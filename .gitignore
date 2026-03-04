@@ -11,6 +11,7 @@ node_modules
 .env.development.local
 .env.test.local
 .env.production.local
+google-credentials.json
 
 # Testing
 coverage
@@ -24,8 +25,8 @@ coverage
 # Build Outputs
 .next/
 out/
-build
-dist
+build/
+dist/
 
 
 # Debug
