@@ -110,7 +110,7 @@ export default function Home() {
             <div className="h-12 w-12 rounded-xl bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center text-2xl mb-6">🛡️</div>
             <h3 className="text-xl font-bold text-zinc-900 dark:text-white mb-3">Validación y Seguridad</h3>
             <p className="text-zinc-600 dark:text-zinc-400 text-sm leading-relaxed">
-              Sistema de doble "Opt-In". Ninguna cita médica se guarda en la base de datos hasta que el paciente confirma explícitamente los datos extraídos por la IA.
+              Sistema de doble &quot;Opt-In&quot;. Ninguna cita médica se guarda en la base de datos hasta que el paciente confirma explícitamente los datos extraídos por la IA.
             </p>
           </div>
 

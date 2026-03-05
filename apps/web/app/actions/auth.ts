@@ -7,7 +7,7 @@ import { prisma } from '../../lib/prisma';
 
 const SECRET_KEY = new TextEncoder().encode(process.env.JWT_SECRET || 'clave-secreta-hospital-san-vicente-2026');
 
-export async function loginAdmin(formData: FormData) {
+export async function loginUser(formData: FormData) {
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
 
@@ -25,8 +25,7 @@ export async function loginAdmin(formData: FormData) {
                 data: {
                     email: 'admin@sanvicente.com',
                     password: hashedPassword,
-                    fullName: 'Admin Principal',
-                    role: 'ADMIN' // 🛑 Le asignamos el rol poderoso
+                    role: 'ADMIN'
                 }
             });
             console.log('✅ Creado usuario administrador por defecto');
@@ -37,7 +36,7 @@ export async function loginAdmin(formData: FormData) {
 
         // 2. Validaciones de seguridad estrictas
         if (!user || !user.password) return { error: 'Credenciales incorrectas' };
-        if (user.role !== 'ADMIN') return { error: 'Acceso denegado: No tienes permisos de administrador.' };
+        // Permitimos el paso a cualquier rol registrado.
 
         // 3. Verificar contraseña encriptada
         const isValidPassword = await bcrypt.compare(password, user.password);
@@ -51,7 +50,7 @@ export async function loginAdmin(formData: FormData) {
 
         // 5. Guardar la Cookie (ahora asíncrona)
         const cookieStore = await cookies();
-        cookieStore.set('admin_token', token, {
+        cookieStore.set('auth_token', token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'lax',

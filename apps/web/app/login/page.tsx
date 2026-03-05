@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { loginAdmin } from '../actions/auth';
+import { loginUser } from '../actions/auth';
 
 export default function LoginPage() {
     const router = useRouter();
@@ -15,7 +15,7 @@ export default function LoginPage() {
         setError(null);
 
         const formData = new FormData(event.currentTarget);
-        const result = await loginAdmin(formData);
+        const result = await loginUser(formData);
 
         if (result?.error) {
             setError(result.error);
@@ -31,7 +31,7 @@ export default function LoginPage() {
 
                 <div className="text-center mb-8">
                     <span className="text-5xl block mb-4">🏥</span>
-                    <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Acceso Administrativo</h1>
+                    <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Portal de Acceso</h1>
                     <p className="text-sm text-zinc-500 mt-2">Hospital San Vicente AI</p>
                 </div>
 

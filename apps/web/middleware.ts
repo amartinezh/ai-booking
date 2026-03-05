@@ -10,7 +10,7 @@ export async function middleware(request: NextRequest) {
     if (request.nextUrl.pathname.startsWith('/dashboard')) {
 
         // 1. Buscar la cookie
-        const token = request.cookies.get('admin_token')?.value;
+        const token = request.cookies.get('auth_token')?.value;
 
         // 2. Si no hay cookie, lo pateamos al login
         if (!token) {
@@ -21,7 +21,7 @@ export async function middleware(request: NextRequest) {
         try {
             await jwtVerify(token, SECRET_KEY);
             return NextResponse.next(); // Adelante, puede pasar
-        } catch (error) {
+        } catch (_) {
             // Token inválido o expirado
             return NextResponse.redirect(new URL('/login', request.url));
         }

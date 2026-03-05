@@ -1,10 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
-// packages/database/prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -14,41 +10,97 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// -----------------------------------------------------------------------------
+// 🔐 AUTH & CORE USER (Mínimo necesario para login)
+// -----------------------------------------------------------------------------
 model User {
   id        String   @id @default(uuid())
-  // Identificadores Sociales (Indexados para búsqueda rápida O(1))
-  facebookId String? @unique
-  whatsappId String? @unique
-  
-  cedula    String?  @unique
-  fullName  String?
-  email      String?  @unique
-  password   String?
+  email     String   @unique
+  password  String
   role      Role     @default(PATIENT)
   
-  appointments Appointment[]
+  // Relaciones 1:1 con Perfiles Opcionales según el Rol
+  patientProfile PatientProfile?
+  doctorProfile  DoctorProfile?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
+// -----------------------------------------------------------------------------
+// 🏥 PATIENT PROFILE (Datos Médicos y Contacto)
+// -----------------------------------------------------------------------------
+model PatientProfile {
+  id        String   @id @default(uuid())
+  
+  // Identificadores Sociales (Indexados para el Bot)
+  facebookId String? @unique
+  whatsappId String? @unique
+  
+  cedula     String   @unique
+  fullName   String
+  dateOfBirth DateTime?
+  gender     String?  // Ej: 'M', 'F', 'Other'
+  address    String?
+
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  appointments Appointment[]
+  
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// 🩺 DOCTOR PROFILE (Datos Profesionales Médicos)
+// -----------------------------------------------------------------------------
+model DoctorProfile {
+  id             String   @id @default(uuid())
+  
+  cedula         String   @unique
+  fullName       String
+  specialty      String   // Ej: 'Medicina General', 'Odontología'
+  medicalLicense String?  @unique // Tarjeta Profesional
+  phone          String?
+  isActive       Boolean  @default(true)
+
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  appointments   Appointment[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// 📅 APPOINTMENTS (Citas Médicas)
+// -----------------------------------------------------------------------------
 model Appointment {
   id          String   @id @default(uuid())
   date        DateTime
-  specialty   String   // 'Medicina General' | 'Odontología'
+  specialty   String   // Especialidad solicitada o asignada
   status      AppointmentStatus @default(SCHEDULED)
   reason      String?  
   
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
-  
+  // A quién atiende
+  patientId   String
+  patient     PatientProfile @relation(fields: [patientId], references: [id])
+
+  // Quien atiende (Puede ser nulo hasta que se asigne)
+  doctorId    String?
+  doctor      DoctorProfile? @relation(fields: [doctorId], references: [id])
+
   metaLog     Json?    
   createdAt   DateTime @default(now())
   bookedViaAi Boolean @default(false)
 
-  // 🔒 EL CANDADO DE CONCURRENCIA: 
-  // Garantiza a nivel físico en disco que no existan dos citas 
-  // para la misma especialidad en la misma fecha y hora exacta.
-  @@unique([date, specialty])
+  // 🔒 CANDADO CONCURRENCIA: 
+  // No pueden existir dos citas a la misma hora para el mismo doctor.
+  // IMPORTANTE: Antes el @@unique sumaba la fecha + especialidad globalmente.
+  // Ahora el candado lo llevamos a que un Doctor NO se doblegue.
+  @@unique([date, doctorId])
 }
 
 enum Role {

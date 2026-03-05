@@ -36,25 +36,33 @@ export class AppointmentsService {
 
     // 2. LÓGICA DE TRANSACCIÓN: Intenta agendar y maneja la colisión
     async bookAppointment(
-        userId: string,
+        patientId: string, // 🛑 NUEVO: Ahora pasamos patientId en lugar de userId
         specialty: string,
         date: Date,
-        bookedViaAi: boolean = false // 🛑 NUEVO: Recibimos la bandera (por defecto false)
+        bookedViaAi: boolean = false
     ): Promise<{ success: boolean; message?: string }> {
         try {
+            // Lógica para asignar al primer doctor disponible de esa especialidad 👨‍⚕️
+            // Para mantener la simplicidad, tomaremos el primer doctor de la BD 
+            // que tenga la especialidad solicitada (en producción sería más complejo).
+            const doctor = await this.prisma.doctorProfile.findFirst({
+                where: { specialty, isActive: true }
+            });
+
             await this.prisma.appointment.create({
                 data: {
                     date,
                     specialty,
-                    userId,
-                    bookedViaAi, // 🛑 NUEVO: Lo guardamos en PostgreSQL
+                    patientId, // 🛑 Inyectamos el ID del paciente, no del User genérico.
+                    doctorId: doctor ? doctor.id : null, // Asignamos doctor si hay
+                    bookedViaAi,
                 },
             });
             return { success: true };
         } catch (error) {
             if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
                 this.logger.warn(`Colisión detectada: El slot ${date} para ${specialty} acaba de ser tomado.`);
-                return { success: false, message: 'Lo sentimos, ese horario acaba de ser reservado por otra persona.' };
+                return { success: false, message: 'Lo sentimos, el horario o el doctor acaba de ser reservado.' };
             }
             this.logger.error('Error crítico al guardar la cita', error);
             throw error;

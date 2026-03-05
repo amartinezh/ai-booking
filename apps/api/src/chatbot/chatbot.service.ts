@@ -420,17 +420,31 @@ export class ChatbotService {
                         await this.setUserState(senderId, ChatState.IDLE);
                         return;
                     }
-                    const user = await this.prisma.user.findFirst({
-                        where: { OR: [{ facebookId: senderId }, { whatsappId: senderId }] }
+                    // 🚨 AQUI BUSCAMOS A UN PACIENTE (NO A UN USER GENERAL)
+                    let patient = await this.prisma.patientProfile.findFirst({
+                        where: { OR: [{ facebookId: senderId }, { whatsappId: senderId }, { cedula: finalCedula }] }
                     });
 
-                    if (!user) {
-                        await this.smartReply(senderId, "❌ Error interno: No pudimos encontrar su registro. Diga 'Hola' para registrarse de nuevo.");
-                        await this.setUserState(senderId, ChatState.IDLE);
-                        return;
+                    // Si no existe el perfil de paciente, mockeamos la creación (En producción iría a registro)
+                    if (!patient) {
+                        const tempUser = await this.prisma.user.create({
+                            data: {
+                                email: `temp_${Date.now()}@sanvicente.test`,
+                                password: 'none',
+                                role: 'PATIENT'
+                            }
+                        });
+                        patient = await this.prisma.patientProfile.create({
+                            data: {
+                                cedula: finalCedula,
+                                fullName: 'Paciente No Registrado',
+                                whatsappId: senderId,
+                                userId: tempUser.id
+                            }
+                        });
                     }
 
-                    const bookingResult = await this.appointmentsService.bookAppointment(user.id, finalSpec, new Date(finalFechaISO), isAiFlow);
+                    const bookingResult = await this.appointmentsService.bookAppointment(patient.id, finalSpec, new Date(finalFechaISO), isAiFlow);
 
                     if (bookingResult.success) {
                         await this.smartReply(
