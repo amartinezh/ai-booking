@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { saveDoctorAction } from './actions';
 
-export default function DoctorModal({ doctor, onClose }: { doctor?: any, onClose: () => void }) {
+export default function DoctorModal({ doctor, services, onClose }: { doctor?: any, services: any[], onClose: () => void }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
@@ -16,9 +16,9 @@ export default function DoctorModal({ doctor, onClose }: { doctor?: any, onClose
         const formData = new FormData(e.currentTarget);
         if (doctor?.id) formData.append('id', doctor.id);
 
-        // El checkbox no se envía si está desmarcado, procesamos un input hidden para forzar su estado
+        // El checkbox no se envía si está desmarcado, procesamos su estado explícitamente
         const isActiveCheckbox = e.currentTarget.isActive as HTMLInputElement;
-        formData.append('isActive', isActiveCheckbox.checked ? 'true' : 'false');
+        formData.set('isActive', isActiveCheckbox.checked ? 'true' : 'false');
 
         const res = await saveDoctorAction(formData);
         if (!res.success) {
@@ -92,16 +92,17 @@ export default function DoctorModal({ doctor, onClose }: { doctor?: any, onClose
                         </div>
 
                         <div>
-                            <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">Especialidad Principal</label>
+                            <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">Servicio Adscrito</label>
                             <select
-                                name="specialty"
-                                defaultValue={doctor?.specialty || 'Medicina General'}
+                                name="serviceId"
+                                defaultValue={doctor?.serviceId || ''}
+                                required
                                 className="w-full bg-zinc-50 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 rounded-xl px-4 py-3 text-zinc-900 dark:text-white outline-none"
                             >
-                                <option value="Medicina General">Medicina General</option>
-                                <option value="Odontología">Odontología</option>
-                                <option value="Cardiología">Cardiología</option>
-                                <option value="Ortopedia">Ortopedia</option>
+                                <option value="">Seleccione el Servicio</option>
+                                {services.map((svc: any) => (
+                                    <option key={svc.id} value={svc.id}>{svc.name}</option>
+                                ))}
                             </select>
                         </div>
 

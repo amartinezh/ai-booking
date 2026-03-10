@@ -28,6 +28,40 @@ model User {
 }
 
 // -----------------------------------------------------------------------------
+// 1. Catálogo de Aseguradoras (NUEVO)
+// -----------------------------------------------------------------------------
+model Eps {
+  id          String   @id @default(uuid())
+  name        String   @unique             // Ej: 'Sura', 'Sanitas'
+  nit         String?  @unique
+  isActive    Boolean  @default(true)      // Para encender/apagar convenios
+  
+  // Relaciones
+  patients    PatientProfile[]             // Pacientes afiliados a esta EPS
+  slots       ScheduleSlot[]               // Cupos de agenda EXCLUSIVOS para esta EPS
+  appointments Appointment[]               // Historial de citas facturadas por esta EPS
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// 2. Catálogo de Servicios / Especialidades (NUEVO)
+// -----------------------------------------------------------------------------
+model MedicalService {
+  id          String   @id @default(uuid())
+  name        String   @unique             // Ej: 'Odontología', 'Medicina General'
+  isActive    Boolean  @default(true)
+
+  // Relaciones
+  doctors     DoctorProfile[]              // Qué doctores prestan este servicio
+  slots       ScheduleSlot[]               // Agenda disponible para este servicio
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
 // 🏥 PATIENT PROFILE (Datos Médicos y Contacto)
 // -----------------------------------------------------------------------------
 model PatientProfile {
@@ -42,6 +76,10 @@ model PatientProfile {
   dateOfBirth DateTime?
   gender     String?  // Ej: 'M', 'F', 'Other'
   address    String?
+
+  // 🔌 CONEXIÓN EPS: El paciente declara su EPS base
+  epsId       String?
+  eps         Eps?     @relation(fields: [epsId], references: [id])
 
   userId     String   @unique
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -60,47 +98,80 @@ model DoctorProfile {
   
   cedula         String   @unique
   fullName       String
-  specialty      String   // Ej: 'Medicina General', 'Odontología'
   medicalLicense String?  @unique // Tarjeta Profesional
   phone          String?
   isActive       Boolean  @default(true)
 
+  // 🔌 CONEXIÓN SERVICIO: La especialidad deja de ser String libre
+  serviceId      String?
+  service        MedicalService? @relation(fields: [serviceId], references: [id])
+
   userId         String   @unique
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  appointments   Appointment[]
+  // Relación con el motor de turnos
+  slots          ScheduleSlot[]
 
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
 
 // -----------------------------------------------------------------------------
-// 📅 APPOINTMENTS (Citas Médicas)
+// 3. Agenda Física de Disponibilidad (NUEVO MOTOR)
+// -----------------------------------------------------------------------------
+model ScheduleSlot {
+  id             String   @id @default(uuid())
+  
+  startTime      DateTime
+  endTime        DateTime
+  isAvailable    Boolean  @default(true)
+  
+  // Quién atiende en este bloque
+  doctorId       String
+  doctor         DoctorProfile  @relation(fields: [doctorId], references: [id])
+  
+  // Qué servicio se está prestando
+  serviceId      String
+  service        MedicalService @relation(fields: [serviceId], references: [id])
+  
+  // Opcional: ¿Este hueco es exclusivo para pacientes de una EPS en particular?
+  allowedEpsId   String?
+  allowedEps     Eps?           @relation(fields: [allowedEpsId], references: [id])
+
+  // Relación 1:1 -> Si se ocupa, aquí está la cita. (Si es null, está libre)
+  appointment    Appointment?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // No podemos tener slots duplicados para el mismo médico a la misma hora exacta
+  @@unique([doctorId, startTime, endTime])
+}
+
+
+// -----------------------------------------------------------------------------
+// 📅 APPOINTMENTS (Citas Médicas Evolucionada a HIS)
 // -----------------------------------------------------------------------------
 model Appointment {
   id          String   @id @default(uuid())
-  date        DateTime
-  specialty   String   // Especialidad solicitada o asignada
   status      AppointmentStatus @default(SCHEDULED)
   reason      String?  
   
-  // A quién atiende
+  // 🔌 CONEXIÓN AL SLOT: Ya no guardamos la 'fecha', apuntamos al slot real preconstruido.
+  scheduleSlotId  String   @unique
+  scheduleSlot    ScheduleSlot @relation(fields: [scheduleSlotId], references: [id])
+
+  // A quién se atiende
   patientId   String
   patient     PatientProfile @relation(fields: [patientId], references: [id])
 
-  // Quien atiende (Puede ser nulo hasta que se asigne)
-  doctorId    String?
-  doctor      DoctorProfile? @relation(fields: [doctorId], references: [id])
+  // 🔌 CONEXIÓN EPS FACTURACIÓN: Qué EPS autorizó y cubrirá este costo.
+  epsId           String?
+  eps             Eps? @relation(fields: [epsId], references: [id])
 
   metaLog     Json?    
   createdAt   DateTime @default(now())
   bookedViaAi Boolean @default(false)
-
-  // 🔒 CANDADO CONCURRENCIA: 
-  // No pueden existir dos citas a la misma hora para el mismo doctor.
-  // IMPORTANTE: Antes el @@unique sumaba la fecha + especialidad globalmente.
-  // Ahora el candado lo llevamos a que un Doctor NO se doblegue.
-  @@unique([date, doctorId])
 }
 
 enum Role {

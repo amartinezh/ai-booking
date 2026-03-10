@@ -4,68 +4,98 @@ import { Prisma } from '@antigravity/database';
 
 @Injectable()
 export class AppointmentsService {
-    private readonly logger = new Logger(AppointmentsService.name);
+  private readonly logger = new Logger(AppointmentsService.name);
 
-    constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) {}
 
-    // 1. LÓGICA DE BÚSQUEDA: Genera slots y filtra los ocupados
-    async getAvailableSlots(specialty: string): Promise<Date[]> {
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        tomorrow.setHours(8, 0, 0, 0);
+  // 1. LÓGICA DE BÚSQUEDA H.I.S: Busca slots pre-creados reales.
+  async getAvailableSlots(
+    serviceName: string,
+    epsId?: string | null,
+  ): Promise<any[]> {
+    // En un HIS real, solo se ofrecen slots a partir de mañana, para un servicio en particular
+    const now = new Date();
 
-        const dayAfter = new Date();
-        dayAfter.setDate(dayAfter.getDate() + 2);
-        dayAfter.setHours(10, 0, 0, 0);
+    // Consultamos la BD buscando huecos disponibles
+    const rawSlots = await this.prisma.scheduleSlot.findMany({
+      where: {
+        isAvailable: true,
+        startTime: { gt: now },
+        service: {
+          name: { contains: serviceName, mode: 'insensitive' },
+        },
+        // Filtro clave: El slot debe ser universal (null) o ser exclusivo para la EPS del paciente
+        OR: [{ allowedEpsId: null }, { allowedEpsId: epsId }],
+      },
+      include: { doctor: true, service: true },
+      orderBy: { startTime: 'asc' },
+      take: 10, // Retornamos los próximos 10 cupos
+    });
 
-        const potentialSlots = [tomorrow, dayAfter];
+    // Mapeamos para que Gemini lo pueda entender fácil
+    return rawSlots.map((slot) => ({
+      slotId: slot.id,
+      fecha: slot.startTime,
+      doctor: slot.doctor.fullName,
+      servicio: slot.service.name,
+    }));
+  }
 
-        const bookedAppointments = await this.prisma.appointment.findMany({
-            where: {
-                specialty,
-                date: { in: potentialSlots },
-                status: 'SCHEDULED',
-            },
-            select: { date: true },
+  // 2. LÓGICA DE TRANSACCIÓN: Intenta agendar ocupando el Slot Físico
+  async bookAppointment(
+    patientId: string,
+    scheduleSlotId: string,
+    epsId?: string | null,
+    bookedViaAi: boolean = false,
+  ): Promise<{ success: boolean; message?: string }> {
+    try {
+      // Utilizamos el motor transaccional de Prisma para evitar concurrencia
+      await this.prisma.$transaction(async (tx) => {
+        // 1. Verificar si sigue libre y bloquear la fila momentáneamente si la BD lo soporta
+        const slot = await tx.scheduleSlot.findUnique({
+          where: { id: scheduleSlotId },
         });
 
-        const bookedDates = bookedAppointments.map((app) => app.date.getTime());
-
-        return potentialSlots.filter((slot) => !bookedDates.includes(slot.getTime()));
-    }
-
-    // 2. LÓGICA DE TRANSACCIÓN: Intenta agendar y maneja la colisión
-    async bookAppointment(
-        patientId: string, // 🛑 NUEVO: Ahora pasamos patientId en lugar de userId
-        specialty: string,
-        date: Date,
-        bookedViaAi: boolean = false
-    ): Promise<{ success: boolean; message?: string }> {
-        try {
-            // Lógica para asignar al primer doctor disponible de esa especialidad 👨‍⚕️
-            // Para mantener la simplicidad, tomaremos el primer doctor de la BD 
-            // que tenga la especialidad solicitada (en producción sería más complejo).
-            const doctor = await this.prisma.doctorProfile.findFirst({
-                where: { specialty, isActive: true }
-            });
-
-            await this.prisma.appointment.create({
-                data: {
-                    date,
-                    specialty,
-                    patientId, // 🛑 Inyectamos el ID del paciente, no del User genérico.
-                    doctorId: doctor ? doctor.id : null, // Asignamos doctor si hay
-                    bookedViaAi,
-                },
-            });
-            return { success: true };
-        } catch (error) {
-            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-                this.logger.warn(`Colisión detectada: El slot ${date} para ${specialty} acaba de ser tomado.`);
-                return { success: false, message: 'Lo sentimos, el horario o el doctor acaba de ser reservado.' };
-            }
-            this.logger.error('Error crítico al guardar la cita', error);
-            throw error;
+        if (!slot || !slot.isAvailable) {
+          throw new Error('SLOT_TAKEN');
         }
+
+        // 2. Marcar slot como Ocupado
+        await tx.scheduleSlot.update({
+          where: { id: scheduleSlotId },
+          data: { isAvailable: false },
+        });
+
+        // 3. Crear el record de Cita conectado al Slot
+        await tx.appointment.create({
+          data: {
+            scheduleSlotId,
+            patientId,
+            epsId,
+            bookedViaAi,
+          },
+        });
+      });
+
+      return { success: true };
+    } catch (error: any) {
+      // El catch atrapará si el constraint @unique choca o si lanzamos SLOT_TAKEN
+      if (
+        error.message === 'SLOT_TAKEN' ||
+        (error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002')
+      ) {
+        this.logger.warn(
+          `Colisión detectada: El slot ${scheduleSlotId} acaba de ser tomado.`,
+        );
+        return {
+          success: false,
+          message:
+            'Lo sentimos, el horario acaba de ser reservado por otro paciente.',
+        };
+      }
+      this.logger.error('Error crítico al guardar la cita', error);
+      throw error;
     }
+  }
 }

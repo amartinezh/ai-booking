@@ -15,8 +15,13 @@ export default async function MedicosPage() {
 
     const doctors = await prisma.doctorProfile.findMany({
         orderBy: { createdAt: 'desc' },
-        include: { user: true }
+        include: { user: true, service: true }
     });
 
-    return <DoctorClientView doctors={doctors} />;
+    const services = await prisma.medicalService.findMany({
+        where: { isActive: true },
+        orderBy: { name: 'asc' }
+    });
+
+    return <DoctorClientView doctors={doctors} services={services} />;
 }

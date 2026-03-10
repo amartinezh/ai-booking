@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 import { cookies } from 'next/headers';
 import { jwtVerify } from 'jose';
 

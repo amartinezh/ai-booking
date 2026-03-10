@@ -5,7 +5,7 @@ import { useState, useTransition } from 'react';
 import DoctorModal from './DoctorModal';
 import { deleteDoctorAction } from './actions';
 
-export default function DoctorClientView({ doctors }: { doctors: any[] }) {
+export default function DoctorClientView({ doctors, services }: { doctors: any[], services: any[] }) {
     const [editingDoctor, setEditingDoctor] = useState<any | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [isPending, startTransition] = useTransition();
@@ -40,6 +40,7 @@ export default function DoctorClientView({ doctors }: { doctors: any[] }) {
             {(isCreating || editingDoctor) && (
                 <DoctorModal
                     doctor={editingDoctor}
+                    services={services}
                     onClose={() => { setIsCreating(false); setEditingDoctor(null); }}
                 />
             )}
@@ -55,7 +56,7 @@ export default function DoctorClientView({ doctors }: { doctors: any[] }) {
                                     </div>
                                     <div>
                                         <h3 className="text-lg font-bold text-zinc-900 dark:text-white leading-tight">{doctor.fullName}</h3>
-                                        <p className="text-sm font-medium text-blue-600 dark:text-blue-400">{doctor.specialty}</p>
+                                        <p className="text-sm font-medium text-blue-600 dark:text-blue-400">{doctor.service?.name || 'Servicio no asignado'}</p>
                                     </div>
                                 </div>
                                 <span className={`px-2.5 py-1 text-[10px] uppercase font-bold tracking-wider rounded-lg border ${doctor.isActive ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:border-emerald-800' : 'bg-red-50 text-red-600 border-red-200 dark:bg-red-900/30 dark:border-red-800'}`}>

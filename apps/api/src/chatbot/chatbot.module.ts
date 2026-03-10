@@ -17,4 +17,4 @@ import { AppointmentsModule } from 'src/appointments/appointments.module';
   // Exportamos por si en el futuro otro módulo necesita enviar mensajes
   exports: [ChatbotService],
 })
-export class ChatbotModule { }
+export class ChatbotModule {}

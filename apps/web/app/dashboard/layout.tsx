@@ -22,9 +22,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
     const ADMIN_MENUS = [
         { label: 'Visión General', href: '/dashboard', icon: '📋' },
+        { label: 'Agendas (Slots)', href: '/dashboard/agenda', icon: '📅' },
+        { label: 'Servicios de Salud', href: '/dashboard/servicios', icon: '💉' },
+        { label: 'Aseguradoras (EPS)', href: '/dashboard/eps', icon: '🏦' },
         { label: 'Usuarios', href: '/dashboard/usuarios', icon: '👥' },
-        { label: 'Médicos', href: '/dashboard/medicos', icon: '⚕️' },
-        { label: 'Especialidades', href: '/dashboard/especialidades', icon: '🏥' }
+        { label: 'Médicos', href: '/dashboard/medicos', icon: '⚕️' }
     ];
 
     const roleMap = {
