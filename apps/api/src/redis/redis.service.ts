@@ -6,10 +6,10 @@ export class RedisService extends Redis implements OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
 
   constructor() {
-    // En producción, esto vendría de variables de entorno (process.env.REDIS_URL)
+    // Ahora lee de Docker en producción, o usa localhost en tu Mac
     super({
-      host: 'localhost', // Asumiendo que tu Docker compose expone el 6379 localmente
-      port: 6379,
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
     });
 
     this.on('connect', () => this.logger.log('Conectado a Redis exitosamente'));
