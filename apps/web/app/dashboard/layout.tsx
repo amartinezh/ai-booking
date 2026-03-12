@@ -26,7 +26,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         { label: 'Servicios de Salud', href: '/dashboard/servicios', icon: '💉' },
         { label: 'Aseguradoras (EPS)', href: '/dashboard/eps', icon: '🏦' },
         { label: 'Usuarios', href: '/dashboard/usuarios', icon: '👥' },
-        { label: 'Médicos', href: '/dashboard/medicos', icon: '⚕️' }
+        { label: 'Médicos', href: '/dashboard/medicos', icon: '⚕️' },
+        { label: 'Caja Negra (Auditoría)', href: '/dashboard/auditoria', icon: '🕵️' }
     ];
 
     const roleMap = {

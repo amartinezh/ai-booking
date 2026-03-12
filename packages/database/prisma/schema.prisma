@@ -14,14 +14,17 @@ datasource db {
 // 🔐 AUTH & CORE USER (Mínimo necesario para login)
 // -----------------------------------------------------------------------------
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  role      Role     @default(PATIENT)
-  
+  id       String @id @default(uuid())
+  email    String @unique
+  password String
+  role     Role   @default(PATIENT)
+
   // Relaciones 1:1 con Perfiles Opcionales según el Rol
   patientProfile PatientProfile?
   doctorProfile  DoctorProfile?
+
+  // Relación con Logs de Auditoría ("Caja Negra")
+  interactionLogs InteractionLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -31,147 +34,146 @@ model User {
 // 1. Catálogo de Aseguradoras (NUEVO)
 // -----------------------------------------------------------------------------
 model Eps {
-  id          String   @id @default(uuid())
-  name        String   @unique             // Ej: 'Sura', 'Sanitas'
-  nit         String?  @unique
-  isActive    Boolean  @default(true)      // Para encender/apagar convenios
-  
-  // Relaciones
-  patients    PatientProfile[]             // Pacientes afiliados a esta EPS
-  slots       ScheduleSlot[]               // Cupos de agenda EXCLUSIVOS para esta EPS
-  appointments Appointment[]               // Historial de citas facturadas por esta EPS
+  id       String  @id @default(uuid())
+  name     String  @unique // Ej: 'Sura', 'Sanitas'
+  nit      String? @unique
+  isActive Boolean @default(true) // Para encender/apagar convenios
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  // Relaciones
+  patients     PatientProfile[] // Pacientes afiliados a esta EPS
+  slots        ScheduleSlot[] // Cupos de agenda EXCLUSIVOS para esta EPS
+  appointments Appointment[] // Historial de citas facturadas por esta EPS
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // -----------------------------------------------------------------------------
 // 2. Catálogo de Servicios / Especialidades (NUEVO)
 // -----------------------------------------------------------------------------
 model MedicalService {
-  id          String   @id @default(uuid())
-  name        String   @unique             // Ej: 'Odontología', 'Medicina General'
-  isActive    Boolean  @default(true)
+  id       String  @id @default(uuid())
+  name     String  @unique // Ej: 'Odontología', 'Medicina General'
+  isActive Boolean @default(true)
 
   // Relaciones
-  doctors     DoctorProfile[]              // Qué doctores prestan este servicio
-  slots       ScheduleSlot[]               // Agenda disponible para este servicio
+  doctors DoctorProfile[] // Qué doctores prestan este servicio
+  slots   ScheduleSlot[] // Agenda disponible para este servicio
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // -----------------------------------------------------------------------------
 // 🏥 PATIENT PROFILE (Datos Médicos y Contacto)
 // -----------------------------------------------------------------------------
 model PatientProfile {
-  id        String   @id @default(uuid())
-  
+  id String @id @default(uuid())
+
   // Identificadores Sociales (Indexados para el Bot)
   facebookId String? @unique
   whatsappId String? @unique
-  
-  cedula     String   @unique
-  fullName   String
+
+  cedula      String    @unique
+  fullName    String
   dateOfBirth DateTime?
-  gender     String?  // Ej: 'M', 'F', 'Other'
-  address    String?
+  gender      String? // Ej: 'M', 'F', 'Other'
+  address     String?
 
   // 🔌 CONEXIÓN EPS: El paciente declara su EPS base
-  epsId       String?
-  eps         Eps?     @relation(fields: [epsId], references: [id])
+  epsId String?
+  eps   Eps?    @relation(fields: [epsId], references: [id])
 
-  userId     String   @unique
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   appointments Appointment[]
-  
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // -----------------------------------------------------------------------------
 // 🩺 DOCTOR PROFILE (Datos Profesionales Médicos)
 // -----------------------------------------------------------------------------
 model DoctorProfile {
-  id             String   @id @default(uuid())
-  
-  cedula         String   @unique
+  id String @id @default(uuid())
+
+  cedula         String  @unique
   fullName       String
-  medicalLicense String?  @unique // Tarjeta Profesional
+  medicalLicense String? @unique // Tarjeta Profesional
   phone          String?
-  isActive       Boolean  @default(true)
+  isActive       Boolean @default(true)
 
   // 🔌 CONEXIÓN SERVICIO: La especialidad deja de ser String libre
-  serviceId      String?
-  service        MedicalService? @relation(fields: [serviceId], references: [id])
+  serviceId String?
+  service   MedicalService? @relation(fields: [serviceId], references: [id])
 
-  userId         String   @unique
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Relación con el motor de turnos
-  slots          ScheduleSlot[]
+  slots ScheduleSlot[]
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // -----------------------------------------------------------------------------
 // 3. Agenda Física de Disponibilidad (NUEVO MOTOR)
 // -----------------------------------------------------------------------------
 model ScheduleSlot {
-  id             String   @id @default(uuid())
-  
-  startTime      DateTime
-  endTime        DateTime
-  isAvailable    Boolean  @default(true)
-  
+  id String @id @default(uuid())
+
+  startTime   DateTime
+  endTime     DateTime
+  isAvailable Boolean  @default(true)
+
   // Quién atiende en este bloque
-  doctorId       String
-  doctor         DoctorProfile  @relation(fields: [doctorId], references: [id])
-  
+  doctorId String
+  doctor   DoctorProfile @relation(fields: [doctorId], references: [id])
+
   // Qué servicio se está prestando
-  serviceId      String
-  service        MedicalService @relation(fields: [serviceId], references: [id])
-  
+  serviceId String
+  service   MedicalService @relation(fields: [serviceId], references: [id])
+
   // Opcional: ¿Este hueco es exclusivo para pacientes de una EPS en particular?
-  allowedEpsId   String?
-  allowedEps     Eps?           @relation(fields: [allowedEpsId], references: [id])
+  allowedEpsId String?
+  allowedEps   Eps?    @relation(fields: [allowedEpsId], references: [id])
 
   // Relación 1:1 -> Si se ocupa, aquí está la cita. (Si es null, está libre)
-  appointment    Appointment?
+  appointment Appointment?
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // No podemos tener slots duplicados para el mismo médico a la misma hora exacta
   @@unique([doctorId, startTime, endTime])
 }
 
-
 // -----------------------------------------------------------------------------
 // 📅 APPOINTMENTS (Citas Médicas Evolucionada a HIS)
 // -----------------------------------------------------------------------------
 model Appointment {
-  id          String   @id @default(uuid())
-  status      AppointmentStatus @default(SCHEDULED)
-  reason      String?  
-  
+  id     String            @id @default(uuid())
+  status AppointmentStatus @default(SCHEDULED)
+  reason String?
+
   // 🔌 CONEXIÓN AL SLOT: Ya no guardamos la 'fecha', apuntamos al slot real preconstruido.
-  scheduleSlotId  String   @unique
-  scheduleSlot    ScheduleSlot @relation(fields: [scheduleSlotId], references: [id])
+  scheduleSlotId String       @unique
+  scheduleSlot   ScheduleSlot @relation(fields: [scheduleSlotId], references: [id])
 
   // A quién se atiende
-  patientId   String
-  patient     PatientProfile @relation(fields: [patientId], references: [id])
+  patientId String
+  patient   PatientProfile @relation(fields: [patientId], references: [id])
 
   // 🔌 CONEXIÓN EPS FACTURACIÓN: Qué EPS autorizó y cubrirá este costo.
-  epsId           String?
-  eps             Eps? @relation(fields: [epsId], references: [id])
+  epsId String?
+  eps   Eps?    @relation(fields: [epsId], references: [id])
 
-  metaLog     Json?    
+  metaLog     Json?
   createdAt   DateTime @default(now())
-  bookedViaAi Boolean @default(false)
+  bookedViaAi Boolean  @default(false)
 }
 
 enum Role {
@@ -184,4 +186,27 @@ enum AppointmentStatus {
   SCHEDULED
   COMPLETED
   CANCELLED
+}
+
+// -----------------------------------------------------------------------------
+// 🕵️ AUDITORÍA "CAJA NEGRA" (Logs de Chatbot y Demandas Fallidas)
+// -----------------------------------------------------------------------------
+model InteractionLog {
+  id            String  @id @default(uuid())
+  whatsappId    String // Identificador de WhatsApp/Facebook del remitente
+  status        String // Ej: "SUCCESS", "FAILED", "ABANDONED"
+  failureReason String? // Ej: "UNINTELLIGIBLE_AUDIO", "SERVICE_NOT_FOUND", "NO_AGENDA"
+
+  // El rastro de la conversación para recuperación manual
+  userMessage String? // Lo que transcribió Gemini o escribió el usuario
+  botReply    String? // Lo que Vicente le contestó
+
+  // 🔥 Superpoder NoSQL dentro de Postgres
+  metadata Json? // Guarda info inferida (EPS, servicios) para Business Intelligence
+
+  createdAt DateTime @default(now())
+
+  // Relación opcional por si el usuario que falla ya tiene un PatientProfile/User
+  patientId String?
+  patient   User?   @relation(fields: [patientId], references: [id])
 }

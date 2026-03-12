@@ -314,10 +314,21 @@ export class ChatbotService {
         this.logger.log(`🧠 Gemini extrajo: ${JSON.stringify(aiData)}`);
 
         if (aiData.ininteligible) {
-          await this.smartReply(
-            senderId,
-            '🎙️ Disculpe, había mucho ruido de fondo o el audio se escuchó cortado y no alcancé a entenderle bien. ¿Podría acercarse un poquito el celular y volver a grabarme la nota de voz?',
-          );
+          const botMessage = '🎙️ Disculpe, había mucho ruido de fondo o el audio se escuchó cortado y no alcancé a entenderle bien. ¿Podría acercarse un poquito el celular y volver a grabarme la nota de voz?';
+          await this.smartReply(senderId, botMessage);
+
+          // Caja Negra: Se registra el fallo por audio ininteligible
+          await this.prisma.interactionLog.create({
+            data: {
+              whatsappId: senderId,
+              status: 'FAILED',
+              failureReason: 'UNINTELLIGIBLE_AUDIO',
+              userMessage: '[Audio File]',
+              botReply: botMessage,
+              metadata: aiData as any,
+            }
+          });
+
           return;
         }
 
@@ -371,6 +382,20 @@ export class ChatbotService {
               ? `Entendí que necesita cita para *${finalEspecialidad}*. Revisé su perfil como afiliado a *${epsNameFromDb}*, pero lamentablemente no hay cupos asignados por la aseguradora en este momento. Intente otro día.`
               : `Entendí que necesita cita para *${finalEspecialidad}*, pero no hay agenda abierta. Intente mañana.`;
             await this.smartReply(senderId, noDispoMsg);
+
+            // Caja Negra: Se audita demanda de médicos sin disponibilidad (AI Flow)
+            await this.prisma.interactionLog.create({
+              data: {
+                whatsappId: senderId,
+                status: 'FAILED',
+                failureReason: 'NO_AGENDA',
+                userMessage: `[AI Deducción] Servicio: ${finalEspecialidad}`,
+                botReply: noDispoMsg,
+                metadata: { extractedData: aiData, epsNameFromDb },
+                patientId: patient?.id
+              }
+            });
+
             await this.setUserState(senderId, ChatState.IDLE);
             return;
           }
@@ -431,12 +456,21 @@ export class ChatbotService {
             "Disculpe, no pude entender qué trámite necesita. ¿Podría volver a grabarlo o escribirme 'Hola' para empezar de nuevo?",
           );
         }
-      } catch (error) {
+      } catch (error: any) {
         this.logger.error('Fallo general procesando IA', error);
-        await this.smartReply(
-          senderId,
-          "❌ Hubo un fallo en mi sistema de inteligencia artificial. Por favor, escríbame 'Hola' para hacerlo de forma manual.",
-        );
+        const failMsg = "❌ Hubo un fallo en mi sistema de inteligencia artificial. Por favor, escríbame 'Hola' para hacerlo de forma manual.";
+        await this.smartReply(senderId, failMsg);
+
+        await this.prisma.interactionLog.create({
+          data: {
+            whatsappId: senderId,
+            status: 'FAILED',
+            failureReason: 'AI_SYSTEM_FAILURE',
+            userMessage: '[Audio Process Error]',
+            botReply: failMsg,
+            metadata: { errorMsg: error?.message || 'Unknown' }
+          }
+        });
       }
       return;
     }
@@ -497,10 +531,21 @@ export class ChatbotService {
         const slots = await this.appointmentsService.getAvailableSlots(specRecuperada, matchedEpsId);
 
         if (slots.length === 0) {
-          await this.smartReply(
-            senderId,
-            `Lo sentimos. He revisado los horarios disponibles para usuarios de *${matchedEpsName}* en *${specRecuperada}* y no hay agenda abierta por convenio en este momento. Intente más tarde o consulte con su entidad.`,
-          );
+          const noDispoMsg = `Lo sentimos. He revisado los horarios disponibles para usuarios de *${matchedEpsName}* en *${specRecuperada}* y no hay agenda abierta por convenio en este momento. Intente más tarde o consulte con su entidad.`;
+          await this.smartReply(senderId, noDispoMsg);
+
+          // Caja Negra: Se audita el déficit de ofertas frente a la EPS (Text Flow)
+          await this.prisma.interactionLog.create({
+            data: {
+              whatsappId: senderId,
+              status: 'FAILED',
+              failureReason: 'NO_AGENDA',
+              userMessage: epsInput,
+              botReply: noDispoMsg,
+              metadata: { requestedService: specRecuperada, requestedEps: matchedEpsName }
+            }
+          });
+
           await this.setUserState(senderId, ChatState.IDLE);
           return;
         }
