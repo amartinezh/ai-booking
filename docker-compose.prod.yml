@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: antigravity_db_prod
+    restart: always
+    # Eliminamos el 'ports' por seguridad. Solo la red interna puede verlo.
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: antigravity
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    container_name: antigravity_redis_prod
+    restart: always
+    # Eliminamos el 'ports' por seguridad.
+    volumes:
+      - redis_data:/data
+
+  # --- NUEVOS SERVICIOS DE PRODUCCIÓN ---
+
+  api:
+    container_name: antigravity_api_prod
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: always
+    env_file: .env.production
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - postgres
+      - redis
+
+  web:
+    container_name: antigravity_web_prod
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: always
+    env_file: .env.production
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: antigravity_proxy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    depends_on:
+      - web
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
