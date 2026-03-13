@@ -163,6 +163,33 @@ export class ChatbotService {
     }
   }
 
+  private async analyzeIntentWithGemini(text: string): Promise<{ isEscape: boolean; reason?: string }> {
+    const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const prompt = `
+        Eres un analizador de intenciones para un Chatbot Médico de WhatsApp.
+        El usuario acaba de enviar el siguiente mensaje: "${text}"
+
+        TAREA:
+        Detecta si el sentimiento o la intención de este mensaje es querer cancelar, reiniciar, salir, cambiar de opinión, arrepentirse, o pedir hablar con un humano en lugar de seguir respondiendo a lo que se le preguntó.
+        Las palabras sueltas como "hola", "cancelar", "menú", "volver", "equivoqué" también cuentan como intención de escape/reinicio.
+
+        Si detectas este sentimiento, responde con isEscape: true y un motivo breve en 'reason'.
+        Si simplemente está respondiendo normal a una pregunta (Ej: dando su cédula, diciendo una especialidad, "Sura", "A", "Sí"), pon isEscape: false.
+
+        Devuelve ÚNICAMENTE un JSON válido sin envolturas de código (\`\`\`json):
+        { "isEscape": boolean, "reason": "string o null" }
+    `;
+
+    try {
+      const result = await model.generateContent(prompt);
+      const responseText = result.response.text().trim().replace(/```json/g, '').replace(/```/g, '');
+      return JSON.parse(responseText);
+    } catch (e) {
+      this.logger.error('Error analizando intención con Gemini', e);
+      return { isEscape: false };
+    }
+  }
+
   // ==========================================
   // HELPER 4: TEXT-TO-SPEECH Y SMART REPLY (NUEVO)
   // ==========================================
@@ -284,6 +311,29 @@ export class ChatbotService {
     );
 
     // ========================================================
+    // 🛑 INTERCEPTOR DE ESCAPE GLOBAL (SENTIMIENTO & PALABRAS CLAVE)
+    // ========================================================
+    if (messageType === 'text' && text && currentState !== ChatState.IDLE) {
+      const isQuickEscape = /^(hola|cancelar|salir|reiniciar|volver|me equivoque|me equivoqué|otra cita|cambiar|no quiero|detener|menu|menú)$/i.test(text.trim());
+
+      let isEscape = isQuickEscape;
+      // Si el texto tiene más de 2 palabras y no fue escape rápido, usamos Inteligencia Artificial (Empatía)
+      if (!isEscape && text.split(' ').length > 2) {
+        const intent = await this.analyzeIntentWithGemini(text);
+        isEscape = intent.isEscape;
+      }
+
+      if (isEscape) {
+        this.logger.log(`🚨 Escape detectado (Humano/IA) para ${senderId}: "${text}"`);
+        // Reiniciar memoria borrando sesión y estado
+        await this.redis.del(`is_ai_flow:${senderId}`);
+        await this.setUserState(senderId, ChatState.IDLE);
+        await this.smartReply(senderId, "✅ Entendido. He cancelado lo que estábamos haciendo. ¡No hay problema!\n\n¿En qué más le puedo ayudar el día de hoy? (Puede escribirme de nuevo la especialidad deseada)");
+        return;
+      }
+    }
+
+    // ========================================================
     // FLUJO DE IA (AUDIO)
     // ========================================================
     if (messageType === 'audio' && audioId) {
@@ -304,7 +354,7 @@ export class ChatbotService {
 
       await this.sendWhatsAppMessage(
         senderId,
-        '⏳ Estoy escuchando su nota de voz. Denme un momentico...',
+        '🎧 Permítame un momento por favor, lo estoy escuchando atentamente...',
       );
 
       try {
@@ -466,7 +516,7 @@ export class ChatbotService {
         }
       } catch (error: any) {
         this.logger.error('Fallo general procesando IA', error);
-        const failMsg = "❌ Hubo un fallo en mi sistema de inteligencia artificial. Por favor, escríbame 'Hola' para hacerlo de forma manual.";
+        const failMsg = "Ups! 🛑 Tuve un pequeño contratiempo con mi sistema de lectura. Por favor, escríbame 'Hola' para hacerlo manualmente, o reiniciemos la conversación.";
         await this.smartReply(senderId, failMsg);
 
         try {
@@ -601,7 +651,7 @@ export class ChatbotService {
         const slotFechaStr = await this.redis.get(`temp_slot_${letraElegida}_fecha:${senderId}`);
 
         if (!slotId || !slotFechaStr) {
-          await this.smartReply(senderId, '❌ Opción inválida. Por favor responda con la letra correcta (ej: A).');
+          await this.smartReply(senderId, 'Esa no parece ser una de las letras disponibles. Por favor responda con la letra correcta (ej: A), o si prefiere cancelar y cambiar de especialidad, escriba "Salir".');
           return;
         }
 
@@ -624,7 +674,7 @@ export class ChatbotService {
 
       case ChatState.AWAITING_CEDULA:
         if (!/^\d{6,11}$/.test(text)) {
-          await this.smartReply(senderId, '❌ Formato inválido. Por favor, envíe solo números de cédula.');
+          await this.smartReply(senderId, 'Ese formato no parece correcto. Por favor, envíeme solo su número de cédula sin puntos ni comas, o escriba "Volver" si desea reiniciar.');
           return;
         }
         await this.redis.set(`temp_cedula:${senderId}`, text, 'EX', SESSION_TTL);
@@ -744,7 +794,7 @@ export class ChatbotService {
         } else if (respuesta === 'NO' || respuesta === 'CANCELAR') {
           await this.smartReply(
             senderId,
-            "❌ Entendido. He cancelado su solicitud de cita temporal. Si desea empezar de nuevo, envíe la palabra 'Hola'.",
+            "✅ Entendido. He cancelado su solicitud temporal por inactividad. Siéntase libre de enviarme un 'Hola' cuando desee agendar de nuevo. ¡Que esté muy bien!",
           );
           await this.setUserState(senderId, ChatState.IDLE);
 
