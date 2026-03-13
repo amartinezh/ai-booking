@@ -86,7 +86,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
             </header>
 
             {/* Contenido Principal */}
-            <main className="flex-1 p-6 md:p-10 overflow-y-auto w-full">
+            <main className="flex-1 p-6 md:p-10 overflow-x-hidden overflow-y-auto w-full">
+                {/* Menú de enlaces rápidos temporal para móviles */}
+                <div className="md:hidden flex flex-wrap gap-2 mb-6">
+                    {menus.map((item, idx) => (
+                        <Link key={idx} href={item.href} className="px-3 py-2 bg-white dark:bg-zinc-900 shadow-sm rounded-lg text-xs font-semibold text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800">
+                            {item.icon} {item.label}
+                        </Link>
+                    ))}
+                </div>
                 {children}
             </main>
         </div>
