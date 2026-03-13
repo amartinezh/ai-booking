@@ -5,7 +5,19 @@ import { useTransition, useState, useEffect } from 'react';
 import { generateBulkSlots } from '@/app/actions/agenda';
 import { useRouter } from 'next/navigation';
 
-export default function AgendaGenerator({ deps, isOpen, onClose }: { deps: any, isOpen: boolean, onClose: () => void }) {
+export default function AgendaGenerator({
+    deps,
+    isOpen,
+    onClose,
+    initialDate,
+    initialStartTime
+}: {
+    deps: any,
+    isOpen: boolean,
+    onClose: () => void,
+    initialDate?: string,
+    initialStartTime?: string
+}) {
     const [isPending, startTransition] = useTransition();
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
@@ -76,7 +88,7 @@ export default function AgendaGenerator({ deps, isOpen, onClose }: { deps: any, 
 
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de la Agenda *</label>
-                            <input type="date" name="date" required className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:border-indigo-500" />
+                            <input type="date" name="date" defaultValue={initialDate || ""} required className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:border-indigo-500" />
                         </div>
 
                         <div>
@@ -91,7 +103,7 @@ export default function AgendaGenerator({ deps, isOpen, onClose }: { deps: any, 
 
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Hora Inicio Jornada *</label>
-                            <input type="time" name="startTime" defaultValue="08:00" required className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900" />
+                            <input type="time" name="startTime" defaultValue={initialStartTime || "08:00"} required className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900" />
                         </div>
 
                         <div>

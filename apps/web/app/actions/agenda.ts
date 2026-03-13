@@ -144,3 +144,73 @@ export async function deleteSlot(id: string) {
         return { success: false, error: 'Error eliminando el cupo' };
     }
 }
+
+export async function cloneDaySlots(formData: FormData) {
+    try {
+        const doctorId = formData.get('doctorId') as string;
+        const sourceDateStr = formData.get('sourceDate') as string; // 'YYYY-MM-DD'
+        const targetDateStr = formData.get('targetDate') as string; // 'YYYY-MM-DD'
+
+        if (!doctorId || !sourceDateStr || !targetDateStr) {
+            return { success: false, error: 'Faltan campos (Doctor, Fecha Origen, Fecha Destino)' };
+        }
+
+        // 1. Obtener todos los slots del doctor en sourceDate
+        const sourceStart = new Date(`${sourceDateStr}T00:00:00`);
+        const sourceEnd = new Date(`${sourceDateStr}T23:59:59`);
+
+        const sourceSlots = await prisma.scheduleSlot.findMany({
+            where: {
+                doctorId,
+                startTime: {
+                    gte: sourceStart,
+                    lte: sourceEnd,
+                }
+            }
+        });
+
+        if (sourceSlots.length === 0) {
+            return { success: false, error: 'No se encontraron agendas en la fecha de origen para clonar.' };
+        }
+
+        // 2. Calcular diferencia en milisegundos entre targetDate y sourceDate
+        const targetStart = new Date(`${targetDateStr}T00:00:00`);
+        const timeOffset = targetStart.getTime() - sourceStart.getTime();
+
+        if (timeOffset === 0) {
+            return { success: false, error: 'La fecha origen y destino no pueden ser la misma.' };
+        }
+
+        // 3. Preparar array de nuevos slots desplazados en el tiempo
+        const slotsToCreate = sourceSlots.map(slot => ({
+            doctorId: slot.doctorId,
+            serviceId: slot.serviceId,
+            allowedEpsId: slot.allowedEpsId,
+            isAvailable: true, // Siempre nacen disponibles
+            startTime: new Date(slot.startTime.getTime() + timeOffset),
+            endTime: new Date(slot.endTime.getTime() + timeOffset)
+        }));
+
+        // 4. Inserción masiva ignorando colisiones (P2002)
+        let createdCount = 0;
+        for (const slot of slotsToCreate) {
+            try {
+                await prisma.scheduleSlot.create({ data: slot });
+                createdCount++;
+            } catch (e: any) {
+                if (e.code === 'P2002') continue;
+                throw e;
+            }
+        }
+
+        revalidatePath('/dashboard/agenda');
+        return {
+            success: true,
+            message: `Clonación Exitosa. Se replicaron ${createdCount} cupos en el nuevo día.`
+        };
+
+    } catch (error) {
+        console.error('Error clonando agenda:', error);
+        return { success: false, error: 'Fallo crítico ejecutando la clonación.' };
+    }
+}

@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Fuerza la inactividad del modo oscuro de Tailwind (evitando la lectura del OS) */
+@custom-variant dark (&:is(.dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -12,12 +15,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Modo Oscuro Deshabilitado Globalmente a petición del usuario
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
   }
 }
+*/
 
 body {
   background: var(--background);

@@ -1,7 +1,7 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { getUpcomingSlots, getAgendaDependencies } from '@/app/actions/agenda';
-import AgendaClient from './components/AgendaClient';
+import AgendaCalendarClient from './components/AgendaCalendarClient';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,9 +15,9 @@ export default async function AgendaPage() {
     ]);
 
     return (
-        <div className="p-6 md:p-8 max-w-7xl mx-auto w-full">
+        <div className="p-6 md:p-8 w-full max-w-[1600px] mx-auto">
             {slotsRes.success && depsRes.success ? (
-                <AgendaClient slots={slotsRes.data || []} deps={depsRes.data} />
+                <AgendaCalendarClient slots={slotsRes.data || []} deps={depsRes.data} />
             ) : (
                 <div className="p-4 bg-red-50 text-red-500 rounded-lg font-medium border border-red-200">
                     ⚠️ Ocurrió un error cargando el motor de agenda clínica.
