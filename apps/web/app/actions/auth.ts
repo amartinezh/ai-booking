@@ -1,6 +1,7 @@
 'use server'
 
 import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { SignJWT } from 'jose';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../lib/prisma';
@@ -63,4 +64,10 @@ export async function loginUser(formData: FormData) {
         console.error('Error en login:', error);
         return { error: 'Error interno del servidor' };
     }
+}
+
+export async function logoutUser() {
+    const cookieStore = await cookies();
+    cookieStore.delete('auth_token');
+    redirect('/login');
 }
