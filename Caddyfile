@@ -1,0 +1,7 @@
+panel.173.249.12.226.nip.io {
+    reverse_proxy web:3000
+}
+
+api.173.249.12.226.nip.io {
+    reverse_proxy api:3000
+}
