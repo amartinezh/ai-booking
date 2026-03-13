@@ -318,16 +318,20 @@ export class ChatbotService {
           await this.smartReply(senderId, botMessage);
 
           // Caja Negra: Se registra el fallo por audio ininteligible
-          await this.prisma.interactionLog.create({
-            data: {
-              whatsappId: senderId,
-              status: 'FAILED',
-              failureReason: 'UNINTELLIGIBLE_AUDIO',
-              userMessage: '[Audio File]',
-              botReply: botMessage,
-              metadata: aiData as any,
-            }
-          });
+          try {
+            await this.prisma.interactionLog.create({
+              data: {
+                whatsappId: senderId,
+                status: 'FAILED',
+                failureReason: 'UNINTELLIGIBLE_AUDIO',
+                userMessage: '[Audio File]',
+                botReply: botMessage,
+                metadata: aiData as any,
+              }
+            });
+          } catch (logErr) {
+            this.logger.error('Error guardando en InteractionLog (Audio)', logErr);
+          }
 
           return;
         }
@@ -384,17 +388,21 @@ export class ChatbotService {
             await this.smartReply(senderId, noDispoMsg);
 
             // Caja Negra: Se audita demanda de médicos sin disponibilidad (AI Flow)
-            await this.prisma.interactionLog.create({
-              data: {
-                whatsappId: senderId,
-                status: 'FAILED',
-                failureReason: 'NO_AGENDA',
-                userMessage: `[AI Deducción] Servicio: ${finalEspecialidad}`,
-                botReply: noDispoMsg,
-                metadata: { extractedData: aiData, epsNameFromDb },
-                patientId: patient?.id
-              }
-            });
+            try {
+              await this.prisma.interactionLog.create({
+                data: {
+                  whatsappId: senderId,
+                  status: 'FAILED',
+                  failureReason: 'NO_AGENDA',
+                  userMessage: `[AI Deducción] Servicio: ${finalEspecialidad}`,
+                  botReply: noDispoMsg,
+                  metadata: { extractedData: aiData, epsNameFromDb },
+                  patientId: patient?.id
+                }
+              });
+            } catch (logErr) {
+              this.logger.error('Error guardando en InteractionLog (AI Flow NO_AGENDA)', logErr);
+            }
 
             await this.setUserState(senderId, ChatState.IDLE);
             return;
@@ -461,16 +469,20 @@ export class ChatbotService {
         const failMsg = "❌ Hubo un fallo en mi sistema de inteligencia artificial. Por favor, escríbame 'Hola' para hacerlo de forma manual.";
         await this.smartReply(senderId, failMsg);
 
-        await this.prisma.interactionLog.create({
-          data: {
-            whatsappId: senderId,
-            status: 'FAILED',
-            failureReason: 'AI_SYSTEM_FAILURE',
-            userMessage: '[Audio Process Error]',
-            botReply: failMsg,
-            metadata: { errorMsg: error?.message || 'Unknown' }
-          }
-        });
+        try {
+          await this.prisma.interactionLog.create({
+            data: {
+              whatsappId: senderId,
+              status: 'FAILED',
+              failureReason: 'AI_SYSTEM_FAILURE',
+              userMessage: '[Audio Process Error]',
+              botReply: failMsg,
+              metadata: { errorMsg: error?.message || 'Unknown' }
+            }
+          });
+        } catch (logErr) {
+          this.logger.error('Error guardando en InteractionLog (System Failure)', logErr);
+        }
       }
       return;
     }
@@ -480,9 +492,23 @@ export class ChatbotService {
     // ========================================================
     switch (currentState) {
       case ChatState.IDLE:
+        const activeServices = await this.prisma.medicalService.findMany({
+          where: { isActive: true },
+          select: { name: true },
+          orderBy: { name: 'asc' }
+        });
+
+        let servicesText = "";
+        if (activeServices.length > 0) {
+          const namesList = activeServices.map(s => s.name).join(', ');
+          servicesText = `(Opciones disponibles: ${namesList})`;
+        } else {
+          servicesText = "(Ej: Medicina General o Odontología)";
+        }
+
         await this.smartReply(
           senderId,
-          '👋 ¡Hola! Bienvenido al sistema de agendamiento del Hospital San Vicente.\n\nPiede ayudarle con asignación de citas médicas. Por favor, *escríbame la especialidad* que desea (Ej: Medicina General o Odontología) o envíeme un *audio corto*.',
+          `👋 ¡Hola! Bienvenido al sistema de agendamiento del Hospital San Vicente.\n\nPuedo ayudarle con la asignación de citas médicas. Por favor, *escríbame la especialidad* que desea ${servicesText} o envíeme un *audio corto*.`,
         );
         await this.setUserState(senderId, ChatState.AWAITING_SPECIALTY);
         break;
@@ -535,16 +561,20 @@ export class ChatbotService {
           await this.smartReply(senderId, noDispoMsg);
 
           // Caja Negra: Se audita el déficit de ofertas frente a la EPS (Text Flow)
-          await this.prisma.interactionLog.create({
-            data: {
-              whatsappId: senderId,
-              status: 'FAILED',
-              failureReason: 'NO_AGENDA',
-              userMessage: epsInput,
-              botReply: noDispoMsg,
-              metadata: { requestedService: specRecuperada, requestedEps: matchedEpsName }
-            }
-          });
+          try {
+            await this.prisma.interactionLog.create({
+              data: {
+                whatsappId: senderId,
+                status: 'FAILED',
+                failureReason: 'NO_AGENDA',
+                userMessage: epsInput,
+                botReply: noDispoMsg,
+                metadata: { requestedService: specRecuperada, requestedEps: matchedEpsName }
+              }
+            });
+          } catch (logErr) {
+            this.logger.error('Error guardando en InteractionLog (Text Flow NO_AGENDA)', logErr);
+          }
 
           await this.setUserState(senderId, ChatState.IDLE);
           return;
