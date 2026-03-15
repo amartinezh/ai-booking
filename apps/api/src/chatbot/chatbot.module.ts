@@ -2,6 +2,7 @@
 import { Module } from '@nestjs/common';
 import { ChatbotController } from './chatbot.controller';
 import { ChatbotService } from './chatbot.service';
+import { ChatbotCron } from './chatbot.cron';
 import { HttpModule } from '@nestjs/axios';
 import { AppointmentsModule } from 'src/appointments/appointments.module';
 
@@ -13,7 +14,7 @@ import { AppointmentsModule } from 'src/appointments/appointments.module';
   // Registramos el controlador que recibe los webhooks
   controllers: [ChatbotController],
   // Registramos el servicio que contiene la lógica de negocio
-  providers: [ChatbotService],
+  providers: [ChatbotService, ChatbotCron],
   // Exportamos por si en el futuro otro módulo necesita enviar mensajes
   exports: [ChatbotService],
 })

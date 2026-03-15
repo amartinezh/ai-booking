@@ -147,3 +147,460 @@ Import trace:
 
  POST /dashboard/agenda 200 in 226ms (compile: 7ms, proxy.ts: 33ms, render: 186ms)
  GET /dashboard/agenda 200 in 51ms (compile: 7ms, proxy.ts: 4ms, render: 40ms)
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+
+
+ GET /login 200 in 151ms (compile: 92ms, render: 60ms)
+ POST /dashboard/agenda 303 in 526ms (compile: 80ms, proxy.ts: 151ms, render: 294ms)
+ GET / 200 in 1896ms (compile: 1733ms, render: 163ms)
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+
+
+ GET /login 200 in 39ms (compile: 17ms, render: 22ms)
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+
+
+ POST /login 200 in 257ms (compile: 10ms, render: 247ms)
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+ GET /dashboard 200 in 54ms (compile: 13ms, proxy.ts: 3ms, render: 38ms)
+ GET /dashboard 200 in 28ms (compile: 3ms, proxy.ts: 1557µs, render: 24ms)
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+ GET /dashboard/auditoria 200 in 3.4s (compile: 2.8s, proxy.ts: 271ms, render: 323ms)
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+
+
+ GET /login 200 in 886ms (compile: 333ms, render: 552ms)
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+⚠ [externals]/@prisma/client
+unexpected export *
+export * used with module [externals]/@prisma/client [external] (@prisma/client, cjs, [project]/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client) which is a CommonJS module with exports only available at runtime
+List all export names manually (`export { a, b, c } from "...") or rewrite the module to ESM, to avoid the additional runtime code.`
+
+Import trace:
+  external:
+    [externals]/@prisma/client [external]
+    ./apps/web/lib/prisma.ts [Server Component]
+    ./apps/web/app/actions/auth.ts [Server Component]
+    ./apps/web/app/dashboard/layout.tsx [Server Component]
+
+
+/Users/andresmauriciomartinezhincapie/test/antigravity/apps/web:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  web@0.1.0 dev: `next dev`
+Command failed with signal "SIGHUP"
