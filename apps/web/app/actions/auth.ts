@@ -59,7 +59,7 @@ export async function loginUser(formData: FormData) {
             maxAge: 60 * 60 * 8,
         });
 
-        return { success: true };
+        return { success: true, role: user.role };
     } catch (error) {
         console.error('Error en login:', error);
         return { error: 'Error interno del servidor' };

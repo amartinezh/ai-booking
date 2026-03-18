@@ -3,11 +3,12 @@
 import { useState } from 'react';
 import { saveUserAction } from './actions';
 
-type UserData = { id?: string; email: string; role: 'ADMIN' | 'DOCTOR' | 'PATIENT' };
+type UserData = { id?: string; email: string; role: 'ADMIN' | 'DOCTOR' | 'PATIENT' | 'BOOKING_AGENT'; agentProfile?: any };
 
-export default function UserModal({ user, onClose }: { user?: UserData | null, onClose: () => void }) {
+export default function UserModal({ user, epsList, doctorList, onClose }: { user?: UserData | null, epsList: any[], doctorList: any[], onClose: () => void }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [selectedRole, setSelectedRole] = useState(user?.role || 'PATIENT');
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -72,14 +73,60 @@ export default function UserModal({ user, onClose }: { user?: UserData | null, o
                         <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">Rol de Acceso</label>
                         <select
                             name="role"
-                            defaultValue={user?.role || 'PATIENT'}
+                            value={selectedRole}
+                            onChange={(e) => setSelectedRole(e.target.value as any)}
                             className="w-full bg-zinc-50 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 rounded-xl px-4 py-3 text-zinc-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                         >
                             <option value="ADMIN">Administrador</option>
                             <option value="DOCTOR">Médico Especialista</option>
                             <option value="PATIENT">Paciente</option>
+                            <option value="BOOKING_AGENT">Agente Reservas</option>
                         </select>
                     </div>
+
+                    {selectedRole === 'BOOKING_AGENT' && (
+                        <div className="p-4 bg-orange-50/50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/30 rounded-2xl space-y-4 animate-fade-in">
+                            <h4 className="text-sm font-bold text-orange-800 dark:text-orange-400 mb-2">📞 Perfil de Agente</h4>
+                            
+                            <div>
+                                <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Nombre Completo</label>
+                                <input
+                                    name="agentFullName"
+                                    type="text"
+                                    required={selectedRole === 'BOOKING_AGENT'}
+                                    defaultValue={user?.agentProfile?.fullName || ''}
+                                    placeholder="Nombre del asesor"
+                                    className="w-full bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-white focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Límite por EPS</label>
+                                    <select
+                                        name="agentEpsId"
+                                        defaultValue={user?.agentProfile?.epsId || ''}
+                                        className="w-full bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none"
+                                    >
+                                        <option value="">Global (Todas)</option>
+                                        {epsList.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Límite por Médico</label>
+                                    <select
+                                        name="agentDoctorId"
+                                        defaultValue={user?.agentProfile?.doctorId || ''}
+                                        className="w-full bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-900 dark:text-white outline-none"
+                                    >
+                                        <option value="">Global (Todos)</option>
+                                        {doctorList.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                            <p className="text-[10px] text-zinc-400 italic mt-2 text-center">Si dejas los límites globales, el agente podrá ver y agendar cualquiera cita.</p>
+                        </div>
+                    )}
 
                     <div className="pt-4 flex gap-3">
                         <button

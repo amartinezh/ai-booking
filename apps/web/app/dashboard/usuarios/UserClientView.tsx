@@ -7,7 +7,7 @@ import UserModal from './UserModal';
 import { deleteUserAction } from './actions';
 import { useRouter } from 'next/navigation';
 
-export default function UserClientView({ users }: { users: any[] }) {
+export default function UserClientView({ users, epsList, doctorList }: { users: any[], epsList: any[], doctorList: any[] }) {
     const [editingUser, setEditingUser] = useState<any | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [isPending, startTransition] = useTransition();
@@ -43,6 +43,8 @@ export default function UserClientView({ users }: { users: any[] }) {
             {(isCreating || editingUser) && (
                 <UserModal
                     user={editingUser}
+                    epsList={epsList}
+                    doctorList={doctorList}
                     onClose={() => { setIsCreating(false); setEditingUser(null); }}
                 />
             )}
@@ -80,15 +82,24 @@ export default function UserClientView({ users }: { users: any[] }) {
                                     <td className="px-6 py-5 whitespace-nowrap">
                                         <span className={`px-3 py-1 inline-flex text-xs font-bold rounded-lg border ${user.role === 'ADMIN' ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400' :
                                             user.role === 'DOCTOR' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400' :
-                                                'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700'
+                                                user.role === 'BOOKING_AGENT' ? 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400' :
+                                                    'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700'
                                             }`}>
                                             {user.role}
                                         </span>
                                     </td>
                                     <td className="px-6 py-5 whitespace-nowrap">
                                         {user.patientProfile && <span className="text-xs font-semibold mr-2 bg-blue-100 text-blue-700 px-2 py-0.5 rounded">🏥 Paciente</span>}
-                                        {user.doctorProfile && <span className="text-xs font-semibold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">🩺 Médico</span>}
-                                        {!user.patientProfile && !user.doctorProfile && <span className="text-xs text-zinc-400 italic">Solo Credenciales</span>}
+                                        {user.doctorProfile && <span className="text-xs font-semibold mr-2 bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">🩺 Médico</span>}
+                                        {user.agentProfile && (
+                                            <div className="flex flex-col gap-1">
+                                                <span className="text-xs font-semibold mr-2 bg-orange-100 text-orange-700 px-2 py-0.5 rounded max-w-max">🎧 Agente</span>
+                                                {user.agentProfile.eps && <span className="text-[10px] text-zinc-500 max-w-max px-1 bg-zinc-100 rounded">🏣 {user.agentProfile.eps.name}</span>}
+                                                {user.agentProfile.doctor && <span className="text-[10px] text-zinc-500 max-w-max px-1 bg-zinc-100 rounded">🩺 {user.agentProfile.doctor.fullName}</span>}
+                                                {!user.agentProfile.eps && !user.agentProfile.doctor && <span className="text-[10px] text-emerald-600 font-medium max-w-max px-1 bg-emerald-50 rounded">🌐 GLOBAL</span>}
+                                            </div>
+                                        )}
+                                        {!user.patientProfile && !user.doctorProfile && !user.agentProfile && <span className="text-xs text-zinc-400 italic">Solo Credenciales</span>}
                                     </td>
                                     <td className="px-6 py-5 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
                                         {new Date(user.createdAt).toLocaleDateString('es-CO')}

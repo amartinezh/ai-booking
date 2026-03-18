@@ -79,4 +79,15 @@ export class ChatbotController {
     // Si llega basura que no es de Meta, devolvemos 404
     return 'UNKNOWN_SOURCE';
   }
+
+  // 3. Envío de Mensajes Manuales (Outbound desde el Dashboard)
+  @Post('outbound')
+  @HttpCode(HttpStatus.OK)
+  async sendOutboundMessage(@Body() body: { to: string; message: string }) {
+    if (!body.to || !body.message) {
+      throw new Error('Faltan parámetros (to, message)');
+    }
+    await this.chatbotService.sendOutboundMessage(body.to, body.message);
+    return { success: true };
+  }
 }

@@ -46,7 +46,7 @@ export class AppointmentsService {
     patientId: string,
     scheduleSlotId: string,
     epsId?: string | null,
-    bookedViaAi: boolean = false,
+    origin: 'WHATSAPP' | 'MANUAL' = 'WHATSAPP',
   ): Promise<{ success: boolean; message?: string }> {
     try {
       // Utilizamos el motor transaccional de Prisma para evitar concurrencia
@@ -72,7 +72,7 @@ export class AppointmentsService {
             scheduleSlotId,
             patientId,
             epsId,
-            bookedViaAi,
+            origin,
           },
         });
       });

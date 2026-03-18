@@ -17,9 +17,18 @@ export default async function UsuariosPage() {
         orderBy: { createdAt: 'desc' },
         include: {
             patientProfile: true,
-            doctorProfile: true
+            doctorProfile: true,
+            agentProfile: {
+                include: {
+                    eps: true,
+                    doctor: true
+                }
+            }
         }
     });
 
-    return <UserClientView users={users} />;
+    const epsList = await prisma.eps.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } });
+    const doctorList = await prisma.doctorProfile.findMany({ select: { id: true, fullName: true, cedula: true }, orderBy: { fullName: 'asc' } });
+
+    return <UserClientView users={users} epsList={epsList} doctorList={doctorList} />;
 }

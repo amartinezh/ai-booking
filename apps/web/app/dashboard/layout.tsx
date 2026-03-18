@@ -31,16 +31,23 @@ export default async function DashboardLayout({ children }: { children: React.Re
         { label: 'Caja Negra (Auditoría)', href: '/dashboard/auditoria', icon: '🕵️' }
     ];
 
+    const AGENT_MENUS = [
+        { label: 'Visión General', href: '/dashboard', icon: '📋' },
+        { label: 'Agendamiento', href: '/dashboard/agendamiento', icon: '📅' }
+    ];
+
     const roleMap = {
         'PATIENT': 'Paciente',
         'DOCTOR': 'Médico Especialista',
-        'ADMIN': 'Administrador del Sistema'
+        'ADMIN': 'Administrador del Sistema',
+        'BOOKING_AGENT': 'Agente de Reservas'
     };
 
     let menus: Array<{ label: string, href: string, icon: string }> = [];
     if (role === 'PATIENT') menus = PATIENT_MENUS;
     else if (role === 'DOCTOR') menus = DOCTOR_MENUS;
     else if (role === 'ADMIN') menus = ADMIN_MENUS;
+    else if (role === 'BOOKING_AGENT') menus = AGENT_MENUS;
 
     return (
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans">

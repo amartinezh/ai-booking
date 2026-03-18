@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 export default async function DashboardPage({
     searchParams
 }: {
-    searchParams: Promise<{ eps?: string, doctor?: string }>
+    searchParams: Promise<{ eps?: string, doctor?: string, startDate?: string, endDate?: string }>
 }) {
     const session = await getSession();
     if (!session) redirect('/login');
@@ -19,22 +19,44 @@ export default async function DashboardPage({
     // Filtros
     const epsFilter = resolvedParams.eps;
     const doctorFilter = resolvedParams.doctor;
+    const startDateFilter = resolvedParams.startDate;
+    const endDateFilter = resolvedParams.endDate;
 
     const whereClause: Prisma.AppointmentWhereInput = {};
+    const slotWhere: any = {};
 
     if (session.role === 'PATIENT') {
         const profile = await prisma.patientProfile.findUnique({ where: { userId: session.userId } });
         if (profile) whereClause.patientId = profile.id;
     } else if (session.role === 'DOCTOR') {
         const dProfile = await prisma.doctorProfile.findUnique({ where: { userId: session.userId } });
-        if (dProfile) whereClause.scheduleSlot = { doctorId: dProfile.id };
-
-        // El doctor puede filtrar por EPS de sus pacientes
+        if (dProfile) slotWhere.doctorId = dProfile.id;
         if (epsFilter) whereClause.epsId = epsFilter;
+    } else if (session.role === 'BOOKING_AGENT') {
+        const aProfile = await prisma.agentProfile.findUnique({ where: { userId: session.userId } });
+        const finalEpsId = aProfile?.epsId || epsFilter;
+        if (finalEpsId) whereClause.epsId = finalEpsId;
+        const finalDocId = aProfile?.doctorId || doctorFilter;
+        if (finalDocId) slotWhere.doctorId = finalDocId;
     } else {
         // ADMIN filters
         if (epsFilter) whereClause.epsId = epsFilter;
-        if (doctorFilter) whereClause.scheduleSlot = { doctorId: doctorFilter };
+        if (doctorFilter) slotWhere.doctorId = doctorFilter;
+    }
+
+    if (startDateFilter || endDateFilter) {
+        const timeConditions: any = {};
+        if (startDateFilter) {
+            timeConditions.gte = new Date(`${startDateFilter}T05:00:00.000Z`);
+        }
+        if (endDateFilter) {
+            timeConditions.lte = new Date(new Date(`${endDateFilter}T05:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000 - 1);
+        }
+        slotWhere.startTime = timeConditions;
+    }
+
+    if (Object.keys(slotWhere).length > 0) {
+        whereClause.scheduleSlot = slotWhere;
     }
 
     const appointments = await prisma.appointment.findMany({
@@ -51,17 +73,18 @@ export default async function DashboardPage({
     let epsList: any[] = [];
     let doctorsList: any[] = [];
 
-    if (session.role === 'ADMIN' || session.role === 'DOCTOR') {
+    if (session.role === 'ADMIN' || session.role === 'DOCTOR' || session.role === 'BOOKING_AGENT') {
         epsList = await prisma.eps.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } });
     }
-    if (session.role === 'ADMIN') {
+    if (session.role === 'ADMIN' || session.role === 'BOOKING_AGENT') {
         doctorsList = await prisma.doctorProfile.findMany({ select: { id: true, fullName: true }, orderBy: { fullName: 'asc' } });
     }
 
     const greeting = {
         'PATIENT': '¡Hola! Aquí puedes ver el listado de tus próximas citas médicas programadas y su estado.',
         'DOCTOR': '¡Bienvenido, Doctor! Conozca el flujo de atención para el día de hoy.',
-        'ADMIN': 'Panel Central HIS. Monitoreo, Búsqueda y Liberación de Agendas Clínicas.'
+        'ADMIN': 'Panel Central HIS. Monitoreo, Búsqueda y Liberación de Agendas Clínicas.',
+        'BOOKING_AGENT': 'Panel de Gestión de Reservas. Atención prioritaria de Citas y control Omnicanal.'
     }[session.role];
 
     return (

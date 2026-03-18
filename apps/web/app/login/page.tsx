@@ -21,7 +21,7 @@ export default function LoginPage() {
             setError(result.error);
             setLoading(false);
         } else if (result?.success) {
-            router.push('/dashboard');
+            router.push(result.role === 'BOOKING_AGENT' ? '/dashboard/agendamiento' : '/dashboard');
         }
     }
 

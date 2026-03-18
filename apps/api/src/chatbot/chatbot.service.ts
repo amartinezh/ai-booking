@@ -624,7 +624,7 @@ export class ChatbotService {
           }
 
           const bookingResult = await this.appointmentsService.bookAppointment(
-            patient.id, finalSlotId as string, patient.epsId, isAiFlow,
+            patient.id, finalSlotId as string, patient.epsId, 'WHATSAPP',
           );
 
           if (bookingResult.success) {
@@ -663,6 +663,14 @@ export class ChatbotService {
         await this.setUserState(senderId, ChatState.IDLE);
         break;
     }
+  }
+
+  // ==========================================
+  // INTERFAZ EXTERNA (Outbound)
+  // ==========================================
+  async sendOutboundMessage(to: string, message: string) {
+    // Usamos el mismo core de smartReply que se comunica con la API de Whatsapp
+    await this.smartReply(to, message);
   }
 
   // ==========================================

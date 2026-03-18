@@ -22,6 +22,7 @@ model User {
   // Relaciones 1:1 con Perfiles Opcionales según el Rol
   patientProfile PatientProfile?
   doctorProfile  DoctorProfile?
+  agentProfile   AgentProfile?
 
   // Relación con Logs de Auditoría ("Caja Negra")
   interactionLogs InteractionLog[]
@@ -43,6 +44,7 @@ model Eps {
   patients     PatientProfile[] // Pacientes afiliados a esta EPS
   slots        ScheduleSlot[] // Cupos de agenda EXCLUSIVOS para esta EPS
   appointments Appointment[] // Historial de citas facturadas por esta EPS
+  agents       AgentProfile[] // Agentes limitados a agendar paciente de esta EPS
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -113,7 +115,8 @@ model DoctorProfile {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Relación con el motor de turnos
-  slots ScheduleSlot[]
+  slots  ScheduleSlot[]
+  agents AgentProfile[] // Agentes limitados a gestionar la agenda de este doctor
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -173,13 +176,19 @@ model Appointment {
 
   metaLog     Json?
   createdAt   DateTime @default(now())
-  bookedViaAi Boolean  @default(false)
+  origin      AppointmentOrigin @default(WHATSAPP)
+}
+
+enum AppointmentOrigin {
+  MANUAL
+  WHATSAPP
 }
 
 enum Role {
   PATIENT
   DOCTOR
   ADMIN
+  BOOKING_AGENT
 }
 
 enum AppointmentStatus {
@@ -210,3 +219,29 @@ model InteractionLog {
   patientId String?
   patient   User?   @relation(fields: [patientId], references: [id])
 }
+
+// -----------------------------------------------------------------------------
+// 🏢 AGENT PROFILE (Agendador Humano con Scopes)
+// -----------------------------------------------------------------------------
+model AgentProfile {
+  id String @id @default(uuid())
+
+  fullName String
+  phone    String?
+  isActive Boolean @default(true)
+
+  // 🔌 SCOPE: ¿Este Agente está limitado a atender pacientes de una EPS específica?
+  epsId String?
+  eps   Eps?    @relation(fields: [epsId], references: [id])
+
+  // 🔌 SCOPE: ¿Este Agente está limitado a agendar citas de un Doctor en particular?
+  doctorId String?
+  doctor   DoctorProfile? @relation(fields: [doctorId], references: [id])
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+

@@ -49,6 +49,24 @@ export default function DashboardClient({
                     <span className="font-semibold text-sm text-zinc-700 dark:text-zinc-300">Filtros Activos:</span>
                 </div>
 
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                    <input 
+                        type="date"
+                        title="Fecha Inicial"
+                        onChange={(e) => handleFilterChange('startDate', e.target.value)}
+                        defaultValue={searchParams.get('startDate') || ''}
+                        className="w-full md:w-36 rounded-lg border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm py-2 px-3 focus:ring-indigo-500"
+                    />
+                    <span className="text-zinc-400 text-sm">-</span>
+                    <input 
+                        type="date"
+                        title="Fecha Final"
+                        onChange={(e) => handleFilterChange('endDate', e.target.value)}
+                        defaultValue={searchParams.get('endDate') || ''}
+                        className="w-full md:w-36 rounded-lg border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm py-2 px-3 focus:ring-indigo-500"
+                    />
+                </div>
+
                 {role !== 'DOCTOR' && role !== 'PATIENT' && (
                     <select
                         onChange={(e) => handleFilterChange('doctor', e.target.value)}
@@ -134,7 +152,8 @@ export default function DashboardClient({
                                             <span className={`px-4 py-1.5 inline-flex text-xs font-bold rounded-full border ${apt.status === 'SCHEDULED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-50 text-zinc-600 border-zinc-200'}`}>
                                                 {apt.status === 'CANCELLED' ? 'CANCELADA' : apt.status}
                                             </span>
-                                            {apt.bookedViaAi && apt.status === 'SCHEDULED' && <div className="mt-1 text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full inline-block border border-indigo-200">🤖 AI Bot</div>}
+                                            {apt.origin === 'WHATSAPP' && apt.status === 'SCHEDULED' && <div className="mt-1 text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full inline-block border border-indigo-200">🤖 AI Bot</div>}
+                                            {apt.origin === 'MANUAL' && apt.status === 'SCHEDULED' && <div className="mt-1 text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-full inline-block border border-blue-200">👤 Manual</div>}
                                         </td>
 
                                         <td className="px-6 py-5 whitespace-nowrap text-right">
