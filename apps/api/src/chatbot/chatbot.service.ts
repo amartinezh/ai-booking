@@ -303,15 +303,22 @@ export class ChatbotService {
     this.logger.log(`Usuario ${senderId} en estado: ${currentState}. Tipo: ${messageType}`);
 
     // Contador de reintentos
-    const retriesKey = `temp_retries:${senderId}`;
+    const retriesKey = `error_count:${senderId}`;
     let retriesCount = parseInt((await this.redis.get(retriesKey)) || '0');
 
     if (retriesCount >= 3) {
       this.logger.warn(`Máximo de reintentos alcanzado para ${senderId}`);
-      await this.redis.del(retriesKey);
-      await this.redis.del(`is_ai_flow:${senderId}`);
-      await this.setUserState(senderId, ChatState.IDLE);
-      await this.smartReply(senderId, "Entiendo que estamos teniendo algunas dificultades para comunicarnos claramente (quizás por interferencia en el audio o un dato no reconocido). Por seguridad, he reiniciado la sesión. ¡Cuando desee empezar de nuevo solo escríbame 'Hola'!");
+      await this.cleanUpUserCounters(senderId);
+
+      const humanAgentPhone = this.configService.get<string>('HUMAN_AGENT_PHONE');
+
+      if (!humanAgentPhone || humanAgentPhone === 'NO') {
+        const resetMessage = "Entiendo que estamos teniendo algunas dificultades para comunicarnos claramente. Por seguridad, he reiniciado la sesión. ¡Cuando desee empezar de nuevo solo escríbame 'Hola'!";
+        await this.smartReply(senderId, resetMessage);
+      } else {
+        const handoffMessage = `Entiendo que estamos teniendo algunas dificultades. Por favor, comuníquese directamente con uno de nuestros asesores para ayudarle a programar su cita a través del siguiente enlace:\n\n👉 https://wa.me/${humanAgentPhone}`;
+        await this.smartReply(senderId, handoffMessage);
+      }
       return;
     }
 
@@ -630,7 +637,7 @@ export class ChatbotService {
           const keysToDelete = [
             `temp_cedula:${senderId}`, `temp_nombre:${senderId}`, `temp_eps_query:${senderId}`, `temp_eps_id:${senderId}`,
             `temp_especialidad:${senderId}`, `temp_doctor:${senderId}`, `temp_selected_slot_id:${senderId}`, `temp_selected_date_view:${senderId}`,
-            `temp_retries:${senderId}`, `is_ai_flow:${senderId}`
+            `error_count:${senderId}`, `is_ai_flow:${senderId}`
           ];
           const slotKeys = await this.redis.keys(`temp_slot_*:${senderId}`);
           await this.redis.del(...keysToDelete, ...slotKeys);
@@ -642,7 +649,7 @@ export class ChatbotService {
           const keysToDelete = [
             `temp_cedula:${senderId}`, `temp_nombre:${senderId}`, `temp_eps_query:${senderId}`, `temp_eps_id:${senderId}`,
             `temp_especialidad:${senderId}`, `temp_doctor:${senderId}`, `temp_selected_slot_id:${senderId}`, `temp_selected_date_view:${senderId}`,
-            `temp_retries:${senderId}`, `is_ai_flow:${senderId}`
+            `error_count:${senderId}`, `is_ai_flow:${senderId}`
           ];
           const slotKeys = await this.redis.keys(`temp_slot_*:${senderId}`);
           await this.redis.del(...keysToDelete, ...slotKeys);
@@ -656,5 +663,14 @@ export class ChatbotService {
         await this.setUserState(senderId, ChatState.IDLE);
         break;
     }
+  }
+
+  // ==========================================
+  // HELPER MÉTODOS DE LIMPIEZA
+  // ==========================================
+  private async cleanUpUserCounters(senderId: string) {
+    await this.redis.del(`error_count:${senderId}`);
+    await this.redis.del(`is_ai_flow:${senderId}`);
+    await this.setUserState(senderId, ChatState.IDLE);
   }
 }

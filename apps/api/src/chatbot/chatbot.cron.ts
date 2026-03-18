@@ -92,7 +92,7 @@ export class ChatbotCron {
       `temp_doctor:${phoneId}`,
       `temp_selected_slot_id:${phoneId}`,
       `temp_selected_date_view:${phoneId}`,
-      `temp_retries:${phoneId}`,
+      `error_count:${phoneId}`,
       `is_ai_flow:${phoneId}`
     ];
     const slotKeys = await this.redis.keys(`temp_slot_*:${phoneId}`);
