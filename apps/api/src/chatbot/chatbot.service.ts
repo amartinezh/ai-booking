@@ -123,6 +123,7 @@ export class ChatbotService {
     isEscape: boolean;
     outOfContext: boolean;
     ininteligible: boolean;
+    isFallback: boolean;
   }> {
     const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
@@ -168,7 +169,9 @@ export class ChatbotService {
         .replace(/```json/g, '')
         .replace(/```/g, '');
 
-      return JSON.parse(cleanedText);
+      const parsed = JSON.parse(cleanedText);
+      parsed.isFallback = false;
+      return parsed;
     } catch (e) {
       this.logger.error('Error procesando IA con Gemini', e);
       return {
@@ -179,7 +182,8 @@ export class ChatbotService {
         doctor: null,
         isEscape: false,
         outOfContext: false,
-        ininteligible: true, // Asumimos falla
+        ininteligible: false,
+        isFallback: true, 
       };
     }
   }
@@ -338,7 +342,8 @@ export class ChatbotService {
         doctor: null as string | null,
         isEscape: false,
         outOfContext: false,
-        ininteligible: false
+        ininteligible: false,
+        isFallback: false
     };
 
     const isQuickEscape = messageType === 'text' && text && /^(hola|cancelar|salir|reiniciar|volver|me equivoque|me equivoqué|otra cita|cambiar|no quiero|detener|menu|menú)$/i.test(text.trim());
@@ -362,6 +367,15 @@ export class ChatbotService {
     }
 
     this.logger.log(`🧠 Gemini extrajo: ${JSON.stringify(aiData)}`);
+
+    // 🛑 0. FALLBACK DE IA (CAÍDA O LÍMITES)
+    if (aiData.isFallback) {
+      await this.cleanUpUserCounters(senderId);
+      const humanAgentPhone = this.configService.get<string>('HUMAN_AGENT_PHONE') || 'nuestro contact center';
+      const phoneLink = humanAgentPhone !== 'nuestro contact center' ? `👉 https://wa.me/${humanAgentPhone}` : '';
+      await this.smartReply(senderId, `⚠️ Nuestro sistema de inteligencia artificial está en mantenimiento.\nPor favor comuníquese al teléfono ${humanAgentPhone} para ese efecto.\n${phoneLink}`);
+      return;
+    }
 
     // 🛑 1. ESCAPE O REINICIO
     if (aiData.isEscape) {
