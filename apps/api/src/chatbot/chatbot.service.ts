@@ -124,6 +124,7 @@ export class ChatbotService {
     outOfContext: boolean;
     ininteligible: boolean;
     isFallback: boolean;
+    isCancellation: boolean;
   }> {
     const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
@@ -131,20 +132,22 @@ export class ChatbotService {
         Eres un asistente médico hiper-empático en el Hospital San Vicente (Colombia) que analiza las solicitudes de agendamiento de pacientes. 
         Analiza el texto o el audio provisto.
         
-        REGLA DE ESCAPE: Si el usuario desea cancelar, volver atrás, arrepentirse, cambiar de opinión, reiniciar, o pide hablar con un humano en lugar de seguir tus pasos (Ej: "me equivoqué", "salir", "cancelar"), pon "isEscape" en true. SALUDOS inofensivos como "Hola" no son escape ni outOfContext.
-        REGLA DE FUERA DE CONTEXTO: Si el paciente dice groserías, temas sin sentido médico ("quiero ir a bailar", "cuéntame un chiste") que no tienen nada que ver con agendamiento médico, pon "outOfContext" en true. 
-        REGLA DE RUIDO Y SILENCIO: Si es un audio vacío, inentendible o solo hay ruido sin intención clara (o texto sin letras), pon "ininteligible" en true y los demás null.
+        REGLA DE CANCELACIÓN: Si el usuario expresa explícitamente que desea "cancelar una cita", "anular cita", o "suspender mi cita", pon "isCancellation" en true.
+        REGLA DE ESCAPE: Si el usuario desea interrumpir el flujo actual, volver atrás, reiniciar (Ej: "me equivoqué", "salir", "volver"), pon "isEscape" en true. (Nota: Si dice "cancelar cita", eso es isCancellation, NO isEscape). SALUDOS inofensivos como "Hola" no son escape ni outOfContext.
+        REGLA DE FUERA DE CONTEXTO: Si el paciente dice groserías o temas sin sentido médico, pon "outOfContext" en true. 
+        REGLA DE RUIDO Y SILENCIO: Si es un audio vacío, inentendible o solo hay ruido sin intención clara, pon "ininteligible" en true.
 
         Extrae la siguiente información y devuélvela ÚNICAMENTE en JSON válido sin envolturas de código (\`\`\`json):
         {
             "cedula": "Número sin puntos (Ej: 1088123456). Si no menciona, null.",
             "nombre": "Nombre completo de la persona que habla (Ej: Juan Perez). Si no menciona, null.",
-            "eps": "El nombre de su EPS o aseguradora (Ej: Sura, Sanitas, Nueva EPS, Asmet Salud, Particular, Savia). Si no menciona, null.",
-            "especialidad": "Normaliza a la especialidad médica solicitada (Ej: Odontología, Medicina General, Pediatría). Si no la menciona de forma reconocible, null.",
-            "doctor": "Nombre del médico si pide cita con alguien específico (Ej: Doctor Manotas, Carlos, Gomez, etc). Si no menciona, null.",
+            "eps": "El nombre de su EPS o aseguradora. Si no menciona, null.",
+            "especialidad": "Normaliza a la especialidad médica solicitada. Si no la menciona, null.",
+            "doctor": "Nombre del médico si pide cita con uno en específico. Si no menciona, null.",
             "isEscape": false,
             "outOfContext": false,
-            "ininteligible": false
+            "ininteligible": false,
+            "isCancellation": false
         }`;
 
     const parts: any[] = [prompt];
@@ -184,6 +187,7 @@ export class ChatbotService {
         outOfContext: false,
         ininteligible: false,
         isFallback: true, 
+        isCancellation: false,
       };
     }
   }
@@ -326,7 +330,7 @@ export class ChatbotService {
       return;
     }
 
-    const isStrictStep = currentState === ChatState.AWAITING_DATE || currentState === ChatState.AWAITING_CONFIRMATION;
+    const isStrictStep = currentState === ChatState.AWAITING_DATE || currentState === ChatState.AWAITING_CONFIRMATION || currentState === ChatState.AWAITING_CANCEL_SELECTION || currentState === ChatState.AWAITING_CANCEL_CONFIRM;
     const isAudio = messageType === 'audio' && !!audioId;
 
     if (isAudio && isStrictStep) {
@@ -343,12 +347,18 @@ export class ChatbotService {
         isEscape: false,
         outOfContext: false,
         ininteligible: false,
-        isFallback: false
+        isFallback: false,
+        isCancellation: false
     };
 
-    const isQuickEscape = messageType === 'text' && text && /^(hola|cancelar|salir|reiniciar|volver|me equivoque|me equivoqué|otra cita|cambiar|no quiero|detener|menu|menú)$/i.test(text.trim());
+    const isQuickCancel = messageType === 'text' && text && /^(cancelar cita|anular cita|quiero cancelar|necesito cancelar)/i.test(text.trim());
+    const isQuickEscape = messageType === 'text' && text && /^(hola|salir|reiniciar|volver|me equivoque|me equivoqué|otra cita|cambiar|no quiero|detener|menu|menú)$/i.test(text.trim());
 
-    if (isQuickEscape && currentState !== ChatState.IDLE) {
+    if ((isQuickCancel || (text && text.trim().toLowerCase() === 'cancelar')) && currentState === ChatState.IDLE) {
+       aiData.isCancellation = true;
+    } else if (isQuickEscape && currentState !== ChatState.IDLE) {
+       aiData.isEscape = true;
+    } else if (text && text.trim().toLowerCase() === 'cancelar' && currentState !== ChatState.IDLE) {
        aiData.isEscape = true;
     } else if (isQuickEscape && currentState === ChatState.IDLE && text.trim().toLowerCase() === 'hola') {
        // initial greeting, no NLP needed
@@ -375,6 +385,23 @@ export class ChatbotService {
       const phoneLink = humanAgentPhone !== 'nuestro contact center' ? `👉 https://wa.me/${humanAgentPhone}` : '';
       await this.smartReply(senderId, `⚠️ Nuestro sistema de inteligencia artificial está en mantenimiento.\nPor favor comuníquese al teléfono ${humanAgentPhone} para ese efecto.\n${phoneLink}`);
       return;
+    }
+
+    // 🛑 0.5 CANCELACIÓN OMNICANAL DE CITAS
+    if (aiData.isCancellation || isQuickCancel) {
+      this.logger.log(`Iniciando flujo de Cancelación para ${senderId}`);
+      await this.cleanUpUserCounters(senderId);
+      await this.redis.set(`is_ai_flow:${senderId}`, isAudio ? 'true' : 'false', 'EX', SESSION_TTL);
+      
+      if (aiData.cedula) {
+         await this.redis.set(`temp_cancel_cedula:${senderId}`, aiData.cedula, 'EX', SESSION_TTL);
+         await this.handleCancelCedulaStep(senderId, aiData.cedula);
+         return;
+      } else {
+         await this.smartReply(senderId, "Entiendo que desea cancelar una cita existente.\nPara poder buscarla en nuestro sistema, por favor indíqueme o escríbame el *número de cédula* del paciente a cancelar.");
+         await this.setUserState(senderId, ChatState.AWAITING_CANCEL_CEDULA);
+         return;
+      }
     }
 
     // 🛑 1. ESCAPE O REINICIO
@@ -426,7 +453,11 @@ export class ChatbotService {
     if (finalEps) await this.redis.set(`temp_eps_query:${senderId}`, finalEps, 'EX', SESSION_TTL);
     if (finalEspecialidad) await this.redis.set(`temp_especialidad:${senderId}`, finalEspecialidad, 'EX', SESSION_TTL);
 
-    if (!isStrictStep) {
+    const isCancelFlow = currentState === ChatState.AWAITING_CANCEL_CEDULA || 
+                         currentState === ChatState.AWAITING_CANCEL_SELECTION || 
+                         currentState === ChatState.AWAITING_CANCEL_CONFIRM;
+
+    if (!isStrictStep && !isCancelFlow) {
       // --- PASO 1: ESPECIALIDAD O MÉDICO ---
       if (!finalEspecialidad && !finalDoctor) {
          if (currentState === ChatState.IDLE) {
@@ -673,10 +704,147 @@ export class ChatbotService {
         }
         break;
       }
+
+      // ==========================================
+      // CASOS DE CANCELACIÓN
+      // ==========================================
+      case ChatState.AWAITING_CANCEL_CEDULA: {
+        let cedula = text?.trim() || '';
+        if (isAudio && aiData.cedula) cedula = aiData.cedula;
+        else if (!isAudio && aiData.cedula) cedula = aiData.cedula;
+
+        if (!cedula || cedula.length < 5) {
+           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+           await this.smartReply(senderId, "No pude detectar un número de cédula válido. Por favor, escriba o diga el número de documento del paciente de la cita a cancelar.");
+           return;
+        }
+
+        await this.redis.set(`temp_cancel_cedula:${senderId}`, cedula, 'EX', SESSION_TTL);
+        await this.handleCancelCedulaStep(senderId, cedula);
+        break;
+      }
+
+      case ChatState.AWAITING_CANCEL_SELECTION: {
+        const letraElegida = text?.toUpperCase().trim() || '';
+        const aptId = await this.redis.get(`temp_cancel_apt_${letraElegida}:${senderId}`);
+        const slotId = await this.redis.get(`temp_cancel_slot_${letraElegida}:${senderId}`);
+        
+        if (!aptId || !slotId) {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const maxLetra = await this.redis.get(`temp_cancel_max_letra:${senderId}`) || 'A';
+          await this.smartReply(senderId, `Lo siento, no reconozco esa opción. Por favor, responda con una de las letras de la lista (ej: A${maxLetra !== 'A' ? ' - ' + maxLetra : ''}).`);
+          return;
+        }
+
+        await this.redis.set(`temp_selected_cancel_apt:${senderId}`, aptId, 'EX', SESSION_TTL);
+        await this.redis.set(`temp_selected_cancel_slot:${senderId}`, slotId, 'EX', SESSION_TTL);
+
+        await this.smartReply(senderId, `Va a cancelar definitivamente esta cita.\n\n⚠️ *¿Está completamente seguro?*\n(Responda *SÍ* para ejecutar la cancelación o *NO* para abortar y mantener la cita).`);
+        await this.setUserState(senderId, ChatState.AWAITING_CANCEL_CONFIRM);
+        break;
+      }
+
+      case ChatState.AWAITING_CANCEL_CONFIRM: {
+        const respuesta = text?.toUpperCase().trim() || '';
+
+        if (respuesta === 'SI' || respuesta === 'SÍ' || respuesta === 'SÍ.' || respuesta === 'SI.') {
+          const aptId = await this.redis.get(`temp_selected_cancel_apt:${senderId}`);
+          const slotId = await this.redis.get(`temp_selected_cancel_slot:${senderId}`);
+
+          if (!aptId || !slotId) {
+             await this.smartReply(senderId, "⏳ Lo siento, la sesión expiró. Por favor comience el proceso de cancelación nuevamente diciendo 'Cancelar cita'.");
+             await this.setUserState(senderId, ChatState.IDLE);
+             return;
+          }
+
+          try {
+             await this.prisma.$transaction([
+                this.prisma.appointment.update({
+                   where: { id: aptId },
+                   data: { status: 'CANCELLED' }
+                }),
+                this.prisma.scheduleSlot.update({
+                   where: { id: slotId },
+                   data: { isAvailable: true }
+                })
+             ]);
+             await this.smartReply(senderId, "✅ Su cita médica ha sido **cancelada exitosamente**.\nEl cupo ha sido liberado.\n\n¿Desea agendar una *nueva cita* o le puedo ayudar en algo más?");
+          } catch (e) {
+             this.logger.error('Error cancelando cita desde WhatsApp', e);
+             await this.smartReply(senderId, "Lo siento, ocurrió un error en nuestro sistema al intentar cancelar la cita. Por favor comuníquese con el Call Center.");
+          }
+          await this.setUserState(senderId, ChatState.IDLE);
+          const keysToDelete = await this.redis.keys(`temp_cancel_*:${senderId}`);
+          if (keysToDelete.length > 0) await this.redis.del(...keysToDelete, `temp_selected_cancel_apt:${senderId}`, `temp_selected_cancel_slot:${senderId}`);
+        } else if (respuesta === 'NO' || respuesta === 'CANCELAR') {
+          await this.smartReply(senderId, "✅ Perfecto. La cancelación ha sido abortada y **su cita sigue activa y agendada**.\n\n¿Qué más puedo hacer por usted?");
+          await this.setUserState(senderId, ChatState.IDLE);
+          const keysToDelete = await this.redis.keys(`temp_cancel_*:${senderId}`);
+          if (keysToDelete.length > 0) await this.redis.del(...keysToDelete, `temp_selected_cancel_apt:${senderId}`, `temp_selected_cancel_slot:${senderId}`);
+        } else {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          await this.sendWhatsAppMessage(senderId, '⚠️ Por favor, responda únicamente con la palabra *SÍ* para confirmar la cancelación, o *NO* para mantener su cita.');
+        }
+        break;
+      }
+
       default:
         await this.setUserState(senderId, ChatState.IDLE);
         break;
     }
+  }
+
+  private async handleCancelCedulaStep(senderId: string, cedula: string) {
+      const patient = await this.prisma.patientProfile.findUnique({
+         where: { cedula }
+      });
+
+      if (!patient) {
+         await this.smartReply(senderId, `No pude encontrar ningún paciente registrado con la cédula *${cedula}*.\nPor lo tanto no hay citas para cancelar.\n\nSi el número es incorrecto diga 'Cancelar Cita' nuevamente.`);
+         await this.setUserState(senderId, ChatState.IDLE);
+         return;
+      }
+
+      const activeAppointments = await this.prisma.appointment.findMany({
+         where: { 
+            patientId: patient.id,
+            status: 'SCHEDULED', // Only active
+            scheduleSlot: { startTime: { gte: new Date() } } // Only future or current
+         },
+         include: {
+            scheduleSlot: { include: { doctor: true, service: true } }
+         },
+         orderBy: { scheduleSlot: { startTime: 'asc' } }
+      });
+
+      if (activeAppointments.length === 0) {
+         await this.smartReply(senderId, `Actualmente el paciente con cédula *${cedula}* **no tiene citas futuras activas** programadas en nuestro sistema.\n\n¿Desea que le ayude agendando una nueva cita?`);
+         await this.setUserState(senderId, ChatState.IDLE);
+         return;
+      }
+
+      if (activeAppointments.length === 1) {
+         const apt = activeAppointments[0];
+         await this.redis.set(`temp_selected_cancel_apt:${senderId}`, apt.id, 'EX', SESSION_TTL);
+         await this.redis.set(`temp_selected_cancel_slot:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
+         
+         await this.smartReply(senderId, `Encontramos 1 cita programada:\n\n🏥 *${apt.scheduleSlot.service.name}*\n👨‍⚕️ Dr. ${apt.scheduleSlot.doctor.fullName}\n📅 ${new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO')}\n\n⚠️ *¿Está seguro que desea cancelar esta cita y liberar su cupo?*\n(Responda SÍ o NO)`);
+         await this.setUserState(senderId, ChatState.AWAITING_CANCEL_CONFIRM);
+         return;
+      }
+
+      let mazo = `Encontramos ${activeAppointments.length} citas programadas para la cédula ${cedula}.\n¿Cuál desea cancelar?\n`;
+      activeAppointments.forEach((apt, idx) => {
+         const letra = String.fromCharCode(65 + idx);
+         this.redis.set(`temp_cancel_apt_${letra}:${senderId}`, apt.id, 'EX', SESSION_TTL);
+         this.redis.set(`temp_cancel_slot_${letra}:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
+         this.redis.set(`temp_cancel_max_letra:${senderId}`, letra, 'EX', SESSION_TTL);
+         mazo += `\n*${letra})* ${apt.scheduleSlot.service.name} con Dr. ${apt.scheduleSlot.doctor.fullName} - ${new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO')}`;
+      });
+
+      mazo += `\n\n👉 Por favor, envíeme **la letra** (A, B, C...) de la cita que quiere cancelar.`;
+      await this.smartReply(senderId, mazo);
+      await this.setUserState(senderId, ChatState.AWAITING_CANCEL_SELECTION);
   }
 
   // ==========================================
