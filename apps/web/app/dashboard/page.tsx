@@ -84,7 +84,8 @@ export default async function DashboardPage({
         'PATIENT': '¡Hola! Aquí puedes ver el listado de tus próximas citas médicas programadas y su estado.',
         'DOCTOR': '¡Bienvenido, Doctor! Conozca el flujo de atención para el día de hoy.',
         'ADMIN': 'Panel Central HIS. Monitoreo, Búsqueda y Liberación de Agendas Clínicas.',
-        'BOOKING_AGENT': 'Panel de Gestión de Reservas. Atención prioritaria de Citas y control Omnicanal.'
+        'BOOKING_AGENT': 'Panel de Gestión de Reservas. Atención prioritaria de Citas y control Omnicanal.',
+        'GENERAL_OBSERVER': 'Panel de Inteligencia de Negocios. Visualización y monitoreo de analíticas en tiempo real.'
     }[session.role];
 
     return (

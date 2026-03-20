@@ -7,7 +7,7 @@ const SECRET_KEY = new TextEncoder().encode(process.env.JWT_SECRET || 'clave-sec
 export interface SessionPayload {
     userId: string;
     email: string;
-    role: 'PATIENT' | 'DOCTOR' | 'ADMIN' | 'BOOKING_AGENT';
+    role: 'PATIENT' | 'DOCTOR' | 'ADMIN' | 'BOOKING_AGENT' | 'GENERAL_OBSERVER';
 }
 
 export async function getSession(): Promise<SessionPayload | null> {

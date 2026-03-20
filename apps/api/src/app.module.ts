@@ -7,6 +7,7 @@ import { ChatbotModule } from './chatbot/chatbot.module';
 import { RedisModule } from './redis/redis.module';
 import { join } from 'path';
 import { AppointmentsModule } from './appointments/appointments.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AppointmentsModule } from './appointments/appointments.module';
     ChatbotModule,
     RedisModule,
     AppointmentsModule,
+    AnalyticsModule,
   ],
 })
 export class AppModule {}

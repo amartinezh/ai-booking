@@ -23,6 +23,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
     const ADMIN_MENUS = [
         { label: 'Visión General', href: '/dashboard', icon: '📋' },
+        { label: 'Analíticas de Negocio', href: '/dashboard/analytics', icon: '📊' },
         { label: 'Agendas (Slots)', href: '/dashboard/agenda', icon: '📅' },
         { label: 'Servicios de Salud', href: '/dashboard/servicios', icon: '💉' },
         { label: 'Aseguradoras (EPS)', href: '/dashboard/eps', icon: '🏦' },
@@ -36,11 +37,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
         { label: 'Agendamiento', href: '/dashboard/agendamiento', icon: '📅' }
     ];
 
-    const roleMap = {
+    const OBSERVER_MENUS = [
+        { label: 'Analíticas de Negocio', href: '/dashboard/analytics', icon: '📊' }
+    ];
+
+    const roleMap: Record<string, string> = {
         'PATIENT': 'Paciente',
         'DOCTOR': 'Médico Especialista',
         'ADMIN': 'Administrador del Sistema',
-        'BOOKING_AGENT': 'Agente de Reservas'
+        'BOOKING_AGENT': 'Agente de Reservas',
+        'GENERAL_OBSERVER': 'Observador General'
     };
 
     let menus: Array<{ label: string, href: string, icon: string }> = [];
@@ -48,6 +54,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     else if (role === 'DOCTOR') menus = DOCTOR_MENUS;
     else if (role === 'ADMIN') menus = ADMIN_MENUS;
     else if (role === 'BOOKING_AGENT') menus = AGENT_MENUS;
+    else if (role === 'GENERAL_OBSERVER') menus = OBSERVER_MENUS;
 
     return (
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans">
