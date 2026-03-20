@@ -90,6 +90,7 @@ model PatientProfile {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   appointments Appointment[]
+  clinicalRecords ClinicalRecord[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -117,6 +118,7 @@ model DoctorProfile {
   // Relación con el motor de turnos
   slots  ScheduleSlot[]
   agents AgentProfile[] // Agentes limitados a gestionar la agenda de este doctor
+  clinicalRecords ClinicalRecord[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -160,6 +162,7 @@ model ScheduleSlot {
 model Appointment {
   id     String            @id @default(uuid())
   status AppointmentStatus @default(SCHEDULED)
+  attendanceStatus AttendanceStatus @default(PENDING) // NUEVO: Control de asistencia
   reason String?
 
   // 🔌 CONEXIÓN AL SLOT: Ya no guardamos la 'fecha', apuntamos al slot real preconstruido.
@@ -173,6 +176,9 @@ model Appointment {
   // 🔌 CONEXIÓN EPS FACTURACIÓN: Qué EPS autorizó y cubrirá este costo.
   epsId String?
   eps   Eps?    @relation(fields: [epsId], references: [id])
+
+  // 🔌 EHR: Historia clínica asociada a esta cita específica. (1:1 opcional hasta que se crea)
+  clinicalRecord ClinicalRecord?
 
   metaLog     Json?
   createdAt   DateTime @default(now())
@@ -246,3 +252,79 @@ model AgentProfile {
   updatedAt DateTime @updatedAt
 }
 
+// -----------------------------------------------------------------------------
+// 📋 ELECTRONIC HEALTH RECORD (EHR - Historia Clínica Electrónica)
+// -----------------------------------------------------------------------------
+model ClinicalRecord {
+  id String @id @default(uuid())
+
+  // Motivo de Consulta y Anamnesis
+  chiefComplaint   String  @db.Text
+  currentIllness   String  @db.Text
+  
+  // Examen Físico y Notas
+  physicalExam     String? @db.Text
+  evolutionNotes   String? @db.Text
+
+  // Relaciones
+  appointmentId String @unique
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+
+  patientId String
+  patient   PatientProfile @relation(fields: [patientId], references: [id])
+
+  doctorId String
+  doctor   DoctorProfile @relation(fields: [doctorId], references: [id])
+
+  // Componentes de la HC
+  vitalSigns     VitalSigns?
+  diagnoses      Diagnosis[]
+  prescriptions  MedicalPrescription[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model VitalSigns {
+  id String @id @default(uuid())
+
+  bloodPressure String? // Ej: "120/80"
+  heartRate     Int?    // lpm
+  temperature   Float?  // °C
+  weight        Float?  // kg
+  height        Float?  // cm
+  oxygenSat     Int?    // %
+
+  clinicalRecordId String @unique
+  clinicalRecord   ClinicalRecord @relation(fields: [clinicalRecordId], references: [id], onDelete: Cascade)
+}
+
+model Diagnosis {
+  id String @id @default(uuid())
+
+  code        String? // Para futuro soporte CIE-10 cruzado
+  description String
+  isMain      Boolean @default(true) // Diagnóstico Principal vs Secundario
+
+  clinicalRecordId String
+  clinicalRecord   ClinicalRecord @relation(fields: [clinicalRecordId], references: [id], onDelete: Cascade)
+}
+
+model MedicalPrescription {
+  id String @id @default(uuid())
+
+  medication String
+  dose       String
+  frequency  String
+  duration   String
+  notes      String?
+
+  clinicalRecordId String
+  clinicalRecord   ClinicalRecord @relation(fields: [clinicalRecordId], references: [id], onDelete: Cascade)
+}
+
+enum AttendanceStatus {
+  PENDING
+  ATTENDED
+  NO_SHOW
+}

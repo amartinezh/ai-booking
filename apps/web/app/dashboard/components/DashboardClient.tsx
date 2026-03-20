@@ -3,7 +3,8 @@
 
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { cancelAppointmentAndFreeSlot } from '@/app/actions/dashboard';
+import { cancelAppointmentAndFreeSlot, updateAttendance } from '@/app/actions/dashboard';
+import ClinicalRecordDrawer from './ClinicalRecordDrawer';
 import { useDebouncedCallback } from 'use-debounce';
 
 export default function DashboardClient({
@@ -39,8 +40,24 @@ export default function DashboardClient({
         setLoadingId(null);
     }
 
+    const handleAttendance = async (appointmentId: string, status: string) => {
+        setLoadingId(appointmentId);
+        const res = await updateAttendance(appointmentId, status);
+        if (!res.success) alert(res.error);
+        setLoadingId(null);
+    };
+
+    const [ehrAppointment, setEhrAppointment] = useState<any | null>(null);
+
     return (
         <>
+            {ehrAppointment && (
+                <ClinicalRecordDrawer
+                    appointment={ehrAppointment}
+                    onClose={() => setEhrAppointment(null)}
+                />
+            )}
+
             <div className="mb-6 flex flex-col md:flex-row gap-4 items-center bg-white dark:bg-zinc-900 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
                 <div className="flex items-center gap-2 w-full md:w-auto">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-zinc-500">
@@ -99,8 +116,8 @@ export default function DashboardClient({
                                 <th className="px-6 py-4 text-left text-xs font-bold text-zinc-500 uppercase">Estudio/EPS</th>
                                 {role !== 'PATIENT' && <th className="px-6 py-4 text-left text-xs font-bold text-zinc-500 uppercase">Paciente</th>}
                                 {role !== 'DOCTOR' && <th className="px-6 py-4 text-left text-xs font-bold text-zinc-500 uppercase">Médico</th>}
-                                <th className="px-6 py-4 text-center text-xs font-bold text-zinc-500 uppercase">Estado</th>
-                                <th className="px-6 py-4 text-right text-xs font-bold text-zinc-500 uppercase">Decisión</th>
+                                <th className="px-6 py-4 text-center text-xs font-bold text-zinc-500 uppercase">Estado y Asistencia</th>
+                                <th className="px-6 py-4 text-right text-xs font-bold text-zinc-500 uppercase">Acción</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white dark:bg-zinc-900 divide-y divide-zinc-200 dark:divide-zinc-800">
@@ -149,21 +166,52 @@ export default function DashboardClient({
                                         )}
 
                                         <td className="px-6 py-5 whitespace-nowrap text-center">
-                                            <span className={`px-4 py-1.5 inline-flex text-xs font-bold rounded-full border ${apt.status === 'SCHEDULED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-50 text-zinc-600 border-zinc-200'}`}>
-                                                {apt.status === 'CANCELLED' ? 'CANCELADA' : apt.status}
-                                            </span>
-                                            {apt.origin === 'WHATSAPP' && apt.status === 'SCHEDULED' && <div className="mt-1 text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full inline-block border border-indigo-200">🤖 AI Bot</div>}
-                                            {apt.origin === 'MANUAL' && apt.status === 'SCHEDULED' && <div className="mt-1 text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-full inline-block border border-blue-200">👤 Manual</div>}
+                                            <div className="mb-2">
+                                                <span className={`px-4 py-1.5 inline-flex text-xs font-bold rounded-full border ${apt.status === 'SCHEDULED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-50 text-zinc-600 border-zinc-200'}`}>
+                                                    {apt.status === 'CANCELLED' ? 'CANCELADA' : apt.status}
+                                                </span>
+                                                {apt.origin === 'WHATSAPP' && apt.status === 'SCHEDULED' && <div className="mt-1 ml-1 text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full inline-block border border-indigo-200">🤖 AI Bot</div>}
+                                                {apt.origin === 'MANUAL' && apt.status === 'SCHEDULED' && <div className="mt-1 ml-1 text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-full inline-block border border-blue-200">👤 Manual</div>}
+                                            </div>
+
+                                            {/* ATTENDANCE TOGGLE */}
+                                            {apt.status === 'SCHEDULED' && role !== 'PATIENT' && (
+                                                <div className="mt-2 inline-flex flex-col items-center">
+                                                    <select 
+                                                        value={apt.attendanceStatus} 
+                                                        onChange={(e) => handleAttendance(apt.id, e.target.value)}
+                                                        disabled={loadingId === apt.id}
+                                                        className={`text-xs font-semibold px-2 py-1 rounded-md border ${
+                                                            apt.attendanceStatus === 'ATTENDED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' :
+                                                            apt.attendanceStatus === 'NO_SHOW' ? 'bg-red-100 text-red-800 border-red-300' :
+                                                            'bg-amber-50 text-amber-600 border-amber-200'
+                                                        }`}
+                                                    >
+                                                        <option value="PENDING">En Espera</option>
+                                                        <option value="ATTENDED">✅ Asistió</option>
+                                                        <option value="NO_SHOW">❌ Ausente</option>
+                                                    </select>
+                                                </div>
+                                            )}
                                         </td>
 
-                                        <td className="px-6 py-5 whitespace-nowrap text-right">
-                                            {apt.status === 'SCHEDULED' && (
+                                        <td className="px-6 py-5 whitespace-nowrap text-right space-y-2">
+                                            {apt.status === 'SCHEDULED' && apt.attendanceStatus === 'ATTENDED' && role === 'DOCTOR' && (
+                                                <button
+                                                    onClick={() => setEhrAppointment(apt)}
+                                                    className="w-full text-xs font-semibold px-3 py-1.5 rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-sm"
+                                                >
+                                                    📝 Hist. Clínica
+                                                </button>
+                                            )}
+
+                                            {apt.status === 'SCHEDULED' && apt.attendanceStatus !== 'ATTENDED' && (
                                                 <button
                                                     onClick={() => handleCancelAndFree(apt.id, apt.scheduleSlotId)}
                                                     disabled={loadingId === apt.id}
-                                                    className="text-xs font-semibold px-3 py-1.5 rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+                                                    className="w-full text-xs font-semibold px-3 py-1.5 rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
                                                 >
-                                                    Anular y Liberar Cupo
+                                                    Anular y Liberar
                                                 </button>
                                             )}
                                         </td>

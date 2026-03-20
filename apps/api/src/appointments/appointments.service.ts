@@ -98,4 +98,21 @@ export class AppointmentsService {
       throw error;
     }
   }
+
+  // 3. CONTROL DE ASISTENCIA
+  async updateAttendance(appointmentId: string, status: any): Promise<any> {
+    const updated = await this.prisma.appointment.update({
+      where: { id: appointmentId },
+      data: { attendanceStatus: status },
+      include: {
+         patient: true,
+         scheduleSlot: { include: { doctor: true, service: true } }
+      }
+    });
+
+    return {
+       success: true,
+       data: updated
+    };
+  }
 }

@@ -8,6 +8,7 @@ import { RedisModule } from './redis/redis.module';
 import { join } from 'path';
 import { AppointmentsModule } from './appointments/appointments.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { ClinicalRecordsModule } from './clinical-records/clinical-records.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     RedisModule,
     AppointmentsModule,
     AnalyticsModule,
+    ClinicalRecordsModule,
   ],
 })
 export class AppModule {}
