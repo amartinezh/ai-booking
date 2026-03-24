@@ -8,11 +8,12 @@ export const dynamic = 'force-dynamic';
 export default async function AuditoriaPage() {
     const session = await getSession();
 
-    if (!session || session.role !== 'ADMIN') {
+    if (!session || session.role !== 'ORG_ADMIN') {
         redirect('/dashboard');
     }
 
     const logs = await prisma.interactionLog.findMany({
+        where: { organizationId: session.organizationId },
         orderBy: { createdAt: 'desc' },
         take: 100 // Límite para no saturar al inicio
     });

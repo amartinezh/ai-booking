@@ -5,8 +5,8 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AnalyticsService {
   constructor(private prisma: PrismaService) {}
 
-  async getDashboardStats(startDate?: string, endDate?: string) {
-    const where: any = {};
+  async getDashboardStats(organizationId: string, startDate?: string, endDate?: string) {
+    const where: any = { organizationId };
     if (startDate || endDate) {
       where.scheduleSlot = { startTime: {} };
       if (startDate) {

@@ -9,17 +9,18 @@ export default async function MedicosPage() {
     const session = await getSession();
 
     // Solo permitimos el acceso a administradores
-    if (!session || session.role !== 'ADMIN') {
+    if (!session || session.role !== 'ORG_ADMIN') {
         redirect('/dashboard');
     }
 
     const doctors = await prisma.doctorProfile.findMany({
+        where: { organizationId: session.organizationId },
         orderBy: { createdAt: 'desc' },
         include: { user: true, service: true }
     });
 
     const services = await prisma.medicalService.findMany({
-        where: { isActive: true },
+        where: { organizationId: session.organizationId, isActive: true },
         orderBy: { name: 'asc' }
     });
 

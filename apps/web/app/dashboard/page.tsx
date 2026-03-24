@@ -22,7 +22,7 @@ export default async function DashboardPage({
     const startDateFilter = resolvedParams.startDate;
     const endDateFilter = resolvedParams.endDate;
 
-    const whereClause: Prisma.AppointmentWhereInput = {};
+    const whereClause: Prisma.AppointmentWhereInput = { organizationId: session.organizationId };
     const slotWhere: any = {};
 
     if (session.role === 'PATIENT') {
@@ -73,20 +73,22 @@ export default async function DashboardPage({
     let epsList: any[] = [];
     let doctorsList: any[] = [];
 
-    if (session.role === 'ADMIN' || session.role === 'DOCTOR' || session.role === 'BOOKING_AGENT') {
-        epsList = await prisma.eps.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } });
+    if (session.role === 'ORG_ADMIN' || session.role === 'DOCTOR' || session.role === 'BOOKING_AGENT') {
+        epsList = await prisma.eps.findMany({ where: { organizationId: session.organizationId }, select: { id: true, name: true }, orderBy: { name: 'asc' } });
     }
-    if (session.role === 'ADMIN' || session.role === 'BOOKING_AGENT') {
-        doctorsList = await prisma.doctorProfile.findMany({ select: { id: true, fullName: true }, orderBy: { fullName: 'asc' } });
+    if (session.role === 'ORG_ADMIN' || session.role === 'BOOKING_AGENT') {
+        doctorsList = await prisma.doctorProfile.findMany({ where: { organizationId: session.organizationId }, select: { id: true, fullName: true }, orderBy: { fullName: 'asc' } });
     }
 
-    const greeting = {
+    const greetingMap: Record<string, string> = {
         'PATIENT': '¡Hola! Aquí puedes ver el listado de tus próximas citas médicas programadas y su estado.',
         'DOCTOR': '¡Bienvenido, Doctor! Conozca el flujo de atención para el día de hoy.',
-        'ADMIN': 'Panel Central HIS. Monitoreo, Búsqueda y Liberación de Agendas Clínicas.',
+        'ORG_ADMIN': 'Panel Central HIS. Monitoreo, Búsqueda y Liberación de Agendas Clínicas.',
         'BOOKING_AGENT': 'Panel de Gestión de Reservas. Atención prioritaria de Citas y control Omnicanal.',
         'GENERAL_OBSERVER': 'Panel de Inteligencia de Negocios. Visualización y monitoreo de analíticas en tiempo real.'
-    }[session.role];
+    };
+    
+    const greeting = greetingMap[session.role as string] || '';
 
     return (
         <div className="max-w-7xl mx-auto animate-fade-in">

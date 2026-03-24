@@ -4,6 +4,7 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { getSession } from '@/lib/session';
 
 const formSchema = z.object({
     name: z.string().min(3, 'El nombre debe tener al menos 3 caracteres'),
@@ -12,10 +13,16 @@ const formSchema = z.object({
 
 export async function getMedicalServicesList(query?: string) {
     try {
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
+        const whereObj: any = { organizationId: session.organizationId };
+        if (query) {
+            whereObj.name = { contains: query, mode: 'insensitive' };
+        }
+
         const data = await prisma.medicalService.findMany({
-            where: query
-                ? { name: { contains: query, mode: 'insensitive' } }
-                : undefined,
+            where: whereObj,
             include: {
                 _count: {
                     select: { doctors: true, slots: true },
@@ -41,10 +48,14 @@ export async function createMedicalService(prevState: any, formData: FormData) {
             return { success: false, error: 'Datos inválidos', issues: validatedFields.error.flatten().fieldErrors };
         }
 
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
         await prisma.medicalService.create({
             data: {
                 name: validatedFields.data.name,
                 isActive: validatedFields.data.isActive,
+                organizationId: session.organizationId
             },
         });
 
@@ -58,8 +69,11 @@ export async function createMedicalService(prevState: any, formData: FormData) {
 
 export async function toggleMedicalServiceStatus(id: string, currentStatus: boolean) {
     try {
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
         await prisma.medicalService.update({
-            where: { id },
+            where: { id, organizationId: session.organizationId },
             data: { isActive: !currentStatus },
         });
         revalidatePath('/dashboard/servicios');
@@ -72,8 +86,11 @@ export async function toggleMedicalServiceStatus(id: string, currentStatus: bool
 
 export async function deleteMedicalService(id: string) {
     try {
-        const service = await prisma.medicalService.findUnique({
-            where: { id },
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
+        const service = await prisma.medicalService.findFirst({
+            where: { id, organizationId: session.organizationId },
             include: {
                 _count: {
                     select: { doctors: true, slots: true },

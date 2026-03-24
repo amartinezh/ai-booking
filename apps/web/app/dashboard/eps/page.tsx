@@ -9,7 +9,7 @@ export default async function EpsPage({
     searchParams: Promise<{ q?: string }>;
 }) {
     const session = await getSession();
-    if (session?.role !== 'ADMIN') redirect('/dashboard');
+    if (session?.role !== 'ORG_ADMIN') redirect('/dashboard');
 
     const resolvedParams = await searchParams;
     const res = await getEpsList(resolvedParams.q);

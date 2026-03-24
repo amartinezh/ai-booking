@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { getSession } from '../../lib/session';
 import { redirect } from 'next/navigation';
 import { logoutUser } from '../actions/auth';
+import { prisma } from '../../lib/prisma';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
     const session = await getSession();
@@ -11,6 +12,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
     }
 
     const { role, email } = session;
+
+    let orgName = 'Portal Salud';
+    let orgLogoUrl = null;
+
+    if (session.organizationId && session.role !== 'SUPER_ADMIN') {
+        const org = await prisma.organization.findUnique({
+            where: { id: session.organizationId },
+            select: { name: true, logoUrl: true }
+        });
+        if (org) {
+            orgName = org.name;
+            orgLogoUrl = org.logoUrl;
+        }
+    }
 
     // Diferentes opciones de menú dependiendo del Rol
     const PATIENT_MENUS = [
@@ -44,7 +59,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
     const roleMap: Record<string, string> = {
         'PATIENT': 'Paciente',
         'DOCTOR': 'Médico Especialista',
-        'ADMIN': 'Administrador del Sistema',
+        'ORG_ADMIN': 'Administrador del Hospital',
+        'SUPER_ADMIN': 'Súper Administrador',
         'BOOKING_AGENT': 'Agente de Reservas',
         'GENERAL_OBSERVER': 'Observador General'
     };
@@ -52,7 +68,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     let menus: Array<{ label: string, href: string, icon: string }> = [];
     if (role === 'PATIENT') menus = PATIENT_MENUS;
     else if (role === 'DOCTOR') menus = DOCTOR_MENUS;
-    else if (role === 'ADMIN') menus = ADMIN_MENUS;
+    else if (role === 'ORG_ADMIN') menus = ADMIN_MENUS;
     else if (role === 'BOOKING_AGENT') menus = AGENT_MENUS;
     else if (role === 'GENERAL_OBSERVER') menus = OBSERVER_MENUS;
 
@@ -62,8 +78,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
             {/* Sidebar Moderno */}
             <aside className="w-full md:w-72 bg-white dark:bg-zinc-900 border-b md:border-b-0 md:border-r border-zinc-200 dark:border-zinc-800 hidden md:flex flex-col">
                 <div className="p-6 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
-                    <span className="text-3xl">🏥</span>
-                    <h2 className="text-xl font-bold tracking-tight text-zinc-900 dark:text-white">Portal Salud</h2>
+                    {orgLogoUrl ? (
+                        <img src={orgLogoUrl} alt="Logo Organización" className="w-10 h-10 shrink-0 rounded-lg object-contain bg-white shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800" />
+                    ) : (
+                        <span className="text-3xl shrink-0">🏥</span>
+                    )}
+                    <h2 className="text-xl font-bold tracking-tight text-zinc-900 dark:text-white truncate" title={orgName}>{orgName}</h2>
                 </div>
 
                 <nav className="flex-1 p-4 space-y-2">
@@ -96,9 +116,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
             {/* Configuración Móvil */}
             <header className="md:hidden bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 p-4 flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                    <span className="text-2xl">🏥</span>
-                    <span className="font-bold text-zinc-900 dark:text-white">Portal</span>
+                <div className="flex items-center gap-2 truncate max-w-[60%]">
+                    {orgLogoUrl ? (
+                        <img src={orgLogoUrl} alt="Logo" className="w-8 h-8 shrink-0 rounded-md object-contain bg-white shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800" />
+                    ) : (
+                        <span className="text-2xl shrink-0">🏥</span>
+                    )}
+                    <span className="font-bold text-zinc-900 dark:text-white truncate" title={orgName}>{orgName}</span>
                 </div>
                 <div className="flex items-center gap-3">
                     <span className="text-xs font-semibold px-3 py-1 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 rounded-lg">

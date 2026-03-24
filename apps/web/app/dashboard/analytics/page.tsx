@@ -12,7 +12,7 @@ export default async function AnalyticsPage({
     const session = await getSession();
     if (!session) redirect('/login');
 
-    if (session.role !== 'ADMIN' && session.role !== 'GENERAL_OBSERVER') {
+    if (session.role !== 'ORG_ADMIN' && session.role !== 'GENERAL_OBSERVER') {
         redirect('/dashboard');
     }
 

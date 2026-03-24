@@ -3,17 +3,20 @@
 
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
+import { getSession } from '@/lib/session';
 
 export async function getAgendaDependencies() {
     try {
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
         const doctors = await prisma.doctorProfile.findMany({
-            where: { isActive: true },
+            where: { isActive: true, organizationId: session.organizationId },
             include: { service: true },
             orderBy: { fullName: 'asc' },
         });
 
         const epsList = await prisma.eps.findMany({
-            where: { isActive: true },
+            where: { isActive: true, organizationId: session.organizationId },
             orderBy: { name: 'asc' },
         });
 
@@ -26,11 +29,14 @@ export async function getAgendaDependencies() {
 
 export async function getUpcomingSlots(doctorId?: string) {
     try {
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
         // Mostrar slots desde el inicio del día actual (medianoche) para ver la agenda completa del día
         const todayAtMidnight = new Date();
         todayAtMidnight.setHours(0, 0, 0, 0);
 
-        const whereClause: any = { startTime: { gte: todayAtMidnight } };
+        const whereClause: any = { startTime: { gte: todayAtMidnight }, organizationId: session.organizationId };
         if (doctorId) whereClause.doctorId = doctorId;
 
         const slots = await prisma.scheduleSlot.findMany({
@@ -64,8 +70,11 @@ export async function generateBulkSlots(formData: FormData) {
             return { success: false, error: 'Faltan campos obligatorios' };
         }
 
-        const doctor = await prisma.doctorProfile.findUnique({
-            where: { id: doctorId },
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
+        const doctor = await prisma.doctorProfile.findFirst({
+            where: { id: doctorId, organizationId: session.organizationId },
         });
 
         if (!doctor || !doctor.serviceId) {
@@ -96,6 +105,7 @@ export async function generateBulkSlots(formData: FormData) {
                     serviceId: doctor.serviceId,
                     allowedEpsId: epsId === 'none' ? null : epsId,
                     isAvailable: true,
+                    organizationId: session.organizationId
                 });
             }
 
@@ -133,11 +143,14 @@ export async function generateBulkSlots(formData: FormData) {
 
 export async function deleteSlot(id: string) {
     try {
-        const slot = await prisma.scheduleSlot.findUnique({ where: { id }, include: { appointment: true } });
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
+        const slot = await prisma.scheduleSlot.findFirst({ where: { id, organizationId: session.organizationId }, include: { appointment: true } });
         if (slot?.appointment) {
             return { success: false, error: 'Este cupo ya fue reservado por un paciente. Cancele la cita primero.' };
         }
-        await prisma.scheduleSlot.delete({ where: { id } });
+        await prisma.scheduleSlot.delete({ where: { id, organizationId: session.organizationId } });
         revalidatePath('/dashboard/agenda');
         return { success: true };
     } catch (e) {
@@ -159,9 +172,13 @@ export async function cloneDaySlots(formData: FormData) {
         const sourceStart = new Date(`${sourceDateStr}T00:00:00`);
         const sourceEnd = new Date(`${sourceDateStr}T23:59:59`);
 
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
         const sourceSlots = await prisma.scheduleSlot.findMany({
             where: {
                 doctorId,
+                organizationId: session.organizationId,
                 startTime: {
                     gte: sourceStart,
                     lte: sourceEnd,
@@ -187,6 +204,7 @@ export async function cloneDaySlots(formData: FormData) {
             serviceId: slot.serviceId,
             allowedEpsId: slot.allowedEpsId,
             isAvailable: true, // Siempre nacen disponibles
+            organizationId: session.organizationId,
             startTime: new Date(slot.startTime.getTime() + timeOffset),
             endTime: new Date(slot.endTime.getTime() + timeOffset)
         }));

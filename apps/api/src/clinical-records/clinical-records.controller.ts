@@ -10,13 +10,13 @@ export class ClinicalRecordsController {
   constructor(private readonly recordService: ClinicalRecordService) {}
 
   @Post()
-  @Roles(Role.DOCTOR) // Estrictamente DOCTOR, agentes no pueden escribir historias clínicas
+  @Roles('DOCTOR') // Estrictamente DOCTOR, agentes no pueden escribir historias clínicas
   async createRecord(@Body() createDto: any) {
     return this.recordService.createClinicalRecord(createDto);
   }
 
   @Get('appointment/:appointmentId')
-  @Roles(Role.DOCTOR, Role.PATIENT) // Pacientes pueden ver su propia historia, doctores también
+  @Roles('DOCTOR', 'PATIENT') // Pacientes pueden ver su propia historia, doctores también
   async getByAppointment(@Param('appointmentId') appointmentId: string) {
     return this.recordService.getClinicalRecordByAppointment(appointmentId);
   }

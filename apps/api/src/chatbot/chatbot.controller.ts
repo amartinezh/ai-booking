@@ -52,6 +52,10 @@ export class ChatbotController {
           // A. ¿Es un mensaje entrante (texto, imagen, audio)?
           if (value?.messages && value.messages.length > 0) {
             const messageEvent = value.messages[0];
+            
+            // 💡 Inyectamos la metadata (donde viene phone_number_id) al evento 
+            messageEvent.metadata = value.metadata;
+
             // Pasamos el evento válido a nuestro servicio
             await this.chatbotService.processIncomingMessage(messageEvent);
           }

@@ -11,6 +11,37 @@ datasource db {
 }
 
 // -----------------------------------------------------------------------------
+// 🏢 MULTI-TENANT: ORGANIZACIÓN (CLÍNICA/HOSPITAL)
+// -----------------------------------------------------------------------------
+model Organization {
+  id              String  @id @default(uuid())
+  name            String  @unique
+  isActive        Boolean @default(true)
+  whatsappPhoneId String? @unique
+  logoUrl         String?
+
+  // Facturación Global Súper Admin
+  monthlyFee      String?
+  lastPaymentDate DateTime?
+  autoSuspend     Boolean @default(false)
+
+  // Relaciones Inversas (Todo el sistema)
+  users           User[]
+  eps             Eps[]
+  medicalServices MedicalService[]
+  slots           ScheduleSlot[]
+  appointments    Appointment[]
+  clinicalRecords ClinicalRecord[]
+  patients        PatientProfile[]
+  doctors         DoctorProfile[]
+  interactionLogs InteractionLog[]
+  agents          AgentProfile[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
 // 🔐 AUTH & CORE USER (Mínimo necesario para login)
 // -----------------------------------------------------------------------------
 model User {
@@ -26,6 +57,10 @@ model User {
 
   // Relación con Logs de Auditoría ("Caja Negra")
   interactionLogs InteractionLog[]
+
+  // 🏢 TENANT ISOLATION
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -46,6 +81,10 @@ model Eps {
   appointments Appointment[] // Historial de citas facturadas por esta EPS
   agents       AgentProfile[] // Agentes limitados a agendar paciente de esta EPS
 
+  // 🏢 TENANT ISOLATION
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -61,6 +100,10 @@ model MedicalService {
   // Relaciones
   doctors DoctorProfile[] // Qué doctores prestan este servicio
   slots   ScheduleSlot[] // Agenda disponible para este servicio
+
+  // 🏢 TENANT ISOLATION
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -89,8 +132,12 @@ model PatientProfile {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  appointments Appointment[]
+  appointments    Appointment[]
   clinicalRecords ClinicalRecord[]
+
+  // 🏢 TENANT ISOLATION
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -116,9 +163,13 @@ model DoctorProfile {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Relación con el motor de turnos
-  slots  ScheduleSlot[]
-  agents AgentProfile[] // Agentes limitados a gestionar la agenda de este doctor
+  slots           ScheduleSlot[]
+  agents          AgentProfile[] // Agentes limitados a gestionar la agenda de este doctor
   clinicalRecords ClinicalRecord[]
+
+  // 🏢 TENANT ISOLATION
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -149,6 +200,10 @@ model ScheduleSlot {
   // Relación 1:1 -> Si se ocupa, aquí está la cita. (Si es null, está libre)
   appointment Appointment?
 
+  // 🏢 TENANT ISOLATION
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -160,10 +215,10 @@ model ScheduleSlot {
 // 📅 APPOINTMENTS (Citas Médicas Evolucionada a HIS)
 // -----------------------------------------------------------------------------
 model Appointment {
-  id     String            @id @default(uuid())
-  status AppointmentStatus @default(SCHEDULED)
-  attendanceStatus AttendanceStatus @default(PENDING) // NUEVO: Control de asistencia
-  reason String?
+  id               String            @id @default(uuid())
+  status           AppointmentStatus @default(SCHEDULED)
+  attendanceStatus AttendanceStatus  @default(PENDING) // NUEVO: Control de asistencia
+  reason           String?
 
   // 🔌 CONEXIÓN AL SLOT: Ya no guardamos la 'fecha', apuntamos al slot real preconstruido.
   scheduleSlotId String       @unique
@@ -180,9 +235,13 @@ model Appointment {
   // 🔌 EHR: Historia clínica asociada a esta cita específica. (1:1 opcional hasta que se crea)
   clinicalRecord ClinicalRecord?
 
-  metaLog     Json?
-  createdAt   DateTime @default(now())
-  origin      AppointmentOrigin @default(WHATSAPP)
+  // 🏢 TENANT ISOLATION
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  metaLog   Json?
+  createdAt DateTime          @default(now())
+  origin    AppointmentOrigin @default(WHATSAPP)
 }
 
 enum AppointmentOrigin {
@@ -193,7 +252,8 @@ enum AppointmentOrigin {
 enum Role {
   PATIENT
   DOCTOR
-  ADMIN
+  ORG_ADMIN
+  SUPER_ADMIN
   BOOKING_AGENT
   GENERAL_OBSERVER
 }
@@ -225,6 +285,10 @@ model InteractionLog {
   // Relación opcional por si el usuario que falla ya tiene un PatientProfile/User
   patientId String?
   patient   User?   @relation(fields: [patientId], references: [id])
+
+  // 🏢 TENANT ISOLATION
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 }
 
 // -----------------------------------------------------------------------------
@@ -248,6 +312,10 @@ model AgentProfile {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // 🏢 TENANT ISOLATION
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -259,15 +327,15 @@ model ClinicalRecord {
   id String @id @default(uuid())
 
   // Motivo de Consulta y Anamnesis
-  chiefComplaint   String  @db.Text
-  currentIllness   String  @db.Text
-  
+  chiefComplaint String @db.Text
+  currentIllness String @db.Text
+
   // Examen Físico y Notas
-  physicalExam     String? @db.Text
-  evolutionNotes   String? @db.Text
+  physicalExam   String? @db.Text
+  evolutionNotes String? @db.Text
 
   // Relaciones
-  appointmentId String @unique
+  appointmentId String      @unique
   appointment   Appointment @relation(fields: [appointmentId], references: [id])
 
   patientId String
@@ -277,9 +345,13 @@ model ClinicalRecord {
   doctor   DoctorProfile @relation(fields: [doctorId], references: [id])
 
   // Componentes de la HC
-  vitalSigns     VitalSigns?
-  diagnoses      Diagnosis[]
-  prescriptions  MedicalPrescription[]
+  vitalSigns    VitalSigns?
+  diagnoses     Diagnosis[]
+  prescriptions MedicalPrescription[]
+
+  // 🏢 TENANT ISOLATION
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -289,13 +361,13 @@ model VitalSigns {
   id String @id @default(uuid())
 
   bloodPressure String? // Ej: "120/80"
-  heartRate     Int?    // lpm
-  temperature   Float?  // °C
-  weight        Float?  // kg
-  height        Float?  // cm
-  oxygenSat     Int?    // %
+  heartRate     Int? // lpm
+  temperature   Float? // °C
+  weight        Float? // kg
+  height        Float? // cm
+  oxygenSat     Int? // %
 
-  clinicalRecordId String @unique
+  clinicalRecordId String         @unique
   clinicalRecord   ClinicalRecord @relation(fields: [clinicalRecordId], references: [id], onDelete: Cascade)
 }
 

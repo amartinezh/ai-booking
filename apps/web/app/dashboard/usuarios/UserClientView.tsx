@@ -10,8 +10,25 @@ import { useRouter } from 'next/navigation';
 export default function UserClientView({ users, epsList, doctorList }: { users: any[], epsList: any[], doctorList: any[] }) {
     const [editingUser, setEditingUser] = useState<any | null>(null);
     const [isCreating, setIsCreating] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [roleFilter, setRoleFilter] = useState('ALL');
     const [isPending, startTransition] = useTransition();
     const router = useRouter();
+
+    const filteredUsers = users.filter(user => {
+        const term = searchTerm.toLowerCase();
+        const matchesSearch = 
+            user.email.toLowerCase().includes(term) ||
+            user.patientProfile?.fullName?.toLowerCase().includes(term) ||
+            user.doctorProfile?.fullName?.toLowerCase().includes(term) ||
+            user.agentProfile?.fullName?.toLowerCase().includes(term) ||
+            user.patientProfile?.cedula?.toLowerCase().includes(term) ||
+            user.doctorProfile?.cedula?.toLowerCase().includes(term);
+            
+        const matchesRole = roleFilter === 'ALL' || user.role === roleFilter;
+
+        return matchesSearch && matchesRole;
+    });
 
     const handleDelete = (id: string) => {
         if (!confirm('¿Estás seguro de que deseas eliminar este usuario? Esto no se puede deshacer y borrará sus perfiles asociados.')) return;
@@ -49,6 +66,30 @@ export default function UserClientView({ users, epsList, doctorList }: { users: 
                 />
             )}
 
+            <div className="flex flex-col sm:flex-row gap-3 mb-2">
+                <div className="relative flex-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400">🔍</span>
+                    <input 
+                        type="text" 
+                        placeholder="Buscar por correo, nombre o documento..." 
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-9 pr-4 py-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all shadow-sm"
+                    />
+                </div>
+                <select 
+                    value={roleFilter}
+                    onChange={(e) => setRoleFilter(e.target.value)}
+                    className="py-3 px-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all shadow-sm cursor-pointer"
+                >
+                    <option value="ALL">Todos los roles</option>
+                    <option value="PATIENT">Pacientes</option>
+                    <option value="DOCTOR">Médicos</option>
+                    <option value="BOOKING_AGENT">Agentes de Salud</option>
+                    <option value="ORG_ADMIN">Administradores</option>
+                </select>
+            </div>
+
             <div className="bg-white dark:bg-zinc-900 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-black/20 rounded-3xl overflow-hidden border border-zinc-100 dark:border-zinc-800">
                 <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-zinc-200 dark:divide-zinc-800">
@@ -62,7 +103,7 @@ export default function UserClientView({ users, epsList, doctorList }: { users: 
                             </tr>
                         </thead>
                         <tbody className="bg-white dark:bg-zinc-900 divide-y divide-zinc-100 dark:divide-zinc-800/60">
-                            {users.map(user => (
+                            {filteredUsers.map(user => (
                                 <tr key={user.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30 transition-colors group">
                                     <td className="px-6 py-5 whitespace-nowrap">
                                         <div className="flex items-center">
@@ -80,7 +121,7 @@ export default function UserClientView({ users, epsList, doctorList }: { users: 
                                         </div>
                                     </td>
                                     <td className="px-6 py-5 whitespace-nowrap">
-                                        <span className={`px-3 py-1 inline-flex text-xs font-bold rounded-lg border ${user.role === 'ADMIN' ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400' :
+                                        <span className={`px-3 py-1 inline-flex text-xs font-bold rounded-lg border ${user.role === 'ORG_ADMIN' ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400' :
                                             user.role === 'DOCTOR' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400' :
                                                 user.role === 'BOOKING_AGENT' ? 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400' :
                                                     'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700'
@@ -127,9 +168,11 @@ export default function UserClientView({ users, epsList, doctorList }: { users: 
                             ))}
                         </tbody>
                     </table>
-                    {users.length === 0 && (
-                        <div className="text-center py-16 text-zinc-500">
-                            No hay usuarios registrados.
+                    {filteredUsers.length === 0 && (
+                        <div className="text-center py-16 text-zinc-500 flex flex-col items-center">
+                            <span className="text-4xl mb-3">👻</span>
+                            <p className="font-medium text-lg text-zinc-900 dark:text-zinc-200">No hay resultados encontrados</p>
+                            <p className="text-sm mt-1">Intenta ajustando el término de búsqueda o el filtro de rol.</p>
                         </div>
                     )}
                 </div>

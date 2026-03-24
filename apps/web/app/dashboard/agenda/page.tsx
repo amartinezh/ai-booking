@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function AgendaPage() {
     const session = await getSession();
-    if (session?.role !== 'ADMIN') redirect('/dashboard');
+    if (session?.role !== 'ORG_ADMIN') redirect('/dashboard');
 
     const [slotsRes, depsRes] = await Promise.all([
         getUpcomingSlots(),

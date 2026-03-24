@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { sendManualWhatsappAction, createManualAppointmentAction, updateManualAppointmentAction } from './actions';
 
 export default function AppointmentModal({
@@ -25,7 +25,31 @@ export default function AppointmentModal({
     const [msgText, setMsgText] = useState('');
     const [isEditing, setIsEditing] = useState(false);
 
+    const [creationServiceId, setCreationServiceId] = useState('');
+    const [editServiceId, setEditServiceId] = useState('');
+
+    useEffect(() => {
+        if (isOpen) {
+            setCreationServiceId('');
+            if (eventData) {
+                setEditServiceId(eventData.scheduleSlot?.serviceId || '');
+            } else {
+                setEditServiceId('');
+            }
+            setIsEditing(false);
+            setMsgMode(false);
+        }
+    }, [isOpen, eventData]);
+
     if (!isOpen) return null;
+
+    const creationDoctors = creationServiceId 
+        ? doctorList.filter((d: any) => d.serviceId === creationServiceId) 
+        : []; 
+
+    const editDoctors = editServiceId 
+        ? doctorList.filter((d: any) => d.serviceId === editServiceId) 
+        : [];
 
     const handleUpdate = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -101,7 +125,13 @@ export default function AppointmentModal({
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="col-span-1">
                                     <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">Servicio</label>
-                                    <select required name="serviceId" defaultValue={eventData.scheduleSlot?.serviceId} className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm">
+                                    <select 
+                                        required 
+                                        name="serviceId" 
+                                        value={editServiceId}
+                                        onChange={(e) => setEditServiceId(e.target.value)}
+                                        className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm"
+                                    >
                                         <option value="">Seleccione...</option>
                                         {servicesList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                                     </select>
@@ -110,7 +140,7 @@ export default function AppointmentModal({
                                     <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">Médico</label>
                                     <select required name="doctorId" defaultValue={eventData.scheduleSlot?.doctorId} className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm">
                                         <option value="">Seleccione...</option>
-                                        {doctorList.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+                                        {editDoctors.map((d: any) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                                     </select>
                                 </div>
                             </div>
@@ -248,8 +278,14 @@ export default function AppointmentModal({
                     <div className="grid grid-cols-2 gap-4">
                         <div className="col-span-1">
                             <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">Especialidad/Servicio</label>
-                            <select required name="serviceId" className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm">
-                                <option value="">Seleccione...</option>
+                            <select 
+                                required 
+                                name="serviceId" 
+                                value={creationServiceId}
+                                onChange={(e) => setCreationServiceId(e.target.value)}
+                                className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm"
+                            >
+                                <option value="">Seleccione primera una especialidad...</option>
                                 {servicesList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                             </select>
                         </div>
@@ -257,7 +293,7 @@ export default function AppointmentModal({
                             <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">Médico Responsable</label>
                             <select required name="doctorId" className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm">
                                 <option value="">Seleccione...</option>
-                                {doctorList.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+                                {creationDoctors.map((d: any) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                             </select>
                         </div>
                     </div>

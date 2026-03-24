@@ -4,6 +4,7 @@
 import { prisma } from '../../../lib/prisma';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
+import { getSession } from '../../../lib/session';
 import { Role } from '@antigravity/database';
 
 export async function saveUserAction(formData: FormData) {
@@ -12,6 +13,9 @@ export async function saveUserAction(formData: FormData) {
     const password = formData.get('password') as string;
     const role = formData.get('role') as Role;
     try {
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Contexto de Clínica no encontrado' };
+        
         // Propiedades de Agente
         const agentFullName = formData.get('agentFullName') as string;
         const agentEpsId = formData.get('agentEpsId') as string;
@@ -22,7 +26,10 @@ export async function saveUserAction(formData: FormData) {
             if (password) {
                 data.password = await bcrypt.hash(password, 10);
             }
-            // MODO EDICIÓN
+            // MODO EDICIÓN (Aseguramos que no modifique usuarios de otro lado, ni Super Admins)
+            const existingUser = await prisma.user.findFirst({ where: { id, organizationId: session.organizationId, role: { not: 'SUPER_ADMIN' } }});
+            if (!existingUser) return { success: false, error: 'Usuario no encontrado en este Tenant permitido para editar' };
+
             await prisma.$transaction(async (tx: any) => {
                 await tx.user.update({ where: { id }, data });
                 
@@ -48,16 +55,17 @@ export async function saveUserAction(formData: FormData) {
             });
         } else {
             // MODO CREACIÓN
-            const hashedPassword = await bcrypt.hash(password || 'sanvicente123', 10);
+            const hashedPassword = await bcrypt.hash(password || 'temporal123', 10);
             await prisma.$transaction(async (tx: any) => {
                 const newUser = await tx.user.create({
-                    data: { email, password: hashedPassword, role }
+                    data: { email, password: hashedPassword, role, organizationId: session.organizationId }
                 });
 
                 if (role === 'BOOKING_AGENT') {
                     await tx.agentProfile.create({
                         data: {
                             userId: newUser.id,
+                            organizationId: session.organizationId,
                             fullName: agentFullName,
                             epsId: agentEpsId || null,
                             doctorId: agentDoctorId || null,
@@ -75,7 +83,10 @@ export async function saveUserAction(formData: FormData) {
 
 export async function deleteUserAction(id: string) {
     try {
-        await prisma.user.delete({ where: { id } });
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Contexto de Clínica no encontrado' };
+
+        await prisma.user.delete({ where: { id, organizationId: session.organizationId, role: { not: 'SUPER_ADMIN' } } });
         revalidatePath('/dashboard/usuarios');
         return { success: true, error: undefined };
     } catch (e: any) {

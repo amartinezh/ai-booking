@@ -13,7 +13,7 @@ export default async function AgendamientoPage({
     const session = await getSession();
 
     // Permissions: Admins, Doctors, and Booking Agents
-    if (!session || (session.role !== 'ADMIN' && session.role !== 'DOCTOR' && session.role !== 'BOOKING_AGENT')) {
+    if (!session || (session.role !== 'ORG_ADMIN' && session.role !== 'DOCTOR' && session.role !== 'BOOKING_AGENT')) {
         redirect('/dashboard');
     }
 
@@ -40,7 +40,7 @@ export default async function AgendamientoPage({
     const qsService = typeof resolvedParams.serviceId === 'string' ? resolvedParams.serviceId : undefined;
 
     // Prisma WHERE clause construction
-    const whereClause: any = {};
+    const whereClause: any = { organizationId: session.organizationId };
     const slotWhere: any = {};
 
     // 1. Omnibox Search (Patient cedula, fullName. Also checking reason)
@@ -85,11 +85,11 @@ export default async function AgendamientoPage({
     });
 
     // Fetch Lookups for filter selectors
-    const epsList = await prisma.eps.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } });
-    const servicesList = await prisma.medicalService.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } });
+    const epsList = await prisma.eps.findMany({ where: { organizationId: session.organizationId, isActive: true }, select: { id: true, name: true }, orderBy: { name: 'asc' } });
+    const servicesList = await prisma.medicalService.findMany({ where: { organizationId: session.organizationId, isActive: true }, select: { id: true, name: true }, orderBy: { name: 'asc' } });
     const doctorList = session.role === 'DOCTOR' 
-      ? await prisma.doctorProfile.findMany({ where: { id: agentDoctorId }, select: { id: true, fullName: true, cedula: true } })
-      : await prisma.doctorProfile.findMany({ select: { id: true, fullName: true, cedula: true }, orderBy: { fullName: 'asc' } });
+      ? await prisma.doctorProfile.findMany({ where: { id: agentDoctorId, organizationId: session.organizationId }, select: { id: true, fullName: true, cedula: true, serviceId: true } })
+      : await prisma.doctorProfile.findMany({ where: { organizationId: session.organizationId }, select: { id: true, fullName: true, cedula: true, serviceId: true }, orderBy: { fullName: 'asc' } });
 
     return (
         <CalendarClient

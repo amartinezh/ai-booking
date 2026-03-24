@@ -9,11 +9,12 @@ export default async function PacientesPage() {
     const session = await getSession();
 
     // Solo permitimos el acceso a administradores
-    if (!session || session.role !== 'ADMIN') {
+    if (!session || session.role !== 'ORG_ADMIN') {
         redirect('/dashboard');
     }
 
     const patients = await prisma.patientProfile.findMany({
+        where: { organizationId: session.organizationId },
         orderBy: { createdAt: 'desc' },
         include: { user: true }
     });

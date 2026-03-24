@@ -3,6 +3,8 @@
 import { prisma } from '../../lib/prisma';
 import bcrypt from 'bcryptjs';
 
+import { getSession } from '../../lib/session';
+
 export interface CreateAgentInput {
   email: string;
   fullName: string;
@@ -16,6 +18,9 @@ export async function createBookingAgent(data: CreateAgentInput) {
   try {
     const { email, fullName, phone, epsId, doctorId, password } = data;
 
+    const session = await getSession();
+    if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
     // 1. Validar si ya existe
     const existingUser = await prisma.user.findUnique({
       where: { email }
@@ -26,7 +31,7 @@ export async function createBookingAgent(data: CreateAgentInput) {
     }
 
     // 2. Hash Password (o clave por defecto)
-    const rawPassword = password || 'sanvicente123';
+    const rawPassword = password || 'temporal123';
     const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
     // 3. Transacción para crear Usuario + Perfil de Agente
@@ -35,7 +40,8 @@ export async function createBookingAgent(data: CreateAgentInput) {
         data: {
           email,
           password: hashedPassword,
-          role: 'BOOKING_AGENT'
+          role: 'BOOKING_AGENT',
+          organizationId: session.organizationId
         }
       });
 

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { saveUserAction } from './actions';
 
-type UserData = { id?: string; email: string; role: 'ADMIN' | 'DOCTOR' | 'PATIENT' | 'BOOKING_AGENT'; agentProfile?: any };
+type UserData = { id?: string; email: string; role: 'ORG_ADMIN' | 'DOCTOR' | 'PATIENT' | 'BOOKING_AGENT'; agentProfile?: any };
 
 export default function UserModal({ user, epsList, doctorList, onClose }: { user?: UserData | null, epsList: any[], doctorList: any[], onClose: () => void }) {
     const [loading, setLoading] = useState(false);
@@ -51,7 +51,7 @@ export default function UserModal({ user, epsList, doctorList, onClose }: { user
                             type="email"
                             required
                             defaultValue={user?.email || ''}
-                            placeholder="ejemplo@sanvicente.com"
+                            placeholder="ejemplo@clinica.com"
                             className="w-full bg-zinc-50 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 rounded-xl px-4 py-3 text-zinc-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                         />
                     </div>

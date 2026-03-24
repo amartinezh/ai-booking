@@ -17,23 +17,26 @@ export async function loginUser(formData: FormData) {
     try {
         // 🪄 TRUCO: Si no hay NINGÚN administrador en la tabla User, creamos el primero
         const adminCount = await prisma.user.count({
-            where: { role: 'ADMIN' }
+            where: { role: 'SUPER_ADMIN' }
         });
 
         if (adminCount === 0) {
             const hashedPassword = await bcrypt.hash('admin123', 10);
             await prisma.user.create({
                 data: {
-                    email: 'admin@sanvicente.com',
+                    email: 'superadmin@sanvicente.com',
                     password: hashedPassword,
-                    role: 'ADMIN'
+                    role: 'SUPER_ADMIN'
                 }
             });
             console.log('✅ Creado usuario administrador por defecto');
         }
 
-        // 1. Buscar al usuario por correo
-        const user = await prisma.user.findUnique({ where: { email } });
+        // 1. Buscar al usuario por correo e incluir su organización
+        const user = await prisma.user.findUnique({ 
+            where: { email },
+            include: { organization: true }
+        });
 
         // 2. Validaciones de seguridad estrictas
         if (!user || !user.password) return { error: 'Credenciales incorrectas' };
@@ -43,8 +46,18 @@ export async function loginUser(formData: FormData) {
         const isValidPassword = await bcrypt.compare(password, user.password);
         if (!isValidPassword) return { error: 'Credenciales incorrectas' };
 
-        // 4. Crear el token JWT
-        const token = await new SignJWT({ userId: user.id, email: user.email, role: user.role })
+        // Kill-switch: Validar si la organización está activa
+        if (user.organizationId && user.organization && !user.organization.isActive) {
+            return { error: 'Por el momento su organización no se encuentra activa. Contacte al administrador del sistema.' };
+        }
+
+        // 4. Crear el token JWT con organizationId
+        const token = await new SignJWT({ 
+            userId: user.id, 
+            email: user.email, 
+            role: user.role,
+            organizationId: user.organizationId 
+        })
             .setProtectedHeader({ alg: 'HS256' })
             .setExpirationTime('8h')
             .sign(SECRET_KEY);

@@ -2,14 +2,18 @@
 
 import { prisma } from '../../../lib/prisma';
 import { revalidatePath } from 'next/cache';
+import { getSession } from '../../../lib/session';
 
 // Mock del Outbound de Whatsapp desde NestJS API (o invocación HTTP a nuestro NestJS)
 export async function sendManualWhatsappAction(appointmentId: string, message: string) {
     if (!message || message.trim() === '') return { success: false, error: 'Mensaje vacío.' };
 
     try {
-        const appointment = await prisma.appointment.findUnique({
-            where: { id: appointmentId },
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
+        const appointment = await prisma.appointment.findFirst({
+            where: { id: appointmentId, organizationId: session.organizationId },
             include: { patient: true }
         });
 
@@ -48,23 +52,27 @@ export async function createManualAppointmentAction(formData: FormData) {
             return { success: false, error: 'Faltan campos obligatorios.' };
         }
 
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
         // 1. Transaction to find/create patient and assign slot
         await prisma.$transaction(async (tx) => {
             // Find or insert Patient
-            let patient = await tx.patientProfile.findUnique({ where: { cedula: patientCedula } });
+            let patient = await tx.patientProfile.findFirst({ where: { cedula: patientCedula, organizationId: session.organizationId } });
             
             if (!patient) {
                 // To create a patient, we need a base user on this architecture
-                const tempEmail = `${patientCedula}@sanvicente.temporal.com`;
+                const tempEmail = `${patientCedula}@paciente.temporal.com`;
                 const user = await tx.user.create({
-                    data: { email: tempEmail, password: 'manual_created_hash', role: 'PATIENT' }
+                    data: { email: tempEmail, password: 'manual_created_hash', role: 'PATIENT', organizationId: session.organizationId }
                 });
                 patient = await tx.patientProfile.create({
                     data: {
                         cedula: patientCedula,
                         fullName: patientName,
                         userId: user.id,
-                        epsId: epsId
+                        epsId: epsId,
+                        organizationId: session.organizationId
                     }
                 });
             }
@@ -74,11 +82,20 @@ export async function createManualAppointmentAction(formData: FormData) {
             const startDate = new Date(startDateStr);
             const endDate = new Date(startDate.getTime() + 30 * 60000); // 30 mins later
             
-            let slot = await tx.scheduleSlot.findFirst({
-                where: { doctorId, startTime: startDate, isAvailable: true }
+            // Check if ANY slot exists at this exact time (available or not)
+            const existingSlot = await tx.scheduleSlot.findFirst({
+                where: { doctorId, startTime: startDate, organizationId: session.organizationId }
             });
 
-            if (!slot) {
+            let slot = null;
+            if (existingSlot) {
+                if (!existingSlot.isAvailable) {
+                    throw new Error('El médico ya tiene una cita ocupada a esta hora exacta.');
+                }
+                // Si existe y está libre, lo usamos
+                slot = existingSlot;
+                await tx.scheduleSlot.update({ where: { id: slot.id }, data: { isAvailable: false } });
+            } else {
                 // Force Create for Admins (manual booking bypassing regular slots if needed - just for testing POC)
                 slot = await tx.scheduleSlot.create({
                     data: {
@@ -86,11 +103,10 @@ export async function createManualAppointmentAction(formData: FormData) {
                         endTime: endDate,
                         doctorId,
                         serviceId,
-                        isAvailable: false
+                        isAvailable: false,
+                        organizationId: session.organizationId
                     }
                 });
-            } else {
-                await tx.scheduleSlot.update({ where: { id: slot.id }, data: { isAvailable: false } });
             }
 
             // 3. Create Appointment Origin MANUAL
@@ -100,7 +116,8 @@ export async function createManualAppointmentAction(formData: FormData) {
                     patientId: patient.id,
                     epsId: epsId,
                     origin: 'MANUAL',
-                    reason: formData.get('reason') as string || 'Agendamiento Manual Panel'
+                    reason: formData.get('reason') as string || 'Agendamiento Manual Panel',
+                    organizationId: session.organizationId
                 }
             });
         });
@@ -125,9 +142,12 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
             return { success: false, error: 'Faltan campos obligatorios para actualizar.' };
         }
 
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
         await prisma.$transaction(async (tx) => {
-            const appointment = await tx.appointment.findUnique({
-                where: { id: appointmentId },
+            const appointment = await tx.appointment.findFirst({
+                where: { id: appointmentId, organizationId: session.organizationId },
                 include: { patient: true }
             });
 
@@ -144,7 +164,7 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
 
             // 2. Gestionar la reagendación logica de Slots
             let newSlot = await tx.scheduleSlot.findFirst({
-                where: { doctorId, startTime: startDate, isAvailable: true }
+                where: { doctorId, startTime: startDate, isAvailable: true, organizationId: session.organizationId }
             });
 
             if (!newSlot) {

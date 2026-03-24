@@ -4,6 +4,7 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { getSession } from '@/lib/session';
 
 const formSchema = z.object({
     name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
@@ -13,15 +14,19 @@ const formSchema = z.object({
 
 export async function getEpsList(query?: string) {
     try {
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
+        const whereObj: any = { organizationId: session.organizationId };
+        if (query) {
+            whereObj.OR = [
+                { name: { contains: query, mode: 'insensitive' } },
+                { nit: { contains: query, mode: 'insensitive' } },
+            ];
+        }
+
         const data = await prisma.eps.findMany({
-            where: query
-                ? {
-                    OR: [
-                        { name: { contains: query, mode: 'insensitive' } },
-                        { nit: { contains: query, mode: 'insensitive' } },
-                    ],
-                }
-                : undefined,
+            where: whereObj,
             include: {
                 _count: {
                     select: { patients: true, appointments: true },
@@ -48,11 +53,15 @@ export async function createEps(prevState: any, formData: FormData) {
             return { success: false, error: 'Datos inválidos', issues: validatedFields.error.flatten().fieldErrors };
         }
 
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
         await prisma.eps.create({
             data: {
                 name: validatedFields.data.name,
                 nit: validatedFields.data.nit || null,
                 isActive: validatedFields.data.isActive,
+                organizationId: session.organizationId
             },
         });
 
@@ -76,8 +85,11 @@ export async function updateEps(id: string, prevState: any, formData: FormData) 
             return { success: false, error: 'Datos inválidos' };
         }
 
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
         await prisma.eps.update({
-            where: { id },
+            where: { id, organizationId: session.organizationId },
             data: {
                 name: validatedFields.data.name,
                 nit: validatedFields.data.nit || null,
@@ -95,8 +107,11 @@ export async function updateEps(id: string, prevState: any, formData: FormData) 
 
 export async function toggleEpsStatus(id: string, currentStatus: boolean) {
     try {
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
         await prisma.eps.update({
-            where: { id },
+            where: { id, organizationId: session.organizationId },
             data: { isActive: !currentStatus },
         });
         revalidatePath('/dashboard/eps');
@@ -109,9 +124,12 @@ export async function toggleEpsStatus(id: string, currentStatus: boolean) {
 
 export async function deleteEps(id: string) {
     try {
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
         // Validar si tiene pacientes o citas atadas
-        const eps = await prisma.eps.findUnique({
-            where: { id },
+        const eps = await prisma.eps.findFirst({
+            where: { id, organizationId: session.organizationId },
             include: {
                 _count: {
                     select: { patients: true, appointments: true },

@@ -4,6 +4,7 @@
 import { prisma } from '../../../lib/prisma';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
+import { getSession } from '../../../lib/session';
 
 export async function saveDoctorAction(formData: FormData) {
     const id = formData.get('id') as string;
@@ -17,10 +18,13 @@ export async function saveDoctorAction(formData: FormData) {
     const isActive = formData.get('isActive') === 'true';
 
     try {
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant no encontrado' };
+
         if (id) {
             // Editando (Asumimos que id es el DoctorProfile.id)
-            const doctor = await prisma.doctorProfile.findUnique({ where: { id }, include: { user: true } });
-            if (!doctor) throw new Error("Doctor no encontrado");
+            const doctor = await prisma.doctorProfile.findFirst({ where: { id, organizationId: session.organizationId }, include: { user: true } });
+            if (!doctor) throw new Error("Doctor no encontrado en esta Organización");
 
             // Validaciones de unicidad (edición)
             if (email !== doctor.user.email) {
@@ -48,28 +52,29 @@ export async function saveDoctorAction(formData: FormData) {
             });
         } else {
             // Creando
-            const hashedPassword = await bcrypt.hash(password || 'sanvicente123', 10);
+            const hashedPassword = await bcrypt.hash(password || 'temporal123', 10);
 
             // Validaciones de unicidad (creación)
-            const existCedula = await prisma.doctorProfile.findUnique({ where: { cedula } });
-            if (existCedula) throw new Error("La cédula ya está registrada para otro médico.");
+            const existCedula = await prisma.doctorProfile.findFirst({ where: { cedula, organizationId: session.organizationId } });
+            if (existCedula) throw new Error("La cédula ya está registrada para otro médico en esta Clínica.");
 
             const existEmail = await prisma.user.findUnique({ where: { email } });
             if (existEmail) throw new Error("El correo electrónico ya se encuentra en uso.");
 
             if (medicalLicense) {
-                const existLicense = await prisma.doctorProfile.findUnique({ where: { medicalLicense } });
+                const existLicense = await prisma.doctorProfile.findFirst({ where: { medicalLicense, organizationId: session.organizationId } });
                 if (existLicense) throw new Error("La Tarjeta Profesional ya está registrada para otro médico.");
             }
 
             const newUser = await prisma.user.create({
-                data: { email, password: hashedPassword, role: 'DOCTOR' }
+                data: { email, password: hashedPassword, role: 'DOCTOR', organizationId: session.organizationId }
             });
 
             await prisma.doctorProfile.create({
                 data: {
                     fullName, cedula, serviceId: serviceId || null, medicalLicense, phone, isActive,
-                    userId: newUser.id
+                    userId: newUser.id,
+                    organizationId: session.organizationId
                 }
             });
         }
@@ -85,10 +90,11 @@ export async function saveDoctorAction(formData: FormData) {
 
 export async function deleteDoctorAction(id: string) {
     try {
-        const doctor = await prisma.doctorProfile.findUnique({ where: { id } });
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+
+        const doctor = await prisma.doctorProfile.findFirst({ where: { id, organizationId: session.organizationId } });
         if (doctor) {
-            // Por comportamiento de base de datos o por logica, borramos al user y eso hace cascade en el profile (si se tiene Cascade Delete)
-            // Para asegurar, borramos explicitamente el user. 
             await prisma.user.delete({ where: { id: doctor.userId } });
         }
         revalidatePath('/dashboard/medicos');

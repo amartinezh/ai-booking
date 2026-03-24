@@ -4,6 +4,7 @@
 import { prisma } from '../../../lib/prisma';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
+import { getSession } from '../../../lib/session';
 
 export async function savePatientAction(formData: FormData) {
     const id = formData.get('id') as string;
@@ -16,9 +17,12 @@ export async function savePatientAction(formData: FormData) {
     const dateOfBirth = formData.get('dateOfBirth') as string;
 
     try {
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant no encontrado' };
+
         if (id) {
-            const patient = await prisma.patientProfile.findUnique({ where: { id }, include: { user: true } });
-            if (!patient) throw new Error("Paciente no encontrado");
+            const patient = await prisma.patientProfile.findFirst({ where: { id, organizationId: session.organizationId }, include: { user: true } });
+            if (!patient) throw new Error("Paciente no encontrado en esta Organización");
 
             const userData: any = { email };
             if (password) userData.password = await bcrypt.hash(password, 10);
@@ -33,13 +37,13 @@ export async function savePatientAction(formData: FormData) {
                 }
             });
         } else {
-            const hashedPassword = await bcrypt.hash(password || 'sanvicente123', 10);
+            const hashedPassword = await bcrypt.hash(password || 'temporal123', 10);
 
-            const existing = await prisma.patientProfile.findUnique({ where: { cedula } });
-            if (existing) throw new Error("La cédula ya está registrada");
+            const existing = await prisma.patientProfile.findFirst({ where: { cedula, organizationId: session.organizationId } });
+            if (existing) throw new Error("La cédula ya está registrada en esta clínica");
 
             const newUser = await prisma.user.create({
-                data: { email, password: hashedPassword, role: 'PATIENT' }
+                data: { email, password: hashedPassword, role: 'PATIENT', organizationId: session.organizationId }
             });
 
             await prisma.patientProfile.create({
@@ -47,7 +51,8 @@ export async function savePatientAction(formData: FormData) {
                     fullName, cedula, address,
                     whatsappId: whatsappId || null,
                     dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-                    userId: newUser.id
+                    userId: newUser.id,
+                    organizationId: session.organizationId
                 }
             });
         }
@@ -60,7 +65,10 @@ export async function savePatientAction(formData: FormData) {
 
 export async function deletePatientAction(id: string) {
     try {
-        const patient = await prisma.patientProfile.findUnique({ where: { id } });
+        const session = await getSession();
+        if (!session?.organizationId) return { success: false, error: 'Tenant no encontrado' };
+
+        const patient = await prisma.patientProfile.findFirst({ where: { id, organizationId: session.organizationId } });
         if (patient) {
             await prisma.user.delete({ where: { id: patient.userId } });
         }
