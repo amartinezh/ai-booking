@@ -1,2 +1,2 @@
-export { PrismaClient, Prisma, Role, AppointmentStatus, AppointmentOrigin } from '@prisma/client';
-export type { User, PatientProfile, DoctorProfile, ScheduleSlot, Appointment, Eps, MedicalService, AgentProfile, InteractionLog } from '@prisma/client';
+export { PrismaClient, Prisma, Role, AppointmentStatus, AppointmentOrigin, RecordStatus, ConsentType, ConsentStatus } from '@prisma/client';
+export type { User, PatientProfile, DoctorProfile, ScheduleSlot, Appointment, Eps, MedicalService, AgentProfile, InteractionLog, ClinicalRecord, DigitalSignature, Addendum, InformedConsent } from '@prisma/client';

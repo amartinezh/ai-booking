@@ -197,12 +197,33 @@ export default function DashboardClient({
 
                                         <td className="px-6 py-5 whitespace-nowrap text-right space-y-2">
                                             {apt.status === 'SCHEDULED' && apt.attendanceStatus === 'ATTENDED' && role === 'DOCTOR' && (
-                                                <button
-                                                    onClick={() => setEhrAppointment(apt)}
-                                                    className="w-full text-xs font-semibold px-3 py-1.5 rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-sm"
-                                                >
-                                                    📝 Hist. Clínica
-                                                </button>
+                                                <>
+                                                    {!apt.clinicalRecord && (
+                                                        <button
+                                                            onClick={() => setEhrAppointment(apt)}
+                                                            className="w-full text-xs font-semibold px-3 py-1.5 rounded-md text-white bg-emerald-600 hover:bg-emerald-700 transition-colors shadow-sm"
+                                                        >
+                                                            ✅ Iniciar Historia
+                                                        </button>
+                                                    )}
+                                                    {apt.clinicalRecord?.status === 'DRAFT' && (
+                                                        <button
+                                                            onClick={() => setEhrAppointment(apt)}
+                                                            className="w-full text-xs font-semibold px-3 py-1.5 rounded-md text-white bg-amber-500 hover:bg-amber-600 transition-colors shadow-sm"
+                                                        >
+                                                            📝 Continuar Borrador
+                                                        </button>
+                                                    )}
+                                                    {apt.clinicalRecord?.status === 'SIGNED' && (
+                                                        <button
+                                                            onClick={() => setEhrAppointment(apt)}
+                                                            className="w-full text-xs font-semibold px-3 py-1.5 rounded-md text-white bg-slate-800 hover:bg-slate-900 transition-colors shadow-sm flex items-center justify-center gap-1"
+                                                        >
+                                                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                                                            Ver Historia
+                                                        </button>
+                                                    )}
+                                                </>
                                             )}
 
                                             {apt.status === 'SCHEDULED' && apt.attendanceStatus !== 'ATTENDED' && (

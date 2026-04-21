@@ -132,8 +132,9 @@ model PatientProfile {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  appointments    Appointment[]
-  clinicalRecords ClinicalRecord[]
+  appointments     Appointment[]
+  clinicalRecords  ClinicalRecord[]
+  informedConsents InformedConsent[]
 
   // 🏢 TENANT ISOLATION
   organizationId String?
@@ -166,6 +167,7 @@ model DoctorProfile {
   slots           ScheduleSlot[]
   agents          AgentProfile[] // Agentes limitados a gestionar la agenda de este doctor
   clinicalRecords ClinicalRecord[]
+  addendums       Addendum[]
 
   // 🏢 TENANT ISOLATION
   organizationId String?
@@ -353,6 +355,12 @@ model ClinicalRecord {
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
+  status       RecordStatus @default(DRAFT)
+  recordNumber Int          @default(autoincrement())
+
+  signature DigitalSignature?
+  addendums Addendum[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -399,4 +407,72 @@ enum AttendanceStatus {
   PENDING
   ATTENDED
   NO_SHOW
+}
+
+// -----------------------------------------------------------------------------
+// 🔐 LEGAL & COMPLIANCE (HealthTech Colombia)
+// -----------------------------------------------------------------------------
+
+enum RecordStatus {
+  DRAFT
+  SIGNED
+  LOCKED
+}
+
+enum ConsentType {
+  DATA_TREATMENT
+  MEDICAL_PROCEDURE
+}
+
+enum ConsentStatus {
+  ACCEPTED
+  REVOKED
+}
+
+model DigitalSignature {
+  id            String   @id @default(uuid())
+  userId        String // El médico que firmó
+  ipAddress     String?
+  timestamp     DateTime @default(now())
+  hashedContent String // Hash SHA-256 integrando historial y sello de tiempo
+
+  // Relaciones (Debe pertenecer a un ClinicalRecord O a un Addendum)
+  clinicalRecordId String?         @unique
+  clinicalRecord   ClinicalRecord? @relation(fields: [clinicalRecordId], references: [id], onDelete: Cascade)
+
+  addendumId String?   @unique
+  addendum   Addendum? @relation(fields: [addendumId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model Addendum {
+  id      String @id @default(uuid())
+  content String @db.Text // Nota aclaratoria
+
+  doctorId String
+  doctor   DoctorProfile @relation(fields: [doctorId], references: [id])
+
+  clinicalRecordId String
+  clinicalRecord   ClinicalRecord @relation(fields: [clinicalRecordId], references: [id], onDelete: Cascade)
+
+  signature DigitalSignature?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model InformedConsent {
+  id        String        @id @default(uuid())
+  type      ConsentType
+  status    ConsentStatus @default(ACCEPTED)
+  version   String // Versión de los términos de datos (ej: "v1.2")
+  ipAddress String?
+  userAgent String?
+
+  patientId String
+  patient   PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

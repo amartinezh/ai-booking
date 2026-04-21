@@ -64,7 +64,8 @@ export default async function DashboardPage({
         include: {
             patient: { include: { user: true } },
             scheduleSlot: { include: { doctor: true, service: true } },
-            eps: true
+            eps: true,
+            clinicalRecord: { select: { id: true, status: true } }
         },
         orderBy: { scheduleSlot: { startTime: 'asc' } }
     });

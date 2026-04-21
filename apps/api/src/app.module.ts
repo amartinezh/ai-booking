@@ -9,6 +9,7 @@ import { join } from 'path';
 import { AppointmentsModule } from './appointments/appointments.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ClinicalRecordsModule } from './clinical-records/clinical-records.module';
+import { Hl7FhirModule } from './hl7-fhir/hl7-fhir.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ClinicalRecordsModule } from './clinical-records/clinical-records.modul
     AppointmentsModule,
     AnalyticsModule,
     ClinicalRecordsModule,
+    Hl7FhirModule,
   ],
 })
 export class AppModule {}
