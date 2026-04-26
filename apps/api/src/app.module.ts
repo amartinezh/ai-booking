@@ -10,6 +10,7 @@ import { AppointmentsModule } from './appointments/appointments.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ClinicalRecordsModule } from './clinical-records/clinical-records.module';
 import { Hl7FhirModule } from './hl7-fhir/hl7-fhir.module';
+import { ClinicalAiModule } from './clinical-ai/clinical-ai.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { Hl7FhirModule } from './hl7-fhir/hl7-fhir.module';
     AppointmentsModule,
     AnalyticsModule,
     ClinicalRecordsModule,
+    ClinicalAiModule,
     Hl7FhirModule,
   ],
 })

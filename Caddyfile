@@ -3,5 +3,5 @@ panel.173.249.12.226.nip.io {
 }
 
 api.173.249.12.226.nip.io {
-    reverse_proxy api:3000
+    reverse_proxy api:3001
 }

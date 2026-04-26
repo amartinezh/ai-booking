@@ -51,7 +51,8 @@ export async function fetchClinicalRecordByAppointment(appointmentId: string) {
             throw new Error('Error al obtener la historia clínica');
         }
 
-        const data = await res.json();
+        const rawText = await res.text();
+        const data = rawText ? JSON.parse(rawText) : null;
         return { success: true, data };
     } catch (error: any) {
         console.error('fetchClinicalRecord error:', error);

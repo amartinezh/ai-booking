@@ -32,11 +32,12 @@ export async function getUpcomingSlots(doctorId?: string) {
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
 
-        // Mostrar slots desde el inicio del día actual (medianoche) para ver la agenda completa del día
-        const todayAtMidnight = new Date();
-        todayAtMidnight.setHours(0, 0, 0, 0);
+        // Expandimos 30 días al pasado para que el visualizador de semana/mes cargue contexto histórico
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        thirtyDaysAgo.setHours(0, 0, 0, 0);
 
-        const whereClause: any = { startTime: { gte: todayAtMidnight }, organizationId: session.organizationId };
+        const whereClause: any = { startTime: { gte: thirtyDaysAgo }, organizationId: session.organizationId };
         if (doctorId) whereClause.doctorId = doctorId;
 
         const slots = await prisma.scheduleSlot.findMany({
@@ -48,7 +49,7 @@ export async function getUpcomingSlots(doctorId?: string) {
                 appointment: true,
             },
             orderBy: { startTime: 'asc' },
-            take: 100, // Limitar para UX
+            take: 3000, // Límite expansivo para vistas mensuales pesadas
         });
         return { success: true, data: slots };
     } catch (error) {

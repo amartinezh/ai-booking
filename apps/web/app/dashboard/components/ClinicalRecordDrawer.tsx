@@ -1,20 +1,22 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, SetStateAction } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { 
-    createClinicalRecord, 
+import {
+    createClinicalRecord,
     fetchClinicalRecordByAppointment,
     updateClinicalRecordAction,
     signClinicalRecordAction,
     createAddendumAction
 } from '@/app/actions/ehr';
+import { transcribeAudioAction } from '@/app/actions/dictation';
 import { X, Plus, Trash2, Save, Stethoscope, FileText, ClipboardList, Lock, FilePlus } from 'lucide-react';
 import { toast } from 'sonner';
 import ConfirmSignatureModal from './ConfirmSignatureModal';
+import VoiceDictationButton from './VoiceDictationButton';
 const ehrSchema = z.object({
     vitalSigns: z.object({
         bloodPressure: z.string().optional(),
@@ -53,7 +55,7 @@ export default function ClinicalRecordDrawer({
 }) {
     const [activeTab, setActiveTab] = useState<'vitals' | 'notes' | 'plan'>('vitals');
     const [isSubmitting, setIsSubmitting] = useState(false);
-    
+
     // Estados para la carga de historiales existentes y adendas
     const [existingRecord, setExistingRecord] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -61,7 +63,11 @@ export default function ClinicalRecordDrawer({
     const [isSubmittingAddendum, setIsSubmittingAddendum] = useState(false);
     const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
 
-    const { register, control, handleSubmit, reset, formState: { errors } } = useForm<EhrFormValues>({
+    // AI Dictation Engine States
+    const [isProcessingAI, setIsProcessingAI] = useState(false);
+    const [aiMissingFields, setAiMissingFields] = useState<string[]>([]);
+
+    const { register, control, handleSubmit, reset, getValues, setValue, formState: { errors } } = useForm<EhrFormValues>({
         resolver: zodResolver(ehrSchema),
         defaultValues: {
             diagnoses: [{ description: '', code: '', isMain: true }],
@@ -96,6 +102,61 @@ export default function ClinicalRecordDrawer({
         loadRecord();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [appointment.id]);
+
+    const handleAudioTranscribed = async (audioBase64: string) => {
+        setIsProcessingAI(true);
+        const res = await transcribeAudioAction(audioBase64);
+        if (res.success && res.data) {
+            const ai = res.data;
+            const currentVals = getValues();
+            const missing: SetStateAction<string[]> = [];
+
+            const mergeText = (current: string | undefined, aiFragment: string | null, fieldName: string) => {
+                if (aiFragment === null) {
+                    if (!current) missing.push(fieldName);
+                    return current || '';
+                }
+                if (!current) return aiFragment;
+                return `${current}\n\n${aiFragment}`;
+            };
+
+            // String Merges
+            setValue('chiefComplaint', mergeText(currentVals.chiefComplaint, ai.chiefComplaint, 'chiefComplaint'));
+            setValue('currentIllness', mergeText(currentVals.currentIllness, ai.currentIllness, 'currentIllness'));
+            setValue('physicalExam', mergeText(currentVals.physicalExam, ai.physicalExam, 'physicalExam'));
+            setValue('evolutionNotes', mergeText(currentVals.evolutionNotes, ai.evolutionNotes, 'evolutionNotes'));
+
+            setAiMissingFields(missing);
+
+            // Array Appends - Remove initially empty ones if any
+            if (ai.diagnoses && Array.isArray(ai.diagnoses)) {
+                ai.diagnoses.forEach((dx: any) => {
+                    appendDx({
+                        description: dx.description || '',
+                        code: dx.code || '',
+                        isMain: dx.isMain || false
+                    });
+                });
+            }
+
+            if (ai.prescriptions && Array.isArray(ai.prescriptions)) {
+                ai.prescriptions.forEach((rx: any) => {
+                    appendRx({
+                        medication: rx.medication || '',
+                        dose: rx.dose || '',
+                        frequency: rx.frequency || '',
+                        duration: rx.duration || '',
+                        notes: rx.notes || ''
+                    });
+                });
+            }
+
+            toast.success('Dictado procesado. HCE actualizada inteligentemente.');
+        } else {
+            toast.error(res.error || 'Fallo de procesamiento IA.');
+        }
+        setIsProcessingAI(false);
+    };
 
     const isSigned = existingRecord?.status === 'SIGNED';
 
@@ -141,7 +202,7 @@ export default function ClinicalRecordDrawer({
         setIsSubmitting(true);
         const userId = appointment.scheduleSlot.doctor.userId; // UserID autenticado del doctor
         const res = await signClinicalRecordAction(existingRecord.id, userId);
-        
+
         if (res.success) {
             toast.success("✓ Historia Clínica Sellada Exitosamente (Firma SHA-256).");
             setIsSignatureModalOpen(false);
@@ -153,8 +214,8 @@ export default function ClinicalRecordDrawer({
     const handleAddAddendum = async () => {
         setIsSubmittingAddendum(true);
         const res = await createAddendumAction(
-            existingRecord.id, 
-            appointment.scheduleSlot.doctor.id, 
+            existingRecord.id,
+            appointment.scheduleSlot.doctor.id,
             addendumContent
         );
         if (res.success) {
@@ -170,29 +231,38 @@ export default function ClinicalRecordDrawer({
     return (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm transition-opacity">
             <div className={`w-full max-w-4xl bg-white dark:bg-zinc-900 h-full shadow-2xl flex flex-col pt-0 animate-slide-in-right ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
-                
+
                 {/* Header */}
                 <div className={`flex items-center justify-between px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 ${isSigned ? 'bg-slate-800' : 'bg-zinc-50 dark:bg-zinc-900'}`}>
                     <div>
                         <h2 className={`text-xl font-bold flex items-center gap-2 ${isSigned ? 'text-white' : 'text-zinc-900 dark:text-white'}`}>
-                            {isSigned ? <Lock className="w-5 h-5 text-emerald-400" /> : '📝'} 
+                            {isSigned ? <Lock className="w-5 h-5 text-emerald-400" /> : '📝'}
                             {isSigned ? 'Historia Clínica (Lectura Sellada)' : 'Historia Clínica Electrónica'}
                         </h2>
                         <p className={`text-sm mt-1 ${isSigned ? 'text-slate-300' : 'text-zinc-500'}`}>
                             Paciente: <strong className={isSigned ? 'text-white' : 'text-zinc-700 dark:text-zinc-300'}>{appointment.patient.fullName}</strong> (DNI: {appointment.patient.cedula})
                         </p>
                     </div>
-                    <button onClick={onClose} className={`p-2 rounded-full transition ${isSigned ? 'bg-slate-700 hover:bg-slate-600' : 'bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700'}`}>
-                        <X className={`w-5 h-5 ${isSigned ? 'text-white' : 'text-zinc-600 dark:text-zinc-300'}`} />
-                    </button>
+                    <div className="flex items-center gap-4">
+                        {!isSigned && (
+                            <VoiceDictationButton
+                                onAudioReady={handleAudioTranscribed}
+                                isProcessingAI={isProcessingAI}
+                                disabled={isSigned}
+                            />
+                        )}
+                        <button onClick={onClose} className={`p-2 rounded-full transition ${isSigned ? 'bg-slate-700 hover:bg-slate-600' : 'bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700'}`}>
+                            <X className={`w-5 h-5 ${isSigned ? 'text-white' : 'text-zinc-600 dark:text-zinc-300'}`} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Modal Confirmación de Firma */}
-                <ConfirmSignatureModal 
-                    isOpen={isSignatureModalOpen} 
-                    onClose={() => setIsSignatureModalOpen(false)} 
-                    onConfirm={confirmSignatureExecution} 
-                    isLoading={isSubmitting} 
+                <ConfirmSignatureModal
+                    isOpen={isSignatureModalOpen}
+                    onClose={() => setIsSignatureModalOpen(false)}
+                    onConfirm={confirmSignatureExecution}
+                    isLoading={isSubmitting}
                 />
 
                 {/* Tabs */}
@@ -212,7 +282,7 @@ export default function ClinicalRecordDrawer({
                 <div className="flex-1 overflow-y-auto bg-zinc-50/50 dark:bg-black/20 p-6">
                     <form id="ehr-form" onSubmit={handleSubmit(onSaveDraft)} className="space-y-8">
                         <fieldset disabled={isSigned} className="space-y-8 disabled:opacity-90">
-                            
+
                             {/* TAB 1: VITALS */}
                             <div className={activeTab === 'vitals' ? 'block' : 'hidden'}>
                                 <h3 className="text-lg font-bold text-zinc-800 dark:text-zinc-200 mb-4">Signos Vitales</h3>
@@ -265,25 +335,28 @@ export default function ClinicalRecordDrawer({
 
                             {/* TAB 2: NOTES */}
                             <div className={activeTab === 'notes' ? 'block' : 'hidden'}>
-                                <h3 className="text-lg font-bold text-zinc-800 dark:text-zinc-200 mb-4">Anamnesis y Examen Físico</h3>
+                                <h3 className="text-lg font-bold text-zinc-800 dark:text-zinc-200 mb-4 flex items-center gap-2">
+                                    Anamnesis y Examen Físico
+                                    {aiMissingFields.length > 0 && <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md font-bold">Atención: Campos no dictados</span>}
+                                </h3>
                                 <div className="space-y-5">
                                     <div>
                                         <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">S - Motivo de Consulta <span className="text-red-500">*</span></label>
-                                        <textarea {...register('chiefComplaint')} rows={2} className={`w-full bg-white dark:bg-zinc-900 border rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-zinc-100 disabled:text-zinc-600 ${errors.chiefComplaint ? 'border-red-500' : 'border-zinc-300 dark:border-zinc-700'}`} placeholder="¿Por qué acude el paciente hoy?"></textarea>
+                                        <textarea {...register('chiefComplaint')} rows={2} className={`w-full border rounded-lg px-4 py-3 text-sm focus:ring-2 disabled:bg-zinc-100 disabled:text-zinc-600 transition-colors ${errors.chiefComplaint ? 'border-red-500 focus:ring-red-500' : aiMissingFields.includes('chiefComplaint') ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 focus:ring-amber-500' : 'bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700 focus:ring-blue-500'}`} placeholder="¿Por qué acude el paciente hoy?"></textarea>
                                         {errors.chiefComplaint && <span className="text-xs text-red-500 mt-1">{errors.chiefComplaint.message}</span>}
                                     </div>
                                     <div>
                                         <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">O - Enfermedad Actual <span className="text-red-500">*</span></label>
-                                        <textarea {...register('currentIllness')} rows={4} className={`w-full bg-white dark:bg-zinc-900 border rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-zinc-100 disabled:text-zinc-600 ${errors.currentIllness ? 'border-red-500' : 'border-zinc-300 dark:border-zinc-700'}`} placeholder="Descripción detallada de la enfermedad..."></textarea>
+                                        <textarea {...register('currentIllness')} rows={4} className={`w-full border rounded-lg px-4 py-3 text-sm focus:ring-2 disabled:bg-zinc-100 disabled:text-zinc-600 transition-colors ${errors.currentIllness ? 'border-red-500 focus:ring-red-500' : aiMissingFields.includes('currentIllness') ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 focus:ring-amber-500' : 'bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700 focus:ring-blue-500'}`} placeholder="Descripción detallada de la enfermedad..."></textarea>
                                         {errors.currentIllness && <span className="text-xs text-red-500 mt-1">{errors.currentIllness.message}</span>}
                                     </div>
                                     <div>
                                         <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Examen Físico</label>
-                                        <textarea {...register('physicalExam')} rows={4} className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-zinc-100 disabled:text-zinc-600" placeholder="Hallazgos al examen físico..."></textarea>
+                                        <textarea {...register('physicalExam')} rows={4} className={`w-full border rounded-lg px-4 py-3 text-sm focus:ring-2 disabled:bg-zinc-100 disabled:text-zinc-600 transition-colors ${aiMissingFields.includes('physicalExam') ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 focus:ring-amber-500' : 'bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700 focus:ring-blue-500'}`} placeholder="Hallazgos al examen físico..."></textarea>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Notas de Evolución</label>
-                                        <textarea {...register('evolutionNotes')} rows={3} className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-zinc-100 disabled:text-zinc-600" placeholder="Apreciaciones clínicas adicionales..."></textarea>
+                                        <textarea {...register('evolutionNotes')} rows={3} className={`w-full border rounded-lg px-4 py-3 text-sm focus:ring-2 disabled:bg-zinc-100 disabled:text-zinc-600 transition-colors ${aiMissingFields.includes('evolutionNotes') ? 'border-amber-400 bg-amber-50 dark:bg-amber-900/20 focus:ring-amber-500' : 'bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700 focus:ring-blue-500'}`} placeholder="Apreciaciones clínicas adicionales..."></textarea>
                                     </div>
                                 </div>
                             </div>
@@ -291,7 +364,7 @@ export default function ClinicalRecordDrawer({
                             {/* TAB 3: PLAN */}
                             <div className={activeTab === 'plan' ? 'block' : 'hidden'}>
                                 <h3 className="text-lg font-bold text-zinc-800 dark:text-zinc-200 mb-4">A - Diagnóstico</h3>
-                                
+
                                 <div className="space-y-4 mb-8">
                                     {dxFields.map((field, index) => (
                                         <div key={field.id} className={`flex gap-4 items-start p-4 rounded-xl border ${isSigned ? 'bg-zinc-50 border-zinc-200 dark:bg-zinc-800 dark:border-zinc-700' : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700'}`}>
@@ -384,17 +457,17 @@ export default function ClinicalRecordDrawer({
                     {isSigned && (
                         <div className="mt-12 bg-zinc-100/80 dark:bg-zinc-800/60 p-6 rounded-2xl border-2 border-zinc-200 dark:border-zinc-700">
                             <h4 className="text-lg font-bold mb-5 text-zinc-900 dark:text-white flex items-center gap-2">
-                                <FilePlus className="w-5 h-5 text-indigo-600 dark:text-indigo-400" /> 
+                                <FilePlus className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                                 Adendas Legales y Notas Aclaratorias
                             </h4>
-                            
+
                             {/* Historial de Adendas */}
                             {existingRecord?.addendums?.length > 0 ? (
                                 <div className="space-y-4 mb-6">
                                     {existingRecord.addendums.map((add: any, i: number) => (
                                         <div key={add.id} className="bg-white dark:bg-zinc-900 p-5 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700">
                                             <div className="flex justify-between items-center mb-2">
-                                                <span className="text-xs font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-2.5 py-1 rounded">Nota #{i+1}</span>
+                                                <span className="text-xs font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-2.5 py-1 rounded">Nota #{i + 1}</span>
                                                 <time className="text-xs font-mono text-zinc-500">
                                                     {new Date(add.createdAt).toLocaleDateString('es-CO')} - {new Date(add.createdAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
                                                 </time>
@@ -406,19 +479,19 @@ export default function ClinicalRecordDrawer({
                             ) : (
                                 <p className="text-sm text-zinc-500 mb-6 italic">No existen adendas registradas en esta historia clínica.</p>
                             )}
-                            
+
                             {/* Input para Nueva Adenda */}
                             <div className="bg-white dark:bg-zinc-900 p-5 rounded-xl border border-zinc-300 dark:border-zinc-600 shadow-inner">
                                 <h5 className="text-sm font-bold text-zinc-800 dark:text-zinc-200 mb-3">Registrar Nueva Adenda (Modificación)</h5>
-                                <textarea 
-                                    rows={3} 
+                                <textarea
+                                    rows={3}
                                     value={addendumContent}
                                     onChange={(e) => setAddendumContent(e.target.value)}
                                     className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 mb-3"
                                     placeholder="Escriba la modificación clínica o corrección legal de la historia original. Este texto también generará firma criptográfica y sello temporal..."
                                 />
                                 <div className="flex justify-end relative">
-                                    <button 
+                                    <button
                                         onClick={handleAddAddendum}
                                         disabled={isSubmittingAddendum || !addendumContent.trim()}
                                         className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-bold disabled:opacity-50 transition-colors shadow-md flex items-center gap-2"
@@ -443,16 +516,16 @@ export default function ClinicalRecordDrawer({
                             ⚠️ Recuerde: Las historias sin firmar se conservan como "Borrador".
                         </div>
                         <div className="flex gap-4">
-                            <button 
-                                type="submit" 
-                                form="ehr-form" 
+                            <button
+                                type="submit"
+                                form="ehr-form"
                                 disabled={isSubmitting}
                                 className="px-6 py-2.5 rounded-xl font-bold bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-zinc-800 dark:text-amber-500 dark:hover:bg-zinc-700 transition disabled:opacity-50 border border-amber-300 dark:border-amber-700/50"
                             >
                                 Guardar Borrador
                             </button>
-                            <button 
-                                type="button" 
+                            <button
+                                type="button"
                                 onClick={handleSignRecord}
                                 disabled={isSubmitting || !existingRecord?.id}
                                 title={!existingRecord?.id ? "Guarde un borrador antes de firmar" : ""}
