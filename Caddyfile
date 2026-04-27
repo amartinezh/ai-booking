@@ -1,4 +1,4 @@
-panel.agendamiento-ia.com {
+agendamiento-ia.com {
     reverse_proxy web:3000
 }
 
