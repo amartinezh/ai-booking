@@ -1,21 +1,19 @@
-// apps/api/src/chatbot/chatbot.module.ts
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ChatbotController } from './chatbot.controller';
 import { ChatbotService } from './chatbot.service';
 import { ChatbotCron } from './chatbot.cron';
 import { HttpModule } from '@nestjs/axios';
 import { AppointmentsModule } from 'src/appointments/appointments.module';
+import { WaitlistModule } from 'src/waitlist/waitlist.module';
 
 @Module({
   imports: [
-    HttpModule, // <-- 2. Lo registramos en los imports del módulo
+    HttpModule,
     AppointmentsModule,
+    forwardRef(() => WaitlistModule),
   ],
-  // Registramos el controlador que recibe los webhooks
   controllers: [ChatbotController],
-  // Registramos el servicio que contiene la lógica de negocio
   providers: [ChatbotService, ChatbotCron],
-  // Exportamos por si en el futuro otro módulo necesita enviar mensajes
   exports: [ChatbotService],
 })
-export class ChatbotModule {}
+export class ChatbotModule { }

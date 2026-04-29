@@ -7,7 +7,7 @@ import { Prisma } from '@antigravity/database';
 export class AppointmentsService {
   private readonly logger = new Logger(AppointmentsService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   // 1. LÓGICA DE BÚSQUEDA H.I.S
   async getAvailableSlots(
@@ -102,10 +102,10 @@ export class AppointmentsService {
 
   // 3. CONTROL DE ASISTENCIA
   async updateAttendance(appointmentId: string, status: any, organizationId?: string): Promise<any> {
-    
+
     // Verificamos antes para evitar NotFoundExceptions por isolation o seguridad
     const apt = await this.prisma.appointment.findFirst({
-        where: { id: appointmentId, organizationId }
+      where: { id: appointmentId, organizationId }
     });
     if (!apt) throw new Error('Cita no encontrada o no pertenece a tu Organización.');
 
@@ -113,14 +113,33 @@ export class AppointmentsService {
       where: { id: appointmentId },
       data: { attendanceStatus: status },
       include: {
-         patient: true,
-         scheduleSlot: { include: { doctor: true, service: true } }
+        patient: true,
+        scheduleSlot: { include: { doctor: true, service: true } }
       }
     });
 
     return {
-       success: true,
-       data: updated
+      success: true,
+      data: updated
     };
+  }
+
+  // NUEVO método: llamar cuando un slot se LIBERA
+  async releaseSlot(slotId: string, organizationId: string): Promise<void> {
+    const slot = await this.prisma.scheduleSlot.update({
+      where: { id: slotId },
+      data: { isAvailable: true },
+      include: { service: true, doctor: true },
+    });
+
+    // Disparar notificación a la waitlist
+    await this.waitlistService.notifyWaitlist({
+      slotId: slot.id,
+      serviceId: slot.serviceId,
+      epsId: slot.allowedEpsId,
+      organizationId,
+      doctorName: slot.doctor.fullName,
+      slotDate: slot.startTime,
+    });
   }
 }

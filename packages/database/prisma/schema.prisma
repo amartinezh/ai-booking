@@ -36,6 +36,7 @@ model Organization {
   doctors         DoctorProfile[]
   interactionLogs InteractionLog[]
   agents          AgentProfile[]
+  waitlistEntries WaitlistEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -80,6 +81,7 @@ model Eps {
   slots        ScheduleSlot[] // Cupos de agenda EXCLUSIVOS para esta EPS
   appointments Appointment[] // Historial de citas facturadas por esta EPS
   agents       AgentProfile[] // Agentes limitados a agendar paciente de esta EPS
+  waitlistEntries WaitlistEntry[]
 
   // 🏢 TENANT ISOLATION
   organizationId String?
@@ -100,6 +102,7 @@ model MedicalService {
   // Relaciones
   doctors DoctorProfile[] // Qué doctores prestan este servicio
   slots   ScheduleSlot[] // Agenda disponible para este servicio
+  waitlistEntries WaitlistEntry[]
 
   // 🏢 TENANT ISOLATION
   organizationId String?
@@ -135,6 +138,7 @@ model PatientProfile {
   appointments     Appointment[]
   clinicalRecords  ClinicalRecord[]
   informedConsents InformedConsent[]
+  waitlistEntries  WaitlistEntry[]
 
   // 🏢 TENANT ISOLATION
   organizationId String?
@@ -475,4 +479,53 @@ model InformedConsent {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// ⏳ LISTA DE ESPERA (WAITLIST)
+// -----------------------------------------------------------------------------
+model WaitlistEntry {
+  id String @id @default(uuid())
+
+  // Quién espera
+  patientId String
+  patient   PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  // Qué busca
+  serviceId String
+  service   MedicalService @relation(fields: [serviceId], references: [id])
+
+  // Filtro EPS (null = acepta cualquier slot universal)
+  epsId String?
+  eps   Eps?    @relation(fields: [epsId], references: [id])
+
+  // Estado de la entrada
+  status     WaitlistStatus @default(WAITING)
+  notifiedAt DateTime?
+  expiresAt  DateTime?
+
+  // Canal de contacto
+  whatsappId String
+
+  // Datos del slot pendiente cuando status = NOTIFIED
+  // Estructura: { pendingSlotId, doctorName, slotDate }
+  metadata Json?
+
+  // 🏢 TENANT ISOLATION
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, serviceId, status])
+  @@index([whatsappId, status])
+}
+
+enum WaitlistStatus {
+  WAITING    // Esperando que se libere un cupo
+  NOTIFIED   // Le avisamos, esperando confirmación SI/NO
+  CONFIRMED  // Tomó el cupo (se convirtió en Appointment)
+  EXPIRED    // No respondió en 30 minutos
+  CANCELLED  // Salió voluntariamente o rechazó el cupo
 }
