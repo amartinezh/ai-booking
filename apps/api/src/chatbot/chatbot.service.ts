@@ -42,11 +42,23 @@ export class ChatbotService {
 
   // ══════════════════════════════════════════════════════════════
   // HELPER 1: ENVÍO DE MENSAJES OUTBOUND (META API)
+  // 🛡️ FIX BUG #1 y #2: Nunca lanza errores que crasheen el proceso.
+  // Si Meta falla (401, 500, timeout, etc.), se loguea y se devuelve null.
   // ══════════════════════════════════════════════════════════════
   private async sendWhatsAppMessage(toPhone: string, text: string) {
     const token = this.configService.get<string>('META_ACCESS_TOKEN');
     const phoneId = await this.getOriginPhoneId(toPhone);
-    if (!phoneId) throw new Error('CRÍTICO: META_PHONE_ID no resuelto');
+
+    // ✅ FIX: en lugar de throw, log + return null
+    if (!phoneId) {
+      this.logger.error(`CRÍTICO: META_PHONE_ID no resuelto para ${toPhone}. Mensaje NO enviado.`);
+      return null;
+    }
+
+    if (!token) {
+      this.logger.error(`CRÍTICO: META_ACCESS_TOKEN no configurado. Mensaje NO enviado a ${toPhone}.`);
+      return null;
+    }
 
     const url = `https://graph.facebook.com/v19.0/${phoneId}/messages`;
     try {
@@ -70,8 +82,19 @@ export class ChatbotService {
       );
       return response.data;
     } catch (error) {
-      this.logger.error(`Error enviando mensaje a ${toPhone}`, error.response?.data || error.message);
-      throw error;
+      // ✅ FIX: capturar error sin propagarlo
+      const errorBody = error.response?.data || error.message || error;
+      const errorString = typeof errorBody === 'object' ? JSON.stringify(errorBody) : errorBody;
+      this.logger.error(`Error enviando mensaje a ${toPhone}: ${errorString}`);
+
+      // Detectar token expirado para alertar específicamente
+      if (error.response?.data?.error?.code === 190) {
+        this.logger.error(
+          `🚨 TOKEN DE META EXPIRADO O REVOCADO. Renueva META_ACCESS_TOKEN en .env.production y recrea el contenedor.`,
+        );
+      }
+
+      return null;
     }
   }
 
@@ -89,21 +112,27 @@ export class ChatbotService {
 
   // ══════════════════════════════════════════════════════════════
   // HELPER 3: DESCARGA Y PROCESAMIENTO DE AUDIO (WHATSAPP → GEMINI)
+  // 🛡️ FIX: Nunca lanza errores que crasheen el proceso.
   // ══════════════════════════════════════════════════════════════
-  private async downloadWhatsAppAudio(mediaId: string): Promise<Buffer> {
-    const token = this.configService.get<string>('META_ACCESS_TOKEN');
-    const urlReq = `https://graph.facebook.com/v19.0/${mediaId}`;
-    const urlResponse = await lastValueFrom(
-      this.httpService.get(urlReq, { headers: { Authorization: `Bearer ${token}` } }),
-    );
-    const mediaUrl = urlResponse.data.url;
-    const mediaResponse = await lastValueFrom(
-      this.httpService.get(mediaUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-        responseType: 'arraybuffer',
-      }),
-    );
-    return Buffer.from(mediaResponse.data);
+  private async downloadWhatsAppAudio(mediaId: string): Promise<Buffer | null> {
+    try {
+      const token = this.configService.get<string>('META_ACCESS_TOKEN');
+      const urlReq = `https://graph.facebook.com/v19.0/${mediaId}`;
+      const urlResponse = await lastValueFrom(
+        this.httpService.get(urlReq, { headers: { Authorization: `Bearer ${token}` } }),
+      );
+      const mediaUrl = urlResponse.data.url;
+      const mediaResponse = await lastValueFrom(
+        this.httpService.get(mediaUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'arraybuffer',
+        }),
+      );
+      return Buffer.from(mediaResponse.data);
+    } catch (error) {
+      this.logger.error(`Error descargando audio ${mediaId}: ${error.message}`);
+      return null;
+    }
   }
 
   private async extractDataWithGemini(
@@ -175,57 +204,78 @@ export class ChatbotService {
 
   // ══════════════════════════════════════════════════════════════
   // HELPER 4: TEXT-TO-SPEECH Y SMART REPLY
+  // 🛡️ FIX BUG #3: Nunca lanza errores que crasheen el proceso.
   // ══════════════════════════════════════════════════════════════
-  private async generateTTS(text: string): Promise<Buffer> {
-    const cleanText = text.replace(/[*_~`\[\]🎙️⏳✅❌📅👤⚕️⚠️🎉📝🔔😔😊🏥💳🪪]/g, '').trim();
-    const request = {
-      input: { text: cleanText },
-      voice: { languageCode: 'es-US', name: 'es-US-Neural2-A' },
-      audioConfig: { audioEncoding: 'OGG_OPUS' as const },
-    };
-    const [response] = await this.ttsClient.synthesizeSpeech(request);
-    if (!response.audioContent) throw new Error('Google Cloud TTS no devolvió audio');
-    return Buffer.from(response.audioContent);
+  private async generateTTS(text: string): Promise<Buffer | null> {
+    try {
+      const cleanText = text.replace(/[*_~`\[\]🎙️⏳✅❌📅👤⚕️⚠️🎉📝🔔😔😊🏥💳🪪]/g, '').trim();
+      const request = {
+        input: { text: cleanText },
+        voice: { languageCode: 'es-US', name: 'es-US-Neural2-A' },
+        audioConfig: { audioEncoding: 'OGG_OPUS' as const },
+      };
+      const [response] = await this.ttsClient.synthesizeSpeech(request);
+      if (!response.audioContent) {
+        this.logger.error('Google Cloud TTS no devolvió audio');
+        return null;
+      }
+      return Buffer.from(response.audioContent);
+    } catch (error) {
+      this.logger.error(`Error en generateTTS: ${error.message}`);
+      return null;
+    }
   }
 
-  private async uploadToWhatsApp(audioBuffer: Buffer, senderId: string): Promise<string> {
-    const token = this.configService.get<string>('META_ACCESS_TOKEN');
-    const phoneId = await this.getOriginPhoneId(senderId);
-    const formData = new FormData();
-    formData.append('messaging_product', 'whatsapp');
-    const blob = new Blob([new Uint8Array(audioBuffer)], { type: 'audio/ogg' });
-    formData.append('file', blob, 'audio.ogg');
-    const response = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/media`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: formData,
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(`Error subiendo audio: ${JSON.stringify(data)}`);
-    return data.id;
+  private async uploadToWhatsApp(audioBuffer: Buffer, senderId: string): Promise<string | null> {
+    try {
+      const token = this.configService.get<string>('META_ACCESS_TOKEN');
+      const phoneId = await this.getOriginPhoneId(senderId);
+      const formData = new FormData();
+      formData.append('messaging_product', 'whatsapp');
+      const blob = new Blob([new Uint8Array(audioBuffer)], { type: 'audio/ogg' });
+      formData.append('file', blob, 'audio.ogg');
+      const response = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/media`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        this.logger.error(`Error subiendo audio: ${JSON.stringify(data)}`);
+        return null;
+      }
+      return data.id;
+    } catch (error) {
+      this.logger.error(`Error en uploadToWhatsApp: ${error.message}`);
+      return null;
+    }
   }
 
   private async sendWhatsAppAudioMessage(toPhone: string, mediaId: string) {
-    const token = this.configService.get<string>('META_ACCESS_TOKEN');
-    const phoneId = await this.getOriginPhoneId(toPhone);
-    await lastValueFrom(
-      this.httpService.post(
-        `https://graph.facebook.com/v19.0/${phoneId}/messages`,
-        {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: toPhone,
-          type: 'audio',
-          audio: { id: mediaId },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
+    try {
+      const token = this.configService.get<string>('META_ACCESS_TOKEN');
+      const phoneId = await this.getOriginPhoneId(toPhone);
+      await lastValueFrom(
+        this.httpService.post(
+          `https://graph.facebook.com/v19.0/${phoneId}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: toPhone,
+            type: 'audio',
+            audio: { id: mediaId },
           },
-        },
-      ),
-    );
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          },
+        ),
+      );
+    } catch (error) {
+      this.logger.error(`Error enviando audio a ${toPhone}: ${error.response?.data || error.message}`);
+    }
   }
 
   private async smartReply(organizationId: string, senderId: string, text: string) {
@@ -235,19 +285,88 @@ export class ChatbotService {
     if (isAiFlow) {
       try {
         const audioBuffer = await this.generateTTS(text);
-        const mediaId = await this.uploadToWhatsApp(audioBuffer, senderId);
-        await this.sendWhatsAppAudioMessage(senderId, mediaId);
+        if (audioBuffer) {
+          const mediaId = await this.uploadToWhatsApp(audioBuffer, senderId);
+          if (mediaId) {
+            await this.sendWhatsAppAudioMessage(senderId, mediaId);
+          }
+        }
+        // Siempre enviar respaldo en texto, incluso si TTS falla
         await this.sendWhatsAppMessage(senderId, text);
         return;
       } catch (error) {
-        this.logger.error('Error TTS, fallback a texto', error);
+        this.logger.error(`Error en smartReply (AI flow): ${error.message}`);
+        // Fallback a texto plano
       }
     }
     await this.sendWhatsAppMessage(senderId, text);
   }
 
   // ══════════════════════════════════════════════════════════════
-  // HELPER 5: LIMPIEZA DE SESIÓN
+  // HELPER 5: PERSISTENCIA TEMPRANA DEL PACIENTE
+  // 🛡️ FIX BUG #5: Crea el PatientProfile en BD apenas se tienen
+  // los datos mínimos (cédula + nombre). Esto garantiza que el
+  // paciente exista en BD aunque la sesión expire o crashee después.
+  // Es idempotente: si ya existe, no lo recrea.
+  // ══════════════════════════════════════════════════════════════
+  private async ensurePatientPersisted(params: {
+    cedula: string;
+    nombre: string;
+    senderId: string;
+    organizationId: string;
+    epsId?: string | null;
+  }): Promise<any> {
+    const { cedula, nombre, senderId, organizationId, epsId } = params;
+
+    // 1. ¿Ya existe?
+    let patient = await this.prisma.patientProfile.findUnique({
+      where: { cedula },
+    });
+
+    if (patient) {
+      // Si ya existe, solo actualiza datos faltantes
+      const updates: any = {};
+      if (!patient.whatsappId) updates.whatsappId = senderId;
+      if (!patient.organizationId) updates.organizationId = organizationId;
+      if (epsId && !patient.epsId) updates.epsId = epsId;
+      if (Object.keys(updates).length > 0) {
+        patient = await this.prisma.patientProfile.update({
+          where: { id: patient.id },
+          data: updates,
+        });
+      }
+      return patient;
+    }
+
+    // 2. No existe → crear usuario temporal y perfil
+    try {
+      const tempUser = await this.prisma.user.create({
+        data: {
+          email: `temp_${Date.now()}_${cedula}@paciente.local`,
+          password: 'none',
+          role: 'PATIENT',
+        },
+      });
+      patient = await this.prisma.patientProfile.create({
+        data: {
+          cedula,
+          fullName: nombre,
+          whatsappId: senderId,
+          userId: tempUser.id,
+          epsId: epsId || null,
+          organizationId,
+        },
+      });
+      this.logger.log(`✅ Paciente persistido: ${nombre} (cédula ${cedula})`);
+      return patient;
+    } catch (error) {
+      this.logger.error(`Error persistiendo paciente cédula ${cedula}: ${error.message}`);
+      return null;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // HELPER 6: LIMPIEZA DE SESIÓN
   // ══════════════════════════════════════════════════════════════
   private async cleanUpSession(organizationId: string, senderId: string) {
     const keysToDelete = [
@@ -280,8 +399,21 @@ export class ChatbotService {
 
   // ══════════════════════════════════════════════════════════════
   // CORE: PROCESAMIENTO DE MENSAJES ENTRANTES
+  // 🛡️ FIX: Wrapper try/catch global para evitar crashes propagados.
   // ══════════════════════════════════════════════════════════════
   async processIncomingMessage(event: any) {
+    try {
+      await this.processIncomingMessageUnsafe(event);
+    } catch (error) {
+      this.logger.error(
+        `🚨 Error no manejado en processIncomingMessage: ${error.message}`,
+        error.stack,
+      );
+      // No re-lanzar: mantenemos el contenedor vivo
+    }
+  }
+
+  private async processIncomingMessageUnsafe(event: any) {
     const senderId = event.from || event.sender?.id;
     const messageType = event.type;
     const text = event.text?.body?.trim() || event.message?.text?.trim();
@@ -402,11 +534,10 @@ export class ChatbotService {
     } else if (isAudio) {
       await this.redis.set(`is_ai_flow:${organizationId}:${senderId}`, 'true', 'EX', SESSION_TTL);
       await this.sendWhatsAppMessage(senderId, '🎧 Permítame un momento, lo estoy escuchando...');
-      try {
-        const audioBuffer = await this.downloadWhatsAppAudio(audioId);
+      const audioBuffer = await this.downloadWhatsAppAudio(audioId);
+      if (audioBuffer) {
         aiData = await this.extractDataWithGemini(null, audioBuffer);
-      } catch (e) {
-        this.logger.error('Error descargando audio', e);
+      } else {
         aiData.ininteligible = true;
       }
     } else if (messageType === 'text' && text && !isStrictStep) {
@@ -622,6 +753,16 @@ export class ChatbotService {
           await this.setUserState(organizationId, senderId, ChatState.AWAITING_NAME);
           return;
         }
+
+        // ✅ FIX BUG #5: Persistir paciente nuevo en BD apenas tengamos cédula+nombre.
+        // Esto evita que se pierda el dato si la sesión expira antes de bookAppointment.
+        await this.ensurePatientPersisted({
+          cedula: finalCedula,
+          nombre: finalNombre,
+          senderId,
+          organizationId: organizationId!,
+          epsId: null,
+        });
       }
 
       const epsEfectiva = finalEps || dbPatientEpsName;
@@ -660,6 +801,17 @@ export class ChatbotService {
       const matchedEpsName = epsMatches[0].name;
       await this.redis.set(`temp_eps_id:${organizationId}:${senderId}`, matchedEpsId, 'EX', SESSION_TTL);
 
+      // ✅ FIX BUG #5 (continuación): actualizar EPS del paciente apenas la conozcamos.
+      if (finalCedula && finalNombre) {
+        await this.ensurePatientPersisted({
+          cedula: finalCedula,
+          nombre: finalNombre,
+          senderId,
+          organizationId: organizationId!,
+          epsId: matchedEpsId,
+        });
+      }
+
       // ── BUSCAR SLOTS DISPONIBLES ──────────────────────────
       const slots = await this.appointmentsService.getAvailableSlots(
         finalEspecialidadConDoctor as string,
@@ -671,47 +823,39 @@ export class ChatbotService {
       if (slots.length === 0) {
         const nombrePaciente = finalNombre || patient?.fullName || 'paciente';
 
-        // Obtener o crear el paciente para el ID
-        let patientForWaitlist = patient;
-        if (!patientForWaitlist) {
-          // Crear usuario y paciente temporales
-          const tempUser = await this.prisma.user.create({
-            data: {
-              email: `temp_${Date.now()}@paciente.local`,
-              password: 'none',
-              role: 'PATIENT',
-            },
-          });
-          patientForWaitlist = await this.prisma.patientProfile.create({
-            data: {
-              cedula: finalCedula,
-              fullName: finalNombre || 'Paciente',
-              whatsappId: senderId,
-              userId: tempUser.id,
-              epsId: matchedEpsId,
+        // Asegurar que el paciente exista en BD antes de meterlo a waitlist
+        const patientForWaitlist = await this.ensurePatientPersisted({
+          cedula: finalCedula,
+          nombre: nombrePaciente,
+          senderId,
+          organizationId: organizationId!,
+          epsId: matchedEpsId,
+        });
+
+        // Agregar a la lista de espera
+        let position = 1;
+        if (patientForWaitlist) {
+          const serviceRecord = await this.prisma.medicalService.findFirst({
+            where: {
+              name: { contains: finalEspecialidadConDoctor as string, mode: 'insensitive' },
               organizationId: organizationId!,
             },
           });
-        }
 
-        // Agregar a la lista de espera
-        const serviceRecord = await this.prisma.medicalService.findFirst({
-          where: {
-            name: { contains: finalEspecialidadConDoctor as string, mode: 'insensitive' },
-            organizationId: organizationId!,
-          },
-        });
-
-        let position = 1;
-        if (serviceRecord) {
-          const result = await this.waitlistService.joinWaitlist({
-            patientId: patientForWaitlist.id,
-            serviceId: serviceRecord.id,
-            epsId: matchedEpsId,
-            whatsappId: senderId,
-            organizationId: organizationId!,
-          });
-          position = result.position;
+          if (serviceRecord) {
+            try {
+              const result = await this.waitlistService.joinWaitlist({
+                patientId: patientForWaitlist.id,
+                serviceId: serviceRecord.id,
+                epsId: matchedEpsId,
+                whatsappId: senderId,
+                organizationId: organizationId!,
+              });
+              position = result.position;
+            } catch (e) {
+              this.logger.error(`Error agregando a waitlist: ${e.message}`);
+            }
+          }
         }
 
         await this.smartReply(
@@ -720,7 +864,7 @@ export class ChatbotService {
           MSGS.sinDisponibilidad(nombrePaciente, matchedEpsName, finalEspecialidadConDoctor as string, position),
         );
 
-        // ✅ FIX CRÍTICO: limpiar estado para evitar loop infinito
+        // ✅ FIX BUG #6: cierre claro del flujo
         await this.cleanUpSession(organizationId, senderId);
         return;
       }
@@ -802,31 +946,19 @@ export class ChatbotService {
             return;
           }
 
-          let patient = await this.prisma.patientProfile.findUnique({ where: { cedula: cedulaFinal } });
+          // ✅ FIX BUG #5: usar helper unificado de persistencia
+          const patient = await this.ensurePatientPersisted({
+            cedula: cedulaFinal,
+            nombre: nombreFinal || 'Paciente Registrado',
+            senderId,
+            organizationId: organizationId!,
+            epsId: epsIdFinal || null,
+          });
 
           if (!patient) {
-            const tempUser = await this.prisma.user.create({
-              data: {
-                email: `temp_${Date.now()}@paciente.local`,
-                password: 'none',
-                role: 'PATIENT',
-              },
-            });
-            patient = await this.prisma.patientProfile.create({
-              data: {
-                cedula: cedulaFinal,
-                fullName: nombreFinal || 'Paciente Registrado',
-                whatsappId: senderId,
-                userId: tempUser.id,
-                epsId: epsIdFinal || null,
-                organizationId: organizationId!,
-              },
-            });
-          } else if (epsIdFinal && patient.epsId !== epsIdFinal) {
-            patient = await this.prisma.patientProfile.update({
-              where: { id: patient.id },
-              data: { epsId: epsIdFinal },
-            });
+            await this.smartReply(organizationId, senderId, MSGS.cancelarError());
+            await this.cleanUpSession(organizationId, senderId);
+            return;
           }
 
           const bookingResult = await this.appointmentsService.bookAppointment(
@@ -959,14 +1091,18 @@ export class ChatbotService {
               include: { doctor: true, service: true },
             });
             if (slot) {
-              await this.waitlistService.notifyWaitlist({
-                slotId: slot.id,
-                serviceId: slot.serviceId,
-                epsId: slot.allowedEpsId,
-                organizationId: organizationId!,
-                doctorName: slot.doctor.fullName,
-                slotDate: slot.startTime,
-              });
+              try {
+                await this.waitlistService.notifyWaitlist({
+                  slotId: slot.id,
+                  serviceId: slot.serviceId,
+                  epsId: slot.allowedEpsId,
+                  organizationId: organizationId!,
+                  doctorName: slot.doctor.fullName,
+                  slotDate: slot.startTime,
+                });
+              } catch (e) {
+                this.logger.error(`Error notificando waitlist: ${e.message}`);
+              }
             }
           } catch (e) {
             this.logger.error('Error cancelando cita', e);
@@ -1143,15 +1279,30 @@ export class ChatbotService {
 
   // ══════════════════════════════════════════════════════════════
   // INTERFAZ EXTERNA (OUTBOUND desde el Dashboard)
+  // 🛡️ FIX BUG #4: Nunca lanza errores que crasheen el proceso.
   // ══════════════════════════════════════════════════════════════
-  async sendOutboundMessage(to: string, message: string) {
-    const origin = await this.redis.get(`origin_phone:${to}`);
-    if (!origin) throw new Error('No hay tenant asociado para outbound message');
-    const org = await this.prisma.organization.findFirst({
-      where: { whatsappPhoneId: origin },
-    });
-    if (!org) throw new Error('Organización no encontrada para outbound');
-    await this.smartReply(org.id, to, message);
+  async sendOutboundMessage(to: string, message: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const origin = await this.redis.get(`origin_phone:${to}`);
+      if (!origin) {
+        const errMsg = 'No hay tenant asociado para outbound message';
+        this.logger.error(`${errMsg}: ${to}`);
+        return { success: false, error: errMsg };
+      }
+      const org = await this.prisma.organization.findFirst({
+        where: { whatsappPhoneId: origin },
+      });
+      if (!org) {
+        const errMsg = 'Organización no encontrada para outbound';
+        this.logger.error(`${errMsg}: ${origin}`);
+        return { success: false, error: errMsg };
+      }
+      await this.smartReply(org.id, to, message);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Error en sendOutboundMessage: ${error.message}`);
+      return { success: false, error: error.message };
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -1165,21 +1316,25 @@ export class ChatbotService {
     doctor: string;
     slotDate: Date;
   }) {
-    const { whatsappId, organizationId, nombre, especialidad, doctor, slotDate } = params;
-    const fechaFormateada = slotDate.toLocaleString('es-CO', {
-      weekday: 'long', day: 'numeric', month: 'long',
-      hour: '2-digit', minute: '2-digit',
-    });
-    await this.setUserState(organizationId, whatsappId, ChatState.AWAITING_WAITLIST_CONFIRM);
-    await this.redis.set(
-      `is_ai_flow:${organizationId}:${whatsappId}`,
-      'false',
-      'EX',
-      WAITLIST_CONFIRM_TTL,
-    );
-    await this.sendWhatsAppMessage(
-      whatsappId,
-      MSGS.waitlistCupoDisponible(nombre, especialidad, fechaFormateada, doctor),
-    );
+    try {
+      const { whatsappId, organizationId, nombre, especialidad, doctor, slotDate } = params;
+      const fechaFormateada = slotDate.toLocaleString('es-CO', {
+        weekday: 'long', day: 'numeric', month: 'long',
+        hour: '2-digit', minute: '2-digit',
+      });
+      await this.setUserState(organizationId, whatsappId, ChatState.AWAITING_WAITLIST_CONFIRM);
+      await this.redis.set(
+        `is_ai_flow:${organizationId}:${whatsappId}`,
+        'false',
+        'EX',
+        WAITLIST_CONFIRM_TTL,
+      );
+      await this.sendWhatsAppMessage(
+        whatsappId,
+        MSGS.waitlistCupoDisponible(nombre, especialidad, fechaFormateada, doctor),
+      );
+    } catch (error) {
+      this.logger.error(`Error en notifyWaitlistCandidate: ${error.message}`);
+    }
   }
 }
