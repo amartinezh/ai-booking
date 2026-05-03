@@ -42,14 +42,12 @@ export class ChatbotService {
 
   // ══════════════════════════════════════════════════════════════
   // HELPER 1: ENVÍO DE MENSAJES OUTBOUND (META API)
-  // 🛡️ FIX BUG #1 y #2: Nunca lanza errores que crasheen el proceso.
-  // Si Meta falla (401, 500, timeout, etc.), se loguea y se devuelve null.
+  // 🛡️ A prueba de errores: nunca crashea el proceso.
   // ══════════════════════════════════════════════════════════════
   private async sendWhatsAppMessage(toPhone: string, text: string) {
     const token = this.configService.get<string>('META_ACCESS_TOKEN');
     const phoneId = await this.getOriginPhoneId(toPhone);
 
-    // ✅ FIX: en lugar de throw, log + return null
     if (!phoneId) {
       this.logger.error(`CRÍTICO: META_PHONE_ID no resuelto para ${toPhone}. Mensaje NO enviado.`);
       return null;
@@ -82,12 +80,10 @@ export class ChatbotService {
       );
       return response.data;
     } catch (error) {
-      // ✅ FIX: capturar error sin propagarlo
       const errorBody = error.response?.data || error.message || error;
       const errorString = typeof errorBody === 'object' ? JSON.stringify(errorBody) : errorBody;
       this.logger.error(`Error enviando mensaje a ${toPhone}: ${errorString}`);
 
-      // Detectar token expirado para alertar específicamente
       if (error.response?.data?.error?.code === 190) {
         this.logger.error(
           `🚨 TOKEN DE META EXPIRADO O REVOCADO. Renueva META_ACCESS_TOKEN en .env.production y recrea el contenedor.`,
@@ -111,8 +107,7 @@ export class ChatbotService {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // HELPER 3: DESCARGA Y PROCESAMIENTO DE AUDIO (WHATSAPP → GEMINI)
-  // 🛡️ FIX: Nunca lanza errores que crasheen el proceso.
+  // HELPER 3: AUDIO (WHATSAPP → GEMINI)
   // ══════════════════════════════════════════════════════════════
   private async downloadWhatsAppAudio(mediaId: string): Promise<Buffer | null> {
     try {
@@ -204,7 +199,6 @@ export class ChatbotService {
 
   // ══════════════════════════════════════════════════════════════
   // HELPER 4: TEXT-TO-SPEECH Y SMART REPLY
-  // 🛡️ FIX BUG #3: Nunca lanza errores que crasheen el proceso.
   // ══════════════════════════════════════════════════════════════
   private async generateTTS(text: string): Promise<Buffer | null> {
     try {
@@ -291,23 +285,25 @@ export class ChatbotService {
             await this.sendWhatsAppAudioMessage(senderId, mediaId);
           }
         }
-        // Siempre enviar respaldo en texto, incluso si TTS falla
         await this.sendWhatsAppMessage(senderId, text);
         return;
       } catch (error) {
         this.logger.error(`Error en smartReply (AI flow): ${error.message}`);
-        // Fallback a texto plano
       }
     }
     await this.sendWhatsAppMessage(senderId, text);
   }
 
   // ══════════════════════════════════════════════════════════════
-  // HELPER 5: PERSISTENCIA TEMPRANA DEL PACIENTE
-  // 🛡️ FIX BUG #5: Crea el PatientProfile en BD apenas se tienen
-  // los datos mínimos (cédula + nombre). Esto garantiza que el
-  // paciente exista en BD aunque la sesión expire o crashee después.
-  // Es idempotente: si ya existe, no lo recrea.
+  // HELPER 5: PERSISTENCIA DE PACIENTE — MULTI-PACIENTE POR WHATSAPP
+  //
+  // Lógica nueva (Camino Y):
+  // - La identidad del paciente es su CÉDULA (única).
+  // - Un mismo whatsappId puede estar asociado a varios pacientes
+  //   (madre que agenda para sus hijos, cuidador, etc.)
+  // - Si la cédula existe → usar ese paciente, actualizar campos faltantes
+  // - Si la cédula es nueva → crear paciente, sin importar cuántos
+  //   otros pacientes ya compartan el whatsappId
   // ══════════════════════════════════════════════════════════════
   private async ensurePatientPersisted(params: {
     cedula: string;
@@ -318,27 +314,34 @@ export class ChatbotService {
   }): Promise<any> {
     const { cedula, nombre, senderId, organizationId, epsId } = params;
 
-    // 1. ¿Ya existe?
+    // 1. ¿Ya existe un paciente con esta cédula?
     let patient = await this.prisma.patientProfile.findUnique({
       where: { cedula },
     });
 
     if (patient) {
-      // Si ya existe, solo actualiza datos faltantes
+      // Existe: actualizar solo los campos vacíos (no sobrescribir datos válidos)
       const updates: any = {};
       if (!patient.whatsappId) updates.whatsappId = senderId;
       if (!patient.organizationId) updates.organizationId = organizationId;
       if (epsId && !patient.epsId) updates.epsId = epsId;
       if (Object.keys(updates).length > 0) {
-        patient = await this.prisma.patientProfile.update({
-          where: { id: patient.id },
-          data: updates,
-        });
+        try {
+          patient = await this.prisma.patientProfile.update({
+            where: { id: patient.id },
+            data: updates,
+          });
+        } catch (error) {
+          this.logger.error(
+            `Error actualizando paciente ${cedula}: ${error.message || JSON.stringify(error)}`,
+          );
+        }
       }
       return patient;
     }
 
-    // 2. No existe → crear usuario temporal y perfil
+    // 2. No existe: crear usuario temporal + paciente nuevo.
+    //    No nos preocupa si el whatsappId ya está en uso por otros pacientes.
     try {
       const tempUser = await this.prisma.user.create({
         data: {
@@ -357,10 +360,12 @@ export class ChatbotService {
           organizationId,
         },
       });
-      this.logger.log(`✅ Paciente persistido: ${nombre} (cédula ${cedula})`);
+      this.logger.log(`✅ Paciente persistido: ${nombre} (cédula ${cedula}, WA ${senderId})`);
       return patient;
     } catch (error) {
-      this.logger.error(`Error persistiendo paciente cédula ${cedula}: ${error.message}`);
+      this.logger.error(
+        `Error persistiendo paciente cédula ${cedula}: ${error.message || JSON.stringify(error)}`,
+      );
       return null;
     }
   }
@@ -398,8 +403,7 @@ export class ChatbotService {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // CORE: PROCESAMIENTO DE MENSAJES ENTRANTES
-  // 🛡️ FIX: Wrapper try/catch global para evitar crashes propagados.
+  // CORE: PROCESAMIENTO DE MENSAJES — con try/catch global
   // ══════════════════════════════════════════════════════════════
   async processIncomingMessage(event: any) {
     try {
@@ -409,7 +413,6 @@ export class ChatbotService {
         `🚨 Error no manejado en processIncomingMessage: ${error.message}`,
         error.stack,
       );
-      // No re-lanzar: mantenemos el contenedor vivo
     }
   }
 
@@ -462,7 +465,6 @@ export class ChatbotService {
       `[Tenant: ${organizationId}] Usuario ${senderId} en estado: ${currentState}. Tipo: ${messageType}`,
     );
 
-    // ── CONTADOR DE REINTENTOS ─────────────────────────────────
     const retriesKey = `error_count:${organizationId}:${senderId}`;
     const retriesCount = parseInt((await this.redis.get(retriesKey)) || '0');
 
@@ -478,7 +480,6 @@ export class ChatbotService {
       return;
     }
 
-    // ── PASOS ESTRICTOS: SIN AUDIO ─────────────────────────────
     const isStrictStep =
       currentState === ChatState.AWAITING_DATE ||
       currentState === ChatState.AWAITING_CONFIRMATION ||
@@ -493,7 +494,6 @@ export class ChatbotService {
       return;
     }
 
-    // ── DETECCIÓN RÁPIDA SIN GEMINI ────────────────────────────
     const isQuickCancel =
       messageType === 'text' &&
       text &&
@@ -548,7 +548,6 @@ export class ChatbotService {
 
     // ── GUARDS GLOBALES ────────────────────────────────────────
 
-    // 0. IA CAÍDA
     if (aiData.isFallback) {
       await this.cleanUpSession(organizationId, senderId);
       const humanPhone = org?.supportPhone || '+573000000000';
@@ -556,7 +555,6 @@ export class ChatbotService {
       return;
     }
 
-    // 0.5. CANCELACIÓN DE CITA (flujo omnicanal)
     if (aiData.isCancellation || isQuickCancel) {
       await this.cleanUpSession(organizationId, senderId);
       await this.redis.set(
@@ -575,34 +573,28 @@ export class ChatbotService {
       return;
     }
 
-    // 1. ESCAPE / REINICIO
     if (aiData.isEscape) {
       await this.cleanUpSession(organizationId, senderId);
       await this.smartReply(organizationId, senderId, MSGS.escape());
       return;
     }
 
-    // 2. FUERA DE CONTEXTO
     if (aiData.outOfContext) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
       await this.smartReply(organizationId, senderId, MSGS.outOfContext());
       return;
     }
 
-    // 3. ININTELIGIBLE
     if (aiData.ininteligible) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
       await this.smartReply(organizationId, senderId, MSGS.ininteligible());
       return;
     }
 
-    // Limpiar reintentos si extracción fue exitosa
     if (aiData.cedula || aiData.especialidad || aiData.eps || aiData.doctor) {
       await this.redis.del(retriesKey);
     }
 
-    // ── FLUJO DE CONFIRMACIÓN DE WAITLIST ──────────────────────
-    // (tiene precedencia sobre el flujo normal si hay un cupo pendiente)
     if (currentState === ChatState.AWAITING_WAITLIST_CONFIRM) {
       await this.handleWaitlistConfirmStep(organizationId, senderId, text);
       return;
@@ -661,7 +653,6 @@ export class ChatbotService {
         return;
       }
 
-      // Resolver especialidad a partir del doctor si aplica
       let finalEspecialidadConDoctor = finalEspecialidad;
       let finalEspecialidadIdResuelto = savedEspecialidadId;
 
@@ -754,8 +745,7 @@ export class ChatbotService {
           return;
         }
 
-        // ✅ FIX BUG #5: Persistir paciente nuevo en BD apenas tengamos cédula+nombre.
-        // Esto evita que se pierda el dato si la sesión expira antes de bookAppointment.
+        // ✅ Persistir paciente nuevo apenas tengamos cédula+nombre
         await this.ensurePatientPersisted({
           cedula: finalCedula,
           nombre: finalNombre,
@@ -801,7 +791,7 @@ export class ChatbotService {
       const matchedEpsName = epsMatches[0].name;
       await this.redis.set(`temp_eps_id:${organizationId}:${senderId}`, matchedEpsId, 'EX', SESSION_TTL);
 
-      // ✅ FIX BUG #5 (continuación): actualizar EPS del paciente apenas la conozcamos.
+      // ✅ Actualizar EPS del paciente apenas la conozcamos
       if (finalCedula && finalNombre) {
         await this.ensurePatientPersisted({
           cedula: finalCedula,
@@ -823,7 +813,6 @@ export class ChatbotService {
       if (slots.length === 0) {
         const nombrePaciente = finalNombre || patient?.fullName || 'paciente';
 
-        // Asegurar que el paciente exista en BD antes de meterlo a waitlist
         const patientForWaitlist = await this.ensurePatientPersisted({
           cedula: finalCedula,
           nombre: nombrePaciente,
@@ -832,7 +821,6 @@ export class ChatbotService {
           epsId: matchedEpsId,
         });
 
-        // Agregar a la lista de espera
         let position = 1;
         if (patientForWaitlist) {
           const serviceRecord = await this.prisma.medicalService.findFirst({
@@ -864,7 +852,6 @@ export class ChatbotService {
           MSGS.sinDisponibilidad(nombrePaciente, matchedEpsName, finalEspecialidadConDoctor as string, position),
         );
 
-        // ✅ FIX BUG #6: cierre claro del flujo
         await this.cleanUpSession(organizationId, senderId);
         return;
       }
@@ -896,7 +883,6 @@ export class ChatbotService {
     // ══════════════════════════════════════════════════════════
     switch (currentState) {
 
-      // ── SELECCIÓN DE FECHA ─────────────────────────────────
       case ChatState.AWAITING_DATE: {
         const letraElegida = text?.toUpperCase().trim() || '';
         const slotId = await this.redis.get(`temp_slot_${letraElegida}:${senderId}`);
@@ -928,7 +914,6 @@ export class ChatbotService {
         break;
       }
 
-      // ── CONFIRMACIÓN FINAL DE CITA ─────────────────────────
       case ChatState.AWAITING_CONFIRMATION: {
         const respuesta = text?.toUpperCase().trim() || '';
 
@@ -946,7 +931,6 @@ export class ChatbotService {
             return;
           }
 
-          // ✅ FIX BUG #5: usar helper unificado de persistencia
           const patient = await this.ensurePatientPersisted({
             cedula: cedulaFinal,
             nombre: nombreFinal || 'Paciente Registrado',
@@ -977,7 +961,6 @@ export class ChatbotService {
             await this.smartReply(organizationId, senderId, MSGS.citaConfirmada(orgName, fechaFormateada));
           } else {
             await this.smartReply(organizationId, senderId, MSGS.slotTomado());
-            // Volver a AWAITING_DATE para que elija otro slot
             await this.setUserState(organizationId, senderId, ChatState.AWAITING_DATE);
             return;
           }
@@ -994,14 +977,11 @@ export class ChatbotService {
         break;
       }
 
-      // ── CANCELACIÓN: PEDIR CÉDULA ──────────────────────────
       case ChatState.AWAITING_CANCEL_CEDULA: {
-        // Extraer cédula del texto o del aiData (si vino de audio)
         let cedula = '';
         if (aiData.cedula) {
           cedula = aiData.cedula;
         } else if (text) {
-          // ✅ FIX: validar que sea numérico antes de consultar BD
           const soloNumeros = text.replace(/\D/g, '');
           cedula = soloNumeros;
         }
@@ -1017,7 +997,6 @@ export class ChatbotService {
         break;
       }
 
-      // ── CANCELACIÓN: SELECCIONAR CITA ─────────────────────
       case ChatState.AWAITING_CANCEL_SELECTION: {
         const letraElegida = text?.toUpperCase().trim() || '';
         const aptId = await this.redis.get(`temp_cancel_apt_${letraElegida}:${organizationId}:${senderId}`);
@@ -1057,7 +1036,6 @@ export class ChatbotService {
         break;
       }
 
-      // ── CANCELACIÓN: CONFIRMACIÓN FINAL ───────────────────
       case ChatState.AWAITING_CANCEL_CONFIRM: {
         const respuesta = text?.toUpperCase().trim() || '';
 
@@ -1085,7 +1063,6 @@ export class ChatbotService {
 
             await this.smartReply(organizationId, senderId, MSGS.cancelarExitosa());
 
-            // ✅ Notificar a la waitlist que hay un slot libre
             const slot = await this.prisma.scheduleSlot.findUnique({
               where: { id: slotId },
               include: { doctor: true, service: true },
@@ -1178,7 +1155,6 @@ export class ChatbotService {
           MSGS.citaConfirmada(org?.name || 'nuestra Clínica', fechaFormateada),
         );
       } else {
-        // El cupo fue tomado por otro paciente entre el aviso y la confirmación
         await this.smartReply(organizationId, senderId, MSGS.slotTomado());
       }
 
@@ -1255,7 +1231,6 @@ export class ChatbotService {
       return;
     }
 
-    // Múltiples citas: listar opciones
     let lineas = '';
     activeAppointments.forEach((apt, idx) => {
       const letra = String.fromCharCode(65 + idx);
@@ -1279,7 +1254,6 @@ export class ChatbotService {
 
   // ══════════════════════════════════════════════════════════════
   // INTERFAZ EXTERNA (OUTBOUND desde el Dashboard)
-  // 🛡️ FIX BUG #4: Nunca lanza errores que crasheen el proceso.
   // ══════════════════════════════════════════════════════════════
   async sendOutboundMessage(to: string, message: string): Promise<{ success: boolean; error?: string }> {
     try {
@@ -1306,7 +1280,7 @@ export class ChatbotService {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // NOTIFICACIÓN PÚBLICA DE CUPO DISPONIBLE (llamado por WaitlistService)
+  // NOTIFICACIÓN PÚBLICA DE CUPO DISPONIBLE
   // ══════════════════════════════════════════════════════════════
   async notifyWaitlistCandidate(params: {
     whatsappId: string;
