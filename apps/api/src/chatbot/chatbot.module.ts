@@ -5,12 +5,14 @@ import { ChatbotCron } from './chatbot.cron';
 import { HttpModule } from '@nestjs/axios';
 import { AppointmentsModule } from 'src/appointments/appointments.module';
 import { WaitlistModule } from 'src/waitlist/waitlist.module';
+import { InteractionLogModule } from 'src/interaction-log/interaction-log.module';
 
 @Module({
   imports: [
     HttpModule,
     AppointmentsModule,
     forwardRef(() => WaitlistModule),
+    InteractionLogModule,
   ],
   controllers: [ChatbotController],
   providers: [ChatbotService, ChatbotCron],

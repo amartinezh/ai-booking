@@ -8,6 +8,11 @@ import { RedisService } from '../redis/redis.service';
 import { ChatState, SESSION_TTL, WAITLIST_CONFIRM_TTL, MSGS } from './chatbot.constants';
 import { AppointmentsService } from 'src/appointments/appointments.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
+import {
+  InteractionLogService,
+  InteractionStatus,
+  FailureReason,
+} from '../interaction-log/interaction-log.service';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import textToSpeech from '@google-cloud/text-to-speech';
 
@@ -24,6 +29,7 @@ export class ChatbotService {
     private redis: RedisService,
     private appointmentsService: AppointmentsService,
     private waitlistService: WaitlistService,
+    private interactionLog: InteractionLogService,
   ) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     if (!apiKey) {
@@ -43,7 +49,10 @@ export class ChatbotService {
   // ══════════════════════════════════════════════════════════════
   // HELPER 1: ENVÍO DE MENSAJES OUTBOUND (META API)
   // 🛡️ A prueba de errores: nunca crashea el proceso.
+  // 📝 Captura el último mensaje enviado para auditoría.
   // ══════════════════════════════════════════════════════════════
+  private lastSentByUser = new Map<string, string>(); // En memoria, no persistente
+
   private async sendWhatsAppMessage(toPhone: string, text: string) {
     const token = this.configService.get<string>('META_ACCESS_TOKEN');
     const phoneId = await this.getOriginPhoneId(toPhone);
@@ -78,6 +87,10 @@ export class ChatbotService {
           },
         ),
       );
+
+      // Guardar el último mensaje enviado para audit logging
+      this.lastSentByUser.set(toPhone, text);
+
       return response.data;
     } catch (error) {
       const errorBody = error.response?.data || error.message || error;
@@ -295,15 +308,7 @@ export class ChatbotService {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // HELPER 5: PERSISTENCIA DE PACIENTE — MULTI-PACIENTE POR WHATSAPP
-  //
-  // Lógica nueva (Camino Y):
-  // - La identidad del paciente es su CÉDULA (única).
-  // - Un mismo whatsappId puede estar asociado a varios pacientes
-  //   (madre que agenda para sus hijos, cuidador, etc.)
-  // - Si la cédula existe → usar ese paciente, actualizar campos faltantes
-  // - Si la cédula es nueva → crear paciente, sin importar cuántos
-  //   otros pacientes ya compartan el whatsappId
+  // HELPER 5: PERSISTENCIA DE PACIENTE — MULTI-PACIENTE
   // ══════════════════════════════════════════════════════════════
   private async ensurePatientPersisted(params: {
     cedula: string;
@@ -314,13 +319,11 @@ export class ChatbotService {
   }): Promise<any> {
     const { cedula, nombre, senderId, organizationId, epsId } = params;
 
-    // 1. ¿Ya existe un paciente con esta cédula?
     let patient = await this.prisma.patientProfile.findUnique({
       where: { cedula },
     });
 
     if (patient) {
-      // Existe: actualizar solo los campos vacíos (no sobrescribir datos válidos)
       const updates: any = {};
       if (!patient.whatsappId) updates.whatsappId = senderId;
       if (!patient.organizationId) updates.organizationId = organizationId;
@@ -340,8 +343,6 @@ export class ChatbotService {
       return patient;
     }
 
-    // 2. No existe: crear usuario temporal + paciente nuevo.
-    //    No nos preocupa si el whatsappId ya está en uso por otros pacientes.
     try {
       const tempUser = await this.prisma.user.create({
         data: {
@@ -390,6 +391,8 @@ export class ChatbotService {
     const slotKeys = await this.redis.keys(`temp_slot_*:${senderId}`);
     await this.redis.del(...keysToDelete, ...slotKeys);
     await this.setUserState(organizationId, senderId, ChatState.IDLE);
+    // Limpiar último mensaje enviado en memoria
+    this.lastSentByUser.delete(senderId);
   }
 
   private async cleanUpCancelSession(organizationId: string, senderId: string) {
@@ -403,9 +406,13 @@ export class ChatbotService {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // CORE: PROCESAMIENTO DE MENSAJES — con try/catch global
+  // CORE: PROCESAMIENTO DE MENSAJES — con try/catch global y logging
   // ══════════════════════════════════════════════════════════════
   async processIncomingMessage(event: any) {
+    const senderId = event.from || event.sender?.id;
+    const messageType = event.type;
+    const userMessage = event.text?.body?.trim() || event.message?.text?.trim();
+
     try {
       await this.processIncomingMessageUnsafe(event);
     } catch (error) {
@@ -413,6 +420,19 @@ export class ChatbotService {
         `🚨 Error no manejado en processIncomingMessage: ${error.message}`,
         error.stack,
       );
+
+      // 📝 Auditoría: registrar el error no manejado
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        reason: FailureReason.UNHANDLED_ERROR,
+        userMessage: userMessage || `[${messageType}]`,
+        botReply: this.lastSentByUser.get(senderId) || null,
+        metadata: {
+          errorMessage: error.message,
+          errorStack: error.stack?.substring(0, 1000),
+          messageType,
+        },
+      });
     }
   }
 
@@ -438,10 +458,18 @@ export class ChatbotService {
       });
       if (org) {
         if (!org.isActive) {
-          await this.sendWhatsAppMessage(
-            senderId,
-            'Esta línea clínica se encuentra inactiva temporalmente por mantenimiento administrativo.',
-          );
+          const reply = 'Esta línea clínica se encuentra inactiva temporalmente por mantenimiento administrativo.';
+          await this.sendWhatsAppMessage(senderId, reply);
+
+          // 📝 Auditoría
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId: org.id,
+            reason: FailureReason.ORG_INACTIVE,
+            userMessage: text || `[${messageType}]`,
+            botReply: reply,
+            metadata: { orgName: org.name },
+          });
           return;
         }
         organizationId = org.id;
@@ -468,15 +496,26 @@ export class ChatbotService {
     const retriesKey = `error_count:${organizationId}:${senderId}`;
     const retriesCount = parseInt((await this.redis.get(retriesKey)) || '0');
 
+    // ── MÁXIMO REINTENTOS ──────────────────────────────────────
     if (retriesCount >= 3) {
       this.logger.warn(`Máximo de reintentos para ${senderId}`);
       await this.cleanUpSession(organizationId, senderId);
       const humanPhone = org?.supportPhone || '';
-      if (humanPhone) {
-        await this.smartReply(organizationId, senderId, MSGS.maxReintentos(humanPhone));
-      } else {
-        await this.smartReply(organizationId, senderId, MSGS.maxReintentosReset());
-      }
+      const replyText = humanPhone
+        ? MSGS.maxReintentos(humanPhone)
+        : MSGS.maxReintentosReset();
+      await this.smartReply(organizationId, senderId, replyText);
+
+      // 📝 Auditoría: usuario abandonó por exceso de reintentos
+      await this.interactionLog.log({
+        whatsappId: senderId,
+        organizationId,
+        status: InteractionStatus.ABANDONED,
+        failureReason: FailureReason.MAX_RETRIES,
+        userMessage: text || `[${messageType}]`,
+        botReply: replyText,
+        metadata: { previousState: currentState, retriesCount },
+      });
       return;
     }
 
@@ -490,7 +529,17 @@ export class ChatbotService {
     const isAudio = messageType === 'audio' && !!audioId;
 
     if (isAudio && isStrictStep) {
-      await this.sendWhatsAppMessage(senderId, MSGS.audioPasoEstricto());
+      const reply = MSGS.audioPasoEstricto();
+      await this.sendWhatsAppMessage(senderId, reply);
+
+      // 📝 Auditoría: rechazo de audio en paso estricto
+      await this.interactionLog.logSuccess({
+        whatsappId: senderId,
+        organizationId,
+        userMessage: '[audio]',
+        botReply: reply,
+        metadata: { reason: 'AUDIO_REJECTED_IN_STRICT_STEP', state: currentState },
+      });
       return;
     }
 
@@ -551,7 +600,18 @@ export class ChatbotService {
     if (aiData.isFallback) {
       await this.cleanUpSession(organizationId, senderId);
       const humanPhone = org?.supportPhone || '+573000000000';
-      await this.smartReply(organizationId, senderId, MSGS.iaCaida(humanPhone));
+      const reply = MSGS.iaCaida(humanPhone);
+      await this.smartReply(organizationId, senderId, reply);
+
+      // 📝 Auditoría: Gemini falló
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        organizationId,
+        reason: FailureReason.GEMINI_DOWN,
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { previousState: currentState },
+      });
       return;
     }
 
@@ -563,31 +623,76 @@ export class ChatbotService {
         'EX',
         SESSION_TTL,
       );
+
+      let reply: string;
       if (aiData.cedula) {
         await this.redis.set(`temp_cancel_cedula:${organizationId}:${senderId}`, aiData.cedula, 'EX', SESSION_TTL);
         await this.handleCancelCedulaStep(organizationId, senderId, aiData.cedula);
+        reply = this.lastSentByUser.get(senderId) || '[cancelación iniciada]';
       } else {
-        await this.smartReply(organizationId, senderId, MSGS.cancelarPedirCedula());
+        reply = MSGS.cancelarPedirCedula();
+        await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CEDULA);
       }
+
+      // 📝 Auditoría: inicio de flujo de cancelación
+      await this.interactionLog.log({
+        whatsappId: senderId,
+        organizationId,
+        status: InteractionStatus.CANCELLATION_FLOW,
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { aiData, hasInitialCedula: !!aiData.cedula },
+      });
       return;
     }
 
     if (aiData.isEscape) {
       await this.cleanUpSession(organizationId, senderId);
-      await this.smartReply(organizationId, senderId, MSGS.escape());
+      const reply = MSGS.escape();
+      await this.smartReply(organizationId, senderId, reply);
+
+      // 📝 Auditoría: usuario reinició el flujo
+      await this.interactionLog.log({
+        whatsappId: senderId,
+        organizationId,
+        status: InteractionStatus.ESCAPED,
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { previousState: currentState },
+      });
       return;
     }
 
     if (aiData.outOfContext) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-      await this.smartReply(organizationId, senderId, MSGS.outOfContext());
+      const reply = MSGS.outOfContext();
+      await this.smartReply(organizationId, senderId, reply);
+
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        organizationId,
+        reason: FailureReason.OUT_OF_CONTEXT,
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { retriesCount: retriesCount + 1 },
+      });
       return;
     }
 
     if (aiData.ininteligible) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-      await this.smartReply(organizationId, senderId, MSGS.ininteligible());
+      const reply = MSGS.ininteligible();
+      await this.smartReply(organizationId, senderId, reply);
+
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        organizationId,
+        reason: FailureReason.UNINTELLIGIBLE_AUDIO,
+        userMessage: '[audio inentendible]',
+        botReply: reply,
+        metadata: { retriesCount: retriesCount + 1 },
+      });
       return;
     }
 
@@ -644,12 +749,23 @@ export class ChatbotService {
             ? `Opciones: ${activeServices.map((s) => s.name).join(' · ')}`
             : 'Ej: Medicina General, Odontología';
 
-        await this.smartReply(
-          organizationId,
-          senderId,
-          MSGS.bienvenida(orgName, serviciosText),
-        );
+        const reply = MSGS.bienvenida(orgName, serviciosText);
+        await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+
+        // 📝 Auditoría: bienvenida / pidiendo especialidad
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: {
+            step: 'WELCOME',
+            previousState: currentState,
+            newState: ChatState.AWAITING_SPECIALTY,
+            aiData,
+          },
+        });
         return;
       }
 
@@ -668,13 +784,18 @@ export class ChatbotService {
         if (doctores.length === 0) {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
           await this.redis.del(`temp_doctor:${organizationId}:${senderId}`);
-          await this.smartReply(
-            organizationId,
-            senderId,
-            `Lo siento, no encontré ningún médico con el nombre *"${finalDoctor}"* en nuestra institución.\n\n` +
-            `Por favor indíqueme la especialidad deseada o el nombre correcto del médico.`,
-          );
+          const reply = `Lo siento, no encontré ningún médico con el nombre *"${finalDoctor}"* en nuestra institución.\n\nPor favor indíqueme la especialidad deseada o el nombre correcto del médico.`;
+          await this.smartReply(organizationId, senderId, reply);
           await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.DOCTOR_NOT_FOUND,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: { searchedDoctor: finalDoctor },
+          });
           return;
         }
         if (doctores.length > 1) {
@@ -683,12 +804,20 @@ export class ChatbotService {
             opciones += `*${i + 1}.* Dr. ${d.fullName} _(${d.service?.name})_\n`;
           });
           await this.redis.del(`temp_doctor:${organizationId}:${senderId}`);
-          await this.smartReply(
-            organizationId,
-            senderId,
-            `Encontré varios médicos con el nombre *"${finalDoctor}"*:\n\n${opciones}\nPor favor indíqueme el apellido completo o la especialidad.`,
-          );
+          const reply = `Encontré varios médicos con el nombre *"${finalDoctor}"*:\n\n${opciones}\nPor favor indíqueme el apellido completo o la especialidad.`;
+          await this.smartReply(organizationId, senderId, reply);
           await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+
+          await this.interactionLog.logSuccess({
+            whatsappId: senderId,
+            organizationId,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: {
+              step: 'DOCTOR_DISAMBIGUATION',
+              candidates: doctores.map(d => d.fullName),
+            },
+          });
           return;
         }
         finalEspecialidadConDoctor = doctores[0].service?.name || finalEspecialidad;
@@ -712,12 +841,21 @@ export class ChatbotService {
 
       // ── PASO 2: CÉDULA ────────────────────────────────────
       if (!finalCedula) {
-        await this.smartReply(
-          organizationId,
-          senderId,
-          MSGS.pedirCedula(finalDoctor || finalEspecialidadConDoctor || 'la especialidad solicitada'),
-        );
+        const reply = MSGS.pedirCedula(finalDoctor || finalEspecialidadConDoctor || 'la especialidad solicitada');
+        await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_CEDULA);
+
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: {
+            step: 'ASKING_CEDULA',
+            specialty: finalEspecialidadConDoctor,
+            doctor: finalDoctor,
+          },
+        });
         return;
       }
 
@@ -740,12 +878,23 @@ export class ChatbotService {
       } else {
         // Paciente nuevo: pedir nombre
         if (!finalNombre) {
-          await this.smartReply(organizationId, senderId, MSGS.primeraVez());
+          const reply = MSGS.primeraVez();
+          await this.smartReply(organizationId, senderId, reply);
           await this.setUserState(organizationId, senderId, ChatState.AWAITING_NAME);
+
+          await this.interactionLog.logSuccess({
+            whatsappId: senderId,
+            organizationId,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: {
+              step: 'ASKING_NAME_NEW_PATIENT',
+              cedula: finalCedula,
+            },
+          });
           return;
         }
 
-        // ✅ Persistir paciente nuevo apenas tengamos cédula+nombre
         await this.ensurePatientPersisted({
           cedula: finalCedula,
           nombre: finalNombre,
@@ -759,8 +908,17 @@ export class ChatbotService {
 
       // ── PASO 3: EPS ───────────────────────────────────────
       if (!epsEfectiva) {
-        await this.smartReply(organizationId, senderId, MSGS.pedirEps());
+        const reply = MSGS.pedirEps();
+        await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
+
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: { step: 'ASKING_EPS', cedula: finalCedula },
+        });
         return;
       }
 
@@ -774,16 +932,36 @@ export class ChatbotService {
       if (epsMatches.length === 0) {
         await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
         await this.redis.del(`temp_eps_query:${organizationId}:${senderId}`);
-        await this.smartReply(organizationId, senderId, MSGS.epsNoEncontrada(epsEfectiva));
+        const reply = MSGS.epsNoEncontrada(epsEfectiva);
+        await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
+
+        await this.interactionLog.logFailure({
+          whatsappId: senderId,
+          organizationId,
+          reason: FailureReason.EPS_NOT_FOUND,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: { searchedEps: epsEfectiva },
+        });
         return;
       }
 
       if (!epsMatches[0].isActive) {
         await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
         await this.redis.del(`temp_eps_query:${organizationId}:${senderId}`);
-        await this.smartReply(organizationId, senderId, MSGS.epsInactiva(epsMatches[0].name));
+        const reply = MSGS.epsInactiva(epsMatches[0].name);
+        await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
+
+        await this.interactionLog.logFailure({
+          whatsappId: senderId,
+          organizationId,
+          reason: FailureReason.EPS_INACTIVE,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: { eps: epsMatches[0].name },
+        });
         return;
       }
 
@@ -791,7 +969,6 @@ export class ChatbotService {
       const matchedEpsName = epsMatches[0].name;
       await this.redis.set(`temp_eps_id:${organizationId}:${senderId}`, matchedEpsId, 'EX', SESSION_TTL);
 
-      // ✅ Actualizar EPS del paciente apenas la conozcamos
       if (finalCedula && finalNombre) {
         await this.ensurePatientPersisted({
           cedula: finalCedula,
@@ -822,6 +999,7 @@ export class ChatbotService {
         });
 
         let position = 1;
+        let waitlistEntryId: string | null = null;
         if (patientForWaitlist) {
           const serviceRecord = await this.prisma.medicalService.findFirst({
             where: {
@@ -840,25 +1018,53 @@ export class ChatbotService {
                 organizationId: organizationId!,
               });
               position = result.position;
+              waitlistEntryId = result.id || null;
             } catch (e) {
               this.logger.error(`Error agregando a waitlist: ${e.message}`);
             }
           }
         }
 
-        await this.smartReply(
-          organizationId,
-          senderId,
-          MSGS.sinDisponibilidad(nombrePaciente, matchedEpsName, finalEspecialidadConDoctor as string, position),
-        );
-
+        const reply = MSGS.sinDisponibilidad(nombrePaciente, matchedEpsName, finalEspecialidadConDoctor as string, position);
+        await this.smartReply(organizationId, senderId, reply);
         await this.cleanUpSession(organizationId, senderId);
+
+        // 📝 Auditoría: paciente entró a waitlist (evento de negocio)
+        if (waitlistEntryId && patientForWaitlist) {
+          await this.interactionLog.logWaitlistJoined({
+            whatsappId: senderId,
+            organizationId: organizationId!,
+            waitlistEntryId,
+            patientCedula: finalCedula,
+            serviceName: finalEspecialidadConDoctor as string,
+            epsName: matchedEpsName,
+            position,
+            userMessage: text || '[audio]',
+            botReply: reply,
+          });
+        } else {
+          // Si no se pudo crear waitlist, registrar como fallo
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId: organizationId!,
+            reason: FailureReason.NO_AGENDA,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: {
+              cedula: finalCedula,
+              eps: matchedEpsName,
+              specialty: finalEspecialidadConDoctor,
+              waitlistFailed: true,
+            },
+          });
+        }
         return;
       }
 
       // ── MOSTRAR CUPOS DISPONIBLES ─────────────────────────
       const nombrePaciente = finalNombre || patient?.fullName || '';
       let lineasFechas = '';
+      const slotsMetadata = [];
       for (let i = 0; i < slots.length; i++) {
         const letra = String.fromCharCode(65 + i);
         await this.redis.set(`temp_slot_${letra}:${senderId}`, slots[i].slotId, 'EX', SESSION_TTL);
@@ -867,19 +1073,38 @@ export class ChatbotService {
           `*${letra})* ${slots[i].fecha.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })} ` +
           `a las ${slots[i].fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} ` +
           `· Dr. ${slots[i].doctor}\n`;
+        slotsMetadata.push({
+          letter: letra,
+          slotId: slots[i].slotId,
+          doctor: slots[i].doctor,
+          fecha: slots[i].fecha.toISOString(),
+        });
       }
 
-      await this.smartReply(
-        organizationId,
-        senderId,
-        MSGS.cuposDisponibles(nombrePaciente, matchedEpsName, lineasFechas),
-      );
+      const reply = MSGS.cuposDisponibles(nombrePaciente, matchedEpsName, lineasFechas);
+      await this.smartReply(organizationId, senderId, reply);
       await this.setUserState(organizationId, senderId, ChatState.AWAITING_DATE);
+
+      // 📝 Auditoría: cupos mostrados
+      await this.interactionLog.logSuccess({
+        whatsappId: senderId,
+        organizationId,
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: {
+          step: 'SLOTS_OFFERED',
+          slotsCount: slots.length,
+          slots: slotsMetadata,
+          patientCedula: finalCedula,
+          eps: matchedEpsName,
+          specialty: finalEspecialidadConDoctor,
+        },
+      });
       return;
     }
 
     // ══════════════════════════════════════════════════════════
-    // MÁQUINA DE ESTADOS — PASOS ESTRICTOS Y FLUJOS DE CANCELACIÓN
+    // MÁQUINA DE ESTADOS — PASOS ESTRICTOS Y CANCELACIÓN
     // ══════════════════════════════════════════════════════════
     switch (currentState) {
 
@@ -890,7 +1115,17 @@ export class ChatbotService {
 
         if (!slotId || !slotFechaStr) {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-          await this.smartReply(organizationId, senderId, MSGS.errorSlotInvalido());
+          const reply = MSGS.errorSlotInvalido();
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidLetter: letraElegida, state: currentState },
+          });
           return;
         }
 
@@ -906,11 +1141,24 @@ export class ChatbotService {
           hour: '2-digit', minute: '2-digit',
         });
 
-        await this.sendWhatsAppMessage(
-          senderId,
-          MSGS.resumenCita(nombreAgend, cedulaAgend || '', epsAgend, specAgend, fechaFormateada),
-        );
+        const reply = MSGS.resumenCita(nombreAgend, cedulaAgend || '', epsAgend, specAgend, fechaFormateada);
+        await this.sendWhatsAppMessage(senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_CONFIRMATION);
+
+        // 📝 Auditoría: paciente seleccionó slot
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            step: 'SLOT_SELECTED',
+            selectedLetter: letraElegida,
+            slotId,
+            slotDate: slotFechaStr,
+            cedula: cedulaAgend,
+          },
+        });
         break;
       }
 
@@ -926,8 +1174,18 @@ export class ChatbotService {
           const fechaVistaFinal = await this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`);
 
           if (!cedulaFinal || !specFinal || !slotIdFinal || !fechaVistaFinal) {
-            await this.smartReply(organizationId, senderId, MSGS.sesionExpirada());
+            const reply = MSGS.sesionExpirada();
+            await this.smartReply(organizationId, senderId, reply);
             await this.cleanUpSession(organizationId, senderId);
+
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId,
+              reason: FailureReason.SESSION_EXPIRED,
+              userMessage: text,
+              botReply: reply,
+              metadata: { stage: 'AWAITING_CONFIRMATION_SI' },
+            });
             return;
           }
 
@@ -940,8 +1198,18 @@ export class ChatbotService {
           });
 
           if (!patient) {
-            await this.smartReply(organizationId, senderId, MSGS.cancelarError());
+            const reply = MSGS.cancelarError();
+            await this.smartReply(organizationId, senderId, reply);
             await this.cleanUpSession(organizationId, senderId);
+
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId,
+              reason: FailureReason.UNHANDLED_ERROR,
+              userMessage: text,
+              botReply: reply,
+              metadata: { stage: 'PATIENT_PERSISTENCE_FAILED', cedula: cedulaFinal },
+            });
             return;
           }
 
@@ -958,21 +1226,74 @@ export class ChatbotService {
               weekday: 'long', day: 'numeric', month: 'long',
               hour: '2-digit', minute: '2-digit',
             });
-            await this.smartReply(organizationId, senderId, MSGS.citaConfirmada(orgName, fechaFormateada));
+            const reply = MSGS.citaConfirmada(orgName, fechaFormateada);
+            await this.smartReply(organizationId, senderId, reply);
+
+            // 📝 Auditoría: cita agendada (evento de negocio crítico)
+            const slotInfo = await this.prisma.scheduleSlot.findUnique({
+              where: { id: slotIdFinal as string },
+              include: { doctor: true, service: true },
+            });
+            await this.interactionLog.logBookingConfirmed({
+              whatsappId: senderId,
+              organizationId: organizationId!,
+              appointmentId: bookingResult.appointmentId || 'unknown',
+              patientCedula: cedulaFinal,
+              serviceName: slotInfo?.service?.name || specFinal,
+              doctorName: slotInfo?.doctor?.fullName || 'desconocido',
+              slotDate: new Date(fechaVistaFinal),
+              epsName: epsIdFinal ? (await this.prisma.eps.findUnique({ where: { id: epsIdFinal } }))?.name : undefined,
+              userMessage: text,
+              botReply: reply,
+            });
           } else {
-            await this.smartReply(organizationId, senderId, MSGS.slotTomado());
+            const reply = MSGS.slotTomado();
+            await this.smartReply(organizationId, senderId, reply);
             await this.setUserState(organizationId, senderId, ChatState.AWAITING_DATE);
+
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId,
+              reason: FailureReason.SLOT_TAKEN,
+              userMessage: text,
+              botReply: reply,
+              metadata: {
+                slotId: slotIdFinal,
+                cedula: cedulaFinal,
+              },
+            });
             return;
           }
 
           await this.cleanUpSession(organizationId, senderId);
 
         } else if (['NO', 'NO.', 'CANCELAR'].includes(respuesta)) {
-          await this.smartReply(organizationId, senderId, MSGS.citaNoConfirmada());
+          const reply = MSGS.citaNoConfirmada();
+          await this.smartReply(organizationId, senderId, reply);
           await this.cleanUpSession(organizationId, senderId);
+
+          // 📝 Auditoría: usuario rechazó la confirmación
+          await this.interactionLog.log({
+            whatsappId: senderId,
+            organizationId,
+            status: InteractionStatus.ESCAPED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { stage: 'CONFIRMATION_REJECTED' },
+          });
         } else {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-          await this.sendWhatsAppMessage(senderId, MSGS.respuestaInvalidaSiNo());
+          const reply = MSGS.respuestaInvalidaSiNo();
+          await this.sendWhatsAppMessage(senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidResponse: respuesta, stage: 'AWAITING_CONFIRMATION' },
+          });
         }
         break;
       }
@@ -988,7 +1309,17 @@ export class ChatbotService {
 
         if (!cedula || cedula.length < 5) {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-          await this.smartReply(organizationId, senderId, MSGS.cancelarCedulaInvalida());
+          const reply = MSGS.cancelarCedulaInvalida();
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.PATIENT_NOT_FOUND,
+            userMessage: text,
+            botReply: reply,
+            metadata: { stage: 'CANCEL_CEDULA_INVALID' },
+          });
           return;
         }
 
@@ -1005,11 +1336,17 @@ export class ChatbotService {
         if (!aptId || !slotId) {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
           const maxLetra = await this.redis.get(`temp_cancel_max_letra:${organizationId}:${senderId}`) || 'A';
-          await this.smartReply(
+          const reply = `No reconozco esa opción. Por favor responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
             organizationId,
-            senderId,
-            `No reconozco esa opción. Por favor responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`,
-          );
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidLetter: letraElegida, stage: 'CANCEL_SELECTION' },
+          });
           return;
         }
 
@@ -1021,18 +1358,28 @@ export class ChatbotService {
           include: { scheduleSlot: { include: { doctor: true, service: true } } },
         });
 
+        let reply = '';
         if (apt) {
           const fechaFormateada = new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO', {
             weekday: 'long', day: 'numeric', month: 'long',
             hour: '2-digit', minute: '2-digit',
           });
-          await this.smartReply(
-            organizationId,
-            senderId,
-            MSGS.cancelarConfirmar(apt.scheduleSlot.service.name, apt.scheduleSlot.doctor.fullName, fechaFormateada),
-          );
+          reply = MSGS.cancelarConfirmar(apt.scheduleSlot.service.name, apt.scheduleSlot.doctor.fullName, fechaFormateada);
+          await this.smartReply(organizationId, senderId, reply);
         }
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CONFIRM);
+
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            step: 'CANCEL_APPOINTMENT_SELECTED',
+            appointmentId: aptId,
+            slotId,
+          },
+        });
         break;
       }
 
@@ -1044,8 +1391,18 @@ export class ChatbotService {
           const slotId = await this.redis.get(`temp_selected_cancel_slot:${organizationId}:${senderId}`);
 
           if (!aptId || !slotId) {
-            await this.smartReply(organizationId, senderId, MSGS.sesionExpirada());
+            const reply = MSGS.sesionExpirada();
+            await this.smartReply(organizationId, senderId, reply);
             await this.cleanUpCancelSession(organizationId, senderId);
+
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId,
+              reason: FailureReason.SESSION_EXPIRED,
+              userMessage: text,
+              botReply: reply,
+              metadata: { stage: 'CANCEL_CONFIRM_NO_DATA' },
+            });
             return;
           }
 
@@ -1061,7 +1418,21 @@ export class ChatbotService {
               }),
             ]);
 
-            await this.smartReply(organizationId, senderId, MSGS.cancelarExitosa());
+            const reply = MSGS.cancelarExitosa();
+            await this.smartReply(organizationId, senderId, reply);
+
+            // 📝 Auditoría: cancelación exitosa
+            await this.interactionLog.logSuccess({
+              whatsappId: senderId,
+              organizationId,
+              userMessage: text,
+              botReply: reply,
+              metadata: {
+                event: 'APPOINTMENT_CANCELLED',
+                appointmentId: aptId,
+                slotId,
+              },
+            });
 
             const slot = await this.prisma.scheduleSlot.findUnique({
               where: { id: slotId },
@@ -1083,17 +1454,47 @@ export class ChatbotService {
             }
           } catch (e) {
             this.logger.error('Error cancelando cita', e);
-            await this.smartReply(organizationId, senderId, MSGS.cancelarError());
+            const reply = MSGS.cancelarError();
+            await this.smartReply(organizationId, senderId, reply);
+
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId,
+              reason: FailureReason.CANCEL_ERROR,
+              userMessage: text,
+              botReply: reply,
+              metadata: { error: e.message, appointmentId: aptId },
+            });
           }
 
           await this.cleanUpCancelSession(organizationId, senderId);
 
         } else if (['NO', 'NO.', 'CANCELAR'].includes(respuesta)) {
-          await this.smartReply(organizationId, senderId, MSGS.cancelarAbortada());
+          const reply = MSGS.cancelarAbortada();
+          await this.smartReply(organizationId, senderId, reply);
           await this.cleanUpCancelSession(organizationId, senderId);
+
+          await this.interactionLog.log({
+            whatsappId: senderId,
+            organizationId,
+            status: InteractionStatus.ESCAPED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { event: 'CANCELLATION_ABORTED' },
+          });
         } else {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-          await this.sendWhatsAppMessage(senderId, MSGS.respuestaInvalidaSiNo());
+          const reply = MSGS.respuestaInvalidaSiNo();
+          await this.sendWhatsAppMessage(senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidResponse: respuesta, stage: 'CANCEL_CONFIRM' },
+          });
         }
         break;
       }
@@ -1122,8 +1523,18 @@ export class ChatbotService {
       });
 
       if (!slotId || !patientId) {
-        await this.smartReply(organizationId, senderId, MSGS.sesionExpirada());
+        const reply = MSGS.sesionExpirada();
+        await this.smartReply(organizationId, senderId, reply);
         await this.cleanUpSession(organizationId, senderId);
+
+        await this.interactionLog.logFailure({
+          whatsappId: senderId,
+          organizationId,
+          reason: FailureReason.SESSION_EXPIRED,
+          userMessage: text,
+          botReply: reply,
+          metadata: { stage: 'WAITLIST_CONFIRM_NO_DATA' },
+        });
         return;
       }
 
@@ -1141,21 +1552,47 @@ export class ChatbotService {
       );
 
       if (bookingResult.success) {
-        const slot = await this.prisma.scheduleSlot.findUnique({ where: { id: slotId } });
+        const slot = await this.prisma.scheduleSlot.findUnique({
+          where: { id: slotId },
+          include: { doctor: true, service: true },
+        });
         const fechaFormateada = slot
           ? new Date(slot.startTime).toLocaleString('es-CO', {
             weekday: 'long', day: 'numeric', month: 'long',
             hour: '2-digit', minute: '2-digit',
           })
           : '';
-        const org = await this.prisma.organization.findUnique({ where: { id: organizationId } });
-        await this.smartReply(
-          organizationId,
-          senderId,
-          MSGS.citaConfirmada(org?.name || 'nuestra Clínica', fechaFormateada),
-        );
+        const orgInfo = await this.prisma.organization.findUnique({ where: { id: organizationId } });
+        const reply = MSGS.citaConfirmada(orgInfo?.name || 'nuestra Clínica', fechaFormateada);
+        await this.smartReply(organizationId, senderId, reply);
+
+        // 📝 Auditoría: cita agendada desde waitlist
+        if (slot && patient) {
+          await this.interactionLog.logBookingConfirmed({
+            whatsappId: senderId,
+            organizationId,
+            appointmentId: bookingResult.appointmentId || 'unknown',
+            patientCedula: patient.cedula,
+            serviceName: slot.service.name,
+            doctorName: slot.doctor.fullName,
+            slotDate: slot.startTime,
+            epsName: patient.eps?.name,
+            userMessage: text,
+            botReply: reply,
+          });
+        }
       } else {
-        await this.smartReply(organizationId, senderId, MSGS.slotTomado());
+        const reply = MSGS.slotTomado();
+        await this.smartReply(organizationId, senderId, reply);
+
+        await this.interactionLog.logFailure({
+          whatsappId: senderId,
+          organizationId,
+          reason: FailureReason.SLOT_TAKEN,
+          userMessage: text,
+          botReply: reply,
+          metadata: { stage: 'WAITLIST_SLOT_TAKEN', slotId, patientId },
+        });
       }
 
     } else if (['NO', 'NO.', 'CANCELAR'].includes(respuesta)) {
@@ -1164,13 +1601,29 @@ export class ChatbotService {
         organizationId,
         confirmed: false,
       });
-      await this.smartReply(
+      const reply = `Entendido. El cupo fue liberado. Sigue en nuestra lista de espera por si aparece otro. 😊`;
+      await this.smartReply(organizationId, senderId, reply);
+
+      await this.interactionLog.log({
+        whatsappId: senderId,
         organizationId,
-        senderId,
-        `Entendido. El cupo fue liberado. Sigue en nuestra lista de espera por si aparece otro. 😊`,
-      );
+        status: InteractionStatus.ESCAPED,
+        userMessage: text,
+        botReply: reply,
+        metadata: { event: 'WAITLIST_OFFER_REJECTED' },
+      });
     } else {
-      await this.sendWhatsAppMessage(senderId, MSGS.respuestaInvalidaSiNo());
+      const reply = MSGS.respuestaInvalidaSiNo();
+      await this.sendWhatsAppMessage(senderId, reply);
+
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        organizationId,
+        reason: FailureReason.SESSION_EXPIRED,
+        userMessage: text,
+        botReply: reply,
+        metadata: { invalidResponse: respuesta, stage: 'WAITLIST_CONFIRM' },
+      });
       return;
     }
 
@@ -1190,8 +1643,18 @@ export class ChatbotService {
     });
 
     if (!patient) {
-      await this.smartReply(organizationId, senderId, MSGS.cancelarPacienteNoExiste(cedula));
+      const reply = MSGS.cancelarPacienteNoExiste(cedula);
+      await this.smartReply(organizationId, senderId, reply);
       await this.setUserState(organizationId, senderId, ChatState.IDLE);
+
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        organizationId,
+        reason: FailureReason.PATIENT_NOT_FOUND,
+        userMessage: cedula,
+        botReply: reply,
+        metadata: { searchedCedula: cedula },
+      });
       return;
     }
 
@@ -1208,8 +1671,18 @@ export class ChatbotService {
     });
 
     if (activeAppointments.length === 0) {
-      await this.smartReply(organizationId, senderId, MSGS.cancelarSinCitas(cedula));
+      const reply = MSGS.cancelarSinCitas(cedula);
+      await this.smartReply(organizationId, senderId, reply);
       await this.setUserState(organizationId, senderId, ChatState.IDLE);
+
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        organizationId,
+        reason: FailureReason.NO_APPOINTMENTS_TO_CANCEL,
+        userMessage: cedula,
+        botReply: reply,
+        metadata: { patientCedula: cedula, patientId: patient.id },
+      });
       return;
     }
 
@@ -1222,12 +1695,21 @@ export class ChatbotService {
         weekday: 'long', day: 'numeric', month: 'long',
         hour: '2-digit', minute: '2-digit',
       });
-      await this.smartReply(
-        organizationId,
-        senderId,
-        MSGS.cancelarConfirmar(apt.scheduleSlot.service.name, apt.scheduleSlot.doctor.fullName, fechaFormateada),
-      );
+      const reply = MSGS.cancelarConfirmar(apt.scheduleSlot.service.name, apt.scheduleSlot.doctor.fullName, fechaFormateada);
+      await this.smartReply(organizationId, senderId, reply);
       await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CONFIRM);
+
+      await this.interactionLog.logSuccess({
+        whatsappId: senderId,
+        organizationId,
+        userMessage: cedula,
+        botReply: reply,
+        metadata: {
+          step: 'CANCEL_SHOWING_SINGLE',
+          appointmentId: apt.id,
+          patientCedula: cedula,
+        },
+      });
       return;
     }
 
@@ -1244,12 +1726,21 @@ export class ChatbotService {
       lineas += `*${letra})* ${apt.scheduleSlot.service.name} · Dr. ${apt.scheduleSlot.doctor.fullName} · ${fecha}\n`;
     });
 
-    await this.smartReply(
-      organizationId,
-      senderId,
-      MSGS.cancelarSeleccionar(patient.fullName, lineas),
-    );
+    const reply = MSGS.cancelarSeleccionar(patient.fullName, lineas);
+    await this.smartReply(organizationId, senderId, reply);
     await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_SELECTION);
+
+    await this.interactionLog.logSuccess({
+      whatsappId: senderId,
+      organizationId,
+      userMessage: cedula,
+      botReply: reply,
+      metadata: {
+        step: 'CANCEL_SHOWING_MULTIPLE',
+        appointmentsCount: activeAppointments.length,
+        patientCedula: cedula,
+      },
+    });
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -1261,6 +1752,12 @@ export class ChatbotService {
       if (!origin) {
         const errMsg = 'No hay tenant asociado para outbound message';
         this.logger.error(`${errMsg}: ${to}`);
+        await this.interactionLog.logOutbound({
+          whatsappId: to,
+          botReply: message,
+          success: false,
+          error: errMsg,
+        });
         return { success: false, error: errMsg };
       }
       const org = await this.prisma.organization.findFirst({
@@ -1269,12 +1766,32 @@ export class ChatbotService {
       if (!org) {
         const errMsg = 'Organización no encontrada para outbound';
         this.logger.error(`${errMsg}: ${origin}`);
+        await this.interactionLog.logOutbound({
+          whatsappId: to,
+          botReply: message,
+          success: false,
+          error: errMsg,
+        });
         return { success: false, error: errMsg };
       }
       await this.smartReply(org.id, to, message);
+
+      await this.interactionLog.logOutbound({
+        whatsappId: to,
+        organizationId: org.id,
+        botReply: message,
+        success: true,
+      });
+
       return { success: true };
     } catch (error) {
       this.logger.error(`Error en sendOutboundMessage: ${error.message}`);
+      await this.interactionLog.logOutbound({
+        whatsappId: to,
+        botReply: message,
+        success: false,
+        error: error.message,
+      });
       return { success: false, error: error.message };
     }
   }
@@ -1289,6 +1806,8 @@ export class ChatbotService {
     especialidad: string;
     doctor: string;
     slotDate: Date;
+    slotId?: string;
+    patientCedula?: string;
   }) {
     try {
       const { whatsappId, organizationId, nombre, especialidad, doctor, slotDate } = params;
@@ -1303,10 +1822,19 @@ export class ChatbotService {
         'EX',
         WAITLIST_CONFIRM_TTL,
       );
-      await this.sendWhatsAppMessage(
+      const reply = MSGS.waitlistCupoDisponible(nombre, especialidad, fechaFormateada, doctor);
+      await this.sendWhatsAppMessage(whatsappId, reply);
+
+      // 📝 Auditoría: notificación de waitlist enviada
+      await this.interactionLog.logWaitlistNotification({
         whatsappId,
-        MSGS.waitlistCupoDisponible(nombre, especialidad, fechaFormateada, doctor),
-      );
+        organizationId,
+        patientCedula: params.patientCedula || 'unknown',
+        slotId: params.slotId || 'unknown',
+        doctorName: doctor,
+        slotDate,
+        botReply: reply,
+      });
     } catch (error) {
       this.logger.error(`Error en notifyWaitlistCandidate: ${error.message}`);
     }
