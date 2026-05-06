@@ -46,6 +46,8 @@ services:
     env_file: .env.production
     depends_on:
       - api
+    environment:
+      - API_URL=${API_URL}
 
   caddy:
     image: caddy:2-alpine
