@@ -297,6 +297,10 @@ model InteractionLog {
   // 🏢 TENANT ISOLATION
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  contactedAt   DateTime? // Cuándo el funcionario contactó al paciente
+  contactedBy   String?   // Email/nombre del funcionario que contactó
+  contactNotes  String?   @db.Text // Resultado del contacto
 }
 
 // -----------------------------------------------------------------------------

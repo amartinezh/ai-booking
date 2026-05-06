@@ -11,6 +11,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { ClinicalRecordsModule } from './clinical-records/clinical-records.module';
 import { Hl7FhirModule } from './hl7-fhir/hl7-fhir.module';
 import { ClinicalAiModule } from './clinical-ai/clinical-ai.module';
+import { AuditoriaModule } from './auditoria/auditoria.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { ClinicalAiModule } from './clinical-ai/clinical-ai.module';
     ClinicalRecordsModule,
     ClinicalAiModule,
     Hl7FhirModule,
+    AuditoriaModule,
   ],
 })
-export class AppModule {}
+export class AppModule { }
