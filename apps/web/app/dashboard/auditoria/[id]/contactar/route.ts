@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '../../../../../lib/session';
+import { prisma } from '../../../../../lib/prisma';
 
 export async function POST(
     req: NextRequest,
@@ -14,32 +15,35 @@ export async function POST(
 
     // 2. Resolver los params con await
     const { id } = await params;
-
     const body = await req.json();
 
-    // 3. Inyectamos la información de la sesión en el body para el backend de NestJS
-    const payload = {
-        ...body,
-        organizationId: session.organizationId,
-        contactedBy: session.email,
-    };
+    try {
+        // 3. Verificamos que el log exista y pertenezca a la organización
+        const log = await prisma.interactionLog.findUnique({
+            where: { id },
+        });
 
-    // 4. Asegurarnos que la URL del API no tenga doble slash
-    const baseUrl = (process.env.API_URL || 'https://api:3000').replace(/\/$/, '');
-
-    const res = await fetch(
-        `${baseUrl}/auditoria/${id}/contactar`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+        if (!log) {
+            return NextResponse.json({ error: 'No encontrado' }, { status: 404 });
         }
-    );
 
-    if (!res.ok) {
-        return NextResponse.json({ error: 'Failed' }, { status: res.status });
+        if (log.organizationId !== session.organizationId) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
+
+        // 4. Actualizamos DIRECTAMENTE en la base de datos
+        const updated = await prisma.interactionLog.update({
+            where: { id },
+            data: {
+                contactedAt: new Date(),
+                contactedBy: session.email,
+                contactNotes: body.notes || null,
+            },
+        });
+
+        return NextResponse.json(updated);
+    } catch (error) {
+        console.error('Error al contactar paciente:', error);
+        return NextResponse.json({ error: 'Error de base de datos' }, { status: 500 });
     }
-
-    const data = await res.json();
-    return NextResponse.json(data);
 }
