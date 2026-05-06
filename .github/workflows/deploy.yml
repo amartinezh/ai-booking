@@ -19,6 +19,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
+            # 0. Detener el script si ocurre cualquier error
+            set -e
+            
             # 1. Ir a la carpeta del proyecto
             cd /home/deploy/ai-booking
             
