@@ -2,11 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(
     req: NextRequest,
-    { params }: { params: { id: string } }
+    // 1. Tipar params como una Promesa
+    { params }: { params: Promise<{ id: string }> }
 ) {
+    // 2. Resolver los params con await
+    const { id } = await params;
+
     const body = await req.json();
+
+    // 3. Utilizar el id resuelto en la URL
     const res = await fetch(
-        `${process.env.API_URL}/auditoria/${params.id}/contactar`,
+        `${process.env.API_URL}/auditoria/${id}/contactar`,
         {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
