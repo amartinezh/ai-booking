@@ -6,34 +6,51 @@ import {
     Param,
     Body,
     Query,
-    UseGuards,
 } from '@nestjs/common';
 import { AuditoriaService } from './auditoria.service';
-// import { JwtAuthGuard } from '../auth/jwt-auth.guard'; // si tienes auth
 
 @Controller('auditoria')
-// @UseGuards(JwtAuthGuard) // descomentar cuando tengas auth
 export class AuditoriaController {
     constructor(private readonly auditoriaService: AuditoriaService) { }
 
+    /**
+     * GET /auditoria?organizationId=...&onlyPending=true
+     *
+     * NOTA TEMPORAL: organizationId viene como query param.
+     * Cuando exista JwtAuthGuard, debe venir del token (req.user.organizationId).
+     */
     @Get()
     async listar(
         @Query('organizationId') organizationId: string,
         @Query('onlyPending') onlyPending?: string,
     ) {
+        if (!organizationId) {
+            return [];
+        }
+
         return this.auditoriaService.listarLogs({
             organizationId,
             onlyPending: onlyPending === 'true',
         });
     }
 
+    /**
+     * POST /auditoria/:id/contactar
+     * Body: { notes?: string, organizationId: string, contactedBy: string }
+     *
+     * NOTA TEMPORAL: contactedBy y organizationId vienen en body.
+     * Cuando exista JwtAuthGuard, deben venir del token.
+     */
     @Post(':id/contactar')
     async marcarContactado(
         @Param('id') id: string,
-        @Body() body: { notes?: string; contactedBy?: string },
+        @Body() body: { notes?: string; organizationId: string; contactedBy?: string },
     ) {
-        // En producción, contactedBy debería venir del JWT del usuario logueado
-        const contactedBy = body.contactedBy || 'sistema';
-        return this.auditoriaService.marcarContactado(id, contactedBy, body.notes);
+        return this.auditoriaService.marcarContactado({
+            logId: id,
+            organizationId: body.organizationId,
+            contactedBy: body.contactedBy || 'sistema',
+            notes: body.notes,
+        });
     }
 }

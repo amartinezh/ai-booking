@@ -4,12 +4,26 @@ import { getSession } from '../../../lib/session';
 import { redirect } from 'next/navigation';
 
 async function getLogs(organizationId: string) {
-    const res = await fetch(
-        `${process.env.API_URL}/auditoria?organizationId=${organizationId}`,
-        { cache: 'no-store' }, // siempre fresco
-    );
-    if (!res.ok) return [];
-    return res.json();
+    try {
+        const url = `${process.env.API_URL}/auditoria?organizationId=${organizationId}`;
+        console.log('🔍 Auditoría - fetching:', url);
+
+        const res = await fetch(url, { cache: 'no-store' });
+
+        if (!res.ok) {
+            console.error(
+                `❌ Auditoría - endpoint respondió ${res.status}: ${res.statusText}`,
+            );
+            return [];
+        }
+
+        const data = await res.json();
+        console.log(`✅ Auditoría - cargados ${data.length} logs`);
+        return data;
+    } catch (error) {
+        console.error('❌ Auditoría - error fetching logs:', error);
+        return [];
+    }
 }
 
 export default async function AuditoriaPage() {
