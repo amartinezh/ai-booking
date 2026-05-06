@@ -5,7 +5,22 @@ import { redirect } from 'next/navigation';
 
 async function getLogs(organizationId: string) {
     try {
-        const url = `${process.env.API_URL}/auditoria?organizationId=${organizationId}`;
+        // En Docker, la app web (NextJS) se comunica con la API (NestJS)
+        // a través de la red interna 'https://api:3000'. Si process.env.API_URL
+        // apunta al dominio público de NextJS (ej. https://agendamiento-ia.com/)
+        // esto causará un ciclo infinito o un 404.
+
+        let baseUrl = process.env.API_URL || 'https://api:3000';
+        // Limpiamos el slash final si existe para evitar //auditoria
+        baseUrl = baseUrl.replace(/\/$/, '');
+
+        // Fallback de seguridad: si API_URL apunta por error a la misma app web, forzamos interno.
+        if (baseUrl.includes('agendamiento-ia.com') && !baseUrl.includes('api.')) {
+            console.warn('⚠️ API_URL apunta al frontend. Forzando ruta interna Docker.');
+            baseUrl = 'https://api:3000';
+        }
+
+        const url = `${baseUrl}/auditoria?organizationId=${organizationId}`;
         console.log('🔍 Auditoría - fetching:', url);
 
         const res = await fetch(url, { cache: 'no-store' });
