@@ -1,5 +1,7 @@
-// app/(dashboard)/auditoria/page.tsx (o donde tengas la página)
+// app/(dashboard)/auditoria/page.tsx
 import AuditoriaClientView from './AuditoriaClientView';
+import { getSession } from '../../../lib/session';
+import { redirect } from 'next/navigation';
 
 async function getLogs(organizationId: string) {
     const res = await fetch(
@@ -11,8 +13,16 @@ async function getLogs(organizationId: string) {
 }
 
 export default async function AuditoriaPage() {
-    // Asume que tienes el organizationId desde la sesión
-    const organizationId = '92b268d0-fae5-425f-8478-0b5ed528326a';
+    // Obtenemos la sesión actual
+    const session = await getSession();
+
+    // Validamos que exista la sesión y tenga permisos
+    if (!session || !session.organizationId || session.role !== 'ORG_ADMIN') {
+        redirect('/dashboard');
+    }
+
+    // Usamos el ID dinámico de la organización de la sesión
+    const organizationId = session.organizationId;
     const logs = await getLogs(organizationId);
 
     return <AuditoriaClientView logs={logs} />;
