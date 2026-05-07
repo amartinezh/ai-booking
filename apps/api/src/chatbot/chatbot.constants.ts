@@ -9,7 +9,8 @@ export enum ChatState {
   AWAITING_CANCEL_CEDULA = 'AWAITING_CANCEL_CEDULA',
   AWAITING_CANCEL_SELECTION = 'AWAITING_CANCEL_SELECTION',
   AWAITING_CANCEL_CONFIRM = 'AWAITING_CANCEL_CONFIRM',
-  AWAITING_WAITLIST_CONFIRM = 'AWAITING_WAITLIST_CONFIRM', // nuevo: cupo liberado, esperando SÍ/NO
+  AWAITING_WAITLIST_CONFIRM = 'AWAITING_WAITLIST_CONFIRM',
+  AWAITING_POST_CANCEL_CHOICE = 'AWAITING_POST_CANCEL_CHOICE', // tras cancelación exitosa: ¿desea agendar?
 }
 
 // Tiempo de expiración de la sesión conversacional en Redis (1 hora)
@@ -100,11 +101,17 @@ export const MSGS = {
     `_(ej: A, B, C...)_ o escriba *"Salir"* para cancelar.`,
 
   waitlistCupoDisponible: (nombre: string, especialidad: string, fecha: string, doctor: string) =>
-    `🔔 ¡${nombre}! Hay un cupo disponible para *${especialidad}*:\n\n` +
+    `🔔 ¡${nombre}, tengo buenas noticias!\n\n` +
+    `Se liberó un cupo para *${especialidad}* y usted está primero en la lista. 🌟\n\n` +
     `📅 *${fecha}*\n` +
     `👨‍⚕️ Dr. ${doctor}\n\n` +
     `⏰ Este cupo está reservado para usted por *30 minutos*.\n\n` +
-    `¿Desea tomarlo? Responda *SÍ* para confirmar o *NO* para liberar el cupo.`,
+    `¿Le interesa tomarlo? Responda *SÍ* para confirmar o *NO* para liberar el cupo.`,
+
+  waitlistCupoRechazado: () =>
+    `¡Sin problema! 😊 El cupo ha sido liberado para otro paciente.\n\n` +
+    `Sigue en nuestra lista de espera — le avisaremos cuando haya una nueva disponibilidad.\n\n` +
+    `¡Que tenga un excelente día! 👋`,
 
   waitlistExpirado: () =>
     `Lo sentimos, el tiempo para confirmar el cupo expiró. ⏰\n\n` +
@@ -146,8 +153,8 @@ export const MSGS = {
     `_(Ej: 18531928)_`,
 
   cancelarPacienteNoExiste: (cedula: string) =>
-    `No encontré ningún paciente registrado con la cédula *${cedula}*.\n\n` +
-    `¿Desea intentar con otra cédula o agendar una nueva cita?`,
+    `No encontré ningún paciente registrado con la cédula *${cedula}*. 🔍\n\n` +
+    `Por favor verifique el número e inténtelo de nuevo, o escriba _*"Salir"*_ para cancelar el proceso.`,
 
   cancelarSinCitas: (cedula: string) =>
     `El paciente con cédula *${cedula}* no tiene citas futuras activas. 📭\n\n` +
@@ -166,8 +173,15 @@ export const MSGS = {
     `⚠️ ¿Está seguro? Responda *SÍ* para cancelar o *NO* para mantenerla.`,
 
   cancelarExitosa: () =>
-    `✅ Su cita fue *cancelada exitosamente* y el cupo ha sido liberado.\n\n` +
-    `¿Desea agendar una nueva cita o puedo ayudarle en algo más?`,
+    `✅ Su cita fue *cancelada exitosamente* y el cupo ha sido liberado. 🗓️`,
+
+  cancelarOfreceAgendar: () =>
+    `¿Le gustaría agendar en *otro horario disponible*?\n\n` +
+    `Responda *SÍ* para continuar o *NO* para finalizar.`,
+
+  cancelarDespedida: () =>
+    `¡Entendido! 😊 Que tenga un excelente día.\n\n` +
+    `Recuerde que cuando lo necesite, estaré aquí para ayudarle. ¡Hasta pronto! 👋`,
 
   cancelarAbortada: () =>
     `✅ Perfecto. Su cita sigue *activa y agendada*.\n\n` +

@@ -264,6 +264,8 @@ export class ChatbotService implements OnModuleInit {
       });
     }
 
+    const maxRetries = parseInt(this.configService.get<string>('GEMINI_MAX_RETRIES') || '3', 10);
+
     try {
       const result = await model.generateContent(parts);
       const responseText = result.response.text().trim();
@@ -272,20 +274,38 @@ export class ChatbotService implements OnModuleInit {
       parsed.isFallback = false;
       return parsed;
     } catch (e) {
-      // Reintentar hasta 3 veces con backoff exponencial antes de declarar fallo
-      if (attempt < 3) {
-        const delayMs = attempt * 1500; // 1.5 s, luego 3 s
+      if (attempt < maxRetries) {
+        const delayMs = attempt * 1500;
         this.logger.warn(`Gemini intento ${attempt} fallido, reintentando en ${delayMs}ms...`);
         await new Promise((r) => setTimeout(r, delayMs));
         return this.extractDataWithGemini(text, audioBuffer, attempt + 1);
       }
-      this.logger.error('Error procesando IA con Gemini tras 3 intentos', e);
+      this.logger.error(`Error procesando IA con Gemini tras ${maxRetries} intentos`, e);
       return {
         cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
         isEscape: false, outOfContext: false, ininteligible: false,
         isFallback: true, isCancellation: false,
       };
     }
+  }
+
+  // Extrae datos básicos del texto cuando Gemini no está disponible.
+  // No reemplaza la IA — solo evita rechazar el mensaje por completo.
+  private simpleExtractFallback(text: string | null) {
+    const t = text?.trim() || '';
+    const digits = t.replace(/\D/g, '');
+    return {
+      cedula: /^\d+$/.test(t) ? digits : null,
+      nombre: null,
+      eps: null,
+      especialidad: null,
+      doctor: null,
+      isEscape: this.escapeRegex.test(t),
+      outOfContext: false,
+      ininteligible: false,
+      isFallback: false,
+      isCancellation: this.cancelRegex.test(t),
+    };
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -602,7 +622,8 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_CONFIRMATION ||
       currentState === ChatState.AWAITING_CANCEL_SELECTION ||
       currentState === ChatState.AWAITING_CANCEL_CONFIRM ||
-      currentState === ChatState.AWAITING_WAITLIST_CONFIRM;
+      currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
+      currentState === ChatState.AWAITING_POST_CANCEL_CHOICE;
 
     const isAudio = messageType === 'audio' && !!audioId;
 
@@ -662,34 +683,64 @@ export class ChatbotService implements OnModuleInit {
       await this.sendWhatsAppMessage(senderId, '🎧 Permítame un momento, lo estoy escuchando...');
       const audioBuffer = await this.downloadWhatsAppAudio(audioId);
       if (audioBuffer) {
-        aiData = await this.extractDataWithGemini(null, audioBuffer);
+        aiData = await this.extractDataWithGemini(text, audioBuffer);
       } else {
         aiData.ininteligible = true;
       }
+    } else if (
+      messageType === 'text' &&
+      text &&
+      (currentState === ChatState.AWAITING_CEDULA || currentState === ChatState.AWAITING_CANCEL_CEDULA)
+    ) {
+      // En pasos de cédula, extraemos dígitos directamente sin llamar a Gemini.
+      // Esto evita que "000", "123", etc. sean clasificados como ininteligibles.
+      const digits = text.replace(/\D/g, '');
+      if (digits.length > 0) {
+        aiData.cedula = digits;
+      }
+      // Si el texto no tiene dígitos (ej: "salir") ya fue capturado por isQuickEscape arriba.
     } else if (messageType === 'text' && text && !isStrictStep) {
       aiData = await this.extractDataWithGemini(text, null);
     }
 
     this.logger.log(`🧠 Gemini extrajo: ${JSON.stringify(aiData)}`);
 
-    // ── GUARDS GLOBALES ────────────────────────────────────────
+    // ── CONTADOR DE FALLOS GEMINI (por organización) ───────────
+    const geminiFailKey = `gemini_fail_count:${organizationId}`;
+    const geminiDownThreshold = parseInt(
+      this.configService.get<string>('GEMINI_DOWN_THRESHOLD') || '3', 10,
+    );
 
     if (aiData.isFallback) {
-      // No se limpia la sesión: el usuario puede reintentar sin perder el contexto
-      const humanPhone = org?.supportPhone || '+573000000000';
-      const reply = MSGS.iaCaida(humanPhone);
-      await this.smartReply(organizationId, senderId, reply);
+      // Incrementar contador de fallos (TTL 15 min para auto-recuperación)
+      const currentFails = parseInt((await this.redis.get(geminiFailKey)) || '0', 10);
+      const newFails = currentFails + 1;
+      await this.redis.set(geminiFailKey, newFails.toString(), 'EX', 900);
 
-      // 📝 Auditoría: Gemini falló tras reintentos
-      await this.interactionLog.logFailure({
-        whatsappId: senderId,
-        organizationId,
-        reason: FailureReason.GEMINI_DOWN,
-        userMessage: text || '[audio]',
-        botReply: reply,
-        metadata: { previousState: currentState },
-      });
-      return;
+      if (newFails < geminiDownThreshold) {
+        // Gemini fallando pero aún por debajo del umbral: usar fallback simple y continuar
+        this.logger.warn(`Gemini fallo #${newFails}/${geminiDownThreshold} — usando fallback simple`);
+        aiData = this.simpleExtractFallback(text);
+      } else {
+        // Gemini caído definitivamente: mostrar mensaje de mantenimiento
+        this.logger.error(`Gemini caído (${newFails} fallos consecutivos) — mostrando mantenimiento`);
+        const humanPhone = org?.supportPhone || '+573000000000';
+        const reply = MSGS.iaCaida(humanPhone);
+        await this.smartReply(organizationId, senderId, reply);
+
+        await this.interactionLog.logFailure({
+          whatsappId: senderId,
+          organizationId,
+          reason: FailureReason.GEMINI_DOWN,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: { previousState: currentState, failCount: newFails },
+        });
+        return;
+      }
+    } else if (!aiData.isFallback) {
+      // Gemini respondió exitosamente: resetear contador de fallos
+      await this.redis.del(geminiFailKey);
     }
 
     if (aiData.isCancellation || isQuickCancel) {
@@ -1512,15 +1563,15 @@ export class ChatbotService implements OnModuleInit {
               }),
             ]);
 
-            const reply = MSGS.cancelarExitosa();
-            await this.smartReply(organizationId, senderId, reply);
+            const replyExito = MSGS.cancelarExitosa();
+            await this.smartReply(organizationId, senderId, replyExito);
 
             // 📝 Auditoría: cancelación exitosa
             await this.interactionLog.logSuccess({
               whatsappId: senderId,
               organizationId,
               userMessage: text,
-              botReply: reply,
+              botReply: replyExito,
               metadata: {
                 event: 'APPOINTMENT_CANCELLED',
                 appointmentId: aptId,
@@ -1528,6 +1579,7 @@ export class ChatbotService implements OnModuleInit {
               },
             });
 
+            // Liberar cupo y notificar waitlist ANTES de preguntar si desea agendar
             const slot = await this.prisma.scheduleSlot.findUnique({
               where: { id: slotId },
               include: { doctor: true, service: true },
@@ -1546,6 +1598,13 @@ export class ChatbotService implements OnModuleInit {
                 this.logger.error(`Error notificando waitlist: ${e.message}`);
               }
             }
+
+            // Preguntar si desea agendar en otro horario
+            const replyOfrecer = MSGS.cancelarOfreceAgendar();
+            await this.smartReply(organizationId, senderId, replyOfrecer);
+            await this.cleanUpCancelSession(organizationId, senderId);
+            await this.setUserState(organizationId, senderId, ChatState.AWAITING_POST_CANCEL_CHOICE);
+
           } catch (e) {
             this.logger.error('Error cancelando cita', e);
             const reply = MSGS.cancelarError();
@@ -1559,9 +1618,8 @@ export class ChatbotService implements OnModuleInit {
               botReply: reply,
               metadata: { error: e.message, appointmentId: aptId },
             });
+            await this.cleanUpCancelSession(organizationId, senderId);
           }
-
-          await this.cleanUpCancelSession(organizationId, senderId);
 
         } else if (['NO', 'NO.', 'CANCELAR'].includes(respuesta)) {
           const reply = MSGS.cancelarAbortada();
@@ -1589,6 +1647,53 @@ export class ChatbotService implements OnModuleInit {
             botReply: reply,
             metadata: { invalidResponse: respuesta, stage: 'CANCEL_CONFIRM' },
           });
+        }
+        break;
+      }
+
+      case ChatState.AWAITING_POST_CANCEL_CHOICE: {
+        const respuesta = text?.toUpperCase().trim() || '';
+
+        if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
+          const activeServices = await this.prisma.medicalService.findMany({
+            where: { isActive: true, organizationId },
+            select: { name: true },
+            orderBy: { name: 'asc' },
+          });
+          const serviciosText =
+            activeServices.length > 0
+              ? `Opciones: ${activeServices.map((s) => s.name).join(' · ')}`
+              : 'Ej: Medicina General, Odontología';
+
+          const reply = MSGS.bienvenida(orgName, serviciosText);
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+
+          await this.interactionLog.logSuccess({
+            whatsappId: senderId,
+            organizationId,
+            userMessage: text,
+            botReply: reply,
+            metadata: { event: 'POST_CANCEL_NEW_BOOKING_STARTED' },
+          });
+
+        } else if (['NO', 'NO.'].includes(respuesta)) {
+          const reply = MSGS.cancelarDespedida();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.cleanUpSession(organizationId, senderId);
+
+          await this.interactionLog.logSuccess({
+            whatsappId: senderId,
+            organizationId,
+            userMessage: text,
+            botReply: reply,
+            metadata: { event: 'POST_CANCEL_DECLINED' },
+          });
+
+        } else {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const reply = MSGS.respuestaInvalidaSiNo();
+          await this.sendWhatsAppMessage(senderId, reply);
         }
         break;
       }
@@ -1695,7 +1800,7 @@ export class ChatbotService implements OnModuleInit {
         organizationId,
         confirmed: false,
       });
-      const reply = `Entendido. El cupo fue liberado. Sigue en nuestra lista de espera por si aparece otro. 😊`;
+      const reply = MSGS.waitlistCupoRechazado();
       await this.smartReply(organizationId, senderId, reply);
 
       await this.interactionLog.log({
@@ -1739,7 +1844,8 @@ export class ChatbotService implements OnModuleInit {
     if (!patient) {
       const reply = MSGS.cancelarPacienteNoExiste(cedula);
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.IDLE);
+      // Mantener en AWAITING_CANCEL_CEDULA para que el usuario pueda reintentar sin reiniciar
+      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CEDULA);
 
       await this.interactionLog.logFailure({
         whatsappId: senderId,
