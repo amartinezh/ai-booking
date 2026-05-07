@@ -1,0 +1,53 @@
+# ============================================================
+# chatbot-patterns.txt
+# Palabras y frases que el chatbot reconoce sin llamar a Gemini.
+#
+# Formato:
+#   - Líneas que empiezan con '#' son comentarios (ignoradas).
+#   - Líneas en blanco son ignoradas.
+#   - [escape]  → coincidencia EXACTA (^...$). Reinician la sesión.
+#   - [cancel]  → coincidencia de INICIO (^...). Inician flujo de cancelación.
+#
+# Para agregar una nueva palabra o frase, simplemente añada una
+# línea en la sección correspondiente y reinicie el servicio.
+# ============================================================
+
+# ----------------------------------------------------------
+# PALABRAS DE ESCAPE
+# El usuario quiere salir o reiniciar el flujo actual.
+# Se evalúan con coincidencia exacta (case-insensitive).
+# ----------------------------------------------------------
+[escape]
+hola
+hols
+hloa
+ola
+salir
+reiniciar
+volver
+me equivoque
+me equivoqué
+otra cita
+cambiar
+no quiero
+detener
+menu
+menú
+inicio
+empezar
+comenzar
+reset
+
+# ----------------------------------------------------------
+# FRASES DE CANCELACIÓN
+# El usuario quiere cancelar una cita existente.
+# Se evalúan como "empieza con" (case-insensitive).
+# ----------------------------------------------------------
+[cancel]
+cancelar cita
+anular cita
+quiero cancelar
+necesito cancelar
+deseo cancelar
+cancelar mi cita
+anular mi cita

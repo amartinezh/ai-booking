@@ -15,6 +15,10 @@ export enum ChatState {
 // Tiempo de expiración de la sesión conversacional en Redis (1 hora)
 export const SESSION_TTL = 3600;
 
+// Longitud mínima de dígitos para considerar una cédula válida.
+// Aplica en flujo de agendamiento Y cancelación (consistencia).
+export const MIN_CEDULA_LENGTH = 4;
+
 // Tiempo máximo para confirmar un cupo de waitlist (30 minutos)
 export const WAITLIST_CONFIRM_TTL = 1800;
 

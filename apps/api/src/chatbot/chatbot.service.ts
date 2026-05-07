@@ -1,11 +1,11 @@
 // @ts-nocheck
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { RedisService } from '../redis/redis.service';
-import { ChatState, SESSION_TTL, WAITLIST_CONFIRM_TTL, MSGS } from './chatbot.constants';
+import { ChatState, SESSION_TTL, WAITLIST_CONFIRM_TTL, MSGS, MIN_CEDULA_LENGTH } from './chatbot.constants';
 import { AppointmentsService } from 'src/appointments/appointments.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
 import {
@@ -15,12 +15,18 @@ import {
 } from '../interaction-log/interaction-log.service';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import textToSpeech from '@google-cloud/text-to-speech';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
-export class ChatbotService {
+export class ChatbotService implements OnModuleInit {
   private readonly logger = new Logger(ChatbotService.name);
   private readonly genAI: GoogleGenerativeAI;
   private readonly ttsClient = new textToSpeech.TextToSpeechClient();
+
+  // Regex construidos dinámicamente desde chatbot-patterns.txt
+  private escapeRegex: RegExp = /^(hola)$/i;
+  private cancelRegex: RegExp = /^(cancelar cita)/i;
 
   constructor(
     private prisma: PrismaService,
@@ -36,6 +42,70 @@ export class ChatbotService {
       this.logger.warn('⚠️ GEMINI_API_KEY no definida. Las funciones de audio fallarán.');
     }
     this.genAI = new GoogleGenerativeAI(apiKey || 'dummy');
+  }
+
+  onModuleInit() {
+    this.loadPatterns();
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // CARGA DE PATRONES DESDE ARCHIVO PLANO
+  // Lee chatbot-patterns.txt y construye los regex de escape/cancel.
+  // Llamar reloadPatterns() si se edita el archivo en caliente.
+  // ══════════════════════════════════════════════════════════════
+  private loadPatterns(): void {
+    const candidates = [
+      path.resolve(__dirname, 'chatbot-patterns.txt'),
+      path.resolve(process.cwd(), 'src', 'chatbot', 'chatbot-patterns.txt'),
+    ];
+
+    let content: string | null = null;
+    for (const filePath of candidates) {
+      if (fs.existsSync(filePath)) {
+        content = fs.readFileSync(filePath, 'utf-8');
+        this.logger.log(`Patrones cargados desde: ${filePath}`);
+        break;
+      }
+    }
+
+    if (!content) {
+      this.logger.warn('chatbot-patterns.txt no encontrado. Se usarán patrones por defecto.');
+      return;
+    }
+
+    const escapeWords: string[] = [];
+    const cancelPhrases: string[] = [];
+    let currentSection = '';
+
+    for (const rawLine of content.split('\n')) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+
+      if (line === '[escape]') {
+        currentSection = 'escape';
+      } else if (line === '[cancel]') {
+        currentSection = 'cancel';
+      } else if (currentSection === 'escape') {
+        escapeWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      } else if (currentSection === 'cancel') {
+        cancelPhrases.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      }
+    }
+
+    if (escapeWords.length > 0) {
+      this.escapeRegex = new RegExp(`^(${escapeWords.join('|')})$`, 'i');
+    }
+    if (cancelPhrases.length > 0) {
+      this.cancelRegex = new RegExp(`^(${cancelPhrases.join('|')})`, 'i');
+    }
+
+    this.logger.log(
+      `Patrones listos — escape: ${escapeWords.length} palabras, cancel: ${cancelPhrases.length} frases`,
+    );
+  }
+
+  reloadPatterns(): void {
+    this.loadPatterns();
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -146,6 +216,7 @@ export class ChatbotService {
   private async extractDataWithGemini(
     text: string | null,
     audioBuffer: Buffer | null,
+    attempt = 1,
   ): Promise<{
     cedula: string | null;
     nombre: string | null;
@@ -201,7 +272,14 @@ export class ChatbotService {
       parsed.isFallback = false;
       return parsed;
     } catch (e) {
-      this.logger.error('Error procesando IA con Gemini', e);
+      // Reintentar hasta 3 veces con backoff exponencial antes de declarar fallo
+      if (attempt < 3) {
+        const delayMs = attempt * 1500; // 1.5 s, luego 3 s
+        this.logger.warn(`Gemini intento ${attempt} fallido, reintentando en ${delayMs}ms...`);
+        await new Promise((r) => setTimeout(r, delayMs));
+        return this.extractDataWithGemini(text, audioBuffer, attempt + 1);
+      }
+      this.logger.error('Error procesando IA con Gemini tras 3 intentos', e);
       return {
         cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
         isEscape: false, outOfContext: false, ininteligible: false,
@@ -543,17 +621,16 @@ export class ChatbotService {
       return;
     }
 
+    // Patrones cargados desde chatbot-patterns.txt (ver loadPatterns / reloadPatterns)
     const isQuickCancel =
       messageType === 'text' &&
-      text &&
-      /^(cancelar cita|anular cita|quiero cancelar|necesito cancelar)/i.test(text.trim());
+      !!text &&
+      this.cancelRegex.test(text.trim());
 
     const isQuickEscape =
       messageType === 'text' &&
-      text &&
-      /^(hola|salir|reiniciar|volver|me equivoque|me equivoqué|otra cita|cambiar|no quiero|detener|menu|menú)$/i.test(
-        text.trim(),
-      );
+      !!text &&
+      this.escapeRegex.test(text.trim());
 
     let aiData = {
       cedula: null as string | null,
@@ -578,8 +655,8 @@ export class ChatbotService {
       currentState !== ChatState.IDLE
     ) {
       aiData.isEscape = true;
-    } else if (isQuickEscape && currentState === ChatState.IDLE && text.trim().toLowerCase() === 'hola') {
-      // saludo simple, no llama Gemini
+    } else if (isQuickEscape && currentState === ChatState.IDLE) {
+      // saludo o reinicio simple en estado IDLE — no llama Gemini
     } else if (isAudio) {
       await this.redis.set(`is_ai_flow:${organizationId}:${senderId}`, 'true', 'EX', SESSION_TTL);
       await this.sendWhatsAppMessage(senderId, '🎧 Permítame un momento, lo estoy escuchando...');
@@ -598,12 +675,12 @@ export class ChatbotService {
     // ── GUARDS GLOBALES ────────────────────────────────────────
 
     if (aiData.isFallback) {
-      await this.cleanUpSession(organizationId, senderId);
+      // No se limpia la sesión: el usuario puede reintentar sin perder el contexto
       const humanPhone = org?.supportPhone || '+573000000000';
       const reply = MSGS.iaCaida(humanPhone);
       await this.smartReply(organizationId, senderId, reply);
 
-      // 📝 Auditoría: Gemini falló
+      // 📝 Auditoría: Gemini falló tras reintentos
       await this.interactionLog.logFailure({
         whatsappId: senderId,
         organizationId,
@@ -855,6 +932,23 @@ export class ChatbotService {
             specialty: finalEspecialidadConDoctor,
             doctor: finalDoctor,
           },
+        });
+        return;
+      }
+
+      // Validación de cédula consistente con el flujo de cancelación
+      const soloNumerosAgendamiento = finalCedula.replace(/\D/g, '');
+      if (!soloNumerosAgendamiento || soloNumerosAgendamiento.length < MIN_CEDULA_LENGTH) {
+        await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+        const reply = MSGS.cancelarCedulaInvalida();
+        await this.smartReply(organizationId, senderId, reply);
+        await this.interactionLog.logFailure({
+          whatsappId: senderId,
+          organizationId,
+          reason: FailureReason.PATIENT_NOT_FOUND,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: { stage: 'BOOKING_CEDULA_INVALID', cedula: finalCedula },
         });
         return;
       }
@@ -1307,7 +1401,7 @@ export class ChatbotService {
           cedula = soloNumeros;
         }
 
-        if (!cedula || cedula.length < 5) {
+        if (!cedula || cedula.length < MIN_CEDULA_LENGTH) {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
           const reply = MSGS.cancelarCedulaInvalida();
           await this.smartReply(organizationId, senderId, reply);
