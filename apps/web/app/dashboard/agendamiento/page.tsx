@@ -1,7 +1,9 @@
 import { prisma } from '../../../lib/prisma';
 import { getSession } from '../../../lib/session';
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 import CalendarClient from './client';
+import PageSkeleton from '../components/PageSkeleton';
 
 export const dynamic = 'force-dynamic';
 
@@ -92,12 +94,14 @@ export default async function AgendamientoPage({
       : await prisma.doctorProfile.findMany({ where: { organizationId: session.organizationId }, select: { id: true, fullName: true, cedula: true, serviceId: true }, orderBy: { fullName: 'asc' } });
 
     return (
-        <CalendarClient
-            appointments={appointments}
-            epsList={epsList}
-            doctorList={doctorList}
-            servicesList={servicesList}
-            role={session.role}
-        />
+        <Suspense fallback={<PageSkeleton />}>
+            <CalendarClient
+                appointments={appointments}
+                epsList={epsList}
+                doctorList={doctorList}
+                servicesList={servicesList}
+                role={session.role}
+            />
+        </Suspense>
     );
 }

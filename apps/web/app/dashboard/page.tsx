@@ -2,7 +2,9 @@ import { prisma } from '@/lib/prisma';
 import { Prisma } from '@antigravity/database';
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 import DashboardClient from './components/DashboardClient';
+import PageSkeleton from './components/PageSkeleton';
 
 export const dynamic = 'force-dynamic';
 
@@ -100,12 +102,14 @@ export default async function DashboardPage({
                 <p className="text-zinc-500 dark:text-zinc-400 text-lg leading-relaxed max-w-2xl">{greeting}</p>
             </header>
 
-            <DashboardClient
-                appointments={appointments}
-                epsList={epsList}
-                doctorsList={doctorsList}
-                role={session.role}
-            />
+            <Suspense fallback={<PageSkeleton />}>
+                <DashboardClient
+                    appointments={appointments}
+                    epsList={epsList}
+                    doctorsList={doctorsList}
+                    role={session.role}
+                />
+            </Suspense>
         </div>
     );
 }

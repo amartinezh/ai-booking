@@ -1,7 +1,9 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 import { getEpsList } from '@/app/actions/eps';
 import EpsClient from './components/EpsClient';
+import PageSkeleton from '../components/PageSkeleton';
 
 export default async function EpsPage({
     searchParams,
@@ -17,7 +19,9 @@ export default async function EpsPage({
     return (
         <div className="p-6 md:p-8 max-w-7xl mx-auto w-full">
             {res.success ? (
-                <EpsClient data={res.data || []} />
+                <Suspense fallback={<PageSkeleton />}>
+                    <EpsClient data={res.data || []} />
+                </Suspense>
             ) : (
                 <div className="p-4 bg-red-50 text-red-500 rounded-lg font-medium border border-red-200">
                     ⚠️ {res.error}

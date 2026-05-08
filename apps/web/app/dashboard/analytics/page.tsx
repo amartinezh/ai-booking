@@ -1,6 +1,8 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
+import PageSkeleton from '../components/PageSkeleton';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,10 +33,12 @@ export default async function AnalyticsPage({
                 </div>
             </header>
 
-            <AnalyticsDashboard 
-                startDate={startDate} 
-                endDate={endDate} 
-            />
+            <Suspense fallback={<PageSkeleton />}>
+                <AnalyticsDashboard
+                    startDate={startDate}
+                    endDate={endDate}
+                />
+            </Suspense>
         </div>
     );
 }

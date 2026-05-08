@@ -1,7 +1,9 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 import { getMedicalServicesList } from '@/app/actions/services';
 import ServicesClient from './components/ServicesClient';
+import PageSkeleton from '../components/PageSkeleton';
 
 export default async function ServicesPage({
     searchParams,
@@ -17,7 +19,9 @@ export default async function ServicesPage({
     return (
         <div className="p-6 md:p-8 max-w-7xl mx-auto w-full">
             {res.success ? (
-                <ServicesClient data={res.data || []} />
+                <Suspense fallback={<PageSkeleton />}>
+                    <ServicesClient data={res.data || []} />
+                </Suspense>
             ) : (
                 <div className="p-4 bg-red-50 text-red-500 rounded-lg font-medium border border-red-200">
                     ⚠️ {res.error}
