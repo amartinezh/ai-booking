@@ -1,26 +1,28 @@
 'use server';
 
 import { prisma } from '@/lib/prisma';
+import { getSession } from '@/lib/session';
 import { revalidatePath } from 'next/cache';
-import { cookies } from 'next/headers';
+
+const ATTENDANCE_ALLOWED_ROLES = ['BOOKING_AGENT', 'DOCTOR', 'ORG_ADMIN', 'SUPER_ADMIN'];
 
 export async function updateAttendance(appointmentId: string, status: string) {
     try {
-        const cookieStore = await cookies();
-        const token = cookieStore.get('auth_token')?.value || '';
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+        const session = await getSession();
 
-        const res = await fetch(`${apiUrl}/appointments/${appointmentId}/attendance`, {
-            method: 'PATCH',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Cookie': `auth_token=${token}`,
-                'Authorization': `Bearer ${token}` 
-            },
-            body: JSON.stringify({ status })
+        if (!session || !ATTENDANCE_ALLOWED_ROLES.includes(session.role)) {
+            return { success: false, error: 'No tiene permisos para actualizar la asistencia' };
+        }
+
+        const whereClause: { id: string; organizationId?: string } = { id: appointmentId };
+        if (session.role !== 'SUPER_ADMIN' && session.organizationId) {
+            whereClause.organizationId = session.organizationId;
+        }
+
+        await prisma.appointment.update({
+            where: whereClause,
+            data: { attendanceStatus: status as any },
         });
-
-        if (!res.ok) throw new Error('API Error');
 
         revalidatePath('/dashboard');
         return { success: true };
