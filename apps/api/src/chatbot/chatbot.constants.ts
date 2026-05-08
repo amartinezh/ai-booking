@@ -183,6 +183,10 @@ export const MSGS = {
     `¡Entendido! 😊 Que tenga un excelente día.\n\n` +
     `Recuerde que cuando lo necesite, estaré aquí para ayudarle. ¡Hasta pronto! 👋`,
 
+  despedidaCorta: () =>
+    `¡Fue un placer ayudarle! 😊 Que tenga un excelente día.\n\n` +
+    `Cuando necesite algo más, aquí estaré. ¡Hasta pronto! 👋`,
+
   cancelarAbortada: () =>
     `✅ Perfecto. Su cita sigue *activa y agendada*.\n\n` +
     `¿Puedo ayudarle en algo más?`,

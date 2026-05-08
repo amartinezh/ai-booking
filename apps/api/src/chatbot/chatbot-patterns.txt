@@ -17,6 +17,28 @@
 # ============================================================
 
 # ----------------------------------------------------------
+# DESPEDIDAS
+# El usuario se despide o agradece (estado IDLE después de una acción).
+# Se evalúan con coincidencia EXACTA (case-insensitive).
+# El bot responde con un cierre amable SIN reabrir el flujo de agendamiento.
+# ----------------------------------------------------------
+[farewell]
+gracias
+muchas gracias
+ok gracias
+mil gracias
+perfecto
+excelente
+listo
+genial
+que bueno
+muy bien
+de acuerdo
+ok perfecto
+todo bien
+gracias por todo
+
+# ----------------------------------------------------------
 # SALUDOS
 # El usuario saluda (puede estar en cualquier estado).
 # Se evalúan con coincidencia EXACTA (case-insensitive).

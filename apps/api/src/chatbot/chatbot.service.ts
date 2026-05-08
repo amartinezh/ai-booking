@@ -30,6 +30,7 @@ export class ChatbotService implements OnModuleInit {
   private cancelRegex: RegExp = /^(cancelar cita)/i;
   private greetingRegex: RegExp = /^(hola)$/i;
   private particularRegex: RegExp = /^(particular)$/i;
+  private farewellRegex: RegExp = /^(gracias)$/i;
 
   constructor(
     private prisma: PrismaService,
@@ -77,6 +78,7 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    const farewellWords: string[] = [];
     const greetingWords: string[] = [];
     const escapeWords: string[] = [];
     const cancelPhrases: string[] = [];
@@ -87,7 +89,9 @@ export class ChatbotService implements OnModuleInit {
       const line = rawLine.trim();
       if (!line || line.startsWith('#')) continue;
 
-      if (line === '[greetings]') {
+      if (line === '[farewell]') {
+        currentSection = 'farewell';
+      } else if (line === '[greetings]') {
         currentSection = 'greetings';
       } else if (line === '[escape]') {
         currentSection = 'escape';
@@ -95,6 +99,8 @@ export class ChatbotService implements OnModuleInit {
         currentSection = 'cancel';
       } else if (line === '[particular]') {
         currentSection = 'particular';
+      } else if (currentSection === 'farewell') {
+        farewellWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'greetings') {
         greetingWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'escape') {
@@ -106,6 +112,9 @@ export class ChatbotService implements OnModuleInit {
       }
     }
 
+    if (farewellWords.length > 0) {
+      this.farewellRegex = new RegExp(`^(${farewellWords.join('|')})$`, 'i');
+    }
     if (greetingWords.length > 0) {
       this.greetingRegex = new RegExp(`^(${greetingWords.join('|')})$`, 'i');
     }
@@ -120,7 +129,7 @@ export class ChatbotService implements OnModuleInit {
     }
 
     this.logger.log(
-      `Patrones listos — greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, particular: ${particularWords.length}`,
+      `Patrones listos — farewell: ${farewellWords.length}, greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, particular: ${particularWords.length}`,
     );
   }
 
@@ -775,6 +784,25 @@ export class ChatbotService implements OnModuleInit {
         userMessage: '[audio]',
         botReply: reply,
         metadata: { reason: 'AUDIO_REJECTED_IN_STRICT_STEP', state: currentState },
+      });
+      return;
+    }
+
+    // EARLY RETURN: despedida en IDLE — no reabrir el flujo de agendamiento
+    if (
+      messageType === 'text' &&
+      !!text &&
+      currentState === ChatState.IDLE &&
+      this.farewellRegex.test(text.trim())
+    ) {
+      const reply = MSGS.despedidaCorta();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.interactionLog.logSuccess({
+        whatsappId: senderId,
+        organizationId,
+        userMessage: text,
+        botReply: reply,
+        metadata: { step: 'FAREWELL' },
       });
       return;
     }

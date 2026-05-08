@@ -21,16 +21,24 @@ jobs:
           script: |
             # 0. Detener el script si ocurre cualquier error
             set -e
-            
+
             # 1. Ir a la carpeta del proyecto
             cd /home/deploy/ai-booking
-            
+
             # 2. Bajar los últimos cambios de GitHub
             git pull origin main
-            
-            # 3. Reconstruir los contenedores (Docker es inteligente y solo compilará lo que cambió)
-            # Nota: No usamos sudo porque 'deploy' ya está en el grupo docker
-            docker compose -f docker-compose.prod.yml up -d --build
-            
-            # 4. Ejecutar migraciones de Prisma de forma segura
+
+            # 3. Detener y eliminar los contenedores de aplicación (api y web).
+            #    postgres y redis NO se tocan para preservar los datos.
+            docker compose -f docker-compose.prod.yml stop api web
+            docker compose -f docker-compose.prod.yml rm -f api web
+
+            # 4. Reconstruir desde cero sin caché para garantizar que el código
+            #    nuevo quede dentro de la imagen (evita el problema de capa cacheada).
+            docker compose -f docker-compose.prod.yml build --no-cache api web
+
+            # 5. Levantar todos los servicios
+            docker compose -f docker-compose.prod.yml up -d
+
+            # 6. Ejecutar migraciones de Prisma de forma segura
             docker compose -f docker-compose.prod.yml exec -T api npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
