@@ -13,7 +13,7 @@ import {
     createAddendumAction
 } from '@/app/actions/ehr';
 import { transcribeAudioAction } from '@/app/actions/dictation';
-import { X, Plus, Trash2, Save, Stethoscope, FileText, ClipboardList, Lock, FilePlus } from 'lucide-react';
+import { X, Plus, Trash2, Stethoscope, FileText, ClipboardList, Lock, FilePlus } from 'lucide-react';
 import { toast } from 'sonner';
 import ConfirmSignatureModal from './ConfirmSignatureModal';
 import VoiceDictationButton from './VoiceDictationButton';
@@ -119,6 +119,23 @@ export default function ClinicalRecordDrawer({
                 if (!current) return aiFragment;
                 return `${current}\n\n${aiFragment}`;
             };
+
+            // Signos vitales — solo sobreescribir si el campo está vacío y la IA detectó un valor
+            if (ai.vitalSigns) {
+                const vs = ai.vitalSigns;
+                if (vs.bloodPressure != null && !currentVals.vitalSigns?.bloodPressure)
+                    setValue('vitalSigns.bloodPressure', vs.bloodPressure);
+                if (vs.heartRate != null && !currentVals.vitalSigns?.heartRate)
+                    setValue('vitalSigns.heartRate', vs.heartRate);
+                if (vs.temperature != null && !currentVals.vitalSigns?.temperature)
+                    setValue('vitalSigns.temperature', vs.temperature);
+                if (vs.oxygenSat != null && !currentVals.vitalSigns?.oxygenSat)
+                    setValue('vitalSigns.oxygenSat', vs.oxygenSat);
+                if (vs.weight != null && !currentVals.vitalSigns?.weight)
+                    setValue('vitalSigns.weight', vs.weight);
+                if (vs.height != null && !currentVals.vitalSigns?.height)
+                    setValue('vitalSigns.height', vs.height);
+            }
 
             // String Merges
             setValue('chiefComplaint', mergeText(currentVals.chiefComplaint, ai.chiefComplaint, 'chiefComplaint'));

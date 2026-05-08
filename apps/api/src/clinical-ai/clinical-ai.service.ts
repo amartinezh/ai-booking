@@ -26,32 +26,48 @@ export class ClinicalAiService {
       });
 
       const prompt = `
-        Actúa como un escriba médico experto. 
+        Actúa como un escriba médico experto.
         Analiza el audio dictado por el médico y extrae la información para llenar la Historia Clínica Electrónica.
         Mejorarás sutilmente la redacción clínica (ortografía, términos médicos), pero mantendrás absolutamente la intención original del médico.
 
         Debes retornar ESTRICTAMENTE un JSON con la siguiente estructura.
         Si el médico NO menciona información para algún campo, DEBES establecer ese campo como \`null\`.
-        No inventes datos. 
+        No inventes datos.
+
+        REGLAS PARA SIGNOS VITALES:
+        - "bloodPressure": string en formato "sistólica/diastólica" (ej. "120/80"). null si no se menciona.
+        - "heartRate": número entero en lpm. null si no se menciona.
+        - "temperature": número decimal en °C (ej. 36.5). null si no se menciona.
+        - "oxygenSat": número entero en % (ej. 98). null si no se menciona.
+        - "weight": número decimal en kg (ej. 70.5). null si no se menciona.
+        - "height": número entero en cm (ej. 175). null si no se menciona.
 
         Estructura JSON Requerida:
         {
+          "vitalSigns": {
+            "bloodPressure": "120/80 o null",
+            "heartRate": 80 or null,
+            "temperature": 36.5 or null,
+            "oxygenSat": 98 or null,
+            "weight": 70.5 or null,
+            "height": 175 or null
+          },
           "chiefComplaint": "El motivo de consulta del paciente. O null.",
           "currentIllness": "La enfermedad actual y desarrollo de síntomas. O null.",
           "physicalExam": "Los hallazgos del examen físico. O null.",
           "evolutionNotes": "Notas o análisis de evolución y plan médico. O null.",
           "diagnoses": [
-            { "description": "Nombre de la enfermedad o condición", "isMain": boolean (true si es el principal) }
-          ], // Retorna array vacío [] si no menciona diagnósticos
+            { "description": "Nombre de la enfermedad o condición", "isMain": boolean }
+          ],
           "prescriptions": [
             {
               "medication": "Nombre del medicamento",
               "dose": "Dosis (ej. 500mg, 1 tableta)",
               "frequency": "Frecuencia (ej. cada 8 horas)",
               "duration": "Duración (ej. por 5 días)",
-              "notes": "Instrucciones extra. (opcional, o string vacío)"
+              "notes": "Instrucciones extra o string vacío"
             }
-          ] // Retorna array vacío [] si no se dictan recetas
+          ]
         }
       `;
 
