@@ -5,7 +5,8 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { RedisService } from '../redis/redis.service';
-import { ChatState, SESSION_TTL, WAITLIST_CONFIRM_TTL, MSGS, MIN_CEDULA_LENGTH } from './chatbot.constants';
+import { ChatState, SESSION_TTL, WAITLIST_CONFIRM_TTL, MSGS, MIN_CEDULA_LENGTH, BOT_NAME } from './chatbot.constants';
+import { KnowledgeBaseService } from './knowledge-base.service';
 import { AppointmentsService } from 'src/appointments/appointments.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
 import {
@@ -38,6 +39,7 @@ export class ChatbotService implements OnModuleInit {
     private appointmentsService: AppointmentsService,
     private waitlistService: WaitlistService,
     private interactionLog: InteractionLogService,
+    private knowledgeBase: KnowledgeBaseService,
   ) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     if (!apiKey) {
@@ -327,6 +329,124 @@ export class ChatbotService implements OnModuleInit {
       isFallback: false,
       isCancellation: this.cancelRegex.test(t),
     };
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // INTENT ROUTER
+  // Clasifica el mensaje en IDLE antes de llamar al extractor principal.
+  // Retorna una categoría simple; falla-abierto a 'other' si Gemini no responde.
+  // ══════════════════════════════════════════════════════════════
+  private async classifyIntent(
+    text: string,
+  ): Promise<'scheduling' | 'cancellation' | 'faq' | 'greeting' | 'other'> {
+    const validIntents = ['scheduling', 'cancellation', 'faq', 'greeting', 'other'] as const;
+    type Intent = (typeof validIntents)[number];
+
+    try {
+      const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const prompt =
+        `Clasifica el siguiente mensaje de WhatsApp de un paciente de una clínica colombiana ` +
+        `en UNA sola categoría.\n\n` +
+        `Categorías:\n` +
+        `- scheduling: quiere agendar, pedir, confirmar o reprogramar una cita médica\n` +
+        `- cancellation: quiere cancelar o anular una cita existente\n` +
+        `- faq: pregunta sobre horarios, costos, documentos, seguros, servicios, trámites o ` +
+        `información general de la clínica\n` +
+        `- greeting: saludo simple sin intención clara (hola, buenos días, etc.)\n` +
+        `- other: tema sin relación médica o ambiguo\n\n` +
+        `Mensaje: "${text}"\n\n` +
+        `Responde ÚNICAMENTE con una de estas palabras exactas: scheduling | cancellation | faq | greeting | other`;
+
+      const result = await model.generateContent(prompt);
+      const raw = result.response.text().trim().toLowerCase();
+      const matched = validIntents.find((i) => raw.includes(i));
+      return (matched as Intent) ?? 'other';
+    } catch (err) {
+      this.logger.warn(`classifyIntent falló, usando 'other' por defecto: ${err.message}`);
+      return 'other';
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // FAQ HANDLER
+  // Responde preguntas generales usando la base de conocimiento.
+  // No modifica el estado de la sesión (el usuario sigue en IDLE).
+  // ══════════════════════════════════════════════════════════════
+  private async answerFAQ(
+    question: string,
+    organizationId: string,
+    senderId: string,
+    org: any,
+  ): Promise<void> {
+    const supportPhone = org?.supportPhone || '(601) 555-0199';
+    const clinicName = org?.name || 'nuestra Clínica';
+
+    if (!this.knowledgeBase.hasContent()) {
+      const reply =
+        `Esa información no está disponible en este momento. 😊\n\n` +
+        `Para más detalles, comuníquese con nosotros al *${supportPhone}* ` +
+        `o visítenos en recepción.`;
+      await this.smartReply(organizationId, senderId, reply);
+      await this.interactionLog.logSuccess({
+        whatsappId: senderId,
+        organizationId,
+        userMessage: question,
+        botReply: reply,
+        metadata: { step: 'FAQ_NO_KB' },
+      });
+      return;
+    }
+
+    const systemPrompt =
+      `Eres *${BOT_NAME}*, el recepcionista virtual de *${clinicName}*. ` +
+      `Tu único rol en este momento es responder preguntas generales de pacientes ` +
+      `basándote EXCLUSIVAMENTE en la BASE DE CONOCIMIENTO que se incluye a continuación.\n\n` +
+      `REGLAS ESTRICTAS QUE DEBES SEGUIR:\n` +
+      `1. NUNCA inventes información que no esté en la base de conocimiento.\n` +
+      `2. Si la respuesta no está en la base de conocimiento, responde exactamente: ` +
+      `"Esa información no está disponible en este momento. Para más detalles, ` +
+      `comuníquese con nosotros al *${supportPhone}*."\n` +
+      `3. Usa formato de WhatsApp: *negrita* para énfasis importante, guiones para listas. ` +
+      `NO uses HTML ni markdown avanzado (#, ##, **).\n` +
+      `4. Sé cálido, empático y profesional. Lenguaje sencillo y cercano.\n` +
+      `5. Sé conciso: máximo 4 oraciones o puntos clave, salvo que la pregunta requiera más detalle.\n` +
+      `6. Si el paciente menciona querer agendar una cita, indícale: ` +
+      `"Para agendar, indíqueme la especialidad que necesita o escriba *Hola* para comenzar."\n` +
+      `7. Termina siempre con "¿Hay algo más en lo que pueda ayudarle? 😊" ` +
+      `salvo que ya hayas derivado al teléfono de soporte.\n\n` +
+      `--- BASE DE CONOCIMIENTO ---\n` +
+      `${this.knowledgeBase.getContent()}\n` +
+      `--- FIN DE BASE DE CONOCIMIENTO ---\n\n` +
+      `Responde la siguiente pregunta del paciente:`;
+
+    try {
+      const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const result = await model.generateContent([systemPrompt, `Pregunta: "${question}"`]);
+      const reply = result.response.text().trim();
+
+      await this.smartReply(organizationId, senderId, reply);
+      await this.interactionLog.logSuccess({
+        whatsappId: senderId,
+        organizationId,
+        userMessage: question,
+        botReply: reply,
+        metadata: { step: 'FAQ_ANSWERED' },
+      });
+    } catch (err) {
+      this.logger.error(`answerFAQ falló: ${err.message}`);
+      const fallback =
+        `Lo siento, tuve un inconveniente al procesar su consulta. 😔\n\n` +
+        `Para más información, comuníquese con nosotros al *${supportPhone}*.`;
+      await this.smartReply(organizationId, senderId, fallback);
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        organizationId,
+        reason: FailureReason.GEMINI_DOWN,
+        userMessage: question,
+        botReply: fallback,
+        metadata: { step: 'FAQ_ERROR' },
+      });
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -698,7 +818,24 @@ export class ChatbotService implements OnModuleInit {
     ) {
       aiData.isEscape = true;
     } else if (isQuickEscape && currentState === ChatState.IDLE) {
-      // saludo o reinicio simple en estado IDLE — no llama Gemini
+      // saludo o reinicio simple en estado IDLE — no llama Gemini (→ bienvenida abajo)
+    } else if (
+      messageType === 'text' &&
+      !!text &&
+      currentState === ChatState.IDLE &&
+      this.knowledgeBase.hasContent()
+    ) {
+      // Intent routing: solo en IDLE y cuando la KB está disponible.
+      // Clasifica ANTES de llamar al extractor principal para evitar una llamada Gemini innecesaria.
+      const intent = await this.classifyIntent(text);
+      this.logger.log(`🎯 Intent clasificado: ${intent} para mensaje: "${text}"`);
+
+      if (intent === 'faq') {
+        await this.answerFAQ(text, organizationId, senderId, org);
+        return;
+      }
+      // Para scheduling / cancellation / greeting / other → extracción normal
+      aiData = await this.extractDataWithGemini(text, null);
     } else if (isAudio) {
       await this.redis.set(`is_ai_flow:${organizationId}:${senderId}`, 'true', 'EX', SESSION_TTL);
       await this.sendWhatsAppMessage(senderId, '🎧 Permítame un momento, lo estoy escuchando...');
