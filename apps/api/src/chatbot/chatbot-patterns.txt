@@ -5,12 +5,33 @@
 # Formato:
 #   - Líneas que empiezan con '#' son comentarios (ignoradas).
 #   - Líneas en blanco son ignoradas.
-#   - [escape]  → coincidencia EXACTA (^...$). Reinician la sesión.
-#   - [cancel]  → coincidencia de INICIO (^...). Inician flujo de cancelación.
+#   - [greetings] → coincidencia EXACTA. Muestran bienvenida directa (sin "Sin problema").
+#   - [escape]    → coincidencia EXACTA (^...$). Muestran "Sin problema. Empezamos de cero."
+#   - [cancel]    → coincidencia de INICIO (^...). Inician flujo de cancelación.
 #
-# Para agregar una nueva palabra o frase, simplemente añada una
-# línea en la sección correspondiente y reinicie el servicio.
+# Nota: Las palabras de [greetings] también deben estar en [escape] para que
+# el sistema las detecte como escape y evite llamar a Gemini.
+#
+# Para agregar una nueva palabra, añada una línea en la sección correcta
+# y reinicie el servicio (o llame a reloadPatterns()).
 # ============================================================
+
+# ----------------------------------------------------------
+# SALUDOS
+# El usuario saluda (puede estar en cualquier estado).
+# Se evalúan con coincidencia EXACTA (case-insensitive).
+# Muestran la bienvenida directamente (sin "Sin problema").
+# IMPORTANTE: Estas palabras también deben estar en [escape]
+# para que el sistema las detecte y omita llamar a Gemini.
+# ----------------------------------------------------------
+[greetings]
+hola
+hols
+hloa
+ola
+inicio
+empezar
+comenzar
 
 # ----------------------------------------------------------
 # PALABRAS DE ESCAPE
@@ -37,6 +58,23 @@ inicio
 empezar
 comenzar
 reset
+
+# ----------------------------------------------------------
+# PACIENTES PARTICULARES (pago directo, sin EPS)
+# El usuario no tiene EPS y pagará directamente.
+# Se evalúan con coincidencia EXACTA (case-insensitive).
+# Cuando coincide, se omite la búsqueda de EPS en la BD
+# y se agenda en cupos universales (allowedEpsId = null).
+# ----------------------------------------------------------
+[particular]
+particular
+particulares
+pago directo
+pago particular
+sin eps
+no tengo eps
+privado
+pago privado
 
 # ----------------------------------------------------------
 # FRASES DE CANCELACIÓN

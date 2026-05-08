@@ -27,6 +27,8 @@ export class ChatbotService implements OnModuleInit {
   // Regex construidos dinámicamente desde chatbot-patterns.txt
   private escapeRegex: RegExp = /^(hola)$/i;
   private cancelRegex: RegExp = /^(cancelar cita)/i;
+  private greetingRegex: RegExp = /^(hola)$/i;
+  private particularRegex: RegExp = /^(particular)$/i;
 
   constructor(
     private prisma: PrismaService,
@@ -73,34 +75,50 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    const greetingWords: string[] = [];
     const escapeWords: string[] = [];
     const cancelPhrases: string[] = [];
+    const particularWords: string[] = [];
     let currentSection = '';
 
     for (const rawLine of content.split('\n')) {
       const line = rawLine.trim();
       if (!line || line.startsWith('#')) continue;
 
-      if (line === '[escape]') {
+      if (line === '[greetings]') {
+        currentSection = 'greetings';
+      } else if (line === '[escape]') {
         currentSection = 'escape';
       } else if (line === '[cancel]') {
         currentSection = 'cancel';
+      } else if (line === '[particular]') {
+        currentSection = 'particular';
+      } else if (currentSection === 'greetings') {
+        greetingWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'escape') {
         escapeWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'cancel') {
         cancelPhrases.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      } else if (currentSection === 'particular') {
+        particularWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       }
     }
 
+    if (greetingWords.length > 0) {
+      this.greetingRegex = new RegExp(`^(${greetingWords.join('|')})$`, 'i');
+    }
     if (escapeWords.length > 0) {
       this.escapeRegex = new RegExp(`^(${escapeWords.join('|')})$`, 'i');
     }
     if (cancelPhrases.length > 0) {
       this.cancelRegex = new RegExp(`^(${cancelPhrases.join('|')})`, 'i');
     }
+    if (particularWords.length > 0) {
+      this.particularRegex = new RegExp(`^(${particularWords.join('|')})$`, 'i');
+    }
 
     this.logger.log(
-      `Patrones listos — escape: ${escapeWords.length} palabras, cancel: ${cancelPhrases.length} frases`,
+      `Patrones listos — greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, particular: ${particularWords.length}`,
     );
   }
 
@@ -290,15 +308,18 @@ export class ChatbotService implements OnModuleInit {
   }
 
   // Extrae datos básicos del texto cuando Gemini no está disponible.
-  // No reemplaza la IA — solo evita rechazar el mensaje por completo.
-  private simpleExtractFallback(text: string | null) {
+  // Usa currentState para saber qué campo está esperando el flujo y evitar bucles.
+  private simpleExtractFallback(text: string | null, currentState?: ChatState) {
     const t = text?.trim() || '';
     const digits = t.replace(/\D/g, '');
+    const isOnlyDigits = /^\d+$/.test(t);
+
     return {
-      cedula: /^\d+$/.test(t) ? digits : null,
-      nombre: null,
-      eps: null,
-      especialidad: null,
+      cedula: isOnlyDigits ? digits : null,
+      // En el paso de nombre o EPS, pasar el texto raw para que el flujo lo procese
+      nombre: currentState === ChatState.AWAITING_NAME ? (t || null) : null,
+      eps: currentState === ChatState.AWAITING_EPS ? (t || null) : null,
+      especialidad: currentState === ChatState.AWAITING_SPECIALTY ? (t || null) : null,
       doctor: null,
       isEscape: this.escapeRegex.test(t),
       outOfContext: false,
@@ -720,7 +741,7 @@ export class ChatbotService implements OnModuleInit {
       if (newFails < geminiDownThreshold) {
         // Gemini fallando pero aún por debajo del umbral: usar fallback simple y continuar
         this.logger.warn(`Gemini fallo #${newFails}/${geminiDownThreshold} — usando fallback simple`);
-        aiData = this.simpleExtractFallback(text);
+        aiData = this.simpleExtractFallback(text, currentState);
       } else {
         // Gemini caído definitivamente: mostrar mensaje de mantenimiento
         this.logger.error(`Gemini caído (${newFails} fallos consecutivos) — mostrando mantenimiento`);
@@ -777,18 +798,46 @@ export class ChatbotService implements OnModuleInit {
 
     if (aiData.isEscape) {
       await this.cleanUpSession(organizationId, senderId);
-      const reply = MSGS.escape();
-      await this.smartReply(organizationId, senderId, reply);
 
-      // 📝 Auditoría: usuario reinició el flujo
-      await this.interactionLog.log({
-        whatsappId: senderId,
-        organizationId,
-        status: InteractionStatus.ESCAPED,
-        userMessage: text || '[audio]',
-        botReply: reply,
-        metadata: { previousState: currentState },
-      });
+      const isGreeting = this.greetingRegex.test(text?.trim() || '');
+
+      if (isGreeting) {
+        // Saludo → mostrar bienvenida directamente sin "Sin problema"
+        const activeServices = await this.prisma.medicalService.findMany({
+          where: { isActive: true, organizationId },
+          select: { name: true },
+          orderBy: { name: 'asc' },
+        });
+        const serviciosText =
+          activeServices.length > 0
+            ? `Opciones: ${activeServices.map((s) => s.name).join(' · ')}`
+            : 'Ej: Medicina General, Odontología';
+
+        const reply = MSGS.bienvenida(orgName, serviciosText);
+        await this.smartReply(organizationId, senderId, reply);
+        await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: { step: 'WELCOME', previousState: currentState, newState: ChatState.AWAITING_SPECIALTY, triggeredBy: 'greeting_escape' },
+        });
+      } else {
+        // Palabra de reset ("salir", "reiniciar", etc.) → mostrar "Sin problema"
+        const reply = MSGS.escape();
+        await this.smartReply(organizationId, senderId, reply);
+
+        await this.interactionLog.log({
+          whatsappId: senderId,
+          organizationId,
+          status: InteractionStatus.ESCAPED,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: { previousState: currentState },
+        });
+      }
       return;
     }
 
@@ -1067,52 +1116,64 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      const epsMatches = await this.prisma.eps.findMany({
-        where: {
-          name: { contains: epsEfectiva, mode: 'insensitive' },
-          organizationId: organizationId!,
-        },
-      });
+      // Paciente particular (pago directo) → omitir búsqueda de EPS en BD
+      const isParticular = this.particularRegex.test(epsEfectiva.trim());
 
-      if (epsMatches.length === 0) {
-        await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-        await this.redis.del(`temp_eps_query:${organizationId}:${senderId}`);
-        const reply = MSGS.epsNoEncontrada(epsEfectiva);
-        await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
+      let matchedEpsId: string | null = null;
+      let matchedEpsName: string = 'Particular';
 
-        await this.interactionLog.logFailure({
-          whatsappId: senderId,
-          organizationId,
-          reason: FailureReason.EPS_NOT_FOUND,
-          userMessage: text || '[audio]',
-          botReply: reply,
-          metadata: { searchedEps: epsEfectiva },
+      if (isParticular) {
+        // Normalizar el texto almacenado para que el resumen muestre "Particular"
+        await this.redis.set(`temp_eps_query:${organizationId}:${senderId}`, 'Particular', 'EX', SESSION_TTL);
+        // No guardamos temp_eps_id → al confirmar, epsIdFinal será null (correcto)
+      } else {
+        const epsMatches = await this.prisma.eps.findMany({
+          where: {
+            name: { contains: epsEfectiva, mode: 'insensitive' },
+            organizationId: organizationId!,
+          },
         });
-        return;
+
+        if (epsMatches.length === 0) {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          await this.redis.del(`temp_eps_query:${organizationId}:${senderId}`);
+          const reply = MSGS.epsNoEncontrada(epsEfectiva);
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.EPS_NOT_FOUND,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: { searchedEps: epsEfectiva },
+          });
+          return;
+        }
+
+        if (!epsMatches[0].isActive) {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          await this.redis.del(`temp_eps_query:${organizationId}:${senderId}`);
+          const reply = MSGS.epsInactiva(epsMatches[0].name);
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.EPS_INACTIVE,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: { eps: epsMatches[0].name },
+          });
+          return;
+        }
+
+        matchedEpsId = epsMatches[0].id;
+        matchedEpsName = epsMatches[0].name;
+        await this.redis.set(`temp_eps_id:${organizationId}:${senderId}`, matchedEpsId, 'EX', SESSION_TTL);
       }
-
-      if (!epsMatches[0].isActive) {
-        await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-        await this.redis.del(`temp_eps_query:${organizationId}:${senderId}`);
-        const reply = MSGS.epsInactiva(epsMatches[0].name);
-        await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
-
-        await this.interactionLog.logFailure({
-          whatsappId: senderId,
-          organizationId,
-          reason: FailureReason.EPS_INACTIVE,
-          userMessage: text || '[audio]',
-          botReply: reply,
-          metadata: { eps: epsMatches[0].name },
-        });
-        return;
-      }
-
-      const matchedEpsId = epsMatches[0].id;
-      const matchedEpsName = epsMatches[0].name;
-      await this.redis.set(`temp_eps_id:${organizationId}:${senderId}`, matchedEpsId, 'EX', SESSION_TTL);
 
       if (finalCedula && finalNombre) {
         await this.ensurePatientPersisted({
