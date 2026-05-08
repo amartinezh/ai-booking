@@ -20,6 +20,9 @@ model Organization {
   whatsappPhoneId String? @unique
   logoUrl         String?
 
+  // Base de Conocimiento del Chatbot (por clínica)
+  knowledgeBase   String? @db.Text
+
   // Facturación Global Súper Admin
   monthlyFee      String?
   lastPaymentDate DateTime?

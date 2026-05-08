@@ -386,7 +386,9 @@ export class ChatbotService implements OnModuleInit {
     const supportPhone = org?.supportPhone || '(601) 555-0199';
     const clinicName = org?.name || 'nuestra Clínica';
 
-    if (!this.knowledgeBase.hasContent()) {
+    const kbContent = await this.knowledgeBase.getContent(organizationId);
+
+    if (!kbContent) {
       const reply =
         `Esa información no está disponible en este momento. 😊\n\n` +
         `Para más detalles, comuníquese con nosotros al *${supportPhone}* ` +
@@ -420,7 +422,7 @@ export class ChatbotService implements OnModuleInit {
       `7. Termina siempre con "¿Hay algo más en lo que pueda ayudarle? 😊" ` +
       `salvo que ya hayas derivado al teléfono de soporte.\n\n` +
       `--- BASE DE CONOCIMIENTO ---\n` +
-      `${this.knowledgeBase.getContent()}\n` +
+      `${kbContent}\n` +
       `--- FIN DE BASE DE CONOCIMIENTO ---\n\n` +
       `Responde la siguiente pregunta del paciente:`;
 
@@ -848,7 +850,7 @@ export class ChatbotService implements OnModuleInit {
       messageType === 'text' &&
       !!text &&
       currentState === ChatState.IDLE &&
-      this.knowledgeBase.hasContent()
+      await this.knowledgeBase.hasContent(organizationId)
     ) {
       // Intent routing: solo en IDLE y cuando la KB está disponible.
       // Clasifica ANTES de llamar al extractor principal para evitar una llamada Gemini innecesaria.

@@ -1,69 +1,33 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import * as fs from 'fs';
-import * as path from 'path';
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 
-/**
- * Carga y mantiene en memoria el archivo knowledge-base.md.
- * El archivo es leído una sola vez al arrancar el módulo y almacenado en caché.
- * Llame a reload() para refrescarlo en caliente sin reiniciar el servidor.
- *
- * Estructura esperada del archivo: Markdown libre.
- * El LLM recibe el contenido completo como contexto de sistema.
- */
 @Injectable()
-export class KnowledgeBaseService implements OnModuleInit {
+export class KnowledgeBaseService {
   private readonly logger = new Logger(KnowledgeBaseService.name);
 
-  private content = '';
-  private loadedFrom = '';
+  constructor(private prisma: PrismaService) {}
 
-  onModuleInit(): void {
-    this.load();
+  async hasContent(organizationId: string): Promise<boolean> {
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { knowledgeBase: true },
+    });
+    return !!(org?.knowledgeBase && org.knowledgeBase.trim().length > 0);
   }
 
-  load(): void {
-    const candidates = [
-      path.resolve(__dirname, 'knowledge-base.md'),
-      path.resolve(process.cwd(), 'src', 'chatbot', 'knowledge-base.md'),
-    ];
-
-    for (const filePath of candidates) {
-      if (fs.existsSync(filePath)) {
-        try {
-          this.content = fs.readFileSync(filePath, 'utf-8').trim();
-          this.loadedFrom = filePath;
-          this.logger.log(
-            `Base de conocimiento cargada: ${filePath} (${this.content.length} chars)`,
-          );
-          return;
-        } catch (err) {
-          this.logger.error(`Error leyendo ${filePath}: ${err.message}`);
-        }
-      }
-    }
-
-    this.content = '';
-    this.loadedFrom = '';
-    this.logger.warn(
-      'knowledge-base.md no encontrado. El asistente no podrá responder FAQs. ' +
-        `Rutas buscadas: ${candidates.join(', ')}`,
-    );
+  async getContent(organizationId: string): Promise<string> {
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { knowledgeBase: true },
+    });
+    return org?.knowledgeBase?.trim() ?? '';
   }
 
-  reload(): void {
-    this.logger.log('Recargando base de conocimiento...');
-    this.load();
-  }
-
-  getContent(): string {
-    return this.content;
-  }
-
-  hasContent(): boolean {
-    return this.content.length > 0;
-  }
-
-  getLoadedFrom(): string {
-    return this.loadedFrom;
+  async updateContent(organizationId: string, content: string): Promise<void> {
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: { knowledgeBase: content.trim() || null },
+    });
+    this.logger.log(`Base de conocimiento actualizada para org ${organizationId}`);
   }
 }

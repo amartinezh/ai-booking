@@ -2,12 +2,17 @@
 
 import { useState, useTransition } from "react";
 import { createOrganization, updateOrganization, toggleOrganizationStatus } from "../../../actions/organizations";
+import { getKnowledgeBaseForOrg, updateKnowledgeBaseForOrg } from "../../../actions/knowledge-base";
 
 export default function OrganizationsClient({ initialOrganizations }: { initialOrganizations: any[] }) {
   const [organizations, setOrganizations] = useState(initialOrganizations);
   const [isPending, startTransition] = useTransition();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingOrg, setEditingOrg] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<'general' | 'kb'>('general');
+  const [kbContent, setKbContent] = useState('');
+  const [kbLoading, setKbLoading] = useState(false);
+  const [kbSaved, setKbSaved] = useState(false);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -16,15 +21,13 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
   });
 
   const handleToggle = async (id: string, currentStatus: boolean) => {
-    // Optimistic UI update
     setOrganizations(orgs => orgs.map(o => o.id === id ? { ...o, isActive: !currentStatus } : o));
-    
     startTransition(async () => {
       await toggleOrganizationStatus(id, !currentStatus);
     });
   };
 
-  const handleOpenModal = (org?: any) => {
+  const handleOpenModal = async (org?: any) => {
     if (org) {
       setEditingOrg(org);
       setFormData({
@@ -32,14 +35,47 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
         whatsappPhoneId: org.whatsappPhoneId || "",
         logoUrl: org.logoUrl || ""
       });
+      setActiveTab('general');
+      setKbContent('');
     } else {
       setEditingOrg(null);
       setFormData({ name: "", whatsappPhoneId: "", logoUrl: "" });
+      setActiveTab('general');
+      setKbContent('');
     }
     setIsModalOpen(true);
   };
 
-  const handleSave = async (e: React.FormEvent) => {
+  const handleTabChange = async (tab: 'general' | 'kb') => {
+    setActiveTab(tab);
+    if (tab === 'kb' && editingOrg && kbContent === '') {
+      setKbLoading(true);
+      try {
+        const content = await getKnowledgeBaseForOrg(editingOrg.id);
+        setKbContent(content ?? '');
+      } catch {
+        setKbContent('');
+      } finally {
+        setKbLoading(false);
+      }
+    }
+  };
+
+  const handleSaveKb = () => {
+    if (!editingOrg) return;
+    setKbSaved(false);
+    startTransition(async () => {
+      const res = await updateKnowledgeBaseForOrg(editingOrg.id, kbContent);
+      if (res.success) {
+        setKbSaved(true);
+        setTimeout(() => setKbSaved(false), 3000);
+      } else {
+        alert('Error al guardar KB: ' + res.error);
+      }
+    });
+  };
+
+  const handleSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!formData.name) return;
 
@@ -56,10 +92,7 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
       } else {
         res = await createOrganization(formData);
         if (res.success) {
-          // reloaded by server via revalidatePath, but we can optimistically close
           setIsModalOpen(false);
-          // Normally we'd rely on server component refresh, 
-          // but if we want to force full reload: window.location.reload()
           window.location.reload();
         } else {
           alert('Error creando organización: ' + res.error);
@@ -75,7 +108,7 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
           <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Gestión de Organizaciones (Tenants)</h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">Administra el aislamiento global y configura interfaces de WhatsApp por Clínica.</p>
         </div>
-        <button 
+        <button
           onClick={() => handleOpenModal()}
           className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm"
         >
@@ -120,7 +153,7 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
                     )}
                   </td>
                   <td className="p-4">
-                    <button 
+                    <button
                       onClick={() => handleToggle(org.id, org.isActive)}
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 shadow-inner ${org.isActive ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-700'}`}
                     >
@@ -131,7 +164,7 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
                     </span>
                   </td>
                   <td className="p-4 text-right flex gap-2 justify-end">
-                    <button 
+                    <button
                       onClick={() => handleOpenModal(org)}
                       className="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium text-xs px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:hover:bg-indigo-900/40 rounded-lg transition-colors">
                       Configurar Entidad
@@ -157,64 +190,137 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
 
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in p-4">
-          <div className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-2xl shadow-xl overflow-hidden animate-slide-up border border-zinc-200 dark:border-zinc-800">
-            <div className="p-6 border-b border-zinc-100 dark:border-zinc-800 flex justify-between items-center">
+          <div className="bg-white dark:bg-zinc-900 w-full max-w-2xl rounded-2xl shadow-xl overflow-hidden animate-slide-up border border-zinc-200 dark:border-zinc-800 flex flex-col max-h-[90vh]">
+
+            {/* Header */}
+            <div className="p-6 border-b border-zinc-100 dark:border-zinc-800 flex justify-between items-center shrink-0">
               <h2 className="text-xl font-bold text-zinc-900 dark:text-white">
                 {editingOrg ? 'Configurar Organización' : 'Nueva Organización'}
               </h2>
               <button onClick={() => setIsModalOpen(false)} className="text-zinc-400 hover:text-zinc-600 transition-colors text-2xl leading-none">&times;</button>
             </div>
-            <form onSubmit={handleSave} className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                  Nombre de la Clínica/Hospital <span className="text-red-500">*</span>
-                </label>
-                <input 
-                  type="text" 
-                  required
-                  value={formData.name}
-                  onChange={e => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all dark:text-white"
-                  placeholder="Ej: Clínica del Sol"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                  WhatsApp Phone ID Oficial
-                </label>
-                <input 
-                  type="text" 
-                  value={formData.whatsappPhoneId}
-                  onChange={e => setFormData({ ...formData, whatsappPhoneId: e.target.value })}
-                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all dark:text-white font-mono"
-                  placeholder="Ej: 1082348572019"
-                />
-                <p className="text-xs text-zinc-500 mt-1">Este ID es entregado por Meta WABA. Separa automáticamente al Chatbot Omnicanal.</p>
-              </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                  URL del Logo Visual
-                </label>
-                <input 
-                  type="url" 
-                  value={formData.logoUrl}
-                  onChange={e => setFormData({ ...formData, logoUrl: e.target.value })}
-                  className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all dark:text-white"
-                  placeholder="https://proveedor.com/logo.png"
-                />
-              </div>
-
-              <div className="pt-4 flex justify-end gap-3">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2 rounded-xl text-sm font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors">
-                  Cancelar
+            {/* Tabs — solo visibles al editar */}
+            {editingOrg && (
+              <div className="flex border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+                <button
+                  onClick={() => handleTabChange('general')}
+                  className={`px-6 py-3 text-sm font-semibold transition-colors ${activeTab === 'general' ? 'text-indigo-600 border-b-2 border-indigo-600 dark:text-indigo-400 dark:border-indigo-400' : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400'}`}
+                >
+                  ⚙️ Configuración General
                 </button>
-                <button disabled={isPending} type="submit" className="px-5 py-2 rounded-xl text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-md transition-colors disabled:opacity-50 flex items-center justify-center min-w-[120px]">
-                  {isPending ? 'Guardando...' : 'Guardar Datos'}
+                <button
+                  onClick={() => handleTabChange('kb')}
+                  className={`px-6 py-3 text-sm font-semibold transition-colors ${activeTab === 'kb' ? 'text-indigo-600 border-b-2 border-indigo-600 dark:text-indigo-400 dark:border-indigo-400' : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400'}`}
+                >
+                  🧠 Base de Conocimiento
                 </button>
               </div>
-            </form>
+            )}
+
+            {/* Tab: General */}
+            {activeTab === 'general' && (
+              <form onSubmit={handleSave} className="p-6 space-y-4 overflow-y-auto">
+                <div>
+                  <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Nombre de la Clínica/Hospital <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.name}
+                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                    className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                    placeholder="Ej: Clínica del Sol"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                    WhatsApp Phone ID Oficial
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.whatsappPhoneId}
+                    onChange={e => setFormData({ ...formData, whatsappPhoneId: e.target.value })}
+                    className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all dark:text-white font-mono"
+                    placeholder="Ej: 1082348572019"
+                  />
+                  <p className="text-xs text-zinc-500 mt-1">Este ID es entregado por Meta WABA. Separa automáticamente al Chatbot Omnicanal.</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                    URL del Logo Visual
+                  </label>
+                  <input
+                    type="url"
+                    value={formData.logoUrl}
+                    onChange={e => setFormData({ ...formData, logoUrl: e.target.value })}
+                    className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                    placeholder="https://proveedor.com/logo.png"
+                  />
+                </div>
+
+                <div className="pt-4 flex justify-end gap-3">
+                  <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2 rounded-xl text-sm font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors">
+                    Cancelar
+                  </button>
+                  <button disabled={isPending} type="submit" className="px-5 py-2 rounded-xl text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-md transition-colors disabled:opacity-50 flex items-center justify-center min-w-30">
+                    {isPending ? 'Guardando...' : 'Guardar Datos'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Tab: Knowledge Base */}
+            {activeTab === 'kb' && editingOrg && (
+              <div className="p-6 space-y-4 overflow-y-auto flex flex-col flex-1">
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Información que el chatbot usará para responder preguntas frecuentes de pacientes de <strong className="text-zinc-700 dark:text-zinc-200">{editingOrg.name}</strong>.
+                </p>
+
+                {kbLoading ? (
+                  <div className="flex items-center justify-center py-12 text-zinc-400">
+                    <svg className="animate-spin w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    Cargando...
+                  </div>
+                ) : (
+                  <>
+                    <textarea
+                      value={kbContent}
+                      onChange={(e) => setKbContent(e.target.value)}
+                      rows={14}
+                      className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-4 py-3 text-sm font-mono text-zinc-800 dark:text-zinc-200 focus:ring-2 focus:ring-indigo-500 outline-none resize-y leading-relaxed"
+                      placeholder="Escriba la información de la clínica: horarios, tarifas, EPS, servicios, contacto..."
+                    />
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-zinc-400">{kbContent.length.toLocaleString()} caracteres</span>
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setIsModalOpen(false)}
+                          className="px-5 py-2 rounded-xl text-sm font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors"
+                        >
+                          Cerrar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveKb}
+                          disabled={isPending}
+                          className="px-5 py-2 rounded-xl text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-md transition-colors disabled:opacity-50 flex items-center gap-2 min-w-35"
+                        >
+                          {isPending ? 'Guardando...' : kbSaved ? '✅ Guardado' : '💾 Guardar KB'}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

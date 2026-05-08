@@ -44,7 +44,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         { label: 'Aseguradoras (EPS)', href: '/dashboard/eps', icon: '🏦' },
         { label: 'Usuarios', href: '/dashboard/usuarios', icon: '👥' },
         { label: 'Médicos', href: '/dashboard/medicos', icon: '⚕️' },
-        { label: 'Caja Negra (Auditoría)', href: '/dashboard/auditoria', icon: '🕵️' }
+        { label: 'Caja Negra (Auditoría)', href: '/dashboard/auditoria', icon: '🕵️' },
+        { label: 'Base de Conocimiento', href: '/dashboard/conocimiento', icon: '🧠' }
     ];
 
     const AGENT_MENUS = [
