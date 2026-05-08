@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import { getSession } from '../../lib/session';
 import { redirect } from 'next/navigation';
-import { logoutUser } from '../actions/auth';
 import { prisma } from '../../lib/prisma';
+import LogoutButton from './components/LogoutButton';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
     const session = await getSession();
@@ -106,11 +106,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                             {roleMap[role]}
                         </span>
                     </div>
-                    <form action={logoutUser}>
-                        <button type="submit" className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-900/20 dark:hover:bg-red-900/40 rounded-xl transition-colors">
-                            <span>🚪</span> Cerrar Sesión
-                        </button>
-                    </form>
+                    <LogoutButton variant="sidebar" />
                 </div>
             </aside>
 
@@ -128,11 +124,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     <span className="text-xs font-semibold px-3 py-1 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 rounded-lg">
                         {roleMap[role]}
                     </span>
-                    <form action={logoutUser}>
-                        <button type="submit" className="p-2 flex items-center justify-center text-red-600 bg-red-50 rounded-lg dark:text-red-400 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors" title="Cerrar Sesión">
-                            🚪
-                        </button>
-                    </form>
+                    <LogoutButton variant="mobile" />
                 </div>
             </header>
 
