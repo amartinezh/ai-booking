@@ -248,6 +248,7 @@ export class ChatbotService implements OnModuleInit {
     ininteligible: boolean;
     isFallback: boolean;
     isCancellation: boolean;
+    isRateLimited: boolean;
   }> {
     const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
@@ -292,8 +293,18 @@ export class ChatbotService implements OnModuleInit {
       const cleanedText = responseText.replace(/```json/g, '').replace(/```/g, '');
       const parsed = JSON.parse(cleanedText);
       parsed.isFallback = false;
+      parsed.isRateLimited = false;
       return parsed;
     } catch (e) {
+      // 429: cuota agotada — no reintentar (sería peor), no contar como fallo permanente
+      if (e?.status === 429) {
+        this.logger.warn(`Gemini rate limit (429) — usando fallback simple, sin incrementar contador de fallos`);
+        return {
+          cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
+          isEscape: false, outOfContext: false, ininteligible: false,
+          isFallback: true, isCancellation: false, isRateLimited: true,
+        };
+      }
       if (attempt < maxRetries) {
         const delayMs = attempt * 1500;
         this.logger.warn(`Gemini intento ${attempt} fallido, reintentando en ${delayMs}ms...`);
@@ -304,7 +315,7 @@ export class ChatbotService implements OnModuleInit {
       return {
         cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
         isEscape: false, outOfContext: false, ininteligible: false,
-        isFallback: true, isCancellation: false,
+        isFallback: true, isCancellation: false, isRateLimited: false,
       };
     }
   }
@@ -328,43 +339,28 @@ export class ChatbotService implements OnModuleInit {
       ininteligible: false,
       isFallback: false,
       isCancellation: this.cancelRegex.test(t),
+      isRateLimited: false,
     };
   }
 
   // ══════════════════════════════════════════════════════════════
-  // INTENT ROUTER
-  // Clasifica el mensaje en IDLE antes de llamar al extractor principal.
-  // Retorna una categoría simple; falla-abierto a 'other' si Gemini no responde.
+  // INTENT ROUTER (sin llamada a Gemini — regex local)
+  // Clasifica el mensaje en IDLE sin consumir cuota de API.
+  // Fail-open: 'other' → cae al flujo de agendamiento normal.
   // ══════════════════════════════════════════════════════════════
-  private async classifyIntent(
-    text: string,
-  ): Promise<'scheduling' | 'cancellation' | 'faq' | 'greeting' | 'other'> {
-    const validIntents = ['scheduling', 'cancellation', 'faq', 'greeting', 'other'] as const;
-    type Intent = (typeof validIntents)[number];
+  private classifyIntentLocal(text: string): 'faq' | 'other' {
+    // Normalizar: minúsculas + quitar tildes para comparación robusta
+    const t = text.trim().toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '');
 
-    try {
-      const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-      const prompt =
-        `Clasifica el siguiente mensaje de WhatsApp de un paciente de una clínica colombiana ` +
-        `en UNA sola categoría.\n\n` +
-        `Categorías:\n` +
-        `- scheduling: quiere agendar, pedir, confirmar o reprogramar una cita médica\n` +
-        `- cancellation: quiere cancelar o anular una cita existente\n` +
-        `- faq: pregunta sobre horarios, costos, documentos, seguros, servicios, trámites o ` +
-        `información general de la clínica\n` +
-        `- greeting: saludo simple sin intención clara (hola, buenos días, etc.)\n` +
-        `- other: tema sin relación médica o ambiguo\n\n` +
-        `Mensaje: "${text}"\n\n` +
-        `Responde ÚNICAMENTE con una de estas palabras exactas: scheduling | cancellation | faq | greeting | other`;
+    // Palabras interrogativas o de solicitud de información
+    const hasQuestionWord = /\b(como|cuanto|cuando|donde|que|cual|quien|puedo|pueden|tienen|tiene|aceptan|cobran|vale|cuestan|cuesta|atienden|funciona|hay|existe|permiten|solicitar)\b/.test(t);
 
-      const result = await model.generateContent(prompt);
-      const raw = result.response.text().trim().toLowerCase();
-      const matched = validIntents.find((i) => raw.includes(i));
-      return (matched as Intent) ?? 'other';
-    } catch (err) {
-      this.logger.warn(`classifyIntent falló, usando 'other' por defecto: ${err.message}`);
-      return 'other';
-    }
+    // Temas propios de FAQ de clínica (no de agendamiento)
+    const hasFaqTopic = /\b(eps|seguro|asegurador|laboratorio|urgencia|historia.{0,10}clinica|incapacidad|certificado|parqueo|parqueadero|visita|acompanante|factura|tarifa|costo|precio|documento|requisito|telefono|correo|direccion|telemedicin|farmacia|radiolog|ecograf|rayos|scanner|pqrs|habeas|tramite|convenio|metodo.{0,5}pago|efectivo|nequi|pse|bancolombia)\b/.test(t);
+
+    if (hasQuestionWord || hasFaqTopic) return 'faq';
+    return 'other';
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -805,6 +801,7 @@ export class ChatbotService implements OnModuleInit {
       ininteligible: false,
       isFallback: false,
       isCancellation: false,
+      isRateLimited: false,
     };
 
     if (isQuickCancel && currentState === ChatState.IDLE) {
@@ -827,8 +824,8 @@ export class ChatbotService implements OnModuleInit {
     ) {
       // Intent routing: solo en IDLE y cuando la KB está disponible.
       // Clasifica ANTES de llamar al extractor principal para evitar una llamada Gemini innecesaria.
-      const intent = await this.classifyIntent(text);
-      this.logger.log(`🎯 Intent clasificado: ${intent} para mensaje: "${text}"`);
+      const intent = this.classifyIntentLocal(text);
+      this.logger.log(`🎯 Intent (local): ${intent} para mensaje: "${text}"`);
 
       if (intent === 'faq') {
         await this.answerFAQ(text, organizationId, senderId, org);
@@ -870,34 +867,39 @@ export class ChatbotService implements OnModuleInit {
     );
 
     if (aiData.isFallback) {
-      // Incrementar contador de fallos (TTL 15 min para auto-recuperación)
-      const currentFails = parseInt((await this.redis.get(geminiFailKey)) || '0', 10);
-      const newFails = currentFails + 1;
-      await this.redis.set(geminiFailKey, newFails.toString(), 'EX', 900);
-
-      if (newFails < geminiDownThreshold) {
-        // Gemini fallando pero aún por debajo del umbral: usar fallback simple y continuar
-        this.logger.warn(`Gemini fallo #${newFails}/${geminiDownThreshold} — usando fallback simple`);
+      if (aiData.isRateLimited) {
+        // 429: cuota agotada — NO es un fallo de disponibilidad de Gemini.
+        // Usar fallback simple sin tocar el contador permanente.
+        this.logger.warn(`Gemini rate-limited (429) — fallback sin penalizar contador`);
         aiData = this.simpleExtractFallback(text, currentState);
       } else {
-        // Gemini caído definitivamente: mostrar mensaje de mantenimiento
-        this.logger.error(`Gemini caído (${newFails} fallos consecutivos) — mostrando mantenimiento`);
-        const humanPhone = org?.supportPhone || '+573000000000';
-        const reply = MSGS.iaCaida(humanPhone);
-        await this.smartReply(organizationId, senderId, reply);
+        // Error real (timeout, 5xx, etc.) → incrementar contador de caída
+        const currentFails = parseInt((await this.redis.get(geminiFailKey)) || '0', 10);
+        const newFails = currentFails + 1;
+        await this.redis.set(geminiFailKey, newFails.toString(), 'EX', 900);
 
-        await this.interactionLog.logFailure({
-          whatsappId: senderId,
-          organizationId,
-          reason: FailureReason.GEMINI_DOWN,
-          userMessage: text || '[audio]',
-          botReply: reply,
-          metadata: { previousState: currentState, failCount: newFails },
-        });
-        return;
+        if (newFails < geminiDownThreshold) {
+          this.logger.warn(`Gemini fallo real #${newFails}/${geminiDownThreshold} — usando fallback simple`);
+          aiData = this.simpleExtractFallback(text, currentState);
+        } else {
+          this.logger.error(`Gemini caído (${newFails} fallos consecutivos) — mostrando mantenimiento`);
+          const humanPhone = org?.supportPhone || '+573000000000';
+          const reply = MSGS.iaCaida(humanPhone);
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.GEMINI_DOWN,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: { previousState: currentState, failCount: newFails },
+          });
+          return;
+        }
       }
-    } else if (!aiData.isFallback) {
-      // Gemini respondió exitosamente: resetear contador de fallos
+    } else {
+      // Gemini respondió exitosamente: resetear contador de fallos reales
       await this.redis.del(geminiFailKey);
     }
 
