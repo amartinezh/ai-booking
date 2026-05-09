@@ -45,7 +45,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         { label: 'Usuarios', href: '/dashboard/usuarios', icon: '👥' },
         { label: 'Médicos', href: '/dashboard/medicos', icon: '⚕️' },
         { label: 'Caja Negra (Auditoría)', href: '/dashboard/auditoria', icon: '🕵️' },
-        { label: 'Base de Conocimiento', href: '/dashboard/conocimiento', icon: '🧠' }
+        { label: 'Base de Conocimiento', href: '/dashboard/conocimiento', icon: '🧠' },
+        { label: 'Configuración', href: '/dashboard/configuracion', icon: '⚙️' }
     ];
 
     const AGENT_MENUS = [

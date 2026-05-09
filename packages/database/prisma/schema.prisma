@@ -23,6 +23,9 @@ model Organization {
   // Base de Conocimiento del Chatbot (por clínica)
   knowledgeBase   String? @db.Text
 
+  // Configuración avanzada por clínica (1:1)
+  settings        OrganizationSettings?
+
   // Facturación Global Súper Admin
   monthlyFee      String?
   lastPaymentDate DateTime?
@@ -43,6 +46,21 @@ model Organization {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// ⚙️ CONFIGURACIONES POR ORGANIZACIÓN (extensible)
+// -----------------------------------------------------------------------------
+model OrganizationSettings {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Personalización del chatbot
+  botName        String       @default("Vicente")
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 }
 
 // -----------------------------------------------------------------------------

@@ -31,8 +31,8 @@ export const BOT_NAME = 'Vicente';
 // Principios: cálido, breve, personalizado, sin dead-ends.
 // ─────────────────────────────────────────────────────────────
 export const MSGS = {
-  bienvenida: (clinicaName: string, servicios: string) =>
-    `¡Hola! 👋 Soy *${BOT_NAME}*, el asistente de *${clinicaName}*.\n\n` +
+  bienvenida: (clinicaName: string, servicios: string, botName: string = BOT_NAME) =>
+    `¡Hola! 👋 Soy *${botName}*, el asistente de *${clinicaName}*.\n\n` +
     `Estoy aquí para ayudarle a agendar su cita médica de forma rápida y sin filas. 🏥\n\n` +
     `¿Para qué especialidad necesita cita hoy?\n` +
     `_${servicios}_`,
@@ -121,8 +121,8 @@ export const MSGS = {
     `Sin problema. Empezamos de cero. 😊\n\n` +
     `¿En qué le puedo ayudar?`,
 
-  outOfContext: () =>
-    `Soy *${BOT_NAME}*, un asistente exclusivo para agendamiento médico. 🏥\n\n` +
+  outOfContext: (botName: string = BOT_NAME) =>
+    `Soy *${botName}*, un asistente exclusivo para agendamiento médico. 🏥\n\n` +
     `Por favor indíqueme la especialidad que busca o el nombre del médico.`,
 
   ininteligible: () =>

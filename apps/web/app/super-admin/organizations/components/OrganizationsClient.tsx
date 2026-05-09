@@ -3,16 +3,20 @@
 import { useState, useTransition } from "react";
 import { createOrganization, updateOrganization, toggleOrganizationStatus } from "../../../actions/organizations";
 import { getKnowledgeBaseForOrg, updateKnowledgeBaseForOrg } from "../../../actions/knowledge-base";
+import { getOrgSettingsForOrg, updateOrgSettingsForOrg } from "../../../actions/settings";
 
 export default function OrganizationsClient({ initialOrganizations }: { initialOrganizations: any[] }) {
   const [organizations, setOrganizations] = useState(initialOrganizations);
   const [isPending, startTransition] = useTransition();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingOrg, setEditingOrg] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'general' | 'kb'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'kb' | 'settings'>('general');
   const [kbContent, setKbContent] = useState('');
   const [kbLoading, setKbLoading] = useState(false);
   const [kbSaved, setKbSaved] = useState(false);
+  const [settingsBotName, setSettingsBotName] = useState('Vicente');
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -46,7 +50,7 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
     setIsModalOpen(true);
   };
 
-  const handleTabChange = async (tab: 'general' | 'kb') => {
+  const handleTabChange = async (tab: 'general' | 'kb' | 'settings') => {
     setActiveTab(tab);
     if (tab === 'kb' && editingOrg && kbContent === '') {
       setKbLoading(true);
@@ -59,6 +63,31 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
         setKbLoading(false);
       }
     }
+    if (tab === 'settings' && editingOrg) {
+      setSettingsLoading(true);
+      try {
+        const s = await getOrgSettingsForOrg(editingOrg.id);
+        setSettingsBotName(s.botName);
+      } catch {
+        setSettingsBotName('Vicente');
+      } finally {
+        setSettingsLoading(false);
+      }
+    }
+  };
+
+  const handleSaveSettings = () => {
+    if (!editingOrg) return;
+    setSettingsSaved(false);
+    startTransition(async () => {
+      const res = await updateOrgSettingsForOrg(editingOrg.id, { botName: settingsBotName });
+      if (res.success) {
+        setSettingsSaved(true);
+        setTimeout(() => setSettingsSaved(false), 3000);
+      } else {
+        alert('Error al guardar: ' + res.error);
+      }
+    });
   };
 
   const handleSaveKb = () => {
@@ -215,6 +244,12 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
                 >
                   🧠 Base de Conocimiento
                 </button>
+                <button
+                  onClick={() => handleTabChange('settings')}
+                  className={`px-6 py-3 text-sm font-semibold transition-colors ${activeTab === 'settings' ? 'text-indigo-600 border-b-2 border-indigo-600 dark:text-indigo-400 dark:border-indigo-400' : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400'}`}
+                >
+                  🤖 Chatbot
+                </button>
               </div>
             )}
 
@@ -271,6 +306,57 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
                   </button>
                 </div>
               </form>
+            )}
+
+            {/* Tab: Chatbot Settings */}
+            {activeTab === 'settings' && editingOrg && (
+              <div className="p-6 space-y-5 overflow-y-auto">
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Personalización del asistente virtual de <strong className="text-zinc-700 dark:text-zinc-200">{editingOrg.name}</strong>.
+                </p>
+
+                {settingsLoading ? (
+                  <div className="flex items-center justify-center py-12 text-zinc-400">
+                    <svg className="animate-spin w-6 h-6 mr-2" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    Cargando...
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                        Nombre del asistente virtual
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={40}
+                        value={settingsBotName}
+                        onChange={e => setSettingsBotName(e.target.value)}
+                        className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white"
+                        placeholder="Ej: Vicente, Sofía, MedBot..."
+                      />
+                      <p className="text-xs text-zinc-400 mt-1.5">
+                        El paciente verá: <em>"Soy <strong>{settingsBotName || 'Vicente'}</strong>, el asistente de {editingOrg.name}."</em>
+                      </p>
+                    </div>
+                    <div className="flex justify-between items-center pt-2">
+                      <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2 rounded-xl text-sm font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors">
+                        Cerrar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveSettings}
+                        disabled={isPending}
+                        className="px-5 py-2 rounded-xl text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-md transition-colors disabled:opacity-50 flex items-center gap-2 min-w-35"
+                      >
+                        {isPending ? 'Guardando...' : settingsSaved ? '✅ Guardado' : '💾 Guardar'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             )}
 
             {/* Tab: Knowledge Base */}

@@ -5,8 +5,9 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { RedisService } from '../redis/redis.service';
-import { ChatState, SESSION_TTL, WAITLIST_CONFIRM_TTL, MSGS, MIN_CEDULA_LENGTH, BOT_NAME } from './chatbot.constants';
+import { ChatState, SESSION_TTL, WAITLIST_CONFIRM_TTL, MSGS, MIN_CEDULA_LENGTH } from './chatbot.constants';
 import { KnowledgeBaseService } from './knowledge-base.service';
+import { OrganizationSettingsService } from './organization-settings.service';
 import { AppointmentsService } from 'src/appointments/appointments.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
 import {
@@ -41,6 +42,7 @@ export class ChatbotService implements OnModuleInit {
     private waitlistService: WaitlistService,
     private interactionLog: InteractionLogService,
     private knowledgeBase: KnowledgeBaseService,
+    private organizationSettings: OrganizationSettingsService,
   ) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     if (!apiKey) {
@@ -382,6 +384,7 @@ export class ChatbotService implements OnModuleInit {
     organizationId: string,
     senderId: string,
     org: any,
+    botName: string,
   ): Promise<void> {
     const supportPhone = org?.supportPhone || '(601) 555-0199';
     const clinicName = org?.name || 'nuestra Clínica';
@@ -405,7 +408,7 @@ export class ChatbotService implements OnModuleInit {
     }
 
     const systemPrompt =
-      `Eres *${BOT_NAME}*, el recepcionista virtual de *${clinicName}*. ` +
+      `Eres *${botName}*, el recepcionista virtual de *${clinicName}*. ` +
       `Tu único rol en este momento es responder preguntas generales de pacientes ` +
       `basándote EXCLUSIVAMENTE en la BASE DE CONOCIMIENTO que se incluye a continuación.\n\n` +
       `REGLAS ESTRICTAS QUE DEBES SEGUIR:\n` +
@@ -734,6 +737,8 @@ export class ChatbotService implements OnModuleInit {
 
     if (messageType !== 'text' && messageType !== 'audio') return;
 
+    const botName = await this.organizationSettings.getBotName(organizationId);
+
     const currentState = await this.getUserState(organizationId, senderId);
     this.logger.log(
       `[Tenant: ${organizationId}] Usuario ${senderId} en estado: ${currentState}. Tipo: ${messageType}`,
@@ -858,7 +863,7 @@ export class ChatbotService implements OnModuleInit {
       this.logger.log(`🎯 Intent (local): ${intent} para mensaje: "${text}"`);
 
       if (intent === 'faq') {
-        await this.answerFAQ(text, organizationId, senderId, org);
+        await this.answerFAQ(text, organizationId, senderId, org, botName);
         return;
       }
       // Para scheduling / cancellation / greeting / other → extracción normal
@@ -982,7 +987,7 @@ export class ChatbotService implements OnModuleInit {
             ? `Opciones: ${activeServices.map((s) => s.name).join(' · ')}`
             : 'Ej: Medicina General, Odontología';
 
-        const reply = MSGS.bienvenida(orgName, serviciosText);
+        const reply = MSGS.bienvenida(orgName, serviciosText, botName);
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
 
@@ -1012,7 +1017,7 @@ export class ChatbotService implements OnModuleInit {
 
     if (aiData.outOfContext) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-      const reply = MSGS.outOfContext();
+      const reply = MSGS.outOfContext(botName);
       await this.smartReply(organizationId, senderId, reply);
 
       await this.interactionLog.logFailure({
@@ -1095,7 +1100,7 @@ export class ChatbotService implements OnModuleInit {
             ? `Opciones: ${activeServices.map((s) => s.name).join(' · ')}`
             : 'Ej: Medicina General, Odontología';
 
-        const reply = MSGS.bienvenida(orgName, serviciosText);
+        const reply = MSGS.bienvenida(orgName, serviciosText, botName);
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
 

@@ -3,6 +3,10 @@
 import fs from 'fs';
 import path from 'path';
 import { getSession } from '../../lib/session';
+import { prisma } from '@/lib/prisma';
+import { revalidatePath } from 'next/cache';
+
+const DEFAULT_BOT_NAME = 'Vicente';
 
 export async function getEnvVars() {
     const session = await getSession();
@@ -78,6 +82,66 @@ export async function saveEnvVars(vars: { key: string, value: string }[]) {
             fs.writeFileSync(dbEnvPath, `DATABASE_URL="${dbUrl}"\n`, 'utf-8');
         }
 
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message };
+    }
+}
+
+// ─── Configuración de Organización (botName, etc.) ───────────────────────────
+
+export async function getMyOrgSettings() {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') throw new Error('Acceso denegado');
+
+    const s = await prisma.organizationSettings.findUnique({
+        where: { organizationId: session.organizationId! },
+        select: { botName: true },
+    });
+    return { botName: s?.botName ?? DEFAULT_BOT_NAME };
+}
+
+export async function updateMyOrgSettings(data: { botName: string }) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
+
+    const botName = data.botName.trim() || DEFAULT_BOT_NAME;
+    try {
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, botName },
+            update: { botName },
+        });
+        revalidatePath('/dashboard/configuracion');
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message };
+    }
+}
+
+export async function getOrgSettingsForOrg(organizationId: string) {
+    const session = await getSession();
+    if (session?.role !== 'SUPER_ADMIN') throw new Error('Acceso denegado');
+
+    const s = await prisma.organizationSettings.findUnique({
+        where: { organizationId },
+        select: { botName: true },
+    });
+    return { botName: s?.botName ?? DEFAULT_BOT_NAME };
+}
+
+export async function updateOrgSettingsForOrg(organizationId: string, data: { botName: string }) {
+    const session = await getSession();
+    if (session?.role !== 'SUPER_ADMIN') return { success: false, error: 'Acceso denegado' };
+
+    const botName = data.botName.trim() || DEFAULT_BOT_NAME;
+    try {
+        await prisma.organizationSettings.upsert({
+            where: { organizationId },
+            create: { organizationId, botName },
+            update: { botName },
+        });
+        revalidatePath('/super-admin/organizations');
         return { success: true };
     } catch (e: any) {
         return { success: false, error: e.message };
