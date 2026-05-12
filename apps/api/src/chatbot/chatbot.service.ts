@@ -5,7 +5,15 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { RedisService } from '../redis/redis.service';
-import { ChatState, SESSION_TTL, WAITLIST_CONFIRM_TTL, MSGS, MIN_CEDULA_LENGTH } from './chatbot.constants';
+import {
+  ChatState,
+  SESSION_TTL,
+  WAITLIST_CONFIRM_TTL,
+  MSGS,
+  MIN_CEDULA_LENGTH,
+  PARTICULAR_EPS_NAME,
+  DEFAULT_MAX_RETRIES,
+} from './chatbot.constants';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { AppointmentsService } from 'src/appointments/appointments.service';
@@ -32,6 +40,8 @@ export class ChatbotService implements OnModuleInit {
   private greetingRegex: RegExp = /^(hola)$/i;
   private particularRegex: RegExp = /^(particular)$/i;
   private farewellRegex: RegExp = /^(gracias)$/i;
+  // 🛡️ Guardrail: detecta insultos en cualquier parte del mensaje (no ancla a inicio/fin).
+  private insultRegex: RegExp = /\b(gonorrea|hijueputa|malparid[oa]|idiota|imb[eé]cil)\b/i;
 
   constructor(
     private prisma: PrismaService,
@@ -51,8 +61,55 @@ export class ChatbotService implements OnModuleInit {
     this.genAI = new GoogleGenerativeAI(apiKey || 'dummy');
   }
 
-  onModuleInit() {
+  async onModuleInit() {
     this.loadPatterns();
+    // Seeder idempotente: asegura que cada organización tenga un registro EPS "Particular"
+    // (pago directo). Se ejecuta en silencio si ya existe; no afecta CRON ni flujos en curso.
+    try {
+      await this.ensureParticularEpsForAllOrganizations();
+    } catch (e) {
+      this.logger.error(`No fue posible asegurar EPS "${PARTICULAR_EPS_NAME}": ${e.message}`);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // SEEDER IDEMPOTENTE — EPS "Particular" por organización
+  // ══════════════════════════════════════════════════════════════
+  private async ensureParticularEpsForAllOrganizations(): Promise<void> {
+    const orgs = await this.prisma.organization.findMany({ select: { id: true } });
+    for (const org of orgs) {
+      await this.ensureParticularEpsForOrg(org.id);
+    }
+  }
+
+  private async ensureParticularEpsForOrg(organizationId: string): Promise<{ id: string; name: string } | null> {
+    try {
+      const existing = await this.prisma.eps.findFirst({
+        where: {
+          organizationId,
+          name: { equals: PARTICULAR_EPS_NAME, mode: 'insensitive' },
+        },
+      });
+      if (existing) {
+        // Garantizar que esté activa para que aparezca en el menú
+        if (!existing.isActive) {
+          await this.prisma.eps.update({ where: { id: existing.id }, data: { isActive: true } });
+        }
+        return { id: existing.id, name: existing.name };
+      }
+      const created = await this.prisma.eps.create({
+        data: {
+          name: PARTICULAR_EPS_NAME,
+          isActive: true,
+          organizationId,
+        },
+      });
+      this.logger.log(`✅ EPS "${PARTICULAR_EPS_NAME}" creada para organización ${organizationId}`);
+      return { id: created.id, name: created.name };
+    } catch (e) {
+      this.logger.error(`Error asegurando EPS Particular para org ${organizationId}: ${e.message}`);
+      return null;
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -85,6 +142,7 @@ export class ChatbotService implements OnModuleInit {
     const escapeWords: string[] = [];
     const cancelPhrases: string[] = [];
     const particularWords: string[] = [];
+    const insultWords: string[] = [];
     let currentSection = '';
 
     for (const rawLine of content.split('\n')) {
@@ -101,6 +159,8 @@ export class ChatbotService implements OnModuleInit {
         currentSection = 'cancel';
       } else if (line === '[particular]') {
         currentSection = 'particular';
+      } else if (line === '[insults]') {
+        currentSection = 'insults';
       } else if (currentSection === 'farewell') {
         farewellWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'greetings') {
@@ -111,6 +171,8 @@ export class ChatbotService implements OnModuleInit {
         cancelPhrases.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'particular') {
         particularWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      } else if (currentSection === 'insults') {
+        insultWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       }
     }
 
@@ -129,9 +191,13 @@ export class ChatbotService implements OnModuleInit {
     if (particularWords.length > 0) {
       this.particularRegex = new RegExp(`^(${particularWords.join('|')})$`, 'i');
     }
+    if (insultWords.length > 0) {
+      // No-anchored: detecta el insulto en cualquier parte del mensaje.
+      this.insultRegex = new RegExp(`(?:^|\\s|[¡!¿?.,;])(${insultWords.join('|')})(?=$|\\s|[!?.,;])`, 'i');
+    }
 
     this.logger.log(
-      `Patrones listos — farewell: ${farewellWords.length}, greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, particular: ${particularWords.length}`,
+      `Patrones listos — farewell: ${farewellWords.length}, greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, particular: ${particularWords.length}, insults: ${insultWords.length}`,
     );
   }
 
@@ -629,16 +695,23 @@ export class ChatbotService implements OnModuleInit {
       `temp_nombre:${organizationId}:${senderId}`,
       `temp_eps_query:${organizationId}:${senderId}`,
       `temp_eps_id:${organizationId}:${senderId}`,
+      `temp_eps_max_letra:${organizationId}:${senderId}`,
       `temp_especialidad:${organizationId}:${senderId}`,
       `temp_especialidad_id:${organizationId}:${senderId}`,
+      `temp_service_max_letra:${organizationId}:${senderId}`,
       `temp_doctor:${organizationId}:${senderId}`,
       `temp_selected_slot_id:${organizationId}:${senderId}`,
       `temp_selected_date_view:${organizationId}:${senderId}`,
+      `temp_waitlist_service_id:${organizationId}:${senderId}`,
+      `temp_waitlist_eps_id:${organizationId}:${senderId}`,
+      `temp_waitlist_pending:${organizationId}:${senderId}`,
       `error_count:${organizationId}:${senderId}`,
       `is_ai_flow:${organizationId}:${senderId}`,
     ];
     const slotKeys = await this.redis.keys(`temp_slot_*:${senderId}`);
-    await this.redis.del(...keysToDelete, ...slotKeys);
+    const serviceMenuKeys = await this.redis.keys(`temp_service_*:${organizationId}:${senderId}`);
+    const epsMenuKeys = await this.redis.keys(`temp_eps_[A-Z]_*:${organizationId}:${senderId}`);
+    await this.redis.del(...keysToDelete, ...slotKeys, ...serviceMenuKeys, ...epsMenuKeys);
     await this.setUserState(organizationId, senderId, ChatState.IDLE);
     // Limpiar último mensaje enviado en memoria
     this.lastSentByUser.delete(senderId);
@@ -652,6 +725,138 @@ export class ChatbotService implements OnModuleInit {
       `temp_selected_cancel_slot:${organizationId}:${senderId}`,
     );
     await this.setUserState(organizationId, senderId, ChatState.IDLE);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // HELPERS: MENÚS CON LETRAS PARA SERVICIO Y EPS
+  // Persisten el mapping letra → id en Redis para resolver el input
+  // del usuario en el turno siguiente. NO ejecutan llamadas a Gemini.
+  // ══════════════════════════════════════════════════════════════
+  private async buildServiceMenu(
+    organizationId: string,
+    senderId: string,
+  ): Promise<{ lineas: string; count: number }> {
+    const services = await this.prisma.medicalService.findMany({
+      where: { isActive: true, organizationId },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+
+    // Limpiar mapping previo de servicios
+    const prev = await this.redis.keys(`temp_service_*:${organizationId}:${senderId}`);
+    if (prev.length > 0) await this.redis.del(...prev);
+
+    let lineas = '';
+    let maxLetra = '';
+    for (let i = 0; i < services.length; i++) {
+      const letra = String.fromCharCode(65 + i);
+      maxLetra = letra;
+      await this.redis.set(`temp_service_${letra}_id:${organizationId}:${senderId}`, services[i].id, 'EX', SESSION_TTL);
+      await this.redis.set(`temp_service_${letra}_name:${organizationId}:${senderId}`, services[i].name, 'EX', SESSION_TTL);
+      lineas += `*${letra})* ${services[i].name}\n`;
+    }
+    if (maxLetra) {
+      await this.redis.set(`temp_service_max_letra:${organizationId}:${senderId}`, maxLetra, 'EX', SESSION_TTL);
+    }
+    return { lineas, count: services.length };
+  }
+
+  private async buildEpsMenu(
+    organizationId: string,
+    senderId: string,
+  ): Promise<{ lineas: string; count: number }> {
+    // Garantizar que "Particular" exista para esta org (idempotente).
+    await this.ensureParticularEpsForOrg(organizationId);
+
+    const epsList = await this.prisma.eps.findMany({
+      where: { isActive: true, organizationId },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const prev = await this.redis.keys(`temp_eps_${'*'}:${organizationId}:${senderId}`);
+    // Solo limpiar los del menú, no temp_eps_query/temp_eps_id si ya existen
+    const toClean = prev.filter(k => /temp_eps_[A-Z]_(id|name):/.test(k) || /temp_eps_max_letra:/.test(k));
+    if (toClean.length > 0) await this.redis.del(...toClean);
+
+    let lineas = '';
+    let maxLetra = '';
+    for (let i = 0; i < epsList.length; i++) {
+      const letra = String.fromCharCode(65 + i);
+      maxLetra = letra;
+      await this.redis.set(`temp_eps_${letra}_id:${organizationId}:${senderId}`, epsList[i].id, 'EX', SESSION_TTL);
+      await this.redis.set(`temp_eps_${letra}_name:${organizationId}:${senderId}`, epsList[i].name, 'EX', SESSION_TTL);
+      lineas += `*${letra})* ${epsList[i].name}\n`;
+    }
+    if (maxLetra) {
+      await this.redis.set(`temp_eps_max_letra:${organizationId}:${senderId}`, maxLetra, 'EX', SESSION_TTL);
+    }
+    return { lineas, count: epsList.length };
+  }
+
+  // Resuelve el input del usuario contra el menú de servicios:
+  // 1) Letra exacta en el mapping. 2) Match parcial por nombre (insensitive contains).
+  // 3) Si Gemini devolvió `especialidad`, intenta resolver por ese texto.
+  private async resolveServiceFromInput(
+    organizationId: string,
+    senderId: string,
+    text: string | null,
+    geminiSpecialty: string | null,
+  ): Promise<{ id: string; name: string } | null> {
+    // 1) Letra
+    const candidate = (text || '').trim().toUpperCase();
+    if (/^[A-Z]$/.test(candidate)) {
+      const id = await this.redis.get(`temp_service_${candidate}_id:${organizationId}:${senderId}`);
+      const name = await this.redis.get(`temp_service_${candidate}_name:${organizationId}:${senderId}`);
+      if (id && name) return { id, name };
+    }
+    // 2/3) Match parcial por nombre en BD
+    const query = (geminiSpecialty || text || '').trim();
+    if (query.length >= 3) {
+      const svc = await this.prisma.medicalService.findFirst({
+        where: {
+          name: { contains: query, mode: 'insensitive' },
+          isActive: true,
+          organizationId,
+        },
+      });
+      if (svc) return { id: svc.id, name: svc.name };
+    }
+    return null;
+  }
+
+  private async resolveEpsFromInput(
+    organizationId: string,
+    senderId: string,
+    text: string | null,
+    geminiEps: string | null,
+  ): Promise<{ id: string; name: string } | null> {
+    // 1) Letra
+    const candidate = (text || '').trim().toUpperCase();
+    if (/^[A-Z]$/.test(candidate)) {
+      const id = await this.redis.get(`temp_eps_${candidate}_id:${organizationId}:${senderId}`);
+      const name = await this.redis.get(`temp_eps_${candidate}_name:${organizationId}:${senderId}`);
+      if (id && name) return { id, name };
+    }
+    // 2) "Particular" por patrón (tolerancia a typos / sinónimos del archivo de patrones)
+    const raw = (text || '').trim();
+    if (raw && this.particularRegex.test(raw)) {
+      const part = await this.ensureParticularEpsForOrg(organizationId);
+      if (part) return part;
+    }
+    // 3) Match parcial por nombre en BD (incluye "Particular" si el usuario lo escribió)
+    const query = (geminiEps || text || '').trim();
+    if (query.length >= 3) {
+      const eps = await this.prisma.eps.findFirst({
+        where: {
+          name: { contains: query, mode: 'insensitive' },
+          isActive: true,
+          organizationId,
+        },
+      });
+      if (eps) return { id: eps.id, name: eps.name };
+    }
+    return null;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -738,22 +943,53 @@ export class ChatbotService implements OnModuleInit {
     if (messageType !== 'text' && messageType !== 'audio') return;
 
     const botName = await this.organizationSettings.getBotName(organizationId);
+    const maxRetries = organizationId
+      ? await this.organizationSettings.getMaxRetries(organizationId)
+      : DEFAULT_MAX_RETRIES;
 
     const currentState = await this.getUserState(organizationId, senderId);
     this.logger.log(
       `[Tenant: ${organizationId}] Usuario ${senderId} en estado: ${currentState}. Tipo: ${messageType}`,
     );
 
+    // 🛡️ GUARDRAIL: INSULTO → DERIVACIÓN INMEDIATA ───────────────
+    // Se evalúa lo más temprano posible, antes de cualquier procesamiento
+    // (Gemini, reintentos, estados). El audio no se inspecciona aquí (irá
+    // a Gemini con outOfContext; eso se maneja como off-topic).
+    if (messageType === 'text' && !!text && this.insultRegex.test(text)) {
+      const humanPhone = org?.supportPhone || '';
+      const reply = humanPhone
+        ? MSGS.guardrailInsulto(humanPhone, botName)
+        : MSGS.maxReintentosReset();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.cleanUpSession(organizationId, senderId);
+
+      await this.interactionLog.log({
+        whatsappId: senderId,
+        organizationId,
+        status: InteractionStatus.ABANDONED,
+        failureReason: FailureReason.OUT_OF_CONTEXT,
+        userMessage: text,
+        botReply: reply,
+        metadata: {
+          guardrail: 'INSULT_DETECTED',
+          previousState: currentState,
+          immediate: true,
+        },
+      });
+      return;
+    }
+
     const retriesKey = `error_count:${organizationId}:${senderId}`;
     const retriesCount = parseInt((await this.redis.get(retriesKey)) || '0');
 
-    // ── MÁXIMO REINTENTOS ──────────────────────────────────────
-    if (retriesCount >= 3) {
-      this.logger.warn(`Máximo de reintentos para ${senderId}`);
+    // ── MÁXIMO REINTENTOS (configurable por org) ──────────────
+    if (retriesCount >= maxRetries) {
+      this.logger.warn(`Máximo de reintentos (${maxRetries}) para ${senderId}`);
       await this.cleanUpSession(organizationId, senderId);
       const humanPhone = org?.supportPhone || '';
       const replyText = humanPhone
-        ? MSGS.maxReintentos(humanPhone)
+        ? MSGS.guardrailOffTopic(humanPhone, botName)
         : MSGS.maxReintentosReset();
       await this.smartReply(organizationId, senderId, replyText);
 
@@ -765,7 +1001,7 @@ export class ChatbotService implements OnModuleInit {
         failureReason: FailureReason.MAX_RETRIES,
         userMessage: text || `[${messageType}]`,
         botReply: replyText,
-        metadata: { previousState: currentState, retriesCount },
+        metadata: { previousState: currentState, retriesCount, maxRetries },
       });
       return;
     }
@@ -776,6 +1012,7 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_CANCEL_SELECTION ||
       currentState === ChatState.AWAITING_CANCEL_CONFIRM ||
       currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
+      currentState === ChatState.AWAITING_WAITLIST_OPTIN ||
       currentState === ChatState.AWAITING_POST_CANCEL_CHOICE;
 
     const isAudio = messageType === 'audio' && !!audioId;
@@ -976,18 +1213,12 @@ export class ChatbotService implements OnModuleInit {
       const isGreeting = this.greetingRegex.test(text?.trim() || '');
 
       if (isGreeting) {
-        // Saludo → mostrar bienvenida directamente sin "Sin problema"
-        const activeServices = await this.prisma.medicalService.findMany({
-          where: { isActive: true, organizationId },
-          select: { name: true },
-          orderBy: { name: 'asc' },
-        });
-        const serviciosText =
-          activeServices.length > 0
-            ? `Opciones: ${activeServices.map((s) => s.name).join(' · ')}`
-            : 'Ej: Medicina General, Odontología';
+        // Saludo → mostrar bienvenida + menú de servicios con letras (Paso 1).
+        const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
+        const reply = count > 0
+          ? MSGS.menuServicios(orgName, lineas, botName)
+          : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
 
-        const reply = MSGS.bienvenida(orgName, serviciosText, botName);
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
 
@@ -996,7 +1227,7 @@ export class ChatbotService implements OnModuleInit {
           organizationId,
           userMessage: text || '[audio]',
           botReply: reply,
-          metadata: { step: 'WELCOME', previousState: currentState, newState: ChatState.AWAITING_SPECIALTY, triggeredBy: 'greeting_escape' },
+          metadata: { step: 'WELCOME', previousState: currentState, newState: ChatState.AWAITING_SPECIALTY, triggeredBy: 'greeting_escape', servicesCount: count },
         });
       } else {
         // Palabra de reset ("salir", "reiniciar", etc.) → mostrar "Sin problema"
@@ -1087,77 +1318,57 @@ export class ChatbotService implements OnModuleInit {
     // FLUJO PRINCIPAL DE AGENDAMIENTO (pasos no-estrictos)
     // ══════════════════════════════════════════════════════════
     if (!isStrictStep && !isCancelFlow) {
+      // ════════════════════════════════════════════════════════
+      // NUEVO PROTOCOLO DE ATENCIÓN
+      //   PASO 1: SERVICIO  (menú con letras + NLP + voz)
+      //   PASO 2: EPS       (menú con letras + NLP + voz; Particular vive en BD)
+      //   PASO 3: SLOTS o WAITLIST OPT-IN
+      //   PASO 4: CÉDULA + (nombre si paciente nuevo) → CONFIRMACIÓN
+      // ════════════════════════════════════════════════════════
 
-      // ── PASO 1: ESPECIALIDAD O MÉDICO ──────────────────────
-      if (!finalEspecialidad && !finalDoctor) {
-        const activeServices = await this.prisma.medicalService.findMany({
-          where: { isActive: true, organizationId },
-          select: { name: true },
-          orderBy: { name: 'asc' },
-        });
-        const serviciosText =
-          activeServices.length > 0
-            ? `Opciones: ${activeServices.map((s) => s.name).join(' · ')}`
-            : 'Ej: Medicina General, Odontología';
-
-        const reply = MSGS.bienvenida(orgName, serviciosText, botName);
-        await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
-
-        // 📝 Auditoría: bienvenida / pidiendo especialidad
-        await this.interactionLog.logSuccess({
-          whatsappId: senderId,
-          organizationId,
-          userMessage: text || '[audio]',
-          botReply: reply,
-          metadata: {
-            step: 'WELCOME',
-            previousState: currentState,
-            newState: ChatState.AWAITING_SPECIALTY,
-            aiData,
-          },
-        });
-        return;
-      }
-
-      let finalEspecialidadConDoctor = finalEspecialidad;
-      let finalEspecialidadIdResuelto = savedEspecialidadId;
-
-      if (finalDoctor && !finalEspecialidad) {
-        const doctores = await this.prisma.doctorProfile.findMany({
-          where: {
-            fullName: { contains: finalDoctor, mode: 'insensitive' },
-            isActive: true,
-            organizationId,
-          },
-          include: { service: true },
-        });
-        if (doctores.length === 0) {
+      // ── SHORT-CIRCUIT: cédula post-opt-in a waitlist ─────────
+      // El usuario aceptó entrar a la cola y nos faltaba su cédula.
+      // En este caminito NO buscamos slots: directamente unimos a la cola.
+      const waitlistPending = await this.redis.get(`temp_waitlist_pending:${organizationId}:${senderId}`);
+      if (waitlistPending === '1' && finalCedula) {
+        const soloNumeros = finalCedula.replace(/\D/g, '');
+        if (!soloNumeros || soloNumeros.length < MIN_CEDULA_LENGTH) {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-          await this.redis.del(`temp_doctor:${organizationId}:${senderId}`);
-          const reply = `Lo siento, no encontré ningún médico con el nombre *"${finalDoctor}"* en nuestra institución.\n\nPor favor indíqueme la especialidad deseada o el nombre correcto del médico.`;
+          await this.redis.del(`temp_cedula:${organizationId}:${senderId}`);
+          const reply = MSGS.cancelarCedulaInvalida();
           await this.smartReply(organizationId, senderId, reply);
-          await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
 
           await this.interactionLog.logFailure({
             whatsappId: senderId,
             organizationId,
-            reason: FailureReason.DOCTOR_NOT_FOUND,
+            reason: FailureReason.PATIENT_NOT_FOUND,
             userMessage: text || '[audio]',
             botReply: reply,
-            metadata: { searchedDoctor: finalDoctor },
+            metadata: { stage: 'WAITLIST_OPTIN_CEDULA_INVALID', cedula: finalCedula },
           });
           return;
         }
-        if (doctores.length > 1) {
-          let opciones = '';
-          doctores.forEach((d, i) => {
-            opciones += `*${i + 1}.* Dr. ${d.fullName} _(${d.service?.name})_\n`;
-          });
-          await this.redis.del(`temp_doctor:${organizationId}:${senderId}`);
-          const reply = `Encontré varios médicos con el nombre *"${finalDoctor}"*:\n\n${opciones}\nPor favor indíqueme el apellido completo o la especialidad.`;
+
+        const serviceIdWl = await this.redis.get(`temp_waitlist_service_id:${organizationId}:${senderId}`);
+        const epsIdRawWl = await this.redis.get(`temp_waitlist_eps_id:${organizationId}:${senderId}`);
+        const epsIdForWl = epsIdRawWl && epsIdRawWl.length > 0 ? epsIdRawWl : null;
+        const serviceNameWl = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`) || '';
+
+        if (!serviceIdWl) {
+          const reply = MSGS.sesionExpirada();
           await this.smartReply(organizationId, senderId, reply);
-          await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+          await this.cleanUpSession(organizationId, senderId);
+          return;
+        }
+
+        // Si el paciente NO está registrado y no nos dio nombre, pedirlo.
+        const existing = await this.prisma.patientProfile.findUnique({
+          where: { cedula: finalCedula },
+        });
+        if (!existing && !finalNombre) {
+          const reply = MSGS.primeraVez();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(organizationId, senderId, ChatState.AWAITING_NAME);
 
           await this.interactionLog.logSuccess({
             whatsappId: senderId,
@@ -1165,34 +1376,282 @@ export class ChatbotService implements OnModuleInit {
             userMessage: text || '[audio]',
             botReply: reply,
             metadata: {
-              step: 'DOCTOR_DISAMBIGUATION',
-              candidates: doctores.map(d => d.fullName),
+              step: 'WAITLIST_OPTIN_ASK_NAME',
+              cedula: finalCedula,
             },
           });
           return;
         }
-        finalEspecialidadConDoctor = doctores[0].service?.name || finalEspecialidad;
-        finalEspecialidadIdResuelto = doctores[0].serviceId || null;
-        if (finalEspecialidadConDoctor) {
-          await this.redis.set(`temp_especialidad:${organizationId}:${senderId}`, finalEspecialidadConDoctor, 'EX', SESSION_TTL);
-        }
-      } else if (finalEspecialidad && !savedEspecialidadId) {
-        const svc = await this.prisma.medicalService.findFirst({
-          where: {
-            name: { contains: finalEspecialidad, mode: 'insensitive' },
-            isActive: true,
-            organizationId,
-          },
+
+        const nombreFinalWl = finalNombre || existing?.fullName || 'Paciente';
+        const patientWl = await this.ensurePatientPersisted({
+          cedula: finalCedula,
+          nombre: nombreFinalWl,
+          senderId,
+          organizationId: organizationId!,
+          epsId: epsIdForWl,
         });
-        if (svc) {
-          finalEspecialidadIdResuelto = svc.id;
-          await this.redis.set(`temp_especialidad_id:${organizationId}:${senderId}`, svc.id, 'EX', SESSION_TTL);
+
+        let positionWl = 1;
+        let wlEntryId: string | null = null;
+        if (patientWl) {
+          try {
+            const result = await this.waitlistService.joinWaitlist({
+              patientId: patientWl.id,
+              serviceId: serviceIdWl,
+              epsId: epsIdForWl,
+              whatsappId: senderId,
+              organizationId: organizationId!,
+            });
+            positionWl = result.position;
+            wlEntryId = result.id || null;
+          } catch (e) {
+            this.logger.error(`Error joinWaitlist (post-cedula): ${e.message}`);
+          }
+        }
+
+        const replyOk = MSGS.unidoAWaitlist(nombreFinalWl, serviceNameWl, positionWl);
+        await this.smartReply(organizationId, senderId, replyOk);
+
+        if (wlEntryId && patientWl) {
+          await this.interactionLog.logWaitlistJoined({
+            whatsappId: senderId,
+            organizationId: organizationId!,
+            waitlistEntryId: wlEntryId,
+            patientCedula: finalCedula,
+            serviceName: serviceNameWl,
+            epsName: '',
+            position: positionWl,
+            userMessage: text || '[audio]',
+            botReply: replyOk,
+          });
+        }
+
+        await this.cleanUpSession(organizationId, senderId);
+        return;
+      }
+
+      // ── PASO 1: SERVICIO ─────────────────────────────────────
+      let resolvedServiceId = savedEspecialidadId;
+      let resolvedServiceName = savedEspecialidad;
+
+      if (!resolvedServiceId) {
+        // ¿Podemos resolverlo del input actual o de aiData?
+        const inputForService = currentState === ChatState.AWAITING_SPECIALTY ? text : null;
+        const match = await this.resolveServiceFromInput(
+          organizationId,
+          senderId,
+          inputForService,
+          finalEspecialidad || finalDoctor,
+        );
+
+        if (match) {
+          resolvedServiceId = match.id;
+          resolvedServiceName = match.name;
+          await this.redis.set(`temp_especialidad:${organizationId}:${senderId}`, match.name, 'EX', SESSION_TTL);
+          await this.redis.set(`temp_especialidad_id:${organizationId}:${senderId}`, match.id, 'EX', SESSION_TTL);
+        } else if (currentState === ChatState.AWAITING_SPECIALTY && text) {
+          // El usuario respondió algo que no pudimos mapear al menú → reintento
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
+          const reply = count > 0
+            ? MSGS.servicioInvalido(lineas)
+            : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.OUT_OF_CONTEXT,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: {
+              stage: 'SPECIALTY_INVALID',
+              retriesCount: retriesCount + 1,
+              maxRetries,
+            },
+          });
+          return;
         }
       }
 
-      // ── PASO 2: CÉDULA ────────────────────────────────────
+      if (!resolvedServiceId) {
+        // Primera vez (o sesión limpia): renderizar menú
+        const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
+        const reply = count > 0
+          ? MSGS.menuServicios(orgName, lineas, botName)
+          : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
+        await this.smartReply(organizationId, senderId, reply);
+        await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: {
+            step: 'SERVICE_MENU_SHOWN',
+            previousState: currentState,
+            newState: ChatState.AWAITING_SPECIALTY,
+            servicesCount: count,
+          },
+        });
+        return;
+      }
+
+      // ── PASO 2: EPS ──────────────────────────────────────────
+      let resolvedEpsId = await this.redis.get(`temp_eps_id:${organizationId}:${senderId}`);
+      let resolvedEpsName = await this.redis.get(`temp_eps_query:${organizationId}:${senderId}`);
+
+      if (!resolvedEpsId || !resolvedEpsName) {
+        const inputForEps = currentState === ChatState.AWAITING_EPS ? text : null;
+        const match = await this.resolveEpsFromInput(
+          organizationId,
+          senderId,
+          inputForEps,
+          finalEps,
+        );
+
+        if (match) {
+          resolvedEpsId = match.id;
+          resolvedEpsName = match.name;
+          await this.redis.set(`temp_eps_id:${organizationId}:${senderId}`, match.id, 'EX', SESSION_TTL);
+          await this.redis.set(`temp_eps_query:${organizationId}:${senderId}`, match.name, 'EX', SESSION_TTL);
+        } else if (currentState === ChatState.AWAITING_EPS && text) {
+          // El usuario respondió algo no mapeable al menú → reintento
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const { lineas, count } = await this.buildEpsMenu(organizationId, senderId);
+          const reply = count > 0
+            ? MSGS.epsInvalida(lineas)
+            : MSGS.pedirEps();
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.EPS_NOT_FOUND,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: {
+              stage: 'EPS_INVALID',
+              retriesCount: retriesCount + 1,
+              maxRetries,
+            },
+          });
+          return;
+        }
+      }
+
+      if (!resolvedEpsId || !resolvedEpsName) {
+        const { lineas, count } = await this.buildEpsMenu(organizationId, senderId);
+        const reply = count > 0
+          ? MSGS.menuEps(resolvedServiceName!, lineas)
+          : MSGS.pedirEps();
+        await this.smartReply(organizationId, senderId, reply);
+        await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
+
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: {
+            step: 'EPS_MENU_SHOWN',
+            service: resolvedServiceName,
+            epsCount: count,
+          },
+        });
+        return;
+      }
+
+      // Pago directo → al reservar, no asociamos epsId al slot.
+      const isParticular =
+        (resolvedEpsName || '').toLowerCase() === PARTICULAR_EPS_NAME.toLowerCase();
+      const epsIdForSlots: string | null = isParticular ? null : resolvedEpsId;
+      const epsIdForPatient: string | null = isParticular ? null : resolvedEpsId;
+
+      // ── PASO 3: SLOTS o WAITLIST OPT-IN ──────────────────────
+      const selectedSlotId = await this.redis.get(`temp_selected_slot_id:${organizationId}:${senderId}`);
+
+      if (!selectedSlotId) {
+        const slots = await this.appointmentsService.getAvailableSlots(
+          resolvedServiceName as string,
+          epsIdForSlots,
+          organizationId!,
+        );
+
+        if (slots.length === 0) {
+          // Guardar contexto para que AWAITING_WAITLIST_OPTIN sepa qué hacer.
+          await this.redis.set(`temp_waitlist_service_id:${organizationId}:${senderId}`, resolvedServiceId!, 'EX', SESSION_TTL);
+          await this.redis.set(`temp_waitlist_eps_id:${organizationId}:${senderId}`, epsIdForPatient || '', 'EX', SESSION_TTL);
+
+          const reply = MSGS.preguntaWaitlist(resolvedServiceName as string, resolvedEpsName);
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(organizationId, senderId, ChatState.AWAITING_WAITLIST_OPTIN);
+
+          await this.interactionLog.logSuccess({
+            whatsappId: senderId,
+            organizationId,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: {
+              step: 'WAITLIST_OPTIN_OFFERED',
+              service: resolvedServiceName,
+              eps: resolvedEpsName,
+            },
+          });
+          return;
+        }
+
+        // Hay slots: mostrar menú con letras y pedir selección.
+        let lineasFechas = '';
+        const slotsMetadata: any[] = [];
+        for (let i = 0; i < slots.length; i++) {
+          const letra = String.fromCharCode(65 + i);
+          await this.redis.set(`temp_slot_${letra}:${senderId}`, slots[i].slotId, 'EX', SESSION_TTL);
+          await this.redis.set(`temp_slot_${letra}_fecha:${senderId}`, slots[i].fecha.toISOString(), 'EX', SESSION_TTL);
+          lineasFechas +=
+            `*${letra})* ${slots[i].fecha.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })} ` +
+            `a las ${slots[i].fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} ` +
+            `· Dr. ${slots[i].doctor}\n`;
+          slotsMetadata.push({
+            letter: letra,
+            slotId: slots[i].slotId,
+            doctor: slots[i].doctor,
+            fecha: slots[i].fecha.toISOString(),
+          });
+        }
+
+        const reply = MSGS.cuposDisponibles('', resolvedEpsName, lineasFechas);
+        await this.smartReply(organizationId, senderId, reply);
+        await this.setUserState(organizationId, senderId, ChatState.AWAITING_DATE);
+
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: {
+            step: 'SLOTS_OFFERED',
+            slotsCount: slots.length,
+            slots: slotsMetadata,
+            eps: resolvedEpsName,
+            specialty: resolvedServiceName,
+          },
+        });
+        return;
+      }
+
+      // ── PASO 4: CÉDULA (sólo si ya hay slot seleccionado) ────
       if (!finalCedula) {
-        const reply = MSGS.pedirCedula(finalDoctor || finalEspecialidadConDoctor || 'la especialidad solicitada');
+        const fechaVista = await this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`);
+        const fechaFormateada = fechaVista
+          ? new Date(fechaVista).toLocaleString('es-CO', {
+              weekday: 'long', day: 'numeric', month: 'long',
+              hour: '2-digit', minute: '2-digit',
+            })
+          : '';
+        const reply = MSGS.pedirCedulaPostSlot(fechaFormateada);
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_CEDULA);
 
@@ -1202,20 +1661,22 @@ export class ChatbotService implements OnModuleInit {
           userMessage: text || '[audio]',
           botReply: reply,
           metadata: {
-            step: 'ASKING_CEDULA',
-            specialty: finalEspecialidadConDoctor,
-            doctor: finalDoctor,
+            step: 'ASKING_CEDULA_POST_SLOT',
+            specialty: resolvedServiceName,
+            eps: resolvedEpsName,
           },
         });
         return;
       }
 
-      // Validación de cédula consistente con el flujo de cancelación
+      // Validación de cédula (idéntica al flujo de cancelación).
       const soloNumerosAgendamiento = finalCedula.replace(/\D/g, '');
       if (!soloNumerosAgendamiento || soloNumerosAgendamiento.length < MIN_CEDULA_LENGTH) {
         await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+        await this.redis.del(`temp_cedula:${organizationId}:${senderId}`);
         const reply = MSGS.cancelarCedulaInvalida();
         await this.smartReply(organizationId, senderId, reply);
+
         await this.interactionLog.logFailure({
           whatsappId: senderId,
           organizationId,
@@ -1227,9 +1688,7 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      // Cargar contexto del paciente si existe
-      let dbPatientEpsId: string | null = null;
-      let dbPatientEpsName: string | null = null;
+      // Cargar contexto del paciente.
       const patient = await this.prisma.patientProfile.findUnique({
         where: { cedula: finalCedula },
         include: { eps: true },
@@ -1239,12 +1698,8 @@ export class ChatbotService implements OnModuleInit {
         if (!finalNombre) {
           await this.redis.set(`temp_nombre:${organizationId}:${senderId}`, patient.fullName, 'EX', SESSION_TTL);
         }
-        if (patient.eps) {
-          dbPatientEpsId = patient.epsId;
-          dbPatientEpsName = patient.eps.name;
-        }
       } else {
-        // Paciente nuevo: pedir nombre
+        // Paciente nuevo: pedir nombre.
         if (!finalNombre) {
           const reply = MSGS.primeraVez();
           await this.smartReply(organizationId, senderId, reply);
@@ -1268,216 +1723,50 @@ export class ChatbotService implements OnModuleInit {
           nombre: finalNombre,
           senderId,
           organizationId: organizationId!,
-          epsId: null,
+          epsId: epsIdForPatient,
         });
       }
 
-      const epsEfectiva = finalEps || dbPatientEpsName;
-
-      // ── PASO 3: EPS ───────────────────────────────────────
-      if (!epsEfectiva) {
-        const reply = MSGS.pedirEps();
-        await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
-
-        await this.interactionLog.logSuccess({
-          whatsappId: senderId,
-          organizationId,
-          userMessage: text || '[audio]',
-          botReply: reply,
-          metadata: { step: 'ASKING_EPS', cedula: finalCedula },
-        });
-        return;
-      }
-
-      // Paciente particular (pago directo) → omitir búsqueda de EPS en BD
-      const isParticular = this.particularRegex.test(epsEfectiva.trim());
-
-      let matchedEpsId: string | null = null;
-      let matchedEpsName: string = 'Particular';
-
-      if (isParticular) {
-        // Normalizar el texto almacenado para que el resumen muestre "Particular"
-        await this.redis.set(`temp_eps_query:${organizationId}:${senderId}`, 'Particular', 'EX', SESSION_TTL);
-        // No guardamos temp_eps_id → al confirmar, epsIdFinal será null (correcto)
-      } else {
-        const epsMatches = await this.prisma.eps.findMany({
-          where: {
-            name: { contains: epsEfectiva, mode: 'insensitive' },
-            organizationId: organizationId!,
-          },
-        });
-
-        if (epsMatches.length === 0) {
-          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-          await this.redis.del(`temp_eps_query:${organizationId}:${senderId}`);
-          const reply = MSGS.epsNoEncontrada(epsEfectiva);
-          await this.smartReply(organizationId, senderId, reply);
-          await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
-
-          await this.interactionLog.logFailure({
-            whatsappId: senderId,
-            organizationId,
-            reason: FailureReason.EPS_NOT_FOUND,
-            userMessage: text || '[audio]',
-            botReply: reply,
-            metadata: { searchedEps: epsEfectiva },
-          });
-          return;
-        }
-
-        if (!epsMatches[0].isActive) {
-          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-          await this.redis.del(`temp_eps_query:${organizationId}:${senderId}`);
-          const reply = MSGS.epsInactiva(epsMatches[0].name);
-          await this.smartReply(organizationId, senderId, reply);
-          await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
-
-          await this.interactionLog.logFailure({
-            whatsappId: senderId,
-            organizationId,
-            reason: FailureReason.EPS_INACTIVE,
-            userMessage: text || '[audio]',
-            botReply: reply,
-            metadata: { eps: epsMatches[0].name },
-          });
-          return;
-        }
-
-        matchedEpsId = epsMatches[0].id;
-        matchedEpsName = epsMatches[0].name;
-        await this.redis.set(`temp_eps_id:${organizationId}:${senderId}`, matchedEpsId, 'EX', SESSION_TTL);
-      }
-
+      // Asegurar persistencia con nombre + EPS final.
       if (finalCedula && finalNombre) {
         await this.ensurePatientPersisted({
           cedula: finalCedula,
           nombre: finalNombre,
           senderId,
           organizationId: organizationId!,
-          epsId: matchedEpsId,
+          epsId: epsIdForPatient,
         });
       }
 
-      // ── BUSCAR SLOTS DISPONIBLES ──────────────────────────
-      const slots = await this.appointmentsService.getAvailableSlots(
-        finalEspecialidadConDoctor as string,
-        matchedEpsId,
-        organizationId!,
+      // Mostrar resumen y pasar a confirmación.
+      const nombreAgend = finalNombre || patient?.fullName || 'Paciente';
+      const fechaVistaFinal = await this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`);
+      const fechaFormateadaResumen = fechaVistaFinal
+        ? new Date(fechaVistaFinal).toLocaleString('es-CO', {
+            weekday: 'long', day: 'numeric', month: 'long',
+            hour: '2-digit', minute: '2-digit',
+          })
+        : '';
+      const replyResumen = MSGS.resumenCita(
+        nombreAgend,
+        finalCedula,
+        resolvedEpsName,
+        resolvedServiceName as string,
+        fechaFormateadaResumen,
       );
+      await this.sendWhatsAppMessage(senderId, replyResumen);
+      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CONFIRMATION);
 
-      // ── SIN DISPONIBILIDAD → WAITLIST ─────────────────────
-      if (slots.length === 0) {
-        const nombrePaciente = finalNombre || patient?.fullName || 'paciente';
-
-        const patientForWaitlist = await this.ensurePatientPersisted({
-          cedula: finalCedula,
-          nombre: nombrePaciente,
-          senderId,
-          organizationId: organizationId!,
-          epsId: matchedEpsId,
-        });
-
-        let position = 1;
-        let waitlistEntryId: string | null = null;
-        if (patientForWaitlist) {
-          const serviceRecord = await this.prisma.medicalService.findFirst({
-            where: {
-              name: { contains: finalEspecialidadConDoctor as string, mode: 'insensitive' },
-              organizationId: organizationId!,
-            },
-          });
-
-          if (serviceRecord) {
-            try {
-              const result = await this.waitlistService.joinWaitlist({
-                patientId: patientForWaitlist.id,
-                serviceId: serviceRecord.id,
-                epsId: matchedEpsId,
-                whatsappId: senderId,
-                organizationId: organizationId!,
-              });
-              position = result.position;
-              waitlistEntryId = result.id || null;
-            } catch (e) {
-              this.logger.error(`Error agregando a waitlist: ${e.message}`);
-            }
-          }
-        }
-
-        const reply = MSGS.sinDisponibilidad(nombrePaciente, matchedEpsName, finalEspecialidadConDoctor as string, position);
-        await this.smartReply(organizationId, senderId, reply);
-        await this.cleanUpSession(organizationId, senderId);
-
-        // 📝 Auditoría: paciente entró a waitlist (evento de negocio)
-        if (waitlistEntryId && patientForWaitlist) {
-          await this.interactionLog.logWaitlistJoined({
-            whatsappId: senderId,
-            organizationId: organizationId!,
-            waitlistEntryId,
-            patientCedula: finalCedula,
-            serviceName: finalEspecialidadConDoctor as string,
-            epsName: matchedEpsName,
-            position,
-            userMessage: text || '[audio]',
-            botReply: reply,
-          });
-        } else {
-          // Si no se pudo crear waitlist, registrar como fallo
-          await this.interactionLog.logFailure({
-            whatsappId: senderId,
-            organizationId: organizationId!,
-            reason: FailureReason.NO_AGENDA,
-            userMessage: text || '[audio]',
-            botReply: reply,
-            metadata: {
-              cedula: finalCedula,
-              eps: matchedEpsName,
-              specialty: finalEspecialidadConDoctor,
-              waitlistFailed: true,
-            },
-          });
-        }
-        return;
-      }
-
-      // ── MOSTRAR CUPOS DISPONIBLES ─────────────────────────
-      const nombrePaciente = finalNombre || patient?.fullName || '';
-      let lineasFechas = '';
-      const slotsMetadata = [];
-      for (let i = 0; i < slots.length; i++) {
-        const letra = String.fromCharCode(65 + i);
-        await this.redis.set(`temp_slot_${letra}:${senderId}`, slots[i].slotId, 'EX', SESSION_TTL);
-        await this.redis.set(`temp_slot_${letra}_fecha:${senderId}`, slots[i].fecha.toISOString(), 'EX', SESSION_TTL);
-        lineasFechas +=
-          `*${letra})* ${slots[i].fecha.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })} ` +
-          `a las ${slots[i].fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} ` +
-          `· Dr. ${slots[i].doctor}\n`;
-        slotsMetadata.push({
-          letter: letra,
-          slotId: slots[i].slotId,
-          doctor: slots[i].doctor,
-          fecha: slots[i].fecha.toISOString(),
-        });
-      }
-
-      const reply = MSGS.cuposDisponibles(nombrePaciente, matchedEpsName, lineasFechas);
-      await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_DATE);
-
-      // 📝 Auditoría: cupos mostrados
       await this.interactionLog.logSuccess({
         whatsappId: senderId,
         organizationId,
         userMessage: text || '[audio]',
-        botReply: reply,
+        botReply: replyResumen,
         metadata: {
-          step: 'SLOTS_OFFERED',
-          slotsCount: slots.length,
-          slots: slotsMetadata,
-          patientCedula: finalCedula,
-          eps: matchedEpsName,
-          specialty: finalEspecialidadConDoctor,
+          step: 'BOOKING_SUMMARY_SHOWN',
+          cedula: finalCedula,
+          eps: resolvedEpsName,
+          specialty: resolvedServiceName,
         },
       });
       return;
@@ -1512,31 +1801,61 @@ export class ChatbotService implements OnModuleInit {
         await this.redis.set(`temp_selected_slot_id:${organizationId}:${senderId}`, slotId, 'EX', SESSION_TTL);
         await this.redis.set(`temp_selected_date_view:${organizationId}:${senderId}`, slotFechaStr, 'EX', SESSION_TTL);
 
-        const cedulaAgend = await this.redis.get(`temp_cedula:${organizationId}:${senderId}`);
-        const nombreAgend = await this.redis.get(`temp_nombre:${organizationId}:${senderId}`) || 'Paciente';
-        const specAgend = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`) || 'Servicio';
-        const epsAgend = await this.redis.get(`temp_eps_query:${organizationId}:${senderId}`) || 'EPS';
         const fechaFormateada = new Date(slotFechaStr).toLocaleString('es-CO', {
           weekday: 'long', day: 'numeric', month: 'long',
           hour: '2-digit', minute: '2-digit',
         });
 
-        const reply = MSGS.resumenCita(nombreAgend, cedulaAgend || '', epsAgend, specAgend, fechaFormateada);
-        await this.sendWhatsAppMessage(senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_CONFIRMATION);
+        // Nuevo protocolo: tras elegir el slot, capturamos los datos del paciente.
+        // Si el usuario ya tenía cédula en memoria (re-agendamiento), saltamos
+        // directo al resumen para no preguntar dos veces.
+        const cedulaPrevia = await this.redis.get(`temp_cedula:${organizationId}:${senderId}`);
+        const nombrePrevio = await this.redis.get(`temp_nombre:${organizationId}:${senderId}`);
 
-        // 📝 Auditoría: paciente seleccionó slot
+        if (cedulaPrevia) {
+          // Paciente con cédula ya conocida → resumen + confirmación.
+          const specAgend = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`) || 'Servicio';
+          const epsAgend = await this.redis.get(`temp_eps_query:${organizationId}:${senderId}`) || 'EPS';
+          const reply = MSGS.resumenCita(
+            nombrePrevio || 'Paciente',
+            cedulaPrevia,
+            epsAgend,
+            specAgend,
+            fechaFormateada,
+          );
+          await this.sendWhatsAppMessage(senderId, reply);
+          await this.setUserState(organizationId, senderId, ChatState.AWAITING_CONFIRMATION);
+
+          await this.interactionLog.logSuccess({
+            whatsappId: senderId,
+            organizationId,
+            userMessage: text,
+            botReply: reply,
+            metadata: {
+              step: 'SLOT_SELECTED_CEDULA_KNOWN',
+              selectedLetter: letraElegida,
+              slotId,
+              slotDate: slotFechaStr,
+            },
+          });
+          break;
+        }
+
+        // Sin cédula previa → pedir cédula (Paso 4 del protocolo).
+        const reply = MSGS.pedirCedulaPostSlot(fechaFormateada);
+        await this.sendWhatsAppMessage(senderId, reply);
+        await this.setUserState(organizationId, senderId, ChatState.AWAITING_CEDULA);
+
         await this.interactionLog.logSuccess({
           whatsappId: senderId,
           organizationId,
           userMessage: text,
           botReply: reply,
           metadata: {
-            step: 'SLOT_SELECTED',
+            step: 'SLOT_SELECTED_ASK_CEDULA',
             selectedLetter: letraElegida,
             slotId,
             slotDate: slotFechaStr,
-            cedula: cedulaAgend,
           },
         });
         break;
@@ -1673,6 +1992,142 @@ export class ChatbotService implements OnModuleInit {
             userMessage: text,
             botReply: reply,
             metadata: { invalidResponse: respuesta, stage: 'AWAITING_CONFIRMATION' },
+          });
+        }
+        break;
+      }
+
+      case ChatState.AWAITING_WAITLIST_OPTIN: {
+        const respuesta = text?.toUpperCase().trim() || '';
+
+        if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
+          // El usuario acepta entrar a la cola de espera.
+          const serviceId = await this.redis.get(`temp_waitlist_service_id:${organizationId}:${senderId}`);
+          const epsIdRaw = await this.redis.get(`temp_waitlist_eps_id:${organizationId}:${senderId}`);
+          const epsIdForWl = epsIdRaw && epsIdRaw.length > 0 ? epsIdRaw : null;
+          const serviceName = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`) || '';
+          const cedulaPrevia = await this.redis.get(`temp_cedula:${organizationId}:${senderId}`);
+          const nombrePrevio = await this.redis.get(`temp_nombre:${organizationId}:${senderId}`);
+
+          if (!serviceId) {
+            const reply = MSGS.sesionExpirada();
+            await this.smartReply(organizationId, senderId, reply);
+            await this.cleanUpSession(organizationId, senderId);
+
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId,
+              reason: FailureReason.SESSION_EXPIRED,
+              userMessage: text,
+              botReply: reply,
+              metadata: { stage: 'WAITLIST_OPTIN_NO_CONTEXT' },
+            });
+            return;
+          }
+
+          // Si todavía no tenemos cédula, la pedimos ahora (necesaria para la cola).
+          if (!cedulaPrevia) {
+            const reply =
+              `Para unirle a la lista de espera, ¿me comparte su *número de cédula*?`;
+            await this.smartReply(organizationId, senderId, reply);
+            await this.setUserState(organizationId, senderId, ChatState.AWAITING_CEDULA);
+            // Marcador para que la cascada sepa que estamos en flujo waitlist-pending
+            await this.redis.set(`temp_waitlist_pending:${organizationId}:${senderId}`, '1', 'EX', SESSION_TTL);
+
+            await this.interactionLog.logSuccess({
+              whatsappId: senderId,
+              organizationId,
+              userMessage: text,
+              botReply: reply,
+              metadata: { step: 'WAITLIST_OPTIN_ASK_CEDULA' },
+            });
+            return;
+          }
+
+          const nombrePaciente = nombrePrevio || 'Paciente';
+          const patientForWl = await this.ensurePatientPersisted({
+            cedula: cedulaPrevia,
+            nombre: nombrePaciente,
+            senderId,
+            organizationId: organizationId!,
+            epsId: epsIdForWl,
+          });
+
+          let position = 1;
+          let waitlistEntryId: string | null = null;
+          if (patientForWl) {
+            try {
+              const result = await this.waitlistService.joinWaitlist({
+                patientId: patientForWl.id,
+                serviceId,
+                epsId: epsIdForWl,
+                whatsappId: senderId,
+                organizationId: organizationId!,
+              });
+              position = result.position;
+              waitlistEntryId = result.id || null;
+            } catch (e) {
+              this.logger.error(`Error agregando a waitlist (opt-in): ${e.message}`);
+            }
+          }
+
+          const reply = MSGS.unidoAWaitlist(nombrePaciente, serviceName, position);
+          await this.smartReply(organizationId, senderId, reply);
+
+          if (waitlistEntryId && patientForWl) {
+            await this.interactionLog.logWaitlistJoined({
+              whatsappId: senderId,
+              organizationId: organizationId!,
+              waitlistEntryId,
+              patientCedula: cedulaPrevia,
+              serviceName,
+              epsName: '',
+              position,
+              userMessage: text,
+              botReply: reply,
+            });
+          } else {
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId: organizationId!,
+              reason: FailureReason.NO_AGENDA,
+              userMessage: text,
+              botReply: reply,
+              metadata: {
+                cedula: cedulaPrevia,
+                specialty: serviceName,
+                waitlistFailed: true,
+              },
+            });
+          }
+
+          await this.cleanUpSession(organizationId, senderId);
+
+        } else if (['NO', 'NO.'].includes(respuesta)) {
+          const reply = MSGS.noUnidoAWaitlist();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.cleanUpSession(organizationId, senderId);
+
+          await this.interactionLog.log({
+            whatsappId: senderId,
+            organizationId,
+            status: InteractionStatus.ESCAPED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { event: 'WAITLIST_OPTIN_DECLINED' },
+          });
+        } else {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const reply = MSGS.respuestaInvalidaSiNo();
+          await this.sendWhatsAppMessage(senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidResponse: respuesta, stage: 'WAITLIST_OPTIN' },
           });
         }
         break;
@@ -1890,17 +2345,11 @@ export class ChatbotService implements OnModuleInit {
         const respuesta = text?.toUpperCase().trim() || '';
 
         if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
-          const activeServices = await this.prisma.medicalService.findMany({
-            where: { isActive: true, organizationId },
-            select: { name: true },
-            orderBy: { name: 'asc' },
-          });
-          const serviciosText =
-            activeServices.length > 0
-              ? `Opciones: ${activeServices.map((s) => s.name).join(' · ')}`
-              : 'Ej: Medicina General, Odontología';
-
-          const reply = MSGS.bienvenida(orgName, serviciosText);
+          // Tras cancelar, ofrecer menú con letras (Paso 1 del nuevo protocolo).
+          const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
+          const reply = count > 0
+            ? MSGS.menuServicios(orgName, lineas, botName)
+            : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
           await this.smartReply(organizationId, senderId, reply);
           await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
 

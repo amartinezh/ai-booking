@@ -60,6 +60,10 @@ model OrganizationSettings {
   // Personalización del chatbot
   botName        String       @default("Vicente")
 
+  // Tolerancia a fallos del flujo conversacional:
+  // máximo de reintentos por paso antes de derivar al humano.
+  maxRetriesPerStep Int       @default(3)
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 }

@@ -111,3 +111,49 @@ necesito cancelar
 deseo cancelar
 cancelar mi cita
 anular mi cita
+
+# ----------------------------------------------------------
+# 🛡️ INSULTOS / LENGUAJE OFENSIVO
+# Detección por palabras contenidas en el mensaje (case-insensitive).
+# Cuando coincide → derivación INMEDIATA a la línea de soporte
+# y cierre del flujo conversacional (guardrail estricto).
+# Agregue/edite términos para ajustar la sensibilidad.
+# ----------------------------------------------------------
+[insults]
+gonorrea
+hijueputa
+hijo de puta
+hp
+malparido
+malparida
+marica
+maricón
+maricon
+pirobo
+estúpido
+estupido
+estúpida
+estupida
+idiota
+imbécil
+imbecil
+inútil
+inutil
+basura
+mierda
+chupame
+chupamela
+puta
+puto
+perra
+perro
+verga
+culo
+pendejo
+pendeja
+huevón
+huevon
+sapo
+zorra
+maldito
+maldita

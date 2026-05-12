@@ -10,8 +10,17 @@ export enum ChatState {
   AWAITING_CANCEL_SELECTION = 'AWAITING_CANCEL_SELECTION',
   AWAITING_CANCEL_CONFIRM = 'AWAITING_CANCEL_CONFIRM',
   AWAITING_WAITLIST_CONFIRM = 'AWAITING_WAITLIST_CONFIRM',
+  // NUEVO — el usuario consulta cita y no hay slots: ¿se une a la cola?
+  AWAITING_WAITLIST_OPTIN = 'AWAITING_WAITLIST_OPTIN',
   AWAITING_POST_CANCEL_CHOICE = 'AWAITING_POST_CANCEL_CHOICE', // tras cancelación exitosa: ¿desea agendar?
 }
+
+// Nombre canónico del registro EPS para pago directo (debe existir en BD por org).
+// El seeder en ChatbotService lo asegura idempotentemente al iniciar el módulo.
+export const PARTICULAR_EPS_NAME = 'Particular';
+
+// Valor por defecto de reintentos. La cifra efectiva se lee de OrganizationSettings.
+export const DEFAULT_MAX_RETRIES = 3;
 
 // Tiempo de expiración de la sesión conversacional en Redis (1 hora)
 export const SESSION_TTL = 3600;
@@ -36,6 +45,55 @@ export const MSGS = {
     `Estoy aquí para ayudarle a agendar su cita médica de forma rápida y sin filas. 🏥\n\n` +
     `¿Para qué especialidad necesita cita hoy?\n` +
     `_${servicios}_`,
+
+  // ── Menú de servicios con letras (Paso 1) ──────────────────
+  menuServicios: (clinicaName: string, lineas: string, botName: string = BOT_NAME) =>
+    `¡Hola! 👋 Soy *${botName}*, el asistente de *${clinicaName}*.\n\n` +
+    `Estoy aquí para ayudarle a agendar su cita médica. 🏥\n\n` +
+    `*¿Qué servicio necesita?* Responda con la letra:\n\n` +
+    `${lineas}\n` +
+    `_También puede escribir el nombre del servicio o enviarme un audio._`,
+
+  servicioInvalido: (lineas: string) =>
+    `No reconocí esa opción. 🙏 Por favor responda con la letra del servicio ` +
+    `_(ej: A, B, C...)_ o escriba su nombre.\n\n` +
+    `${lineas}`,
+
+  // ── Menú de EPS con letras (Paso 2) ────────────────────────
+  menuEps: (servicio: string, lineas: string) =>
+    `Perfecto, *${servicio}*. 🩺\n\n` +
+    `*¿Cuál es su EPS o aseguradora?* Responda con la letra:\n\n` +
+    `${lineas}\n` +
+    `_Si paga directamente, elija *Particular*._`,
+
+  epsInvalida: (lineas: string) =>
+    `No reconocí esa opción. 🙏 Responda con la letra de su EPS ` +
+    `_(ej: A, B, C...)_ o escriba el nombre.\n\n` +
+    `${lineas}`,
+
+  // ── Opt-in a lista de espera (Paso 3 sin disponibilidad) ──
+  preguntaWaitlist: (servicio: string, eps: string) =>
+    `Lamentablemente no encuentro cupos disponibles en este momento para ` +
+    `*${servicio}* con *${eps}*. 😔\n\n` +
+    `¿Desea unirse a la *lista de espera*? En cuanto se libere un cupo, ` +
+    `le avisamos por aquí mismo. ✅\n\n` +
+    `Responda *SÍ* para unirse o *NO* para finalizar.`,
+
+  unidoAWaitlist: (nombre: string, servicio: string, position: number) =>
+    `${nombre ? `Listo, ${nombre}. ` : 'Listo. '}` +
+    `Le he agregado a la lista de espera para *${servicio}* ` +
+    `(posición *#${position}*). 🎟️\n\n` +
+    `Le avisaremos en cuanto se libere un cupo. ¡Que esté muy bien! 😊`,
+
+  noUnidoAWaitlist: () =>
+    `Entendido. 😊 No le agregaré a la lista de espera.\n\n` +
+    `Cuando desee volver a intentarlo, escríbame *"Hola"*. ¡Hasta pronto! 👋`,
+
+  // ── Captura de datos del paciente DESPUÉS de elegir slot ──
+  pedirCedulaPostSlot: (fechaFormateada: string) =>
+    `Excelente, reservé tentativamente el horario:\n` +
+    `📅 *${fechaFormateada}*\n\n` +
+    `Para finalizar el agendamiento, ¿me comparte su *número de cédula*?`,
 
   especialidadConfirmada: (especialidad: string) =>
     `Perfecto, *${especialidad}*. 🩺\n\n` +
@@ -124,6 +182,22 @@ export const MSGS = {
   outOfContext: (botName: string = BOT_NAME) =>
     `Soy *${botName}*, un asistente exclusivo para agendamiento médico. 🏥\n\n` +
     `Por favor indíqueme la especialidad que busca o el nombre del médico.`,
+
+  // 🛡️ Guardrail: insulto / lenguaje ofensivo → derivar de inmediato.
+  guardrailInsulto: (phone: string, botName: string = BOT_NAME) =>
+    `Soy *${botName}* y estoy aquí solo para ayudarle con su agendamiento médico. ` +
+    `No puedo continuar la conversación en este tono. 🙏\n\n` +
+    `Si necesita atención adicional, por favor comuníquese con nuestra línea de soporte: ` +
+    `👉 *${phone}*\n\n` +
+    `He cerrado esta conversación por seguridad. 🔒`,
+
+  // 🛡️ Guardrail: off-topic persistente → derivar tras agotar reintentos.
+  guardrailOffTopic: (phone: string, botName: string = BOT_NAME) =>
+    `Disculpe, no he logrado entender su solicitud dentro del contexto de ` +
+    `*agendamiento médico*. 🏥\n\n` +
+    `Para ofrecerle una mejor atención, por favor comuníquese con nuestra línea de soporte: ` +
+    `👉 *${phone}*\n\n` +
+    `${botName} estará disponible cuando desee escribir *"Hola"* nuevamente. 😊`,
 
   ininteligible: () =>
     `🎙️ Disculpe, no entendí bien el mensaje. ¿Podría repetirlo de forma más pausada o escribirme texto?`,
