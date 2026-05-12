@@ -3,8 +3,39 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 
-// Debe ser la misma clave secreta que usaste en auth.ts
 const SECRET_KEY = new TextEncoder().encode(process.env.JWT_SECRET || 'clave-secreta-hospital-san-vicente-2026');
+
+function isServerActionRequest(request: NextRequest): boolean {
+    if (request.method !== 'POST') return false;
+    return request.headers.has('next-action');
+}
+
+function isRscRequest(request: NextRequest): boolean {
+    return request.headers.get('rsc') === '1' || request.headers.has('next-router-state-tree');
+}
+
+function unauthorizedActionResponse(request: NextRequest) {
+    const loginUrl = new URL('/login', request.url).toString();
+    const res = new NextResponse(
+        JSON.stringify({ error: 'SESSION_EXPIRED', redirect: '/login' }),
+        {
+            status: 401,
+            headers: {
+                'content-type': 'application/json',
+                'x-session-expired': '1',
+                'x-redirect-to': loginUrl,
+            },
+        }
+    );
+    res.cookies.delete('auth_token');
+    return res;
+}
+
+function redirectToLogin(request: NextRequest, clearCookie: boolean) {
+    const res = NextResponse.redirect(new URL('/login', request.url));
+    if (clearCookie) res.cookies.delete('auth_token');
+    return res;
+}
 
 export async function middleware(request: NextRequest) {
     const isDashboard = request.nextUrl.pathname.startsWith('/dashboard');
@@ -12,9 +43,11 @@ export async function middleware(request: NextRequest) {
 
     if (isDashboard || isSuperAdmin) {
         const token = request.cookies.get('auth_token')?.value;
+        const isAction = isServerActionRequest(request);
 
         if (!token) {
-            return NextResponse.redirect(new URL('/login', request.url));
+            if (isAction) return unauthorizedActionResponse(request);
+            return redirectToLogin(request, false);
         }
 
         try {
@@ -31,7 +64,8 @@ export async function middleware(request: NextRequest) {
 
             return NextResponse.next();
         } catch (_) {
-            return NextResponse.redirect(new URL('/login', request.url));
+            if (isAction) return unauthorizedActionResponse(request);
+            return redirectToLogin(request, true);
         }
     }
 
