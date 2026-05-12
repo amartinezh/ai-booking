@@ -1,4 +1,4 @@
-name: Deploy Hospital San Vicente a Producción
+name: Deploy Agendamiento IA a Producción
 
 # 1. ¿Cuándo se activa? Cuando hagas push a la rama 'main'
 on:
@@ -28,17 +28,18 @@ jobs:
             # 2. Bajar los últimos cambios de GitHub
             git pull origin main
 
-            # 3. Detener y eliminar los contenedores de aplicación (api y web).
-            #    postgres y redis NO se tocan para preservar los datos.
+            # 3. CONSTRUIR PRIMERO (Minimiza el tiempo de inactividad)
+            # Reconstruye las imágenes mientras la versión anterior sigue funcionando
+            docker compose -f docker-compose.prod.yml build --no-cache api web
+
+            # 4. Detener y eliminar SOLO las versiones antiguas de api y web
+            # postgres y redis NO se tocan para preservar los datos.
             docker compose -f docker-compose.prod.yml stop api web
             docker compose -f docker-compose.prod.yml rm -f api web
 
-            # 4. Reconstruir desde cero sin caché para garantizar que el código
-            #    nuevo quede dentro de la imagen (evita el problema de capa cacheada).
-            docker compose -f docker-compose.prod.yml build --no-cache api web
+            # 5. MIGRAR BASE DE DATOS (Contenedor efímero)
+            # Se aplica el nuevo esquema ANTES de levantar la aplicación
+            docker compose -f docker-compose.prod.yml run --rm api npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
 
-            # 5. Levantar todos los servicios
+            # 6. Levantar todo con la nueva versión y la BD actualizada
             docker compose -f docker-compose.prod.yml up -d
-
-            # 6. Ejecutar migraciones de Prisma de forma segura
-            docker compose -f docker-compose.prod.yml exec -T api npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma

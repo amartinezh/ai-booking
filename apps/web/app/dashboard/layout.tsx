@@ -27,13 +27,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
         }
     }
 
+    const SUPPORT_MENU = { label: 'Soporte', href: '/dashboard/soporte', icon: '🛟' };
+
     // Diferentes opciones de menú dependiendo del Rol
     const PATIENT_MENUS = [
-        { label: 'Mis Citas Programadas', href: '/dashboard', icon: '📅' }
+        { label: 'Mis Citas Programadas', href: '/dashboard', icon: '📅' },
+        SUPPORT_MENU
     ];
 
     const DOCTOR_MENUS = [
-        { label: 'Mi Agenda', href: '/dashboard', icon: '🩺' }
+        { label: 'Mi Agenda', href: '/dashboard', icon: '🩺' },
+        SUPPORT_MENU
     ];
 
     const ADMIN_MENUS = [
@@ -45,16 +49,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
         { label: 'Usuarios', href: '/dashboard/usuarios', icon: '👥' },
         { label: 'Médicos', href: '/dashboard/medicos', icon: '⚕️' },
         { label: 'Caja Negra (Auditoría)', href: '/dashboard/auditoria', icon: '🕵️' },
-        { label: 'Configuración', href: '/dashboard/configuracion', icon: '⚙️' }
+        { label: 'Configuración', href: '/dashboard/configuracion', icon: '⚙️' },
+        SUPPORT_MENU
     ];
 
     const AGENT_MENUS = [
         { label: 'Visión General', href: '/dashboard', icon: '📋' },
-        { label: 'Agendamiento', href: '/dashboard/agendamiento', icon: '📅' }
+        { label: 'Agendamiento', href: '/dashboard/agendamiento', icon: '📅' },
+        SUPPORT_MENU
     ];
 
     const OBSERVER_MENUS = [
-        { label: 'Analíticas de Negocio', href: '/dashboard/analytics', icon: '📊' }
+        { label: 'Analíticas de Negocio', href: '/dashboard/analytics', icon: '📊' },
+        SUPPORT_MENU
     ];
 
     const roleMap: Record<string, string> = {

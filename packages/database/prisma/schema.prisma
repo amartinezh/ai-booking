@@ -43,6 +43,7 @@ model Organization {
   interactionLogs InteractionLog[]
   agents          AgentProfile[]
   waitlistEntries WaitlistEntry[]
+  supportTickets  SupportTicket[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -79,6 +80,9 @@ model User {
 
   // Relación con Logs de Auditoría ("Caja Negra")
   interactionLogs InteractionLog[]
+
+  // Tickets de soporte que reportó este usuario
+  supportTickets SupportTicket[]
 
   // 🏢 TENANT ISOLATION
   organizationId String?
@@ -555,4 +559,41 @@ enum WaitlistStatus {
   CONFIRMED  // Tomó el cupo (se convirtió en Appointment)
   EXPIRED    // No respondió en 30 minutos
   CANCELLED  // Salió voluntariamente o rechazó el cupo
+}
+
+// -----------------------------------------------------------------------------
+// 🛟 HELP DESK / SOPORTE DE TICKETS INTERNO
+// -----------------------------------------------------------------------------
+model SupportTicket {
+  id          String              @id @default(uuid())
+  title       String
+  description String              @db.Text
+  status      SupportTicketStatus @default(OPEN)
+
+  // Marcas temporales del ciclo de vida del ticket
+  startedAt  DateTime?
+  resolvedAt DateTime?
+
+  // Nota/Respuesta del equipo de soporte (Super Admin)
+  resolutionNote String? @db.Text
+
+  // Quién reporta
+  reporterId String
+  reporter   User   @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+
+  // 🏢 TENANT ISOLATION (clínica del reportante)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([reporterId, status])
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
 }

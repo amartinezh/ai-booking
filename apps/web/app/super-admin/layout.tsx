@@ -15,6 +15,7 @@ export default async function SuperAdminLayout({ children }: { children: React.R
     const SUPER_ADMIN_MENUS = [
         { label: 'Organizaciones', href: '/super-admin/organizations', icon: '🏢' },
         { label: 'Facturación Global', href: '/super-admin/billing', icon: '💳' },
+        { label: 'Mesa de Ayuda', href: '/super-admin/support', icon: '🛟' },
         { label: 'Ajustes del Sistema', href: '/super-admin/settings', icon: '⚙️' },
     ];
 
