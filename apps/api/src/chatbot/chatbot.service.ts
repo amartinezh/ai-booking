@@ -1126,6 +1126,15 @@ export class ChatbotService implements OnModuleInit {
         aiData.cedula = digits;
       }
       // Si el texto no tiene dígitos (ej: "salir") ya fue capturado por isQuickEscape arriba.
+    } else if (
+      messageType === 'text' &&
+      text &&
+      (currentState === ChatState.AWAITING_SPECIALTY || currentState === ChatState.AWAITING_EPS)
+    ) {
+      // En selección de menú (Pasos 1 y 2) NO llamamos a Gemini para texto:
+      // el resolver del menú maneja letras (case-insensitive) y match parcial por nombre.
+      // Gemini con inputs cortos como "a", "B", "Sura" tiende a marcar ininteligible=true
+      // y bloquea el flujo. La voz sí va al extractor (manejada arriba en isAudio).
     } else if (messageType === 'text' && text && !isStrictStep) {
       aiData = await this.extractDataWithGemini(text, null);
     }
