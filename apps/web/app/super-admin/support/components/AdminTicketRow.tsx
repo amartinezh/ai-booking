@@ -5,6 +5,7 @@ import { useState, useTransition } from 'react';
 import StatusBadge from '../../../dashboard/soporte/components/StatusBadge';
 import { startTicketAttention } from '@/app/actions/support';
 import ResolveTicketModal from './ResolveTicketModal';
+import BrandLogo from '@/app/components/BrandLogo';
 
 const fmt = (d: Date | string) =>
     new Date(d).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' });
@@ -44,7 +45,7 @@ export default function AdminTicketRow({ ticket }: { ticket: AdminTicket }) {
                                 {ticket.organization.logoUrl ? (
                                     <img src={ticket.organization.logoUrl} alt="" className="w-3.5 h-3.5 rounded-sm object-contain" />
                                 ) : (
-                                    <span>🏥</span>
+                                    <BrandLogo size={14} alt={ticket.organization.name} />
                                 )}
                                 {ticket.organization.name}
                             </span>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import BrandLogo from "@/app/components/BrandLogo";
 
 export default function Home() {
   return (
@@ -18,7 +19,7 @@ export default function Home() {
       <header className="absolute top-0 w-full z-50">
         <div className="max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-3xl">🏥</span>
+            <BrandLogo size={32} alt="Antigravity" />
             <span className="text-xl font-bold tracking-tight text-zinc-900 dark:text-white">
               San Vicente <span className="text-blue-600 font-black">AI</span>
             </span>

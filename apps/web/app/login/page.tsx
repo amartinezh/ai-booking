@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { loginUser } from '../actions/auth';
+import BrandLogo from '@/app/components/BrandLogo';
 
 export default function LoginPage() {
     const router = useRouter();
@@ -30,7 +31,7 @@ export default function LoginPage() {
             <div className="w-full max-w-md bg-white dark:bg-zinc-900 rounded-3xl shadow-xl border border-zinc-200 dark:border-zinc-800 p-8">
 
                 <div className="text-center mb-8">
-                    <span className="text-5xl block mb-4">🏥</span>
+                    <BrandLogo size={64} className="mx-auto mb-4" alt="Antigravity" />
                     <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Portal de Acceso</h1>
                     <p className="text-sm text-zinc-500 mt-2">Hospital San Vicente AI</p>
                 </div>

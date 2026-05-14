@@ -3,6 +3,7 @@ import { getSession } from '../../lib/session';
 import { redirect } from 'next/navigation';
 import { prisma } from '../../lib/prisma';
 import LogoutButton from './components/LogoutButton';
+import BrandLogo from '@/app/components/BrandLogo';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
     const session = await getSession();
@@ -89,7 +90,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     {orgLogoUrl ? (
                         <img src={orgLogoUrl} alt="Logo Organización" className="w-10 h-10 shrink-0 rounded-lg object-contain bg-white shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800" />
                     ) : (
-                        <span className="text-3xl shrink-0">🏥</span>
+                        <BrandLogo size={40} alt={orgName} />
                     )}
                     <h2 className="text-xl font-bold tracking-tight text-zinc-900 dark:text-white truncate" title={orgName}>{orgName}</h2>
                 </div>
@@ -124,7 +125,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     {orgLogoUrl ? (
                         <img src={orgLogoUrl} alt="Logo" className="w-8 h-8 shrink-0 rounded-md object-contain bg-white shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800" />
                     ) : (
-                        <span className="text-2xl shrink-0">🏥</span>
+                        <BrandLogo size={32} alt={orgName} />
                     )}
                     <span className="font-bold text-zinc-900 dark:text-white truncate" title={orgName}>{orgName}</span>
                 </div>
