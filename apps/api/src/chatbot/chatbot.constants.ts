@@ -420,61 +420,53 @@ const FORMAL = {
 // envueltas en una conversación más natural, no en lista rígida.
 // ═════════════════════════════════════════════════════════════
 const INFORMAL = {
+  // Helper interno: aplana cualquier `${lineas}` multilínea (viene con \n
+  // desde buildServiceMenu/buildEpsMenu/slots) en un fragmento de párrafo
+  // separado por ` · `, manteniendo los marcadores A) B) C) inline.
+  _flat: (lineas: string) => lineas.replace(/\n+/g, ' · ').replace(/\s+/g, ' ').trim(),
+
   bienvenida: (clinicaName: string, servicios: string, botName: string = BOT_NAME) =>
     pick([
-      `¡Hola, ¿cómo estás? 😊 Mi nombre es *${botName}* y te escribo desde *${clinicaName}*.\n\n` +
-        `Espero que estés muy bien. Gracias por escribirnos — te cuento que puedo ayudarte a agendar tu cita médica de una.\n\n` +
-        `Cuéntame, ¿qué especialidad necesitas hoy? _${servicios}_`,
-      `¡Hey, hola! 👋 Soy *${botName}*, de *${clinicaName}*. ¿Cómo vas?\n\n` +
-        `Gracias por escribir, con gusto te ayudo a reservar tu cita rapidito.\n\n` +
-        `¿Para qué especialidad la necesitas? _${servicios}_`,
-      `¡Hola! ¿Qué tal? 🌻 Soy *${botName}*, el asistente de *${clinicaName}*.\n\n` +
-        `Mira, aquí te ayudo a agendar tu cita sin filas ni esperas. Cuéntame qué buscas hoy.\n\n` +
-        `_${servicios}_`,
+      `¡Hola, ¿cómo estás? 😊 Mi nombre es *${botName}* y te escribo desde *${clinicaName}*. Espero que estés muy bien y gracias por escribirnos. Te cuento que puedo ayudarte a agendar tu cita médica de una. Cuéntame, ¿qué especialidad necesitas hoy? _${servicios}_`,
+      `¡Hey, hola! 👋 Soy *${botName}*, de *${clinicaName}*. ¿Cómo vas? Gracias por escribir, con gusto te ayudo a reservar tu cita rapidito. ¿Para qué especialidad la necesitas? _${servicios}_`,
+      `¡Hola! ¿Qué tal? 🌻 Soy *${botName}*, el asistente de *${clinicaName}*. Mira, aquí te ayudo a agendar tu cita sin filas ni esperas. Cuéntame qué buscas hoy. _${servicios}_`,
     ]),
 
-  menuServicios: (clinicaName: string, lineas: string, botName: string = BOT_NAME) =>
-    pick([
-      `¡Hola, ¿cómo estás? 😊 Soy *${botName}*, te escribo desde *${clinicaName}*. Espero que estés muy bien y gracias por escribirnos.\n\n` +
-        `Mira, te puedo ayudar a agendar tu cita médica. De momento estos son los servicios que tenemos disponibles:\n\n` +
-        `${lineas}\n` +
-        `Cuéntame con cuál te puedo ayudar — me puedes responder con la letra, escribirme el nombre o mandarme un audio, como prefieras. 🎙️`,
-      `¡Hey! 👋 Soy *${botName}*, de *${clinicaName}*. Un gusto saludarte.\n\n` +
-        `Te cuento rapidito: aquí te ayudo a reservar tu cita. Hoy tengo estos servicios para ti — me dices con cuál vamos:\n\n` +
-        `${lineas}\n` +
-        `Puedes responderme con la letra _(A, B, C...)_, escribirme el nombre o mandarme un audio. Lo que te quede más fácil. 😊`,
-      `¡Hola! ¿Qué tal? 🌻 Soy *${botName}*, tu asistente de *${clinicaName}*.\n\n` +
-        `Estoy aquí para que reservar tu cita sea cosa de un minuto. ¿Cuál de estos servicios necesitas hoy?\n\n` +
-        `${lineas}\n` +
-        `Respóndeme con la letra, con el nombre o un audito de voz — como te parezca mejor. 🎙️`,
-    ]),
+  menuServicios: (clinicaName: string, lineas: string, botName: string = BOT_NAME) => {
+    const inline = INFORMAL._flat(lineas);
+    return pick([
+      `¡Hola, ¿cómo estás? 😊 Soy *${botName}*, te escribo desde *${clinicaName}*. Espero que estés muy bien y gracias por escribirnos. Mira, te puedo ayudar a agendar tu cita médica. De momento estos son los servicios disponibles: ${inline}. Cuéntame con cuál te puedo ayudar — me puedes responder con la letra, escribirme el nombre o mandarme un audio, como prefieras. 🎙️`,
+      `¡Hey! 👋 Soy *${botName}*, de *${clinicaName}*, un gusto saludarte. Te cuento rapidito: aquí te ayudo a reservar tu cita. Hoy tengo estos servicios para ti: ${inline}. Me dices con cuál vamos — puedes responder con la letra _(A, B, C...)_, escribirme el nombre o mandarme un audio, lo que te quede más fácil. 😊`,
+      `¡Hola! ¿Qué tal? 🌻 Soy *${botName}*, tu asistente de *${clinicaName}*. Estoy aquí para que reservar tu cita sea cosa de un minuto. ¿Cuál de estos servicios necesitas hoy? ${inline}. Respóndeme con la letra, con el nombre o un audito de voz — como te parezca mejor. 🎙️`,
+    ]);
+  },
 
-  servicioInvalido: (lineas: string) =>
-    pick([
-      `Ay, perdóname, no te entendí bien. 🙏 ¿Me confirmas el servicio? Puedes mandarme la letra _(A, B, C...)_ o escribirme el nombre directito.\n\n${lineas}`,
-      `Uy, esa opción no la pude identificar. 😅 Volvamos a intentarlo — me dices la letra o me escribes el nombre.\n\n${lineas}`,
-      `Perdón, no me quedó claro. ¿Lo intentamos otra vez? Dame una letra _(A, B, C...)_ o escríbeme el nombre del servicio.\n\n${lineas}`,
-    ]),
+  servicioInvalido: (lineas: string) => {
+    const inline = INFORMAL._flat(lineas);
+    return pick([
+      `Ay, perdóname, no te entendí bien. 🙏 ¿Me confirmas el servicio? Puedes mandarme la letra _(A, B, C...)_ o escribirme el nombre directito. Las opciones son: ${inline}.`,
+      `Uy, esa opción no la pude identificar. 😅 Volvamos a intentarlo — me dices la letra o me escribes el nombre. Aquí van otra vez: ${inline}.`,
+      `Perdón, no me quedó claro. ¿Lo intentamos otra vez? Dame una letra _(A, B, C...)_ o escríbeme el nombre del servicio: ${inline}.`,
+    ]);
+  },
 
-  menuEps: (servicio: string, lineas: string) =>
-    pick([
-      `¡Listo, *${servicio}*! 🩺 Buena elección.\n\n` +
-        `Ahora cuéntame algo: ¿con qué *EPS* vienes hoy? Así te busco el mejor horario. Estas son las que manejamos:\n\n${lineas}\n` +
-        `Si pagas directo la consulta, no te preocupes — elige *Particular* y listo. 💳`,
-      `¡Perfecto, vamos por *${servicio}*! 🩺\n\n` +
-        `Dame un segundito y dime con cuál *EPS* estás afiliado(a). Mira, estas son las opciones — me respondes con la letra o el nombre:\n\n${lineas}\n` +
-        `Y si pagas por tu cuenta, marca *Particular*, con toda confianza. 💳`,
-      `Genial, anotado *${servicio}*. 🩺 Siguiente pasito:\n\n` +
-        `¿De qué *EPS* eres? Aquí te dejo las que tenemos en convenio:\n\n${lineas}\n` +
-        `_Si tu consulta es particular, escoge *Particular*._ 💳`,
-    ]),
+  menuEps: (servicio: string, lineas: string) => {
+    const inline = INFORMAL._flat(lineas);
+    return pick([
+      `¡Listo, *${servicio}*! 🩺 Buena elección. Ahora cuéntame algo: ¿con qué *EPS* vienes hoy? Así te busco el mejor horario. Estas son las que manejamos: ${inline}. Si pagas directo la consulta, no te preocupes — elige *Particular* y listo. 💳`,
+      `¡Perfecto, vamos por *${servicio}*! 🩺 Dame un segundito y dime con cuál *EPS* estás afiliado(a). Mira, estas son las opciones — me respondes con la letra o el nombre: ${inline}. Y si pagas por tu cuenta, marca *Particular*, con toda confianza. 💳`,
+      `Genial, anotado *${servicio}*. 🩺 Siguiente pasito: ¿de qué *EPS* eres? Aquí te dejo las que tenemos en convenio: ${inline}. _Si tu consulta es particular, escoge *Particular*._ 💳`,
+    ]);
+  },
 
-  epsInvalida: (lineas: string) =>
-    pick([
-      `Uy, perdón, no logré pillar esa EPS. 🙏 ¿Me la confirmas? Puedes elegir la letra o escribirme el nombre:\n\n${lineas}`,
-      `No te entendí bien la EPS, perdón. 😅 Dame otra oportunidad — letra o nombre, lo que tú quieras:\n\n${lineas}`,
-      `No pude ubicar esa opción en nuestros convenios. ¿La repetimos? Aquí van las opciones de nuevo:\n\n${lineas}`,
-    ]),
+  epsInvalida: (lineas: string) => {
+    const inline = INFORMAL._flat(lineas);
+    return pick([
+      `Uy, perdón, no logré pillar esa EPS. 🙏 ¿Me la confirmas? Puedes elegir la letra o escribirme el nombre: ${inline}.`,
+      `No te entendí bien la EPS, perdón. 😅 Dame otra oportunidad — letra o nombre, lo que tú quieras: ${inline}.`,
+      `No pude ubicar esa opción en nuestros convenios. ¿La repetimos? Aquí van las opciones de nuevo: ${inline}.`,
+    ]);
+  },
 
   pedirEps: () =>
     pick([
@@ -494,36 +486,27 @@ const INFORMAL = {
       `Perdón, en este momento no estamos atendiendo *${epsName}*. 😅 Si gustas te agendo como *Particular*, o si tienes otra EPS, dímelo.`,
     ]),
 
-  cuposDisponibles: (nombre: string, epsName: string, lineas: string) =>
-    pick([
-      `${nombre ? `¡${nombre}, ` : '¡'}qué bien! 🌟 Mira los horarios que te encontré con *${epsName}*:\n\n${lineas}\n` +
-        `Cuéntame con cuál te quedas — me respondes con la letra. ✍️`,
-      `${nombre ? `${nombre}, ` : ''}¡con gusto! Estos son los espacios que tengo para ti con *${epsName}*:\n\n${lineas}\n` +
-        `Dime cuál te sirve mejor, mándame la letra. 😊`,
-      `${nombre ? `Listo, ${nombre}: ` : 'Listo: '}aquí va la agenda para *${epsName}*:\n\n${lineas}\n` +
-        `Elige el horario que más te acomode (mándame la letra). ✍️`,
-    ]),
+  cuposDisponibles: (nombre: string, epsName: string, lineas: string) => {
+    const inline = INFORMAL._flat(lineas);
+    return pick([
+      `${nombre ? `¡${nombre}, ` : '¡'}qué bien! 🌟 Mira los horarios que te encontré con *${epsName}*: ${inline}. Cuéntame con cuál te quedas — me respondes con la letra. ✍️`,
+      `${nombre ? `${nombre}, ` : ''}¡con gusto! Estos son los espacios que tengo para ti con *${epsName}*: ${inline}. Dime cuál te sirve mejor, mándame la letra. 😊`,
+      `${nombre ? `Listo, ${nombre}: ` : 'Listo: '}aquí va la agenda para *${epsName}*: ${inline}. Elige el horario que más te acomode (mándame la letra). ✍️`,
+    ]);
+  },
 
   preguntaWaitlist: (servicio: string, eps: string) =>
     pick([
-      `Mira, revisé bien la agenda de *${servicio}* con *${eps}* y por ahora no veo cupos. 😔\n\n` +
-        `Pero no te preocupes — si quieres te anoto en la *lista de espera* y te aviso por acá apenas se libere un espacio. ✨\n\n` +
-        `¿Te animas? Responde *SÍ* para anotarte o *NO* si prefieres intentar después.`,
-      `${servicio} con *${eps}* está full estos días. 😅 Pero tengo una idea:\n\n` +
-        `¿Quieres que te apunte en la *lista de espera*? En cuanto alguien libere un cupo te escribo para reservártelo. ✅\n\n` +
-        `*SÍ* para anotarte, *NO* para dejarlo. Con toda confianza.`,
-      `Acabo de mirar y la agenda de *${servicio}* (${eps}) está llenita. 🙏\n\n` +
-        `Te puedo dejar en la *lista de espera* y te aviso apenas se abra algo — sin compromiso. 🤝 ¿Te parece? *SÍ* o *NO*.`,
+      `Mira, revisé bien la agenda de *${servicio}* con *${eps}* y por ahora no veo cupos. 😔 Pero no te preocupes — si quieres te anoto en la *lista de espera* y te aviso por acá apenas se libere un espacio. ✨ ¿Te animas? Responde *SÍ* para anotarte o *NO* si prefieres intentar después.`,
+      `${servicio} con *${eps}* está full estos días. 😅 Pero tengo una idea: ¿quieres que te apunte en la *lista de espera*? En cuanto alguien libere un cupo te escribo para reservártelo. ✅ *SÍ* para anotarte, *NO* para dejarlo. Con toda confianza.`,
+      `Acabo de mirar y la agenda de *${servicio}* (${eps}) está llenita. 🙏 Te puedo dejar en la *lista de espera* y te aviso apenas se abra algo — sin compromiso. 🤝 ¿Te parece? *SÍ* o *NO*.`,
     ]),
 
   unidoAWaitlist: (nombre: string, servicio: string, position: number) =>
     pick([
-      `¡Listo${nombre ? `, ${nombre}` : ''}! 🎟️ Te anoté en la lista de espera para *${servicio}* — quedaste en la posición *#${position}*.\n\n` +
-        `Pendiente de tu WhatsApp: apenas se libere un cupo te escribo de una. ✨\n\nQue tengas un día muy bonito. 😊`,
-      `${nombre ? `Perfecto, ${nombre}. ` : 'Perfecto. '}Ya quedaste apuntado(a) en la cola de *${servicio}* (posición *#${position}*). 🎟️\n\n` +
-        `Apenas se abra un espacio, te aviso por acá. 💚 ¡Cuídate mucho!`,
-      `¡Hecho${nombre ? `, ${nombre}` : ''}! 🌟 Te agregué a la lista para *${servicio}*, vas en la posición *#${position}*.\n\n` +
-        `Te escribo en cuanto tenga novedades. 🙏 Mientras tanto, ¡que estés muy bien!`,
+      `¡Listo${nombre ? `, ${nombre}` : ''}! 🎟️ Te anoté en la lista de espera para *${servicio}* — quedaste en la posición *#${position}*. Pendiente de tu WhatsApp: apenas se libere un cupo te escribo de una. ✨ Que tengas un día muy bonito. 😊`,
+      `${nombre ? `Perfecto, ${nombre}. ` : 'Perfecto. '}Ya quedaste apuntado(a) en la cola de *${servicio}* (posición *#${position}*). 🎟️ Apenas se abra un espacio, te aviso por acá. 💚 ¡Cuídate mucho!`,
+      `¡Hecho${nombre ? `, ${nombre}` : ''}! 🌟 Te agregué a la lista para *${servicio}*, vas en la posición *#${position}*. Te escribo en cuanto tenga novedades. 🙏 Mientras tanto, ¡que estés muy bien!`,
     ]),
 
   noUnidoAWaitlist: () =>
@@ -534,15 +517,13 @@ const INFORMAL = {
     ]),
 
   sinDisponibilidad: (nombre: string, epsName: string, especialidad: string, position: number) =>
-    `${nombre}, revisé la agenda para *${epsName}* en *${especialidad}* y ahorita no hay cupos. 😔\n\n` +
-    `Pero tranqui(la), ya te agregué a la lista de espera (posición *#${position}*). En cuanto se libere algo, te escribo. ✨\n\n` +
-    `¿Algo más en lo que te pueda ayudar?`,
+    `${nombre}, revisé la agenda para *${epsName}* en *${especialidad}* y ahorita no hay cupos. 😔 Pero tranqui(la), ya te agregué a la lista de espera (posición *#${position}*). En cuanto se libere algo, te escribo. ✨ ¿Algo más en lo que te pueda ayudar?`,
 
   pedirCedulaPostSlot: (fechaFormateada: string) =>
     pick([
-      `¡Genial! 🌟 Te aparté ese horario:\n📅 *${fechaFormateada}*\n\nPara terminar de agendarte, ¿me regalas tu *número de cédula*?`,
-      `¡Perfecto, ya casi! 😊 Te reservé tentativamente:\n📅 *${fechaFormateada}*\n\nMe falta solo un datico: ¿me compartes tu *cédula*?`,
-      `¡Listo! 🎯 Tengo ese cupo apartado para ti:\n📅 *${fechaFormateada}*\n\nPara cerrar, ¿me mandas tu *número de cédula*? Solo el número, sin puntos.`,
+      `¡Genial! 🌟 Te aparté ese horario: 📅 *${fechaFormateada}*. Para terminar de agendarte, ¿me regalas tu *número de cédula*?`,
+      `¡Perfecto, ya casi! 😊 Te reservé tentativamente 📅 *${fechaFormateada}*. Me falta solo un datico: ¿me compartes tu *cédula*?`,
+      `¡Listo! 🎯 Tengo ese cupo apartado para ti: 📅 *${fechaFormateada}*. Para cerrar, ¿me mandas tu *número de cédula*? Solo el número, sin puntos.`,
     ]),
 
   especialidadConfirmada: (especialidad: string) =>
@@ -560,25 +541,16 @@ const INFORMAL = {
 
   resumenCita: (nombre: string, cedula: string, eps: string, especialidad: string, fecha: string) =>
     pick([
-      `¡Listo${nombre ? `, ${nombre}` : ''}! Revisemos los datos antes de cerrar:\n\n` +
-        `👤 *Paciente:* ${nombre}\n🪪 *Cédula:* ${cedula}\n💳 *EPS:* ${eps}\n🏥 *Servicio:* ${especialidad}\n📅 *Fecha y hora:* ${fecha}\n\n` +
-        `¿Todo bien? Responde *SÍ* para confirmarte la cita o *NO* si quieres cambiar algo.`,
-      `¡Perfecto${nombre ? `, ${nombre}` : ''}! Mira los datos que tengo:\n\n` +
-        `👤 ${nombre}\n🪪 Cédula ${cedula}\n💳 EPS: ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
-        `Si está bien, responde *SÍ* y te la dejo confirmada. Si algo no, dime *NO*.`,
-      `Ya casi terminamos${nombre ? `, ${nombre}` : ''} 🌟. Estos son tus datos:\n\n` +
-        `👤 ${nombre}\n🪪 ${cedula}\n💳 ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
-        `¿Cerramos? *SÍ* para agendar, *NO* si prefieres cancelar.`,
+      `¡Listo${nombre ? `, ${nombre}` : ''}! Revisemos los datos antes de cerrar: 👤 *Paciente:* ${nombre} · 🪪 *Cédula:* ${cedula} · 💳 *EPS:* ${eps} · 🏥 *Servicio:* ${especialidad} · 📅 *Fecha y hora:* ${fecha}. ¿Todo bien? Responde *SÍ* para confirmarte la cita o *NO* si quieres cambiar algo.`,
+      `¡Perfecto${nombre ? `, ${nombre}` : ''}! Mira los datos que tengo: 👤 ${nombre} · 🪪 Cédula ${cedula} · 💳 EPS ${eps} · 🏥 ${especialidad} · 📅 ${fecha}. Si está bien, responde *SÍ* y te la dejo confirmada; si algo no, dime *NO*.`,
+      `Ya casi terminamos${nombre ? `, ${nombre}` : ''} 🌟. Estos son tus datos: 👤 ${nombre} · 🪪 ${cedula} · 💳 ${eps} · 🏥 ${especialidad} · 📅 ${fecha}. ¿Cerramos? *SÍ* para agendar, *NO* si prefieres cancelar.`,
     ]),
 
   citaConfirmada: (clinicaName: string, fecha: string) =>
     pick([
-      `¡Listo, todo confirmado! 🎉 Tu cita ya quedó en *${clinicaName}*.\n\n📅 _${fecha}_\n\n` +
-        `Llega por favor *15 minutos antes* y trae tu *cédula*. 🪪\n\nCualquier cosa, acá estoy. ¡Que estés muy bien! 😊`,
-      `¡Hecho! 🌟 Tu cita en *${clinicaName}* quedó agendada.\n\n📅 _${fecha}_\n\n` +
-        `Recuerda llegar *15 min antes* con tu *cédula*. 🪪 ¡Gracias por confiar en nosotros! 💚`,
-      `¡Quedó lista! 🎊 Tienes cita confirmada en *${clinicaName}*.\n\n📅 _${fecha}_\n\n` +
-        `Por favor sé puntual: llega *15 min antes* y trae tu *documento*. 🪪 ¡Hasta pronto! 👋`,
+      `¡Listo, todo confirmado! 🎉 Tu cita ya quedó en *${clinicaName}* para 📅 _${fecha}_. Llega por favor *15 minutos antes* y trae tu *cédula*. 🪪 Cualquier cosa, acá estoy. ¡Que estés muy bien! 😊`,
+      `¡Hecho! 🌟 Tu cita en *${clinicaName}* quedó agendada 📅 _${fecha}_. Recuerda llegar *15 min antes* con tu *cédula*. 🪪 ¡Gracias por confiar en nosotros! 💚`,
+      `¡Quedó lista! 🎊 Tienes cita confirmada en *${clinicaName}* para 📅 _${fecha}_. Por favor sé puntual: llega *15 min antes* y trae tu *documento*. 🪪 ¡Hasta pronto! 👋`,
     ]),
 
   citaNoConfirmada: () =>
@@ -602,8 +574,8 @@ const INFORMAL = {
 
   waitlistCupoDisponible: (nombre: string, especialidad: string, fecha: string, doctor: string) =>
     pick([
-      `🔔 ¡Hey ${nombre}, tengo súper buenas noticias!\n\nSe liberó un cupo para *${especialidad}* y tú eras la siguiente en la lista. 🌟\n\n📅 *${fecha}*\n👨‍⚕️ Dr(a). ${doctor}\n\nTe lo aparto por *30 minutos*. ¿Lo tomas?\n\nResponde *SÍ* para confirmarte o *NO* si ya no lo necesitas.`,
-      `🔔 ¡${nombre}, buena noticia! 🌟\n\nSe abrió un espacio para *${especialidad}* y te toca a ti, eras la primera en espera.\n\n📅 *${fecha}*\n👨‍⚕️ Dr(a). ${doctor}\n\nTienes *30 minutos* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
+      `🔔 ¡Hey ${nombre}, tengo súper buenas noticias! Se liberó un cupo para *${especialidad}* y tú eras la siguiente en la lista. 🌟 📅 *${fecha}* · 👨‍⚕️ Dr(a). ${doctor}. Te lo aparto por *30 minutos*. ¿Lo tomas? Responde *SÍ* para confirmarte o *NO* si ya no lo necesitas.`,
+      `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eras la primera en espera: 📅 *${fecha}* · 👨‍⚕️ Dr(a). ${doctor}. Tienes *30 minutos* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
     ]),
 
   waitlistCupoRechazado: () =>
@@ -633,15 +605,10 @@ const INFORMAL = {
     ]),
 
   guardrailInsulto: (phone: string, _botName: string = BOT_NAME) =>
-    `Hey, entiendo que puedas estar molesto(a), pero por aquí solo te puedo ayudar con tu agendamiento ` +
-    `y necesito que mantengamos un trato respetuoso. 🙏\n\n` +
-    `Si necesitas atención adicional, te dejo nuestra línea de soporte: 👉 *${phone}*\n\n` +
-    `Por seguridad, cierro la conversación. Cuando quieras retomar, acá estaré. 💚`,
+    `Hey, entiendo que puedas estar molesto(a), pero por aquí solo te puedo ayudar con tu agendamiento y necesito que mantengamos un trato respetuoso. 🙏 Si necesitas atención adicional, te dejo nuestra línea de soporte: 👉 *${phone}*. Por seguridad, cierro la conversación. Cuando quieras retomar, acá estaré. 💚`,
 
   guardrailOffTopic: (phone: string, botName: string = BOT_NAME) =>
-    `Uy, parece que no estoy logrando entenderte dentro del agendamiento. 🙏\n\n` +
-    `Mejor te paso con nuestro equipo humano para que te atiendan: 👉 *${phone}*\n\n` +
-    `Cuando quieras intentarlo conmigo otra vez, solo escríbeme *"Hola"* y *${botName}* te atiende. 😊`,
+    `Uy, parece que no estoy logrando entenderte dentro del agendamiento. 🙏 Mejor te paso con nuestro equipo humano para que te atiendan: 👉 *${phone}*. Cuando quieras intentarlo conmigo otra vez, solo escríbeme *"Hola"* y *${botName}* te atiende. 😊`,
 
   ininteligible: () =>
     pick([
@@ -651,13 +618,10 @@ const INFORMAL = {
     ]),
 
   iaCaida: (phone: string) =>
-    `Uy, qué pena: el sistema está pasando por un mantenimiento breve. 🛠️\n\n` +
-    `Mientras tanto, comunícate al *${phone}* para que te atiendan directamente. 🙏 ¡Gracias por tu paciencia!`,
+    `Uy, qué pena: el sistema está pasando por un mantenimiento breve. 🛠️ Mientras tanto, comunícate al *${phone}* para que te atiendan directamente. 🙏 ¡Gracias por tu paciencia!`,
 
   maxReintentos: (phone: string) =>
-    `Perdón, parece que no estamos logrando entendernos. 😔\n\n` +
-    `Para no hacerte perder tiempo, te paso con nuestro equipo humano: 👉 https://wa.me/${phone}\n\n` +
-    `Te atienden enseguida con gusto.`,
+    `Perdón, parece que no estamos logrando entendernos. 😔 Para no hacerte perder tiempo, te paso con nuestro equipo humano: 👉 https://wa.me/${phone}. Te atienden enseguida con gusto.`,
 
   maxReintentosReset: () =>
     pick([
@@ -692,15 +656,16 @@ const INFORMAL = {
   cancelarSinCitas: (cedula: string) =>
     `Revisé y el paciente con cédula *${cedula}* no tiene citas próximas. 📭 ¿Te ayudo a agendar una nueva?`,
 
-  cancelarSeleccionar: (nombre: string, lineas: string) =>
-    pick([
-      `Listo, encontré estas citas a nombre de *${nombre}*:\n\n${lineas}\n¿Cuál quieres cancelar? Mándame la letra.`,
-      `Acá están las citas que tengo para *${nombre}*:\n\n${lineas}\nDime con la letra cuál es la que quieres cancelar. 😊`,
-    ]),
+  cancelarSeleccionar: (nombre: string, lineas: string) => {
+    const inline = INFORMAL._flat(lineas);
+    return pick([
+      `Listo, encontré estas citas a nombre de *${nombre}*: ${inline}. ¿Cuál quieres cancelar? Mándame la letra.`,
+      `Acá están las citas que tengo para *${nombre}*: ${inline}. Dime con la letra cuál es la que quieres cancelar. 😊`,
+    ]);
+  },
 
   cancelarConfirmar: (servicio: string, doctor: string, fecha: string) =>
-    `Para confirmarte, esta es la cita que vamos a cancelar:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n📅 ${fecha}\n\n` +
-    `⚠️ ¿Seguro(a)? Responde *SÍ* para cancelarla o *NO* si prefieres dejarla.`,
+    `Para confirmarte, esta es la cita que vamos a cancelar: 🏥 *${servicio}* · 👨‍⚕️ Dr(a). ${doctor} · 📅 ${fecha}. ⚠️ ¿Seguro(a)? Responde *SÍ* para cancelarla o *NO* si prefieres dejarla.`,
 
   cancelarExitosa: () =>
     pick([
@@ -711,7 +676,7 @@ const INFORMAL = {
 
   cancelarOfreceAgendar: () =>
     pick([
-      `¿Te ayudo a agendar en *otro horario disponible*? Cuéntame.\n\n*SÍ* para seguir, *NO* si por ahora no.`,
+      `¿Te ayudo a agendar en *otro horario disponible*? Cuéntame. *SÍ* para seguir, *NO* si por ahora no.`,
       `Si quieres te busco *otro horarito* que te acomode. ¿Te animas? *SÍ* para seguir, *NO* para terminar.`,
     ]),
 
@@ -749,7 +714,7 @@ const INFORMAL = {
     `🎙️ Para este pasito, mejor respóndeme por *texto* _(la letra o un SÍ/NO)_ — así evitamos confusiones. 🙏`,
 
   inactividad: () =>
-    `Hola, ¿cómo estás? Cerré la conversación por inactividad para cuidar tus datos. 🔒\n\nCuando quieras retomar, escríbeme *"Hola"* y te atiendo. 😊`,
+    `Hola, ¿cómo estás? Cerré la conversación por inactividad para cuidar tus datos. 🔒 Cuando quieras retomar, escríbeme *"Hola"* y te atiendo. 😊`,
 };
 
 // ─────────────────────────────────────────────────────────────
