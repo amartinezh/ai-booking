@@ -10,6 +10,7 @@ import {
   SESSION_TTL,
   WAITLIST_CONFIRM_TTL,
   MSGS,
+  buildMessages,
   MIN_CEDULA_LENGTH,
   PARTICULAR_EPS_NAME,
   DEFAULT_MAX_RETRIES,
@@ -455,20 +456,36 @@ export class ChatbotService implements OnModuleInit {
     const supportPhone = org?.supportPhone || '(601) 555-0199';
     const clinicName = org?.name || 'nuestra Clínica';
 
+    // Inyectar tono al system prompt según el estilo configurado por la org.
+    const style = await this.organizationSettings.getCommunicationStyle(organizationId);
+    const toneBlock =
+      style === 'INFORMAL'
+        ? `TONO Y ESTILO (INFORMAL):\n` +
+          `- Trato cercano y amable usando *tú* (no "usted").\n` +
+          `- Lenguaje conversacional, fluido, tipo charla con un amigo (sin caer en groserías ni sobrefamiliaridad).\n` +
+          `- Saludos variados ("¡Hola!", "¡Hey!", "¿Cómo estás?"). No comiences siempre igual.\n` +
+          `- Frases tipo párrafo en vez de listas rígidas, pero si presentas opciones, intégralas como viñetas A/B/C dentro del texto para que el usuario responda fácil.\n` +
+          `- Modismos suaves colombianos OK ("dale", "tranqui", "te cuento", "mira"). Evita lo vulgar.`
+        : `TONO Y ESTILO (FORMAL):\n` +
+          `- Trato respetuoso usando *usted* en todo momento.\n` +
+          `- Estructura clara con opciones A/B/C en líneas separadas cuando corresponda.\n` +
+          `- Vocabulario profesional con calidez colombiana ("con mucho gusto", "claro que sí", "permítame").\n` +
+          `- Conciso, ordenado, sin coloquialismos fuertes.`;
+
     const kbContent = await this.knowledgeBase.getContent(organizationId);
 
     if (!kbContent) {
       const reply =
-        `Esa información no está disponible en este momento. 😊\n\n` +
-        `Para más detalles, comuníquese con nosotros al *${supportPhone}* ` +
-        `o visítenos en recepción.`;
+        style === 'INFORMAL'
+          ? `Esa información no la tengo en este momento, perdón. 😊 Para más detalles, comunícate al *${supportPhone}* o pásate por recepción.`
+          : `Esa información no está disponible en este momento. 😊\n\nPara más detalles, comuníquese con nosotros al *${supportPhone}* o visítenos en recepción.`;
       await this.smartReply(organizationId, senderId, reply);
       await this.interactionLog.logSuccess({
         whatsappId: senderId,
         organizationId,
         userMessage: question,
         botReply: reply,
-        metadata: { step: 'FAQ_NO_KB' },
+        metadata: { step: 'FAQ_NO_KB', communicationStyle: style },
       });
       return;
     }
@@ -477,6 +494,7 @@ export class ChatbotService implements OnModuleInit {
       `Eres *${botName}*, el recepcionista virtual de *${clinicName}*. ` +
       `Tu único rol en este momento es responder preguntas generales de pacientes ` +
       `basándote EXCLUSIVAMENTE en la BASE DE CONOCIMIENTO que se incluye a continuación.\n\n` +
+      `${toneBlock}\n\n` +
       `REGLAS ESTRICTAS QUE DEBES SEGUIR:\n` +
       `1. NUNCA inventes información que no esté en la base de conocimiento.\n` +
       `2. Si la respuesta no está en la base de conocimiento, responde exactamente: ` +
@@ -484,12 +502,17 @@ export class ChatbotService implements OnModuleInit {
       `comuníquese con nosotros al *${supportPhone}*."\n` +
       `3. Usa formato de WhatsApp: *negrita* para énfasis importante, guiones para listas. ` +
       `NO uses HTML ni markdown avanzado (#, ##, **).\n` +
-      `4. Sé cálido, empático y profesional. Lenguaje sencillo y cercano.\n` +
+      `4. Sé cálido, empático y profesional. Lenguaje sencillo y cercano — respeta el TONO Y ESTILO definido arriba.\n` +
       `5. Sé conciso: máximo 4 oraciones o puntos clave, salvo que la pregunta requiera más detalle.\n` +
       `6. Si el paciente menciona querer agendar una cita, indícale: ` +
-      `"Para agendar, indíqueme la especialidad que necesita o escriba *Hola* para comenzar."\n` +
-      `7. Termina siempre con "¿Hay algo más en lo que pueda ayudarle? 😊" ` +
-      `salvo que ya hayas derivado al teléfono de soporte.\n\n` +
+      (style === 'INFORMAL'
+        ? `"Para agendar, cuéntame qué especialidad necesitas o escríbeme *Hola* para empezar."\n`
+        : `"Para agendar, indíqueme la especialidad que necesita o escriba *Hola* para comenzar."\n`) +
+      `7. Termina siempre con ` +
+      (style === 'INFORMAL'
+        ? `"¿Te ayudo con algo más? 😊"`
+        : `"¿Hay algo más en lo que pueda ayudarle? 😊"`) +
+      ` salvo que ya hayas derivado al teléfono de soporte.\n\n` +
       `--- BASE DE CONOCIMIENTO ---\n` +
       `${kbContent}\n` +
       `--- FIN DE BASE DE CONOCIMIENTO ---\n\n` +
@@ -946,6 +969,16 @@ export class ChatbotService implements OnModuleInit {
     const maxRetries = organizationId
       ? await this.organizationSettings.getMaxRetries(organizationId)
       : DEFAULT_MAX_RETRIES;
+
+    // Resolver el estilo de comunicación de la organización y construir
+    // el pool de mensajes para todo este turno. La variable local `MSGS`
+    // sombrea al import del mismo nombre dentro de esta función — todos
+    // los `MSGS.xxx()` siguientes usan el pool del estilo activo, sin
+    // tocar la lógica de extracción de datos ni el flujo del protocolo.
+    const communicationStyle = organizationId
+      ? await this.organizationSettings.getCommunicationStyle(organizationId)
+      : 'FORMAL';
+    const MSGS = buildMessages(communicationStyle);
 
     const currentState = await this.getUserState(organizationId, senderId);
     this.logger.log(
@@ -2405,6 +2438,8 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
     text: string | undefined,
   ) {
+    // Sombra del pool de mensajes según el estilo activo de la org.
+    const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
     const respuesta = text?.toUpperCase().trim() || '';
 
     if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
@@ -2530,6 +2565,8 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
     cedula: string,
   ) {
+    // Sombra del pool de mensajes según el estilo activo de la org.
+    const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
     const patient = await this.prisma.patientProfile.findFirst({
       where: { cedula, organizationId },
     });
@@ -2704,6 +2741,8 @@ export class ChatbotService implements OnModuleInit {
   }) {
     try {
       const { whatsappId, organizationId, nombre, especialidad, doctor, slotDate } = params;
+      // Sombra del pool de mensajes según el estilo activo de la org.
+      const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
       const fechaFormateada = slotDate.toLocaleString('es-CO', {
         weekday: 'long', day: 'numeric', month: 'long',
         hour: '2-digit', minute: '2-digit',

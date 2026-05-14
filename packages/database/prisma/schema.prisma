@@ -64,8 +64,18 @@ model OrganizationSettings {
   // máximo de reintentos por paso antes de derivar al humano.
   maxRetriesPerStep Int       @default(3)
 
+  // Tono de voz del chatbot:
+  //   FORMAL    → "usted", estructurado, viñetas A/B/C explícitas
+  //   INFORMAL  → "tú", conversacional, viñetas integradas en párrafo
+  communicationStyle CommunicationStyle @default(FORMAL)
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+}
+
+enum CommunicationStyle {
+  FORMAL
+  INFORMAL
 }
 
 // -----------------------------------------------------------------------------
