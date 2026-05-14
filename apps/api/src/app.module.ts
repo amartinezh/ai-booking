@@ -11,6 +11,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { ClinicalRecordsModule } from './clinical-records/clinical-records.module';
 import { Hl7FhirModule } from './hl7-fhir/hl7-fhir.module';
 import { ClinicalAiModule } from './clinical-ai/clinical-ai.module';
+import { SystemLogModule } from './system-log/system-log.module';
 
 @Module({
   imports: [
@@ -23,6 +24,9 @@ import { ClinicalAiModule } from './clinical-ai/clinical-ai.module';
     //ConfigModule.forRoot({ isGlobal: true }),
     // Módulo de base de datos (Global)
     PrismaModule,
+    // 🩻 Auditoría / logging global (Global) — debe ir temprano para que
+    // el GlobalExceptionFilter ya esté disponible cuando se registre en main.ts
+    SystemLogModule,
     // Nuestro módulo de IA / Webhooks
     ChatbotModule,
     RedisModule,

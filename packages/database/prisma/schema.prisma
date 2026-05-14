@@ -611,3 +611,33 @@ enum SupportTicketStatus {
   IN_PROGRESS
   RESOLVED
 }
+
+// -----------------------------------------------------------------------------
+// 🩻 SYSTEM LOG — Auditoría y trazabilidad centralizada (cross-tenant)
+// Diseñado para crecer mucho. Solo visible para SUPER_ADMIN en el dashboard.
+// -----------------------------------------------------------------------------
+model SystemLog {
+  id      String   @id @default(uuid())
+  level   LogLevel
+  action  String   // Ej: 'USER_LOGIN', 'DOCTOR_DELETED', 'UNHANDLED_EXCEPTION'
+  message String   @db.Text
+
+  // Contexto rico: stack trace, body de la request, IP, headers, etc.
+  metadata Json?
+
+  userId         String?
+  organizationId String?
+
+  createdAt DateTime @default(now())
+
+  // Índices críticos para listado y dashboard de "últimas 24h".
+  @@index([createdAt])
+  @@index([level, createdAt])
+  @@index([action])
+}
+
+enum LogLevel {
+  EVENT
+  WARNING
+  ERROR
+}

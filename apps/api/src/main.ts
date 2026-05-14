@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { json } from 'express';
 import { Logger } from '@nestjs/common';
+import { GlobalExceptionFilter } from './system-log/global-exception.filter';
+import { SystemLogService } from './system-log/system-log.service';
 
 // ══════════════════════════════════════════════════════════════
 // 🛡️ CAPTURA GLOBAL DE EXCEPCIONES NO MANEJADAS
@@ -27,6 +29,13 @@ process.on('uncaughtException', (error: Error) => {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.use(json({ limit: '50mb' }));
+
+  // 🛡️ Registrar el filtro global de excepciones. Cualquier excepción
+  // no atrapada en controllers/services queda persistida en SystemLog
+  // con nivel ERROR + stack trace + contexto de la request.
+  const logService = app.get(SystemLogService);
+  app.useGlobalFilters(new GlobalExceptionFilter(logService));
+
   await app.listen(process.env.PORT ?? 3001);
   Logger.log(`🚀 API escuchando en puerto ${process.env.PORT ?? 3001}`, 'Bootstrap');
 }
