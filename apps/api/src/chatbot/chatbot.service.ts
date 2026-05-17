@@ -24,15 +24,14 @@ import {
   InteractionStatus,
   FailureReason,
 } from '../interaction-log/interaction-log.service';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import textToSpeech from '@google-cloud/text-to-speech';
 import * as fs from 'fs';
 import * as path from 'path';
+import { LlmFactoryService } from '../llm/llm-factory.service';
 
 @Injectable()
 export class ChatbotService implements OnModuleInit {
   private readonly logger = new Logger(ChatbotService.name);
-  private readonly genAI: GoogleGenerativeAI;
   private readonly ttsClient = new textToSpeech.TextToSpeechClient();
 
   // Regex construidos dinámicamente desde chatbot-patterns.txt
@@ -54,13 +53,8 @@ export class ChatbotService implements OnModuleInit {
     private interactionLog: InteractionLogService,
     private knowledgeBase: KnowledgeBaseService,
     private organizationSettings: OrganizationSettingsService,
-  ) {
-    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
-    if (!apiKey) {
-      this.logger.warn('⚠️ GEMINI_API_KEY no definida. Las funciones de audio fallarán.');
-    }
-    this.genAI = new GoogleGenerativeAI(apiKey || 'dummy');
-  }
+    private llmFactory: LlmFactoryService,
+  ) {}
 
   async onModuleInit() {
     this.loadPatterns();
@@ -311,7 +305,8 @@ export class ChatbotService implements OnModuleInit {
     }
   }
 
-  private async extractDataWithGemini(
+  private async extractDataWithLLM(
+    organizationId: string,
     text: string | null,
     audioBuffer: Buffer | null,
     attempt = 1,
@@ -328,55 +323,31 @@ export class ChatbotService implements OnModuleInit {
     isCancellation: boolean;
     isRateLimited: boolean;
   }> {
-    const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-    const prompt = `
-        Eres un asistente médico hiper-empático en una clínica colombiana que analiza solicitudes de agendamiento.
-        Analiza el texto o audio provisto.
-
-        REGLA DE CANCELACIÓN: Si el usuario dice "cancelar una cita", "anular cita" o "suspender mi cita", pon "isCancellation" en true.
-        REGLA DE ESCAPE: Si el usuario quiere reiniciar, volver atrás o salir del flujo (ej: "me equivoqué", "salir", "volver", "reiniciar"), pon "isEscape" en true. (NOTA: "cancelar cita" es isCancellation, NO isEscape). Saludos como "Hola" no son escape.
-        REGLA DE FUERA DE CONTEXTO: Si el paciente dice groserías o temas sin relación médica, pon "outOfContext" en true.
-        REGLA DE RUIDO: Si el audio es vacío, inentendible o solo hay ruido, pon "ininteligible" en true.
-
-        Devuelve ÚNICAMENTE JSON válido sin bloques de código:
-        {
-            "cedula": "Número sin puntos (Ej: 1088123456). Si no menciona, null.",
-            "nombre": "Nombre completo. Si no menciona, null.",
-            "eps": "Nombre de EPS o aseguradora. Si no menciona, null.",
-            "especialidad": "Especialidad médica normalizada. Si no menciona, null.",
-            "doctor": "Nombre del médico si pide uno específico. Si no menciona, null.",
-            "isEscape": false,
-            "outOfContext": false,
-            "ininteligible": false,
-            "isCancellation": false
-        }`;
-
-    const parts: any[] = [prompt];
-    if (text) parts.push(`Texto del usuario: "${text}"`);
-    if (audioBuffer) {
-      parts.push({
-        inlineData: {
-          data: audioBuffer.toString('base64'),
-          mimeType: 'audio/ogg',
-        },
-      });
+    const provider = await this.llmFactory.forOrgOrNull(organizationId);
+    if (!provider) {
+      this.logger.warn(
+        `Org ${organizationId} sin proveedor LLM configurado — usando fallback simple.`,
+      );
+      return {
+        cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
+        isEscape: false, outOfContext: false, ininteligible: false,
+        isFallback: true, isCancellation: false, isRateLimited: false,
+      };
     }
 
-    const maxRetries = parseInt(this.configService.get<string>('GEMINI_MAX_RETRIES') || '3', 10);
+    const maxRetries = await this.organizationSettings.getMaxRetries(organizationId);
 
     try {
-      const result = await model.generateContent(parts);
-      const responseText = result.response.text().trim();
-      const cleanedText = responseText.replace(/```json/g, '').replace(/```/g, '');
-      const parsed = JSON.parse(cleanedText);
-      parsed.isFallback = false;
-      parsed.isRateLimited = false;
-      return parsed;
+      return await provider.extractSchedulingIntent({
+        text,
+        audio: audioBuffer
+          ? { base64: audioBuffer.toString('base64'), mimeType: 'audio/ogg' }
+          : null,
+      });
     } catch (e) {
       // 429: cuota agotada — no reintentar (sería peor), no contar como fallo permanente
       if (e?.status === 429) {
-        this.logger.warn(`Gemini rate limit (429) — usando fallback simple, sin incrementar contador de fallos`);
+        this.logger.warn(`${provider.name} rate limit (429) — usando fallback simple, sin incrementar contador de fallos`);
         return {
           cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
           isEscape: false, outOfContext: false, ininteligible: false,
@@ -385,11 +356,11 @@ export class ChatbotService implements OnModuleInit {
       }
       if (attempt < maxRetries) {
         const delayMs = attempt * 1500;
-        this.logger.warn(`Gemini intento ${attempt} fallido, reintentando en ${delayMs}ms...`);
+        this.logger.warn(`${provider.name} intento ${attempt} fallido, reintentando en ${delayMs}ms...`);
         await new Promise((r) => setTimeout(r, delayMs));
-        return this.extractDataWithGemini(text, audioBuffer, attempt + 1);
+        return this.extractDataWithLLM(organizationId, text, audioBuffer, attempt + 1);
       }
-      this.logger.error(`Error procesando IA con Gemini tras ${maxRetries} intentos`, e);
+      this.logger.error(`Error procesando IA con ${provider.name} tras ${maxRetries} intentos`, e);
       return {
         cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
         isEscape: false, outOfContext: false, ininteligible: false,
@@ -519,9 +490,23 @@ export class ChatbotService implements OnModuleInit {
       `Responde la siguiente pregunta del paciente:`;
 
     try {
-      const model = this.genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-      const result = await model.generateContent([systemPrompt, `Pregunta: "${question}"`]);
-      const reply = result.response.text().trim();
+      const provider = await this.llmFactory.forOrgOrNull(organizationId);
+      if (!provider) {
+        const reply =
+          `Esta clínica no tiene un proveedor de IA configurado. ` +
+          `Para más detalles, comuníquese al *${supportPhone}*.`;
+        await this.smartReply(organizationId, senderId, reply);
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: question,
+          botReply: reply,
+          metadata: { step: 'FAQ_NO_PROVIDER' },
+        });
+        return;
+      }
+
+      const reply = await provider.answerFAQ(systemPrompt, question);
 
       await this.smartReply(organizationId, senderId, reply);
       await this.interactionLog.logSuccess({
@@ -529,7 +514,7 @@ export class ChatbotService implements OnModuleInit {
         organizationId,
         userMessage: question,
         botReply: reply,
-        metadata: { step: 'FAQ_ANSWERED' },
+        metadata: { step: 'FAQ_ANSWERED', provider: provider.name },
       });
     } catch (err) {
       this.logger.error(`answerFAQ falló: ${err.message}`);
@@ -1137,13 +1122,13 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
       // Para scheduling / cancellation / greeting / other → extracción normal
-      aiData = await this.extractDataWithGemini(text, null);
+      aiData = await this.extractDataWithLLM(organizationId, text, null);
     } else if (isAudio) {
       await this.redis.set(`is_ai_flow:${organizationId}:${senderId}`, 'true', 'EX', SESSION_TTL);
       await this.sendWhatsAppMessage(senderId, '🎧 Permítame un momento, lo estoy escuchando...');
       const audioBuffer = await this.downloadWhatsAppAudio(audioId);
       if (audioBuffer) {
-        aiData = await this.extractDataWithGemini(text, audioBuffer);
+        aiData = await this.extractDataWithLLM(organizationId, text, audioBuffer);
       } else {
         aiData.ininteligible = true;
       }
@@ -1169,16 +1154,16 @@ export class ChatbotService implements OnModuleInit {
       // Gemini con inputs cortos como "a", "B", "Sura" tiende a marcar ininteligible=true
       // y bloquea el flujo. La voz sí va al extractor (manejada arriba en isAudio).
     } else if (messageType === 'text' && text && !isStrictStep) {
-      aiData = await this.extractDataWithGemini(text, null);
+      aiData = await this.extractDataWithLLM(organizationId, text, null);
     }
 
-    this.logger.log(`🧠 Gemini extrajo: ${JSON.stringify(aiData)}`);
+    this.logger.log(`🧠 LLM extrajo: ${JSON.stringify(aiData)}`);
 
-    // ── CONTADOR DE FALLOS GEMINI (por organización) ───────────
+    // ── CONTADOR DE FALLOS LLM (por organización) ──────────────
+    // Antes "GEMINI_DOWN_THRESHOLD"; el umbral ahora vive en
+    // OrganizationSettings.maxRetriesPerStep (consistente con la config por clínica).
     const geminiFailKey = `gemini_fail_count:${organizationId}`;
-    const geminiDownThreshold = parseInt(
-      this.configService.get<string>('GEMINI_DOWN_THRESHOLD') || '3', 10,
-    );
+    const geminiDownThreshold = await this.organizationSettings.getMaxRetries(organizationId);
 
     if (aiData.isFallback) {
       if (aiData.isRateLimited) {

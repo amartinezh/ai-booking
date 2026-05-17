@@ -26,6 +26,9 @@ model Organization {
   // Configuración avanzada por clínica (1:1)
   settings        OrganizationSettings?
 
+  // Configuración multi-LLM por clínica (1:1) — credenciales encriptadas
+  aiProviderConfig AiProviderConfig?
+
   // Facturación Global Súper Admin
   monthlyFee      String?
   lastPaymentDate DateTime?
@@ -76,6 +79,38 @@ model OrganizationSettings {
 enum CommunicationStyle {
   FORMAL
   INFORMAL
+}
+
+// -----------------------------------------------------------------------------
+// 🧠 MULTI-LLM: CONFIGURACIÓN DINÁMICA POR CLÍNICA
+// Permite que cada clínica elija su proveedor (Gemini, ChatGPT, Claude)
+// y guarde sus credenciales encriptadas (AES-256-GCM).
+// -----------------------------------------------------------------------------
+model AiProviderConfig {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Proveedor activo. NONE = la clínica todavía no configuró IA.
+  activeProvider LlmProvider  @default(NONE)
+
+  // JSON serializado y luego encriptado con AES-256-GCM.
+  // Estructura interna por proveedor:
+  //   GEMINI   → { "apiKey": "...", "model": "gemini-2.5-flash" }
+  //   CHATGPT  → { "apiKey": "...", "model": "gpt-4o-mini", "organizationId": "org_..." }
+  //   CLAUDE   → { "apiKey": "...", "model": "claude-sonnet-4-6" }
+  // Nunca se almacena en texto plano.
+  encryptedApiConfig String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum LlmProvider {
+  GEMINI
+  CHATGPT
+  CLAUDE
+  NONE
 }
 
 // -----------------------------------------------------------------------------

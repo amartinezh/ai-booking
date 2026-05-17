@@ -2,15 +2,18 @@ import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { getMyOrgSettings } from '@/app/actions/settings';
 import { getMyKnowledgeBase } from '@/app/actions/knowledge-base';
+import { getMyAiConfig } from '@/app/actions/ai-config';
 import SettingsForm from './SettingsForm';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
+import AiIntegrationForm from './AiIntegrationForm';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
 const TABS = [
     { key: 'chatbot', label: 'Asistente Virtual', icon: '🤖' },
-    { key: 'kb', label: 'Base de Conocimiento', icon: '🧠' },
+    { key: 'ai', label: 'Integración de IA', icon: '🧠' },
+    { key: 'kb', label: 'Base de Conocimiento', icon: '📚' },
 ];
 
 export default async function ConfiguracionPage({
@@ -27,6 +30,7 @@ export default async function ConfiguracionPage({
 
     const settings = activeTab === 'chatbot' ? await getMyOrgSettings() : null;
     const kbContent = activeTab === 'kb' ? await getMyKnowledgeBase() : null;
+    const aiConfig = activeTab === 'ai' ? await getMyAiConfig() : null;
 
     return (
         <div className="max-w-4xl mx-auto animate-fade-in">
@@ -61,6 +65,12 @@ export default async function ConfiguracionPage({
             <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl shadow-zinc-200/50 dark:shadow-black/20 p-6 md:p-8">
                 {activeTab === 'chatbot' && settings && (
                     <SettingsForm initial={settings} />
+                )}
+                {activeTab === 'ai' && aiConfig && (
+                    <AiIntegrationForm initial={{
+                        ...aiConfig,
+                        updatedAt: aiConfig.updatedAt ? String(aiConfig.updatedAt) : null,
+                    }} />
                 )}
                 {activeTab === 'kb' && (
                     <KnowledgeBaseEditor initialContent={kbContent ?? ''} />

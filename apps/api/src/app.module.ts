@@ -12,6 +12,8 @@ import { ClinicalRecordsModule } from './clinical-records/clinical-records.modul
 import { Hl7FhirModule } from './hl7-fhir/hl7-fhir.module';
 import { ClinicalAiModule } from './clinical-ai/clinical-ai.module';
 import { SystemLogModule } from './system-log/system-log.module';
+import { CryptoModule } from './common/crypto/crypto.module';
+import { LlmModule } from './llm/llm.module';
 
 @Module({
   imports: [
@@ -27,6 +29,10 @@ import { SystemLogModule } from './system-log/system-log.module';
     // 🩻 Auditoría / logging global (Global) — debe ir temprano para que
     // el GlobalExceptionFilter ya esté disponible cuando se registre en main.ts
     SystemLogModule,
+    // 🔐 Cifrado simétrico AES-256-GCM (Global) — usado por LlmModule y otros.
+    CryptoModule,
+    // 🧠 Multi-LLM dinámico por clínica (Gemini / ChatGPT / Claude).
+    LlmModule,
     // Nuestro módulo de IA / Webhooks
     ChatbotModule,
     RedisModule,

@@ -8,6 +8,7 @@ import { HttpModule } from '@nestjs/axios';
 import { AppointmentsModule } from 'src/appointments/appointments.module';
 import { WaitlistModule } from 'src/waitlist/waitlist.module';
 import { InteractionLogModule } from 'src/interaction-log/interaction-log.module';
+import { LlmModule } from '../llm/llm.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { InteractionLogModule } from 'src/interaction-log/interaction-log.module
     AppointmentsModule,
     forwardRef(() => WaitlistModule),
     InteractionLogModule,
+    LlmModule,
   ],
   controllers: [ChatbotController],
   providers: [ChatbotService, ChatbotCron, KnowledgeBaseService, OrganizationSettingsService],
