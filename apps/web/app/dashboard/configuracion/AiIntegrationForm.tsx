@@ -2,13 +2,13 @@
 
 import { useState, useTransition } from 'react';
 import { Sparkles, BrainCircuit, Cpu, ShieldCheck, KeyRound } from 'lucide-react';
+import { updateMyAiConfig } from '@/app/actions/ai-config';
 import {
-    updateMyAiConfig,
     PROVIDER_MODELS,
     type LlmProvider,
     type PublicAiConfig,
     type SaveAiConfigInput,
-} from '@/app/actions/ai-config';
+} from '@/app/actions/ai-config.types';
 
 type Props = {
     initial: PublicAiConfig;
