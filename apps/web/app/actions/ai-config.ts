@@ -11,7 +11,15 @@ import type {
     SaveAiConfigInput,
 } from './ai-config.types';
 
-const INTERNAL_API_URL = process.env.INTERNAL_API_URL || 'http://localhost:3001';
+// Resolución de URL hacia el backend NestJS:
+//   1. INTERNAL_API_URL (override explícito).
+//   2. NEXT_PUBLIC_API_URL (lo que docker-compose.prod.yml ya inyecta como
+//      `http://api:3000`, red interna Docker).
+//   3. http://localhost:3001 (dev local, donde la API arranca por defecto).
+const INTERNAL_API_URL =
+    process.env.INTERNAL_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    'http://localhost:3001';
 
 async function callBackend(method: 'GET' | 'POST', path: string, body?: unknown) {
     const cookieStore = await cookies();
