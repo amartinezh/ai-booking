@@ -34,10 +34,36 @@ export default async function ConfiguracionPage({
 
     const settings = activeTab === 'chatbot' ? await getMyOrgSettings() : null;
     const kbContent = activeTab === 'kb' ? await getMyKnowledgeBase() : null;
-    const [aiConfig, whatsappConfig] =
-        activeTab === 'integrations'
-            ? await Promise.all([getMyAiConfig(), getMyWhatsappConfig()])
-            : [null, null];
+
+    // Tab de integraciones: cargamos IA y WhatsApp en paralelo PERO aislados.
+    // Si una de las dos revienta (decrypt, backend down, migración faltante,
+    // etc.) la otra debe seguir mostrándose y el error queda inline, no en
+    // el error boundary global del dashboard.
+    let aiConfig: Awaited<ReturnType<typeof getMyAiConfig>> | null = null;
+    let aiConfigError: string | null = null;
+    let whatsappConfig: Awaited<ReturnType<typeof getMyWhatsappConfig>> | null = null;
+    let whatsappConfigError: string | null = null;
+
+    if (activeTab === 'integrations') {
+        const [aiRes, waRes] = await Promise.allSettled([
+            getMyAiConfig(),
+            getMyWhatsappConfig(),
+        ]);
+        if (aiRes.status === 'fulfilled') {
+            aiConfig = aiRes.value;
+        } else {
+            console.error('[configuracion] AI config load failed:', aiRes.reason);
+            aiConfigError =
+                aiRes.reason?.message ?? 'Error desconocido cargando la integración de IA.';
+        }
+        if (waRes.status === 'fulfilled') {
+            whatsappConfig = waRes.value;
+        } else {
+            console.error('[configuracion] WhatsApp config load failed:', waRes.reason);
+            whatsappConfigError =
+                waRes.reason?.message ?? 'Error desconocido cargando el canal de WhatsApp.';
+        }
+    }
 
     return (
         <div className="max-w-4xl mx-auto animate-fade-in">
@@ -73,23 +99,61 @@ export default async function ConfiguracionPage({
                 {activeTab === 'chatbot' && settings && (
                     <SettingsForm initial={settings} />
                 )}
-                {activeTab === 'integrations' && aiConfig && whatsappConfig && (
+                {activeTab === 'integrations' && (
                     <div className="space-y-12">
-                        <AiIntegrationForm initial={{
-                            ...aiConfig,
-                            updatedAt: aiConfig.updatedAt ? String(aiConfig.updatedAt) : null,
-                        }} />
+                        {aiConfig ? (
+                            <AiIntegrationForm initial={{
+                                ...aiConfig,
+                                updatedAt: aiConfig.updatedAt ? String(aiConfig.updatedAt) : null,
+                            }} />
+                        ) : (
+                            <SectionLoadError
+                                title="No pudimos cargar la integración de IA"
+                                detail={aiConfigError}
+                            />
+                        )}
                         <div className="border-t border-zinc-200 dark:border-zinc-800" />
-                        <WhatsappChannelForm initial={{
-                            ...whatsappConfig,
-                            updatedAt: whatsappConfig.updatedAt ? String(whatsappConfig.updatedAt) : null,
-                        }} />
+                        {whatsappConfig ? (
+                            <WhatsappChannelForm initial={{
+                                ...whatsappConfig,
+                                updatedAt: whatsappConfig.updatedAt ? String(whatsappConfig.updatedAt) : null,
+                            }} />
+                        ) : (
+                            <SectionLoadError
+                                title="No pudimos cargar el canal de WhatsApp"
+                                detail={whatsappConfigError}
+                            />
+                        )}
                     </div>
                 )}
                 {activeTab === 'kb' && (
                     <KnowledgeBaseEditor initialContent={kbContent ?? ''} />
                 )}
             </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Mensaje inline cuando una sub-sección de Integraciones no carga.
+// En producción Next.js esconde el mensaje real al cliente; aquí
+// mostramos lo poco que tenemos y dejamos el detalle completo en
+// los logs del servidor (ver console.error del callBackend).
+// ─────────────────────────────────────────────────────────────
+function SectionLoadError({ title, detail }: { title: string; detail: string | null }) {
+    return (
+        <div className="rounded-2xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-900/20 p-5">
+            <h3 className="text-sm font-bold text-rose-800 dark:text-rose-200 mb-1">
+                ⚠️ {title}
+            </h3>
+            <p className="text-xs text-rose-700 dark:text-rose-300 leading-relaxed">
+                {detail ??
+                    'El backend respondió con un error. Revisa los logs del API o contacta al super-admin.'}
+            </p>
+            <p className="text-[11px] text-rose-600/80 dark:text-rose-400/80 mt-2">
+                Tip: el equipo de plataforma puede buscar este incidente en{' '}
+                <code className="font-mono">/super-admin/logs</code> filtrando por nivel ERROR.
+            </p>
         </div>
     );
 }

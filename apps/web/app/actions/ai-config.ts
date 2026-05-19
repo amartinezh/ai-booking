@@ -25,18 +25,27 @@ async function callBackend(method: 'GET' | 'POST', path: string, body?: unknown)
     const cookieStore = await cookies();
     const token = cookieStore.get('auth_token')?.value;
 
-    const res = await fetch(`${INTERNAL_API_URL}${path}`, {
-        method,
-        headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Cookie: `auth_token=${token}` } : {}),
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        cache: 'no-store',
-    });
+    let res: Response;
+    try {
+        res = await fetch(`${INTERNAL_API_URL}${path}`, {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Cookie: `auth_token=${token}` } : {}),
+            },
+            body: body ? JSON.stringify(body) : undefined,
+            cache: 'no-store',
+        });
+    } catch (e: any) {
+        // Falla de red: el contenedor api no responde, DNS interno caído, etc.
+        // Logueamos para que aparezca en PM2/Docker logs aún en producción.
+        console.error(`[ai-config] ${method} ${path} fetch error:`, e?.message ?? e);
+        throw new Error(`No se pudo contactar al backend (${e?.message ?? 'network'}).`);
+    }
 
     if (!res.ok) {
         const err = await res.text();
+        console.error(`[ai-config] ${method} ${path} -> ${res.status}: ${err}`);
         throw new Error(`Backend ${res.status}: ${err}`);
     }
     return res.json();
