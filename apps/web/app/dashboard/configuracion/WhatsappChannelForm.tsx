@@ -15,6 +15,7 @@ import type {
     PublicWhatsappConfig,
     SaveWhatsappConfigInput,
 } from '@/app/actions/whatsapp-config.types';
+import BrandLogo from '@/app/components/BrandLogo';
 
 type Props = {
     initial: PublicWhatsappConfig;
@@ -71,6 +72,15 @@ export default function WhatsappChannelForm({ initial }: Props) {
 
     return (
         <form onSubmit={handleSubmit} className="space-y-8">
+            {/* ── Branding superior ────────────────────────── */}
+            <div className="flex justify-center mb-6">
+                <BrandLogo
+                    size={96}
+                    alt="AgenIA — Agendamiento inteligente en salud"
+                    className="rounded-2xl shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800 bg-white p-2"
+                />
+            </div>
+
             {/* ── Header ───────────────────────────────────── */}
             <section>
                 <div className="flex items-start gap-3">

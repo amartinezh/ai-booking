@@ -3,7 +3,13 @@
 
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { cancelAppointmentAndFreeSlot, updateAttendance } from '@/app/actions/dashboard';
+import { toast } from 'sonner';
+import { Bell, Loader2 } from 'lucide-react';
+import {
+    cancelAppointmentAndFreeSlot,
+    updateAttendance,
+    sendManualReminder,
+} from '@/app/actions/dashboard';
 import ClinicalRecordDrawer from './ClinicalRecordDrawer';
 import { useDebouncedCallback } from 'use-debounce';
 
@@ -45,6 +51,35 @@ export default function DashboardClient({
         const res = await updateAttendance(appointmentId, status);
         if (!res.success) alert(res.error);
         setLoadingId(null);
+    };
+
+    // ── Recordatorio MANUAL por WhatsApp ─────────────────────────────────
+    // Estado local que guarda el último `reminderSentAt` por appointment
+    // para que la UI reaccione inmediatamente sin esperar el revalidate.
+    const [reminderLoadingId, setReminderLoadingId] = useState<string | null>(null);
+    const [localReminderSentAt, setLocalReminderSentAt] = useState<Record<string, string>>({});
+
+    const handleManualReminder = async (appointmentId: string) => {
+        setReminderLoadingId(appointmentId);
+        const toastId = toast.loading('Enviando recordatorio por WhatsApp...');
+        try {
+            const res = await sendManualReminder(appointmentId);
+            if (res.success) {
+                if (res.reminderSentAt) {
+                    setLocalReminderSentAt(prev => ({
+                        ...prev,
+                        [appointmentId]: res.reminderSentAt as string,
+                    }));
+                }
+                toast.success('Recordatorio manual enviado con éxito', { id: toastId });
+            } else {
+                toast.error(res.error ?? 'No se pudo enviar el recordatorio.', { id: toastId });
+            }
+        } catch (e: any) {
+            toast.error(e?.message ?? 'Error inesperado al enviar el recordatorio.', { id: toastId });
+        } finally {
+            setReminderLoadingId(null);
+        }
     };
 
     const [ehrAppointment, setEhrAppointment] = useState<any | null>(null);
@@ -225,6 +260,42 @@ export default function DashboardClient({
                                                     )}
                                                 </>
                                             )}
+
+                                            {apt.status === 'SCHEDULED' && apt.attendanceStatus !== 'ATTENDED' && role !== 'PATIENT' && (() => {
+                                                const reminderSentAt =
+                                                    localReminderSentAt[apt.id] ?? apt.reminderSentAt ?? null;
+                                                const alreadySent = Boolean(reminderSentAt);
+                                                const isSending = reminderLoadingId === apt.id;
+                                                return (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleManualReminder(apt.id)}
+                                                        disabled={isSending}
+                                                        title={
+                                                            alreadySent
+                                                                ? `Recordatorio enviado el ${new Date(reminderSentAt).toLocaleString('es-CO')}. Puedes reenviarlo si lo necesitas.`
+                                                                : 'Enviar recordatorio manual por WhatsApp'
+                                                        }
+                                                        className={`w-full text-xs font-semibold px-3 py-1.5 rounded-md flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                                            alreadySent
+                                                                ? 'border border-cyan-200 text-cyan-700 bg-cyan-50 hover:bg-cyan-100 dark:border-cyan-800/40 dark:bg-cyan-900/20 dark:text-cyan-300'
+                                                                : 'border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 dark:border-blue-800/40 dark:bg-blue-900/20 dark:text-blue-300'
+                                                        }`}
+                                                    >
+                                                        {isSending ? (
+                                                            <>
+                                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                                Enviando...
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <Bell className="w-3.5 h-3.5" />
+                                                                {alreadySent ? 'Reenviar recordatorio' : 'Recordar por WhatsApp'}
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                );
+                                            })()}
 
                                             {apt.status === 'SCHEDULED' && apt.attendanceStatus !== 'ATTENDED' && (
                                                 <button

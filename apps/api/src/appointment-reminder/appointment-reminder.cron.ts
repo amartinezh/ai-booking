@@ -336,4 +336,118 @@ export class AppointmentReminderCronService
       `Si requiere reagendar o cancelar, por favor responda *cancelar cita* y le ayudaremos. Le esperamos. 🩺`
     );
   }
+
+  // ════════════════════════════════════════════════════════════════
+  // ENVÍO MANUAL — DISPARO DESDE EL DASHBOARD
+  // ════════════════════════════════════════════════════════════════
+  //
+  // Reutiliza la misma maquinaria que el cron (`processOne`) pero para una
+  // sola cita identificada por ID. El caller decide cuándo dispararlo (botón
+  // en la tabla de citas). Como `processOne` ya actualiza `reminderSentAt`,
+  // el cron NO volverá a enviar a esta cita en la siguiente ejecución
+  // automática — exactamente la garantía de idempotencia que se pide.
+  //
+  // Si la cita ya tenía `reminderSentAt`, se permite el reenvío manual
+  // (el operador clínico tiene la última palabra) y el campo se actualiza
+  // al nuevo timestamp.
+  async sendManualForAppointment(
+    appointmentId: string,
+    organizationId: string,
+  ): Promise<{
+    success: boolean;
+    outcome: 'sent' | 'failed' | 'skipped';
+    error?: string;
+    appointment?: {
+      id: string;
+      reminderSentAt: Date | null;
+      patientWhatsappId: string | null;
+    };
+  }> {
+    // 1. Cargar la cita con los MISMOS includes que usa el cron, para que
+    //    processOne reciba exactamente el mismo shape.
+    const apt = await this.prisma.appointment.findFirst({
+      where: { id: appointmentId, organizationId },
+      include: {
+        patient: {
+          select: { cedula: true, fullName: true, whatsappId: true },
+        },
+        scheduleSlot: {
+          include: {
+            doctor: { select: { fullName: true } },
+            service: { select: { name: true } },
+          },
+        },
+        organization: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!apt) {
+      return {
+        success: false,
+        outcome: 'skipped',
+        error: 'Cita no encontrada o no pertenece a esta clínica.',
+      };
+    }
+
+    if (apt.status !== 'SCHEDULED') {
+      return {
+        success: false,
+        outcome: 'skipped',
+        error: `No se puede enviar recordatorio: la cita está en estado ${apt.status}.`,
+      };
+    }
+
+    if (!apt.patient?.whatsappId) {
+      return {
+        success: false,
+        outcome: 'skipped',
+        error: 'El paciente no tiene número de WhatsApp registrado.',
+      };
+    }
+
+    // 2. Delegar al mismo flujo del cron — actualiza reminderSentAt y registra
+    //    InteractionLog automáticamente.
+    const outcome = await this.processOne(apt);
+
+    if (outcome === 'sent') {
+      // Eco hacia SystemLog para diferenciar disparos manuales de los del cron.
+      await this.systemLog.event({
+        action: 'REMINDER_MANUAL_SENT',
+        message: `Recordatorio manual enviado para cita ${apt.id}.`,
+        organizationId: apt.organizationId ?? null,
+        metadata: {
+          appointmentId: apt.id,
+          patientCedula: apt.patient?.cedula ?? null,
+          slotDate: apt.scheduleSlot.startTime.toISOString(),
+        },
+      });
+
+      // Releemos para devolver el reminderSentAt ya actualizado al frontend.
+      const refreshed = await this.prisma.appointment.findUnique({
+        where: { id: apt.id },
+        select: { id: true, reminderSentAt: true },
+      });
+      return {
+        success: true,
+        outcome,
+        appointment: {
+          id: apt.id,
+          reminderSentAt: refreshed?.reminderSentAt ?? null,
+          patientWhatsappId: apt.patient.whatsappId,
+        },
+      };
+    }
+
+    if (outcome === 'failed') {
+      return {
+        success: false,
+        outcome,
+        error:
+          'Meta no aceptó el envío del recordatorio. Revise las credenciales de WhatsApp o vuelva a intentar.',
+      };
+    }
+
+    // 'skipped' por algún check interno de processOne (edge case).
+    return { success: false, outcome, error: 'No fue posible enviar el recordatorio.' };
+  }
 }

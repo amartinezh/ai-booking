@@ -71,6 +71,10 @@ export default async function DashboardPage({
         },
         orderBy: { scheduleSlot: { startTime: 'asc' } }
     });
+    // `reminderSentAt` ya viene en el findMany por defecto (Prisma incluye todos
+    // los campos del modelo). Si más adelante se cambia a `select`, hay que
+    // exponerlo explícitamente para que el botón "Recordar por WhatsApp" sepa
+    // si la cita ya tiene un recordatorio enviado.
 
     // Catálogos para Filtros
     let epsList: any[] = [];
