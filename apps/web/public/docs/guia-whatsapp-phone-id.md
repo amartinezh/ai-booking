@@ -134,7 +134,7 @@ Al terminar, llegas al **Panel de la App**. En el menú lateral izquierdo aparec
 
 Ahora en el menú lateral izquierdo, debajo de **"WhatsApp"**, verás varios sub-elementos:
 
-- **Quickstart** o **Empezar**
+- **Quickstart** o **Empezar** (Inicio rápido)
 - **API Setup** (Configuración de API)
 - **Configuración** (Configuration)
 - **Plantillas de mensajes** (Templates)

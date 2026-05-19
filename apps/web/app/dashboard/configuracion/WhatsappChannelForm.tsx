@@ -87,7 +87,7 @@ export default function WhatsappChannelForm({ initial }: Props) {
                             <strong>cifra con AES-256-GCM</strong> en la base de datos.
                             Si no tiene aún sus credenciales, siga la{' '}
                             <a
-                                href="/docs/guia-whatsapp-phone-id.md"
+                                href="/guia/whatsapp"
                                 target="_blank"
                                 rel="noreferrer"
                                 className="text-emerald-700 dark:text-emerald-400 font-semibold underline"

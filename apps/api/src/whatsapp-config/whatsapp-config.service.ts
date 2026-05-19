@@ -27,7 +27,7 @@ export class WhatsappConfigService {
     const base =
       process.env.PUBLIC_API_URL ||
       process.env.NEXT_PUBLIC_API_URL ||
-      'https://api.example.com';
+      'https://api.agendamiento-ia.com';
     return `${base.replace(/\/+$/, '')}/chatbot/webhook`;
   }
 
