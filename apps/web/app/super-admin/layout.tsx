@@ -17,7 +17,6 @@ export default async function SuperAdminLayout({ children }: { children: React.R
         { label: 'Facturación Global', href: '/super-admin/billing', icon: '💳' },
         { label: 'Mesa de Ayuda', href: '/super-admin/support', icon: '🛟' },
         { label: 'Auditoría y Logs', href: '/super-admin/logs', icon: '🩻' },
-        { label: 'Ajustes del Sistema', href: '/super-admin/settings', icon: '⚙️' },
     ];
 
     return (
