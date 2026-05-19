@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vicente - Agendamiento",
+  title: "Agendamiento - AgenIA",
   description: "Agendamiento de citas con IA",
 };
 

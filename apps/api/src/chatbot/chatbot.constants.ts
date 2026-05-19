@@ -30,7 +30,7 @@ export const MIN_CEDULA_LENGTH = 4;
 export const WAITLIST_CONFIRM_TTL = 1800;
 
 // Nombre del asistente (usado en todos los mensajes)
-export const BOT_NAME = 'Vicente';
+export const BOT_NAME = 'AgenIA';
 
 // Estilos de comunicación soportados por el chatbot.
 // Reflejan el enum CommunicationStyle del schema Prisma.

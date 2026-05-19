@@ -61,7 +61,7 @@ model OrganizationSettings {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   // Personalización del chatbot
-  botName        String       @default("Vicente")
+  botName        String       @default("AgenIA")
 
   // Tolerancia a fallos del flujo conversacional:
   // máximo de reintentos por paso antes de derivar al humano.

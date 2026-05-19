@@ -21,7 +21,7 @@ export default function Home() {
           <div className="flex items-center gap-2">
             <BrandLogo size={32} alt="Antigravity" />
             <span className="text-xl font-bold tracking-tight text-zinc-900 dark:text-white">
-              San Vicente <span className="text-blue-600 font-black">AI</span>
+              Clinica <span className="text-blue-600 font-black">AI</span>
             </span>
           </div>
           <nav>

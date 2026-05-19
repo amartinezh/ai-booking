@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
-const DEFAULT_BOT_NAME = 'Vicente';
+const DEFAULT_BOT_NAME = 'AgenIA';
 const DEFAULT_MAX_RETRIES = 3;
 
 export type CommStyle = 'FORMAL' | 'INFORMAL';

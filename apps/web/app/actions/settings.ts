@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { CommunicationStyle } from '@antigravity/database';
 
-const DEFAULT_BOT_NAME = 'Vicente';
+const DEFAULT_BOT_NAME = 'AgenIA';
 
 export type CommStyle = 'FORMAL' | 'INFORMAL';
 
