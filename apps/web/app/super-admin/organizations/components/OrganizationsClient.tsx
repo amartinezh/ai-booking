@@ -20,7 +20,6 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
 
   const [formData, setFormData] = useState({
     name: "",
-    whatsappPhoneId: "",
     logoUrl: ""
   });
 
@@ -36,14 +35,13 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
       setEditingOrg(org);
       setFormData({
         name: org.name,
-        whatsappPhoneId: org.whatsappPhoneId || "",
         logoUrl: org.logoUrl || ""
       });
       setActiveTab('general');
       setKbContent('');
     } else {
       setEditingOrg(null);
-      setFormData({ name: "", whatsappPhoneId: "", logoUrl: "" });
+      setFormData({ name: "", logoUrl: "" });
       setActiveTab('general');
       setKbContent('');
     }
@@ -175,8 +173,17 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
                     </div>
                   </td>
                   <td className="p-4 text-zinc-600 dark:text-zinc-400 font-mono text-xs">
-                    {org.whatsappPhoneId ? (
-                       <span className="bg-green-100 text-green-800 px-2 py-1 rounded-md border border-green-200">{org.whatsappPhoneId}</span>
+                    {org.whatsappConfig?.phoneNumberId ? (
+                       <span
+                         className={`px-2 py-1 rounded-md border ${
+                           org.whatsappConfig.isActive
+                             ? 'bg-green-100 text-green-800 border-green-200'
+                             : 'bg-amber-100 text-amber-800 border-amber-200'
+                         }`}
+                         title={org.whatsappConfig.isActive ? 'Canal activo' : 'Canal inactivo'}
+                       >
+                         {org.whatsappConfig.phoneNumberId}
+                       </span>
                     ) : (
                        <span className="text-zinc-400 italic">No configurado</span>
                     )}
@@ -270,18 +277,31 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                    WhatsApp Phone ID Oficial
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.whatsappPhoneId}
-                    onChange={e => setFormData({ ...formData, whatsappPhoneId: e.target.value })}
-                    className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all dark:text-white font-mono"
-                    placeholder="Ej: 1082348572019"
-                  />
-                  <p className="text-xs text-zinc-500 mt-1">Este ID es entregado por Meta WABA. Separa automáticamente al Chatbot Omnicanal.</p>
+                <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 p-4 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                  <p className="font-semibold text-zinc-700 dark:text-zinc-200 mb-1">
+                    📱 Credenciales de WhatsApp
+                  </p>
+                  Las credenciales de Meta (Phone ID, Access Token, Verify Token) ahora
+                  las gestiona el administrador de cada clínica desde su panel:
+                  <span className="block mt-1 text-zinc-500 italic">
+                    Configuración → Integraciones → Canal de WhatsApp.
+                  </span>
+                  {editingOrg?.whatsappConfig?.phoneNumberId && (
+                    <p className="mt-2 font-mono text-[11px]">
+                      Estado actual:{' '}
+                      <span
+                        className={
+                          editingOrg.whatsappConfig.isActive
+                            ? 'text-green-700 dark:text-green-300'
+                            : 'text-amber-700 dark:text-amber-300'
+                        }
+                      >
+                        {editingOrg.whatsappConfig.isActive ? 'Activo' : 'Inactivo'}
+                      </span>
+                      {' · '}
+                      Phone ID {editingOrg.whatsappConfig.phoneNumberId}
+                    </p>
+                  )}
                 </div>
 
                 <div>

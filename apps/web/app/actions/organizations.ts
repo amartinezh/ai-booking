@@ -7,18 +7,32 @@ import { getSession } from '../../lib/session';
 export async function getOrganizations() {
     const session = await getSession();
     if (session?.role !== 'SUPER_ADMIN') throw new Error('Acceso denegado');
-    return prisma.organization.findMany({ orderBy: { createdAt: 'desc' } });
+    // Incluimos whatsappConfig para que el super-admin pueda ver el estado
+    // del canal por clínica (read-only). Las credenciales reales las
+    // configura el ORG_ADMIN desde su panel.
+    const rows = await prisma.organization.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: {
+            whatsappConfig: {
+                select: {
+                    phoneNumberId: true,
+                    displayPhoneNumber: true,
+                    isActive: true,
+                },
+            },
+        },
+    });
+    return rows;
 }
 
-export async function createOrganization(data: { name: string; whatsappPhoneId?: string; logoUrl?: string }) {
+export async function createOrganization(data: { name: string; logoUrl?: string }) {
     const session = await getSession();
     if (session?.role !== 'SUPER_ADMIN') throw new Error('Acceso denegado');
-    
+
     try {
         await prisma.organization.create({
             data: {
                 name: data.name,
-                whatsappPhoneId: data.whatsappPhoneId || null,
                 logoUrl: data.logoUrl || null,
             }
         });
@@ -30,16 +44,15 @@ export async function createOrganization(data: { name: string; whatsappPhoneId?:
     }
 }
 
-export async function updateOrganization(id: string, data: { name: string; whatsappPhoneId?: string; logoUrl?: string }) {
+export async function updateOrganization(id: string, data: { name: string; logoUrl?: string }) {
     const session = await getSession();
     if (session?.role !== 'SUPER_ADMIN') throw new Error('Acceso denegado');
-    
+
     try {
         await prisma.organization.update({
             where: { id },
             data: {
                 name: data.name,
-                whatsappPhoneId: data.whatsappPhoneId || null,
                 logoUrl: data.logoUrl || null,
             }
         });

@@ -3,16 +3,18 @@ import { redirect } from 'next/navigation';
 import { getMyOrgSettings } from '@/app/actions/settings';
 import { getMyKnowledgeBase } from '@/app/actions/knowledge-base';
 import { getMyAiConfig } from '@/app/actions/ai-config';
+import { getMyWhatsappConfig } from '@/app/actions/whatsapp-config';
 import SettingsForm from './SettingsForm';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
+import WhatsappChannelForm from './WhatsappChannelForm';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
 const TABS = [
     { key: 'chatbot', label: 'Asistente Virtual', icon: '🤖' },
-    { key: 'ai', label: 'Integración de IA', icon: '🧠' },
+    { key: 'integrations', label: 'Integraciones (IA y Canales)', icon: '🧠' },
     { key: 'kb', label: 'Base de Conocimiento', icon: '📚' },
 ];
 
@@ -26,11 +28,16 @@ export default async function ConfiguracionPage({
     if (session.role !== 'ORG_ADMIN') redirect('/dashboard');
 
     const { tab = 'chatbot' } = await searchParams;
-    const activeTab = TABS.find(t => t.key === tab)?.key ?? 'chatbot';
+    // Compatibilidad: el tab `?tab=ai` antiguo redirige a `integrations`.
+    const normalizedTab = tab === 'ai' ? 'integrations' : tab;
+    const activeTab = TABS.find(t => t.key === normalizedTab)?.key ?? 'chatbot';
 
     const settings = activeTab === 'chatbot' ? await getMyOrgSettings() : null;
     const kbContent = activeTab === 'kb' ? await getMyKnowledgeBase() : null;
-    const aiConfig = activeTab === 'ai' ? await getMyAiConfig() : null;
+    const [aiConfig, whatsappConfig] =
+        activeTab === 'integrations'
+            ? await Promise.all([getMyAiConfig(), getMyWhatsappConfig()])
+            : [null, null];
 
     return (
         <div className="max-w-4xl mx-auto animate-fade-in">
@@ -39,17 +46,17 @@ export default async function ConfiguracionPage({
                     Configuración de la Clínica
                 </h1>
                 <p className="text-zinc-500 dark:text-zinc-400 text-lg leading-relaxed max-w-2xl">
-                    Personalice el comportamiento del asistente virtual y la información que comparte con los pacientes.
+                    Personalice el comportamiento del asistente virtual, conecte sus canales y administre la información que comparte con los pacientes.
                 </p>
             </header>
 
             {/* Tabs */}
-            <div className="flex gap-1 mb-6 border-b border-zinc-200 dark:border-zinc-800">
+            <div className="flex gap-1 mb-6 border-b border-zinc-200 dark:border-zinc-800 overflow-x-auto">
                 {TABS.map(t => (
                     <Link
                         key={t.key}
                         href={`/dashboard/configuracion?tab=${t.key}`}
-                        className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold rounded-t-xl border-b-2 transition-all
+                        className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold rounded-t-xl border-b-2 transition-all whitespace-nowrap
                             ${activeTab === t.key
                                 ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20'
                                 : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
@@ -66,11 +73,18 @@ export default async function ConfiguracionPage({
                 {activeTab === 'chatbot' && settings && (
                     <SettingsForm initial={settings} />
                 )}
-                {activeTab === 'ai' && aiConfig && (
-                    <AiIntegrationForm initial={{
-                        ...aiConfig,
-                        updatedAt: aiConfig.updatedAt ? String(aiConfig.updatedAt) : null,
-                    }} />
+                {activeTab === 'integrations' && aiConfig && whatsappConfig && (
+                    <div className="space-y-12">
+                        <AiIntegrationForm initial={{
+                            ...aiConfig,
+                            updatedAt: aiConfig.updatedAt ? String(aiConfig.updatedAt) : null,
+                        }} />
+                        <div className="border-t border-zinc-200 dark:border-zinc-800" />
+                        <WhatsappChannelForm initial={{
+                            ...whatsappConfig,
+                            updatedAt: whatsappConfig.updatedAt ? String(whatsappConfig.updatedAt) : null,
+                        }} />
+                    </div>
                 )}
                 {activeTab === 'kb' && (
                     <KnowledgeBaseEditor initialContent={kbContent ?? ''} />

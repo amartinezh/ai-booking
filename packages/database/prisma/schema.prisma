@@ -17,7 +17,6 @@ model Organization {
   id              String  @id @default(uuid())
   name            String  @unique
   isActive        Boolean @default(true)
-  whatsappPhoneId String? @unique
   logoUrl         String?
 
   // Base de Conocimiento del Chatbot (por clínica)
@@ -28,6 +27,9 @@ model Organization {
 
   // Configuración multi-LLM por clínica (1:1) — credenciales encriptadas
   aiProviderConfig AiProviderConfig?
+
+  // Configuración del canal WhatsApp por clínica (1:1) — credenciales encriptadas
+  whatsappConfig  WhatsappAccountConfig?
 
   // Facturación Global Súper Admin
   monthlyFee      String?
@@ -111,6 +113,43 @@ enum LlmProvider {
   CHATGPT
   CLAUDE
   NONE
+}
+
+// -----------------------------------------------------------------------------
+// 📱 CANAL WHATSAPP: CONFIGURACIÓN POR CLÍNICA
+// Almacena las credenciales de la WhatsApp Business API (Meta Graph) que cada
+// clínica obtiene de su panel de Meta for Developers.
+// El access token NUNCA se guarda en texto plano: se encripta con AES-256-GCM.
+// -----------------------------------------------------------------------------
+model WhatsappAccountConfig {
+  id                   String       @id @default(uuid())
+  organizationId       String       @unique
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // ID interno que Meta asigna a la línea telefónica (15–17 dígitos).
+  // ÚNICO en toda la plataforma: es la llave que usa el webhook entrante
+  // para enrutar mensajes al tenant correcto.
+  phoneNumberId        String?      @unique
+
+  // ID de la WhatsApp Business Account (WABA). Informativo.
+  businessAccountId    String?
+
+  // Número de display (ej. "+57 300 1234567"). Solo para mostrar al usuario.
+  displayPhoneNumber   String?
+
+  // Token elegido por la clínica para validar el webhook GET de Meta.
+  // ÚNICO porque cuando Meta llama a verificar, sólo conocemos este token
+  // y debemos identificar a qué clínica pertenece.
+  verifyToken          String?      @unique
+
+  // Permanent Access Token cifrado (AES-256-GCM). Empieza por "EAA…" en claro.
+  encryptedAccessToken String?      @db.Text
+
+  // false hasta que la clínica termine de configurar y validar la conexión.
+  isActive             Boolean      @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // -----------------------------------------------------------------------------

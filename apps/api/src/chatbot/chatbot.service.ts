@@ -28,6 +28,8 @@ import textToSpeech from '@google-cloud/text-to-speech';
 import * as fs from 'fs';
 import * as path from 'path';
 import { LlmFactoryService } from '../llm/llm-factory.service';
+import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
+import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 
 @Injectable()
 export class ChatbotService implements OnModuleInit {
@@ -54,6 +56,7 @@ export class ChatbotService implements OnModuleInit {
     private knowledgeBase: KnowledgeBaseService,
     private organizationSettings: OrganizationSettingsService,
     private llmFactory: LlmFactoryService,
+    private whatsappCredentials: WhatsappCredentialsService,
   ) {}
 
   async onModuleInit() {
@@ -201,11 +204,25 @@ export class ChatbotService implements OnModuleInit {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // HELPER 0: RESOLUCIÓN DE TENANT
+  // HELPER 0: RESOLUCIÓN DE TENANT + CREDENCIALES WHATSAPP
   // ══════════════════════════════════════════════════════════════
-  private async getOriginPhoneId(senderId: string): Promise<string> {
-    const origin = await this.redis.get(`origin_phone:${senderId}`);
-    return origin || this.configService.get<string>('META_PHONE_ID') || '';
+  //
+  // Para mensajes outbound necesitamos: phoneNumberId desde el que enviar
+  // + accessToken (cifrado en DB). El "tenant" del destinatario se cachea
+  // en Redis como `origin_org:${senderId}` durante el flujo entrante.
+  // Si no hay caché, devolvemos null y el caller decide qué hacer.
+  private async resolveCredentialsForRecipient(
+    senderId: string,
+  ): Promise<ResolvedWhatsappCredentials | null> {
+    const orgId = await this.redis.get(`origin_org:${senderId}`);
+    if (!orgId) return null;
+    return this.whatsappCredentials.forOrg(orgId);
+  }
+
+  private async resolveCredentialsForOrg(
+    organizationId: string,
+  ): Promise<ResolvedWhatsappCredentials | null> {
+    return this.whatsappCredentials.forOrg(organizationId);
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -216,20 +233,21 @@ export class ChatbotService implements OnModuleInit {
   private lastSentByUser = new Map<string, string>(); // En memoria, no persistente
 
   private async sendWhatsAppMessage(toPhone: string, text: string) {
-    const token = this.configService.get<string>('META_ACCESS_TOKEN');
-    const phoneId = await this.getOriginPhoneId(toPhone);
-
-    if (!phoneId) {
-      this.logger.error(`CRÍTICO: META_PHONE_ID no resuelto para ${toPhone}. Mensaje NO enviado.`);
+    const creds = await this.resolveCredentialsForRecipient(toPhone);
+    if (!creds) {
+      this.logger.error(
+        `CRÍTICO: no hay credenciales WhatsApp para ${toPhone}. El destinatario no está asociado a ninguna org configurada. Mensaje NO enviado.`,
+      );
+      return null;
+    }
+    if (!creds.isActive) {
+      this.logger.error(
+        `CRÍTICO: integración WhatsApp inactiva para org ${creds.organizationId}. Mensaje NO enviado a ${toPhone}.`,
+      );
       return null;
     }
 
-    if (!token) {
-      this.logger.error(`CRÍTICO: META_ACCESS_TOKEN no configurado. Mensaje NO enviado a ${toPhone}.`);
-      return null;
-    }
-
-    const url = `https://graph.facebook.com/v19.0/${phoneId}/messages`;
+    const url = `https://graph.facebook.com/v19.0/${creds.phoneNumberId}/messages`;
     try {
       const response = await lastValueFrom(
         this.httpService.post(
@@ -243,7 +261,7 @@ export class ChatbotService implements OnModuleInit {
           },
           {
             headers: {
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${creds.accessToken}`,
               'Content-Type': 'application/json',
             },
           },
@@ -261,7 +279,9 @@ export class ChatbotService implements OnModuleInit {
 
       if (error.response?.data?.error?.code === 190) {
         this.logger.error(
-          `🚨 TOKEN DE META EXPIRADO O REVOCADO. Renueva META_ACCESS_TOKEN en .env.production y recrea el contenedor.`,
+          `🚨 Token de Meta inválido para org ${creds.organizationId}. ` +
+            `Pídele al administrador de la clínica que regenere el Access Token ` +
+            `en Configuración → Integraciones → Canal de WhatsApp.`,
         );
       }
 
@@ -284,9 +304,12 @@ export class ChatbotService implements OnModuleInit {
   // ══════════════════════════════════════════════════════════════
   // HELPER 3: AUDIO (WHATSAPP → GEMINI)
   // ══════════════════════════════════════════════════════════════
-  private async downloadWhatsAppAudio(mediaId: string): Promise<Buffer | null> {
+  private async downloadWhatsAppAudio(
+    mediaId: string,
+    creds: ResolvedWhatsappCredentials,
+  ): Promise<Buffer | null> {
     try {
-      const token = this.configService.get<string>('META_ACCESS_TOKEN');
+      const token = creds.accessToken;
       const urlReq = `https://graph.facebook.com/v19.0/${mediaId}`;
       const urlResponse = await lastValueFrom(
         this.httpService.get(urlReq, { headers: { Authorization: `Bearer ${token}` } }),
@@ -556,19 +579,23 @@ export class ChatbotService implements OnModuleInit {
     }
   }
 
-  private async uploadToWhatsApp(audioBuffer: Buffer, senderId: string): Promise<string | null> {
+  private async uploadToWhatsApp(
+    audioBuffer: Buffer,
+    creds: ResolvedWhatsappCredentials,
+  ): Promise<string | null> {
     try {
-      const token = this.configService.get<string>('META_ACCESS_TOKEN');
-      const phoneId = await this.getOriginPhoneId(senderId);
       const formData = new FormData();
       formData.append('messaging_product', 'whatsapp');
       const blob = new Blob([new Uint8Array(audioBuffer)], { type: 'audio/ogg' });
       formData.append('file', blob, 'audio.ogg');
-      const response = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/media`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      const response = await fetch(
+        `https://graph.facebook.com/v19.0/${creds.phoneNumberId}/media`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${creds.accessToken}` },
+          body: formData,
+        },
+      );
       const data = await response.json();
       if (!response.ok) {
         this.logger.error(`Error subiendo audio: ${JSON.stringify(data)}`);
@@ -581,13 +608,15 @@ export class ChatbotService implements OnModuleInit {
     }
   }
 
-  private async sendWhatsAppAudioMessage(toPhone: string, mediaId: string) {
+  private async sendWhatsAppAudioMessage(
+    toPhone: string,
+    mediaId: string,
+    creds: ResolvedWhatsappCredentials,
+  ) {
     try {
-      const token = this.configService.get<string>('META_ACCESS_TOKEN');
-      const phoneId = await this.getOriginPhoneId(toPhone);
       await lastValueFrom(
         this.httpService.post(
-          `https://graph.facebook.com/v19.0/${phoneId}/messages`,
+          `https://graph.facebook.com/v19.0/${creds.phoneNumberId}/messages`,
           {
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
@@ -597,7 +626,7 @@ export class ChatbotService implements OnModuleInit {
           },
           {
             headers: {
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${creds.accessToken}`,
               'Content-Type': 'application/json',
             },
           },
@@ -614,11 +643,14 @@ export class ChatbotService implements OnModuleInit {
 
     if (isAiFlow) {
       try {
-        const audioBuffer = await this.generateTTS(text);
-        if (audioBuffer) {
-          const mediaId = await this.uploadToWhatsApp(audioBuffer, senderId);
-          if (mediaId) {
-            await this.sendWhatsAppAudioMessage(senderId, mediaId);
+        const creds = await this.resolveCredentialsForOrg(organizationId);
+        if (creds && creds.isActive) {
+          const audioBuffer = await this.generateTTS(text);
+          if (audioBuffer) {
+            const mediaId = await this.uploadToWhatsApp(audioBuffer, creds);
+            if (mediaId) {
+              await this.sendWhatsAppAudioMessage(senderId, mediaId, creds);
+            }
           }
         }
         await this.sendWhatsAppMessage(senderId, text);
@@ -905,20 +937,27 @@ export class ChatbotService implements OnModuleInit {
     const audioId = event.audio?.id;
 
     // ── IDENTIFICACIÓN DEL TENANT ──────────────────────────────
-    const metaPhoneId =
-      event.metadata?.phone_number_id ||
-      this.configService.get<string>('META_PHONE_ID');
+    // Meta envía `phone_number_id` en `value.metadata` del payload entrante.
+    // Buscamos la WhatsappAccountConfig que lo tenga registrado para saber
+    // a qué clínica enrutar el mensaje. Si no hay match, descartamos: NO
+    // hay fallback global — eso violaba el aislamiento entre tenants.
+    const metaPhoneId: string | undefined = event.metadata?.phone_number_id;
 
     let organizationId: string | null = null;
     let orgName = 'nuestra Clínica';
     let org: any = null;
 
     if (metaPhoneId) {
-      await this.redis.set(`origin_phone:${senderId}`, metaPhoneId, 'EX', SESSION_TTL);
-      org = await this.prisma.organization.findUnique({
-        where: { whatsappPhoneId: metaPhoneId },
+      const waConfig = await this.prisma.whatsappAccountConfig.findUnique({
+        where: { phoneNumberId: metaPhoneId },
+        include: { organization: true },
       });
-      if (org) {
+      if (waConfig?.organization) {
+        org = waConfig.organization;
+        // Cacheamos el orgId del destinatario en Redis: lo usamos al hacer
+        // outbound (resolveCredentialsForRecipient).
+        await this.redis.set(`origin_org:${senderId}`, org.id, 'EX', SESSION_TTL);
+
         if (!org.isActive) {
           const reply = 'Esta línea clínica se encuentra inactiva temporalmente por mantenimiento administrativo.';
           await this.sendWhatsAppMessage(senderId, reply);
@@ -936,16 +975,18 @@ export class ChatbotService implements OnModuleInit {
         }
         organizationId = org.id;
         orgName = org.name;
+      } else {
+        this.logger.warn(
+          `Webhook recibió phone_number_id=${metaPhoneId} pero no hay ninguna ` +
+            `WhatsappAccountConfig que lo reclame. Mensaje descartado.`,
+        );
+        return;
       }
-    }
-
-    if (!organizationId) {
-      const firstOrg = await this.prisma.organization.findFirst();
-      if (firstOrg) {
-        organizationId = firstOrg.id;
-        orgName = firstOrg.name;
-        org = firstOrg;
-      }
+    } else {
+      this.logger.warn(
+        `Webhook recibió evento sin phone_number_id. Imposible enrutar tenant. Descartado.`,
+      );
+      return;
     }
 
     if (messageType !== 'text' && messageType !== 'audio') return;
@@ -1126,7 +1167,10 @@ export class ChatbotService implements OnModuleInit {
     } else if (isAudio) {
       await this.redis.set(`is_ai_flow:${organizationId}:${senderId}`, 'true', 'EX', SESSION_TTL);
       await this.sendWhatsAppMessage(senderId, '🎧 Permítame un momento, lo estoy escuchando...');
-      const audioBuffer = await this.downloadWhatsAppAudio(audioId);
+      const audioCreds = await this.resolveCredentialsForOrg(organizationId);
+      const audioBuffer = audioCreds
+        ? await this.downloadWhatsAppAudio(audioId, audioCreds)
+        : null;
       if (audioBuffer) {
         aiData = await this.extractDataWithLLM(organizationId, text, audioBuffer);
       } else {
@@ -2663,8 +2707,8 @@ export class ChatbotService implements OnModuleInit {
   // ══════════════════════════════════════════════════════════════
   async sendOutboundMessage(to: string, message: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const origin = await this.redis.get(`origin_phone:${to}`);
-      if (!origin) {
+      const orgId = await this.redis.get(`origin_org:${to}`);
+      if (!orgId) {
         const errMsg = 'No hay tenant asociado para outbound message';
         this.logger.error(`${errMsg}: ${to}`);
         await this.interactionLog.logOutbound({
@@ -2675,12 +2719,12 @@ export class ChatbotService implements OnModuleInit {
         });
         return { success: false, error: errMsg };
       }
-      const org = await this.prisma.organization.findFirst({
-        where: { whatsappPhoneId: origin },
+      const org = await this.prisma.organization.findUnique({
+        where: { id: orgId },
       });
       if (!org) {
         const errMsg = 'Organización no encontrada para outbound';
-        this.logger.error(`${errMsg}: ${origin}`);
+        this.logger.error(`${errMsg}: ${orgId}`);
         await this.interactionLog.logOutbound({
           whatsappId: to,
           botReply: message,
@@ -2738,6 +2782,15 @@ export class ChatbotService implements OnModuleInit {
         'false',
         'EX',
         WAITLIST_CONFIRM_TTL,
+      );
+      // Notificación proactiva: el paciente no escribió antes, así que el caché
+      // `origin_org` no existe. Lo establecemos a partir del organizationId
+      // recibido para que sendWhatsAppMessage pueda resolver credenciales.
+      await this.redis.set(
+        `origin_org:${whatsappId}`,
+        organizationId,
+        'EX',
+        SESSION_TTL,
       );
       const reply = MSGS.waitlistCupoDisponible(nombre, especialidad, fechaFormateada, doctor);
       await this.sendWhatsAppMessage(whatsappId, reply);

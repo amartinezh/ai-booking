@@ -70,7 +70,7 @@ Meta for Developers es el panel desde donde se crean integraciones técnicas.
 
 ## Paso 2 — Crear tu cuenta de **Meta Business Suite** (cuenta empresarial)
 
-Esto representa a tu clínica como empresa dentro del ecosistema de Meta. Es distinto al perfil personal de Facebook.
+Esto representa a tu institución como empresa dentro del ecosistema de Meta. Es distinto al perfil personal de Facebook.
 
 1. Abre una **pestaña nueva** y entra a:
    **https://business.facebook.com**
@@ -81,7 +81,7 @@ Esto representa a tu clínica como empresa dentro del ecosistema de Meta. Es dis
    - **Correo de la empresa:** usa el corporativo, no el personal.
 4. Clic en **"Siguiente"**.
 5. Meta te enviará un correo a esa dirección con un botón **"Confirmar correo"**. Ábrelo y confírmalo. Si no llega en 5 minutos, revisa la carpeta de Spam.
-6. Vuelve a Business Suite. Ahora verás un panel con el nombre de tu clínica arriba.
+6. Vuelve a Business Suite. Ahora verás un panel con el nombre de tu institución arriba.
 
 > **¿Ya tenías un Business Manager creado?** Puedes saltarte este paso y simplemente entrar al existente. Solo necesitas ser **administrador** dentro de él.
 
@@ -105,7 +105,7 @@ Una "App" en este contexto es básicamente un proyecto técnico al que se le con
 3. Te muestra una pantalla **"¿Qué quieres hacer con tu app?"** con varias opciones (Autenticar, Conectar Instagram, etc.).
    - Baja hasta la opción **"Otro"** y selecciónala.
    - Clic en **"Siguiente"**.
-4. Te pregunta **"Selecciona el tipo de app"**. Escoge **"Empresa"** (Business). Clic en **"Siguiente"**.
+4. Te pregunta **"Selecciona el tipo de app"**. Escoge **"Negocios"** (Business). Clic en **"Siguiente"**.
 5. Pantalla **"Proporciona detalles"**:
    - **Nombre de la app:** algo identificable, por ejemplo `AgenIA - Clínica del Sol`. No es público, solo lo verás tú.
    - **Correo de contacto de la app:** usa el corporativo de la clínica.

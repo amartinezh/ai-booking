@@ -1,5 +1,6 @@
 import {
   Controller,
+  ForbiddenException,
   Get,
   Post,
   Body,
@@ -9,7 +10,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ChatbotService } from './chatbot.service';
-import { ConfigService } from '@nestjs/config';
+import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 
 @Controller('chatbot')
 export class ChatbotController {
@@ -17,70 +18,68 @@ export class ChatbotController {
 
   constructor(
     private readonly chatbotService: ChatbotService,
-    private readonly configService: ConfigService,
+    private readonly whatsappCredentials: WhatsappCredentialsService,
   ) {}
 
-  // 1. Verificación del Webhook (Facebook te llama aquí primero)
+  // 1. Verificación del Webhook (Facebook te llama aquí primero).
+  //
+  // En modo multi-tenant ya no hay un VERIFY_TOKEN global: cada clínica define
+  // el suyo en Configuración → Integraciones → WhatsApp y lo registra con Meta.
+  // Buscamos la clínica que reclame el token enviado. Si no existe ninguna,
+  // rechazamos.
   @Get('webhook')
-  verifyWebhook(
+  async verifyWebhook(
     @Query('hub.mode') mode: string,
     @Query('hub.verify_token') token: string,
     @Query('hub.challenge') challenge: string,
   ) {
-    const MY_VERIFY_TOKEN = this.configService.get<string>('META_VERIFY_TOKEN');
-
-    if (mode === 'subscribe' && token === MY_VERIFY_TOKEN) {
-      this.logger.log('Webhook verified successfully!');
-      return challenge;
+    if (mode !== 'subscribe' || !token) {
+      throw new ForbiddenException('Invalid webhook verification request');
     }
-    throw new Error('Invalid verification token');
+    const orgId = await this.whatsappCredentials.organizationIdByVerifyToken(token);
+    if (!orgId) {
+      this.logger.warn(`Verificación de webhook rechazada — verify_token desconocido`);
+      throw new ForbiddenException('Invalid verification token');
+    }
+    this.logger.log(`Webhook verificado para org ${orgId}`);
+    return challenge;
   }
 
-  // 2. Recepción de Mensajes (Aquí llega el "Hola")
+  // 2. Recepción de Mensajes (Aquí llega el "Hola").
+  //
+  // El enrutamiento al tenant correcto ocurre dentro de ChatbotService a partir
+  // de `value.metadata.phone_number_id`, así que este endpoint sólo desempaca.
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   async handleMessage(@Body() body: any) {
-    // 1. Validar que es un evento válido
     if (body.object === 'page' || body.object === 'whatsapp_business_account') {
-      // 2. Iterar sobre las entradas (Meta puede enviar eventos en lote)
       body.entry?.forEach(async (entry: any) => {
-        // --- LÓGICA PARA WHATSAPP ---
         if (entry.changes && entry.changes.length > 0) {
           const change = entry.changes[0];
           const value = change.value;
 
-          // A. ¿Es un mensaje entrante (texto, imagen, audio)?
           if (value?.messages && value.messages.length > 0) {
             const messageEvent = value.messages[0];
-            
-            // 💡 Inyectamos la metadata (donde viene phone_number_id) al evento 
+            // 💡 Inyectamos la metadata (phone_number_id) al evento para que
+            // processIncomingMessage pueda enrutar al tenant correcto.
             messageEvent.metadata = value.metadata;
-
-            // Pasamos el evento válido a nuestro servicio
             await this.chatbotService.processIncomingMessage(messageEvent);
-          }
-          // B. ¿Es una confirmación de estado (entregado, leído, enviado)?
-          else if (value?.statuses && value.statuses.length > 0) {
+          } else if (value?.statuses && value.statuses.length > 0) {
             const statusEvent = value.statuses[0];
-            // Aquí solo logueamos, no necesitamos responderle al bot
             this.logger.debug(
               `Status update recibido: ${statusEvent.status} para el mensaje ${statusEvent.id}`,
             );
           }
-        }
-
-        // --- LÓGICA PARA FACEBOOK MESSENGER (Si lo usamos después) ---
-        else if (entry.messaging && entry.messaging.length > 0) {
+        } else if (entry.messaging && entry.messaging.length > 0) {
           const webhookEvent = entry.messaging[0];
           await this.chatbotService.processIncomingMessage(webhookEvent);
         }
       });
 
-      // 3. SIEMPRE retornar 200 OK rápido a Meta, o bloquearán el Webhook
+      // SIEMPRE retornar 200 OK rápido a Meta, o bloquearán el Webhook.
       return 'EVENT_RECEIVED';
     }
 
-    // Si llega basura que no es de Meta, devolvemos 404
     return 'UNKNOWN_SOURCE';
   }
 

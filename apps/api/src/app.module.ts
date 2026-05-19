@@ -14,6 +14,7 @@ import { ClinicalAiModule } from './clinical-ai/clinical-ai.module';
 import { SystemLogModule } from './system-log/system-log.module';
 import { CryptoModule } from './common/crypto/crypto.module';
 import { LlmModule } from './llm/llm.module';
+import { WhatsappConfigModule } from './whatsapp-config/whatsapp-config.module';
 
 @Module({
   imports: [
@@ -33,6 +34,8 @@ import { LlmModule } from './llm/llm.module';
     CryptoModule,
     // 🧠 Multi-LLM dinámico por clínica (Gemini / ChatGPT / Claude).
     LlmModule,
+    // 📱 Canal WhatsApp Business (credenciales encriptadas por clínica).
+    WhatsappConfigModule,
     // Nuestro módulo de IA / Webhooks
     ChatbotModule,
     RedisModule,
