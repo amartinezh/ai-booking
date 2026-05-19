@@ -360,6 +360,11 @@ model Appointment {
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
+  // ⏰ RECORDATORIO ENVIADO — idempotencia del cron de recordatorios.
+  // NULL = nunca se ha enviado recordatorio para esta cita.
+  // DateTime = momento UTC en que el cron disparó el WhatsApp con éxito.
+  reminderSentAt DateTime?
+
   metaLog   Json?
   createdAt DateTime          @default(now())
   origin    AppointmentOrigin @default(WHATSAPP)

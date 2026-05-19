@@ -15,6 +15,7 @@ import { SystemLogModule } from './system-log/system-log.module';
 import { CryptoModule } from './common/crypto/crypto.module';
 import { LlmModule } from './llm/llm.module';
 import { WhatsappConfigModule } from './whatsapp-config/whatsapp-config.module';
+import { AppointmentReminderModule } from './appointment-reminder/appointment-reminder.module';
 
 @Module({
   imports: [
@@ -38,6 +39,9 @@ import { WhatsappConfigModule } from './whatsapp-config/whatsapp-config.module';
     WhatsappConfigModule,
     // Nuestro módulo de IA / Webhooks
     ChatbotModule,
+    // ⏰ Cron de recordatorios de citas por WhatsApp (horas hábiles).
+    // Va DESPUÉS de ChatbotModule porque consume ChatbotService.
+    AppointmentReminderModule,
     RedisModule,
     AppointmentsModule,
     AnalyticsModule,

@@ -15,6 +15,7 @@ export enum InteractionStatus {
     CANCELLATION_FLOW = 'CANCELLATION_FLOW',   // Inicio de flujo de cancelación
     BOOKING_CONFIRMED = 'BOOKING_CONFIRMED',   // Cita agendada exitosamente
     WAITLIST_JOINED = 'WAITLIST_JOINED',       // Paciente entró a waitlist
+    REMINDER_SENT = 'REMINDER_SENT',           // Recordatorio automático de cita enviado
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -203,6 +204,45 @@ export class InteractionLogService {
             botReply: params.botReply,
             metadata: {
                 outbound: true,
+                error: params.error || null,
+            },
+        });
+    }
+
+    /**
+     * Helper: registrar recordatorio automático de cita enviado al paciente.
+     * Lo invoca AppointmentReminderCronService al completar cada envío
+     * (éxito o falla) para que quede traza en la Caja Negra.
+     */
+    async logReminderSent(params: {
+        whatsappId: string;
+        organizationId: string;
+        appointmentId: string;
+        patientCedula?: string | null;
+        doctorName?: string | null;
+        serviceName?: string | null;
+        slotDate: Date;
+        businessHoursBefore: number;
+        success: boolean;
+        botReply: string;
+        error?: string | null;
+    }): Promise<void> {
+        await this.log({
+            whatsappId: params.whatsappId,
+            organizationId: params.organizationId,
+            status: params.success
+                ? InteractionStatus.REMINDER_SENT
+                : InteractionStatus.FAILED,
+            failureReason: params.success ? null : FailureReason.META_API_ERROR,
+            botReply: params.botReply,
+            metadata: {
+                appointmentId: params.appointmentId,
+                patientCedula: params.patientCedula || null,
+                doctorName: params.doctorName || null,
+                serviceName: params.serviceName || null,
+                slotDate: params.slotDate.toISOString(),
+                businessHoursBefore: params.businessHoursBefore,
+                reminderAutomatic: true,
                 error: params.error || null,
             },
         });

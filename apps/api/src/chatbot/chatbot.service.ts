@@ -2703,6 +2703,41 @@ export class ChatbotService implements OnModuleInit {
   }
 
   // ══════════════════════════════════════════════════════════════
+  // INTERFAZ EXTERNA — OUTBOUND CON TENANT EXPLÍCITO
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Usado por flujos automáticos que ya conocen el `organizationId` y no
+  // dependen del caché Redis `origin_org` (ej. cron de recordatorios,
+  // notificaciones programadas, jobs administrativos). Siembra el caché
+  // para que cualquier respuesta inmediata del paciente resuelva al mismo
+  // tenant durante SESSION_TTL.
+  async sendOutboundForOrg(
+    organizationId: string,
+    to: string,
+    message: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!organizationId || !to || !message) {
+      return { success: false, error: 'missing-params' };
+    }
+    try {
+      // Seed del caché de tenant para outbound posterior y para resolver la
+      // siguiente respuesta entrante del paciente.
+      await this.redis.set(`origin_org:${to}`, organizationId, 'EX', SESSION_TTL);
+
+      const result = await this.sendWhatsAppMessage(to, message);
+      if (!result) {
+        return { success: false, error: 'meta-api-error' };
+      }
+      return { success: true };
+    } catch (error: any) {
+      this.logger.error(
+        `Error en sendOutboundForOrg (org=${organizationId}, to=${to}): ${error.message}`,
+      );
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // INTERFAZ EXTERNA (OUTBOUND desde el Dashboard)
   // ══════════════════════════════════════════════════════════════
   async sendOutboundMessage(to: string, message: string): Promise<{ success: boolean; error?: string }> {
