@@ -16,6 +16,7 @@ import { CryptoModule } from './common/crypto/crypto.module';
 import { LlmModule } from './llm/llm.module';
 import { WhatsappConfigModule } from './whatsapp-config/whatsapp-config.module';
 import { AppointmentReminderModule } from './appointment-reminder/appointment-reminder.module';
+import { GlobalStatsModule } from './global-stats/global-stats.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { AppointmentReminderModule } from './appointment-reminder/appointment-re
     RedisModule,
     AppointmentsModule,
     AnalyticsModule,
+    GlobalStatsModule,
     ClinicalRecordsModule,
     ClinicalAiModule,
     Hl7FhirModule,
