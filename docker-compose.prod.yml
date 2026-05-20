@@ -3,7 +3,8 @@ services:
     image: postgres:15-alpine
     container_name: antigravity_db_prod
     restart: always
-    # Eliminamos el 'ports' por seguridad. Solo la red interna puede verlo.
+    ports:
+      - "127.0.0.1:49317:5432"   # ⚠️ ojo: 127.0.0.1 — NO 0.0.
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: password123
