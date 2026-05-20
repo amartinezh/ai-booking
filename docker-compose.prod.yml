@@ -48,7 +48,7 @@ services:
       - API_URL=${API_URL}
       # URL interna Docker para llamadas server-side (server actions → NestJS API)
       # NEXT_PUBLIC_* en server actions se lee en runtime, no requiere rebuild
-      - NEXT_PUBLIC_API_URL=http://api:3001
+      - NEXT_PUBLIC_API_URL=http://api:3000
 
   caddy:
     image: caddy:2-alpine
