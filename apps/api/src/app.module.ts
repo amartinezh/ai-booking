@@ -17,6 +17,7 @@ import { LlmModule } from './llm/llm.module';
 import { WhatsappConfigModule } from './whatsapp-config/whatsapp-config.module';
 import { AppointmentReminderModule } from './appointment-reminder/appointment-reminder.module';
 import { GlobalStatsModule } from './global-stats/global-stats.module';
+import { OrganizationsModule } from './organizations/organizations.module';
 
 @Module({
   imports: [
@@ -47,6 +48,8 @@ import { GlobalStatsModule } from './global-stats/global-stats.module';
     AppointmentsModule,
     AnalyticsModule,
     GlobalStatsModule,
+    // 🏢 Acciones críticas del Super Admin sobre tenants (purge + quick-stats).
+    OrganizationsModule,
     ClinicalRecordsModule,
     ClinicalAiModule,
     Hl7FhirModule,

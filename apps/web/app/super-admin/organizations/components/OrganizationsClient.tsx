@@ -4,6 +4,8 @@ import { useState, useTransition } from "react";
 import { createOrganization, updateOrganization, toggleOrganizationStatus } from "../../../actions/organizations";
 import { getKnowledgeBaseForOrg, updateKnowledgeBaseForOrg } from "../../../actions/knowledge-base";
 import { getOrgSettingsForOrg, updateOrgSettingsForOrg } from "../../../actions/settings";
+import PurgeOrganizationModal from "./PurgeOrganizationModal";
+import QuickStatsModal from "./QuickStatsModal";
 
 export default function OrganizationsClient({ initialOrganizations }: { initialOrganizations: any[] }) {
   const [organizations, setOrganizations] = useState(initialOrganizations);
@@ -17,6 +19,8 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
   const [settingsBotName, setSettingsBotName] = useState('Vicente');
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [purgeOrg, setPurgeOrg] = useState<{ id: string; name: string } | null>(null);
+  const [statsOrg, setStatsOrg] = useState<{ id: string; name: string } | null>(null);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -211,6 +215,28 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
                     >
                       👤 Admins
                     </a>
+                    {/* 📊 Resumen rápido de la clínica */}
+                    <button
+                      onClick={() => setStatsOrg({ id: org.id, name: org.name })}
+                      title="Ver resumen estadístico"
+                      aria-label="Ver resumen estadístico"
+                      className="text-sky-600 hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300 p-1.5 bg-sky-50 hover:bg-sky-100 dark:bg-sky-900/20 dark:hover:bg-sky-900/40 rounded-lg transition-colors inline-flex items-center justify-center w-8 h-8"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18h18M8 17V9m5 8V5m5 12v-6" />
+                      </svg>
+                    </button>
+                    {/* 🗑️ Purga (hard delete irreversible) */}
+                    <button
+                      onClick={() => setPurgeOrg({ id: org.id, name: org.name })}
+                      title="Purgar clínica (irreversible)"
+                      aria-label="Purgar clínica"
+                      className="text-red-600 hover:text-white dark:text-red-400 p-1.5 bg-red-50 hover:bg-red-600 dark:bg-red-900/20 dark:hover:bg-red-600 rounded-lg transition-colors inline-flex items-center justify-center w-8 h-8"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -429,6 +455,20 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
             )}
           </div>
         </div>
+      )}
+
+      {/* 📊 Sidebar de resumen estadístico */}
+      {statsOrg && (
+        <QuickStatsModal org={statsOrg} onClose={() => setStatsOrg(null)} />
+      )}
+
+      {/* 🗑️ Modal de purga irreversible */}
+      {purgeOrg && (
+        <PurgeOrganizationModal
+          org={purgeOrg}
+          onClose={() => setPurgeOrg(null)}
+          onPurged={(id) => setOrganizations((orgs) => orgs.filter((o) => o.id !== id))}
+        />
       )}
     </div>
   );

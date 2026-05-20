@@ -720,3 +720,48 @@ enum LogLevel {
   WARNING
   ERROR
 }
+
+// -----------------------------------------------------------------------------
+// 🧾 GLOBAL AUDIT LOG — Bitácora inmutable a nivel plataforma (Super Admin)
+//
+// A diferencia de InteractionLog (que vive DENTRO del tenant y se borra con él)
+// o de SystemLog (logging operacional), esta tabla es un registro legal
+// append-only que debe SOBREVIVIR al borrado de una clínica.
+//
+// Por eso NO tiene llave foránea hacia Organization: guardamos organizationId
+// y organizationName como escalares planos. Cuando el Super Admin purga una
+// clínica, el FK desaparecería junto con la org; aquí, en cambio, queda la
+// evidencia inmutable de quién purgó qué, cuándo y desde dónde.
+// -----------------------------------------------------------------------------
+model GlobalAuditLog {
+  id     String              @id @default(uuid())
+  action GlobalAuditAction
+  // Texto humano-legible del evento (lo que se muestra en el dashboard legal).
+  message String             @db.Text
+
+  // Actor que ejecutó la acción (no es FK: el actor podría ser eliminado luego).
+  actorId    String?
+  actorEmail String?
+
+  // Objetivo de la acción. Escalares planos a propósito (sin relación) para
+  // que la entrada sobreviva al hard delete del tenant.
+  organizationId   String?
+  organizationName String?
+
+  // Trazabilidad de la request (IP, user agent) y conteos purgados, etc.
+  ipAddress String?
+  metadata  Json?
+
+  // Inmutable por convención: sólo se inserta, nunca se actualiza ni borra.
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@index([organizationId])
+}
+
+enum GlobalAuditAction {
+  ORGANIZATION_PURGED
+  ORGANIZATION_CREATED
+  ORGANIZATION_SUSPENDED
+}
