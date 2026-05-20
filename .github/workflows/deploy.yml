@@ -30,7 +30,7 @@ jobs:
 
             # 3. CONSTRUIR PRIMERO (Minimiza el tiempo de inactividad)
             # Reconstruye las imágenes mientras la versión anterior sigue funcionando
-            docker compose -f docker-compose.prod.yml build --no-cache api web
+            docker compose -f docker-compose.prod.yml build api web
 
             # 4. Detener y eliminar SOLO las versiones antiguas de api y web
             # postgres y redis NO se tocan para preservar los datos.
