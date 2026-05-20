@@ -57,69 +57,169 @@ export class OrganizationsService {
 
     // 3. Transacción explícita: borramos hijos antes que padres para no
     //    violar llaves foráneas. Acumulamos los conteos para auditoría/UX.
-    const where = { organizationId };
     const purged: Record<string, number> = {};
 
     const auditLogId = await this.prisma.$transaction(
       async (tx: Prisma.TransactionClient) => {
+        // ⚠️ Los campos `organizationId` del esquema son OPCIONALES (String?)
+        // y, en la práctica, no siempre están poblados (p.ej. una HC creada
+        // sin setear el tenant). Por eso NO podemos confiar solo en ese
+        // escalar: borraríamos parcialmente y reventaríamos las FKs (que fue
+        // exactamente el error `ClinicalRecord_appointmentId_fkey`).
+        //
+        // Estrategia robusta: resolvemos el GRAFO real de la clínica por IDs
+        // (usuarios → perfiles → catálogos → slots → citas) y luego borramos
+        // por esos IDs + por el escalar, en orden de dependencias.
+
+        // ── Resolución de IDs raíz de la clínica ──────────────────
+        const orgUsers = await tx.user.findMany({
+          where: { organizationId },
+          select: { id: true },
+        });
+        const userIds = orgUsers.map((u) => u.id);
+
+        const patientRows = await tx.patientProfile.findMany({
+          where: { OR: [{ organizationId }, { userId: { in: userIds } }] },
+          select: { id: true },
+        });
+        const patientIds = patientRows.map((p) => p.id);
+
+        const doctorRows = await tx.doctorProfile.findMany({
+          where: { OR: [{ organizationId }, { userId: { in: userIds } }] },
+          select: { id: true },
+        });
+        const doctorIds = doctorRows.map((d) => d.id);
+
+        const serviceRows = await tx.medicalService.findMany({
+          where: { organizationId },
+          select: { id: true },
+        });
+        const serviceIds = serviceRows.map((s) => s.id);
+
+        const epsRows = await tx.eps.findMany({
+          where: { organizationId },
+          select: { id: true },
+        });
+        const epsIds = epsRows.map((e) => e.id);
+
+        // Slots: por escalar, o por doctor/servicio de la clínica.
+        const slotRows = await tx.scheduleSlot.findMany({
+          where: {
+            OR: [
+              { organizationId },
+              { doctorId: { in: doctorIds } },
+              { serviceId: { in: serviceIds } },
+            ],
+          },
+          select: { id: true },
+        });
+        const slotIds = slotRows.map((s) => s.id);
+
+        // Citas: por escalar, o por paciente/slot de la clínica.
+        const apptRows = await tx.appointment.findMany({
+          where: {
+            OR: [
+              { organizationId },
+              { patientId: { in: patientIds } },
+              { scheduleSlotId: { in: slotIds } },
+            ],
+          },
+          select: { id: true },
+        });
+        const apptIds = apptRows.map((a) => a.id);
+
+        // ── Borrado en orden de dependencias (hijos → padres) ─────
         // 3.1 EHR primero: ClinicalRecord arrastra (CASCADE) VitalSigns,
         //     Diagnosis, MedicalPrescription, DigitalSignature y Addendum.
+        //     Lo atrapamos por CUALQUIER vínculo con la clínica para no dejar
+        //     historias huérfanas apuntando a citas que vamos a borrar.
         purged.clinicalRecords = (
-          await tx.clinicalRecord.deleteMany({ where })
+          await tx.clinicalRecord.deleteMany({
+            where: {
+              OR: [
+                { organizationId },
+                { appointmentId: { in: apptIds } },
+                { patientId: { in: patientIds } },
+                { doctorId: { in: doctorIds } },
+              ],
+            },
+          })
         ).count;
 
-        // 3.2 Citas (referencian slot/paciente/eps; ya sin HC asociada).
-        purged.appointments = (await tx.appointment.deleteMany({ where })).count;
+        // 3.2 Citas (ya sin HC asociada).
+        purged.appointments = (
+          await tx.appointment.deleteMany({ where: { id: { in: apptIds } } })
+        ).count;
 
         // 3.3 Agenda física.
         purged.scheduleSlots = (
-          await tx.scheduleSlot.deleteMany({ where })
+          await tx.scheduleSlot.deleteMany({ where: { id: { in: slotIds } } })
         ).count;
 
         // 3.4 Lista de espera (antes de servicios/eps/pacientes).
         purged.waitlistEntries = (
-          await tx.waitlistEntry.deleteMany({ where })
+          await tx.waitlistEntry.deleteMany({
+            where: {
+              OR: [{ organizationId }, { patientId: { in: patientIds } }],
+            },
+          })
         ).count;
 
-        // 3.5 Caja negra del chatbot de ESTA clínica.
+        // 3.5 Caja negra del chatbot de ESTA clínica (patientId → User).
         purged.interactionLogs = (
-          await tx.interactionLog.deleteMany({ where })
+          await tx.interactionLog.deleteMany({
+            where: {
+              OR: [{ organizationId }, { patientId: { in: userIds } }],
+            },
+          })
         ).count;
 
         // 3.6 Perfiles de agendador (referencian eps/doctor/user).
         purged.agentProfiles = (
-          await tx.agentProfile.deleteMany({ where })
+          await tx.agentProfile.deleteMany({
+            where: {
+              OR: [{ organizationId }, { userId: { in: userIds } }],
+            },
+          })
         ).count;
 
         // 3.7 Pacientes (CASCADE → InformedConsent). Antes de eps.
-        purged.patients = (await tx.patientProfile.deleteMany({ where })).count;
+        purged.patients = (
+          await tx.patientProfile.deleteMany({ where: { id: { in: patientIds } } })
+        ).count;
 
         // 3.8 Médicos (antes de servicios). Sus addendums ya cayeron en 3.1.
-        purged.doctors = (await tx.doctorProfile.deleteMany({ where })).count;
+        purged.doctors = (
+          await tx.doctorProfile.deleteMany({ where: { id: { in: doctorIds } } })
+        ).count;
 
         // 3.9 Catálogos por tenant.
-        purged.eps = (await tx.eps.deleteMany({ where })).count;
+        purged.eps = (
+          await tx.eps.deleteMany({ where: { id: { in: epsIds } } })
+        ).count;
         purged.medicalServices = (
-          await tx.medicalService.deleteMany({ where })
+          await tx.medicalService.deleteMany({ where: { id: { in: serviceIds } } })
         ).count;
 
         // 3.10 Tickets de soporte (CASCADE por org, pero explícito).
         purged.supportTickets = (
-          await tx.supportTicket.deleteMany({ where })
+          await tx.supportTicket.deleteMany({ where: { organizationId } })
         ).count;
 
         // 3.11 Usuarios del tenant (sus perfiles 1:1 ya fueron borrados).
-        purged.users = (await tx.user.deleteMany({ where })).count;
+        purged.users = (
+          await tx.user.deleteMany({ where: { organizationId } })
+        ).count;
 
         // 3.12 Configuraciones 1:1 (CASCADE al borrar org, pero explícito).
         purged.settings = (
-          await tx.organizationSettings.deleteMany({ where })
+          await tx.organizationSettings.deleteMany({ where: { organizationId } })
         ).count;
         purged.aiProviderConfig = (
-          await tx.aiProviderConfig.deleteMany({ where })
+          await tx.aiProviderConfig.deleteMany({ where: { organizationId } })
         ).count;
         purged.whatsappConfig = (
-          await tx.whatsappAccountConfig.deleteMany({ where })
+          await tx.whatsappAccountConfig.deleteMany({ where: { organizationId } })
         ).count;
 
         // 3.13 Finalmente, la organización.
