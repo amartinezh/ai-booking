@@ -1522,6 +1522,19 @@ export class ChatbotService implements OnModuleInit {
           await this.redis.set(`temp_especialidad:${organizationId}:${senderId}`, match.name, 'EX', SESSION_TTL);
           await this.redis.set(`temp_especialidad_id:${organizationId}:${senderId}`, match.id, 'EX', SESSION_TTL);
         } else if (currentState === ChatState.AWAITING_SPECIALTY && text) {
+          // No mapeó a un servicio del menú. Antes de marcar reintento,
+          // ¿es una pregunta abierta (FAQ)? Si hay KB y el texto luce como
+          // pregunta, respondemos desde la base de conocimiento SIN perder el
+          // estado del menú (el usuario sigue en AWAITING_SPECIALTY y puede
+          // elegir su letra después). Esto evita que "¿qué servicios tienen?"
+          // caiga en el mensaje de "servicio inválido".
+          if (
+            this.classifyIntentLocal(text) === 'faq' &&
+            (await this.knowledgeBase.hasContent(organizationId))
+          ) {
+            await this.answerFAQ(text, organizationId, senderId, org, botName);
+            return;
+          }
           // El usuario respondió algo que no pudimos mapear al menú → reintento
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
           const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
@@ -1589,6 +1602,16 @@ export class ChatbotService implements OnModuleInit {
           await this.redis.set(`temp_eps_id:${organizationId}:${senderId}`, match.id, 'EX', SESSION_TTL);
           await this.redis.set(`temp_eps_query:${organizationId}:${senderId}`, match.name, 'EX', SESSION_TTL);
         } else if (currentState === ChatState.AWAITING_EPS && text) {
+          // No mapeó a una EPS del menú. Igual que en el paso de servicio:
+          // si es una pregunta abierta y hay KB, respondemos desde la base de
+          // conocimiento sin perder el estado (sigue en AWAITING_EPS).
+          if (
+            this.classifyIntentLocal(text) === 'faq' &&
+            (await this.knowledgeBase.hasContent(organizationId))
+          ) {
+            await this.answerFAQ(text, organizationId, senderId, org, botName);
+            return;
+          }
           // El usuario respondió algo no mapeable al menú → reintento
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
           const { lineas, count } = await this.buildEpsMenu(organizationId, senderId);
