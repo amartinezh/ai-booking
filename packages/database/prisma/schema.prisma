@@ -287,6 +287,7 @@ model DoctorProfile {
   agents          AgentProfile[] // Agentes limitados a gestionar la agenda de este doctor
   clinicalRecords ClinicalRecord[]
   addendums       Addendum[]
+  waitlistEntries WaitlistEntry[] // Pacientes en lista de espera que pidieron a este médico
 
   // 🏢 TENANT ISOLATION
   organizationId String?
@@ -623,6 +624,11 @@ model WaitlistEntry {
   epsId String?
   eps   Eps?    @relation(fields: [epsId], references: [id])
 
+  // Médico preferido (opcional): el paciente pidió un doctor específico.
+  // null = acepta cualquier médico del servicio.
+  preferredDoctorId String?
+  preferredDoctor   DoctorProfile? @relation(fields: [preferredDoctorId], references: [id])
+
   // Estado de la entrada
   status     WaitlistStatus @default(WAITING)
   notifiedAt DateTime?
@@ -644,6 +650,7 @@ model WaitlistEntry {
 
   @@index([organizationId, serviceId, status])
   @@index([whatsappId, status])
+  @@index([preferredDoctorId])
 }
 
 enum WaitlistStatus {

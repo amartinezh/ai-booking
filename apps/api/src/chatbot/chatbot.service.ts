@@ -764,6 +764,7 @@ export class ChatbotService implements OnModuleInit {
       `temp_selected_date_view:${organizationId}:${senderId}`,
       `temp_waitlist_service_id:${organizationId}:${senderId}`,
       `temp_waitlist_eps_id:${organizationId}:${senderId}`,
+      `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
       `temp_waitlist_pending:${organizationId}:${senderId}`,
       `error_count:${organizationId}:${senderId}`,
       `is_ai_flow:${organizationId}:${senderId}`,
@@ -775,6 +776,56 @@ export class ChatbotService implements OnModuleInit {
     await this.setUserState(organizationId, senderId, ChatState.IDLE);
     // Limpiar último mensaje enviado en memoria
     this.lastSentByUser.delete(senderId);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // HELPER 7: RESOLVER MÉDICO PREFERIDO (nombre libre → DoctorProfile.id)
+  // El paciente puede escribir "Dr. Pérez", "pérez", "Juan Pérez"...
+  // Devuelve el id SÓLO si hay UNA coincidencia activa inequívoca dentro
+  // de la organización, para nunca asignar un médico equivocado a la cola.
+  // ══════════════════════════════════════════════════════════════
+  private async resolvePreferredDoctorId(
+    organizationId: string,
+    serviceId: string,
+    doctorName: string | null | undefined,
+  ): Promise<string | null> {
+    if (!doctorName) return null;
+
+    const clean = (s: string) =>
+      s
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '') // quita acentos
+        .replace(/\b(dr|dra|doctor|doctora|medico|medico)\b\.?/g, '')
+        .replace(/[^a-z0-9 ]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const needle = clean(doctorName);
+    if (needle.length < 3) return null;
+
+    const pickUnique = (doctors: { id: string; fullName: string }[]) => {
+      const hits = doctors.filter((d) => {
+        const hay = clean(d.fullName);
+        return hay.includes(needle) || needle.includes(hay);
+      });
+      return hits.length === 1 ? hits[0].id : null;
+    };
+
+    // 1º intento: médicos activos de ESE servicio (más preciso).
+    const byService = await this.prisma.doctorProfile.findMany({
+      where: { organizationId, serviceId, isActive: true },
+      select: { id: true, fullName: true },
+    });
+    const inService = pickUnique(byService);
+    if (inService) return inService;
+
+    // 2º intento: cualquier médico activo de la organización.
+    const inOrg = await this.prisma.doctorProfile.findMany({
+      where: { organizationId, isActive: true },
+      select: { id: true, fullName: true },
+    });
+    return pickUnique(inOrg);
   }
 
   private async cleanUpCancelSession(organizationId: string, senderId: string) {
@@ -1641,6 +1692,7 @@ export class ChatbotService implements OnModuleInit {
         const serviceIdWl = await this.redis.get(`temp_waitlist_service_id:${organizationId}:${senderId}`);
         const epsIdRawWl = await this.redis.get(`temp_waitlist_eps_id:${organizationId}:${senderId}`);
         const epsIdForWl = epsIdRawWl && epsIdRawWl.length > 0 ? epsIdRawWl : null;
+        const preferredDoctorIdWl = (await this.redis.get(`temp_waitlist_doctor_id:${organizationId}:${senderId}`)) || null;
         const serviceNameWl = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`) || '';
 
         if (!serviceIdWl) {
@@ -1691,6 +1743,7 @@ export class ChatbotService implements OnModuleInit {
               epsId: epsIdForWl,
               whatsappId: senderId,
               organizationId: organizationId!,
+              preferredDoctorId: preferredDoctorIdWl,
             });
             positionWl = result.position;
             wlEntryId = result.id || null;
@@ -1933,6 +1986,24 @@ export class ChatbotService implements OnModuleInit {
           // Guardar contexto para que AWAITING_WAITLIST_OPTIN sepa qué hacer.
           await this.redis.set(`temp_waitlist_service_id:${organizationId}:${senderId}`, resolvedServiceId!, 'EX', SESSION_TTL);
           await this.redis.set(`temp_waitlist_eps_id:${organizationId}:${senderId}`, epsIdForPatient || '', 'EX', SESSION_TTL);
+
+          // Médico preferido (si el paciente lo mencionó): nombre libre → id inequívoco.
+          const preferredDoctorIdForWl = await this.resolvePreferredDoctorId(
+            organizationId!,
+            resolvedServiceId!,
+            finalDoctor,
+          );
+          if (preferredDoctorIdForWl) {
+            await this.redis.set(
+              `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
+              preferredDoctorIdForWl,
+              'EX',
+              SESSION_TTL,
+            );
+          } else {
+            // Evita arrastrar un médico de una solicitud anterior si esta no aplica.
+            await this.redis.del(`temp_waitlist_doctor_id:${organizationId}:${senderId}`);
+          }
 
           const reply = MSGS.preguntaWaitlist(resolvedServiceName as string, resolvedEpsName);
           await this.smartReply(organizationId, senderId, reply);
@@ -2354,6 +2425,7 @@ export class ChatbotService implements OnModuleInit {
           const serviceId = await this.redis.get(`temp_waitlist_service_id:${organizationId}:${senderId}`);
           const epsIdRaw = await this.redis.get(`temp_waitlist_eps_id:${organizationId}:${senderId}`);
           const epsIdForWl = epsIdRaw && epsIdRaw.length > 0 ? epsIdRaw : null;
+          const preferredDoctorIdOptin = (await this.redis.get(`temp_waitlist_doctor_id:${organizationId}:${senderId}`)) || null;
           const serviceName = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`) || '';
           const cedulaPrevia = await this.redis.get(`temp_cedula:${organizationId}:${senderId}`);
           const nombrePrevio = await this.redis.get(`temp_nombre:${organizationId}:${senderId}`);
@@ -2412,6 +2484,7 @@ export class ChatbotService implements OnModuleInit {
                 epsId: epsIdForWl,
                 whatsappId: senderId,
                 organizationId: organizationId!,
+                preferredDoctorId: preferredDoctorIdOptin,
               });
               position = result.position;
               waitlistEntryId = result.id || null;

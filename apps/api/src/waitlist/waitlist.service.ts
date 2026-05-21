@@ -26,8 +26,9 @@ export class WaitlistService {
         epsId: string | null;
         whatsappId: string;
         organizationId: string;
-    }): Promise<{ success: boolean; position: number }> {
-        const { patientId, serviceId, epsId, whatsappId, organizationId } = params;
+        preferredDoctorId?: string | null;
+    }): Promise<{ success: boolean; position: number; id: string }> {
+        const { patientId, serviceId, epsId, whatsappId, organizationId, preferredDoctorId = null } = params;
 
         // Evitar duplicados: si ya está esperando lo mismo, devolver su posición actual
         const existing = await this.prisma.waitlistEntry.findFirst({
@@ -36,16 +37,16 @@ export class WaitlistService {
 
         if (existing) {
             const position = await this.getPosition(existing.id, serviceId, epsId, organizationId);
-            return { success: true, position };
+            return { success: true, position, id: existing.id };
         }
 
         const entry = await this.prisma.waitlistEntry.create({
-            data: { patientId, serviceId, epsId, whatsappId, organizationId },
+            data: { patientId, serviceId, epsId, whatsappId, organizationId, preferredDoctorId },
         });
 
         const position = await this.getPosition(entry.id, serviceId, epsId, organizationId);
         this.logger.log(`Paciente ${patientId} en waitlist posición ${position}`);
-        return { success: true, position };
+        return { success: true, position, id: entry.id };
     }
 
     // ════════════════════════════════════════════════════════════

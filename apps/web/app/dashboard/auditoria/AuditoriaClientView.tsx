@@ -2,6 +2,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
+import WaitlistModal from './WaitlistModal';
 
 type InteractionLog = {
     id: string;
@@ -166,8 +167,17 @@ const getMeta = (reason: string | null) => FAILURE_META[reason || ''] || DEFAULT
 // ══════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ══════════════════════════════════════════════════════════════
-export default function AuditoriaClientView({ logs: initialLogs }: { logs: InteractionLog[] }) {
+export default function AuditoriaClientView({
+    logs: initialLogs,
+    waitlistCount = 0,
+    organizationName = 'nuestra clínica',
+}: {
+    logs: InteractionLog[];
+    waitlistCount?: number;
+    organizationName?: string;
+}) {
     const [logs, setLogs] = useState(initialLogs);
+    const [showWaitlist, setShowWaitlist] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedReason, setSelectedReason] = useState<string | null>(null);
     const [selectedSeverity, setSelectedSeverity] = useState<string | null>(null);
@@ -316,7 +326,33 @@ export default function AuditoriaClientView({ logs: initialLogs }: { logs: Inter
             </header>
 
             {/* KPIs PRINCIPALES */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                {/* EN LISTA DE ESPERA — pacientes que pidieron cupo (WaitlistEntry) */}
+                <div className="relative bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-900/40 rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                        <span className="text-base">📜</span>
+                        <p className="text-xs font-semibold text-cyan-900 dark:text-cyan-300 uppercase tracking-wide">
+                            En lista de espera
+                        </p>
+                    </div>
+                    <div className="flex items-end justify-between gap-2">
+                        <p className="text-3xl font-bold text-cyan-900 dark:text-cyan-200">
+                            {waitlistCount}
+                        </p>
+                        <button
+                            onClick={() => setShowWaitlist(true)}
+                            title="Ver detalle de la cola de espera"
+                            aria-label="Ver detalle de la cola de espera"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-semibold shadow-sm transition-all"
+                        >
+                            <span>👁️</span> Ver detalle
+                        </button>
+                    </div>
+                    <p className="text-xs text-cyan-700 dark:text-cyan-400 mt-1">
+                        pendientes de cupo
+                    </p>
+                </div>
+
                 {/* PENDIENTES DE CONTACTAR — el más importante */}
                 <div className="bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-2">
@@ -629,7 +665,7 @@ export default function AuditoriaClientView({ logs: initialLogs }: { logs: Inter
                                     <div className="flex md:flex-col gap-2 md:w-48 shrink-0">
                                         <a
                                             href={`https://wa.me/${log.whatsappId.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
-                                                `Hola, soy del Hospital San Vicente. Vi que intentó agendar una cita y queremos ayudarle a completarla. ¿Le puedo asistir?`
+                                                `Hola, le escribimos de ${organizationName}. Vimos que intentó agendar una cita y queremos ayudarle a completarla. ¿Le puedo asistir?`
                                             )}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -651,6 +687,11 @@ export default function AuditoriaClientView({ logs: initialLogs }: { logs: Inter
                     })
                 )}
             </div>
+
+            {/* MODAL DE LISTA DE ESPERA (lujo de detalle) */}
+            {showWaitlist && (
+                <WaitlistModal organizationName={organizationName} onClose={() => setShowWaitlist(false)} />
+            )}
 
             {/* MODAL DE DETALLE */}
             {selectedLog && (
@@ -767,7 +808,7 @@ export default function AuditoriaClientView({ logs: initialLogs }: { logs: Inter
                         <div className="sticky bottom-0 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 p-4 flex gap-2">
                             <a
                                 href={`https://wa.me/${selectedLog.whatsappId.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
-                                    `Hola, soy del Hospital San Vicente. Vi que intentó agendar una cita y queremos ayudarle a completarla.`
+                                    `Hola, le escribimos de ${organizationName}. Vimos que intentó agendar una cita y queremos ayudarle a completarla.`
                                 )}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
