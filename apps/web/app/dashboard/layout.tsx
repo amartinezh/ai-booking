@@ -92,15 +92,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     ) : (
                         <BrandLogo size={40} alt={orgName} />
                     )}
-                    <h2 className="text-lg font-bold tracking-tight leading-tight text-zinc-900 dark:text-white line-clamp-2" title={orgName}>{orgName}</h2>
+                    <h2 className="text-base font-bold tracking-tight leading-snug text-zinc-900 dark:text-white wrap-break-word" title={orgName}>{orgName}</h2>
                 </div>
 
-                <nav className="flex-1 min-h-0 overflow-y-auto p-3 space-y-1">
+                <nav className="flex-1 min-h-0 overflow-y-auto p-3 space-y-0.5">
                     {menus.map((item, idx) => (
                         <Link
                             key={idx}
                             href={item.href}
-                            className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl transition-all"
+                            className="flex items-center gap-3 px-3 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all"
                         >
                             <span className="text-xl">{item.icon}</span>
                             {item.label}
