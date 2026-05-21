@@ -85,22 +85,22 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans">
 
             {/* Sidebar Moderno */}
-            <aside className="w-full md:w-72 bg-white dark:bg-zinc-900 border-b md:border-b-0 md:border-r border-zinc-200 dark:border-zinc-800 hidden md:flex flex-col">
-                <div className="p-6 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
+            <aside className="w-full md:w-72 bg-white dark:bg-zinc-900 border-b md:border-b-0 md:border-r border-zinc-200 dark:border-zinc-800 hidden md:flex flex-col md:h-screen md:sticky md:top-0">
+                <div className="p-5 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-3 shrink-0">
                     {orgLogoUrl ? (
                         <img src={orgLogoUrl} alt="Logo Organización" className="w-10 h-10 shrink-0 rounded-lg object-contain bg-white shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800" />
                     ) : (
                         <BrandLogo size={40} alt={orgName} />
                     )}
-                    <h2 className="text-xl font-bold tracking-tight text-zinc-900 dark:text-white truncate" title={orgName}>{orgName}</h2>
+                    <h2 className="text-lg font-bold tracking-tight leading-tight text-zinc-900 dark:text-white line-clamp-2" title={orgName}>{orgName}</h2>
                 </div>
 
-                <nav className="flex-1 p-4 space-y-2">
+                <nav className="flex-1 min-h-0 overflow-y-auto p-3 space-y-1">
                     {menus.map((item, idx) => (
                         <Link
                             key={idx}
                             href={item.href}
-                            className="flex items-center gap-3 px-4 py-3 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-2xl transition-all"
+                            className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl transition-all"
                         >
                             <span className="text-xl">{item.icon}</span>
                             {item.label}
@@ -108,7 +108,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     ))}
                 </nav>
 
-                <div className="p-6 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
+                <div className="p-5 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 shrink-0">
                     <div className="text-xs mb-4">
                         <p className="font-semibold text-zinc-900 dark:text-white truncate text-sm mb-1">{email}</p>
                         <span className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 font-medium">

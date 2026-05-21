@@ -134,6 +134,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         update: jest.fn(async () => ({})),
       },
       organization: { findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null) },
+      doctorProfile: { findMany: jest.fn(async () => []) },
     };
 
     const organizationSettings = {
@@ -176,6 +177,69 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  // ── Resolución de médico preferido (nombre libre → DoctorProfile.id) ──
+  describe('resolvePreferredDoctorId', () => {
+    const SERVICE_ID = 'svc-1';
+    const resolve = (name: string | null | undefined) =>
+      (service as any).resolvePreferredDoctorId(ORG_ID, SERVICE_ID, name);
+
+    it('match único: una sola coincidencia en el servicio devuelve su id', async () => {
+      prisma.doctorProfile.findMany.mockResolvedValueOnce([
+        { id: 'd1', fullName: 'Carlos Pérez' },
+        { id: 'd2', fullName: 'Ana Gómez' },
+      ]);
+
+      await expect(resolve('Dr. Pérez')).resolves.toBe('d1');
+      // Bastó la consulta acotada al servicio; no se hace fallback org-wide.
+      expect(prisma.doctorProfile.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.doctorProfile.findMany).toHaveBeenCalledWith({
+        where: { organizationId: ORG_ID, serviceId: SERVICE_ID, isActive: true },
+        select: { id: true, fullName: true },
+      });
+    });
+
+    it('ambigüedad: varias coincidencias devuelven null (nunca asigna al azar)', async () => {
+      // Dos "Pérez" en el servicio → ambiguo; el fallback org-wide repite la ambigüedad.
+      prisma.doctorProfile.findMany
+        .mockResolvedValueOnce([
+          { id: 'd1', fullName: 'Ana Pérez' },
+          { id: 'd2', fullName: 'Luis Pérez' },
+        ])
+        .mockResolvedValueOnce([
+          { id: 'd1', fullName: 'Ana Pérez' },
+          { id: 'd2', fullName: 'Luis Pérez' },
+        ]);
+
+      await expect(resolve('perez')).resolves.toBeNull();
+      // Intentó servicio y luego org-wide.
+      expect(prisma.doctorProfile.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('sin acentos: "nunez" coincide con "Núñez" (normalización NFD)', async () => {
+      prisma.doctorProfile.findMany.mockResolvedValueOnce([
+        { id: 'd9', fullName: 'María Núñez' },
+      ]);
+
+      await expect(resolve('doctora nunez')).resolves.toBe('d9');
+    });
+
+    it('fallback org-wide: si no hay match en el servicio, busca en toda la organización', async () => {
+      prisma.doctorProfile.findMany
+        .mockResolvedValueOnce([]) // servicio: vacío
+        .mockResolvedValueOnce([{ id: 'd5', fullName: 'Jorge Salazar' }]); // org-wide
+
+      await expect(resolve('salazar')).resolves.toBe('d5');
+      expect(prisma.doctorProfile.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('sin nombre: retorna null sin tocar la base de datos', async () => {
+      await expect(resolve(null)).resolves.toBeNull();
+      await expect(resolve('')).resolves.toBeNull();
+      await expect(resolve('Dr')).resolves.toBeNull(); // needle < 3 chars tras limpiar
+      expect(prisma.doctorProfile.findMany).not.toHaveBeenCalled();
+    });
   });
 
   // ── Sinónimos de saludo (chatbot-patterns.txt) ──
