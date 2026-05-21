@@ -15,6 +15,7 @@ import { SystemLogModule } from './system-log/system-log.module';
 import { CryptoModule } from './common/crypto/crypto.module';
 import { LlmModule } from './llm/llm.module';
 import { WhatsappConfigModule } from './whatsapp-config/whatsapp-config.module';
+import { IntegrationsModule } from './integrations/integrations.module';
 import { AppointmentReminderModule } from './appointment-reminder/appointment-reminder.module';
 import { GlobalStatsModule } from './global-stats/global-stats.module';
 import { OrganizationsModule } from './organizations/organizations.module';
@@ -39,6 +40,8 @@ import { OrganizationsModule } from './organizations/organizations.module';
     LlmModule,
     // 📱 Canal WhatsApp Business (credenciales encriptadas por clínica).
     WhatsappConfigModule,
+    // 🩺 Diagnóstico en tiempo real de integraciones (Gemini + Meta).
+    IntegrationsModule,
     // Nuestro módulo de IA / Webhooks
     ChatbotModule,
     // ⏰ Cron de recordatorios de citas por WhatsApp (horas hábiles).

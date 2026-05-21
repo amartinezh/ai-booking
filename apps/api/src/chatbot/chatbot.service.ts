@@ -961,6 +961,64 @@ export class ChatbotService implements OnModuleInit {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // MATCH DETERMINISTA POR NOMBRE (bidireccional, sin LLM).
+  // Compara la frase del usuario contra los nombres del catálogo en ambas
+  // direcciones, con normalización (minúsculas, sin tildes) y límites de
+  // palabra:
+  //   • Frase CONTIENE el nombre  → "quiero una consulta externa" ⊇ "Consulta externa".
+  //   • Nombre CONTIENE la frase   → "consulta" ⊆ "Consulta externa" (query corta).
+  // Prefiere la coincidencia más específica (nombre más largo). Esto hace que
+  // el bot reconozca lenguaje natural aunque el proveedor LLM esté apagado.
+  // ══════════════════════════════════════════════════════════════
+  private matchCatalogByName(
+    phrase: string | null,
+    options: { id: string; name: string }[],
+  ): { id: string; name: string } | null {
+    const norm = (s: string) =>
+      s
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+    const np = norm(phrase || '');
+    if (np.length < 3) return null;
+    const paddedPhrase = ` ${np} `;
+
+    let exact: { id: string; name: string } | null = null;
+    let phraseContainsName: { opt: { id: string; name: string }; len: number } | null = null;
+    let nameContainsPhrase: { opt: { id: string; name: string }; len: number } | null = null;
+
+    for (const o of options) {
+      const nn = norm(o.name);
+      if (nn.length < 3) continue;
+      if (nn === np) {
+        exact = { id: o.id, name: o.name };
+        break;
+      }
+      // Dirección A: la frase del usuario contiene el nombre del catálogo
+      // como secuencia de palabras completas. La más específica = nombre más largo.
+      if (paddedPhrase.includes(` ${nn} `)) {
+        if (!phraseContainsName || nn.length > phraseContainsName.len) {
+          phraseContainsName = { opt: o, len: nn.length };
+        }
+      }
+      // Dirección B: el nombre del catálogo contiene la frase (query corta).
+      else if (` ${nn} `.includes(paddedPhrase)) {
+        if (!nameContainsPhrase || nn.length < nameContainsPhrase.len) {
+          nameContainsPhrase = { opt: o, len: nn.length };
+        }
+      }
+    }
+
+    if (exact) return exact;
+    if (phraseContainsName) return { id: phraseContainsName.opt.id, name: phraseContainsName.opt.name };
+    if (nameContainsPhrase) return { id: nameContainsPhrase.opt.id, name: nameContainsPhrase.opt.name };
+    return null;
+  }
+
   private async resolveServiceFromInput(
     organizationId: string,
     senderId: string,
@@ -974,27 +1032,24 @@ export class ChatbotService implements OnModuleInit {
       const name = await this.redis.get(`temp_service_${candidate}_name:${organizationId}:${senderId}`);
       if (id && name) return { id, name };
     }
-    // 2/3) Match parcial por nombre en BD
-    const query = (geminiSpecialty || text || '').trim();
-    if (query.length >= 3) {
-      const svc = await this.prisma.medicalService.findFirst({
-        where: {
-          name: { contains: query, mode: 'insensitive' },
-          isActive: true,
-          organizationId,
-        },
-      });
-      if (svc) return { id: svc.id, name: svc.name };
-    }
+
+    // Catálogo activo (lo reutilizamos para el match por nombre y el semántico).
+    const services = await this.prisma.medicalService.findMany({
+      where: { isActive: true, organizationId },
+      select: { id: true, name: true },
+    });
+
+    // 2/3) Match determinista por nombre (bidireccional, sin LLM). Probamos
+    // primero las palabras reales del usuario y, si existe, la pista de Gemini.
+    const byName =
+      this.matchCatalogByName(text, services) ||
+      this.matchCatalogByName(geminiSpecialty, services);
+    if (byName) return byName;
 
     // 4) Mapeo semántico (LLM) contra el catálogo real — último recurso.
     // Resuelve frases como "necesito una cita de consulta externa para mañana"
     // que el substring no captura. La frase original es la mejor señal.
     const phrase = (text || geminiSpecialty || '').trim();
-    const services = await this.prisma.medicalService.findMany({
-      where: { isActive: true, organizationId },
-      select: { id: true, name: true },
-    });
     const semantic = await this.semanticMatchFromCatalog(
       organizationId,
       phrase,
@@ -1025,25 +1080,20 @@ export class ChatbotService implements OnModuleInit {
       const part = await this.ensureParticularEpsForOrg(organizationId);
       if (part) return part;
     }
-    // 3) Match parcial por nombre en BD (incluye "Particular" si el usuario lo escribió)
-    const query = (geminiEps || text || '').trim();
-    if (query.length >= 3) {
-      const eps = await this.prisma.eps.findFirst({
-        where: {
-          name: { contains: query, mode: 'insensitive' },
-          isActive: true,
-          organizationId,
-        },
-      });
-      if (eps) return { id: eps.id, name: eps.name };
-    }
-
-    // 4) Mapeo semántico (LLM) contra el catálogo real de EPS — último recurso.
-    const phrase = (text || geminiEps || '').trim();
+    // Catálogo de EPS activas (reutilizado por el match por nombre y el semántico).
     const epsList = await this.prisma.eps.findMany({
       where: { isActive: true, organizationId },
       select: { id: true, name: true },
     });
+
+    // 3) Match determinista por nombre (bidireccional, sin LLM).
+    const byName =
+      this.matchCatalogByName(text, epsList) ||
+      this.matchCatalogByName(geminiEps, epsList);
+    if (byName) return byName;
+
+    // 4) Mapeo semántico (LLM) contra el catálogo real de EPS — último recurso.
+    const phrase = (text || geminiEps || '').trim();
     const semantic = await this.semanticMatchFromCatalog(
       organizationId,
       phrase,

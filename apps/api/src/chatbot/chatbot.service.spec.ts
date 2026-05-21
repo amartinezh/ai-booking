@@ -444,11 +444,15 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       prisma.eps.findMany.mockResolvedValue([{ id: 'e1', name: 'SURA' }]);
     });
 
+    // Paráfrasis SIN el nombre literal de ningún servicio del catálogo: obliga
+    // a usar el mapeo semántico (el match determinista por nombre la deja en null).
+    const SEM_PHRASE = 'Necesito una valoración médica pronto';
+
     it('Caso A: frase larga se mapea al servicio y avanza a EPS', async () => {
       provider.mapEntityToCatalog.mockResolvedValueOnce({ id: 's1' });
 
       await service.processIncomingMessage(
-        makeTextEvent('Necesito una cita de consulta externa para mañana'),
+        makeTextEvent(SEM_PHRASE),
       );
 
       expect(provider.mapEntityToCatalog).toHaveBeenCalledTimes(1);
@@ -464,7 +468,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       provider.mapEntityToCatalog.mockResolvedValueOnce({ id: 'id-inexistente' });
 
       await service.processIncomingMessage(
-        makeTextEvent('Necesito una cita de consulta externa para mañana'),
+        makeTextEvent(SEM_PHRASE),
       );
 
       // No se resolvió ningún servicio (id inválido descartado).
@@ -477,7 +481,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       provider.mapEntityToCatalog.mockRejectedValueOnce(new Error('boom'));
 
       await service.processIncomingMessage(
-        makeTextEvent('Necesito una cita de consulta externa para mañana'),
+        makeTextEvent(SEM_PHRASE),
       );
 
       // Degradación segura: no resolvió servicio, no lanzó excepción.
@@ -494,6 +498,33 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
       expect(provider.mapEntityToCatalog).not.toHaveBeenCalled();
       expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
+    });
+
+    // Regresión: la frase del usuario CONTIENE el nombre de un servicio del
+    // catálogo ("quiero una consulta externa"). El match determinista por nombre
+    // debe resolverlo SIN llamar al LLM (clave cuando no hay proveedor configurado).
+    it('resuelve por nombre cuando la frase contiene el servicio, sin usar el LLM', async () => {
+      await service.processIncomingMessage(
+        makeTextEvent('quiero una consulta externa, la opción A'),
+      );
+
+      expect(provider.mapEntityToCatalog).not.toHaveBeenCalled();
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
+      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBe('Consulta externa');
+      // Avanzó al paso de EPS y no cayó en el loop de "no entendí"/reprompt.
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
+      expect(sentMessages().join('\n')).not.toContain('servicios necesitas');
+    });
+
+    // Aunque el proveedor LLM esté APAGADO (forOrgOrNull → null), el match por
+    // nombre sigue funcionando. Esta era la causa raíz del loop reportado.
+    it('resuelve por nombre aun sin proveedor LLM configurado', async () => {
+      llmFactory.forOrgOrNull.mockResolvedValue(null);
+
+      await service.processIncomingMessage(makeTextEvent('quiero una consulta externa'));
+
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
     });
   });
 });

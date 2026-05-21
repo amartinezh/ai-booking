@@ -8,6 +8,7 @@ import SettingsForm from './SettingsForm';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
 import WhatsappChannelForm from './WhatsappChannelForm';
+import ConnectionHealthPanel from './ConnectionHealthPanel';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -101,6 +102,8 @@ export default async function ConfiguracionPage({
                 )}
                 {activeTab === 'integrations' && (
                     <div className="space-y-12">
+                        <ConnectionHealthPanel />
+                        <div className="border-t border-zinc-200 dark:border-zinc-800" />
                         {aiConfig ? (
                             <AiIntegrationForm initial={{
                                 ...aiConfig,
