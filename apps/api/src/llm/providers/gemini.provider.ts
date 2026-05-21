@@ -6,11 +6,14 @@ import {
   DecryptedAiConfig,
   LLMProvider,
   SchedulingExtraction,
+  CatalogOption,
   normalizeIntent,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
   SCHEDULING_EXTRACTION_PROMPT,
+  buildCatalogMappingPrompt,
+  parseCatalogMappingResponse,
 } from '../prompts/shared-prompts';
 
 export class GeminiProvider implements LLMProvider {
@@ -85,5 +88,19 @@ export class GeminiProvider implements LLMProvider {
       `Pregunta: "${question}"`,
     ]);
     return result.response.text().trim();
+  }
+
+  async mapEntityToCatalog(input: {
+    text: string;
+    options: CatalogOption[];
+    entityKind: string;
+  }): Promise<{ id: string | null }> {
+    if (!input.options?.length || !input.text?.trim()) return { id: null };
+    const model = this.client.getGenerativeModel({ model: this.model });
+    const result = await model.generateContent([
+      buildCatalogMappingPrompt(input.entityKind, input.options),
+      `Texto del paciente: "${input.text}"`,
+    ]);
+    return parseCatalogMappingResponse(result.response.text());
   }
 }

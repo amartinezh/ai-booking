@@ -5,11 +5,14 @@ import {
   DecryptedAiConfig,
   LLMProvider,
   SchedulingExtraction,
+  CatalogOption,
   normalizeIntent,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
   SCHEDULING_EXTRACTION_PROMPT,
+  buildCatalogMappingPrompt,
+  parseCatalogMappingResponse,
 } from '../prompts/shared-prompts';
 
 const MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
@@ -89,6 +92,20 @@ export class ClaudeProvider implements LLMProvider {
       max_tokens: 1024,
     });
     return text.trim();
+  }
+
+  async mapEntityToCatalog(input: {
+    text: string;
+    options: CatalogOption[];
+    entityKind: string;
+  }): Promise<{ id: string | null }> {
+    if (!input.options?.length || !input.text?.trim()) return { id: null };
+    const raw = await this.message({
+      system: buildCatalogMappingPrompt(input.entityKind, input.options),
+      messages: [{ role: 'user', content: `Texto del paciente: "${input.text}"` }],
+      max_tokens: 128,
+    });
+    return parseCatalogMappingResponse(raw);
   }
 
   // ── HTTP helper ───────────────────────────────────────────────────────────

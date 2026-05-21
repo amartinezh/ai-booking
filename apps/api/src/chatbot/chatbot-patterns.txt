@@ -51,6 +51,43 @@ hola
 hols
 hloa
 ola
+holi
+holis
+hola buenas
+buenas hola
+buenas
+buenos
+buenos dias
+buenos días
+buen dia
+buen día
+buenas tardes
+buenas tarde
+buenas noches
+buena noche
+que mas
+qué más
+quiubo
+quihubo
+qubo
+q hubo
+que tal
+qué tal
+que hubo
+qué hubo
+como esta
+cómo está
+como estas
+cómo estás
+hey
+ey
+eyy
+saludos
+saludo
+alo
+aló
+hello
+hi
 inicio
 empezar
 comenzar
@@ -65,6 +102,43 @@ hola
 hols
 hloa
 ola
+holi
+holis
+hola buenas
+buenas hola
+buenas
+buenos
+buenos dias
+buenos días
+buen dia
+buen día
+buenas tardes
+buenas tarde
+buenas noches
+buena noche
+que mas
+qué más
+quiubo
+quihubo
+qubo
+q hubo
+que tal
+qué tal
+que hubo
+qué hubo
+como esta
+cómo está
+como estas
+cómo estás
+hey
+ey
+eyy
+saludos
+saludo
+alo
+aló
+hello
+hi
 salir
 reiniciar
 volver

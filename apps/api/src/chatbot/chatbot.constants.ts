@@ -26,6 +26,10 @@ export const SESSION_TTL = 3600;
 // Longitud mínima de dígitos para considerar una cédula válida.
 export const MIN_CEDULA_LENGTH = 4;
 
+// Timeout para el mapeo semántico de catálogo (servicio/EPS) vía LLM.
+// Si la API tarda más, caemos al menú determinista (no degrada la UX de voz).
+export const SEMANTIC_MAP_TIMEOUT_MS = 2500;
+
 // Tiempo máximo para confirmar un cupo de waitlist (30 minutos)
 export const WAITLIST_CONFIRM_TTL = 1800;
 

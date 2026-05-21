@@ -50,6 +50,42 @@ Estructura JSON Requerida:
 }
 `;
 
+/**
+ * Construye el system prompt para el "Mapeo Semántico" de la frase del paciente
+ * contra el catálogo real de la clínica (servicios o EPS). El texto del paciente
+ * se envía aparte como mensaje de usuario.
+ */
+export function buildCatalogMappingPrompt(
+  entityKind: string,
+  options: { id: string; name: string }[],
+): string {
+  const lista = options.map((o) => `${o.id} | ${o.name}`).join('\n');
+  return (
+    `Actúa como un extractor de entidades médicas para una recepción hospitalaria. ` +
+    `Tu tarea es mapear la intención del paciente a uno de los ${entityKind} disponibles en la clínica.\n\n` +
+    `Lista de ${entityKind} disponibles (ID | Nombre):\n${lista}\n\n` +
+    `Instrucciones de salida (JSON estricto): Si la intención es clara y coincide ` +
+    `semánticamente con una opción (ej: "consulta externa" == "Consulta Externa"), ` +
+    `devuelve {"id": "ID_CORRECTO"}. Si la intención no es clara, la frase es ambigua ` +
+    `o no coincide con nada, devuelve {"id": null}.\n` +
+    `REGLA DE ORO: Evita falsos positivos. Si no estás 95% seguro de la coincidencia ` +
+    `semántica, devuelve {"id": null}.\n` +
+    `Devuelve ÚNICAMENTE el JSON, sin texto adicional ni bloques de código.`
+  );
+}
+
+/** Extrae `{ id }` del texto JSON devuelto por el LLM, tolerante a ```bloques```. */
+export function parseCatalogMappingResponse(raw: string): { id: string | null } {
+  try {
+    const cleaned = (raw || '').trim().replace(/```json/gi, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    const id = parsed?.id;
+    return { id: typeof id === 'string' && id.trim() ? id.trim() : null };
+  } catch {
+    return { id: null };
+  }
+}
+
 export const SCHEDULING_EXTRACTION_PROMPT = `
 Eres un asistente médico hiper-empático en una clínica colombiana. Analiza el texto o audio del paciente y realiza TRES tareas en simultáneo sobre el mismo mensaje:
 

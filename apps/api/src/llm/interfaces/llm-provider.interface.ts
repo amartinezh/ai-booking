@@ -17,6 +17,12 @@ export interface AudioInput {
   mimeType: string;
 }
 
+/** Opción de catálogo (servicio o EPS) que se ofrece al LLM para mapear. */
+export interface CatalogOption {
+  id: string;
+  name: string;
+}
+
 /**
  * Intención principal detectada por el LLM en un turno conversacional.
  * - `agendar_cita`   → el paciente quiere reservar/gestionar una cita.
@@ -111,6 +117,19 @@ export interface LLMProvider {
    * El llamador arma el prompt; el provider solo lo ejecuta.
    */
   answerFAQ(systemPrompt: string, question: string): Promise<string>;
+
+  /**
+   * Mapeo semántico: dada la frase del paciente y el catálogo real de la
+   * clínica (servicios o EPS), devuelve el `id` de la opción que coincide
+   * semánticamente, o `null` si es ambiguo / no coincide (evita falsos
+   * positivos). El llamador DEBE validar que el `id` pertenezca al catálogo.
+   */
+  mapEntityToCatalog(input: {
+    text: string;
+    options: CatalogOption[];
+    /** Etiqueta para el prompt, p.ej. "servicio médico" o "EPS o aseguradora". */
+    entityKind: string;
+  }): Promise<{ id: string | null }>;
 }
 
 /**

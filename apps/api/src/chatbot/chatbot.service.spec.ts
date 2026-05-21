@@ -81,7 +81,12 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   let service: ChatbotService;
   let redis: ReturnType<typeof createFakeRedis>;
   let prisma: any;
-  let provider: { name: string; extractSchedulingIntent: jest.Mock; answerFAQ: jest.Mock };
+  let provider: {
+    name: string;
+    extractSchedulingIntent: jest.Mock;
+    answerFAQ: jest.Mock;
+    mapEntityToCatalog: jest.Mock;
+  };
   let llmFactory: { forOrgOrNull: jest.Mock };
   let knowledgeBase: { hasContent: jest.Mock; getContent: jest.Mock };
   let sendSpy: jest.SpyInstance;
@@ -97,6 +102,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       name: 'GEMINI',
       extractSchedulingIntent: jest.fn(async () => extraction()),
       answerFAQ: jest.fn(async () => 'respuesta FAQ'),
+      mapEntityToCatalog: jest.fn(async () => ({ id: null })),
     };
     llmFactory = { forOrgOrNull: jest.fn(async () => provider) };
 
@@ -170,6 +176,36 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  // ── Sinónimos de saludo (chatbot-patterns.txt) ──
+  describe('patrones de saludo', () => {
+    beforeEach(() => {
+      // Carga los patrones reales del archivo (onModuleInit no corre en tests).
+      (service as any).loadPatterns();
+    });
+
+    it.each([
+      'hola',
+      'buenas',
+      'buenos días',
+      'buenas tardes',
+      'buenas noches',
+      'qué más',
+      'quiubo',
+      'qué tal',
+      'hey',
+      'saludos',
+    ])('reconoce "%s" como saludo', (saludo) => {
+      expect((service as any).greetingRegex.test(saludo)).toBe(true);
+      // Debe estar también en escape (resetea sesión / evita LLM).
+      expect((service as any).escapeRegex.test(saludo)).toBe(true);
+    });
+
+    it('no confunde una solicitud real con un saludo', () => {
+      expect((service as any).greetingRegex.test('necesito una cita')).toBe(false);
+      expect((service as any).greetingRegex.test('buenas necesito una cita')).toBe(false);
+    });
   });
 
   // ── PRIMER TURNO: siempre clasifica con el LLM (entrada abierta) ──
@@ -324,6 +360,76 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBe('1');
       // No es la re-presentación cálida de agendamiento.
       expect(sentMessages()[0]).not.toContain('🗓️');
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // Mapeo Semántico de Servicios (LLM contra catálogo real)
+  // ════════════════════════════════════════════════════════════
+  describe('mapeo semántico de servicio en AWAITING_SPECIALTY', () => {
+    beforeEach(() => {
+      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_SPECIALTY);
+      // El catálogo real de la clínica.
+      prisma.medicalService.findMany.mockResolvedValue([
+        { id: 's1', name: 'Consulta externa' },
+        { id: 's2', name: 'Laboratorio clínico' },
+      ]);
+      // El substring NO resuelve la frase larga.
+      prisma.medicalService.findFirst.mockResolvedValue(null);
+      // Hay EPS para que el siguiente paso muestre menú sin romper.
+      prisma.eps.findMany.mockResolvedValue([{ id: 'e1', name: 'SURA' }]);
+    });
+
+    it('Caso A: frase larga se mapea al servicio y avanza a EPS', async () => {
+      provider.mapEntityToCatalog.mockResolvedValueOnce({ id: 's1' });
+
+      await service.processIncomingMessage(
+        makeTextEvent('Necesito una cita de consulta externa para mañana'),
+      );
+
+      expect(provider.mapEntityToCatalog).toHaveBeenCalledTimes(1);
+      // Servicio resuelto y persistido.
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
+      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBe('Consulta externa');
+      // Avanzó al paso de EPS (no se quedó en el menú de servicio ni dio error).
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
+      expect(sentMessages().join('\n')).not.toContain('no logré entender');
+    });
+
+    it('anti-alucinación: id devuelto que no existe en el catálogo se descarta', async () => {
+      provider.mapEntityToCatalog.mockResolvedValueOnce({ id: 'id-inexistente' });
+
+      await service.processIncomingMessage(
+        makeTextEvent('Necesito una cita de consulta externa para mañana'),
+      );
+
+      // No se resolvió ningún servicio (id inválido descartado).
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      // No avanzó a EPS; sigue en selección de servicio.
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_SPECIALTY);
+    });
+
+    it('Caso B: si el LLM falla, cae al flujo determinista sin romper', async () => {
+      provider.mapEntityToCatalog.mockRejectedValueOnce(new Error('boom'));
+
+      await service.processIncomingMessage(
+        makeTextEvent('Necesito una cita de consulta externa para mañana'),
+      );
+
+      // Degradación segura: no resolvió servicio, no lanzó excepción.
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(sentMessages().length).toBeGreaterThan(0);
+    });
+
+    it('no llama al mapeo semántico para una letra de menú (atajo barato)', async () => {
+      // "a" resuelve por letra; no debe gastar una llamada al LLM.
+      redis.store.set(`temp_service_A_id:${ORG_ID}:${SENDER}`, 's1');
+      redis.store.set(`temp_service_A_name:${ORG_ID}:${SENDER}`, 'Consulta externa');
+
+      await service.processIncomingMessage(makeTextEvent('a'));
+
+      expect(provider.mapEntityToCatalog).not.toHaveBeenCalled();
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
     });
   });
 });

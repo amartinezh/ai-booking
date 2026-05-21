@@ -5,11 +5,14 @@ import {
   DecryptedAiConfig,
   LLMProvider,
   SchedulingExtraction,
+  CatalogOption,
   normalizeIntent,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
   SCHEDULING_EXTRACTION_PROMPT,
+  buildCatalogMappingPrompt,
+  parseCatalogMappingResponse,
 } from '../prompts/shared-prompts';
 
 const CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
@@ -87,6 +90,22 @@ export class ChatGptProvider implements LLMProvider {
         { role: 'user', content: `Pregunta: "${question}"` },
       ],
     });
+  }
+
+  async mapEntityToCatalog(input: {
+    text: string;
+    options: CatalogOption[];
+    entityKind: string;
+  }): Promise<{ id: string | null }> {
+    if (!input.options?.length || !input.text?.trim()) return { id: null };
+    const raw = await this.chat({
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: buildCatalogMappingPrompt(input.entityKind, input.options) },
+        { role: 'user', content: `Texto del paciente: "${input.text}"` },
+      ],
+    });
+    return parseCatalogMappingResponse(raw);
   }
 
   // ── HTTP helpers ──────────────────────────────────────────────────────────

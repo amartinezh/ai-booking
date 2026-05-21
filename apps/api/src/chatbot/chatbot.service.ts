@@ -14,6 +14,7 @@ import {
   MIN_CEDULA_LENGTH,
   PARTICULAR_EPS_NAME,
   DEFAULT_MAX_RETRIES,
+  SEMANTIC_MAP_TIMEOUT_MS,
 } from './chatbot.constants';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
@@ -856,6 +857,59 @@ export class ChatbotService implements OnModuleInit {
   // Resuelve el input del usuario contra el menú de servicios:
   // 1) Letra exacta en el mapping. 2) Match parcial por nombre (insensitive contains).
   // 3) Si Gemini devolvió `especialidad`, intenta resolver por ese texto.
+  // Promesa con timeout: si `p` no resuelve en `ms`, rechaza. Lo usamos para
+  // que una API de LLM lenta no congele el turno (clave en voz).
+  private withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+    let timer: NodeJS.Timeout;
+    const timeout = new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('SEMANTIC_MAP_TIMEOUT')), ms);
+    });
+    return Promise.race([p, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // MAPEO SEMÁNTICO (LLM) contra el catálogo real de la clínica.
+  // Último recurso cuando letra/substring no resolvieron. Valida que el id
+  // devuelto exista en el catálogo (anti-alucinación) y aplica timeout.
+  // Devuelve null de forma segura ante cualquier fallo → cae al menú.
+  // ══════════════════════════════════════════════════════════════
+  private async semanticMatchFromCatalog(
+    organizationId: string,
+    phrase: string | null,
+    entityKind: string,
+    options: { id: string; name: string }[],
+  ): Promise<{ id: string; name: string } | null> {
+    const text = (phrase || '').trim();
+    // Solo vale la pena para frases (no letras sueltas) y con catálogo no vacío.
+    if (text.length < 4 || options.length === 0) return null;
+
+    const provider = await this.llmFactory.forOrgOrNull(organizationId);
+    if (!provider) return null;
+
+    try {
+      const result = await this.withTimeout(
+        provider.mapEntityToCatalog({
+          text,
+          options: options.map((o) => ({ id: o.id, name: o.name })),
+          entityKind,
+        }),
+        SEMANTIC_MAP_TIMEOUT_MS,
+      );
+      if (!result?.id) return null;
+      // Validación dura: el id debe pertenecer al catálogo real de esta org.
+      const match = options.find((o) => o.id === result.id);
+      if (!match) {
+        this.logger.warn(`Mapeo semántico (${entityKind}) devolvió id inexistente: ${result.id}`);
+        return null;
+      }
+      this.logger.log(`🧭 Mapeo semántico (${entityKind}): "${text}" → ${match.name}`);
+      return { id: match.id, name: match.name };
+    } catch (e) {
+      this.logger.warn(`Mapeo semántico (${entityKind}) falló/timeout: ${e?.message}`);
+      return null;
+    }
+  }
+
   private async resolveServiceFromInput(
     organizationId: string,
     senderId: string,
@@ -881,6 +935,23 @@ export class ChatbotService implements OnModuleInit {
       });
       if (svc) return { id: svc.id, name: svc.name };
     }
+
+    // 4) Mapeo semántico (LLM) contra el catálogo real — último recurso.
+    // Resuelve frases como "necesito una cita de consulta externa para mañana"
+    // que el substring no captura. La frase original es la mejor señal.
+    const phrase = (text || geminiSpecialty || '').trim();
+    const services = await this.prisma.medicalService.findMany({
+      where: { isActive: true, organizationId },
+      select: { id: true, name: true },
+    });
+    const semantic = await this.semanticMatchFromCatalog(
+      organizationId,
+      phrase,
+      'servicio médico',
+      services,
+    );
+    if (semantic) return semantic;
+
     return null;
   }
 
@@ -915,6 +986,21 @@ export class ChatbotService implements OnModuleInit {
       });
       if (eps) return { id: eps.id, name: eps.name };
     }
+
+    // 4) Mapeo semántico (LLM) contra el catálogo real de EPS — último recurso.
+    const phrase = (text || geminiEps || '').trim();
+    const epsList = await this.prisma.eps.findMany({
+      where: { isActive: true, organizationId },
+      select: { id: true, name: true },
+    });
+    const semantic = await this.semanticMatchFromCatalog(
+      organizationId,
+      phrase,
+      'EPS o aseguradora',
+      epsList,
+    );
+    if (semantic) return semantic;
+
     return null;
   }
 
