@@ -5,6 +5,7 @@ import {
   DecryptedAiConfig,
   LLMProvider,
   SchedulingExtraction,
+  normalizeIntent,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
@@ -68,6 +69,8 @@ export class ChatGptProvider implements LLMProvider {
       eps: parsed.eps ?? null,
       especialidad: parsed.especialidad ?? null,
       doctor: parsed.doctor ?? null,
+      fechaSolicitada: parsed.fechaSolicitada ?? null,
+      intent: normalizeIntent(parsed.intent),
       isEscape: Boolean(parsed.isEscape),
       outOfContext: Boolean(parsed.outOfContext),
       ininteligible: Boolean(parsed.ininteligible),

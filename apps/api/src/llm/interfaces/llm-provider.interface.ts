@@ -17,12 +17,46 @@ export interface AudioInput {
   mimeType: string;
 }
 
+/**
+ * Intención principal detectada por el LLM en un turno conversacional.
+ * - `agendar_cita`   → el paciente quiere reservar/gestionar una cita.
+ * - `consulta_faq`   → duda general (horarios, servicios, ubicación, etc.).
+ * - `insulto_abuso`  → lenguaje ofensivo/abusivo → guardrail.
+ * - `otro`           → no clasificable / fallback (se trata como agendamiento).
+ */
+export type SchedulingIntent =
+  | 'agendar_cita'
+  | 'consulta_faq'
+  | 'insulto_abuso'
+  | 'otro';
+
+/**
+ * Normaliza el valor `intent` recibido del LLM a uno de los valores válidos.
+ * Fail-open: cualquier valor desconocido/ausente cae en `'otro'`, que el
+ * orquestador trata como agendamiento (no bloquea al paciente).
+ */
+export function normalizeIntent(value: unknown): SchedulingIntent {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (v === 'agendar_cita' || v === 'consulta_faq' || v === 'insulto_abuso') {
+    return v;
+  }
+  return 'otro';
+}
+
 export interface SchedulingExtraction {
   cedula: string | null;
   nombre: string | null;
   eps: string | null;
   especialidad: string | null;
   doctor: string | null;
+  /**
+   * Fecha/franja solicitada en lenguaje natural (ej: "mañana", "el lunes",
+   * "2026-05-25"). Es una PISTA: el agendamiento sigue ofreciendo cupos reales.
+   * `null` si el paciente no menciona ninguna preferencia temporal.
+   */
+  fechaSolicitada: string | null;
+  /** Clasificación de intención principal del turno (Tarea C). */
+  intent: SchedulingIntent;
   isEscape: boolean;
   outOfContext: boolean;
   ininteligible: boolean;

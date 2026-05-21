@@ -28,6 +28,7 @@ import textToSpeech from '@google-cloud/text-to-speech';
 import * as fs from 'fs';
 import * as path from 'path';
 import { LlmFactoryService } from '../llm/llm-factory.service';
+import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 
@@ -333,19 +334,7 @@ export class ChatbotService implements OnModuleInit {
     text: string | null,
     audioBuffer: Buffer | null,
     attempt = 1,
-  ): Promise<{
-    cedula: string | null;
-    nombre: string | null;
-    eps: string | null;
-    especialidad: string | null;
-    doctor: string | null;
-    isEscape: boolean;
-    outOfContext: boolean;
-    ininteligible: boolean;
-    isFallback: boolean;
-    isCancellation: boolean;
-    isRateLimited: boolean;
-  }> {
+  ): Promise<SchedulingExtraction> {
     const provider = await this.llmFactory.forOrgOrNull(organizationId);
     if (!provider) {
       this.logger.warn(
@@ -353,6 +342,7 @@ export class ChatbotService implements OnModuleInit {
       );
       return {
         cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
+        fechaSolicitada: null, intent: 'otro',
         isEscape: false, outOfContext: false, ininteligible: false,
         isFallback: true, isCancellation: false, isRateLimited: false,
       };
@@ -373,6 +363,7 @@ export class ChatbotService implements OnModuleInit {
         this.logger.warn(`${provider.name} rate limit (429) — usando fallback simple, sin incrementar contador de fallos`);
         return {
           cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
+          fechaSolicitada: null, intent: 'otro',
           isEscape: false, outOfContext: false, ininteligible: false,
           isFallback: true, isCancellation: false, isRateLimited: true,
         };
@@ -386,6 +377,7 @@ export class ChatbotService implements OnModuleInit {
       this.logger.error(`Error procesando IA con ${provider.name} tras ${maxRetries} intentos`, e);
       return {
         cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
+        fechaSolicitada: null, intent: 'otro',
         isEscape: false, outOfContext: false, ininteligible: false,
         isFallback: true, isCancellation: false, isRateLimited: false,
       };
@@ -406,6 +398,8 @@ export class ChatbotService implements OnModuleInit {
       eps: currentState === ChatState.AWAITING_EPS ? (t || null) : null,
       especialidad: currentState === ChatState.AWAITING_SPECIALTY ? (t || null) : null,
       doctor: null,
+      fechaSolicitada: null,
+      intent: 'otro' as const,
       isEscape: this.escapeRegex.test(t),
       outOfContext: false,
       ininteligible: false,
@@ -1121,12 +1115,14 @@ export class ChatbotService implements OnModuleInit {
       !!text &&
       this.escapeRegex.test(text.trim());
 
-    let aiData = {
-      cedula: null as string | null,
-      nombre: null as string | null,
-      eps: null as string | null,
-      especialidad: null as string | null,
-      doctor: null as string | null,
+    let aiData: SchedulingExtraction = {
+      cedula: null,
+      nombre: null,
+      eps: null,
+      especialidad: null,
+      doctor: null,
+      fechaSolicitada: null,
+      intent: 'otro',
       isEscape: false,
       outOfContext: false,
       ininteligible: false,
@@ -1150,19 +1146,16 @@ export class ChatbotService implements OnModuleInit {
     } else if (
       messageType === 'text' &&
       !!text &&
-      currentState === ChatState.IDLE &&
-      await this.knowledgeBase.hasContent(organizationId)
+      currentState === ChatState.IDLE
     ) {
-      // Intent routing: solo en IDLE y cuando la KB está disponible.
-      // Clasifica ANTES de llamar al extractor principal para evitar una llamada Gemini innecesaria.
-      const intent = this.classifyIntentLocal(text);
-      this.logger.log(`🎯 Intent (local): ${intent} para mensaje: "${text}"`);
-
-      if (intent === 'faq') {
-        await this.answerFAQ(text, organizationId, senderId, org, botName);
-        return;
-      }
-      // Para scheduling / cancellation / greeting / other → extracción normal
+      // ── PROTOCOLO DEL PRIMER TURNO (Fase 1) ──────────────────
+      // Entrada abierta: cualquier texto inicial del paciente (que no fuera
+      // un saludo/escape/cancelación puros, ya atendidos arriba sin gastar
+      // LLM) pasa por el extractor, que en UNA sola llamada realiza:
+      //   Tarea A — guardrail de seguridad (intent='insulto_abuso')
+      //   Tarea B — extracción de entidades (cédula, nombre, EPS, etc.)
+      //   Tarea C — clasificación de intención (agendar_cita | consulta_faq | otro)
+      // El branching por intención se centraliza en el INTENT ROUTER (abajo).
       aiData = await this.extractDataWithLLM(organizationId, text, null);
     } else if (isAudio) {
       await this.redis.set(`is_ai_flow:${organizationId}:${senderId}`, 'true', 'EX', SESSION_TTL);
@@ -1315,6 +1308,51 @@ export class ChatbotService implements OnModuleInit {
         });
       }
       return;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // INTENT ROUTER (Fase 2 — Branching dinámico)
+    // Actúa cuando el LLM produjo una clasificación real (no fallback)
+    // y NO estamos en un paso estricto de selección (donde el input es una
+    // letra/opción, no lenguaje libre). Esto cubre el Primer Turno (IDLE) y
+    // los turnos subsiguientes no-estrictos (Fase 4: el paciente puede
+    // cambiar de intención a mitad del agendamiento, p.ej. lanzar una FAQ).
+    // ══════════════════════════════════════════════════════════
+    if (!aiData.isFallback && !isStrictStep) {
+      // ── Tarea A: insulto/abuso → respuesta firme y cierre de sesión ──
+      // Defensa en profundidad: complementa el guardrail por regex (que ya
+      // atrapó los casos obvios antes de gastar una llamada al LLM).
+      if (aiData.intent === 'insulto_abuso') {
+        const humanPhone = org?.supportPhone || '';
+        const reply = humanPhone
+          ? MSGS.guardrailInsulto(humanPhone, botName)
+          : MSGS.maxReintentosReset();
+        await this.smartReply(organizationId, senderId, reply);
+        await this.cleanUpSession(organizationId, senderId);
+
+        await this.interactionLog.log({
+          whatsappId: senderId,
+          organizationId,
+          status: InteractionStatus.ABANDONED,
+          failureReason: FailureReason.OUT_OF_CONTEXT,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: { guardrail: 'INSULT_LLM', previousState: currentState },
+        });
+        return;
+      }
+
+      // ── Tarea C: consulta_faq → RAG sobre la base de conocimiento ──
+      // No cambia el estado: si el paciente venía agendando, conserva su
+      // progreso y la respuesta cierra invitando a continuar.
+      if (
+        aiData.intent === 'consulta_faq' &&
+        !!text &&
+        (await this.knowledgeBase.hasContent(organizationId))
+      ) {
+        await this.answerFAQ(text, organizationId, senderId, org, botName);
+        return;
+      }
     }
 
     if (aiData.outOfContext) {
