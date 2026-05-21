@@ -496,10 +496,10 @@ export class ChatbotService implements OnModuleInit {
       (style === 'INFORMAL'
         ? `"Para agendar, cuéntame qué especialidad necesitas o escríbeme *Hola* para empezar."\n`
         : `"Para agendar, indíqueme la especialidad que necesita o escriba *Hola* para comenzar."\n`) +
-      `7. Termina siempre con ` +
+      `7. Termina SIEMPRE invitando sutilmente a agendar con ` +
       (style === 'INFORMAL'
-        ? `"¿Te ayudo con algo más? 😊"`
-        : `"¿Hay algo más en lo que pueda ayudarle? 😊"`) +
+        ? `"¿Te gustaría agendar una cita ahora? 😊"`
+        : `"¿Desea agendar una cita ahora? 😊"`) +
       ` salvo que ya hayas derivado al teléfono de soporte.\n\n` +
       `--- BASE DE CONOCIMIENTO ---\n` +
       `${kbContent}\n` +
@@ -1417,6 +1417,75 @@ export class ChatbotService implements OnModuleInit {
     if (finalDoctor) await this.redis.set(`temp_doctor:${organizationId}:${senderId}`, finalDoctor, 'EX', SESSION_TTL);
     if (finalEps) await this.redis.set(`temp_eps_query:${organizationId}:${senderId}`, finalEps, 'EX', SESSION_TTL);
     if (finalEspecialidad) await this.redis.set(`temp_especialidad:${organizationId}:${senderId}`, finalEspecialidad, 'EX', SESSION_TTL);
+
+    // ══════════════════════════════════════════════════════════
+    // ACK DEL PRIMER TURNO (Fase 2 — Acknowledge)
+    // Si en el PRIMER mensaje (estado IDLE) el LLM extrajo entidades para
+    // agendar, el Agente las confirma ANTES de pedir lo que falta. La cédula
+    // se VALIDA contra PostgreSQL antes de darla por confirmada (Fase 3).
+    // No hace `return`: tras el ACK, el flujo continúa hacia el primer dato
+    // faltante (servicio → EPS → slot...), evitando re-preguntar lo conocido.
+    // ══════════════════════════════════════════════════════════
+    const extrajoEntidadesTurno1 = !!(
+      aiData.cedula || aiData.nombre || aiData.eps ||
+      aiData.especialidad || aiData.doctor || aiData.fechaSolicitada
+    );
+    if (
+      currentState === ChatState.IDLE &&
+      !aiData.isCancellation &&
+      extrajoEntidadesTurno1
+    ) {
+      let cedulaAck: string | null = null;
+      let nombreAck: string | null = aiData.nombre;
+
+      if (aiData.cedula) {
+        const soloNumeros = aiData.cedula.replace(/\D/g, '');
+        if (soloNumeros.length >= MIN_CEDULA_LENGTH) {
+          // Validación contra PostgreSQL antes de "confirmar" la cédula.
+          const paciente = await this.prisma.patientProfile.findUnique({
+            where: { cedula: aiData.cedula },
+            select: { fullName: true },
+          });
+          cedulaAck = aiData.cedula;
+          if (paciente?.fullName) {
+            nombreAck = nombreAck || paciente.fullName;
+            // El paciente ya existe → no volver a pedir el nombre más adelante.
+            await this.redis.set(`temp_nombre:${organizationId}:${senderId}`, paciente.fullName, 'EX', SESSION_TTL);
+          }
+        } else {
+          // Formato inválido: no la damos por confirmada ni la arrastramos.
+          await this.redis.del(`temp_cedula:${organizationId}:${senderId}`);
+        }
+      }
+
+      const ack = MSGS.ackTurno1({
+        nombre: nombreAck,
+        cedula: cedulaAck,
+        especialidad: aiData.especialidad,
+        eps: aiData.eps,
+        fecha: aiData.fechaSolicitada,
+      });
+      await this.smartReply(organizationId, senderId, ack);
+
+      await this.interactionLog.logSuccess({
+        whatsappId: senderId,
+        organizationId,
+        userMessage: text || '[audio]',
+        botReply: ack,
+        metadata: {
+          step: 'TURN1_ACK',
+          intent: aiData.intent,
+          extracted: {
+            cedula: cedulaAck,
+            nombre: nombreAck,
+            especialidad: aiData.especialidad,
+            eps: aiData.eps,
+            doctor: aiData.doctor,
+            fecha: aiData.fechaSolicitada,
+          },
+        },
+      });
+    }
 
     const isCancelFlow =
       currentState === ChatState.AWAITING_CANCEL_CEDULA ||

@@ -215,6 +215,28 @@ const FORMAL = {
       `¡Mucho gusto! Es la primera vez que le veo por aquí. 😊\n\n¿Me dice su *nombre completo* para registrarle como nuevo paciente?`,
     ]),
 
+  // ACK del Primer Turno (Fase 2): confirma al paciente las entidades que el
+  // Agente entendió de su primer mensaje, antes de pedir lo que falta.
+  ackTurno1: (p: {
+    nombre?: string | null;
+    cedula?: string | null;
+    especialidad?: string | null;
+    eps?: string | null;
+    fecha?: string | null;
+  }) => {
+    const detalles: string[] = [];
+    if (p.nombre) detalles.push(`👤 *Paciente:* ${p.nombre}`);
+    if (p.cedula) detalles.push(`🪪 *Cédula:* ${p.cedula}`);
+    if (p.especialidad) detalles.push(`🏥 *Servicio:* ${p.especialidad}`);
+    if (p.eps) detalles.push(`💳 *EPS:* ${p.eps}`);
+    if (p.fecha) detalles.push(`📅 *Fecha preferida:* ${p.fecha}`);
+    const saludo = p.nombre ? `¡Hola, ${p.nombre}!` : '¡Hola!';
+    const bloque = detalles.length
+      ? `\n\nEntendido, ya tomé nota de:\n${detalles.join('\n')}`
+      : '';
+    return `${saludo} 👋 Con mucho gusto le ayudo a agendar su cita.${bloque}`;
+  },
+
   resumenCita: (nombre: string, cedula: string, eps: string, especialidad: string, fecha: string) =>
     pick([
       `¡Listo${nombre ? `, ${nombre}` : ''}! Confirmemos los datos de su cita antes de agendarle:\n\n` +
@@ -538,6 +560,28 @@ const INFORMAL = {
       `¡Bienvenido(a)! Es un gusto atenderte por primera vez. 🌟 Cuéntame tu *nombre completo* para abrirte tu historia.`,
       `¡Mucho gusto! 😊 No te tengo registrado aún — ¿me dices tu *nombre completo* para crearte el perfil?`,
     ]),
+
+  // ACK del Primer Turno (Fase 2): confirma lo que el Agente entendió del
+  // primer mensaje, en tono cercano, antes de pedir lo que falta.
+  ackTurno1: (p: {
+    nombre?: string | null;
+    cedula?: string | null;
+    especialidad?: string | null;
+    eps?: string | null;
+    fecha?: string | null;
+  }) => {
+    const detalles: string[] = [];
+    if (p.nombre) detalles.push(`👤 *Paciente:* ${p.nombre}`);
+    if (p.cedula) detalles.push(`🪪 *Cédula:* ${p.cedula}`);
+    if (p.especialidad) detalles.push(`🏥 *Servicio:* ${p.especialidad}`);
+    if (p.eps) detalles.push(`💳 *EPS:* ${p.eps}`);
+    if (p.fecha) detalles.push(`📅 *Fecha que pediste:* ${p.fecha}`);
+    const saludo = p.nombre ? `¡Hola, ${p.nombre}!` : '¡Hola!';
+    const bloque = detalles.length
+      ? `\n\nListo, ya anoté:\n${detalles.join('\n')}`
+      : '';
+    return `${saludo} 👋 De una te ayudo a agendar tu cita.${bloque}`;
+  },
 
   resumenCita: (nombre: string, cedula: string, eps: string, especialidad: string, fecha: string) =>
     pick([
