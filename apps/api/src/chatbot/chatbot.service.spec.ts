@@ -277,4 +277,53 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     const ack = sentMessages()[0] || '';
     expect(ack).not.toContain('🪪');
   });
+
+  // ════════════════════════════════════════════════════════════
+  // Fix #2 — Intención de agendar dentro del paso de menú
+  // (AWAITING_SPECIALTY): "Si quiero agendar una cita" ya no cae
+  // en el mensaje de "no entendí".
+  // ════════════════════════════════════════════════════════════
+  describe('en AWAITING_SPECIALTY', () => {
+    beforeEach(async () => {
+      // Sesión colgada en el paso de selección de servicio.
+      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_SPECIALTY);
+      prisma.medicalService.findMany.mockResolvedValue([
+        { id: 's1', name: 'Consulta externa' },
+        { id: 's2', name: 'Laboratorio clínico' },
+      ]);
+    });
+
+    it('afirmación de agendar → re-presenta el menú sin error ni penalizar reintentos', async () => {
+      await service.processIncomingMessage(makeTextEvent('Si quiero agendar una cita'));
+
+      const reply = sentMessages()[0] || '';
+      // Re-presentación cálida, NO el mensaje de "no logré entender".
+      expect(reply).not.toContain('no logré entender');
+      expect(reply).toContain('servicios');
+      expect(reply).toContain('Consulta externa');
+      // No se llamó al LLM (en el paso de menú no se usa).
+      expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+      // No se penalizó con reintento.
+      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBeUndefined();
+    });
+
+    it('una pregunta abierta sigue yendo a FAQ (no a re-presentación)', async () => {
+      provider.answerFAQ.mockResolvedValueOnce('Una cita cuesta $50.000.');
+
+      await service.processIncomingMessage(makeTextEvent('¿cuánto cuesta una cita?'));
+
+      expect(provider.answerFAQ).toHaveBeenCalledTimes(1);
+      expect(sentMessages()[0]).toContain('cuesta');
+    });
+
+    it('texto sin sentido (ni servicio, ni FAQ, ni agendar) → sí muestra el error y penaliza', async () => {
+      await service.processIncomingMessage(makeTextEvent('xyz qwerty zzz'));
+
+      // Solo la rama de error incrementa el contador (la re-presentación y el
+      // FAQ no lo hacen): señal fiable de que cayó en "servicio inválido".
+      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBe('1');
+      // No es la re-presentación cálida de agendamiento.
+      expect(sentMessages()[0]).not.toContain('🗓️');
+    });
+  });
 });

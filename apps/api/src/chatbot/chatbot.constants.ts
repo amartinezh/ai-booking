@@ -237,6 +237,17 @@ const FORMAL = {
     return `${saludo} 👋 Con mucho gusto le ayudo a agendar su cita.${bloque}`;
   },
 
+  // Re-presentación cálida cuando el paciente confirma que SÍ quiere agendar
+  // (o expresa intención de cita) estando en el paso de selección de servicio,
+  // pero su texto no mapeó a una opción. Evita el mensaje de "no entendí".
+  repromptAgendarServicio: (lineas: string) =>
+    `¡Perfecto, con mucho gusto le agendo su cita! 🗓️\n\n` +
+    `*¿Cuál de estos servicios necesita?* Puede responderme con la letra o el nombre:\n\n${lineas}`,
+
+  // Igual, pero en el paso de selección de EPS.
+  repromptAgendarEps: (lineas: string) =>
+    `¡Perfecto, sigamos! 🗓️\n\n*¿Con cuál EPS o entidad desea su cita?*\n\n${lineas}`,
+
   resumenCita: (nombre: string, cedula: string, eps: string, especialidad: string, fecha: string) =>
     pick([
       `¡Listo${nombre ? `, ${nombre}` : ''}! Confirmemos los datos de su cita antes de agendarle:\n\n` +
@@ -582,6 +593,16 @@ const INFORMAL = {
       : '';
     return `${saludo} 👋 De una te ayudo a agendar tu cita.${bloque}`;
   },
+
+  // Re-presentación cálida cuando el paciente confirma que SÍ quiere agendar
+  // estando en el paso de selección de servicio, pero su texto no mapeó.
+  repromptAgendarServicio: (lineas: string) =>
+    `¡De una, te ayudo a agendar! 🗓️\n\n` +
+    `*¿Cuál de estos servicios necesitas?* Puedes responder con la letra o el nombre:\n\n${lineas}`,
+
+  // Igual, pero en el paso de selección de EPS.
+  repromptAgendarEps: (lineas: string) =>
+    `¡Listo, sigamos! 🗓️\n\n*¿Con cuál EPS quieres tu cita?*\n\n${lineas}`,
 
   resumenCita: (nombre: string, cedula: string, eps: string, especialidad: string, fecha: string) =>
     pick([

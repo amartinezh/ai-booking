@@ -430,6 +430,31 @@ export class ChatbotService implements OnModuleInit {
   }
 
   // ══════════════════════════════════════════════════════════════
+  // DETECTOR DE INTENCIÓN DE AGENDAR (regex local, sin LLM)
+  // Se usa en los pasos de menú (AWAITING_SPECIALTY / AWAITING_EPS) cuando el
+  // texto NO mapeó a una opción: si el paciente está afirmando que quiere
+  // agendar (ej: "sí quiero agendar una cita", "dale", "necesito una cita"),
+  // re-presentamos el menú con calidez en vez del mensaje de "no entendí".
+  // Nota: las PREGUNTAS abiertas ya las captura classifyIntentLocal ('faq')
+  // y se evalúan ANTES, así "¿cuánto cuesta una cita?" no cae aquí.
+  // ══════════════════════════════════════════════════════════════
+  private looksLikeScheduleIntent(text: string): boolean {
+    const t = (text || '').trim().toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '');
+    if (!t) return false;
+
+    // Afirmaciones al inicio del mensaje ("sí", "claro", "dale", "ok"...).
+    const afirmacion =
+      /^(si|sip|claro|dale|ok|okay|listo|bueno|vale|por supuesto|afirmativo|correcto|exacto|de una|eso es|asi es)\b/.test(t);
+
+    // Verbos/sustantivos de agendamiento en cualquier parte del texto.
+    const agendamiento =
+      /\b(agendar|agendame|agendarme|agenda|reservar|reserva|programar|programarme|sacar|pedir|quiero|necesito|deseo|cita|citas|turno)\b/.test(t);
+
+    return afirmacion || agendamiento;
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // FAQ HANDLER
   // Responde preguntas generales usando la base de conocimiento.
   // No modifica el estado de la sesión (el usuario sigue en IDLE).
@@ -1642,6 +1667,25 @@ export class ChatbotService implements OnModuleInit {
             await this.answerFAQ(text, organizationId, senderId, org, botName);
             return;
           }
+          // ¿El paciente confirma que quiere agendar (ej: "sí quiero agendar
+          // una cita")? No es una opción del menú, pero tampoco un error: le
+          // re-presentamos el menú con calidez y SIN penalizar reintentos.
+          if (this.looksLikeScheduleIntent(text)) {
+            const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
+            const reply = count > 0
+              ? MSGS.repromptAgendarServicio(lineas)
+              : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
+            await this.smartReply(organizationId, senderId, reply);
+
+            await this.interactionLog.logSuccess({
+              whatsappId: senderId,
+              organizationId,
+              userMessage: text || '[audio]',
+              botReply: reply,
+              metadata: { step: 'SPECIALTY_REPROMPT_SCHEDULE_INTENT', servicesCount: count },
+            });
+            return;
+          }
           // El usuario respondió algo que no pudimos mapear al menú → reintento
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
           const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
@@ -1717,6 +1761,24 @@ export class ChatbotService implements OnModuleInit {
             (await this.knowledgeBase.hasContent(organizationId))
           ) {
             await this.answerFAQ(text, organizationId, senderId, org, botName);
+            return;
+          }
+          // Afirmación de agendar en el paso de EPS → re-presentar el menú de
+          // EPS con calidez, sin penalizar reintentos.
+          if (this.looksLikeScheduleIntent(text)) {
+            const { lineas, count } = await this.buildEpsMenu(organizationId, senderId);
+            const reply = count > 0
+              ? MSGS.repromptAgendarEps(lineas)
+              : MSGS.pedirEps();
+            await this.smartReply(organizationId, senderId, reply);
+
+            await this.interactionLog.logSuccess({
+              whatsappId: senderId,
+              organizationId,
+              userMessage: text || '[audio]',
+              botReply: reply,
+              metadata: { step: 'EPS_REPROMPT_SCHEDULE_INTENT', epsCount: count },
+            });
             return;
           }
           // El usuario respondió algo no mapeable al menú → reintento
