@@ -1396,6 +1396,18 @@ export class ChatbotService implements OnModuleInit {
     } else if (
       messageType === 'text' &&
       text &&
+      currentState === ChatState.AWAITING_NAME
+    ) {
+      // En el paso de nombre capturamos el texto TAL CUAL, sin llamar a Gemini.
+      // Antes el nombre pasaba por el extractor y el clasificador de seguridad
+      // podía marcar apellidos legítimos (p.ej. "Negro") como intent='insulto_abuso',
+      // disparando el guardrail y borrando toda la sesión. Aquí ya pedimos un
+      // nombre libre de forma explícita; las palabras de escape ("salir",
+      // "cancelar") ya fueron capturadas por isQuickEscape más arriba.
+      aiData.nombre = text.trim();
+    } else if (
+      messageType === 'text' &&
+      text &&
       (currentState === ChatState.AWAITING_SPECIALTY || currentState === ChatState.AWAITING_EPS)
     ) {
       // En selección de menú (Pasos 1 y 2) NO llamamos a Gemini para texto:
@@ -1638,6 +1650,11 @@ export class ChatbotService implements OnModuleInit {
     // No hace `return`: tras el ACK, el flujo continúa hacia el primer dato
     // faltante (servicio → EPS → slot...), evitando re-preguntar lo conocido.
     // ══════════════════════════════════════════════════════════
+    // Marca si en este turno ya enviamos el ACK del primer turno. Si es así,
+    // el render del menú de servicios que viene a continuación NO debe volver
+    // a saludar (evita el doble mensaje: ACK + bienvenida completa).
+    let sentTurn1Ack = false;
+
     const extrajoEntidadesTurno1 = !!(
       aiData.cedula || aiData.nombre || aiData.eps ||
       aiData.especialidad || aiData.doctor || aiData.fechaSolicitada
@@ -1678,6 +1695,7 @@ export class ChatbotService implements OnModuleInit {
         fecha: aiData.fechaSolicitada,
       });
       await this.smartReply(organizationId, senderId, ack);
+      sentTurn1Ack = true;
 
       await this.interactionLog.logSuccess({
         whatsappId: senderId,
@@ -1902,8 +1920,13 @@ export class ChatbotService implements OnModuleInit {
       if (!resolvedServiceId) {
         // Primera vez (o sesión limpia): renderizar menú
         const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
+        // Si acabamos de enviar el ACK del primer turno, usamos el reprompt
+        // (que NO vuelve a saludar) en vez de la bienvenida completa, para no
+        // mandar dos saludos seguidos en el mismo turno.
         const reply = count > 0
-          ? MSGS.menuServicios(orgName, lineas, botName)
+          ? (sentTurn1Ack
+              ? MSGS.repromptAgendarServicio(lineas)
+              : MSGS.menuServicios(orgName, lineas, botName))
           : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);

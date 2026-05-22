@@ -379,6 +379,59 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   });
 
   // ════════════════════════════════════════════════════════════
+  // Fix Problema 2 — El paso de nombre (AWAITING_NAME) NO pasa por
+  // el LLM. Antes, un nombre como "Negro Test" llegaba al extractor
+  // y el clasificador de seguridad podía marcarlo como insulto_abuso,
+  // disparando el guardrail y borrando toda la sesión.
+  // ════════════════════════════════════════════════════════════
+  it('en AWAITING_NAME captura el nombre sin invocar al LLM ni disparar el guardrail', async () => {
+    redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_NAME);
+    // Aunque el LLM clasificaría este texto como insulto, NO debe ser invocado.
+    provider.extractSchedulingIntent.mockResolvedValue(
+      extraction({ intent: 'insulto_abuso' }),
+    );
+
+    await service.processIncomingMessage(makeTextEvent('Negro Test'));
+
+    // Núcleo del fix: el nombre no se manda a Gemini en este paso.
+    expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+    // No se disparó el guardrail de insulto ni el reinicio de sesión.
+    const all = sentMessages().join('\n');
+    expect(all).not.toContain('arrancamos de cero');
+    expect(all).not.toContain('respetuoso');
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // Fix Problema 3 — El ACK del primer turno no produce doble saludo.
+  // Tras el ACK, el menú de servicios usa el reprompt (sin volver a
+  // presentar al bot) en vez de la bienvenida completa.
+  // ════════════════════════════════════════════════════════════
+  it('tras el ACK del primer turno, el menú de servicios no vuelve a saludar', async () => {
+    prisma.medicalService.findMany.mockResolvedValue([
+      { id: 's1', name: 'Consulta externa' },
+      { id: 's2', name: 'Laboratorio clínico' },
+    ]);
+    // Primer turno en IDLE: el LLM extrae el nombre pero ningún servicio.
+    provider.extractSchedulingIntent.mockResolvedValueOnce(
+      extraction({ intent: 'agendar_cita', nombre: 'Andres' }),
+    );
+
+    await service.processIncomingMessage(
+      makeTextEvent('soy Andres y necesito una cita'),
+    );
+
+    const replies = sentMessages();
+    // Dos mensajes: el ACK + el menú de servicios.
+    expect(replies).toHaveLength(2);
+    // El ACK saluda por nombre.
+    expect(replies[0]).toContain('Andres');
+    // El segundo pregunta por el servicio...
+    expect(replies[1]).toContain('servicio');
+    // ...pero NO vuelve a presentar al bot (sin segundo saludo "Soy *Geni*").
+    expect(replies.filter((m) => m.includes('Geni'))).toHaveLength(0);
+  });
+
+  // ════════════════════════════════════════════════════════════
   // Fix #2 — Intención de agendar dentro del paso de menú
   // (AWAITING_SPECIALTY): "Si quiero agendar una cita" ya no cae
   // en el mensaje de "no entendí".
