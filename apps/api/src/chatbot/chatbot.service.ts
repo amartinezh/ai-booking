@@ -32,6 +32,8 @@ import { LlmFactoryService } from '../llm/llm-factory.service';
 import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
+import { SurveyService } from '../survey/survey.service';
+import { ResolutionStatus } from '@antigravity/database';
 
 @Injectable()
 export class ChatbotService implements OnModuleInit {
@@ -59,6 +61,7 @@ export class ChatbotService implements OnModuleInit {
     private organizationSettings: OrganizationSettingsService,
     private llmFactory: LlmFactoryService,
     private whatsappCredentials: WhatsappCredentialsService,
+    private surveyService: SurveyService,
   ) {}
 
   async onModuleInit() {
@@ -683,6 +686,46 @@ export class ChatbotService implements OnModuleInit {
   }
 
   // ══════════════════════════════════════════════════════════════
+  // HELPER 4b: ENCUESTA DE SATISFACCIÓN (CSAT) POST-CHAT
+  // Al cerrar CUALQUIER flujo (cita, waitlist, insulto, error) generamos un
+  // token de un solo uso y enviamos su enlace como ÚLTIMO mensaje de WhatsApp.
+  //
+  // Nunca lanza: si la encuesta falla, el flujo principal ya respondió y no
+  // queremos que un error de CSAT tumbe la conversación.
+  // ══════════════════════════════════════════════════════════════
+  private async sendSurveyLink(
+    organizationId: string,
+    senderId: string,
+    resolutionStatus: ResolutionStatus,
+    options?: { patientId?: string | null; chatSummary?: string | null },
+  ): Promise<void> {
+    if (!organizationId) return;
+    try {
+      const token = await this.surveyService.generateSurveyToken({
+        patientId: options?.patientId ?? null,
+        organizationId,
+        resolutionStatus,
+        chatSummary: options?.chatSummary ?? null,
+      });
+
+      const baseUrl = (
+        this.configService.get<string>('PUBLIC_WEB_URL') ||
+        'https://agendamiento-ia.com'
+      ).replace(/\/+$/, '');
+      const url = `${baseUrl}/encuesta/${token}`;
+
+      const message =
+        `Antes de irnos, ¿me regala 10 segundos? 🙏\n\n` +
+        `Por favor califique mi atención en este enlace seguro y único:\n${url}`;
+
+      // Enlace como mensaje separado, posterior a la respuesta del flujo.
+      await this.sendWhatsAppMessage(senderId, message);
+    } catch (e) {
+      this.logger.error(`No se pudo enviar el enlace de encuesta a ${senderId}: ${e.message}`);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // HELPER 5: PERSISTENCIA DE PACIENTE — MULTI-PACIENTE
   // ══════════════════════════════════════════════════════════════
   private async ensurePatientPersisted(params: {
@@ -1254,6 +1297,11 @@ export class ChatbotService implements OnModuleInit {
           immediate: true,
         },
       });
+
+      // ⭐ CSAT: cierre por lenguaje abusivo.
+      await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.BLOCKED_INSULT, {
+        chatSummary: 'Sesión cerrada por insulto detectado (regex).',
+      });
       return;
     }
 
@@ -1279,6 +1327,11 @@ export class ChatbotService implements OnModuleInit {
         userMessage: text || `[${messageType}]`,
         botReply: replyText,
         metadata: { previousState: currentState, retriesCount, maxRetries },
+      });
+
+      // ⭐ CSAT: cierre por error técnico / exceso de reintentos.
+      await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.SYSTEM_ERROR, {
+        chatSummary: `Sesión cerrada por exceso de reintentos (${maxRetries}).`,
       });
       return;
     }
@@ -1575,6 +1628,11 @@ export class ChatbotService implements OnModuleInit {
           botReply: reply,
           metadata: { guardrail: 'INSULT_LLM', previousState: currentState },
         });
+
+        // ⭐ CSAT: cierre por lenguaje abusivo (detección LLM).
+        await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.BLOCKED_INSULT, {
+          chatSummary: 'Sesión cerrada por insulto detectado (LLM).',
+        });
         return;
       }
 
@@ -1848,6 +1906,12 @@ export class ChatbotService implements OnModuleInit {
             botReply: replyOk,
           });
         }
+
+        // ⭐ CSAT: flujo cerrado en lista de espera → encuesta.
+        await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.QUEUED, {
+          patientId: patientWl?.id ?? null,
+          chatSummary: `Ingresó a lista de espera de ${serviceNameWl} (posición ${positionWl}).`,
+        });
 
         await this.cleanUpSession(organizationId, senderId);
         return;
@@ -2449,6 +2513,11 @@ export class ChatbotService implements OnModuleInit {
               epsName: epsIdFinal ? (await this.prisma.eps.findUnique({ where: { id: epsIdFinal } }))?.name : undefined,
               userMessage: text,
               botReply: reply,
+            });
+            // ⭐ CSAT: flujo cerrado con cita agendada → encuesta.
+            await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.BOOKED, {
+              patientId: patient.id,
+              chatSummary: `Cita agendada (${specFinal}) para ${fechaFormateada}.`,
             });
           } else {
             const reply = MSGS.slotTomado();

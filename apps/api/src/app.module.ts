@@ -19,6 +19,7 @@ import { IntegrationsModule } from './integrations/integrations.module';
 import { AppointmentReminderModule } from './appointment-reminder/appointment-reminder.module';
 import { GlobalStatsModule } from './global-stats/global-stats.module';
 import { OrganizationsModule } from './organizations/organizations.module';
+import { SurveyModule } from './survey/survey.module';
 
 @Module({
   imports: [
@@ -56,6 +57,8 @@ import { OrganizationsModule } from './organizations/organizations.module';
     ClinicalRecordsModule,
     ClinicalAiModule,
     Hl7FhirModule,
+    // ⭐ Encuestas de satisfacción (CSAT) post-chat.
+    SurveyModule,
   ],
 })
 export class AppModule { }

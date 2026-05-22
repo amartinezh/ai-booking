@@ -14,32 +14,32 @@ datasource db {
 // 🏢 MULTI-TENANT: ORGANIZACIÓN (CLÍNICA/HOSPITAL)
 // -----------------------------------------------------------------------------
 model Organization {
-  id              String  @id @default(uuid())
-  name            String  @unique
-  isActive        Boolean @default(true)
-  logoUrl         String?
+  id       String  @id @default(uuid())
+  name     String  @unique
+  isActive Boolean @default(true)
+  logoUrl  String?
 
   // Línea de soporte humano de la clínica. Cuando un guardrail se dispara
   // (insulto, exceso de reintentos, off-topic), el chatbot deriva al paciente
   // a este número en vez de reiniciar la sesión. Si es null, cae al reinicio.
-  supportPhone    String?
+  supportPhone String?
 
   // Base de Conocimiento del Chatbot (por clínica)
-  knowledgeBase   String? @db.Text
+  knowledgeBase String? @db.Text
 
   // Configuración avanzada por clínica (1:1)
-  settings        OrganizationSettings?
+  settings OrganizationSettings?
 
   // Configuración multi-LLM por clínica (1:1) — credenciales encriptadas
   aiProviderConfig AiProviderConfig?
 
   // Configuración del canal WhatsApp por clínica (1:1) — credenciales encriptadas
-  whatsappConfig  WhatsappAccountConfig?
+  whatsappConfig WhatsappAccountConfig?
 
   // Facturación Global Súper Admin
   monthlyFee      String?
   lastPaymentDate DateTime?
-  autoSuspend     Boolean @default(false)
+  autoSuspend     Boolean   @default(false)
 
   // Relaciones Inversas (Todo el sistema)
   users           User[]
@@ -54,6 +54,7 @@ model Organization {
   agents          AgentProfile[]
   waitlistEntries WaitlistEntry[]
   supportTickets  SupportTicket[]
+  chatSurveys     ChatSurvey[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -68,19 +69,19 @@ model OrganizationSettings {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   // Personalización del chatbot
-  botName        String       @default("AgenIA")
+  botName String @default("AgenIA")
 
   // Tolerancia a fallos del flujo conversacional:
   // máximo de reintentos por paso antes de derivar al humano.
-  maxRetriesPerStep Int       @default(3)
+  maxRetriesPerStep Int @default(3)
 
   // Tono de voz del chatbot:
   //   FORMAL    → "usted", estructurado, viñetas A/B/C explícitas
   //   INFORMAL  → "tú", conversacional, viñetas integradas en párrafo
   communicationStyle CommunicationStyle @default(FORMAL)
 
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum CommunicationStyle {
@@ -99,7 +100,7 @@ model AiProviderConfig {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   // Proveedor activo. NONE = la clínica todavía no configuró IA.
-  activeProvider LlmProvider  @default(NONE)
+  activeProvider LlmProvider @default(NONE)
 
   // JSON serializado y luego encriptado con AES-256-GCM.
   // Estructura interna por proveedor:
@@ -107,7 +108,7 @@ model AiProviderConfig {
   //   CHATGPT  → { "apiKey": "...", "model": "gpt-4o-mini", "organizationId": "org_..." }
   //   CLAUDE   → { "apiKey": "...", "model": "claude-sonnet-4-6" }
   // Nunca se almacena en texto plano.
-  encryptedApiConfig String?   @db.Text
+  encryptedApiConfig String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -127,31 +128,31 @@ enum LlmProvider {
 // El access token NUNCA se guarda en texto plano: se encripta con AES-256-GCM.
 // -----------------------------------------------------------------------------
 model WhatsappAccountConfig {
-  id                   String       @id @default(uuid())
-  organizationId       String       @unique
-  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   // ID interno que Meta asigna a la línea telefónica (15–17 dígitos).
   // ÚNICO en toda la plataforma: es la llave que usa el webhook entrante
   // para enrutar mensajes al tenant correcto.
-  phoneNumberId        String?      @unique
+  phoneNumberId String? @unique
 
   // ID de la WhatsApp Business Account (WABA). Informativo.
-  businessAccountId    String?
+  businessAccountId String?
 
   // Número de display (ej. "+57 300 1234567"). Solo para mostrar al usuario.
-  displayPhoneNumber   String?
+  displayPhoneNumber String?
 
   // Token elegido por la clínica para validar el webhook GET de Meta.
   // ÚNICO porque cuando Meta llama a verificar, sólo conocemos este token
   // y debemos identificar a qué clínica pertenece.
-  verifyToken          String?      @unique
+  verifyToken String? @unique
 
   // Permanent Access Token cifrado (AES-256-GCM). Empieza por "EAA…" en claro.
-  encryptedAccessToken String?      @db.Text
+  encryptedAccessToken String? @db.Text
 
   // false hasta que la clínica termine de configurar y validar la conexión.
-  isActive             Boolean      @default(false)
+  isActive Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -195,10 +196,10 @@ model Eps {
   isActive Boolean @default(true) // Para encender/apagar convenios
 
   // Relaciones
-  patients     PatientProfile[] // Pacientes afiliados a esta EPS
-  slots        ScheduleSlot[] // Cupos de agenda EXCLUSIVOS para esta EPS
-  appointments Appointment[] // Historial de citas facturadas por esta EPS
-  agents       AgentProfile[] // Agentes limitados a agendar paciente de esta EPS
+  patients        PatientProfile[] // Pacientes afiliados a esta EPS
+  slots           ScheduleSlot[] // Cupos de agenda EXCLUSIVOS para esta EPS
+  appointments    Appointment[] // Historial de citas facturadas por esta EPS
+  agents          AgentProfile[] // Agentes limitados a agendar paciente de esta EPS
   waitlistEntries WaitlistEntry[]
 
   // 🏢 TENANT ISOLATION
@@ -218,8 +219,8 @@ model MedicalService {
   isActive Boolean @default(true)
 
   // Relaciones
-  doctors DoctorProfile[] // Qué doctores prestan este servicio
-  slots   ScheduleSlot[] // Agenda disponible para este servicio
+  doctors         DoctorProfile[] // Qué doctores prestan este servicio
+  slots           ScheduleSlot[] // Agenda disponible para este servicio
   waitlistEntries WaitlistEntry[]
 
   // 🏢 TENANT ISOLATION
@@ -257,8 +258,7 @@ model PatientProfile {
   clinicalRecords  ClinicalRecord[]
   informedConsents InformedConsent[]
   waitlistEntries  WaitlistEntry[]
-
-  @@index([whatsappId])
+  chatSurveys      ChatSurvey[]
 
   // 🏢 TENANT ISOLATION
   organizationId String?
@@ -266,6 +266,8 @@ model PatientProfile {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([whatsappId])
 }
 
 // -----------------------------------------------------------------------------
@@ -422,9 +424,9 @@ model InteractionLog {
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
-  contactedAt   DateTime? // Cuándo el funcionario contactó al paciente
-  contactedBy   String?   // Email/nombre del funcionario que contactó
-  contactNotes  String?   @db.Text // Resultado del contacto
+  contactedAt  DateTime? // Cuándo el funcionario contactó al paciente
+  contactedBy  String? // Email/nombre del funcionario que contactó
+  contactNotes String?   @db.Text // Resultado del contacto
 }
 
 // -----------------------------------------------------------------------------
@@ -659,11 +661,11 @@ model WaitlistEntry {
 }
 
 enum WaitlistStatus {
-  WAITING    // Esperando que se libere un cupo
-  NOTIFIED   // Le avisamos, esperando confirmación SI/NO
-  CONFIRMED  // Tomó el cupo (se convirtió en Appointment)
-  EXPIRED    // No respondió en 30 minutos
-  CANCELLED  // Salió voluntariamente o rechazó el cupo
+  WAITING // Esperando que se libere un cupo
+  NOTIFIED // Le avisamos, esperando confirmación SI/NO
+  CONFIRMED // Tomó el cupo (se convirtió en Appointment)
+  EXPIRED // No respondió en 30 minutos
+  CANCELLED // Salió voluntariamente o rechazó el cupo
 }
 
 // -----------------------------------------------------------------------------
@@ -710,7 +712,7 @@ enum SupportTicketStatus {
 model SystemLog {
   id      String   @id @default(uuid())
   level   LogLevel
-  action  String   // Ej: 'USER_LOGIN', 'DOCTOR_DELETED', 'UNHANDLED_EXCEPTION'
+  action  String // Ej: 'USER_LOGIN', 'DOCTOR_DELETED', 'UNHANDLED_EXCEPTION'
   message String   @db.Text
 
   // Contexto rico: stack trace, body de la request, IP, headers, etc.
@@ -746,10 +748,10 @@ enum LogLevel {
 // evidencia inmutable de quién purgó qué, cuándo y desde dónde.
 // -----------------------------------------------------------------------------
 model GlobalAuditLog {
-  id     String              @id @default(uuid())
-  action GlobalAuditAction
+  id      String            @id @default(uuid())
+  action  GlobalAuditAction
   // Texto humano-legible del evento (lo que se muestra en el dashboard legal).
-  message String             @db.Text
+  message String            @db.Text
 
   // Actor que ejecutó la acción (no es FK: el actor podría ser eliminado luego).
   actorId    String?
@@ -776,4 +778,56 @@ enum GlobalAuditAction {
   ORGANIZATION_PURGED
   ORGANIZATION_CREATED
   ORGANIZATION_SUSPENDED
+}
+
+// -----------------------------------------------------------------------------
+// ⭐ ENCUESTA DE SATISFACCIÓN POST-CHAT (CSAT)
+//
+// Al cerrar CUALQUIER flujo conversacional (cita agendada, ingreso a lista de
+// espera, error técnico o cierre por insultos) el bot genera un registro aquí
+// y envía por WhatsApp un enlace ÚNICO de un solo uso: https://.../encuesta/{id}.
+//
+// Seguridad: el `id` (UUID) ES el token del enlace. La página web sólo lo
+// renderiza si isUsed == false y expiresAt > now(); de lo contrario redirige al
+// Home. El POST de calificación vuelve a verificar ambas condiciones (regla de
+// oro) y marca isUsed = true para que el enlace no se pueda reutilizar.
+// -----------------------------------------------------------------------------
+model ChatSurvey {
+  // El UUID es a la vez la PK y el token público del enlace.
+  id String @id @default(uuid())
+
+  // 👤 A quién se le envió. Opcional: en cierres por insulto o error técnico
+  // puede que el paciente nunca llegara a identificarse con su cédula.
+  patientId String?
+  patient   PatientProfile? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  // 🏢 TENANT ISOLATION
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // 🤖 Contexto auto-llenado por el bot al cerrar el flujo.
+  chatSummary      String?          @db.Text
+  resolutionStatus ResolutionStatus
+
+  // ⭐ Llenado por el usuario en la web. null hasta que califica.
+  rating   Int? // 1 a 5
+  feedback String? @db.Text
+
+  // 🔐 Seguridad del enlace de un solo uso.
+  isUsed    Boolean  @default(false)
+  expiresAt DateTime // Típicamente now() + 24h
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // El cron/limpieza y la búsqueda del token se apoyan en estos índices.
+  @@index([organizationId, createdAt])
+  @@index([isUsed, expiresAt])
+}
+
+enum ResolutionStatus {
+  BOOKED // El paciente agendó su cita con éxito
+  QUEUED // El paciente quedó en lista de espera
+  BLOCKED_INSULT // La sesión se cerró por lenguaje abusivo
+  SYSTEM_ERROR // Cierre por error técnico / exceso de reintentos
 }

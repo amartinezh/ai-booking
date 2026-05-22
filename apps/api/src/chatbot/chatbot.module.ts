@@ -10,6 +10,7 @@ import { WaitlistModule } from 'src/waitlist/waitlist.module';
 import { InteractionLogModule } from 'src/interaction-log/interaction-log.module';
 import { LlmModule } from '../llm/llm.module';
 import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module';
+import { SurveyModule } from '../survey/survey.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module'
     InteractionLogModule,
     LlmModule,
     WhatsappConfigModule,
+    SurveyModule,
   ],
   controllers: [ChatbotController],
   providers: [ChatbotService, ChatbotCron, KnowledgeBaseService, OrganizationSettingsService],
