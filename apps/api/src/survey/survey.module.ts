@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
 import { SurveyService } from './survey.service';
 import { SurveyController } from './survey.controller';
+import {
+  ClinicSurveyController,
+  SuperadminSurveyController,
+} from './survey-admin.controller';
 
 /**
  * Módulo de Encuestas de Satisfacción (CSAT) post-chat.
@@ -10,7 +14,11 @@ import { SurveyController } from './survey.controller';
  * generar tokens al cerrar cada flujo conversacional.
  */
 @Module({
-  controllers: [SurveyController],
+  controllers: [
+    SurveyController,
+    SuperadminSurveyController,
+    ClinicSurveyController,
+  ],
   providers: [SurveyService],
   exports: [SurveyService],
 })
