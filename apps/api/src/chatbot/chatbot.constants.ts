@@ -330,11 +330,10 @@ const FORMAL = {
       `Permítame contarle: yo solo le puedo colaborar con citas médicas. 🙏\n\n¿Me dice qué especialidad necesita o con cuál doctor desea su cita?`,
     ]),
 
-  guardrailInsulto: (phone: string, _botName: string = BOT_NAME) =>
-    `Disculpe, le entiendo que pueda estar molesto(a), pero por aquí solo le puedo ayudar con su agendamiento médico ` +
-    `y necesito que conservemos un trato respetuoso. 🙏\n\n` +
-    `Si requiere atención adicional, con mucho gusto le pasamos con un asesor humano: 👉 *${phone}*\n\n` +
-    `Por seguridad, cierro esta conversación. Cuando guste retomar el agendamiento, aquí estaré. 💚`,
+  guardrailInsulto: (_phone: string, _botName: string = BOT_NAME) =>
+    `Para poder brindarle la mejor ayuda, necesitamos mantener una conversación respetuosa. 🙏\n\n` +
+    `Por ahora, cerraremos este chat. Estaremos listos para atenderle cuando lo desee de forma cordial.\n\n` +
+    `Solo escriba *"Hola"* para reiniciar el asistente.`,
 
   guardrailOffTopic: (phone: string, botName: string = BOT_NAME) =>
     `Ay, qué pena, parece que no estoy logrando entenderle bien dentro del agendamiento de citas. 🙏\n\n` +
@@ -673,8 +672,8 @@ const INFORMAL = {
       `Yo solo te puedo colaborar con citas médicas. 🙏 ¿Qué especialidad necesitas o con cuál doctor te gustaría agendar?`,
     ]),
 
-  guardrailInsulto: (phone: string, _botName: string = BOT_NAME) =>
-    `Hey, entiendo que puedas estar molesto(a), pero por aquí solo te puedo ayudar con tu agendamiento y necesito que mantengamos un trato respetuoso. 🙏 Si necesitas atención adicional, te dejo nuestra línea de soporte: 👉 *${phone}*. Por seguridad, cierro la conversación. Cuando quieras retomar, acá estaré. 💚`,
+  guardrailInsulto: (_phone: string, _botName: string = BOT_NAME) =>
+    `Para brindarte la mejor ayuda, necesitamos mantener una conversación respetuosa. 🙏 En este momento, cerraremos este chat. Estamos listos para ayudarte cuando lo desees de forma cordial. Solo escribe *"Hola"* para reiniciar el asistente.`,
 
   guardrailOffTopic: (phone: string, botName: string = BOT_NAME) =>
     `Uy, parece que no estoy logrando entenderte dentro del agendamiento. 🙏 Mejor te paso con nuestro equipo humano para que te atiendan: 👉 *${phone}*. Cuando quieras intentarlo conmigo otra vez, solo escríbeme *"Hola"* y *${botName}* te atiende. 😊`,

@@ -294,7 +294,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
     const replies = sentMessages();
     expect(replies).toHaveLength(1);
-    expect(replies[0]).toContain('respetuoso');
+    expect(replies[0]).toContain('respetuosa');
     // No se intenta responder FAQ ni continuar agendamiento.
     expect(provider.answerFAQ).not.toHaveBeenCalled();
     // Sesión cerrada → estado vuelve a IDLE.
