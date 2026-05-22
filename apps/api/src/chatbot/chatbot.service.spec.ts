@@ -47,6 +47,10 @@ function createFakeRedis() {
       const re = globToRegex(pattern);
       return [...store.keys()].filter((k) => re.test(k));
     }),
+    // El TTL no se modela en memoria; basta con que exista para la marca de
+    // actividad (refresco de TTL del estado) que hace el servicio en cada mensaje.
+    expire: jest.fn(async (k: string, _seconds: number) => (store.has(k) ? 1 : 0)),
+    ttl: jest.fn(async (k: string) => (store.has(k) ? -1 : -2)),
   };
 }
 

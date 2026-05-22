@@ -1217,6 +1217,18 @@ export class ChatbotService implements OnModuleInit {
       `[Tenant: ${organizationId}] Usuario ${senderId} en estado: ${currentState}. Tipo: ${messageType}`,
     );
 
+    // ⏱️ Marca de actividad: cada mensaje entrante de una conversación activa
+    // refresca el TTL del estado. Así el cron de cierre por inactividad mide el
+    // tiempo real desde el ÚLTIMO mensaje del paciente (no desde el último
+    // cambio de estado), incluso en turnos que no avanzan el flujo (FAQ,
+    // reintentos), evitando cerrar conversaciones que siguen activas.
+    if (organizationId && currentState !== ChatState.IDLE) {
+      await this.redis.expire(
+        `chat_state:${organizationId}:${senderId}`,
+        SESSION_TTL,
+      );
+    }
+
     // 🛡️ GUARDRAIL: INSULTO → DERIVACIÓN INMEDIATA ───────────────
     // Se evalúa lo más temprano posible, antes de cualquier procesamiento
     // (Gemini, reintentos, estados). El audio no se inspecciona aquí (irá
