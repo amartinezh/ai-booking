@@ -19,6 +19,11 @@ model Organization {
   isActive        Boolean @default(true)
   logoUrl         String?
 
+  // Línea de soporte humano de la clínica. Cuando un guardrail se dispara
+  // (insulto, exceso de reintentos, off-topic), el chatbot deriva al paciente
+  // a este número en vez de reiniciar la sesión. Si es null, cae al reinicio.
+  supportPhone    String?
+
   // Base de Conocimiento del Chatbot (por clínica)
   knowledgeBase   String? @db.Text
 
