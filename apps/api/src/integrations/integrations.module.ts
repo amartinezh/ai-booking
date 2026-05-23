@@ -16,5 +16,8 @@ import { IntegrationsService } from './integrations.service';
   imports: [HttpModule, LlmModule, WhatsappConfigModule],
   controllers: [IntegrationsController],
   providers: [IntegrationsService],
+  // Exportado para que MonitorModule reutilice la lógica de diagnóstico
+  // (Gemini + Meta) sin recrearla.
+  exports: [IntegrationsService],
 })
 export class IntegrationsModule {}

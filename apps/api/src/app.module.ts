@@ -20,6 +20,7 @@ import { AppointmentReminderModule } from './appointment-reminder/appointment-re
 import { GlobalStatsModule } from './global-stats/global-stats.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { SurveyModule } from './survey/survey.module';
+import { MonitorModule } from './monitor/monitor.module';
 
 @Module({
   imports: [
@@ -59,6 +60,8 @@ import { SurveyModule } from './survey/survey.module';
     Hl7FhirModule,
     // ⭐ Encuestas de satisfacción (CSAT) post-chat.
     SurveyModule,
+    // 📡 Monitor de servicios externos (Google/Meta) — centinela + live (SUPER_ADMIN).
+    MonitorModule,
   ],
 })
 export class AppModule { }

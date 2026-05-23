@@ -831,3 +831,33 @@ enum ResolutionStatus {
   BLOCKED_INSULT // La sesión se cerró por lenguaje abusivo
   SYSTEM_ERROR // Cierre por error técnico / exceso de reintentos
 }
+
+// -----------------------------------------------------------------------------
+// 📡 MONITOR DE SERVICIOS EXTERNOS (Google / Meta) — incidentes
+// -----------------------------------------------------------------------------
+// El monitor de fondo (MonitorCron, MODO A) NO guarda cada check: solo escribe
+// una fila cuando un servicio TRANSICIONA de UP a DOWN/DEGRADED (apertura) y la
+// cierra (resolvedAt) cuando se recupera. Cada fila = un incidente completo.
+// El monitoreo en vivo (MODO B) es 100% efímero y NUNCA toca esta tabla.
+model ServiceIncident {
+  id         String @id @default(uuid())
+  serviceKey String // 'gemini', 'tts', 'meta'
+  status     String // 'DOWN' o 'DEGRADED' (nunca UP — solo guardamos fallos)
+
+  // Datos del primer check fallido (apertura del incidente).
+  startedAt    DateTime @default(now())
+  errorMessage String?  @db.Text
+  errorCode    String? // 'TIMEOUT', 'AUTH', '5XX', etc. (para agrupar)
+  httpStatus   Int?
+  latencyMs    Int? // latencia del check que disparó el incidente
+
+  // Cierre del incidente (cuando el servicio se recupera). null = aún abierto.
+  resolvedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([serviceKey, startedAt])
+  @@index([resolvedAt, startedAt])
+  @@index([startedAt])
+}
