@@ -53,18 +53,26 @@ export class MonitorCron implements OnModuleInit {
 
     // 1️⃣ Reconstruir estado desde incidentes abiertos en BD (resolvedAt = null).
     //    Evita abrir incidentes duplicados si el API se reinició estando caído.
-    const openIncidents = await this.prisma.serviceIncident.findMany({
-      where: { resolvedAt: null },
-    });
-    for (const inc of openIncidents) {
-      this.lastKnownStatus.set(inc.serviceKey, {
-        status: inc.status,
-        incidentId: inc.id,
+    //    CRÍTICO: si esto falla (p.ej. la tabla aún no existe porque no se corrió
+    //    la migración), NO debe abortar el arranque de toda la API. Lo aislamos.
+    try {
+      const openIncidents = await this.prisma.serviceIncident.findMany({
+        where: { resolvedAt: null },
       });
+      for (const inc of openIncidents) {
+        this.lastKnownStatus.set(inc.serviceKey, {
+          status: inc.status,
+          incidentId: inc.id,
+        });
+      }
+      this.logger.log(
+        `📋 Estado reconstruido: ${openIncidents.length} incidente(s) abierto(s)`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `No se pudo reconstruir estado de incidentes (¿falta la migración de ServiceIncident?): ${error.message}. El monitor arranca con estado vacío.`,
+      );
     }
-    this.logger.log(
-      `📋 Estado reconstruido: ${openIncidents.length} incidente(s) abierto(s)`,
-    );
 
     // 2️⃣ Registrar cron dinámico con el intervalo del .env (sin segundos).
     const cronExpr = `*/${intervalMinutes} * * * *`;
@@ -111,6 +119,10 @@ export class MonitorCron implements OnModuleInit {
                   (settled as PromiseRejectedResult).reason?.message ||
                   'Promise rejected',
               };
+
+        // Servicio "no aplica" en este ciclo (ej. Gemini/Meta sin organización):
+        // no se monitorea, no abre ni cierra incidentes.
+        if (result.skip) continue;
 
         const newStatus = result.status;
         const prev = this.lastKnownStatus.get(svc.key);

@@ -42,13 +42,15 @@ Hay dos modos independientes que **nunca comparten estado**:
 ## Credenciales (importante)
 
 Los checks de **Gemini** y **Meta** son *por organización* (leen credenciales
-cifradas de la BD). El monitor es global, así que valida contra una
-organización "testigo" designada por **`MONITOR_TARGET_ORG_ID`**. **Google
+cifradas de la BD). El monitor es global, así que valida automáticamente contra
+la **organización activa más antigua** (la primera por `createdAt`). **Google
 TTS** usa credenciales globales (`GOOGLE_APPLICATION_CREDENTIALS`) y no necesita
 organización.
 
-Si `MONITOR_TARGET_ORG_ID` está vacío, los checks de Gemini/Meta reportan
-`NO_TARGET_ORG` (DOWN) con un mensaje explicativo — no rompen nada.
+Si **no hay ninguna organización activa**, los checks de Gemini/Meta se
+**omiten** (`skip`): no se monitorean, no generan incidentes ni alarmas falsas.
+En la UI en vivo aparecen como "No monitoreado · sin organización". No requiere
+ninguna variable de entorno para esto.
 
 ## Variables de entorno (`apps/api/.env`)
 
@@ -59,7 +61,6 @@ MONITOR_LIVE_INTERVAL_SECONDS=5    # intervalo del live (lo usa el frontend)
 MONITOR_DEFAULT_TIMEOUT_MS=5000    # timeout por check
 MONITOR_DEGRADED_THRESHOLD_MS=3000 # latencia → DEGRADED
 MONITOR_RETENTION_DAYS=365         # retención de incidentes resueltos
-MONITOR_TARGET_ORG_ID=             # org testigo para Gemini/Meta
 ```
 
 Tras cambiar cualquiera, recrear el contenedor:
@@ -102,7 +103,7 @@ no se registra y no se ejecuta ningún check de fondo. El monitoreo en vivo
 - `resolvedAt = NULL` → incidente **abierto** (servicio aún caído).
 - `resolvedAt` con fecha → **resuelto**; duración = `resolvedAt - startedAt`.
 - `status` es `DOWN` o `DEGRADED` (nunca `UP`: solo guardamos fallos).
-- `errorCode` agrupa la causa (`TIMEOUT`, `AUTH`, `HIGH_LATENCY`, `NO_TARGET_ORG`…).
+- `errorCode` agrupa la causa (`TIMEOUT`, `AUTH`, `HIGH_LATENCY`…).
 - Al reiniciar el API, los incidentes abiertos se releen para no duplicar.
 
 ## Limpieza manual desde SQL (si la UI falla)

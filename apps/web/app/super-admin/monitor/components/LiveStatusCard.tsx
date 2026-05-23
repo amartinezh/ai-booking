@@ -14,6 +14,23 @@ export default function LiveStatusCard({
 }: {
   service: LiveServiceResult;
 }) {
+  // Servicio no monitoreado en este ciclo (ej. Gemini/Meta sin organización).
+  if (service.skip) {
+    return (
+      <div className="rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
+            {service.displayName}
+          </span>
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-zinc-400" />
+        </div>
+        <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+          No monitoreado · sin organización
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm p-4 transition-colors duration-300">
       <div className="flex items-center justify-between gap-2">

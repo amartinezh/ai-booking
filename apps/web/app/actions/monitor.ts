@@ -23,6 +23,8 @@ export interface LiveServiceResult {
   httpStatus?: number | null;
   errorMessage?: string | null;
   errorCode?: string | null;
+  /** true = el servicio no se monitorea ahora (ej. Gemini/Meta sin organización). */
+  skip?: boolean;
 }
 
 export interface LiveCheckResponse {

@@ -28,6 +28,7 @@ export class MonitorCheckers {
   constructor(
     private readonly config: ConfigService,
     private readonly integrations: IntegrationsService,
+    private readonly prisma: PrismaService,
   ) {
     this.degradedThresholdMs =
       Number(this.config.get('MONITOR_DEGRADED_THRESHOLD_MS')) || 3000;
@@ -76,8 +77,8 @@ export class MonitorCheckers {
   // ── Gemini ─────────────────────────────────────────────────────────────────
 
   private async checkGemini(): Promise<CheckResult> {
-    const orgId = this.targetOrgId();
-    if (!orgId) return this.missingTargetOrg();
+    const orgId = await this.resolveOrgId();
+    if (!orgId) return this.skippedNoOrg();
 
     const r = await this.integrations.diagnoseGemini(orgId);
     if (r.success) {
@@ -94,8 +95,8 @@ export class MonitorCheckers {
   // ── Meta (WhatsApp Cloud API) ────────────────────────────────────────────────
 
   private async checkMeta(): Promise<CheckResult> {
-    const orgId = this.targetOrgId();
-    if (!orgId) return this.missingTargetOrg();
+    const orgId = await this.resolveOrgId();
+    if (!orgId) return this.skippedNoOrg();
 
     const r = await this.integrations.diagnoseMeta(orgId);
     if (r.success) {
@@ -141,17 +142,33 @@ export class MonitorCheckers {
 
   // ── helpers ──────────────────────────────────────────────────────────────────
 
-  private targetOrgId(): string | undefined {
-    return this.config.get<string>('MONITOR_TARGET_ORG_ID') || undefined;
+  /**
+   * Resuelve la organización "testigo" para Gemini/Meta: la activa más antigua.
+   * Devuelve `null` si no hay ninguna → esos checks se omiten (no son fallos).
+   */
+  private async resolveOrgId(): Promise<string | null> {
+    try {
+      const org = await this.prisma.organization.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      return org?.id ?? null;
+    } catch (error: any) {
+      this.logger.warn(`No se pudo resolver organización testigo: ${error.message}`);
+      return null;
+    }
   }
 
-  private missingTargetOrg(): CheckResult {
+  /** Resultado "no aplica": no hay organización contra la cual validar. */
+  private skippedNoOrg(): CheckResult {
     return {
-      status: 'DOWN',
+      status: 'UP',
       latencyMs: null,
-      errorCode: 'NO_TARGET_ORG',
+      skip: true,
+      errorCode: 'NO_ORG',
       errorMessage:
-        'Falta MONITOR_TARGET_ORG_ID en el .env. El monitor no sabe qué organización usar para validar credenciales de Gemini/Meta.',
+        'No hay organizaciones activas; este servicio no se monitorea por ahora.',
     };
   }
 
