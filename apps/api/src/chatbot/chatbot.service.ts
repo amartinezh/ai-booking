@@ -33,6 +33,7 @@ import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 import { SurveyService } from '../survey/survey.service';
+import { AudioConfigService } from '../audio-config/audio-config.service';
 import { ResolutionStatus } from '@antigravity/database';
 
 @Injectable()
@@ -62,6 +63,7 @@ export class ChatbotService implements OnModuleInit {
     private llmFactory: LlmFactoryService,
     private whatsappCredentials: WhatsappCredentialsService,
     private surveyService: SurveyService,
+    private audioConfig: AudioConfigService,
   ) {}
 
   async onModuleInit() {
@@ -582,13 +584,24 @@ export class ChatbotService implements OnModuleInit {
   // ══════════════════════════════════════════════════════════════
   // HELPER 4: TEXT-TO-SPEECH Y SMART REPLY
   // ══════════════════════════════════════════════════════════════
-  private async generateTTS(text: string): Promise<Buffer | null> {
+  private async generateTTS(
+    organizationId: string,
+    text: string,
+  ): Promise<Buffer | null> {
     try {
       const cleanText = text.replace(/[*_~`\[\]🎙️⏳✅❌📅👤⚕️⚠️🎉📝🔔😔😊🏥💳🪪]/g, '').trim();
+      // 🔊 Inyección dinámica multi-tenant: voz, pitch, velocidad y códec se
+      // resuelven desde OrganizationAudioConfig (con defaults seguros si la
+      // clínica no configuró nada). Ya no hay constantes hardcoded.
+      const cfg = await this.audioConfig.getEffective(organizationId);
       const request = {
         input: { text: cleanText },
-        voice: { languageCode: 'es-US', name: 'es-US-Neural2-A' },
-        audioConfig: { audioEncoding: 'OGG_OPUS' as const },
+        voice: { languageCode: cfg.languageCode, name: cfg.voiceId },
+        audioConfig: {
+          audioEncoding: cfg.audioEncoding,
+          pitch: cfg.pitch,
+          speakingRate: cfg.speakingRate,
+        },
       };
       const [response] = await this.ttsClient.synthesizeSpeech(request);
       if (!response.audioContent) {
@@ -668,7 +681,7 @@ export class ChatbotService implements OnModuleInit {
       try {
         const creds = await this.resolveCredentialsForOrg(organizationId);
         if (creds && creds.isActive) {
-          const audioBuffer = await this.generateTTS(text);
+          const audioBuffer = await this.generateTTS(organizationId, text);
           if (audioBuffer) {
             const mediaId = await this.uploadToWhatsApp(audioBuffer, creds);
             if (mediaId) {

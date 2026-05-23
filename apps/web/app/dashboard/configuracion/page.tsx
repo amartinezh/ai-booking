@@ -4,10 +4,12 @@ import { getMyOrgSettings } from '@/app/actions/settings';
 import { getMyKnowledgeBase } from '@/app/actions/knowledge-base';
 import { getMyAiConfig } from '@/app/actions/ai-config';
 import { getMyWhatsappConfig } from '@/app/actions/whatsapp-config';
+import { getMyAudioConfig } from '@/app/actions/audio-config';
 import SettingsForm from './SettingsForm';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
 import WhatsappChannelForm from './WhatsappChannelForm';
+import AudioConfigForm from './AudioConfigForm';
 import ConnectionHealthPanel from './ConnectionHealthPanel';
 import Link from 'next/link';
 
@@ -44,11 +46,14 @@ export default async function ConfiguracionPage({
     let aiConfigError: string | null = null;
     let whatsappConfig: Awaited<ReturnType<typeof getMyWhatsappConfig>> | null = null;
     let whatsappConfigError: string | null = null;
+    let audioConfig: Awaited<ReturnType<typeof getMyAudioConfig>> | null = null;
+    let audioConfigError: string | null = null;
 
     if (activeTab === 'integrations') {
-        const [aiRes, waRes] = await Promise.allSettled([
+        const [aiRes, waRes, audioRes] = await Promise.allSettled([
             getMyAiConfig(),
             getMyWhatsappConfig(),
+            getMyAudioConfig(),
         ]);
         if (aiRes.status === 'fulfilled') {
             aiConfig = aiRes.value;
@@ -63,6 +68,13 @@ export default async function ConfiguracionPage({
             console.error('[configuracion] WhatsApp config load failed:', waRes.reason);
             whatsappConfigError =
                 waRes.reason?.message ?? 'Error desconocido cargando el canal de WhatsApp.';
+        }
+        if (audioRes.status === 'fulfilled') {
+            audioConfig = audioRes.value;
+        } else {
+            console.error('[configuracion] Audio config load failed:', audioRes.reason);
+            audioConfigError =
+                audioRes.reason?.message ?? 'Error desconocido cargando la configuración de audio.';
         }
     }
 
@@ -125,6 +137,15 @@ export default async function ConfiguracionPage({
                             <SectionLoadError
                                 title="No pudimos cargar el canal de WhatsApp"
                                 detail={whatsappConfigError}
+                            />
+                        )}
+                        <div className="border-t border-zinc-200 dark:border-zinc-800" />
+                        {audioConfig ? (
+                            <AudioConfigForm initial={audioConfig} />
+                        ) : (
+                            <SectionLoadError
+                                title="No pudimos cargar la configuración de audio"
+                                detail={audioConfigError}
                             />
                         )}
                     </div>

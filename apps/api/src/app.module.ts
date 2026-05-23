@@ -15,6 +15,7 @@ import { SystemLogModule } from './system-log/system-log.module';
 import { CryptoModule } from './common/crypto/crypto.module';
 import { LlmModule } from './llm/llm.module';
 import { WhatsappConfigModule } from './whatsapp-config/whatsapp-config.module';
+import { AudioConfigModule } from './audio-config/audio-config.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { AppointmentReminderModule } from './appointment-reminder/appointment-reminder.module';
 import { GlobalStatsModule } from './global-stats/global-stats.module';
@@ -42,6 +43,8 @@ import { MonitorModule } from './monitor/monitor.module';
     LlmModule,
     // 📱 Canal WhatsApp Business (credenciales encriptadas por clínica).
     WhatsappConfigModule,
+    // 🔊 Configuración de voz/audio (TTS) multi-tenant por clínica.
+    AudioConfigModule,
     // 🩺 Diagnóstico en tiempo real de integraciones (Gemini + Meta).
     IntegrationsModule,
     // Nuestro módulo de IA / Webhooks

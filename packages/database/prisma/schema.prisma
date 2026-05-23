@@ -36,6 +36,9 @@ model Organization {
   // Configuración del canal WhatsApp por clínica (1:1) — credenciales encriptadas
   whatsappConfig WhatsappAccountConfig?
 
+  // Configuración de voz/audio (TTS) por clínica (1:1) — pitch, rate, voz, codec
+  audioConfig OrganizationAudioConfig?
+
   // Facturación Global Súper Admin
   monthlyFee      String?
   lastPaymentDate DateTime?
@@ -87,6 +90,52 @@ model OrganizationSettings {
 enum CommunicationStyle {
   FORMAL
   INFORMAL
+}
+
+// -----------------------------------------------------------------------------
+// 🔊 MULTI-TENANT: CONFIGURACIÓN DE VOZ Y AUDIO (TTS) POR CLÍNICA
+// Reemplaza la configuración global hardcoded del "Gestor de Audios" del
+// chatbot. Cada organización define su propia voz, tono (pitch), velocidad
+// (speakingRate) y códec de salida, que se inyectan dinámicamente en cada
+// llamada a Google Cloud Text-to-Speech.
+//
+// Aislamiento NIVEL BANCA: `organizationId` es UNIQUE + FK con onDelete:Cascade.
+// Una organización jamás puede leer/escribir la configuración de otra.
+// Los rangos válidos de `pitch` (-20..20) y `speakingRate` (0.25..4.0) se
+// imponen además con CHECK constraints en la migración SQL.
+// -----------------------------------------------------------------------------
+model OrganizationAudioConfig {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Códec del audio sintetizado. OGG_OPUS es el requerido por WhatsApp Cloud API.
+  audioEncoding AudioEncoding @default(OGG_OPUS)
+
+  // Tono de la voz. Rango válido de Google TTS: -20.0 a 20.0 semitonos.
+  // CHECK constraint en BD: pitch BETWEEN -20.0 AND 20.0.
+  pitch Float @default(0.0)
+
+  // Velocidad de habla. Rango válido de Google TTS: 0.25x a 4.0x.
+  // CHECK constraint en BD: speakingRate BETWEEN 0.25 AND 4.0.
+  speakingRate Float @default(1.0)
+
+  // Identificador de la voz de Google TTS (ej: es-US-Neural2-A).
+  voiceId String @default("es-US-Neural2-A")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+// Códecs soportados por Google Cloud TTS que exponemos a las clínicas.
+// OGG_OPUS es el único compatible con notas de voz de WhatsApp; MP3 y LINEAR16
+// quedan disponibles para integraciones futuras (web player, telefonía).
+enum AudioEncoding {
+  OGG_OPUS
+  MP3
+  LINEAR16
 }
 
 // -----------------------------------------------------------------------------
