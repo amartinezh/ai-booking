@@ -20,6 +20,7 @@ const ELEVENLABS_TIMEOUT_MS = 12_000;
 /** Clasificación técnica del fallo, para `SystemLog.action` y telemetría. */
 type ElevenLabsErrorCode =
   | 'AUTH' // API key rechazada (401/403)
+  | 'PLAN_REQUIRED' // la voz/feature exige plan de pago (402)
   | 'QUOTA_EXCEEDED' // créditos agotados / rate limit (429)
   | 'BAD_REQUEST' // texto/voz/parámetros inválidos (400/422)
   | 'TIMEOUT' // no respondió dentro de ELEVENLABS_TIMEOUT_MS
@@ -157,6 +158,8 @@ export class ElevenLabsTtsService implements TtsProvider {
 /** Mapea el HTTP status de ElevenLabs a un código de error interno. */
 function classifyHttpStatus(status: number): ElevenLabsErrorCode {
   if (status === 401 || status === 403) return 'AUTH';
+  // 402: la voz de librería o un feature exige plan de pago (típico en PoC Free).
+  if (status === 402) return 'PLAN_REQUIRED';
   if (status === 429) return 'QUOTA_EXCEEDED';
   // ElevenLabs usa 422 (Unprocessable Entity) para errores de validación.
   if (status === 400 || status === 422) return 'BAD_REQUEST';
