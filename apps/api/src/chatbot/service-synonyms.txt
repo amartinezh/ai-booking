@@ -1,0 +1,50 @@
+# ============================================================
+# service-synonyms.txt
+# Tesauro GENÉRICO de servicios clínicos (válido para cualquier clínica).
+#
+# Objetivo: cuando el paciente usa un sinónimo o lenguaje natural que NO
+# comparte substring con el nombre del catálogo (ej. "rayos x" vs
+# "Radiología e Imágenes Diagnósticas"), expandimos su frase a las
+# "anclas" del concepto y las probamos contra el catálogo REAL de la
+# clínica con el matcher determinista (sin LLM, anti-alucinación).
+#
+# NO mapea a un serviceId: cada clínica tiene los suyos. Mapea a CONCEPTOS
+# genéricos; las anclas son las palabras que sí suelen aparecer en el
+# nombre del catálogo. Si ninguna ancla coincide con el catálogo de esa
+# clínica, el flujo cae al nivel LLM como antes.
+#
+# Formato:
+#   - Líneas que empiezan con '#' o vacías → ignoradas.
+#   - [concepto: <clave>]  → inicia un concepto.
+#   - anclas:   a | b | c  → frases esperadas en el NOMBRE del catálogo.
+#   - sinonimos: x | y | z → lenguaje natural del paciente (no comparte substring).
+#   - Todo se normaliza (minúsculas, sin tildes) al cargar; escríbalo en
+#     minúsculas y sin tildes por claridad. Evite tokens sueltos demasiado
+#     genéricos ("consulta", "medico", "examenes") → producen falsos positivos.
+#
+# Para editar en caliente: ajuste el archivo y llame a reloadPatterns().
+# ============================================================
+
+[concepto: consulta_externa]
+anclas: consulta externa | consulta ambulatoria | consulta prioritaria | medicina general | consulta medica | medico general
+sinonimos: chequeo medico | valoracion medica | control medico | cita con el medico | cita medico general | revision medica | consulta con medico general | atencion medica general
+
+[concepto: laboratorio]
+anclas: laboratorio clinico | examenes de laboratorio | laboratorio
+sinonimos: examenes de sangre | analisis de sangre | toma de muestras | sacar sangre | examen de sangre | quimica sanguinea | hemograma | perfil lipidico | examen de glucosa | muestra de sangre | pruebas de sangre
+
+[concepto: ecografia]
+anclas: ecografia especializada | ecografia | ultrasonido | ecografias
+sinonimos: ecografia doppler | doppler obstetrico | ecografia obstetrica | ecografia de mama | ecografia cerebral neonatal | ecografia de torax | ultrasonido diagnostico | eco doppler
+
+[concepto: radiologia]
+anclas: radiologia | imagenes diagnosticas | imagenologia | radiologia e imagenes diagnosticas
+sinonimos: rayos x | rayos equis | radiografia | radiografias | mamografia | mamografias | resonancia magnetica | resonancia | escanografia | tomografia | tac | placa de rayos | sacar una placa
+
+[concepto: psicologia]
+anclas: psicologia | psicologo
+sinonimos: sicologo | sicologia | cita con el psicologo | cita psicologo | cita sicologo | terapia psicologica | psicoterapia | salud mental | consulta psicologica
+
+[concepto: promocion_prevencion]
+anclas: promocion y prevencion | pyp | p y p | crecimiento y desarrollo | control prenatal | planificacion familiar
+sinonimos: vacunas | vacuna | vacunacion | aplicacion de vacunas | aplicar vacuna | esquema de vacunacion | citologia | control de nino sano | control del nino sano

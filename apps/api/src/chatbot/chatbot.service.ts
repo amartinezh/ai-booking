@@ -50,6 +50,12 @@ export class ChatbotService implements OnModuleInit {
   // 🛡️ Guardrail: detecta insultos en cualquier parte del mensaje (no ancla a inicio/fin).
   private insultRegex: RegExp = /\b(gonorrea|hijueputa|malparid[oa]|idiota|imb[eé]cil)\b/i;
 
+  // Tesauro GENÉRICO de servicios (service-synonyms.txt). Cada concepto agrupa
+  // "anclas" (frases que suelen estar en el nombre del catálogo) y "sinonimos"
+  // (lenguaje natural del paciente). Todo normalizado al cargar. Se usa para
+  // expandir la frase del paciente a anclas antes de caer al LLM.
+  private serviceConcepts: Array<{ key: string; anchors: string[]; synonyms: string[] }> = [];
+
   constructor(
     private prisma: PrismaService,
     private configService: ConfigService,
@@ -68,6 +74,7 @@ export class ChatbotService implements OnModuleInit {
 
   async onModuleInit() {
     this.loadPatterns();
+    this.loadServiceSynonyms();
     // Seeder idempotente: asegura que cada organización tenga un registro EPS "Particular"
     // (pago directo). Se ejecuta en silencio si ya existe; no afecta CRON ni flujos en curso.
     try {
@@ -208,6 +215,102 @@ export class ChatbotService implements OnModuleInit {
 
   reloadPatterns(): void {
     this.loadPatterns();
+    this.loadServiceSynonyms();
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // TESAURO DE SERVICIOS (service-synonyms.txt) — genérico por concepto.
+  // Lee anclas + sinónimos de cada concepto y los normaliza. No mapea a
+  // serviceId: solo expande lenguaje natural → anclas para el matcher.
+  // ══════════════════════════════════════════════════════════════
+  private normalizeSynonym(s: string): string {
+    return s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  private loadServiceSynonyms(): void {
+    const candidates = [
+      path.resolve(__dirname, 'service-synonyms.txt'),
+      path.resolve(process.cwd(), 'src', 'chatbot', 'service-synonyms.txt'),
+    ];
+
+    let content: string | null = null;
+    for (const filePath of candidates) {
+      if (fs.existsSync(filePath)) {
+        content = fs.readFileSync(filePath, 'utf-8');
+        this.logger.log(`Tesauro de servicios cargado desde: ${filePath}`);
+        break;
+      }
+    }
+
+    if (!content) {
+      this.logger.warn('service-synonyms.txt no encontrado. Tesauro de servicios deshabilitado.');
+      this.serviceConcepts = [];
+      return;
+    }
+
+    const concepts: Array<{ key: string; anchors: string[]; synonyms: string[] }> = [];
+    let current: { key: string; anchors: string[]; synonyms: string[] } | null = null;
+
+    const parseList = (value: string): string[] =>
+      value
+        .split('|')
+        .map((t) => this.normalizeSynonym(t))
+        .filter((t) => t.length >= 3);
+
+    for (const rawLine of content.split('\n')) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+
+      const header = line.match(/^\[concepto:\s*([^\]]+)\]$/i);
+      if (header) {
+        current = { key: header[1].trim(), anchors: [], synonyms: [] };
+        concepts.push(current);
+        continue;
+      }
+      if (!current) continue;
+
+      const idx = line.indexOf(':');
+      if (idx === -1) continue;
+      const field = line.slice(0, idx).trim().toLowerCase();
+      const value = line.slice(idx + 1);
+      if (field === 'anclas') current.anchors = parseList(value);
+      else if (field === 'sinonimos') current.synonyms = parseList(value);
+    }
+
+    this.serviceConcepts = concepts.filter((c) => c.anchors.length > 0);
+    const totalSyn = this.serviceConcepts.reduce((n, c) => n + c.synonyms.length + c.anchors.length, 0);
+    this.logger.log(
+      `Tesauro listo — conceptos: ${this.serviceConcepts.length}, términos: ${totalSyn}`,
+    );
+  }
+
+  // Expande la frase del paciente a las ANCLAS de los conceptos cuyos
+  // sinónimos/anclas aparezcan como secuencia de palabras completas en el
+  // texto. Devuelve las anclas (más específicas primero, por longitud) para
+  // probarlas contra el catálogo real con matchCatalogByName. No usa LLM.
+  private expandToAnchors(text: string | null): string[] {
+    const np = this.normalizeSynonym(text || '');
+    if (np.length < 3 || this.serviceConcepts.length === 0) return [];
+    const padded = ` ${np} `;
+
+    const anchors: string[] = [];
+    for (const concept of this.serviceConcepts) {
+      const hit = [...concept.synonyms, ...concept.anchors].some(
+        (term) => padded.includes(` ${term} `),
+      );
+      if (hit) {
+        // Anclas de este concepto, más específicas (largas) primero.
+        for (const a of [...concept.anchors].sort((x, y) => y.length - x.length)) {
+          if (!anchors.includes(a)) anchors.push(a);
+        }
+      }
+    }
+    return anchors;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -1186,6 +1289,22 @@ export class ChatbotService implements OnModuleInit {
       this.matchCatalogByName(text, services) ||
       this.matchCatalogByName(geminiSpecialty, services);
     if (byName) return byName;
+
+    // 2.5) Tesauro genérico (sin LLM): expande sinónimos del paciente
+    // ("rayos x", "vacunas", "sicologo"…) a las anclas del concepto y las
+    // prueba contra el catálogo real. Resuelve frases que no comparten
+    // substring con el nombre del servicio. Si ningún ancla coincide con el
+    // catálogo de ESTA clínica, sigue al LLM (red de seguridad).
+    for (const anchor of [
+      ...this.expandToAnchors(text),
+      ...this.expandToAnchors(geminiSpecialty),
+    ]) {
+      const bySynonym = this.matchCatalogByName(anchor, services);
+      if (bySynonym) {
+        this.logger.log(`🔤 Tesauro: "${text ?? geminiSpecialty}" → ancla "${anchor}" → ${bySynonym.name}`);
+        return bySynonym;
+      }
+    }
 
     // 4) Mapeo semántico (LLM) contra el catálogo real — último recurso.
     // Resuelve frases como "necesito una cita de consulta externa para mañana"
