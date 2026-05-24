@@ -347,7 +347,7 @@ export class ChatbotService implements OnModuleInit {
         `Org ${organizationId} sin proveedor LLM configurado — usando fallback simple.`,
       );
       return {
-        cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
+        transcript: text, cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
         fechaSolicitada: null, intent: 'otro',
         isEscape: false, outOfContext: false, ininteligible: false,
         isFallback: true, isCancellation: false, isRateLimited: false,
@@ -368,7 +368,7 @@ export class ChatbotService implements OnModuleInit {
       if (e?.status === 429) {
         this.logger.warn(`${provider.name} rate limit (429) — usando fallback simple, sin incrementar contador de fallos`);
         return {
-          cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
+          transcript: text, cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
           fechaSolicitada: null, intent: 'otro',
           isEscape: false, outOfContext: false, ininteligible: false,
           isFallback: true, isCancellation: false, isRateLimited: true,
@@ -382,7 +382,7 @@ export class ChatbotService implements OnModuleInit {
       }
       this.logger.error(`Error procesando IA con ${provider.name} tras ${maxRetries} intentos`, e);
       return {
-        cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
+        transcript: text, cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
         fechaSolicitada: null, intent: 'otro',
         isEscape: false, outOfContext: false, ininteligible: false,
         isFallback: true, isCancellation: false, isRateLimited: false,
@@ -398,6 +398,7 @@ export class ChatbotService implements OnModuleInit {
     const isOnlyDigits = /^\d+$/.test(t);
 
     return {
+      transcript: t || null,
       cedula: isOnlyDigits ? digits : null,
       // En el paso de nombre o EPS, pasar el texto raw para que el flujo lo procese
       nombre: currentState === ChatState.AWAITING_NAME ? (t || null) : null,
@@ -1195,7 +1196,10 @@ export class ChatbotService implements OnModuleInit {
   private async processIncomingMessageUnsafe(event: any) {
     const senderId = event.from || event.sender?.id;
     const messageType = event.type;
-    const text = event.text?.body?.trim() || event.message?.text?.trim();
+    // `text` puede reasignarse: cuando llega audio, lo sustituimos por la
+    // transcripción literal del paciente para que la voz recorra EXACTAMENTE
+    // el mismo camino determinista que el texto (ver rama `isAudio` abajo).
+    let text = event.text?.body?.trim() || event.message?.text?.trim();
     const audioId = event.audio?.id;
 
     // ── IDENTIFICACIÓN DEL TENANT ──────────────────────────────
@@ -1406,6 +1410,7 @@ export class ChatbotService implements OnModuleInit {
       this.escapeRegex.test(text.trim());
 
     let aiData: SchedulingExtraction = {
+      transcript: null,
       cedula: null,
       nombre: null,
       eps: null,
@@ -1456,6 +1461,15 @@ export class ChatbotService implements OnModuleInit {
         : null;
       if (audioBuffer) {
         aiData = await this.extractDataWithLLM(organizationId, text, audioBuffer);
+        // ⭐ Unificación voz↔texto: adoptamos la transcripción literal como el
+        // `text` del turno. A partir de aquí el audio recorre el MISMO camino
+        // determinista que el texto (match por nombre contra el catálogo en
+        // los pasos de menú, FAQ, reprompts), evitando que valores como
+        // "consulta externa" —que el LLM no extrae como `especialidad`— se
+        // pierdan. Solo lo hacemos si la transcripción tiene contenido útil.
+        if (aiData.transcript && aiData.transcript.trim()) {
+          text = aiData.transcript.trim();
+        }
       } else {
         aiData.ininteligible = true;
       }

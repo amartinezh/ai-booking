@@ -106,10 +106,12 @@ REGLA DE CANCELACIÓN: Si el usuario dice "cancelar una cita", "anular cita" o "
 REGLA DE ESCAPE: Si el usuario quiere reiniciar, volver atrás o salir del flujo (ej: "me equivoqué", "salir", "volver", "reiniciar"), pon "isEscape" en true. (NOTA: "cancelar cita" es isCancellation, NO isEscape). Saludos como "Hola" no son escape.
 REGLA DE FUERA DE CONTEXTO: Si el paciente toca temas sin relación médica (no ofensivos), pon "outOfContext" en true e "intent" en "otro". Si es ofensivo, usa "insulto_abuso".
 REGLA DE RUIDO: Si el audio es vacío, inentendible o solo hay ruido, pon "ininteligible" en true.
+REGLA DE TRANSCRIPCIÓN: En "transcript" devuelve la transcripción TEXTUAL y literal de lo que dijo el paciente (si fue audio) o una copia EXACTA del texto recibido. NO normalices, traduzcas ni resumas: conserva las palabras tal cual para poder mapearlas contra el catálogo de la clínica (ej: "consulta externa", "quiero medicina general"). Si no hay audio ni texto, null.
 
 Devuelve ÚNICAMENTE JSON válido sin bloques de código:
 {
     "intent": "agendar_cita | consulta_faq | insulto_abuso | otro",
+    "transcript": "Transcripción literal del audio o copia exacta del texto. Si no hay contenido, null.",
     "cedula": "Número sin puntos (Ej: 1088123456). Si no menciona, null.",
     "nombre": "Nombre completo. Si no menciona, null.",
     "eps": "Nombre de EPS o aseguradora. Si no menciona, null.",

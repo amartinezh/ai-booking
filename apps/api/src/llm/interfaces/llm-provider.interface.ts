@@ -50,6 +50,15 @@ export function normalizeIntent(value: unknown): SchedulingIntent {
 }
 
 export interface SchedulingExtraction {
+  /**
+   * Transcripción LITERAL de lo que dijo el paciente en el audio (o eco exacto
+   * del texto recibido). Permite que la voz recorra el MISMO camino determinista
+   * que el texto: alimenta el match por nombre contra el catálogo en los pasos
+   * de menú (servicio/EPS), donde valores como "consulta externa" no se
+   * extraen como `especialidad` pero sí coinciden por substring con el catálogo.
+   * `null` cuando no hubo audio/texto o no se pudo transcribir.
+   */
+  transcript: string | null;
   cedula: string | null;
   nombre: string | null;
   eps: string | null;

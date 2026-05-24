@@ -12,6 +12,8 @@ import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { LlmFactoryService } from '../llm/llm-factory.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
+import { SurveyService } from '../survey/survey.service';
+import { AudioConfigService } from '../audio-config/audio-config.service';
 import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
 
 // ───────────────────────────────────────────────────────────────
@@ -57,6 +59,7 @@ function createFakeRedis() {
 // SchedulingExtraction completa con overrides; default = intención "otro" sin entidades.
 function extraction(over: Partial<SchedulingExtraction> = {}): SchedulingExtraction {
   return {
+    transcript: null,
     cedula: null,
     nombre: null,
     eps: null,
@@ -168,6 +171,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         { provide: OrganizationSettingsService, useValue: organizationSettings },
         { provide: LlmFactoryService, useValue: llmFactory },
         { provide: WhatsappCredentialsService, useValue: { resolveForOrg: jest.fn() } },
+        { provide: SurveyService, useValue: { generateSurveyToken: jest.fn(async () => null) } },
+        { provide: AudioConfigService, useValue: { getEffective: jest.fn(async () => null) } },
       ],
     }).compile();
 
@@ -176,6 +181,12 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     // Capturamos los envíos sin tocar la capa HTTP de WhatsApp.
     sendSpy = jest
       .spyOn(service as any, 'sendWhatsAppMessage')
+      .mockResolvedValue(undefined);
+
+    // El enlace CSAT (encuesta de cierre) es plumbing aparte de la conversación:
+    // lo silenciamos para que `sentMessages()` capture solo las respuestas del flujo.
+    jest
+      .spyOn(service as any, 'sendSurveyLink')
       .mockResolvedValue(undefined);
   });
 
@@ -581,6 +592,35 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       await service.processIncomingMessage(makeTextEvent('quiero una consulta externa'));
 
       expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
+    });
+
+    // Regresión (voz↔texto): un AUDIO en el paso de servicio. El LLM transcribe
+    // "consulta externa" pero NO lo extrae como `especialidad` (no es una
+    // especialidad médica). Antes de adoptar el transcript como `text`, la voz
+    // no tenía nada que mapear (text=null) y el servicio nunca se resolvía,
+    // mientras que el mismo mensaje por texto sí funcionaba. Ahora el audio
+    // recorre el MISMO camino determinista: el transcript matchea el catálogo.
+    it('AUDIO: el transcript resuelve el servicio aunque el LLM no extraiga la especialidad', async () => {
+      const makeAudioEvent = () => ({
+        from: SENDER,
+        type: 'audio',
+        audio: { id: 'audio-123' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+      // Aislamos la descarga del audio de WhatsApp (capa HTTP/credenciales).
+      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok' });
+      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+      // El LLM transcribe la voz pero deja `especialidad` en null.
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'consulta externa', especialidad: null, intent: 'agendar_cita' }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      // El servicio se resolvió por el transcript y avanzó a EPS (igual que el texto).
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
+      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBe('Consulta externa');
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
     });
   });

@@ -65,6 +65,7 @@ export class GeminiProvider implements LLMProvider {
       .replace(/```/g, '');
     const parsed = JSON.parse(responseText);
     return {
+      transcript: parsed.transcript ?? input.text ?? null,
       cedula: parsed.cedula ?? null,
       nombre: parsed.nombre ?? null,
       eps: parsed.eps ?? null,

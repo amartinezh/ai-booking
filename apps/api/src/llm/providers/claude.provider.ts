@@ -69,6 +69,7 @@ export class ClaudeProvider implements LLMProvider {
     const cleaned = raw.trim().replace(/```json/g, '').replace(/```/g, '');
     const parsed = JSON.parse(cleaned);
     return {
+      transcript: input.text ?? parsed.transcript ?? null,
       cedula: parsed.cedula ?? null,
       nombre: parsed.nombre ?? null,
       eps: parsed.eps ?? null,

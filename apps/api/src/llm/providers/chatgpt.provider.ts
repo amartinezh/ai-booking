@@ -52,9 +52,13 @@ export class ChatGptProvider implements LLMProvider {
     audio?: AudioInput | null;
   }): Promise<SchedulingExtraction> {
     let userContent = '';
+    // Transcripción literal: la de Whisper si fue audio, o el propio texto.
+    // Es la señal que permite que la voz recorra el mismo camino determinista
+    // que el texto en los pasos de menú (ver SchedulingExtraction.transcript).
+    let transcript: string | null = input.text ?? null;
     if (input.text) userContent += `Texto del usuario: "${input.text}"\n`;
     if (input.audio) {
-      const transcript = await this.transcribe(input.audio);
+      transcript = await this.transcribe(input.audio);
       userContent += `Transcripción del audio: "${transcript}"`;
     }
 
@@ -67,6 +71,7 @@ export class ChatGptProvider implements LLMProvider {
     });
     const parsed = JSON.parse(json);
     return {
+      transcript: transcript ?? parsed.transcript ?? null,
       cedula: parsed.cedula ?? null,
       nombre: parsed.nombre ?? null,
       eps: parsed.eps ?? null,
