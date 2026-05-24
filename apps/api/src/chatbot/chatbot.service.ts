@@ -25,7 +25,6 @@ import {
   InteractionStatus,
   FailureReason,
 } from '../interaction-log/interaction-log.service';
-import textToSpeech from '@google-cloud/text-to-speech';
 import * as fs from 'fs';
 import * as path from 'path';
 import { LlmFactoryService } from '../llm/llm-factory.service';
@@ -33,13 +32,12 @@ import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 import { SurveyService } from '../survey/survey.service';
-import { AudioConfigService } from '../audio-config/audio-config.service';
+import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
 import { ResolutionStatus } from '@antigravity/database';
 
 @Injectable()
 export class ChatbotService implements OnModuleInit {
   private readonly logger = new Logger(ChatbotService.name);
-  private readonly ttsClient = new textToSpeech.TextToSpeechClient();
 
   // Regex construidos dinámicamente desde chatbot-patterns.txt
   private escapeRegex: RegExp = /^(hola)$/i;
@@ -69,7 +67,7 @@ export class ChatbotService implements OnModuleInit {
     private llmFactory: LlmFactoryService,
     private whatsappCredentials: WhatsappCredentialsService,
     private surveyService: SurveyService,
-    private audioConfig: AudioConfigService,
+    private ttsFactory: TtsFactoryService,
   ) {}
 
   async onModuleInit() {
@@ -776,31 +774,11 @@ export class ChatbotService implements OnModuleInit {
     organizationId: string,
     text: string,
   ): Promise<Buffer | null> {
-    try {
-      const cleanText = text.replace(/[*_~`\[\]🎙️⏳✅❌📅👤⚕️⚠️🎉📝🔔😔😊🏥💳🪪]/g, '').trim();
-      // 🔊 Inyección dinámica multi-tenant: voz, pitch, velocidad y códec se
-      // resuelven desde OrganizationAudioConfig (con defaults seguros si la
-      // clínica no configuró nada). Ya no hay constantes hardcoded.
-      const cfg = await this.audioConfig.getEffective(organizationId);
-      const request = {
-        input: { text: cleanText },
-        voice: { languageCode: cfg.languageCode, name: cfg.voiceId },
-        audioConfig: {
-          audioEncoding: cfg.audioEncoding,
-          pitch: cfg.pitch,
-          speakingRate: cfg.speakingRate,
-        },
-      };
-      const [response] = await this.ttsClient.synthesizeSpeech(request);
-      if (!response.audioContent) {
-        this.logger.error('Google Cloud TTS no devolvió audio');
-        return null;
-      }
-      return Buffer.from(response.audioContent);
-    } catch (error) {
-      this.logger.error(`Error en generateTTS: ${error.message}`);
-      return null;
-    }
+    // El saneado (markdown/emojis) es agnóstico al proveedor; se hace una vez
+    // aquí. La elección de motor (Google producción / ElevenLabs PoC) y el
+    // eventual fallback los resuelve TtsFactoryService según ACTIVE_TTS_PROVIDER.
+    const cleanText = text.replace(/[*_~`\[\]🎙️⏳✅❌📅👤⚕️⚠️🎉📝🔔😔😊🏥💳🪪]/g, '').trim();
+    return this.ttsFactory.synthesize(organizationId, cleanText);
   }
 
   private async uploadToWhatsApp(
