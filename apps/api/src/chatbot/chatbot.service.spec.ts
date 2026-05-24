@@ -348,6 +348,78 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     expect(provider.answerFAQ).not.toHaveBeenCalled();
   });
 
+  // ── Defecto #2 · guardrail anti-alucinación de cupos en answerFAQ ──
+  // El RAG no conoce la agenda: si afirma disponibilidad/cupos/"horario
+  // especial" no respaldado por la KB, se intercepta y se redirige al flujo.
+  describe('guardrail FAQ: bloquea afirmaciones de disponibilidad de cita', () => {
+    beforeEach(() => {
+      provider.extractSchedulingIntent.mockResolvedValue(
+        extraction({ intent: 'consulta_faq' }),
+      );
+    });
+
+    it('intercepta el "horario especial" fabricado (bug reportado) y redirige al agendamiento', async () => {
+      provider.answerFAQ.mockResolvedValueOnce(
+        'Para los usuarios de Nueva EPS tenemos un horario especial de atención ' +
+          'presencial de 2:00 p.m. a 3:00 p.m. ¿Desea agendar una cita ahora? 😊',
+      );
+
+      await service.processIncomingMessage(
+        makeTextEvent('¿qué horario manejan para Nueva EPS?'),
+      );
+
+      const replies = sentMessages();
+      expect(replies).toHaveLength(1);
+      // La afirmación fabricada NO llegó al paciente.
+      expect(replies[0]).not.toContain('horario especial');
+      expect(replies[0]).not.toContain('2:00');
+      // Se le redirige al flujo real de agendamiento.
+      expect(replies[0]).toContain('Hola');
+    });
+
+    it('intercepta una oferta directa de cupo disponible', async () => {
+      provider.answerFAQ.mockResolvedValueOnce(
+        'Sí, tenemos un cupo disponible para mañana a las 9:00 a.m.',
+      );
+
+      await service.processIncomingMessage(makeTextEvent('¿hay citas para mañana?'));
+
+      const replies = sentMessages();
+      expect(replies[0]).not.toContain('9:00');
+      expect(replies[0]).toContain('Hola');
+    });
+
+    it('NO intercepta un horario de operación legítimo de la clínica', async () => {
+      provider.answerFAQ.mockResolvedValueOnce(
+        'El horario de la farmacia es de lunes a viernes de 7:00 a.m. a 8:00 p.m. ' +
+          '¿Desea agendar una cita ahora? 😊',
+      );
+
+      await service.processIncomingMessage(
+        makeTextEvent('¿a qué hora abre la farmacia?'),
+      );
+
+      const replies = sentMessages();
+      expect(replies[0]).toContain('farmacia');
+      expect(replies[0]).toContain('7:00');
+    });
+
+    it('NO intercepta "horario especial" si está documentado textualmente en la KB', async () => {
+      knowledgeBase.getContent.mockResolvedValue(
+        'Horario especial de festivos: los domingos permanecemos cerrados.',
+      );
+      provider.answerFAQ.mockResolvedValueOnce(
+        'Sí, manejamos un horario especial de festivos: los domingos permanecemos ' +
+          'cerrados. ¿Desea agendar una cita ahora? 😊',
+      );
+
+      await service.processIncomingMessage(makeTextEvent('¿abren los festivos?'));
+
+      const replies = sentMessages();
+      expect(replies[0]).toContain('festivos');
+    });
+  });
+
   // ── ACK · Fase 2 + validación de cédula (Fase 3) ──
   it('agendar_cita con cédula registrada → ACK saluda por nombre y confirma datos', async () => {
     prisma.patientProfile.findUnique.mockResolvedValueOnce({ fullName: 'Andrés Pérez' });
@@ -622,6 +694,70 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
       expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBe('Consulta externa');
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // REGRESIÓN (voz↔texto) · paso de EPS no debe desviarse a FAQ
+  // Bug reportado: al decir la EPS por VOZ, el LLM clasifica el turno como
+  // intent='consulta_faq' (mencionar una EPS dispara esa intención según el
+  // prompt). El router global de FAQ se adelantaba al resolver del menú,
+  // llamaba a answerFAQ (RAG que puede alucinar horarios/cupos) y se comía el
+  // turno SIN capturar la EPS → el flujo parecía reiniciarse al paso de EPS.
+  // El texto nunca sufría esto porque en los pasos de menú no llama al LLM.
+  // ════════════════════════════════════════════════════════════════
+  describe('voz en AWAITING_EPS — selección hablada no se desvía a FAQ', () => {
+    const makeAudioEvent = () => ({
+      from: SENDER,
+      type: 'audio',
+      audio: { id: 'audio-eps-1' },
+      metadata: { phone_number_id: PHONE_ID },
+    });
+
+    beforeEach(() => {
+      // Servicio YA resuelto: el paciente está en el paso de EPS.
+      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_EPS);
+      redis.store.set(`temp_especialidad_id:${ORG_ID}:${SENDER}`, 's1');
+      redis.store.set(`temp_especialidad:${ORG_ID}:${SENDER}`, 'Consulta externa');
+      // Catálogo de EPS de la clínica (incluye la que el paciente dirá por voz).
+      prisma.eps.findMany.mockResolvedValue([{ id: 'e1', name: 'Nueva EPS' }]);
+
+      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok' });
+      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+    });
+
+    it('AUDIO "Nueva EPS" con intent=consulta_faq → resuelve la EPS, NO llama answerFAQ', async () => {
+      // El LLM transcribe la EPS pero la clasifica como consulta_faq (el bug).
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'Nueva EPS', eps: null, intent: 'consulta_faq' }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      // El turno NO se desvió al RAG: nunca se llamó answerFAQ.
+      expect(provider.answerFAQ).not.toHaveBeenCalled();
+      // La EPS se capturó por el transcript (igual que el texto).
+      expect(redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`)).toBe('e1');
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe('Nueva EPS');
+      // Avanzó más allá del paso de EPS (sin slots → opt-in a lista de espera).
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_WAITLIST_OPTIN,
+      );
+    });
+
+    it('AUDIO con pregunta abierta (no mapea a EPS) SÍ responde FAQ sin perder el estado', async () => {
+      // El paciente realmente pregunta algo: el transcript no mapea a ninguna EPS.
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: '¿qué documentos necesito?', eps: null, intent: 'consulta_faq' }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      // La FAQ legítima sí se atiende (vía el resolver del menú, classifyIntentLocal)…
+      expect(provider.answerFAQ).toHaveBeenCalledTimes(1);
+      // …y NO se pierde el progreso: sigue esperando la EPS.
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
+      expect(redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`)).toBeUndefined();
     });
   });
 });

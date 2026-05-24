@@ -41,6 +41,9 @@ export enum FailureReason {
     UNHANDLED_ERROR = 'UNHANDLED_ERROR',
     ORG_INACTIVE = 'ORG_INACTIVE',
     NO_TENANT = 'NO_TENANT',
+    // El RAG de FAQ afirmó disponibilidad de citas/cupos (dato que NO vive en la
+    // base de conocimiento, sino en los Slots) → respuesta interceptada.
+    FAQ_HALLUCINATION = 'FAQ_HALLUCINATION',
 }
 
 export interface LogParams {

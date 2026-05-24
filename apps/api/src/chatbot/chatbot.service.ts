@@ -462,6 +462,47 @@ export class ChatbotService implements OnModuleInit {
   }
 
   // ══════════════════════════════════════════════════════════════
+  // GUARDRAIL: ¿la respuesta de FAQ afirma disponibilidad de citas?
+  // El RAG solo conoce la base de conocimiento (info general de la clínica),
+  // NUNCA la agenda. Cualquier afirmación de cupo/espacio/turno disponible es
+  // por definición fabricada. Detectamos dos clases:
+  //   • DURAS: ofertas de cupo/espacio/turno/disponibilidad de cita → siempre
+  //     se interceptan (jamás son legítimas vía RAG).
+  //   • BLANDAS: "horario especial/exclusivo", "atención exclusiva" → solo se
+  //     interceptan si la frase NO aparece textualmente en la KB (puede ser un
+  //     horario de operación legítimamente documentado, p.ej. festivos).
+  // ══════════════════════════════════════════════════════════════
+  private faqClaimsAvailability(reply: string, kbContent: string | null): boolean {
+    const norm = (s: string) =>
+      (s || '')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ');
+    const r = norm(reply);
+    const kb = norm(kbContent || '');
+
+    // Ofertas explícitas de disponibilidad de cita → nunca legítimas vía RAG.
+    const hardPatterns: RegExp[] = [
+      /(hay|tenemos|tengo|queda|quedan)\s+(un |una |unos |unas )?(espacio|espacios|cupo|cupos|turno|turnos|disponibilidad)\b/,
+      /(espacio|espacios|cupo|cupos|turno|turnos)\s+(disponible|disponibles|libre|libres)\b/,
+      /disponibilidad\s+(de|para)\s+(la |tu |su )?(cita|citas|agenda)\b/,
+    ];
+    if (hardPatterns.some((p) => p.test(r))) return true;
+
+    // Afirmaciones de horario "especial/exclusivo": solo si no están en la KB.
+    const softPatterns: RegExp[] = [
+      /horario\s+(especial|exclusivo)/,
+      /atencion\s+exclusiva/,
+    ];
+    for (const p of softPatterns) {
+      const m = r.match(p);
+      if (m && !kb.includes(m[0])) return true;
+    }
+    return false;
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // FAQ HANDLER
   // Responde preguntas generales usando la base de conocimiento.
   // No modifica el estado de la sesión (el usuario sigue en IDLE).
@@ -510,6 +551,14 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // Mensaje seguro cuando el guardrail intercepta una afirmación de
+    // disponibilidad: NO promete cupos, solo encamina al flujo de agendamiento
+    // (única fuente real de la agenda).
+    const availabilityRedirect =
+      style === 'INFORMAL'
+        ? `Para revisar la disponibilidad real y agendar tu cita, escríbeme *Hola* y seguimos el proceso paso a paso. 😊`
+        : `Para revisar la disponibilidad real y agendar su cita, escríbame *Hola* y seguimos el proceso paso a paso. 😊`;
+
     const systemPrompt =
       `Eres *${botName}*, el recepcionista virtual de *${clinicName}*. ` +
       `Tu único rol en este momento es responder preguntas generales de pacientes ` +
@@ -517,22 +566,35 @@ export class ChatbotService implements OnModuleInit {
       `${toneBlock}\n\n` +
       `REGLAS ESTRICTAS QUE DEBES SEGUIR:\n` +
       `1. NUNCA inventes información que no esté en la base de conocimiento.\n` +
-      `2. Si la respuesta no está en la base de conocimiento, responde exactamente: ` +
+      `2. ⛔ DISPONIBILIDAD DE CITAS: la base de conocimiento NO contiene cupos, ` +
+      `agenda ni horarios libres de citas. NUNCA afirmes, inventes ni insinúes que ` +
+      `hay un cupo, espacio, "horario especial" u "horario exclusivo" disponible ` +
+      `para una EPS, servicio, médico o fecha. Esa información SOLO existe en el ` +
+      `sistema de agendamiento, no aquí. Si el paciente pregunta por disponibilidad ` +
+      `o por reservar un horario concreto, NO respondas con horas ni cupos: invítalo ` +
+      `a iniciar el agendamiento (ver regla 8).\n` +
+      `3. Solo puedes mencionar una hora/horario si está COPIADO TEXTUALMENTE de la ` +
+      `base de conocimiento y corresponde a un horario de OPERACIÓN de la clínica ` +
+      `(atención telefónica, farmacia, visitas, etc.), JAMÁS a la disponibilidad de ` +
+      `una cita. No combines ni "deduzcas" horarios de fragmentos distintos.\n` +
+      `4. Si la respuesta no está en la base de conocimiento, responde exactamente: ` +
       `"Esa información no está disponible en este momento. Para más detalles, ` +
       `comuníquese con nosotros al *${supportPhone}*."\n` +
-      `3. Usa formato de WhatsApp: *negrita* para énfasis importante, guiones para listas. ` +
+      `5. Usa formato de WhatsApp: *negrita* para énfasis importante, guiones para listas. ` +
       `NO uses HTML ni markdown avanzado (#, ##, **).\n` +
-      `4. Sé cálido, empático y profesional. Lenguaje sencillo y cercano — respeta el TONO Y ESTILO definido arriba.\n` +
-      `5. Sé conciso: máximo 4 oraciones o puntos clave, salvo que la pregunta requiera más detalle.\n` +
-      `6. Si el paciente menciona querer agendar una cita, indícale: ` +
+      `6. Sé cálido, empático y profesional. Lenguaje sencillo y cercano — respeta el TONO Y ESTILO definido arriba.\n` +
+      `7. Sé conciso: máximo 4 oraciones o puntos clave, salvo que la pregunta requiera más detalle.\n` +
+      `8. Si el paciente menciona querer agendar una cita, indícale: ` +
       (style === 'INFORMAL'
         ? `"Para agendar, cuéntame qué especialidad necesitas o escríbeme *Hola* para empezar."\n`
         : `"Para agendar, indíqueme la especialidad que necesita o escriba *Hola* para comenzar."\n`) +
-      `7. Termina SIEMPRE invitando sutilmente a agendar con ` +
+      `9. Termina SIEMPRE invitando sutilmente a agendar con ` +
       (style === 'INFORMAL'
         ? `"¿Te gustaría agendar una cita ahora? 😊"`
         : `"¿Desea agendar una cita ahora? 😊"`) +
-      ` salvo que ya hayas derivado al teléfono de soporte.\n\n` +
+      ` salvo que ya hayas derivado al teléfono de soporte. Esta invitación es la ` +
+      `ÚNICA frase sobre agendar permitida: NUNCA la acompañes de una hora, cupo o ` +
+      `disponibilidad concreta.\n\n` +
       `--- BASE DE CONOCIMIENTO ---\n` +
       `${kbContent}\n` +
       `--- FIN DE BASE DE CONOCIMIENTO ---\n\n` +
@@ -556,6 +618,28 @@ export class ChatbotService implements OnModuleInit {
       }
 
       const reply = await provider.answerFAQ(systemPrompt, question);
+
+      // ── GUARDRAIL DE SALIDA (anti-alucinación de cupos) ──────────
+      // El RAG NO conoce la agenda; aun con el prompt endurecido puede
+      // recombinar fragmentos de la KB y afirmar un "horario especial" o un
+      // cupo disponible. Si la respuesta hace una afirmación de DISPONIBILIDAD
+      // que no está respaldada por la KB, la reemplazamos por un redirect seguro
+      // al flujo de agendamiento (única fuente real de la agenda) y lo auditamos.
+      if (this.faqClaimsAvailability(reply, kbContent)) {
+        this.logger.warn(
+          `FAQ interceptada por afirmar disponibilidad no respaldada: "${reply.slice(0, 160)}"`,
+        );
+        await this.smartReply(organizationId, senderId, availabilityRedirect);
+        await this.interactionLog.logFailure({
+          whatsappId: senderId,
+          organizationId,
+          reason: FailureReason.FAQ_HALLUCINATION,
+          userMessage: question,
+          botReply: availabilityRedirect,
+          metadata: { step: 'FAQ_AVAILABILITY_BLOCKED', provider: provider.name, suppressedReply: reply },
+        });
+        return;
+      }
 
       await this.smartReply(organizationId, senderId, reply);
       await this.interactionLog.logSuccess({
@@ -1362,6 +1446,20 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_WAITLIST_OPTIN ||
       currentState === ChatState.AWAITING_POST_CANCEL_CHOICE;
 
+    // Pasos de SELECCIÓN DE MENÚ (servicio / EPS). El texto en estos pasos
+    // NO llama al LLM (ver más abajo), así que su `intent` queda en 'otro' y
+    // jamás toca el router global de FAQ. La voz, en cambio, DEBE pasar por el
+    // LLM para transcribirse, y el LLM clasifica como `consulta_faq` cualquier
+    // mención de una EPS/servicio (ver shared-prompts: "EPS que atienden…").
+    // Sin esta marca, una selección hablada como "Nueva EPS" se desviaría al
+    // RAG de answerFAQ (que puede alucinar horarios/cupos) y nunca llegaría al
+    // resolver del menú → el turno se pierde y el flujo parece reiniciarse.
+    // Los resolvers de servicio/EPS ya atienden FAQs legítimas vía
+    // classifyIntentLocal SIN perder el estado, así que aquí los dejamos pasar.
+    const isMenuStep =
+      currentState === ChatState.AWAITING_SPECIALTY ||
+      currentState === ChatState.AWAITING_EPS;
+
     const isAudio = messageType === 'audio' && !!audioId;
 
     if (isAudio && isStrictStep) {
@@ -1666,8 +1764,14 @@ export class ChatbotService implements OnModuleInit {
       // ── Tarea C: consulta_faq → RAG sobre la base de conocimiento ──
       // No cambia el estado: si el paciente venía agendando, conserva su
       // progreso y la respuesta cierra invitando a continuar.
+      // ⚠️ En pasos de menú (servicio/EPS) NO desviamos a FAQ aquí: una
+      // selección hablada ("Nueva EPS") la clasifica el LLM como consulta_faq
+      // y se perdería el turno. El resolver del menú (más abajo) intenta primero
+      // mapear la selección y, si de verdad es una pregunta abierta, llama a
+      // answerFAQ él mismo SIN perder el estado (vía classifyIntentLocal).
       if (
         aiData.intent === 'consulta_faq' &&
+        !isMenuStep &&
         !!text &&
         (await this.knowledgeBase.hasContent(organizationId))
       ) {
