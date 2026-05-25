@@ -1779,6 +1779,70 @@ export class ChatbotService implements OnModuleInit {
 
     this.logger.log(`🧠 LLM extrajo: ${JSON.stringify(aiData)}`);
 
+    // ══════════════════════════════════════════════════════════
+    // 🎙️ CÉDULA POR VOZ — NORMALIZACIÓN AGRESIVA DEL STT + SAFEGUARD
+    // ──────────────────────────────────────────────────────────
+    // Para TEXTO ya extrajimos los dígitos directo con regex (rama de arriba):
+    // por eso "por texto sí finaliza". La VOZ, en cambio, depende de que el LLM
+    // devuelva `cedula`, pero el STT introduce ruido que el extractor no espera:
+    // separadores ("1.088.123", "10 88 12 34"), muletillas ("mi cédula es…") o
+    // números en palabras ("uno cero ocho ocho"). Si el LLM no devolvió una
+    // cédula limpia, `aiData.cedula` queda null → `finalCedula` null → el
+    // short-circuit de waitlist-pending se salta y el flujo recae en la oferta
+    // de lista de espera ("¿Te anoto? SÍ/NO") en bucle.
+    //
+    // Aquí aplicamos a la transcripción la MISMA intención que al texto, pero
+    // tolerante al ruido del STT: palabras→dígitos y luego solo dígitos. Solo
+    // afecta a VOZ en pasos de cédula; el flujo de texto queda intacto.
+    if (
+      isAudio &&
+      (currentState === ChatState.AWAITING_CEDULA ||
+        currentState === ChatState.AWAITING_CANCEL_CEDULA)
+    ) {
+      const fromLlm = (aiData.cedula || '').replace(/\D/g, '');
+      const fromTranscript = this.extractCedulaFromSpeech(text);
+      const cedulaVoz = fromLlm.length > 0 ? fromLlm : fromTranscript;
+
+      this.logger.log(
+        `[Tenant: ${organizationId}] 🎙️ CEDULA_VOZ paciente=${senderId} estado=${currentState} ` +
+        `sttCrudo="${text ?? ''}" llmCedula="${aiData.cedula ?? ''}" normalizada="${cedulaVoz}"`,
+      );
+
+      if (cedulaVoz.length > 0) {
+        // Adoptamos la cédula normalizada para que la cascada (finalCedula) y el
+        // short-circuit de waitlist la vean igual que si hubiera llegado por texto.
+        aiData.cedula = cedulaVoz;
+      } else if (!aiData.isEscape && !aiData.isCancellation) {
+        // Sin dígitos tras normalizar: NO reentramos al flujo (evita el loop de
+        // SÍ/NO). Reintento acotado pidiendo la cédula por texto; al agotar
+        // maxReintentos, el guard del inicio cierra con maxReintentosReset.
+        const newRetries = retriesCount + 1;
+        await this.redis.set(retriesKey, newRetries.toString(), 'EX', SESSION_TTL);
+        const reply = MSGS.ininteligible();
+        await this.sendWhatsAppMessage(senderId, reply);
+
+        this.logger.warn(
+          `[Tenant: ${organizationId}] 🎙️ Cédula por voz no extraíble (sttCrudo="${text ?? ''}") ` +
+          `— pidiendo cédula por TEXTO. Reintento ${newRetries}/${maxRetries}.`,
+        );
+
+        await this.interactionLog.logFailure({
+          whatsappId: senderId,
+          organizationId,
+          reason: FailureReason.UNINTELLIGIBLE_AUDIO,
+          userMessage: text || '[audio]',
+          botReply: reply,
+          metadata: {
+            stage: 'CEDULA_VOICE_UNRESOLVED',
+            state: currentState,
+            sttTranscript: text ?? null,
+            retriesCount: newRetries,
+          },
+        });
+        return;
+      }
+    }
+
     // ── CONTADOR DE FALLOS LLM (por organización) ──────────────
     // Antes "GEMINI_DOWN_THRESHOLD"; el umbral ahora vive en
     // OrganizationSettings.maxRetriesPerStep (consistente con la config por clínica).
@@ -3378,6 +3442,27 @@ export class ChatbotService implements OnModuleInit {
   // tanto para texto escrito como para transcripciones de voz. Normaliza
   // acentos y puntuación, y acepta variantes naturales ("sí, claro", "no
   // gracias", "dale", "negativo"). Devuelve 'SI' | 'NO' | null.
+  // Normaliza una transcripción de STT a la cédula numérica que contiene.
+  // Tolera el "ruido" típico del audio: separadores y puntuación
+  // ("1.088.123", "10 88 12 34"), muletillas ("mi cédula es…") y números
+  // dictados en palabras ("uno cero ocho ocho"). Devuelve solo dígitos
+  // (cadena vacía si no hay ninguno). NO valida longitud — esa regla vive en
+  // el handler del paso (igual que en el flujo de texto).
+  private extractCedulaFromSpeech(text: string | undefined | null): string {
+    if (!text) return '';
+    const wordToDigit: Record<string, string> = {
+      cero: '0', uno: '1', una: '1', dos: '2', tres: '3', cuatro: '4',
+      cinco: '5', seis: '6', siete: '7', ocho: '8', nueve: '9',
+    };
+    const normalized = text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '') // quita tildes (marcas diacriticas)
+      .replace(/[a-z]+/g, (w) => (w in wordToDigit ? wordToDigit[w] : ' ')); // palabra→dígito; resto fuera
+    // Tras mapear palabras numéricas, conservamos únicamente dígitos.
+    return normalized.replace(/\D/g, '');
+  }
+
   private interpretYesNo(text: string | undefined | null): 'SI' | 'NO' | null {
     if (!text) return null;
     const t = text

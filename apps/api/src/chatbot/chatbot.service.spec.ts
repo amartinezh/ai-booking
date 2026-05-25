@@ -872,6 +872,65 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(all).toContain('nombre completo');
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_NAME);
     });
+
+    // ── REGRESIÓN (loop de cédula por voz en waitlist) ──────────────
+    // El STT transcribe la cédula con ruido (muletillas, separadores, números
+    // en palabras). El LLM no siempre devuelve `cedula` limpia → finalCedula
+    // queda null → el short-circuit de waitlist-pending se salta y el flujo
+    // recae en la oferta de lista de espera (SÍ/NO) en bucle. Ahora la voz en
+    // el paso de cédula se normaliza igual que el texto.
+    it('AUDIO cédula con ruido de STT ("mi cédula es 10 88 12 34") → la normaliza y avanza (NO loop SÍ/NO)', async () => {
+      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_CEDULA);
+      redis.store.set(`temp_waitlist_pending:${ORG_ID}:${SENDER}`, '1');
+      redis.store.set(`temp_waitlist_service_id:${ORG_ID}:${SENDER}`, 's1');
+      redis.store.set(`temp_especialidad:${ORG_ID}:${SENDER}`, 'Cardiología');
+      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok' });
+      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+      // El LLM transcribe pero NO extrae la cédula como entidad limpia.
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'mi cédula es 10 88 12 34', cedula: null }),
+      );
+      // Paciente nuevo → debe pedir el nombre (cédula aceptada), no reabrir SÍ/NO.
+      prisma.patientProfile.findUnique.mockResolvedValue(null);
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      // La cédula se extrajo de la voz → avanza a pedir el nombre.
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_NAME);
+      // NO recayó en el bucle de la oferta de lista de espera.
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).not.toBe(
+        ChatState.AWAITING_WAITLIST_OPTIN,
+      );
+    });
+
+    it('AUDIO en cédula sin dígitos ("no sé bien") → pide por TEXTO con reintento, NO reabre SÍ/NO', async () => {
+      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_CEDULA);
+      redis.store.set(`temp_waitlist_pending:${ORG_ID}:${SENDER}`, '1');
+      redis.store.set(`temp_waitlist_service_id:${ORG_ID}:${SENDER}`, 's1');
+      redis.store.set(`temp_especialidad:${ORG_ID}:${SENDER}`, 'Cardiología');
+      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok' });
+      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'no sé bien', cedula: null }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      // No avanzó ni reabrió la oferta de lista de espera: sigue esperando la cédula.
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_CEDULA);
+      // Reintento acotado registrado (no loop silencioso).
+      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBe('1');
+    });
+
+    it('extractCedulaFromSpeech normaliza ruido de STT (separadores y números en palabras)', () => {
+      const extract = (t: string) => (service as any).extractCedulaFromSpeech(t);
+      expect(extract('mi cédula es 10 88 12 34')).toBe('10881234');
+      expect(extract('1.088.123.456')).toBe('1088123456');
+      expect(extract('uno cero ocho ocho uno dos')).toBe('108812');
+      expect(extract('es uno cero, ocho ocho')).toBe('1088');
+      expect(extract('no sé')).toBe('');
+      expect(extract('')).toBe('');
+    });
   });
 
   // ════════════════════════════════════════════════════════════
