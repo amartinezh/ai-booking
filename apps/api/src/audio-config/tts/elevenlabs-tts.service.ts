@@ -57,7 +57,9 @@ export class ElevenLabsTtsService implements TtsProvider<ElevenLabsTtsParams> {
           'Content-Type': 'application/json',
           Accept: 'audio/ogg',
         },
-        body: JSON.stringify({ text, model_id: ELEVENLABS_MODEL_ID }),
+        // Defensa: ElevenLabs rechaza (400 invalid_unicode) cualquier surrogate
+        // suelto. Lo quitamos aquí también, independiente de cómo limpie el caller.
+        body: JSON.stringify({ text: stripLoneSurrogates(text), model_id: ELEVENLABS_MODEL_ID }),
         signal: controller.signal,
       });
       const rtt_ms = Date.now() - startedAt;
@@ -101,6 +103,17 @@ export class ElevenLabsTtsService implements TtsProvider<ElevenLabsTtsParams> {
 }
 
 // ── helpers puros ─────────────────────────────────────────────────────────────
+
+/**
+ * Elimina surrogates sin par (UTF-16) que producirían un cuerpo JSON con UTF-8
+ * inválido. `\uD800-\uDBFF` = alto, `\uDC00-\uDFFF` = bajo: solo conservamos los
+ * que forman un par válido.
+ */
+function stripLoneSurrogates(input: string): string {
+  return input
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '') // alto sin bajo
+    .replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, '$1'); // bajo sin alto
+}
 
 /** Mapea el HTTP status de ElevenLabs a un código de diagnóstico estable. */
 function classifyHttpStatus(status: number): AudioDiagnosisErrorCode {

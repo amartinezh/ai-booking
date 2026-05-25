@@ -775,9 +775,21 @@ export class ChatbotService implements OnModuleInit {
     text: string,
   ): Promise<Buffer | null> {
     // El saneado (markdown/emojis) es agnóstico al proveedor; se hace una vez
-    // aquí. La elección de motor (Google producción / ElevenLabs PoC) y el
-    // eventual fallback los resuelve TtsFactoryService según ACTIVE_TTS_PROVIDER.
-    const cleanText = text.replace(/[*_~`\[\]🎙️⏳✅❌📅👤⚕️⚠️🎉📝🔔😔😊🏥💳🪪]/g, '').trim();
+    // aquí. La elección de motor y el fallback los resuelve TtsFactoryService
+    // según la config de la organización.
+    //
+    // ⚠️ Unicode-safe: usamos la bandera `u` y `\p{Extended_Pictographic}` para
+    // remover emojis por CODE POINT. La versión anterior listaba emojis en una
+    // clase `[...]` sin `u`, lo que partía pares surrogate y dejaba surrogates
+    // sueltos → UTF-8 inválido → ElevenLabs respondía 400 invalid_unicode. La
+    // última pasada elimina cualquier surrogate suelto remanente (defensa final).
+    const cleanText = text
+      .replace(/[*_~`[\]]/g, '') // markdown
+      .replace(/\p{Extended_Pictographic}/gu, '') // todos los emojis
+      .replace(/[\u{FE00}-\u{FE0F}\u{200D}]/gu, '') // variation selectors + ZWJ
+      .replace(/[\uD800-\uDFFF]/g, '') // surrogates sueltos remanentes
+      .replace(/\s+/g, ' ')
+      .trim();
     return this.ttsFactory.synthesize(organizationId, cleanText);
   }
 
