@@ -7,6 +7,10 @@ export enum ChatState {
   AWAITING_CEDULA = 'AWAITING_CEDULA',
   AWAITING_CONFIRMATION = 'AWAITING_CONFIRMATION',
   AWAITING_CANCEL_CEDULA = 'AWAITING_CANCEL_CEDULA',
+  // La cédula consultada no tenía citas: preguntamos si desea intentar con otra
+  // (SÍ → vuelve a AWAITING_CANCEL_CEDULA; NO → cierra). El loop también lo cierra
+  // el cron de inactividad si el paciente deja de responder.
+  AWAITING_CANCEL_RETRY_CEDULA = 'AWAITING_CANCEL_RETRY_CEDULA',
   AWAITING_CANCEL_SELECTION = 'AWAITING_CANCEL_SELECTION',
   AWAITING_CANCEL_CONFIRM = 'AWAITING_CANCEL_CONFIRM',
   AWAITING_WAITLIST_CONFIRM = 'AWAITING_WAITLIST_CONFIRM',
@@ -406,6 +410,15 @@ const FORMAL = {
 
   cancelarSinCitas: (cedula: string) =>
     `El paciente con cédula *${cedula}* no tiene citas próximas agendadas`,
+
+  // No se hallaron citas para cancelar: ofrecemos consultar con otra cédula (loop) o cerrar.
+  cancelarSinCitasReintentar: (cedula: string) =>
+    pick([
+      `No encontré citas próximas agendadas para la cédula *${cedula}*. 🔍\n\n` +
+        `¿Desea consultar con *otra cédula*? Responda *SÍ* para intentar con otro número, o *NO* para finalizar.`,
+      `La cédula *${cedula}* no tiene citas próximas agendadas.\n\n` +
+        `Si lo desea, puedo buscar con *otra cédula*. Responda *SÍ* para intentarlo de nuevo o *NO* para terminar.`,
+    ]),
 
   cancelarSeleccionar: (nombre: string, lineas: string) =>
     pick([
@@ -837,6 +850,15 @@ const INFORMAL = {
 
   cancelarSinCitas: (cedula: string) =>
     `Revisé y el paciente con cédula *${cedula}* no tiene citas próximas. 📭 ¿Te ayudo a agendar una nueva?`,
+
+  // No se hallaron citas para cancelar: ofrecemos consultar con otra cédula (loop) o cerrar.
+  cancelarSinCitasReintentar: (cedula: string) =>
+    pick([
+      `Revisé y la cédula *${cedula}* no tiene citas próximas agendadas. 📭\n\n` +
+        `¿Quieres que busque con *otra cédula*? Mándame *SÍ* para intentar con otro número, o *NO* para terminar. 😊`,
+      `Hmm, con la cédula *${cedula}* no me aparecen citas agendadas.\n\n` +
+        `Si quieres probamos con *otra cédula*. Responde *SÍ* para intentarlo de nuevo o *NO* para cerrar. 🙏`,
+    ]),
 
   cancelarSeleccionar: (nombre: string, lineas: string) =>
     pick([

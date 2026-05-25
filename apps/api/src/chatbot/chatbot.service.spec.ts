@@ -1006,6 +1006,66 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // Tercer argumento de sendSurveyLink = ResolutionStatus.CANCELLED.
       expect(surveySpy.mock.calls[0][2]).toBe('CANCELLED');
     });
+
+    // ── Loop de reintento de cédula en cancelación (sin citas) ──
+    describe('loop de reintento de cédula (cancelación sin citas)', () => {
+      beforeEach(() => {
+        prisma.patientProfile.findFirst = jest.fn(async () => ({
+          id: 'pat-1', fullName: 'Ana Gómez', cedula: '12345', organizationId: ORG_ID,
+        }));
+        prisma.appointment = { findMany: jest.fn(async () => []) };
+        prisma.$transaction = jest.fn(async (arg: any) =>
+          typeof arg === 'function' ? arg(prisma) : Promise.all(arg),
+        );
+      });
+
+      it('cédula sin citas → ofrece consultar con otra cédula (entra al loop)', async () => {
+        redis.store.set(stateKey, ChatState.AWAITING_CANCEL_CEDULA);
+        prisma.appointment.findMany.mockResolvedValueOnce([]);
+
+        await service.processIncomingMessage(makeTextEvent('12345'));
+
+        expect(sentMessages().join('\n').toLowerCase()).toContain('otra cédula');
+        expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+      });
+
+      it('SÍ vuelve a pedir la cédula (AWAITING_CANCEL_CEDULA)', async () => {
+        redis.store.set(stateKey, ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+
+        await service.processIncomingMessage(makeTextEvent('sí'));
+
+        expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+        expect(sentMessages().join('\n').toLowerCase()).toContain('cédula');
+      });
+
+      it('NO cierra el chat sin tocar nada', async () => {
+        redis.store.set(stateKey, ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+
+        await service.processIncomingMessage(makeTextEvent('no'));
+
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(redis.store.get(stateKey)).toBe(ChatState.IDLE);
+      });
+
+      it('enviar otra cédula directamente la consulta sin exigir SÍ previo', async () => {
+        redis.store.set(stateKey, ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+        prisma.appointment.findMany.mockResolvedValueOnce([]); // tampoco tiene citas → re-loop
+
+        await service.processIncomingMessage(makeTextEvent('98765'));
+
+        expect(prisma.patientProfile.findFirst).toHaveBeenCalled();
+        expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+      });
+
+      it('respuesta ambigua (ni SÍ/NO ni cédula) re-pregunta sin cerrar', async () => {
+        redis.store.set(stateKey, ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+
+        await service.processIncomingMessage(makeTextEvent('tal vez'));
+
+        expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+    });
   });
 
   // ════════════════════════════════════════════════════════════

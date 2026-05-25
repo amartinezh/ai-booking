@@ -1568,6 +1568,7 @@ export class ChatbotService implements OnModuleInit {
     const isStrictStep =
       currentState === ChatState.AWAITING_DATE ||
       currentState === ChatState.AWAITING_CONFIRMATION ||
+      currentState === ChatState.AWAITING_CANCEL_RETRY_CEDULA ||
       currentState === ChatState.AWAITING_CANCEL_SELECTION ||
       currentState === ChatState.AWAITING_CANCEL_CONFIRM ||
       currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
@@ -2252,6 +2253,7 @@ export class ChatbotService implements OnModuleInit {
 
     const isCancelFlow =
       currentState === ChatState.AWAITING_CANCEL_CEDULA ||
+      currentState === ChatState.AWAITING_CANCEL_RETRY_CEDULA ||
       currentState === ChatState.AWAITING_CANCEL_SELECTION ||
       currentState === ChatState.AWAITING_CANCEL_CONFIRM;
 
@@ -3214,6 +3216,60 @@ export class ChatbotService implements OnModuleInit {
 
         await this.redis.set(`temp_cancel_cedula:${organizationId}:${senderId}`, cedula, 'EX', SESSION_TTL);
         await this.handleCancelCedulaStep(organizationId, senderId, cedula);
+        break;
+      }
+
+      // La cédula anterior no tenía citas: SÍ → reintentar con otra cédula;
+      // NO → cerrar. Si el paciente manda directamente otra cédula (dígitos),
+      // la procesamos sin exigir el SÍ previo. El cron de inactividad cierra el
+      // loop si deja de responder.
+      case ChatState.AWAITING_CANCEL_RETRY_CEDULA: {
+        const decision = this.interpretYesNo(text);
+        const digits = (text || '').replace(/\D/g, '');
+
+        if (decision === 'NO') {
+          const reply = MSGS.cancelarDespedida();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.cleanUpCancelSession(organizationId, senderId);
+
+          await this.interactionLog.log({
+            whatsappId: senderId,
+            organizationId,
+            status: InteractionStatus.ESCAPED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { event: 'CANCEL_RETRY_DECLINED' },
+          });
+        } else if (digits.length > 0 && decision !== 'SI') {
+          // El paciente respondió con otra cédula directamente → la consultamos.
+          await this.redis.set(`temp_cancel_cedula:${organizationId}:${senderId}`, digits, 'EX', SESSION_TTL);
+          await this.handleCancelCedulaStep(organizationId, senderId, digits);
+        } else if (decision === 'SI') {
+          const reply = MSGS.cancelarPedirCedula();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CEDULA);
+
+          await this.interactionLog.logSuccess({
+            whatsappId: senderId,
+            organizationId,
+            userMessage: text,
+            botReply: reply,
+            metadata: { step: 'CANCEL_RETRY_CEDULA_YES' },
+          });
+        } else {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const reply = MSGS.respuestaInvalidaSiNo();
+          await this.sendWhatsAppMessage(senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidResponse: text, stage: 'CANCEL_RETRY_CEDULA' },
+          });
+        }
         break;
       }
 
@@ -4206,9 +4262,12 @@ export class ChatbotService implements OnModuleInit {
     });
 
     if (activeAppointments.length === 0) {
-      const reply = MSGS.cancelarSinCitas(cedula);
+      // Sin citas para esta cédula → ofrecemos consultar con otra (loop).
+      // NO penalizamos reintentos: una cédula válida sin citas no es un "error".
+      // El loop se cierra cuando el paciente dice NO o por el cron de inactividad.
+      const reply = MSGS.cancelarSinCitasReintentar(cedula);
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.IDLE);
+      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_RETRY_CEDULA);
 
       await this.interactionLog.logFailure({
         whatsappId: senderId,
@@ -4216,7 +4275,7 @@ export class ChatbotService implements OnModuleInit {
         reason: FailureReason.NO_APPOINTMENTS_TO_CANCEL,
         userMessage: cedula,
         botReply: reply,
-        metadata: { patientCedula: cedula, patientId: patient.id },
+        metadata: { patientCedula: cedula, patientId: patient.id, offeredRetry: true },
       });
       return;
     }
