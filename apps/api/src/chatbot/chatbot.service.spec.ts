@@ -764,6 +764,44 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
       expect(redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`)).toBeUndefined();
     });
+
+    // ── REGRESIÓN (loop de voz en EPS) ──────────────────────────────
+    // El LLM, sin contexto conversacional, marca una EPS hablada suelta como
+    // outOfContext/ininteligible. Los guardas globales cortaban el turno ANTES
+    // del resolver del menú → el paciente regrababa y volvía a fallar (loop).
+    // Ahora la voz en pasos de menú salta esos guardas y llega al resolver.
+    it('AUDIO "Nueva EPS" con outOfContext=true → resuelve la EPS, NO reprompta fuera de contexto', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'Nueva EPS', eps: null, intent: 'otro', outOfContext: true }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      // No se disparó el reprompt de "fuera de contexto" (no incrementa reintentos).
+      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      // La EPS se capturó por el transcript (igual que el texto).
+      expect(redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`)).toBe('e1');
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe('Nueva EPS');
+      // Avanzó más allá del paso de EPS (sin slots → opt-in a lista de espera).
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_WAITLIST_OPTIN,
+      );
+    });
+
+    it('AUDIO "Nueva EPS" con ininteligible=true → resuelve la EPS, NO reprompta "no entendí"', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'Nueva EPS', eps: null, intent: 'otro', ininteligible: true }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`)).toBe('e1');
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe('Nueva EPS');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_WAITLIST_OPTIN,
+      );
+    });
   });
 
   // ════════════════════════════════════════════════════════════════

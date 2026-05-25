@@ -1954,7 +1954,18 @@ export class ChatbotService implements OnModuleInit {
     // marcar un "sí"/"no" suelto como fuera de contexto y bloquearía el turno.
     const waitlistVoiceAnswer = isWaitlistYesNoStep && !!text && !!text.trim();
 
-    if (aiData.outOfContext && !waitlistVoiceAnswer) {
+    // Voz en pasos de menú (servicio/EPS): el LLM, sin contexto conversacional,
+    // marca una EPS suelta ("Sura", "Nueva EPS") como outOfContext/ininteligible
+    // y los guardas de abajo cortarían el turno ANTES del resolver del menú →
+    // el paciente regraba y vuelve a fallar (loop). Igual que en waitlist,
+    // dejamos pasar el transcript: el resolver determinista mapea
+    // letra/nombre/Particular/semántico y, si de verdad no mapea, reprompta el
+    // menú SIN perder el estado (mejor que el reset genérico "fuera de contexto").
+    // El texto en estos pasos no llama al LLM, así que estos flags ya eran false:
+    // sin regresión por escrito.
+    const menuVoiceAnswer = isMenuStep && !!text && !!text.trim();
+
+    if (aiData.outOfContext && !waitlistVoiceAnswer && !menuVoiceAnswer) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
       const reply = MSGS.outOfContext(botName);
       await this.smartReply(organizationId, senderId, reply);
@@ -1970,7 +1981,7 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    if (aiData.ininteligible && !waitlistVoiceAnswer) {
+    if (aiData.ininteligible && !waitlistVoiceAnswer && !menuVoiceAnswer) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
       const reply = MSGS.ininteligible();
       await this.smartReply(organizationId, senderId, reply);
