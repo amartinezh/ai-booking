@@ -35,8 +35,29 @@ export default async function ConfiguracionPage({
     const normalizedTab = tab === 'ai' ? 'integrations' : tab;
     const activeTab = TABS.find(t => t.key === normalizedTab)?.key ?? 'chatbot';
 
-    const settings = activeTab === 'chatbot' ? await getMyOrgSettings() : null;
     const kbContent = activeTab === 'kb' ? await getMyKnowledgeBase() : null;
+
+    // Tab "Asistente Virtual": identidad/tono + configuración de voz (TTS). Se
+    // cargan en paralelo PERO aislados: si la config de voz falla (backend,
+    // migración, decrypt), el formulario de identidad debe seguir mostrándose.
+    let settings: Awaited<ReturnType<typeof getMyOrgSettings>> | null = null;
+    let chatbotAudioConfig: Awaited<ReturnType<typeof getMyAudioConfig>> | null = null;
+    let chatbotAudioError: string | null = null;
+
+    if (activeTab === 'chatbot') {
+        const [setRes, audRes] = await Promise.allSettled([
+            getMyOrgSettings(),
+            getMyAudioConfig(),
+        ]);
+        if (setRes.status === 'fulfilled') settings = setRes.value;
+        if (audRes.status === 'fulfilled') {
+            chatbotAudioConfig = audRes.value;
+        } else {
+            console.error('[configuracion] Audio config load failed:', audRes.reason);
+            chatbotAudioError =
+                audRes.reason?.message ?? 'Error desconocido cargando la configuración de voz.';
+        }
+    }
 
     // Tab de integraciones: cargamos IA y WhatsApp en paralelo PERO aislados.
     // Si una de las dos revienta (decrypt, backend down, migración faltante,
@@ -46,14 +67,11 @@ export default async function ConfiguracionPage({
     let aiConfigError: string | null = null;
     let whatsappConfig: Awaited<ReturnType<typeof getMyWhatsappConfig>> | null = null;
     let whatsappConfigError: string | null = null;
-    let audioConfig: Awaited<ReturnType<typeof getMyAudioConfig>> | null = null;
-    let audioConfigError: string | null = null;
 
     if (activeTab === 'integrations') {
-        const [aiRes, waRes, audioRes] = await Promise.allSettled([
+        const [aiRes, waRes] = await Promise.allSettled([
             getMyAiConfig(),
             getMyWhatsappConfig(),
-            getMyAudioConfig(),
         ]);
         if (aiRes.status === 'fulfilled') {
             aiConfig = aiRes.value;
@@ -68,13 +86,6 @@ export default async function ConfiguracionPage({
             console.error('[configuracion] WhatsApp config load failed:', waRes.reason);
             whatsappConfigError =
                 waRes.reason?.message ?? 'Error desconocido cargando el canal de WhatsApp.';
-        }
-        if (audioRes.status === 'fulfilled') {
-            audioConfig = audioRes.value;
-        } else {
-            console.error('[configuracion] Audio config load failed:', audioRes.reason);
-            audioConfigError =
-                audioRes.reason?.message ?? 'Error desconocido cargando la configuración de audio.';
         }
     }
 
@@ -109,8 +120,22 @@ export default async function ConfiguracionPage({
 
             {/* Panel activo */}
             <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl shadow-zinc-200/50 dark:shadow-black/20 p-6 md:p-8">
-                {activeTab === 'chatbot' && settings && (
-                    <SettingsForm initial={settings} />
+                {activeTab === 'chatbot' && (
+                    <div className="space-y-12">
+                        {settings && <SettingsForm initial={settings} />}
+                        <div className="border-t border-zinc-200 dark:border-zinc-800" />
+                        {chatbotAudioConfig ? (
+                            <AudioConfigForm
+                                initial={chatbotAudioConfig}
+                                assistantName={settings?.botName ?? ''}
+                            />
+                        ) : (
+                            <SectionLoadError
+                                title="No pudimos cargar la configuración de voz"
+                                detail={chatbotAudioError}
+                            />
+                        )}
+                    </div>
                 )}
                 {activeTab === 'integrations' && (
                     <div className="space-y-12">
@@ -137,15 +162,6 @@ export default async function ConfiguracionPage({
                             <SectionLoadError
                                 title="No pudimos cargar el canal de WhatsApp"
                                 detail={whatsappConfigError}
-                            />
-                        )}
-                        <div className="border-t border-zinc-200 dark:border-zinc-800" />
-                        {audioConfig ? (
-                            <AudioConfigForm initial={audioConfig} />
-                        ) : (
-                            <SectionLoadError
-                                title="No pudimos cargar la configuración de audio"
-                                detail={audioConfigError}
                             />
                         )}
                     </div>

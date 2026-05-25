@@ -1,79 +1,92 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { SystemLogService } from '../../system-log/system-log.service';
+import { AudioConfigService } from '../audio-config.service';
 import { GoogleTtsService } from './google-tts.service';
 import { ElevenLabsTtsService } from './elevenlabs-tts.service';
-import {
-  TtsProvider,
-  TtsProviderName,
-  normalizeTtsProvider,
-} from './tts-provider.interface';
 
 /**
- * Factoría + orquestador del "Gestor de Audios".
+ * Factoría + orquestador del "Gestor de Audios" (inyección dinámica multi-tenant).
  *
- * Decide, basándose EXCLUSIVAMENTE en el flag `ACTIVE_TTS_PROVIDER` del `.env`,
- * qué estrategia (`GoogleTtsService` o `ElevenLabsTtsService`) atiende la
- * síntesis, y aplica el safeguard de fallback de la PoC.
+ * En cada síntesis resuelve la configuración de la organización desde
+ * `OrganizationAudioConfig` (NO del `.env`) y ejecuta el proveedor activo con
+ * SUS credenciales. Implementa el Plan B:
  *
- * Aislamiento (Fase 3):
- *  - `ACTIVE_TTS_PROVIDER=GOOGLE`     → solo se invoca Google. ElevenLabs jamás
- *    se ejecuta ni lee sus credenciales (no consume cuota ni red).
- *  - `ACTIVE_TTS_PROVIDER=ELEVENLABS` → se usa la voz nueva; si ElevenLabs falla,
- *    se hace **fallback silencioso a Google** para no degradar WhatsApp. Nunca se
- *    toca la configuración de Google de la clínica.
+ *  - `activeProvider = ELEVENLABS` → intenta ElevenLabs con la key/voz de la
+ *    clínica; si falla (sin cuota, plan, timeout, etc.) hace **fallback
+ *    silencioso a Google** con la config Google de ESA MISMA clínica y registra
+ *    el evento en SystemLog.
+ *  - `activeProvider = GOOGLE`     → usa Google directamente.
+ *
+ * Aislamiento: ElevenLabs solo se invoca si la clínica lo activó; jamás se leen
+ * credenciales de otra organización (todo va scoped por `organizationId`).
  */
 @Injectable()
 export class TtsFactoryService {
   private readonly logger = new Logger(TtsFactoryService.name);
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly audioConfig: AudioConfigService,
     private readonly google: GoogleTtsService,
     private readonly elevenLabs: ElevenLabsTtsService,
     private readonly systemLog: SystemLogService,
   ) {}
 
-  /** Nombre del proveedor activo según el flag (default GOOGLE). */
-  activeProviderName(): TtsProviderName {
-    return normalizeTtsProvider(this.config.get<string>('ACTIVE_TTS_PROVIDER'));
-  }
-
-  /** Resuelve la estrategia activa. Factory puro (sin efectos secundarios). */
-  resolve(): TtsProvider {
-    return this.activeProviderName() === 'ELEVENLABS'
-      ? this.elevenLabs
-      : this.google;
-  }
-
   /**
-   * Punto de entrada único de síntesis para el chatbot.
-   *
-   * Sintetiza con el proveedor activo. Si el activo es ElevenLabs (PoC) y falla,
-   * hace fallback silencioso a Google para que el paciente siga recibiendo audio.
-   * Google nunca hace fallback: es el proveedor de producción y su `null` ya
-   * significa "no enviar audio" (el chatbot manda solo el texto).
+   * Punto de entrada único de síntesis para el chatbot. Devuelve el audio
+   * OGG/Opus listo para WhatsApp o `null` (en cuyo caso el bot envía solo texto).
    */
   async synthesize(
     organizationId: string,
     text: string,
   ): Promise<Buffer | null> {
-    const provider = this.resolve();
-    const audio = await provider.synthesize({ organizationId, text });
+    const cfg = await this.audioConfig.getEffective(organizationId);
 
-    if (audio || provider.name === 'GOOGLE') return audio;
+    if (cfg.activeProvider === 'ELEVENLABS') {
+      const { apiKey, voiceId } = cfg.elevenLabs;
 
-    // El activo era ElevenLabs y devolvió null → fallback de producción.
-    this.logger.warn(
-      `ElevenLabs falló; fallback silencioso a Google TTS (org ${organizationId}).`,
-    );
-    await this.systemLog.warning({
-      action: 'TTS_ELEVENLABS_FALLBACK_GOOGLE',
-      message:
-        'La síntesis con ElevenLabs (PoC) falló; fallback silencioso a Google Cloud TTS.',
-      organizationId,
-      metadata: { from: 'ELEVENLABS', to: 'GOOGLE' },
-    });
-    return this.google.synthesize({ organizationId, text });
+      if (apiKey && voiceId) {
+        const res = await this.elevenLabs.generate(text, { apiKey, voiceId });
+        if (res.ok) return res.audio;
+
+        // Falló ElevenLabs → log con detalle técnico + fallback a Google.
+        await this.systemLog.error({
+          action: `TTS_ELEVENLABS_${res.code}`,
+          message: `ElevenLabs falló (${res.code}) tras ${res.rtt_ms}ms: ${res.message}`,
+          organizationId,
+          metadata: { provider: 'ELEVENLABS', voiceId, code: res.code, rtt_ms: res.rtt_ms },
+        });
+      } else {
+        await this.systemLog.warning({
+          action: 'TTS_ELEVENLABS_NOT_CONFIGURED',
+          message:
+            'activeProvider=ELEVENLABS pero falta API key y/o Voice ID; se usa Google como Plan B.',
+          organizationId,
+          metadata: { hasApiKey: !!apiKey, hasVoiceId: !!voiceId },
+        });
+      }
+
+      this.logger.warn(
+        `Fallback silencioso ElevenLabs → Google (org ${organizationId}).`,
+      );
+      await this.systemLog.warning({
+        action: 'TTS_ELEVENLABS_FALLBACK_GOOGLE',
+        message:
+          'La síntesis con ElevenLabs falló; fallback silencioso a Google Cloud TTS (misma clínica).',
+        organizationId,
+        metadata: { from: 'ELEVENLABS', to: 'GOOGLE' },
+      });
+      const fb = await this.google.generate(text, cfg.google);
+      return fb.ok ? fb.audio : null;
+    }
+
+    // Proveedor activo = GOOGLE.
+    const res = await this.google.generate(text, cfg.google);
+    if (!res.ok) {
+      this.logger.error(
+        `Google TTS falló (${res.code}) para org ${organizationId}: ${res.message}`,
+      );
+      return null;
+    }
+    return res.audio;
   }
 }

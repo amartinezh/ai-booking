@@ -11,6 +11,11 @@ import {
     Music4,
     AlertTriangle,
     RotateCcw,
+    KeyRound,
+    Sparkles,
+    Cloud,
+    Mars,
+    Venus,
 } from 'lucide-react';
 import { updateMyAudioConfig, diagnoseAudio } from '@/app/actions/audio-config';
 import type {
@@ -18,11 +23,15 @@ import type {
     AudioEncoding,
     PublicAudioConfig,
     SaveAudioConfigInput,
+    VoiceGender,
     VoiceOption,
+    VoiceProvider,
 } from '@/app/actions/audio-config.types';
 
 type Props = {
     initial: PublicAudioConfig;
+    /** Nombre del asistente (se edita arriba en Identidad); aquí se muestra en el header. */
+    assistantName: string;
 };
 
 const ENCODING_OPTIONS: { value: AudioEncoding; label: string; hint: string }[] = [
@@ -31,26 +40,34 @@ const ENCODING_OPTIONS: { value: AudioEncoding; label: string; hint: string }[] 
     { value: 'LINEAR16', label: 'WAV (LINEAR16)', hint: 'Sin compresión / telefonía' },
 ];
 
-export default function AudioConfigForm({ initial }: Props) {
+export default function AudioConfigForm({ initial, assistantName }: Props) {
     const { pitchMin, pitchMax, rateMin, rateMax } = initial.limits;
+    const presets = initial.elevenLabsVoicePresets;
 
-    const [voiceId, setVoiceId] = useState(initial.voiceId);
-    const [pitch, setPitch] = useState(initial.pitch);
-    const [speakingRate, setSpeakingRate] = useState(initial.speakingRate);
-    const [audioEncoding, setAudioEncoding] = useState<AudioEncoding>(
-        initial.audioEncoding,
+    // ── Estado compartido ──────────────────────────────
+    const [activeProvider, setActiveProvider] = useState<VoiceProvider>(initial.activeProvider);
+    const [gender, setGender] = useState<VoiceGender>(initial.gender);
+
+    // ── Google ─────────────────────────────────────────
+    const [googleVoiceId, setGoogleVoiceId] = useState(initial.googleVoiceId);
+    const [googlePitch, setGooglePitch] = useState(initial.googlePitch);
+    const [googleSpeakingRate, setGoogleSpeakingRate] = useState(initial.googleSpeakingRate);
+    const [audioEncoding, setAudioEncoding] = useState<AudioEncoding>(initial.audioEncoding);
+
+    // ── ElevenLabs ─────────────────────────────────────
+    const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState(
+        initial.elevenLabsVoiceId ?? presets[initial.gender],
     );
+    const [elevenLabsApiKey, setElevenLabsApiKey] = useState(''); // write-only
+    const [hasKey, setHasKey] = useState(initial.hasElevenLabsApiKey);
 
     const [isSaving, startSaving] = useTransition();
     const [saved, setSaved] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const [aliveLoading, setAliveLoading] = useState(false);
-    const [aliveResult, setAliveResult] = useState<AudioDiagnosisResult | null>(
-        null,
-    );
+    const [aliveResult, setAliveResult] = useState<AudioDiagnosisResult | null>(null);
 
-    // Agrupa las voces por familia tecnológica para un dropdown ordenado.
     const groupedVoices = useMemo(() => {
         const groups: Record<string, VoiceOption[]> = {};
         for (const v of initial.allowedVoices) {
@@ -59,9 +76,16 @@ export default function AudioConfigForm({ initial }: Props) {
         return groups;
     }, [initial.allowedVoices]);
 
-    const resetDefaults = () => {
-        setPitch(0);
-        setSpeakingRate(1);
+    // Lógica PoC: al cambiar el género hardcodeamos el Voice ID de ElevenLabs a
+    // la voz sugerida (masculina/femenina). El input sigue siendo editable luego.
+    const handleGenderChange = (g: VoiceGender) => {
+        setGender(g);
+        setElevenLabsVoiceId(presets[g]);
+    };
+
+    const resetGoogleDefaults = () => {
+        setGooglePitch(0);
+        setGoogleSpeakingRate(1);
     };
 
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -70,16 +94,26 @@ export default function AudioConfigForm({ initial }: Props) {
         setError(null);
 
         const payload: SaveAudioConfigInput = {
-            voiceId,
-            pitch: clampNumber(pitch, pitchMin, pitchMax),
-            speakingRate: clampNumber(speakingRate, rateMin, rateMax),
+            activeProvider,
+            gender,
             audioEncoding,
+            googleVoiceId,
+            googlePitch: clampNumber(googlePitch, pitchMin, pitchMax),
+            googleSpeakingRate: clampNumber(googleSpeakingRate, rateMin, rateMax),
+            elevenLabsVoiceId: elevenLabsVoiceId.trim() || null,
         };
+        // La API key solo se envía si el admin escribió una nueva (write-only).
+        const typedKey = elevenLabsApiKey.trim();
+        if (typedKey) payload.elevenLabsApiKey = typedKey;
 
         startSaving(async () => {
             const res = await updateMyAudioConfig(payload);
             if (res.success) {
                 setSaved(true);
+                if (typedKey) {
+                    setHasKey(true);
+                    setElevenLabsApiKey('');
+                }
                 setTimeout(() => setSaved(false), 4000);
             } else {
                 setError(res.error);
@@ -105,124 +139,237 @@ export default function AudioConfigForm({ initial }: Props) {
 
     return (
         <form onSubmit={handleSubmit} className="space-y-8">
-            {/* ── Header ───────────────────────────────────── */}
-            <section>
-                <div className="flex items-start gap-3">
-                    <div className="rounded-xl bg-violet-100 dark:bg-violet-900/30 p-2.5 text-violet-600 dark:text-violet-400">
-                        <AudioLines className="w-5 h-5" />
+            {/* ── Header: nombre del asistente + género ───────────────── */}
+            <section className="rounded-2xl border border-violet-200/70 dark:border-violet-900/50 bg-gradient-to-br from-violet-50 to-white dark:from-violet-950/30 dark:to-zinc-950 p-5">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                        <div className="rounded-xl bg-violet-600 p-2.5 text-white shadow-sm">
+                            <AudioLines className="w-5 h-5" />
+                        </div>
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-wider text-violet-500 dark:text-violet-400">
+                                Voz del asistente
+                            </p>
+                            <h2 className="text-lg font-bold text-zinc-900 dark:text-white leading-tight">
+                                {assistantName || 'Vicente'}
+                            </h2>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                                El nombre se edita en <em>Identidad del asistente</em>. Aquí define cómo
+                                <strong> suena</strong> en las notas de voz de WhatsApp.
+                            </p>
+                        </div>
                     </div>
-                    <div>
-                        <h2 className="text-lg font-bold text-zinc-900 dark:text-white">
-                            Configuración de Voz y Audio de la Clínica
-                        </h2>
-                        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 max-w-2xl leading-relaxed">
-                            Personalice la voz con la que AgenIA responde por nota de voz en
-                            WhatsApp. Estos parámetros se aplican{' '}
-                            <strong>únicamente a su clínica</strong> y se inyectan en cada
-                            síntesis de audio. Valide el servicio antes de guardar para
-                            confirmar que el proveedor acepta la combinación elegida.
-                        </p>
+
+                    {/* Selector de género */}
+                    <div className="shrink-0">
+                        <label className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+                            Género de la voz
+                        </label>
+                        <div className="inline-flex rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-1">
+                            <GenderPill
+                                label="Masculino"
+                                Icon={Mars}
+                                active={gender === 'MASCULINO'}
+                                onClick={() => handleGenderChange('MASCULINO')}
+                            />
+                            <GenderPill
+                                label="Femenino"
+                                Icon={Venus}
+                                active={gender === 'FEMENINO'}
+                                onClick={() => handleGenderChange('FEMENINO')}
+                            />
+                        </div>
                     </div>
                 </div>
             </section>
 
-            {/* ── Voz + Códec (Cards) ──────────────────────── */}
-            <section className="grid gap-4 md:grid-cols-2">
-                {/* Voz */}
-                <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-5 space-y-3">
-                    <label className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                        <Mic className="w-4 h-4 text-violet-500" />
-                        Voz del asistente
-                    </label>
-                    <select
-                        value={voiceId}
-                        onChange={e => setVoiceId(e.target.value)}
-                        className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm font-medium focus:ring-2 focus:ring-violet-500 focus:border-violet-500 outline-none transition-all dark:text-white"
-                    >
-                        {Object.entries(groupedVoices).map(([category, voices]) => (
-                            <optgroup key={category} label={category}>
-                                {voices.map(v => (
-                                    <option key={v.id} value={v.id}>
-                                        {v.label}
+            {/* ── Selector de proveedor (branching) ───────────────────── */}
+            <section className="space-y-3">
+                <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Proveedor de voz activo</h3>
+                <div className="grid gap-4 md:grid-cols-2">
+                    <ProviderCard
+                        label="ElevenLabs"
+                        tag="Studio Quality"
+                        description="Voz neuronal premium, muy natural. Requiere API key de la clínica."
+                        Icon={Sparkles}
+                        active={activeProvider === 'ELEVENLABS'}
+                        onClick={() => setActiveProvider('ELEVENLABS')}
+                    />
+                    <ProviderCard
+                        label="Google Cloud TTS"
+                        tag="Plan B"
+                        description="Siempre disponible. Fallback automático si ElevenLabs falla."
+                        Icon={Cloud}
+                        active={activeProvider === 'GOOGLE'}
+                        onClick={() => setActiveProvider('GOOGLE')}
+                    />
+                </div>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                    <RotateCcw className="w-3.5 h-3.5 text-violet-500" />
+                    Si ElevenLabs está activo y falla (sin cuota, plan o timeout), el bot usa Google automáticamente.
+                </p>
+            </section>
+
+            {/* ── Panel ElevenLabs ────────────────────────────────────── */}
+            {activeProvider === 'ELEVENLABS' && (
+                <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-5 space-y-5">
+                    <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-violet-500" />
+                        <h3 className="text-sm font-bold text-zinc-900 dark:text-white">
+                            Configuración ElevenLabs (Studio Quality)
+                        </h3>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                        {/* Voice ID */}
+                        <div className="space-y-2">
+                            <label className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+                                <Mic className="w-4 h-4 text-violet-500" />
+                                Voice ID
+                            </label>
+                            <input
+                                type="text"
+                                value={elevenLabsVoiceId}
+                                onChange={e => setElevenLabsVoiceId(e.target.value)}
+                                placeholder="Ej: qHkrJuifPpn95wK3rm2A"
+                                className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-violet-500 focus:border-violet-500 outline-none transition-all dark:text-white"
+                            />
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                Se autocompleta según el género ({gender === 'MASCULINO' ? 'masculina' : 'femenina'}), pero
+                                puede pegar otra voz de su cuenta de ElevenLabs.
+                            </p>
+                        </div>
+
+                        {/* API Key */}
+                        <div className="space-y-2">
+                            <label className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+                                <KeyRound className="w-4 h-4 text-violet-500" />
+                                API Key
+                            </label>
+                            <input
+                                type="password"
+                                value={elevenLabsApiKey}
+                                onChange={e => setElevenLabsApiKey(e.target.value)}
+                                autoComplete="off"
+                                placeholder={hasKey ? '•••••••••• (guardada)' : 'sk_...'}
+                                className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-violet-500 focus:border-violet-500 outline-none transition-all dark:text-white"
+                            />
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                {hasKey
+                                    ? 'Hay una API key guardada y encriptada. Escriba una nueva solo si desea reemplazarla.'
+                                    : 'Se guarda encriptada (AES-256-GCM). Nunca se muestra de vuelta.'}
+                            </p>
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            {/* ── Panel Google ────────────────────────────────────────── */}
+            {activeProvider === 'GOOGLE' && (
+                <section className="space-y-5">
+                    <div className="flex items-center gap-2">
+                        <Cloud className="w-4 h-4 text-violet-500" />
+                        <h3 className="text-sm font-bold text-zinc-900 dark:text-white">
+                            Configuración Google TTS (Plan B)
+                        </h3>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                        {/* Voz */}
+                        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-5 space-y-3">
+                            <label className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                                <Mic className="w-4 h-4 text-violet-500" />
+                                Voz del asistente
+                            </label>
+                            <select
+                                value={googleVoiceId}
+                                onChange={e => setGoogleVoiceId(e.target.value)}
+                                className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm font-medium focus:ring-2 focus:ring-violet-500 focus:border-violet-500 outline-none transition-all dark:text-white"
+                            >
+                                {Object.entries(groupedVoices).map(([category, voices]) => (
+                                    <optgroup key={category} label={category}>
+                                        {voices.map(v => (
+                                            <option key={v.id} value={v.id}>
+                                                {v.label}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                ))}
+                            </select>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                Neural2 y WaveNet ofrecen distintas texturas; Studio es más expresiva. Todas en español (es-US).
+                            </p>
+                        </div>
+
+                        {/* Códec */}
+                        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-5 space-y-3">
+                            <label className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                                <Music4 className="w-4 h-4 text-violet-500" />
+                                Códec de salida
+                            </label>
+                            <select
+                                value={audioEncoding}
+                                onChange={e => setAudioEncoding(e.target.value as AudioEncoding)}
+                                className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm font-medium focus:ring-2 focus:ring-violet-500 focus:border-violet-500 outline-none transition-all dark:text-white"
+                            >
+                                {ENCODING_OPTIONS.map(o => (
+                                    <option key={o.value} value={o.value}>
+                                        {o.label}
                                     </option>
                                 ))}
-                            </optgroup>
-                        ))}
-                    </select>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                        Neural2 y WaveNet ofrecen distintas texturas; Studio es más
-                        expresiva. Todas en español (es-US).
-                    </p>
-                </div>
+                            </select>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                {ENCODING_OPTIONS.find(o => o.value === audioEncoding)?.hint}
+                            </p>
+                        </div>
+                    </div>
 
-                {/* Códec */}
-                <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-5 space-y-3">
-                    <label className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                        <Music4 className="w-4 h-4 text-violet-500" />
-                        Códec de salida
-                    </label>
-                    <select
-                        value={audioEncoding}
-                        onChange={e => setAudioEncoding(e.target.value as AudioEncoding)}
-                        className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm font-medium focus:ring-2 focus:ring-violet-500 focus:border-violet-500 outline-none transition-all dark:text-white"
-                    >
-                        {ENCODING_OPTIONS.map(o => (
-                            <option key={o.value} value={o.value}>
-                                {o.label}
-                            </option>
-                        ))}
-                    </select>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                        {ENCODING_OPTIONS.find(o => o.value === audioEncoding)?.hint}
-                    </p>
-                </div>
-            </section>
+                    {/* Sliders Pitch + Rate */}
+                    <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-5 space-y-6">
+                        <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                                <AudioWaveform className="w-4 h-4 text-violet-500" />
+                                Ajuste fino de la voz
+                            </h4>
+                            <button
+                                type="button"
+                                onClick={resetGoogleDefaults}
+                                className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
+                            >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                Restaurar neutro
+                            </button>
+                        </div>
 
-            {/* ── Sliders Pitch + Rate ─────────────────────── */}
-            <section className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-5 space-y-6">
-                <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                        <AudioWaveform className="w-4 h-4 text-violet-500" />
-                        Ajuste fino de la voz
-                    </h3>
-                    <button
-                        type="button"
-                        onClick={resetDefaults}
-                        className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
-                    >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        Restaurar neutro
-                    </button>
-                </div>
+                        <SliderControl
+                            label="Tono (Pitch)"
+                            icon={<AudioWaveform className="w-3.5 h-3.5" />}
+                            value={googlePitch}
+                            setValue={setGooglePitch}
+                            min={pitchMin}
+                            max={pitchMax}
+                            step={0.1}
+                            unit="semitonos"
+                            minLabel={`${pitchMin}`}
+                            maxLabel={`+${pitchMax}`}
+                        />
+                        <SliderControl
+                            label="Velocidad (Rate)"
+                            icon={<Gauge className="w-3.5 h-3.5" />}
+                            value={googleSpeakingRate}
+                            setValue={setGoogleSpeakingRate}
+                            min={rateMin}
+                            max={rateMax}
+                            step={0.05}
+                            unit="x"
+                            minLabel={`${rateMin}x`}
+                            maxLabel={`${rateMax}x`}
+                        />
+                    </div>
+                </section>
+            )}
 
-                <SliderControl
-                    label="Tono (Pitch)"
-                    icon={<AudioWaveform className="w-3.5 h-3.5" />}
-                    value={pitch}
-                    setValue={setPitch}
-                    min={pitchMin}
-                    max={pitchMax}
-                    step={0.1}
-                    unit="semitonos"
-                    minLabel={`${pitchMin}`}
-                    maxLabel={`+${pitchMax}`}
-                />
-
-                <SliderControl
-                    label="Velocidad (Rate)"
-                    icon={<Gauge className="w-3.5 h-3.5" />}
-                    value={speakingRate}
-                    setValue={setSpeakingRate}
-                    min={rateMin}
-                    max={rateMax}
-                    step={0.05}
-                    unit="x"
-                    minLabel={`${rateMin}x`}
-                    maxLabel={`${rateMax}x`}
-                />
-            </section>
-
-            {/* ── Botón Alive + resultado ──────────────────── */}
+            {/* ── Botón Alive + resultado ─────────────────────────────── */}
             <section className="space-y-4">
                 <button
                     type="button"
@@ -230,27 +377,24 @@ export default function AudioConfigForm({ initial }: Props) {
                     disabled={aliveLoading}
                     className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors shadow-sm"
                 >
-                    {aliveLoading ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                        <AudioLines className="w-4 h-4" />
-                    )}
+                    {aliveLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <AudioLines className="w-4 h-4" />}
                     {aliveLoading
-                        ? 'Validando con Google TTS…'
-                        : 'Validar Servicio Alive (Audio)'}
+                        ? `Validando con ${activeProvider === 'ELEVENLABS' ? 'ElevenLabs' : 'Google TTS'}…`
+                        : `Validar Servicio Alive (${activeProvider === 'ELEVENLABS' ? 'ElevenLabs' : 'Google'})`}
                 </button>
-
+                <p className="text-xs text-zinc-400">
+                    Prueba el proveedor activo con su configuración actual. Guarde primero los cambios para validarlos.
+                </p>
                 <AliveResultCard loading={aliveLoading} result={aliveResult} />
             </section>
 
-            {/* ── Error guardado ───────────────────────────── */}
             {error && (
                 <div className="rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-900/20 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
                     ❌ {error}
                 </div>
             )}
 
-            {/* ── Footer ───────────────────────────────────── */}
+            {/* ── Footer ──────────────────────────────────────────────── */}
             <div className="border-t border-zinc-200 dark:border-zinc-800 pt-6 flex justify-end">
                 <button
                     type="submit"
@@ -264,11 +408,11 @@ export default function AudioConfigForm({ initial }: Props) {
                         </>
                     ) : saved ? (
                         <>
-                            <span>✅</span> Configuración de audio guardada
+                            <span>✅</span> Configuración de voz guardada
                         </>
                     ) : (
                         <>
-                            <span>💾</span> Guardar configuración de audio
+                            <span>💾</span> Guardar configuración de voz
                         </>
                     )}
                 </button>
@@ -278,7 +422,90 @@ export default function AudioConfigForm({ initial }: Props) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Slider + input numérico sincronizados, con etiquetas de rango.
+function GenderPill({
+    label,
+    Icon,
+    active,
+    onClick,
+}: {
+    label: string;
+    Icon: React.ComponentType<{ className?: string }>;
+    active: boolean;
+    onClick: () => void;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                active
+                    ? 'bg-violet-600 text-white shadow-sm'
+                    : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
+            }`}
+        >
+            <Icon className="w-4 h-4" />
+            {label}
+        </button>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────
+function ProviderCard({
+    label,
+    tag,
+    description,
+    Icon,
+    active,
+    onClick,
+}: {
+    label: string;
+    tag: string;
+    description: string;
+    Icon: React.ComponentType<{ className?: string }>;
+    active: boolean;
+    onClick: () => void;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`text-left w-full rounded-2xl border bg-white dark:bg-zinc-900 p-4 transition-all ${
+                active
+                    ? 'ring-2 ring-violet-500 border-violet-500 bg-violet-50/60 dark:bg-violet-900/20'
+                    : 'border-zinc-200 dark:border-zinc-700 hover:border-violet-300'
+            }`}
+        >
+            <div className="flex items-start gap-3">
+                <div
+                    className={`rounded-xl p-2.5 ${
+                        active
+                            ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300'
+                            : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
+                    }`}
+                >
+                    <Icon className="w-5 h-5" />
+                </div>
+                <div className="flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-bold text-zinc-900 dark:text-white">{label}</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">
+                            {tag}
+                        </span>
+                    </div>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 leading-relaxed">{description}</p>
+                    <span
+                        className={`text-xs font-semibold mt-2 inline-block ${
+                            active ? 'text-violet-600 dark:text-violet-300' : 'text-zinc-400'
+                        }`}
+                    >
+                        {active ? '● Activo' : 'Inactivo'}
+                    </span>
+                </div>
+            </div>
+        </button>
+    );
+}
+
 // ─────────────────────────────────────────────────────────────
 function SliderControl({
     label,
@@ -347,8 +574,6 @@ function SliderControl({
 }
 
 // ─────────────────────────────────────────────────────────────
-// Tarjeta de resultado del botón Alive (Verde / Rojo).
-// ─────────────────────────────────────────────────────────────
 function AliveResultCard({
     loading,
     result,
@@ -372,7 +597,7 @@ function AliveResultCard({
                 <div className="flex items-center gap-2 mb-3">
                     <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                     <h3 className="text-sm font-bold text-emerald-800 dark:text-emerald-200">
-                        🟢 Servicio de Audio Alive
+                        🟢 Servicio de Audio Alive · {result.provider}
                     </h3>
                 </div>
                 <dl className="space-y-2 text-xs">
@@ -390,6 +615,7 @@ function AliveResultCard({
                 <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0" />
                 <h3 className="text-sm font-bold text-rose-800 dark:text-rose-200">
                     🔴 Servicio de Audio Caído: {result.error_code}
+                    {result.provider ? ` · ${result.provider}` : ''}
                 </h3>
             </div>
             {typeof result.rtt_ms === 'number' && (
@@ -415,7 +641,6 @@ function Row({ label, value }: { label: string; value: string }) {
     );
 }
 
-// Clamp puro reutilizado por el slider y el submit.
 function clampNumber(n: number, min: number, max: number): number {
     return Math.min(Math.max(n, min), max);
 }

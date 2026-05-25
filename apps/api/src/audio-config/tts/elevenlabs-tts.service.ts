@@ -1,72 +1,47 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { SystemLogService } from '../../system-log/system-log.service';
-import { TtsProvider, TtsSynthesisInput } from './tts-provider.interface';
+import { AudioDiagnosisErrorCode } from '../dto/audio-config.types';
+import {
+  ElevenLabsTtsParams,
+  TtsProvider,
+  TtsResult,
+} from './tts-provider.interface';
 
-// ── Constantes de la PoC ──────────────────────────────────────────────────────
-/** Endpoint oficial de síntesis: POST /v1/text-to-speech/{voice_id}. */
+// ── Constantes del proveedor ──────────────────────────────────────────────────
+/** Endpoint oficial: POST /v1/text-to-speech/{voice_id}. */
 const ELEVENLABS_TTS_BASE = 'https://api.elevenlabs.io/v1/text-to-speech';
 /** Modelo multilingüe v2: soporta español con calidad Studio. */
 const ELEVENLABS_MODEL_ID = 'eleven_multilingual_v2';
 /**
- * Formato de salida. `opus_48000_64` devuelve audio OGG/Opus, que es justo lo
- * que `ChatbotService.uploadToWhatsApp` espera (blob `audio/ogg`) para enviar la
- * nota de voz. Así la PoC no toca la integración existente de WhatsApp.
+ * `opus_48000_64` devuelve OGG/Opus, justo lo que espera la subida a WhatsApp
+ * (`audio/ogg`). Verificado contra la API real durante la PoC.
  */
 const ELEVENLABS_OUTPUT_FORMAT = 'opus_48000_64';
-/** Cap de latencia antes de abortar la request (la PoC no debe colgar el chat). */
+/** Cap de latencia antes de abortar la request. */
 const ELEVENLABS_TIMEOUT_MS = 12_000;
 
-/** Clasificación técnica del fallo, para `SystemLog.action` y telemetría. */
-type ElevenLabsErrorCode =
-  | 'AUTH' // API key rechazada (401/403)
-  | 'PLAN_REQUIRED' // la voz/feature exige plan de pago (402)
-  | 'QUOTA_EXCEEDED' // créditos agotados / rate limit (429)
-  | 'BAD_REQUEST' // texto/voz/parámetros inválidos (400/422)
-  | 'TIMEOUT' // no respondió dentro de ELEVENLABS_TIMEOUT_MS
-  | 'NO_AUDIO' // 200 OK pero cuerpo vacío
-  | 'HTTP_ERROR' // otros 4xx/5xx
-  | 'NETWORK'; // fallo de red / excepción no clasificable
-
 /**
- * Proveedor de Prueba de Concepto: ElevenLabs (voz "Studio Quality").
+ * Proveedor: ElevenLabs (Studio Quality).
  *
- * AISLAMIENTO ESTRICTO: lee **exclusivamente** las variables hardcodeadas
- * `ELEVENLABS_API_KEY_POC` y `ELEVENLABS_VOICE_ID_POC` desde `@nestjs/config`.
- * No consulta la base de datos de la organización ni `OrganizationAudioConfig`.
- *
- * Si la síntesis falla, registra el detalle técnico en `SystemLogModule` y
- * devuelve `null`; el `TtsFactoryService` se encarga del fallback a Google.
+ * Stateless respecto al tenant: recibe `apiKey` y `voiceId` ya resueltos y
+ * desencriptados por `AudioConfigService`. No lee la BD ni el `.env`.
  */
 @Injectable()
-export class ElevenLabsTtsService implements TtsProvider {
+export class ElevenLabsTtsService implements TtsProvider<ElevenLabsTtsParams> {
   readonly name = 'ELEVENLABS' as const;
   private readonly logger = new Logger(ElevenLabsTtsService.name);
 
-  constructor(
-    private readonly config: ConfigService,
-    private readonly systemLog: SystemLogService,
-  ) {}
-
-  async synthesize({
-    organizationId,
-    text,
-  }: TtsSynthesisInput): Promise<Buffer | null> {
-    const apiKey = this.config.get<string>('ELEVENLABS_API_KEY_POC');
-    const voiceId = this.config.get<string>('ELEVENLABS_VOICE_ID_POC');
-
-    // Safeguard de configuración: sin credenciales PoC no intentamos la llamada.
+  async generate(
+    text: string,
+    { apiKey, voiceId }: ElevenLabsTtsParams,
+  ): Promise<TtsResult> {
     if (!apiKey || !voiceId) {
-      const message =
-        'ElevenLabs PoC mal configurado: faltan ELEVENLABS_API_KEY_POC y/o ELEVENLABS_VOICE_ID_POC en el .env.';
-      this.logger.error(message);
-      await this.systemLog.error({
-        action: 'TTS_ELEVENLABS_CONFIG_MISSING',
-        message,
-        organizationId,
-        metadata: { hasApiKey: !!apiKey, hasVoiceId: !!voiceId },
-      });
-      return null;
+      return {
+        ok: false,
+        code: 'NOT_CONFIGURED',
+        message:
+          'ElevenLabs no está configurado: falta la API key y/o el Voice ID de la clínica.',
+        rtt_ms: 0,
+      };
     }
 
     const url = `${ELEVENLABS_TTS_BASE}/${voiceId}?output_format=${ELEVENLABS_OUTPUT_FORMAT}`;
@@ -85,85 +60,56 @@ export class ElevenLabsTtsService implements TtsProvider {
         body: JSON.stringify({ text, model_id: ELEVENLABS_MODEL_ID }),
         signal: controller.signal,
       });
-
       const rtt_ms = Date.now() - startedAt;
 
       if (!res.ok) {
         const body = await safeReadText(res);
         const code = classifyHttpStatus(res.status);
-        await this.logError(organizationId, voiceId, code, rtt_ms, {
-          httpStatus: res.status,
-          responseBody: body.slice(0, 2000),
-        });
-        return null;
+        const message = `ElevenLabs ${res.status} (${code}): ${body.slice(0, 500)}`;
+        this.logger.error(message);
+        return { ok: false, code, message, rtt_ms };
       }
 
       const audio = Buffer.from(await res.arrayBuffer());
       if (audio.length === 0) {
-        await this.logError(organizationId, voiceId, 'NO_AUDIO', rtt_ms, {
-          httpStatus: res.status,
-        });
-        return null;
+        return {
+          ok: false,
+          code: 'NO_AUDIO',
+          message: 'ElevenLabs respondió 200 pero sin contenido de audio.',
+          rtt_ms,
+        };
       }
-
       this.logger.log(
-        `ElevenLabs TTS OK — ${audio.length} bytes, ${rtt_ms}ms, voice=${voiceId}, format=${ELEVENLABS_OUTPUT_FORMAT}`,
+        `ElevenLabs TTS OK — ${audio.length} bytes, ${rtt_ms}ms, voice=${voiceId}`,
       );
-      return audio;
+      return { ok: true, audio, bytes: audio.length, rtt_ms };
     } catch (error: any) {
       const rtt_ms = Date.now() - startedAt;
-      const code: ElevenLabsErrorCode =
-        error?.name === 'AbortError' ? 'TIMEOUT' : 'NETWORK';
-      await this.logError(organizationId, voiceId, code, rtt_ms, {
-        exception: error?.message ?? String(error),
-        timeoutMs: ELEVENLABS_TIMEOUT_MS,
-      });
-      return null;
+      const isTimeout = error?.name === 'AbortError';
+      return {
+        ok: false,
+        code: isTimeout ? 'TIMEOUT' : 'UNKNOWN',
+        message: isTimeout
+          ? `ElevenLabs no respondió en ${ELEVENLABS_TIMEOUT_MS}ms.`
+          : `Fallo de red contactando ElevenLabs: ${error?.message ?? String(error)}`,
+        rtt_ms,
+      };
     } finally {
       clearTimeout(timer);
     }
-  }
-
-  /**
-   * Registra el fallo "con lujo de detalle técnico" en SystemLog (fire-and-forget)
-   * y deja también una línea en el logger de la app. Nunca incluye la API key.
-   */
-  private async logError(
-    organizationId: string,
-    voiceId: string,
-    code: ElevenLabsErrorCode,
-    rtt_ms: number,
-    extra: Record<string, unknown>,
-  ): Promise<void> {
-    const message = `ElevenLabs TTS falló (${code}) tras ${rtt_ms}ms — voice=${voiceId}`;
-    this.logger.error(`${message} :: ${JSON.stringify(extra)}`);
-    await this.systemLog.error({
-      action: `TTS_ELEVENLABS_${code}`,
-      message,
-      organizationId,
-      metadata: {
-        provider: 'ELEVENLABS',
-        voiceId,
-        modelId: ELEVENLABS_MODEL_ID,
-        outputFormat: ELEVENLABS_OUTPUT_FORMAT,
-        rtt_ms,
-        ...extra,
-      },
-    });
   }
 }
 
 // ── helpers puros ─────────────────────────────────────────────────────────────
 
-/** Mapea el HTTP status de ElevenLabs a un código de error interno. */
-function classifyHttpStatus(status: number): ElevenLabsErrorCode {
+/** Mapea el HTTP status de ElevenLabs a un código de diagnóstico estable. */
+function classifyHttpStatus(status: number): AudioDiagnosisErrorCode {
   if (status === 401 || status === 403) return 'AUTH';
-  // 402: la voz de librería o un feature exige plan de pago (típico en PoC Free).
-  if (status === 402) return 'PLAN_REQUIRED';
+  if (status === 402) return 'PLAN_REQUIRED'; // voz de librería exige plan de pago
   if (status === 429) return 'QUOTA_EXCEEDED';
-  // ElevenLabs usa 422 (Unprocessable Entity) para errores de validación.
   if (status === 400 || status === 422) return 'BAD_REQUEST';
-  return 'HTTP_ERROR';
+  if (status === 404) return 'INVALID_VOICE';
+  return 'UNKNOWN';
 }
 
 /** Lee el cuerpo de error sin que un fallo de parseo enmascare el error real. */

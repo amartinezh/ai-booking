@@ -1,52 +1,56 @@
-/**
- * Contrato común (patrón Strategy) para todos los proveedores de Text-to-Speech
- * soportados por el "Gestor de Audios" del chatbot.
- *
- * `TtsFactoryService` resuelve la implementación correcta a partir del feature
- * flag `ACTIVE_TTS_PROVIDER` y devuelve una instancia que respeta este contrato.
- *
- * Implementaciones actuales:
- *  - `GoogleTtsService`     — producción multi-tenant (config por organización).
- *  - `ElevenLabsTtsService` — Prueba de Concepto (voz "Studio Quality" hardcoded).
- */
-
-/** Proveedores de TTS reconocidos por la plataforma. */
-export type TtsProviderName = 'GOOGLE' | 'ELEVENLABS';
-
-/** Proveedor por defecto: producción. Cualquier valor inválido cae aquí. */
-export const DEFAULT_TTS_PROVIDER: TtsProviderName = 'GOOGLE';
+import { AudioEncoding, VoiceProvider } from '@antigravity/database';
+import { AudioDiagnosisErrorCode } from '../dto/audio-config.types';
 
 /**
- * Normaliza el valor del flag `ACTIVE_TTS_PROVIDER` a un proveedor válido.
- * Fail-safe: cualquier valor desconocido/ausente cae en `'GOOGLE'` (producción),
- * de modo que una variable mal escrita nunca activa accidentalmente la PoC.
+ * Contrato común (patrón Strategy) de los proveedores de Text-to-Speech.
+ *
+ * `TtsFactoryService` resuelve la configuración dinámica por organización y
+ * decide qué estrategia ejecutar; cada proveedor es STATELESS respecto al
+ * tenant: recibe sus parámetros/credenciales por argumento (nunca lee la BD ni
+ * el `.env`), de modo que la misma instancia singleton sirve a todas las
+ * clínicas sin riesgo de cross-tenant leak.
+ *
+ * Implementaciones:
+ *  - `GoogleTtsService`     — Google Cloud TTS (Plan B siempre disponible).
+ *  - `ElevenLabsTtsService` — ElevenLabs (Studio Quality).
  */
-export function normalizeTtsProvider(value: unknown): TtsProviderName {
-  return String(value ?? '').trim().toUpperCase() === 'ELEVENLABS'
-    ? 'ELEVENLABS'
-    : 'GOOGLE';
+
+/** Proveedores de TTS reconocidos (alineado con el enum Prisma `VoiceProvider`). */
+export type TtsProviderName = VoiceProvider;
+
+/** Parámetros de síntesis de Google Cloud TTS (resueltos por organización). */
+export interface GoogleTtsParams {
+  voiceId: string;
+  pitch: number;
+  speakingRate: number;
+  audioEncoding: AudioEncoding;
+  languageCode: string;
 }
 
-/** Entrada de síntesis. El texto llega ya saneado (sin markdown ni emojis). */
-export interface TtsSynthesisInput {
-  /** Organización dueña de la conversación (Google la usa para resolver voz/pitch). */
-  organizationId: string;
-  /** Texto limpio listo para sintetizar. */
-  text: string;
+/** Credenciales/voz de ElevenLabs (resueltas por organización, ya desencriptadas). */
+export interface ElevenLabsTtsParams {
+  apiKey: string;
+  voiceId: string;
 }
 
 /**
- * Estrategia de síntesis de voz. Cada proveedor decide internamente de dónde
- * saca su configuración (Google: `OrganizationAudioConfig`; ElevenLabs: env PoC).
+ * Resultado estructurado de una síntesis. Discriminado por `ok` para que tanto
+ * el camino de producción (factory → Buffer | null + fallback) como el de
+ * diagnóstico (botón "Alive" → códigos + latencia) compartan la misma lógica.
  */
-export interface TtsProvider {
-  /** Identifica al proveedor — útil para logs, telemetría y decisiones de fallback. */
+export type TtsResult =
+  | { ok: true; audio: Buffer; bytes: number; rtt_ms: number }
+  | { ok: false; code: AudioDiagnosisErrorCode; message: string; rtt_ms: number };
+
+/** Estrategia de síntesis de voz, parametrizada por su tipo de credenciales. */
+export interface TtsProvider<P> {
+  /** Identifica al proveedor — usado para logs, telemetría y fallback. */
   readonly name: TtsProviderName;
 
   /**
-   * Sintetiza `text` y devuelve un `Buffer` de audio **OGG/Opus** listo para
-   * subir a WhatsApp como nota de voz, o `null` si la síntesis falla (en cuyo
-   * caso el proveedor ya dejó registrado el detalle técnico del error).
+   * Sintetiza `text` con los `params` dados y devuelve un audio **OGG/Opus**
+   * (compatible con la subida a WhatsApp) o un error clasificado. Nunca lanza:
+   * cualquier fallo se mapea a `{ ok: false, code, message }`.
    */
-  synthesize(input: TtsSynthesisInput): Promise<Buffer | null>;
+  generate(text: string, params: P): Promise<TtsResult>;
 }

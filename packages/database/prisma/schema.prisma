@@ -95,38 +95,66 @@ enum CommunicationStyle {
 // -----------------------------------------------------------------------------
 // 🔊 MULTI-TENANT: CONFIGURACIÓN DE VOZ Y AUDIO (TTS) POR CLÍNICA
 // Reemplaza la configuración global hardcoded del "Gestor de Audios" del
-// chatbot. Cada organización define su propia voz, tono (pitch), velocidad
-// (speakingRate) y códec de salida, que se inyectan dinámicamente en cada
-// llamada a Google Cloud Text-to-Speech.
+// chatbot. Cada organización define su PROVEEDOR de voz (Google o ElevenLabs),
+// el género del asistente y los parámetros/credenciales propios de cada motor,
+// que se inyectan dinámicamente en cada síntesis de audio.
 //
 // Aislamiento NIVEL BANCA: `organizationId` es UNIQUE + FK con onDelete:Cascade.
 // Una organización jamás puede leer/escribir la configuración de otra.
-// Los rangos válidos de `pitch` (-20..20) y `speakingRate` (0.25..4.0) se
-// imponen además con CHECK constraints en la migración SQL.
+// Los rangos válidos de `googlePitch` (-20..20) y `googleSpeakingRate`
+// (0.25..4.0) se imponen además con CHECK constraints en la migración SQL.
 // -----------------------------------------------------------------------------
 model OrganizationAudioConfig {
   id             String       @id @default(uuid())
   organizationId String       @unique
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  // Proveedor de voz activo. GOOGLE es el Plan B siempre disponible.
+  activeProvider VoiceProvider @default(GOOGLE)
+
+  // Género del asistente. Alimenta la selección de voz por defecto en el panel
+  // (en ElevenLabs determina el voiceId sugerido masculino/femenino).
+  gender VoiceGender @default(FEMENINO)
+
   // Códec del audio sintetizado. OGG_OPUS es el requerido por WhatsApp Cloud API.
   audioEncoding AudioEncoding @default(OGG_OPUS)
 
+  // ── Google Cloud TTS (Plan B) ───────────────────────────────────────────
   // Tono de la voz. Rango válido de Google TTS: -20.0 a 20.0 semitonos.
-  // CHECK constraint en BD: pitch BETWEEN -20.0 AND 20.0.
-  pitch Float @default(0.0)
+  // CHECK constraint en BD: googlePitch BETWEEN -20.0 AND 20.0.
+  googlePitch Float @default(0.0)
 
   // Velocidad de habla. Rango válido de Google TTS: 0.25x a 4.0x.
-  // CHECK constraint en BD: speakingRate BETWEEN 0.25 AND 4.0.
-  speakingRate Float @default(1.0)
+  // CHECK constraint en BD: googleSpeakingRate BETWEEN 0.25 AND 4.0.
+  googleSpeakingRate Float @default(1.0)
 
   // Identificador de la voz de Google TTS (ej: es-US-Neural2-A).
-  voiceId String @default("es-US-Neural2-A")
+  googleVoiceId String @default("es-US-Neural2-A")
+
+  // ── ElevenLabs (Studio Quality) ─────────────────────────────────────────
+  // API key de ElevenLabs ENCRIPTADA con AES-256-GCM (CryptoService). Nunca se
+  // almacena ni se devuelve al frontend en texto plano. `null` = sin configurar.
+  elevenLabsApiKey String? @db.Text
+
+  // Voice ID de ElevenLabs (ej: qHkrJuifPpn95wK3rm2A). No es secreto.
+  elevenLabsVoiceId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([organizationId])
+}
+
+// Proveedores de Text-to-Speech soportados por la plataforma.
+enum VoiceProvider {
+  GOOGLE
+  ELEVENLABS
+}
+
+// Género del asistente virtual (voz).
+enum VoiceGender {
+  MASCULINO
+  FEMENINO
 }
 
 // Códecs soportados por Google Cloud TTS que exponemos a las clínicas.
