@@ -907,6 +907,7 @@ enum ResolutionStatus {
   QUEUED // El paciente quedó en lista de espera
   BLOCKED_INSULT // La sesión se cerró por lenguaje abusivo
   SYSTEM_ERROR // Cierre por error técnico / exceso de reintentos
+  CANCELLED // El paciente canceló una cita existente con éxito
 }
 
 // -----------------------------------------------------------------------------

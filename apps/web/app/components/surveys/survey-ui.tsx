@@ -85,6 +85,10 @@ export const RESOLUTION_META: Record<ResolutionStatus, { label: string; badge: s
     label: 'Error técnico',
     badge: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200',
   },
+  CANCELLED: {
+    label: 'Cancelado',
+    badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  },
 };
 
 export function ResolutionBadge({ status }: { status: ResolutionStatus }) {

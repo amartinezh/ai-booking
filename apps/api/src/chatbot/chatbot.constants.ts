@@ -12,6 +12,9 @@ export enum ChatState {
   AWAITING_WAITLIST_CONFIRM = 'AWAITING_WAITLIST_CONFIRM',
   AWAITING_WAITLIST_OPTIN = 'AWAITING_WAITLIST_OPTIN',
   AWAITING_POST_CANCEL_CHOICE = 'AWAITING_POST_CANCEL_CHOICE',
+  // Estado de transición: el paciente pidió cancelar mientras agendaba.
+  // Guardamos el estado previo y esperamos un SÍ/NO antes de abortar.
+  AWAITING_INTERRUPT_CONFIRMATION = 'AWAITING_INTERRUPT_CONFIRMATION',
 }
 
 // Nombre canónico del registro EPS para pago directo (debe existir en BD por org).
@@ -447,6 +450,15 @@ const FORMAL = {
   audioPasoEstricto: () =>
     `🎙️ Para este paso en particular, por favor responda por *texto* _(la letra o un SÍ/NO)_ — así evitamos cualquier confusión.`,
 
+  // Interrupción amable: el paciente pidió cancelar en medio del agendamiento.
+  // Pedimos confirmación antes de abandonar el proceso en curso.
+  interrupcionAgendamiento: () =>
+    `Entiendo que desea cancelar una cita. ¿Confirma que desea interrumpir el proceso de agendamiento actual para proceder con la cancelación?`,
+
+  // El paciente decidió NO interrumpir: retomamos el agendamiento donde iba.
+  interrupcionRetomar: () =>
+    `Perfecto, continuemos con su agendamiento justo donde lo dejamos.`,
+
   inactividad: () =>
     `Buen día. Por inactividad cerré nuestra conversación para proteger sus datos. 🔒\n\nCuando quiera retomar, escríbame *"Hola"* y con gusto le atiendo.`,
 };
@@ -789,6 +801,15 @@ const INFORMAL = {
 
   audioPasoEstricto: () =>
     `🎙️ Para este paso, mejor respóndeme por *texto* _(la letra o un SÍ/NO)_ — así evitamos confusiones. 🙏`,
+
+  // Interrupción amable: el paciente pidió cancelar en medio del agendamiento.
+  // Pedimos confirmación antes de abandonar el proceso en curso.
+  interrupcionAgendamiento: () =>
+    `Entiendo, prefieres cancelar una cita. ¿Quieres que detengamos este agendamiento para pasar al proceso de cancelación?`,
+
+  // El paciente decidió NO interrumpir: retomamos el agendamiento donde iba.
+  interrupcionRetomar: () =>
+    `¡Listo, seguimos con tu agendamiento justo donde íbamos! 😊`,
 
   inactividad: () =>
     `Hola, ¿cómo estás? Cerré la conversación por inactividad para cuidar tus datos. 🔒 Cuando quieras retomar, escríbeme *"Hola"* y te atiendo. 😊`,

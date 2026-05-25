@@ -42,6 +42,7 @@ const RESOLUTION_OPTIONS: { value: ResolutionStatus | ''; label: string }[] = [
   { value: 'QUEUED', label: 'En cola' },
   { value: 'BLOCKED_INSULT', label: 'Bloqueado (insulto)' },
   { value: 'SYSTEM_ERROR', label: 'Error técnico' },
+  { value: 'CANCELLED', label: 'Cancelado' },
 ];
 
 const PAGE_SIZE = 25;

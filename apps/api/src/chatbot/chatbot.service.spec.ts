@@ -835,4 +835,78 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_NAME);
     });
   });
+
+  // ════════════════════════════════════════════════════════════
+  // Interceptor de cancelación + interrupción amable + CSAT
+  // (Escenarios 1, 2 y 3)
+  // ════════════════════════════════════════════════════════════
+  describe('interceptor global de cancelación e interrupción del agendamiento', () => {
+    const stateKey = `chat_state:${ORG_ID}:${SENDER}`;
+    const prevStateKey = `temp_interrupt_prev_state:${ORG_ID}:${SENDER}`;
+
+    it('Escenario 1: "cancelar cita" en IDLE enruta directo a recolección de cédula', async () => {
+      // IDLE por defecto (sin estado sembrado).
+      await service.processIncomingMessage(makeTextEvent('cancelar cita'));
+
+      // No pide confirmación: arranca el flujo de cancelación pidiendo la cédula.
+      const all = sentMessages().join('\n');
+      expect(all.toLowerCase()).toContain('cédula');
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+      // El detector por patrón no necesita gastar una llamada al LLM.
+      expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+    });
+
+    it('Escenario 2: "cancelar cita" agendando NO aborta — pide confirmación y guarda el estado previo', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_SPECIALTY);
+
+      await service.processIncomingMessage(makeTextEvent('cancelar cita'));
+
+      const all = sentMessages().join('\n');
+      expect(all).toContain('interrumpir'); // texto FORMAL de interrupcionAgendamiento
+      // Transición al estado puente y memoria del estado interrumpido.
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_INTERRUPT_CONFIRMATION);
+      expect(redis.store.get(prevStateKey)).toBe(ChatState.AWAITING_SPECIALTY);
+      // No se gastó LLM ni se limpió la sesión de agendamiento.
+      expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+    });
+
+    it('Escenario 2: SÍ confirma la interrupción → pasa al flujo de cancelación', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_INTERRUPT_CONFIRMATION);
+      redis.store.set(prevStateKey, ChatState.AWAITING_DATE);
+
+      await service.processIncomingMessage(makeTextEvent('sí'));
+
+      const all = sentMessages().join('\n');
+      expect(all.toLowerCase()).toContain('cédula');
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+      // El rastro del estado previo se descarta al confirmar.
+      expect(redis.store.get(prevStateKey)).toBeUndefined();
+    });
+
+    it('Escenario 2: NO restaura el estado anterior y retoma el agendamiento', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_INTERRUPT_CONFIRMATION);
+      redis.store.set(prevStateKey, ChatState.AWAITING_EPS);
+
+      await service.processIncomingMessage(makeTextEvent('no'));
+
+      // Vuelve EXACTAMENTE al paso donde estaba el paciente.
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_EPS);
+      expect(redis.store.get(prevStateKey)).toBeUndefined();
+      const all = sentMessages().join('\n');
+      expect(all.toLowerCase()).toContain('agendamiento');
+    });
+
+    it('Escenario 3: declinar el reagendamiento tras cancelar dispara la encuesta CSAT (CANCELLED)', async () => {
+      const surveySpy = jest
+        .spyOn(service as any, 'sendSurveyLink')
+        .mockResolvedValue(undefined);
+      redis.store.set(stateKey, ChatState.AWAITING_POST_CANCEL_CHOICE);
+
+      await service.processIncomingMessage(makeTextEvent('no'));
+
+      expect(surveySpy).toHaveBeenCalledTimes(1);
+      // Tercer argumento de sendSurveyLink = ResolutionStatus.CANCELLED.
+      expect(surveySpy.mock.calls[0][2]).toBe('CANCELLED');
+    });
+  });
 });

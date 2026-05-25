@@ -1552,7 +1552,10 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_CANCEL_CONFIRM ||
       currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
       currentState === ChatState.AWAITING_WAITLIST_OPTIN ||
-      currentState === ChatState.AWAITING_POST_CANCEL_CHOICE;
+      currentState === ChatState.AWAITING_POST_CANCEL_CHOICE ||
+      // Escenario 2: la confirmación de interrupción es un paso SÍ/NO por texto;
+      // como los demás pasos estrictos, no llama al LLM y fluye al switch.
+      currentState === ChatState.AWAITING_INTERRUPT_CONFIRMATION;
 
     // Pasos de lista de espera que esperan un SÍ/NO. A diferencia del resto de
     // pasos estrictos, ESTOS aceptan voz: el audio se transcribe y la respuesta
@@ -1621,6 +1624,57 @@ export class ChatbotService implements OnModuleInit {
       messageType === 'text' &&
       !!text &&
       this.escapeRegex.test(text.trim());
+
+    // ══════════════════════════════════════════════════════════
+    // 🧲 ESCENARIO 2 — INTERRUPCIÓN AMABLE DEL AGENDAMIENTO
+    // Capa ADITIVA (Open/Closed): si el interceptor de intención de
+    // cancelación (cancelRegex) dispara mientras el paciente está en un
+    // estado AVANZADO del protocolo de agendamiento, NO abortamos de
+    // inmediato (comportamiento anterior). Guardamos el estado en curso y
+    // pedimos confirmación. El early-return impide que el flujo determinista
+    // posterior (escape / cancelación directa) procese este turno; ningún
+    // estado existente se reescribe.
+    // Nota: el Escenario 1 (cancelación temprana en IDLE) NO entra aquí y
+    // sigue cubierto por el camino existente (isCancellation → flujo de
+    // cancelación → AWAITING_CANCEL_CEDULA).
+    // ══════════════════════════════════════════════════════════
+    const SCHEDULING_FLOW_STATES: ChatState[] = [
+      ChatState.AWAITING_SPECIALTY,
+      ChatState.AWAITING_EPS,
+      ChatState.AWAITING_DATE,
+      ChatState.AWAITING_NAME,
+      ChatState.AWAITING_CEDULA,
+      ChatState.AWAITING_CONFIRMATION,
+    ];
+    if (isQuickCancel && SCHEDULING_FLOW_STATES.includes(currentState)) {
+      // Recordamos dónde estaba el paciente para retomar si responde NO.
+      await this.redis.set(
+        `temp_interrupt_prev_state:${organizationId}:${senderId}`,
+        currentState,
+        'EX',
+        SESSION_TTL,
+      );
+      const reply = MSGS.interrupcionAgendamiento();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_INTERRUPT_CONFIRMATION,
+      );
+
+      await this.interactionLog.log({
+        whatsappId: senderId,
+        organizationId,
+        status: InteractionStatus.CANCELLATION_FLOW,
+        userMessage: text || '[texto]',
+        botReply: reply,
+        metadata: {
+          event: 'SCHEDULING_INTERRUPT_PROMPT',
+          interruptedState: currentState,
+        },
+      });
+      return;
+    }
 
     let aiData: SchedulingExtraction = {
       transcript: null,
@@ -3207,10 +3261,95 @@ export class ChatbotService implements OnModuleInit {
             metadata: { event: 'POST_CANCEL_DECLINED' },
           });
 
+          // ⭐ ESCENARIO 3 — CSAT: el flujo principal de cancelación cerró con
+          // éxito (cita ya cancelada en AWAITING_CANCEL_CONFIRM) y el paciente
+          // declinó reagendar → este es el punto terminal del flujo. Si en
+          // cambio acepta reagendar, el cierre BOOKED engancha su propia
+          // encuesta, evitando enviar dos encuestas en una misma sesión.
+          await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.CANCELLED, {
+            chatSummary: 'Cita cancelada con éxito; el paciente no quiso reagendar.',
+          });
+
         } else {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
           const reply = MSGS.respuestaInvalidaSiNo();
           await this.sendWhatsAppMessage(senderId, reply);
+        }
+        break;
+      }
+
+      // ══════════════════════════════════════════════════════════
+      // ESCENARIO 2 — CONFIRMACIÓN DE INTERRUPCIÓN DEL AGENDAMIENTO
+      // El paciente pidió cancelar a mitad del agendamiento; aquí decide si
+      // realmente interrumpe (SÍ → flujo de cancelación) o retoma (NO →
+      // restaura el estado guardado). Caso nuevo y aislado: no toca el resto
+      // de la máquina de estados.
+      // ══════════════════════════════════════════════════════════
+      case ChatState.AWAITING_INTERRUPT_CONFIRMATION: {
+        // Tolerante a SÍ/NO natural (texto), igual que los demás pasos SÍ/NO.
+        const decision = this.interpretYesNo(text);
+        const prevState = await this.redis.get(
+          `temp_interrupt_prev_state:${organizationId}:${senderId}`,
+        );
+
+        if (decision === 'SI') {
+          // Confirmó: abandonamos el agendamiento e iniciamos la cancelación,
+          // reutilizando el MISMO arranque del flujo existente (pedir cédula).
+          await this.redis.del(`temp_interrupt_prev_state:${organizationId}:${senderId}`);
+          await this.cleanUpSession(organizationId, senderId);
+          await this.redis.set(
+            `is_ai_flow:${organizationId}:${senderId}`,
+            'false',
+            'EX',
+            SESSION_TTL,
+          );
+          const reply = MSGS.cancelarPedirCedula();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CEDULA);
+
+          await this.interactionLog.log({
+            whatsappId: senderId,
+            organizationId,
+            status: InteractionStatus.CANCELLATION_FLOW,
+            userMessage: text,
+            botReply: reply,
+            metadata: { event: 'SCHEDULING_INTERRUPT_CONFIRMED', interruptedState: prevState },
+          });
+
+        } else if (decision === 'NO') {
+          // Rechazó: restauramos el estado anterior y retomamos el agendamiento
+          // justo donde iba. El estado restaurado hace que el próximo mensaje
+          // del paciente se procese en el paso correcto.
+          await this.redis.del(`temp_interrupt_prev_state:${organizationId}:${senderId}`);
+          const restoreState = (prevState as ChatState) || ChatState.AWAITING_SPECIALTY;
+          await this.setUserState(organizationId, senderId, restoreState);
+          const reply = MSGS.interrupcionRetomar();
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.interactionLog.log({
+            whatsappId: senderId,
+            organizationId,
+            status: InteractionStatus.ESCAPED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { event: 'SCHEDULING_INTERRUPT_DECLINED', restoredState: restoreState },
+          });
+
+        } else {
+          // No se entendió la respuesta: re-preguntamos SÍ/NO y penalizamos
+          // reintento, igual que el resto de pasos estrictos.
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const reply = MSGS.respuestaInvalidaSiNo();
+          await this.sendWhatsAppMessage(senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidResponse: text, stage: 'INTERRUPT_CONFIRM' },
+          });
         }
         break;
       }

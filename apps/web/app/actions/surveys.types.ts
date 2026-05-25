@@ -2,7 +2,7 @@
 // archivos 'use server' sólo pueden exportar funciones async).
 
 export type UserMood = 'NEGATIVE' | 'NEUTRAL' | 'HAPPY';
-export type ResolutionStatus = 'BOOKED' | 'QUEUED' | 'BLOCKED_INSULT' | 'SYSTEM_ERROR';
+export type ResolutionStatus = 'BOOKED' | 'QUEUED' | 'BLOCKED_INSULT' | 'SYSTEM_ERROR' | 'CANCELLED';
 export type SurveySortField = 'createdAt' | 'rating';
 export type SortDir = 'asc' | 'desc';
 
