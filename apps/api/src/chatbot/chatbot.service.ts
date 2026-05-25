@@ -11,7 +11,6 @@ import {
   WAITLIST_CONFIRM_TTL,
   MSGS,
   buildMessages,
-  MIN_CEDULA_LENGTH,
   PARTICULAR_EPS_NAME,
   DEFAULT_MAX_RETRIES,
   SEMANTIC_MAP_TIMEOUT_MS,
@@ -1555,6 +1554,13 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_WAITLIST_OPTIN ||
       currentState === ChatState.AWAITING_POST_CANCEL_CHOICE;
 
+    // Pasos de lista de espera que esperan un SÍ/NO. A diferencia del resto de
+    // pasos estrictos, ESTOS aceptan voz: el audio se transcribe y la respuesta
+    // se normaliza con interpretYesNo (texto y voz sirven por igual).
+    const isWaitlistYesNoStep =
+      currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
+      currentState === ChatState.AWAITING_WAITLIST_OPTIN;
+
     // Pasos de SELECCIÓN DE MENÚ (servicio / EPS). El texto en estos pasos
     // NO llama al LLM (ver más abajo), así que su `intent` queda en 'otro' y
     // jamás toca el router global de FAQ. La voz, en cambio, DEBE pasar por el
@@ -1571,7 +1577,7 @@ export class ChatbotService implements OnModuleInit {
 
     const isAudio = messageType === 'audio' && !!audioId;
 
-    if (isAudio && isStrictStep) {
+    if (isAudio && isStrictStep && !isWaitlistYesNoStep) {
       const reply = MSGS.audioPasoEstricto();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -1889,7 +1895,12 @@ export class ChatbotService implements OnModuleInit {
       }
     }
 
-    if (aiData.outOfContext) {
+    // En los pasos SÍ/NO de la cola con una respuesta usable (texto o transcripción
+    // de voz), saltamos los guardas de outOfContext/ininteligible: el LLM tiende a
+    // marcar un "sí"/"no" suelto como fuera de contexto y bloquearía el turno.
+    const waitlistVoiceAnswer = isWaitlistYesNoStep && !!text && !!text.trim();
+
+    if (aiData.outOfContext && !waitlistVoiceAnswer) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
       const reply = MSGS.outOfContext(botName);
       await this.smartReply(organizationId, senderId, reply);
@@ -1905,7 +1916,7 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    if (aiData.ininteligible) {
+    if (aiData.ininteligible && !waitlistVoiceAnswer) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
       const reply = MSGS.ininteligible();
       await this.smartReply(organizationId, senderId, reply);
@@ -1979,7 +1990,8 @@ export class ChatbotService implements OnModuleInit {
 
       if (aiData.cedula) {
         const soloNumeros = aiData.cedula.replace(/\D/g, '');
-        if (soloNumeros.length >= MIN_CEDULA_LENGTH) {
+        // No validamos longitud: se acepta cualquier número de cédula.
+        if (soloNumeros.length > 0) {
           // Validación contra PostgreSQL antes de "confirmar" la cédula.
           const paciente = await this.prisma.patientProfile.findUnique({
             where: { cedula: aiData.cedula },
@@ -2050,7 +2062,8 @@ export class ChatbotService implements OnModuleInit {
       const waitlistPending = await this.redis.get(`temp_waitlist_pending:${organizationId}:${senderId}`);
       if (waitlistPending === '1' && finalCedula) {
         const soloNumeros = finalCedula.replace(/\D/g, '');
-        if (!soloNumeros || soloNumeros.length < MIN_CEDULA_LENGTH) {
+        // No validamos longitud: se acepta cualquier número (solo rechazo si viene vacío).
+        if (!soloNumeros) {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
           await this.redis.del(`temp_cedula:${organizationId}:${senderId}`);
           const reply = MSGS.cancelarCedulaInvalida();
@@ -2478,9 +2491,10 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      // Validación de cédula (idéntica al flujo de cancelación).
+      // Validación de cédula: no validamos longitud, se acepta cualquier número
+      // (solo rechazo si viene vacío/sin dígitos).
       const soloNumerosAgendamiento = finalCedula.replace(/\D/g, '');
-      if (!soloNumerosAgendamiento || soloNumerosAgendamiento.length < MIN_CEDULA_LENGTH) {
+      if (!soloNumerosAgendamiento) {
         await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
         await this.redis.del(`temp_cedula:${organizationId}:${senderId}`);
         const reply = MSGS.cancelarCedulaInvalida();
@@ -2813,8 +2827,10 @@ export class ChatbotService implements OnModuleInit {
 
       case ChatState.AWAITING_WAITLIST_OPTIN: {
         const respuesta = text?.toUpperCase().trim() || '';
+        // Acepta SÍ/NO por texto y por voz (transcripción), de forma tolerante.
+        const decision = this.interpretYesNo(text);
 
-        if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
+        if (decision === 'SI') {
           // El usuario acepta entrar a la cola de espera.
           const serviceId = await this.redis.get(`temp_waitlist_service_id:${organizationId}:${senderId}`);
           const epsIdRaw = await this.redis.get(`temp_waitlist_eps_id:${organizationId}:${senderId}`);
@@ -2919,7 +2935,7 @@ export class ChatbotService implements OnModuleInit {
 
           await this.cleanUpSession(organizationId, senderId);
 
-        } else if (['NO', 'NO.'].includes(respuesta)) {
+        } else if (decision === 'NO') {
           const reply = MSGS.noUnidoAWaitlist();
           await this.smartReply(organizationId, senderId, reply);
           await this.cleanUpSession(organizationId, senderId);
@@ -2958,7 +2974,8 @@ export class ChatbotService implements OnModuleInit {
           cedula = soloNumeros;
         }
 
-        if (!cedula || cedula.length < MIN_CEDULA_LENGTH) {
+        // No validamos longitud: se acepta cualquier número (solo rechazo si viene vacío).
+        if (!cedula) {
           await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
           const reply = MSGS.cancelarCedulaInvalida();
           await this.smartReply(organizationId, senderId, reply);
@@ -3207,6 +3224,31 @@ export class ChatbotService implements OnModuleInit {
   // ══════════════════════════════════════════════════════════════
   // FLUJO DE CONFIRMACIÓN DE CUPO DE WAITLIST
   // ══════════════════════════════════════════════════════════════
+  // Interpreta una respuesta afirmativa/negativa de forma tolerante, sirviendo
+  // tanto para texto escrito como para transcripciones de voz. Normaliza
+  // acentos y puntuación, y acepta variantes naturales ("sí, claro", "no
+  // gracias", "dale", "negativo"). Devuelve 'SI' | 'NO' | null.
+  private interpretYesNo(text: string | undefined | null): 'SI' | 'NO' | null {
+    if (!text) return null;
+    const t = text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // quita tildes (marcas diacriticas)
+      .replace(/[^\w\s]/g, ' ') // signos de puntuación → espacio
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!t) return null;
+
+    const noRegex = /\b(no|nop|nel|negativo|nunca|cancelar|cancela|para nada|no gracias)\b/;
+    const siRegex = /\b(si|sip|sii+|claro|dale|ok|okay|oka|listo|bueno|vale|por supuesto|afirmativo|correcto|exacto|de una|asi es|eso es|confirmo|confirmar|acepto|aceptar|quiero|deseo)\b/;
+
+    // "no" gana cuando aparece explícito (p.ej. "no quiero", "no gracias") para
+    // evitar falsos positivos con palabras afirmativas en la misma frase.
+    if (noRegex.test(t)) return 'NO';
+    if (siRegex.test(t)) return 'SI';
+    return null;
+  }
+
   private async handleWaitlistConfirmStep(
     organizationId: string,
     senderId: string,
@@ -3215,8 +3257,10 @@ export class ChatbotService implements OnModuleInit {
     // Sombra del pool de mensajes según el estilo activo de la org.
     const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
     const respuesta = text?.toUpperCase().trim() || '';
+    // Acepta SÍ/NO por texto y por voz (transcripción), de forma tolerante.
+    const decision = this.interpretYesNo(text);
 
-    if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
+    if (decision === 'SI') {
       const { slotId, patientId } = await this.waitlistService.confirmFromWaitlist({
         whatsappId: senderId,
         organizationId,
@@ -3296,7 +3340,7 @@ export class ChatbotService implements OnModuleInit {
         });
       }
 
-    } else if (['NO', 'NO.', 'CANCELAR'].includes(respuesta)) {
+    } else if (decision === 'NO') {
       await this.waitlistService.confirmFromWaitlist({
         whatsappId: senderId,
         organizationId,

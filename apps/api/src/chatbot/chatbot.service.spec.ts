@@ -14,6 +14,7 @@ import { LlmFactoryService } from '../llm/llm-factory.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { SurveyService } from '../survey/survey.service';
 import { AudioConfigService } from '../audio-config/audio-config.service';
+import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
 import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
 
 // ───────────────────────────────────────────────────────────────
@@ -173,6 +174,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         { provide: WhatsappCredentialsService, useValue: { resolveForOrg: jest.fn() } },
         { provide: SurveyService, useValue: { generateSurveyToken: jest.fn(async () => null) } },
         { provide: AudioConfigService, useValue: { getEffective: jest.fn(async () => null) } },
+        { provide: TtsFactoryService, useValue: { synthesize: jest.fn(async () => null) } },
       ],
     }).compile();
 
@@ -449,20 +451,23 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     expect(redis.store.get(`temp_nombre:${ORG_ID}:${SENDER}`)).toBe('Andrés Pérez');
   });
 
-  it('agendar_cita con cédula de formato inválido → no la confirma ni la persiste', async () => {
+  it('agendar_cita con cédula de cualquier tamaño → la acepta sin validar longitud', async () => {
+    // Ya NO se valida el tamaño de la cédula: un número corto como "12" se acepta.
     provider.extractSchedulingIntent.mockResolvedValueOnce(
-      extraction({ intent: 'agendar_cita', cedula: '12' }), // < MIN_CEDULA_LENGTH
+      extraction({ intent: 'agendar_cita', cedula: '12' }),
     );
 
     await service.processIncomingMessage(makeTextEvent('agendar con cédula 12'));
 
-    // No se valida contra BD una cédula con formato inválido.
-    expect(prisma.patientProfile.findUnique).not.toHaveBeenCalled();
-    // No se arrastra la cédula inválida en sesión.
-    expect(redis.store.get(`temp_cedula:${ORG_ID}:${SENDER}`)).toBeUndefined();
-    // El ACK no la presenta como confirmada.
+    // Se valida contra BD (existencia del paciente), independiente de la longitud.
+    expect(prisma.patientProfile.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { cedula: '12' } }),
+    );
+    // Se arrastra la cédula en sesión.
+    expect(redis.store.get(`temp_cedula:${ORG_ID}:${SENDER}`)).toBe('12');
+    // El ACK la presenta como confirmada.
     const ack = sentMessages()[0] || '';
-    expect(ack).not.toContain('🪪');
+    expect(ack).toContain('🪪');
   });
 
   // ════════════════════════════════════════════════════════════
@@ -758,6 +763,76 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // …y NO se pierde el progreso: sigue esperando la EPS.
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
       expect(redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`)).toBeUndefined();
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // Lista de espera — SÍ/NO por texto y voz + cédula sin validar tamaño
+  // ════════════════════════════════════════════════════════════════
+  describe('lista de espera: SÍ/NO por texto y voz, cédula de cualquier tamaño', () => {
+    const makeAudioEvent = (id = 'audio-wl-1') => ({
+      from: SENDER,
+      type: 'audio',
+      audio: { id },
+      metadata: { phone_number_id: PHONE_ID },
+    });
+
+    it('interpretYesNo reconoce afirmaciones/negaciones de texto y voz', () => {
+      const yn = (t: string) => (service as any).interpretYesNo(t);
+      // Afirmaciones (incluye variantes habladas con tildes y muletillas).
+      expect(yn('Sí')).toBe('SI');
+      expect(yn('si')).toBe('SI');
+      expect(yn('Sí, claro')).toBe('SI');
+      expect(yn('dale')).toBe('SI');
+      expect(yn('Acepto')).toBe('SI');
+      // Negaciones.
+      expect(yn('No')).toBe('NO');
+      expect(yn('No, gracias')).toBe('NO');
+      expect(yn('negativo')).toBe('NO');
+      // "no" gana cuando aparece junto a una palabra afirmativa.
+      expect(yn('no quiero')).toBe('NO');
+      // Sin señal clara → null.
+      expect(yn('quizás mañana')).toBeNull();
+      expect(yn('')).toBeNull();
+    });
+
+    it('AWAITING_WAITLIST_OPTIN acepta "No" por VOZ (no rechaza el audio)', async () => {
+      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_WAITLIST_OPTIN);
+      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok' });
+      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'No, gracias' }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      const all = sentMessages().join('\n');
+      // El audio NO fue rechazado como "paso estricto" (mensaje audioPasoEstricto).
+      expect(all).not.toContain('por *texto*');
+      // Se interpretó como NO → respuesta de declinación (invita a escribir "Hola")
+      // y sesión cerrada (estado reseteado a IDLE).
+      expect(all).toContain('Hola');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.IDLE);
+    });
+
+    it('opt-in a lista de espera acepta una cédula corta ("12") sin validar tamaño', async () => {
+      // Contexto de un opt-in ya aceptado: faltaba la cédula.
+      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_CEDULA);
+      redis.store.set(`temp_waitlist_pending:${ORG_ID}:${SENDER}`, '1');
+      redis.store.set(`temp_waitlist_service_id:${ORG_ID}:${SENDER}`, 's1');
+      redis.store.set(`temp_especialidad:${ORG_ID}:${SENDER}`, 'Cardiología');
+      // Paciente nuevo (no existe en BD) → debe pedir el nombre, NO rechazar la cédula.
+      prisma.patientProfile.findUnique.mockResolvedValueOnce(null);
+
+      await service.processIncomingMessage(makeTextEvent('12'));
+
+      const all = sentMessages().join('\n');
+      // La cédula corta NO se rechaza por tamaño.
+      expect(all).not.toContain('cédula válida');
+      expect(all).not.toContain('no logré identificar');
+      // Avanza pidiendo el nombre del paciente nuevo (cédula aceptada).
+      expect(all).toContain('nombre completo');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_NAME);
     });
   });
 });
