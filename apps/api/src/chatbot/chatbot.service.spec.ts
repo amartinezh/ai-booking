@@ -1053,14 +1053,54 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_CEDULA);
     });
 
-    it('cédula sin citas próximas → informa que no hay nada para reprogramar', async () => {
+    it('cédula sin citas próximas → ofrece consultar con otra cédula (entra al loop)', async () => {
       redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CEDULA);
       prisma.appointment.findMany.mockResolvedValueOnce([]);
 
       await service.processIncomingMessage(makeTextEvent('12345'));
 
-      expect(sentMessages().join('\n').toLowerCase()).toContain('no tiene citas');
+      expect(sentMessages().join('\n').toLowerCase()).toContain('otra cédula');
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+    });
+
+    it('loop: SÍ a "otra cédula" vuelve a pedir la cédula (AWAITING_MODIFY_CEDULA)', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+
+      await service.processIncomingMessage(makeTextEvent('sí'));
+
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_CEDULA);
+      expect(sentMessages().join('\n').toLowerCase()).toContain('cédula');
+    });
+
+    it('loop: NO cierra el chat sin tocar nada del paciente', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+
+      await service.processIncomingMessage(makeTextEvent('no'));
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.appointment.update).not.toHaveBeenCalled();
       expect(redis.store.get(stateKey)).toBe(ChatState.IDLE);
+    });
+
+    it('loop: enviar otra cédula directamente la consulta sin exigir SÍ previo', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+      // La nueva cédula tampoco tiene citas → vuelve a ofrecer el loop.
+      prisma.appointment.findMany.mockResolvedValueOnce([]);
+
+      await service.processIncomingMessage(makeTextEvent('98765'));
+
+      expect(prisma.patientProfile.findFirst).toHaveBeenCalled();
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+    });
+
+    it('loop: respuesta ambigua (ni SÍ/NO ni cédula) re-pregunta sin cerrar', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+
+      await service.processIncomingMessage(makeTextEvent('tal vez'));
+
+      // No cierra ni avanza: sigue esperando SÍ/NO en el mismo estado.
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('una cita con cupos disponibles → ofrece nuevos horarios (AWAITING_MODIFY_NEW_SLOT)', async () => {

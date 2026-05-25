@@ -20,6 +20,10 @@ export enum ChatState {
   //   CEDULA → SELECTION (si tiene varias) → NEW_SLOT → CONFIRM.
   // Si no hay cupos para reprogramar, NO_SLOTS_CANCEL ofrece cancelarla.
   AWAITING_MODIFY_CEDULA = 'AWAITING_MODIFY_CEDULA',
+  // La cédula consultada no tenía citas: preguntamos si desea intentar con otra
+  // (SÍ → vuelve a AWAITING_MODIFY_CEDULA; NO → cierra). El loop también lo cierra
+  // el cron de inactividad si el paciente deja de responder.
+  AWAITING_MODIFY_RETRY_CEDULA = 'AWAITING_MODIFY_RETRY_CEDULA',
   AWAITING_MODIFY_SELECTION = 'AWAITING_MODIFY_SELECTION',
   AWAITING_MODIFY_NEW_SLOT = 'AWAITING_MODIFY_NEW_SLOT',
   AWAITING_MODIFY_CONFIRM = 'AWAITING_MODIFY_CONFIRM',
@@ -484,6 +488,15 @@ const FORMAL = {
   modificarSinCitas: (cedula: string) =>
     `El paciente con cédula *${cedula}* no tiene citas próximas que se puedan reprogramar.`,
 
+  // No se hallaron citas: ofrecemos consultar con otra cédula (loop) o cerrar.
+  modificarSinCitasReintentar: (cedula: string) =>
+    pick([
+      `No encontré citas próximas para la cédula *${cedula}* que se puedan reprogramar. 🔍\n\n` +
+        `¿Desea consultar con *otra cédula*? Responda *SÍ* para intentar con otro número, o *NO* para finalizar.`,
+      `La cédula *${cedula}* no tiene citas próximas para reprogramar.\n\n` +
+        `Si lo desea, puedo buscar con *otra cédula*. Responda *SÍ* para intentarlo de nuevo o *NO* para terminar.`,
+    ]),
+
   modificarSeleccionar: (nombre: string, lineas: string) =>
     pick([
       `Encontré estas citas a nombre de *${nombre}*:\n\n${lineas}\n¿Cuál de ellas desea *reprogramar*? Responda con la letra, por favor.`,
@@ -904,6 +917,15 @@ const INFORMAL = {
 
   modificarSinCitas: (cedula: string) =>
     `Revisé y el paciente con cédula *${cedula}* no tiene citas próximas para reprogramar. 📭 ¿Te ayudo a agendar una nueva?`,
+
+  // No se hallaron citas: ofrecemos consultar con otra cédula (loop) o cerrar.
+  modificarSinCitasReintentar: (cedula: string) =>
+    pick([
+      `Revisé y la cédula *${cedula}* no tiene citas próximas para reprogramar. 📭\n\n` +
+        `¿Quieres que busque con *otra cédula*? Mándame *SÍ* para intentar con otro número, o *NO* para terminar. 😊`,
+      `Hmm, con la cédula *${cedula}* no me aparecen citas para reprogramar.\n\n` +
+        `Si quieres probamos con *otra cédula*. Responde *SÍ* para intentarlo de nuevo o *NO* para cerrar. 🙏`,
+    ]),
 
   modificarSeleccionar: (nombre: string, lineas: string) =>
     pick([

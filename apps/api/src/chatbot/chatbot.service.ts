@@ -1574,6 +1574,7 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_WAITLIST_OPTIN ||
       currentState === ChatState.AWAITING_POST_CANCEL_CHOICE ||
       // Pasos deterministas de reprogramación (letra / SÍ-NO; no llaman al LLM).
+      currentState === ChatState.AWAITING_MODIFY_RETRY_CEDULA ||
       currentState === ChatState.AWAITING_MODIFY_SELECTION ||
       currentState === ChatState.AWAITING_MODIFY_NEW_SLOT ||
       currentState === ChatState.AWAITING_MODIFY_CONFIRM ||
@@ -2258,6 +2259,7 @@ export class ChatbotService implements OnModuleInit {
     // NO debe pasar por la cascada de agendamiento (servicio→EPS→slots).
     const isModifyFlow =
       currentState === ChatState.AWAITING_MODIFY_CEDULA ||
+      currentState === ChatState.AWAITING_MODIFY_RETRY_CEDULA ||
       currentState === ChatState.AWAITING_MODIFY_SELECTION ||
       currentState === ChatState.AWAITING_MODIFY_NEW_SLOT ||
       currentState === ChatState.AWAITING_MODIFY_CONFIRM ||
@@ -3551,6 +3553,60 @@ export class ChatbotService implements OnModuleInit {
         break;
       }
 
+      // La cédula anterior no tenía citas: SÍ → reintentar con otra cédula;
+      // NO → cerrar. Si el paciente manda directamente otra cédula (dígitos),
+      // la procesamos sin exigir el SÍ previo. El cron de inactividad cierra el
+      // loop si deja de responder.
+      case ChatState.AWAITING_MODIFY_RETRY_CEDULA: {
+        const decision = this.interpretYesNo(text);
+        const digits = (text || '').replace(/\D/g, '');
+
+        if (decision === 'NO') {
+          const reply = MSGS.cancelarDespedida();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.cleanUpModifySession(organizationId, senderId);
+
+          await this.interactionLog.log({
+            whatsappId: senderId,
+            organizationId,
+            status: InteractionStatus.ESCAPED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { event: 'MODIFY_RETRY_DECLINED' },
+          });
+        } else if (digits.length > 0 && decision !== 'SI') {
+          // El paciente respondió con otra cédula directamente → la consultamos.
+          await this.redis.set(`temp_modify_cedula:${organizationId}:${senderId}`, digits, 'EX', SESSION_TTL);
+          await this.handleModifyCedulaStep(organizationId, senderId, digits);
+        } else if (decision === 'SI') {
+          const reply = MSGS.modificarPedirCedula();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_CEDULA);
+
+          await this.interactionLog.logSuccess({
+            whatsappId: senderId,
+            organizationId,
+            userMessage: text,
+            botReply: reply,
+            metadata: { step: 'MODIFY_RETRY_CEDULA_YES' },
+          });
+        } else {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const reply = MSGS.respuestaInvalidaSiNo();
+          await this.sendWhatsAppMessage(senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidResponse: text, stage: 'MODIFY_RETRY_CEDULA' },
+          });
+        }
+        break;
+      }
+
       case ChatState.AWAITING_MODIFY_SELECTION: {
         const letraElegida = text?.toUpperCase().trim() || '';
         const aptId = await this.redis.get(`temp_modify_apt_${letraElegida}:${organizationId}:${senderId}`);
@@ -4267,9 +4323,12 @@ export class ChatbotService implements OnModuleInit {
     });
 
     if (activeAppointments.length === 0) {
-      const reply = MSGS.modificarSinCitas(cedula);
+      // Sin citas para esta cédula → ofrecemos consultar con otra (loop).
+      // NO penalizamos reintentos: una cédula válida sin citas no es un "error".
+      // El loop se cierra cuando el paciente dice NO o por el cron de inactividad.
+      const reply = MSGS.modificarSinCitasReintentar(cedula);
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.IDLE);
+      await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_RETRY_CEDULA);
 
       await this.interactionLog.logFailure({
         whatsappId: senderId,
@@ -4277,7 +4336,7 @@ export class ChatbotService implements OnModuleInit {
         reason: FailureReason.NO_APPOINTMENTS_TO_MODIFY,
         userMessage: cedula,
         botReply: reply,
-        metadata: { patientCedula: cedula, patientId: patient.id },
+        metadata: { patientCedula: cedula, patientId: patient.id, offeredRetry: true },
       });
       return;
     }

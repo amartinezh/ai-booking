@@ -132,6 +132,22 @@ export class ChatbotCron {
     const slotKeys = await this.redis.keys(`temp_slot_*:${whatsappPhone}`);
     const serviceMenuKeys = await this.redis.keys(`temp_service_*:${base}`);
     const epsMenuKeys = await this.redis.keys(`temp_eps_[A-Z]_*:${base}`);
-    await this.redis.del(...keysToDelete, ...slotKeys, ...serviceMenuKeys, ...epsMenuKeys);
+    // Claves efímeras de los flujos de cancelación y reprogramación (espejo de
+    // cleanUp(Cancel|Modify)Session en ChatbotService): evita dejar contexto
+    // colgado cuando el cierre lo dispara el cron de inactividad.
+    const cancelKeys = await this.redis.keys(`temp_cancel_*:${base}`);
+    const selectedCancelKeys = await this.redis.keys(`temp_selected_cancel_*:${base}`);
+    const modifyKeys = await this.redis.keys(`temp_modify_*:${base}`);
+    const selectedModifyKeys = await this.redis.keys(`temp_selected_modify_*:${base}`);
+    await this.redis.del(
+      ...keysToDelete,
+      ...slotKeys,
+      ...serviceMenuKeys,
+      ...epsMenuKeys,
+      ...cancelKeys,
+      ...selectedCancelKeys,
+      ...modifyKeys,
+      ...selectedModifyKeys,
+    );
   }
 }
