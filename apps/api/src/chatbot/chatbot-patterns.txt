@@ -187,6 +187,72 @@ cancelar mi cita
 anular mi cita
 
 # ----------------------------------------------------------
+# FRASES DE MODIFICACIÓN / REPROGRAMACIÓN
+# El usuario quiere CAMBIAR LA FECHA de una cita existente.
+# Se evalúan como "empieza con" (case-insensitive).
+# Tienen prioridad sobre [escape] cuando coinciden (ver modifyRegex
+# en chatbot.service.ts: isQuickModify se evalúa antes que el escape).
+# ----------------------------------------------------------
+[modify]
+cambiar cita
+cambiar mi cita
+cambiar la cita
+cambiar de cita
+cambiar la fecha
+cambiar fecha
+cambiar el dia
+cambiar el día
+cambiar de dia
+cambiar de día
+cambiar el horario
+cambiar horario
+modificar cita
+modificar mi cita
+modificar la cita
+modificar la fecha
+modificar fecha
+reprogramar
+reprogramar cita
+reprogramar mi cita
+reprogramar la cita
+reagendar
+reagendar cita
+reagendar mi cita
+reagendar la cita
+reasignar cita
+reasignar la cita
+reasignar mi cita
+ajustar cita
+ajustar la cita
+ajustar mi cita
+mover cita
+mover la cita
+mover mi cita
+pasar la cita
+pasar mi cita
+poner otra cita
+poner para otro dia
+poner para otro día
+ponerla para otro dia
+ponerla para otro día
+quiero cambiar mi cita
+quiero cambiar la cita
+quiero modificar mi cita
+quiero reprogramar
+quiero reagendar
+necesito cambiar mi cita
+necesito reprogramar
+necesito reagendar
+necesito otra fecha
+deseo reprogramar
+deseo reagendar
+otra fecha para mi cita
+correr la cita
+adelantar la cita
+aplazar la cita
+posponer la cita
+
+# ----------------------------------------------------------
 # 🛡️ INSULTOS / LENGUAJE OFENSIVO
 # Detección por palabras contenidas en el mensaje (case-insensitive).
 # Cuando coincide → derivación INMEDIATA a la línea de soporte

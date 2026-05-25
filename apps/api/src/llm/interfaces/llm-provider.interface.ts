@@ -77,6 +77,13 @@ export interface SchedulingExtraction {
   ininteligible: boolean;
   isFallback: boolean;
   isCancellation: boolean;
+  /**
+   * El paciente quiere MODIFICAR/REPROGRAMAR la fecha de una cita existente
+   * (ej: "cambiar mi cita", "pasar la cita para otro día", "reasignar la cita").
+   * Distinto de `isCancellation`: aquí la cita se conserva, solo cambia el horario.
+   * Si no hay cupos alternativos, el flujo ofrece cancelarla.
+   */
+  isModification: boolean;
   isRateLimited: boolean;
 }
 

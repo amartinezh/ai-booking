@@ -13,6 +13,7 @@ export enum InteractionStatus {
     WAITLIST_NOTIFIED = 'WAITLIST_NOTIFIED',   // Notificación automática de waitlist
     ESCAPED = 'ESCAPED',                       // Usuario reinició con "salir" / "hola"
     CANCELLATION_FLOW = 'CANCELLATION_FLOW',   // Inicio de flujo de cancelación
+    MODIFICATION_FLOW = 'MODIFICATION_FLOW',   // Inicio/curso de flujo de reprogramación
     BOOKING_CONFIRMED = 'BOOKING_CONFIRMED',   // Cita agendada exitosamente
     WAITLIST_JOINED = 'WAITLIST_JOINED',       // Paciente entró a waitlist
     REMINDER_SENT = 'REMINDER_SENT',           // Recordatorio automático de cita enviado
@@ -37,7 +38,9 @@ export enum FailureReason {
     MAX_RETRIES = 'MAX_RETRIES',
     PATIENT_NOT_FOUND = 'PATIENT_NOT_FOUND',
     NO_APPOINTMENTS_TO_CANCEL = 'NO_APPOINTMENTS_TO_CANCEL',
+    NO_APPOINTMENTS_TO_MODIFY = 'NO_APPOINTMENTS_TO_MODIFY',
     CANCEL_ERROR = 'CANCEL_ERROR',
+    MODIFY_ERROR = 'MODIFY_ERROR',
     UNHANDLED_ERROR = 'UNHANDLED_ERROR',
     ORG_INACTIVE = 'ORG_INACTIVE',
     NO_TENANT = 'NO_TENANT',

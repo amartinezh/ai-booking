@@ -103,6 +103,7 @@ Clasifica la intención principal del mensaje en uno de estos valores exactos pa
 - "otro": saludo simple sin más contexto o mensaje no clasificable.
 
 REGLA DE CANCELACIÓN: Si el usuario dice "cancelar una cita", "anular cita" o "suspender mi cita", pon "isCancellation" en true (la intención sigue siendo "agendar_cita").
+REGLA DE MODIFICACIÓN: Si el usuario quiere CAMBIAR/REPROGRAMAR la FECHA u hora de una cita ya existente (ej: "cambiar mi cita", "reprogramar la cita", "reasignar la cita", "ajustar la cita", "mover la cita", "pasar la cita para otro día", "ponerla para otro día", "cambiar el horario de mi cita", "necesito otra fecha para mi cita"), pon "isModification" en true (la intención sigue siendo "agendar_cita"). NO es modificación si solo quiere agendar una cita nueva. Si pide cancelar Y NO reprogramar, usa isCancellation. Ante la duda entre cancelar y reprogramar, si menciona "cambiar", "mover", "otra fecha" u "otro día", prioriza isModification.
 REGLA DE ESCAPE: Si el usuario quiere reiniciar, volver atrás o salir del flujo (ej: "me equivoqué", "salir", "volver", "reiniciar"), pon "isEscape" en true. (NOTA: "cancelar cita" es isCancellation, NO isEscape). Saludos como "Hola" no son escape.
 REGLA DE FUERA DE CONTEXTO: Si el paciente toca temas sin relación médica (no ofensivos), pon "outOfContext" en true e "intent" en "otro". Si es ofensivo, usa "insulto_abuso".
 REGLA DE RUIDO: Si el audio es vacío, inentendible o solo hay ruido, pon "ininteligible" en true.
@@ -121,5 +122,6 @@ Devuelve ÚNICAMENTE JSON válido sin bloques de código:
     "isEscape": false,
     "outOfContext": false,
     "ininteligible": false,
-    "isCancellation": false
+    "isCancellation": false,
+    "isModification": false
 }`;

@@ -78,6 +78,7 @@ export class GeminiProvider implements LLMProvider {
       ininteligible: Boolean(parsed.ininteligible),
       isFallback: false,
       isCancellation: Boolean(parsed.isCancellation),
+      isModification: Boolean(parsed.isModification),
       isRateLimited: false,
     };
   }

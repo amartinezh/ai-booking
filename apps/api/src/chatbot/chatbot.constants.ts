@@ -15,6 +15,15 @@ export enum ChatState {
   // Estado de transición: el paciente pidió cancelar mientras agendaba.
   // Guardamos el estado previo y esperamos un SÍ/NO antes de abortar.
   AWAITING_INTERRUPT_CONFIRMATION = 'AWAITING_INTERRUPT_CONFIRMATION',
+  // ── FLUJO DE MODIFICACIÓN (reprogramación de fecha) ──────────
+  // El paciente quiere cambiar la fecha de una cita existente. Pasos:
+  //   CEDULA → SELECTION (si tiene varias) → NEW_SLOT → CONFIRM.
+  // Si no hay cupos para reprogramar, NO_SLOTS_CANCEL ofrece cancelarla.
+  AWAITING_MODIFY_CEDULA = 'AWAITING_MODIFY_CEDULA',
+  AWAITING_MODIFY_SELECTION = 'AWAITING_MODIFY_SELECTION',
+  AWAITING_MODIFY_NEW_SLOT = 'AWAITING_MODIFY_NEW_SLOT',
+  AWAITING_MODIFY_CONFIRM = 'AWAITING_MODIFY_CONFIRM',
+  AWAITING_MODIFY_NO_SLOTS_CANCEL = 'AWAITING_MODIFY_NO_SLOTS_CANCEL',
 }
 
 // Nombre canónico del registro EPS para pago directo (debe existir en BD por org).
@@ -459,6 +468,75 @@ const FORMAL = {
   interrupcionRetomar: () =>
     `Perfecto, continuemos con su agendamiento justo donde lo dejamos.`,
 
+  // ── MODIFICACIÓN / REPROGRAMACIÓN DE CITA ──────────────────────
+  modificarPedirCedula: () =>
+    pick([
+      `Con gusto le ayudo a *modificar la fecha* de su cita. 🗓️\n\nPara ubicarla en el sistema, ¿me indica el *número de cédula* del paciente, por favor?`,
+      `Claro, le ayudo a *reprogramar* su cita.\n\nPara buscarla, ¿me comparte la *cédula* del paciente?`,
+    ]),
+
+  modificarPacienteNoExiste: (cedula: string) =>
+    pick([
+      `No encuentro ningún paciente con la cédula *${cedula}* en el sistema. 🔍\n\n¿Me la confirma, por favor? O si prefiere terminar, escriba _*"Salir"*_.`,
+      `Disculpe, esa cédula *${cedula}* no aparece registrada.\n\n¿La revisamos otra vez? Si desea terminar, escriba _*"Salir"*_.`,
+    ]),
+
+  modificarSinCitas: (cedula: string) =>
+    `El paciente con cédula *${cedula}* no tiene citas próximas que se puedan reprogramar.`,
+
+  modificarSeleccionar: (nombre: string, lineas: string) =>
+    pick([
+      `Encontré estas citas a nombre de *${nombre}*:\n\n${lineas}\n¿Cuál de ellas desea *reprogramar*? Responda con la letra, por favor.`,
+      `Estas son las citas que tengo para *${nombre}*:\n\n${lineas}\nIndíqueme con la letra cuál desea *cambiar de fecha*.`,
+    ]),
+
+  modificarMostrarCupos: (servicio: string, fechaActual: string, lineas: string) =>
+    pick([
+      `Su cita de *${servicio}* está agendada para:\n📅 ${fechaActual}\n\n` +
+        `Estos son los *nuevos horarios disponibles*:\n\n${lineas}\n` +
+        `_Responda con la letra del horario al que desea moverla, por favor._`,
+      `Actualmente su cita de *${servicio}* es el:\n📅 ${fechaActual}\n\n` +
+        `Le muestro los espacios a los que puedo reprogramarla:\n\n${lineas}\n` +
+        `_Elija el nuevo horario respondiendo con la letra._`,
+    ]),
+
+  // No hay cupos para reprogramar → ofrecemos cancelar la cita.
+  modificarSinCupos: (servicio: string) =>
+    pick([
+      `Revisé la agenda de *${servicio}* y por el momento no hay *otros horarios disponibles* para reprogramar su cita.\n\n` +
+        `¿Desea que *cancele la cita actual*? Responda *SÍ* para cancelarla o *NO* si prefiere conservarla tal como está.`,
+      `Por ahora no tengo *cupos alternativos* en *${servicio}* para mover su cita.\n\n` +
+        `Si lo desea puedo *cancelar la cita existente*. Responda *SÍ* para cancelar o *NO* para dejarla sin cambios.`,
+    ]),
+
+  modificarConfirmar: (servicio: string, doctor: string, fechaActual: string, fechaNueva: string) =>
+    `Vamos a *reprogramar* esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n` +
+    `📅 Actual: ${fechaActual}\n🆕 Nueva: ${fechaNueva}\n\n` +
+    `¿Confirma el cambio? Responda *SÍ* para reprogramarla o *NO* para mantener la fecha actual.`,
+
+  modificarExitosa: (fechaNueva: string) =>
+    pick([
+      `✅ Listo, su cita quedó *reprogramada* con éxito para:\n📅 ${fechaNueva}\n\nEl horario anterior queda liberado para otro paciente.`,
+      `✅ Hecho. Moví su cita al nuevo horario:\n📅 ${fechaNueva}\n\nLiberé el espacio anterior. ¡Le esperamos!`,
+    ]),
+
+  // El paciente NO confirmó el cambio: dejamos la cita como estaba.
+  modificarAbortada: () =>
+    pick([
+      `✅ No realicé ningún cambio — su cita sigue *firme* en la fecha original.\n\n¿Le puedo ayudar con algo más?`,
+      `✅ Perfecto, dejé su cita tal como estaba, sin cambios.\n\n¿Le colaboro con algo más?`,
+    ]),
+
+  // No había cupos y el paciente decidió NO cancelar: todo queda intacto.
+  modificarSinCambios: () =>
+    pick([
+      `Entendido, dejo su cita *tal como está*, sin ninguna modificación.\n\n¿Le puedo ayudar con algo más?`,
+      `Listo, no toco nada — su cita sigue *activa y agendada* como estaba.\n\n¿Le colaboro con algo más?`,
+    ]),
+
+  modificarError: () =>
+    `Lo lamento, el sistema presentó un inconveniente al intentar reprogramar la cita.\n\nPara no dejar el proceso a medias, por favor comuníquese con nuestro Call Center y allí le ayudan enseguida.`,
+
   inactividad: () =>
     `Buen día. Por inactividad cerré nuestra conversación para proteger sus datos. 🔒\n\nCuando quiera retomar, escríbame *"Hola"* y con gusto le atiendo.`,
 };
@@ -810,6 +888,75 @@ const INFORMAL = {
   // El paciente decidió NO interrumpir: retomamos el agendamiento donde iba.
   interrupcionRetomar: () =>
     `¡Listo, seguimos con tu agendamiento justo donde íbamos! 😊`,
+
+  // ── MODIFICACIÓN / REPROGRAMACIÓN DE CITA ──────────────────────
+  modificarPedirCedula: () =>
+    pick([
+      `¡Claro que sí! Te ayudo a *cambiar la fecha* de tu cita. 🗓️ Para buscarla, ¿me pasas la *cédula* del paciente?`,
+      `De una, te ayudo a *reprogramar* tu cita. 😊 ¿Me compartes la *cédula* del paciente para ubicarla?`,
+    ]),
+
+  modificarPacienteNoExiste: (cedula: string) =>
+    pick([
+      `Hmm, busqué y no encuentro a ningún paciente con la cédula *${cedula}*. 🔍 ¿Me la confirmas? O si quieres terminar, escríbeme _*"Salir"*_.`,
+      `Esa cédula *${cedula}* no me aparece. 🙏 ¿La revisamos otra vez? Si gustas terminar, mándame _*"Salir"*_.`,
+    ]),
+
+  modificarSinCitas: (cedula: string) =>
+    `Revisé y el paciente con cédula *${cedula}* no tiene citas próximas para reprogramar. 📭 ¿Te ayudo a agendar una nueva?`,
+
+  modificarSeleccionar: (nombre: string, lineas: string) =>
+    pick([
+      `Listo, encontré estas citas a nombre de *${nombre}*:\n\n${lineas}\n¿Cuál quieres *reprogramar*? Mándame la letra. 😊`,
+      `Acá están las citas que tengo para *${nombre}*:\n\n${lineas}\nDime con la letra cuál quieres *cambiar de fecha*.`,
+    ]),
+
+  modificarMostrarCupos: (servicio: string, fechaActual: string, lineas: string) =>
+    pick([
+      `Tu cita de *${servicio}* está para:\n📅 ${fechaActual}\n\n` +
+        `Estos son los *nuevos horarios* que tengo disponibles:\n\n${lineas}\n` +
+        `_Mándame la letra del horario al que quieres moverla._ 😊`,
+      `Ahorita tu cita de *${servicio}* es el:\n📅 ${fechaActual}\n\n` +
+        `Mira, te puedo reprogramar a estos espacios:\n\n${lineas}\n` +
+        `_Elige el nuevo horario con la letra._`,
+    ]),
+
+  // No hay cupos para reprogramar → ofrecemos cancelar la cita.
+  modificarSinCupos: (servicio: string) =>
+    pick([
+      `Revisé la agenda de *${servicio}* y por ahora no hay *otros horarios* para mover tu cita. 🙏\n\n` +
+        `¿Quieres que *cancele la cita actual*? Responde *SÍ* para cancelarla o *NO* si prefieres dejarla tal cual.`,
+      `Por el momento no tengo *cupos alternativos* en *${servicio}* para reprogramarte.\n\n` +
+        `Si quieres puedo *cancelar la cita que tienes*. Mándame *SÍ* para cancelar o *NO* para dejarla sin cambios.`,
+    ]),
+
+  modificarConfirmar: (servicio: string, doctor: string, fechaActual: string, fechaNueva: string) =>
+    `Para confirmarte, vamos a *reprogramar* esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n` +
+    `📅 Actual: ${fechaActual}\n🆕 Nueva: ${fechaNueva}\n\n` +
+    `¿Confirmas el cambio? Responde *SÍ* para reprogramarla o *NO* para dejar la fecha actual.`,
+
+  modificarExitosa: (fechaNueva: string) =>
+    pick([
+      `✅ ¡Listo! Tu cita quedó *reprogramada* para:\n📅 ${fechaNueva}\n\nLiberé el horario anterior para otro paciente. 🗓️`,
+      `✅ ¡Hecho! Moví tu cita al nuevo horario:\n📅 ${fechaNueva}\n\n¡Te esperamos! 💚`,
+    ]),
+
+  // El paciente NO confirmó el cambio: dejamos la cita como estaba.
+  modificarAbortada: () =>
+    pick([
+      `✅ ¡Tranquilo(a)! No cambié nada — tu cita sigue *firme* en la fecha original. ¿Te ayudo en algo más?`,
+      `✅ Perfecto, dejé tu cita tal como estaba. 😊 ¿Te colaboro con algo más?`,
+    ]),
+
+  // No había cupos y el paciente decidió NO cancelar: todo queda intacto.
+  modificarSinCambios: () =>
+    pick([
+      `¡Listo! Dejo tu cita *tal como está*, sin tocar nada. 😊 ¿Te ayudo en algo más?`,
+      `De una, no modifico nada — tu cita sigue *activa* como estaba. ¿Te colaboro con algo más?`,
+    ]),
+
+  modificarError: () =>
+    `Qué pena, tuve un inconveniente reprogramando la cita. 😔 Para no dejarte a medias, llama al Call Center y ahí te ayudan enseguida. 🙏`,
 
   inactividad: () =>
     `Hola, ¿cómo estás? Cerré la conversación por inactividad para cuidar tus datos. 🔒 Cuando quieras retomar, escríbeme *"Hola"* y te atiendo. 😊`,

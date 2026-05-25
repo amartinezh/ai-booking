@@ -73,6 +73,7 @@ function extraction(over: Partial<SchedulingExtraction> = {}): SchedulingExtract
     ininteligible: false,
     isFallback: false,
     isCancellation: false,
+    isModification: false,
     isRateLimited: false,
     ...over,
   };
@@ -1004,6 +1005,174 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(surveySpy).toHaveBeenCalledTimes(1);
       // Tercer argumento de sendSurveyLink = ResolutionStatus.CANCELLED.
       expect(surveySpy.mock.calls[0][2]).toBe('CANCELLED');
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // Flujo de MODIFICACIÓN / REPROGRAMACIÓN de cita
+  // ════════════════════════════════════════════════════════════
+  describe('flujo de modificación (reprogramación de fecha)', () => {
+    const stateKey = `chat_state:${ORG_ID}:${SENDER}`;
+
+    // $transaction soporta tanto el array de promesas (cancelación) como el
+    // callback (reprogramación atómica). En el callback pasamos `prisma` como tx.
+    const setupTxAndModels = () => {
+      prisma.patientProfile.findFirst = jest.fn(async () => ({
+        id: 'pat-1', fullName: 'Ana Gómez', cedula: '12345', organizationId: ORG_ID,
+      }));
+      prisma.appointment = {
+        findMany: jest.fn(async () => []),
+        findUnique: jest.fn(async () => null),
+        update: jest.fn(async () => ({})),
+      };
+      prisma.scheduleSlot = {
+        findUnique: jest.fn(async () => null),
+        update: jest.fn(async () => ({})),
+      };
+      prisma.$transaction = jest.fn(async (arg: any) =>
+        typeof arg === 'function' ? arg(prisma) : Promise.all(arg),
+      );
+    };
+
+    const slots = () => (service as any).appointmentsService.getAvailableSlots as jest.Mock;
+
+    beforeEach(() => {
+      setupTxAndModels();
+    });
+
+    it('detección por patrón: "cambiar mi cita" en IDLE pide la cédula sin gastar LLM', async () => {
+      await service.processIncomingMessage(makeTextEvent('cambiar mi cita'));
+
+      expect(sentMessages().join('\n').toLowerCase()).toContain('cédula');
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_CEDULA);
+      expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+    });
+
+    it('"reprogramar" también dispara el flujo de modificación', async () => {
+      await service.processIncomingMessage(makeTextEvent('reprogramar'));
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_CEDULA);
+    });
+
+    it('cédula sin citas próximas → informa que no hay nada para reprogramar', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CEDULA);
+      prisma.appointment.findMany.mockResolvedValueOnce([]);
+
+      await service.processIncomingMessage(makeTextEvent('12345'));
+
+      expect(sentMessages().join('\n').toLowerCase()).toContain('no tiene citas');
+      expect(redis.store.get(stateKey)).toBe(ChatState.IDLE);
+    });
+
+    it('una cita con cupos disponibles → ofrece nuevos horarios (AWAITING_MODIFY_NEW_SLOT)', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CEDULA);
+      prisma.appointment.findMany.mockResolvedValueOnce([
+        { id: 'apt-1', scheduleSlotId: 'slot-old', epsId: null,
+          scheduleSlot: { startTime: new Date('2026-06-01T09:00:00Z'), doctor: { fullName: 'Pérez' }, service: { name: 'Cardiología' } } },
+      ]);
+      prisma.appointment.findUnique.mockResolvedValueOnce({
+        id: 'apt-1', scheduleSlotId: 'slot-old', epsId: null,
+        scheduleSlot: { startTime: new Date('2026-06-01T09:00:00Z'), doctor: { fullName: 'Pérez' }, service: { name: 'Cardiología' } },
+      });
+      slots().mockResolvedValueOnce([
+        { slotId: 'slot-new', fecha: new Date('2026-06-05T15:00:00Z'), doctor: 'Pérez', servicio: 'Cardiología' },
+      ]);
+
+      await service.processIncomingMessage(makeTextEvent('12345'));
+
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
+      expect(redis.store.get(`temp_modify_newslot_A:${ORG_ID}:${SENDER}`)).toBe('slot-new');
+    });
+
+    it('una cita SIN cupos alternativos → ofrece cancelarla (AWAITING_MODIFY_NO_SLOTS_CANCEL)', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CEDULA);
+      prisma.appointment.findMany.mockResolvedValueOnce([
+        { id: 'apt-1', scheduleSlotId: 'slot-old', epsId: null,
+          scheduleSlot: { startTime: new Date('2026-06-01T09:00:00Z'), doctor: { fullName: 'Pérez' }, service: { name: 'Cardiología' } } },
+      ]);
+      prisma.appointment.findUnique.mockResolvedValueOnce({
+        id: 'apt-1', scheduleSlotId: 'slot-old', epsId: null,
+        scheduleSlot: { startTime: new Date('2026-06-01T09:00:00Z'), doctor: { fullName: 'Pérez' }, service: { name: 'Cardiología' } },
+      });
+      // El único slot devuelto es el que ya tiene → se filtra → sin candidatos.
+      slots().mockResolvedValueOnce([
+        { slotId: 'slot-old', fecha: new Date('2026-06-01T09:00:00Z'), doctor: 'Pérez', servicio: 'Cardiología' },
+      ]);
+
+      await service.processIncomingMessage(makeTextEvent('12345'));
+
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
+      // Ambas variantes del mensaje ofrecen cancelar la cita.
+      expect(sentMessages().join('\n').toLowerCase()).toContain('cancel');
+    });
+
+    it('sin cupos + NO → conserva la cita intacta (no toca la BD)', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
+      redis.store.set(`temp_selected_modify_apt:${ORG_ID}:${SENDER}`, 'apt-1');
+      redis.store.set(`temp_selected_modify_slot:${ORG_ID}:${SENDER}`, 'slot-old');
+
+      await service.processIncomingMessage(makeTextEvent('no'));
+
+      // No se canceló nada.
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(redis.store.get(stateKey)).toBe(ChatState.IDLE);
+      // Ambas variantes confirman que la cita queda sin cambios y ofrecen seguir ayudando.
+      expect(sentMessages().join('\n').toLowerCase()).toContain('algo más');
+    });
+
+    it('sin cupos + SÍ → cancela la cita y pasa a ofrecer reagendar', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
+      redis.store.set(`temp_selected_modify_apt:${ORG_ID}:${SENDER}`, 'apt-1');
+      redis.store.set(`temp_selected_modify_slot:${ORG_ID}:${SENDER}`, 'slot-old');
+      prisma.scheduleSlot.findUnique.mockResolvedValueOnce({
+        id: 'slot-old', serviceId: 'svc-1', allowedEpsId: null,
+        startTime: new Date('2026-06-01T09:00:00Z'), doctor: { fullName: 'Pérez' }, service: { name: 'Cardiología' },
+      });
+
+      await service.processIncomingMessage(makeTextEvent('sí'));
+
+      expect(prisma.appointment.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'apt-1' }, data: { status: 'CANCELLED' } }),
+      );
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_POST_CANCEL_CHOICE);
+    });
+
+    it('confirmación SÍ → mueve la cita al nuevo cupo (reprogramación atómica)', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CONFIRM);
+      redis.store.set(`temp_selected_modify_apt:${ORG_ID}:${SENDER}`, 'apt-1');
+      redis.store.set(`temp_selected_modify_slot:${ORG_ID}:${SENDER}`, 'slot-old');
+      redis.store.set(`temp_selected_modify_newslot:${ORG_ID}:${SENDER}`, 'slot-new');
+      redis.store.set(`temp_selected_modify_newslot_fecha:${ORG_ID}:${SENDER}`, '2026-06-05T15:00:00.000Z');
+      prisma.scheduleSlot.findUnique
+        .mockResolvedValueOnce({ id: 'slot-new', isAvailable: true, organizationId: ORG_ID }) // validación en tx
+        .mockResolvedValueOnce({ id: 'slot-old', serviceId: 'svc-1', allowedEpsId: null, startTime: new Date(), doctor: { fullName: 'Pérez' } }); // cupo liberado
+
+      await service.processIncomingMessage(makeTextEvent('sí'));
+
+      // La cita se reasigna al nuevo slot; el viejo se libera y el nuevo se ocupa.
+      expect(prisma.appointment.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'apt-1' }, data: { scheduleSlotId: 'slot-new' } }),
+      );
+      expect(prisma.scheduleSlot.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'slot-old' }, data: { isAvailable: true } }),
+      );
+      expect(prisma.scheduleSlot.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'slot-new' }, data: { isAvailable: false } }),
+      );
+      expect(redis.store.get(stateKey)).toBe(ChatState.IDLE);
+    });
+
+    it('confirmación NO → deja la cita en su fecha original, sin escribir en BD', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CONFIRM);
+      redis.store.set(`temp_selected_modify_apt:${ORG_ID}:${SENDER}`, 'apt-1');
+      redis.store.set(`temp_selected_modify_slot:${ORG_ID}:${SENDER}`, 'slot-old');
+      redis.store.set(`temp_selected_modify_newslot:${ORG_ID}:${SENDER}`, 'slot-new');
+      redis.store.set(`temp_selected_modify_newslot_fecha:${ORG_ID}:${SENDER}`, '2026-06-05T15:00:00.000Z');
+
+      await service.processIncomingMessage(makeTextEvent('no'));
+
+      expect(prisma.appointment.update).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(redis.store.get(stateKey)).toBe(ChatState.IDLE);
     });
   });
 });

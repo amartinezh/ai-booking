@@ -41,6 +41,8 @@ export class ChatbotService implements OnModuleInit {
   // Regex construidos dinámicamente desde chatbot-patterns.txt
   private escapeRegex: RegExp = /^(hola)$/i;
   private cancelRegex: RegExp = /^(cancelar cita)/i;
+  // Frases de reprogramación ("cambiar mi cita", "reagendar", ...). Match de inicio.
+  private modifyRegex: RegExp = /^(cambiar (mi |la )?cita|reprogramar|reagendar|modificar (mi |la )?cita|mover (mi |la )?cita)/i;
   private greetingRegex: RegExp = /^(hola)$/i;
   private particularRegex: RegExp = /^(particular)$/i;
   private farewellRegex: RegExp = /^(gracias)$/i;
@@ -150,6 +152,7 @@ export class ChatbotService implements OnModuleInit {
     const greetingWords: string[] = [];
     const escapeWords: string[] = [];
     const cancelPhrases: string[] = [];
+    const modifyPhrases: string[] = [];
     const particularWords: string[] = [];
     const insultWords: string[] = [];
     let currentSection = '';
@@ -166,6 +169,8 @@ export class ChatbotService implements OnModuleInit {
         currentSection = 'escape';
       } else if (line === '[cancel]') {
         currentSection = 'cancel';
+      } else if (line === '[modify]') {
+        currentSection = 'modify';
       } else if (line === '[particular]') {
         currentSection = 'particular';
       } else if (line === '[insults]') {
@@ -178,6 +183,8 @@ export class ChatbotService implements OnModuleInit {
         escapeWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'cancel') {
         cancelPhrases.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      } else if (currentSection === 'modify') {
+        modifyPhrases.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'particular') {
         particularWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'insults') {
@@ -197,6 +204,9 @@ export class ChatbotService implements OnModuleInit {
     if (cancelPhrases.length > 0) {
       this.cancelRegex = new RegExp(`^(${cancelPhrases.join('|')})`, 'i');
     }
+    if (modifyPhrases.length > 0) {
+      this.modifyRegex = new RegExp(`^(${modifyPhrases.join('|')})`, 'i');
+    }
     if (particularWords.length > 0) {
       this.particularRegex = new RegExp(`^(${particularWords.join('|')})$`, 'i');
     }
@@ -206,7 +216,7 @@ export class ChatbotService implements OnModuleInit {
     }
 
     this.logger.log(
-      `Patrones listos — farewell: ${farewellWords.length}, greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, particular: ${particularWords.length}, insults: ${insultWords.length}`,
+      `Patrones listos — farewell: ${farewellWords.length}, greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, modify: ${modifyPhrases.length}, particular: ${particularWords.length}, insults: ${insultWords.length}`,
     );
   }
 
@@ -450,7 +460,7 @@ export class ChatbotService implements OnModuleInit {
         transcript: text, cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
         fechaSolicitada: null, intent: 'otro',
         isEscape: false, outOfContext: false, ininteligible: false,
-        isFallback: true, isCancellation: false, isRateLimited: false,
+        isFallback: true, isCancellation: false, isModification: false, isRateLimited: false,
       };
     }
 
@@ -471,7 +481,7 @@ export class ChatbotService implements OnModuleInit {
           transcript: text, cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
           fechaSolicitada: null, intent: 'otro',
           isEscape: false, outOfContext: false, ininteligible: false,
-          isFallback: true, isCancellation: false, isRateLimited: true,
+          isFallback: true, isCancellation: false, isModification: false, isRateLimited: true,
         };
       }
       if (attempt < maxRetries) {
@@ -485,7 +495,7 @@ export class ChatbotService implements OnModuleInit {
         transcript: text, cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
         fechaSolicitada: null, intent: 'otro',
         isEscape: false, outOfContext: false, ininteligible: false,
-        isFallback: true, isCancellation: false, isRateLimited: false,
+        isFallback: true, isCancellation: false, isModification: false, isRateLimited: false,
       };
     }
   }
@@ -512,6 +522,7 @@ export class ChatbotService implements OnModuleInit {
       ininteligible: false,
       isFallback: false,
       isCancellation: this.cancelRegex.test(t),
+      isModification: this.modifyRegex.test(t),
       isRateLimited: false,
     };
   }
@@ -1071,6 +1082,15 @@ export class ChatbotService implements OnModuleInit {
     await this.setUserState(organizationId, senderId, ChatState.IDLE);
   }
 
+  // Limpia el contexto efímero del flujo de reprogramación (espejo del de cancelación).
+  private async cleanUpModifySession(organizationId: string, senderId: string) {
+    const modifyKeys = await this.redis.keys(`temp_modify_*:${organizationId}:${senderId}`);
+    if (modifyKeys.length > 0) await this.redis.del(...modifyKeys);
+    const selectedKeys = await this.redis.keys(`temp_selected_modify_*:${organizationId}:${senderId}`);
+    if (selectedKeys.length > 0) await this.redis.del(...selectedKeys);
+    await this.setUserState(organizationId, senderId, ChatState.IDLE);
+  }
+
   // ══════════════════════════════════════════════════════════════
   // HELPERS: MENÚS CON LETRAS PARA SERVICIO Y EPS
   // Persisten el mapping letra → id en Redis para resolver el input
@@ -1553,6 +1573,11 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
       currentState === ChatState.AWAITING_WAITLIST_OPTIN ||
       currentState === ChatState.AWAITING_POST_CANCEL_CHOICE ||
+      // Pasos deterministas de reprogramación (letra / SÍ-NO; no llaman al LLM).
+      currentState === ChatState.AWAITING_MODIFY_SELECTION ||
+      currentState === ChatState.AWAITING_MODIFY_NEW_SLOT ||
+      currentState === ChatState.AWAITING_MODIFY_CONFIRM ||
+      currentState === ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL ||
       // Escenario 2: la confirmación de interrupción es un paso SÍ/NO por texto;
       // como los demás pasos estrictos, no llama al LLM y fluye al switch.
       currentState === ChatState.AWAITING_INTERRUPT_CONFIRMATION;
@@ -1625,6 +1650,17 @@ export class ChatbotService implements OnModuleInit {
       !!text &&
       this.escapeRegex.test(text.trim());
 
+    // Intención de REPROGRAMAR detectada por patrón (sin LLM). La restringimos
+    // a IDLE — la "primera interacción" — para no interrumpir un agendamiento
+    // en curso; en turnos no-estrictos posteriores, el LLM (isModification) ya
+    // cubre el cambio de intención. Tiene prioridad sobre el escape: frases como
+    // "cambiar mi cita" empiezan por "cambiar" pero NO son un reinicio.
+    const isQuickModify =
+      messageType === 'text' &&
+      !!text &&
+      currentState === ChatState.IDLE &&
+      this.modifyRegex.test(text.trim());
+
     // ══════════════════════════════════════════════════════════
     // 🧲 ESCENARIO 2 — INTERRUPCIÓN AMABLE DEL AGENDAMIENTO
     // Capa ADITIVA (Open/Closed): si el interceptor de intención de
@@ -1690,11 +1726,15 @@ export class ChatbotService implements OnModuleInit {
       ininteligible: false,
       isFallback: false,
       isCancellation: false,
+      isModification: false,
       isRateLimited: false,
     };
 
     if (isQuickCancel && currentState === ChatState.IDLE) {
       aiData.isCancellation = true;
+    } else if (isQuickModify) {
+      // "cambiar/reprogramar mi cita" en IDLE → reprogramación determinista (sin LLM).
+      aiData.isModification = true;
     } else if (isQuickEscape && currentState !== ChatState.IDLE) {
       aiData.isEscape = true;
     } else if (
@@ -1743,7 +1783,9 @@ export class ChatbotService implements OnModuleInit {
     } else if (
       messageType === 'text' &&
       text &&
-      (currentState === ChatState.AWAITING_CEDULA || currentState === ChatState.AWAITING_CANCEL_CEDULA)
+      (currentState === ChatState.AWAITING_CEDULA ||
+        currentState === ChatState.AWAITING_CANCEL_CEDULA ||
+        currentState === ChatState.AWAITING_MODIFY_CEDULA)
     ) {
       // En pasos de cédula, extraemos dígitos directamente sin llamar a Gemini.
       // Esto evita que "000", "123", etc. sean clasificados como ininteligibles.
@@ -1797,7 +1839,8 @@ export class ChatbotService implements OnModuleInit {
     if (
       isAudio &&
       (currentState === ChatState.AWAITING_CEDULA ||
-        currentState === ChatState.AWAITING_CANCEL_CEDULA)
+        currentState === ChatState.AWAITING_CANCEL_CEDULA ||
+        currentState === ChatState.AWAITING_MODIFY_CEDULA)
     ) {
       const fromLlm = (aiData.cedula || '').replace(/\D/g, '');
       const fromTranscript = this.extractCedulaFromSpeech(text);
@@ -1812,7 +1855,7 @@ export class ChatbotService implements OnModuleInit {
         // Adoptamos la cédula normalizada para que la cascada (finalCedula) y el
         // short-circuit de waitlist la vean igual que si hubiera llegado por texto.
         aiData.cedula = cedulaVoz;
-      } else if (!aiData.isEscape && !aiData.isCancellation) {
+      } else if (!aiData.isEscape && !aiData.isCancellation && !aiData.isModification) {
         // Sin dígitos tras normalizar: NO reentramos al flujo (evita el loop de
         // SÍ/NO). Reintento acotado pidiendo la cédula por texto; al agotar
         // maxReintentos, el guard del inicio cierra con maxReintentosReset.
@@ -1914,6 +1957,44 @@ export class ChatbotService implements OnModuleInit {
         userMessage: text || '[audio]',
         botReply: reply,
         metadata: { aiData, hasInitialCedula: !!aiData.cedula },
+      });
+      return;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 🔄 INICIO DEL FLUJO DE MODIFICACIÓN / REPROGRAMACIÓN
+    // Espejo del arranque de cancelación: si traemos cédula, buscamos las
+    // citas de una vez; si no, la pedimos. La cita NO se toca hasta que el
+    // paciente confirme un nuevo horario (o decida cancelarla si no hay cupos).
+    // ══════════════════════════════════════════════════════════
+    if (aiData.isModification || isQuickModify) {
+      await this.cleanUpSession(organizationId, senderId);
+      await this.redis.set(
+        `is_ai_flow:${organizationId}:${senderId}`,
+        isAudio ? 'true' : 'false',
+        'EX',
+        SESSION_TTL,
+      );
+
+      let reply: string;
+      if (aiData.cedula) {
+        await this.redis.set(`temp_modify_cedula:${organizationId}:${senderId}`, aiData.cedula, 'EX', SESSION_TTL);
+        await this.handleModifyCedulaStep(organizationId, senderId, aiData.cedula);
+        reply = this.lastSentByUser.get(senderId) || '[modificación iniciada]';
+      } else {
+        reply = MSGS.modificarPedirCedula();
+        await this.smartReply(organizationId, senderId, reply);
+        await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_CEDULA);
+      }
+
+      // 📝 Auditoría: inicio de flujo de modificación
+      await this.interactionLog.log({
+        whatsappId: senderId,
+        organizationId,
+        status: InteractionStatus.MODIFICATION_FLOW,
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { aiData, hasInitialCedula: !!aiData.cedula, event: 'MODIFY_FLOW_START' },
       });
       return;
     }
@@ -2173,10 +2254,19 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_CANCEL_SELECTION ||
       currentState === ChatState.AWAITING_CANCEL_CONFIRM;
 
+    // El flujo de reprogramación tiene su propia máquina de estados (switch) y
+    // NO debe pasar por la cascada de agendamiento (servicio→EPS→slots).
+    const isModifyFlow =
+      currentState === ChatState.AWAITING_MODIFY_CEDULA ||
+      currentState === ChatState.AWAITING_MODIFY_SELECTION ||
+      currentState === ChatState.AWAITING_MODIFY_NEW_SLOT ||
+      currentState === ChatState.AWAITING_MODIFY_CONFIRM ||
+      currentState === ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL;
+
     // ══════════════════════════════════════════════════════════
     // FLUJO PRINCIPAL DE AGENDAMIENTO (pasos no-estrictos)
     // ══════════════════════════════════════════════════════════
-    if (!isStrictStep && !isCancelFlow) {
+    if (!isStrictStep && !isCancelFlow && !isModifyFlow) {
       // ════════════════════════════════════════════════════════
       // NUEVO PROTOCOLO DE ATENCIÓN
       //   PASO 1: SERVICIO  (menú con letras + NLP + voz)
@@ -3429,6 +3519,412 @@ export class ChatbotService implements OnModuleInit {
         break;
       }
 
+      // ══════════════════════════════════════════════════════════
+      // FLUJO DE MODIFICACIÓN / REPROGRAMACIÓN
+      // ══════════════════════════════════════════════════════════
+      case ChatState.AWAITING_MODIFY_CEDULA: {
+        let cedula = '';
+        if (aiData.cedula) {
+          cedula = aiData.cedula;
+        } else if (text) {
+          cedula = text.replace(/\D/g, '');
+        }
+
+        if (!cedula) {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const reply = MSGS.cancelarCedulaInvalida();
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.PATIENT_NOT_FOUND,
+            userMessage: text,
+            botReply: reply,
+            metadata: { stage: 'MODIFY_CEDULA_INVALID' },
+          });
+          return;
+        }
+
+        await this.redis.set(`temp_modify_cedula:${organizationId}:${senderId}`, cedula, 'EX', SESSION_TTL);
+        await this.handleModifyCedulaStep(organizationId, senderId, cedula);
+        break;
+      }
+
+      case ChatState.AWAITING_MODIFY_SELECTION: {
+        const letraElegida = text?.toUpperCase().trim() || '';
+        const aptId = await this.redis.get(`temp_modify_apt_${letraElegida}:${organizationId}:${senderId}`);
+        const slotId = await this.redis.get(`temp_modify_slot_${letraElegida}:${organizationId}:${senderId}`);
+
+        if (!aptId || !slotId) {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const maxLetra = await this.redis.get(`temp_modify_max_letra:${organizationId}:${senderId}`) || 'A';
+          const reply = `No reconozco esa opción. Por favor responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidLetter: letraElegida, stage: 'MODIFY_SELECTION' },
+          });
+          return;
+        }
+
+        await this.redis.set(`temp_selected_modify_apt:${organizationId}:${senderId}`, aptId, 'EX', SESSION_TTL);
+        await this.redis.set(`temp_selected_modify_slot:${organizationId}:${senderId}`, slotId, 'EX', SESSION_TTL);
+        await this.offerModifySlots(organizationId, senderId, aptId);
+        break;
+      }
+
+      case ChatState.AWAITING_MODIFY_NEW_SLOT: {
+        const letraElegida = text?.toUpperCase().trim() || '';
+        const newSlotId = await this.redis.get(`temp_modify_newslot_${letraElegida}:${organizationId}:${senderId}`);
+        const newSlotFecha = await this.redis.get(`temp_modify_newslot_${letraElegida}_fecha:${organizationId}:${senderId}`);
+
+        if (!newSlotId || !newSlotFecha) {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const maxLetra = await this.redis.get(`temp_modify_newslot_max_letra:${organizationId}:${senderId}`) || 'A';
+          const reply = `No reconozco esa opción. Por favor responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidLetter: letraElegida, stage: 'MODIFY_NEW_SLOT' },
+          });
+          return;
+        }
+
+        await this.redis.set(`temp_selected_modify_newslot:${organizationId}:${senderId}`, newSlotId, 'EX', SESSION_TTL);
+        await this.redis.set(`temp_selected_modify_newslot_fecha:${organizationId}:${senderId}`, newSlotFecha, 'EX', SESSION_TTL);
+
+        const aptId = await this.redis.get(`temp_selected_modify_apt:${organizationId}:${senderId}`);
+        const apt = aptId
+          ? await this.prisma.appointment.findUnique({
+              where: { id: aptId },
+              include: { scheduleSlot: { include: { doctor: true, service: true } } },
+            })
+          : null;
+
+        if (!apt) {
+          const reply = MSGS.sesionExpirada();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.cleanUpModifySession(organizationId, senderId);
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { stage: 'MODIFY_NEW_SLOT_NO_APT' },
+          });
+          return;
+        }
+
+        const fechaActual = new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO', {
+          weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+        });
+        const fechaNueva = new Date(newSlotFecha).toLocaleString('es-CO', {
+          weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+        });
+        const reply = MSGS.modificarConfirmar(
+          apt.scheduleSlot.service.name,
+          apt.scheduleSlot.doctor.fullName,
+          fechaActual,
+          fechaNueva,
+        );
+        await this.smartReply(organizationId, senderId, reply);
+        await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_CONFIRM);
+
+        await this.interactionLog.logSuccess({
+          whatsappId: senderId,
+          organizationId,
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            step: 'MODIFY_NEW_SLOT_SELECTED',
+            appointmentId: apt.id,
+            newSlotId,
+          },
+        });
+        break;
+      }
+
+      case ChatState.AWAITING_MODIFY_CONFIRM: {
+        const decision = this.interpretYesNo(text);
+
+        if (decision === 'SI') {
+          const aptId = await this.redis.get(`temp_selected_modify_apt:${organizationId}:${senderId}`);
+          const oldSlotId = await this.redis.get(`temp_selected_modify_slot:${organizationId}:${senderId}`);
+          const newSlotId = await this.redis.get(`temp_selected_modify_newslot:${organizationId}:${senderId}`);
+          const newSlotFecha = await this.redis.get(`temp_selected_modify_newslot_fecha:${organizationId}:${senderId}`);
+
+          if (!aptId || !oldSlotId || !newSlotId || !newSlotFecha) {
+            const reply = MSGS.sesionExpirada();
+            await this.smartReply(organizationId, senderId, reply);
+            await this.cleanUpModifySession(organizationId, senderId);
+
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId,
+              reason: FailureReason.SESSION_EXPIRED,
+              userMessage: text,
+              botReply: reply,
+              metadata: { stage: 'MODIFY_CONFIRM_NO_DATA' },
+            });
+            return;
+          }
+
+          try {
+            // Reprogramación atómica: validamos que el nuevo cupo siga libre,
+            // movemos la cita a él, liberamos el cupo anterior y ocupamos el nuevo.
+            await this.prisma.$transaction(async (tx) => {
+              const newSlot = await tx.scheduleSlot.findUnique({ where: { id: newSlotId } });
+              if (!newSlot || !newSlot.isAvailable || newSlot.organizationId !== organizationId) {
+                throw new Error('NEW_SLOT_TAKEN');
+              }
+              await tx.appointment.update({
+                where: { id: aptId },
+                data: { scheduleSlotId: newSlotId },
+              });
+              await tx.scheduleSlot.update({
+                where: { id: oldSlotId },
+                data: { isAvailable: true },
+              });
+              await tx.scheduleSlot.update({
+                where: { id: newSlotId },
+                data: { isAvailable: false },
+              });
+            });
+
+            const fechaNuevaFmt = new Date(newSlotFecha).toLocaleString('es-CO', {
+              weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+            });
+            const replyOk = MSGS.modificarExitosa(fechaNuevaFmt);
+            await this.smartReply(organizationId, senderId, replyOk);
+
+            await this.interactionLog.logSuccess({
+              whatsappId: senderId,
+              organizationId,
+              userMessage: text,
+              botReply: replyOk,
+              metadata: {
+                event: 'APPOINTMENT_RESCHEDULED',
+                appointmentId: aptId,
+                oldSlotId,
+                newSlotId,
+              },
+            });
+
+            // El cupo anterior queda libre → notificar a la lista de espera.
+            const freedSlot = await this.prisma.scheduleSlot.findUnique({
+              where: { id: oldSlotId },
+              include: { doctor: true },
+            });
+            if (freedSlot) {
+              try {
+                await this.waitlistService.notifyWaitlist({
+                  slotId: freedSlot.id,
+                  serviceId: freedSlot.serviceId,
+                  epsId: freedSlot.allowedEpsId,
+                  organizationId: organizationId!,
+                  doctorName: freedSlot.doctor.fullName,
+                  slotDate: freedSlot.startTime,
+                });
+              } catch (e) {
+                this.logger.error(`Error notificando waitlist (reprogramación): ${e.message}`);
+              }
+            }
+
+            await this.cleanUpModifySession(organizationId, senderId);
+            // ⭐ CSAT: la reprogramación deja una cita activa → encuesta BOOKED.
+            await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.BOOKED, {
+              chatSummary: `Cita reprogramada para ${fechaNuevaFmt}.`,
+            });
+          } catch (e) {
+            this.logger.error('Error reprogramando cita', e);
+            // El nuevo cupo fue tomado por otro paciente entre tanto → volver a ofrecer.
+            if (e.message === 'NEW_SLOT_TAKEN') {
+              const reply = MSGS.slotTomado();
+              await this.smartReply(organizationId, senderId, reply);
+              await this.interactionLog.logFailure({
+                whatsappId: senderId,
+                organizationId,
+                reason: FailureReason.SLOT_TAKEN,
+                userMessage: text,
+                botReply: reply,
+                metadata: { stage: 'MODIFY_NEW_SLOT_TAKEN', appointmentId: aptId, newSlotId },
+              });
+              // Reofrecemos cupos frescos para el mismo appointment.
+              await this.offerModifySlots(organizationId, senderId, aptId);
+              return;
+            }
+            const reply = MSGS.modificarError();
+            await this.smartReply(organizationId, senderId, reply);
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId,
+              reason: FailureReason.MODIFY_ERROR,
+              userMessage: text,
+              botReply: reply,
+              metadata: { error: e.message, appointmentId: aptId },
+            });
+            await this.cleanUpModifySession(organizationId, senderId);
+          }
+        } else if (decision === 'NO') {
+          // No confirma el cambio → dejamos la cita en su fecha original.
+          const reply = MSGS.modificarAbortada();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.cleanUpModifySession(organizationId, senderId);
+
+          await this.interactionLog.log({
+            whatsappId: senderId,
+            organizationId,
+            status: InteractionStatus.ESCAPED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { event: 'MODIFY_ABORTED' },
+          });
+        } else {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const reply = MSGS.respuestaInvalidaSiNo();
+          await this.sendWhatsAppMessage(senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidResponse: text, stage: 'MODIFY_CONFIRM' },
+          });
+        }
+        break;
+      }
+
+      case ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL: {
+        // No había cupos para reprogramar. SÍ → cancelamos la cita; NO → no tocamos nada.
+        const decision = this.interpretYesNo(text);
+
+        if (decision === 'SI') {
+          const aptId = await this.redis.get(`temp_selected_modify_apt:${organizationId}:${senderId}`);
+          const slotId = await this.redis.get(`temp_selected_modify_slot:${organizationId}:${senderId}`);
+
+          if (!aptId || !slotId) {
+            const reply = MSGS.sesionExpirada();
+            await this.smartReply(organizationId, senderId, reply);
+            await this.cleanUpModifySession(organizationId, senderId);
+
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId,
+              reason: FailureReason.SESSION_EXPIRED,
+              userMessage: text,
+              botReply: reply,
+              metadata: { stage: 'MODIFY_NO_SLOTS_CANCEL_NO_DATA' },
+            });
+            return;
+          }
+
+          try {
+            await this.prisma.$transaction([
+              this.prisma.appointment.update({
+                where: { id: aptId },
+                data: { status: 'CANCELLED' },
+              }),
+              this.prisma.scheduleSlot.update({
+                where: { id: slotId },
+                data: { isAvailable: true },
+              }),
+            ]);
+
+            const replyExito = MSGS.cancelarExitosa();
+            await this.smartReply(organizationId, senderId, replyExito);
+
+            await this.interactionLog.logSuccess({
+              whatsappId: senderId,
+              organizationId,
+              userMessage: text,
+              botReply: replyExito,
+              metadata: { event: 'APPOINTMENT_CANCELLED', via: 'MODIFY_NO_SLOTS', appointmentId: aptId, slotId },
+            });
+
+            const slot = await this.prisma.scheduleSlot.findUnique({
+              where: { id: slotId },
+              include: { doctor: true, service: true },
+            });
+            if (slot) {
+              try {
+                await this.waitlistService.notifyWaitlist({
+                  slotId: slot.id,
+                  serviceId: slot.serviceId,
+                  epsId: slot.allowedEpsId,
+                  organizationId: organizationId!,
+                  doctorName: slot.doctor.fullName,
+                  slotDate: slot.startTime,
+                });
+              } catch (e) {
+                this.logger.error(`Error notificando waitlist (cancelación vía modify): ${e.message}`);
+              }
+            }
+
+            // Reutilizamos el cierre del flujo de cancelación: ofrecer reagendar.
+            const replyOfrecer = MSGS.cancelarOfreceAgendar();
+            await this.smartReply(organizationId, senderId, replyOfrecer);
+            await this.cleanUpModifySession(organizationId, senderId);
+            await this.setUserState(organizationId, senderId, ChatState.AWAITING_POST_CANCEL_CHOICE);
+          } catch (e) {
+            this.logger.error('Error cancelando cita (vía modify)', e);
+            const reply = MSGS.cancelarError();
+            await this.smartReply(organizationId, senderId, reply);
+
+            await this.interactionLog.logFailure({
+              whatsappId: senderId,
+              organizationId,
+              reason: FailureReason.CANCEL_ERROR,
+              userMessage: text,
+              botReply: reply,
+              metadata: { error: e.message, appointmentId: aptId, via: 'MODIFY_NO_SLOTS' },
+            });
+            await this.cleanUpModifySession(organizationId, senderId);
+          }
+        } else if (decision === 'NO') {
+          // El paciente prefiere conservar su cita: NO tocamos nada.
+          const reply = MSGS.modificarSinCambios();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.cleanUpModifySession(organizationId, senderId);
+
+          await this.interactionLog.log({
+            whatsappId: senderId,
+            organizationId,
+            status: InteractionStatus.ESCAPED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { event: 'MODIFY_NO_SLOTS_KEEP_APPOINTMENT' },
+          });
+        } else {
+          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          const reply = MSGS.respuestaInvalidaSiNo();
+          await this.sendWhatsAppMessage(senderId, reply);
+
+          await this.interactionLog.logFailure({
+            whatsappId: senderId,
+            organizationId,
+            reason: FailureReason.SESSION_EXPIRED,
+            userMessage: text,
+            botReply: reply,
+            metadata: { invalidResponse: text, stage: 'MODIFY_NO_SLOTS_CANCEL' },
+          });
+        }
+        break;
+      }
+
       default:
         await this.cleanUpSession(organizationId, senderId);
         break;
@@ -3722,6 +4218,205 @@ export class ChatbotService implements OnModuleInit {
         step: 'CANCEL_SHOWING_MULTIPLE',
         appointmentsCount: activeAppointments.length,
         patientCedula: cedula,
+      },
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // FLUJO DE BÚSQUEDA POR CÉDULA PARA MODIFICACIÓN (REPROGRAMACIÓN)
+  // Espejo de handleCancelCedulaStep: ubica al paciente, lista sus citas
+  // próximas y, cuando hay una sola, pasa directo a buscar nuevos cupos.
+  // ══════════════════════════════════════════════════════════════
+  private async handleModifyCedulaStep(
+    organizationId: string,
+    senderId: string,
+    cedula: string,
+  ) {
+    const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
+    const patient = await this.prisma.patientProfile.findFirst({
+      where: { cedula, organizationId },
+    });
+
+    if (!patient) {
+      const reply = MSGS.modificarPacienteNoExiste(cedula);
+      await this.smartReply(organizationId, senderId, reply);
+      // Permite reintentar la cédula sin reiniciar el flujo.
+      await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_CEDULA);
+
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        organizationId,
+        reason: FailureReason.PATIENT_NOT_FOUND,
+        userMessage: cedula,
+        botReply: reply,
+        metadata: { searchedCedula: cedula, flow: 'MODIFY' },
+      });
+      return;
+    }
+
+    const activeAppointments = await this.prisma.appointment.findMany({
+      where: {
+        patientId: patient.id,
+        status: 'SCHEDULED',
+        scheduleSlot: { startTime: { gte: new Date() } },
+      },
+      include: {
+        scheduleSlot: { include: { doctor: true, service: true } },
+      },
+      orderBy: { scheduleSlot: { startTime: 'asc' } },
+    });
+
+    if (activeAppointments.length === 0) {
+      const reply = MSGS.modificarSinCitas(cedula);
+      await this.smartReply(organizationId, senderId, reply);
+      await this.setUserState(organizationId, senderId, ChatState.IDLE);
+
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        organizationId,
+        reason: FailureReason.NO_APPOINTMENTS_TO_MODIFY,
+        userMessage: cedula,
+        botReply: reply,
+        metadata: { patientCedula: cedula, patientId: patient.id },
+      });
+      return;
+    }
+
+    if (activeAppointments.length === 1) {
+      // Cita única → la fijamos y pasamos directo a ofrecer nuevos horarios.
+      const apt = activeAppointments[0];
+      await this.redis.set(`temp_selected_modify_apt:${organizationId}:${senderId}`, apt.id, 'EX', SESSION_TTL);
+      await this.redis.set(`temp_selected_modify_slot:${organizationId}:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
+      await this.offerModifySlots(organizationId, senderId, apt.id);
+      return;
+    }
+
+    let lineas = '';
+    activeAppointments.forEach((apt, idx) => {
+      const letra = String.fromCharCode(65 + idx);
+      this.redis.set(`temp_modify_apt_${letra}:${organizationId}:${senderId}`, apt.id, 'EX', SESSION_TTL);
+      this.redis.set(`temp_modify_slot_${letra}:${organizationId}:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
+      this.redis.set(`temp_modify_max_letra:${organizationId}:${senderId}`, letra, 'EX', SESSION_TTL);
+      const fecha = new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO', {
+        weekday: 'short', day: 'numeric', month: 'short',
+        hour: '2-digit', minute: '2-digit',
+      });
+      lineas += `*${letra})* ${apt.scheduleSlot.service.name} · Dr. ${apt.scheduleSlot.doctor.fullName} · ${fecha}\n`;
+    });
+
+    const reply = MSGS.modificarSeleccionar(patient.fullName, lineas);
+    await this.smartReply(organizationId, senderId, reply);
+    await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_SELECTION);
+
+    await this.interactionLog.logSuccess({
+      whatsappId: senderId,
+      organizationId,
+      userMessage: cedula,
+      botReply: reply,
+      metadata: {
+        step: 'MODIFY_SHOWING_MULTIPLE',
+        appointmentsCount: activeAppointments.length,
+        patientCedula: cedula,
+      },
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // OFRECER NUEVOS CUPOS PARA REPROGRAMAR LA CITA SELECCIONADA
+  // Busca espacios del MISMO servicio/EPS (excluyendo el cupo actual). Si no
+  // hay → ofrece cancelar la cita (AWAITING_MODIFY_NO_SLOTS_CANCEL). Si hay →
+  // muestra el menú con letras (AWAITING_MODIFY_NEW_SLOT). NO toca la cita aún.
+  // ══════════════════════════════════════════════════════════════
+  private async offerModifySlots(
+    organizationId: string,
+    senderId: string,
+    appointmentId: string,
+  ) {
+    const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
+
+    const apt = await this.prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: { scheduleSlot: { include: { doctor: true, service: true } } },
+    });
+
+    if (!apt) {
+      const reply = MSGS.sesionExpirada();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.cleanUpModifySession(organizationId, senderId);
+      await this.interactionLog.logFailure({
+        whatsappId: senderId,
+        organizationId,
+        reason: FailureReason.SESSION_EXPIRED,
+        userMessage: '[modify]',
+        botReply: reply,
+        metadata: { stage: 'MODIFY_OFFER_SLOTS_NO_APT', appointmentId },
+      });
+      return;
+    }
+
+    const serviceName = apt.scheduleSlot.service.name;
+    const fechaActual = new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO', {
+      weekday: 'long', day: 'numeric', month: 'long',
+      hour: '2-digit', minute: '2-digit',
+    });
+
+    const slots = await this.appointmentsService.getAvailableSlots(
+      serviceName,
+      apt.epsId,
+      organizationId,
+    );
+    // Excluimos el cupo que el paciente ya tiene (no tiene sentido "moverla" al mismo).
+    const candidateSlots = slots.filter((s) => s.slotId !== apt.scheduleSlotId);
+
+    if (candidateSlots.length === 0) {
+      // Sin cupos alternativos → ofrecer cancelar la cita actual.
+      const reply = MSGS.modificarSinCupos(serviceName);
+      await this.smartReply(organizationId, senderId, reply);
+      await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
+
+      await this.interactionLog.logSuccess({
+        whatsappId: senderId,
+        organizationId,
+        userMessage: '[modify]',
+        botReply: reply,
+        metadata: {
+          step: 'MODIFY_NO_SLOTS_OFFER_CANCEL',
+          appointmentId,
+          service: serviceName,
+        },
+      });
+      return;
+    }
+
+    let lineas = '';
+    const slotsMetadata: any[] = [];
+    for (let i = 0; i < candidateSlots.length; i++) {
+      const letra = String.fromCharCode(65 + i);
+      await this.redis.set(`temp_modify_newslot_${letra}:${organizationId}:${senderId}`, candidateSlots[i].slotId, 'EX', SESSION_TTL);
+      await this.redis.set(`temp_modify_newslot_${letra}_fecha:${organizationId}:${senderId}`, candidateSlots[i].fecha.toISOString(), 'EX', SESSION_TTL);
+      await this.redis.set(`temp_modify_newslot_max_letra:${organizationId}:${senderId}`, letra, 'EX', SESSION_TTL);
+      lineas +=
+        `*${letra})* ${candidateSlots[i].fecha.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })} ` +
+        `a las ${candidateSlots[i].fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} ` +
+        `· Dr. ${candidateSlots[i].doctor}\n`;
+      slotsMetadata.push({ letter: letra, slotId: candidateSlots[i].slotId, fecha: candidateSlots[i].fecha.toISOString() });
+    }
+
+    const reply = MSGS.modificarMostrarCupos(serviceName, fechaActual, lineas);
+    await this.smartReply(organizationId, senderId, reply);
+    await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_NEW_SLOT);
+
+    await this.interactionLog.logSuccess({
+      whatsappId: senderId,
+      organizationId,
+      userMessage: '[modify]',
+      botReply: reply,
+      metadata: {
+        step: 'MODIFY_SLOTS_OFFERED',
+        appointmentId,
+        service: serviceName,
+        slotsCount: candidateSlots.length,
+        slots: slotsMetadata,
       },
     });
   }
