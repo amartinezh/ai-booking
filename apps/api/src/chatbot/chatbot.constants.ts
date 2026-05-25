@@ -392,7 +392,7 @@ const FORMAL = {
     ]),
 
   cancelarSinCitas: (cedula: string) =>
-    `El paciente con cédula *${cedula}* no tiene citas próximas activas.\n\n¿Le gustaría agendar una nueva?`,
+    `El paciente con cédula *${cedula}* no tiene citas próximas agendadas`,
 
   cancelarSeleccionar: (nombre: string, lineas: string) =>
     pick([
