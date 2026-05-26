@@ -2,13 +2,35 @@ import { Prisma } from '@antigravity/database';
 import * as crypto from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';
-// En producción, esto debe inyectarse vía ConfigService/process.env
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '12345678901234567890123456789012'; // 32 bytes
+const KEY_LENGTH = 32;
+const DEV_KEY = '12345678901234567890123456789012'; // 32 bytes (solo desarrollo)
+
+/**
+ * Deriva la llave AES-256 de forma robusta (mismo criterio que CryptoService):
+ *   - Se lee de forma perezosa (no en un const al importar), para que
+ *     ConfigService/.env ya esté cargado y no caigamos al fallback.
+ *   - Se recortan espacios y comillas envolventes (causa típica del error
+ *     "Invalid key length": ENCRYPTION_KEY="..." deja 34 bytes en vez de 32).
+ *   - Se soporta tanto 32 bytes utf-8 como 64 caracteres hex.
+ */
+function getKey(): Buffer {
+  const raw = (process.env.ENCRYPTION_KEY ?? '').trim().replace(/^['"]|['"]$/g, '');
+  const source = raw || DEV_KEY;
+  const buf = /^[0-9a-fA-F]{64}$/.test(source)
+    ? Buffer.from(source, 'hex')
+    : Buffer.from(source, 'utf8');
+  if (buf.length !== KEY_LENGTH) {
+    throw new Error(
+      `ENCRYPTION_KEY debe medir 32 bytes (o 64 hex). Recibido: ${buf.length} bytes.`,
+    );
+  }
+  return buf;
+}
 
 export function encryptString(text: string): string {
   if (!text) return text;
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
+  const cipher = crypto.createCipheriv(ALGORITHM, getKey(), iv);
   let encrypted = cipher.update(text, 'utf8', 'hex');
   encrypted += cipher.final('hex');
   const authTag = cipher.getAuthTag().toString('hex');
@@ -24,7 +46,7 @@ export function decryptString(text: string): string {
 
   try {
     const [ivHex, authTagHex, encryptedTextHex] = parts;
-    const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), Buffer.from(ivHex, 'hex'));
+    const decipher = crypto.createDecipheriv(ALGORITHM, getKey(), Buffer.from(ivHex, 'hex'));
     decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
     let decrypted = decipher.update(encryptedTextHex, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
