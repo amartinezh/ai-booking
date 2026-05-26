@@ -806,6 +806,74 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   });
 
   // ════════════════════════════════════════════════════════════════
+  // Selección de HORARIO por VOZ (AWAITING_DATE)
+  // Regresión: decir la letra por audio se rechazaba como "paso estricto"
+  // ("por favor escríbalo"). Ahora la voz se transcribe y la letra se
+  // normaliza (extractOptionLetter), igual que el texto.
+  // ════════════════════════════════════════════════════════════════
+  describe('voz en AWAITING_DATE — elegir el horario diciendo la letra', () => {
+    const makeAudioEvent = (id = 'audio-slot-1') => ({
+      from: SENDER,
+      type: 'audio',
+      audio: { id },
+      metadata: { phone_number_id: PHONE_ID },
+    });
+
+    beforeEach(() => {
+      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_DATE);
+      // Menú de horarios ya presentado: dos opciones A y B.
+      redis.store.set(`temp_slot_A:${SENDER}`, 'slot-A');
+      redis.store.set(`temp_slot_A_fecha:${SENDER}`, new Date('2026-06-01T15:00:00Z').toISOString());
+      redis.store.set(`temp_slot_B:${SENDER}`, 'slot-B');
+      redis.store.set(`temp_slot_B_fecha:${SENDER}`, new Date('2026-06-02T16:00:00Z').toISOString());
+
+      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok', isActive: true });
+      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+    });
+
+    it('AUDIO "la a" selecciona el horario A y NO rechaza el audio como paso estricto', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'la a', intent: 'otro' }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      // No se rechazó el audio (nunca apareció el reprompt de "escríbalo").
+      expect(sentMessages().join('\n').toLowerCase()).not.toContain('escríba');
+      // El horario A quedó seleccionado y avanzó a pedir la cédula.
+      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe('slot-A');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_CEDULA);
+    });
+
+    it('AUDIO "be" (nombre fonético) selecciona el horario B', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'be', intent: 'otro' }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe('slot-B');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_CEDULA);
+    });
+
+    it('AUDIO que transcribe una EPS alucinada NO contamina el contexto: solo cuenta la letra', async () => {
+      // El LLM, sin contexto, devuelve transcript con letra pero marca una EPS.
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'la a', eps: 'Sura', especialidad: 'Cardiología', intent: 'consulta_faq' }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      // No se desvió a FAQ ni se persistió la EPS/especialidad alucinada.
+      expect(provider.answerFAQ).not.toHaveBeenCalled();
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      // Y sí seleccionó el horario A.
+      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe('slot-A');
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════
   // Lista de espera — SÍ/NO por texto y voz + cédula sin validar tamaño
   // ════════════════════════════════════════════════════════════════
   describe('lista de espera: SÍ/NO por texto y voz, cédula de cualquier tamaño', () => {
@@ -931,6 +999,30 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(extract('es uno cero, ocho ocho')).toBe('1088');
       expect(extract('no sé')).toBe('');
       expect(extract('')).toBe('');
+    });
+
+    it('extractOptionLetter reconoce la letra elegida por texto y por voz', () => {
+      const letra = (t: string) => (service as any).extractOptionLetter(t);
+      // Texto directo.
+      expect(letra('A')).toBe('A');
+      expect(letra('b')).toBe('B');
+      expect(letra('A)')).toBe('A');
+      // Voz: nombre fonético de la letra (lo que transcribe el STT).
+      expect(letra('be')).toBe('B');
+      expect(letra('ce')).toBe('C');
+      expect(letra('efe')).toBe('F');
+      expect(letra('hache')).toBe('H');
+      // Voz: muletillas para vocales.
+      expect(letra('ah')).toBe('A');
+      expect(letra('eh.')).toBe('E');
+      // Voz: con prefijo "opción/letra/la".
+      expect(letra('la a')).toBe('A');
+      expect(letra('opción dos')).toBe('B');
+      expect(letra('la primera')).toBe('A');
+      // No reconoce ruido ni nombres de servicio/EPS (cae a otros resolvers).
+      expect(letra('quiero la de las tres de la tarde con ese doctor')).toBe('');
+      expect(letra('sura')).toBe('');
+      expect(letra('')).toBe('');
     });
   });
 

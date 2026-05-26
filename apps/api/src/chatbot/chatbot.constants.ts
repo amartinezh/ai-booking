@@ -177,6 +177,14 @@ const FORMAL = {
         `_Elija el horario que más le convenga (responda con la letra)._`,
     ]),
 
+  // Frase corta para AUDIO: no leemos todos los horarios en voz; el listado
+  // completo va por texto. El paciente lo lee y responde con la letra.
+  cuposDisponiblesAudio: (epsName: string) =>
+    pick([
+      `A continuación le presento las opciones que encontré con ${epsName}. Por favor revíselas en el mensaje de texto y respóndame con la letra del horario que prefiera.`,
+      `Estos son los horarios disponibles con ${epsName}. Se los dejo en el mensaje de texto; respóndame con la letra de la opción que más le acomode.`,
+    ]),
+
   preguntaWaitlist: (servicio: string, eps: string) =>
     pick([
       `Revisé la agenda para *${servicio}* con *${eps}* y por el momento no hay cupos disponibles.\n\n` +
@@ -426,6 +434,13 @@ const FORMAL = {
       `Estas son las citas que tengo para *${nombre}*:\n\n${lineas}\nIndíqueme con la letra cuál desea cancelar.`,
     ]),
 
+  // Frase corta para AUDIO: el listado de citas va por texto.
+  cancelarSeleccionarAudio: (nombre: string) =>
+    pick([
+      `${nombre}, encontré varias citas a su nombre. Se las dejo en el mensaje de texto; respóndame con la letra de la que desea cancelar.`,
+      `A continuación le presento sus citas en el mensaje de texto. Respóndame con la letra de la que desea cancelar, por favor.`,
+    ]),
+
   cancelarConfirmar: (servicio: string, doctor: string, fecha: string) =>
     `Esta es la cita que vamos a cancelar:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n📅 ${fecha}\n\n` +
     `⚠️ ¿Está completamente seguro(a)? Responda *SÍ* para cancelarla o *NO* si prefiere mantenerla.`,
@@ -516,6 +531,13 @@ const FORMAL = {
       `Estas son las citas que tengo para *${nombre}*:\n\n${lineas}\nIndíqueme con la letra cuál desea *cambiar de fecha*.`,
     ]),
 
+  // Frase corta para AUDIO: el listado de citas va por texto.
+  modificarSeleccionarAudio: (nombre: string) =>
+    pick([
+      `${nombre}, encontré varias citas a su nombre. Se las dejo en el mensaje de texto; respóndame con la letra de la que desea reprogramar.`,
+      `A continuación le presento sus citas en el mensaje de texto. Respóndame con la letra de la que desea cambiar de fecha, por favor.`,
+    ]),
+
   modificarMostrarCupos: (servicio: string, fechaActual: string, lineas: string) =>
     pick([
       `Su cita de *${servicio}* está agendada para:\n📅 ${fechaActual}\n\n` +
@@ -524,6 +546,13 @@ const FORMAL = {
       `Actualmente su cita de *${servicio}* es el:\n📅 ${fechaActual}\n\n` +
         `Le muestro los espacios a los que puedo reprogramarla:\n\n${lineas}\n` +
         `_Elija el nuevo horario respondiendo con la letra._`,
+    ]),
+
+  // Frase corta para AUDIO: los nuevos horarios van por texto.
+  modificarMostrarCuposAudio: (servicio: string) =>
+    pick([
+      `A continuación le presento los horarios disponibles para reprogramar su cita de ${servicio}. Los dejo en el mensaje de texto; respóndame con la letra del que prefiera.`,
+      `Estos son los nuevos horarios para su cita de ${servicio}. Se los dejo en el mensaje de texto; respóndame con la letra de la opción que más le acomode.`,
     ]),
 
   // No hay cupos para reprogramar → ofrecemos cancelar la cita.
@@ -650,6 +679,13 @@ const INFORMAL = {
         `_Dime cuál te sirve mejor, mándame la letra._ 😊`,
       `${nombre ? `Listo, ${nombre}: ` : 'Listo: '}aquí va la agenda para *${epsName}*:\n\n${lineas}\n` +
         `_Elige el horario que más te acomode (mándame la letra)._ ✍️`,
+    ]),
+
+  // Frase corta para AUDIO: el listado de horarios va por texto (tuteo).
+  cuposDisponiblesAudio: (epsName: string) =>
+    pick([
+      `A continuación te presento las opciones que encontré con ${epsName}. Míralas en el mensaje de texto y respóndeme con la letra del horario que prefieras.`,
+      `Estos son los horarios que tengo con ${epsName}. Te los dejo en el mensaje de texto; respóndeme con la letra de la opción que más te sirva.`,
     ]),
 
   preguntaWaitlist: (servicio: string, eps: string) =>
@@ -866,6 +902,13 @@ const INFORMAL = {
       `Acá están las citas que tengo para *${nombre}*:\n\n${lineas}\nDime con la letra cuál es la que quieres cancelar. 😊`,
     ]),
 
+  // Frase corta para AUDIO: el listado de citas va por texto (tuteo).
+  cancelarSeleccionarAudio: (nombre: string) =>
+    pick([
+      `${nombre}, encontré varias citas a tu nombre. Te las dejo en el mensaje de texto; respóndeme con la letra de la que quieres cancelar.`,
+      `A continuación te presento tus citas en el mensaje de texto. Respóndeme con la letra de la que quieres cancelar. 😊`,
+    ]),
+
   cancelarConfirmar: (servicio: string, doctor: string, fecha: string) =>
     `Para confirmarte, esta es la cita que vamos a cancelar:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n📅 ${fecha}\n\n⚠️ ¿Seguro(a)? Responde *SÍ* para cancelarla o *NO* si prefieres dejarla.`,
 
@@ -955,6 +998,13 @@ const INFORMAL = {
       `Acá están las citas que tengo para *${nombre}*:\n\n${lineas}\nDime con la letra cuál quieres *cambiar de fecha*.`,
     ]),
 
+  // Frase corta para AUDIO: el listado de citas va por texto (tuteo).
+  modificarSeleccionarAudio: (nombre: string) =>
+    pick([
+      `${nombre}, encontré varias citas a tu nombre. Te las dejo en el mensaje de texto; respóndeme con la letra de la que quieres reprogramar.`,
+      `A continuación te presento tus citas en el mensaje de texto. Respóndeme con la letra de la que quieres cambiar de fecha. 😊`,
+    ]),
+
   modificarMostrarCupos: (servicio: string, fechaActual: string, lineas: string) =>
     pick([
       `Tu cita de *${servicio}* está para:\n📅 ${fechaActual}\n\n` +
@@ -963,6 +1013,13 @@ const INFORMAL = {
       `Ahorita tu cita de *${servicio}* es el:\n📅 ${fechaActual}\n\n` +
         `Mira, te puedo reprogramar a estos espacios:\n\n${lineas}\n` +
         `_Elige el nuevo horario con la letra._`,
+    ]),
+
+  // Frase corta para AUDIO: los nuevos horarios van por texto (tuteo).
+  modificarMostrarCuposAudio: (servicio: string) =>
+    pick([
+      `A continuación te presento los horarios disponibles para reprogramar tu cita de ${servicio}. Te los dejo en el mensaje de texto; respóndeme con la letra del que prefieras.`,
+      `Estos son los nuevos horarios para tu cita de ${servicio}. Te los dejo en el mensaje de texto; respóndeme con la letra de la opción que más te sirva.`,
     ]),
 
   // No hay cupos para reprogramar → ofrecemos cancelar la cita.

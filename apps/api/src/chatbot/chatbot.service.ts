@@ -861,7 +861,17 @@ export class ChatbotService implements OnModuleInit {
     }
   }
 
-  private async smartReply(organizationId: string, senderId: string, text: string) {
+  // `audioText` (opcional): cuando el `text` es un LISTADO largo (horarios,
+  // citas para elegir), no queremos que el audio lea todas las opciones. El
+  // llamador pasa una frase corta para hablar (p.ej. "A continuación le presento
+  // las opciones que encontré con SURA") y el listado completo viaja SIEMPRE por
+  // texto, independientemente de SHOW_TEXT_IN_AUDIO_MODE.
+  private async smartReply(
+    organizationId: string,
+    senderId: string,
+    text: string,
+    audioText?: string,
+  ) {
     const isAiFlow =
       (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) === 'true';
 
@@ -876,7 +886,10 @@ export class ChatbotService implements OnModuleInit {
         const creds = await this.resolveCredentialsForOrg(organizationId);
         let audioSent = false;
         if (creds && creds.isActive) {
-          const audioBuffer = await this.generateTTS(organizationId, text);
+          // Si hay `audioText`, el audio dice solo esa frase corta; el detalle
+          // (el listado) se entrega por texto más abajo.
+          const speakText = audioText ?? text;
+          const audioBuffer = await this.generateTTS(organizationId, speakText);
           if (audioBuffer) {
             const mediaId = await this.uploadToWhatsApp(audioBuffer, creds);
             if (mediaId) {
@@ -885,10 +898,11 @@ export class ChatbotService implements OnModuleInit {
             }
           }
         }
-        // El texto se envía solo si el flag está prendido, o como FALLBACK
-        // cuando el audio no se pudo entregar (de lo contrario el usuario se
-        // quedaría sin respuesta alguna).
-        if (showTextInAudioMode || !audioSent) {
+        // El texto se envía cuando: (a) hay `audioText` (el audio NO contiene el
+        // detalle, así que el texto es obligatorio), (b) el flag está prendido, o
+        // (c) el audio no se pudo entregar (fallback para no dejar al usuario sin
+        // respuesta alguna).
+        if (audioText || showTextInAudioMode || !audioSent) {
           await this.sendWhatsAppMessage(senderId, text);
         }
         return;
@@ -1295,9 +1309,9 @@ export class ChatbotService implements OnModuleInit {
     text: string | null,
     geminiSpecialty: string | null,
   ): Promise<{ id: string; name: string } | null> {
-    // 1) Letra
-    const candidate = (text || '').trim().toUpperCase();
-    if (/^[A-Z]$/.test(candidate)) {
+    // 1) Letra (tolerante a voz: "be"→B, "la a"→A, etc.)
+    const candidate = this.extractOptionLetter(text);
+    if (candidate) {
       const id = await this.redis.get(`temp_service_${candidate}_id:${organizationId}:${senderId}`);
       const name = await this.redis.get(`temp_service_${candidate}_name:${organizationId}:${senderId}`);
       if (id && name) return { id, name };
@@ -1353,9 +1367,9 @@ export class ChatbotService implements OnModuleInit {
     text: string | null,
     geminiEps: string | null,
   ): Promise<{ id: string; name: string } | null> {
-    // 1) Letra
-    const candidate = (text || '').trim().toUpperCase();
-    if (/^[A-Z]$/.test(candidate)) {
+    // 1) Letra (tolerante a voz: "be"→B, "la a"→A, etc.)
+    const candidate = this.extractOptionLetter(text);
+    if (candidate) {
       const id = await this.redis.get(`temp_eps_${candidate}_id:${organizationId}:${senderId}`);
       const name = await this.redis.get(`temp_eps_${candidate}_name:${organizationId}:${senderId}`);
       if (id && name) return { id, name };
@@ -1608,6 +1622,16 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
       currentState === ChatState.AWAITING_WAITLIST_OPTIN;
 
+    // Pasos de SELECCIÓN POR LETRA (elegir horario o cita de un listado A/B/C).
+    // Igual que el SÍ/NO de waitlist, ESTOS aceptan voz: el audio se transcribe
+    // y la letra se normaliza con extractOptionLetter ("be"→B, "la a"→A, etc.).
+    // Sin esta excepción, decir la letra por voz se rechazaba como "paso estricto".
+    const isLetterSelectionStep =
+      currentState === ChatState.AWAITING_DATE ||
+      currentState === ChatState.AWAITING_CANCEL_SELECTION ||
+      currentState === ChatState.AWAITING_MODIFY_SELECTION ||
+      currentState === ChatState.AWAITING_MODIFY_NEW_SLOT;
+
     // Pasos de SELECCIÓN DE MENÚ (servicio / EPS). El texto en estos pasos
     // NO llama al LLM (ver más abajo), así que su `intent` queda en 'otro' y
     // jamás toca el router global de FAQ. La voz, en cambio, DEBE pasar por el
@@ -1624,7 +1648,7 @@ export class ChatbotService implements OnModuleInit {
 
     const isAudio = messageType === 'audio' && !!audioId;
 
-    if (isAudio && isStrictStep && !isWaitlistYesNoStep) {
+    if (isAudio && isStrictStep && !isWaitlistYesNoStep && !isLetterSelectionStep) {
       const reply = MSGS.audioPasoEstricto();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -1902,6 +1926,45 @@ export class ChatbotService implements OnModuleInit {
           },
         });
         return;
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 🎙️ SELECCIÓN POR VOZ — PARIDAD CON TEXTO EN PASOS DE LETRA
+    // ──────────────────────────────────────────────────────────
+    // En los pasos de selección por letra (elegir horario/cita de un listado),
+    // el TEXTO no llama al LLM (isStrictStep) → su `intent` queda en 'otro' y
+    // fluye directo al switch. La VOZ, en cambio, pasó por el extractor para
+    // transcribirse y pudo recibir un `intent` que dispararía los routers de
+    // cancelación/modificación/FAQ ANTES del switch, perdiendo el turno.
+    //
+    // Cuando la transcripción SÍ contiene una letra válida, la adoptamos como
+    // `text` y neutralizamos los flags de intención para que el audio recorra
+    // EXACTAMENTE el mismo camino determinista que el texto. Si NO hay letra
+    // (p.ej. "mejor cancela"), dejamos pasar el intent del LLM tal cual.
+    if (isAudio && isLetterSelectionStep) {
+      const letra = this.extractOptionLetter(text);
+      if (letra) {
+        text = letra;
+        // Reset total de `aiData` a la forma que tendría por TEXTO en un paso
+        // estricto (todo nulo, intent 'otro'). Así ni los routers de intención
+        // ni la "memoria a corto plazo" (que persiste entidades en Redis) se
+        // disparan con valores que el LLM pudo alucinar al transcribir la letra.
+        aiData.intent = 'otro';
+        aiData.isEscape = false;
+        aiData.isCancellation = false;
+        aiData.isModification = false;
+        aiData.outOfContext = false;
+        aiData.ininteligible = false;
+        aiData.cedula = null;
+        aiData.nombre = null;
+        aiData.eps = null;
+        aiData.especialidad = null;
+        aiData.doctor = null;
+        aiData.fechaSolicitada = null;
+        this.logger.log(
+          `[Tenant: ${organizationId}] 🎙️ LETRA_VOZ paciente=${senderId} estado=${currentState} letra="${letra}"`,
+        );
       }
     }
 
@@ -2685,7 +2748,14 @@ export class ChatbotService implements OnModuleInit {
         }
 
         const reply = MSGS.cuposDisponibles('', resolvedEpsName, lineasFechas);
-        await this.smartReply(organizationId, senderId, reply);
+        // En voz: el audio solo anuncia que llegan las opciones; el listado de
+        // horarios viaja por texto (no se leen todos en voz).
+        await this.smartReply(
+          organizationId,
+          senderId,
+          reply,
+          MSGS.cuposDisponiblesAudio(resolvedEpsName),
+        );
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_DATE);
 
         await this.interactionLog.logSuccess({
@@ -2841,7 +2911,7 @@ export class ChatbotService implements OnModuleInit {
     switch (currentState) {
 
       case ChatState.AWAITING_DATE: {
-        const letraElegida = text?.toUpperCase().trim() || '';
+        const letraElegida = this.extractOptionLetter(text);
         const slotId = await this.redis.get(`temp_slot_${letraElegida}:${senderId}`);
         const slotFechaStr = await this.redis.get(`temp_slot_${letraElegida}_fecha:${senderId}`);
 
@@ -3291,7 +3361,7 @@ export class ChatbotService implements OnModuleInit {
       }
 
       case ChatState.AWAITING_CANCEL_SELECTION: {
-        const letraElegida = text?.toUpperCase().trim() || '';
+        const letraElegida = this.extractOptionLetter(text);
         const aptId = await this.redis.get(`temp_cancel_apt_${letraElegida}:${organizationId}:${senderId}`);
         const slotId = await this.redis.get(`temp_cancel_slot_${letraElegida}:${organizationId}:${senderId}`);
 
@@ -3681,7 +3751,7 @@ export class ChatbotService implements OnModuleInit {
       }
 
       case ChatState.AWAITING_MODIFY_SELECTION: {
-        const letraElegida = text?.toUpperCase().trim() || '';
+        const letraElegida = this.extractOptionLetter(text);
         const aptId = await this.redis.get(`temp_modify_apt_${letraElegida}:${organizationId}:${senderId}`);
         const slotId = await this.redis.get(`temp_modify_slot_${letraElegida}:${organizationId}:${senderId}`);
 
@@ -3709,7 +3779,7 @@ export class ChatbotService implements OnModuleInit {
       }
 
       case ChatState.AWAITING_MODIFY_NEW_SLOT: {
-        const letraElegida = text?.toUpperCase().trim() || '';
+        const letraElegida = this.extractOptionLetter(text);
         const newSlotId = await this.redis.get(`temp_modify_newslot_${letraElegida}:${organizationId}:${senderId}`);
         const newSlotFecha = await this.redis.get(`temp_modify_newslot_${letraElegida}_fecha:${organizationId}:${senderId}`);
 
@@ -4109,6 +4179,82 @@ export class ChatbotService implements OnModuleInit {
     return null;
   }
 
+  // Extrae la LETRA de opción (A–Z) que eligió el usuario, tolerando voz.
+  // Por texto el usuario escribe "A"; por voz el STT transcribe la letra como
+  // su nombre fonético ("be", "ce", "efe"), con muletillas ("ah", "eh") o
+  // antepuesta a "opción/letra/la" ("la a", "opción dos", "la primera").
+  //
+  // Es CONSERVADOR a propósito: solo resuelve cuando el enunciado es en esencia
+  // la selección (letra suelta, nombre de letra, u ordinal/número, con prefijo
+  // opcional). Así evita falsos positivos al interpretar preposiciones sueltas
+  // ("de", "se") dentro de una frase larga. Devuelve '' si no reconoce nada.
+  private extractOptionLetter(text: string | undefined | null): string {
+    if (!text) return '';
+    const t = text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '') // quita tildes
+      .replace(/[^\w\s]/g, ' ') // signos de puntuación → espacio
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!t) return '';
+
+    // Una sola letra (caso típico por texto): "a", "b".
+    if (/^[a-z]$/.test(t)) return t.toUpperCase();
+
+    // Quita un prefijo introductorio ("opción/letra/la/el/número") y se queda
+    // con el núcleo de la selección.
+    const core = t
+      .replace(/^(?:la|el|las|los|opcion|opciones|letra|numero|numeral)\s+/, '')
+      .trim();
+
+    // Nombre fonético de la letra dicho solo (incluye errores típicos del STT).
+    const phonetic: Record<string, string> = {
+      a: 'A', ah: 'A', ha: 'A',
+      be: 'B', ve: 'B', uve: 'B',
+      ce: 'C', se: 'C',
+      de: 'D',
+      e: 'E', eh: 'E',
+      efe: 'F',
+      ge: 'G', je: 'G',
+      hache: 'H', ache: 'H',
+      i: 'I', y: 'I',
+      jota: 'J',
+      ka: 'K', ca: 'K',
+      ele: 'L',
+      eme: 'M',
+      ene: 'N',
+      enie: 'Ñ',
+      o: 'O', oh: 'O',
+      pe: 'P',
+      cu: 'Q',
+      erre: 'R', ere: 'R',
+      ese: 'S',
+      te: 'T',
+      u: 'U',
+      equis: 'X',
+      ye: 'Y',
+      zeta: 'Z', seta: 'Z',
+    };
+    if (core in phonetic) return phonetic[core];
+    if (/^[a-z]$/.test(core)) return core.toUpperCase();
+
+    // Ordinal o número dicho solo: "primera"/"uno"/"1" → A, "segunda"/"dos" → B…
+    const ordinal: Record<string, number> = {
+      primera: 1, primero: 1, uno: 1, una: 1, '1': 1,
+      segunda: 2, segundo: 2, dos: 2, '2': 2,
+      tercera: 3, tercero: 3, tres: 3, '3': 3,
+      cuarta: 4, cuarto: 4, cuatro: 4, '4': 4,
+      quinta: 5, quinto: 5, cinco: 5, '5': 5,
+      sexta: 6, sexto: 6, seis: 6, '6': 6,
+      septima: 7, septimo: 7, siete: 7, '7': 7,
+      octava: 8, octavo: 8, ocho: 8, '8': 8,
+    };
+    if (core in ordinal) return String.fromCharCode(64 + ordinal[core]);
+
+    return '';
+  }
+
   private async handleWaitlistConfirmStep(
     organizationId: string,
     senderId: string,
@@ -4338,7 +4484,13 @@ export class ChatbotService implements OnModuleInit {
     });
 
     const reply = MSGS.cancelarSeleccionar(patient.fullName, lineas);
-    await this.smartReply(organizationId, senderId, reply);
+    // En voz: el audio solo anuncia; el listado de citas va por texto.
+    await this.smartReply(
+      organizationId,
+      senderId,
+      reply,
+      MSGS.cancelarSeleccionarAudio(patient.fullName),
+    );
     await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_SELECTION);
 
     await this.interactionLog.logSuccess({
@@ -4440,7 +4592,13 @@ export class ChatbotService implements OnModuleInit {
     });
 
     const reply = MSGS.modificarSeleccionar(patient.fullName, lineas);
-    await this.smartReply(organizationId, senderId, reply);
+    // En voz: el audio solo anuncia; el listado de citas va por texto.
+    await this.smartReply(
+      organizationId,
+      senderId,
+      reply,
+      MSGS.modificarSeleccionarAudio(patient.fullName),
+    );
     await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_SELECTION);
 
     await this.interactionLog.logSuccess({
@@ -4538,7 +4696,13 @@ export class ChatbotService implements OnModuleInit {
     }
 
     const reply = MSGS.modificarMostrarCupos(serviceName, fechaActual, lineas);
-    await this.smartReply(organizationId, senderId, reply);
+    // En voz: el audio solo anuncia; los nuevos horarios van por texto.
+    await this.smartReply(
+      organizationId,
+      senderId,
+      reply,
+      MSGS.modificarMostrarCuposAudio(serviceName),
+    );
     await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_NEW_SLOT);
 
     await this.interactionLog.logSuccess({
