@@ -866,21 +866,38 @@ export class ChatbotService implements OnModuleInit {
       (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) === 'true';
 
     if (isAiFlow) {
+      // En modo voz, mostrar TAMBIÉN el texto está controlado por .env.
+      // Por defecto OFF: solo se envía el audio. A futuro se puede prender con
+      // SHOW_TEXT_IN_AUDIO_MODE=true sin tocar código.
+      const showTextInAudioMode =
+        this.configService.get<string>('SHOW_TEXT_IN_AUDIO_MODE', 'false') ===
+        'true';
       try {
         const creds = await this.resolveCredentialsForOrg(organizationId);
+        let audioSent = false;
         if (creds && creds.isActive) {
           const audioBuffer = await this.generateTTS(organizationId, text);
           if (audioBuffer) {
             const mediaId = await this.uploadToWhatsApp(audioBuffer, creds);
             if (mediaId) {
               await this.sendWhatsAppAudioMessage(senderId, mediaId, creds);
+              audioSent = true;
             }
           }
         }
-        await this.sendWhatsAppMessage(senderId, text);
+        // El texto se envía solo si el flag está prendido, o como FALLBACK
+        // cuando el audio no se pudo entregar (de lo contrario el usuario se
+        // quedaría sin respuesta alguna).
+        if (showTextInAudioMode || !audioSent) {
+          await this.sendWhatsAppMessage(senderId, text);
+        }
         return;
       } catch (error) {
         this.logger.error(`Error en smartReply (AI flow): ${error.message}`);
+        // Ante cualquier error en el camino de audio, garantizamos respuesta
+        // por texto para no dejar al usuario sin contestación.
+        await this.sendWhatsAppMessage(senderId, text);
+        return;
       }
     }
     await this.sendWhatsAppMessage(senderId, text);
