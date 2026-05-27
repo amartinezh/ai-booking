@@ -1656,6 +1656,427 @@ export class ChatbotService implements OnModuleInit {
     return { isQuickCancel, isQuickEscape, isQuickModify };
   }
 
+
+  /**
+   * Determina el `aiData` del turno (init + cadena de extracción) y, en el
+   * caso de audio, puede actualizar `text` con la transcripción adoptada.
+   * Caminos mutuamente excluyentes: quick-flags deterministas; primer turno
+   * / turno no-estricto → LLM; audio → STT (transcribeAudioTurn); pasos de
+   * cédula → dígitos; nombre → texto tal cual; menú (especialidad/EPS) → sin
+   * LLM. Recibe los flags por objeto para evitar errores de orden entre los
+   * varios booleanos (TS no atrapa swaps posicionales boolean↔boolean).
+   */
+  private async resolveTurnData(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    messageType: string | undefined;
+    currentState: ChatState;
+    isAudio: boolean;
+    audioId: string | undefined;
+    isStrictStep: boolean;
+    isQuickCancel: boolean;
+    isQuickModify: boolean;
+    isQuickEscape: boolean;
+  }): Promise<{ aiData: SchedulingExtraction; text: string | undefined }> {
+    const { organizationId, senderId, messageType, currentState, isAudio, audioId, isStrictStep, isQuickCancel, isQuickModify, isQuickEscape } = p;
+    let text = p.text;
+    let aiData: SchedulingExtraction = {
+      transcript: null,
+      cedula: null,
+      nombre: null,
+      eps: null,
+      especialidad: null,
+      doctor: null,
+      fechaSolicitada: null,
+      intent: 'otro',
+      isEscape: false,
+      outOfContext: false,
+      ininteligible: false,
+      isFallback: false,
+      isCancellation: false,
+      isModification: false,
+      isRateLimited: false,
+    };
+
+    if (isQuickCancel && currentState === ChatState.IDLE) {
+      aiData.isCancellation = true;
+    } else if (isQuickModify) {
+      // "cambiar/reprogramar mi cita" en IDLE → reprogramación determinista (sin LLM).
+      aiData.isModification = true;
+    } else if (isQuickEscape && currentState !== ChatState.IDLE) {
+      aiData.isEscape = true;
+    } else if (
+      text &&
+      text.trim().toLowerCase() === 'cancelar' &&
+      currentState !== ChatState.IDLE
+    ) {
+      aiData.isEscape = true;
+    } else if (isQuickEscape && currentState === ChatState.IDLE) {
+      // saludo o reinicio simple en estado IDLE — no llama Gemini (→ bienvenida abajo)
+    } else if (
+      messageType === 'text' &&
+      !!text &&
+      currentState === ChatState.IDLE
+    ) {
+      // ── PROTOCOLO DEL PRIMER TURNO (Fase 1) ──────────────────
+      // Entrada abierta: cualquier texto inicial del paciente (que no fuera
+      // un saludo/escape/cancelación puros, ya atendidos arriba sin gastar
+      // LLM) pasa por el extractor, que en UNA sola llamada realiza:
+      //   Tarea A — guardrail de seguridad (intent='insulto_abuso')
+      //   Tarea B — extracción de entidades (cédula, nombre, EPS, etc.)
+      //   Tarea C — clasificación de intención (agendar_cita | consulta_faq | otro)
+      // El branching por intención se centraliza en el INTENT ROUTER (abajo).
+      aiData = await this.extractDataWithLLM(organizationId, text, null);
+    } else if (isAudio) {
+      // Pipeline de audio: descarga + transcripción (STT) y, si hay
+      // transcripción útil, adopción como `text` del turno (ver
+      // transcribeAudioTurn). Pasamos audioId! porque isAudio lo garantiza.
+      ({ aiData, text } = await this.transcribeAudioTurn(
+        organizationId,
+        senderId,
+        audioId!, // isAudio garantiza audioId no nulo
+        text,
+        aiData,
+      ));
+    } else if (
+      messageType === 'text' &&
+      text &&
+      (currentState === ChatState.AWAITING_CEDULA ||
+        currentState === ChatState.AWAITING_CANCEL_CEDULA ||
+        currentState === ChatState.AWAITING_MODIFY_CEDULA)
+    ) {
+      // En pasos de cédula, extraemos dígitos directamente sin llamar a Gemini.
+      // Esto evita que "000", "123", etc. sean clasificados como ininteligibles.
+      const digits = text.replace(/\D/g, '');
+      if (digits.length > 0) {
+        aiData.cedula = digits;
+      }
+      // Si el texto no tiene dígitos (ej: "salir") ya fue capturado por isQuickEscape arriba.
+    } else if (
+      messageType === 'text' &&
+      text &&
+      currentState === ChatState.AWAITING_NAME
+    ) {
+      // En el paso de nombre capturamos el texto TAL CUAL, sin llamar a Gemini.
+      // Antes el nombre pasaba por el extractor y el clasificador de seguridad
+      // podía marcar apellidos legítimos (p.ej. "Negro") como intent='insulto_abuso',
+      // disparando el guardrail y borrando toda la sesión. Aquí ya pedimos un
+      // nombre libre de forma explícita; las palabras de escape ("salir",
+      // "cancelar") ya fueron capturadas por isQuickEscape más arriba.
+      aiData.nombre = text.trim();
+    } else if (
+      messageType === 'text' &&
+      text &&
+      (currentState === ChatState.AWAITING_SPECIALTY || currentState === ChatState.AWAITING_EPS)
+    ) {
+      // En selección de menú (Pasos 1 y 2) NO llamamos a Gemini para texto:
+      // el resolver del menú maneja letras (case-insensitive) y match parcial por nombre.
+      // Gemini con inputs cortos como "a", "B", "Sura" tiende a marcar ininteligible=true
+      // y bloquea el flujo. La voz sí va al extractor (manejada arriba en isAudio).
+    } else if (messageType === 'text' && text && !isStrictStep) {
+      aiData = await this.extractDataWithLLM(organizationId, text, null);
+    }
+    return { aiData, text };
+  }
+  /**
+   * Paridad voz↔texto en pasos de selección por letra: si la transcripción
+   * contiene una letra válida, la adopta como `text` y resetea `aiData` a la
+   * forma que tendría por TEXTO en un paso estricto (todo nulo, intent 'otro'),
+   * para que ni los routers de intención ni la memoria a corto plazo (entidades
+   * persistidas en Redis) se disparen con valores que el LLM pudo alucinar al
+   * transcribir la letra. Si no hay letra (p.ej. "mejor cancela"), no toca nada.
+   * Muta `aiData` in-place; devuelve el `text` (posiblemente la letra).
+   */
+  private applyVoiceLetterSelection(
+    text: string | undefined,
+    aiData: SchedulingExtraction,
+    organizationId: string,
+    senderId: string,
+    currentState: ChatState,
+  ): string | undefined {
+    const letra = this.extractOptionLetter(text);
+    if (letra) {
+      text = letra;
+      aiData.intent = 'otro';
+      aiData.isEscape = false;
+      aiData.isCancellation = false;
+      aiData.isModification = false;
+      aiData.outOfContext = false;
+      aiData.ininteligible = false;
+      aiData.cedula = null;
+      aiData.nombre = null;
+      aiData.eps = null;
+      aiData.especialidad = null;
+      aiData.doctor = null;
+      aiData.fechaSolicitada = null;
+      this.logger.log(
+        `[Tenant: ${organizationId}] 🎙️ LETRA_VOZ paciente=${senderId} estado=${currentState} letra="${letra}"`,
+      );
+    }
+    return text;
+  }
+
+  /**
+   * Normalización agresiva del STT para cédula por voz (paridad con texto):
+   * toma la cédula del LLM o, si falta, la extrae de la transcripción tolerando
+   * el ruido del STT (separadores, muletillas, números en palabras). Si obtiene
+   * dígitos, los adopta en `aiData.cedula` (in-place) y devuelve false
+   * (continuar). Si no hay dígitos —y no es escape/cancel/modify— reintenta
+   * acotado pidiendo la cédula por TEXTO (evita el loop SÍ/NO) y devuelve true
+   * (detener el turno). Solo aplica a VOZ en pasos de cédula; el texto va intacto.
+   */
+  private async normalizeVoiceCedula(p: {
+    aiData: SchedulingExtraction;
+    text: string | undefined;
+    organizationId: string;
+    senderId: string;
+    currentState: ChatState;
+    retriesCount: number;
+    retriesKey: string;
+    maxRetries: number;
+    MSGS: ReturnType<typeof buildMessages>;
+  }): Promise<boolean> {
+    const { aiData, text, organizationId, senderId, currentState, retriesCount, retriesKey, maxRetries, MSGS } = p;
+    const fromLlm = (aiData.cedula || '').replace(/\D/g, '');
+    const fromTranscript = this.extractCedulaFromSpeech(text);
+    const cedulaVoz = fromLlm.length > 0 ? fromLlm : fromTranscript;
+
+    this.logger.log(
+      `[Tenant: ${organizationId}] 🎙️ CEDULA_VOZ paciente=${senderId} estado=${currentState} ` +
+      `sttCrudo="${text ?? ''}" llmCedula="${aiData.cedula ?? ''}" normalizada="${cedulaVoz}"`,
+    );
+
+    if (cedulaVoz.length > 0) {
+      // Adoptamos la cédula normalizada para que la cascada (finalCedula) y el
+      // short-circuit de waitlist la vean igual que si hubiera llegado por texto.
+      aiData.cedula = cedulaVoz;
+    } else if (!aiData.isEscape && !aiData.isCancellation && !aiData.isModification) {
+      // Sin dígitos tras normalizar: NO reentramos al flujo (evita el loop de
+      // SÍ/NO). Reintento acotado pidiendo la cédula por texto; al agotar
+      // maxReintentos, el guard del inicio cierra con maxReintentosReset.
+      const newRetries = retriesCount + 1;
+      await this.redis.set(retriesKey, newRetries.toString(), 'EX', SESSION_TTL);
+      const reply = MSGS.ininteligible();
+      await this.sendWhatsAppMessage(senderId, reply);
+
+      this.logger.warn(
+        `[Tenant: ${organizationId}] 🎙️ Cédula por voz no extraíble (sttCrudo="${text ?? ''}") ` +
+        `— pidiendo cédula por TEXTO. Reintento ${newRetries}/${maxRetries}.`,
+      );
+
+      await this.auditFailure(senderId, organizationId, {
+        reason: FailureReason.UNINTELLIGIBLE_AUDIO,
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: {
+          stage: 'CEDULA_VOICE_UNRESOLVED',
+          state: currentState,
+          sttTranscript: text ?? null,
+          retriesCount: newRetries,
+        },
+      });
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Contador de fallos del LLM por organización + fallback. Si el extractor
+   * marcó `isFallback`: con rate-limit (429) usa el fallback simple sin penalizar
+   * el contador; con error real incrementa el contador (TTL 900s) y, mientras no
+   * alcance el umbral (maxRetries de la org), usa el fallback simple. Al alcanzar
+   * el umbral responde "IA caída" + auditoría y devuelve `stop:true` (detener el
+   * turno). Si NO hubo fallback, resetea el contador. Devuelve el `aiData`
+   * (posiblemente sustituido por el fallback) y la señal `stop`.
+   */
+  private async handleLlmFallback(p: {
+    aiData: SchedulingExtraction;
+    text: string | undefined;
+    organizationId: string;
+    senderId: string;
+    currentState: ChatState;
+    org: any;
+    MSGS: ReturnType<typeof buildMessages>;
+  }): Promise<{ aiData: SchedulingExtraction; stop: boolean }> {
+    let { aiData } = p;
+    const { text, organizationId, senderId, currentState, org, MSGS } = p;
+    // Antes "GEMINI_DOWN_THRESHOLD"; el umbral ahora vive en
+    // OrganizationSettings.maxRetriesPerStep (consistente con la config por clínica).
+    const geminiFailKey = `gemini_fail_count:${organizationId}`;
+    const geminiDownThreshold = await this.organizationSettings.getMaxRetries(organizationId);
+
+    if (aiData.isFallback) {
+      if (aiData.isRateLimited) {
+        // 429: cuota agotada — NO es un fallo de disponibilidad de Gemini.
+        // Usar fallback simple sin tocar el contador permanente.
+        this.logger.warn(`Gemini rate-limited (429) — fallback sin penalizar contador`);
+        aiData = this.simpleExtractFallback(text ?? null, currentState);
+      } else {
+        // Error real (timeout, 5xx, etc.) → incrementar contador de caída
+        const currentFails = parseInt((await this.redis.get(geminiFailKey)) || '0', 10);
+        const newFails = currentFails + 1;
+        await this.redis.set(geminiFailKey, newFails.toString(), 'EX', 900);
+
+        if (newFails < geminiDownThreshold) {
+          this.logger.warn(`Gemini fallo real #${newFails}/${geminiDownThreshold} — usando fallback simple`);
+          aiData = this.simpleExtractFallback(text ?? null, currentState);
+        } else {
+          this.logger.error(`Gemini caído (${newFails} fallos consecutivos) — mostrando mantenimiento`);
+          const humanPhone = org?.supportPhone || '+573000000000';
+          const reply = MSGS.iaCaida(humanPhone);
+          await this.smartReply(organizationId, senderId, reply);
+
+          await this.auditFailure(senderId, organizationId, {
+            reason: FailureReason.GEMINI_DOWN,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: { previousState: currentState, failCount: newFails },
+          });
+          return { aiData, stop: true };
+        }
+      }
+    } else {
+      // Gemini respondió exitosamente: resetear contador de fallos reales
+      await this.redis.del(geminiFailKey);
+    }
+    return { aiData, stop: false };
+  }
+
+  /**
+   * Arranca el flujo de cancelación: limpia la sesión, marca el modo (voz/texto)
+   * y —si ya hay cédula— busca las citas de una vez (handleCancelCedulaStep); si
+   * no, la pide. Audita el inicio. Terminal: el caller hace return tras llamar.
+   */
+  private async startCancellationFlow(p: {
+    organizationId: string;
+    senderId: string;
+    isAudio: boolean;
+    aiData: SchedulingExtraction;
+    text: string | undefined;
+    MSGS: ReturnType<typeof buildMessages>;
+  }): Promise<void> {
+    const { organizationId, senderId, isAudio, aiData, text, MSGS } = p;
+    await this.cleanUpSession(organizationId, senderId);
+    await this.redis.set(
+      `is_ai_flow:${organizationId}:${senderId}`,
+      isAudio ? 'true' : 'false',
+      'EX',
+      SESSION_TTL,
+    );
+
+    let reply: string;
+    if (aiData.cedula) {
+      await this.redis.set(`temp_cancel_cedula:${organizationId}:${senderId}`, aiData.cedula, 'EX', SESSION_TTL);
+      await this.handleCancelCedulaStep(organizationId, senderId, aiData.cedula);
+      reply = (await this.getLastSent(senderId)) || '[cancelación iniciada]';
+    } else {
+      reply = MSGS.cancelarPedirCedula();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CEDULA);
+    }
+
+    // 📝 Auditoría: inicio de flujo de cancelación
+    await this.auditLog(senderId, organizationId, {
+      status: InteractionStatus.CANCELLATION_FLOW,
+      userMessage: text || '[audio]',
+      botReply: reply,
+      metadata: { aiData, hasInitialCedula: !!aiData.cedula },
+    });
+  }
+
+  /**
+   * Arranca el flujo de modificación / reprogramación (espejo del de
+   * cancelación): si traemos cédula, busca las citas (handleModifyCedulaStep);
+   * si no, la pide. La cita NO se toca hasta que el paciente confirme un nuevo
+   * horario. Audita el inicio. Terminal: el caller hace return tras llamar.
+   */
+  private async startModificationFlow(p: {
+    organizationId: string;
+    senderId: string;
+    isAudio: boolean;
+    aiData: SchedulingExtraction;
+    text: string | undefined;
+    MSGS: ReturnType<typeof buildMessages>;
+  }): Promise<void> {
+    const { organizationId, senderId, isAudio, aiData, text, MSGS } = p;
+    await this.cleanUpSession(organizationId, senderId);
+    await this.redis.set(
+      `is_ai_flow:${organizationId}:${senderId}`,
+      isAudio ? 'true' : 'false',
+      'EX',
+      SESSION_TTL,
+    );
+
+    let reply: string;
+    if (aiData.cedula) {
+      await this.redis.set(`temp_modify_cedula:${organizationId}:${senderId}`, aiData.cedula, 'EX', SESSION_TTL);
+      await this.handleModifyCedulaStep(organizationId, senderId, aiData.cedula);
+      reply = (await this.getLastSent(senderId)) || '[modificación iniciada]';
+    } else {
+      reply = MSGS.modificarPedirCedula();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_CEDULA);
+    }
+
+    // 📝 Auditoría: inicio de flujo de modificación
+    await this.auditLog(senderId, organizationId, {
+      status: InteractionStatus.MODIFICATION_FLOW,
+      userMessage: text || '[audio]',
+      botReply: reply,
+      metadata: { aiData, hasInitialCedula: !!aiData.cedula, event: 'MODIFY_FLOW_START' },
+    });
+  }
+
+  /**
+   * Maneja el escape/reinicio: limpia la sesión. Si el mensaje fue un saludo,
+   * muestra bienvenida + menú de servicios y pasa a AWAITING_SPECIALTY; si fue
+   * una palabra de reset ("salir", etc.), responde "Sin problema". Audita ambos
+   * caminos. Terminal: el caller hace return tras llamar.
+   */
+  private async handleEscape(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    currentState: ChatState;
+    MSGS: ReturnType<typeof buildMessages>;
+    orgName: string;
+    botName: string;
+  }): Promise<void> {
+    const { organizationId, senderId, text, currentState, MSGS, orgName, botName } = p;
+    await this.cleanUpSession(organizationId, senderId);
+
+    const isGreeting = this.greetingRegex.test(text?.trim() || '');
+
+    if (isGreeting) {
+      // Saludo → mostrar bienvenida + menú de servicios con letras (Paso 1).
+      const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
+      const reply = count > 0
+        ? MSGS.menuServicios(orgName, lineas, botName)
+        : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
+
+      await this.smartReply(organizationId, senderId, reply);
+      await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { step: 'WELCOME', previousState: currentState, newState: ChatState.AWAITING_SPECIALTY, triggeredBy: 'greeting_escape', servicesCount: count },
+      });
+    } else {
+      // Palabra de reset ("salir", "reiniciar", etc.) → mostrar "Sin problema"
+      const reply = MSGS.escape();
+      await this.smartReply(organizationId, senderId, reply);
+
+      await this.auditLog(senderId, organizationId, {
+        status: InteractionStatus.ESCAPED,
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { previousState: currentState },
+      });
+    }
+  }
+
   private async processIncomingMessageUnsafe(event: WhatsappInboundEvent) {
     const senderId = event.from || event.sender?.id;
     // Sin remitente no hay nada que procesar ni a quién responder. El guard
@@ -1911,102 +2332,25 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    let aiData: SchedulingExtraction = {
-      transcript: null,
-      cedula: null,
-      nombre: null,
-      eps: null,
-      especialidad: null,
-      doctor: null,
-      fechaSolicitada: null,
-      intent: 'otro',
-      isEscape: false,
-      outOfContext: false,
-      ininteligible: false,
-      isFallback: false,
-      isCancellation: false,
-      isModification: false,
-      isRateLimited: false,
-    };
-
-    if (isQuickCancel && currentState === ChatState.IDLE) {
-      aiData.isCancellation = true;
-    } else if (isQuickModify) {
-      // "cambiar/reprogramar mi cita" en IDLE → reprogramación determinista (sin LLM).
-      aiData.isModification = true;
-    } else if (isQuickEscape && currentState !== ChatState.IDLE) {
-      aiData.isEscape = true;
-    } else if (
-      text &&
-      text.trim().toLowerCase() === 'cancelar' &&
-      currentState !== ChatState.IDLE
-    ) {
-      aiData.isEscape = true;
-    } else if (isQuickEscape && currentState === ChatState.IDLE) {
-      // saludo o reinicio simple en estado IDLE — no llama Gemini (→ bienvenida abajo)
-    } else if (
-      messageType === 'text' &&
-      !!text &&
-      currentState === ChatState.IDLE
-    ) {
-      // ── PROTOCOLO DEL PRIMER TURNO (Fase 1) ──────────────────
-      // Entrada abierta: cualquier texto inicial del paciente (que no fuera
-      // un saludo/escape/cancelación puros, ya atendidos arriba sin gastar
-      // LLM) pasa por el extractor, que en UNA sola llamada realiza:
-      //   Tarea A — guardrail de seguridad (intent='insulto_abuso')
-      //   Tarea B — extracción de entidades (cédula, nombre, EPS, etc.)
-      //   Tarea C — clasificación de intención (agendar_cita | consulta_faq | otro)
-      // El branching por intención se centraliza en el INTENT ROUTER (abajo).
-      aiData = await this.extractDataWithLLM(organizationId, text, null);
-    } else if (isAudio) {
-      // Pipeline de audio: descarga + transcripción (STT) y, si hay
-      // transcripción útil, adopción como `text` del turno (ver
-      // transcribeAudioTurn). `audioId` está narrowed a string por `isAudio`.
-      ({ aiData, text } = await this.transcribeAudioTurn(
-        organizationId,
-        senderId,
-        audioId,
-        text,
-        aiData,
-      ));
-    } else if (
-      messageType === 'text' &&
-      text &&
-      (currentState === ChatState.AWAITING_CEDULA ||
-        currentState === ChatState.AWAITING_CANCEL_CEDULA ||
-        currentState === ChatState.AWAITING_MODIFY_CEDULA)
-    ) {
-      // En pasos de cédula, extraemos dígitos directamente sin llamar a Gemini.
-      // Esto evita que "000", "123", etc. sean clasificados como ininteligibles.
-      const digits = text.replace(/\D/g, '');
-      if (digits.length > 0) {
-        aiData.cedula = digits;
-      }
-      // Si el texto no tiene dígitos (ej: "salir") ya fue capturado por isQuickEscape arriba.
-    } else if (
-      messageType === 'text' &&
-      text &&
-      currentState === ChatState.AWAITING_NAME
-    ) {
-      // En el paso de nombre capturamos el texto TAL CUAL, sin llamar a Gemini.
-      // Antes el nombre pasaba por el extractor y el clasificador de seguridad
-      // podía marcar apellidos legítimos (p.ej. "Negro") como intent='insulto_abuso',
-      // disparando el guardrail y borrando toda la sesión. Aquí ya pedimos un
-      // nombre libre de forma explícita; las palabras de escape ("salir",
-      // "cancelar") ya fueron capturadas por isQuickEscape más arriba.
-      aiData.nombre = text.trim();
-    } else if (
-      messageType === 'text' &&
-      text &&
-      (currentState === ChatState.AWAITING_SPECIALTY || currentState === ChatState.AWAITING_EPS)
-    ) {
-      // En selección de menú (Pasos 1 y 2) NO llamamos a Gemini para texto:
-      // el resolver del menú maneja letras (case-insensitive) y match parcial por nombre.
-      // Gemini con inputs cortos como "a", "B", "Sura" tiende a marcar ininteligible=true
-      // y bloquea el flujo. La voz sí va al extractor (manejada arriba en isAudio).
-    } else if (messageType === 'text' && text && !isStrictStep) {
-      aiData = await this.extractDataWithLLM(organizationId, text, null);
-    }
+    // Determinación de `aiData` del turno: init + cadena de extracción
+    // (quick-flags; primer turno / no-estricto → LLM; audio → STT con adopción
+    // de transcripción; cédula → dígitos; nombre tal cual; menú → sin LLM).
+    // Ver resolveTurnData. Puede actualizar `text` (transcripción adoptada).
+    const turn = await this.resolveTurnData({
+      organizationId,
+      senderId,
+      text,
+      messageType,
+      currentState,
+      isAudio,
+      audioId,
+      isStrictStep,
+      isQuickCancel,
+      isQuickModify,
+      isQuickEscape,
+    });
+    let aiData = turn.aiData;
+    text = turn.text;
 
     this.logger.log(`🧠 LLM extrajo: ${JSON.stringify(aiData)}`);
 
@@ -2031,46 +2375,18 @@ export class ChatbotService implements OnModuleInit {
         currentState === ChatState.AWAITING_CANCEL_CEDULA ||
         currentState === ChatState.AWAITING_MODIFY_CEDULA)
     ) {
-      const fromLlm = (aiData.cedula || '').replace(/\D/g, '');
-      const fromTranscript = this.extractCedulaFromSpeech(text);
-      const cedulaVoz = fromLlm.length > 0 ? fromLlm : fromTranscript;
-
-      this.logger.log(
-        `[Tenant: ${organizationId}] 🎙️ CEDULA_VOZ paciente=${senderId} estado=${currentState} ` +
-        `sttCrudo="${text ?? ''}" llmCedula="${aiData.cedula ?? ''}" normalizada="${cedulaVoz}"`,
-      );
-
-      if (cedulaVoz.length > 0) {
-        // Adoptamos la cédula normalizada para que la cascada (finalCedula) y el
-        // short-circuit de waitlist la vean igual que si hubiera llegado por texto.
-        aiData.cedula = cedulaVoz;
-      } else if (!aiData.isEscape && !aiData.isCancellation && !aiData.isModification) {
-        // Sin dígitos tras normalizar: NO reentramos al flujo (evita el loop de
-        // SÍ/NO). Reintento acotado pidiendo la cédula por texto; al agotar
-        // maxReintentos, el guard del inicio cierra con maxReintentosReset.
-        const newRetries = retriesCount + 1;
-        await this.redis.set(retriesKey, newRetries.toString(), 'EX', SESSION_TTL);
-        const reply = MSGS.ininteligible();
-        await this.sendWhatsAppMessage(senderId, reply);
-
-        this.logger.warn(
-          `[Tenant: ${organizationId}] 🎙️ Cédula por voz no extraíble (sttCrudo="${text ?? ''}") ` +
-          `— pidiendo cédula por TEXTO. Reintento ${newRetries}/${maxRetries}.`,
-        );
-
-        await this.auditFailure(senderId, organizationId, {
-          reason: FailureReason.UNINTELLIGIBLE_AUDIO,
-          userMessage: text || '[audio]',
-          botReply: reply,
-          metadata: {
-            stage: 'CEDULA_VOICE_UNRESOLVED',
-            state: currentState,
-            sttTranscript: text ?? null,
-            retriesCount: newRetries,
-          },
-        });
-        return;
-      }
+      const stop = await this.normalizeVoiceCedula({
+        aiData,
+        text,
+        organizationId,
+        senderId,
+        currentState,
+        retriesCount,
+        retriesKey,
+        maxRetries,
+        MSGS,
+      });
+      if (stop) return;
     }
 
     // ══════════════════════════════════════════════════════════
@@ -2087,99 +2403,27 @@ export class ChatbotService implements OnModuleInit {
     // EXACTAMENTE el mismo camino determinista que el texto. Si NO hay letra
     // (p.ej. "mejor cancela"), dejamos pasar el intent del LLM tal cual.
     if (isAudio && isLetterSelectionStep) {
-      const letra = this.extractOptionLetter(text);
-      if (letra) {
-        text = letra;
-        // Reset total de `aiData` a la forma que tendría por TEXTO en un paso
-        // estricto (todo nulo, intent 'otro'). Así ni los routers de intención
-        // ni la "memoria a corto plazo" (que persiste entidades en Redis) se
-        // disparan con valores que el LLM pudo alucinar al transcribir la letra.
-        aiData.intent = 'otro';
-        aiData.isEscape = false;
-        aiData.isCancellation = false;
-        aiData.isModification = false;
-        aiData.outOfContext = false;
-        aiData.ininteligible = false;
-        aiData.cedula = null;
-        aiData.nombre = null;
-        aiData.eps = null;
-        aiData.especialidad = null;
-        aiData.doctor = null;
-        aiData.fechaSolicitada = null;
-        this.logger.log(
-          `[Tenant: ${organizationId}] 🎙️ LETRA_VOZ paciente=${senderId} estado=${currentState} letra="${letra}"`,
-        );
-      }
+      text = this.applyVoiceLetterSelection(text, aiData, organizationId, senderId, currentState);
     }
 
-    // ── CONTADOR DE FALLOS LLM (por organización) ──────────────
-    // Antes "GEMINI_DOWN_THRESHOLD"; el umbral ahora vive en
-    // OrganizationSettings.maxRetriesPerStep (consistente con la config por clínica).
-    const geminiFailKey = `gemini_fail_count:${organizationId}`;
-    const geminiDownThreshold = await this.organizationSettings.getMaxRetries(organizationId);
-
-    if (aiData.isFallback) {
-      if (aiData.isRateLimited) {
-        // 429: cuota agotada — NO es un fallo de disponibilidad de Gemini.
-        // Usar fallback simple sin tocar el contador permanente.
-        this.logger.warn(`Gemini rate-limited (429) — fallback sin penalizar contador`);
-        aiData = this.simpleExtractFallback(text ?? null, currentState);
-      } else {
-        // Error real (timeout, 5xx, etc.) → incrementar contador de caída
-        const currentFails = parseInt((await this.redis.get(geminiFailKey)) || '0', 10);
-        const newFails = currentFails + 1;
-        await this.redis.set(geminiFailKey, newFails.toString(), 'EX', 900);
-
-        if (newFails < geminiDownThreshold) {
-          this.logger.warn(`Gemini fallo real #${newFails}/${geminiDownThreshold} — usando fallback simple`);
-          aiData = this.simpleExtractFallback(text ?? null, currentState);
-        } else {
-          this.logger.error(`Gemini caído (${newFails} fallos consecutivos) — mostrando mantenimiento`);
-          const humanPhone = org?.supportPhone || '+573000000000';
-          const reply = MSGS.iaCaida(humanPhone);
-          await this.smartReply(organizationId, senderId, reply);
-
-          await this.auditFailure(senderId, organizationId, {
-            reason: FailureReason.GEMINI_DOWN,
-            userMessage: text || '[audio]',
-            botReply: reply,
-            metadata: { previousState: currentState, failCount: newFails },
-          });
-          return;
-        }
-      }
-    } else {
-      // Gemini respondió exitosamente: resetear contador de fallos reales
-      await this.redis.del(geminiFailKey);
-    }
+    // Contador de fallos LLM / fallback (ver handleLlmFallback). Si la IA está
+    // caída tras varios fallos, el helper ya respondió mantenimiento y pide
+    // detener el turno (stop). En otro caso devuelve el aiData (posiblemente
+    // sustituido por el fallback simple).
+    const fb = await this.handleLlmFallback({
+      aiData,
+      text,
+      organizationId,
+      senderId,
+      currentState,
+      org,
+      MSGS,
+    });
+    if (fb.stop) return;
+    aiData = fb.aiData;
 
     if (aiData.isCancellation || isQuickCancel) {
-      await this.cleanUpSession(organizationId, senderId);
-      await this.redis.set(
-        `is_ai_flow:${organizationId}:${senderId}`,
-        isAudio ? 'true' : 'false',
-        'EX',
-        SESSION_TTL,
-      );
-
-      let reply: string;
-      if (aiData.cedula) {
-        await this.redis.set(`temp_cancel_cedula:${organizationId}:${senderId}`, aiData.cedula, 'EX', SESSION_TTL);
-        await this.handleCancelCedulaStep(organizationId, senderId, aiData.cedula);
-        reply = (await this.getLastSent(senderId)) || '[cancelación iniciada]';
-      } else {
-        reply = MSGS.cancelarPedirCedula();
-        await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CEDULA);
-      }
-
-      // 📝 Auditoría: inicio de flujo de cancelación
-      await this.auditLog(senderId, organizationId, {
-        status: InteractionStatus.CANCELLATION_FLOW,
-        userMessage: text || '[audio]',
-        botReply: reply,
-        metadata: { aiData, hasInitialCedula: !!aiData.cedula },
-      });
+      await this.startCancellationFlow({ organizationId, senderId, isAudio, aiData, text, MSGS });
       return;
     }
 
@@ -2190,67 +2434,12 @@ export class ChatbotService implements OnModuleInit {
     // paciente confirme un nuevo horario (o decida cancelarla si no hay cupos).
     // ══════════════════════════════════════════════════════════
     if (aiData.isModification || isQuickModify) {
-      await this.cleanUpSession(organizationId, senderId);
-      await this.redis.set(
-        `is_ai_flow:${organizationId}:${senderId}`,
-        isAudio ? 'true' : 'false',
-        'EX',
-        SESSION_TTL,
-      );
-
-      let reply: string;
-      if (aiData.cedula) {
-        await this.redis.set(`temp_modify_cedula:${organizationId}:${senderId}`, aiData.cedula, 'EX', SESSION_TTL);
-        await this.handleModifyCedulaStep(organizationId, senderId, aiData.cedula);
-        reply = (await this.getLastSent(senderId)) || '[modificación iniciada]';
-      } else {
-        reply = MSGS.modificarPedirCedula();
-        await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_CEDULA);
-      }
-
-      // 📝 Auditoría: inicio de flujo de modificación
-      await this.auditLog(senderId, organizationId, {
-        status: InteractionStatus.MODIFICATION_FLOW,
-        userMessage: text || '[audio]',
-        botReply: reply,
-        metadata: { aiData, hasInitialCedula: !!aiData.cedula, event: 'MODIFY_FLOW_START' },
-      });
+      await this.startModificationFlow({ organizationId, senderId, isAudio, aiData, text, MSGS });
       return;
     }
 
     if (aiData.isEscape) {
-      await this.cleanUpSession(organizationId, senderId);
-
-      const isGreeting = this.greetingRegex.test(text?.trim() || '');
-
-      if (isGreeting) {
-        // Saludo → mostrar bienvenida + menú de servicios con letras (Paso 1).
-        const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
-        const reply = count > 0
-          ? MSGS.menuServicios(orgName, lineas, botName)
-          : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
-
-        await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
-
-        await this.auditSuccess(senderId, organizationId, {
-          userMessage: text || '[audio]',
-          botReply: reply,
-          metadata: { step: 'WELCOME', previousState: currentState, newState: ChatState.AWAITING_SPECIALTY, triggeredBy: 'greeting_escape', servicesCount: count },
-        });
-      } else {
-        // Palabra de reset ("salir", "reiniciar", etc.) → mostrar "Sin problema"
-        const reply = MSGS.escape();
-        await this.smartReply(organizationId, senderId, reply);
-
-        await this.auditLog(senderId, organizationId, {
-          status: InteractionStatus.ESCAPED,
-          userMessage: text || '[audio]',
-          botReply: reply,
-          metadata: { previousState: currentState },
-        });
-      }
+      await this.handleEscape({ organizationId, senderId, text, currentState, MSGS, orgName, botName });
       return;
     }
 
