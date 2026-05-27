@@ -3034,7 +3034,7 @@ export class ChatbotService implements OnModuleInit {
           await this.redis.set(`temp_slot_${letra}_fecha:${senderId}`, slots[i].fecha.toISOString(), 'EX', SESSION_TTL);
           lineasFechas +=
             `*${letra})* ${slots[i].fecha.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })} ` +
-            `a las ${slots[i].fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} ` +
+            `a las ${slots[i].fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }).replace(/\./g, '')} ` +
             `· Dr. ${slots[i].doctor}\n`;
           slotsMetadata.push({
             letter: letra,
@@ -4869,7 +4869,7 @@ export class ChatbotService implements OnModuleInit {
       await this.redis.set(`temp_modify_newslot_max_letra:${organizationId}:${senderId}`, letra, 'EX', SESSION_TTL);
       lineas +=
         `*${letra})* ${candidateSlots[i].fecha.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })} ` +
-        `a las ${candidateSlots[i].fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} ` +
+        `a las ${candidateSlots[i].fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }).replace(/\./g, '')} ` +
         `· Dr. ${candidateSlots[i].doctor}\n`;
       slotsMetadata.push({ letter: letra, slotId: candidateSlots[i].slotId, fecha: candidateSlots[i].fecha.toISOString() });
     }
