@@ -98,6 +98,12 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   };
   let llmFactory: { forOrgOrNull: jest.Mock };
   let knowledgeBase: { hasContent: jest.Mock; getContent: jest.Mock };
+  let interactionLog: {
+    logSuccess: jest.Mock;
+    logFailure: jest.Mock;
+    log: jest.Mock;
+    logWaitlistJoined: jest.Mock;
+  };
   let sendSpy: jest.SpyInstance;
 
   // Devuelve los textos enviados al paciente (todo pasa por sendWhatsAppMessage).
@@ -152,7 +158,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       getCommunicationStyle: jest.fn(async () => 'FORMAL'),
     };
 
-    const interactionLog = {
+    interactionLog = {
       logSuccess: jest.fn(async () => {}),
       logFailure: jest.fn(async () => {}),
       log: jest.fn(async () => {}),
@@ -195,6 +201,72 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  // ── Helpers de auditoría (auditFailure / auditSuccess) ──────────
+  // Contrato crítico: deben reenviar a interactionLog EXACTAMENTE el mismo
+  // payload que las llamadas directas, inyectando whatsappId/organizationId y
+  // preservando campo a campo el resto (reason, userMessage, botReply,
+  // metadata, …). Esta red cierra el hueco de que el resto del spec no
+  // asercia los argumentos de auditoría, y vuelve segura la migración masiva.
+  describe('auditFailure / auditSuccess', () => {
+    it('auditFailure reenvía whatsappId/organizationId + spread de params a logFailure', async () => {
+      await (service as any).auditFailure(SENDER, ORG_ID, {
+        reason: 'PATIENT_NOT_FOUND',
+        userMessage: '1010',
+        botReply: 'No te encontramos',
+        metadata: { searchedCedula: '1010' },
+      });
+
+      expect(interactionLog.logFailure).toHaveBeenCalledTimes(1);
+      expect(interactionLog.logFailure).toHaveBeenCalledWith({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+        reason: 'PATIENT_NOT_FOUND',
+        userMessage: '1010',
+        botReply: 'No te encontramos',
+        metadata: { searchedCedula: '1010' },
+      });
+    });
+
+    it('auditSuccess reenvía whatsappId/organizationId + spread de params a logSuccess', async () => {
+      await (service as any).auditSuccess(SENDER, ORG_ID, {
+        userMessage: '1010',
+        botReply: '¿Confirmas?',
+        metadata: { step: 'CANCEL_SHOWING_SINGLE' },
+      });
+
+      expect(interactionLog.logSuccess).toHaveBeenCalledTimes(1);
+      expect(interactionLog.logSuccess).toHaveBeenCalledWith({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+        userMessage: '1010',
+        botReply: '¿Confirmas?',
+        metadata: { step: 'CANCEL_SHOWING_SINGLE' },
+      });
+    });
+
+    it('auditSuccess sin params envía solo whatsappId/organizationId', async () => {
+      await (service as any).auditSuccess(SENDER, ORG_ID);
+
+      expect(interactionLog.logSuccess).toHaveBeenCalledWith({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+      });
+    });
+
+    it('el caller puede sobreescribir whatsappId/organizationId vía params', async () => {
+      await (service as any).auditFailure(SENDER, ORG_ID, {
+        reason: 'ORG_INACTIVE',
+        organizationId: 'otra-org',
+      });
+
+      expect(interactionLog.logFailure).toHaveBeenCalledWith({
+        whatsappId: SENDER,
+        organizationId: 'otra-org',
+        reason: 'ORG_INACTIVE',
+      });
+    });
   });
 
   // ── Resolución de médico preferido (nombre libre → DoctorProfile.id) ──

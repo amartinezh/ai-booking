@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { Module } from '@nestjs/common';
 import { InteractionLogService } from './interaction-log.service';
 

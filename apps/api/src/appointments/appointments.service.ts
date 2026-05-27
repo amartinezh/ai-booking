@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@antigravity/database';
@@ -49,8 +48,9 @@ export class AppointmentsService {
     epsId?: string | null,
     origin: 'WHATSAPP' | 'MANUAL' = 'WHATSAPP',
     organizationId?: string,
-  ): Promise<{ success: boolean; message?: string }> {
+  ): Promise<{ success: boolean; message?: string; appointmentId?: string }> {
     try {
+      let appointmentId: string | undefined;
       await this.prisma.$transaction(async (tx) => {
         const slot = await tx.scheduleSlot.findUnique({
           where: { id: scheduleSlotId },
@@ -67,7 +67,7 @@ export class AppointmentsService {
         });
 
         // 3. Crear el record de Cita conectado al Slot
-        await tx.appointment.create({
+        const appointment = await tx.appointment.create({
           data: {
             scheduleSlotId,
             patientId,
@@ -76,9 +76,10 @@ export class AppointmentsService {
             organizationId: organizationId || slot.organizationId, // 🏢 TENANT ISOLATION
           },
         });
+        appointmentId = appointment.id;
       });
 
-      return { success: true };
+      return { success: true, appointmentId };
     } catch (error: any) {
       // El catch atrapará si el constraint @unique choca o si lanzamos SLOT_TAKEN
       if (
@@ -122,24 +123,5 @@ export class AppointmentsService {
       success: true,
       data: updated
     };
-  }
-
-  // NUEVO método: llamar cuando un slot se LIBERA
-  async releaseSlot(slotId: string, organizationId: string): Promise<void> {
-    const slot = await this.prisma.scheduleSlot.update({
-      where: { id: slotId },
-      data: { isAvailable: true },
-      include: { service: true, doctor: true },
-    });
-
-    // Disparar notificación a la waitlist
-    await this.waitlistService.notifyWaitlist({
-      slotId: slot.id,
-      serviceId: slot.serviceId,
-      epsId: slot.allowedEpsId,
-      organizationId,
-      doctorName: slot.doctor.fullName,
-      slotDate: slot.startTime,
-    });
   }
 }

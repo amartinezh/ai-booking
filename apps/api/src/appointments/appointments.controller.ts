@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { Controller, Patch, Param, Body, UseGuards } from '@nestjs/common';
 import { AppointmentsService } from './appointments.service';
 import { RolesGuard } from '../common/roles.guard';

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { CurrentTenant } from '../common/current-tenant.decorator';
 import { AnalyticsService } from './analytics.service';
