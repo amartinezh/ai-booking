@@ -1589,6 +1589,73 @@ export class ChatbotService implements OnModuleInit {
     return { org, organizationId: org.id, orgName: org.name };
   }
 
+  /**
+   * Pipeline de audio de un turno: avisa al paciente ("🎧…"), descarga el audio
+   * de WhatsApp y lo transcribe vía el extractor LLM. Si la transcripción tiene
+   * contenido útil, la adopta como `text` del turno —⭐ unificación voz↔texto:
+   * a partir de ahí el audio recorre el MISMO camino determinista que el texto
+   * (match por nombre contra el catálogo en pasos de menú, FAQ, reprompts),
+   * evitando que valores como "consulta externa" —que el LLM no extrae como
+   * `especialidad`— se pierdan. Si no se pudo descargar, marca `ininteligible`.
+   * Devuelve el `aiData` y el `text` (posiblemente actualizados).
+   */
+  private async transcribeAudioTurn(
+    organizationId: string,
+    senderId: string,
+    audioId: string,
+    text: string | undefined,
+    aiData: SchedulingExtraction,
+  ): Promise<{ aiData: SchedulingExtraction; text: string | undefined }> {
+    await this.redis.set(`is_ai_flow:${organizationId}:${senderId}`, 'true', 'EX', SESSION_TTL);
+    await this.sendWhatsAppMessage(senderId, '🎧 Permítame un momento, lo estoy escuchando...');
+    const audioCreds = await this.resolveCredentialsForOrg(organizationId);
+    const audioBuffer = audioCreds
+      ? await this.downloadWhatsAppAudio(audioId, audioCreds)
+      : null;
+    if (audioBuffer) {
+      aiData = await this.extractDataWithLLM(organizationId, text ?? null, audioBuffer);
+      if (aiData.transcript && aiData.transcript.trim()) {
+        text = aiData.transcript.trim();
+      }
+    } else {
+      aiData.ininteligible = true;
+    }
+    return { aiData, text };
+  }
+
+  /**
+   * Detección de intención rápida por patrón (sin LLM), solo sobre texto.
+   * Patrones cargados desde chatbot-patterns.txt (ver loadPatterns/reloadPatterns).
+   * - isQuickCancel / isQuickEscape: cancelar / saludo-reinicio (cualquier estado).
+   * - isQuickModify: "cambiar/reprogramar mi cita", restringido a IDLE (primera
+   *   interacción) para no interrumpir un agendamiento en curso; en turnos
+   *   posteriores el LLM (isModification) cubre el cambio. Tiene prioridad sobre
+   *   el escape: "cambiar mi cita" empieza por "cambiar" pero NO es un reinicio.
+   */
+  private detectQuickIntent(
+    text: string | undefined,
+    messageType: string | undefined,
+    currentState: ChatState,
+  ): { isQuickCancel: boolean; isQuickEscape: boolean; isQuickModify: boolean } {
+    const isQuickCancel =
+      messageType === 'text' &&
+      !!text &&
+      this.cancelRegex.test(text.trim());
+
+    const isQuickEscape =
+      messageType === 'text' &&
+      !!text &&
+      this.escapeRegex.test(text.trim());
+
+    const isQuickModify =
+      messageType === 'text' &&
+      !!text &&
+      currentState === ChatState.IDLE &&
+      this.modifyRegex.test(text.trim());
+
+    return { isQuickCancel, isQuickEscape, isQuickModify };
+  }
+
   private async processIncomingMessageUnsafe(event: WhatsappInboundEvent) {
     const senderId = event.from || event.sender?.id;
     // Sin remitente no hay nada que procesar ni a quién responder. El guard
@@ -1788,27 +1855,12 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    // Patrones cargados desde chatbot-patterns.txt (ver loadPatterns / reloadPatterns)
-    const isQuickCancel =
-      messageType === 'text' &&
-      !!text &&
-      this.cancelRegex.test(text.trim());
-
-    const isQuickEscape =
-      messageType === 'text' &&
-      !!text &&
-      this.escapeRegex.test(text.trim());
-
-    // Intención de REPROGRAMAR detectada por patrón (sin LLM). La restringimos
-    // a IDLE — la "primera interacción" — para no interrumpir un agendamiento
-    // en curso; en turnos no-estrictos posteriores, el LLM (isModification) ya
-    // cubre el cambio de intención. Tiene prioridad sobre el escape: frases como
-    // "cambiar mi cita" empiezan por "cambiar" pero NO son un reinicio.
-    const isQuickModify =
-      messageType === 'text' &&
-      !!text &&
-      currentState === ChatState.IDLE &&
-      this.modifyRegex.test(text.trim());
+    // Detección de intención rápida por patrón (sin LLM). Ver detectQuickIntent.
+    const { isQuickCancel, isQuickEscape, isQuickModify } = this.detectQuickIntent(
+      text,
+      messageType,
+      currentState,
+    );
 
     // ══════════════════════════════════════════════════════════
     // 🧲 ESCENARIO 2 — INTERRUPCIÓN AMABLE DEL AGENDAMIENTO
@@ -1907,26 +1959,16 @@ export class ChatbotService implements OnModuleInit {
       // El branching por intención se centraliza en el INTENT ROUTER (abajo).
       aiData = await this.extractDataWithLLM(organizationId, text, null);
     } else if (isAudio) {
-      await this.redis.set(`is_ai_flow:${organizationId}:${senderId}`, 'true', 'EX', SESSION_TTL);
-      await this.sendWhatsAppMessage(senderId, '🎧 Permítame un momento, lo estoy escuchando...');
-      const audioCreds = await this.resolveCredentialsForOrg(organizationId);
-      const audioBuffer = audioCreds
-        ? await this.downloadWhatsAppAudio(audioId, audioCreds)
-        : null;
-      if (audioBuffer) {
-        aiData = await this.extractDataWithLLM(organizationId, text ?? null, audioBuffer);
-        // ⭐ Unificación voz↔texto: adoptamos la transcripción literal como el
-        // `text` del turno. A partir de aquí el audio recorre el MISMO camino
-        // determinista que el texto (match por nombre contra el catálogo en
-        // los pasos de menú, FAQ, reprompts), evitando que valores como
-        // "consulta externa" —que el LLM no extrae como `especialidad`— se
-        // pierdan. Solo lo hacemos si la transcripción tiene contenido útil.
-        if (aiData.transcript && aiData.transcript.trim()) {
-          text = aiData.transcript.trim();
-        }
-      } else {
-        aiData.ininteligible = true;
-      }
+      // Pipeline de audio: descarga + transcripción (STT) y, si hay
+      // transcripción útil, adopción como `text` del turno (ver
+      // transcribeAudioTurn). `audioId` está narrowed a string por `isAudio`.
+      ({ aiData, text } = await this.transcribeAudioTurn(
+        organizationId,
+        senderId,
+        audioId,
+        text,
+        aiData,
+      ));
     } else if (
       messageType === 'text' &&
       text &&
