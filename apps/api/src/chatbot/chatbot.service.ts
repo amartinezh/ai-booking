@@ -1923,7 +1923,7 @@ export class ChatbotService implements OnModuleInit {
           aiData = this.simpleExtractFallback(text ?? null, currentState);
         } else {
           this.logger.error(`Gemini caído (${newFails} fallos consecutivos) — mostrando mantenimiento`);
-          const humanPhone = org?.supportPhone || '+573000000000';
+          const humanPhone = org?.supportPhone || '+10 334 45 66';
           const reply = MSGS.iaCaida(humanPhone);
           await this.smartReply(organizationId, senderId, reply);
 

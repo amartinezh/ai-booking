@@ -377,7 +377,7 @@ const FORMAL = {
     ]),
 
   iaCaida: (phone: string) =>
-    `Nuestro sistema está pasando por un mantenimiento breve. 🛠️\n\n` +
+    `Nuestro sistema está pasando por un mantenimiento. 🛠️\n\n` +
     `Mientras tanto, le invito a comunicarse al *${phone}* para que le atiendan directamente.\n\n` +
     `Apenas estemos de vuelta, podremos continuar por aquí. Gracias por su paciencia.`,
 
