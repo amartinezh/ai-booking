@@ -26,7 +26,7 @@ export interface SaveAiConfigInput {
  * extra al renderizar la página.
  */
 export const PROVIDER_MODELS: Record<Exclude<LlmProvider, 'NONE'>, string[]> = {
-    GEMINI: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash'],
+    GEMINI: ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'],
     CHATGPT: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
     CLAUDE: ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5-20251001'],
 };
