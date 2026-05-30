@@ -539,48 +539,140 @@ export class ChatbotService implements OnModuleInit {
       this.logger.warn(
         `Org ${organizationId} sin proveedor LLM configurado — usando fallback simple.`,
       );
-      return {
-        transcript: text, cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
-        fechaSolicitada: null, intent: 'otro',
-        isEscape: false, outOfContext: false, ininteligible: false,
-        isFallback: true, isCancellation: false, isModification: false, isRateLimited: false,
-      };
+      return this.buildEmptyFallback(text, false);
     }
 
-    const maxRetries = await this.organizationSettings.getMaxRetries(organizationId);
+    // Reintentos del proveedor primario: env LLM_MAX_RETRIES (default 5),
+    // antes era 3 vía organization settings.
+    const maxRetries = this.getMaxRetriesFromEnv();
+    const audioInput = audioBuffer
+      ? { base64: audioBuffer.toString('base64'), mimeType: 'audio/ogg' }
+      : null;
 
     try {
-      return await provider.extractSchedulingIntent({
-        text,
-        audio: audioBuffer
-          ? { base64: audioBuffer.toString('base64'), mimeType: 'audio/ogg' }
-          : null,
-      });
-    } catch (e) {
-      // 429: cuota agotada — no reintentar (sería peor), no contar como fallo permanente
+      return await provider.extractSchedulingIntent({ text, audio: audioInput });
+    } catch (e: any) {
+      // 429 cuota agotada: no reintentar (empeora), no contar como fallo permanente.
       if (e?.status === 429) {
-        this.logger.warn(`${provider.name} rate limit (429) — usando fallback simple, sin incrementar contador de fallos`);
-        return {
-          transcript: text, cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
-          fechaSolicitada: null, intent: 'otro',
-          isEscape: false, outOfContext: false, ininteligible: false,
-          isFallback: true, isCancellation: false, isModification: false, isRateLimited: true,
-        };
+        this.logger.warn(
+          `${provider.name} rate limit (429) — usando fallback simple, sin incrementar contador de fallos`,
+        );
+        return this.buildEmptyFallback(text, true);
       }
       if (attempt < maxRetries) {
         const delayMs = attempt * 1500;
-        this.logger.warn(`${provider.name} intento ${attempt} fallido, reintentando en ${delayMs}ms...`);
+        this.logger.warn(
+          `${provider.name} intento ${attempt} fallido, reintentando en ${delayMs}ms...`,
+        );
         await new Promise((r) => setTimeout(r, delayMs));
         return this.extractDataWithLLM(organizationId, text, audioBuffer, attempt + 1);
       }
-      this.logger.error(`Error procesando IA con ${provider.name} tras ${maxRetries} intentos`, e);
-      return {
-        transcript: text, cedula: null, nombre: null, eps: null, especialidad: null, doctor: null,
-        fechaSolicitada: null, intent: 'otro',
-        isEscape: false, outOfContext: false, ininteligible: false,
-        isFallback: true, isCancellation: false, isModification: false, isRateLimited: false,
-      };
+      this.logger.error(
+        `Error procesando IA con ${provider.name} tras ${maxRetries} intentos`,
+        e,
+      );
+
+      // Failover entre proveedores: si LLM_FAILOVER_ENABLED=true, intentar
+      // el resto de la cadena (OpenAI → Claude) con las credenciales que la
+      // misma org tenga guardadas en BD (mapa multi-proveedor cifrado). NO
+      // se usan keys del .env: cada clínica usa SUS llaves.
+      if (this.isFailoverEnabled()) {
+        const failoverResult = await this.tryFailoverChain(
+          organizationId,
+          provider.name,
+          text,
+          audioInput,
+        );
+        if (failoverResult) return failoverResult;
+      }
+
+      return this.buildEmptyFallback(text, false);
     }
+  }
+
+  /** Lee el cap de reintentos del LLM desde el env. Default 5. */
+  private getMaxRetriesFromEnv(): number {
+    const raw = process.env.LLM_MAX_RETRIES;
+    const n = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : 5;
+  }
+
+  /** Switch maestro del failover entre proveedores. Default false. */
+  private isFailoverEnabled(): boolean {
+    return (process.env.LLM_FAILOVER_ENABLED || '').toLowerCase() === 'true';
+  }
+
+  /**
+   * Recorre la cadena de failover [CHATGPT, CLAUDE] saltando el proveedor
+   * primario. Cada candidato se construye a partir de las CREDENCIALES QUE LA
+   * ORG TENGA GUARDADAS EN BD (mapa multi-proveedor cifrado en
+   * AiProviderConfig.encryptedApiConfig). Si no hay key guardada para ese
+   * proveedor, se salta silenciosamente con un warn. Devuelve el primer éxito
+   * o null si todos fallaron / no estaban configurados.
+   *
+   * NOTA: Claude NO acepta audio nativo; el provider de Claude no implementa
+   * STT, así que en turnos de voz Claude no servirá como respaldo (lanzará).
+   * El warn se registra y se continúa con el siguiente candidato.
+   */
+  private async tryFailoverChain(
+    organizationId: string,
+    primaryName: 'GEMINI' | 'CHATGPT' | 'CLAUDE',
+    text: string | null,
+    audio: { base64: string; mimeType: string } | null,
+  ): Promise<SchedulingExtraction | null> {
+    const fullChain: Array<'CHATGPT' | 'CLAUDE'> = ['CHATGPT', 'CLAUDE'];
+    const candidates = fullChain.filter((p) => p !== primaryName);
+
+    for (const candidate of candidates) {
+      const provider = await this.llmFactory.forOrgByProvider(
+        organizationId,
+        candidate,
+      );
+      if (!provider) {
+        this.logger.warn(
+          `[FAILOVER] ${candidate} sin credenciales en BD para la org — saltando`,
+        );
+        continue;
+      }
+      try {
+        this.logger.warn(
+          `[FAILOVER] Intentando ${candidate} tras agotar ${primaryName}`,
+        );
+        const result = await provider.extractSchedulingIntent({ text, audio });
+        this.logger.log(`[FAILOVER] ${candidate} respondió OK`);
+        return result;
+      } catch (err: any) {
+        this.logger.warn(
+          `[FAILOVER] ${candidate} también falló: ${err?.message ?? err}`,
+        );
+        continue;
+      }
+    }
+    return null;
+  }
+
+  /** Forma estándar del fallback simple cuando el LLM no produce extracción. */
+  private buildEmptyFallback(
+    text: string | null,
+    isRateLimited: boolean,
+  ): SchedulingExtraction {
+    return {
+      transcript: text,
+      cedula: null,
+      nombre: null,
+      eps: null,
+      especialidad: null,
+      doctor: null,
+      fechaSolicitada: null,
+      intent: 'otro',
+      isEscape: false,
+      outOfContext: false,
+      ininteligible: false,
+      isFallback: true,
+      isCancellation: false,
+      isModification: false,
+      isRateLimited,
+    };
   }
 
   // Extrae datos básicos del texto cuando Gemini no está disponible.

@@ -5,6 +5,8 @@ import { CryptoService } from '../common/crypto/crypto.service';
 import {
   DecryptedAiConfig,
   LLMProvider,
+  MultiProviderBlob,
+  decodeMultiProviderBlob,
 } from './interfaces/llm-provider.interface';
 import { GeminiProvider } from './providers/gemini.provider';
 import { ChatGptProvider } from './providers/chatgpt.provider';
@@ -53,6 +55,8 @@ export class LlmFactoryService {
   /**
    * Devuelve `null` cuando la organización no tiene proveedor activo.
    * Usar cuando el caller tiene un fallback degradado (ej. ChatbotService).
+   * No cachea: cada llamada relee BD para que un cambio en la UI se aplique
+   * en el siguiente turno sin reiniciar el contenedor.
    */
   async forOrgOrNull(organizationId: string): Promise<LLMProvider | null> {
     const config = await this.prisma.aiProviderConfig.findUnique({
@@ -67,19 +71,59 @@ export class LlmFactoryService {
       return null;
     }
 
-    let decoded: DecryptedAiConfig;
-    try {
-      decoded = this.crypto.decryptJson<DecryptedAiConfig>(
-        config.encryptedApiConfig,
-      );
-    } catch (e: any) {
-      this.logger.error(
-        `Falló desencriptado de AiProviderConfig para org ${organizationId}: ${e.message}`,
+    const byProvider = this.readByProvider(
+      config.encryptedApiConfig,
+      config.activeProvider,
+    );
+    const cfg = byProvider[config.activeProvider];
+    if (!cfg) {
+      this.logger.warn(
+        `Org ${organizationId} marca activeProvider=${config.activeProvider} pero el blob no trae sus credenciales.`,
       );
       return null;
     }
+    return this.build(config.activeProvider, cfg);
+  }
 
-    return this.build(config.activeProvider, decoded);
+  /**
+   * Construye un proveedor ESPECÍFICO (no necesariamente el activo) a partir
+   * de las credenciales guardadas de la org. Devuelve null si esa org no
+   * tiene key para ese proveedor en BD. Usado por el failover del chatbot:
+   * cuando el activo cae, el siguiente intento usa otra entrada del MISMO
+   * mapa multi-proveedor, sin tocar el `.env`.
+   */
+  async forOrgByProvider(
+    organizationId: string,
+    provider: 'GEMINI' | 'CHATGPT' | 'CLAUDE',
+  ): Promise<LLMProvider | null> {
+    const config = await this.prisma.aiProviderConfig.findUnique({
+      where: { organizationId },
+    });
+    if (!config || !config.encryptedApiConfig) return null;
+
+    const byProvider = this.readByProvider(
+      config.encryptedApiConfig,
+      config.activeProvider,
+    );
+    const cfg = byProvider[provider];
+    if (!cfg?.apiKey) return null;
+    return this.build(provider, cfg);
+  }
+
+  /** Desencripta y normaliza al mapa multi-proveedor (con compat single-provider). */
+  private readByProvider(
+    encrypted: string,
+    activeProvider: 'GEMINI' | 'CHATGPT' | 'CLAUDE' | 'NONE',
+  ): MultiProviderBlob['byProvider'] {
+    try {
+      const decoded = this.crypto.decryptJson<unknown>(encrypted);
+      return decodeMultiProviderBlob(decoded, activeProvider);
+    } catch (e: any) {
+      this.logger.error(
+        `Falló desencriptado de AiProviderConfig: ${e.message}`,
+      );
+      return {};
+    }
   }
 
   private build(

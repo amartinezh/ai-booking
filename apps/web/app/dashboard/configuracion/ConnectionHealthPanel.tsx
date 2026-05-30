@@ -12,11 +12,17 @@ import {
     PhoneCall,
     Smartphone,
 } from 'lucide-react';
-import { diagnoseGemini, diagnoseMeta } from '@/app/actions/integrations';
+import { diagnoseLlm, diagnoseMeta } from '@/app/actions/integrations';
 import type {
-    GeminiDiagnosisResult,
+    LlmDiagnosisResult,
     MetaDiagnosisResult,
 } from '@/app/actions/integrations.types';
+
+const PROVIDER_LABEL: Record<'GEMINI' | 'CHATGPT' | 'CLAUDE', string> = {
+    GEMINI: 'Google Gemini',
+    CHATGPT: 'OpenAI ChatGPT',
+    CLAUDE: 'Anthropic Claude',
+};
 
 /**
  * Panel "Salud de la Conexión": dispara los diagnósticos de Gemini y Meta de
@@ -25,28 +31,27 @@ import type {
  * banner de alerta con el error crudo copiable para debugging).
  */
 export default function ConnectionHealthPanel() {
-    const [geminiLoading, setGeminiLoading] = useState(false);
-    const [geminiResult, setGeminiResult] =
-        useState<GeminiDiagnosisResult | null>(null);
+    const [llmLoading, setLlmLoading] = useState(false);
+    const [llmResult, setLlmResult] = useState<LlmDiagnosisResult | null>(null);
 
     const [metaLoading, setMetaLoading] = useState(false);
     const [metaResult, setMetaResult] = useState<MetaDiagnosisResult | null>(
         null,
     );
 
-    const runGemini = async () => {
-        setGeminiLoading(true);
-        setGeminiResult(null);
+    const runLlm = async () => {
+        setLlmLoading(true);
+        setLlmResult(null);
         try {
-            setGeminiResult(await diagnoseGemini());
+            setLlmResult(await diagnoseLlm());
         } catch (e: any) {
-            setGeminiResult({
+            setLlmResult({
                 success: false,
                 error_code: 'UNKNOWN',
                 error_message: e?.message ?? 'Error inesperado en el cliente.',
             });
         } finally {
-            setGeminiLoading(false);
+            setLlmLoading(false);
         }
     };
 
@@ -89,16 +94,16 @@ export default function ConnectionHealthPanel() {
             <div className="flex flex-col sm:flex-row gap-3">
                 <button
                     type="button"
-                    onClick={runGemini}
-                    disabled={geminiLoading}
+                    onClick={runLlm}
+                    disabled={llmLoading}
                     className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors shadow-sm"
                 >
-                    {geminiLoading ? (
+                    {llmLoading ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
                         <Brain className="w-4 h-4" />
                     )}
-                    {geminiLoading ? 'Probando Gemini…' : 'Probar Gemini LLM'}
+                    {llmLoading ? 'Probando servicio…' : 'Probar Servicio'}
                 </button>
 
                 <button
@@ -118,7 +123,7 @@ export default function ConnectionHealthPanel() {
 
             {/* ── Resultados ───────────────────────────────── */}
             <div className="grid gap-4 md:grid-cols-2">
-                <GeminiResultCard loading={geminiLoading} result={geminiResult} />
+                <LlmResultCard loading={llmLoading} result={llmResult} />
                 <MetaResultCard loading={metaLoading} result={metaResult} />
             </div>
         </section>
@@ -126,23 +131,35 @@ export default function ConnectionHealthPanel() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Tarjeta de resultado Gemini
+// Tarjeta de resultado del LLM activo (Gemini / OpenAI / Claude)
 // ─────────────────────────────────────────────────────────────
-function GeminiResultCard({
+function LlmResultCard({
     loading,
     result,
 }: {
     loading: boolean;
-    result: GeminiDiagnosisResult | null;
+    result: LlmDiagnosisResult | null;
 }) {
-    if (loading) return <PendingCard label="Contactando a Google Gemini…" />;
-    if (!result) return <IdleCard label="🧠 Gemini sin probar aún" />;
+    if (loading) return <PendingCard label="Contactando al proveedor de IA…" />;
+    if (!result) return <IdleCard label="🧠 Servicio de IA sin probar aún" />;
+
+    const providerLabel = result.provider ? PROVIDER_LABEL[result.provider] : 'Proveedor';
 
     if (result.success) {
         return (
             <SuccessBanner
-                title="🧠 Conexión con Gemini Exitosa"
+                title={`🧠 ${providerLabel}: conexión exitosa`}
                 metrics={[
+                    {
+                        icon: <Brain className="w-3.5 h-3.5" />,
+                        label: 'Proveedor',
+                        value: providerLabel,
+                    },
+                    {
+                        icon: <Brain className="w-3.5 h-3.5" />,
+                        label: 'Modelo',
+                        value: result.model,
+                    },
                     {
                         icon: <Gauge className="w-3.5 h-3.5" />,
                         label: 'Latencia (RTT)',
@@ -158,9 +175,10 @@ function GeminiResultCard({
         );
     }
 
+    const titleSuffix = result.provider ? ` (${providerLabel}${result.model ? ` · ${result.model}` : ''})` : '';
     return (
         <ErrorBanner
-            title={`💔 Fallo en Gemini: ${result.error_code}`}
+            title={`💔 Fallo en el servicio${titleSuffix}: ${result.error_code}`}
             message={result.error_message}
             rttMs={result.rtt_ms}
         />

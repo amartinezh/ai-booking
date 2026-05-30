@@ -87,6 +87,14 @@ export class GeminiProvider implements LLMProvider {
     const parts: any[] = [SCHEDULING_EXTRACTION_PROMPT];
     if (input.text) parts.push(`Texto del usuario: "${input.text}"`);
     if (input.audio) {
+      // Anclaje de idioma: sin esto, Gemini ocasionalmente alucina la
+      // transcripción de audios cortos en español a otros idiomas
+      // (visto: danés "Det er fantastisk..." en lugar de la frase real).
+      parts.push(
+        'IDIOMA DEL AUDIO: El audio adjunto está en ESPAÑOL (acento colombiano). ' +
+          'Transcribe SIEMPRE en español. NUNCA traduzcas ni interpretes en otro idioma. ' +
+          'Si el audio es muy corto o poco claro, marca "ininteligible": true en vez de inventar palabras.',
+      );
       parts.push({
         inlineData: { data: input.audio.base64, mimeType: input.audio.mimeType },
       });

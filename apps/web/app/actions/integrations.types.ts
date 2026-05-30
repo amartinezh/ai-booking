@@ -29,6 +29,27 @@ export interface DiagnosisError {
 
 export type GeminiDiagnosisResult = GeminiDiagnosisSuccess | DiagnosisError;
 
+/**
+ * Resultado del diagnóstico genérico del proveedor de IA activo.
+ * Incluye explícitamente `provider` y `model` para que la UI muestre
+ * qué servicio se probó (Gemini / OpenAI / Claude).
+ */
+export interface LlmDiagnosisSuccess {
+    success: true;
+    status: 'alive';
+    provider: 'GEMINI' | 'CHATGPT' | 'CLAUDE';
+    model: string;
+    rtt_ms: number;
+    model_response: string;
+}
+
+export interface LlmDiagnosisErrorEx extends DiagnosisError {
+    provider?: 'GEMINI' | 'CHATGPT' | 'CLAUDE';
+    model?: string;
+}
+
+export type LlmDiagnosisResult = LlmDiagnosisSuccess | LlmDiagnosisErrorEx;
+
 export interface MetaDiagnosisSuccess {
     success: true;
     status: 'verified';

@@ -158,10 +158,54 @@ export const PROVIDER_MODELS = {
   CLAUDE: ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5-20251001'],
 } as const;
 
-/** Forma decodificada (en claro) de `AiProviderConfig.encryptedApiConfig`. */
+/** Forma decodificada (en claro) de la entrada de UN proveedor. */
 export interface DecryptedAiConfig {
   apiKey: string;
   model: string;
   // Específico de OpenAI; opcional para los demás.
   organizationId?: string;
+}
+
+/**
+ * Forma actual del blob desencriptado de `AiProviderConfig.encryptedApiConfig`:
+ * mapa por proveedor con las credenciales de CADA uno (no solo el activo).
+ * Esto habilita el failover desde BD: si el activo cae, el código puede leer
+ * la entrada de OpenAI o Claude SIN volver a pedirle la key al usuario.
+ *
+ * La forma vieja (un solo `{apiKey, model, organizationId?}` para el activo)
+ * sigue desencriptándose: ver `decodeMultiProviderBlob` más abajo.
+ */
+export interface MultiProviderBlob {
+  byProvider: Partial<Record<'GEMINI' | 'CHATGPT' | 'CLAUDE', DecryptedAiConfig>>;
+}
+
+/**
+ * Decodifica el blob desencriptado y normaliza a la forma multi-proveedor.
+ * - Si el blob ya trae `byProvider`, se devuelve tal cual.
+ * - Si trae la forma vieja (single-provider), se interpreta como las
+ *   credenciales del proveedor activo y se ubica en el mapa.
+ * - Cualquier otra forma devuelve un mapa vacío (defensa).
+ */
+export function decodeMultiProviderBlob(
+  decoded: unknown,
+  activeProvider: 'GEMINI' | 'CHATGPT' | 'CLAUDE' | 'NONE',
+): MultiProviderBlob['byProvider'] {
+  if (
+    decoded &&
+    typeof decoded === 'object' &&
+    'byProvider' in (decoded as Record<string, unknown>) &&
+    typeof (decoded as MultiProviderBlob).byProvider === 'object'
+  ) {
+    return (decoded as MultiProviderBlob).byProvider ?? {};
+  }
+  // Compat hacia atrás: forma vieja single-provider.
+  if (
+    decoded &&
+    typeof decoded === 'object' &&
+    'apiKey' in (decoded as Record<string, unknown>) &&
+    activeProvider !== 'NONE'
+  ) {
+    return { [activeProvider]: decoded as DecryptedAiConfig };
+  }
+  return {};
 }

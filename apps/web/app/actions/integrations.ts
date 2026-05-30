@@ -7,6 +7,7 @@ import { cookies } from 'next/headers';
 import { getSession } from '@/lib/session';
 import type {
     GeminiDiagnosisResult,
+    LlmDiagnosisResult,
     MetaDiagnosisResult,
 } from './integrations.types';
 
@@ -53,6 +54,31 @@ export async function diagnoseGemini(): Promise<GeminiDiagnosisResult> {
     }
     try {
         return (await callBackend('/integrations/diagnose/gemini')) as GeminiDiagnosisResult;
+    } catch (e: any) {
+        return {
+            success: false,
+            error_code: 'UNKNOWN',
+            error_message: e?.message ?? 'Error desconocido contactando al backend.',
+        };
+    }
+}
+
+/**
+ * Diagnóstico genérico del proveedor de IA activo (Gemini / OpenAI / Claude).
+ * El botón "Probar Servicio" del dashboard pega aquí en vez del específico
+ * de Gemini, para que el resultado refleje qué proveedor se probó realmente.
+ */
+export async function diagnoseLlm(): Promise<LlmDiagnosisResult> {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') {
+        return {
+            success: false,
+            error_code: 'AUTH',
+            error_message: 'Acceso denegado.',
+        };
+    }
+    try {
+        return (await callBackend('/integrations/diagnose/llm')) as LlmDiagnosisResult;
     } catch (e: any) {
         return {
             success: false,

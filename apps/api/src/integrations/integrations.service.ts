@@ -3,8 +3,12 @@ import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { LlmFactoryService } from '../llm/llm-factory.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { CryptoService } from '../common/crypto/crypto.service';
+import type { DecryptedAiConfig } from '../llm/interfaces/llm-provider.interface';
 import {
   GeminiDiagnosisResult,
+  LlmDiagnosisResult,
   MetaDiagnosisResult,
 } from './dto/diagnostics.types';
 
@@ -31,7 +35,83 @@ export class IntegrationsService {
     private readonly llmFactory: LlmFactoryService,
     private readonly whatsappCreds: WhatsappCredentialsService,
     private readonly http: HttpService,
+    private readonly prisma: PrismaService,
+    private readonly crypto: CryptoService,
   ) {}
+
+  // ── Generic LLM (proveedor activo: Gemini / OpenAI / Claude) ──────────────
+
+  /**
+   * Diagnóstico genérico del proveedor de IA activo de la organización.
+   * A diferencia de diagnoseGemini, NO asume Gemini: detecta el proveedor
+   * configurado (GEMINI/CHATGPT/CLAUDE) y devuelve provider+model en la
+   * respuesta para que la UI muestre qué servicio se probó realmente.
+   */
+  async diagnoseLlm(organizationId: string): Promise<LlmDiagnosisResult> {
+    const config = await this.prisma.aiProviderConfig.findUnique({
+      where: { organizationId },
+    });
+    if (!config || config.activeProvider === 'NONE') {
+      return {
+        success: false,
+        error_code: 'NO_PROVIDER',
+        error_message:
+          'La organización no tiene un proveedor de IA activo. Configúralo en Integración de IA.',
+      };
+    }
+
+    // El modelo vive cifrado en encryptedApiConfig; lo desciframos solo para
+    // exponerlo en el resultado del diagnóstico (la API key NUNCA se devuelve).
+    let model = '—';
+    if (config.encryptedApiConfig) {
+      try {
+        const decoded = this.crypto.decryptJson<DecryptedAiConfig>(
+          config.encryptedApiConfig,
+        );
+        model = decoded.model || '—';
+      } catch (e: any) {
+        this.logger.warn(
+          `No se pudo descifrar AiProviderConfig de ${organizationId}: ${e.message}`,
+        );
+      }
+    }
+
+    const provider = await this.llmFactory.forOrgOrNull(organizationId);
+    if (!provider) {
+      return {
+        success: false,
+        error_code: 'NO_PROVIDER',
+        error_message:
+          'El proveedor configurado no se pudo instanciar (credenciales corruptas o faltantes).',
+        provider: config.activeProvider as 'GEMINI' | 'CHATGPT' | 'CLAUDE',
+        model,
+      };
+    }
+
+    const startedAt = Date.now();
+    try {
+      const modelResponse = await this.withTimeout(
+        provider.answerFAQ(
+          'Eres un sonda de salud. Responde única y exactamente con el texto que envíe el usuario, sin agregar nada.',
+          'echo: ok',
+        ),
+        GEMINI_TIMEOUT_MS,
+        'LLM_TIMEOUT',
+      );
+      return {
+        success: true,
+        status: 'alive',
+        provider: provider.name,
+        model,
+        rtt_ms: Date.now() - startedAt,
+        model_response: (modelResponse ?? '').trim() || 'ok',
+      };
+    } catch (error: any) {
+      const rtt_ms = Date.now() - startedAt;
+      const base = this.classifyGeminiError(error, rtt_ms);
+      return { ...base, provider: provider.name, model };
+    }
+  }
 
   // ── Gemini ────────────────────────────────────────────────────────────────
 

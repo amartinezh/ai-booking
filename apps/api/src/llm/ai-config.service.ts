@@ -3,7 +3,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import {
   DecryptedAiConfig,
+  MultiProviderBlob,
   PROVIDER_MODELS,
+  decodeMultiProviderBlob,
 } from './interfaces/llm-provider.interface';
 import type {
   PublicAiConfig,
@@ -33,23 +35,17 @@ export class AiConfigService {
       };
     }
 
-    let decoded: DecryptedAiConfig | null = null;
-    if (row.encryptedApiConfig) {
-      try {
-        decoded = this.crypto.decryptJson<DecryptedAiConfig>(
-          row.encryptedApiConfig,
-        );
-      } catch {
-        decoded = null;
-      }
-    }
+    // Lee el mapa multi-proveedor (compat con la forma vieja single-provider).
+    const byProvider = this.readByProvider(row.encryptedApiConfig, row.activeProvider);
+    const activeCfg =
+      row.activeProvider !== 'NONE' ? byProvider[row.activeProvider] : undefined;
 
     return {
       activeProvider: row.activeProvider,
-      model: decoded?.model ?? null,
-      hasApiKey: Boolean(decoded?.apiKey),
-      apiKeyLast4: decoded?.apiKey ? decoded.apiKey.slice(-4) : null,
-      openaiOrganizationId: decoded?.organizationId ?? null,
+      model: activeCfg?.model ?? null,
+      hasApiKey: Boolean(activeCfg?.apiKey),
+      apiKeyLast4: activeCfg?.apiKey ? activeCfg.apiKey.slice(-4) : null,
+      openaiOrganizationId: activeCfg?.organizationId ?? null,
       updatedAt: row.updatedAt,
     };
   }
@@ -61,7 +57,8 @@ export class AiConfigService {
     const { activeProvider } = input;
 
     if (activeProvider === 'NONE') {
-      // Desactivar IA: limpiamos el blob encriptado.
+      // Desactivar IA: limpiamos el blob encriptado entero (también las keys
+      // de respaldo). Es consistente con "modo manual: nada de IA".
       await this.prisma.aiProviderConfig.upsert({
         where: { organizationId },
         create: {
@@ -82,22 +79,22 @@ export class AiConfigService {
         ? input.model
         : allowedModels[0];
 
-    // Si el frontend NO mandó apiKey, conservamos la existente (UX "no rotar").
+    // Leemos el mapa actual para PRESERVAR las credenciales de los otros
+    // proveedores. Sin esto, al cambiar de Gemini a OpenAI se perdía la key
+    // de Gemini y el failover no tenía a quién recurrir.
+    const existing = await this.prisma.aiProviderConfig.findUnique({
+      where: { organizationId },
+    });
+    const byProvider = this.readByProvider(
+      existing?.encryptedApiConfig ?? null,
+      existing?.activeProvider ?? 'NONE',
+    );
+
+    // Si el frontend NO mandó apiKey, conservamos la del proveedor que se
+    // está activando (UX "no rotar"). Si tampoco hay key previa, exigimos una.
     let apiKey = input.apiKey?.trim() || '';
     if (!apiKey) {
-      const existing = await this.prisma.aiProviderConfig.findUnique({
-        where: { organizationId },
-      });
-      if (existing?.encryptedApiConfig) {
-        try {
-          const decoded = this.crypto.decryptJson<DecryptedAiConfig>(
-            existing.encryptedApiConfig,
-          );
-          apiKey = decoded.apiKey;
-        } catch {
-          // Si no se puede leer, exigimos nueva apiKey.
-        }
-      }
+      apiKey = byProvider[activeProvider]?.apiKey ?? '';
     }
     if (!apiKey) {
       throw new BadRequestException(
@@ -105,7 +102,8 @@ export class AiConfigService {
       );
     }
 
-    const decoded: DecryptedAiConfig = {
+    // Merge: actualizamos SOLO la entrada del proveedor que se está guardando.
+    byProvider[activeProvider] = {
       apiKey,
       model,
       ...(activeProvider === 'CHATGPT' && input.openaiOrganizationId
@@ -113,7 +111,8 @@ export class AiConfigService {
         : {}),
     };
 
-    const encryptedApiConfig = this.crypto.encryptJson(decoded);
+    const blob: MultiProviderBlob = { byProvider };
+    const encryptedApiConfig = this.crypto.encryptJson(blob);
 
     await this.prisma.aiProviderConfig.upsert({
       where: { organizationId },
@@ -126,5 +125,22 @@ export class AiConfigService {
     });
 
     return this.getPublic(organizationId);
+  }
+
+  /**
+   * Desencripta el blob y lo normaliza al mapa por proveedor.
+   * Tolerante a la forma vieja (single-provider) y a errores de descifrado.
+   */
+  private readByProvider(
+    encrypted: string | null,
+    activeProvider: 'GEMINI' | 'CHATGPT' | 'CLAUDE' | 'NONE',
+  ): MultiProviderBlob['byProvider'] {
+    if (!encrypted) return {};
+    try {
+      const decoded = this.crypto.decryptJson<unknown>(encrypted);
+      return decodeMultiProviderBlob(decoded, activeProvider);
+    } catch {
+      return {};
+    }
   }
 }

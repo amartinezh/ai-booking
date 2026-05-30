@@ -10,6 +10,7 @@ import { CurrentTenant } from '../common/current-tenant.decorator';
 import { IntegrationsService } from './integrations.service';
 import type {
   GeminiDiagnosisResult,
+  LlmDiagnosisResult,
   MetaDiagnosisResult,
 } from './dto/diagnostics.types';
 
@@ -31,6 +32,20 @@ export class IntegrationsController {
   ): Promise<GeminiDiagnosisResult> {
     if (!organizationId) throw new ForbiddenException('Sin organización.');
     return this.integrations.diagnoseGemini(organizationId);
+  }
+
+  /**
+   * Diagnóstico genérico del proveedor de IA activo (Gemini / OpenAI / Claude).
+   * El nuevo "Probar Servicio" del dashboard pega aquí; la respuesta incluye
+   * provider+model para que la UI muestre qué servicio se probó realmente.
+   */
+  @Get('diagnose/llm')
+  @Roles('ORG_ADMIN')
+  async diagnoseLlm(
+    @CurrentTenant() organizationId: string,
+  ): Promise<LlmDiagnosisResult> {
+    if (!organizationId) throw new ForbiddenException('Sin organización.');
+    return this.integrations.diagnoseLlm(organizationId);
   }
 
   @Get('diagnose/meta')
