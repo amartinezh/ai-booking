@@ -2447,12 +2447,15 @@ export class ChatbotService implements OnModuleInit {
       // como los demás pasos estrictos, no llama al LLM y fluye al switch.
       currentState === ChatState.AWAITING_INTERRUPT_CONFIRMATION;
 
-    // Pasos de lista de espera que esperan un SÍ/NO. A diferencia del resto de
-    // pasos estrictos, ESTOS aceptan voz: el audio se transcribe y la respuesta
-    // se normaliza con interpretYesNo (texto y voz sirven por igual).
-    const isWaitlistYesNoStep =
+    // Pasos que esperan un SÍ/NO. A diferencia del resto de pasos estrictos,
+    // ESTOS aceptan voz: el audio se transcribe y la respuesta se normaliza
+    // con interpretYesNo (texto y voz sirven por igual). Incluye la
+    // CONFIRMACIÓN de la cita (AWAITING_CONFIRMATION) — sin esto, el "Sí"
+    // hablado se rechazaba como audioPasoEstricto y el flujo no cerraba.
+    const isYesNoStep =
       currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
-      currentState === ChatState.AWAITING_WAITLIST_OPTIN;
+      currentState === ChatState.AWAITING_WAITLIST_OPTIN ||
+      currentState === ChatState.AWAITING_CONFIRMATION;
 
     // Pasos de SELECCIÓN POR LETRA (elegir horario o cita de un listado A/B/C).
     // Igual que el SÍ/NO de waitlist, ESTOS aceptan voz: el audio se transcribe
@@ -2480,7 +2483,7 @@ export class ChatbotService implements OnModuleInit {
 
     const isAudio = messageType === 'audio' && !!audioId;
 
-    if (isAudio && isStrictStep && !isWaitlistYesNoStep && !isLetterSelectionStep) {
+    if (isAudio && isStrictStep && !isYesNoStep && !isLetterSelectionStep) {
       const reply = MSGS.audioPasoEstricto();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -2731,10 +2734,11 @@ export class ChatbotService implements OnModuleInit {
       }
     }
 
-    // En los pasos SÍ/NO de la cola con una respuesta usable (texto o transcripción
-    // de voz), saltamos los guardas de outOfContext/ininteligible: el LLM tiende a
-    // marcar un "sí"/"no" suelto como fuera de contexto y bloquearía el turno.
-    const waitlistVoiceAnswer = isWaitlistYesNoStep && !!text && !!text.trim();
+    // En los pasos SÍ/NO (waitlist + confirmación de cita) con una respuesta
+    // usable (texto o transcripción de voz), saltamos los guardas de
+    // outOfContext/ininteligible: el LLM tiende a marcar un "sí"/"no" suelto
+    // como fuera de contexto y bloquearía el turno.
+    const yesNoVoiceAnswer = isYesNoStep && !!text && !!text.trim();
 
     // Voz en pasos de menú (servicio/EPS): el LLM, sin contexto conversacional,
     // marca una EPS suelta ("Sura", "Nueva EPS") como outOfContext/ininteligible
@@ -2747,7 +2751,7 @@ export class ChatbotService implements OnModuleInit {
     // sin regresión por escrito.
     const menuVoiceAnswer = isMenuStep && !!text && !!text.trim();
 
-    if (aiData.outOfContext && !waitlistVoiceAnswer && !menuVoiceAnswer) {
+    if (aiData.outOfContext && !yesNoVoiceAnswer && !menuVoiceAnswer) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
       const reply = MSGS.outOfContext(botName);
       await this.smartReply(organizationId, senderId, reply);
@@ -2761,7 +2765,7 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    if (aiData.ininteligible && !waitlistVoiceAnswer && !menuVoiceAnswer) {
+    if (aiData.ininteligible && !yesNoVoiceAnswer && !menuVoiceAnswer) {
       await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
       const reply = MSGS.ininteligible();
       await this.smartReply(organizationId, senderId, reply);
@@ -3536,9 +3540,14 @@ export class ChatbotService implements OnModuleInit {
   /** Handler de estado: AWAITING_CONFIRMATION. Extraído de processIncomingMessageUnsafe (#2). */
   private async handleAwaitingConfirmation(ctx: ChatTurnContext): Promise<void> {
     const { organizationId, senderId, text, MSGS, orgName, retriesKey, retriesCount } = ctx;
+    // Interpretación tolerante a voz: una transcripción tipo "Sí, por favor"
+    // o "Confirmo" debe contar como SÍ (mismo patrón que la cola de espera).
+    // El whitelist literal anterior ('SI'/'SÍ') sólo matcheaba el texto exacto
+    // y fallaba con casi cualquier transcripción de audio.
+    const decision = this.interpretYesNo(text);
     const respuesta = text?.toUpperCase().trim() || '';
 
-    if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
+    if (decision === 'SI') {
       const cedulaFinal = await this.redis.get(`temp_cedula:${organizationId}:${senderId}`);
       const nombreFinal = await this.redis.get(`temp_nombre:${organizationId}:${senderId}`);
       const specFinal = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`);
@@ -3639,7 +3648,7 @@ export class ChatbotService implements OnModuleInit {
 
       await this.cleanUpSession(organizationId, senderId);
 
-    } else if (['NO', 'NO.', 'CANCELAR'].includes(respuesta)) {
+    } else if (decision === 'NO') {
       const reply = MSGS.citaNoConfirmada();
       await this.smartReply(organizationId, senderId, reply);
       await this.cleanUpSession(organizationId, senderId);
