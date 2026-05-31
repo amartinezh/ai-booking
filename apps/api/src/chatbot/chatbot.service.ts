@@ -2078,6 +2078,13 @@ export class ChatbotService implements OnModuleInit {
       // Adoptamos la cédula normalizada para que la cascada (finalCedula) y el
       // short-circuit de waitlist la vean igual que si hubiera llegado por texto.
       aiData.cedula = cedulaVoz;
+      // El LLM, al ver "90 90 90" sin contexto, suele marcar outOfContext/
+      // ininteligible y los guards aguas abajo matarían el turno aunque la
+      // cédula ya esté recuperada. Espejo de `applyVoiceLetterSelection`:
+      // si la voz pudo resolverse a un dato útil, los flags meta del LLM
+      // dejan de ser válidos.
+      aiData.outOfContext = false;
+      aiData.ininteligible = false;
     } else if (!aiData.isEscape && !aiData.isCancellation && !aiData.isModification) {
       // Sin dígitos tras normalizar: NO reentramos al flujo (evita el loop de
       // SÍ/NO). Reintento acotado pidiendo la cédula por texto; al agotar
@@ -4577,17 +4584,72 @@ export class ChatbotService implements OnModuleInit {
   // el handler del paso (igual que en el flujo de texto).
   private extractCedulaFromSpeech(text: string | undefined | null): string {
     if (!text) return '';
-    const wordToDigit: Record<string, string> = {
-      cero: '0', uno: '1', una: '1', dos: '2', tres: '3', cuatro: '4',
-      cinco: '5', seis: '6', siete: '7', ocho: '8', nueve: '9',
-    };
-    const normalized = text
+    // Pasada multi-etapa de español hablado → dígitos. El ORDEN importa: los
+    // compuestos largos se reemplazan ANTES que los simples, así "noventa y
+    // nueve" se convierte en "99" antes de que "noventa" se vuelva "90". Los
+    // dígitos producidos se separan por espacios y luego se concatenan en
+    // orden, así "noventa, noventa, noventa" → "909090" y "uno cero ocho ocho"
+    // → "1088". Solo cubre 0–99 (más "cien"): los pacientes que dictan cédula
+    // suelen usar dígitos sueltos o pares; los "ciento X" se omiten porque
+    // crearían ambigüedad ("ciento ocho" ≠ "108" si el siguiente número se
+    // pega como dígito independiente).
+    let s = text
       .toLowerCase()
       .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '') // quita tildes (marcas diacriticas)
-      .replace(/[a-z]+/g, (w) => (w in wordToDigit ? wordToDigit[w] : ' ')); // palabra→dígito; resto fuera
-    // Tras mapear palabras numéricas, conservamos únicamente dígitos.
-    return normalized.replace(/\D/g, '');
+      .replace(/[̀-ͯ]/g, ''); // quita tildes
+
+    // (1) Decenas + "y" + unidad: 31..99 excepto 21..29 (que es "veintiX").
+    const decenas: Record<string, number> = {
+      treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60,
+      setenta: 70, ochenta: 80, noventa: 90,
+    };
+    const unidades: Record<string, number> = {
+      uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5,
+      seis: 6, siete: 7, ocho: 8, nueve: 9,
+    };
+    const decRe = Object.keys(decenas).join('|');
+    const uniRe = Object.keys(unidades).join('|');
+    s = s.replace(
+      new RegExp(`\\b(${decRe})\\s+y\\s+(${uniRe})\\b`, 'g'),
+      (_m, d: string, u: string) => ` ${decenas[d] + unidades[u]} `,
+    );
+
+    // (2) Compuestos "veintiX" (21..29) — palabra única.
+    const veinti: Record<string, number> = {
+      veintiuno: 21, veintiuna: 21, veintidos: 22, veintitres: 23,
+      veinticuatro: 24, veinticinco: 25, veintiseis: 26,
+      veintisiete: 27, veintiocho: 28, veintinueve: 29,
+    };
+    for (const [w, n] of Object.entries(veinti)) {
+      s = s.replace(new RegExp(`\\b${w}\\b`, 'g'), ` ${n} `);
+    }
+
+    // (3) Adolescentes 10..19.
+    const teens: Record<string, number> = {
+      diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
+      dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19,
+    };
+    for (const [w, n] of Object.entries(teens)) {
+      s = s.replace(new RegExp(`\\b${w}\\b`, 'g'), ` ${n} `);
+    }
+
+    // (4) Decenas sueltas 20..90.
+    s = s.replace(/\bveinte\b/g, ' 20 ');
+    for (const [w, n] of Object.entries(decenas)) {
+      s = s.replace(new RegExp(`\\b${w}\\b`, 'g'), ` ${n} `);
+    }
+
+    // (5) "cien" → 100 (solo cuando va solo; "ciento X" no se cubre).
+    s = s.replace(/\bcien\b/g, ' 100 ');
+
+    // (6) Dígitos sueltos 0..9.
+    const singles: Record<string, number> = { cero: 0, ...unidades };
+    for (const [w, n] of Object.entries(singles)) {
+      s = s.replace(new RegExp(`\\b${w}\\b`, 'g'), ` ${n} `);
+    }
+
+    // (7) Cualquier otra letra/símbolo fuera: quedan solo dígitos en orden.
+    return s.replace(/\D/g, '');
   }
 
   private interpretYesNo(text: string | undefined | null): 'SI' | 'NO' | null {
