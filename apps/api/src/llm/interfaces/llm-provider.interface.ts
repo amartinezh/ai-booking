@@ -30,10 +30,17 @@ export interface CatalogOption {
  * catálogo (p.ej. "Assura"≈"Sura", "9 PS"≈"Nueva EPS"), el modelo prefiere
  * la opción del catálogo en vez de transcribir lo que oyó literal. Solo
  * lista los NOMBRES; los ids se resuelven contra BD aguas abajo.
+ *
+ * `letterOptions` cubre los pasos de SELECCIÓN POR LETRA (elegir un horario
+ * o cita de un listado A/B/C...). El audio de una sola letra suele ser muy
+ * corto y Gemini lo marca `ininteligible`; el hint de letras visibles le
+ * dice "esto es selección de menú: si oyes A/Be/Ce, transcríbelo como esa
+ * letra mayúscula". Resuelve el caso "no funciona con letras" del log.
  */
 export interface VocabularyHints {
   eps?: string[];
   services?: string[];
+  letterOptions?: string[];
 }
 
 /**

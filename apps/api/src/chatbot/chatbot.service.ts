@@ -1700,6 +1700,7 @@ export class ChatbotService implements OnModuleInit {
     audioId: string,
     text: string | undefined,
     aiData: SchedulingExtraction,
+    currentState: ChatState,
   ): Promise<{ aiData: SchedulingExtraction; text: string | undefined }> {
     await this.redis.set(`is_ai_flow:${organizationId}:${senderId}`, 'true', 'EX', SESSION_TTL);
     await this.sendWhatsAppMessage(senderId, '🎧 Permítame un momento, lo estoy escuchando...');
@@ -1709,10 +1710,16 @@ export class ChatbotService implements OnModuleInit {
       : null;
     if (audioBuffer) {
       // Capa 1 (anclaje de vocabulario): pasamos el catálogo activo del tenant
-      // al LLM para que la STT/extracción sesgue hacia los nombres reales
-      // (mitiga "Sura"→"Assura", "Nueva EPS"→"9 PS" en origen). Falla blanda:
-      // si la lectura del catálogo falla, seguimos sin hints (no regresión).
-      const vocabularyHints = await this.loadVocabularyHints(organizationId);
+      // + las letras visibles del menú (cuando el estado es de selección por
+      // letra) al LLM para sesgar STT/extracción hacia los nombres reales
+      // (mitiga "Sura"→"Assura", "Nueva EPS"→"9 PS", y "A" marcado
+      // ininteligible en AWAITING_DATE). Falla blanda: si la lectura falla,
+      // seguimos sin hints (sin regresión).
+      const vocabularyHints = await this.loadVocabularyHints(
+        organizationId,
+        senderId,
+        currentState,
+      );
       aiData = await this.extractDataWithLLM(
         organizationId,
         text ?? null,
@@ -1730,17 +1737,21 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
-   * Carga los nombres ACTIVOS de EPS y servicios del tenant como "vocab hints"
-   * para anclar al LLM en transcripción y extracción (Capa 1). La lista crece
-   * automáticamente cuando la clínica agrega entidades en el dashboard, sin
-   * tocar código. Devuelve `undefined` si no hay nombres o si hay error (el
-   * LLM funciona sin hints — comportamiento previo).
+   * Carga los nombres ACTIVOS de EPS y servicios del tenant + las letras
+   * visibles del menú actual (cuando aplica) como "vocab hints" para anclar
+   * al LLM en transcripción y extracción (Capa 1). La lista de EPS/servicios
+   * crece automáticamente cuando la clínica agrega entidades en el dashboard.
+   * Las `letterOptions` se leen de Redis para pasos `isLetterSelectionState`
+   * (resuelve el caso "audio corto de una sola letra marcado ininteligible").
+   * Devuelve `undefined` si no hay vocabulario o si hay error (sin regresión).
    */
   private async loadVocabularyHints(
     organizationId: string,
+    senderId?: string,
+    currentState?: ChatState,
   ): Promise<VocabularyHints | undefined> {
     try {
-      const [eps, services] = await Promise.all([
+      const [eps, services, letterOptions] = await Promise.all([
         this.prisma.eps.findMany({
           where: { organizationId, isActive: true },
           select: { name: true },
@@ -1749,13 +1760,79 @@ export class ChatbotService implements OnModuleInit {
           where: { organizationId, isActive: true },
           select: { name: true },
         }),
+        senderId && currentState
+          ? this.loadActiveSlotLetters(organizationId, senderId, currentState)
+          : Promise.resolve<string[] | undefined>(undefined),
       ]);
       const epsNames = eps.map((e) => e.name).filter((n) => !!n);
       const svcNames = services.map((s) => s.name).filter((n) => !!n);
-      if (epsNames.length === 0 && svcNames.length === 0) return undefined;
-      return { eps: epsNames, services: svcNames };
+      if (
+        epsNames.length === 0 &&
+        svcNames.length === 0 &&
+        (!letterOptions || letterOptions.length === 0)
+      ) {
+        return undefined;
+      }
+      return {
+        eps: epsNames.length > 0 ? epsNames : undefined,
+        services: svcNames.length > 0 ? svcNames : undefined,
+        letterOptions: letterOptions && letterOptions.length > 0 ? letterOptions : undefined,
+      };
     } catch (e: any) {
       this.logger.warn(`No se pudieron cargar vocab hints: ${e?.message}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * Lee de Redis las LETRAS visibles del menú actual cuando el estado es de
+   * selección por letra. Cada estado guarda los slots/citas en un patrón
+   * distinto; aquí se centraliza qué patrón corresponde a cada uno. Devuelve
+   * la lista ordenada (A, B, C, ...) o `undefined` si no aplica/no hay datos.
+   * Solo lee `keys` con un patrón acotado al paciente: no impacta a otras
+   * sesiones ni escanea el keyspace global.
+   */
+  private async loadActiveSlotLetters(
+    organizationId: string,
+    senderId: string,
+    currentState: ChatState,
+  ): Promise<string[] | undefined> {
+    let pattern: string | null = null;
+    let regex: RegExp | null = null;
+    switch (currentState) {
+      case ChatState.AWAITING_DATE:
+        // Slots de agendamiento: `temp_slot_${letra}:${senderId}` (sin orgId).
+        // También existen claves `temp_slot_${letra}_fecha:${senderId}` que
+        // hay que descartar: nos quedamos solo con la base.
+        pattern = `temp_slot_*:${senderId}`;
+        regex = /^temp_slot_([A-Z]):/;
+        break;
+      case ChatState.AWAITING_CANCEL_SELECTION:
+        pattern = `temp_cancel_apt_*:${organizationId}:${senderId}`;
+        regex = /^temp_cancel_apt_([A-Z]):/;
+        break;
+      case ChatState.AWAITING_MODIFY_SELECTION:
+        pattern = `temp_modify_apt_*:${organizationId}:${senderId}`;
+        regex = /^temp_modify_apt_([A-Z]):/;
+        break;
+      case ChatState.AWAITING_MODIFY_NEW_SLOT:
+        pattern = `temp_modify_slot_*:${organizationId}:${senderId}`;
+        regex = /^temp_modify_slot_([A-Z]):/;
+        break;
+      default:
+        return undefined;
+    }
+    try {
+      const keys = await this.redis.keys(pattern);
+      const seen = new Set<string>();
+      for (const k of keys) {
+        const m = k.match(regex);
+        if (m) seen.add(m[1]);
+      }
+      const letters = [...seen].sort();
+      return letters.length > 0 ? letters : undefined;
+    } catch (e: any) {
+      this.logger.warn(`No se pudieron leer letras del menú: ${e?.message}`);
       return undefined;
     }
   }
@@ -1866,7 +1943,11 @@ export class ChatbotService implements OnModuleInit {
       // El branching por intención se centraliza en el INTENT ROUTER (abajo).
       // Capa 1: el primer turno extrae eps/especialidad de texto libre — pasar
       // el catálogo del tenant ayuda al LLM a mapear typos del usuario.
-      const vocabularyHints = await this.loadVocabularyHints(organizationId);
+      const vocabularyHints = await this.loadVocabularyHints(
+        organizationId,
+        senderId,
+        currentState,
+      );
       aiData = await this.extractDataWithLLM(organizationId, text, null, 1, vocabularyHints);
     } else if (isAudio) {
       // Pipeline de audio: descarga + transcripción (STT) y, si hay
@@ -1878,6 +1959,7 @@ export class ChatbotService implements OnModuleInit {
         audioId!, // isAudio garantiza audioId no nulo
         text,
         aiData,
+        currentState,
       ));
     } else if (
       messageType === 'text' &&
@@ -1915,7 +1997,11 @@ export class ChatbotService implements OnModuleInit {
       // Gemini con inputs cortos como "a", "B", "Sura" tiende a marcar ininteligible=true
       // y bloquea el flujo. La voz sí va al extractor (manejada arriba en isAudio).
     } else if (messageType === 'text' && text && !isStrictStep) {
-      const vocabularyHints = await this.loadVocabularyHints(organizationId);
+      const vocabularyHints = await this.loadVocabularyHints(
+        organizationId,
+        senderId,
+        currentState,
+      );
       aiData = await this.extractDataWithLLM(organizationId, text, null, 1, vocabularyHints);
     }
     return { aiData, text };

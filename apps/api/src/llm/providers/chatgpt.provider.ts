@@ -28,8 +28,12 @@ const AUDIO_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions
 function buildWhisperBiasingPrompt(hints?: VocabularyHints): string {
   const eps = (hints?.eps ?? []).filter((s) => s && s.trim());
   const services = (hints?.services ?? []).filter((s) => s && s.trim());
-  if (eps.length === 0 && services.length === 0) return '';
+  const letters = (hints?.letterOptions ?? [])
+    .filter((s) => s && s.trim())
+    .map((s) => s.trim().toUpperCase());
+  if (eps.length === 0 && services.length === 0 && letters.length === 0) return '';
   const segs: string[] = [];
+  if (letters.length > 0) segs.push(`Selección por letra: ${letters.join(', ')}.`);
   if (eps.length > 0) segs.push(`EPS: ${eps.join(', ')}.`);
   if (services.length > 0) segs.push(`Servicios: ${services.join(', ')}.`);
   return `Vocabulario de la clínica (en español, Colombia). ${segs.join(' ')}`;

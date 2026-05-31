@@ -89,28 +89,52 @@ export function parseCatalogMappingResponse(raw: string): { id: string | null } 
 /**
  * Construye el bloque de "vocab hints" para anclar al LLM al catálogo real del
  * tenant durante la transcripción/extracción (especialmente audio). Sin esto,
- * el STT del LLM tiende a alucinar fonéticamente nombres locales: "Sura" → "Assura",
- * "Nueva EPS" → "9 PS". Devuelve string vacío cuando no hay vocabulario que pasar
- * (no contamina el prompt). El llamador lo concatena al final del system/user prompt.
+ * el STT del LLM tiende a alucinar fonéticamente nombres locales ("Sura" →
+ * "Assura", "Nueva EPS" → "9 PS") y a marcar `ininteligible` los audios cortos
+ * de selección por letra ("A", "Be") que no logra mapear a su vocabulario.
+ * Devuelve string vacío cuando no hay vocabulario que pasar (no contamina el
+ * prompt). El llamador lo concatena al final del system/user prompt.
  */
 export function buildVocabularyAnchor(hints?: {
   eps?: string[];
   services?: string[];
+  letterOptions?: string[];
 }): string {
   const eps = (hints?.eps ?? []).filter((s) => s && s.trim()).map((s) => s.trim());
   const services = (hints?.services ?? []).filter((s) => s && s.trim()).map((s) => s.trim());
-  if (eps.length === 0 && services.length === 0) return '';
+  const letters = (hints?.letterOptions ?? [])
+    .filter((s) => s && s.trim())
+    .map((s) => s.trim().toUpperCase());
+  if (eps.length === 0 && services.length === 0 && letters.length === 0) return '';
 
-  const lines: string[] = [
-    'VOCABULARIO DE LA CLÍNICA (anclaje fonético):',
-    'El paciente probablemente mencione un término de las listas siguientes. Si oyes o lees algo FONÉTICAMENTE SIMILAR a uno de estos términos (typos, sustituciones, palabras pegadas como "Assura"→"Sura", o números hablados como "9 ps"→"Nueva EPS"), trátalo como ese término exacto:',
-  ];
-  if (eps.length > 0) lines.push(`- EPS / aseguradoras válidas: ${eps.join(', ')}.`);
-  if (services.length > 0) lines.push(`- Servicios / especialidades válidas: ${services.join(', ')}.`);
-  lines.push(
-    'En "transcript" conserva la transcripción literal del audio. En "eps" / "especialidad" devuelve EXACTAMENTE el término del catálogo al que mapeaste (no la versión que oíste). Si no hay similitud razonable con ningún término, deja el campo en null y NO inventes.',
-  );
-  return lines.join('\n');
+  const blocks: string[] = [];
+
+  // Modo selección por letra: si está presente, suele ser el único modo
+  // relevante del turno (el paciente está escogiendo de un menú A/B/C...).
+  if (letters.length > 0) {
+    blocks.push(
+      [
+        'MODO SELECCIÓN POR LETRA — el paciente está eligiendo una opción de un menú con letras visibles.',
+        `Letras válidas del menú actual: ${letters.join(', ')}.`,
+        'El audio en este paso suele ser MUY CORTO (una sola letra o sílaba: "A", "Be", "ce", "la a", "la be"). Si oyes una vocal, una sílaba o un sonido que pueda mapearse a una de las letras del menú, transcríbelo EXACTAMENTE como esa letra mayúscula en "transcript" (ej: "laaaa" o "Ah" → "A"; "be"/"ve" → "B"; "ce" → "C"). NO marques `ininteligible` ni `outOfContext` en este modo a menos que el audio sea silencio total: la regla es preferir la letra más cercana del menú.',
+      ].join('\n'),
+    );
+  }
+
+  if (eps.length > 0 || services.length > 0) {
+    const lines = [
+      'VOCABULARIO DE LA CLÍNICA (anclaje fonético):',
+      'El paciente probablemente mencione un término de las listas siguientes. Si oyes o lees algo FONÉTICAMENTE SIMILAR a uno de estos términos (typos, sustituciones, palabras pegadas como "Assura"→"Sura", o números hablados como "9 ps"→"Nueva EPS"), trátalo como ese término exacto:',
+    ];
+    if (eps.length > 0) lines.push(`- EPS / aseguradoras válidas: ${eps.join(', ')}.`);
+    if (services.length > 0) lines.push(`- Servicios / especialidades válidas: ${services.join(', ')}.`);
+    lines.push(
+      'En "transcript" conserva la transcripción literal del audio. En "eps" / "especialidad" devuelve EXACTAMENTE el término del catálogo al que mapeaste (no la versión que oíste). Si no hay similitud razonable con ningún término, deja el campo en null y NO inventes.',
+    );
+    blocks.push(lines.join('\n'));
+  }
+
+  return blocks.join('\n\n');
 }
 
 export const SCHEDULING_EXTRACTION_PROMPT = `
