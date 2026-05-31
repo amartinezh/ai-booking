@@ -23,6 +23,9 @@ importers:
       '@antigravity/database':
         specifier: workspace:^
         version: link:../../packages/database
+      '@antigravity/shared':
+        specifier: workspace:^
+        version: link:../../packages/shared
       '@google-cloud/text-to-speech':
         specifier: ^6.4.0
         version: 6.4.0
@@ -236,6 +239,12 @@ importers:
       prisma:
         specifier: ^5.0.0
         version: 5.22.0
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.2
+
+  packages/shared:
+    devDependencies:
       typescript:
         specifier: ^5.0.0
         version: 5.9.2

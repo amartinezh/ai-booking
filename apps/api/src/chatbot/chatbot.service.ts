@@ -27,6 +27,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { LlmFactoryService } from '../llm/llm-factory.service';
 import { SchedulingExtraction, VocabularyHints } from '../llm/interfaces/llm-provider.interface';
+import { formatAppointmentLong, formatAppointmentCompact } from '@antigravity/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 import { SurveyService } from '../survey/survey.service';
@@ -3271,7 +3272,7 @@ export class ChatbotService implements OnModuleInit {
           await this.redis.set(`temp_slot_${letra}:${senderId}`, slots[i].slotId, 'EX', SESSION_TTL);
           await this.redis.set(`temp_slot_${letra}_fecha:${senderId}`, slots[i].fecha.toISOString(), 'EX', SESSION_TTL);
           lineasFechas +=
-            `*${letra})* ${this.formatSlotDateForUser(slots[i].fecha)} ` +
+            `*${letra})* ${formatAppointmentLong(slots[i].fecha)} ` +
             `· Dr. ${slots[i].doctor}\n`;
           slotsMetadata.push({
             letter: letra,
@@ -3309,7 +3310,7 @@ export class ChatbotService implements OnModuleInit {
       // ── PASO 4: CÉDULA (sólo si ya hay slot seleccionado) ────
       if (!finalCedula) {
         const fechaVista = await this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`);
-        const fechaFormateada = fechaVista ? this.formatSlotDateForUser(fechaVista) : '';
+        const fechaFormateada = fechaVista ? formatAppointmentLong(fechaVista) : '';
         const reply = MSGS.pedirCedulaPostSlot(fechaFormateada);
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_CEDULA);
@@ -3396,7 +3397,7 @@ export class ChatbotService implements OnModuleInit {
       const nombreAgend = finalNombre || patient?.fullName || 'Paciente';
       const fechaVistaFinal = await this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`);
       const fechaFormateadaResumen = fechaVistaFinal
-        ? this.formatSlotDateForUser(fechaVistaFinal)
+        ? formatAppointmentLong(fechaVistaFinal)
         : '';
       const replyResumen = MSGS.resumenCita(
         nombreAgend,
@@ -3473,7 +3474,7 @@ export class ChatbotService implements OnModuleInit {
     await this.redis.set(`temp_selected_slot_id:${organizationId}:${senderId}`, slotId, 'EX', SESSION_TTL);
     await this.redis.set(`temp_selected_date_view:${organizationId}:${senderId}`, slotFechaStr, 'EX', SESSION_TTL);
 
-    const fechaFormateada = this.formatSlotDateForUser(slotFechaStr);
+    const fechaFormateada = formatAppointmentLong(slotFechaStr);
 
     // Nuevo protocolo: tras elegir el slot, capturamos los datos del paciente.
     // Si el usuario ya tenía cédula en memoria (re-agendamiento), saltamos
@@ -3588,7 +3589,7 @@ export class ChatbotService implements OnModuleInit {
       );
 
       if (bookingResult.success) {
-        const fechaFormateada = this.formatSlotDateForUser(fechaVistaFinal);
+        const fechaFormateada = formatAppointmentLong(fechaVistaFinal);
         const reply = MSGS.citaConfirmada(orgName, fechaFormateada);
         await this.smartReply(organizationId, senderId, reply);
 
@@ -3897,10 +3898,7 @@ export class ChatbotService implements OnModuleInit {
 
     let reply = '';
     if (apt) {
-      const fechaFormateada = new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO', {
-        weekday: 'long', day: 'numeric', month: 'long',
-        hour: '2-digit', minute: '2-digit',
-      });
+      const fechaFormateada = formatAppointmentLong(apt.scheduleSlot.startTime);
       reply = MSGS.cancelarConfirmar(apt.scheduleSlot.service.name, apt.scheduleSlot.doctor.fullName, fechaFormateada);
       await this.smartReply(organizationId, senderId, reply);
     }
@@ -4288,12 +4286,8 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    const fechaActual = new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO', {
-      weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
-    });
-    const fechaNueva = new Date(newSlotFecha).toLocaleString('es-CO', {
-      weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
-    });
+    const fechaActual = formatAppointmentLong(apt.scheduleSlot.startTime);
+    const fechaNueva = formatAppointmentLong(newSlotFecha);
     const reply = MSGS.modificarConfirmar(
       apt.scheduleSlot.service.name,
       apt.scheduleSlot.doctor.fullName,
@@ -4361,9 +4355,7 @@ export class ChatbotService implements OnModuleInit {
           });
         });
 
-        const fechaNuevaFmt = new Date(newSlotFecha).toLocaleString('es-CO', {
-          weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
-        });
+        const fechaNuevaFmt = formatAppointmentLong(newSlotFecha);
         const replyOk = MSGS.modificarExitosa(fechaNuevaFmt);
         await this.smartReply(organizationId, senderId, replyOk);
 
@@ -4667,36 +4659,6 @@ export class ChatbotService implements OnModuleInit {
     return null;
   }
 
-  /**
-   * Formatea una fecha de cita SIEMPRE en hora de Colombia y con el MISMO
-   * formato visual/auditivo. El contenedor del API no fija `TZ` y por defecto
-   * corre en UTC; sin `timeZone` explícito, los slots se mostraban con la hora
-   * UTC (5h por encima de la hora real) y, peor, el menú y el resumen usaban
-   * APIs distintas (`toLocaleTimeString` 12h vs `toLocaleString` 24h) → el
-   * paciente veía "3:00 p m" en el menú pero el TTS leía "15:00" en el
-   * resumen, percibiéndolo como una fecha distinta.
-   */
-  private formatSlotDateForUser(date: Date | string): string {
-    const d = typeof date === 'string' ? new Date(date) : date;
-    const fechaStr = d.toLocaleDateString('es-CO', {
-      timeZone: 'America/Bogota',
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-    });
-    const horaStr = d
-      .toLocaleTimeString('es-CO', {
-        timeZone: 'America/Bogota',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-      })
-      .replace(/\./g, '')   // "p. m." → "p m" (TTS lo pronuncia limpio)
-      .replace(/\s+/g, ' ') // colapsa espacios duplicados
-      .trim();
-    return `${fechaStr} a las ${horaStr}`;
-  }
-
   // Extrae la LETRA de opción (A–Z) que eligió el usuario, tolerando voz.
   // Por texto el usuario escribe "A"; por voz el STT transcribe la letra como
   // su nombre fonético ("be", "ce", "efe"), con muletillas ("ah", "eh") o
@@ -4823,12 +4785,7 @@ export class ChatbotService implements OnModuleInit {
           where: { id: slotId },
           include: { doctor: true, service: true },
         });
-        const fechaFormateada = slot
-          ? new Date(slot.startTime).toLocaleString('es-CO', {
-            weekday: 'long', day: 'numeric', month: 'long',
-            hour: '2-digit', minute: '2-digit',
-          })
-          : '';
+        const fechaFormateada = slot ? formatAppointmentLong(slot.startTime) : '';
         const orgInfo = await this.prisma.organization.findUnique({ where: { id: organizationId } });
         const reply = MSGS.citaConfirmada(orgInfo?.name || 'nuestra Clínica', fechaFormateada);
         await this.smartReply(organizationId, senderId, reply);
@@ -4954,10 +4911,7 @@ export class ChatbotService implements OnModuleInit {
       await this.redis.set(`temp_selected_cancel_apt:${organizationId}:${senderId}`, apt.id, 'EX', SESSION_TTL);
       await this.redis.set(`temp_selected_cancel_slot:${organizationId}:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
 
-      const fechaFormateada = new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO', {
-        weekday: 'long', day: 'numeric', month: 'long',
-        hour: '2-digit', minute: '2-digit',
-      });
+      const fechaFormateada = formatAppointmentLong(apt.scheduleSlot.startTime);
       const reply = MSGS.cancelarConfirmar(apt.scheduleSlot.service.name, apt.scheduleSlot.doctor.fullName, fechaFormateada);
       await this.smartReply(organizationId, senderId, reply);
       await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CONFIRM);
@@ -4980,10 +4934,7 @@ export class ChatbotService implements OnModuleInit {
       this.redis.set(`temp_cancel_apt_${letra}:${organizationId}:${senderId}`, apt.id, 'EX', SESSION_TTL);
       this.redis.set(`temp_cancel_slot_${letra}:${organizationId}:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
       this.redis.set(`temp_cancel_max_letra:${organizationId}:${senderId}`, letra, 'EX', SESSION_TTL);
-      const fecha = new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO', {
-        weekday: 'short', day: 'numeric', month: 'short',
-        hour: '2-digit', minute: '2-digit',
-      });
+      const fecha = formatAppointmentCompact(apt.scheduleSlot.startTime);
       lineas += `*${letra})* ${apt.scheduleSlot.service.name} · Dr. ${apt.scheduleSlot.doctor.fullName} · ${fecha}\n`;
     });
 
@@ -5082,10 +5033,7 @@ export class ChatbotService implements OnModuleInit {
       this.redis.set(`temp_modify_apt_${letra}:${organizationId}:${senderId}`, apt.id, 'EX', SESSION_TTL);
       this.redis.set(`temp_modify_slot_${letra}:${organizationId}:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
       this.redis.set(`temp_modify_max_letra:${organizationId}:${senderId}`, letra, 'EX', SESSION_TTL);
-      const fecha = new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO', {
-        weekday: 'short', day: 'numeric', month: 'short',
-        hour: '2-digit', minute: '2-digit',
-      });
+      const fecha = formatAppointmentCompact(apt.scheduleSlot.startTime);
       lineas += `*${letra})* ${apt.scheduleSlot.service.name} · Dr. ${apt.scheduleSlot.doctor.fullName} · ${fecha}\n`;
     });
 
@@ -5142,10 +5090,7 @@ export class ChatbotService implements OnModuleInit {
     }
 
     const serviceName = apt.scheduleSlot.service.name;
-    const fechaActual = new Date(apt.scheduleSlot.startTime).toLocaleString('es-CO', {
-      weekday: 'long', day: 'numeric', month: 'long',
-      hour: '2-digit', minute: '2-digit',
-    });
+    const fechaActual = formatAppointmentLong(apt.scheduleSlot.startTime);
 
     const slots = await this.appointmentsService.getAvailableSlots(
       serviceName,
@@ -5181,8 +5126,7 @@ export class ChatbotService implements OnModuleInit {
       await this.redis.set(`temp_modify_newslot_${letra}_fecha:${organizationId}:${senderId}`, candidateSlots[i].fecha.toISOString(), 'EX', SESSION_TTL);
       await this.redis.set(`temp_modify_newslot_max_letra:${organizationId}:${senderId}`, letra, 'EX', SESSION_TTL);
       lineas +=
-        `*${letra})* ${candidateSlots[i].fecha.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })} ` +
-        `a las ${candidateSlots[i].fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }).replace(/\./g, '')} ` +
+        `*${letra})* ${formatAppointmentLong(candidateSlots[i].fecha)} ` +
         `· Dr. ${candidateSlots[i].doctor}\n`;
       slotsMetadata.push({ letter: letra, slotId: candidateSlots[i].slotId, fecha: candidateSlots[i].fecha.toISOString() });
     }
@@ -5315,10 +5259,7 @@ export class ChatbotService implements OnModuleInit {
       const { whatsappId, organizationId, nombre, especialidad, doctor, slotDate } = params;
       // Sombra del pool de mensajes según el estilo activo de la org.
       const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
-      const fechaFormateada = slotDate.toLocaleString('es-CO', {
-        weekday: 'long', day: 'numeric', month: 'long',
-        hour: '2-digit', minute: '2-digit',
-      });
+      const fechaFormateada = formatAppointmentLong(slotDate);
       await this.setUserState(organizationId, whatsappId, ChatState.AWAITING_WAITLIST_CONFIRM);
       await this.redis.set(
         `is_ai_flow:${organizationId}:${whatsappId}`,

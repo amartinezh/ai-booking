@@ -32,6 +32,11 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      # Fija la zona horaria del proceso. Red de seguridad para cualquier
+      # `new Date()` o `toLocale*` que se nos olvide pasar `timeZone` explícito.
+      # Los helpers en @antigravity/shared YA pasan timeZone:'America/Bogota'
+      # de forma explícita; esto solo cubre código futuro/legacy.
+      - TZ=America/Bogota
     depends_on:
       - postgres
       - redis
@@ -50,6 +55,9 @@ services:
       # URL interna Docker para llamadas server-side (server actions → NestJS API)
       # NEXT_PUBLIC_* en server actions se lee en runtime, no requiere rebuild
       - NEXT_PUBLIC_API_URL=http://api:3000
+      # Fija TZ del SSR de Next: cualquier render server-side de fechas que no
+      # pase `timeZone` explícito se servirá en hora Colombia.
+      - TZ=America/Bogota
 
   caddy:
     image: caddy:2-alpine
