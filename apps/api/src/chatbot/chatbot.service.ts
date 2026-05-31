@@ -3271,8 +3271,7 @@ export class ChatbotService implements OnModuleInit {
           await this.redis.set(`temp_slot_${letra}:${senderId}`, slots[i].slotId, 'EX', SESSION_TTL);
           await this.redis.set(`temp_slot_${letra}_fecha:${senderId}`, slots[i].fecha.toISOString(), 'EX', SESSION_TTL);
           lineasFechas +=
-            `*${letra})* ${slots[i].fecha.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })} ` +
-            `a las ${slots[i].fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }).replace(/\./g, '')} ` +
+            `*${letra})* ${this.formatSlotDateForUser(slots[i].fecha)} ` +
             `· Dr. ${slots[i].doctor}\n`;
           slotsMetadata.push({
             letter: letra,
@@ -3310,12 +3309,7 @@ export class ChatbotService implements OnModuleInit {
       // ── PASO 4: CÉDULA (sólo si ya hay slot seleccionado) ────
       if (!finalCedula) {
         const fechaVista = await this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`);
-        const fechaFormateada = fechaVista
-          ? new Date(fechaVista).toLocaleString('es-CO', {
-              weekday: 'long', day: 'numeric', month: 'long',
-              hour: '2-digit', minute: '2-digit',
-            })
-          : '';
+        const fechaFormateada = fechaVista ? this.formatSlotDateForUser(fechaVista) : '';
         const reply = MSGS.pedirCedulaPostSlot(fechaFormateada);
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(organizationId, senderId, ChatState.AWAITING_CEDULA);
@@ -3402,10 +3396,7 @@ export class ChatbotService implements OnModuleInit {
       const nombreAgend = finalNombre || patient?.fullName || 'Paciente';
       const fechaVistaFinal = await this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`);
       const fechaFormateadaResumen = fechaVistaFinal
-        ? new Date(fechaVistaFinal).toLocaleString('es-CO', {
-            weekday: 'long', day: 'numeric', month: 'long',
-            hour: '2-digit', minute: '2-digit',
-          })
+        ? this.formatSlotDateForUser(fechaVistaFinal)
         : '';
       const replyResumen = MSGS.resumenCita(
         nombreAgend,
@@ -3482,10 +3473,7 @@ export class ChatbotService implements OnModuleInit {
     await this.redis.set(`temp_selected_slot_id:${organizationId}:${senderId}`, slotId, 'EX', SESSION_TTL);
     await this.redis.set(`temp_selected_date_view:${organizationId}:${senderId}`, slotFechaStr, 'EX', SESSION_TTL);
 
-    const fechaFormateada = new Date(slotFechaStr).toLocaleString('es-CO', {
-      weekday: 'long', day: 'numeric', month: 'long',
-      hour: '2-digit', minute: '2-digit',
-    });
+    const fechaFormateada = this.formatSlotDateForUser(slotFechaStr);
 
     // Nuevo protocolo: tras elegir el slot, capturamos los datos del paciente.
     // Si el usuario ya tenía cédula en memoria (re-agendamiento), saltamos
@@ -3600,10 +3588,7 @@ export class ChatbotService implements OnModuleInit {
       );
 
       if (bookingResult.success) {
-        const fechaFormateada = new Date(fechaVistaFinal).toLocaleString('es-CO', {
-          weekday: 'long', day: 'numeric', month: 'long',
-          hour: '2-digit', minute: '2-digit',
-        });
+        const fechaFormateada = this.formatSlotDateForUser(fechaVistaFinal);
         const reply = MSGS.citaConfirmada(orgName, fechaFormateada);
         await this.smartReply(organizationId, senderId, reply);
 
@@ -4680,6 +4665,36 @@ export class ChatbotService implements OnModuleInit {
     if (noRegex.test(t)) return 'NO';
     if (siRegex.test(t)) return 'SI';
     return null;
+  }
+
+  /**
+   * Formatea una fecha de cita SIEMPRE en hora de Colombia y con el MISMO
+   * formato visual/auditivo. El contenedor del API no fija `TZ` y por defecto
+   * corre en UTC; sin `timeZone` explícito, los slots se mostraban con la hora
+   * UTC (5h por encima de la hora real) y, peor, el menú y el resumen usaban
+   * APIs distintas (`toLocaleTimeString` 12h vs `toLocaleString` 24h) → el
+   * paciente veía "3:00 p m" en el menú pero el TTS leía "15:00" en el
+   * resumen, percibiéndolo como una fecha distinta.
+   */
+  private formatSlotDateForUser(date: Date | string): string {
+    const d = typeof date === 'string' ? new Date(date) : date;
+    const fechaStr = d.toLocaleDateString('es-CO', {
+      timeZone: 'America/Bogota',
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+    });
+    const horaStr = d
+      .toLocaleTimeString('es-CO', {
+        timeZone: 'America/Bogota',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      })
+      .replace(/\./g, '')   // "p. m." → "p m" (TTS lo pronuncia limpio)
+      .replace(/\s+/g, ' ') // colapsa espacios duplicados
+      .trim();
+    return `${fechaStr} a las ${horaStr}`;
   }
 
   // Extrae la LETRA de opción (A–Z) que eligió el usuario, tolerando voz.
