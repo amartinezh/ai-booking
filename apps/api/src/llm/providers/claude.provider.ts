@@ -6,12 +6,14 @@ import {
   LLMProvider,
   SchedulingExtraction,
   CatalogOption,
+  VocabularyHints,
   normalizeIntent,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
   SCHEDULING_EXTRACTION_PROMPT,
   buildCatalogMappingPrompt,
+  buildVocabularyAnchor,
   parseCatalogMappingResponse,
 } from '../prompts/shared-prompts';
 
@@ -55,14 +57,22 @@ export class ClaudeProvider implements LLMProvider {
   async extractSchedulingIntent(input: {
     text: string | null;
     audio?: AudioInput | null;
+    vocabularyHints?: VocabularyHints;
   }): Promise<SchedulingExtraction> {
     // Audio no soportado en Claude vía Messages API; ignoramos audio.
     const userText = input.text
       ? `Texto del usuario: "${input.text}"`
       : '(sin texto)';
 
+    // Anclaje de vocabulario (Capa 1): aún sin audio, ayuda a Claude a mapear
+    // typos/variantes del texto a los nombres reales del catálogo del tenant.
+    const vocabAnchor = buildVocabularyAnchor(input.vocabularyHints);
+    const systemPrompt = vocabAnchor
+      ? `${SCHEDULING_EXTRACTION_PROMPT}\n\n${vocabAnchor}`
+      : SCHEDULING_EXTRACTION_PROMPT;
+
     const raw = await this.message({
-      system: SCHEDULING_EXTRACTION_PROMPT,
+      system: systemPrompt,
       messages: [{ role: 'user', content: userText }],
       max_tokens: 512,
     });

@@ -6,17 +6,34 @@ import {
   LLMProvider,
   SchedulingExtraction,
   CatalogOption,
+  VocabularyHints,
   normalizeIntent,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
   SCHEDULING_EXTRACTION_PROMPT,
   buildCatalogMappingPrompt,
+  buildVocabularyAnchor,
   parseCatalogMappingResponse,
 } from '../prompts/shared-prompts';
 
 const CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 const AUDIO_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
+
+/**
+ * Construye el `prompt` para Whisper (anclaje de vocabulario). Whisper acepta
+ * un prompt corto que sesga la transcripción hacia el vocabulario provisto.
+ * Devuelve string vacío cuando no hay vocabulario.
+ */
+function buildWhisperBiasingPrompt(hints?: VocabularyHints): string {
+  const eps = (hints?.eps ?? []).filter((s) => s && s.trim());
+  const services = (hints?.services ?? []).filter((s) => s && s.trim());
+  if (eps.length === 0 && services.length === 0) return '';
+  const segs: string[] = [];
+  if (eps.length > 0) segs.push(`EPS: ${eps.join(', ')}.`);
+  if (services.length > 0) segs.push(`Servicios: ${services.join(', ')}.`);
+  return `Vocabulario de la clínica (en español, Colombia). ${segs.join(' ')}`;
+}
 
 export class ChatGptProvider implements LLMProvider {
   readonly name = 'CHATGPT' as const;
@@ -50,6 +67,7 @@ export class ChatGptProvider implements LLMProvider {
   async extractSchedulingIntent(input: {
     text: string | null;
     audio?: AudioInput | null;
+    vocabularyHints?: VocabularyHints;
   }): Promise<SchedulingExtraction> {
     let userContent = '';
     // Transcripción literal: la de Whisper si fue audio, o el propio texto.
@@ -58,14 +76,25 @@ export class ChatGptProvider implements LLMProvider {
     let transcript: string | null = input.text ?? null;
     if (input.text) userContent += `Texto del usuario: "${input.text}"\n`;
     if (input.audio) {
-      transcript = await this.transcribe(input.audio);
+      // Anclaje de vocabulario también para Whisper (Capa 1): el parámetro
+      // `prompt` sesga la transcripción hacia el vocabulario del catálogo del
+      // tenant. Reduce "Sura"→"Assura" en origen, antes de la extracción.
+      transcript = await this.transcribe(input.audio, input.vocabularyHints);
       userContent += `Transcripción del audio: "${transcript}"`;
     }
+
+    // Anclaje de vocabulario en el mensaje system del chat completion: aunque
+    // Whisper ya transcribió, la extracción de `eps`/`especialidad` necesita
+    // saber qué nombres son válidos para mapear typos/variantes.
+    const vocabAnchor = buildVocabularyAnchor(input.vocabularyHints);
+    const systemContent = vocabAnchor
+      ? `${SCHEDULING_EXTRACTION_PROMPT}\n\n${vocabAnchor}`
+      : SCHEDULING_EXTRACTION_PROMPT;
 
     const json = await this.chat({
       response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: SCHEDULING_EXTRACTION_PROMPT },
+        { role: 'system', content: systemContent },
         { role: 'user', content: userContent || '(sin contenido)' },
       ],
     });
@@ -140,7 +169,10 @@ export class ChatGptProvider implements LLMProvider {
     return json?.choices?.[0]?.message?.content ?? '';
   }
 
-  private async transcribe(audio: AudioInput): Promise<string> {
+  private async transcribe(
+    audio: AudioInput,
+    vocabularyHints?: VocabularyHints,
+  ): Promise<string> {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
     };
@@ -153,6 +185,12 @@ export class ChatGptProvider implements LLMProvider {
     const ext = audio.mimeType.split('/')[1] || 'webm';
     form.append('file', blob, `dictation.${ext}`);
     form.append('model', 'whisper-1');
+
+    // Whisper acepta un `prompt` (hasta ~224 tokens) que sesga la transcripción
+    // hacia el vocabulario indicado. Lo construimos a partir del catálogo del
+    // tenant cuando el caller lo provee (audio de chatbot en pasos de menú).
+    const whisperPrompt = buildWhisperBiasingPrompt(vocabularyHints);
+    if (whisperPrompt) form.append('prompt', whisperPrompt);
 
     const res = await fetch(AUDIO_TRANSCRIPTIONS_URL, {
       method: 'POST',

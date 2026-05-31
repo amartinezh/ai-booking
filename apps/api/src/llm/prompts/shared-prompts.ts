@@ -86,6 +86,33 @@ export function parseCatalogMappingResponse(raw: string): { id: string | null } 
   }
 }
 
+/**
+ * Construye el bloque de "vocab hints" para anclar al LLM al catálogo real del
+ * tenant durante la transcripción/extracción (especialmente audio). Sin esto,
+ * el STT del LLM tiende a alucinar fonéticamente nombres locales: "Sura" → "Assura",
+ * "Nueva EPS" → "9 PS". Devuelve string vacío cuando no hay vocabulario que pasar
+ * (no contamina el prompt). El llamador lo concatena al final del system/user prompt.
+ */
+export function buildVocabularyAnchor(hints?: {
+  eps?: string[];
+  services?: string[];
+}): string {
+  const eps = (hints?.eps ?? []).filter((s) => s && s.trim()).map((s) => s.trim());
+  const services = (hints?.services ?? []).filter((s) => s && s.trim()).map((s) => s.trim());
+  if (eps.length === 0 && services.length === 0) return '';
+
+  const lines: string[] = [
+    'VOCABULARIO DE LA CLÍNICA (anclaje fonético):',
+    'El paciente probablemente mencione un término de las listas siguientes. Si oyes o lees algo FONÉTICAMENTE SIMILAR a uno de estos términos (typos, sustituciones, palabras pegadas como "Assura"→"Sura", o números hablados como "9 ps"→"Nueva EPS"), trátalo como ese término exacto:',
+  ];
+  if (eps.length > 0) lines.push(`- EPS / aseguradoras válidas: ${eps.join(', ')}.`);
+  if (services.length > 0) lines.push(`- Servicios / especialidades válidas: ${services.join(', ')}.`);
+  lines.push(
+    'En "transcript" conserva la transcripción literal del audio. En "eps" / "especialidad" devuelve EXACTAMENTE el término del catálogo al que mapeaste (no la versión que oíste). Si no hay similitud razonable con ningún término, deja el campo en null y NO inventes.',
+  );
+  return lines.join('\n');
+}
+
 export const SCHEDULING_EXTRACTION_PROMPT = `
 Eres un asistente médico hiper-empático en una clínica colombiana. Analiza el texto o audio del paciente y realiza TRES tareas en simultáneo sobre el mismo mensaje:
 

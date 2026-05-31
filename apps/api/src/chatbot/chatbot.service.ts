@@ -26,7 +26,7 @@ import {
 import * as fs from 'fs';
 import * as path from 'path';
 import { LlmFactoryService } from '../llm/llm-factory.service';
-import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
+import { SchedulingExtraction, VocabularyHints } from '../llm/interfaces/llm-provider.interface';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 import { SurveyService } from '../survey/survey.service';
@@ -533,6 +533,7 @@ export class ChatbotService implements OnModuleInit {
     text: string | null,
     audioBuffer: Buffer | null,
     attempt = 1,
+    vocabularyHints?: VocabularyHints,
   ): Promise<SchedulingExtraction> {
     const provider = await this.llmFactory.forOrgOrNull(organizationId);
     if (!provider) {
@@ -550,7 +551,7 @@ export class ChatbotService implements OnModuleInit {
       : null;
 
     try {
-      return await provider.extractSchedulingIntent({ text, audio: audioInput });
+      return await provider.extractSchedulingIntent({ text, audio: audioInput, vocabularyHints });
     } catch (e: any) {
       // 429 cuota agotada: no reintentar (empeora), no contar como fallo permanente.
       if (e?.status === 429) {
@@ -565,7 +566,7 @@ export class ChatbotService implements OnModuleInit {
           `${provider.name} intento ${attempt} fallido, reintentando en ${delayMs}ms...`,
         );
         await new Promise((r) => setTimeout(r, delayMs));
-        return this.extractDataWithLLM(organizationId, text, audioBuffer, attempt + 1);
+        return this.extractDataWithLLM(organizationId, text, audioBuffer, attempt + 1, vocabularyHints);
       }
       this.logger.error(
         `Error procesando IA con ${provider.name} tras ${maxRetries} intentos`,
@@ -582,6 +583,7 @@ export class ChatbotService implements OnModuleInit {
           provider.name,
           text,
           audioInput,
+          vocabularyHints,
         );
         if (failoverResult) return failoverResult;
       }
@@ -619,6 +621,7 @@ export class ChatbotService implements OnModuleInit {
     primaryName: 'GEMINI' | 'CHATGPT' | 'CLAUDE',
     text: string | null,
     audio: { base64: string; mimeType: string } | null,
+    vocabularyHints?: VocabularyHints,
   ): Promise<SchedulingExtraction | null> {
     const fullChain: Array<'CHATGPT' | 'CLAUDE'> = ['CHATGPT', 'CLAUDE'];
     const candidates = fullChain.filter((p) => p !== primaryName);
@@ -638,7 +641,7 @@ export class ChatbotService implements OnModuleInit {
         this.logger.warn(
           `[FAILOVER] Intentando ${candidate} tras agotar ${primaryName}`,
         );
-        const result = await provider.extractSchedulingIntent({ text, audio });
+        const result = await provider.extractSchedulingIntent({ text, audio, vocabularyHints });
         this.logger.log(`[FAILOVER] ${candidate} respondió OK`);
         return result;
       } catch (err: any) {
@@ -1705,7 +1708,18 @@ export class ChatbotService implements OnModuleInit {
       ? await this.downloadWhatsAppAudio(audioId, audioCreds)
       : null;
     if (audioBuffer) {
-      aiData = await this.extractDataWithLLM(organizationId, text ?? null, audioBuffer);
+      // Capa 1 (anclaje de vocabulario): pasamos el catálogo activo del tenant
+      // al LLM para que la STT/extracción sesgue hacia los nombres reales
+      // (mitiga "Sura"→"Assura", "Nueva EPS"→"9 PS" en origen). Falla blanda:
+      // si la lectura del catálogo falla, seguimos sin hints (no regresión).
+      const vocabularyHints = await this.loadVocabularyHints(organizationId);
+      aiData = await this.extractDataWithLLM(
+        organizationId,
+        text ?? null,
+        audioBuffer,
+        1,
+        vocabularyHints,
+      );
       if (aiData.transcript && aiData.transcript.trim()) {
         text = aiData.transcript.trim();
       }
@@ -1713,6 +1727,37 @@ export class ChatbotService implements OnModuleInit {
       aiData.ininteligible = true;
     }
     return { aiData, text };
+  }
+
+  /**
+   * Carga los nombres ACTIVOS de EPS y servicios del tenant como "vocab hints"
+   * para anclar al LLM en transcripción y extracción (Capa 1). La lista crece
+   * automáticamente cuando la clínica agrega entidades en el dashboard, sin
+   * tocar código. Devuelve `undefined` si no hay nombres o si hay error (el
+   * LLM funciona sin hints — comportamiento previo).
+   */
+  private async loadVocabularyHints(
+    organizationId: string,
+  ): Promise<VocabularyHints | undefined> {
+    try {
+      const [eps, services] = await Promise.all([
+        this.prisma.eps.findMany({
+          where: { organizationId, isActive: true },
+          select: { name: true },
+        }),
+        this.prisma.medicalService.findMany({
+          where: { organizationId, isActive: true },
+          select: { name: true },
+        }),
+      ]);
+      const epsNames = eps.map((e) => e.name).filter((n) => !!n);
+      const svcNames = services.map((s) => s.name).filter((n) => !!n);
+      if (epsNames.length === 0 && svcNames.length === 0) return undefined;
+      return { eps: epsNames, services: svcNames };
+    } catch (e: any) {
+      this.logger.warn(`No se pudieron cargar vocab hints: ${e?.message}`);
+      return undefined;
+    }
   }
 
   /**
@@ -1819,7 +1864,10 @@ export class ChatbotService implements OnModuleInit {
       //   Tarea B — extracción de entidades (cédula, nombre, EPS, etc.)
       //   Tarea C — clasificación de intención (agendar_cita | consulta_faq | otro)
       // El branching por intención se centraliza en el INTENT ROUTER (abajo).
-      aiData = await this.extractDataWithLLM(organizationId, text, null);
+      // Capa 1: el primer turno extrae eps/especialidad de texto libre — pasar
+      // el catálogo del tenant ayuda al LLM a mapear typos del usuario.
+      const vocabularyHints = await this.loadVocabularyHints(organizationId);
+      aiData = await this.extractDataWithLLM(organizationId, text, null, 1, vocabularyHints);
     } else if (isAudio) {
       // Pipeline de audio: descarga + transcripción (STT) y, si hay
       // transcripción útil, adopción como `text` del turno (ver
@@ -1867,7 +1915,8 @@ export class ChatbotService implements OnModuleInit {
       // Gemini con inputs cortos como "a", "B", "Sura" tiende a marcar ininteligible=true
       // y bloquea el flujo. La voz sí va al extractor (manejada arriba en isAudio).
     } else if (messageType === 'text' && text && !isStrictStep) {
-      aiData = await this.extractDataWithLLM(organizationId, text, null);
+      const vocabularyHints = await this.loadVocabularyHints(organizationId);
+      aiData = await this.extractDataWithLLM(organizationId, text, null, 1, vocabularyHints);
     }
     return { aiData, text };
   }

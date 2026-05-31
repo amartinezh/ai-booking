@@ -7,12 +7,14 @@ import {
   LLMProvider,
   SchedulingExtraction,
   CatalogOption,
+  VocabularyHints,
   normalizeIntent,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
   SCHEDULING_EXTRACTION_PROMPT,
   buildCatalogMappingPrompt,
+  buildVocabularyAnchor,
   parseCatalogMappingResponse,
 } from '../prompts/shared-prompts';
 
@@ -83,8 +85,15 @@ export class GeminiProvider implements LLMProvider {
   async extractSchedulingIntent(input: {
     text: string | null;
     audio?: AudioInput | null;
+    vocabularyHints?: VocabularyHints;
   }): Promise<SchedulingExtraction> {
     const parts: any[] = [SCHEDULING_EXTRACTION_PROMPT];
+    // Anclaje de vocabulario (Capa 1): si el caller pasó el catálogo del
+    // tenant, lo agregamos al prompt para sesgar la transcripción/extracción
+    // hacia los nombres reales (mitiga "Assura"→"Sura", "9 PS"→"Nueva EPS").
+    // String vacío si no hay vocab — no contamina el prompt.
+    const vocabAnchor = buildVocabularyAnchor(input.vocabularyHints);
+    if (vocabAnchor) parts.push(vocabAnchor);
     if (input.text) parts.push(`Texto del usuario: "${input.text}"`);
     if (input.audio) {
       // Anclaje de idioma: sin esto, Gemini ocasionalmente alucina la

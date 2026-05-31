@@ -24,6 +24,19 @@ export interface CatalogOption {
 }
 
 /**
+ * Vocabulario válido de la clínica para anclar la transcripción/extracción
+ * del LLM. Equivalente a "phrase hints" en STTs tradicionales: cuando el
+ * paciente habla y dice algo fonéticamente similar a una EPS/servicio del
+ * catálogo (p.ej. "Assura"≈"Sura", "9 PS"≈"Nueva EPS"), el modelo prefiere
+ * la opción del catálogo en vez de transcribir lo que oyó literal. Solo
+ * lista los NOMBRES; los ids se resuelven contra BD aguas abajo.
+ */
+export interface VocabularyHints {
+  eps?: string[];
+  services?: string[];
+}
+
+/**
  * Intención principal detectada por el LLM en un turno conversacional.
  * - `agendar_cita`   → el paciente quiere reservar/gestionar una cita.
  * - `consulta_faq`   → duda general (horarios, servicios, ubicación, etc.).
@@ -126,6 +139,12 @@ export interface LLMProvider {
   extractSchedulingIntent(input: {
     text: string | null;
     audio?: AudioInput | null;
+    /**
+     * Anclaje de vocabulario para sesgar al modelo hacia los nombres reales
+     * del catálogo del tenant. Opcional: si se omite, el comportamiento es el
+     * mismo que antes de Capa 1.
+     */
+    vocabularyHints?: VocabularyHints;
   }): Promise<SchedulingExtraction>;
 
   /**
