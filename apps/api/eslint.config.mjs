@@ -30,6 +30,21 @@ export default tseslint.config(
       '@typescript-eslint/no-floating-promises': 'warn',
       '@typescript-eslint/no-unsafe-argument': 'warn',
       "prettier/prettier": ["error", { endOfLine: "auto" }],
+      // Evita reintroducir el bug de "hora UTC" en mensajes/TTS: cualquier
+      // `.toLocale(Date|Time)?String('es-CO', ...)` SIN una propiedad
+      // `timeZone` en sus opciones se considera incorrecto. Preferir los
+      // helpers de `@antigravity/shared` (formatAppointmentLong,
+      // formatDateShort, etc.) o, si se necesita formato técnico, pasar
+      // `timeZone:'America/Bogota'` explícito.
+      "no-restricted-syntax": [
+        "warn",
+        {
+          selector:
+            "CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/][arguments.0.value='es-CO']:not(:has(Property[key.name='timeZone']))",
+          message:
+            "Usa `@antigravity/shared` (formatAppointmentLong, formatDateShort, etc.) o pasa `timeZone: 'America/Bogota'` explícito. Sin TZ, el contenedor UTC muestra hora errónea al paciente.",
+        },
+      ],
     },
   },
 );
