@@ -427,7 +427,10 @@ function KV({ label, value, mono }: { label: string; value: string; mono?: boole
 function formatDate(iso: string, withSeconds = false): string {
     try {
         const d = new Date(iso);
+        // Logs técnicos: 24h en hora Colombia (no usa el helper compartido por
+        // ser formato técnico, pero pasa timeZone explícito).
         return d.toLocaleString('es-CO', {
+            timeZone: 'America/Bogota',
             year: 'numeric',
             month: 'short',
             day: 'numeric',

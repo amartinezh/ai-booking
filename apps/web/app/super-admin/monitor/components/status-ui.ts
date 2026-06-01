@@ -1,5 +1,7 @@
 // Helpers visuales compartidos por las cards y el gráfico del monitor.
 
+import { formatAppointmentCompact } from '@/lib/date';
+
 export type ServiceStatus = 'UP' | 'DOWN' | 'DEGRADED';
 
 export const STATUS_COLOR: Record<string, string> = {
@@ -48,13 +50,8 @@ export function fmtDuration(ms: number): string {
   return remM ? `${h} h ${remM} min` : `${h} h`;
 }
 
-/** Fecha/hora en zona local del navegador (es-CO). */
+/** Fecha/hora en hora Colombia (TZ fija para staff). */
 export function fmtLocal(iso: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString('es-CO', {
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatAppointmentCompact(iso);
 }

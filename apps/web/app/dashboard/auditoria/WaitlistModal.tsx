@@ -2,6 +2,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { formatAppointmentCompact } from '@/lib/date';
 
 // ══════════════════════════════════════════════════════════════
 // TIPOS (espejo del payload del route handler)
@@ -241,13 +242,7 @@ export default function WaitlistModal({
                                         {/* REGISTRO: fecha/hora + tiempo esperando (ámbar si >24h) */}
                                         <td className="px-4 py-3 align-top">
                                             <p className="text-zinc-700 dark:text-zinc-300">
-                                                {new Date(item.registeredAt).toLocaleString('es-CO', {
-                                                    day: 'numeric',
-                                                    month: 'short',
-                                                    year: 'numeric',
-                                                    hour: '2-digit',
-                                                    minute: '2-digit',
-                                                })}
+                                                {formatAppointmentCompact(item.registeredAt)}
                                             </p>
                                             <span
                                                 className={`inline-block mt-1 px-2 py-0.5 rounded-md text-xs font-semibold ${

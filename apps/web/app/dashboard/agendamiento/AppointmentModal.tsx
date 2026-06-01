@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { sendManualWhatsappAction, createManualAppointmentAction, updateManualAppointmentAction } from './actions';
+import { formatAppointmentShort } from '@/lib/date';
 
 export default function AppointmentModal({
     isOpen,
@@ -191,7 +192,7 @@ export default function AppointmentModal({
                         </div>
                         <div className="flex gap-2">
                             <span className="font-semibold text-zinc-900 dark:text-white">Horario:</span>
-                            {new Date(eventData.scheduleSlot?.startTime).toLocaleString('es-CO')}
+                            {formatAppointmentShort(eventData.scheduleSlot?.startTime)}
                         </div>
                         <div className="flex gap-2">
                             <span className="font-semibold text-zinc-900 dark:text-white">Especialidad/Servicio:</span>

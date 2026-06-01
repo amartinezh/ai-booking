@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { ArrowDown, ArrowUp, ArrowLeft, RefreshCw } from 'lucide-react';
 import { getClinicSurveys } from '@/app/actions/surveys';
+import { formatAppointmentCompact } from '@/lib/date';
 import type {
   LimitedSurveyRow,
   SortDir,
@@ -147,12 +148,7 @@ export default function ClinicSurveysClient() {
                   {r.message || <span className="text-zinc-300">—</span>}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-xs text-zinc-500">
-                  {new Date(r.createdAt).toLocaleString('es-CO', {
-                    day: '2-digit',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
+                  {formatAppointmentCompact(r.createdAt)}
                 </TableCell>
               </TableRow>
             ))

@@ -146,11 +146,12 @@ export function formatDateOnly(
 }
 
 /**
- * Solo la hora 12h limpia: "03:00 p m".
+ * Solo la hora 12h limpia: "03:00 p m" (o "03:00:45 p m" con `withSeconds`).
+ * Pasar `withSeconds: true` para gráficos / monitores donde el segundo importa.
  */
 export function formatTimeOnly(
   date: Date | string,
-  opts: FormatOptions = {},
+  opts: FormatOptions & { withSeconds?: boolean } = {},
 ): string {
   const d = typeof date === 'string' ? new Date(date) : date;
   const tz = opts.timeZone ?? DEFAULT_TIMEZONE;
@@ -160,6 +161,7 @@ export function formatTimeOnly(
       timeZone: tz,
       hour: '2-digit',
       minute: '2-digit',
+      ...(opts.withSeconds ? { second: '2-digit' as const } : {}),
       hour12: true,
     }),
   );

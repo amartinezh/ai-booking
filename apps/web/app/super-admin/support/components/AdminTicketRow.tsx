@@ -6,9 +6,9 @@ import StatusBadge from '../../../dashboard/soporte/components/StatusBadge';
 import { startTicketAttention } from '@/app/actions/support';
 import ResolveTicketModal from './ResolveTicketModal';
 import BrandLogo from '@/app/components/BrandLogo';
+import { formatAppointmentShort } from '@/lib/date';
 
-const fmt = (d: Date | string) =>
-    new Date(d).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' });
+const fmt = (d: Date | string) => formatAppointmentShort(d);
 
 export type AdminTicket = {
     id: string;

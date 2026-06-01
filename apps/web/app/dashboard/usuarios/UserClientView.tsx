@@ -6,6 +6,7 @@ import { useState, useTransition } from 'react';
 import UserModal from './UserModal';
 import { deleteUserAction } from './actions';
 import { useRouter } from 'next/navigation';
+import { formatDateShort } from '@/lib/date';
 
 export default function UserClientView({ users, epsList, doctorList }: { users: any[], epsList: any[], doctorList: any[] }) {
     const [editingUser, setEditingUser] = useState<any | null>(null);
@@ -143,7 +144,7 @@ export default function UserClientView({ users, epsList, doctorList }: { users: 
                                         {!user.patientProfile && !user.doctorProfile && !user.agentProfile && <span className="text-xs text-zinc-400 italic">Solo Credenciales</span>}
                                     </td>
                                     <td className="px-6 py-5 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
-                                        {new Date(user.createdAt).toLocaleDateString('es-CO')}
+                                        {formatDateShort(user.createdAt)}
                                     </td>
                                     <td className="px-6 py-5 whitespace-nowrap text-right text-sm font-medium">
                                         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex justify-end gap-2">

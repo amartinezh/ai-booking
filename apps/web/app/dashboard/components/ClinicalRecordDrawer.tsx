@@ -5,6 +5,7 @@ import { useState, useEffect, SetStateAction } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
+import { formatDateShort, formatTimeOnly } from '@/lib/date';
 import {
     createClinicalRecord,
     fetchClinicalRecordByAppointment,
@@ -486,7 +487,7 @@ export default function ClinicalRecordDrawer({
                                             <div className="flex justify-between items-center mb-2">
                                                 <span className="text-xs font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-2.5 py-1 rounded">Nota #{i + 1}</span>
                                                 <time className="text-xs font-mono text-zinc-500">
-                                                    {new Date(add.createdAt).toLocaleDateString('es-CO')} - {new Date(add.createdAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                                                    {formatDateShort(add.createdAt)} - {formatTimeOnly(add.createdAt)}
                                                 </time>
                                             </div>
                                             <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed whitespace-pre-line">{add.content}</p>

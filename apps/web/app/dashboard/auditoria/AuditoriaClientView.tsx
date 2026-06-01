@@ -3,6 +3,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import WaitlistModal from './WaitlistModal';
+import { formatAppointmentCompact, formatAppointmentShort } from '@/lib/date';
 
 type InteractionLog = {
     id: string;
@@ -611,12 +612,7 @@ export default function AuditoriaClientView({
                                             )}
 
                                             <span className="text-xs text-zinc-500 dark:text-zinc-400 ml-auto">
-                                                {new Date(log.createdAt).toLocaleString('es-CO', {
-                                                    day: 'numeric',
-                                                    month: 'short',
-                                                    hour: '2-digit',
-                                                    minute: '2-digit',
-                                                })}
+                                                {formatAppointmentCompact(log.createdAt)}
                                             </span>
                                         </div>
 
@@ -731,7 +727,7 @@ export default function AuditoriaClientView({
                                         Fecha completa
                                     </p>
                                     <p className="text-zinc-900 dark:text-white">
-                                        {new Date(selectedLog.createdAt).toLocaleString('es-CO')}
+                                        {formatAppointmentShort(selectedLog.createdAt)}
                                     </p>
                                 </div>
                                 <div>
@@ -789,7 +785,7 @@ export default function AuditoriaClientView({
                                 {selectedLog.contactedAt ? (
                                     <div className="bg-emerald-50 dark:bg-emerald-950/30 rounded-lg p-3 border border-emerald-200 dark:border-emerald-900">
                                         <p className="text-sm text-emerald-900 dark:text-emerald-200 font-medium">
-                                            ✓ Contactado el {new Date(selectedLog.contactedAt).toLocaleString('es-CO')}
+                                            ✓ Contactado el {formatAppointmentShort(selectedLog.contactedAt)}
                                         </p>
                                         {selectedLog.contactNotes && (
                                             <p className="text-sm text-emerald-800 dark:text-emerald-300 mt-2">

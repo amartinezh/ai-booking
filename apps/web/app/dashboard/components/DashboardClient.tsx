@@ -12,6 +12,7 @@ import {
 } from '@/app/actions/dashboard';
 import ClinicalRecordDrawer from './ClinicalRecordDrawer';
 import { useDebouncedCallback } from 'use-debounce';
+import { formatDateShort, formatTimeOnly, formatAppointmentShort } from '@/lib/date';
 
 export default function DashboardClient({
     appointments,
@@ -168,10 +169,10 @@ export default function DashboardClient({
                                     <tr key={apt.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
                                         <td className="px-6 py-5 whitespace-nowrap">
                                             <div className="font-semibold text-zinc-900 dark:text-white">
-                                                {new Date(apt.scheduleSlot.startTime).toLocaleDateString('es-CO')}
+                                                {formatDateShort(apt.scheduleSlot.startTime)}
                                             </div>
                                             <div className="text-sm font-medium text-blue-600 dark:text-blue-400">
-                                                {new Date(apt.scheduleSlot.startTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} - {new Date(apt.scheduleSlot.endTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                                                {formatTimeOnly(apt.scheduleSlot.startTime)} - {formatTimeOnly(apt.scheduleSlot.endTime)}
                                             </div>
                                         </td>
                                         <td className="px-6 py-5 whitespace-nowrap">
@@ -273,7 +274,7 @@ export default function DashboardClient({
                                                         disabled={isSending}
                                                         title={
                                                             alreadySent
-                                                                ? `Recordatorio enviado el ${new Date(reminderSentAt).toLocaleString('es-CO')}. Puedes reenviarlo si lo necesitas.`
+                                                                ? `Recordatorio enviado el ${formatAppointmentShort(reminderSentAt)}. Puedes reenviarlo si lo necesitas.`
                                                                 : 'Enviar recordatorio manual por WhatsApp'
                                                         }
                                                         className={`w-full text-xs font-semibold px-3 py-1.5 rounded-md flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${

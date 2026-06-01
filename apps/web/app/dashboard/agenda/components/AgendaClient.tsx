@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import AgendaTable from './AgendaTable';
 import AgendaGenerator from './AgendaGenerator';
+import { formatDateShort, formatTimeOnly } from '@/lib/date';
 
 export default function AgendaClient({
     slots,
@@ -30,8 +31,8 @@ export default function AgendaClient({
                 slot.service?.name?.toLowerCase(),
                 slot.allowedEps ? slot.allowedEps.name.toLowerCase() : 'universal libre',
                 slot.appointment ? 'reservado' : 'disponible',
-                new Date(slot.startTime).toLocaleDateString(),
-                new Date(slot.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                formatDateShort(slot.startTime),
+                formatTimeOnly(slot.startTime)
             ].join(' ');
 
             if (!searchTargets.includes(lowerTerm)) {

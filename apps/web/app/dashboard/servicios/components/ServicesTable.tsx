@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { toggleMedicalServiceStatus, deleteMedicalService } from '@/app/actions/services';
+import { formatDateShort } from '@/lib/date';
 
 type ServiceWithCounts = {
     id: string;
@@ -58,7 +59,7 @@ export default function ServicesTable({ data }: { data: ServiceWithCounts[] }) {
                         <tr key={service.id} className="hover:bg-gray-50 transition-colors duration-150">
                             <td className="px-6 py-4 whitespace-nowrap">
                                 <div className="text-sm font-medium text-gray-900">{service.name}</div>
-                                <div className="text-xs text-gray-500">Agregado el {new Date(service.createdAt).toLocaleDateString()}</div>
+                                <div className="text-xs text-gray-500">Agregado el {formatDateShort(service.createdAt)}</div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
                                 <div className="flex flex-col gap-1 items-center font-mono text-xs">

@@ -3,6 +3,7 @@
 
 import { useState } from 'react';
 import { deleteSlot } from '@/app/actions/agenda';
+import { formatDateShort, formatTimeOnly } from '@/lib/date';
 
 export default function AgendaTable({ data }: { data: any[] }) {
     const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -30,13 +31,11 @@ export default function AgendaTable({ data }: { data: any[] }) {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                     {data.map((slot) => {
-                        const startDate = new Date(slot.startTime);
-                        const endDate = new Date(slot.endTime);
-                        const timeStr = `${startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                        const timeStr = `${formatTimeOnly(slot.startTime)} - ${formatTimeOnly(slot.endTime)}`;
                         return (
                             <tr key={slot.id} className="hover:bg-gray-50">
                                 <td className="px-6 py-4 whitespace-nowrap">
-                                    <div className="text-sm font-semibold text-gray-900">{startDate.toLocaleDateString()}</div>
+                                    <div className="text-sm font-semibold text-gray-900">{formatDateShort(slot.startTime)}</div>
                                     <div className="text-sm text-gray-600 font-mono mt-0.5">{timeStr}</div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">

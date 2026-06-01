@@ -156,6 +156,9 @@ importers:
       '@antigravity/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@antigravity/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@hookform/resolvers':
         specifier: ^5.2.2
         version: 5.2.2(react-hook-form@7.71.2(react@19.2.3))

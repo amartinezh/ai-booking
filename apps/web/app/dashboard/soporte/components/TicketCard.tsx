@@ -3,9 +3,9 @@
 import { useState } from 'react';
 import type { SupportTicket } from '@antigravity/database';
 import StatusBadge from './StatusBadge';
+import { formatAppointmentShort } from '@/lib/date';
 
-const fmt = (d: Date | string) =>
-    new Date(d).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' });
+const fmt = (d: Date | string) => formatAppointmentShort(d);
 
 export default function TicketCard({ ticket }: { ticket: SupportTicket }) {
     const [expanded, setExpanded] = useState(ticket.status === 'RESOLVED' ? false : false);

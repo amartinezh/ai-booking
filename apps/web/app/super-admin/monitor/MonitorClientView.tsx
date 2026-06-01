@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { formatTimeOnly } from '@/lib/date';
 import {
   LineChart,
   Line,
@@ -118,11 +119,7 @@ export default function MonitorClientView({
   const chartData = useMemo(() => {
     return livePoints.map((p) => {
       const row: Record<string, number | string | null> = {
-        t: new Date(p.timestamp).toLocaleTimeString('es-CO', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        }),
+        t: formatTimeOnly(p.timestamp, { withSeconds: true }),
       };
       for (const svc of p.services) {
         row[svc.key] = svc.latencyMs;
@@ -222,10 +219,7 @@ export default function MonitorClientView({
             {isLive && startedAt && (
               <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
                 🟢 Activo desde{' '}
-                {new Date(startedAt).toLocaleTimeString('es-CO', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
+                {formatTimeOnly(startedAt)}
               </span>
             )}
             {!isLive ? (

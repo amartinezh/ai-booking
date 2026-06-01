@@ -1,10 +1,7 @@
 import { SupportTicketStatus } from '@antigravity/database';
+import { formatAppointmentShort } from '@/lib/date';
 
-const fmt = (d: Date | string) =>
-    new Date(d).toLocaleString('es-CO', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-    });
+const fmt = (d: Date | string) => formatAppointmentShort(d);
 
 export default function StatusBadge({
     status,

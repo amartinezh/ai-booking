@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from 'react';
 import { ArrowDown, ArrowUp, RefreshCw } from 'lucide-react';
 import { getDetailedSurveys } from '@/app/actions/surveys';
+import { formatAppointmentCompact } from '@/lib/date';
 import type {
   DetailedSurveyRow,
   ResolutionStatus,
@@ -242,13 +243,7 @@ export default function SurveysClient({ organizations }: Props) {
                   <ResolutionBadge status={r.resolutionStatus} />
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-xs text-zinc-500">
-                  {new Date(r.createdAt).toLocaleString('es-CO', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
+                  {formatAppointmentCompact(r.createdAt)}
                 </TableCell>
               </TableRow>
             ))
