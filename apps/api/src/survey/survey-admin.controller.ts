@@ -22,7 +22,10 @@ import {
 // ───────────────────────────────────────────────────────────────
 // Helpers de parseo del query string (no hay ValidationPipe global).
 // ───────────────────────────────────────────────────────────────
-function parseSort(sortBy?: string, sortDir?: string): {
+function parseSort(
+  sortBy?: string,
+  sortDir?: string,
+): {
   sortBy: SurveySortField;
   sortDir: SortDir;
 } {
@@ -32,8 +35,13 @@ function parseSort(sortBy?: string, sortDir?: string): {
   };
 }
 
-function parseEnum<T extends string>(value: string | undefined, allowed: readonly T[]): T | undefined {
-  return value && (allowed as readonly string[]).includes(value) ? (value as T) : undefined;
+function parseEnum<T extends string>(
+  value: string | undefined,
+  allowed: readonly T[],
+): T | undefined {
+  return value && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : undefined;
 }
 
 const MOODS = Object.values(UserMood);

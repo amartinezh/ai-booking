@@ -36,9 +36,12 @@ export class ChatbotController {
     if (mode !== 'subscribe' || !token) {
       throw new ForbiddenException('Invalid webhook verification request');
     }
-    const orgId = await this.whatsappCredentials.organizationIdByVerifyToken(token);
+    const orgId =
+      await this.whatsappCredentials.organizationIdByVerifyToken(token);
     if (!orgId) {
-      this.logger.warn(`Verificación de webhook rechazada — verify_token desconocido`);
+      this.logger.warn(
+        `Verificación de webhook rechazada — verify_token desconocido`,
+      );
       throw new ForbiddenException('Invalid verification token');
     }
     this.logger.log(`Webhook verificado para org ${orgId}`);

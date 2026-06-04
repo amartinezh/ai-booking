@@ -75,9 +75,15 @@ export function buildCatalogMappingPrompt(
 }
 
 /** Extrae `{ id }` del texto JSON devuelto por el LLM, tolerante a ```bloques```. */
-export function parseCatalogMappingResponse(raw: string): { id: string | null } {
+export function parseCatalogMappingResponse(raw: string): {
+  id: string | null;
+} {
   try {
-    const cleaned = (raw || '').trim().replace(/```json/gi, '').replace(/```/g, '').trim();
+    const cleaned = (raw || '')
+      .trim()
+      .replace(/```json/gi, '')
+      .replace(/```/g, '')
+      .trim();
     const parsed = JSON.parse(cleaned);
     const id = parsed?.id;
     return { id: typeof id === 'string' && id.trim() ? id.trim() : null };
@@ -100,12 +106,17 @@ export function buildVocabularyAnchor(hints?: {
   services?: string[];
   letterOptions?: string[];
 }): string {
-  const eps = (hints?.eps ?? []).filter((s) => s && s.trim()).map((s) => s.trim());
-  const services = (hints?.services ?? []).filter((s) => s && s.trim()).map((s) => s.trim());
+  const eps = (hints?.eps ?? [])
+    .filter((s) => s && s.trim())
+    .map((s) => s.trim());
+  const services = (hints?.services ?? [])
+    .filter((s) => s && s.trim())
+    .map((s) => s.trim());
   const letters = (hints?.letterOptions ?? [])
     .filter((s) => s && s.trim())
     .map((s) => s.trim().toUpperCase());
-  if (eps.length === 0 && services.length === 0 && letters.length === 0) return '';
+  if (eps.length === 0 && services.length === 0 && letters.length === 0)
+    return '';
 
   const blocks: string[] = [];
 
@@ -126,8 +137,12 @@ export function buildVocabularyAnchor(hints?: {
       'VOCABULARIO DE LA CLÍNICA (anclaje fonético):',
       'El paciente probablemente mencione un término de las listas siguientes. Si oyes o lees algo FONÉTICAMENTE SIMILAR a uno de estos términos (typos, sustituciones, palabras pegadas como "Assura"→"Sura", o números hablados como "9 ps"→"Nueva EPS"), trátalo como ese término exacto:',
     ];
-    if (eps.length > 0) lines.push(`- EPS / aseguradoras válidas: ${eps.join(', ')}.`);
-    if (services.length > 0) lines.push(`- Servicios / especialidades válidas: ${services.join(', ')}.`);
+    if (eps.length > 0)
+      lines.push(`- EPS / aseguradoras válidas: ${eps.join(', ')}.`);
+    if (services.length > 0)
+      lines.push(
+        `- Servicios / especialidades válidas: ${services.join(', ')}.`,
+      );
     lines.push(
       'En "transcript" conserva la transcripción literal del audio. En "eps" / "especialidad" devuelve EXACTAMENTE el término del catálogo al que mapeaste (no la versión que oíste). Si no hay similitud razonable con ningún término, deja el campo en null y NO inventes.',
     );

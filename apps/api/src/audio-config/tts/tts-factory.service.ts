@@ -53,7 +53,12 @@ export class TtsFactoryService {
           action: `TTS_ELEVENLABS_${res.code}`,
           message: `ElevenLabs falló (${res.code}) tras ${res.rtt_ms}ms: ${res.message}`,
           organizationId,
-          metadata: { provider: 'ELEVENLABS', voiceId, code: res.code, rtt_ms: res.rtt_ms },
+          metadata: {
+            provider: 'ELEVENLABS',
+            voiceId,
+            code: res.code,
+            rtt_ms: res.rtt_ms,
+          },
         });
       } else {
         await this.systemLog.warning({

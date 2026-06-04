@@ -91,10 +91,15 @@ export class SurveyService {
   // de forma atómica (updateMany con guardas en el WHERE) para que un doble
   // submit concurrente no pueda escribir dos veces.
   // ══════════════════════════════════════════════════════════════
-  async submitSurvey(id: string, input: SubmitSurveyInput): Promise<{ success: true }> {
+  async submitSurvey(
+    id: string,
+    input: SubmitSurveyInput,
+  ): Promise<{ success: true }> {
     const rating = Number(input.rating);
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-      throw new BadRequestException('La calificación debe ser un entero entre 1 y 5.');
+      throw new BadRequestException(
+        'La calificación debe ser un entero entre 1 y 5.',
+      );
     }
 
     const feedback =
@@ -118,7 +123,9 @@ export class SurveyService {
 
     // count === 0 → o no existe, o ya se usó, o expiró. No filtramos cuál.
     if (result.count === 0) {
-      throw new NotFoundException('El enlace de la encuesta es inválido, ya se usó o expiró.');
+      throw new NotFoundException(
+        'El enlace de la encuesta es inválido, ya se usó o expiró.',
+      );
     }
 
     this.logger.log(`Encuesta ${id} calificada con ${rating}/5.`);
@@ -133,7 +140,10 @@ export class SurveyService {
   async findDetailedForSuperAdmin(
     query: DetailedSurveyQuery,
   ): Promise<PaginatedSurveys<DetailedSurveyRow>> {
-    const { page, pageSize, skip } = this.normalizePagination(query.page, query.pageSize);
+    const { page, pageSize, skip } = this.normalizePagination(
+      query.page,
+      query.pageSize,
+    );
 
     const where: Prisma.ChatSurveyWhereInput = {
       ...this.buildDateRange(query.startDate, query.endDate),
@@ -160,7 +170,12 @@ export class SurveyService {
           resolutionStatus: true,
           isUsed: true,
           patient: {
-            select: { id: true, fullName: true, whatsappId: true, cedula: true },
+            select: {
+              id: true,
+              fullName: true,
+              whatsappId: true,
+              cedula: true,
+            },
           },
           organization: { select: { id: true, name: true } },
         },
@@ -203,7 +218,10 @@ export class SurveyService {
     organizationId: string,
     query: LimitedSurveyQuery,
   ): Promise<PaginatedSurveys<LimitedSurveyRow>> {
-    const { page, pageSize, skip } = this.normalizePagination(query.page, query.pageSize);
+    const { page, pageSize, skip } = this.normalizePagination(
+      query.page,
+      query.pageSize,
+    );
 
     const where: Prisma.ChatSurveyWhereInput = { organizationId };
     const orderBy = this.buildOrderBy(query.sortBy, query.sortDir);
@@ -246,7 +264,11 @@ export class SurveyService {
   private normalizePagination(page?: number, pageSize?: number) {
     const safePage = Math.max(1, Math.floor(page || 1));
     const safeSize = Math.min(100, Math.max(5, Math.floor(pageSize || 25)));
-    return { page: safePage, pageSize: safeSize, skip: (safePage - 1) * safeSize };
+    return {
+      page: safePage,
+      pageSize: safeSize,
+      skip: (safePage - 1) * safeSize,
+    };
   }
 
   // Allowlist de campos ordenables → evita inyección de columnas arbitrarias.

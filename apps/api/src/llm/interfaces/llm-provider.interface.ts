@@ -62,7 +62,9 @@ export type SchedulingIntent =
  * orquestador trata como agendamiento (no bloquea al paciente).
  */
 export function normalizeIntent(value: unknown): SchedulingIntent {
-  const v = String(value ?? '').trim().toLowerCase();
+  const v = String(value ?? '')
+    .trim()
+    .toLowerCase();
   if (v === 'agendar_cita' || v === 'consulta_faq' || v === 'insulto_abuso') {
     return v;
   }
@@ -179,7 +181,12 @@ export interface LLMProvider {
  * Usado por la UI para poblar el `<select>` de modelo.
  */
 export const PROVIDER_MODELS = {
-  GEMINI: ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'],
+  GEMINI: [
+    'gemini-2.0-flash',
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash-lite',
+  ],
   CHATGPT: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
   CLAUDE: ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5-20251001'],
 } as const;
@@ -202,7 +209,9 @@ export interface DecryptedAiConfig {
  * sigue desencriptándose: ver `decodeMultiProviderBlob` más abajo.
  */
 export interface MultiProviderBlob {
-  byProvider: Partial<Record<'GEMINI' | 'CHATGPT' | 'CLAUDE', DecryptedAiConfig>>;
+  byProvider: Partial<
+    Record<'GEMINI' | 'CHATGPT' | 'CLAUDE', DecryptedAiConfig>
+  >;
 }
 
 /**

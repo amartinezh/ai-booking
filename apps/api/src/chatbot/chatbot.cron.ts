@@ -19,7 +19,10 @@ export class ChatbotCron {
    */
   private readonly inactivityTimeoutSec = Math.min(
     SESSION_TTL - 60,
-    Math.max(60, (Number(process.env.CHATBOT_INACTIVITY_TIMEOUT_MINUTES) || 5) * 60),
+    Math.max(
+      60,
+      (Number(process.env.CHATBOT_INACTIVITY_TIMEOUT_MINUTES) || 5) * 60,
+    ),
   );
 
   constructor(
@@ -88,8 +91,7 @@ export class ChatbotCron {
       type: 'text',
       text: {
         preview_url: false,
-        body:
-          "Hola. Lo siento, he cerrado nuestra comunicación por inactividad prolongada por su seguridad y privacidad de datos. ¡En caso de querer un servicio aquí estoy, solo escríbame 'Hola' nuevamente!",
+        body: "Hola. Lo siento, he cerrado nuestra comunicación por inactividad prolongada por su seguridad y privacidad de datos. ¡En caso de querer un servicio aquí estoy, solo escríbame 'Hola' nuevamente!",
       },
     };
     const headers = {
@@ -136,9 +138,13 @@ export class ChatbotCron {
     // cleanUp(Cancel|Modify)Session en ChatbotService): evita dejar contexto
     // colgado cuando el cierre lo dispara el cron de inactividad.
     const cancelKeys = await this.redis.keys(`temp_cancel_*:${base}`);
-    const selectedCancelKeys = await this.redis.keys(`temp_selected_cancel_*:${base}`);
+    const selectedCancelKeys = await this.redis.keys(
+      `temp_selected_cancel_*:${base}`,
+    );
     const modifyKeys = await this.redis.keys(`temp_modify_*:${base}`);
-    const selectedModifyKeys = await this.redis.keys(`temp_selected_modify_*:${base}`);
+    const selectedModifyKeys = await this.redis.keys(
+      `temp_selected_modify_*:${base}`,
+    );
     await this.redis.del(
       ...keysToDelete,
       ...slotKeys,

@@ -185,12 +185,16 @@ export class OrganizationsService {
 
         // 3.7 Pacientes (CASCADE → InformedConsent). Antes de eps.
         purged.patients = (
-          await tx.patientProfile.deleteMany({ where: { id: { in: patientIds } } })
+          await tx.patientProfile.deleteMany({
+            where: { id: { in: patientIds } },
+          })
         ).count;
 
         // 3.8 Médicos (antes de servicios). Sus addendums ya cayeron en 3.1.
         purged.doctors = (
-          await tx.doctorProfile.deleteMany({ where: { id: { in: doctorIds } } })
+          await tx.doctorProfile.deleteMany({
+            where: { id: { in: doctorIds } },
+          })
         ).count;
 
         // 3.9 Catálogos por tenant.
@@ -198,7 +202,9 @@ export class OrganizationsService {
           await tx.eps.deleteMany({ where: { id: { in: epsIds } } })
         ).count;
         purged.medicalServices = (
-          await tx.medicalService.deleteMany({ where: { id: { in: serviceIds } } })
+          await tx.medicalService.deleteMany({
+            where: { id: { in: serviceIds } },
+          })
         ).count;
 
         // 3.10 Tickets de soporte (CASCADE por org, pero explícito).
@@ -213,13 +219,17 @@ export class OrganizationsService {
 
         // 3.12 Configuraciones 1:1 (CASCADE al borrar org, pero explícito).
         purged.settings = (
-          await tx.organizationSettings.deleteMany({ where: { organizationId } })
+          await tx.organizationSettings.deleteMany({
+            where: { organizationId },
+          })
         ).count;
         purged.aiProviderConfig = (
           await tx.aiProviderConfig.deleteMany({ where: { organizationId } })
         ).count;
         purged.whatsappConfig = (
-          await tx.whatsappAccountConfig.deleteMany({ where: { organizationId } })
+          await tx.whatsappAccountConfig.deleteMany({
+            where: { organizationId },
+          })
         ).count;
 
         // 3.13 Finalmente, la organización.

@@ -18,7 +18,8 @@ import {
 } from '../prompts/shared-prompts';
 
 const CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
-const AUDIO_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
+const AUDIO_TRANSCRIPTIONS_URL =
+  'https://api.openai.com/v1/audio/transcriptions';
 
 /**
  * Construye el `prompt` para Whisper (anclaje de vocabulario). Whisper acepta
@@ -31,9 +32,11 @@ function buildWhisperBiasingPrompt(hints?: VocabularyHints): string {
   const letters = (hints?.letterOptions ?? [])
     .filter((s) => s && s.trim())
     .map((s) => s.trim().toUpperCase());
-  if (eps.length === 0 && services.length === 0 && letters.length === 0) return '';
+  if (eps.length === 0 && services.length === 0 && letters.length === 0)
+    return '';
   const segs: string[] = [];
-  if (letters.length > 0) segs.push(`Selección por letra: ${letters.join(', ')}.`);
+  if (letters.length > 0)
+    segs.push(`Selección por letra: ${letters.join(', ')}.`);
   if (eps.length > 0) segs.push(`EPS: ${eps.join(', ')}.`);
   if (services.length > 0) segs.push(`Servicios: ${services.join(', ')}.`);
   return `Vocabulario de la clínica (en español, Colombia). ${segs.join(' ')}`;
@@ -55,7 +58,9 @@ export class ChatGptProvider implements LLMProvider {
     this.orgHeader = config.organizationId;
   }
 
-  async generateClinicalRecord(audio: AudioInput): Promise<ClinicalRecordDraft> {
+  async generateClinicalRecord(
+    audio: AudioInput,
+  ): Promise<ClinicalRecordDraft> {
     // OpenAI no acepta audio nativo en chat.completions; primero transcribe.
     const transcript = await this.transcribe(audio);
     const json = await this.chat({
@@ -140,7 +145,10 @@ export class ChatGptProvider implements LLMProvider {
     const raw = await this.chat({
       response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: buildCatalogMappingPrompt(input.entityKind, input.options) },
+        {
+          role: 'system',
+          content: buildCatalogMappingPrompt(input.entityKind, input.options),
+        },
         { role: 'user', content: `Texto del paciente: "${input.text}"` },
       ],
     });

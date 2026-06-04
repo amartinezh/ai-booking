@@ -115,9 +115,7 @@ export class MonitorCron implements OnModuleInit {
                 status: 'DOWN',
                 latencyMs: null,
                 errorCode: 'UNHANDLED',
-                errorMessage:
-                  (settled as PromiseRejectedResult).reason?.message ||
-                  'Promise rejected',
+                errorMessage: settled.reason?.message || 'Promise rejected',
               };
 
         // Servicio "no aplica" en este ciclo (ej. Gemini/Meta sin organización):
@@ -146,7 +144,10 @@ export class MonitorCron implements OnModuleInit {
       }
     } catch (error: any) {
       // Nunca re-lanzar: el cron debe sobrevivir al próximo tick.
-      this.logger.error(`runHealthChecks crasheó: ${error.message}`, error.stack);
+      this.logger.error(
+        `runHealthChecks crasheó: ${error.message}`,
+        error.stack,
+      );
     }
   }
 

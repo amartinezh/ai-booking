@@ -8,7 +8,7 @@ import { InteractionLogService } from './interaction-log.service';
  * NO se importa explícitamente acá. NestJS lo provee automáticamente.
  */
 @Module({
-    providers: [InteractionLogService],
-    exports: [InteractionLogService],
+  providers: [InteractionLogService],
+  exports: [InteractionLogService],
 })
-export class InteractionLogModule { }
+export class InteractionLogModule {}

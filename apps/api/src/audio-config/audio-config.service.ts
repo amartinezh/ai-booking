@@ -1,5 +1,9 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { AudioEncoding, VoiceGender, VoiceProvider } from '@antigravity/database';
+import {
+  AudioEncoding,
+  VoiceGender,
+  VoiceProvider,
+} from '@antigravity/database';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { GoogleTtsService } from './tts/google-tts.service';
@@ -106,16 +110,18 @@ export class AudioConfigService {
       );
     }
 
-    const audioEncoding = VALID_ENCODINGS.has(row?.audioEncoding as AudioEncoding)
-      ? (row!.audioEncoding as AudioEncoding)
+    const audioEncoding = VALID_ENCODINGS.has(
+      row?.audioEncoding as AudioEncoding,
+    )
+      ? row!.audioEncoding
       : DEFAULT_AUDIO_ENCODING;
 
     return {
       activeProvider: VALID_PROVIDERS.has(row?.activeProvider as VoiceProvider)
-        ? (row!.activeProvider as VoiceProvider)
+        ? row!.activeProvider
         : DEFAULT_ACTIVE_PROVIDER,
       gender: VALID_GENDERS.has(row?.gender as VoiceGender)
-        ? (row!.gender as VoiceGender)
+        ? row!.gender
         : DEFAULT_GENDER,
       audioEncoding,
       google: {
@@ -148,9 +154,11 @@ export class AudioConfigService {
     });
 
     return {
-      activeProvider: (row?.activeProvider as VoiceProvider) ?? DEFAULT_ACTIVE_PROVIDER,
+      activeProvider:
+        (row?.activeProvider as VoiceProvider) ?? DEFAULT_ACTIVE_PROVIDER,
       gender: (row?.gender as VoiceGender) ?? DEFAULT_GENDER,
-      audioEncoding: (row?.audioEncoding as AudioEncoding) ?? DEFAULT_AUDIO_ENCODING,
+      audioEncoding:
+        (row?.audioEncoding as AudioEncoding) ?? DEFAULT_AUDIO_ENCODING,
       googleVoiceId: row?.googleVoiceId ?? DEFAULT_VOICE_ID,
       googlePitch: row?.googlePitch ?? DEFAULT_PITCH,
       googleSpeakingRate: row?.googleSpeakingRate ?? DEFAULT_SPEAKING_RATE,
@@ -182,7 +190,9 @@ export class AudioConfigService {
 
     if (input.activeProvider !== undefined) {
       if (!VALID_PROVIDERS.has(input.activeProvider)) {
-        throw new BadRequestException(`Proveedor inválido: ${input.activeProvider}.`);
+        throw new BadRequestException(
+          `Proveedor inválido: ${input.activeProvider}.`,
+        );
       }
       data.activeProvider = input.activeProvider;
     }
@@ -209,7 +219,12 @@ export class AudioConfigService {
     }
 
     if (input.googleSpeakingRate !== undefined) {
-      assertInRange('googleSpeakingRate', input.googleSpeakingRate, RATE_MIN, RATE_MAX);
+      assertInRange(
+        'googleSpeakingRate',
+        input.googleSpeakingRate,
+        RATE_MIN,
+        RATE_MAX,
+      );
       data.googleSpeakingRate = input.googleSpeakingRate;
     }
 
@@ -229,8 +244,13 @@ export class AudioConfigService {
     }
 
     // ElevenLabs API key: se ENCRIPTA al guardar. Vacío/omitido = sin cambios.
-    if (input.elevenLabsApiKey !== undefined && input.elevenLabsApiKey.trim() !== '') {
-      data.elevenLabsApiKey = this.crypto.encrypt(input.elevenLabsApiKey.trim());
+    if (
+      input.elevenLabsApiKey !== undefined &&
+      input.elevenLabsApiKey.trim() !== ''
+    ) {
+      data.elevenLabsApiKey = this.crypto.encrypt(
+        input.elevenLabsApiKey.trim(),
+      );
     }
 
     await this.prisma.organizationAudioConfig.upsert({
@@ -300,7 +320,10 @@ export class AudioConfigService {
   }
 
   /** Desencripta sin tumbar el flujo: si falla, loguea y devuelve null. */
-  private safeDecrypt(ciphertext: string | null, organizationId: string): string | null {
+  private safeDecrypt(
+    ciphertext: string | null,
+    organizationId: string,
+  ): string | null {
     if (!ciphertext) return null;
     try {
       return this.crypto.decrypt(ciphertext);
@@ -320,8 +343,18 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function assertInRange(field: string, value: number, min: number, max: number): void {
-  if (typeof value !== 'number' || Number.isNaN(value) || value < min || value > max) {
+function assertInRange(
+  field: string,
+  value: number,
+  min: number,
+  max: number,
+): void {
+  if (
+    typeof value !== 'number' ||
+    Number.isNaN(value) ||
+    value < min ||
+    value > max
+  ) {
     throw new BadRequestException(
       `${field} fuera de rango: ${value}. Debe estar entre ${min} y ${max}.`,
     );

@@ -40,7 +40,12 @@ export interface ElevenLabsTtsParams {
  */
 export type TtsResult =
   | { ok: true; audio: Buffer; bytes: number; rtt_ms: number }
-  | { ok: false; code: AudioDiagnosisErrorCode; message: string; rtt_ms: number };
+  | {
+      ok: false;
+      code: AudioDiagnosisErrorCode;
+      message: string;
+      rtt_ms: number;
+    };
 
 /** Estrategia de síntesis de voz, parametrizada por su tipo de credenciales. */
 export interface TtsProvider<P> {

@@ -25,4 +25,3 @@ export class PrismaService
     return this._extendedClient;
   }
 }
-

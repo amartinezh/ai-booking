@@ -52,13 +52,17 @@ function createFakeRedis() {
     }),
     // El TTL no se modela en memoria; basta con que exista para la marca de
     // actividad (refresco de TTL del estado) que hace el servicio en cada mensaje.
-    expire: jest.fn(async (k: string, _seconds: number) => (store.has(k) ? 1 : 0)),
+    expire: jest.fn(async (k: string, _seconds: number) =>
+      store.has(k) ? 1 : 0,
+    ),
     ttl: jest.fn(async (k: string) => (store.has(k) ? -1 : -2)),
   };
 }
 
 // SchedulingExtraction completa con overrides; default = intención "otro" sin entidades.
-function extraction(over: Partial<SchedulingExtraction> = {}): SchedulingExtraction {
+function extraction(
+  over: Partial<SchedulingExtraction> = {},
+): SchedulingExtraction {
   return {
     transcript: null,
     cedula: null,
@@ -123,7 +127,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
     knowledgeBase = {
       hasContent: jest.fn(async () => true),
-      getContent: jest.fn(async () => 'Servicios: Consulta externa, Laboratorio, Cardiología.'),
+      getContent: jest.fn(
+        async () => 'Servicios: Consulta externa, Laboratorio, Cardiología.',
+      ),
     };
 
     prisma = {
@@ -148,7 +154,10 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         create: jest.fn(async () => ({ id: 'eps-part', name: 'Particular' })),
         update: jest.fn(async () => ({})),
       },
-      organization: { findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null) },
+      organization: {
+        findMany: jest.fn(async () => []),
+        findUnique: jest.fn(async () => null),
+      },
       doctorProfile: { findMany: jest.fn(async () => []) },
     };
 
@@ -172,16 +181,37 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: HttpService, useValue: { post: jest.fn() } },
         { provide: RedisService, useValue: redis },
-        { provide: AppointmentsService, useValue: { getAvailableSlots: jest.fn(async () => []) } },
-        { provide: WaitlistService, useValue: { joinWaitlist: jest.fn(), notifyWaitlist: jest.fn() } },
+        {
+          provide: AppointmentsService,
+          useValue: { getAvailableSlots: jest.fn(async () => []) },
+        },
+        {
+          provide: WaitlistService,
+          useValue: { joinWaitlist: jest.fn(), notifyWaitlist: jest.fn() },
+        },
         { provide: InteractionLogService, useValue: interactionLog },
         { provide: KnowledgeBaseService, useValue: knowledgeBase },
-        { provide: OrganizationSettingsService, useValue: organizationSettings },
+        {
+          provide: OrganizationSettingsService,
+          useValue: organizationSettings,
+        },
         { provide: LlmFactoryService, useValue: llmFactory },
-        { provide: WhatsappCredentialsService, useValue: { resolveForOrg: jest.fn() } },
-        { provide: SurveyService, useValue: { generateSurveyToken: jest.fn(async () => null) } },
-        { provide: AudioConfigService, useValue: { getEffective: jest.fn(async () => null) } },
-        { provide: TtsFactoryService, useValue: { synthesize: jest.fn(async () => null) } },
+        {
+          provide: WhatsappCredentialsService,
+          useValue: { resolveForOrg: jest.fn() },
+        },
+        {
+          provide: SurveyService,
+          useValue: { generateSurveyToken: jest.fn(async () => null) },
+        },
+        {
+          provide: AudioConfigService,
+          useValue: { getEffective: jest.fn(async () => null) },
+        },
+        {
+          provide: TtsFactoryService,
+          useValue: { synthesize: jest.fn(async () => null) },
+        },
       ],
     }).compile();
 
@@ -194,9 +224,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
     // El enlace CSAT (encuesta de cierre) es plumbing aparte de la conversación:
     // lo silenciamos para que `sentMessages()` capture solo las respuestas del flujo.
-    jest
-      .spyOn(service as any, 'sendSurveyLink')
-      .mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'sendSurveyLink').mockResolvedValue(undefined);
   });
 
   it('should be defined', () => {
@@ -285,7 +313,11 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // Bastó la consulta acotada al servicio; no se hace fallback org-wide.
       expect(prisma.doctorProfile.findMany).toHaveBeenCalledTimes(1);
       expect(prisma.doctorProfile.findMany).toHaveBeenCalledWith({
-        where: { organizationId: ORG_ID, serviceId: SERVICE_ID, isActive: true },
+        where: {
+          organizationId: ORG_ID,
+          serviceId: SERVICE_ID,
+          isActive: true,
+        },
         select: { id: true, fullName: true },
       });
     });
@@ -357,14 +389,20 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     });
 
     it('no confunde una solicitud real con un saludo', () => {
-      expect((service as any).greetingRegex.test('necesito una cita')).toBe(false);
-      expect((service as any).greetingRegex.test('buenas necesito una cita')).toBe(false);
+      expect((service as any).greetingRegex.test('necesito una cita')).toBe(
+        false,
+      );
+      expect(
+        (service as any).greetingRegex.test('buenas necesito una cita'),
+      ).toBe(false);
     });
   });
 
   // ── PRIMER TURNO: siempre clasifica con el LLM (entrada abierta) ──
   it('en IDLE invoca al LLM para clasificar el primer mensaje libre', async () => {
-    provider.extractSchedulingIntent.mockResolvedValueOnce(extraction({ intent: 'otro' }));
+    provider.extractSchedulingIntent.mockResolvedValueOnce(
+      extraction({ intent: 'otro' }),
+    );
 
     await service.processIncomingMessage(makeTextEvent('necesito información'));
 
@@ -388,7 +426,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     // No se intenta responder FAQ ni continuar agendamiento.
     expect(provider.answerFAQ).not.toHaveBeenCalled();
     // Sesión cerrada → estado vuelve a IDLE.
-    expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.IDLE);
+    expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+      ChatState.IDLE,
+    );
   });
 
   // ── INTENT ROUTER · Tarea C: consulta_faq ──
@@ -400,7 +440,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       'Tenemos consulta externa y laboratorio. ¿Desea agendar una cita ahora? 😊',
     );
 
-    await service.processIncomingMessage(makeTextEvent('¿qué servicios tienen?'));
+    await service.processIncomingMessage(
+      makeTextEvent('¿qué servicios tienen?'),
+    );
 
     expect(provider.answerFAQ).toHaveBeenCalledTimes(1);
     const replies = sentMessages();
@@ -457,7 +499,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         'Sí, tenemos un cupo disponible para mañana a las 9:00 a.m.',
       );
 
-      await service.processIncomingMessage(makeTextEvent('¿hay citas para mañana?'));
+      await service.processIncomingMessage(
+        makeTextEvent('¿hay citas para mañana?'),
+      );
 
       const replies = sentMessages();
       expect(replies[0]).not.toContain('9:00');
@@ -488,7 +532,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           'cerrados. ¿Desea agendar una cita ahora? 😊',
       );
 
-      await service.processIncomingMessage(makeTextEvent('¿abren los festivos?'));
+      await service.processIncomingMessage(
+        makeTextEvent('¿abren los festivos?'),
+      );
 
       const replies = sentMessages();
       expect(replies[0]).toContain('festivos');
@@ -497,7 +543,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
   // ── ACK · Fase 2 + validación de cédula (Fase 3) ──
   it('agendar_cita con cédula registrada → ACK saluda por nombre y confirma datos', async () => {
-    prisma.patientProfile.findUnique.mockResolvedValueOnce({ fullName: 'Andrés Pérez' });
+    prisma.patientProfile.findUnique.mockResolvedValueOnce({
+      fullName: 'Andrés Pérez',
+    });
     provider.extractSchedulingIntent.mockResolvedValueOnce(
       extraction({
         intent: 'agendar_cita',
@@ -521,7 +569,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     expect(ack).toContain('Cardiología');
 
     // Sembró el nombre para no volver a pedirlo.
-    expect(redis.store.get(`temp_nombre:${ORG_ID}:${SENDER}`)).toBe('Andrés Pérez');
+    expect(redis.store.get(`temp_nombre:${ORG_ID}:${SENDER}`)).toBe(
+      'Andrés Pérez',
+    );
   });
 
   it('agendar_cita con cédula de cualquier tamaño → la acepta sin validar longitud', async () => {
@@ -530,7 +580,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       extraction({ intent: 'agendar_cita', cedula: '12' }),
     );
 
-    await service.processIncomingMessage(makeTextEvent('agendar con cédula 12'));
+    await service.processIncomingMessage(
+      makeTextEvent('agendar con cédula 12'),
+    );
 
     // Se valida contra BD (existencia del paciente), independiente de la longitud.
     expect(prisma.patientProfile.findUnique).toHaveBeenCalledWith(
@@ -604,7 +656,10 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   describe('en AWAITING_SPECIALTY', () => {
     beforeEach(async () => {
       // Sesión colgada en el paso de selección de servicio.
-      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_SPECIALTY);
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_SPECIALTY,
+      );
       prisma.medicalService.findMany.mockResolvedValue([
         { id: 's1', name: 'Consulta externa' },
         { id: 's2', name: 'Laboratorio clínico' },
@@ -612,7 +667,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     });
 
     it('afirmación de agendar → re-presenta el menú sin error ni penalizar reintentos', async () => {
-      await service.processIncomingMessage(makeTextEvent('Si quiero agendar una cita'));
+      await service.processIncomingMessage(
+        makeTextEvent('Si quiero agendar una cita'),
+      );
 
       const reply = sentMessages()[0] || '';
       // Re-presentación cálida, NO el mensaje de "no logré entender".
@@ -622,13 +679,17 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // No se llamó al LLM (en el paso de menú no se usa).
       expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
       // No se penalizó con reintento.
-      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`error_count:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
     });
 
     it('una pregunta abierta sigue yendo a FAQ (no a re-presentación)', async () => {
       provider.answerFAQ.mockResolvedValueOnce('Una cita cuesta $50.000.');
 
-      await service.processIncomingMessage(makeTextEvent('¿cuánto cuesta una cita?'));
+      await service.processIncomingMessage(
+        makeTextEvent('¿cuánto cuesta una cita?'),
+      );
 
       expect(provider.answerFAQ).toHaveBeenCalledTimes(1);
       expect(sentMessages()[0]).toContain('cuesta');
@@ -650,7 +711,10 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   // ════════════════════════════════════════════════════════════
   describe('mapeo semántico de servicio en AWAITING_SPECIALTY', () => {
     beforeEach(() => {
-      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_SPECIALTY);
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_SPECIALTY,
+      );
       // El catálogo real de la clínica.
       prisma.medicalService.findMany.mockResolvedValue([
         { id: 's1', name: 'Consulta externa' },
@@ -669,53 +733,66 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('Caso A: frase larga se mapea al servicio y avanza a EPS', async () => {
       provider.mapEntityToCatalog.mockResolvedValueOnce({ id: 's1' });
 
-      await service.processIncomingMessage(
-        makeTextEvent(SEM_PHRASE),
-      );
+      await service.processIncomingMessage(makeTextEvent(SEM_PHRASE));
 
       expect(provider.mapEntityToCatalog).toHaveBeenCalledTimes(1);
       // Servicio resuelto y persistido.
-      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
-      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBe('Consulta externa');
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe(
+        's1',
+      );
+      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBe(
+        'Consulta externa',
+      );
       // Avanzó al paso de EPS (no se quedó en el menú de servicio ni dio error).
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_EPS,
+      );
       expect(sentMessages().join('\n')).not.toContain('no logré entender');
     });
 
     it('anti-alucinación: id devuelto que no existe en el catálogo se descarta', async () => {
-      provider.mapEntityToCatalog.mockResolvedValueOnce({ id: 'id-inexistente' });
+      provider.mapEntityToCatalog.mockResolvedValueOnce({
+        id: 'id-inexistente',
+      });
 
-      await service.processIncomingMessage(
-        makeTextEvent(SEM_PHRASE),
-      );
+      await service.processIncomingMessage(makeTextEvent(SEM_PHRASE));
 
       // No se resolvió ningún servicio (id inválido descartado).
-      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
       // No avanzó a EPS; sigue en selección de servicio.
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_SPECIALTY);
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_SPECIALTY,
+      );
     });
 
     it('Caso B: si el LLM falla, cae al flujo determinista sin romper', async () => {
       provider.mapEntityToCatalog.mockRejectedValueOnce(new Error('boom'));
 
-      await service.processIncomingMessage(
-        makeTextEvent(SEM_PHRASE),
-      );
+      await service.processIncomingMessage(makeTextEvent(SEM_PHRASE));
 
       // Degradación segura: no resolvió servicio, no lanzó excepción.
-      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
       expect(sentMessages().length).toBeGreaterThan(0);
     });
 
     it('no llama al mapeo semántico para una letra de menú (atajo barato)', async () => {
       // "a" resuelve por letra; no debe gastar una llamada al LLM.
       redis.store.set(`temp_service_A_id:${ORG_ID}:${SENDER}`, 's1');
-      redis.store.set(`temp_service_A_name:${ORG_ID}:${SENDER}`, 'Consulta externa');
+      redis.store.set(
+        `temp_service_A_name:${ORG_ID}:${SENDER}`,
+        'Consulta externa',
+      );
 
       await service.processIncomingMessage(makeTextEvent('a'));
 
       expect(provider.mapEntityToCatalog).not.toHaveBeenCalled();
-      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe(
+        's1',
+      );
     });
 
     // Regresión: la frase del usuario CONTIENE el nombre de un servicio del
@@ -727,10 +804,16 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       );
 
       expect(provider.mapEntityToCatalog).not.toHaveBeenCalled();
-      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
-      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBe('Consulta externa');
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe(
+        's1',
+      );
+      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBe(
+        'Consulta externa',
+      );
       // Avanzó al paso de EPS y no cayó en el loop de "no entendí"/reprompt.
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_EPS,
+      );
       expect(sentMessages().join('\n')).not.toContain('servicios necesitas');
     });
 
@@ -739,10 +822,16 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('resuelve por nombre aun sin proveedor LLM configurado', async () => {
       llmFactory.forOrgOrNull.mockResolvedValue(null);
 
-      await service.processIncomingMessage(makeTextEvent('quiero una consulta externa'));
+      await service.processIncomingMessage(
+        makeTextEvent('quiero una consulta externa'),
+      );
 
-      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe(
+        's1',
+      );
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_EPS,
+      );
     });
 
     // Regresión (voz↔texto): un AUDIO en el paso de servicio. El LLM transcribe
@@ -759,19 +848,33 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         metadata: { phone_number_id: PHONE_ID },
       });
       // Aislamos la descarga del audio de WhatsApp (capa HTTP/credenciales).
-      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok' });
-      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok' });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
       // El LLM transcribe la voz pero deja `especialidad` en null.
       provider.extractSchedulingIntent.mockResolvedValueOnce(
-        extraction({ transcript: 'consulta externa', especialidad: null, intent: 'agendar_cita' }),
+        extraction({
+          transcript: 'consulta externa',
+          especialidad: null,
+          intent: 'agendar_cita',
+        }),
       );
 
       await service.processIncomingMessage(makeAudioEvent());
 
       // El servicio se resolvió por el transcript y avanzó a EPS (igual que el texto).
-      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe('s1');
-      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBe('Consulta externa');
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
+      expect(redis.store.get(`temp_especialidad_id:${ORG_ID}:${SENDER}`)).toBe(
+        's1',
+      );
+      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBe(
+        'Consulta externa',
+      );
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_EPS,
+      );
     });
   });
 
@@ -796,18 +899,29 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // Servicio YA resuelto: el paciente está en el paso de EPS.
       redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_EPS);
       redis.store.set(`temp_especialidad_id:${ORG_ID}:${SENDER}`, 's1');
-      redis.store.set(`temp_especialidad:${ORG_ID}:${SENDER}`, 'Consulta externa');
+      redis.store.set(
+        `temp_especialidad:${ORG_ID}:${SENDER}`,
+        'Consulta externa',
+      );
       // Catálogo de EPS de la clínica (incluye la que el paciente dirá por voz).
       prisma.eps.findMany.mockResolvedValue([{ id: 'e1', name: 'Nueva EPS' }]);
 
-      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok' });
-      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok' });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
     });
 
     it('AUDIO "Nueva EPS" con intent=consulta_faq → resuelve la EPS, NO llama answerFAQ', async () => {
       // El LLM transcribe la EPS pero la clasifica como consulta_faq (el bug).
       provider.extractSchedulingIntent.mockResolvedValueOnce(
-        extraction({ transcript: 'Nueva EPS', eps: null, intent: 'consulta_faq' }),
+        extraction({
+          transcript: 'Nueva EPS',
+          eps: null,
+          intent: 'consulta_faq',
+        }),
       );
 
       await service.processIncomingMessage(makeAudioEvent());
@@ -816,7 +930,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(provider.answerFAQ).not.toHaveBeenCalled();
       // La EPS se capturó por el transcript (igual que el texto).
       expect(redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`)).toBe('e1');
-      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe('Nueva EPS');
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+        'Nueva EPS',
+      );
       // Avanzó más allá del paso de EPS (sin slots → opt-in a lista de espera).
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
         ChatState.AWAITING_WAITLIST_OPTIN,
@@ -826,7 +942,11 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('AUDIO con pregunta abierta (no mapea a EPS) SÍ responde FAQ sin perder el estado', async () => {
       // El paciente realmente pregunta algo: el transcript no mapea a ninguna EPS.
       provider.extractSchedulingIntent.mockResolvedValueOnce(
-        extraction({ transcript: '¿qué documentos necesito?', eps: null, intent: 'consulta_faq' }),
+        extraction({
+          transcript: '¿qué documentos necesito?',
+          eps: null,
+          intent: 'consulta_faq',
+        }),
       );
 
       await service.processIncomingMessage(makeAudioEvent());
@@ -834,8 +954,12 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // La FAQ legítima sí se atiende (vía el resolver del menú, classifyIntentLocal)…
       expect(provider.answerFAQ).toHaveBeenCalledTimes(1);
       // …y NO se pierde el progreso: sigue esperando la EPS.
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_EPS);
-      expect(redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_EPS,
+      );
+      expect(
+        redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
     });
 
     // ── REGRESIÓN (loop de voz en EPS) ──────────────────────────────
@@ -845,16 +969,25 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     // Ahora la voz en pasos de menú salta esos guardas y llega al resolver.
     it('AUDIO "Nueva EPS" con outOfContext=true → resuelve la EPS, NO reprompta fuera de contexto', async () => {
       provider.extractSchedulingIntent.mockResolvedValueOnce(
-        extraction({ transcript: 'Nueva EPS', eps: null, intent: 'otro', outOfContext: true }),
+        extraction({
+          transcript: 'Nueva EPS',
+          eps: null,
+          intent: 'otro',
+          outOfContext: true,
+        }),
       );
 
       await service.processIncomingMessage(makeAudioEvent());
 
       // No se disparó el reprompt de "fuera de contexto" (no incrementa reintentos).
-      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`error_count:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
       // La EPS se capturó por el transcript (igual que el texto).
       expect(redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`)).toBe('e1');
-      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe('Nueva EPS');
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+        'Nueva EPS',
+      );
       // Avanzó más allá del paso de EPS (sin slots → opt-in a lista de espera).
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
         ChatState.AWAITING_WAITLIST_OPTIN,
@@ -863,14 +996,23 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
     it('AUDIO "Nueva EPS" con ininteligible=true → resuelve la EPS, NO reprompta "no entendí"', async () => {
       provider.extractSchedulingIntent.mockResolvedValueOnce(
-        extraction({ transcript: 'Nueva EPS', eps: null, intent: 'otro', ininteligible: true }),
+        extraction({
+          transcript: 'Nueva EPS',
+          eps: null,
+          intent: 'otro',
+          ininteligible: true,
+        }),
       );
 
       await service.processIncomingMessage(makeAudioEvent());
 
-      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`error_count:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
       expect(redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`)).toBe('e1');
-      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe('Nueva EPS');
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+        'Nueva EPS',
+      );
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
         ChatState.AWAITING_WAITLIST_OPTIN,
       );
@@ -892,15 +1034,28 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     });
 
     beforeEach(() => {
-      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_DATE);
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_DATE,
+      );
       // Menú de horarios ya presentado: dos opciones A y B.
       redis.store.set(`temp_slot_A:${SENDER}`, 'slot-A');
-      redis.store.set(`temp_slot_A_fecha:${SENDER}`, new Date('2026-06-01T15:00:00Z').toISOString());
+      redis.store.set(
+        `temp_slot_A_fecha:${SENDER}`,
+        new Date('2026-06-01T15:00:00Z').toISOString(),
+      );
       redis.store.set(`temp_slot_B:${SENDER}`, 'slot-B');
-      redis.store.set(`temp_slot_B_fecha:${SENDER}`, new Date('2026-06-02T16:00:00Z').toISOString());
+      redis.store.set(
+        `temp_slot_B_fecha:${SENDER}`,
+        new Date('2026-06-02T16:00:00Z').toISOString(),
+      );
 
-      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok', isActive: true });
-      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok', isActive: true });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
     });
 
     it('AUDIO "la a" selecciona el horario A y NO rechaza el audio como paso estricto', async () => {
@@ -913,8 +1068,12 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // No se rechazó el audio (nunca apareció el reprompt de "escríbalo").
       expect(sentMessages().join('\n').toLowerCase()).not.toContain('escríba');
       // El horario A quedó seleccionado y avanzó a pedir la cédula.
-      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe('slot-A');
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_CEDULA);
+      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe(
+        'slot-A',
+      );
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_CEDULA,
+      );
     });
 
     it('AUDIO "be" (nombre fonético) selecciona el horario B', async () => {
@@ -924,24 +1083,39 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
       await service.processIncomingMessage(makeAudioEvent());
 
-      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe('slot-B');
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_CEDULA);
+      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe(
+        'slot-B',
+      );
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_CEDULA,
+      );
     });
 
     it('AUDIO que transcribe una EPS alucinada NO contamina el contexto: solo cuenta la letra', async () => {
       // El LLM, sin contexto, devuelve transcript con letra pero marca una EPS.
       provider.extractSchedulingIntent.mockResolvedValueOnce(
-        extraction({ transcript: 'la a', eps: 'Sura', especialidad: 'Cardiología', intent: 'consulta_faq' }),
+        extraction({
+          transcript: 'la a',
+          eps: 'Sura',
+          especialidad: 'Cardiología',
+          intent: 'consulta_faq',
+        }),
       );
 
       await service.processIncomingMessage(makeAudioEvent());
 
       // No se desvió a FAQ ni se persistió la EPS/especialidad alucinada.
       expect(provider.answerFAQ).not.toHaveBeenCalled();
-      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBeUndefined();
-      expect(redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
+      expect(
+        redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
       // Y sí seleccionó el horario A.
-      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe('slot-A');
+      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe(
+        'slot-A',
+      );
     });
   });
 
@@ -976,9 +1150,16 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     });
 
     it('AWAITING_WAITLIST_OPTIN acepta "No" por VOZ (no rechaza el audio)', async () => {
-      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_WAITLIST_OPTIN);
-      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok' });
-      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_WAITLIST_OPTIN,
+      );
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok' });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
       provider.extractSchedulingIntent.mockResolvedValueOnce(
         extraction({ transcript: 'No, gracias' }),
       );
@@ -991,12 +1172,17 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // Se interpretó como NO → respuesta de declinación (invita a escribir "Hola")
       // y sesión cerrada (estado reseteado a IDLE).
       expect(all).toContain('Hola');
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.IDLE);
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.IDLE,
+      );
     });
 
     it('opt-in a lista de espera acepta una cédula corta ("12") sin validar tamaño', async () => {
       // Contexto de un opt-in ya aceptado: faltaba la cédula.
-      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_CEDULA);
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_CEDULA,
+      );
       redis.store.set(`temp_waitlist_pending:${ORG_ID}:${SENDER}`, '1');
       redis.store.set(`temp_waitlist_service_id:${ORG_ID}:${SENDER}`, 's1');
       redis.store.set(`temp_especialidad:${ORG_ID}:${SENDER}`, 'Cardiología');
@@ -1011,7 +1197,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(all).not.toContain('no logré identificar');
       // Avanza pidiendo el nombre del paciente nuevo (cédula aceptada).
       expect(all).toContain('nombre completo');
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_NAME);
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_NAME,
+      );
     });
 
     // ── REGRESIÓN (loop de cédula por voz en waitlist) ──────────────
@@ -1021,12 +1209,19 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     // recae en la oferta de lista de espera (SÍ/NO) en bucle. Ahora la voz en
     // el paso de cédula se normaliza igual que el texto.
     it('AUDIO cédula con ruido de STT ("mi cédula es 10 88 12 34") → la normaliza y avanza (NO loop SÍ/NO)', async () => {
-      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_CEDULA);
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_CEDULA,
+      );
       redis.store.set(`temp_waitlist_pending:${ORG_ID}:${SENDER}`, '1');
       redis.store.set(`temp_waitlist_service_id:${ORG_ID}:${SENDER}`, 's1');
       redis.store.set(`temp_especialidad:${ORG_ID}:${SENDER}`, 'Cardiología');
-      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok' });
-      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok' });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
       // El LLM transcribe pero NO extrae la cédula como entidad limpia.
       provider.extractSchedulingIntent.mockResolvedValueOnce(
         extraction({ transcript: 'mi cédula es 10 88 12 34', cedula: null }),
@@ -1037,7 +1232,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       await service.processIncomingMessage(makeAudioEvent());
 
       // La cédula se extrajo de la voz → avanza a pedir el nombre.
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_NAME);
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_NAME,
+      );
       // NO recayó en el bucle de la oferta de lista de espera.
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).not.toBe(
         ChatState.AWAITING_WAITLIST_OPTIN,
@@ -1045,12 +1242,19 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     });
 
     it('AUDIO en cédula sin dígitos ("no sé bien") → pide por TEXTO con reintento, NO reabre SÍ/NO', async () => {
-      redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, ChatState.AWAITING_CEDULA);
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_CEDULA,
+      );
       redis.store.set(`temp_waitlist_pending:${ORG_ID}:${SENDER}`, '1');
       redis.store.set(`temp_waitlist_service_id:${ORG_ID}:${SENDER}`, 's1');
       redis.store.set(`temp_especialidad:${ORG_ID}:${SENDER}`, 'Cardiología');
-      jest.spyOn(service as any, 'resolveCredentialsForOrg').mockResolvedValue({ accessToken: 'tok' });
-      jest.spyOn(service as any, 'downloadWhatsAppAudio').mockResolvedValue(Buffer.from('fake-ogg'));
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok' });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
       provider.extractSchedulingIntent.mockResolvedValueOnce(
         extraction({ transcript: 'no sé bien', cedula: null }),
       );
@@ -1058,13 +1262,16 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       await service.processIncomingMessage(makeAudioEvent());
 
       // No avanzó ni reabrió la oferta de lista de espera: sigue esperando la cédula.
-      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(ChatState.AWAITING_CEDULA);
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_CEDULA,
+      );
       // Reintento acotado registrado (no loop silencioso).
       expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBe('1');
     });
 
     it('extractCedulaFromSpeech normaliza ruido de STT (separadores y números en palabras)', () => {
-      const extract = (t: string) => (service as any).extractCedulaFromSpeech(t);
+      const extract = (t: string) =>
+        (service as any).extractCedulaFromSpeech(t);
       expect(extract('mi cédula es 10 88 12 34')).toBe('10881234');
       expect(extract('1.088.123.456')).toBe('1088123456');
       expect(extract('uno cero ocho ocho uno dos')).toBe('108812');
@@ -1092,7 +1299,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(letra('opción dos')).toBe('B');
       expect(letra('la primera')).toBe('A');
       // No reconoce ruido ni nombres de servicio/EPS (cae a otros resolvers).
-      expect(letra('quiero la de las tres de la tarde con ese doctor')).toBe('');
+      expect(letra('quiero la de las tres de la tarde con ese doctor')).toBe(
+        '',
+      );
       expect(letra('sura')).toBe('');
       expect(letra('')).toBe('');
     });
@@ -1126,7 +1335,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       const all = sentMessages().join('\n');
       expect(all).toContain('interrumpir'); // texto FORMAL de interrupcionAgendamiento
       // Transición al estado puente y memoria del estado interrumpido.
-      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_INTERRUPT_CONFIRMATION);
+      expect(redis.store.get(stateKey)).toBe(
+        ChatState.AWAITING_INTERRUPT_CONFIRMATION,
+      );
       expect(redis.store.get(prevStateKey)).toBe(ChatState.AWAITING_SPECIALTY);
       // No se gastó LLM ni se limpió la sesión de agendamiento.
       expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
@@ -1175,7 +1386,10 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     describe('loop de reintento de cédula (cancelación sin citas)', () => {
       beforeEach(() => {
         prisma.patientProfile.findFirst = jest.fn(async () => ({
-          id: 'pat-1', fullName: 'Ana Gómez', cedula: '12345', organizationId: ORG_ID,
+          id: 'pat-1',
+          fullName: 'Ana Gómez',
+          cedula: '12345',
+          organizationId: ORG_ID,
         }));
         prisma.appointment = { findMany: jest.fn(async () => []) };
         prisma.$transaction = jest.fn(async (arg: any) =>
@@ -1189,8 +1403,12 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
         await service.processIncomingMessage(makeTextEvent('12345'));
 
-        expect(sentMessages().join('\n').toLowerCase()).toContain('otra cédula');
-        expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+        expect(sentMessages().join('\n').toLowerCase()).toContain(
+          'otra cédula',
+        );
+        expect(redis.store.get(stateKey)).toBe(
+          ChatState.AWAITING_CANCEL_RETRY_CEDULA,
+        );
       });
 
       it('SÍ vuelve a pedir la cédula (AWAITING_CANCEL_CEDULA)', async () => {
@@ -1198,7 +1416,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
         await service.processIncomingMessage(makeTextEvent('sí'));
 
-        expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+        expect(redis.store.get(stateKey)).toBe(
+          ChatState.AWAITING_CANCEL_CEDULA,
+        );
         expect(sentMessages().join('\n').toLowerCase()).toContain('cédula');
       });
 
@@ -1218,7 +1438,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         await service.processIncomingMessage(makeTextEvent('98765'));
 
         expect(prisma.patientProfile.findFirst).toHaveBeenCalled();
-        expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+        expect(redis.store.get(stateKey)).toBe(
+          ChatState.AWAITING_CANCEL_RETRY_CEDULA,
+        );
       });
 
       it('respuesta ambigua (ni SÍ/NO ni cédula) re-pregunta sin cerrar', async () => {
@@ -1226,7 +1448,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
         await service.processIncomingMessage(makeTextEvent('tal vez'));
 
-        expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+        expect(redis.store.get(stateKey)).toBe(
+          ChatState.AWAITING_CANCEL_RETRY_CEDULA,
+        );
         expect(prisma.$transaction).not.toHaveBeenCalled();
       });
     });
@@ -1242,7 +1466,10 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     // callback (reprogramación atómica). En el callback pasamos `prisma` como tx.
     const setupTxAndModels = () => {
       prisma.patientProfile.findFirst = jest.fn(async () => ({
-        id: 'pat-1', fullName: 'Ana Gómez', cedula: '12345', organizationId: ORG_ID,
+        id: 'pat-1',
+        fullName: 'Ana Gómez',
+        cedula: '12345',
+        organizationId: ORG_ID,
       }));
       prisma.appointment = {
         findMany: jest.fn(async () => []),
@@ -1258,7 +1485,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       );
     };
 
-    const slots = () => (service as any).appointmentsService.getAvailableSlots as jest.Mock;
+    const slots = () =>
+      (service as any).appointmentsService.getAvailableSlots as jest.Mock;
 
     beforeEach(() => {
       setupTxAndModels();
@@ -1284,7 +1512,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       await service.processIncomingMessage(makeTextEvent('12345'));
 
       expect(sentMessages().join('\n').toLowerCase()).toContain('otra cédula');
-      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+      expect(redis.store.get(stateKey)).toBe(
+        ChatState.AWAITING_MODIFY_RETRY_CEDULA,
+      );
     });
 
     it('loop: SÍ a "otra cédula" vuelve a pedir la cédula (AWAITING_MODIFY_CEDULA)', async () => {
@@ -1314,7 +1544,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       await service.processIncomingMessage(makeTextEvent('98765'));
 
       expect(prisma.patientProfile.findFirst).toHaveBeenCalled();
-      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+      expect(redis.store.get(stateKey)).toBe(
+        ChatState.AWAITING_MODIFY_RETRY_CEDULA,
+      );
     });
 
     it('loop: respuesta ambigua (ni SÍ/NO ni cédula) re-pregunta sin cerrar', async () => {
@@ -1323,48 +1555,94 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       await service.processIncomingMessage(makeTextEvent('tal vez'));
 
       // No cierra ni avanza: sigue esperando SÍ/NO en el mismo estado.
-      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+      expect(redis.store.get(stateKey)).toBe(
+        ChatState.AWAITING_MODIFY_RETRY_CEDULA,
+      );
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('una cita con cupos disponibles → ofrece nuevos horarios (AWAITING_MODIFY_NEW_SLOT)', async () => {
       redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CEDULA);
       prisma.appointment.findMany.mockResolvedValueOnce([
-        { id: 'apt-1', scheduleSlotId: 'slot-old', epsId: null,
-          scheduleSlot: { startTime: new Date('2026-06-01T09:00:00Z'), doctor: { fullName: 'Pérez' }, service: { name: 'Cardiología' } } },
+        {
+          id: 'apt-1',
+          scheduleSlotId: 'slot-old',
+          epsId: null,
+          scheduleSlot: {
+            startTime: new Date('2026-06-01T09:00:00Z'),
+            doctor: { fullName: 'Pérez' },
+            service: { name: 'Cardiología' },
+          },
+        },
       ]);
       prisma.appointment.findUnique.mockResolvedValueOnce({
-        id: 'apt-1', scheduleSlotId: 'slot-old', epsId: null,
-        scheduleSlot: { startTime: new Date('2026-06-01T09:00:00Z'), doctor: { fullName: 'Pérez' }, service: { name: 'Cardiología' } },
+        id: 'apt-1',
+        scheduleSlotId: 'slot-old',
+        epsId: null,
+        scheduleSlot: {
+          startTime: new Date('2026-06-01T09:00:00Z'),
+          doctor: { fullName: 'Pérez' },
+          service: { name: 'Cardiología' },
+        },
       });
       slots().mockResolvedValueOnce([
-        { slotId: 'slot-new', fecha: new Date('2026-06-05T15:00:00Z'), doctor: 'Pérez', servicio: 'Cardiología' },
+        {
+          slotId: 'slot-new',
+          fecha: new Date('2026-06-05T15:00:00Z'),
+          doctor: 'Pérez',
+          servicio: 'Cardiología',
+        },
       ]);
 
       await service.processIncomingMessage(makeTextEvent('12345'));
 
-      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
-      expect(redis.store.get(`temp_modify_newslot_A:${ORG_ID}:${SENDER}`)).toBe('slot-new');
+      expect(redis.store.get(stateKey)).toBe(
+        ChatState.AWAITING_MODIFY_NEW_SLOT,
+      );
+      expect(redis.store.get(`temp_modify_newslot_A:${ORG_ID}:${SENDER}`)).toBe(
+        'slot-new',
+      );
     });
 
     it('una cita SIN cupos alternativos → ofrece cancelarla (AWAITING_MODIFY_NO_SLOTS_CANCEL)', async () => {
       redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CEDULA);
       prisma.appointment.findMany.mockResolvedValueOnce([
-        { id: 'apt-1', scheduleSlotId: 'slot-old', epsId: null,
-          scheduleSlot: { startTime: new Date('2026-06-01T09:00:00Z'), doctor: { fullName: 'Pérez' }, service: { name: 'Cardiología' } } },
+        {
+          id: 'apt-1',
+          scheduleSlotId: 'slot-old',
+          epsId: null,
+          scheduleSlot: {
+            startTime: new Date('2026-06-01T09:00:00Z'),
+            doctor: { fullName: 'Pérez' },
+            service: { name: 'Cardiología' },
+          },
+        },
       ]);
       prisma.appointment.findUnique.mockResolvedValueOnce({
-        id: 'apt-1', scheduleSlotId: 'slot-old', epsId: null,
-        scheduleSlot: { startTime: new Date('2026-06-01T09:00:00Z'), doctor: { fullName: 'Pérez' }, service: { name: 'Cardiología' } },
+        id: 'apt-1',
+        scheduleSlotId: 'slot-old',
+        epsId: null,
+        scheduleSlot: {
+          startTime: new Date('2026-06-01T09:00:00Z'),
+          doctor: { fullName: 'Pérez' },
+          service: { name: 'Cardiología' },
+        },
       });
       // El único slot devuelto es el que ya tiene → se filtra → sin candidatos.
       slots().mockResolvedValueOnce([
-        { slotId: 'slot-old', fecha: new Date('2026-06-01T09:00:00Z'), doctor: 'Pérez', servicio: 'Cardiología' },
+        {
+          slotId: 'slot-old',
+          fecha: new Date('2026-06-01T09:00:00Z'),
+          doctor: 'Pérez',
+          servicio: 'Cardiología',
+        },
       ]);
 
       await service.processIncomingMessage(makeTextEvent('12345'));
 
-      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
+      expect(redis.store.get(stateKey)).toBe(
+        ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL,
+      );
       // Ambas variantes del mensaje ofrecen cancelar la cita.
       expect(sentMessages().join('\n').toLowerCase()).toContain('cancel');
     });
@@ -1372,7 +1650,10 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('sin cupos + NO → conserva la cita intacta (no toca la BD)', async () => {
       redis.store.set(stateKey, ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
       redis.store.set(`temp_selected_modify_apt:${ORG_ID}:${SENDER}`, 'apt-1');
-      redis.store.set(`temp_selected_modify_slot:${ORG_ID}:${SENDER}`, 'slot-old');
+      redis.store.set(
+        `temp_selected_modify_slot:${ORG_ID}:${SENDER}`,
+        'slot-old',
+      );
 
       await service.processIncomingMessage(makeTextEvent('no'));
 
@@ -1386,41 +1667,81 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('sin cupos + SÍ → cancela la cita y pasa a ofrecer reagendar', async () => {
       redis.store.set(stateKey, ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
       redis.store.set(`temp_selected_modify_apt:${ORG_ID}:${SENDER}`, 'apt-1');
-      redis.store.set(`temp_selected_modify_slot:${ORG_ID}:${SENDER}`, 'slot-old');
+      redis.store.set(
+        `temp_selected_modify_slot:${ORG_ID}:${SENDER}`,
+        'slot-old',
+      );
       prisma.scheduleSlot.findUnique.mockResolvedValueOnce({
-        id: 'slot-old', serviceId: 'svc-1', allowedEpsId: null,
-        startTime: new Date('2026-06-01T09:00:00Z'), doctor: { fullName: 'Pérez' }, service: { name: 'Cardiología' },
+        id: 'slot-old',
+        serviceId: 'svc-1',
+        allowedEpsId: null,
+        startTime: new Date('2026-06-01T09:00:00Z'),
+        doctor: { fullName: 'Pérez' },
+        service: { name: 'Cardiología' },
       });
 
       await service.processIncomingMessage(makeTextEvent('sí'));
 
       expect(prisma.appointment.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'apt-1' }, data: { status: 'CANCELLED' } }),
+        expect.objectContaining({
+          where: { id: 'apt-1' },
+          data: { status: 'CANCELLED' },
+        }),
       );
-      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_POST_CANCEL_CHOICE);
+      expect(redis.store.get(stateKey)).toBe(
+        ChatState.AWAITING_POST_CANCEL_CHOICE,
+      );
     });
 
     it('confirmación SÍ → mueve la cita al nuevo cupo (reprogramación atómica)', async () => {
       redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CONFIRM);
       redis.store.set(`temp_selected_modify_apt:${ORG_ID}:${SENDER}`, 'apt-1');
-      redis.store.set(`temp_selected_modify_slot:${ORG_ID}:${SENDER}`, 'slot-old');
-      redis.store.set(`temp_selected_modify_newslot:${ORG_ID}:${SENDER}`, 'slot-new');
-      redis.store.set(`temp_selected_modify_newslot_fecha:${ORG_ID}:${SENDER}`, '2026-06-05T15:00:00.000Z');
+      redis.store.set(
+        `temp_selected_modify_slot:${ORG_ID}:${SENDER}`,
+        'slot-old',
+      );
+      redis.store.set(
+        `temp_selected_modify_newslot:${ORG_ID}:${SENDER}`,
+        'slot-new',
+      );
+      redis.store.set(
+        `temp_selected_modify_newslot_fecha:${ORG_ID}:${SENDER}`,
+        '2026-06-05T15:00:00.000Z',
+      );
       prisma.scheduleSlot.findUnique
-        .mockResolvedValueOnce({ id: 'slot-new', isAvailable: true, organizationId: ORG_ID }) // validación en tx
-        .mockResolvedValueOnce({ id: 'slot-old', serviceId: 'svc-1', allowedEpsId: null, startTime: new Date(), doctor: { fullName: 'Pérez' } }); // cupo liberado
+        .mockResolvedValueOnce({
+          id: 'slot-new',
+          isAvailable: true,
+          organizationId: ORG_ID,
+        }) // validación en tx
+        .mockResolvedValueOnce({
+          id: 'slot-old',
+          serviceId: 'svc-1',
+          allowedEpsId: null,
+          startTime: new Date(),
+          doctor: { fullName: 'Pérez' },
+        }); // cupo liberado
 
       await service.processIncomingMessage(makeTextEvent('sí'));
 
       // La cita se reasigna al nuevo slot; el viejo se libera y el nuevo se ocupa.
       expect(prisma.appointment.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'apt-1' }, data: { scheduleSlotId: 'slot-new' } }),
+        expect.objectContaining({
+          where: { id: 'apt-1' },
+          data: { scheduleSlotId: 'slot-new' },
+        }),
       );
       expect(prisma.scheduleSlot.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'slot-old' }, data: { isAvailable: true } }),
+        expect.objectContaining({
+          where: { id: 'slot-old' },
+          data: { isAvailable: true },
+        }),
       );
       expect(prisma.scheduleSlot.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'slot-new' }, data: { isAvailable: false } }),
+        expect.objectContaining({
+          where: { id: 'slot-new' },
+          data: { isAvailable: false },
+        }),
       );
       expect(redis.store.get(stateKey)).toBe(ChatState.IDLE);
     });
@@ -1428,9 +1749,18 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('confirmación NO → deja la cita en su fecha original, sin escribir en BD', async () => {
       redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CONFIRM);
       redis.store.set(`temp_selected_modify_apt:${ORG_ID}:${SENDER}`, 'apt-1');
-      redis.store.set(`temp_selected_modify_slot:${ORG_ID}:${SENDER}`, 'slot-old');
-      redis.store.set(`temp_selected_modify_newslot:${ORG_ID}:${SENDER}`, 'slot-new');
-      redis.store.set(`temp_selected_modify_newslot_fecha:${ORG_ID}:${SENDER}`, '2026-06-05T15:00:00.000Z');
+      redis.store.set(
+        `temp_selected_modify_slot:${ORG_ID}:${SENDER}`,
+        'slot-old',
+      );
+      redis.store.set(
+        `temp_selected_modify_newslot:${ORG_ID}:${SENDER}`,
+        'slot-new',
+      );
+      redis.store.set(
+        `temp_selected_modify_newslot_fecha:${ORG_ID}:${SENDER}`,
+        '2026-06-05T15:00:00.000Z',
+      );
 
       await service.processIncomingMessage(makeTextEvent('no'));
 

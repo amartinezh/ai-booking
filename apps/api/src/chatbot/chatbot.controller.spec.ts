@@ -10,7 +10,10 @@ describe('ChatbotController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ChatbotController],
       providers: [
-        { provide: ChatbotService, useValue: { processIncomingMessage: jest.fn() } },
+        {
+          provide: ChatbotService,
+          useValue: { processIncomingMessage: jest.fn() },
+        },
         {
           provide: WhatsappCredentialsService,
           useValue: { resolveForOrg: jest.fn(), verifyWebhook: jest.fn() },

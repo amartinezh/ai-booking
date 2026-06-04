@@ -110,8 +110,7 @@ export class WhatsappConfigService {
 
     // isActive automático: requerimos phoneNumberId + access token cifrado.
     const isActive = Boolean(
-      input.isActive ??
-        (phoneNumberId && (encryptedAccessToken ?? null)),
+      input.isActive ?? (phoneNumberId && (encryptedAccessToken ?? null)),
     );
 
     await this.prisma.whatsappAccountConfig.upsert({

@@ -28,6 +28,8 @@ export class KnowledgeBaseService {
       where: { id: organizationId },
       data: { knowledgeBase: content.trim() || null },
     });
-    this.logger.log(`Base de conocimiento actualizada para org ${organizationId}`);
+    this.logger.log(
+      `Base de conocimiento actualizada para org ${organizationId}`,
+    );
   }
 }

@@ -1,9 +1,4 @@
-import {
-  Controller,
-  ForbiddenException,
-  Get,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, ForbiddenException, Get, UseGuards } from '@nestjs/common';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';

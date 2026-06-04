@@ -67,4 +67,4 @@ import { MonitorModule } from './monitor/monitor.module';
     MonitorModule,
   ],
 })
-export class AppModule { }
+export class AppModule {}

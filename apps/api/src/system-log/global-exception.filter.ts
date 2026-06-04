@@ -43,7 +43,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       status = exception.getStatus();
       const responseBody = exception.getResponse();
       publicMessage =
-        typeof responseBody === 'string' ? responseBody : (responseBody as any) ?? exception.message;
+        typeof responseBody === 'string'
+          ? responseBody
+          : ((responseBody as any) ?? exception.message);
       exceptionName = exception.constructor.name;
       stack = exception.stack;
     } else if (exception instanceof Error) {
@@ -143,10 +145,19 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   private sanitizeBody(body: any): any {
     try {
       if (!body || typeof body !== 'object') return body ?? null;
-      const SECRETS = ['password', 'token', 'authorization', 'apiKey', 'api_key', 'secret'];
-      const clone: Record<string, any> = Array.isArray(body) ? [...body] : { ...body };
+      const SECRETS = [
+        'password',
+        'token',
+        'authorization',
+        'apiKey',
+        'api_key',
+        'secret',
+      ];
+      const clone: Record<string, any> = Array.isArray(body)
+        ? [...body]
+        : { ...body };
       for (const key of Object.keys(clone)) {
-        if (SECRETS.some(s => key.toLowerCase().includes(s.toLowerCase()))) {
+        if (SECRETS.some((s) => key.toLowerCase().includes(s.toLowerCase()))) {
           clone[key] = '[REDACTED]';
         }
       }

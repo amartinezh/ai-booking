@@ -31,10 +31,7 @@ describe('SurveyService — generación, gate y regla de oro (CSAT)', () => {
     prisma = createFakePrisma();
 
     const moduleRef: TestingModule = await Test.createTestingModule({
-      providers: [
-        SurveyService,
-        { provide: PrismaService, useValue: prisma },
-      ],
+      providers: [SurveyService, { provide: PrismaService, useValue: prisma }],
     }).compile();
 
     service = moduleRef.get(SurveyService);
@@ -68,7 +65,9 @@ describe('SurveyService — generación, gate y regla de oro (CSAT)', () => {
 
       // expiresAt ≈ now + 24h (con holgura por el tiempo de ejecución del test)
       const expiresMs = (arg.data.expiresAt as Date).getTime();
-      expect(expiresMs).toBeGreaterThanOrEqual(before + 24 * 60 * 60 * 1000 - 1000);
+      expect(expiresMs).toBeGreaterThanOrEqual(
+        before + 24 * 60 * 60 * 1000 - 1000,
+      );
       expect(expiresMs).toBeLessThanOrEqual(after + 24 * 60 * 60 * 1000 + 1000);
     });
 
@@ -125,7 +124,10 @@ describe('SurveyService — generación, gate y regla de oro (CSAT)', () => {
     });
 
     it('devuelve null si ya se usó', async () => {
-      prisma.chatSurvey.findUnique.mockResolvedValue({ ...validRow(), isUsed: true });
+      prisma.chatSurvey.findUnique.mockResolvedValue({
+        ...validRow(),
+        isUsed: true,
+      });
       expect(await service.getValidSurvey(TOKEN)).toBeNull();
     });
 
@@ -146,14 +148,19 @@ describe('SurveyService — generación, gate y regla de oro (CSAT)', () => {
       prisma.chatSurvey.updateMany.mockResolvedValue({ count: 1 });
 
       const before = new Date();
-      const res = await service.submitSurvey(TOKEN, { rating: 5, feedback: '  excelente  ' });
+      const res = await service.submitSurvey(TOKEN, {
+        rating: 5,
+        feedback: '  excelente  ',
+      });
       expect(res).toEqual({ success: true });
 
       const arg = prisma.chatSurvey.updateMany.mock.calls[0][0];
       // Guardas de seguridad en el WHERE
       expect(arg.where.id).toBe(TOKEN);
       expect(arg.where.isUsed).toBe(false);
-      expect(arg.where.expiresAt.gt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+      expect(arg.where.expiresAt.gt.getTime()).toBeGreaterThanOrEqual(
+        before.getTime(),
+      );
       // Marca el token como consumido y normaliza el feedback (trim)
       expect(arg.data.isUsed).toBe(true);
       expect(arg.data.rating).toBe(5);
@@ -164,17 +171,21 @@ describe('SurveyService — generación, gate y regla de oro (CSAT)', () => {
       prisma.chatSurvey.updateMany.mockResolvedValue({ count: 1 });
 
       await service.submitSurvey(TOKEN, { rating: 4, feedback: '   ' });
-      expect(prisma.chatSurvey.updateMany.mock.calls[0][0].data.feedback).toBeNull();
+      expect(
+        prisma.chatSurvey.updateMany.mock.calls[0][0].data.feedback,
+      ).toBeNull();
 
       await service.submitSurvey(TOKEN, { rating: 4 });
-      expect(prisma.chatSurvey.updateMany.mock.calls[1][0].data.feedback).toBeNull();
+      expect(
+        prisma.chatSurvey.updateMany.mock.calls[1][0].data.feedback,
+      ).toBeNull();
     });
 
     it.each([0, 6, -1, 2.5, NaN])(
       'rechaza rating inválido (%p) sin tocar la BD',
       async (rating) => {
         await expect(
-          service.submitSurvey(TOKEN, { rating: rating as number }),
+          service.submitSurvey(TOKEN, { rating: rating }),
         ).rejects.toBeInstanceOf(BadRequestException);
         expect(prisma.chatSurvey.updateMany).not.toHaveBeenCalled();
       },

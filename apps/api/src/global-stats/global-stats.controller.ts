@@ -3,7 +3,13 @@ import { Roles } from '../common/roles.decorator';
 import { RolesGuard } from '../common/roles.guard';
 import { GlobalStatsService, TimeRange } from './global-stats.service';
 
-const ALLOWED_RANGES: TimeRange[] = ['TODAY', 'WEEK', 'MONTH', 'YEAR', 'CUSTOM'];
+const ALLOWED_RANGES: TimeRange[] = [
+  'TODAY',
+  'WEEK',
+  'MONTH',
+  'YEAR',
+  'CUSTOM',
+];
 
 /**
  * 🌎 Endpoints exclusivos del dashboard de "Estadísticas Globales"

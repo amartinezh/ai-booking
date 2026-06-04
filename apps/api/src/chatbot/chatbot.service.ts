@@ -26,8 +26,14 @@ import {
 import * as fs from 'fs';
 import * as path from 'path';
 import { LlmFactoryService } from '../llm/llm-factory.service';
-import { SchedulingExtraction, VocabularyHints } from '../llm/interfaces/llm-provider.interface';
-import { formatAppointmentLong, formatAppointmentCompact } from '@antigravity/shared';
+import {
+  SchedulingExtraction,
+  VocabularyHints,
+} from '../llm/interfaces/llm-provider.interface';
+import {
+  formatAppointmentLong,
+  formatAppointmentCompact,
+} from '@antigravity/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 import { SurveyService } from '../survey/survey.service';
@@ -79,18 +85,24 @@ export class ChatbotService implements OnModuleInit {
   private escapeRegex: RegExp = /^(hola)$/i;
   private cancelRegex: RegExp = /^(cancelar cita)/i;
   // Frases de reprogramación ("cambiar mi cita", "reagendar", ...). Match de inicio.
-  private modifyRegex: RegExp = /^(cambiar (mi |la )?cita|reprogramar|reagendar|modificar (mi |la )?cita|mover (mi |la )?cita)/i;
+  private modifyRegex: RegExp =
+    /^(cambiar (mi |la )?cita|reprogramar|reagendar|modificar (mi |la )?cita|mover (mi |la )?cita)/i;
   private greetingRegex: RegExp = /^(hola)$/i;
   private particularRegex: RegExp = /^(particular)$/i;
   private farewellRegex: RegExp = /^(gracias)$/i;
   // 🛡️ Guardrail: detecta insultos en cualquier parte del mensaje (no ancla a inicio/fin).
-  private insultRegex: RegExp = /\b(gonorrea|hijueputa|malparid[oa]|idiota|imb[eé]cil)\b/i;
+  private insultRegex: RegExp =
+    /\b(gonorrea|hijueputa|malparid[oa]|idiota|imb[eé]cil)\b/i;
 
   // Tesauro GENÉRICO de servicios (service-synonyms.txt). Cada concepto agrupa
   // "anclas" (frases que suelen estar en el nombre del catálogo) y "sinonimos"
   // (lenguaje natural del paciente). Todo normalizado al cargar. Se usa para
   // expandir la frase del paciente a anclas antes de caer al LLM.
-  private serviceConcepts: Array<{ key: string; anchors: string[]; synonyms: string[] }> = [];
+  private serviceConcepts: Array<{
+    key: string;
+    anchors: string[];
+    synonyms: string[];
+  }> = [];
 
   constructor(
     private prisma: PrismaService,
@@ -116,7 +128,9 @@ export class ChatbotService implements OnModuleInit {
     try {
       await this.ensureParticularEpsForAllOrganizations();
     } catch (e) {
-      this.logger.error(`No fue posible asegurar EPS "${PARTICULAR_EPS_NAME}": ${e.message}`);
+      this.logger.error(
+        `No fue posible asegurar EPS "${PARTICULAR_EPS_NAME}": ${e.message}`,
+      );
     }
   }
 
@@ -124,13 +138,17 @@ export class ChatbotService implements OnModuleInit {
   // SEEDER IDEMPOTENTE — EPS "Particular" por organización
   // ══════════════════════════════════════════════════════════════
   private async ensureParticularEpsForAllOrganizations(): Promise<void> {
-    const orgs = await this.prisma.organization.findMany({ select: { id: true } });
+    const orgs = await this.prisma.organization.findMany({
+      select: { id: true },
+    });
     for (const org of orgs) {
       await this.ensureParticularEpsForOrg(org.id);
     }
   }
 
-  private async ensureParticularEpsForOrg(organizationId: string): Promise<{ id: string; name: string } | null> {
+  private async ensureParticularEpsForOrg(
+    organizationId: string,
+  ): Promise<{ id: string; name: string } | null> {
     try {
       const existing = await this.prisma.eps.findFirst({
         where: {
@@ -141,7 +159,10 @@ export class ChatbotService implements OnModuleInit {
       if (existing) {
         // Garantizar que esté activa para que aparezca en el menú
         if (!existing.isActive) {
-          await this.prisma.eps.update({ where: { id: existing.id }, data: { isActive: true } });
+          await this.prisma.eps.update({
+            where: { id: existing.id },
+            data: { isActive: true },
+          });
         }
         return { id: existing.id, name: existing.name };
       }
@@ -152,10 +173,14 @@ export class ChatbotService implements OnModuleInit {
           organizationId,
         },
       });
-      this.logger.log(`✅ EPS "${PARTICULAR_EPS_NAME}" creada para organización ${organizationId}`);
+      this.logger.log(
+        `✅ EPS "${PARTICULAR_EPS_NAME}" creada para organización ${organizationId}`,
+      );
       return { id: created.id, name: created.name };
     } catch (e) {
-      this.logger.error(`Error asegurando EPS Particular para org ${organizationId}: ${e.message}`);
+      this.logger.error(
+        `Error asegurando EPS Particular para org ${organizationId}: ${e.message}`,
+      );
       return null;
     }
   }
@@ -181,7 +206,9 @@ export class ChatbotService implements OnModuleInit {
     }
 
     if (!content) {
-      this.logger.warn('chatbot-patterns.txt no encontrado. Se usarán patrones por defecto.');
+      this.logger.warn(
+        'chatbot-patterns.txt no encontrado. Se usarán patrones por defecto.',
+      );
       return;
     }
 
@@ -245,11 +272,17 @@ export class ChatbotService implements OnModuleInit {
       this.modifyRegex = new RegExp(`^(${modifyPhrases.join('|')})`, 'i');
     }
     if (particularWords.length > 0) {
-      this.particularRegex = new RegExp(`^(${particularWords.join('|')})$`, 'i');
+      this.particularRegex = new RegExp(
+        `^(${particularWords.join('|')})$`,
+        'i',
+      );
     }
     if (insultWords.length > 0) {
       // No-anchored: detecta el insulto en cualquier parte del mensaje.
-      this.insultRegex = new RegExp(`(?:^|\\s|[¡!¿?.,;])(${insultWords.join('|')})(?=$|\\s|[!?.,;])`, 'i');
+      this.insultRegex = new RegExp(
+        `(?:^|\\s|[¡!¿?.,;])(${insultWords.join('|')})(?=$|\\s|[!?.,;])`,
+        'i',
+      );
     }
 
     this.logger.log(
@@ -292,13 +325,20 @@ export class ChatbotService implements OnModuleInit {
     }
 
     if (!content) {
-      this.logger.warn('service-synonyms.txt no encontrado. Tesauro de servicios deshabilitado.');
+      this.logger.warn(
+        'service-synonyms.txt no encontrado. Tesauro de servicios deshabilitado.',
+      );
       this.serviceConcepts = [];
       return;
     }
 
-    const concepts: Array<{ key: string; anchors: string[]; synonyms: string[] }> = [];
-    let current: { key: string; anchors: string[]; synonyms: string[] } | null = null;
+    const concepts: Array<{
+      key: string;
+      anchors: string[];
+      synonyms: string[];
+    }> = [];
+    let current: { key: string; anchors: string[]; synonyms: string[] } | null =
+      null;
 
     const parseList = (value: string): string[] =>
       value
@@ -327,7 +367,10 @@ export class ChatbotService implements OnModuleInit {
     }
 
     this.serviceConcepts = concepts.filter((c) => c.anchors.length > 0);
-    const totalSyn = this.serviceConcepts.reduce((n, c) => n + c.synonyms.length + c.anchors.length, 0);
+    const totalSyn = this.serviceConcepts.reduce(
+      (n, c) => n + c.synonyms.length + c.anchors.length,
+      0,
+    );
     this.logger.log(
       `Tesauro listo — conceptos: ${this.serviceConcepts.length}, términos: ${totalSyn}`,
     );
@@ -344,12 +387,14 @@ export class ChatbotService implements OnModuleInit {
 
     const anchors: string[] = [];
     for (const concept of this.serviceConcepts) {
-      const hit = [...concept.synonyms, ...concept.anchors].some(
-        (term) => padded.includes(` ${term} `),
+      const hit = [...concept.synonyms, ...concept.anchors].some((term) =>
+        padded.includes(` ${term} `),
       );
       if (hit) {
         // Anclas de este concepto, más específicas (largas) primero.
-        for (const a of [...concept.anchors].sort((x, y) => y.length - x.length)) {
+        for (const a of [...concept.anchors].sort(
+          (x, y) => y.length - x.length,
+        )) {
           if (!anchors.includes(a)) anchors.push(a);
         }
       }
@@ -426,7 +471,8 @@ export class ChatbotService implements OnModuleInit {
       return response.data;
     } catch (error) {
       const errorBody = error.response?.data || error.message || error;
-      const errorString = typeof errorBody === 'object' ? JSON.stringify(errorBody) : errorBody;
+      const errorString =
+        typeof errorBody === 'object' ? JSON.stringify(errorBody) : errorBody;
       this.logger.error(`Error enviando mensaje a ${toPhone}: ${errorString}`);
 
       if (error.response?.data?.error?.code === 190) {
@@ -444,13 +490,27 @@ export class ChatbotService implements OnModuleInit {
   // ══════════════════════════════════════════════════════════════
   // HELPER 2: ESTADO DE SESIÓN (REDIS)
   // ══════════════════════════════════════════════════════════════
-  private async getUserState(organizationId: string, phoneId: string): Promise<ChatState> {
-    const state = await this.redis.get(`chat_state:${organizationId}:${phoneId}`);
+  private async getUserState(
+    organizationId: string,
+    phoneId: string,
+  ): Promise<ChatState> {
+    const state = await this.redis.get(
+      `chat_state:${organizationId}:${phoneId}`,
+    );
     return (state as ChatState) || ChatState.IDLE;
   }
 
-  private async setUserState(organizationId: string, phoneId: string, state: ChatState) {
-    await this.redis.set(`chat_state:${organizationId}:${phoneId}`, state, 'EX', SESSION_TTL);
+  private async setUserState(
+    organizationId: string,
+    phoneId: string,
+    state: ChatState,
+  ) {
+    await this.redis.set(
+      `chat_state:${organizationId}:${phoneId}`,
+      state,
+      'EX',
+      SESSION_TTL,
+    );
   }
 
   // ── Último mensaje de bot enviado (para audit logging) ──────────
@@ -485,21 +545,33 @@ export class ChatbotService implements OnModuleInit {
     organizationId: string | null | undefined,
     params: { reason: FailureReason; [k: string]: any },
   ): Promise<void> {
-    return this.interactionLog.logFailure({ whatsappId: senderId, organizationId, ...params });
+    return this.interactionLog.logFailure({
+      whatsappId: senderId,
+      organizationId,
+      ...params,
+    });
   }
   private auditSuccess(
     senderId: string,
     organizationId: string | null | undefined,
     params: { [k: string]: any } = {},
   ): Promise<void> {
-    return this.interactionLog.logSuccess({ whatsappId: senderId, organizationId, ...params });
+    return this.interactionLog.logSuccess({
+      whatsappId: senderId,
+      organizationId,
+      ...params,
+    });
   }
   private auditLog(
     senderId: string,
     organizationId: string | null | undefined,
     params: { status: InteractionStatus; [k: string]: any },
   ): Promise<void> {
-    return this.interactionLog.log({ whatsappId: senderId, organizationId, ...params });
+    return this.interactionLog.log({
+      whatsappId: senderId,
+      organizationId,
+      ...params,
+    });
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -513,7 +585,9 @@ export class ChatbotService implements OnModuleInit {
       const token = creds.accessToken;
       const urlReq = `https://graph.facebook.com/v19.0/${mediaId}`;
       const urlResponse = await lastValueFrom(
-        this.httpService.get(urlReq, { headers: { Authorization: `Bearer ${token}` } }),
+        this.httpService.get(urlReq, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
       );
       const mediaUrl = urlResponse.data.url;
       const mediaResponse = await lastValueFrom(
@@ -552,7 +626,11 @@ export class ChatbotService implements OnModuleInit {
       : null;
 
     try {
-      return await provider.extractSchedulingIntent({ text, audio: audioInput, vocabularyHints });
+      return await provider.extractSchedulingIntent({
+        text,
+        audio: audioInput,
+        vocabularyHints,
+      });
     } catch (e: any) {
       // 429 cuota agotada: no reintentar (empeora), no contar como fallo permanente.
       if (e?.status === 429) {
@@ -567,7 +645,13 @@ export class ChatbotService implements OnModuleInit {
           `${provider.name} intento ${attempt} fallido, reintentando en ${delayMs}ms...`,
         );
         await new Promise((r) => setTimeout(r, delayMs));
-        return this.extractDataWithLLM(organizationId, text, audioBuffer, attempt + 1, vocabularyHints);
+        return this.extractDataWithLLM(
+          organizationId,
+          text,
+          audioBuffer,
+          attempt + 1,
+          vocabularyHints,
+        );
       }
       this.logger.error(
         `Error procesando IA con ${provider.name} tras ${maxRetries} intentos`,
@@ -642,7 +726,11 @@ export class ChatbotService implements OnModuleInit {
         this.logger.warn(
           `[FAILOVER] Intentando ${candidate} tras agotar ${primaryName}`,
         );
-        const result = await provider.extractSchedulingIntent({ text, audio, vocabularyHints });
+        const result = await provider.extractSchedulingIntent({
+          text,
+          audio,
+          vocabularyHints,
+        });
         this.logger.log(`[FAILOVER] ${candidate} respondió OK`);
         return result;
       } catch (err: any) {
@@ -690,9 +778,10 @@ export class ChatbotService implements OnModuleInit {
       transcript: t || null,
       cedula: isOnlyDigits ? digits : null,
       // En el paso de nombre o EPS, pasar el texto raw para que el flujo lo procese
-      nombre: currentState === ChatState.AWAITING_NAME ? (t || null) : null,
-      eps: currentState === ChatState.AWAITING_EPS ? (t || null) : null,
-      especialidad: currentState === ChatState.AWAITING_SPECIALTY ? (t || null) : null,
+      nombre: currentState === ChatState.AWAITING_NAME ? t || null : null,
+      eps: currentState === ChatState.AWAITING_EPS ? t || null : null,
+      especialidad:
+        currentState === ChatState.AWAITING_SPECIALTY ? t || null : null,
       doctor: null,
       fechaSolicitada: null,
       intent: 'otro' as const,
@@ -713,14 +802,19 @@ export class ChatbotService implements OnModuleInit {
   // ══════════════════════════════════════════════════════════════
   private classifyIntentLocal(text: string): 'faq' | 'other' {
     // Normalizar: minúsculas + quitar tildes para comparación robusta
-    const t = text.trim().toLowerCase()
-      .normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const t = text.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
     // Palabras interrogativas o de solicitud de información
-    const hasQuestionWord = /\b(como|cuanto|cuando|donde|que|cual|quien|puedo|pueden|tienen|tiene|aceptan|cobran|vale|cuestan|cuesta|atienden|funciona|hay|existe|permiten|solicitar)\b/.test(t);
+    const hasQuestionWord =
+      /\b(como|cuanto|cuando|donde|que|cual|quien|puedo|pueden|tienen|tiene|aceptan|cobran|vale|cuestan|cuesta|atienden|funciona|hay|existe|permiten|solicitar)\b/.test(
+        t,
+      );
 
     // Temas propios de FAQ de clínica (no de agendamiento)
-    const hasFaqTopic = /\b(eps|seguro|asegurador|laboratorio|urgencia|historia.{0,10}clinica|incapacidad|certificado|parqueo|parqueadero|visita|acompanante|factura|tarifa|costo|precio|documento|requisito|telefono|correo|direccion|telemedicin|farmacia|radiolog|ecograf|rayos|scanner|pqrs|habeas|tramite|convenio|metodo.{0,5}pago|efectivo|nequi|pse|bancolombia)\b/.test(t);
+    const hasFaqTopic =
+      /\b(eps|seguro|asegurador|laboratorio|urgencia|historia.{0,10}clinica|incapacidad|certificado|parqueo|parqueadero|visita|acompanante|factura|tarifa|costo|precio|documento|requisito|telefono|correo|direccion|telemedicin|farmacia|radiolog|ecograf|rayos|scanner|pqrs|habeas|tramite|convenio|metodo.{0,5}pago|efectivo|nequi|pse|bancolombia)\b/.test(
+        t,
+      );
 
     if (hasQuestionWord || hasFaqTopic) return 'faq';
     return 'other';
@@ -736,17 +830,24 @@ export class ChatbotService implements OnModuleInit {
   // y se evalúan ANTES, así "¿cuánto cuesta una cita?" no cae aquí.
   // ══════════════════════════════════════════════════════════════
   private looksLikeScheduleIntent(text: string): boolean {
-    const t = (text || '').trim().toLowerCase()
-      .normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const t = (text || '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '');
     if (!t) return false;
 
     // Afirmaciones al inicio del mensaje ("sí", "claro", "dale", "ok"...).
     const afirmacion =
-      /^(si|sip|claro|dale|ok|okay|listo|bueno|vale|por supuesto|afirmativo|correcto|exacto|de una|eso es|asi es)\b/.test(t);
+      /^(si|sip|claro|dale|ok|okay|listo|bueno|vale|por supuesto|afirmativo|correcto|exacto|de una|eso es|asi es)\b/.test(
+        t,
+      );
 
     // Verbos/sustantivos de agendamiento en cualquier parte del texto.
     const agendamiento =
-      /\b(agendar|agendame|agendarme|agenda|reservar|reserva|programar|programarme|sacar|pedir|quiero|necesito|deseo|cita|citas|turno)\b/.test(t);
+      /\b(agendar|agendame|agendarme|agenda|reservar|reserva|programar|programarme|sacar|pedir|quiero|necesito|deseo|cita|citas|turno)\b/.test(
+        t,
+      );
 
     return afirmacion || agendamiento;
   }
@@ -762,7 +863,10 @@ export class ChatbotService implements OnModuleInit {
   //     interceptan si la frase NO aparece textualmente en la KB (puede ser un
   //     horario de operación legítimamente documentado, p.ej. festivos).
   // ══════════════════════════════════════════════════════════════
-  private faqClaimsAvailability(reply: string, kbContent: string | null): boolean {
+  private faqClaimsAvailability(
+    reply: string,
+    kbContent: string | null,
+  ): boolean {
     const norm = (s: string) =>
       (s || '')
         .normalize('NFD')
@@ -808,7 +912,8 @@ export class ChatbotService implements OnModuleInit {
     const clinicName = org?.name || 'nuestra Clínica';
 
     // Inyectar tono al system prompt según el estilo configurado por la org.
-    const style = await this.organizationSettings.getCommunicationStyle(organizationId);
+    const style =
+      await this.organizationSettings.getCommunicationStyle(organizationId);
     const toneBlock =
       style === 'INFORMAL'
         ? `TONO Y ESTILO (INFORMAL):\n` +
@@ -920,7 +1025,11 @@ export class ChatbotService implements OnModuleInit {
           reason: FailureReason.FAQ_HALLUCINATION,
           userMessage: question,
           botReply: availabilityRedirect,
-          metadata: { step: 'FAQ_AVAILABILITY_BLOCKED', provider: provider.name, suppressedReply: reply },
+          metadata: {
+            step: 'FAQ_AVAILABILITY_BLOCKED',
+            provider: provider.name,
+            suppressedReply: reply,
+          },
         });
         return;
       }
@@ -963,10 +1072,26 @@ export class ChatbotService implements OnModuleInit {
     // sueltos → UTF-8 inválido → ElevenLabs respondía 400 invalid_unicode. La
     // última pasada elimina cualquier surrogate suelto remanente (defensa final).
     const cleanText = text
+      // Las URLs (p. ej. el enlace a la política de datos) suenan fatal leídas
+      // letra por letra; las quitamos junto con su etiqueta "Consúlte/ala aquí:".
+      .replace(/Cons[uú]lt[ae]la?\s+aqu[ií]:?\s*/gi, '')
+      .replace(/https?:\/\/\S+/gi, '')
       .replace(/[*_~`[\]]/g, '') // markdown
       .replace(/\p{Extended_Pictographic}/gu, '') // todos los emojis
       .replace(/[\u{FE00}-\u{FE0F}\u{200D}]/gu, '') // variation selectors + ZWJ
       .replace(/[\uD800-\uDFFF]/g, '') // surrogates sueltos remanentes
+      // ── Normalización de horas para voz ──────────────────────────
+      // El TTS lee "03:00" como "cero tres cero cero". Convertimos
+      // "HH:MM" → "H MM" separando con espacio y quitando el cero a la
+      // izquierda de la hora: "05:30" → "5 30", "03:00" → "3 00".
+      .replace(/\b0?(\d{1,2}):(\d{2})\b/g, '$1 $2')
+      // El meridiano ya llega como "a m"/"p m" desde los formatters
+      // canónicos, pero el LLM puede generar "a.m."/"p. m."/"5pm" en texto
+      // libre que no pasa por cleanMeridiem. Normalizamos SOLO las formas
+      // con punto ("a. m.") o pegadas a la hora ("5 30 pm") para no tocar
+      // español natural como "a mañana" o "para mí".
+      .replace(/\b([ap])\.\s*m\.?/gi, '$1 m') // "a. m." / "p.m." → "a m" / "p m"
+      .replace(/(\d)\s*([ap])\s*m\b/gi, '$1 $2 m') // "5 30pm" → "5 30 p m"
       .replace(/\s+/g, ' ')
       .trim();
     return this.ttsFactory.synthesize(organizationId, cleanText);
@@ -979,7 +1104,9 @@ export class ChatbotService implements OnModuleInit {
     try {
       const formData = new FormData();
       formData.append('messaging_product', 'whatsapp');
-      const blob = new Blob([new Uint8Array(audioBuffer)], { type: 'audio/ogg' });
+      const blob = new Blob([new Uint8Array(audioBuffer)], {
+        type: 'audio/ogg',
+      });
       formData.append('file', blob, 'audio.ogg');
       const response = await fetch(
         `https://graph.facebook.com/v19.0/${creds.phoneNumberId}/media`,
@@ -1026,7 +1153,9 @@ export class ChatbotService implements OnModuleInit {
         ),
       );
     } catch (error) {
-      this.logger.error(`Error enviando audio a ${toPhone}: ${error.response?.data || error.message}`);
+      this.logger.error(
+        `Error enviando audio a ${toPhone}: ${error.response?.data || error.message}`,
+      );
     }
   }
 
@@ -1042,7 +1171,8 @@ export class ChatbotService implements OnModuleInit {
     audioText?: string,
   ) {
     const isAiFlow =
-      (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) === 'true';
+      (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
+      'true';
 
     if (isAiFlow) {
       // En modo voz, mostrar TAMBIÉN el texto está controlado por .env.
@@ -1122,7 +1252,9 @@ export class ChatbotService implements OnModuleInit {
       // Enlace como mensaje separado, posterior a la respuesta del flujo.
       await this.sendWhatsAppMessage(senderId, message);
     } catch (e) {
-      this.logger.error(`No se pudo enviar el enlace de encuesta a ${senderId}: ${e.message}`);
+      this.logger.error(
+        `No se pudo enviar el enlace de encuesta a ${senderId}: ${e.message}`,
+      );
     }
   }
 
@@ -1180,7 +1312,9 @@ export class ChatbotService implements OnModuleInit {
           organizationId,
         },
       });
-      this.logger.log(`✅ Paciente persistido: ${nombre} (cédula ${cedula}, WA ${senderId})`);
+      this.logger.log(
+        `✅ Paciente persistido: ${nombre} (cédula ${cedula}, WA ${senderId})`,
+      );
       return patient;
     } catch (error) {
       this.logger.error(
@@ -1214,9 +1348,18 @@ export class ChatbotService implements OnModuleInit {
       `is_ai_flow:${organizationId}:${senderId}`,
     ];
     const slotKeys = await this.redis.keys(`temp_slot_*:${senderId}`);
-    const serviceMenuKeys = await this.redis.keys(`temp_service_*:${organizationId}:${senderId}`);
-    const epsMenuKeys = await this.redis.keys(`temp_eps_[A-Z]_*:${organizationId}:${senderId}`);
-    await this.redis.del(...keysToDelete, ...slotKeys, ...serviceMenuKeys, ...epsMenuKeys);
+    const serviceMenuKeys = await this.redis.keys(
+      `temp_service_*:${organizationId}:${senderId}`,
+    );
+    const epsMenuKeys = await this.redis.keys(
+      `temp_eps_[A-Z]_*:${organizationId}:${senderId}`,
+    );
+    await this.redis.del(
+      ...keysToDelete,
+      ...slotKeys,
+      ...serviceMenuKeys,
+      ...epsMenuKeys,
+    );
     await this.setUserState(organizationId, senderId, ChatState.IDLE);
     // Limpiar último mensaje enviado
     await this.clearLastSent(senderId);
@@ -1273,7 +1416,9 @@ export class ChatbotService implements OnModuleInit {
   }
 
   private async cleanUpCancelSession(organizationId: string, senderId: string) {
-    const cancelKeys = await this.redis.keys(`temp_cancel_*:${organizationId}:${senderId}`);
+    const cancelKeys = await this.redis.keys(
+      `temp_cancel_*:${organizationId}:${senderId}`,
+    );
     if (cancelKeys.length > 0) await this.redis.del(...cancelKeys);
     await this.redis.del(
       `temp_selected_cancel_apt:${organizationId}:${senderId}`,
@@ -1284,9 +1429,13 @@ export class ChatbotService implements OnModuleInit {
 
   // Limpia el contexto efímero del flujo de reprogramación (espejo del de cancelación).
   private async cleanUpModifySession(organizationId: string, senderId: string) {
-    const modifyKeys = await this.redis.keys(`temp_modify_*:${organizationId}:${senderId}`);
+    const modifyKeys = await this.redis.keys(
+      `temp_modify_*:${organizationId}:${senderId}`,
+    );
     if (modifyKeys.length > 0) await this.redis.del(...modifyKeys);
-    const selectedKeys = await this.redis.keys(`temp_selected_modify_*:${organizationId}:${senderId}`);
+    const selectedKeys = await this.redis.keys(
+      `temp_selected_modify_*:${organizationId}:${senderId}`,
+    );
     if (selectedKeys.length > 0) await this.redis.del(...selectedKeys);
     await this.setUserState(organizationId, senderId, ChatState.IDLE);
   }
@@ -1307,7 +1456,9 @@ export class ChatbotService implements OnModuleInit {
     });
 
     // Limpiar mapping previo de servicios
-    const prev = await this.redis.keys(`temp_service_*:${organizationId}:${senderId}`);
+    const prev = await this.redis.keys(
+      `temp_service_*:${organizationId}:${senderId}`,
+    );
     if (prev.length > 0) await this.redis.del(...prev);
 
     let lineas = '';
@@ -1315,12 +1466,27 @@ export class ChatbotService implements OnModuleInit {
     for (let i = 0; i < services.length; i++) {
       const letra = String.fromCharCode(65 + i);
       maxLetra = letra;
-      await this.redis.set(`temp_service_${letra}_id:${organizationId}:${senderId}`, services[i].id, 'EX', SESSION_TTL);
-      await this.redis.set(`temp_service_${letra}_name:${organizationId}:${senderId}`, services[i].name, 'EX', SESSION_TTL);
+      await this.redis.set(
+        `temp_service_${letra}_id:${organizationId}:${senderId}`,
+        services[i].id,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        `temp_service_${letra}_name:${organizationId}:${senderId}`,
+        services[i].name,
+        'EX',
+        SESSION_TTL,
+      );
       lineas += `*${letra})* ${services[i].name}\n`;
     }
     if (maxLetra) {
-      await this.redis.set(`temp_service_max_letra:${organizationId}:${senderId}`, maxLetra, 'EX', SESSION_TTL);
+      await this.redis.set(
+        `temp_service_max_letra:${organizationId}:${senderId}`,
+        maxLetra,
+        'EX',
+        SESSION_TTL,
+      );
     }
     return { lineas, count: services.length };
   }
@@ -1338,9 +1504,14 @@ export class ChatbotService implements OnModuleInit {
       orderBy: { name: 'asc' },
     });
 
-    const prev = await this.redis.keys(`temp_eps_${'*'}:${organizationId}:${senderId}`);
+    const prev = await this.redis.keys(
+      `temp_eps_${'*'}:${organizationId}:${senderId}`,
+    );
     // Solo limpiar los del menú, no temp_eps_query/temp_eps_id si ya existen
-    const toClean = prev.filter(k => /temp_eps_[A-Z]_(id|name):/.test(k) || /temp_eps_max_letra:/.test(k));
+    const toClean = prev.filter(
+      (k) =>
+        /temp_eps_[A-Z]_(id|name):/.test(k) || /temp_eps_max_letra:/.test(k),
+    );
     if (toClean.length > 0) await this.redis.del(...toClean);
 
     let lineas = '';
@@ -1348,12 +1519,27 @@ export class ChatbotService implements OnModuleInit {
     for (let i = 0; i < epsList.length; i++) {
       const letra = String.fromCharCode(65 + i);
       maxLetra = letra;
-      await this.redis.set(`temp_eps_${letra}_id:${organizationId}:${senderId}`, epsList[i].id, 'EX', SESSION_TTL);
-      await this.redis.set(`temp_eps_${letra}_name:${organizationId}:${senderId}`, epsList[i].name, 'EX', SESSION_TTL);
+      await this.redis.set(
+        `temp_eps_${letra}_id:${organizationId}:${senderId}`,
+        epsList[i].id,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        `temp_eps_${letra}_name:${organizationId}:${senderId}`,
+        epsList[i].name,
+        'EX',
+        SESSION_TTL,
+      );
       lineas += `*${letra})* ${epsList[i].name}\n`;
     }
     if (maxLetra) {
-      await this.redis.set(`temp_eps_max_letra:${organizationId}:${senderId}`, maxLetra, 'EX', SESSION_TTL);
+      await this.redis.set(
+        `temp_eps_max_letra:${organizationId}:${senderId}`,
+        maxLetra,
+        'EX',
+        SESSION_TTL,
+      );
     }
     return { lineas, count: epsList.length };
   }
@@ -1368,7 +1554,9 @@ export class ChatbotService implements OnModuleInit {
     const timeout = new Promise<T>((_, reject) => {
       timer = setTimeout(() => reject(new Error('SEMANTIC_MAP_TIMEOUT')), ms);
     });
-    return Promise.race([p, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
+    return Promise.race([p, timeout]).finally(() =>
+      clearTimeout(timer),
+    ) as Promise<T>;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -1403,13 +1591,19 @@ export class ChatbotService implements OnModuleInit {
       // Validación dura: el id debe pertenecer al catálogo real de esta org.
       const match = options.find((o) => o.id === result.id);
       if (!match) {
-        this.logger.warn(`Mapeo semántico (${entityKind}) devolvió id inexistente: ${result.id}`);
+        this.logger.warn(
+          `Mapeo semántico (${entityKind}) devolvió id inexistente: ${result.id}`,
+        );
         return null;
       }
-      this.logger.log(`🧭 Mapeo semántico (${entityKind}): "${text}" → ${match.name}`);
+      this.logger.log(
+        `🧭 Mapeo semántico (${entityKind}): "${text}" → ${match.name}`,
+      );
       return { id: match.id, name: match.name };
     } catch (e) {
-      this.logger.warn(`Mapeo semántico (${entityKind}) falló/timeout: ${e?.message}`);
+      this.logger.warn(
+        `Mapeo semántico (${entityKind}) falló/timeout: ${e?.message}`,
+      );
       return null;
     }
   }
@@ -1441,8 +1635,14 @@ export class ChatbotService implements OnModuleInit {
     const paddedPhrase = ` ${np} `;
 
     let exact: { id: string; name: string } | null = null;
-    let phraseContainsName: { opt: { id: string; name: string }; len: number } | null = null;
-    let nameContainsPhrase: { opt: { id: string; name: string }; len: number } | null = null;
+    let phraseContainsName: {
+      opt: { id: string; name: string };
+      len: number;
+    } | null = null;
+    let nameContainsPhrase: {
+      opt: { id: string; name: string };
+      len: number;
+    } | null = null;
 
     for (const o of options) {
       const nn = norm(o.name);
@@ -1467,8 +1667,16 @@ export class ChatbotService implements OnModuleInit {
     }
 
     if (exact) return exact;
-    if (phraseContainsName) return { id: phraseContainsName.opt.id, name: phraseContainsName.opt.name };
-    if (nameContainsPhrase) return { id: nameContainsPhrase.opt.id, name: nameContainsPhrase.opt.name };
+    if (phraseContainsName)
+      return {
+        id: phraseContainsName.opt.id,
+        name: phraseContainsName.opt.name,
+      };
+    if (nameContainsPhrase)
+      return {
+        id: nameContainsPhrase.opt.id,
+        name: nameContainsPhrase.opt.name,
+      };
     return null;
   }
 
@@ -1481,8 +1689,12 @@ export class ChatbotService implements OnModuleInit {
     // 1) Letra (tolerante a voz: "be"→B, "la a"→A, etc.)
     const candidate = this.extractOptionLetter(text);
     if (candidate) {
-      const id = await this.redis.get(`temp_service_${candidate}_id:${organizationId}:${senderId}`);
-      const name = await this.redis.get(`temp_service_${candidate}_name:${organizationId}:${senderId}`);
+      const id = await this.redis.get(
+        `temp_service_${candidate}_id:${organizationId}:${senderId}`,
+      );
+      const name = await this.redis.get(
+        `temp_service_${candidate}_name:${organizationId}:${senderId}`,
+      );
       if (id && name) return { id, name };
     }
 
@@ -1510,7 +1722,9 @@ export class ChatbotService implements OnModuleInit {
     ]) {
       const bySynonym = this.matchCatalogByName(anchor, services);
       if (bySynonym) {
-        this.logger.log(`🔤 Tesauro: "${text ?? geminiSpecialty}" → ancla "${anchor}" → ${bySynonym.name}`);
+        this.logger.log(
+          `🔤 Tesauro: "${text ?? geminiSpecialty}" → ancla "${anchor}" → ${bySynonym.name}`,
+        );
         return bySynonym;
       }
     }
@@ -1539,8 +1753,12 @@ export class ChatbotService implements OnModuleInit {
     // 1) Letra (tolerante a voz: "be"→B, "la a"→A, etc.)
     const candidate = this.extractOptionLetter(text);
     if (candidate) {
-      const id = await this.redis.get(`temp_eps_${candidate}_id:${organizationId}:${senderId}`);
-      const name = await this.redis.get(`temp_eps_${candidate}_name:${organizationId}:${senderId}`);
+      const id = await this.redis.get(
+        `temp_eps_${candidate}_id:${organizationId}:${senderId}`,
+      );
+      const name = await this.redis.get(
+        `temp_eps_${candidate}_name:${organizationId}:${senderId}`,
+      );
       if (id && name) return { id, name };
     }
     // 2) "Particular" por patrón (tolerancia a typos / sinónimos del archivo de patrones)
@@ -1581,20 +1799,34 @@ export class ChatbotService implements OnModuleInit {
     Record<ChatState, (ctx: ChatTurnContext) => Promise<void>>
   > = {
     [ChatState.AWAITING_DATE]: (ctx) => this.handleAwaitingDate(ctx),
-    [ChatState.AWAITING_CONFIRMATION]: (ctx) => this.handleAwaitingConfirmation(ctx),
-    [ChatState.AWAITING_WAITLIST_OPTIN]: (ctx) => this.handleAwaitingWaitlistOptin(ctx),
-    [ChatState.AWAITING_CANCEL_CEDULA]: (ctx) => this.handleAwaitingCancelCedula(ctx),
-    [ChatState.AWAITING_CANCEL_RETRY_CEDULA]: (ctx) => this.handleAwaitingCancelRetryCedula(ctx),
-    [ChatState.AWAITING_CANCEL_SELECTION]: (ctx) => this.handleAwaitingCancelSelection(ctx),
-    [ChatState.AWAITING_CANCEL_CONFIRM]: (ctx) => this.handleAwaitingCancelConfirm(ctx),
-    [ChatState.AWAITING_POST_CANCEL_CHOICE]: (ctx) => this.handleAwaitingPostCancelChoice(ctx),
-    [ChatState.AWAITING_INTERRUPT_CONFIRMATION]: (ctx) => this.handleAwaitingInterruptConfirmation(ctx),
-    [ChatState.AWAITING_MODIFY_CEDULA]: (ctx) => this.handleAwaitingModifyCedula(ctx),
-    [ChatState.AWAITING_MODIFY_RETRY_CEDULA]: (ctx) => this.handleAwaitingModifyRetryCedula(ctx),
-    [ChatState.AWAITING_MODIFY_SELECTION]: (ctx) => this.handleAwaitingModifySelection(ctx),
-    [ChatState.AWAITING_MODIFY_NEW_SLOT]: (ctx) => this.handleAwaitingModifyNewSlot(ctx),
-    [ChatState.AWAITING_MODIFY_CONFIRM]: (ctx) => this.handleAwaitingModifyConfirm(ctx),
-    [ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL]: (ctx) => this.handleAwaitingModifyNoSlotsCancel(ctx),
+    [ChatState.AWAITING_CONFIRMATION]: (ctx) =>
+      this.handleAwaitingConfirmation(ctx),
+    [ChatState.AWAITING_WAITLIST_OPTIN]: (ctx) =>
+      this.handleAwaitingWaitlistOptin(ctx),
+    [ChatState.AWAITING_CANCEL_CEDULA]: (ctx) =>
+      this.handleAwaitingCancelCedula(ctx),
+    [ChatState.AWAITING_CANCEL_RETRY_CEDULA]: (ctx) =>
+      this.handleAwaitingCancelRetryCedula(ctx),
+    [ChatState.AWAITING_CANCEL_SELECTION]: (ctx) =>
+      this.handleAwaitingCancelSelection(ctx),
+    [ChatState.AWAITING_CANCEL_CONFIRM]: (ctx) =>
+      this.handleAwaitingCancelConfirm(ctx),
+    [ChatState.AWAITING_POST_CANCEL_CHOICE]: (ctx) =>
+      this.handleAwaitingPostCancelChoice(ctx),
+    [ChatState.AWAITING_INTERRUPT_CONFIRMATION]: (ctx) =>
+      this.handleAwaitingInterruptConfirmation(ctx),
+    [ChatState.AWAITING_MODIFY_CEDULA]: (ctx) =>
+      this.handleAwaitingModifyCedula(ctx),
+    [ChatState.AWAITING_MODIFY_RETRY_CEDULA]: (ctx) =>
+      this.handleAwaitingModifyRetryCedula(ctx),
+    [ChatState.AWAITING_MODIFY_SELECTION]: (ctx) =>
+      this.handleAwaitingModifySelection(ctx),
+    [ChatState.AWAITING_MODIFY_NEW_SLOT]: (ctx) =>
+      this.handleAwaitingModifyNewSlot(ctx),
+    [ChatState.AWAITING_MODIFY_CONFIRM]: (ctx) =>
+      this.handleAwaitingModifyConfirm(ctx),
+    [ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL]: (ctx) =>
+      this.handleAwaitingModifyNoSlotsCancel(ctx),
   };
 
   // ══════════════════════════════════════════════════════════════
@@ -1671,7 +1903,8 @@ export class ChatbotService implements OnModuleInit {
     await this.redis.set(`origin_org:${senderId}`, org.id, 'EX', SESSION_TTL);
 
     if (!org.isActive) {
-      const reply = 'Esta línea clínica se encuentra inactiva temporalmente por mantenimiento administrativo.';
+      const reply =
+        'Esta línea clínica se encuentra inactiva temporalmente por mantenimiento administrativo.';
       await this.sendWhatsAppMessage(senderId, reply);
       await this.auditFailure(senderId, org.id, {
         reason: FailureReason.ORG_INACTIVE,
@@ -1703,8 +1936,16 @@ export class ChatbotService implements OnModuleInit {
     aiData: SchedulingExtraction,
     currentState: ChatState,
   ): Promise<{ aiData: SchedulingExtraction; text: string | undefined }> {
-    await this.redis.set(`is_ai_flow:${organizationId}:${senderId}`, 'true', 'EX', SESSION_TTL);
-    await this.sendWhatsAppMessage(senderId, '🎧 Permítame un momento, lo estoy escuchando...');
+    await this.redis.set(
+      `is_ai_flow:${organizationId}:${senderId}`,
+      'true',
+      'EX',
+      SESSION_TTL,
+    );
+    await this.sendWhatsAppMessage(
+      senderId,
+      '🎧 Permítame un momento, lo estoy escuchando...',
+    );
     const audioCreds = await this.resolveCredentialsForOrg(organizationId);
     const audioBuffer = audioCreds
       ? await this.downloadWhatsAppAudio(audioId, audioCreds)
@@ -1777,7 +2018,8 @@ export class ChatbotService implements OnModuleInit {
       return {
         eps: epsNames.length > 0 ? epsNames : undefined,
         services: svcNames.length > 0 ? svcNames : undefined,
-        letterOptions: letterOptions && letterOptions.length > 0 ? letterOptions : undefined,
+        letterOptions:
+          letterOptions && letterOptions.length > 0 ? letterOptions : undefined,
       };
     } catch (e: any) {
       this.logger.warn(`No se pudieron cargar vocab hints: ${e?.message}`);
@@ -1851,16 +2093,16 @@ export class ChatbotService implements OnModuleInit {
     text: string | undefined,
     messageType: string | undefined,
     currentState: ChatState,
-  ): { isQuickCancel: boolean; isQuickEscape: boolean; isQuickModify: boolean } {
+  ): {
+    isQuickCancel: boolean;
+    isQuickEscape: boolean;
+    isQuickModify: boolean;
+  } {
     const isQuickCancel =
-      messageType === 'text' &&
-      !!text &&
-      this.cancelRegex.test(text.trim());
+      messageType === 'text' && !!text && this.cancelRegex.test(text.trim());
 
     const isQuickEscape =
-      messageType === 'text' &&
-      !!text &&
-      this.escapeRegex.test(text.trim());
+      messageType === 'text' && !!text && this.escapeRegex.test(text.trim());
 
     const isQuickModify =
       messageType === 'text' &&
@@ -1870,7 +2112,6 @@ export class ChatbotService implements OnModuleInit {
 
     return { isQuickCancel, isQuickEscape, isQuickModify };
   }
-
 
   /**
    * Determina el `aiData` del turno (init + cadena de extracción) y, en el
@@ -1894,7 +2135,18 @@ export class ChatbotService implements OnModuleInit {
     isQuickModify: boolean;
     isQuickEscape: boolean;
   }): Promise<{ aiData: SchedulingExtraction; text: string | undefined }> {
-    const { organizationId, senderId, messageType, currentState, isAudio, audioId, isStrictStep, isQuickCancel, isQuickModify, isQuickEscape } = p;
+    const {
+      organizationId,
+      senderId,
+      messageType,
+      currentState,
+      isAudio,
+      audioId,
+      isStrictStep,
+      isQuickCancel,
+      isQuickModify,
+      isQuickEscape,
+    } = p;
     let text = p.text;
     let aiData: SchedulingExtraction = {
       transcript: null,
@@ -1949,7 +2201,13 @@ export class ChatbotService implements OnModuleInit {
         senderId,
         currentState,
       );
-      aiData = await this.extractDataWithLLM(organizationId, text, null, 1, vocabularyHints);
+      aiData = await this.extractDataWithLLM(
+        organizationId,
+        text,
+        null,
+        1,
+        vocabularyHints,
+      );
     } else if (isAudio) {
       // Pipeline de audio: descarga + transcripción (STT) y, si hay
       // transcripción útil, adopción como `text` del turno (ver
@@ -1991,7 +2249,8 @@ export class ChatbotService implements OnModuleInit {
     } else if (
       messageType === 'text' &&
       text &&
-      (currentState === ChatState.AWAITING_SPECIALTY || currentState === ChatState.AWAITING_EPS)
+      (currentState === ChatState.AWAITING_SPECIALTY ||
+        currentState === ChatState.AWAITING_EPS)
     ) {
       // En selección de menú (Pasos 1 y 2) NO llamamos a Gemini para texto:
       // el resolver del menú maneja letras (case-insensitive) y match parcial por nombre.
@@ -2003,7 +2262,13 @@ export class ChatbotService implements OnModuleInit {
         senderId,
         currentState,
       );
-      aiData = await this.extractDataWithLLM(organizationId, text, null, 1, vocabularyHints);
+      aiData = await this.extractDataWithLLM(
+        organizationId,
+        text,
+        null,
+        1,
+        vocabularyHints,
+      );
     }
     return { aiData, text };
   }
@@ -2065,14 +2330,24 @@ export class ChatbotService implements OnModuleInit {
     maxRetries: number;
     MSGS: ReturnType<typeof buildMessages>;
   }): Promise<boolean> {
-    const { aiData, text, organizationId, senderId, currentState, retriesCount, retriesKey, maxRetries, MSGS } = p;
+    const {
+      aiData,
+      text,
+      organizationId,
+      senderId,
+      currentState,
+      retriesCount,
+      retriesKey,
+      maxRetries,
+      MSGS,
+    } = p;
     const fromLlm = (aiData.cedula || '').replace(/\D/g, '');
     const fromTranscript = this.extractCedulaFromSpeech(text);
     const cedulaVoz = fromLlm.length > 0 ? fromLlm : fromTranscript;
 
     this.logger.log(
       `[Tenant: ${organizationId}] 🎙️ CEDULA_VOZ paciente=${senderId} estado=${currentState} ` +
-      `sttCrudo="${text ?? ''}" llmCedula="${aiData.cedula ?? ''}" normalizada="${cedulaVoz}"`,
+        `sttCrudo="${text ?? ''}" llmCedula="${aiData.cedula ?? ''}" normalizada="${cedulaVoz}"`,
     );
 
     if (cedulaVoz.length > 0) {
@@ -2086,18 +2361,27 @@ export class ChatbotService implements OnModuleInit {
       // dejan de ser válidos.
       aiData.outOfContext = false;
       aiData.ininteligible = false;
-    } else if (!aiData.isEscape && !aiData.isCancellation && !aiData.isModification) {
+    } else if (
+      !aiData.isEscape &&
+      !aiData.isCancellation &&
+      !aiData.isModification
+    ) {
       // Sin dígitos tras normalizar: NO reentramos al flujo (evita el loop de
       // SÍ/NO). Reintento acotado pidiendo la cédula por texto; al agotar
       // maxReintentos, el guard del inicio cierra con maxReintentosReset.
       const newRetries = retriesCount + 1;
-      await this.redis.set(retriesKey, newRetries.toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        newRetries.toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.ininteligible();
       await this.sendWhatsAppMessage(senderId, reply);
 
       this.logger.warn(
         `[Tenant: ${organizationId}] 🎙️ Cédula por voz no extraíble (sttCrudo="${text ?? ''}") ` +
-        `— pidiendo cédula por TEXTO. Reintento ${newRetries}/${maxRetries}.`,
+          `— pidiendo cédula por TEXTO. Reintento ${newRetries}/${maxRetries}.`,
       );
 
       await this.auditFailure(senderId, organizationId, {
@@ -2139,25 +2423,35 @@ export class ChatbotService implements OnModuleInit {
     // Antes "GEMINI_DOWN_THRESHOLD"; el umbral ahora vive en
     // OrganizationSettings.maxRetriesPerStep (consistente con la config por clínica).
     const geminiFailKey = `gemini_fail_count:${organizationId}`;
-    const geminiDownThreshold = await this.organizationSettings.getMaxRetries(organizationId);
+    const geminiDownThreshold =
+      await this.organizationSettings.getMaxRetries(organizationId);
 
     if (aiData.isFallback) {
       if (aiData.isRateLimited) {
         // 429: cuota agotada — NO es un fallo de disponibilidad de Gemini.
         // Usar fallback simple sin tocar el contador permanente.
-        this.logger.warn(`Gemini rate-limited (429) — fallback sin penalizar contador`);
+        this.logger.warn(
+          `Gemini rate-limited (429) — fallback sin penalizar contador`,
+        );
         aiData = this.simpleExtractFallback(text ?? null, currentState);
       } else {
         // Error real (timeout, 5xx, etc.) → incrementar contador de caída
-        const currentFails = parseInt((await this.redis.get(geminiFailKey)) || '0', 10);
+        const currentFails = parseInt(
+          (await this.redis.get(geminiFailKey)) || '0',
+          10,
+        );
         const newFails = currentFails + 1;
         await this.redis.set(geminiFailKey, newFails.toString(), 'EX', 900);
 
         if (newFails < geminiDownThreshold) {
-          this.logger.warn(`Gemini fallo real #${newFails}/${geminiDownThreshold} — usando fallback simple`);
+          this.logger.warn(
+            `Gemini fallo real #${newFails}/${geminiDownThreshold} — usando fallback simple`,
+          );
           aiData = this.simpleExtractFallback(text ?? null, currentState);
         } else {
-          this.logger.error(`Gemini caído (${newFails} fallos consecutivos) — mostrando mantenimiento`);
+          this.logger.error(
+            `Gemini caído (${newFails} fallos consecutivos) — mostrando mantenimiento`,
+          );
           const humanPhone = org?.supportPhone || '+10 334 45 66';
           const reply = MSGS.iaCaida(humanPhone);
           await this.smartReply(organizationId, senderId, reply);
@@ -2202,13 +2496,26 @@ export class ChatbotService implements OnModuleInit {
 
     let reply: string;
     if (aiData.cedula) {
-      await this.redis.set(`temp_cancel_cedula:${organizationId}:${senderId}`, aiData.cedula, 'EX', SESSION_TTL);
-      await this.handleCancelCedulaStep(organizationId, senderId, aiData.cedula);
+      await this.redis.set(
+        `temp_cancel_cedula:${organizationId}:${senderId}`,
+        aiData.cedula,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.handleCancelCedulaStep(
+        organizationId,
+        senderId,
+        aiData.cedula,
+      );
       reply = (await this.getLastSent(senderId)) || '[cancelación iniciada]';
     } else {
       reply = MSGS.cancelarPedirCedula();
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CEDULA);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_CANCEL_CEDULA,
+      );
     }
 
     // 📝 Auditoría: inicio de flujo de cancelación
@@ -2245,13 +2552,26 @@ export class ChatbotService implements OnModuleInit {
 
     let reply: string;
     if (aiData.cedula) {
-      await this.redis.set(`temp_modify_cedula:${organizationId}:${senderId}`, aiData.cedula, 'EX', SESSION_TTL);
-      await this.handleModifyCedulaStep(organizationId, senderId, aiData.cedula);
+      await this.redis.set(
+        `temp_modify_cedula:${organizationId}:${senderId}`,
+        aiData.cedula,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.handleModifyCedulaStep(
+        organizationId,
+        senderId,
+        aiData.cedula,
+      );
       reply = (await this.getLastSent(senderId)) || '[modificación iniciada]';
     } else {
       reply = MSGS.modificarPedirCedula();
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_CEDULA);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_MODIFY_CEDULA,
+      );
     }
 
     // 📝 Auditoría: inicio de flujo de modificación
@@ -2259,7 +2579,11 @@ export class ChatbotService implements OnModuleInit {
       status: InteractionStatus.MODIFICATION_FLOW,
       userMessage: text || '[audio]',
       botReply: reply,
-      metadata: { aiData, hasInitialCedula: !!aiData.cedula, event: 'MODIFY_FLOW_START' },
+      metadata: {
+        aiData,
+        hasInitialCedula: !!aiData.cedula,
+        event: 'MODIFY_FLOW_START',
+      },
     });
   }
 
@@ -2278,25 +2602,51 @@ export class ChatbotService implements OnModuleInit {
     orgName: string;
     botName: string;
   }): Promise<void> {
-    const { organizationId, senderId, text, currentState, MSGS, orgName, botName } = p;
+    const {
+      organizationId,
+      senderId,
+      text,
+      currentState,
+      MSGS,
+      orgName,
+      botName,
+    } = p;
     await this.cleanUpSession(organizationId, senderId);
 
     const isGreeting = this.greetingRegex.test(text?.trim() || '');
 
     if (isGreeting) {
       // Saludo → mostrar bienvenida + menú de servicios con letras (Paso 1).
-      const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
-      const reply = count > 0
-        ? MSGS.menuServicios(orgName, lineas, botName)
-        : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
+      const { lineas, count } = await this.buildServiceMenu(
+        organizationId,
+        senderId,
+      );
+      const reply =
+        count > 0
+          ? MSGS.menuServicios(orgName, lineas, botName)
+          : MSGS.bienvenida(
+              orgName,
+              'Ej: Medicina General, Odontología',
+              botName,
+            );
 
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_SPECIALTY,
+      );
 
       await this.auditSuccess(senderId, organizationId, {
         userMessage: text || '[audio]',
         botReply: reply,
-        metadata: { step: 'WELCOME', previousState: currentState, newState: ChatState.AWAITING_SPECIALTY, triggeredBy: 'greeting_escape', servicesCount: count },
+        metadata: {
+          step: 'WELCOME',
+          previousState: currentState,
+          newState: ChatState.AWAITING_SPECIALTY,
+          triggeredBy: 'greeting_escape',
+          servicesCount: count,
+        },
       });
     } else {
       // Palabra de reset ("salir", "reiniciar", etc.) → mostrar "Sin problema"
@@ -2394,9 +2744,14 @@ export class ChatbotService implements OnModuleInit {
       });
 
       // ⭐ CSAT: cierre por lenguaje abusivo.
-      await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.BLOCKED_INSULT, {
-        chatSummary: 'Sesión cerrada por insulto detectado (regex).',
-      });
+      await this.sendSurveyLink(
+        organizationId,
+        senderId,
+        ResolutionStatus.BLOCKED_INSULT,
+        {
+          chatSummary: 'Sesión cerrada por insulto detectado (regex).',
+        },
+      );
       return;
     }
 
@@ -2423,9 +2778,14 @@ export class ChatbotService implements OnModuleInit {
       });
 
       // ⭐ CSAT: cierre por error técnico / exceso de reintentos.
-      await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.SYSTEM_ERROR, {
-        chatSummary: `Sesión cerrada por exceso de reintentos (${maxRetries}).`,
-      });
+      await this.sendSurveyLink(
+        organizationId,
+        senderId,
+        ResolutionStatus.SYSTEM_ERROR,
+        {
+          chatSummary: `Sesión cerrada por exceso de reintentos (${maxRetries}).`,
+        },
+      );
       return;
     }
 
@@ -2492,7 +2852,10 @@ export class ChatbotService implements OnModuleInit {
       await this.auditSuccess(senderId, organizationId, {
         userMessage: '[audio]',
         botReply: reply,
-        metadata: { reason: 'AUDIO_REJECTED_IN_STRICT_STEP', state: currentState },
+        metadata: {
+          reason: 'AUDIO_REJECTED_IN_STRICT_STEP',
+          state: currentState,
+        },
       });
       return;
     }
@@ -2515,11 +2878,8 @@ export class ChatbotService implements OnModuleInit {
     }
 
     // Detección de intención rápida por patrón (sin LLM). Ver detectQuickIntent.
-    const { isQuickCancel, isQuickEscape, isQuickModify } = this.detectQuickIntent(
-      text,
-      messageType,
-      currentState,
-    );
+    const { isQuickCancel, isQuickEscape, isQuickModify } =
+      this.detectQuickIntent(text, messageType, currentState);
 
     // ══════════════════════════════════════════════════════════
     // 🧲 ESCENARIO 2 — INTERRUPCIÓN AMABLE DEL AGENDAMIENTO
@@ -2641,7 +3001,13 @@ export class ChatbotService implements OnModuleInit {
     // EXACTAMENTE el mismo camino determinista que el texto. Si NO hay letra
     // (p.ej. "mejor cancela"), dejamos pasar el intent del LLM tal cual.
     if (isAudio && isLetterSelectionStep) {
-      text = this.applyVoiceLetterSelection(text, aiData, organizationId, senderId, currentState);
+      text = this.applyVoiceLetterSelection(
+        text,
+        aiData,
+        organizationId,
+        senderId,
+        currentState,
+      );
     }
 
     // Contador de fallos LLM / fallback (ver handleLlmFallback). Si la IA está
@@ -2661,7 +3027,14 @@ export class ChatbotService implements OnModuleInit {
     aiData = fb.aiData;
 
     if (aiData.isCancellation || isQuickCancel) {
-      await this.startCancellationFlow({ organizationId, senderId, isAudio, aiData, text, MSGS });
+      await this.startCancellationFlow({
+        organizationId,
+        senderId,
+        isAudio,
+        aiData,
+        text,
+        MSGS,
+      });
       return;
     }
 
@@ -2672,12 +3045,27 @@ export class ChatbotService implements OnModuleInit {
     // paciente confirme un nuevo horario (o decida cancelarla si no hay cupos).
     // ══════════════════════════════════════════════════════════
     if (aiData.isModification || isQuickModify) {
-      await this.startModificationFlow({ organizationId, senderId, isAudio, aiData, text, MSGS });
+      await this.startModificationFlow({
+        organizationId,
+        senderId,
+        isAudio,
+        aiData,
+        text,
+        MSGS,
+      });
       return;
     }
 
     if (aiData.isEscape) {
-      await this.handleEscape({ organizationId, senderId, text, currentState, MSGS, orgName, botName });
+      await this.handleEscape({
+        organizationId,
+        senderId,
+        text,
+        currentState,
+        MSGS,
+        orgName,
+        botName,
+      });
       return;
     }
 
@@ -2710,9 +3098,14 @@ export class ChatbotService implements OnModuleInit {
         });
 
         // ⭐ CSAT: cierre por lenguaje abusivo (detección LLM).
-        await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.BLOCKED_INSULT, {
-          chatSummary: 'Sesión cerrada por insulto detectado (LLM).',
-        });
+        await this.sendSurveyLink(
+          organizationId,
+          senderId,
+          ResolutionStatus.BLOCKED_INSULT,
+          {
+            chatSummary: 'Sesión cerrada por insulto detectado (LLM).',
+          },
+        );
         return;
       }
 
@@ -2753,7 +3146,12 @@ export class ChatbotService implements OnModuleInit {
     const menuVoiceAnswer = isMenuStep && !!text && !!text.trim();
 
     if (aiData.outOfContext && !yesNoVoiceAnswer && !menuVoiceAnswer) {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.outOfContext(botName);
       await this.smartReply(organizationId, senderId, reply);
 
@@ -2767,7 +3165,12 @@ export class ChatbotService implements OnModuleInit {
     }
 
     if (aiData.ininteligible && !yesNoVoiceAnswer && !menuVoiceAnswer) {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.ininteligible();
       await this.smartReply(organizationId, senderId, reply);
 
@@ -2792,12 +3195,24 @@ export class ChatbotService implements OnModuleInit {
     // ══════════════════════════════════════════════════════════
     // MEMORIA A CORTO PLAZO (cascada de contexto)
     // ══════════════════════════════════════════════════════════
-    const savedCedula = await this.redis.get(`temp_cedula:${organizationId}:${senderId}`);
-    const savedNombre = await this.redis.get(`temp_nombre:${organizationId}:${senderId}`);
-    const savedEspecialidad = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`);
-    const savedEspecialidadId = await this.redis.get(`temp_especialidad_id:${organizationId}:${senderId}`);
-    const savedDoctor = await this.redis.get(`temp_doctor:${organizationId}:${senderId}`);
-    const savedEps = await this.redis.get(`temp_eps_query:${organizationId}:${senderId}`);
+    const savedCedula = await this.redis.get(
+      `temp_cedula:${organizationId}:${senderId}`,
+    );
+    const savedNombre = await this.redis.get(
+      `temp_nombre:${organizationId}:${senderId}`,
+    );
+    const savedEspecialidad = await this.redis.get(
+      `temp_especialidad:${organizationId}:${senderId}`,
+    );
+    const savedEspecialidadId = await this.redis.get(
+      `temp_especialidad_id:${organizationId}:${senderId}`,
+    );
+    const savedDoctor = await this.redis.get(
+      `temp_doctor:${organizationId}:${senderId}`,
+    );
+    const savedEps = await this.redis.get(
+      `temp_eps_query:${organizationId}:${senderId}`,
+    );
 
     const finalCedula = aiData.cedula || savedCedula;
     const finalNombre = aiData.nombre || savedNombre;
@@ -2805,11 +3220,41 @@ export class ChatbotService implements OnModuleInit {
     const finalDoctor = aiData.doctor || savedDoctor;
     const finalEps = aiData.eps || savedEps;
 
-    if (finalCedula) await this.redis.set(`temp_cedula:${organizationId}:${senderId}`, finalCedula, 'EX', SESSION_TTL);
-    if (finalNombre) await this.redis.set(`temp_nombre:${organizationId}:${senderId}`, finalNombre, 'EX', SESSION_TTL);
-    if (finalDoctor) await this.redis.set(`temp_doctor:${organizationId}:${senderId}`, finalDoctor, 'EX', SESSION_TTL);
-    if (finalEps) await this.redis.set(`temp_eps_query:${organizationId}:${senderId}`, finalEps, 'EX', SESSION_TTL);
-    if (finalEspecialidad) await this.redis.set(`temp_especialidad:${organizationId}:${senderId}`, finalEspecialidad, 'EX', SESSION_TTL);
+    if (finalCedula)
+      await this.redis.set(
+        `temp_cedula:${organizationId}:${senderId}`,
+        finalCedula,
+        'EX',
+        SESSION_TTL,
+      );
+    if (finalNombre)
+      await this.redis.set(
+        `temp_nombre:${organizationId}:${senderId}`,
+        finalNombre,
+        'EX',
+        SESSION_TTL,
+      );
+    if (finalDoctor)
+      await this.redis.set(
+        `temp_doctor:${organizationId}:${senderId}`,
+        finalDoctor,
+        'EX',
+        SESSION_TTL,
+      );
+    if (finalEps)
+      await this.redis.set(
+        `temp_eps_query:${organizationId}:${senderId}`,
+        finalEps,
+        'EX',
+        SESSION_TTL,
+      );
+    if (finalEspecialidad)
+      await this.redis.set(
+        `temp_especialidad:${organizationId}:${senderId}`,
+        finalEspecialidad,
+        'EX',
+        SESSION_TTL,
+      );
 
     // ══════════════════════════════════════════════════════════
     // ACK DEL PRIMER TURNO (Fase 2 — Acknowledge)
@@ -2825,8 +3270,12 @@ export class ChatbotService implements OnModuleInit {
     let sentTurn1Ack = false;
 
     const extrajoEntidadesTurno1 = !!(
-      aiData.cedula || aiData.nombre || aiData.eps ||
-      aiData.especialidad || aiData.doctor || aiData.fechaSolicitada
+      aiData.cedula ||
+      aiData.nombre ||
+      aiData.eps ||
+      aiData.especialidad ||
+      aiData.doctor ||
+      aiData.fechaSolicitada
     );
     if (
       currentState === ChatState.IDLE &&
@@ -2849,7 +3298,12 @@ export class ChatbotService implements OnModuleInit {
           if (paciente?.fullName) {
             nombreAck = nombreAck || paciente.fullName;
             // El paciente ya existe → no volver a pedir el nombre más adelante.
-            await this.redis.set(`temp_nombre:${organizationId}:${senderId}`, paciente.fullName, 'EX', SESSION_TTL);
+            await this.redis.set(
+              `temp_nombre:${organizationId}:${senderId}`,
+              paciente.fullName,
+              'EX',
+              SESSION_TTL,
+            );
           }
         } else {
           // Formato inválido: no la damos por confirmada ni la arrastramos.
@@ -2916,12 +3370,19 @@ export class ChatbotService implements OnModuleInit {
       // ── SHORT-CIRCUIT: cédula post-opt-in a waitlist ─────────
       // El usuario aceptó entrar a la cola y nos faltaba su cédula.
       // En este caminito NO buscamos slots: directamente unimos a la cola.
-      const waitlistPending = await this.redis.get(`temp_waitlist_pending:${organizationId}:${senderId}`);
+      const waitlistPending = await this.redis.get(
+        `temp_waitlist_pending:${organizationId}:${senderId}`,
+      );
       if (waitlistPending === '1' && finalCedula) {
         const soloNumeros = finalCedula.replace(/\D/g, '');
         // No validamos longitud: se acepta cualquier número (solo rechazo si viene vacío).
         if (!soloNumeros) {
-          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+          await this.redis.set(
+            retriesKey,
+            (retriesCount + 1).toString(),
+            'EX',
+            SESSION_TTL,
+          );
           await this.redis.del(`temp_cedula:${organizationId}:${senderId}`);
           const reply = MSGS.cancelarCedulaInvalida();
           await this.smartReply(organizationId, senderId, reply);
@@ -2930,16 +3391,30 @@ export class ChatbotService implements OnModuleInit {
             reason: FailureReason.PATIENT_NOT_FOUND,
             userMessage: text || '[audio]',
             botReply: reply,
-            metadata: { stage: 'WAITLIST_OPTIN_CEDULA_INVALID', cedula: finalCedula },
+            metadata: {
+              stage: 'WAITLIST_OPTIN_CEDULA_INVALID',
+              cedula: finalCedula,
+            },
           });
           return;
         }
 
-        const serviceIdWl = await this.redis.get(`temp_waitlist_service_id:${organizationId}:${senderId}`);
-        const epsIdRawWl = await this.redis.get(`temp_waitlist_eps_id:${organizationId}:${senderId}`);
-        const epsIdForWl = epsIdRawWl && epsIdRawWl.length > 0 ? epsIdRawWl : null;
-        const preferredDoctorIdWl = (await this.redis.get(`temp_waitlist_doctor_id:${organizationId}:${senderId}`)) || null;
-        const serviceNameWl = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`) || '';
+        const serviceIdWl = await this.redis.get(
+          `temp_waitlist_service_id:${organizationId}:${senderId}`,
+        );
+        const epsIdRawWl = await this.redis.get(
+          `temp_waitlist_eps_id:${organizationId}:${senderId}`,
+        );
+        const epsIdForWl =
+          epsIdRawWl && epsIdRawWl.length > 0 ? epsIdRawWl : null;
+        const preferredDoctorIdWl =
+          (await this.redis.get(
+            `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
+          )) || null;
+        const serviceNameWl =
+          (await this.redis.get(
+            `temp_especialidad:${organizationId}:${senderId}`,
+          )) || '';
 
         if (!serviceIdWl) {
           const reply = MSGS.sesionExpirada();
@@ -2955,7 +3430,11 @@ export class ChatbotService implements OnModuleInit {
         if (!existing && !finalNombre) {
           const reply = MSGS.primeraVez();
           await this.smartReply(organizationId, senderId, reply);
-          await this.setUserState(organizationId, senderId, ChatState.AWAITING_NAME);
+          await this.setUserState(
+            organizationId,
+            senderId,
+            ChatState.AWAITING_NAME,
+          );
 
           await this.auditSuccess(senderId, organizationId, {
             userMessage: text || '[audio]',
@@ -2973,7 +3452,7 @@ export class ChatbotService implements OnModuleInit {
           cedula: finalCedula,
           nombre: nombreFinalWl,
           senderId,
-          organizationId: organizationId!,
+          organizationId: organizationId,
           epsId: epsIdForWl,
         });
 
@@ -2986,7 +3465,7 @@ export class ChatbotService implements OnModuleInit {
               serviceId: serviceIdWl,
               epsId: epsIdForWl,
               whatsappId: senderId,
-              organizationId: organizationId!,
+              organizationId: organizationId,
               preferredDoctorId: preferredDoctorIdWl,
             });
             positionWl = result.position;
@@ -2996,13 +3475,17 @@ export class ChatbotService implements OnModuleInit {
           }
         }
 
-        const replyOk = MSGS.unidoAWaitlist(nombreFinalWl, serviceNameWl, positionWl);
+        const replyOk = MSGS.unidoAWaitlist(
+          nombreFinalWl,
+          serviceNameWl,
+          positionWl,
+        );
         await this.smartReply(organizationId, senderId, replyOk);
 
         if (wlEntryId && patientWl) {
           await this.interactionLog.logWaitlistJoined({
             whatsappId: senderId,
-            organizationId: organizationId!,
+            organizationId: organizationId,
             waitlistEntryId: wlEntryId,
             patientCedula: finalCedula,
             serviceName: serviceNameWl,
@@ -3014,10 +3497,15 @@ export class ChatbotService implements OnModuleInit {
         }
 
         // ⭐ CSAT: flujo cerrado en lista de espera → encuesta.
-        await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.QUEUED, {
-          patientId: patientWl?.id ?? null,
-          chatSummary: `Ingresó a lista de espera de ${serviceNameWl} (posición ${positionWl}).`,
-        });
+        await this.sendSurveyLink(
+          organizationId,
+          senderId,
+          ResolutionStatus.QUEUED,
+          {
+            patientId: patientWl?.id ?? null,
+            chatSummary: `Ingresó a lista de espera de ${serviceNameWl} (posición ${positionWl}).`,
+          },
+        );
 
         await this.cleanUpSession(organizationId, senderId);
         return;
@@ -3029,7 +3517,8 @@ export class ChatbotService implements OnModuleInit {
 
       if (!resolvedServiceId) {
         // ¿Podemos resolverlo del input actual o de aiData?
-        const inputForService = currentState === ChatState.AWAITING_SPECIALTY ? text : null;
+        const inputForService =
+          currentState === ChatState.AWAITING_SPECIALTY ? text : null;
         const match = await this.resolveServiceFromInput(
           organizationId,
           senderId,
@@ -3040,8 +3529,18 @@ export class ChatbotService implements OnModuleInit {
         if (match) {
           resolvedServiceId = match.id;
           resolvedServiceName = match.name;
-          await this.redis.set(`temp_especialidad:${organizationId}:${senderId}`, match.name, 'EX', SESSION_TTL);
-          await this.redis.set(`temp_especialidad_id:${organizationId}:${senderId}`, match.id, 'EX', SESSION_TTL);
+          await this.redis.set(
+            `temp_especialidad:${organizationId}:${senderId}`,
+            match.name,
+            'EX',
+            SESSION_TTL,
+          );
+          await this.redis.set(
+            `temp_especialidad_id:${organizationId}:${senderId}`,
+            match.id,
+            'EX',
+            SESSION_TTL,
+          );
         } else if (currentState === ChatState.AWAITING_SPECIALTY && text) {
           // No mapeó a un servicio del menú. Antes de marcar reintento,
           // ¿es una pregunta abierta (FAQ)? Si hay KB y el texto luce como
@@ -3060,25 +3559,49 @@ export class ChatbotService implements OnModuleInit {
           // una cita")? No es una opción del menú, pero tampoco un error: le
           // re-presentamos el menú con calidez y SIN penalizar reintentos.
           if (this.looksLikeScheduleIntent(text)) {
-            const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
-            const reply = count > 0
-              ? MSGS.repromptAgendarServicio(lineas)
-              : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
+            const { lineas, count } = await this.buildServiceMenu(
+              organizationId,
+              senderId,
+            );
+            const reply =
+              count > 0
+                ? MSGS.repromptAgendarServicio(lineas)
+                : MSGS.bienvenida(
+                    orgName,
+                    'Ej: Medicina General, Odontología',
+                    botName,
+                  );
             await this.smartReply(organizationId, senderId, reply);
 
             await this.auditSuccess(senderId, organizationId, {
               userMessage: text || '[audio]',
               botReply: reply,
-              metadata: { step: 'SPECIALTY_REPROMPT_SCHEDULE_INTENT', servicesCount: count },
+              metadata: {
+                step: 'SPECIALTY_REPROMPT_SCHEDULE_INTENT',
+                servicesCount: count,
+              },
             });
             return;
           }
           // El usuario respondió algo que no pudimos mapear al menú → reintento
-          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-          const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
-          const reply = count > 0
-            ? MSGS.servicioInvalido(lineas)
-            : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
+          await this.redis.set(
+            retriesKey,
+            (retriesCount + 1).toString(),
+            'EX',
+            SESSION_TTL,
+          );
+          const { lineas, count } = await this.buildServiceMenu(
+            organizationId,
+            senderId,
+          );
+          const reply =
+            count > 0
+              ? MSGS.servicioInvalido(lineas)
+              : MSGS.bienvenida(
+                  orgName,
+                  'Ej: Medicina General, Odontología',
+                  botName,
+                );
           await this.smartReply(organizationId, senderId, reply);
 
           await this.auditFailure(senderId, organizationId, {
@@ -3097,17 +3620,29 @@ export class ChatbotService implements OnModuleInit {
 
       if (!resolvedServiceId) {
         // Primera vez (o sesión limpia): renderizar menú
-        const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
+        const { lineas, count } = await this.buildServiceMenu(
+          organizationId,
+          senderId,
+        );
         // Si acabamos de enviar el ACK del primer turno, usamos el reprompt
         // (que NO vuelve a saludar) en vez de la bienvenida completa, para no
         // mandar dos saludos seguidos en el mismo turno.
-        const reply = count > 0
-          ? (sentTurn1Ack
+        const reply =
+          count > 0
+            ? sentTurn1Ack
               ? MSGS.repromptAgendarServicio(lineas)
-              : MSGS.menuServicios(orgName, lineas, botName))
-          : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
+              : MSGS.menuServicios(orgName, lineas, botName)
+            : MSGS.bienvenida(
+                orgName,
+                'Ej: Medicina General, Odontología',
+                botName,
+              );
         await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_SPECIALTY,
+        );
 
         await this.auditSuccess(senderId, organizationId, {
           userMessage: text || '[audio]',
@@ -3123,11 +3658,16 @@ export class ChatbotService implements OnModuleInit {
       }
 
       // ── PASO 2: EPS ──────────────────────────────────────────
-      let resolvedEpsId = await this.redis.get(`temp_eps_id:${organizationId}:${senderId}`);
-      let resolvedEpsName = await this.redis.get(`temp_eps_query:${organizationId}:${senderId}`);
+      let resolvedEpsId = await this.redis.get(
+        `temp_eps_id:${organizationId}:${senderId}`,
+      );
+      let resolvedEpsName = await this.redis.get(
+        `temp_eps_query:${organizationId}:${senderId}`,
+      );
 
       if (!resolvedEpsId || !resolvedEpsName) {
-        const inputForEps = currentState === ChatState.AWAITING_EPS ? text : null;
+        const inputForEps =
+          currentState === ChatState.AWAITING_EPS ? text : null;
         const match = await this.resolveEpsFromInput(
           organizationId,
           senderId,
@@ -3138,8 +3678,18 @@ export class ChatbotService implements OnModuleInit {
         if (match) {
           resolvedEpsId = match.id;
           resolvedEpsName = match.name;
-          await this.redis.set(`temp_eps_id:${organizationId}:${senderId}`, match.id, 'EX', SESSION_TTL);
-          await this.redis.set(`temp_eps_query:${organizationId}:${senderId}`, match.name, 'EX', SESSION_TTL);
+          await this.redis.set(
+            `temp_eps_id:${organizationId}:${senderId}`,
+            match.id,
+            'EX',
+            SESSION_TTL,
+          );
+          await this.redis.set(
+            `temp_eps_query:${organizationId}:${senderId}`,
+            match.name,
+            'EX',
+            SESSION_TTL,
+          );
         } else if (currentState === ChatState.AWAITING_EPS && text) {
           // No mapeó a una EPS del menú. Igual que en el paso de servicio:
           // si es una pregunta abierta y hay KB, respondemos desde la base de
@@ -3154,25 +3704,36 @@ export class ChatbotService implements OnModuleInit {
           // Afirmación de agendar en el paso de EPS → re-presentar el menú de
           // EPS con calidez, sin penalizar reintentos.
           if (this.looksLikeScheduleIntent(text)) {
-            const { lineas, count } = await this.buildEpsMenu(organizationId, senderId);
-            const reply = count > 0
-              ? MSGS.repromptAgendarEps(lineas)
-              : MSGS.pedirEps();
+            const { lineas, count } = await this.buildEpsMenu(
+              organizationId,
+              senderId,
+            );
+            const reply =
+              count > 0 ? MSGS.repromptAgendarEps(lineas) : MSGS.pedirEps();
             await this.smartReply(organizationId, senderId, reply);
 
             await this.auditSuccess(senderId, organizationId, {
               userMessage: text || '[audio]',
               botReply: reply,
-              metadata: { step: 'EPS_REPROMPT_SCHEDULE_INTENT', epsCount: count },
+              metadata: {
+                step: 'EPS_REPROMPT_SCHEDULE_INTENT',
+                epsCount: count,
+              },
             });
             return;
           }
           // El usuario respondió algo no mapeable al menú → reintento
-          await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-          const { lineas, count } = await this.buildEpsMenu(organizationId, senderId);
-          const reply = count > 0
-            ? MSGS.epsInvalida(lineas)
-            : MSGS.pedirEps();
+          await this.redis.set(
+            retriesKey,
+            (retriesCount + 1).toString(),
+            'EX',
+            SESSION_TTL,
+          );
+          const { lineas, count } = await this.buildEpsMenu(
+            organizationId,
+            senderId,
+          );
+          const reply = count > 0 ? MSGS.epsInvalida(lineas) : MSGS.pedirEps();
           await this.smartReply(organizationId, senderId, reply);
 
           await this.auditFailure(senderId, organizationId, {
@@ -3190,12 +3751,20 @@ export class ChatbotService implements OnModuleInit {
       }
 
       if (!resolvedEpsId || !resolvedEpsName) {
-        const { lineas, count } = await this.buildEpsMenu(organizationId, senderId);
-        const reply = count > 0
-          ? MSGS.menuEps(resolvedServiceName!, lineas)
-          : MSGS.pedirEps();
+        const { lineas, count } = await this.buildEpsMenu(
+          organizationId,
+          senderId,
+        );
+        const reply =
+          count > 0
+            ? MSGS.menuEps(resolvedServiceName!, lineas)
+            : MSGS.pedirEps();
         await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_EPS,
+        );
 
         await this.auditSuccess(senderId, organizationId, {
           userMessage: text || '[audio]',
@@ -3211,29 +3780,44 @@ export class ChatbotService implements OnModuleInit {
 
       // Pago directo → al reservar, no asociamos epsId al slot.
       const isParticular =
-        (resolvedEpsName || '').toLowerCase() === PARTICULAR_EPS_NAME.toLowerCase();
+        (resolvedEpsName || '').toLowerCase() ===
+        PARTICULAR_EPS_NAME.toLowerCase();
       const epsIdForSlots: string | null = isParticular ? null : resolvedEpsId;
-      const epsIdForPatient: string | null = isParticular ? null : resolvedEpsId;
+      const epsIdForPatient: string | null = isParticular
+        ? null
+        : resolvedEpsId;
 
       // ── PASO 3: SLOTS o WAITLIST OPT-IN ──────────────────────
-      const selectedSlotId = await this.redis.get(`temp_selected_slot_id:${organizationId}:${senderId}`);
+      const selectedSlotId = await this.redis.get(
+        `temp_selected_slot_id:${organizationId}:${senderId}`,
+      );
 
       if (!selectedSlotId) {
         const slots = await this.appointmentsService.getAvailableSlots(
           resolvedServiceName as string,
           epsIdForSlots,
-          organizationId!,
+          organizationId,
         );
 
         if (slots.length === 0) {
           // Guardar contexto para que AWAITING_WAITLIST_OPTIN sepa qué hacer.
-          await this.redis.set(`temp_waitlist_service_id:${organizationId}:${senderId}`, resolvedServiceId!, 'EX', SESSION_TTL);
-          await this.redis.set(`temp_waitlist_eps_id:${organizationId}:${senderId}`, epsIdForPatient || '', 'EX', SESSION_TTL);
+          await this.redis.set(
+            `temp_waitlist_service_id:${organizationId}:${senderId}`,
+            resolvedServiceId,
+            'EX',
+            SESSION_TTL,
+          );
+          await this.redis.set(
+            `temp_waitlist_eps_id:${organizationId}:${senderId}`,
+            epsIdForPatient || '',
+            'EX',
+            SESSION_TTL,
+          );
 
           // Médico preferido (si el paciente lo mencionó): nombre libre → id inequívoco.
           const preferredDoctorIdForWl = await this.resolvePreferredDoctorId(
-            organizationId!,
-            resolvedServiceId!,
+            organizationId,
+            resolvedServiceId,
             finalDoctor,
           );
           if (preferredDoctorIdForWl) {
@@ -3245,12 +3829,21 @@ export class ChatbotService implements OnModuleInit {
             );
           } else {
             // Evita arrastrar un médico de una solicitud anterior si esta no aplica.
-            await this.redis.del(`temp_waitlist_doctor_id:${organizationId}:${senderId}`);
+            await this.redis.del(
+              `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
+            );
           }
 
-          const reply = MSGS.preguntaWaitlist(resolvedServiceName as string, resolvedEpsName);
+          const reply = MSGS.preguntaWaitlist(
+            resolvedServiceName as string,
+            resolvedEpsName,
+          );
           await this.smartReply(organizationId, senderId, reply);
-          await this.setUserState(organizationId, senderId, ChatState.AWAITING_WAITLIST_OPTIN);
+          await this.setUserState(
+            organizationId,
+            senderId,
+            ChatState.AWAITING_WAITLIST_OPTIN,
+          );
 
           await this.auditSuccess(senderId, organizationId, {
             userMessage: text || '[audio]',
@@ -3269,8 +3862,18 @@ export class ChatbotService implements OnModuleInit {
         const slotsMetadata: any[] = [];
         for (let i = 0; i < slots.length; i++) {
           const letra = String.fromCharCode(65 + i);
-          await this.redis.set(`temp_slot_${letra}:${senderId}`, slots[i].slotId, 'EX', SESSION_TTL);
-          await this.redis.set(`temp_slot_${letra}_fecha:${senderId}`, slots[i].fecha.toISOString(), 'EX', SESSION_TTL);
+          await this.redis.set(
+            `temp_slot_${letra}:${senderId}`,
+            slots[i].slotId,
+            'EX',
+            SESSION_TTL,
+          );
+          await this.redis.set(
+            `temp_slot_${letra}_fecha:${senderId}`,
+            slots[i].fecha.toISOString(),
+            'EX',
+            SESSION_TTL,
+          );
           lineasFechas +=
             `*${letra})* ${formatAppointmentLong(slots[i].fecha)} ` +
             `· Dr. ${slots[i].doctor}\n`;
@@ -3291,7 +3894,11 @@ export class ChatbotService implements OnModuleInit {
           reply,
           MSGS.cuposDisponiblesAudio(resolvedEpsName),
         );
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_DATE);
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_DATE,
+        );
 
         await this.auditSuccess(senderId, organizationId, {
           userMessage: text || '[audio]',
@@ -3309,11 +3916,19 @@ export class ChatbotService implements OnModuleInit {
 
       // ── PASO 4: CÉDULA (sólo si ya hay slot seleccionado) ────
       if (!finalCedula) {
-        const fechaVista = await this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`);
-        const fechaFormateada = fechaVista ? formatAppointmentLong(fechaVista) : '';
+        const fechaVista = await this.redis.get(
+          `temp_selected_date_view:${organizationId}:${senderId}`,
+        );
+        const fechaFormateada = fechaVista
+          ? formatAppointmentLong(fechaVista)
+          : '';
         const reply = MSGS.pedirCedulaPostSlot(fechaFormateada);
         await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_CEDULA);
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_CEDULA,
+        );
 
         await this.auditSuccess(senderId, organizationId, {
           userMessage: text || '[audio]',
@@ -3331,7 +3946,12 @@ export class ChatbotService implements OnModuleInit {
       // (solo rechazo si viene vacío/sin dígitos).
       const soloNumerosAgendamiento = finalCedula.replace(/\D/g, '');
       if (!soloNumerosAgendamiento) {
-        await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+        await this.redis.set(
+          retriesKey,
+          (retriesCount + 1).toString(),
+          'EX',
+          SESSION_TTL,
+        );
         await this.redis.del(`temp_cedula:${organizationId}:${senderId}`);
         const reply = MSGS.cancelarCedulaInvalida();
         await this.smartReply(organizationId, senderId, reply);
@@ -3353,14 +3973,23 @@ export class ChatbotService implements OnModuleInit {
 
       if (patient) {
         if (!finalNombre) {
-          await this.redis.set(`temp_nombre:${organizationId}:${senderId}`, patient.fullName, 'EX', SESSION_TTL);
+          await this.redis.set(
+            `temp_nombre:${organizationId}:${senderId}`,
+            patient.fullName,
+            'EX',
+            SESSION_TTL,
+          );
         }
       } else {
         // Paciente nuevo: pedir nombre.
         if (!finalNombre) {
           const reply = MSGS.primeraVez();
           await this.smartReply(organizationId, senderId, reply);
-          await this.setUserState(organizationId, senderId, ChatState.AWAITING_NAME);
+          await this.setUserState(
+            organizationId,
+            senderId,
+            ChatState.AWAITING_NAME,
+          );
 
           await this.auditSuccess(senderId, organizationId, {
             userMessage: text || '[audio]',
@@ -3377,7 +4006,7 @@ export class ChatbotService implements OnModuleInit {
           cedula: finalCedula,
           nombre: finalNombre,
           senderId,
-          organizationId: organizationId!,
+          organizationId: organizationId,
           epsId: epsIdForPatient,
         });
       }
@@ -3388,14 +4017,16 @@ export class ChatbotService implements OnModuleInit {
           cedula: finalCedula,
           nombre: finalNombre,
           senderId,
-          organizationId: organizationId!,
+          organizationId: organizationId,
           epsId: epsIdForPatient,
         });
       }
 
       // Mostrar resumen y pasar a confirmación.
       const nombreAgend = finalNombre || patient?.fullName || 'Paciente';
-      const fechaVistaFinal = await this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`);
+      const fechaVistaFinal = await this.redis.get(
+        `temp_selected_date_view:${organizationId}:${senderId}`,
+      );
       const fechaFormateadaResumen = fechaVistaFinal
         ? formatAppointmentLong(fechaVistaFinal)
         : '';
@@ -3405,9 +4036,14 @@ export class ChatbotService implements OnModuleInit {
         resolvedEpsName,
         resolvedServiceName as string,
         fechaFormateadaResumen,
+        this.configService.get<string>('PRIVACY_POLICY_URL'),
       );
       await this.sendWhatsAppMessage(senderId, replyResumen);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CONFIRMATION);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_CONFIRMATION,
+      );
 
       await this.auditSuccess(senderId, organizationId, {
         userMessage: text || '[audio]',
@@ -3452,13 +4088,30 @@ export class ChatbotService implements OnModuleInit {
 
   /** Handler de estado: AWAITING_DATE. Extraído de processIncomingMessageUnsafe (#2). */
   private async handleAwaitingDate(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, currentState, MSGS, retriesKey, retriesCount } = ctx;
+    const {
+      organizationId,
+      senderId,
+      text,
+      currentState,
+      MSGS,
+      retriesKey,
+      retriesCount,
+    } = ctx;
     const letraElegida = this.extractOptionLetter(text);
-    const slotId = await this.redis.get(`temp_slot_${letraElegida}:${senderId}`);
-    const slotFechaStr = await this.redis.get(`temp_slot_${letraElegida}_fecha:${senderId}`);
+    const slotId = await this.redis.get(
+      `temp_slot_${letraElegida}:${senderId}`,
+    );
+    const slotFechaStr = await this.redis.get(
+      `temp_slot_${letraElegida}_fecha:${senderId}`,
+    );
 
     if (!slotId || !slotFechaStr) {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.errorSlotInvalido();
       await this.smartReply(organizationId, senderId, reply);
 
@@ -3471,30 +4124,55 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    await this.redis.set(`temp_selected_slot_id:${organizationId}:${senderId}`, slotId, 'EX', SESSION_TTL);
-    await this.redis.set(`temp_selected_date_view:${organizationId}:${senderId}`, slotFechaStr, 'EX', SESSION_TTL);
+    await this.redis.set(
+      `temp_selected_slot_id:${organizationId}:${senderId}`,
+      slotId,
+      'EX',
+      SESSION_TTL,
+    );
+    await this.redis.set(
+      `temp_selected_date_view:${organizationId}:${senderId}`,
+      slotFechaStr,
+      'EX',
+      SESSION_TTL,
+    );
 
     const fechaFormateada = formatAppointmentLong(slotFechaStr);
 
     // Nuevo protocolo: tras elegir el slot, capturamos los datos del paciente.
     // Si el usuario ya tenía cédula en memoria (re-agendamiento), saltamos
     // directo al resumen para no preguntar dos veces.
-    const cedulaPrevia = await this.redis.get(`temp_cedula:${organizationId}:${senderId}`);
-    const nombrePrevio = await this.redis.get(`temp_nombre:${organizationId}:${senderId}`);
+    const cedulaPrevia = await this.redis.get(
+      `temp_cedula:${organizationId}:${senderId}`,
+    );
+    const nombrePrevio = await this.redis.get(
+      `temp_nombre:${organizationId}:${senderId}`,
+    );
 
     if (cedulaPrevia) {
       // Paciente con cédula ya conocida → resumen + confirmación.
-      const specAgend = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`) || 'Servicio';
-      const epsAgend = await this.redis.get(`temp_eps_query:${organizationId}:${senderId}`) || 'EPS';
+      const specAgend =
+        (await this.redis.get(
+          `temp_especialidad:${organizationId}:${senderId}`,
+        )) || 'Servicio';
+      const epsAgend =
+        (await this.redis.get(
+          `temp_eps_query:${organizationId}:${senderId}`,
+        )) || 'EPS';
       const reply = MSGS.resumenCita(
         nombrePrevio || 'Paciente',
         cedulaPrevia,
         epsAgend,
         specAgend,
         fechaFormateada,
+        this.configService.get<string>('PRIVACY_POLICY_URL'),
       );
       await this.sendWhatsAppMessage(senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CONFIRMATION);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_CONFIRMATION,
+      );
 
       await this.auditSuccess(senderId, organizationId, {
         userMessage: text,
@@ -3512,7 +4190,11 @@ export class ChatbotService implements OnModuleInit {
     // Sin cédula previa → pedir cédula (Paso 4 del protocolo).
     const reply = MSGS.pedirCedulaPostSlot(fechaFormateada);
     await this.sendWhatsAppMessage(senderId, reply);
-    await this.setUserState(organizationId, senderId, ChatState.AWAITING_CEDULA);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_CEDULA,
+    );
 
     await this.auditSuccess(senderId, organizationId, {
       userMessage: text,
@@ -3527,8 +4209,18 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** Handler de estado: AWAITING_CONFIRMATION. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingConfirmation(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, orgName, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingConfirmation(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const {
+      organizationId,
+      senderId,
+      text,
+      MSGS,
+      orgName,
+      retriesKey,
+      retriesCount,
+    } = ctx;
     // Interpretación tolerante a voz: una transcripción tipo "Sí, por favor"
     // o "Confirmo" debe contar como SÍ (mismo patrón que la cola de espera).
     // El whitelist literal anterior ('SI'/'SÍ') sólo matcheaba el texto exacto
@@ -3537,12 +4229,24 @@ export class ChatbotService implements OnModuleInit {
     const respuesta = text?.toUpperCase().trim() || '';
 
     if (decision === 'SI') {
-      const cedulaFinal = await this.redis.get(`temp_cedula:${organizationId}:${senderId}`);
-      const nombreFinal = await this.redis.get(`temp_nombre:${organizationId}:${senderId}`);
-      const specFinal = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`);
-      const epsIdFinal = await this.redis.get(`temp_eps_id:${organizationId}:${senderId}`);
-      const slotIdFinal = await this.redis.get(`temp_selected_slot_id:${organizationId}:${senderId}`);
-      const fechaVistaFinal = await this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`);
+      const cedulaFinal = await this.redis.get(
+        `temp_cedula:${organizationId}:${senderId}`,
+      );
+      const nombreFinal = await this.redis.get(
+        `temp_nombre:${organizationId}:${senderId}`,
+      );
+      const specFinal = await this.redis.get(
+        `temp_especialidad:${organizationId}:${senderId}`,
+      );
+      const epsIdFinal = await this.redis.get(
+        `temp_eps_id:${organizationId}:${senderId}`,
+      );
+      const slotIdFinal = await this.redis.get(
+        `temp_selected_slot_id:${organizationId}:${senderId}`,
+      );
+      const fechaVistaFinal = await this.redis.get(
+        `temp_selected_date_view:${organizationId}:${senderId}`,
+      );
 
       if (!cedulaFinal || !specFinal || !slotIdFinal || !fechaVistaFinal) {
         const reply = MSGS.sesionExpirada();
@@ -3562,7 +4266,7 @@ export class ChatbotService implements OnModuleInit {
         cedula: cedulaFinal,
         nombre: nombreFinal || 'Paciente Registrado',
         senderId,
-        organizationId: organizationId!,
+        organizationId: organizationId,
         epsId: epsIdFinal || null,
       });
 
@@ -3575,17 +4279,20 @@ export class ChatbotService implements OnModuleInit {
           reason: FailureReason.UNHANDLED_ERROR,
           userMessage: text,
           botReply: reply,
-          metadata: { stage: 'PATIENT_PERSISTENCE_FAILED', cedula: cedulaFinal },
+          metadata: {
+            stage: 'PATIENT_PERSISTENCE_FAILED',
+            cedula: cedulaFinal,
+          },
         });
         return;
       }
 
       const bookingResult = await this.appointmentsService.bookAppointment(
         patient.id,
-        slotIdFinal as string,
+        slotIdFinal,
         patient.epsId,
         'WHATSAPP',
-        organizationId!,
+        organizationId,
       );
 
       if (bookingResult.success) {
@@ -3595,30 +4302,42 @@ export class ChatbotService implements OnModuleInit {
 
         // 📝 Auditoría: cita agendada (evento de negocio crítico)
         const slotInfo = await this.prisma.scheduleSlot.findUnique({
-          where: { id: slotIdFinal as string },
+          where: { id: slotIdFinal },
           include: { doctor: true, service: true },
         });
         await this.interactionLog.logBookingConfirmed({
           whatsappId: senderId,
-          organizationId: organizationId!,
+          organizationId: organizationId,
           appointmentId: bookingResult.appointmentId || 'unknown',
           patientCedula: cedulaFinal,
           serviceName: slotInfo?.service?.name || specFinal,
           doctorName: slotInfo?.doctor?.fullName || 'desconocido',
           slotDate: new Date(fechaVistaFinal),
-          epsName: epsIdFinal ? (await this.prisma.eps.findUnique({ where: { id: epsIdFinal } }))?.name : undefined,
+          epsName: epsIdFinal
+            ? (await this.prisma.eps.findUnique({ where: { id: epsIdFinal } }))
+                ?.name
+            : undefined,
           userMessage: text,
           botReply: reply,
         });
         // ⭐ CSAT: flujo cerrado con cita agendada → encuesta.
-        await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.BOOKED, {
-          patientId: patient.id,
-          chatSummary: `Cita agendada (${specFinal}) para ${fechaFormateada}.`,
-        });
+        await this.sendSurveyLink(
+          organizationId,
+          senderId,
+          ResolutionStatus.BOOKED,
+          {
+            patientId: patient.id,
+            chatSummary: `Cita agendada (${specFinal}) para ${fechaFormateada}.`,
+          },
+        );
       } else {
         const reply = MSGS.slotTomado();
         await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_DATE);
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_DATE,
+        );
 
         await this.auditFailure(senderId, organizationId, {
           reason: FailureReason.SLOT_TAKEN,
@@ -3633,7 +4352,6 @@ export class ChatbotService implements OnModuleInit {
       }
 
       await this.cleanUpSession(organizationId, senderId);
-
     } else if (decision === 'NO') {
       const reply = MSGS.citaNoConfirmada();
       await this.smartReply(organizationId, senderId, reply);
@@ -3647,7 +4365,12 @@ export class ChatbotService implements OnModuleInit {
         metadata: { stage: 'CONFIRMATION_REJECTED' },
       });
     } else {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -3655,27 +4378,47 @@ export class ChatbotService implements OnModuleInit {
         reason: FailureReason.SESSION_EXPIRED,
         userMessage: text,
         botReply: reply,
-        metadata: { invalidResponse: respuesta, stage: 'AWAITING_CONFIRMATION' },
+        metadata: {
+          invalidResponse: respuesta,
+          stage: 'AWAITING_CONFIRMATION',
+        },
       });
     }
   }
 
   /** Handler de estado: AWAITING_WAITLIST_OPTIN. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingWaitlistOptin(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingWaitlistOptin(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
+      ctx;
     const respuesta = text?.toUpperCase().trim() || '';
     // Acepta SÍ/NO por texto y por voz (transcripción), de forma tolerante.
     const decision = this.interpretYesNo(text);
 
     if (decision === 'SI') {
       // El usuario acepta entrar a la cola de espera.
-      const serviceId = await this.redis.get(`temp_waitlist_service_id:${organizationId}:${senderId}`);
-      const epsIdRaw = await this.redis.get(`temp_waitlist_eps_id:${organizationId}:${senderId}`);
+      const serviceId = await this.redis.get(
+        `temp_waitlist_service_id:${organizationId}:${senderId}`,
+      );
+      const epsIdRaw = await this.redis.get(
+        `temp_waitlist_eps_id:${organizationId}:${senderId}`,
+      );
       const epsIdForWl = epsIdRaw && epsIdRaw.length > 0 ? epsIdRaw : null;
-      const preferredDoctorIdOptin = (await this.redis.get(`temp_waitlist_doctor_id:${organizationId}:${senderId}`)) || null;
-      const serviceName = await this.redis.get(`temp_especialidad:${organizationId}:${senderId}`) || '';
-      const cedulaPrevia = await this.redis.get(`temp_cedula:${organizationId}:${senderId}`);
-      const nombrePrevio = await this.redis.get(`temp_nombre:${organizationId}:${senderId}`);
+      const preferredDoctorIdOptin =
+        (await this.redis.get(
+          `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
+        )) || null;
+      const serviceName =
+        (await this.redis.get(
+          `temp_especialidad:${organizationId}:${senderId}`,
+        )) || '';
+      const cedulaPrevia = await this.redis.get(
+        `temp_cedula:${organizationId}:${senderId}`,
+      );
+      const nombrePrevio = await this.redis.get(
+        `temp_nombre:${organizationId}:${senderId}`,
+      );
 
       if (!serviceId) {
         const reply = MSGS.sesionExpirada();
@@ -3693,12 +4436,20 @@ export class ChatbotService implements OnModuleInit {
 
       // Si todavía no tenemos cédula, la pedimos ahora (necesaria para la cola).
       if (!cedulaPrevia) {
-        const reply =
-          `Para unirle a la lista de espera, ¿me comparte su *número de cédula*?`;
+        const reply = `Para unirle a la lista de espera, ¿me comparte su *número de cédula*?`;
         await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_CEDULA);
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_CEDULA,
+        );
         // Marcador para que la cascada sepa que estamos en flujo waitlist-pending
-        await this.redis.set(`temp_waitlist_pending:${organizationId}:${senderId}`, '1', 'EX', SESSION_TTL);
+        await this.redis.set(
+          `temp_waitlist_pending:${organizationId}:${senderId}`,
+          '1',
+          'EX',
+          SESSION_TTL,
+        );
 
         await this.auditSuccess(senderId, organizationId, {
           userMessage: text,
@@ -3713,7 +4464,7 @@ export class ChatbotService implements OnModuleInit {
         cedula: cedulaPrevia,
         nombre: nombrePaciente,
         senderId,
-        organizationId: organizationId!,
+        organizationId: organizationId,
         epsId: epsIdForWl,
       });
 
@@ -3726,13 +4477,15 @@ export class ChatbotService implements OnModuleInit {
             serviceId,
             epsId: epsIdForWl,
             whatsappId: senderId,
-            organizationId: organizationId!,
+            organizationId: organizationId,
             preferredDoctorId: preferredDoctorIdOptin,
           });
           position = result.position;
           waitlistEntryId = result.id || null;
         } catch (e) {
-          this.logger.error(`Error agregando a waitlist (opt-in): ${e.message}`);
+          this.logger.error(
+            `Error agregando a waitlist (opt-in): ${e.message}`,
+          );
         }
       }
 
@@ -3742,7 +4495,7 @@ export class ChatbotService implements OnModuleInit {
       if (waitlistEntryId && patientForWl) {
         await this.interactionLog.logWaitlistJoined({
           whatsappId: senderId,
-          organizationId: organizationId!,
+          organizationId: organizationId,
           waitlistEntryId,
           patientCedula: cedulaPrevia,
           serviceName,
@@ -3752,7 +4505,7 @@ export class ChatbotService implements OnModuleInit {
           botReply: reply,
         });
       } else {
-        await this.auditFailure(senderId, organizationId!, {
+        await this.auditFailure(senderId, organizationId, {
           reason: FailureReason.NO_AGENDA,
           userMessage: text,
           botReply: reply,
@@ -3765,7 +4518,6 @@ export class ChatbotService implements OnModuleInit {
       }
 
       await this.cleanUpSession(organizationId, senderId);
-
     } else if (decision === 'NO') {
       const reply = MSGS.noUnidoAWaitlist();
       await this.smartReply(organizationId, senderId, reply);
@@ -3778,7 +4530,12 @@ export class ChatbotService implements OnModuleInit {
         metadata: { event: 'WAITLIST_OPTIN_DECLINED' },
       });
     } else {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -3792,8 +4549,18 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** Handler de estado: AWAITING_CANCEL_CEDULA. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingCancelCedula(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, aiData, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingCancelCedula(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const {
+      organizationId,
+      senderId,
+      text,
+      aiData,
+      MSGS,
+      retriesKey,
+      retriesCount,
+    } = ctx;
     let cedula = '';
     if (aiData.cedula) {
       cedula = aiData.cedula;
@@ -3804,7 +4571,12 @@ export class ChatbotService implements OnModuleInit {
 
     // No validamos longitud: se acepta cualquier número (solo rechazo si viene vacío).
     if (!cedula) {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.cancelarCedulaInvalida();
       await this.smartReply(organizationId, senderId, reply);
 
@@ -3817,13 +4589,21 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    await this.redis.set(`temp_cancel_cedula:${organizationId}:${senderId}`, cedula, 'EX', SESSION_TTL);
+    await this.redis.set(
+      `temp_cancel_cedula:${organizationId}:${senderId}`,
+      cedula,
+      'EX',
+      SESSION_TTL,
+    );
     await this.handleCancelCedulaStep(organizationId, senderId, cedula);
   }
 
   /** Handler de estado: AWAITING_CANCEL_RETRY_CEDULA. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingCancelRetryCedula(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingCancelRetryCedula(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
+      ctx;
     const decision = this.interpretYesNo(text);
     const digits = (text || '').replace(/\D/g, '');
 
@@ -3840,12 +4620,21 @@ export class ChatbotService implements OnModuleInit {
       });
     } else if (digits.length > 0 && decision !== 'SI') {
       // El paciente respondió con otra cédula directamente → la consultamos.
-      await this.redis.set(`temp_cancel_cedula:${organizationId}:${senderId}`, digits, 'EX', SESSION_TTL);
+      await this.redis.set(
+        `temp_cancel_cedula:${organizationId}:${senderId}`,
+        digits,
+        'EX',
+        SESSION_TTL,
+      );
       await this.handleCancelCedulaStep(organizationId, senderId, digits);
     } else if (decision === 'SI') {
       const reply = MSGS.cancelarPedirCedula();
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CEDULA);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_CANCEL_CEDULA,
+      );
 
       await this.auditSuccess(senderId, organizationId, {
         userMessage: text,
@@ -3853,7 +4642,12 @@ export class ChatbotService implements OnModuleInit {
         metadata: { step: 'CANCEL_RETRY_CEDULA_YES' },
       });
     } else {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -3867,15 +4661,30 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** Handler de estado: AWAITING_CANCEL_SELECTION. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingCancelSelection(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingCancelSelection(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
+      ctx;
     const letraElegida = this.extractOptionLetter(text);
-    const aptId = await this.redis.get(`temp_cancel_apt_${letraElegida}:${organizationId}:${senderId}`);
-    const slotId = await this.redis.get(`temp_cancel_slot_${letraElegida}:${organizationId}:${senderId}`);
+    const aptId = await this.redis.get(
+      `temp_cancel_apt_${letraElegida}:${organizationId}:${senderId}`,
+    );
+    const slotId = await this.redis.get(
+      `temp_cancel_slot_${letraElegida}:${organizationId}:${senderId}`,
+    );
 
     if (!aptId || !slotId) {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-      const maxLetra = await this.redis.get(`temp_cancel_max_letra:${organizationId}:${senderId}`) || 'A';
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
+      const maxLetra =
+        (await this.redis.get(
+          `temp_cancel_max_letra:${organizationId}:${senderId}`,
+        )) || 'A';
       const reply = `No reconozco esa opción. Por favor responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
       await this.smartReply(organizationId, senderId, reply);
 
@@ -3888,8 +4697,18 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    await this.redis.set(`temp_selected_cancel_apt:${organizationId}:${senderId}`, aptId, 'EX', SESSION_TTL);
-    await this.redis.set(`temp_selected_cancel_slot:${organizationId}:${senderId}`, slotId, 'EX', SESSION_TTL);
+    await this.redis.set(
+      `temp_selected_cancel_apt:${organizationId}:${senderId}`,
+      aptId,
+      'EX',
+      SESSION_TTL,
+    );
+    await this.redis.set(
+      `temp_selected_cancel_slot:${organizationId}:${senderId}`,
+      slotId,
+      'EX',
+      SESSION_TTL,
+    );
 
     const apt = await this.prisma.appointment.findUnique({
       where: { id: aptId },
@@ -3899,10 +4718,18 @@ export class ChatbotService implements OnModuleInit {
     let reply = '';
     if (apt) {
       const fechaFormateada = formatAppointmentLong(apt.scheduleSlot.startTime);
-      reply = MSGS.cancelarConfirmar(apt.scheduleSlot.service.name, apt.scheduleSlot.doctor.fullName, fechaFormateada);
+      reply = MSGS.cancelarConfirmar(
+        apt.scheduleSlot.service.name,
+        apt.scheduleSlot.doctor.fullName,
+        fechaFormateada,
+      );
       await this.smartReply(organizationId, senderId, reply);
     }
-    await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CONFIRM);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_CANCEL_CONFIRM,
+    );
 
     await this.auditSuccess(senderId, organizationId, {
       userMessage: text,
@@ -3916,13 +4743,20 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** Handler de estado: AWAITING_CANCEL_CONFIRM. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingCancelConfirm(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingCancelConfirm(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
+      ctx;
     const respuesta = text?.toUpperCase().trim() || '';
 
     if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
-      const aptId = await this.redis.get(`temp_selected_cancel_apt:${organizationId}:${senderId}`);
-      const slotId = await this.redis.get(`temp_selected_cancel_slot:${organizationId}:${senderId}`);
+      const aptId = await this.redis.get(
+        `temp_selected_cancel_apt:${organizationId}:${senderId}`,
+      );
+      const slotId = await this.redis.get(
+        `temp_selected_cancel_slot:${organizationId}:${senderId}`,
+      );
 
       if (!aptId || !slotId) {
         const reply = MSGS.sesionExpirada();
@@ -3975,7 +4809,7 @@ export class ChatbotService implements OnModuleInit {
               slotId: slot.id,
               serviceId: slot.serviceId,
               epsId: slot.allowedEpsId,
-              organizationId: organizationId!,
+              organizationId: organizationId,
               doctorName: slot.doctor.fullName,
               slotDate: slot.startTime,
             });
@@ -3988,8 +4822,11 @@ export class ChatbotService implements OnModuleInit {
         const replyOfrecer = MSGS.cancelarOfreceAgendar();
         await this.smartReply(organizationId, senderId, replyOfrecer);
         await this.cleanUpCancelSession(organizationId, senderId);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_POST_CANCEL_CHOICE);
-
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_POST_CANCEL_CHOICE,
+        );
       } catch (e) {
         this.logger.error('Error cancelando cita', e);
         const reply = MSGS.cancelarError();
@@ -4003,7 +4840,6 @@ export class ChatbotService implements OnModuleInit {
         });
         await this.cleanUpCancelSession(organizationId, senderId);
       }
-
     } else if (['NO', 'NO.', 'CANCELAR'].includes(respuesta)) {
       const reply = MSGS.cancelarAbortada();
       await this.smartReply(organizationId, senderId, reply);
@@ -4016,7 +4852,12 @@ export class ChatbotService implements OnModuleInit {
         metadata: { event: 'CANCELLATION_ABORTED' },
       });
     } else {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -4030,25 +4871,47 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** Handler de estado: AWAITING_POST_CANCEL_CHOICE. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingPostCancelChoice(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, botName, orgName, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingPostCancelChoice(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const {
+      organizationId,
+      senderId,
+      text,
+      MSGS,
+      botName,
+      orgName,
+      retriesKey,
+      retriesCount,
+    } = ctx;
     const respuesta = text?.toUpperCase().trim() || '';
 
     if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
       // Tras cancelar, ofrecer menú con letras (Paso 1 del nuevo protocolo).
-      const { lineas, count } = await this.buildServiceMenu(organizationId, senderId);
-      const reply = count > 0
-        ? MSGS.menuServicios(orgName, lineas, botName)
-        : MSGS.bienvenida(orgName, 'Ej: Medicina General, Odontología', botName);
+      const { lineas, count } = await this.buildServiceMenu(
+        organizationId,
+        senderId,
+      );
+      const reply =
+        count > 0
+          ? MSGS.menuServicios(orgName, lineas, botName)
+          : MSGS.bienvenida(
+              orgName,
+              'Ej: Medicina General, Odontología',
+              botName,
+            );
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_SPECIALTY);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_SPECIALTY,
+      );
 
       await this.auditSuccess(senderId, organizationId, {
         userMessage: text,
         botReply: reply,
         metadata: { event: 'POST_CANCEL_NEW_BOOKING_STARTED' },
       });
-
     } else if (['NO', 'NO.'].includes(respuesta)) {
       const reply = MSGS.cancelarDespedida();
       await this.smartReply(organizationId, senderId, reply);
@@ -4065,20 +4928,33 @@ export class ChatbotService implements OnModuleInit {
       // declinó reagendar → este es el punto terminal del flujo. Si en
       // cambio acepta reagendar, el cierre BOOKED engancha su propia
       // encuesta, evitando enviar dos encuestas en una misma sesión.
-      await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.CANCELLED, {
-        chatSummary: 'Cita cancelada con éxito; el paciente no quiso reagendar.',
-      });
-
+      await this.sendSurveyLink(
+        organizationId,
+        senderId,
+        ResolutionStatus.CANCELLED,
+        {
+          chatSummary:
+            'Cita cancelada con éxito; el paciente no quiso reagendar.',
+        },
+      );
     } else {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
     }
   }
 
   /** Handler de estado: AWAITING_INTERRUPT_CONFIRMATION. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingInterruptConfirmation(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingInterruptConfirmation(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
+      ctx;
     // Tolerante a SÍ/NO natural (texto), igual que los demás pasos SÍ/NO.
     const decision = this.interpretYesNo(text);
     const prevState = await this.redis.get(
@@ -4088,7 +4964,9 @@ export class ChatbotService implements OnModuleInit {
     if (decision === 'SI') {
       // Confirmó: abandonamos el agendamiento e iniciamos la cancelación,
       // reutilizando el MISMO arranque del flujo existente (pedir cédula).
-      await this.redis.del(`temp_interrupt_prev_state:${organizationId}:${senderId}`);
+      await this.redis.del(
+        `temp_interrupt_prev_state:${organizationId}:${senderId}`,
+      );
       await this.cleanUpSession(organizationId, senderId);
       await this.redis.set(
         `is_ai_flow:${organizationId}:${senderId}`,
@@ -4098,21 +4976,30 @@ export class ChatbotService implements OnModuleInit {
       );
       const reply = MSGS.cancelarPedirCedula();
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CEDULA);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_CANCEL_CEDULA,
+      );
 
       await this.auditLog(senderId, organizationId, {
         status: InteractionStatus.CANCELLATION_FLOW,
         userMessage: text,
         botReply: reply,
-        metadata: { event: 'SCHEDULING_INTERRUPT_CONFIRMED', interruptedState: prevState },
+        metadata: {
+          event: 'SCHEDULING_INTERRUPT_CONFIRMED',
+          interruptedState: prevState,
+        },
       });
-
     } else if (decision === 'NO') {
       // Rechazó: restauramos el estado anterior y retomamos el agendamiento
       // justo donde iba. El estado restaurado hace que el próximo mensaje
       // del paciente se procese en el paso correcto.
-      await this.redis.del(`temp_interrupt_prev_state:${organizationId}:${senderId}`);
-      const restoreState = (prevState as ChatState) || ChatState.AWAITING_SPECIALTY;
+      await this.redis.del(
+        `temp_interrupt_prev_state:${organizationId}:${senderId}`,
+      );
+      const restoreState =
+        (prevState as ChatState) || ChatState.AWAITING_SPECIALTY;
       await this.setUserState(organizationId, senderId, restoreState);
       const reply = MSGS.interrupcionRetomar();
       await this.smartReply(organizationId, senderId, reply);
@@ -4121,13 +5008,20 @@ export class ChatbotService implements OnModuleInit {
         status: InteractionStatus.ESCAPED,
         userMessage: text,
         botReply: reply,
-        metadata: { event: 'SCHEDULING_INTERRUPT_DECLINED', restoredState: restoreState },
+        metadata: {
+          event: 'SCHEDULING_INTERRUPT_DECLINED',
+          restoredState: restoreState,
+        },
       });
-
     } else {
       // No se entendió la respuesta: re-preguntamos SÍ/NO y penalizamos
       // reintento, igual que el resto de pasos estrictos.
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -4141,8 +5035,18 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** Handler de estado: AWAITING_MODIFY_CEDULA. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingModifyCedula(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, aiData, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingModifyCedula(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const {
+      organizationId,
+      senderId,
+      text,
+      aiData,
+      MSGS,
+      retriesKey,
+      retriesCount,
+    } = ctx;
     let cedula = '';
     if (aiData.cedula) {
       cedula = aiData.cedula;
@@ -4151,7 +5055,12 @@ export class ChatbotService implements OnModuleInit {
     }
 
     if (!cedula) {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.cancelarCedulaInvalida();
       await this.smartReply(organizationId, senderId, reply);
 
@@ -4164,13 +5073,21 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    await this.redis.set(`temp_modify_cedula:${organizationId}:${senderId}`, cedula, 'EX', SESSION_TTL);
+    await this.redis.set(
+      `temp_modify_cedula:${organizationId}:${senderId}`,
+      cedula,
+      'EX',
+      SESSION_TTL,
+    );
     await this.handleModifyCedulaStep(organizationId, senderId, cedula);
   }
 
   /** Handler de estado: AWAITING_MODIFY_RETRY_CEDULA. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingModifyRetryCedula(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingModifyRetryCedula(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
+      ctx;
     const decision = this.interpretYesNo(text);
     const digits = (text || '').replace(/\D/g, '');
 
@@ -4187,12 +5104,21 @@ export class ChatbotService implements OnModuleInit {
       });
     } else if (digits.length > 0 && decision !== 'SI') {
       // El paciente respondió con otra cédula directamente → la consultamos.
-      await this.redis.set(`temp_modify_cedula:${organizationId}:${senderId}`, digits, 'EX', SESSION_TTL);
+      await this.redis.set(
+        `temp_modify_cedula:${organizationId}:${senderId}`,
+        digits,
+        'EX',
+        SESSION_TTL,
+      );
       await this.handleModifyCedulaStep(organizationId, senderId, digits);
     } else if (decision === 'SI') {
       const reply = MSGS.modificarPedirCedula();
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_CEDULA);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_MODIFY_CEDULA,
+      );
 
       await this.auditSuccess(senderId, organizationId, {
         userMessage: text,
@@ -4200,7 +5126,12 @@ export class ChatbotService implements OnModuleInit {
         metadata: { step: 'MODIFY_RETRY_CEDULA_YES' },
       });
     } else {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -4214,15 +5145,29 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** Handler de estado: AWAITING_MODIFY_SELECTION. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingModifySelection(ctx: ChatTurnContext): Promise<void> {
+  private async handleAwaitingModifySelection(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
     const { organizationId, senderId, text, retriesKey, retriesCount } = ctx;
     const letraElegida = this.extractOptionLetter(text);
-    const aptId = await this.redis.get(`temp_modify_apt_${letraElegida}:${organizationId}:${senderId}`);
-    const slotId = await this.redis.get(`temp_modify_slot_${letraElegida}:${organizationId}:${senderId}`);
+    const aptId = await this.redis.get(
+      `temp_modify_apt_${letraElegida}:${organizationId}:${senderId}`,
+    );
+    const slotId = await this.redis.get(
+      `temp_modify_slot_${letraElegida}:${organizationId}:${senderId}`,
+    );
 
     if (!aptId || !slotId) {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-      const maxLetra = await this.redis.get(`temp_modify_max_letra:${organizationId}:${senderId}`) || 'A';
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
+      const maxLetra =
+        (await this.redis.get(
+          `temp_modify_max_letra:${organizationId}:${senderId}`,
+        )) || 'A';
       const reply = `No reconozco esa opción. Por favor responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
       await this.smartReply(organizationId, senderId, reply);
 
@@ -4235,21 +5180,46 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    await this.redis.set(`temp_selected_modify_apt:${organizationId}:${senderId}`, aptId, 'EX', SESSION_TTL);
-    await this.redis.set(`temp_selected_modify_slot:${organizationId}:${senderId}`, slotId, 'EX', SESSION_TTL);
+    await this.redis.set(
+      `temp_selected_modify_apt:${organizationId}:${senderId}`,
+      aptId,
+      'EX',
+      SESSION_TTL,
+    );
+    await this.redis.set(
+      `temp_selected_modify_slot:${organizationId}:${senderId}`,
+      slotId,
+      'EX',
+      SESSION_TTL,
+    );
     await this.offerModifySlots(organizationId, senderId, aptId);
   }
 
   /** Handler de estado: AWAITING_MODIFY_NEW_SLOT. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingModifyNewSlot(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingModifyNewSlot(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
+      ctx;
     const letraElegida = this.extractOptionLetter(text);
-    const newSlotId = await this.redis.get(`temp_modify_newslot_${letraElegida}:${organizationId}:${senderId}`);
-    const newSlotFecha = await this.redis.get(`temp_modify_newslot_${letraElegida}_fecha:${organizationId}:${senderId}`);
+    const newSlotId = await this.redis.get(
+      `temp_modify_newslot_${letraElegida}:${organizationId}:${senderId}`,
+    );
+    const newSlotFecha = await this.redis.get(
+      `temp_modify_newslot_${letraElegida}_fecha:${organizationId}:${senderId}`,
+    );
 
     if (!newSlotId || !newSlotFecha) {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
-      const maxLetra = await this.redis.get(`temp_modify_newslot_max_letra:${organizationId}:${senderId}`) || 'A';
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
+      const maxLetra =
+        (await this.redis.get(
+          `temp_modify_newslot_max_letra:${organizationId}:${senderId}`,
+        )) || 'A';
       const reply = `No reconozco esa opción. Por favor responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
       await this.smartReply(organizationId, senderId, reply);
 
@@ -4262,14 +5232,28 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    await this.redis.set(`temp_selected_modify_newslot:${organizationId}:${senderId}`, newSlotId, 'EX', SESSION_TTL);
-    await this.redis.set(`temp_selected_modify_newslot_fecha:${organizationId}:${senderId}`, newSlotFecha, 'EX', SESSION_TTL);
+    await this.redis.set(
+      `temp_selected_modify_newslot:${organizationId}:${senderId}`,
+      newSlotId,
+      'EX',
+      SESSION_TTL,
+    );
+    await this.redis.set(
+      `temp_selected_modify_newslot_fecha:${organizationId}:${senderId}`,
+      newSlotFecha,
+      'EX',
+      SESSION_TTL,
+    );
 
-    const aptId = await this.redis.get(`temp_selected_modify_apt:${organizationId}:${senderId}`);
+    const aptId = await this.redis.get(
+      `temp_selected_modify_apt:${organizationId}:${senderId}`,
+    );
     const apt = aptId
       ? await this.prisma.appointment.findUnique({
           where: { id: aptId },
-          include: { scheduleSlot: { include: { doctor: true, service: true } } },
+          include: {
+            scheduleSlot: { include: { doctor: true, service: true } },
+          },
         })
       : null;
 
@@ -4295,7 +5279,11 @@ export class ChatbotService implements OnModuleInit {
       fechaNueva,
     );
     await this.smartReply(organizationId, senderId, reply);
-    await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_CONFIRM);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_MODIFY_CONFIRM,
+    );
 
     await this.auditSuccess(senderId, organizationId, {
       userMessage: text,
@@ -4309,15 +5297,26 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** Handler de estado: AWAITING_MODIFY_CONFIRM. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingModifyConfirm(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingModifyConfirm(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
+      ctx;
     const decision = this.interpretYesNo(text);
 
     if (decision === 'SI') {
-      const aptId = await this.redis.get(`temp_selected_modify_apt:${organizationId}:${senderId}`);
-      const oldSlotId = await this.redis.get(`temp_selected_modify_slot:${organizationId}:${senderId}`);
-      const newSlotId = await this.redis.get(`temp_selected_modify_newslot:${organizationId}:${senderId}`);
-      const newSlotFecha = await this.redis.get(`temp_selected_modify_newslot_fecha:${organizationId}:${senderId}`);
+      const aptId = await this.redis.get(
+        `temp_selected_modify_apt:${organizationId}:${senderId}`,
+      );
+      const oldSlotId = await this.redis.get(
+        `temp_selected_modify_slot:${organizationId}:${senderId}`,
+      );
+      const newSlotId = await this.redis.get(
+        `temp_selected_modify_newslot:${organizationId}:${senderId}`,
+      );
+      const newSlotFecha = await this.redis.get(
+        `temp_selected_modify_newslot_fecha:${organizationId}:${senderId}`,
+      );
 
       if (!aptId || !oldSlotId || !newSlotId || !newSlotFecha) {
         const reply = MSGS.sesionExpirada();
@@ -4337,8 +5336,14 @@ export class ChatbotService implements OnModuleInit {
         // Reprogramación atómica: validamos que el nuevo cupo siga libre,
         // movemos la cita a él, liberamos el cupo anterior y ocupamos el nuevo.
         await this.prisma.$transaction(async (tx) => {
-          const newSlot = await tx.scheduleSlot.findUnique({ where: { id: newSlotId } });
-          if (!newSlot || !newSlot.isAvailable || newSlot.organizationId !== organizationId) {
+          const newSlot = await tx.scheduleSlot.findUnique({
+            where: { id: newSlotId },
+          });
+          if (
+            !newSlot ||
+            !newSlot.isAvailable ||
+            newSlot.organizationId !== organizationId
+          ) {
             throw new Error('NEW_SLOT_TAKEN');
           }
           await tx.appointment.update({
@@ -4381,20 +5386,27 @@ export class ChatbotService implements OnModuleInit {
               slotId: freedSlot.id,
               serviceId: freedSlot.serviceId,
               epsId: freedSlot.allowedEpsId,
-              organizationId: organizationId!,
+              organizationId: organizationId,
               doctorName: freedSlot.doctor.fullName,
               slotDate: freedSlot.startTime,
             });
           } catch (e) {
-            this.logger.error(`Error notificando waitlist (reprogramación): ${e.message}`);
+            this.logger.error(
+              `Error notificando waitlist (reprogramación): ${e.message}`,
+            );
           }
         }
 
         await this.cleanUpModifySession(organizationId, senderId);
         // ⭐ CSAT: la reprogramación deja una cita activa → encuesta BOOKED.
-        await this.sendSurveyLink(organizationId, senderId, ResolutionStatus.BOOKED, {
-          chatSummary: `Cita reprogramada para ${fechaNuevaFmt}.`,
-        });
+        await this.sendSurveyLink(
+          organizationId,
+          senderId,
+          ResolutionStatus.BOOKED,
+          {
+            chatSummary: `Cita reprogramada para ${fechaNuevaFmt}.`,
+          },
+        );
       } catch (e) {
         this.logger.error('Error reprogramando cita', e);
         // El nuevo cupo fue tomado por otro paciente entre tanto → volver a ofrecer.
@@ -4405,7 +5417,11 @@ export class ChatbotService implements OnModuleInit {
             reason: FailureReason.SLOT_TAKEN,
             userMessage: text,
             botReply: reply,
-            metadata: { stage: 'MODIFY_NEW_SLOT_TAKEN', appointmentId: aptId, newSlotId },
+            metadata: {
+              stage: 'MODIFY_NEW_SLOT_TAKEN',
+              appointmentId: aptId,
+              newSlotId,
+            },
           });
           // Reofrecemos cupos frescos para el mismo appointment.
           await this.offerModifySlots(organizationId, senderId, aptId);
@@ -4434,7 +5450,12 @@ export class ChatbotService implements OnModuleInit {
         metadata: { event: 'MODIFY_ABORTED' },
       });
     } else {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -4448,14 +5469,21 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** Handler de estado: AWAITING_MODIFY_NO_SLOTS_CANCEL. Extraído de processIncomingMessageUnsafe (#2). */
-  private async handleAwaitingModifyNoSlotsCancel(ctx: ChatTurnContext): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } = ctx;
+  private async handleAwaitingModifyNoSlotsCancel(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
+      ctx;
     // No había cupos para reprogramar. SÍ → cancelamos la cita; NO → no tocamos nada.
     const decision = this.interpretYesNo(text);
 
     if (decision === 'SI') {
-      const aptId = await this.redis.get(`temp_selected_modify_apt:${organizationId}:${senderId}`);
-      const slotId = await this.redis.get(`temp_selected_modify_slot:${organizationId}:${senderId}`);
+      const aptId = await this.redis.get(
+        `temp_selected_modify_apt:${organizationId}:${senderId}`,
+      );
+      const slotId = await this.redis.get(
+        `temp_selected_modify_slot:${organizationId}:${senderId}`,
+      );
 
       if (!aptId || !slotId) {
         const reply = MSGS.sesionExpirada();
@@ -4489,7 +5517,12 @@ export class ChatbotService implements OnModuleInit {
         await this.auditSuccess(senderId, organizationId, {
           userMessage: text,
           botReply: replyExito,
-          metadata: { event: 'APPOINTMENT_CANCELLED', via: 'MODIFY_NO_SLOTS', appointmentId: aptId, slotId },
+          metadata: {
+            event: 'APPOINTMENT_CANCELLED',
+            via: 'MODIFY_NO_SLOTS',
+            appointmentId: aptId,
+            slotId,
+          },
         });
 
         const slot = await this.prisma.scheduleSlot.findUnique({
@@ -4502,12 +5535,14 @@ export class ChatbotService implements OnModuleInit {
               slotId: slot.id,
               serviceId: slot.serviceId,
               epsId: slot.allowedEpsId,
-              organizationId: organizationId!,
+              organizationId: organizationId,
               doctorName: slot.doctor.fullName,
               slotDate: slot.startTime,
             });
           } catch (e) {
-            this.logger.error(`Error notificando waitlist (cancelación vía modify): ${e.message}`);
+            this.logger.error(
+              `Error notificando waitlist (cancelación vía modify): ${e.message}`,
+            );
           }
         }
 
@@ -4515,7 +5550,11 @@ export class ChatbotService implements OnModuleInit {
         const replyOfrecer = MSGS.cancelarOfreceAgendar();
         await this.smartReply(organizationId, senderId, replyOfrecer);
         await this.cleanUpModifySession(organizationId, senderId);
-        await this.setUserState(organizationId, senderId, ChatState.AWAITING_POST_CANCEL_CHOICE);
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_POST_CANCEL_CHOICE,
+        );
       } catch (e) {
         this.logger.error('Error cancelando cita (vía modify)', e);
         const reply = MSGS.cancelarError();
@@ -4525,7 +5564,11 @@ export class ChatbotService implements OnModuleInit {
           reason: FailureReason.CANCEL_ERROR,
           userMessage: text,
           botReply: reply,
-          metadata: { error: e.message, appointmentId: aptId, via: 'MODIFY_NO_SLOTS' },
+          metadata: {
+            error: e.message,
+            appointmentId: aptId,
+            via: 'MODIFY_NO_SLOTS',
+          },
         });
         await this.cleanUpModifySession(organizationId, senderId);
       }
@@ -4542,7 +5585,12 @@ export class ChatbotService implements OnModuleInit {
         metadata: { event: 'MODIFY_NO_SLOTS_KEEP_APPOINTMENT' },
       });
     } else {
-      await this.redis.set(retriesKey, (retriesCount + 1).toString(), 'EX', SESSION_TTL);
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
 
@@ -4579,19 +5627,29 @@ export class ChatbotService implements OnModuleInit {
     // suelen usar dígitos sueltos o pares; los "ciento X" se omiten porque
     // crearían ambigüedad ("ciento ocho" ≠ "108" si el siguiente número se
     // pega como dígito independiente).
-    let s = text
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, ''); // quita tildes
+    let s = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); // quita tildes
 
     // (1) Decenas + "y" + unidad: 31..99 excepto 21..29 (que es "veintiX").
     const decenas: Record<string, number> = {
-      treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60,
-      setenta: 70, ochenta: 80, noventa: 90,
+      treinta: 30,
+      cuarenta: 40,
+      cincuenta: 50,
+      sesenta: 60,
+      setenta: 70,
+      ochenta: 80,
+      noventa: 90,
     };
     const unidades: Record<string, number> = {
-      uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5,
-      seis: 6, siete: 7, ocho: 8, nueve: 9,
+      uno: 1,
+      una: 1,
+      dos: 2,
+      tres: 3,
+      cuatro: 4,
+      cinco: 5,
+      seis: 6,
+      siete: 7,
+      ocho: 8,
+      nueve: 9,
     };
     const decRe = Object.keys(decenas).join('|');
     const uniRe = Object.keys(unidades).join('|');
@@ -4602,9 +5660,16 @@ export class ChatbotService implements OnModuleInit {
 
     // (2) Compuestos "veintiX" (21..29) — palabra única.
     const veinti: Record<string, number> = {
-      veintiuno: 21, veintiuna: 21, veintidos: 22, veintitres: 23,
-      veinticuatro: 24, veinticinco: 25, veintiseis: 26,
-      veintisiete: 27, veintiocho: 28, veintinueve: 29,
+      veintiuno: 21,
+      veintiuna: 21,
+      veintidos: 22,
+      veintitres: 23,
+      veinticuatro: 24,
+      veinticinco: 25,
+      veintiseis: 26,
+      veintisiete: 27,
+      veintiocho: 28,
+      veintinueve: 29,
     };
     for (const [w, n] of Object.entries(veinti)) {
       s = s.replace(new RegExp(`\\b${w}\\b`, 'g'), ` ${n} `);
@@ -4612,8 +5677,16 @@ export class ChatbotService implements OnModuleInit {
 
     // (3) Adolescentes 10..19.
     const teens: Record<string, number> = {
-      diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
-      dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19,
+      diez: 10,
+      once: 11,
+      doce: 12,
+      trece: 13,
+      catorce: 14,
+      quince: 15,
+      dieciseis: 16,
+      diecisiete: 17,
+      dieciocho: 18,
+      diecinueve: 19,
     };
     for (const [w, n] of Object.entries(teens)) {
       s = s.replace(new RegExp(`\\b${w}\\b`, 'g'), ` ${n} `);
@@ -4649,8 +5722,10 @@ export class ChatbotService implements OnModuleInit {
       .trim();
     if (!t) return null;
 
-    const noRegex = /\b(no|nop|nel|negativo|nunca|cancelar|cancela|para nada|no gracias)\b/;
-    const siRegex = /\b(si|sip|sii+|claro|dale|ok|okay|oka|listo|bueno|vale|por supuesto|afirmativo|correcto|exacto|de una|asi es|eso es|confirmo|confirmar|acepto|aceptar|quiero|deseo)\b/;
+    const noRegex =
+      /\b(no|nop|nel|negativo|nunca|cancelar|cancela|para nada|no gracias)\b/;
+    const siRegex =
+      /\b(si|sip|sii+|claro|dale|ok|okay|oka|listo|bueno|vale|por supuesto|afirmativo|correcto|exacto|de una|asi es|eso es|confirmo|confirmar|acepto|aceptar|quiero|deseo)\b/;
 
     // "no" gana cuando aparece explícito (p.ej. "no quiero", "no gracias") para
     // evitar falsos positivos con palabras afirmativas en la misma frase.
@@ -4690,45 +5765,83 @@ export class ChatbotService implements OnModuleInit {
 
     // Nombre fonético de la letra dicho solo (incluye errores típicos del STT).
     const phonetic: Record<string, string> = {
-      a: 'A', ah: 'A', ha: 'A',
-      be: 'B', ve: 'B', uve: 'B',
-      ce: 'C', se: 'C',
+      a: 'A',
+      ah: 'A',
+      ha: 'A',
+      be: 'B',
+      ve: 'B',
+      uve: 'B',
+      ce: 'C',
+      se: 'C',
       de: 'D',
-      e: 'E', eh: 'E',
+      e: 'E',
+      eh: 'E',
       efe: 'F',
-      ge: 'G', je: 'G',
-      hache: 'H', ache: 'H',
-      i: 'I', y: 'I',
+      ge: 'G',
+      je: 'G',
+      hache: 'H',
+      ache: 'H',
+      i: 'I',
+      y: 'I',
       jota: 'J',
-      ka: 'K', ca: 'K',
+      ka: 'K',
+      ca: 'K',
       ele: 'L',
       eme: 'M',
       ene: 'N',
       enie: 'Ñ',
-      o: 'O', oh: 'O',
+      o: 'O',
+      oh: 'O',
       pe: 'P',
       cu: 'Q',
-      erre: 'R', ere: 'R',
+      erre: 'R',
+      ere: 'R',
       ese: 'S',
       te: 'T',
       u: 'U',
       equis: 'X',
       ye: 'Y',
-      zeta: 'Z', seta: 'Z',
+      zeta: 'Z',
+      seta: 'Z',
     };
     if (core in phonetic) return phonetic[core];
     if (/^[a-z]$/.test(core)) return core.toUpperCase();
 
     // Ordinal o número dicho solo: "primera"/"uno"/"1" → A, "segunda"/"dos" → B…
     const ordinal: Record<string, number> = {
-      primera: 1, primero: 1, uno: 1, una: 1, '1': 1,
-      segunda: 2, segundo: 2, dos: 2, '2': 2,
-      tercera: 3, tercero: 3, tres: 3, '3': 3,
-      cuarta: 4, cuarto: 4, cuatro: 4, '4': 4,
-      quinta: 5, quinto: 5, cinco: 5, '5': 5,
-      sexta: 6, sexto: 6, seis: 6, '6': 6,
-      septima: 7, septimo: 7, siete: 7, '7': 7,
-      octava: 8, octavo: 8, ocho: 8, '8': 8,
+      primera: 1,
+      primero: 1,
+      uno: 1,
+      una: 1,
+      '1': 1,
+      segunda: 2,
+      segundo: 2,
+      dos: 2,
+      '2': 2,
+      tercera: 3,
+      tercero: 3,
+      tres: 3,
+      '3': 3,
+      cuarta: 4,
+      cuarto: 4,
+      cuatro: 4,
+      '4': 4,
+      quinta: 5,
+      quinto: 5,
+      cinco: 5,
+      '5': 5,
+      sexta: 6,
+      sexto: 6,
+      seis: 6,
+      '6': 6,
+      septima: 7,
+      septimo: 7,
+      siete: 7,
+      '7': 7,
+      octava: 8,
+      octavo: 8,
+      ocho: 8,
+      '8': 8,
     };
     if (core in ordinal) return String.fromCharCode(64 + ordinal[core]);
 
@@ -4741,17 +5854,20 @@ export class ChatbotService implements OnModuleInit {
     text: string | undefined,
   ) {
     // Sombra del pool de mensajes según el estilo activo de la org.
-    const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
+    const MSGS = buildMessages(
+      await this.organizationSettings.getCommunicationStyle(organizationId),
+    );
     const respuesta = text?.toUpperCase().trim() || '';
     // Acepta SÍ/NO por texto y por voz (transcripción), de forma tolerante.
     const decision = this.interpretYesNo(text);
 
     if (decision === 'SI') {
-      const { slotId, patientId } = await this.waitlistService.confirmFromWaitlist({
-        whatsappId: senderId,
-        organizationId,
-        confirmed: true,
-      });
+      const { slotId, patientId } =
+        await this.waitlistService.confirmFromWaitlist({
+          whatsappId: senderId,
+          organizationId,
+          confirmed: true,
+        });
 
       if (!slotId || !patientId) {
         const reply = MSGS.sesionExpirada();
@@ -4785,9 +5901,16 @@ export class ChatbotService implements OnModuleInit {
           where: { id: slotId },
           include: { doctor: true, service: true },
         });
-        const fechaFormateada = slot ? formatAppointmentLong(slot.startTime) : '';
-        const orgInfo = await this.prisma.organization.findUnique({ where: { id: organizationId } });
-        const reply = MSGS.citaConfirmada(orgInfo?.name || 'nuestra Clínica', fechaFormateada);
+        const fechaFormateada = slot
+          ? formatAppointmentLong(slot.startTime)
+          : '';
+        const orgInfo = await this.prisma.organization.findUnique({
+          where: { id: organizationId },
+        });
+        const reply = MSGS.citaConfirmada(
+          orgInfo?.name || 'nuestra Clínica',
+          fechaFormateada,
+        );
         await this.smartReply(organizationId, senderId, reply);
 
         // 📝 Auditoría: cita agendada desde waitlist
@@ -4816,7 +5939,6 @@ export class ChatbotService implements OnModuleInit {
           metadata: { stage: 'WAITLIST_SLOT_TAKEN', slotId, patientId },
         });
       }
-
     } else if (decision === 'NO') {
       await this.waitlistService.confirmFromWaitlist({
         whatsappId: senderId,
@@ -4857,7 +5979,9 @@ export class ChatbotService implements OnModuleInit {
     cedula: string,
   ) {
     // Sombra del pool de mensajes según el estilo activo de la org.
-    const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
+    const MSGS = buildMessages(
+      await this.organizationSettings.getCommunicationStyle(organizationId),
+    );
     const patient = await this.prisma.patientProfile.findFirst({
       where: { cedula, organizationId },
     });
@@ -4866,7 +5990,11 @@ export class ChatbotService implements OnModuleInit {
       const reply = MSGS.cancelarPacienteNoExiste(cedula);
       await this.smartReply(organizationId, senderId, reply);
       // Mantener en AWAITING_CANCEL_CEDULA para que el usuario pueda reintentar sin reiniciar
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CEDULA);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_CANCEL_CEDULA,
+      );
 
       await this.auditFailure(senderId, organizationId, {
         reason: FailureReason.PATIENT_NOT_FOUND,
@@ -4895,26 +6023,52 @@ export class ChatbotService implements OnModuleInit {
       // El loop se cierra cuando el paciente dice NO o por el cron de inactividad.
       const reply = MSGS.cancelarSinCitasReintentar(cedula);
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_RETRY_CEDULA);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_CANCEL_RETRY_CEDULA,
+      );
 
       await this.auditFailure(senderId, organizationId, {
         reason: FailureReason.NO_APPOINTMENTS_TO_CANCEL,
         userMessage: cedula,
         botReply: reply,
-        metadata: { patientCedula: cedula, patientId: patient.id, offeredRetry: true },
+        metadata: {
+          patientCedula: cedula,
+          patientId: patient.id,
+          offeredRetry: true,
+        },
       });
       return;
     }
 
     if (activeAppointments.length === 1) {
       const apt = activeAppointments[0];
-      await this.redis.set(`temp_selected_cancel_apt:${organizationId}:${senderId}`, apt.id, 'EX', SESSION_TTL);
-      await this.redis.set(`temp_selected_cancel_slot:${organizationId}:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
+      await this.redis.set(
+        `temp_selected_cancel_apt:${organizationId}:${senderId}`,
+        apt.id,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        `temp_selected_cancel_slot:${organizationId}:${senderId}`,
+        apt.scheduleSlotId,
+        'EX',
+        SESSION_TTL,
+      );
 
       const fechaFormateada = formatAppointmentLong(apt.scheduleSlot.startTime);
-      const reply = MSGS.cancelarConfirmar(apt.scheduleSlot.service.name, apt.scheduleSlot.doctor.fullName, fechaFormateada);
+      const reply = MSGS.cancelarConfirmar(
+        apt.scheduleSlot.service.name,
+        apt.scheduleSlot.doctor.fullName,
+        fechaFormateada,
+      );
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_CONFIRM);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_CANCEL_CONFIRM,
+      );
 
       await this.auditSuccess(senderId, organizationId, {
         userMessage: cedula,
@@ -4931,9 +6085,24 @@ export class ChatbotService implements OnModuleInit {
     let lineas = '';
     activeAppointments.forEach((apt, idx) => {
       const letra = String.fromCharCode(65 + idx);
-      this.redis.set(`temp_cancel_apt_${letra}:${organizationId}:${senderId}`, apt.id, 'EX', SESSION_TTL);
-      this.redis.set(`temp_cancel_slot_${letra}:${organizationId}:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
-      this.redis.set(`temp_cancel_max_letra:${organizationId}:${senderId}`, letra, 'EX', SESSION_TTL);
+      this.redis.set(
+        `temp_cancel_apt_${letra}:${organizationId}:${senderId}`,
+        apt.id,
+        'EX',
+        SESSION_TTL,
+      );
+      this.redis.set(
+        `temp_cancel_slot_${letra}:${organizationId}:${senderId}`,
+        apt.scheduleSlotId,
+        'EX',
+        SESSION_TTL,
+      );
+      this.redis.set(
+        `temp_cancel_max_letra:${organizationId}:${senderId}`,
+        letra,
+        'EX',
+        SESSION_TTL,
+      );
       const fecha = formatAppointmentCompact(apt.scheduleSlot.startTime);
       lineas += `*${letra})* ${apt.scheduleSlot.service.name} · Dr. ${apt.scheduleSlot.doctor.fullName} · ${fecha}\n`;
     });
@@ -4946,7 +6115,11 @@ export class ChatbotService implements OnModuleInit {
       reply,
       MSGS.cancelarSeleccionarAudio(patient.fullName),
     );
-    await this.setUserState(organizationId, senderId, ChatState.AWAITING_CANCEL_SELECTION);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_CANCEL_SELECTION,
+    );
 
     await this.auditSuccess(senderId, organizationId, {
       userMessage: cedula,
@@ -4969,7 +6142,9 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
     cedula: string,
   ) {
-    const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
+    const MSGS = buildMessages(
+      await this.organizationSettings.getCommunicationStyle(organizationId),
+    );
     const patient = await this.prisma.patientProfile.findFirst({
       where: { cedula, organizationId },
     });
@@ -4978,7 +6153,11 @@ export class ChatbotService implements OnModuleInit {
       const reply = MSGS.modificarPacienteNoExiste(cedula);
       await this.smartReply(organizationId, senderId, reply);
       // Permite reintentar la cédula sin reiniciar el flujo.
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_CEDULA);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_MODIFY_CEDULA,
+      );
 
       await this.auditFailure(senderId, organizationId, {
         reason: FailureReason.PATIENT_NOT_FOUND,
@@ -5007,13 +6186,21 @@ export class ChatbotService implements OnModuleInit {
       // El loop se cierra cuando el paciente dice NO o por el cron de inactividad.
       const reply = MSGS.modificarSinCitasReintentar(cedula);
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_RETRY_CEDULA);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_MODIFY_RETRY_CEDULA,
+      );
 
       await this.auditFailure(senderId, organizationId, {
         reason: FailureReason.NO_APPOINTMENTS_TO_MODIFY,
         userMessage: cedula,
         botReply: reply,
-        metadata: { patientCedula: cedula, patientId: patient.id, offeredRetry: true },
+        metadata: {
+          patientCedula: cedula,
+          patientId: patient.id,
+          offeredRetry: true,
+        },
       });
       return;
     }
@@ -5021,8 +6208,18 @@ export class ChatbotService implements OnModuleInit {
     if (activeAppointments.length === 1) {
       // Cita única → la fijamos y pasamos directo a ofrecer nuevos horarios.
       const apt = activeAppointments[0];
-      await this.redis.set(`temp_selected_modify_apt:${organizationId}:${senderId}`, apt.id, 'EX', SESSION_TTL);
-      await this.redis.set(`temp_selected_modify_slot:${organizationId}:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
+      await this.redis.set(
+        `temp_selected_modify_apt:${organizationId}:${senderId}`,
+        apt.id,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        `temp_selected_modify_slot:${organizationId}:${senderId}`,
+        apt.scheduleSlotId,
+        'EX',
+        SESSION_TTL,
+      );
       await this.offerModifySlots(organizationId, senderId, apt.id);
       return;
     }
@@ -5030,9 +6227,24 @@ export class ChatbotService implements OnModuleInit {
     let lineas = '';
     activeAppointments.forEach((apt, idx) => {
       const letra = String.fromCharCode(65 + idx);
-      this.redis.set(`temp_modify_apt_${letra}:${organizationId}:${senderId}`, apt.id, 'EX', SESSION_TTL);
-      this.redis.set(`temp_modify_slot_${letra}:${organizationId}:${senderId}`, apt.scheduleSlotId, 'EX', SESSION_TTL);
-      this.redis.set(`temp_modify_max_letra:${organizationId}:${senderId}`, letra, 'EX', SESSION_TTL);
+      this.redis.set(
+        `temp_modify_apt_${letra}:${organizationId}:${senderId}`,
+        apt.id,
+        'EX',
+        SESSION_TTL,
+      );
+      this.redis.set(
+        `temp_modify_slot_${letra}:${organizationId}:${senderId}`,
+        apt.scheduleSlotId,
+        'EX',
+        SESSION_TTL,
+      );
+      this.redis.set(
+        `temp_modify_max_letra:${organizationId}:${senderId}`,
+        letra,
+        'EX',
+        SESSION_TTL,
+      );
       const fecha = formatAppointmentCompact(apt.scheduleSlot.startTime);
       lineas += `*${letra})* ${apt.scheduleSlot.service.name} · Dr. ${apt.scheduleSlot.doctor.fullName} · ${fecha}\n`;
     });
@@ -5045,7 +6257,11 @@ export class ChatbotService implements OnModuleInit {
       reply,
       MSGS.modificarSeleccionarAudio(patient.fullName),
     );
-    await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_SELECTION);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_MODIFY_SELECTION,
+    );
 
     await this.auditSuccess(senderId, organizationId, {
       userMessage: cedula,
@@ -5069,7 +6285,9 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
     appointmentId: string,
   ) {
-    const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
+    const MSGS = buildMessages(
+      await this.organizationSettings.getCommunicationStyle(organizationId),
+    );
 
     const apt = await this.prisma.appointment.findUnique({
       where: { id: appointmentId },
@@ -5104,7 +6322,11 @@ export class ChatbotService implements OnModuleInit {
       // Sin cupos alternativos → ofrecer cancelar la cita actual.
       const reply = MSGS.modificarSinCupos(serviceName);
       await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL,
+      );
 
       await this.auditSuccess(senderId, organizationId, {
         userMessage: '[modify]',
@@ -5122,13 +6344,32 @@ export class ChatbotService implements OnModuleInit {
     const slotsMetadata: any[] = [];
     for (let i = 0; i < candidateSlots.length; i++) {
       const letra = String.fromCharCode(65 + i);
-      await this.redis.set(`temp_modify_newslot_${letra}:${organizationId}:${senderId}`, candidateSlots[i].slotId, 'EX', SESSION_TTL);
-      await this.redis.set(`temp_modify_newslot_${letra}_fecha:${organizationId}:${senderId}`, candidateSlots[i].fecha.toISOString(), 'EX', SESSION_TTL);
-      await this.redis.set(`temp_modify_newslot_max_letra:${organizationId}:${senderId}`, letra, 'EX', SESSION_TTL);
+      await this.redis.set(
+        `temp_modify_newslot_${letra}:${organizationId}:${senderId}`,
+        candidateSlots[i].slotId,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        `temp_modify_newslot_${letra}_fecha:${organizationId}:${senderId}`,
+        candidateSlots[i].fecha.toISOString(),
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        `temp_modify_newslot_max_letra:${organizationId}:${senderId}`,
+        letra,
+        'EX',
+        SESSION_TTL,
+      );
       lineas +=
         `*${letra})* ${formatAppointmentLong(candidateSlots[i].fecha)} ` +
         `· Dr. ${candidateSlots[i].doctor}\n`;
-      slotsMetadata.push({ letter: letra, slotId: candidateSlots[i].slotId, fecha: candidateSlots[i].fecha.toISOString() });
+      slotsMetadata.push({
+        letter: letra,
+        slotId: candidateSlots[i].slotId,
+        fecha: candidateSlots[i].fecha.toISOString(),
+      });
     }
 
     const reply = MSGS.modificarMostrarCupos(serviceName, fechaActual, lineas);
@@ -5139,7 +6380,11 @@ export class ChatbotService implements OnModuleInit {
       reply,
       MSGS.modificarMostrarCuposAudio(serviceName),
     );
-    await this.setUserState(organizationId, senderId, ChatState.AWAITING_MODIFY_NEW_SLOT);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_MODIFY_NEW_SLOT,
+    );
 
     await this.auditSuccess(senderId, organizationId, {
       userMessage: '[modify]',
@@ -5174,7 +6419,12 @@ export class ChatbotService implements OnModuleInit {
     try {
       // Seed del caché de tenant para outbound posterior y para resolver la
       // siguiente respuesta entrante del paciente.
-      await this.redis.set(`origin_org:${to}`, organizationId, 'EX', SESSION_TTL);
+      await this.redis.set(
+        `origin_org:${to}`,
+        organizationId,
+        'EX',
+        SESSION_TTL,
+      );
 
       const result = await this.sendWhatsAppMessage(to, message);
       if (!result) {
@@ -5192,7 +6442,10 @@ export class ChatbotService implements OnModuleInit {
   // ══════════════════════════════════════════════════════════════
   // INTERFAZ EXTERNA (OUTBOUND desde el Dashboard)
   // ══════════════════════════════════════════════════════════════
-  async sendOutboundMessage(to: string, message: string): Promise<{ success: boolean; error?: string }> {
+  async sendOutboundMessage(
+    to: string,
+    message: string,
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       const orgId = await this.redis.get(`origin_org:${to}`);
       if (!orgId) {
@@ -5256,11 +6509,24 @@ export class ChatbotService implements OnModuleInit {
     patientCedula?: string;
   }) {
     try {
-      const { whatsappId, organizationId, nombre, especialidad, doctor, slotDate } = params;
+      const {
+        whatsappId,
+        organizationId,
+        nombre,
+        especialidad,
+        doctor,
+        slotDate,
+      } = params;
       // Sombra del pool de mensajes según el estilo activo de la org.
-      const MSGS = buildMessages(await this.organizationSettings.getCommunicationStyle(organizationId));
+      const MSGS = buildMessages(
+        await this.organizationSettings.getCommunicationStyle(organizationId),
+      );
       const fechaFormateada = formatAppointmentLong(slotDate);
-      await this.setUserState(organizationId, whatsappId, ChatState.AWAITING_WAITLIST_CONFIRM);
+      await this.setUserState(
+        organizationId,
+        whatsappId,
+        ChatState.AWAITING_WAITLIST_CONFIRM,
+      );
       await this.redis.set(
         `is_ai_flow:${organizationId}:${whatsappId}`,
         'false',
@@ -5276,7 +6542,12 @@ export class ChatbotService implements OnModuleInit {
         'EX',
         SESSION_TTL,
       );
-      const reply = MSGS.waitlistCupoDisponible(nombre, especialidad, fechaFormateada, doctor);
+      const reply = MSGS.waitlistCupoDisponible(
+        nombre,
+        especialidad,
+        fechaFormateada,
+        doctor,
+      );
       await this.sendWhatsAppMessage(whatsappId, reply);
 
       // 📝 Auditoría: notificación de waitlist enviada

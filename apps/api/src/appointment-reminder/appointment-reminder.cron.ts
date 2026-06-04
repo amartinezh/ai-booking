@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
@@ -69,7 +74,7 @@ export class AppointmentReminderCronService
       }
       this.inFlight = true;
       this.runOnce()
-        .catch(err => {
+        .catch((err) => {
           this.logger.error(
             `Cron falló (no propagado): ${err?.message}`,
             err?.stack,
@@ -448,6 +453,10 @@ export class AppointmentReminderCronService
     }
 
     // 'skipped' por algún check interno de processOne (edge case).
-    return { success: false, outcome, error: 'No fue posible enviar el recordatorio.' };
+    return {
+      success: false,
+      outcome,
+      error: 'No fue posible enviar el recordatorio.',
+    };
   }
 }

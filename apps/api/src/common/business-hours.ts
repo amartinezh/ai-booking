@@ -82,7 +82,10 @@ export function addBusinessHours(from: Date, hours: number): Date {
  * idempotencia para que no se envíe dos veces aunque el cron corra varias
  * veces dentro de la ventana.
  */
-export function reminderWindow(now: Date, businessHoursBefore: number): {
+export function reminderWindow(
+  now: Date,
+  businessHoursBefore: number,
+): {
   from: Date;
   to: Date;
 } {

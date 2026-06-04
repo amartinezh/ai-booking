@@ -125,9 +125,16 @@ export class MonitorCheckers {
       const raw = error?.details || error?.message || String(error);
       const haystack = String(raw).toLowerCase();
       let errorCode = 'UNKNOWN';
-      if (haystack.includes('permission') || haystack.includes('credential') || haystack.includes('unauthenticated')) {
+      if (
+        haystack.includes('permission') ||
+        haystack.includes('credential') ||
+        haystack.includes('unauthenticated')
+      ) {
         errorCode = 'AUTH';
-      } else if (haystack.includes('deadline') || haystack.includes('timeout')) {
+      } else if (
+        haystack.includes('deadline') ||
+        haystack.includes('timeout')
+      ) {
         errorCode = 'TIMEOUT';
       }
       this.logger.warn(`Check TTS falló: ${raw}`);
@@ -155,7 +162,9 @@ export class MonitorCheckers {
       });
       return org?.id ?? null;
     } catch (error: any) {
-      this.logger.warn(`No se pudo resolver organización testigo: ${error.message}`);
+      this.logger.warn(
+        `No se pudo resolver organización testigo: ${error.message}`,
+      );
       return null;
     }
   }

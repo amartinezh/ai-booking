@@ -14,7 +14,9 @@ const DEV_KEY = '12345678901234567890123456789012'; // 32 bytes (solo desarrollo
  *   - Se soporta tanto 32 bytes utf-8 como 64 caracteres hex.
  */
 function getKey(): Buffer {
-  const raw = (process.env.ENCRYPTION_KEY ?? '').trim().replace(/^['"]|['"]$/g, '');
+  const raw = (process.env.ENCRYPTION_KEY ?? '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '');
   const source = raw || DEV_KEY;
   const buf = /^[0-9a-fA-F]{64}$/.test(source)
     ? Buffer.from(source, 'hex')
@@ -42,11 +44,15 @@ export function decryptString(text: string): string {
   if (!text) return text;
   const parts = text.split(':');
   // Si no está en el formato cifrado, devolvemos el texto plano (retrocompatibilidad híbrida)
-  if (parts.length !== 3) return text; 
+  if (parts.length !== 3) return text;
 
   try {
     const [ivHex, authTagHex, encryptedTextHex] = parts;
-    const decipher = crypto.createDecipheriv(ALGORITHM, getKey(), Buffer.from(ivHex, 'hex'));
+    const decipher = crypto.createDecipheriv(
+      ALGORITHM,
+      getKey(),
+      Buffer.from(ivHex, 'hex'),
+    );
     decipher.setAuthTag(Buffer.from(authTagHex, 'hex'));
     let decrypted = decipher.update(encryptedTextHex, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
@@ -62,18 +68,26 @@ export const encryptionExtension = Prisma.defineExtension({
   query: {
     clinicalRecord: {
       async create({ args, query }) {
-        if (args.data.chiefComplaint) args.data.chiefComplaint = encryptString(args.data.chiefComplaint as string);
-        if (args.data.currentIllness) args.data.currentIllness = encryptString(args.data.currentIllness as string);
-        if (args.data.physicalExam) args.data.physicalExam = encryptString(args.data.physicalExam as string);
-        if (args.data.evolutionNotes) args.data.evolutionNotes = encryptString(args.data.evolutionNotes as string);
+        if (args.data.chiefComplaint)
+          args.data.chiefComplaint = encryptString(args.data.chiefComplaint);
+        if (args.data.currentIllness)
+          args.data.currentIllness = encryptString(args.data.currentIllness);
+        if (args.data.physicalExam)
+          args.data.physicalExam = encryptString(args.data.physicalExam);
+        if (args.data.evolutionNotes)
+          args.data.evolutionNotes = encryptString(args.data.evolutionNotes);
         return query(args);
       },
       async update({ args, query }) {
         const data: any = args.data;
-        if (data.chiefComplaint) data.chiefComplaint = encryptString(data.chiefComplaint);
-        if (data.currentIllness) data.currentIllness = encryptString(data.currentIllness);
-        if (data.physicalExam) data.physicalExam = encryptString(data.physicalExam);
-        if (data.evolutionNotes) data.evolutionNotes = encryptString(data.evolutionNotes);
+        if (data.chiefComplaint)
+          data.chiefComplaint = encryptString(data.chiefComplaint);
+        if (data.currentIllness)
+          data.currentIllness = encryptString(data.currentIllness);
+        if (data.physicalExam)
+          data.physicalExam = encryptString(data.physicalExam);
+        if (data.evolutionNotes)
+          data.evolutionNotes = encryptString(data.evolutionNotes);
         return query(args);
       },
     },

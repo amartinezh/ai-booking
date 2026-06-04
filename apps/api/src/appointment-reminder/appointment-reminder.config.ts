@@ -21,7 +21,10 @@ export function readReminderConfig(config: ConfigService): ReminderConfig {
   const rawHours = config.get<string>('REMINDER_BUSINESS_HOURS_BEFORE');
   const rawCron = config.get<string>('REMINDER_CRON_MINUTES');
 
-  const businessHoursBefore = toPositiveInt(rawHours, DEFAULT_BUSINESS_HOURS_BEFORE);
+  const businessHoursBefore = toPositiveInt(
+    rawHours,
+    DEFAULT_BUSINESS_HOURS_BEFORE,
+  );
   const cronMinutes = toPositiveInt(rawCron, DEFAULT_CRON_MINUTES);
 
   if (businessHoursBefore < 1) {

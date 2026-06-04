@@ -18,6 +18,10 @@ export class AppointmentsController {
     @Param('id') id: string,
     @Body('status') status: AttendanceStatus,
   ) {
-    return this.appointmentsService.updateAttendance(id, status, organizationId);
+    return this.appointmentsService.updateAttendance(
+      id,
+      status,
+      organizationId,
+    );
   }
 }

@@ -13,7 +13,11 @@ describe('AppointmentsService', () => {
           provide: PrismaService,
           useValue: {
             scheduleSlot: { findUnique: jest.fn(), update: jest.fn() },
-            appointment: { create: jest.fn(), update: jest.fn(), findFirst: jest.fn() },
+            appointment: {
+              create: jest.fn(),
+              update: jest.fn(),
+              findFirst: jest.fn(),
+            },
             $transaction: jest.fn(),
           },
         },

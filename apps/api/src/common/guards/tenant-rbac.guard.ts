@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
@@ -9,9 +14,10 @@ export class TenantRbacGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     // NOTA: Se asume que request.user ya fue hidratado por un AuthGuard (JWT) anterior.
     const user = request.user;
-    
+
     // Obtenemos el target patientId ya sea de params o del body de la request
-    const targetPatientId = request.params?.patientId || request.body?.patientId;
+    const targetPatientId =
+      request.params?.patientId || request.body?.patientId;
 
     if (!user) {
       throw new ForbiddenException('Autenticación requerida.');
@@ -29,28 +35,33 @@ export class TenantRbacGuard implements CanActivate {
       if (!targetPatientId) return true;
 
       const doctorProfile = await this.prisma.doctorProfile.findUnique({
-        where: { userId: user.id }
+        where: { userId: user.id },
       });
-      
-      if (!doctorProfile) throw new ForbiddenException('Perfil de doctor no encontrado.');
+
+      if (!doctorProfile)
+        throw new ForbiddenException('Perfil de doctor no encontrado.');
 
       // Validar si el doctor tiene cita o historial asociado a este paciente
       const therapeuticRelation = await this.prisma.appointment.findFirst({
         where: {
           patientId: targetPatientId,
           scheduleSlot: {
-            doctorId: doctorProfile.id
-          }
-        }
+            doctorId: doctorProfile.id,
+          },
+        },
       });
-      
+
       if (!therapeuticRelation) {
-        throw new ForbiddenException('Zero Trust: No tienes relación terapéutica activa (citas) que autorice ver a este paciente.');
+        throw new ForbiddenException(
+          'Zero Trust: No tienes relación terapéutica activa (citas) que autorice ver a este paciente.',
+        );
       }
       return true;
     }
 
     // 3. Recepcionistas y Pacientes tienen explícitamente prohíbido acceder a la historia clínica
-    throw new ForbiddenException(`Zero Trust: Acceso denegado a historiales para el rol ${user.role}.`);
+    throw new ForbiddenException(
+      `Zero Trust: Acceso denegado a historiales para el rol ${user.role}.`,
+    );
   }
 }

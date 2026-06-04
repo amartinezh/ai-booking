@@ -34,7 +34,9 @@ export class ClaudeProvider implements LLMProvider {
     this.model = config.model || 'claude-sonnet-4-6';
   }
 
-  async generateClinicalRecord(audio: AudioInput): Promise<ClinicalRecordDraft> {
+  async generateClinicalRecord(
+    audio: AudioInput,
+  ): Promise<ClinicalRecordDraft> {
     // La Messages API de Anthropic no acepta audio nativo. Se documenta como
     // limitación del proveedor: para dictado se recomienda Gemini o ChatGPT.
     // Mantenemos el contrato y devolvemos una estructura vacía con un log claro.
@@ -76,7 +78,10 @@ export class ClaudeProvider implements LLMProvider {
       messages: [{ role: 'user', content: userText }],
       max_tokens: 512,
     });
-    const cleaned = raw.trim().replace(/```json/g, '').replace(/```/g, '');
+    const cleaned = raw
+      .trim()
+      .replace(/```json/g, '')
+      .replace(/```/g, '');
     const parsed = JSON.parse(cleaned);
     return {
       transcript: input.text ?? parsed.transcript ?? null,
@@ -114,7 +119,9 @@ export class ClaudeProvider implements LLMProvider {
     if (!input.options?.length || !input.text?.trim()) return { id: null };
     const raw = await this.message({
       system: buildCatalogMappingPrompt(input.entityKind, input.options),
-      messages: [{ role: 'user', content: `Texto del paciente: "${input.text}"` }],
+      messages: [
+        { role: 'user', content: `Texto del paciente: "${input.text}"` },
+      ],
       max_tokens: 128,
     });
     return parseCatalogMappingResponse(raw);

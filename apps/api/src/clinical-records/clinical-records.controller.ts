@@ -1,4 +1,12 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Patch } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Param,
+  UseGuards,
+  Patch,
+} from '@nestjs/common';
 import { ClinicalRecordService } from './clinical-records.service';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
@@ -7,7 +15,7 @@ import { Role } from '@antigravity/database';
 @Controller('clinical-records')
 @UseGuards(RolesGuard)
 export class ClinicalRecordsController {
-  constructor(private readonly recordService: ClinicalRecordService) { }
+  constructor(private readonly recordService: ClinicalRecordService) {}
 
   @Post()
   @Roles('DOCTOR') // Estrictamente DOCTOR, agentes no pueden escribir historias clínicas
@@ -17,10 +25,7 @@ export class ClinicalRecordsController {
 
   @Patch(':id')
   @Roles('DOCTOR')
-  async updateRecord(
-    @Param('id') id: string,
-    @Body() updateDto: any
-  ) {
+  async updateRecord(@Param('id') id: string, @Body() updateDto: any) {
     return this.recordService.updateClinicalRecord(id, updateDto);
   }
 
@@ -29,7 +34,7 @@ export class ClinicalRecordsController {
   async signRecord(
     @Param('id') id: string,
     @Body('userId') userId: string,
-    @Body('ipAddress') ipAddress?: string
+    @Body('ipAddress') ipAddress?: string,
   ) {
     return this.recordService.signClinicalRecord(id, userId, ipAddress);
   }
@@ -40,7 +45,7 @@ export class ClinicalRecordsController {
     @Param('id') id: string,
     @Body('doctorId') doctorId: string,
     @Body('content') content: string,
-    @Body('ipAddress') ipAddress?: string
+    @Body('ipAddress') ipAddress?: string,
   ) {
     return this.recordService.createAddendum(id, doctorId, content, ipAddress);
   }

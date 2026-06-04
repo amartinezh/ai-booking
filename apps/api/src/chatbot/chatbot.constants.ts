@@ -61,6 +61,27 @@ export const BOT_NAME = 'AgenIA';
 export type CommStyle = 'FORMAL' | 'INFORMAL';
 
 // ─────────────────────────────────────────────────────────────
+// Aviso de tratamiento de datos (Ley 1581 de 2012 — Habeas Data).
+// Se inserta en el resumen previo a la confirmación de la cita: el
+// "SÍ" del paciente en ese paso es el acto afirmativo que autoriza
+// el tratamiento de sus datos personales y sensibles de salud.
+// Mantener una sola fuente de verdad para el texto legal.
+// ─────────────────────────────────────────────────────────────
+// `policyUrl` (de PRIVACY_POLICY_URL en el .env) se enlaza en una línea aparte
+// cuando está configurada; si falta, el aviso legal se mantiene sin el enlace.
+export const CONSENT_1581_FORMAL = (policyUrl?: string) =>
+  `🔒 Al responder *SÍ* confirma su asistencia y autoriza el tratamiento de sus ` +
+  `datos personales —incluidos los datos sensibles de salud necesarios para su ` +
+  `atención— conforme a la Ley 1581 de 2012 y nuestra política de tratamiento de datos.` +
+  (policyUrl ? `\n📄 Consúltela aquí: ${policyUrl}` : '');
+
+export const CONSENT_1581_INFORMAL = (policyUrl?: string) =>
+  `🔒 Al responder *SÍ* confirmas tu asistencia y autorizas el tratamiento de tus ` +
+  `datos personales —incluidos los datos sensibles de salud necesarios para tu ` +
+  `atención— conforme a la Ley 1581 de 2012 y nuestra política de privacidad.` +
+  (policyUrl ? `\n📄 Consúltala aquí: ${policyUrl}` : '');
+
+// ─────────────────────────────────────────────────────────────
 // Helper: selección pseudo-aleatoria de variantes.
 // Permite que el bot no repita exactamente la misma frase cada vez.
 // ─────────────────────────────────────────────────────────────
@@ -73,7 +94,11 @@ const pick = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 // Estructura clara con viñetas A) B) C) en líneas separadas.
 // ═════════════════════════════════════════════════════════════
 const FORMAL = {
-  bienvenida: (clinicaName: string, servicios: string, botName: string = BOT_NAME) =>
+  bienvenida: (
+    clinicaName: string,
+    servicios: string,
+    botName: string = BOT_NAME,
+  ) =>
     pick([
       `Buen día, soy *${botName}*, asistente de *${clinicaName}*.\n\n` +
         `Con gusto le ayudo a agendar su cita de forma ágil. 🏥\n\n` +
@@ -89,7 +114,11 @@ const FORMAL = {
         `_${servicios}_`,
     ]),
 
-  menuServicios: (clinicaName: string, lineas: string, botName: string = BOT_NAME) =>
+  menuServicios: (
+    clinicaName: string,
+    lineas: string,
+    botName: string = BOT_NAME,
+  ) =>
     pick([
       `Le saluda *${botName}*, su asistente en *${clinicaName}*.\n\n` +
         `Con gusto le ayudo a agendar su cita el día de hoy. 🏥\n\n` +
@@ -218,7 +247,12 @@ const FORMAL = {
         `Cuando lo necesite, escríbame *"Hola"* y le ayudo. Que tenga un excelente día.`,
     ]),
 
-  sinDisponibilidad: (nombre: string, epsName: string, especialidad: string, position: number) =>
+  sinDisponibilidad: (
+    nombre: string,
+    epsName: string,
+    especialidad: string,
+    position: number,
+  ) =>
     `${nombre}, revisé la agenda para *${epsName}* en *${especialidad}* ` +
     `y por el momento no hay cupos abiertos.\n\n` +
     `Ya le agregué a la lista de espera (posición *#${position}*). ` +
@@ -281,17 +315,24 @@ const FORMAL = {
   repromptAgendarEps: (lineas: string) =>
     `Perfecto, continuemos. 📅\n\n*¿Con cuál EPS o entidad desea su cita?*\n\n${lineas}`,
 
-  resumenCita: (nombre: string, cedula: string, eps: string, especialidad: string, fecha: string) =>
+  resumenCita: (
+    nombre: string,
+    cedula: string,
+    eps: string,
+    especialidad: string,
+    fecha: string,
+    policyUrl?: string,
+  ) =>
     pick([
       `Listo${nombre ? `, ${nombre}` : ''}. Confirmemos los datos de su cita antes de agendarle:\n\n` +
         `👤 *Paciente:* ${nombre}\n🪪 *Cédula:* ${cedula}\n💳 *EPS:* ${eps}\n🏥 *Servicio:* ${especialidad}\n📅 *Fecha y hora:* ${fecha}\n\n` +
-        `¿Está todo correcto? Responda *SÍ* para agendarle definitivamente o *NO* si necesita cambiar algo.`,
+        `¿Está todo correcto? Responda *SÍ* para agendarle definitivamente o *NO* si necesita cambiar algo.\n\n${CONSENT_1581_FORMAL(policyUrl)}`,
       `Perfecto${nombre ? `, ${nombre}` : ''}. Reviso con usted la información antes de cerrar:\n\n` +
         `👤 ${nombre}\n🪪 Cédula ${cedula}\n💳 EPS: ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
-        `Si todo está bien, responda *SÍ* y lo dejo confirmado. Si algo no corresponde, escriba *NO*.`,
+        `Si todo está bien, responda *SÍ* y lo dejo confirmado. Si algo no corresponde, escriba *NO*.\n\n${CONSENT_1581_FORMAL(policyUrl)}`,
       `Ya casi terminamos${nombre ? `, ${nombre}` : ''}. Estos son los datos de su cita:\n\n` +
         `👤 ${nombre}\n🪪 ${cedula}\n💳 ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
-        `¿Lo confirmamos? Responda *SÍ* para agendarle o *NO* si prefiere cancelar.`,
+        `¿Lo confirmamos? Responda *SÍ* para agendarle o *NO* si prefiere cancelar.\n\n${CONSENT_1581_FORMAL(policyUrl)}`,
     ]),
 
   citaConfirmada: (clinicaName: string, fecha: string) =>
@@ -323,7 +364,12 @@ const FORMAL = {
       `Disculpe, no fue posible ubicar esa opción.\n\nResponda con una de las letras disponibles _(A, B, C...)_ o escriba *"Salir"* si desea terminar el proceso.`,
     ]),
 
-  waitlistCupoDisponible: (nombre: string, especialidad: string, fecha: string, doctor: string) =>
+  waitlistCupoDisponible: (
+    nombre: string,
+    especialidad: string,
+    fecha: string,
+    doctor: string,
+  ) =>
     pick([
       `🔔 ${nombre}, tengo buenas noticias.\n\n` +
         `Se acaba de liberar un cupo en *${especialidad}* y usted era la siguiente persona en la lista.\n\n` +
@@ -538,7 +584,11 @@ const FORMAL = {
       `A continuación le presento sus citas en el mensaje de texto. Respóndame con la letra de la que desea cambiar de fecha, por favor.`,
     ]),
 
-  modificarMostrarCupos: (servicio: string, fechaActual: string, lineas: string) =>
+  modificarMostrarCupos: (
+    servicio: string,
+    fechaActual: string,
+    lineas: string,
+  ) =>
     pick([
       `Su cita de *${servicio}* está agendada para:\n📅 ${fechaActual}\n\n` +
         `Estos son los *nuevos horarios disponibles*:\n\n${lineas}\n` +
@@ -564,7 +614,12 @@ const FORMAL = {
         `Si lo desea puedo *cancelar la cita existente*. Responda *SÍ* para cancelar o *NO* para dejarla sin cambios.`,
     ]),
 
-  modificarConfirmar: (servicio: string, doctor: string, fechaActual: string, fechaNueva: string) =>
+  modificarConfirmar: (
+    servicio: string,
+    doctor: string,
+    fechaActual: string,
+    fechaNueva: string,
+  ) =>
     `Vamos a *reprogramar* esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n` +
     `📅 Actual: ${fechaActual}\n🆕 Nueva: ${fechaNueva}\n\n` +
     `¿Confirma el cambio? Responda *SÍ* para reprogramarla o *NO* para mantener la fecha actual.`,
@@ -603,7 +658,11 @@ const FORMAL = {
 // hacia abajo, no en un bloque tipo párrafo.
 // ═════════════════════════════════════════════════════════════
 const INFORMAL = {
-  bienvenida: (clinicaName: string, servicios: string, botName: string = BOT_NAME) =>
+  bienvenida: (
+    clinicaName: string,
+    servicios: string,
+    botName: string = BOT_NAME,
+  ) =>
     pick([
       `¡Hola! ¿Cómo estás? 😊 Soy *${botName}* y te escribo desde *${clinicaName}*. Gracias por escribirnos.\n\n` +
         `Te ayudo a agendar tu cita médica de una. Cuéntame, ¿qué especialidad necesitas hoy?\n_${servicios}_`,
@@ -613,7 +672,11 @@ const INFORMAL = {
         `Aquí te ayudo a agendar tu cita sin filas ni esperas. Cuéntame qué buscas hoy.\n_${servicios}_`,
     ]),
 
-  menuServicios: (clinicaName: string, lineas: string, botName: string = BOT_NAME) =>
+  menuServicios: (
+    clinicaName: string,
+    lineas: string,
+    botName: string = BOT_NAME,
+  ) =>
     pick([
       `¡Hola! ¿Cómo estás? 😊 Soy *${botName}*, te escribo desde *${clinicaName}*. Gracias por escribirnos.\n\n` +
         `Te puedo ayudar a agendar tu cita médica. Estos son los servicios disponibles:\n\n` +
@@ -709,7 +772,12 @@ const INFORMAL = {
       `Perfecto, lo dejamos así. 😊 Cualquier cosa, escríbeme *"Hola"* y te atiendo. Que tengas un día genial. 🌟`,
     ]),
 
-  sinDisponibilidad: (nombre: string, epsName: string, especialidad: string, position: number) =>
+  sinDisponibilidad: (
+    nombre: string,
+    epsName: string,
+    especialidad: string,
+    position: number,
+  ) =>
     `${nombre}, revisé la agenda para *${epsName}* en *${especialidad}* y ahorita no hay espacios. 😔 Pero tranquilo(a), ya te agregué a la lista de espera (posición *#${position}*). En cuanto se libere algo, te escribo. ✨\n\n¿Algo más en lo que te pueda ayudar?`,
 
   pedirCedulaPostSlot: (fechaFormateada: string) =>
@@ -764,17 +832,24 @@ const INFORMAL = {
   repromptAgendarEps: (lineas: string) =>
     `¡Listo, sigamos! 🗓️\n\n*¿Con cuál EPS quieres tu cita?*\n\n${lineas}`,
 
-  resumenCita: (nombre: string, cedula: string, eps: string, especialidad: string, fecha: string) =>
+  resumenCita: (
+    nombre: string,
+    cedula: string,
+    eps: string,
+    especialidad: string,
+    fecha: string,
+    policyUrl?: string,
+  ) =>
     pick([
       `¡Listo${nombre ? `, ${nombre}` : ''}! Revisemos los datos antes de cerrar:\n\n` +
         `👤 *Paciente:* ${nombre}\n🪪 *Cédula:* ${cedula}\n💳 *EPS:* ${eps}\n🏥 *Servicio:* ${especialidad}\n📅 *Fecha y hora:* ${fecha}\n\n` +
-        `¿Todo bien? Responde *SÍ* para confirmar tu cita o *NO* si quieres cambiar algo.`,
+        `¿Todo bien? Responde *SÍ* para confirmar tu cita o *NO* si quieres cambiar algo.\n\n${CONSENT_1581_INFORMAL(policyUrl)}`,
       `¡Perfecto${nombre ? `, ${nombre}` : ''}! Mira los datos que tengo:\n\n` +
         `👤 ${nombre}\n🪪 Cédula ${cedula}\n💳 EPS ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
-        `Si está bien, responde *SÍ* y te la dejo confirmada; si algo no, dime *NO*.`,
+        `Si está bien, responde *SÍ* y te la dejo confirmada; si algo no, dime *NO*.\n\n${CONSENT_1581_INFORMAL(policyUrl)}`,
       `Ya casi terminamos${nombre ? `, ${nombre}` : ''} 🌟. Estos son tus datos:\n\n` +
         `👤 ${nombre}\n🪪 ${cedula}\n💳 ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
-        `¿Cerramos? *SÍ* para agendar, *NO* si prefieres cancelar.`,
+        `¿Cerramos? *SÍ* para agendar, *NO* si prefieres cancelar.\n\n${CONSENT_1581_INFORMAL(policyUrl)}`,
     ]),
 
   citaConfirmada: (clinicaName: string, fecha: string) =>
@@ -803,7 +878,12 @@ const INFORMAL = {
       `No encontré esa opción. 😊 Respóndeme con una de las letras (A, B, C...) o escribe *"Salir"* para cancelar.`,
     ]),
 
-  waitlistCupoDisponible: (nombre: string, especialidad: string, fecha: string, doctor: string) =>
+  waitlistCupoDisponible: (
+    nombre: string,
+    especialidad: string,
+    fecha: string,
+    doctor: string,
+  ) =>
     pick([
       `🔔 ¡Hey ${nombre}, tengo súper buenas noticias! Se liberó un cupo para *${especialidad}* y tú eras la siguiente persona en la lista. 🌟\n\n📅 *${fecha}*\n👨‍⚕️ Dr(a). ${doctor}\n\nTe lo aparto por *30 minutos*. ¿Lo tomas? Responde *SÍ* para confirmarte o *NO* si ya no lo necesitas.`,
       `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eras la primera en espera:\n\n📅 *${fecha}*\n👨‍⚕️ Dr(a). ${doctor}\n\nTienes *30 minutos* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
@@ -1005,7 +1085,11 @@ const INFORMAL = {
       `A continuación te presento tus citas en el mensaje de texto. Respóndeme con la letra de la que quieres cambiar de fecha. 😊`,
     ]),
 
-  modificarMostrarCupos: (servicio: string, fechaActual: string, lineas: string) =>
+  modificarMostrarCupos: (
+    servicio: string,
+    fechaActual: string,
+    lineas: string,
+  ) =>
     pick([
       `Tu cita de *${servicio}* está para:\n📅 ${fechaActual}\n\n` +
         `Estos son los *nuevos horarios* que tengo disponibles:\n\n${lineas}\n` +
@@ -1031,7 +1115,12 @@ const INFORMAL = {
         `Si quieres puedo *cancelar la cita que tienes*. Mándame *SÍ* para cancelar o *NO* para dejarla sin cambios.`,
     ]),
 
-  modificarConfirmar: (servicio: string, doctor: string, fechaActual: string, fechaNueva: string) =>
+  modificarConfirmar: (
+    servicio: string,
+    doctor: string,
+    fechaActual: string,
+    fechaNueva: string,
+  ) =>
     `Para confirmarte, vamos a *reprogramar* esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n` +
     `📅 Actual: ${fechaActual}\n🆕 Nueva: ${fechaNueva}\n\n` +
     `¿Confirmas el cambio? Responde *SÍ* para reprogramarla o *NO* para dejar la fecha actual.`,

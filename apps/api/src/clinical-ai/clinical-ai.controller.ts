@@ -1,4 +1,10 @@
-import { Body, Controller, ForbiddenException, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { ClinicalAiService } from './clinical-ai.service';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';

@@ -6,7 +6,7 @@ import { Prisma } from '@antigravity/database';
 export class AppointmentsService {
   private readonly logger = new Logger(AppointmentsService.name);
 
-  constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) {}
 
   // 1. LÓGICA DE BÚSQUEDA H.I.S
   async getAvailableSlots(
@@ -56,7 +56,11 @@ export class AppointmentsService {
           where: { id: scheduleSlotId },
         });
 
-        if (!slot || !slot.isAvailable || (organizationId && slot.organizationId !== organizationId)) {
+        if (
+          !slot ||
+          !slot.isAvailable ||
+          (organizationId && slot.organizationId !== organizationId)
+        ) {
           throw new Error('SLOT_TAKEN_OR_INVALID');
         }
 
@@ -102,26 +106,30 @@ export class AppointmentsService {
   }
 
   // 3. CONTROL DE ASISTENCIA
-  async updateAttendance(appointmentId: string, status: any, organizationId?: string): Promise<any> {
-
+  async updateAttendance(
+    appointmentId: string,
+    status: any,
+    organizationId?: string,
+  ): Promise<any> {
     // Verificamos antes para evitar NotFoundExceptions por isolation o seguridad
     const apt = await this.prisma.appointment.findFirst({
-      where: { id: appointmentId, organizationId }
+      where: { id: appointmentId, organizationId },
     });
-    if (!apt) throw new Error('Cita no encontrada o no pertenece a tu Organización.');
+    if (!apt)
+      throw new Error('Cita no encontrada o no pertenece a tu Organización.');
 
     const updated = await this.prisma.appointment.update({
       where: { id: appointmentId },
       data: { attendanceStatus: status },
       include: {
         patient: true,
-        scheduleSlot: { include: { doctor: true, service: true } }
-      }
+        scheduleSlot: { include: { doctor: true, service: true } },
+      },
     });
 
     return {
       success: true,
-      data: updated
+      data: updated,
     };
   }
 }

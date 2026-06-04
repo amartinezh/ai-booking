@@ -18,6 +18,10 @@ export class AnalyticsController {
     @Query('endDate') endDate?: string,
   ) {
     if (!organizationId) throw new Error('Missing Tenant Context');
-    return this.analyticsService.getDashboardStats(organizationId, startDate, endDate);
+    return this.analyticsService.getDashboardStats(
+      organizationId,
+      startDate,
+      endDate,
+    );
   }
 }

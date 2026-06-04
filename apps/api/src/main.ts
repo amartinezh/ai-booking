@@ -13,7 +13,8 @@ import { SystemLogService } from './system-log/system-log.service';
 // ══════════════════════════════════════════════════════════════
 process.on('unhandledRejection', (reason: any) => {
   Logger.error(
-    `🚨 UnhandledRejection capturada (proceso sigue vivo): ${reason?.message || JSON.stringify(reason)
+    `🚨 UnhandledRejection capturada (proceso sigue vivo): ${
+      reason?.message || JSON.stringify(reason)
     }`,
     reason?.stack || 'GlobalErrorHandler',
   );
@@ -37,7 +38,10 @@ async function bootstrap() {
   app.useGlobalFilters(new GlobalExceptionFilter(logService));
 
   await app.listen(process.env.PORT ?? 3001);
-  Logger.log(`🚀 API escuchando en puerto ${process.env.PORT ?? 3001}`, 'Bootstrap');
+  Logger.log(
+    `🚀 API escuchando en puerto ${process.env.PORT ?? 3001}`,
+    'Bootstrap',
+  );
 }
 
 bootstrap();

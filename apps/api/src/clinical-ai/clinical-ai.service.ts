@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { LlmFactoryService, NoActiveLlmProviderError } from '../llm/llm-factory.service';
+import {
+  LlmFactoryService,
+  NoActiveLlmProviderError,
+} from '../llm/llm-factory.service';
 import { ClinicalRecordDraft } from '../llm/interfaces/llm-provider.interface';
 
 @Injectable()
@@ -36,7 +39,8 @@ export class ClinicalAiService {
         );
       }
       throw new Error(
-        'Fallo al procesar dictado de voz: ' + (error?.message || 'Error desconocido'),
+        'Fallo al procesar dictado de voz: ' +
+          (error?.message || 'Error desconocido'),
       );
     }
   }

@@ -66,17 +66,43 @@ export class GoogleTtsService implements TtsProvider<GoogleTtsParams> {
     const raw = error?.details || error?.message || String(error);
     const h = String(raw).toLowerCase();
 
-    if (error?.name === 'TimeoutError' || h.includes('deadline') || h.includes('timeout')) {
-      return { code: 'TIMEOUT', message: 'Google Cloud TTS no respondió a tiempo.' };
+    if (
+      error?.name === 'TimeoutError' ||
+      h.includes('deadline') ||
+      h.includes('timeout')
+    ) {
+      return {
+        code: 'TIMEOUT',
+        message: 'Google Cloud TTS no respondió a tiempo.',
+      };
     }
-    if (h.includes('permission') || h.includes('credential') || h.includes('unauthenticated') || h.includes('401') || h.includes('403')) {
-      return { code: 'AUTH', message: `Google rechazó las credenciales del proyecto TTS: ${raw}` };
+    if (
+      h.includes('permission') ||
+      h.includes('credential') ||
+      h.includes('unauthenticated') ||
+      h.includes('401') ||
+      h.includes('403')
+    ) {
+      return {
+        code: 'AUTH',
+        message: `Google rechazó las credenciales del proyecto TTS: ${raw}`,
+      };
     }
-    if (h.includes('voice') || h.includes('does not exist') || h.includes('not found')) {
-      return { code: 'INVALID_VOICE', message: `La voz no es válida o no soporta estos parámetros: ${raw}` };
+    if (
+      h.includes('voice') ||
+      h.includes('does not exist') ||
+      h.includes('not found')
+    ) {
+      return {
+        code: 'INVALID_VOICE',
+        message: `La voz no es válida o no soporta estos parámetros: ${raw}`,
+      };
     }
     if (h.includes('invalid') || h.includes('400')) {
-      return { code: 'BAD_REQUEST', message: `Google rechazó los parámetros (pitch/rate/códec): ${raw}` };
+      return {
+        code: 'BAD_REQUEST',
+        message: `Google rechazó los parámetros (pitch/rate/códec): ${raw}`,
+      };
     }
     return { code: 'UNKNOWN', message: String(raw) };
   }

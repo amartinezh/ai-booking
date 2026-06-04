@@ -25,7 +25,12 @@ import { SurveyModule } from '../survey/survey.module';
     SurveyModule,
   ],
   controllers: [ChatbotController],
-  providers: [ChatbotService, ChatbotCron, KnowledgeBaseService, OrganizationSettingsService],
+  providers: [
+    ChatbotService,
+    ChatbotCron,
+    KnowledgeBaseService,
+    OrganizationSettingsService,
+  ],
   exports: [ChatbotService, KnowledgeBaseService, OrganizationSettingsService],
 })
-export class ChatbotModule { }
+export class ChatbotModule {}

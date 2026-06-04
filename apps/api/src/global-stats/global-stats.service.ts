@@ -24,7 +24,7 @@ export interface StatsFilters {
   organizationId?: string | null; // null/undefined = global (todas las clínicas)
   range?: TimeRange;
   startDate?: string; // ISO date (yyyy-mm-dd) — solo cuando range = CUSTOM
-  endDate?: string;   // ISO date (yyyy-mm-dd)
+  endDate?: string; // ISO date (yyyy-mm-dd)
 }
 
 interface ResolvedRange {
@@ -163,8 +163,12 @@ export class GlobalStatsService {
         return { gte: start, lte: end };
       }
       case 'YEAR': {
-        const start = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
-        const end = new Date(Date.UTC(now.getUTCFullYear(), 11, 31, 23, 59, 59, 999));
+        const start = new Date(
+          Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0),
+        );
+        const end = new Date(
+          Date.UTC(now.getUTCFullYear(), 11, 31, 23, 59, 59, 999),
+        );
         return { gte: start, lte: end };
       }
       case 'MONTH':
@@ -173,7 +177,15 @@ export class GlobalStatsService {
           Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
         );
         const end = new Date(
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999),
+          Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth() + 1,
+            0,
+            23,
+            59,
+            59,
+            999,
+          ),
         );
         return { gte: start, lte: end };
       }
@@ -197,7 +209,10 @@ export class GlobalStatsService {
   }
 
   // Para Appointment: la fecha clínica vive en scheduleSlot.startTime.
-  private whereAppointment(range: ResolvedRange, orgId: string | null): Prisma.AppointmentWhereInput {
+  private whereAppointment(
+    range: ResolvedRange,
+    orgId: string | null,
+  ): Prisma.AppointmentWhereInput {
     const where: Prisma.AppointmentWhereInput = {
       scheduleSlot: {
         startTime: { gte: range.gte, lte: range.lte },
@@ -239,7 +254,10 @@ export class GlobalStatsService {
   }
 
   // Citas fallidas = canceladas O paciente no asistió (NO_SHOW).
-  private countAppointmentsFailed(range: ResolvedRange, orgId: string | null): Promise<number> {
+  private countAppointmentsFailed(
+    range: ResolvedRange,
+    orgId: string | null,
+  ): Promise<number> {
     return this.prisma.appointment.count({
       where: {
         ...this.whereAppointment(range, orgId),
@@ -261,22 +279,37 @@ export class GlobalStatsService {
     return this.prisma.systemLog.count({ where });
   }
 
-  private countNewPatients(range: ResolvedRange, orgId: string | null): Promise<number> {
+  private countNewPatients(
+    range: ResolvedRange,
+    orgId: string | null,
+  ): Promise<number> {
     return this.prisma.patientProfile.count({
-      where: this.whereCreatedAt(range, orgId) as Prisma.PatientProfileWhereInput,
+      where: this.whereCreatedAt(
+        range,
+        orgId,
+      ) as Prisma.PatientProfileWhereInput,
     });
   }
 
-  private countSignedClinicalRecords(range: ResolvedRange, orgId: string | null): Promise<number> {
+  private countSignedClinicalRecords(
+    range: ResolvedRange,
+    orgId: string | null,
+  ): Promise<number> {
     return this.prisma.clinicalRecord.count({
       where: {
-        ...(this.whereCreatedAt(range, orgId) as Prisma.ClinicalRecordWhereInput),
+        ...(this.whereCreatedAt(
+          range,
+          orgId,
+        ) as Prisma.ClinicalRecordWhereInput),
         status: 'SIGNED',
       },
     });
   }
 
-  private countLegalAddendums(range: ResolvedRange, orgId: string | null): Promise<number> {
+  private countLegalAddendums(
+    range: ResolvedRange,
+    orgId: string | null,
+  ): Promise<number> {
     // Addendum no tiene organizationId propio: lo filtramos vía clinicalRecord.
     const where: Prisma.AddendumWhereInput = {
       createdAt: { gte: range.gte, lte: range.lte },
@@ -297,7 +330,10 @@ export class GlobalStatsService {
     if (orgId) {
       const [hasAppt, hasRecord] = await Promise.all([
         this.prisma.appointment.count({
-          where: { ...this.whereAppointment(range, orgId), organizationId: orgId },
+          where: {
+            ...this.whereAppointment(range, orgId),
+            organizationId: orgId,
+          },
         }),
         this.prisma.clinicalRecord.count({
           where: {
@@ -341,7 +377,9 @@ export class GlobalStatsService {
     range: ResolvedRange,
     orgId: string | null,
   ): Promise<TrendPoint[]> {
-    const rows = await this.prisma.$queryRaw<Array<{ day: Date; count: bigint }>>`
+    const rows = await this.prisma.$queryRaw<
+      Array<{ day: Date; count: bigint }>
+    >`
       SELECT date_trunc('day', s."startTime") AS day, COUNT(a.id)::bigint AS count
       FROM "Appointment" a
       INNER JOIN "ScheduleSlot" s ON s.id = a."scheduleSlotId"
@@ -362,7 +400,9 @@ export class GlobalStatsService {
     range: ResolvedRange,
     orgId: string | null,
   ): Promise<TrendPoint[]> {
-    const rows = await this.prisma.$queryRaw<Array<{ day: Date; count: bigint }>>`
+    const rows = await this.prisma.$queryRaw<
+      Array<{ day: Date; count: bigint }>
+    >`
       SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::bigint AS count
       FROM "PatientProfile"
       WHERE "createdAt" >= ${range.gte}
@@ -382,7 +422,9 @@ export class GlobalStatsService {
     range: ResolvedRange,
     orgId: string | null,
   ): Promise<TrendPoint[]> {
-    const rows = await this.prisma.$queryRaw<Array<{ day: Date; count: bigint }>>`
+    const rows = await this.prisma.$queryRaw<
+      Array<{ day: Date; count: bigint }>
+    >`
       SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::bigint AS count
       FROM "SystemLog"
       WHERE action = ${action}
@@ -402,7 +444,9 @@ export class GlobalStatsService {
     range: ResolvedRange,
     orgId: string | null,
   ): Promise<TrendPoint[]> {
-    const rows = await this.prisma.$queryRaw<Array<{ day: Date; count: bigint }>>`
+    const rows = await this.prisma.$queryRaw<
+      Array<{ day: Date; count: bigint }>
+    >`
       SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::bigint AS count
       FROM "ClinicalRecord"
       WHERE status = 'SIGNED'

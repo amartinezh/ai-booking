@@ -21,7 +21,11 @@ import {
 // Modelos de respaldo, ordenados por disponibilidad: cuando el modelo
 // configurado por la organización devuelve 503 (saturado) o 404 (retirado),
 // se reintenta con el siguiente. Se priorizan los más livianos/disponibles.
-const FALLBACK_MODELS = ['gemini-2.0-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-flash'];
+const FALLBACK_MODELS = [
+  'gemini-2.0-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+];
 
 export class GeminiProvider implements LLMProvider {
   readonly name = 'GEMINI' as const;
@@ -68,7 +72,9 @@ export class GeminiProvider implements LLMProvider {
     throw lastErr;
   }
 
-  async generateClinicalRecord(audio: AudioInput): Promise<ClinicalRecordDraft> {
+  async generateClinicalRecord(
+    audio: AudioInput,
+  ): Promise<ClinicalRecordDraft> {
     const result = await this.withModelFallback((modelName) => {
       const model = this.client.getGenerativeModel({
         model: modelName,
@@ -105,7 +111,10 @@ export class GeminiProvider implements LLMProvider {
           'Si el audio es muy corto o poco claro, marca "ininteligible": true en vez de inventar palabras.',
       );
       parts.push({
-        inlineData: { data: input.audio.base64, mimeType: input.audio.mimeType },
+        inlineData: {
+          data: input.audio.base64,
+          mimeType: input.audio.mimeType,
+        },
       });
     }
 

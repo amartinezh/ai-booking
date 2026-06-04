@@ -24,7 +24,9 @@ export class WhatsappCredentialsService {
   ) {}
 
   /** Resuelve credenciales completas (con token en claro) por organizationId. */
-  async forOrg(organizationId: string): Promise<ResolvedWhatsappCredentials | null> {
+  async forOrg(
+    organizationId: string,
+  ): Promise<ResolvedWhatsappCredentials | null> {
     const row = await this.prisma.whatsappAccountConfig.findUnique({
       where: { organizationId },
     });
@@ -51,7 +53,9 @@ export class WhatsappCredentialsService {
    * de verificación de Meta. Devuelve sólo el organizationId — el GET no
    * necesita las credenciales completas.
    */
-  async organizationIdByVerifyToken(verifyToken: string): Promise<string | null> {
+  async organizationIdByVerifyToken(
+    verifyToken: string,
+  ): Promise<string | null> {
     if (!verifyToken) return null;
     const row = await this.prisma.whatsappAccountConfig.findUnique({
       where: { verifyToken },

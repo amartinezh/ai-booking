@@ -157,7 +157,9 @@ export class MonitorService {
 
   // ── helpers ──────────────────────────────────────────────────────────────────
 
-  private buildWhere(filters: IncidentFilters): Prisma.ServiceIncidentWhereInput {
+  private buildWhere(
+    filters: IncidentFilters,
+  ): Prisma.ServiceIncidentWhereInput {
     const where: Prisma.ServiceIncidentWhereInput = {};
 
     if (filters.from || filters.to) {

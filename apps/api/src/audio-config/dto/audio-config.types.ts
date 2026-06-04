@@ -1,4 +1,8 @@
-import { AudioEncoding, VoiceProvider, VoiceGender } from '@antigravity/database';
+import {
+  AudioEncoding,
+  VoiceProvider,
+  VoiceGender,
+} from '@antigravity/database';
 
 /**
  * Contrato JSON del módulo de Configuración de Voz/Audio (TTS) por organización.
@@ -55,13 +59,48 @@ export interface VoiceOption {
 }
 
 export const ALLOWED_VOICES: readonly VoiceOption[] = [
-  { id: 'es-US-Neural2-A', label: 'A — Femenina (Neural2)', gender: 'FEMENINA', category: 'Neural2' },
-  { id: 'es-US-Neural2-B', label: 'B — Masculina (Neural2)', gender: 'MASCULINA', category: 'Neural2' },
-  { id: 'es-US-Neural2-C', label: 'C — Masculina (Neural2)', gender: 'MASCULINA', category: 'Neural2' },
-  { id: 'es-US-Wavenet-A', label: 'A — Femenina (WaveNet)', gender: 'FEMENINA', category: 'WaveNet' },
-  { id: 'es-US-Wavenet-B', label: 'B — Masculina (WaveNet)', gender: 'MASCULINA', category: 'WaveNet' },
-  { id: 'es-US-Wavenet-C', label: 'C — Masculina (WaveNet)', gender: 'MASCULINA', category: 'WaveNet' },
-  { id: 'es-US-Studio-B', label: 'B — Masculina expresiva (Studio)', gender: 'MASCULINA', category: 'Studio' },
+  {
+    id: 'es-US-Neural2-A',
+    label: 'A — Femenina (Neural2)',
+    gender: 'FEMENINA',
+    category: 'Neural2',
+  },
+  {
+    id: 'es-US-Neural2-B',
+    label: 'B — Masculina (Neural2)',
+    gender: 'MASCULINA',
+    category: 'Neural2',
+  },
+  {
+    id: 'es-US-Neural2-C',
+    label: 'C — Masculina (Neural2)',
+    gender: 'MASCULINA',
+    category: 'Neural2',
+  },
+  {
+    id: 'es-US-Wavenet-A',
+    label: 'A — Femenina (WaveNet)',
+    gender: 'FEMENINA',
+    category: 'WaveNet',
+  },
+  {
+    id: 'es-US-Wavenet-B',
+    label: 'B — Masculina (WaveNet)',
+    gender: 'MASCULINA',
+    category: 'WaveNet',
+  },
+  {
+    id: 'es-US-Wavenet-C',
+    label: 'C — Masculina (WaveNet)',
+    gender: 'MASCULINA',
+    category: 'WaveNet',
+  },
+  {
+    id: 'es-US-Studio-B',
+    label: 'B — Masculina expresiva (Studio)',
+    gender: 'MASCULINA',
+    category: 'Studio',
+  },
 ] as const;
 
 export const ALLOWED_VOICE_IDS: ReadonlySet<string> = new Set(

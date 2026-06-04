@@ -36,12 +36,18 @@ export class OrganizationSettingsService {
     return (s?.communicationStyle as CommStyle) || DEFAULT_STYLE;
   }
 
-  async getSettings(
-    organizationId: string,
-  ): Promise<{ botName: string; maxRetriesPerStep: number; communicationStyle: CommStyle }> {
+  async getSettings(organizationId: string): Promise<{
+    botName: string;
+    maxRetriesPerStep: number;
+    communicationStyle: CommStyle;
+  }> {
     const s = await this.prisma.organizationSettings.findUnique({
       where: { organizationId },
-      select: { botName: true, maxRetriesPerStep: true, communicationStyle: true },
+      select: {
+        botName: true,
+        maxRetriesPerStep: true,
+        communicationStyle: true,
+      },
     });
     return {
       botName: s?.botName || DEFAULT_BOT_NAME,
@@ -55,7 +61,11 @@ export class OrganizationSettingsService {
 
   async upsertSettings(
     organizationId: string,
-    data: { botName?: string; maxRetriesPerStep?: number; communicationStyle?: CommStyle },
+    data: {
+      botName?: string;
+      maxRetriesPerStep?: number;
+      communicationStyle?: CommStyle;
+    },
   ): Promise<void> {
     await this.prisma.organizationSettings.upsert({
       where: { organizationId },

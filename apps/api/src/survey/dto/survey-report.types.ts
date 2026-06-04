@@ -13,7 +13,9 @@ export enum UserMood {
 }
 
 /** Deriva el ánimo a partir del rating. null si aún no hay calificación. */
-export function computeUserMood(rating: number | null | undefined): UserMood | null {
+export function computeUserMood(
+  rating: number | null | undefined,
+): UserMood | null {
   if (rating == null) return null;
   if (rating <= 2) return UserMood.NEGATIVE;
   if (rating === 3) return UserMood.NEUTRAL;
@@ -21,9 +23,7 @@ export function computeUserMood(rating: number | null | undefined): UserMood | n
 }
 
 /** Traduce un filtro por ánimo a un rango de rating para el WHERE de Prisma. */
-export function moodToRatingWhere(
-  mood: UserMood,
-): Prisma.IntNullableFilter {
+export function moodToRatingWhere(mood: UserMood): Prisma.IntNullableFilter {
   switch (mood) {
     case UserMood.NEGATIVE:
       return { gte: 1, lte: 2 };

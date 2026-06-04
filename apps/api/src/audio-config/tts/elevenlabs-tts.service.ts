@@ -59,7 +59,10 @@ export class ElevenLabsTtsService implements TtsProvider<ElevenLabsTtsParams> {
         },
         // Defensa: ElevenLabs rechaza (400 invalid_unicode) cualquier surrogate
         // suelto. Lo quitamos aquí también, independiente de cómo limpie el caller.
-        body: JSON.stringify({ text: stripLoneSurrogates(text), model_id: ELEVENLABS_MODEL_ID }),
+        body: JSON.stringify({
+          text: stripLoneSurrogates(text),
+          model_id: ELEVENLABS_MODEL_ID,
+        }),
         signal: controller.signal,
       });
       const rtt_ms = Date.now() - startedAt;

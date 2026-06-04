@@ -126,10 +126,7 @@ export class LlmFactoryService {
     }
   }
 
-  private build(
-    provider: LlmProvider,
-    config: DecryptedAiConfig,
-  ): LLMProvider {
+  private build(provider: LlmProvider, config: DecryptedAiConfig): LLMProvider {
     switch (provider) {
       case 'GEMINI':
         return new GeminiProvider(config);
@@ -139,9 +136,7 @@ export class LlmFactoryService {
         return new ClaudeProvider(config);
       case 'NONE':
       default:
-        throw new NotFoundException(
-          `Proveedor LLM no soportado: ${provider}`,
-        );
+        throw new NotFoundException(`Proveedor LLM no soportado: ${provider}`);
     }
   }
 }

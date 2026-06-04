@@ -83,7 +83,7 @@ export class IntegrationsService {
         error_code: 'NO_PROVIDER',
         error_message:
           'El proveedor configurado no se pudo instanciar (credenciales corruptas o faltantes).',
-        provider: config.activeProvider as 'GEMINI' | 'CHATGPT' | 'CLAUDE',
+        provider: config.activeProvider,
         model,
       };
     }
@@ -359,9 +359,7 @@ export class IntegrationsService {
  */
 export function sanitizeBearerToken(
   rawToken: string,
-):
-  | { ok: true; token: string }
-  | { ok: false; reason: string } {
+): { ok: true; token: string } | { ok: false; reason: string } {
   if (!rawToken) return { ok: false, reason: 'token vacío' };
 
   const stripped = rawToken.trim().replace(/\s+/g, '');

@@ -7,10 +7,7 @@ import {
   PROVIDER_MODELS,
   decodeMultiProviderBlob,
 } from './interfaces/llm-provider.interface';
-import type {
-  PublicAiConfig,
-  SaveAiConfigInput,
-} from './dto/ai-config.types';
+import type { PublicAiConfig, SaveAiConfigInput } from './dto/ai-config.types';
 
 @Injectable()
 export class AiConfigService {
@@ -36,9 +33,14 @@ export class AiConfigService {
     }
 
     // Lee el mapa multi-proveedor (compat con la forma vieja single-provider).
-    const byProvider = this.readByProvider(row.encryptedApiConfig, row.activeProvider);
+    const byProvider = this.readByProvider(
+      row.encryptedApiConfig,
+      row.activeProvider,
+    );
     const activeCfg =
-      row.activeProvider !== 'NONE' ? byProvider[row.activeProvider] : undefined;
+      row.activeProvider !== 'NONE'
+        ? byProvider[row.activeProvider]
+        : undefined;
 
     return {
       activeProvider: row.activeProvider,
@@ -73,7 +75,7 @@ export class AiConfigService {
 
     // Validar modelo contra catálogo permitido por proveedor.
     const allowedModels: readonly string[] =
-      PROVIDER_MODELS[activeProvider as keyof typeof PROVIDER_MODELS] ?? [];
+      PROVIDER_MODELS[activeProvider] ?? [];
     const model =
       input.model && allowedModels.includes(input.model)
         ? input.model
