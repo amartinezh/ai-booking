@@ -461,6 +461,23 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     });
   });
 
+  // ── Números de documento por voz (agrupación para TTS) ──
+  describe('groupDigitsForSpeech: lee la cédula por bloques', () => {
+    const group = (d: string) =>
+      (service as any).groupDigitsForSpeech(d) as string;
+
+    it('agrupa de a 3 desde la derecha', () => {
+      expect(group('123456789')).toBe('123 456 789');
+      expect(group('1234567')).toBe('1 234 567');
+      expect(group('12345678')).toBe('12 345 678');
+    });
+
+    it('un bloque exacto no añade espacios', () => {
+      expect(group('123')).toBe('123');
+      expect(group('123456')).toBe('123 456');
+    });
+  });
+
   // ── PRIMER TURNO: siempre clasifica con el LLM (entrada abierta) ──
   it('en IDLE invoca al LLM para clasificar el primer mensaje libre', async () => {
     provider.extractSchedulingIntent.mockResolvedValueOnce(

@@ -1104,9 +1104,29 @@ export class ChatbotService implements OnModuleInit {
       // español natural como "a mañana" o "para mí".
       .replace(/\b([ap])\.\s*m\.?/gi, '$1 m') // "a. m." / "p.m." → "a m" / "p m"
       .replace(/(\d)\s*([ap])\s*m\b/gi, '$1 $2 m') // "5 30pm" → "5 30 p m"
+      // ── Números de documento para voz ───────────────────────────
+      // El TTS lee "123456789" como una cifra gigante ("ciento veintitrés
+      // millones...") imposible de seguir para confirmar la cédula.
+      // Agrupamos en bloques de 3 desde la derecha para que se lean por
+      // separado: "123456789" → "123 456 789", "1234567" → "1 234 567".
+      // Solo runs de 6+ dígitos (cédulas/NITs); así no tocamos años (2026)
+      // ni las horas ya normalizadas ("5 30").
+      .replace(/\b\d{6,15}\b/g, (m) => this.groupDigitsForSpeech(m))
       .replace(/\s+/g, ' ')
       .trim();
     return this.ttsFactory.synthesize(organizationId, cleanText);
+  }
+
+  /**
+   * Agrupa una cadena de dígitos en bloques de 3 desde la derecha, separados
+   * por espacio, para que el TTS los lea por separado (claridad en cédulas):
+   *   "123456789" → "123 456 789"
+   *   "1234567"   → "1 234 567"
+   * Es la agrupación clásica de miles; el espacio fuerza al motor a leer cada
+   * bloque como un número independiente en vez de una sola cifra gigante.
+   */
+  private groupDigitsForSpeech(digits: string): string {
+    return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   }
 
   private async uploadToWhatsApp(
