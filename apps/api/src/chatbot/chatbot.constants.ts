@@ -290,6 +290,8 @@ const FORMAL = {
     especialidad?: string | null;
     eps?: string | null;
     fecha?: string | null;
+    botName?: string;
+    clinicaName?: string;
   }) => {
     const detalles: string[] = [];
     if (p.nombre) detalles.push(`👤 *Paciente:* ${p.nombre}`);
@@ -298,10 +300,18 @@ const FORMAL = {
     if (p.eps) detalles.push(`💳 *EPS:* ${p.eps}`);
     if (p.fecha) detalles.push(`📅 *Fecha preferida:* ${p.fecha}`);
     const saludo = p.nombre ? `Hola, ${p.nombre}.` : 'Buen día.';
+    // Saludo + presentación como asistente de IA. Esta es la primera respuesta
+    // que recibe el paciente cuando abre dando sus datos (nombre/cédula/EPS),
+    // así que aquí debe identificarse explícitamente como asistente virtual con
+    // IA (sentTurn1Ack suprime el saludo del menú posterior → sin doble saludo).
+    const nombreBot = p.botName || BOT_NAME;
+    const presentacion = p.clinicaName
+      ? `Le saluda *${nombreBot}*, asistente virtual con inteligencia artificial de *${p.clinicaName}*.`
+      : `Le saluda *${nombreBot}*, asistente virtual con inteligencia artificial.`;
     const bloque = detalles.length
       ? `\n\nEntendido, ya tomé nota de:\n${detalles.join('\n')}`
       : '';
-    return `${saludo} Con gusto le ayudo a agendar su cita.${bloque}`;
+    return `${saludo} ${presentacion} Con gusto le ayudo a agendar su cita.${bloque}`;
   },
 
   // Re-presentación cuando el paciente confirma que SÍ quiere agendar
@@ -808,6 +818,8 @@ const INFORMAL = {
     especialidad?: string | null;
     eps?: string | null;
     fecha?: string | null;
+    botName?: string;
+    clinicaName?: string;
   }) => {
     const detalles: string[] = [];
     if (p.nombre) detalles.push(`👤 *Paciente:* ${p.nombre}`);
@@ -816,10 +828,18 @@ const INFORMAL = {
     if (p.eps) detalles.push(`💳 *EPS:* ${p.eps}`);
     if (p.fecha) detalles.push(`📅 *Fecha que pediste:* ${p.fecha}`);
     const saludo = p.nombre ? `¡Hola, ${p.nombre}!` : '¡Hola!';
+    // Saludo + presentación como asistente de IA. Es la primera respuesta que
+    // recibe el paciente cuando abre dando sus datos (nombre/cédula/EPS), así
+    // que aquí debe identificarse como asistente virtual con IA (sentTurn1Ack
+    // suprime el saludo del menú posterior → no hay doble saludo).
+    const nombreBot = p.botName || BOT_NAME;
+    const presentacion = p.clinicaName
+      ? `Soy *${nombreBot}*, tu asistente virtual con inteligencia artificial de *${p.clinicaName}*.`
+      : `Soy *${nombreBot}*, tu asistente virtual con inteligencia artificial.`;
     const bloque = detalles.length
       ? `\n\nListo, ya anoté:\n${detalles.join('\n')}`
       : '';
-    return `${saludo} 👋 De una te ayudo a agendar tu cita.${bloque}`;
+    return `${saludo} 👋 ${presentacion} De una te ayudo a agendar tu cita.${bloque}`;
   },
 
   // Re-presentación cálida cuando el paciente confirma que SÍ quiere agendar

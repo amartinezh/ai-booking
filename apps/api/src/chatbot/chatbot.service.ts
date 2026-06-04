@@ -3317,6 +3317,8 @@ export class ChatbotService implements OnModuleInit {
         especialidad: aiData.especialidad,
         eps: aiData.eps,
         fecha: aiData.fechaSolicitada,
+        botName,
+        clinicaName: orgName,
       });
       await this.smartReply(organizationId, senderId, ack);
       sentTurn1Ack = true;

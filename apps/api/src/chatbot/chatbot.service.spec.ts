@@ -640,12 +640,56 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     const replies = sentMessages();
     // Dos mensajes: el ACK + el menú de servicios.
     expect(replies).toHaveLength(2);
-    // El ACK saluda por nombre.
+    // El ACK saluda por nombre Y se identifica como asistente de IA.
     expect(replies[0]).toContain('Andres');
+    expect(replies[0]).toContain('Geni');
+    expect(replies[0]).toContain('inteligencia artificial');
     // El segundo pregunta por el servicio...
     expect(replies[1]).toContain('servicio');
-    // ...pero NO vuelve a presentar al bot (sin segundo saludo "Soy *Geni*").
-    expect(replies.filter((m) => m.includes('Geni'))).toHaveLength(0);
+    // ...pero NO vuelve a presentar al bot (el bot se presenta UNA sola vez,
+    // en el ACK; el menú posterior no repite el saludo).
+    expect(replies.filter((m) => m.includes('Geni'))).toHaveLength(1);
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // Paridad voz↔texto: si el PRIMER mensaje por VOZ trae datos del
+  // paciente (cédula/EPS), el bot saluda y se identifica como
+  // asistente de IA igual que por texto.
+  // ════════════════════════════════════════════════════════════
+  it('AUDIO: primer turno con datos → saluda y se presenta como asistente de IA', async () => {
+    const makeAudioEvent = () => ({
+      from: SENDER,
+      type: 'audio',
+      audio: { id: 'audio-ack-1' },
+      metadata: { phone_number_id: PHONE_ID },
+    });
+    // Aislamos la descarga del audio de WhatsApp (capa HTTP/credenciales).
+    jest
+      .spyOn(service as any, 'resolveCredentialsForOrg')
+      .mockResolvedValue({ accessToken: 'tok' });
+    jest
+      .spyOn(service as any, 'downloadWhatsAppAudio')
+      .mockResolvedValue(Buffer.from('fake-ogg'));
+    // El LLM transcribe la voz y extrae la cédula y la EPS del paciente.
+    provider.extractSchedulingIntent.mockResolvedValueOnce(
+      extraction({
+        transcript: 'mi cédula es 1088123456 y soy de Sura',
+        intent: 'agendar_cita',
+        cedula: '1088123456',
+        eps: 'Sura',
+      }),
+    );
+
+    await service.processIncomingMessage(makeAudioEvent());
+
+    // El ACK saluda y se presenta como asistente de IA (tras el audio se
+    // envía primero un "lo estoy escuchando..."; ubicamos el ACK por contenido).
+    const ack = sentMessages().find((m) =>
+      m.includes('inteligencia artificial'),
+    );
+    expect(ack).toBeDefined();
+    expect(ack).toContain('Geni');
+    expect(ack).toContain('1088123456');
   });
 
   // ════════════════════════════════════════════════════════════
