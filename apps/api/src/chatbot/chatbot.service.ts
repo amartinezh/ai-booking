@@ -90,6 +90,10 @@ export class ChatbotService implements OnModuleInit {
   private greetingRegex: RegExp = /^(hola)$/i;
   private particularRegex: RegExp = /^(particular)$/i;
   private farewellRegex: RegExp = /^(gracias)$/i;
+  // Cierre/despedida: el paciente quiere TERMINAR la conversación ("chao",
+  // "salir", "no quiero agendar"...). Match EXACTO; se aplica en cualquier
+  // estado y también por voz (sobre la transcripción). Ver [goodbye] en el .txt.
+  private goodbyeRegex: RegExp = /^(chao|adios|adiós|salir)$/i;
   // 🛡️ Guardrail: detecta insultos en cualquier parte del mensaje (no ancla a inicio/fin).
   private insultRegex: RegExp =
     /\b(gonorrea|hijueputa|malparid[oa]|idiota|imb[eé]cil)\b/i;
@@ -213,6 +217,7 @@ export class ChatbotService implements OnModuleInit {
     }
 
     const farewellWords: string[] = [];
+    const goodbyeWords: string[] = [];
     const greetingWords: string[] = [];
     const escapeWords: string[] = [];
     const cancelPhrases: string[] = [];
@@ -227,6 +232,8 @@ export class ChatbotService implements OnModuleInit {
 
       if (line === '[farewell]') {
         currentSection = 'farewell';
+      } else if (line === '[goodbye]') {
+        currentSection = 'goodbye';
       } else if (line === '[greetings]') {
         currentSection = 'greetings';
       } else if (line === '[escape]') {
@@ -241,6 +248,8 @@ export class ChatbotService implements OnModuleInit {
         currentSection = 'insults';
       } else if (currentSection === 'farewell') {
         farewellWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      } else if (currentSection === 'goodbye') {
+        goodbyeWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'greetings') {
         greetingWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'escape') {
@@ -258,6 +267,9 @@ export class ChatbotService implements OnModuleInit {
 
     if (farewellWords.length > 0) {
       this.farewellRegex = new RegExp(`^(${farewellWords.join('|')})$`, 'i');
+    }
+    if (goodbyeWords.length > 0) {
+      this.goodbyeRegex = new RegExp(`^(${goodbyeWords.join('|')})$`, 'i');
     }
     if (greetingWords.length > 0) {
       this.greetingRegex = new RegExp(`^(${greetingWords.join('|')})$`, 'i');
@@ -286,7 +298,7 @@ export class ChatbotService implements OnModuleInit {
     }
 
     this.logger.log(
-      `Patrones listos — farewell: ${farewellWords.length}, greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, modify: ${modifyPhrases.length}, particular: ${particularWords.length}, insults: ${insultWords.length}`,
+      `Patrones listos — farewell: ${farewellWords.length}, goodbye: ${goodbyeWords.length}, greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, modify: ${modifyPhrases.length}, particular: ${particularWords.length}, insults: ${insultWords.length}`,
     );
   }
 
@@ -2662,6 +2674,50 @@ export class ChatbotService implements OnModuleInit {
     }
   }
 
+  /**
+   * ¿El paciente quiere CERRAR la conversación? ("chao", "salir", "no quiero
+   * agendar", "hasta luego"...). Match EXACTO contra el diccionario [goodbye],
+   * previa normalización tolerante: minúsculas, sin signos de puntuación ni
+   * emojis al inicio/fin y colapsando espacios internos. Así "Chao." / "¡Hasta
+   * luego!" / "  no quiero seguir  " coinciden, sin abrir la puerta a falsos
+   * positivos (sigue anclado a ^...$, no es "contiene"). Se aplica tanto a
+   * TEXTO como a la TRANSCRIPCIÓN de un audio → paridad voz↔texto.
+   */
+  private matchesGoodbye(text: string | undefined | null): boolean {
+    if (!text) return false;
+    const normalized = text
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ') // signos, emojis → espacio
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!normalized) return false;
+    return this.goodbyeRegex.test(normalized);
+  }
+
+  /**
+   * Cierre cordial de la conversación: limpia la sesión (estado → IDLE) y
+   * envía una despedida. A diferencia de handleEscape (reinicio: "comencemos
+   * de nuevo"), aquí el paciente NO quiere seguir, así que NO reabrimos el
+   * flujo. Terminal: el caller hace return tras llamar.
+   */
+  private async handleGoodbye(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    currentState: ChatState;
+    MSGS: ReturnType<typeof buildMessages>;
+  }): Promise<void> {
+    const { organizationId, senderId, text, currentState, MSGS } = p;
+    await this.cleanUpSession(organizationId, senderId);
+    const reply = MSGS.despedidaCorta();
+    await this.smartReply(organizationId, senderId, reply);
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: text || '[audio]',
+      botReply: reply,
+      metadata: { step: 'GOODBYE', previousState: currentState },
+    });
+  }
+
   private async processIncomingMessageUnsafe(event: WhatsappInboundEvent) {
     const senderId = event.from || event.sender?.id;
     // Sin remitente no hay nada que procesar ni a quién responder. El guard
@@ -2877,6 +2933,21 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // EARLY RETURN: cierre de la conversación por TEXTO en CUALQUIER estado
+    // ("chao", "salir", "no quiero agendar"...). Determinista (sin LLM) para no
+    // gastar una llamada al extractor en el primer turno. La VOZ se atiende más
+    // abajo, tras adoptar la transcripción (ver bloque [goodbye] post-turno).
+    if (messageType === 'text' && this.matchesGoodbye(text)) {
+      await this.handleGoodbye({
+        organizationId,
+        senderId,
+        text,
+        currentState,
+        MSGS,
+      });
+      return;
+    }
+
     // Detección de intención rápida por patrón (sin LLM). Ver detectQuickIntent.
     const { isQuickCancel, isQuickEscape, isQuickModify } =
       this.detectQuickIntent(text, messageType, currentState);
@@ -2951,6 +3022,26 @@ export class ChatbotService implements OnModuleInit {
     text = turn.text;
 
     this.logger.log(`🧠 LLM extrajo: ${JSON.stringify(aiData)}`);
+
+    // ══════════════════════════════════════════════════════════
+    // 👋 CIERRE DE LA CONVERSACIÓN POR VOZ (diccionario [goodbye])
+    // ──────────────────────────────────────────────────────────
+    // Paridad voz↔texto: el TEXTO ya se atendió en el early-return de arriba;
+    // aquí cubrimos el AUDIO, una vez adoptada la transcripción como `text`.
+    // El paciente quiere TERMINAR ("chao", "no quiero agendar", "hasta luego").
+    // Match EXACTO normalizado → no colisiona con SÍ/NO; aun así excluimos los
+    // pasos de selección por letra por defensa en profundidad. Cierra cordial
+    // (despedidaCorta) y resetea la sesión, sin reabrir el flujo (≠ escape).
+    if (isAudio && !isLetterSelectionStep && this.matchesGoodbye(text)) {
+      await this.handleGoodbye({
+        organizationId,
+        senderId,
+        text,
+        currentState,
+        MSGS,
+      });
+      return;
+    }
 
     // ══════════════════════════════════════════════════════════
     // 🎙️ CÉDULA POR VOZ — NORMALIZACIÓN AGRESIVA DEL STT + SAFEGUARD

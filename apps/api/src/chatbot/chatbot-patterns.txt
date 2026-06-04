@@ -6,8 +6,19 @@
 #   - Líneas que empiezan con '#' son comentarios (ignoradas).
 #   - Líneas en blanco son ignoradas.
 #   - [greetings] → coincidencia EXACTA. Muestran bienvenida directa (sin "Sin problema").
-#   - [escape]    → coincidencia EXACTA (^...$). Muestran "Sin problema. Empezamos de cero."
-#   - [cancel]    → coincidencia de INICIO (^...). Inician flujo de cancelación.
+#   - [farewell]  → coincidencia EXACTA (^...$). Solo en IDLE. Cierre cordial (agradecimiento).
+#   - [goodbye]   → coincidencia EXACTA (^...$). EN CUALQUIER ESTADO y también por VOZ
+#                   (se evalúa sobre la transcripción). El paciente quiere TERMINAR la
+#                   conversación / colgar / "no agendar". Cierra con despedida cordial y
+#                   resetea la sesión a IDLE. Distinto de [escape]: NO reabre el flujo.
+#   - [escape]    → coincidencia EXACTA (^...$). REINICIO: "Sin problema. Empezamos de cero."
+#                   (volver al menú / empezar otra vez), NO un cierre.
+#   - [cancel]    → coincidencia de INICIO (^...). Inician flujo de cancelación DE UNA CITA.
+#
+# Diferencia clave (léase antes de mover palabras entre secciones):
+#   [goodbye] = "me voy / chao / no quiero seguir"  → cierra la conversación.
+#   [escape]  = "reinicia / volvamos a empezar / menú" → reabre el flujo desde cero.
+#   [cancel]  = "cancelar mi cita"                    → anula una cita ya agendada.
 #
 # Nota: Las palabras de [greetings] también deben estar en [escape] para que
 # el sistema las detecte como escape y evite llamar a Gemini.
@@ -27,16 +38,148 @@ gracias
 muchas gracias
 ok gracias
 mil gracias
+muchisimas gracias
+muchísimas gracias
+mil gracias por todo
 perfecto
 excelente
 listo
+listo gracias
 genial
 que bueno
+qué bueno
 muy bien
+muy amable
+muy amable gracias
+mil gracias muy amable
 de acuerdo
 ok perfecto
 todo bien
+todo claro
+quedo claro
 gracias por todo
+gracias por la informacion
+gracias por la información
+gracias por su ayuda
+gracias por tu ayuda
+
+# ----------------------------------------------------------
+# CIERRE / DESPEDIDA (el paciente quiere TERMINAR la conversación)
+# Coincidencia EXACTA (case-insensitive, sin signos de puntuación).
+# Funciona en CUALQUIER estado y también por VOZ (sobre la transcripción).
+# El bot responde con una despedida cordial y resetea la sesión a IDLE.
+# A diferencia de [escape], NO reabre el flujo de agendamiento.
+# IMPORTANTE: no incluir aquí "no" a secas ni letras sueltas — colisionan
+# con los pasos de SÍ/NO y de selección por letra.
+# ----------------------------------------------------------
+[goodbye]
+chao
+chao chao
+chaolin
+chau
+chausito
+adios
+adiós
+adiosito
+adios gracias
+adiós gracias
+gracias chao
+gracias adios
+gracias adiós
+listo chao
+listo gracias chao
+hasta luego
+hasta luego gracias
+hasta pronto
+hasta la proxima
+hasta la próxima
+hasta manana
+hasta mañana
+nos vemos
+nos vemos luego
+nos hablamos
+me despido
+bye
+bye bye
+goodbye
+good bye
+salir
+salirme
+quiero salir
+me quiero salir
+deseo salir
+me retiro
+detener
+detente
+deten
+parar
+pare
+terminar
+quiero terminar
+terminar conversacion
+terminar conversación
+terminar la conversacion
+terminar la conversación
+finalizar
+finalizar conversacion
+finalizar conversación
+finalizar la conversacion
+finalizar la conversación
+cerrar
+cerrar chat
+cerrar conversacion
+cerrar conversación
+eso es todo
+eso seria todo
+eso sería todo
+es todo
+es todo gracias
+eso es todo gracias
+nada mas
+nada más
+nada mas gracias
+nada más gracias
+por ahora nada mas
+por ahora nada más
+por ahora no
+no por ahora
+ya no
+ya no gracias
+ya no quiero
+ya no quiero nada
+ya no necesito
+ya no necesito nada
+no gracias
+no quiero
+no quiero nada
+no quiero agendar
+no quiero la cita
+no quiero cita
+no deseo agendar
+no deseo continuar
+no deseo seguir
+no quiero continuar
+no quiero seguir
+no agendar
+no agendar nada
+mejor no
+mejor no gracias
+mejor luego
+mejor despues
+mejor después
+mejor en otro momento
+sera luego
+será luego
+dejalo asi
+déjalo así
+dejemoslo asi
+dejémoslo así
+dejalo
+olvidalo
+olvídalo
+olvidalo gracias
+no importa
+ya no importa
 
 # ----------------------------------------------------------
 # SALUDOS
@@ -93,9 +236,10 @@ empezar
 comenzar
 
 # ----------------------------------------------------------
-# PALABRAS DE ESCAPE
-# El usuario quiere salir o reiniciar el flujo actual.
-# Se evalúan con coincidencia exacta (case-insensitive).
+# PALABRAS DE ESCAPE (REINICIO — NO cierre)
+# El usuario quiere VOLVER A EMPEZAR el flujo actual (no terminar la
+# conversación: para eso está [goodbye]). Respuesta: "Sin problema,
+# comencemos de nuevo." Se evalúan con coincidencia exacta (case-insensitive).
 # ----------------------------------------------------------
 [escape]
 hola
@@ -139,17 +283,23 @@ alo
 aló
 hello
 hi
-salir
 reiniciar
+reiniciemos
 volver
+volver a empezar
+empezar de nuevo
+empecemos de nuevo
+comencemos de nuevo
 me equivoque
 me equivoqué
 otra cita
 cambiar
-no quiero
-detener
 menu
 menú
+ver menu
+ver menú
+volver al menu
+volver al menú
 inicio
 empezar
 comenzar

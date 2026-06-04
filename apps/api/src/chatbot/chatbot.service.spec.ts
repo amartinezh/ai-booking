@@ -398,6 +398,69 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     });
   });
 
+  // ── Sinónimos de cierre/despedida [goodbye] (chatbot-patterns.txt) ──
+  describe('patrones de cierre (goodbye)', () => {
+    beforeEach(() => {
+      (service as any).loadPatterns();
+    });
+
+    const matches = (t: string) => (service as any).matchesGoodbye(t) as boolean;
+
+    it.each([
+      'chao',
+      'adios',
+      'adiós',
+      'hasta luego',
+      'nos vemos',
+      'bye',
+      'salir',
+      'no quiero agendar',
+      'no agendar',
+      'ya no quiero',
+      'no gracias',
+      'eso es todo',
+      'nada más',
+      'déjalo así',
+      'terminar',
+      'finalizar',
+    ])('reconoce "%s" como cierre', (frase) => {
+      expect(matches(frase)).toBe(true);
+    });
+
+    it('normaliza signos de puntuación, emojis y mayúsculas (paridad voz)', () => {
+      expect(matches('Chao.')).toBe(true);
+      expect(matches('¡Hasta luego!')).toBe(true);
+      expect(matches('  no quiero seguir  ')).toBe(true);
+      expect(matches('Adiós 👋')).toBe(true);
+    });
+
+    it('NO colisiona con respuestas SÍ/NO ni letras de selección', () => {
+      // "no" a secas es una respuesta válida en pasos SÍ/NO → no debe cerrar.
+      expect(matches('no')).toBe(false);
+      expect(matches('si')).toBe(false);
+      expect(matches('sí')).toBe(false);
+      expect(matches('a')).toBe(false);
+      expect(matches('b')).toBe(false);
+    });
+
+    it('NO confunde una solicitud real con un cierre', () => {
+      expect(matches('quiero agendar una cita')).toBe(false);
+      expect(matches('necesito salir temprano del trabajo')).toBe(false);
+    });
+
+    it('cierre ≠ escape: "salir" cierra, no reinicia', () => {
+      // "salir" salió de [escape] y vive en [goodbye] (cierre cordial).
+      expect((service as any).escapeRegex.test('salir')).toBe(false);
+      expect((service as any).goodbyeRegex.test('salir')).toBe(true);
+    });
+
+    it('escape sigue siendo reinicio (no cierre)', () => {
+      expect((service as any).escapeRegex.test('reiniciar')).toBe(true);
+      expect((service as any).escapeRegex.test('menu')).toBe(true);
+      expect(matches('reiniciar')).toBe(false);
+    });
+  });
+
   // ── PRIMER TURNO: siempre clasifica con el LLM (entrada abierta) ──
   it('en IDLE invoca al LLM para clasificar el primer mensaje libre', async () => {
     provider.extractSchedulingIntent.mockResolvedValueOnce(
