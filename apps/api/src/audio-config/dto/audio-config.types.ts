@@ -2,7 +2,7 @@ import {
   AudioEncoding,
   VoiceProvider,
   VoiceGender,
-} from '@antigravity/database';
+} from '@agenia/database';
 
 /**
  * Contrato JSON del módulo de Configuración de Voz/Audio (TTS) por organización.

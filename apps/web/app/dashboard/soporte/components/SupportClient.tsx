@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import type { SupportTicket } from '@antigravity/database';
+import type { SupportTicket } from '@agenia/database';
 import NewTicketModal from './NewTicketModal';
 import TicketCard from './TicketCard';
 

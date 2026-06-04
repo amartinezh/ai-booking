@@ -10,7 +10,7 @@ import {
 import { ClinicalRecordService } from './clinical-records.service';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
-import { Role } from '@antigravity/database';
+import { Role } from '@agenia/database';
 
 @Controller('clinical-records')
 @UseGuards(RolesGuard)

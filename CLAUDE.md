@@ -6,8 +6,8 @@ Convenciones del repo. Lee esto antes de tocar código.
 
 **Regla:** nunca llamar `.toLocaleString` / `.toLocaleDateString` / `.toLocaleTimeString` directamente sobre `Date` para presentación al usuario. Usar siempre los helpers canónicos:
 
-- **API (`apps/api`):** `import { formatAppointmentLong, formatAppointmentCompact, formatDateShort, formatTimeOnly } from '@antigravity/shared'`
-- **WEB (`apps/web`):** `import { ... } from '@/lib/date'` (re-exporta `@antigravity/shared`)
+- **API (`apps/api`):** `import { formatAppointmentLong, formatAppointmentCompact, formatDateShort, formatTimeOnly } from '@agenia/shared'`
+- **WEB (`apps/web`):** `import { ... } from '@/lib/date'` (re-exporta `@agenia/shared`)
 
 Ambos imponen `timeZone: 'America/Bogota'` por defecto. Aceptan `opts.timeZone` para multi-tenant futuro.
 
@@ -20,7 +20,7 @@ Ambos imponen `timeZone: 'America/Bogota'` por defecto. Aceptan `opts.timeZone` 
 ## Workspace y paquetes
 
 - pnpm workspaces. `packages/shared` y `packages/database` se consumen con `workspace:^` / `workspace:*`.
-- Tras cambios en `packages/*`: `pnpm install --workspace-root` para refrescar symlinks; los paquetes con `build` (database, shared) necesitan `pnpm --filter @antigravity/<pkg> build` después de cambios para que apps los vean.
+- Tras cambios en `packages/*`: `pnpm install --workspace-root` para refrescar symlinks; los paquetes con `build` (database, shared) necesitan `pnpm --filter @agenia/<pkg> build` después de cambios para que apps los vean.
 
 ## Tests y build
 

@@ -9,7 +9,7 @@ import {
 import { Roles } from '../common/roles.decorator';
 import { RolesGuard } from '../common/roles.guard';
 import { CurrentTenant } from '../common/current-tenant.decorator';
-import { ResolutionStatus } from '@antigravity/database';
+import { ResolutionStatus } from '@agenia/database';
 import { SurveyService } from './survey.service';
 import {
   DetailedSurveyQuery,

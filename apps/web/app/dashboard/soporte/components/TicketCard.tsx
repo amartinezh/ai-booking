@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { SupportTicket } from '@antigravity/database';
+import type { SupportTicket } from '@agenia/database';
 import StatusBadge from './StatusBadge';
 import { formatAppointmentShort } from '@/lib/date';
 

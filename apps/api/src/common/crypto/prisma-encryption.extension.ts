@@ -1,4 +1,4 @@
-import { Prisma } from '@antigravity/database';
+import { Prisma } from '@agenia/database';
 import * as crypto from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';

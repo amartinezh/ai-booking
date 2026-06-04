@@ -34,12 +34,12 @@ import {
   formatAppointmentLong,
   formatAppointmentCompact,
   parseFechaPreferida,
-} from '@antigravity/shared';
+} from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 import { SurveyService } from '../survey/survey.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
-import { ResolutionStatus } from '@antigravity/database';
+import { ResolutionStatus } from '@agenia/database';
 
 /**
  * Evento entrante del webhook de Meta, ya desempacado por ChatbotController.

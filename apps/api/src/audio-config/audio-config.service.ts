@@ -3,7 +3,7 @@ import {
   AudioEncoding,
   VoiceGender,
   VoiceProvider,
-} from '@antigravity/database';
+} from '@agenia/database';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { GoogleTtsService } from './tts/google-tts.service';

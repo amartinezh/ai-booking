@@ -1,4 +1,4 @@
-import { AudioEncoding, VoiceProvider } from '@antigravity/database';
+import { AudioEncoding, VoiceProvider } from '@agenia/database';
 import { AudioDiagnosisErrorCode } from '../dto/audio-config.types';
 
 /**

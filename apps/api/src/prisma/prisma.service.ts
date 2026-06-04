@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { PrismaClient } from '@antigravity/database';
+import { PrismaClient } from '@agenia/database';
 import { encryptionExtension } from '../common/crypto/prisma-encryption.extension';
 
 @Injectable()

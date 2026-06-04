@@ -5,7 +5,7 @@ import { prisma } from '../../../lib/prisma';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '../../../lib/session';
-import { Role } from '@antigravity/database';
+import { Role } from '@agenia/database';
 
 export async function saveUserAction(formData: FormData) {
     const id = formData.get('id') as string;

@@ -25,7 +25,7 @@ model Organization {
   supportPhone String?
 
   // Zona horaria IANA de la clínica (ej: "America/Bogota", "America/Mexico_City").
-  // Cuando es null, los helpers de `@antigravity/shared` caen al default
+  // Cuando es null, los helpers de `@agenia/shared` caen al default
   // 'America/Bogota'. Permite expandir a clínicas en otras zonas sin tocar
   // código: el chatbot y el web leen este campo y lo pasan como `opts.timeZone`.
   timezone String?

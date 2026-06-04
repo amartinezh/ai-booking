@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Role } from '@antigravity/database';
+import { Role } from '@agenia/database';
 import { ROLES_KEY } from './roles.decorator';
 import * as jwt from 'jsonwebtoken';
 

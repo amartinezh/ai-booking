@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { ResolutionStatus } from '@antigravity/database';
+import { ResolutionStatus } from '@agenia/database';
 import { SurveyService } from './survey.service';
 import { PrismaService } from '../prisma/prisma.service';
 

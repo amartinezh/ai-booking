@@ -4,7 +4,7 @@
  * una ventana de instantes UTC `{ desde, hasta }` lista para filtrar
  * `ScheduleSlot.startTime` en Prisma.
  *
- * Por qué vive en `@antigravity/shared` y no en el chatbot:
+ * Por qué vive en `@agenia/shared` y no en el chatbot:
  * - La conversión "fecha de pared en una zona horaria → instante UTC" es la
  *   misma disciplina que `date-format.ts`: el contenedor corre en UTC y la
  *   clínica piensa en `America/Bogota`. Calcular "mañana" con aritmética naïve

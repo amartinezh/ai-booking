@@ -7,7 +7,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { LlmProvider } from '@antigravity/database';
+import { LlmProvider } from '@agenia/database';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';

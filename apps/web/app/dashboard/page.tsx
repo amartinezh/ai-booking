@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { Prisma } from '@antigravity/database';
+import { Prisma } from '@agenia/database';
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';

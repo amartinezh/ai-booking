@@ -4,7 +4,7 @@ import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';
 // @ts-ignore: Prisma monorepo cache issue
-import { AttendanceStatus } from '@antigravity/database';
+import { AttendanceStatus } from '@agenia/database';
 
 @Controller('appointments')
 @UseGuards(RolesGuard)

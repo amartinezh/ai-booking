@@ -18,7 +18,7 @@ const eslintConfig = defineConfig([
       // Evita reintroducir el bug de "hora UTC" en pantallas/dashboards:
       // cualquier `.toLocale(Date|Time)?String('es-CO', ...)` SIN una
       // propiedad `timeZone` se considera incorrecto. Usar los helpers de
-      // `@/lib/date` (re-exporta `@antigravity/shared`) o, si se necesita
+      // `@/lib/date` (re-exporta `@agenia/shared`) o, si se necesita
       // formato técnico crudo, pasar `timeZone:'America/Bogota'` explícito.
       "no-restricted-syntax": [
         "warn",

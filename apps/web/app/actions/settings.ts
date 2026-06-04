@@ -3,7 +3,7 @@
 import { getSession } from '../../lib/session';
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
-import { CommunicationStyle } from '@antigravity/database';
+import { CommunicationStyle } from '@agenia/database';
 
 const DEFAULT_BOT_NAME = 'AgenIA';
 

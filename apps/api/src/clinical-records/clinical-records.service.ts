@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as crypto from 'crypto';
-import { RecordStatus } from '@antigravity/database';
+import { RecordStatus } from '@agenia/database';
 
 @Injectable()
 export class ClinicalRecordService {

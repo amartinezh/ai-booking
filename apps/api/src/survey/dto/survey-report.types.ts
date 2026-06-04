@@ -1,4 +1,4 @@
-import { Prisma, ResolutionStatus } from '@antigravity/database';
+import { Prisma, ResolutionStatus } from '@agenia/database';
 
 // ───────────────────────────────────────────────────────────────
 // 😀 CLASIFICACIÓN DE ÁNIMO (userMood) DERIVADA DE LA CALIFICACIÓN

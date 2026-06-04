@@ -2,7 +2,7 @@
 
 import { getSession } from '@/lib/session';
 import { prisma } from '@/lib/prisma';
-import { LogLevel } from '@antigravity/database';
+import { LogLevel } from '@agenia/database';
 
 export type SystemLogLevel = 'EVENT' | 'WARNING' | 'ERROR';
 

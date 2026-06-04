@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma } from '@antigravity/database';
+import { Prisma } from '@agenia/database';
 
 @Injectable()
 export class AppointmentsService {

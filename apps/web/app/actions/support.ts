@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getSession } from '@/lib/session';
-import { SupportTicketStatus } from '@antigravity/database';
+import { SupportTicketStatus } from '@agenia/database';
 
 const createSchema = z.object({
     title: z.string().min(5, 'El título debe tener al menos 5 caracteres').max(140, 'Máximo 140 caracteres'),

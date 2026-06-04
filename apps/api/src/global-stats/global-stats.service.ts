@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@antigravity/database';
+import { Prisma } from '@agenia/database';
 import { PrismaService } from '../prisma/prisma.service';
 
 // ══════════════════════════════════════════════════════════════

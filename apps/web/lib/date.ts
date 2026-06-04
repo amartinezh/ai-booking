@@ -1,7 +1,7 @@
 /**
  * Wrapper de presentación de fechas para el frontend (Next.js).
  *
- * Re-exporta los helpers canónicos de `@antigravity/shared` para que el código
+ * Re-exporta los helpers canónicos de `@agenia/shared` para que el código
  * del dashboard nunca llame `toLocale*` directamente y termine usando la TZ
  * del navegador (variable) en vez de la de la organización (estable).
  *
@@ -17,5 +17,5 @@ export {
   formatDateOnly,
   formatTimeOnly,
   formatDateShort,
-} from '@antigravity/shared';
-export type { FormatOptions } from '@antigravity/shared';
+} from '@agenia/shared';
+export type { FormatOptions } from '@agenia/shared';

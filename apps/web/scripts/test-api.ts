@@ -1,4 +1,4 @@
-import { PrismaClient } from '@antigravity/database';
+import { PrismaClient } from '@agenia/database';
 import { SignJWT } from 'jose';
 
 const prisma = new PrismaClient();

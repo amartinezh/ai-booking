@@ -1,4 +1,4 @@
-import { ResolutionStatus } from '@antigravity/database';
+import { ResolutionStatus } from '@agenia/database';
 
 // Datos que el ChatbotService entrega al generar el token de encuesta.
 export interface GenerateSurveyInput {

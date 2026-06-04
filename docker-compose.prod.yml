@@ -34,7 +34,7 @@ services:
       - REDIS_PORT=6379
       # Fija la zona horaria del proceso. Red de seguridad para cualquier
       # `new Date()` o `toLocale*` que se nos olvide pasar `timeZone` explícito.
-      # Los helpers en @antigravity/shared YA pasan timeZone:'America/Bogota'
+      # Los helpers en @agenia/shared YA pasan timeZone:'America/Bogota'
       # de forma explícita; esto solo cubre código futuro/legacy.
       - TZ=America/Bogota
     depends_on:

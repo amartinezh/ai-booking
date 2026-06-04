@@ -9,8 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@antigravity/database": "workspace:*",
-    "@antigravity/shared": "workspace:*",
+    "@agenia/database": "workspace:*",
+    "@agenia/shared": "workspace:*",
     "@hookform/resolvers": "^5.2.2",
     "bcryptjs": "^3.0.3",
     "date-fns": "^4.1.0",

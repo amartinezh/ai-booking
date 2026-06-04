@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'crypto';
-import { Prisma } from '@antigravity/database';
+import { Prisma } from '@agenia/database';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   AuditActor,

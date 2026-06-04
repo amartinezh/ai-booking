@@ -1,4 +1,4 @@
-import { LlmProvider } from '@antigravity/database';
+import { LlmProvider } from '@agenia/database';
 
 /**
  * Payload de entrada para `POST /ai-config`.

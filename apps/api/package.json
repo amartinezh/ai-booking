@@ -20,8 +20,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
-    "@antigravity/database": "workspace:^",
-    "@antigravity/shared": "workspace:^",
+    "@agenia/database": "workspace:^",
+    "@agenia/shared": "workspace:^",
     "@google-cloud/text-to-speech": "^6.4.0",
     "@google/generative-ai": "^0.24.1",
     "@nestjs/axios": "^4.0.1",

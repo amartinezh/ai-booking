@@ -1,4 +1,4 @@
-import { SupportTicketStatus } from '@antigravity/database';
+import { SupportTicketStatus } from '@agenia/database';
 import { formatAppointmentShort } from '@/lib/date';
 
 const fmt = (d: Date | string) => formatAppointmentShort(d);

@@ -20,10 +20,10 @@ importers:
 
   apps/api:
     dependencies:
-      '@antigravity/database':
+      '@agenia/database':
         specifier: workspace:^
         version: link:../../packages/database
-      '@antigravity/shared':
+      '@agenia/shared':
         specifier: workspace:^
         version: link:../../packages/shared
       '@google-cloud/text-to-speech':
@@ -153,10 +153,10 @@ importers:
 
   apps/web:
     dependencies:
-      '@antigravity/database':
+      '@agenia/database':
         specifier: workspace:*
         version: link:../../packages/database
-      '@antigravity/shared':
+      '@agenia/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@hookform/resolvers':

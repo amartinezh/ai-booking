@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, ServiceIncident } from '@antigravity/database';
+import { Prisma, ServiceIncident } from '@agenia/database';
 import { PrismaService } from '../prisma/prisma.service';
 import { MonitorCheckers } from './monitor.checkers';
 import { ACTIVE_SERVICES, SERVICES_CONFIG } from './services.config';

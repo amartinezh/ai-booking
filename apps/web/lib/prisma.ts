@@ -1,4 +1,4 @@
-import { PrismaClient } from '@antigravity/database';
+import { PrismaClient } from '@agenia/database';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 
