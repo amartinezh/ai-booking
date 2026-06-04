@@ -4486,6 +4486,31 @@ export class ChatbotService implements OnModuleInit {
           where: { id: slotIdFinal },
           include: { doctor: true, service: true },
         });
+        const epsNameFinal = epsIdFinal
+          ? (await this.prisma.eps.findUnique({ where: { id: epsIdFinal } }))
+              ?.name
+          : undefined;
+
+        // En flujo de VOZ el paciente solo escuchó la confirmación; le dejamos
+        // un resumen escrito como respaldo. `sendWhatsAppMessage` directo (no
+        // `smartReply`) para garantizar texto y no re-sintetizar a audio. Solo
+        // voz: el flujo de texto ya mostró estos datos antes de confirmar.
+        const isVoiceFlow =
+          (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
+          'true';
+        if (isVoiceFlow) {
+          await this.sendWhatsAppMessage(
+            senderId,
+            MSGS.resumenCitaConfirmadaTexto(
+              nombreFinal || 'Paciente',
+              cedulaFinal,
+              epsNameFinal || PARTICULAR_EPS_NAME,
+              slotInfo?.service?.name || specFinal,
+              fechaFormateada,
+            ),
+          );
+        }
+
         await this.interactionLog.logBookingConfirmed({
           whatsappId: senderId,
           organizationId: organizationId,
@@ -4494,10 +4519,7 @@ export class ChatbotService implements OnModuleInit {
           serviceName: slotInfo?.service?.name || specFinal,
           doctorName: slotInfo?.doctor?.fullName || 'desconocido',
           slotDate: new Date(fechaVistaFinal),
-          epsName: epsIdFinal
-            ? (await this.prisma.eps.findUnique({ where: { id: epsIdFinal } }))
-                ?.name
-            : undefined,
+          epsName: epsNameFinal,
           userMessage: text,
           botReply: reply,
         });
@@ -6093,6 +6115,25 @@ export class ChatbotService implements OnModuleInit {
           fechaFormateada,
         );
         await this.smartReply(organizationId, senderId, reply);
+
+        // En flujo de VOZ el paciente solo escuchó la confirmación; le dejamos
+        // un resumen escrito como respaldo. `sendWhatsAppMessage` directo (no
+        // `smartReply`) para garantizar texto y no re-sintetizar a audio.
+        const isVoiceFlow =
+          (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
+          'true';
+        if (isVoiceFlow && slot && patient) {
+          await this.sendWhatsAppMessage(
+            senderId,
+            MSGS.resumenCitaConfirmadaTexto(
+              patient.fullName || 'Paciente',
+              patient.cedula,
+              patient.eps?.name || PARTICULAR_EPS_NAME,
+              slot.service.name,
+              fechaFormateada,
+            ),
+          );
+        }
 
         // 📝 Auditoría: cita agendada desde waitlist
         if (slot && patient) {

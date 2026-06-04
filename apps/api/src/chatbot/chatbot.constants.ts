@@ -377,6 +377,21 @@ const FORMAL = {
         `Por favor sea puntual: llegue *15 minutos antes* y traiga su *documento*. 🪪\n\nQue tenga un excelente día.`,
     ]),
 
+  // Resumen de texto que se envía DESPUÉS de confirmar (solo en flujo de voz):
+  // el paciente escuchó el audio de confirmación pero no vio los datos por
+  // escrito, así que se los dejamos como respaldo. Sin SÍ/NO ni consentimiento
+  // (ese paso ya ocurrió). Una sola versión (no `pick`): es un comprobante, no
+  // conversación.
+  resumenCitaConfirmadaTexto: (
+    nombre: string,
+    cedula: string,
+    eps: string,
+    especialidad: string,
+    fecha: string,
+  ) =>
+    `📋 *Resumen de su cita*\n\n` +
+    `👤 *Paciente:* ${nombre}\n🪪 *Cédula:* ${cedula}\n💳 *EPS:* ${eps}\n🏥 *Servicio:* ${especialidad}\n📅 *Fecha y hora:* ${fecha}`,
+
   citaNoConfirmada: () =>
     pick([
       `Entendido, cancelé la solicitud.\n\nCuando quiera intentarlo de nuevo, escríbame *"Hola"* y con gusto le ayudo.`,
@@ -922,6 +937,20 @@ const INFORMAL = {
       `¡Hecho! 🌟 Tu cita en *${clinicaName}* quedó agendada:\n📅 _${fecha}_\n\nRecuerda llegar *15 min antes* con tu *cédula*. 🪪 ¡Gracias por confiar en nosotros! 💚`,
       `¡Quedó lista! 🎊 Tienes cita confirmada en *${clinicaName}*:\n📅 _${fecha}_\n\nPor favor sé puntual: llega *15 min antes* y trae tu *documento*. 🪪 ¡Hasta pronto! 👋`,
     ]),
+
+  // Resumen de texto que se envía DESPUÉS de confirmar (solo en flujo de voz):
+  // el paciente escuchó el audio pero no vio los datos por escrito, así que se
+  // los dejamos como respaldo. Sin SÍ/NO ni consentimiento (ya ocurrió). Una
+  // sola versión (no `pick`): es un comprobante, no conversación.
+  resumenCitaConfirmadaTexto: (
+    nombre: string,
+    cedula: string,
+    eps: string,
+    especialidad: string,
+    fecha: string,
+  ) =>
+    `📋 *Resumen de tu cita*\n\n` +
+    `👤 *Paciente:* ${nombre}\n🪪 *Cédula:* ${cedula}\n💳 *EPS:* ${eps}\n🏥 *Servicio:* ${especialidad}\n📅 *Fecha y hora:* ${fecha}`,
 
   citaNoConfirmada: () =>
     pick([
