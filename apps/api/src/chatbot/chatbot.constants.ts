@@ -214,6 +214,28 @@ const FORMAL = {
       `Estos son los horarios disponibles con ${epsName}. Se los dejo en el mensaje de texto; respóndame con la letra de la opción que más le acomode.`,
     ]),
 
+  // Cupos filtrados por la fecha que pidió el paciente ("mañana", "el lunes"...).
+  cuposParaFecha: (epsName: string, fechaLabel: string, lineas: string) =>
+    pick([
+      `Para *${fechaLabel}* con *${epsName}* tengo estos horarios:\n\n${lineas}\n` +
+        `_Responda con la letra del horario que más le acomode, por favor._`,
+      `Revisé la agenda para *${fechaLabel}* con *${epsName}* y esto es lo que encontré:\n\n${lineas}\n` +
+        `_Indíqueme con la letra cuál le sirve mejor._`,
+    ]),
+
+  // Fallback suave: no hay cupos en la fecha pedida, pero sí los más próximos.
+  sinCuposEsaFechaProximos: (
+    fechaLabel: string,
+    epsName: string,
+    lineas: string,
+  ) =>
+    pick([
+      `Para *${fechaLabel}* no encontré cupos disponibles, pero estos son los más próximos con *${epsName}*:\n\n${lineas}\n` +
+        `_Si alguno le sirve, respóndame con la letra._`,
+      `Por el momento no tengo espacios para *${fechaLabel}*. Le comparto los horarios más cercanos con *${epsName}*:\n\n${lineas}\n` +
+        `_Responda con la letra del que prefiera, por favor._`,
+    ]),
+
   preguntaWaitlist: (servicio: string, eps: string) =>
     pick([
       `Revisé la agenda para *${servicio}* con *${eps}* y por el momento no hay cupos disponibles.\n\n` +
@@ -759,6 +781,28 @@ const INFORMAL = {
     pick([
       `A continuación te presento las opciones que encontré con ${epsName}. Míralas en el mensaje de texto y respóndeme con la letra del horario que prefieras.`,
       `Estos son los horarios que tengo con ${epsName}. Te los dejo en el mensaje de texto; respóndeme con la letra de la opción que más te sirva.`,
+    ]),
+
+  // Cupos filtrados por la fecha que pidió el paciente ("mañana", "el lunes"...).
+  cuposParaFecha: (epsName: string, fechaLabel: string, lineas: string) =>
+    pick([
+      `¡Mira! Para *${fechaLabel}* con *${epsName}* tengo estos horarios:\n\n${lineas}\n` +
+        `_Cuéntame con cuál te quedas — me respondes con la letra._ ✍️`,
+      `Para *${fechaLabel}* con *${epsName}* encontré esto:\n\n${lineas}\n` +
+        `_Dime cuál te sirve mejor, mándame la letra._ 😊`,
+    ]),
+
+  // Fallback suave: no hay cupos en la fecha pedida, pero sí los más próximos.
+  sinCuposEsaFechaProximos: (
+    fechaLabel: string,
+    epsName: string,
+    lineas: string,
+  ) =>
+    pick([
+      `Para *${fechaLabel}* no me quedaron cupos. 😔 Pero mira, estos son los más próximos con *${epsName}*:\n\n${lineas}\n` +
+        `_Si alguno te sirve, mándame la letra._ ✍️`,
+      `Uy, para *${fechaLabel}* ya no tengo espacios. 🙏 Te dejo los más cercanos con *${epsName}*:\n\n${lineas}\n` +
+        `_Dime con la letra cuál prefieres._ 😊`,
     ]),
 
   preguntaWaitlist: (servicio: string, eps: string) =>

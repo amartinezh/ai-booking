@@ -404,7 +404,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       (service as any).loadPatterns();
     });
 
-    const matches = (t: string) => (service as any).matchesGoodbye(t) as boolean;
+    const matches = (t: string) =>
+      (service as any).matchesGoodbye(t) as boolean;
 
     it.each([
       'chao',
@@ -1140,6 +1141,152 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
         ChatState.AWAITING_WAITLIST_OPTIN,
       );
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // PREFERENCIA DE FECHA ("quiero una cita para mañana")
+  // El paciente expresa una fecha en lenguaje natural; el sistema filtra los
+  // cupos a esa ventana. Si no hay ese día pero sí próximos → fallback suave;
+  // si no hay ninguno → lista de espera (conducta actual); sin preferencia o
+  // frase no reconocida → conducta histórica intacta.
+  // ════════════════════════════════════════════════════════════════
+  describe('preferencia de fecha en el paso de cupos', () => {
+    const slots = () =>
+      (service as any).appointmentsService.getAvailableSlots as jest.Mock;
+
+    const sampleSlot = {
+      slotId: 'slot-X',
+      fecha: new Date('2026-06-05T15:00:00.000Z'),
+      doctor: 'Pérez',
+      servicio: 'Consulta externa',
+    };
+
+    const fechaPrefKey = `temp_fecha_pref:${ORG_ID}:${SENDER}`;
+    const stateKey = `chat_state:${ORG_ID}:${SENDER}`;
+
+    beforeEach(() => {
+      // Servicio ya resuelto: el paciente está en el paso de EPS. Al decir la
+      // EPS, el flujo avanza al paso de cupos en el mismo turno.
+      redis.store.set(stateKey, ChatState.AWAITING_EPS);
+      redis.store.set(`temp_especialidad_id:${ORG_ID}:${SENDER}`, 's1');
+      redis.store.set(
+        `temp_especialidad:${ORG_ID}:${SENDER}`,
+        'Consulta externa',
+      );
+      prisma.eps.findMany.mockResolvedValue([{ id: 'e1', name: 'Nueva EPS' }]);
+    });
+
+    const sayEps = () =>
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ eps: 'Nueva EPS' }),
+      );
+
+    it('con fecha preferida y cupos ese día → filtra por ventana y muestra "para <fecha>"', async () => {
+      redis.store.set(fechaPrefKey, 'mañana');
+      slots().mockResolvedValueOnce([sampleSlot]);
+      sayEps();
+
+      await service.processIncomingMessage(makeTextEvent('Nueva EPS'));
+
+      // Se llamó UNA vez, con la ventana de fecha como 4º argumento.
+      expect(slots()).toHaveBeenCalledTimes(1);
+      const window = slots().mock.calls[0][3];
+      expect(window).toBeTruthy();
+      expect(window.desde).toBeInstanceOf(Date);
+      expect(window.hasta).toBeInstanceOf(Date);
+      // El menú nombra la fecha pedida y deja al paciente en selección de letra.
+      expect(sentMessages().join('\n')).toContain('mañana');
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_DATE);
+      expect(redis.store.get(`temp_slot_A:${SENDER}`)).toBe('slot-X');
+    });
+
+    it('con fecha preferida SIN cupos ese día pero con próximos → fallback suave (no waitlist)', async () => {
+      redis.store.set(fechaPrefKey, 'mañana');
+      slots()
+        .mockResolvedValueOnce([]) // ventana: vacío
+        .mockResolvedValueOnce([sampleSlot]); // próximos: hay
+      sayEps();
+
+      await service.processIncomingMessage(makeTextEvent('Nueva EPS'));
+
+      // Dos llamadas: primero con ventana, luego sin ventana (próximos).
+      expect(slots()).toHaveBeenCalledTimes(2);
+      expect(slots().mock.calls[0][3]).toBeTruthy();
+      expect(slots().mock.calls[1][3]).toBeUndefined();
+      // No cae a lista de espera: ofrece horarios y espera la letra.
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_DATE);
+      expect(redis.store.get(`temp_slot_A:${SENDER}`)).toBe('slot-X');
+    });
+
+    it('con fecha preferida y NINGÚN cupo (ni próximos) → lista de espera (conducta actual)', async () => {
+      redis.store.set(fechaPrefKey, 'mañana');
+      // El mock por defecto devuelve [] en ambas llamadas.
+      sayEps();
+
+      await service.processIncomingMessage(makeTextEvent('Nueva EPS'));
+
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+    });
+
+    it('SIN fecha preferida → conducta histórica (getAvailableSlots sin ventana)', async () => {
+      slots().mockResolvedValueOnce([sampleSlot]);
+      sayEps();
+
+      await service.processIncomingMessage(makeTextEvent('Nueva EPS'));
+
+      expect(slots()).toHaveBeenCalledTimes(1);
+      expect(slots().mock.calls[0][3]).toBeUndefined();
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_DATE);
+    });
+
+    it('persistencia: fechaSolicitada extraída por el LLM se guarda para turnos siguientes', async () => {
+      // En el primer turno (IDLE) el LLM SÍ corre y extrae la fecha. En los
+      // pasos de menú el texto no llama al LLM, así que la preferencia debe
+      // quedar persistida aquí para sobrevivir la cascada servicio→EPS→slots.
+      redis.store.set(stateKey, ChatState.IDLE);
+      redis.store.delete(`temp_especialidad_id:${ORG_ID}:${SENDER}`);
+      redis.store.delete(`temp_especialidad:${ORG_ID}:${SENDER}`);
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ fechaSolicitada: 'mañana', intent: 'agendar_cita' }),
+      );
+
+      await service.processIncomingMessage(
+        makeTextEvent('quiero una cita para mañana'),
+      );
+
+      expect(redis.store.get(fechaPrefKey)).toBe('mañana');
+    });
+
+    it('paridad por voz: "para mañana" hablado filtra igual que el texto', async () => {
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok' });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
+
+      redis.store.set(fechaPrefKey, 'mañana');
+      slots().mockResolvedValueOnce([sampleSlot]);
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'Nueva EPS', eps: 'Nueva EPS' }),
+      );
+
+      await service.processIncomingMessage({
+        from: SENDER,
+        type: 'audio',
+        audio: { id: 'audio-pref-1' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      expect(slots().mock.calls[0][3]).toBeTruthy();
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_DATE);
+    });
+
+    it('cleanUpSession borra la preferencia de fecha', async () => {
+      redis.store.set(fechaPrefKey, 'mañana');
+      await (service as any).cleanUpSession(ORG_ID, SENDER);
+      expect(redis.store.get(fechaPrefKey)).toBeUndefined();
     });
   });
 

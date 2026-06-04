@@ -13,14 +13,26 @@ export class AppointmentsService {
     serviceName: string,
     epsId?: string | null,
     organizationId?: string,
+    // Ventana de fecha preferida por el paciente ("mañana", "el lunes"...).
+    // Opcional: sin ella, la consulta es idéntica a la histórica (próximos cupos).
+    dateWindow?: { desde: Date; hasta: Date } | null,
   ): Promise<any[]> {
     const now = new Date();
+
+    // Con ventana, acotamos a [max(desde, ahora) .. hasta] para no ofrecer
+    // horas pasadas si el paciente pidió "hoy". Sin ventana, conducta de siempre.
+    const startTimeFilter = dateWindow
+      ? {
+          gte: dateWindow.desde > now ? dateWindow.desde : now,
+          lte: dateWindow.hasta,
+        }
+      : { gt: now };
 
     const rawSlots = await this.prisma.scheduleSlot.findMany({
       where: {
         organizationId: organizationId, // 🏢 AISLAMIENTO DE TENANT
         isAvailable: true,
-        startTime: { gt: now },
+        startTime: startTimeFilter,
         service: {
           name: { contains: serviceName, mode: 'insensitive' },
         },

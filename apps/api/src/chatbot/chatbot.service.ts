@@ -33,6 +33,7 @@ import {
 import {
   formatAppointmentLong,
   formatAppointmentCompact,
+  parseFechaPreferida,
 } from '@antigravity/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
@@ -1370,6 +1371,7 @@ export class ChatbotService implements OnModuleInit {
       `temp_especialidad_id:${organizationId}:${senderId}`,
       `temp_service_max_letra:${organizationId}:${senderId}`,
       `temp_doctor:${organizationId}:${senderId}`,
+      `temp_fecha_pref:${organizationId}:${senderId}`,
       `temp_selected_slot_id:${organizationId}:${senderId}`,
       `temp_selected_date_view:${organizationId}:${senderId}`,
       `temp_waitlist_service_id:${organizationId}:${senderId}`,
@@ -3324,12 +3326,19 @@ export class ChatbotService implements OnModuleInit {
     const savedEps = await this.redis.get(
       `temp_eps_query:${organizationId}:${senderId}`,
     );
+    // Preferencia de fecha ("mañana", "el lunes"): el paciente puede decirla en
+    // cualquier turno, pero la cascada servicio→EPS→slots abarca varios. La
+    // persistimos para que sobreviva hasta el momento de mostrar los cupos.
+    const savedFechaPref = await this.redis.get(
+      `temp_fecha_pref:${organizationId}:${senderId}`,
+    );
 
     const finalCedula = aiData.cedula || savedCedula;
     const finalNombre = aiData.nombre || savedNombre;
     const finalEspecialidad = aiData.especialidad || savedEspecialidad;
     const finalDoctor = aiData.doctor || savedDoctor;
     const finalEps = aiData.eps || savedEps;
+    const finalFechaPref = aiData.fechaSolicitada || savedFechaPref;
 
     if (finalCedula)
       await this.redis.set(
@@ -3363,6 +3372,13 @@ export class ChatbotService implements OnModuleInit {
       await this.redis.set(
         `temp_especialidad:${organizationId}:${senderId}`,
         finalEspecialidad,
+        'EX',
+        SESSION_TTL,
+      );
+    if (finalFechaPref)
+      await this.redis.set(
+        `temp_fecha_pref:${organizationId}:${senderId}`,
+        finalFechaPref,
         'EX',
         SESSION_TTL,
       );
@@ -3906,11 +3922,45 @@ export class ChatbotService implements OnModuleInit {
       );
 
       if (!selectedSlotId) {
-        const slots = await this.appointmentsService.getAvailableSlots(
-          resolvedServiceName as string,
-          epsIdForSlots,
-          organizationId,
+        // ── Preferencia de fecha ("mañana", "el lunes"...) ──────
+        // Si el paciente pidió una fecha y se reconoce, filtramos los cupos a
+        // esa ventana. Tres resultados posibles:
+        //   • hay cupos ese día            → menú "para <fecha>"
+        //   • no ese día pero sí próximos  → fallback suave con los próximos
+        //   • ninguno (ni próximos)        → waitlist (conducta actual)
+        // Si la frase no se reconoce (null), todo se comporta como siempre.
+        const fechaPrefRaw = await this.redis.get(
+          `temp_fecha_pref:${organizationId}:${senderId}`,
         );
+        const ventana = parseFechaPreferida(fechaPrefRaw);
+
+        let slots: any[];
+        let slotsMode: 'normal' | 'fecha' | 'fallback' = 'normal';
+        if (ventana) {
+          slots = await this.appointmentsService.getAvailableSlots(
+            resolvedServiceName as string,
+            epsIdForSlots,
+            organizationId,
+            { desde: ventana.desde, hasta: ventana.hasta },
+          );
+          if (slots.length > 0) {
+            slotsMode = 'fecha';
+          } else {
+            // Sin cupos en la fecha pedida: ofrecemos los más próximos.
+            slots = await this.appointmentsService.getAvailableSlots(
+              resolvedServiceName as string,
+              epsIdForSlots,
+              organizationId,
+            );
+            if (slots.length > 0) slotsMode = 'fallback';
+          }
+        } else {
+          slots = await this.appointmentsService.getAvailableSlots(
+            resolvedServiceName as string,
+            epsIdForSlots,
+            organizationId,
+          );
+        }
 
         if (slots.length === 0) {
           // Guardar contexto para que AWAITING_WAITLIST_OPTIN sepa qué hacer.
@@ -3998,7 +4048,23 @@ export class ChatbotService implements OnModuleInit {
           });
         }
 
-        const reply = MSGS.cuposDisponibles('', resolvedEpsName, lineasFechas);
+        const fechaLabel = ventana?.label ?? '';
+        let reply: string;
+        if (slotsMode === 'fecha') {
+          reply = MSGS.cuposParaFecha(
+            resolvedEpsName,
+            fechaLabel,
+            lineasFechas,
+          );
+        } else if (slotsMode === 'fallback') {
+          reply = MSGS.sinCuposEsaFechaProximos(
+            fechaLabel,
+            resolvedEpsName,
+            lineasFechas,
+          );
+        } else {
+          reply = MSGS.cuposDisponibles('', resolvedEpsName, lineasFechas);
+        }
         // En voz: el audio solo anuncia que llegan las opciones; el listado de
         // horarios viaja por texto (no se leen todos en voz).
         await this.smartReply(
@@ -4022,6 +4088,8 @@ export class ChatbotService implements OnModuleInit {
             slots: slotsMetadata,
             eps: resolvedEpsName,
             specialty: resolvedServiceName,
+            fechaPref: fechaLabel || undefined,
+            slotsMode,
           },
         });
         return;
