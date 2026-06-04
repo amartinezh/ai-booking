@@ -164,12 +164,12 @@ const FORMAL = {
 
   epsInvalida: (lineas: string) =>
     pick([
-      `Disculpe, no logré identificar esa EPS.\n\n` +
-        `¿Me la confirma, por favor? Puede elegir la letra _(A, B, C...)_ o escribir el nombre:\n\n${lineas}`,
-      `El sistema no logró interpretar la EPS. Intentémoslo de nuevo:\n\n` +
-        `Responda con la letra o escriba el nombre completo, como prefiera:\n\n${lineas}`,
-      `No fue posible ubicar esa opción dentro de nuestros convenios.\n\n` +
-        `¿Me la repite, por favor? Aquí están las opciones nuevamente:\n\n${lineas}`,
+      `Esa EPS no está dentro del listado de EPS a las que les prestamos el servicio. 🙏\n\n` +
+        `Por favor, elija una de las siguientes opciones (con la letra o el nombre). Si paga directamente la consulta, escoja *Particular*:\n\n${lineas}`,
+      `Lo siento, no tenemos convenio con esa EPS, así que no figura en nuestro listado de atención. 🙏\n\n` +
+        `¿Me confirma una de estas opciones, por favor? Puede responder con la letra o el nombre:\n\n${lineas}`,
+      `Esa EPS no aparece entre las que atendemos en convenio.\n\n` +
+        `Estas son las EPS disponibles — elija una con la letra o el nombre, o marque *Particular* si paga por su cuenta:\n\n${lineas}`,
     ]),
 
   pedirEps: () =>
@@ -721,9 +721,9 @@ const INFORMAL = {
 
   epsInvalida: (lineas: string) =>
     pick([
-      `Parece que no logré captar esa EPS. ¿Me la confirmas? Puedes elegir la letra o escribirme el nombre:\n\n${lineas}`,
-      `No te entendí bien la EPS. Dame otra oportunidad — letra o nombre, lo que prefieras:\n\n${lineas}`,
-      `No pude ubicar esa opción en nuestros convenios. ¿La repetimos? Aquí van las opciones de nuevo:\n\n${lineas}`,
+      `Esa EPS no está en el listado de las que atendemos en convenio. 🙏 Elige una de estas opciones con la letra o el nombre, o marca *Particular* si pagas directo:\n\n${lineas}`,
+      `Uy, no tenemos convenio con esa EPS, así que no está dentro de las que prestamos el servicio. ¿Eliges una de estas? Me dices la letra o el nombre:\n\n${lineas}`,
+      `Esa EPS no aparece entre las que manejamos. Aquí van las disponibles — escoge una con la letra o el nombre, o *Particular* si pagas por tu cuenta:\n\n${lineas}`,
     ]),
 
   pedirEps: () =>

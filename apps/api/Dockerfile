@@ -23,6 +23,7 @@ RUN npx prisma generate --schema=packages/database/prisma/schema.prisma
 
 # 7. Compilar API
 RUN pnpm --filter @antigravity/database build
+RUN pnpm --filter @antigravity/shared build
 RUN pnpm --filter api build
 
 ENV NODE_ENV=production
