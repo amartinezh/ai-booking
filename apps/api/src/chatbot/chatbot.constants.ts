@@ -210,7 +210,7 @@ const FORMAL = {
   // completo va por texto. El paciente lo lee y responde con la letra.
   cuposDisponiblesAudio: (epsName: string) =>
     pick([
-      `A continuación le presento las opciones que encontré con ${epsName}. Por favor revíselas en el mensaje de texto y respóndame con la letra del horario que prefiera.`,
+      `A continuación le presento las opciones que encontré con ${epsName}. Por favor, revíselas en el mensaje de texto y respóndame con la letra del horario que prefiera.`,
       `Estos son los horarios disponibles con ${epsName}. Se los dejo en el mensaje de texto; respóndame con la letra de la opción que más le acomode.`,
     ]),
 
@@ -374,7 +374,7 @@ const FORMAL = {
       `Su cita en *${clinicaName}* quedó agendada con éxito.\n\n📅 _${fecha}_\n\n` +
         `Recuerde llegar *15 minutos antes* con su *cédula*. 🪪\n\nGracias por confiar en nosotros.`,
       `Su cita quedó confirmada en *${clinicaName}*.\n\n📅 _${fecha}_\n\n` +
-        `Por favor sea puntual: llegue *15 minutos antes* y traiga su *documento*. 🪪\n\nQue tenga un excelente día.`,
+        `Por favor, sea puntual: llegue *15 minutos antes* y traiga su *documento*. 🪪\n\nQue tenga un excelente día.`,
     ]),
 
   // Resumen de texto que se envía DESPUÉS de confirmar (solo en flujo de voz):
@@ -464,7 +464,7 @@ const FORMAL = {
 
   ininteligible: () =>
     pick([
-      `🎙️ El sistema no logró procesar bien su mensaje. ¿Me lo repite por favor, con calma, o me lo escribe?`,
+      `🎙️ El sistema no logró procesar bien su mensaje. ¿Me lo repite, por favor, con calma, o me lo escribe?`,
       `🎙️ No fue posible captar bien el audio. ¿Me lo envía otra vez o me lo escribe, por favor?`,
       `🎙️ El audio no quedó del todo claro. ¿Me lo reenvía con calma o me lo escribe?`,
     ]),
@@ -933,9 +933,9 @@ const INFORMAL = {
 
   citaConfirmada: (clinicaName: string, fecha: string) =>
     pick([
-      `¡Listo, todo confirmado! 🎉 Tu cita ya quedó en *${clinicaName}*:\n📅 _${fecha}_\n\nLlega por favor *15 minutos antes* y trae tu *cédula*. 🪪 Cualquier cosa, acá estoy. ¡Que estés muy bien! 😊`,
+      `¡Listo, todo confirmado! 🎉 Tu cita ya quedó en *${clinicaName}*:\n📅 _${fecha}_\n\nLlega, por favor, *15 minutos antes* y trae tu *cédula*. 🪪 Cualquier cosa, acá estoy. ¡Que estés muy bien! 😊`,
       `¡Hecho! 🌟 Tu cita en *${clinicaName}* quedó agendada:\n📅 _${fecha}_\n\nRecuerda llegar *15 min antes* con tu *cédula*. 🪪 ¡Gracias por confiar en nosotros! 💚`,
-      `¡Quedó lista! 🎊 Tienes cita confirmada en *${clinicaName}*:\n📅 _${fecha}_\n\nPor favor sé puntual: llega *15 min antes* y trae tu *documento*. 🪪 ¡Hasta pronto! 👋`,
+      `¡Quedó lista! 🎊 Tienes cita confirmada en *${clinicaName}*:\n📅 _${fecha}_\n\nPor favor, sé puntual: llega *15 minutos antes* y trae tu *documento*. 🪪 ¡Hasta pronto! 👋`,
     ]),
 
   // Resumen de texto que se envía DESPUÉS de confirmar (solo en flujo de voz):

@@ -1093,6 +1093,30 @@ export class ChatbotService implements OnModuleInit {
       .replace(/\p{Extended_Pictographic}/gu, '') // todos los emojis
       .replace(/[\u{FE00}-\u{FE0F}\u{200D}]/gu, '') // variation selectors + ZWJ
       .replace(/[\uD800-\uDFFF]/g, '') // surrogates sueltos remanentes
+      // ── Marcas inclusivas de género para voz ─────────────────────
+      // El texto escrito usa el desdoblamiento "(a)/(o)/(as)/(os)" para no
+      // marcar género ("tranquilo(a)", "Bienvenido(a)", "Dr(a).", "afiliado(a)").
+      // El TTS lo lee como "tranquilo paréntesis a" o "tranquilo a". Para voz
+      // quitamos el paréntesis y dejamos solo la raíz: "tranquilo(a)" → "tranquilo".
+      .replace(/\(([oa]s?)\)/gi, '')
+      // "Dr." / "Dra." (tras quitar el "(a)") suenan mejor expandidos a la
+      // palabra completa; algunos motores no lo hacen por sí solos.
+      .replace(/\bDra\.?/g, 'Doctora')
+      .replace(/\bDr\.?/g, 'Doctor')
+      // ── Símbolos y abreviaturas para voz ─────────────────────────
+      // "#3" → "3" (el motor leería "numeral" o "almohadilla"). El "#" solo
+      // aparece como prefijo de posición de lista de espera ("posición #3").
+      .replace(/#(?=\d)/g, '')
+      // "15 min" → "15 minutos" (el TTS deletrea o corta "min").
+      .replace(/(\d+)\s*min\b/gi, '$1 minutos')
+      // ── Paréntesis de ejemplos/ayudas para voz ───────────────────
+      // Las aclaraciones entre paréntesis ("(Ej: Sura, Sanitas...)", "(A, B,
+      // C...)") suenan mal: el motor lee "abre paréntesis". Las convertimos en
+      // un inciso con comas (pausa natural) y expandimos "Ej:" → "por ejemplo".
+      .replace(/\bEj\.?:?/gi, 'por ejemplo,')
+      .replace(/\s*\(([^)]+)\)/g, ', $1,')
+      .replace(/,\s*([,.;:])/g, '$1') // colapsa ",." / ",," que deja lo anterior
+      .replace(/([.?!:;])\s*,/g, '$1') // y la coma sobrante tras "?," / ".,"
       // ── Normalización de horas para voz ──────────────────────────
       // El TTS lee "03:00" como "cero tres cero cero". Convertimos
       // "HH:MM" → "H MM" separando con espacio y quitando el cero a la
@@ -4888,7 +4912,7 @@ export class ChatbotService implements OnModuleInit {
         (await this.redis.get(
           `temp_cancel_max_letra:${organizationId}:${senderId}`,
         )) || 'A';
-      const reply = `No reconozco esa opción. Por favor responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
+      const reply = `No reconozco esa opción. Por favor, responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
       await this.smartReply(organizationId, senderId, reply);
 
       await this.auditFailure(senderId, organizationId, {
@@ -5371,7 +5395,7 @@ export class ChatbotService implements OnModuleInit {
         (await this.redis.get(
           `temp_modify_max_letra:${organizationId}:${senderId}`,
         )) || 'A';
-      const reply = `No reconozco esa opción. Por favor responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
+      const reply = `No reconozco esa opción. Por favor, responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
       await this.smartReply(organizationId, senderId, reply);
 
       await this.auditFailure(senderId, organizationId, {
@@ -5423,7 +5447,7 @@ export class ChatbotService implements OnModuleInit {
         (await this.redis.get(
           `temp_modify_newslot_max_letra:${organizationId}:${senderId}`,
         )) || 'A';
-      const reply = `No reconozco esa opción. Por favor responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
+      const reply = `No reconozco esa opción. Por favor, responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
       await this.smartReply(organizationId, senderId, reply);
 
       await this.auditFailure(senderId, organizationId, {
