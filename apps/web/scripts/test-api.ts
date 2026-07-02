@@ -2,7 +2,10 @@ import { PrismaClient } from '@agenia/database';
 import { SignJWT } from 'jose';
 
 const prisma = new PrismaClient();
-const SECRET_KEY = new TextEncoder().encode(process.env.JWT_SECRET || 'clave-secreta-hospital-san-vicente-2026');
+if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET no está configurado (mismo valor que usa la app).');
+}
+const SECRET_KEY = new TextEncoder().encode(process.env.JWT_SECRET);
 
 async function main() {
     const user = await prisma.user.findUnique({ where: { email: 'admin@sanvicente.com' } });

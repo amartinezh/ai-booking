@@ -8,17 +8,24 @@ import { PrismaService } from '../prisma/prisma.service';
 import * as crypto from 'crypto';
 import { RecordStatus } from '@agenia/database';
 
+/**
+ * 🏢 AISLAMIENTO MULTI-TENANT (PHI)
+ *
+ * Toda operación recibe el `organizationId` resuelto DESDE EL TOKEN por el
+ * controller (@CurrentTenant) y lo aplica en el `where` de cada consulta.
+ * Ninguna historia clínica puede leerse, editarse, firmarse ni adendarse
+ * desde otra clínica, aunque se conozca su ID.
+ */
 @Injectable()
 export class ClinicalRecordService {
   private readonly logger = new Logger(ClinicalRecordService.name);
 
   constructor(private prisma: PrismaService) {}
 
-  async createClinicalRecord(data: any): Promise<any> {
+  async createClinicalRecord(data: any, organizationId: string): Promise<any> {
     try {
       const {
         appointmentId,
-        patientId,
         doctorId,
         chiefComplaint,
         currentIllness,
@@ -27,14 +34,35 @@ export class ClinicalRecordService {
         vitalSigns,
         diagnoses,
         prescriptions,
-        organizationId,
       } = data;
+
+      // La cita ancla el tenant: debe existir y pertenecer a la clínica del
+      // token. El patientId sale de la cita (no del body, que es falsificable).
+      const appointment = await this.prisma.appointment.findFirst({
+        where: { id: appointmentId, organizationId },
+        select: { id: true, patientId: true },
+      });
+      if (!appointment) {
+        throw new NotFoundException(
+          'La cita no existe o no pertenece a tu organización.',
+        );
+      }
+
+      const doctor = await this.prisma.doctorProfile.findFirst({
+        where: { id: doctorId, organizationId },
+        select: { id: true },
+      });
+      if (!doctor) {
+        throw new ForbiddenException(
+          'El médico indicado no pertenece a tu organización.',
+        );
+      }
 
       // El campo status es automáticamente 'DRAFT' y el 'recordNumber' autoincrementa
       const record = await this.prisma.extended.clinicalRecord.create({
         data: {
           appointmentId,
-          patientId,
+          patientId: appointment.patientId,
           doctorId,
           organizationId,
           chiefComplaint,
@@ -62,9 +90,13 @@ export class ClinicalRecordService {
   }
 
   // SPRINT 2 - AUTOSAVE CON CANDADO LEGAL
-  async updateClinicalRecord(id: string, data: any): Promise<any> {
-    const existing = await this.prisma.extended.clinicalRecord.findUnique({
-      where: { id },
+  async updateClinicalRecord(
+    id: string,
+    data: any,
+    organizationId: string,
+  ): Promise<any> {
+    const existing = await this.prisma.extended.clinicalRecord.findFirst({
+      where: { id, organizationId },
     });
 
     if (!existing) {
@@ -85,9 +117,15 @@ export class ClinicalRecordService {
 
     // Si es DRAFT, permitimos actualizar ("Autoguardado")
 
-    // Mapeo defensivo de relaciones Prisma para un update
-    const { vitalSigns, diagnoses, prescriptions, ...scalarData } = data;
-    const prismaUpdateData: any = { ...scalarData };
+    // Whitelist explícito de campos editables: el body NO puede reasignar
+    // tenant, paciente, médico, cita ni estado (mass-assignment).
+    const { vitalSigns, diagnoses, prescriptions } = data;
+    const prismaUpdateData: any = {
+      chiefComplaint: data.chiefComplaint,
+      currentIllness: data.currentIllness,
+      physicalExam: data.physicalExam,
+      evolutionNotes: data.evolutionNotes,
+    };
 
     if (vitalSigns) {
       prismaUpdateData.vitalSigns = {
@@ -119,13 +157,16 @@ export class ClinicalRecordService {
   }
 
   // SPRINT 2 - FLUJO DE FIRMA DIGITAL Y SELLO DE TIEMPO
+  // `userId` es el usuario AUTENTICADO (token); el controller nunca lo toma
+  // del body para que la firma sea de verdad no-repudiable.
   async signClinicalRecord(
     id: string,
     userId: string,
+    organizationId: string,
     ipAddress?: string,
   ): Promise<any> {
-    const existing = await this.prisma.extended.clinicalRecord.findUnique({
-      where: { id },
+    const existing = await this.prisma.extended.clinicalRecord.findFirst({
+      where: { id, organizationId },
       include: { vitalSigns: true, diagnoses: true, prescriptions: true },
     });
 
@@ -167,20 +208,34 @@ export class ClinicalRecordService {
   }
 
   // SPRINT 2 - CREACIÓN DE ADENDAS PARA HISTORIAS FIRMADAS
+  // `signerUserId` viene del token: la firma digital de la adenda registra al
+  // usuario autenticado, no al DoctorProfile.id que enviara el body.
   async createAddendum(
     clinicalRecordId: string,
     doctorId: string,
     content: string,
+    organizationId: string,
+    signerUserId: string,
     ipAddress?: string,
   ): Promise<any> {
-    const existing = await this.prisma.extended.clinicalRecord.findUnique({
-      where: { id: clinicalRecordId },
+    const existing = await this.prisma.extended.clinicalRecord.findFirst({
+      where: { id: clinicalRecordId, organizationId },
     });
     if (!existing) throw new NotFoundException('Clinical record not found');
 
     if (existing.status === RecordStatus.DRAFT) {
       throw new ForbiddenException(
         'No puede crear una adenda si la historia clínica sigue en modo Borrador. Modifíquela directamente.',
+      );
+    }
+
+    const doctor = await this.prisma.doctorProfile.findFirst({
+      where: { id: doctorId, organizationId },
+      select: { id: true },
+    });
+    if (!doctor) {
+      throw new ForbiddenException(
+        'El médico indicado no pertenece a tu organización.',
       );
     }
 
@@ -202,7 +257,7 @@ export class ClinicalRecordService {
       // Cada adenda debe llevar su propia traza y firma digital
       await tx.digitalSignature.create({
         data: {
-          userId: doctorId,
+          userId: signerUserId,
           ipAddress,
           timestamp,
           hashedContent: hash,
@@ -217,9 +272,15 @@ export class ClinicalRecordService {
     });
   }
 
-  async getClinicalRecordByAppointment(appointmentId: string): Promise<any> {
-    return this.prisma.extended.clinicalRecord.findUnique({
-      where: { appointmentId },
+  // Lectura scoped al tenant. Si quien consulta es un PACIENTE, además debe
+  // ser el dueño de la historia (un paciente jamás lee historias ajenas).
+  async getClinicalRecordByAppointment(
+    appointmentId: string,
+    organizationId: string,
+    requester: { userId: string; role: string },
+  ): Promise<any> {
+    const record = await this.prisma.extended.clinicalRecord.findFirst({
+      where: { appointmentId, organizationId },
       include: {
         vitalSigns: true,
         diagnoses: true,
@@ -228,7 +289,21 @@ export class ClinicalRecordService {
         addendums: {
           include: { signature: true },
         },
+        patient: { select: { userId: true } },
       },
     });
+
+    if (!record) return null;
+
+    if (requester.role === 'PATIENT' && record.patient?.userId !== requester.userId) {
+      throw new ForbiddenException(
+        'Solo puedes consultar tu propia historia clínica.',
+      );
+    }
+
+    // No exponer la relación auxiliar usada para el chequeo de propiedad.
+    const result = { ...record };
+    delete result.patient;
+    return result;
   }
 }

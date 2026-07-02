@@ -63,6 +63,9 @@ export async function createMedicalService(prevState: any, formData: FormData) {
         return { success: true };
     } catch (error) {
         console.error('Error creating Medical Service:', error);
+        if ((error as any)?.code === 'P2002') {
+            return { success: false, error: 'Ya existe un servicio con ese nombre en esta clínica.' };
+        }
         return { success: false, error: 'Ocurrió un error al crear el servicio médico' };
     }
 }

@@ -1418,14 +1418,15 @@ export class ChatbotService implements OnModuleInit {
   }): Promise<any> {
     const { cedula, nombre, senderId, organizationId, epsId } = params;
 
-    let patient = await this.prisma.patientProfile.findUnique({
-      where: { cedula },
+    // Cédula única POR CLÍNICA: buscamos solo dentro del tenant actual para
+    // no adoptar (ni filtrar datos de) un paciente de otra organización.
+    let patient = await this.prisma.patientProfile.findFirst({
+      where: { cedula, organizationId },
     });
 
     if (patient) {
       const updates: any = {};
       if (!patient.whatsappId) updates.whatsappId = senderId;
-      if (!patient.organizationId) updates.organizationId = organizationId;
       if (epsId && !patient.epsId) updates.epsId = epsId;
       if (Object.keys(updates).length > 0) {
         try {
@@ -1448,6 +1449,9 @@ export class ChatbotService implements OnModuleInit {
           email: `temp_${Date.now()}_${cedula}@paciente.local`,
           password: 'none',
           role: 'PATIENT',
+          // El usuario temporal pertenece a la clínica que registró al
+          // paciente; sin esto quedaría huérfano al purgar la organización.
+          organizationId,
         },
       });
       patient = await this.prisma.patientProfile.create({
@@ -3532,8 +3536,10 @@ export class ChatbotService implements OnModuleInit {
         // No validamos longitud: se acepta cualquier número de cédula.
         if (soloNumeros.length > 0) {
           // Validación contra PostgreSQL antes de "confirmar" la cédula.
-          const paciente = await this.prisma.patientProfile.findUnique({
-            where: { cedula: aiData.cedula },
+          // Scoped al tenant: la misma cédula puede existir en otra clínica
+          // y su nombre NO debe filtrarse en esta conversación.
+          const paciente = await this.prisma.patientProfile.findFirst({
+            where: { cedula: aiData.cedula, organizationId },
             select: { fullName: true },
           });
           cedulaAck = aiData.cedula;
@@ -3667,9 +3673,10 @@ export class ChatbotService implements OnModuleInit {
           return;
         }
 
-        // Si el paciente NO está registrado y no nos dio nombre, pedirlo.
-        const existing = await this.prisma.patientProfile.findUnique({
-          where: { cedula: finalCedula },
+        // Si el paciente NO está registrado EN ESTA CLÍNICA y no nos dio
+        // nombre, pedirlo (la cédula es única por organización).
+        const existing = await this.prisma.patientProfile.findFirst({
+          where: { cedula: finalCedula, organizationId },
         });
         if (!existing && !finalNombre) {
           const reply = MSGS.primeraVez();
@@ -4295,9 +4302,9 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      // Cargar contexto del paciente.
-      const patient = await this.prisma.patientProfile.findUnique({
-        where: { cedula: finalCedula },
+      // Cargar contexto del paciente (solo dentro del tenant actual).
+      const patient = await this.prisma.patientProfile.findFirst({
+        where: { cedula: finalCedula, organizationId },
         include: { eps: true },
       });
 
@@ -6871,13 +6878,17 @@ export class ChatbotService implements OnModuleInit {
   // ══════════════════════════════════════════════════════════════
   // INTERFAZ EXTERNA (OUTBOUND desde el Dashboard)
   // ══════════════════════════════════════════════════════════════
+  // El tenant viene SIEMPRE del token del funcionario (vía controller). Antes
+  // se resolvía con el caché `origin_org:{to}` (la última clínica con la que
+  // habló el número), lo que podía enrutar el mensaje por la línea de OTRA
+  // clínica si el paciente conversaba con varias.
   async sendOutboundMessage(
     to: string,
     message: string,
+    organizationId: string,
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      const orgId = await this.redis.get(`origin_org:${to}`);
-      if (!orgId) {
+      if (!organizationId) {
         const errMsg = 'No hay tenant asociado para outbound message';
         this.logger.error(`${errMsg}: ${to}`);
         await this.interactionLog.logOutbound({
@@ -6889,11 +6900,11 @@ export class ChatbotService implements OnModuleInit {
         return { success: false, error: errMsg };
       }
       const org = await this.prisma.organization.findUnique({
-        where: { id: orgId },
+        where: { id: organizationId },
       });
       if (!org) {
         const errMsg = 'Organización no encontrada para outbound';
-        this.logger.error(`${errMsg}: ${orgId}`);
+        this.logger.error(`${errMsg}: ${organizationId}`);
         await this.interactionLog.logOutbound({
           whatsappId: to,
           botReply: message,
@@ -6902,6 +6913,9 @@ export class ChatbotService implements OnModuleInit {
         });
         return { success: false, error: errMsg };
       }
+      // Seed del tenant: la próxima respuesta entrante del paciente (y los
+      // flujos que aún dependan del caché) resuelven a esta misma clínica.
+      await this.redis.set(`origin_org:${to}`, org.id, 'EX', SESSION_TTL);
       await this.smartReply(org.id, to, message);
 
       await this.interactionLog.logOutbound({

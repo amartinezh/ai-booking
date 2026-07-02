@@ -346,18 +346,16 @@ export class GlobalStatsService {
     }
 
     const [byAppt, byRecord] = await Promise.all([
+      // Appointment.organizationId ya es NOT NULL: no hace falta filtrarlo.
       this.prisma.appointment.groupBy({
         by: ['organizationId'],
-        where: {
-          ...this.whereAppointment(range, null),
-          organizationId: { not: null },
-        },
+        where: this.whereAppointment(range, null),
       }),
+      // ClinicalRecord.organizationId ya es NOT NULL: no hace falta filtrarlo.
       this.prisma.clinicalRecord.groupBy({
         by: ['organizationId'],
         where: {
           createdAt: { gte: range.gte, lte: range.lte },
-          organizationId: { not: null },
         },
       }),
     ]);

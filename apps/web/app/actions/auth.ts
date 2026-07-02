@@ -4,8 +4,7 @@ import { cookies } from 'next/headers';
 import { SignJWT } from 'jose';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../lib/prisma';
-
-const SECRET_KEY = new TextEncoder().encode(process.env.JWT_SECRET || 'clave-secreta-hospital-san-vicente-2026');
+import { getJwtSecretKey } from '../../lib/jwt-secret';
 
 export async function loginUser(formData: FormData) {
     const email = formData.get('email') as string;
@@ -59,7 +58,7 @@ export async function loginUser(formData: FormData) {
         })
             .setProtectedHeader({ alg: 'HS256' })
             .setExpirationTime('8h')
-            .sign(SECRET_KEY);
+            .sign(getJwtSecretKey());
 
         // 5. Guardar la Cookie (ahora asíncrona)
         const cookieStore = await cookies();

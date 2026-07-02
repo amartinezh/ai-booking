@@ -49,6 +49,30 @@ export class WhatsappCredentialsService {
   }
 
   /**
+   * App Secret en claro para verificar la firma X-Hub-Signature-256 del
+   * webhook POST. `null` cuando la clínica no lo tiene configurado (la
+   * verificación cae entonces al env META_APP_SECRET, o se omite).
+   */
+  async appSecretByPhoneNumberId(
+    phoneNumberId: string,
+  ): Promise<string | null> {
+    if (!phoneNumberId) return null;
+    const row = await this.prisma.whatsappAccountConfig.findUnique({
+      where: { phoneNumberId },
+      select: { organizationId: true, encryptedAppSecret: true },
+    });
+    if (!row?.encryptedAppSecret) return null;
+    try {
+      return this.crypto.decrypt(row.encryptedAppSecret) || null;
+    } catch (e: any) {
+      this.logger.error(
+        `Falló desencriptado de app secret para org ${row.organizationId}: ${e.message}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Resuelve la organización por `verify_token` enviado en el webhook GET
    * de verificación de Meta. Devuelve sólo el organizationId — el GET no
    * necesita las credenciales completas.

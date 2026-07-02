@@ -143,7 +143,10 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           },
         })),
       },
-      patientProfile: { findUnique: jest.fn(async () => null) },
+      patientProfile: {
+        findUnique: jest.fn(async () => null),
+        findFirst: jest.fn(async () => null),
+      },
       medicalService: {
         findMany: jest.fn(async () => []),
         findFirst: jest.fn(async () => null),
@@ -624,7 +627,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
   // ── ACK · Fase 2 + validación de cédula (Fase 3) ──
   it('agendar_cita con cédula registrada → ACK saluda por nombre y confirma datos', async () => {
-    prisma.patientProfile.findUnique.mockResolvedValueOnce({
+    prisma.patientProfile.findFirst.mockResolvedValueOnce({
       fullName: 'Andrés Pérez',
     });
     provider.extractSchedulingIntent.mockResolvedValueOnce(
@@ -639,9 +642,12 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       makeTextEvent('quiero agendar cardiología, mi cédula es 1088123456'),
     );
 
-    // Validó la cédula contra PostgreSQL antes de confirmarla.
-    expect(prisma.patientProfile.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { cedula: '1088123456' } }),
+    // Validó la cédula contra PostgreSQL antes de confirmarla,
+    // siempre dentro del tenant de la conversación.
+    expect(prisma.patientProfile.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { cedula: '1088123456', organizationId: ORG_ID },
+      }),
     );
 
     const ack = sentMessages().find((m) => m.includes('Andrés Pérez'));
@@ -666,8 +672,10 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     );
 
     // Se valida contra BD (existencia del paciente), independiente de la longitud.
-    expect(prisma.patientProfile.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { cedula: '12' } }),
+    expect(prisma.patientProfile.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { cedula: '12', organizationId: ORG_ID },
+      }),
     );
     // Se arrastra la cédula en sesión.
     expect(redis.store.get(`temp_cedula:${ORG_ID}:${SENDER}`)).toBe('12');
@@ -1314,9 +1322,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // Saltó el menú de letras (nunca se persistió temp_slot_A) y dejó el cupo
       // seleccionado, avanzando a pedir la cédula (el resumen confirmará).
       expect(redis.store.get(`temp_slot_A:${SENDER}`)).toBeUndefined();
-      expect(
-        redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`),
-      ).toBe('slot-X');
+      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe(
+        'slot-X',
+      );
       expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CEDULA);
     });
 
@@ -1567,7 +1575,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       redis.store.set(`temp_waitlist_service_id:${ORG_ID}:${SENDER}`, 's1');
       redis.store.set(`temp_especialidad:${ORG_ID}:${SENDER}`, 'Cardiología');
       // Paciente nuevo (no existe en BD) → debe pedir el nombre, NO rechazar la cédula.
-      prisma.patientProfile.findUnique.mockResolvedValueOnce(null);
+      prisma.patientProfile.findFirst.mockResolvedValueOnce(null);
 
       await service.processIncomingMessage(makeTextEvent('12'));
 
@@ -1607,7 +1615,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         extraction({ transcript: 'mi cédula es 10 88 12 34', cedula: null }),
       );
       // Paciente nuevo → debe pedir el nombre (cédula aceptada), no reabrir SÍ/NO.
-      prisma.patientProfile.findUnique.mockResolvedValue(null);
+      prisma.patientProfile.findFirst.mockResolvedValue(null);
 
       await service.processIncomingMessage(makeAudioEvent());
 

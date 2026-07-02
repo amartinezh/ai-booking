@@ -24,7 +24,9 @@ export default async function DashboardPage({
     const startDateFilter = resolvedParams.startDate;
     const endDateFilter = resolvedParams.endDate;
 
-    const whereClause: Prisma.AppointmentWhereInput = { organizationId: session.organizationId };
+    // SUPER_ADMIN no tiene tenant: sin filtro ve la plataforma completa.
+    // Los roles clínicos siempre traen organizationId en el token.
+    const whereClause: Prisma.AppointmentWhereInput = { organizationId: session.organizationId ?? undefined };
     const slotWhere: any = {};
 
     if (session.role === 'PATIENT') {
@@ -80,10 +82,10 @@ export default async function DashboardPage({
     let epsList: any[] = [];
     let doctorsList: any[] = [];
 
-    if (session.role === 'ORG_ADMIN' || session.role === 'DOCTOR' || session.role === 'BOOKING_AGENT') {
+    if (session.organizationId && (session.role === 'ORG_ADMIN' || session.role === 'DOCTOR' || session.role === 'BOOKING_AGENT')) {
         epsList = await prisma.eps.findMany({ where: { organizationId: session.organizationId }, select: { id: true, name: true }, orderBy: { name: 'asc' } });
     }
-    if (session.role === 'ORG_ADMIN' || session.role === 'BOOKING_AGENT') {
+    if (session.organizationId && (session.role === 'ORG_ADMIN' || session.role === 'BOOKING_AGENT')) {
         doctorsList = await prisma.doctorProfile.findMany({ where: { organizationId: session.organizationId }, select: { id: true, fullName: true }, orderBy: { fullName: 'asc' } });
     }
 

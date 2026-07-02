@@ -9,10 +9,13 @@ export class AppointmentsService {
   constructor(private prisma: PrismaService) {}
 
   // 1. LÓGICA DE BÚSQUEDA H.I.S
+  // `organizationId` es OBLIGATORIO: con el parámetro opcional, un caller que
+  // lo omitiera generaba `where: { organizationId: undefined }`, que Prisma
+  // interpreta como "sin filtro" y devolvía cupos de TODAS las clínicas.
   async getAvailableSlots(
     serviceName: string,
-    epsId?: string | null,
-    organizationId?: string,
+    epsId: string | null,
+    organizationId: string,
     // Ventana de fecha preferida por el paciente ("mañana", "el lunes"...).
     // Opcional: sin ella, la consulta es idéntica a la histórica (próximos cupos).
     dateWindow?: { desde: Date; hasta: Date } | null,
@@ -54,12 +57,14 @@ export class AppointmentsService {
   }
 
   // 2. LÓGICA DE TRANSACCIÓN
+  // `organizationId` es OBLIGATORIO: el chequeo de tenant del slot ya no es
+  // condicional — sin él, un slotId de otra clínica se podía reservar.
   async bookAppointment(
     patientId: string,
     scheduleSlotId: string,
-    epsId?: string | null,
-    origin: 'WHATSAPP' | 'MANUAL' = 'WHATSAPP',
-    organizationId?: string,
+    epsId: string | null,
+    origin: 'WHATSAPP' | 'MANUAL',
+    organizationId: string,
   ): Promise<{ success: boolean; message?: string; appointmentId?: string }> {
     try {
       let appointmentId: string | undefined;
@@ -71,7 +76,7 @@ export class AppointmentsService {
         if (
           !slot ||
           !slot.isAvailable ||
-          (organizationId && slot.organizationId !== organizationId)
+          slot.organizationId !== organizationId
         ) {
           throw new Error('SLOT_TAKEN_OR_INVALID');
         }
@@ -89,7 +94,7 @@ export class AppointmentsService {
             patientId,
             epsId,
             origin,
-            organizationId: organizationId || slot.organizationId, // 🏢 TENANT ISOLATION
+            organizationId, // 🏢 TENANT ISOLATION (ya validado contra el slot)
           },
         });
         appointmentId = appointment.id;
@@ -118,10 +123,12 @@ export class AppointmentsService {
   }
 
   // 3. CONTROL DE ASISTENCIA
+  // `organizationId` obligatorio: el controller solo admite roles clínicos,
+  // que siempre traen tenant en el token.
   async updateAttendance(
     appointmentId: string,
     status: any,
-    organizationId?: string,
+    organizationId: string,
   ): Promise<any> {
     // Verificamos antes para evitar NotFoundExceptions por isolation o seguridad
     const apt = await this.prisma.appointment.findFirst({

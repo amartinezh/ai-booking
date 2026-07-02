@@ -9,6 +9,7 @@ export interface PublicWhatsappConfig {
     verifyToken: string | null;
     hasAccessToken: boolean;
     accessTokenLast4: string | null;
+    hasAppSecret: boolean;
     isActive: boolean;
     webhookCallbackUrl: string;
     updatedAt: string | null;
@@ -20,5 +21,8 @@ export interface SaveWhatsappConfigInput {
     displayPhoneNumber?: string | null;
     verifyToken?: string | null;
     accessToken?: string | null;
+    // App Secret de la app de Meta: activa la verificación de firma del
+    // webhook (X-Hub-Signature-256). Vacío = conservar el actual.
+    appSecret?: string | null;
     isActive?: boolean;
 }

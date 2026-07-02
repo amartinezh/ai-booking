@@ -31,6 +31,7 @@ export default function WhatsappChannelForm({ initial }: Props) {
     );
     const [verifyToken, setVerifyToken] = useState(initial.verifyToken ?? '');
     const [accessToken, setAccessToken] = useState('');
+    const [appSecret, setAppSecret] = useState('');
     const [isPending, startTransition] = useTransition();
     const [saved, setSaved] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -56,12 +57,16 @@ export default function WhatsappChannelForm({ initial }: Props) {
         if (accessToken.trim()) {
             payload.accessToken = accessToken.trim();
         }
+        if (appSecret.trim()) {
+            payload.appSecret = appSecret.trim();
+        }
 
         startTransition(async () => {
             const res = await updateMyWhatsappConfig(payload);
             if (res.success) {
                 setSaved(true);
                 setAccessToken('');
+                setAppSecret('');
                 if (res.data.verifyToken) setVerifyToken(res.data.verifyToken);
                 setTimeout(() => setSaved(false), 4000);
             } else {
@@ -226,6 +231,33 @@ export default function WhatsappChannelForm({ initial }: Props) {
                     <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1.5">
                         Use el token <strong>permanente</strong> de un System User. Los
                         tokens temporales de 24h dejan de funcionar al día siguiente.
+                    </p>
+                </div>
+
+                {/* App Secret */}
+                <div>
+                    <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1 flex items-center gap-2">
+                        <KeyRound className="w-4 h-4 text-zinc-400" />
+                        App Secret{' '}
+                        <span className="text-zinc-400 font-normal">(recomendado)</span>
+                    </label>
+                    <input
+                        type="password"
+                        autoComplete="off"
+                        value={appSecret}
+                        onChange={e => setAppSecret(e.target.value)}
+                        placeholder={
+                            initial.hasAppSecret
+                                ? '•••••••••••••••• (dejar vacío para mantener)'
+                                : 'Meta → su App → App Settings → Basic → App Secret'
+                        }
+                        className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                    />
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1.5">
+                        Con el App Secret configurado, AgenIA verifica la firma
+                        criptográfica de cada mensaje entrante y{' '}
+                        <strong>rechaza payloads falsificados</strong> que no vengan de
+                        Meta. Se cifra con AES-256-GCM igual que el Access Token.
                     </p>
                 </div>
 

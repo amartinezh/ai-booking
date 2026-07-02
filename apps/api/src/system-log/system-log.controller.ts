@@ -1,12 +1,18 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { SystemLogService, SystemLogLevel } from './system-log.service';
+import { RolesGuard } from '../common/roles.guard';
+import { Roles } from '../common/roles.decorator';
 
 /**
- * Endpoints internos consumidos por el panel de Super Admin del frontend
- * (a través de server actions en Next.js). La autorización al rol
- * SUPER_ADMIN se hace en el lado Next.js mediante `getSession()`.
+ * Endpoints del panel de Super Admin. Los logs son CROSS-TENANT (incluyen
+ * metadata con bodies de requests de todas las clínicas), así que la API los
+ * protege por sí misma con RolesGuard: la validación del lado Next.js no
+ * basta porque esta API es alcanzable públicamente (el webhook de Meta
+ * apunta a ella).
  */
 @Controller('system-logs')
+@UseGuards(RolesGuard)
+@Roles('SUPER_ADMIN')
 export class SystemLogController {
   constructor(private readonly logs: SystemLogService) {}
 

@@ -14,8 +14,8 @@ export default async function AgendamientoPage({
 }) {
     const session = await getSession();
 
-    // Permissions: Admins, Doctors, and Booking Agents
-    if (!session || (session.role !== 'ORG_ADMIN' && session.role !== 'DOCTOR' && session.role !== 'BOOKING_AGENT')) {
+    // Permissions: Admins, Doctors, and Booking Agents — siempre con tenant.
+    if (!session?.organizationId || (session.role !== 'ORG_ADMIN' && session.role !== 'DOCTOR' && session.role !== 'BOOKING_AGENT')) {
         redirect('/dashboard');
     }
 

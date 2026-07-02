@@ -10,8 +10,15 @@ import {
 import { ClinicalRecordService } from './clinical-records.service';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
-import { Role } from '@agenia/database';
+import { CurrentTenant } from '../common/current-tenant.decorator';
+import { CurrentUser } from '../common/current-user.decorator';
+import type { JwtUserPayload } from '../common/current-user.decorator';
 
+/**
+ * 🏢 Todas las rutas operan sobre el tenant del TOKEN (@CurrentTenant), nunca
+ * sobre un organizationId del body/params. El actor de firmas y adendas sale
+ * de @CurrentUser por la misma razón (no-repudio).
+ */
 @Controller('clinical-records')
 @UseGuards(RolesGuard)
 export class ClinicalRecordsController {
@@ -19,24 +26,43 @@ export class ClinicalRecordsController {
 
   @Post()
   @Roles('DOCTOR') // Estrictamente DOCTOR, agentes no pueden escribir historias clínicas
-  async createRecord(@Body() createDto: any) {
-    return this.recordService.createClinicalRecord(createDto);
+  async createRecord(
+    @Body() createDto: any,
+    @CurrentTenant() organizationId: string,
+  ) {
+    return this.recordService.createClinicalRecord(createDto, organizationId);
   }
 
   @Patch(':id')
   @Roles('DOCTOR')
-  async updateRecord(@Param('id') id: string, @Body() updateDto: any) {
-    return this.recordService.updateClinicalRecord(id, updateDto);
+  async updateRecord(
+    @Param('id') id: string,
+    @Body() updateDto: any,
+    @CurrentTenant() organizationId: string,
+  ) {
+    return this.recordService.updateClinicalRecord(
+      id,
+      updateDto,
+      organizationId,
+    );
   }
 
   @Post(':id/sign')
   @Roles('DOCTOR')
   async signRecord(
     @Param('id') id: string,
-    @Body('userId') userId: string,
+    @CurrentTenant() organizationId: string,
+    @CurrentUser() user: JwtUserPayload,
     @Body('ipAddress') ipAddress?: string,
   ) {
-    return this.recordService.signClinicalRecord(id, userId, ipAddress);
+    // El firmante es SIEMPRE el usuario autenticado; el `userId` que envíe el
+    // body se ignora (era suplantable).
+    return this.recordService.signClinicalRecord(
+      id,
+      user.userId,
+      organizationId,
+      ipAddress,
+    );
   }
 
   @Post(':id/addendum')
@@ -45,14 +71,31 @@ export class ClinicalRecordsController {
     @Param('id') id: string,
     @Body('doctorId') doctorId: string,
     @Body('content') content: string,
+    @CurrentTenant() organizationId: string,
+    @CurrentUser() user: JwtUserPayload,
     @Body('ipAddress') ipAddress?: string,
   ) {
-    return this.recordService.createAddendum(id, doctorId, content, ipAddress);
+    return this.recordService.createAddendum(
+      id,
+      doctorId,
+      content,
+      organizationId,
+      user.userId,
+      ipAddress,
+    );
   }
 
   @Get('appointment/:appointmentId')
   @Roles('DOCTOR', 'PATIENT') // Pacientes pueden ver su propia historia, doctores también
-  async getByAppointment(@Param('appointmentId') appointmentId: string) {
-    return this.recordService.getClinicalRecordByAppointment(appointmentId);
+  async getByAppointment(
+    @Param('appointmentId') appointmentId: string,
+    @CurrentTenant() organizationId: string,
+    @CurrentUser() user: JwtUserPayload,
+  ) {
+    return this.recordService.getClinicalRecordByAppointment(
+      appointmentId,
+      organizationId,
+      { userId: user.userId, role: user.role },
+    );
   }
 }

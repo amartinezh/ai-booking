@@ -2,8 +2,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
-
-const SECRET_KEY = new TextEncoder().encode(process.env.JWT_SECRET || 'clave-secreta-hospital-san-vicente-2026');
+import { getJwtSecretKey } from './lib/jwt-secret';
 
 function isServerActionRequest(request: NextRequest): boolean {
     if (request.method !== 'POST') return false;
@@ -50,8 +49,12 @@ export async function middleware(request: NextRequest) {
             return redirectToLogin(request, false);
         }
 
+        // Fuera del try: si JWT_SECRET falta, el error de configuración debe
+        // aflorar, no convertirse en un redirect a login en bucle.
+        const secretKey = getJwtSecretKey();
+
         try {
-            const verified = await jwtVerify(token, SECRET_KEY);
+            const verified = await jwtVerify(token, secretKey);
             const payload = verified.payload as any;
 
             if (isSuperAdmin && payload.role !== 'SUPER_ADMIN') {

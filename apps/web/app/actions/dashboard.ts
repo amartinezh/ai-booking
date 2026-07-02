@@ -99,16 +99,40 @@ export async function sendManualReminder(appointmentId: string): Promise<{
 
 export async function cancelAppointmentAndFreeSlot(appointmentId: string, scheduleSlotId: string) {
     try {
+        // 🔐 Sesión + tenant obligatorios: sin esto, cualquiera podía cancelar
+        // citas de cualquier clínica conociendo los IDs.
+        const session = await getSession();
+        if (!session || !ATTENDANCE_ALLOWED_ROLES.includes(session.role)) {
+            return { success: false, error: 'No tiene permisos para cancelar citas.' };
+        }
+
+        const whereClause: { id: string; organizationId?: string } = { id: appointmentId };
+        if (session.role !== 'SUPER_ADMIN' && session.organizationId) {
+            whereClause.organizationId = session.organizationId;
+        }
+
+        // El slot a liberar se toma de la MISMA cita (no del cliente): evita
+        // liberar un slot ajeno pasando un scheduleSlotId arbitrario.
+        const appointment = await prisma.appointment.findFirst({
+            where: whereClause,
+            select: { id: true, scheduleSlotId: true }
+        });
+        if (!appointment) {
+            return { success: false, error: 'Cita no encontrada en su organización.' };
+        }
+        if (scheduleSlotId && scheduleSlotId !== appointment.scheduleSlotId) {
+            return { success: false, error: 'El cupo indicado no corresponde a la cita.' };
+        }
+
         // En una transacción: Cancelar o eliminar la cita (en este caso cambiar estado a CANCELLED)
         // Y liberar el slot para que la IA/WhatsApp lo pueda re-vender.
-
         await prisma.$transaction([
             prisma.appointment.update({
-                where: { id: appointmentId },
+                where: { id: appointment.id },
                 data: { status: 'CANCELLED' }
             }),
             prisma.scheduleSlot.update({
-                where: { id: scheduleSlotId },
+                where: { id: appointment.scheduleSlotId },
                 data: { isAvailable: true } // Liberación al mercado
             })
         ]);

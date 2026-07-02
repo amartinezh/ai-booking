@@ -175,11 +175,13 @@ export async function cloneDaySlots(formData: FormData) {
 
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        // Capturado tras el guard: TS no propaga el narrowing al callback del map.
+        const organizationId = session.organizationId;
 
         const sourceSlots = await prisma.scheduleSlot.findMany({
             where: {
                 doctorId,
-                organizationId: session.organizationId,
+                organizationId,
                 startTime: {
                     gte: sourceStart,
                     lte: sourceEnd,
@@ -205,7 +207,7 @@ export async function cloneDaySlots(formData: FormData) {
             serviceId: slot.serviceId,
             allowedEpsId: slot.allowedEpsId,
             isAvailable: true, // Siempre nacen disponibles
-            organizationId: session.organizationId,
+            organizationId,
             startTime: new Date(slot.startTime.getTime() + timeOffset),
             endTime: new Date(slot.endTime.getTime() + timeOffset)
         }));

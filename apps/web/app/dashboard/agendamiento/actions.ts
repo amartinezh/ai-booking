@@ -2,6 +2,7 @@
 
 import { prisma } from '../../../lib/prisma';
 import { revalidatePath } from 'next/cache';
+import { cookies } from 'next/headers';
 import { getSession } from '../../../lib/session';
 
 // Mock del Outbound de Whatsapp desde NestJS API (o invocación HTTP a nuestro NestJS)
@@ -19,10 +20,17 @@ export async function sendManualWhatsappAction(appointmentId: string, message: s
 
         if (!appointment) return { success: false, error: 'Cita no encontrada.' };
 
-        // Llamar a NestJS Endpoint o usar lógica directa si es monolito
+        // El endpoint /chatbot/outbound ahora exige sesión (RolesGuard) y envía
+        // por la línea de la clínica del token, así que reenviamos la cookie.
+        const cookieStore = await cookies();
+        const token = cookieStore.get('auth_token')?.value;
+
         const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/chatbot/outbound`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Cookie: `auth_token=${token}` } : {})
+            },
             body: JSON.stringify({
                 to: appointment.patient.whatsappId || appointment.patient.cedula,
                 message
@@ -54,17 +62,19 @@ export async function createManualAppointmentAction(formData: FormData) {
 
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        // Capturado tras el guard: TS no propaga el narrowing al closure de la transacción.
+        const organizationId = session.organizationId;
 
         // 1. Transaction to find/create patient and assign slot
         await prisma.$transaction(async (tx) => {
             // Find or insert Patient
-            let patient = await tx.patientProfile.findFirst({ where: { cedula: patientCedula, organizationId: session.organizationId } });
-            
+            let patient = await tx.patientProfile.findFirst({ where: { cedula: patientCedula, organizationId } });
+
             if (!patient) {
                 // To create a patient, we need a base user on this architecture
                 const tempEmail = `${patientCedula}@paciente.temporal.com`;
                 const user = await tx.user.create({
-                    data: { email: tempEmail, password: 'manual_created_hash', role: 'PATIENT', organizationId: session.organizationId }
+                    data: { email: tempEmail, password: 'manual_created_hash', role: 'PATIENT', organizationId }
                 });
                 patient = await tx.patientProfile.create({
                     data: {
@@ -72,7 +82,7 @@ export async function createManualAppointmentAction(formData: FormData) {
                         fullName: patientName,
                         userId: user.id,
                         epsId: epsId,
-                        organizationId: session.organizationId
+                        organizationId
                     }
                 });
             }
@@ -84,7 +94,7 @@ export async function createManualAppointmentAction(formData: FormData) {
             
             // Check if ANY slot exists at this exact time (available or not)
             const existingSlot = await tx.scheduleSlot.findFirst({
-                where: { doctorId, startTime: startDate, organizationId: session.organizationId }
+                where: { doctorId, startTime: startDate, organizationId }
             });
 
             let slot = null;
@@ -104,7 +114,7 @@ export async function createManualAppointmentAction(formData: FormData) {
                         doctorId,
                         serviceId,
                         isAvailable: false,
-                        organizationId: session.organizationId
+                        organizationId
                     }
                 });
             }
@@ -117,7 +127,7 @@ export async function createManualAppointmentAction(formData: FormData) {
                     epsId: epsId,
                     origin: 'MANUAL',
                     reason: formData.get('reason') as string || 'Agendamiento Manual Panel',
-                    organizationId: session.organizationId
+                    organizationId
                 }
             });
         });
@@ -144,10 +154,12 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
 
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        // Capturado tras el guard: TS no propaga el narrowing al closure de la transacción.
+        const organizationId = session.organizationId;
 
         await prisma.$transaction(async (tx) => {
             const appointment = await tx.appointment.findFirst({
-                where: { id: appointmentId, organizationId: session.organizationId },
+                where: { id: appointmentId, organizationId },
                 include: { patient: true }
             });
 
@@ -164,7 +176,7 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
 
             // 2. Gestionar la reagendación logica de Slots
             let newSlot = await tx.scheduleSlot.findFirst({
-                where: { doctorId, startTime: startDate, isAvailable: true, organizationId: session.organizationId }
+                where: { doctorId, startTime: startDate, isAvailable: true, organizationId }
             });
 
             if (!newSlot) {
@@ -175,7 +187,8 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
                         endTime: endDate,
                         doctorId,
                         serviceId,
-                        isAvailable: false
+                        isAvailable: false,
+                        organizationId
                     }
                 });
             } else {

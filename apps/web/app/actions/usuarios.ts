@@ -20,6 +20,8 @@ export async function createBookingAgent(data: CreateAgentInput) {
 
     const session = await getSession();
     if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+    // Capturado tras el guard: TS no propaga el narrowing al closure de la transacción.
+    const organizationId = session.organizationId;
 
     // 1. Validar si ya existe
     const existingUser = await prisma.user.findUnique({
@@ -41,7 +43,7 @@ export async function createBookingAgent(data: CreateAgentInput) {
           email,
           password: hashedPassword,
           role: 'BOOKING_AGENT',
-          organizationId: session.organizationId
+          organizationId
         }
       });
 
@@ -52,6 +54,7 @@ export async function createBookingAgent(data: CreateAgentInput) {
           phone: phone || null,
           epsId: epsId || null,
           doctorId: doctorId || null,
+          organizationId,
         }
       });
 

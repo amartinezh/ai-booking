@@ -204,11 +204,13 @@ export class WaitlistService {
         data: { status: 'EXPIRED' },
       });
 
-      // Avisar al paciente que perdió el cupo
+      // Avisar al paciente que perdió el cupo — por la línea de SU clínica
+      // (antes dependía del caché origin_org, que podía apuntar a otra org).
       try {
         await this.chatbotService.sendOutboundMessage(
           entry.whatsappId,
           `Lo sentimos, el tiempo para confirmar el cupo expiró. ⏰\n\nSi aún desea una cita, escríbame "Hola" y lo agregaremos nuevamente. 😊`,
+          entry.organizationId,
         );
       } catch (e) {
         this.logger.warn(

@@ -234,6 +234,13 @@ model WhatsappAccountConfig {
   // Permanent Access Token cifrado (AES-256-GCM). Empieza por "EAA…" en claro.
   encryptedAccessToken String? @db.Text
 
+  // App Secret de la app de Meta, cifrado (AES-256-GCM). Cuando está
+  // configurado, el webhook POST exige la firma X-Hub-Signature-256 válida
+  // (HMAC-SHA256 del body crudo) — sin él, cualquiera que conozca la URL
+  // podría inyectar mensajes falsos al tenant. null = verificación apagada
+  // (retrocompatibilidad; cae al env META_APP_SECRET si existe).
+  encryptedAppSecret String? @db.Text
+
   // false hasta que la clínica termine de configurar y validar la conexión.
   isActive Boolean @default(false)
 
@@ -274,8 +281,8 @@ model User {
 // -----------------------------------------------------------------------------
 model Eps {
   id       String  @id @default(uuid())
-  name     String  @unique // Ej: 'Sura', 'Sanitas'
-  nit      String? @unique
+  name     String // Ej: 'Sura', 'Sanitas' — única POR CLÍNICA (ver @@unique)
+  nit      String?
   isActive Boolean @default(true) // Para encender/apagar convenios
 
   // Relaciones
@@ -285,12 +292,17 @@ model Eps {
   agents          AgentProfile[] // Agentes limitados a agendar paciente de esta EPS
   waitlistEntries WaitlistEntry[]
 
-  // 🏢 TENANT ISOLATION
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  // 🏢 TENANT ISOLATION — obligatorio: una EPS siempre pertenece a una clínica.
+  // La unicidad de name/nit es por organización: dos clínicas pueden tener
+  // ambas su propia "Sura" sin chocar entre sí.
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@unique([organizationId, nit])
 }
 
 // -----------------------------------------------------------------------------
@@ -298,7 +310,7 @@ model Eps {
 // -----------------------------------------------------------------------------
 model MedicalService {
   id       String  @id @default(uuid())
-  name     String  @unique // Ej: 'Odontología', 'Medicina General'
+  name     String // Ej: 'Odontología', 'Medicina General' — único POR CLÍNICA
   isActive Boolean @default(true)
 
   // Relaciones
@@ -306,12 +318,15 @@ model MedicalService {
   slots           ScheduleSlot[] // Agenda disponible para este servicio
   waitlistEntries WaitlistEntry[]
 
-  // 🏢 TENANT ISOLATION
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  // 🏢 TENANT ISOLATION — obligatorio: cada clínica define su propio catálogo,
+  // por eso "Odontología" puede existir en varias clínicas a la vez.
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
 }
 
 // -----------------------------------------------------------------------------
@@ -324,7 +339,9 @@ model PatientProfile {
   facebookId String? @unique
   whatsappId String?
 
-  cedula      String    @unique
+  // Cédula única POR CLÍNICA (ver @@unique): la misma persona puede ser
+  // paciente de varias clínicas, cada una con su propio PatientProfile.
+  cedula      String
   fullName    String
   dateOfBirth DateTime?
   gender      String? // Ej: 'M', 'F', 'Other'
@@ -343,13 +360,14 @@ model PatientProfile {
   waitlistEntries  WaitlistEntry[]
   chatSurveys      ChatSurvey[]
 
-  // 🏢 TENANT ISOLATION
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  // 🏢 TENANT ISOLATION — obligatorio: todo paciente pertenece a una clínica.
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([organizationId, cedula])
   @@index([whatsappId])
 }
 
@@ -359,9 +377,11 @@ model PatientProfile {
 model DoctorProfile {
   id String @id @default(uuid())
 
-  cedula         String  @unique
+  // Cédula y Tarjeta Profesional únicas POR CLÍNICA (ver @@unique): un médico
+  // puede trabajar en varias clínicas, cada una con su propio DoctorProfile.
+  cedula         String
   fullName       String
-  medicalLicense String? @unique // Tarjeta Profesional
+  medicalLicense String? // Tarjeta Profesional
   phone          String?
   isActive       Boolean @default(true)
 
@@ -379,12 +399,15 @@ model DoctorProfile {
   addendums       Addendum[]
   waitlistEntries WaitlistEntry[] // Pacientes en lista de espera que pidieron a este médico
 
-  // 🏢 TENANT ISOLATION
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  // 🏢 TENANT ISOLATION — obligatorio: todo médico pertenece a una clínica.
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, cedula])
+  @@unique([organizationId, medicalLicense])
 }
 
 // -----------------------------------------------------------------------------
@@ -412,15 +435,17 @@ model ScheduleSlot {
   // Relación 1:1 -> Si se ocupa, aquí está la cita. (Si es null, está libre)
   appointment Appointment?
 
-  // 🏢 TENANT ISOLATION
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  // 🏢 TENANT ISOLATION — obligatorio: todo cupo pertenece a una clínica
+  // (coincide siempre con la del médico que atiende el bloque).
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // No podemos tener slots duplicados para el mismo médico a la misma hora exacta
   @@unique([doctorId, startTime, endTime])
+  @@index([organizationId])
 }
 
 // -----------------------------------------------------------------------------
@@ -447,9 +472,10 @@ model Appointment {
   // 🔌 EHR: Historia clínica asociada a esta cita específica. (1:1 opcional hasta que se crea)
   clinicalRecord ClinicalRecord?
 
-  // 🏢 TENANT ISOLATION
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  // 🏢 TENANT ISOLATION — obligatorio: toda cita pertenece a una clínica
+  // (coincide siempre con la del paciente y la del cupo).
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
   // ⏰ RECORDATORIO ENVIADO — idempotencia del cron de recordatorios.
   // NULL = nunca se ha enviado recordatorio para esta cita.
@@ -459,6 +485,8 @@ model Appointment {
   metaLog   Json?
   createdAt DateTime          @default(now())
   origin    AppointmentOrigin @default(WHATSAPP)
+
+  @@index([organizationId])
 }
 
 enum AppointmentOrigin {
@@ -503,7 +531,11 @@ model InteractionLog {
   patientId String?
   patient   User?   @relation(fields: [patientId], references: [id])
 
-  // 🏢 TENANT ISOLATION
+  // 🏢 TENANT ISOLATION — nullable A PROPÓSITO: hay eventos que se loguean
+  // antes de poder resolver el tenant (webhooks descartados sin
+  // phone_number_id, errores de outbound sin org). Toda vista de clínica
+  // DEBE filtrar por organizationId; las filas NULL solo son visibles para
+  // diagnóstico de plataforma (SUPER_ADMIN).
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
@@ -533,9 +565,9 @@ model AgentProfile {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // 🏢 TENANT ISOLATION
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  // 🏢 TENANT ISOLATION — obligatorio: todo agente agenda para UNA clínica.
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -570,9 +602,10 @@ model ClinicalRecord {
   diagnoses     Diagnosis[]
   prescriptions MedicalPrescription[]
 
-  // 🏢 TENANT ISOLATION
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  // 🏢 TENANT ISOLATION — obligatorio: toda historia clínica pertenece a una
+  // clínica y la API filtra CADA operación por este campo (PHI).
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
   status       RecordStatus @default(DRAFT)
   recordNumber Int          @default(autoincrement())
@@ -582,6 +615,8 @@ model ClinicalRecord {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
 }
 
 model VitalSigns {

@@ -55,6 +55,7 @@ export class WhatsappConfigService {
       verifyToken: row?.verifyToken ?? null,
       hasAccessToken,
       accessTokenLast4,
+      hasAppSecret: Boolean(row?.encryptedAppSecret),
       isActive: row?.isActive ?? false,
       webhookCallbackUrl: this.buildWebhookUrl(),
       updatedAt: row?.updatedAt ?? null,
@@ -85,6 +86,13 @@ export class WhatsappConfigService {
     const incomingToken = normalizeOrNull(input.accessToken);
     if (incomingToken) {
       encryptedAccessToken = this.crypto.encrypt(incomingToken);
+    }
+
+    // appSecret: misma semántica "no rotar" que el access token.
+    let encryptedAppSecret = existing?.encryptedAppSecret ?? null;
+    const incomingAppSecret = normalizeOrNull(input.appSecret);
+    if (incomingAppSecret) {
+      encryptedAppSecret = this.crypto.encrypt(incomingAppSecret);
     }
 
     // Validación de unicidad anticipada (mejor UX que un error de Prisma).
@@ -122,6 +130,7 @@ export class WhatsappConfigService {
         displayPhoneNumber,
         verifyToken,
         encryptedAccessToken,
+        encryptedAppSecret,
         isActive,
       },
       update: {
@@ -130,6 +139,7 @@ export class WhatsappConfigService {
         displayPhoneNumber,
         verifyToken,
         encryptedAccessToken,
+        encryptedAppSecret,
         isActive,
       },
     });

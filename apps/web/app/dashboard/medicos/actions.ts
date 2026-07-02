@@ -32,12 +32,12 @@ export async function saveDoctorAction(formData: FormData) {
                 if (exist) throw new Error("El correo electrónico ya está registrado por otro usuario.");
             }
             if (cedula !== doctor.cedula) {
-                const exist = await prisma.doctorProfile.findUnique({ where: { cedula } });
-                if (exist) throw new Error("La cédula ya pertenece a otro perfil médico.");
+                const exist = await prisma.doctorProfile.findFirst({ where: { cedula, organizationId: session.organizationId } });
+                if (exist) throw new Error("La cédula ya pertenece a otro perfil médico de esta Clínica.");
             }
             if (medicalLicense && medicalLicense !== doctor.medicalLicense) {
-                const exist = await prisma.doctorProfile.findUnique({ where: { medicalLicense } });
-                if (exist) throw new Error("La Tarjeta Profesional ya pertenece a otro perfil médico.");
+                const exist = await prisma.doctorProfile.findFirst({ where: { medicalLicense, organizationId: session.organizationId } });
+                if (exist) throw new Error("La Tarjeta Profesional ya pertenece a otro perfil médico de esta Clínica.");
             }
 
             // Actualizar User
@@ -82,7 +82,7 @@ export async function saveDoctorAction(formData: FormData) {
         return { success: true };
     } catch (e: any) {
         if (e.code === 'P2002') {
-            return { success: false, error: 'Conflicto: Un dato único (correo, cédula o Tarjeta Profesional) ya existe en la base de datos.' };
+            return { success: false, error: 'Conflicto: el correo ya está en uso, o la cédula/Tarjeta Profesional ya existe en esta Clínica.' };
         }
         return { success: false, error: e.message || 'Error al guardar el médico' };
     }

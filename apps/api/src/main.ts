@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
-import { json } from 'express';
 import { Logger } from '@nestjs/common';
 import { GlobalExceptionFilter } from './system-log/global-exception.filter';
 import { SystemLogService } from './system-log/system-log.service';
@@ -28,8 +28,13 @@ process.on('uncaughtException', (error: Error) => {
 });
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  app.use(json({ limit: '50mb' }));
+  // `rawBody: true` conserva el body crudo de cada request: es indispensable
+  // para verificar la firma X-Hub-Signature-256 del webhook de Meta (HMAC
+  // byte a byte sobre el payload original, antes de parsear el JSON).
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
+  app.useBodyParser('json', { limit: '50mb' });
 
   // 🛡️ Registrar el filtro global de excepciones. Cualquier excepción
   // no atrapada en controllers/services queda persistida en SystemLog

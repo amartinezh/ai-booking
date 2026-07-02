@@ -42,11 +42,20 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('A token must be provided for analytics');
     }
 
+    // SIN fallback hardcodeado: un secreto en el repo permitiría a cualquiera
+    // forjar tokens de cualquier clínica. Sin la variable, se rechaza todo.
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      console.error(
+        'RolesGuard: JWT_SECRET no está configurado — se rechaza toda autenticación. Defina la variable de entorno (mismo valor que el web).',
+      );
+      throw new ForbiddenException(
+        'Autenticación no disponible: el servidor no tiene JWT_SECRET configurado.',
+      );
+    }
+
     try {
-      const decoded = jwt.verify(
-        token,
-        process.env.JWT_SECRET || 'clave-secreta-hospital-san-vicente-2026',
-      ) as any;
+      const decoded = jwt.verify(token, jwtSecret) as any;
       request.user = decoded;
       console.log('RolesGuard: Token decoded user:', request.user);
     } catch (e) {

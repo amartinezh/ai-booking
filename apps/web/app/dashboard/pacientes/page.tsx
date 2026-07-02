@@ -8,8 +8,8 @@ export const dynamic = 'force-dynamic';
 export default async function PacientesPage() {
     const session = await getSession();
 
-    // Solo permitimos el acceso a administradores
-    if (!session || session.role !== 'ORG_ADMIN') {
+    // Solo permitimos el acceso a administradores de clínica (con tenant).
+    if (!session?.organizationId || session.role !== 'ORG_ADMIN') {
         redirect('/dashboard');
     }
 

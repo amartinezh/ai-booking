@@ -69,6 +69,9 @@ export async function createEps(prevState: any, formData: FormData) {
         return { success: true };
     } catch (error) {
         console.error('Error creating EPS:', error);
+        if ((error as any)?.code === 'P2002') {
+            return { success: false, error: 'Ya existe una EPS con ese nombre o NIT en esta clínica.' };
+        }
         return { success: false, error: 'Ocurrió un error al crear la EPS' };
     }
 }
@@ -101,6 +104,9 @@ export async function updateEps(id: string, prevState: any, formData: FormData) 
         return { success: true };
     } catch (error) {
         console.error('Error updating EPS:', error);
+        if ((error as any)?.code === 'P2002') {
+            return { success: false, error: 'Ya existe una EPS con ese nombre o NIT en esta clínica.' };
+        }
         return { success: false, error: 'Ocurrió un error al actualizar' };
     }
 }

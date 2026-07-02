@@ -1,8 +1,7 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { cookies } from 'next/headers';
 import { jwtVerify } from 'jose';
-
-const SECRET_KEY = new TextEncoder().encode(process.env.JWT_SECRET || 'clave-secreta-hospital-san-vicente-2026');
+import { getJwtSecretKey } from './jwt-secret';
 
 export interface SessionPayload {
     userId: string;
@@ -12,13 +11,16 @@ export interface SessionPayload {
 }
 
 export async function getSession(): Promise<SessionPayload | null> {
+    // Fuera del try: si JWT_SECRET falta, queremos el error explícito de
+    // configuración, no un "sesión inválida" silencioso en bucle.
+    const secretKey = getJwtSecretKey();
     try {
         const cookieStore = await cookies();
         const token = cookieStore.get('auth_token')?.value;
 
         if (!token) return null;
 
-        const verified = await jwtVerify(token, SECRET_KEY);
+        const verified = await jwtVerify(token, secretKey);
         return verified.payload as unknown as SessionPayload;
     } catch (_) {
         return null;
