@@ -1,8 +1,4 @@
-import {
-  AudioEncoding,
-  VoiceProvider,
-  VoiceGender,
-} from '@agenia/database';
+import { AudioEncoding, VoiceProvider, VoiceGender } from '@agenia/database';
 
 /**
  * Contrato JSON del módulo de Configuración de Voz/Audio (TTS) por organización.
@@ -41,7 +37,7 @@ export const LANGUAGE_CODE = 'es-US';
  */
 export const ELEVENLABS_VOICE_PRESETS: Readonly<Record<VoiceGender, string>> = {
   MASCULINO: 'o2vbTbO3g4GrKUg7rehy',
-  FEMENINO: 'qHkrJuifPpn95wK3rm2A',
+  FEMENINO: 'JcWDFG8DiES2OzGhZJUJ',
 };
 
 /**

@@ -1288,6 +1288,76 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       await (service as any).cleanUpSession(ORG_ID, SENDER);
       expect(redis.store.get(fechaPrefKey)).toBeUndefined();
     });
+
+    it('voz "mañana a las 10": casa un cupo único por día+hora → salta el menú y pide la cédula', async () => {
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok' });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
+
+      // sampleSlot cae a las 10:00 de Bogotá (2026-06-05T15:00Z).
+      redis.store.set(fechaPrefKey, 'mañana a las 10');
+      slots().mockResolvedValueOnce([sampleSlot]);
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'Nueva EPS', eps: 'Nueva EPS' }),
+      );
+
+      await service.processIncomingMessage({
+        from: SENDER,
+        type: 'audio',
+        audio: { id: 'audio-match-1' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      // Saltó el menú de letras (nunca se persistió temp_slot_A) y dejó el cupo
+      // seleccionado, avanzando a pedir la cédula (el resumen confirmará).
+      expect(redis.store.get(`temp_slot_A:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`),
+      ).toBe('slot-X');
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CEDULA);
+    });
+
+    it('voz: el audio LEE las próximas opciones ("opción A ... con el Doctor Pérez")', async () => {
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok', isActive: true });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
+      const ttsSpy = jest
+        .spyOn(service as any, 'generateTTS')
+        .mockResolvedValue(null);
+
+      const slotB = {
+        slotId: 'slot-Y',
+        fecha: new Date('2026-06-06T16:00:00.000Z'),
+        doctor: 'Gómez',
+        servicio: 'Consulta externa',
+      };
+      // Sin fecha preferida: dos cupos y el audio debe leerlos (no solo anunciar).
+      slots().mockResolvedValueOnce([sampleSlot, slotB]);
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'Nueva EPS', eps: 'Nueva EPS' }),
+      );
+
+      await service.processIncomingMessage({
+        from: SENDER,
+        type: 'audio',
+        audio: { id: 'audio-read-1' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_DATE);
+      const spoken = ttsSpy.mock.calls
+        .map((c: any[]) => c[1] as string)
+        .join('\n');
+      expect(spoken).toContain('opción A');
+      expect(spoken).toContain('opción B');
+      expect(spoken).toContain('Pérez');
+    });
   });
 
   // ════════════════════════════════════════════════════════════════
@@ -1386,6 +1456,45 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // Y sí seleccionó el horario A.
       expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe(
         'slot-A',
+      );
+    });
+
+    it('AUDIO "las diez de la mañana" (sin letra) casa el cupo por hora → horario A', async () => {
+      // Slot A = 10:00 Bogotá (2026-06-01T15:00Z); Slot B = 11:00 Bogotá.
+      // El paciente no dice la letra: identifica el cupo por su hora.
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'las diez de la mañana', intent: 'otro' }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      expect(sentMessages().join('\n').toLowerCase()).not.toContain('escríba');
+      expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe(
+        'slot-A',
+      );
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_CEDULA,
+      );
+    });
+
+    it('AUDIO con hora AMBIGUA entre cupos → no adivina: reintenta pidiendo la letra', async () => {
+      // Ambos slots caen en la "mañana"; sin hora concreta el match es ambiguo.
+      redis.store.set(
+        `temp_slot_B_fecha:${SENDER}`,
+        new Date('2026-06-01T15:30:00Z').toISOString(), // también 10:xx Bogotá
+      );
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ transcript: 'la de las diez', intent: 'otro' }),
+      );
+
+      await service.processIncomingMessage(makeAudioEvent());
+
+      // No seleccionó ningún cupo (ambiguo) y sigue en AWAITING_DATE.
+      expect(
+        redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_DATE,
       );
     });
   });

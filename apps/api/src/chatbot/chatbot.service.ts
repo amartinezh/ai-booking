@@ -33,7 +33,10 @@ import {
 import {
   formatAppointmentLong,
   formatAppointmentCompact,
+  formatAppointmentSpoken,
   parseFechaPreferida,
+  parseHoraPreferida,
+  matchesHora,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
@@ -695,6 +698,94 @@ export class ChatbotService implements OnModuleInit {
     const raw = process.env.LLM_MAX_RETRIES;
     const n = raw ? parseInt(raw, 10) : NaN;
     return Number.isFinite(n) && n > 0 ? n : 5;
+  }
+
+  /**
+   * Cuántos cupos LEE la voz al presentar la agenda (los más próximos). El
+   * listado completo con todas las letras sigue yendo por texto. Env
+   * `VOICE_SLOTS_SPOKEN_COUNT`, default 3.
+   */
+  private getVoiceSlotsSpokenCount(): number {
+    const raw = this.configService.get<string>('VOICE_SLOTS_SPOKEN_COUNT', '3');
+    const n = parseInt(raw ?? '', 10);
+    return Number.isFinite(n) && n > 0 ? n : 3;
+  }
+
+  /**
+   * Arma la frase hablada de las próximas N citas para el audio del menú de
+   * cupos: "opción A, mañana a las 3 de la tarde con el Doctor Pérez. opción B,
+   * ...". Las letras coinciden con el listado de texto (mismo orden A, B, C…).
+   */
+  private buildSpokenSlotLines(
+    slots: Array<{ fecha: Date; doctor: string }>,
+  ): string {
+    const n = this.getVoiceSlotsSpokenCount();
+    return slots
+      .slice(0, n)
+      .map((s, i) => {
+        const letra = String.fromCharCode(65 + i);
+        return `opción ${letra}, ${formatAppointmentSpoken(s.fecha)} con el Doctor ${s.doctor}.`;
+      })
+      .join(' ');
+  }
+
+  /**
+   * Lee de Redis los cupos ofrecidos en el menú de agendamiento
+   * (`temp_slot_<letra>` + `temp_slot_<letra>_fecha`) con su letra, id y fecha.
+   * Permite casar un cupo por "día + hora" dichos por voz, no solo por letra.
+   */
+  private async loadOfferedSlots(
+    senderId: string,
+  ): Promise<Array<{ letra: string; slotId: string; fecha: Date }>> {
+    const keys = await this.redis.keys(`temp_slot_*:${senderId}`);
+    const letras = [
+      ...new Set(
+        keys
+          .map((k) => k.match(/^temp_slot_([A-Z]):/)?.[1])
+          .filter((l): l is string => !!l),
+      ),
+    ].sort();
+
+    const out: Array<{ letra: string; slotId: string; fecha: Date }> = [];
+    for (const letra of letras) {
+      const slotId = await this.redis.get(`temp_slot_${letra}:${senderId}`);
+      const fechaStr = await this.redis.get(
+        `temp_slot_${letra}_fecha:${senderId}`,
+      );
+      if (slotId && fechaStr) {
+        out.push({ letra, slotId, fecha: new Date(fechaStr) });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Casa el turno del paciente contra los cupos ofrecidos usando el día
+   * (`parseFechaPreferida`) y/o la hora (`parseHoraPreferida`) que mencione.
+   * Devuelve el cupo SOLO si el match es inequívoco (exactamente uno); ante
+   * ambigüedad o si no se reconoce ni día ni hora, devuelve `null` para que el
+   * llamador reintente o siga pidiendo la letra. Nunca agenda a ciegas.
+   */
+  private async matchOfferedSlotByVoice(
+    senderId: string,
+    text: string | undefined,
+  ): Promise<{ slotId: string; fecha: Date } | null> {
+    const ventana = parseFechaPreferida(text ?? null);
+    const hora = parseHoraPreferida(text ?? null);
+    if (!ventana && !hora) return null;
+
+    const offered = await this.loadOfferedSlots(senderId);
+    const matches = offered.filter((s) => {
+      const inDay = ventana
+        ? s.fecha >= ventana.desde && s.fecha <= ventana.hasta
+        : true;
+      const inHour = hora ? matchesHora(s.fecha, hora) : true;
+      return inDay && inHour;
+    });
+
+    return matches.length === 1
+      ? { slotId: matches[0].slotId, fecha: matches[0].fecha }
+      : null;
   }
 
   /** Switch maestro del failover entre proveedores. Default false. */
@@ -4044,6 +4135,37 @@ export class ChatbotService implements OnModuleInit {
           return;
         }
 
+        const isVoiceTurn =
+          (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
+          'true';
+
+        // ── Match por voz "día + hora" ("la quiero mañana a las 3") ──
+        // Solo cuando los cupos ya están acotados al día pedido (slotsMode
+        // 'fecha') y el turno vino por voz. Si la hora casa con UN único cupo,
+        // saltamos el menú y vamos directo a la confirmación (el resumen
+        // existente pide el SÍ/NO). Si es ambiguo o no casa, cae al menú y la
+        // voz lee las opciones más próximas (abajo).
+        if (isVoiceTurn && slotsMode === 'fecha') {
+          const horaPref =
+            parseHoraPreferida(aiData.transcript ?? text ?? null) ??
+            parseHoraPreferida(fechaPrefRaw);
+          if (horaPref) {
+            const matches = slots.filter((s) => matchesHora(s.fecha, horaPref));
+            if (matches.length === 1) {
+              await this.advanceAfterSlotSelected({
+                organizationId,
+                senderId,
+                slotId: matches[0].slotId,
+                slotFechaStr: matches[0].fecha.toISOString(),
+                MSGS,
+                userMessage: text,
+                via: 'voice_datetime',
+              });
+              return;
+            }
+          }
+        }
+
         // Hay slots: mostrar menú con letras y pedir selección.
         let lineasFechas = '';
         const slotsMetadata: any[] = [];
@@ -4089,14 +4211,17 @@ export class ChatbotService implements OnModuleInit {
         } else {
           reply = MSGS.cuposDisponibles('', resolvedEpsName, lineasFechas);
         }
-        // En voz: el audio solo anuncia que llegan las opciones; el listado de
-        // horarios viaja por texto (no se leen todos en voz).
-        await this.smartReply(
-          organizationId,
-          senderId,
-          reply,
-          MSGS.cuposDisponiblesAudio(resolvedEpsName),
-        );
+        // En voz: el audio LEE las próximas N opciones (env
+        // VOICE_SLOTS_SPOKEN_COUNT) en lenguaje natural ("opción A, mañana a
+        // las 3 de la tarde..."); el listado completo con todas las letras
+        // siempre viaja por texto para que el paciente pueda revisarlo.
+        const audioText = isVoiceTurn
+          ? MSGS.cuposDisponiblesAudioHablado(
+              resolvedEpsName,
+              this.buildSpokenSlotLines(slots),
+            )
+          : MSGS.cuposDisponiblesAudio(resolvedEpsName);
+        await this.smartReply(organizationId, senderId, reply, audioText);
         await this.setUserState(
           organizationId,
           senderId,
@@ -4310,7 +4435,25 @@ export class ChatbotService implements OnModuleInit {
       `temp_slot_${letraElegida}_fecha:${senderId}`,
     );
 
+    // Sin letra válida: el paciente (típicamente por voz) puede referirse al
+    // cupo por su día/hora ("la de mañana a las 3") en vez de la letra.
+    // Intentamos casar UN único cupo de los ofrecidos; si resulta ambiguo o no
+    // se reconoce, caemos al reintento (disculpa + volver a preguntar).
     if (!slotId || !slotFechaStr) {
+      const matched = await this.matchOfferedSlotByVoice(senderId, text);
+      if (matched) {
+        await this.advanceAfterSlotSelected({
+          organizationId,
+          senderId,
+          slotId: matched.slotId,
+          slotFechaStr: matched.fecha.toISOString(),
+          MSGS,
+          userMessage: text,
+          via: 'voice_datetime',
+        });
+        return;
+      }
+
       await this.redis.set(
         retriesKey,
         (retriesCount + 1).toString(),
@@ -4329,6 +4472,45 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    await this.advanceAfterSlotSelected({
+      organizationId,
+      senderId,
+      slotId,
+      slotFechaStr,
+      MSGS,
+      userMessage: text,
+      selectedLetter: letraElegida,
+      via: 'letter',
+    });
+  }
+
+  /**
+   * Transición común tras elegir un cupo (por letra o por voz "día+hora"):
+   * persiste el slot seleccionado y avanza al resumen (si la cédula ya está en
+   * memoria) o a pedir la cédula. Fuente ÚNICA de esta transición para que la
+   * selección por letra y el match por voz se comporten idénticamente.
+   */
+  private async advanceAfterSlotSelected(p: {
+    organizationId: string;
+    senderId: string;
+    slotId: string;
+    slotFechaStr: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    userMessage: string | undefined;
+    selectedLetter?: string;
+    via: 'letter' | 'voice_datetime';
+  }): Promise<void> {
+    const {
+      organizationId,
+      senderId,
+      slotId,
+      slotFechaStr,
+      MSGS,
+      userMessage,
+      selectedLetter,
+      via,
+    } = p;
+
     await this.redis.set(
       `temp_selected_slot_id:${organizationId}:${senderId}`,
       slotId,
@@ -4344,7 +4526,6 @@ export class ChatbotService implements OnModuleInit {
 
     const fechaFormateada = formatAppointmentLong(slotFechaStr);
 
-    // Nuevo protocolo: tras elegir el slot, capturamos los datos del paciente.
     // Si el usuario ya tenía cédula en memoria (re-agendamiento), saltamos
     // directo al resumen para no preguntar dos veces.
     const cedulaPrevia = await this.redis.get(
@@ -4380,11 +4561,12 @@ export class ChatbotService implements OnModuleInit {
       );
 
       await this.auditSuccess(senderId, organizationId, {
-        userMessage: text,
+        userMessage,
         botReply: reply,
         metadata: {
           step: 'SLOT_SELECTED_CEDULA_KNOWN',
-          selectedLetter: letraElegida,
+          selectedLetter,
+          via,
           slotId,
           slotDate: slotFechaStr,
         },
@@ -4402,11 +4584,12 @@ export class ChatbotService implements OnModuleInit {
     );
 
     await this.auditSuccess(senderId, organizationId, {
-      userMessage: text,
+      userMessage,
       botReply: reply,
       metadata: {
         step: 'SLOT_SELECTED_ASK_CEDULA',
-        selectedLetter: letraElegida,
+        selectedLetter,
+        via,
         slotId,
         slotDate: slotFechaStr,
       },

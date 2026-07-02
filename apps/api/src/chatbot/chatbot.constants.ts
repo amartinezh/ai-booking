@@ -214,6 +214,16 @@ const FORMAL = {
       `Estos son los horarios disponibles con ${epsName}. Se los dejo en el mensaje de texto; respóndame con la letra de la opción que más le acomode.`,
     ]),
 
+  // Audio que SÍ lee las próximas opciones (las más cercanas), no solo anuncia.
+  // `lineasHabladas` ya viene armado por el service en lenguaje natural
+  // ("opción A, mañana a las 3 de la tarde con el Doctor Pérez"). El listado
+  // completo con todas las letras sigue viajando por texto.
+  cuposDisponiblesAudioHablado: (epsName: string, lineasHabladas: string) =>
+    pick([
+      `Con ${epsName} encontré estas opciones cercanas: ${lineasHabladas} Puede responderme con la letra, o decirme el día y la hora que prefiera. Le dejo el listado completo en el mensaje de texto.`,
+      `Estas son las citas más próximas con ${epsName}: ${lineasHabladas} Respóndame con la letra de la que prefiera, o dígame directamente el día y la hora. En el mensaje de texto le dejo todas las opciones.`,
+    ]),
+
   // Cupos filtrados por la fecha que pidió el paciente ("mañana", "el lunes"...).
   cuposParaFecha: (epsName: string, fechaLabel: string, lineas: string) =>
     pick([
@@ -796,6 +806,16 @@ const INFORMAL = {
     pick([
       `A continuación te presento las opciones que encontré con ${epsName}. Míralas en el mensaje de texto y respóndeme con la letra del horario que prefieras.`,
       `Estos son los horarios que tengo con ${epsName}. Te los dejo en el mensaje de texto; respóndeme con la letra de la opción que más te sirva.`,
+    ]),
+
+  // Audio que SÍ lee las próximas opciones (las más cercanas), no solo anuncia.
+  // `lineasHabladas` ya viene armado por el service en lenguaje natural
+  // ("opción A, mañana a las 3 de la tarde con el Doctor Pérez"). El listado
+  // completo con todas las letras sigue viajando por texto (tuteo).
+  cuposDisponiblesAudioHablado: (epsName: string, lineasHabladas: string) =>
+    pick([
+      `Con ${epsName} te encontré estas opciones cercanas: ${lineasHabladas} Me puedes responder con la letra, o decirme el día y la hora que prefieras. Te dejo el listado completo en el mensaje de texto.`,
+      `Estas son las citas más próximas con ${epsName}: ${lineasHabladas} Respóndeme con la letra de la que quieras, o dime directamente el día y la hora. En el mensaje de texto te dejo todas las opciones.`,
     ]),
 
   // Cupos filtrados por la fecha que pidió el paciente ("mañana", "el lunes"...).
