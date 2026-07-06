@@ -151,6 +151,7 @@ export default function AppointmentModal({
                                     <option value="">Sin EPS / Particular</option>
                                     {epsList.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                                 </select>
+                                <p className="mt-1 text-[11px] text-zinc-400">Para agendar por EPS el paciente debe estar en el Padrón EPS. Use “Particular” para pago directo.</p>
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">Fecha y Hora</label>
@@ -305,6 +306,7 @@ export default function AppointmentModal({
                             <option value="">Seleccione...</option>
                             {epsList.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                         </select>
+                        <p className="mt-1 text-[11px] text-zinc-400">Para agendar por EPS el paciente debe estar en el Padrón EPS. Use “Particular” para pago directo.</p>
                     </div>
 
                     <div>

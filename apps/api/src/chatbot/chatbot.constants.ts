@@ -35,7 +35,9 @@ export enum ChatState {
 }
 
 // Nombre canónico del registro EPS para pago directo (debe existir en BD por org).
-export const PARTICULAR_EPS_NAME = 'Particular';
+// Fuente única de verdad en @agenia/shared; se re-exporta para no romper los
+// imports existentes (`from './chatbot.constants'`).
+export { PARTICULAR_EPS_NAME } from '@agenia/shared';
 
 // Valor por defecto de reintentos. La cifra efectiva se lee de OrganizationSettings.
 export const DEFAULT_MAX_RETRIES = 3;

@@ -27,3 +27,4 @@ export type {
   PadronCsvError,
   PadronCsvReport,
 } from './src/padron-csv';
+export { PARTICULAR_EPS_NAME, isParticularEps } from './src/eps';

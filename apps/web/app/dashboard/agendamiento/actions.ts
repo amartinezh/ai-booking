@@ -4,6 +4,7 @@ import { prisma } from '../../../lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import { getSession } from '../../../lib/session';
+import { findEpsEnrollmentIssue } from '../../../lib/eps-enrollment';
 
 // Mock del Outbound de Whatsapp desde NestJS API (o invocación HTTP a nuestro NestJS)
 export async function sendManualWhatsappAction(appointmentId: string, message: string) {
@@ -64,6 +65,15 @@ export async function createManualAppointmentAction(formData: FormData) {
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
         // Capturado tras el guard: TS no propaga el narrowing al closure de la transacción.
         const organizationId = session.organizationId;
+
+        // 🪪 PADRÓN EPS: agendar por EPS exige que la cédula esté dada de alta.
+        // Read puro previo a la transacción: falla rápido, sin escrituras a medias.
+        const enrollmentIssue = await findEpsEnrollmentIssue(prisma, {
+            organizationId,
+            epsId,
+            cedula: patientCedula,
+        });
+        if (enrollmentIssue) return { success: false, error: enrollmentIssue };
 
         // 1. Transaction to find/create patient and assign slot
         await prisma.$transaction(async (tx) => {
@@ -156,6 +166,14 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
         // Capturado tras el guard: TS no propaga el narrowing al closure de la transacción.
         const organizationId = session.organizationId;
+
+        // 🪪 PADRÓN EPS: reagendar/actualizar por EPS también exige estar de alta.
+        const enrollmentIssue = await findEpsEnrollmentIssue(prisma, {
+            organizationId,
+            epsId,
+            cedula: patientCedula,
+        });
+        if (enrollmentIssue) return { success: false, error: enrollmentIssue };
 
         await prisma.$transaction(async (tx) => {
             const appointment = await tx.appointment.findFirst({
