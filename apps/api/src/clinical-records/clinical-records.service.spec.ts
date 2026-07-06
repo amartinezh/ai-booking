@@ -189,13 +189,7 @@ describe('ClinicalRecordService — aislamiento de tenant', () => {
       });
 
       await expect(
-        service.createAddendum(
-          'hc-1',
-          'doc-de-org-b',
-          'nota',
-          ORG_A,
-          'user-1',
-        ),
+        service.createAddendum('hc-1', 'doc-de-org-b', 'nota', ORG_A, 'user-1'),
       ).rejects.toThrow(ForbiddenException);
     });
   });

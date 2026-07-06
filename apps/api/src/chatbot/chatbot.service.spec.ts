@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ChatbotService } from './chatbot.service';
-import { ChatState } from './chatbot.constants';
+import { ChatState, MSGS } from './chatbot.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
@@ -107,6 +107,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     logFailure: jest.Mock;
     log: jest.Mock;
     logWaitlistJoined: jest.Mock;
+    logBookingConfirmed: jest.Mock;
   };
   let sendSpy: jest.SpyInstance;
 
@@ -146,6 +147,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       patientProfile: {
         findUnique: jest.fn(async () => null),
         findFirst: jest.fn(async () => null),
+        create: jest.fn(async ({ data }: any) => ({ id: 'pat-1', ...data })),
+        update: jest.fn(async ({ data }: any) => ({ id: 'pat-1', ...data })),
       },
       medicalService: {
         findMany: jest.fn(async () => []),
@@ -154,6 +157,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       eps: {
         findMany: jest.fn(async () => []),
         findFirst: jest.fn(async () => null),
+        findUnique: jest.fn(async () => null),
         create: jest.fn(async () => ({ id: 'eps-part', name: 'Particular' })),
         update: jest.fn(async () => ({})),
       },
@@ -162,6 +166,12 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         findUnique: jest.fn(async () => null),
       },
       doctorProfile: { findMany: jest.fn(async () => []) },
+      // Padrón EPS (pacientes dados de alta). Default null = "no está de
+      // alta"; el gate solo se activa cuando eps.findFirst resuelve una EPS
+      // real (no Particular), así que el resto de tests no se ven afectados.
+      epsEnrolledPatient: { findFirst: jest.fn(async () => null) },
+      user: { create: jest.fn(async () => ({ id: 'user-tmp-1' })) },
+      scheduleSlot: { findUnique: jest.fn(async () => null) },
     };
 
     const organizationSettings = {
@@ -175,6 +185,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       logFailure: jest.fn(async () => {}),
       log: jest.fn(async () => {}),
       logWaitlistJoined: jest.fn(async () => {}),
+      logBookingConfirmed: jest.fn(async () => {}),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -186,7 +197,13 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         { provide: RedisService, useValue: redis },
         {
           provide: AppointmentsService,
-          useValue: { getAvailableSlots: jest.fn(async () => []) },
+          useValue: {
+            getAvailableSlots: jest.fn(async () => []),
+            bookAppointment: jest.fn(async () => ({
+              success: true,
+              appointmentId: 'apt-1',
+            })),
+          },
         },
         {
           provide: WaitlistService,
@@ -2155,6 +2172,95 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(prisma.appointment.update).not.toHaveBeenCalled();
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(redis.store.get(stateKey)).toBe(ChatState.IDLE);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // PADRÓN EPS: agendar POR EPS exige que la cédula esté dada de alta
+  // (EpsEnrolledPatient). "Particular" no pasa por el padrón.
+  // ─────────────────────────────────────────────────────────────
+  describe('padrón EPS: agendamiento por EPS exige estar dado de alta', () => {
+    const stateKey = `chat_state:${ORG_ID}:${SENDER}`;
+
+    // Sesión lista para confirmar una cita por la EPS Sura.
+    const armarConfirmacionPendiente = () => {
+      redis.store.set(stateKey, ChatState.AWAITING_CONFIRMATION);
+      redis.store.set(`temp_cedula:${ORG_ID}:${SENDER}`, '1088123456');
+      redis.store.set(`temp_nombre:${ORG_ID}:${SENDER}`, 'Ana Pérez');
+      redis.store.set(`temp_especialidad:${ORG_ID}:${SENDER}`, 'Odontología');
+      redis.store.set(`temp_eps_id:${ORG_ID}:${SENDER}`, 'eps-sura');
+      redis.store.set(`temp_selected_slot_id:${ORG_ID}:${SENDER}`, 'slot-1');
+      redis.store.set(
+        `temp_selected_date_view:${ORG_ID}:${SENDER}`,
+        '2026-08-10T14:00:00.000Z',
+      );
+    };
+
+    it('cédula SIN alta para la EPS → bloquea, envía el enlace de solicitud y cierra la sesión', async () => {
+      armarConfirmacionPendiente();
+      prisma.eps.findFirst.mockResolvedValue({ id: 'eps-sura', name: 'Sura' });
+      prisma.epsEnrolledPatient.findFirst.mockResolvedValue(null);
+
+      await service.processIncomingMessage(makeTextEvent('SI'));
+
+      const all = sentMessages().join('\n');
+      // Mensaje amable con el enlace al formulario público de revisión.
+      expect(all).toContain('dado de alta');
+      expect(all).toContain(`/solicitud-alta/${ORG_ID}`);
+      // No se reservó nada y la sesión quedó cerrada.
+      expect(
+        (service as any).appointmentsService.bookAppointment,
+      ).not.toHaveBeenCalled();
+      expect(redis.store.get(stateKey)).toBe(ChatState.IDLE);
+      // Auditoría con la razón estandarizada.
+      expect(interactionLog.logFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'EPS_NOT_ENROLLED' }),
+      );
+    });
+
+    it('cédula CON alta para la EPS → el flujo continúa y reserva la cita', async () => {
+      armarConfirmacionPendiente();
+      prisma.eps.findFirst.mockResolvedValue({ id: 'eps-sura', name: 'Sura' });
+      prisma.eps.findUnique.mockResolvedValue({ id: 'eps-sura', name: 'Sura' });
+      prisma.epsEnrolledPatient.findFirst.mockResolvedValue({ id: 'padron-1' });
+
+      await service.processIncomingMessage(makeTextEvent('SI'));
+
+      expect(
+        (service as any).appointmentsService.bookAppointment,
+      ).toHaveBeenCalledWith('pat-1', 'slot-1', 'eps-sura', 'WHATSAPP', ORG_ID);
+      const all = sentMessages().join('\n');
+      expect(all).not.toContain('/solicitud-alta/');
+    });
+
+    it('EPS "Particular" (pago directo) → NO consulta el padrón ni bloquea', async () => {
+      armarConfirmacionPendiente();
+      redis.store.set(`temp_eps_id:${ORG_ID}:${SENDER}`, 'eps-part');
+      prisma.eps.findFirst.mockResolvedValue({
+        id: 'eps-part',
+        name: 'Particular',
+      });
+
+      await service.processIncomingMessage(makeTextEvent('SI'));
+
+      expect(prisma.epsEnrolledPatient.findFirst).not.toHaveBeenCalled();
+      expect(
+        (service as any).appointmentsService.bookAppointment,
+      ).toHaveBeenCalled();
+    });
+
+    it('sin EPS en sesión (epsId null) → el gate no aplica', async () => {
+      const blocked = await (service as any).rejectIfNotEnrolledInEps({
+        organizationId: ORG_ID,
+        senderId: SENDER,
+        cedula: '1088123456',
+        epsId: null,
+        MSGS,
+        userMessage: 'test',
+      });
+
+      expect(blocked).toBe(false);
+      expect(prisma.eps.findFirst).not.toHaveBeenCalled();
     });
   });
 });

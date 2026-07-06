@@ -1,9 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import {
-  AudioEncoding,
-  VoiceGender,
-  VoiceProvider,
-} from '@agenia/database';
+import { AudioEncoding, VoiceGender, VoiceProvider } from '@agenia/database';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { GoogleTtsService } from './tts/google-tts.service';

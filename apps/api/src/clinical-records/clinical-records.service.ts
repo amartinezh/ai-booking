@@ -295,7 +295,10 @@ export class ClinicalRecordService {
 
     if (!record) return null;
 
-    if (requester.role === 'PATIENT' && record.patient?.userId !== requester.userId) {
+    if (
+      requester.role === 'PATIENT' &&
+      record.patient?.userId !== requester.userId
+    ) {
       throw new ForbiddenException(
         'Solo puedes consultar tu propia historia clínica.',
       );

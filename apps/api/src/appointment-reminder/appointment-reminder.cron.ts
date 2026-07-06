@@ -316,10 +316,10 @@ export class AppointmentReminderCronService
     apt: Awaited<ReturnType<typeof this.findEligibleAppointments>>[number],
   ): Promise<string> {
     const style = await this.organizationSettings.getCommunicationStyle(
-      apt.organizationId!,
+      apt.organizationId,
     );
     const botName = await this.organizationSettings.getBotName(
-      apt.organizationId!,
+      apt.organizationId,
     );
     const clinicName = apt.organization?.name ?? 'su clínica';
     const patientName = apt.patient?.fullName?.split(' ')[0] ?? '';

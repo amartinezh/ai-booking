@@ -7,8 +7,14 @@ import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credenti
 
 describe('ChatbotController', () => {
   let controller: ChatbotController;
-  let chatbotService: { processIncomingMessage: jest.Mock; sendOutboundMessage: jest.Mock };
-  let credentials: { organizationIdByVerifyToken: jest.Mock; appSecretByPhoneNumberId: jest.Mock };
+  let chatbotService: {
+    processIncomingMessage: jest.Mock;
+    sendOutboundMessage: jest.Mock;
+  };
+  let credentials: {
+    organizationIdByVerifyToken: jest.Mock;
+    appSecretByPhoneNumberId: jest.Mock;
+  };
 
   const APP_SECRET = 'super-secreto-de-meta';
 

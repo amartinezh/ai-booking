@@ -51,19 +51,21 @@ model Organization {
   autoSuspend     Boolean   @default(false)
 
   // Relaciones Inversas (Todo el sistema)
-  users           User[]
-  eps             Eps[]
-  medicalServices MedicalService[]
-  slots           ScheduleSlot[]
-  appointments    Appointment[]
-  clinicalRecords ClinicalRecord[]
-  patients        PatientProfile[]
-  doctors         DoctorProfile[]
-  interactionLogs InteractionLog[]
-  agents          AgentProfile[]
-  waitlistEntries WaitlistEntry[]
-  supportTickets  SupportTicket[]
-  chatSurveys     ChatSurvey[]
+  users              User[]
+  eps                Eps[]
+  medicalServices    MedicalService[]
+  slots              ScheduleSlot[]
+  appointments       Appointment[]
+  clinicalRecords    ClinicalRecord[]
+  patients           PatientProfile[]
+  doctors            DoctorProfile[]
+  interactionLogs    InteractionLog[]
+  agents             AgentProfile[]
+  waitlistEntries    WaitlistEntry[]
+  supportTickets     SupportTicket[]
+  chatSurveys        ChatSurvey[]
+  epsEnrolledPatients EpsEnrolledPatient[]
+  epsEnrollmentRequests EpsEnrollmentRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -286,11 +288,12 @@ model Eps {
   isActive Boolean @default(true) // Para encender/apagar convenios
 
   // Relaciones
-  patients        PatientProfile[] // Pacientes afiliados a esta EPS
-  slots           ScheduleSlot[] // Cupos de agenda EXCLUSIVOS para esta EPS
-  appointments    Appointment[] // Historial de citas facturadas por esta EPS
-  agents          AgentProfile[] // Agentes limitados a agendar paciente de esta EPS
-  waitlistEntries WaitlistEntry[]
+  patients         PatientProfile[] // Pacientes afiliados a esta EPS
+  slots            ScheduleSlot[] // Cupos de agenda EXCLUSIVOS para esta EPS
+  appointments     Appointment[] // Historial de citas facturadas por esta EPS
+  agents           AgentProfile[] // Agentes limitados a agendar paciente de esta EPS
+  waitlistEntries  WaitlistEntry[]
+  enrolledPatients EpsEnrolledPatient[] // Padrón: pacientes dados de alta para agendar por esta EPS
 
   // 🏢 TENANT ISOLATION — obligatorio: una EPS siempre pertenece a una clínica.
   // La unicidad de name/nit es por organización: dos clínicas pueden tener
@@ -949,6 +952,83 @@ enum ResolutionStatus {
   BLOCKED_INSULT // La sesión se cerró por lenguaje abusivo
   SYSTEM_ERROR // Cierre por error técnico / exceso de reintentos
   CANCELLED // El paciente canceló una cita existente con éxito
+}
+
+// -----------------------------------------------------------------------------
+// 🪪 PADRÓN EPS: PACIENTES DADOS DE ALTA
+//
+// Regla de negocio: un paciente solo puede AGENDAR POR EPS si su cédula figura
+// en este padrón (cargado por la clínica vía CSV en /dashboard/padron). Las
+// citas "Particular" (pago directo) NO pasan por esta tabla.
+//
+// La cédula es única POR CLÍNICA (multi-tenant): la misma persona puede estar
+// dada de alta en varias clínicas, cada una con su propia fila y su propia EPS.
+// Un re-import del CSV hace upsert por (organizationId, cedula), de modo que
+// un cambio de EPS del paciente se refleja re-importando el padrón.
+// -----------------------------------------------------------------------------
+model EpsEnrolledPatient {
+  id String @id @default(uuid())
+
+  cedula      String
+  fullName    String
+  phone       String?
+  email       String?
+  dateOfBirth DateTime?
+  gender      String? // 'M', 'F', 'OTRO'
+  address     String?
+
+  // Baja lógica: permite retirar a un paciente del padrón sin perder trazabilidad.
+  isActive Boolean @default(true)
+
+  // EPS por la que el paciente está autorizado a agendar.
+  epsId String
+  eps   Eps    @relation(fields: [epsId], references: [id], onDelete: Cascade)
+
+  // 🏢 TENANT ISOLATION — obligatorio: el padrón es por clínica.
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, cedula])
+  @@index([organizationId, epsId])
+}
+
+// -----------------------------------------------------------------------------
+// 📨 SOLICITUDES DE ALTA (revisión ciudadana)
+//
+// Cuando el chatbot rechaza un agendamiento por EPS porque la cédula no está
+// en el padrón, remite al paciente a un formulario público
+// (/solicitud-alta/{orgId}) donde puede argumentar por qué debería estar dado
+// de alta. Esta tabla SOLO registra esas revisiones; el alta efectiva se hace
+// re-importando el padrón (o corrigiéndolo) desde el dashboard.
+// -----------------------------------------------------------------------------
+model EpsEnrollmentRequest {
+  id String @id @default(uuid())
+
+  cedula   String
+  fullName String
+  phone    String?
+  epsName  String? // Nombre de la EPS que el ciudadano dice tener (texto informativo)
+  message  String  @db.Text // Argumento/reclamo del ciudadano
+
+  status     EnrollmentRequestStatus @default(PENDING)
+  reviewedAt DateTime?
+
+  // 🏢 TENANT ISOLATION
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status, createdAt])
+}
+
+enum EnrollmentRequestStatus {
+  PENDING // Radicada, sin revisar
+  REVIEWED // Un funcionario ya la revisó
 }
 
 // -----------------------------------------------------------------------------

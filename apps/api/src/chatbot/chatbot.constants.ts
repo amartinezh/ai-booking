@@ -196,6 +196,24 @@ const FORMAL = {
         `Si lo prefiere, podemos agendarle como *Particular*, o indíqueme si cuenta con otra EPS.`,
     ]),
 
+  // La cédula no está en el padrón de pacientes dados de alta para esa EPS.
+  // Mensaje amable + enlace al formulario público de solicitud de revisión.
+  epsNoAfiliado: (epsName: string, enlace: string) =>
+    pick([
+      `Lo sentimos: verifiqué en nuestro sistema y su documento aún no figura *dado de alta* ` +
+        `para agendar por *${epsName}* en esta institución. 🙏\n\n` +
+        `Si considera que debería estar habilitado(a), con gusto puede radicar una *solicitud de revisión* ` +
+        `en este enlace seguro y nuestro equipo estudiará su caso:\n${enlace}\n\n` +
+        `_Cuando su alta sea aprobada, podrá agendar por su EPS. Si lo prefiere, también puede ` +
+        `escribirme *"Hola"* y agendar como *Particular* (pago directo)._ 💙`,
+      `Disculpe: revisé el listado de pacientes habilitados y su documento todavía no está ` +
+        `*dado de alta* para *${epsName}* en esta institución. 🙏\n\n` +
+        `Puede solicitar la revisión de su caso en este enlace seguro — allí nos cuenta por qué ` +
+        `debería estar habilitado(a):\n${enlace}\n\n` +
+        `_Apenas la institución apruebe su alta, podrá agendar por su EPS. Mientras tanto, si desea, ` +
+        `escríbame *"Hola"* para agendar como *Particular*._ 💙`,
+    ]),
+
   cuposDisponibles: (nombre: string, epsName: string, lineas: string) =>
     pick([
       `${nombre ? `${nombre}, ` : ''}estos son los horarios que encontré con *${epsName}*:\n\n${lineas}\n` +
@@ -789,6 +807,24 @@ const INFORMAL = {
     pick([
       `Qué pena, ahorita no tenemos convenio activo con *${epsName}*. ¿Te animas a continuar como *Particular* o tienes otra EPS? Cuéntame.`,
       `En este momento no estamos atendiendo *${epsName}*. Si gustas te agendo como *Particular*, o si tienes otra EPS, dímelo.`,
+    ]),
+
+  // La cédula no está en el padrón de pacientes dados de alta para esa EPS.
+  // Mensaje amable + enlace al formulario público de solicitud de revisión.
+  epsNoAfiliado: (epsName: string, enlace: string) =>
+    pick([
+      `Qué pena contigo: revisé el sistema y tu documento aún no aparece *dado de alta* ` +
+        `para agendar por *${epsName}* aquí. 🙏\n\n` +
+        `Si crees que deberías estar habilitado(a), radica una *solicitud de revisión* en este ` +
+        `enlace seguro y el equipo estudiará tu caso:\n${enlace}\n\n` +
+        `_Cuando aprueben tu alta podrás agendar por tu EPS. Si prefieres, también puedes ` +
+        `escribirme *"Hola"* y agendar como *Particular* (pago directo)._ 💙`,
+      `Lo siento: miré el listado de pacientes habilitados y tu documento todavía no está ` +
+        `*dado de alta* para *${epsName}*. 🙏\n\n` +
+        `Cuéntanos tu caso en este enlace seguro para que lo revisen — ahí explicas por qué ` +
+        `deberías estar habilitado(a):\n${enlace}\n\n` +
+        `_Apenas aprueben tu alta podrás agendar por tu EPS. Mientras tanto, si quieres, ` +
+        `escríbeme *"Hola"* y te agendo como *Particular*._ 💙`,
     ]),
 
   cuposDisponibles: (nombre: string, epsName: string, lineas: string) =>

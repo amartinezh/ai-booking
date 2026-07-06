@@ -1407,6 +1407,73 @@ export class ChatbotService implements OnModuleInit {
   }
 
   // ══════════════════════════════════════════════════════════════
+  // HELPER 4c: PADRÓN EPS — VERIFICACIÓN DE ALTA
+  // Regla de negocio: agendar POR EPS exige que la cédula esté dada de alta
+  // en el padrón de la clínica (EpsEnrolledPatient, cargado por CSV).
+  // "Particular" (pago directo) NO pasa por el padrón.
+  //
+  // Si el paciente NO está de alta: mensaje amable + enlace al formulario
+  // público de solicitud de revisión, auditoría y cierre de la sesión.
+  // Devuelve true si el flujo debe DETENERSE (paciente bloqueado).
+  // ══════════════════════════════════════════════════════════════
+  private async rejectIfNotEnrolledInEps(params: {
+    organizationId: string;
+    senderId: string;
+    cedula: string;
+    epsId: string | null;
+    MSGS: ReturnType<typeof buildMessages>;
+    userMessage?: string | null;
+  }): Promise<boolean> {
+    const { organizationId, senderId, epsId, MSGS, userMessage } = params;
+    if (!epsId) return false; // sin EPS asociada (flujo Particular) → no aplica
+
+    // Autoritativo: resolvemos la EPS por id DENTRO del tenant. "Particular"
+    // vive como fila de Eps en BD, por eso se detecta por nombre.
+    const eps = await this.prisma.eps.findFirst({
+      where: { id: epsId, organizationId },
+      select: { id: true, name: true },
+    });
+    if (!eps || eps.name.toLowerCase() === PARTICULAR_EPS_NAME.toLowerCase()) {
+      return false;
+    }
+
+    const cedula = (params.cedula || '').replace(/\D/g, '');
+    if (!cedula) return false; // la cédula vacía ya se rechaza aguas arriba
+
+    const enrolled = await this.prisma.epsEnrolledPatient.findFirst({
+      where: { organizationId, epsId: eps.id, cedula, isActive: true },
+      select: { id: true },
+    });
+    if (enrolled) return false;
+
+    const baseUrl = (
+      this.configService.get<string>('PUBLIC_WEB_URL') ||
+      'https://agendamiento-ia.com'
+    ).replace(/\/+$/, '');
+    const reply = MSGS.epsNoAfiliado(
+      eps.name,
+      `${baseUrl}/solicitud-alta/${organizationId}`,
+    );
+    // Texto directo (no smartReply): el mensaje contiene un enlace que no debe
+    // sintetizarse a voz — mismo criterio que el enlace de la encuesta CSAT.
+    await this.sendWhatsAppMessage(senderId, reply);
+
+    await this.auditFailure(senderId, organizationId, {
+      reason: FailureReason.EPS_NOT_ENROLLED,
+      userMessage: userMessage || '[audio]',
+      botReply: reply,
+      metadata: {
+        stage: 'EPS_ENROLLMENT_BLOCKED',
+        cedula,
+        epsId: eps.id,
+        epsName: eps.name,
+      },
+    });
+    await this.cleanUpSession(organizationId, senderId);
+    return true;
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // HELPER 5: PERSISTENCIA DE PACIENTE — MULTI-PACIENTE
   // ══════════════════════════════════════════════════════════════
   private async ensurePatientPersisted(params: {
@@ -3673,6 +3740,21 @@ export class ChatbotService implements OnModuleInit {
           return;
         }
 
+        // 🪪 PADRÓN EPS: entrar a la cola por EPS también exige estar de alta
+        // (la cola termina reservando un cupo de esa EPS al liberarse).
+        if (
+          await this.rejectIfNotEnrolledInEps({
+            organizationId,
+            senderId,
+            cedula: soloNumeros,
+            epsId: epsIdForWl,
+            MSGS,
+            userMessage: text,
+          })
+        ) {
+          return;
+        }
+
         // Si el paciente NO está registrado EN ESTA CLÍNICA y no nos dio
         // nombre, pedirlo (la cédula es única por organización).
         const existing = await this.prisma.patientProfile.findFirst({
@@ -4302,6 +4384,20 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
+      // 🪪 PADRÓN EPS: agendar por EPS exige que la cédula esté dada de alta.
+      if (
+        await this.rejectIfNotEnrolledInEps({
+          organizationId,
+          senderId,
+          cedula: soloNumerosAgendamiento,
+          epsId: epsIdForPatient,
+          MSGS,
+          userMessage: text,
+        })
+      ) {
+        return;
+      }
+
       // Cargar contexto del paciente (solo dentro del tenant actual).
       const patient = await this.prisma.patientProfile.findFirst({
         where: { cedula: finalCedula, organizationId },
@@ -4543,6 +4639,24 @@ export class ChatbotService implements OnModuleInit {
     );
 
     if (cedulaPrevia) {
+      // 🪪 PADRÓN EPS: este atajo salta el paso de cédula del flujo unificado,
+      // así que la verificación de alta debe repetirse aquí.
+      const epsIdPrevio = await this.redis.get(
+        `temp_eps_id:${organizationId}:${senderId}`,
+      );
+      if (
+        await this.rejectIfNotEnrolledInEps({
+          organizationId,
+          senderId,
+          cedula: cedulaPrevia,
+          epsId: epsIdPrevio,
+          MSGS,
+          userMessage,
+        })
+      ) {
+        return;
+      }
+
       // Paciente con cédula ya conocida → resumen + confirmación.
       const specAgend =
         (await this.redis.get(
@@ -4654,6 +4768,21 @@ export class ChatbotService implements OnModuleInit {
           botReply: reply,
           metadata: { stage: 'AWAITING_CONFIRMATION_SI' },
         });
+        return;
+      }
+
+      // 🪪 PADRÓN EPS: última barrera antes de reservar (defensa en
+      // profundidad: cubre cualquier camino que llegue a la confirmación).
+      if (
+        await this.rejectIfNotEnrolledInEps({
+          organizationId,
+          senderId,
+          cedula: cedulaFinal,
+          epsId: epsIdFinal || null,
+          MSGS,
+          userMessage: text,
+        })
+      ) {
         return;
       }
 

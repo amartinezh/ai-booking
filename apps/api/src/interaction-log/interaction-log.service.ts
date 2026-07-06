@@ -31,6 +31,9 @@ export enum FailureReason {
   NO_AGENDA = 'NO_AGENDA',
   EPS_NOT_FOUND = 'EPS_NOT_FOUND',
   EPS_INACTIVE = 'EPS_INACTIVE',
+  // La cédula no figura en el padrón de pacientes dados de alta
+  // (EpsEnrolledPatient) para la EPS elegida → agendamiento por EPS bloqueado.
+  EPS_NOT_ENROLLED = 'EPS_NOT_ENROLLED',
   DOCTOR_NOT_FOUND = 'DOCTOR_NOT_FOUND',
   SLOT_TAKEN = 'SLOT_TAKEN',
   SESSION_EXPIRED = 'SESSION_EXPIRED',

@@ -21,3 +21,9 @@ export type {
   HoraPreferida,
   HoraMatchOptions,
 } from './src/parse-hora-preferida';
+export { validatePadronCsv, PADRON_CSV_HEADERS } from './src/padron-csv';
+export type {
+  PadronCsvRow,
+  PadronCsvError,
+  PadronCsvReport,
+} from './src/padron-csv';

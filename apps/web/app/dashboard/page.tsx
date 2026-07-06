@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 import DashboardClient from './components/DashboardClient';
 import PageSkeleton from './components/PageSkeleton';
+import QuickAccessGrid from './components/QuickAccessGrid';
 
 export const dynamic = 'force-dynamic';
 
@@ -107,6 +108,9 @@ export default async function DashboardPage({
                 </h1>
                 <p className="text-zinc-500 dark:text-zinc-400 text-lg leading-relaxed max-w-2xl">{greeting}</p>
             </header>
+
+            {/* Accesos rápidos: iconos a las opciones del menú, según el rol. */}
+            <QuickAccessGrid role={session.role} />
 
             <Suspense fallback={<PageSkeleton />}>
                 <DashboardClient

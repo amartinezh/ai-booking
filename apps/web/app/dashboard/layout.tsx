@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { prisma } from '../../lib/prisma';
 import LogoutButton from './components/LogoutButton';
 import BrandLogo from '@/app/components/BrandLogo';
+import { getMenusForRole } from '../../lib/menus';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
     const session = await getSession();
@@ -28,44 +29,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
         }
     }
 
-    const SUPPORT_MENU = { label: 'Soporte', href: '/dashboard/soporte', icon: '🛟' };
-
-    // Diferentes opciones de menú dependiendo del Rol
-    const PATIENT_MENUS = [
-        { label: 'Mis Citas Programadas', href: '/dashboard', icon: '📅' },
-        SUPPORT_MENU
-    ];
-
-    const DOCTOR_MENUS = [
-        { label: 'Mi Agenda', href: '/dashboard', icon: '🩺' },
-        SUPPORT_MENU
-    ];
-
-    const ADMIN_MENUS = [
-        { label: 'Visión General', href: '/dashboard', icon: '📋' },
-        { label: 'Analíticas de Negocio', href: '/dashboard/analytics', icon: '📊' },
-        { label: 'Agendas (Slots)', href: '/dashboard/agenda', icon: '📅' },
-        { label: 'Servicios de Salud', href: '/dashboard/servicios', icon: '💉' },
-        { label: 'Aseguradoras (EPS)', href: '/dashboard/eps', icon: '🏦' },
-        { label: 'Usuarios', href: '/dashboard/usuarios', icon: '👥' },
-        { label: 'Médicos', href: '/dashboard/medicos', icon: '⚕️' },
-        { label: 'Caja Negra (Auditoría)', href: '/dashboard/auditoria', icon: '🕵️' },
-        { label: 'Encuestas (CSAT)', href: '/dashboard/configuracion/integraciones/surveys', icon: '⭐' },
-        { label: 'Configuración', href: '/dashboard/configuracion', icon: '⚙️' },
-        SUPPORT_MENU
-    ];
-
-    const AGENT_MENUS = [
-        { label: 'Visión General', href: '/dashboard', icon: '📋' },
-        { label: 'Agendamiento', href: '/dashboard/agendamiento', icon: '📅' },
-        SUPPORT_MENU
-    ];
-
-    const OBSERVER_MENUS = [
-        { label: 'Analíticas de Negocio', href: '/dashboard/analytics', icon: '📊' },
-        SUPPORT_MENU
-    ];
-
     const roleMap: Record<string, string> = {
         'PATIENT': 'Paciente',
         'DOCTOR': 'Médico Especialista',
@@ -75,12 +38,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
         'GENERAL_OBSERVER': 'Observador General'
     };
 
-    let menus: Array<{ label: string, href: string, icon: string }> = [];
-    if (role === 'PATIENT') menus = PATIENT_MENUS;
-    else if (role === 'DOCTOR') menus = DOCTOR_MENUS;
-    else if (role === 'ORG_ADMIN') menus = ADMIN_MENUS;
-    else if (role === 'BOOKING_AGENT') menus = AGENT_MENUS;
-    else if (role === 'GENERAL_OBSERVER') menus = OBSERVER_MENUS;
+    // Fuente única de verdad de la navegación por rol (compartida con el
+    // grid de accesos rápidos del dashboard): lib/menus.ts.
+    const menus = getMenusForRole(role);
 
     return (
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans">
