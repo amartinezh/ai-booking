@@ -11,15 +11,19 @@ export interface SessionPayload {
 }
 
 export async function getSession(): Promise<SessionPayload | null> {
+    // Leer la cookie PRIMERO (y fuera del try) marca la ruta como dinámica: en
+    // `next build` Next no intenta prerenderizarla, así que NO evalúa
+    // `getJwtSecretKey()` en build-time (donde JWT_SECRET no existe y lanzaría,
+    // tumbando el build). En runtime el comportamiento es idéntico.
+    const cookieStore = await cookies();
+    const token = cookieStore.get('auth_token')?.value;
+
+    if (!token) return null;
+
     // Fuera del try: si JWT_SECRET falta, queremos el error explícito de
     // configuración, no un "sesión inválida" silencioso en bucle.
     const secretKey = getJwtSecretKey();
     try {
-        const cookieStore = await cookies();
-        const token = cookieStore.get('auth_token')?.value;
-
-        if (!token) return null;
-
         const verified = await jwtVerify(token, secretKey);
         return verified.payload as unknown as SessionPayload;
     } catch (_) {
