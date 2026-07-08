@@ -102,8 +102,16 @@ export class AppointmentsService {
 
       return { success: true, appointmentId };
     } catch (error: any) {
-      // El catch atrapará si el constraint @unique choca o si lanzamos SLOT_TAKEN
+      // El catch atrapa la colisión de cupo, sea cual sea su forma:
+      //   - 'SLOT_TAKEN_OR_INVALID': lo lanzamos arriba cuando el slot ya no está
+      //     disponible / no existe / es de otro tenant (caso MÁS común: el paciente
+      //     confirma segundos después de que otro ganó el cupo).
+      //   - 'SLOT_TAKEN': alias histórico conservado por compatibilidad.
+      //   - P2002: choque del @unique de scheduleSlotId (dos reservas simultáneas).
+      // Sin incluir 'SLOT_TAKEN_OR_INVALID' aquí, el error se relanzaba, el paciente
+      // no recibía respuesta y quedaba atascado en AWAITING_CONFIRMATION.
       if (
+        error.message === 'SLOT_TAKEN_OR_INVALID' ||
         error.message === 'SLOT_TAKEN' ||
         (error instanceof Prisma.PrismaClientKnownRequestError &&
           error.code === 'P2002')

@@ -17,6 +17,7 @@ import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import * as crypto from 'crypto';
 import { ChatbotService } from './chatbot.service';
+import { InboundQueueService } from './inbound-queue.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
@@ -29,6 +30,7 @@ export class ChatbotController {
   constructor(
     private readonly chatbotService: ChatbotService,
     private readonly whatsappCredentials: WhatsappCredentialsService,
+    private readonly inboundQueue: InboundQueueService,
   ) {}
 
   // 1. Verificación del Webhook (Facebook te llama aquí primero).
@@ -87,30 +89,47 @@ export class ChatbotController {
         throw new ForbiddenException('Invalid webhook signature');
       }
 
-      body.entry?.forEach(async (entry: any) => {
+      // Meta puede agrupar VARIOS entries, cambios y mensajes en un solo webhook
+      // (típico bajo alta carga). Antes sólo se leía `[0]` de cada nivel y el
+      // resto se descartaba en silencio: recorremos TODOS.
+      for (const entry of body.entry ?? []) {
         if (entry.changes && entry.changes.length > 0) {
-          const change = entry.changes[0];
-          const value = change.value;
+          for (const change of entry.changes) {
+            const value = change.value;
 
-          if (value?.messages && value.messages.length > 0) {
-            const messageEvent = value.messages[0];
-            // 💡 Inyectamos la metadata (phone_number_id) al evento para que
-            // processIncomingMessage pueda enrutar al tenant correcto.
-            messageEvent.metadata = value.metadata;
-            await this.chatbotService.processIncomingMessage(messageEvent);
-          } else if (value?.statuses && value.statuses.length > 0) {
-            const statusEvent = value.statuses[0];
-            this.logger.debug(
-              `Status update recibido: ${statusEvent.status} para el mensaje ${statusEvent.id}`,
-            );
+            if (value?.messages && value.messages.length > 0) {
+              for (const messageEvent of value.messages) {
+                // 💡 Inyectamos la metadata (phone_number_id) al evento para que
+                // processIncomingMessage pueda enrutar al tenant correcto.
+                messageEvent.metadata = value.metadata;
+                await this.dispatch(
+                  messageEvent,
+                  messageEvent.id,
+                  messageEvent.from,
+                );
+              }
+            } else if (value?.statuses && value.statuses.length > 0) {
+              for (const statusEvent of value.statuses) {
+                this.logger.debug(
+                  `Status update recibido: ${statusEvent.status} para el mensaje ${statusEvent.id}`,
+                );
+              }
+            }
           }
         } else if (entry.messaging && entry.messaging.length > 0) {
-          const webhookEvent = entry.messaging[0];
-          await this.chatbotService.processIncomingMessage(webhookEvent);
+          for (const webhookEvent of entry.messaging) {
+            await this.dispatch(
+              webhookEvent,
+              webhookEvent.message?.mid,
+              webhookEvent.sender?.id,
+            );
+          }
         }
-      });
+      }
 
-      // SIEMPRE retornar 200 OK rápido a Meta, o bloquearán el Webhook.
+      // SIEMPRE retornar 200 OK rápido a Meta, o bloquearán el Webhook. El
+      // procesamiento real corre asíncrono dentro de la cola (backpressure +
+      // serialización por remitente); aquí sólo deduplicamos y encolamos.
       return 'EVENT_RECEIVED';
     }
 
@@ -143,12 +162,46 @@ export class ChatbotController {
   // ── helpers ────────────────────────────────────────────────────────────
 
   /**
+   * Deduplica por wamid y encola un evento entrante. El procesamiento real es
+   * asíncrono (cola con backpressure + serialización por remitente); aquí sólo:
+   *   1. Descartamos duplicados (reentrega del mismo webhook por Meta).
+   *   2. Encolamos; si la cola está saturada, revertimos el dedup para que el
+   *      reintento de Meta pueda volver a procesarse (no se pierde el mensaje).
+   */
+  private async dispatch(
+    event: any,
+    wamid: string | undefined,
+    senderId: string | undefined,
+  ): Promise<void> {
+    const admitted = await this.inboundQueue.admit(wamid);
+    if (!admitted) {
+      this.logger.debug(`Mensaje duplicado descartado (wamid=${wamid}).`);
+      return;
+    }
+
+    const accepted = this.inboundQueue.enqueue(
+      senderId || wamid || 'unknown',
+      () => this.chatbotService.processIncomingMessage(event),
+    );
+    if (!accepted) {
+      await this.inboundQueue.releaseAdmission(wamid);
+      this.logger.warn(
+        `Backpressure: cola de entrada saturada (${this.inboundQueue.inFlight} ` +
+          `en vuelo). Mensaje ${wamid ?? '(sin id)'} rechazado; Meta lo reintentará.`,
+      );
+    }
+  }
+
+  /**
    * Valida la firma HMAC-SHA256 de Meta sobre el body crudo.
    *
    * Resolución del secreto (en orden):
    *   1. App Secret de la clínica dueña del `phone_number_id` del payload.
    *   2. META_APP_SECRET del entorno (plataformas de una sola app de Meta).
-   *   3. Sin secreto → se acepta el evento (retrocompatibilidad) con warning.
+   *   3. Sin secreto → por defecto se RECHAZA el evento (verificación
+   *      obligatoria). Para migrar un tenant legacy que aún no configuró su App
+   *      Secret, se puede poner `META_REQUIRE_SIGNATURE=false` en el entorno y
+   *      volver temporalmente al modo permisivo (con warning).
    */
   private async verifyMetaSignature(
     body: any,
@@ -163,10 +216,22 @@ export class ChatbotController {
       : null;
     const secret = orgSecret || process.env.META_APP_SECRET || null;
 
+    // Obligatoria por defecto: sólo se relaja si META_REQUIRE_SIGNATURE=false.
+    const requireSignature = process.env.META_REQUIRE_SIGNATURE !== 'false';
+
     if (!secret) {
+      if (requireSignature) {
+        this.logger.warn(
+          'Webhook RECHAZADO: no hay App Secret de la clínica ni META_APP_SECRET, ' +
+            'y la verificación de firma es obligatoria. Configure el App Secret o, ' +
+            'sólo para migración, ponga META_REQUIRE_SIGNATURE=false.',
+        );
+        return false;
+      }
       this.logger.warn(
-        'Webhook aceptado SIN verificación de firma: configure el App Secret ' +
-          'de la clínica (o META_APP_SECRET) para rechazar payloads falsificados.',
+        'Webhook aceptado SIN verificación de firma (META_REQUIRE_SIGNATURE=false): ' +
+          'configure el App Secret de la clínica (o META_APP_SECRET) para rechazar ' +
+          'payloads falsificados.',
       );
       return true;
     }

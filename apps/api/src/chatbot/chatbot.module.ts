@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ChatbotController } from './chatbot.controller';
 import { ChatbotService } from './chatbot.service';
 import { ChatbotCron } from './chatbot.cron';
+import { InboundQueueService } from './inbound-queue.service';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { HttpModule } from '@nestjs/axios';
@@ -28,6 +29,7 @@ import { SurveyModule } from '../survey/survey.module';
   providers: [
     ChatbotService,
     ChatbotCron,
+    InboundQueueService,
     KnowledgeBaseService,
     OrganizationSettingsService,
   ],

@@ -3,6 +3,7 @@ import { ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { ChatbotController } from './chatbot.controller';
 import { ChatbotService } from './chatbot.service';
+import { InboundQueueService } from './inbound-queue.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 
 describe('ChatbotController', () => {
@@ -14,6 +15,15 @@ describe('ChatbotController', () => {
   let credentials: {
     organizationIdByVerifyToken: jest.Mock;
     appSecretByPhoneNumberId: jest.Mock;
+  };
+  // Cola de entrada fake: `admit` deduplica en memoria y `enqueue` ejecuta la
+  // tarea de inmediato (síncrono) para poder afirmar que se procesó el mensaje.
+  let inboundQueue: {
+    admit: jest.Mock;
+    releaseAdmission: jest.Mock;
+    enqueue: jest.Mock;
+    inFlight: number;
+    seen: Set<string>;
   };
 
   const APP_SECRET = 'super-secreto-de-meta';
@@ -45,6 +55,7 @@ describe('ChatbotController', () => {
 
   beforeEach(async () => {
     delete process.env.META_APP_SECRET;
+    delete process.env.META_REQUIRE_SIGNATURE;
 
     chatbotService = {
       processIncomingMessage: jest.fn(),
@@ -54,12 +65,30 @@ describe('ChatbotController', () => {
       organizationIdByVerifyToken: jest.fn(async () => null),
       appSecretByPhoneNumberId: jest.fn(async () => null),
     };
+    inboundQueue = {
+      seen: new Set<string>(),
+      inFlight: 0,
+      admit: jest.fn(async (wamid?: string) => {
+        if (!wamid) return true;
+        if (inboundQueue.seen.has(wamid)) return false;
+        inboundQueue.seen.add(wamid);
+        return true;
+      }),
+      releaseAdmission: jest.fn(async (wamid?: string) => {
+        if (wamid) inboundQueue.seen.delete(wamid);
+      }),
+      enqueue: jest.fn((_senderId: string, task: () => Promise<void>) => {
+        void task();
+        return true;
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ChatbotController],
       providers: [
         { provide: ChatbotService, useValue: chatbotService },
         { provide: WhatsappCredentialsService, useValue: credentials },
+        { provide: InboundQueueService, useValue: inboundQueue },
       ],
     }).compile();
 
@@ -74,7 +103,18 @@ describe('ChatbotController', () => {
   // 🔏 Verificación de firma X-Hub-Signature-256
   // ══════════════════════════════════════════════════════════════
   describe('firma del webhook', () => {
-    it('sin App Secret configurado → acepta el evento (retrocompatibilidad)', async () => {
+    it('sin App Secret configurado → RECHAZA por defecto (firma obligatoria)', async () => {
+      const body = inboundBody();
+      const { req } = signedRequest(body);
+
+      await expect(
+        controller.handleMessage(body, req, undefined),
+      ).rejects.toThrow(ForbiddenException);
+      expect(chatbotService.processIncomingMessage).not.toHaveBeenCalled();
+    });
+
+    it('sin App Secret + META_REQUIRE_SIGNATURE=false → acepta (modo migración)', async () => {
+      process.env.META_REQUIRE_SIGNATURE = 'false';
       const body = inboundBody();
       const { req } = signedRequest(body);
 
@@ -129,6 +169,118 @@ describe('ChatbotController', () => {
         controller.handleMessage(body, req, signature),
       ).rejects.toThrow(ForbiddenException);
       expect(chatbotService.processIncomingMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // 📦 Batching, deduplicación y backpressure de la cola de entrada
+  // ══════════════════════════════════════════════════════════════
+  describe('cola de entrada', () => {
+    beforeEach(() => {
+      // Aislamos estas pruebas de la firma (probada aparte).
+      process.env.META_REQUIRE_SIGNATURE = 'false';
+    });
+
+    const msg = (id: string, from: string, body: string) => ({
+      id,
+      from,
+      text: { body },
+    });
+
+    it('procesa TODOS los mensajes/cambios/entries agrupados (#1)', async () => {
+      const body = {
+        object: 'whatsapp_business_account',
+        entry: [
+          {
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: 'p1' },
+                  messages: [
+                    msg('w1', '573001', 'Hola'),
+                    msg('w2', '573002', 'Buenas'),
+                  ],
+                },
+              },
+              {
+                value: {
+                  metadata: { phone_number_id: 'p1' },
+                  messages: [msg('w3', '573003', 'Cita')],
+                },
+              },
+            ],
+          },
+          {
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: 'p2' },
+                  messages: [msg('w4', '573004', 'Agendar')],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const { req } = signedRequest(body);
+
+      await controller.handleMessage(body, req, undefined);
+
+      expect(chatbotService.processIncomingMessage).toHaveBeenCalledTimes(4);
+      // La metadata del `value` se inyecta en cada mensaje para enrutar tenant.
+      const firstArg = chatbotService.processIncomingMessage.mock.calls[0][0];
+      expect(firstArg.metadata).toEqual({ phone_number_id: 'p1' });
+    });
+
+    it('descarta reentregas con el mismo wamid (#2)', async () => {
+      const body = {
+        object: 'whatsapp_business_account',
+        entry: [
+          {
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: 'p1' },
+                  messages: [msg('dup-1', '573001', 'Hola')],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const { req } = signedRequest(body);
+
+      await controller.handleMessage(body, req, undefined);
+      await controller.handleMessage(body, req, undefined); // reentrega
+
+      expect(chatbotService.processIncomingMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('backpressure: si la cola rechaza, revierte el dedup para no perder el mensaje (#6)', async () => {
+      inboundQueue.enqueue.mockReturnValueOnce(false); // cola llena una vez
+      const body = {
+        object: 'whatsapp_business_account',
+        entry: [
+          {
+            changes: [
+              {
+                value: {
+                  metadata: { phone_number_id: 'p1' },
+                  messages: [msg('bp-1', '573001', 'Hola')],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const { req } = signedRequest(body);
+
+      await controller.handleMessage(body, req, undefined);
+      expect(inboundQueue.releaseAdmission).toHaveBeenCalledWith('bp-1');
+
+      // El reintento de Meta ahora SÍ se procesa (no quedó marcado como dup).
+      await controller.handleMessage(body, req, undefined);
+      expect(chatbotService.processIncomingMessage).toHaveBeenCalledTimes(1);
     });
   });
 

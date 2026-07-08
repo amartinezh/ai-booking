@@ -37,6 +37,90 @@ describe('AppointmentsService', () => {
     expect(service).toBeDefined();
   });
 
+  describe('bookAppointment — colisión de cupo', () => {
+    // Construye un servicio cuyo $transaction ejecuta el callback contra un tx
+    // en el que el slot indicado ya NO está disponible (o no existe / es de otro
+    // tenant), reproduciendo la carrera real entre dos pacientes.
+    const serviceWithSlot = async (slot: any) => {
+      const tx = {
+        scheduleSlot: {
+          findUnique: jest.fn(async () => slot),
+          update: jest.fn(),
+        },
+        appointment: { create: jest.fn(async () => ({ id: 'apt1' })) },
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          {
+            provide: PrismaService,
+            useValue: {
+              $transaction: jest.fn(async (cb: any) => cb(tx)),
+            },
+          },
+        ],
+      }).compile();
+      return {
+        svc: module.get<AppointmentsService>(AppointmentsService),
+        tx,
+      };
+    };
+
+    it('slot ya tomado (isAvailable=false) → success:false, NO relanza (bug SLOT_TAKEN_OR_INVALID)', async () => {
+      const { svc, tx } = await serviceWithSlot({
+        id: 's1',
+        isAvailable: false,
+        organizationId: 'org1',
+      });
+
+      const result = await svc.bookAppointment(
+        'p1',
+        's1',
+        null,
+        'WHATSAPP',
+        'org1',
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/acaba de ser reservado/i);
+      // No debió intentar crear la cita ni ocupar el slot.
+      expect(tx.appointment.create).not.toHaveBeenCalled();
+      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('slot inexistente → success:false (misma rama del catch)', async () => {
+      const { svc } = await serviceWithSlot(null);
+
+      const result = await svc.bookAppointment(
+        'p1',
+        's1',
+        null,
+        'WHATSAPP',
+        'org1',
+      );
+
+      expect(result.success).toBe(false);
+    });
+
+    it('slot de otro tenant → success:false (aislamiento)', async () => {
+      const { svc } = await serviceWithSlot({
+        id: 's1',
+        isAvailable: true,
+        organizationId: 'OTRA_ORG',
+      });
+
+      const result = await svc.bookAppointment(
+        'p1',
+        's1',
+        null,
+        'WHATSAPP',
+        'org1',
+      );
+
+      expect(result.success).toBe(false);
+    });
+  });
+
   describe('getAvailableSlots — filtro de fecha', () => {
     const whereOf = () => findMany.mock.calls[0][0].where;
 

@@ -34,7 +34,10 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,
   });
-  app.useBodyParser('json', { limit: '50mb' });
+  // El webhook de Meta pesa unos KB; un límite de 50 MB era un vector de
+  // agotamiento de memoria (un atacante podía empujar payloads enormes). 1 MB
+  // da holgura de sobra para cualquier evento legítimo de WhatsApp.
+  app.useBodyParser('json', { limit: '1mb' });
 
   // 🛡️ Registrar el filtro global de excepciones. Cualquier excepción
   // no atrapada en controllers/services queda persistida en SystemLog
