@@ -21,7 +21,11 @@ export default async function AuditoriaPage() {
         prisma.interactionLog.findMany({
             where: {
                 organizationId,
-                status: { in: ['FAILED', 'ABANDONED'] },
+                // EMERGENCY_ESCALATED: derivaciones por posible emergencia
+                // médica (guardrail del chatbot). No son "fallos" pero son el
+                // caso MÁS accionable del panel: el staff debe llamar al
+                // paciente y marcar el contacto.
+                status: { in: ['FAILED', 'ABANDONED', 'EMERGENCY_ESCALATED'] },
             },
             orderBy: { createdAt: 'desc' },
             take: 200,

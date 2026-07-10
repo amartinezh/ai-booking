@@ -153,6 +153,17 @@ const FAILURE_META: Record<
         actionable: false,
         description: 'Falló el envío del mensaje a Meta.',
     },
+    // 🚑 No es un "fallo" del bot: es una derivación del guardrail de
+    // emergencias (status EMERGENCY_ESCALATED, sin failureReason). Se mapea
+    // aquí vía metaKeyOf() para heredar KPIs, filtros y flujo de contacto.
+    EMERGENCY_ESCALATED: {
+        label: 'Posible emergencia médica',
+        icon: '🚑',
+        severity: 'critical',
+        actionable: true,
+        description:
+            'El paciente reportó síntomas de posible emergencia y el bot lo derivó al 123/Urgencias. Llamarlo YA para hacer seguimiento.',
+    },
 };
 
 const DEFAULT_META = {
@@ -164,6 +175,11 @@ const DEFAULT_META = {
 };
 
 const getMeta = (reason: string | null) => FAILURE_META[reason || ''] || DEFAULT_META;
+
+// Clave de metadata visual de un log: las emergencias se registran por STATUS
+// (no traen failureReason); el resto se clasifica por su razón de fallo.
+const metaKeyOf = (log: InteractionLog) =>
+    log.status === 'EMERGENCY_ESCALATED' ? 'EMERGENCY_ESCALATED' : log.failureReason;
 
 // ══════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -199,13 +215,13 @@ export default function AuditoriaClientView({
         const last24h = logs.filter(l => new Date(l.createdAt).getTime() > oneDayAgo);
         const last7d = logs.filter(l => new Date(l.createdAt).getTime() > sevenDaysAgo);
 
-        const actionableLast7d = last7d.filter(l => getMeta(l.failureReason).actionable);
+        const actionableLast7d = last7d.filter(l => getMeta(metaKeyOf(l)).actionable);
         const pendingContact = actionableLast7d.filter(l => !l.contactedAt);
 
         // Top razón de fallo en últimos 7 días
         const reasonCounts: Record<string, number> = {};
         last7d.forEach(l => {
-            const reason = l.failureReason || 'OTHER';
+            const reason = metaKeyOf(l) || 'OTHER';
             reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
         });
         const topReason = Object.entries(reasonCounts).sort((a, b) => b[1] - a[1])[0];
@@ -249,9 +265,9 @@ export default function AuditoriaClientView({
         let result = logs.filter(log => {
             if (new Date(log.createdAt).getTime() < cutoff) return false;
 
-            if (selectedReason && log.failureReason !== selectedReason) return false;
-            if (selectedSeverity && getMeta(log.failureReason).severity !== selectedSeverity) return false;
-            if (showOnlyActionable && !getMeta(log.failureReason).actionable) return false;
+            if (selectedReason && metaKeyOf(log) !== selectedReason) return false;
+            if (selectedSeverity && getMeta(metaKeyOf(log)).severity !== selectedSeverity) return false;
+            if (showOnlyActionable && !getMeta(metaKeyOf(log)).actionable) return false;
             if (showOnlyPending && log.contactedAt) return false;
 
             if (searchTerm) {
@@ -274,8 +290,8 @@ export default function AuditoriaClientView({
             result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
         } else if (sortBy === 'severity') {
             result.sort((a, b) => {
-                const aSev = severityOrder[getMeta(a.failureReason).severity];
-                const bSev = severityOrder[getMeta(b.failureReason).severity];
+                const aSev = severityOrder[getMeta(metaKeyOf(a)).severity];
+                const bSev = severityOrder[getMeta(metaKeyOf(b)).severity];
                 if (aSev !== bSev) return aSev - bSev;
                 return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
             });
@@ -569,7 +585,7 @@ export default function AuditoriaClientView({
                     </div>
                 ) : (
                     filteredLogs.map(log => {
-                        const meta = getMeta(log.failureReason);
+                        const meta = getMeta(metaKeyOf(log));
                         const severityStyles = {
                             critical: 'border-l-rose-500 bg-rose-50/30 dark:bg-rose-950/10',
                             warning: 'border-l-amber-500 bg-amber-50/30 dark:bg-amber-950/10',
@@ -661,7 +677,9 @@ export default function AuditoriaClientView({
                                     <div className="flex md:flex-col gap-2 md:w-48 shrink-0">
                                         <a
                                             href={`https://wa.me/${log.whatsappId.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
-                                                `Hola, le escribimos de ${organizationName}. Vimos que intentó agendar una cita y queremos ayudarle a completarla. ¿Le puedo asistir?`
+                                                log.status === 'EMERGENCY_ESCALATED'
+                                                    ? `Hola, le escribimos de ${organizationName}. Recibimos su mensaje y queremos hacer seguimiento a su estado de salud. ¿Cómo se encuentra? ¿Ya recibió atención?`
+                                                    : `Hola, le escribimos de ${organizationName}. Vimos que intentó agendar una cita y queremos ayudarle a completarla. ¿Le puedo asistir?`
                                             )}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -701,7 +719,7 @@ export default function AuditoriaClientView({
                     >
                         <div className="sticky top-0 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 p-5 flex items-center justify-between">
                             <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                                <span>{getMeta(selectedLog.failureReason).icon}</span>
+                                <span>{getMeta(metaKeyOf(selectedLog)).icon}</span>
                                 Detalle del registro
                             </h2>
                             <button
@@ -719,7 +737,7 @@ export default function AuditoriaClientView({
                                         Razón del fallo
                                     </p>
                                     <p className="font-mono text-zinc-900 dark:text-white">
-                                        {selectedLog.failureReason || 'N/A'}
+                                        {selectedLog.failureReason || selectedLog.status}
                                     </p>
                                 </div>
                                 <div>

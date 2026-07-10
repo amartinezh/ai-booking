@@ -101,6 +101,13 @@ export class ChatbotService implements OnModuleInit {
   // 🛡️ Guardrail: detecta insultos en cualquier parte del mensaje (no ancla a inicio/fin).
   private insultRegex: RegExp =
     /\b(gonorrea|hijueputa|malparid[oa]|idiota|imb[eé]cil)\b/i;
+  // 🚑 Guardrail: banderas rojas clínicas en cualquier parte del mensaje.
+  // Se evalúa sobre texto NORMALIZADO (minúsculas, sin tildes, puntuación →
+  // espacios; ver isEmergencyText), por eso las frases van sin tilde. Default
+  // de fábrica por si chatbot-patterns.txt no está disponible; la lista real
+  // vive en la sección [emergency] de ese archivo.
+  private emergencyRegex: RegExp =
+    /(?:^|\s)(dolor (en el|de) pecho|duele (mucho )?el pecho|no puedo respirar|me falta el aire|dificultad para respirar|infarto|convulsion(es)?|sobredosis|hemorragia|me quiero matar|quiero suicidarme|perdida de conocimiento)(?=$|\s)/i;
 
   // Tesauro GENÉRICO de servicios (service-synonyms.txt). Cada concepto agrupa
   // "anclas" (frases que suelen estar en el nombre del catálogo) y "sinonimos"
@@ -228,6 +235,7 @@ export class ChatbotService implements OnModuleInit {
     const modifyPhrases: string[] = [];
     const particularWords: string[] = [];
     const insultWords: string[] = [];
+    const emergencyPhrases: string[] = [];
     let currentSection = '';
 
     for (const rawLine of content.split('\n')) {
@@ -250,6 +258,8 @@ export class ChatbotService implements OnModuleInit {
         currentSection = 'particular';
       } else if (line === '[insults]') {
         currentSection = 'insults';
+      } else if (line === '[emergency]') {
+        currentSection = 'emergency';
       } else if (currentSection === 'farewell') {
         farewellWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'goodbye') {
@@ -266,6 +276,12 @@ export class ChatbotService implements OnModuleInit {
         particularWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'insults') {
         insultWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      } else if (currentSection === 'emergency') {
+        // Se normaliza igual que el texto entrante (isEmergencyText): tras
+        // normalizeSynonym solo quedan [a-z0-9 ], así que no hay especiales
+        // de regex que escapar.
+        const normalized = this.normalizeSynonym(line);
+        if (normalized) emergencyPhrases.push(normalized);
       }
     }
 
@@ -300,9 +316,18 @@ export class ChatbotService implements OnModuleInit {
         'i',
       );
     }
+    if (emergencyPhrases.length > 0) {
+      // No-anchored: detecta la bandera roja en cualquier parte del mensaje.
+      // Los delimitadores son solo ^/$/espacio porque el texto ya llega
+      // normalizado (la puntuación se colapsó a espacios).
+      this.emergencyRegex = new RegExp(
+        `(?:^|\\s)(${emergencyPhrases.join('|')})(?=$|\\s)`,
+        'i',
+      );
+    }
 
     this.logger.log(
-      `Patrones listos — farewell: ${farewellWords.length}, goodbye: ${goodbyeWords.length}, greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, modify: ${modifyPhrases.length}, particular: ${particularWords.length}, insults: ${insultWords.length}`,
+      `Patrones listos — farewell: ${farewellWords.length}, goodbye: ${goodbyeWords.length}, greetings: ${greetingWords.length}, escape: ${escapeWords.length}, cancel: ${cancelPhrases.length}, modify: ${modifyPhrases.length}, particular: ${particularWords.length}, insults: ${insultWords.length}, emergency: ${emergencyPhrases.length}`,
     );
   }
 
@@ -867,6 +892,7 @@ export class ChatbotService implements OnModuleInit {
       isFallback: true,
       isCancellation: false,
       isModification: false,
+      isEmergency: false,
       isRateLimited,
     };
   }
@@ -895,8 +921,94 @@ export class ChatbotService implements OnModuleInit {
       isFallback: false,
       isCancellation: this.cancelRegex.test(t),
       isModification: this.modifyRegex.test(t),
+      isEmergency: this.isEmergencyText(t),
       isRateLimited: false,
     };
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // 🚑 DETECTOR DE EMERGENCIAS (regex local, sin LLM)
+  // Banderas rojas clínicas ("dolor en el pecho", "no puedo respirar"...).
+  // El bot NO hace triage: detectar aquí solo significa DERIVAR de
+  // inmediato (línea 123 / urgencias / equipo humano), nunca diagnosticar
+  // ni tranquilizar. Normaliza el texto igual que las frases cargadas de
+  // [emergency] (minúsculas, sin tildes, puntuación → espacios) para que
+  // "¡Convulsión!" y "convulsion" coincidan por igual.
+  // ══════════════════════════════════════════════════════════════
+  private isEmergencyText(text: string | null | undefined): boolean {
+    if (!text) return false;
+    return this.emergencyRegex.test(this.normalizeSynonym(text));
+  }
+
+  /**
+   * 🚑 Deriva una POSIBLE emergencia: mensaje con línea 123 / urgencias /
+   * equipo humano, cierre de sesión y auditoría EMERGENCY_ESCALATED.
+   * Deliberadamente NO envía encuesta CSAT (no se le manda un link de
+   * encuesta a quien acaba de reportar dolor torácico). `via` registra la
+   * capa que detectó: regex pre-LLM sobre el texto, flag isEmergency del
+   * LLM (Tarea D) o regex sobre la transcripción del audio.
+   */
+  private async escalateEmergency(p: {
+    organizationId: string;
+    senderId: string;
+    org: any;
+    MSGS: ReturnType<typeof buildMessages>;
+    text: string | undefined;
+    currentState: ChatState;
+    via: 'EMERGENCY_REGEX' | 'EMERGENCY_LLM' | 'EMERGENCY_TRANSCRIPT_REGEX';
+  }): Promise<void> {
+    const humanPhone = p.org?.supportPhone || '';
+    const reply = p.MSGS.guardrailEmergencia(humanPhone);
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.cleanUpSession(p.organizationId, p.senderId);
+
+    // 📟 Alerta proactiva al equipo humano (best-effort: NUNCA rompe el
+    // flujo del paciente). La derivación al 123 no sustituye el seguimiento:
+    // un funcionario debe llamar al paciente. Requiere que supportPhone sea
+    // un número con WhatsApp (los fijos no lo reciben; Meta rechaza y queda
+    // en el log del servidor). Nota Meta: fuera de la ventana de 24h del
+    // staff el envío de texto libre puede fallar — por eso el resultado se
+    // registra en `staffAlerted` y la auditoría EMERGENCY_ESCALATED queda
+    // SIEMPRE visible en el panel de auditoría como respaldo.
+    let staffAlerted = false;
+    const alertPhone = (p.org?.supportPhone || '').replace(/\D/g, '');
+    if (alertPhone.length >= 10) {
+      try {
+        const alertText =
+          `🚨 *ALERTA: POSIBLE EMERGENCIA MÉDICA*\n\n` +
+          `Un paciente reportó síntomas que podrían requerir atención ` +
+          `inmediata y el asistente lo derivó a la línea 123 / Urgencias.\n\n` +
+          `📱 Paciente: +${p.senderId}\n` +
+          `💬 Mensaje: "${(p.text || '[audio]').slice(0, 300)}"\n\n` +
+          `Por favor contáctelo AHORA para hacer seguimiento.`;
+        const result = await this.sendOutboundForOrg(
+          p.organizationId,
+          alertPhone,
+          alertText,
+        );
+        staffAlerted = result.success;
+      } catch (e: any) {
+        this.logger.error(
+          `No fue posible alertar al staff de la emergencia (org=${p.organizationId}): ${e?.message}`,
+        );
+      }
+    } else {
+      this.logger.warn(
+        `Sin teléfono de staff válido para alertar la emergencia (org=${p.organizationId}, supportPhone="${p.org?.supportPhone || ''}").`,
+      );
+    }
+
+    await this.auditLog(p.senderId, p.organizationId, {
+      status: InteractionStatus.EMERGENCY_ESCALATED,
+      userMessage: p.text || '[audio]',
+      botReply: reply,
+      metadata: {
+        guardrail: p.via,
+        previousState: p.currentState,
+        immediate: true,
+        staffAlerted,
+      },
+    });
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -1062,6 +1174,17 @@ export class ChatbotService implements OnModuleInit {
       `basándote EXCLUSIVAMENTE en la BASE DE CONOCIMIENTO que se incluye a continuación.\n\n` +
       `${toneBlock}\n\n` +
       `REGLAS ESTRICTAS QUE DEBES SEGUIR:\n` +
+      `0. 🚨 EMERGENCIAS (MÁXIMA PRIORIDAD, por encima de todas las demás reglas): ` +
+      `si la pregunta describe síntomas o una situación que PODRÍA ser una emergencia ` +
+      `médica EN CURSO (dolor u opresión en el pecho, dificultad para respirar, sangrado ` +
+      `abundante, pérdida de conciencia, convulsiones, ideación suicida, envenenamiento, ` +
+      `sobredosis, trauma grave, reacción alérgica severa), NO respondas como FAQ: responde ` +
+      `ÚNICAMENTE que lo que describe podría requerir atención médica inmediata, que llame ` +
+      `YA a la línea de emergencias *123* o acuda al servicio de *Urgencias* más cercano, ` +
+      `y que puede comunicarse con nuestro equipo al *${supportPhone}*. NUNCA diagnostiques, ` +
+      `NUNCA minimices ("no parece grave" está PROHIBIDO) y NO agregues información de la ` +
+      `base de conocimiento ni invitación a agendar. En cambio, las preguntas INFORMATIVAS ` +
+      `sobre el servicio de urgencias (horario, dirección, costo) SÍ son FAQ normal.\n` +
       `1. NUNCA inventes información que no esté en la base de conocimiento.\n` +
       `2. ⛔ DISPONIBILIDAD DE CITAS: la base de conocimiento NO contiene cupos, ` +
       `agenda ni horarios libres de citas. NUNCA afirmes, inventes ni insinúes que ` +
@@ -2383,6 +2506,7 @@ export class ChatbotService implements OnModuleInit {
       isFallback: false,
       isCancellation: false,
       isModification: false,
+      isEmergency: false,
       isRateLimited: false,
     };
 
@@ -2983,6 +3107,27 @@ export class ChatbotService implements OnModuleInit {
       );
     }
 
+    // 🚑 GUARDRAIL: POSIBLE EMERGENCIA MÉDICA → DERIVACIÓN INMEDIATA ──
+    // Máxima prioridad: se evalúa ANTES que insultos, reintentos y estados
+    // (incluidos los pasos estrictos, donde el LLM ni se llama — un "me
+    // duele mucho el pecho" en AWAITING_CONFIRMATION NO debe recibir un
+    // reintento de SÍ/NO). Una cita a días vista no es respuesta para un
+    // posible infarto: se deriva a 123/urgencias/humano y se corta el
+    // agendamiento. El AUDIO se cubre tras el LLM (flag isEmergency de la
+    // Tarea D + regex sobre la transcripción adoptada, ver más abajo).
+    if (messageType === 'text' && this.isEmergencyText(text)) {
+      await this.escalateEmergency({
+        organizationId,
+        senderId,
+        org,
+        MSGS,
+        text,
+        currentState,
+        via: 'EMERGENCY_REGEX',
+      });
+      return;
+    }
+
     // 🛡️ GUARDRAIL: INSULTO → DERIVACIÓN INMEDIATA ───────────────
     // Se evalúa lo más temprano posible, antes de cualquier procesamiento
     // (Gemini, reintentos, estados). El audio no se inspecciona aquí (irá
@@ -3230,6 +3375,31 @@ export class ChatbotService implements OnModuleInit {
     text = turn.text;
 
     this.logger.log(`🧠 LLM extrajo: ${JSON.stringify(aiData)}`);
+
+    // 🚑 GUARDRAIL POST-LLM: EMERGENCIA EN AUDIO O PARÁFRASIS ──────────
+    // Defensa en profundidad sobre el guardrail regex pre-LLM (que solo ve
+    // TEXTO): (a) el flag isEmergency de la Tarea D captura paráfrasis que
+    // el diccionario [emergency] no enumera ("siento una presión horrible
+    // aquí en el corazón"); (b) el regex sobre `text` —que a esta altura ya
+    // es la TRANSCRIPCIÓN adoptada si el turno fue audio— cubre la nota de
+    // voz aunque el LLM no marque el flag (Boolean(parsed.isEmergency) es
+    // fail-open hacia false). Se evalúa ANTES que goodbye/cédula/menús y
+    // que el INTENT ROUTER (insultos/FAQ): la emergencia siempre gana,
+    // incluso si el intent fue "agendar_cita".
+    if (aiData.isEmergency || this.isEmergencyText(text)) {
+      await this.escalateEmergency({
+        organizationId,
+        senderId,
+        org,
+        MSGS,
+        text,
+        currentState,
+        via: aiData.isEmergency
+          ? 'EMERGENCY_LLM'
+          : 'EMERGENCY_TRANSCRIPT_REGEX',
+      });
+      return;
+    }
 
     // ══════════════════════════════════════════════════════════
     // 👋 CIERRE DE LA CONVERSACIÓN POR VOZ (diccionario [goodbye])

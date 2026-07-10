@@ -447,3 +447,134 @@ sapo
 zorra
 maldito
 maldita
+
+# ----------------------------------------------------------
+# 🚑 EMERGENCIAS MÉDICAS (banderas rojas clínicas)
+# Frases contenidas en el mensaje que sugieren una POSIBLE emergencia.
+# Cuando coincide → derivación INMEDIATA a la línea 123 / Urgencias /
+# equipo humano, SIN continuar el agendamiento y SIN encuesta CSAT.
+# Se evalúa ANTES que cualquier otro guardrail y EN CUALQUIER estado
+# (incluidos los pasos estrictos donde el LLM no se llama).
+#
+# Las frases se comparan NORMALIZADAS: minúsculas, sin tildes y con la
+# puntuación colapsada a espacios ("convulsión" y "convulsion" son la
+# misma entrada; basta escribir la variante sin tilde).
+#
+# ⚠️ NO agregar aquí "urgente" / "urgencia" / "cita urgente": los
+# pacientes las usan para pedir prontitud, no para reportar síntomas
+# (dispararía la derivación en solicitudes legítimas de agendamiento).
+# ⚠️ NO agregar "no puedo mover" a secas: colisiona con "no puedo
+# mover la cita" (reprogramación).
+# ----------------------------------------------------------
+[emergency]
+# — Dolor torácico / cardiaco —
+dolor en el pecho
+dolor de pecho
+dolor fuerte en el pecho
+duele el pecho
+duele mucho el pecho
+dolor toracico
+dolor en el corazon
+duele el corazon
+presion en el pecho
+opresion en el pecho
+apreton en el pecho
+punzada en el pecho
+infarto
+preinfarto
+paro cardiaco
+# — Dificultad respiratoria —
+no puedo respirar
+no logro respirar
+no puede respirar
+me cuesta respirar
+dificultad para respirar
+me falta el aire
+falta de aire
+me ahogo
+me estoy ahogando
+se esta ahogando
+asfixia
+me asfixio
+se me cierra la garganta
+se me cerro la garganta
+garganta cerrada
+# — Pérdida de conciencia / neurológico —
+desmayo
+desmayado
+desmayada
+me desmaye
+se desmayo
+perdida de conocimiento
+perdio el conocimiento
+inconsciente
+convulsion
+convulsiones
+convulsionando
+esta convulsionando
+derrame cerebral
+acv
+# — Sangrado —
+sangrado abundante
+sangrando mucho
+no para de sangrar
+no deja de sangrar
+hemorragia
+vomito sangre
+vomite sangre
+vomitando sangre
+sangre en el vomito
+# — Crisis de salud mental / autolesión —
+me quiero matar
+quiero matarme
+me voy a matar
+voy a matarme
+quiero suicidarme
+me quiero suicidar
+voy a suicidarme
+pienso en suicidarme
+quitarme la vida
+me quiero morir
+quiero hacerme dano
+# — Envenenamiento / sobredosis —
+envenenamiento
+me envenene
+se enveneno
+envenenado
+envenenada
+intoxicacion
+me intoxique
+se intoxico
+sobredosis
+se tomo las pastillas
+# — Trauma / accidente —
+tuve un accidente
+tuvimos un accidente
+accidente de transito
+accidente de trafico
+atropellado
+atropellada
+atropellaron
+herida profunda
+herida de bala
+apunalado
+apunalada
+apunalaron
+punalada
+dispararon
+quemadura grave
+fractura expuesta
+# — Obstétrico —
+no siento al bebe
+el bebe no se mueve
+mi bebe no se mueve
+sangrado en el embarazo
+# — Reacción alérgica severa —
+reaccion alergica grave
+se me hincho la cara
+se esta hinchando la cara
+# — Emergencia declarada por el paciente —
+es una emergencia
+tengo una emergencia
+estoy en una emergencia
+emergencia medica

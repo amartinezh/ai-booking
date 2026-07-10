@@ -16,6 +16,7 @@ export enum InteractionStatus {
   BOOKING_CONFIRMED = 'BOOKING_CONFIRMED', // Cita agendada exitosamente
   WAITLIST_JOINED = 'WAITLIST_JOINED', // Paciente entró a waitlist
   REMINDER_SENT = 'REMINDER_SENT', // Recordatorio automático de cita enviado
+  EMERGENCY_ESCALATED = 'EMERGENCY_ESCALATED', // 🚑 Posible emergencia médica → derivación inmediata (123/urgencias/humano)
 }
 
 // ══════════════════════════════════════════════════════════════

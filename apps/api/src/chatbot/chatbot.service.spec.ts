@@ -78,6 +78,7 @@ function extraction(
     isFallback: false,
     isCancellation: false,
     isModification: false,
+    isEmergency: false,
     isRateLimited: false,
     ...over,
   };
@@ -532,6 +533,417 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     );
   });
 
+  // ── 🚑 GUARDRAIL EMERGENCIA: banderas rojas clínicas → derivación ──
+  // Caso de referencia: "necesito una cita urgente porque llevo tres días
+  // con dolor en el pecho" NO debe entrar al funnel de agendamiento — se
+  // deriva a 123/urgencias/equipo humano SIN gastar llamada al LLM y SIN
+  // encuesta CSAT. El chequeo es regex pre-LLM y corre en TODOS los estados,
+  // incluidos los pasos estrictos donde el LLM ni se invoca.
+  describe('guardrail EMERGENCIA (regex pre-LLM)', () => {
+    it('bandera roja en IDLE → deriva a 123 sin llamar al LLM ni encuestar', async () => {
+      await service.processIncomingMessage(
+        makeTextEvent(
+          'Necesito una cita urgente porque llevo tres días con dolor en el pecho',
+        ),
+      );
+
+      // No se gastó llamada al LLM ni se intentó FAQ/agendamiento.
+      expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+      expect(provider.answerFAQ).not.toHaveBeenCalled();
+
+      // [0] = derivación al paciente, [1] = alerta proactiva al staff.
+      const replies = sentMessages();
+      expect(replies).toHaveLength(2);
+      expect(replies[0]).toContain('123');
+      expect(replies[0]).toContain('Urgencias');
+      // Incluye el teléfono del equipo humano de la org.
+      expect(replies[0]).toContain('606 853 8838');
+      // Sin diagnóstico: lenguaje condicional, nunca afirmativo.
+      expect(replies[0]).toContain('podría');
+
+      // 📟 Alerta al staff: supportPhone normalizado a dígitos, con el
+      // teléfono del paciente y su mensaje para el seguimiento humano.
+      expect(sendSpy).toHaveBeenCalledWith(
+        '6068538838',
+        expect.stringContaining('ALERTA: POSIBLE EMERGENCIA'),
+      );
+      expect(sendSpy).toHaveBeenCalledWith(
+        '6068538838',
+        expect.stringContaining(SENDER),
+      );
+
+      // Sesión cerrada → IDLE, con status de auditoría dedicado. El envío
+      // de la alerta queda registrado (false aquí: el mock de Meta no
+      // confirma la entrega).
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.IDLE,
+      );
+      expect(interactionLog.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'EMERGENCY_ESCALATED',
+          metadata: expect.objectContaining({
+            guardrail: 'EMERGENCY_REGEX',
+            staffAlerted: false,
+          }),
+        }),
+      );
+      // Sin encuesta CSAT para un paciente en posible emergencia.
+      expect((service as any).sendSurveyLink).not.toHaveBeenCalled();
+    });
+
+    it('registra staffAlerted=true cuando Meta confirma la entrega de la alerta', async () => {
+      sendSpy.mockResolvedValue({ messages: [{ id: 'wamid-1' }] });
+
+      await service.processIncomingMessage(
+        makeTextEvent('tengo dolor en el pecho'),
+      );
+
+      expect(interactionLog.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'EMERGENCY_ESCALATED',
+          metadata: expect.objectContaining({ staffAlerted: true }),
+        }),
+      );
+    });
+
+    it('sin supportPhone: deriva igual al paciente y no intenta alertar (fail-soft)', async () => {
+      prisma.whatsappAccountConfig.findUnique.mockResolvedValue({
+        organization: {
+          id: ORG_ID,
+          name: 'Hospital San Vicente',
+          isActive: true,
+          supportPhone: null,
+        },
+      });
+
+      await service.processIncomingMessage(makeTextEvent('me quiero matar'));
+
+      // Solo la derivación al paciente: no hay número al cual alertar.
+      const replies = sentMessages();
+      expect(replies).toHaveLength(1);
+      expect(replies[0]).toContain('123');
+      expect(interactionLog.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'EMERGENCY_ESCALATED',
+          metadata: expect.objectContaining({ staffAlerted: false }),
+        }),
+      );
+    });
+
+    it('también dispara en paso de MENÚ (AWAITING_SPECIALTY), antes del resolver y su atajo a FAQ', async () => {
+      // En los pasos de menú el texto NO llama al LLM y el resolver puede
+      // desviar a answerFAQ vía classifyIntentLocal ("urgencia" es keyword
+      // de FAQ). La bandera roja debe ganar ANTES de llegar ahí.
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_SPECIALTY,
+      );
+
+      await service.processIncomingMessage(
+        makeTextEvent('es una emergencia, llevo horas con dolor en el pecho'),
+      );
+
+      expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+      expect(provider.answerFAQ).not.toHaveBeenCalled();
+      const replies = sentMessages();
+      expect(replies).toHaveLength(2); // paciente + alerta al staff
+      expect(replies[0]).toContain('123');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.IDLE,
+      );
+    });
+
+    it('también dispara en paso estricto (AWAITING_CONFIRMATION), donde el LLM ni se llama', async () => {
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_CONFIRMATION,
+      );
+
+      await service.processIncomingMessage(
+        makeTextEvent('me duele mucho el pecho, no aguanto'),
+      );
+
+      expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+      const replies = sentMessages();
+      expect(replies).toHaveLength(2); // paciente + alerta al staff
+      expect(replies[0]).toContain('123');
+      // El flujo de agendamiento se corta: la sesión vuelve a IDLE.
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.IDLE,
+      );
+    });
+
+    it('tiene prioridad sobre el guardrail de insultos', async () => {
+      await service.processIncomingMessage(
+        makeTextEvent('hijueputa me duele el pecho'),
+      );
+
+      const replies = sentMessages();
+      expect(replies).toHaveLength(2); // paciente + alerta al staff
+      expect(replies[0]).toContain('123');
+      expect(replies[0]).not.toContain('respetuosa');
+    });
+
+    it('"cita urgente" sin síntomas NO dispara la derivación', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ intent: 'agendar_cita' }),
+      );
+
+      await service.processIncomingMessage(
+        makeTextEvent('quiero una cita urgente con cardiología'),
+      );
+
+      // Siguió el flujo normal: el LLM clasificó el mensaje.
+      expect(provider.extractSchedulingIntent).toHaveBeenCalledTimes(1);
+      expect(sentMessages().join('\n')).not.toContain('🚨');
+    });
+
+    it('mención clínica sin bandera roja ("chequeo del corazón") NO dispara', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ intent: 'agendar_cita' }),
+      );
+
+      await service.processIncomingMessage(
+        makeTextEvent('quiero un chequeo del corazón con el cardiólogo'),
+      );
+
+      expect(provider.extractSchedulingIntent).toHaveBeenCalledTimes(1);
+      expect(sentMessages().join('\n')).not.toContain('🚨');
+    });
+
+    // El TestingModule no ejecuta onModuleInit: los tests de arriba corren
+    // sobre el regex default hardcodeado. Este ejercita la carga real de la
+    // sección [emergency] del .txt (reloadPatterns) y su normalización.
+    it('carga [emergency] desde chatbot-patterns.txt y normaliza tildes/puntuación', () => {
+      service.reloadPatterns();
+      const isEmergency = (t: string) =>
+        (service as any).isEmergencyText(t) as boolean;
+
+      // Frase que SOLO está en el archivo (no en el default hardcodeado),
+      // escrita con tilde para probar la normalización de entrada.
+      expect(isEmergency('Se tomó las pastillas, ayuda')).toBe(true);
+      // Tilde + signos de puntuación colapsados a espacios.
+      expect(isEmergency('¡Convulsión!')).toBe(true);
+      // Exclusiones documentadas en el .txt: prontitud no es síntoma y
+      // "mover la cita" es reprogramación, no parálisis.
+      expect(isEmergency('necesito una cita urgente')).toBe(false);
+      expect(isEmergency('no puedo mover la cita')).toBe(false);
+    });
+  });
+
+  // ── 🚑 GUARDRAIL EMERGENCIA post-LLM (Tarea D + transcript de audio) ──
+  // Defensa en profundidad sobre el regex pre-LLM (que solo ve TEXTO):
+  // (a) el flag isEmergency del LLM captura paráfrasis que el diccionario
+  // [emergency] no enumera; (b) el regex sobre la transcripción adoptada
+  // cubre la nota de VOZ aunque el LLM no marque el flag.
+  describe('guardrail EMERGENCIA (post-LLM: Tarea D + transcript)', () => {
+    it('paráfrasis por TEXTO que el regex no cubre pero el LLM marca isEmergency → deriva', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ intent: 'agendar_cita', isEmergency: true }),
+      );
+
+      await service.processIncomingMessage(
+        makeTextEvent(
+          'siento una presión horrible aquí en el corazón desde ayer',
+        ),
+      );
+
+      const replies = sentMessages();
+      expect(replies).toHaveLength(2); // paciente + alerta al staff
+      expect(replies[0]).toContain('123');
+      // La emergencia gana aunque el intent fuera agendar_cita: no avanza el flujo.
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.IDLE,
+      );
+      expect(interactionLog.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'EMERGENCY_ESCALATED',
+          metadata: expect.objectContaining({ guardrail: 'EMERGENCY_LLM' }),
+        }),
+      );
+      expect((service as any).sendSurveyLink).not.toHaveBeenCalled();
+    });
+
+    it('isEmergency gana sobre intent=consulta_faq: no responde FAQ', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ intent: 'consulta_faq', isEmergency: true }),
+      );
+
+      await service.processIncomingMessage(
+        makeTextEvent('¿qué hago? mi esposo se puso morado y no responde'),
+      );
+
+      expect(provider.answerFAQ).not.toHaveBeenCalled();
+      const replies = sentMessages();
+      expect(replies).toHaveLength(2); // paciente + alerta al staff
+      expect(replies[0]).toContain('123');
+    });
+
+    it('AUDIO: bandera roja en la transcripción deriva aunque el LLM no marque el flag', async () => {
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok' });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
+      // El LLM transcribe la bandera roja pero deja isEmergency en false
+      // (fail-open): el regex sobre el transcript debe atraparla.
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({
+          transcript: 'me duele mucho el pecho y no aguanto',
+          intent: 'agendar_cita',
+          isEmergency: false,
+        }),
+      );
+
+      await service.processIncomingMessage({
+        from: SENDER,
+        type: 'audio',
+        audio: { id: 'audio-emergencia-1' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      // [0] = ACK "🎧 lo estoy escuchando", [1] = derivación de emergencia,
+      // [2] = alerta proactiva al staff.
+      const replies = sentMessages();
+      expect(replies).toHaveLength(3);
+      expect(replies[1]).toContain('123');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.IDLE,
+      );
+      expect(interactionLog.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'EMERGENCY_ESCALATED',
+          metadata: expect.objectContaining({
+            guardrail: 'EMERGENCY_TRANSCRIPT_REGEX',
+          }),
+        }),
+      );
+      expect((service as any).sendSurveyLink).not.toHaveBeenCalled();
+    });
+
+    it('AUDIO sin bandera roja ni flag → sigue el flujo normal', async () => {
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok' });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('fake-ogg'));
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({
+          transcript: 'quiero una cita de consulta externa',
+          intent: 'agendar_cita',
+        }),
+      );
+
+      await service.processIncomingMessage({
+        from: SENDER,
+        type: 'audio',
+        audio: { id: 'audio-normal-1' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      expect(sentMessages().join('\n')).not.toContain('🚨');
+      expect(interactionLog.log).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'EMERGENCY_ESCALATED' }),
+      );
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // 🚑 FASE 5 — DATASET DE EVALUACIÓN DEL DETECTOR DETERMINISTA
+  // ──────────────────────────────────────────────────────────────
+  // Golden dataset de `isEmergencyText` contra el diccionario REAL cargado
+  // de chatbot-patterns.txt (por eso reloadPatterns() en cada caso: el
+  // TestingModule no corre onModuleInit). Su función es fijar a la vez la
+  // SENSIBILIDAD (una bandera roja por cada categoría clínica del .txt) y
+  // la ESPECIFICIDAD (exclusiones deliberadas), de modo que editar el .txt
+  // NO reintroduzca un falso negativo —potencialmente una vida— ni una
+  // regresión de falsos positivos que erosione la confianza en el canal.
+  // NO cubre la capa LLM (Tarea D), que se prueba arriba con el flag
+  // mockeado: aquí se evalúa la red de seguridad que NO depende del LLM.
+  // Ver docs/GUARDRAIL_EMERGENCIAS.md para el runbook de afinamiento.
+  // ══════════════════════════════════════════════════════════════
+  describe('FASE 5 — dataset de evaluación (isEmergencyText, diccionario real)', () => {
+    beforeEach(() => service.reloadPatterns());
+    const isEmergency = (t: string) =>
+      (service as any).isEmergencyText(t) as boolean;
+
+    // DEBEN derivar — una frase natural por categoría del diccionario.
+    const POSITIVOS: Array<[string, string]> = [
+      [
+        'dolor torácico (frase de la lámina)',
+        'Necesito una cita urgente porque llevo tres días con dolor en el pecho',
+      ],
+      ['dolor torácico agudo', 'me duele mucho el pecho y no aguanto'],
+      ['opresión torácica', 'siento una opresión en el pecho horrible'],
+      ['dificultad respiratoria', 'no puedo respirar bien'],
+      ['falta de aire', 'me falta el aire desde hace rato'],
+      ['infarto declarado', 'creo que le está dando un infarto'],
+      ['desmayo', 'mi papá se desmayó en la casa'],
+      ['convulsión', 'el niño está convulsionando'],
+      ['pérdida de conciencia', 'perdió el conocimiento y no despierta'],
+      ['sangrado', 'no para de sangrar la herida'],
+      ['vómito con sangre', 'está vomitando sangre'],
+      ['ideación suicida', 'me quiero matar'],
+      ['ideación suicida (variante)', 'quiero quitarme la vida'],
+      ['sobredosis', 'creo que fue una sobredosis'],
+      ['intoxicación por fármacos', 'se tomó las pastillas de la abuela'],
+      ['accidente grave', 'tuvimos un accidente grave en la moto'],
+      ['atropello', 'lo atropellaron hace un momento'],
+      ['obstétrico', 'mi bebé no se mueve desde ayer'],
+      ['reacción alérgica', 'se me hinchó la cara de repente'],
+      ['emergencia declarada', 'es una emergencia por favor'],
+      ['normalización mayúsculas/tildes/signos', '¡CONVULSIÓN!'],
+      ['normalización puntuación', 'Me desmayé, ayúdenme'],
+    ];
+
+    // NO deben derivar — el costo de un falso positivo es fricción, pero
+    // estas exclusiones son deliberadas y están documentadas en el .txt.
+    const NEGATIVOS: Array<[string, string]> = [
+      ['prontitud, no síntoma', 'necesito una cita urgente con cardiología'],
+      ['chequeo de rutina', 'quiero un chequeo del corazón'],
+      ['control rutinario', 'cita de control con cardiología'],
+      [
+        'reprogramación (colisión "no puedo mover")',
+        'no puedo mover la cita para el viernes',
+      ],
+      ['cefalea leve', 'me duele la cabeza a veces'],
+      ['pregunta informativa de urgencias', 'cuál es el horario de urgencias'],
+      [
+        'info del servicio de urgencias',
+        'quiero información sobre el servicio de urgencias',
+      ],
+      ['trámite administrativo', 'necesito un certificado médico'],
+      ['cita normal', 'tengo una cita a las tres de la tarde'],
+      ['síntoma leve no listado', 'tengo dolor de garganta leve'],
+    ];
+
+    it.each(POSITIVOS)('POSITIVO — %s → deriva', (_label, frase) => {
+      expect(isEmergency(frase)).toBe(true);
+    });
+
+    it.each(NEGATIVOS)('NEGATIVO — %s → NO deriva', (_label, frase) => {
+      expect(isEmergency(frase)).toBe(false);
+    });
+
+    // Métrica agregada: deja el conteo visible en el reporte y sirve de
+    // guardarraíl si un edit del .txt tumba una categoría entera.
+    it('cubre todas las banderas rojas del dataset (sensibilidad 100%)', () => {
+      const fallos = POSITIVOS.filter(([, f]) => !isEmergency(f)).map(
+        ([l]) => l,
+      );
+      expect(fallos).toEqual([]);
+    });
+
+    it('respeta todas las exclusiones del dataset (0 falsos positivos)', () => {
+      const fallos = NEGATIVOS.filter(([, f]) => isEmergency(f)).map(
+        ([l]) => l,
+      );
+      expect(fallos).toEqual([]);
+    });
+  });
+
   // ── INTENT ROUTER · Tarea C: consulta_faq ──
   it('intent=consulta_faq con KB → responde vía RAG sin cambiar el estado', async () => {
     provider.extractSchedulingIntent.mockResolvedValueOnce(
@@ -553,6 +965,29 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     // El FAQ no debe alterar el estado (sigue IDLE; no entra a AWAITING_SPECIALTY).
     const state = redis.store.get(`chat_state:${ORG_ID}:${SENDER}`);
     expect(state === undefined || state === ChatState.IDLE).toBe(true);
+  });
+
+  // ── Fase 3 · endurecimiento del RAG: regla 0 de emergencias ──
+  // Defensa en profundidad para paráfrasis que ni el regex ni la Tarea D
+  // atraparon y llegan al RAG como consulta_faq: el system prompt instruye
+  // derivar a 123/urgencias en vez de responder como FAQ, sin diagnosticar
+  // ni minimizar.
+  it('el system prompt del RAG incluye la regla 0 de emergencias', async () => {
+    provider.extractSchedulingIntent.mockResolvedValueOnce(
+      extraction({ intent: 'consulta_faq' }),
+    );
+
+    await service.processIncomingMessage(
+      makeTextEvent('¿qué servicios tienen?'),
+    );
+
+    expect(provider.answerFAQ).toHaveBeenCalledTimes(1);
+    const systemPrompt = provider.answerFAQ.mock.calls[0][0] as string;
+    expect(systemPrompt).toContain('🚨 EMERGENCIAS');
+    expect(systemPrompt).toContain('*123*');
+    expect(systemPrompt).toContain('no parece grave');
+    // El teléfono del equipo humano queda inyectado en la regla.
+    expect(systemPrompt).toContain('606 853 8838');
   });
 
   it('intent=consulta_faq sin KB → no llama answerFAQ (cae al flujo normal)', async () => {

@@ -487,6 +487,19 @@ const FORMAL = {
     `Por ahora, cerraremos este chat. Estaremos listos para atenderle cuando lo desee de forma cordial.\n\n` +
     `Solo escriba *"Hola"* para reiniciar el asistente.`,
 
+  // 🚑 Derivación de EMERGENCIA. Contrato del mensaje: (a) condicional
+  // ("podría"), el bot NO diagnostica ni tranquiliza; (b) acción inmediata
+  // (línea 123 / urgencias / equipo humano); (c) NO continúa el agendamiento;
+  // (d) cierre no punitivo — puede volver con "Hola".
+  guardrailEmergencia: (phone: string) =>
+    `🚨 Lo que me describe podría requerir *atención médica inmediata* y no debería esperar una cita.\n\n` +
+    `Por favor, actúe ahora mismo:\n` +
+    `• Llame a la línea de emergencias *123* o diríjase de inmediato al servicio de *Urgencias* más cercano.\n` +
+    (phone
+      ? `• Si desea hablar con nuestro equipo humano, comuníquese al: 👉 *${phone}*\n`
+      : '') +
+    `\nSu salud es lo primero. 💙 Cuando se encuentre bien y desee agendar una cita, escríbame *"Hola"* y con gusto le atiendo.`,
+
   guardrailOffTopic: (phone: string, botName: string = BOT_NAME) =>
     `El sistema no está logrando interpretar correctamente su solicitud dentro del agendamiento de citas.\n\n` +
     `Para que reciba una mejor atención, le recomiendo comunicarse con nuestro equipo humano: 👉 *${phone}*\n\n` +
@@ -1068,6 +1081,17 @@ const INFORMAL = {
 
   guardrailInsulto: (_phone: string, _botName: string = BOT_NAME) =>
     `Para brindarte la mejor ayuda, necesitamos mantener una conversación respetuosa. 🙏 En este momento, cerraremos este chat. Estamos listos para ayudarte cuando lo desees de forma cordial. Solo escribe *"Hola"* para reiniciar el asistente.`,
+
+  // 🚑 Derivación de EMERGENCIA (mismo contrato que el pool FORMAL:
+  // condicional, acción inmediata, sin agendamiento, cierre no punitivo).
+  guardrailEmergencia: (phone: string) =>
+    `🚨 Lo que me cuentas podría requerir *atención médica inmediata* y no debería esperar una cita.\n\n` +
+    `Por favor, actúa ya:\n` +
+    `• Llama a la línea de emergencias *123* o ve de inmediato al servicio de *Urgencias* más cercano.\n` +
+    (phone
+      ? `• Si quieres hablar con nuestro equipo humano: 👉 *${phone}*\n`
+      : '') +
+    `\nTu salud es lo primero. 💙 Cuando estés bien y quieras agendar tu cita, escríbeme *"Hola"* y te atiendo con gusto.`,
 
   guardrailOffTopic: (phone: string, botName: string = BOT_NAME) =>
     `Parece que no estoy logrando entenderte dentro del agendamiento. 🙏 Mejor te paso con nuestro equipo humano para que te atiendan: 👉 *${phone}*. Cuando quieras intentarlo conmigo otra vez, solo escríbeme *"Hola"* y *${botName}* te atiende. 😊`,

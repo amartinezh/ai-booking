@@ -106,6 +106,16 @@ export interface SchedulingExtraction {
    * Si no hay cupos alternativos, el flujo ofrece cancelarla.
    */
   isModification: boolean;
+  /**
+   * 🚑 El mensaje describe una POSIBLE emergencia médica en curso (Tarea D:
+   * dolor torácico, dificultad respiratoria, ideación suicida, sobredosis...).
+   * Es ORTOGONAL a `intent`: "necesito una cita urgente porque llevo tres días
+   * con dolor en el pecho" es `agendar_cita` E `isEmergency` a la vez, y la
+   * emergencia SIEMPRE gana (derivación a 123/urgencias, sin agendar).
+   * OJO: `Boolean(parsed.isEmergency)` es fail-open hacia `false`; la red de
+   * seguridad determinista es el regex de [emergency] en chatbot-patterns.txt.
+   */
+  isEmergency: boolean;
   isRateLimited: boolean;
 }
 
