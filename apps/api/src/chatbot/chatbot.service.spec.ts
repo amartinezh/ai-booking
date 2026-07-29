@@ -1658,7 +1658,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       // El menú nombra la fecha pedida y deja al paciente en selección de letra.
       expect(sentMessages().join('\n')).toContain('mañana');
       expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_DATE);
-      expect(redis.store.get(`temp_slot_A:${SENDER}`)).toBe('slot-X');
+      expect(redis.store.get(`temp_slot_A:${ORG_ID}:${SENDER}`)).toBe('slot-X');
     });
 
     it('con fecha preferida SIN cupos ese día pero con próximos → fallback suave (no waitlist)', async () => {
@@ -1676,7 +1676,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(slots().mock.calls[1][3]).toBeUndefined();
       // No cae a lista de espera: ofrece horarios y espera la letra.
       expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_DATE);
-      expect(redis.store.get(`temp_slot_A:${SENDER}`)).toBe('slot-X');
+      expect(redis.store.get(`temp_slot_A:${ORG_ID}:${SENDER}`)).toBe('slot-X');
     });
 
     it('con fecha preferida y NINGÚN cupo (ni próximos) → lista de espera (conducta actual)', async () => {
@@ -1773,7 +1773,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
       // Saltó el menú de letras (nunca se persistió temp_slot_A) y dejó el cupo
       // seleccionado, avanzando a pedir la cédula (el resumen confirmará).
-      expect(redis.store.get(`temp_slot_A:${SENDER}`)).toBeUndefined();
+      expect(redis.store.get(`temp_slot_A:${ORG_ID}:${SENDER}`)).toBeUndefined();
       expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe(
         'slot-X',
       );
@@ -1840,14 +1840,14 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         ChatState.AWAITING_DATE,
       );
       // Menú de horarios ya presentado: dos opciones A y B.
-      redis.store.set(`temp_slot_A:${SENDER}`, 'slot-A');
+      redis.store.set(`temp_slot_A:${ORG_ID}:${SENDER}`, 'slot-A');
       redis.store.set(
-        `temp_slot_A_fecha:${SENDER}`,
+        `temp_slot_A_fecha:${ORG_ID}:${SENDER}`,
         new Date('2026-06-01T15:00:00Z').toISOString(),
       );
-      redis.store.set(`temp_slot_B:${SENDER}`, 'slot-B');
+      redis.store.set(`temp_slot_B:${ORG_ID}:${SENDER}`, 'slot-B');
       redis.store.set(
-        `temp_slot_B_fecha:${SENDER}`,
+        `temp_slot_B_fecha:${ORG_ID}:${SENDER}`,
         new Date('2026-06-02T16:00:00Z').toISOString(),
       );
 
@@ -1940,7 +1940,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('AUDIO con hora AMBIGUA entre cupos → no adivina: reintenta pidiendo la letra', async () => {
       // Ambos slots caen en la "mañana"; sin hora concreta el match es ambiguo.
       redis.store.set(
-        `temp_slot_B_fecha:${SENDER}`,
+        `temp_slot_B_fecha:${ORG_ID}:${SENDER}`,
         new Date('2026-06-01T15:30:00Z').toISOString(), // también 10:xx Bogotá
       );
       provider.extractSchedulingIntent.mockResolvedValueOnce(

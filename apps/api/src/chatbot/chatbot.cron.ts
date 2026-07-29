@@ -131,7 +131,11 @@ export class ChatbotCron {
       `error_count:${base}`,
       `is_ai_flow:${base}`,
     ];
-    const slotKeys = await this.redis.keys(`temp_slot_*:${whatsappPhone}`);
+    // Los cupos ofrecidos van scoped por organización como el resto de la
+    // sesión (ver slotKey/slotDateKey en ChatbotService): sin el tenant en el
+    // patrón, cerrar por inactividad en una clínica borraba también los cupos
+    // que otra le estuviera ofreciendo al mismo paciente.
+    const slotKeys = await this.redis.keys(`temp_slot_*:${base}`);
     const serviceMenuKeys = await this.redis.keys(`temp_service_*:${base}`);
     const epsMenuKeys = await this.redis.keys(`temp_eps_[A-Z]_*:${base}`);
     // Claves efímeras de los flujos de cancelación y reprogramación (espejo de

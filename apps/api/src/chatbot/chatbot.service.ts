@@ -760,9 +760,12 @@ export class ChatbotService implements OnModuleInit {
    * Permite casar un cupo por "día + hora" dichos por voz, no solo por letra.
    */
   private async loadOfferedSlots(
+    organizationId: string,
     senderId: string,
   ): Promise<Array<{ letra: string; slotId: string; fecha: Date }>> {
-    const keys = await this.redis.keys(`temp_slot_*:${senderId}`);
+    const keys = await this.redis.keys(
+      `temp_slot_*:${organizationId}:${senderId}`,
+    );
     const letras = [
       ...new Set(
         keys
@@ -773,15 +776,39 @@ export class ChatbotService implements OnModuleInit {
 
     const out: Array<{ letra: string; slotId: string; fecha: Date }> = [];
     for (const letra of letras) {
-      const slotId = await this.redis.get(`temp_slot_${letra}:${senderId}`);
+      const slotId = await this.redis.get(
+        this.slotKey(organizationId, senderId, letra),
+      );
       const fechaStr = await this.redis.get(
-        `temp_slot_${letra}_fecha:${senderId}`,
+        this.slotDateKey(organizationId, senderId, letra),
       );
       if (slotId && fechaStr) {
         out.push({ letra, slotId, fecha: new Date(fechaStr) });
       }
     }
     return out;
+  }
+
+  // ── Claves de los cupos ofrecidos en el menú de agendamiento ──────
+  // Van scoped por organización como TODAS las demás claves de sesión. Antes
+  // eran `temp_slot_<letra>:<senderId>` (sin tenant): si un mismo paciente
+  // conversaba con dos clínicas de la plataforma, las letras colisionaban y el
+  // `cleanUpSession` de una borraba los cupos ofrecidos por la otra.
+  // `bookAppointment` valida el tenant del slot, así que nunca hubo reserva
+  // cruzada; el síntoma era un "ese horario ya lo tomaron" falso.
+  private slotKey(
+    organizationId: string,
+    senderId: string,
+    letra: string,
+  ): string {
+    return `temp_slot_${letra}:${organizationId}:${senderId}`;
+  }
+  private slotDateKey(
+    organizationId: string,
+    senderId: string,
+    letra: string,
+  ): string {
+    return `temp_slot_${letra}_fecha:${organizationId}:${senderId}`;
   }
 
   /**
@@ -792,6 +819,7 @@ export class ChatbotService implements OnModuleInit {
    * llamador reintente o siga pidiendo la letra. Nunca agenda a ciegas.
    */
   private async matchOfferedSlotByVoice(
+    organizationId: string,
     senderId: string,
     text: string | undefined,
   ): Promise<{ slotId: string; fecha: Date } | null> {
@@ -799,7 +827,7 @@ export class ChatbotService implements OnModuleInit {
     const hora = parseHoraPreferida(text ?? null);
     if (!ventana && !hora) return null;
 
-    const offered = await this.loadOfferedSlots(senderId);
+    const offered = await this.loadOfferedSlots(organizationId, senderId);
     const matches = offered.filter((s) => {
       const inDay = ventana
         ? s.fecha >= ventana.desde && s.fecha <= ventana.hasta
@@ -1596,6 +1624,31 @@ export class ChatbotService implements OnModuleInit {
     return true;
   }
 
+  /**
+   * Traduce el `epsId` guardado en la sesión al valor con el que se persiste
+   * la cita: `null` cuando la EPS elegida es "Particular" (pago directo) o
+   * cuando el id ya no resuelve dentro del tenant.
+   *
+   * "Particular" existe como fila de `Eps` únicamente para poder aparecer en
+   * el menú de selección; no representa una afiliación. Los pasos previos del
+   * protocolo ya la traducen a `null` (`epsIdForSlots` / `epsIdForPatient`),
+   * así que este helper mantiene esa misma regla en el punto de reserva.
+   */
+  private async normalizeEpsIdForBooking(
+    organizationId: string,
+    epsId: string | null | undefined,
+  ): Promise<string | null> {
+    if (!epsId) return null;
+    const eps = await this.prisma.eps.findFirst({
+      where: { id: epsId, organizationId },
+      select: { name: true },
+    });
+    if (!eps) return null;
+    return eps.name.toLowerCase() === PARTICULAR_EPS_NAME.toLowerCase()
+      ? null
+      : epsId;
+  }
+
   // ══════════════════════════════════════════════════════════════
   // HELPER 5: PERSISTENCIA DE PACIENTE — MULTI-PACIENTE
   // ══════════════════════════════════════════════════════════════
@@ -1690,7 +1743,9 @@ export class ChatbotService implements OnModuleInit {
       `error_count:${organizationId}:${senderId}`,
       `is_ai_flow:${organizationId}:${senderId}`,
     ];
-    const slotKeys = await this.redis.keys(`temp_slot_*:${senderId}`);
+    const slotKeys = await this.redis.keys(
+      `temp_slot_*:${organizationId}:${senderId}`,
+    );
     const serviceMenuKeys = await this.redis.keys(
       `temp_service_*:${organizationId}:${senderId}`,
     );
@@ -2387,10 +2442,10 @@ export class ChatbotService implements OnModuleInit {
     let regex: RegExp | null = null;
     switch (currentState) {
       case ChatState.AWAITING_DATE:
-        // Slots de agendamiento: `temp_slot_${letra}:${senderId}` (sin orgId).
-        // También existen claves `temp_slot_${letra}_fecha:${senderId}` que
-        // hay que descartar: nos quedamos solo con la base.
-        pattern = `temp_slot_*:${senderId}`;
+        // Slots de agendamiento: `temp_slot_${letra}:${orgId}:${senderId}`.
+        // También existen claves `temp_slot_${letra}_fecha:...` que hay que
+        // descartar: el regex se queda solo con la base (letra + ':').
+        pattern = `temp_slot_*:${organizationId}:${senderId}`;
         regex = /^temp_slot_([A-Z]):/;
         break;
       case ChatState.AWAITING_CANCEL_SELECTION:
@@ -2652,6 +2707,54 @@ export class ChatbotService implements OnModuleInit {
       );
     }
     return text;
+  }
+
+  /**
+   * Espejo de `applyVoiceLetterSelection` para los pasos SÍ/NO. Cuando la
+   * transcripción resuelve a un SÍ/NO inequívoco (`interpretYesNo`), el turno
+   * debe recorrer EXACTAMENTE el mismo camino determinista que por texto: en
+   * esos pasos el texto no llama al LLM (son `isStrictStep`), así que sus flags
+   * de intención quedan en falso y fluyen directo al handler del estado.
+   *
+   * Por voz, en cambio, el audio SÍ pasa por el extractor para transcribirse y
+   * el LLM puede devolver `isCancellation` / `isModification` / `isEscape` /
+   * `outOfContext` al ver un "sí" suelto sin contexto conversacional. Sin este
+   * neutralizado, esos flags disparan los routers globales ANTES del switch y
+   * el turno se pierde (p.ej. un "sí" hablado en la confirmación de una
+   * cancelación reiniciaría el flujo en vez de cancelar la cita).
+   *
+   * NO toca `isEmergency`: el guardrail de emergencia se evalúa antes que este
+   * helper y debe seguir ganando siempre. Si la transcripción no resuelve a
+   * SÍ/NO (p.ej. "mejor cuénteme los horarios"), no modifica nada.
+   */
+  private applyVoiceYesNoAnswer(
+    text: string | undefined,
+    aiData: SchedulingExtraction,
+    organizationId: string,
+    senderId: string,
+    currentState: ChatState,
+  ): void {
+    const decision = this.interpretYesNo(text);
+    if (!decision) return;
+
+    aiData.intent = 'otro';
+    aiData.isEscape = false;
+    aiData.isCancellation = false;
+    aiData.isModification = false;
+    aiData.outOfContext = false;
+    aiData.ininteligible = false;
+    // Entidades alucinadas al transcribir un "sí" suelto: ningún handler de
+    // paso SÍ/NO las consume (todos leen su contexto de Redis), y dejarlas
+    // pasar contaminaría la memoria a corto plazo de la sesión.
+    aiData.cedula = null;
+    aiData.nombre = null;
+    aiData.eps = null;
+    aiData.especialidad = null;
+    aiData.doctor = null;
+    aiData.fechaSolicitada = null;
+    this.logger.log(
+      `[Tenant: ${organizationId}] 🎙️ SI_NO_VOZ paciente=${senderId} estado=${currentState} decision="${decision}"`,
+    );
   }
 
   /**
@@ -3050,6 +3153,54 @@ export class ChatbotService implements OnModuleInit {
     });
   }
 
+  /**
+   * 🧲 ESCENARIO 2 — Pide confirmación antes de abandonar un agendamiento en
+   * curso para pasar a cancelar una cita existente. Guarda el estado previo
+   * para poder retomar si el paciente responde NO.
+   *
+   * Fuente ÚNICA de esta transición: la dispara tanto el interceptor por
+   * TEXTO (`cancelRegex` → isQuickCancel, evaluado antes del LLM) como el
+   * camino de VOZ (flag `isCancellation` del extractor, que solo se conoce
+   * después de transcribir). Sin el segundo, la misma frase dicha en voz alta
+   * abortaba el agendamiento sin preguntar. Terminal: el caller hace return.
+   */
+  private async promptSchedulingInterrupt(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    currentState: ChatState;
+    MSGS: ReturnType<typeof buildMessages>;
+    via: 'text_regex' | 'voice_llm';
+  }): Promise<void> {
+    const { organizationId, senderId, text, currentState, MSGS, via } = p;
+
+    // Recordamos dónde estaba el paciente para retomar si responde NO.
+    await this.redis.set(
+      `temp_interrupt_prev_state:${organizationId}:${senderId}`,
+      currentState,
+      'EX',
+      SESSION_TTL,
+    );
+    const reply = MSGS.interrupcionAgendamiento();
+    await this.smartReply(organizationId, senderId, reply);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_INTERRUPT_CONFIRMATION,
+    );
+
+    await this.auditLog(senderId, organizationId, {
+      status: InteractionStatus.CANCELLATION_FLOW,
+      userMessage: text || (via === 'voice_llm' ? '[audio]' : '[texto]'),
+      botReply: reply,
+      metadata: {
+        event: 'SCHEDULING_INTERRUPT_PROMPT',
+        interruptedState: currentState,
+        via,
+      },
+    });
+  }
+
   private async processIncomingMessageUnsafe(event: WhatsappInboundEvent) {
     const senderId = event.from || event.sender?.id;
     // Sin remitente no hay nada que procesar ni a quién responder. El guard
@@ -3218,14 +3369,27 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_INTERRUPT_CONFIRMATION;
 
     // Pasos que esperan un SÍ/NO. A diferencia del resto de pasos estrictos,
-    // ESTOS aceptan voz: el audio se transcribe y la respuesta se normaliza
-    // con interpretYesNo (texto y voz sirven por igual). Incluye la
-    // CONFIRMACIÓN de la cita (AWAITING_CONFIRMATION) — sin esto, el "Sí"
-    // hablado se rechazaba como audioPasoEstricto y el flujo no cerraba.
+    // ESTOS aceptan voz: el audio se transcribe y la respuesta se normaliza con
+    // interpretYesNo (texto y voz sirven por igual), y `applyVoiceYesNoAnswer`
+    // neutraliza los flags que el LLM pudo inventar al transcribir un "sí".
+    //
+    // La lista cubre TODOS los pasos SÍ/NO del protocolo, incluidos los de
+    // cancelación y reprogramación: sin ellos, un paciente que venía hablando
+    // recorría el flujo entero por voz y era rechazado (audioPasoEstricto)
+    // justo en el "¿está seguro?" final. Los pasos *_RETRY_CEDULA aceptan
+    // además una cédula dictada; si el STT no produce dígitos, el handler
+    // reprompta igual que por texto (sin regresión).
     const isYesNoStep =
       currentState === ChatState.AWAITING_WAITLIST_CONFIRM ||
       currentState === ChatState.AWAITING_WAITLIST_OPTIN ||
-      currentState === ChatState.AWAITING_CONFIRMATION;
+      currentState === ChatState.AWAITING_CONFIRMATION ||
+      currentState === ChatState.AWAITING_CANCEL_CONFIRM ||
+      currentState === ChatState.AWAITING_CANCEL_RETRY_CEDULA ||
+      currentState === ChatState.AWAITING_POST_CANCEL_CHOICE ||
+      currentState === ChatState.AWAITING_INTERRUPT_CONFIRMATION ||
+      currentState === ChatState.AWAITING_MODIFY_CONFIRM ||
+      currentState === ChatState.AWAITING_MODIFY_RETRY_CEDULA ||
+      currentState === ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL;
 
     // Pasos de SELECCIÓN POR LETRA (elegir horario o cita de un listado A/B/C).
     // Igual que el SÍ/NO de waitlist, ESTOS aceptan voz: el audio se transcribe
@@ -3327,29 +3491,13 @@ export class ChatbotService implements OnModuleInit {
       ChatState.AWAITING_CONFIRMATION,
     ];
     if (isQuickCancel && SCHEDULING_FLOW_STATES.includes(currentState)) {
-      // Recordamos dónde estaba el paciente para retomar si responde NO.
-      await this.redis.set(
-        `temp_interrupt_prev_state:${organizationId}:${senderId}`,
-        currentState,
-        'EX',
-        SESSION_TTL,
-      );
-      const reply = MSGS.interrupcionAgendamiento();
-      await this.smartReply(organizationId, senderId, reply);
-      await this.setUserState(
+      await this.promptSchedulingInterrupt({
         organizationId,
         senderId,
-        ChatState.AWAITING_INTERRUPT_CONFIRMATION,
-      );
-
-      await this.auditLog(senderId, organizationId, {
-        status: InteractionStatus.CANCELLATION_FLOW,
-        userMessage: text || '[texto]',
-        botReply: reply,
-        metadata: {
-          event: 'SCHEDULING_INTERRUPT_PROMPT',
-          interruptedState: currentState,
-        },
+        text,
+        currentState,
+        MSGS,
+        via: 'text_regex',
       });
       return;
     }
@@ -3479,6 +3627,22 @@ export class ChatbotService implements OnModuleInit {
       );
     }
 
+    // ══════════════════════════════════════════════════════════
+    // 🎙️ SÍ/NO POR VOZ — PARIDAD CON TEXTO EN PASOS DE CONFIRMACIÓN
+    // ──────────────────────────────────────────────────────────
+    // Mismo razonamiento que el bloque de letras de arriba, aplicado a los
+    // pasos SÍ/NO (confirmar cita, confirmar cancelación, confirmar
+    // reprogramación, lista de espera...). Ver applyVoiceYesNoAnswer.
+    if (isAudio && isYesNoStep) {
+      this.applyVoiceYesNoAnswer(
+        text,
+        aiData,
+        organizationId,
+        senderId,
+        currentState,
+      );
+    }
+
     // Contador de fallos LLM / fallback (ver handleLlmFallback). Si la IA está
     // caída tras varios fallos, el helper ya respondió mantenimiento y pide
     // detener el turno (stop). En otro caso devuelve el aiData (posiblemente
@@ -3494,6 +3658,29 @@ export class ChatbotService implements OnModuleInit {
     });
     if (fb.stop) return;
     aiData = fb.aiData;
+
+    // 🧲 ESCENARIO 2 (paridad de VOZ): por texto la interrupción amable ya se
+    // interceptó arriba con `cancelRegex` (antes de gastar una llamada al LLM).
+    // Por voz la intención solo se conoce tras transcribir, así que el chequeo
+    // se repite aquí, ANTES del router de cancelación, para que el paciente
+    // confirme en vez de perder su agendamiento en curso. Los pasos de letra y
+    // de SÍ/NO ya neutralizaron `isCancellation` si la voz resolvió a una
+    // opción concreta, así que aquí solo entran intenciones reales.
+    if (
+      isAudio &&
+      aiData.isCancellation &&
+      SCHEDULING_FLOW_STATES.includes(currentState)
+    ) {
+      await this.promptSchedulingInterrupt({
+        organizationId,
+        senderId,
+        text,
+        currentState,
+        MSGS,
+        via: 'voice_llm',
+      });
+      return;
+    }
 
     if (aiData.isCancellation || isQuickCancel) {
       await this.startCancellationFlow({
@@ -4431,13 +4618,13 @@ export class ChatbotService implements OnModuleInit {
         for (let i = 0; i < slots.length; i++) {
           const letra = String.fromCharCode(65 + i);
           await this.redis.set(
-            `temp_slot_${letra}:${senderId}`,
+            this.slotKey(organizationId, senderId, letra),
             slots[i].slotId,
             'EX',
             SESSION_TTL,
           );
           await this.redis.set(
-            `temp_slot_${letra}_fecha:${senderId}`,
+            this.slotDateKey(organizationId, senderId, letra),
             slots[i].fecha.toISOString(),
             'EX',
             SESSION_TTL,
@@ -4505,13 +4692,32 @@ export class ChatbotService implements OnModuleInit {
 
       // ── PASO 4: CÉDULA (sólo si ya hay slot seleccionado) ────
       if (!finalCedula) {
+        // Si el paciente YA estaba en el paso de cédula y su respuesta no traía
+        // dígitos, esto es un reintento fallido y se contabiliza como en el
+        // resto de pasos. Sin esto, `error_count` nunca subía aquí y el guard
+        // de máximo de reintentos no se alcanzaba: la conversación podía
+        // reciclar indefinidamente hasta que la cerrara el cron de inactividad.
+        // La PRIMERA vez que pedimos la cédula (venimos de elegir cupo, con
+        // otro estado) no penaliza: aún no ha tenido oportunidad de responder.
+        const esReintentoDeCedula = currentState === ChatState.AWAITING_CEDULA;
+        if (esReintentoDeCedula) {
+          await this.redis.set(
+            retriesKey,
+            (retriesCount + 1).toString(),
+            'EX',
+            SESSION_TTL,
+          );
+        }
+
         const fechaVista = await this.redis.get(
           `temp_selected_date_view:${organizationId}:${senderId}`,
         );
         const fechaFormateada = fechaVista
           ? formatAppointmentLong(fechaVista)
           : '';
-        const reply = MSGS.pedirCedulaPostSlot(fechaFormateada);
+        const reply = esReintentoDeCedula
+          ? MSGS.cancelarCedulaInvalida()
+          : MSGS.pedirCedulaPostSlot(fechaFormateada);
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(
           organizationId,
@@ -4519,15 +4725,28 @@ export class ChatbotService implements OnModuleInit {
           ChatState.AWAITING_CEDULA,
         );
 
-        await this.auditSuccess(senderId, organizationId, {
-          userMessage: text || '[audio]',
-          botReply: reply,
-          metadata: {
-            step: 'ASKING_CEDULA_POST_SLOT',
-            specialty: resolvedServiceName,
-            eps: resolvedEpsName,
-          },
-        });
+        if (esReintentoDeCedula) {
+          await this.auditFailure(senderId, organizationId, {
+            reason: FailureReason.PATIENT_NOT_FOUND,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: {
+              stage: 'BOOKING_CEDULA_MISSING_DIGITS',
+              retriesCount: retriesCount + 1,
+              maxRetries,
+            },
+          });
+        } else {
+          await this.auditSuccess(senderId, organizationId, {
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: {
+              step: 'ASKING_CEDULA_POST_SLOT',
+              specialty: resolvedServiceName,
+              eps: resolvedEpsName,
+            },
+          });
+        }
         return;
       }
 
@@ -4605,17 +4824,14 @@ export class ChatbotService implements OnModuleInit {
           return;
         }
 
-        await this.ensurePatientPersisted({
-          cedula: finalCedula,
-          nombre: finalNombre,
-          senderId,
-          organizationId: organizationId,
-          epsId: epsIdForPatient,
-        });
+        // Paciente nuevo CON nombre: cae al persistido común de abajo (antes
+        // se llamaba aquí y otra vez fuera del if, duplicando la consulta).
       }
 
-      // Asegurar persistencia con nombre + EPS final.
-      if (finalCedula && finalNombre) {
+      // Persistencia con nombre + EPS final. Cubre ambos casos: crea al
+      // paciente nuevo (arriba ya garantizamos que tenemos su nombre) y
+      // completa whatsappId/EPS del que ya existía.
+      if (finalNombre) {
         await this.ensurePatientPersisted({
           cedula: finalCedula,
           nombre: finalNombre,
@@ -4702,10 +4918,10 @@ export class ChatbotService implements OnModuleInit {
     } = ctx;
     const letraElegida = this.extractOptionLetter(text);
     const slotId = await this.redis.get(
-      `temp_slot_${letraElegida}:${senderId}`,
+      this.slotKey(organizationId, senderId, letraElegida),
     );
     const slotFechaStr = await this.redis.get(
-      `temp_slot_${letraElegida}_fecha:${senderId}`,
+      this.slotDateKey(organizationId, senderId, letraElegida),
     );
 
     // Sin letra válida: el paciente (típicamente por voz) puede referirse al
@@ -4713,7 +4929,11 @@ export class ChatbotService implements OnModuleInit {
     // Intentamos casar UN único cupo de los ofrecidos; si resulta ambiguo o no
     // se reconoce, caemos al reintento (disculpa + volver a preguntar).
     if (!slotId || !slotFechaStr) {
-      const matched = await this.matchOfferedSlotByVoice(senderId, text);
+      const matched = await this.matchOfferedSlotByVoice(
+        organizationId,
+        senderId,
+        text,
+      );
       if (matched) {
         await this.advanceAfterSlotSelected({
           organizationId,
@@ -4956,12 +5176,22 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
+      // "Particular" (pago directo) vive como fila de Eps en BD para poder
+      // listarse en el menú, pero NO es una afiliación: todo el flujo previo la
+      // traduce a `null` (cupos universales, sin padrón). La confirmación debe
+      // hacer lo mismo, o el paciente y su cita quedarían ligados a la fila
+      // "Particular" como si tuviera convenio.
+      const epsIdForBooking = await this.normalizeEpsIdForBooking(
+        organizationId,
+        epsIdFinal,
+      );
+
       const patient = await this.ensurePatientPersisted({
         cedula: cedulaFinal,
         nombre: nombreFinal || 'Paciente Registrado',
         senderId,
         organizationId: organizationId,
-        epsId: epsIdFinal || null,
+        epsId: epsIdForBooking,
       });
 
       if (!patient) {
@@ -4981,10 +5211,13 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
+      // La EPS de la CITA es la de esta sesión de agendamiento, no la que el
+      // perfil traiga de reservas anteriores (un paciente puede venir hoy como
+      // Particular y la próxima vez por su EPS).
       const bookingResult = await this.appointmentsService.bookAppointment(
         patient.id,
         slotIdFinal,
-        patient.epsId,
+        epsIdForBooking,
         'WHATSAPP',
         organizationId,
       );
@@ -5465,8 +5698,15 @@ export class ChatbotService implements OnModuleInit {
     const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
       ctx;
     const respuesta = text?.toUpperCase().trim() || '';
+    // Interpretación tolerante (texto y voz), igual que el resto de pasos
+    // SÍ/NO. El whitelist literal anterior ('SI'/'SÍ'/'SI.'/'SÍ.') rechazaba
+    // respuestas naturales ("Sí, confirmo", "claro") justo en el paso más caro
+    // de fallar: el paciente ya identificó su cita y quiere cancelarla.
+    // `interpretYesNo` mapea "cancelar"/"cancela" a NO, así que la rama de
+    // aborto conserva el comportamiento del antiguo literal 'CANCELAR'.
+    const decision = this.interpretYesNo(text);
 
-    if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
+    if (decision === 'SI') {
       const aptId = await this.redis.get(
         `temp_selected_cancel_apt:${organizationId}:${senderId}`,
       );
@@ -5556,7 +5796,7 @@ export class ChatbotService implements OnModuleInit {
         });
         await this.cleanUpCancelSession(organizationId, senderId);
       }
-    } else if (['NO', 'NO.', 'CANCELAR'].includes(respuesta)) {
+    } else if (decision === 'NO') {
       const reply = MSGS.cancelarAbortada();
       await this.smartReply(organizationId, senderId, reply);
       await this.cleanUpCancelSession(organizationId, senderId);
@@ -5601,8 +5841,10 @@ export class ChatbotService implements OnModuleInit {
       retriesCount,
     } = ctx;
     const respuesta = text?.toUpperCase().trim() || '';
+    // Tolerante a SÍ/NO natural (texto y voz), como el resto de pasos SÍ/NO.
+    const decision = this.interpretYesNo(text);
 
-    if (['SI', 'SÍ', 'SÍ.', 'SI.'].includes(respuesta)) {
+    if (decision === 'SI') {
       // Tras cancelar, ofrecer menú con letras (Paso 1 del nuevo protocolo).
       const { lineas, count } = await this.buildServiceMenu(
         organizationId,
@@ -5628,7 +5870,7 @@ export class ChatbotService implements OnModuleInit {
         botReply: reply,
         metadata: { event: 'POST_CANCEL_NEW_BOOKING_STARTED' },
       });
-    } else if (['NO', 'NO.'].includes(respuesta)) {
+    } else if (decision === 'NO') {
       const reply = MSGS.cancelarDespedida();
       await this.smartReply(organizationId, senderId, reply);
       await this.cleanUpSession(organizationId, senderId);
@@ -5662,6 +5904,13 @@ export class ChatbotService implements OnModuleInit {
       );
       const reply = MSGS.respuestaInvalidaSiNo();
       await this.sendWhatsAppMessage(senderId, reply);
+
+      await this.auditFailure(senderId, organizationId, {
+        reason: FailureReason.SESSION_EXPIRED,
+        userMessage: text,
+        botReply: reply,
+        metadata: { invalidResponse: respuesta, stage: 'POST_CANCEL_CHOICE' },
+      });
     }
   }
 
@@ -6817,30 +7066,39 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // El mapping letra → cita DEBE quedar escrito antes de ofrecer el menú:
+    // es lo que resuelve la respuesta del paciente en el turno siguiente. Se
+    // recorre con `for...of` + `await` (como offerModifySlots) en vez del
+    // `forEach` anterior, que disparaba los `set` sin esperarlos — el turno
+    // respondía antes de que la escritura ocurriera y, si Redis rechazaba, la
+    // promesa quedaba sin manejar y tumbaba el proceso Node.
     let lineas = '';
-    activeAppointments.forEach((apt, idx) => {
+    let maxLetra = '';
+    for (let idx = 0; idx < activeAppointments.length; idx++) {
+      const apt = activeAppointments[idx];
       const letra = String.fromCharCode(65 + idx);
-      this.redis.set(
+      maxLetra = letra;
+      await this.redis.set(
         `temp_cancel_apt_${letra}:${organizationId}:${senderId}`,
         apt.id,
         'EX',
         SESSION_TTL,
       );
-      this.redis.set(
+      await this.redis.set(
         `temp_cancel_slot_${letra}:${organizationId}:${senderId}`,
         apt.scheduleSlotId,
         'EX',
         SESSION_TTL,
       );
-      this.redis.set(
-        `temp_cancel_max_letra:${organizationId}:${senderId}`,
-        letra,
-        'EX',
-        SESSION_TTL,
-      );
       const fecha = formatAppointmentCompact(apt.scheduleSlot.startTime);
       lineas += `*${letra})* ${apt.scheduleSlot.service.name} · Dr. ${apt.scheduleSlot.doctor.fullName} · ${fecha}\n`;
-    });
+    }
+    await this.redis.set(
+      `temp_cancel_max_letra:${organizationId}:${senderId}`,
+      maxLetra,
+      'EX',
+      SESSION_TTL,
+    );
 
     const reply = MSGS.cancelarSeleccionar(patient.fullName, lineas);
     // En voz: el audio solo anuncia; el listado de citas va por texto.
@@ -6959,30 +7217,35 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // Mismo criterio que handleCancelCedulaStep: la escritura del mapping
+    // letra → cita se espera antes de ofrecer el menú.
     let lineas = '';
-    activeAppointments.forEach((apt, idx) => {
+    let maxLetra = '';
+    for (let idx = 0; idx < activeAppointments.length; idx++) {
+      const apt = activeAppointments[idx];
       const letra = String.fromCharCode(65 + idx);
-      this.redis.set(
+      maxLetra = letra;
+      await this.redis.set(
         `temp_modify_apt_${letra}:${organizationId}:${senderId}`,
         apt.id,
         'EX',
         SESSION_TTL,
       );
-      this.redis.set(
+      await this.redis.set(
         `temp_modify_slot_${letra}:${organizationId}:${senderId}`,
         apt.scheduleSlotId,
         'EX',
         SESSION_TTL,
       );
-      this.redis.set(
-        `temp_modify_max_letra:${organizationId}:${senderId}`,
-        letra,
-        'EX',
-        SESSION_TTL,
-      );
       const fecha = formatAppointmentCompact(apt.scheduleSlot.startTime);
       lineas += `*${letra})* ${apt.scheduleSlot.service.name} · Dr. ${apt.scheduleSlot.doctor.fullName} · ${fecha}\n`;
-    });
+    }
+    await this.redis.set(
+      `temp_modify_max_letra:${organizationId}:${senderId}`,
+      maxLetra,
+      'EX',
+      SESSION_TTL,
+    );
 
     const reply = MSGS.modificarSeleccionar(patient.fullName, lineas);
     // En voz: el audio solo anuncia; el listado de citas va por texto.

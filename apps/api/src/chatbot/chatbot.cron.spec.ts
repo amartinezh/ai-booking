@@ -103,4 +103,22 @@ describe('ChatbotCron — cierre por inactividad', () => {
     expect(httpService.post).not.toHaveBeenCalled();
     expect(redis.del).not.toHaveBeenCalled();
   });
+
+  // El cron replica el juego de claves de ChatbotService.cleanUpSession. Los
+  // cupos ofrecidos van scoped por organización (slotKey/slotDateKey), así que
+  // el patrón debe incluir el tenant: con `temp_slot_*:<phone>` a secas, cerrar
+  // por inactividad en una clínica borraba los cupos que otra le estaba
+  // ofreciendo al mismo paciente.
+  it('busca los cupos ofrecidos con el patrón scoped por organización', async () => {
+    const { cron, redis } = build({
+      state: ChatState.AWAITING_DATE,
+      ttl: SESSION_TTL - 400,
+    });
+
+    await cron.handleAbandonedSessions();
+
+    const patrones = redis.keys.mock.calls.map((c: string[]) => c[0]);
+    expect(patrones).toContain(`temp_slot_*:${ORG}:${PHONE}`);
+    expect(patrones).not.toContain(`temp_slot_*:${PHONE}`);
+  });
 });
