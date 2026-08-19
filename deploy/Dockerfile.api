@@ -1,0 +1,49 @@
+# deploy/Dockerfile.api — imagen de producción de la API (NestJS)
+#
+# Difiere de apps/api/Dockerfile en tres puntos que hacen que funcione desde un
+# clon limpio del repo (sin node_modules ni dist en el contexto de build):
+#   1. Fija pnpm 9.0.0 (el `packageManager` del root) en vez de "el último".
+#   2. Instala con --no-frozen-lockfile: el lockfile puede ir un commit atrás.
+#   3. Deja TZ=America/Bogota en la imagen (red de seguridad de CLAUDE.md).
+FROM node:20-bookworm-slim
+
+# OpenSSL es obligatorio para el motor de query de Prisma sobre Debian.
+# python3/make/g++ cubren cualquier dependencia nativa que entre a futuro.
+RUN apt-get update -y \
+ && apt-get install -y --no-install-recommends \
+      openssl ca-certificates python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g pnpm@9.0.0 prisma@5
+
+WORKDIR /app
+
+# El contexto lo recorta .dockerignore (node_modules, .git, dist, .next fuera).
+COPY . .
+
+RUN pnpm install --no-frozen-lockfile
+
+# Cliente Prisma → node_modules de @agenia/database.
+RUN prisma generate --schema=packages/database/prisma/schema.prisma
+
+# Orden obligatorio: database y shared publican dist/ y la API los importa.
+RUN pnpm --filter @agenia/database build \
+ && pnpm --filter @agenia/shared build \
+ && pnpm --filter api build
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV TZ=America/Bogota
+
+EXPOSE 3000
+
+# Healthcheck por conexión TCP, no por HTTP.
+#
+# `GET /` devuelve 404 porque AppController no está registrado en app.module.ts,
+# y el GlobalExceptionFilter persiste cada 404 en la tabla SystemLog: un sondeo
+# HTTP cada 30 s llenaría la base de datos de errores falsos. Abrir el socket
+# demuestra lo que interesa — el proceso vive y acepta conexiones — sin ruido.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=5 \
+  CMD node -e "const s=require('net').connect(Number(process.env.PORT||3000),'127.0.0.1');s.setTimeout(4000);s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));s.on('timeout',()=>process.exit(1))"
+
+CMD ["pnpm", "--filter", "api", "start:prod"]

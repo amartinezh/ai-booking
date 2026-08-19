@@ -1,0 +1,162 @@
+# docker-compose.deploy.yml — stack de producción para VPS (Debian/Ubuntu).
+#
+# Sustituye a docker-compose.prod.yml, del que corrige cuatro incompatibilidades
+# que impiden un arranque limpio en un servidor nuevo:
+#
+#   1. REDIS_HOST/REDIS_PORT no los lee nadie: `redis.service.ts` usa REDIS_URL.
+#      Sin REDIS_URL el contenedor de la API intenta redis://localhost:6379
+#      (dentro de sí mismo) y el estado de sesión del chatbot nunca funciona.
+#   2. El Caddyfile del repo apunta a `api:3001`, pero la imagen de la API
+#      escucha en 3000 (ENV PORT=3000). Aquí todo queda alineado en 3000.
+#   3. El dominio estaba fijo en el Caddyfile; ahora se genera en
+#      deploy/Caddyfile a partir de tus dominios reales.
+#   4. Contraseña de Postgres y demás secretos salen de .env.production, no
+#      hardcodeados en el YAML.
+#
+# Uso (siempre con --env-file, que alimenta la interpolación ${...}):
+#   docker compose --env-file .env.production -f docker-compose.deploy.yml up -d
+# o simplemente:  agenia up
+
+name: agenia
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: agenia_db
+    restart: unless-stopped
+    logging: *default-logging
+    # Solo accesible desde el propio host (túnel SSH para administrar).
+    # NUNCA cambiar a 0.0.0.0.
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-49317}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?falta POSTGRES_USER en .env.production}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:?falta POSTGRES_DB en .env.production}
+      TZ: ${TZ:-America/Bogota}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: agenia_redis
+    restart: unless-stopped
+    logging: *default-logging
+    # Sin `ports`: solo la red interna de Docker lo alcanza.
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    container_name: agenia_api
+    # Tag explícito: el servicio `migrator` reutiliza esta misma imagen en vez
+    # de construir una segunda copia idéntica.
+    image: agenia-api:latest
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    restart: unless-stopped
+    logging: *default-logging
+    env_file: .env.production
+    environment:
+      # Estos ganan sobre .env.production: son topología, no configuración.
+      - NODE_ENV=production
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379
+      # Fija la zona horaria del proceso. Red de seguridad para cualquier
+      # `new Date()` o `toLocale*` sin timeZone explícito (ver CLAUDE.md).
+      - TZ=${TZ:-America/Bogota}
+    volumes:
+      # Credenciales de Google Cloud TTS (opcional). Si no existen, el
+      # instalador deja un archivo vacío y el TTS de Google queda inactivo.
+      - ./deploy/secrets:/app/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Contenedor efímero de mantenimiento: migraciones de Prisma y cualquier
+  # comando puntual contra la base. Comparte imagen con `api`.
+  #
+  # Es un servicio aparte, y no `docker compose run api`, a propósito: `api`
+  # tiene `container_name` fijo y un one-off de compose sobre un servicio con
+  # nombre fijo puede chocar con el contenedor que ya está corriendo.
+  # `profiles` lo mantiene fuera de `up`; `run` activa su perfil solo.
+  migrator:
+    image: agenia-api:latest
+    profiles: ["tools"]
+    restart: "no"
+    env_file: .env.production
+    environment:
+      - NODE_ENV=production
+      - TZ=${TZ:-America/Bogota}
+    command: ["prisma", "migrate", "deploy", "--schema=packages/database/prisma/schema.prisma"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    container_name: agenia_web
+    image: agenia-web:latest
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: http://api:3000
+    restart: unless-stopped
+    logging: *default-logging
+    env_file: .env.production
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Llamadas server-side (server actions y RSC) → red interna de Docker.
+      # Ningún componente de cliente usa estas variables, así que no hace
+      # falta que sean la URL pública.
+      - INTERNAL_API_URL=http://api:3000
+      - NEXT_PUBLIC_API_URL=http://api:3000
+      - TZ=${TZ:-America/Bogota}
+    depends_on:
+      api:
+        condition: service_started
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: agenia_proxy
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data     # certificados TLS — NO borrar este volumen
+      - caddy_config:/config
+    depends_on:
+      - web
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

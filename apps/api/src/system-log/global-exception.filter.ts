@@ -13,9 +13,26 @@ import { SystemLogService } from './system-log.service';
  * 🛡️ GlobalExceptionFilter
  *
  * Atrapa CUALQUIER excepción no manejada y:
- *   1. La persiste en SystemLog con nivel ERROR + stack trace + contexto.
+ *   1. Persiste en SystemLog SOLO los fallos del servidor (5xx).
  *   2. Devuelve al cliente una respuesta HTTP coherente (preservando el
  *      statusCode si era un HttpException).
+ *
+ * ── Por qué los 4xx NO se persisten ──────────────────────────────────────
+ * Un 4xx es un error del cliente, no una avería del sistema: una ruta que no
+ * existe, un token de webhook que no cuadra, un rol sin permiso. Persistirlos
+ * convertía la tabla en un vertedero y, peor, en un vector de agotamiento:
+ * cualquiera que escanee la API a ciegas —o un simple healthcheck contra `/`,
+ * que devuelve 404 porque AppController no está registrado— genera una fila
+ * por petición. Se escriben igual en el stdout del contenedor, que Docker ya
+ * rota, así que no se pierde nada para diagnosticar.
+ *
+ * Para depurar un problema puntual de cliente se puede bajar el umbral con
+ * SYSTEMLOG_PERSIST_MIN_STATUS=400 y devolverlo a 500 al terminar.
+ *
+ * ── Antirrepetición ──────────────────────────────────────────────────────
+ * Aun con 5xx, un fallo en bucle (BD caída, cron que revienta cada minuto)
+ * escribiría miles de filas idénticas. Se guarda una por combinación
+ * estado+método+ruta+mensaje cada DEDUP_WINDOW_MS; el resto solo va al log.
  *
  * IMPORTANTE:
  *   - El filtro NUNCA debe lanzar excepciones propias. Si la escritura
@@ -23,9 +40,15 @@ import { SystemLogService } from './system-log.service';
  *   - El body de la request se sanitiza superficialmente (passwords,
  *     tokens) antes de guardarse en metadata.
  */
+const DEFAULT_PERSIST_MIN_STATUS = 500;
+const DEDUP_WINDOW_MS = 60_000;
+const DEDUP_MAX_KEYS = 500;
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
+
+  /** Última vez que se persistió cada firma de error (para no repetir). */
+  private readonly lastPersisted = new Map<string, number>();
 
   constructor(private readonly logs: SystemLogService) {}
 
@@ -83,20 +106,29 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         ? publicMessage
         : (publicMessage as any)?.message || JSON.stringify(publicMessage);
 
-    // Persistir el ERROR. fire-and-forget — si falla no rompe la respuesta.
-    void this.logs.error({
-      action: this.deriveAction(request, status),
-      message: messageStr.slice(0, 2000),
-      metadata,
-      userId: this.extractUserId(request),
-      organizationId: this.extractOrganizationId(request),
-    });
+    const route = `${request?.method} ${request?.originalUrl || request?.url}`;
 
-    // También al stdout del contenedor para que aparezca en `docker logs`.
-    this.logger.error(
-      `🚨 [${status}] ${request?.method} ${request?.originalUrl} — ${messageStr}`,
-      stack,
-    );
+    // Persistir solo lo que de verdad es una avería, y solo una vez por
+    // ventana. fire-and-forget — si falla no rompe la respuesta.
+    if (this.shouldPersist(status, request, messageStr)) {
+      void this.logs.error({
+        action: this.deriveAction(request, status),
+        message: messageStr.slice(0, 2000),
+        metadata,
+        userId: this.extractUserId(request),
+        organizationId: this.extractOrganizationId(request),
+      });
+    }
+
+    // Al stdout del contenedor va TODO, con el nivel que le corresponde:
+    // Docker ya rota estos logs, así que aquí no hay riesgo de acumulación.
+    if (status >= 500) {
+      this.logger.error(`🚨 [${status}] ${route} — ${messageStr}`, stack);
+    } else if (status === HttpStatus.NOT_FOUND) {
+      this.logger.verbose(`[404] ${route}`);
+    } else {
+      this.logger.warn(`[${status}] ${route} — ${messageStr}`);
+    }
 
     // Responder al cliente con un payload predecible.
     if (response && typeof response.status === 'function') {
@@ -110,6 +142,42 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   }
 
   // ── helpers ────────────────────────────────────────────────
+
+  /**
+   * Decide si el error merece una fila en SystemLog.
+   *
+   * Dos filtros: el umbral por código de estado (5xx por defecto) y una
+   * ventana antirrepetición por firma del error. El mapa se poda solo para
+   * que no crezca sin límite en un proceso de larga vida.
+   */
+  private shouldPersist(
+    status: number,
+    request: Request | undefined,
+    messageStr: string,
+  ): boolean {
+    const min = Number(process.env.SYSTEMLOG_PERSIST_MIN_STATUS);
+    const threshold =
+      Number.isFinite(min) && min > 0 ? min : DEFAULT_PERSIST_MIN_STATUS;
+    if (status < threshold) return false;
+
+    const path = (request?.originalUrl || request?.url || '/').split('?')[0];
+    const key = `${status}:${request?.method}:${path}:${messageStr.slice(0, 120)}`;
+    const now = Date.now();
+
+    const last = this.lastPersisted.get(key);
+    if (last !== undefined && now - last < DEDUP_WINDOW_MS) return false;
+
+    if (this.lastPersisted.size >= DEDUP_MAX_KEYS) {
+      for (const [k, t] of this.lastPersisted) {
+        if (now - t > DEDUP_WINDOW_MS) this.lastPersisted.delete(k);
+      }
+      // Si aun así sigue lleno, se descarta todo: perder la memoria de
+      // repeticiones es preferible a que el mapa crezca sin control.
+      if (this.lastPersisted.size >= DEDUP_MAX_KEYS) this.lastPersisted.clear();
+    }
+    this.lastPersisted.set(key, now);
+    return true;
+  }
 
   private deriveAction(request: Request | undefined, status: number): string {
     if (!request) return `UNHANDLED_EXCEPTION_${status}`;

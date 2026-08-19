@@ -38,3 +38,8 @@ yarn-error.log*
 .DS_Store
 *.pem
 .env.production
+
+# Artefactos generados por deploy/install-vps.sh en el servidor
+deploy/Caddyfile
+deploy/install.conf
+deploy/secrets/

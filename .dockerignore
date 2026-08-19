@@ -1,0 +1,34 @@
+# Contexto de build de Docker.
+#
+# Sin este archivo, `COPY . .` metía en la imagen:
+#   - node_modules del equipo de desarrollo (binarios de macOS → la imagen
+#     Linux arranca con módulos nativos inválidos),
+#   - .git completo, que en este repo incluye un token en la URL del remote.
+#
+# OJO: los .env NO se excluyen a propósito. `next build` necesita
+# apps/web/.env (DATABASE_URL para instanciar PrismaClient en import-time).
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+
+.git
+.github
+.vscode
+.DS_Store
+**/.DS_Store
+
+*.log
+web_dev.log
+refactor_chatbot*.py
+
+# Artefactos del despliegue: no deben viajar dentro de la imagen.
+deploy/secrets
+docs
+
+# Secretos de runtime: los inyecta docker compose vía `env_file`, no deben
+# quedar horneados en la imagen. Los .env por app SÍ entran porque
+# `next build` necesita DATABASE_URL en tiempo de compilación.
+.env.production

@@ -1,0 +1,46 @@
+# deploy/Dockerfile.web — imagen de producción del panel (Next.js 16)
+#
+# Difiere de apps/web/Dockerfile en un punto CRÍTICO: compila @agenia/database
+# y @agenia/shared antes de `next build`. El Dockerfile original no lo hace y
+# solo funciona si el contexto ya trae los dist/ del equipo de desarrollo
+# (están en .gitignore, así que un clon limpio del repo fallaba con
+# "Cannot find module '@agenia/shared'").
+FROM node:20-bookworm-slim
+
+RUN apt-get update -y \
+ && apt-get install -y --no-install-recommends \
+      openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g pnpm@9.0.0 prisma@5
+
+WORKDIR /app
+
+COPY . .
+
+RUN pnpm install --no-frozen-lockfile
+
+RUN prisma generate --schema=packages/database/prisma/schema.prisma
+
+# ── Build ──────────────────────────────────────────────────────────────────
+# apps/web/.env (que genera el instalador) aporta DATABASE_URL y JWT_SECRET
+# durante el build: `lib/prisma.ts` instancia PrismaClient en tiempo de import.
+# No se conecta a la BD — todas las páginas con datos son force-dynamic — pero
+# la variable debe existir.
+ARG NEXT_PUBLIC_API_URL=http://api:3000
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+RUN pnpm --filter @agenia/database build \
+ && pnpm --filter @agenia/shared build \
+ && pnpm --filter web build
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV TZ=America/Bogota
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["pnpm", "--filter", "web", "start"]
