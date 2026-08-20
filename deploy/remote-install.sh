@@ -461,11 +461,27 @@ if [[ "$ADMIN_OK" == "1" ]]; then
     confirm "¿Desactivar el login SSH por contraseña?" && HARDEN=1 || HARDEN=0
   fi
   if [[ "$HARDEN" == "1" ]]; then
+    # El archivo va con prefijo 00- a propósito. Los .conf de
+    # /etc/ssh/sshd_config.d se leen en orden alfabético y en OpenSSH GANA EL
+    # PRIMER valor leído, no el último. Las imágenes de nube traen un
+    # 50-cloud-init.conf con "PasswordAuthentication yes" que, con un 99-,
+    # ganaba y dejaba el endurecimiento sin efecto — en silencio.
     ssh_key "install -d /etc/ssh/sshd_config.d && \
+      rm -f /etc/ssh/sshd_config.d/99-agenia.conf && \
       printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n' \
-        > /etc/ssh/sshd_config.d/99-agenia.conf && \
-      (sshd -t && systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true)"
-    ok "SSH por contraseña desactivado (queda el acceso por llave)"
+        > /etc/ssh/sshd_config.d/00-agenia.conf && \
+      (sshd -t && (systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null))"
+
+    # Se comprueba la configuración EFECTIVA, no lo que se escribió: escribir
+    # un archivo no garantiza que ese valor sea el que sshd aplica.
+    EFF="$(ssh_key "sshd -T 2>/dev/null | grep -E '^(passwordauthentication|permitrootlogin)'" || true)"
+    if grep -q '^passwordauthentication no' <<<"$EFF"; then
+      ok "SSH por contraseña desactivado y verificado con sshd -T"
+    else
+      warn "El archivo se escribió pero sshd sigue aceptando contraseña:"
+      printf '%s\n' "$EFF" | sed 's/^/      /'
+      warn "Revisa qué otro archivo de /etc/ssh/sshd_config.d lo está fijando antes."
+    fi
   else
     info "SSH sin cambios (sigue aceptando contraseña)"
   fi

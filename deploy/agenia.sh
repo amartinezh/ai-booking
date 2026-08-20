@@ -47,6 +47,16 @@ case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
 [[ -f "$COMPOSE_FILE" ]] || { err "No existe $COMPOSE_FILE"; exit 1; }
 [[ -f "$ENV_FILE" ]]     || { err "No existe $ENV_FILE (¿corriste el instalador?)"; exit 1; }
 
+# .env.production es 600 de root: contiene la contraseña de la base, el
+# JWT_SECRET y la ENCRYPTION_KEY. Pertenecer al grupo docker da acceso a
+# Docker, pero no a este archivo. Sin este aviso, el usuario administrador
+# recibía un "Permission denied" crudo de la línea del `source`.
+if [[ ! -r "$ENV_FILE" ]]; then
+  err "No tienes permiso para leer $ENV_FILE (es 600 de root, guarda los secretos)."
+  err "Ejecuta:  sudo agenia ${*:-status}"
+  exit 1
+fi
+
 # Los valores de .env.production se generan sin comillas ni espacios, así que
 # es seguro cargarlos en el shell.
 set -a; # shellcheck disable=SC1090
