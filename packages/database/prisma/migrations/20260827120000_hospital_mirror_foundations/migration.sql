@@ -53,7 +53,10 @@ CREATE TABLE "MirrorConflictAlert" (
 -- CreateTable
 CREATE TABLE "SyncOutbox" (
     "seq" BIGSERIAL NOT NULL,
-    "eventId" TEXT NOT NULL,
+    -- dbgenerated: esta fila la crea el trigger fn_sync_outbox() con INSERT
+    -- SQL crudo (nunca pasa por Prisma Client), así que necesita un DEFAULT
+    -- real a nivel de base de datos, no uno de capa de aplicación.
+    "eventId" TEXT NOT NULL DEFAULT gen_random_uuid(),
     "organizationId" TEXT NOT NULL,
     "entityType" TEXT NOT NULL,
     "entityId" TEXT NOT NULL,

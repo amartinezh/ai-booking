@@ -1163,7 +1163,11 @@ model MirrorConflictAlert {
 // -----------------------------------------------------------------------------
 model SyncOutbox {
   seq            BigInt       @id @default(autoincrement())
-  eventId        String       @unique @default(uuid())
+  // ⚠️ dbgenerated (NO @default(uuid())): esta fila SIEMPRE se crea desde el
+  // trigger fn_sync_outbox() con INSERT SQL crudo, que nunca pasa por Prisma
+  // Client — @default(uuid()) es un default de capa de aplicación y habría
+  // dejado la columna NULL. Confirmado con una prueba real: ver Fase 1.
+  eventId        String       @unique @default(dbgenerated("gen_random_uuid()"))
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   entityType     String // 'SLOT' | 'DOCTOR' | 'APPOINTMENT' | 'PATIENT' | 'SERVICE' | 'EPS'
