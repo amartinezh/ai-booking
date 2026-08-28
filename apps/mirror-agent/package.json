@@ -1,0 +1,42 @@
+{
+  "name": "@agenia/mirror-agent",
+  "version": "0.0.1",
+  "description": "Agente on-premise del motor de espejo de citas con HIS externos (patrón de drivers). Ver docs/PLAN_ESPEJO_HOSPITAL.md.",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/agent.bundle.js",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint \"src/**/*.ts\" --fix"
+  },
+  "dependencies": {
+    "@agenia/shared": "workspace:^",
+    "mssql": "^11.0.1"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/mssql": "^9.1.5",
+    "@types/node": "^22.10.7",
+    "esbuild": "^0.24.2",
+    "jest": "^30.0.0",
+    "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "moduleFileExtensions": [
+      "ts",
+      "js",
+      "json"
+    ]
+  }
+}

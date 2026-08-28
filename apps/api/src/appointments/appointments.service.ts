@@ -63,12 +63,22 @@ export class AppointmentsService {
     patientId: string,
     scheduleSlotId: string,
     epsId: string | null,
-    origin: 'WHATSAPP' | 'MANUAL',
+    origin: 'WHATSAPP' | 'MANUAL' | 'MIRROR',
     organizationId: string,
   ): Promise<{ success: boolean; message?: string; appointmentId?: string }> {
     try {
       let appointmentId: string | undefined;
       await this.prisma.$transaction(async (tx) => {
+        // 🪞 ANTI-ECO ESPEJO: cuando esta cita la origina el módulo mirror
+        // (una cita creada/reflejada desde el HIS de un hospital), marcamos
+        // la transacción para que el trigger fn_sync_outbox() registre el
+        // evento con origin='MIRROR' — el dispatcher del mirror no lo
+        // reenvía de vuelta al HIS que lo originó. Ver PLAN_ESPEJO_HOSPITAL.md
+        // §5.1b. `SET LOCAL` solo dura mientras dure esta transacción.
+        if (origin === 'MIRROR') {
+          await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+        }
+
         const slot = await tx.scheduleSlot.findUnique({
           where: { id: scheduleSlotId },
         });

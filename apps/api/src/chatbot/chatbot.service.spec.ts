@@ -1773,7 +1773,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
       // Saltó el menú de letras (nunca se persistió temp_slot_A) y dejó el cupo
       // seleccionado, avanzando a pedir la cédula (el resumen confirmará).
-      expect(redis.store.get(`temp_slot_A:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`temp_slot_A:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
       expect(redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`)).toBe(
         'slot-X',
       );

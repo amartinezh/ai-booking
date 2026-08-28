@@ -28,3 +28,16 @@ export type {
   PadronCsvReport,
 } from './src/padron-csv';
 export { PARTICULAR_EPS_NAME, isParticularEps } from './src/eps';
+export type {
+  CanonicalEntityType,
+  CanonicalOp,
+  HandshakeInput,
+  HandshakeResult,
+  OutboxEventDto,
+  AckInput,
+  AckResult,
+  CanonicalChangeEvent,
+  ChangesInput,
+  ChangesResult,
+  HeartbeatInput,
+} from './src/mirror-protocol';

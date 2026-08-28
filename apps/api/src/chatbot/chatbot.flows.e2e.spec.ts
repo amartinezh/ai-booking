@@ -474,7 +474,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       );
       // Sesión cerrada y limpia tras confirmar.
       expect(await state()).toBe(ChatState.IDLE);
-      expect(redis.store.get(`temp_cedula:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`temp_cedula:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
     });
 
     it('1.2 paciente EXISTENTE: no vuelve a pedir el nombre', async () => {
@@ -616,7 +618,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A'); // elige cupo → primera vez que se pide la cédula
 
       expect(await state()).toBe(ChatState.AWAITING_CEDULA);
-      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`error_count:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
     });
 
     it('1.8d una cédula válida tras un intento fallido limpia el contador', async () => {
@@ -628,7 +632,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBe('1');
 
       await say('1088123456');
-      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`error_count:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
       expect(await state()).toBe(ChatState.AWAITING_NAME);
     });
 
@@ -786,7 +792,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say(CEDULA);
 
       expect(await state()).toBe(ChatState.AWAITING_CANCEL_RETRY_CEDULA);
-      expect(redis.store.get(`error_count:${ORG_ID}:${SENDER}`)).toBeUndefined();
+      expect(
+        redis.store.get(`error_count:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
     });
 
     it('2.6 cédula inexistente → permite reintentar sin salir del flujo', async () => {
@@ -1041,7 +1049,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(db.appointments[0].scheduleSlotId).toBe('slot-new');
       expect(db.appointments[0].status).toBe('SCHEDULED');
       expect(db.slots.find((s) => s.id === 'slot-old')!.isAvailable).toBe(true);
-      expect(db.slots.find((s) => s.id === 'slot-new')!.isAvailable).toBe(false);
+      expect(db.slots.find((s) => s.id === 'slot-new')!.isAvailable).toBe(
+        false,
+      );
       expect(waitlist.notifyWaitlist).toHaveBeenCalledWith(
         expect.objectContaining({ slotId: 'slot-old' }),
       );
@@ -1288,7 +1298,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await service.processIncomingMessage(textEvent('A', PHONE_ID2));
       await service.processIncomingMessage(textEvent('A', PHONE_ID2));
 
-      expect(redis.store.get(`temp_slot_A:${ORG2}:${SENDER}`)).toBe('slot-orgB');
+      expect(redis.store.get(`temp_slot_A:${ORG2}:${SENDER}`)).toBe(
+        'slot-orgB',
+      );
       expect(redis.store.get(`temp_slot_A:${ORG_ID}:${SENDER}`)).toBe(
         'slot-orgA',
       );

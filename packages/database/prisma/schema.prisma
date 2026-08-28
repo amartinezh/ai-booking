@@ -67,6 +67,13 @@ model Organization {
   epsEnrolledPatients EpsEnrolledPatient[]
   epsEnrollmentRequests EpsEnrollmentRequest[]
 
+  // 🪞 ESPEJO HOSPITAL (ver PLAN_ESPEJO_HOSPITAL.md) — 1:1, config del driver HIS de esta org.
+  hospitalMirrorConfig HospitalMirrorConfig?
+  mirrorConflictAlerts MirrorConflictAlert[]
+  syncOutboxEntries    SyncOutbox[]
+  syncInboxEntries     SyncInbox[]
+  syncAuditEntries     SyncAudit[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -388,6 +395,12 @@ model DoctorProfile {
   phone          String?
   isActive       Boolean @default(true)
 
+  // 🪞 ESPEJO HOSPITAL: si la organización usa HospitalMirrorConfig, este médico
+  // puede existir en AgenIA (importado del HIS) sin aceptar todavía reservas por
+  // WhatsApp — activación manual y gradual del piloto (ver PLAN_ESPEJO_HOSPITAL.md
+  // §5.3/§5.4). Orgs sin espejo: default true no cambia el comportamiento actual.
+  whatsappBookingEnabled Boolean @default(true)
+
   // 🔌 CONEXIÓN SERVICIO: La especialidad deja de ser String libre
   serviceId String?
   service   MedicalService? @relation(fields: [serviceId], references: [id])
@@ -495,6 +508,7 @@ model Appointment {
 enum AppointmentOrigin {
   MANUAL
   WHATSAPP
+  MIRROR // Creada/reflejada desde el HIS de un hospital (ver PLAN_ESPEJO_HOSPITAL.md)
 }
 
 enum Role {
@@ -772,6 +786,10 @@ model WaitlistEntry {
   // 🏢 TENANT ISOLATION
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // 🪞 ESPEJO HOSPITAL: presente cuando esta entrada nació de un conflicto de
+  // agenda contra el HIS de un hospital (ver PLAN_ESPEJO_HOSPITAL.md §5.1/§7).
+  mirrorConflictAlert MirrorConflictAlert?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1059,4 +1077,141 @@ model ServiceIncident {
   @@index([serviceKey, startedAt])
   @@index([resolvedAt, startedAt])
   @@index([startedAt])
+}
+
+// =============================================================================
+// 🪞 ESPEJO HOSPITAL — motor genérico de sincronización con HIS externos.
+// Arquitectura y patrón de drivers: ver docs/PLAN_ESPEJO_HOSPITAL.md.
+// Nada aquí debe referenciar un HIS específico (ni nombres de tabla ni
+// formatos de un proveedor) — eso vive en el driver de cada organización,
+// fuera del monorepo de AgenIA propiamente dicho (apps/mirror-agent).
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// Configuración del espejo por organización (1:1). La bandera `enabled` y el
+// `driverKey` que selecciona qué implementación de HisDriver habla con el HIS
+// de esa organización.
+// -----------------------------------------------------------------------------
+model HospitalMirrorConfig {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  enabled Boolean @default(false) // 🚩 LA bandera
+
+  // 🔌 Qué driver habla con el HIS de esta organización (ej. "cnt-sanvicente-anserma").
+  // Sin este campo el motor no sabría con qué implementación conectar.
+  driverKey String
+
+  // Identidad del agente on-premise: solo se guarda el HASH del token (SHA-256);
+  // el secreto en claro se muestra una única vez al crearlo/rotarlo.
+  agentTokenHash String?
+
+  // Payload de configuración PROPIO del driver (nombre de catálogo/BD, endpoints,
+  // flags...) — cada driver define su propia forma; el motor solo lo pasa sin
+  // interpretarlo.
+  driverConfig Json?
+
+  // Versión y contenido del mapeo de tablas/campos acordado en la Fase 0 de ESE driver.
+  mappingVersion Int  @default(1)
+  mappingJson    Json?
+
+  // Interruptor de emergencia por dirección — independiente de `enabled`.
+  pushEnabled Boolean @default(true) // AgenIA → HIS
+  pullEnabled Boolean @default(true) // HIS → AgenIA
+
+  // Observabilidad del agente on-premise.
+  lastHeartbeatAt DateTime?
+  lastPushCursor  BigInt    @default(0)
+
+  // 🔔 Alertas de conflicto (doble-cupo → WaitlistEntry): configurable, se puede
+  // apagar sin tocar código. Ver PLAN_ESPEJO_HOSPITAL.md §5.1/§7.
+  conflictAlertsEnabled Boolean @default(true)
+  agendadorWhatsapp     String? // número E.164 del agendador responsable
+  agendadorEmail        String? // correo del agendador responsable
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// Alerta multicanal (WhatsApp + email + in-app) cuando un conflicto de agenda
+// contra el HIS manda una cita a lista de espera. 1:1 con la WaitlistEntry que
+// lo originó.
+// -----------------------------------------------------------------------------
+model MirrorConflictAlert {
+  id              String        @id @default(uuid())
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+  waitlistEntryId String        @unique
+  waitlistEntry   WaitlistEntry @relation(fields: [waitlistEntryId], references: [id])
+
+  whatsappSentAt DateTime? // null = no enviado / error
+  emailSentAt    DateTime?
+  seenByStaffAt  DateTime? // marcado como visto en el dashboard por el agendador
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, seenByStaffAt])
+}
+
+// -----------------------------------------------------------------------------
+// Outbox transaccional (AgenIA → HIS). Las filas las inserta el trigger
+// fn_sync_outbox() (ver migración SQL manual), NUNCA código de aplicación
+// directamente — así ningún escritor (API, web, seeds, SQL manual) se escapa.
+// Prisma lo modela para que el módulo mirror pueda leerlo y marcar `deliveredAt`.
+// -----------------------------------------------------------------------------
+model SyncOutbox {
+  seq            BigInt       @id @default(autoincrement())
+  eventId        String       @unique @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  entityType     String // 'SLOT' | 'DOCTOR' | 'APPOINTMENT' | 'PATIENT' | 'SERVICE' | 'EPS'
+  entityId       String
+  op             String // 'INSERT' | 'UPDATE' | 'DELETE'
+  payload        Json // fila completa serializada (NEW u OLD) — formato canónico AgenIA
+  origin         String       @default("LOCAL") // 'LOCAL' | 'MIRROR' (anti-eco)
+  createdAt      DateTime     @default(now())
+  deliveredAt    DateTime? // null = pendiente
+  attempts       Int          @default(0)
+  deadLettered   Boolean      @default(false)
+
+  @@index([organizationId, seq])
+}
+
+// -----------------------------------------------------------------------------
+// Idempotencia de eventos ENTRANTES (agente → POST /mirror/changes). Cada
+// event_id que el driver reporta se registra aquí antes de aplicarse; un
+// reintento con el mismo event_id no se vuelve a aplicar.
+// -----------------------------------------------------------------------------
+model SyncInbox {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  eventId        String       @unique
+  entityType     String
+  appliedAt      DateTime     @default(now())
+
+  @@index([organizationId, appliedAt])
+}
+
+// -----------------------------------------------------------------------------
+// Auditoría append-only de toda operación del motor de espejo (ambas
+// direcciones). Nunca se actualiza ni se borra una fila existente.
+// -----------------------------------------------------------------------------
+model SyncAudit {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  direction      String // 'OUTBOUND' (AgenIA→HIS) | 'INBOUND' (HIS→AgenIA)
+  entityType     String
+  entityId       String?
+  op             String // INSERT | UPDATE | DELETE | CANCEL
+  outcome        String // OK | CONFLICT | ERROR | DEAD_LETTER
+  detail         String?      @db.Text
+  eventId        String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([eventId])
 }

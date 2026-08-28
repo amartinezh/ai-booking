@@ -48,6 +48,7 @@ describe('AppointmentsService', () => {
           update: jest.fn(),
         },
         appointment: { create: jest.fn(async () => ({ id: 'apt1' })) },
+        $executeRawUnsafe: jest.fn(),
       };
       const module: TestingModule = await Test.createTestingModule({
         providers: [
@@ -119,6 +120,69 @@ describe('AppointmentsService', () => {
 
       expect(result.success).toBe(false);
     });
+  });
+
+  describe('bookAppointment — anti-eco espejo (origin=MIRROR)', () => {
+    const serviceWithSlot = async (slot: any) => {
+      const tx = {
+        scheduleSlot: {
+          findUnique: jest.fn(async () => slot),
+          update: jest.fn(),
+        },
+        appointment: { create: jest.fn(async () => ({ id: 'apt1' })) },
+        $executeRawUnsafe: jest.fn(),
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          {
+            provide: PrismaService,
+            useValue: {
+              $transaction: jest.fn(async (cb: any) => cb(tx)),
+            },
+          },
+        ],
+      }).compile();
+      return {
+        svc: module.get<AppointmentsService>(AppointmentsService),
+        tx,
+      };
+    };
+
+    it('origin=MIRROR → marca SET LOCAL agenia.sync_origin ANTES de tocar el slot', async () => {
+      const { svc, tx } = await serviceWithSlot({
+        id: 's1',
+        isAvailable: true,
+        organizationId: 'org1',
+      });
+
+      await svc.bookAppointment('p1', 's1', null, 'MIRROR', 'org1');
+
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      // Orden: el anti-eco debe fijarse ANTES del INSERT que el trigger va a
+      // capturar — si se marcara después, la fila ya habría entrado sin el
+      // origin correcto y el evento se reenviaría de vuelta al HIS que lo originó.
+      const rawCallOrder = tx.$executeRawUnsafe.mock.invocationCallOrder[0];
+      const createCallOrder = tx.appointment.create.mock.invocationCallOrder[0];
+      expect(rawCallOrder).toBeLessThan(createCallOrder);
+    });
+
+    it.each(['WHATSAPP', 'MANUAL'] as const)(
+      'origin=%s → NUNCA marca el anti-eco (solo aplica a MIRROR)',
+      async (origin) => {
+        const { svc, tx } = await serviceWithSlot({
+          id: 's1',
+          isAvailable: true,
+          organizationId: 'org1',
+        });
+
+        await svc.bookAppointment('p1', 's1', null, origin, 'org1');
+
+        expect(tx.$executeRawUnsafe).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe('getAvailableSlots — filtro de fecha', () => {

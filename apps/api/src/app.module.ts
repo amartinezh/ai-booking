@@ -22,6 +22,7 @@ import { GlobalStatsModule } from './global-stats/global-stats.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { SurveyModule } from './survey/survey.module';
 import { MonitorModule } from './monitor/monitor.module';
+import { MirrorModule } from './mirror/mirror.module';
 
 @Module({
   imports: [
@@ -65,6 +66,9 @@ import { MonitorModule } from './monitor/monitor.module';
     SurveyModule,
     // 📡 Monitor de servicios externos (Google/Meta) — centinela + live (SUPER_ADMIN).
     MonitorModule,
+    // 🪞 Espejo de citas con HIS externos (patrón de drivers) — Fase 1.
+    // Ver docs/PLAN_ESPEJO_HOSPITAL.md.
+    MirrorModule,
   ],
 })
 export class AppModule {}
