@@ -2,7 +2,7 @@
 -- FASE 0 — DESCUBRIMIENTO DEL HIS (100% SOLO LECTURA — no modifica nada)
 -- Ejecutar en SSMS conectado a la BD PRUEBAS (bloque 13 también en ESEHSVP2025
 -- para volúmenes reales). Compartir el resultado de CADA bloque con el equipo.
--- Numeración alineada con docs/MAPEO_HIS.md §5.
+-- Numeración alineada con docs/drivers/cnt-sanvicente-anserma/MAPEO_HIS.md §5.
 -- =============================================================================
 USE PRUEBAS;
 GO
@@ -353,3 +353,129 @@ WHERE c.FE_ELAB_CIT >= DATEADD(DAY,-7,GETDATE())
 ORDER BY c.FE_ELAB_CIT DESC;
 -- (si la columna de especialidad en R_ESP_SER tiene otro nombre, ajustarla según
 -- el resultado del bloque 21b y reenviar)
+
+-- =============================================================================
+-- SÉPTIMA RONDA (2026-08-23) — CITAS_ANULADAS
+-- La prueba manual del hospital (bloque 17) reveló que cancelar una cita hace
+-- DELETE en CITAS_MEDICAS + INSERT de auditoría en esta tabla, antes desconocida.
+-- Cierra el bloqueante #15 (última pieza no crítica del ciclo de vida).
+-- =============================================================================
+
+-- (22a) Esquema completo de CITAS_ANULADAS
+SELECT COLUMN_NAME, DATA_TYPE,
+       ISNULL(CAST(CHARACTER_MAXIMUM_LENGTH AS VARCHAR),'N/A') AS longitud, IS_NULLABLE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'CITAS_ANULADAS' AND TABLE_SCHEMA = 'dbo'
+ORDER BY ORDINAL_POSITION;
+
+-- (22b) Muestra reciente (para ver formato real de Motivo/Observaciones y fechas)
+SELECT TOP 20 * FROM dbo.CITAS_ANULADAS ORDER BY FE_ELAB_CIAN DESC;
+-- (si el nombre de la columna de fecha de elaboración es distinto, quitar el
+-- ORDER BY y reenviar el resultado igual)
+
+-- (22c) Catálogo de motivos de cancelación (para que el agente use uno propio
+-- reconocible cuando AgenIA cancela una cita reflejada en el HIS)
+SELECT name FROM sys.tables WHERE name LIKE '%MOTIVO%' ORDER BY name;
+-- Si aparece una tabla de motivos: SELECT * de ella y compartir.
+-- Si el motivo es texto libre sin catálogo, compartir los valores distintos usados:
+-- SELECT DISTINCT <columna_motivo> FROM dbo.CITAS_ANULADAS;   -- (ajustar nombre de columna)
+
+-- (22d) PK/índices de CITAS_ANULADAS (para el diseño del correlacionador de eventos)
+SELECT i.name AS indice, c.name AS columna, ic.key_ordinal, i.is_primary_key
+FROM sys.indexes i
+JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+JOIN sys.columns c        ON c.object_id  = ic.object_id AND c.column_id = ic.column_id
+WHERE i.object_id = OBJECT_ID('dbo.CITAS_ANULADAS')
+ORDER BY i.is_primary_key DESC, ic.key_ordinal;
+
+-- =============================================================================
+-- OCTAVA RONDA (2026-08-23) — cierre de CITAS_ANULADAS + trazabilidad de origen.
+-- Esquema de CITAS_ANULADAS ya confirmado (24 columnas, sin PK/FK/triggers).
+-- Falta: contenido de MOTIVOANUL, una muestra fila-a-fila válida (la anterior
+-- vino incompleta), y de dónde sale "Asignada Por" del comprobante impreso.
+-- =============================================================================
+
+-- (23a) Catálogo de motivos de anulación — el que importa es MOTIVOANUL
+-- (las otras tablas MOTIVO_* vistas en el bloque 22c son de otros procesos:
+-- glosas, ajustes de cuenta, triage, remisión, recibo, no autorización)
+SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'MOTIVOANUL' ORDER BY ORDINAL_POSITION;
+
+SELECT * FROM dbo.MOTIVOANUL;
+
+-- (23b) Muestra fila-a-fila de CITAS_ANULADAS (corregida: ORDER BY explícito
+-- por la columna real de fecha de elaboración, ya confirmada)
+SELECT TOP 20
+    CD_CODI_MED_CIAN, CD_CODI_SER_CIAN, NU_HIST_PAC_CIAN, FE_HORA_CIAN,
+    FE_ELAB_CIAN, FE_FECH_CIAN, CD_CODI_MOTI_CIAN, TX_OBSE_CIAN,
+    NU_CONE_ANUL_CIAN, NU_NUME_CONV_CIAN
+FROM dbo.CITAS_ANULADAS
+ORDER BY FE_ELAB_CIAN DESC;
+
+-- Distribución real de motivos usados (para saber cuáles son los más comunes
+-- y elegir/crear el motivo que usará el agente cuando AgenIA cancela):
+SELECT CD_CODI_MOTI_CIAN, COUNT(*) AS total
+FROM dbo.CITAS_ANULADAS
+GROUP BY CD_CODI_MOTI_CIAN
+ORDER BY total DESC;
+
+-- (23c) Trazabilidad de origen: buscar la columna "Asignada Por" del comprobante
+-- Candidatas por nombre en CITAS_MEDICAS y CITAS_ANULADAS:
+SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME IN ('CITAS_MEDICAS','CITAS_ANULADAS')
+  AND (COLUMN_NAME LIKE '%USUA%' OR COLUMN_NAME LIKE '%ASIG%' OR COLUMN_NAME LIKE '%OPER%'
+       OR COLUMN_NAME LIKE '%LOGIN%' OR COLUMN_NAME LIKE '%CREADOR%')
+ORDER BY TABLE_NAME, COLUMN_NAME;
+
+-- Si no aparece nada ahí, el dato puede vivir en una tabla de auditoría aparte
+-- o en el log de aplicación (no en la BD) — candidatas genéricas de auditoría:
+SELECT name FROM sys.tables
+WHERE name LIKE '%AUDIT%' OR name LIKE '%LOG%' OR name LIKE '%USUARIO%'
+ORDER BY name;
+-- Si se identifica la tabla/columna correcta, compartir su estructura y una
+-- muestra para la cita de prueba (médico 76, paciente 9696544, 2026-08-27).
+
+-- =============================================================================
+-- NOVENA RONDA (2026-08-23) — cierre de "Asignada Por" (bloqueante #17).
+-- La búsqueda directa por nombre de columna en CITAS_MEDICAS/CITAS_ANULADAS dio
+-- vacío. El dato probablemente vive en una tabla de auditoría genérica correlada
+-- por transacción/timestamp, no como columna propia de la cita. Candidatos
+-- hallados en el bloque 23c: AUDITORIA_COT, HIST_AUDIT, LOG_AUDITORIA_SGIO,
+-- C_USUARIO/USUARIO. Requisito de negocio confirmado: el hospital quiere poder
+-- distinguir a simple vista las citas creadas por WhatsApp/AgenIA.
+-- =============================================================================
+
+-- (24a) Estructura de los candidatos más prometedores
+SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME IN ('AUDITORIA_COT','HIST_AUDIT','LOG_AUDITORIA_SGIO','USUARIO','C_USUARIO')
+ORDER BY TABLE_NAME, ORDINAL_POSITION;
+
+-- (24b) Buscar en HIST_AUDIT/AUDITORIA_COT algo correlacionable con la cita de
+-- prueba por tabla+fecha (médico 76, paciente 9696544, creada 2026-08-27 14:25)
+SELECT TOP 20 * FROM dbo.HIST_AUDIT
+WHERE 1=1
+  -- ajustar el nombre de columna de fecha según el resultado de 24a, ej.:
+  -- AND FECHA >= '2026-08-27 14:00' AND FECHA <= '2026-08-27 14:30'
+ORDER BY 1 DESC;
+
+SELECT TOP 20 * FROM dbo.AUDITORIA_COT
+WHERE 1=1
+ORDER BY 1 DESC;
+
+-- (24c) Usuarios del sistema — el texto "ADMINISTRADOR" del comprobante podría
+-- ser simplemente el nombre de un usuario en este catálogo, y "Asignada Por"
+-- vendría de la sesión activa al grabar (no de una columna en CITAS_MEDICAS)
+SELECT TOP 20 * FROM dbo.USUARIO WHERE 1=1;
+-- Buscar específicamente si existe un usuario tipo "ADMINISTRADOR":
+-- SELECT * FROM dbo.USUARIO WHERE <columna_nombre> LIKE '%ADMIN%';   -- ajustar columna
+
+-- (24d) Si NINGUNO de los anteriores da resultado: probablemente "Asignada Por"
+-- es una etiqueta generada en la CAPA DE APLICACIÓN (a partir del usuario logueado
+-- en el momento, sin persistirse en una tabla dedicada) — en ese caso, la única
+-- vía real de marcar el origen "WhatsApp/AgenIA" es que el hospital cree en su
+-- app un usuario/login propio para nuestro agente (ej. "AGENIA" o "WHATSAPP"),
+-- y que ese usuario sea el que quede registrado como "Asignada Por" al insertar
+-- la cita — a confirmar directamente con el proveedor CNT o con TI del hospital,
+-- ya no es indagable por SQL de solo lectura.

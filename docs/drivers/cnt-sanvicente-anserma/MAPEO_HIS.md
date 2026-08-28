@@ -1,14 +1,15 @@
-# Mapeo del HIS del Hospital — Fase 0 (Descubrimiento)
+# Mapeo del HIS — Driver CNT / Hospital San Vicente de Paul de Anserma
 
+> **Este documento es la documentación técnica de UN driver específico** (`driverKey: cnt-sanvicente-anserma`), no de la arquitectura general. La arquitectura genérica del motor de espejo (aplicable a este y a futuros hospitales) vive en `../../PLAN_ESPEJO_HOSPITAL.md`. El seguimiento de preguntas/respuestas/pendientes de este hospital vive en `ESTADO.md` (mismo directorio). Correo enviado/por enviar a TI: `CORREO_PRUEBA_HIS.md`. Scripts: `sql/FASE0_DESCUBRIMIENTO_HIS.sql` y `sql/AGENIA_SYNC_SETUP.sql`. Evidencia de pruebas manuales: `evidencia/`.
+>
 > **Fuente:** inspección en vivo vía SSMS sobre `192.168.1.16`, BD `ESEHSVP2025`, 2026-08-23.
-> **Complementa:** `docs/PLAN_ESPEJO_HOSPITAL.md`. Scripts asociados: `docs/sql/FASE0_DESCUBRIMIENTO_HIS.sql` y `docs/sql/AGENIA_SYNC_SETUP.sql`.
 > Las interpretaciones marcadas **(hipótesis)** deben confirmarse con las queries del script de descubrimiento antes de escribir una sola fila productiva.
 
 ---
 
 ## 0. Bitácora del descubrimiento (cómo llegamos a cada conclusión)
 
-Todas las rondas se corrieron el 2026-08-23 con `docs/sql/FASE0_DESCUBRIMIENTO_HIS.sql`; los números de bloque de esta tabla son los del script.
+Todas las rondas se corrieron el 2026-08-23 con `sql/FASE0_DESCUBRIMIENTO_HIS.sql`; los números de bloque de esta tabla son los del script.
 
 | Ronda | BD consultada | Bloques | Qué produjo |
 |---|---|---|---|
@@ -16,7 +17,8 @@ Todas las rondas se corrieron el 2026-08-23 con `docs/sql/FASE0_DESCUBRIMIENTO_H
 | 2 | BD creída "producción" (resultó ser el **archivo** `ESEHSVP2025`) | 0, 13–16 | Bloque 14 vacío, 818 citas/90d, 1 médico con turnos ⇒ **alerta**: esa BD no recibía citas hace meses → nace la pregunta del catálogo vivo (se crea el bloque 18). |
 | 3 | `ESEHSVP` | 13–16, 18–19 | **Catálogo vivo confirmado = `ESEHSVP`** (los sufijos de año son archivos anuales; no hay rollover); plantilla del INSERT campo a campo; regla de convenios (EPS+régimen+PyP); turnos vivos de 27 médicos. |
 | 4 | `ESEHSVP` | 20 | Jobs del servidor: solo backups/mantenimiento, **ninguno toca citas** ✔; pista del proveedor (`cnt`); tablas candidatas del consecutivo de sesión (`CONEXION*`, `CONSECUTIVOS`); `R_MEDI_ESPE` (especialidades por médico); catálogo de sedes (`LUGAR_ATENCION`); cero turnos futuros tipo 1 ✔; `TIPOSERVICIO` completo (el valor 1 no existe) ✔. |
-| Pendiente | `PRUEBAS` (app) / `ESEHSVP` | **17 (manual)** + 21 | Ciclo de vida de la cita desde la aplicación (LA crítica — correo enviado, `docs/CORREO_PRUEBA_HIS.md`) + fuentes exactas de `CONE/ESP/CONS/CECO/LUAT`. |
+| 5 | `PRUEBAS` (app, ejecutada por el hospital) | **17 (manual) ✔ RESUELTO** | El hospital creó y canceló una cita real desde su aplicación y compartió capturas + resultados SQL (transcrito en `evidencia/PRUEBA_CICLO_VIDA_CNT_2026-08-23.md`). **Cierra LA incógnita crítica:** cancelar = DELETE de `CITAS_MEDICAS` + INSERT de auditoría en `CITAS_ANULADAS` (tabla nueva, antes desconocida). Ver §2.1bis. |
+| Pendiente | `ESEHSVP` | 21 | Fuentes exactas de `CONE/ESP/CONS/CECO/LUAT` (última milla del INSERT). |
 
 ## 1. Entorno confirmado
 
@@ -44,7 +46,7 @@ FKs confirmadas:
 
 1. ✅ **Formato confirmado (bloque 5):** `FE_HORA_CIT` = fecha+hora completa con **barras**: `'YYYY/MM/DD HH:MM'` (16 chars, 24h, cero a la izquierda; ej. `'2026/10/17 09:20'`). Convive data legada sucia (longitudes 12/13, incluso `'31'` — e incluso una fila de 2026 con `'2026/08/29 1'`): el **lector** del agente debe ser tolerante; el **escritor**, estricto al formato de 16 chars. El INSERT de prueba con guiones pasó constraints pero NO es el formato de la app — jamás escribir con guiones. |
 2. Con el estado en la PK pueden **coexistir varias filas del mismo médico+hora con estados distintos** (p. ej. una cancelada y una reasignada del mismo cupo). La "cita vigente" de un cupo = la fila cuyo estado esté en el conjunto activo.
-3. Cambiar el estado cambia la clave: o el HIS hace UPDATE de la columna de PK en sitio, o **inserta una fila nueva por transición**. Cuál de las dos es ahora **LA pregunta crítica** (prueba manual del bloque 4): define cómo interpretamos los eventos HIS→AgenIA y el diseño de `MirrorMap`.
+3. ✅ **Resuelto (prueba manual, 2026-08-23 — ver §2.1bis):** cambiar el estado por **cancelación** NO es un UPDATE en sitio ni una fila nueva en `CITAS_MEDICAS` — es un **DELETE** de esa tabla con **INSERT de auditoría en `CITAS_ANULADAS`**. El paso a "atendida" (estado 0→1) sí es un **UPDATE en sitio** (las citas históricas con estado 1 siguen siendo filas únicas en `CITAS_MEDICAS`, nunca duplicadas). Define la detección HIS→AgenIA: vigilar DELETEs de `CITAS_MEDICAS` (=cancelación, correlacionable con el INSERT en `CITAS_ANULADAS` para capturar motivo/observaciones) y UPDATEs de `NU_ESTA_CIT` en sitio (=desenlace de atención).
 4. Change Tracking es viable (hay PK) ✅ — nota: un UPDATE sobre columna de PK aparece en CT como DELETE+INSERT.
 5. Identidad estable para `MirrorMap`: **clave de cupo** = `CD_CODI_MED_CIT + '|' + FE_HORA_CIT` (estable), con el estado seguido aparte; la cita de AgenIA se enlaza al *cupo*, no a una fila física.
 6. Bonus de concurrencia: si el agente intenta insertar una fila (médico, hora, estado-activo) que ya existe, la violación de PK es la señal natural de **colisión de cupo** — el análogo exacto de nuestro `SLOT_TAKEN_OR_INVALID` / P2002, se mapea a conflicto (gana el hospital).
@@ -110,6 +112,38 @@ Lo que escribe la app al crear una cita (muestra de 15 citas reales del 2026-08-
 | `FE_SOLI_CIT` | fecha/hora solicitada (≈ la de la cita) |
 | Resto (`NU_AUTO_AGRU`, `TX_PEND_AGRU`, `CD_CODI_EST`, `CD_CODI_CAMP`, `NU_CODIGO_HSWE`, `NU_MOD`) | `NULL` |
 
+#### 2.1bis Ciclo de vida CONFIRMADO por prueba manual en la aplicación (bloque 17, 2026-08-23)
+
+El hospital ejecutó la prueba directamente en su aplicación (conectada a `PRUEBAS`) y compartió capturas + resultados SQL, transcritos en `evidencia/PRUEBA_CICLO_VIDA_CNT_2026-08-23.md`. Esta es la evidencia que **cierra el bloqueante crítico #3**.
+
+**Paso a paso realizado:**
+1. Crearon un turno para el médico `76` ("MEDICO ATENCION HTA" — programa de hipertensión/PyP, explica su altísimo volumen visto en muestras previas) el 2026-08-31, 07:00–12:00, `CONSULTORIO APS-01`.
+2. Agendaron una cita a las 07:00 para el paciente CC `9696544` (afiliado NUEVA EPS S.A, convenio mostrado en pantalla: `NUEVASUBSID`).
+3. La consulta de verificación mostró la fila creada en `CITAS_MEDICAS`: `estado=0, medico=76, fecha_hora=2026/08/31 07:00, creada=2026-08-27 14:25, servicio=S39141, convenio=283, consecutivo=1286024`.
+4. **Cruce de validación independiente:** convenio `283` = el mismo que ya habíamos homologado como `NUEVASUBSID` (Nueva EPS, régimen subsidiado, §2.3) — coincide exactamente con lo que mostraba la pantalla de la app. Confirma la regla de convenios sin depender solo de estadística sobre citas históricas.
+5. **Cancelaron la cita desde la aplicación** (ícono de estado → menú → "Anular"; formulario con `Motivo` = desplegable, valor usado `CANCELADO WEB`, y `Observaciones` libre: "paciente no apto para consulta").
+6. Al guardar, el turno quedó despejado (disponible de nuevo) y el hospital confirmó explícitamente: **"el sistema guarda bitácora en la tabla `citas_anuladas`"**.
+7. Al repetir la consulta sobre `CITAS_MEDICAS`, la fila **había desaparecido por completo**. Consultando `CITAS_ANULADAS` apareció ahí, con columnas homólogas a `CITAS_MEDICAS` pero sufijo `_CIAN` en vez de `_CIT` (`CD_CODI_MED_CIAN`, `CD_CODI_SER_CIAN`, `NU_HIST_PAC_CIAN`, `NU_DURA_CIAN`, `FE_ELAB_CIAN`, `FE_FECH_CIAN`, `NU_DIA_CIAN`, `NU_NUME_MOVI_CIAN`…) más los campos de motivo/observaciones del formulario de anulación.
+
+**Conclusiones firmes (reemplazan toda hipótesis anterior sobre estados):**
+
+| Transición | Mecanismo confirmado |
+|---|---|
+| Alta de cita | INSERT en `CITAS_MEDICAS`, `NU_ESTA_CIT = 0` |
+| Atención/desenlace clínico (0→1, y el raro 0→2) | **UPDATE en sitio** de `NU_ESTA_CIT` — confirmado porque las citas históricas en estado `1` siguen siendo filas únicas en `CITAS_MEDICAS` (nunca se duplican ni aparecen en `CITAS_ANULADAS`) |
+| Cancelación | **DELETE** de `CITAS_MEDICAS` + **INSERT de auditoría en `CITAS_ANULADAS`** (nueva tabla, antes desconocida; guarda motivo y observaciones) |
+
+**Consecuencia directa para el diseño de detección HIS→AgenIA** (actualiza §5 "Garantía de cero pérdida" del plan): el agente debe vigilar en `CITAS_MEDICAS` tanto **UPDATEs** de `NU_ESTA_CIT` (desenlace de atención) como **DELETEs** (cancelación) — un DELETE simple no basta para saber el motivo, así que el agente correlaciona cada desaparición con la fila nueva que aparece en `CITAS_ANULADAS` (mismo médico+hora+historia, filtrando por `FE_ELAB_CIAN` reciente) para capturar `Motivo`/`Observaciones` en el evento que sube a AgenIA. Con Change Tracking esto es nativo (CT reporta DELETE de `CITAS_MEDICAS`); con polling diferencial, una fila que desaparece del snapshot es la señal de cancelación — igual de correcta.
+
+**Detalle operativo no crítico pero útil:** una cita histórica de este mismo paciente para 2025-06-20 (fecha ya pasada respecto a hoy) sigue con `estado=0` — nunca fue tocada. Confirma que el estado **no caduca solo por el paso del tiempo**; una cita vigente con fecha pasada detectada por el agente no es un error de sincronización, es comportamiento normal del HIS.
+
+**Lo que esta prueba NO cubrió (residual menor, ya no bloqueante):**
+- Qué acción de la aplicación produce el UPDATE a estado `1` vs `2` específicamente (solo se probó creación + cancelación, no "marcar asistencia"). Como ningún job de SQL Agent toca estas tablas (bloque 20a), el cambio debe originarse en lógica de la aplicación (probablemente al facturar/RIPS la atención) — no afecta el diseño del agente, que detecta el UPDATE sin necesitar saber qué lo disparó.
+- Reagendamiento (mover una cita de horario) no se probó explícitamente — hipótesis razonable tras esta evidencia: cancelación (DELETE+archivo) + nueva alta (INSERT), pero se recomienda una prueba corta adicional si el hospital tiene disponibilidad.
+- ✅ Esquema completo de `CITAS_ANULADAS` — **resuelto** (24 columnas, ver §2.5). Sin PK/FK/triggers.
+- ✅ Contenido del catálogo `dbo.MOTIVOANUL` — **resuelto**, 23 motivos, ver §2.1bis.
+- 🆕 **Trazabilidad de origen ("¿quién creó la cita?") — CONFIRMADO COMO REQUISITO DE NEGOCIO (2026-08-23):** el hospital respondió explícitamente que sí quieren marcar las citas de WhatsApp para identificarlas. El comprobante impreso de la prueba manual mostraba `Asignada Por: ADMINISTRADOR`, pero la búsqueda de columnas `USUA/ASIG/OPER/LOGIN/CREADOR` en `CITAS_MEDICAS` y `CITAS_ANULADAS` **no encontró nada** — ese dato NO vive como columna en las tablas de citas. Sí apareció un universo grande de tablas candidatas de auditoría/usuarios: `AUDITOR` (+ variantes `_AF/_CO/_IN/_N/_T`), `AUDITORIA_COT`, `AUDITORIA_FC`, `AUDITORIA_TFP`, `C_AUDITOR`, `C_USUARIO`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO`, `P_AUDITOR`, `P_USUARIO`, `USUARIO` (+ variantes), `USUARIOS` (+ `_N`), `TIPOUSUARIO` (+ `_FFD`), `REPORTE_USUARIO`, y **`API_LOGS`** (curioso — posible bitácora de alguna interfaz API del HIS, no necesariamente de citas; vale una mirada rápida aunque no reabre el bloqueante #8, ya cerrado con evidencia sólida de que no hay SPs/triggers de agendamiento). Candidatos más prometedores para la próxima ronda: `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO` (auditoría genérica por tabla/transacción) y `C_USUARIO`/`USUARIO` (para saber si "Asignada Por" es en realidad el usuario de sesión de quien grabó, correlacionable por timestamp con `FE_ELAB_CIT`, más que un campo propio de la cita). SQL de la siguiente ronda en el script (bloque 24).
+
 ### 2.2 `dbo.MEDICOS`
 
 PK: `CD_CODI_MED` varchar(4) (códigos observados: `001`, `0010`, `001V` — alfanuméricos). NOT NULL: solo `CD_CODI_MED` y `NU_AUTMEDCTRL_MED` (bit).
@@ -151,7 +185,28 @@ Relevantes para agenda: ✅ **`ID_CITA_SER='1'` confirmado como marca de "servic
 
 - **`TURNOS_MEDICOS`** — ✅ **estructura confirmada (bloque 7): ES la fuente de disponibilidad del HIS.** Columnas: `CD_MED_TUME` (médico), `FE_FECH_TUME` (fecha del turno), `FE_HOIN_TUME`/`FE_HOFI_TUME` (hora inicio/fin como datetime sobre base `1900-01-01`, ej. 07:00–12:00 y 14:00–18:00), `ID_DISP_TUME` varchar(1) (¿disponible?), `CD_CODI_CONS_TUME` (consultorio), `NU_NUME_TUME` (PK, consecutivo), `NU_TIPO_TUME`, `CD_CODI_ESP_TUME` (especialidad). Modelo: **bloques de turno por médico/fecha/consultorio**; la app calcula los cupos = bloques ÷ duración − citas ocupadas. ✅ **Confirmado en el catálogo vivo (4ª corrida):** **1.120 turnos futuros de 27 médicos**, hasta 2027-08-31. ⚠️ Son **27** médicos con turnos, no los "15" reportados — confirmar con el hospital cuáles agendan por WhatsApp. Bloques típicos 07:00–12:00 y 14:00–15:30; consultorio estable por médico (ej. `91-1` → consultorio `40`) que **se copia a la cita**. `ID_DISP_TUME`: `'1'` = disponible/activo (99%), `'0'` = excepcional; `NU_TIPO_TUME`: ✅ **cero turnos futuros con tipo `1`** (bloque 20e) ⇒ solo el tipo `0` importa para el sync; el `1` es histórico/irrelevante. `TURNOS_MEDICOS_COSTOS` = bitácora de ediciones (usuario/fechas/centro de costos — hipótesis); no participa del sync. Otra hermana: `CX_HORARIO_SALA` (salas de cirugía, fuera de alcance).
 - `PYP_AGENDA_GRUP` — agenda grupal de PyP (FK a médico y servicio).
-- `CITAS_TELEMEDICINA` — espejo estructural de `CITAS_MEDICAS` para telemedicina. **PK confirmada:** (`FE_HORA_CITE`, `NU_HIST_PAC_CITE`, `CD_CODI_MED_CITE`, `CD_CODI_SER_CITE`, `NU_NUME_MOVI_CITE`) — el **paciente integra la PK** ⇒ aquí no existen filas de cupo libre: modelo distinto al de `CITAS_MEDICAS`. **Definir si entra al alcance.**
+- `CITAS_TELEMEDICINA` — espejo estructural de `CITAS_MEDICAS` para telemedicina. **PK confirmada:** (`FE_HORA_CITE`, `NU_HIST_PAC_CITE`, `CD_CODI_MED_CITE`, `CD_CODI_SER_CITE`, `NU_NUME_MOVI_CITE`) — el **paciente integra la PK** ⇒ aquí no existen filas de cupo libre: modelo distinto al de `CITAS_MEDICAS`. **Definir si entra al alcance.** Probablemente tenga su propia `CITAS_TELEMEDICINA_ANULADAS` hermana (por confirmar) siguiendo el mismo patrón de auditoría.
+- ✅ **`CITAS_ANULADAS`** (descubierta por la prueba manual del bloque 17, §2.1bis) — **archivo de auditoría de cancelaciones**, no un catálogo de agenda. **Esquema completo confirmado (2026-08-23, 24 columnas):** mismos campos que `CITAS_MEDICAS` con sufijo `_CIAN`, más `CD_CODI_MOTI_CIAN` varchar(2) (código de motivo → catálogo `dbo.MOTIVOANUL`), `TX_OBSE_CIAN` varchar(255) (observaciones libres), y `NU_CONE_ANUL_CIAN` (consecutivo propio de la anulación, distinto del `NU_NUME_CONE_CIAN` heredado de la cita original).
+  - 🔑 **Hallazgo de diseño importante: `CITAS_ANULADAS` NO tiene primary key, NO tiene índices únicos y NO tiene foreign keys** (verificado por `sys.indexes`/`sys.foreign_keys` — resultado vacío). Es un log de auditoría puro sin integridad referencial. **Consecuencia para el agente:** no hay una clave natural que garantice unicidad de fila; la correlación DELETE-de-`CITAS_MEDICAS` ↔ INSERT-en-`CITAS_ANULADAS` debe hacerse por la tupla `(CD_CODI_MED_CIAN, FE_HORA_CIAN, NU_HIST_PAC_CIAN)` **más cercanía temporal de `FE_ELAB_CIAN`** al momento de la detección (si el mismo cupo se reservó/canceló varias veces, tomar la fila con `FE_ELAB_CIAN` más reciente).
+  - ⚠️ **Corrección (muestra real, 2026-08-23): `NU_CONE_ANUL_CIAN` NO es un identificador único por fila — es un consecutivo de SESIÓN del operador**, igual que `NU_NUME_CONE_CIT`/`NU_NUME_CONE_CIAN` en la cita original: el mismo valor (ej. `1286723`) se repite en 5 filas distintas de la muestra (cancelaciones consecutivas hechas por el mismo funcionario en una sola sesión). **No sirve como idempotency-key.** El `event_id` del agente debe generarse internamente (UUID propio al detectar el DELETE), nunca derivado de estos consecutivos del HIS.
+  - ✅ **Volumen:** 92.464 filas históricas — tasa de cancelación ≈ 8-9% sobre el total histórico de citas, consistente con operación normal.
+
+  **✅ Catálogo `dbo.MOTIVOANUL` — completo (23 motivos, confirmado 2026-08-23):**
+
+  | Código | Descripción | Uso histórico | Lectura de negocio |
+  |---|---|---:|---|
+  | `05` | PACIENTE LLAMA A CANCELAR | 72.446 (78%) | Abrumadoramente el motivo dominante — cancelación genuina del paciente. |
+  | `06` | DOBLE CONSULTA | 9.687 (10%) | Segundo motivo en volumen — sugiere depuración de citas duplicadas, relevante para nuestra lógica anti-colisión. |
+  | `01` | ERROR DE CAJERO | 6.591 (7%) | Error operativo de digitación — nunca debería originarse desde el agente si el INSERT es correcto. |
+  | `NA` | **NO ASISTIO** | 285 | 🔑 **Hallazgo que refina el ciclo de vida:** el "no-show" **también pasa por DELETE+archivo en `CITAS_ANULADAS`**, NO por un `NU_ESTA_CIT` distinto. Esto reduce la importancia de descifrar exactamente qué dispara el estado `2` (ver nota abajo) — el flujo de detección de "no asistió" ya está cubierto por el mismo mecanismo de cancelación. |
+  | `WB` | **CANCELADO WEB** | 90 | El código que la app usó en nuestra prueba manual. **Ya existe infraestructura de un canal "web" distinguible en el HIS.** Pregunta abierta para el hospital: ¿reutilizamos `WB` para las cancelaciones que origina AgenIA, o piden un código nuevo dedicado (ej. `WA`) para diferenciar en sus reportes cancelaciones del portal web propio vs. WhatsApp/AgenIA? Ligado a la petición de "Asignada Por" (ver abajo) — mismo espíritu de trazabilidad. |
+  | `09` | EDAD NO CORRESPONDE | 1.002 | El HIS sí valida rango de edad por servicio en la práctica (coincide con `NU_EDIN_SER`/`NU_EDFI_SER` de §2.4) — el agente debe validar esto también antes de reservar, o heredará este mismo motivo de rechazo. |
+  | `10` | ERROR EN CONVENIOS | 177 | Confirma que la asignación de convenio es un punto real de fricción operativa — refuerza la necesidad de validar bien nuestra regla de convenios (§2.3) antes de escribir en producción. |
+  | `15` | CAMBIO DE CONTRATACIÓN EVENTO A CÁPITA | 126 | Cambios de modelo de contratación de una EPS — puede invalidar un convenio ya asignado; el agente debería tolerar este tipo de rechazo con reintento/alerta, no como error fatal. |
+  | resto (`02,04,07,08,11-14,16-21`) | NO POS, error en cantidad medicada, procedimientos/exámenes no cargados, copago no cobrado, medicamento no corresponde, usuario de otra entidad, mayor valor cobrado, devolución dinero, etc. | ≤330 c/u | Motivos de depuración administrativa/facturación — no deberían originarse desde el flujo de agendamiento de AgenIA. |
+
+  **Refinamiento del ciclo de vida (no bloqueante):** con `NA` confirmado dentro de `CITAS_ANULADAS`, la hipótesis de que `NU_ESTA_CIT=2` fuera "inasistencia" pierde fuerza — la inasistencia real vive en `CITAS_ANULADAS`/motivo `NA`. El significado exacto del estado `2` (solo 3 casos observados para el paciente de prueba, en seis muestras de 17 años) queda como curiosidad menor sin impacto en el diseño: el agente reacciona igual ante cualquier UPDATE de `NU_ESTA_CIT` en sitio, sin necesitar saber su significado clínico exacto.
+  - **Muestra fila-a-fila obtenida** (2026-08-23): confirma formato — `TX_OBSE_CIAN` en la práctica suele venir vacío o con puntos de relleno (`"...."`, `"SSSSS"` — placeholders de digitación del personal, no texto significativo); `CD_CODI_MOTI_CIAN='05'` domina la muestra reciente, consistente con la distribución histórica.
 
 ### 2.6 Módulo web del propio HIS
 
@@ -168,7 +223,7 @@ Existen `HOM_SERV_WEB`, `LOGIN_WEB` y la columna `NU_CODIGO_HSWE_CIT` en la cita
 | `endTime − startTime` (min) | `NU_DURA_CIT` | Si la hipótesis de duración se confirma. |
 | `serviceId` → `MirrorMap` | `CD_CODI_SER_CIT` | Solo servicios homologados. |
 | `patientId` → `MirrorMap` | `NU_HIST_PAC_CIT` | Paciente debe existir (crear si falta). |
-| `status` (SCHEDULED/CANCELLED/COMPLETED) | `NU_ESTA_CIT` | Candidatos observados: `0`=vigente/agendada, `1`=cumplida (hipótesis), `2`=incumplida o cancelada (hipótesis; cero futuras en 2 ⇒ cancelar podría ser DELETE). Cierre con la prueba manual (bloque 17). |
+| `status` (SCHEDULED/CANCELLED/COMPLETED) | `NU_ESTA_CIT` + presencia/ausencia en `CITAS_ANULADAS` | ✅ **Confirmado (§2.1bis):** `0`=vigente (UPDATE en sitio al cambiar), `1`/`2`=desenlace de atención (UPDATE en sitio); **`CANCELLED` = la fila DESAPARECE de `CITAS_MEDICAS`** y se archiva en `CITAS_ANULADAS`. El `AppointmentStatus.CANCELLED` de AgenIA se dispara al detectar el DELETE, no un valor de `NU_ESTA_CIT`. |
 | `reason` | `DE_DESC_CIT` (600) | Truncar con elipsis si excede. |
 | `createdAt` | `FE_ELAB_CIT` / `FE_SOLI_CIT` | Según semántica confirmada. |
 | `epsId` | `NU_NUME_CONV_CIT` (+ `R_PAC_EPS`) | Tras bloqueante #6. |
@@ -195,8 +250,8 @@ Mapeo estático curado a mano en Fase 0 (solo servicios agendables), versionado 
 1. **Ambos sistemas siguen agendando.** El espejo es bidireccional permanente.
 2. **El hospital gana todo conflicto.** Si el HIS crea/modifica/cancela una cita, esa versión prevalece y AgenIA se ajusta; los pacientes consultan las novedades por WhatsApp. En doble ocupación del mismo cupo, la cita del HIS queda y la de AgenIA pasa a conflicto → waitlist + notificación al staff + mensaje WhatsApp al paciente afectado.
 3. **`PRUEBAS` primero.** Ningún experimento contra `ESEHSVP2025`; backup previo a cualquier intervención en producción.
-4. **TI del hospital es receptivo** y autoriza crear BD propia y login dedicado — pasos en `docs/sql/AGENIA_SYNC_SETUP.sql`.
-5. **Escala pequeña confirmada:** 15 médicos, 26.290 citas en 90 días ≈ **250–300 citas/día hábil** (bloque 13). Consecuencia de diseño: el **polling diferencial es sobradamente suficiente** (Change Tracking pasa a opcional) y la reconciliación compara la ventana completa en segundos. ⚠️ Hay reservas hasta **12 meses adelante** (agosto 2027) ⇒ la ventana de sincronización/reconciliación es **+13 meses**, no +90 días.
+4. **TI del hospital es receptivo** y autoriza crear BD propia y login dedicado — pasos en `sql/AGENIA_SYNC_SETUP.sql`.
+5. **Escala pequeña confirmada:** 27 médicos (dato real de producción, confirmado 2026-08-23 — la cifra de "15" reportada al inicio de la Fase 0 era incorrecta), 26.290 citas en 90 días ≈ **250–300 citas/día hábil** (bloque 13). Consecuencia de diseño: el **polling diferencial es sobradamente suficiente** (Change Tracking pasa a opcional) y la reconciliación compara la ventana completa en segundos. ⚠️ Hay reservas hasta **12 meses adelante** (agosto 2027) ⇒ la ventana de sincronización/reconciliación es **+13 meses**, no +90 días.
 6. **Ventana de mantenimiento: los domingos.** Todo despliegue, activación de fase, corte a producción y game-day se programa en domingo; la reconciliación pesada nocturna evita el horario de agenda activa.
 7. **Marco legal cubierto: existe contrato** de tratamiento de datos con el hospital (Ley 1581). Referenciarlo en el runbook y en la autorización formal de creación de `AGENIA_SYNC`.
 
@@ -206,14 +261,18 @@ Mapeo estático curado a mano en Fase 0 (solo servicios agendables), versionado 
 |---|---|---|---|
 | 1 | ✅ **Resuelto (2026-08-23):** PK compuesta = (`CD_CODI_MED_CIT`, `FE_HORA_CIT`, `NU_ESTA_CIT`) — CT ya es viable. **Bloqueante derivado:** ¿un cambio de estado es UPDATE en sitio o fila nueva por transición? | Define la interpretación de eventos HIS→AgenIA y el diseño de `MirrorMap` | Prueba manual del bloque 4 + bloque 6; faltan además los result sets 2 y 3 del bloque 1 (identity e índices únicos) |
 | 2 | ✅ **Resuelto:** `FE_HORA_CIT` = `'YYYY/MM/DD HH:MM'` (16 chars, barras); data legada sucia ⇒ lector tolerante, escritor estricto | — | Bloque 5 ✔ |
-| 3 | ⚠️ **Parcial:** estados observados `0`=vigente, `1`=cumplida (hip.), `2`=incumplida/cancelada (hip.; cero futuras en 2 ⇒ cancelar podría ser DELETE) | Mapa de estados del ciclo de vida y detección de cancelaciones | **Prueba manual — bloque 17 (LA crítica)** |
-| 4 | ✅ **Resuelto (hipótesis doble rol REFUTADA):** los cupos NO se materializan; disponibilidad = `TURNOS_MEDICOS` − citas ocupadas. Vivo: 1.120 turnos futuros de **27 médicos** hasta ago-2027 | Redefine el espejo de slots: derivado, no fila a fila. ⚠️ 27 ≠ "15 médicos": confirmar cuáles agendan por WhatsApp | Bloque 15 ✔ |
+| 3 | ✅ **RESUELTO por prueba manual (2026-08-23):** `0`=vigente; `1`/`2`=UPDATE en sitio (desenlace de atención); **cancelación = DELETE de `CITAS_MEDICAS` + INSERT de auditoría en `CITAS_ANULADAS`** (tabla nueva, antes desconocida) | Mapa de estados y mecanismo de cancelación — base del diseño de detección HIS→AgenIA | Bloque 17 (manual, ejecutado por el hospital) ✔ — ver §2.1bis |
+| 4 | ✅ **Resuelto (hipótesis doble rol REFUTADA):** los cupos NO se materializan; disponibilidad = `TURNOS_MEDICOS` − citas ocupadas. Vivo: 1.120 turnos futuros de **27 médicos** hasta ago-2027 (dato real confirmado) | Redefine el espejo de slots: derivado, no fila a fila. Pendiente de negocio: confirmar cuáles de los 27 agendan por WhatsApp en el piloto | Bloque 15 ✔ |
 | 5 | ✅ **Resuelto:** historia = documento (100%); defaults de `PACIENTES` confirmados; catálogo `TIPO_DOCUMENTO` completo | Alta de pacientes desde WhatsApp viable | Bloques 8–9 ✔ |
 | 6 | ✅ **Resuelto:** regla = EPS (NIT) + régimen + PyP → convenio vigente; `R_PAC_CONV` descartada; tabla de 12 convenios homologada (§2.3) | Falta solo validar la tabla de decisión con la agendadora (Fase 2) | Bloques 16 y 19 ✔ |
 | 7 | ✅ **Resuelto:** `ID_CITA_SER='1'` marca los 1.280 servicios agendables (100% de las citas de 90d) | Filtro de homologación | Bloque 12 ✔ |
 | 8 | ✅ **Resuelto:** sin triggers, sin SPs de escritura, módulo web sin uso ⇒ **vía = DML directo** replicando el patrón de la app | Ninguna lógica oculta; nada oficial reutilizable | Bloques 2–3, 11 ✔ |
 | 9 | ✅ **Resuelto (vivo):** 27.877 citas/90d; 1.652 elaboradas/7d ≈ 235/día; reservas hasta 12 meses ⇒ ventana **+13 meses** | Dimensiona polling y reconciliación | Bloque 13 ✔ |
 | 10 | ¿`CITAS_TELEMEDICINA` entra al alcance? | Alcance de Fase 3/4 | Decisión de negocio |
+| 15 | ✅ **RESUELTO por completo:** esquema de `CITAS_ANULADAS` + catálogo `MOTIVOANUL` (23 motivos) + muestra fila-a-fila | El agente lo lee para capturar el motivo de cada cancelación detectada | Bloques 22–23 ✔ |
+| 17 | 🆕 **Confirmado como requisito de negocio** (el hospital quiere marcar citas de WhatsApp), pero la columna/tabla exacta que guarda "Asignada Por" AÚN no se encuentra — búsqueda directa en `CITAS_MEDICAS`/`CITAS_ANULADAS` dio vacío; candidatos: `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO`, `C_USUARIO`/`USUARIO` | Marcar visualmente para el staff qué citas vienen de WhatsApp/AgenIA | **Bloque 24** (nuevo) |
+| 18 | 🆕 ¿Reutilizar el código de motivo `WB` (CANCELADO WEB, ya usado 90 veces) para las cancelaciones que origina AgenIA, o pedir uno nuevo dedicado (ej. `WA`)? | Que el hospital pueda diferenciar en sus reportes cancelaciones del portal web propio vs. WhatsApp/AgenIA | Decisión de negocio + posible alta de código en `MOTIVOANUL` (requiere autorización de escritura de TI) |
+| 16 | Reagendamiento no probado explícitamente (¿DELETE+INSERT o UPDATE de horario?) | Diseño del flujo de reagendar en el espejo | Prueba manual adicional corta (opcional, ya no bloquea el diseño base) |
 | 11 | ✅ **Resuelto:** plantilla del INSERT campo a campo documentada (§2.1) | Replicar el patrón exacto del INSERT | Bloque 14 ✔ |
 | 13 | ⚠️ **Fuentes contextuales del INSERT** (última milla): `NU_NUME_CONE_CIT` (tablas `CONEXION*`/`CONSECUTIVOS` halladas), `CD_CODI_ESP_CIT` (probable `R_ESP_SER` del servicio), `CD_CODI_CONS/CECO/LUAT` (tabla `CONSULTORIOS` + sedes) | Completa el INSERT sin valores inventados | **Bloque 21** (muestras y verificación cruzada) |
 | 14 | ✅ **Verificado (bloque 20a):** ningún job de SQL Agent toca las tablas del flujo — solo backups de `ESEHSVP` y shrink de logs | Nada interfiere con el sync; el `.bak` diario sirve para refrescar `PRUEBAS` | Bloque 20a ✔ |
