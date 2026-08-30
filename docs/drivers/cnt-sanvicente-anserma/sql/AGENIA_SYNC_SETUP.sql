@@ -121,9 +121,11 @@ GO
 
 -- -----------------------------------------------------------------------------
 -- 4) PERMISOS MÍNIMOS EN LA BD DEL HIS  (primero PRUEBAS; luego ESEHSVP2025)
---    Lectura: tablas del flujo de citas. Escritura: SOLO donde el espejo
---    escribe. Deliberadamente SIN DELETE, SIN ALTER, SIN permisos de BD.
---    (La lista de GRANTs de escritura se confirma al cerrar la Fase 0.)
+--    Lectura: tablas del flujo de citas y sus catálogos de homologación.
+--    Escritura: SOLO en CITAS_MEDICAS/CITAS_ANULADAS/PACIENTES, con el DELETE
+--    puntual sobre CITAS_MEDICAS que exige la cancelación (mecanismo real
+--    confirmado por la prueba manual del hospital — ver MAPEO_HIS.md §2.1bis).
+--    SIN ALTER, SIN permisos de BD, sin acceso a nada fuera de este alcance.
 -- -----------------------------------------------------------------------------
 USE PRUEBAS;   -- ⚠️ producción: USE ESEHSVP; (catálogo VIVO confirmado en Fase 0 — los sufijos de año son archivos)
 GO
@@ -132,6 +134,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = 'agenia_sync')
 GO
 -- Lectura
 GRANT SELECT ON dbo.CITAS_MEDICAS   TO agenia_sync;
+GRANT SELECT ON dbo.CITAS_ANULADAS  TO agenia_sync;  -- correlacionar cancelaciones del HIS (§2.1bis)
 GRANT SELECT ON dbo.MEDICOS         TO agenia_sync;
 GRANT SELECT ON dbo.PACIENTES       TO agenia_sync;
 GRANT SELECT ON dbo.SERVICIOS       TO agenia_sync;
@@ -139,9 +142,19 @@ GRANT SELECT ON dbo.TIPO_DOCUMENTO  TO agenia_sync;
 GRANT SELECT ON dbo.MUNICIPIOS      TO agenia_sync;
 GRANT SELECT ON dbo.R_PAC_EPS       TO agenia_sync;
 GRANT SELECT ON dbo.TURNOS_MEDICOS  TO agenia_sync;
--- Escritura (mínima; ampliar solo si el mapeo cerrado de Fase 0 lo exige)
-GRANT INSERT, UPDATE ON dbo.CITAS_MEDICAS TO agenia_sync;
-GRANT INSERT, UPDATE ON dbo.PACIENTES     TO agenia_sync;
+GRANT SELECT ON dbo.MOTIVOANUL      TO agenia_sync;  -- validar código de motivo al cancelar
+GRANT SELECT ON dbo.CONVENIOS       TO agenia_sync;  -- resolver convenio (EPS+régimen+PyP, §2.3)
+GRANT SELECT ON dbo.EPS             TO agenia_sync;
+GRANT SELECT ON dbo.CONSULTORIOS    TO agenia_sync;  -- última milla del INSERT (esquema confirmado; regla de asignación aún por validar a escala, bloque 25)
+GRANT SELECT ON dbo.R_ESP_SER       TO agenia_sync;  -- candidato de especialidad por servicio (bloque 21)
+-- Escritura (mínima — ver MAPEO_HIS.md §2.1bis: alta = INSERT en CITAS_MEDICAS;
+-- cancelación = DELETE de CITAS_MEDICAS + INSERT en CITAS_ANULADAS, confirmado
+-- por la prueba manual del hospital. Deliberadamente SIN UPDATE en CITAS_MEDICAS
+-- más allá de lo necesario, SIN ALTER, SIN permisos de BD.)
+GRANT INSERT, UPDATE ON dbo.CITAS_MEDICAS  TO agenia_sync;  -- alta + reflejar asistencia (updateAttendance)
+GRANT DELETE         ON dbo.CITAS_MEDICAS  TO agenia_sync;  -- cancelación (mecanismo confirmado en Fase 0)
+GRANT INSERT         ON dbo.CITAS_ANULADAS TO agenia_sync;  -- registrar motivo/observaciones al cancelar
+GRANT INSERT, UPDATE ON dbo.PACIENTES      TO agenia_sync;  -- alta mínima de paciente nuevo (§3.3)
 GO
 
 -- -----------------------------------------------------------------------------
@@ -168,8 +181,15 @@ GO
 EXECUTE AS LOGIN = 'agenia_sync';
 SELECT TOP 1 CD_CODI_MED_CIT, FE_FECH_CIT FROM PRUEBAS.dbo.CITAS_MEDICAS;   -- debe funcionar
 SELECT COUNT(*) FROM AGENIA_SYNC.dbo.LocalQueue;                            -- debe funcionar
--- Lo siguiente DEBE FALLAR (permiso denegado) — confirma el mínimo privilegio:
--- DELETE FROM PRUEBAS.dbo.CITAS_MEDICAS WHERE 1 = 0;
+-- DELETE sobre CITAS_MEDICAS SÍ debe funcionar (es la cancelación, ver arriba) —
+-- probarlo dentro de una transacción con ROLLBACK, nunca contra una fila real:
+-- BEGIN TRAN;
+--   DELETE FROM PRUEBAS.dbo.CITAS_MEDICAS WHERE 1 = 0;  -- predicado falso: no borra nada, solo valida el permiso
+-- ROLLBACK;
+-- Lo siguiente DEBE FALLAR (permiso denegado) — confirma el mínimo privilegio
+-- fuera del alcance de citas:
 -- SELECT TOP 1 * FROM PRUEBAS.dbo.HISTORIACLINICA;
+-- DELETE FROM PRUEBAS.dbo.PACIENTES WHERE 1 = 0;  -- nunca se otorgó DELETE sobre pacientes
+-- ALTER TABLE PRUEBAS.dbo.CITAS_MEDICAS ADD test_col INT;  -- ni ALTER de ningún tipo
 REVERT;
 GO

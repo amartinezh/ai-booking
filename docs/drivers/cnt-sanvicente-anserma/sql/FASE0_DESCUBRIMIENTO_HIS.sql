@@ -341,8 +341,10 @@ WHERE TABLE_NAME = 'R_ESP_SER' ORDER BY ORDINAL_POSITION;
 SELECT TOP 20 * FROM dbo.R_ESP_SER;
 
 -- (21c) Consultorios y su sede/centro de costos (fuente de CONS/CECO/LUAT)
-SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_NAME = 'CONSULTORIOS' ORDER BY ORDINAL_POSITION;
+-- ✅ Esquema YA CONFIRMADO 2026-08-28 vía SSMS Object Explorer (no hace falta
+-- rendir esta parte): CD_CODI_CONS varchar(8) PK, DE_DESC_CONS varchar(30),
+-- DE_UBIC_CONS varchar(40), NU_ACTIVO_CONS bit NOT NULL (con DEFAULT). Falta
+-- el contenido real — correr igual para tener el catálogo completo:
 SELECT TOP 20 * FROM dbo.CONSULTORIOS;
 
 -- (21d) Verificación cruzada: ¿la especialidad de la cita = la del servicio?
@@ -479,3 +481,56 @@ SELECT TOP 20 * FROM dbo.USUARIO WHERE 1=1;
 -- y que ese usuario sea el que quede registrado como "Asignada Por" al insertar
 -- la cita — a confirmar directamente con el proveedor CNT o con TI del hospital,
 -- ya no es indagable por SQL de solo lectura.
+
+-- =============================================================================
+-- DÉCIMA RONDA (2026-08-28) — validar a escala "el consultorio de la cita se
+-- copia del turno del médico ese día" (hoy solo confirmada por 1 caso manual +
+-- 1 muestra puntual, MAPEO_HIS.md §2.1/§2.1bis). Motivador: un comprobante
+-- impreso mostró "51-CONSULTORIO APS-01" — el CÓDIGO real probablemente es
+-- '51' y "CONSULTORIO APS-01" es solo la etiqueta (DE_DESC_CONS) — a confirmar
+-- también con (25b). Correr en ESEHSVP (o PRUEBAS si no hay acceso aún).
+-- =============================================================================
+
+-- (25a) ¿La cita SIEMPRE coincide con el consultorio del turno que la cubre?
+SELECT resultado, COUNT(*) AS total FROM (
+    SELECT CASE
+        WHEN c.CD_CODI_CONS_CIT = t.CD_CODI_CONS_TUME THEN 'COINCIDE'
+        WHEN t.NU_NUME_TUME IS NULL THEN 'SIN_TURNO_QUE_CUBRA'
+        ELSE 'DIFIERE'
+        END AS resultado
+    FROM dbo.CITAS_MEDICAS c
+    LEFT JOIN dbo.TURNOS_MEDICOS t
+        ON t.CD_MED_TUME = c.CD_CODI_MED_CIT
+        AND t.FE_FECH_TUME = c.FE_FECH_CIT
+        AND CAST(RIGHT(c.FE_HORA_CIT,5) AS TIME)
+            BETWEEN CAST(t.FE_HOIN_TUME AS TIME) AND CAST(t.FE_HOFI_TUME AS TIME)
+    WHERE c.FE_ELAB_CIT >= DATEADD(DAY,-30,GETDATE())
+      AND c.NU_ESTA_CIT = 0
+) x
+GROUP BY resultado
+ORDER BY total DESC;
+-- Lectura: si 'DIFIERE' + 'SIN_TURNO_QUE_CUBRA' es <5% del total, la hipótesis
+-- queda confirmada como regla de escritura del driver (createAppointment lee
+-- TURNOS_MEDICOS en el momento, no necesita tabla propia). Si es alto, revisar
+-- casos DIFIERE fila a fila con la consulta de detalle de abajo.
+
+-- (25b) Detalle fila a fila de los casos que no coinciden (para entender por qué)
+SELECT TOP 30
+    c.CD_CODI_MED_CIT, c.FE_HORA_CIT,
+    c.CD_CODI_CONS_CIT AS consultorio_en_cita,
+    t.CD_CODI_CONS_TUME AS consultorio_en_turno
+FROM dbo.CITAS_MEDICAS c
+LEFT JOIN dbo.TURNOS_MEDICOS t
+    ON t.CD_MED_TUME = c.CD_CODI_MED_CIT
+    AND t.FE_FECH_TUME = c.FE_FECH_CIT
+    AND CAST(RIGHT(c.FE_HORA_CIT,5) AS TIME)
+        BETWEEN CAST(t.FE_HOIN_TUME AS TIME) AND CAST(t.FE_HOFI_TUME AS TIME)
+WHERE c.FE_ELAB_CIT >= DATEADD(DAY,-30,GETDATE())
+  AND c.NU_ESTA_CIT = 0
+  AND (t.NU_NUME_TUME IS NULL OR c.CD_CODI_CONS_CIT <> t.CD_CODI_CONS_TUME)
+ORDER BY c.FE_ELAB_CIT DESC;
+
+-- (25c) Catálogo completo de consultorios — para confirmar si '51' existe
+-- y corresponde a "CONSULTORIO APS-01" (corrige o confirma la hipótesis del
+-- comprobante impreso; ver nota arriba)
+SELECT * FROM dbo.CONSULTORIOS ORDER BY CD_CODI_CONS;

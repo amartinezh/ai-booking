@@ -43,3 +43,6 @@ yarn-error.log*
 deploy/Caddyfile
 deploy/install.conf
 deploy/secrets/
+
+# Estado local de scripts/whatsapp-tunnel.sh (verify token, logs de ngrok)
+.local/

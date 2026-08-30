@@ -51,20 +51,21 @@ model Organization {
   autoSuspend     Boolean   @default(false)
 
   // Relaciones Inversas (Todo el sistema)
-  users              User[]
-  eps                Eps[]
-  medicalServices    MedicalService[]
-  slots              ScheduleSlot[]
-  appointments       Appointment[]
-  clinicalRecords    ClinicalRecord[]
-  patients           PatientProfile[]
-  doctors            DoctorProfile[]
-  interactionLogs    InteractionLog[]
-  agents             AgentProfile[]
-  waitlistEntries    WaitlistEntry[]
-  supportTickets     SupportTicket[]
-  chatSurveys        ChatSurvey[]
-  epsEnrolledPatients EpsEnrolledPatient[]
+  users                 User[]
+  eps                   Eps[]
+  medicalServices       MedicalService[]
+  consultingRooms       ConsultingRoom[]
+  slots                 ScheduleSlot[]
+  appointments          Appointment[]
+  clinicalRecords       ClinicalRecord[]
+  patients              PatientProfile[]
+  doctors               DoctorProfile[]
+  interactionLogs       InteractionLog[]
+  agents                AgentProfile[]
+  waitlistEntries       WaitlistEntry[]
+  supportTickets        SupportTicket[]
+  chatSurveys           ChatSurvey[]
+  epsEnrolledPatients   EpsEnrolledPatient[]
   epsEnrollmentRequests EpsEnrollmentRequest[]
 
   // 🪞 ESPEJO HOSPITAL (ver PLAN_ESPEJO_HOSPITAL.md) — 1:1, config del driver HIS de esta org.
@@ -339,6 +340,35 @@ model MedicalService {
   @@unique([organizationId, name])
 }
 
+// 🏥 CONSULTORIO — catálogo genérico y OPCIONAL de salas/consultorios físicos de
+// la clínica. Existe para dar visibilidad en el dashboard de a qué consultorio
+// suele estar asignado un médico; ningún flujo de agendamiento por WhatsApp lo
+// exige. Nace del espejo con HIS (ver docs/PLAN_ESPEJO_HOSPITAL.md y
+// docs/drivers/cnt-sanvicente-anserma/, tabla dbo.CONSULTORIOS) pero es un
+// concepto genérico del motor, no de un driver — cualquier clínica puede usarlo
+// aunque no tenga espejo. `code` homologa con el código del HIS cuando aplica;
+// la decisión de en qué consultorio queda una cita CONCRETA al escribir al HIS
+// la resuelve cada driver en tiempo real (ver comentario en DoctorProfile).
+model ConsultingRoom {
+  id String @id @default(uuid())
+
+  code     String // homólogo de CD_CODI_CONS del HIS, cuando aplica
+  name     String? // homólogo de DE_DESC_CONS
+  location String? // homólogo de DE_UBIC_CONS
+  isActive Boolean @default(true)
+
+  doctors DoctorProfile[]
+
+  // 🏢 TENANT ISOLATION
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, code])
+}
+
 // -----------------------------------------------------------------------------
 // 🏥 PATIENT PROFILE (Datos Médicos y Contacto)
 // -----------------------------------------------------------------------------
@@ -404,6 +434,15 @@ model DoctorProfile {
   // 🔌 CONEXIÓN SERVICIO: La especialidad deja de ser String libre
   serviceId String?
   service   MedicalService? @relation(fields: [serviceId], references: [id])
+
+  // 🏥 CONSULTORIO HABITUAL — opcional e informativo (ver ConsultingRoom). NO es
+  // la fuente de verdad de en qué consultorio queda una cita concreta: eso lo
+  // resuelve cada driver de espejo en el momento de escribir al HIS (para
+  // cnt-sanvicente-anserma, del turno del médico ese día — ver
+  // docs/drivers/cnt-sanvicente-anserma/MAPEO_HIS.md §2.1). Esto es solo para
+  // mostrarlo en el dashboard de AgenIA.
+  consultingRoomId String?
+  consultingRoom   ConsultingRoom? @relation(fields: [consultingRoomId], references: [id])
 
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1113,7 +1152,7 @@ model HospitalMirrorConfig {
   driverConfig Json?
 
   // Versión y contenido del mapeo de tablas/campos acordado en la Fase 0 de ESE driver.
-  mappingVersion Int  @default(1)
+  mappingVersion Int   @default(1)
   mappingJson    Json?
 
   // Interruptor de emergencia por dirección — independiente de `enabled`.

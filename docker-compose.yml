@@ -22,6 +22,25 @@ services:
     volumes:
       - redis_data:/data
 
+  # Simulador local del SQL Server del hospital, SOLO para el driver
+  # cnt-sanvicente-anserma (apps/mirror-agent/local-his-mock/). SQL Server
+  # real (no Azure SQL Edge: esa imagen quedó EOL y revienta con SIGABRT al
+  # arrancar en este host) bajo emulación amd64 — este host es Apple Silicon
+  # y la imagen oficial de SQL Server solo existe para amd64. Ver
+  # apps/mirror-agent/local-his-mock/README.md.
+  mirror-his-mock:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    container_name: agenia_mirror_his_mock
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "AgenIA_Local_2026!"
+    ports:
+      - "1433:1433"
+    volumes:
+      - mirror_his_mock_data:/var/opt/mssql
+
 volumes:
   postgres_data:
   redis_data:
+  mirror_his_mock_data:

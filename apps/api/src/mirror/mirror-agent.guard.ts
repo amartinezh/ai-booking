@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CryptoService } from '../common/crypto/crypto.service';
 import { parseAgentToken, verifyAgentToken } from './mirror-token.util';
 
 export interface MirrorAgentRequest {
@@ -29,7 +30,10 @@ export interface MirrorAgentRequest {
  */
 @Injectable()
 export class MirrorAgentGuard implements CanActivate {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly crypto: CryptoService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context
@@ -61,11 +65,21 @@ export class MirrorAgentGuard implements CanActivate {
       throw new UnauthorizedException('Token de agente inválido.');
     }
 
+    // driverConfig guarda credenciales del HIS (§9 del plan: "nube: patrón
+    // existente de credenciales cifradas"). Desde que existe esta guarda se
+    // persiste cifrado (string `iv:authTag:cipher`, ver CryptoService) — si
+    // llega como objeto es data legada de antes de este cambio.
+    const rawDriverConfig = config.driverConfig;
+    const driverConfig =
+      typeof rawDriverConfig === 'string'
+        ? this.crypto.decryptJson(rawDriverConfig)
+        : rawDriverConfig;
+
     request.mirrorConfig = {
       id: config.id,
       organizationId: config.organizationId,
       driverKey: config.driverKey,
-      driverConfig: config.driverConfig,
+      driverConfig,
     };
 
     return true;

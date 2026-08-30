@@ -1,0 +1,33 @@
+[Unit]
+Description=AgenIA Mirror Agent (driver: cnt-sanvicente-anserma)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mirroragent
+Group=mirroragent
+WorkingDirectory=/opt/agenia-mirror-agent
+
+# Config sensible: NUNCA en el .service ni en un .env versionado. Se sirve
+# como archivo protegido 0600, propiedad de mirroragent, fuera del repo.
+# Ver docs/PLAN_ESPEJO_HOSPITAL.md §9 Seguridad.
+EnvironmentFile=/etc/agenia-mirror-agent/agent.env
+
+ExecStart=/usr/bin/node /opt/agenia-mirror-agent/dist/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agenia-mirror-agent
+
+# Endurecimiento — el agente no necesita más que esto: leer su propio config,
+# hablar HTTPS saliente, y hablar T-SQL saliente hacia 192.168.1.16.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/agenia-mirror-agent/data
+
+[Install]
+WantedBy=multi-user.target

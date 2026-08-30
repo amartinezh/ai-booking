@@ -18,7 +18,7 @@ Todas las rondas se corrieron el 2026-08-23 con `sql/FASE0_DESCUBRIMIENTO_HIS.sq
 | 3 | `ESEHSVP` | 13–16, 18–19 | **Catálogo vivo confirmado = `ESEHSVP`** (los sufijos de año son archivos anuales; no hay rollover); plantilla del INSERT campo a campo; regla de convenios (EPS+régimen+PyP); turnos vivos de 27 médicos. |
 | 4 | `ESEHSVP` | 20 | Jobs del servidor: solo backups/mantenimiento, **ninguno toca citas** ✔; pista del proveedor (`cnt`); tablas candidatas del consecutivo de sesión (`CONEXION*`, `CONSECUTIVOS`); `R_MEDI_ESPE` (especialidades por médico); catálogo de sedes (`LUGAR_ATENCION`); cero turnos futuros tipo 1 ✔; `TIPOSERVICIO` completo (el valor 1 no existe) ✔. |
 | 5 | `PRUEBAS` (app, ejecutada por el hospital) | **17 (manual) ✔ RESUELTO** | El hospital creó y canceló una cita real desde su aplicación y compartió capturas + resultados SQL (transcrito en `evidencia/PRUEBA_CICLO_VIDA_CNT_2026-08-23.md`). **Cierra LA incógnita crítica:** cancelar = DELETE de `CITAS_MEDICAS` + INSERT de auditoría en `CITAS_ANULADAS` (tabla nueva, antes desconocida). Ver §2.1bis. |
-| Pendiente | `ESEHSVP` | 21 | Fuentes exactas de `CONE/ESP/CONS/CECO/LUAT` (última milla del INSERT). |
+| Pendiente | `ESEHSVP` | 21, 25 | Fuentes exactas de `CONE/ESP/CONS/CECO/LUAT` (última milla del INSERT). Esquema de `CONSULTORIOS` ya confirmado (2026-08-28, captura SSMS) — falta validar a escala la regla "consultorio = turno del día" (bloque 25). |
 
 ## 1. Entorno confirmado
 
@@ -104,7 +104,7 @@ Lo que escribe la app al crear una cita (muestra de 15 citas reales del 2026-08-
 | `NU_DIA_CIT`, `NU_NUME_MOVI_CIT`, `NU_PRIM_CIT`, `NU_CONE_CALL_CIT`, `NU_TIPO_CIT` | `0` (constantes en la práctica) |
 | `NU_NUME_CONE_CIT` | consecutivo de sesión/conexión (~1.285.8xx; se repite entre citas de la misma sesión). Fuente probable: tablas `CONEXION`/`CONEXIONES`/`CONSECUTIVOS` halladas en bloque 20b — muestras en bloque 21a. Plan B: validar en la prueba de fuego si la app acepta un valor propio del agente. |
 | `CD_CODI_ESP_CIT` | especialidad (`572`, `328`, `461`, `000`…). `R_MEDI_ESPE` confirma médico↔especialidades N:M (bloque 20c), pero en la muestra la especialidad **correlaciona con el servicio** (todas las citas de `S39141-1` → `000`, `SCITOD` → `461`) ⇒ fuente probable: `R_ESP_SER` del servicio — verificación cruzada en bloque 21b/21d. |
-| `CD_CODI_CONS_CIT` | consultorio — **copiado del turno del día** (verificado: cita del médico `91-1` → consultorio `40` = su `CD_CODI_CONS_TUME`) |
+| `CD_CODI_CONS_CIT` | consultorio — **copiado del turno del día** (verificado: cita del médico `91-1` → consultorio `40` = su `CD_CODI_CONS_TUME`). Regla a validar a escala en bloque 25 de `FASE0_DESCUBRIMIENTO_HIS.sql` — ver §2.5bis. |
 | `NU_NUME_CONV_CIT` | convenio (ver regla en §2.3) |
 | `DE_DESC_CIT` | `''` (cadena vacía, no NULL) |
 | `CD_CODI_CECO_CIT` | centro de costos (`007`, `001`, `004` — correlaciona con lugar de atención) |
@@ -208,6 +208,23 @@ Relevantes para agenda: ✅ **`ID_CITA_SER='1'` confirmado como marca de "servic
   **Refinamiento del ciclo de vida (no bloqueante):** con `NA` confirmado dentro de `CITAS_ANULADAS`, la hipótesis de que `NU_ESTA_CIT=2` fuera "inasistencia" pierde fuerza — la inasistencia real vive en `CITAS_ANULADAS`/motivo `NA`. El significado exacto del estado `2` (solo 3 casos observados para el paciente de prueba, en seis muestras de 17 años) queda como curiosidad menor sin impacto en el diseño: el agente reacciona igual ante cualquier UPDATE de `NU_ESTA_CIT` en sitio, sin necesitar saber su significado clínico exacto.
   - **Muestra fila-a-fila obtenida** (2026-08-23): confirma formato — `TX_OBSE_CIAN` en la práctica suele venir vacío o con puntos de relleno (`"...."`, `"SSSSS"` — placeholders de digitación del personal, no texto significativo); `CD_CODI_MOTI_CIAN='05'` domina la muestra reciente, consistente con la distribución histórica.
 
+### 2.5bis `dbo.CONSULTORIOS` — esquema CONFIRMADO (2026-08-28)
+
+Confirmado vía captura de SSMS Object Explorer (no solo `INFORMATION_SCHEMA`):
+
+| Columna | Tipo | Nulos | Nota |
+|---|---|---|---|
+| `CD_CODI_CONS` | varchar(8) | NO | **PK** (`PKCONSULTORIOS`, clúster). |
+| `DE_DESC_CONS` | varchar(30) | SÍ | Nombre/etiqueta (ej. "CONSULTORIO 40"). Índice no único `CONSULTORIOSDE_DESC_CONS`. |
+| `DE_UBIC_CONS` | varchar(40) | SÍ | Ubicación/sede. |
+| `NU_ACTIVO_CONS` | bit | NO | Tiene `DEFAULT` (`DF__CONSULTOR__NU_AC__5461B285`). |
+
+⚠️ **Hipótesis corregida sobre el consultorio del médico `76`:** el comprobante impreso de la prueba de fuego (§2.1bis) muestra *"51-CONSULTORIO APS-01"*. Antes documentamos "CONSULTORIO APS-01" como si fuera el código — con este esquema a la vista, es mucho más probable que `CD_CODI_CONS` real sea **`'51'`** y "CONSULTORIO APS-01" sea solo `DE_DESC_CONS` (la etiqueta que imprime el reporte). Sin confirmar todavía con el contenido real de la tabla — bloque 25c de `FASE0_DESCUBRIMIENTO_HIS.sql` lo cierra.
+
+**Mock local actualizado** (`apps/mirror-agent/local-his-mock/schema-and-seed.sql`) ya refleja este esquema confirmado y la hipótesis corregida (médico `76` → consultorio `'51'`).
+
+**Lado AgenIA:** existe ahora `ConsultingRoom` (`packages/database/prisma/schema.prisma`) — catálogo genérico, por tenant, **opcional e informativo**: relaciona `DoctorProfile.consultingRoomId` para mostrar en el dashboard a qué consultorio suele estar asignado un médico. **No es la fuente de verdad** de en qué consultorio queda una cita concreta al escribir al HIS — eso lo sigue resolviendo el driver en tiempo real leyendo `TURNOS_MEDICOS` del médico ese día (regla de arriba), no esta tabla. `ConsultingRoom.code` homologa con `CD_CODI_CONS` cuando se quiera poblar (manual o, más adelante, importado del HIS).
+
 ### 2.6 Módulo web del propio HIS
 
 Existen `HOM_SERV_WEB`, `LOGIN_WEB` y la columna `NU_CODIGO_HSWE_CIT` en la cita. ❌ **Descartado como vía (bloque 11): el módulo web está SIN USO** — `NU_CODIGO_HSWE_CIT` es NULL en las 1.080.292 citas. Sumado a que no hay triggers ni SPs de escritura (2ª ronda §2.1), la conclusión es definitiva: **la vía de integración es DML directo replicando el patrón de la aplicación**, validado contra `PRUEBAS`.
@@ -240,6 +257,8 @@ Homologación por **cédula** (`cedula` ↔ `NU_DOCU_MED`); `fullName` ↔ `NO_N
 ### 3.3 Paciente (`PatientProfile` ↔ `PACIENTES`)
 
 Homologación por tipo+número de documento (`NU_TIPD_PAC`+`NU_DOCU_PAC`); clave `MirrorMap`: `NU_HIST_PAC`. Alta desde WhatsApp requiere los NOT NULL de §2.3 (capturar nacimiento y sexo en el flujo del chatbot cuando el paciente no exista en el HIS) + homologación de `TIPO_DOCUMENTO` (catálogo pequeño, mapeo estático).
+
+> ⚠️ **Hueco detectado (2026-08-28, revisando un comprobante impreso real):** `PatientProfile.fullName` en AgenIA es **un solo campo de texto**, sin partir en nombres/apellidos. `MEDICOS` sí tiene columnas de nombre partido confirmadas (`TX_PRNOM_MED`/`TX_SGNOM_MED`/`TX_PRAPEL_MED`/`TX_SGAPEL_MED`), pero Fase 0 **nunca confirmó las columnas equivalentes de `PACIENTES`** (§2.3 solo cierra `NO_NOMB_PAC` como NOT NULL, sin mapear apellidos). Falta: (1) confirmar con una query real cuáles son esas columnas en `PACIENTES`, (2) decidir/implementar cómo partir `fullName` de AgenIA en sus componentes antes del alta de un paciente nuevo — hoy esa lógica no existe. Ver `ESTADO.md` pendiente #9.
 
 ### 3.4 Servicio (`MedicalService` ↔ `SERVICIOS`) y EPS
 
