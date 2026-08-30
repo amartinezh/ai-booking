@@ -47,6 +47,10 @@ export enum FailureReason {
   UNHANDLED_ERROR = 'UNHANDLED_ERROR',
   ORG_INACTIVE = 'ORG_INACTIVE',
   NO_TENANT = 'NO_TENANT',
+  // Webhook sin NINGÚN identificador de remitente utilizable (ni BSUID, ni
+  // teléfono, ni PSID legacy). Casi siempre significa que Meta cambió el
+  // formato del payload y todavía no lo sabemos leer.
+  SENDER_UNIDENTIFIED = 'SENDER_UNIDENTIFIED',
   // El RAG de FAQ afirmó disponibilidad de citas/cupos (dato que NO vive en la
   // base de conocimiento, sino en los Slots) → respuesta interceptada.
   FAQ_HALLUCINATION = 'FAQ_HALLUCINATION',

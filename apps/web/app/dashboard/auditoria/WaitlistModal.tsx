@@ -11,9 +11,10 @@ type WaitlistItem = {
     id: string;
     patientName: string;
     cedula: string;
-    phone: string;
+    phone: string | null;
     phoneDisplay: string;
-    whatsappLink: string;
+    /** `null` cuando el paciente ocultó su número: no hay enlace wa.me posible. */
+    whatsappLink: string | null;
     specialty: string;
     eps: string | null;
     preferredDoctor: string | null;
@@ -210,6 +211,7 @@ export default function WaitlistModal({
 
                                         {/* WHATSAPP (botón cyan → wa.me) */}
                                         <td className="px-4 py-3 align-top">
+                                            {item.whatsappLink ? (
                                             <a
                                                 href={`${item.whatsappLink}?text=${encodeURIComponent(waGreeting)}`}
                                                 target="_blank"
@@ -221,6 +223,14 @@ export default function WaitlistModal({
                                                 </svg>
                                                 WhatsApp
                                             </a>
+                                            ) : (
+                                                <span
+                                                    title="Este paciente ocultó su número en WhatsApp: no existe un enlace wa.me para él. Escríbale desde el envío manual del dashboard."
+                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 text-xs font-semibold cursor-not-allowed"
+                                                >
+                                                    🔒 Sin número
+                                                </span>
+                                            )}
                                             <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono mt-1">
                                                 {item.phoneDisplay}
                                             </p>

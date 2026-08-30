@@ -4,11 +4,13 @@ import { getMyOrgSettings } from '@/app/actions/settings';
 import { getMyKnowledgeBase } from '@/app/actions/knowledge-base';
 import { getMyAiConfig } from '@/app/actions/ai-config';
 import { getMyWhatsappConfig } from '@/app/actions/whatsapp-config';
+import { getMyWhatsappTemplates } from '@/app/actions/whatsapp-templates';
 import { getMyAudioConfig } from '@/app/actions/audio-config';
 import SettingsForm from './SettingsForm';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
 import WhatsappChannelForm from './WhatsappChannelForm';
+import WhatsappTemplatesForm from './WhatsappTemplatesForm';
 import AudioConfigForm from './AudioConfigForm';
 import ConnectionHealthPanel from './ConnectionHealthPanel';
 import Link from 'next/link';
@@ -67,12 +69,22 @@ export default async function ConfiguracionPage({
     let aiConfigError: string | null = null;
     let whatsappConfig: Awaited<ReturnType<typeof getMyWhatsappConfig>> | null = null;
     let whatsappConfigError: string | null = null;
+    let whatsappTemplates: Awaited<ReturnType<typeof getMyWhatsappTemplates>> | null = null;
+    let whatsappTemplatesError: string | null = null;
 
     if (activeTab === 'integrations') {
-        const [aiRes, waRes] = await Promise.allSettled([
+        const [aiRes, waRes, tplRes] = await Promise.allSettled([
             getMyAiConfig(),
             getMyWhatsappConfig(),
+            getMyWhatsappTemplates(),
         ]);
+        if (tplRes.status === 'fulfilled') {
+            whatsappTemplates = tplRes.value;
+        } else {
+            console.error('[configuracion] WhatsApp templates load failed:', tplRes.reason);
+            whatsappTemplatesError =
+                tplRes.reason?.message ?? 'Error desconocido cargando las plantillas.';
+        }
         if (aiRes.status === 'fulfilled') {
             aiConfig = aiRes.value;
         } else {
@@ -162,6 +174,15 @@ export default async function ConfiguracionPage({
                             <SectionLoadError
                                 title="No pudimos cargar el canal de WhatsApp"
                                 detail={whatsappConfigError}
+                            />
+                        )}
+                        <div className="border-t border-zinc-200 dark:border-zinc-800" />
+                        {whatsappTemplates ? (
+                            <WhatsappTemplatesForm initial={whatsappTemplates} />
+                        ) : (
+                            <SectionLoadError
+                                title="No pudimos cargar las plantillas de WhatsApp"
+                                detail={whatsappTemplatesError}
                             />
                         )}
                     </div>

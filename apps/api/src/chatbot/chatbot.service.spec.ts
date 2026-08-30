@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { of } from 'rxjs';
 import { ChatbotService } from './chatbot.service';
 import { ChatState, MSGS } from './chatbot.constants';
 import { PrismaService } from '../prisma/prisma.service';
@@ -37,7 +38,9 @@ function createFakeRedis() {
   return {
     store,
     get: jest.fn(async (k: string) => (store.has(k) ? store.get(k)! : null)),
-    set: jest.fn(async (k: string, v: string) => {
+    // La firma real es `set(key, value, 'EX', ttl)`: el fake acepta los args de
+    // expiración para que los tests puedan afirmar sobre el TTL.
+    set: jest.fn(async (k: string, v: string, ..._ttlArgs: unknown[]) => {
       store.set(k, String(v));
       return 'OK';
     }),
@@ -2698,6 +2701,311 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
       expect(blocked).toBe(false);
       expect(prisma.eps.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // IDENTIDAD DEL REMITENTE (BSUID) — el webhook ya no depende del teléfono
+  // ═══════════════════════════════════════════════════════════════════════
+  describe('Identidad del remitente entrante', () => {
+    const BSUID = 'CO.13491208655302741918';
+
+    it('payload SIN teléfono pero CON user_id (BSUID) → se procesa normalmente', async () => {
+      await service.processIncomingMessage({
+        user_id: BSUID,
+        type: 'text',
+        text: { body: 'Hola' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      // El turno corrió de verdad: hubo respuesta al paciente...
+      expect(sentMessages().length).toBeGreaterThan(0);
+      // ...y la sesión quedó namespaced por el BSUID, no por un teléfono.
+      expect(redis.store.has(`chat_state:${ORG_ID}:${BSUID}`)).toBe(true);
+      expect(sendSpy.mock.calls[0][0]).toBe(BSUID);
+    });
+
+    it('con teléfono Y BSUID, la sesión se indexa por el BSUID (estable)', async () => {
+      await service.processIncomingMessage({
+        from: SENDER,
+        user_id: BSUID,
+        type: 'text',
+        text: { body: 'Hola' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      expect(redis.store.has(`chat_state:${ORG_ID}:${BSUID}`)).toBe(true);
+      expect(redis.store.has(`chat_state:${ORG_ID}:${SENDER}`)).toBe(false);
+    });
+
+    // ── La falla silenciosa que este cambio corrige ─────────────────────
+    it('payload SIN ningún identificador → se audita, no se descarta en silencio', async () => {
+      await service.processIncomingMessage({
+        type: 'text',
+        text: { body: 'Hola, necesito una cita' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      expect(interactionLog.logFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: 'SENDER_UNIDENTIFIED',
+          whatsappId: 'unknown',
+          userMessage: 'Hola, necesito una cita',
+        }),
+      );
+    });
+
+    it('la auditoría del remitente desconocido se atribuye a la clínica del phone_number_id', async () => {
+      prisma.whatsappAccountConfig.findUnique.mockResolvedValue({
+        organizationId: ORG_ID,
+      });
+
+      await service.processIncomingMessage({
+        type: 'text',
+        text: { body: 'Hola' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      expect(interactionLog.logFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: ORG_ID }),
+      );
+    });
+
+    it('el remitente desconocido no dispara ninguna respuesta al paciente', async () => {
+      await service.processIncomingMessage({
+        type: 'text',
+        text: { body: 'Hola' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      // No hay a quién responder: intentarlo sería mandar un mensaje a ciegas.
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+
+    it('la metadata auditada lleva las CLAVES del payload, nunca sus valores', async () => {
+      await service.processIncomingMessage({
+        type: 'text',
+        text: { body: 'dato sensible del paciente' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      const call = interactionLog.logFailure.mock.calls[0][0];
+      expect(call.metadata.eventKeys).toEqual(
+        expect.arrayContaining(['type', 'text', 'metadata']),
+      );
+      expect(JSON.stringify(call.metadata)).not.toContain('dato sensible');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // PERSISTENCIA: cada identificador en SU columna
+  // ═══════════════════════════════════════════════════════════════════════
+  describe('ensurePatientPersisted — teléfono vs BSUID', () => {
+    const BSUID = 'CO.13491208655302741918';
+    const persist = (identity: {
+      senderId: string;
+      phone: string | null;
+      bsuid: string | null;
+    }) =>
+      (service as any).ensurePatientPersisted({
+        cedula: '1088123456',
+        nombre: 'Paciente Test',
+        identity,
+        organizationId: ORG_ID,
+      });
+
+    it('paciente nuevo con solo teléfono → whatsappId, bsuid en null', async () => {
+      await persist({ senderId: SENDER, phone: SENDER, bsuid: null });
+
+      expect(prisma.patientProfile.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ whatsappId: SENDER, bsuid: null }),
+        }),
+      );
+    });
+
+    it('paciente nuevo con solo BSUID → bsuid, whatsappId en null (no se inventa teléfono)', async () => {
+      await persist({ senderId: BSUID, phone: null, bsuid: BSUID });
+
+      expect(prisma.patientProfile.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ whatsappId: null, bsuid: BSUID }),
+        }),
+      );
+    });
+
+    it('con ambos → cada identificador va a su columna', async () => {
+      await persist({ senderId: BSUID, phone: SENDER, bsuid: BSUID });
+
+      expect(prisma.patientProfile.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ whatsappId: SENDER, bsuid: BSUID }),
+        }),
+      );
+    });
+
+    it('PSID legacy de Messenger → se conserva el comportamiento previo', async () => {
+      await persist({ senderId: 'PSID-123', phone: null, bsuid: null });
+
+      expect(prisma.patientProfile.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ whatsappId: 'PSID-123' }),
+        }),
+      );
+    });
+
+    it('paciente existente sin BSUID → se le adopta el que llegó', async () => {
+      prisma.patientProfile.findFirst.mockResolvedValue({
+        id: 'pat-1',
+        whatsappId: SENDER,
+        bsuid: null,
+      });
+
+      await persist({ senderId: BSUID, phone: SENDER, bsuid: BSUID });
+
+      expect(prisma.patientProfile.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { bsuid: BSUID } }),
+      );
+    });
+
+    it('BSUID desactualizado → se refresca (si no, el paciente queda inalcanzable)', async () => {
+      prisma.patientProfile.findFirst.mockResolvedValue({
+        id: 'pat-1',
+        whatsappId: SENDER,
+        bsuid: 'CO.VIEJO000000000000',
+      });
+
+      await persist({ senderId: BSUID, phone: SENDER, bsuid: BSUID });
+
+      expect(prisma.patientProfile.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { bsuid: BSUID } }),
+      );
+    });
+
+    it('el teléfono ya guardado NO se pisa', async () => {
+      prisma.patientProfile.findFirst.mockResolvedValue({
+        id: 'pat-1',
+        whatsappId: '573009998877',
+        bsuid: BSUID,
+      });
+
+      await persist({ senderId: BSUID, phone: SENDER, bsuid: BSUID });
+
+      expect(prisma.patientProfile.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ENVÍO: el destinatario va en `to` (teléfono) o en `recipient` (BSUID)
+  // ═══════════════════════════════════════════════════════════════════════
+  describe('sendWhatsAppMessage — campo del destinatario', () => {
+    const BSUID = 'CO.13491208655302741918';
+    let postMock: jest.Mock;
+
+    beforeEach(() => {
+      // Aquí SÍ queremos el método real: lo que se prueba es el payload.
+      sendSpy.mockRestore();
+      postMock = jest.fn(() => of({ data: { messages: [{ id: 'wamid.1' }] } }));
+      (service as any).httpService = { post: postMock };
+      (service as any).whatsappCredentials = {
+        forOrg: jest.fn(async () => ({
+          organizationId: ORG_ID,
+          phoneNumberId: PHONE_ID,
+          accessToken: 'token-de-prueba',
+          isActive: true,
+        })),
+      };
+    });
+
+    const enviarA = async (recipientId: string) => {
+      // El tenant del destinatario se resuelve por este caché.
+      redis.store.set(`origin_org:${recipientId}`, ORG_ID);
+      await (service as any).sendWhatsAppMessage(recipientId, 'Hola');
+      return postMock.mock.calls[0];
+    };
+
+    it('teléfono → `to`, sin `recipient`', async () => {
+      const [, body] = await enviarA(SENDER);
+      expect(body).toMatchObject({ to: SENDER, messaging_product: 'whatsapp' });
+      expect(body).not.toHaveProperty('recipient');
+    });
+
+    it('BSUID → `recipient`, sin `to`', async () => {
+      const [, body] = await enviarA(BSUID);
+      expect(body).toMatchObject({ recipient: BSUID });
+      expect(body).not.toHaveProperty('to');
+    });
+
+    it('la URL usa la versión centralizada de la Graph API, no v19.0', async () => {
+      const [url] = await enviarA(SENDER);
+      expect(url).toContain(`/${PHONE_ID}/messages`);
+      expect(url).not.toContain('v19.0');
+      expect(url).toMatch(/^https:\/\/graph\.facebook\.com\/v\d+\.\d+\//);
+    });
+
+    it('el audio usa el mismo criterio de destinatario', async () => {
+      const creds = {
+        organizationId: ORG_ID,
+        phoneNumberId: PHONE_ID,
+        accessToken: 'token-de-prueba',
+        isActive: true,
+      };
+      await (service as any).sendWhatsAppAudioMessage(BSUID, 'media-1', creds);
+      const [, body] = postMock.mock.calls[0];
+      expect(body).toMatchObject({ recipient: BSUID, type: 'audio' });
+      expect(body).not.toHaveProperty('to');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // VENTANA DE ATENCIÓN DE 24 H (decide plantilla vs texto libre)
+  // ═══════════════════════════════════════════════════════════════════════
+  describe('Ventana de atención de 24 h', () => {
+    it('un mensaje entrante abre la ventana del paciente en esa clínica', async () => {
+      await service.processIncomingMessage(makeTextEvent('Hola'));
+
+      expect(redis.store.has(`wa_window:${ORG_ID}:${SENDER}`)).toBe(true);
+      await expect(service.isWithinServiceWindow(ORG_ID, SENDER)).resolves.toBe(
+        true,
+      );
+    });
+
+    it('la ventana se marca con TTL de 24 h', async () => {
+      await service.processIncomingMessage(makeTextEvent('Hola'));
+
+      const llamada = redis.set.mock.calls.find(
+        (c: any[]) => c[0] === `wa_window:${ORG_ID}:${SENDER}`,
+      );
+      expect(llamada?.[2]).toBe('EX');
+      expect(llamada?.[3]).toBe(24 * 60 * 60);
+    });
+
+    it('la ventana es POR CLÍNICA: escribirle a la A no autoriza a la B', async () => {
+      await service.processIncomingMessage(makeTextEvent('Hola'));
+
+      await expect(
+        service.isWithinServiceWindow('otra-org', SENDER),
+      ).resolves.toBe(false);
+    });
+
+    it('sin marca previa → fuera de la ventana', async () => {
+      await expect(
+        service.isWithinServiceWindow(ORG_ID, '573009998877'),
+      ).resolves.toBe(false);
+    });
+
+    it('si Redis falla se asume FUERA de ventana (se cae a plantilla, que siempre es válida)', async () => {
+      redis.get.mockRejectedValueOnce(new Error('redis caído'));
+
+      await expect(service.isWithinServiceWindow(ORG_ID, SENDER)).resolves.toBe(
+        false,
+      );
+    });
+
+    it('responder al paciente NO reabre la ventana (sólo la abre él)', async () => {
+      await service.sendOutboundForOrg(ORG_ID, '573009998877', 'Hola');
+
+      expect(redis.store.has(`wa_window:${ORG_ID}:573009998877`)).toBe(false);
     });
   });
 });

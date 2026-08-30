@@ -17,6 +17,7 @@ import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import * as crypto from 'crypto';
 import { ChatbotService } from './chatbot.service';
+import { resolveSenderIdentity } from './sender-identity';
 import { InboundQueueService } from './inbound-queue.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { RolesGuard } from '../common/roles.guard';
@@ -102,10 +103,14 @@ export class ChatbotController {
                 // 💡 Inyectamos la metadata (phone_number_id) al evento para que
                 // processIncomingMessage pueda enrutar al tenant correcto.
                 messageEvent.metadata = value.metadata;
+                // La clave de serialización sale del resolver, no de `from`:
+                // con un remitente que oculta su número `from` no viene y la
+                // cola caía al wamid — único por mensaje, así que los mensajes
+                // de ese paciente dejaban de encadenarse en orden.
                 await this.dispatch(
                   messageEvent,
                   messageEvent.id,
-                  messageEvent.from,
+                  resolveSenderIdentity(messageEvent)?.senderId,
                 );
               }
             } else if (value?.statuses && value.statuses.length > 0) {
@@ -121,7 +126,7 @@ export class ChatbotController {
             await this.dispatch(
               webhookEvent,
               webhookEvent.message?.mid,
-              webhookEvent.sender?.id,
+              resolveSenderIdentity(webhookEvent)?.senderId,
             );
           }
         }

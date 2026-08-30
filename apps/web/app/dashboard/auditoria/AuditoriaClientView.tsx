@@ -4,6 +4,12 @@
 import { useState, useMemo, useEffect } from 'react';
 import WaitlistModal from './WaitlistModal';
 import { formatAppointmentCompact, formatAppointmentShort } from '@/lib/date';
+import {
+    formatWhatsappIdentifier,
+    whatsappIdentifierLabel,
+    whatsappDeepLink,
+    NO_DEEP_LINK_REASON,
+} from '@/lib/whatsapp';
 
 type InteractionLog = {
     id: string;
@@ -639,10 +645,10 @@ export default function AuditoriaClientView({
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                                             <div>
                                                 <p className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide font-medium mb-0.5">
-                                                    📞 Teléfono
+                                                    {whatsappIdentifierLabel(log.whatsappId)}
                                                 </p>
                                                 <p className="font-mono font-semibold text-zinc-900 dark:text-white">
-                                                    +{log.whatsappId}
+                                                    {formatWhatsappIdentifier(log.whatsappId)}
                                                 </p>
                                             </div>
 
@@ -675,18 +681,34 @@ export default function AuditoriaClientView({
 
                                     {/* Acciones */}
                                     <div className="flex md:flex-col gap-2 md:w-48 shrink-0">
-                                        <a
-                                            href={`https://wa.me/${log.whatsappId.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+                                        {(() => {
+                                            // Sin teléfono no hay enlace wa.me posible: antes se
+                                            // fabricaba uno filtrando dígitos del identificador, lo
+                                            // que apuntaba a un número de un tercero.
+                                            const href = whatsappDeepLink(
+                                                log.whatsappId,
                                                 log.status === 'EMERGENCY_ESCALATED'
                                                     ? `Hola, le escribimos de ${organizationName}. Recibimos su mensaje y queremos hacer seguimiento a su estado de salud. ¿Cómo se encuentra? ¿Ya recibió atención?`
                                                     : `Hola, le escribimos de ${organizationName}. Vimos que intentó agendar una cita y queremos ayudarle a completarla. ¿Le puedo asistir?`
-                                            )}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-all"
-                                        >
-                                            <span>💬</span> WhatsApp
-                                        </a>
+                                            );
+                                            return href ? (
+                                                <a
+                                                    href={href}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-all"
+                                                >
+                                                    <span>💬</span> WhatsApp
+                                                </a>
+                                            ) : (
+                                                <span
+                                                    title={NO_DEEP_LINK_REASON}
+                                                    className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-lg bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 cursor-not-allowed"
+                                                >
+                                                    <span>🔒</span> Sin número
+                                                </span>
+                                            );
+                                        })()}
 
                                         <button
                                             onClick={() => setSelectedLog(log)}
@@ -750,9 +772,11 @@ export default function AuditoriaClientView({
                                 </div>
                                 <div>
                                     <p className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide font-medium mb-1">
-                                        Teléfono
+                                        {whatsappIdentifierLabel(selectedLog.whatsappId)}
                                     </p>
-                                    <p className="font-mono text-zinc-900 dark:text-white">+{selectedLog.whatsappId}</p>
+                                    <p className="font-mono text-zinc-900 dark:text-white">
+                                        {formatWhatsappIdentifier(selectedLog.whatsappId)}
+                                    </p>
                                 </div>
                                 <div>
                                     <p className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide font-medium mb-1">
@@ -820,16 +844,29 @@ export default function AuditoriaClientView({
                         </div>
 
                         <div className="sticky bottom-0 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 p-4 flex gap-2">
-                            <a
-                                href={`https://wa.me/${selectedLog.whatsappId.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+                            {(() => {
+                                const href = whatsappDeepLink(
+                                    selectedLog.whatsappId,
                                     `Hola, le escribimos de ${organizationName}. Vimos que intentó agendar una cita y queremos ayudarle a completarla.`
-                                )}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-all"
-                            >
-                                <span>💬</span> Abrir WhatsApp
-                            </a>
+                                );
+                                return href ? (
+                                    <a
+                                        href={href}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-all"
+                                    >
+                                        <span>💬</span> Abrir WhatsApp
+                                    </a>
+                                ) : (
+                                    <span
+                                        title={NO_DEEP_LINK_REASON}
+                                        className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 font-semibold rounded-lg bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 cursor-not-allowed"
+                                    >
+                                        <span>🔒</span> Sin número para enlace directo
+                                    </span>
+                                );
+                            })()}
                             <button
                                 onClick={() => setSelectedLog(null)}
                                 className="px-4 py-2.5 font-medium rounded-lg border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 transition-all"

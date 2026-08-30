@@ -8,11 +8,23 @@ export class Hl7FhirService {
   /**
    * Genera la Historia Clínica Electrónica Interoperable (HCEI)
    * transformando el formato Prisma local a HL7 FHIR V4 Bundle.
+   *
+   * @param organizationId Tenant del actor que pide el bundle. Acota la
+   *   búsqueda del paciente como DEFENSA EN PROFUNDIDAD: `TenantRbacGuard` ya
+   *   validó la pertenencia, pero el servicio no debe depender de que quien lo
+   *   llame lo haya hecho. `null` = ámbito de plataforma (SUPER_ADMIN), el
+   *   único caso legítimo sin filtro por organización.
    */
-  async getPatientSummaryBundle(patientId: string): Promise<any> {
+  async getPatientSummaryBundle(
+    patientId: string,
+    organizationId: string | null,
+  ): Promise<any> {
     // Usamos el cliente extendido para que los campos clínicos viajen descifrados
-    const patientConfig = await this.prisma.extended.patientProfile.findUnique({
-      where: { id: patientId },
+    const patientConfig = await this.prisma.extended.patientProfile.findFirst({
+      where: {
+        id: patientId,
+        ...(organizationId ? { organizationId } : {}),
+      },
       include: {
         eps: true,
         clinicalRecords: {

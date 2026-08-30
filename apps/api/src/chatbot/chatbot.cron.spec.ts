@@ -13,7 +13,11 @@ function build(opts: {
   state: string;
   ttl: number; // segundos restantes (idle = SESSION_TTL - ttl)
   envMinutes?: string;
+  /** Identificador del paciente en la clave de sesión. Default: teléfono. */
+  sender?: string;
 }) {
+  const sender = opts.sender ?? PHONE;
+  const key = `chat_state:${ORG}:${sender}`;
   if (opts.envMinutes === undefined) {
     delete process.env.CHATBOT_INACTIVITY_TIMEOUT_MINUTES;
   } else {
@@ -22,7 +26,7 @@ function build(opts: {
 
   const redis = {
     keys: jest.fn(async (pattern: string) =>
-      pattern.startsWith('chat_state:') ? [KEY] : [],
+      pattern.startsWith('chat_state:') ? [key] : [],
     ),
     get: jest.fn(async () => opts.state),
     ttl: jest.fn(async () => opts.ttl),
@@ -120,5 +124,47 @@ describe('ChatbotCron — cierre por inactividad', () => {
     const patrones = redis.keys.mock.calls.map((c: string[]) => c[0]);
     expect(patrones).toContain(`temp_slot_*:${ORG}:${PHONE}`);
     expect(patrones).not.toContain(`temp_slot_*:${PHONE}`);
+  });
+
+  // ── Destinatario: teléfono vs BSUID ──────────────────────────────────
+  it('sesión de un teléfono → el aviso de cierre va en `to`', async () => {
+    const { cron, httpService } = build({
+      state: ChatState.AWAITING_SPECIALTY,
+      ttl: SESSION_TTL - 400,
+    });
+
+    await cron.handleAbandonedSessions();
+
+    const [, body] = httpService.post.mock.calls[0] as any[];
+    expect(body).toMatchObject({ to: PHONE });
+    expect(body).not.toHaveProperty('recipient');
+  });
+
+  it('sesión de un BSUID → el aviso de cierre va en `recipient`', async () => {
+    const BSUID = 'CO.13491208655302741918';
+    const { cron, httpService } = build({
+      state: ChatState.AWAITING_SPECIALTY,
+      ttl: SESSION_TTL - 400,
+      sender: BSUID,
+    });
+
+    await cron.handleAbandonedSessions();
+
+    const [, body] = httpService.post.mock.calls[0] as any[];
+    expect(body).toMatchObject({ recipient: BSUID });
+    expect(body).not.toHaveProperty('to');
+  });
+
+  it('la URL del cron ya no lleva v19.0 incrustada', async () => {
+    const { cron, httpService } = build({
+      state: ChatState.AWAITING_SPECIALTY,
+      ttl: SESSION_TTL - 400,
+    });
+
+    await cron.handleAbandonedSessions();
+
+    const [url] = httpService.post.mock.calls[0] as any[];
+    expect(url).not.toContain('v19.0');
+    expect(url).toMatch(/^https:\/\/graph\.facebook\.com\/v\d+\.\d+\//);
   });
 });

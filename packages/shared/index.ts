@@ -28,6 +28,11 @@ export type {
   PadronCsvReport,
 } from './src/padron-csv';
 export { PARTICULAR_EPS_NAME, isParticularEps } from './src/eps';
+export {
+  isWhatsappPhoneId,
+  whatsappRecipientField,
+  buildWhatsappRecipient,
+} from './src/whatsapp-recipient';
 export type {
   CanonicalEntityType,
   CanonicalOp,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '../../../../lib/session';
 import { prisma } from '../../../../lib/prisma';
+import { isWhatsappPhoneId } from '@agenia/shared';
 
 // ════════════════════════════════════════════════════════════════
 // GET /dashboard/auditoria/waiting-list
@@ -97,8 +98,11 @@ export async function GET(req: NextRequest) {
 
         // ── 5. "LUJO DE DETALLE": joins + cálculos del backend ───
         const items = entries.map((e) => {
-            const phoneRaw = e.patient.whatsappId || e.whatsappId;
-            const phoneDigits = (phoneRaw || '').replace(/[^0-9]/g, '');
+            // El identificador puede ser un teléfono o un BSUID (paciente que
+            // ocultó su número). Filtrar dígitos de un BSUID producía un
+            // teléfono INVENTADO y un enlace wa.me hacia un desconocido.
+            const identifier = (e.patient.whatsappId || e.whatsappId || '').trim();
+            const isPhone = isWhatsappPhoneId(identifier);
             const waitMs = now - new Date(e.createdAt).getTime();
             const metadata = (e.metadata as { doctorName?: string } | null) || null;
 
@@ -106,9 +110,10 @@ export async function GET(req: NextRequest) {
                 id: e.id,
                 patientName: e.patient.fullName,
                 cedula: e.patient.cedula,
-                phone: phoneDigits,
-                phoneDisplay: formatPhone(phoneDigits),
-                whatsappLink: `https://wa.me/${phoneDigits}`,
+                phone: isPhone ? identifier : null,
+                phoneDisplay: isPhone ? formatPhone(identifier) : identifier,
+                // `null` = sin enlace directo posible; la UI lo muestra deshabilitado.
+                whatsappLink: isPhone ? `https://wa.me/${identifier}` : null,
                 specialty: e.service?.name ?? '—',
                 eps: e.eps?.name ?? null,
                 // Médico preferido: campo real (relación) con fallback a metadata

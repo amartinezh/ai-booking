@@ -11,6 +11,7 @@ import { ChatbotService } from '../chatbot/chatbot.service';
 import { OrganizationSettingsService } from '../chatbot/organization-settings.service';
 import { InteractionLogService } from '../interaction-log/interaction-log.service';
 import { SystemLogService } from '../system-log/system-log.service';
+import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
 import { addBusinessHours, formatForPatient } from '../common/business-hours';
 import {
   readReminderConfig,
@@ -52,6 +53,7 @@ export class AppointmentReminderCronService
     private readonly organizationSettings: OrganizationSettingsService,
     private readonly interactionLog: InteractionLogService,
     private readonly systemLog: SystemLogService,
+    private readonly templates: WhatsappTemplateService,
     private readonly scheduler: SchedulerRegistry,
   ) {
     // Validación temprana — si el .env está mal, el módulo no arranca.
@@ -207,6 +209,7 @@ export class AppointmentReminderCronService
             cedula: true,
             fullName: true,
             whatsappId: true,
+            bsuid: true,
           },
         },
         scheduleSlot: {
@@ -241,10 +244,12 @@ export class AppointmentReminderCronService
       this.logger.warn(`Cita ${apt.id} sin organizationId — omitida.`);
       return 'skipped';
     }
-    const phone = apt.patient?.whatsappId;
+    // El BSUID manda sobre el teléfono: es el identificador estable, y el
+    // teléfono puede haber caducado de la caché de 30 días de Meta.
+    const phone = apt.patient?.bsuid || apt.patient?.whatsappId;
     if (!phone) {
       this.logger.warn(
-        `Cita ${apt.id} sin whatsappId del paciente (${apt.patient?.cedula ?? 'sin cédula'}) — omitida.`,
+        `Cita ${apt.id} sin identificador de WhatsApp del paciente (${apt.patient?.cedula ?? 'sin cédula'}) — omitida.`,
       );
       return 'skipped';
     }
@@ -252,11 +257,47 @@ export class AppointmentReminderCronService
     const slotDate = apt.scheduleSlot.startTime;
     const message = await this.buildMessage(apt);
 
-    const result = await this.chatbot.sendOutboundForOrg(
+    // ⏱️ VENTANA DE ATENCIÓN. Un recordatorio sale el día ANTES de la cita, así
+    // que casi siempre cae FUERA de las 24 h desde el último mensaje del
+    // paciente. Ahí Meta rechaza el texto libre y exige plantilla aprobada:
+    // hasta ahora se mandaba texto libre siempre y esos envíos fallaban.
+    const withinWindow = await this.chatbot.isWithinServiceWindow(
       apt.organizationId,
       phone,
-      message,
     );
+
+    const result = withinWindow
+      ? await this.chatbot.sendOutboundForOrg(
+          apt.organizationId,
+          phone,
+          message,
+        )
+      : await this.sendReminderTemplate(apt, phone);
+
+    if (result.error === 'template-not-configured') {
+      // No es un fallo de red que reintentar: falta que la clínica apruebe y
+      // registre su plantilla. Se deja huella para que lo vea en su auditoría.
+      this.logger.warn(
+        `Cita ${apt.id} (org ${apt.organizationId}): fuera de la ventana de 24 h y ` +
+          `sin plantilla APPOINTMENT_REMINDER configurada. Recordatorio NO enviado — ` +
+          `registre la plantilla aprobada por Meta para esta clínica.`,
+      );
+      await this.interactionLog.logReminderSent({
+        whatsappId: phone,
+        organizationId: apt.organizationId,
+        appointmentId: apt.id,
+        patientCedula: apt.patient?.cedula ?? null,
+        doctorName: apt.scheduleSlot.doctor?.fullName ?? null,
+        serviceName: apt.scheduleSlot.service?.name ?? null,
+        slotDate,
+        businessHoursBefore: this.cfg.businessHoursBefore,
+        success: false,
+        error:
+          'Sin plantilla APPOINTMENT_REMINDER configurada para la clínica.',
+        botReply: message,
+      });
+      return 'skipped';
+    }
 
     if (result.success) {
       // Idempotencia: marca la cita ANTES de loggear para evitar reenvíos
@@ -312,6 +353,35 @@ export class AppointmentReminderCronService
    * existente OrganizationSettingsService para mantener una única fuente
    * de verdad sobre el tono.
    */
+  /**
+   * Envía el recordatorio como PLANTILLA aprobada (vía fuera de la ventana).
+   *
+   * CONTRATO DE VARIABLES — la plantilla que la clínica apruebe en Meta debe
+   * declarar sus marcadores del cuerpo en este orden exacto:
+   *
+   *   {{1}} nombre del paciente   {{2}} servicio
+   *   {{3}} médico                {{4}} fecha y hora
+   *
+   * Si la aprobación usa otro orden u otra cantidad, Meta rechaza el envío y
+   * el error viaja tal cual hasta la auditoría.
+   */
+  private async sendReminderTemplate(
+    apt: Awaited<ReturnType<typeof this.findEligibleAppointments>>[number],
+    recipientId: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.templates.sendTemplate({
+      organizationId: apt.organizationId!,
+      recipientId,
+      kind: 'APPOINTMENT_REMINDER',
+      bodyParams: [
+        apt.patient?.fullName?.split(' ')[0] ?? 'Paciente',
+        apt.scheduleSlot.service?.name ?? 'su consulta',
+        apt.scheduleSlot.doctor?.fullName ?? 'su médico',
+        formatForPatient(apt.scheduleSlot.startTime),
+      ],
+    });
+  }
+
   private async buildMessage(
     apt: Awaited<ReturnType<typeof this.findEligibleAppointments>>[number],
   ): Promise<string> {
@@ -374,7 +444,12 @@ export class AppointmentReminderCronService
       where: { id: appointmentId, organizationId },
       include: {
         patient: {
-          select: { cedula: true, fullName: true, whatsappId: true },
+          select: {
+            cedula: true,
+            fullName: true,
+            whatsappId: true,
+            bsuid: true,
+          },
         },
         scheduleSlot: {
           include: {

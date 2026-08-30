@@ -7,6 +7,7 @@ import { RedisService } from '../redis/redis.service';
 import {
   ChatState,
   SESSION_TTL,
+  SERVICE_WINDOW_TTL,
   WAITLIST_CONFIRM_TTL,
   MSGS,
   buildMessages,
@@ -43,23 +44,15 @@ import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-con
 import { SurveyService } from '../survey/survey.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
 import { ResolutionStatus } from '@agenia/database';
+import { buildWhatsappRecipient } from '@agenia/shared';
+import { metaGraphUrl } from '../whatsapp-config/meta-graph';
+import { resolveSenderIdentity, UNIDENTIFIED_SENDER } from './sender-identity';
+import type { SenderIdentity, WhatsappInboundEvent } from './sender-identity';
 
-/**
- * Evento entrante del webhook de Meta, ya desempacado por ChatbotController.
- * El controller extrae `value.messages[0]` (formato WhatsApp Cloud API) o
- * `entry.messaging[0]` (formato Messenger legacy) e inyecta `metadata`.
- * Todos los campos son opcionales: el payload real varía según el tipo de
- * mensaje (texto, audio, status, etc.).
- */
-export interface WhatsappInboundEvent {
-  from?: string;
-  type?: string;
-  sender?: { id?: string };
-  text?: { body?: string };
-  message?: { text?: string };
-  audio?: { id?: string };
-  metadata?: { phone_number_id?: string };
-}
+// La forma del evento entrante y la resolución de "quién escribió" viven en
+// sender-identity.ts (ver allí el porqué del orden BSUID → teléfono → PSID).
+// Se re-exporta el tipo para no romper importaciones existentes.
+export type { WhatsappInboundEvent } from './sender-identity';
 
 /**
  * Contexto de un turno de conversación, construido en el preámbulo de
@@ -71,6 +64,13 @@ export interface WhatsappInboundEvent {
 interface ChatTurnContext {
   organizationId: string;
   senderId: string;
+  /**
+   * Identidad completa del remitente. `senderId` es su clave canónica (ya
+   * presente arriba); esto conserva además el BSUID y el teléfono por separado,
+   * que es lo que `ensurePatientPersisted` necesita para guardar cada uno en su
+   * propia columna.
+   */
+  identity: SenderIdentity;
   text: string | undefined;
   currentState: ChatState;
   aiData: SchedulingExtraction;
@@ -459,6 +459,67 @@ export class ChatbotService implements OnModuleInit {
     return this.whatsappCredentials.forOrg(orgId);
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // VENTANA DE ATENCIÓN DE 24 H (Meta)
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Dentro de la ventana se puede responder con texto libre; fuera de ella
+  // Meta rechaza el envío y hay que usar una plantilla aprobada. La clave
+  // lleva el tenant delante porque la ventana es POR LÍNEA de clínica: que un
+  // paciente escriba a la clínica A no autoriza a la B a escribirle.
+  private serviceWindowKey(organizationId: string, senderId: string): string {
+    return `wa_window:${organizationId}:${senderId}`;
+  }
+
+  /** Marca que el paciente acaba de escribir: abre/renueva su ventana de 24 h. */
+  private async markServiceWindow(
+    organizationId: string,
+    senderId: string,
+  ): Promise<void> {
+    try {
+      await this.redis.set(
+        this.serviceWindowKey(organizationId, senderId),
+        String(Date.now()),
+        'EX',
+        SERVICE_WINDOW_TTL,
+      );
+    } catch (error) {
+      // La ventana es una optimización de envío, no parte del flujo del
+      // paciente: si Redis falla, no se rompe la conversación.
+      this.logger.warn(
+        `No se pudo marcar la ventana de atención de ${senderId}: ${
+          (error as Error).message
+        }`,
+      );
+    }
+  }
+
+  /**
+   * ¿Se le puede escribir texto libre a este paciente ahora mismo?
+   *
+   * Ante un fallo de Redis devuelve `false` (fuera de ventana) a propósito:
+   * el llamador cae a plantilla, que es válida DENTRO y FUERA de la ventana.
+   * Equivocarse hacia el otro lado sería un envío rechazado por Meta.
+   */
+  async isWithinServiceWindow(
+    organizationId: string,
+    senderId: string,
+  ): Promise<boolean> {
+    try {
+      const marker = await this.redis.get(
+        this.serviceWindowKey(organizationId, senderId),
+      );
+      return marker !== null && marker !== undefined;
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo leer la ventana de atención de ${senderId} (se asume fuera): ${
+          (error as Error).message
+        }`,
+      );
+      return false;
+    }
+  }
+
   private async resolveCredentialsForOrg(
     organizationId: string,
   ): Promise<ResolvedWhatsappCredentials | null> {
@@ -470,22 +531,25 @@ export class ChatbotService implements OnModuleInit {
   // 🛡️ A prueba de errores: nunca crashea el proceso.
   // 📝 Captura el último mensaje enviado para auditoría.
   // ══════════════════════════════════════════════════════════════
-  private async sendWhatsAppMessage(toPhone: string, text: string) {
-    const creds = await this.resolveCredentialsForRecipient(toPhone);
+  // `recipientId` es el identificador del paciente: su teléfono o su BSUID.
+  // `buildWhatsappRecipient` decide si va en `to` o en `recipient` — mandar un
+  // BSUID en `to` es un envío fallido garantizado.
+  private async sendWhatsAppMessage(recipientId: string, text: string) {
+    const creds = await this.resolveCredentialsForRecipient(recipientId);
     if (!creds) {
       this.logger.error(
-        `CRÍTICO: no hay credenciales WhatsApp para ${toPhone}. El destinatario no está asociado a ninguna org configurada. Mensaje NO enviado.`,
+        `CRÍTICO: no hay credenciales WhatsApp para ${recipientId}. El destinatario no está asociado a ninguna org configurada. Mensaje NO enviado.`,
       );
       return null;
     }
     if (!creds.isActive) {
       this.logger.error(
-        `CRÍTICO: integración WhatsApp inactiva para org ${creds.organizationId}. Mensaje NO enviado a ${toPhone}.`,
+        `CRÍTICO: integración WhatsApp inactiva para org ${creds.organizationId}. Mensaje NO enviado a ${recipientId}.`,
       );
       return null;
     }
 
-    const url = `https://graph.facebook.com/v19.0/${creds.phoneNumberId}/messages`;
+    const url = metaGraphUrl(`${creds.phoneNumberId}/messages`);
     try {
       const response = await lastValueFrom(
         this.httpService.post(
@@ -493,7 +557,7 @@ export class ChatbotService implements OnModuleInit {
           {
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
-            to: toPhone,
+            ...buildWhatsappRecipient(recipientId),
             type: 'text',
             text: { preview_url: false, body: text },
           },
@@ -507,14 +571,16 @@ export class ChatbotService implements OnModuleInit {
       );
 
       // Guardar el último mensaje enviado para audit logging
-      await this.setLastSent(toPhone, text);
+      await this.setLastSent(recipientId, text);
 
       return response.data;
     } catch (error) {
       const errorBody = error.response?.data || error.message || error;
       const errorString =
         typeof errorBody === 'object' ? JSON.stringify(errorBody) : errorBody;
-      this.logger.error(`Error enviando mensaje a ${toPhone}: ${errorString}`);
+      this.logger.error(
+        `Error enviando mensaje a ${recipientId}: ${errorString}`,
+      );
 
       if (error.response?.data?.error?.code === 190) {
         this.logger.error(
@@ -624,7 +690,7 @@ export class ChatbotService implements OnModuleInit {
   ): Promise<Buffer | null> {
     try {
       const token = creds.accessToken;
-      const urlReq = `https://graph.facebook.com/v19.0/${mediaId}`;
+      const urlReq = metaGraphUrl(mediaId);
       const urlResponse = await lastValueFrom(
         this.httpService.get(urlReq, {
           headers: { Authorization: `Bearer ${token}` },
@@ -1408,7 +1474,7 @@ export class ChatbotService implements OnModuleInit {
       });
       formData.append('file', blob, 'audio.ogg');
       const response = await fetch(
-        `https://graph.facebook.com/v19.0/${creds.phoneNumberId}/media`,
+        metaGraphUrl(`${creds.phoneNumberId}/media`),
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${creds.accessToken}` },
@@ -1428,18 +1494,18 @@ export class ChatbotService implements OnModuleInit {
   }
 
   private async sendWhatsAppAudioMessage(
-    toPhone: string,
+    recipientId: string,
     mediaId: string,
     creds: ResolvedWhatsappCredentials,
   ) {
     try {
       await lastValueFrom(
         this.httpService.post(
-          `https://graph.facebook.com/v19.0/${creds.phoneNumberId}/messages`,
+          metaGraphUrl(`${creds.phoneNumberId}/messages`),
           {
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
-            to: toPhone,
+            ...buildWhatsappRecipient(recipientId),
             type: 'audio',
             audio: { id: mediaId },
           },
@@ -1453,7 +1519,7 @@ export class ChatbotService implements OnModuleInit {
       );
     } catch (error) {
       this.logger.error(
-        `Error enviando audio a ${toPhone}: ${error.response?.data || error.message}`,
+        `Error enviando audio a ${recipientId}: ${error.response?.data || error.message}`,
       );
     }
   }
@@ -1655,11 +1721,19 @@ export class ChatbotService implements OnModuleInit {
   private async ensurePatientPersisted(params: {
     cedula: string;
     nombre: string;
-    senderId: string;
+    identity: SenderIdentity;
     organizationId: string;
     epsId?: string | null;
   }): Promise<any> {
-    const { cedula, nombre, senderId, organizationId, epsId } = params;
+    const { cedula, nombre, identity, organizationId, epsId } = params;
+
+    // Cada identificador va a SU columna: `whatsappId` es el teléfono y `bsuid`
+    // el Business-scoped user ID. Compat hacia atrás: mientras Meta no mande
+    // BSUID, `senderId` ES el teléfono (o el PSID legacy de Messenger) y se
+    // sigue guardando en `whatsappId` exactamente como antes.
+    const phoneToPersist =
+      identity.phone ?? (identity.bsuid ? null : identity.senderId);
+    const { bsuid } = identity;
 
     // Cédula única POR CLÍNICA: buscamos solo dentro del tenant actual para
     // no adoptar (ni filtrar datos de) un paciente de otra organización.
@@ -1668,8 +1742,16 @@ export class ChatbotService implements OnModuleInit {
     });
 
     if (patient) {
-      const updates: any = {};
-      if (!patient.whatsappId) updates.whatsappId = senderId;
+      // Tipado explícito (antes `any`): con `any` en `data`, el resultado del
+      // update contagiaba `any` a `patient` y todo acceso posterior quedaba sin
+      // verificar por el compilador.
+      const updates: { whatsappId?: string; bsuid?: string; epsId?: string } =
+        {};
+      if (phoneToPersist && !patient.whatsappId)
+        updates.whatsappId = phoneToPersist;
+      // El BSUID sí se refresca aunque ya haya uno: es el identificador con el
+      // que le responderemos, así que un valor viejo lo dejaría inalcanzable.
+      if (bsuid && patient.bsuid !== bsuid) updates.bsuid = bsuid;
       if (epsId && !patient.epsId) updates.epsId = epsId;
       if (Object.keys(updates).length > 0) {
         try {
@@ -1701,14 +1783,15 @@ export class ChatbotService implements OnModuleInit {
         data: {
           cedula,
           fullName: nombre,
-          whatsappId: senderId,
+          whatsappId: phoneToPersist,
+          bsuid,
           userId: tempUser.id,
           epsId: epsId || null,
           organizationId,
         },
       });
       this.logger.log(
-        `✅ Paciente persistido: ${nombre} (cédula ${cedula}, WA ${senderId})`,
+        `✅ Paciente persistido: ${nombre} (cédula ${cedula}, WA ${identity.senderId})`,
       );
       return patient;
     } catch (error) {
@@ -2231,9 +2314,11 @@ export class ChatbotService implements OnModuleInit {
   // CORE: PROCESAMIENTO DE MENSAJES — con try/catch global y logging
   // ══════════════════════════════════════════════════════════════
   async processIncomingMessage(event: WhatsappInboundEvent) {
-    // Fallback a 'unknown' para no perder la auditoría del error si llegara un
-    // evento sin remitente; `processIncomingMessageUnsafe` lo descarta aparte.
-    const senderId = event.from || event.sender?.id || 'unknown';
+    // Fallback a UNIDENTIFIED_SENDER para no perder la auditoría del error si
+    // llegara un evento sin remitente; `processIncomingMessageUnsafe` lo audita
+    // aparte con su propia razón de fallo.
+    const senderId =
+      resolveSenderIdentity(event)?.senderId ?? UNIDENTIFIED_SENDER;
     const messageType = event.type;
     const userMessage = event.text?.body?.trim() || event.message?.text?.trim();
 
@@ -2258,6 +2343,67 @@ export class ChatbotService implements OnModuleInit {
         },
       });
     }
+  }
+
+  /**
+   * Un webhook sin remitente identificable es un SÍNTOMA, no un no-evento: lo
+   * más probable es un payload nuevo de Meta que todavía no sabemos leer (o un
+   * campo de identidad que cambió de nombre). Antes se hacía `return` mudo y el
+   * mensaje del paciente desaparecía sin rastro.
+   *
+   * El tenant sí se puede resolver: `phone_number_id` viaja en la metadata
+   * aunque no venga el remitente. Adjuntarlo hace que la fila sea visible en la
+   * auditoría de ESA clínica y no sólo en la vista de plataforma.
+   */
+  private async auditUnidentifiedSender(
+    event: WhatsappInboundEvent,
+  ): Promise<void> {
+    const metaPhoneId = event?.metadata?.phone_number_id;
+    let organizationId: string | null = null;
+
+    if (metaPhoneId) {
+      try {
+        const waConfig = await this.prisma.whatsappAccountConfig.findUnique({
+          where: { phoneNumberId: metaPhoneId },
+          select: { organizationId: true },
+        });
+        organizationId = waConfig?.organizationId ?? null;
+      } catch (error) {
+        this.logger.error(
+          `No se pudo resolver el tenant del webhook sin remitente: ${
+            (error as Error).message
+          }`,
+        );
+      }
+    }
+
+    // Sólo las CLAVES del payload, nunca sus valores: basta para diagnosticar
+    // qué campo nuevo trajo Meta sin volcar datos del paciente en los logs.
+    const eventKeys = Object.keys(event ?? {});
+
+    this.logger.error(
+      `🚨 Webhook SIN remitente identificable: no vino user_id (BSUID), ni from ` +
+        `(teléfono), ni sender.id (PSID). El mensaje NO se procesó. ` +
+        `phone_number_id=${metaPhoneId ?? 'ausente'} tipo=${event?.type ?? 'desconocido'} ` +
+        `claves=[${eventKeys.join(', ') || 'ninguna'}]. Si esto se repite, Meta ` +
+        `cambió el formato del payload y hay que enseñarle el campo nuevo a ` +
+        `resolveSenderIdentity (sender-identity.ts).`,
+    );
+
+    await this.interactionLog.logFailure({
+      whatsappId: UNIDENTIFIED_SENDER,
+      organizationId,
+      reason: FailureReason.SENDER_UNIDENTIFIED,
+      userMessage:
+        event?.text?.body ??
+        event?.message?.text ??
+        `[${event?.type ?? 'desconocido'}]`,
+      metadata: {
+        eventKeys,
+        messageType: event?.type ?? null,
+        phoneNumberId: metaPhoneId ?? null,
+      },
+    });
   }
 
   /**
@@ -2299,6 +2445,13 @@ export class ChatbotService implements OnModuleInit {
     // Cacheamos el orgId del destinatario en Redis: lo usamos al hacer
     // outbound (resolveCredentialsForRecipient).
     await this.redis.set(`origin_org:${senderId}`, org.id, 'EX', SESSION_TTL);
+
+    // ⏱️ VENTANA DE ATENCIÓN (24 h). Meta sólo acepta texto libre dentro de las
+    // 24 h siguientes al ÚLTIMO MENSAJE DEL PACIENTE; fuera de ella exige una
+    // plantilla aprobada. Se marca aquí, en el único punto por el que pasa todo
+    // mensaje entrante, y NUNCA en los envíos salientes: responder no reabre la
+    // ventana, sólo la abre un mensaje del paciente.
+    await this.markServiceWindow(org.id, senderId);
 
     if (!org.isActive) {
       const reply =
@@ -3202,11 +3355,19 @@ export class ChatbotService implements OnModuleInit {
   }
 
   private async processIncomingMessageUnsafe(event: WhatsappInboundEvent) {
-    const senderId = event.from || event.sender?.id;
-    // Sin remitente no hay nada que procesar ni a quién responder. El guard
-    // también narrowea `senderId` de `string | undefined` a `string` para el
-    // resto del turno (se usa como clave de Redis y destinatario por doquier).
-    if (!senderId) return;
+    const identity = resolveSenderIdentity(event);
+    // Sin remitente no hay nada que procesar ni a quién responder — pero eso NO
+    // se descarta en silencio: hasta este cambio, un payload sin `from` (justo
+    // lo que Meta envía cuando el paciente oculta su número tras un username)
+    // se perdía sin log, sin auditoría y sin excepción. El paciente escribía y
+    // nadie se enteraba nunca.
+    if (!identity) {
+      await this.auditUnidentifiedSender(event);
+      return;
+    }
+    // `senderId` queda como `string` para el resto del turno (se usa como clave
+    // de Redis y destinatario por doquier).
+    const senderId = identity.senderId;
     const messageType = event.type;
     // `text` puede reasignarse: cuando llega audio, lo sustituimos por la
     // transcripción literal del paciente para que la voz recorra EXACTAMENTE
@@ -4141,7 +4302,7 @@ export class ChatbotService implements OnModuleInit {
         const patientWl = await this.ensurePatientPersisted({
           cedula: finalCedula,
           nombre: nombreFinalWl,
-          senderId,
+          identity,
           organizationId: organizationId,
           epsId: epsIdForWl,
         });
@@ -4835,7 +4996,7 @@ export class ChatbotService implements OnModuleInit {
         await this.ensurePatientPersisted({
           cedula: finalCedula,
           nombre: finalNombre,
-          senderId,
+          identity,
           organizationId: organizationId,
           epsId: epsIdForPatient,
         });
@@ -4884,6 +5045,7 @@ export class ChatbotService implements OnModuleInit {
     const ctx: ChatTurnContext = {
       organizationId,
       senderId,
+      identity,
       text,
       currentState,
       aiData,
@@ -5114,6 +5276,7 @@ export class ChatbotService implements OnModuleInit {
     const {
       organizationId,
       senderId,
+      identity,
       text,
       MSGS,
       orgName,
@@ -5189,7 +5352,7 @@ export class ChatbotService implements OnModuleInit {
       const patient = await this.ensurePatientPersisted({
         cedula: cedulaFinal,
         nombre: nombreFinal || 'Paciente Registrado',
-        senderId,
+        identity,
         organizationId: organizationId,
         epsId: epsIdForBooking,
       });
@@ -5339,8 +5502,15 @@ export class ChatbotService implements OnModuleInit {
   private async handleAwaitingWaitlistOptin(
     ctx: ChatTurnContext,
   ): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
-      ctx;
+    const {
+      organizationId,
+      senderId,
+      identity,
+      text,
+      MSGS,
+      retriesKey,
+      retriesCount,
+    } = ctx;
     const respuesta = text?.toUpperCase().trim() || '';
     // Acepta SÍ/NO por texto y por voz (transcripción), de forma tolerante.
     const decision = this.interpretYesNo(text);
@@ -5412,7 +5582,7 @@ export class ChatbotService implements OnModuleInit {
       const patientForWl = await this.ensurePatientPersisted({
         cedula: cedulaPrevia,
         nombre: nombrePaciente,
-        senderId,
+        identity,
         organizationId: organizationId,
         epsId: epsIdForWl,
       });

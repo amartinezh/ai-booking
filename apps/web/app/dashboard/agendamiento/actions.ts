@@ -21,6 +21,18 @@ export async function sendManualWhatsappAction(appointmentId: string, message: s
 
         if (!appointment) return { success: false, error: 'Cita no encontrada.' };
 
+        // Destinatario: el BSUID manda sobre el teléfono (es el identificador
+        // estable). Antes esto caía en `|| patient.cedula` — una cédula NO es
+        // un destinatario de WhatsApp: el envío fallaba o, peor, llegaba a
+        // quien tuviera ese número. Sin identificador, no se envía.
+        const recipient = appointment.patient.bsuid || appointment.patient.whatsappId;
+        if (!recipient) {
+            return {
+                success: false,
+                error: 'El paciente no tiene un identificador de WhatsApp registrado.',
+            };
+        }
+
         // El endpoint /chatbot/outbound ahora exige sesión (RolesGuard) y envía
         // por la línea de la clínica del token, así que reenviamos la cookie.
         const cookieStore = await cookies();
@@ -33,7 +45,7 @@ export async function sendManualWhatsappAction(appointmentId: string, message: s
                 ...(token ? { Cookie: `auth_token=${token}` } : {})
             },
             body: JSON.stringify({
-                to: appointment.patient.whatsappId || appointment.patient.cedula,
+                to: recipient,
                 message
             })
         });

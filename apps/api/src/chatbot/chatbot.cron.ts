@@ -6,6 +6,8 @@ import { RedisService } from '../redis/redis.service';
 import { ChatState, SESSION_TTL } from './chatbot.constants';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
+import { buildWhatsappRecipient } from '@agenia/shared';
+import { metaGraphUrl } from '../whatsapp-config/meta-graph';
 
 @Injectable()
 export class ChatbotCron {
@@ -81,13 +83,14 @@ export class ChatbotCron {
 
   private async sendAbandonedNotification(
     creds: ResolvedWhatsappCredentials,
-    toPhone: string,
+    recipientId: string,
   ) {
-    const url = `https://graph.facebook.com/v19.0/${creds.phoneNumberId}/messages`;
+    const url = metaGraphUrl(`${creds.phoneNumberId}/messages`);
     const data = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: toPhone,
+      // Teléfono → `to`; BSUID → `recipient` (ver @agenia/shared).
+      ...buildWhatsappRecipient(recipientId),
       type: 'text',
       text: {
         preview_url: false,
@@ -102,7 +105,7 @@ export class ChatbotCron {
       await lastValueFrom(this.httpService.post(url, data, { headers }));
     } catch (error: any) {
       this.logger.error(
-        `Error enviando mensaje de abandono a ${toPhone}: ${error.message}`,
+        `Error enviando mensaje de abandono a ${recipientId}: ${error.message}`,
       );
     }
   }

@@ -45,6 +45,13 @@ export const DEFAULT_MAX_RETRIES = 3;
 // Tiempo de expiración de la sesión conversacional en Redis (1 hora)
 export const SESSION_TTL = 3600;
 
+/**
+ * Ventana de atención de Meta: 24 h desde el último mensaje del paciente.
+ * Dentro se puede responder con texto libre; fuera hay que usar una plantilla
+ * aprobada. En segundos, para el TTL de la clave en Redis.
+ */
+export const SERVICE_WINDOW_TTL = 24 * 60 * 60;
+
 // Longitud mínima de dígitos para considerar una cédula válida.
 export const MIN_CEDULA_LENGTH = 4;
 

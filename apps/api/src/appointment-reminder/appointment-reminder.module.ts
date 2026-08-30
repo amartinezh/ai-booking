@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ChatbotModule } from '../chatbot/chatbot.module';
 import { InteractionLogModule } from '../interaction-log/interaction-log.module';
+import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module';
 import { AppointmentReminderCronService } from './appointment-reminder.cron';
 import { AppointmentReminderController } from './appointment-reminder.controller';
 
@@ -17,7 +18,7 @@ import { AppointmentReminderController } from './appointment-reminder.controller
  *   POST /appointments/:id/send-manual-reminder
  */
 @Module({
-  imports: [ChatbotModule, InteractionLogModule],
+  imports: [ChatbotModule, InteractionLogModule, WhatsappConfigModule],
   controllers: [AppointmentReminderController],
   providers: [AppointmentReminderCronService],
 })

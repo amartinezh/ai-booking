@@ -11,9 +11,8 @@ import {
   LlmDiagnosisResult,
   MetaDiagnosisResult,
 } from './dto/diagnostics.types';
+import { metaGraphUrl } from '../whatsapp-config/meta-graph';
 
-/** Versión de la Graph API contra la que validamos credenciales. */
-const META_GRAPH_VERSION = 'v21.0';
 /** Cap de latencia antes de declarar TIMEOUT (alineado con SEMANTIC_MAP_TIMEOUT). */
 const GEMINI_TIMEOUT_MS = 8000;
 const META_TIMEOUT_MS = 8000;
@@ -238,7 +237,7 @@ export class IntegrationsService {
       };
     }
 
-    const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/${creds.phoneNumberId}`;
+    const url = metaGraphUrl(creds.phoneNumberId);
     const startedAt = Date.now();
     try {
       const response = await lastValueFrom(

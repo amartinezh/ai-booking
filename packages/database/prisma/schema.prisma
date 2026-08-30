@@ -40,7 +40,8 @@ model Organization {
   aiProviderConfig AiProviderConfig?
 
   // Configuración del canal WhatsApp por clínica (1:1) — credenciales encriptadas
-  whatsappConfig WhatsappAccountConfig?
+  whatsappConfig    WhatsappAccountConfig?
+  whatsappTemplates WhatsappTemplate[]
 
   // Configuración de voz/audio (TTS) por clínica (1:1) — pitch, rate, voz, codec
   audioConfig OrganizationAudioConfig?
@@ -259,6 +260,55 @@ model WhatsappAccountConfig {
 }
 
 // -----------------------------------------------------------------------------
+// 📨 PLANTILLAS DE WHATSAPP (mensajes fuera de la ventana de 24 h)
+// -----------------------------------------------------------------------------
+//
+// Meta sólo permite TEXTO LIBRE dentro de las 24 h siguientes al último mensaje
+// del paciente. Fuera de esa ventana —el caso normal de un recordatorio de cita
+// enviado el día anterior— hay que usar una plantilla previamente APROBADA.
+//
+// Las plantillas se aprueban contra la WABA de CADA clínica, así que su nombre
+// e idioma son datos POR ORGANIZACIÓN: la misma plantilla lógica
+// (APPOINTMENT_REMINDER) puede llamarse distinto en cada tenant.
+enum WhatsappTemplateKind {
+  APPOINTMENT_REMINDER
+  WAITLIST_SLOT_OFFER
+}
+
+model WhatsappTemplate {
+  id String @id @default(uuid())
+
+  kind WhatsappTemplateKind
+
+  // Nombre EXACTO tal como quedó aprobado en la WABA de la clínica.
+  name String
+
+  // Código de idioma de la plantilla aprobada (ej. 'es', 'es_CO'). Debe
+  // coincidir con el de la aprobación: Meta rechaza el envío si no cuadra.
+  language String @default("es")
+
+  // La plantilla aprobada incluye un botón REQUEST_CONTACT_INFO. Es
+  // informativo para el envío (el botón vive en la plantilla aprobada, no en
+  // el payload), pero permite saber qué plantillas sirven para recuperar el
+  // número de un paciente que lo tiene oculto.
+  requestsContactInfo Boolean @default(false)
+
+  // Permite desactivar una plantilla sin borrarla (ej. mientras Meta la
+  // revisa de nuevo tras una edición).
+  isActive Boolean @default(true)
+
+  // 🏢 TENANT ISOLATION — cada clínica configura las suyas.
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, kind])
+  @@index([organizationId])
+}
+
+// -----------------------------------------------------------------------------
 // 🔐 AUTH & CORE USER (Mínimo necesario para login)
 // -----------------------------------------------------------------------------
 model User {
@@ -375,9 +425,21 @@ model ConsultingRoom {
 model PatientProfile {
   id String @id @default(uuid())
 
-  // Identificadores Sociales (Indexados para el Bot)
-  facebookId String? @unique
+  // 🆔 IDENTIDAD DE WHATSAPP — scoped POR ORGANIZACIÓN.
+  //
+  // Desde el cambio de usernames de Meta (2026), el teléfono deja de venir en
+  // el webhook cuando el paciente oculta su número: `whatsappId` guarda el
+  // número mientras Meta lo entregue (caché de 30 días / contact book) y
+  // `bsuid` el Business-scoped user ID (ej. CO.13491208655302741918), que es
+  // el identificador estable y el que la API de envío espera en `recipient`.
+  //
+  // Ambos son POR CLÍNICA a propósito: el mismo paciente en dos clínicas son
+  // dos filas con dos BSUID distintos (uno por portafolio de Meta). NO se
+  // adopta el Parent BSUID (CO.ENT.*) porque su función es correlacionar al
+  // mismo usuario entre portafolios vinculados — justo lo contrario del
+  // aislamiento fuerte que queremos entre tenants sobre datos de salud.
   whatsappId String?
+  bsuid      String?
 
   // Cédula única POR CLÍNICA (ver @@unique): la misma persona puede ser
   // paciente de varias clínicas, cada una con su propio PatientProfile.
@@ -408,7 +470,8 @@ model PatientProfile {
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, cedula])
-  @@index([whatsappId])
+  @@unique([organizationId, bsuid])
+  @@index([organizationId, whatsappId])
 }
 
 // -----------------------------------------------------------------------------
