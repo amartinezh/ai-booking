@@ -128,7 +128,8 @@ compose_config() {
 
 # docker-compose.yml fija `container_name:`, así que el nombre del contenedor es
 # estable aunque el proyecto de compose cambie (este repo se llamó `antigravity`
-# antes que `agen-ia`: los contenedores viejos siguen bajo el proyecto viejo y
+# antes que `agen-ia`, y los contenedores eran `antigravity_*` antes que
+# `agenia_*`: los viejos siguen bajo el proyecto viejo y
 # un `compose up` chocaría con "container name already in use"). Operar por
 # nombre de contenedor esquiva ese conflicto.
 container_name_for() {
@@ -139,10 +140,14 @@ container_name_for() {
   '
 }
 
-container_state() { docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null; }
+# `docker inspect` falla (exit 1) si el contenedor no existe. Sin `|| true`,
+# bajo `set -e` la asignación `state="$(container_state ...)"` aborta el script
+# antes de llegar al `case`, que SÍ contempla el caso "no existe" (rama *).
+# Es decir: sin esto, un arranque desde cero es imposible.
+container_state() { docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null || true; }
 
 container_project() {
-  docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$1" 2>/dev/null
+  docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$1" 2>/dev/null || true
 }
 
 # Manifiesto: kind<TAB>name<TAB>ref<TAB>port<TAB>log
@@ -184,10 +189,16 @@ wait_for_tcp() {
   return 1
 }
 
+# Espera a que una URL DEVUELVA ALGO por HTTP. Deliberadamente sin `curl -f`:
+# la API de NestJS no expone ninguna ruta en `/` (no hay setGlobalPrefix ni
+# controlador raíz), así que responde 404 — y `-f` trata cualquier 4xx como
+# fallo, con lo que el probe expiraba a los 120s contra una API perfectamente
+# sana. Un 404 ya demuestra lo que aquí importa: el servidor HTTP escucha y
+# enruta. curl sale != 0 solo si no logra conectarse, que es la señal correcta.
 wait_for_http() {
   local url="$1" timeout="${2:-90}" i=0
   while [ "$i" -lt "$timeout" ]; do
-    if curl -fsS -o /dev/null --max-time 3 "$url" 2>/dev/null; then return 0; fi
+    if curl -sS -o /dev/null --max-time 3 "$url" 2>/dev/null; then return 0; fi
     sleep 1; i=$((i + 1))
   done
   return 1
@@ -272,6 +283,15 @@ ok "docker $(docker version --format '{{.Client.Version}}' 2>/dev/null), pnpm $(
 
 [ -f "$COMPOSE_FILE" ] || die "No se encontró $COMPOSE_FILE"
 
+# Credenciales locales. docker-compose.yml ya NO trae contraseñas: las lee del
+# .env de la raíz (gitignored). Este script lo genera con openssl si no existe y
+# propaga el DATABASE_URL a los .env de las apps. Es idempotente.
+if [ -x "$REPO_ROOT/scripts/secrets-init.sh" ]; then
+  "$REPO_ROOT/scripts/secrets-init.sh" || die "No se pudieron preparar las credenciales locales."
+else
+  die "Falta scripts/secrets-init.sh: sin él docker-compose.yml no puede resolver POSTGRES_PASSWORD."
+fi
+
 for envfile in apps/api/.env apps/web/.env packages/database/.env; do
   if [ ! -f "$REPO_ROOT/$envfile" ]; then
     if [ -f "$REPO_ROOT/$envfile.example" ]; then
@@ -342,7 +362,9 @@ info "Esperando a que la infraestructura acepte conexiones..."
 PG_CONTAINER="$(container_name_for postgres)"; [ -n "$PG_CONTAINER" ] || PG_CONTAINER=postgres
 REDIS_CONTAINER="$(container_name_for redis)"; [ -n "$REDIS_CONTAINER" ] || REDIS_CONTAINER=redis
 
-if docker exec "$PG_CONTAINER" sh -c 'i=0; until pg_isready -U "${POSTGRES_USER:-admin}" -d "${POSTGRES_DB:-antigravity}" -q; do i=$((i+1)); [ "$i" -gt 60 ] && exit 1; sleep 1; done' >/dev/null 2>&1; then
+# POSTGRES_USER/DB están en el entorno del propio contenedor (compose los
+# inyectó desde .env), así que pg_isready los resuelve sin que los repitamos aquí.
+if docker exec "$PG_CONTAINER" sh -c 'i=0; until pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -q; do i=$((i+1)); [ "$i" -gt 60 ] && exit 1; sleep 1; done' >/dev/null 2>&1; then
   ok "postgres listo en localhost:$PG_PORT"
 else
   wait_for_tcp 127.0.0.1 "$PG_PORT" 60 || die "postgres no levantó. Log: docker logs $PG_CONTAINER"
@@ -517,8 +539,8 @@ printf '%s╚══════════════════════�
 echo
 [ "$START_WEB" -eq 1 ] && printf '  %-16s %s\n' "WEB" "http://localhost:$WEB_PORT"
 [ "$START_API" -eq 1 ] && printf '  %-16s %s\n' "API" "http://localhost:$API_PORT"
-printf '  %-16s %s\n' "postgres"   "localhost:$PG_PORT  (antigravity_db)"
-printf '  %-16s %s\n' "redis"      "localhost:$REDIS_PORT  (antigravity_redis)"
+printf '  %-16s %s\n' "postgres"   "localhost:$PG_PORT  ($PG_CONTAINER)"
+printf '  %-16s %s\n' "redis"      "localhost:$REDIS_PORT  ($REDIS_CONTAINER)"
 [ "$WITH_HIS_MOCK" -eq 1 ] && printf '  %-16s %s\n' "HIS mock" "localhost:$HIS_MOCK_PORT  ($(container_name_for mirror-his-mock))"
 [ "$WITH_MIRROR_AGENT" -eq 1 ] && printf '  %-16s %s\n' "mirror-agent" "en background — tail -f ${RUN_DIR#$REPO_ROOT/}/mirror-agent.log"
 echo

@@ -135,10 +135,18 @@ short_cmd() {
 # antes que `agen-ia`, así que hay contenedores vivos bajo el proyecto viejo:
 # `docker compose stop` (proyecto `agen-ia`) no los vería. `docker stop <nombre>`
 # sí, sin importar bajo qué proyecto se crearon.
+# `docker compose config` falla si falta el .env de la raíz (docker-compose.yml
+# usa ${POSTGRES_PASSWORD:?...}). Bajar el stack tiene que funcionar igual — es
+# justo lo que quieres poder hacer cuando el entorno está a medio romper. Los
+# `container_name:` son literales, no interpolados, así que leer el YAML crudo
+# da los mismos nombres y el mismo awk sirve para ambos.
 COMPOSE_CONFIG_CACHE=""
 compose_config() {
   if [ -z "$COMPOSE_CONFIG_CACHE" ]; then
     COMPOSE_CONFIG_CACHE="$(docker compose -f "$COMPOSE_FILE" config 2>/dev/null)"
+    if [ -z "$COMPOSE_CONFIG_CACHE" ]; then
+      COMPOSE_CONFIG_CACHE="$(cat "$COMPOSE_FILE" 2>/dev/null)"
+    fi
   fi
   printf '%s\n' "$COMPOSE_CONFIG_CACHE"
 }
@@ -158,10 +166,14 @@ container_name_for() {
   '
 }
 
-container_state() { docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null; }
+# `docker inspect` falla (exit 1) si el contenedor no existe. Sin `|| true`,
+# bajo `set -e` la asignación `state="$(container_state ...)"` aborta el script
+# antes de llegar al `case`, que SÍ contempla el caso "no existe" (rama *).
+# Es decir: sin esto, un arranque desde cero es imposible.
+container_state() { docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null || true; }
 
 container_volumes() {
-  docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}} {{end}}{{end}}' "$1" 2>/dev/null
+  docker inspect -f '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}} {{end}}{{end}}' "$1" 2>/dev/null || true
 }
 
 # ¿El proceso pertenece a este repo? Evita matar el `next dev` de otro proyecto.
