@@ -268,7 +268,17 @@ export class MirrorDispatchService {
         ),
       );
 
-    const slotIds = idsDe('scheduleSlotId');
+    // Un reagendamiento mueve `scheduleSlotId` en la MISMA fila, así que el
+    // cupo anterior solo existe en el `__old` que adjunta el trigger. Sin
+    // resolverlo, el driver no sabría qué cita borrar en el HIS.
+    const idsAnteriores = citas
+      .map((r) => (filaDe(r).__old as Record<string, unknown> | undefined))
+      .map((old) => old?.scheduleSlotId)
+      .filter((v): v is string => typeof v === 'string');
+
+    const slotIds = Array.from(
+      new Set([...idsDe('scheduleSlotId'), ...idsAnteriores]),
+    );
     const patientIds = idsDe('patientId');
     const epsIds = idsDe('epsId');
 
@@ -347,6 +357,28 @@ export class MirrorDispatchService {
         // El cupo desapareció entre la captura y la entrega. No es
         // recuperable desde aquí, pero tampoco se descarta en silencio.
         missing.push(`SLOT ${String(fila.scheduleSlotId)}`);
+      }
+
+      // Cupo anterior de un reagendamiento: solo se adjunta si de verdad
+      // cambió. Un UPDATE de asistencia no es un reagendamiento.
+      const anteriorId = (fila.__old as Record<string, unknown> | undefined)
+        ?.scheduleSlotId;
+      if (
+        typeof anteriorId === 'string' &&
+        anteriorId !== fila.scheduleSlotId
+      ) {
+        const anterior = slotPorId.get(anteriorId);
+        if (anterior) {
+          context.previousStartTimeIso = anterior.startTime.toISOString();
+          const medicoAnterior = claveExterna.get(`DOCTOR:${anterior.doctorId}`);
+          if (medicoAnterior) {
+            context.previousDoctorExternalKey = medicoAnterior;
+          } else {
+            missing.push(`DOCTOR ${anterior.doctorId} (cupo anterior)`);
+          }
+        } else {
+          missing.push(`SLOT ${anteriorId} (cupo anterior)`);
+        }
       }
 
       if (paciente) {

@@ -85,6 +85,15 @@ export interface OutboxEventContext {
   serviceExternalKey?: string;
 
   /**
+   * Cupo ANTERIOR de un reagendamiento. AgenIA lo modela moviendo
+   * `scheduleSlotId` en la misma fila, así que sin esto el driver no sabría
+   * qué cita borrar en el HIS: solo vería la nueva. El trigger conserva la
+   * fila previa y aquí se resuelve igual que la actual.
+   */
+  previousStartTimeIso?: string;
+  previousDoctorExternalKey?: string;
+
+  /**
    * Homologaciones que faltaron. **Si trae algo, el evento NO es aplicable**:
    * el motor lo rechaza sin llamar al driver. Escribir una cita a medias en el
    * HIS es el riesgo #1 de la tabla de riesgos del plan — mejor un fallo
@@ -164,6 +173,11 @@ export interface CanonicalChangeEvent {
     doctorExternalKey?: string;
     serviceExternalKey?: string;
     attendanceStatus?: string;
+    /** Estado de la cita en AgenIA: 'SCHEDULED' | 'COMPLETED' | 'CANCELLED'. */
+    status?: string;
+    /** Cupo anterior, cuando el evento es un reagendamiento. */
+    previousStartTimeIso?: string;
+    previousDoctorExternalKey?: string;
     cancelReason?: string;
     cancelObservations?: string;
   };

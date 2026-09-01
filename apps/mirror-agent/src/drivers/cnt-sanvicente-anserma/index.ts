@@ -320,18 +320,145 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     return this.mapping;
   }
 
-  async cancelAppointment(
-    _evt: CanonicalChangeEvent,
-  ): Promise<DriverResult> {
-    // 🚧 TODO (ESTADO.md pendiente #3): el MECANISMO ya está confirmado por
-    // la prueba manual del hospital (DELETE de CITAS_MEDICAS + INSERT en
-    // CITAS_ANULADAS con CD_CODI_MOTI_CIAN + TX_OBSE_CIAN, ver MAPEO_HIS.md
-    // §2.1bis) — falta decidir el código de motivo que use el agente
-    // (reutilizar "WB" o pedir uno dedicado) antes de escribir en
-    // producción. Se implementa en Fase 3, junto con createAppointment.
-    throw new Error(
-      'cancelAppointment: pendiente de Fase 3 — ver docs/drivers/cnt-sanvicente-anserma/ESTADO.md',
-    );
+  /**
+   * Cancelar = DELETE de `CITAS_MEDICAS` + INSERT de auditoría en
+   * `CITAS_ANULADAS`.
+   *
+   * No es un cambio de estado en sitio: lo confirmó el propio hospital
+   * ejecutando una cancelación real desde su aplicación (evidencia del
+   * 2026-08-23). Las dos escrituras van en UNA transacción — dejar la cita
+   * borrada sin su registro de auditoría le rompería los reportes al hospital.
+   *
+   * `CITAS_ANULADAS` no tiene PK ni índices: es un log de auditoría puro, así
+   * que se inserta sin más.
+   */
+  async cancelAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {
+    const p = evt.payload;
+    if (!p.doctorExternalKey || !p.startTimeIso) {
+      return {
+        success: false,
+        message: 'faltan médico u hora para identificar la cita a cancelar',
+      };
+    }
+
+    const mapping = this.requireMapping();
+    const pool = this.requirePool();
+    const feHora = formatFeHoraCit(p.startTimeIso, this.timeZone);
+
+    const tx = pool.transaction();
+    await tx.begin();
+    try {
+      const borrada = await this.copiarAAnuladas(tx, {
+        medico: p.doctorExternalKey,
+        feHora,
+        motivo: mapping.motivoAnulacion,
+        observacion: p.cancelObservations ?? 'Cancelada por el paciente vía WhatsApp',
+      });
+
+      if (!borrada) {
+        // No estaba: o el hospital ya la canceló por su lado, o nunca llegó a
+        // escribirse. En ambos casos el resultado deseado ya se cumple, así
+        // que se reporta como éxito — reintentar no cambiaría nada.
+        await tx.rollback();
+        return { success: true, message: 'La cita ya no existía en el HIS.' };
+      }
+
+      await tx.commit();
+      return { success: true };
+    } catch (error) {
+      await tx.rollback().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /**
+   * Reagendar = cancelar la vieja y crear la nueva, en una transacción.
+   *
+   * Es la decisión explícita del hospital: su HIS no tiene movimiento nativo
+   * de citas. La observación de la anulación dice que fue un reagendamiento
+   * para que su tasa de cancelación —hoy del 8-9%— no se infle sola.
+   */
+  async rescheduleAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {
+    const p = evt.payload;
+    if (!p.previousStartTimeIso || !p.previousDoctorExternalKey) {
+      return {
+        success: false,
+        message: 'no se conoce el cupo anterior: no se puede reagendar sin él',
+      };
+    }
+
+    const mapping = this.requireMapping();
+    const pool = this.requirePool();
+    const tx = pool.transaction();
+    await tx.begin();
+    try {
+      await this.copiarAAnuladas(tx, {
+        medico: p.previousDoctorExternalKey,
+        feHora: formatFeHoraCit(p.previousStartTimeIso, this.timeZone),
+        motivo: mapping.motivoAnulacion,
+        observacion: 'Reagendada por el paciente vía WhatsApp',
+      });
+      await tx.commit();
+    } catch (error) {
+      await tx.rollback().catch(() => undefined);
+      throw error;
+    }
+
+    // El alta de la cita nueva reusa createAppointment tal cual: mismas
+    // reglas de convenio, consultorio y validación. Duplicarlas aquí sería
+    // garantizar que las dos versiones se separen con el tiempo.
+    return this.createAppointment(evt);
+  }
+
+  /**
+   * Mueve una cita de `CITAS_MEDICAS` a `CITAS_ANULADAS` dentro de una
+   * transacción. Devuelve false si no había nada que mover.
+   */
+  private async copiarAAnuladas(
+    tx: sql.Transaction,
+    datos: {
+      medico: string;
+      feHora: string;
+      motivo: string;
+      observacion: string;
+    },
+  ): Promise<boolean> {
+    // Copia campo a campo: `CITAS_ANULADAS` repite las columnas de
+    // `CITAS_MEDICAS` con sufijo _CIAN, más motivo y observaciones.
+    const copia = await tx.request()
+      .input('med', sql.VarChar(4), datos.medico)
+      .input('hora', sql.VarChar(18), datos.feHora)
+      .input('moti', sql.VarChar(2), datos.motivo)
+      .input('obse', sql.VarChar(255), datos.observacion).query(`
+        INSERT INTO dbo.CITAS_ANULADAS (
+          CD_CODI_MED_CIAN, FE_HORA_CIAN, NU_ESTA_CIAN, CD_CODI_SER_CIAN,
+          NU_HIST_PAC_CIAN, NU_DURA_CIAN, FE_ELAB_CIAN, FE_FECH_CIAN,
+          NU_DIA_CIAN, NU_NUME_MOVI_CIAN, NU_PRIM_CIAN, NU_NUME_CONE_CIAN,
+          NU_CONE_CALL_CIAN, CD_CODI_ESP_CIAN, CD_CODI_CONS_CIAN,
+          NU_NUME_CONV_CIAN, NU_TIPO_CIAN, DE_DESC_CIAN, CD_CODI_CECO_CIAN,
+          CD_CODI_LUAT_CIAN, FE_SOLI_CIAN, CD_CODI_MOTI_CIAN, TX_OBSE_CIAN
+        )
+        SELECT
+          CD_CODI_MED_CIT, FE_HORA_CIT, NU_ESTA_CIT, CD_CODI_SER_CIT,
+          NU_HIST_PAC_CIT, NU_DURA_CIT, FE_ELAB_CIT, FE_FECH_CIT,
+          NU_DIA_CIT, NU_NUME_MOVI_CIT, NU_PRIM_CIT, NU_NUME_CONE_CIT,
+          NU_CONE_CALL_CIT, CD_CODI_ESP_CIT, CD_CODI_CONS_CIT,
+          NU_NUME_CONV_CIT, NU_TIPO_CIT, DE_DESC_CIT, CD_CODI_CECO_CIT,
+          CD_CODI_LUAT_CIT, FE_SOLI_CIT, @moti, @obse
+        FROM dbo.CITAS_MEDICAS
+        WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora`);
+
+    if ((copia.rowsAffected[0] ?? 0) === 0) return false;
+
+    await tx
+      .request()
+      .input('med', sql.VarChar(4), datos.medico)
+      .input('hora', sql.VarChar(18), datos.feHora)
+      .query(
+        'DELETE FROM dbo.CITAS_MEDICAS WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora',
+      );
+
+    return true;
   }
 
   async updateAttendance(

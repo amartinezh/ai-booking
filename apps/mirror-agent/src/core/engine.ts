@@ -172,10 +172,36 @@ export class MirrorEngine {
     switch (dto.op) {
       case 'INSERT':
         return this.driver.createAppointment(canonical);
+
+      // Borrado físico de la fila. Hoy AgenIA no borra citas (cancelar es
+      // cambiar el estado), pero si algún día lo hiciera, para el HIS sigue
+      // siendo una cancelación.
       case 'DELETE':
         return this.driver.cancelAppointment(canonical);
-      case 'UPDATE':
-        return this.driver.updateAttendance(canonical);
+
+      // ⚠️ UPDATE no es una sola cosa, y tratarlo como si lo fuera era un
+      // defecto grave: AgenIA modela la CANCELACIÓN como un cambio de estado,
+      // no como un DELETE, así que toda cancelación llegaba aquí y se enviaba
+      // al HIS como una actualización de asistencia. El hospital nunca se
+      // enteraba y el cupo seguía vendido en su agenda.
+      case 'UPDATE': {
+        if (canonical.payload.status === 'CANCELLED') {
+          return this.driver.cancelAppointment({ ...canonical, op: 'CANCEL' });
+        }
+        // El cupo cambió: es un reagendamiento. Cada HIS decide cómo lo hace.
+        if (
+          canonical.payload.previousStartTimeIso &&
+          canonical.payload.previousStartTimeIso !==
+            canonical.payload.startTimeIso
+        ) {
+          return this.driver.rescheduleAppointment(canonical);
+        }
+        return this.driver.updateAttendance({
+          ...canonical,
+          op: 'ATTENDANCE',
+        });
+      }
+
       default:
         return { success: false, message: `op desconocida: ${String(dto.op)}` };
     }
@@ -234,6 +260,11 @@ export function translateOutboxAppointment(
         typeof row.attendanceStatus === 'string'
           ? row.attendanceStatus
           : undefined,
+      // El estado distingue una cancelación de una actualización de asistencia:
+      // las dos llegan como UPDATE desde Postgres.
+      status: typeof row.status === 'string' ? row.status : undefined,
+      previousStartTimeIso: ctx.previousStartTimeIso,
+      previousDoctorExternalKey: ctx.previousDoctorExternalKey,
       // Todo lo que el driver necesita para construir la escritura.
       startTimeIso: ctx.startTimeIso,
       endTimeIso: ctx.endTimeIso,

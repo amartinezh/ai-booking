@@ -28,12 +28,16 @@ describe('translateOutboxAppointment', () => {
       entityType: 'APPOINTMENT',
       op: 'INSERT',
       occurredAtIso: '2026-08-27T10:00:00.000Z',
-      payload: {
+      // `objectContaining` en vez de igualdad exacta: el contexto que el
+      // servidor resuelve (hora, médico, servicio, cupo anterior) crece con
+      // cada driver nuevo, y fijar la forma completa aquí obliga a tocar este
+      // test cada vez sin que aporte nada. Lo que importa es la identidad.
+      payload: expect.objectContaining({
         agenIAAppointmentId: 'apt1',
         agenIAPatientId: 'pat1',
         agenIAScheduleSlotId: 'slot1',
-        attendanceStatus: undefined,
-      },
+        status: 'SCHEDULED',
+      }),
     });
   });
 
@@ -89,6 +93,7 @@ describe('MirrorEngine', () => {
       detectChanges: jest.fn(),
       createAppointment: jest.fn(),
       cancelAppointment: jest.fn(),
+      rescheduleAppointment: jest.fn(),
       updateAttendance: jest.fn(),
       resolveCatalogMapping: jest.fn(),
     };
@@ -383,6 +388,113 @@ describe('MirrorEngine', () => {
       expect(recibido.payload.serviceExternalKey).toBe('S39141-1');
       expect(recibido.payload.startTimeIso).toBe('2026-09-03T12:20:00.000Z');
       expect(recibido.payload.patientDocument).toBe('9696544');
+    });
+  });
+
+  // ⚠️ DEFECTO 11. AgenIA modela la CANCELACIÓN como un cambio de estado, no
+  // como un DELETE de la fila: `status = 'CANCELLED'`. El motor enrutaba todo
+  // UPDATE a `updateAttendance`, así que una cancelación por WhatsApp llegaba
+  // al hospital como una actualización de asistencia — el hospital nunca se
+  // enteraba y el cupo seguía vendido en su agenda.
+  describe('UPDATE no es una sola cosa', () => {
+    const conPayload = (payload: Record<string, unknown>, ctx = {}) =>
+      outboxEvent({
+        seq: '90',
+        op: 'UPDATE',
+        payload,
+        context: ctx,
+      });
+
+    it('estado CANCELLED → cancelAppointment, NO updateAttendance', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        conPayload({ id: 'apt1', status: 'CANCELLED' }),
+      ]);
+      driver.cancelAppointment.mockResolvedValueOnce({ success: true });
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(driver.cancelAppointment).toHaveBeenCalledTimes(1);
+      expect(driver.updateAttendance).not.toHaveBeenCalled();
+    });
+
+    it('la cancelación viaja con op CANONICAL "CANCEL"', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        conPayload({ id: 'apt1', status: 'CANCELLED' }),
+      ]);
+      driver.cancelAppointment.mockResolvedValueOnce({ success: true });
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(driver.cancelAppointment.mock.calls[0][0].op).toBe('CANCEL');
+    });
+
+    it('el cupo cambió → rescheduleAppointment', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        conPayload(
+          { id: 'apt1', status: 'SCHEDULED' },
+          {
+            startTimeIso: '2026-09-03T13:00:00.000Z',
+            previousStartTimeIso: '2026-09-03T12:00:00.000Z',
+            previousDoctorExternalKey: '76',
+          },
+        ),
+      ]);
+      driver.rescheduleAppointment.mockResolvedValueOnce({ success: true });
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(driver.rescheduleAppointment).toHaveBeenCalledTimes(1);
+      expect(driver.cancelAppointment).not.toHaveBeenCalled();
+      expect(driver.createAppointment).not.toHaveBeenCalled();
+    });
+
+    it('el cupo NO cambió → es asistencia, no reagendamiento', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        conPayload(
+          { id: 'apt1', status: 'SCHEDULED', attendanceStatus: 'ATTENDED' },
+          {
+            startTimeIso: '2026-09-03T12:00:00.000Z',
+            previousStartTimeIso: '2026-09-03T12:00:00.000Z',
+          },
+        ),
+      ]);
+      driver.updateAttendance.mockResolvedValueOnce({ success: true });
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(driver.updateAttendance).toHaveBeenCalledTimes(1);
+      expect(driver.rescheduleAppointment).not.toHaveBeenCalled();
+    });
+
+    it('una cancelación gana sobre un cambio de cupo simultáneo', async () => {
+      // Estado terminal: si la cita quedó cancelada, da igual a qué cupo
+      // apuntara. Reagendar una cita cancelada dejaría un cupo vendido.
+      api.getPendingEvents.mockResolvedValueOnce([
+        conPayload(
+          { id: 'apt1', status: 'CANCELLED' },
+          {
+            startTimeIso: '2026-09-03T13:00:00.000Z',
+            previousStartTimeIso: '2026-09-03T12:00:00.000Z',
+          },
+        ),
+      ]);
+      driver.cancelAppointment.mockResolvedValueOnce({ success: true });
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(driver.cancelAppointment).toHaveBeenCalledTimes(1);
+      expect(driver.rescheduleAppointment).not.toHaveBeenCalled();
+    });
+
+    it('un DELETE físico también es una cancelación para el HIS', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ seq: '91', op: 'DELETE' }),
+      ]);
+      driver.cancelAppointment.mockResolvedValueOnce({ success: true });
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(driver.cancelAppointment).toHaveBeenCalledTimes(1);
     });
   });
 

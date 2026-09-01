@@ -48,6 +48,7 @@ CREATE OR REPLACE FUNCTION fn_sync_outbox() RETURNS trigger AS $$
 DECLARE
   v_origin TEXT := current_setting('agenia.sync_origin', true);
   v_org_id TEXT := COALESCE(NEW."organizationId", OLD."organizationId");
+  v_payload JSONB;
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM "HospitalMirrorConfig" c
@@ -56,13 +57,29 @@ BEGIN
     RETURN COALESCE(NEW, OLD);
   END IF;
 
+  -- En un UPDATE se adjunta la fila ANTERIOR bajo `__old`.
+  --
+  -- Sin esto un reagendamiento es irrecuperable: AgenIA lo modela moviendo
+  -- `scheduleSlotId` en la MISMA fila, asi que el evento solo traia el cupo
+  -- nuevo y el driver no tenia forma de saber que cita borrar en el HIS. Con
+  -- `__old` se puede cancelar la vieja y crear la nueva, que es exactamente
+  -- como el hospital dijo que quiere que funcione.
+  --
+  -- Solo en UPDATE: en INSERT no hay anterior, y en DELETE la fila completa ya
+  -- viaja como payload.
+  IF TG_OP = 'UPDATE' THEN
+    v_payload := to_jsonb(NEW) || jsonb_build_object('__old', to_jsonb(OLD));
+  ELSE
+    v_payload := to_jsonb(COALESCE(NEW, OLD));
+  END IF;
+
   INSERT INTO "SyncOutbox"("organizationId", "entityType", "entityId", "op", "payload", "origin")
   VALUES (
     v_org_id,
     TG_ARGV[0],
     COALESCE(NEW.id, OLD.id),
     TG_OP,
-    to_jsonb(COALESCE(NEW, OLD)),
+    v_payload,
     COALESCE(v_origin, 'LOCAL')
   );
 

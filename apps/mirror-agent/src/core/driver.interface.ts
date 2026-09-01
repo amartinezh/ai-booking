@@ -52,6 +52,18 @@ export interface HisDriver {
   // AgenIA → HIS (escritura)
   createAppointment(evt: CanonicalChangeEvent): Promise<DriverResult>;
   cancelAppointment(evt: CanonicalChangeEvent): Promise<DriverResult>;
+  /**
+   * Mover una cita a otro cupo.
+   *
+   * Es su propio método y no "cancelar + crear" desde el motor porque CÓMO se
+   * reagenda depende del HIS: el de Anserma no tiene movimiento nativo y hay
+   * que borrar y volver a insertar (decisión del hospital), pero otro podría
+   * tener un UPDATE en sitio. El motor solo sabe que el cupo cambió.
+   *
+   * El evento trae el cupo nuevo en `startTimeIso`/`doctorExternalKey` y el
+   * anterior en `previousStartTimeIso`/`previousDoctorExternalKey`.
+   */
+  rescheduleAppointment(evt: CanonicalChangeEvent): Promise<DriverResult>;
   updateAttendance(evt: CanonicalChangeEvent): Promise<DriverResult>;
 
   // Homologación de catálogos propios del HIS

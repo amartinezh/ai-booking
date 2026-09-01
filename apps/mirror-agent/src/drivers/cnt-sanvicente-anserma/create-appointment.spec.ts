@@ -29,8 +29,17 @@ const MAPPING: AnsermaMapping = {
 };
 
 /** Conexión falsa: registra cada request con sus parámetros y su SQL. */
-function fakePool(opts: { pacienteExiste?: boolean; turno?: any; error?: any } = {}) {
+function fakePool(
+  opts: {
+    pacienteExiste?: boolean;
+    turno?: any;
+    error?: any;
+    /** Filas que afecta la copia a CITAS_ANULADAS: 0 = la cita no existía. */
+    filasAnuladas?: number;
+  } = {},
+) {
   const requests: { params: Record<string, unknown>; sql: string }[] = [];
+  const tx = { begun: false, committed: false, rolledBack: false };
 
   const makeRequest = () => {
     const params: Record<string, unknown> = {};
@@ -41,6 +50,9 @@ function fakePool(opts: { pacienteExiste?: boolean; turno?: any; error?: any } =
       },
       async query(sqlText: string) {
         requests.push({ params, sql: sqlText });
+        if (/INSERT INTO dbo\.CITAS_ANULADAS/.test(sqlText)) {
+          return { rowsAffected: [opts.filasAnuladas ?? 1], recordset: [] };
+        }
         if (opts.error && /INSERT INTO dbo\.CITAS_MEDICAS/.test(sqlText)) {
           throw opts.error;
         }
@@ -59,7 +71,26 @@ function fakePool(opts: { pacienteExiste?: boolean; turno?: any; error?: any } =
     return req;
   };
 
-  return { pool: { request: makeRequest } as any, requests };
+  // El driver usa `pool.transaction()` y `tx.request()` — la API idiomática
+  // de mssql — precisamente para que este doble pueda sustituirlos sin tocar
+  // el módulo global (los constructores de `mssql` no son redefinibles).
+  const pool: any = {
+    request: makeRequest,
+    transaction: () => ({
+      request: makeRequest,
+      async begin() {
+        tx.begun = true;
+      },
+      async commit() {
+        tx.committed = true;
+      },
+      async rollback() {
+        tx.rolledBack = true;
+      },
+    }),
+  };
+
+  return { pool, requests, tx };
 }
 
 const evento = (over: Partial<CanonicalChangeEvent['payload']> = {}): CanonicalChangeEvent => ({
@@ -83,10 +114,11 @@ const evento = (over: Partial<CanonicalChangeEvent['payload']> = {}): CanonicalC
 
 const conDriver = (opts: Parameters<typeof fakePool>[0] = {}) => {
   const driver = new CntSanVicenteAnsermaDriver();
-  const { pool, requests } = fakePool(opts);
+  const { pool, requests, tx } = fakePool(opts);
   driver.useConnection(pool, MAPPING);
-  return { driver, requests };
+  return { driver, requests, tx };
 };
+
 
 const insertDeCita = (requests: { params: any; sql: string }[]) =>
   requests.find((r) => /INSERT INTO dbo\.CITAS_MEDICAS/.test(r.sql))?.params;
@@ -275,5 +307,158 @@ describe('createAppointment — colisión de cupo en el HIS', () => {
     await expect(driver.createAppointment(evento())).rejects.toThrow(
       /se cayó la red/,
     );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Cancelar = DELETE de CITAS_MEDICAS + INSERT en CITAS_ANULADAS, en UNA
+// transacción. No es un cambio de estado en sitio: lo confirmó el hospital
+// ejecutando una cancelación real desde su aplicación.
+// ══════════════════════════════════════════════════════════════════════════
+const eventoCancel = (over: Partial<CanonicalChangeEvent['payload']> = {}) => ({
+  ...evento(over),
+  op: 'CANCEL' as const,
+});
+
+const sqlDe = (requests: { sql: string }[], patron: RegExp) =>
+  requests.find((r) => patron.test(r.sql));
+
+describe('cancelAppointment', () => {
+  it('copia la cita a CITAS_ANULADAS y la borra de CITAS_MEDICAS', async () => {
+    const { driver, requests } = conDriver();
+
+    const r = await driver.cancelAppointment(eventoCancel());
+
+    expect(r.success).toBe(true);
+    expect(sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)).toBeDefined();
+    expect(sqlDe(requests, /DELETE FROM dbo\.CITAS_MEDICAS/)).toBeDefined();
+  });
+
+  it('las dos escrituras van en una transacción que se confirma', async () => {
+    // Borrar la cita sin dejar el registro de auditoría le rompería los
+    // reportes al hospital: las dos cosas, o ninguna.
+    const { driver, tx } = conDriver();
+
+    await driver.cancelAppointment(eventoCancel());
+
+    expect(tx.begun).toBe(true);
+    expect(tx.committed).toBe(true);
+    expect(tx.rolledBack).toBe(false);
+  });
+
+  it('el orden importa: primero copia, después borra', async () => {
+    const { driver, requests } = conDriver();
+    await driver.cancelAppointment(eventoCancel());
+
+    const iCopia = requests.findIndex((r) =>
+      /INSERT INTO dbo\.CITAS_ANULADAS/.test(r.sql),
+    );
+    const iBorra = requests.findIndex((r) =>
+      /DELETE FROM dbo\.CITAS_MEDICAS/.test(r.sql),
+    );
+    expect(iCopia).toBeLessThan(iBorra);
+  });
+
+  it('usa el motivo que el hospital pidió (WB) y una observación legible', async () => {
+    const { driver, requests } = conDriver();
+    await driver.cancelAppointment(eventoCancel());
+
+    const copia = sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)!;
+    expect((copia as any).params.moti).toBe('WB');
+    expect((copia as any).params.obse).toMatch(/WhatsApp/);
+  });
+
+  it('identifica la cita por médico y hora, que es su clave en el HIS', async () => {
+    const { driver, requests } = conDriver();
+    await driver.cancelAppointment(eventoCancel());
+
+    const copia = sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)! as any;
+    expect(copia.params.med).toBe('91-1');
+    expect(copia.params.hora).toBe('2026/09/03 07:00');
+  });
+
+  it('si la cita ya no está, es éxito: reintentar no cambiaría nada', async () => {
+    // O el hospital ya la canceló por su lado, o nunca llegó a escribirse. En
+    // los dos casos el resultado deseado ya se cumple.
+    const { driver, tx } = conDriver({ filasAnuladas: 0 });
+
+    const r = await driver.cancelAppointment(eventoCancel());
+
+    expect(r.success).toBe(true);
+    expect(r.message).toMatch(/ya no existía/);
+    expect(tx.committed).toBe(false);
+    expect(tx.rolledBack).toBe(true);
+  });
+
+  it('sin médico u hora no toca la base', async () => {
+    const { driver, requests } = conDriver();
+
+    const r = await driver.cancelAppointment(
+      eventoCancel({ startTimeIso: undefined }),
+    );
+
+    expect(r.success).toBe(false);
+    expect(requests).toHaveLength(0);
+  });
+});
+
+describe('rescheduleAppointment', () => {
+  const eventoResched = () => ({
+    ...evento({
+      startTimeIso: '2026-09-03T13:00:00.000Z', // nuevo: 08:00 Bogotá
+      endTimeIso: '2026-09-03T13:20:00.000Z',
+      previousStartTimeIso: '2026-09-03T12:20:00.000Z', // anterior: 07:20
+      previousDoctorExternalKey: '76',
+    }),
+    op: 'UPDATE' as const,
+  });
+
+  it('anula el cupo ANTERIOR y crea el nuevo', async () => {
+    const { driver, requests } = conDriver();
+
+    const r = await driver.rescheduleAppointment(eventoResched());
+
+    expect(r.success).toBe(true);
+    const anulada = sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)! as any;
+    expect(anulada.params.med).toBe('76'); // el médico ANTERIOR
+    expect(anulada.params.hora).toBe('2026/09/03 07:20'); // la hora ANTERIOR
+    expect(insertDeCita(requests)!.hora).toBe('2026/09/03 08:00'); // la nueva
+  });
+
+  it('la observación distingue reagendar de cancelar', async () => {
+    // Sin esto, cada cambio de hora sumaría una anulación y le inflaría al
+    // hospital su tasa de cancelación, que hoy es del 8-9%.
+    const { driver, requests } = conDriver();
+    await driver.rescheduleAppointment(eventoResched());
+
+    const anulada = sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)! as any;
+    expect(anulada.params.obse).toMatch(/Reagendada/);
+  });
+
+  it('sin el cupo anterior NO borra nada: no adivina cuál era', async () => {
+    const { driver, requests } = conDriver();
+
+    const r = await driver.rescheduleAppointment({
+      ...evento(),
+      op: 'UPDATE' as const,
+    });
+
+    expect(r.success).toBe(false);
+    expect(r.message).toMatch(/cupo anterior/);
+    expect(requests).toHaveLength(0);
+  });
+
+  it('el alta nueva reusa createAppointment: mismas reglas de convenio', async () => {
+    const { driver, requests } = conDriver();
+    await driver.rescheduleAppointment({
+      ...eventoResched(),
+      payload: {
+        ...eventoResched().payload,
+        epsNit: '900156264',
+        patientRegime: 'CONTRIBUTIVO',
+      },
+    });
+
+    expect(insertDeCita(requests)!.conv).toBe(473);
   });
 });
