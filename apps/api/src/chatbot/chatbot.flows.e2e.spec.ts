@@ -247,6 +247,26 @@ function createPrisma(db: Db) {
   };
 }
 
+/**
+ * Los tres turnos que un paciente NUEVO responde tras dar su nombre.
+ *
+ * El HIS del hospital exige `FE_NACI_PAC` y `NU_SEXO_PAC` NOT NULL, y el
+ * convenio de facturación se resuelve con EPS + régimen — datos que el
+ * chatbot no pedía y sin los cuales la cita era imposible de escribir en el
+ * HIS. A un paciente que YA existe no se le pregunta nada de esto.
+ *
+ * El régimen solo se pregunta cuando hay EPS: un particular no lo necesita.
+ */
+async function responderAlta(
+  say: (t: string) => Promise<void>,
+  opts: { conEps?: boolean } = {},
+) {
+  await say('15/03/1980'); // nacimiento
+  await say('SI'); // confirma la fecha que el bot le devolvió
+  await say('A'); // sexo: masculino
+  if (opts.conEps) await say('B'); // régimen: contributivo
+}
+
 function slotRow(id: string, fecha: Date, doctor: string, service: any) {
   return {
     id,
@@ -452,6 +472,10 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(await state()).toBe(ChatState.AWAITING_NAME);
 
       await say('Juan Pérez');
+      // Paciente nuevo: ahora se le piden nacimiento y sexo antes del resumen.
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+      await responderAlta(say);
+
       expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
       const resumen = lastSent();
       expect(resumen).toContain('Juan Pérez');
@@ -510,6 +534,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('1088123456');
       await say('Juan Pérez');
+      // Paciente nuevo: nacimiento, sexo antes del resumen.
+      await responderAlta(say);
 
       await say('No');
       expect(appointments.bookAppointment).not.toHaveBeenCalled();
@@ -528,6 +554,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('1088123456');
       await say('Juan Pérez');
+      // Paciente nuevo: nacimiento, sexo antes del resumen.
+      await responderAlta(say);
       await say('Sí');
 
       expect(lastSent()).toMatch(/acaba de (tomar|reservarse)/i);
@@ -554,6 +582,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('1088123456');
       await say('Juan Pérez');
+      // Paciente nuevo: nacimiento, sexo antes del resumen.
+      await responderAlta(say);
 
       redis.store.delete(`temp_selected_slot_id:${ORG_ID}:${SENDER}`);
       await say('Sí');
@@ -669,6 +699,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('1088123456');
       await say('Juan Pérez');
+      // Paciente nuevo: nacimiento, sexo y régimen antes del resumen.
+      await responderAlta(say, { conEps: true });
       await say('Sí');
 
       expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
@@ -1404,6 +1436,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('1088123456');
       await say('Juan Pérez');
+      // Paciente nuevo: nacimiento, sexo antes del resumen.
+      await responderAlta(say);
       await say('Sí');
 
       expect(prisma.user.create).toHaveBeenCalledTimes(1);
@@ -1420,6 +1454,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('1088123456');
       await say('Juan Pérez');
+      // Paciente nuevo: nacimiento, sexo antes del resumen.
+      await responderAlta(say);
       await say('Sí');
 
       expect(db.patients[0].epsId).toBeNull();
@@ -1435,6 +1471,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('1088123456');
       await say('Juan Pérez');
+      // Paciente nuevo: nacimiento, sexo y régimen antes del resumen.
+      await responderAlta(say, { conEps: true });
       await say('Sí');
 
       expect(db.patients[0].epsId).toBe(EPS_SURA.id);
@@ -1526,6 +1564,118 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(interactionLog.logFailure).toHaveBeenCalledWith(
         expect.objectContaining({ reason: 'UNHANDLED_ERROR' }),
       );
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // 8. Alta de paciente nuevo (bloque F)
+  //
+  // El HIS del hospital exige FE_NACI_PAC y NU_SEXO_PAC NOT NULL, y el
+  // convenio de facturación se resuelve con EPS + régimen. Nada de esto se
+  // preguntaba: una cita de paciente nuevo era imposible de escribir en el HIS.
+  // ══════════════════════════════════════════════════════════════════
+  describe('8. Alta de paciente nuevo', () => {
+    beforeEach(() => {
+      db.slots = [slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA)];
+      appointments.getAvailableSlots.mockImplementation(async () =>
+        db.slots.map((s) => ({
+          slotId: s.id,
+          fecha: s.startTime,
+          doctor: s.doctor.fullName,
+          servicio: s.service.name,
+        })),
+      );
+    });
+
+    const hastaElNombre = async (epsLetra = 'A') => {
+      await say('Hola');
+      await say('A');
+      await say(epsLetra);
+      await say('A');
+      await say('1088123456');
+      await say('Juan Pérez');
+    };
+
+    it('8.1 a un paciente NUEVO se le piden nacimiento y sexo', async () => {
+      await hastaElNombre();
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+      expect(lastSent()).toMatch(/fecha de nacimiento/i);
+    });
+
+    it('8.2 devuelve la fecha entendida ANTES de darla por buena', async () => {
+      await hastaElNombre();
+      await say('15/03/1980');
+
+      // Una fecha mal leída no da error: se propaga en silencio hasta la
+      // historia clínica. Por eso se confirma, con día Y año.
+      expect(lastSent()).toContain('15');
+      expect(lastSent()).toContain('1980');
+      expect(lastSent()).toMatch(/marzo/i);
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+    });
+
+    it('8.3 una fecha que no entiende hace repreguntar, no adivinar', async () => {
+      await hastaElNombre();
+      await say('no me acuerdo');
+
+      expect(lastSent()).toMatch(/15\/03\/1980/);
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+    });
+
+    it('8.4 si la fecha estaba mal, escribirla de nuevo la corrige', async () => {
+      await hastaElNombre();
+      await say('15/03/1980');
+      await say('20/07/1990'); // en vez de confirmar, la reescribe
+      expect(lastSent()).toContain('1990');
+
+      await say('SI');
+      expect(await state()).toBe(ChatState.AWAITING_GENDER);
+    });
+
+    it('8.5 el sexo acepta la letra del menú y la palabra', async () => {
+      await hastaElNombre();
+      await say('15/03/1980');
+      await say('SI');
+      expect(await state()).toBe(ChatState.AWAITING_GENDER);
+
+      await say('masculino');
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+    });
+
+    it('8.6 con Particular NO se pregunta el régimen: no lo necesita', async () => {
+      await hastaElNombre('A'); // Particular
+      await responderAlta(say);
+
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+    });
+
+    it('8.7 los tres datos quedan guardados en el paciente', async () => {
+      await hastaElNombre();
+      await responderAlta(say);
+      await say('Sí');
+
+      const p = db.patients[0];
+      expect(p.dateOfBirth?.toISOString().slice(0, 10)).toBe('1980-03-15');
+      expect(p.gender).toBe('M');
+    });
+
+    it('8.8 a un paciente que YA existe no se le pregunta nada de esto', async () => {
+      db.patients.push({
+        id: 'pat-viejo',
+        cedula: '1088123456',
+        fullName: 'Juan Pérez',
+        organizationId: ORG_ID,
+        epsId: null,
+      });
+
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say('1088123456');
+
+      // Sin nombre, sin nacimiento, sin sexo: directo al resumen.
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
     });
   });
 });

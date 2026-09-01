@@ -15,6 +15,8 @@ function build(opts: {
   envMinutes?: string;
   /** Identificador del paciente en la clave de sesión. Default: teléfono. */
   sender?: string;
+  /** Marcador de alta de paciente nuevo en curso (alarga el umbral). */
+  enAlta?: string | null;
 }) {
   const sender = opts.sender ?? PHONE;
   const key = `chat_state:${ORG}:${sender}`;
@@ -28,7 +30,13 @@ function build(opts: {
     keys: jest.fn(async (pattern: string) =>
       pattern.startsWith('chat_state:') ? [key] : [],
     ),
-    get: jest.fn(async () => opts.state),
+    // El cron consulta dos keys distintas: el estado de la conversación y el
+    // marcador de "alta de paciente nuevo en curso", que alarga el umbral de
+    // inactividad. Devolver `opts.state` para TODA key hacía que el marcador
+    // pareciera presente siempre.
+    get: jest.fn(async (k: string) =>
+      k.startsWith('alta_en_curso:') ? (opts.enAlta ?? null) : opts.state,
+    ),
     ttl: jest.fn(async () => opts.ttl),
     del: jest.fn(async () => 1),
   };
@@ -166,5 +174,50 @@ describe('ChatbotCron — cierre por inactividad', () => {
     const [url] = httpService.post.mock.calls[0] as any[];
     expect(url).not.toContain('v19.0');
     expect(url).toMatch(/^https:\/\/graph\.facebook\.com\/v\d+\.\d+\//);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Umbral más largo durante el alta de un paciente nuevo (bloque F7).
+//
+// Un paciente nuevo contesta tres preguntas más que antes. Con el umbral
+// normal de 5 minutos, la reserva se pierde a mitad del registro justo cuando
+// ya había invertido el mayor esfuerzo.
+// ══════════════════════════════════════════════════════════════════════════
+describe('ChatbotCron — inactividad durante el alta de paciente nuevo', () => {
+  it('NO cierra a los 5 minutos si hay un alta en curso', async () => {
+    const { cron, httpService } = build({
+      state: 'AWAITING_BIRTHDATE',
+      ttl: SESSION_TTL - 6 * 60, // 6 min inactivo: pasaría el umbral normal
+      enAlta: '1',
+    });
+
+    await cron.handleAbandonedSessions();
+
+    expect(httpService.post).not.toHaveBeenCalled();
+  });
+
+  it('sí cierra cuando el alta también supera SU umbral', async () => {
+    const { cron, httpService } = build({
+      state: 'AWAITING_GENDER',
+      ttl: SESSION_TTL - 20 * 60, // 20 min: por encima de los 15 del alta
+      enAlta: '1',
+    });
+
+    await cron.handleAbandonedSessions();
+
+    expect(httpService.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('sin alta en curso, el umbral normal sigue mandando', async () => {
+    const { cron, httpService } = build({
+      state: 'AWAITING_CONFIRMATION',
+      ttl: SESSION_TTL - 6 * 60,
+      enAlta: null,
+    });
+
+    await cron.handleAbandonedSessions();
+
+    expect(httpService.post).toHaveBeenCalledTimes(1);
   });
 });

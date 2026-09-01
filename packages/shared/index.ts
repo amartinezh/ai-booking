@@ -17,6 +17,16 @@ export type {
   ParseOptions,
 } from './src/parse-fecha-preferida';
 export { parseHoraPreferida, matchesHora } from './src/parse-hora-preferida';
+export {
+  parseFechaNacimiento,
+  parseSexo,
+  parseRegimen,
+  formatFechaNacimiento,
+} from './src/parse-fecha-nacimiento';
+export type {
+  FechaNacimiento,
+  ParseNacimientoOptions,
+} from './src/parse-fecha-nacimiento';
 export type {
   HoraPreferida,
   HoraMatchOptions,

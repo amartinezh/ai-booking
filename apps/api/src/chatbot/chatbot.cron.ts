@@ -27,6 +27,24 @@ export class ChatbotCron {
     ),
   );
 
+  /**
+   * Umbral más largo mientras se está dando de alta a un paciente nuevo.
+   *
+   * Un paciente nuevo contesta tres preguntas más que antes (nacimiento, sexo
+   * y régimen — datos que el HIS exige y que el chatbot no pedía). Tres turnos
+   * extra son tres oportunidades más de distraerse, y con el umbral normal de
+   * 5 minutos la reserva se pierde a mitad del registro justo cuando ya había
+   * invertido el mayor esfuerzo. Solo aplica mientras dura el alta: en cuanto
+   * se completa, la sesión vuelve al umbral normal.
+   */
+  private readonly altaInactivityTimeoutSec = Math.min(
+    SESSION_TTL - 60,
+    Math.max(
+      this.inactivityTimeoutSec,
+      (Number(process.env.CHATBOT_INTAKE_TIMEOUT_MINUTES) || 15) * 60,
+    ),
+  );
+
   constructor(
     private readonly redis: RedisService,
     private readonly httpService: HttpService,
@@ -62,10 +80,19 @@ export class ChatbotCron {
       const ttl = await this.redis.ttl(key);
       if (ttl <= 0) continue;
       const idleSec = SESSION_TTL - ttl;
-      if (idleSec < this.inactivityTimeoutSec) continue;
+
+      // El alta de un paciente nuevo aguanta más: ver altaInactivityTimeoutSec.
+      const enAlta =
+        (await this.redis.get(`alta_en_curso:${organizationId}:${whatsappPhone}`)) !==
+        null;
+      const umbral = enAlta
+        ? this.altaInactivityTimeoutSec
+        : this.inactivityTimeoutSec;
+      if (idleSec < umbral) continue;
 
       this.logger.log(
-        `⚠️ Sesión org=${organizationId} ${whatsappPhone} inactiva ${idleSec}s (umbral ${this.inactivityTimeoutSec}s, estado: ${state}). Cerrando.`,
+        `⚠️ Sesión org=${organizationId} ${whatsappPhone} inactiva ${idleSec}s ` +
+          `(umbral ${umbral}s${enAlta ? ', alta en curso' : ''}, estado: ${state}). Cerrando.`,
       );
 
       const creds = await this.whatsappCredentials.forOrg(organizationId);

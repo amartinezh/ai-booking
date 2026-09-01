@@ -38,6 +38,11 @@ import {
   parseFechaPreferida,
   parseHoraPreferida,
   matchesHora,
+  formatFechaNacimiento,
+  parseFechaNacimiento,
+  parseSexo,
+  parseRegimen,
+  isParticularEps,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
@@ -71,6 +76,8 @@ interface ChatTurnContext {
    * propia columna.
    */
   identity: SenderIdentity;
+  /** phone_number_id de Meta. Lo necesita el alta para reinyectar un turno. */
+  phoneNumberId?: string;
   text: string | undefined;
   currentState: ChatState;
   aiData: SchedulingExtraction;
@@ -1724,8 +1731,21 @@ export class ChatbotService implements OnModuleInit {
     identity: SenderIdentity;
     organizationId: string;
     epsId?: string | null;
+    /** Solo al CREAR: el HIS los exige y una clínica sin espejo los ignora. */
+    dateOfBirth?: Date;
+    gender?: string;
+    regime?: string;
   }): Promise<any> {
-    const { cedula, nombre, identity, organizationId, epsId } = params;
+    const {
+      cedula,
+      nombre,
+      identity,
+      organizationId,
+      epsId,
+      dateOfBirth,
+      gender,
+      regime,
+    } = params;
 
     // Cada identificador va a SU columna: `whatsappId` es el teléfono y `bsuid`
     // el Business-scoped user ID. Compat hacia atrás: mientras Meta no mande
@@ -1788,6 +1808,13 @@ export class ChatbotService implements OnModuleInit {
           userId: tempUser.id,
           epsId: epsId || null,
           organizationId,
+          // Datos que el HIS exige para dar de alta al paciente
+          // (FE_NACI_PAC y NU_SEXO_PAC son NOT NULL) y el régimen, del que
+          // depende el convenio de facturación. Opcionales aquí porque una
+          // clínica sin espejo no los necesita.
+          ...(dateOfBirth ? { dateOfBirth } : {}),
+          ...(gender ? { gender } : {}),
+          ...(regime ? { regime } : {}),
         },
       });
       this.logger.log(
@@ -2280,6 +2307,10 @@ export class ChatbotService implements OnModuleInit {
     Record<ChatState, (ctx: ChatTurnContext) => Promise<void>>
   > = {
     [ChatState.AWAITING_DATE]: (ctx) => this.handleAwaitingDate(ctx),
+    // Alta de paciente nuevo (ver la sección de handlers más abajo).
+    [ChatState.AWAITING_BIRTHDATE]: (ctx) => this.handleAwaitingBirthdate(ctx),
+    [ChatState.AWAITING_GENDER]: (ctx) => this.handleAwaitingGender(ctx),
+    [ChatState.AWAITING_REGIME]: (ctx) => this.handleAwaitingRegime(ctx),
     [ChatState.AWAITING_CONFIRMATION]: (ctx) =>
       this.handleAwaitingConfirmation(ctx),
     [ChatState.AWAITING_WAITLIST_OPTIN]: (ctx) =>
@@ -3513,6 +3544,12 @@ export class ChatbotService implements OnModuleInit {
     const isStrictStep =
       currentState === ChatState.AWAITING_DATE ||
       currentState === ChatState.AWAITING_CONFIRMATION ||
+      // Alta de paciente nuevo: una fecha y dos letras. Deterministas — no
+      // llaman al LLM, y sin esto el turno caía al protocolo general y volvía
+      // a preguntar lo mismo en bucle.
+      currentState === ChatState.AWAITING_BIRTHDATE ||
+      currentState === ChatState.AWAITING_GENDER ||
+      currentState === ChatState.AWAITING_REGIME ||
       currentState === ChatState.AWAITING_CANCEL_RETRY_CEDULA ||
       currentState === ChatState.AWAITING_CANCEL_SELECTION ||
       currentState === ChatState.AWAITING_CANCEL_CONFIRM ||
@@ -4992,6 +5029,31 @@ export class ChatbotService implements OnModuleInit {
       // Persistencia con nombre + EPS final. Cubre ambos casos: crea al
       // paciente nuevo (arriba ya garantizamos que tenemos su nombre) y
       // completa whatsappId/EPS del que ya existía.
+      // 🆕 ALTA DE PACIENTE NUEVO — datos que el HIS exige y que hasta ahora
+      // el chatbot no pedía: `FE_NACI_PAC` y `NU_SEXO_PAC` son NOT NULL en
+      // PACIENTES, y sin el régimen no se puede resolver el convenio de
+      // facturación (la misma EPS tiene convenios distintos por régimen).
+      //
+      // Solo se preguntan cuando el paciente NO existe todavía. A quien ya
+      // está registrado no se le pregunta nada: sus datos ya están.
+      if (!patient) {
+        const siguiente = await this.siguienteDatoDeAlta(
+          organizationId,
+          senderId,
+          epsIdForPatient,
+        );
+        if (siguiente) {
+          await this.pedirDatoDeAlta(
+            organizationId,
+            senderId,
+            siguiente,
+            MSGS,
+            resolvedEpsName,
+          );
+          return;
+        }
+      }
+
       if (finalNombre) {
         await this.ensurePatientPersisted({
           cedula: finalCedula,
@@ -4999,6 +5061,7 @@ export class ChatbotService implements OnModuleInit {
           identity,
           organizationId: organizationId,
           epsId: epsIdForPatient,
+          ...(await this.datosDeAltaGuardados(organizationId, senderId)),
         });
       }
 
@@ -5046,6 +5109,7 @@ export class ChatbotService implements OnModuleInit {
       organizationId,
       senderId,
       identity,
+      phoneNumberId: event?.metadata?.phone_number_id,
       text,
       currentState,
       aiData,
@@ -5270,6 +5334,294 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** Handler de estado: AWAITING_CONFIRMATION. Extraído de processIncomingMessageUnsafe (#2). */
+  // ══════════════════════════════════════════════════════════════
+  // ALTA DE PACIENTE NUEVO — nacimiento, sexo y régimen
+  //
+  // El HIS del hospital exige `FE_NACI_PAC` y `NU_SEXO_PAC` NOT NULL para
+  // crear un paciente, y el convenio de facturación se resuelve con
+  // EPS + régimen. Nada de esto se preguntaba: el chatbot solo capturaba
+  // nombre y cédula, así que una cita de un paciente nuevo era imposible de
+  // escribir en el HIS.
+  //
+  // Los tres van en turnos SEPARADOS, no en un solo mensaje: el extractor LLM
+  // está devolviendo nulos (esta organización no tiene proveedor configurado),
+  // así que todo el parseo es determinista y un dato por turno es lo único
+  // fiable.
+  // ══════════════════════════════════════════════════════════════
+
+  private altaKey(
+    organizationId: string,
+    senderId: string,
+    dato: 'nacimiento' | 'sexo' | 'regimen',
+  ): string {
+    return `temp_alta_${dato}:${organizationId}:${senderId}`;
+  }
+
+  /** Qué dato falta todavía, o null si ya están todos. */
+  private async siguienteDatoDeAlta(
+    organizationId: string,
+    senderId: string,
+    epsId: string | null,
+  ): Promise<'nacimiento' | 'sexo' | 'regimen' | null> {
+    if (!(await this.redis.get(this.altaKey(organizationId, senderId, 'nacimiento'))))
+      return 'nacimiento';
+    if (!(await this.redis.get(this.altaKey(organizationId, senderId, 'sexo'))))
+      return 'sexo';
+
+    // El régimen solo aplica con EPS: un particular paga directo y su convenio
+    // no depende de nada. Preguntárselo sería una pregunta de más para nada.
+    if (!epsId) return null;
+    const eps = await this.prisma.eps.findUnique({ where: { id: epsId } });
+    if (!eps || isParticularEps(eps.name)) return null;
+
+    if (!(await this.redis.get(this.altaKey(organizationId, senderId, 'regimen'))))
+      return 'regimen';
+    return null;
+  }
+
+  private async pedirDatoDeAlta(
+    organizationId: string,
+    senderId: string,
+    dato: 'nacimiento' | 'sexo' | 'regimen',
+    MSGS: ReturnType<typeof buildMessages>,
+    epsName: string,
+  ): Promise<void> {
+    const porDato = {
+      nacimiento: { reply: MSGS.pedirNacimiento(), state: ChatState.AWAITING_BIRTHDATE },
+      sexo: { reply: MSGS.pedirSexo(), state: ChatState.AWAITING_GENDER },
+      regimen: { reply: MSGS.pedirRegimen(epsName), state: ChatState.AWAITING_REGIME },
+    }[dato];
+
+    await this.smartReply(organizationId, senderId, porDato.reply);
+    await this.setUserState(organizationId, senderId, porDato.state);
+    await this.extenderSesionDeAlta(organizationId, senderId);
+  }
+
+  /** Lo capturado hasta ahora, en el formato que espera `ensurePatientPersisted`. */
+  private async datosDeAltaGuardados(
+    organizationId: string,
+    senderId: string,
+  ): Promise<{ dateOfBirth?: Date; gender?: string; regime?: string }> {
+    const [nacimiento, sexo, regimen] = await Promise.all([
+      this.redis.get(this.altaKey(organizationId, senderId, 'nacimiento')),
+      this.redis.get(this.altaKey(organizationId, senderId, 'sexo')),
+      this.redis.get(this.altaKey(organizationId, senderId, 'regimen')),
+    ]);
+    return {
+      ...(nacimiento ? { dateOfBirth: new Date(nacimiento) } : {}),
+      ...(sexo ? { gender: sexo } : {}),
+      ...(regimen ? { regime: regimen } : {}),
+    };
+  }
+
+  /**
+   * Un paciente nuevo ahora contesta tres preguntas más, y el cron cierra las
+   * sesiones inactivas a los 300 s. Tres turnos extra son tres oportunidades
+   * más de distraerse y perder la reserva a medio camino, así que mientras
+   * dura el alta la sesión aguanta más.
+   */
+  private async extenderSesionDeAlta(
+    organizationId: string,
+    senderId: string,
+  ): Promise<void> {
+    await this.redis.set(
+      `alta_en_curso:${organizationId}:${senderId}`,
+      '1',
+      'EX',
+      SESSION_TTL,
+    );
+  }
+
+  private async handleAwaitingBirthdate(ctx: ChatTurnContext): Promise<void> {
+    const { organizationId, senderId, text, MSGS } = ctx;
+
+    // El paciente confirma la fecha que se le devolvió en el turno anterior.
+    const pendiente = await this.redis.get(
+      `temp_alta_nacimiento_pendiente:${organizationId}:${senderId}`,
+    );
+    if (pendiente && /^(s[ií]|si|correcto|ok|exacto|as[ií] es)$/i.test((text ?? '').trim())) {
+      await this.redis.set(
+        this.altaKey(organizationId, senderId, 'nacimiento'),
+        pendiente,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.del(
+        `temp_alta_nacimiento_pendiente:${organizationId}:${senderId}`,
+      );
+      await this.continuarAlta(ctx);
+      return;
+    }
+
+    const fecha = parseFechaNacimiento(text);
+    if (!fecha) {
+      await this.smartReply(organizationId, senderId, MSGS.nacimientoNoEntendido());
+      return;
+    }
+
+    // ⭐ Se le devuelve lo entendido ANTES de darlo por bueno. Una fecha mal
+    // leída no da error: se propaga en silencio hasta la historia clínica del
+    // paciente, y de ella depende el rango de edad que el HIS valida.
+    await this.redis.set(
+      `temp_alta_nacimiento_pendiente:${organizationId}:${senderId}`,
+      fecha.iso,
+      'EX',
+      SESSION_TTL,
+    );
+    await this.smartReply(
+      organizationId,
+      senderId,
+      MSGS.confirmarNacimiento(formatFechaNacimiento(fecha.date)),
+    );
+  }
+
+  private async handleAwaitingGender(ctx: ChatTurnContext): Promise<void> {
+    const { organizationId, senderId, text, MSGS } = ctx;
+    const t = (text ?? '').trim();
+    // El menú ofrece A/B; también se acepta la palabra escrita.
+    const sexo = /^a$/i.test(t) ? 'M' : /^b$/i.test(t) ? 'F' : parseSexo(t);
+    if (!sexo) {
+      await this.smartReply(organizationId, senderId, MSGS.sexoNoEntendido());
+      return;
+    }
+    await this.redis.set(
+      this.altaKey(organizationId, senderId, 'sexo'),
+      sexo,
+      'EX',
+      SESSION_TTL,
+    );
+    await this.continuarAlta(ctx);
+  }
+
+  private async handleAwaitingRegime(ctx: ChatTurnContext): Promise<void> {
+    const { organizationId, senderId, text, MSGS } = ctx;
+    const regimen = parseRegimen((text ?? '').trim());
+    if (!regimen) {
+      await this.smartReply(organizationId, senderId, MSGS.regimenNoEntendido());
+      return;
+    }
+    await this.redis.set(
+      this.altaKey(organizationId, senderId, 'regimen'),
+      regimen,
+      'EX',
+      SESSION_TTL,
+    );
+    await this.continuarAlta(ctx);
+  }
+
+  /**
+   * Avanza al siguiente dato pendiente o, si ya están todos, retoma el flujo
+   * normal reinyectando el turno — así el resumen y la confirmación se
+   * construyen con el MISMO código de siempre, sin duplicar esa lógica aquí.
+   */
+  private async continuarAlta(ctx: ChatTurnContext): Promise<void> {
+    const { organizationId, senderId, MSGS } = ctx;
+    const epsId = await this.redis.get(
+      `temp_eps_id:${organizationId}:${senderId}`,
+    );
+    const siguiente = await this.siguienteDatoDeAlta(
+      organizationId,
+      senderId,
+      epsId,
+    );
+
+    if (siguiente) {
+      const eps = epsId
+        ? await this.prisma.eps.findUnique({ where: { id: epsId } })
+        : null;
+      await this.pedirDatoDeAlta(
+        organizationId,
+        senderId,
+        siguiente,
+        MSGS,
+        eps?.name ?? PARTICULAR_EPS_NAME,
+      );
+      return;
+    }
+
+    // Datos completos: se persiste al paciente y se muestra el resumen por el
+    // MISMO camino que el flujo normal. Se probó antes reinyectando un turno
+    // sintético con la cédula, pero eso re-resuelve el tenant, ensucia la
+    // auditoría con un mensaje que el paciente nunca escribió y se arriesga a
+    // recursión. Una llamada directa dice lo que hace.
+    await this.persistirYMostrarResumen(ctx);
+  }
+
+  /**
+   * Persiste al paciente y muestra el resumen previo a la confirmación.
+   *
+   * Sale del flujo principal para que el alta de paciente nuevo pueda retomar
+   * exactamente aquí cuando termina de recoger nacimiento, sexo y régimen —
+   * sin duplicar la construcción del resumen ni el consentimiento de Habeas
+   * Data, que es justo el tipo de cosa que se desincroniza con el tiempo.
+   */
+  private async persistirYMostrarResumen(ctx: ChatTurnContext): Promise<void> {
+    const { organizationId, senderId, MSGS, text } = ctx;
+    const g = (k: string) => this.redis.get(`${k}:${organizationId}:${senderId}`);
+
+    const [cedula, nombre, epsId, servicio, fechaVista] = await Promise.all([
+      g('temp_cedula'),
+      g('temp_nombre'),
+      g('temp_eps_id'),
+      g('temp_especialidad'),
+      g('temp_selected_date_view'),
+    ]);
+
+    if (!cedula) {
+      // La sesión expiró a mitad del alta. Sin cédula no hay a quién agendar.
+      await this.smartReply(organizationId, senderId, MSGS.sesionExpirada());
+      await this.cleanUpSession(organizationId, senderId);
+      return;
+    }
+
+    const eps = epsId
+      ? await this.prisma.eps.findUnique({ where: { id: epsId } })
+      : null;
+
+    // "Particular" existe como fila de `Eps` solo para poder aparecer en el
+    // menú: NO es una afiliación, y ni el paciente ni la cita deben quedar
+    // ligados a ella. Misma traducción que hace el flujo normal con
+    // `epsIdForPatient`; replicarla aquí es obligatorio, no cosmético.
+    const epsIdParaPaciente =
+      eps && !isParticularEps(eps.name) ? eps.id : null;
+
+    await this.ensurePatientPersisted({
+      cedula,
+      nombre: nombre || 'Paciente',
+      identity: ctx.identity,
+      organizationId,
+      epsId: epsIdParaPaciente,
+      ...(await this.datosDeAltaGuardados(organizationId, senderId)),
+    });
+
+    const reply = MSGS.resumenCita(
+      nombre || 'Paciente',
+      cedula,
+      eps?.name ?? PARTICULAR_EPS_NAME,
+      servicio ?? '',
+      fechaVista ? formatAppointmentLong(fechaVista) : '',
+      this.configService.get<string>('PRIVACY_POLICY_URL'),
+    );
+    await this.sendWhatsAppMessage(senderId, reply);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_CONFIRMATION,
+    );
+
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: text || '[alta]',
+      botReply: reply,
+      metadata: {
+        step: 'BOOKING_SUMMARY_SHOWN',
+        cedula,
+        eps: eps?.name ?? PARTICULAR_EPS_NAME,
+        specialty: servicio,
+        viaAltaPacienteNuevo: true,
+      },
+    });
+  }
+
   private async handleAwaitingConfirmation(
     ctx: ChatTurnContext,
   ): Promise<void> {

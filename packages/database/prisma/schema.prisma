@@ -450,6 +450,19 @@ model PatientProfile {
   gender      String? // Ej: 'M', 'F', 'Other'
   address     String?
 
+  /// Régimen de afiliación: 'SUBSIDIADO' | 'CONTRIBUTIVO'. Concepto del
+  /// sistema de salud colombiano, no de un HIS concreto, por eso vive aquí y
+  /// no en MirrorEntityMap.
+  ///
+  /// Hace falta para resolver el convenio de facturación: la MISMA EPS tiene
+  /// convenios distintos según el régimen (en el HIS de Anserma, Sura
+  /// subsidiado es el 467 y contributivo el 473). Deducirlo de la EPS sería
+  /// adivinar, porque varias operan los dos.
+  ///
+  /// Nullable: los pacientes creados antes de que el chatbot lo preguntara no
+  /// lo tienen, y una clínica sin espejo nunca lo necesita.
+  regime String?
+
   // 🔌 CONEXIÓN EPS: El paciente declara su EPS base
   epsId String?
   eps   Eps?    @relation(fields: [epsId], references: [id])

@@ -4,6 +4,13 @@ export enum ChatState {
   AWAITING_EPS = 'AWAITING_EPS',
   AWAITING_DATE = 'AWAITING_DATE',
   AWAITING_NAME = 'AWAITING_NAME',
+  // Alta de paciente nuevo. El HIS del hospital exige nacimiento y sexo NOT
+  // NULL en PACIENTES, y el régimen decide el convenio de facturación. Solo
+  // se recorren cuando el paciente NO existe todavía: a quien ya está
+  // registrado no se le pregunta nada de esto.
+  AWAITING_BIRTHDATE = 'AWAITING_BIRTHDATE',
+  AWAITING_GENDER = 'AWAITING_GENDER',
+  AWAITING_REGIME = 'AWAITING_REGIME',
   AWAITING_CEDULA = 'AWAITING_CEDULA',
   AWAITING_CONFIRMATION = 'AWAITING_CONFIRMATION',
   AWAITING_CANCEL_CEDULA = 'AWAITING_CANCEL_CEDULA',
@@ -450,6 +457,51 @@ const FORMAL = {
     pick([
       `Le pido disculpas: ese horario dejó de estar disponible para agendamiento por este medio.\n\n¿Elegimos otro de la lista? Escriba la letra, por favor.`,
       `Ese espacio ya no se puede reservar por este canal.\n\n¿Vemos otra opción? Indíqueme con qué letra prefiere quedarse.`,
+    ]),
+
+  // ── Alta de paciente nuevo ────────────────────────────────────────────
+  pedirNacimiento: () =>
+    pick([
+      `Gracias. ¿Cuál es su *fecha de nacimiento*?\n\nPuede escribirla como *15/03/1980* o "15 de marzo de 1980".`,
+      `Perfecto. Para completar su registro, ¿me indica su *fecha de nacimiento*?\n\nPor ejemplo: *15/03/1980*.`,
+    ]),
+
+  // Se le devuelve al paciente lo que se entendió ANTES de seguir: una fecha
+  // mal leída se propaga en silencio hasta su historia clínica.
+  confirmarNacimiento: (fechaLegible: string) =>
+    pick([
+      `Entendí *${fechaLegible}*. ¿Es correcto? Responda *SÍ* o escríbala de nuevo.`,
+      `Anoté *${fechaLegible}*. ¿Está bien? Conteste *SÍ*, o vuelva a escribirla si me equivoqué.`,
+    ]),
+
+  nacimientoNoEntendido: () =>
+    pick([
+      `No logré entender esa fecha. ¿Me la escribe como *15/03/1980*, por favor?`,
+      `Disculpe, no interpreté bien la fecha. Escríbala así: *día/mes/año*, por ejemplo *15/03/1980*.`,
+    ]),
+
+  pedirSexo: () =>
+    pick([
+      `¿Cuál es su *sexo*?\n\n*A)* Masculino\n*B)* Femenino`,
+      `Para el registro, ¿me indica su *sexo*?\n\n*A)* Masculino\n*B)* Femenino`,
+    ]),
+
+  sexoNoEntendido: () =>
+    pick([
+      `No entendí. Responda *A* para masculino o *B* para femenino, por favor.`,
+      `Disculpe, ¿*A)* Masculino o *B)* Femenino?`,
+    ]),
+
+  pedirRegimen: (epsName: string) =>
+    pick([
+      `Última pregunta: su afiliación a *${epsName}*, ¿es *subsidiada* o *contributiva*?\n\n*A)* Subsidiado (SISBÉN)\n*B)* Contributivo (cotizante o beneficiario)`,
+      `Para terminar: en *${epsName}*, ¿su régimen es subsidiado o contributivo?\n\n*A)* Subsidiado (SISBÉN)\n*B)* Contributivo`,
+    ]),
+
+  regimenNoEntendido: () =>
+    pick([
+      `No entendí. Responda *A* si es subsidiado (SISBÉN) o *B* si es contributivo, por favor.`,
+      `Disculpe: *A)* Subsidiado o *B)* Contributivo.`,
     ]),
 
   errorSlotInvalido: () =>
@@ -1059,6 +1111,49 @@ const INFORMAL = {
     pick([
       `Uy, ese horario ya no se puede agendar por acá. 🙏 ¿Vemos otro? Mándame la letra.`,
       `Ese espacio dejó de estar disponible por este medio. ¿Cuál otro te sirve? Dime la letra.`,
+    ]),
+
+  // ── Alta de paciente nuevo ────────────────────────────────────────────
+  pedirNacimiento: () =>
+    pick([
+      `Gracias. ¿Cuál es tu *fecha de nacimiento*? 📅\n\nPuedes escribirla como *15/03/1980* o "15 de marzo de 1980".`,
+      `Listo. ¿Me dices tu *fecha de nacimiento*? Por ejemplo: *15/03/1980*.`,
+    ]),
+
+  confirmarNacimiento: (fechaLegible: string) =>
+    pick([
+      `Entendí *${fechaLegible}*. ¿Está bien? Responde *SÍ*, o escríbela de nuevo.`,
+      `Anoté *${fechaLegible}*. ¿Correcto? Dime *SÍ* o mándamela otra vez.`,
+    ]),
+
+  nacimientoNoEntendido: () =>
+    pick([
+      `No entendí esa fecha. 🙏 ¿Me la escribes como *15/03/1980*?`,
+      `Uy, no capté la fecha. Escríbela así: *día/mes/año*, por ejemplo *15/03/1980*.`,
+    ]),
+
+  pedirSexo: () =>
+    pick([
+      `¿Cuál es tu *sexo*?\n\n*A)* Masculino\n*B)* Femenino`,
+      `Para el registro: ¿*A)* Masculino o *B)* Femenino?`,
+    ]),
+
+  sexoNoEntendido: () =>
+    pick([
+      `No entendí. Responde *A* (masculino) o *B* (femenino), porfa.`,
+      `¿*A)* Masculino o *B)* Femenino?`,
+    ]),
+
+  pedirRegimen: (epsName: string) =>
+    pick([
+      `Última: tu afiliación a *${epsName}*, ¿es *subsidiada* o *contributiva*?\n\n*A)* Subsidiado (SISBÉN)\n*B)* Contributivo`,
+      `Para terminar: en *${epsName}*, ¿régimen subsidiado o contributivo?\n\n*A)* Subsidiado\n*B)* Contributivo`,
+    ]),
+
+  regimenNoEntendido: () =>
+    pick([
+      `No entendí. Responde *A* si eres subsidiado (SISBÉN) o *B* si contributivo.`,
+      `¿*A)* Subsidiado o *B)* Contributivo?`,
     ]),
 
   errorSlotInvalido: () =>
