@@ -19,7 +19,7 @@ export default function Home() {
       <header className="absolute top-0 w-full z-50">
         <div className="max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <BrandLogo size={32} alt="Antigravity" />
+            <BrandLogo size={32} alt="AgenIA" />
             <span className="text-xl font-bold tracking-tight text-zinc-900 dark:text-white">
               Clinica <span className="text-blue-600 font-black">AI</span>
             </span>

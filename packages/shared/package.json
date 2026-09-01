@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "check-types": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

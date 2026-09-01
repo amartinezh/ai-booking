@@ -1282,7 +1282,19 @@ model SyncOutbox {
   attempts       Int          @default(0)
   deadLettered   Boolean      @default(false)
 
+  // Backoff exponencial entre reintentos. NULL = entregable ya (nunca se ha
+  // intentado, o el intento anterior no llego a fallar). Cuando el agente
+  // reporta un fallo, se corre hacia adelante 2^intentos segundos con techo
+  // de 5 minutos: sin esto, un evento que el HIS rechaza siempre se
+  // reintentaria en cada vuelta del agente y saturaria el log y la BD.
+  nextAttemptAt  DateTime?
+
   @@index([organizationId, seq])
+  // Cubre la consulta caliente del dispatcher: pendientes de una organizacion
+  // en orden de seq. El indice parcial equivalente con el predicado completo
+  // (incluido deadLettered) vive en prisma/sql/, porque Prisma no expresa
+  // indices parciales en su DSL.
+  @@index([organizationId, entityType, entityId, seq])
 }
 
 // -----------------------------------------------------------------------------

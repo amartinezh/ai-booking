@@ -20,7 +20,8 @@ function fakeRedis() {
   };
 }
 
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const delay = (ms: number) =>
+  new Promise<void>((r) => setTimeout(r, ms));
 
 describe('InboundQueueService', () => {
   afterEach(() => {

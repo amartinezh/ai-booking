@@ -109,7 +109,12 @@ services:
     environment:
       - NODE_ENV=production
       - TZ=${TZ:-America/Bogota}
-    command: ["prisma", "migrate", "deploy", "--schema=packages/database/prisma/schema.prisma"]
+    # `db:deploy` = `prisma migrate deploy` + el DDL que Prisma no gestiona
+    # (triggers, funciones, indices parciales). Van encadenados a proposito:
+    # cuando eran dos pasos sueltos, el segundo simplemente no existia y el
+    # trigger del espejo nunca llego a ninguna base. Ver
+    # packages/database/prisma/sql/non-prisma-ddl.sql.
+    command: ["pnpm", "--filter", "@agenia/database", "db:deploy"]
     depends_on:
       postgres:
         condition: service_healthy

@@ -2,6 +2,8 @@ import { loadConfig } from './config';
 import { HttpMirrorApiClient } from './core/mirror-api-client';
 import { InMemoryAgentStateStore } from './core/agent-state-store';
 import { MirrorEngine } from './core/engine';
+import { FailureReporter } from './core/failure-reporter';
+import { runSyncCycle } from './core/sync-cycle';
 import { CntSanVicenteAnsermaDriver } from './drivers/cnt-sanvicente-anserma';
 import type { HisDriver } from './core/driver.interface';
 
@@ -42,17 +44,25 @@ async function main() {
 
   let recentErrors = 0;
   let lastHeartbeat = 0;
+  // Amortigua los fallos repetidos: el driver falla igual en cada vuelta
+  // mientras la causa siga ahi, y sin esto el log se vuelve inservible.
+  const reporter = new FailureReporter((line) => console.error(line));
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    try {
-      await engine.pullAndApplyOutboxEvents();
-      await engine.detectAndPushChanges();
-      recentErrors = 0;
-    } catch (error) {
-      recentErrors++;
-      console.error('[mirror-agent] error en el ciclo de sync:', error);
+    // Toda la logica del ciclo vive en core/sync-cycle.ts, probada aparte.
+    // Aqui solo queda el cableado: el bucle, el heartbeat y la espera.
+    const { applied, pushed, hadErrors } = await runSyncCycle(engine, reporter);
+    if (applied > 0) {
+      console.log(`[mirror-agent] AgenIA->HIS: ${applied} evento(s) aplicados.`);
     }
+    if (pushed > 0) {
+      console.log(`[mirror-agent] HIS->AgenIA: ${pushed} cambio(s) subidos.`);
+    }
+
+    // El contador que viaja en el heartbeat: acumula mientras haya fallos y
+    // se reinicia solo cuando un ciclo entero sale limpio.
+    recentErrors = hadErrors ? recentErrors + 1 : 0;
 
     if (Date.now() - lastHeartbeat >= config.heartbeatIntervalMs) {
       await engine.sendHeartbeat(recentErrors).catch((err) => {

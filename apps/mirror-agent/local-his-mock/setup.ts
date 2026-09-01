@@ -16,7 +16,31 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as sql from 'mssql';
 
-const SA_PASSWORD = process.env.MIRROR_HIS_MOCK_SA_PASSWORD ?? 'AgenIA_Local_2026!'; // ver docker-compose.yml
+/**
+ * Lee una variable del `.env` de la raíz del repo. Este script se corre suelto
+ * con `npx tsx`, así que no hereda el entorno que docker compose sí carga solo.
+ * La clave NO tiene valor por defecto a propósito: un fallback hardcodeado es
+ * una credencial en git, que es justo lo que este archivo dejó de tener.
+ */
+function readRootEnv(key: string): string | undefined {
+  const envPath = path.resolve(__dirname, '../../../.env');
+  if (!fs.existsSync(envPath)) return undefined;
+  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+    const match = line.match(/^\s*([A-Z0-9_]+)=(.*)$/);
+    if (match?.[1] === key) return match[2].trim().replace(/^["']|["']$/g, '');
+  }
+  return undefined;
+}
+
+const SA_PASSWORD = process.env.MIRROR_HIS_MOCK_SA_PASSWORD ?? readRootEnv('MIRROR_HIS_MOCK_SA_PASSWORD');
+if (!SA_PASSWORD) {
+  console.error(
+    'Falta MIRROR_HIS_MOCK_SA_PASSWORD.\n' +
+      'Genera el .env de la raíz con:  ./scripts/secrets-init.sh\n' +
+      'o pásala en la invocación:      MIRROR_HIS_MOCK_SA_PASSWORD=... npx tsx ...',
+  );
+  process.exit(1);
+}
 const AGENIA_SYNC_PASSWORD = process.env.AGENIA_SYNC_PASSWORD;
 
 const SCHEMA_SEED_PATH = path.resolve(__dirname, 'schema-and-seed.sql');

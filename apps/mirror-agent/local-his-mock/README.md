@@ -43,7 +43,7 @@ AGENIA_SYNC_PASSWORD='<misma que uses en provision-mirror-config.ts>' \
 AGENIA_SYNC_PASSWORD='<la misma>' npx tsx packages/database/scripts/provision-mirror-config.ts
 
 # 4) Habilitar temporalmente para probar (enabled=false es el default de fábrica)
-docker exec antigravity_db psql -U admin -d antigravity -c \
+docker exec agenia_db psql -U admin -d agenia -c \
   "UPDATE \"HospitalMirrorConfig\" SET enabled=true WHERE \"organizationId\"='<id>';"
 
 # 5) Con la API corriendo (pnpm --filter api start:dev) y el token del paso 3:

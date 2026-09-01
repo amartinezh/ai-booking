@@ -61,10 +61,12 @@ Cinco contenedores en una red privada de Docker. Solo Caddy toca Internet:
   SSH). **redis** no publica ningún puerto.
 - Caddy pide y renueva los certificados de Let's Encrypt sin intervención.
 
-> ⚠️ **Usamos [`docker-compose.deploy.yml`](../docker-compose.deploy.yml), no
-> `docker-compose.prod.yml`.** El archivo `prod` tiene cuatro incompatibilidades
-> que impiden un arranque limpio en un servidor nuevo; están explicadas en la
-> [§13](#13-por-qué-no-usamos-docker-composeprodyml).
+> ⚠️ **El único compose de producción es
+> [`docker-compose.deploy.yml`](../docker-compose.deploy.yml).**
+> `docker-compose.prod.yml` fue **eliminado del repo**: tenía cuatro
+> incompatibilidades que impedían un arranque limpio en un servidor nuevo, entre
+> ellas la contraseña de Postgres escrita en el YAML. Quedan explicadas en la
+> [§13](#13-por-qué-se-eliminó-docker-composeprodyml).
 
 ---
 
@@ -258,9 +260,9 @@ PORT=3000
 # ── PostgreSQL ──
 POSTGRES_USER=agenia
 POSTGRES_PASSWORD=<pega-aquí>
-POSTGRES_DB=antigravity
+POSTGRES_DB=agenia
 DB_HOST_PORT=49317
-DATABASE_URL=postgresql://agenia:<pega-aquí>@postgres:5432/antigravity?schema=public
+DATABASE_URL=postgresql://agenia:<pega-aquí>@postgres:5432/agenia?schema=public
 
 # ── Redis ──
 # redis.service.ts lee EXCLUSIVAMENTE REDIS_URL. REDIS_HOST/REDIS_PORT se ignoran.
@@ -327,7 +329,7 @@ imagen. No se conecta a la base (todas las páginas con datos son
 
 ```bash
 cat > /opt/agenia/apps/web/.env <<'EOF'
-DATABASE_URL=postgresql://agenia:<pega-aquí>@postgres:5432/antigravity?schema=public
+DATABASE_URL=postgresql://agenia:<pega-aquí>@postgres:5432/agenia?schema=public
 JWT_SECRET=<el-mismo-de-arriba>
 API_URL=https://api.tudominio.com
 INTERNAL_API_URL=http://api:3000
@@ -335,7 +337,7 @@ NEXT_PUBLIC_API_URL=http://api:3000
 EOF
 
 cat > /opt/agenia/packages/database/.env <<'EOF'
-DATABASE_URL=postgresql://agenia:<pega-aquí>@postgres:5432/antigravity?schema=public
+DATABASE_URL=postgresql://agenia:<pega-aquí>@postgres:5432/agenia?schema=public
 EOF
 
 chmod 600 /opt/agenia/apps/web/.env /opt/agenia/packages/database/.env
@@ -690,17 +692,22 @@ apt-get update && apt-get upgrade -y && reboot   # los contenedores vuelven solo
 
 ---
 
-## 13. Por qué no usamos `docker-compose.prod.yml`
+## 13. Por qué se eliminó `docker-compose.prod.yml`
 
-Cuatro cosas que impiden que ese archivo arranque limpio en un servidor nuevo,
-y cómo quedan resueltas en [`docker-compose.deploy.yml`](../docker-compose.deploy.yml):
+Ese archivo ya no existe en el repo. Tenía cuatro cosas que impedían un arranque
+limpio en un servidor nuevo, todas resueltas en
+[`docker-compose.deploy.yml`](../docker-compose.deploy.yml):
 
 | # | Problema en `prod` | Efecto | Solución |
 |---|---|---|---|
 | 1 | Inyecta `REDIS_HOST`/`REDIS_PORT` | `redis.service.ts` solo lee `REDIS_URL` → la API busca Redis en su propio contenedor y el estado de sesión del chatbot no funciona | `REDIS_URL=redis://redis:6379` |
 | 2 | `Caddyfile` apunta a `api:3001` | La imagen escucha en 3000 → 502 en el dominio de la API | Caddy → `api:3000` |
 | 3 | Dominio fijo `agendamiento-ia.com` | Certificado imposible con otro dominio | `deploy/Caddyfile` generado con los tuyos |
-| 4 | Contraseña `password123` en el YAML | Credencial pública en git | Secretos en `.env.production` (chmod 600, fuera de git y fuera de la imagen) |
+| 4 | Contraseña de Postgres fija dentro del YAML | Credencial pública en git | Secretos en `.env.production` (chmod 600, fuera de git y fuera de la imagen) |
+
+Mientras existió, `.github/workflows/deploy.yml` desplegaba con él en cada push a
+`main` — es decir, producción arrancaba con la contraseña que estaba en git. El
+workflow ahora usa `docker-compose.deploy.yml` con `--env-file .env.production`.
 
 Y dos correcciones en los Dockerfiles ([`deploy/Dockerfile.web`](../deploy/Dockerfile.web),
 [`deploy/Dockerfile.api`](../deploy/Dockerfile.api)):

@@ -1,15 +1,24 @@
 name: Deploy Agendamiento IA a Producción
 
-# 1. ¿Cuándo se activa? Cuando hagas push a la rama 'main'
+# Se activa con cada push a 'main'.
 on:
   push:
     branches:
       - main
 
 jobs:
+  # Barrera de calidad: reutiliza ci.yml en vez de duplicar sus pasos, así no
+  # hay forma de que las dos definiciones se separen con el tiempo.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
     name: Despliegue en Ubuntu VPS
     runs-on: ubuntu-latest
+    # 🚧 Sin esto, un push a `main` con las pruebas en rojo llegaba igual a
+    # producción: deploy.yml era el ÚNICO workflow del repo y no corría una
+    # sola prueba antes de entrar por SSH al VPS.
+    needs: ci
 
     steps:
       - name: 🚀 Conectar, Actualizar y Levantar
@@ -19,28 +28,47 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           command_timeout: 30m
+          envs: APP_DIR
           script: |
-            # 0. Detener el script si ocurre cualquier error
-            set -e
+            set -euo pipefail
 
-            # 1. Ir a la carpeta del proyecto
-            cd /home/deploy/ai-booking
+            # Ruta del despliegue en el servidor. Configurable por si el VPS no
+            # usa la ruta por defecto del instalador.
+            APP_DIR="${APP_DIR:-/home/deploy/ai-booking}"
+            cd "$APP_DIR"
 
-            # 2. Bajar los últimos cambios de GitHub
+            # --- Stack de producción -------------------------------------------
+            # docker-compose.deploy.yml, NO docker-compose.prod.yml (eliminado):
+            # el legacy traía la contraseña de Postgres escrita en el YAML y
+            # exportaba REDIS_HOST/REDIS_PORT, que la API no lee.
+            # Ver docs/INSTALACION_VPS.md §13.
+            #
+            # Todos los secretos viven en .env.production (chmod 600, en el
+            # servidor, fuera de git y fuera de la imagen). --env-file es
+            # obligatorio: alimenta la interpolación ${...} del compose.
+            if [ ! -f .env.production ]; then
+              echo "✗ Falta $APP_DIR/.env.production — el stack no puede arrancar." >&2
+              echo "  Genéralo con: bash deploy/install-vps.sh" >&2
+              exit 1
+            fi
+
+            DC="docker compose --env-file .env.production -f docker-compose.deploy.yml"
+
+            # 1. Traer los últimos cambios.
             git pull origin main
 
-            # 3. CONSTRUIR PRIMERO (Minimiza el tiempo de inactividad)
-            # Reconstruye las imágenes mientras la versión anterior sigue funcionando
-            docker compose -f docker-compose.prod.yml build api web
+            # 2. Construir primero: la versión anterior sigue sirviendo mientras tanto.
+            $DC build api web
 
-            # 4. Detener y eliminar SOLO las versiones antiguas de api y web
-            # postgres y redis NO se tocan para preservar los datos.
-            docker compose -f docker-compose.prod.yml stop api web
-            docker compose -f docker-compose.prod.yml rm -f api web
+            # 3. Migrar ANTES de recrear los servicios. `migrator` es un contenedor
+            #    efímero que comparte imagen con `api` (perfil "tools").
+            $DC run --rm migrator
 
-            # 5. MIGRAR BASE DE DATOS (Contenedor efímero)
-            # Se aplica el nuevo esquema ANTES de levantar la aplicación
-            docker compose -f docker-compose.prod.yml run --rm api npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
+            # 4. Recrear solo lo que cambió. postgres y redis no se tocan:
+            #    `up -d` respeta los contenedores cuya definición no varió.
+            $DC up -d
 
-            # 6. Levantar todo con la nueva versión y la BD actualizada
-            docker compose -f docker-compose.prod.yml up -d
+            # 5. Confirmar que quedó todo arriba.
+            $DC ps
+        env:
+          APP_DIR: ${{ secrets.SERVER_APP_DIR }}

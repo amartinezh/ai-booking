@@ -33,6 +33,9 @@ dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# Logs de dev sueltos en la raíz (web_dev.log y compañía). Los de scripts/up.sh
+# ya caen bajo .local/.
+/*.log
 
 # Misc
 .DS_Store

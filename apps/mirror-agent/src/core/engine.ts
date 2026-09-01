@@ -8,6 +8,20 @@ import type { HisDriver } from './driver.interface';
 import type { AgentStateStore } from './agent-state-store';
 
 /**
+ * Por qué un evento no se pudo aplicar. Se devuelve en vez de loguearse aquí
+ * dentro: `core/` no decide cómo se reporta un error (consola, archivo,
+ * heartbeat) — eso es del proceso que lo envuelve, y así los tests pueden
+ * afirmar sobre el motivo sin espiar la consola.
+ */
+export interface EventFailure {
+  seq: string;
+  eventId: string;
+  message: string;
+  /** true si el driver lanzó una excepción en vez de devolver {success:false}. */
+  threw?: boolean;
+}
+
+/**
  * Motor genérico del agente — el mismo para cualquier driver. Orquesta las
  * dos direcciones del espejo llamando SIEMPRE a través del contrato
  * `HisDriver` y del `MirrorApiClient`; nunca conoce el esquema de un HIS
@@ -45,35 +59,62 @@ export class MirrorEngine {
     applied: number;
     skippedIdempotent: number;
     failed: number;
+    failures: EventFailure[];
   }> {
     const cursor = await this.state.getOutboxCursor();
     const events = await this.api.getPendingEvents(cursor, limit);
     if (events.length === 0) {
-      return { applied: 0, skippedIdempotent: 0, failed: 0 };
+      return { applied: 0, skippedIdempotent: 0, failed: 0, failures: [] };
     }
 
     const acked: string[] = [];
     const failed: string[] = [];
+    const failures: EventFailure[] = [];
     let applied = 0;
     let skippedIdempotent = 0;
 
     for (const dto of events) {
-      if (await this.state.hasAppliedLocally(dto.eventId)) {
-        skippedIdempotent++;
-        acked.push(dto.seq);
-        continue;
-      }
+      // ⚠️ TODO el cuerpo va dentro del try. Un driver puede LANZAR en vez de
+      // devolver {success:false} — es exactamente lo que hace hoy el único
+      // driver real con sus métodos de escritura aún sin implementar. Sin
+      // este catch la excepción salía de este método entero y se llevaba por
+      // delante el `api.ack()` de más abajo: ningún seq se reportaba, el
+      // contador de intentos del servidor no subía NUNCA, y el evento se
+      // reintentaba para siempre sin llegar jamás a dead-letter ni a una
+      // alerta. Es la capa 3 del plan §6: un evento que falla bloquea solo su
+      // entidad, nunca la cola completa.
+      try {
+        if (await this.state.hasAppliedLocally(dto.eventId)) {
+          skippedIdempotent++;
+          acked.push(dto.seq);
+          continue;
+        }
 
-      const result = await this.applyOutboxEvent(dto);
-      if (result.success) {
-        await this.state.markAppliedLocally(dto.eventId);
-        acked.push(dto.seq);
-        applied++;
-      } else {
-        // No se marca aplicado ni se hace ack — el evento sigue pendiente
-        // en el servidor y se reintentará en el próximo pull. El servidor
-        // lleva la cuenta de intentos vía failedSeqs (plan §6, capa 4).
+        const result = await this.applyOutboxEvent(dto);
+        if (result.success) {
+          await this.state.markAppliedLocally(dto.eventId);
+          acked.push(dto.seq);
+          applied++;
+        } else {
+          // No se marca aplicado ni se hace ack — el evento sigue pendiente
+          // en el servidor y se reintentará en el próximo pull. El servidor
+          // lleva la cuenta de intentos vía failedSeqs (plan §6, capa 4).
+          failed.push(dto.seq);
+          failures.push({
+            seq: dto.seq,
+            eventId: dto.eventId,
+            message: result.message ?? 'rechazado por el driver, sin detalle',
+          });
+        }
+      } catch (error) {
         failed.push(dto.seq);
+        failures.push({
+          seq: dto.seq,
+          eventId: dto.eventId,
+          message:
+            error instanceof Error ? error.message : String(error),
+          threw: true,
+        });
       }
     }
 
@@ -84,7 +125,7 @@ export class MirrorEngine {
     const maxSeq = events[events.length - 1].seq;
     await this.state.setOutboxCursor(maxSeq);
 
-    return { applied, skippedIdempotent, failed: failed.length };
+    return { applied, skippedIdempotent, failed: failed.length, failures };
   }
 
   private async applyOutboxEvent(

@@ -1,4 +1,4 @@
-# BASE DE CONOCIMIENTO: CLÍNICA MÉDICA ANTIGRAVITY
+# BASE DE CONOCIMIENTO: CLÍNICA MÉDICA AGENIA
 
 > Archivo de referencia para el asistente virtual Vicente.
 > Última actualización: Mayo 2026.
@@ -8,7 +8,7 @@
 
 ## 1. AGENDAMIENTO Y CITAS MÉDICAS
 
-* **¿Cómo pedir una cita?**: Puede agendar a través de este chat de WhatsApp, en nuestro portal web (www.clinica-antigravity.com.co) o llamando al conmutador (601) 555-0199 ext 1. Nuestro horario de atención telefónica es de lunes a viernes de 7:00 a.m. a 6:00 p.m.
+* **¿Cómo pedir una cita?**: Puede agendar a través de este chat de WhatsApp, en nuestro portal web (www.clinica-agenia.com.co) o llamando al conmutador (601) 555-0199 ext 1. Nuestro horario de atención telefónica es de lunes a viernes de 7:00 a.m. a 6:00 p.m.
 * **¿Cómo cancelar o reprogramar?**: Debe hacerlo con al menos 4 horas de anticipación a través de este chat indicando su número de cédula. Cancelaciones con menos de 4 horas de anticipación pueden generar una nota en su historia clínica.
 * **¿Con cuánta anticipación llegar?**: Es obligatorio presentarse 20 minutos antes de la hora programada para el proceso de admisión y facturación. Llegadas con más de 15 minutos de retraso pueden perder el turno a discreción del especialista.
 * **Documentos requeridos**:
@@ -43,7 +43,7 @@
     * Urgencias (evaluación inicial): $120.000 COP.
 * **Métodos de Pago aceptados**: Efectivo, tarjetas débito/crédito (Visa, Mastercard, Amex), transferencias por PSE, y botones de pago de Bancolombia (QR) y Nequi.
 * **Copagos y Cuotas Moderadoras**: Se definen según su nivel de afiliación a la EPS (Nivel A, B o C) y deben cancelarse antes de la atención. Consulte los valores exactos directamente con su EPS.
-* **¿Hacen factura electrónica?**: Sí. Se envía automáticamente al correo registrado en admisiones. Si no la recibió, escríbanos al correo facturacion@clinica-antigravity.com.co con su número de cédula.
+* **¿Hacen factura electrónica?**: Sí. Se envía automáticamente al correo registrado en admisiones. Si no la recibió, escríbanos al correo facturacion@clinica-agenia.com.co con su número de cédula.
 
 ---
 
@@ -73,13 +73,13 @@
 ## 4. TRÁMITES LEGALES Y ADMINISTRATIVOS (HABEAS DATA)
 
 * **Solicitud de Historia Clínica**: Es un documento de carácter privado y confidencial. Puede solicitarla:
-    * Enviando un correo a hc@clinica-antigravity.com.co con copia de su documento de identidad.
+    * Enviando un correo a hc@clinica-agenia.com.co con copia de su documento de identidad.
     * En persona en la ventanilla de Archivo, piso 1, de lunes a viernes de 8:00 a.m. a 4:00 p.m.
     * El tiempo de entrega es de *3 a 5 días hábiles* desde la radicación.
     * No se entrega información clínica por WhatsApp por protocolos de confidencialidad.
 * **Pacientes Menores de Edad**: La historia clínica y cualquier información médica solo se entrega a los padres o tutores legales, quienes deben acreditar el parentesco presentando el Registro Civil original o escritura de tutela.
 * **Certificados e Incapacidades Médicas**: Solo se emiten durante la consulta médica activa. Copias adicionales o reexpedición deben solicitarse personalmente en la ventanilla de Archivo con la cédula del paciente, de lunes a viernes de 8:00 a.m. a 4:00 p.m.
-* **Derechos de Petición y PQRS**: Puede radicar su petición, queja, reclamo o sugerencia en el correo pqrs@clinica-antigravity.com.co o en el buzón físico ubicado en recepción principal. El tiempo de respuesta es de 15 días hábiles según la Ley 1438.
+* **Derechos de Petición y PQRS**: Puede radicar su petición, queja, reclamo o sugerencia en el correo pqrs@clinica-agenia.com.co o en el buzón físico ubicado en recepción principal. El tiempo de respuesta es de 15 días hábiles según la Ley 1438.
 * **Corrección de datos personales**: Si sus datos en el sistema están incorrectos, preséntese en admisiones con su documento de identidad original para actualizarlos.
 
 ---
@@ -106,7 +106,7 @@
     * Ext 3: Urgencias y hospitalización
     * Ext 4: Laboratorio e imágenes
 * **WhatsApp oficial**: Este chat (disponible 24/7 para consultas; atención personalizada L-V 7am-7pm, Sáb 7am-1pm).
-* **Correo general**: info@clinica-antigravity.com.co
-* **Portal web**: www.clinica-antigravity.com.co
+* **Correo general**: info@clinica-agenia.com.co
+* **Portal web**: www.clinica-agenia.com.co
 * **Dirección**: Calle 100 #15-20, Bogotá D.C. (entrada principal por Calle 100; entrada urgencias por costado lateral).
-* **Redes sociales**: @clinicaantigravity en Instagram y Facebook para novedades y tips de salud.
+* **Redes sociales**: @clinicaagenia en Instagram y Facebook para novedades y tips de salud.

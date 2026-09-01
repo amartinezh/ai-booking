@@ -66,7 +66,7 @@ MONITOR_RETENTION_DAYS=365         # retención de incidentes resueltos
 Tras cambiar cualquiera, recrear el contenedor:
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --force-recreate api
+docker compose --env-file .env.production -f docker-compose.deploy.yml up -d --force-recreate api
 ```
 
 ## Cómo agregar un nuevo servicio a monitorear
@@ -127,5 +127,5 @@ ORDER BY "startedAt" DESC;
 ## Migración de Prisma
 
 ```bash
-docker exec antigravity_api_prod npx prisma db push --schema=packages/database/prisma/schema.prisma
+docker exec agenia_api npx prisma db push --schema=packages/database/prisma/schema.prisma
 ```

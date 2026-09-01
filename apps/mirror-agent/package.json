@@ -12,7 +12,8 @@
     "dev": "ts-node src/index.ts",
     "test": "jest",
     "test:watch": "jest --watch",
-    "lint": "eslint \"src/**/*.ts\" --fix"
+    "lint": "eslint \"src/**/*.ts\" --fix",
+    "check-types": "tsc --noEmit"
   },
   "dependencies": {
     "@agenia/shared": "workspace:^",
@@ -37,6 +38,18 @@
       "ts",
       "js",
       "json"
-    ]
+    ],
+    "collectCoverageFrom": [
+      "**/*.ts",
+      "!**/*.spec.ts"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "statements": 45,
+        "branches": 47,
+        "functions": 25,
+        "lines": 46
+      }
+    }
   }
 }

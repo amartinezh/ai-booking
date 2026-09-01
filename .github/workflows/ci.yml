@@ -1,0 +1,89 @@
+# =============================================================================
+# ci.yml — barrera de calidad. Corre en cada push y en cada pull request.
+#
+# Existe porque hasta ahora el único workflow era deploy.yml: un push a `main`
+# entraba por SSH al VPS y levantaba el stack sin correr una sola prueba. Las
+# 509 pruebas del repo solo se ejecutaban si alguien se acordaba de hacerlo en
+# su portátil. `deploy.yml` ahora depende de este job (needs: ci).
+#
+# Qué BLOQUEA (todo esto está verde hoy, así que un fallo = una regresión real):
+#   · typecheck de los cinco workspaces
+#   · las tres suites de jest + los umbrales de cobertura (trinquete)
+#   · la regla de fechas de CLAUDE.md — cero violaciones hoy, y que siga así
+#
+# Qué NO bloquea todavía: el lint completo. `apps/api` arrastra 1.199 errores
+# y `apps/web` 238, casi todos de la familia no-unsafe-* de typescript-eslint.
+# Bloquear con eso hoy dejaría el repo imposible de mergear, así que se publica
+# como informe visible y se convierte en barrera cuando la deuda baje. Ver el
+# bloque A del plan de remediación.
+# =============================================================================
+name: CI
+
+on:
+  pull_request:
+  # Invocable desde deploy.yml. Un push a `main` NO dispara este workflow por
+  # su cuenta: lo llama deploy.yml y despliega solo si pasa. Así la barrera
+  # corre una vez, no dos, y nunca queda un deploy que ignore su resultado.
+  workflow_call:
+  workflow_dispatch:
+
+# Un push que llega mientras corre el anterior cancela al viejo: en un PR
+# activo solo importa el último commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Typecheck, pruebas y cobertura
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      # `prisma generate` produce el cliente que apps/api importa vía
+      # @agenia/database. Sin esto el typecheck falla en una máquina limpia
+      # con "Cannot find module '.prisma/client'".
+      - name: Generar el cliente de Prisma
+        run: pnpm --filter @agenia/database db:generate
+
+      # database y shared publican dist/; api y web los consumen desde ahí.
+      - name: Compilar los paquetes del workspace
+        run: |
+          pnpm --filter @agenia/database build
+          pnpm --filter @agenia/shared build
+
+      - name: Typecheck
+        run: pnpm turbo run check-types
+
+      # La convención de fechas de CLAUDE.md: ningún .toLocale* sin timeZone
+      # explícito. Hoy hay CERO violaciones en api y en web — esta barrera
+      # existe para que siga siendo cierto. Los contenedores corren en UTC:
+      # una regresión aquí le muestra al paciente una hora cinco horas movida.
+      # El mismo script corre en local: node scripts/check-date-rule.mjs
+      - name: Regla de fechas (America/Bogota)
+        run: node scripts/check-date-rule.mjs
+
+      - name: Pruebas y cobertura
+        run: |
+          pnpm --filter api test -- --coverage --ci
+          pnpm --filter @agenia/mirror-agent test -- --coverage --ci
+          pnpm --filter @agenia/shared test -- --coverage --ci
+
+      # Informe, no barrera — todavía. Ver el comentario de la cabecera.
+      - name: Lint (informe, no bloquea)
+        continue-on-error: true
+        run: pnpm turbo run lint:ci

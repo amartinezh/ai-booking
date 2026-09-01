@@ -159,7 +159,7 @@ if [[ $KEEP_DATA -eq 0 && $HAS_DOCKER -eq 1 && ${#VOLUMES[@]} -gt 0 ]]; then
       f="$BACKUP_DIR/pre-uninstall-$(date +%Y%m%d-%H%M%S).sql.gz"
       # shellcheck disable=SC1090
       [[ -f "$ENV_FILE" ]] && { set -a; source "$ENV_FILE"; set +a; }
-      if docker exec -i agenia_db pg_dump -U "${POSTGRES_USER:-agenia}" -d "${POSTGRES_DB:-antigravity}" \
+      if docker exec -i agenia_db pg_dump -U "${POSTGRES_USER:-agenia}" -d "${POSTGRES_DB:-agenia}" \
            --clean --if-exists 2>/dev/null | gzip -9 > "$f" && [[ -s "$f" ]]; then
         ok "Respaldo guardado: $f ($(du -h "$f" | cut -f1))"
         PURGE_BACKUPS=0   # no tendría sentido borrar el respaldo recién hecho

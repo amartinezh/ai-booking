@@ -5,8 +5,15 @@
  * mismo esquema AES-256-GCM que CryptoService (apps/api/src/common/crypto),
  * para que MirrorAgentGuard pueda descifrarlo en runtime.
  *
- * Uso: npx tsx packages/database/scripts/provision-mirror-config.ts
- * Ajustar las constantes de abajo antes de correrlo.
+ * Uso:
+ *   AGENIA_SYNC_PASSWORD='...' ORGANIZATION_ID='<uuid>' \
+ *     npx tsx packages/database/scripts/provision-mirror-config.ts
+ *
+ *   # o pasando la organización como argumento:
+ *   AGENIA_SYNC_PASSWORD='...' npx tsx ... <organizationId>
+ *
+ *   # sin organización, lista las disponibles y sale:
+ *   npx tsx packages/database/scripts/provision-mirror-config.ts
  */
 import * as path from 'path';
 import * as fs from 'fs';
@@ -29,9 +36,12 @@ loadEnvFile(path.resolve(__dirname, '../../../apps/api/.env'));
 
 import { PrismaClient } from '@prisma/client';
 
-// ---- Ajustar por corrida ----
-const ORGANIZATION_ID = 'ad8c391d-bed5-4d96-936e-0ff065e62117'; // "Hospital San Vicente" (dev)
-const DRIVER_KEY = 'cnt-sanvicente-anserma';
+// ---- Configuración por corrida ----
+// El organizationId salía quemado aquí y quedó obsoleto en cuanto la base se
+// recreó con otro nombre: el script fallaba con "No existe Organization" y
+// había que editarlo para cada entorno. Ahora entra por variable de entorno
+// o argumento, y si falta, `resolveOrganizationId` lista las que sí existen.
+const DRIVER_KEY = process.env.MIRROR_DRIVER_KEY ?? 'cnt-sanvicente-anserma';
 // MIRROR_HIS_TARGET=local (default) → mock local en Docker (localhost:1433).
 // MIRROR_HIS_TARGET=hospital        → red real del hospital (VM + PRUEBAS remoto).
 // Cambiar de uno a otro es SOLO este bloque — nada más del sistema cambia
@@ -86,6 +96,40 @@ function hashAgentToken(token: string): string {
 
 const prisma = new PrismaClient();
 
+/**
+ * Resuelve la organización objetivo desde el argumento o el entorno. Cuando no
+ * se puede, imprime las organizaciones que SÍ existen en la base: es la
+ * información que uno necesita justo en ese momento y evita ir a buscarla a
+ * psql.
+ */
+async function resolveOrganizationId(): Promise<string> {
+  const candidato = process.argv[2] ?? process.env.ORGANIZATION_ID;
+
+  const orgs = await prisma.organization.findMany({
+    select: { id: true, name: true },
+    orderBy: { name: 'asc' },
+  });
+
+  if (candidato) {
+    const org = orgs.find((o) => o.id === candidato);
+    if (org) return org.id;
+    console.error(`\nNo existe ninguna Organization con id ${candidato}.`);
+  } else {
+    console.error('\nFalta la organización objetivo.');
+  }
+
+  if (orgs.length === 0) {
+    console.error('La base no tiene ninguna organización. ¿Corriste el seed?\n');
+  } else {
+    console.error('\nOrganizaciones disponibles:');
+    for (const o of orgs) console.error(`  ${o.id}  ${o.name}`);
+    console.error(
+      `\nReintenta con:\n  AGENIA_SYNC_PASSWORD='...' ORGANIZATION_ID='${orgs[0].id}' \\\n    npx tsx packages/database/scripts/provision-mirror-config.ts\n`,
+    );
+  }
+  process.exit(2);
+}
+
 async function main() {
   if (!DRIVER_CONFIG.password) {
     throw new Error(
@@ -93,10 +137,10 @@ async function main() {
     );
   }
 
-  const org = await prisma.organization.findUnique({ where: { id: ORGANIZATION_ID } });
-  if (!org) {
-    throw new Error(`No existe Organization ${ORGANIZATION_ID}`);
-  }
+  const ORGANIZATION_ID = await resolveOrganizationId();
+  const org = await prisma.organization.findUniqueOrThrow({
+    where: { id: ORGANIZATION_ID },
+  });
 
   const token = generateAgentToken(ORGANIZATION_ID);
   const agentTokenHash = hashAgentToken(token);

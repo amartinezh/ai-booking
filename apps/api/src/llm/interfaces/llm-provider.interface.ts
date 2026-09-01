@@ -4,7 +4,7 @@
  * El `LlmFactoryService` resuelve la implementación correcta por `organizationId`
  * (Gemini, ChatGPT, Claude) y devuelve una instancia que respeta este contrato.
  *
- * Cada método es el mínimo necesario para los flujos de Antigravity:
+ * Cada método es el mínimo necesario para los flujos de AgenIA:
  *  - `generateClinicalRecord` — usado por ClinicalAiService (dictado médico).
  *  - `extractSchedulingIntent` — usado por ChatbotService (NLU sobre WhatsApp).
  *  - `answerFAQ` — usado por ChatbotService (RAG con base de conocimiento).

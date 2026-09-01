@@ -463,7 +463,7 @@ fi
 # ── 08. Secretos y variables de entorno ─────────────────────────────────────
 step "Secretos y variables de entorno"
 POSTGRES_USER="$(env_get POSTGRES_USER "$ENV_FILE")";       POSTGRES_USER="${POSTGRES_USER:-agenia}"
-POSTGRES_DB="$(env_get POSTGRES_DB "$ENV_FILE")";           POSTGRES_DB="${POSTGRES_DB:-antigravity}"
+POSTGRES_DB="$(env_get POSTGRES_DB "$ENV_FILE")";           POSTGRES_DB="${POSTGRES_DB:-agenia}"
 POSTGRES_PASSWORD="$(env_get POSTGRES_PASSWORD "$ENV_FILE")"; POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(gen_pass)}"
 JWT_SECRET="$(env_get JWT_SECRET "$ENV_FILE")";             JWT_SECRET="${JWT_SECRET:-$(gen_secret)}"
 ENCRYPTION_KEY="$(env_get ENCRYPTION_KEY "$ENV_FILE")";     ENCRYPTION_KEY="${ENCRYPTION_KEY:-$(gen_secret)}"
@@ -786,19 +786,45 @@ db_baseline() {
     done'
 }
 
+# Aplica el DDL que Prisma NO gestiona: triggers, funciones e índices
+# parciales (packages/database/prisma/sql/non-prisma-ddl.sql).
+#
+# 🚧 Esto faltaba, y el fallo era silencioso. `prisma db push` no ejecuta el
+# SQL de migrations/, y `db_baseline` sella TODAS las migraciones como
+# aplicadas sin correrlas — así que el SQL manual de la migración del espejo
+# quedaba marcado como hecho sin haberse ejecutado jamás, y ningún
+# `migrate deploy` posterior lo iba a correr. Comprobado el 2026-08-31 sobre
+# la base de desarrollo: `fn_sync_outbox()` y sus tres triggers no existían,
+# el espejo con el HIS estaba muerto y nada lo delataba.
+#
+# Es idempotente y barato: se corre en las TRES ramas, no solo en una.
+db_apply_sql() {
+  "${DC[@]}" run --rm migrator pnpm --filter @agenia/database db:apply-sql \
+    || die "No se pudo aplicar el DDL no gestionado por Prisma (triggers del espejo).
+     Reintenta con: agenia migrate"
+}
+
 db_bootstrap() {
   if db_has_table "_prisma_migrations"; then
     info "Base ya inicializada: aplicando migraciones pendientes"
+    # El comando por defecto del servicio `migrator` es `db:deploy`, que ya
+    # encadena el DDL no gestionado. No hace falta llamarlo aparte.
     "${DC[@]}" run --rm migrator
   elif db_has_table "Organization"; then
     info "Esquema presente sin historial: sellando migraciones"
     db_baseline
+    # Rama crítica: el sellado NO ejecuta nada. Sin esto, una base que llegue
+    # por aquí se queda sin triggers para siempre.
+    info "Aplicando el DDL no gestionado por Prisma"
+    db_apply_sql
   else
     info "Base vacía: creando el esquema completo desde schema.prisma"
     "${DC[@]}" run --rm migrator \
       prisma db push --schema=packages/database/prisma/schema.prisma --skip-generate
     info "Sellando el historial de migraciones (baseline)"
     db_baseline
+    info "Aplicando el DDL no gestionado por Prisma"
+    db_apply_sql
   fi
 }
 

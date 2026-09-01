@@ -126,7 +126,12 @@ describe('MirrorEngine', () => {
 
       expect(driver.createAppointment).toHaveBeenCalledTimes(1);
       expect(driver.cancelAppointment).not.toHaveBeenCalled();
-      expect(result).toEqual({ applied: 1, skippedIdempotent: 0, failed: 0 });
+      expect(result).toEqual({
+        applied: 1,
+        skippedIdempotent: 0,
+        failed: 0,
+        failures: [],
+      });
     });
 
     it('op=DELETE → driver.cancelAppointment', async () => {
@@ -183,6 +188,117 @@ describe('MirrorEngine', () => {
         seqs: ['10'],
         failedSeqs: ['11'],
       });
+    });
+  });
+
+  // ⚠️ El bloque que faltaba. TODOS los mocks de driver de este archivo usan
+  // `mockResolvedValue`, es decir, drivers que DEVUELVEN un resultado. El
+  // único driver real del repo hace lo contrario: LANZA, porque sus métodos
+  // de escritura siguen sin implementar. Por eso los 11 tests de este archivo
+  // pasaban en verde mientras el camino real fallaba el 100% de las veces.
+  describe('el driver LANZA en vez de devolver {success:false}', () => {
+    it('no aborta el lote: se hace ack igual y el seq va en failedSeqs', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'boom-1', seq: '20' }),
+      ]);
+      driver.createAppointment.mockRejectedValueOnce(
+        new Error('createAppointment: pendiente de Fase 3'),
+      );
+
+      const result = await engine.pullAndApplyOutboxEvents();
+
+      // Lo crítico: el ack SÍ ocurre. Sin él el servidor nunca sube `attempts`,
+      // el evento no llega jamás a dead-letter y no se dispara ninguna alerta.
+      expect(api.ack).toHaveBeenCalledWith({ seqs: [], failedSeqs: ['20'] });
+      expect(result.failed).toBe(1);
+      expect(result.applied).toBe(0);
+    });
+
+    it('reporta el motivo y marca que fue una excepción, no un rechazo', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'boom-2', seq: '21' }),
+      ]);
+      driver.createAppointment.mockRejectedValueOnce(
+        new Error('el HIS cerró la conexión'),
+      );
+
+      const { failures } = await engine.pullAndApplyOutboxEvents();
+
+      expect(failures).toEqual([
+        {
+          seq: '21',
+          eventId: 'boom-2',
+          message: 'el HIS cerró la conexión',
+          threw: true,
+        },
+      ]);
+    });
+
+    it('un evento que revienta NO impide que los siguientes se apliquen', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'boom-3', seq: '30' }),
+        outboxEvent({ eventId: 'ok-3', seq: '31' }),
+      ]);
+      driver.createAppointment
+        .mockRejectedValueOnce(new Error('revienta'))
+        .mockResolvedValueOnce({ success: true });
+
+      const result = await engine.pullAndApplyOutboxEvents();
+
+      // Capa 3 del plan §6: un evento que falla bloquea solo su entidad.
+      expect(result.applied).toBe(1);
+      expect(result.failed).toBe(1);
+      expect(api.ack).toHaveBeenCalledWith({
+        seqs: ['31'],
+        failedSeqs: ['30'],
+      });
+    });
+
+    it('el evento que lanzó NO se marca aplicado localmente: se reintenta', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'boom-4', seq: '40' }),
+      ]);
+      driver.createAppointment.mockRejectedValueOnce(new Error('revienta'));
+      await engine.pullAndApplyOutboxEvents();
+
+      // Segunda pasada: el servidor lo reenvía y el driver ya funciona.
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'boom-4', seq: '40' }),
+      ]);
+      driver.createAppointment.mockResolvedValueOnce({ success: true });
+      const segunda = await engine.pullAndApplyOutboxEvents();
+
+      expect(segunda.applied).toBe(1);
+      expect(segunda.skippedIdempotent).toBe(0);
+    });
+
+    it('el cursor avanza aunque todo el lote haya reventado', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'b1', seq: '50' }),
+        outboxEvent({ eventId: 'b2', seq: '51' }),
+      ]);
+      driver.createAppointment.mockRejectedValue(new Error('revienta'));
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(await state.getOutboxCursor()).toBe('51');
+    });
+
+    it('un rechazo normal se distingue de una excepción', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'rechazo', seq: '60' }),
+      ]);
+      driver.createAppointment.mockResolvedValueOnce({
+        success: false,
+        message: 'violación de PK: el cupo ya está ocupado',
+      });
+
+      const { failures } = await engine.pullAndApplyOutboxEvents();
+
+      expect(failures[0].threw).toBeUndefined();
+      expect(failures[0].message).toBe(
+        'violación de PK: el cupo ya está ocupado',
+      );
     });
   });
 

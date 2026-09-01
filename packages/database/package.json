@@ -5,14 +5,19 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "db:generate": "prisma generate",
-    "db:push": "prisma db push",
-    "build": "tsc"
+    "db:push": "prisma db push && pnpm run db:apply-sql",
+    "db:deploy": "prisma migrate deploy && pnpm run db:apply-sql",
+    "build": "tsc",
+    "check-types": "tsc --noEmit",
+    "db:apply-sql": "tsx scripts/apply-non-prisma-ddl.ts",
+    "db:backfill-outbox": "tsx scripts/backfill-sync-outbox.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.0.0"
   },
   "devDependencies": {
     "prisma": "^5.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "tsx": "^4.19.2"
   }
 }

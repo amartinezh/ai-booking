@@ -4,6 +4,7 @@ import { MirrorController } from './mirror.controller';
 import { MirrorAgentGuard } from './mirror-agent.guard';
 import { MirrorDispatchService } from './mirror-dispatch.service';
 import { MirrorApplyService } from './mirror-apply.service';
+import { MirrorSchemaCheckService } from './mirror-schema-check.service';
 
 /**
  * Motor genérico de espejo de citas con HIS externos (patrón de drivers).
@@ -15,7 +16,14 @@ import { MirrorApplyService } from './mirror-apply.service';
 @Module({
   imports: [AppointmentsModule],
   controllers: [MirrorController],
-  providers: [MirrorAgentGuard, MirrorDispatchService, MirrorApplyService],
+  providers: [
+    MirrorAgentGuard,
+    MirrorDispatchService,
+    MirrorApplyService,
+    // Grita al arrancar si el DDL del espejo no llegó a la base. Ver la nota
+    // larga en mirror-schema-check.service.ts.
+    MirrorSchemaCheckService,
+  ],
   exports: [MirrorApplyService],
 })
 export class MirrorModule {}

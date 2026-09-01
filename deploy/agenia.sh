@@ -102,20 +102,30 @@ db_baseline() {
     done'
 }
 
+# Triggers, funciones e índices parciales: SQL que Prisma no gestiona y que
+# ni `db push` ni el sellado de migraciones ejecutan. Idempotente. Ver la nota
+# larga en deploy/install-vps.sh y packages/database/prisma/sql/.
+db_apply_sql() {
+  dc run --rm migrator pnpm --filter @agenia/database db:apply-sql
+}
+
 cmd_migrate() {
   head1 "Base de datos"
   if db_has_table "_prisma_migrations"; then
+    # El comando por defecto de `migrator` ya es db:deploy, que encadena el DDL.
     dc run --rm migrator
     ok "Migraciones al día"
   elif db_has_table "Organization"; then
     warn "Esquema presente sin historial de migraciones: sellando (baseline)"
     db_baseline
-    ok "Historial sellado"
+    db_apply_sql
+    ok "Historial sellado y DDL aplicado"
   else
     warn "Base vacía: se crea el esquema completo desde schema.prisma"
     dc run --rm migrator prisma db push --schema=packages/database/prisma/schema.prisma --skip-generate
     db_baseline
-    ok "Esquema creado y historial sellado"
+    db_apply_sql
+    ok "Esquema creado, historial sellado y DDL aplicado"
   fi
 }
 

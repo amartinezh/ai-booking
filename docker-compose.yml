@@ -1,24 +1,30 @@
-# docker-compose.yml
-version: '3.8'
+# docker-compose.yml — infraestructura LOCAL de desarrollo.
+#
+# Las credenciales NO viven en este archivo (está trackeado en git). Salen del
+# `.env` de la raíz, que docker compose carga solo y que está en .gitignore.
+# `./scripts/up.sh` lo genera con `openssl rand -hex 16` si no existe.
+# La sintaxis ${VAR:?mensaje} aborta el `up` con un error claro si falta.
+#
+# Producción NO usa este archivo: ver docker-compose.deploy.yml + .env.production.
 
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: antigravity_db
+    container_name: agenia_db
     ports:
-      - "5432:5432"
+      - "${PG_PORT:-5432}:5432"
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password123
-      POSTGRES_DB: antigravity
+      POSTGRES_USER: ${POSTGRES_USER:?falta POSTGRES_USER en .env (corre ./scripts/up.sh)}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env (corre ./scripts/up.sh)}
+      POSTGRES_DB: ${POSTGRES_DB:?falta POSTGRES_DB en .env (corre ./scripts/up.sh)}
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   redis:
     image: redis:alpine
-    container_name: antigravity_redis
+    container_name: agenia_redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
 
@@ -34,9 +40,9 @@ services:
     container_name: agenia_mirror_his_mock
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "AgenIA_Local_2026!"
+      MSSQL_SA_PASSWORD: ${MIRROR_HIS_MOCK_SA_PASSWORD:?falta MIRROR_HIS_MOCK_SA_PASSWORD en .env (corre ./scripts/up.sh)}
     ports:
-      - "1433:1433"
+      - "${HIS_MOCK_PORT:-1433}:1433"
     volumes:
       - mirror_his_mock_data:/var/opt/mssql
 
