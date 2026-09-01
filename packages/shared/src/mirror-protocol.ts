@@ -73,6 +73,8 @@ export interface OutboxEventContext {
   /** ISO-8601. El HIS los exige NOT NULL al dar de alta un paciente nuevo. */
   patientBirthDateIso?: string;
   patientGender?: string;
+  /** 'SUBSIDIADO' | 'CONTRIBUTIVO'. Junto al NIT decide el convenio. */
+  patientRegime?: string;
 
   /** NIT de la EPS. Tampoco se homologa: el driver deriva el convenio de aquí. */
   epsNit?: string;
@@ -154,6 +156,8 @@ export interface CanonicalChangeEvent {
     patientFullName?: string;
     patientBirthDateIso?: string;
     patientGender?: string;
+    /** Régimen: la misma EPS tiene convenios distintos según cuál sea. */
+    patientRegime?: string;
     /** NIT de la EPS: de aquí sale el convenio de facturación. */
     epsNit?: string;
     epsName?: string;

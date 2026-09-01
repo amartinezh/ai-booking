@@ -291,6 +291,7 @@ export class MirrorDispatchService {
           fullName: true,
           dateOfBirth: true,
           gender: true,
+          regime: true,
         },
       }),
       this.prisma.eps.findMany({
@@ -356,6 +357,7 @@ export class MirrorDispatchService {
         if (paciente.dateOfBirth)
           context.patientBirthDateIso = paciente.dateOfBirth.toISOString();
         if (paciente.gender) context.patientGender = paciente.gender;
+        if (paciente.regime) context.patientRegime = paciente.regime;
       } else {
         missing.push(`PATIENT ${String(fila.patientId)}`);
       }

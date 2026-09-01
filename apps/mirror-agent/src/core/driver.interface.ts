@@ -35,7 +35,13 @@ export interface HisDriver {
   readonly key: string;
 
   // Conectividad y salud
-  connect(config: DriverConnectionConfig): Promise<void>;
+  //
+  // `mapping` es HospitalMirrorConfig.mappingJson tal como llega en el
+  // handshake: la tabla de valores propia de ese hospital (convenios, sedes,
+  // equivalencias de catálogo). El motor NO la interpreta — solo la pasa. Vive
+  // en configuración y no en código a propósito: cuando el hospital valide su
+  // tabla de convenios, debe ser un cambio de fila, no un despliegue.
+  connect(config: DriverConnectionConfig, mapping?: unknown): Promise<void>;
   disconnect(): Promise<void>;
   healthCheck(): Promise<{ ok: boolean; detail?: string }>;
 

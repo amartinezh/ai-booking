@@ -45,7 +45,10 @@ export class MirrorEngine {
       agentClockIso: new Date().toISOString(),
     };
     const result = await this.api.handshake(input);
-    await this.driver.connect(result.driverConfig as Record<string, unknown>);
+    await this.driver.connect(
+      result.driverConfig as Record<string, unknown>,
+      result.mappingJson,
+    );
   }
 
   /**
@@ -238,6 +241,7 @@ export function translateOutboxAppointment(
       patientFullName: ctx.patientFullName,
       patientBirthDateIso: ctx.patientBirthDateIso,
       patientGender: ctx.patientGender,
+      patientRegime: ctx.patientRegime,
       epsNit: ctx.epsNit,
       epsName: ctx.epsName,
       doctorExternalKey: ctx.doctorExternalKey,

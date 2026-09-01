@@ -1,5 +1,14 @@
 import * as sql from 'mssql';
 import type { CanonicalChangeEvent } from '@agenia/shared';
+import {
+  AnsermaMapping,
+  MappingIncompletoError,
+  formatFeHoraCit,
+  fechaCitaLocal,
+  mapSexo,
+  resolveConvenio,
+  resolveEspecialidad,
+} from './mapping';
 import type {
   CanonicalSlot,
   CatalogKind,
@@ -32,10 +41,22 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
   readonly key = 'cnt-sanvicente-anserma';
 
   private pool: sql.ConnectionPool | null = null;
+  private mapping: AnsermaMapping | null = null;
+  /** Zona del hospital. El protocolo viaja en UTC; aquí es la frontera (plan §8). */
+  private timeZone = 'America/Bogota';
   /** Nombre del catálogo VIVO — confirmado en Fase 0: "ESEHSVP" (los sufijos de año son archivos, no rotan). Viene de driverConfig, nunca hardcoded aquí. */
   private catalog = 'ESEHSVP';
 
-  async connect(config: DriverConnectionConfig): Promise<void> {
+  async connect(
+    config: DriverConnectionConfig,
+    mapping?: unknown,
+  ): Promise<void> {
+    // La tabla de valores (convenios, sedes, sexo) llega en el handshake desde
+    // HospitalMirrorConfig.mappingJson, no vive en el código: la tabla de
+    // convenios está pendiente de validación con la agendadora, y cuando la
+    // valide tiene que ser un cambio de configuración, no un despliegue.
+    if (mapping) this.mapping = mapping as AnsermaMapping;
+
     const {
       server,
       catalog,
@@ -66,6 +87,19 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         encrypt: false,
       },
     }).connect();
+  }
+
+  /**
+   * Adopta una conexión ya abierta en vez de crear una.
+   *
+   * Existe por las pruebas: el SQL que este driver le escribe a un hospital
+   * merece verificarse valor a valor, y montar un SQL Server para cada
+   * aserción no es viable. También sirve si algún día conviene compartir un
+   * pool entre drivers de la misma organización.
+   */
+  useConnection(pool: sql.ConnectionPool, mapping: unknown): void {
+    this.pool = pool;
+    this.mapping = mapping as AnsermaMapping;
   }
 
   async disconnect(): Promise<void> {
@@ -110,21 +144,180 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     );
   }
 
-  async createAppointment(
-    _evt: CanonicalChangeEvent,
-  ): Promise<DriverResult> {
-    // 🚧 TODO (ESTADO.md pendiente #4, bloque 21): la plantilla del INSERT
-    // está mapeada casi por completo (MAPEO_HIS.md §2.1 "Plantilla del
-    // INSERT confirmada") EXCEPTO tres campos: NU_NUME_CONE_CIT (consecutivo
-    // de sesión), CD_CODI_ESP_CIT (especialidad) y CD_CODI_CONS/CECO/LUAT
-    // (consultorio/centro de costos/sede) — hay candidatos identificados
-    // (tablas CONEXION*/CONSECUTIVOS, R_ESP_SER) pero sin confirmar con una
-    // consulta real. Escribir esto ahora sería una cita "a medias" que
-    // podría no verse bien en la aplicación del hospital — exactamente el
-    // riesgo #1 del plan (§12, tabla de riesgos). Se implementa en Fase 3.
-    throw new Error(
-      'createAppointment: pendiente de Fase 3 — ver docs/drivers/cnt-sanvicente-anserma/ESTADO.md',
-    );
+  async createAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {
+    const p = evt.payload;
+
+    // El motor genérico ya rechaza los eventos sin homologar antes de llegar
+    // aquí (ver engine.applyOutboxEvent). Esto es la segunda línea: el driver
+    // NO escribe una cita a medias ni aunque se lo pidan.
+    const faltan = [
+      !p.doctorExternalKey && 'médico',
+      !p.serviceExternalKey && 'servicio',
+      !p.patientDocument && 'documento del paciente',
+      !p.startTimeIso && 'hora de la cita',
+    ].filter(Boolean);
+    if (faltan.length > 0) {
+      return {
+        success: false,
+        message: `faltan datos para escribir la cita: ${faltan.join(', ')}`,
+      };
+    }
+
+    const mapping = this.requireMapping();
+    const pool = this.requirePool();
+
+    try {
+      const feHora = formatFeHoraCit(p.startTimeIso!, this.timeZone);
+      const feFecha = fechaCitaLocal(p.startTimeIso!, this.timeZone);
+      const convenio = resolveConvenio(mapping, {
+        epsNit: p.epsNit,
+        patientRegime: p.patientRegime,
+        serviceExternalKey: p.serviceExternalKey,
+      });
+
+      await this.ensurePaciente(p);
+
+      // El consultorio sale del turno del médico ese día, y con él la duración.
+      // Es la regla documentada en MAPEO_HIS.md §2.5bis; si el turno no existe,
+      // la cita no debería crearse: el médico no atiende ese día.
+      const turno = await this.turnoDelDia(p.doctorExternalKey!, feFecha);
+      if (!turno) {
+        return {
+          success: false,
+          message:
+            `El médico ${p.doctorExternalKey} no tiene turno el ${feFecha}: ` +
+            `la agenda de AgenIA y la del HIS no coinciden.`,
+        };
+      }
+
+      const duracion = p.startTimeIso && p.endTimeIso
+        ? Math.round(
+            (new Date(p.endTimeIso).getTime() -
+              new Date(p.startTimeIso).getTime()) /
+              60000,
+          )
+        : mapping.duracionMinutos;
+
+      await pool
+        .request()
+        .input('med', sql.VarChar(4), p.doctorExternalKey)
+        .input('hora', sql.VarChar(18), feHora)
+        .input('ser', sql.VarChar(12), p.serviceExternalKey)
+        .input('hist', sql.VarChar(20), p.patientDocument)
+        .input('dura', sql.Int, duracion)
+        .input('fecha', sql.DateTime, new Date(`${feFecha}T00:00:00`))
+        .input('esp', sql.VarChar(3), resolveEspecialidad(mapping, p.serviceExternalKey))
+        .input('cons', sql.VarChar(8), turno.consultorio)
+        .input('conv', sql.Int, convenio)
+        .input('desc', sql.VarChar(600), mapping.marcaOrigen)
+        .input('ceco', sql.VarChar(11), mapping.centroCostos ?? null)
+        .input('luat', sql.VarChar(2), mapping.lugarAtencion).query(`
+          INSERT INTO dbo.CITAS_MEDICAS (
+            CD_CODI_MED_CIT, FE_HORA_CIT, NU_ESTA_CIT, CD_CODI_SER_CIT,
+            NU_HIST_PAC_CIT, NU_DURA_CIT, FE_ELAB_CIT, FE_FECH_CIT,
+            NU_DIA_CIT, NU_NUME_MOVI_CIT, NU_PRIM_CIT, NU_CONE_CALL_CIT,
+            NU_TIPO_CIT, CD_CODI_ESP_CIT, CD_CODI_CONS_CIT, NU_NUME_CONV_CIT,
+            DE_DESC_CIT, CD_CODI_CECO_CIT, CD_CODI_LUAT_CIT, FE_SOLI_CIT
+          ) VALUES (
+            @med, @hora, 0, @ser,
+            @hist, @dura, GETDATE(), @fecha,
+            0, 0, 0, 0,
+            0, @esp, @cons, @conv,
+            @desc, @ceco, @luat, GETDATE()
+          )`);
+
+      return { success: true };
+    } catch (error: any) {
+      // Violación de la PK (médico + hora + estado): ese cupo YA está vendido
+      // en el HIS. No es un fallo del agente, es el detector natural de
+      // colisión que la Fase 0 identificó — y la política de este hospital es
+      // que el HIS gana. Se reporta como fallo para que quede auditado, pero
+      // con un mensaje que dice qué pasó de verdad.
+      if (error?.number === 2627 || error?.number === 2601) {
+        return {
+          success: false,
+          message:
+            `El cupo del médico ${p.doctorExternalKey} a las ` +
+            `${formatFeHoraCit(p.startTimeIso!, this.timeZone)} ya está ocupado en el HIS.`,
+        };
+      }
+      if (error instanceof MappingIncompletoError) {
+        return { success: false, message: error.message };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Crea el paciente en `PACIENTES` si no existe.
+   *
+   * El HIS tiene una FK: solo pacientes existentes pueden tener cita. La
+   * historia ES el documento (confirmado en el 100% de los 78.654 pacientes),
+   * y `FE_NACI_PAC`/`NU_SEXO_PAC` son NOT NULL — de ahí que el chatbot ahora
+   * los pregunte.
+   */
+  private async ensurePaciente(
+    p: CanonicalChangeEvent['payload'],
+  ): Promise<void> {
+    const pool = this.requirePool();
+    const mapping = this.requireMapping();
+
+    const existe = await pool
+      .request()
+      .input('hist', sql.VarChar(20), p.patientDocument)
+      .query('SELECT 1 AS x FROM dbo.PACIENTES WHERE NU_HIST_PAC = @hist');
+    if (existe.recordset.length > 0) return;
+
+    if (!p.patientBirthDateIso || !p.patientGender) {
+      throw new MappingIncompletoError(
+        `El paciente ${p.patientDocument} no existe en el HIS y faltan datos ` +
+          `para darlo de alta (nacimiento y/o sexo). PACIENTES los exige NOT NULL.`,
+      );
+    }
+
+    await pool
+      .request()
+      .input('hist', sql.VarChar(20), p.patientDocument)
+      .input('docu', sql.VarChar(20), p.patientDocument)
+      .input('nomb', sql.VarChar(60), (p.patientFullName ?? '').slice(0, 60))
+      .input('naci', sql.DateTime, new Date(p.patientBirthDateIso))
+      .input('sexo', sql.TinyInt, mapSexo(mapping, p.patientGender)).query(`
+        INSERT INTO dbo.PACIENTES (
+          NU_HIST_PAC, NU_DOCU_PAC, NU_TIPD_PAC, NO_NOMB_PAC,
+          FE_NACI_PAC, NU_SEXO_PAC, FE_HIST_PAC, NU_EXTR_PAC
+        ) VALUES (@hist, @docu, 0, @nomb, @naci, @sexo, GETDATE(), 0)`);
+  }
+
+  /** Turno del médico ese día: de ahí salen el consultorio y la disponibilidad. */
+  private async turnoDelDia(
+    medico: string,
+    fechaIso: string,
+  ): Promise<{ consultorio: string | null } | null> {
+    const r = await this.requirePool()
+      .request()
+      .input('med', sql.VarChar(4), medico)
+      .input('fecha', sql.DateTime, new Date(`${fechaIso}T00:00:00`)).query(`
+        SELECT TOP 1 CD_CODI_CONS_TUME AS consultorio
+          FROM dbo.TURNOS_MEDICOS
+         WHERE CD_MED_TUME = @med
+           AND CAST(FE_FECH_TUME AS date) = CAST(@fecha AS date)
+           AND ID_DISP_TUME = '1'`);
+    return r.recordset[0] ?? null;
+  }
+
+  private requirePool(): sql.ConnectionPool {
+    if (!this.pool) throw new Error('El driver no está conectado al HIS.');
+    return this.pool;
+  }
+
+  private requireMapping(): AnsermaMapping {
+    if (!this.mapping) {
+      throw new Error(
+        'Falta mappingJson en HospitalMirrorConfig: sin la tabla de convenios, ' +
+          'sedes y equivalencias no se puede escribir en el HIS.',
+      );
+    }
+    return this.mapping;
   }
 
   async cancelAppointment(
