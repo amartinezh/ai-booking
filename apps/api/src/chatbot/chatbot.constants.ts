@@ -442,6 +442,16 @@ const FORMAL = {
       `Disculpe, ese espacio acaba de reservarse.\n\n¿Vemos otra opción? Indíqueme con qué letra prefiere quedarse.`,
     ]),
 
+  // El médico dejó de aceptar reservas por WhatsApp mientras el paciente
+  // decidía. NO es una colisión de cupo: el horario sigue libre, solo que no
+  // por este canal — decirle que "otro paciente lo tomó" sería mentira, y el
+  // paciente que llame a la clínica se encontrará con que el horario existe.
+  medicoNoDisponiblePorWhatsapp: () =>
+    pick([
+      `Le pido disculpas: ese horario dejó de estar disponible para agendamiento por este medio.\n\n¿Elegimos otro de la lista? Escriba la letra, por favor.`,
+      `Ese espacio ya no se puede reservar por este canal.\n\n¿Vemos otra opción? Indíqueme con qué letra prefiere quedarse.`,
+    ]),
+
   errorSlotInvalido: () =>
     pick([
       `Esa letra no aparece entre las opciones que le envié.\n\n¿Me la confirma, por favor? Recuerde que puede responder con la letra _(A, B, C...)_ o escribir *"Salir"* si prefiere cancelar.`,
@@ -1041,6 +1051,14 @@ const INFORMAL = {
     pick([
       `Qué pena, justo ese horario lo acaba de tomar otro paciente. 😬 ¿Vemos otro? Mándame la letra de nuevo, por favor.`,
       `Ese espacio acaba de reservarse. 🙏 ¿Cuál otro te sirve? Dime la letra.`,
+    ]),
+
+  // Ver la nota de la versión formal: el cupo NO está tomado, solo cerrado
+  // para este canal.
+  medicoNoDisponiblePorWhatsapp: () =>
+    pick([
+      `Uy, ese horario ya no se puede agendar por acá. 🙏 ¿Vemos otro? Mándame la letra.`,
+      `Ese espacio dejó de estar disponible por este medio. ¿Cuál otro te sirve? Dime la letra.`,
     ]),
 
   errorSlotInvalido: () =>

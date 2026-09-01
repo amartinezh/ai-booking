@@ -5443,7 +5443,13 @@ export class ChatbotService implements OnModuleInit {
           },
         );
       } else {
-        const reply = MSGS.slotTomado();
+        // El servicio distingue "se lo llevó otro paciente" de "el médico dejó
+        // de aceptar WhatsApp". Antes ambos casos usaban el mismo texto, y el
+        // segundo le mentía al paciente: el horario seguía libre.
+        const reply =
+          bookingResult.reason === 'DOCTOR_NOT_BOOKABLE'
+            ? MSGS.medicoNoDisponiblePorWhatsapp()
+            : MSGS.slotTomado();
         await this.smartReply(organizationId, senderId, reply);
         await this.setUserState(
           organizationId,
@@ -6473,13 +6479,23 @@ export class ChatbotService implements OnModuleInit {
         await this.prisma.$transaction(async (tx) => {
           const newSlot = await tx.scheduleSlot.findUnique({
             where: { id: newSlotId },
+            include: { doctor: { select: { whatsappBookingEnabled: true } } },
           });
           if (
             !newSlot ||
+            !newSlot.doctor ||
             !newSlot.isAvailable ||
             newSlot.organizationId !== organizationId
           ) {
             throw new Error('NEW_SLOT_TAKEN');
+          }
+          // 🚦 El reagendamiento hace su propia transacción y NO pasa por
+          // `bookAppointment`, así que el interruptor del médico hay que
+          // revalidarlo también aquí — si no, apagar a un médico impediría
+          // reservar con él pero no MOVER una cita hacia su agenda, y el
+          // hueco seguiría abierto por la puerta de atrás.
+          if (!newSlot.doctor.whatsappBookingEnabled) {
+            throw new Error('NEW_SLOT_DOCTOR_NOT_BOOKABLE');
           }
           await tx.appointment.update({
             where: { id: aptId },
@@ -6545,8 +6561,17 @@ export class ChatbotService implements OnModuleInit {
       } catch (e) {
         this.logger.error('Error reprogramando cita', e);
         // El nuevo cupo fue tomado por otro paciente entre tanto → volver a ofrecer.
-        if (e.message === 'NEW_SLOT_TAKEN') {
-          const reply = MSGS.slotTomado();
+        if (
+          e.message === 'NEW_SLOT_TAKEN' ||
+          e.message === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE'
+        ) {
+          // Dos motivos distintos con el mismo desenlace (volver a ofrecer),
+          // pero mensajes distintos: decir "lo tomó otro paciente" cuando el
+          // cupo sigue libre le hace perder el tiempo a quien luego llama.
+          const reply =
+            e.message === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE'
+              ? MSGS.medicoNoDisponiblePorWhatsapp()
+              : MSGS.slotTomado();
           await this.smartReply(organizationId, senderId, reply);
           await this.auditFailure(senderId, organizationId, {
             reason: FailureReason.SLOT_TAKEN,
@@ -7083,7 +7108,13 @@ export class ChatbotService implements OnModuleInit {
           });
         }
       } else {
-        const reply = MSGS.slotTomado();
+        // El servicio distingue "se lo llevó otro paciente" de "el médico dejó
+        // de aceptar WhatsApp". Antes ambos casos usaban el mismo texto, y el
+        // segundo le mentía al paciente: el horario seguía libre.
+        const reply =
+          bookingResult.reason === 'DOCTOR_NOT_BOOKABLE'
+            ? MSGS.medicoNoDisponiblePorWhatsapp()
+            : MSGS.slotTomado();
         await this.smartReply(organizationId, senderId, reply);
 
         await this.auditFailure(senderId, organizationId, {

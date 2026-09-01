@@ -255,7 +255,10 @@ function slotRow(id: string, fecha: Date, doctor: string, service: any) {
     organizationId: ORG_ID,
     serviceId: service.id,
     allowedEpsId: null,
-    doctor: { fullName: doctor },
+    // `whatsappBookingEnabled` va aquí porque la consulta real lo incluye:
+    // el reagendamiento revalida el interruptor del médico antes de mover la
+    // cita al cupo nuevo (bloque E).
+    doctor: { fullName: doctor, whatsappBookingEnabled: true },
     service,
   };
 }

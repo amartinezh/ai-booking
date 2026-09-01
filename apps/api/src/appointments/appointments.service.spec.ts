@@ -5,9 +5,15 @@ import { PrismaService } from '../prisma/prisma.service';
 describe('AppointmentsService', () => {
   let service: AppointmentsService;
   let findMany: jest.Mock;
+  let mirrorConfig: { findUnique: jest.Mock };
+  let entityMap: { findMany: jest.Mock };
 
   beforeEach(async () => {
     findMany = jest.fn(async () => []);
+    // Por defecto: organización SIN espejo. Es el caso de cualquier clínica
+    // normal, y el que no debe cambiar de comportamiento.
+    mirrorConfig = { findUnique: jest.fn(async () => null) };
+    entityMap = { findMany: jest.fn(async () => []) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AppointmentsService,
@@ -24,6 +30,8 @@ describe('AppointmentsService', () => {
               update: jest.fn(),
               findFirst: jest.fn(),
             },
+            hospitalMirrorConfig: mirrorConfig,
+            mirrorEntityMap: entityMap,
             $transaction: jest.fn(),
           },
         },
@@ -41,10 +49,17 @@ describe('AppointmentsService', () => {
     // Construye un servicio cuyo $transaction ejecuta el callback contra un tx
     // en el que el slot indicado ya NO está disponible (o no existe / es de otro
     // tenant), reproduciendo la carrera real entre dos pacientes.
+    // `doctor` va en el fixture porque la consulta real lo incluye: sin el,
+    // el chequeo de `whatsappBookingEnabled` no tendria nada que mirar.
+    const conMedico = (slot: any) =>
+      slot === null
+        ? null
+        : { doctor: { whatsappBookingEnabled: true }, ...slot };
+
     const serviceWithSlot = async (slot: any) => {
       const tx = {
         scheduleSlot: {
-          findUnique: jest.fn(async () => slot),
+          findUnique: jest.fn(async () => conMedico(slot)),
           update: jest.fn(),
         },
         appointment: { create: jest.fn(async () => ({ id: 'apt1' })) },
@@ -123,10 +138,17 @@ describe('AppointmentsService', () => {
   });
 
   describe('bookAppointment — anti-eco espejo (origin=MIRROR)', () => {
+    // `doctor` va en el fixture porque la consulta real lo incluye: sin el,
+    // el chequeo de `whatsappBookingEnabled` no tendria nada que mirar.
+    const conMedico = (slot: any) =>
+      slot === null
+        ? null
+        : { doctor: { whatsappBookingEnabled: true }, ...slot };
+
     const serviceWithSlot = async (slot: any) => {
       const tx = {
         scheduleSlot: {
-          findUnique: jest.fn(async () => slot),
+          findUnique: jest.fn(async () => conMedico(slot)),
           update: jest.fn(),
         },
         appointment: { create: jest.fn(async () => ({ id: 'apt1' })) },
@@ -219,5 +241,210 @@ describe('AppointmentsService', () => {
       expect(startTime.gte.getTime()).toBeGreaterThanOrEqual(before);
       expect(startTime.lte).toEqual(hasta);
     });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Activación por médico (bloque E).
+//
+// `whatsappBookingEnabled` existía en el schema desde la Fase 1 del espejo
+// pero NO SE LEÍA EN NINGÚN SITIO — verificado con un grep sobre todo el
+// repo el 2026-08-31: una sola aparición, la del schema. La activación
+// gradual médico por médico que el hospital pidió no existía.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('AppointmentsService — activación por médico', () => {
+  let service: AppointmentsService;
+  let slotFindMany: jest.Mock;
+  let mirrorConfig: { findUnique: jest.Mock };
+  let entityMap: { findMany: jest.Mock };
+
+  const construir = async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AppointmentsService,
+        {
+          provide: PrismaService,
+          useValue: {
+            scheduleSlot: { findMany: slotFindMany },
+            hospitalMirrorConfig: mirrorConfig,
+            mirrorEntityMap: entityMap,
+          },
+        },
+      ],
+    }).compile();
+    return module.get<AppointmentsService>(AppointmentsService);
+  };
+
+  beforeEach(async () => {
+    slotFindMany = jest.fn(async () => []);
+    mirrorConfig = { findUnique: jest.fn(async () => null) };
+    entityMap = { findMany: jest.fn(async () => []) };
+    service = await construir();
+  });
+
+  const whereDeLaConsulta = () => slotFindMany.mock.calls[0][0].where;
+
+  describe('sin espejo (clínica normal)', () => {
+    it('solo ofrece cupos de médicos con la reserva por WhatsApp activa', async () => {
+      await service.getAvailableSlots('Medicina General', null, 'org1');
+
+      expect(whereDeLaConsulta().doctor).toEqual({
+        whatsappBookingEnabled: true,
+      });
+    });
+
+    it('NO consulta la homologación: una clínica normal no sabe qué es eso', async () => {
+      await service.getAvailableSlots('Medicina General', null, 'org1');
+
+      expect(entityMap.findMany).not.toHaveBeenCalled();
+    });
+
+    it('el resto de la consulta no cambia (tenant, disponibilidad, EPS)', async () => {
+      await service.getAvailableSlots('Medicina General', 'eps-1', 'org1');
+
+      const where = whereDeLaConsulta();
+      expect(where.organizationId).toBe('org1');
+      expect(where.isAvailable).toBe(true);
+      expect(where.OR).toEqual([
+        { allowedEpsId: null },
+        { allowedEpsId: 'eps-1' },
+      ]);
+    });
+  });
+
+  describe('con espejo activo', () => {
+    beforeEach(async () => {
+      mirrorConfig.findUnique = jest.fn(async () => ({ enabled: true }));
+      entityMap.findMany = jest.fn(async () => [
+        { agenIAId: 'doc-1' },
+        { agenIAId: 'doc-2' },
+      ]);
+      service = await construir();
+    });
+
+    it('además exige que el médico esté homologado con el HIS', async () => {
+      await service.getAvailableSlots('Medicina General', null, 'org1');
+
+      expect(whereDeLaConsulta().doctor).toEqual({
+        whatsappBookingEnabled: true,
+        id: { in: ['doc-1', 'doc-2'] },
+      });
+    });
+
+    it('sin ningún médico homologado, no ofrece nada', async () => {
+      // Prometerle un cupo al paciente cuya cita jamás llegará al HIS es la
+      // misma sobreventa que encontró la prueba E2E, vista desde el otro lado.
+      entityMap.findMany = jest.fn(async () => []);
+      service = await construir();
+
+      await service.getAvailableSlots('Medicina General', null, 'org1');
+
+      expect(whereDeLaConsulta().doctor.id).toEqual({ in: [] });
+    });
+
+    it('un espejo configurado pero APAGADO se comporta como sin espejo', async () => {
+      mirrorConfig.findUnique = jest.fn(async () => ({ enabled: false }));
+      service = await construir();
+
+      await service.getAvailableSlots('Medicina General', null, 'org1');
+
+      expect(whereDeLaConsulta().doctor).toEqual({
+        whatsappBookingEnabled: true,
+      });
+      expect(entityMap.findMany).not.toHaveBeenCalled();
+    });
+
+    it('la homologación se consulta acotada a la organización', async () => {
+      await service.getAvailableSlots('Medicina General', null, 'org1');
+
+      expect(entityMap.findMany).toHaveBeenCalledWith({
+        where: { organizationId: 'org1', entityType: 'DOCTOR' },
+        select: { agenIAId: true },
+      });
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Revalidación al confirmar: entre que el paciente ve el menú y responde "SÍ"
+// pasan minutos, y al hospital le basta apagar a un médico en ese rato.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('AppointmentsService — el médico se apaga mientras el paciente decide', () => {
+  const conCupo = async (slot: any) => {
+    const tx = {
+      scheduleSlot: { findUnique: jest.fn(async () => slot), update: jest.fn() },
+      appointment: { create: jest.fn(async () => ({ id: 'apt1' })) },
+      $executeRawUnsafe: jest.fn(),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AppointmentsService,
+        {
+          provide: PrismaService,
+          useValue: { $transaction: jest.fn(async (cb: any) => cb(tx)) },
+        },
+      ],
+    }).compile();
+    return { svc: module.get<AppointmentsService>(AppointmentsService), tx };
+  };
+
+  const cupoLibre = (whatsappBookingEnabled: boolean) => ({
+    id: 's1',
+    isAvailable: true,
+    organizationId: 'org1',
+    doctor: { whatsappBookingEnabled },
+  });
+
+  it('rechaza la reserva si el médico ya no acepta WhatsApp', async () => {
+    const { svc, tx } = await conCupo(cupoLibre(false));
+
+    const r = await svc.bookAppointment('p1', 's1', null, 'WHATSAPP', 'org1');
+
+    expect(r.success).toBe(false);
+    expect(tx.appointment.create).not.toHaveBeenCalled();
+    expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+  });
+
+  it('el mensaje NO dice que otro paciente se llevó el cupo: sería mentira', async () => {
+    const { svc } = await conCupo(cupoLibre(false));
+
+    const r = await svc.bookAppointment('p1', 's1', null, 'WHATSAPP', 'org1');
+
+    expect(r.message).not.toContain('otro paciente');
+    expect(r.message).toContain('este medio');
+  });
+
+  it('con el médico activo, la reserva pasa', async () => {
+    const { svc, tx } = await conCupo(cupoLibre(true));
+
+    const r = await svc.bookAppointment('p1', 's1', null, 'WHATSAPP', 'org1');
+
+    expect(r.success).toBe(true);
+    expect(tx.appointment.create).toHaveBeenCalled();
+  });
+
+  it('una cita que viene del HIS se salta el interruptor', async () => {
+    // El hospital ya la agendó: rechazarla dejaría los dos sistemas
+    // divergiendo, que es justo lo que el espejo existe para evitar.
+    const { svc, tx } = await conCupo(cupoLibre(false));
+
+    const r = await svc.bookAppointment('p1', 's1', null, 'MIRROR', 'org1');
+
+    expect(r.success).toBe(true);
+    expect(tx.appointment.create).toHaveBeenCalled();
+  });
+
+  it('un cupo sin médico se trata como inválido, no se reserva a ciegas', async () => {
+    const { svc, tx } = await conCupo({
+      id: 's1',
+      isAvailable: true,
+      organizationId: 'org1',
+      doctor: null,
+    });
+
+    const r = await svc.bookAppointment('p1', 's1', null, 'WHATSAPP', 'org1');
+
+    expect(r.success).toBe(false);
+    expect(tx.appointment.create).not.toHaveBeenCalled();
   });
 });

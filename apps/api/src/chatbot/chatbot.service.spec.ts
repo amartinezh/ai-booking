@@ -2558,6 +2558,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           id: 'slot-new',
           isAvailable: true,
           organizationId: ORG_ID,
+          // El reagendamiento revalida el interruptor del médico antes de
+          // mover la cita (bloque E), así que la consulta real lo incluye.
+          doctor: { whatsappBookingEnabled: true },
         }) // validación en tx
         .mockResolvedValueOnce({
           id: 'slot-old',
