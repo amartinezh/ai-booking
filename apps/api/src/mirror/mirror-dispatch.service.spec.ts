@@ -12,6 +12,11 @@ describe('MirrorDispatchService', () => {
       updateMany: jest.Mock;
       update: jest.Mock;
     };
+    // Modelos que consulta la hidratación (bloque D).
+    scheduleSlot: { findMany: jest.Mock };
+    patientProfile: { findMany: jest.Mock };
+    eps: { findMany: jest.Mock };
+    mirrorEntityMap: { findMany: jest.Mock };
   };
 
   beforeEach(async () => {
@@ -33,6 +38,11 @@ describe('MirrorDispatchService', () => {
         updateMany: jest.fn(() => Promise.resolve({ count: 1 })),
         update: jest.fn(),
       },
+      // Modelos que consulta la hidratación (bloque D).
+      scheduleSlot: { findMany: jest.fn(() => Promise.resolve([])) },
+      patientProfile: { findMany: jest.fn(() => Promise.resolve([])) },
+      eps: { findMany: jest.fn(() => Promise.resolve([])) },
+      mirrorEntityMap: { findMany: jest.fn(() => Promise.resolve([])) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -250,6 +260,11 @@ describe('MirrorDispatchService — entrega con backoff', () => {
         updateMany: jest.fn(() => Promise.resolve({ count: 1 })),
         update: jest.fn(),
       },
+      // Modelos que consulta la hidratación (bloque D).
+      scheduleSlot: { findMany: jest.fn(() => Promise.resolve([])) },
+      patientProfile: { findMany: jest.fn(() => Promise.resolve([])) },
+      eps: { findMany: jest.fn(() => Promise.resolve([])) },
+      mirrorEntityMap: { findMany: jest.fn(() => Promise.resolve([])) },
     };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -466,5 +481,251 @@ describe('MirrorDispatchService — entrega con backoff', () => {
         data: { deadLettered: true },
       });
     });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Hidratación del evento (bloque D).
+//
+// El trigger serializa la fila de Appointment tal cual, y esa fila NO tiene
+// hora, ni médico, ni servicio: eso vive en ScheduleSlot. El driver recibía
+// cuatro UUIDs de AgenIA y nada con qué construir el INSERT del HIS.
+// ═════════════════════════════════════════════════════════════════════════
+describe('MirrorDispatchService — hidratación del evento', () => {
+  let service: MirrorDispatchService;
+  let prisma: any;
+  let avisos: string[];
+
+  const SLOT = {
+    id: 'slot-1',
+    startTime: new Date('2026-09-03T12:20:00.000Z'),
+    endTime: new Date('2026-09-03T12:40:00.000Z'),
+    doctorId: 'doc-1',
+    serviceId: 'svc-1',
+  };
+  const PACIENTE = {
+    id: 'pat-1',
+    cedula: '9696544',
+    fullName: 'PACIENTE DE PRUEBA UNO',
+    dateOfBirth: new Date('1980-05-12T00:00:00.000Z'),
+    gender: 'M',
+  };
+  const EPS = { id: 'eps-1', nit: '800088702', name: 'Nueva EPS' };
+
+  const eventoCrudo = (payload: Record<string, unknown> = {}) => ({
+    seq: BigInt(1),
+    eventId: 'e1',
+    entityType: 'APPOINTMENT',
+    entityId: 'apt-1',
+    op: 'INSERT',
+    payload: {
+      id: 'apt-1',
+      patientId: 'pat-1',
+      scheduleSlotId: 'slot-1',
+      epsId: 'eps-1',
+      ...payload,
+    },
+    createdAt: new Date('2026-08-31T03:48:16.919Z'),
+    deliveredAt: null,
+    attempts: 0,
+    deadLettered: false,
+    nextAttemptAt: null,
+  });
+
+  /** Configura las cuatro consultas de la hidratación. */
+  const conCatalogo = (opts: {
+    slot?: boolean;
+    paciente?: boolean;
+    eps?: boolean;
+    mapas?: { entityType: string; agenIAId: string; externalKey: string }[];
+  }) => {
+    prisma.scheduleSlot.findMany.mockResolvedValue(
+      opts.slot === false ? [] : [SLOT],
+    );
+    prisma.patientProfile.findMany.mockResolvedValue(
+      opts.paciente === false ? [] : [PACIENTE],
+    );
+    prisma.eps.findMany.mockResolvedValue(opts.eps === false ? [] : [EPS]);
+    prisma.mirrorEntityMap.findMany.mockResolvedValue(
+      opts.mapas ?? [
+        { entityType: 'DOCTOR', agenIAId: 'doc-1', externalKey: '76' },
+        { entityType: 'SERVICE', agenIAId: 'svc-1', externalKey: 'S39141-1' },
+      ],
+    );
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      hospitalMirrorConfig: {
+        findUniqueOrThrow: jest.fn(() => Promise.resolve({})),
+        update: jest.fn(() => Promise.resolve({})),
+      },
+      syncOutbox: {
+        findMany: jest.fn(() => Promise.resolve([])),
+        findFirst: jest.fn(() => Promise.resolve(null)),
+        updateMany: jest.fn(() => Promise.resolve({ count: 1 })),
+        update: jest.fn(),
+      },
+      scheduleSlot: { findMany: jest.fn(() => Promise.resolve([])) },
+      patientProfile: { findMany: jest.fn(() => Promise.resolve([])) },
+      eps: { findMany: jest.fn(() => Promise.resolve([])) },
+      mirrorEntityMap: { findMany: jest.fn(() => Promise.resolve([])) },
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MirrorDispatchService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = module.get(MirrorDispatchService);
+    (service as any).longPollMs = 5;
+    (service as any).longPollIntervalMs = 1;
+    avisos = [];
+    jest
+      .spyOn((service as any).logger, 'warn')
+      .mockImplementation((m: string) => avisos.push(m));
+  });
+
+  it('completa hora, médico, servicio, paciente y EPS', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([eventoCrudo()]);
+    conCatalogo({});
+
+    const [evento] = await service.getPendingEvents('org1', BigInt(0));
+
+    expect(evento.context).toEqual({
+      startTimeIso: '2026-09-03T12:20:00.000Z',
+      endTimeIso: '2026-09-03T12:40:00.000Z',
+      doctorExternalKey: '76',
+      serviceExternalKey: 'S39141-1',
+      patientDocument: '9696544',
+      patientFullName: 'PACIENTE DE PRUEBA UNO',
+      patientBirthDateIso: '1980-05-12T00:00:00.000Z',
+      patientGender: 'M',
+      epsNit: '800088702',
+      epsName: 'Nueva EPS',
+    });
+  });
+
+  it('conserva intacta la fila cruda del trigger junto al contexto', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([eventoCrudo()]);
+    conCatalogo({});
+
+    const [evento] = await service.getPendingEvents('org1', BigInt(0));
+
+    expect(evento.payload).toMatchObject({ id: 'apt-1', patientId: 'pat-1' });
+  });
+
+  it('sin homologación del médico, marca missingMappings y avisa', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([eventoCrudo()]);
+    conCatalogo({
+      mapas: [
+        { entityType: 'SERVICE', agenIAId: 'svc-1', externalKey: 'S39141-1' },
+      ],
+    });
+
+    const [evento] = await service.getPendingEvents('org1', BigInt(0));
+
+    expect(evento.context?.missingMappings).toEqual(['DOCTOR doc-1']);
+    expect(evento.context?.doctorExternalKey).toBeUndefined();
+    expect(avisos[0]).toContain('SIN homologar');
+  });
+
+  it('acumula TODAS las homologaciones que faltan, no solo la primera', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([eventoCrudo()]);
+    conCatalogo({ mapas: [] });
+
+    const [evento] = await service.getPendingEvents('org1', BigInt(0));
+
+    expect(evento.context?.missingMappings).toEqual([
+      'DOCTOR doc-1',
+      'SERVICE svc-1',
+    ]);
+  });
+
+  it('un cupo que ya no existe se reporta, no se entrega a medias', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([eventoCrudo()]);
+    conCatalogo({ slot: false });
+
+    const [evento] = await service.getPendingEvents('org1', BigInt(0));
+
+    expect(evento.context?.missingMappings).toContain('SLOT slot-1');
+    expect(evento.context?.startTimeIso).toBeUndefined();
+  });
+
+  it('una cita particular (sin EPS) es válida: no falta nada', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([
+      eventoCrudo({ epsId: null }),
+    ]);
+    conCatalogo({ eps: false });
+
+    const [evento] = await service.getPendingEvents('org1', BigInt(0));
+
+    expect(evento.context?.missingMappings).toBeUndefined();
+    expect(evento.context?.epsNit).toBeUndefined();
+  });
+
+  it('una cita que declara EPS pero no se encuentra SÍ es un problema', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([eventoCrudo()]);
+    conCatalogo({ eps: false });
+
+    const [evento] = await service.getPendingEvents('org1', BigInt(0));
+
+    expect(evento.context?.missingMappings).toContain('EPS eps-1');
+  });
+
+  it('hidrata en LOTE: cuatro consultas, no cuatro por evento', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([
+      eventoCrudo(),
+      { ...eventoCrudo(), seq: BigInt(2), eventId: 'e2', entityId: 'apt-2' },
+      { ...eventoCrudo(), seq: BigInt(3), eventId: 'e3', entityId: 'apt-3' },
+    ]);
+    conCatalogo({});
+
+    await service.getPendingEvents('org1', BigInt(0));
+
+    // Un lote de 100 citas producía 400 consultas sueltas antes de agrupar.
+    expect(prisma.scheduleSlot.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.patientProfile.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.eps.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.mirrorEntityMap.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('las consultas de hidratación filtran por organización', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([eventoCrudo()]);
+    conCatalogo({});
+
+    await service.getPendingEvents('org1', BigInt(0));
+
+    for (const modelo of ['scheduleSlot', 'patientProfile', 'eps', 'mirrorEntityMap']) {
+      expect(prisma[modelo].findMany.mock.calls[0][0].where.organizationId).toBe(
+        'org1',
+      );
+    }
+  });
+
+  it('un evento que no es de cita no se hidrata ni consulta nada', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([
+      { ...eventoCrudo(), entityType: 'SLOT' },
+    ]);
+
+    const [evento] = await service.getPendingEvents('org1', BigInt(0));
+
+    expect(evento.context).toBeUndefined();
+    expect(prisma.scheduleSlot.findMany).not.toHaveBeenCalled();
+  });
+
+  it('un paciente sin nacimiento ni sexo no rompe la hidratación', async () => {
+    // Pacientes creados antes de que el chatbot pidiera esos datos (bloque F).
+    prisma.syncOutbox.findMany.mockResolvedValueOnce([eventoCrudo()]);
+    conCatalogo({});
+    prisma.patientProfile.findMany.mockResolvedValue([
+      { ...PACIENTE, dateOfBirth: null, gender: null },
+    ]);
+
+    const [evento] = await service.getPendingEvents('org1', BigInt(0));
+
+    expect(evento.context?.patientDocument).toBe('9696544');
+    expect(evento.context?.patientBirthDateIso).toBeUndefined();
+    expect(evento.context?.missingMappings).toBeUndefined();
   });
 });

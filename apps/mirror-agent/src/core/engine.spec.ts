@@ -302,6 +302,90 @@ describe('MirrorEngine', () => {
     });
   });
 
+  // 🛑 D3: nunca una escritura a medias en el HIS. Si el servidor entrega un
+  // evento cuya homologación está incompleta, el motor lo rechaza SIN llamar
+  // al driver — una cita sin código de médico en la agenda del hospital es
+  // peor que una cita que no llegó.
+  describe('homologación incompleta', () => {
+    it('NO llama al driver cuando faltan claves del HIS', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({
+          seq: '70',
+          context: { missingMappings: ['DOCTOR doc-abc'] },
+        }),
+      ]);
+
+      const result = await engine.pullAndApplyOutboxEvents();
+
+      expect(driver.createAppointment).not.toHaveBeenCalled();
+      expect(driver.cancelAppointment).not.toHaveBeenCalled();
+      expect(driver.updateAttendance).not.toHaveBeenCalled();
+      expect(result.failed).toBe(1);
+    });
+
+    it('el motivo dice qué falta y dónde arreglarlo', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({
+          seq: '71',
+          context: { missingMappings: ['DOCTOR doc-abc', 'SERVICE svc-xyz'] },
+        }),
+      ]);
+
+      const { failures } = await engine.pullAndApplyOutboxEvents();
+
+      expect(failures[0].message).toContain('DOCTOR doc-abc');
+      expect(failures[0].message).toContain('SERVICE svc-xyz');
+      expect(failures[0].message).toContain('MirrorEntityMap');
+      // No es una excepción: es un rechazo deliberado y ordenado.
+      expect(failures[0].threw).toBeUndefined();
+    });
+
+    it('se reporta como failedSeq: entra al backoff y acaba en dead-letter', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ seq: '72', context: { missingMappings: ['DOCTOR d1'] } }),
+      ]);
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(api.ack).toHaveBeenCalledWith({ seqs: [], failedSeqs: ['72'] });
+    });
+
+    it('missingMappings vacío no bloquea nada', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ seq: '73', context: { missingMappings: [] } }),
+      ]);
+      driver.createAppointment.mockResolvedValueOnce({ success: true });
+
+      const result = await engine.pullAndApplyOutboxEvents();
+
+      expect(driver.createAppointment).toHaveBeenCalledTimes(1);
+      expect(result.applied).toBe(1);
+    });
+
+    it('el driver recibe las claves del HIS ya resueltas', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({
+          seq: '74',
+          context: {
+            doctorExternalKey: '76',
+            serviceExternalKey: 'S39141-1',
+            startTimeIso: '2026-09-03T12:20:00.000Z',
+            patientDocument: '9696544',
+          },
+        }),
+      ]);
+      driver.createAppointment.mockResolvedValueOnce({ success: true });
+
+      await engine.pullAndApplyOutboxEvents();
+
+      const recibido = driver.createAppointment.mock.calls[0][0];
+      expect(recibido.payload.doctorExternalKey).toBe('76');
+      expect(recibido.payload.serviceExternalKey).toBe('S39141-1');
+      expect(recibido.payload.startTimeIso).toBe('2026-09-03T12:20:00.000Z');
+      expect(recibido.payload.patientDocument).toBe('9696544');
+    });
+  });
+
   describe('cursor', () => {
     it('avanza el cursor local al último seq recibido, incluso si algo falló', async () => {
       api.getPendingEvents.mockResolvedValueOnce([

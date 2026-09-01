@@ -75,6 +75,7 @@ model Organization {
   syncOutboxEntries    SyncOutbox[]
   syncInboxEntries     SyncInbox[]
   syncAuditEntries     SyncAudit[]
+  mirrorEntityMaps     MirrorEntityMap[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1263,6 +1264,54 @@ model MirrorConflictAlert {
 // directamente — así ningún escritor (API, web, seeds, SQL manual) se escapa.
 // Prisma lo modela para que el módulo mirror pueda leerlo y marcar `deliveredAt`.
 // -----------------------------------------------------------------------------
+/// Homologacion entre una entidad de AgenIA y su clave en el HIS del hospital.
+///
+/// POR QUE ES UNA TABLA APARTE Y NO UN CAMPO EN CADA MODELO
+/// Un `hisCode` en DoctorProfile seria mas simple, pero mete conocimiento de
+/// un HIS concreto dentro del schema generico — justo el riesgo de diseno que
+/// el §12 del plan marca como "acoplar el motor a las particularidades del
+/// primer driver". Ademas no serviria para una organizacion con dos espejos, y
+/// obligaria a una migracion por cada tipo de entidad nuevo que un driver
+/// futuro necesite homologar.
+///
+/// SIN ESTO NO HAY ESCRITURA POSIBLE. El HIS de Anserma exige CD_CODI_MED_CIT
+/// ('76') y CD_CODI_SER_CIT ('S39141-1'); el evento del outbox solo lleva
+/// UUIDs de AgenIA. Hasta esta tabla no habia donde guardar esa equivalencia.
+///
+/// El documento del paciente y el NIT de la EPS NO necesitan fila aqui: salen
+/// de PatientProfile.cedula y Eps.nit, que ya son las claves que el HIS usa.
+model MirrorEntityMap {
+  id String @id @default(uuid())
+
+  /// 'DOCTOR' | 'SERVICE' | 'PATIENT' | 'EPS' | 'SLOT' — el mismo vocabulario
+  /// de CanonicalEntityType. String y no enum: un driver futuro puede necesitar
+  /// homologar algo que hoy no existe, y eso no deberia costar una migracion.
+  entityType String
+
+  /// Id de la fila en AgenIA (DoctorProfile.id, MedicalService.id...).
+  agenIAId String
+
+  /// Clave que usa el HIS. Opaca para el motor: solo el driver la interpreta.
+  externalKey String
+
+  /// Etiqueta legible del HIS, para diagnosticar sin abrir su base.
+  externalLabel String?
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Unico en LOS DOS sentidos: un medico de AgenIA apunta a un solo codigo del
+  /// HIS, y un codigo del HIS pertenece a un solo medico de AgenIA. Sin el
+  /// segundo, dos medicos podrian homologarse al mismo codigo y las citas de
+  /// uno terminarian en la agenda del otro.
+  @@unique([organizationId, entityType, agenIAId])
+  @@unique([organizationId, entityType, externalKey])
+  @@index([organizationId, entityType])
+}
+
 model SyncOutbox {
   seq            BigInt       @id @default(autoincrement())
   // ⚠️ dbgenerated (NO @default(uuid())): esta fila SIEMPRE se crea desde el

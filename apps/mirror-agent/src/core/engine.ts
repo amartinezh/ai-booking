@@ -131,6 +131,28 @@ export class MirrorEngine {
   private async applyOutboxEvent(
     dto: OutboxEventDto,
   ): Promise<{ success: boolean; message?: string }> {
+    // 🛑 Homologación incompleta: se rechaza ANTES de llamar al driver.
+    //
+    // Sin esto, un evento cuyo médico no está homologado llegaría al driver
+    // con `doctorExternalKey` vacío y produciría una cita a medias en el HIS
+    // — sin médico, o con una cadena vacía donde va su código. Es el riesgo
+    // número uno de la tabla del plan (§12): una fila "cruda" que la
+    // aplicación del hospital no sabe mostrar. Un fallo explícito, que sube
+    // el contador de intentos y acaba en dead-letter con su motivo, es
+    // infinitamente preferible a una cita rota en la agenda de un médico.
+    //
+    // La comprobación vive aquí, en el motor genérico, y no en el driver: es
+    // el mismo criterio para cualquier HIS.
+    const missing = dto.context?.missingMappings;
+    if (missing && missing.length > 0) {
+      return {
+        success: false,
+        message:
+          `homologación incompleta, no se toca el HIS: falta ${missing.join(', ')}. ` +
+          `Revisa MirrorEntityMap para esta organización.`,
+      };
+    }
+
     if (dto.entityType !== 'APPOINTMENT') {
       // 🚧 Fase 2+: espejar SLOT/DOCTOR/PATIENT/SERVICE/EPS hacia el HIS
       // depende del modelo de disponibilidad de cada driver (ver plan
@@ -189,6 +211,11 @@ export function translateOutboxAppointment(
   dto: OutboxEventDto,
 ): CanonicalChangeEvent {
   const row = (dto.payload ?? {}) as Record<string, unknown>;
+  // `context` lo resuelve el servidor al entregar el evento (joins con el cupo,
+  // el paciente y la EPS, más la homologación de médico y servicio). La fila
+  // cruda del trigger NO tiene hora, médico ni servicio: sin esto el driver
+  // recibía cuatro UUIDs de AgenIA y nada con qué escribir en el HIS.
+  const ctx = dto.context ?? {};
   return {
     eventId: dto.eventId,
     entityType: 'APPOINTMENT',
@@ -204,6 +231,17 @@ export function translateOutboxAppointment(
         typeof row.attendanceStatus === 'string'
           ? row.attendanceStatus
           : undefined,
+      // Todo lo que el driver necesita para construir la escritura.
+      startTimeIso: ctx.startTimeIso,
+      endTimeIso: ctx.endTimeIso,
+      patientDocument: ctx.patientDocument,
+      patientFullName: ctx.patientFullName,
+      patientBirthDateIso: ctx.patientBirthDateIso,
+      patientGender: ctx.patientGender,
+      epsNit: ctx.epsNit,
+      epsName: ctx.epsName,
+      doctorExternalKey: ctx.doctorExternalKey,
+      serviceExternalKey: ctx.serviceExternalKey,
     },
   };
 }

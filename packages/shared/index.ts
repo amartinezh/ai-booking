@@ -39,6 +39,7 @@ export type {
   HandshakeInput,
   HandshakeResult,
   OutboxEventDto,
+  OutboxEventContext,
   AckInput,
   AckResult,
   CanonicalChangeEvent,

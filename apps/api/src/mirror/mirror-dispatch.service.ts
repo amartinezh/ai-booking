@@ -7,6 +7,7 @@ import {
   HandshakeResult,
   HeartbeatInput,
   OutboxEventDto,
+  OutboxEventContext,
 } from './dto/mirror.types';
 
 const DEFAULT_LONG_POLL_MS = 25_000;
@@ -121,15 +122,7 @@ export class MirrorDispatchService {
       const rows = await this.selectDeliverable(organizationId, limit);
 
       if (rows.length > 0 || Date.now() >= deadline) {
-        return rows.map((r) => ({
-          seq: r.seq.toString(),
-          eventId: r.eventId,
-          entityType: r.entityType as OutboxEventDto['entityType'],
-          entityId: r.entityId,
-          op: r.op as OutboxEventDto['op'],
-          payload: r.payload,
-          createdAt: r.createdAt.toISOString(),
-        }));
+        return this.hydrateSafely(organizationId, rows);
       }
 
       await new Promise((resolve) =>
@@ -196,6 +189,196 @@ export class MirrorDispatchService {
     }
 
     return entregables;
+  }
+
+  /**
+   * Envoltorio de `hydrate` que nunca deja caer el poll entero.
+   *
+   * Si la hidratación falla (una consulta que revienta, un modelo que no
+   * responde), entregar los eventos SIN contexto sería lo peor posible: el
+   * driver los recibiría con las claves del HIS vacías y escribiría citas a
+   * medias. Y no entregar nada dejaría al agente sin saber por qué.
+   *
+   * Así que se entregan marcados como no aplicables: el motor los rechaza sin
+   * tocar el HIS, suben su contador de intentos y acaban en dead-letter con el
+   * motivo real escrito.
+   */
+  private async hydrateSafely(
+    organizationId: string,
+    rows: Awaited<ReturnType<MirrorDispatchService['selectDeliverable']>>,
+  ): Promise<OutboxEventDto[]> {
+    try {
+      return await this.hydrate(organizationId, rows);
+    } catch (error) {
+      const detalle = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Falló la hidratación de ${rows.length} evento(s) de la organización ${organizationId}: ${detalle}. ` +
+          `Se entregan marcados como no aplicables para que el agente NO escriba en el HIS.`,
+      );
+      return rows.map((r) => ({
+        seq: r.seq.toString(),
+        eventId: r.eventId,
+        entityType: r.entityType as OutboxEventDto['entityType'],
+        entityId: r.entityId,
+        op: r.op as OutboxEventDto['op'],
+        payload: r.payload,
+        context: { missingMappings: [`hidratación falló: ${detalle}`] },
+        createdAt: r.createdAt.toISOString(),
+      }));
+    }
+  }
+
+  /**
+   * Completa cada evento con lo que la fila cruda no trae.
+   *
+   * El trigger serializa `Appointment` tal cual, y esa fila no tiene la hora,
+   * ni el médico, ni el servicio — eso vive en `ScheduleSlot`. Un driver que
+   * recibiera solo eso no podría construir el INSERT de su HIS. Aquí se hacen
+   * los joins y se resuelven las claves externas contra `MirrorEntityMap`.
+   *
+   * Se hace en lote, no evento por evento: un lote de 100 citas producía 400
+   * consultas sueltas. Así son cuatro, sea cual sea el tamaño del lote.
+   */
+  private async hydrate(
+    organizationId: string,
+    rows: Awaited<ReturnType<MirrorDispatchService['selectDeliverable']>>,
+  ): Promise<OutboxEventDto[]> {
+    const base = rows.map((r) => ({
+      seq: r.seq.toString(),
+      eventId: r.eventId,
+      entityType: r.entityType as OutboxEventDto['entityType'],
+      entityId: r.entityId,
+      op: r.op as OutboxEventDto['op'],
+      payload: r.payload,
+      createdAt: r.createdAt.toISOString(),
+    }));
+
+    const citas = rows.filter((r) => r.entityType === 'APPOINTMENT');
+    if (citas.length === 0) return base;
+
+    // La fila cruda del outbox: de ahí salen los ids a los que hay que ir.
+    const filaDe = (r: (typeof rows)[number]) =>
+      (r.payload ?? {}) as Record<string, unknown>;
+    const idsDe = (campo: string) =>
+      Array.from(
+        new Set(
+          citas
+            .map((r) => filaDe(r)[campo])
+            .filter((v): v is string => typeof v === 'string'),
+        ),
+      );
+
+    const slotIds = idsDe('scheduleSlotId');
+    const patientIds = idsDe('patientId');
+    const epsIds = idsDe('epsId');
+
+    const [slots, pacientes, epsRows] = await Promise.all([
+      this.prisma.scheduleSlot.findMany({
+        where: { id: { in: slotIds }, organizationId },
+        select: {
+          id: true,
+          startTime: true,
+          endTime: true,
+          doctorId: true,
+          serviceId: true,
+        },
+      }),
+      this.prisma.patientProfile.findMany({
+        where: { id: { in: patientIds }, organizationId },
+        select: {
+          id: true,
+          cedula: true,
+          fullName: true,
+          dateOfBirth: true,
+          gender: true,
+        },
+      }),
+      this.prisma.eps.findMany({
+        where: { id: { in: epsIds }, organizationId },
+        select: { id: true, nit: true, name: true },
+      }),
+    ]);
+
+    const slotPorId = new Map(slots.map((s) => [s.id, s]));
+    const pacientePorId = new Map(pacientes.map((p) => [p.id, p]));
+    const epsPorId = new Map(epsRows.map((e) => [e.id, e]));
+
+    // Homologación de médicos y servicios en una sola consulta.
+    const mapas = await this.prisma.mirrorEntityMap.findMany({
+      where: {
+        organizationId,
+        entityType: { in: ['DOCTOR', 'SERVICE'] },
+        agenIAId: {
+          in: [
+            ...new Set(slots.flatMap((s) => [s.doctorId, s.serviceId])),
+          ],
+        },
+      },
+      select: { entityType: true, agenIAId: true, externalKey: true },
+    });
+    const claveExterna = new Map(
+      mapas.map((m) => [`${m.entityType}:${m.agenIAId}`, m.externalKey]),
+    );
+
+    return base.map((dto, i) => {
+      if (dto.entityType !== 'APPOINTMENT') return dto;
+
+      const fila = filaDe(rows[i]);
+      const slot = slotPorId.get(fila.scheduleSlotId as string);
+      const paciente = pacientePorId.get(fila.patientId as string);
+      const eps = epsPorId.get(fila.epsId as string);
+
+      const missing: string[] = [];
+      const context: OutboxEventContext = {};
+
+      if (slot) {
+        context.startTimeIso = slot.startTime.toISOString();
+        context.endTimeIso = slot.endTime.toISOString();
+
+        const medico = claveExterna.get(`DOCTOR:${slot.doctorId}`);
+        if (medico) context.doctorExternalKey = medico;
+        else missing.push(`DOCTOR ${slot.doctorId}`);
+
+        const servicio = claveExterna.get(`SERVICE:${slot.serviceId}`);
+        if (servicio) context.serviceExternalKey = servicio;
+        else missing.push(`SERVICE ${slot.serviceId}`);
+      } else {
+        // El cupo desapareció entre la captura y la entrega. No es
+        // recuperable desde aquí, pero tampoco se descarta en silencio.
+        missing.push(`SLOT ${String(fila.scheduleSlotId)}`);
+      }
+
+      if (paciente) {
+        // El documento NO se homologa: en este HIS la historia ES el documento,
+        // y en general es la clave con la que cualquier HIS identifica gente.
+        context.patientDocument = paciente.cedula;
+        context.patientFullName = paciente.fullName;
+        if (paciente.dateOfBirth)
+          context.patientBirthDateIso = paciente.dateOfBirth.toISOString();
+        if (paciente.gender) context.patientGender = paciente.gender;
+      } else {
+        missing.push(`PATIENT ${String(fila.patientId)}`);
+      }
+
+      // La EPS es opcional (una cita particular no tiene): su ausencia no
+      // rompe nada, pero si la cita SÍ declara una y no la encontramos, eso sí.
+      if (eps) {
+        if (eps.nit) context.epsNit = eps.nit;
+        context.epsName = eps.name;
+      } else if (fila.epsId) {
+        missing.push(`EPS ${String(fila.epsId)}`);
+      }
+
+      if (missing.length > 0) {
+        context.missingMappings = missing;
+        this.logger.warn(
+          `Evento ${dto.eventId} (org ${organizationId}) se entrega SIN homologar: ` +
+            `falta ${missing.join(', ')}. El agente lo rechazará sin tocar el HIS.`,
+        );
+      }
+
+      return { ...dto, context };
+    });
   }
 
   async ack(organizationId: string, input: AckInput): Promise<AckResult> {
