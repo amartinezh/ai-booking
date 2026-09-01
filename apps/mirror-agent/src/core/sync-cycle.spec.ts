@@ -117,4 +117,47 @@ describe('runSyncCycle', () => {
     await runSyncCycle(fallando, reporter); // vuelve a fallar: se reporta
     expect(lines).toHaveLength(2);
   });
+
+  // 🐛 El long-poll de la salida (hasta 25 s) bloqueaba la entrada cuando las
+  // dos iban encadenadas: una cita agendada en el hospital tardaba una vuelta
+  // larga en llegar, y mientras tanto ese cupo se seguía ofreciendo por
+  // WhatsApp. Se detectó probando el ciclo completo contra el mock.
+  it('las dos direcciones arrancan en PARALELO, no una tras otra', async () => {
+    const orden: string[] = [];
+    const engine = engineDoble({
+      pullAndApplyOutboxEvents: jest.fn(async () => {
+        orden.push('salida:inicio');
+        await new Promise((r) => setTimeout(r, 30)); // simula el long-poll
+        orden.push('salida:fin');
+        return { applied: 0, skippedIdempotent: 0, failed: 0, failures: [] };
+      }),
+      detectAndPushChanges: jest.fn(async () => {
+        orden.push('entrada:inicio');
+        return { pushed: 2 };
+      }),
+    });
+
+    const r = await runSyncCycle(engine, reporter);
+
+    // La entrada arranca ANTES de que la salida termine de esperar.
+    expect(orden.indexOf('entrada:inicio')).toBeLessThan(
+      orden.indexOf('salida:fin'),
+    );
+    expect(r.pushed).toBe(2);
+  });
+
+  it('si la salida se cuelga y falla, la entrada igual entrega su resultado', async () => {
+    const engine = engineDoble({
+      pullAndApplyOutboxEvents: jest.fn(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        throw new Error('long-poll cortado');
+      }),
+      detectAndPushChanges: jest.fn().mockResolvedValue({ pushed: 5 }),
+    });
+
+    const r = await runSyncCycle(engine, reporter);
+
+    expect(r.pushed).toBe(5);
+    expect(r.hadErrors).toBe(true);
+  });
 });

@@ -24,6 +24,50 @@ export interface SyncCycleResult {
   hadErrors: boolean;
 }
 
+const mensajeDe = (e: unknown) =>
+  e instanceof Error ? e.message : String(e);
+
+/**
+ * Una vuelta de AgenIA -> HIS. Se autorregula sola: el `getPendingEvents` del
+ * servidor usa long-poll y se queda esperando hasta 25 s cuando no hay nada.
+ */
+export async function runOutbound(
+  engine: Pick<MirrorEngine, 'pullAndApplyOutboxEvents'>,
+  reporter: FailureReporter,
+): Promise<{ applied: number; failed: number; hadErrors: boolean }> {
+  try {
+    const r = await engine.pullAndApplyOutboxEvents();
+    if (r.failed > 0) {
+      reporter.reportAll(
+        'AgenIA->HIS',
+        r.failures.map(
+          (f) =>
+            `evento ${f.eventId} (seq ${f.seq})` +
+            `${f.threw ? ' lanzo' : ' rechazado'}: ${f.message}`,
+        ),
+      );
+    }
+    return { applied: r.applied, failed: r.failed, hadErrors: r.failed > 0 };
+  } catch (error) {
+    reporter.report('AgenIA->HIS', mensajeDe(error));
+    return { applied: 0, failed: 0, hadErrors: true };
+  }
+}
+
+/** Una vuelta de HIS -> AgenIA. */
+export async function runInbound(
+  engine: Pick<MirrorEngine, 'detectAndPushChanges'>,
+  reporter: FailureReporter,
+): Promise<{ pushed: number; hadErrors: boolean }> {
+  try {
+    const r = await engine.detectAndPushChanges();
+    return { pushed: r.pushed, hadErrors: false };
+  } catch (error) {
+    reporter.report('HIS->AgenIA', mensajeDe(error));
+    return { pushed: 0, hadErrors: true };
+  }
+}
+
 export async function runSyncCycle(
   engine: Pick<
     MirrorEngine,
@@ -36,42 +80,47 @@ export async function runSyncCycle(
   let pushed = 0;
   let hadErrors = false;
 
-  // --- AgenIA -> HIS -------------------------------------------------------
-  try {
-    const result = await engine.pullAndApplyOutboxEvents();
-    applied = result.applied;
-    failed = result.failed;
+  // Las dos direcciones corren EN PARALELO, no una detrás de otra.
+  //
+  // El pull hacia el HIS usa long-poll: cuando no hay eventos pendientes se
+  // queda esperando hasta 25 s. Encadenadas, esa espera bloqueaba la lectura
+  // DESDE el HIS, así que una cita agendada en el hospital tardaba media
+  // vuelta larga en llegar a AgenIA — y mientras tanto ese cupo se seguía
+  // ofreciendo por WhatsApp. Se detectó probando justo eso: el agente no
+  // reportó el cambio porque nunca llegó a mirarlo.
+  //
+  // `allSettled` y no `all`: que una dirección falle no debe cancelar la otra.
+  const [salida, entrada] = await Promise.allSettled([
+    engine.pullAndApplyOutboxEvents(),
+    engine.detectAndPushChanges(),
+  ]);
 
-    if (result.failed > 0) {
+  // --- AgenIA -> HIS -------------------------------------------------------
+  if (salida.status === 'fulfilled') {
+    applied = salida.value.applied;
+    failed = salida.value.failed;
+    if (salida.value.failed > 0) {
       hadErrors = true;
       reporter.reportAll(
         'AgenIA->HIS',
-        result.failures.map(
+        salida.value.failures.map(
           (f) =>
             `evento ${f.eventId} (seq ${f.seq})` +
             `${f.threw ? ' lanzo' : ' rechazado'}: ${f.message}`,
         ),
       );
     }
-  } catch (error) {
+  } else {
     hadErrors = true;
-    reporter.report(
-      'AgenIA->HIS',
-      error instanceof Error ? error.message : String(error),
-    );
+    reporter.report('AgenIA->HIS', mensajeDe(salida.reason));
   }
 
   // --- HIS -> AgenIA -------------------------------------------------------
-  // try/catch PROPIO, no un `else` ni el mismo bloque de arriba.
-  try {
-    const result = await engine.detectAndPushChanges();
-    pushed = result.pushed;
-  } catch (error) {
+  if (entrada.status === 'fulfilled') {
+    pushed = entrada.value.pushed;
+  } else {
     hadErrors = true;
-    reporter.report(
-      'HIS->AgenIA',
-      error instanceof Error ? error.message : String(error),
-    );
+    reporter.report('HIS->AgenIA', mensajeDe(entrada.reason));
   }
 
   if (!hadErrors) reporter.reset();

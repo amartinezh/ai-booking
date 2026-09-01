@@ -2,6 +2,7 @@ import {
   AnsermaMapping,
   MappingIncompletoError,
   fechaCitaLocal,
+  feHoraCitAIso,
   formatFeHoraCit,
   mapSexo,
   resolveConvenio,
@@ -181,5 +182,38 @@ describe('resolveEspecialidad', () => {
   it('un servicio sin mapear cae al valor por defecto', () => {
     expect(resolveEspecialidad(MAPPING, 'DESCONOCIDO')).toBe('000');
     expect(resolveEspecialidad(MAPPING, undefined)).toBe('000');
+  });
+});
+
+// La ida y la vuelta tienen que ser exactas: un desfase de una hora aquí
+// mueve la cita del paciente sin que nadie se entere.
+describe('feHoraCitAIso — de la hora del hospital a UTC', () => {
+  const BOGOTA = 'America/Bogota';
+
+  it('convierte la hora local a UTC', () => {
+    expect(feHoraCitAIso('2026/09/03 07:00', BOGOTA)).toBe(
+      '2026-09-03T12:00:00.000Z',
+    );
+  });
+
+  it('es el inverso exacto de formatFeHoraCit', () => {
+    for (const iso of [
+      '2026-09-03T12:20:00.000Z',
+      '2026-01-05T14:05:00.000Z',
+      '2026-09-04T02:00:00.000Z', // cruza el día hacia atrás
+      '2026-09-04T05:00:00.000Z', // medianoche local
+    ]) {
+      const ida = formatFeHoraCit(iso, BOGOTA);
+      expect(feHoraCitAIso(ida, BOGOTA)).toBe(iso);
+    }
+  });
+
+  it('rechaza un formato que no es el del HIS', () => {
+    // Data legada sucia: el mapeo documenta longitudes 12/13 e incluso '31'.
+    // El LECTOR tiene que ser tolerante, pero no puede inventarse una hora.
+    expect(() => feHoraCitAIso('2026-09-03 07:00', BOGOTA)).toThrow(
+      MappingIncompletoError,
+    );
+    expect(() => feHoraCitAIso('31', BOGOTA)).toThrow(MappingIncompletoError);
   });
 });

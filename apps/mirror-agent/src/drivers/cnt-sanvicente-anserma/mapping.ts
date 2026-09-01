@@ -47,6 +47,15 @@ export interface AnsermaMapping {
   especialidadPorDefecto: string;
   /** `NU_DURA_CIT` cuando el turno no la impone. */
   duracionMinutos: number;
+  /**
+   * Días hacia adelante que vigila `detectChanges`.
+   *
+   * El hospital reserva hasta 12 meses, pero la instantánea completa de 13
+   * meses son ~120.000 filas comparadas en cada vuelta. Lo que de verdad
+   * importa para no sobrevender es el futuro cercano; el resto lo cubre la
+   * reconciliación nocturna.
+   */
+  ventanaVigilanciaDias?: number;
 }
 
 export class MappingIncompletoError extends Error {}
@@ -150,4 +159,45 @@ export function resolveEspecialidad(
     mapping.especialidadPorServicio[serviceExternalKey ?? ''] ??
     mapping.especialidadPorDefecto
   );
+}
+
+/**
+ * Inverso de `formatFeHoraCit`: de `'YYYY/MM/DD HH:MM'` en hora del hospital
+ * a un instante UTC ISO-8601.
+ *
+ * Hace falta porque los eventos que SUBEN al servidor viajan en UTC, igual
+ * que los que bajan. La conversión se hace calculando el desfase real de esa
+ * zona en esa fecha concreta — no con un offset fijo, que se rompería el día
+ * que una zona tenga horario de verano.
+ */
+export function feHoraCitAIso(feHora: string, timeZone: string): string {
+  const m = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/.exec(feHora.trim());
+  if (!m) {
+    throw new MappingIncompletoError(
+      `FE_HORA_CIT con formato inesperado: "${feHora}". Se esperaba 'YYYY/MM/DD HH:MM'.`,
+    );
+  }
+  const [, y, mo, d, h, mi] = m;
+
+  // Se parte de interpretar los componentes como si fueran UTC y se corrige
+  // con el desfase que esa zona tenía en ese instante.
+  const comoUtc = Date.UTC(+y, +mo - 1, +d, +h, +mi);
+  const desfase = offsetDeZonaMs(new Date(comoUtc), timeZone);
+  return new Date(comoUtc - desfase).toISOString();
+}
+
+/** Desfase de una zona respecto a UTC, en ms, en un instante dado. */
+function offsetDeZonaMs(instante: Date, timeZone: string): number {
+  const partes = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(instante);
+  const v = (t: string) => Number(partes.find((p) => p.type === t)!.value);
+  const local = Date.UTC(
+    v('year'), v('month') - 1, v('day'),
+    v('hour') % 24, v('minute'), v('second'),
+  );
+  return local - instante.getTime();
 }

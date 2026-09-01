@@ -2,6 +2,7 @@ import * as sql from 'mssql';
 import type { CanonicalChangeEvent } from '@agenia/shared';
 import {
   AnsermaMapping,
+  feHoraCitAIso,
   MappingIncompletoError,
   formatFeHoraCit,
   fechaCitaLocal,
@@ -37,6 +38,23 @@ import type {
  * comentario en cada método) — implementarlos ahora sería adivinar contra
  * un hospital real, exactamente lo que la Fase 0 existe para evitar.
  */
+/** Una fila de la instantánea: lo mínimo para detectar qué cambió. */
+interface SnapshotRow {
+  /** NU_ESTA_CIT */
+  e: number;
+  /** CD_CODI_SER_CIT */
+  s: string | null;
+  /** NU_HIST_PAC_CIT */
+  h: string | null;
+  /** NU_DURA_CIT */
+  d: number | null;
+  /** true si la escribió este agente (marca de origen en DE_DESC_CIT). */
+  propia: boolean;
+}
+
+/** Instantánea completa de la ventana, indexada por `${médico}|${hora}`. */
+type SnapshotCursor = Record<string, SnapshotRow>;
+
 export class CntSanVicenteAnsermaDriver implements HisDriver {
   readonly key = 'cnt-sanvicente-anserma';
 
@@ -133,15 +151,114 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     );
   }
 
-  async detectChanges(_since: DriverCursor): Promise<DetectChangesResult> {
-    // 🚧 TODO (ESTADO.md pendiente #2): el mecanismo de detección de
-    // cancelación YA está resuelto (DELETE de CITAS_MEDICAS + correlación
-    // con CITAS_ANULADAS, ver MAPEO_HIS.md §2.1bis) — lo que falta es decidir
-    // Change Tracking vs. polling diferencial con el hospital y armar el
-    // snapshot/hash inicial. Se implementa en Fase 4.
-    throw new Error(
-      'detectChanges: pendiente de Fase 4 — ver docs/drivers/cnt-sanvicente-anserma/ESTADO.md',
-    );
+  /**
+   * Detección de cambios del HIS por instantánea diferencial.
+   *
+   * POR QUE INSTANTÁNEA Y NO UN CURSOR POR FECHA
+   * Un cursor sobre `FE_ELAB_CIT` detectaría las altas nuevas, pero no las
+   * cancelaciones: cancelar BORRA la fila de `CITAS_MEDICAS`, y
+   * `CITAS_ANULADAS` copia `FE_ELAB_CIAN` de la cita original — no guarda
+   * cuándo se canceló. Una fila que desaparece no se detecta mirando fechas:
+   * hay que saber qué había antes.
+   *
+   * Se compara el conjunto (médico|hora → estado) de la ventana de vigilancia
+   * contra la lectura anterior:
+   *   apareció     → alta en el HIS
+   *   desapareció  → cancelación
+   *   cambió estado→ desenlace de atención
+   *
+   * ANTI-ECO: las citas que escribió el propio agente llevan la marca de
+   * origen en `DE_DESC_CIT`, así que no se reportan como altas del hospital
+   * — pero SÍ entran a la instantánea, para poder detectar si el hospital las
+   * cancela después.
+   *
+   * La PRIMERA lectura no emite nada: sin instantánea previa no se sabe qué
+   * cambió, y reportar todo como nuevo duplicaría la agenda entera. Solo toma
+   * la línea base. La carga inicial es un paso aparte.
+   */
+  async detectChanges(since: DriverCursor): Promise<DetectChangesResult> {
+    const pool = this.requirePool();
+    const mapping = this.requireMapping();
+    const anterior = (since as SnapshotCursor | null) ?? null;
+
+    const desde = new Date();
+    const hasta = new Date();
+    hasta.setDate(hasta.getDate() + (mapping.ventanaVigilanciaDias ?? 90));
+
+    const filas = await pool
+      .request()
+      .input('desde', sql.DateTime, desde)
+      .input('hasta', sql.DateTime, hasta).query(`
+        SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
+               CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist,
+               NU_DURA_CIT dura, DE_DESC_CIT descripcion
+          FROM dbo.CITAS_MEDICAS
+         WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
+
+    const actual: SnapshotCursor = {};
+    for (const f of filas.recordset) {
+      actual[`${f.med}|${f.hora}`] = {
+        e: f.estado,
+        s: f.servicio,
+        h: f.hist,
+        d: f.dura,
+        propia: f.descripcion === mapping.marcaOrigen,
+      };
+    }
+
+    if (!anterior) {
+      return { events: [], nextCursor: actual };
+    }
+
+    const events: CanonicalChangeEvent[] = [];
+    const ahora = new Date().toISOString();
+
+    for (const [clave, fila] of Object.entries(actual)) {
+      const previo = anterior[clave];
+      if (!previo) {
+        // Alta nueva. Si la escribimos nosotros, no se devuelve al servidor.
+        if (fila.propia) continue;
+        events.push(this.eventoDeCita('INSERT', clave, fila, ahora));
+      } else if (previo.e !== fila.e) {
+        events.push(this.eventoDeCita('ATTENDANCE', clave, fila, ahora));
+      }
+    }
+
+    for (const [clave, previo] of Object.entries(anterior)) {
+      if (actual[clave]) continue;
+      // Desapareció de CITAS_MEDICAS: es una cancelación, la haya hecho el
+      // hospital sobre una cita nuestra o sobre una suya.
+      events.push(this.eventoDeCita('CANCEL', clave, previo, ahora));
+    }
+
+    return { events, nextCursor: actual };
+  }
+
+  /** Traduce una fila del HIS al formato canónico que entiende el motor. */
+  private eventoDeCita(
+    op: 'INSERT' | 'CANCEL' | 'ATTENDANCE',
+    clave: string,
+    fila: SnapshotRow,
+    ahora: string,
+  ): CanonicalChangeEvent {
+    const [medico, feHora] = clave.split('|');
+    return {
+      // El `eventId` lo genera el AGENTE y debe ser estable para la misma
+      // observación: si el mismo cambio se reportara dos veces (un reintento
+      // tras un corte de red), la idempotencia del servidor lo absorbe.
+      eventId: `cnt:${op}:${clave}:${fila.e}`,
+      entityType: 'APPOINTMENT',
+      op,
+      occurredAtIso: ahora,
+      payload: {
+        doctorExternalKey: medico,
+        serviceExternalKey: fila.s ?? undefined,
+        patientDocument: fila.h ?? undefined,
+        // La hora del HIS es local; el protocolo viaja en UTC (plan §8).
+        startTimeIso: feHoraCitAIso(feHora, this.timeZone),
+        attendanceStatus: op === 'ATTENDANCE' ? String(fila.e) : undefined,
+      },
+    };
   }
 
   async createAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {

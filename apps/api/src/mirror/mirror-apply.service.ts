@@ -136,11 +136,81 @@ export class MirrorApplyService {
     }
   }
 
+  /**
+   * Encuentra el cupo de AgenIA que corresponde a una cita del HIS.
+   *
+   * El driver no conoce los ids de AgenIA: reporta "el médico 76 a las 07:00".
+   * La traducción se hace aquí, con la misma homologación que usa la salida
+   * (`MirrorEntityMap`), para que la equivalencia viva en un solo sitio.
+   */
+  private async resolverCupo(
+    organizationId: string,
+    payload: CanonicalChangeEvent['payload'],
+  ) {
+    if (!payload.doctorExternalKey || !payload.startTimeIso) return null;
+
+    const mapa = await this.prisma.mirrorEntityMap.findFirst({
+      where: {
+        organizationId,
+        entityType: 'DOCTOR',
+        externalKey: payload.doctorExternalKey,
+      },
+      select: { agenIAId: true },
+    });
+    if (!mapa) return null;
+
+    return this.prisma.scheduleSlot.findFirst({
+      where: {
+        organizationId,
+        doctorId: mapa.agenIAId,
+        startTime: new Date(payload.startTimeIso),
+      },
+    });
+  }
+
   private async applyAppointmentCreate(
     organizationId: string,
     event: CanonicalChangeEvent,
   ): Promise<'APPLIED' | 'CONFLICT'> {
-    const { agenIAPatientId, agenIAScheduleSlotId } = event.payload;
+    const { agenIAPatientId } = event.payload;
+    let { agenIAScheduleSlotId } = event.payload;
+
+    // 🏥 Cita nacida en el HIS: el driver la reporta por médico y hora, no por
+    // id de AgenIA. Sin resolverla, ese cupo seguiría ofreciéndose por
+    // WhatsApp aunque el hospital ya lo hubiera vendido — la sobreventa que
+    // encontró la prueba de punta a punta.
+    if (!agenIAScheduleSlotId) {
+      const cupo = await this.resolverCupo(organizationId, event.payload);
+      if (!cupo) {
+        throw new Error(
+          `Cita entrante del HIS sin cupo equivalente en AgenIA ` +
+            `(médico ${event.payload.doctorExternalKey}, ${event.payload.startTimeIso}). ` +
+            `Falta homologar el médico o generar el cupo.`,
+        );
+      }
+
+      // Ocupar el cupo es lo que evita la sobreventa, y hay que hacerlo
+      // aunque el paciente no se pueda homologar: da igual quién tenga la
+      // cita, lo que importa es que AgenIA deje de ofrecer esa hora.
+      if (!cupo.isAvailable) return 'APPLIED'; // ya estaba ocupado: nada que hacer
+
+      if (!agenIAPatientId) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+          await tx.scheduleSlot.update({
+            where: { id: cupo.id },
+            data: { isAvailable: false },
+          });
+        });
+        this.logger.log(
+          `Cupo ${cupo.id} marcado como ocupado por una cita del HIS ` +
+            `(paciente ${event.payload.patientDocument ?? 'desconocido'} sin homologar).`,
+        );
+        return 'APPLIED';
+      }
+
+      agenIAScheduleSlotId = cupo.id;
+    }
 
     if (!agenIAPatientId || !agenIAScheduleSlotId) {
       // 🚧 Fase 2+: cuando el driver reporta una cita del HIS para un
@@ -185,12 +255,44 @@ export class MirrorApplyService {
     organizationId: string,
     event: CanonicalChangeEvent,
   ): Promise<'APPLIED'> {
-    const { agenIAAppointmentId, cancelReason, cancelObservations } =
-      event.payload;
+    const { cancelReason, cancelObservations } = event.payload;
+    let { agenIAAppointmentId } = event.payload;
+
+    // 🏥 Cancelación hecha en el HIS: llega identificada por médico y hora.
+    // Se resuelve al cupo y de ahí a la cita, si es que AgenIA tenía una.
     if (!agenIAAppointmentId) {
-      throw new Error(
-        `Cancelación entrante sin agenIAAppointmentId (event_id=${event.eventId})`,
-      );
+      const cupo = await this.resolverCupo(organizationId, event.payload);
+      if (!cupo) {
+        throw new Error(
+          `Cancelación entrante del HIS sin cupo equivalente en AgenIA ` +
+            `(médico ${event.payload.doctorExternalKey}, ${event.payload.startTimeIso}).`,
+        );
+      }
+
+      const cita = await this.prisma.appointment.findFirst({
+        where: { scheduleSlotId: cupo.id, organizationId },
+      });
+
+      if (!cita) {
+        // El hospital canceló una cita que AgenIA nunca tuvo (la agendó él
+        // mismo). Lo único que corresponde es liberar el cupo para que vuelva
+        // a ofrecerse por WhatsApp.
+        if (!cupo.isAvailable) {
+          await this.prisma.$transaction(async (tx) => {
+            await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+            await tx.scheduleSlot.update({
+              where: { id: cupo.id },
+              data: { isAvailable: true },
+            });
+          });
+          this.logger.log(
+            `Cupo ${cupo.id} liberado: el hospital canceló una cita que AgenIA no tenía.`,
+          );
+        }
+        return 'APPLIED';
+      }
+
+      agenIAAppointmentId = cita.id;
     }
 
     await this.prisma.$transaction(async (tx) => {

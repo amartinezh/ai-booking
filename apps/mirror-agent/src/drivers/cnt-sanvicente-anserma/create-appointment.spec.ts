@@ -462,3 +462,146 @@ describe('rescheduleAppointment', () => {
     expect(insertDeCita(requests)!.conv).toBe(473);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// detectChanges — instantánea diferencial.
+//
+// Es la pieza que evita la sobreventa: si el hospital vende un cupo por su
+// lado y AgenIA no se entera, el chatbot lo sigue ofreciendo. Un fallo aquí
+// no da error, solo silencio, así que se prueba caso por caso.
+// ══════════════════════════════════════════════════════════════════════════
+const filaHis = (over: Record<string, unknown> = {}) => ({
+  med: '76',
+  hora: '2026/09/03 07:00',
+  estado: 0,
+  servicio: 'S39141-1',
+  hist: '9696544',
+  dura: 20,
+  descripcion: '',
+  ...over,
+});
+
+const conCitas = (filas: Record<string, unknown>[]) => {
+  const driver = new CntSanVicenteAnsermaDriver();
+  const pool: any = {
+    request: () => {
+      const req: any = {
+        input: () => req,
+        async query() {
+          return { recordset: filas };
+        },
+      };
+      return req;
+    },
+  };
+  driver.useConnection(pool, MAPPING);
+  return driver;
+};
+
+describe('detectChanges', () => {
+  it('la PRIMERA lectura no emite nada: solo toma la línea base', async () => {
+    // Sin instantánea previa no se sabe qué cambió. Reportar todo como nuevo
+    // duplicaría la agenda entera del hospital dentro de AgenIA.
+    const driver = conCitas([filaHis()]);
+
+    const r = await driver.detectChanges(null);
+
+    expect(r.events).toHaveLength(0);
+    expect(Object.keys(r.nextCursor as any)).toEqual(['76|2026/09/03 07:00']);
+  });
+
+  it('sin cambios entre dos lecturas, no emite nada', async () => {
+    const driver = conCitas([filaHis()]);
+    const base = await driver.detectChanges(null);
+
+    const r = await driver.detectChanges(base.nextCursor);
+
+    expect(r.events).toHaveLength(0);
+  });
+
+  it('una cita NUEVA del hospital se reporta como alta', async () => {
+    const driver = conCitas([filaHis(), filaHis({ hora: '2026/09/03 09:00' })]);
+
+    const r = await driver.detectChanges({ '76|2026/09/03 07:00': { e: 0, s: null, h: null, d: null, propia: false } } as any);
+
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].op).toBe('INSERT');
+    expect(r.events[0].payload.startTimeIso).toBe('2026-09-03T14:00:00.000Z');
+  });
+
+  it('una cita que DESAPARECE es una cancelación', async () => {
+    // Cancelar borra la fila de CITAS_MEDICAS: no hay estado que consultar,
+    // solo la ausencia.
+    const driver = conCitas([]);
+
+    const r = await driver.detectChanges({
+      '76|2026/09/03 07:00': { e: 0, s: 'S39141-1', h: '9696544', d: 20, propia: false },
+    } as any);
+
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].op).toBe('CANCEL');
+    expect(r.events[0].payload.doctorExternalKey).toBe('76');
+  });
+
+  it('un cambio de estado es un desenlace de atención', async () => {
+    const driver = conCitas([filaHis({ estado: 1 })]);
+
+    const r = await driver.detectChanges({
+      '76|2026/09/03 07:00': { e: 0, s: null, h: null, d: null, propia: false },
+    } as any);
+
+    expect(r.events[0].op).toBe('ATTENDANCE');
+    expect(r.events[0].payload.attendanceStatus).toBe('1');
+  });
+
+  // 🔁 ANTI-ECO: sin esto, cada cita que el agente escribe volvería como
+  // "alta del hospital" en la siguiente vuelta, y AgenIA la aplicaría sobre
+  // sí misma en bucle.
+  it('una cita que escribió el propio agente NO se reporta como alta', async () => {
+    const driver = conCitas([filaHis({ descripcion: 'ASIGNADA POR WHATSAPP' })]);
+
+    const r = await driver.detectChanges({} as any);
+
+    expect(r.events).toHaveLength(0);
+  });
+
+  it('...pero SÍ entra a la instantánea, para detectar si el hospital la cancela', async () => {
+    const driver = conCitas([filaHis({ descripcion: 'ASIGNADA POR WHATSAPP' })]);
+    const base = await driver.detectChanges({} as any);
+
+    // El hospital la cancela: desaparece.
+    const vacio = conCitas([]);
+    const r = await vacio.detectChanges(base.nextCursor);
+
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].op).toBe('CANCEL');
+  });
+
+  it('el eventId es estable para la misma observación (idempotencia)', async () => {
+    const driver = conCitas([filaHis({ hora: '2026/09/03 09:00' })]);
+    const previo = {} as any;
+
+    const a = await driver.detectChanges(previo);
+    const b = await driver.detectChanges(previo);
+
+    expect(a.events[0].eventId).toBe(b.events[0].eventId);
+  });
+
+  it('reporta varios cambios de distinto tipo en la misma vuelta', async () => {
+    const driver = conCitas([
+      filaHis({ hora: '2026/09/03 09:00' }), // nueva
+      filaHis({ hora: '2026/09/03 10:00', estado: 1 }), // cambió estado
+    ]);
+
+    const r = await driver.detectChanges({
+      '76|2026/09/03 10:00': { e: 0, s: null, h: null, d: null, propia: false },
+      '76|2026/09/03 11:00': { e: 0, s: null, h: null, d: null, propia: false }, // desapareció
+    } as any);
+
+    expect(r.events.map((e) => e.op).sort()).toEqual([
+      'ATTENDANCE',
+      'CANCEL',
+      'INSERT',
+    ]);
+  });
+});
