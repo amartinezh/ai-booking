@@ -200,4 +200,15 @@ export interface HeartbeatInput {
   localQueueDepth?: number;
   recentErrors?: number;
   detail?: string;
+  /**
+   * Salud de la conexión con el HIS, medida por el driver justo antes de
+   * mandar el latido.
+   *
+   * Sin esto, "el agente respira" y "el agente puede hablar con el HIS" eran
+   * indistinguibles desde el servidor: el 2026-08-31 el agente latía puntual
+   * mientras fallaba el 100 % de sus escrituras. `healthCheck()` existía en el
+   * contrato del driver desde la Fase 1 y no lo invocaba nadie.
+   */
+  hisReachable?: boolean;
+  hisDetail?: string;
 }

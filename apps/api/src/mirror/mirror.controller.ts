@@ -12,6 +12,7 @@ import type { Request } from 'express';
 import type { MirrorAgentRequest } from './mirror-agent.guard';
 import { MirrorAgentGuard } from './mirror-agent.guard';
 import { MirrorDispatchService } from './mirror-dispatch.service';
+import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { MirrorApplyService } from './mirror-apply.service';
 import type {
   AckInput,
@@ -36,6 +37,7 @@ type AgentRequest = Request & MirrorAgentRequest;
 export class MirrorController {
   constructor(
     private readonly dispatch: MirrorDispatchService,
+    private readonly reconciliation: MirrorReconciliationService,
     private readonly apply: MirrorApplyService,
   ) {}
 
@@ -69,6 +71,39 @@ export class MirrorController {
       req.mirrorConfig.organizationId,
       cursorSeq,
       parsedLimit,
+    );
+  }
+
+  /**
+   * POST /mirror/reconcile — el agente sube su instantánea del HIS y el
+   * servidor la contrasta con las citas de AgenIA.
+   *
+   * Va por aquí y no por una conexión directa a la base del hospital porque
+   * el HIS no es alcanzable desde la nube por diseño (plan §4.1): solo el
+   * agente lo ve, y solo habla HTTPS saliente.
+   */
+  @Post('reconcile')
+  async reconcile(
+    @Req() req: AgentRequest,
+    @Body() body: { fromIso?: string; toIso?: string; appointments?: unknown },
+  ) {
+    if (!Array.isArray(body?.appointments)) {
+      throw new BadRequestException(
+        'appointments debe ser un arreglo con la instantánea del HIS.',
+      );
+    }
+    const from = body.fromIso ? new Date(body.fromIso) : new Date();
+    const to = body.toIso
+      ? new Date(body.toIso)
+      : new Date(Date.now() + 90 * 24 * 3600_000);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new BadRequestException('fromIso/toIso deben ser fechas válidas.');
+    }
+
+    return this.reconciliation.reconcile(
+      req.mirrorConfig.organizationId,
+      body.appointments as never,
+      { from, to },
     );
   }
 

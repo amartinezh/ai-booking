@@ -4,6 +4,7 @@ import { InMemoryAgentStateStore } from './core/agent-state-store';
 import { MirrorEngine } from './core/engine';
 import { FailureReporter } from './core/failure-reporter';
 import { runOutbound, runInbound } from './core/sync-cycle';
+import { CircuitBreaker } from './core/circuit-breaker';
 import { CntSanVicenteAnsermaDriver } from './drivers/cnt-sanvicente-anserma';
 import type { HisDriver } from './core/driver.interface';
 
@@ -60,9 +61,29 @@ async function main() {
   // mock: el agente no reportaba el cambio porque no llegaba a mirarlo.
   const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+  // Modo seguro: si el HIS lleva rato rechazando todo, se deja de intentar en
+  // vez de quemar los diez intentos que separan cada evento del dead-letter.
+  // Un reinicio de veinte minutos del SQL Server no debería mandar media cola
+  // a dead-letter por un problema que ya se resolvió solo.
+  const breaker = new CircuitBreaker();
+
   const bucleSalida = async () => {
     for (;;) {
+      if (!breaker.puedeIntentar()) {
+        // Circuito abierto: ni se conecta. Se avisa una vez y el amortiguador
+        // del reporter se encarga de que no inunde el log.
+        reporter.report(
+          'AgenIA->HIS',
+          `modo seguro activo (${breaker.resumen().fallosSeguidos} fallos seguidos): ` +
+            `no se intenta escribir hasta que el HIS responda.`,
+        );
+        await dormir(config.pollIntervalMs);
+        continue;
+      }
+
       const r = await runOutbound(engine, reporter);
+      if (r.hadErrors) breaker.registrarFallo();
+      else breaker.registrarExito();
       if (r.applied > 0) {
         console.log(`[mirror-agent] AgenIA->HIS: ${r.applied} evento(s) aplicados.`);
       }

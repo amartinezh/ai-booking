@@ -225,8 +225,28 @@ export class MirrorEngine {
     return { pushed: events.length };
   }
 
+  /**
+   * Latido con el estado REAL de la conexión al HIS.
+   *
+   * `driver.healthCheck()` existía desde la Fase 1 y no lo llamaba nadie: el
+   * servidor solo sabía que el proceso seguía vivo. Ahora cada latido lleva si
+   * el HIS responde, que es lo que de verdad determina si el espejo sirve.
+   */
   async sendHeartbeat(recentErrors: number): Promise<void> {
-    await this.api.heartbeat({ recentErrors });
+    let hisReachable: boolean | undefined;
+    let hisDetail: string | undefined;
+    try {
+      const salud = await this.driver.healthCheck();
+      hisReachable = salud.ok;
+      hisDetail = salud.detail;
+    } catch (error) {
+      // Que el chequeo falle no puede impedir el latido: un agente que deja de
+      // latir se ve igual que un agente muerto, y aquí sí está vivo.
+      hisReachable = false;
+      hisDetail = error instanceof Error ? error.message : String(error);
+    }
+
+    await this.api.heartbeat({ recentErrors, hisReachable, hisDetail });
   }
 }
 

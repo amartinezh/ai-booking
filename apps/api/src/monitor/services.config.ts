@@ -34,7 +34,7 @@ export interface ServiceConfig {
   /** Nombre legible para la UI. */
   displayName: string;
   /** Agrupador visual. */
-  group: 'google' | 'meta';
+  group: 'google' | 'meta' | 'espejo';
   /** Si el check está activo. Los deshabilitados se omiten por completo. */
   enabled: boolean;
   /** Timeout duro de la llamada, en ms. */
@@ -63,6 +63,19 @@ export const SERVICES_CONFIG: ServiceConfig[] = [
     key: 'meta',
     displayName: 'Meta WhatsApp Cloud API',
     group: 'meta',
+    enabled: true,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+  },
+  {
+    // 🪞 Espejo con el HIS del hospital.
+    //
+    // Este check nace de un fallo real: el agente reportaba heartbeat sano
+    // mientras el 100 % de sus eventos fallaba, y el panel mostraba todo en
+    // verde. "El agente respira" y "el agente está sincronizando" son cosas
+    // distintas, y hasta ahora el monitor solo miraba la primera.
+    key: 'mirror',
+    displayName: 'Espejo con el HIS',
+    group: 'espejo',
     enabled: true,
     timeoutMs: DEFAULT_TIMEOUT_MS,
   },

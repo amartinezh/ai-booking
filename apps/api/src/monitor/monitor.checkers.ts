@@ -64,6 +64,8 @@ export class MonitorCheckers {
         return this.checkTts();
       case 'meta':
         return this.checkMeta();
+      case 'mirror':
+        return this.checkMirror();
       default:
         return Promise.resolve({
           status: 'DOWN',
@@ -72,6 +74,98 @@ export class MonitorCheckers {
           errorMessage: `No hay checker implementado para "${svc.key}".`,
         });
     }
+  }
+
+  // ── Espejo con el HIS ──────────────────────────────────────────────────────
+
+  /**
+   * Salud REAL del espejo, no solo si el agente respira.
+   *
+   * El 2026-08-31 se comprobó que el agente mandaba heartbeat puntual mientras
+   * fallaba el 100 % de sus eventos: `lastHeartbeatAt` al día, `SyncOutbox`
+   * atascado y el hospital sin ver una sola cita. Un operador mirando el panel
+   * habría visto todo verde.
+   *
+   * Se miran tres cosas, en orden de gravedad:
+   *   1. Eventos en dead-letter → algo se rindió tras 10 intentos y nadie lo vio.
+   *   2. Eventos pendientes viejos → la cola no avanza.
+   *   3. Heartbeat ausente → el agente no está corriendo, o perdió la red.
+   */
+  private async checkMirror(): Promise<CheckResult> {
+    const inicio = Date.now();
+
+    const configs = await this.prisma.hospitalMirrorConfig.findMany({
+      where: { enabled: true },
+      select: { organizationId: true, lastHeartbeatAt: true },
+    });
+
+    // Ninguna organización con espejo: no aplica, ni verde ni rojo.
+    if (configs.length === 0) {
+      return { status: 'UP', latencyMs: Date.now() - inicio, skip: true };
+    }
+
+    const umbralPendienteMs =
+      Number(this.config.get('MIRROR_STALE_EVENT_MS')) || 10 * 60_000;
+    const umbralHeartbeatMs =
+      Number(this.config.get('MIRROR_HEARTBEAT_MAX_AGE_MS')) || 5 * 60_000;
+    const ahora = Date.now();
+
+    const problemas: string[] = [];
+    let peor: CheckResult['status'] = 'UP';
+
+    for (const cfg of configs) {
+      const [deadLetters, masViejo] = await Promise.all([
+        this.prisma.syncOutbox.count({
+          where: { organizationId: cfg.organizationId, deadLettered: true },
+        }),
+        this.prisma.syncOutbox.findFirst({
+          where: {
+            organizationId: cfg.organizationId,
+            deliveredAt: null,
+            deadLettered: false,
+          },
+          orderBy: { createdAt: 'asc' },
+          select: { createdAt: true, eventId: true },
+        }),
+      ]);
+
+      if (deadLetters > 0) {
+        peor = 'DOWN';
+        problemas.push(
+          `${deadLetters} evento(s) en dead-letter (org ${cfg.organizationId}): ` +
+            `el hospital NO los tiene y nadie los va a reintentar solo.`,
+        );
+      }
+
+      if (masViejo) {
+        const antiguedad = ahora - masViejo.createdAt.getTime();
+        if (antiguedad > umbralPendienteMs) {
+          if (peor !== 'DOWN') peor = 'DEGRADED';
+          problemas.push(
+            `Evento pendiente desde hace ${Math.round(antiguedad / 60_000)} min ` +
+              `(org ${cfg.organizationId}): la cola no avanza.`,
+          );
+        }
+      }
+
+      const heartbeat = cfg.lastHeartbeatAt?.getTime();
+      if (!heartbeat || ahora - heartbeat > umbralHeartbeatMs) {
+        peor = 'DOWN';
+        problemas.push(
+          heartbeat
+            ? `Sin heartbeat del agente hace ${Math.round((ahora - heartbeat) / 60_000)} min ` +
+              `(org ${cfg.organizationId}).`
+            : `El agente de la org ${cfg.organizationId} nunca ha hecho handshake.`,
+        );
+      }
+    }
+
+    return {
+      status: peor,
+      latencyMs: Date.now() - inicio,
+      errorCode: peor === 'UP' ? null : 'MIRROR_UNHEALTHY',
+      errorMessage: problemas.length > 0 ? problemas.join(' | ') : null,
+    };
   }
 
   // ── Gemini ─────────────────────────────────────────────────────────────────

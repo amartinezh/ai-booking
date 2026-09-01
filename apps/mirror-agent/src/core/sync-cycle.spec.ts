@@ -1,4 +1,4 @@
-import { runSyncCycle } from './sync-cycle';
+import { runSyncCycle, runOutbound, runInbound } from './sync-cycle';
 import { FailureReporter } from './failure-reporter';
 
 describe('runSyncCycle', () => {
@@ -159,5 +159,55 @@ describe('runSyncCycle', () => {
 
     expect(r.pushed).toBe(5);
     expect(r.hadErrors).toBe(true);
+  });
+
+  it('runOutbound reporta el fallo y devuelve hadErrors', async () => {
+    const engine = engineDoble({
+      pullAndApplyOutboxEvents: jest.fn().mockRejectedValue(new Error('boom')),
+    });
+
+    const r = await runOutbound(engine, reporter);
+
+    expect(r).toEqual({ applied: 0, failed: 0, hadErrors: true });
+    expect(lines[0]).toContain('AgenIA->HIS: boom');
+  });
+
+  it('runOutbound reporta los eventos rechazados uno por uno', async () => {
+    const engine = engineDoble({
+      pullAndApplyOutboxEvents: jest.fn().mockResolvedValue({
+        applied: 1,
+        skippedIdempotent: 0,
+        failed: 1,
+        failures: [{ seq: '9', eventId: 'e9', message: 'lo rechazó el HIS' }],
+      }),
+    });
+
+    const r = await runOutbound(engine, reporter);
+
+    expect(r.applied).toBe(1);
+    expect(r.hadErrors).toBe(true);
+    expect(lines[0]).toContain('evento e9 (seq 9) rechazado: lo rechazó el HIS');
+  });
+
+  it('runInbound aísla su fallo y no contamina la otra dirección', async () => {
+    const engine = engineDoble({
+      detectAndPushChanges: jest.fn().mockRejectedValue(new Error('HIS caído')),
+    });
+
+    const r = await runInbound(engine, reporter);
+
+    expect(r).toEqual({ pushed: 0, hadErrors: true });
+    expect(lines[0]).toContain('HIS->AgenIA: HIS caído');
+  });
+
+  it('runInbound devuelve cuántos cambios subió', async () => {
+    const engine = engineDoble({
+      detectAndPushChanges: jest.fn().mockResolvedValue({ pushed: 7 }),
+    });
+
+    expect(await runInbound(engine, reporter)).toEqual({
+      pushed: 7,
+      hadErrors: false,
+    });
   });
 });

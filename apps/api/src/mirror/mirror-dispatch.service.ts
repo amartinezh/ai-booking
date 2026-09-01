@@ -512,5 +512,14 @@ export class MirrorDispatchService {
         `Heartbeat con errores del agente (org ${organizationId}, driver ${driverKey}): ${input.recentErrors} errores recientes. ${input.detail ?? ''}`,
       );
     }
+
+    // El agente late, pero ¿alcanza al HIS? Son dos cosas distintas y hasta
+    // ahora el servidor solo sabía la primera.
+    if (input.hisReachable === false) {
+      this.logger.error(
+        `🚨 El agente de la org ${organizationId} está vivo pero NO alcanza su HIS: ` +
+          `${input.hisDetail ?? 'sin detalle'}. Ninguna cita se está espejando.`,
+      );
+    }
   }
 }
