@@ -492,6 +492,29 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(orgId).toBe(ORG_ID);
       expect(patientId).toBe(db.patients[0].id);
 
+      // ⭐ Los tres turnos del alta TAMBIÉN quedan auditados.
+      //
+      // No lo estaban: nacimiento, sexo y régimen se preguntaban, se guardaban
+      // y acababan en la historia clínica del paciente sin dejar una sola fila
+      // en InteractionLog. Si una historia sale con el sexo equivocado, sin
+      // esto no hay manera de saber si el paciente escribió mal o lo
+      // entendimos mal nosotros.
+      const pasosDeAlta = interactionLog.logSuccess.mock.calls
+        .map((c: any[]) => c[0]?.metadata?.step)
+        .filter((p: string) => p?.startsWith('ALTA_'));
+      expect(pasosDeAlta).toEqual(
+        expect.arrayContaining([
+          'ALTA_PEDIR_NACIMIENTO',
+          'ALTA_CONFIRMAR_NACIMIENTO',
+          'ALTA_PEDIR_SEXO',
+        ]),
+      );
+      // Y guardan lo que el paciente escribió, no solo lo que respondió el bot.
+      const turnoNacimiento = interactionLog.logSuccess.mock.calls.find(
+        (c: any[]) => c[0]?.metadata?.step === 'ALTA_CONFIRMAR_NACIMIENTO',
+      );
+      expect(turnoNacimiento[0].userMessage).toBe('15/03/1980');
+
       expect(interactionLog.logBookingConfirmed).toHaveBeenCalledTimes(1);
       expect(surveySpy).toHaveBeenCalledWith(
         ORG_ID,

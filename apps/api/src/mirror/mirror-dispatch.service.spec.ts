@@ -17,6 +17,7 @@ describe('MirrorDispatchService', () => {
     patientProfile: { findMany: jest.Mock };
     eps: { findMany: jest.Mock };
     mirrorEntityMap: { findMany: jest.Mock };
+    syncAudit: { create: jest.Mock };
   };
 
   beforeEach(async () => {
@@ -43,6 +44,7 @@ describe('MirrorDispatchService', () => {
       patientProfile: { findMany: jest.fn(() => Promise.resolve([])) },
       eps: { findMany: jest.fn(() => Promise.resolve([])) },
       mirrorEntityMap: { findMany: jest.fn(() => Promise.resolve([])) },
+      syncAudit: { create: jest.fn(() => Promise.resolve({})) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -103,6 +105,72 @@ describe('MirrorDispatchService', () => {
       expect(prisma.syncOutbox.updateMany).toHaveBeenCalledWith({
         where: { organizationId: 'org1', seq: { in: [BigInt(1), BigInt(2)] } },
         data: { deliveredAt: expect.any(Date), nextAttemptAt: null },
+      });
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Cada reserva de cita genera además un evento SLOT (el cupo pasa a
+    // ocupado) que este driver no espeja. Tratarlo como fallo lo mandaba a
+    // dead-letter tras diez intentos y dejaba el monitor en DOWN permanente:
+    // a la décima cita, una alerta rota para siempre por diseño.
+    // ══════════════════════════════════════════════════════════════════════
+    describe('skippedSeqs — el driver no espeja ese tipo de entidad', () => {
+      const eventoSlot = {
+        eventId: 'e-slot',
+        entityType: 'SLOT',
+        entityId: 'slot-1',
+        op: 'UPDATE',
+      };
+
+      it('se cierra como entregado: no se reintenta nunca más', async () => {
+        prisma.syncOutbox.findFirst.mockResolvedValueOnce(eventoSlot);
+
+        await service.ack('org1', { seqs: [], skippedSeqs: ['7'] });
+
+        expect(prisma.syncOutbox.updateMany).toHaveBeenCalledWith({
+          where: { seq: BigInt(7), organizationId: 'org1' },
+          data: { deliveredAt: expect.any(Date), nextAttemptAt: null },
+        });
+      });
+
+      it('NO sube attempts: no es un fallo', async () => {
+        prisma.syncOutbox.findFirst.mockResolvedValueOnce(eventoSlot);
+
+        await service.ack('org1', { seqs: [], skippedSeqs: ['7'] });
+
+        const incrementos = prisma.syncOutbox.updateMany.mock.calls.filter(
+          (c: any[]) => c[0]?.data?.attempts,
+        );
+        expect(incrementos).toHaveLength(0);
+      });
+
+      it('no es un descarte silencioso: queda en SyncAudit como SKIPPED', async () => {
+        prisma.syncOutbox.findFirst.mockResolvedValueOnce(eventoSlot);
+
+        await service.ack('org1', { seqs: [], skippedSeqs: ['7'] });
+
+        expect(prisma.syncAudit.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            organizationId: 'org1',
+            outcome: 'SKIPPED',
+            entityType: 'SLOT',
+            eventId: 'e-slot',
+          }),
+        });
+      });
+
+      it('un agente no puede cerrar el evento de otra clínica', async () => {
+        // Mismo aislamiento de tenant que markAttemptFailed: `seq` es una
+        // secuencia global, no por organización.
+        prisma.syncOutbox.findFirst.mockResolvedValueOnce(null);
+
+        await service.ack('org2', { seqs: [], skippedSeqs: ['7'] });
+
+        expect(prisma.syncAudit.create).not.toHaveBeenCalled();
+        const cierres = prisma.syncOutbox.updateMany.mock.calls.filter(
+          (c: any[]) => c[0]?.where?.seq === BigInt(7),
+        );
+        expect(cierres).toHaveLength(0);
       });
     });
 

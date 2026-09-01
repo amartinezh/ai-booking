@@ -83,6 +83,8 @@ describe('MirrorEngine', () => {
       ack: jest.fn(),
       pushChanges: jest.fn(),
       heartbeat: jest.fn(),
+      reconcile: jest.fn(),
+      uploadAvailability: jest.fn(),
     };
     driver = {
       key: 'test-driver',
@@ -95,6 +97,7 @@ describe('MirrorEngine', () => {
       cancelAppointment: jest.fn(),
       rescheduleAppointment: jest.fn(),
       updateAttendance: jest.fn(),
+      snapshotAppointments: jest.fn(),
       resolveCatalogMapping: jest.fn(),
     };
 
@@ -134,6 +137,7 @@ describe('MirrorEngine', () => {
       expect(result).toEqual({
         applied: 1,
         skippedIdempotent: 0,
+        skippedUnsupported: 0,
         failed: 0,
         failures: [],
       });
@@ -192,6 +196,7 @@ describe('MirrorEngine', () => {
       expect(api.ack).toHaveBeenCalledWith({
         seqs: ['10'],
         failedSeqs: ['11'],
+        skippedSeqs: [],
       });
     });
   });
@@ -214,7 +219,7 @@ describe('MirrorEngine', () => {
 
       // Lo crítico: el ack SÍ ocurre. Sin él el servidor nunca sube `attempts`,
       // el evento no llega jamás a dead-letter y no se dispara ninguna alerta.
-      expect(api.ack).toHaveBeenCalledWith({ seqs: [], failedSeqs: ['20'] });
+      expect(api.ack).toHaveBeenCalledWith({ seqs: [], failedSeqs: ['20'], skippedSeqs: [] });
       expect(result.failed).toBe(1);
       expect(result.applied).toBe(0);
     });
@@ -256,6 +261,7 @@ describe('MirrorEngine', () => {
       expect(api.ack).toHaveBeenCalledWith({
         seqs: ['31'],
         failedSeqs: ['30'],
+        skippedSeqs: [],
       });
     });
 
@@ -352,7 +358,7 @@ describe('MirrorEngine', () => {
 
       await engine.pullAndApplyOutboxEvents();
 
-      expect(api.ack).toHaveBeenCalledWith({ seqs: [], failedSeqs: ['72'] });
+      expect(api.ack).toHaveBeenCalledWith({ seqs: [], failedSeqs: ['72'], skippedSeqs: [] });
     });
 
     it('missingMappings vacío no bloquea nada', async () => {
@@ -513,16 +519,217 @@ describe('MirrorEngine', () => {
     });
   });
 
+  // ════════════════════════════════════════════════════════════════════════
+  // Descubierto corriendo el agente en la VM simulada: cada reserva de cita
+  // genera TAMBIÉN un evento SLOT (el cupo pasa a ocupado) y este driver no
+  // espeja SLOT. Como fallo, cada uno quemaba sus diez intentos hasta
+  // dead-letter: a la décima cita el monitor quedaba en DOWN permanente por
+  // una decisión de diseño. Una alerta siempre en rojo no es una alerta.
+  // ════════════════════════════════════════════════════════════════════════
   describe('entidades no soportadas todavía (Fase 2+)', () => {
-    it('SLOT/DOCTOR/... → failedSeq, no intenta llamar métodos de cita del driver', async () => {
+    const eventoSlot = () =>
+      outboxEvent({ entityType: 'SLOT', eventId: 'slot-evt', seq: '7' });
+
+    it('SLOT/DOCTOR/... no llega a los métodos de cita del driver', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([eventoSlot()]);
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(driver.createAppointment).not.toHaveBeenCalled();
+    });
+
+    it('NO cuenta como fallo: reintentarlo daría siempre lo mismo', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([eventoSlot()]);
+
+      const result = await engine.pullAndApplyOutboxEvents();
+
+      expect(result.failed).toBe(0);
+      expect(result.skippedUnsupported).toBe(1);
+    });
+
+    it('se reporta como skippedSeq, no como failedSeq', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([eventoSlot()]);
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(api.ack).toHaveBeenCalledWith({
+        seqs: [],
+        failedSeqs: [],
+        skippedSeqs: ['7'],
+      });
+    });
+
+    it('un fallo de verdad sigue yendo por failedSeqs', async () => {
+      // El riesgo del cambio anterior es tapar errores reales como "saltados".
+      driver.createAppointment.mockResolvedValueOnce({
+        success: false,
+        message: 'el HIS rechazó la fila',
+      });
+      api.getPendingEvents.mockResolvedValueOnce([outboxEvent({ seq: '8' })]);
+
+      const result = await engine.pullAndApplyOutboxEvents();
+
+      expect(result.failed).toBe(1);
+      expect(result.skippedUnsupported).toBe(0);
+      expect(api.ack).toHaveBeenCalledWith(
+        expect.objectContaining({ failedSeqs: ['8'], skippedSeqs: [] }),
+      );
+    });
+
+    it('una cita entre eventos SLOT sí se aplica', async () => {
+      // Un tipo saltado no puede frenar la cola de los que sí importan.
+      driver.createAppointment.mockResolvedValue({ success: true });
       api.getPendingEvents.mockResolvedValueOnce([
-        outboxEvent({ entityType: 'SLOT', eventId: 'slot-evt' }),
+        eventoSlot(),
+        outboxEvent({ seq: '9', eventId: 'cita-evt' }),
       ]);
 
       const result = await engine.pullAndApplyOutboxEvents();
 
-      expect(driver.createAppointment).not.toHaveBeenCalled();
-      expect(result.failed).toBe(1);
+      expect(driver.createAppointment).toHaveBeenCalledTimes(1);
+      expect(result.applied).toBe(1);
+      expect(result.skippedUnsupported).toBe(1);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // La capa 5 del plan §6 existía a medias: el endpoint estaba en el servidor
+  // y NADIE lo llamaba. La única defensa contra la deriva silenciosa no corría
+  // nunca. Se vio en la VM simulada: una cita agendada por ventanilla mientras
+  // el agente estaba caído quedó fuera de AgenIA y ningún mecanismo la
+  // encontraba.
+  // ════════════════════════════════════════════════════════════════════════
+  describe('reconcile', () => {
+    const ventana = {
+      from: new Date('2026-09-01T00:00:00.000Z'),
+      to: new Date('2026-12-01T00:00:00.000Z'),
+    };
+
+    it('sube al servidor la instantánea que da el driver', async () => {
+      driver.snapshotAppointments.mockResolvedValue([
+        { doctorExternalKey: '76', startTimeIso: '2026-09-03T13:20:00.000Z' },
+      ]);
+      api.reconcile.mockResolvedValue({
+        inAgenIA: 1, inHis: 1, missingInHis: [], missingInAgenIA: [], inSync: true,
+      });
+
+      await engine.reconcile(ventana);
+
+      expect(api.reconcile).toHaveBeenCalledWith({
+        fromIso: '2026-09-01T00:00:00.000Z',
+        toIso: '2026-12-01T00:00:00.000Z',
+        appointments: [
+          { doctorExternalKey: '76', startTimeIso: '2026-09-03T13:20:00.000Z' },
+        ],
+      });
+    });
+
+    it('le pasa al driver la misma ventana que reporta al servidor', async () => {
+      driver.snapshotAppointments.mockResolvedValue([]);
+      api.reconcile.mockResolvedValue({
+        inAgenIA: 0, inHis: 0, missingInHis: [], missingInAgenIA: [], inSync: true,
+      });
+
+      await engine.reconcile(ventana);
+
+      expect(driver.snapshotAppointments).toHaveBeenCalledWith(ventana);
+    });
+
+    it('devuelve el veredicto del servidor tal cual', async () => {
+      driver.snapshotAppointments.mockResolvedValue([]);
+      api.reconcile.mockResolvedValue({
+        inAgenIA: 3, inHis: 2, missingInHis: ['76|x'], missingInAgenIA: [], inSync: false,
+      });
+
+      const r = await engine.reconcile(ventana);
+
+      expect(r.inSync).toBe(false);
+      expect(r.missingInHis).toEqual(['76|x']);
+    });
+
+    it('un HIS inalcanzable propaga el error: no se reporta un falso "todo bien"', async () => {
+      driver.snapshotAppointments.mockRejectedValue(new Error('SQL caído'));
+
+      await expect(engine.reconcile(ventana)).rejects.toThrow('SQL caído');
+      expect(api.reconcile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('syncAvailability — Fase 2', () => {
+    const ventana = {
+      from: new Date('2026-09-03T00:00:00.000Z'),
+      to: new Date('2026-09-04T00:00:00.000Z'),
+    };
+    const respuesta = {
+      mode: 'ON' as const,
+      created: 1,
+      updated: 0,
+      removed: 0,
+      skipped: [],
+      conflicts: [],
+    };
+
+    it('sube la rejilla que calculó el driver, con la ventana', async () => {
+      driver.fetchAvailability.mockResolvedValue([
+        {
+          doctorExternalKey: '91-1',
+          startTimeIso: '2026-09-03T12:00:00.000Z',
+          endTimeIso: '2026-09-03T12:20:00.000Z',
+          occupied: false,
+        },
+      ]);
+      api.uploadAvailability.mockResolvedValue(respuesta);
+
+      await engine.syncAvailability(ventana);
+
+      expect(api.uploadAvailability).toHaveBeenCalledWith({
+        fromIso: '2026-09-03T00:00:00.000Z',
+        toIso: '2026-09-04T00:00:00.000Z',
+        slots: [
+          {
+            doctorExternalKey: '91-1',
+            startTimeIso: '2026-09-03T12:00:00.000Z',
+            endTimeIso: '2026-09-03T12:20:00.000Z',
+            occupied: false,
+          },
+        ],
+      });
+    });
+
+    it('un día sin turnos se sube VACÍO, no se omite', async () => {
+      // "Ese día el médico no atiende" es información: si no se envía, el
+      // servidor no puede borrar los cupos que sobraron de antes.
+      driver.fetchAvailability.mockResolvedValue([]);
+      api.uploadAvailability.mockResolvedValue({ ...respuesta, created: 0 });
+
+      await engine.syncAvailability(ventana);
+
+      expect(api.uploadAvailability).toHaveBeenCalledWith(
+        expect.objectContaining({ slots: [] }),
+      );
+    });
+
+    it('`occupied` ausente cuenta como libre, nunca como indefinido', async () => {
+      driver.fetchAvailability.mockResolvedValue([
+        {
+          doctorExternalKey: '91-1',
+          startTimeIso: '2026-09-03T12:00:00.000Z',
+          endTimeIso: '2026-09-03T12:20:00.000Z',
+        },
+      ]);
+      api.uploadAvailability.mockResolvedValue(respuesta);
+
+      await engine.syncAvailability(ventana);
+
+      expect(api.uploadAvailability.mock.calls[0][0].slots[0].occupied).toBe(false);
+    });
+
+    it('si el HIS no responde, no se sube una agenda vacía', async () => {
+      // Subir [] tras un fallo borraría la agenda entera de ese día.
+      driver.fetchAvailability.mockRejectedValue(new Error('SQL caído'));
+
+      await expect(engine.syncAvailability(ventana)).rejects.toThrow('SQL caído');
+      expect(api.uploadAvailability).not.toHaveBeenCalled();
     });
   });
 

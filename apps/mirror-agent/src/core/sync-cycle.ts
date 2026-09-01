@@ -1,5 +1,6 @@
 import type { MirrorEngine } from './engine';
 import type { FailureReporter } from './failure-reporter';
+import type { CircuitBreaker } from './circuit-breaker';
 
 /**
  * Una vuelta del ciclo de sync: primero AgenIA -> HIS, despues HIS -> AgenIA.
@@ -34,7 +35,13 @@ const mensajeDe = (e: unknown) =>
 export async function runOutbound(
   engine: Pick<MirrorEngine, 'pullAndApplyOutboxEvents'>,
   reporter: FailureReporter,
-): Promise<{ applied: number; failed: number; hadErrors: boolean }> {
+): Promise<{
+  applied: number;
+  failed: number;
+  /** Eventos que este driver no espeja; ya quedaron cerrados en el servidor. */
+  skipped: number;
+  hadErrors: boolean;
+}> {
   try {
     const r = await engine.pullAndApplyOutboxEvents();
     if (r.failed > 0) {
@@ -47,10 +54,15 @@ export async function runOutbound(
         ),
       );
     }
-    return { applied: r.applied, failed: r.failed, hadErrors: r.failed > 0 };
+    return {
+      applied: r.applied,
+      failed: r.failed,
+      skipped: r.skippedUnsupported,
+      hadErrors: r.failed > 0,
+    };
   } catch (error) {
     reporter.report('AgenIA->HIS', mensajeDe(error));
-    return { applied: 0, failed: 0, hadErrors: true };
+    return { applied: 0, failed: 0, skipped: 0, hadErrors: true };
   }
 }
 
@@ -126,4 +138,46 @@ export async function runSyncCycle(
   if (!hadErrors) reporter.reset();
 
   return { applied, failed, pushed, hadErrors };
+}
+
+
+/**
+ * Una vuelta de AgenIA -> HIS con el modo seguro delante.
+ *
+ * El freno y la vuelta van juntos porque la regla que los une —"si el circuito
+ * está abierto NO se toca el HIS, y el resultado de cada vuelta abre o cierra
+ * ese circuito"— es la que evita que un SQL Server reiniciándose veinte
+ * minutos mande media cola a dead-letter. Enterrada en el `while` de index.ts
+ * no se podía afirmar en ningún test.
+ */
+export async function runOutboundConFreno(
+  engine: Pick<MirrorEngine, 'pullAndApplyOutboxEvents'>,
+  reporter: FailureReporter,
+  breaker: Pick<
+    CircuitBreaker,
+    'puedeIntentar' | 'registrarExito' | 'registrarFallo' | 'resumen'
+  >,
+): Promise<{
+  applied: number;
+  failed: number;
+  skipped: number;
+  hadErrors: boolean;
+  /** true si ni se intentó: el circuito estaba abierto. */
+  frenado: boolean;
+}> {
+  if (!breaker.puedeIntentar()) {
+    // Se avisa una vez por vuelta; el amortiguador del reporter evita que
+    // inunde el log mientras el HIS siga caído.
+    reporter.report(
+      'AgenIA->HIS',
+      `modo seguro activo (${breaker.resumen().fallosSeguidos} fallos seguidos): ` +
+        `no se intenta escribir hasta que el HIS responda.`,
+    );
+    return { applied: 0, failed: 0, skipped: 0, hadErrors: false, frenado: true };
+  }
+
+  const r = await runOutbound(engine, reporter);
+  if (r.hadErrors) breaker.registrarFallo();
+  else breaker.registrarExito();
+  return { ...r, frenado: false };
 }

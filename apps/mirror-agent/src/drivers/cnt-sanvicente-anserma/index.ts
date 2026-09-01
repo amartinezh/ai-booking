@@ -1,5 +1,5 @@
 import * as sql from 'mssql';
-import type { CanonicalChangeEvent } from '@agenia/shared';
+import type { CanonicalChangeEvent, HisAppointmentSnapshot } from '@agenia/shared';
 import {
   AnsermaMapping,
   feHoraCitAIso,
@@ -9,6 +9,8 @@ import {
   mapSexo,
   resolveConvenio,
   resolveEspecialidad,
+  cuposDelTurno,
+  duracionDeServicio,
 } from './mapping';
 import type {
   CanonicalSlot,
@@ -135,20 +137,106 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     }
   }
 
-  async fetchAvailability(_window: {
+  /**
+   * La agenda del hospital, convertida en cupos de AgenIA (Fase 2).
+   *
+   * ═══ El modelo ═══
+   * `CITAS_MEDICAS` NO tiene filas de cupo libre: solo existe la fila cuando
+   * hay cita. La disponibilidad vive en `TURNOS_MEDICOS` como BLOQUES por
+   * médico/fecha/consultorio (07:00–12:00, 14:00–18:00…), y la aplicación del
+   * hospital calcula los huecos dividiendo el bloque entre la duración y
+   * descontando las citas ya tomadas. Esto replica esa cuenta.
+   *
+   * ═══ Por qué importa ═══
+   * Hasta ahora los cupos de AgenIA se creaban a mano y no tenían por qué
+   * parecerse a la agenda real: se podía vender por WhatsApp una hora en la
+   * que el médico no atiende. Esta es la pata que hace que la agenda de AgenIA
+   * SEA la del hospital.
+   *
+   * Se devuelve la rejilla COMPLETA, marcando cuáles están ocupados, y no solo
+   * los libres: entre traer la rejilla y marcar lo ocupado en un segundo viaje
+   * cabe una ventana en la que se ofrecería una hora recién vendida.
+   */
+  async fetchAvailability(window: {
     from: Date;
     to: Date;
   }): Promise<CanonicalSlot[]> {
-    // 🚧 TODO (ESTADO.md pendiente #4): última milla del INSERT — fuentes
-    // exactas de especialidad/consultorio/centro de costos (bloque 21) aún
-    // no confirmadas. La CONSULTA de disponibilidad en sí (TURNOS_MEDICOS −
-    // CITAS_MEDICAS ocupadas, ver MAPEO_HIS.md §2.5) ya está diseñada y se
-    // implementa en Fase 2, una vez cerrado ese pendiente — de lo contrario
-    // se estaría adivinando el mapeo de especialidad/consultorio sin
-    // confirmación real del hospital.
-    throw new Error(
-      'fetchAvailability: pendiente de Fase 2 — ver docs/drivers/cnt-sanvicente-anserma/ESTADO.md',
+    const pool = this.requirePool();
+    const mapping = this.requireMapping();
+
+    // ⚠️ La ventana viaja en UTC; `FE_FECH_TUME` es una fecha LOCAL sin zona.
+    //
+    // Filtrar la una con la otra desplaza un día entero: un día de Bogotá va de
+    // las 05:00Z a las 05:00Z siguientes, así que el turno del día D (00:00
+    // local, que el motor guarda tal cual) caía dentro de la ventana del día
+    // D-1. Los cupos generados quedaban FUERA de la ventana que el servidor
+    // estaba podando, y ese descuadre hacía que cada vuelta creara y borrara
+    // los mismos cupos. Lo destapó la primera pasada en modo sombra.
+    //
+    // Se consulta por FECHAS LOCALES —el lenguaje de esa columna— y después se
+    // recortan los cupos a la ventana real.
+    const fechaDesde = fechaCitaLocal(window.from.toISOString(), this.timeZone);
+    const fechaHasta = fechaCitaLocal(window.to.toISOString(), this.timeZone);
+
+    // Solo turnos vigentes: `NU_TIPO_TUME = 0` (el tipo 1 no existe a futuro,
+    // verificado en el bloque 20e) e `ID_DISP_TUME = '1'` (disponible).
+    const turnos = await pool
+      .request()
+      .input('desde', sql.VarChar(10), fechaDesde)
+      .input('hasta', sql.VarChar(10), fechaHasta).query(`
+        SELECT CD_MED_TUME med,
+               CONVERT(varchar(10), FE_FECH_TUME, 23) fecha,
+               CONVERT(varchar(5), FE_HOIN_TUME, 108) hora_ini,
+               CONVERT(varchar(5), FE_HOFI_TUME, 108) hora_fin
+          FROM dbo.TURNOS_MEDICOS
+         WHERE CONVERT(varchar(10), FE_FECH_TUME, 23) BETWEEN @desde AND @hasta
+           AND ISNULL(NU_TIPO_TUME, 0) = 0
+           AND ISNULL(ID_DISP_TUME, '1') = '1'`);
+
+    // Las horas ya vendidas. Mismo criterio de fecha local, y la clave es la
+    // que usa la PK de la cita: médico + FE_HORA_CIT.
+    const ocupadas = await pool
+      .request()
+      .input('desde', sql.VarChar(10), fechaDesde)
+      .input('hasta', sql.VarChar(10), fechaHasta).query(`
+        SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora
+          FROM dbo.CITAS_MEDICAS
+         WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @desde AND @hasta`);
+
+    const vendidas = new Set(
+      ocupadas.recordset.map(
+        (f: { med: string; hora: string }) => `${f.med}|${f.hora.trim()}`,
+      ),
     );
+
+    const cupos: CanonicalSlot[] = [];
+    for (const t of turnos.recordset as {
+      med: string;
+      fecha: string;
+      hora_ini: string;
+      hora_fin: string;
+    }[]) {
+      const duracion = duracionDeServicio(mapping, undefined, t.med);
+      for (const cupo of cuposDelTurno(
+        { fechaLocal: t.fecha, horaInicio: t.hora_ini, horaFin: t.hora_fin },
+        duracion,
+        this.timeZone,
+      )) {
+        // Recorte a la ventana pedida. El servidor borra, dentro de la
+        // ventana que declara, todo cupo que no venga en el envío: devolver
+        // uno de fuera lo haría crear algo que la siguiente vuelta borraría.
+        const inicio = new Date(cupo.startTimeIso);
+        if (inicio < window.from || inicio >= window.to) continue;
+
+        cupos.push({
+          doctorExternalKey: t.med,
+          startTimeIso: cupo.startTimeIso,
+          endTimeIso: cupo.endTimeIso,
+          occupied: vendidas.has(`${t.med}|${cupo.feHoraCit}`),
+        });
+      }
+    }
+    return cupos;
   }
 
   /**
@@ -259,6 +347,36 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         attendanceStatus: op === 'ATTENDANCE' ? String(fila.e) : undefined,
       },
     };
+  }
+
+  /**
+   * Instantánea de las citas vigentes, para la reconciliación.
+   *
+   * Se lee `CITAS_MEDICAS` entera dentro de la ventana — sin filtrar por la
+   * marca de origen. Es deliberado: reconciliar es justamente comparar TODO lo
+   * que el hospital tiene contra todo lo que AgenIA cree tener, incluidas las
+   * citas que el hospital agendó por ventanilla. Si se filtraran, la
+   * comparación solo confirmaría lo que ya sabemos.
+   */
+  async snapshotAppointments(window: {
+    from: Date;
+    to: Date;
+  }): Promise<HisAppointmentSnapshot[]> {
+    const pool = this.requirePool();
+    const filas = await pool
+      .request()
+      .input('desde', sql.DateTime, window.from)
+      .input('hasta', sql.DateTime, window.to).query(`
+        SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_HIST_PAC_CIT hist
+          FROM dbo.CITAS_MEDICAS
+         WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
+
+    return filas.recordset.map((f: { med: string; hora: string; hist: string | null }) => ({
+      doctorExternalKey: f.med,
+      // El HIS guarda hora local; el protocolo viaja en UTC (plan §8).
+      startTimeIso: feHoraCitAIso(f.hora, this.timeZone),
+      patientDocument: f.hist ?? undefined,
+    }));
   }
 
   async createAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {

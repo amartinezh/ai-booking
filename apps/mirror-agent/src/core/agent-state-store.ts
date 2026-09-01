@@ -1,18 +1,23 @@
 import type { DriverCursor } from './driver.interface';
 
 /**
- * Estado local persistente del agente: cursor de detección de cambios del
- * driver, último `seq` del outbox ya procesado, y el registro de event_id
- * ya aplicados hacia el HIS (idempotencia del lado del agente — el análogo
- * de AppliedEvents en AGENIA_SYNC, ver PLAN_ESPEJO_HOSPITAL.md §5.1e).
+ * Estado local del agente: cursor de detección de cambios del driver, último
+ * `seq` del outbox ya procesado, y el registro de `event_id` ya aplicados
+ * hacia el HIS (idempotencia del lado del agente — el análogo de
+ * `AppliedEvents` en AGENIA_SYNC, ver PLAN_ESPEJO_HOSPITAL.md §5.1e).
  *
- * ⚠️ Fase 1 solo trae la implementación en memoria (`InMemoryAgentStateStore`)
- * — suficiente para probar la lógica del motor. Antes de desplegar el agente
- * de verdad contra un hospital hace falta una implementación persistente
- * (SQLite local o la BD `AGENIA_SYNC` del driver SQL Server) que sobreviva a
- * reinicios del proceso; si no, un reinicio del agente perdería el cursor y
- * reprocesaría todo desde cero. Implementar esa persistencia es trabajo de
- * Fase 2, cuando haya un driver real corriendo contra un hospital.
+ * ⚠️ La única implementación es `FileAgentStateStore`, y es a propósito.
+ *
+ * Hubo una en memoria, y resultó ser un fallo grave disfrazado de simplicidad:
+ * el cursor del driver no es una marca de tiempo, es una FOTO del HIS. Al
+ * arrancar sin ella se toma una nueva, que YA incluye todo lo ocurrido
+ * mientras el agente estuvo caído — así que esos cambios no se reportan nunca.
+ * Un reinicio para aplicar parches bastaba para que una cita agendada en
+ * ventanilla desapareciera del lado de AgenIA y ese cupo se siguiera vendiendo
+ * por WhatsApp. Se reprodujo en la VM simulada (apps/mirror-agent/local-vm/).
+ *
+ * Si algún día hace falta otra implementación (SQLite, la base AGENIA_SYNC del
+ * propio HIS), que persista: una que no lo haga vuelve a introducir eso.
  */
 export interface AgentStateStore {
   getOutboxCursor(): Promise<string>;
@@ -23,34 +28,4 @@ export interface AgentStateStore {
 
   hasAppliedLocally(eventId: string): Promise<boolean>;
   markAppliedLocally(eventId: string): Promise<void>;
-}
-
-export class InMemoryAgentStateStore implements AgentStateStore {
-  private outboxCursor = '0';
-  private driverCursor: DriverCursor | null = null;
-  private readonly appliedEventIds = new Set<string>();
-
-  async getOutboxCursor(): Promise<string> {
-    return this.outboxCursor;
-  }
-
-  async setOutboxCursor(seq: string): Promise<void> {
-    this.outboxCursor = seq;
-  }
-
-  async getDriverCursor(): Promise<DriverCursor | null> {
-    return this.driverCursor;
-  }
-
-  async setDriverCursor(cursor: DriverCursor): Promise<void> {
-    this.driverCursor = cursor;
-  }
-
-  async hasAppliedLocally(eventId: string): Promise<boolean> {
-    return this.appliedEventIds.has(eventId);
-  }
-
-  async markAppliedLocally(eventId: string): Promise<void> {
-    this.appliedEventIds.add(eventId);
-  }
 }

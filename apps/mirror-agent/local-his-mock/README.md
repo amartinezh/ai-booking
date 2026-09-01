@@ -36,11 +36,12 @@ docker compose up -d mirror-his-mock
 # 2) Crear/recrear PRUEBAS + correr AGENIA_SYNC_SETUP.sql real sin modificar
 #    (reintentable — recrea todo desde cero cada vez que corre)
 AGENIA_SYNC_PASSWORD='<misma que uses en provision-mirror-config.ts>' \
-  npx tsx apps/mirror-agent/local-his-mock/setup.ts
+  pnpm --filter @agenia/mirror-agent exec tsx local-his-mock/setup.ts
 
 # 3) Apuntar el HospitalMirrorConfig de dev a este mock (MIRROR_HIS_TARGET=local
 #    es el default — ver packages/database/scripts/provision-mirror-config.ts)
-AGENIA_SYNC_PASSWORD='<la misma>' npx tsx packages/database/scripts/provision-mirror-config.ts
+AGENIA_SYNC_PASSWORD='<la misma>' \
+  pnpm --filter @agenia/database exec tsx scripts/provision-mirror-config.ts
 
 # 4) Habilitar temporalmente para probar (enabled=false es el default de fábrica)
 docker exec agenia_db psql -U admin -d agenia -c \
@@ -70,7 +71,7 @@ Cuando la VM esté activa y `AGENIA_SYNC_SETUP.sql` haya corrido contra el
 
 ```bash
 MIRROR_HIS_TARGET=hospital AGENIA_SYNC_PASSWORD='<password real de agenia_sync>' \
-  npx tsx packages/database/scripts/provision-mirror-config.ts
+  pnpm --filter @agenia/database exec tsx scripts/provision-mirror-config.ts
 ```
 
 Esto reescribe `driverConfig` (cifrado) apuntando a `192.168.1.16:1433` en
@@ -83,5 +84,5 @@ código en `apps/mirror-agent/src/` ni en `apps/api/src/mirror/`.
 ```bash
 docker compose down -v mirror-his-mock   # borra también el volumen (todo el estado del mock)
 docker compose up -d mirror-his-mock
-npx tsx apps/mirror-agent/local-his-mock/setup.ts   # con AGENIA_SYNC_PASSWORD de nuevo
+pnpm --filter @agenia/mirror-agent exec tsx local-his-mock/setup.ts   # con AGENIA_SYNC_PASSWORD de nuevo
 ```

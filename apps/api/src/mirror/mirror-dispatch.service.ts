@@ -432,7 +432,60 @@ export class MirrorDispatchService {
       await this.markAttemptFailed(organizationId, seq);
     }
 
+    for (const seq of input.skippedSeqs ?? []) {
+      await this.markSkipped(organizationId, seq);
+    }
+
     return { acknowledged: result.count };
+  }
+
+  /**
+   * El agente declinó el evento a conciencia: su driver no espeja ese tipo de
+   * entidad. Se cierra la fila (deliveredAt) en vez de reintentarla.
+   *
+   * 🚨 POR QUÉ EXISTE: cada reserva de cita genera además un evento SLOT (el
+   * cupo pasa a ocupado) y el driver de Anserma no espeja SLOT. Antes de esto
+   * esos eventos entraban por `failedSeqs`, quemaban sus diez intentos y
+   * caían en dead-letter — a la décima cita el checker del monitor quedaba en
+   * DOWN permanente por algo que no está roto. Una alerta que siempre está en
+   * rojo deja de ser una alerta.
+   *
+   * No es un descarte silencioso: queda la fila en SyncAudit con outcome
+   * SKIPPED, así que "no llegó al HIS porque no lo espejamos" sigue siendo
+   * consultable el día que alguien pregunte.
+   */
+  async markSkipped(organizationId: string, seq: string): Promise<void> {
+    const evento = await this.prisma.syncOutbox.findFirst({
+      where: { seq: BigInt(seq), organizationId },
+      select: { eventId: true, entityType: true, entityId: true, op: true },
+    });
+
+    // Mismo aislamiento de tenant que markAttemptFailed: el `seq` es una
+    // secuencia global y un agente no puede cerrar el evento de otra clínica.
+    if (!evento) {
+      this.logger.warn(
+        `La organización ${organizationId} reportó como no soportado el seq ${seq}, que no le pertenece o no existe. Ignorado.`,
+      );
+      return;
+    }
+
+    await this.prisma.syncOutbox.updateMany({
+      where: { seq: BigInt(seq), organizationId },
+      data: { deliveredAt: new Date(), nextAttemptAt: null },
+    });
+
+    await this.prisma.syncAudit.create({
+      data: {
+        organizationId,
+        direction: 'AGENIA_TO_HIS',
+        entityType: evento.entityType,
+        entityId: evento.entityId,
+        op: evento.op,
+        outcome: 'SKIPPED',
+        eventId: evento.eventId,
+        detail: `El driver no espeja ${evento.entityType}; el evento se cierra sin enviarlo al HIS.`,
+      },
+    });
   }
 
   /**

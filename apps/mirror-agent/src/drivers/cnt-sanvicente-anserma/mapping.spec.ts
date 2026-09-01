@@ -7,6 +7,8 @@ import {
   mapSexo,
   resolveConvenio,
   resolveEspecialidad,
+  cuposDelTurno,
+  duracionDeServicio,
 } from './mapping';
 
 const MAPPING: AnsermaMapping = {
@@ -215,5 +217,107 @@ describe('feHoraCitAIso — de la hora del hospital a UTC', () => {
       MappingIncompletoError,
     );
     expect(() => feHoraCitAIso('31', BOGOTA)).toThrow(MappingIncompletoError);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Fase 2. El hospital no guarda cupos: guarda BLOQUES de turno y su aplicación
+// los divide. Si esta división no coincide con la suya, AgenIA ofrece horas
+// que en el hospital no existen — que es exactamente lo que pasaba con la
+// agenda hecha a mano.
+// ══════════════════════════════════════════════════════════════════════════
+describe('cuposDelTurno', () => {
+  const TZ = 'America/Bogota';
+  const turno = {
+    fechaLocal: '2026-09-03',
+    horaInicio: '07:00',
+    horaFin: '12:00',
+  };
+
+  it('divide el bloque en cupos de la duración pedida', () => {
+    const cupos = cuposDelTurno(turno, 20, TZ);
+
+    expect(cupos).toHaveLength(15); // 5 horas / 20 min
+    expect(cupos[0].feHoraCit).toBe('2026/09/03 07:00');
+    expect(cupos[14].feHoraCit).toBe('2026/09/03 11:40');
+  });
+
+  it('cada cupo sale en UTC, que es como viaja el protocolo', () => {
+    const [primero] = cuposDelTurno(turno, 20, TZ);
+
+    // 07:00 en Bogotá son las 12:00 UTC.
+    expect(primero.startTimeIso).toBe('2026-09-03T12:00:00.000Z');
+    expect(primero.endTimeIso).toBe('2026-09-03T12:20:00.000Z');
+  });
+
+  it('un resto que no alcanza para una cita completa se descarta', () => {
+    // 07:00–08:10 con citas de 30 min: caben dos, y sobran 10 minutos que no
+    // son un cupo. Ofrecerlos haría llegar al paciente cuando el médico ya se
+    // fue.
+    const cupos = cuposDelTurno(
+      { ...turno, horaFin: '08:10' },
+      30,
+      TZ,
+    );
+
+    expect(cupos.map((c) => c.feHoraCit)).toEqual([
+      '2026/09/03 07:00',
+      '2026/09/03 07:30',
+    ]);
+  });
+
+  it('un bloque más corto que la duración no produce ningún cupo', () => {
+    expect(cuposDelTurno({ ...turno, horaFin: '07:15' }, 20, TZ)).toEqual([]);
+  });
+
+  it('el turno de la tarde también se parte bien', () => {
+    const cupos = cuposDelTurno(
+      { fechaLocal: '2026-09-04', horaInicio: '14:00', horaFin: '18:00' },
+      20,
+      TZ,
+    );
+
+    expect(cupos).toHaveLength(12);
+    expect(cupos[11].feHoraCit).toBe('2026/09/04 17:40');
+    // 17:40 en Bogotá son las 22:40 UTC del mismo día.
+    expect(cupos[11].startTimeIso).toBe('2026-09-04T22:40:00.000Z');
+  });
+
+  it('una hora con formato raro falla en vez de inventar cupos', () => {
+    expect(() => cuposDelTurno({ ...turno, horaInicio: '7 am' }, 20, TZ)).toThrow(
+      /formato inesperado/,
+    );
+  });
+
+  it('una fecha con formato raro también', () => {
+    expect(() =>
+      cuposDelTurno({ ...turno, fechaLocal: '03/09/2026' }, 20, TZ),
+    ).toThrow(/formato inesperado/);
+  });
+
+  it('una duración de cero no genera un bucle infinito: falla', () => {
+    expect(() => cuposDelTurno(turno, 0, TZ)).toThrow(/Duración/);
+  });
+});
+
+describe('duracionDeServicio', () => {
+  const base = { duracionMinutos: 20 } as never;
+
+  it('sin override, todo dura lo mismo', () => {
+    expect(duracionDeServicio(base, 'SCITOD')).toBe(20);
+  });
+
+  it('un servicio puede durar distinto sin tocar código', () => {
+    const conOverride = {
+      duracionMinutos: 20,
+      duracionPorServicio: { SCITOD: 30 },
+    } as never;
+
+    expect(duracionDeServicio(conOverride, 'SCITOD')).toBe(30);
+    expect(duracionDeServicio(conOverride, 'S39141-1')).toBe(20);
+  });
+
+  it('sin servicio, la duración general', () => {
+    expect(duracionDeServicio(base)).toBe(20);
   });
 });

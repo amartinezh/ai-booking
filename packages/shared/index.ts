@@ -56,4 +56,10 @@ export type {
   ChangesInput,
   ChangesResult,
   HeartbeatInput,
+  HisAppointmentSnapshot,
+  ReconcileInput,
+  ReconcileResult,
+  HisSlotSnapshot,
+  AvailabilityInput,
+  AvailabilityResult,
 } from './src/mirror-protocol';

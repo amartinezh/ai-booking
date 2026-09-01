@@ -48,6 +48,18 @@ export interface AnsermaMapping {
   /** `NU_DURA_CIT` cuando el turno no la impone. */
   duracionMinutos: number;
   /**
+   * Override de duración por servicio, para cuando un servicio no dura lo
+   * mismo que el resto. Opcional: sin él todo usa `duracionMinutos`.
+   */
+  duracionPorServicio?: Record<string, number>;
+  /**
+   * Override por médico. Es el que sirve de verdad hoy: `TURNOS_MEDICOS` no
+   * lleva servicio, así que al generar los cupos de un turno lo único que se
+   * conoce es de quién es. "El odontólogo atiende cada 30 minutos" se resuelve
+   * con una fila, no con un despliegue.
+   */
+  duracionPorMedico?: Record<string, number>;
+  /**
    * Días hacia adelante que vigila `detectChanges`.
    *
    * El hospital reserva hasta 12 meses, pero la instantánea completa de 13
@@ -200,4 +212,108 @@ function offsetDeZonaMs(instante: Date, timeZone: string): number {
     v('hour') % 24, v('minute'), v('second'),
   );
   return local - instante.getTime();
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Disponibilidad (Fase 2): de turnos del HIS a cupos de AgenIA.
+//
+// El hospital NO guarda cupos: guarda BLOQUES de turno por médico, fecha y
+// consultorio (`TURNOS_MEDICOS`, esquema confirmado en el bloque 7), y su
+// aplicación calcula los huecos dividiendo el bloque entre la duración de la
+// cita y descontando las ya ocupadas. Replicar esa división aquí es lo que
+// permite que la agenda de AgenIA SEA la del hospital y no una copia hecha a
+// mano que se desincroniza sola.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface TurnoHis {
+  /** `FE_FECH_TUME`, solo la fecha, en hora local del hospital: 'YYYY-MM-DD'. */
+  fechaLocal: string;
+  /** `FE_HOIN_TUME`, solo la hora: 'HH:MM'. */
+  horaInicio: string;
+  /** `FE_HOFI_TUME`, solo la hora: 'HH:MM'. */
+  horaFin: string;
+}
+
+export interface CupoGenerado {
+  startTimeIso: string;
+  endTimeIso: string;
+  /** La misma hora en el formato del HIS — sirve para cruzar con CITAS_MEDICAS. */
+  feHoraCit: string;
+}
+
+/**
+ * Divide un turno en cupos de `duracionMinutos`.
+ *
+ * Un resto que no alcanza para una cita completa se descarta: media consulta
+ * no es un cupo, y ofrecerla haría que el paciente llegue a una hora en la que
+ * el médico ya se fue.
+ */
+export function cuposDelTurno(
+  turno: TurnoHis,
+  duracionMinutos: number,
+  timeZone: string,
+): CupoGenerado[] {
+  const aMinutos = (hhmm: string): number => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+    if (!m) {
+      throw new MappingIncompletoError(
+        `Hora de turno con formato inesperado: "${hhmm}". Se esperaba 'HH:MM'.`,
+      );
+    }
+    return +m[1] * 60 + +m[2];
+  };
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(turno.fechaLocal)) {
+    throw new MappingIncompletoError(
+      `Fecha de turno con formato inesperado: "${turno.fechaLocal}". Se esperaba 'YYYY-MM-DD'.`,
+    );
+  }
+  if (duracionMinutos <= 0) {
+    throw new MappingIncompletoError(
+      `Duración de cita inválida: ${duracionMinutos} minutos.`,
+    );
+  }
+
+  const inicio = aMinutos(turno.horaInicio);
+  const fin = aMinutos(turno.horaFin);
+  const fecha = turno.fechaLocal.replace(/-/g, '/');
+
+  const cupos: CupoGenerado[] = [];
+  for (let t = inicio; t + duracionMinutos <= fin; t += duracionMinutos) {
+    const hhmm = (min: number) =>
+      `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    const feHoraCit = `${fecha} ${hhmm(t)}`;
+    cupos.push({
+      feHoraCit,
+      startTimeIso: feHoraCitAIso(feHoraCit, timeZone),
+      endTimeIso: feHoraCitAIso(
+        `${fecha} ${hhmm(t + duracionMinutos)}`,
+        timeZone,
+      ),
+    });
+  }
+  return cupos;
+}
+
+/**
+ * Cuánto dura una cita de ese servicio.
+ *
+ * El HIS no guarda la duración en ninguna parte (`SERVICIOS` no la tiene): su
+ * aplicación usa un valor operativo fijo. Por eso vive en `mappingJson`, con
+ * override por servicio — el día que el hospital diga "odontología es de 30
+ * minutos" eso es cambiar una fila, no desplegar.
+ */
+export function duracionDeServicio(
+  mapping: AnsermaMapping,
+  servicio?: string,
+  medico?: string,
+): number {
+  const porMedico = mapping.duracionPorMedico ?? {};
+  const porServicio = mapping.duracionPorServicio ?? {};
+  return (
+    (medico && porMedico[medico]) ||
+    (servicio && porServicio[servicio]) ||
+    mapping.duracionMinutos
+  );
 }

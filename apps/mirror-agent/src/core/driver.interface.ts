@@ -1,4 +1,4 @@
-import type { CanonicalChangeEvent } from '@agenia/shared';
+import type { CanonicalChangeEvent, HisAppointmentSnapshot } from '@agenia/shared';
 
 /**
  * Contrato que todo driver implementa — ver docs/PLAN_ESPEJO_HOSPITAL.md §1.4.
@@ -17,6 +17,14 @@ export interface CanonicalSlot {
   startTimeIso: string;
   endTimeIso: string;
   serviceExternalKey?: string;
+  /**
+   * `true` si el HIS ya tiene una cita en ese hueco.
+   *
+   * Viaja en el mismo viaje que el cupo, y no en una segunda consulta, porque
+   * entre "traer la rejilla" y "marcar lo ocupado" cabe una ventana en la que
+   * AgenIA ofrecería una hora que el hospital acaba de vender.
+   */
+  occupied?: boolean;
 }
 
 export type CatalogKind = 'CONVENIO' | 'EPS' | 'TIPO_DOCUMENTO' | 'SERVICIO';
@@ -24,6 +32,13 @@ export type CatalogKind = 'CONVENIO' | 'EPS' | 'TIPO_DOCUMENTO' | 'SERVICIO';
 export interface DriverResult {
   success: boolean;
   message?: string;
+  /**
+   * `true` cuando el evento no se aplicó porque este driver NO lo soporta, y
+   * no porque algo fallara. La diferencia importa: un fallo se reintenta y
+   * acaba en dead-letter con alerta; esto no se reintenta nunca, porque la
+   * respuesta va a ser la misma hasta que se despliegue otro driver.
+   */
+  unsupported?: boolean;
 }
 
 export interface DetectChangesResult {
@@ -65,6 +80,20 @@ export interface HisDriver {
    */
   rescheduleAppointment(evt: CanonicalChangeEvent): Promise<DriverResult>;
   updateAttendance(evt: CanonicalChangeEvent): Promise<DriverResult>;
+
+  /**
+   * Instantánea de las citas VIGENTES del HIS en una ventana, ya canonicalizada
+   * (código del médico del HIS + hora en UTC).
+   *
+   * Es su propio método y no una lectura del cursor de `detectChanges` porque
+   * pasar de la hora local del HIS a UTC es conocimiento del driver, y `core/`
+   * no puede tenerlo. Sirve a la reconciliación: la capa 5 del plan §6, la
+   * única que detecta que los dos sistemas divergieron sin que nada fallara.
+   */
+  snapshotAppointments(window: {
+    from: Date;
+    to: Date;
+  }): Promise<HisAppointmentSnapshot[]>;
 
   // Homologación de catálogos propios del HIS
   resolveCatalogMapping(

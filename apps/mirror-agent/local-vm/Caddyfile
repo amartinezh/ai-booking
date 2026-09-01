@@ -1,0 +1,22 @@
+# Borde HTTPS de AgenIA para la simulación de la VM.
+#
+# En producción el agente NO habla con la API en claro: sale por 443 contra
+# api.agendamiento-ia.com (ver Caddyfile de la raíz). Probar el agente contra
+# http://localhost:3001 deja sin ejercitar toda la pata de TLS, que es
+# exactamente donde fallan los despliegues en redes hospitalarias.
+#
+# `tls internal` emite un certificado con la CA propia de Caddy; vm-up.sh
+# extrae esa raíz y la instala en la VM. Es el mismo escenario que un
+# hospital con inspección TLS corporativa.
+
+{
+	admin off
+	auto_https disable_redirects
+}
+
+api.agenia.local {
+	tls internal
+	# La API corre en el host (pnpm --filter api start:dev), no en un
+	# contenedor, igual que en dev. En el VPS real esto es `reverse_proxy api:3001`.
+	reverse_proxy host.docker.internal:3001
+}

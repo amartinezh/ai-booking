@@ -7,7 +7,7 @@
  *
  * Uso:
  *   docker compose up -d mirror-his-mock
- *   AGENIA_SYNC_PASSWORD='...' npx tsx apps/mirror-agent/local-his-mock/setup.ts
+ *   AGENIA_SYNC_PASSWORD='...' pnpm --filter @agenia/mirror-agent exec tsx local-his-mock/setup.ts
  *
  * Reintentable: recrea PRUEBAS y AGENIA_SYNC desde cero cada vez que corre —
  * es un sandbox desechable, no un ambiente a preservar entre corridas.

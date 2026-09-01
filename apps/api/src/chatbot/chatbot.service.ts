@@ -5049,6 +5049,7 @@ export class ChatbotService implements OnModuleInit {
             siguiente,
             MSGS,
             resolvedEpsName,
+            text,
           );
           return;
         }
@@ -5385,6 +5386,7 @@ export class ChatbotService implements OnModuleInit {
     dato: 'nacimiento' | 'sexo' | 'regimen',
     MSGS: ReturnType<typeof buildMessages>,
     epsName: string,
+    userMessage?: string,
   ): Promise<void> {
     const porDato = {
       nacimiento: { reply: MSGS.pedirNacimiento(), state: ChatState.AWAITING_BIRTHDATE },
@@ -5393,8 +5395,44 @@ export class ChatbotService implements OnModuleInit {
     }[dato];
 
     await this.smartReply(organizationId, senderId, porDato.reply);
+    await this.auditarAlta(organizationId, senderId, userMessage, porDato.reply, `ALTA_PEDIR_${dato.toUpperCase()}`);
     await this.setUserState(organizationId, senderId, porDato.state);
     await this.extenderSesionDeAlta(organizationId, senderId);
+  }
+
+  /**
+   * Deja en InteractionLog los turnos del alta.
+   *
+   * 🚨 No los registraba nadie: los tres datos que el HIS exige — fecha de
+   * nacimiento, sexo y régimen — se preguntaban, se guardaban y acababan en la
+   * historia clínica del paciente sin dejar una sola fila de auditoría. Si
+   * mañana una historia sale con el sexo equivocado, sin esto no hay forma de
+   * saber si el paciente escribió mal o lo entendimos mal nosotros. Se
+   * descubrió porque la prueba de punta a punta esperaba la respuesta del bot
+   * en InteractionLog y en estos tres turnos no aparecía nunca.
+   */
+  private async auditarAlta(
+    organizationId: string,
+    senderId: string,
+    userMessage: string | undefined,
+    botReply: string,
+    step: string,
+  ): Promise<void> {
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: userMessage ?? '',
+      botReply,
+      metadata: { step },
+    });
+  }
+
+  /** Responde y audita en un solo paso, para los turnos del alta. */
+  private async responderAlta(
+    ctx: ChatTurnContext,
+    reply: string,
+    step: string,
+  ): Promise<void> {
+    await this.smartReply(ctx.organizationId, ctx.senderId, reply);
+    await this.auditarAlta(ctx.organizationId, ctx.senderId, ctx.text, reply, step);
   }
 
   /** Lo capturado hasta ahora, en el formato que espera `ensurePatientPersisted`. */
@@ -5455,7 +5493,7 @@ export class ChatbotService implements OnModuleInit {
 
     const fecha = parseFechaNacimiento(text);
     if (!fecha) {
-      await this.smartReply(organizationId, senderId, MSGS.nacimientoNoEntendido());
+      await this.responderAlta(ctx, MSGS.nacimientoNoEntendido(), 'ALTA_NACIMIENTO_NO_ENTENDIDO');
       return;
     }
 
@@ -5468,10 +5506,10 @@ export class ChatbotService implements OnModuleInit {
       'EX',
       SESSION_TTL,
     );
-    await this.smartReply(
-      organizationId,
-      senderId,
+    await this.responderAlta(
+      ctx,
       MSGS.confirmarNacimiento(formatFechaNacimiento(fecha.date)),
+      'ALTA_CONFIRMAR_NACIMIENTO',
     );
   }
 
@@ -5481,7 +5519,7 @@ export class ChatbotService implements OnModuleInit {
     // El menú ofrece A/B; también se acepta la palabra escrita.
     const sexo = /^a$/i.test(t) ? 'M' : /^b$/i.test(t) ? 'F' : parseSexo(t);
     if (!sexo) {
-      await this.smartReply(organizationId, senderId, MSGS.sexoNoEntendido());
+      await this.responderAlta(ctx, MSGS.sexoNoEntendido(), 'ALTA_SEXO_NO_ENTENDIDO');
       return;
     }
     await this.redis.set(
@@ -5497,7 +5535,7 @@ export class ChatbotService implements OnModuleInit {
     const { organizationId, senderId, text, MSGS } = ctx;
     const regimen = parseRegimen((text ?? '').trim());
     if (!regimen) {
-      await this.smartReply(organizationId, senderId, MSGS.regimenNoEntendido());
+      await this.responderAlta(ctx, MSGS.regimenNoEntendido(), 'ALTA_REGIMEN_NO_ENTENDIDO');
       return;
     }
     await this.redis.set(
@@ -5535,6 +5573,7 @@ export class ChatbotService implements OnModuleInit {
         siguiente,
         MSGS,
         eps?.name ?? PARTICULAR_EPS_NAME,
+        ctx.text,
       );
       return;
     }

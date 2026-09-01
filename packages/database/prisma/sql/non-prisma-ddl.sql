@@ -109,3 +109,24 @@ DROP TRIGGER IF EXISTS trg_sync_outbox_appointment ON "Appointment";
 CREATE TRIGGER trg_sync_outbox_appointment
   AFTER INSERT OR UPDATE OR DELETE ON "Appointment"
   FOR EACH ROW EXECUTE FUNCTION fn_sync_outbox('APPOINTMENT');
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Un cupo, como mucho UNA cita vigente.
+--
+-- `Appointment.scheduleSlotId` llevaba un @unique global, y eso decía algo
+-- distinto: "un cupo tuvo como mucho una cita EN TODA SU HISTORIA". Una cita
+-- cancelada conserva su fila (es historia clínica) y seguía ocupando la llave,
+-- así que un cupo liberado tras una cancelación se volvía a ofrecer por
+-- WhatsApp y reventaba al confirmar con "ese espacio acaba de reservarse".
+-- Mentira, y sin arreglo posible: ese cupo quedaba invendible para siempre.
+--
+-- Lo encontró la prueba de punta a punta contra la VM: cancelar y volver a
+-- agendar la misma hora es de las cosas más normales que hace un paciente.
+--
+-- Prisma no sabe expresar un índice único parcial, por eso vive aquí.
+-- ═══════════════════════════════════════════════════════════════════════════
+DROP INDEX IF EXISTS "Appointment_scheduleSlotId_key";
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_appointment_cupo_vigente"
+  ON "Appointment" ("scheduleSlotId")
+  WHERE status <> 'CANCELLED';

@@ -6,6 +6,7 @@ import { MirrorDispatchService } from './mirror-dispatch.service';
 import { MirrorApplyService } from './mirror-apply.service';
 import { MirrorSchemaCheckService } from './mirror-schema-check.service';
 import { MirrorReconciliationService } from './mirror-reconciliation.service';
+import { MirrorAvailabilityService } from './mirror-availability.service';
 
 /**
  * Motor genérico de espejo de citas con HIS externos (patrón de drivers).
@@ -25,6 +26,7 @@ import { MirrorReconciliationService } from './mirror-reconciliation.service';
     // larga en mirror-schema-check.service.ts.
     MirrorSchemaCheckService,
     MirrorReconciliationService,
+    MirrorAvailabilityService,
   ],
   exports: [MirrorApplyService, MirrorReconciliationService],
 })

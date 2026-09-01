@@ -13,6 +13,8 @@ export type {
   OutboxEventContext,
   AckInput,
   AckResult,
+  AvailabilityInput,
+  AvailabilityResult,
   CanonicalChangeEvent,
   ChangesInput,
   ChangesResult,

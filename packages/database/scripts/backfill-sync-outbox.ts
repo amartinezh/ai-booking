@@ -20,10 +20,10 @@
  *
  * Uso:
  *   # ver que haria, sin escribir nada (por defecto)
- *   npx tsx packages/database/scripts/backfill-sync-outbox.ts
+ *   pnpm --filter @agenia/database exec tsx scripts/backfill-sync-outbox.ts
  *
  *   # escribir de verdad, acotado a una organizacion
- *   npx tsx packages/database/scripts/backfill-sync-outbox.ts --apply \
+ *   pnpm --filter @agenia/database exec tsx scripts/backfill-sync-outbox.ts --apply \
  *     --org=<uuid> --since=2026-08-01
  *
  * Es idempotente: una fila que ya tiene evento nunca genera otro.

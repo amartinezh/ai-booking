@@ -14,6 +14,7 @@ import { MirrorAgentGuard } from './mirror-agent.guard';
 import { MirrorDispatchService } from './mirror-dispatch.service';
 import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { MirrorApplyService } from './mirror-apply.service';
+import { MirrorAvailabilityService } from './mirror-availability.service';
 import type {
   AckInput,
   AckResult,
@@ -23,6 +24,8 @@ import type {
   HandshakeResult,
   HeartbeatInput,
   OutboxEventDto,
+  AvailabilityInput,
+  AvailabilityResult,
 } from './dto/mirror.types';
 
 type AgentRequest = Request & MirrorAgentRequest;
@@ -39,6 +42,7 @@ export class MirrorController {
     private readonly dispatch: MirrorDispatchService,
     private readonly reconciliation: MirrorReconciliationService,
     private readonly apply: MirrorApplyService,
+    private readonly availability: MirrorAvailabilityService,
   ) {}
 
   @Post('handshake')
@@ -107,20 +111,57 @@ export class MirrorController {
     );
   }
 
-  @Post('ack')
-  ack(@Req() req: AgentRequest, @Body() body: AckInput): Promise<AckResult> {
-    // `seqs` puede venir vacío si TODO el lote falló (ver failedSeqs) — lo
-    // único inválido es que ninguno de los dos venga como arreglo.
-    const hasSeqs = Array.isArray(body?.seqs);
-    const hasFailed = body?.failedSeqs === undefined || Array.isArray(body.failedSeqs);
-    if (!hasSeqs || !hasFailed) {
+  /**
+   * POST /mirror/availability — el agente sube la rejilla de agenda del
+   * hospital para una sub-ventana (Fase 2).
+   *
+   * Cada envío es la foto COMPLETA de esa sub-ventana: el servidor crea lo que
+   * falta y borra lo que sobra dentro de ella. Por eso la ventana viaja en el
+   * cuerpo y no se infiere de los cupos — una franja sin turnos es información
+   * legítima ("ese día el médico no atiende") y debe poder llegar vacía.
+   */
+  @Post('availability')
+  availabilityUpload(
+    @Req() req: AgentRequest,
+    @Body() body: AvailabilityInput,
+  ): Promise<AvailabilityResult> {
+    if (!Array.isArray(body?.slots)) {
+      throw new BadRequestException('slots debe ser un arreglo.');
+    }
+    const from = new Date(body?.fromIso ?? '');
+    const to = new Date(body?.toIso ?? '');
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) {
       throw new BadRequestException(
-        'seqs y failedSeqs (si viene) deben ser arreglos.',
+        'fromIso/toIso deben ser fechas válidas y fromIso anterior a toIso.',
       );
     }
-    if (body.seqs.length === 0 && !body.failedSeqs?.length) {
+    return this.availability.apply(req.mirrorConfig.organizationId, body);
+  }
+
+  @Post('ack')
+  ack(@Req() req: AgentRequest, @Body() body: AckInput): Promise<AckResult> {
+    // `seqs` puede venir vacío si TODO el lote falló (ver failedSeqs) o si
+    // todo el lote era de un tipo que el driver no espeja (skippedSeqs) — lo
+    // único inválido es que ninguno de los tres venga como arreglo.
+    const esArreglo = (v: unknown) => v === undefined || Array.isArray(v);
+    const hasSeqs = Array.isArray(body?.seqs);
+    if (!hasSeqs || !esArreglo(body?.failedSeqs) || !esArreglo(body?.skippedSeqs)) {
       throw new BadRequestException(
-        'Debe reportar al menos un seq exitoso o fallido.',
+        'seqs, failedSeqs y skippedSeqs (si vienen) deben ser arreglos.',
+      );
+    }
+    // 🚨 Olvidar skippedSeqs aquí bloqueaba el lote entero: un tick en el que
+    // lo único pendiente era un evento SLOT mandaba un ack legítimo y recibía
+    // un 400, así que el evento nunca se cerraba y el agente entraba en modo
+    // seguro. No lo vio ningún test unitario — el cliente HTTP estaba
+    // mockeado. Lo encontró el agente corriendo de verdad en la VM.
+    if (
+      body.seqs.length === 0 &&
+      !body.failedSeqs?.length &&
+      !body.skippedSeqs?.length
+    ) {
+      throw new BadRequestException(
+        'Debe reportar al menos un seq exitoso, fallido u omitido.',
       );
     }
     return this.dispatch.ack(req.mirrorConfig.organizationId, body);

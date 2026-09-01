@@ -123,7 +123,11 @@ const OBJETOS_ESPERADOS = {
     'trg_sync_outbox_doctor_profile',
     'trg_sync_outbox_appointment',
   ],
-  indices: ['idx_outbox_pending'],
+  // `uq_appointment_cupo_vigente` es único parcial y sustituye a la llave
+  // única global que llevaba `Appointment.scheduleSlotId`. Si alguien corre
+  // `prisma db push` sin este paso, no queda NINGUNA garantía de "una cita
+  // vigente por cupo" y el mismo horario se puede vender dos veces.
+  indices: ['idx_outbox_pending', 'uq_appointment_cupo_vigente'],
 };
 
 async function main() {

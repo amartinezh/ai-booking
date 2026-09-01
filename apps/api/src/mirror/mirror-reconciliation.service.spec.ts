@@ -23,6 +23,13 @@ describe('MirrorReconciliationService', () => {
     scheduleSlot: { startTime: new Date(startIso), doctorId },
   });
 
+  const cupo = (doctorId: string, startIso: string, isAvailable: boolean) => ({
+    id: `slot-${doctorId}-${startIso}`,
+    doctorId,
+    startTime: new Date(startIso),
+    isAvailable,
+  });
+
   beforeEach(async () => {
     prisma = {
       appointment: { findMany: jest.fn(async () => []) },
@@ -32,6 +39,15 @@ describe('MirrorReconciliationService', () => {
           { agenIAId: 'doc-2', externalKey: '91-1' },
         ]),
       },
+      // Ocupación de cupos: la comparación HIS→AgenIA se mide aquí, no en
+      // `Appointment` (ver el comentario del servicio).
+      scheduleSlot: {
+        findMany: jest.fn(async () => []),
+        update: jest.fn(async () => ({})),
+      },
+      $transaction: jest.fn(async (fn: any) =>
+        fn({ $executeRawUnsafe: jest.fn(), scheduleSlot: prisma.scheduleSlot }),
+      ),
       syncAudit: { create: jest.fn(async () => ({})) },
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -79,7 +95,48 @@ describe('MirrorReconciliationService', () => {
     expect(r.missingInHis).toEqual(['76|2026-09-03T12:00:00.000Z']);
   });
 
-  it('una cita del HIS que AgenIA desconoce: podría revender ese cupo', async () => {
+  it('una cita del HIS sobre un cupo que AgenIA sigue ofreciendo: lo revendería', async () => {
+    prisma.scheduleSlot.findMany.mockResolvedValue([
+      cupo('doc-2', '2026-09-03T13:00:00.000Z', true),
+    ]);
+
+    const r = await service.reconcile(
+      'org1',
+      [{ doctorExternalKey: '91-1', startTimeIso: '2026-09-03T13:00:00.000Z' }],
+      VENTANA,
+    );
+
+    expect(r.missingInAgenIA).toEqual(['91-1|2026-09-03T13:00:00.000Z']);
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Una cita agendada en la ventanilla del hospital NO crea un `Appointment`
+  // en AgenIA (el alta en caliente del paciente es Fase 2+): lo que AgenIA
+  // hace, y es lo que importa, es dejar de ofrecer ese cupo. Compararlo contra
+  // `Appointment` marcaba como deriva TODAS las citas de ventanilla — cinco en
+  // la prueba contra la VM, cientos en producción. Una alerta siempre en rojo
+  // se deja de mirar, y con ella se pierde la deriva de verdad.
+  // ════════════════════════════════════════════════════════════════════════
+  it('una cita de ventanilla con su cupo ya ocupado NO es deriva', async () => {
+    prisma.scheduleSlot.findMany.mockResolvedValue([
+      cupo('doc-2', '2026-09-03T13:00:00.000Z', false),
+    ]);
+
+    const r = await service.reconcile(
+      'org1',
+      [{ doctorExternalKey: '91-1', startTimeIso: '2026-09-03T13:00:00.000Z' }],
+      VENTANA,
+    );
+
+    expect(r.missingInAgenIA).toEqual([]);
+    expect(r.inSync).toBe(true);
+  });
+
+  it('una cita del HIS sin cupo equivalente en AgenIA sí es deriva', async () => {
+    // El médico está homologado pero ese horario no existe como cupo: AgenIA
+    // no puede reflejar la ocupación y el hospital tiene una cita huérfana.
+    prisma.scheduleSlot.findMany.mockResolvedValue([]);
+
     const r = await service.reconcile(
       'org1',
       [{ doctorExternalKey: '91-1', startTimeIso: '2026-09-03T13:00:00.000Z' }],
@@ -93,6 +150,9 @@ describe('MirrorReconciliationService', () => {
     prisma.appointment.findMany.mockResolvedValue([
       citaAgenIA('doc-1', '2026-09-03T12:00:00.000Z'),
     ]);
+    prisma.scheduleSlot.findMany.mockResolvedValue([
+      cupo('doc-2', '2026-09-03T13:00:00.000Z', true),
+    ]);
 
     const r = await service.reconcile(
       'org1',
@@ -104,6 +164,77 @@ describe('MirrorReconciliationService', () => {
     expect(r.missingInAgenIA).toHaveLength(1);
     expect(r.inAgenIA).toBe(1);
     expect(r.inHis).toBe(1);
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Detectar no basta: cada diferencia de esta dirección es una hora que el
+  // hospital YA vendió y que AgenIA sigue ofreciendo por WhatsApp. Dejarla
+  // marcada en un informe es esperar a que dos pacientes se presenten a la
+  // misma cita.
+  // ════════════════════════════════════════════════════════════════════════
+  describe('reparación automática', () => {
+    beforeEach(() => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupo('doc-2', '2026-09-03T13:00:00.000Z', true),
+      ]);
+    });
+
+    const conCitaSoloEnHis = () =>
+      service.reconcile(
+        'org1',
+        [{ doctorExternalKey: '91-1', startTimeIso: '2026-09-03T13:00:00.000Z' }],
+        VENTANA,
+      );
+
+    it('cierra el cupo que el hospital ya vendió', async () => {
+      await conCitaSoloEnHis();
+
+      expect(prisma.scheduleSlot.update).toHaveBeenCalledWith({
+        where: { id: 'slot-doc-2-2026-09-03T13:00:00.000Z' },
+        data: { isAvailable: false },
+      });
+    });
+
+    it('lo reporta como reparado, no solo como diferencia', async () => {
+      const r = await conCitaSoloEnHis();
+
+      expect(r.repaired).toEqual(['91-1|2026-09-03T13:00:00.000Z']);
+    });
+
+    it('marca el cambio como MIRROR para que no rebote al hospital', async () => {
+      const tx = { $executeRawUnsafe: jest.fn(), scheduleSlot: prisma.scheduleSlot };
+      prisma.$transaction.mockImplementation(async (fn: any) => fn(tx));
+
+      await conCitaSoloEnHis();
+
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        expect.stringContaining("agenia.sync_origin = 'MIRROR'"),
+      );
+    });
+
+    it('NO toca la dirección contraria: eso lo decide una persona', async () => {
+      // Una cita que AgenIA tiene y el hospital no significaría escribir o
+      // borrar en la base del hospital a partir de una comparación.
+      prisma.appointment.findMany.mockResolvedValue([
+        citaAgenIA('doc-1', '2026-09-03T12:00:00.000Z'),
+      ]);
+      prisma.scheduleSlot.findMany.mockResolvedValue([]);
+
+      const r = await service.reconcile('org1', [], VENTANA);
+
+      expect(r.missingInHis).toHaveLength(1);
+      expect(r.repaired).toEqual([]);
+      expect(prisma.scheduleSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('un cupo que no existe no se puede reparar: solo se reporta', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([]);
+
+      const r = await conCitaSoloEnHis();
+
+      expect(r.missingInAgenIA).toHaveLength(1);
+      expect(r.repaired).toEqual([]);
+    });
   });
 
   it('un médico sin homologar no cuenta como diferencia', async () => {

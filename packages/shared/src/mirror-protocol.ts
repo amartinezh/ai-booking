@@ -131,6 +131,21 @@ export interface AckInput {
    * pendientes (sin ack) hasta agotar los reintentos.
    */
   failedSeqs?: string[];
+  /**
+   * `seq` que el agente NO va a aplicar nunca con la versión de driver que
+   * corre — por ejemplo un `entityType` que ese driver no espeja. Son
+   * distintos de `failedSeqs`: reintentarlos no cambia el resultado.
+   *
+   * Tratarlos como fallo era un defecto real: cada reserva de cita genera
+   * también un evento SLOT (el cupo pasa a ocupado), el driver de Anserma no
+   * espeja SLOT, y ese evento quemaba sus diez intentos hasta dead-letter. A
+   * la décima cita el monitor quedaba en DOWN permanente por una decisión de
+   * diseño, y una alerta que siempre está roja es una alerta que nadie mira.
+   *
+   * El servidor los marca entregados y deja constancia en SyncAudit con
+   * outcome SKIPPED — no es un descarte silencioso.
+   */
+  skippedSeqs?: string[];
 }
 
 export interface AckResult {
@@ -211,4 +226,81 @@ export interface HeartbeatInput {
    */
   hisReachable?: boolean;
   hisDetail?: string;
+}
+
+// ── POST /mirror/reconcile ──────────────────────────────────────────────────
+
+/**
+ * Una cita vigente del HIS, tal como el agente la ve. Es la unidad de la capa
+ * 5 del plan (§6): la única defensa que detecta DERIVA SILENCIOSA — los casos
+ * en que todo pareció ir bien y aun así los dos sistemas no coinciden.
+ *
+ * Viaja por HTTPS saliente como todo lo demás: el HIS no es alcanzable desde
+ * la nube por diseño, así que la nube no puede mirarlo por su cuenta.
+ */
+export interface HisAppointmentSnapshot {
+  doctorExternalKey: string;
+  /** Hora de inicio en UTC. La conversión desde la hora local del HIS la hace el driver. */
+  startTimeIso: string;
+  patientDocument?: string;
+}
+
+export interface ReconcileInput {
+  fromIso: string;
+  toIso: string;
+  appointments: HisAppointmentSnapshot[];
+}
+
+export interface ReconcileResult {
+  inAgenIA: number;
+  inHis: number;
+  missingInHis: string[];
+  missingInAgenIA: string[];
+  inSync: boolean;
+}
+
+// ── POST /mirror/availability ───────────────────────────────────────────────
+
+/**
+ * Un hueco de la agenda del hospital, ya canonicalizado por el driver.
+ *
+ * La disponibilidad del HIS no son filas: son BLOQUES de turno que su
+ * aplicación divide. El driver hace esa misma división y sube la rejilla ya
+ * calculada, marcando qué está vendido. Así la agenda de AgenIA es la del
+ * hospital y no una copia hecha a mano que se desincroniza sola.
+ */
+export interface HisSlotSnapshot {
+  doctorExternalKey: string;
+  startTimeIso: string;
+  endTimeIso: string;
+  /** `true` si el HIS ya tiene una cita en ese hueco. */
+  occupied: boolean;
+}
+
+/**
+ * Se sube por sub-ventanas (típicamente un día) y cada envío es la rejilla
+ * COMPLETA de esa sub-ventana: el servidor borra los cupos que ya no estén.
+ * Enviarlo por páginas parciales obligaría a guardar estado a medio camino;
+ * por día, cada petición se basta sola.
+ */
+export interface AvailabilityInput {
+  fromIso: string;
+  toIso: string;
+  slots: HisSlotSnapshot[];
+}
+
+export interface AvailabilityResult {
+  /** 'SHADOW' calcula y reporta sin escribir nada. */
+  mode: 'OFF' | 'SHADOW' | 'ON';
+  created: number;
+  updated: number;
+  removed: number;
+  /** Cupos del HIS cuyo médico no está homologado, o no tiene servicio. */
+  skipped: string[];
+  /**
+   * Cupos que el hospital ya no tiene en su agenda pero que en AgenIA tienen
+   * una cita viva. NO se tocan: son un paciente con cita a una hora en la que
+   * su médico ya no atiende, y eso lo resuelve una persona.
+   */
+  conflicts: string[];
 }

@@ -7,13 +7,13 @@
  *
  * Uso:
  *   AGENIA_SYNC_PASSWORD='...' ORGANIZATION_ID='<uuid>' \
- *     npx tsx packages/database/scripts/provision-mirror-config.ts
+ *     pnpm --filter @agenia/database exec tsx scripts/provision-mirror-config.ts
  *
  *   # o pasando la organización como argumento:
- *   AGENIA_SYNC_PASSWORD='...' npx tsx ... <organizationId>
+ *   AGENIA_SYNC_PASSWORD='...' pnpm --filter @agenia/database exec tsx scripts/... <organizationId>
  *
  *   # sin organización, lista las disponibles y sale:
- *   npx tsx packages/database/scripts/provision-mirror-config.ts
+ *   pnpm --filter @agenia/database exec tsx scripts/provision-mirror-config.ts
  */
 import * as path from 'path';
 import * as fs from 'fs';
@@ -124,7 +124,7 @@ async function resolveOrganizationId(): Promise<string> {
     console.error('\nOrganizaciones disponibles:');
     for (const o of orgs) console.error(`  ${o.id}  ${o.name}`);
     console.error(
-      `\nReintenta con:\n  AGENIA_SYNC_PASSWORD='...' ORGANIZATION_ID='${orgs[0].id}' \\\n    npx tsx packages/database/scripts/provision-mirror-config.ts\n`,
+      `\nReintenta con:\n  AGENIA_SYNC_PASSWORD='...' ORGANIZATION_ID='${orgs[0].id}' \\\n    pnpm --filter @agenia/database exec tsx scripts/provision-mirror-config.ts\n`,
     );
   }
   process.exit(2);
@@ -133,7 +133,7 @@ async function resolveOrganizationId(): Promise<string> {
 async function main() {
   if (!DRIVER_CONFIG.password) {
     throw new Error(
-      'Falta la contraseña de agenia_sync. Pasarla por env: AGENIA_SYNC_PASSWORD=... npx tsx ...',
+      'Falta la contraseña de agenia_sync. Pasarla por env: AGENIA_SYNC_PASSWORD=... pnpm --filter @agenia/database exec tsx scripts/provision-mirror-config.ts',
     );
   }
 

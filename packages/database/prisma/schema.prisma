@@ -564,8 +564,9 @@ model ScheduleSlot {
   allowedEpsId String?
   allowedEps   Eps?    @relation(fields: [allowedEpsId], references: [id])
 
-  // Relación 1:1 -> Si se ocupa, aquí está la cita. (Si es null, está libre)
-  appointment Appointment?
+  // Histórico de citas del cupo: como mucho UNA vigente (índice único parcial
+  // en non-prisma-ddl.sql) más las canceladas, que se conservan como historia.
+  appointments Appointment[]
 
   // 🏢 TENANT ISOLATION — obligatorio: todo cupo pertenece a una clínica
   // (coincide siempre con la del médico que atiende el bloque).
@@ -590,7 +591,17 @@ model Appointment {
   reason           String?
 
   // 🔌 CONEXIÓN AL SLOT: Ya no guardamos la 'fecha', apuntamos al slot real preconstruido.
-  scheduleSlotId String       @unique
+  // ⚠️ NO lleva @unique. La regla real es "un cupo no puede tener DOS citas
+  // VIGENTES", y eso no es lo mismo: una cita cancelada sigue existiendo como
+  // historia clínica y ocupaba la llave única para siempre. El resultado era
+  // que un cupo liberado tras una cancelación se volvía a ofrecer por WhatsApp
+  // y, al confirmar, fallaba con "ese espacio acaba de reservarse" — mentira,
+  // y sin salida: ese cupo quedaba invendible de por vida.
+  //
+  // La unicidad correcta es parcial (solo sobre las no canceladas) y Prisma no
+  // sabe expresarla: vive en prisma/sql/non-prisma-ddl.sql, junto al resto de
+  // DDL que el esquema no alcanza.
+  scheduleSlotId String
   scheduleSlot   ScheduleSlot @relation(fields: [scheduleSlotId], references: [id])
 
   // A quién se atiende
@@ -619,6 +630,16 @@ model Appointment {
   origin    AppointmentOrigin @default(WHATSAPP)
 
   @@index([organizationId])
+  // Sustituye a la llave única que llevaba `scheduleSlotId`: se sigue
+  // necesitando buscar por cupo, pero sin impedir que un cupo acumule
+  // cancelaciones.
+  @@index([scheduleSlotId])
+}
+
+enum MirrorAvailabilityMode {
+  OFF
+  SHADOW
+  ON
 }
 
 enum AppointmentOrigin {
@@ -1231,6 +1252,17 @@ model HospitalMirrorConfig {
   // Versión y contenido del mapeo de tablas/campos acordado en la Fase 0 de ESE driver.
   mappingVersion Int   @default(1)
   mappingJson    Json?
+
+  // Importación de la AGENDA del hospital (Fase 2), separada del resto del
+  // espejo a propósito: escribir citas y adueñarse de la disponibilidad son
+  // decisiones distintas, y el hospital las enciende en momentos distintos.
+  //
+  //   OFF    — no se toca `ScheduleSlot`; la agenda de AgenIA es la suya.
+  //   SHADOW — se calcula la rejilla del HIS y se REPORTAN las diferencias sin
+  //            escribir nada. Es el modo sombra que el plan §11 exige durante
+  //            al menos una semana antes de exponer la agenda al chatbot.
+  //   ON     — la agenda de AgenIA pasa a ser la del hospital.
+  availabilityMode MirrorAvailabilityMode @default(OFF)
 
   // Interruptor de emergencia por dirección — independiente de `enabled`.
   pushEnabled Boolean @default(true) // AgenIA → HIS

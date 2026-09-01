@@ -41,14 +41,15 @@
     ],
     "collectCoverageFrom": [
       "**/*.ts",
-      "!**/*.spec.ts"
+      "!**/*.spec.ts",
+      "!index.ts"
     ],
     "coverageThreshold": {
       "global": {
-        "statements": 69,
-        "branches": 74,
-        "functions": 54,
-        "lines": 70
+        "statements": 91,
+        "branches": 88,
+        "functions": 82,
+        "lines": 92
       }
     }
   }

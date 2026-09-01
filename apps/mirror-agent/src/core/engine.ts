@@ -2,9 +2,11 @@ import type {
   CanonicalChangeEvent,
   HandshakeInput,
   OutboxEventDto,
+  ReconcileResult,
+  AvailabilityResult,
 } from '@agenia/shared';
 import type { MirrorApiClient } from './mirror-api-client';
-import type { HisDriver } from './driver.interface';
+import type { DriverResult, HisDriver } from './driver.interface';
 import type { AgentStateStore } from './agent-state-store';
 
 /**
@@ -39,6 +41,53 @@ export class MirrorEngine {
     private readonly driverVersion: string,
   ) {}
 
+  /**
+   * Contrasta lo que el HIS tiene HOY contra lo que AgenIA cree tener.
+   *
+   * Es la capa 5 de las seis defensas del plan (§6) y la única que detecta
+   * deriva silenciosa. Las otras cinco protegen cada evento por separado y no
+   * ven el caso en que todo pareció ir bien y aun así los dos sistemas no
+   * coinciden: un cambio ocurrido mientras el agente estaba caído, una fila
+   * que alguien tocó a mano en el HIS, un trigger que no estaba puesto.
+   *
+   * El servidor no puede hacerlo solo: el HIS no es alcanzable desde la nube
+   * por diseño, así que la instantánea la sube el agente.
+   */
+  async reconcile(window: { from: Date; to: Date }): Promise<ReconcileResult> {
+    const appointments = await this.driver.snapshotAppointments(window);
+    return this.api.reconcile({
+      fromIso: window.from.toISOString(),
+      toIso: window.to.toISOString(),
+      appointments,
+    });
+  }
+
+  /**
+   * Sube la agenda del hospital para una sub-ventana (Fase 2).
+   *
+   * Va por sub-ventanas —normalmente un día— y no de una sola vez porque cada
+   * envío es la foto COMPLETA de su franja: el servidor borra lo que ya no
+   * esté. Trocear por día mantiene esa semántica sin que el servidor tenga que
+   * guardar estado entre páginas, y hace que una franja vacía siga siendo
+   * información legítima ("ese día no hay turnos").
+   */
+  async syncAvailability(window: {
+    from: Date;
+    to: Date;
+  }): Promise<AvailabilityResult> {
+    const slots = await this.driver.fetchAvailability(window);
+    return this.api.uploadAvailability({
+      fromIso: window.from.toISOString(),
+      toIso: window.to.toISOString(),
+      slots: slots.map((s) => ({
+        doctorExternalKey: s.doctorExternalKey,
+        startTimeIso: s.startTimeIso,
+        endTimeIso: s.endTimeIso,
+        occupied: s.occupied === true,
+      })),
+    });
+  }
+
   async handshake(): Promise<void> {
     const input: HandshakeInput = {
       driverVersion: this.driverVersion,
@@ -61,17 +110,25 @@ export class MirrorEngine {
   async pullAndApplyOutboxEvents(limit?: number): Promise<{
     applied: number;
     skippedIdempotent: number;
+    skippedUnsupported: number;
     failed: number;
     failures: EventFailure[];
   }> {
     const cursor = await this.state.getOutboxCursor();
     const events = await this.api.getPendingEvents(cursor, limit);
     if (events.length === 0) {
-      return { applied: 0, skippedIdempotent: 0, failed: 0, failures: [] };
+      return {
+        applied: 0,
+        skippedIdempotent: 0,
+        skippedUnsupported: 0,
+        failed: 0,
+        failures: [],
+      };
     }
 
     const acked: string[] = [];
     const failed: string[] = [];
+    const skipped: string[] = [];
     const failures: EventFailure[] = [];
     let applied = 0;
     let skippedIdempotent = 0;
@@ -98,6 +155,13 @@ export class MirrorEngine {
           await this.state.markAppliedLocally(dto.eventId);
           acked.push(dto.seq);
           applied++;
+        } else if (result.unsupported) {
+          // Este driver no espeja ese tipo de entidad y no lo hará por
+          // reintentarlo. Se resuelve como "saltado", no como fallo: si
+          // entrara por failedSeqs quemaría sus diez intentos y acabaría en
+          // dead-letter, dejando el monitor en rojo permanente por una
+          // decisión de diseño.
+          skipped.push(dto.seq);
         } else {
           // No se marca aplicado ni se hace ack — el evento sigue pendiente
           // en el servidor y se reintentará en el próximo pull. El servidor
@@ -121,19 +185,29 @@ export class MirrorEngine {
       }
     }
 
-    if (acked.length > 0 || failed.length > 0) {
-      await this.api.ack({ seqs: acked, failedSeqs: failed });
+    if (acked.length > 0 || failed.length > 0 || skipped.length > 0) {
+      await this.api.ack({
+        seqs: acked,
+        failedSeqs: failed,
+        skippedSeqs: skipped,
+      });
     }
 
     const maxSeq = events[events.length - 1].seq;
     await this.state.setOutboxCursor(maxSeq);
 
-    return { applied, skippedIdempotent, failed: failed.length, failures };
+    return {
+      applied,
+      skippedIdempotent,
+      skippedUnsupported: skipped.length,
+      failed: failed.length,
+      failures,
+    };
   }
 
   private async applyOutboxEvent(
     dto: OutboxEventDto,
-  ): Promise<{ success: boolean; message?: string }> {
+  ): Promise<DriverResult> {
     // 🛑 Homologación incompleta: se rechaza ANTES de llamar al driver.
     //
     // Sin esto, un evento cuyo médico no está homologado llegaría al driver
@@ -163,6 +237,7 @@ export class MirrorEngine {
       // el flujo central que valida el motor de punta a punta en Fase 1.
       return {
         success: false,
+        unsupported: true,
         message: `${dto.entityType} aún no soportado (Fase 2+)`,
       };
     }

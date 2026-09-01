@@ -72,6 +72,28 @@ El hospital creó y canceló una cita real desde su aplicación (contra `PRUEBAS
 
 Se agregó `ConsultingRoom` al schema genérico de AgenIA (`packages/database/prisma/schema.prisma`) — catálogo de consultorios por tenant, **opcional e informativo**, relacionado a `DoctorProfile.consultingRoomId`. Nace de esta necesidad pero es un concepto genérico del motor (cualquier clínica lo puede usar, tenga o no espejo con un HIS). **No decide** en qué consultorio queda una cita concreta al escribir al HIS — eso lo sigue resolviendo el driver en tiempo real contra `TURNOS_MEDICOS` (ver `MAPEO_HIS.md` §2.5bis). `db push` corrido contra el Postgres de desarrollo, `@agenia/database` reconstruido, 335 tests de `api` en verde.
 
+## ✅ Fase 2 implementada (2026-09-01)
+
+`fetchAvailability()` dejó de ser un stub: el driver lee `TURNOS_MEDICOS`
+(esquema confirmado en el bloque 7), divide cada bloque en cupos con la misma
+cuenta que hace la aplicación del hospital, marca los que ya están vendidos
+cruzando con `CITAS_MEDICAS`, y el agente los sube día por día. Con
+`availabilityMode = ON`, **la agenda de AgenIA es la del hospital**: hasta
+ahora los cupos se creaban a mano y se podía vender por WhatsApp una hora en
+la que el médico no atiende.
+
+Incluye modo sombra (`SHADOW`: calcula y reporta sin escribir) y carga inicial
+(`--seed-inicial`). Verificado de punta a punta contra la VM simulada: importar
+la rejilla, cancelar una jornada en el HIS y ver desaparecer sus cupos, y —lo
+importante— que un cupo con cita viva NUNCA se borra: se reporta como conflicto.
+
+No dependía del bloque 21: ese bloque cierra la última milla del **INSERT**
+(especialidad, consecutivo de sesión, consultorio), no la LECTURA de turnos.
+
+Queda para cuando el hospital confirme: `TURNOS_MEDICOS` no lleva servicio, así
+que el servicio del cupo sale de `DoctorProfile.serviceId`. Un médico que
+atienda dos servicios en el mismo turno necesitará una regla más fina.
+
 ## ⏳ Pendientes de este driver
 
 1. **Encontrar la fuente de "Asignada Por"** (bloque 24) — búsqueda directa por nombre de columna dio vacío; candidatos: `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO`, `USUARIO`. Si no aparece en ninguna tabla, la alternativa es pedir al hospital un usuario/login propio de la aplicación (`AGENIA`/`WHATSAPP`) para que quede registrado como origen al insertar.

@@ -46,12 +46,21 @@ export async function getUpcomingSlots(doctorId?: string) {
                 doctor: true,
                 service: true,
                 allowedEps: true,
-                appointment: true,
+                // Solo la cita VIGENTE. Las canceladas son historia clínica:
+                // mientras contaban, un cupo cancelado seguía pintándose como
+                // "reservado" en la agenda del hospital para siempre.
+                appointments: { where: { status: { not: 'CANCELLED' } }, take: 1 },
             },
             orderBy: { startTime: 'asc' },
             take: 3000, // Límite expansivo para vistas mensuales pesadas
         });
-        return { success: true, data: slots };
+        // Se devuelve como `appointment` (singular) porque es lo que la agenda
+        // necesita saber: hay reserva o no la hay.
+        const data = slots.map(({ appointments, ...slot }) => ({
+            ...slot,
+            appointment: appointments[0] ?? null,
+        }));
+        return { success: true, data };
     } catch (error) {
         console.error('Error fetching slots:', error);
         return { success: false, error: 'Error obteniendo cupos creados' };
@@ -147,8 +156,15 @@ export async function deleteSlot(id: string) {
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
 
-        const slot = await prisma.scheduleSlot.findFirst({ where: { id, organizationId: session.organizationId }, include: { appointment: true } });
-        if (slot?.appointment) {
+        // Solo las citas VIGENTES impiden borrar el cupo. Una cancelada es
+        // historia clínica, no una reserva: antes bloqueaba el borrado igual
+        // que una activa, así que un cupo con una cita cancelada no se podía
+        // ni borrar ni volver a vender.
+        const slot = await prisma.scheduleSlot.findFirst({
+            where: { id, organizationId: session.organizationId },
+            include: { appointments: { where: { status: { not: 'CANCELLED' } }, take: 1 } },
+        });
+        if (slot?.appointments.length) {
             return { success: false, error: 'Este cupo ya fue reservado por un paciente. Cancele la cita primero.' };
         }
         await prisma.scheduleSlot.delete({ where: { id, organizationId: session.organizationId } });

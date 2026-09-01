@@ -1,4 +1,4 @@
-import { runSyncCycle, runOutbound, runInbound } from './sync-cycle';
+import { runSyncCycle, runOutbound, runInbound, runOutboundConFreno } from './sync-cycle';
 import { FailureReporter } from './failure-reporter';
 
 describe('runSyncCycle', () => {
@@ -168,7 +168,7 @@ describe('runSyncCycle', () => {
 
     const r = await runOutbound(engine, reporter);
 
-    expect(r).toEqual({ applied: 0, failed: 0, hadErrors: true });
+    expect(r).toEqual({ applied: 0, failed: 0, skipped: 0, hadErrors: true });
     expect(lines[0]).toContain('AgenIA->HIS: boom');
   });
 
@@ -209,5 +209,94 @@ describe('runSyncCycle', () => {
       pushed: 7,
       hadErrors: false,
     });
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// El freno y la vuelta van juntos: "si el circuito está abierto NO se toca el
+// HIS, y el resultado de cada vuelta abre o cierra ese circuito". Es la regla
+// que evita que un SQL Server reiniciándose veinte minutos mande media cola a
+// dead-letter, y estaba enterrada en el bucle infinito de index.ts.
+// ══════════════════════════════════════════════════════════════════════════
+describe('runOutboundConFreno', () => {
+  /** Reporter propio: este describe vive fuera del `beforeEach` de arriba. */
+  const crearReporter = () => {
+    const lines: string[] = [];
+    return { lines, reporter: new FailureReporter((l) => lines.push(l)) };
+  };
+
+  const freno = (puede: boolean) => ({
+    puedeIntentar: jest.fn(() => puede),
+    registrarExito: jest.fn(),
+    registrarFallo: jest.fn(),
+    resumen: jest.fn(() => ({ estado: 'ABIERTO' as const, fallosSeguidos: 5 })),
+  });
+
+  const engineQue = (r: unknown) => ({
+    pullAndApplyOutboxEvents: jest.fn(async () => r as never),
+  });
+
+  const vueltaOk = {
+    applied: 2,
+    skippedIdempotent: 0,
+    skippedUnsupported: 0,
+    failed: 0,
+    failures: [],
+  };
+
+  it('con el circuito abierto NO se toca el HIS', async () => {
+    const engine = engineQue(vueltaOk);
+    const { lines, reporter } = crearReporter();
+
+    const r = await runOutboundConFreno(engine, reporter, freno(false));
+
+    expect(engine.pullAndApplyOutboxEvents).not.toHaveBeenCalled();
+    expect(r.frenado).toBe(true);
+    expect(lines[0]).toContain('modo seguro activo');
+  });
+
+  it('estar frenado NO es un error: no debe contar como fallo', async () => {
+    // Si contara, el propio freno alimentaría el contador que lo mantiene
+    // abierto y no se cerraría nunca.
+    const cb = freno(false);
+
+    const r = await runOutboundConFreno(engineQue(vueltaOk), crearReporter().reporter, cb);
+
+    expect(r.hadErrors).toBe(false);
+    expect(cb.registrarFallo).not.toHaveBeenCalled();
+  });
+
+  it('una vuelta buena cierra el circuito', async () => {
+    const cb = freno(true);
+
+    await runOutboundConFreno(engineQue(vueltaOk), crearReporter().reporter, cb);
+
+    expect(cb.registrarExito).toHaveBeenCalled();
+    expect(cb.registrarFallo).not.toHaveBeenCalled();
+  });
+
+  it('una vuelta con eventos fallidos alimenta el freno', async () => {
+    const cb = freno(true);
+    const engine = engineQue({
+      ...vueltaOk,
+      applied: 0,
+      failed: 1,
+      failures: [{ seq: '1', eventId: 'e1', message: 'HIS caído' }],
+    });
+
+    await runOutboundConFreno(engine, crearReporter().reporter, cb);
+
+    expect(cb.registrarFallo).toHaveBeenCalled();
+    expect(cb.registrarExito).not.toHaveBeenCalled();
+  });
+
+  it('deja pasar los totales de la vuelta', async () => {
+    const r = await runOutboundConFreno(
+      engineQue({ ...vueltaOk, skippedUnsupported: 3 }),
+      crearReporter().reporter,
+      freno(true),
+    );
+
+    expect(r).toMatchObject({ applied: 2, skipped: 3, frenado: false });
   });
 });

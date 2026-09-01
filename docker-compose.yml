@@ -45,8 +45,87 @@ services:
       - "${HIS_MOCK_PORT:-1433}:1433"
     volumes:
       - mirror_his_mock_data:/var/opt/mssql
+    networks:
+      default:
+      # Misma IP que el SQL Server real del hospital. Así el `driverConfig` que
+      # usa la VM simulada es CARÁCTER POR CARÁCTER el de producción, y el
+      # cutover no cambia ni ese campo.
+      hospital_lan:
+        ipv4_address: 192.168.1.16
+
+  # ── Simulación de la VM del hospital (perfil "vm") ────────────────────────
+  # Levantar con:  ./apps/mirror-agent/local-vm/vm-up.sh
+  # No arranca con un `docker compose up -d` normal: vive tras el perfil "vm".
+
+  # Borde HTTPS de AgenIA. El agente sale por 443 con TLS de verdad, como en
+  # producción — no contra http://localhost:3001.
+  agenia-edge:
+    image: caddy:2-alpine
+    container_name: agenia_edge
+    profiles: ["vm"]
+    volumes:
+      - ./apps/mirror-agent/local-vm/Caddyfile:/etc/caddy/Caddyfile:ro
+      - agenia_edge_data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      wan:
+        aliases:
+          - api.agenia.local
+
+  # La VM que TI entrega: Ubuntu 22.04 con systemd como PID 1.
+  mirror-vm:
+    build:
+      context: ./apps/mirror-agent/local-vm
+      dockerfile: Dockerfile
+    image: agenia/mirror-vm:22.04
+    container_name: agenia_mirror_vm
+    profiles: ["vm"]
+    # SIN `platform`: la VM corre en la arquitectura nativa del host.
+    #
+    # La del hospital es x86_64 y forzar `linux/amd64` era lo fiel, pero en
+    # Apple Silicon eso entra por Rosetta y la traducción NO sobrevive a un
+    # `docker restart`: la VM volvía a arrancar y ningún binario x86 se podía
+    # ejecutar ("exec format error"), lo que hacía imposible probar justo lo
+    # que más importa — que la VM se recupere de un reinicio. Nada de este
+    # agente depende de la arquitectura (Node y tedious son puro JS), así que
+    # se prefiere poder probar el reinicio. En un runner Linux x86 esto ya
+    # corre amd64 solo, sin tocar nada.
+    #
+    # systemd necesita cgroups y /run escribible. `privileged` además permite
+    # que ufw manipule iptables, que es parte de lo que queremos probar.
+    privileged: true
+    cgroup: host
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - mirror_vm_root:/var/log/journal
+    # Specs pedidas a TI: 2 vCPU, 4 GB RAM.
+    cpus: 2
+    mem_limit: 4g
+    # SIN `ports:` a propósito. La VM no expone NADA: el diseño es de salida
+    # únicamente (PLAN_ESPEJO_HOSPITAL §4.1) y la simulación lo respeta.
+    networks:
+      hospital_lan:
+        ipv4_address: 192.168.1.50
+      wan:
 
 volumes:
   postgres_data:
   redis_data:
   mirror_his_mock_data:
+  mirror_vm_root:
+  agenia_edge_data:
+
+networks:
+  default:
+  # LAN del hospital: la VM y el SQL Server, en el mismo segmento que en
+  # Anserma. La nube NO está aquí — no puede alcanzar la VM, por diseño.
+  hospital_lan:
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24
+  # Salida a internet de la VM hacia el borde de AgenIA.
+  wan:

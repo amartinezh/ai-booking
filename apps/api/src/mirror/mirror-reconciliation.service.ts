@@ -33,8 +33,16 @@ export interface ReconciliationReport {
   inHis: number;
   /** Están en AgenIA y NO en el HIS: el paciente cree que tiene cita y no la tiene. */
   missingInHis: string[];
-  /** Están en el HIS y NO en AgenIA: AgenIA podría revender ese cupo. */
+  /**
+   * Citas del HIS cuyo cupo en AgenIA no existe o sigue disponible: AgenIA
+   * podría vender esa misma hora otra vez.
+   */
   missingInAgenIA: string[];
+  /**
+   * Cupos que se cerraron automáticamente porque el hospital ya los tenía
+   * vendidos. Subconjunto de `missingInAgenIA`.
+   */
+  repaired: string[];
   /** true si los dos sistemas coinciden exactamente. */
   inSync: boolean;
 }
@@ -93,7 +101,80 @@ export class MirrorReconciliationService {
     );
 
     const missingInHis = [...enAgenIA].filter((k) => !enHis.has(k)).sort();
-    const missingInAgenIA = [...enHis].filter((k) => !enAgenIA.has(k)).sort();
+
+    // ⚠️ La otra dirección NO se mide con la tabla `Appointment`.
+    //
+    // Una cita nacida en el HIS (agendada en ventanilla) no crea un
+    // `Appointment` en AgenIA — el alta en caliente del paciente es Fase 2+.
+    // Lo que AgenIA sí hace, y es lo que importa, es OCUPAR el cupo para dejar
+    // de venderlo por WhatsApp. Comparar contra `Appointment` marcaba como
+    // deriva cada cita de ventanilla del hospital: cinco en la prueba, cientos
+    // en producción. Una alerta que siempre está en rojo deja de mirarse, y la
+    // deriva de verdad se pierde entre el ruido.
+    //
+    // El criterio correcto es el operativo: ¿podría AgenIA vender otra vez esa
+    // hora? Si el cupo no existe o sigue libre, eso sí es deriva.
+    const cupos = await this.prisma.scheduleSlot.findMany({
+      where: {
+        organizationId,
+        startTime: { gte: window.from, lt: window.to },
+        doctorId: { in: [...claveHis.keys()] },
+      },
+      select: { id: true, doctorId: true, startTime: true, isAvailable: true },
+    });
+    const ocupacion = new Map<string, { id: string; isAvailable: boolean }>();
+    for (const cupo of cupos) {
+      const medico = claveHis.get(cupo.doctorId);
+      if (!medico) continue;
+      ocupacion.set(`${medico}|${cupo.startTime.toISOString()}`, {
+        id: cupo.id,
+        isAvailable: cupo.isAvailable,
+      });
+    }
+
+    const missingInAgenIA = [...enHis]
+      .filter((k) => {
+        // Una cita que AgenIA tiene como propia está, por definición, conocida.
+        if (enAgenIA.has(k)) return false;
+        const cupo = ocupacion.get(k);
+        // Sin cupo equivalente, o con el cupo todavía a la venta.
+        return cupo === undefined || cupo.isAvailable;
+      })
+      .sort();
+
+    // ─── Reparación ─────────────────────────────────────────────────────
+    // Detectar no basta. Cada clave de `missingInAgenIA` es una hora que el
+    // hospital YA vendió y que AgenIA sigue ofreciendo por WhatsApp: dejarla
+    // así es esperar a que dos pacientes se presenten a la misma cita.
+    //
+    // Solo se repara ESTA dirección, y solo cerrando cupos. Es la única
+    // corrección que no puede hacer daño: como mucho se deja de ofrecer una
+    // hora que el hospital tiene ocupada. La dirección contraria (una cita que
+    // AgenIA tiene y el hospital no) NO se toca sola — repararla significaría
+    // escribir o borrar en la base del hospital a partir de una comparación, y
+    // eso lo decide una persona.
+    const reparados: string[] = [];
+    for (const clave of missingInAgenIA) {
+      const cupo = ocupacion.get(clave);
+      if (!cupo || !cupo.isAvailable) continue;
+      await this.prisma.$transaction(async (tx) => {
+        // Marca de anti-eco: este cambio nace del HIS, no debe volver al HIS.
+        await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+        await tx.scheduleSlot.update({
+          where: { id: cupo.id },
+          data: { isAvailable: false },
+        });
+      });
+      reparados.push(clave);
+    }
+
+    if (reparados.length > 0) {
+      this.logger.warn(
+        `Reconciliación (org ${organizationId}): ${reparados.length} cupo(s) que el ` +
+          `hospital ya tenía vendidos y AgenIA seguía ofreciendo se cerraron ` +
+          `automáticamente: ${reparados.slice(0, 5).join(', ')}.`,
+      );
+    }
 
     const report: ReconciliationReport = {
       organizationId,
@@ -102,6 +183,7 @@ export class MirrorReconciliationService {
       inHis: enHis.size,
       missingInHis,
       missingInAgenIA,
+      repaired: reparados,
       inSync: missingInHis.length === 0 && missingInAgenIA.length === 0,
     };
 
@@ -149,6 +231,7 @@ export class MirrorReconciliationService {
           inHis: report.inHis,
           missingInHis: report.missingInHis,
           missingInAgenIA: report.missingInAgenIA,
+          repaired: report.repaired,
         }).slice(0, 4000),
       },
     });
