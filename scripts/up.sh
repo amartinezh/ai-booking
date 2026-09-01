@@ -439,9 +439,23 @@ if [ "$DO_DB_PUSH" -eq 1 ] || [ "$DO_SEED" -eq 1 ]; then
   fi
   if [ "$DO_SEED" -eq 1 ]; then
     info "seed ..."
-    ( cd "$REPO_ROOT/packages/database" && npx tsx scripts/seed.ts ) || die "El seed falló."
+    # La ruta era scripts/seed.ts y ese archivo no existe: el seed vive en
+    # prisma/seed.ts. `--seed` fallaba siempre con "Cannot find module".
+    ( cd "$REPO_ROOT/packages/database" && npx tsx prisma/seed.ts ) || die "El seed falló."
     ok "Seed ejecutado."
   fi
+fi
+
+# El DDL que Prisma no gestiona (triggers del espejo, índices parciales) se
+# aplica SIEMPRE, no solo con --db-push: es idempotente, tarda milisegundos, y
+# olvidarlo deja el espejo con el HIS muerto sin un solo error visible. Ver
+# packages/database/prisma/sql/non-prisma-ddl.sql.
+step "DDL no gestionado por Prisma (triggers del espejo)"
+if pnpm --filter @agenia/database db:apply-sql >/dev/null 2>&1; then
+  ok "Triggers, función de captura e índices parciales verificados."
+else
+  warn "No se pudo aplicar el DDL no gestionado. El espejo con el HIS no capturará eventos."
+  warn "Detalle:  pnpm --filter @agenia/database db:apply-sql"
 fi
 
 if [ "$WITH_HIS_MOCK" -eq 1 ] && [ -n "${AGENIA_SYNC_PASSWORD:-}" ]; then
