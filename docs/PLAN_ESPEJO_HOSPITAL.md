@@ -468,7 +468,7 @@ Estas seis capas son idénticas para cualquier driver — es la parte del sistem
 
 | `driverKey` | Hospital | Estado | Documentación |
 |---|---|---|---|
-| `cnt-sanvicente-anserma` | Hospital San Vicente de Paul de Anserma (HIS de CNT Sistemas de Información, por confirmar) | Fase 0 avanzada — bloqueante crítico del ciclo de vida de citas ya resuelto | `docs/drivers/cnt-sanvicente-anserma/` (`MAPEO_HIS.md`, `ESTADO.md`, `CORREO_PRUEBA_HIS.md`, `sql/`, `evidencia/`) |
+| `cnt-sanvicente-anserma` | Hospital San Vicente de Paul de Anserma (HIS de CNT Sistemas de Información, por confirmar) | Fases 1–5 implementadas y verificadas contra una VM simulada (`apps/mirror-agent/local-vm/`). Fase 0 con pendientes externos: bloque 21, `NU_SEXO_PAC` y la VM real | `docs/drivers/cnt-sanvicente-anserma/` (`MAPEO_HIS.md`, `ESTADO.md`, `CORREO_PRUEBA_HIS.md`, `sql/`, `evidencia/`) |
 
 *(Esta tabla crece con cada hospital nuevo. Antes de escribir código específico de un HIS nuevo, crear su carpeta en `docs/drivers/<driverKey>/` y agregar la fila aquí.)*
 

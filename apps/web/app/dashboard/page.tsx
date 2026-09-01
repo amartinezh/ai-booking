@@ -64,6 +64,13 @@ export default async function DashboardPage({
         whereClause.scheduleSlot = slotWhere;
     }
 
+    // La tarjeta del espejo solo se ofrece a las clínicas que lo tienen.
+    const conEspejo = session.organizationId
+        ? (await prisma.hospitalMirrorConfig.count({
+              where: { organizationId: session.organizationId },
+          })) > 0
+        : false;
+
     const appointments = await prisma.appointment.findMany({
         where: whereClause,
         include: {
@@ -110,7 +117,7 @@ export default async function DashboardPage({
             </header>
 
             {/* Accesos rápidos: iconos a las opciones del menú, según el rol. */}
-            <QuickAccessGrid role={session.role} />
+            <QuickAccessGrid role={session.role} conEspejo={conEspejo} />
 
             <Suspense fallback={<PageSkeleton />}>
                 <DashboardClient

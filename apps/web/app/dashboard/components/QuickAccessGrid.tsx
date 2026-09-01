@@ -25,9 +25,15 @@ const ACCENT_STYLES: Record<MenuAccent, { tile: string; glow: string }> = {
     slate: { tile: 'bg-gradient-to-br from-slate-500 to-slate-700', glow: 'group-hover:shadow-slate-500/25' },
 };
 
-export default function QuickAccessGrid({ role }: { role: UserRole }) {
+export default function QuickAccessGrid({
+    role,
+    conEspejo = false,
+}: {
+    role: UserRole;
+    conEspejo?: boolean;
+}) {
     // La Visión General es la página actual: no tiene sentido como acceso rápido.
-    const items = getMenusForRole(role).filter((item) => item.href !== '/dashboard');
+    const items = getMenusForRole(role, { conEspejo }).filter((item) => item.href !== '/dashboard');
 
     if (items.length === 0) return null;
 

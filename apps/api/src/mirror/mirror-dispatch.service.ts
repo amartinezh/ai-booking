@@ -557,7 +557,14 @@ export class MirrorDispatchService {
   ): Promise<void> {
     await this.prisma.hospitalMirrorConfig.update({
       where: { organizationId },
-      data: { lastHeartbeatAt: new Date() },
+      data: {
+        lastHeartbeatAt: new Date(),
+        // Se guarda, no solo se loguea: "el agente respira" y "el agente
+        // alcanza su HIS" son cosas distintas, y la segunda tiene que verse en
+        // el panel sin que nadie esté mirando el log en ese instante.
+        lastHisReachable: input.hisReachable ?? null,
+        lastHisDetail: input.hisDetail?.slice(0, 500) ?? null,
+      },
     });
 
     if (input.recentErrors && input.recentErrors > 0) {

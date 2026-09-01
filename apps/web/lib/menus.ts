@@ -84,6 +84,29 @@ const MENUS_BY_ROLE: Partial<Record<UserRole, MenuItem[]>> = {
 };
 
 /** Opciones de menú visibles para un rol (vacío para roles sin dashboard clínico). */
-export function getMenusForRole(role: UserRole): MenuItem[] {
-    return MENUS_BY_ROLE[role] ?? [];
+/**
+ * Solo aparece en las clínicas que tienen espejo con un HIS. Ponerlo siempre
+ * dejaría una opción muerta en la mayoría de los tenants, y una opción que no
+ * hace nada enseña a ignorar el menú.
+ */
+const ESPEJO: MenuItem = {
+    label: 'Espejo con el HIS',
+    href: '/dashboard/espejo',
+    icon: '🪞',
+    description: 'Sincronización con el sistema del hospital',
+    accent: 'violet',
+};
+
+export function getMenusForRole(
+    role: UserRole,
+    opts: { conEspejo?: boolean } = {},
+): MenuItem[] {
+    const menus = MENUS_BY_ROLE[role] ?? [];
+    if (!opts.conEspejo || role !== 'ORG_ADMIN') return menus;
+
+    // Antes de Soporte, que siempre cierra la lista.
+    const i = menus.findIndex((m) => m.href === '/dashboard/soporte');
+    return i === -1
+        ? [...menus, ESPEJO]
+        : [...menus.slice(0, i), ESPEJO, ...menus.slice(i)];
 }

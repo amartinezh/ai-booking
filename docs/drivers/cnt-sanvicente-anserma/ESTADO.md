@@ -72,6 +72,30 @@ El hospital creó y canceló una cita real desde su aplicación (contra `PRUEBAS
 
 Se agregó `ConsultingRoom` al schema genérico de AgenIA (`packages/database/prisma/schema.prisma`) — catálogo de consultorios por tenant, **opcional e informativo**, relacionado a `DoctorProfile.consultingRoomId`. Nace de esta necesidad pero es un concepto genérico del motor (cualquier clínica lo puede usar, tenga o no espejo con un HIS). **No decide** en qué consultorio queda una cita concreta al escribir al HIS — eso lo sigue resolviendo el driver en tiempo real contra `TURNOS_MEDICOS` (ver `MAPEO_HIS.md` §2.5bis). `db push` corrido contra el Postgres de desarrollo, `@agenia/database` reconstruido, 335 tests de `api` en verde.
 
+## ✅ Fase 5 implementada (2026-09-01)
+
+Blindaje y operación, las cinco piezas que pedía el plan §11:
+
+- **Panel del espejo** (`Dashboard → Espejo con el HIS`). Cuatro semáforos que
+  responden lo que de verdad se pregunta quien opera esto: si el agente está
+  vivo *y alcanza el HIS* (son cosas distintas), si hay citas que no llegaron,
+  si la agenda coincide, y si los dos sistemas cuadran. Incluye el botón que la
+  capa 4 del plan prometía y no existía: **devolver a la cola un evento que se
+  rindió**. Antes, un dead-letter solo se veía por `psql` y se reintentaba con
+  un UPDATE a mano.
+- **`lastHisReachable` se guarda**, no solo se loguea: la única forma de
+  enterarse de que el agente latía sin poder escribir era estar mirando el log
+  del servidor en ese instante.
+- **Reconciliación** diaria corriendo desde el agente (ver Fase 2).
+- **Runbook** (`RUNBOOK.md`): qué hacer cuando algo va mal, ordenado por lo que
+  se ve primero. Rotación de token y credenciales, reproceso de dead-letter,
+  desastre total, apagado de emergencia.
+- **Game-day** (`scripts/game-day-espejo.sh`): seis escenarios de desastre
+  contra la VM simulada, con aserciones. Superado — 21 comprobaciones, 0 fallos:
+  proceso muerto, VM reiniciada, HIS incomunicado, internet caído, dead-letter
+  reprocesado y jornada cancelada con cita dentro. En los seis vuelve solo y no
+  se pierde ninguna cita.
+
 ## ✅ Fase 2 implementada (2026-09-01)
 
 `fetchAvailability()` dejó de ser un stub: el driver lee `TURNOS_MEDICOS`

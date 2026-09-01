@@ -98,6 +98,58 @@ describe('MirrorDispatchService', () => {
     });
   });
 
+  // ══════════════════════════════════════════════════════════════════════
+  // "El agente respira" y "el agente alcanza su HIS" son cosas distintas: el
+  // agente puede latir puntual mientras falla el 100 % de sus escrituras. Esa
+  // diferencia solo existía en el log del servidor, así que la única forma de
+  // enterarse era que alguien estuviera mirando en ese instante. Ahora se
+  // guarda, y el panel del hospital la muestra.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('heartbeat', () => {
+    const datosDelUpdate = () =>
+      prisma.hospitalMirrorConfig.update.mock.calls[0][0].data;
+
+    it('registra el latido', async () => {
+      await service.heartbeat('org1', 'driver-x', {});
+
+      expect(datosDelUpdate().lastHeartbeatAt).toEqual(expect.any(Date));
+    });
+
+    it('guarda que el HIS NO respondía, no solo lo loguea', async () => {
+      await service.heartbeat('org1', 'driver-x', {
+        hisReachable: false,
+        hisDetail: 'Failed to connect to 192.168.1.16:1433',
+      });
+
+      expect(datosDelUpdate()).toMatchObject({
+        lastHisReachable: false,
+        lastHisDetail: 'Failed to connect to 192.168.1.16:1433',
+      });
+    });
+
+    it('guarda también el caso bueno: sin él no se distingue de "nunca reportó"', async () => {
+      await service.heartbeat('org1', 'driver-x', { hisReachable: true });
+
+      expect(datosDelUpdate().lastHisReachable).toBe(true);
+    });
+
+    it('un agente viejo que no reporta salud del HIS deja el campo en nulo', async () => {
+      // Nulo significa "no lo sé", que es distinto de "no alcanza".
+      await service.heartbeat('org1', 'driver-x', {});
+
+      expect(datosDelUpdate().lastHisReachable).toBeNull();
+    });
+
+    it('un detalle largo se recorta: no se rompe el insert por un stack trace', async () => {
+      await service.heartbeat('org1', 'driver-x', {
+        hisReachable: false,
+        hisDetail: 'x'.repeat(2000),
+      });
+
+      expect(datosDelUpdate().lastHisDetail).toHaveLength(500);
+    });
+  });
+
   describe('ack — reintentos y dead-letter', () => {
     it('seqs exitosos → marca deliveredAt, no toca attempts', async () => {
       await service.ack('org1', { seqs: ['1', '2'] });

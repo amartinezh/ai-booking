@@ -1270,6 +1270,13 @@ model HospitalMirrorConfig {
 
   // Observabilidad del agente on-premise.
   lastHeartbeatAt DateTime?
+
+  // ¿El agente alcanzaba su HIS en el último latido? Son dos cosas distintas:
+  // el agente puede latir puntual y no poder escribir una sola cita. Antes esto
+  // solo salía por log, así que la única forma de enterarse era que alguien
+  // estuviera mirando el servidor en ese momento.
+  lastHisReachable Boolean?
+  lastHisDetail    String?
   lastPushCursor  BigInt    @default(0)
 
   // 🔔 Alertas de conflicto (doble-cupo → WaitlistEntry): configurable, se puede

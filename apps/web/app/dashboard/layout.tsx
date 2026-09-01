@@ -40,7 +40,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
     // Fuente única de verdad de la navegación por rol (compartida con el
     // grid de accesos rápidos del dashboard): lib/menus.ts.
-    const menus = getMenusForRole(role);
+    // La sección del espejo solo existe para las clínicas que lo tienen.
+    const conEspejo = session.organizationId
+        ? (await prisma.hospitalMirrorConfig.count({
+              where: { organizationId: session.organizationId },
+          })) > 0
+        : false;
+    const menus = getMenusForRole(role, { conEspejo });
 
     return (
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans">
