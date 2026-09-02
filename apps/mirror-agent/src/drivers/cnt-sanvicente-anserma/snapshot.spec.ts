@@ -65,13 +65,36 @@ describe('snapshotAppointments', () => {
     ]);
   });
 
-  it('acota la consulta a la ventana que se le pide', async () => {
+  it('consulta por fecha LOCAL, no por el instante UTC crudo', async () => {
+    // FE_FECH_CIT es una fecha local sin zona: pasarle un Date de JS deja que
+    // mssql lo serialice en UTC y desplaza el borde de la ventana hasta un
+    // día entero según la hora en que corra. Mismo desfase que tenía
+    // `detectChanges` antes de corregirse (ESTADO.md).
     const { driver, capturado } = conDriver([]);
 
     await driver.snapshotAppointments(VENTANA);
 
-    expect(capturado.params.desde).toEqual(VENTANA.from);
-    expect(capturado.params.hasta).toEqual(VENTANA.to);
+    // 2026-09-01T00:00:00Z son las 2026-08-31 19:00 en Bogotá: la fecha local
+    // retrocede un día respecto al instante UTC pedido.
+    expect(capturado.params.desde).toBe('2026-08-31');
+    expect(capturado.params.hasta).toBe('2026-11-30');
+    expect(capturado.sql).toMatch(
+      /CONVERT\(varchar\(10\), FE_FECH_CIT, 23\) BETWEEN @desde AND @hasta/,
+    );
+  });
+
+  it('recorta el resultado a la ventana UTC real, no al día completo', async () => {
+    // La consulta por fecha local trae el día entero como superconjunto; una
+    // cita de las 23:50 UTC del último día pedido cae fuera de `window.to` y
+    // no debe aparecer en la foto, aunque su fecha local haya calzado.
+    const { driver } = conDriver([
+      { med: '91-1', hora: '2026/11/30 18:00', hist: '111' }, // dentro: 23:00 UTC
+      { med: '91-1', hora: '2026/12/01 08:00', hist: '222' }, // fuera: >= window.to
+    ]);
+
+    const foto = await driver.snapshotAppointments(VENTANA);
+
+    expect(foto.map((f) => f.patientDocument)).toEqual(['111']);
   });
 
   it('NO filtra por marca de origen: reconciliar es comparar TODO', async () => {

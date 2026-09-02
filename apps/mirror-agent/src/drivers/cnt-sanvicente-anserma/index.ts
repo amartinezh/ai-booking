@@ -472,26 +472,56 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
    * que el hospital tiene contra todo lo que AgenIA cree tener, incluidas las
    * citas que el hospital agendó por ventanilla. Si se filtraran, la
    * comparación solo confirmaría lo que ya sabemos.
+   *
+   * ⚠️ MISMO DESFASE QUE TENÍA `detectChanges` (ver ESTADO.md, corregido
+   * 2026-09-01): `FE_FECH_CIT` es una fecha LOCAL sin zona, y `mssql`
+   * serializa un `Date` de JS en UTC. Filtrar la una con la otra desplaza el
+   * borde de la ventana hasta un día entero según la hora en que corra la
+   * reconciliación.
+   *
+   * Aquí no cancela nada —esto es de solo lectura—, pero sí falsea el
+   * reporte que decide qué se repara: una cita real cerca del borde puede
+   * faltar en la foto (la reconciliación la reporta como "el hospital no la
+   * tiene" sin ser cierto) o la foto puede traer una de fuera de lo pedido
+   * (comparándose contra cupos que la consulta de AgenIA nunca miró). Se
+   * consulta por FECHAS LOCALES —el lenguaje de esa columna, igual que en
+   * `fetchAvailability`— y se recorta el resultado a la ventana UTC real
+   * que pidió el llamador: la consulta por día completo trae un
+   * superconjunto, y el contrato de este método es la ventana exacta.
    */
   async snapshotAppointments(window: {
     from: Date;
     to: Date;
   }): Promise<HisAppointmentSnapshot[]> {
     const pool = this.requirePool();
+    const fechaDesde = fechaCitaLocal(window.from.toISOString(), this.timeZone);
+    const fechaHasta = fechaCitaLocal(window.to.toISOString(), this.timeZone);
+
     const filas = await pool
       .request()
-      .input('desde', sql.DateTime, window.from)
-      .input('hasta', sql.DateTime, window.to).query(`
+      .input('desde', sql.VarChar(10), fechaDesde)
+      .input('hasta', sql.VarChar(10), fechaHasta).query(`
         SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_HIST_PAC_CIT hist
           FROM dbo.CITAS_MEDICAS
-         WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
+         WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @desde AND @hasta`);
 
-    return filas.recordset.map((f: { med: string; hora: string; hist: string | null }) => ({
-      doctorExternalKey: f.med,
+    const foto: HisAppointmentSnapshot[] = [];
+    for (const f of filas.recordset as {
+      med: string;
+      hora: string;
+      hist: string | null;
+    }[]) {
       // El HIS guarda hora local; el protocolo viaja en UTC (plan §8).
-      startTimeIso: feHoraCitAIso(f.hora, this.timeZone),
-      patientDocument: f.hist ?? undefined,
-    }));
+      const startTimeIso = feHoraCitAIso(f.hora, this.timeZone);
+      const inicio = new Date(startTimeIso);
+      if (inicio < window.from || inicio >= window.to) continue;
+      foto.push({
+        doctorExternalKey: f.med,
+        startTimeIso,
+        patientDocument: f.hist ?? undefined,
+      });
+    }
+    return foto;
   }
 
   async createAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {

@@ -182,9 +182,18 @@ la VM simulada: el agente migró solo, sin emitir una sola cancelación.
 Seis pruebas nuevas cubren los bordes (239 en total). Ninguna de las que había
 podía fallar: todas miraban el SQL y el defecto estaba en el reloj.
 
-**Sigue pendiente el mismo desfase en `snapshotAppointments`** (la foto que usa
-la reconciliación), que aún compara una columna de fecha local contra un
-instante UTC.
+**El mismo desfase en `snapshotAppointments` (la foto que usa la
+reconciliación) también se cerró (2026-09-01).** No cancelaba nada —esa
+función es de solo lectura— pero falseaba el reporte: una cita real cerca del
+borde podía faltar en la foto y la reconciliación la marcaba como "el hospital
+no la tiene" sin ser cierto, o repararla en falso (cerrar un cupo que sí tenía
+cita). Mismo remedio: la consulta se hace por fecha local
+(`CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN`) y el resultado se recorta a
+la ventana UTC exacta que pidió el llamador — la consulta por día completo
+trae un superconjunto, y el contrato del método es la ventana precisa.
+Verificado contra el mock: la foto ya trae la cita de hoy y la de mañana
+corriendo cerca de la medianoche de Bogotá, el momento exacto en que antes se
+perdían. 240 tests en total.
 
 ## ⏳ Pendientes de este driver
 
