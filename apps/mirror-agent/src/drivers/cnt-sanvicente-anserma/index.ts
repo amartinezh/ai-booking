@@ -682,21 +682,32 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       .input('hora', sql.VarChar(18), datos.feHora)
       .input('moti', sql.VarChar(2), datos.motivo)
       .input('obse', sql.VarChar(255), datos.observacion).query(`
+        -- ⚠️ CITAS_ANULADAS NO es CITAS_MEDICAS con el sufijo cambiado.
+        --
+        -- Le faltan cuatro columnas que la cita SÍ tiene: NU_ESTA, CD_CODI_CECO,
+        -- CD_CODI_LUAT y FE_SOLI. Nombrarlas aquí hacía fallar el INSERT en el
+        -- hospital con "Invalid column name" (error 207) y, con él, TODA
+        -- cancelación: el paciente recibía "cancelada" por WhatsApp y el
+        -- hospital se quedaba con la cita. No se veía en pruebas porque el mock
+        -- local se había construido creyendo esa equivalencia y las inventó.
+        -- Esquema real confirmado en el bloque 28 (esquema-real.tsv).
         INSERT INTO dbo.CITAS_ANULADAS (
-          CD_CODI_MED_CIAN, FE_HORA_CIAN, NU_ESTA_CIAN, CD_CODI_SER_CIAN,
+          CD_CODI_MED_CIAN, FE_HORA_CIAN, CD_CODI_SER_CIAN,
           NU_HIST_PAC_CIAN, NU_DURA_CIAN, FE_ELAB_CIAN, FE_FECH_CIAN,
           NU_DIA_CIAN, NU_NUME_MOVI_CIAN, NU_PRIM_CIAN, NU_NUME_CONE_CIAN,
           NU_CONE_CALL_CIAN, CD_CODI_ESP_CIAN, CD_CODI_CONS_CIAN,
-          NU_NUME_CONV_CIAN, NU_TIPO_CIAN, DE_DESC_CIAN, CD_CODI_CECO_CIAN,
-          CD_CODI_LUAT_CIAN, FE_SOLI_CIAN, CD_CODI_MOTI_CIAN, TX_OBSE_CIAN
+          NU_NUME_CONV_CIAN, NU_TIPO_CIAN, DE_DESC_CIAN, NU_AUTO_AGRU_CIAN,
+          CD_CODI_EST_CIAN, CD_CODI_CAMP_CIAN, NU_CODIGO_HSWE_CIAN,
+          CD_CODI_MOTI_CIAN, TX_OBSE_CIAN
         )
         SELECT
-          CD_CODI_MED_CIT, FE_HORA_CIT, NU_ESTA_CIT, CD_CODI_SER_CIT,
+          CD_CODI_MED_CIT, FE_HORA_CIT, CD_CODI_SER_CIT,
           NU_HIST_PAC_CIT, NU_DURA_CIT, FE_ELAB_CIT, FE_FECH_CIT,
           NU_DIA_CIT, NU_NUME_MOVI_CIT, NU_PRIM_CIT, NU_NUME_CONE_CIT,
           NU_CONE_CALL_CIT, CD_CODI_ESP_CIT, CD_CODI_CONS_CIT,
-          NU_NUME_CONV_CIT, NU_TIPO_CIT, DE_DESC_CIT, CD_CODI_CECO_CIT,
-          CD_CODI_LUAT_CIT, FE_SOLI_CIT, @moti, @obse
+          NU_NUME_CONV_CIT, NU_TIPO_CIT, DE_DESC_CIT, NU_AUTO_AGRU_CIT,
+          CD_CODI_EST_CIT, CD_CODI_CAMP_CIT, NU_CODIGO_HSWE_CIT,
+          @moti, @obse
         FROM dbo.CITAS_MEDICAS
         WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora`);
 

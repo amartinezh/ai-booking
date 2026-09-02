@@ -314,6 +314,57 @@ describe('createAppointment — alta de paciente', () => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// 🚨 CITAS_ANULADAS NO es CITAS_MEDICAS con el sufijo cambiado. Le faltan
+// cuatro columnas que la cita sí tiene, y el driver las nombraba: en el
+// hospital ese INSERT fallaba con "Invalid column name" (error 207) y con él
+// TODA cancelación — el paciente recibía "cancelada" por WhatsApp y el
+// hospital se quedaba con la cita. Localmente pasaba porque el mock se había
+// construido creyendo esa equivalencia y las había inventado.
+//
+// Esquema real confirmado en el bloque 28 (esquema-real.tsv).
+// ══════════════════════════════════════════════════════════════════════════
+describe('cancelAppointment — solo columnas que CITAS_ANULADAS tiene', () => {
+  const INEXISTENTES = [
+    'NU_ESTA_CIAN',
+    'CD_CODI_CECO_CIAN',
+    'CD_CODI_LUAT_CIAN',
+    'FE_SOLI_CIAN',
+  ];
+
+  const sqlDeAnulacion = async () => {
+    const { driver, requests } = conDriver();
+    await driver.cancelAppointment({ ...evento(), op: 'CANCEL' });
+    return requests.find((r) => /INSERT INTO dbo\.CITAS_ANULADAS/.test(r.sql))!.sql;
+  };
+
+  it.each(INEXISTENTES)('no nombra %s: no existe en el hospital', async (col) => {
+    expect(await sqlDeAnulacion()).not.toContain(col);
+  });
+
+  it('sí archiva las columnas propias de la anulación', async () => {
+    const sql = await sqlDeAnulacion();
+
+    expect(sql).toContain('CD_CODI_MOTI_CIAN');
+    expect(sql).toContain('TX_OBSE_CIAN');
+  });
+
+  it('conserva el resto de la cita en el archivo', async () => {
+    // Es una tabla de auditoría: lo que no se copie, se pierde.
+    const sql = await sqlDeAnulacion();
+
+    for (const col of [
+      'CD_CODI_MED_CIAN',
+      'FE_HORA_CIAN',
+      'NU_HIST_PAC_CIAN',
+      'NU_NUME_CONV_CIAN',
+      'DE_DESC_CIAN',
+    ]) {
+      expect(sql).toContain(col);
+    }
+  });
+});
+
 describe('createAppointment — colisión de cupo en el HIS', () => {
   it('una violación de PK se reporta como cupo ya ocupado, no como error genérico', async () => {
     // La PK es (médico, hora, estado): que reviente es el detector natural de

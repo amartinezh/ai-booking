@@ -323,31 +323,40 @@ GO
 
 -- CITAS_ANULADAS: SIN PK/FK/índices únicos a propósito (así es en el HIS real
 -- — log de auditoría puro, ver MAPEO_HIS.md §2.5).
+-- ⚠️ Esquema REAL, confirmado contra ESEHSVP (bloque 28, esquema-real.tsv).
+--
+-- CITAS_ANULADAS NO es CITAS_MEDICAS con el sufijo cambiado, aunque se le
+-- parezca: le FALTAN cuatro columnas que la cita sí tiene (NU_ESTA, CD_CODI_CECO,
+-- CD_CODI_LUAT, FE_SOLI) y tiene otras cuatro propias. El mock las había
+-- inventado creyendo la equivalencia, y eso escondió un defecto que rompía
+-- TODA cancelación en el hospital: el INSERT nombraba columnas inexistentes y
+-- fallaba con "Invalid column name". El paciente recibía "cancelada" y el
+-- hospital se quedaba con la cita.
 CREATE TABLE dbo.CITAS_ANULADAS (
-    CD_CODI_MED_CIAN   varchar(4)   NULL,
-    FE_HORA_CIAN       varchar(18)  NULL,
-    NU_ESTA_CIAN       tinyint      NULL,
-    CD_CODI_SER_CIAN   varchar(12)  NULL,
-    NU_HIST_PAC_CIAN   varchar(20)  NULL,
-    NU_DURA_CIAN       int          NULL,
-    FE_ELAB_CIAN       datetime     NULL,
-    FE_FECH_CIAN       datetime     NULL,
-    NU_DIA_CIAN        tinyint      NULL,
-    NU_NUME_MOVI_CIAN  int          NULL,
-    NU_PRIM_CIAN       tinyint      NULL,
-    NU_NUME_CONE_CIAN  int          NULL,
-    NU_CONE_CALL_CIAN  int          NULL,
-    CD_CODI_ESP_CIAN   varchar(3)   NULL,
-    CD_CODI_CONS_CIAN  varchar(8)   NULL,
-    NU_NUME_CONV_CIAN  int          NULL,
-    NU_TIPO_CIAN       tinyint      NULL,
-    DE_DESC_CIAN       varchar(600) NULL,
-    CD_CODI_CECO_CIAN  varchar(11)  NULL,
-    CD_CODI_LUAT_CIAN  varchar(2)   NULL,
-    FE_SOLI_CIAN       datetime     NULL,
-    CD_CODI_MOTI_CIAN  varchar(2)   NULL,
-    TX_OBSE_CIAN       varchar(255) NULL,
-    NU_CONE_ANUL_CIAN  int          NULL
+    CD_CODI_MED_CIAN     varchar(4)   NOT NULL,
+    CD_CODI_SER_CIAN     varchar(12)  NULL,
+    NU_HIST_PAC_CIAN     varchar(20)  NULL,
+    NU_DURA_CIAN         int          NULL,
+    FE_ELAB_CIAN         datetime     NULL,
+    FE_FECH_CIAN         datetime     NULL,
+    NU_DIA_CIAN          tinyint      NULL,
+    NU_NUME_MOVI_CIAN    int          NOT NULL,
+    NU_PRIM_CIAN         tinyint      NULL,
+    FE_HORA_CIAN         varchar(18)  NULL,
+    NU_NUME_CONE_CIAN    int          NULL,
+    NU_CONE_CALL_CIAN    int          NULL,
+    CD_CODI_ESP_CIAN     varchar(3)   NULL,
+    CD_CODI_CONS_CIAN    varchar(8)   NULL,
+    NU_NUME_CONV_CIAN    int          NULL,
+    NU_TIPO_CIAN         tinyint      NULL,
+    DE_DESC_CIAN         varchar(600) NULL,
+    CD_CODI_MOTI_CIAN    varchar(2)   NULL,
+    NU_CONE_ANUL_CIAN    int          NULL,
+    NU_AUTO_AGRU_CIAN    int          NULL,
+    TX_OBSE_CIAN         varchar(255) NULL,
+    CD_CODI_EST_CIAN     varchar(3)   NULL,
+    CD_CODI_CAMP_CIAN    varchar(3)   NULL,
+    NU_CODIGO_HSWE_CIAN  tinyint      NULL
 );
 GO
 
