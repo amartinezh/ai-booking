@@ -39,7 +39,13 @@ function fakePool(
   } = {},
 ) {
   const requests: { params: Record<string, unknown>; sql: string }[] = [];
-  const tx = { begun: false, committed: false, rolledBack: false };
+  const tx = {
+    begun: false,
+    committed: false,
+    rolledBack: false,
+    /** Cuántas escrituras se habían hecho ya cuando se confirmó. */
+    escriturasAlConfirmar: -1,
+  };
 
   const makeRequest = () => {
     const params: Record<string, unknown> = {};
@@ -83,6 +89,7 @@ function fakePool(
       },
       async commit() {
         tx.committed = true;
+        tx.escriturasAlConfirmar = requests.length;
       },
       async rollback() {
         tx.rolledBack = true;
@@ -578,6 +585,60 @@ describe('rescheduleAppointment', () => {
     expect(r.success).toBe(false);
     expect(r.message).toMatch(/cupo anterior/);
     expect(requests).toHaveLength(0);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Reagendar es MOVER, y mover es una sola cosa o ninguna.
+  //
+  // Antes la anulación hacía `commit` y solo DESPUÉS se intentaba el alta,
+  // fuera de la transacción. Si el alta fallaba, el paciente se quedaba sin
+  // NINGUNA cita —la vieja borrada, la nueva nunca escrita— mientras AgenIA
+  // creía haberla movido. Ninguna de las pruebas de arriba lo detectaba:
+  // todas miran el camino feliz.
+  // ══════════════════════════════════════════════════════════════════════
+  it('si el médico no tiene turno el día nuevo, la cita anterior NO se borra', async () => {
+    const { driver, requests, tx } = conDriver({ turno: null });
+
+    const r = await driver.rescheduleAppointment(eventoResched());
+
+    expect(r.success).toBe(false);
+    expect(r.message).toMatch(/la cita anterior sigue en pie/);
+    expect(tx.rolledBack).toBe(true);
+    expect(tx.committed).toBe(false);
+    // Y no queda ninguna cita nueva a medias.
+    expect(insertDeCita(requests)).toBeUndefined();
+  });
+
+  it('si el cupo nuevo ya está vendido en el HIS, tampoco se pierde la anterior', async () => {
+    // Colisión de PK: el hospital vendió ese cupo entre que AgenIA lo ofreció
+    // y el agente llegó a escribirlo. Es el caso más probable de todos.
+    const { driver, tx } = conDriver({ error: { number: 2627 } });
+
+    const r = await driver.rescheduleAppointment(eventoResched());
+
+    expect(r.success).toBe(false);
+    expect(r.message).toMatch(/ya está ocupado/);
+    expect(tx.rolledBack).toBe(true);
+    expect(tx.committed).toBe(false);
+  });
+
+  it('anulación y alta viajan en la MISMA transacción, y se confirma una sola vez', async () => {
+    const { driver, requests, tx } = conDriver();
+
+    await driver.rescheduleAppointment(eventoResched());
+
+    const iAlta = requests.findIndex((r) =>
+      /INSERT INTO dbo\.CITAS_MEDICAS/.test(r.sql),
+    );
+    expect(sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)).toBeDefined();
+    expect(iAlta).toBeGreaterThanOrEqual(0);
+    expect(tx.begun).toBe(true);
+    expect(tx.committed).toBe(true);
+    expect(tx.rolledBack).toBe(false);
+    // Lo que de verdad distingue el arreglo del defecto: el commit vino
+    // DESPUÉS del alta, no antes. Con el código anterior se confirmaba la
+    // anulación y solo entonces se intentaba escribir la cita nueva.
+    expect(tx.escriturasAlConfirmar).toBeGreaterThan(iAlta);
   });
 
   it('el alta nueva reusa createAppointment: mismas reglas de convenio', async () => {

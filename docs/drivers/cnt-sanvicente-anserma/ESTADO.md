@@ -283,6 +283,40 @@ Verificado de punta a punta con el driver real contra el mock en cuatro zonas
 horarias: las cuatro escriben `2026-09-15 00:00:00.000`. Cinco pruebas nuevas,
 250 en total.
 
+## ✅ Reagendar ya no puede dejar al paciente sin ninguna cita (2026-09-01)
+
+`rescheduleAppointment()` hacía `commit` de la anulación y **después**, fuera
+de la transacción, llamaba a `createAppointment()`. Si el alta fallaba —el
+médico no tiene turno el día nuevo, o el hospital acaba de vender ese cupo y
+salta la colisión de PK— la cita vieja ya estaba borrada y la nueva nunca se
+escribía. El paciente se quedaba sin NADA, mientras AgenIA daba el
+reagendamiento por hecho y le mostraba la cita nueva. El comentario del método
+decía "en una transacción" y no lo era.
+
+Reproducido con el driver real contra el SQL Server del mock — reagendar a un
+día en el que el médico no atiende:
+
+| | Antes | Ahora |
+|---|---|---|
+| Citas vigentes del paciente | **0** | 1 (la original, intacta) |
+| Filas en `CITAS_ANULADAS` | 1 (huérfana) | 0 |
+| Resultado devuelto | fallo | fallo, con "la cita anterior sigue en pie" |
+
+**Arreglo:** el alta se puede ejecutar ahora dentro de una transacción ajena.
+Se extrajo `crearCita(ejecutor, evt)` del cuerpo de `createAppointment()`, y
+tanto ella como `ensurePaciente()` y `turnoDelDia()` reciben un `Ejecutor`
+—el pool o una transacción abierta; `mssql` expone el mismo `.request()` en
+los dos, así que no hubo que duplicar ni una consulta—. `rescheduleAppointment`
+abre UNA transacción, anula y crea dentro de ella, y **hace rollback si el alta
+no sale**. Un alta suelta sigue usando el pool y se comporta igual que siempre.
+
+Tres pruebas nuevas, y las tres **verificadas contra el código anterior**: las
+tres fallan sin el arreglo. Ninguna de las que ya existían lo detectaba porque
+todas miran el camino feliz. La tercera comprueba lo que de verdad distingue
+el arreglo del defecto —que el `commit` ocurre DESPUÉS del alta, no antes—;
+para eso el doble de conexión ahora registra cuántas escrituras llevaba hechas
+al confirmar. 253 tests en total, game-day 19/19.
+
 ## ⏳ Pendientes de este driver
 
 0. **Bloque 29 preparado, pendiente de correr** (`sql/FASE0_DESCUBRIMIENTO_HIS.sql`)

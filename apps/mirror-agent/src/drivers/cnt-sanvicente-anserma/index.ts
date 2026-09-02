@@ -96,6 +96,16 @@ interface FotoPrevia {
   ventana: VentanaLocal | null;
 }
 
+/**
+ * Quien ejecuta una consulta: el pool o una transacción abierta.
+ *
+ * Existe para que el alta de una cita se pueda escribir DENTRO de la misma
+ * transacción que la anulación, que es lo que hace falta para reagendar sin
+ * dejar al paciente sin nada si el segundo paso falla. `mssql` expone el
+ * mismo `.request()` en los dos, así que el resto del código no se entera.
+ */
+type Ejecutor = { request(): sql.Request };
+
 function leerCursor(since: DriverCursor): FotoPrevia | null {
   if (!since || typeof since !== 'object') return null;
   const c = since as Partial<SnapshotCursor>;
@@ -560,6 +570,20 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
   }
 
   async createAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {
+    return this.crearCita(this.requirePool(), evt);
+  }
+
+  /**
+   * El alta de verdad, sobre el ejecutor que se le pase.
+   *
+   * Separada de `createAppointment` para que `rescheduleAppointment` pueda
+   * escribirla dentro de SU transacción, junto con la anulación de la cita
+   * anterior. Un alta suelta usa el pool y se comporta igual que siempre.
+   */
+  private async crearCita(
+    ej: Ejecutor,
+    evt: CanonicalChangeEvent,
+  ): Promise<DriverResult> {
     const p = evt.payload;
 
     // El motor genérico ya rechaza los eventos sin homologar antes de llegar
@@ -579,7 +603,6 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     }
 
     const mapping = this.requireMapping();
-    const pool = this.requirePool();
 
     try {
       const feHora = formatFeHoraCit(p.startTimeIso!, this.timeZone);
@@ -590,12 +613,12 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         serviceExternalKey: p.serviceExternalKey,
       });
 
-      await this.ensurePaciente(p);
+      await this.ensurePaciente(ej, p);
 
       // El consultorio sale del turno del médico ese día, y con él la duración.
       // Es la regla documentada en MAPEO_HIS.md §2.5bis; si el turno no existe,
       // la cita no debería crearse: el médico no atiende ese día.
-      const turno = await this.turnoDelDia(p.doctorExternalKey!, feFecha);
+      const turno = await this.turnoDelDia(ej, p.doctorExternalKey!, feFecha);
       if (!turno) {
         return {
           success: false,
@@ -613,7 +636,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
           )
         : mapping.duracionMinutos;
 
-      await pool
+      await ej
         .request()
         .input('med', sql.VarChar(4), p.doctorExternalKey)
         .input('hora', sql.VarChar(18), feHora)
@@ -674,12 +697,12 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
    * los pregunte.
    */
   private async ensurePaciente(
+    ej: Ejecutor,
     p: CanonicalChangeEvent['payload'],
   ): Promise<void> {
-    const pool = this.requirePool();
     const mapping = this.requireMapping();
 
-    const existe = await pool
+    const existe = await ej
       .request()
       .input('hist', sql.VarChar(20), p.patientDocument)
       .query('SELECT 1 AS x FROM dbo.PACIENTES WHERE NU_HIST_PAC = @hist');
@@ -699,7 +722,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       ? partirNombreDado(p.patientNombres, p.patientApellidos)
       : partirNombre(p.patientFullName);
 
-    await pool
+    await ej
       .request()
       .input('hist', sql.VarChar(20), p.patientDocument)
       .input('docu', sql.VarChar(20), p.patientDocument)
@@ -722,10 +745,11 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
 
   /** Turno del médico ese día: de ahí salen el consultorio y la disponibilidad. */
   private async turnoDelDia(
+    ej: Ejecutor,
     medico: string,
     fechaIso: string,
   ): Promise<{ consultorio: string | null } | null> {
-    const r = await this.requirePool()
+    const r = await ej
       .request()
       .input('med', sql.VarChar(4), medico)
       // Mismo motivo que en el INSERT: `FE_FECH_TUME` es una fecha sin zona.
@@ -834,16 +858,34 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         motivo: mapping.motivoAnulacion,
         observacion: 'Reagendada por el paciente vía WhatsApp',
       });
+
+      // El alta de la cita nueva reusa la MISMA lógica que un alta suelta
+      // —convenio, consultorio, alta de paciente, validaciones— pero sobre
+      // esta transacción. Duplicarla aquí sería garantizar que las dos
+      // versiones se separen con el tiempo.
+      const alta = await this.crearCita(tx, evt);
+
+      // 🛡️ Si la cita nueva no se pudo crear, la vieja NO se puede haber
+      // ido. Antes esto no era así: la anulación hacía `commit` y solo
+      // DESPUÉS se intentaba el alta, fuera de la transacción. Si el alta
+      // fallaba —el médico no tiene turno ese día, el cupo ya está vendido en
+      // el HIS— el paciente se quedaba sin NINGUNA cita: la vieja borrada y
+      // la nueva nunca escrita, mientras AgenIA creía haberla movido.
+      // Reagendar es mover, y mover es una sola cosa o ninguna.
+      if (!alta.success) {
+        await tx.rollback();
+        return {
+          success: false,
+          message: `no se reagendó, la cita anterior sigue en pie: ${alta.message ?? 'el alta falló'}`,
+        };
+      }
+
       await tx.commit();
+      return { success: true };
     } catch (error) {
       await tx.rollback().catch(() => undefined);
       throw error;
     }
-
-    // El alta de la cita nueva reusa createAppointment tal cual: mismas
-    // reglas de convenio, consultorio y validación. Duplicarlas aquí sería
-    // garantizar que las dos versiones se separen con el tiempo.
-    return this.createAppointment(evt);
   }
 
   /**
