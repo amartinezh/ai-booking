@@ -989,3 +989,198 @@ FROM dbo.CITAS_MEDICAS;
 --   · Si (29c) ya es barata (pocas lecturas, pocos ms) ⇒ no hay nada que
 --     hacer y el polling cada 5s es sostenible. Esa también es una respuesta.
 -- =============================================================================
+
+-- =============================================================================
+-- BLOQUE 30 — El insumo de la homologación (MirrorEntityMap)
+--
+-- POR QUÉ ESTE BLOQUE
+-- `MirrorEntityMap` es la tabla de equivalencias entre los médicos/servicios de
+-- AgenIA y los códigos del hospital. HOY NO EXISTE QUIEN LA ESCRIBA: cinco
+-- piezas del motor la leen y ninguna la produce. Sin esas filas no se generan
+-- cupos, no sale ninguna cita hacia el HIS, no entra ninguna, y —lo más
+-- traicionero— con el espejo encendido el chatbot deja de ofrecer citas a TODO
+-- el mundo, sin un solo error en el log.
+--
+-- Esto no se puede resolver desde el servidor: la API no alcanza el HIS por
+-- diseño (plan §4.1), solo el agente lo ve. La herramienta que vamos a
+-- construir hará que el agente lea este catálogo y proponga los emparejamientos
+-- por CÉDULA. Antes de escribirla hace falta saber si esa clave sirve.
+--
+-- 🔐 SOBRE DATOS PERSONALES
+-- Las cédulas de los médicos son datos personales (Ley 1581). Para decidir el
+-- diseño solo hace falta saber si están COMPLETAS y si son ÚNICAS — no sus
+-- valores. Por eso las consultas devuelven indicadores, no números de
+-- documento. El emparejamiento real lo hará el agente contra la base, sin que
+-- nadie copie cédulas a un chat ni a un repositorio.
+--
+-- ⚠️ SOLO LECTURA. No modifica nada.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- (30a) Los médicos que IMPORTAN no son todos los de MEDICOS.
+--
+-- Solo un médico con turnos a futuro puede generar cupos: los demás son
+-- historia. Fase 0 contó 27 con turnos hasta ago-2027, pero la tabla entera
+-- tiene muchas más filas. Esto separa las dos poblaciones — es el tamaño real
+-- del trabajo de homologación.
+SELECT
+    COUNT(*)                                                        AS medicos_en_la_tabla,
+    SUM(CASE WHEN t.med IS NOT NULL THEN 1 ELSE 0 END)              AS con_turnos_futuros
+FROM dbo.MEDICOS m
+LEFT JOIN (
+    SELECT DISTINCT CD_MED_TUME AS med
+    FROM dbo.TURNOS_MEDICOS
+    WHERE FE_FECH_TUME >= CAST(GETDATE() AS date)
+) t ON t.med = m.CD_CODI_MED;
+
+-- Y el listado de esos médicos con lo que hace falta para homologar.
+-- SIN la cédula: solo si la tiene y de qué largo, que es lo que decide si la
+-- clave sirve. El nombre y el cargo sí van — son la etiqueta legible que
+-- `MirrorEntityMap.externalLabel` guarda para poder diagnosticar sin abrir la
+-- base del hospital.
+SELECT
+    m.CD_CODI_MED                                                   AS codigo,
+    m.NO_NOMB_MED                                                   AS nombre,
+    m.DE_CARG_MED                                                   AS cargo,
+    m.NU_ESTA_MED                                                   AS estado,
+    m.CD_CODI_LUA_MED                                               AS sede,
+    CASE WHEN NULLIF(LTRIM(RTRIM(m.NU_DOCU_MED)), '') IS NULL
+         THEN 'NO' ELSE 'SI' END                                    AS tiene_cedula,
+    LEN(LTRIM(RTRIM(ISNULL(m.NU_DOCU_MED, ''))))                    AS largo_cedula,
+    CASE WHEN NULLIF(LTRIM(RTRIM(m.TX_EMAIL_MED)), '') IS NULL
+         THEN 'NO' ELSE 'SI' END                                    AS tiene_email,
+    CASE WHEN NULLIF(LTRIM(RTRIM(m.DE_REGI_MED)), '') IS NULL
+         THEN 'NO' ELSE 'SI' END                                    AS tiene_registro_medico
+FROM dbo.MEDICOS m
+JOIN (
+    SELECT DISTINCT CD_MED_TUME AS med
+    FROM dbo.TURNOS_MEDICOS
+    WHERE FE_FECH_TUME >= CAST(GETDATE() AS date)
+) t ON t.med = m.CD_CODI_MED
+ORDER BY m.CD_CODI_MED;
+
+-- (30b) ¿Sirve la cédula como clave de emparejamiento?
+--
+-- `NU_DOCU_MED` es NULLABLE. Cada médico sin cédula, o con una cédula repetida,
+-- es un emparejamiento que habrá que hacer a mano mirando el nombre — y el
+-- nombre no es clave: "JUAN PEREZ" puede haber dos.
+SELECT
+    COUNT(*)                                                        AS medicos_con_turnos,
+    SUM(CASE WHEN NULLIF(LTRIM(RTRIM(m.NU_DOCU_MED)), '') IS NULL
+             THEN 1 ELSE 0 END)                                     AS sin_cedula,
+    COUNT(DISTINCT NULLIF(LTRIM(RTRIM(m.NU_DOCU_MED)), ''))         AS cedulas_distintas
+FROM dbo.MEDICOS m
+JOIN (
+    SELECT DISTINCT CD_MED_TUME AS med
+    FROM dbo.TURNOS_MEDICOS
+    WHERE FE_FECH_TUME >= CAST(GETDATE() AS date)
+) t ON t.med = m.CD_CODI_MED;
+
+-- Cédulas repetidas entre DOS médicos distintos (mismo profesional dado de alta
+-- dos veces, o error de digitación). Si sale algo, el emparejamiento automático
+-- tiene que negarse a resolver esos casos en vez de elegir uno.
+SELECT LTRIM(RTRIM(NU_DOCU_MED)) AS cedula_repetida, COUNT(*) AS veces
+FROM dbo.MEDICOS
+WHERE NULLIF(LTRIM(RTRIM(NU_DOCU_MED)), '') IS NOT NULL
+GROUP BY LTRIM(RTRIM(NU_DOCU_MED))
+HAVING COUNT(*) > 1
+ORDER BY COUNT(*) DESC;
+
+-- (30c) ¿Qué significa NU_ESTA_MED?
+--
+-- MAPEO_HIS.md §2.2 lo anota como "estado — VERIFICAR 1=activo": sigue siendo
+-- una hipótesis. Si nos equivocamos, importamos médicos retirados o excluimos
+-- activos. Se verifica igual que se verificó NU_SEXO_PAC: por cruce
+-- estadístico contra un hecho independiente — tener turnos a futuro. Un médico
+-- con agenda hasta 2027 está activo, diga lo que diga la columna.
+SELECT
+    m.NU_ESTA_MED                                                   AS estado,
+    COUNT(*)                                                        AS medicos,
+    SUM(CASE WHEN t.med IS NOT NULL THEN 1 ELSE 0 END)              AS con_turnos_futuros
+FROM dbo.MEDICOS m
+LEFT JOIN (
+    SELECT DISTINCT CD_MED_TUME AS med
+    FROM dbo.TURNOS_MEDICOS
+    WHERE FE_FECH_TUME >= CAST(GETDATE() AS date)
+) t ON t.med = m.CD_CODI_MED
+GROUP BY m.NU_ESTA_MED
+ORDER BY m.NU_ESTA_MED;
+
+-- (30d) ¿Sirve TX_EMAIL_MED para crear usuarios en AgenIA?
+--
+-- Importa porque `DoctorProfile` exige un `User`, y `User` exige email ÚNICO.
+-- Si los correos faltan o se repiten, importar médicos automáticamente obliga a
+-- inventar credenciales — una superficie de seguridad que preferimos no abrir.
+SELECT
+    COUNT(*)                                                        AS medicos_con_turnos,
+    SUM(CASE WHEN NULLIF(LTRIM(RTRIM(m.TX_EMAIL_MED)), '') IS NULL
+             THEN 1 ELSE 0 END)                                     AS sin_email,
+    COUNT(DISTINCT NULLIF(LTRIM(RTRIM(m.TX_EMAIL_MED)), ''))        AS emails_distintos
+FROM dbo.MEDICOS m
+JOIN (
+    SELECT DISTINCT CD_MED_TUME AS med
+    FROM dbo.TURNOS_MEDICOS
+    WHERE FE_FECH_TUME >= CAST(GETDATE() AS date)
+) t ON t.med = m.CD_CODI_MED;
+
+-- (30e) De los 1.280 servicios agendables, ¿cuáles se usan de verdad?
+--
+-- Nadie va a homologar 1.280 servicios a mano, y AgenIA tiene tres. La pregunta
+-- real no es "¿cuáles existen?" sino "¿cuáles mueven las citas?". Esto convierte
+-- un catálogo inmanejable en la lista corta que hay que discutir con la
+-- agendadora para decidir qué ofrece el chatbot.
+SELECT TOP 40
+    c.CD_CODI_SER_CIT                                               AS codigo_servicio,
+    s.NO_NOMB_SER                                                   AS nombre_servicio,
+    COUNT(*)                                                        AS citas_90d,
+    COUNT(DISTINCT c.CD_CODI_MED_CIT)                               AS medicos_que_lo_prestan
+FROM dbo.CITAS_MEDICAS c
+LEFT JOIN dbo.SERVICIOS s ON s.CD_CODI_SER = c.CD_CODI_SER_CIT
+WHERE c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+  AND c.FE_FECH_CIT <  DATEADD(day,   1, CAST(GETDATE() AS date))
+GROUP BY c.CD_CODI_SER_CIT, s.NO_NOMB_SER
+ORDER BY COUNT(*) DESC;
+
+-- (30f) ¿Un médico atiende MÁS DE UN servicio?
+--
+-- Pregunta abierta desde la Fase 2 (ESTADO.md): `TURNOS_MEDICOS` no lleva
+-- servicio, así que el servicio del cupo sale hoy de `DoctorProfile.serviceId`
+-- — UNO por médico. Si un médico atiende dos servicios en el mismo turno, esa
+-- regla es insuficiente y hace falta una más fina. Esto lo mide en vez de
+-- suponerlo.
+SELECT
+    c.CD_CODI_MED_CIT                                               AS medico,
+    COUNT(DISTINCT c.CD_CODI_SER_CIT)                               AS servicios_distintos,
+    COUNT(*)                                                        AS citas_90d
+FROM dbo.CITAS_MEDICAS c
+WHERE c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+  AND c.FE_FECH_CIT <  DATEADD(day,   1, CAST(GETDATE() AS date))
+GROUP BY c.CD_CODI_MED_CIT
+HAVING COUNT(DISTINCT c.CD_CODI_SER_CIT) > 1
+ORDER BY COUNT(DISTINCT c.CD_CODI_SER_CIT) DESC;
+
+-- =============================================================================
+-- RESULTADO DEL BLOQUE 30 (pendiente de ejecución):
+--
+--   (30a) médicos en la tabla / con turnos futuros:
+--   (30b) sin cédula:            cédulas distintas:        repetidas:
+--   (30c) NU_ESTA_MED — qué valor concentra los turnos futuros:
+--   (30d) sin email:             emails distintos:
+--   (30e) servicios que concentran las citas:
+--   (30f) médicos con más de un servicio:
+--
+-- QUÉ SE DECIDE CON ESTO
+--   · (30a) da el TAMAÑO real del trabajo: cuántas equivalencias hay que crear.
+--   · (30b) decide si el emparejamiento automático por cédula es viable. Con
+--     cédulas completas y únicas, la herramienta propone los 27 sola y solo
+--     hace falta revisar la lista. Con huecos, cada hueco es trabajo manual.
+--   · (30c) cierra una hipótesis que lleva abierta desde el bloque 2 y que
+--     decide a quién se importa.
+--   · (30d) decide si los médicos que faltan en AgenIA se pueden crear
+--     automáticamente o hay que darlos de alta por la pantalla que ya existe.
+--   · (30e) es el insumo de la conversación con la agendadora sobre qué ofrece
+--     el chatbot — la misma en la que hay que validar la tabla de convenios.
+--   · (30f) confirma o refuta que `DoctorProfile.serviceId` (un servicio por
+--     médico) baste para generar los cupos.
+-- =============================================================================

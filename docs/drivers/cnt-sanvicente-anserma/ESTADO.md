@@ -380,6 +380,32 @@ agente, 140 shared), game-day 19/19.
    resuelve dos preguntas de una línea: si existen de verdad claves
    (médico+hora) duplicadas, y si `NU_NUME_MOVI_CIT` llega a ser NULL.
 
+0a. **Bloque 30 preparado, pendiente de correr** — el insumo de la
+   homologación. `MirrorEntityMap` es la tabla de equivalencias entre los
+   médicos/servicios de AgenIA y los códigos del hospital, y **hoy no existe
+   quien la escriba**: cinco piezas del motor la leen, ninguna la produce (las
+   6 filas del entorno de desarrollo se metieron a mano). Sin ella no se
+   generan cupos, no sale ni entra ninguna cita, y —lo más traicionero— con el
+   espejo encendido `buildDoctorFilter()` devuelve `id: { in: [] }` y **el
+   chatbot deja de ofrecer citas a todo el mundo, sin un solo error en el
+   log**.
+
+   El bloque mide lo que decide el diseño de la herramienta: cuántos médicos
+   hay que homologar de verdad (solo los que tienen turnos futuros, no toda la
+   tabla `MEDICOS`), si la **cédula** sirve como clave de emparejamiento
+   automático (`NU_DOCU_MED` es nullable), qué significa `NU_ESTA_MED` —una
+   hipótesis abierta desde el bloque 2, verificada aquí por cruce contra los
+   turnos futuros, la misma técnica que cerró `NU_SEXO_PAC`—, si
+   `TX_EMAIL_MED` permite crear los `User` que `DoctorProfile` exige, cuáles de
+   los 1.280 servicios agendables mueven de verdad las citas, y si algún médico
+   atiende más de un servicio (lo que dejaría corto a `DoctorProfile.serviceId`
+   para generar cupos).
+
+   🔐 Las consultas devuelven **indicadores, no cédulas**: para decidir el
+   diseño basta saber si están completas y si son únicas. El emparejamiento
+   real lo hará el agente contra la base, sin que nadie copie datos personales
+   a un chat ni al repositorio.
+
 0b. **Distinguir "no asistió" de "canceló" en la entrada.** El no-show del
    hospital llega como una cancelación (DELETE + `CITAS_ANULADAS` con motivo
    `NA`), así que AgenIA lo guarda como `CANCELLED` en vez de `NO_SHOW`. El
