@@ -285,6 +285,19 @@ horarias: las cuatro escriben `2026-09-15 00:00:00.000`. Cinco pruebas nuevas,
 
 ## ⏳ Pendientes de este driver
 
+0. **Bloque 29 preparado, pendiente de correr** (`sql/FASE0_DESCUBRIMIENTO_HIS.sql`)
+   — ¿cuánto le cuesta al hospital que el agente relea su agenda cada 5
+   segundos? Mide índices y tamaño de `CITAS_MEDICAS`/`TURNOS_MEDICOS`, y
+   compara las DOS formas de la consulta: la actual (que envuelve la columna
+   en `CONVERT` y por tanto **no es sargable** — ningún índice la puede
+   servir) contra una candidata equivalente que deja la columna desnuda. La
+   equivalencia ya está verificada contra el mock en los bordes; falta el
+   costo real. De ahí sale si el arreglo es cambiar código nuestro, pedirle un
+   índice al hospital, o bajar la frecuencia del bucle de entrada — que hoy
+   comparte el intervalo de 5s del long-poll de salida sin motivo. De paso
+   resuelve dos preguntas de una línea: si existen de verdad claves
+   (médico+hora) duplicadas, y si `NU_NUME_MOVI_CIT` llega a ser NULL.
+
 1. **Encontrar la fuente de "Asignada Por"** (bloque 24) — búsqueda directa por nombre de columna dio vacío; candidatos: `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO`, `USUARIO`. Si no aparece en ninguna tabla, la alternativa es pedir al hospital un usuario/login propio de la aplicación (`AGENIA`/`WHATSAPP`) para que quede registrado como origen al insertar.
 2. **Decidir el código de motivo de cancelación del agente:** reutilizar `WB` (CANCELADO WEB, ya existe, 90 usos históricos) o pedir uno dedicado (ej. `WA`) — mismo espíritu que "Asignada Por", para que el hospital distinga sus reportes.
 3. **Fuentes contextuales del INSERT (bloque 21):** consecutivo de sesión (`CONEXION*`/`CONSECUTIVOS`), especialidad (¿`R_ESP_SER`?), consultorio/centro de costos/sede (`CONSULTORIOS`). Última milla del INSERT. **Consultorio: esquema de `CONSULTORIOS` ya CONFIRMADO** (2026-08-28, captura SSMS — ver `MAPEO_HIS.md` §2.5bis); falta validar a escala la regla "consultorio = turno del médico ese día" (bloque 25 de `FASE0_DESCUBRIMIENTO_HIS.sql`, ya preparado) y confirmar si el código real del consultorio del médico 76 es `'51'` (hipótesis corregida a partir de un comprobante impreso: "51-CONSULTORIO APS-01").

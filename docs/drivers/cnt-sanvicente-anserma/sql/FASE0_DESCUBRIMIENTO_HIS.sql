@@ -816,3 +816,176 @@ WHERE t.name IN (
     'CONVENIOS', 'EPS', 'R_PAC_EPS', 'MOTIVOANUL', 'TIPO_DOCUMENTO'
 )
 ORDER BY t.name, c.column_id;
+
+-- =============================================================================
+-- BLOQUE 29 — ¿Cuánto le cuesta al hospital que el agente lea su agenda?
+--
+-- POR QUÉ ESTE BLOQUE
+-- El agente hace polling diferencial: cada vuelta lee la ventana de vigilancia
+-- COMPLETA de CITAS_MEDICAS (90 días, ~28.000 filas) y la compara contra la
+-- foto anterior. Hoy ese bucle corre cada 5 segundos ⇒ unas 17.000 lecturas
+-- diarias sobre la base VIVA del hospital. Antes de encender esto en
+-- producción hay que saber si es una consulta barata o un escaneo completo de
+-- una tabla de años.
+--
+-- Y HAY UNA SEGUNDA PREGUNTA, MÁS IMPORTANTE QUE LA PRIMERA
+-- El driver filtra hoy así:
+--     WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @desde AND @hasta
+-- Envolver la columna en una función la vuelve NO SARGABLE: SQL Server no
+-- puede usar un índice sobre FE_FECH_CIT aunque exista, y se ve obligado a
+-- evaluar la conversión fila por fila. Es decir: puede que la respuesta a
+-- "¿hay índice?" sea SÍ y aun así no sirva de nada.
+--
+-- Esa forma se adoptó para arreglar un defecto real (comparar una columna de
+-- fecha local contra un instante UTC desplazaba la ventana hasta un día
+-- entero, y las citas que salían de ella se reportaban como canceladas). Pero
+-- el mismo arreglo se puede escribir manteniendo la columna desnuda y pasando
+-- el borde como literal de fecha, que es sargable. Por eso aquí se miden LAS
+-- DOS FORMAS con la misma ventana: la respuesta decide si hay que cambiar la
+-- consulta, pedir un índice, bajar la frecuencia, o las tres cosas.
+--
+-- ⚠️ TODO ESTE BLOQUE ES DE SOLO LECTURA. No crea índices ni cambia nada.
+-- ⚠️ NO ejecutar DBCC DROPCLEANBUFFERS / FREEPROCCACHE para "medir en frío":
+--    vaciaría la caché de TODO el servidor y se lo haría notar a los usuarios.
+--    Basta con correr cada consulta dos veces y quedarse con la segunda.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- (29a) TODOS los índices de las dos tablas que el agente relee sin parar, con
+-- sus columnas clave en orden. Un índice sobre FE_FECH_CIT solo sirve si la
+-- fecha es la PRIMERA columna de la clave (o la primera tras columnas fijadas
+-- por igualdad, que aquí no hay).
+SELECT
+    t.name                                   AS tabla,
+    i.name                                   AS indice,
+    i.type_desc                              AS tipo,
+    CASE WHEN i.is_primary_key = 1 THEN 'PK'
+         WHEN i.is_unique      = 1 THEN 'UNICO'
+         ELSE '' END                         AS clase,
+    ic.key_ordinal                           AS orden,
+    c.name                                   AS columna,
+    CASE WHEN ic.is_included_column = 1 THEN 'INCLUIDA' ELSE 'CLAVE' END AS rol
+FROM sys.indexes i
+JOIN sys.tables t          ON t.object_id  = i.object_id
+JOIN sys.index_columns ic  ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+JOIN sys.columns c         ON c.object_id  = ic.object_id AND c.column_id = ic.column_id
+WHERE t.name IN ('CITAS_MEDICAS', 'TURNOS_MEDICOS')
+ORDER BY t.name, i.name, ic.is_included_column, ic.key_ordinal;
+
+-- (29b) Tamaño real: cuántas filas y cuántos MB tiene que recorrer si escanea.
+-- La tabla acumula años (92.464 anulaciones históricas ⇒ el orden de magnitud
+-- de CITAS_MEDICAS es de cientos de miles de filas).
+SELECT
+    OBJECT_NAME(ps.object_id)                        AS tabla,
+    SUM(CASE WHEN ps.index_id IN (0,1) THEN ps.row_count ELSE 0 END) AS filas,
+    CAST(SUM(ps.used_page_count) * 8.0 / 1024 AS decimal(10,1))      AS mb
+FROM sys.dm_db_partition_stats ps
+WHERE OBJECT_NAME(ps.object_id) IN ('CITAS_MEDICAS', 'TURNOS_MEDICOS')
+GROUP BY OBJECT_NAME(ps.object_id);
+
+-- (29c) y (29d): las dos formas, con la MISMA ventana.
+--
+-- 👉 En SSMS, antes de correr esto: activar "Include Actual Execution Plan"
+--    (Ctrl+M). Lo que hay que mirar en el plan es si aparece "Index Seek" o
+--    "Index/Table Scan" sobre CITAS_MEDICAS.
+-- 👉 Correr el lote DOS VECES y reportar los números de la segunda (la primera
+--    paga el costo de leer de disco y ensucia la comparación).
+SET STATISTICS IO ON;
+SET STATISTICS TIME ON;
+GO
+
+DECLARE @desde23  varchar(10) = CONVERT(varchar(10), GETDATE(), 23);              -- 'YYYY-MM-DD'
+DECLARE @hasta23  varchar(10) = CONVERT(varchar(10), DATEADD(day, 90, GETDATE()), 23);
+DECLARE @desde112 varchar(8)  = CONVERT(varchar(8),  GETDATE(), 112);             -- 'YYYYMMDD'
+DECLARE @hasta112 varchar(8)  = CONVERT(varchar(8),  DATEADD(day, 91, GETDATE()), 112);
+
+PRINT '--- (29c) FORMA ACTUAL del driver: CONVERT sobre la columna (no sargable) ---';
+SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
+       CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist,
+       NU_DURA_CIT dura, DE_DESC_CIT descripcion,
+       CONVERT(varchar(10), FE_FECH_CIT, 23) fecha
+  FROM dbo.CITAS_MEDICAS
+ WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @desde23 AND @hasta23;
+
+PRINT '--- (29d) FORMA CANDIDATA: rango sobre la columna desnuda (sargable) ---';
+-- Mismo resultado, misma inmunidad a la zona horaria (el borde viaja como
+-- literal 'YYYYMMDD', que SQL Server lee igual bajo cualquier DATEFORMAT),
+-- pero dejando la columna sin envolver para que un índice pueda usarse.
+-- El borde superior es EXCLUSIVO, por eso son 91 días y no 90.
+--
+-- ✔ Equivalencia ya verificada contra el mock local sembrando los bordes
+--   (ayer, hoy, +89, +90, +91): las dos formas devuelven EXACTAMENTE el mismo
+--   conjunto — incluyen hoy y el día +90, excluyen ayer y el día +91. Lo que
+--   falta medir aquí no es si dan lo mismo, sino cuánto cuesta cada una.
+SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
+       CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist,
+       NU_DURA_CIT dura, DE_DESC_CIT descripcion,
+       CONVERT(varchar(10), FE_FECH_CIT, 23) fecha
+  FROM dbo.CITAS_MEDICAS
+ WHERE FE_FECH_CIT >= @desde112 AND FE_FECH_CIT < @hasta112;
+GO
+
+SET STATISTICS IO OFF;
+SET STATISTICS TIME OFF;
+GO
+
+-- 👉 De la salida de la pestaña "Messages" hacen falta, para CADA una de las
+--    dos: la línea "Table 'CITAS_MEDICAS'. Scan count N, logical reads N..." y
+--    la línea "SQL Server Execution Times: ... elapsed time = N ms". Y del
+--    plan, si fue Seek o Scan.
+
+-- (29e) ¿Existe de verdad más de una cita vigente para el mismo médico+hora?
+-- La PK es (médico, hora, ESTADO), así que el esquema lo permite: el desenlace
+-- de atención libera la tupla (médico, hora, 0) y esa hora se puede volver a
+-- agendar. El driver ya está blindado para ese caso (elige la fila viva y deja
+-- un aviso en el log), pero saber si pasa a diario o nunca dice si ese aviso
+-- va a sonar todo el tiempo.
+SELECT COUNT(*) AS claves_con_mas_de_una_fila
+FROM (
+    SELECT CD_CODI_MED_CIT, FE_HORA_CIT
+    FROM dbo.CITAS_MEDICAS
+    GROUP BY CD_CODI_MED_CIT, FE_HORA_CIT
+    HAVING COUNT(*) > 1
+) x;
+
+-- Y si hay, ver diez ejemplos con sus estados:
+SELECT TOP 10 a.CD_CODI_MED_CIT, a.FE_HORA_CIT, a.NU_ESTA_CIT, a.NU_HIST_PAC_CIT
+FROM dbo.CITAS_MEDICAS a
+JOIN (
+    SELECT CD_CODI_MED_CIT, FE_HORA_CIT
+    FROM dbo.CITAS_MEDICAS
+    GROUP BY CD_CODI_MED_CIT, FE_HORA_CIT
+    HAVING COUNT(*) > 1
+) d ON d.CD_CODI_MED_CIT = a.CD_CODI_MED_CIT AND d.FE_HORA_CIT = a.FE_HORA_CIT
+ORDER BY a.CD_CODI_MED_CIT, a.FE_HORA_CIT, a.NU_ESTA_CIT;
+
+-- (29f) ¿NU_NUME_MOVI_CIT llega a ser NULL en filas reales?
+-- Importa porque su columna hermana NU_NUME_MOVI_CIAN es NOT NULL, y la
+-- cancelación copia la una en la otra: una sola fila con NULL ahí haría fallar
+-- la cancelación de esa cita desde WhatsApp. El mapeo dice que en la práctica
+-- vale 0, esto lo confirma o lo desmiente.
+SELECT COUNT(*) AS filas, SUM(CASE WHEN NU_NUME_MOVI_CIT IS NULL THEN 1 ELSE 0 END) AS con_null
+FROM dbo.CITAS_MEDICAS;
+
+-- =============================================================================
+-- RESULTADO DEL BLOQUE 29 (pendiente de ejecución):
+--
+--   (29a) índices de CITAS_MEDICAS / TURNOS_MEDICOS:
+--   (29b) filas y MB:
+--   (29c) forma actual  → Seek/Scan:        logical reads:        elapsed:
+--   (29d) forma candidata → Seek/Scan:      logical reads:        elapsed:
+--   (29e) claves duplicadas (médico+hora):
+--   (29f) NU_NUME_MOVI_CIT nulos:
+--
+-- QUÉ SE DECIDE CON ESTO
+--   · Si (29d) hace Seek y (29c) hace Scan ⇒ cambiar las 4 consultas del
+--     driver a la forma sargable. Es un cambio de código, sin pedirle nada al
+--     hospital.
+--   · Si las DOS hacen Scan ⇒ no hay índice útil por fecha: o se pide uno
+--     (cambio en su base, hay que negociarlo), o se baja la frecuencia del
+--     bucle de entrada, que hoy comparte el intervalo de 5s del long-poll de
+--     salida sin ninguna razón para ello.
+--   · Si (29c) ya es barata (pocas lecturas, pocos ms) ⇒ no hay nada que
+--     hacer y el polling cada 5s es sostenible. Esa también es una respuesta.
+-- =============================================================================
