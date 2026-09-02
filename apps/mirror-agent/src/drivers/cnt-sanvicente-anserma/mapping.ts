@@ -116,6 +116,36 @@ export function fechaCitaLocal(iso: string, timeZone: string): string {
 }
 
 /**
+ * Una fecha local (`YYYY-MM-DD`) como literal `YYYYMMDD` para SQL Server.
+ *
+ * ═══ Por qué no se manda un `Date` ═══
+ * `FE_FECH_CIT` es una fecha SIN ZONA: el hospital la guarda a medianoche. Un
+ * `Date` de JavaScript, en cambio, es un instante, y `mssql` lo serializa en
+ * UTC. Mandar `new Date('2026-09-02T00:00:00')` desde un proceso en Bogotá
+ * hacía que al servidor llegara `2026-09-02 05:00:00` — la fecha correcta con
+ * cinco horas pegadas que ninguna fila del hospital tiene.
+ *
+ * Peor aún: el resultado dependía de la zona del PROCESO. El mismo código
+ * escribía `05:00` en la VM (`America/Bogota`) y `00:00` en un contenedor sin
+ * `TZ`. Un dato del hospital no puede depender de dónde corra el agente.
+ *
+ * Un literal de texto no tiene zona ni instante, así que no hay nada que
+ * convertir. Se usa `YYYYMMDD` y no `YYYY-MM-DD` porque para `datetime` es el
+ * único formato que SQL Server interpreta igual bajo cualquier `DATEFORMAT` o
+ * idioma de la sesión — y es además el que usó el hospital en su propia prueba
+ * (MAPEO_HIS.md §2.1).
+ */
+export function fechaLiteralSql(fechaLocal: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fechaLocal);
+  if (!m) {
+    throw new MappingIncompletoError(
+      `Fecha con formato inesperado: "${fechaLocal}". Se esperaba 'YYYY-MM-DD'.`,
+    );
+  }
+  return `${m[1]}${m[2]}${m[3]}`;
+}
+
+/**
  * Convenio de facturación de la cita.
  *
  * Regla confirmada en Fase 0 y validada de forma cruzada con la prueba manual

@@ -240,6 +240,49 @@ Cinco pruebas nuevas cubren esto, incluyendo el contrapunto obligado: que
 una atención normal (una sola fila, sin colisión) se siga reportando como
 `ATTENDANCE` y no como `CANCEL`+`INSERT`. 245 tests en total.
 
+## ✅ `FE_FECH_CIT` ya se escribe a medianoche (2026-09-01)
+
+El hospital guarda `FE_FECH_CIT` como fecha a medianoche (`MAPEO_HIS.md` §2.1).
+El driver mandaba `new Date(\`${feFecha}T00:00:00\`)` como `sql.DateTime`, y ahí
+se juntan dos cosas: un `Date` de JS es un INSTANTE, no una fecha, y `mssql` lo
+serializa en UTC. Medido contra el SQL Server del mock, para una cita del
+2026-09-15:
+
+| Zona del proceso | Antes | Ahora |
+|---|---|---|
+| `America/Bogota` (la VM) | `2026-09-15 05:00:00` | `2026-09-15 00:00:00` |
+| `UTC` | `2026-09-15 00:00:00` | `2026-09-15 00:00:00` |
+| `Europe/Madrid` | **`2026-09-14 22:00:00`** | `2026-09-15 00:00:00` |
+| `Asia/Tokyo` | **`2026-09-14 15:00:00`** | `2026-09-15 00:00:00` |
+
+En la VM el daño era "solo" cinco horas pegadas a la fecha correcta: nuestras
+citas quedaban con un componente horario que ninguna fila del hospital tiene, y
+cualquier consulta de su aplicación que compare la fecha por igualdad exacta
+—patrón habitual en este estilo de código legado— dejaba de encontrarlas. La
+cita existía en la tabla y podía no aparecer en su pantalla de agenda del día.
+
+Pero el defecto de fondo es peor que el síntoma: **el valor dependía de la zona
+del PROCESO**. El mismo código escribía una cosa en la VM y otra en un
+contenedor sin `TZ`, y desde cualquier zona al este de UTC escribía el DÍA
+ANTERIOR. Un dato del hospital no puede depender de dónde corra el agente.
+
+**Arreglo:** se saca el `Date` del camino. `fechaLiteralSql()` convierte la
+fecha local a un literal `'YYYYMMDD'` que viaja como `VarChar` — un texto no
+tiene zona ni instante, así que no hay nada que convertir. Se usa `YYYYMMDD` y
+no `YYYY-MM-DD` porque para `datetime` es el único formato que SQL Server
+interpreta igual bajo cualquier `DATEFORMAT` o idioma de sesión, y es el que
+usó el hospital en su propia prueba.
+
+Se corrigieron los dos sitios que mandaban fechas así: el INSERT de
+`CITAS_MEDICAS` y la búsqueda de turno en `turnoDelDia()`. En el segundo el
+`CAST(... AS date)` disimulaba el desfase mientras el agente corriera al oeste
+de UTC; desde una zona al este, la comparación caía en el día anterior y el
+médico "no tenía turno" — la cita se rechazaba entera.
+
+Verificado de punta a punta con el driver real contra el mock en cuatro zonas
+horarias: las cuatro escriben `2026-09-15 00:00:00.000`. Cinco pruebas nuevas,
+250 en total.
+
 ## ⏳ Pendientes de este driver
 
 1. **Encontrar la fuente de "Asignada Por"** (bloque 24) — búsqueda directa por nombre de columna dio vacío; candidatos: `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO`, `USUARIO`. Si no aparece en ninguna tabla, la alternativa es pedir al hospital un usuario/login propio de la aplicación (`AGENIA`/`WHATSAPP`) para que quede registrado como origen al insertar.

@@ -2,6 +2,7 @@ import {
   AnsermaMapping,
   MappingIncompletoError,
   fechaCitaLocal,
+  fechaLiteralSql,
   feHoraCitAIso,
   formatFeHoraCit,
   mapSexo,
@@ -475,5 +476,38 @@ describe('partirNombreDado', () => {
 
   it('sin nombres NO inventa: NO_NOMB_PAC es NOT NULL', () => {
     expect(() => partirNombreDado('', 'PEREZ')).toThrow(MappingIncompletoError);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// `FE_FECH_CIT` es una fecha SIN ZONA. Un `Date` de JS es un instante, y
+// `mssql` lo serializa en UTC: mandar uno le pegaba cinco horas a la fecha
+// del hospital, y el resultado dependía de la zona del PROCESO — el mismo
+// código escribía distinto en la VM que en un contenedor sin TZ.
+// ══════════════════════════════════════════════════════════════════════════
+describe('fechaLiteralSql', () => {
+  it('devuelve el literal YYYYMMDD que SQL Server lee igual siempre', () => {
+    expect(fechaLiteralSql('2026-09-02')).toBe('20260902');
+  });
+
+  it('el resultado NO depende de la zona del proceso', () => {
+    // La prueba de que el defecto quedó cerrado: es una transformación de
+    // texto, así que no hay reloj ni zona de por medio.
+    const tz = process.env.TZ;
+    try {
+      process.env.TZ = 'Asia/Tokyo';
+      const enTokio = fechaLiteralSql('2026-09-02');
+      process.env.TZ = 'UTC';
+      const enUtc = fechaLiteralSql('2026-09-02');
+      expect(enTokio).toBe('20260902');
+      expect(enUtc).toBe('20260902');
+    } finally {
+      process.env.TZ = tz;
+    }
+  });
+
+  it('una fecha con formato inesperado falla en vez de escribir basura', () => {
+    expect(() => fechaLiteralSql('02/09/2026')).toThrow(MappingIncompletoError);
+    expect(() => fechaLiteralSql('')).toThrow(MappingIncompletoError);
   });
 });

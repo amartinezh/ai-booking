@@ -177,6 +177,42 @@ describe('createAppointment — valores que se le escriben al HIS', () => {
     expect(insertDeCita(requests)!.dura).toBe(30);
   });
 
+  it('la fecha va como literal YYYYMMDD, no como Date', async () => {
+    // `FE_FECH_CIT` es una fecha SIN ZONA y el hospital la guarda a
+    // medianoche. Un `Date` de JS es un instante y `mssql` lo serializa en
+    // UTC: desde la VM (America/Bogota) llegaba `2026-09-03 05:00:00`, la
+    // fecha correcta con cinco horas que ninguna fila suya tiene. Cualquier
+    // consulta de su aplicación que compare la fecha por igualdad exacta
+    // dejaba de encontrar nuestras citas.
+    const { driver, requests } = conDriver();
+    await driver.createAppointment(evento());
+
+    const fecha = insertDeCita(requests)!.fecha;
+    expect(fecha).toBe('20260903');
+    expect(fecha).not.toBeInstanceOf(Date);
+  });
+
+  it('la fecha escrita no depende de la zona horaria del proceso', async () => {
+    // El defecto de fondo: el MISMO código escribía `05:00` en la VM y
+    // `00:00` en un contenedor sin TZ. Un dato del hospital no puede depender
+    // de dónde corra el agente.
+    const tz = process.env.TZ;
+    const fechaCon = async (zona: string) => {
+      process.env.TZ = zona;
+      const { driver, requests } = conDriver();
+      await driver.createAppointment(evento());
+      return insertDeCita(requests)!.fecha;
+    };
+
+    try {
+      expect(await fechaCon('America/Bogota')).toBe('20260903');
+      expect(await fechaCon('UTC')).toBe('20260903');
+      expect(await fechaCon('Asia/Tokyo')).toBe('20260903');
+    } finally {
+      process.env.TZ = tz;
+    }
+  });
+
   it('sin EPS factura como particular', async () => {
     const { driver, requests } = conDriver();
     await driver.createAppointment(evento());

@@ -6,6 +6,7 @@ import {
   MappingIncompletoError,
   formatFeHoraCit,
   fechaCitaLocal,
+  fechaLiteralSql,
   mapSexo,
   resolveConvenio,
   resolveEspecialidad,
@@ -619,7 +620,9 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         .input('ser', sql.VarChar(12), p.serviceExternalKey)
         .input('hist', sql.VarChar(20), p.patientDocument)
         .input('dura', sql.Int, duracion)
-        .input('fecha', sql.DateTime, new Date(`${feFecha}T00:00:00`))
+        // Literal 'YYYYMMDD', no un Date: ver fechaLiteralSql(). Un Date se
+        // serializa en UTC y le pegaba cinco horas a la fecha del hospital.
+        .input('fecha', sql.VarChar(8), fechaLiteralSql(feFecha))
         .input('esp', sql.VarChar(3), resolveEspecialidad(mapping, p.serviceExternalKey))
         .input('cons', sql.VarChar(8), turno.consultorio)
         .input('conv', sql.Int, convenio)
@@ -725,7 +728,11 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     const r = await this.requirePool()
       .request()
       .input('med', sql.VarChar(4), medico)
-      .input('fecha', sql.DateTime, new Date(`${fechaIso}T00:00:00`)).query(`
+      // Mismo motivo que en el INSERT: `FE_FECH_TUME` es una fecha sin zona.
+      // El `CAST(... AS date)` disimulaba el desfase mientras el agente
+      // corriera al oeste de UTC — desde una zona al este, la comparación
+      // caía en el día anterior y el médico "no tenía turno".
+      .input('fecha', sql.VarChar(8), fechaLiteralSql(fechaIso)).query(`
         SELECT TOP 1 CD_CODI_CONS_TUME AS consultorio
           FROM dbo.TURNOS_MEDICOS
          WHERE CD_MED_TUME = @med
