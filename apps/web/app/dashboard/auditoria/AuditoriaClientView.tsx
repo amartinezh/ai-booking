@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import WaitlistModal from './WaitlistModal';
 import { formatAppointmentCompact, formatAppointmentShort } from '@/lib/date';
 import {
@@ -268,7 +268,7 @@ export default function AuditoriaClientView({
         };
         const cutoff = now - ranges[dateRange];
 
-        let result = logs.filter(log => {
+        const result = logs.filter(log => {
             if (new Date(log.createdAt).getTime() < cutoff) return false;
 
             if (selectedReason && metaKeyOf(log) !== selectedReason) return false;

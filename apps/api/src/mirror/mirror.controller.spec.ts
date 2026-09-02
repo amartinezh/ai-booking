@@ -29,11 +29,15 @@ describe('MirrorController — validación de /mirror/ack', () => {
   const ack = (body: unknown) => controller.ack(req, body as never);
 
   beforeEach(async () => {
-    dispatch = { ack: jest.fn(async () => ({ acknowledged: 1 })) };
-    availability = { apply: jest.fn(async () => ({ mode: 'ON' })) };
+    dispatch = { ack: jest.fn(() => ({ acknowledged: 1 })) };
+    availability = { apply: jest.fn(() => ({ mode: 'ON' })) };
     catalog = {
-      upload: jest.fn(async () => ({
-        kind: 'DOCTOR', created: 0, updated: 0, vanished: 0, homologated: 0,
+      upload: jest.fn(() => ({
+        kind: 'DOCTOR',
+        created: 0,
+        updated: 0,
+        vanished: 0,
+        homologated: 0,
       })),
     };
 
@@ -104,7 +108,6 @@ describe('MirrorController — validación de /mirror/ack', () => {
   });
 });
 
-
 // ══════════════════════════════════════════════════════════════════════════
 // /mirror/availability borra, dentro de la ventana que declara, todo cupo que
 // no venga en el envío. Una ventana mal formada no es un detalle: es la
@@ -115,14 +118,15 @@ describe('MirrorController — validación de /mirror/availability', () => {
   let availability: { apply: jest.Mock };
 
   const req = { mirrorConfig: { organizationId: 'org1' } } as never;
-  const subir = (body: unknown) => controller.availabilityUpload(req, body as never);
+  const subir = (body: unknown) =>
+    controller.availabilityUpload(req, body as never);
   const VENTANA = {
     fromIso: '2026-09-03T05:00:00.000Z',
     toIso: '2026-09-04T05:00:00.000Z',
   };
 
   beforeEach(async () => {
-    availability = { apply: jest.fn(async () => ({ mode: 'ON' })) };
+    availability = { apply: jest.fn(() => ({ mode: 'ON' })) };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MirrorController],
       providers: [
@@ -190,8 +194,12 @@ describe('MirrorController — validación de /mirror/catalog', () => {
 
   beforeEach(async () => {
     catalog = {
-      upload: jest.fn(async () => ({
-        kind: 'DOCTOR', created: 2, updated: 0, vanished: 0, homologated: 0,
+      upload: jest.fn(() => ({
+        kind: 'DOCTOR',
+        created: 2,
+        updated: 0,
+        vanished: 0,
+        homologated: 0,
       })),
     };
     const module: TestingModule = await Test.createTestingModule({

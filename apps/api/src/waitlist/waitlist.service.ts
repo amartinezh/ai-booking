@@ -212,7 +212,7 @@ export class WaitlistService {
           `Lo sentimos, el tiempo para confirmar el cupo expiró. ⏰\n\nSi aún desea una cita, escríbame "Hola" y lo agregaremos nuevamente. 😊`,
           entry.organizationId,
         );
-      } catch (e) {
+      } catch {
         this.logger.warn(
           `No se pudo notificar expiración a ${entry.whatsappId}`,
         );

@@ -3,7 +3,6 @@ import { CurrentTenant } from '../common/current-tenant.decorator';
 import { AnalyticsService } from './analytics.service';
 import { Roles } from '../common/roles.decorator';
 import { RolesGuard } from '../common/roles.guard';
-import { Role } from '@agenia/database';
 
 @Controller('analytics')
 @UseGuards(RolesGuard)

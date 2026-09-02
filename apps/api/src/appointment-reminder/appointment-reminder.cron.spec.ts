@@ -33,15 +33,13 @@ describe('AppointmentReminderCronService — plantilla vs texto libre', () => {
     templateResult?: { success: boolean; error?: string };
   }) => {
     const chatbot = {
-      isWithinServiceWindow: jest.fn(async () => opts?.withinWindow ?? false),
-      sendOutboundForOrg: jest.fn(async () => ({ success: true })),
+      isWithinServiceWindow: jest.fn(() => opts?.withinWindow ?? false),
+      sendOutboundForOrg: jest.fn(() => ({ success: true })),
     };
     const templates = {
-      sendTemplate: jest.fn(
-        async () => opts?.templateResult ?? { success: true },
-      ),
+      sendTemplate: jest.fn(() => opts?.templateResult ?? { success: true }),
     };
-    const prisma = { appointment: { update: jest.fn(async () => ({})) } };
+    const prisma = { appointment: { update: jest.fn(() => ({})) } };
     const interactionLog = { logReminderSent: jest.fn(async () => {}) };
 
     const service = new AppointmentReminderCronService(
@@ -49,8 +47,8 @@ describe('AppointmentReminderCronService — plantilla vs texto libre', () => {
       prisma as any,
       chatbot as any,
       {
-        getCommunicationStyle: jest.fn(async () => 'FORMAL'),
-        getBotName: jest.fn(async () => 'Geni'),
+        getCommunicationStyle: jest.fn(() => 'FORMAL'),
+        getBotName: jest.fn(() => 'Geni'),
       } as any,
       interactionLog as any,
       { log: jest.fn() } as any,

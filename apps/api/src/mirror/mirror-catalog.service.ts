@@ -79,7 +79,7 @@ export class MirrorCatalogService {
     // queda con su `lastSeenAt` viejo, que es la señal honesta: "esto existía,
     // hoy no está".
     const vistas = new Set(
-      entries.map((e) => e.externalKey?.trim()).filter(Boolean) as string[],
+      entries.map((e) => e.externalKey?.trim()).filter(Boolean),
     );
     const vanished = [...yaConocidas].filter((k) => !vistas.has(k)).length;
 

@@ -32,9 +32,9 @@ describe('MirrorReconciliationService', () => {
 
   beforeEach(async () => {
     prisma = {
-      appointment: { findMany: jest.fn(async () => []) },
+      appointment: { findMany: jest.fn(() => []) },
       mirrorEntityMap: {
-        findMany: jest.fn(async () => [
+        findMany: jest.fn(() => [
           { agenIAId: 'doc-1', externalKey: '76' },
           { agenIAId: 'doc-2', externalKey: '91-1' },
         ]),
@@ -42,13 +42,13 @@ describe('MirrorReconciliationService', () => {
       // Ocupación de cupos: la comparación HIS→AgenIA se mide aquí, no en
       // `Appointment` (ver el comentario del servicio).
       scheduleSlot: {
-        findMany: jest.fn(async () => []),
-        update: jest.fn(async () => ({})),
+        findMany: jest.fn(() => []),
+        update: jest.fn(() => ({})),
       },
-      $transaction: jest.fn(async (fn: any) =>
+      $transaction: jest.fn((fn: any) =>
         fn({ $executeRawUnsafe: jest.fn(), scheduleSlot: prisma.scheduleSlot }),
       ),
-      syncAudit: { create: jest.fn(async () => ({})) },
+      syncAudit: { create: jest.fn(() => ({})) },
     };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -182,7 +182,12 @@ describe('MirrorReconciliationService', () => {
     const conCitaSoloEnHis = () =>
       service.reconcile(
         'org1',
-        [{ doctorExternalKey: '91-1', startTimeIso: '2026-09-03T13:00:00.000Z' }],
+        [
+          {
+            doctorExternalKey: '91-1',
+            startTimeIso: '2026-09-03T13:00:00.000Z',
+          },
+        ],
         VENTANA,
       );
 
@@ -202,8 +207,11 @@ describe('MirrorReconciliationService', () => {
     });
 
     it('marca el cambio como MIRROR para que no rebote al hospital', async () => {
-      const tx = { $executeRawUnsafe: jest.fn(), scheduleSlot: prisma.scheduleSlot };
-      prisma.$transaction.mockImplementation(async (fn: any) => fn(tx));
+      const tx = {
+        $executeRawUnsafe: jest.fn(),
+        scheduleSlot: prisma.scheduleSlot,
+      };
+      prisma.$transaction.mockImplementation((fn: any) => fn(tx));
 
       await conCitaSoloEnHis();
 

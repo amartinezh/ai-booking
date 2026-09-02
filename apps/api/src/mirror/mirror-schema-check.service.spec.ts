@@ -24,10 +24,7 @@ describe('MirrorSchemaCheckService', () => {
   let avisos: string[];
 
   /** Respuestas de pg_proc / pg_trigger, en el orden en que se consultan. */
-  const conObjetos = (opciones: {
-    funcion?: boolean;
-    triggers?: string[];
-  }) => {
+  const conObjetos = (opciones: { funcion?: boolean; triggers?: string[] }) => {
     const { funcion = true, triggers } = opciones;
     const todos = [
       'trg_sync_outbox_schedule_slot',
@@ -36,9 +33,7 @@ describe('MirrorSchemaCheckService', () => {
     ];
     prisma.$queryRaw
       .mockResolvedValueOnce([{ n: BigInt(funcion ? 1 : 0) }])
-      .mockResolvedValueOnce(
-        (triggers ?? todos).map((tgname) => ({ tgname })),
-      );
+      .mockResolvedValueOnce((triggers ?? todos).map((tgname) => ({ tgname })));
   };
 
   beforeEach(async () => {
@@ -64,7 +59,9 @@ describe('MirrorSchemaCheckService', () => {
     jest
       .spyOn((service as any).logger, 'warn')
       .mockImplementation((m: string) => avisos.push(m));
-    jest.spyOn((service as any).logger, 'log').mockImplementation(() => undefined);
+    jest
+      .spyOn((service as any).logger, 'log')
+      .mockImplementation(() => undefined);
   });
 
   it('sin ninguna organizacion con espejo, ni siquiera consulta el esquema', async () => {

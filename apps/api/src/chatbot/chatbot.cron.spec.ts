@@ -27,22 +27,22 @@ function build(opts: {
   }
 
   const redis = {
-    keys: jest.fn(async (pattern: string) =>
+    keys: jest.fn((pattern: string) =>
       pattern.startsWith('chat_state:') ? [key] : [],
     ),
     // El cron consulta dos keys distintas: el estado de la conversación y el
     // marcador de "alta de paciente nuevo en curso", que alarga el umbral de
     // inactividad. Devolver `opts.state` para TODA key hacía que el marcador
     // pareciera presente siempre.
-    get: jest.fn(async (k: string) =>
+    get: jest.fn((k: string) =>
       k.startsWith('alta_en_curso:') ? (opts.enAlta ?? null) : opts.state,
     ),
-    ttl: jest.fn(async () => opts.ttl),
-    del: jest.fn(async () => 1),
+    ttl: jest.fn(() => opts.ttl),
+    del: jest.fn(() => 1),
   };
   const httpService = { post: jest.fn(() => of({ data: {} })) };
   const whatsappCredentials = {
-    forOrg: jest.fn(async () => ({
+    forOrg: jest.fn(() => ({
       organizationId: ORG,
       phoneNumberId: 'pnid',
       accessToken: 'tok',

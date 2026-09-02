@@ -577,7 +577,7 @@ const FORMAL = {
       `Únicamente puedo colaborarle con citas médicas.\n\n¿Me indica qué especialidad necesita o con cuál doctor desea su cita?`,
     ]),
 
-  guardrailInsulto: (_phone: string, _botName: string = BOT_NAME) =>
+  guardrailInsulto: (_phone: string, _botName: string) =>
     `Para poder brindarle la mejor ayuda, necesitamos mantener una conversación respetuosa.\n\n` +
     `Por ahora, cerraremos este chat. Estaremos listos para atenderle cuando lo desee de forma cordial.\n\n` +
     `Solo escriba *"Hola"* para reiniciar el asistente.`,
@@ -1240,7 +1240,7 @@ const INFORMAL = {
       `Yo solo te puedo colaborar con citas médicas. 🙏 ¿Qué especialidad necesitas o con cuál doctor te gustaría agendar?`,
     ]),
 
-  guardrailInsulto: (_phone: string, _botName: string = BOT_NAME) =>
+  guardrailInsulto: (_phone: string, _botName: string) =>
     `Para brindarte la mejor ayuda, necesitamos mantener una conversación respetuosa. 🙏 En este momento, cerraremos este chat. Estamos listos para ayudarte cuando lo desees de forma cordial. Solo escribe *"Hola"* para reiniciar el asistente.`,
 
   // 🚑 Derivación de EMERGENCIA (mismo contrato que el pool FORMAL:

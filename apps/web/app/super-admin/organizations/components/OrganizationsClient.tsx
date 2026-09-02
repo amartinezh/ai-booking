@@ -384,7 +384,7 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
                         placeholder="Ej: Vicente, Sofía, MedBot..."
                       />
                       <p className="text-xs text-zinc-400 mt-1.5">
-                        El paciente verá: <em>"Soy <strong>{settingsBotName || 'Vicente'}</strong>, el asistente de {editingOrg.name}."</em>
+                        El paciente verá: <em>&quot;Soy <strong>{settingsBotName || 'Vicente'}</strong>, el asistente de {editingOrg.name}.&quot;</em>
                       </p>
                     </div>
                     <div className="flex justify-between items-center pt-2">

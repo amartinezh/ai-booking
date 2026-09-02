@@ -370,7 +370,7 @@ export class AppointmentReminderCronService
     recipientId: string,
   ): Promise<{ success: boolean; error?: string }> {
     return this.templates.sendTemplate({
-      organizationId: apt.organizationId!,
+      organizationId: apt.organizationId,
       recipientId,
       kind: 'APPOINTMENT_REMINDER',
       bodyParams: [

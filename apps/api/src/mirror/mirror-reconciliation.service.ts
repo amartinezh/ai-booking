@@ -96,7 +96,8 @@ export class MirrorReconciliationService {
 
     const enHis = new Set(
       hisSnapshot.map(
-        (c) => `${c.doctorExternalKey}|${new Date(c.startTimeIso).toISOString()}`,
+        (c) =>
+          `${c.doctorExternalKey}|${new Date(c.startTimeIso).toISOString()}`,
       ),
     );
 
@@ -178,7 +179,10 @@ export class MirrorReconciliationService {
 
     const report: ReconciliationReport = {
       organizationId,
-      window: { fromIso: window.from.toISOString(), toIso: window.to.toISOString() },
+      window: {
+        fromIso: window.from.toISOString(),
+        toIso: window.to.toISOString(),
+      },
       inAgenIA: enAgenIA.size,
       inHis: enHis.size,
       missingInHis,

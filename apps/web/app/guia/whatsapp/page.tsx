@@ -280,7 +280,7 @@ export default function GuiaWhatsappPage() {
                                 </li>
                                 <li>
                                     Esquina superior derecha → botón azul{' '}
-                                    <strong>"Comenzar"</strong>.
+                                    <strong>&quot;Comenzar&quot;</strong>.
                                 </li>
                                 <li>
                                     Inicia sesión con tu cuenta de Facebook (si ya estás
@@ -292,11 +292,11 @@ export default function GuiaWhatsappPage() {
                                 </li>
                                 <li>
                                     Cuando te pregunte tu rol, elige{' '}
-                                    <strong>"Desarrollador"</strong>.
+                                    <strong>&quot;Desarrollador&quot;</strong>.
                                 </li>
                             </OrderedSteps>
                             <Callout variant="info">
-                                "Desarrollador" no significa que tengas que programar — es
+                                &quot;Desarrollador&quot; no significa que tengas que programar — es
                                 solo el tipo de cuenta que Meta usa internamente.
                             </Callout>
                         </StepSection>
@@ -316,7 +316,7 @@ export default function GuiaWhatsappPage() {
                                     en una pestaña nueva.
                                 </li>
                                 <li>
-                                    <strong>"Crear cuenta"</strong> en la esquina superior
+                                    <strong>&quot;Crear cuenta&quot;</strong> en la esquina superior
                                     derecha.
                                 </li>
                                 <li>
@@ -350,24 +350,24 @@ export default function GuiaWhatsappPage() {
                         {/* ===== PASO 3 ===== */}
                         <StepSection number={3} id="paso-3" title="Crear la App en Meta for Developers">
                             <p>
-                                Una "App" es un proyecto técnico al que se le conectan
+                                Una &quot;App&quot; es un proyecto técnico al que se le conectan
                                 productos de Meta. Vamos a crear una solo para AgenIA.
                             </p>
                             <OrderedSteps>
                                 <li>
                                     En el panel de Developers → botón{' '}
-                                    <strong>"Crear app"</strong>.
+                                    <strong>&quot;Crear app&quot;</strong>.
                                 </li>
                                 <li>
-                                    "¿Qué quieres hacer con tu app?" → baja hasta{' '}
-                                    <strong>"Otro"</strong>.
+                                    &quot;¿Qué quieres hacer con tu app?&quot; → baja hasta{' '}
+                                    <strong>&quot;Otro&quot;</strong>.
                                 </li>
                                 <li>
-                                    "Selecciona el tipo de app" →{' '}
-                                    <strong>"Negocios"</strong> (Business).
+                                    &quot;Selecciona el tipo de app&quot; →{' '}
+                                    <strong>&quot;Negocios&quot;</strong> (Business).
                                 </li>
                                 <li>
-                                    En "Proporciona detalles":
+                                    En &quot;Proporciona detalles&quot;:
                                     <ul className="list-disc ml-5 mt-2 space-y-1 marker:text-emerald-500">
                                         <li>
                                             <strong>Nombre de la app:</strong>{' '}
@@ -395,10 +395,10 @@ export default function GuiaWhatsappPage() {
                             <OrderedSteps>
                                 <li>
                                     En el panel de la App, busca la tarjeta{' '}
-                                    <strong>"WhatsApp"</strong> (logo verde).
+                                    <strong>&quot;WhatsApp&quot;</strong> (logo verde).
                                 </li>
                                 <li>
-                                    Clic en <strong>"Configurar"</strong>.
+                                    Clic en <strong>&quot;Configurar&quot;</strong>.
                                 </li>
                                 <li>
                                     Asocia tu cuenta empresarial cuando te lo pida.
@@ -415,7 +415,7 @@ export default function GuiaWhatsappPage() {
                                 </li>
                             </ul>
                             <p>
-                                En el menú lateral izquierdo, debajo de "WhatsApp",
+                                En el menú lateral izquierdo, debajo de &quot;WhatsApp&quot;,
                                 aparecerán:{' '}
                                 <Code>Inicio rápido</Code>, <Code>API Setup</Code>,{' '}
                                 <Code>Configuration</Code>, <Code>Plantillas</Code>.
@@ -438,10 +438,10 @@ export default function GuiaWhatsappPage() {
                                 <li>
                                     Menú izquierdo → <strong>WhatsApp → API Setup</strong>{' '}
                                     (también puede aparecer como{' '}
-                                    <em>"Configuración de la API"</em>).
+                                    <em>&quot;Configuración de la API&quot;</em>).
                                 </li>
                                 <li>
-                                    En la sección "Send and receive messages" verás un
+                                    En la sección &quot;Send and receive messages&quot; verás un
                                     esquema parecido a este:
                                 </li>
                             </OrderedSteps>
@@ -466,7 +466,7 @@ export default function GuiaWhatsappPage() {
                             <OrderedSteps start={3}>
                                 <li>
                                     Lo que necesitas es el texto al lado de{' '}
-                                    <strong>"Phone number ID"</strong>. Son entre 15 y 17
+                                    <strong>&quot;Phone number ID&quot;</strong>. Son entre 15 y 17
                                     dígitos.
                                 </li>
                                 <li>
@@ -547,8 +547,8 @@ export default function GuiaWhatsappPage() {
                         <StepSection number={7} id="paso-7" title="Conectar tu número real">
                             <OrderedSteps>
                                 <li>
-                                    En <strong>API Setup</strong> → sección "From" → enlace{' '}
-                                    <strong>"Add phone number"</strong>.
+                                    En <strong>API Setup</strong> → sección &quot;From&quot; → enlace{' '}
+                                    <strong>&quot;Add phone number&quot;</strong>.
                                 </li>
                                 <li>
                                     Llena el formulario:
@@ -562,15 +562,15 @@ export default function GuiaWhatsappPage() {
                                             con tu marca real.
                                         </li>
                                         <li>
-                                            <strong>Categoría:</strong> "Salud".
+                                            <strong>Categoría:</strong> &quot;Salud&quot;.
                                         </li>
                                         <li>
                                             <strong>Descripción:</strong> opcional pero
                                             recomendada. Ej.{' '}
                                             <em>
-                                                "Clínica especializada en medicina general
+                                                &quot;Clínica especializada en medicina general
                                                 y odontología. Agenda tu cita con nuestra
-                                                asistente virtual AgenIA."
+                                                asistente virtual AgenIA.&quot;
                                             </em>
                                         </li>
                                         <li>
@@ -581,14 +581,14 @@ export default function GuiaWhatsappPage() {
                                     </ul>
                                 </li>
                                 <li>
-                                    "Verifica tu número": código de país (+57 Colombia),
+                                    &quot;Verifica tu número&quot;: código de país (+57 Colombia),
                                     10 dígitos del celular, método{' '}
-                                    <strong>"SMS"</strong> o{' '}
-                                    <strong>"Llamada de voz"</strong>.
+                                    <strong>&quot;SMS&quot;</strong> o{' '}
+                                    <strong>&quot;Llamada de voz&quot;</strong>.
                                 </li>
                                 <li>Ingresa el código de 6 dígitos que recibas.</li>
                                 <li>
-                                    Tu número real aparece ahora en el selector "From".{' '}
+                                    Tu número real aparece ahora en el selector &quot;From&quot;.{' '}
                                     <strong>
                                         Selecciónalo y vuelve a copiar el Phone Number ID
                                     </strong>{' '}
@@ -654,16 +654,16 @@ export default function GuiaWhatsappPage() {
                                         <strong>Usuarios del sistema</strong>.
                                     </li>
                                     <li>
-                                        Clic en <strong>"Agregar"</strong> (botón azul).
+                                        Clic en <strong>&quot;Agregar&quot;</strong> (botón azul).
                                     </li>
                                     <li>
                                         Nombre:{' '}
                                         <Code>AgenIA Integration</Code>. Rol:{' '}
-                                        <strong>"Admin"</strong>.
+                                        <strong>&quot;Admin&quot;</strong>.
                                     </li>
                                     <li>
                                         Acepta los términos y{' '}
-                                        <strong>"Crear usuario del sistema"</strong>.
+                                        <strong>&quot;Crear usuario del sistema&quot;</strong>.
                                     </li>
                                 </OrderedSteps>
                             </SubStep>
@@ -672,18 +672,18 @@ export default function GuiaWhatsappPage() {
                                 <OrderedSteps>
                                     <li>
                                         Con el System User seleccionado, clic en{' '}
-                                        <strong>"Agregar activos"</strong>.
+                                        <strong>&quot;Agregar activos&quot;</strong>.
                                     </li>
                                     <li>
-                                        Elige <strong>"Cuentas de WhatsApp"</strong>.
+                                        Elige <strong>&quot;Cuentas de WhatsApp&quot;</strong>.
                                     </li>
                                     <li>Marca tu WABA del listado.</li>
                                     <li>
                                         A la derecha, activa{' '}
-                                        <strong>"Control total"</strong>.
+                                        <strong>&quot;Control total&quot;</strong>.
                                     </li>
                                     <li>
-                                        <strong>"Guardar cambios"</strong>.
+                                        <strong>&quot;Guardar cambios&quot;</strong>.
                                     </li>
                                 </OrderedSteps>
                             </SubStep>
@@ -692,7 +692,7 @@ export default function GuiaWhatsappPage() {
                                 <OrderedSteps>
                                     <li>
                                         Con el System User seleccionado →{' '}
-                                        <strong>"Generar nuevo token"</strong>.
+                                        <strong>&quot;Generar nuevo token&quot;</strong>.
                                     </li>
                                     <li>
                                         En el diálogo:
@@ -703,7 +703,7 @@ export default function GuiaWhatsappPage() {
                                             </li>
                                             <li>
                                                 <strong>Caducidad:</strong>{' '}
-                                                <strong>"Nunca"</strong>.
+                                                <strong>&quot;Nunca&quot;</strong>.
                                             </li>
                                             <li>
                                                 <strong>Permisos obligatorios:</strong>{' '}
@@ -713,7 +713,7 @@ export default function GuiaWhatsappPage() {
                                         </ul>
                                     </li>
                                     <li>
-                                        Clic en <strong>"Generar token"</strong>.
+                                        Clic en <strong>&quot;Generar token&quot;</strong>.
                                     </li>
                                 </OrderedSteps>
                                 <Callout variant="danger" title="🚨 Crítico">
@@ -733,7 +733,7 @@ export default function GuiaWhatsappPage() {
                                 <li>
                                     Menú →{' '}
                                     <strong>Configuración → Integraciones (IA y Canales)</strong>{' '}
-                                    → sección <strong>"Canal de WhatsApp (Meta)"</strong>.
+                                    → sección <strong>&quot;Canal de WhatsApp (Meta)&quot;</strong>.
                                 </li>
                                 <li>
                                     Pega:
@@ -749,7 +749,7 @@ export default function GuiaWhatsappPage() {
                                     </ul>
                                 </li>
                                 <li>
-                                    Clic en <strong>"Guardar canal de WhatsApp"</strong>.
+                                    Clic en <strong>&quot;Guardar canal de WhatsApp&quot;</strong>.
                                 </li>
                             </OrderedSteps>
                             <p>
@@ -771,14 +771,14 @@ export default function GuiaWhatsappPage() {
                                 <li>
                                     En AgenIA, copia la <strong>Callback URL</strong> y el{' '}
                                     <strong>Verify Token</strong> que se muestran en el
-                                    formulario (con los botones "Copiar").
+                                    formulario (con los botones &quot;Copiar&quot;).
                                 </li>
                                 <li>
                                     En Meta for Developers → tu app →{' '}
                                     <strong>WhatsApp → Configuration</strong>.
                                 </li>
                                 <li>
-                                    En la sección "Webhook" → <strong>"Editar"</strong>.
+                                    En la sección &quot;Webhook&quot; → <strong>&quot;Editar&quot;</strong>.
                                 </li>
                                 <li>
                                     Pega ambos valores. El Verify Token debe ser{' '}
@@ -786,12 +786,12 @@ export default function GuiaWhatsappPage() {
                                     inicio ni al final.
                                 </li>
                                 <li>
-                                    Clic en <strong>"Verificar y guardar"</strong>.
+                                    Clic en <strong>&quot;Verificar y guardar&quot;</strong>.
                                 </li>
                                 <li>
                                     Una vez verificado, baja a{' '}
-                                    <strong>"Webhook fields"</strong> →{' '}
-                                    <strong>"Manage"</strong> y marca:
+                                    <strong>&quot;Webhook fields&quot;</strong> →{' '}
+                                    <strong>&quot;Manage&quot;</strong> y marca:
                                     <ul className="list-disc ml-5 mt-2 space-y-1 marker:text-emerald-500">
                                         <li>
                                             <Code>messages</Code> ✅ (obligatorio para
@@ -804,7 +804,7 @@ export default function GuiaWhatsappPage() {
                                     </ul>
                                 </li>
                                 <li>
-                                    <strong>"Save"</strong>.
+                                    <strong>&quot;Save&quot;</strong>.
                                 </li>
                             </OrderedSteps>
                         </StepSection>
@@ -819,14 +819,14 @@ export default function GuiaWhatsappPage() {
                             <OrderedSteps>
                                 <li>Sigue en WhatsApp → Configuration.</li>
                                 <li>
-                                    Baja hasta <strong>"WhatsApp Business Account"</strong>
+                                    Baja hasta <strong>&quot;WhatsApp Business Account&quot;</strong>
                                     .
                                 </li>
                                 <li>
-                                    Clic en <strong>"Subscribe"</strong>.
+                                    Clic en <strong>&quot;Subscribe&quot;</strong>.
                                 </li>
                                 <li>
-                                    Confirma seleccionando tu cuenta → <strong>"Done"</strong>.
+                                    Confirma seleccionando tu cuenta → <strong>&quot;Done&quot;</strong>.
                                 </li>
                             </OrderedSteps>
                         </StepSection>

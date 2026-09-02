@@ -531,7 +531,7 @@ export default function ClinicalRecordDrawer({
                 {!isSigned && (
                     <div className="p-6 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex justify-between items-center shrink-0">
                         <div className="text-xs text-amber-600 dark:text-amber-500 font-semibold flex items-center gap-1 bg-amber-50 dark:bg-amber-900/20 px-3 py-1.5 rounded-md">
-                            ⚠️ Recuerde: Las historias sin firmar se conservan como "Borrador".
+                            ⚠️ Recuerde: Las historias sin firmar se conservan como &quot;Borrador&quot;.
                         </div>
                         <div className="flex gap-4">
                             <button

@@ -2,7 +2,7 @@
 
 import { 
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
-    PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, Legend
+    PieChart, Pie, Cell, AreaChart, Area, Legend
 } from 'recharts';
 
 export default function ChartsWrapper({ data }: { data: any }) {

@@ -37,28 +37,26 @@ function createFakeRedis() {
   };
   return {
     store,
-    get: jest.fn(async (k: string) => (store.has(k) ? store.get(k)! : null)),
+    get: jest.fn((k: string) => (store.has(k) ? store.get(k)! : null)),
     // La firma real es `set(key, value, 'EX', ttl)`: el fake acepta los args de
     // expiración para que los tests puedan afirmar sobre el TTL.
-    set: jest.fn(async (k: string, v: string, ..._ttlArgs: unknown[]) => {
+    set: jest.fn((k: string, v: string) => {
       store.set(k, String(v));
       return 'OK';
     }),
-    del: jest.fn(async (...keys: string[]) => {
+    del: jest.fn((...keys: string[]) => {
       let n = 0;
       for (const k of keys) if (store.delete(k)) n++;
       return n;
     }),
-    keys: jest.fn(async (pattern: string) => {
+    keys: jest.fn((pattern: string) => {
       const re = globToRegex(pattern);
       return [...store.keys()].filter((k) => re.test(k));
     }),
     // El TTL no se modela en memoria; basta con que exista para la marca de
     // actividad (refresco de TTL del estado) que hace el servicio en cada mensaje.
-    expire: jest.fn(async (k: string, _seconds: number) =>
-      store.has(k) ? 1 : 0,
-    ),
-    ttl: jest.fn(async (k: string) => (store.has(k) ? -1 : -2)),
+    expire: jest.fn((k: string) => (store.has(k) ? 1 : 0)),
+    ttl: jest.fn((k: string) => (store.has(k) ? -1 : -2)),
   };
 }
 
@@ -124,22 +122,22 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
     provider = {
       name: 'GEMINI',
-      extractSchedulingIntent: jest.fn(async () => extraction()),
-      answerFAQ: jest.fn(async () => 'respuesta FAQ'),
-      mapEntityToCatalog: jest.fn(async () => ({ id: null })),
+      extractSchedulingIntent: jest.fn(() => extraction()),
+      answerFAQ: jest.fn(() => 'respuesta FAQ'),
+      mapEntityToCatalog: jest.fn(() => ({ id: null })),
     };
-    llmFactory = { forOrgOrNull: jest.fn(async () => provider) };
+    llmFactory = { forOrgOrNull: jest.fn(() => provider) };
 
     knowledgeBase = {
-      hasContent: jest.fn(async () => true),
+      hasContent: jest.fn(() => true),
       getContent: jest.fn(
-        async () => 'Servicios: Consulta externa, Laboratorio, Cardiología.',
+        () => 'Servicios: Consulta externa, Laboratorio, Cardiología.',
       ),
     };
 
     prisma = {
       whatsappAccountConfig: {
-        findUnique: jest.fn(async () => ({
+        findUnique: jest.fn(() => ({
           organization: {
             id: ORG_ID,
             name: 'Hospital San Vicente',
@@ -149,39 +147,39 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         })),
       },
       patientProfile: {
-        findUnique: jest.fn(async () => null),
-        findFirst: jest.fn(async () => null),
-        create: jest.fn(async ({ data }: any) => ({ id: 'pat-1', ...data })),
-        update: jest.fn(async ({ data }: any) => ({ id: 'pat-1', ...data })),
+        findUnique: jest.fn(() => null),
+        findFirst: jest.fn(() => null),
+        create: jest.fn(({ data }: any) => ({ id: 'pat-1', ...data })),
+        update: jest.fn(({ data }: any) => ({ id: 'pat-1', ...data })),
       },
       medicalService: {
-        findMany: jest.fn(async () => []),
-        findFirst: jest.fn(async () => null),
+        findMany: jest.fn(() => []),
+        findFirst: jest.fn(() => null),
       },
       eps: {
-        findMany: jest.fn(async () => []),
-        findFirst: jest.fn(async () => null),
-        findUnique: jest.fn(async () => null),
-        create: jest.fn(async () => ({ id: 'eps-part', name: 'Particular' })),
-        update: jest.fn(async () => ({})),
+        findMany: jest.fn(() => []),
+        findFirst: jest.fn(() => null),
+        findUnique: jest.fn(() => null),
+        create: jest.fn(() => ({ id: 'eps-part', name: 'Particular' })),
+        update: jest.fn(() => ({})),
       },
       organization: {
-        findMany: jest.fn(async () => []),
-        findUnique: jest.fn(async () => null),
+        findMany: jest.fn(() => []),
+        findUnique: jest.fn(() => null),
       },
-      doctorProfile: { findMany: jest.fn(async () => []) },
+      doctorProfile: { findMany: jest.fn(() => []) },
       // Padrón EPS (pacientes dados de alta). Default null = "no está de
       // alta"; el gate solo se activa cuando eps.findFirst resuelve una EPS
       // real (no Particular), así que el resto de tests no se ven afectados.
-      epsEnrolledPatient: { findFirst: jest.fn(async () => null) },
-      user: { create: jest.fn(async () => ({ id: 'user-tmp-1' })) },
-      scheduleSlot: { findUnique: jest.fn(async () => null) },
+      epsEnrolledPatient: { findFirst: jest.fn(() => null) },
+      user: { create: jest.fn(() => ({ id: 'user-tmp-1' })) },
+      scheduleSlot: { findUnique: jest.fn(() => null) },
     };
 
     const organizationSettings = {
-      getBotName: jest.fn(async () => 'Geni'),
-      getMaxRetries: jest.fn(async () => 3),
-      getCommunicationStyle: jest.fn(async () => 'FORMAL'),
+      getBotName: jest.fn(() => 'Geni'),
+      getMaxRetries: jest.fn(() => 3),
+      getCommunicationStyle: jest.fn(() => 'FORMAL'),
     };
 
     interactionLog = {
@@ -202,8 +200,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         {
           provide: AppointmentsService,
           useValue: {
-            getAvailableSlots: jest.fn(async () => []),
-            bookAppointment: jest.fn(async () => ({
+            getAvailableSlots: jest.fn(() => []),
+            bookAppointment: jest.fn(() => ({
               success: true,
               appointmentId: 'apt-1',
             })),
@@ -226,15 +224,15 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         },
         {
           provide: SurveyService,
-          useValue: { generateSurveyToken: jest.fn(async () => null) },
+          useValue: { generateSurveyToken: jest.fn(() => null) },
         },
         {
           provide: AudioConfigService,
-          useValue: { getEffective: jest.fn(async () => null) },
+          useValue: { getEffective: jest.fn(() => null) },
         },
         {
           provide: TtsFactoryService,
-          useValue: { synthesize: jest.fn(async () => null) },
+          useValue: { synthesize: jest.fn(() => null) },
         },
       ],
     }).compile();
@@ -1242,7 +1240,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   // en el mensaje de "no entendí".
   // ════════════════════════════════════════════════════════════
   describe('en AWAITING_SPECIALTY', () => {
-    beforeEach(async () => {
+    beforeEach(() => {
       // Sesión colgada en el paso de selección de servicio.
       redis.store.set(
         `chat_state:${ORG_ID}:${SENDER}`,
@@ -2230,14 +2228,14 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     // ── Loop de reintento de cédula en cancelación (sin citas) ──
     describe('loop de reintento de cédula (cancelación sin citas)', () => {
       beforeEach(() => {
-        prisma.patientProfile.findFirst = jest.fn(async () => ({
+        prisma.patientProfile.findFirst = jest.fn(() => ({
           id: 'pat-1',
           fullName: 'Ana Gómez',
           cedula: '12345',
           organizationId: ORG_ID,
         }));
-        prisma.appointment = { findMany: jest.fn(async () => []) };
-        prisma.$transaction = jest.fn(async (arg: any) =>
+        prisma.appointment = { findMany: jest.fn(() => []) };
+        prisma.$transaction = jest.fn((arg: any) =>
           typeof arg === 'function' ? arg(prisma) : Promise.all(arg),
         );
       });
@@ -2310,22 +2308,22 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     // $transaction soporta tanto el array de promesas (cancelación) como el
     // callback (reprogramación atómica). En el callback pasamos `prisma` como tx.
     const setupTxAndModels = () => {
-      prisma.patientProfile.findFirst = jest.fn(async () => ({
+      prisma.patientProfile.findFirst = jest.fn(() => ({
         id: 'pat-1',
         fullName: 'Ana Gómez',
         cedula: '12345',
         organizationId: ORG_ID,
       }));
       prisma.appointment = {
-        findMany: jest.fn(async () => []),
-        findUnique: jest.fn(async () => null),
-        update: jest.fn(async () => ({})),
+        findMany: jest.fn(() => []),
+        findUnique: jest.fn(() => null),
+        update: jest.fn(() => ({})),
       };
       prisma.scheduleSlot = {
-        findUnique: jest.fn(async () => null),
-        update: jest.fn(async () => ({})),
+        findUnique: jest.fn(() => null),
+        update: jest.fn(() => ({})),
       };
-      prisma.$transaction = jest.fn(async (arg: any) =>
+      prisma.$transaction = jest.fn((arg: any) =>
         typeof arg === 'function' ? arg(prisma) : Promise.all(arg),
       );
     };
@@ -2911,7 +2909,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       postMock = jest.fn(() => of({ data: { messages: [{ id: 'wamid.1' }] } }));
       (service as any).httpService = { post: postMock };
       (service as any).whatsappCredentials = {
-        forOrg: jest.fn(async () => ({
+        forOrg: jest.fn(() => ({
           organizationId: ORG_ID,
           phoneNumberId: PHONE_ID,
           accessToken: 'token-de-prueba',

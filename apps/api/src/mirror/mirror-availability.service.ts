@@ -41,8 +41,13 @@ export class MirrorAvailabilityService {
 
     if (mode === 'OFF') {
       return {
-        mode, created: 0, updated: 0, removed: 0, retired: 0,
-        skipped: [], conflicts: [],
+        mode,
+        created: 0,
+        updated: 0,
+        removed: 0,
+        retired: 0,
+        skipped: [],
+        conflicts: [],
       };
     }
 
@@ -68,7 +73,13 @@ export class MirrorAvailabilityService {
     const skipped: string[] = [];
     const deseados = new Map<
       string,
-      { doctorId: string; serviceId: string; start: Date; end: Date; occupied: boolean }
+      {
+        doctorId: string;
+        serviceId: string;
+        start: Date;
+        end: Date;
+        occupied: boolean;
+      }
     >();
 
     let fueraDeVentana = 0;
@@ -127,7 +138,8 @@ export class MirrorAvailabilityService {
       existentes.map((e) => [`${e.doctorId}|${e.startTime.toISOString()}`, e]),
     );
 
-    const aCrear: typeof deseados extends Map<string, infer V> ? V[] : never = [];
+    const aCrear: typeof deseados extends Map<string, infer V> ? V[] : never =
+      [];
     const aOcupar: string[] = [];
     const aLiberar: string[] = [];
     const aBorrar: string[] = [];

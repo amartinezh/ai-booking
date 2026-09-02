@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import type {
@@ -149,7 +150,6 @@ export class WhatsappConfigService {
 
   private generateVerifyToken(): string {
     // 32 bytes hex = 64 chars; suficientemente impredecible para Meta.
-    const crypto = require('crypto') as typeof import('crypto');
     return crypto.randomBytes(32).toString('hex');
   }
 }

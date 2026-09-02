@@ -40,10 +40,10 @@ describe('MonitorCheckers — espejo con el HIS', () => {
 
   beforeEach(async () => {
     prisma = {
-      hospitalMirrorConfig: { findMany: jest.fn(async () => []) },
+      hospitalMirrorConfig: { findMany: jest.fn(() => []) },
       syncOutbox: {
-        count: jest.fn(async () => 0),
-        findFirst: jest.fn(async () => null),
+        count: jest.fn(() => 0),
+        findFirst: jest.fn(() => null),
       },
     };
 

@@ -23,7 +23,9 @@ describe('MirrorAvailabilityService', () => {
   const cupoHis = (startTimeIso: string, occupied = false) => ({
     doctorExternalKey: '91-1',
     startTimeIso,
-    endTimeIso: new Date(new Date(startTimeIso).getTime() + 1_200_000).toISOString(),
+    endTimeIso: new Date(
+      new Date(startTimeIso).getTime() + 1_200_000,
+    ).toISOString(),
     occupied,
   });
 
@@ -56,24 +58,22 @@ describe('MirrorAvailabilityService', () => {
     tx = {
       $executeRawUnsafe: jest.fn(),
       scheduleSlot: {
-        createMany: jest.fn(async () => ({ count: 0 })),
-        updateMany: jest.fn(async () => ({ count: 0 })),
-        deleteMany: jest.fn(async () => ({ count: 0 })),
+        createMany: jest.fn(() => ({ count: 0 })),
+        updateMany: jest.fn(() => ({ count: 0 })),
+        deleteMany: jest.fn(() => ({ count: 0 })),
       },
     };
     prisma = {
       hospitalMirrorConfig: { findUniqueOrThrow: jest.fn() },
       mirrorEntityMap: {
-        findMany: jest.fn(async () => [
-          { agenIAId: 'doc-1', externalKey: '91-1' },
-        ]),
+        findMany: jest.fn(() => [{ agenIAId: 'doc-1', externalKey: '91-1' }]),
       },
       doctorProfile: {
-        findMany: jest.fn(async () => [{ id: 'doc-1', serviceId: 'srv-1' }]),
+        findMany: jest.fn(() => [{ id: 'doc-1', serviceId: 'srv-1' }]),
       },
-      scheduleSlot: { findMany: jest.fn(async () => []) },
-      syncAudit: { create: jest.fn(async () => ({})) },
-      $transaction: jest.fn(async (fn: any) => fn(tx)),
+      scheduleSlot: { findMany: jest.fn(() => []) },
+      syncAudit: { create: jest.fn(() => ({})) },
+      $transaction: jest.fn((fn: any) => fn(tx)),
     };
     conModo('ON');
 
@@ -144,7 +144,10 @@ describe('MirrorAvailabilityService', () => {
 
     it('libera lo que el hospital canceló por su lado', async () => {
       prisma.scheduleSlot.findMany.mockResolvedValue([
-        cupoAgenIA('2026-09-03T12:00:00.000Z', { isAvailable: false, id: 's1' }),
+        cupoAgenIA('2026-09-03T12:00:00.000Z', {
+          isAvailable: false,
+          id: 's1',
+        }),
       ]);
 
       await aplicar([cupoHis('2026-09-03T12:00:00.000Z', false)]);
@@ -193,7 +196,10 @@ describe('MirrorAvailabilityService', () => {
       // Es un paciente con cita a una hora en la que su médico ya no atiende.
       // Eso no es un cupo sobrante, es un problema para una persona.
       prisma.scheduleSlot.findMany.mockResolvedValue([
-        cupoAgenIA('2026-09-03T15:00:00.000Z', { conCita: true, id: 'con-cita' }),
+        cupoAgenIA('2026-09-03T15:00:00.000Z', {
+          conCita: true,
+          id: 'con-cita',
+        }),
       ]);
 
       const r = await aplicar([]);

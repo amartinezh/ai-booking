@@ -75,7 +75,7 @@ export default function LogsClient({ initialLogs, recentErrors, initialFilters }
         try {
             const fresh = await getSystemLogById(log.id);
             if (fresh) setSelectedLog(fresh);
-        } catch (_) {
+        } catch {
             // si falla, dejamos el optimistic
         } finally {
             setLoadingDetail(false);

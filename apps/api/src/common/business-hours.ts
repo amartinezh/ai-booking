@@ -16,7 +16,6 @@
  */
 
 const BOGOTA_OFFSET_MS = 5 * 60 * 60 * 1000;
-const HOUR_MS = 60 * 60 * 1000;
 
 function isWeekendUTC(d: Date): boolean {
   // getUTCDay sobre un Date que internamente representa "Bogotá" devuelve

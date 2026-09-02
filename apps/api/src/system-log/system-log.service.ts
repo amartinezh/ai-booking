@@ -138,7 +138,7 @@ export class SystemLogService {
     });
   }
 
-  async getById(id: string): Promise<any | null> {
+  async getById(id: string): Promise<any> {
     return this.prisma.systemLog.findUnique({ where: { id } });
   }
 

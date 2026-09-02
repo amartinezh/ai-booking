@@ -17,24 +17,24 @@ describe('ClinicalRecordService — aislamiento de tenant', () => {
 
   beforeEach(async () => {
     const extendedClinicalRecord = {
-      findFirst: jest.fn(async () => null),
-      create: jest.fn(async (args: any) => ({ id: 'hc-1', ...args.data })),
-      update: jest.fn(async (args: any) => ({ id: args.where.id })),
+      findFirst: jest.fn(() => null),
+      create: jest.fn((args: any) => ({ id: 'hc-1', ...args.data })),
+      update: jest.fn((args: any) => ({ id: args.where.id })),
     };
     prisma = {
-      appointment: { findFirst: jest.fn(async () => null) },
-      doctorProfile: { findFirst: jest.fn(async () => null) },
+      appointment: { findFirst: jest.fn(() => null) },
+      doctorProfile: { findFirst: jest.fn(() => null) },
       extended: {
         clinicalRecord: extendedClinicalRecord,
-        $transaction: jest.fn(async (fn: any) =>
+        $transaction: jest.fn((fn: any) =>
           fn({
-            digitalSignature: { create: jest.fn(async () => ({})) },
+            digitalSignature: { create: jest.fn(() => ({})) },
             clinicalRecord: {
-              update: jest.fn(async () => ({ id: 'hc-1', status: 'SIGNED' })),
+              update: jest.fn(() => ({ id: 'hc-1', status: 'SIGNED' })),
             },
             addendum: {
-              create: jest.fn(async () => ({ id: 'ad-1' })),
-              findUnique: jest.fn(async () => ({ id: 'ad-1' })),
+              create: jest.fn(() => ({ id: 'ad-1' })),
+              findUnique: jest.fn(() => ({ id: 'ad-1' })),
             },
           }),
         ),

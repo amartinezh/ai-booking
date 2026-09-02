@@ -83,8 +83,9 @@ export class ChatbotCron {
 
       // El alta de un paciente nuevo aguanta más: ver altaInactivityTimeoutSec.
       const enAlta =
-        (await this.redis.get(`alta_en_curso:${organizationId}:${whatsappPhone}`)) !==
-        null;
+        (await this.redis.get(
+          `alta_en_curso:${organizationId}:${whatsappPhone}`,
+        )) !== null;
       const umbral = enAlta
         ? this.altaInactivityTimeoutSec
         : this.inactivityTimeoutSec;

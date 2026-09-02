@@ -53,22 +53,22 @@ function createFakeRedis() {
   };
   return {
     store,
-    get: jest.fn(async (k: string) => (store.has(k) ? store.get(k)! : null)),
-    set: jest.fn(async (k: string, v: string) => {
+    get: jest.fn((k: string) => (store.has(k) ? store.get(k)! : null)),
+    set: jest.fn((k: string, v: string) => {
       store.set(k, String(v));
       return 'OK';
     }),
-    del: jest.fn(async (...keys: string[]) => {
+    del: jest.fn((...keys: string[]) => {
       let n = 0;
       for (const k of keys) if (store.delete(k)) n++;
       return n;
     }),
-    keys: jest.fn(async (pattern: string) => {
+    keys: jest.fn((pattern: string) => {
       const re = globToRegex(pattern);
       return [...store.keys()].filter((k) => re.test(k));
     }),
-    expire: jest.fn(async (k: string) => (store.has(k) ? 1 : 0)),
-    ttl: jest.fn(async (k: string) => (store.has(k) ? -1 : -2)),
+    expire: jest.fn((k: string) => (store.has(k) ? 1 : 0)),
+    ttl: jest.fn((k: string) => (store.has(k) ? -1 : -2)),
   };
 }
 
@@ -125,22 +125,22 @@ function createPrisma(db: Db) {
   let patientSeq = 0;
   const tx = {
     scheduleSlot: {
-      findUnique: jest.fn(async ({ where }: any) =>
+      findUnique: jest.fn(({ where }: any) =>
         db.slots.find((s) => s.id === where.id),
       ),
-      update: jest.fn(async ({ where, data }: any) => {
+      update: jest.fn(({ where, data }: any) => {
         const s = db.slots.find((x) => x.id === where.id);
         if (s) Object.assign(s, data);
         return s;
       }),
     },
     appointment: {
-      update: jest.fn(async ({ where, data }: any) => {
+      update: jest.fn(({ where, data }: any) => {
         const a = db.appointments.find((x) => x.id === where.id);
         if (a) Object.assign(a, data);
         return a;
       }),
-      create: jest.fn(async ({ data }: any) => {
+      create: jest.fn(({ data }: any) => {
         const a = { id: `apt-${db.appointments.length + 1}`, ...data };
         db.appointments.push(a);
         return a;
@@ -151,22 +151,22 @@ function createPrisma(db: Db) {
   return {
     _tx: tx,
     whatsappAccountConfig: {
-      findUnique: jest.fn(async ({ where }: any) => {
+      findUnique: jest.fn(({ where }: any) => {
         const org = db.orgsByPhoneId[where.phoneNumberId];
         return org ? { organization: org } : null;
       }),
     },
     organization: {
-      findMany: jest.fn(async () => []),
-      findUnique: jest.fn(async () => ({ id: ORG_ID, name: ORG_NAME })),
+      findMany: jest.fn(() => []),
+      findUnique: jest.fn(() => ({ id: ORG_ID, name: ORG_NAME })),
     },
     medicalService: {
-      findMany: jest.fn(async () => db.services),
-      findFirst: jest.fn(async () => null),
+      findMany: jest.fn(() => db.services),
+      findFirst: jest.fn(() => null),
     },
     eps: {
-      findMany: jest.fn(async () => db.epsList),
-      findFirst: jest.fn(async ({ where }: any) => {
+      findMany: jest.fn(() => db.epsList),
+      findFirst: jest.fn(({ where }: any) => {
         if (where?.id) return db.epsList.find((e) => e.id === where.id) ?? null;
         if (where?.name?.equals) {
           const needle = String(where.name.equals).toLowerCase();
@@ -176,19 +176,19 @@ function createPrisma(db: Db) {
         }
         return null;
       }),
-      findUnique: jest.fn(async ({ where }: any) =>
+      findUnique: jest.fn(({ where }: any) =>
         db.epsList.find((e) => e.id === where.id),
       ),
-      create: jest.fn(async ({ data }: any) => {
+      create: jest.fn(({ data }: any) => {
         const e = { id: `eps-${db.epsList.length + 1}`, ...data };
         db.epsList.push(e);
         return e;
       }),
-      update: jest.fn(async () => ({})),
+      update: jest.fn(() => ({})),
     },
     epsEnrolledPatient: {
       findFirst: jest.fn(
-        async ({ where }: any) =>
+        ({ where }: any) =>
           db.enrolled.find(
             (e) => e.cedula === where.cedula && e.epsId === where.epsId,
           ) ?? null,
@@ -196,28 +196,27 @@ function createPrisma(db: Db) {
     },
     patientProfile: {
       findFirst: jest.fn(
-        async ({ where }: any) =>
+        ({ where }: any) =>
           db.patients.find((p) => p.cedula === where.cedula) ?? null,
       ),
       findUnique: jest.fn(
-        async ({ where }: any) =>
-          db.patients.find((p) => p.id === where.id) ?? null,
+        ({ where }: any) => db.patients.find((p) => p.id === where.id) ?? null,
       ),
-      create: jest.fn(async ({ data }: any) => {
+      create: jest.fn(({ data }: any) => {
         const p = { id: `pat-${++patientSeq}`, ...data };
         db.patients.push(p);
         return p;
       }),
-      update: jest.fn(async ({ where, data }: any) => {
+      update: jest.fn(({ where, data }: any) => {
         const p = db.patients.find((x) => x.id === where.id);
         if (p) Object.assign(p, data);
         return p;
       }),
     },
-    user: { create: jest.fn(async () => ({ id: `user-${Date.now()}` })) },
-    doctorProfile: { findMany: jest.fn(async () => []) },
+    user: { create: jest.fn(() => ({ id: `user-${Date.now()}` })) },
+    doctorProfile: { findMany: jest.fn(() => []) },
     appointment: {
-      findMany: jest.fn(async ({ where }: any) =>
+      findMany: jest.fn(({ where }: any) =>
         db.appointments
           .filter(
             (a) => a.patientId === where.patientId && a.status === where.status,
@@ -227,7 +226,7 @@ function createPrisma(db: Db) {
             scheduleSlot: db.slots.find((s) => s.id === a.scheduleSlotId),
           })),
       ),
-      findUnique: jest.fn(async ({ where }: any) => {
+      findUnique: jest.fn(({ where }: any) => {
         const a = db.appointments.find((x) => x.id === where.id);
         if (!a) return null;
         return {
@@ -241,7 +240,7 @@ function createPrisma(db: Db) {
       findUnique: tx.scheduleSlot.findUnique,
       update: tx.scheduleSlot.update,
     },
-    $transaction: jest.fn(async (arg: any) =>
+    $transaction: jest.fn((arg: any) =>
       Array.isArray(arg) ? Promise.all(arg) : arg(tx),
     ),
   };
@@ -322,7 +321,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   const sent = (): string[] =>
     sendSpy.mock.calls.map((c: any[]) => c[1] as string);
   const lastSent = (): string => sent()[sent().length - 1] ?? '';
-  const state = async (): Promise<string | null> =>
+  const state = (): Promise<string | null> =>
     redis.store.get(`chat_state:${ORG_ID}:${SENDER}`) ?? null;
   const say = (body: string) => service.processIncomingMessage(textEvent(body));
 
@@ -348,22 +347,22 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
     provider = {
       name: 'GEMINI',
-      extractSchedulingIntent: jest.fn(async () => extraction()),
-      answerFAQ: jest.fn(async () => 'respuesta FAQ'),
-      mapEntityToCatalog: jest.fn(async () => ({ id: null })),
+      extractSchedulingIntent: jest.fn(() => extraction()),
+      answerFAQ: jest.fn(() => 'respuesta FAQ'),
+      mapEntityToCatalog: jest.fn(() => ({ id: null })),
     };
 
     appointments = {
-      getAvailableSlots: jest.fn(async () => []),
-      bookAppointment: jest.fn(async () => ({
+      getAvailableSlots: jest.fn(() => []),
+      bookAppointment: jest.fn(() => ({
         success: true,
         appointmentId: 'apt-new',
       })),
     };
     waitlist = {
-      joinWaitlist: jest.fn(async () => ({ id: 'wl-1', position: 2 })),
-      notifyWaitlist: jest.fn(async () => undefined),
-      confirmFromWaitlist: jest.fn(async () => ({
+      joinWaitlist: jest.fn(() => ({ id: 'wl-1', position: 2 })),
+      notifyWaitlist: jest.fn(() => undefined),
+      confirmFromWaitlist: jest.fn(() => ({
         slotId: null,
         patientId: null,
       })),
@@ -391,37 +390,37 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         {
           provide: KnowledgeBaseService,
           useValue: {
-            hasContent: jest.fn(async () => false),
-            getContent: jest.fn(async () => null),
+            hasContent: jest.fn(() => false),
+            getContent: jest.fn(() => null),
           },
         },
         {
           provide: OrganizationSettingsService,
           useValue: {
-            getBotName: jest.fn(async () => 'AgenIA'),
-            getMaxRetries: jest.fn(async () => 3),
-            getCommunicationStyle: jest.fn(async () => 'FORMAL'),
+            getBotName: jest.fn(() => 'AgenIA'),
+            getMaxRetries: jest.fn(() => 3),
+            getCommunicationStyle: jest.fn(() => 'FORMAL'),
           },
         },
         {
           provide: LlmFactoryService,
-          useValue: { forOrgOrNull: jest.fn(async () => provider) },
+          useValue: { forOrgOrNull: jest.fn(() => provider) },
         },
         {
           provide: WhatsappCredentialsService,
-          useValue: { forOrg: jest.fn(async () => null) },
+          useValue: { forOrg: jest.fn(() => null) },
         },
         {
           provide: SurveyService,
-          useValue: { generateSurveyToken: jest.fn(async () => 'tok') },
+          useValue: { generateSurveyToken: jest.fn(() => 'tok') },
         },
         {
           provide: AudioConfigService,
-          useValue: { getEffective: jest.fn(async () => null) },
+          useValue: { getEffective: jest.fn(() => null) },
         },
         {
           provide: TtsFactoryService,
-          useValue: { synthesize: jest.fn(async () => null) },
+          useValue: { synthesize: jest.fn(() => null) },
         },
       ],
     }).compile();
@@ -447,7 +446,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA),
         slotRow('slot-b', FECHA_B, 'Luis Gómez', SVC_MEDICINA),
       ];
-      appointments.getAvailableSlots.mockImplementation(async () =>
+      appointments.getAvailableSlots.mockImplementation(() =>
         db.slots
           .filter((s) => s.isAvailable)
           .map((s) => ({
@@ -1103,7 +1102,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         epsId: null,
         organizationId: ORG_ID,
       });
-      appointments.getAvailableSlots.mockImplementation(async () =>
+      appointments.getAvailableSlots.mockImplementation(() =>
         db.slots
           .filter((s) => s.isAvailable)
           .map((s) => ({
@@ -1325,7 +1324,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         supportPhone: '6011234567',
       };
       db.slots = [slotRow('slot-orgA', FECHA_A, 'Ana Pérez', SVC_MEDICINA)];
-      appointments.getAvailableSlots.mockImplementation(async () =>
+      appointments.getAvailableSlots.mockImplementation(() =>
         db.slots.map((s) => ({
           slotId: s.id,
           fecha: s.startTime,
@@ -1410,7 +1409,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   describe('6. Guardrailes durante el agendamiento', () => {
     beforeEach(() => {
       db.slots = [slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA)];
-      appointments.getAvailableSlots.mockImplementation(async () =>
+      appointments.getAvailableSlots.mockImplementation(() =>
         db.slots.map((s) => ({
           slotId: s.id,
           fecha: s.startTime,
@@ -1468,7 +1467,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   describe('7. Persistencia', () => {
     beforeEach(() => {
       db.slots = [slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA)];
-      appointments.getAvailableSlots.mockImplementation(async () =>
+      appointments.getAvailableSlots.mockImplementation(() =>
         db.slots.map((s) => ({
           slotId: s.id,
           fecha: s.startTime,
@@ -1602,7 +1601,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       }
 
       const originalSet = redis.set.getMockImplementation()!;
-      redis.set.mockImplementation(async (k: string, v: string) => {
+      redis.set.mockImplementation((k: string, v: string) => {
         if (k.startsWith('temp_cancel_apt_')) throw new Error('redis down');
         return originalSet(k, v);
       });
@@ -1626,7 +1625,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   describe('8. Alta de paciente nuevo', () => {
     beforeEach(() => {
       db.slots = [slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA)];
-      appointments.getAvailableSlots.mockImplementation(async () =>
+      appointments.getAvailableSlots.mockImplementation(() =>
         db.slots.map((s) => ({
           slotId: s.id,
           fecha: s.startTime,

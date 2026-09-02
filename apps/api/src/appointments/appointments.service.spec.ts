@@ -9,11 +9,11 @@ describe('AppointmentsService', () => {
   let entityMap: { findMany: jest.Mock };
 
   beforeEach(async () => {
-    findMany = jest.fn(async () => []);
+    findMany = jest.fn(() => []);
     // Por defecto: organización SIN espejo. Es el caso de cualquier clínica
     // normal, y el que no debe cambiar de comportamiento.
-    mirrorConfig = { findUnique: jest.fn(async () => null) };
-    entityMap = { findMany: jest.fn(async () => []) };
+    mirrorConfig = { findUnique: jest.fn(() => null) };
+    entityMap = { findMany: jest.fn(() => []) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AppointmentsService,
@@ -59,10 +59,10 @@ describe('AppointmentsService', () => {
     const serviceWithSlot = async (slot: any) => {
       const tx = {
         scheduleSlot: {
-          findUnique: jest.fn(async () => conMedico(slot)),
+          findUnique: jest.fn(() => conMedico(slot)),
           update: jest.fn(),
         },
-        appointment: { create: jest.fn(async () => ({ id: 'apt1' })) },
+        appointment: { create: jest.fn(() => ({ id: 'apt1' })) },
         $executeRawUnsafe: jest.fn(),
       };
       const module: TestingModule = await Test.createTestingModule({
@@ -71,7 +71,7 @@ describe('AppointmentsService', () => {
           {
             provide: PrismaService,
             useValue: {
-              $transaction: jest.fn(async (cb: any) => cb(tx)),
+              $transaction: jest.fn((cb: any) => cb(tx)),
             },
           },
         ],
@@ -148,10 +148,10 @@ describe('AppointmentsService', () => {
     const serviceWithSlot = async (slot: any) => {
       const tx = {
         scheduleSlot: {
-          findUnique: jest.fn(async () => conMedico(slot)),
+          findUnique: jest.fn(() => conMedico(slot)),
           update: jest.fn(),
         },
-        appointment: { create: jest.fn(async () => ({ id: 'apt1' })) },
+        appointment: { create: jest.fn(() => ({ id: 'apt1' })) },
         $executeRawUnsafe: jest.fn(),
       };
       const module: TestingModule = await Test.createTestingModule({
@@ -160,7 +160,7 @@ describe('AppointmentsService', () => {
           {
             provide: PrismaService,
             useValue: {
-              $transaction: jest.fn(async (cb: any) => cb(tx)),
+              $transaction: jest.fn((cb: any) => cb(tx)),
             },
           },
         ],
@@ -276,9 +276,9 @@ describe('AppointmentsService — activación por médico', () => {
   };
 
   beforeEach(async () => {
-    slotFindMany = jest.fn(async () => []);
-    mirrorConfig = { findUnique: jest.fn(async () => null) };
-    entityMap = { findMany: jest.fn(async () => []) };
+    slotFindMany = jest.fn(() => []);
+    mirrorConfig = { findUnique: jest.fn(() => null) };
+    entityMap = { findMany: jest.fn(() => []) };
     service = await construir();
   });
 
@@ -314,8 +314,8 @@ describe('AppointmentsService — activación por médico', () => {
 
   describe('con espejo activo', () => {
     beforeEach(async () => {
-      mirrorConfig.findUnique = jest.fn(async () => ({ enabled: true }));
-      entityMap.findMany = jest.fn(async () => [
+      mirrorConfig.findUnique = jest.fn(() => ({ enabled: true }));
+      entityMap.findMany = jest.fn(() => [
         { agenIAId: 'doc-1' },
         { agenIAId: 'doc-2' },
       ]);
@@ -334,7 +334,7 @@ describe('AppointmentsService — activación por médico', () => {
     it('sin ningún médico homologado, no ofrece nada', async () => {
       // Prometerle un cupo al paciente cuya cita jamás llegará al HIS es la
       // misma sobreventa que encontró la prueba E2E, vista desde el otro lado.
-      entityMap.findMany = jest.fn(async () => []);
+      entityMap.findMany = jest.fn(() => []);
       service = await construir();
 
       await service.getAvailableSlots('Medicina General', null, 'org1');
@@ -343,7 +343,7 @@ describe('AppointmentsService — activación por médico', () => {
     });
 
     it('un espejo configurado pero APAGADO se comporta como sin espejo', async () => {
-      mirrorConfig.findUnique = jest.fn(async () => ({ enabled: false }));
+      mirrorConfig.findUnique = jest.fn(() => ({ enabled: false }));
       service = await construir();
 
       await service.getAvailableSlots('Medicina General', null, 'org1');
@@ -372,8 +372,11 @@ describe('AppointmentsService — activación por médico', () => {
 describe('AppointmentsService — el médico se apaga mientras el paciente decide', () => {
   const conCupo = async (slot: any) => {
     const tx = {
-      scheduleSlot: { findUnique: jest.fn(async () => slot), update: jest.fn() },
-      appointment: { create: jest.fn(async () => ({ id: 'apt1' })) },
+      scheduleSlot: {
+        findUnique: jest.fn(() => slot),
+        update: jest.fn(),
+      },
+      appointment: { create: jest.fn(() => ({ id: 'apt1' })) },
       $executeRawUnsafe: jest.fn(),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -381,7 +384,7 @@ describe('AppointmentsService — el médico se apaga mientras el paciente decid
         AppointmentsService,
         {
           provide: PrismaService,
-          useValue: { $transaction: jest.fn(async (cb: any) => cb(tx)) },
+          useValue: { $transaction: jest.fn((cb: any) => cb(tx)) },
         },
       ],
     }).compile();

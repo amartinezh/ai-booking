@@ -182,7 +182,7 @@ export default function GuiaGoogleAiStudioPage() {
                             </p>
                             <ul className="list-disc list-outside space-y-1 ml-5 marker:text-sky-500">
                                 <li>
-                                    <strong>Gemini</strong> es el "cerebro" de IA de Google.
+                                    <strong>Gemini</strong> es el &quot;cerebro&quot; de IA de Google.
                                     Es <strong>multimodal</strong> (entiende texto y audio),
                                     por eso es el proveedor recomendado para el dictado
                                     clínico de tus médicos.
@@ -279,7 +279,7 @@ export default function GuiaGoogleAiStudioPage() {
                             <Callout variant="warning" title="Ojo con la cuenta correcta">
                                 Si arriba a la derecha aparece tu cuenta{' '}
                                 <em>personal</em> en lugar de la corporativa, haz clic en la
-                                foto → <strong>"Cambiar de cuenta"</strong> y entra con la de
+                                foto → <strong>&quot;Cambiar de cuenta&quot;</strong> y entra con la de
                                 la clínica antes de continuar. La llave queda ligada a esa
                                 cuenta.
                             </Callout>
@@ -295,14 +295,14 @@ export default function GuiaGoogleAiStudioPage() {
                                 </li>
                                 <li>
                                     Marca la casilla de{' '}
-                                    <strong>"Acepto los términos de servicio"</strong>.
+                                    <strong>&quot;Acepto los términos de servicio&quot;</strong>.
                                 </li>
                                 <li>
                                     La segunda casilla (recibir correos) es opcional; puedes
                                     dejarla sin marcar.
                                 </li>
                                 <li>
-                                    Clic en <strong>"Continuar"</strong>.
+                                    Clic en <strong>&quot;Continuar&quot;</strong>.
                                 </li>
                             </OrderedSteps>
                             <Callout variant="info">
@@ -316,8 +316,8 @@ export default function GuiaGoogleAiStudioPage() {
                             <OrderedSteps>
                                 <li>
                                     En el <strong>menú lateral izquierdo</strong>, busca{' '}
-                                    <strong>"Get API key"</strong> (Obtener clave de API) o{' '}
-                                    <strong>"API Keys"</strong>.
+                                    <strong>&quot;Get API key&quot;</strong> (Obtener clave de API) o{' '}
+                                    <strong>&quot;API Keys&quot;</strong>.
                                 </li>
                                 <li>
                                     También puedes ir directo a{' '}
@@ -327,8 +327,8 @@ export default function GuiaGoogleAiStudioPage() {
                                     .
                                 </li>
                                 <li>
-                                    Llegas a la pantalla <strong>"API keys"</strong> con un
-                                    botón grande <strong>"Create API key"</strong>.
+                                    Llegas a la pantalla <strong>&quot;API keys&quot;</strong> con un
+                                    botón grande <strong>&quot;Create API key&quot;</strong>.
                                 </li>
                             </OrderedSteps>
                             <Callout variant="info">
@@ -341,7 +341,7 @@ export default function GuiaGoogleAiStudioPage() {
                         <StepSection number={4} id="paso-4" title="Crear tu API Key">
                             <OrderedSteps>
                                 <li>
-                                    Haz clic en <strong>"Create API key"</strong> (Crear
+                                    Haz clic en <strong>&quot;Create API key&quot;</strong> (Crear
                                     clave de API).
                                 </li>
                                 <li>
@@ -454,11 +454,11 @@ export default function GuiaGoogleAiStudioPage() {
                                 <li>Inicia sesión como Administrador de Clínica.</li>
                                 <li>
                                     Menú → <strong>Configuración</strong> → sección{' '}
-                                    <strong>"Integración de IA"</strong>.
+                                    <strong>&quot;Integración de IA&quot;</strong>.
                                 </li>
                                 <li>
-                                    En <strong>"Proveedor activo"</strong>, haz clic en la
-                                    tarjeta de <strong>"Google Gemini"</strong> (ícono de
+                                    En <strong>&quot;Proveedor activo&quot;</strong>, haz clic en la
+                                    tarjeta de <strong>&quot;Google Gemini&quot;</strong> (ícono de
                                     destellos ✨).
                                 </li>
                                 <li>
@@ -474,11 +474,11 @@ export default function GuiaGoogleAiStudioPage() {
                                     </ul>
                                 </li>
                                 <li>
-                                    Clic en <strong>"Guardar integración"</strong>.
+                                    Clic en <strong>&quot;Guardar integración&quot;</strong>.
                                 </li>
                             </OrderedSteps>
                             <Callout variant="info" title="Tu llave queda protegida">
-                                Cuando veas <strong>"✅ Configuración guardada"</strong>, la
+                                Cuando veas <strong>&quot;✅ Configuración guardada&quot;</strong>, la
                                 llave queda cifrada con <strong>AES-256-GCM</strong>. Por
                                 seguridad el campo se vacía y AgenIA solo muestra los últimos
                                 dígitos (<Code>•••XXXX</Code>).

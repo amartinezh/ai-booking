@@ -10,7 +10,6 @@ import {
   normalizeIntent,
 } from '../interfaces/llm-provider.interface';
 import {
-  CLINICAL_RECORD_PROMPT,
   SCHEDULING_EXTRACTION_PROMPT,
   buildCatalogMappingPrompt,
   buildVocabularyAnchor,
@@ -34,9 +33,7 @@ export class ClaudeProvider implements LLMProvider {
     this.model = config.model || 'claude-sonnet-4-6';
   }
 
-  async generateClinicalRecord(
-    audio: AudioInput,
-  ): Promise<ClinicalRecordDraft> {
+  generateClinicalRecord(audio: AudioInput): Promise<ClinicalRecordDraft> {
     // La Messages API de Anthropic no acepta audio nativo. Se documenta como
     // limitación del proveedor: para dictado se recomienda Gemini o ChatGPT.
     // Mantenemos el contrato y devolvemos una estructura vacía con un log claro.
@@ -45,7 +42,7 @@ export class ClaudeProvider implements LLMProvider {
         'Usa Gemini o ChatGPT para esta función. Devolviendo borrador vacío.',
     );
     void audio;
-    return {
+    return Promise.resolve({
       vitalSigns: null,
       chiefComplaint: null,
       currentIllness: null,
@@ -53,7 +50,7 @@ export class ClaudeProvider implements LLMProvider {
       evolutionNotes: null,
       diagnoses: [],
       prescriptions: [],
-    };
+    });
   }
 
   async extractSchedulingIntent(input: {

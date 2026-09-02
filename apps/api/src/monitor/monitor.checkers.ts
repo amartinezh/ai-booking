@@ -154,7 +154,7 @@ export class MonitorCheckers {
         problemas.push(
           heartbeat
             ? `Sin heartbeat del agente hace ${Math.round((ahora - heartbeat) / 60_000)} min ` +
-              `(org ${cfg.organizationId}).`
+                `(org ${cfg.organizationId}).`
             : `El agente de la org ${cfg.organizationId} nunca ha hecho handshake.`,
         );
       }

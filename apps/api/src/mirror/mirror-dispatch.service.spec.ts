@@ -58,7 +58,8 @@ describe('MirrorDispatchService', () => {
     // Ventanas de long-poll cortas — el default de producción (25s) haría
     // estos tests lentísimos y frágiles. Ver el comentario en el servicio.
     (service as unknown as { longPollMs: number }).longPollMs = 30;
-    (service as unknown as { longPollIntervalMs: number }).longPollIntervalMs = 10;
+    (service as unknown as { longPollIntervalMs: number }).longPollIntervalMs =
+      10;
   });
 
   describe('getPendingEvents — orden', () => {
@@ -333,9 +334,9 @@ describe('MirrorDispatchService', () => {
       for (const [args] of prisma.syncOutbox.updateMany.mock.calls) {
         expect(args.where.organizationId).toBe('org-duena');
       }
-      expect(prisma.syncOutbox.findFirst.mock.calls[0][0].where.organizationId).toBe(
-        'org-duena',
-      );
+      expect(
+        prisma.syncOutbox.findFirst.mock.calls[0][0].where.organizationId,
+      ).toBe('org-duena');
     });
   });
 });
@@ -501,7 +502,12 @@ describe('MirrorDispatchService — entrega con backoff', () => {
     it('entrega como mucho UN evento por entidad en cada lote', async () => {
       prisma.syncOutbox.findMany.mockResolvedValueOnce([
         fila({ seq: BigInt(1), eventId: 'insert', entityId: 'apt-1' }),
-        fila({ seq: BigInt(2), eventId: 'delete', entityId: 'apt-1', op: 'DELETE' }),
+        fila({
+          seq: BigInt(2),
+          eventId: 'delete',
+          entityId: 'apt-1',
+          op: 'DELETE',
+        }),
       ]);
 
       const eventos = await service.getPendingEvents('org1', BigInt(0));
@@ -529,7 +535,12 @@ describe('MirrorDispatchService — entrega con backoff', () => {
           entityId: 'apt-1',
           nextAttemptAt: new Date(Date.now() + 60_000),
         }),
-        fila({ seq: BigInt(2), eventId: 'delete', entityId: 'apt-1', op: 'DELETE' }),
+        fila({
+          seq: BigInt(2),
+          eventId: 'delete',
+          entityId: 'apt-1',
+          op: 'DELETE',
+        }),
         fila({ seq: BigInt(3), eventId: 'otra-cita', entityId: 'apt-9' }),
       ]);
 
@@ -541,8 +552,18 @@ describe('MirrorDispatchService — entrega con backoff', () => {
 
     it('la misma entityId de tipos distintos son entidades distintas', async () => {
       prisma.syncOutbox.findMany.mockResolvedValueOnce([
-        fila({ seq: BigInt(1), eventId: 'slot', entityType: 'SLOT', entityId: 'x' }),
-        fila({ seq: BigInt(2), eventId: 'cita', entityType: 'APPOINTMENT', entityId: 'x' }),
+        fila({
+          seq: BigInt(1),
+          eventId: 'slot',
+          entityType: 'SLOT',
+          entityId: 'x',
+        }),
+        fila({
+          seq: BigInt(2),
+          eventId: 'cita',
+          entityType: 'APPOINTMENT',
+          entityId: 'x',
+        }),
       ]);
 
       const eventos = await service.getPendingEvents('org1', BigInt(0));
@@ -563,7 +584,9 @@ describe('MirrorDispatchService — entrega con backoff', () => {
     it('lee una ventana mayor que el límite, porque el filtro por entidad descarta filas', async () => {
       await service.getPendingEvents('org1', BigInt(0), 10);
 
-      expect(prisma.syncOutbox.findMany.mock.calls[0][0].take).toBeGreaterThan(10);
+      expect(prisma.syncOutbox.findMany.mock.calls[0][0].take).toBeGreaterThan(
+        10,
+      );
     });
   });
 
@@ -816,10 +839,15 @@ describe('MirrorDispatchService — hidratación del evento', () => {
 
     await service.getPendingEvents('org1', BigInt(0));
 
-    for (const modelo of ['scheduleSlot', 'patientProfile', 'eps', 'mirrorEntityMap']) {
-      expect(prisma[modelo].findMany.mock.calls[0][0].where.organizationId).toBe(
-        'org1',
-      );
+    for (const modelo of [
+      'scheduleSlot',
+      'patientProfile',
+      'eps',
+      'mirrorEntityMap',
+    ]) {
+      expect(
+        prisma[modelo].findMany.mock.calls[0][0].where.organizationId,
+      ).toBe('org1');
     }
   });
 

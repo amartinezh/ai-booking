@@ -59,22 +59,22 @@ describe('ChatbotController', () => {
 
     chatbotService = {
       processIncomingMessage: jest.fn(),
-      sendOutboundMessage: jest.fn(async () => ({ success: true })),
+      sendOutboundMessage: jest.fn(() => ({ success: true })),
     };
     credentials = {
-      organizationIdByVerifyToken: jest.fn(async () => null),
-      appSecretByPhoneNumberId: jest.fn(async () => null),
+      organizationIdByVerifyToken: jest.fn(() => null),
+      appSecretByPhoneNumberId: jest.fn(() => null),
     };
     inboundQueue = {
       seen: new Set<string>(),
       inFlight: 0,
-      admit: jest.fn(async (wamid?: string) => {
+      admit: jest.fn((wamid?: string) => {
         if (!wamid) return true;
         if (inboundQueue.seen.has(wamid)) return false;
         inboundQueue.seen.add(wamid);
         return true;
       }),
-      releaseAdmission: jest.fn(async (wamid?: string) => {
+      releaseAdmission: jest.fn((wamid?: string) => {
         if (wamid) inboundQueue.seen.delete(wamid);
       }),
       enqueue: jest.fn((_senderId: string, task: () => Promise<void>) => {

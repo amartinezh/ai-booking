@@ -272,7 +272,7 @@ export class MirrorDispatchService {
     // cupo anterior solo existe en el `__old` que adjunta el trigger. Sin
     // resolverlo, el driver no sabría qué cita borrar en el HIS.
     const idsAnteriores = citas
-      .map((r) => (filaDe(r).__old as Record<string, unknown> | undefined))
+      .map((r) => filaDe(r).__old as Record<string, unknown> | undefined)
       .map((old) => old?.scheduleSlotId)
       .filter((v): v is string => typeof v === 'string');
 
@@ -322,9 +322,7 @@ export class MirrorDispatchService {
         organizationId,
         entityType: { in: ['DOCTOR', 'SERVICE'] },
         agenIAId: {
-          in: [
-            ...new Set(slots.flatMap((s) => [s.doctorId, s.serviceId])),
-          ],
+          in: [...new Set(slots.flatMap((s) => [s.doctorId, s.serviceId]))],
         },
       },
       select: { entityType: true, agenIAId: true, externalKey: true },
@@ -372,7 +370,9 @@ export class MirrorDispatchService {
         const anterior = slotPorId.get(anteriorId);
         if (anterior) {
           context.previousStartTimeIso = anterior.startTime.toISOString();
-          const medicoAnterior = claveExterna.get(`DOCTOR:${anterior.doctorId}`);
+          const medicoAnterior = claveExterna.get(
+            `DOCTOR:${anterior.doctorId}`,
+          );
           if (medicoAnterior) {
             context.previousDoctorExternalKey = medicoAnterior;
           } else {

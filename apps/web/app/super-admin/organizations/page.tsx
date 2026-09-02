@@ -1,6 +1,5 @@
 import { getOrganizations } from "../../actions/organizations";
 import OrganizationsClient from "./components/OrganizationsClient";
-import { Prisma } from "@agenia/database";
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

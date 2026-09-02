@@ -52,7 +52,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
   constructor(private readonly logs: SystemLogService) {}
 
-  async catch(exception: unknown, host: ArgumentsHost): Promise<void> {
+  catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();

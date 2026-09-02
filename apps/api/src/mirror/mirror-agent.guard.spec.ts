@@ -120,7 +120,11 @@ describe('MirrorAgentGuard', () => {
 
   it('driverConfig cifrado (string) → se descifra antes de colgarlo en el request', async () => {
     const token = generateAgentToken('org-1');
-    const decrypted = { server: '192.168.1.16', port: 1433, user: 'agenia_sync' };
+    const decrypted = {
+      server: '192.168.1.16',
+      port: 1433,
+      user: 'agenia_sync',
+    };
     const prisma = buildPrisma({
       id: 'cfg1',
       organizationId: 'org-1',
@@ -138,7 +142,9 @@ describe('MirrorAgentGuard', () => {
 
     await guard.canActivate(context);
 
-    expect(crypto.decryptJson).toHaveBeenCalledWith('iv-hex:tag-hex:cipher-hex');
+    expect(crypto.decryptJson).toHaveBeenCalledWith(
+      'iv-hex:tag-hex:cipher-hex',
+    );
     const request = (context.switchToHttp().getRequest as any)();
     expect(request.mirrorConfig.driverConfig).toEqual(decrypted);
   });

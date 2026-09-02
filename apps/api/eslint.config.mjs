@@ -29,6 +29,17 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-floating-promises': 'warn',
       '@typescript-eslint/no-unsafe-argument': 'warn',
+      // Convención del repo: un parámetro/variable prefijado con `_` es
+      // intencionalmente no usado (p.ej. para mantener la forma de la firma
+      // entre funciones hermanas de un mismo pool de mensajes).
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
       "prettier/prettier": ["error", { endOfLine: "auto" }],
       // Evita reintroducir el bug de "hora UTC" en mensajes/TTS: cualquier
       // `.toLocale(Date|Time)?String('es-CO', ...)` SIN una propiedad

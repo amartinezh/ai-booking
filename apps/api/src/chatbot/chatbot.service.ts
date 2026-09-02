@@ -9,7 +9,6 @@ import {
   SESSION_TTL,
   SERVICE_WINDOW_TTL,
   WAITLIST_CONFIRM_TTL,
-  MSGS,
   buildMessages,
   PARTICULAR_EPS_NAME,
   DEFAULT_MAX_RETRIES,
@@ -5408,7 +5407,11 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
     epsId: string | null,
   ): Promise<'nacimiento' | 'sexo' | 'regimen' | null> {
-    if (!(await this.redis.get(this.altaKey(organizationId, senderId, 'nacimiento'))))
+    if (
+      !(await this.redis.get(
+        this.altaKey(organizationId, senderId, 'nacimiento'),
+      ))
+    )
       return 'nacimiento';
     if (!(await this.redis.get(this.altaKey(organizationId, senderId, 'sexo'))))
       return 'sexo';
@@ -5419,7 +5422,9 @@ export class ChatbotService implements OnModuleInit {
     const eps = await this.prisma.eps.findUnique({ where: { id: epsId } });
     if (!eps || isParticularEps(eps.name)) return null;
 
-    if (!(await this.redis.get(this.altaKey(organizationId, senderId, 'regimen'))))
+    if (
+      !(await this.redis.get(this.altaKey(organizationId, senderId, 'regimen')))
+    )
       return 'regimen';
     return null;
   }
@@ -5433,13 +5438,25 @@ export class ChatbotService implements OnModuleInit {
     userMessage?: string,
   ): Promise<void> {
     const porDato = {
-      nacimiento: { reply: MSGS.pedirNacimiento(), state: ChatState.AWAITING_BIRTHDATE },
+      nacimiento: {
+        reply: MSGS.pedirNacimiento(),
+        state: ChatState.AWAITING_BIRTHDATE,
+      },
       sexo: { reply: MSGS.pedirSexo(), state: ChatState.AWAITING_GENDER },
-      regimen: { reply: MSGS.pedirRegimen(epsName), state: ChatState.AWAITING_REGIME },
+      regimen: {
+        reply: MSGS.pedirRegimen(epsName),
+        state: ChatState.AWAITING_REGIME,
+      },
     }[dato];
 
     await this.smartReply(organizationId, senderId, porDato.reply);
-    await this.auditarAlta(organizationId, senderId, userMessage, porDato.reply, `ALTA_PEDIR_${dato.toUpperCase()}`);
+    await this.auditarAlta(
+      organizationId,
+      senderId,
+      userMessage,
+      porDato.reply,
+      `ALTA_PEDIR_${dato.toUpperCase()}`,
+    );
     await this.setUserState(organizationId, senderId, porDato.state);
     await this.extenderSesionDeAlta(organizationId, senderId);
   }
@@ -5476,7 +5493,13 @@ export class ChatbotService implements OnModuleInit {
     step: string,
   ): Promise<void> {
     await this.smartReply(ctx.organizationId, ctx.senderId, reply);
-    await this.auditarAlta(ctx.organizationId, ctx.senderId, ctx.text, reply, step);
+    await this.auditarAlta(
+      ctx.organizationId,
+      ctx.senderId,
+      ctx.text,
+      reply,
+      step,
+    );
   }
 
   /** Lo capturado hasta ahora, en el formato que espera `ensurePatientPersisted`. */
@@ -5551,7 +5574,8 @@ export class ChatbotService implements OnModuleInit {
     }
 
     const nombres =
-      (await this.redis.get(`temp_nombres:${organizationId}:${senderId}`)) ?? '';
+      (await this.redis.get(`temp_nombres:${organizationId}:${senderId}`)) ??
+      '';
 
     await this.redis.set(
       `temp_apellidos:${organizationId}:${senderId}`,
@@ -5576,7 +5600,10 @@ export class ChatbotService implements OnModuleInit {
     const pendiente = await this.redis.get(
       `temp_alta_nacimiento_pendiente:${organizationId}:${senderId}`,
     );
-    if (pendiente && /^(s[ií]|si|correcto|ok|exacto|as[ií] es)$/i.test((text ?? '').trim())) {
+    if (
+      pendiente &&
+      /^(s[ií]|si|correcto|ok|exacto|as[ií] es)$/i.test((text ?? '').trim())
+    ) {
       await this.redis.set(
         this.altaKey(organizationId, senderId, 'nacimiento'),
         pendiente,
@@ -5592,7 +5619,11 @@ export class ChatbotService implements OnModuleInit {
 
     const fecha = parseFechaNacimiento(text);
     if (!fecha) {
-      await this.responderAlta(ctx, MSGS.nacimientoNoEntendido(), 'ALTA_NACIMIENTO_NO_ENTENDIDO');
+      await this.responderAlta(
+        ctx,
+        MSGS.nacimientoNoEntendido(),
+        'ALTA_NACIMIENTO_NO_ENTENDIDO',
+      );
       return;
     }
 
@@ -5618,7 +5649,11 @@ export class ChatbotService implements OnModuleInit {
     // El menú ofrece A/B; también se acepta la palabra escrita.
     const sexo = /^a$/i.test(t) ? 'M' : /^b$/i.test(t) ? 'F' : parseSexo(t);
     if (!sexo) {
-      await this.responderAlta(ctx, MSGS.sexoNoEntendido(), 'ALTA_SEXO_NO_ENTENDIDO');
+      await this.responderAlta(
+        ctx,
+        MSGS.sexoNoEntendido(),
+        'ALTA_SEXO_NO_ENTENDIDO',
+      );
       return;
     }
     await this.redis.set(
@@ -5634,7 +5669,11 @@ export class ChatbotService implements OnModuleInit {
     const { organizationId, senderId, text, MSGS } = ctx;
     const regimen = parseRegimen((text ?? '').trim());
     if (!regimen) {
-      await this.responderAlta(ctx, MSGS.regimenNoEntendido(), 'ALTA_REGIMEN_NO_ENTENDIDO');
+      await this.responderAlta(
+        ctx,
+        MSGS.regimenNoEntendido(),
+        'ALTA_REGIMEN_NO_ENTENDIDO',
+      );
       return;
     }
     await this.redis.set(
@@ -5695,7 +5734,8 @@ export class ChatbotService implements OnModuleInit {
    */
   private async persistirYMostrarResumen(ctx: ChatTurnContext): Promise<void> {
     const { organizationId, senderId, MSGS, text } = ctx;
-    const g = (k: string) => this.redis.get(`${k}:${organizationId}:${senderId}`);
+    const g = (k: string) =>
+      this.redis.get(`${k}:${organizationId}:${senderId}`);
 
     const [cedula, nombre, epsId, servicio, fechaVista] = await Promise.all([
       g('temp_cedula'),
@@ -5720,8 +5760,7 @@ export class ChatbotService implements OnModuleInit {
     // menú: NO es una afiliación, y ni el paciente ni la cita deben quedar
     // ligados a ella. Misma traducción que hace el flujo normal con
     // `epsIdForPatient`; replicarla aquí es obligatorio, no cosmético.
-    const epsIdParaPaciente =
-      eps && !isParticularEps(eps.name) ? eps.id : null;
+    const epsIdParaPaciente = eps && !isParticularEps(eps.name) ? eps.id : null;
 
     await this.ensurePatientPersisted({
       cedula,

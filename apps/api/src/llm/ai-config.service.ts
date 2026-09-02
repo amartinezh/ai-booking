@@ -2,7 +2,6 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import {
-  DecryptedAiConfig,
   MultiProviderBlob,
   PROVIDER_MODELS,
   decodeMultiProviderBlob,

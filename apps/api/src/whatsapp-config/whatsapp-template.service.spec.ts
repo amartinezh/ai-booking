@@ -37,7 +37,7 @@ describe('WhatsappTemplateService', () => {
       jest.fn(() => of({ data: { messages: [{ id: 'w1' }] } }));
     const prisma = {
       whatsappTemplate: {
-        findFirst: jest.fn(async () =>
+        findFirst: jest.fn(() =>
           opts?.template === undefined
             ? {
                 name: 'recordatorio_cita',
@@ -49,7 +49,7 @@ describe('WhatsappTemplateService', () => {
       },
     };
     const credentials = {
-      forOrg: jest.fn(async () =>
+      forOrg: jest.fn(() =>
         opts?.creds === undefined
           ? {
               organizationId: ORG,

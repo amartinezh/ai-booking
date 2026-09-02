@@ -6,13 +6,13 @@ function fakeRedis() {
   return {
     store,
     set: jest.fn(
-      async (k: string, v: string, _ex: string, _ttl: number, nx?: string) => {
+      (k: string, v: string, _ex: string, _ttl: number, nx?: string) => {
         if (nx === 'NX' && store.has(k)) return null;
         store.set(k, String(v));
         return 'OK';
       },
     ),
-    del: jest.fn(async (...keys: string[]) => {
+    del: jest.fn((...keys: string[]) => {
       let n = 0;
       for (const k of keys) if (store.delete(k)) n++;
       return n;
@@ -20,8 +20,7 @@ function fakeRedis() {
   };
 }
 
-const delay = (ms: number) =>
-  new Promise<void>((r) => setTimeout(r, ms));
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 describe('InboundQueueService', () => {
   afterEach(() => {

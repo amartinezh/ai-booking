@@ -64,7 +64,7 @@ export default function SettingsForm({ initial }: Props) {
                             placeholder="Ej: Vicente, Sofía, MedBot..."
                         />
                         <p className="text-xs text-zinc-400 mt-1.5">
-                            Este nombre aparece en los mensajes de bienvenida: <em>"Soy <strong>{botName || 'Vicente'}</strong>, el asistente de su clínica."</em>
+                            Este nombre aparece en los mensajes de bienvenida: <em>&quot;Soy <strong>{botName || 'Vicente'}</strong>, el asistente de su clínica.&quot;</em>
                         </p>
                     </div>
 
@@ -72,7 +72,7 @@ export default function SettingsForm({ initial }: Props) {
                         <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-4 text-sm text-indigo-700 dark:text-indigo-300 w-full">
                             <p className="font-semibold mb-1">💡 Vista previa del mensaje</p>
                             <p className="text-indigo-600 dark:text-indigo-400 italic">
-                                "¡Hola! 👋 Soy <strong>{botName || 'Vicente'}</strong>, el asistente de su clínica. Estoy aquí para ayudarle a agendar su cita médica..."
+                                &quot;¡Hola! 👋 Soy <strong>{botName || 'Vicente'}</strong>, el asistente de su clínica. Estoy aquí para ayudarle a agendar su cita médica...&quot;
                             </p>
                         </div>
                     </div>

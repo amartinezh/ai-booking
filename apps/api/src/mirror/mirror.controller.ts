@@ -134,7 +134,11 @@ export class MirrorController {
     }
     const from = new Date(body?.fromIso ?? '');
     const to = new Date(body?.toIso ?? '');
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) {
+    if (
+      Number.isNaN(from.getTime()) ||
+      Number.isNaN(to.getTime()) ||
+      from >= to
+    ) {
       throw new BadRequestException(
         'fromIso/toIso deben ser fechas válidas y fromIso anterior a toIso.',
       );
@@ -172,7 +176,11 @@ export class MirrorController {
     // único inválido es que ninguno de los tres venga como arreglo.
     const esArreglo = (v: unknown) => v === undefined || Array.isArray(v);
     const hasSeqs = Array.isArray(body?.seqs);
-    if (!hasSeqs || !esArreglo(body?.failedSeqs) || !esArreglo(body?.skippedSeqs)) {
+    if (
+      !hasSeqs ||
+      !esArreglo(body?.failedSeqs) ||
+      !esArreglo(body?.skippedSeqs)
+    ) {
       throw new BadRequestException(
         'seqs, failedSeqs y skippedSeqs (si vienen) deben ser arreglos.',
       );
