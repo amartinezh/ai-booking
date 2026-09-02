@@ -116,6 +116,39 @@ export function fechaCitaLocal(iso: string, timeZone: string): string {
 }
 
 /**
+ * El día SIGUIENTE a una fecha local, como literal `YYYYMMDD`.
+ *
+ * Existe para poder filtrar por rango sin envolver la columna en una función.
+ * `WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @a AND @b` es correcto
+ * pero **no es sargable**: tocar la columna con `CONVERT` le impide a SQL
+ * Server usar un índice sobre ella, y lo obliga a evaluar la conversión fila
+ * por fila sobre la tabla entera.
+ *
+ * No es teórico. El hospital TIENE un índice con `FE_FECH_CIT` como primera
+ * columna de la clave (bloque 29a) y `CITAS_MEDICAS` tiene 1.084.093 filas /
+ * 855 MB. La forma con `CONVERT` los ignoraba y el agente releía eso cada
+ * pocos segundos.
+ *
+ * La forma sargable es `COL >= @desde AND COL < @hastaExclusivo`, y de ahí
+ * este helper: el borde superior tiene que ser el día siguiente, porque
+ * `BETWEEN` sobre fechas incluía el último día y `<` no.
+ *
+ * La suma se hace en UTC a propósito: aquí una fecha es un día del calendario,
+ * no un instante, así que no hay zona ni horario de verano que aplicar.
+ */
+export function diaSiguienteLiteralSql(fechaLocal: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fechaLocal);
+  if (!m) {
+    throw new MappingIncompletoError(
+      `Fecha con formato inesperado: "${fechaLocal}". Se esperaba 'YYYY-MM-DD'.`,
+    );
+  }
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + 1));
+  const dos = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}${dos(d.getUTCMonth() + 1)}${dos(d.getUTCDate())}`;
+}
+
+/**
  * `NU_ESTA_CIT` traducido al vocabulario de AgenIA.
  *
  * ═══ Por qué existe ═══

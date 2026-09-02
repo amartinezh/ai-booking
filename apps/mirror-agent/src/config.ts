@@ -8,6 +8,17 @@ export interface AgentConfig {
   agentToken: string;
   driverVersion: string;
   pollIntervalMs: number;
+  /**
+   * Cada cuánto se le pregunta al HIS qué cambió.
+   *
+   * Es SUYO y no el de `pollIntervalMs` a propósito. El de salida es un
+   * long-poll: pedir cada 5s no cuesta nada porque el servidor retiene la
+   * llamada. El de entrada, en cambio, relee la ventana de vigilancia entera
+   * de la base del hospital en cada vuelta — 1.084.093 filas / 855 MB de
+   * tabla, ~28.000 filas devueltas (bloque 29b). Compartir los 5 segundos del
+   * long-poll era heredar un ritmo pensado para algo que no cuesta.
+   */
+  inboundIntervalMs: number;
   heartbeatIntervalMs: number;
   /** Cada cuánto se contrasta el HIS entero contra AgenIA. */
   reconcileIntervalMs: number;
@@ -31,6 +42,11 @@ export interface AgentConfig {
 
 const DEFAULTS = {
   pollIntervalMs: 5_000,
+  // 30s: seis veces menos carga sobre la base viva del hospital, y sigue
+  // siendo mucho más rápido de lo que nadie nota. Lo que protege de la
+  // sobreventa en el intervalo no es esta lectura sino la PK del HIS, que
+  // rechaza la segunda cita en el mismo cupo en el momento de escribirla.
+  inboundIntervalMs: 30_000,
   heartbeatIntervalMs: 60_000,
   // Una vez al día: la reconciliación lee la agenda entera del hospital, no es
   // algo que convenga hacer cada minuto.
@@ -66,6 +82,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
     agentToken,
     driverVersion: env.MIRROR_DRIVER_VERSION ?? DEFAULTS.driverVersion,
     pollIntervalMs: Number(env.MIRROR_POLL_INTERVAL_MS) || DEFAULTS.pollIntervalMs,
+    inboundIntervalMs:
+      Number(env.MIRROR_INBOUND_INTERVAL_MS) || DEFAULTS.inboundIntervalMs,
     heartbeatIntervalMs:
       Number(env.MIRROR_HEARTBEAT_INTERVAL_MS) || DEFAULTS.heartbeatIntervalMs,
     reconcileIntervalMs:

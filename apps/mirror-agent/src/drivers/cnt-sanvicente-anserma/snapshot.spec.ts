@@ -76,10 +76,13 @@ describe('snapshotAppointments', () => {
 
     // 2026-09-01T00:00:00Z son las 2026-08-31 19:00 en Bogotá: la fecha local
     // retrocede un día respecto al instante UTC pedido.
-    expect(capturado.params.desde).toBe('2026-08-31');
-    expect(capturado.params.hasta).toBe('2026-11-30');
+    expect(capturado.params.desde).toBe('20260831');
+    // El borde superior es EXCLUSIVO: el día SIGUIENTE al último incluido, que
+    // es lo que hace equivalente `< @hasta` al `BETWEEN` inclusivo anterior.
+    expect(capturado.params.hasta).toBe('20261201');
+    // Y la columna va desnuda, para que el índice del hospital sirva.
     expect(capturado.sql).toMatch(
-      /CONVERT\(varchar\(10\), FE_FECH_CIT, 23\) BETWEEN @desde AND @hasta/,
+      /FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta/,
     );
   });
 

@@ -886,11 +886,18 @@ GROUP BY OBJECT_NAME(ps.object_id);
 
 -- (29c) y (29d): las dos formas, con la MISMA ventana.
 --
--- 👉 En SSMS, antes de correr esto: activar "Include Actual Execution Plan"
---    (Ctrl+M). Lo que hay que mirar en el plan es si aparece "Index Seek" o
---    "Index/Table Scan" sobre CITAS_MEDICAS.
--- 👉 Correr el lote DOS VECES y reportar los números de la segunda (la primera
---    paga el costo de leer de disco y ensucia la comparación).
+-- ⚠️ CORREGIDO (2026-09-02): la primera versión devolvía las ~28.000 filas de
+-- la ventana a la grilla, y eran imposibles de copiar — 5.200 líneas en el
+-- portapapeles. Pero las filas nunca fueron el objetivo: lo que se mide es el
+-- COSTO. Ahora el resultado se vuelca en variables, así que SQL Server lee
+-- exactamente las mismas filas y hace exactamente el mismo trabajo, pero no
+-- devuelve nada a la pantalla. Lo único que sale es la pestaña "Messages",
+-- que es justo lo que hay que reportar.
+--
+-- 👉 Antes de correr: activar "Include Actual Execution Plan" (Ctrl+M). En el
+--    plan hay que mirar si sobre CITAS_MEDICAS aparece "Index Seek" o "Scan".
+-- 👉 Correr el lote DOS VECES y reportar los números de la SEGUNDA (la primera
+--    paga la lectura de disco y ensucia la comparación).
 SET STATISTICS IO ON;
 SET STATISTICS TIME ON;
 GO
@@ -900,28 +907,38 @@ DECLARE @hasta23  varchar(10) = CONVERT(varchar(10), DATEADD(day, 90, GETDATE())
 DECLARE @desde112 varchar(8)  = CONVERT(varchar(8),  GETDATE(), 112);             -- 'YYYYMMDD'
 DECLARE @hasta112 varchar(8)  = CONVERT(varchar(8),  DATEADD(day, 91, GETDATE()), 112);
 
-PRINT '--- (29c) FORMA ACTUAL del driver: CONVERT sobre la columna (no sargable) ---';
-SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
-       CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist,
-       NU_DURA_CIT dura, DE_DESC_CIT descripcion,
-       CONVERT(varchar(10), FE_FECH_CIT, 23) fecha
+-- Sumideros: absorben las columnas para que no viajen a la grilla. El motor
+-- lee las mismas filas y toca las mismas páginas — el costo es idéntico.
+DECLARE @med varchar(4), @hora varchar(18), @est tinyint, @ser varchar(12),
+        @hist varchar(20), @dura int, @desc varchar(600), @fecha varchar(10);
+
+PRINT '--- (29c) FORMA ANTERIOR: CONVERT sobre la columna (no sargable) ---';
+SELECT @med = CD_CODI_MED_CIT, @hora = FE_HORA_CIT, @est = NU_ESTA_CIT,
+       @ser = CD_CODI_SER_CIT, @hist = NU_HIST_PAC_CIT,
+       @dura = NU_DURA_CIT, @desc = DE_DESC_CIT,
+       @fecha = CONVERT(varchar(10), FE_FECH_CIT, 23)
   FROM dbo.CITAS_MEDICAS
  WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @desde23 AND @hasta23;
 
-PRINT '--- (29d) FORMA CANDIDATA: rango sobre la columna desnuda (sargable) ---';
--- Mismo resultado, misma inmunidad a la zona horaria (el borde viaja como
+PRINT '--- (29d) FORMA NUEVA: rango sobre la columna desnuda (sargable) ---';
+-- Mismo resultado y misma inmunidad a la zona horaria (el borde viaja como
 -- literal 'YYYYMMDD', que SQL Server lee igual bajo cualquier DATEFORMAT),
--- pero dejando la columna sin envolver para que un índice pueda usarse.
--- El borde superior es EXCLUSIVO, por eso son 91 días y no 90.
+-- pero sin envolver la columna, para que el índice pueda usarse. El borde
+-- superior es EXCLUSIVO: por eso son 91 días y no 90.
 --
--- ✔ Equivalencia ya verificada contra el mock local sembrando los bordes
---   (ayer, hoy, +89, +90, +91): las dos formas devuelven EXACTAMENTE el mismo
---   conjunto — incluyen hoy y el día +90, excluyen ayer y el día +91. Lo que
---   falta medir aquí no es si dan lo mismo, sino cuánto cuesta cada una.
-SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
-       CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist,
-       NU_DURA_CIT dura, DE_DESC_CIT descripcion,
-       CONVERT(varchar(10), FE_FECH_CIT, 23) fecha
+-- ✔ Equivalencia verificada dos veces contra el mock local sembrando los
+--   bordes (ayer, hoy, +89, +90, +91): las dos formas devuelven EXACTAMENTE
+--   el mismo conjunto. Lo que falta medir no es si dan lo mismo, sino cuánto
+--   cuesta cada una.
+--
+-- 🔧 Esta forma YA ESTÁ DESPLEGADA en el driver (2026-09-02), porque el
+--    bloque 29a mostró que el hospital tiene un índice con FE_FECH_CIT de
+--    primera columna y la forma anterior no lo podía usar. Esta medición
+--    ahora sirve para CONFIRMAR la mejora, no para decidirla.
+SELECT @med = CD_CODI_MED_CIT, @hora = FE_HORA_CIT, @est = NU_ESTA_CIT,
+       @ser = CD_CODI_SER_CIT, @hist = NU_HIST_PAC_CIT,
+       @dura = NU_DURA_CIT, @desc = DE_DESC_CIT,
+       @fecha = CONVERT(varchar(10), FE_FECH_CIT, 23)
   FROM dbo.CITAS_MEDICAS
  WHERE FE_FECH_CIT >= @desde112 AND FE_FECH_CIT < @hasta112;
 GO
@@ -930,10 +947,10 @@ SET STATISTICS IO OFF;
 SET STATISTICS TIME OFF;
 GO
 
--- 👉 De la salida de la pestaña "Messages" hacen falta, para CADA una de las
---    dos: la línea "Table 'CITAS_MEDICAS'. Scan count N, logical reads N..." y
---    la línea "SQL Server Execution Times: ... elapsed time = N ms". Y del
---    plan, si fue Seek o Scan.
+-- 👉 De la pestaña "Messages", para CADA una de las dos, hacen falta dos
+--    líneas: la de "Table 'CITAS_MEDICAS'. Scan count N, logical reads N..."
+--    y la de "SQL Server Execution Times: ... elapsed time = N ms". Del plan,
+--    solo si fue Seek o Scan. Son cuatro datos en total, no una tabla.
 
 -- (29e) ¿Existe de verdad más de una cita vigente para el mismo médico+hora?
 -- La PK es (médico, hora, ESTADO), así que el esquema lo permite: el desenlace
@@ -969,25 +986,47 @@ SELECT COUNT(*) AS filas, SUM(CASE WHEN NU_NUME_MOVI_CIT IS NULL THEN 1 ELSE 0 E
 FROM dbo.CITAS_MEDICAS;
 
 -- =============================================================================
--- RESULTADO DEL BLOQUE 29 (pendiente de ejecución):
+-- RESULTADO DEL BLOQUE 29 (2026-09-02, ESEHSVP):
 --
---   (29a) índices de CITAS_MEDICAS / TURNOS_MEDICOS:
---   (29b) filas y MB:
---   (29c) forma actual  → Seek/Scan:        logical reads:        elapsed:
---   (29d) forma candidata → Seek/Scan:      logical reads:        elapsed:
---   (29e) claves duplicadas (médico+hora):
---   (29f) NU_NUME_MOVI_CIT nulos:
+--   (29a) 🔑 EL HOSPITAL SÍ TIENE EL ÍNDICE QUE HACÍA FALTA. Dos, de hecho,
+--         con FE_FECH_CIT como PRIMERA columna de la clave:
+--           · CITAS_MEDICASFE_FECH_CIT            → (FE_FECH_CIT)
+--           · IDX_ESEHSVP_CITAS_MEDICAS31931_31930 → (FE_FECH_CIT, NU_ESTA_CIT)
+--             + INCLUDE (CD_CODI_SER_CIT, FE_ELAB_CIT, NU_NUME_MOVI_CIT)
+--         TURNOS_MEDICOS tiene el equivalente: TURNOS_MEDICOSFE_FECH_TUME.
+--         PK confirmada de nuevo: PKCITAS_MEDICAS CLUSTERED
+--         (CD_CODI_MED_CIT, FE_HORA_CIT, NU_ESTA_CIT).
 --
--- QUÉ SE DECIDE CON ESTO
---   · Si (29d) hace Seek y (29c) hace Scan ⇒ cambiar las 4 consultas del
---     driver a la forma sargable. Es un cambio de código, sin pedirle nada al
---     hospital.
---   · Si las DOS hacen Scan ⇒ no hay índice útil por fecha: o se pide uno
---     (cambio en su base, hay que negociarlo), o se baja la frecuencia del
---     bucle de entrada, que hoy comparte el intervalo de 5s del long-poll de
---     salida sin ninguna razón para ello.
---   · Si (29c) ya es barata (pocas lecturas, pocos ms) ⇒ no hay nada que
---     hacer y el polling cada 5s es sostenible. Esa también es una respuesta.
+--   (29b) CITAS_MEDICAS  1.084.093 filas   855,2 MB
+--         TURNOS_MEDICOS   119.480 filas    15,0 MB
+--         Un orden de magnitud por encima de lo que se estimaba (~28.000).
+--
+--   (29c)/(29d) SIN MEDIR todavía: la consulta devolvía las ~28.000 filas de
+--         la ventana y no se podían copiar. Corregido arriba — ahora vuelca a
+--         variables y solo sale la pestaña "Messages".
+--
+--         Pero la decisión ya no dependía de la medición: con un índice cuya
+--         primera columna es FE_FECH_CIT, envolverla en CONVERT lo inutiliza.
+--         ⇒ Las 4 consultas del driver se pasaron a la forma sargable
+--           (2026-09-02). La medición queda como confirmación.
+--
+--         Matiz que la medición sí resolverá: la ventana son ~28.000 de
+--         1.084.093 filas = 2,6% de la tabla, justo en el punto donde el
+--         optimizador a veces prefiere escanear igual, porque el SELECT pide
+--         columnas que el índice no cubre (NU_HIST_PAC_CIT, NU_DURA_CIT,
+--         DE_DESC_CIT) y tendría que hacer 28.000 búsquedas adicionales.
+--
+--   (29e) SOLO 2 claves (médico+hora) duplicadas en 1.084.093 filas, ambas de
+--         2014 — y son PACIENTES DISTINTOS a la misma hora del mismo médico
+--         (estados 1 y 2, historias diferentes):
+--           09  2014/08/13 11:40  estado 1 → hist 43490245
+--           09  2014/08/13 11:40  estado 2 → hist 1089098369
+--         El blindaje del driver era correcto, pero el fenómeno es rarísimo:
+--         el aviso del log no va a sonar en la práctica.
+--
+--   (29f) NU_NUME_MOVI_CIT nulo en EXACTAMENTE 1 fila de 1.084.093. Basta una
+--         para romper la cancelación de esa cita (NU_NUME_MOVI_CIAN es NOT
+--         NULL y se copia de ahí) ⇒ el COALESCE queda justificado. PENDIENTE.
 -- =============================================================================
 
 -- =============================================================================
@@ -1161,14 +1200,61 @@ HAVING COUNT(DISTINCT c.CD_CODI_SER_CIT) > 1
 ORDER BY COUNT(DISTINCT c.CD_CODI_SER_CIT) DESC;
 
 -- =============================================================================
--- RESULTADO DEL BLOQUE 30 (pendiente de ejecución):
+-- RESULTADO DEL BLOQUE 30 (2026-09-02, ESEHSVP):
 --
---   (30a) médicos en la tabla / con turnos futuros:
---   (30b) sin cédula:            cédulas distintas:        repetidas:
---   (30c) NU_ESTA_MED — qué valor concentra los turnos futuros:
---   (30d) sin email:             emails distintos:
---   (30e) servicios que concentran las citas:
---   (30f) médicos con más de un servicio:
+--   (30a) 588 médicos en la tabla, 30 CON TURNOS FUTUROS (no 27 — la cifra que
+--         arrastraba ESTADO.md estaba desactualizada). Filtrar por turnos
+--         futuros era imprescindible: el 95% de la tabla es historia.
+--
+--         ⚠️ HALLAZGO: OCHO de esos 30 NO SON PERSONAS, son agendas de rol —
+--         "MEDICO ATENCION HTA" (76, 77, 077), "MEDICO ATENCION RIAS" (80-1),
+--         "ENFERMERA CYD HSVP" (91-1), "ENFERMERA SALUD REPRODUCTIVA" (91-2),
+--         "MEDICO DISPONIBLE HSVP 01/02" (MDD1, MDD2). Y el catálogo incluye
+--         enfermeras, higienistas orales, auxiliares de odontología,
+--         nutricionista y psicólogas: `DoctorProfile` va a contener gente que
+--         no es médica. CD_CODI_LUA_MED (sede) está NULL en los 30.
+--
+--   (30b) 30 médicos, 0 sin cédula, pero solo 29 CÉDULAS DISTINTAS. Las
+--         repetidas delatan a las agendas funcionales:
+--           77123456789 → 3 veces (11 dígitos, marcador de posición)
+--           123456      → 2 veces (evidentemente falsa)
+--           1053844965, 24393263, 33990162 → 2 veces c/u
+--         TODOS los largo_cedula = 11 son agendas funcionales, y ninguna tiene
+--         registro médico. ⇒ La cédula empareja bien a las personas reales y
+--         falla justo donde el emparejamiento automático no tenía sentido.
+--
+--   (30c) ✅ NU_ESTA_MED = 1 ES ACTIVO. Confirmado, separación perfecta:
+--           estado 0 → 359 médicos,  0 con turnos futuros
+--           estado 1 → 229 médicos, 30 con turnos futuros
+--         Cierra una hipótesis abierta desde el bloque 2. Ojo: 229 están
+--         activos y solo 30 tienen agenda ⇒ el filtro operativo sigue siendo
+--         "tiene turnos futuros", no el estado.
+--
+--   (30d) 30 médicos, 10 SIN email, 20 emails distintos (los 20 presentes son
+--         únicos, sin colisiones). Los que faltan son casi todos las agendas
+--         funcionales.
+--
+--   (30e) Concentración brutal: los 4 primeros servicios son el 41% de todas
+--         las citas, y los 40 primeros el 76% (~21.194 de 27.877 en 90 días).
+--           S39141    Consulta ambulatoria de medicina general   5.565  (26 méd.)
+--           S39141-1  Consulta control hipertensos                3.635  (23)
+--           SCITOD    Cita odontológica                           1.084  (5)
+--           S39141-2  Consulta lectura de exámenes                1.020  (23)
+--         Ningún laboratorio aparece en el top 40: todo lo que se agenda hoy
+--         son consultas.
+--
+--   (30f) 🔴 `DoctorProfile.serviceId` ES INSUFICIENTE, y no por excepción.
+--         47 médicos prestan MÁS DE UN servicio:
+--           77 → 11 servicios    OD07 → 9    OD01 → 9    OD02 → 9    OD05 → 8
+--         La nota de Fase 2 lo trataba como caso raro; es la norma. Hoy los
+--         cupos heredan el ÚNICO servicio del médico, así que AgenIA solo
+--         puede ofrecer uno de los que cada médico presta y los demás son
+--         invisibles — y si se reserva, CD_CODI_SER_CIT va con el servicio
+--         equivocado, que además determina el convenio de facturación.
+--         Pista para resolverlo: TURNOS_MEDICOS.CD_CODI_ESP_TUME (especialidad
+--         del turno) existe y no se usa, y R_ESP_SER relaciona
+--         especialidad↔servicio. Camino: turno → especialidad → servicios.
+--         ⇒ Material del bloque 31.
 --
 -- QUÉ SE DECIDE CON ESTO
 --   · (30a) da el TAMAÑO real del trabajo: cuántas equivalencias hay que crear.

@@ -157,7 +157,11 @@ describe('fetchAvailability', () => {
       await driver.fetchAvailability(VENTANA_LOCAL);
 
       const consulta = sqls.find((q) => /TURNOS_MEDICOS/.test(q))!;
-      expect(consulta).toMatch(/CONVERT\(varchar\(10\), FE_FECH_TUME, 23\) BETWEEN/);
+      // La columna va DESNUDA: envolverla en CONVERT impedía usar el índice
+      // que el hospital tiene sobre ella (bloque 29a). Lo que se comparan son
+      // literales de fecha local, que es lo que evita el desfase de zona.
+      expect(consulta).toMatch(/FE_FECH_TUME >= @desde AND FE_FECH_TUME < @hasta/);
+      expect(consulta).not.toMatch(/CONVERT\([^)]*\)?[^)]*FE_FECH_TUME[^)]*\)\s*(>=|BETWEEN)/);
     });
 
     it('el turno del día cae en SU día, no en el anterior', async () => {

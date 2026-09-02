@@ -144,7 +144,7 @@ async function main() {
         );
       }
       erroresEntrada = r.hadErrors ? erroresEntrada + 1 : 0;
-      await dormir(config.pollIntervalMs);
+      await dormir(config.inboundIntervalMs);
     }
   };
 

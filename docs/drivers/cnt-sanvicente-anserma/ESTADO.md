@@ -365,9 +365,56 @@ problema que nadie sabe que tiene.
 Once pruebas nuevas entre driver y servidor. 943 en total (545 API, 258
 agente, 140 shared), game-day 19/19.
 
+## ✅ Las consultas ya usan el índice del hospital (2026-09-02)
+
+El bloque 29 devolvió dos cosas que cambian la escala del problema:
+
+- **`CITAS_MEDICAS` tiene 1.084.093 filas y 855 MB.** Se venía estimando en
+  ~28.000 — un orden de magnitud menos.
+- **El hospital YA TIENE el índice que hacía falta:** dos, con `FE_FECH_CIT`
+  como primera columna de la clave (`CITAS_MEDICASFE_FECH_CIT` y
+  `IDX_ESEHSVP_CITAS_MEDICAS31931_31930`). `TURNOS_MEDICOS` tiene el suyo.
+
+Y el driver no los podía usar. Al corregir el desfase de zona horaria se
+adoptó `WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @a AND @b`, que es
+correcto pero **no es sargable**: envolver la columna en una función le impide
+al motor usar cualquier índice sobre ella. Eran cuatro consultas, y una de
+ellas la que el bucle de entrada repetía cada 5 segundos contra la base viva
+del hospital.
+
+**Arreglo, en dos partes:**
+
+1. **Las cuatro consultas pasan a `COL >= @desde AND COL < @hasta`**, con los
+   bordes como literales `'YYYYMMDD'` (`fechaLiteralSql` /
+   `diaSiguienteLiteralSql`). La columna queda desnuda y el índice sirve, sin
+   perder la inmunidad a la zona horaria — un literal de texto no tiene zona.
+   El borde superior pasa a ser EXCLUSIVO, de ahí el helper del día siguiente.
+   Equivalencia verificada contra el mock sembrando los bordes (ayer, hoy,
+   +89, +90, +91): las dos formas devuelven el mismo conjunto exacto.
+
+2. **El bucle de entrada tiene su propio intervalo** (`MIRROR_INBOUND_INTERVAL_MS`,
+   30s por defecto) en vez de heredar los 5s del long-poll de salida. Compartirlo
+   no tenía ninguna razón: el de salida es un long-poll que no cuesta nada
+   porque el servidor retiene la llamada; el de entrada relee la ventana entera
+   de la base del hospital. Aunque el seek fuera perfecto, 28.000 filas cada 5
+   segundos son 484 millones de filas al día por su LAN. Lo que protege de la
+   sobreventa en ese intervalo no es esta lectura sino la PK del HIS, que
+   rechaza la segunda cita en el mismo cupo al escribirla.
+
+Nueve pruebas nuevas (incluidos los saltos de mes, año y bisiesto del borde
+superior, donde esto se rompería en silencio). 264 en el agente, game-day 19/19.
+
+**Queda pendiente medir** (29c/29d): la primera versión del bloque devolvía las
+28.000 filas a la grilla y era imposible copiarlas. Ya está corregido —vuelca a
+variables, así que hace el mismo trabajo y solo sale la pestaña "Messages"—.
+La medición ahora confirma la mejora en vez de decidirla. Hay un matiz que sí
+resolverá: la ventana es el 2,6% de la tabla, justo donde el optimizador a
+veces escanea igual porque el `SELECT` pide tres columnas que el índice no
+cubre.
+
 ## ⏳ Pendientes de este driver
 
-0. **Bloque 29 preparado, pendiente de correr** (`sql/FASE0_DESCUBRIMIENTO_HIS.sql`)
+0. **Bloque 29 — corrido, falta solo la medición de 29c/29d.** (`sql/FASE0_DESCUBRIMIENTO_HIS.sql`)
    — ¿cuánto le cuesta al hospital que el agente relea su agenda cada 5
    segundos? Mide índices y tamaño de `CITAS_MEDICAS`/`TURNOS_MEDICOS`, y
    compara las DOS formas de la consulta: la actual (que envuelve la columna

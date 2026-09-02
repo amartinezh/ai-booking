@@ -3,6 +3,7 @@ import {
   MappingIncompletoError,
   fechaCitaLocal,
   fechaLiteralSql,
+  diaSiguienteLiteralSql,
   desenlaceDeAtencion,
   feHoraCitAIso,
   formatFeHoraCit,
@@ -539,5 +540,50 @@ describe('desenlaceDeAtencion', () => {
     for (const estado of [0, 1, 2, 3, 9]) {
       expect(desenlaceDeAtencion(estado)).not.toBe('NO_SHOW');
     }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// El borde superior exclusivo. Existe para poder filtrar SIN envolver la
+// columna en CONVERT — envolverla impedía usar el índice que el hospital tiene
+// sobre FE_FECH_CIT, sobre una tabla de 1.084.093 filas / 855 MB.
+// ══════════════════════════════════════════════════════════════════════════
+describe('diaSiguienteLiteralSql', () => {
+  it('devuelve el día siguiente como literal YYYYMMDD', () => {
+    expect(diaSiguienteLiteralSql('2026-09-02')).toBe('20260903');
+  });
+
+  it('cruza el fin de mes', () => {
+    expect(diaSiguienteLiteralSql('2026-09-30')).toBe('20261001');
+  });
+
+  it('cruza el fin de año', () => {
+    expect(diaSiguienteLiteralSql('2026-12-31')).toBe('20270101');
+  });
+
+  it('respeta los años bisiestos', () => {
+    expect(diaSiguienteLiteralSql('2028-02-28')).toBe('20280229');
+    expect(diaSiguienteLiteralSql('2028-02-29')).toBe('20280301');
+    expect(diaSiguienteLiteralSql('2027-02-28')).toBe('20270301');
+  });
+
+  it('no depende de la zona del proceso', () => {
+    // La suma se hace en UTC a propósito: aquí una fecha es un día del
+    // calendario, no un instante.
+    const tz = process.env.TZ;
+    try {
+      process.env.TZ = 'Asia/Tokyo';
+      expect(diaSiguienteLiteralSql('2026-09-30')).toBe('20261001');
+      process.env.TZ = 'Pacific/Honolulu';
+      expect(diaSiguienteLiteralSql('2026-09-30')).toBe('20261001');
+    } finally {
+      process.env.TZ = tz;
+    }
+  });
+
+  it('una fecha mal formada falla en vez de producir un borde silencioso', () => {
+    expect(() => diaSiguienteLiteralSql('30/09/2026')).toThrow(
+      MappingIncompletoError,
+    );
   });
 });

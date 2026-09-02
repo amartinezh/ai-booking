@@ -904,10 +904,15 @@ describe('detectChanges — la ventana que se mueve', () => {
 
     await driver.detectChanges(null);
 
-    expect(requests[0].params.desde).toBe('2026-09-01'); // hoy, incluido
-    expect(requests[0].params.hasta).toBe('2026-11-30'); // +90 días
+    expect(requests[0].params.desde).toBe('20260901'); // hoy, incluido
+    // Borde superior EXCLUSIVO: el día siguiente al +90, para que `< @hasta`
+    // siga incluyendo el día 90 como lo hacía el BETWEEN.
+    expect(requests[0].params.hasta).toBe('20261201');
+    // 🔎 La consulta caliente: la columna SIN envolver, para que el índice que
+    // el hospital tiene sobre FE_FECH_CIT (bloque 29a) se pueda usar sobre una
+    // tabla de 1.084.093 filas.
     expect(requests[0].sql).toMatch(
-      /CONVERT\(varchar\(10\), FE_FECH_CIT, 23\) BETWEEN @desde AND @hasta/,
+      /FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta/,
     );
   });
 

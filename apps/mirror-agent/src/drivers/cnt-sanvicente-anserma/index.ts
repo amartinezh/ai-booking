@@ -7,6 +7,7 @@ import {
   formatFeHoraCit,
   fechaCitaLocal,
   fechaLiteralSql,
+  diaSiguienteLiteralSql,
   desenlaceDeAtencion,
   mapSexo,
   resolveConvenio,
@@ -237,19 +238,24 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     // recortan los cupos a la ventana real.
     const fechaDesde = fechaCitaLocal(window.from.toISOString(), this.timeZone);
     const fechaHasta = fechaCitaLocal(window.to.toISOString(), this.timeZone);
+    // Bordes como literal 'YYYYMMDD' y el superior EXCLUSIVO: así la columna
+    // queda SIN envolver y el índice del hospital se puede usar. Ver
+    // diaSiguienteLiteralSql().
+    const desdeSql = fechaLiteralSql(fechaDesde);
+    const hastaSql = diaSiguienteLiteralSql(fechaHasta);
 
     // Solo turnos vigentes: `NU_TIPO_TUME = 0` (el tipo 1 no existe a futuro,
     // verificado en el bloque 20e) e `ID_DISP_TUME = '1'` (disponible).
     const turnos = await pool
       .request()
-      .input('desde', sql.VarChar(10), fechaDesde)
-      .input('hasta', sql.VarChar(10), fechaHasta).query(`
+      .input('desde', sql.VarChar(8), desdeSql)
+      .input('hasta', sql.VarChar(8), hastaSql).query(`
         SELECT CD_MED_TUME med,
                CONVERT(varchar(10), FE_FECH_TUME, 23) fecha,
                CONVERT(varchar(5), FE_HOIN_TUME, 108) hora_ini,
                CONVERT(varchar(5), FE_HOFI_TUME, 108) hora_fin
           FROM dbo.TURNOS_MEDICOS
-         WHERE CONVERT(varchar(10), FE_FECH_TUME, 23) BETWEEN @desde AND @hasta
+         WHERE FE_FECH_TUME >= @desde AND FE_FECH_TUME < @hasta
            AND ISNULL(NU_TIPO_TUME, 0) = 0
            AND ISNULL(ID_DISP_TUME, '1') = '1'`);
 
@@ -257,11 +263,11 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     // que usa la PK de la cita: médico + FE_HORA_CIT.
     const ocupadas = await pool
       .request()
-      .input('desde', sql.VarChar(10), fechaDesde)
-      .input('hasta', sql.VarChar(10), fechaHasta).query(`
+      .input('desde', sql.VarChar(8), desdeSql)
+      .input('hasta', sql.VarChar(8), hastaSql).query(`
         SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora
           FROM dbo.CITAS_MEDICAS
-         WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @desde AND @hasta`);
+         WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
 
     const vendidas = new Set(
       ocupadas.recordset.map(
@@ -365,16 +371,22 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       ),
     };
 
+    // 🔎 Esta es LA consulta caliente: la repite el bucle de entrada, y
+    // `CITAS_MEDICAS` tiene 1.084.093 filas / 855 MB (bloque 29b). El hospital
+    // tiene un índice con `FE_FECH_CIT` de primera columna (bloque 29a), así
+    // que la columna va SIN envolver — con `CONVERT` encima, ese índice no se
+    // podía usar y cada vuelta era un recorrido de la tabla entera.
     const filas = await pool
       .request()
-      .input('desde', sql.VarChar(10), ventana.desde)
-      .input('hasta', sql.VarChar(10), ventana.hasta).query(`
+      .input('desde', sql.VarChar(8), fechaLiteralSql(ventana.desde))
+      .input('hasta', sql.VarChar(8), diaSiguienteLiteralSql(ventana.hasta))
+      .query(`
         SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
                CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist,
                NU_DURA_CIT dura, DE_DESC_CIT descripcion,
                CONVERT(varchar(10), FE_FECH_CIT, 23) fecha
           FROM dbo.CITAS_MEDICAS
-         WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @desde AND @hasta`);
+         WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
 
     // ⚠️ Puede haber más de una fila por médico+hora — no es un caso que
     // "no debería pasar".
@@ -559,14 +571,19 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     const pool = this.requirePool();
     const fechaDesde = fechaCitaLocal(window.from.toISOString(), this.timeZone);
     const fechaHasta = fechaCitaLocal(window.to.toISOString(), this.timeZone);
+    // Bordes como literal 'YYYYMMDD' y el superior EXCLUSIVO: así la columna
+    // queda SIN envolver y el índice del hospital se puede usar. Ver
+    // diaSiguienteLiteralSql().
+    const desdeSql = fechaLiteralSql(fechaDesde);
+    const hastaSql = diaSiguienteLiteralSql(fechaHasta);
 
     const filas = await pool
       .request()
-      .input('desde', sql.VarChar(10), fechaDesde)
-      .input('hasta', sql.VarChar(10), fechaHasta).query(`
+      .input('desde', sql.VarChar(8), desdeSql)
+      .input('hasta', sql.VarChar(8), hastaSql).query(`
         SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_HIST_PAC_CIT hist
           FROM dbo.CITAS_MEDICAS
-         WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @desde AND @hasta`);
+         WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
 
     const foto: HisAppointmentSnapshot[] = [];
     for (const f of filas.recordset as {
