@@ -1635,21 +1635,75 @@ WHERE CD_CODI_ESP IN (
 ORDER BY CD_CODI_ESP;
 
 -- =============================================================================
--- RESULTADO DEL BLOQUE 32 (pendiente de ejecución):
+-- RESULTADO DEL BLOQUE 32 (2026-09-02, ESEHSVP):
 --
---   (32a) servicios sin fila en R_ESP_SER:
---   (32b) médicos sin fila en R_MEDI_ESPE:
---   (32c) veredicto de la regla:
---   (32d) los cuatro ambiguos:
---   (32e) nombres de las especialidades:
+--   (32a) 53 servicios con citas en 90d, 0 SIN fila en R_ESP_SER. Cobertura
+--         total: el temor de que R_ESP_SER viviera en otra familia de códigos
+--         era infundado, lo del bloque 31f fue solo efecto del ORDER BY.
+--   (32b) 25 médicos con turnos, 0 SIN fila en R_MEDI_ESPE. Cobertura total.
+--         ⚠️ Eran 30 en el bloque 30a, corrido un día antes: el conjunto de
+--         "médicos con turnos futuros" SE MUEVE día a día. La herramienta de
+--         homologación no puede tomarlo como una lista fija.
 --
--- QUÉ SE DECIDE CON ESTO
---   · Si (32a) o (32b) devuelven muchos huecos ⇒ la regla no se puede aplicar
---     y `especialidadPorServicio` sigue siendo una tabla mantenida a mano; en
---     ese caso se GENERA del bloque 31d (36 de 40 servicios son inequívocos) y
---     se resuelven los 4 restantes uno a uno.
---   · Si (32c) sale mayoritariamente "ACIERTA" ⇒ el driver puede resolver la
---     especialidad contra el HIS y esa tabla del mappingJson desaparece.
---   · (32e) da las etiquetas legibles para el panel y para la homologación —
---     sin ellas, un operador ve '461' y no sabe que es odontología.
+--   (32c) VEREDICTO DE LA REGLA (21.362 citas):
+--           ACIERTA (una sola, y es la correcta) ... 13.227   61,9%
+--           ambigua (la intersección deja varias)    8.135   38,1%
+--           FALLA .................................       0
+--           sin intersección ......................       0
+--
+--         🔑 La regla NUNCA se equivoca, pero deja indeciso el 38%. Es SEGURA
+--         pero INCOMPLETA: sirve para validar, no para decidir.
+--
+--   (32d) ❌ MI HIPÓTESIS ERA FALSA. Yo sostenía que "la especialidad la
+--         decide quién atiende": que S36101 salía 461 con la odontóloga y 572
+--         con la higienista. Los datos dicen que no —
+--           S36101: 461 en 826 de 827 citas. La única con 572 es UNA cita de
+--                   OD02, y HO03 (higienista oral) también usa 461.
+--         El servicio manda, no el médico. La intersección deja dos porque
+--         R_ESP_SER lista lo POSIBLE, no lo que se usa.
+--
+--         Los otros tres confirman el mismo patrón, y todos tienen el mismo
+--         culpable — el código 000:
+--           I890301AG → deja {000, 328, ...}; real 328 en 453 de 455
+--           S35102    → deja {000, 590};      real 590 en 387 de 388
+--           S35104    → deja {000, 590};      real 590 en 577 de 580
+--         `000` (MEDICINA GENERAL) es un COMODÍN: casi todos los médicos la
+--         tienen declarada y casi todos los servicios la admiten, así que
+--         infla toda intersección y casi nunca es la respuesta correcta
+--         cuando hay alternativa. Desempatar por MIN() la elegiría — y
+--         fallaría en tres de los cuatro.
+--
+--   (32e) CATÁLOGO. Revela una estructura de PARES normal ↔ PyDT (promoción y
+--         detección temprana) que explica las ambigüedades:
+--           000 MEDICINA GENERAL   ↔ 328 MEDICINA GENERAL PYDT
+--           461 ODONTOLOGIA        ↔ 572 ODONTOLOGIA PYDT
+--           590 PSICOLOGIA         ↔ 591 PSICOLOGIA PYDT
+--           060 ENFERMERIA PYDT, 200 DERMATOLOGIA, 341 GINECOLOGIA Y
+--           OBSTETRICIA, 345 PSIQUIATRIA, 387 MEDICINA INTERNA,
+--           451 NUTRICION Y DIETETICA, 550 PEDIATRIA
+--         ⚠️ `TX_ACTI_ESP = 0` en las TRECE, incluidas las que se usan a
+--         diario ⇒ ese flag no sirve para filtrar, nadie lo mantiene.
+--         (Detalle de datos sucios: '000' es "MEDICINA  GENERAL", con dos
+--         espacios.)
+--
+-- ✅ CONCLUSIÓN — de dónde sale CD_CODI_ESP_CIT (cierra el bloque 21b):
+--
+--   La fuente es el SERVICIO, tomada de los datos reales (la moda por
+--   servicio del bloque 31d: 36 de 40 servicios son inequívocos en la
+--   práctica). La intersección R_ESP_SER ∩ R_MEDI_ESPE queda como
+--   VALIDACIÓN — nunca contradijo la realidad en 21.362 citas — pero no como
+--   fuente, porque en el 38% de los casos no decide.
+--
+--   Dicho de otro modo: R_ESP_SER dice lo que es POSIBLE; los datos dicen lo
+--   que se HACE. `especialidadPorServicio` se genera de lo segundo y se
+--   comprueba contra lo primero.
+--
+-- QUÉ SE HIZO CON ESTO
+--   · `especialidadPorServicio` se GENERA de la moda empírica por servicio,
+--     no se mantiene a mano. La intersección se usa para verificar que el
+--     valor generado sea uno de los posibles.
+--   · `especialidadPorDefecto` sigue siendo '000' (medicina general) para el
+--     servicio que no se conozca — es el comodín, y como último recurso es
+--     razonable; lo que no se puede es dejar que gane un desempate.
+--   · No usar `TX_ACTI_ESP` para filtrar especialidades: está en 0 para todas.
 -- =============================================================================

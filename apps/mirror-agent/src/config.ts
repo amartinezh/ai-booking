@@ -38,6 +38,12 @@ export interface AgentConfig {
   availabilityDias: number;
   /** Cada cuánto se hace el repaso completo. */
   availabilityCompletaMs: number;
+
+  // ── Catálogo del HIS (homologación) ───────────────────────────────────
+  /** Cada cuánto se sube el catálogo de médicos y servicios del hospital. */
+  catalogIntervalMs: number;
+  /** Espera antes de la primera subida, tras arrancar. */
+  catalogDelayMs: number;
 }
 
 const DEFAULTS = {
@@ -63,6 +69,11 @@ const DEFAULTS = {
   availabilityDiasCercanos: 14,
   availabilityDias: 400,
   availabilityCompletaMs: 24 * 60 * 60_000,
+  // Una vez al día basta: un médico nuevo del hospital no aparece cada minuto.
+  // Pero el conjunto SÍ se mueve —30 médicos con turnos futuros en una corrida,
+  // 25 al día siguiente— así que tampoco vale hacerlo solo al arrancar.
+  catalogIntervalMs: 24 * 60 * 60_000,
+  catalogDelayMs: 15_000,
   driverVersion: '0.1.0-fase1',
 };
 
@@ -101,5 +112,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
       Number(env.MIRROR_AVAILABILITY_DIAS) || DEFAULTS.availabilityDias,
     availabilityCompletaMs:
       Number(env.MIRROR_AVAILABILITY_COMPLETA_MS) || DEFAULTS.availabilityCompletaMs,
+    catalogIntervalMs:
+      Number(env.MIRROR_CATALOG_INTERVAL_MS) || DEFAULTS.catalogIntervalMs,
+    catalogDelayMs:
+      Number(env.MIRROR_CATALOG_DELAY_MS) || DEFAULTS.catalogDelayMs,
   };
 }

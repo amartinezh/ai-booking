@@ -11,6 +11,8 @@ import type {
   ReconcileResult,
   AvailabilityInput,
   AvailabilityResult,
+  CatalogInput,
+  CatalogResult,
 } from '@agenia/shared';
 
 /**
@@ -25,6 +27,7 @@ export interface MirrorApiClient {
   heartbeat(input: HeartbeatInput): Promise<void>;
   reconcile(input: ReconcileInput): Promise<ReconcileResult>;
   uploadAvailability(input: AvailabilityInput): Promise<AvailabilityResult>;
+  uploadCatalog(input: CatalogInput): Promise<CatalogResult>;
 }
 
 /**
@@ -144,5 +147,9 @@ export class HttpMirrorApiClient implements MirrorApiClient {
 
   uploadAvailability(input: AvailabilityInput): Promise<AvailabilityResult> {
     return this.request('POST', '/mirror/availability', input);
+  }
+
+  uploadCatalog(input: CatalogInput): Promise<CatalogResult> {
+    return this.request('POST', '/mirror/catalog', input);
   }
 }

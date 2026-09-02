@@ -412,6 +412,158 @@ resolverá: la ventana es el 2,6% de la tabla, justo donde el optimizador a
 veces escanea igual porque el `SELECT` pide tres columnas que el índice no
 cubre.
 
+## ✅ De dónde sale la especialidad de la cita (2026-09-02, bloque 32)
+
+Cierra el bloque 21b, abierto desde agosto. Y corrige una hipótesis mía.
+
+**Lo que yo sostenía:** que la especialidad la decide quién atiende — que
+`S36101` (examen clínico de primera vez) salía `461` con la odontóloga y `572`
+con la higienista. **Los datos dicen que no.** Ese servicio usa `461` en 826 de
+827 citas, y `HO03`, que es higienista oral, también usa `461`. La única fila
+con `572` es una cita suelta. **El servicio manda, no el médico.**
+
+**El veredicto de la regla** `R_ESP_SER(servicio) ∩ R_MEDI_ESPE(médico)`, sobre
+21.362 citas reales:
+
+| | citas | |
+|---|---:|---|
+| Acierta (una sola, y es la correcta) | 13.227 | 61,9% |
+| Ambigua (la intersección deja varias) | 8.135 | 38,1% |
+| **Falla** | **0** | — |
+| **Sin intersección** | **0** | — |
+
+La cobertura es total (53 servicios y 25 médicos, ninguno sin fila), y la regla
+**nunca se equivoca** — pero deja indeciso el 38%. Es segura e incompleta:
+sirve para **validar**, no para decidir.
+
+**Por qué queda ambigua:** el código `000` (MEDICINA GENERAL) es un comodín.
+Casi todos los médicos lo tienen declarado y casi todos los servicios lo
+admiten, así que infla toda intersección y casi nunca es la respuesta correcta
+cuando hay alternativa. Desempatar por `MIN()` lo elegiría, y fallaría en tres
+de los cuatro casos conocidos (`I890301AG` → 328, `S35102` → 590, `S35104` →
+590; el real nunca es `000`).
+
+**La conclusión:** la fuente es el **servicio**, tomada de la moda empírica
+(bloque 31d: 36 de 40 servicios son inequívocos en la práctica). La
+intersección queda como comprobación de que el valor generado sea uno de los
+posibles. R_ESP_SER dice lo que es POSIBLE; los datos dicen lo que se HACE.
+`especialidadPorServicio` se genera de lo segundo y se verifica contra lo
+primero.
+
+**Dos detalles operativos que salieron de paso:**
+
+- `TX_ACTI_ESP = 0` en las trece especialidades, incluidas las que se usan a
+  diario ⇒ **no sirve para filtrar**, nadie mantiene ese flag.
+- El conjunto de "médicos con turnos futuros" **se mueve día a día**: eran 30 en
+  el bloque 30a y 25 un día después. La herramienta de homologación no puede
+  tratarlo como una lista fija.
+
+El catálogo tiene además una estructura de pares normal ↔ PyDT que conviene
+conocer: `000`/`328` (medicina general), `461`/`572` (odontología),
+`590`/`591` (psicología).
+
+## ✅ El `mappingJson` deja de ser huérfano — y traía dos valores mal (2026-09-02)
+
+Al ir a aplicar la especialidad recién descubierta apareció el mismo patrón que
+con `MirrorEntityMap`: **nadie escribía el `mappingJson`**. Vive en
+`HospitalMirrorConfig` (en la base y no en el código a propósito: validarlo con
+el hospital debe ser configuración, no despliegue), pero vivía SOLO ahí, metido
+a mano con un UPDATE. Sin original revisable nadie podía ver qué decía, por qué,
+ni desde cuándo. Y escondía dos errores:
+
+- **`I890301AG` con especialidad `000`** cuando las citas reales usan `328` en
+  453 de 455 (bloque 31d). Cada control a la gestante agendado por WhatsApp
+  habría ido con la especialidad equivocada.
+- **`serviciosPyp` con UN servicio de los catorce** de la familia PyDT. Los
+  otros trece se habrían facturado al **convenio general en vez del de PyP** —
+  `resolveConvenio()` decide justo con esa lista.
+
+**Arreglo:** `docs/drivers/cnt-sanvicente-anserma/mapping.json` es ahora el
+original versionado, con la procedencia de cada bloque anotada dentro, y
+`packages/database/scripts/aplicar-mapping.ts` lo aplica. El script **no se
+limita a copiar**: comprueba coherencia antes de escribir —que toda
+especialidad usada exista en el catálogo, y que `serviciosPyp` y la familia
+PyDT coincidan **en los dos sentidos**—. Probado rompiendo el archivo a
+propósito: caza exactamente los dos defectos que había en producción.
+
+Aplicado: de 3 a **40** servicios con especialidad, de 1 a **14** de PyP.
+El agente lo recogió en el handshake; game-day 19/19.
+
+Sigue pendiente **validar los convenios con la agendadora**: es el único bloque
+del archivo que sigue siendo una hipótesis, y está marcado como tal ahí dentro.
+
+## 🎯 Decisión tomada: el cupo lleva el servicio dominante del médico (opción C)
+
+El bloque 31b había dejado claro que **el 72% de los turnos mezcla servicios** y
+que nada en el HIS dice de qué servicio es un cupo. De las tres opciones se
+elige **C**: AgenIA ofrece, de cada médico, **un** servicio —el dominante, por
+volumen de citas— y el resto se sigue agendando por ventanilla.
+
+Es lo que el código ya hace; lo que cambia es que pasa a ser una **decisión
+explícita** en vez de un accidente: la herramienta de homologación elegirá ese
+servicio a propósito, con el dato de volumen, y lo dejará visible.
+
+**Por qué es seguro:** la ocupación del cupo ya es agnóstica al servicio
+(`resolverCupo()` empareja por médico + hora, y la rejilla se indexa por
+`doctorId|startTime`). Si el hospital vende esa hora para cualquier otro
+servicio, AgenIA marca el cupo ocupado igual. **No hay riesgo de sobreventa**;
+lo único limitado es lo que AgenIA puede *ofrecer*.
+
+**Destino:** la opción B —`ScheduleSlot.serviceId` opcional y el servicio
+elegido al reservar— sigue siendo el modelo correcto, pero es cambio de
+esquema + búsqueda de cupos del chatbot + validación médico↔servicio. Queda
+para cuando el piloto lo justifique.
+
+## ✅ La homologación ya tiene quien la escriba (2026-09-02)
+
+`MirrorEntityMap` era el último bloqueante para encender: cinco piezas del
+motor la leen y ninguna la producía. Ahora hay un camino completo.
+
+**El problema de fondo no era una herramienta que faltara, era un hueco de
+arquitectura.** La API no alcanza el HIS por diseño (plan §4.1), así que no
+podía leer el catálogo del hospital ni proponer nada. Y el contrato `HisDriver`
+tenía nueve métodos y **ninguno listaba un catálogo**.
+
+**Las tres piezas nuevas:**
+
+1. **`fetchCatalog(kind)` en el contrato.** Cada driver decide qué entra. El de
+   Anserma no sube "todo lo que hay" —588 médicos y 1.280 servicios— sino los
+   que tienen turnos futuros (~30) y los servicios con citas en 90 días (~53).
+   El filtro NO es `NU_ESTA_MED`: 229 están "activos" y solo 30 agendan.
+2. **`POST /mirror/catalog`.** El catálogo viaja como la agenda. Se guarda en
+   **`MirrorCatalogEntry`, tabla aparte**: un médico sin emparejar no es una
+   homologación a medias, es un candidato esperando que alguien lo mire. Con el
+   `agenIAId` vacío rompería las dos restricciones únicas de `MirrorEntityMap`
+   y confundiría "no lo hemos mirado" con "no tiene equivalente". Lo que el HIS
+   deja de reportar **no se borra**: el conjunto se mueve día a día.
+3. **`scripts/homologar.ts`.** Propone, y solo escribe con `--aplicar`.
+
+**Las decisiones, implementadas:**
+
+- **Emparejamiento por cédula**, y **se niega a adivinar** cuando la cédula se
+  repite — que es justo lo que pasa con las agendas funcionales del hospital
+  (`77123456789`, `123456`). Esas van a revisión manual, que es donde deben ir.
+- **Los médicos que faltan se crean**, con email de marcador (`medicoN@…`) y una
+  **contraseña aleatoria de 32 bytes que nadie conoce**: no pueden entrar hasta
+  que un administrador la restablezca. Una contraseña por defecto conocida sería
+  una puerta abierta en treinta cuentas.
+- **`whatsappBookingEnabled = false` explícito.** El schema tiene
+  `@default(true)`: sin ponerlo, cada médico homologado quedaría vendible al
+  instante, lo contrario del piloto gradual que pidió el hospital.
+- **Servicio dominante** por médico (opción C), tomado del volumen real de 90
+  días que el driver calcula y manda en el catálogo. Elegido a propósito y
+  visible, no a dedo.
+- **Nunca se borra una equivalencia.**
+
+**Probado de punta a punta contra la VM y el mock**, no solo en unitarias: el
+agente leyó 5 médicos y 2 servicios del HIS, los subió, y la CLI clasificó
+2 ya homologados / 1 a crear / **2 a revisar por cédula compartida**. Aplicado:
+el médico nuevo quedó con `whatsappBookingEnabled=false`, su servicio dominante
+asignado y una contraseña de 64 caracteres hex.
+
+**Lo que sigue faltando para encender:** correr esto contra el hospital de
+verdad, y que alguien mire la lista antes del `--aplicar`.
+
 ## ⏳ Pendientes de este driver
 
 0. **Bloque 29 — corrido, falta solo la medición de 29c/29d.** (`sql/FASE0_DESCUBRIMIENTO_HIS.sql`)
@@ -426,34 +578,6 @@ cubre.
    comparte el intervalo de 5s del long-poll de salida sin motivo. De paso
    resuelve dos preguntas de una línea: si existen de verdad claves
    (médico+hora) duplicadas, y si `NU_NUME_MOVI_CIT` llega a ser NULL.
-
-0d. **Bloque 32 preparado, pendiente de correr — la regla de la especialidad.**
-   El bloque 31 dejó `CD_CODI_ESP_CIT` a medio cerrar: 36 de los 40 servicios
-   principales usan siempre la misma especialidad, pero cuatro usan dos. Y
-   tienen explicación: el mismo "Examen clínico de primera vez" (`S36101`) sale
-   como 461 cuando lo hace la odontóloga y como 572 cuando lo hace la
-   higienista. **La especialidad no la decide el servicio: la decide quién
-   atiende.**
-
-   El 31a confirmó las dos piezas que faltaban — `R_ESP_SER` (desde qué
-   especialidades se presta un servicio, N:M) y `R_MEDI_ESPE` (las del médico)
-   — así que la hipótesis a probar es:
-
-       especialidad = R_ESP_SER(servicio) ∩ R_MEDI_ESPE(médico)
-
-   El bloque la contrasta contra las citas reales de 90 días. Si acierta,
-   `especialidadPorServicio` deja de ser una tabla escrita a mano en el
-   mappingJson (hoy hecha desde una muestra de dos servicios) y pasa a ser una
-   regla que el driver resuelve contra el propio HIS. Cierra el bloque 21b.
-
-   Empieza por lo que puede tumbarlo todo: si `R_ESP_SER` no cubre los
-   servicios que de verdad se agendan, no hay regla. La muestra del 31f
-   devolvió códigos ('04', '05', '25') que no se parecen a los de las citas —
-   puede ser solo efecto del ORDER BY, o puede que vivan en otra familia.
-
-   ✔ La lógica ya está probada contra el mock con el caso ambiguo real
-   sembrado: `S36101` × `OD05` → la intersección deja una sola especialidad
-   (461) y coincide con la cita.
 
 0c. **Bloque 31 preparado, pendiente de correr — ¿de qué servicio es un cupo?**
    Lo abre el hallazgo 30f: 47 médicos prestan más de un servicio (uno, once), y

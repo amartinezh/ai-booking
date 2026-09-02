@@ -286,6 +286,68 @@ export interface ReconcileResult {
   inSync: boolean;
 }
 
+// ── POST /mirror/catalog ────────────────────────────────────────────────────
+
+/**
+ * Una entrada del catálogo del HIS: un médico, un servicio.
+ *
+ * ═══ Por qué existe este endpoint ═══
+ * `MirrorEntityMap` dice qué médico de AgenIA es cuál del hospital, y sin esas
+ * filas no se genera un solo cupo ni sale ni entra una sola cita. Nadie las
+ * escribía: cinco piezas del motor la leen y ninguna la produce.
+ *
+ * No se puede resolver desde el servidor porque **la API no alcanza el HIS**
+ * (plan §4.1): solo el agente lo ve. Así que el catálogo viaja igual que la
+ * agenda — lo lee el agente, lo sube, y aquí se guarda.
+ *
+ * ⚠️ Se guarda como CANDIDATO, no como equivalencia. Un médico del hospital
+ * que todavía no se ha emparejado con uno de AgenIA no es una homologación a
+ * medias: es una fila de catálogo esperando que alguien la mire. Meterla en
+ * `MirrorEntityMap` con el id de AgenIA vacío rompería las dos restricciones
+ * únicas que esa tabla tiene bien puestas.
+ */
+export interface HisCatalogEntry {
+  /** Clave del HIS. Opaca para el motor: solo el driver la interpreta. */
+  externalKey: string;
+  /** Etiqueta legible, para poder emparejar y diagnosticar sin abrir su base. */
+  label: string;
+  /**
+   * Datos extra que el driver considere útiles para emparejar, ya
+   * normalizados por él. El motor NO los interpreta: los guarda y se los
+   * enseña a quien decide. Para Anserma: `cedula`, `cargo`, `activo`.
+   *
+   * La cédula viaja porque es la clave de homologación de los médicos
+   * (MAPEO_HIS.md §2.2) — pero es un dato personal, así que solo viaja la de
+   * los profesionales que el hospital agenda, nunca la de un paciente.
+   */
+  extra?: Record<string, string>;
+}
+
+/**
+ * Cada envío es el catálogo COMPLETO de ese tipo, no un incremento.
+ *
+ * Igual que la agenda: el servidor marca como visto lo que llega y deja de
+ * proponer lo que ya no está. El conjunto de médicos con turnos futuros se
+ * mueve día a día (30 en una corrida, 25 al día siguiente — bloque 30/32), así
+ * que un incremento obligaría a adivinar qué desapareció.
+ */
+export interface CatalogInput {
+  kind: 'DOCTOR' | 'SERVICE';
+  entries: HisCatalogEntry[];
+}
+
+export interface CatalogResult {
+  kind: 'DOCTOR' | 'SERVICE';
+  /** Entradas nuevas, que nadie había visto antes. */
+  created: number;
+  /** Entradas que ya estaban y se refrescaron (etiqueta o extras cambiados). */
+  updated: number;
+  /** Entradas que estaban y el HIS ya no reporta. NO se borran: ver abajo. */
+  vanished: number;
+  /** De las que hay, cuántas ya tienen equivalencia en MirrorEntityMap. */
+  homologated: number;
+}
+
 // ── POST /mirror/availability ───────────────────────────────────────────────
 
 /**

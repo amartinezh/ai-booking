@@ -1,0 +1,95 @@
+{
+  "_procedencia": {
+    "_": "La tabla de valores de este hospital. Vive en HospitalMirrorConfig.mappingJson (en la base, no en el código) para que validarla sea un cambio de configuración y no un despliegue — pero hasta ahora solo vivía ahí, metida a mano, sin original revisable. Este archivo es ese original; se aplica con packages/database/scripts/aplicar-mapping.ts.",
+    "especialidadPorServicio": "GENERADA del bloque 31d: la especialidad dominante de cada servicio en las citas reales de 90 días. 36 de 40 son inequívocos; los 4 restantes se resolvieron por mayoría (S36101 461 en 826/827, S35102 590 en 387/388, S35104 590 en 577/580, I890301AG 328 en 453/455). Verificada contra R_ESP_SER ∩ R_MEDI_ESPE en el bloque 32c: 0 contradicciones en 21.362 citas.",
+    "serviciosPyp": "DERIVADA del catálogo del bloque 32e: son los servicios cuya especialidad pertenece a la familia PyDT (060 ENFERMERIA PYDT, 328 MEDICINA GENERAL PYDT, 572 ODONTOLOGIA PYDT, 591 PSICOLOGIA PYDT). Antes tenía UN solo servicio y los otros trece se habrían facturado al convenio equivocado.",
+    "convenios": "⚠️ PENDIENTE de validar con la agendadora del hospital. Es el único bloque de este archivo que sigue siendo una hipótesis.",
+    "_no_usar": "TX_ACTI_ESP del catálogo ESPECIALIDADES está en 0 para las trece especialidades, incluidas las que se usan a diario. No sirve para filtrar."
+  },
+
+  "lugarAtencion": "01",
+  "centroCostos": "007",
+  "marcaOrigen": "ASIGNADA POR WHATSAPP",
+  "motivoAnulacion": "WB",
+  "duracionMinutos": 20,
+  "ventanaVigilanciaDias": 90,
+
+  "sexo": { "M": 1, "F": 0 },
+
+  "convenios": {
+    "800088702|SUBSIDIADO": 283,
+    "800088702|CONTRIBUTIVO": 283,
+    "800088702|PYP": 489,
+    "900156264|SUBSIDIADO": 467,
+    "900156264|CONTRIBUTIVO": 473
+  },
+  "convenioParticular": 26,
+
+  "serviciosPyp": [
+    "890201-CI", "I890301AG", "890201AD", "890201PI", "I890201AG",
+    "I890201PL1", "I890301G", "I890301RN", "890201AV",
+    "990203", "997301-1", "SSAO",
+    "890208Ges",
+    "I890305PL"
+  ],
+
+  "especialidadPorDefecto": "000",
+  "especialidadPorServicio": {
+    "S39141": "000",
+    "S39141-1": "000",
+    "S39141-2": "000",
+    "SCITOD": "461",
+    "SCITOD2": "461",
+    "SCITOD3": "461",
+    "S36101": "461",
+    "S36101-2": "461",
+    "S36101-3": "461",
+    "S36203-1": "461",
+    "990203": "572",
+    "997301-1": "572",
+    "SSAO": "572",
+    "890201-CI": "328",
+    "890201AD": "328",
+    "890201PI": "328",
+    "890201AV": "328",
+    "I890201AG": "328",
+    "I890301AG": "328",
+    "I890201PL1": "328",
+    "I890301G": "328",
+    "I890301RN": "328",
+    "I890305PL": "060",
+    "S35102": "590",
+    "S35102-1": "590",
+    "S35104": "590",
+    "890208Ges": "591",
+    "890206": "451",
+    "890306": "451",
+    "890266ESP": "387",
+    "890266SUR": "387",
+    "890366ESP": "387",
+    "890366SUR": "387",
+    "890283ESP": "550",
+    "890383ESP": "550",
+    "890284ESP": "345",
+    "890384ESP": "345",
+    "890242SUR": "200",
+    "890250ESP": "341",
+    "890250SUR": "341"
+  },
+
+  "_especialidades": {
+    "000": "MEDICINA GENERAL",
+    "060": "ENFERMERIA PYDT",
+    "200": "DERMATOLOGIA",
+    "328": "MEDICINA GENERAL PYDT",
+    "341": "GINECOLOGIA Y OBSTETRICIA",
+    "345": "PSIQUIATRIA",
+    "387": "MEDICINA INTERNA",
+    "451": "NUTRICION Y DIETETICA",
+    "461": "ODONTOLOGIA",
+    "550": "PEDIATRIA",
+    "572": "ODONTOLOGIA PYDT",
+    "590": "PSICOLOGIA",
+    "591": "PSICOLOGIA PYDT"
+  }
+}

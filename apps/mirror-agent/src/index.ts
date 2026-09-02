@@ -190,6 +190,34 @@ async function main() {
     }
   };
 
+  // El catálogo del hospital, para que alguien pueda homologarlo. Sin esas
+  // equivalencias no se genera un solo cupo ni sale ni entra una sola cita.
+  //
+  // Una vez al arrancar y luego una vez al día: un médico nuevo del hospital no
+  // aparece cada minuto, pero el conjunto SÍ se mueve (30 médicos con turnos
+  // futuros en una corrida, 25 al día siguiente), así que no basta con hacerlo
+  // el primer día y olvidarse.
+  const bucleCatalogo = async () => {
+    await dormir(config.catalogDelayMs);
+    for (;;) {
+      try {
+        const r = await engine.syncCatalog();
+        for (const c of r) {
+          const pendientes = c.total - c.homologated;
+          console.log(
+            `[mirror-agent] catálogo ${c.kind}: ${c.total} del hospital, ` +
+              `${c.homologated} homologado(s)` +
+              (pendientes > 0 ? `, ${pendientes} SIN homologar` : '') +
+              (c.created > 0 ? ` (${c.created} nuevo/s)` : '') + '.',
+          );
+        }
+      } catch (error) {
+        reporter.report('catálogo', mensajeDeError(error));
+      }
+      await dormir(config.catalogIntervalMs);
+    }
+  };
+
   // Capa 5 del plan §6: la única defensa que detecta deriva silenciosa.
   //
   // Estaba a medias: el endpoint del servidor existía y NADIE lo llamaba. Es
@@ -264,6 +292,7 @@ async function main() {
     bucleHeartbeat(),
     bucleReconciliacion(),
     bucleAgenda(),
+    bucleCatalogo(),
   ]);
 }
 

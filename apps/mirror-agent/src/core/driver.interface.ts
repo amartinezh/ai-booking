@@ -1,4 +1,8 @@
-import type { CanonicalChangeEvent, HisAppointmentSnapshot } from '@agenia/shared';
+import type {
+  CanonicalChangeEvent,
+  HisAppointmentSnapshot,
+  HisCatalogEntry,
+} from '@agenia/shared';
 
 /**
  * Contrato que todo driver implementa — ver docs/PLAN_ESPEJO_HOSPITAL.md §1.4.
@@ -94,6 +98,24 @@ export interface HisDriver {
     from: Date;
     to: Date;
   }): Promise<HisAppointmentSnapshot[]>;
+
+  /**
+   * El catálogo del HIS: qué médicos y qué servicios tiene el hospital.
+   *
+   * Existe porque `MirrorEntityMap` —la tabla que dice qué médico de AgenIA es
+   * cuál del hospital— no tenía quien la escribiera, y sin ella no se genera un
+   * solo cupo ni sale ni entra una sola cita. El servidor no puede leerlo: la
+   * API no alcanza el HIS por diseño (plan §4.1), solo el agente lo ve.
+   *
+   * Cada driver decide QUÉ entra en su catálogo. No es "todo lo que hay": el de
+   * Anserma tiene 588 médicos de los que solo ~30 agendan, y 1.280 servicios de
+   * los que ~53 se usan. Subir el resto sería basura que alguien tendría que
+   * descartar a mano.
+   *
+   * `extra` es del driver y el motor no lo interpreta: lo guarda y se lo enseña
+   * a quien decide el emparejamiento.
+   */
+  fetchCatalog(kind: 'DOCTOR' | 'SERVICE'): Promise<HisCatalogEntry[]>;
 
   // Homologación de catálogos propios del HIS
   resolveCatalogMapping(

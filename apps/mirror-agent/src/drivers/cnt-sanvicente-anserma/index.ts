@@ -1,5 +1,9 @@
 import * as sql from 'mssql';
-import type { CanonicalChangeEvent, HisAppointmentSnapshot } from '@agenia/shared';
+import type {
+  CanonicalChangeEvent,
+  HisAppointmentSnapshot,
+  HisCatalogEntry,
+} from '@agenia/shared';
 import {
   AnsermaMapping,
   feHoraCitAIso,
@@ -602,6 +606,123 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       });
     }
     return foto;
+  }
+
+  /**
+   * El catálogo del hospital, acotado a lo que de verdad se agenda.
+   *
+   * ═══ Qué entra y qué no ═══
+   * `MEDICOS` tiene 588 filas y `SERVICIOS` 1.280 agendables, pero solo ~30
+   * médicos tienen turnos a futuro y ~53 servicios mueven citas (bloques 30 y
+   * 32). Subir el resto sería basura que alguien tendría que descartar a mano.
+   * El filtro operativo NO es `NU_ESTA_MED` —229 médicos están "activos" y solo
+   * 30 agendan— sino tener turnos por delante.
+   *
+   * ⚠️ Ese conjunto SE MUEVE: eran 30 en una corrida y 25 al día siguiente. Por
+   * eso cada envío es el catálogo completo y no un incremento.
+   *
+   * ═══ Lo que viaja en `extra` ═══
+   * · `cedula` — la clave de homologación con `DoctorProfile.cedula`. Es un
+   *   dato personal: viaja solo la de los profesionales que el hospital
+   *   agenda, nunca la de un paciente.
+   * · `servicioDominante` / `citasDelDominante` / `serviciosDistintos` — el
+   *   servicio con más citas de ese médico en 90 días. Lo necesita la decisión
+   *   de producto tomada para el piloto: como el 72% de los turnos mezcla
+   *   servicios y nada en el HIS dice de cuál es un cupo, AgenIA ofrece de cada
+   *   médico UN servicio, y ese se elige por volumen en vez de a dedo.
+   */
+  async fetchCatalog(kind: 'DOCTOR' | 'SERVICE'): Promise<HisCatalogEntry[]> {
+    const pool = this.requirePool();
+    const ahoraMs = Date.now();
+    const hoy = fechaCitaLocal(new Date(ahoraMs).toISOString(), this.timeZone);
+    // 90 días hacia atrás: lo que se agendó de verdad, que es mejor señal de lo
+    // que el hospital ofrece que cualquier bandera del catálogo.
+    const desde = fechaLiteralSql(
+      fechaCitaLocal(new Date(ahoraMs - 90 * 86_400_000).toISOString(), this.timeZone),
+    );
+    const hasta = diaSiguienteLiteralSql(hoy);
+
+    if (kind === 'SERVICE') {
+      const r = await pool
+        .request()
+        .input('desde', sql.VarChar(8), desde)
+        .input('hasta', sql.VarChar(8), hasta).query(`
+          SELECT c.CD_CODI_SER_CIT              AS codigo,
+                 MAX(s.NO_NOMB_SER)             AS nombre,
+                 COUNT(*)                       AS citas,
+                 COUNT(DISTINCT c.CD_CODI_MED_CIT) AS medicos
+            FROM dbo.CITAS_MEDICAS c
+            LEFT JOIN dbo.SERVICIOS s ON s.CD_CODI_SER = c.CD_CODI_SER_CIT
+           WHERE c.FE_FECH_CIT >= @desde AND c.FE_FECH_CIT < @hasta
+             AND c.CD_CODI_SER_CIT IS NOT NULL
+           GROUP BY c.CD_CODI_SER_CIT
+           ORDER BY COUNT(*) DESC`);
+
+      return r.recordset.map((f: any) => ({
+        externalKey: String(f.codigo).trim(),
+        label: (f.nombre ?? String(f.codigo)).trim(),
+        extra: {
+          citas90d: String(f.citas),
+          medicosQueLoPrestan: String(f.medicos),
+        },
+      }));
+    }
+
+    const r = await pool
+      .request()
+      .input('hoy', sql.VarChar(8), fechaLiteralSql(hoy))
+      .input('desde', sql.VarChar(8), desde)
+      .input('hasta', sql.VarChar(8), hasta).query(`
+        WITH con_turnos AS (
+            SELECT DISTINCT CD_MED_TUME AS med
+              FROM dbo.TURNOS_MEDICOS
+             WHERE FE_FECH_TUME >= @hoy
+        ),
+        volumen AS (
+            SELECT CD_CODI_MED_CIT AS med,
+                   CD_CODI_SER_CIT AS ser,
+                   COUNT(*)        AS n,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY CD_CODI_MED_CIT ORDER BY COUNT(*) DESC
+                   )               AS rn
+              FROM dbo.CITAS_MEDICAS
+             WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta
+               AND CD_CODI_SER_CIT IS NOT NULL
+             GROUP BY CD_CODI_MED_CIT, CD_CODI_SER_CIT
+        )
+        SELECT m.CD_CODI_MED   AS codigo,
+               m.NO_NOMB_MED   AS nombre,
+               m.DE_CARG_MED   AS cargo,
+               m.NU_ESTA_MED   AS estado,
+               m.NU_DOCU_MED   AS cedula,
+               m.TX_EMAIL_MED  AS email,
+               v.ser           AS servicio_dominante,
+               v.n             AS citas_dominante,
+               (SELECT COUNT(*) FROM volumen v2 WHERE v2.med = m.CD_CODI_MED) AS servicios
+          FROM dbo.MEDICOS m
+          JOIN con_turnos t ON t.med = m.CD_CODI_MED
+          LEFT JOIN volumen v ON v.med = m.CD_CODI_MED AND v.rn = 1
+         ORDER BY m.CD_CODI_MED`);
+
+    return r.recordset.map((f: any) => {
+      const extra: Record<string, string> = {};
+      const poner = (k: string, v: unknown) => {
+        const t = v === null || v === undefined ? '' : String(v).trim();
+        if (t !== '') extra[k] = t;
+      };
+      poner('cedula', f.cedula);
+      poner('cargo', f.cargo);
+      poner('estado', f.estado);
+      poner('email', f.email);
+      poner('servicioDominante', f.servicio_dominante);
+      poner('citasDelDominante', f.citas_dominante);
+      poner('serviciosDistintos', f.servicios);
+      return {
+        externalKey: String(f.codigo).trim(),
+        label: (f.nombre ?? String(f.codigo)).trim(),
+        extra,
+      };
+    });
   }
 
   async createAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {

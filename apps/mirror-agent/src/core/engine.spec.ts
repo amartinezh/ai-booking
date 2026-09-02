@@ -85,6 +85,7 @@ describe('MirrorEngine', () => {
       heartbeat: jest.fn(),
       reconcile: jest.fn(),
       uploadAvailability: jest.fn(),
+      uploadCatalog: jest.fn(),
     };
     driver = {
       key: 'test-driver',
@@ -98,6 +99,7 @@ describe('MirrorEngine', () => {
       rescheduleAppointment: jest.fn(),
       updateAttendance: jest.fn(),
       snapshotAppointments: jest.fn(),
+      fetchCatalog: jest.fn(),
       resolveCatalogMapping: jest.fn(),
     };
 
@@ -761,5 +763,92 @@ describe('MirrorEngine', () => {
 
       expect(api.pushChanges).toHaveBeenCalledWith({ events });
     });
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// syncCatalog — lo que destraba MirrorEntityMap.
+//
+// Cinco piezas del motor leen esa tabla y ninguna la escribía: sin ella no se
+// genera un solo cupo ni sale ni entra una cita. El servidor no puede leer el
+// catálogo del hospital —la API no alcanza el HIS— así que lo trae el agente.
+// ══════════════════════════════════════════════════════════════════════════
+describe('syncCatalog', () => {
+  const nuevoMotor = () => {
+    const api: any = { uploadCatalog: jest.fn() };
+    const driver: any = { fetchCatalog: jest.fn() };
+    const state: any = {};
+    return {
+      api,
+      driver,
+      engine: new MirrorEngine(api, driver, state, '0.0.0-test'),
+    };
+  };
+
+  it('sube los DOS catálogos: médicos y servicios', async () => {
+    const { api, driver, engine } = nuevoMotor();
+    driver.fetchCatalog.mockResolvedValue([
+      { externalKey: '76', label: 'MEDICO ATENCION HTA', extra: { cedula: '123' } },
+    ]);
+    api.uploadCatalog.mockResolvedValue({
+      kind: 'DOCTOR', created: 1, updated: 0, vanished: 0, homologated: 0,
+    });
+
+    const r = await engine.syncCatalog();
+
+    expect(driver.fetchCatalog).toHaveBeenCalledWith('DOCTOR');
+    expect(driver.fetchCatalog).toHaveBeenCalledWith('SERVICE');
+    expect(r).toHaveLength(2);
+  });
+
+  it('el motor NO interpreta el `extra` del driver: lo pasa tal cual', async () => {
+    // Es conocimiento del HIS (cédula, cargo, servicio dominante). `core/` no
+    // puede saber qué significa — solo transportarlo a quien decide.
+    const { api, driver, engine } = nuevoMotor();
+    const extra = { cedula: '9696544', servicioDominante: 'S39141', loQueSea: 'x' };
+    driver.fetchCatalog.mockResolvedValue([{ externalKey: '76', label: 'X', extra }]);
+    api.uploadCatalog.mockResolvedValue({
+      kind: 'DOCTOR', created: 0, updated: 1, vanished: 0, homologated: 1,
+    });
+
+    await engine.syncCatalog();
+
+    expect(api.uploadCatalog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entries: [expect.objectContaining({ extra })],
+      }),
+    );
+  });
+
+  it('reporta cuántas quedan SIN homologar, que es lo que hay que mirar', async () => {
+    const { api, driver, engine } = nuevoMotor();
+    driver.fetchCatalog.mockResolvedValue(
+      Array.from({ length: 30 }, (_, i) => ({ externalKey: `m${i}`, label: `M${i}` })),
+    );
+    api.uploadCatalog.mockResolvedValue({
+      kind: 'DOCTOR', created: 0, updated: 30, vanished: 0, homologated: 12,
+    });
+
+    const r = await engine.syncCatalog();
+
+    expect(r[0]).toMatchObject({ total: 30, homologated: 12 });
+  });
+
+  it('si el catálogo del hospital viene vacío, se sube vacío en vez de callar', async () => {
+    // Un catálogo vacío es información: significa que ningún médico tiene
+    // turnos futuros. Saltarse el envío dejaría el del día anterior como si
+    // siguiera vigente.
+    const { api, driver, engine } = nuevoMotor();
+    driver.fetchCatalog.mockResolvedValue([]);
+    api.uploadCatalog.mockResolvedValue({
+      kind: 'DOCTOR', created: 0, updated: 0, vanished: 30, homologated: 0,
+    });
+
+    await engine.syncCatalog();
+
+    expect(api.uploadCatalog).toHaveBeenCalledTimes(2);
+    expect(api.uploadCatalog).toHaveBeenCalledWith(
+      expect.objectContaining({ entries: [] }),
+    );
   });
 });

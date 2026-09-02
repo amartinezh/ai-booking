@@ -62,4 +62,7 @@ export type {
   HisSlotSnapshot,
   AvailabilityInput,
   AvailabilityResult,
+  HisCatalogEntry,
+  CatalogInput,
+  CatalogResult,
 } from './src/mirror-protocol';

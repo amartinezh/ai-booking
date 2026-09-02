@@ -76,6 +76,7 @@ model Organization {
   syncInboxEntries     SyncInbox[]
   syncAuditEntries     SyncAudit[]
   mirrorEntityMaps     MirrorEntityMap[]
+  mirrorCatalogEntries MirrorCatalogEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1341,6 +1342,49 @@ model MirrorConflictAlert {
 ///
 /// El documento del paciente y el NIT de la EPS NO necesitan fila aqui: salen
 /// de PatientProfile.cedula y Eps.nit, que ya son las claves que el HIS usa.
+/// Catalogo del HIS tal como el agente lo reporta: los medicos y servicios que
+/// el hospital tiene, ANTES de que nadie decida a quien corresponden en AgenIA.
+///
+/// Es una tabla aparte de MirrorEntityMap a proposito. Un medico del hospital
+/// que todavia no se ha emparejado NO es una homologacion a medias: es una fila
+/// de catalogo esperando que alguien la mire. Meterla en MirrorEntityMap con el
+/// agenIAId vacio romperia las dos restricciones unicas que esa tabla tiene bien
+/// puestas, y confundiria "no lo hemos mirado" con "no tiene equivalente".
+///
+/// Existe porque la API no alcanza el HIS (plan §4.1): solo el agente lo ve, asi
+/// que el catalogo tiene que viajar por el protocolo como viaja la agenda.
+model MirrorCatalogEntry {
+  id String @id @default(uuid())
+
+  /// 'DOCTOR' | 'SERVICE' — mismo vocabulario que MirrorEntityMap.
+  entityType String
+
+  /// Clave del HIS. Opaca para el motor.
+  externalKey String
+
+  /// Etiqueta legible del HIS, para poder emparejar sin abrir su base.
+  label String
+
+  /// Lo que el driver considere util para emparejar (cedula, cargo, activo...).
+  /// El motor NO lo interpreta: lo guarda y se lo ensena a quien decide.
+  extra Json?
+
+  /// Ultima vez que el HIS lo reporto. Una entrada que deja de aparecer NO se
+  /// borra —el conjunto de medicos con turnos futuros se mueve dia a dia, y
+  /// borrar por una corrida perderia el rastro— pero deja de refrescarse, y por
+  /// esta fecha se sabe cual esta viva.
+  lastSeenAt DateTime @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, entityType, externalKey])
+  @@index([organizationId, entityType])
+}
+
 model MirrorEntityMap {
   id String @id @default(uuid())
 

@@ -19,4 +19,7 @@ export type {
   ChangesInput,
   ChangesResult,
   HeartbeatInput,
+  HisCatalogEntry,
+  CatalogInput,
+  CatalogResult,
 } from '@agenia/shared';

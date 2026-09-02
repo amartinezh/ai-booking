@@ -7,6 +7,7 @@ import { MirrorApplyService } from './mirror-apply.service';
 import { MirrorSchemaCheckService } from './mirror-schema-check.service';
 import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { MirrorAvailabilityService } from './mirror-availability.service';
+import { MirrorCatalogService } from './mirror-catalog.service';
 
 /**
  * Motor genérico de espejo de citas con HIS externos (patrón de drivers).
@@ -27,6 +28,7 @@ import { MirrorAvailabilityService } from './mirror-availability.service';
     MirrorSchemaCheckService,
     MirrorReconciliationService,
     MirrorAvailabilityService,
+    MirrorCatalogService,
   ],
   exports: [MirrorApplyService, MirrorReconciliationService],
 })

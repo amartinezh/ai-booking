@@ -88,6 +88,32 @@ export class MirrorEngine {
     });
   }
 
+  /**
+   * Sube el catálogo del HIS para que alguien pueda homologarlo.
+   *
+   * Es lo que destraba `MirrorEntityMap`: sin esas equivalencias no se genera
+   * un solo cupo ni sale ni entra una sola cita, y hasta ahora nadie las
+   * escribía. El servidor no puede leer el catálogo por su cuenta — la API no
+   * alcanza el HIS (plan §4.1) — así que lo trae el agente.
+   *
+   * No hace falta que corra seguido: un médico nuevo del hospital no aparece
+   * cada minuto. Pero sí periódicamente, porque el conjunto se mueve.
+   */
+  async syncCatalog(): Promise<{ kind: string; created: number; homologated: number; total: number }[]> {
+    const resultados = [];
+    for (const kind of ['DOCTOR', 'SERVICE'] as const) {
+      const entries = await this.driver.fetchCatalog(kind);
+      const r = await this.api.uploadCatalog({ kind, entries });
+      resultados.push({
+        kind,
+        created: r.created,
+        homologated: r.homologated,
+        total: entries.length,
+      });
+    }
+    return resultados;
+  }
+
   async handshake(): Promise<void> {
     const input: HandshakeInput = {
       driverVersion: this.driverVersion,

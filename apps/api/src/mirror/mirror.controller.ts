@@ -15,6 +15,7 @@ import { MirrorDispatchService } from './mirror-dispatch.service';
 import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { MirrorApplyService } from './mirror-apply.service';
 import { MirrorAvailabilityService } from './mirror-availability.service';
+import { MirrorCatalogService } from './mirror-catalog.service';
 import type {
   AckInput,
   AckResult,
@@ -26,6 +27,8 @@ import type {
   OutboxEventDto,
   AvailabilityInput,
   AvailabilityResult,
+  CatalogInput,
+  CatalogResult,
 } from './dto/mirror.types';
 
 type AgentRequest = Request & MirrorAgentRequest;
@@ -43,6 +46,7 @@ export class MirrorController {
     private readonly reconciliation: MirrorReconciliationService,
     private readonly apply: MirrorApplyService,
     private readonly availability: MirrorAvailabilityService,
+    private readonly catalog: MirrorCatalogService,
   ) {}
 
   @Post('handshake')
@@ -136,6 +140,29 @@ export class MirrorController {
       );
     }
     return this.availability.apply(req.mirrorConfig.organizationId, body);
+  }
+
+  /**
+   * POST /mirror/catalog — el agente sube el catálogo del HIS (médicos,
+   * servicios) para que alguien pueda homologarlo.
+   *
+   * Va por aquí y no por una consulta directa porque la API no alcanza el HIS
+   * (plan §4.1). Cada envío es el catálogo COMPLETO de ese tipo: un incremento
+   * obligaría a adivinar qué desapareció, y el conjunto de médicos con turnos
+   * futuros se mueve día a día.
+   */
+  @Post('catalog')
+  catalogUpload(
+    @Req() req: AgentRequest,
+    @Body() body: CatalogInput,
+  ): Promise<CatalogResult> {
+    if (body?.kind !== 'DOCTOR' && body?.kind !== 'SERVICE') {
+      throw new BadRequestException("kind debe ser 'DOCTOR' o 'SERVICE'.");
+    }
+    if (!Array.isArray(body?.entries)) {
+      throw new BadRequestException('entries debe ser un arreglo.');
+    }
+    return this.catalog.upload(req.mirrorConfig.organizationId, body);
   }
 
   @Post('ack')
