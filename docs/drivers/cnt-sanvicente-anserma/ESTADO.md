@@ -137,6 +137,55 @@ Queda para cuando el hospital confirme: `TURNOS_MEDICOS` no lleva servicio, así
 que el servicio del cupo sale de `DoctorProfile.serviceId`. Un médico que
 atienda dos servicios en el mismo turno necesitará una regla más fina.
 
+## ✅ La ventana de detección ya no cancela citas vivas (2026-09-01)
+
+El defecto más grave que ha tenido el espejo, y no daba error: `detectChanges`
+filtraba la ventana de vigilancia con `FE_FECH_CIT >= new Date()`, y `mssql`
+serializa un `Date` en UTC. Comprobado contra el SQL Server del mock:
+
+```
+new Date() a las 20:13 de Bogotá  ->  llega al servidor como 2026-09-02 01:13
+```
+
+Es decir, **a partir de las 19:00 locales el borde de la ventana ya estaba en la
+fecha de mañana**, y toda la agenda del día siguiente salía de la foto de golpe.
+El diff no distingue "la cancelaron" de "salió de la ventana" —las dos se ven
+igual, una clave que ya no está— así que emitía `CANCEL` para cada una:
+
+- ~235 pacientes por noche perdían su cita en AgenIA (`status = CANCELLED`),
+- su cupo volvía a ofrecerse por WhatsApp,
+- y la segunda cita reventaba en el HIS por violación de PK → dead-letter.
+
+La reconciliación diaria vuelve a cerrar el cupo, pero **no restaura la cita**:
+solo la reporta como `missingInHis`. Al paciente no se le avisa de nada.
+
+Por el otro borde, el mismo filtro dejaba el día en curso SIEMPRE fuera: una
+cita que el hospital cancelaba hoy para hoy no se detectaba nunca.
+
+**Arreglo, en dos partes:**
+
+1. La ventana se consulta en **fechas locales** (`CONVERT(varchar(10), …, 23)
+   BETWEEN`), que es el idioma de esa columna — el mismo remedio que ya usaba
+   `fetchAvailability`, donde el desfase se había descubierto antes y no se
+   llevó a las otras dos consultas.
+2. La foto **guarda qué fechas cubrió**, y el diff solo compara la
+   intersección de las dos ventanas. Lo que entra o sale por el borde no es un
+   cambio: es la ventana moviéndose.
+
+El cursor cambia de forma (`{ventana, filas}`, y cada fila lleva su fecha). Un
+`state.json` de la versión anterior se acepta tal cual, pero en esa única
+vuelta **no cancela nada**: sin saber qué fechas cubría no se puede afirmar que
+algo desapareció, y equivocarse ahí es cancelarle la cita a un paciente. Las
+altas sí se siguen reportando — ocupan cupos, nunca los liberan. Verificado en
+la VM simulada: el agente migró solo, sin emitir una sola cancelación.
+
+Seis pruebas nuevas cubren los bordes (239 en total). Ninguna de las que había
+podía fallar: todas miraban el SQL y el defecto estaba en el reloj.
+
+**Sigue pendiente el mismo desfase en `snapshotAppointments`** (la foto que usa
+la reconciliación), que aún compara una columna de fecha local contra un
+instante UTC.
+
 ## ⏳ Pendientes de este driver
 
 1. **Encontrar la fuente de "Asignada Por"** (bloque 24) — búsqueda directa por nombre de columna dio vacío; candidatos: `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO`, `USUARIO`. Si no aparece en ninguna tabla, la alternativa es pedir al hospital un usuario/login propio de la aplicación (`AGENIA`/`WHATSAPP`) para que quede registrado como origen al insertar.

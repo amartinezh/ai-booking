@@ -550,24 +550,36 @@ describe('rescheduleAppointment', () => {
 // lado y AgenIA no se entera, el chatbot lo sigue ofreciendo. Un fallo aquí
 // no da error, solo silencio, así que se prueba caso por caso.
 // ══════════════════════════════════════════════════════════════════════════
-const filaHis = (over: Record<string, unknown> = {}) => ({
-  med: '76',
-  hora: '2026/09/03 07:00',
-  estado: 0,
-  servicio: 'S39141-1',
-  hist: '9696544',
-  dura: 20,
-  descripcion: '',
-  ...over,
-});
+const filaHis = (over: Record<string, unknown> = {}) => {
+  const fila = {
+    med: '76',
+    hora: '2026/09/03 07:00',
+    estado: 0,
+    servicio: 'S39141-1',
+    hist: '9696544',
+    dura: 20,
+    descripcion: '',
+    ...over,
+  };
+  // `fecha` es FE_FECH_CIT en fecha local: lo que el driver usa para saber si
+  // una fila está dentro de la ventana. Se deriva de la hora salvo que la
+  // prueba la fije aparte.
+  return { fecha: String(fila.hora).slice(0, 10).replace(/\//g, '-'), ...fila };
+};
 
-const conCitas = (filas: Record<string, unknown>[]) => {
+const conCitasEspiadas = (filas: Record<string, unknown>[]) => {
+  const requests: { params: Record<string, unknown>; sql: string }[] = [];
   const driver = new CntSanVicenteAnsermaDriver();
   const pool: any = {
     request: () => {
+      const params: Record<string, unknown> = {};
       const req: any = {
-        input: () => req,
-        async query() {
+        input(nombre: string, _tipo: unknown, valor: unknown) {
+          params[nombre] = valor;
+          return req;
+        },
+        async query(sqlText: string) {
+          requests.push({ params, sql: sqlText });
           return { recordset: filas };
         },
       };
@@ -575,10 +587,48 @@ const conCitas = (filas: Record<string, unknown>[]) => {
     },
   };
   driver.useConnection(pool, MAPPING);
-  return driver;
+  return { driver, requests };
 };
 
+const conCitas = (filas: Record<string, unknown>[]) =>
+  conCitasEspiadas(filas).driver;
+
+// Reloj congelado: la ventana de vigilancia se calcula desde "ahora", así que
+// sin esto las pruebas caducarían solas a los 90 días.
+const AHORA = '2026-09-01T15:00:00.000Z'; // 10:00 en Bogotá
+const VENTANA = { desde: '2026-09-01', hasta: '2026-11-30' }; // +90 días
+
+/** Una foto previa con la forma que persiste el agente. */
+const foto = (
+  filas: Record<string, Partial<Record<string, unknown>>>,
+  ventana: { desde: string; hasta: string } | null = VENTANA,
+) => ({
+  ...(ventana ? { ventana } : {}),
+  filas: Object.fromEntries(
+    Object.entries(filas).map(([clave, campos]) => [
+      clave,
+      {
+        e: 0,
+        s: null,
+        h: null,
+        d: null,
+        propia: false,
+        // Por defecto, la fecha de la propia clave `${médico}|${hora}`.
+        f: clave.slice(clave.indexOf('|') + 1).slice(0, 10).replace(/\//g, '-'),
+        ...campos,
+      },
+    ]),
+  ),
+});
+
 describe('detectChanges', () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ now: new Date(AHORA) });
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('la PRIMERA lectura no emite nada: solo toma la línea base', async () => {
     // Sin instantánea previa no se sabe qué cambió. Reportar todo como nuevo
     // duplicaría la agenda entera del hospital dentro de AgenIA.
@@ -587,7 +637,9 @@ describe('detectChanges', () => {
     const r = await driver.detectChanges(null);
 
     expect(r.events).toHaveLength(0);
-    expect(Object.keys(r.nextCursor as any)).toEqual(['76|2026/09/03 07:00']);
+    expect(Object.keys((r.nextCursor as any).filas)).toEqual([
+      '76|2026/09/03 07:00',
+    ]);
   });
 
   it('sin cambios entre dos lecturas, no emite nada', async () => {
@@ -602,7 +654,9 @@ describe('detectChanges', () => {
   it('una cita NUEVA del hospital se reporta como alta', async () => {
     const driver = conCitas([filaHis(), filaHis({ hora: '2026/09/03 09:00' })]);
 
-    const r = await driver.detectChanges({ '76|2026/09/03 07:00': { e: 0, s: null, h: null, d: null, propia: false } } as any);
+    const r = await driver.detectChanges(
+      foto({ '76|2026/09/03 07:00': {} }) as any,
+    );
 
     expect(r.events).toHaveLength(1);
     expect(r.events[0].op).toBe('INSERT');
@@ -614,9 +668,11 @@ describe('detectChanges', () => {
     // solo la ausencia.
     const driver = conCitas([]);
 
-    const r = await driver.detectChanges({
-      '76|2026/09/03 07:00': { e: 0, s: 'S39141-1', h: '9696544', d: 20, propia: false },
-    } as any);
+    const r = await driver.detectChanges(
+      foto({
+        '76|2026/09/03 07:00': { s: 'S39141-1', h: '9696544', d: 20 },
+      }) as any,
+    );
 
     expect(r.events).toHaveLength(1);
     expect(r.events[0].op).toBe('CANCEL');
@@ -626,9 +682,9 @@ describe('detectChanges', () => {
   it('un cambio de estado es un desenlace de atención', async () => {
     const driver = conCitas([filaHis({ estado: 1 })]);
 
-    const r = await driver.detectChanges({
-      '76|2026/09/03 07:00': { e: 0, s: null, h: null, d: null, propia: false },
-    } as any);
+    const r = await driver.detectChanges(
+      foto({ '76|2026/09/03 07:00': {} }) as any,
+    );
 
     expect(r.events[0].op).toBe('ATTENDANCE');
     expect(r.events[0].payload.attendanceStatus).toBe('1');
@@ -640,14 +696,14 @@ describe('detectChanges', () => {
   it('una cita que escribió el propio agente NO se reporta como alta', async () => {
     const driver = conCitas([filaHis({ descripcion: 'ASIGNADA POR WHATSAPP' })]);
 
-    const r = await driver.detectChanges({} as any);
+    const r = await driver.detectChanges(foto({}) as any);
 
     expect(r.events).toHaveLength(0);
   });
 
   it('...pero SÍ entra a la instantánea, para detectar si el hospital la cancela', async () => {
     const driver = conCitas([filaHis({ descripcion: 'ASIGNADA POR WHATSAPP' })]);
-    const base = await driver.detectChanges({} as any);
+    const base = await driver.detectChanges(foto({}) as any);
 
     // El hospital la cancela: desaparece.
     const vacio = conCitas([]);
@@ -659,7 +715,7 @@ describe('detectChanges', () => {
 
   it('el eventId es estable para la misma observación (idempotencia)', async () => {
     const driver = conCitas([filaHis({ hora: '2026/09/03 09:00' })]);
-    const previo = {} as any;
+    const previo = foto({}) as any;
 
     const a = await driver.detectChanges(previo);
     const b = await driver.detectChanges(previo);
@@ -673,15 +729,120 @@ describe('detectChanges', () => {
       filaHis({ hora: '2026/09/03 10:00', estado: 1 }), // cambió estado
     ]);
 
-    const r = await driver.detectChanges({
-      '76|2026/09/03 10:00': { e: 0, s: null, h: null, d: null, propia: false },
-      '76|2026/09/03 11:00': { e: 0, s: null, h: null, d: null, propia: false }, // desapareció
-    } as any);
+    const r = await driver.detectChanges(
+      foto({
+        '76|2026/09/03 10:00': {},
+        '76|2026/09/03 11:00': {}, // desapareció
+      }) as any,
+    );
 
     expect(r.events.map((e) => e.op).sort()).toEqual([
       'ATTENDANCE',
       'CANCEL',
       'INSERT',
     ]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// La ventana de vigilancia.
+//
+// Aquí vivía el peor defecto del espejo: una ventana que se mueve hace
+// desaparecer filas sin que nadie las toque, y eso se reportaba como
+// cancelación. En AgenIA se traducía en citas canceladas a pacientes que las
+// tenían, y en cupos revendidos que el HIS después rechazaba por PK.
+//
+// Ninguna de estas pruebas habría fallado antes por mirar el SQL: fallan por
+// mirar el reloj.
+// ══════════════════════════════════════════════════════════════════════════
+describe('detectChanges — la ventana que se mueve', () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ now: new Date(AHORA) });
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('la ventana arranca HOY y se pide en fecha local, no como instante', async () => {
+    // El filtro era `FE_FECH_CIT >= new Date()`, y mssql serializa el Date en
+    // UTC: el día en curso quedaba SIEMPRE fuera, así que una cita que el
+    // hospital cancelaba hoy para hoy no se detectaba nunca.
+    const { driver, requests } = conCitasEspiadas([]);
+
+    await driver.detectChanges(null);
+
+    expect(requests[0].params.desde).toBe('2026-09-01'); // hoy, incluido
+    expect(requests[0].params.hasta).toBe('2026-11-30'); // +90 días
+    expect(requests[0].sql).toMatch(
+      /CONVERT\(varchar\(10\), FE_FECH_CIT, 23\) BETWEEN @desde AND @hasta/,
+    );
+  });
+
+  it('a las 20:13 de Bogotá NO se cancela la agenda del día siguiente', async () => {
+    // El caso real: a partir de las 19:00 locales, el borde de la ventana
+    // llegaba al servidor ya en la fecha de mañana (20:13 en Bogotá viajaba
+    // como `2026-09-02 01:13`), y toda la agenda del día siguiente salía de la
+    // foto de golpe. Eran ~235 pacientes por noche.
+    const manana = filaHis({ hora: '2026/09/02 08:00' });
+    const base = await conCitas([manana]).detectChanges(null);
+
+    jest.setSystemTime(new Date('2026-09-02T01:13:00.000Z')); // 20:13 en Bogotá
+    const r = await conCitas([manana]).detectChanges(base.nextCursor);
+
+    expect(r.events).toEqual([]);
+  });
+
+  it('al cambiar el día, la agenda de ayer no se reporta como cancelada', async () => {
+    const ayer = filaHis({ hora: '2026/09/01 08:00' });
+    const base = await conCitas([ayer]).detectChanges(null);
+
+    // Un día después la cita ya no entra en la ventana: no está cancelada,
+    // simplemente ya pasó.
+    jest.setSystemTime(new Date('2026-09-02T15:00:00.000Z'));
+    const r = await conCitas([]).detectChanges(base.nextCursor);
+
+    expect(r.events).toEqual([]);
+  });
+
+  it('una cita que entra por el borde lejano no es un alta del hospital', async () => {
+    // Existía desde antes; lo que cambió es hasta dónde miramos. Su cupo lo
+    // cierra `fetchAvailability`, que sí barre esas fechas.
+    // La ventana de hoy llega al 30/11; la de mañana, al 01/12.
+    const lejana = filaHis({ hora: '2026/12/01 08:00' });
+    const base = await conCitas([]).detectChanges(null);
+
+    jest.setSystemTime(new Date('2026-09-02T15:00:00.000Z')); // la ventana avanza
+    const r = await conCitas([lejana]).detectChanges(base.nextCursor);
+
+    expect(r.events).toEqual([]);
+  });
+
+  it('dentro de la franja común, una cancelación de verdad SÍ se reporta', async () => {
+    // El contrapunto imprescindible: si silenciar los bordes silenciara
+    // también las cancelaciones reales, el arreglo sería peor que el defecto.
+    const cita = filaHis({ hora: '2026/09/10 08:00' });
+    const base = await conCitas([cita]).detectChanges(null);
+
+    jest.setSystemTime(new Date('2026-09-02T15:00:00.000Z'));
+    const r = await conCitas([]).detectChanges(base.nextCursor);
+
+    expect(r.events.map((e) => e.op)).toEqual(['CANCEL']);
+  });
+
+  it('un cursor de la versión anterior no cancela nada en su primera vuelta', async () => {
+    // Al desplegar esto, el `state.json` de la VM trae la forma vieja: filas
+    // sueltas, sin ventana. Sin saber qué fechas cubría no se puede afirmar
+    // que algo desapareció, y equivocarse aquí es cancelarle la cita a un
+    // paciente. Las altas sí siguen: ocupan cupos, nunca los liberan.
+    const cursorViejo = {
+      '76|2026/09/10 08:00': { e: 0, s: null, h: null, d: null, propia: false },
+    };
+
+    const r = await conCitas([filaHis({ hora: '2026/09/11 09:00' })]).detectChanges(
+      cursorViejo as any,
+    );
+
+    expect(r.events.map((e) => e.op)).toEqual(['INSERT']);
+    expect((r.nextCursor as any).ventana).toEqual(VENTANA);
   });
 });

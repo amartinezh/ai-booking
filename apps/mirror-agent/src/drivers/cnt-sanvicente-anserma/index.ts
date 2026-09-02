@@ -54,10 +54,56 @@ interface SnapshotRow {
   d: number | null;
   /** true si la escribió este agente (marca de origen en DE_DESC_CIT). */
   propia: boolean;
+  /**
+   * `FE_FECH_CIT` como fecha LOCAL (`YYYY-MM-DD`).
+   *
+   * Se guarda en la foto, y no se deduce de la clave, porque es lo que decide
+   * si una fila que ya no está desapareció o solo se salió de la ventana. Se
+   * lee de la columna y no de `FE_HORA_CIT` para que una hora legada sucia no
+   * arrastre a la ventana con ella.
+   */
+  f: string;
 }
 
-/** Instantánea completa de la ventana, indexada por `${médico}|${hora}`. */
-type SnapshotCursor = Record<string, SnapshotRow>;
+/** Rango de fechas LOCALES que cubre una foto, inclusive en los dos extremos. */
+interface VentanaLocal {
+  desde: string;
+  hasta: string;
+}
+
+/**
+ * Instantánea completa de la ventana.
+ *
+ * Lleva la ventana consigo a propósito: sin ella, la foto siguiente no puede
+ * distinguir "esta cita se canceló" de "esta cita quedó fuera del rango que
+ * miré esta vez", y las dos se ven igual — una clave que ya no está.
+ */
+interface SnapshotCursor {
+  ventana: VentanaLocal;
+  /** Filas indexadas por `${médico}|${hora}`. */
+  filas: Record<string, SnapshotRow>;
+}
+
+/**
+ * La foto anterior, ya normalizada.
+ *
+ * `ventana: null` es un cursor escrito por una versión anterior del agente:
+ * trae las filas pero no dice qué fechas cubrían.
+ */
+interface FotoPrevia {
+  filas: Record<string, SnapshotRow>;
+  ventana: VentanaLocal | null;
+}
+
+function leerCursor(since: DriverCursor): FotoPrevia | null {
+  if (!since || typeof since !== 'object') return null;
+  const c = since as Partial<SnapshotCursor>;
+  if (c.ventana?.desde && c.ventana?.hasta && c.filas) {
+    return { filas: c.filas, ventana: c.ventana };
+  }
+  // Forma anterior: un mapa plano de clave → fila, sin ventana.
+  return { filas: since as Record<string, SnapshotRow>, ventana: null };
+}
 
 export class CntSanVicenteAnsermaDriver implements HisDriver {
   readonly key = 'cnt-sanvicente-anserma';
@@ -265,33 +311,67 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
    * La PRIMERA lectura no emite nada: sin instantánea previa no se sabe qué
    * cambió, y reportar todo como nuevo duplicaría la agenda entera. Solo toma
    * la línea base. La carga inicial es un paso aparte.
+   *
+   * ⚠️ SOLO SE COMPARA LO QUE LAS DOS FOTOS MIRARON
+   * Una ventana que se mueve hace aparecer y desaparecer filas sin que nadie
+   * haya tocado nada. Tratar esa desaparición como una cancelación cancelaba,
+   * en AgenIA, citas que el hospital tenía perfectamente vivas:
+   *
+   *   · La ventana se filtraba con `FE_FECH_CIT >= new Date()`, y `mssql`
+   *     serializa un `Date` en UTC. A las 20:13 de Bogotá el borde llegaba al
+   *     servidor como `2026-09-02 01:13` — el día siguiente. Así que cada
+   *     noche, a las 19:00 en punto, TODAS las citas del día siguiente salían
+   *     de la foto y se reportaban como canceladas: ~235 pacientes por noche
+   *     perdían su cita y su cupo volvía a venderse por WhatsApp, con el HIS
+   *     rechazando después la segunda cita por violación de PK.
+   *   · Y como el borde inferior era "ahora", el día en curso quedaba SIEMPRE
+   *     fuera: una cita que el hospital cancelaba hoy para hoy no se detectaba
+   *     nunca.
+   *
+   * Se arregla en dos partes, y hacen falta las dos:
+   *   1. La ventana se consulta en FECHAS LOCALES (`CONVERT(...,23)`), que es
+   *      el idioma de esa columna — el mismo remedio que ya usa
+   *      `fetchAvailability`, donde el mismo desfase se descubrió antes.
+   *   2. La foto guarda qué fechas cubrió, y el diff solo mira la
+   *      INTERSECCIÓN de las dos ventanas. Lo que entra o sale por el borde no
+   *      es un cambio: es la ventana moviéndose.
    */
   async detectChanges(since: DriverCursor): Promise<DetectChangesResult> {
     const pool = this.requirePool();
     const mapping = this.requireMapping();
-    const anterior = (since as SnapshotCursor | null) ?? null;
+    const anterior = leerCursor(since);
 
-    const desde = new Date();
-    const hasta = new Date();
-    hasta.setDate(hasta.getDate() + (mapping.ventanaVigilanciaDias ?? 90));
+    // Fechas LOCALES del hospital, inclusive en los dos extremos. `desde` es
+    // HOY: el día en curso es justo el que más duele perder de vista.
+    const dias = mapping.ventanaVigilanciaDias ?? 90;
+    const ahoraMs = Date.now();
+    const ventana: VentanaLocal = {
+      desde: fechaCitaLocal(new Date(ahoraMs).toISOString(), this.timeZone),
+      hasta: fechaCitaLocal(
+        new Date(ahoraMs + dias * 86_400_000).toISOString(),
+        this.timeZone,
+      ),
+    };
 
     const filas = await pool
       .request()
-      .input('desde', sql.DateTime, desde)
-      .input('hasta', sql.DateTime, hasta).query(`
+      .input('desde', sql.VarChar(10), ventana.desde)
+      .input('hasta', sql.VarChar(10), ventana.hasta).query(`
         SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
                CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist,
-               NU_DURA_CIT dura, DE_DESC_CIT descripcion
+               NU_DURA_CIT dura, DE_DESC_CIT descripcion,
+               CONVERT(varchar(10), FE_FECH_CIT, 23) fecha
           FROM dbo.CITAS_MEDICAS
-         WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
+         WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @desde AND @hasta`);
 
-    const actual: SnapshotCursor = {};
+    const actual: SnapshotCursor = { ventana, filas: {} };
     for (const f of filas.recordset) {
-      actual[`${f.med}|${f.hora}`] = {
+      actual.filas[`${f.med}|${f.hora}`] = {
         e: f.estado,
         s: f.servicio,
         h: f.hist,
         d: f.dura,
+        f: f.fecha,
         propia: f.descripcion === mapping.marcaOrigen,
       };
     }
@@ -300,22 +380,55 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       return { events: [], nextCursor: actual };
     }
 
+    // Franja que las DOS fotos cubrieron. Fuera de ella no se puede afirmar
+    // nada: la foto anterior no miró ahí, o esta no mira ya.
+    const comun: VentanaLocal = anterior.ventana
+      ? {
+          desde:
+            anterior.ventana.desde > ventana.desde
+              ? anterior.ventana.desde
+              : ventana.desde,
+          hasta:
+            anterior.ventana.hasta < ventana.hasta
+              ? anterior.ventana.hasta
+              : ventana.hasta,
+        }
+      : ventana;
+    const dentro = (fila: SnapshotRow) =>
+      !!fila.f && fila.f >= comun.desde && fila.f <= comun.hasta;
+
     const events: CanonicalChangeEvent[] = [];
     const ahora = new Date().toISOString();
 
-    for (const [clave, fila] of Object.entries(actual)) {
-      const previo = anterior[clave];
+    for (const [clave, fila] of Object.entries(actual.filas)) {
+      const previo = anterior.filas[clave];
       if (!previo) {
+        // Entró por el borde lejano: la cita ya existía, solo que antes no se
+        // miraba tan lejos. Reportarla como alta del hospital sería inventar
+        // un evento; que su cupo quede ocupado lo resuelve `fetchAvailability`,
+        // que sí barre esas fechas y viaja con el `occupied`.
+        if (!dentro(fila)) continue;
         // Alta nueva. Si la escribimos nosotros, no se devuelve al servidor.
         if (fila.propia) continue;
         events.push(this.eventoDeCita('INSERT', clave, fila, ahora));
-      } else if (previo.e !== fila.e) {
+      } else if (previo.e !== fila.e && dentro(fila)) {
         events.push(this.eventoDeCita('ATTENDANCE', clave, fila, ahora));
       }
     }
 
-    for (const [clave, previo] of Object.entries(anterior)) {
-      if (actual[clave]) continue;
+    for (const [clave, previo] of Object.entries(anterior.filas)) {
+      if (actual.filas[clave]) continue;
+      // 🛡️ Una cita solo se da por cancelada si esta foto MIRÓ su fecha y aun
+      // así no estaba. Si la fecha cayó fuera, lo único que se sabe es que no
+      // se miró — y cancelar por eso es cancelarle la cita a un paciente que
+      // la tiene.
+      //
+      // Con un cursor de una versión anterior no se sabe qué ventana cubría,
+      // así que en esa única vuelta no se cancela nada: se prefiere una cita
+      // fantasma (que la reconciliación diaria reporta) a una cancelación
+      // inventada. Las altas sí se siguen reportando — ocupan cupos, nunca
+      // los liberan.
+      if (!anterior.ventana || !dentro(previo)) continue;
       // Desapareció de CITAS_MEDICAS: es una cancelación, la haya hecho el
       // hospital sobre una cita nuestra o sobre una suya.
       events.push(this.eventoDeCita('CANCEL', clave, previo, ahora));
