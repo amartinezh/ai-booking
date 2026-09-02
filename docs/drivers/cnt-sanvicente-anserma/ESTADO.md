@@ -195,6 +195,51 @@ Verificado contra el mock: la foto ya trae la cita de hoy y la de mañana
 corriendo cerca de la medianoche de Bogotá, el momento exacto en que antes se
 perdían. 240 tests en total.
 
+## ✅ Cancelar ya no arrastra citas de otro paciente (2026-09-01)
+
+La PK de `CITAS_MEDICAS` es `(médico, hora, ESTADO)` — el estado integra la
+clave a propósito (confirmado en la 2ª ronda de descubrimiento). El desenlace
+de atención (0→1/2) es un UPDATE en sitio que **libera** la tupla
+`(médico, hora, 0)`, y nada en el esquema impide que esa hora se vuelva a
+agendar después. El resultado, real y no hipotético: dos filas vigentes para
+el mismo médico+hora, una ya atendida y una nueva.
+
+`copiarAAnuladas()` no lo sabía: filtraba solo por `(médico, hora)`, tanto en
+el `SELECT` que archiva en `CITAS_ANULADAS` como en el `DELETE`. Cancelar la
+cita **nueva** (estado 0) copiaba y borraba **también** la ya atendida —un
+paciente atendido desaparecía de la historia clínica del hospital por la
+cancelación de otro. Reproducido contra el SQL Server del mock: dos filas
+insertadas con la misma hora y estados 0/1, un `DELETE` sin el filtro se
+llevó las dos.
+
+**Arreglo:** `AND NU_ESTA_CIT = 0` en las dos consultas — cancelar solo puede
+tocar la fila viva, que es la única sobre la que el motor actúa.
+
+**El mismo hallazgo alcanzaba a `detectChanges`:** la foto que alimenta la
+detección de cambios indexaba por `${médico}|${hora}` sin más, así que ante
+dos filas reales para la misma clave, la última que devolviera SQL Server
+ganaba en silencio — sin ningún criterio, solo el orden de la consulta.
+
+**No se corrigió añadiendo el estado a la clave.** Se probó primero esa vía
+y rompe algo peor: si la clave fuera `${médico}|${hora}|${estado}`, una
+atención normal (una sola cita, 0→1) se vería como que la fila `estado=0`
+desapareció y otra con `estado=1` apareció — es decir, **CANCEL + INSERT en
+vez de ATTENDANCE**. Cada cita atendida se cancelaría sola en AgenIA, un
+defecto nuevo y peor que el que se estaba cerrando. La clave sigue siendo
+`${médico}|${hora}`.
+
+En su lugar, cuando la consulta trae más de una fila para la misma clave, se
+elige de forma determinista la fila **viva** (`estado = 0`) — es la única
+sobre la que el motor puede actuar (cancelar, reagendar); la atendida ya es
+historia cerrada y no vuelve a cambiar — y se deja constancia con
+`console.warn` en el log del agente, visible en `journalctl`. Sin colisión
+(el caso normal, con diferencia el más frecuente) el comportamiento no
+cambia un bit.
+
+Cinco pruebas nuevas cubren esto, incluyendo el contrapunto obligado: que
+una atención normal (una sola fila, sin colisión) se siga reportando como
+`ATTENDANCE` y no como `CANCEL`+`INSERT`. 245 tests en total.
+
 ## ⏳ Pendientes de este driver
 
 1. **Encontrar la fuente de "Asignada Por"** (bloque 24) — búsqueda directa por nombre de columna dio vacío; candidatos: `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO`, `USUARIO`. Si no aparece en ninguna tabla, la alternativa es pedir al hospital un usuario/login propio de la aplicación (`AGENIA`/`WHATSAPP`) para que quede registrado como origen al insertar.

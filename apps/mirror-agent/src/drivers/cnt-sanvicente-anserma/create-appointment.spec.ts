@@ -457,6 +457,22 @@ describe('cancelAppointment', () => {
     expect(copia.params.hora).toBe('2026/09/03 07:00');
   });
 
+  it('solo toca la fila VIVA (estado 0): un médico+hora puede tener también una ya atendida', async () => {
+    // La PK es (médico, hora, ESTADO): el desenlace de atención libera la
+    // tupla (médico, hora, 0) con un UPDATE en sitio, y esa hora se puede
+    // volver a agendar — coexisten entonces dos filas reales para el mismo
+    // médico+hora. Sin filtrar por estado, cancelar la cita nueva copiaba Y
+    // BORRABA también la ya atendida: un paciente atendido desaparecía de la
+    // historia del hospital por la cancelación de otro.
+    const { driver, requests } = conDriver();
+    await driver.cancelAppointment(eventoCancel());
+
+    const copia = sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)!;
+    const borra = sqlDe(requests, /DELETE FROM dbo\.CITAS_MEDICAS/)!;
+    expect(copia.sql).toMatch(/NU_ESTA_CIT\s*=\s*0/);
+    expect(borra.sql).toMatch(/NU_ESTA_CIT\s*=\s*0/);
+  });
+
   it('si la cita ya no está, es éxito: reintentar no cambiaría nada', async () => {
     // O el hospital ya la canceló por su lado, o nunca llegó a escribirse. En
     // los dos casos el resultado deseado ya se cumple.
@@ -844,5 +860,84 @@ describe('detectChanges — la ventana que se mueve', () => {
 
     expect(r.events.map((e) => e.op)).toEqual(['INSERT']);
     expect((r.nextCursor as any).ventana).toEqual(VENTANA);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Dos filas para el mismo médico+hora.
+//
+// La PK de CITAS_MEDICAS es (médico, hora, ESTADO) — el estado integra la
+// clave a propósito (MAPEO_HIS.md §1). El desenlace de atención LIBERA la
+// tupla (médico, hora, 0) con un UPDATE en sitio, y nada impide que esa hora
+// se agende de nuevo después: dos filas reales, vigentes las dos, mismo
+// médico+hora, estados distintos.
+//
+// La clave del cursor sigue siendo `${médico}|${hora}` — y no
+// `${médico}|${hora}|${estado}` — porque partir por estado rompería lo
+// contrario: el desenlace de atención pasaría de verse como "cambió el
+// estado de una fila" a verse como "una fila desapareció y otra apareció",
+// es decir CANCEL + INSERT en vez de ATTENDANCE. Cada cita atendida se
+// cancelaría sola en AgenIA. Lo que hacía falta no era otra clave: era dejar
+// de resolver la colisión al azar, según el orden en que SQL Server
+// devolviera las filas.
+// ══════════════════════════════════════════════════════════════════════════
+describe('detectChanges — dos filas para el mismo médico+hora', () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ now: new Date(AHORA) });
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('con una atendida y otra nueva en el mismo médico+hora, la nueva (estado 0) manda', async () => {
+    const filas = [
+      filaHis({ hora: '2026/09/10 08:00', estado: 1, hist: 'ATENDIDO' }),
+      filaHis({ hora: '2026/09/10 08:00', estado: 0, hist: 'NUEVO' }),
+    ];
+
+    const r = await conCitas(filas).detectChanges(
+      foto({ '76|2026/09/10 08:00': { e: 1, h: 'ATENDIDO' } }) as any,
+    );
+
+    // La fila elegida es la viva: si el motor tuviera que actuar sobre este
+    // médico+hora (cancelarla, reagendarla), solo la de estado 0 es la que
+    // puede tocar — la atendida ya es historia cerrada.
+    const cursorFila = (r.nextCursor as any).filas['76|2026/09/10 08:00'];
+    expect(cursorFila.e).toBe(0);
+    expect(cursorFila.h).toBe('NUEVO');
+  });
+
+  it('el orden en que SQL Server devuelve las filas no cambia cuál se elige', async () => {
+    const enOrden = [
+      filaHis({ hora: '2026/09/10 08:00', estado: 0, hist: 'NUEVO' }),
+      filaHis({ hora: '2026/09/10 08:00', estado: 1, hist: 'ATENDIDO' }),
+    ];
+    const invertido = [...enOrden].reverse();
+
+    const previo = foto({}) as any;
+    const a = await conCitas(enOrden).detectChanges(previo);
+    const b = await conCitas(invertido).detectChanges(previo);
+
+    expect((a.nextCursor as any).filas['76|2026/09/10 08:00'].h).toBe('NUEVO');
+    expect((b.nextCursor as any).filas['76|2026/09/10 08:00'].h).toBe('NUEVO');
+  });
+
+  it('sin colisión, una única fila no dispara la resolución de empate', async () => {
+    const spy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await conCitas([filaHis({ hora: '2026/09/10 08:00' })]).detectChanges(null);
+
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('una atención normal (una sola fila, 0→1) sigue siendo ATTENDANCE y no CANCEL+INSERT', async () => {
+    // El contrapunto imprescindible: la clave sigue siendo médico+hora sin el
+    // estado exactamente para proteger este caso, el común de los dos.
+    const r = await conCitas([
+      filaHis({ hora: '2026/09/10 08:00', estado: 1 }),
+    ]).detectChanges(foto({ '76|2026/09/10 08:00': {} }) as any);
+
+    expect(r.events.map((e) => e.op)).toEqual(['ATTENDANCE']);
   });
 });

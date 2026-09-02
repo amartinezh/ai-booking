@@ -364,15 +364,49 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
           FROM dbo.CITAS_MEDICAS
          WHERE CONVERT(varchar(10), FE_FECH_CIT, 23) BETWEEN @desde AND @hasta`);
 
-    const actual: SnapshotCursor = { ventana, filas: {} };
+    // ⚠️ Puede haber más de una fila por médico+hora — no es un caso que
+    // "no debería pasar".
+    //
+    // La PK es (médico, hora, ESTADO): el desenlace de atención LIBERA la
+    // tupla (médico, hora, 0) con un UPDATE en sitio (MAPEO_HIS.md §1), y
+    // nada en el esquema impide que esa hora se vuelva a agendar después. El
+    // resultado son dos filas reales, vigentes las dos, para el mismo
+    // médico+hora: una atendida (estado 1/2) y una nueva (estado 0).
+    //
+    // Agrupar por clave y quedarse con "la última que trajo la consulta" —lo
+    // que hacía este bucle antes— decide en silencio y sin ningún criterio
+    // cuál de las dos cuenta, según el orden en que SQL Server devuelva las
+    // filas. Aquí se decide a propósito: la fila VIVA (estado 0) manda, por
+    // ser la única sobre la que el motor puede actuar (cancelar, reagendar);
+    // la atendida ya es historia y no puede volver a cambiar.
+    const porClave = new Map<string, (typeof filas.recordset)[number][]>();
     for (const f of filas.recordset) {
-      actual.filas[`${f.med}|${f.hora}`] = {
-        e: f.estado,
-        s: f.servicio,
-        h: f.hist,
-        d: f.dura,
-        f: f.fecha,
-        propia: f.descripcion === mapping.marcaOrigen,
+      const clave = `${f.med}|${f.hora}`;
+      const lista = porClave.get(clave);
+      if (lista) lista.push(f);
+      else porClave.set(clave, [f]);
+    }
+
+    const actual: SnapshotCursor = { ventana, filas: {} };
+    for (const [clave, filasDeLaClave] of porClave) {
+      let elegida = filasDeLaClave[0];
+      if (filasDeLaClave.length > 1) {
+        elegida =
+          filasDeLaClave.find((f) => f.estado === 0) ?? filasDeLaClave[0];
+        console.warn(
+          `[driver cnt-sanvicente-anserma] ${clave}: ${filasDeLaClave.length} filas ` +
+            `vigentes en CITAS_MEDICAS para el mismo médico+hora (estados ` +
+            `${filasDeLaClave.map((f) => f.estado).join(', ')}) — se sigue la ` +
+            `de estado ${elegida.estado}.`,
+        );
+      }
+      actual.filas[clave] = {
+        e: elegida.estado,
+        s: elegida.servicio,
+        h: elegida.hist,
+        d: elegida.dura,
+        f: elegida.fecha,
+        propia: elegida.descripcion === mapping.marcaOrigen,
       };
     }
 
@@ -820,6 +854,20 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
   ): Promise<boolean> {
     // Copia campo a campo: `CITAS_ANULADAS` repite las columnas de
     // `CITAS_MEDICAS` con sufijo _CIAN, más motivo y observaciones.
+    //
+    // ⚠️ `AND NU_ESTA_CIT = 0` no es un refinamiento — sin él se cancela lo
+    // que no se debía.
+    //
+    // La PK de `CITAS_MEDICAS` es (médico, hora, ESTADO) — el estado integra
+    // la clave (MAPEO_HIS.md §1) precisamente para que dos citas puedan
+    // coexistir en el mismo médico+hora si tienen estados distintos. Eso pasa
+    // de verdad: la aplicación del hospital hace el desenlace de atención con
+    // un UPDATE en sitio (0→1/2), lo que LIBERA la tupla (médico, hora, 0) —
+    // y nada impide que esa hora se vuelva a agendar después. Filtrar solo
+    // por (médico, hora), como hacía este método, significaba que cancelar la
+    // cita nueva (estado 0) también copiaba y BORRABA la cita ya atendida
+    // (estado 1/2) que compartía la misma hora: un paciente ya atendido
+    // desaparecía de la historia del hospital por la cancelación de otro.
     const copia = await tx.request()
       .input('med', sql.VarChar(4), datos.medico)
       .input('hora', sql.VarChar(18), datos.feHora)
@@ -852,7 +900,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
           CD_CODI_EST_CIT, CD_CODI_CAMP_CIT, NU_CODIGO_HSWE_CIT,
           @moti, @obse
         FROM dbo.CITAS_MEDICAS
-        WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora`);
+        WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0`);
 
     if ((copia.rowsAffected[0] ?? 0) === 0) return false;
 
@@ -861,7 +909,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       .input('med', sql.VarChar(4), datos.medico)
       .input('hora', sql.VarChar(18), datos.feHora)
       .query(
-        'DELETE FROM dbo.CITAS_MEDICAS WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora',
+        'DELETE FROM dbo.CITAS_MEDICAS WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0',
       );
 
     return true;
