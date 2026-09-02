@@ -21,7 +21,16 @@ No es una réplica binaria del HIS. Es una reconstrucción best-effort del
 esquema **confirmado** en `docs/drivers/cnt-sanvicente-anserma/MAPEO_HIS.md`
 (columnas, tipos, PKs — donde Fase 0 ya cerró la pregunta). Tres tablas
 (`CONSULTORIOS`, `R_ESP_SER`, `MUNICIPIOS`) son placeholders mínimos porque
-su esquema real aún no se descubrió (bloque 21, pendiente). Motor: SQL
+su esquema real aún no se descubrió (bloque 21, pendiente).
+
+⚠️ **Cuando el mock es más permisivo que el HIS, no simplifica: miente.**
+`PACIENTES` llegó a tener 13 columnas inventadas a partir de la lista de NOT
+NULL del mapeo, con `NO_NOMB_PAC` como `varchar(60)`. En el hospital son 62
+columnas y esa es `varchar(20)` — solo el primer nombre. El driver escribía
+ahí el nombre completo y **en producción habría reventado el INSERT** con el
+error 8152 para casi todos los pacientes; aquí pasaba sin ruido. Se corrigió
+copiando el esquema real columna por columna (bloque 27a). Si una tabla del
+mock se aparta del HIS, que sea a propósito y esté escrito. Motor: SQL
 Server 2022 real bajo emulación amd64 (no Azure SQL Edge — esa imagen quedó
 sin mantenimiento y revienta con SIGABRT al arrancar en Apple Silicon; el
 hospital corre SQL Server 2017, pero para DDL/DML estándar la diferencia de
@@ -36,7 +45,7 @@ docker compose up -d mirror-his-mock
 # 2) Crear/recrear PRUEBAS + correr AGENIA_SYNC_SETUP.sql real sin modificar
 #    (reintentable — recrea todo desde cero cada vez que corre)
 AGENIA_SYNC_PASSWORD='<misma que uses en provision-mirror-config.ts>' \
-  pnpm --filter @agenia/mirror-agent exec tsx local-his-mock/setup.ts
+  pnpm --filter @agenia/database exec tsx ../../apps/mirror-agent/local-his-mock/setup.ts
 
 # 3) Apuntar el HospitalMirrorConfig de dev a este mock (MIRROR_HIS_TARGET=local
 #    es el default — ver packages/database/scripts/provision-mirror-config.ts)
@@ -84,5 +93,5 @@ código en `apps/mirror-agent/src/` ni en `apps/api/src/mirror/`.
 ```bash
 docker compose down -v mirror-his-mock   # borra también el volumen (todo el estado del mock)
 docker compose up -d mirror-his-mock
-pnpm --filter @agenia/mirror-agent exec tsx local-his-mock/setup.ts   # con AGENIA_SYNC_PASSWORD de nuevo
+pnpm --filter @agenia/database exec tsx ../../apps/mirror-agent/local-his-mock/setup.ts   # con AGENIA_SYNC_PASSWORD
 ```

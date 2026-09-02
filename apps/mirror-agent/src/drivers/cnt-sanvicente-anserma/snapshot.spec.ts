@@ -14,7 +14,7 @@ const MAPPING = {
   centroCostos: '007',
   marcaOrigen: 'ASIGNADA POR WHATSAPP',
   motivoAnulacion: 'WB',
-  sexo: { M: 0, F: 1 },
+  sexo: { M: 1, F: 0 }, // confirmado contra ESEHSVP (mapping.ts, 2026-09-01)
   convenios: {},
   convenioParticular: 26,
   serviciosPyp: [],

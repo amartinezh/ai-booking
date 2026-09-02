@@ -257,6 +257,18 @@ function createPrisma(db: Db) {
  *
  * El régimen solo se pregunta cuando hay EPS: un particular no lo necesita.
  */
+/**
+ * El nombre se pregunta en DOS turnos: nombres y apellidos.
+ *
+ * No es un capricho del test: el HIS guarda nombres y apellidos en columnas
+ * separadas y partir "JUAN CARLOS PEREZ" después es adivinar. Preguntando, la
+ * frontera la pone el paciente.
+ */
+async function decirNombre(say: (t: string) => Promise<void>) {
+  await say('Juan');
+  await say('Pérez');
+}
+
 async function responderAlta(
   say: (t: string) => Promise<void>,
   opts: { conEps?: boolean } = {},
@@ -471,7 +483,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('1088123456');
       expect(await state()).toBe(ChatState.AWAITING_NAME);
 
-      await say('Juan Pérez');
+      await decirNombre(say);
       // Paciente nuevo: ahora se le piden nacimiento y sexo antes del resumen.
       expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
       await responderAlta(say);
@@ -491,6 +503,18 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(origin).toBe('WHATSAPP');
       expect(orgId).toBe(ORG_ID);
       expect(patientId).toBe(db.patients[0].id);
+
+      // ⭐ La frontera nombres/apellidos llega a PatientProfile SEPARADA.
+      //
+      // Es lo único que no se puede deducir después: "JUAN CARLOS PEREZ" puede
+      // ser un nombre y dos apellidos, o dos nombres y uno. El HIS los guarda
+      // en columnas distintas, así que preguntarlo es la única forma de no
+      // adivinar el apellido de un paciente en su historia clínica.
+      const creado = db.patients.at(-1)!;
+      expect(creado.nombres).toBe('Juan');
+      expect(creado.apellidos).toBe('Pérez');
+      // `fullName` se conserva compuesto: medio sistema lo usa para mostrar.
+      expect(creado.fullName).toBe('Juan Pérez');
 
       // ⭐ Los tres turnos del alta TAMBIÉN quedan auditados.
       //
@@ -556,7 +580,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('A');
       await say('1088123456');
-      await say('Juan Pérez');
+      await decirNombre(say);
       // Paciente nuevo: nacimiento, sexo antes del resumen.
       await responderAlta(say);
 
@@ -576,7 +600,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('A');
       await say('1088123456');
-      await say('Juan Pérez');
+      await decirNombre(say);
       // Paciente nuevo: nacimiento, sexo antes del resumen.
       await responderAlta(say);
       await say('Sí');
@@ -604,7 +628,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('A');
       await say('1088123456');
-      await say('Juan Pérez');
+      await decirNombre(say);
       // Paciente nuevo: nacimiento, sexo antes del resumen.
       await responderAlta(say);
 
@@ -721,7 +745,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('B');
       await say('A');
       await say('1088123456');
-      await say('Juan Pérez');
+      await decirNombre(say);
       // Paciente nuevo: nacimiento, sexo y régimen antes del resumen.
       await responderAlta(say, { conEps: true });
       await say('Sí');
@@ -1196,6 +1220,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('1088123456');
       expect(await state()).toBe(ChatState.AWAITING_NAME);
 
+      // Un solo turno: la lista de espera no llega al HIS, así que no necesita
+      // la frontera nombres/apellidos y no le cobra un turno extra al paciente.
       await say('Juan Pérez');
       expect(waitlist.joinWaitlist).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1400,7 +1426,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('A');
       await say('1088123456');
-      await say('Juan Pérez');
+      await decirNombre(say);
 
       await say('me duele mucho el pecho');
       expect(appointments.bookAppointment).not.toHaveBeenCalled();
@@ -1458,7 +1484,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A');
       await say('A');
       await say('1088123456');
-      await say('Juan Pérez');
+      await decirNombre(say);
       // Paciente nuevo: nacimiento, sexo antes del resumen.
       await responderAlta(say);
       await say('Sí');
@@ -1476,7 +1502,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('A'); // Particular
       await say('A');
       await say('1088123456');
-      await say('Juan Pérez');
+      await decirNombre(say);
       // Paciente nuevo: nacimiento, sexo antes del resumen.
       await responderAlta(say);
       await say('Sí');
@@ -1493,7 +1519,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('B'); // Sura
       await say('A');
       await say('1088123456');
-      await say('Juan Pérez');
+      await decirNombre(say);
       // Paciente nuevo: nacimiento, sexo y régimen antes del resumen.
       await responderAlta(say, { conEps: true });
       await say('Sí');
@@ -1616,7 +1642,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say(epsLetra);
       await say('A');
       await say('1088123456');
-      await say('Juan Pérez');
+      await decirNombre(say);
     };
 
     it('8.1 a un paciente NUEVO se le piden nacimiento y sexo', async () => {

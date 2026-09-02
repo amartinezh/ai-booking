@@ -40,7 +40,10 @@ export class MirrorAvailabilityService {
     const mode = config.availabilityMode as AvailabilityResult['mode'];
 
     if (mode === 'OFF') {
-      return { mode, created: 0, updated: 0, removed: 0, skipped: [], conflicts: [] };
+      return {
+        mode, created: 0, updated: 0, removed: 0, retired: 0,
+        skipped: [], conflicts: [],
+      };
     }
 
     const from = new Date(input.fromIso);
@@ -111,11 +114,13 @@ export class MirrorAvailabilityService {
         doctorId: true,
         startTime: true,
         isAvailable: true,
-        appointments: {
-          where: { status: { not: 'CANCELLED' } },
-          select: { id: true },
-          take: 1,
-        },
+        // Dos preguntas distintas sobre el mismo cupo:
+        //  · ¿tiene una cita VIVA? → no se puede liberar ni borrar: hay un
+        //    paciente contando con esa hora.
+        //  · ¿tiene CUALQUIER cita, aunque esté cancelada? → no se puede
+        //    BORRAR: la fila cancelada es historia clínica y la llave foránea
+        //    la sostiene. Se puede cerrar, pero no eliminar.
+        appointments: { select: { id: true, status: true } },
       },
     });
     const existentePorClave = new Map(
@@ -126,6 +131,7 @@ export class MirrorAvailabilityService {
     const aOcupar: string[] = [];
     const aLiberar: string[] = [];
     const aBorrar: string[] = [];
+    const aRetirar: string[] = [];
     const conflicts: string[] = [];
 
     for (const [clave, cupo] of deseados) {
@@ -136,19 +142,39 @@ export class MirrorAvailabilityService {
       }
       // Un cupo con cita viva en AgenIA jamás se marca disponible, diga lo que
       // diga el HIS: liberarlo sería revender una hora ya vendida.
-      const tieneCita = actual.appointments.length > 0;
-      const deberiaEstarLibre = !cupo.occupied && !tieneCita;
+      const tieneCitaViva = actual.appointments.some(
+        (a) => a.status !== 'CANCELLED',
+      );
+      const deberiaEstarLibre = !cupo.occupied && !tieneCitaViva;
       if (deberiaEstarLibre && !actual.isAvailable) aLiberar.push(actual.id);
       if (!deberiaEstarLibre && actual.isAvailable) aOcupar.push(actual.id);
     }
 
     for (const [clave, actual] of existentePorClave) {
       if (deseados.has(clave)) continue;
+
       // El hospital ya no tiene esa hora en su agenda.
-      if (actual.appointments.length > 0) {
+      if (actual.appointments.some((a) => a.status !== 'CANCELLED')) {
+        // Hay un paciente con cita a una hora en la que su médico ya no
+        // atiende. No es un cupo sobrante: es un problema para una persona.
         conflicts.push(clave);
         continue;
       }
+
+      // 🚨 Un cupo con citas CANCELADAS no se puede borrar: la fila cancelada
+      // es historia clínica y `Appointment_scheduleSlotId_fkey` la sostiene.
+      // Intentarlo reventaba la transacción entera con un error de llave
+      // foránea — y como el error subía, se llevaba por delante el resto del
+      // barrido: los otros 399 días no se sincronizaban. La agenda se quedó
+      // desalineada casi media hora sin que nada lo dijera.
+      //
+      // Cerrarlo consigue lo que importa —que AgenIA no ofrezca una hora que
+      // el hospital no tiene— sin tocar la historia.
+      if (actual.appointments.length > 0) {
+        if (actual.isAvailable) aRetirar.push(actual.id);
+        continue;
+      }
+
       aBorrar.push(actual.id);
     }
 
@@ -157,6 +183,7 @@ export class MirrorAvailabilityService {
       created: aCrear.length,
       updated: aOcupar.length + aLiberar.length,
       removed: aBorrar.length,
+      retired: aRetirar.length,
       skipped,
       conflicts,
     };
@@ -198,6 +225,12 @@ export class MirrorAvailabilityService {
         await tx.scheduleSlot.updateMany({
           where: { id: { in: aLiberar } },
           data: { isAvailable: true },
+        });
+      }
+      if (aRetirar.length > 0) {
+        await tx.scheduleSlot.updateMany({
+          where: { id: { in: aRetirar } },
+          data: { isAvailable: false },
         });
       }
       if (aBorrar.length > 0) {

@@ -29,13 +29,22 @@ describe('MirrorAvailabilityService', () => {
 
   const cupoAgenIA = (
     startIso: string,
-    opts: { isAvailable?: boolean; conCita?: boolean; id?: string } = {},
+    opts: {
+      isAvailable?: boolean;
+      conCita?: boolean;
+      conCitaCancelada?: boolean;
+      id?: string;
+    } = {},
   ) => ({
     id: opts.id ?? `slot-${startIso}`,
     doctorId: 'doc-1',
     startTime: new Date(startIso),
     isAvailable: opts.isAvailable ?? true,
-    appointments: opts.conCita ? [{ id: 'apt-1' }] : [],
+    appointments: opts.conCita
+      ? [{ id: 'apt-1', status: 'SCHEDULED' }]
+      : opts.conCitaCancelada
+        ? [{ id: 'apt-1', status: 'CANCELLED' }]
+        : [],
   });
 
   const conModo = (mode: 'OFF' | 'SHADOW' | 'ON') =>
@@ -191,6 +200,72 @@ describe('MirrorAvailabilityService', () => {
 
       expect(tx.scheduleSlot.deleteMany).not.toHaveBeenCalled();
       expect(r.conflicts).toEqual(['doc-1|2026-09-03T15:00:00.000Z']);
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 🚨 Una cita CANCELADA sigue apuntando al cupo por llave foránea: es
+    // historia clínica. Borrar el cupo reventaba la transacción entera con un
+    // error de FK — y como el error subía, se llevaba por delante el resto del
+    // barrido: los otros 399 días no se sincronizaban. La agenda se quedó
+    // media hora desalineada sin que nada lo dijera.
+    // ══════════════════════════════════════════════════════════════════════
+    it('un cupo con cita CANCELADA no se borra: se cierra', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoAgenIA('2026-09-03T15:00:00.000Z', {
+          conCitaCancelada: true,
+          id: 'con-historia',
+        }),
+      ]);
+
+      const r = await aplicar([]);
+
+      expect(tx.scheduleSlot.deleteMany).not.toHaveBeenCalled();
+      expect(tx.scheduleSlot.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['con-historia'] } },
+        data: { isAvailable: false },
+      });
+      expect(r.retired).toBe(1);
+      expect(r.removed).toBe(0);
+    });
+
+    it('cerrarlo consigue lo que importa: dejar de ofrecer esa hora', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoAgenIA('2026-09-03T15:00:00.000Z', { conCitaCancelada: true }),
+      ]);
+
+      await aplicar([]);
+
+      const cierres = tx.scheduleSlot.updateMany.mock.calls.filter(
+        (c: any[]) => c[0].data.isAvailable === false,
+      );
+      expect(cierres).toHaveLength(1);
+    });
+
+    it('un cupo con cita cancelada YA cerrado no se toca dos veces', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoAgenIA('2026-09-03T15:00:00.000Z', {
+          conCitaCancelada: true,
+          isAvailable: false,
+        }),
+      ]);
+
+      const r = await aplicar([]);
+
+      expect(tx.scheduleSlot.updateMany).not.toHaveBeenCalled();
+      expect(r.retired).toBe(0);
+    });
+
+    it('un cupo SIN ninguna cita sí se borra', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoAgenIA('2026-09-03T15:00:00.000Z', { id: 'limpio' }),
+      ]);
+
+      const r = await aplicar([]);
+
+      expect(tx.scheduleSlot.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ['limpio'] } },
+      });
+      expect(r.retired).toBe(0);
     });
 
     it('marca el cambio como MIRROR para que no rebote al hospital', async () => {

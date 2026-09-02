@@ -1735,6 +1735,12 @@ export class ChatbotService implements OnModuleInit {
     dateOfBirth?: Date;
     gender?: string;
     regime?: string;
+    /**
+     * La frontera entre nombres y apellidos, tal como la dio el paciente. El
+     * HIS los guarda en columnas separadas y deducirla de `nombre` es adivinar.
+     */
+    nombres?: string;
+    apellidos?: string;
   }): Promise<any> {
     const {
       cedula,
@@ -1745,6 +1751,8 @@ export class ChatbotService implements OnModuleInit {
       dateOfBirth,
       gender,
       regime,
+      nombres,
+      apellidos,
     } = params;
 
     // Cada identificador va a SU columna: `whatsappId` es el teléfono y `bsuid`
@@ -1803,6 +1811,8 @@ export class ChatbotService implements OnModuleInit {
         data: {
           cedula,
           fullName: nombre,
+          ...(nombres ? { nombres } : {}),
+          ...(apellidos ? { apellidos } : {}),
           whatsappId: phoneToPersist,
           bsuid,
           userId: tempUser.id,
@@ -2308,6 +2318,7 @@ export class ChatbotService implements OnModuleInit {
   > = {
     [ChatState.AWAITING_DATE]: (ctx) => this.handleAwaitingDate(ctx),
     // Alta de paciente nuevo (ver la sección de handlers más abajo).
+    [ChatState.AWAITING_APELLIDOS]: (ctx) => this.handleAwaitingApellidos(ctx),
     [ChatState.AWAITING_BIRTHDATE]: (ctx) => this.handleAwaitingBirthdate(ctx),
     [ChatState.AWAITING_GENDER]: (ctx) => this.handleAwaitingGender(ctx),
     [ChatState.AWAITING_REGIME]: (ctx) => this.handleAwaitingRegime(ctx),
@@ -2820,7 +2831,8 @@ export class ChatbotService implements OnModuleInit {
     } else if (
       messageType === 'text' &&
       text &&
-      currentState === ChatState.AWAITING_NAME
+      (currentState === ChatState.AWAITING_NAME ||
+        currentState === ChatState.AWAITING_APELLIDOS)
     ) {
       // En el paso de nombre capturamos el texto TAL CUAL, sin llamar a Gemini.
       // Antes el nombre pasaba por el extractor y el clasificador de seguridad
@@ -3547,6 +3559,7 @@ export class ChatbotService implements OnModuleInit {
       // Alta de paciente nuevo: una fecha y dos letras. Deterministas — no
       // llaman al LLM, y sin esto el turno caía al protocolo general y volvía
       // a preguntar lo mismo en bucle.
+      currentState === ChatState.AWAITING_APELLIDOS ||
       currentState === ChatState.AWAITING_BIRTHDATE ||
       currentState === ChatState.AWAITING_GENDER ||
       currentState === ChatState.AWAITING_REGIME ||
@@ -4316,7 +4329,10 @@ export class ChatbotService implements OnModuleInit {
           where: { cedula: finalCedula, organizationId },
         });
         if (!existing && !finalNombre) {
-          const reply = MSGS.primeraVez();
+          // Aquí se pide el nombre COMPLETO de una vez: la lista de espera no
+          // llega al HIS, así que no necesita la frontera nombres/apellidos y
+          // no tiene sentido cobrarle al paciente un turno más.
+          const reply = MSGS.nombreParaLista();
           await this.smartReply(organizationId, senderId, reply);
           await this.setUserState(
             organizationId,
@@ -5022,8 +5038,36 @@ export class ChatbotService implements OnModuleInit {
           return;
         }
 
-        // Paciente nuevo CON nombre: cae al persistido común de abajo (antes
-        // se llamaba aquí y otra vez fuera del if, duplicando la consulta).
+        // Paciente nuevo CON nombres: falta la segunda mitad. Los apellidos se
+        // preguntan aparte porque el HIS los guarda en columnas propias, y
+        // recomponer la frontera después es adivinar: "JUAN CARLOS PEREZ" es
+        // un nombre y dos apellidos, o dos nombres y uno, y no hay forma de
+        // saberlo. Preguntando, la frontera la pone el paciente.
+        const apellidosGuardados = await this.redis.get(
+          `temp_apellidos:${organizationId}:${senderId}`,
+        );
+        if (!apellidosGuardados) {
+          await this.redis.set(
+            `temp_nombres:${organizationId}:${senderId}`,
+            finalNombre,
+            'EX',
+            SESSION_TTL,
+          );
+          const reply = MSGS.pedirApellidos(finalNombre);
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(
+            organizationId,
+            senderId,
+            ChatState.AWAITING_APELLIDOS,
+          );
+          await this.extenderSesionDeAlta(organizationId, senderId);
+          await this.auditSuccess(senderId, organizationId, {
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: { step: 'ALTA_PEDIR_APELLIDOS', cedula: finalCedula },
+          });
+          return;
+        }
       }
 
       // Persistencia con nombre + EPS final. Cubre ambos casos: crea al
@@ -5439,16 +5483,28 @@ export class ChatbotService implements OnModuleInit {
   private async datosDeAltaGuardados(
     organizationId: string,
     senderId: string,
-  ): Promise<{ dateOfBirth?: Date; gender?: string; regime?: string }> {
-    const [nacimiento, sexo, regimen] = await Promise.all([
+  ): Promise<{
+    dateOfBirth?: Date;
+    gender?: string;
+    regime?: string;
+    nombres?: string;
+    apellidos?: string;
+  }> {
+    const [nacimiento, sexo, regimen, nombres, apellidos] = await Promise.all([
       this.redis.get(this.altaKey(organizationId, senderId, 'nacimiento')),
       this.redis.get(this.altaKey(organizationId, senderId, 'sexo')),
       this.redis.get(this.altaKey(organizationId, senderId, 'regimen')),
+      this.redis.get(`temp_nombres:${organizationId}:${senderId}`),
+      this.redis.get(`temp_apellidos:${organizationId}:${senderId}`),
     ]);
     return {
       ...(nacimiento ? { dateOfBirth: new Date(nacimiento) } : {}),
       ...(sexo ? { gender: sexo } : {}),
       ...(regimen ? { regime: regimen } : {}),
+      // La frontera nombres/apellidos viaja hasta PatientProfile: es lo que
+      // evita que el driver tenga que adivinarla luego.
+      ...(nombres ? { nombres } : {}),
+      ...(apellidos ? { apellidos } : {}),
     };
   }
 
@@ -5468,6 +5524,49 @@ export class ChatbotService implements OnModuleInit {
       'EX',
       SESSION_TTL,
     );
+  }
+
+  /**
+   * Segundo paso del nombre: los apellidos.
+   *
+   * Se preguntan aparte porque el HIS los guarda en columnas propias y
+   * recomponer la frontera después es adivinar: "JUAN CARLOS PEREZ" puede ser
+   * un nombre y dos apellidos, o dos nombres y un apellido. Preguntando, la
+   * frontera la pone el paciente.
+   *
+   * `temp_nombre` sigue guardando el nombre COMPUESTO: el resumen, la reserva
+   * y todo lo que viene después no se enteran de que ahora son dos preguntas.
+   */
+  private async handleAwaitingApellidos(ctx: ChatTurnContext): Promise<void> {
+    const { organizationId, senderId, text, MSGS } = ctx;
+    const apellidos = (text ?? '').trim().replace(/\s+/g, ' ');
+
+    if (apellidos.length < 2) {
+      await this.responderAlta(
+        ctx,
+        MSGS.apellidosNoEntendidos(),
+        'ALTA_APELLIDOS_NO_ENTENDIDOS',
+      );
+      return;
+    }
+
+    const nombres =
+      (await this.redis.get(`temp_nombres:${organizationId}:${senderId}`)) ?? '';
+
+    await this.redis.set(
+      `temp_apellidos:${organizationId}:${senderId}`,
+      apellidos,
+      'EX',
+      SESSION_TTL,
+    );
+    await this.redis.set(
+      `temp_nombre:${organizationId}:${senderId}`,
+      `${nombres} ${apellidos}`.trim(),
+      'EX',
+      SESSION_TTL,
+    );
+
+    await this.continuarAlta(ctx);
   }
 
   private async handleAwaitingBirthdate(ctx: ChatTurnContext): Promise<void> {

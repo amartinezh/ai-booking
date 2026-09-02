@@ -9,6 +9,8 @@ import {
   resolveEspecialidad,
   cuposDelTurno,
   duracionDeServicio,
+  partirNombre,
+  partirNombreDado,
 } from './mapping';
 
 const MAPPING: AnsermaMapping = {
@@ -16,7 +18,7 @@ const MAPPING: AnsermaMapping = {
   centroCostos: '007',
   marcaOrigen: 'ASIGNADA POR WHATSAPP',
   motivoAnulacion: 'WB',
-  sexo: { M: 0, F: 1 },
+  sexo: { M: 1, F: 0 }, // confirmado contra ESEHSVP (mapping.ts, 2026-09-01)
   convenios: {
     '800088702|SUBSIDIADO': 283, // Nueva EPS subsidiado
     '800088702|PYP': 489, // Nueva EPS, promoción y prevención
@@ -161,12 +163,13 @@ describe('resolveConvenio', () => {
 
 describe('mapSexo', () => {
   it('traduce las dos letras que guarda AgenIA', () => {
-    expect(mapSexo(MAPPING, 'M')).toBe(0);
-    expect(mapSexo(MAPPING, 'F')).toBe(1);
+    // Confirmado contra ESEHSVP (mapping.ts): 1=Masculino, 0=Femenino.
+    expect(mapSexo(MAPPING, 'M')).toBe(1);
+    expect(mapSexo(MAPPING, 'F')).toBe(0);
   });
 
   it('acepta minúsculas', () => {
-    expect(mapSexo(MAPPING, 'f')).toBe(1);
+    expect(mapSexo(MAPPING, 'f')).toBe(0);
   });
 
   it('sin sexo NO inventa un valor: PACIENTES lo exige NOT NULL', () => {
@@ -319,5 +322,158 @@ describe('duracionDeServicio', () => {
 
   it('sin servicio, la duración general', () => {
     expect(duracionDeServicio(base)).toBe(20);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🚨 Esto rompía producción y no se veía. El driver escribía el nombre
+// COMPLETO en `NO_NOMB_PAC`, que en el hospital es varchar(20) y solo guarda
+// el PRIMER NOMBRE: cualquier nombre de más de 20 caracteres —o sea, casi
+// todos— habría reventado el INSERT con el error 8152 de SQL Server, y el
+// paciente no se habría podido dar de alta. No falló localmente porque el mock
+// declaraba varchar(60). El mapeo de Fase 0 ya decía "(primer nombre)".
+// ══════════════════════════════════════════════════════════════════════════
+describe('partirNombre', () => {
+  it('cuatro palabras: dos nombres y dos apellidos', () => {
+    expect(partirNombre('JORGE ANDRES TABORDA RUIZ')).toEqual({
+      primerNombre: 'JORGE',
+      segundoNombre: 'ANDRES',
+      primerApellido: 'TABORDA',
+      segundoApellido: 'RUIZ',
+    });
+  });
+
+  it('tres palabras: un nombre y los DOS apellidos', () => {
+    // Ambiguo de verdad ("JUAN CARLOS PEREZ" también existe), pero en Colombia
+    // los dos apellidos son el identificador legal: quien acorta suelta el
+    // segundo nombre, no un apellido.
+    expect(partirNombre('CARLOS ROMERO RENDON')).toEqual({
+      primerNombre: 'CARLOS',
+      segundoNombre: null,
+      primerApellido: 'ROMERO',
+      segundoApellido: 'RENDON',
+    });
+  });
+
+  it('dos palabras: nombre y primer apellido', () => {
+    expect(partirNombre('CARLOS ROMERO')).toEqual({
+      primerNombre: 'CARLOS',
+      segundoNombre: null,
+      primerApellido: 'ROMERO',
+      segundoApellido: null,
+    });
+  });
+
+  it('una sola palabra: es el 98% de las historias viejas del hospital', () => {
+    expect(partirNombre('CARLOS')).toEqual({
+      primerNombre: 'CARLOS',
+      segundoNombre: null,
+      primerApellido: null,
+      segundoApellido: null,
+    });
+  });
+
+  it('lo que sobra se pega al segundo apellido', () => {
+    // Los apellidos compuestos ("DE LA CRUZ") son más frecuentes que los
+    // nombres de tres palabras.
+    expect(partirNombre('ANA MARIA DE LA CRUZ')).toEqual({
+      primerNombre: 'ANA',
+      segundoNombre: 'MARIA',
+      primerApellido: 'DE',
+      segundoApellido: 'LA CRUZ',
+    });
+  });
+
+  it('cada parte se recorta al ancho REAL de su columna', () => {
+    // Es lo que evita el error 8152: la base rechaza, no trunca.
+    const r = partirNombre(`${'N'.repeat(40)} ${'A'.repeat(40)}`);
+
+    expect(r.primerNombre).toHaveLength(20); // NO_NOMB_PAC varchar(20)
+    expect(r.primerApellido).toHaveLength(30); // DE_PRAP_PAC varchar(30)
+  });
+
+  it('tolera espacios de más, que es como llega de WhatsApp', () => {
+    expect(partirNombre('  JORGE   ANDRES  TABORDA RUIZ ').segundoNombre).toBe(
+      'ANDRES',
+    );
+  });
+
+  it('sin nombre NO inventa uno: NO_NOMB_PAC es NOT NULL', () => {
+    expect(() => partirNombre(undefined)).toThrow(MappingIncompletoError);
+    expect(() => partirNombre('   ')).toThrow(MappingIncompletoError);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// El camino bueno: el chatbot pregunta nombres y apellidos en dos pasos, así
+// que la frontera —lo único imposible de deducir— la pone el paciente.
+// `partirNombre` (la heurística) queda solo para los pacientes anteriores al
+// cambio y para los que no entran por WhatsApp.
+// ══════════════════════════════════════════════════════════════════════════
+describe('partirNombreDado', () => {
+  it('reparte sin adivinar lo que el paciente ya separó', () => {
+    expect(partirNombreDado('JUAN CARLOS', 'PEREZ GOMEZ')).toEqual({
+      primerNombre: 'JUAN',
+      segundoNombre: 'CARLOS',
+      primerApellido: 'PEREZ',
+      segundoApellido: 'GOMEZ',
+    });
+  });
+
+  it('resuelve el caso que la heurística no podía', () => {
+    // "JUAN CARLOS PEREZ" en una sola cadena es ambiguo. Partido, no lo es.
+    expect(partirNombreDado('JUAN CARLOS', 'PEREZ')).toEqual({
+      primerNombre: 'JUAN',
+      segundoNombre: 'CARLOS',
+      primerApellido: 'PEREZ',
+      segundoApellido: null,
+    });
+    expect(partirNombreDado('JUAN', 'PEREZ GOMEZ')).toEqual({
+      primerNombre: 'JUAN',
+      segundoNombre: null,
+      primerApellido: 'PEREZ',
+      segundoApellido: 'GOMEZ',
+    });
+  });
+
+  it('un solo nombre y un solo apellido', () => {
+    expect(partirNombreDado('ANA', 'RIOS')).toEqual({
+      primerNombre: 'ANA',
+      segundoNombre: null,
+      primerApellido: 'RIOS',
+      segundoApellido: null,
+    });
+  });
+
+  it('un apellido compuesto no se pierde', () => {
+    expect(partirNombreDado('ANA', 'DE LA CRUZ').segundoApellido).toBe(
+      'LA CRUZ',
+    );
+  });
+
+  it('un tercer nombre tampoco se tira', () => {
+    expect(partirNombreDado('MARIA DEL CARMEN', 'GOMEZ').segundoNombre).toBe(
+      'DEL CARMEN',
+    );
+  });
+
+  it('sin apellidos sigue siendo válido: hay pacientes así', () => {
+    expect(partirNombreDado('CARLOS', undefined)).toEqual({
+      primerNombre: 'CARLOS',
+      segundoNombre: null,
+      primerApellido: null,
+      segundoApellido: null,
+    });
+  });
+
+  it('recorta a los anchos reales de cada columna', () => {
+    const r = partirNombreDado('N'.repeat(40), 'A'.repeat(40));
+
+    expect(r.primerNombre).toHaveLength(20);
+    expect(r.primerApellido).toHaveLength(30);
+  });
+
+  it('sin nombres NO inventa: NO_NOMB_PAC es NOT NULL', () => {
+    expect(() => partirNombreDado('', 'PEREZ')).toThrow(MappingIncompletoError);
   });
 });

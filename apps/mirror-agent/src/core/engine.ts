@@ -365,6 +365,8 @@ export function translateOutboxAppointment(
       endTimeIso: ctx.endTimeIso,
       patientDocument: ctx.patientDocument,
       patientFullName: ctx.patientFullName,
+      patientNombres: ctx.patientNombres,
+      patientApellidos: ctx.patientApellidos,
       patientBirthDateIso: ctx.patientBirthDateIso,
       patientGender: ctx.patientGender,
       patientRegime: ctx.patientRegime,

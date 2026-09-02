@@ -175,10 +175,19 @@ pg "DELETE FROM \"SyncOutbox\" WHERE \"entityId\"='game-day-dl';" >/dev/null
 escenario "6. El hospital cancela un turno donde un paciente ya tiene cita"
 MODO=$(pg "SELECT \"availabilityMode\" FROM \"HospitalMirrorConfig\";")
 if [[ "$MODO" == "ON" ]]; then
+  # La cita tiene que estar CUBIERTA por un turno vigente del médico: si no,
+  # recortar el turno no puede producir un conflicto y la comprobación fallaría
+  # por el estado del entorno, no por el sistema. Pasó una vez y costó
+  # entenderlo — mejor decir "omitido" que dar un rojo que no significa nada.
   MED_CITA=$(pg "SELECT m.\"externalKey\" FROM \"Appointment\" a
                  JOIN \"ScheduleSlot\" s ON s.id=a.\"scheduleSlotId\"
                  JOIN \"MirrorEntityMap\" m ON m.\"agenIAId\"=s.\"doctorId\" AND m.\"entityType\"='DOCTOR'
                  WHERE a.status='SCHEDULED' LIMIT 1;")
+  if [[ -n "$MED_CITA" ]]; then
+    TIENE_TURNO=$(his "SELECT COUNT(*) AS n FROM TURNOS_MEDICOS WHERE CD_MED_TUME='$MED_CITA'" \
+                  2>/dev/null | tr -d '[:space:]')
+    [[ "$TIENE_TURNO" == "0" ]] && MED_CITA=""
+  fi
   if [[ -n "$MED_CITA" ]]; then
     FIN_ORIGINAL=$(his "SELECT CONVERT(varchar(5), FE_HOFI_TUME, 108) FROM TURNOS_MEDICOS WHERE CD_MED_TUME='$MED_CITA'" | head -1 | tr -d '[:space:]')
     paso "recortando el turno de $MED_CITA (terminaba a las $FIN_ORIGINAL)"

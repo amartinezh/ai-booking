@@ -11,6 +11,8 @@ import {
   resolveEspecialidad,
   cuposDelTurno,
   duracionDeServicio,
+  partirNombre,
+  partirNombreDado,
 } from './mapping';
 import type {
   CanonicalSlot,
@@ -510,17 +512,32 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       );
     }
 
+    // Si el paciente dio la frontera en el chatbot, se usa tal cual: no hay
+    // nada que adivinar. La heurística queda solo para los pacientes
+    // anteriores al cambio y para los que no vienen por WhatsApp.
+    const nombre = p.patientNombres
+      ? partirNombreDado(p.patientNombres, p.patientApellidos)
+      : partirNombre(p.patientFullName);
+
     await pool
       .request()
       .input('hist', sql.VarChar(20), p.patientDocument)
       .input('docu', sql.VarChar(20), p.patientDocument)
-      .input('nomb', sql.VarChar(60), (p.patientFullName ?? '').slice(0, 60))
+      // El HIS parte el nombre en cuatro columnas, y `NO_NOMB_PAC` es solo el
+      // PRIMER NOMBRE, varchar(20). Meter ahí el nombre completo reventaba el
+      // INSERT en producción con el error 8152 — ver partirNombre().
+      .input('nomb', sql.VarChar(20), nombre.primerNombre)
+      .input('sgno', sql.VarChar(20), nombre.segundoNombre)
+      .input('prap', sql.VarChar(30), nombre.primerApellido)
+      .input('sgap', sql.VarChar(30), nombre.segundoApellido)
       .input('naci', sql.DateTime, new Date(p.patientBirthDateIso))
       .input('sexo', sql.TinyInt, mapSexo(mapping, p.patientGender)).query(`
         INSERT INTO dbo.PACIENTES (
-          NU_HIST_PAC, NU_DOCU_PAC, NU_TIPD_PAC, NO_NOMB_PAC,
+          NU_HIST_PAC, NU_DOCU_PAC, NU_TIPD_PAC,
+          NO_NOMB_PAC, NO_SGNO_PAC, DE_PRAP_PAC, DE_SGAP_PAC,
           FE_NACI_PAC, NU_SEXO_PAC, FE_HIST_PAC, NU_EXTR_PAC
-        ) VALUES (@hist, @docu, 0, @nomb, @naci, @sexo, GETDATE(), 0)`);
+        ) VALUES (@hist, @docu, 0, @nomb, @sgno, @prap, @sgap,
+                  @naci, @sexo, GETDATE(), 0)`);
   }
 
   /** Turno del médico ese día: de ahí salen el consultorio y la disponibilidad. */

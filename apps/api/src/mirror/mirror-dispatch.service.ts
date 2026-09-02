@@ -299,6 +299,8 @@ export class MirrorDispatchService {
           id: true,
           cedula: true,
           fullName: true,
+          nombres: true,
+          apellidos: true,
           dateOfBirth: true,
           gender: true,
           regime: true,
@@ -386,6 +388,10 @@ export class MirrorDispatchService {
         // y en general es la clave con la que cualquier HIS identifica gente.
         context.patientDocument = paciente.cedula;
         context.patientFullName = paciente.fullName;
+        // Si el paciente dio la frontera, viaja: el driver no tiene que
+        // adivinar dónde acaban los nombres y empiezan los apellidos.
+        if (paciente.nombres) context.patientNombres = paciente.nombres;
+        if (paciente.apellidos) context.patientApellidos = paciente.apellidos;
         if (paciente.dateOfBirth)
           context.patientBirthDateIso = paciente.dateOfBirth.toISOString();
         if (paciente.gender) context.patientGender = paciente.gender;

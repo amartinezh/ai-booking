@@ -534,3 +534,287 @@ ORDER BY c.FE_ELAB_CIT DESC;
 -- y corresponde a "CONSULTORIO APS-01" (corrige o confirma la hipótesis del
 -- comprobante impreso; ver nota arriba)
 SELECT * FROM dbo.CONSULTORIOS ORDER BY CD_CODI_CONS;
+
+-- =============================================================================
+-- SEXTA RONDA — NU_SEXO_PAC: qué número es cuál  ← BLOQUEANTE previo al primer
+-- INSERT real (ver la advertencia en mapping.ts, AnsermaMapping.sexo)
+--
+-- Hoy el driver escribe M→0 / F→1 por decisión PROVISIONAL, sin confirmar
+-- contra la base del hospital. Escribirlo al revés deja el sexo equivocado en
+-- la historia clínica de una persona — no es un campo que se pueda adivinar.
+--
+-- CORRER EN ESEHSVP (catálogo vivo). Es 100% lectura, no modifica nada.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- (26a) Ancla directa: el paciente del piloto guiado por el hospital.
+-- CC 9696544 = ROMERO RENDON CARLOS ARTURO — masculino, sin ambigüedad
+-- (confirmado en evidencia/PRUEBA_CICLO_VIDA_CNT_2026-08-23.md, bloque 17).
+-- El valor que salga aquí para NU_SEXO_PAC ES el código de "masculino".
+SELECT NU_HIST_PAC, NU_DOCU_PAC, NO_NOMB_PAC, NU_SEXO_PAC, FE_NACI_PAC
+FROM dbo.PACIENTES
+WHERE NU_HIST_PAC = '9696544';
+
+-- (26b) Todos los valores que existe realmente en la columna, y cuántos.
+-- NU_SEXO_PAC es tinyint NOT NULL con DEFAULT 0 (MAPEO_HIS.md §2.3, bloque 9):
+-- si aparece un tercer valor además de 0/1, no es "M/F" — hay que investigar
+-- qué es antes de asumir binario.
+SELECT NU_SEXO_PAC, COUNT(*) AS pacientes
+FROM dbo.PACIENTES
+GROUP BY NU_SEXO_PAC
+ORDER BY NU_SEXO_PAC;
+
+-- (26c) Validación estadística por nombre, para no depender de una sola fila.
+-- NO_NOMB_PAC no tiene el nombre partido (a diferencia de MEDICOS —
+-- TX_PRNOM_MED/TX_SGNOM_MED/...; ver ESTADO.md pendiente #9), así que se busca
+-- como palabra completa dentro del campo. Nombres de género inequívoco en
+-- español/colombiano, alta frecuencia, sin variantes ambiguas.
+SELECT
+    NU_SEXO_PAC,
+    SUM(CASE WHEN genero_por_nombre = 'M' THEN 1 ELSE 0 END) AS nombres_masculinos,
+    SUM(CASE WHEN genero_por_nombre = 'F' THEN 1 ELSE 0 END) AS nombres_femeninos
+FROM (
+    SELECT
+        NU_SEXO_PAC,
+        CASE
+            WHEN ' ' + NO_NOMB_PAC + ' ' LIKE '% CARLOS %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% JOSE %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% JUAN %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% LUIS %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% JORGE %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% ANDRES %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% MIGUEL %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% FERNANDO %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% RICARDO %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% ALBERTO %'
+                THEN 'M'
+            WHEN ' ' + NO_NOMB_PAC + ' ' LIKE '% MARIA %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% LUZ %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% ANA %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% CLAUDIA %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% SANDRA %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% MARTHA %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% GLORIA %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% PATRICIA %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% ADRIANA %'
+              OR ' ' + NO_NOMB_PAC + ' ' LIKE '% YOLANDA %'
+                THEN 'F'
+            ELSE NULL
+        END AS genero_por_nombre
+    FROM dbo.PACIENTES
+) x
+WHERE genero_por_nombre IS NOT NULL
+GROUP BY NU_SEXO_PAC
+ORDER BY NU_SEXO_PAC;
+-- Lectura: si NU_SEXO_PAC=0 concentra casi todos los "nombres_masculinos" (y
+-- pocos femeninos) y NU_SEXO_PAC=1 al revés, confirma 0=M/1=F — que es lo que
+-- el driver ya asume. Si sale al revés, hay que invertir `AnsermaMapping.sexo`
+-- ANTES de escribir la primera cita real. Un cruce mixto (ni 0 ni 1 domina
+-- claramente en ningún lado) significa que el campo no es un booleano de sexo
+-- como se está asumiendo, y hay que avisar antes de seguir.
+
+-- (26d) Muestra fila a fila para revisar a ojo, con el nombre completo.
+SELECT TOP 30 NU_HIST_PAC, NO_NOMB_PAC, NU_SEXO_PAC
+FROM dbo.PACIENTES
+WHERE NO_NOMB_PAC LIKE '% CARLOS %' OR NO_NOMB_PAC LIKE '% MARIA %'
+ORDER BY NU_HIST_PAC;
+
+-- =============================================================================
+-- RESULTADO (2026-09-01, corrida contra ESEHSVP):
+--   (26a) CC 9696544 = "CARLOS" (un solo nombre, no el completo del
+--         comprobante impreso — ver nota abajo) → NU_SEXO_PAC = 1.
+--   (26c) NU_SEXO_PAC=0: 307 nombres masculinos / 11.287 femeninos.
+--         NU_SEXO_PAC=1: 10.740 masculinos / 291 femeninos.
+--   (26d) "HIJO DE ..." → 1, "HIJA/HJA DE ..." → 0.
+--
+--   ⇒ CONFIRMADO: NU_SEXO_PAC = 1 → Masculino, 0 → Femenino. La tabla
+--     provisional del driver (M:0, F:1) estaba INVERTIDA — corregida en
+--     mapping.ts. Ver docs/drivers/cnt-sanvicente-anserma/ESTADO.md.
+--
+--   Efecto colateral (no bloqueante): NO_NOMB_PAC para el paciente ancla es
+--   "CARLOS", no "ROMERO RENDON CARLOS ARTURO". PACIENTES no tiene columnas
+--   de nombre partido en INFORMATION_SCHEMA (a diferencia de MEDICOS) — sigue
+--   como pendiente #9 en ESTADO.md, todavía sin bloque de descubrimiento propio.
+-- =============================================================================
+
+-- =============================================================================
+-- SÉPTIMA RONDA — de dónde sale el nombre completo del paciente
+-- (pendiente #9 de ESTADO.md). El comprobante impreso del piloto (bloque 17)
+-- mostró "ROMERO RENDON CARLOS ARTURO", pero PACIENTES.NO_NOMB_PAC para ese
+-- mismo paciente (CC 9696544) vale literalmente "CARLOS" (bloque 26a). Dos
+-- hipótesis a distinguir: (a) NO_NOMB_PAC SÍ es el nombre completo y esta fila
+-- es una captura vieja/incompleta (historia abierta en 2009); (b) NO_NOMB_PAC
+-- es solo "primer nombre" por diseño y el resto vive en otra parte que no
+-- hemos encontrado (columna oculta a INFORMATION_SCHEMA por permisos — es
+-- justo lo que pasó con CONSULTORIOS en la ronda anterior, bloque 25c — o una
+-- tabla satélite, o el comprobante lo arma la app desde otra fuente).
+--
+-- CORRER EN ESEHSVP. 100% lectura.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- (27a) Reconfirmar el esquema de PACIENTES con sys.columns, NO con
+-- INFORMATION_SCHEMA — que fue justo lo que se saltó una columna real en
+-- CONSULTORIOS por un tema de permisos de metadatos (bloque 25c). Si aquí
+-- aparece algo que el 27a original no mostró (ej. algo con "APEL" en el
+-- nombre), ahí está la respuesta.
+SELECT c.name AS columna, ty.name AS tipo, c.max_length, c.is_nullable
+FROM sys.columns c
+JOIN sys.tables t ON t.object_id = c.object_id
+JOIN sys.types  ty ON ty.user_type_id = c.user_type_id
+WHERE t.name = 'PACIENTES'
+ORDER BY c.column_id;
+
+-- (27b) ¿Cuántas palabras tiene NO_NOMB_PAC en la práctica? Si "CARLOS" (una
+-- sola palabra) es la EXCEPCIÓN y la mayoría de pacientes tiene 3-4 palabras
+-- (nombre completo), confirma la hipótesis (a): esta fila es una captura vieja
+-- incompleta, no la norma. Si "una sola palabra" es común, apunta a (b).
+SELECT
+    LEN(NO_NOMB_PAC) - LEN(REPLACE(NO_NOMB_PAC, ' ', '')) + 1 AS num_palabras,
+    COUNT(*) AS pacientes
+FROM dbo.PACIENTES
+WHERE NO_NOMB_PAC IS NOT NULL AND LTRIM(RTRIM(NO_NOMB_PAC)) <> ''
+GROUP BY LEN(NO_NOMB_PAC) - LEN(REPLACE(NO_NOMB_PAC, ' ', '')) + 1
+ORDER BY num_palabras;
+
+-- (27c) Buscar, en TODOS los procedimientos y vistas del servidor, cualquiera
+-- que combine PACIENTES con algo relacionado a nombre/apellido — así se
+-- encontraron los candidatos de "Asignada Por" en el bloque 24. Si el
+-- comprobante arma "ROMERO RENDON CARLOS ARTURO" desde una fuente que no es
+-- PACIENTES.NO_NOMB_PAC solo, un objeto de este tipo lo revela.
+SELECT o.type_desc, s.name + '.' + o.name AS objeto, o.modify_date
+FROM sys.sql_modules m
+JOIN sys.objects o ON o.object_id = m.object_id
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+WHERE m.definition LIKE '%PACIENTES%'
+  AND (m.definition LIKE '%APEL%' OR m.definition LIKE '%NOMB%')
+ORDER BY o.type_desc, objeto;
+
+-- (27d) ¿Existe una tabla satélite de PACIENTES, con FK hacia ella, que pueda
+-- guardar apellidos por separado? El mismo patrón que reveló CITAS_ANULADAS
+-- como satélite de CITAS_MEDICAS.
+SELECT
+    fk.name AS foreign_key,
+    OBJECT_NAME(fk.parent_object_id) AS tabla_que_referencia,
+    OBJECT_NAME(fk.referenced_object_id) AS tabla_referenciada
+FROM sys.foreign_keys fk
+WHERE OBJECT_NAME(fk.referenced_object_id) = 'PACIENTES'
+   OR OBJECT_NAME(fk.parent_object_id) = 'PACIENTES';
+
+-- Complemento: cualquier tabla del servidor cuyo NOMBRE sugiera que guarda
+-- apellidos o datos extendidos de paciente (por si no hay FK declarada —
+-- ya se vio que este HIS no usa FKs/triggers de forma consistente).
+SELECT name AS tabla FROM sys.tables
+WHERE name LIKE '%PAC%' AND name <> 'PACIENTES'
+ORDER BY name;
+
+-- (27e) Historial de cambios sobre ESTE paciente en las tablas de auditoría ya
+-- localizadas en el bloque 24 (AUDITORIA_COT, HIST_AUDIT, LOG_AUDITORIA_SGIO)
+-- — por si NO_NOMB_PAC tuvo un valor más completo antes y se recortó, o por si
+-- estas tablas tienen su propio campo de nombre con más detalle. Ajustar la
+-- columna del WHERE según lo que devuelva 24a para cada tabla (documento o
+-- historia del paciente, "9696544").
+SELECT TOP 20 * FROM dbo.HIST_AUDIT
+WHERE 1=1
+  -- AND <columna_documento_o_historia> = '9696544'
+ORDER BY 1 DESC;
+
+SELECT TOP 20 * FROM dbo.AUDITORIA_COT
+WHERE 1=1
+  -- AND <columna_documento_o_historia> = '9696544'
+ORDER BY 1 DESC;
+
+-- (27f) Muestra amplia para ver el patrón general fuera de este único
+-- paciente: 20 casos de "una sola palabra" y 20 de "nombre largo", elegidos al
+-- azar por antigüedad de la historia — si el patrón de una sola palabra
+-- concentra en historias MUY viejas, refuerza que es dato legado, no diseño.
+SELECT TOP 20 NU_HIST_PAC, NO_NOMB_PAC, FE_HIST_PAC
+FROM dbo.PACIENTES
+WHERE NO_NOMB_PAC NOT LIKE '% %'
+ORDER BY FE_HIST_PAC ASC;
+
+SELECT TOP 20 NU_HIST_PAC, NO_NOMB_PAC, FE_HIST_PAC
+FROM dbo.PACIENTES
+WHERE NO_NOMB_PAC LIKE '% % % %'
+ORDER BY FE_HIST_PAC DESC;
+
+-- =============================================================================
+-- RESULTADO DEL BLOQUE 27 (2026-09-01, ESEHSVP):
+--
+--   (27a) PACIENTES tiene 62 COLUMNAS, no las 13 que teníamos documentadas.
+--         El nombre va PARTIDO EN CUATRO, igual que en MEDICOS:
+--           NO_NOMB_PAC varchar(20) NOT NULL  primer nombre
+--           NO_SGNO_PAC varchar(20)           segundo nombre
+--           DE_PRAP_PAC varchar(30)           primer apellido
+--           DE_SGAP_PAC varchar(30)           segundo apellido
+--         ⇒ hipótesis (b) confirmada. Cierra el pendiente #9 de ESTADO.md.
+--
+--   (27b) 76.268 pacientes con UNA sola palabra en NO_NOMB_PAC (98,3%), 898
+--         con dos, 1.390 con tres, 188 con cuatro, 3 con cinco. Las de varias
+--         palabras son recién nacidos sin nombre propio ("HIJO 3 DE YURANI").
+--
+--   (27c) 30 objetos combinan PACIENTES con nombre/apellido — todos de
+--         facturación, RIPS y reportes normativos. Ninguno de agendamiento:
+--         coherente con lo ya sabido (la app escribe DML directo). Aparecen
+--         SP_INTEROPERABILIDAD, SP_INTEROPERABILIDAD_HC_FHIR y
+--         SP_INTEROPERABILIDAD_IHC_V2 — el hospital YA tiene procedimientos de
+--         interoperabilidad, incluido FHIR. No hace falta para el espejo, pero
+--         merece una mirada si algún día se plantea otra vía de integración.
+--
+--   (27d) Ninguna tabla satélite de apellidos: están en PACIENTES. Se
+--         confirman como satélites conocidos R_PAC_EPS, CITAS_TELEMEDICINA,
+--         HISTORIACLINICA, LOGIN_WEB, ANTECEDENTES, DIAGNOSTICOS, ORDENES.
+--
+--   (27e) HIST_AUDIT NO es auditoría de cambios de datos: son notas de
+--         auditoría CLÍNICA sobre historias ("NO REALIZA ARGUMENTACION
+--         DIAGNOSTICA..."). Fuera del alcance del espejo.
+--         🔎 PISTA PARA EL BLOQUE 21a: su columna NU_NUME_CONE_HAUD trae
+--         valores del MISMO rango que NU_NUME_CONE_CIT (1.283.567–1.287.914).
+--         Es el consecutivo de sesión que seguimos buscando, y aquí aparece
+--         junto a una fecha exacta — sirve para correlacionarlo.
+--
+--   ⇒ DEFECTO ENCONTRADO Y CORREGIDO: el driver escribía el nombre completo
+--     en NO_NOMB_PAC (varchar 20). El mock lo declaraba varchar(60) y lo
+--     dejaba pasar; en el hospital habría fallado con el error 8152 para casi
+--     cualquier paciente. Ver partirNombre() en mapping.ts.
+-- =============================================================================
+
+-- =============================================================================
+-- OCTAVA RONDA — volcado del esquema REAL de las tablas que toca el driver.
+--
+-- Motivo: `PACIENTES` parecía documentada y no lo estaba. Solo teníamos su
+-- lista de NOT NULL, el mock se construyó con eso, y la diferencia escondió un
+-- defecto que habría roto producción (bloque 27). El resto de tablas están en
+-- la misma situación o mejor, pero "documentado" no es lo mismo que
+-- "verificado contra el esquema vivo", y no sabemos cuáles son cuáles.
+--
+-- Esta consulta devuelve una tabla lista para pegar en
+-- docs/drivers/cnt-sanvicente-anserma/esquema-real.tsv, que
+-- scripts/verificar-esquema-mock.mjs contrasta contra el mock local.
+--
+-- CORRER EN ESEHSVP. 100% lectura. Copiar el resultado COMPLETO (en SSMS:
+-- clic derecho sobre la cuadrícula → "Copy with Headers").
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+SELECT
+    t.name                                        AS tabla,
+    c.name                                        AS columna,
+    ty.name                                       AS tipo,
+    CASE WHEN ty.name LIKE '%char%' THEN c.max_length ELSE NULL END AS ancho,
+    CASE WHEN c.is_nullable = 1 THEN 'SI' ELSE 'NO' END AS acepta_nulos
+FROM sys.columns c
+JOIN sys.tables t  ON t.object_id = c.object_id
+JOIN sys.types ty  ON ty.user_type_id = c.user_type_id
+WHERE t.name IN (
+    -- Donde el driver ESCRIBE: un ancho mal aquí es un error 8152 en cara del
+    -- paciente. Máxima prioridad.
+    'CITAS_MEDICAS', 'CITAS_ANULADAS', 'PACIENTES',
+    -- Donde LEE: un ancho mal no rompe, pero una columna que no existe sí.
+    'TURNOS_MEDICOS', 'MEDICOS', 'SERVICIOS', 'CONSULTORIOS',
+    'CONVENIOS', 'EPS', 'R_PAC_EPS', 'MOTIVOANUL', 'TIPO_DOCUMENTO'
+)
+ORDER BY t.name, c.column_id;

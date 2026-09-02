@@ -164,6 +164,14 @@ async function main() {
             'agenda',
             'availabilityMode=OFF: la agenda de AgenIA sigue siendo la suya, no la del hospital.',
           );
+        } else if (r.diasConError > 0) {
+          // Que el barrido siga no significa que esté bien: se dice cuántos
+          // días quedaron sin sincronizar y por qué.
+          reporter.report(
+            'agenda',
+            `${r.diasConError} de ${dias} día(s) no se pudieron sincronizar. ` +
+              `Primer motivo: ${r.primerError ?? 'sin detalle'}`,
+          );
         } else if (r.creados || r.borrados || r.conflictos) {
           const sombra = r.modo === 'SHADOW' ? ' (modo sombra, sin escribir)' : '';
           console.log(

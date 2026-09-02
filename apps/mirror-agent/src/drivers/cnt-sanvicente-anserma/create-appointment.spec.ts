@@ -16,7 +16,7 @@ const MAPPING: AnsermaMapping = {
   centroCostos: '007',
   marcaOrigen: 'ASIGNADA POR WHATSAPP',
   motivoAnulacion: 'WB',
-  sexo: { M: 0, F: 1 },
+  sexo: { M: 1, F: 0 }, // confirmado contra ESEHSVP (mapping.ts, 2026-09-01)
   convenios: {
     '800088702|SUBSIDIADO': 283,
     '900156264|CONTRIBUTIVO': 473,
@@ -271,17 +271,46 @@ describe('createAppointment — alta de paciente', () => {
     // 78.654 pacientes del hospital.
     expect(alta.params.hist).toBe('1122334455');
     expect(alta.params.docu).toBe('1122334455');
-    expect(alta.params.sexo).toBe(0); // M
+    expect(alta.params.sexo).toBe(1); // M — confirmado contra ESEHSVP
   });
 
-  it('recorta el nombre a lo que cabe en NO_NOMB_PAC (60)', async () => {
+  // 🚨 Este test afirmaba lo contrario y por eso el defecto pasó: daba por
+  // bueno meter el nombre completo recortado a 60 en `NO_NOMB_PAC`, que en el
+  // hospital es varchar(20) y solo guarda el PRIMER NOMBRE. En producción ese
+  // INSERT habría fallado con el error 8152 para casi todos los pacientes.
+  it('parte el nombre en las cuatro columnas del HIS', async () => {
     const { driver, requests } = conDriver({ pacienteExiste: false });
     await driver.createAppointment(
-      evento({ patientFullName: 'A'.repeat(90) }),
+      evento({ patientFullName: 'JORGE ANDRES TABORDA RUIZ' }),
     );
 
     const alta = requests.find((r) => /INSERT INTO dbo\.PACIENTES/.test(r.sql))!;
-    expect((alta.params.nomb as string).length).toBe(60);
+    expect(alta.params.nomb).toBe('JORGE');
+    expect(alta.params.sgno).toBe('ANDRES');
+    expect(alta.params.prap).toBe('TABORDA');
+    expect(alta.params.sgap).toBe('RUIZ');
+  });
+
+  it('cada columna se recorta a SU ancho real, no a uno inventado', async () => {
+    const { driver, requests } = conDriver({ pacienteExiste: false });
+    await driver.createAppointment(
+      evento({ patientFullName: `${'N'.repeat(40)} ${'A'.repeat(40)}` }),
+    );
+
+    const alta = requests.find((r) => /INSERT INTO dbo\.PACIENTES/.test(r.sql))!;
+    expect((alta.params.nomb as string).length).toBe(20); // NO_NOMB_PAC
+    expect((alta.params.prap as string).length).toBe(30); // DE_PRAP_PAC
+  });
+
+  it('escribe las cuatro columnas de nombre, no solo una', async () => {
+    const { driver, requests } = conDriver({ pacienteExiste: false });
+    await driver.createAppointment(evento());
+
+    const alta = requests.find((r) => /INSERT INTO dbo\.PACIENTES/.test(r.sql))!;
+    expect(alta.sql).toMatch(/NO_NOMB_PAC/);
+    expect(alta.sql).toMatch(/NO_SGNO_PAC/);
+    expect(alta.sql).toMatch(/DE_PRAP_PAC/);
+    expect(alta.sql).toMatch(/DE_SGAP_PAC/);
   });
 });
 

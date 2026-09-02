@@ -98,16 +98,20 @@ describe('recorrerAgenda', () => {
     expect(r.creados).toBe(15);
   });
 
-  it('un fallo a mitad de barrido se propaga, no se traga', async () => {
-    // Tragarlo dejaría la agenda medio sincronizada sin que nadie se entere.
+  it('un fallo a mitad de barrido NO se traga: se cuenta y se reporta', async () => {
+    // Este test afirmaba lo contrario —que el error debía propagarse— y esa
+    // era justo la causa del defecto: propagarlo abortaba los días restantes.
+    // Lo que hacía falta no era parar, sino no callar.
     const spy = jest
       .fn()
       .mockResolvedValueOnce(respuesta())
-      .mockRejectedValueOnce(new Error('SQL caído'));
+      .mockRejectedValue(new Error('SQL caído'));
 
-    await expect(
-      recorrerAgenda(engineQue(spy), { dias: 5 }),
-    ).rejects.toThrow('SQL caído');
+    const r = await recorrerAgenda(engineQue(spy), { dias: 5 });
+
+    expect(r.dias).toBe(1); // el primero sí corrió
+    expect(r.diasConError).toBe(4);
+    expect(r.primerError).toBe('SQL caído');
   });
 
   it('cero días no llama a nadie', async () => {
@@ -117,5 +121,67 @@ describe('recorrerAgenda', () => {
 
     expect(spy).not.toHaveBeenCalled();
     expect(r.dias).toBe(0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🚨 Un fallo en UN día no puede tumbar el barrido entero. Pasó de verdad: un
+// cupo que no se podía borrar rompía el día 3, el error subía, y los otros 397
+// días no se sincronizaban nunca. La agenda quedó media hora desalineada y lo
+// único visible era una línea de error por vuelta, sin decir que el resto no
+// había corrido. Misma regla que en sync-cycle.
+// ══════════════════════════════════════════════════════════════════════════
+describe('recorrerAgenda — un día malo no tumba el resto', () => {
+  const ok = {
+    mode: 'ON' as const,
+    created: 1,
+    updated: 0,
+    removed: 0,
+    retired: 0,
+    skipped: [],
+    conflicts: [],
+  };
+
+  it('sigue con los días siguientes cuando uno falla', () => {
+    const spy = jest
+      .fn()
+      .mockResolvedValueOnce(ok)
+      .mockRejectedValueOnce(new Error('Foreign key constraint violated'))
+      .mockResolvedValueOnce(ok);
+
+    return recorrerAgenda({ syncAvailability: spy }, { dias: 3 }).then((r) => {
+      expect(spy).toHaveBeenCalledTimes(3);
+      expect(r.dias).toBe(2); // los dos que sí corrieron
+      expect(r.creados).toBe(2);
+    });
+  });
+
+  it('cuenta los días que fallaron: seguir no es lo mismo que estar bien', async () => {
+    const spy = jest.fn().mockRejectedValue(new Error('HIS caído'));
+
+    const r = await recorrerAgenda({ syncAvailability: spy }, { dias: 5 });
+
+    expect(r.diasConError).toBe(5);
+    expect(r.dias).toBe(0);
+  });
+
+  it('guarda el primer motivo, no los 400', async () => {
+    const spy = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('el primero'))
+      .mockRejectedValueOnce(new Error('el segundo'));
+
+    const r = await recorrerAgenda({ syncAvailability: spy }, { dias: 2 });
+
+    expect(r.primerError).toBe('el primero');
+  });
+
+  it('sin fallos, no reporta ninguno', async () => {
+    const spy = jest.fn(async () => ok);
+
+    const r = await recorrerAgenda({ syncAvailability: spy }, { dias: 3 });
+
+    expect(r.diasConError).toBe(0);
+    expect(r.primerError).toBeUndefined();
   });
 });

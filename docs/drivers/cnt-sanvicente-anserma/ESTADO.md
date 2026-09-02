@@ -72,6 +72,25 @@ El hospital creó y canceló una cita real desde su aplicación (contra `PRUEBAS
 
 Se agregó `ConsultingRoom` al schema genérico de AgenIA (`packages/database/prisma/schema.prisma`) — catálogo de consultorios por tenant, **opcional e informativo**, relacionado a `DoctorProfile.consultingRoomId`. Nace de esta necesidad pero es un concepto genérico del motor (cualquier clínica lo puede usar, tenga o no espejo con un HIS). **No decide** en qué consultorio queda una cita concreta al escribir al HIS — eso lo sigue resolviendo el driver en tiempo real contra `TURNOS_MEDICOS` (ver `MAPEO_HIS.md` §2.5bis). `db push` corrido contra el Postgres de desarrollo, `@agenia/database` reconstruido, 335 tests de `api` en verde.
 
+## ✅ `NU_SEXO_PAC` confirmado (2026-09-01)
+
+Corrida contra el catálogo vivo (`ESEHSVP`, bloque 26 de
+`FASE0_DESCUBRIMIENTO_HIS.sql`): **`1 = Masculino`, `0 = Femenino`**. La tabla
+provisional en `mapping.ts` estaba **invertida** (`M:0, F:1`) — nunca llegó a
+escribirse contra un paciente real, solo contra el mock local. Corregido en el
+driver, en los tests y en el `mappingJson` de desarrollo. Verificado de punta a
+punta: alta de un paciente masculino nuevo por WhatsApp → `NU_SEXO_PAC=1` en la
+fila real de `PACIENTES`.
+
+Tres evidencias independientes, todas consistentes: el paciente del piloto
+guiado por el hospital (CC 9696544 → 1), un cruce estadístico por nombre sobre
+la tabla completa (>97% de consistencia en ambos sentidos), y el patrón de
+recién nacidos sin nombre propio ("HIJO DE..." → 1, "HIJA DE..." → 0).
+
+Efecto colateral: la misma consulta reveló que `NO_NOMB_PAC` puede no ser el
+nombre completo del paciente (ver pendiente #9 abajo) — no bloqueaba nada, pero
+conviene cerrarlo antes de escribir contra pacientes reales.
+
 ## ✅ Fase 5 implementada (2026-09-01)
 
 Blindaje y operación, las cinco piezas que pedía el plan §11:
@@ -128,7 +147,8 @@ atienda dos servicios en el mismo turno necesitará una regla más fina.
 6. **Alcance de `CITAS_TELEMEDICINA`** (¿entra al espejo?). Su probable tabla hermana `CITAS_TELEMEDICINA_ANULADAS` (por confirmar) seguiría el mismo patrón recién descubierto.
 7. *(Ya no bloqueante, opcional)* Reagendamiento no probado explícitamente — hipótesis: cancelación + nueva alta, a confirmar con una prueba corta adicional si el hospital tiene disponibilidad.
 8. ~~Generar el token del agente y la fila `HospitalMirrorConfig`~~ ✅ hecho en el entorno de desarrollo/pruebas (ver sección "En curso" arriba) — falta activarla (`enabled=true`) el día que se valide conectividad real con la VM.
-9. **Nombre partido del paciente:** `PatientProfile.fullName` (AgenIA) es un solo campo; no está confirmado cómo `PACIENTES` parte nombres/apellidos (a diferencia de `MEDICOS`, que sí tiene `TX_PRNOM_MED`/`TX_SGNOM_MED`/`TX_PRAPEL_MED`/`TX_SGAPEL_MED` confirmados). Detectado 2026-08-28 revisando un comprobante impreso real ("ROMERO RENDON CARLOS ARTURO"). Falta: query de descubrimiento sobre `PACIENTES` + lógica de split de `fullName`. Ver `MAPEO_HIS.md` §3.3.
+9. ~~**Nombre partido del paciente**~~ ✅ **RESUELTO (2026-09-01, bloque 27a).** `PACIENTES` tiene 62 columnas —no las 13 documentadas— y el nombre va partido en cuatro, igual que `MEDICOS`: `NO_NOMB_PAC` varchar(20) NOT NULL (primer nombre), `NO_SGNO_PAC` varchar(20), `DE_PRAP_PAC` varchar(30), `DE_SGAP_PAC` varchar(30). El 98,3% de los pacientes tiene una sola palabra en `NO_NOMB_PAC` (bloque 27b), confirmando que es "primer nombre" por diseño. **Destapó un defecto que rompía producción:** el driver escribía el nombre completo en esa columna de 20 caracteres, y el mock local la declaraba de 60, así que nunca falló en pruebas — en el hospital habría reventado el INSERT (error 8152) para casi cualquier paciente. Corregido con `partirNombre()` y con el esquema real replicado en el mock. **La ambigüedad se cerró preguntando** (2026-09-01): el chatbot pide *nombres* y *apellidos* en dos turnos, `PatientProfile` guarda los dos por separado y la frontera viaja hasta el driver. "JUAN CARLOS PEREZ" —que la heurística habría partido como `JUAN | CARLOS | PEREZ`, con el apellido equivocado— ahora llega correcto: `JUAN | CARLOS` de nombres y `PEREZ` de apellido. La heurística (`partirNombre`) queda solo para los pacientes anteriores al cambio y los que no entran por WhatsApp. La lista de espera sigue pidiendo el nombre completo de una vez: no llega al HIS, así que no necesita la frontera ni le cuesta un turno al paciente.
+
 10. *(Verificados ya:* jobs del servidor no interfieren ✔; turnos tipo 1 no existen a futuro ✔; `TIPOSERVICIO` completo — el valor 1 no existe ✔.*)*
 
 ## Dependencia técnica pendiente de verificar (Fase 1, motor genérico)

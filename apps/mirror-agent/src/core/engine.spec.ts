@@ -665,6 +665,7 @@ describe('MirrorEngine', () => {
       created: 1,
       updated: 0,
       removed: 0,
+      retired: 0,
       skipped: [],
       conflicts: [],
     };

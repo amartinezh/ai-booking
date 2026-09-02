@@ -446,6 +446,15 @@ model PatientProfile {
   // paciente de varias clínicas, cada una con su propio PatientProfile.
   cedula      String
   fullName    String
+  // Nombres y apellidos POR SEPARADO, tal como los dio el paciente.
+  //
+  // `fullName` se conserva porque medio sistema lo usa para mostrar, pero
+  // partirlo después es imposible sin adivinar: "JUAN CARLOS PEREZ" puede ser
+  // un nombre y dos apellidos, o dos nombres y un apellido. El HIS del
+  // hospital los guarda en cuatro columnas y necesita esa frontera. Nulos en
+  // los pacientes anteriores a este cambio y en los que no vienen por WhatsApp.
+  nombres     String?
+  apellidos   String?
   dateOfBirth DateTime?
   gender      String? // Ej: 'M', 'F', 'Other'
   address     String?

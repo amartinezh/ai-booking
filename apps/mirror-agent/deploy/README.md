@@ -91,15 +91,19 @@ como se espera:
 - [ ] En el panel, el servicio **`mirror`** en verde (mira dead-letters, cola atascada y latido, no solo que el proceso viva).
 - [ ] A los dos minutos del arranque, la primera reconciliación en el journal: `reconciliación OK` o el detalle de la deriva.
 
-⚠️ **Antes del primer INSERT contra datos reales de `PRUEBAS`**: correr la
-consulta que confirma la equivalencia de `NU_SEXO_PAC`. Hoy vamos con
-`M→0 / F→1` por decisión propia, sin confirmar; escribirlo al revés deja el
-sexo equivocado en la historia clínica de una persona. Está marcado como deuda
-en `drivers/cnt-sanvicente-anserma/mapping.ts`.
+✅ **`NU_SEXO_PAC` confirmado (2026-09-01):** `1 = Masculino`, `0 = Femenino`
+— tres evidencias independientes contra el catálogo vivo (bloque 26 de
+`FASE0_DESCUBRIMIENTO_HIS.sql`), ver `drivers/cnt-sanvicente-anserma/mapping.ts`.
+Ya no es un bloqueante.
 
-Sigue pendiente `fetchAvailability` (Fase 2), que depende de los tres campos
-del bloque 21 — ver `docs/drivers/cnt-sanvicente-anserma/ESTADO.md`. No lo usa
-el flujo de espejo, así que su ausencia no bloquea nada de lo de arriba.
+⚠️ **`NO_NOMB_PAC` puede no ser el nombre completo.** La misma consulta que
+confirmó el sexo devolvió, para el paciente ancla, `NO_NOMB_PAC = "CARLOS"` —
+un solo nombre, no "ROMERO RENDON CARLOS ARTURO" como mostraba el comprobante
+impreso de la prueba de fuego. Sigue como pendiente #9 en `ESTADO.md`; no
+bloquea lo de arriba (el driver ya escribe `patientFullName` completo en ese
+campo porque `PACIENTES` no expone columnas partidas como sí tiene `MEDICOS`),
+pero antes de escribir contra pacientes reales conviene confirmar si esa fila
+es un caso legado o si el campo tiene otro propósito.
 
 ## Carga inicial de la agenda (Fase 2)
 

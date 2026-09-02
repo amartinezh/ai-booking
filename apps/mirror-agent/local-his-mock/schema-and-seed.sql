@@ -159,25 +159,87 @@ INSERT INTO dbo.SERVICIOS (CD_CODI_SER, NO_NOMB_SER, CD_CODI_GRUF_SER, ID_CITA_S
 ('I890301AG','ATENCION PYP HTA','02','1','CO');
 GO
 
+-- ⚠️ Esquema REAL, confirmado columna por columna contra ESEHSVP con
+-- sys.columns (bloque 27a, 2026-09-01). Antes esta tabla tenía 13 columnas
+-- inventadas a partir de la lista de NOT NULL del mapeo, y `NO_NOMB_PAC` como
+-- varchar(60). Esa diferencia OCULTÓ UN DEFECTO QUE ROMPÍA PRODUCCIÓN: el
+-- driver escribía el nombre completo en `NO_NOMB_PAC`, que aquí es varchar(20)
+-- y solo guarda el PRIMER NOMBRE. En el hospital, ese INSERT habría fallado
+-- con el error 8152 para casi todos los pacientes.
+--
+-- Lección: cuando el mock es más permisivo que el HIS, no simplifica — miente.
 CREATE TABLE dbo.PACIENTES (
-    NU_HIST_PAC       varchar(20) NOT NULL PRIMARY KEY,
-    NU_DOCU_PAC       varchar(20) NOT NULL,
-    NU_TIPD_PAC       tinyint     NOT NULL DEFAULT 0,
-    NO_NOMB_PAC       varchar(60) NOT NULL,
-    FE_NACI_PAC       datetime    NOT NULL,
-    NU_SEXO_PAC       tinyint     NOT NULL DEFAULT 0,
-    FE_HIST_PAC       datetime    NOT NULL,
-    NU_EXTR_PAC       bit         NOT NULL DEFAULT 0,
-    FE_FECH_DONA_PAC  datetime    NOT NULL DEFAULT '1900-01-01',
-    FE_FECH_VOLU_PAC  datetime    NOT NULL DEFAULT '1900-01-01',
-    NU_ESTA_PAC       tinyint     NULL DEFAULT 1,
-    NU_ESCI_PAC       tinyint     NULL DEFAULT 0,
-    NU_NIVE_PAC       tinyint     NULL DEFAULT 0
+    NU_DOCU_PAC          varchar(20)  NOT NULL,
+    NU_HIST_PAC          varchar(20)  NOT NULL PRIMARY KEY,
+    NU_TIPD_PAC          tinyint      NOT NULL DEFAULT 0,
+    DE_PRAP_PAC          varchar(30)  NULL,   -- primer apellido
+    DE_SGAP_PAC          varchar(30)  NULL,   -- segundo apellido
+    NO_NOMB_PAC          varchar(20)  NOT NULL, -- PRIMER NOMBRE, no el completo
+    NO_SGNO_PAC          varchar(20)  NULL,   -- segundo nombre
+    FE_NACI_PAC          datetime     NOT NULL,
+    CD_CODI_DPTO_PAC     varchar(2)   NULL,
+    CD_CODI_MUNI_PAC     varchar(3)   NULL,
+    DE_DIRE_PAC          varchar(80)  NULL,
+    DE_TELE_PAC          varchar(10)  NULL,
+    NU_SEXO_PAC          tinyint      NOT NULL DEFAULT 0,
+    NU_ESCI_PAC          tinyint      NULL DEFAULT 0,
+    FE_HIST_PAC          datetime     NOT NULL,
+    NU_SITU_PAC          varchar(20)  NULL,
+    CD_CODI_CAM_PAC      varchar(5)   NULL,
+    NU_NUME_REG_PAC      int          NULL,
+    NU_NIVE_PAC          tinyint      NULL DEFAULT 0,
+    NU_ESTA_PAC          tinyint      NULL DEFAULT 1,
+    CD_CODI_ZORE_PAC     varchar(1)   NULL,
+    CD_CODI_LUAT_PAC     varchar(2)   NULL,
+    DE_EMAIL_PAC         varchar(100) NULL,
+    CD_CODI_OCUP_PAC     varchar(4)   NULL,
+    NU_CONS_HIST_PAC     int          NULL,
+    NU_TIPO_PAC          tinyint      NULL,
+    CD_CODI_RELI_PAC     varchar(2)   NULL,
+    CD_CODI_BAR_PAC      varchar(3)   NULL,
+    DE_NOMB_ACOM_PAC     varchar(50)  NULL,
+    DE_DIRE_ACOM_PAC     varchar(80)  NULL,
+    DE_TELE_ACOM_PAC     varchar(15)  NULL,
+    NU_LUGN_PAC          varchar(30)  NULL,
+    CD_CODI_PARE_PAC     varchar(2)   NULL,
+    TX_CODI_CLPA_PAC     varchar(2)   NULL,
+    TX_DOCU_ACOM_PAC     varchar(20)  NULL,
+    TX_PRNO_ACOM_PAC     varchar(20)  NULL,
+    TX_SGNO_ACOM_PAC     varchar(20)  NULL,
+    TX_PRAP_ACOM_PAC     varchar(30)  NULL,
+    TX_SGAP_ACOM_PAC     varchar(30)  NULL,
+    NU_TIPD_ACOM_PAC     tinyint      NULL,
+    CD_CODPTO_ACOM_PAC   varchar(2)   NULL,
+    CD_COMUNI_ACOM_PAC   varchar(3)   NULL,
+    TX_CODI_NIED_PAC     varchar(2)   NULL,
+    NU_IPSPRIMARIA_PAC   varchar(12)  NULL,
+    CD_CODI_GPOB_PAC     int          NULL,
+    CD_CODI_GETN_PAC     int          NULL,
+    NU_DPTO_NAC_PAC      varchar(2)   NULL,
+    NU_MUNI_NAC_PAC      varchar(3)   NULL,
+    NU_CODI_GESPE_PAC    tinyint      NULL,
+    TX_EMAIL_ACOM_PAC    varchar(100) NULL,
+    NU_EXTR_PAC          bit          NOT NULL DEFAULT 0,
+    TX_COPO_PAC          varchar(10)  NULL,
+    NU_ID_IDENTG_PAC     int          NULL,
+    TX_ID_DONA_PAC       varchar(2)   NULL,
+    FE_FECH_DONA_PAC     datetime     NOT NULL DEFAULT '1900-01-01',
+    TX_ID_VOLU_ANTI_PAC  varchar(2)   NULL,
+    FE_FECH_VOLU_PAC     datetime     NOT NULL DEFAULT '1900-01-01',
+    TX_COD_PRES_VOLU_PAC varchar(30)  NULL,
+    TX_CODI_DISC_PAC     varchar(2)   NULL,
+    TX_PAIS_RES_PAC      varchar(100) NULL,
+    CD_CODI_CETN_PAC     int          NULL,
+    DE_DIRE_ALTE_PAC     varchar(80)  NULL
 );
 GO
-INSERT INTO dbo.PACIENTES (NU_HIST_PAC, NU_DOCU_PAC, NU_TIPD_PAC, NO_NOMB_PAC, FE_NACI_PAC, NU_SEXO_PAC, FE_HIST_PAC) VALUES
-('9696544','9696544',0,'PACIENTE DE PRUEBA UNO','1980-05-12',0,'2020-01-10'),
-('1035445566','1035445566',0,'PACIENTE DE PRUEBA DOS','1995-11-03',1,'2021-03-22');
+-- Nombres ya partidos, como los guarda el HIS. NU_SEXO_PAC: 1=M, 0=F
+-- (confirmado en el bloque 26).
+INSERT INTO dbo.PACIENTES (NU_HIST_PAC, NU_DOCU_PAC, NU_TIPD_PAC,
+                           NO_NOMB_PAC, NO_SGNO_PAC, DE_PRAP_PAC, DE_SGAP_PAC,
+                           FE_NACI_PAC, NU_SEXO_PAC, FE_HIST_PAC) VALUES
+('9696544','9696544',0,'CARLOS','ARTURO','ROMERO','RENDON','1980-05-12',1,'2020-01-10'),
+('1035445566','1035445566',0,'MARIA','FERNANDA','GOMEZ','RIOS','1995-11-03',0,'2021-03-22');
 GO
 
 CREATE TABLE dbo.R_PAC_EPS (

@@ -24,12 +24,21 @@ export interface AnsermaMapping {
   /**
    * AgenIA guarda 'M'/'F'; `NU_SEXO_PAC` es tinyint.
    *
-   * ⚠️ DEUDA CON FECHA DE VENCIMIENTO: qué número es cuál NO está confirmado
-   * contra la base del hospital. Se decidió provisionalmente para poder
-   * avanzar, y mientras solo se escriba contra el mock local no hay riesgo.
-   * ANTES del primer INSERT contra `PRUEBAS` con pacientes reales hay que
-   * correr la consulta que lo confirme: escribirlo al revés deja el sexo
-   * equivocado en la historia clínica de una persona.
+   * ✅ CONFIRMADO contra ESEHSVP (catálogo vivo, 2026-09-01 — bloque 26 de
+   * FASE0_DESCUBRIMIENTO_HIS.sql): `1 = Masculino`, `0 = Femenino`.
+   *
+   * Tres evidencias independientes, todas consistentes:
+   *  · El paciente del piloto guiado por el hospital (CC 9696544, nombre
+   *    registrado "CARLOS") tiene NU_SEXO_PAC=1.
+   *  · Cruce estadístico por nombre sobre la tabla completa: NU_SEXO_PAC=0
+   *    correlaciona con nombres femeninos 11.287 a 307; NU_SEXO_PAC=1 con
+   *    nombres masculinos 10.740 a 291 (>97% de consistencia en ambos casos).
+   *  · Los recién nacidos sin nombre propio confirman el mismo patrón:
+   *    "HIJO DE ..." → 1, "HIJA DE ..." → 0.
+   *
+   * Se llegó a escribir la tabla INVERTIDA (`M:0, F:1`) como decisión
+   * provisional para poder avanzar antes de tener esta confirmación — nunca
+   * llegó a escribirse contra un paciente real, solo contra el mock local.
    */
   sexo: Record<string, number>;
   /**
@@ -316,4 +325,136 @@ export function duracionDeServicio(
     (servicio && porServicio[servicio]) ||
     mapping.duracionMinutos
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Nombre del paciente: AgenIA guarda uno solo, PACIENTES tiene cuatro.
+//
+// 🚨 ESTO ROMPÍA PRODUCCIÓN. El driver escribía el nombre COMPLETO en
+// `NO_NOMB_PAC`, que en el hospital es `varchar(20)` — cualquier nombre de más
+// de 20 caracteres (o sea, casi todos) habría reventado el INSERT con el error
+// 8152 de SQL Server y el paciente no se habría podido dar de alta. No se vio
+// antes porque el mock local declaraba `varchar(60)`.
+//
+// El mapeo de Fase 0 ya lo decía —"NO_NOMB_PAC (primer nombre)"— y el driver
+// lo ignoró. Las otras tres columnas se confirmaron en el bloque 27:
+//   NO_NOMB_PAC varchar(20)  primer nombre    (NOT NULL)
+//   NO_SGNO_PAC varchar(20)  segundo nombre
+//   DE_PRAP_PAC varchar(30)  primer apellido
+//   DE_SGAP_PAC varchar(30)  segundo apellido
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface NombrePartido {
+  primerNombre: string;
+  segundoNombre: string | null;
+  primerApellido: string | null;
+  segundoApellido: string | null;
+}
+
+/** Anchos reales de las columnas en el HIS (bloque 27a). */
+const ANCHO = { nombre: 20, apellido: 30 } as const;
+
+/**
+ * Parte el `fullName` de AgenIA en las cuatro columnas del HIS.
+ *
+ * ⚠️ ES UNA HEURÍSTICA, y en un caso es ambigua de verdad. Con tres palabras,
+ * "JUAN PEREZ GOMEZ" (un nombre y dos apellidos) y "JUAN CARLOS PEREZ" (dos
+ * nombres y un apellido) son indistinguibles sin un diccionario de nombres.
+ * Se elige la primera lectura porque en Colombia los dos apellidos son el
+ * identificador legal: quien acorta su nombre suele soltar el segundo nombre,
+ * no un apellido.
+ *
+ * La forma de quitarse la ambigüedad de encima es preguntar nombres y
+ * apellidos por separado en el chatbot — hoy se pregunta "nombre completo".
+ * Mientras eso no cambie, esto es lo mejor que se puede hacer sin inventar.
+ */
+export function partirNombre(fullName?: string): NombrePartido {
+  const partes = (fullName ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+
+  if (partes.length === 0) {
+    throw new MappingIncompletoError(
+      'El paciente no tiene nombre: NO_NOMB_PAC es NOT NULL en PACIENTES.',
+    );
+  }
+
+  const cortar = (t: string | null, max: number) =>
+    t === null ? null : t.slice(0, max);
+
+  // Una sola palabra: solo hay primer nombre. Es lo que tiene el 98% de las
+  // historias viejas del hospital (bloque 27b), así que no es un caso raro.
+  if (partes.length === 1) {
+    return {
+      primerNombre: cortar(partes[0], ANCHO.nombre)!,
+      segundoNombre: null,
+      primerApellido: null,
+      segundoApellido: null,
+    };
+  }
+
+  if (partes.length === 2) {
+    return {
+      primerNombre: cortar(partes[0], ANCHO.nombre)!,
+      segundoNombre: null,
+      primerApellido: cortar(partes[1], ANCHO.apellido),
+      segundoApellido: null,
+    };
+  }
+
+  if (partes.length === 3) {
+    return {
+      primerNombre: cortar(partes[0], ANCHO.nombre)!,
+      segundoNombre: null,
+      primerApellido: cortar(partes[1], ANCHO.apellido),
+      segundoApellido: cortar(partes[2], ANCHO.apellido),
+    };
+  }
+
+  // Cuatro o más: dos nombres y dos apellidos, que es la forma canónica. Lo
+  // que sobre se pega al segundo apellido — los apellidos compuestos ("DE LA
+  // CRUZ") son más frecuentes que los nombres de tres palabras.
+  return {
+    primerNombre: cortar(partes[0], ANCHO.nombre)!,
+    segundoNombre: cortar(partes[1], ANCHO.nombre),
+    primerApellido: cortar(partes[2], ANCHO.apellido),
+    segundoApellido: cortar(partes.slice(3).join(' '), ANCHO.apellido),
+  };
+}
+
+
+/**
+ * Reparte nombres y apellidos que el paciente YA separó, sin adivinar nada.
+ *
+ * Es el camino bueno: el chatbot pregunta nombres y apellidos en dos pasos, y
+ * la frontera —la parte imposible de deducir— la pone quien sí la sabe.
+ * `partirNombre` sigue existiendo para los pacientes anteriores al cambio y
+ * para los que no entran por WhatsApp.
+ */
+export function partirNombreDado(
+  nombres: string,
+  apellidos?: string,
+): NombrePartido {
+  const trozos = (t: string | undefined) =>
+    (t ?? '').trim().split(/\s+/).filter((x) => x.length > 0);
+
+  const n = trozos(nombres);
+  const a = trozos(apellidos);
+
+  if (n.length === 0) {
+    throw new MappingIncompletoError(
+      'El paciente no tiene nombre: NO_NOMB_PAC es NOT NULL en PACIENTES.',
+    );
+  }
+
+  // Lo que sobre de cada lado se pega al último campo de ese lado: un nombre
+  // de tres palabras no se puede tirar, y un apellido compuesto tampoco.
+  return {
+    primerNombre: n[0].slice(0, ANCHO.nombre),
+    segundoNombre: n.length > 1 ? n.slice(1).join(' ').slice(0, ANCHO.nombre) : null,
+    primerApellido: a.length > 0 ? a[0].slice(0, ANCHO.apellido) : null,
+    segundoApellido:
+      a.length > 1 ? a.slice(1).join(' ').slice(0, ANCHO.apellido) : null,
+  };
 }

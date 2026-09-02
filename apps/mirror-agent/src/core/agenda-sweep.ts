@@ -23,6 +23,10 @@ export interface ResumenAgenda {
   conflictos: number;
   /** Días efectivamente repasados (menos que los pedidos si el modo era OFF). */
   dias: number;
+  /** Días que fallaron. El barrido sigue: uno malo no puede tumbar el resto. */
+  diasConError: number;
+  /** El primer motivo de fallo, para no repetir 400 veces el mismo mensaje. */
+  primerError?: string;
 }
 
 const UN_DIA_MS = 86_400_000;
@@ -43,12 +47,29 @@ export async function recorrerAgenda(
     borrados: 0,
     conflictos: 0,
     dias: 0,
+    diasConError: 0,
   };
 
   for (let i = 0; i < opts.dias; i++) {
     const from = new Date(inicio.getTime() + i * UN_DIA_MS);
     const to = new Date(from.getTime() + UN_DIA_MS);
-    const r = await engine.syncAvailability({ from, to });
+
+    // 🚨 Cada día va en su propio try. Antes un fallo cualquiera subía y
+    // abortaba el barrido completo: pasó de verdad — un cupo que no se podía
+    // borrar rompía el día 3 y los otros 397 no se sincronizaban nunca. La
+    // agenda se quedó media hora desalineada y lo único que se veía era una
+    // línea de error por vuelta, sin decir que el resto no había corrido.
+    // Es la misma regla que en sync-cycle: un fallo aislado no tumba el todo.
+    let r;
+    try {
+      r = await engine.syncAvailability({ from, to });
+    } catch (error) {
+      total.diasConError++;
+      total.primerError ??=
+        error instanceof Error ? error.message : String(error);
+      continue;
+    }
+
     total.modo = r.mode;
 
     // El hospital todavía no cedió su agenda: seguir preguntando 399 veces lo

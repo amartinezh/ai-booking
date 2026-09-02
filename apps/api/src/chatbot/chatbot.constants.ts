@@ -4,6 +4,13 @@ export enum ChatState {
   AWAITING_EPS = 'AWAITING_EPS',
   AWAITING_DATE = 'AWAITING_DATE',
   AWAITING_NAME = 'AWAITING_NAME',
+  // Los apellidos van en su PROPIA pregunta, no pegados al nombre.
+  //
+  // El HIS guarda nombres y apellidos en cuatro columnas separadas, y partir
+  // "JUAN CARLOS PEREZ" es imposible sin adivinar: puede ser un nombre y dos
+  // apellidos, o dos nombres y un apellido. Preguntando por separado, la
+  // frontera la pone el paciente y no hay nada que adivinar.
+  AWAITING_APELLIDOS = 'AWAITING_APELLIDOS',
   // Alta de paciente nuevo. El HIS del hospital exige nacimiento y sexo NOT
   // NULL en PACIENTES, y el régimen decide el convenio de facturación. Solo
   // se recorren cuando el paciente NO existe todavía: a quien ya está
@@ -343,9 +350,9 @@ const FORMAL = {
 
   primeraVez: () =>
     pick([
-      `Es un gusto recibirle por primera vez.\n\nPara registrarle en el sistema, ¿me indica su *nombre completo*, por favor?`,
-      `Bienvenido(a). Es un gusto atenderle por primera vez.\n\nIndíqueme su *nombre completo* para abrir su historia con nosotros.`,
-      `Es la primera vez que le atendemos por aquí.\n\n¿Me indica su *nombre completo* para registrarle como nuevo paciente?`,
+      `Es un gusto recibirle por primera vez.\n\nPara registrarle en el sistema, ¿me indica sus *nombres*, por favor? (solo los nombres — los apellidos se los pido enseguida)`,
+      `Bienvenido(a). Es un gusto atenderle por primera vez.\n\nIndíqueme sus *nombres* para abrir su historia (los apellidos van en la siguiente pregunta).`,
+      `Es la primera vez que le atendemos por aquí.\n\n¿Me indica sus *nombres*? Enseguida le pido los apellidos.`,
     ]),
 
   // ACK del Primer Turno (Fase 2): confirma al paciente las entidades que el
@@ -480,6 +487,25 @@ const FORMAL = {
       `Disculpe, no interpreté bien la fecha. Escríbala así: *día/mes/año*, por ejemplo *15/03/1980*.`,
     ]),
 
+  /**
+   * La lista de espera NO alimenta al HIS: no necesita la frontera entre
+   * nombres y apellidos, así que no se le cobra al paciente un turno extra.
+   */
+  nombreParaLista: () =>
+    pick([
+      `Para anotarle en la lista, ¿me indica su *nombre completo*?`,
+      `¿Me da su *nombre completo* para dejarle en la lista de espera?`,
+    ]),
+  pedirApellidos: (nombres: string) =>
+    pick([
+      `Gracias, ${nombres}. Ahora sus *apellidos*, por favor.`,
+      `Anotado: ${nombres}. ¿Me indica sus *apellidos*?`,
+    ]),
+  apellidosNoEntendidos: () =>
+    pick([
+      `No alcancé a leer los apellidos. ¿Me los escribe de nuevo, por favor?`,
+      `Disculpe, ¿me repite sus *apellidos*?`,
+    ]),
   pedirSexo: () =>
     pick([
       `¿Cuál es su *sexo*?\n\n*A)* Masculino\n*B)* Femenino`,
@@ -1004,9 +1030,9 @@ const INFORMAL = {
 
   primeraVez: () =>
     pick([
-      `¡Qué bueno tenerte por aquí por primera vez! 🤝 Para registrarte, ¿me pasas tu *nombre completo*?`,
-      `¡Bienvenido(a)! Es un gusto atenderte por primera vez. 🌟 Cuéntame tu *nombre completo* para abrirte tu historia.`,
-      `¡Mucho gusto! 😊 No te tengo registrado aún — ¿me dices tu *nombre completo* para crearte el perfil?`,
+      `¡Qué bueno tenerte por aquí por primera vez! 🤝 Para registrarte, ¿me pasas tus *nombres*? (los apellidos te los pido enseguida)`,
+      `¡Bienvenido(a)! Es un gusto atenderte por primera vez. 🌟 Cuéntame tus *nombres* para abrirte tu historia — los apellidos van después.`,
+      `¡Mucho gusto! 😊 No te tengo registrado aún — ¿me dices tus *nombres*? Enseguida te pido los apellidos.`,
     ]),
 
   // ACK del Primer Turno (Fase 2): confirma lo que el Agente entendió del
@@ -1132,6 +1158,21 @@ const INFORMAL = {
       `Uy, no capté la fecha. Escríbela así: *día/mes/año*, por ejemplo *15/03/1980*.`,
     ]),
 
+  nombreParaLista: () =>
+    pick([
+      `Para anotarte en la lista, ¿me pasas tu *nombre completo*?`,
+      `¿Me dices tu *nombre completo* para dejarte en la lista de espera?`,
+    ]),
+  pedirApellidos: (nombres: string) =>
+    pick([
+      `¡Gracias, ${nombres}! Ahora tus *apellidos*. 😊`,
+      `Listo, ${nombres}. ¿Me pasas tus *apellidos*?`,
+    ]),
+  apellidosNoEntendidos: () =>
+    pick([
+      `No te entendí los apellidos. ¿Me los escribes otra vez?`,
+      `Perdona, ¿me repites tus *apellidos*?`,
+    ]),
   pedirSexo: () =>
     pick([
       `¿Cuál es tu *sexo*?\n\n*A)* Masculino\n*B)* Femenino`,

@@ -70,6 +70,14 @@ export interface OutboxEventContext {
   /** Documento del paciente. No necesita homologación: es la clave que el HIS usa. */
   patientDocument?: string;
   patientFullName?: string;
+  /**
+   * Nombres y apellidos por separado, tal como los dio el paciente. Van además
+   * de `patientFullName` porque el HIS los guarda en columnas propias y
+   * deducir la frontera desde el nombre completo es adivinar. Ausentes en los
+   * pacientes anteriores al cambio: ahí el driver cae a su heurística.
+   */
+  patientNombres?: string;
+  patientApellidos?: string;
   /** ISO-8601. El HIS los exige NOT NULL al dar de alta un paciente nuevo. */
   patientBirthDateIso?: string;
   patientGender?: string;
@@ -178,6 +186,9 @@ export interface CanonicalChangeEvent {
     // de aceptar la cita, y con campos NOT NULL (el de Anserma pide nacimiento
     // y sexo). Si el driver tiene que crearlo, los necesita aquí.
     patientFullName?: string;
+    /** La frontera nombres/apellidos, cuando el paciente la dio explícitamente. */
+    patientNombres?: string;
+    patientApellidos?: string;
     patientBirthDateIso?: string;
     patientGender?: string;
     /** Régimen: la misma EPS tiene convenios distintos según cuál sea. */
@@ -295,6 +306,12 @@ export interface AvailabilityResult {
   created: number;
   updated: number;
   removed: number;
+  /**
+   * Cupos que el hospital ya no tiene pero que NO se pueden borrar porque
+   * cargan citas canceladas (historia clínica sostenida por la llave foránea).
+   * Se cierran en vez de eliminarse: AgenIA deja de ofrecerlos igual.
+   */
+  retired: number;
   /** Cupos del HIS cuyo médico no está homologado, o no tiene servicio. */
   skipped: string[];
   /**

@@ -154,6 +154,14 @@ Columnas relevantes: `NU_DOCU_MED` (cédula — **clave de homologación** con `
 
 PK: `NU_HIST_PAC` varchar(20). ✅ **Regla confirmada (bloque 8): historia = documento en el 100% de los 78.654 pacientes.** Al crear un paciente nuevo: `NU_HIST_PAC = NU_DOCU_PAC`.
 
+✅ **Esquema completo confirmado (2026-09-01, bloque 27a):** `PACIENTES` tiene **62 columnas**, no las 10-13 que se habían documentado a partir de la lista de NOT NULL. El nombre está **partido en cuatro**, igual que en `MEDICOS`: `NO_NOMB_PAC` varchar(20) NOT NULL (primer nombre), `NO_SGNO_PAC` varchar(20) (segundo nombre), `DE_PRAP_PAC` varchar(30) (primer apellido), `DE_SGAP_PAC` varchar(30) (segundo apellido). El resto son datos demográficos, de acompañante, y de RIPS/normativa. **Cierra el pendiente #9.**
+
+✅ **El chatbot pregunta nombres y apellidos por separado** (2026-09-01), y `PatientProfile.nombres`/`apellidos` los guardan así. La frontera viaja en el evento del outbox (`patientNombres`/`patientApellidos`) y el driver la usa tal cual — sin adivinar. Solo cae a la heurística `partirNombre()` con pacientes anteriores al cambio.
+
+⚠️ El ancho importa: `NO_NOMB_PAC` es `varchar(20)`. El driver escribía ahí el nombre completo (el mock lo declaraba `varchar(60)` y lo dejaba pasar) — en el hospital ese INSERT habría fallado con el error 8152 para casi todos los pacientes. Corregido: `partirNombre()` en `mapping.ts`.
+
+📊 **Distribución real de `NO_NOMB_PAC`** (bloque 27b): 76.268 pacientes con **una sola palabra** (98,3%), 898 con dos, 1.390 con tres, 188 con cuatro, 3 con cinco. Las de varias palabras son casi todas recién nacidos sin nombre propio (`"HIJO 3 DE YURANI"`), que el hospital registra así hasta el registro civil. Confirma que la columna es "primer nombre" por diseño, no el nombre completo.
+
 **Columnas NOT NULL (obligatorias al crear un paciente):** `NU_DOCU_PAC`, `NU_HIST_PAC`, `NU_TIPD_PAC` (FK `TIPO_DOCUMENTO`), `NO_NOMB_PAC` (primer nombre), `FE_NACI_PAC` (fecha nacimiento), `NU_SEXO_PAC`, `FE_HIST_PAC` (fecha apertura historia), `NU_EXTR_PAC` (bit), `FE_FECH_DONA_PAC`, `FE_FECH_VOLU_PAC`.
 
 ✅ **Defaults confirmados (bloque 9):** el esquema declara DEFAULT `(0)` para `FE_FECH_DONA_PAC`/`FE_FECH_VOLU_PAC` (⇒ `1900-01-01`; la app escribe `2024-01-01` últimamente — ambas formas conviven), `NU_SEXO_PAC=0`, `NU_TIPD_PAC=0`, `NU_ESTA_PAC=1`, `NU_EXTR_PAC=0`, `NU_ESCI_PAC=0`, `NU_NIVE_PAC=0`. **Alta mínima viable:** documento, tipo doc, nombres/apellidos, nacimiento, sexo, `FE_HIST_PAC = hoy` — el resto por default.
