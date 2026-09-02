@@ -790,12 +790,10 @@ ORDER BY FE_HIST_PAC DESC;
 -- la misma situación o mejor, pero "documentado" no es lo mismo que
 -- "verificado contra el esquema vivo", y no sabemos cuáles son cuáles.
 --
--- Esta consulta devuelve una tabla lista para pegar en
--- docs/drivers/cnt-sanvicente-anserma/esquema-real.tsv, que
--- scripts/verificar-esquema-mock.mjs contrasta contra el mock local.
---
 -- CORRER EN ESEHSVP. 100% lectura. Copiar el resultado COMPLETO (en SSMS:
--- clic derecho sobre la cuadrícula → "Copy with Headers").
+-- clic derecho sobre la cuadrícula → "Copy with Headers") y pegarlo aquí en
+-- el chat, igual que con los bloques 26 y 27 — de ahí sale el contraste
+-- contra el mock local y el resto de la documentación.
 -- =============================================================================
 USE ESEHSVP;
 GO

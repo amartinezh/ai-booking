@@ -31,14 +31,23 @@ GO
 -- -----------------------------------------------------------------------------
 -- Catálogos base
 -- -----------------------------------------------------------------------------
+-- Nombres de columna REALES (bloque 28). El mock los había inventado como
+-- CD_CODI_TIDO/DE_DESC_TIDO; en el hospital son otros.
 CREATE TABLE dbo.TIPO_DOCUMENTO (
-    CD_CODI_TIDO tinyint       NOT NULL PRIMARY KEY,
-    DE_DESC_TIDO varchar(60)   NOT NULL
+    NU_CODIGO_TDOC tinyint      NOT NULL PRIMARY KEY,
+    TX_NOMB_TDOC   varchar(3)   NOT NULL,
+    TX_DESC_TDOC   varchar(100) NOT NULL
 );
 GO
-INSERT INTO dbo.TIPO_DOCUMENTO (CD_CODI_TIDO, DE_DESC_TIDO) VALUES
-(0,'CC'),(1,'TI'),(2,'RC'),(3,'CE'),(4,'PA'),(5,'AS'),(6,'MS'),(7,'CN'),
-(8,'CD'),(9,'SC'),(10,'PR'),(11,'PE'),(12,'DE'),(13,'SI'),(14,'PT');
+INSERT INTO dbo.TIPO_DOCUMENTO (NU_CODIGO_TDOC, TX_NOMB_TDOC, TX_DESC_TDOC) VALUES
+(0,'CC','CEDULA DE CIUDADANIA'),(1,'TI','TARJETA DE IDENTIDAD'),
+(2,'RC','REGISTRO CIVIL'),(3,'CE','CEDULA DE EXTRANJERIA'),
+(4,'PA','PASAPORTE'),(5,'AS','ADULTO SIN IDENTIFICAR'),
+(6,'MS','MENOR SIN IDENTIFICAR'),(7,'CN','CERTIFICADO NACIDO VIVO'),
+(8,'CD','CARNET DIPLOMATICO'),(9,'SC','SALVOCONDUCTO'),
+(10,'PR','PERMISO RESIDENCIA'),(11,'PE','PERMISO ESPECIAL'),
+(12,'DE','DOCUMENTO EXTRANJERO'),(13,'SI','SIN IDENTIFICAR'),
+(14,'PT','PERMISO PROTECCION TEMPORAL');
 GO
 
 CREATE TABLE dbo.MUNICIPIOS ( -- placeholder, esquema real no confirmado
@@ -49,11 +58,31 @@ GO
 INSERT INTO dbo.MUNICIPIOS VALUES ('17042','ANSERMA'),('17001','MANIZALES');
 GO
 
+-- Esquema REAL (bloque 28). `NU_ACTIVO_EPS` es bit, no tinyint, y hay tres
+-- columnas NOT NULL que el mock no tenía.
 CREATE TABLE dbo.EPS (
-    CD_NIT_EPS   varchar(20)  NOT NULL PRIMARY KEY,
-    NO_NOMB_EPS  varchar(150) NULL,
-    CD_CODI_EPS  varchar(10)  NULL,
-    NU_ACTIVO_EPS tinyint     NULL DEFAULT 1
+    CD_NIT_EPS    varchar(11)  NOT NULL PRIMARY KEY,
+    CD_INDI_EPS   varchar(1)   NULL,
+    NO_DPTO_EPS   varchar(40)  NULL,
+    NO_MUNI_EPS   varchar(40)  NULL,
+    DE_DIRE_EPS   varchar(40)  NULL,
+    DE_TELE_EPS   varchar(15)  NULL,
+    DE_REPR_EPS   varchar(40)  NULL,
+    NU_FATO_EPS   tinyint      NULL,
+    NU_FADE_EPS   tinyint      NULL,
+    NU_FAAT_EPS   tinyint      NULL,
+    PR_FADE_EPS   real         NULL,
+    NU_COEL_EPS   tinyint      NULL,
+    NU_COLA_EPS   tinyint      NULL,
+    CD_CODI_EPS   varchar(10)  NULL,
+    NO_NOMB_EPS   varchar(255) NULL,
+    NU_ENVIMG_EPS int          NULL,
+    NU_ACTIVO_EPS bit          NOT NULL DEFAULT 1,
+    TX_COPO_EPS   varchar(10)  NULL,
+    NU_REQPOL_EPS int          NULL,
+    NU_NITEXT_EPS tinyint      NOT NULL DEFAULT 0,
+    TX_NITALT_EPS varchar(30)  NOT NULL DEFAULT '',
+    TX_CODPAI_EPS varchar(100) NOT NULL DEFAULT ''
 );
 GO
 INSERT INTO dbo.EPS (CD_NIT_EPS, NO_NOMB_EPS, CD_CODI_EPS, NU_ACTIVO_EPS) VALUES
@@ -63,8 +92,10 @@ GO
 
 CREATE TABLE dbo.CONVENIOS (
     NU_NUME_CONV    int          NOT NULL PRIMARY KEY,
-    CD_CODI_CONV    varchar(30)  NULL,
-    CD_NIT_EPS_CONV varchar(20)  NULL REFERENCES dbo.EPS(CD_NIT_EPS),
+    CD_CODI_CONV    varchar(20)  NULL,
+    -- Anchos reales (bloque 28). El del NIT debe coincidir con EPS.CD_NIT_EPS
+    -- o SQL Server rechaza la llave foránea.
+    CD_NIT_EPS_CONV varchar(11)  NULL REFERENCES dbo.EPS(CD_NIT_EPS),
     FE_INIC_CONV    datetime     NULL,
     FE_FINA_CONV    datetime     NULL,
     NU_VIGE_CONV    tinyint      NULL DEFAULT 1
@@ -79,7 +110,7 @@ GO
 
 CREATE TABLE dbo.MOTIVOANUL (
     CD_CODI_MOTI varchar(2)   NOT NULL PRIMARY KEY,
-    DE_DESC_MOTI varchar(100) NOT NULL
+    DE_DESC_MOTI varchar(40)  NULL
 );
 GO
 INSERT INTO dbo.MOTIVOANUL (CD_CODI_MOTI, DE_DESC_MOTI) VALUES
@@ -115,22 +146,31 @@ GO
 -- -----------------------------------------------------------------------------
 -- Médicos, servicios, pacientes
 -- -----------------------------------------------------------------------------
+-- Esquema REAL (bloque 28). Ojo con los anchos: los apellidos y el segundo
+-- nombre tienen 30, pero el primer nombre y el primer apellido solo 20 — no
+-- son simétricos, como tampoco lo son en PACIENTES.
 CREATE TABLE dbo.MEDICOS (
-    CD_CODI_MED      varchar(4)   NOT NULL PRIMARY KEY,
-    NU_DOCU_MED      varchar(20)  NULL,
-    NO_NOMB_MED      varchar(200) NULL,
-    TX_PRNOM_MED     varchar(60)  NULL,
-    TX_SGNOM_MED     varchar(60)  NULL,
-    TX_PRAPEL_MED    varchar(60)  NULL,
-    TX_SGAPEL_MED    varchar(60)  NULL,
-    NU_TIPD_MED      varchar(2)   NULL,
-    DE_CARG_MED      varchar(100) NULL,
-    NU_ESTA_MED      tinyint      NULL DEFAULT 1,
-    NU_MAXC_MED      int          NULL,
-    DE_REGI_MED      varchar(30)  NULL,
-    TX_EMAIL_MED     varchar(120) NULL,
-    CD_CODI_LUA_MED  varchar(2)   NULL,
-    NU_AUTMEDCTRL_MED bit         NOT NULL DEFAULT 0
+    CD_CODI_MED       varchar(4)   NOT NULL PRIMARY KEY,
+    NU_DOCU_MED       varchar(12)  NULL,
+    NO_NOMB_MED       varchar(103) NULL,
+    NU_TIPD_MED       tinyint      NULL,
+    DE_DIRE_MED       varchar(40)  NULL,
+    DE_TELE_MED       varchar(50)  NULL,
+    DE_CARG_MED       varchar(50)  NULL,
+    NU_MICO_MED       tinyint      NULL,
+    NU_INDI_MED       int          NULL,
+    NU_ESTA_MED       tinyint      NULL DEFAULT 1,
+    NU_CONSE_ADSC_MED int          NULL,
+    NU_MAXC_MED       int          NULL,
+    DE_REGI_MED       varchar(20)  NULL,
+    TX_QUIM_MED       int          NULL,
+    TX_PRNOM_MED      varchar(20)  NULL,
+    TX_SGNOM_MED      varchar(30)  NULL,
+    TX_PRAPEL_MED     varchar(20)  NULL,
+    TX_SGAPEL_MED     varchar(30)  NULL,
+    NU_AUTMEDCTRL_MED bit          NOT NULL DEFAULT 0,
+    TX_EMAIL_MED      varchar(100) NULL,
+    CD_CODI_LUA_MED   varchar(2)   NULL
 );
 GO
 INSERT INTO dbo.MEDICOS (CD_CODI_MED, NU_DOCU_MED, NO_NOMB_MED, TX_PRNOM_MED, TX_PRAPEL_MED, DE_CARG_MED, NU_ESTA_MED, DE_REGI_MED, CD_CODI_LUA_MED) VALUES
@@ -139,18 +179,41 @@ INSERT INTO dbo.MEDICOS (CD_CODI_MED, NU_DOCU_MED, NO_NOMB_MED, TX_PRNOM_MED, TX
 ('OD05','15900789','ANA GOMEZ RUIZ','ANA','GOMEZ','ODONTOLOGA',1,'RM-0105','01');
 GO
 
+-- Esquema REAL (bloque 28), incluidas las columnas que el mock no tenía.
 CREATE TABLE dbo.SERVICIOS (
-    CD_CODI_SER     varchar(12)  NOT NULL PRIMARY KEY,
-    NO_NOMB_SER     varchar(200) NOT NULL,
-    CD_CODI_GRUF_SER varchar(10) NOT NULL,
-    NU_MOD_SER      tinyint      NOT NULL DEFAULT 0,
-    NU_UNED_SER     int          NOT NULL DEFAULT 0,
-    ID_CITA_SER     varchar(1)   NULL,
-    ID_GCIT_SER     varchar(3)   NULL,
-    NU_EDIN_SER     int          NULL,
-    NU_EDFI_SER     int          NULL,
-    TX_TICO_SER     varchar(2)   NULL,
-    CD_CODI_TISE_SER varchar(2)  NULL
+    CD_CODI_SER      varchar(12)  NOT NULL PRIMARY KEY,
+    NO_NOMB_SER      varchar(255) NOT NULL,
+    CD_CODI_CUEN_SER varchar(50)  NULL,
+    NU_OPCI_SER      tinyint      NULL,
+    NU_NIVE_SER      tinyint      NULL,
+    NU_APLI_SER      tinyint      NULL,
+    -- Rango de edad por servicio: el HIS lo valida en la práctica (motivo de
+    -- anulación 09, "EDAD NO CORRESPONDE", 1.002 usos históricos).
+    NU_EDIN_SER      int          NULL,
+    NU_EDFI_SER      int          NULL,
+    NU_ESTA_SER      tinyint      NULL,
+    NU_TITA_SER      tinyint      NULL,
+    DE_OBSE_SER      varchar(250) NULL,
+    CD_CODI_COSE_SER varchar(2)   NULL,
+    CD_CODI_TISE_SER varchar(1)   NULL,
+    ID_CITA_SER      varchar(2)   NULL,
+    NU_MICO_SER      tinyint      NULL,
+    ID_GCIT_SER      varchar(2)   NULL,
+    NU_NUME_IND_SER  tinyint      NULL,
+    NU_VACU_SER      tinyint      NULL,
+    NU_CLAS_SER      tinyint      NULL,
+    TX_TICO_SER      varchar(3)   NULL,
+    NU_INDOXI_SER    tinyint      NULL,
+    NU_IMALAB_SER    tinyint      NULL,
+    NU_ARCO_SER      tinyint      NULL,
+    CD_CODI_GRUF_SER varchar(5)   NOT NULL,
+    TX_CODI_RRTT_SER varchar(2)   NULL,
+    NU_CMULT_SER     tinyint      NULL,
+    TX_NOPOS_SER     varchar(1)   NULL,
+    NU_MOD_SER       tinyint      NOT NULL DEFAULT 0,
+    TX_CODI_SERV_SER varchar(10)  NULL,
+    NU_UNED_SER      tinyint      NOT NULL DEFAULT 0,
+    TX_TIPOOS_SER    varchar(3)   NULL
 );
 GO
 INSERT INTO dbo.SERVICIOS (CD_CODI_SER, NO_NOMB_SER, CD_CODI_GRUF_SER, ID_CITA_SER, TX_TICO_SER) VALUES
@@ -242,15 +305,17 @@ INSERT INTO dbo.PACIENTES (NU_HIST_PAC, NU_DOCU_PAC, NU_TIPD_PAC,
 ('1035445566','1035445566',0,'MARIA','FERNANDA','GOMEZ','RIOS','1995-11-03',0,'2021-03-22');
 GO
 
+-- Esquema REAL (bloque 28). `NU_AFIL_RPE` es tinyint, no varchar — el mock lo
+-- tenía como texto, y el régimen (CD_CODI_REG_RPE) es NOT NULL allá.
 CREATE TABLE dbo.R_PAC_EPS (
     NU_HIST_PAC_RPE varchar(20) NOT NULL,
-    CD_NIT_EPS_RPE  varchar(20) NOT NULL,
-    CD_CODI_REG_RPE varchar(2)  NULL,
-    CD_CARN_RPE     varchar(30) NULL,
-    NU_AFIL_RPE     varchar(30) NULL,
-    NU_ESTA_RPE     tinyint     NULL DEFAULT 1,
+    CD_NIT_EPS_RPE  varchar(11) NOT NULL,
+    CD_CODI_REG_RPE varchar(2)  NOT NULL,
+    CD_CARN_RPE     varchar(18) NULL,
+    NU_AFIL_RPE     tinyint     NOT NULL DEFAULT 1,
+    NU_ESTA_RPE     tinyint     NOT NULL DEFAULT 1,
     TX_ACTI_RPE     varchar(1)  NULL,
-    CD_POL_RPE      varchar(30) NULL,
+    CD_POL_RPE      varchar(22) NULL,
     CONSTRAINT PK_R_PAC_EPS PRIMARY KEY (NU_HIST_PAC_RPE, CD_NIT_EPS_RPE)
 );
 GO
@@ -277,8 +342,8 @@ CREATE TABLE dbo.TURNOS_MEDICOS (
     FE_FECH_TUME    datetime NOT NULL,
     FE_HOIN_TUME    datetime NOT NULL,
     FE_HOFI_TUME    datetime NOT NULL,
-    ID_DISP_TUME    varchar(1)  NULL DEFAULT '1',
-    CD_CODI_CONS_TUME varchar(8) NULL,
+    ID_DISP_TUME    varchar(1)  NOT NULL DEFAULT '1',
+    CD_CODI_CONS_TUME varchar(8) NOT NULL,
     NU_TIPO_TUME    tinyint  NULL DEFAULT 0,
     CD_CODI_ESP_TUME varchar(3) NULL
 );
