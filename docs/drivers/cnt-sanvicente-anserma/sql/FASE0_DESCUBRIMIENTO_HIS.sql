@@ -1270,3 +1270,386 @@ ORDER BY COUNT(DISTINCT c.CD_CODI_SER_CIT) DESC;
 --   · (30f) confirma o refuta que `DoctorProfile.serviceId` (un servicio por
 --     médico) baste para generar los cupos.
 -- =============================================================================
+
+-- =============================================================================
+-- BLOQUE 31 — ¿De qué servicio es un cupo?
+--
+-- POR QUÉ ESTE BLOQUE
+-- El bloque 30f destapó que 47 médicos prestan MÁS DE UN servicio — uno de
+-- ellos once. Y AgenIA le pone a cada cupo el ÚNICO servicio del médico
+-- (`DoctorProfile.serviceId`), porque `TURNOS_MEDICOS` no lleva servicio.
+-- Consecuencia hoy: de los once servicios que ese médico presta, el chatbot
+-- solo puede ofrecer uno; los otros diez son invisibles. Y si el paciente
+-- reserva, `CD_CODI_SER_CIT` viaja con el servicio equivocado — que además es
+-- el que determina el convenio de facturación.
+--
+-- La pregunta no es "¿cuántos servicios presta el médico?" (ya se sabe) sino
+-- **"¿un mismo bloque de turno mezcla servicios, o cada turno es de uno solo?"**
+-- De ahí salen dos diseños muy distintos:
+--   · Si cada turno es de UN servicio ⇒ el cupo hereda el servicio del turno.
+--     Basta con saber cuál, y `CD_CODI_ESP_TUME` es el candidato.
+--   · Si un turno MEZCLA servicios ⇒ el cupo es "médico + hora" y el servicio
+--     lo elige el paciente al reservar. Eso obliga a repensar cómo AgenIA
+--     modela la disponibilidad, no solo a homologar mejor.
+--
+-- De paso cierra el bloque 21b/21d, aplazado desde hace tiempo: de dónde sale
+-- `CD_CODI_ESP_CIT`, que el driver hoy resuelve con una tabla del mappingJson
+-- escrita a mano.
+--
+-- ⚠️ SOLO LECTURA.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- (31a) ¿Existe R_ESP_SER? No salió en el volcado del bloque 28 porque no
+-- estaba en su lista — así que ni siquiera sabemos si existe. Esto lo
+-- descubre junto con cualquier otra tabla de especialidades.
+SELECT name AS tabla
+FROM sys.tables
+WHERE name LIKE '%ESP%'
+ORDER BY name;
+
+-- Y sus columnas, solo de las que existan (así el lote no revienta si falta
+-- alguna). Se consultan las tres candidatas de una vez.
+SELECT t.name AS tabla, c.name AS columna, ty.name AS tipo,
+       CASE WHEN ty.name LIKE '%char%' THEN c.max_length ELSE NULL END AS ancho,
+       CASE WHEN c.is_nullable = 1 THEN 'SI' ELSE 'NO' END AS acepta_nulos
+FROM sys.columns c
+JOIN sys.tables t ON t.object_id = c.object_id
+JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+WHERE t.name IN ('R_ESP_SER', 'R_MEDI_ESPE', 'ESPECIALIDADES', 'ESPECIALIDAD')
+ORDER BY t.name, c.column_id;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- (31b) 🔑 LA PREGUNTA DECISIVA: ¿un turno mezcla servicios?
+--
+-- Cada cita se asocia a SU bloque de turno — mismo médico, misma fecha, y la
+-- hora dentro del rango del bloque (un médico puede tener turno de mañana y
+-- de tarde el mismo día, y contarlos juntos falsearía el resultado).
+--
+-- La salida es una sola tabla pequeña: cuántos turnos tuvieron 1 servicio,
+-- cuántos 2, cuántos 3...
+-- ═══════════════════════════════════════════════════════════════════════════
+SELECT servicios_en_el_turno, COUNT(*) AS turnos
+FROM (
+    SELECT t.NU_NUME_TUME,
+           COUNT(DISTINCT c.CD_CODI_SER_CIT) AS servicios_en_el_turno
+    FROM dbo.TURNOS_MEDICOS t
+    JOIN dbo.CITAS_MEDICAS c
+      ON  c.CD_CODI_MED_CIT = t.CD_MED_TUME
+      AND CAST(c.FE_FECH_CIT AS date) = CAST(t.FE_FECH_TUME AS date)
+      -- La hora de la cita, dentro del rango del bloque. FE_HORA_CIT es
+      -- 'YYYY/MM/DD HH:MM', así que la hora son 5 caracteres desde el 12.
+      AND SUBSTRING(c.FE_HORA_CIT, 12, 5) >= CONVERT(varchar(5), t.FE_HOIN_TUME, 108)
+      AND SUBSTRING(c.FE_HORA_CIT, 12, 5) <  CONVERT(varchar(5), t.FE_HOFI_TUME, 108)
+    WHERE t.FE_FECH_TUME >= DATEADD(day, -90, CAST(GETDATE() AS date))
+      AND t.FE_FECH_TUME <  DATEADD(day,   1, CAST(GETDATE() AS date))
+    GROUP BY t.NU_NUME_TUME
+) x
+GROUP BY servicios_en_el_turno
+ORDER BY servicios_en_el_turno;
+
+-- Diez ejemplos de turnos que SÍ mezclan, para ver de qué se trata: ¿son
+-- servicios parecidos (control y primera vez del mismo tipo) o cosas
+-- distintas (odontología y medicina general en el mismo bloque)?
+SELECT TOP 10 * FROM (
+    SELECT t.NU_NUME_TUME AS turno, t.CD_MED_TUME AS medico,
+           CONVERT(varchar(10), t.FE_FECH_TUME, 23) AS fecha,
+           CONVERT(varchar(5), t.FE_HOIN_TUME, 108) AS hora_ini,
+           CONVERT(varchar(5), t.FE_HOFI_TUME, 108) AS hora_fin,
+           t.CD_CODI_ESP_TUME AS esp_del_turno,
+           COUNT(DISTINCT c.CD_CODI_SER_CIT) AS servicios,
+           COUNT(*) AS citas
+    FROM dbo.TURNOS_MEDICOS t
+    JOIN dbo.CITAS_MEDICAS c
+      ON  c.CD_CODI_MED_CIT = t.CD_MED_TUME
+      AND CAST(c.FE_FECH_CIT AS date) = CAST(t.FE_FECH_TUME AS date)
+      AND SUBSTRING(c.FE_HORA_CIT, 12, 5) >= CONVERT(varchar(5), t.FE_HOIN_TUME, 108)
+      AND SUBSTRING(c.FE_HORA_CIT, 12, 5) <  CONVERT(varchar(5), t.FE_HOFI_TUME, 108)
+    WHERE t.FE_FECH_TUME >= DATEADD(day, -90, CAST(GETDATE() AS date))
+      AND t.FE_FECH_TUME <  DATEADD(day,   1, CAST(GETDATE() AS date))
+    GROUP BY t.NU_NUME_TUME, t.CD_MED_TUME, t.FE_FECH_TUME,
+             t.FE_HOIN_TUME, t.FE_HOFI_TUME, t.CD_CODI_ESP_TUME
+    HAVING COUNT(DISTINCT c.CD_CODI_SER_CIT) > 1
+) y
+ORDER BY servicios DESC, citas DESC;
+
+-- Y qué servicios concretos conviven en un mismo turno (los 15 pares más
+-- frecuentes). Es lo que dice si "mezclar" significa variantes del mismo acto
+-- o especialidades distintas de verdad.
+SELECT TOP 15
+       t.CD_CODI_ESP_TUME AS esp_del_turno,
+       c.CD_CODI_SER_CIT  AS servicio,
+       s.NO_NOMB_SER      AS nombre_servicio,
+       COUNT(*)           AS citas
+FROM dbo.TURNOS_MEDICOS t
+JOIN dbo.CITAS_MEDICAS c
+  ON  c.CD_CODI_MED_CIT = t.CD_MED_TUME
+  AND CAST(c.FE_FECH_CIT AS date) = CAST(t.FE_FECH_TUME AS date)
+  AND SUBSTRING(c.FE_HORA_CIT, 12, 5) >= CONVERT(varchar(5), t.FE_HOIN_TUME, 108)
+  AND SUBSTRING(c.FE_HORA_CIT, 12, 5) <  CONVERT(varchar(5), t.FE_HOFI_TUME, 108)
+LEFT JOIN dbo.SERVICIOS s ON s.CD_CODI_SER = c.CD_CODI_SER_CIT
+WHERE t.FE_FECH_TUME >= DATEADD(day, -90, CAST(GETDATE() AS date))
+  AND t.FE_FECH_TUME <  DATEADD(day,   1, CAST(GETDATE() AS date))
+GROUP BY t.CD_CODI_ESP_TUME, c.CD_CODI_SER_CIT, s.NO_NOMB_SER
+ORDER BY COUNT(*) DESC;
+
+-- (31c) ¿Está poblada CD_CODI_ESP_TUME en los turnos que importan?
+-- Si viene vacía, deja de ser candidata a decidir el servicio del cupo.
+SELECT
+    COUNT(*)                                                          AS turnos_futuros,
+    SUM(CASE WHEN NULLIF(LTRIM(RTRIM(CD_CODI_ESP_TUME)), '') IS NULL
+             THEN 1 ELSE 0 END)                                       AS sin_especialidad,
+    COUNT(DISTINCT NULLIF(LTRIM(RTRIM(CD_CODI_ESP_TUME)), ''))        AS especialidades_distintas
+FROM dbo.TURNOS_MEDICOS
+WHERE FE_FECH_TUME >= CAST(GETDATE() AS date);
+
+-- (31d) Cierra el bloque 21b: ¿de dónde sale CD_CODI_ESP_CIT?
+--
+-- El driver la resuelve hoy con `especialidadPorServicio` del mappingJson,
+-- escrita a mano a partir de una muestra pequeña. Si cada servicio usa SIEMPRE
+-- la misma especialidad, esa tabla se puede generar de los datos en vez de
+-- adivinarla. Si un servicio usa varias, la regla es más fina y hay que verla.
+SELECT TOP 40
+       c.CD_CODI_SER_CIT                        AS servicio,
+       s.NO_NOMB_SER                            AS nombre_servicio,
+       COUNT(DISTINCT c.CD_CODI_ESP_CIT)        AS especialidades_distintas,
+       MIN(c.CD_CODI_ESP_CIT)                   AS esp_min,
+       MAX(c.CD_CODI_ESP_CIT)                   AS esp_max,
+       COUNT(*)                                 AS citas_90d
+FROM dbo.CITAS_MEDICAS c
+LEFT JOIN dbo.SERVICIOS s ON s.CD_CODI_SER = c.CD_CODI_SER_CIT
+WHERE c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+  AND c.FE_FECH_CIT <  DATEADD(day,   1, CAST(GETDATE() AS date))
+GROUP BY c.CD_CODI_SER_CIT, s.NO_NOMB_SER
+ORDER BY COUNT(*) DESC;
+
+-- (31e) ¿Y coincide la especialidad del TURNO con la de la CITA?
+-- Si coinciden casi siempre, el turno basta para decidirla y no hace falta
+-- ninguna tabla de homologación.
+SELECT
+    CASE WHEN t.CD_CODI_ESP_TUME = c.CD_CODI_ESP_CIT THEN 'COINCIDE'
+         WHEN t.CD_CODI_ESP_TUME IS NULL             THEN 'turno sin especialidad'
+         WHEN c.CD_CODI_ESP_CIT  IS NULL             THEN 'cita sin especialidad'
+         ELSE 'DIFIEREN' END                        AS resultado,
+    COUNT(*)                                        AS citas
+FROM dbo.TURNOS_MEDICOS t
+JOIN dbo.CITAS_MEDICAS c
+  ON  c.CD_CODI_MED_CIT = t.CD_MED_TUME
+  AND CAST(c.FE_FECH_CIT AS date) = CAST(t.FE_FECH_TUME AS date)
+  AND SUBSTRING(c.FE_HORA_CIT, 12, 5) >= CONVERT(varchar(5), t.FE_HOIN_TUME, 108)
+  AND SUBSTRING(c.FE_HORA_CIT, 12, 5) <  CONVERT(varchar(5), t.FE_HOFI_TUME, 108)
+WHERE t.FE_FECH_TUME >= DATEADD(day, -90, CAST(GETDATE() AS date))
+  AND t.FE_FECH_TUME <  DATEADD(day,   1, CAST(GETDATE() AS date))
+GROUP BY CASE WHEN t.CD_CODI_ESP_TUME = c.CD_CODI_ESP_CIT THEN 'COINCIDE'
+              WHEN t.CD_CODI_ESP_TUME IS NULL             THEN 'turno sin especialidad'
+              WHEN c.CD_CODI_ESP_CIT  IS NULL             THEN 'cita sin especialidad'
+              ELSE 'DIFIEREN' END
+ORDER BY COUNT(*) DESC;
+GO
+
+-- (31f) Si R_ESP_SER existe, ¿reproduce la relación especialidad↔servicio que
+-- muestran los datos? Va en su propio lote y protegido, porque si la tabla no
+-- existe una referencia directa haría fallar todo el bloque.
+IF OBJECT_ID('dbo.R_ESP_SER') IS NOT NULL
+    EXEC sp_executesql N'SELECT TOP 50 * FROM dbo.R_ESP_SER ORDER BY 1, 2;';
+ELSE
+    PRINT 'dbo.R_ESP_SER NO EXISTE — la especialidad no sale de ahí.';
+GO
+
+-- (31g) `NU_TIPO_TUME`: el driver descarta todo lo que no sea 0. Confirmar que
+-- sigue siendo cierto a futuro, ahora que sabemos que hay 119.480 turnos.
+-- `NU_TIPO_TUME` es tinyint (0..255): el -1 que marca los nulos hay que
+-- convertirlo a int antes, o desborda el tipo.
+SELECT ISNULL(CAST(NU_TIPO_TUME AS int), -1) AS tipo,
+       COUNT(*)                              AS turnos,
+       SUM(CASE WHEN FE_FECH_TUME >= CAST(GETDATE() AS date) THEN 1 ELSE 0 END) AS futuros
+FROM dbo.TURNOS_MEDICOS
+GROUP BY ISNULL(CAST(NU_TIPO_TUME AS int), -1)
+ORDER BY 1;
+
+-- =============================================================================
+-- RESULTADO DEL BLOQUE 31 (pendiente de ejecución):
+--
+--   (31a) tablas de especialidad que existen:
+--   (31b) distribución de servicios por turno:
+--   (31c) CD_CODI_ESP_TUME poblada:            distintas:
+--   (31d) ¿cada servicio usa una sola especialidad?
+--   (31e) turno vs cita — coinciden:
+--   (31f) R_ESP_SER existe:
+--   (31g) tipos de turno a futuro:
+--
+-- QUÉ SE DECIDE CON ESTO
+--   · Si (31b) dice que casi todos los turnos son de UN servicio ⇒ el cupo
+--     hereda el servicio del turno y basta con homologar servicio↔turno. Es el
+--     escenario bueno: `DoctorProfile.serviceId` se reemplaza por algo que sale
+--     del propio HIS y no hay que tocar el modelo de AgenIA.
+--   · Si (31b) dice que los turnos MEZCLAN ⇒ el cupo es "médico + hora" y el
+--     servicio lo elige el paciente. Eso cambia el modelo de disponibilidad de
+--     AgenIA (hoy `ScheduleSlot.serviceId` es obligatorio) y es una decisión
+--     de producto, no solo de espejo.
+--   · (31d) decide si `especialidadPorServicio` del mappingJson se puede
+--     GENERAR de los datos en vez de mantenerse a mano — hoy es una tabla
+--     escrita a partir de una muestra de dos servicios.
+--   · (31e)+(31f) dicen cuál es la fuente de verdad de la especialidad: el
+--     turno, el servicio, o una tabla de relación.
+-- =============================================================================
+
+-- =============================================================================
+-- BLOQUE 32 — La regla de la especialidad: servicio ∩ médico
+--
+-- POR QUÉ ESTE BLOQUE
+-- El bloque 31d mostró que 36 de los 40 servicios principales usan SIEMPRE la
+-- misma especialidad, y que los 4 que no tienen una explicación: el mismo
+-- "Examen clínico de primera vez" (S36101) sale como 461 cuando lo hace la
+-- odontóloga y como 572 cuando lo hace la higienista. La especialidad no la
+-- decide el servicio: la decide QUIÉN atiende.
+--
+-- Y 31a/31f confirmaron las dos piezas que faltaban:
+--   · R_ESP_SER  (CD_CODI_SER_RES → CD_CODI_ESP_RES): desde qué especialidades
+--     se puede prestar un servicio. Es N:M — el servicio '09' apunta a cuatro.
+--   · R_MEDI_ESPE (CD_CODI_MED_RMP → CD_CODI_ESP_RMP): las del médico.
+--
+-- HIPÓTESIS A PROBAR:
+--     especialidad de la cita = R_ESP_SER(servicio) ∩ R_MEDI_ESPE(médico)
+--
+-- Si la intersección da EXACTAMENTE UNA y coincide con la CD_CODI_ESP_CIT real,
+-- `especialidadPorServicio` deja de ser una tabla escrita a mano en el
+-- mappingJson —hoy hecha a partir de una muestra de dos servicios— y pasa a ser
+-- una regla que el driver resuelve contra el propio HIS. Cierra el bloque 21b.
+--
+-- ⚠️ SOLO LECTURA.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- (32a) 🚧 PRIMERO LO QUE PUEDE TUMBAR TODO: ¿R_ESP_SER cubre los servicios
+-- que de verdad se agendan?
+--
+-- La muestra del bloque 31f devolvió códigos como '04', '05', '25' — que no se
+-- parecen a los que usan las citas ('S39141', 'SCITOD'). Puede que fuera solo
+-- efecto del ORDER BY (los numéricos ordenan primero), o puede que R_ESP_SER
+-- viva en otra familia de códigos. Si no cubre los servicios reales, la regla
+-- no sirve y no hay nada más que mirar en este bloque.
+SELECT
+    COUNT(*)                                                         AS servicios_con_citas_90d,
+    SUM(CASE WHEN r.CD_CODI_SER_RES IS NULL THEN 1 ELSE 0 END)       AS sin_fila_en_R_ESP_SER
+FROM (
+    SELECT DISTINCT c.CD_CODI_SER_CIT AS servicio
+    FROM dbo.CITAS_MEDICAS c
+    WHERE c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+      AND c.FE_FECH_CIT <  DATEADD(day,   1, CAST(GETDATE() AS date))
+) s
+LEFT JOIN (SELECT DISTINCT CD_CODI_SER_RES FROM dbo.R_ESP_SER) r
+       ON r.CD_CODI_SER_RES = s.servicio;
+
+-- (32b) Lo mismo por el lado del médico: ¿R_MEDI_ESPE cubre a los 30 que
+-- tienen turnos futuros? Un médico sin especialidades declaradas rompe la
+-- intersección igual que un servicio sin filas.
+SELECT
+    COUNT(*)                                                         AS medicos_con_turnos,
+    SUM(CASE WHEN r.CD_CODI_MED_RMP IS NULL THEN 1 ELSE 0 END)       AS sin_fila_en_R_MEDI_ESPE
+FROM (
+    SELECT DISTINCT CD_MED_TUME AS medico
+    FROM dbo.TURNOS_MEDICOS
+    WHERE FE_FECH_TUME >= CAST(GETDATE() AS date)
+) m
+LEFT JOIN (SELECT DISTINCT CD_CODI_MED_RMP FROM dbo.R_MEDI_ESPE) r
+       ON r.CD_CODI_MED_RMP = m.medico;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- (32c) 🔑 LA PRUEBA: ¿la intersección predice la especialidad real?
+--
+-- Se contrasta contra las citas de verdad de los últimos 90 días. Una sola
+-- tabla pequeña con el veredicto.
+-- ═══════════════════════════════════════════════════════════════════════════
+WITH interseccion AS (
+    SELECT rs.CD_CODI_SER_RES              AS servicio,
+           rm.CD_CODI_MED_RMP              AS medico,
+           COUNT(*)                        AS cuantas,
+           MIN(rs.CD_CODI_ESP_RES)         AS unica
+    FROM dbo.R_ESP_SER rs
+    JOIN dbo.R_MEDI_ESPE rm
+      ON rm.CD_CODI_ESP_RMP = rs.CD_CODI_ESP_RES
+    GROUP BY rs.CD_CODI_SER_RES, rm.CD_CODI_MED_RMP
+)
+SELECT
+    CASE
+        WHEN i.servicio IS NULL              THEN '4. sin interseccion (no se puede decidir)'
+        WHEN i.cuantas > 1                   THEN '3. ambigua (la interseccion deja varias)'
+        WHEN i.unica = c.CD_CODI_ESP_CIT     THEN '1. ACIERTA (una sola, y es la correcta)'
+        ELSE                                      '2. FALLA (una sola, pero es otra)'
+    END                                      AS veredicto,
+    COUNT(*)                                 AS citas
+FROM dbo.CITAS_MEDICAS c
+LEFT JOIN interseccion i
+       ON i.servicio = c.CD_CODI_SER_CIT
+      AND i.medico   = c.CD_CODI_MED_CIT
+WHERE c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+  AND c.FE_FECH_CIT <  DATEADD(day,   1, CAST(GETDATE() AS date))
+GROUP BY
+    CASE
+        WHEN i.servicio IS NULL              THEN '4. sin interseccion (no se puede decidir)'
+        WHEN i.cuantas > 1                   THEN '3. ambigua (la interseccion deja varias)'
+        WHEN i.unica = c.CD_CODI_ESP_CIT     THEN '1. ACIERTA (una sola, y es la correcta)'
+        ELSE                                      '2. FALLA (una sola, pero es otra)'
+    END
+ORDER BY 1;
+
+-- (32d) Y el detalle de los CUATRO servicios que el bloque 31d dejó ambiguos.
+-- Para cada uno, por médico: qué dice la intersección y qué se escribió de
+-- verdad. Es donde se ve si la regla los resuelve o no.
+WITH interseccion AS (
+    SELECT rs.CD_CODI_SER_RES AS servicio, rm.CD_CODI_MED_RMP AS medico,
+           COUNT(*) AS cuantas, MIN(rs.CD_CODI_ESP_RES) AS unica
+    FROM dbo.R_ESP_SER rs
+    JOIN dbo.R_MEDI_ESPE rm ON rm.CD_CODI_ESP_RMP = rs.CD_CODI_ESP_RES
+    GROUP BY rs.CD_CODI_SER_RES, rm.CD_CODI_MED_RMP
+)
+SELECT c.CD_CODI_SER_CIT           AS servicio,
+       c.CD_CODI_MED_CIT           AS medico,
+       c.CD_CODI_ESP_CIT           AS esp_real,
+       i.cuantas                   AS esp_que_deja_la_interseccion,
+       i.unica                     AS esp_que_predice,
+       COUNT(*)                    AS citas
+FROM dbo.CITAS_MEDICAS c
+LEFT JOIN interseccion i
+       ON i.servicio = c.CD_CODI_SER_CIT AND i.medico = c.CD_CODI_MED_CIT
+WHERE c.CD_CODI_SER_CIT IN ('S36101', 'S35104', 'I890301AG', 'S35102')
+  AND c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+  AND c.FE_FECH_CIT <  DATEADD(day,   1, CAST(GETDATE() AS date))
+GROUP BY c.CD_CODI_SER_CIT, c.CD_CODI_MED_CIT, c.CD_CODI_ESP_CIT, i.cuantas, i.unica
+ORDER BY c.CD_CODI_SER_CIT, COUNT(*) DESC;
+
+-- (32e) El catálogo legible de especialidades. Hace falta para poner nombre a
+-- los códigos ('000', '461', '572'…) en el mappingJson y en el panel — hoy son
+-- números sueltos que nadie puede interpretar sin abrir la base del hospital.
+SELECT CD_CODI_ESP AS codigo, NO_NOMB_ESP AS nombre, TX_ACTI_ESP AS activa
+FROM dbo.ESPECIALIDADES
+WHERE CD_CODI_ESP IN (
+    SELECT DISTINCT CD_CODI_ESP_CIT
+    FROM dbo.CITAS_MEDICAS
+    WHERE FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+      AND FE_FECH_CIT <  DATEADD(day,   1, CAST(GETDATE() AS date))
+)
+ORDER BY CD_CODI_ESP;
+
+-- =============================================================================
+-- RESULTADO DEL BLOQUE 32 (pendiente de ejecución):
+--
+--   (32a) servicios sin fila en R_ESP_SER:
+--   (32b) médicos sin fila en R_MEDI_ESPE:
+--   (32c) veredicto de la regla:
+--   (32d) los cuatro ambiguos:
+--   (32e) nombres de las especialidades:
+--
+-- QUÉ SE DECIDE CON ESTO
+--   · Si (32a) o (32b) devuelven muchos huecos ⇒ la regla no se puede aplicar
+--     y `especialidadPorServicio` sigue siendo una tabla mantenida a mano; en
+--     ese caso se GENERA del bloque 31d (36 de 40 servicios son inequívocos) y
+--     se resuelven los 4 restantes uno a uno.
+--   · Si (32c) sale mayoritariamente "ACIERTA" ⇒ el driver puede resolver la
+--     especialidad contra el HIS y esa tabla del mappingJson desaparece.
+--   · (32e) da las etiquetas legibles para el panel y para la homologación —
+--     sin ellas, un operador ve '461' y no sabe que es odontología.
+-- =============================================================================

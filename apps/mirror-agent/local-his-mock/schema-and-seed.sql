@@ -324,13 +324,58 @@ INSERT INTO dbo.R_PAC_EPS (NU_HIST_PAC_RPE, CD_NIT_EPS_RPE, CD_CODI_REG_RPE, NU_
 ('1035445566','900156264','C',1);
 GO
 
-CREATE TABLE dbo.R_ESP_SER ( -- placeholder, esquema real no confirmado (bloque 21)
+-- ✅ Esquema CONFIRMADO contra ESEHSVP (bloque 31a). La relación es N:M: un
+-- servicio puede prestarse desde varias especialidades (el servicio '09' del
+-- hospital apunta a cuatro). NO decide por sí sola qué especialidad va en la
+-- cita — hay que cruzarla con las del médico (R_MEDI_ESPE).
+CREATE TABLE dbo.R_ESP_SER (
     CD_CODI_SER_RES varchar(12) NOT NULL,
     CD_CODI_ESP_RES varchar(3)  NOT NULL,
     CONSTRAINT PK_R_ESP_SER PRIMARY KEY (CD_CODI_SER_RES, CD_CODI_ESP_RES)
 );
 GO
-INSERT INTO dbo.R_ESP_SER VALUES ('S39141-1','000'),('SCITOD','461'),('I890301AG','000');
+INSERT INTO dbo.R_ESP_SER VALUES
+    ('S39141-1','000'),('SCITOD','461'),('I890301AG','000'),
+    -- Caso AMBIGUO reproducido a propósito: el mismo servicio se presta desde
+    -- odontología (461) y desde higiene oral (572). Es uno de los cuatro que
+    -- el bloque 31d encontró con dos especialidades, y el que prueba que la
+    -- especialidad la decide QUIÉN atiende, no el servicio.
+    ('S36101','461'),('S36101','572');
+
+-- ✅ Esquema CONFIRMADO contra ESEHSVP (bloque 31a). Especialidades del médico.
+CREATE TABLE dbo.R_MEDI_ESPE (
+    CD_CODI_MED_RMP varchar(4) NOT NULL,
+    CD_CODI_ESP_RMP varchar(3) NOT NULL,
+    CONSTRAINT PK_R_MEDI_ESPE PRIMARY KEY (CD_CODI_MED_RMP, CD_CODI_ESP_RMP)
+);
+GO
+INSERT INTO dbo.R_MEDI_ESPE VALUES
+    ('76','000'),('91-1','000'),('OD05','461');
+
+-- ✅ Esquema CONFIRMADO contra ESEHSVP (bloque 31a). Catálogo legible de
+-- especialidades: hace falta para poner nombre a los códigos ('000', '461'…)
+-- en el mappingJson y en el panel.
+CREATE TABLE dbo.ESPECIALIDADES (
+    CD_CODI_ESP      varchar(3)  NOT NULL,
+    NO_NOMB_ESP      varchar(80)     NULL,
+    NU_AUOI_ESP      tinyint         NULL,
+    NU_AUCI_ESP      tinyint         NULL,
+    NU_NIVE_ESP      tinyint         NULL,
+    TX_ACTI_ESP      varchar(1)  NOT NULL DEFAULT 'S',
+    NU_GEOOIN_ESP    tinyint         NULL,
+    CD_CODIALTER_ESP varchar(10)     NULL,
+    TX_QUIM_ESP      tinyint         NULL,
+    TX_CODI_SERV_EPS varchar(20)     NULL,
+    NU_GENRDA_ESP    int             NULL,
+    CONSTRAINT PK_ESPECIALIDADES PRIMARY KEY (CD_CODI_ESP)
+);
+GO
+INSERT INTO dbo.ESPECIALIDADES (CD_CODI_ESP, NO_NOMB_ESP, TX_ACTI_ESP) VALUES
+    ('000','MEDICINA GENERAL','S'),
+    ('461','ODONTOLOGIA','S'),
+    ('572','HIGIENE ORAL','S'),
+    ('328','PROMOCION Y PREVENCION','S'),
+    ('590','PSICOLOGIA','S');
 GO
 
 -- -----------------------------------------------------------------------------

@@ -427,6 +427,59 @@ cubre.
    resuelve dos preguntas de una línea: si existen de verdad claves
    (médico+hora) duplicadas, y si `NU_NUME_MOVI_CIT` llega a ser NULL.
 
+0d. **Bloque 32 preparado, pendiente de correr — la regla de la especialidad.**
+   El bloque 31 dejó `CD_CODI_ESP_CIT` a medio cerrar: 36 de los 40 servicios
+   principales usan siempre la misma especialidad, pero cuatro usan dos. Y
+   tienen explicación: el mismo "Examen clínico de primera vez" (`S36101`) sale
+   como 461 cuando lo hace la odontóloga y como 572 cuando lo hace la
+   higienista. **La especialidad no la decide el servicio: la decide quién
+   atiende.**
+
+   El 31a confirmó las dos piezas que faltaban — `R_ESP_SER` (desde qué
+   especialidades se presta un servicio, N:M) y `R_MEDI_ESPE` (las del médico)
+   — así que la hipótesis a probar es:
+
+       especialidad = R_ESP_SER(servicio) ∩ R_MEDI_ESPE(médico)
+
+   El bloque la contrasta contra las citas reales de 90 días. Si acierta,
+   `especialidadPorServicio` deja de ser una tabla escrita a mano en el
+   mappingJson (hoy hecha desde una muestra de dos servicios) y pasa a ser una
+   regla que el driver resuelve contra el propio HIS. Cierra el bloque 21b.
+
+   Empieza por lo que puede tumbarlo todo: si `R_ESP_SER` no cubre los
+   servicios que de verdad se agendan, no hay regla. La muestra del 31f
+   devolvió códigos ('04', '05', '25') que no se parecen a los de las citas —
+   puede ser solo efecto del ORDER BY, o puede que vivan en otra familia.
+
+   ✔ La lógica ya está probada contra el mock con el caso ambiguo real
+   sembrado: `S36101` × `OD05` → la intersección deja una sola especialidad
+   (461) y coincide con la cita.
+
+0c. **Bloque 31 preparado, pendiente de correr — ¿de qué servicio es un cupo?**
+   Lo abre el hallazgo 30f: 47 médicos prestan más de un servicio (uno, once), y
+   AgenIA le pone a cada cupo el ÚNICO servicio del médico porque
+   `TURNOS_MEDICOS` no lleva servicio. Hoy eso significa que de los once que
+   presta ese médico el chatbot solo puede ofrecer uno, y que si el paciente
+   reserva, `CD_CODI_SER_CIT` viaja con el servicio equivocado — el mismo que
+   determina el convenio de facturación.
+
+   La pregunta decisiva del bloque no es cuántos servicios presta el médico
+   (ya se sabe) sino **si un mismo bloque de turno mezcla servicios**. Cada
+   cita se asocia a SU turno por médico, fecha y hora dentro del rango, para
+   no confundir el turno de la mañana con el de la tarde. Dos desenlaces muy
+   distintos: si cada turno es de un servicio, el cupo lo hereda y no hay que
+   tocar el modelo de AgenIA; si los turnos mezclan, el cupo es "médico+hora"
+   y el servicio lo elige el paciente — y eso cambia el modelo de
+   disponibilidad (`ScheduleSlot.serviceId` es obligatorio hoy), que ya es
+   decisión de producto y no solo de espejo.
+
+   De paso cierra el bloque 21b, aplazado hace tiempo: de dónde sale
+   `CD_CODI_ESP_CIT`. El driver la resuelve con `especialidadPorServicio` del
+   mappingJson, escrita a mano a partir de una muestra de dos servicios; si
+   cada servicio usa siempre la misma especialidad, esa tabla se puede generar
+   de los datos. También descubre si `R_ESP_SER` existe siquiera — no salió en
+   el volcado del bloque 28 porque no estaba en su lista.
+
 0a. **Bloque 30 preparado, pendiente de correr** — el insumo de la
    homologación. `MirrorEntityMap` es la tabla de equivalencias entre los
    médicos/servicios de AgenIA y los códigos del hospital, y **hoy no existe
