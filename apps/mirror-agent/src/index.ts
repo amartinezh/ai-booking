@@ -137,7 +137,11 @@ async function main() {
     for (;;) {
       const r = await runInbound(engine, reporter);
       if (r.pushed > 0) {
-        console.log(`[mirror-agent] HIS->AgenIA: ${r.pushed} cambio(s) subidos.`);
+        const noAplicados =
+          r.noAplicados > 0 ? `, ${r.noAplicados} SIN aplicar` : '';
+        console.log(
+          `[mirror-agent] HIS->AgenIA: ${r.pushed} cambio(s) subidos${noAplicados}.`,
+        );
       }
       erroresEntrada = r.hadErrors ? erroresEntrada + 1 : 0;
       await dormir(config.pollIntervalMs);

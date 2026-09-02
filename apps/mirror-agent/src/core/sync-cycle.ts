@@ -70,13 +70,23 @@ export async function runOutbound(
 export async function runInbound(
   engine: Pick<MirrorEngine, 'detectAndPushChanges'>,
   reporter: FailureReporter,
-): Promise<{ pushed: number; hadErrors: boolean }> {
+): Promise<{ pushed: number; noAplicados: number; hadErrors: boolean }> {
   try {
     const r = await engine.detectAndPushChanges();
-    return { pushed: r.pushed, hadErrors: false };
+    // Un lote que el servidor no pudo aplicar NO es una vuelta limpia, aunque
+    // la llamada HTTP haya devuelto 200.
+    if (r.errores > 0) {
+      reporter.report(
+        'HIS->AgenIA',
+        `${r.errores} de ${r.pushed} cambio(s) del hospital no se pudieron ` +
+          `aplicar en AgenIA. No se reintentan (el cursor es una foto): ` +
+          `revisar SyncAudit con outcome ERROR.`,
+      );
+    }
+    return { pushed: r.pushed, noAplicados: r.errores, hadErrors: r.errores > 0 };
   } catch (error) {
     reporter.report('HIS->AgenIA', mensajeDe(error));
-    return { pushed: 0, hadErrors: true };
+    return { pushed: 0, noAplicados: 0, hadErrors: true };
   }
 }
 

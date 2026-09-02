@@ -7,6 +7,7 @@ import {
   formatFeHoraCit,
   fechaCitaLocal,
   fechaLiteralSql,
+  desenlaceDeAtencion,
   mapSexo,
   resolveConvenio,
   resolveEspecialidad,
@@ -457,7 +458,19 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         if (fila.propia) continue;
         events.push(this.eventoDeCita('INSERT', clave, fila, ahora));
       } else if (previo.e !== fila.e && dentro(fila)) {
-        events.push(this.eventoDeCita('ATTENDANCE', clave, fila, ahora));
+        // Solo se reporta el desenlace que sabemos traducir al vocabulario de
+        // AgenIA. El estado 2 existe y nadie ha confirmado qué significa
+        // (MAPEO_HIS.md §2.1): inventarle una asistencia a un paciente es
+        // peor que no escribirla. Se avisa para que no sea un silencio.
+        if (desenlaceDeAtencion(fila.e)) {
+          events.push(this.eventoDeCita('ATTENDANCE', clave, fila, ahora));
+        } else {
+          console.warn(
+            `[driver cnt-sanvicente-anserma] ${clave}: NU_ESTA_CIT pasó de ` +
+              `${previo.e} a ${fila.e}, un desenlace sin significado confirmado. ` +
+              `No se reporta.`,
+          );
+        }
       }
     }
 
@@ -504,7 +517,12 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         patientDocument: fila.h ?? undefined,
         // La hora del HIS es local; el protocolo viaja en UTC (plan §8).
         startTimeIso: feHoraCitAIso(feHora, this.timeZone),
-        attendanceStatus: op === 'ATTENDANCE' ? String(fila.e) : undefined,
+        // 🌐 El protocolo viaja en el vocabulario de AgenIA, no en el del
+        // hospital — igual que las horas viajan en UTC. Antes se mandaba
+        // `String(fila.e)`, el código crudo del HIS, contra un enum de Prisma
+        // que solo entiende PENDING/ATTENDED/NO_SHOW.
+        attendanceStatus:
+          op === 'ATTENDANCE' ? (desenlaceDeAtencion(fila.e) ?? undefined) : undefined,
       },
     };
   }

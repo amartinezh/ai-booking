@@ -800,7 +800,27 @@ describe('detectChanges', () => {
     );
 
     expect(r.events[0].op).toBe('ATTENDANCE');
-    expect(r.events[0].payload.attendanceStatus).toBe('1');
+    // 🌐 Traducido al vocabulario de AgenIA, no el código crudo del HIS.
+    // Esta prueba afirmaba `'1'` — el valor que el driver mandaba y que
+    // `Appointment.attendanceStatus` (enum de Prisma) nunca podría aceptar.
+    expect(r.events[0].payload.attendanceStatus).toBe('ATTENDED');
+  });
+
+  it('el estado 2, cuyo significado nadie confirmó, NO se reporta', async () => {
+    // MAPEO_HIS.md §2.1 lo llama "el raro" y deja su disparador sin
+    // descubrir. Inventarle una asistencia a un paciente es peor que no
+    // escribirla — y el no-show real ni siquiera pasa por aquí: llega como
+    // cancelación con motivo NA.
+    const avisos = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const driver = conCitas([filaHis({ estado: 2 })]);
+
+    const r = await driver.detectChanges(
+      foto({ '76|2026/09/03 07:00': {} }) as any,
+    );
+
+    expect(r.events).toEqual([]);
+    expect(avisos).toHaveBeenCalledWith(expect.stringMatching(/sin significado confirmado/));
+    avisos.mockRestore();
   });
 
   // 🔁 ANTI-ECO: sin esto, cada cita que el agente escribe volvería como

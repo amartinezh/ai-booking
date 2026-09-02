@@ -196,7 +196,7 @@ describe('runSyncCycle', () => {
 
     const r = await runInbound(engine, reporter);
 
-    expect(r).toEqual({ pushed: 0, hadErrors: true });
+    expect(r).toEqual({ pushed: 0, noAplicados: 0, hadErrors: true });
     expect(lines[0]).toContain('HIS->AgenIA: HIS caído');
   });
 

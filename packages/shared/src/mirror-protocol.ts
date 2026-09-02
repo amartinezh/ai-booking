@@ -217,6 +217,22 @@ export interface ChangesResult {
   applied: number;
   skipped: number; // ya aplicados antes (idempotencia) — no es un error
   conflicts: number;
+  /**
+   * Eventos que NO se pudieron aplicar.
+   *
+   * Existe porque su ausencia hacía invisible el peor tipo de fallo. El
+   * servidor atrapaba la excepción, dejaba una fila ERROR en `SyncAudit` y
+   * devolvía 200 con `applied+skipped+conflicts` — un lote entero podía
+   * fracasar y el agente lo leía como éxito. Como el cursor de detección es
+   * una FOTO, no una marca de tiempo, avanzarlo significa que ese cambio no
+   * se vuelve a ver nunca: se pierde en silencio hasta la reconciliación
+   * diaria.
+   *
+   * No hace el evento reintentable —eso el modelo de instantánea no lo
+   * permite— pero sí lo hace VISIBLE, que es la diferencia entre un problema
+   * y un problema que nadie sabe que tiene.
+   */
+  errors: number;
 }
 
 // ── POST /mirror/heartbeat ──────────────────────────────────────────────────

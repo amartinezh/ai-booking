@@ -317,6 +317,54 @@ el arreglo del defecto —que el `commit` ocurre DESPUÉS del alta, no antes—;
 para eso el doble de conexión ahora registra cuántas escrituras llevaba hechas
 al confirmar. 253 tests en total, game-day 19/19.
 
+## ✅ La asistencia entrante ya no se pierde en silencio (2026-09-01)
+
+Nunca se aplicó ni una. Tres capas, cada una suficiente por sí sola para
+romperlo:
+
+1. **El evento llegaba sin identidad.** El driver reporta la cita por médico y
+   hora —no conoce los ids de AgenIA, no puede—, así que
+   `agenIAAppointmentId` venía siempre vacío y `applyAttendanceUpdate` lanzaba.
+   La cancelación entrante ya resolvía esto por el cupo desde hacía tiempo; la
+   asistencia hace ahora lo mismo.
+2. **El evento llegaba en el idioma equivocado.** Se enviaba
+   `String(fila.e)` — el código crudo del HIS, `'1'` — contra
+   `Appointment.attendanceStatus`, que es un enum de Prisma
+   (`PENDING | ATTENDED | NO_SHOW`). Aunque hubiera llegado con id, el UPDATE
+   habría reventado igual. Ahora se traduce en la frontera del driver
+   (`desenlaceDeAtencion()`), igual que las horas se convierten ahí.
+3. **Y el fallo era invisible.** `applyBatch` atrapaba la excepción, dejaba una
+   fila `ERROR` en `SyncAudit` y devolvía **200** con
+   `applied+skipped+conflicts`: no había dónde reportar un fallo. El agente lo
+   leía como una vuelta limpia y avanzaba el cursor.
+
+Efecto acumulado: ~235 eventos al día descartados, y
+`Appointment.attendanceStatus` en `PENDING` para siempre — nadie sabía quién
+había asistido.
+
+**Lo que NO se adivina:** el estado `2` existe y nadie ha confirmado qué lo
+dispara (MAPEO_HIS.md §2.1). Se devuelve `null` y no se reporta el evento, con
+un aviso en el log. Escribirle mal la asistencia a un paciente es peor que no
+escribirla.
+
+**Y un hallazgo que cambia el mapa:** el "no asistió" del hospital **no es un
+estado distinto**. Es un DELETE de `CITAS_MEDICAS` + archivo en
+`CITAS_ANULADAS` con motivo `NA` (285 casos históricos, MAPEO_HIS.md §2.2). Al
+agente le llega como una CANCELACIÓN, no como un desenlace. Así que hoy un
+paciente que no se presentó queda en AgenIA como `CANCELLED`, no como
+`NO_SHOW`. Distinguirlos exige leer `CD_CODI_MOTI_CIAN` de la fila archivada,
+que el driver todavía no hace — **pendiente nuevo, anotado abajo**.
+
+**Sobre la visibilidad:** `ChangesResult` gana `errors`, el servidor lo cuenta
+y el agente lo dice en el log. No hace el evento reintentable —el cursor es una
+FOTO, no una marca de tiempo, así que "volver a pedir el evento 7" no existe y
+la entrada es por diseño *a lo sumo una vez*, con la reconciliación diaria como
+red— pero sí lo hace VISIBLE, que es la diferencia entre un problema y un
+problema que nadie sabe que tiene.
+
+Once pruebas nuevas entre driver y servidor. 943 en total (545 API, 258
+agente, 140 shared), game-day 19/19.
+
 ## ⏳ Pendientes de este driver
 
 0. **Bloque 29 preparado, pendiente de correr** (`sql/FASE0_DESCUBRIMIENTO_HIS.sql`)
@@ -331,6 +379,16 @@ al confirmar. 253 tests en total, game-day 19/19.
    comparte el intervalo de 5s del long-poll de salida sin motivo. De paso
    resuelve dos preguntas de una línea: si existen de verdad claves
    (médico+hora) duplicadas, y si `NU_NUME_MOVI_CIT` llega a ser NULL.
+
+0b. **Distinguir "no asistió" de "canceló" en la entrada.** El no-show del
+   hospital llega como una cancelación (DELETE + `CITAS_ANULADAS` con motivo
+   `NA`), así que AgenIA lo guarda como `CANCELLED` en vez de `NO_SHOW`. El
+   driver ya escribe `CD_CODI_MOTI_CIAN` al cancelar, pero no lo LEE al
+   detectar una cancelación entrante — habría que correlacionar la fila que
+   desaparece con la recién archivada (mismo médico+hora+historia,
+   `FE_ELAB_CIAN` reciente, como describe MAPEO_HIS.md §2.2) y mapear `NA` →
+   `NO_SHOW`. No es urgente: la cita queda cerrada de todos modos y el cupo
+   liberado correctamente; lo que se pierde es la estadística de inasistencia.
 
 1. **Encontrar la fuente de "Asignada Por"** (bloque 24) — búsqueda directa por nombre de columna dio vacío; candidatos: `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO`, `USUARIO`. Si no aparece en ninguna tabla, la alternativa es pedir al hospital un usuario/login propio de la aplicación (`AGENIA`/`WHATSAPP`) para que quede registrado como origen al insertar.
 2. **Decidir el código de motivo de cancelación del agente:** reutilizar `WB` (CANCELADO WEB, ya existe, 90 usos históricos) o pedir uno dedicado (ej. `WA`) — mismo espíritu que "Asignada Por", para que el hospital distinga sus reportes.

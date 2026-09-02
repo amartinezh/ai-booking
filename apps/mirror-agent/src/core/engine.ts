@@ -288,16 +288,32 @@ export class MirrorEngine {
    * canonicalizado. El driver ya tradujo TODO antes de este punto — el
    * motor no interpreta nada específico del HIS.
    */
-  async detectAndPushChanges(): Promise<{ pushed: number }> {
+  async detectAndPushChanges(): Promise<{ pushed: number; errores: number }> {
     const cursor = await this.state.getDriverCursor();
     const { events, nextCursor } = await this.driver.detectChanges(cursor);
 
+    let errores = 0;
     if (events.length > 0) {
-      await this.api.pushChanges({ events });
+      const r = await this.api.pushChanges({ events });
+      errores = r?.errors ?? 0;
     }
 
+    // ⚠️ El cursor avanza aunque el servidor no haya podido aplicar todo.
+    //
+    // No es un descuido: el cursor es una FOTO del HIS, no una marca de
+    // tiempo. No existe "volver a pedir el evento 7" — la vuelta siguiente
+    // compara el estado nuevo contra este, y el cambio que ya se vio no
+    // reaparece. Retroceder el cursor tampoco serviría: volvería a comparar
+    // contra una foto vieja y reportaría de nuevo TODO lo ocurrido desde
+    // entonces, no solo lo que falló.
+    //
+    // Así que la entrada es, por diseño, "a lo sumo una vez", y la red de
+    // seguridad es la reconciliación diaria. Lo que NO puede pasar es que
+    // además sea invisible: por eso se devuelve el número de errores, para
+    // que el bucle lo diga en el log en vez de tratar un lote fracasado como
+    // una vuelta normal.
     await this.state.setDriverCursor(nextCursor);
-    return { pushed: events.length };
+    return { pushed: events.length, errores };
   }
 
   /**

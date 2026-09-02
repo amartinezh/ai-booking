@@ -116,6 +116,39 @@ export function fechaCitaLocal(iso: string, timeZone: string): string {
 }
 
 /**
+ * `NU_ESTA_CIT` traducido al vocabulario de AgenIA.
+ *
+ * ═══ Por qué existe ═══
+ * El protocolo canónico viaja en el idioma de AgenIA, no en el del HIS — igual
+ * que las horas viajan en UTC y se convierten aquí, en la frontera. El driver
+ * mandaba `String(fila.e)`, o sea el código crudo del hospital ('1', '2'), y
+ * al otro lado `Appointment.attendanceStatus` es un enum de Prisma
+ * (`PENDING | ATTENDED | NO_SHOW`). Aunque el evento hubiera llegado completo,
+ * escribir '1' ahí habría reventado igual.
+ *
+ * ═══ Lo que se sabe y lo que no ═══
+ * · `0` = cita vigente. No es un desenlace: no hay nada que reportar.
+ * · `1` = atendida. Confirmado: las citas históricas en estado 1 siguen siendo
+ *   filas únicas de CITAS_MEDICAS, nunca aparecen en CITAS_ANULADAS.
+ * · `2` = existe pero es raro, y NADIE ha confirmado qué lo dispara
+ *   (MAPEO_HIS.md §2.1). Se devuelve `null` en vez de adivinar: escribir mal
+ *   la asistencia de un paciente es peor que no escribirla.
+ *
+ * ═══ Y el "no asistió" NO pasa por aquí ═══
+ * Contra lo que sugiere el nombre, el no-show del hospital no es un estado
+ * distinto: es un DELETE de CITAS_MEDICAS + archivo en CITAS_ANULADAS con
+ * motivo `NA` (285 casos históricos). Al agente le llega como una
+ * CANCELACIÓN, no como un desenlace de atención. Distinguir "canceló" de "no
+ * se presentó" exige leer `CD_CODI_MOTI_CIAN` de la fila archivada, que hoy
+ * no se lee — anotado en ESTADO.md, no se resuelve aquí.
+ */
+export function desenlaceDeAtencion(
+  estado: number,
+): 'ATTENDED' | null {
+  return estado === 1 ? 'ATTENDED' : null;
+}
+
+/**
  * Una fecha local (`YYYY-MM-DD`) como literal `YYYYMMDD` para SQL Server.
  *
  * ═══ Por qué no se manda un `Date` ═══

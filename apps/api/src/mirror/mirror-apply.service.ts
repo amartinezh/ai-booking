@@ -12,6 +12,13 @@ import { CanonicalChangeEvent, ChangesResult } from './dto/mirror.types';
  * tenant, disponibilidad) se respeten igual que en el flujo de WhatsApp — ver
  * PLAN_ESPEJO_HOSPITAL.md §5.1c.
  */
+/**
+ * Vocabulario que `Appointment.attendanceStatus` acepta (enum de Prisma).
+ * El driver traduce el código de su HIS a esto en su frontera; aquí solo se
+ * comprueba, porque un enum inválido revienta el UPDATE.
+ */
+const ATTENDANCE_VALIDOS = new Set(['PENDING', 'ATTENDED', 'NO_SHOW']);
+
 @Injectable()
 export class MirrorApplyService {
   private readonly logger = new Logger(MirrorApplyService.name);
@@ -25,7 +32,12 @@ export class MirrorApplyService {
     organizationId: string,
     events: CanonicalChangeEvent[],
   ): Promise<ChangesResult> {
-    const result: ChangesResult = { applied: 0, skipped: 0, conflicts: 0 };
+    const result: ChangesResult = {
+      applied: 0,
+      skipped: 0,
+      conflicts: 0,
+      errors: 0,
+    };
 
     // Eventos procesados en orden de llegada: si uno falla, los siguientes
     // igual se intentan — un evento malo no debe bloquear el resto del lote
@@ -37,6 +49,9 @@ export class MirrorApplyService {
         else if (outcome === 'CONFLICT') result.conflicts++;
         else result.applied++;
       } catch (error: any) {
+        // Se cuenta, además de auditarse. Sin el contador, el agente recibía
+        // 200 y no tenía forma de saber que la mitad del lote se había caído.
+        result.errors++;
         this.logger.error(
           `Error aplicando evento ${event.eventId} (org ${organizationId}, ${event.entityType}/${event.op}): ${error?.message}`,
         );
@@ -60,7 +75,7 @@ export class MirrorApplyService {
       return 'SKIPPED';
     }
 
-    let outcome: 'APPLIED' | 'CONFLICT' = 'APPLIED';
+    let outcome: 'APPLIED' | 'CONFLICT' | 'SKIPPED' = 'APPLIED';
 
     switch (event.entityType) {
       case 'APPOINTMENT':
@@ -121,7 +136,7 @@ export class MirrorApplyService {
   private async applyAppointmentEvent(
     organizationId: string,
     event: CanonicalChangeEvent,
-  ): Promise<'APPLIED' | 'CONFLICT'> {
+  ): Promise<'APPLIED' | 'CONFLICT' | 'SKIPPED'> {
     switch (event.op) {
       case 'INSERT':
         return this.applyAppointmentCreate(organizationId, event);
@@ -279,7 +294,9 @@ export class MirrorApplyService {
         // a ofrecerse por WhatsApp.
         if (!cupo.isAvailable) {
           await this.prisma.$transaction(async (tx) => {
-            await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+            await tx.$executeRawUnsafe(
+              `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+            );
             await tx.scheduleSlot.update({
               where: { id: cupo.id },
               data: { isAvailable: true },
@@ -330,15 +347,64 @@ export class MirrorApplyService {
     return 'APPLIED';
   }
 
+  /**
+   * Desenlace de atención nacido en el HIS.
+   *
+   * 🚨 Esto NUNCA se aplicó. El driver reporta la cita por médico y hora —no
+   * conoce los ids de AgenIA, no puede—, así que `agenIAAppointmentId` venía
+   * siempre vacío y este método lanzaba. `applyBatch` se tragaba el error, lo
+   * dejaba como una fila ERROR en `SyncAudit`, y el agente recibía 200 y
+   * avanzaba el cursor: el evento no se reintentaba jamás. Eran ~235 al día, y
+   * `Appointment.attendanceStatus` se quedaba en PENDING para siempre — nadie
+   * sabía quién había asistido.
+   *
+   * La cancelación entrante ya resolvía esto por el cupo desde hacía tiempo.
+   * La asistencia hace ahora lo mismo.
+   */
   private async applyAttendanceUpdate(
     organizationId: string,
     event: CanonicalChangeEvent,
-  ): Promise<'APPLIED'> {
-    const { agenIAAppointmentId, attendanceStatus } = event.payload;
-    if (!agenIAAppointmentId || !attendanceStatus) {
+  ): Promise<'APPLIED' | 'SKIPPED'> {
+    const { attendanceStatus } = event.payload;
+    let { agenIAAppointmentId } = event.payload;
+
+    if (!attendanceStatus) {
       throw new Error(
-        `Evento de asistencia incompleto (event_id=${event.eventId})`,
+        `Evento de asistencia sin desenlace (event_id=${event.eventId})`,
       );
+    }
+
+    // El driver traduce el código del HIS al vocabulario de AgenIA antes de
+    // enviarlo. Si aun así llega algo que este modelo no conoce, se rechaza
+    // en vez de escribirlo: un valor inventado en la asistencia de un
+    // paciente es peor que no tener el dato.
+    if (!ATTENDANCE_VALIDOS.has(attendanceStatus)) {
+      throw new Error(
+        `Desenlace de atención desconocido "${attendanceStatus}" ` +
+          `(event_id=${event.eventId}). Esperados: ${[...ATTENDANCE_VALIDOS].join(', ')}.`,
+      );
+    }
+
+    if (!agenIAAppointmentId) {
+      const cupo = await this.resolverCupo(organizationId, event.payload);
+      const cita = cupo
+        ? await this.prisma.appointment.findFirst({
+            where: { scheduleSlotId: cupo.id, organizationId },
+          })
+        : null;
+
+      if (!cita) {
+        // El hospital atendió una cita que AgenIA nunca tuvo: la agendó él
+        // por ventanilla. No hay nada que actualizar y no es un fallo — el
+        // cupo ya está ocupado, que es lo único que nos importaba de ella.
+        this.logger.log(
+          `Desenlace de atención de una cita que AgenIA no tiene ` +
+            `(médico ${event.payload.doctorExternalKey}, ${event.payload.startTimeIso}). Se omite.`,
+        );
+        return 'SKIPPED';
+      }
+
+      agenIAAppointmentId = cita.id;
     }
 
     await this.appointmentsService.updateAttendance(

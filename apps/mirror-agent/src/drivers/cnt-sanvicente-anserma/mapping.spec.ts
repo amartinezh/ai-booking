@@ -3,6 +3,7 @@ import {
   MappingIncompletoError,
   fechaCitaLocal,
   fechaLiteralSql,
+  desenlaceDeAtencion,
   feHoraCitAIso,
   formatFeHoraCit,
   mapSexo,
@@ -509,5 +510,34 @@ describe('fechaLiteralSql', () => {
   it('una fecha con formato inesperado falla en vez de escribir basura', () => {
     expect(() => fechaLiteralSql('02/09/2026')).toThrow(MappingIncompletoError);
     expect(() => fechaLiteralSql('')).toThrow(MappingIncompletoError);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// El protocolo canónico viaja en el vocabulario de AgenIA, igual que las horas
+// viajan en UTC. El driver mandaba `String(fila.e)` — el código crudo del
+// hospital — contra un enum de Prisma que solo entiende PENDING/ATTENDED/
+// NO_SHOW. Ni siquiera llegaba a escribirse: el evento moría antes.
+// ══════════════════════════════════════════════════════════════════════════
+describe('desenlaceDeAtencion', () => {
+  it('el estado 1 es una cita atendida', () => {
+    expect(desenlaceDeAtencion(1)).toBe('ATTENDED');
+  });
+
+  it('el estado 0 no es un desenlace: la cita sigue vigente', () => {
+    expect(desenlaceDeAtencion(0)).toBeNull();
+  });
+
+  it('el estado 2 NO se adivina: nadie confirmó qué lo dispara', () => {
+    // Escribirle mal la asistencia a un paciente es peor que no escribirla.
+    expect(desenlaceDeAtencion(2)).toBeNull();
+  });
+
+  it('nunca devuelve NO_SHOW: ese camino es una cancelación con motivo NA', () => {
+    // El no-show del hospital no es un estado distinto — es DELETE de
+    // CITAS_MEDICAS + archivo en CITAS_ANULADAS (MAPEO_HIS.md §2.2).
+    for (const estado of [0, 1, 2, 3, 9]) {
+      expect(desenlaceDeAtencion(estado)).not.toBe('NO_SHOW');
+    }
   });
 });
