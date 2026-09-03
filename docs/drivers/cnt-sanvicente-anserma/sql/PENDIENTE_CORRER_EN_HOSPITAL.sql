@@ -11,9 +11,9 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · Pendiente de correr: G.7 (ficha de Salud Total y Fomag para darlas
---     de alta). El resto está cerrado; volver a correr G.4 y G.6 cada vez
---     que se encienda un médico nuevo.
+--   · Pendiente de correr: D.7 (decodificar el régimen 15 de Fomag — ya no
+--     es opcional). El resto está cerrado; volver a correr G.4 y G.6 cada
+--     vez que se encienda un médico nuevo.
 --
 -- CONTENIDO
 --   A. ✅ CORRIDA — y la respuesta es la mala: el 72,5 % de los turnos
@@ -43,9 +43,11 @@
 --   G.6 ✅ CORRIDA — 32 servicios cápita (<0,6 %) y 16 evento (>90 %). Sin
 --      zona gris. Corrigió dos cosas: NUTRICIÓN sí es evento (el medico NU02
 --      NO estaba a salvo), y el «MIXTO» de 890284ESP no es ambiguo.
---   G.7 🆕 PENDIENTE — ficha completa de Salud Total y Fomag (EPS, vigencia
---      real de sus convenios, tamaño del padrón). Es lo que falta para darlas
---      de alta en AgenIA.
+--   G.7 ✅ CORRIDA — los cuatro convenios de Salud Total vigentes hasta el
+--      31-dic-2026 (renovación a 4 meses). El NIT de Fomag es en realidad
+--      una FIDUCIARIA que administra varios contratos del Estado, y su
+--      padrón está 100 % bajo un código de régimen (15) que NO es ni
+--      SUBSIDIADO ni CONTRIBUTIVO. Abrió D.7, que deja de ser opcional.
 --
 -- El detalle de POR QUÉ se pregunta cada cosa está en
 -- FASE0_DESCUBRIMIENTO_HIS.sql (bloques 31, 25, 29 y 16/19). Este archivo es
@@ -515,16 +517,32 @@ WHERE c.NU_NUME_CONV IN (26, 283, 467, 473, 489)
 ORDER BY c.NU_NUME_CONV;
 
 
--- ── D.7 (opcional) Decodificar los códigos de régimen ───────────────────────
+-- ── D.7 🚨 YA NO ES OPCIONAL — decodificar el código de régimen 15 (G.7) ────
 --
--- D.6 encontró que SÍ existe un catálogo: `REGIMEN` y `TIPO_REGIMEN_RESOL4505`.
--- Leerlo confirma la lectura de los códigos (01/02 = subsidiado, 07-12 =
--- contributivo) y de paso explica qué son 'P' (125.403 afiliaciones) y 'F'
--- (78.729), los dos más frecuentes, que no aparecen en las citas de estas dos
--- EPS.
+-- Nació como verificación de cierre: D.6 encontró el catálogo `REGIMEN` ⋈
+-- `TIPO_REGIMEN_RESOL4505`, y leerlo confirmaba lo ya inferido de los nombres
+-- de los convenios (01/02/14 = SUBSIDIADO, 07-12/18 = CONTRIBUTIVO) — no
+-- bloqueaba nada porque la tabla de convenios se sostiene sola.
 --
--- NO bloquea nada: la tabla de convenios del driver se sostiene por los
--- nombres de los propios convenios. Esto es para dejar de inferir.
+-- G.7 lo cambia: el padrón de Fomag/La Previsora (NIT 830053105) está
+-- 100 % bajo el código de régimen **`15`**, que NO está en ninguno de los dos
+-- catálogos ya confirmados. No es un caso raro entre otros — es EL ÚNICO
+-- régimen que usan esos 1.046 pacientes. Si `15` es un régimen de EXCEPCIÓN
+-- (como `P` OTRO o `F` FOSYGA, que tampoco son SUBSIDIADO/CONTRIBUTIVO),
+-- entonces preguntarle a un paciente de Fomag «¿es usted subsidiado o
+-- contributivo?» no tiene una respuesta correcta — el modelo de régimen de
+-- AgenIA (`parseRegimen`, en `packages/shared`) solo conoce esos dos valores.
+--
+-- CÓMO SE LEE: buscar en el resultado de `REGIMEN` la fila cuyo código es
+-- `15` y ver a qué tipo de la Resolución 4505 apunta. Si no es ni el tipo 1
+-- (contributivo) ni el tipo 2 (subsidiado), queda confirmado que Fomag es un
+-- régimen de excepción y el chatbot necesita una rama nueva: cuando la EPS
+-- elegida sea Fomag, no preguntar régimen — hay un solo convenio posible por
+-- tipo de servicio (518 MAGISTERIOFOMAG / 529 PYPFOMAG), así que la pregunta
+-- sobra.
+--
+-- ⚠️ SOLO LECTURA. `SELECT *` no necesita nombres de columna — el mock local
+-- no tiene estas tablas para poder validar más allá de esto.
 SELECT * FROM dbo.REGIMEN;
 SELECT * FROM dbo.TIPO_REGIMEN_RESOL4505;
 
@@ -1303,7 +1321,7 @@ GO
 
 
 -- =============================================================================
--- G.7 🆕 FICHA DE SALUD TOTAL Y FOMAG — para darlas de alta en AgenIA
+-- G.7 ✅ CORRIDA Y CERRADA EL 2026-09-03 — con una duda nueva sobre el régimen
 --
 -- G.5 encontró que Salud Total es un TERCIO del hospital (33,9 % de la
 -- atención primaria) y que Fomag es un 2,4 % adicional, y que ninguna de las
@@ -1354,3 +1372,54 @@ WHERE r.CD_NIT_EPS_RPE IN ('800130907','830053105')
 GROUP BY r.CD_NIT_EPS_RPE, r.CD_CODI_REG_RPE
 ORDER BY r.CD_NIT_EPS_RPE, r.CD_CODI_REG_RPE;
 GO
+
+-- ── RESULTADO DE G.7 (2026-09-03) ───────────────────────────────────────────
+--
+-- 1. AMBAS EPS ESTÁN ACTIVAS. Salud Total en Manizales/Caldas — vecina de
+--    Anserma. Pero el NIT 830053105 **NO es «Fomag»**: es
+--    «FIDEICOMISOS PATRIMONIOS AUTONOMOS FIDUCIARIA LA PREVISORA», en Bogotá.
+--    Sus convenios NO vigentes incluyen INPEC (307, 326) y otros contratos —
+--    es la fiduciaria que administra VARIOS fondos del Estado (magisterio,
+--    presos, etc.), y solo DOS de sus convenios activos son de magisterio
+--    (518 MAGISTERIOFOMAG, 529 PYPFOMAG). Importa para cómo se le muestra al
+--    paciente: preguntarle su EPS y que responda «La Previsora» no dice si es
+--    magisterio o cualquier otro programa que administre esa fiduciaria.
+--
+-- 2. LOS CUATRO CONVENIOS DE SALUD TOTAL SIGUEN VIGENTES — y los de Fomag
+--    también — pero LOS CUATRO VENCEN EL 31-DIC-2026, igual que los 5 que ya
+--    usa el driver (D.4 lo confirmó para esos). Faltan ~4 meses desde hoy.
+--    🚨 Poner una alerta operativa: si el hospital renueva con un NÚMERO DE
+--    CONVENIO distinto (ya pasó antes: 261 PYPSALUDTOTAL y 481 STPYPSUBS
+--    vencieron el 2025-12-31 y NO se renovaron con el mismo número — el PyP
+--    de Salud Total simplemente dejó de tener convenio propio), el mapeo
+--    quedaría apuntando a un convenio muerto sin que nada lo avise hasta que
+--    una cita falle. Repetir D.4/G.7 en diciembre.
+--
+-- 3. CONFIRMA EL DISEÑO DEL REPLIEGUE DE PyP. Salud Total SÍ tuvo convenios
+--    propios de PyP (261, 481) y los dos vencieron a fin de 2025 sin
+--    reemplazo — hoy su PyP se factura al convenio general (475/476), que es
+--    EXACTAMENTE lo que hace el mappingJson. No es una suposición: es lo que
+--    el propio hospital decidió al no renovarlos.
+--
+-- 4. 🚨 EL PADRÓN DE FOMAG ABRE UNA PREGUNTA ESTRUCTURAL. Salud Total reparte
+--    limpio entre los dos regímenes conocidos:
+--
+--       SUBSIDIADO (01+02+14):    10.633 pacientes  (82,4 %)
+--       CONTRIBUTIVO (07-12):      2.267 pacientes  (17,6 %)
+--       TOTAL:                    12.900
+--
+--    Pero Fomag/La Previsora tiene **1.046 pacientes y los 1.046 están bajo
+--    el código de régimen `15`**, que no es ninguno de los confirmados en
+--    D.6 (01/02/14 subsidiado; 07-12/18 contributivo). Cero excepciones: no
+--    hay ni un paciente de Fomag en régimen subsidiado o contributivo
+--    corriente. Eso encaja con lo que es el magisterio en Colombia: un
+--    RÉGIMEN DE EXCEPCIÓN, no una EPS del régimen general — y explica por
+--    qué la fiduciaria administra sus contratos por fuera de las categorías
+--    de siempre.
+--
+--    Si D.7 confirma que 15 es régimen de excepción, la pregunta
+--    «¿subsidiado o contributivo?» del chatbot **no tiene respuesta correcta**
+--    para un paciente de Fomag — y como Fomag/La Previsora solo tiene DOS
+--    convenios activos (uno normal, uno de PyP), la solución más simple es
+--    que el chatbot NO pregunte régimen cuando la EPS elegida sea esta: basta
+--    con si el servicio es de PyP o no.

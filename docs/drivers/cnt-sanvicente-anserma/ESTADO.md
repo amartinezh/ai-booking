@@ -1541,6 +1541,54 @@ en el camino crítico del arranque**.
 
 ## 3. Lo que SÍ falta, en orden
 
+### ✅ G.7: Salud Total confirmada, y una fiduciaria detrás de «Fomag»
+
+Corrida contra el hospital. Tres hallazgos.
+
+**1. El NIT de «Fomag» no es Fomag — es la fiduciaria que lo administra.**
+`830053105` es «FIDEICOMISOS PATRIMONIOS AUTONOMOS FIDUCIARIA LA PREVISORA»,
+en Bogotá. Entre sus convenios NO vigentes hay INPEC (prisiones) y otros — es
+la fiduciaria que administra varios contratos del Estado, y solo dos de sus
+convenios activos son de magisterio (`518` MAGISTERIOFOMAG, `529` PYPFOMAG).
+Importa para el chatbot: si un paciente escribe «La Previsora» eso no dice si
+es magisterio o cualquier otro programa de esa fiduciaria.
+
+**2. Los cuatro convenios de Salud Total vencen el 31-dic-2026 — igual que los
+cinco que ya usa el driver (confirmado en D.4).** Faltan ~4 meses. Y hay una
+prueba de que la renovación NO es automática con el mismo número: Salud Total
+tuvo convenios propios de PyP (`261` PYPSALUDTOTAL, `481` STPYPSUBS) que
+vencieron el 2025-12-31 y **no se renovaron** — hoy su PyP se factura al
+convenio general, que es exactamente lo que hace el mappingJson. Confirma que
+el repliegue de PyP no es una suposición: es lo que el hospital decidió al no
+renovarlos. Pero también es la prueba de que hay que **repetir esta consulta
+en diciembre**, porque un convenio puede desaparecer sin aviso.
+
+**3. 🚨 El padrón de Fomag abre una pregunta estructural sobre el régimen.**
+Salud Total reparte limpio entre los dos regímenes que AgenIA conoce:
+
+| régimen | pacientes | % |
+|---|---|---|
+| SUBSIDIADO (01+02+14) | 10.633 | 82,4 % |
+| CONTRIBUTIVO (07-12) | 2.267 | 17,6 % |
+
+Pero **los 1.046 pacientes de Fomag/La Previsora están, los 1.046, bajo el
+código de régimen `15`** — que no es ninguno de los confirmados en D.6
+(01/02/14 subsidiado; 07-12/18 contributivo). Cero excepciones.
+
+Encaja con lo que es el magisterio en Colombia: un **régimen de excepción**, no
+una EPS del régimen general. Si es así, la pregunta «¿subsidiado o
+contributivo?» del chatbot (`parseRegimen` en `packages/shared`, que solo
+conoce esos dos valores) **no tiene respuesta correcta** para un paciente de
+Fomag. Como esa NIT solo tiene dos convenios activos —uno normal, uno de
+PyP—, la solución más simple sería que el chatbot **no pregunte régimen** para
+esta EPS: basta con saber si el servicio es de PyP.
+
+⚠️ **No se homologó Fomag todavía.** Falta correr **D.7** (`SELECT * FROM
+dbo.REGIMEN`), que confirma qué es el código 15 — ya estaba escrita, marcada
+como opcional, y este hallazgo la vuelve necesaria. No es un bloqueante para
+Salud Total ni para el arranque de medicina general: Fomag es el 2,4 % del
+volumen y puede esperar.
+
 ### 🔴 1. Salud Total — un tercio de los pacientes no puede usarlo
 
 Sobre 18.304 citas de atención primaria en 90 días:
@@ -1595,7 +1643,12 @@ corrige con una línea de configuración.
 
 ### 🟡 5. Fomag (2,4 %) y las residuales (0,1 %)
 
-Se pueden dejar para después sin que duela.
+Se pueden dejar para después sin que duela. Con una salvedad: cuando le
+llegue el turno a Fomag, **no basta con copiar la receta de Salud Total**.
+G.7 encontró que su NIT es una fiduciaria (no una EPS tradicional) y que su
+padrón entero cae en un código de régimen (`15`) que todavía no está
+decodificado — hace falta correr **D.7** antes de homologarla, no solo pedir
+el CSV del padrón.
 
 ## 4. Qué está listo y verificado
 

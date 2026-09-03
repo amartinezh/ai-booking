@@ -156,6 +156,24 @@ describe('parseRegimen', () => {
     expect(parseRegimen('particular')).toBeNull();
     expect(parseRegimen(null)).toBeNull();
   });
+
+  // 🚨 SOLO CONOCE DOS VALORES — y eso es exactamente el hueco que destapó
+  // G.7 del driver de Anserma (2026-09-03). El padrón de Fomag/magisterio
+  // está el 100 % bajo un código de régimen del HIS que NO es ni SUBSIDIADO
+  // ni CONTRIBUTIVO (encaja con lo que es el magisterio en Colombia: un
+  // régimen de EXCEPCIÓN). Si algún día se le pregunta el régimen a un
+  // paciente de ese tipo, ninguna respuesta suya calza aquí — 'excepcion',
+  // 'magisterio' o 'ninguno de los dos' vuelven null igual que 'no sé'.
+  //
+  // No es un bug: es la prueba de que la pregunta «¿subsidiado o
+  // contributivo?» no se le puede hacer a TODOS los pacientes por igual, y
+  // de que un tercer régimen necesita su propio camino en el chatbot, no una
+  // tercera opción aquí adivinada sin que el hospital lo confirme.
+  it('🚨 un régimen de excepción (magisterio) no calza en ninguno de los dos', () => {
+    expect(parseRegimen('excepcion')).toBeNull();
+    expect(parseRegimen('magisterio')).toBeNull();
+    expect(parseRegimen('ninguno de los dos')).toBeNull();
+  });
 });
 
 describe('formatFechaNacimiento', () => {
