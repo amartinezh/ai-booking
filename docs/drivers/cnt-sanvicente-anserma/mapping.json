@@ -4,6 +4,7 @@
     "especialidadPorServicio_cinco_anadidos_2026-09-03": "890242ESP, 890342ESP, 890342SUR, 890350ESP y 890350SUR se anadieron el 2026-09-03. Los destapo la seccion G: tienen citas reales en 90 dias pero quedaron fuera de la generacion del 31d, que filtraba a medicos con turnos futuros. La especialidad NO se adivino: los codigos van en pares CUPS 8902xx (primera vez) / 8903xx (control) del MISMO procedimiento, y ni el digito 2/3 ni el sufijo ESP/SUR cambian la especialidad — se ve en los pares ya mapeados (890266ESP/SUR/890366ESP/SUR todos 387; 890283/890383 ambos 550; 890284/890384 ambos 345; 890206/890306 ambos 451). De ahi: 890342* = control de 890242* = 200 DERMATOLOGIA; 890350* = control de 890250* = 341 GINECOLOGIA. La consulta G.4 lo confirma contra los datos del hospital.",
     "especialidadPorServicio": "GENERADA del bloque 31d: la especialidad dominante de cada servicio en las citas reales de 90 días. 36 de 40 son inequívocos; los 4 restantes se resolvieron por mayoría (S36101 461 en 826/827, S35102 590 en 387/388, S35104 590 en 577/580, I890301AG 328 en 453/455). Verificada contra R_ESP_SER ∩ R_MEDI_ESPE en el bloque 32c: 0 contradicciones en 21.362 citas.",
     "serviciosPyp": "DERIVADA del catálogo del bloque 32e: son los servicios cuya especialidad pertenece a la familia PyDT (060 ENFERMERIA PYDT, 328 MEDICINA GENERAL PYDT, 572 ODONTOLOGIA PYDT, 591 PSICOLOGIA PYDT). Antes tenía UN solo servicio y los otros trece se habrían facturado al convenio equivocado.",
+    "convenios_evento_2026-09-03": "La seccion G.2 encontro que la regla EPS+regimen+PyP estaba INCOMPLETA: le faltaba un cuarto eje. Los especialistas facturan a convenios de EVENTO (el prefijo EVEN/EVENTOS de sus propios nombres lo dice) y no a los de capita que se midieron en la seccion D. Anadidas 800088702|SUBSIDIADO|EVENTO=535 EVENSURASUB (605 citas en 90 dias) y 800088702|CONTRIBUTIVO|EVENTO=97 EVENSURACON (318). NO se anadio Salud Total —538 EVENTOSTOTALSU (500 citas) y 96 EVENTOSTOTALCO (126)— porque esa EPS no existe todavia en la tabla Eps de AgenIA y falta su NIT: lo saca G.5.",
     "convenios": "DERIVADA de los datos del hospital y CERRADA (seccion D de sql/PENDIENTE_CORRER_EN_HOSPITAL.sql, 2026-09-02): el convenio dominante de cada combinacion EPS + regimen + PyP sobre 90 dias de citas reales. Cuotas: Sura subsidiado 467 (84,5% normal / 94,3% PyP), Sura contributivo 473 (84,8% / 88,0%), Nueva EPS subsidiado 283 normal (89,6%) y 489 PyP (94,4%), Nueva EPS contributivo 473 (73,4% / 65,6%). R_PAC_EPS es un historial many-to-many y su fan-out ensucia la cola de cada grupo, pero NO invalida la conclusion: el fan-out solo puede inflar un conteo, nunca esconderlo, y la cota superior de 290 NUEVAEPSCONT —el unico candidato alternativo para Nueva EPS contributivo— es de DOS citas en 90 dias. El hospital no lo usa. Los codigos de regimen se leen de los nombres de los propios convenios (01 lleva a SUBS, NUEVASUBSID y PYPSUBS; 07 a CONTRIBUTIVO), no de una suposicion.",
     "_no_usar": "TX_ACTI_ESP del catálogo ESPECIALIDADES está en 0 para las trece especialidades, incluidas las que se usan a diario. No sirve para filtrar."
   },
@@ -24,9 +25,21 @@
     "900156264|SUBSIDIADO|PYP": 489,
     "900156264|CONTRIBUTIVO": 473,
     "800088702|SUBSIDIADO": 467,
-    "800088702|CONTRIBUTIVO": 473
+    "800088702|CONTRIBUTIVO": 473,
+    "800088702|SUBSIDIADO|EVENTO": 535,
+    "800088702|CONTRIBUTIVO|EVENTO": 97
   },
   "convenioParticular": 26,
+
+  "_serviciosEvento": "DERIVADA de la seccion G.2 (2026-09-03). Son los servicios de especialista, que la EPS paga POR EVENTO y no por capita: la misma EPS y el mismo regimen facturan a un contrato distinto que la atencion primaria. Sura subsidiado usa 467 SUBS en primaria y 535 EVENSURASUB con un especialista — 605 citas contra 4 en 90 dias. INCOMPLETA a proposito: falta Salud Total (39,4% del volumen de especialistas, y AgenIA no la tiene ni en su tabla Eps), Fomag y Nueva EPS. Los rellena G.5. Mientras tanto resolveConvenio LANZA en vez de replegarse, que es justo lo que se quiere: ningun especialista se puede encender hasta que su convenio este medido.",
+
+  "serviciosEvento": [
+    "890242ESP", "890242SUR", "890342ESP", "890342SUR",
+    "890250ESP", "890250SUR", "890350ESP", "890350SUR",
+    "890266ESP", "890266SUR", "890366ESP", "890366SUR",
+    "890283ESP", "890383ESP",
+    "890284ESP", "890384ESP"
+  ],
 
   "serviciosPyp": [
     "890201-CI", "I890301AG", "890201AD", "890201PI", "I890201AG",

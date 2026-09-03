@@ -58,6 +58,31 @@ export interface AnsermaMapping {
    * la clave `|PYP` de SU régimen; si no, facturan como una consulta normal.
    */
   serviciosPyp: string[];
+  /**
+   * Servicios que la EPS paga **por evento** y no por cápita.
+   *
+   * Es el cuarto eje de la regla de convenio, y salió de la sección G.2
+   * (2026-09-03). La misma EPS y el mismo régimen facturan a contratos
+   * DISTINTOS según el tipo de servicio:
+   *
+   * ```
+   *   Sura subsidiado + atención primaria  → 467 SUBS          (cápita)
+   *   Sura subsidiado + especialista       → 535 EVENSURASUB   (evento)
+   * ```
+   *
+   * El prefijo de los propios convenios lo dice: `EVEN`/`EVENTOS`. En 90 días,
+   * Sura subsidiado con un especialista usó el 535 en **605** citas y el 467
+   * en **4**. Sin este eje, encender un especialista factura al contrato
+   * equivocado en el 99 % de los casos — y en silencio, porque el 467 es un
+   * convenio perfectamente válido de la misma EPS.
+   *
+   * A diferencia de `serviciosPyp`, aquí **NO hay repliegue**: si el servicio
+   * está en esta lista y falta su clave `|EVENTO`, `resolveConvenio` lanza. El
+   * repliegue de PyP es correcto porque el hospital lo hace así de verdad
+   * (medido en la sección D); replegarse aquí sería justo el error que este
+   * campo existe para impedir.
+   */
+  serviciosEvento?: string[];
   /** `CD_CODI_ESP_CIT` por servicio. Correlaciona con el servicio, no con el médico. */
   especialidadPorServicio: Record<string, string>;
   /**
@@ -245,9 +270,17 @@ export function fechaLiteralSql(fechaLocal: string): string {
  * Convenio de facturación de la cita.
  *
  * Regla confirmada en Fase 0 y validada de forma cruzada con la prueba manual
- * del hospital: EPS (por NIT) + régimen + si el servicio es de PyP. NO se
- * puede deducir solo de la EPS — varias operan los dos regímenes, y fijar un
- * convenio constante facturaría todas las citas al contrato equivocado.
+ * del hospital: EPS (por NIT) + régimen + si el servicio es de PyP + si se
+ * factura por evento. NO se puede deducir solo de la EPS — varias operan los
+ * dos regímenes, y fijar un convenio constante facturaría todas las citas al
+ * contrato equivocado.
+ *
+ * Los cuatro ejes, en orden de precedencia:
+ *   1. sin EPS            → `convenioParticular`
+ *   2. PyP                → `nit|REGIMEN|PYP`, y si no existe se repliega al
+ *                           del régimen (el hospital lo hace así — sección D)
+ *   3. facturado por evento → `nit|REGIMEN|EVENTO`, **sin repliegue** (G.2)
+ *   4. el resto           → `nit|REGIMEN`
  */
 export function resolveConvenio(
   mapping: AnsermaMapping,
@@ -285,6 +318,34 @@ export function resolveConvenio(
     if (pyp !== undefined) return pyp;
     // Sin convenio de PyP para esa combinación se cae al del régimen: es lo
     // que hace el hospital con Sura y con Nueva EPS contributivo.
+  }
+
+  // Facturación por EVENTO — el cuarto eje, y el único sin repliegue.
+  //
+  // Un especialista de la misma EPS y el mismo régimen va a un contrato
+  // distinto que la atención primaria: Sura subsidiado usa 467 SUBS en
+  // primaria y 535 EVENSURASUB con un especialista (605 citas contra 4, en
+  // 90 días — sección G.2). El repliegue al convenio del régimen, que en PyP
+  // es lo correcto, aquí sería exactamente el error que hay que evitar: un
+  // contrato válido de la EPS correcta, y aun así el equivocado.
+  const esEvento = (mapping.serviciosEvento ?? []).includes(
+    datos.serviceExternalKey ?? '',
+  );
+  if (esEvento) {
+    const evento =
+      mapping.convenios[
+        `${datos.epsNit}|${datos.patientRegime}|EVENTO`
+      ];
+    if (evento !== undefined) return evento;
+
+    throw new MappingIncompletoError(
+      `El servicio "${datos.serviceExternalKey}" se factura por evento, pero no ` +
+        `hay convenio de evento para la EPS ${datos.epsNit} en régimen ` +
+        `${datos.patientRegime}. Falta la clave ` +
+        `"${datos.epsNit}|${datos.patientRegime}|EVENTO" en el mappingJson. ` +
+        `Usar el convenio de cápita facturaría la cita a un contrato que no ` +
+        `cubre este servicio.`,
+    );
   }
 
   const convenio = mapping.convenios[`${datos.epsNit}|${datos.patientRegime}`];

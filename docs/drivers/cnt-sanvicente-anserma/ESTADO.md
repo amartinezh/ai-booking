@@ -852,7 +852,7 @@ febrero de un año bisiesto sigue siendo válido.
 ### 📋 El cuestionario para el hospital (2026-09-03)
 
 Todo lo que queda abierto que NO se puede resolver leyendo la base está
-consolidado en **`PREGUNTAS_AL_HOSPITAL.md`** — seis decisiones, escritas para
+consolidado en **`PREGUNTAS_AL_HOSPITAL.md`** — siete decisiones, escritas para
 que las responda la agendadora sin traducir nada técnico.
 
 La regla al redactarlo: **nada de preguntas abiertas.** Cada una llega con lo
@@ -866,6 +866,7 @@ abstracto.
 | # | Quién responde | Qué desbloquea |
 |---|---|---|
 | 1 | Agendadora | 🔴 El piloto. Por médico: servicio fijo, preguntarle al paciente, o no activar |
+| 1-bis | Facturación | 🔴 Especialistas: convenio de evento vs cápita, y el alta de Salud Total |
 | 2 | Agendadora | El consecutivo de sesión: ¿algún informe agrupa por él? |
 | 3 | Agendadora / facturación | Confirmar la tabla de convenios que dedujimos |
 | 4 | Coordinación | Alcance del arranque: qué médicos, cuántas citas/día |
@@ -897,7 +898,87 @@ La decisión del 2026-09-02 queda confirmada con números, y el argumento para
 TI en la pregunta 6 deja de ser una promesa: **el agente le cuesta al HIS menos
 de una milésima de núcleo.**
 
-### ⚠️ La sección G se corrió y no concluyó — el defecto era de la consulta
+### 🚨 G.2 respondió su pregunta Y destapó un bloqueante que no se buscaba (2026-09-03)
+
+**Lo que se preguntaba — respondido, pero solo en una dirección.** Sobre 1.589
+citas de especialista en 90 días, leyendo el convenio de la propia cita:
+
+| bucket | citas | composición |
+|---|---|---|
+| **SUR** | 367 | **100,0 % Sura. Cero excepciones.** |
+| **ESP** | 1.222 | 51,2 % Salud Total · 45,8 % Sura · 1,5 % Fomag · 0,6 % Nueva EPS · 0,4 % particular |
+
+`SUR` ⟹ Sura, siempre. Pero **Sura ⇏ `SUR`**: 560 de las 927 citas de Sura —el
+60 %— van con `ESP`. **AgenIA no puede deducir el sufijo de la EPS.** La
+pregunta a la agendadora sigue viva, pero ahora es concreta y tiene un default
+seguro: `ESP` se usa con todas las aseguradoras, Sura incluida, así que
+escribirlo nunca es «la aseguradora equivocada».
+
+**Y lo que nadie preguntaba, que pesa más.** Los convenios que aparecen no son
+los que AgenIA tiene homologados:
+
+| | especialista | atención primaria (lo que dice el mapping) |
+|---|---|---|
+| Sura subsidiado | **535** EVENSURASUB · 605 citas | 467 SUBS |
+| Sura contributivo | **97** EVENSURACON · 318 | 473 CONTRIBUTIVO |
+| Salud Total subsidiado | **538** EVENTOSTOTALSU · 500 | *(no existe)* |
+| Salud Total contributivo | **96** EVENTOSTOTALCO · 126 | *(no existe)* |
+
+El prefijo de los propios convenios lo dice: `EVEN`/`EVENTOS`. **La atención
+primaria va por cápita y el especialista por evento**, y la regla de convenio
+de AgenIA —EPS + régimen + PyP— no tenía ese eje. Para Sura subsidiado con un
+especialista el hospital usa el 535 en 605 citas y el 467 en 4: encender un
+especialista hoy facturaría al contrato equivocado en el 99 % de los casos, y
+en silencio, porque el 467 es un convenio perfectamente válido de la EPS
+correcta.
+
+Además, **Salud Total es el 39,4 % del volumen de especialistas y AgenIA no
+sabe que existe** — su tabla `Eps` solo tiene Nueva EPS, Sura y Particular.
+
+**Nada de esto toca al piloto de los cuatro verdes** (76, 077, 91-1, 91-2): son
+primaria y PyP, y sus convenios están medidos y verificados en la sección D. Lo
+que bloquea es encender especialistas.
+
+#### Lo que se hizo con eso
+
+1. **Cuarto eje en `resolveConvenio`**: `serviciosEvento` + claves
+   `nit|REGIMEN|EVENTO`. A diferencia de PyP, **sin repliegue** — si falta la
+   clave, lanza. El repliegue de PyP es correcto porque el hospital lo hace así
+   (medido en D); replegarse aquí sería justo el error que el eje existe para
+   impedir.
+2. **Los 16 servicios de especialista** quedan listados, y las dos claves de
+   Sura medidas (535 y 97). Salud Total, Fomag y Nueva EPS **no** se
+   inventaron: los saca **G.5**.
+3. `aplicar-mapping.ts` rechaza un servicio que esté a la vez en PyP y en
+   evento, o una clave `|EVENTO` sin su cápita, y **avisa** de qué
+   combinaciones se quedan sin convenio de evento.
+
+El efecto neto es que un especialista sin medir **no se puede encender por
+accidente**: la cita falla con un mensaje que nombra la clave que falta.
+
+### ✅ G.3 confirmó el par primera vez / control (2026-09-03)
+
+| familia | especialidad | 1ª cita del paciente | citas posteriores |
+|---|---|---|---|
+| 890206/890306 | nutrición | **99,0 %** con `8902xx` | 44,9 % |
+| 890242/890342 | dermatología | **99,7 %** | 14,5 % |
+| 890250/890350 | ginecología | **97,9 %** | 16,3 % |
+| 890266/890366 | medicina interna | **97,1 %** | 11,3 % |
+| 890283/890383 | pediatría | **91,6 %** | 42,4 % |
+| 890284/890384 | psiquiatría | **98,5 %** | 22,2 % |
+
+Seis familias de seis. Y el sesgo de la ventana de 3 años juega **a favor**: un
+paciente cuya primera visita real fue antes entra como «primera» llevando un
+código de control, lo que ensucia la columna de la izquierda. Aun así sale por
+encima del 91 %.
+
+Que las citas posteriores conserven un 11-45 % de `8902xx` no contradice nada
+—«primera vez» se reabre con un episodio nuevo— y de hecho **refuerza la
+decisión de preguntárselo al paciente**: no se puede deducir del historial. Que
+pediatría y nutrición sean las más altas encaja con que un niño estrena motivo
+de consulta a menudo.
+
+### ⚠️ La sección G.1 se corrió y no concluyó — el defecto era de la consulta
 
 G preguntaba si el sufijo `ESP`/`SUR` depende de la EPS del paciente. La cuota
 de Sura salió así:
@@ -1038,11 +1119,17 @@ Las cinco están mapeadas y el default ya no existe. Ver arriba.
 Todo lo que queda por descubrir está consolidado en
 `sql/PENDIENTE_CORRER_EN_HOSPITAL.sql` — 100 % lectura. Cerradas: **A** (obliga
 a cambiar el modelo de cupo), **B**, **C**, **D**, **E** y **F**. La **G.1** se
-corrió pero no concluyó. Queda por correr **G.2** (el sufijo por el convenio de
-la propia cita), **G.3** (comprobar el par primera vez / control contra los
-datos) y **G.4** (la red de seguridad: la especialidad de TODOS los servicios
-con citas, sin filtrar por turnos — la que confirma los cinco añadidos y la que
-hay que volver a correr cada vez que se encienda un médico nuevo).
+corrió pero no concluyó; **G.2** y **G.3** sí, y están cerradas arriba.
+
+Quedan dos:
+
+- **G.4** — la red de seguridad: la especialidad de TODOS los servicios con
+  citas, sin filtrar por turnos. Confirma los cinco añadidos, y hay que volver
+  a correrla cada vez que se encienda un médico nuevo.
+- **G.5** 🚨 — la tabla de convenios completa (EPS × régimen × tipo de
+  servicio). Es lo que hace falta para poder encender **cualquier**
+  especialista, y de paso trae el NIT de Salud Total, que AgenIA necesita para
+  darla de alta.
 
 ## ⏳ Pendientes de este driver
 

@@ -7,7 +7,7 @@
 > correo a TI.
 >
 > Este documento no pide revisar código ni entender el sistema. Pide decidir
-> **seis cosas** que solo el hospital sabe. Cada una está planteada con lo que
+> **siete cosas** que solo el hospital sabe. Cada una está planteada con lo que
 > ya medimos sobre sus propios datos, para que responder sea confirmar o
 > corregir, no reconstruir de memoria.
 
@@ -20,8 +20,8 @@ en `CITAS_MEDICAS`, igual que si las hubiera creado una agendadora. Ya funciona
 de punta a punta: crea el paciente si no existe, agenda, y cancela dejando la
 constancia en `CITAS_ANULADAS`.
 
-Antes de abrirlo a pacientes reales necesitamos cerrar seis decisiones. Cinco
-son de la agendadora y una es de TI.
+Antes de abrirlo a pacientes reales necesitamos cerrar siete decisiones. Cinco
+son de la agendadora, una de facturación y una de TI.
 
 ---
 
@@ -181,24 +181,70 @@ sufijo:
 - **ES01** (internista): `890266ESP` / `890266SUR`, `890366ESP` / `890366SUR`
 - **ES03** (ginecología): `890250ESP` / `890250SUR`, `890350ESP` / `890350SUR`
 
-Sospechamos que `SUR` = **Sura**, es decir que el código depende de la EPS del
-paciente. Si es así, AgenIA lo resuelve sola: ya sabe la EPS al agendar y no
-hay que preguntarle nada a nadie.
+Ya lo medimos sobre sus 1.589 citas de especialista de los últimos 90 días, y
+la respuesta es **mitad y mitad**:
 
-Corrimos una consulta para comprobarlo y **quedó a medias por un error
-nuestro**: la escribimos uniendo por la tabla de afiliaciones, que guarda el
-historial completo de cada paciente, así que cada cita salía contada tantas
-veces como EPS ha tenido esa persona en su vida. El resultado apunta fuerte en
-la dirección esperada —en dermatología y ginecología, el bucket `SUR` tiene
-Sura y el `ESP` prácticamente no— pero con esos números no podemos afirmarlo.
+| | citas | quién las paga |
+|---|---|---|
+| **`SUR`** | 367 | **Sura, el 100 %. Ni una excepción.** |
+| **`ESP`** | 1.222 | Salud Total 51 % · **Sura 46 %** · Fomag 2 % · otros 1 % |
 
-Ya tenemos la consulta corregida (**G.2**), que lee el convenio que la propia
-cita lleva grabado y no toca la tabla de afiliaciones. Es una consulta de
-lectura, de segundos.
+O sea: cuando ven `SUR`, es Sura — eso está fuera de duda. Pero **al revés no
+se cumple**: 6 de cada 10 citas de pacientes de Sura se agendan con `ESP`. Así
+que AgenIA no puede deducirlo sola: saber que el paciente es de Sura no le dice
+cuál de los dos códigos toca.
 
-- [ ] **Sí, `SUR` es para pacientes de Sura.**
+**La pregunta, entonces:** ¿qué distingue a esas citas de Sura que van con
+`SUR` de las que van con `ESP`?
+
+- [ ] Es una diferencia real: `SUR` se usa cuando ______________________________
+- [ ] No hay diferencia, son dos códigos para lo mismo y se usa el que salga.
+- [ ] Otra cosa: ______________________________________________
+
+> **Mientras tanto, nuestra propuesta:** que AgenIA use siempre **`ESP`**.
+> Ustedes ya lo usan con todas las aseguradoras, Sura incluida, así que nunca
+> sería «la aseguradora equivocada». Si nos dicen la regla, la aplicamos.
+
+---
+
+## 🔴 PREGUNTA 1-bis — Los especialistas facturan a otro contrato (esto lo encontramos sin buscarlo)
+
+Al medir lo anterior salió algo que **no** estábamos buscando y que es más
+importante que la pregunta original.
+
+Sus especialistas **no facturan a los mismos convenios que su atención
+primaria**, aunque sea la misma EPS y el mismo régimen:
+
+| EPS y régimen | atención primaria | especialista |
+|---|---|---|
+| Sura subsidiado | `467` SUBS | **`535` EVENSURASUB** — 605 citas |
+| Sura contributivo | `473` CONTRIBUTIVO | **`97` EVENSURACON** — 318 |
+| Salud Total subsidiado | — | **`538` EVENTOSTOTALSU** — 500 |
+| Salud Total contributivo | — | **`96` EVENTOSTOTALCO** — 126 |
+
+Entendemos que es cápita contra evento: sus propios convenios se llaman
+`EVEN`/`EVENTOS`. AgenIA tenía la regla incompleta — habría facturado un
+especialista de Sura subsidiado al `467` en vez de al `535`.
+
+**Ya está corregido y no hay riesgo:** AgenIA ahora **se niega a agendar** con
+un especialista cuyo convenio no tengamos medido, en vez de adivinar. Y esto no
+afecta al piloto que proponemos (los cuatro médicos del Bloque 1 son primaria y
+PyP, y sus convenios están verificados).
+
+Solo necesitamos que nos confirmen dos cosas:
+
+- [ ] **Sí: primaria va por cápita y especialista por evento.** ← *lo que vemos*
 - [ ] No, la diferencia es: ______________________________________________
-- [ ] No estoy seguro → **corremos G.2 y lo vemos en los datos.**
+
+Y **Salud Total no está en nuestro sistema** — es el 39 % de sus citas de
+especialista y no la teníamos registrada.
+
+- [ ] Confirmamos que Salud Total atiende con ustedes; su NIT es: ______________
+- [ ] Hay otras aseguradoras que tampoco tenemos: ______________________________
+
+> Tenemos una consulta de lectura (**G.5**) que saca la tabla completa —qué
+> convenio usa cada EPS, en cada régimen, para cada tipo de servicio— y con eso
+> lo dejamos exacto sin que ustedes tengan que recordar nada.
 
 ## 🟠 PREGUNTA 2 — El consecutivo de sesión
 

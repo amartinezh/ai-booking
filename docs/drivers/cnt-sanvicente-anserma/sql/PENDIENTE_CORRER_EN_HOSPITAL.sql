@@ -11,7 +11,7 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · Pendiente de correr: G.2, G.3 y G.4. Nada más.
+--   · Pendiente de correr: G.4 y G.5.
 --
 -- CONTENIDO
 --   A. ✅ CORRIDA — y la respuesta es la mala: el 72,5 % de los turnos
@@ -26,14 +26,17 @@
 --      umbral de ruido son 4 verdes, 20 amarillos y solo 6 rojos.
 --   G.1 ⚠️ CORRIDA, NO CONCLUYENTE — la escribí uniendo por R_PAC_EPS, que es
 --      un historial y multiplica cada cita. Ninguna cuota es fiable.
---   G.2 🔍 PENDIENTE — la misma pregunta leyendo el convenio DE LA CITA
---      (NU_NUME_CONV_CIT). Sin fan-out: esta sí decide.
---   G.3 🧪 PENDIENTE — comprueba contra los datos que 8902xx es «primera vez»
---      y 8903xx «control», que es lo que G.1 destapó de rebote.
+--   G.2 ✅ CORRIDA — SUR ⟹ Sura siempre (367/367), pero Sura NO ⟹ SUR: el
+--      60 % de las citas de Sura van con ESP. Y destapó el bloqueante: los
+--      especialistas facturan a convenios de EVENTO que AgenIA no tiene.
+--   G.3 ✅ CORRIDA — CONFIRMADO: la 1ª cita del paciente lleva 8902xx en el
+--      91,6-99,7 % de los casos; las siguientes, en el 11-45 %.
 --   G.4 🧷 PENDIENTE — la red de seguridad: la especialidad de TODOS los
 --      servicios con citas, sin filtrar por turnos. Cierra el hueco que dejó
 --      el 31d y sirve para volver a correrla cada vez que se encienda un
 --      médico nuevo.
+--   G.5 🚨 PENDIENTE — la tabla de convenios COMPLETA (EPS × régimen × tipo
+--      de servicio). Es lo que hace falta para poder encender especialistas.
 --
 -- El detalle de POR QUÉ se pregunta cada cosa está en
 -- FASE0_DESCUBRIMIENTO_HIS.sql (bloques 31, 25, 29 y 16/19). Este archivo es
@@ -795,7 +798,7 @@ GO
 
 
 -- =============================================================================
--- G.2 ✅ LA QUE SÍ DECIDE — el convenio DE LA CITA, sin fan-out
+-- G.2 ✅ CORRIDA Y CERRADA EL 2026-09-03 — y destapó un bloqueante nuevo
 --
 -- Misma pregunta que G.1 (¿el sufijo depende del pagador?) pero leyendo el
 -- convenio que la cita YA tiene grabado en `NU_NUME_CONV_CIT` y resolviendo la
@@ -835,8 +838,50 @@ ORDER BY p.raiz, p.sufijo, citas DESC;
 GO
 
 
+-- ── RESULTADO DE G.2 (2026-09-03) — 1.589 citas de especialista en 90 días ──
+--
+-- LA PREGUNTA ORIGINAL: SÍ, PERO SOLO EN UNA DIRECCIÓN.
+--
+--   bucket SUR (367 citas):  100,0 % Sura.  CERO excepciones.
+--   bucket ESP (1.222):      51,2 % Salud Total · 45,8 % Sura ·
+--                            1,5 % Fomag · 0,6 % Nueva EPS · 0,4 % particular
+--
+-- Es decir: `SUR` ⟹ Sura, siempre, sin una sola contradicción en 367 citas.
+-- Pero **Sura NO ⟹ SUR**: 560 de las 927 citas de Sura (el 60 %) van con ESP.
+-- AgenIA no puede deducir el sufijo de la EPS: saber que el paciente es de
+-- Sura no dice si toca ESP o SUR. La pregunta a la agendadora sigue viva,
+-- pero ahora es concreta — y hay un default seguro: ESP se usa con TODAS las
+-- aseguradoras, Sura incluida, así que escribir ESP nunca es «la aseguradora
+-- equivocada».
+--
+-- 🚨 Y ESTO, QUE NO SE PREGUNTABA Y PESA MÁS:
+--
+-- Los convenios que aparecen NO son los que AgenIA tiene homologados.
+--
+--   especialistas           atención primaria (lo que dice mapping.json hoy)
+--   ─────────────────────   ────────────────────────────────────────────────
+--   535 EVENSURASUB    605   467 SUBS            ← Sura subsidiado
+--    97 EVENSURACON    318   473 CONTRIBUTIVO    ← Sura contributivo
+--   538 EVENTOSTOTALSU 500   (no existe)         ← Salud Total subsidiado
+--    96 EVENTOSTOTALCO 126   (no existe)         ← Salud Total contributivo
+--
+-- El prefijo lo dice: EVEN(TOS) = facturación por evento. La atención primaria
+-- va por cápita (467, 283, 489) y el especialista por evento. La regla de
+-- convenio de AgenIA —EPS + régimen + PyP— **le falta un cuarto eje**.
+--
+-- Para Sura subsidiado con un especialista, el hospital usa 535 en 605 citas y
+-- 467 en 4. Si AgenIA enciende un especialista hoy, factura al contrato
+-- equivocado en el 99 % de los casos.
+--
+-- Además: **Salud Total es el 39,4 % del volumen de especialistas y AgenIA no
+-- sabe que existe** — su tabla `Eps` solo tiene Nueva EPS, Sura y Particular.
+--
+-- Nada de esto toca al piloto de los 4 médicos verdes (76, 077, 91-1, 91-2):
+-- son primaria y PyP, y sus convenios están medidos y verificados en D.
+-- Lo que bloquea es encender especialistas. G.5 saca la tabla completa.
+
 -- =============================================================================
--- G.3 🧪 ¿8902xx ES "PRIMERA VEZ" Y 8903xx "CONTROL"? — contra los datos
+-- G.3 ✅ CORRIDA Y CERRADA EL 2026-09-03 — CONFIRMADO
 --
 -- La estructura CUPS dice que sí, pero conviene no creerle a un estándar
 -- cuando se puede mirar el dato. La prueba: para cada paciente y cada familia
@@ -898,6 +943,33 @@ HAVING COUNT(*) >= 20
 ORDER BY o.familia, momento;
 GO
 
+
+-- ── RESULTADO DE G.3 (2026-09-03) — CONFIRMADO, y con margen de sobra ───────
+--
+--   familia            especialidad        1ª cita del      citas
+--                                          paciente         posteriores
+--                                          (% con 8902xx)   (% con 8902xx)
+--   89006  890206/890306  nutrición             99,0 %          44,9 %
+--   89042  890242/890342  dermatología          99,7 %          14,5 %
+--   89050  890250/890350  ginecología           97,9 %          16,3 %
+--   89066  890266/890366  medicina interna      97,1 %          11,3 %
+--   89083  890283/890383  pediatría             91,6 %          42,4 %
+--   89084  890284/890384  psiquiatría           98,5 %          22,2 %
+--
+-- La primera cita de un paciente lleva 8902xx entre el 91,6 % y el 99,7 % de
+-- las veces. Las siguientes caen al 11-45 %. Seis familias de seis.
+--
+-- Y el sesgo de la ventana JUEGA A FAVOR: un paciente cuya primera visita real
+-- fue hace más de 3 años entra como «primera» llevando un código de control,
+-- lo que ENSUCIA la fila de arriba. Aun así sale por encima del 91 %. El
+-- resultado real es todavía más limpio que este.
+--
+-- Que las citas posteriores conserven un 11-45 % de 8902xx no contradice nada:
+-- «primera vez» se vuelve a abrir con un episodio nuevo. Que pediatría (42,4 %)
+-- y nutrición (44,9 %) sean las más altas encaja — un niño estrena motivo de
+-- consulta a menudo. Y confirma que la respuesta no se puede deducir del
+-- historial: **hay que preguntársela al paciente**, que es justo lo que hace
+-- la pregunta «¿primera vez o control?».
 
 -- =============================================================================
 -- G.4 🧷 LA RED DE SEGURIDAD — ¿queda algún servicio sin especialidad?
@@ -962,4 +1034,73 @@ LEFT JOIN dbo.ESPECIALIDADES e ON e.CD_CODI_ESP = r.especialidad
 LEFT JOIN catalogo           c ON c.servicio    = r.servicio
 WHERE r.puesto = 1
 ORDER BY r.servicio;
+GO
+
+
+-- =============================================================================
+-- G.5 🚨 LA TABLA DE CONVENIOS COMPLETA — el bloqueante que destapó G.2
+--
+-- G.2 encontró que la regla de convenio de AgenIA está incompleta. Hoy dice
+-- «EPS + régimen (+ PyP) → convenio», y con eso acierta en atención primaria
+-- porque así se midió en la sección D. Pero los especialistas facturan a
+-- contratos DISTINTOS de la misma EPS y el mismo régimen:
+--
+--   Sura subsidiado + primaria      → 467 SUBS
+--   Sura subsidiado + especialista  → 535 EVENSURASUB   ← el que falta
+--
+-- «EVEN» es EVENTOS: primaria por cápita, especialista por evento. Falta un
+-- cuarto eje en la regla, y falta Salud Total entera —el 39 % del volumen de
+-- especialistas— que AgenIA ni siquiera tiene en su tabla `Eps`.
+--
+-- Esta consulta saca la tabla ENTERA de una vez: qué convenio usa cada EPS,
+-- en cada régimen, para cada tipo de servicio. Con eso se rellena el
+-- `mappingJson` sin deducir nada.
+--
+-- CÓMO SE LEE:
+--   · `nit_eps` es lo que hay que dar de alta en la tabla `Eps` de AgenIA.
+--     Ojo con Salud Total: hoy no existe.
+--   · `vigente` (NU_VIGE_CONV): si un convenio con volumen sale NO vigente,
+--     preguntar antes de homologarlo — puede ser un contrato que acaba de
+--     terminar.
+--   · `tipo_servicio` separa PyP / especialista / primaria. Si una EPS usa el
+--     MISMO convenio para especialista y primaria, para esa EPS no hay cuarto
+--     eje y basta la regla actual.
+--   · `servicios_distintos` alto en «especialista» = ese contrato cubre toda
+--     la cartera de especialidades, no un servicio suelto.
+--
+-- ⚠️ SOLO LECTURA. Sintaxis validada contra un SQL Server real.
+-- =============================================================================
+WITH pyp AS (
+    SELECT s FROM (VALUES
+        ('890201-CI'),('I890301AG'),('890201AD'),('890201PI'),('I890201AG'),
+        ('I890201PL1'),('I890301G'),('I890301RN'),('890201AV'),
+        ('990203'),('997301-1'),('SSAO'),('890208Ges'),('I890305PL')
+    ) v(s)
+),
+citas AS (
+    SELECT  c.NU_NUME_CONV_CIT AS convenio,
+            c.CD_CODI_SER_CIT  AS servicio,
+            CASE WHEN p.s IS NOT NULL                    THEN 'PyP'
+                 WHEN c.CD_CODI_SER_CIT LIKE '8902%'
+                   OR c.CD_CODI_SER_CIT LIKE '8903%'     THEN 'especialista'
+                 ELSE 'primaria' END AS tipo_servicio
+    FROM dbo.CITAS_MEDICAS c
+    LEFT JOIN pyp p ON p.s = c.CD_CODI_SER_CIT
+    WHERE c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+)
+SELECT  ct.convenio,
+        cv.CD_CODI_CONV        AS nombre_convenio,
+        cv.CD_NIT_EPS_CONV     AS nit_eps,
+        e.NO_NOMB_EPS          AS eps,
+        cv.NU_VIGE_CONV        AS vigente,
+        ct.tipo_servicio,
+        COUNT(*)                       AS citas,
+        COUNT(DISTINCT ct.servicio)    AS servicios_distintos
+FROM citas ct
+LEFT JOIN dbo.CONVENIOS cv ON cv.NU_NUME_CONV = ct.convenio
+LEFT JOIN dbo.EPS e        ON e.CD_NIT_EPS    = cv.CD_NIT_EPS_CONV
+GROUP BY ct.convenio, cv.CD_CODI_CONV, cv.CD_NIT_EPS_CONV, e.NO_NOMB_EPS,
+         cv.NU_VIGE_CONV, ct.tipo_servicio
+HAVING COUNT(*) >= 5
+ORDER BY e.NO_NOMB_EPS, ct.tipo_servicio, citas DESC;
 GO

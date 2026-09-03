@@ -84,6 +84,51 @@ function revisar(mapping: Record<string, any>): string[] {
       );
     }
   }
+  // ── El cuarto eje del convenio: facturación por evento (sección G.2) ─────
+  const evento: string[] = mapping.serviciosEvento ?? [];
+  const convenios: Record<string, number> = mapping.convenios ?? {};
+
+  // Un servicio no puede facturarse a la vez por PyP y por evento: las dos
+  // reglas se pisarían y gana la primera que mire `resolveConvenio`.
+  for (const servicio of evento) {
+    if (pyp.includes(servicio)) {
+      problemas.push(`${servicio} está en serviciosPyp Y en serviciosEvento: las dos reglas de convenio chocarían.`);
+    }
+    if (!esp[servicio]) {
+      problemas.push(`${servicio} está en serviciosEvento pero no tiene especialidad asignada.`);
+    }
+  }
+
+  // Una clave |EVENTO sin su clave de cápita es un mapeo a medias: el
+  // especialista funcionaría y la atención primaria de esa misma EPS no.
+  for (const clave of Object.keys(convenios)) {
+    if (!clave.endsWith('|EVENTO')) continue;
+    const capita = clave.replace('|EVENTO', '');
+    if (!(capita in convenios)) {
+      problemas.push(`El convenio "${clave}" no tiene su equivalente de cápita "${capita}": el especialista facturaría y la primaria de la misma EPS no.`);
+    }
+  }
+
+  // Aviso, no error: la lista de evento nace incompleta a propósito (falta
+  // Salud Total, que es el 39 % del volumen de especialistas). Lo importante
+  // es que `resolveConvenio` LANZA ante el hueco en vez de facturar a cápita,
+  // así que un especialista sin medir no se puede encender por accidente.
+  if (evento.length > 0) {
+    const regimenes = new Set(
+      Object.keys(convenios)
+        .filter((k) => !k.includes('|PYP') && !k.includes('|EVENTO'))
+        .map((k) => k),
+    );
+    const sinEvento = [...regimenes].filter((k) => !(`${k}|EVENTO` in convenios));
+    if (sinEvento.length > 0) {
+      console.warn(
+        `⚠️  Sin convenio de EVENTO: ${sinEvento.join(', ')}. Un paciente de esas ` +
+          `combinaciones NO podrá agendar con un especialista (resolveConvenio lanza). ` +
+          `Es el comportamiento buscado hasta que G.5 mida el contrato — pero conviene saberlo.`,
+      );
+    }
+  }
+
   // ── El par CUPS 8902xx (primera vez) / 8903xx (control) ──────────────────
   // Es el mismo procedimiento: cambia el momento, no la especialidad. Ni el
   // dígito 2/3 ni el sufijo local ESP/SUR la cambian. Este chequeo existe

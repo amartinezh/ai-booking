@@ -895,3 +895,118 @@ describe('especialidades — el mapa que se aplica en producción', () => {
     expect(desconocidas).toEqual([]);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// EL CUARTO EJE DEL CONVENIO: facturación por EVENTO (sección G.2, 2026-09-03)
+//
+// La regla era EPS + régimen + PyP, y acertaba en atención primaria porque así
+// se midió en la sección D. Pero un especialista de la MISMA EPS y el MISMO
+// régimen factura a otro contrato:
+//
+//     Sura subsidiado + primaria      → 467 SUBS          (cápita)
+//     Sura subsidiado + especialista  → 535 EVENSURASUB   (evento)
+//
+// 605 citas contra 4, en 90 días. Sin este eje, encender un especialista
+// factura mal en el 99 % de los casos — y en silencio, porque el 467 es un
+// convenio perfectamente válido de la EPS correcta.
+// ══════════════════════════════════════════════════════════════════════════
+describe('resolveConvenio — facturación por evento', () => {
+  const REAL = JSON.parse(
+    readFileSync(
+      join(
+        __dirname,
+        '../../../../../docs/drivers/cnt-sanvicente-anserma/mapping.json',
+      ),
+      'utf8',
+    ),
+  ) as AnsermaMapping;
+
+  const SURA = '800088702';
+  const NUEVA = '900156264';
+
+  it.each([
+    ['SUBSIDIADO', '890266ESP', 535, 'EVENSURASUB', 605],
+    ['CONTRIBUTIVO', '890266ESP', 97, 'EVENSURACON', 318],
+    ['SUBSIDIADO', '890350SUR', 535, 'EVENSURASUB', 605],
+    ['CONTRIBUTIVO', '890384ESP', 97, 'EVENSURACON', 318],
+  ])(
+    'Sura %s con el especialista %s → convenio %i (%s, %i citas reales)',
+    (regimen, servicio, esperado) => {
+      expect(
+        resolveConvenio(REAL, {
+          epsNit: SURA,
+          patientRegime: regimen as string,
+          serviceExternalKey: servicio as string,
+        }),
+      ).toBe(esperado);
+    },
+  );
+
+  it('🚨 el especialista NO se repliega al convenio de cápita de su régimen', () => {
+    const capita = resolveConvenio(REAL, {
+      epsNit: SURA,
+      patientRegime: 'SUBSIDIADO',
+      serviceExternalKey: 'S39141-1', // primaria
+    });
+    const evento = resolveConvenio(REAL, {
+      epsNit: SURA,
+      patientRegime: 'SUBSIDIADO',
+      serviceExternalKey: '890266ESP', // especialista
+    });
+
+    expect(capita).toBe(467);
+    expect(evento).toBe(535);
+    expect(evento).not.toBe(capita);
+  });
+
+  it('🚨 una EPS sin convenio de evento LANZA en vez de facturar a cápita', () => {
+    // Nueva EPS no tiene clave |EVENTO todavía: falta medirla (G.5). Antes de
+    // este eje habría devuelto 283 NUEVASUBSID tan tranquila.
+    expect(() =>
+      resolveConvenio(REAL, {
+        epsNit: NUEVA,
+        patientRegime: 'SUBSIDIADO',
+        serviceExternalKey: '890266ESP',
+      }),
+    ).toThrow(MappingIncompletoError);
+  });
+
+  it('el error dice qué clave falta, para poder añadirla sin adivinar', () => {
+    expect(() =>
+      resolveConvenio(REAL, {
+        epsNit: NUEVA,
+        patientRegime: 'SUBSIDIADO',
+        serviceExternalKey: '890266ESP',
+      }),
+    ).toThrow(/900156264\|SUBSIDIADO\|EVENTO/);
+  });
+
+  it('sin EPS sigue mandando el pago directo, aunque sea un especialista', () => {
+    expect(
+      resolveConvenio(REAL, { serviceExternalKey: '890266ESP' }),
+    ).toBe(REAL.convenioParticular);
+  });
+
+  it('🔒 ningún servicio es a la vez de PyP y de evento (las reglas chocarían)', () => {
+    const ambos = (REAL.serviciosEvento ?? []).filter((s) =>
+      REAL.serviciosPyp.includes(s),
+    );
+    expect(ambos).toEqual([]);
+  });
+
+  it('🔒 todo servicio de evento tiene especialidad homologada', () => {
+    const sinEsp = (REAL.serviciosEvento ?? []).filter(
+      (s) => !(s in REAL.especialidadPorServicio),
+    );
+    expect(sinEsp).toEqual([]);
+  });
+
+  it('🔒 las claves |EVENTO son de EPS que existen en la tabla de convenios', () => {
+    // Una clave |EVENTO de una EPS sin convenio de cápita sería un mapeo a
+    // medias: el especialista funcionaría y la primaria no.
+    const huerfanas = Object.keys(REAL.convenios)
+      .filter((k) => k.endsWith('|EVENTO'))
+      .filter((k) => !(k.replace('|EVENTO', '') in REAL.convenios));
+    expect(huerfanas).toEqual([]);
+  });
+});
