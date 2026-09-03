@@ -259,24 +259,17 @@ el chatbot solo le ofrece Nueva EPS, Sura o Particular.
 > afiliados habilitados. Es el mismo archivo que ya nos entregaron para Nueva
 > EPS y Sura.
 
-### Sobre el magisterio (Fomag) — todavía no, y una cosa que necesitamos entender
+### Sobre el magisterio (Fomag) — no entra al alcance
 
 Vimos que ustedes facturan al magisterio a través de una fiduciaria (La
-Previsora), con dos convenios propios. Por ahora **no la vamos a activar** —es
-apenas el 2,4 % del volumen— pero notamos algo que preferimos preguntar antes
-de tocarla:
+Previsora), con dos convenios propios, y que sus pacientes no están
+registrados ni como subsidiados ni como contributivos — usan un régimen
+aparte que nuestro chatbot no sabe preguntar.
 
-**Los pacientes del magisterio, en su sistema, no están registrados como
-subsidiados ni como contributivos** — usan un tercer código de régimen.
-Nuestro chatbot solo sabe preguntar esas dos cosas.
-
-- [ ] Confirmamos: el magisterio es un régimen aparte (de excepción), no
-      subsidiado ni contributivo.
-- [ ] No, el magisterio sí es uno de los dos: ______________________________
-
-> Si es un régimen aparte, cuando lo activemos el chatbot **no le preguntará
-> el régimen** a un paciente del magisterio — con saber que es del magisterio
-> alcanza para elegir el convenio correcto.
+Con esa complejidad y apenas el 2,4 % del volumen, **decidimos que AgenIA no
+va a dar soporte al magisterio**. No hace falta que nos confirmen nada de
+esto — lo dejamos por escrito para que quede claro que fue una decisión y no
+un olvido.
 
 ### Y una duda concreta que nos gustaría que nos despejaran
 

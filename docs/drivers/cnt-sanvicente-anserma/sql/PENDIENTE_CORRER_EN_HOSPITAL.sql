@@ -11,9 +11,9 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · Pendiente de correr: D.7 (decodificar el régimen 15 de Fomag — ya no
---     es opcional). El resto está cerrado; volver a correr G.4 y G.6 cada
---     vez que se encienda un médico nuevo.
+--   · ✅ NO QUEDA NADA POR CORRER. D.7 se cerró SIN correr: decisión de
+--     producto, Fomag queda fuera de alcance. Volver a correr G.4 y G.6
+--     cada vez que se encienda un médico nuevo.
 --
 -- CONTENIDO
 --   A. ✅ CORRIDA — y la respuesta es la mala: el 72,5 % de los turnos
@@ -517,34 +517,25 @@ WHERE c.NU_NUME_CONV IN (26, 283, 467, 473, 489)
 ORDER BY c.NU_NUME_CONV;
 
 
--- ── D.7 🚨 YA NO ES OPCIONAL — decodificar el código de régimen 15 (G.7) ────
+-- ── D.7 ⛔ CERRADA SIN CORRER — decisión de producto: Fomag queda fuera (2026-09-03)
 --
--- Nació como verificación de cierre: D.6 encontró el catálogo `REGIMEN` ⋈
--- `TIPO_REGIMEN_RESOL4505`, y leerlo confirmaba lo ya inferido de los nombres
--- de los convenios (01/02/14 = SUBSIDIADO, 07-12/18 = CONTRIBUTIVO) — no
--- bloqueaba nada porque la tabla de convenios se sostiene sola.
+-- Nació como verificación de cierre (confirmar 01/02/14 = SUBSIDIADO,
+-- 07-12/18 = CONTRIBUTIVO) y G.7 la volvió urgente al encontrar que el
+-- padrón de Fomag/La Previsora (NIT 830053105) está 100 % bajo un código de
+-- régimen (`15`) ajeno a esos dos. Antes de correrla se decidió que
+-- **AgenIA no va a soportar Fomag** — es el 2,4 % del volumen y la
+-- estructura que destapó G.7 (una fiduciaria, no una EPS; un régimen de
+-- excepción que el chatbot no sabe preguntar) no justifica el trabajo.
 --
--- G.7 lo cambia: el padrón de Fomag/La Previsora (NIT 830053105) está
--- 100 % bajo el código de régimen **`15`**, que NO está en ninguno de los dos
--- catálogos ya confirmados. No es un caso raro entre otros — es EL ÚNICO
--- régimen que usan esos 1.046 pacientes. Si `15` es un régimen de EXCEPCIÓN
--- (como `P` OTRO o `F` FOSYGA, que tampoco son SUBSIDIADO/CONTRIBUTIVO),
--- entonces preguntarle a un paciente de Fomag «¿es usted subsidiado o
--- contributivo?» no tiene una respuesta correcta — el modelo de régimen de
--- AgenIA (`parseRegimen`, en `packages/shared`) solo conoce esos dos valores.
+-- Con esa decisión, decodificar el código 15 no desbloquea nada: no hay
+-- ningún camino en el que el resultado cambie una línea de código o de
+-- mappingJson. Se deja SIN CORRER a propósito.
 --
--- CÓMO SE LEE: buscar en el resultado de `REGIMEN` la fila cuyo código es
--- `15` y ver a qué tipo de la Resolución 4505 apunta. Si no es ni el tipo 1
--- (contributivo) ni el tipo 2 (subsidiado), queda confirmado que Fomag es un
--- régimen de excepción y el chatbot necesita una rama nueva: cuando la EPS
--- elegida sea Fomag, no preguntar régimen — hay un solo convenio posible por
--- tipo de servicio (518 MAGISTERIOFOMAG / 529 PYPFOMAG), así que la pregunta
--- sobra.
+-- Si algún día se revierte la decisión de no soportar Fomag, esta consulta
+-- sigue siendo el primer paso — no se borra, se reabre.
 --
--- ⚠️ SOLO LECTURA. `SELECT *` no necesita nombres de columna — el mock local
--- no tiene estas tablas para poder validar más allá de esto.
-SELECT * FROM dbo.REGIMEN;
-SELECT * FROM dbo.TIPO_REGIMEN_RESOL4505;
+-- SELECT * FROM dbo.REGIMEN;
+-- SELECT * FROM dbo.TIPO_REGIMEN_RESOL4505;
 
 -- Y qué marca la afiliación vigente, para futuras consultas sobre R_PAC_EPS.
 SELECT NU_ESTA_RPE, TX_ACTI_RPE, COUNT(*) AS filas
@@ -1417,9 +1408,7 @@ GO
 --    qué la fiduciaria administra sus contratos por fuera de las categorías
 --    de siempre.
 --
---    Si D.7 confirma que 15 es régimen de excepción, la pregunta
---    «¿subsidiado o contributivo?» del chatbot **no tiene respuesta correcta**
---    para un paciente de Fomag — y como Fomag/La Previsora solo tiene DOS
---    convenios activos (uno normal, uno de PyP), la solución más simple es
---    que el chatbot NO pregunte régimen cuando la EPS elegida sea esta: basta
---    con si el servicio es de PyP o no.
+--    ⛔ DECISIÓN DE PRODUCTO (2026-09-03): este hallazgo, sumado al volumen
+--    (2,4 %), es lo que llevó a decidir que AgenIA NO va a soportar Fomag.
+--    D.7 (decodificar el 15) queda cerrada sin correr — no hay resultado
+--    posible que cambie esa decisión.

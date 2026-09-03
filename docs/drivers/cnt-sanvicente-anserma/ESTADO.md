@@ -1641,14 +1641,33 @@ facturarán al `473`, un convenio registrado bajo el NIT de **Sura**. Si está
 mal, está mal desde el primer día. Es la pregunta 1-bis del cuestionario y se
 corrige con una línea de configuración.
 
-### 🟡 5. Fomag (2,4 %) y las residuales (0,1 %)
+### ⛔ 5. Fomag — DECISIÓN: no lo soporta AgenIA (2026-09-03)
 
-Se pueden dejar para después sin que duela. Con una salvedad: cuando le
-llegue el turno a Fomag, **no basta con copiar la receta de Salud Total**.
-G.7 encontró que su NIT es una fiduciaria (no una EPS tradicional) y que su
-padrón entero cae en un código de régimen (`15`) que todavía no está
-decodificado — hace falta correr **D.7** antes de homologarla, no solo pedir
-el CSV del padrón.
+Se decidió que **AgenIA no dará soporte a Fomag/magisterio**. No es un
+aplazamiento — a diferencia de las residuales (0,1 %, que sí podrían
+homologarse más adelante sin más que un CSV — esta EPS queda **fuera del
+alcance del producto**, sin fecha.
+
+No hay nada que deshacer en el código: Fomag nunca llegó a homologarse.
+`mapping.json` no tiene ninguna clave `830053105|*`, y `Eps` de AgenIA no
+tiene esa fila. **D.7** (decodificar el régimen `15`) queda cerrada por esta
+decisión: no hace falta correr una consulta para una EPS que no se va a
+soportar.
+
+Queda documentado por qué se llegó a investigar tanto: G.7 encontró que el
+NIT `830053105` es en realidad una fiduciaria (La Previsora, no una EPS
+tradicional) que administra varios contratos del Estado, y que su padrón
+completo cae en un código de régimen ajeno a SUBSIDIADO/CONTRIBUTIVO — un
+régimen de excepción, coherente con lo que es el magisterio en Colombia. Esa
+complejidad estructural, sumada a ser solo el 2,4 % del volumen, es
+justamente lo que hace razonable la decisión de no soportarlo: el esfuerzo de
+construir una tercera rama de régimen en el chatbot no se justifica para ese
+volumen.
+
+⚠️ **Si en el futuro se revierte esta decisión**, no partir del trabajo de
+G.7 sin releer el hallazgo del régimen de excepción — sigue siendo cierto que
+`parseRegimen` (en `packages/shared`) solo conoce SUBSIDIADO/CONTRIBUTIVO, y
+que un paciente de Fomag no tiene una respuesta correcta a esa pregunta.
 
 ## 4. Qué está listo y verificado
 
