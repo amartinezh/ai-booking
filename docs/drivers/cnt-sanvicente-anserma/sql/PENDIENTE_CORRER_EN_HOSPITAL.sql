@@ -11,9 +11,9 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · ✅ NO QUEDA NADA POR CORRER. Todas las secciones están cerradas.
---     Volver a correr G.4 y G.6 cada vez que se encienda un médico nuevo:
---     son las únicas que ven servicios que AgenIA todavía no conoce.
+--   · Pendiente de correr: G.7 (ficha de Salud Total y Fomag para darlas
+--     de alta). El resto está cerrado; volver a correr G.4 y G.6 cada vez
+--     que se encienda un médico nuevo.
 --
 -- CONTENIDO
 --   A. ✅ CORRIDA — y la respuesta es la mala: el 72,5 % de los turnos
@@ -43,6 +43,9 @@
 --   G.6 ✅ CORRIDA — 32 servicios cápita (<0,6 %) y 16 evento (>90 %). Sin
 --      zona gris. Corrigió dos cosas: NUTRICIÓN sí es evento (el medico NU02
 --      NO estaba a salvo), y el «MIXTO» de 890284ESP no es ambiguo.
+--   G.7 🆕 PENDIENTE — ficha completa de Salud Total y Fomag (EPS, vigencia
+--      real de sus convenios, tamaño del padrón). Es lo que falta para darlas
+--      de alta en AgenIA.
 --
 -- El detalle de POR QUÉ se pregunta cada cosa está en
 -- FASE0_DESCUBRIMIENTO_HIS.sql (bloques 31, 25, 29 y 16/19). Este archivo es
@@ -1297,3 +1300,57 @@ GO
 --     I890305PL  planificación familiar (91-2)   1.114         0,0 %
 --
 --   El piloto no toca facturación por evento por ningún lado.
+
+
+-- =============================================================================
+-- G.7 🆕 FICHA DE SALUD TOTAL Y FOMAG — para darlas de alta en AgenIA
+--
+-- G.5 encontró que Salud Total es un TERCIO del hospital (33,9 % de la
+-- atención primaria) y que Fomag es un 2,4 % adicional, y que ninguna de las
+-- dos existe como `Eps` en AgenIA. Esta consulta trae lo que falta para
+-- crearlas: ficha de la EPS, vigencia real de sus convenios (no solo el
+-- nombre) y el tamaño de su padrón, para dimensionar el CSV de alta.
+--
+-- CÓMO SE LEE:
+--   · Bloque 1 (ficha): si `activa = 0`, avisar antes de dar de alta — puede
+--     ser una EPS que dejó de operar y las citas recientes son solo cola.
+--   · Bloque 2 (convenios): si `vigente = 0` o `fin` ya pasó, ese convenio no
+--     sirve para citas NUEVAS aunque tenga volumen histórico en 90 días.
+--   · Bloque 3 (padrón): el número de pacientes distintos por régimen es una
+--     cota SUPERIOR razonable del tamaño del CSV que hay que pedir —el padrón
+--     real puede ser menor si algunos ya no están afiliados.
+--
+-- ⚠️ SOLO LECTURA. Sintaxis validada contra un SQL Server real.
+-- =============================================================================
+SELECT  e.CD_NIT_EPS      AS nit,
+        e.NO_NOMB_EPS     AS nombre,
+        e.CD_CODI_EPS     AS codigo_corto,
+        e.NU_ACTIVO_EPS   AS activa,
+        e.NO_DPTO_EPS     AS depto,
+        e.NO_MUNI_EPS     AS municipio,
+        e.DE_TELE_EPS     AS telefono,
+        e.NU_REQPOL_EPS   AS requiere_poliza
+FROM dbo.EPS e
+WHERE e.CD_NIT_EPS IN ('800130907','830053105');
+GO
+
+SELECT  cv.NU_NUME_CONV     AS convenio,
+        cv.CD_CODI_CONV     AS nombre_convenio,
+        cv.CD_NIT_EPS_CONV  AS nit_eps,
+        cv.NU_VIGE_CONV     AS vigente,
+        CONVERT(varchar(10), cv.FE_INIC_CONV, 23) AS inicio,
+        CONVERT(varchar(10), cv.FE_FINA_CONV, 23) AS fin
+FROM dbo.CONVENIOS cv
+WHERE cv.CD_NIT_EPS_CONV IN ('800130907','830053105')
+ORDER BY cv.CD_NIT_EPS_CONV, cv.NU_NUME_CONV;
+GO
+
+SELECT  r.CD_NIT_EPS_RPE                 AS nit_eps,
+        r.CD_CODI_REG_RPE                 AS regimen,
+        COUNT(DISTINCT r.NU_HIST_PAC_RPE) AS pacientes_distintos
+FROM dbo.R_PAC_EPS r
+WHERE r.CD_NIT_EPS_RPE IN ('800130907','830053105')
+  AND r.NU_ESTA_RPE = 1
+GROUP BY r.CD_NIT_EPS_RPE, r.CD_CODI_REG_RPE
+ORDER BY r.CD_NIT_EPS_RPE, r.CD_CODI_REG_RPE;
+GO
