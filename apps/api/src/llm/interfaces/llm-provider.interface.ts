@@ -62,7 +62,12 @@ export type SchedulingIntent =
  * orquestador trata como agendamiento (no bloquea al paciente).
  */
 export function normalizeIntent(value: unknown): SchedulingIntent {
-  const v = String(value ?? '')
+  // El LLM puede devolver cualquier cosa en `intent`; solo un string o número
+  // se puede comparar con sentido. `String(objeto)` daría '[object Object]'
+  // en vez de caer limpio al 'otro' de más abajo.
+  const v = (
+    typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+  )
     .trim()
     .toLowerCase();
   if (v === 'agendar_cita' || v === 'consulta_faq' || v === 'insulto_abuso') {
@@ -117,6 +122,39 @@ export interface SchedulingExtraction {
    */
   isEmergency: boolean;
   isRateLimited: boolean;
+}
+
+/**
+ * Forma cruda del JSON que el LLM devuelve para `extractSchedulingIntent`,
+ * antes de normalizar — los tres proveedores (Claude, ChatGPT, Gemini) hacen
+ * el mismo `JSON.parse(...)` seguido de defaults y `Boolean(...)`. Todo
+ * opcional porque viene de un modelo de lenguaje: no hay contrato que
+ * garantice que el campo exista o tenga el tipo esperado.
+ */
+export interface RawSchedulingExtraction {
+  transcript?: unknown;
+  cedula?: unknown;
+  nombre?: unknown;
+  eps?: unknown;
+  especialidad?: unknown;
+  doctor?: unknown;
+  fechaSolicitada?: unknown;
+  intent?: unknown;
+  isEscape?: unknown;
+  outOfContext?: unknown;
+  ininteligible?: unknown;
+  isCancellation?: unknown;
+  isModification?: unknown;
+  isEmergency?: unknown;
+}
+
+/**
+ * Un campo de texto del JSON del LLM: úsalo antes de asignarlo a un
+ * `string | null` de `SchedulingExtraction` — el modelo puede devolver
+ * cualquier cosa (número, objeto, veces ni el campo).
+ */
+export function asNullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
 }
 
 export interface ClinicalRecordDraft {

@@ -1,14 +1,17 @@
 import { Logger } from '@nestjs/common';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getErrorStatus } from '../../common/error-message.util';
 import {
   AudioInput,
   ClinicalRecordDraft,
   DecryptedAiConfig,
   LLMProvider,
   SchedulingExtraction,
+  RawSchedulingExtraction,
   CatalogOption,
   VocabularyHints,
   normalizeIntent,
+  asNullableString,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
@@ -58,10 +61,11 @@ export class GeminiProvider implements LLMProvider {
     for (const model of this.modelCandidates) {
       try {
         return await fn(model);
-      } catch (e: any) {
-        if (e?.status === 503 || e?.status === 404) {
+      } catch (e: unknown) {
+        const status = getErrorStatus(e);
+        if (status === 503 || status === 404) {
           this.logger.warn(
-            `Modelo ${model} no disponible (${e.status}) — probando siguiente`,
+            `Modelo ${model} no disponible (${status}) — probando siguiente`,
           );
           lastErr = e;
           continue;
@@ -127,15 +131,15 @@ export class GeminiProvider implements LLMProvider {
       .trim()
       .replace(/```json/g, '')
       .replace(/```/g, '');
-    const parsed = JSON.parse(responseText);
+    const parsed = JSON.parse(responseText) as RawSchedulingExtraction;
     return {
-      transcript: parsed.transcript ?? input.text ?? null,
-      cedula: parsed.cedula ?? null,
-      nombre: parsed.nombre ?? null,
-      eps: parsed.eps ?? null,
-      especialidad: parsed.especialidad ?? null,
-      doctor: parsed.doctor ?? null,
-      fechaSolicitada: parsed.fechaSolicitada ?? null,
+      transcript: asNullableString(parsed.transcript) ?? input.text ?? null,
+      cedula: asNullableString(parsed.cedula),
+      nombre: asNullableString(parsed.nombre),
+      eps: asNullableString(parsed.eps),
+      especialidad: asNullableString(parsed.especialidad),
+      doctor: asNullableString(parsed.doctor),
+      fechaSolicitada: asNullableString(parsed.fechaSolicitada),
       intent: normalizeIntent(parsed.intent),
       isEscape: Boolean(parsed.isEscape),
       outOfContext: Boolean(parsed.outOfContext),

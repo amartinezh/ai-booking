@@ -5,9 +5,11 @@ import {
   DecryptedAiConfig,
   LLMProvider,
   SchedulingExtraction,
+  RawSchedulingExtraction,
   CatalogOption,
   VocabularyHints,
   normalizeIntent,
+  asNullableString,
 } from '../interfaces/llm-provider.interface';
 import {
   SCHEDULING_EXTRACTION_PROMPT,
@@ -79,15 +81,15 @@ export class ClaudeProvider implements LLMProvider {
       .trim()
       .replace(/```json/g, '')
       .replace(/```/g, '');
-    const parsed = JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned) as RawSchedulingExtraction;
     return {
-      transcript: input.text ?? parsed.transcript ?? null,
-      cedula: parsed.cedula ?? null,
-      nombre: parsed.nombre ?? null,
-      eps: parsed.eps ?? null,
-      especialidad: parsed.especialidad ?? null,
-      doctor: parsed.doctor ?? null,
-      fechaSolicitada: parsed.fechaSolicitada ?? null,
+      transcript: input.text ?? asNullableString(parsed.transcript),
+      cedula: asNullableString(parsed.cedula),
+      nombre: asNullableString(parsed.nombre),
+      eps: asNullableString(parsed.eps),
+      especialidad: asNullableString(parsed.especialidad),
+      doctor: asNullableString(parsed.doctor),
+      fechaSolicitada: asNullableString(parsed.fechaSolicitada),
       intent: normalizeIntent(parsed.intent),
       isEscape: Boolean(parsed.isEscape),
       outOfContext: Boolean(parsed.outOfContext),
@@ -149,12 +151,14 @@ export class ClaudeProvider implements LLMProvider {
       err.status = res.status;
       throw err;
     }
-    const json: any = await res.json();
+    const json = (await res.json()) as {
+      content?: Array<{ type: string; text?: string }>;
+    };
     // content es un array de bloques { type: "text", text: "..." }
-    const parts = Array.isArray(json?.content) ? json.content : [];
+    const parts = Array.isArray(json.content) ? json.content : [];
     return parts
-      .filter((p: any) => p?.type === 'text')
-      .map((p: any) => p.text)
+      .filter((p) => p.type === 'text')
+      .map((p) => p.text ?? '')
       .join('');
   }
 }

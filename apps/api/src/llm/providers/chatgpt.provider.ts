@@ -5,9 +5,11 @@ import {
   DecryptedAiConfig,
   LLMProvider,
   SchedulingExtraction,
+  RawSchedulingExtraction,
   CatalogOption,
   VocabularyHints,
   normalizeIntent,
+  asNullableString,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
@@ -107,15 +109,15 @@ export class ChatGptProvider implements LLMProvider {
         { role: 'user', content: userContent || '(sin contenido)' },
       ],
     });
-    const parsed = JSON.parse(json);
+    const parsed = JSON.parse(json) as RawSchedulingExtraction;
     return {
-      transcript: transcript ?? parsed.transcript ?? null,
-      cedula: parsed.cedula ?? null,
-      nombre: parsed.nombre ?? null,
-      eps: parsed.eps ?? null,
-      especialidad: parsed.especialidad ?? null,
-      doctor: parsed.doctor ?? null,
-      fechaSolicitada: parsed.fechaSolicitada ?? null,
+      transcript: transcript ?? asNullableString(parsed.transcript),
+      cedula: asNullableString(parsed.cedula),
+      nombre: asNullableString(parsed.nombre),
+      eps: asNullableString(parsed.eps),
+      especialidad: asNullableString(parsed.especialidad),
+      doctor: asNullableString(parsed.doctor),
+      fechaSolicitada: asNullableString(parsed.fechaSolicitada),
       intent: normalizeIntent(parsed.intent),
       isEscape: Boolean(parsed.isEscape),
       outOfContext: Boolean(parsed.outOfContext),
@@ -178,8 +180,10 @@ export class ChatGptProvider implements LLMProvider {
       err.status = res.status;
       throw err;
     }
-    const json: any = await res.json();
-    return json?.choices?.[0]?.message?.content ?? '';
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    return json.choices?.[0]?.message?.content ?? '';
   }
 
   private async transcribe(
@@ -214,7 +218,7 @@ export class ChatGptProvider implements LLMProvider {
       const errText = await res.text();
       throw new Error(`OpenAI Whisper ${res.status}: ${errText}`);
     }
-    const json: any = await res.json();
-    return json?.text ?? '';
+    const json = (await res.json()) as { text?: string };
+    return json.text ?? '';
   }
 }
