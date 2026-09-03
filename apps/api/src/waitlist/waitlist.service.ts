@@ -4,6 +4,26 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { ChatbotService } from '../chatbot/chatbot.service';
 
+/**
+ * Lo que `notifyWaitlist` guarda en `WaitlistEntry.metadata` (columna `Json`)
+ * al ofrecerle el cupo a un candidato. Se lee de vuelta en
+ * `confirmFromWaitlist` y `expireStaleNotifications` para saber qué cupo
+ * confirmar o a quién ofrecérselo después.
+ */
+interface WaitlistNotificationMetadata {
+  pendingSlotId?: string;
+  doctorName?: string;
+  /** ISO 8601 — se reconstruye con `new Date(...)` al leerlo. */
+  slotDate?: string;
+}
+
+/** `WaitlistEntry.metadata` es `Prisma.JsonValue`; esto valida la forma antes de usarla. */
+function readWaitlistMetadata(metadata: unknown): WaitlistNotificationMetadata {
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? (metadata as WaitlistNotificationMetadata)
+    : {};
+}
+
 @Injectable()
 export class WaitlistService {
   private readonly logger = new Logger(WaitlistService.name);
@@ -153,8 +173,8 @@ export class WaitlistService {
 
     if (!entry) return { slotId: null, patientId: null };
 
-    const metadata = entry.metadata as any;
-    const slotId = metadata?.pendingSlotId as string;
+    const metadata = readWaitlistMetadata(entry.metadata);
+    const slotId = metadata.pendingSlotId ?? null;
 
     if (confirmed) {
       await this.prisma.waitlistEntry.update({
@@ -170,14 +190,16 @@ export class WaitlistService {
       data: { status: 'CANCELLED' },
     });
 
-    await this.notifyWaitlist({
-      slotId,
-      serviceId: entry.serviceId,
-      epsId: entry.epsId,
-      organizationId,
-      doctorName: metadata?.doctorName,
-      slotDate: new Date(metadata?.slotDate),
-    });
+    if (slotId) {
+      await this.notifyWaitlist({
+        slotId,
+        serviceId: entry.serviceId,
+        epsId: entry.epsId,
+        organizationId,
+        doctorName: metadata.doctorName ?? '',
+        slotDate: metadata.slotDate ? new Date(metadata.slotDate) : new Date(),
+      });
+    }
 
     return { slotId: null, patientId: null };
   }
@@ -197,7 +219,7 @@ export class WaitlistService {
 
     for (const entry of expired) {
       this.logger.log(`Expirando waitlist de ${entry.patient.fullName}`);
-      const metadata = entry.metadata as any;
+      const metadata = readWaitlistMetadata(entry.metadata);
 
       await this.prisma.waitlistEntry.update({
         where: { id: entry.id },
@@ -219,14 +241,16 @@ export class WaitlistService {
       }
 
       // Ofrecer el slot al siguiente candidato
-      if (metadata?.pendingSlotId) {
+      if (metadata.pendingSlotId) {
         await this.notifyWaitlist({
           slotId: metadata.pendingSlotId,
           serviceId: entry.serviceId,
           epsId: entry.epsId,
           organizationId: entry.organizationId,
-          doctorName: metadata.doctorName,
-          slotDate: new Date(metadata.slotDate),
+          doctorName: metadata.doctorName ?? '',
+          slotDate: metadata.slotDate
+            ? new Date(metadata.slotDate)
+            : new Date(),
         });
       }
     }

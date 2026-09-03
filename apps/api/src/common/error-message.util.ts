@@ -32,9 +32,11 @@ export function getErrorStack(error: unknown): string | undefined {
  */
 export function getAxiosErrorDetail(error: unknown): string {
   if (isAxiosError(error)) {
-    const body = error.response?.data as unknown;
+    const body: unknown = error.response?.data;
     if (body !== undefined) {
-      return typeof body === 'object' ? JSON.stringify(body) : String(body);
+      if (typeof body === 'object' && body !== null)
+        return JSON.stringify(body);
+      return typeof body === 'string' ? body : JSON.stringify(body);
     }
     return error.message;
   }
