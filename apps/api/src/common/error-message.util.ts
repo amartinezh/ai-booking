@@ -67,3 +67,19 @@ export function getErrorStatus(error: unknown): number | undefined {
   const status = (error as { status: unknown }).status;
   return typeof status === 'number' ? status : undefined;
 }
+
+/**
+ * Mensaje de un error de un cliente gRPC (Google Cloud: TTS, Speech...).
+ * `.details` trae el motivo real que manda el servidor; `.message` de gRPC
+ * suele ser un envoltorio genérico ("13 INTERNAL: ..."). Ningún cliente lo
+ * tipa hacia afuera, así que se lee por duck-typing.
+ */
+export function getGrpcErrorDetail(error: unknown): string {
+  const details =
+    typeof error === 'object' && error !== null && 'details' in error
+      ? (error as { details: unknown }).details
+      : undefined;
+  return typeof details === 'string' && details
+    ? details
+    : getErrorMessage(error);
+}

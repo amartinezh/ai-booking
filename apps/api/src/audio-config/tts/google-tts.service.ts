@@ -6,6 +6,7 @@ import {
   TtsProvider,
   TtsResult,
 } from './tts-provider.interface';
+import { getGrpcErrorDetail } from '../../common/error-message.util';
 
 /** Cap de latencia antes de declarar TIMEOUT (no debe colgar el chat). */
 const GOOGLE_TTS_TIMEOUT_MS = 8000;
@@ -59,15 +60,15 @@ export class GoogleTtsService implements TtsProvider<GoogleTtsParams> {
   }
 
   /** Traduce el error crudo de Google a un código de diagnóstico estable. */
-  private classify(error: any): {
+  private classify(error: unknown): {
     code: AudioDiagnosisErrorCode;
     message: string;
   } {
-    const raw = error?.details || error?.message || String(error);
-    const h = String(raw).toLowerCase();
+    const raw = getGrpcErrorDetail(error);
+    const h = raw.toLowerCase();
 
     if (
-      error?.name === 'TimeoutError' ||
+      (error instanceof Error && error.name === 'TimeoutError') ||
       h.includes('deadline') ||
       h.includes('timeout')
     ) {
@@ -104,7 +105,7 @@ export class GoogleTtsService implements TtsProvider<GoogleTtsParams> {
         message: `Google rechazó los parámetros (pitch/rate/códec): ${raw}`,
       };
     }
-    return { code: 'UNKNOWN', message: String(raw) };
+    return { code: 'UNKNOWN', message: raw };
   }
 
   private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

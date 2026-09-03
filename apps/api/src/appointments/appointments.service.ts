@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma } from '@agenia/database';
+import { Prisma, AttendanceStatus } from '@agenia/database';
 
 /** Forma reducida de un cupo que `getAvailableSlots` le entrega al chatbot. */
 export interface AvailableSlot {
@@ -198,7 +198,7 @@ export class AppointmentsService {
       });
 
       return { success: true, appointmentId };
-    } catch (error: any) {
+    } catch (error: unknown) {
       // El catch atrapa la colisión de cupo, sea cual sea su forma:
       //   - 'SLOT_TAKEN_OR_INVALID': lo lanzamos arriba cuando el slot ya no está
       //     disponible / no existe / es de otro tenant (caso MÁS común: el paciente
@@ -211,7 +211,9 @@ export class AppointmentsService {
       // decidía. No es una colisión de cupo: el horario sigue libre, pero ya
       // no por este canal. Merece su propio mensaje, no el de "se lo llevó
       // otro paciente", que sería mentira.
-      if (error.message === 'DOCTOR_NOT_BOOKABLE') {
+      const message = error instanceof Error ? error.message : undefined;
+
+      if (message === 'DOCTOR_NOT_BOOKABLE') {
         this.logger.warn(
           `Reserva rechazada: el médico del cupo ${scheduleSlotId} ya no acepta reservas por WhatsApp.`,
         );
@@ -224,8 +226,8 @@ export class AppointmentsService {
       }
 
       if (
-        error.message === 'SLOT_TAKEN_OR_INVALID' ||
-        error.message === 'SLOT_TAKEN' ||
+        message === 'SLOT_TAKEN_OR_INVALID' ||
+        message === 'SLOT_TAKEN' ||
         (error instanceof Prisma.PrismaClientKnownRequestError &&
           error.code === 'P2002')
       ) {
@@ -249,9 +251,9 @@ export class AppointmentsService {
   // que siempre traen tenant en el token.
   async updateAttendance(
     appointmentId: string,
-    status: any,
+    status: AttendanceStatus,
     organizationId: string,
-  ): Promise<any> {
+  ) {
     // Verificamos antes para evitar NotFoundExceptions por isolation o seguridad
     const apt = await this.prisma.appointment.findFirst({
       where: { id: appointmentId, organizationId },

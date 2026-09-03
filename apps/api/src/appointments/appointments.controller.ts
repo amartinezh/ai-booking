@@ -3,7 +3,6 @@ import { AppointmentsService } from './appointments.service';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';
-// @ts-expect-error: Prisma monorepo cache issue
 import { AttendanceStatus } from '@agenia/database';
 
 @Controller('appointments')

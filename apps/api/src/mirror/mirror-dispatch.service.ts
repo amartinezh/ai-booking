@@ -406,7 +406,7 @@ export class MirrorDispatchService {
         if (eps.nit) context.epsNit = eps.nit;
         context.epsName = eps.name;
       } else if (fila.epsId) {
-        missing.push(`EPS ${String(fila.epsId)}`);
+        missing.push(`EPS ${String(fila.epsId as string)}`);
       }
 
       if (missing.length > 0) {

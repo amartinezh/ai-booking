@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { CanonicalChangeEvent, ChangesResult } from './dto/mirror.types';
+import { AttendanceStatus } from '@agenia/database';
+import { getErrorMessage } from '../common/error-message.util';
 
 /**
  * Aplica al modelo de datos de AgenIA los eventos que un driver reportó desde
@@ -17,7 +19,11 @@ import { CanonicalChangeEvent, ChangesResult } from './dto/mirror.types';
  * El driver traduce el código de su HIS a esto en su frontera; aquí solo se
  * comprueba, porque un enum inválido revienta el UPDATE.
  */
-const ATTENDANCE_VALIDOS = new Set(['PENDING', 'ATTENDED', 'NO_SHOW']);
+const ATTENDANCE_VALIDOS = new Set<string>(Object.values(AttendanceStatus));
+
+function esAttendanceStatus(valor: string): valor is AttendanceStatus {
+  return ATTENDANCE_VALIDOS.has(valor);
+}
 
 @Injectable()
 export class MirrorApplyService {
@@ -48,14 +54,15 @@ export class MirrorApplyService {
         if (outcome === 'SKIPPED') result.skipped++;
         else if (outcome === 'CONFLICT') result.conflicts++;
         else result.applied++;
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Se cuenta, además de auditarse. Sin el contador, el agente recibía
         // 200 y no tenía forma de saber que la mitad del lote se había caído.
         result.errors++;
+        const message = getErrorMessage(error);
         this.logger.error(
-          `Error aplicando evento ${event.eventId} (org ${organizationId}, ${event.entityType}/${event.op}): ${error?.message}`,
+          `Error aplicando evento ${event.eventId} (org ${organizationId}, ${event.entityType}/${event.op}): ${message}`,
         );
-        await this.audit(organizationId, event, 'ERROR', error?.message);
+        await this.audit(organizationId, event, 'ERROR', message);
       }
     }
 
@@ -378,7 +385,7 @@ export class MirrorApplyService {
     // enviarlo. Si aun así llega algo que este modelo no conoce, se rechaza
     // en vez de escribirlo: un valor inventado en la asistencia de un
     // paciente es peor que no tener el dato.
-    if (!ATTENDANCE_VALIDOS.has(attendanceStatus)) {
+    if (!esAttendanceStatus(attendanceStatus)) {
       throw new Error(
         `Desenlace de atención desconocido "${attendanceStatus}" ` +
           `(event_id=${event.eventId}). Esperados: ${[...ATTENDANCE_VALIDOS].join(', ')}.`,
