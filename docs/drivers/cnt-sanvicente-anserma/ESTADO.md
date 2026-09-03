@@ -1474,3 +1474,170 @@ facturación por evento por ningún lado.**
 ## Dependencia técnica pendiente de verificar (Fase 1, motor genérico)
 
 ¿Ya existe infraestructura de envío de email transaccional en `apps/api`, o hay que añadirla para las alertas de conflicto? El stack actual es WhatsApp-céntrico — a confirmar antes de implementar el canal de email de `MirrorConflictAlert` (esto aplica al motor genérico, no solo a este driver, pero se detectó al diseñar la alerta que pidió este hospital).
+
+---
+
+# 🎯 ALCANCE REDUCIDO: SOLO MEDICINA GENERAL (2026-09-03)
+
+El hospital decide arrancar **únicamente con Medicina General de consulta
+externa** por WhatsApp. Los demás servicios los siguen manejando con su propio
+software. Sin especialistas.
+
+Esto no es un recorte cosmético: **desactiva el bloqueante principal.**
+
+## 1. La sección A deja de bloquear — y está demostrado
+
+La sección A bloqueaba porque el 72,5 % de los turnos mezcla servicios y AgenIA
+le estampa a cada cupo el único servicio de la ficha del médico. **Pero el daño
+nunca fue la mezcla en sí: era que la mezcla cruzaba la frontera de PyP** (y,
+tras G.6, también la de cápita/evento). Un servicio mal elegido cambiaba el
+convenio y producía una glosa.
+
+Dentro de medicina general **no hay ninguna frontera que cruzar**:
+
+| servicio | especialidad | ¿PyP? | ¿evento? | citas/90d |
+|---|---|---|---|---|
+| `S39141` consulta ambulatoria de medicina general | 000 | no | no | 5.637 |
+| `S39141-1` control hipertensos | 000 | no | no | 7.014 |
+| `S39141-2` lectura de exámenes | 000 | no | no | 1.022 |
+
+Y el convenio que sale es **idéntico** para los tres, en toda combinación:
+
+| EPS | régimen | `S39141` | `S39141-1` | `S39141-2` |
+|---|---|---|---|---|
+| Sura | SUBSIDIADO | 467 | 467 | 467 |
+| Sura | CONTRIBUTIVO | 473 | 473 | 473 |
+| Nueva EPS | SUBSIDIADO | 283 | 283 | 283 |
+| Nueva EPS | CONTRIBUTIVO | 473 | 473 | 473 |
+| Salud Total | SUBSIDIADO | 475 | 475 | 475 |
+| Salud Total | CONTRIBUTIVO | 476 | 476 | 476 |
+
+**Equivocarse entre los tres no cuesta un peso.** Lo que queda es sub-oferta —
+elegir el código menos preciso— y eso es un defecto de catalogación, no de
+facturación. El cambio de modelo sigue siendo necesario para crecer, pero **ya
+no bloquea el arranque**.
+
+⚠️ El argumento depende de que **solo se enciendan médicos de medicina
+general**. Los médicos 77 (gestante HTA, 36 % PyP) y 80-1 (RIAS, curso de vida)
+tocan PyP de verdad y **no pueden entrar**. Su especialidad ni siquiera es la
+misma: `328 MEDICINA GENERAL PYDT` no es `000 MEDICINA GENERAL`.
+
+## 2. Lo que el recorte deja fuera, y ya no hay que resolver para arrancar
+
+| | por qué deja de aplicar |
+|---|---|
+| El cambio de modelo (sección A) | no hay frontera que cruzar dentro de medicina general |
+| «¿primera vez o control?» | los `S39141*` no son un par CUPS `8902xx`/`8903xx` — la pregunta no tiene sentido aquí |
+| El sufijo `ESP`/`SUR` | son códigos de especialista |
+| Los convenios de evento (535, 97, 538, 96) | medicina general es 100 % cápita, medido: 0,0 % de evento en 13.673 citas |
+| Nutrición factura por evento | fuera de alcance |
+| 4 de los 6 médicos rojos | fuera de alcance (quedan 77 y 80-1, que se excluyen) |
+| Los 9 servicios de curso de vida | son PyDT, no medicina general |
+
+Nada de ese trabajo se tira: los guardarraíles siguen puestos y son
+precisamente lo que impide que alguien encienda un especialista por accidente
+—`resolveConvenio` lanza si falta el convenio de evento—. Pero **ninguno está
+en el camino crítico del arranque**.
+
+## 3. Lo que SÍ falta, en orden
+
+### 🔴 1. Salud Total — un tercio de los pacientes no puede usarlo
+
+Sobre 18.304 citas de atención primaria en 90 días:
+
+| EPS | citas | % | ¿en AgenIA? |
+|---|---|---|---|
+| Sura | 8.126 | 44,4 % | ✅ |
+| **Salud Total** | **6.196** | **33,9 %** | ❌ |
+| Nueva EPS | 3.525 | 19,3 % | ✅ |
+| Fomag | 432 | 2,4 % | ❌ |
+| Particular | 13 | 0,1 % | ✅ |
+| Otras (Reg. Aseg. N3, Axa) | 12 | 0,1 % | ❌ |
+
+**Cobertura hoy: 63,7 %.** Dando de alta solo Salud Total: **97,6 %**.
+
+Ya tenemos su NIT (800130907) y sus convenios (`475` STOTALSUBS, `476`
+STCONTRIB) homologados. Falta crearla como fila `Eps` y cargar su padrón.
+
+Es la única decisión que cambia de verdad el valor del arranque: sin ella, uno
+de cada tres pacientes que escriba recibe «no tenemos convenio con esa EPS».
+
+### 🔴 2. El padrón — hoy está vacío y bloquea a todos
+
+`rejectIfNotEnrolledInEps` exige que la cédula esté en `EpsEnrolledPatient`
+para **cualquier** EPS que no sea Particular. Sin padrón cargado, **nadie
+puede agendar**: el bot responde «su documento aún no figura dado de alta».
+
+Hace falta el CSV de altas de cada EPS que entre. No es desarrollo, es un
+archivo.
+
+### 🟠 3. Qué código lleva la cita de WhatsApp
+
+Ahora es una pregunta pequeña y con respuesta casi escrita:
+
+- Los **11 médicos de medicina general** (AP04, AP08, MD08, MD09, MDD1, MDD2,
+  R001, RU64, RU66, RU67, RU69) → `S39141` consulta ambulatoria de medicina
+  general.
+- Los **2 del programa de HTA** (76, 077) → `S39141-1` control hipertensos en
+  el 98,4 % y 95,2 % de sus citas. **Sigue viva la pregunta de si son médicos
+  del programa o comodines** — es la única del cuestionario que queda en pie
+  para este alcance.
+- `S39141-2` lectura de exámenes: no se ofrece por WhatsApp. Es el cierre de un
+  proceso que empieza en consulta, no una cita que un paciente pida en frío.
+
+### 🟠 4. La duda del convenio 473 — ahora sí entra en el arranque
+
+Con especialistas fuera, esta pasa de curiosidad a asunto en producción: los
+pacientes **contributivos de Nueva EPS** que agenden medicina general se
+facturarán al `473`, un convenio registrado bajo el NIT de **Sura**. Si está
+mal, está mal desde el primer día. Es la pregunta 1-bis del cuestionario y se
+corrige con una línea de configuración.
+
+### 🟡 5. Fomag (2,4 %) y las residuales (0,1 %)
+
+Se pueden dejar para después sin que duela.
+
+## 4. Qué está listo y verificado
+
+| | |
+|---|---|
+| Motor de espejo punta a punta | ✅ WhatsApp → API → Postgres → outbox → agente → `CITAS_MEDICAS`, con alta de paciente nuevo |
+| Cancelación | ✅ borra la fila y deja constancia en `CITAS_ANULADAS` con motivo `WB` |
+| Reprogramación | ✅ nunca deja al paciente sin ninguna cita |
+| Convenio de Sura y Nueva EPS en primaria | ✅ medido (sección D) y confirmado por G.5 |
+| Especialidad `000` de los tres `S39141*` | ✅ 100 % en G.4 |
+| Que medicina general es cápita | ✅ 0,0 % de evento en 13.673 citas (G.6) |
+| Encendido médico por médico | ✅ `whatsappBookingEnabled`, con los del HIS apagados de fábrica |
+| Resistencia a caídas | ✅ game-day 21/21: kill -9, reinicio de VM, HIS caído, sin internet, dead-letter, turno recortado |
+| Coste sobre el HIS | ✅ 0,09 % de un núcleo (sección C) |
+| Fechas en zona de Bogotá | ✅ 0 violaciones de la regla |
+| Pruebas | ✅ 2.195 en verde, typecheck 7/7 |
+
+## 5. Veredicto
+
+**Técnicamente el arranque está listo.** Lo que falta no es código: es un alta
+de EPS, dos archivos de padrón y tres respuestas cortas del hospital.
+
+Con Salud Total dentro, AgenIA cubre el **97,6 %** de la consulta externa de
+medicina general — que son ~152 citas al día, de las cuales WhatsApp tomaría
+una fracción. La carga no es un problema.
+
+**Sin Salud Total se puede arrancar igual**, cubriendo el 63,7 %, pero hay que
+saberlo: un tercio de quienes escriban recibirán una negativa, y eso desgasta
+la percepción del piloto más que cualquier fallo técnico.
+
+### Riesgos residuales, dichos sin adornos
+
+- **`apps/web` no tiene ni una prueba automatizada.** El panel del staff se
+  verifica a mano.
+- **No hay prueba de carga.** El volumen esperado la hace poco urgente, pero no
+  está hecha.
+- **No hay prueba de concurrencia contra Postgres real** sobre el mismo cupo.
+  El índice único parcial `uq_appointment_cupo_vigente` lo cubre por
+  construcción, y el HIS tiene su propia PK, pero no está ejercitado bajo
+  carrera real.
+- **Las plantillas de WhatsApp no están verificadas contra la WABA real** de
+  Meta en producción.
+- **`pnpm --filter api lint` está en rojo** con 594 problemas de la familia
+  `no-unsafe-*` en código de producción. Es estado previo del repo —
+  comprobado con `git stash`, el número es idéntico— pero sigue ahí.
