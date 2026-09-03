@@ -978,6 +978,95 @@ decisión de preguntárselo al paciente**: no se puede deducir del historial. Qu
 pediatría y nutrición sean las más altas encaja con que un niño estrena motivo
 de consulta a menudo.
 
+### 🚨 G.4 encontró NUEVE huecos más — y `R_ESP_SER` no sirve (2026-09-03)
+
+54 servicios con citas en 90 días.
+
+**Lo bueno:** las 45 especialidades que ya había son **correctas al 100 %**,
+las cinco deducidas del par CUPS incluidas. Y los propios nombres del hospital
+las validan mejor que cualquier estadística:
+
+```
+890242ESP  CONSULTA DE PRIMERA VEZ POR ESPECIALISTA EN DERMATOLOGÍA
+890342ESP  CONSULTA DE CONTROL O DE SEGUIMIENTO POR ESPECIALISTA EN DERMATOLOGIA
+890206     CONSULTA DE PRIMERA VEZ POR NUTRICIÓN Y DIETÉTICA
+890306     CONSULTA DE CONTROL POR NUTRICIÓN Y DIETÉTICA
+```
+
+La hipótesis de G.3 no era una hipótesis: está escrita en el catálogo.
+
+**Lo malo:** nueve servicios más con el defecto **por partida doble** — sin
+especialidad *y* sin marcar como PyP:
+
+| servicio | | esp | citas/90d |
+|---|---|---|---|
+| `890201AA` | adolescente, médico | 328 | 22 |
+| `890201AJ` | joven, médico | 328 | 34 |
+| `890201CP` | preconcepcional | 328 | 12 |
+| `890201INF` | infancia, médico | 328 | 34 |
+| `890205AA` | adolescente, enfermería | 060 | 28 |
+| `890205PI` | primera infancia, enf. | 060 | 3 |
+| `890205-LM` | lactancia materna, enf. | 060 | 2 |
+| `890205CAM` | tamizaje de mama, enf. | 060 | 1 |
+| `I890305AG` | control gestante, enf. | 060 | 1 |
+
+Son los servicios de **curso de vida del médico 80-1 (RIAS)**, uno de los seis
+rojos. Sus especialidades son de la familia PyDT ⇒ son de PyP ⇒ facturaban al
+convenio general. Ya están mapeados; `serviciosPyp` pasa de 14 a **23**.
+
+La invariante nueva —*toda especialidad de la familia PyDT está marcada como
+PyP*— es la que los habría cazado, y se comprobó que falla al quitar uno.
+
+**Y un desmentido:** `R_ESP_SER` discrepa de lo observado en **22 de 54**
+servicios (dice 461 para `990203` y las citas usan 572; dice 571 para
+`997301-1` y usan 572; dice 000 para `S35102` y usan 590). La especialidad se
+deriva de las **citas reales**, no del catálogo. Cae la hipótesis del bloque 21b.
+
+### 🚨 G.5: Salud Total es un tercio del hospital y AgenIA no la tenía (2026-09-03)
+
+| EPS (NIT) | | primaria / PyP | especialista |
+|---|---|---|---|
+| **Sura** 800088702 | SUB | `467` SUBS · 5.604 | `535` EVENSURASUB · 706 |
+| | CON | `473` CONTRIBUTIVO · 2.513 | `97` EVENSURACON · 391 |
+| **Salud Total** 800130907 | SUB | `475` STOTALSUBS · 5.267 | `538` EVENTOSTOTALSU · 703 |
+| | CON | `476` STCONTRIB · 929 | `96` EVENTOSTOTALCO · 171 |
+| **Nueva EPS** 900156264 | SUB | `283` NUEVASUBSID · 3.302 | *(no tiene)* |
+| | CON | *(no aparece)* | *(no tiene)* |
+| Fomag 830053105 | | `518` · 418 / `529` PYPFOMAG | |
+
+La estructura cápita/evento queda confirmada. Pero el titular es otro: **Salud
+Total son 10.137 citas en 90 días** —contra 11.933 de Sura y 5.457 de Nueva
+EPS— y no era «el 39 % de los especialistas» como se leyó en G.2, sino **un
+tercio del hospital entero**. Ya está homologada con sus cuatro convenios.
+
+⚠️ **Falta darla de alta como `Eps` en AgenIA.** Hoy el chatbot ofrece Nueva
+EPS, Sura y Particular: un paciente de Salud Total no puede ni empezar. Y
+necesita su padrón. `aplicar-mapping.ts` ahora cruza las dos tablas y lo avisa
+por su NIT.
+
+**Nueva EPS no tiene convenio de evento.** Sus 34 citas de especialista se
+reparten entre `489` PYPSUBS (27) y `283` (7) — un convenio de PyP para una
+consulta de especialista es raro y 34 citas no deciden nada. No se homologa:
+`resolveConvenio` lanza.
+
+#### ⚠️ Y una duda que G.5 abre sobre la sección D
+
+El convenio `473` CONTRIBUTIVO está registrado en el catálogo del hospital bajo
+el NIT de **Sura**, y Nueva EPS no aparece con **ningún** convenio contributivo
+en 90 días. `mapping.json` dice `900156264|CONTRIBUTIVO = 473` porque así lo
+midió D — pero **D usó `R_PAC_EPS`, la misma tabla cuyo fan-out invalidó G.1**.
+
+- *(a)* `473` es un contrato contributivo genérico usado por varias EPS. Lo
+  apoya que se llame solo «CONTRIBUTIVO» y no «SURACONTRIB».
+- *(b)* La conclusión de D está contaminada.
+
+En contra de (b): si Nueva EPS contributivo facturara a un contrato propio, ese
+contrato tendría volumen, y el único candidato (`290` NUEVAEPSCONT) tiene **dos**
+citas en 90 días. En contra de (a): Salud Total **no** usa el 473 — tiene su
+propio `476`.
+
+Se deja como está y **se pregunta**. Es la pregunta 1-bis del cuestionario.
+
 ### ⚠️ La sección G.1 se corrió y no concluyó — el defecto era de la consulta
 
 G preguntaba si el sufijo `ESP`/`SUR` depende de la EPS del paciente. La cuota
@@ -1119,17 +1208,20 @@ Las cinco están mapeadas y el default ya no existe. Ver arriba.
 Todo lo que queda por descubrir está consolidado en
 `sql/PENDIENTE_CORRER_EN_HOSPITAL.sql` — 100 % lectura. Cerradas: **A** (obliga
 a cambiar el modelo de cupo), **B**, **C**, **D**, **E** y **F**. La **G.1** se
-corrió pero no concluyó; **G.2** y **G.3** sí, y están cerradas arriba.
+corrió pero no concluyó; **G.2**, **G.3**, **G.4** y **G.5** sí, y están
+cerradas arriba.
 
-Quedan dos:
+Queda **una**:
 
-- **G.4** — la red de seguridad: la especialidad de TODOS los servicios con
-  citas, sin filtrar por turnos. Confirma los cinco añadidos, y hay que volver
-  a correrla cada vez que se encienda un médico nuevo.
-- **G.5** 🚨 — la tabla de convenios completa (EPS × régimen × tipo de
-  servicio). Es lo que hace falta para poder encender **cualquier**
-  especialista, y de paso trae el NIT de Salud Total, que AgenIA necesita para
-  darla de alta.
+- **G.6** 🎯 — la modalidad servicio por servicio, sin patrones. G.5 agrupó
+  usando `8902%`/`8903%` y ese patrón mete a nutrición en el mismo saco que a
+  los especialistas. Si nutrición factura por cápita y AgenIA la trata como
+  evento —o al revés— vuelve el mismo error silencioso. G.6 mide, para cada
+  servicio, qué proporción de sus citas fue a un convenio `EVEN*`. Es la última
+  y cierra la tabla de convenios del todo.
+
+Y **hay que volver a correr G.4** cada vez que se encienda un médico nuevo: es
+la única consulta que ve los servicios que AgenIA todavía no conoce.
 
 ## ⏳ Pendientes de este driver
 

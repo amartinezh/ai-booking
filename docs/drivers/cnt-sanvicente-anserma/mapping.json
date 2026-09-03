@@ -1,8 +1,12 @@
 {
   "_procedencia": {
     "_": "La tabla de valores de este hospital. Vive en HospitalMirrorConfig.mappingJson (en la base, no en el código) para que validarla sea un cambio de configuración y no un despliegue — pero hasta ahora solo vivía ahí, metida a mano, sin original revisable. Este archivo es ese original; se aplica con packages/database/scripts/aplicar-mapping.ts.",
+    "G4_G5_2026-09-03": "Las secciones G.4 y G.5 cerraron el mapa contra los datos del hospital. G.4 confirmo las 45 especialidades que ya habia AL 100% —incluidas las cinco deducidas del par CUPS, que los propios nombres del hospital validan: 890242ESP es CONSULTA DE PRIMERA VEZ POR ESPECIALISTA EN DERMATOLOGIA y 890342ESP es CONSULTA DE CONTROL O DE SEGUIMIENTO POR ESPECIALISTA EN DERMATOLOGIA— y saco NUEVE servicios mas que faltaban, todos de la familia PyDT y por tanto todos PyP: 890201AA, 890201AJ, 890201CP, 890201INF, 890205AA, 890205PI, 890205-LM, 890205CAM, I890305AG (137 citas/90d). Son los servicios de curso de vida del medico 80-1 RIAS. Estaban SIN especialidad Y sin marcar como PyP, o sea con el convenio equivocado por partida doble. G.5 anadio Salud Total (NIT 800130907), que resulto ser un tercio del volumen TOTAL del hospital y no estaba en AgenIA: 475 STOTALSUBS y 476 STCONTRIB en capita, 538 EVENTOSTOTALSU y 96 EVENTOSTOTALCO por evento.",
+    "_R_ESP_SER_no_sirve": "El catalogo R_ESP_SER discrepa de lo observado en 22 de 54 servicios (990203 dice 461 y las citas usan 572; 997301-1 dice 571 y usan 572; S35102 dice 000 y usan 590). especialidadPorServicio se deriva de las CITAS REALES, no del catalogo.",
     "especialidadPorServicio_cinco_anadidos_2026-09-03": "890242ESP, 890342ESP, 890342SUR, 890350ESP y 890350SUR se anadieron el 2026-09-03. Los destapo la seccion G: tienen citas reales en 90 dias pero quedaron fuera de la generacion del 31d, que filtraba a medicos con turnos futuros. La especialidad NO se adivino: los codigos van en pares CUPS 8902xx (primera vez) / 8903xx (control) del MISMO procedimiento, y ni el digito 2/3 ni el sufijo ESP/SUR cambian la especialidad — se ve en los pares ya mapeados (890266ESP/SUR/890366ESP/SUR todos 387; 890283/890383 ambos 550; 890284/890384 ambos 345; 890206/890306 ambos 451). De ahi: 890342* = control de 890242* = 200 DERMATOLOGIA; 890350* = control de 890250* = 341 GINECOLOGIA. La consulta G.4 lo confirma contra los datos del hospital.",
     "especialidadPorServicio": "GENERADA del bloque 31d: la especialidad dominante de cada servicio en las citas reales de 90 días. 36 de 40 son inequívocos; los 4 restantes se resolvieron por mayoría (S36101 461 en 826/827, S35102 590 en 387/388, S35104 590 en 577/580, I890301AG 328 en 453/455). Verificada contra R_ESP_SER ∩ R_MEDI_ESPE en el bloque 32c: 0 contradicciones en 21.362 citas.",
+    "_convenios_pendiente_473": "⚠️ ABIERTO. mapping.json dice 900156264|CONTRIBUTIVO=473, derivado de la seccion D. Pero G.5 muestra que el convenio 473 CONTRIBUTIVO esta registrado en el catalogo del hospital bajo el NIT de SURA (800088702), no bajo el de Nueva EPS, y que Nueva EPS no aparece con NINGUN convenio contributivo en 90 dias. Dos lecturas: (a) 473 es un contrato contributivo generico que el hospital usa para varias EPS —lo apoya que se llame solo CONTRIBUTIVO y no SURACONTRIB—, o (b) la conclusion de D esta contaminada por el fan-out de R_PAC_EPS, que es la misma tabla que invalido G.1. Nota en contra de (b): si Nueva EPS contributivo facturara a un contrato propio, ese contrato tendria volumen, y el unico candidato (290 NUEVAEPSCONT) tiene DOS citas en 90 dias. Se deja como esta y se pregunta: es la pregunta 1-bis del cuestionario. Salud Total NO usa el 473 —tiene su propio 476 STCONTRIB— asi que generico del todo no es.",
+    "_convenios_nueva_eps_especialista": "Nueva EPS NO tiene convenio de evento. Sus 34 citas de especialista en 90 dias se reparten entre 489 PYPSUBS (27) y 283 NUEVASUBSID (7) — un convenio de PyP para una consulta de especialista es semanticamente raro y el volumen es demasiado bajo para deducir nada. NO se homologa: resolveConvenio lanza, que es lo correcto mientras no se sepa.",
     "serviciosPyp": "DERIVADA del catálogo del bloque 32e: son los servicios cuya especialidad pertenece a la familia PyDT (060 ENFERMERIA PYDT, 328 MEDICINA GENERAL PYDT, 572 ODONTOLOGIA PYDT, 591 PSICOLOGIA PYDT). Antes tenía UN solo servicio y los otros trece se habrían facturado al convenio equivocado.",
     "convenios_evento_2026-09-03": "La seccion G.2 encontro que la regla EPS+regimen+PyP estaba INCOMPLETA: le faltaba un cuarto eje. Los especialistas facturan a convenios de EVENTO (el prefijo EVEN/EVENTOS de sus propios nombres lo dice) y no a los de capita que se midieron en la seccion D. Anadidas 800088702|SUBSIDIADO|EVENTO=535 EVENSURASUB (605 citas en 90 dias) y 800088702|CONTRIBUTIVO|EVENTO=97 EVENSURACON (318). NO se anadio Salud Total —538 EVENTOSTOTALSU (500 citas) y 96 EVENTOSTOTALCO (126)— porque esa EPS no existe todavia en la tabla Eps de AgenIA y falta su NIT: lo saca G.5.",
     "convenios": "DERIVADA de los datos del hospital y CERRADA (seccion D de sql/PENDIENTE_CORRER_EN_HOSPITAL.sql, 2026-09-02): el convenio dominante de cada combinacion EPS + regimen + PyP sobre 90 dias de citas reales. Cuotas: Sura subsidiado 467 (84,5% normal / 94,3% PyP), Sura contributivo 473 (84,8% / 88,0%), Nueva EPS subsidiado 283 normal (89,6%) y 489 PyP (94,4%), Nueva EPS contributivo 473 (73,4% / 65,6%). R_PAC_EPS es un historial many-to-many y su fan-out ensucia la cola de cada grupo, pero NO invalida la conclusion: el fan-out solo puede inflar un conteo, nunca esconderlo, y la cota superior de 290 NUEVAEPSCONT —el unico candidato alternativo para Nueva EPS contributivo— es de DOS citas en 90 dias. El hospital no lo usa. Los codigos de regimen se leen de los nombres de los propios convenios (01 lleva a SUBS, NUEVASUBSID y PYPSUBS; 07 a CONTRIBUTIVO), no de una suposicion.",
@@ -27,7 +31,11 @@
     "800088702|SUBSIDIADO": 467,
     "800088702|CONTRIBUTIVO": 473,
     "800088702|SUBSIDIADO|EVENTO": 535,
-    "800088702|CONTRIBUTIVO|EVENTO": 97
+    "800088702|CONTRIBUTIVO|EVENTO": 97,
+    "800130907|SUBSIDIADO": 475,
+    "800130907|CONTRIBUTIVO": 476,
+    "800130907|SUBSIDIADO|EVENTO": 538,
+    "800130907|CONTRIBUTIVO|EVENTO": 96
   },
   "convenioParticular": 26,
 
@@ -44,9 +52,11 @@
   "serviciosPyp": [
     "890201-CI", "I890301AG", "890201AD", "890201PI", "I890201AG",
     "I890201PL1", "I890301G", "I890301RN", "890201AV",
+    "890201AA", "890201AJ", "890201CP", "890201INF",
     "990203", "997301-1", "SSAO",
     "890208Ges",
-    "I890305PL"
+    "I890305PL", "I890305AG",
+    "890205AA", "890205PI", "890205-LM", "890205CAM"
   ],
 
   "_sin_especialidadPorDefecto": "NO se declara a propósito (2026-09-03). Tenia \"000\" MEDICINA GENERAL y eso hacia que cualquier servicio fuera del mapa entrara al HIS mal etiquetado en silencio. La generacion del bloque 31d filtraba a medicos con turnos futuros y dejo fuera cinco servicios con citas reales — 890242ESP, 890342ESP/SUR, 890350ESP/SUR — entre ellos la mitad control de ginecologia. Sin default, resolveEspecialidad lanza MappingIncompletoError igual que mapConvenio y mapSexo: la cita falla a la vista de todos en vez de facturarse con la especialidad equivocada.",
@@ -69,12 +79,21 @@
     "890201AD": "328",
     "890201PI": "328",
     "890201AV": "328",
+    "890201AA": "328",
+    "890201AJ": "328",
+    "890201CP": "328",
+    "890201INF": "328",
     "I890201AG": "328",
     "I890301AG": "328",
     "I890201PL1": "328",
     "I890301G": "328",
     "I890301RN": "328",
     "I890305PL": "060",
+    "I890305AG": "060",
+    "890205AA": "060",
+    "890205PI": "060",
+    "890205-LM": "060",
+    "890205CAM": "060",
     "S35102": "590",
     "S35102-1": "590",
     "S35104": "590",

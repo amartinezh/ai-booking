@@ -236,15 +236,44 @@ Solo necesitamos que nos confirmen dos cosas:
 - [ ] **Sí: primaria va por cápita y especialista por evento.** ← *lo que vemos*
 - [ ] No, la diferencia es: ______________________________________________
 
-Y **Salud Total no está en nuestro sistema** — es el 39 % de sus citas de
-especialista y no la teníamos registrada.
+### 🚨 Y lo más importante de todo: Salud Total
 
-- [ ] Confirmamos que Salud Total atiende con ustedes; su NIT es: ______________
-- [ ] Hay otras aseguradoras que tampoco tenemos: ______________________________
+Ya sacamos la tabla completa. **Salud Total es un tercio de su hospital** y no
+la teníamos registrada:
 
-> Tenemos una consulta de lectura (**G.5**) que saca la tabla completa —qué
-> convenio usa cada EPS, en cada régimen, para cada tipo de servicio— y con eso
-> lo dejamos exacto sin que ustedes tengan que recordar nada.
+| aseguradora | citas en 90 días |
+|---|---|
+| Sura | 11.933 |
+| **Salud Total** | **10.137** |
+| Nueva EPS | 5.457 |
+
+Ya tenemos sus cuatro convenios (`475` STOTALSUBS, `476` STCONTRIB, `538` y
+`96` para especialista) y su NIT (800130907). Pero **hasta que la demos de alta
+en AgenIA, un paciente de Salud Total no puede ni empezar la conversación** —
+el chatbot solo le ofrece Nueva EPS, Sura o Particular.
+
+- [ ] **Confirmamos: Salud Total atiende con nosotros y debe entrar al piloto.**
+- [ ] Todavía no; entra más adelante.
+- [ ] Hay otras aseguradoras que tampoco tienen: ______________________________
+
+> Para darla de alta necesitamos, como con las otras dos, el **padrón** de sus
+> afiliados habilitados. Es el mismo archivo que ya nos entregaron para Nueva
+> EPS y Sura.
+
+### Y una duda concreta que nos gustaría que nos despejaran
+
+El convenio **`473` CONTRIBUTIVO** aparece en su catálogo registrado bajo el NIT
+de **Sura**, pero por lo que medimos también se usa con pacientes
+**contributivos de Nueva EPS** — que no tiene ningún convenio contributivo con
+volumen. (El `290` NUEVAEPSCONT existe pero tiene dos citas en 90 días.)
+
+- [ ] `473` es un contrato **genérico de contributivo**, se usa con varias
+      aseguradoras. Está bien como lo tienen.
+- [ ] `473` es **solo de Sura**. Un contributivo de Nueva EPS debe ir a: _______
+- [ ] Nueva EPS no tiene contributivo aquí; esos pacientes no deberían agendar.
+
+> Nos importa porque hoy AgenIA factura el contributivo de Nueva EPS al `473`.
+> Si eso está mal, se corrige con una línea de configuración.
 
 ## 🟠 PREGUNTA 2 — El consecutivo de sesión
 

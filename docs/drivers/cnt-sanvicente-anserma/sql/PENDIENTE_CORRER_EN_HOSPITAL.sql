@@ -11,7 +11,7 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · Pendiente de correr: G.4 y G.5.
+--   · Pendiente de correr: G.6. Nada más.
 --
 -- CONTENIDO
 --   A. ✅ CORRIDA — y la respuesta es la mala: el 72,5 % de los turnos
@@ -31,12 +31,15 @@
 --      especialistas facturan a convenios de EVENTO que AgenIA no tiene.
 --   G.3 ✅ CORRIDA — CONFIRMADO: la 1ª cita del paciente lleva 8902xx en el
 --      91,6-99,7 % de los casos; las siguientes, en el 11-45 %.
---   G.4 🧷 PENDIENTE — la red de seguridad: la especialidad de TODOS los
---      servicios con citas, sin filtrar por turnos. Cierra el hueco que dejó
---      el 31d y sirve para volver a correrla cada vez que se encienda un
---      médico nuevo.
---   G.5 🚨 PENDIENTE — la tabla de convenios COMPLETA (EPS × régimen × tipo
---      de servicio). Es lo que hace falta para poder encender especialistas.
+--   G.4 ✅ CORRIDA — las 45 especialidades que había son correctas al 100 %,
+--      pero faltaban NUEVE servicios más (los de curso de vida del 80-1), sin
+--      especialidad Y sin marcar como PyP. Y R_ESP_SER discrepa en 22 de 54:
+--      no sirve como fuente. Volver a correrla al encender cada médico.
+--   G.5 ✅ CORRIDA — cápita vs evento confirmado, con los NIT. Salud Total es
+--      un TERCIO del hospital (10.137 citas/90d) y no estaba en AgenIA.
+--      Nueva EPS no tiene convenio de evento. Abre una duda sobre el 473.
+--   G.6 🎯 PENDIENTE — la modalidad servicio por servicio, sin patrones. Es la
+--      última: cierra la tabla de convenios del todo.
 --
 -- El detalle de POR QUÉ se pregunta cada cosa está en
 -- FASE0_DESCUBRIMIENTO_HIS.sql (bloques 31, 25, 29 y 16/19). Este archivo es
@@ -972,7 +975,7 @@ GO
 -- la pregunta «¿primera vez o control?».
 
 -- =============================================================================
--- G.4 🧷 LA RED DE SEGURIDAD — ¿queda algún servicio sin especialidad?
+-- G.4 ✅ CORRIDA Y CERRADA EL 2026-09-03 — y había NUEVE huecos más
 --
 -- `especialidadPorServicio` se generó en el bloque 31d filtrando a médicos CON
 -- TURNOS FUTUROS, y ese filtro dejó fuera cinco servicios con citas reales
@@ -1037,8 +1040,50 @@ ORDER BY r.servicio;
 GO
 
 
+-- ── RESULTADO DE G.4 (2026-09-03) — 54 servicios con citas en 90 días ──────
+--
+-- 1. LAS 45 ESPECIALIDADES QUE YA HABÍA: correctas al 100 %. Cero
+--    discrepancias entre lo mapeado y lo observado.
+--
+-- 2. LAS CINCO DEDUCIDAS DEL PAR CUPS: confirmadas, y los propios NOMBRES del
+--    hospital las validan mejor que cualquier estadística —
+--      890242ESP  «CONSULTA DE PRIMERA VEZ POR ESPECIALISTA EN DERMATOLOGÍA»
+--      890342ESP  «CONSULTA DE CONTROL O DE SEGUIMIENTO POR ESPECIALISTA EN
+--                  DERMATOLOGIA»
+--      890206     «CONSULTA DE PRIMERA VEZ POR NUTRICIÓN Y DIETÉTICA»
+--      890306     «CONSULTA DE CONTROL POR NUTRICIÓN Y DIETÉTICA»
+--    La hipótesis de G.3 no era una hipótesis: está escrita en el catálogo.
+--
+-- 3. 🚨 NUEVE SERVICIOS MÁS QUE FALTABAN, con el mismo defecto por partida
+--    doble — sin especialidad Y sin marcar como PyP:
+--
+--      890201AA   adolescente, médico        328    22 citas
+--      890201AJ   joven, médico              328    34
+--      890201CP   preconcepcional            328    12
+--      890201INF  infancia, médico           328    34
+--      890205AA   adolescente, enfermería    060    28
+--      890205PI   primera infancia, enf.     060     3
+--      890205-LM  lactancia materna, enf.    060     2
+--      890205CAM  tamizaje de mama, enf.     060     1
+--      I890305AG  control gestante, enf.     060     1
+--                                                  ─────
+--                                                   137 citas/90d
+--
+--    Son los servicios de CURSO DE VIDA del médico 80-1 (RIAS), uno de los
+--    seis rojos de la sección E. Sus especialidades son de la familia PyDT
+--    (328, 060) ⇒ son de PyP ⇒ facturaban al convenio general. Ya están
+--    mapeados y marcados; `serviciosPyp` pasa de 14 a 23.
+--
+-- 4. `R_ESP_SER` NO SIRVE COMO FUENTE: discrepa de lo observado en 22 de 54.
+--    Dice 461 para 990203 y las citas usan 572; dice 571 para 997301-1 y usan
+--    572; dice 000 para S35102 y usan 590. La especialidad se deriva de las
+--    CITAS, no del catálogo. Queda desmentida la hipótesis del bloque 21b.
+--
+-- ⚠️ VOLVER A CORRERLA cada vez que se encienda un médico nuevo. Es la única
+--    consulta que ve los servicios que AgenIA todavía no conoce.
+
 -- =============================================================================
--- G.5 🚨 LA TABLA DE CONVENIOS COMPLETA — el bloqueante que destapó G.2
+-- G.5 ✅ CORRIDA Y CERRADA EL 2026-09-03 — Salud Total es un tercio del hospital
 --
 -- G.2 encontró que la regla de convenio de AgenIA está incompleta. Hoy dice
 -- «EPS + régimen (+ PyP) → convenio», y con eso acierta en atención primaria
@@ -1103,4 +1148,98 @@ GROUP BY ct.convenio, cv.CD_CODI_CONV, cv.CD_NIT_EPS_CONV, e.NO_NOMB_EPS,
          cv.NU_VIGE_CONV, ct.tipo_servicio
 HAVING COUNT(*) >= 5
 ORDER BY e.NO_NOMB_EPS, ct.tipo_servicio, citas DESC;
+GO
+
+-- ── RESULTADO DE G.5 (2026-09-03) — la tabla completa ──────────────────────
+--
+-- LA ESTRUCTURA CONFIRMADA: cápita para primaria y PyP, EVENTO para el
+-- especialista. Y con el NIT de cada EPS, que es lo que hacía falta.
+--
+--   EPS (NIT)                      primaria/PyP        especialista
+--   ────────────────────────────   ─────────────────   ────────────────────
+--   Sura        800088702  SUB     467 SUBS   5.604    535 EVENSURASUB  706
+--                          CON     473 CONTRIB 2.513    97 EVENSURACON  391
+--   Salud Total 800130907  SUB     475 STOTALSUBS 5.267 538 EVENTOSTOTALSU 703
+--                          CON     476 STCONTRIB   929  96 EVENTOSTOTALCO 171
+--   Nueva EPS   900156264  SUB     283 NUEVASUBSID 3.302  (no tiene)
+--                          CON     (no aparece)            (no tiene)
+--   Fomag       830053105          518 MAGISTERIOFOMAG 418 / 529 PYPFOMAG
+--   Particular  000000000          26 PARTICULARES
+--
+-- 🚨 SALUD TOTAL ES UN TERCIO DEL HOSPITAL, no «el 39 % de los especialistas»
+-- como se leyó en G.2: 10.137 citas en 90 días contra 11.933 de Sura y 5.457
+-- de Nueva EPS. Y AgenIA no la tenía ni en su tabla `Eps`. Ya está homologada
+-- (NIT 800130907, cuatro convenios). **Falta darla de alta como `Eps` en
+-- AgenIA para que el chatbot pueda ofrecerla** — hoy solo ofrece Nueva EPS,
+-- Sura y Particular, así que un paciente de Salud Total no puede ni empezar.
+--
+-- ⚠️ NUEVA EPS NO TIENE CONVENIO DE EVENTO. Sus 34 citas de especialista se
+-- reparten entre 489 PYPSUBS (27) y 283 NUEVASUBSID (7) — un convenio de PyP
+-- para una consulta de especialista es raro y 34 citas no deciden nada. NO se
+-- homologa: `resolveConvenio` lanza, que es lo correcto mientras no se sepa.
+--
+-- ⚠️ Y UNA DUDA QUE G.5 ABRE SOBRE LA SECCIÓN D: el convenio 473 CONTRIBUTIVO
+-- está registrado en el catálogo bajo el NIT de **Sura**, y Nueva EPS no
+-- aparece con NINGÚN convenio contributivo en 90 días. `mapping.json` dice
+-- `900156264|CONTRIBUTIVO = 473` porque así lo midió D — pero D usó
+-- `R_PAC_EPS`, la misma tabla cuyo fan-out invalidó G.1. Dos lecturas:
+--   (a) 473 es un contrato contributivo genérico usado por varias EPS. Lo
+--       apoya que se llame solo «CONTRIBUTIVO» y no «SURACONTRIB».
+--   (b) La conclusión de D está contaminada.
+-- En contra de (b): si Nueva EPS contributivo facturara a un contrato propio,
+-- ese contrato tendría volumen, y el único candidato (290 NUEVAEPSCONT) tiene
+-- DOS citas en 90 días. En contra de (a): Salud Total NO usa el 473, tiene su
+-- propio 476. Se deja como está y **se pregunta** — pregunta 1-bis.
+--
+-- Nota metodológica: la clasificación `especialista` de esta consulta mete
+-- también nutrición (890206/890306), que es 8902xx/8903xx pero puede no
+-- facturarse por evento. Por eso hace falta G.6.
+
+
+-- =============================================================================
+-- G.6 🎯 LA ÚLTIMA — ¿qué servicios se facturan por EVENTO, uno por uno?
+--
+-- G.5 confirmó que existen dos modalidades pero las agrupó por «tipo de
+-- servicio» usando un patrón (`8902%`/`8903%`), y ese patrón mete en el mismo
+-- saco a los especialistas y a nutrición. Si nutrición factura por cápita y
+-- AgenIA la trata como evento —o al revés— vuelve el mismo error silencioso.
+--
+-- Esto lo resuelve sin patrones ni hipótesis: para CADA servicio, qué
+-- proporción de sus citas fue a un convenio cuyo nombre empieza por `EVEN`.
+-- Una fila por servicio, y la columna `modalidad` ya trae la conclusión.
+--
+-- CÓMO SE LEE:
+--   · `EVENTO`  → va en `serviciosEvento` del mappingJson.
+--   · `capita`  → NO va (usa el convenio del régimen).
+--   · `?? MIXTO — preguntar` → ese servicio se factura de las dos formas.
+--     Preguntar a facturación qué lo decide; hasta entonces AgenIA no debe
+--     ofrecerlo, porque no hay respuesta correcta que se pueda deducir.
+--
+-- Con esto la tabla de convenios queda cerrada del todo.
+--
+-- ⚠️ SOLO LECTURA. Sintaxis validada contra un SQL Server real.
+-- =============================================================================
+WITH clasificadas AS (
+    SELECT  c.CD_CODI_SER_CIT AS servicio,
+            CASE WHEN cv.CD_CODI_CONV LIKE 'EVEN%' THEN 1 ELSE 0 END AS es_evento
+    FROM dbo.CITAS_MEDICAS c
+    LEFT JOIN dbo.CONVENIOS cv ON cv.NU_NUME_CONV = c.NU_NUME_CONV_CIT
+    WHERE c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+      AND cv.CD_CODI_CONV IS NOT NULL
+)
+SELECT  cl.servicio,
+        s.NO_NOMB_SER                                       AS nombre_servicio,
+        COUNT(*)                                            AS citas,
+        SUM(cl.es_evento)                                   AS por_evento,
+        COUNT(*) - SUM(cl.es_evento)                        AS por_capita,
+        CAST(100.0 * SUM(cl.es_evento) / COUNT(*)
+             AS decimal(5,1))                               AS pct_evento,
+        CASE WHEN 100.0 * SUM(cl.es_evento) / COUNT(*) >= 80 THEN 'EVENTO'
+             WHEN 100.0 * SUM(cl.es_evento) / COUNT(*) <= 20 THEN 'capita'
+             ELSE '?? MIXTO — preguntar' END                AS modalidad
+FROM clasificadas cl
+LEFT JOIN dbo.SERVICIOS s ON s.CD_CODI_SER = cl.servicio
+GROUP BY cl.servicio, s.NO_NOMB_SER
+HAVING COUNT(*) >= 5
+ORDER BY modalidad, citas DESC;
 GO

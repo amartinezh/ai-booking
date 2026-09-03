@@ -848,14 +848,24 @@ describe('especialidades — el mapa que se aplica en producción', () => {
   // su pareja no, hay que decirlo aquí y explicar por qué. Un hueco nuevo
   // rompe el test en vez de esperar a la primera cita.
   it('🔒 un CUPS sin su pareja tiene que estar declarado, no ser un olvido', () => {
-    // Los cinco de PyDT no tienen mitad de control con el MISMO sufijo: el
-    // hospital la codifica con prefijo `I` (I890301AG, I890301G, I890301RN).
+    // Los de PyDT no tienen mitad de control con el MISMO sufijo: el hospital
+    // la codifica con prefijo `I` (I890301AG, I890301G, I890301RN, I890305PL,
+    // I890305AG). Confirmado con datos: la sección G.4 listó los 54 servicios
+    // con citas en 90 días y ninguno es `890301AA`, `890305PI` ni similar.
     const SINGLETONES_CONOCIDOS = new Set([
       '890201-CI', // PyDT crecimiento infantil
       '890201AD', // PyDT adulto
       '890201AV', // PyDT adulto y vejez
       '890201PI', // PyDT primera infancia
       '890208Ges', // PyDT gestante (psicología)
+      '890201AA', // PyDT adolescente
+      '890201AJ', // PyDT joven
+      '890201CP', // PyDT preconcepcional
+      '890201INF', // PyDT infancia
+      '890205AA', // PyDT adolescente, enfermería
+      '890205PI', // PyDT primera infancia, enfermería
+      '890205-LM', // PyDT lactancia materna, enfermería
+      '890205CAM', // PyDT tamizaje de mama, enfermería
     ]);
 
     const huerfanos: string[] = [];
@@ -1008,5 +1018,143 @@ describe('resolveConvenio — facturación por evento', () => {
       .filter((k) => k.endsWith('|EVENTO'))
       .filter((k) => !(k.replace('|EVENTO', '') in REAL.convenios));
     expect(huerfanas).toEqual([]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// SALUD TOTAL — la EPS que era un tercio del hospital y no estaba (G.5)
+//
+// No apareció en la sección D porque D midió sobre `R_PAC_EPS` y se centró en
+// las dos EPS que AgenIA ya conocía. G.5, leyendo el convenio de cada cita,
+// la puso en 10.137 citas en 90 días: más que Nueva EPS (5.457) y del orden de
+// Sura (11.933).
+// ══════════════════════════════════════════════════════════════════════════
+describe('convenios — Salud Total (NIT 800130907)', () => {
+  const REAL = JSON.parse(
+    readFileSync(
+      join(
+        __dirname,
+        '../../../../../docs/drivers/cnt-sanvicente-anserma/mapping.json',
+      ),
+      'utf8',
+    ),
+  ) as AnsermaMapping;
+
+  const ST = '800130907';
+
+  it.each([
+    ['SUBSIDIADO', 'S39141-1', 475, 'STOTALSUBS', 5267],
+    ['CONTRIBUTIVO', 'S39141-1', 476, 'STCONTRIB', 929],
+    ['SUBSIDIADO', '890266ESP', 538, 'EVENTOSTOTALSU', 703],
+    ['CONTRIBUTIVO', '890266ESP', 96, 'EVENTOSTOTALCO', 171],
+  ])(
+    'Salud Total %s · %s → convenio %i (%s, %i citas reales)',
+    (regimen, servicio, esperado) => {
+      expect(
+        resolveConvenio(REAL, {
+          epsNit: ST,
+          patientRegime: regimen as string,
+          serviceExternalKey: servicio as string,
+        }),
+      ).toBe(esperado);
+    },
+  );
+
+  it('su PyP se repliega al convenio del régimen, como el de Sura', () => {
+    // G.5: Salud Total no tiene convenio propio de PyP — 475 cubre primaria y
+    // PyP (5.267 y 2.690 citas), igual que hace Sura con el 467.
+    expect(
+      resolveConvenio(REAL, {
+        epsNit: ST,
+        patientRegime: 'SUBSIDIADO',
+        serviceExternalKey: '890201-CI', // PyP
+      }),
+    ).toBe(475);
+  });
+
+  it('🚦 Nueva EPS NO tiene convenio de evento: su especialista LANZA', () => {
+    // G.5 midió 90 días: las 34 citas de especialista de Nueva EPS se reparten
+    // entre 489 PYPSUBS (27) y 283 (7). Un convenio de PyP para una consulta
+    // de especialista es raro y 34 citas no deciden nada — así que no se
+    // homologa y la cita falla a la vista de todos.
+    expect(() =>
+      resolveConvenio(REAL, {
+        epsNit: '900156264',
+        patientRegime: 'SUBSIDIADO',
+        serviceExternalKey: '890266ESP',
+      }),
+    ).toThrow(MappingIncompletoError);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// LOS NUEVE SERVICIOS DE CURSO DE VIDA (G.4)
+//
+// Tenían el defecto por partida DOBLE: ni especialidad ni marca de PyP. Sin
+// especialidad habrían entrado como MEDICINA GENERAL; sin la marca de PyP,
+// facturados al convenio general en vez de al de promoción y prevención.
+// ══════════════════════════════════════════════════════════════════════════
+describe('servicios de curso de vida — los nueve que faltaban', () => {
+  const REAL = JSON.parse(
+    readFileSync(
+      join(
+        __dirname,
+        '../../../../../docs/drivers/cnt-sanvicente-anserma/mapping.json',
+      ),
+      'utf8',
+    ),
+  ) as AnsermaMapping;
+
+  const NUEVE: [string, string][] = [
+    ['890201AA', '328'],
+    ['890201AJ', '328'],
+    ['890201CP', '328'],
+    ['890201INF', '328'],
+    ['890205AA', '060'],
+    ['890205PI', '060'],
+    ['890205-LM', '060'],
+    ['890205CAM', '060'],
+    ['I890305AG', '060'],
+  ];
+
+  it.each(NUEVE)('%s tiene especialidad %s', (servicio, esperada) => {
+    expect(resolveEspecialidad(REAL, servicio)).toBe(esperada);
+  });
+
+  it.each(NUEVE)('%s está marcado como PyP', (servicio) => {
+    expect(REAL.serviciosPyp).toContain(servicio);
+  });
+
+  it('🚨 y por tanto facturan al convenio de PyP, no al general', () => {
+    // Nueva EPS subsidiado: PyP va al 489 PYPSUBS y lo normal al 283.
+    // Sin la marca, estos nueve se habrían ido al 283.
+    for (const [servicio] of NUEVE) {
+      expect(
+        resolveConvenio(REAL, {
+          epsNit: '900156264',
+          patientRegime: 'SUBSIDIADO',
+          serviceExternalKey: servicio,
+        }),
+      ).toBe(489);
+    }
+  });
+
+  it('🔒 TODA especialidad de la familia PyDT está marcada como PyP', () => {
+    // La invariante que habría cazado los nueve. `_especialidades` nombra la
+    // familia: 060 ENFERMERIA PYDT, 328 MEDICINA GENERAL PYDT, 572
+    // ODONTOLOGIA PYDT, 591 PSICOLOGIA PYDT.
+    const nombres = (REAL as unknown as { _especialidades: Record<string, string> })
+      ._especialidades;
+    const familiaPyp = new Set(
+      Object.entries(nombres)
+        .filter(([, n]) => /PYDT|PYP/i.test(n))
+        .map(([codigo]) => codigo),
+    );
+
+    const sinMarcar = Object.entries(REAL.especialidadPorServicio)
+      .filter(([s, cod]) => familiaPyp.has(cod) && !REAL.serviciosPyp.includes(s))
+      .map(([s]) => s);
+
+    expect(sinMarcar).toEqual([]);
   });
 });

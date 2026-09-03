@@ -124,7 +124,8 @@ function revisar(mapping: Record<string, any>): string[] {
       console.warn(
         `⚠️  Sin convenio de EVENTO: ${sinEvento.join(', ')}. Un paciente de esas ` +
           `combinaciones NO podrá agendar con un especialista (resolveConvenio lanza). ` +
-          `Es el comportamiento buscado hasta que G.5 mida el contrato — pero conviene saberlo.`,
+          `Es el comportamiento buscado: la sección G.5 midió 90 días y esas ` +
+          `combinaciones NO tienen contrato de evento en el hospital.`,
       );
     }
   }
@@ -135,12 +136,23 @@ function revisar(mapping: Record<string, any>): string[] {
   // porque `especialidadPorServicio` se generó filtrando a médicos con turnos
   // futuros y ese filtro dejó fuera cinco servicios con citas reales — entre
   // ellos la mitad «control» de ginecología (890350ESP/SUR).
+  // Los de PyDT codifican su mitad de control con prefijo `I` (I890301AG,
+  // I890305PL, I890305AG…), no con el mismo sufijo. La sección G.4 lo confirma:
+  // de los 54 servicios con citas en 90 días, ninguno es `890301AA` ni similar.
   const SINGLETONES_CONOCIDOS = new Set([
     '890201-CI',
     '890201AD',
     '890201AV',
     '890201PI',
     '890208Ges',
+    '890201AA',
+    '890201AJ',
+    '890201CP',
+    '890201INF',
+    '890205AA',
+    '890205PI',
+    '890205-LM',
+    '890205CAM',
   ]);
   for (const [servicio, codigo] of Object.entries(esp)) {
     const m = /^(890)([23])(\d{2})(.*)$/.exec(servicio);
@@ -225,6 +237,42 @@ async function main() {
     console.log('\nVuelve a correr pasando una de ellas como argumento.');
     await prisma.$disconnect();
     return;
+  }
+
+  // ── Cruce con la tabla `Eps` de AgenIA ───────────────────────────────────
+  // El mapeo puede tener el convenio de una EPS que AgenIA no ofrece todavía,
+  // y entonces no sirve de nada: el chatbot nunca le enseña esa opción al
+  // paciente. Pasó con Salud Total — un TERCIO del volumen del hospital
+  // (10.137 citas en 90 días, sección G.5) y no estaba dada de alta, así que
+  // ninguno de sus pacientes podía siquiera empezar una conversación.
+  const nitsDelMapeo = new Set(
+    Object.keys(crudo.convenios ?? {}).map((k) => k.split('|')[0]),
+  );
+  const epsDeLaOrg = await prisma.eps.findMany({
+    where: { organizationId: orgId },
+    select: { name: true, nit: true, isActive: true },
+  });
+  const nitsDeAgenIA = new Set(
+    epsDeLaOrg.filter((e) => e.nit).map((e) => e.nit as string),
+  );
+
+  const sinAlta = [...nitsDelMapeo].filter((n) => !nitsDeAgenIA.has(n));
+  if (sinAlta.length > 0) {
+    console.warn(
+      `\n⚠️  Estos NIT tienen convenio en el mapeo pero NO existen como Eps en ` +
+        `AgenIA: ${sinAlta.join(', ')}.\n` +
+        `   Sus pacientes no pueden agendar: el chatbot no les ofrece esa opción.\n` +
+        `   Hay que darlas de alta (y cargarles el padrón) para que sirvan.`,
+    );
+  }
+
+  const sinConvenio = [...nitsDeAgenIA].filter((n) => !nitsDelMapeo.has(n));
+  if (sinConvenio.length > 0) {
+    console.warn(
+      `\n⚠️  Estas Eps existen en AgenIA pero NO tienen convenio en el mapeo: ` +
+        `${sinConvenio.join(', ')}.\n` +
+        `   El chatbot las ofrece y la cita fallará al escribirse en el HIS.`,
+    );
   }
 
   const actual = await prisma.hospitalMirrorConfig.findUnique({
