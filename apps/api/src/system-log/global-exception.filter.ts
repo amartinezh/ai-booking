@@ -10,6 +10,18 @@ import { Request, Response } from 'express';
 import { SystemLogService } from './system-log.service';
 
 /**
+ * Este filtro atrapa CUALQUIER excepción, incluidas las que ocurren antes de
+ * que un guard de autenticación corra (una ruta que no existe, por ejemplo).
+ * `user`/`session` son opcionales y de forma laxa a propósito: según qué
+ * guard alcanzó a correr, `request.user` puede traer `userId` (JWT propio,
+ * ver `RolesGuard`) o `id` (otras integraciones) — nunca los dos garantizados.
+ */
+interface RequestWithAuth extends Request {
+  user?: { id?: string; userId?: string; organizationId?: string };
+  session?: { userId?: string; organizationId?: string };
+}
+
+/**
  * 🛡️ GlobalExceptionFilter
  *
  * Atrapa CUALQUIER excepción no manejada y:
@@ -57,7 +69,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    let status = HttpStatus.INTERNAL_SERVER_ERROR;
+    // `number`, no `HttpStatus`: exception.getStatus() devuelve cualquier
+    // codigo HTTP, no solo los que HttpStatus nombra.
+    let status: number = HttpStatus.INTERNAL_SERVER_ERROR;
     let publicMessage: string | object = 'Internal server error';
     let exceptionName = 'Exception';
     let stack: string | undefined;
@@ -65,10 +79,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       const responseBody = exception.getResponse();
+      // `getResponse()` de un HttpException siempre devuelve algo (nunca
+      // null/undefined) — o el string que se le pasó al constructor, o el
+      // objeto `{ message, error, statusCode }` que arma NestJS por defecto.
       publicMessage =
-        typeof responseBody === 'string'
-          ? responseBody
-          : ((responseBody as any) ?? exception.message);
+        typeof responseBody === 'string' ? responseBody : responseBody;
       exceptionName = exception.constructor.name;
       stack = exception.stack;
     } else if (exception instanceof Error) {
@@ -89,12 +104,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       method: request?.method,
       path: request?.originalUrl || request?.url,
       query: request?.query,
-      params: (request as any)?.params,
-      body: this.sanitizeBody((request as any)?.body),
+      params: request.params,
+      body: this.sanitizeBody(request.body),
       ip:
-        (request?.headers?.['x-forwarded-for'] as string) ||
-        (request as any)?.ip ||
-        request?.socket?.remoteAddress ||
+        (request.headers['x-forwarded-for'] as string) ||
+        request.ip ||
+        request.socket?.remoteAddress ||
         null,
       userAgent: request?.headers?.['user-agent'] || null,
       statusCode: status,
@@ -104,7 +119,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const messageStr =
       typeof publicMessage === 'string'
         ? publicMessage
-        : (publicMessage as any)?.message || JSON.stringify(publicMessage);
+        : ((publicMessage as { message?: unknown }).message as string) ||
+          JSON.stringify(publicMessage);
 
     const route = `${request?.method} ${request?.originalUrl || request?.url}`;
 
@@ -137,7 +153,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     // Docker ya rota estos logs, así que aquí no hay riesgo de acumulación.
     if (status >= 500) {
       this.logger.error(`🚨 [${status}] ${route} — ${messageStr}`, stack);
-    } else if (status === HttpStatus.NOT_FOUND) {
+    } else if (status === (HttpStatus.NOT_FOUND as number)) {
       this.logger.verbose(`[404] ${route}`);
     } else {
       this.logger.warn(`[${status}] ${route} — ${messageStr}`);
@@ -201,7 +217,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     return `HTTP_${status}_${method}_${cleanUrl}`;
   }
 
-  private extractUserId(request: any): string | null {
+  private extractUserId(request: RequestWithAuth | undefined): string | null {
     return (
       request?.user?.id ||
       request?.user?.userId ||
@@ -210,11 +226,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     );
   }
 
-  private extractOrganizationId(request: any): string | null {
+  private extractOrganizationId(
+    request: RequestWithAuth | undefined,
+  ): string | null {
     return (
       request?.user?.organizationId ||
       request?.session?.organizationId ||
-      request?.headers?.['x-organization-id'] ||
+      (request?.headers?.['x-organization-id'] as string) ||
       null
     );
   }
@@ -223,7 +241,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
    * Sanitiza el body antes de persistirlo: trunca tamaño y oculta secretos.
    * Nunca debe lanzar.
    */
-  private sanitizeBody(body: any): any {
+  private sanitizeBody(body: unknown): unknown {
     try {
       if (!body || typeof body !== 'object') return body ?? null;
       const SECRETS = [
@@ -234,9 +252,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         'api_key',
         'secret',
       ];
-      const clone: Record<string, any> = Array.isArray(body)
-        ? [...body]
-        : { ...body };
+      const clone: Record<string, unknown> | unknown[] = Array.isArray(body)
+        ? [...(body as unknown[])]
+        : { ...(body as Record<string, unknown>) };
       for (const key of Object.keys(clone)) {
         if (SECRETS.some((s) => key.toLowerCase().includes(s.toLowerCase()))) {
           clone[key] = '[REDACTED]';
