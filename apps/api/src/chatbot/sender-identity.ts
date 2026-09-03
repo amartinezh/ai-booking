@@ -41,11 +41,14 @@ export interface WhatsappInboundEvent {
    * salud que el aislamiento por organización evita. No se lee ni se persiste.
    */
   parent_user_id?: string;
+  /** wamid del mensaje (formato WhatsApp Cloud API). Usado para dedup/cola. */
+  id?: string;
   type?: string;
   /** Messenger legacy (PSID). Ni teléfono ni BSUID. */
   sender?: { id?: string };
   text?: { body?: string };
-  message?: { text?: string };
+  /** `mid` solo en formato Messenger legacy; Cloud API usa el `id` de arriba. */
+  message?: { text?: string; mid?: string };
   audio?: { id?: string };
   metadata?: { phone_number_id?: string };
 }

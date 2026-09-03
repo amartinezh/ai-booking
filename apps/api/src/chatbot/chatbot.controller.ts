@@ -17,12 +17,38 @@ import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import * as crypto from 'crypto';
 import { ChatbotService } from './chatbot.service';
-import { resolveSenderIdentity } from './sender-identity';
+import { resolveSenderIdentity, WhatsappInboundEvent } from './sender-identity';
 import { InboundQueueService } from './inbound-queue.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';
+
+/** Un mensaje entregado con estado (enviado/entregado/leído/fallido). */
+interface WhatsappStatusUpdate {
+  status?: string;
+  id?: string;
+}
+
+/** `value` de un `change` en formato WhatsApp Cloud API. */
+interface WhatsappChangeValue {
+  metadata?: { phone_number_id?: string };
+  messages?: WhatsappInboundEvent[];
+  statuses?: WhatsappStatusUpdate[];
+}
+
+interface WhatsappEntry {
+  /** Formato Cloud API (WhatsApp Business Account). */
+  changes?: Array<{ value?: WhatsappChangeValue }>;
+  /** Formato Messenger legacy. */
+  messaging?: WhatsappInboundEvent[];
+}
+
+/** Body crudo que Meta manda a `POST /chatbot/webhook`. */
+interface WhatsappWebhookBody {
+  object?: string;
+  entry?: WhatsappEntry[];
+}
 
 @Controller('chatbot')
 export class ChatbotController {
@@ -73,7 +99,7 @@ export class ChatbotController {
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   async handleMessage(
-    @Body() body: any,
+    @Body() body: WhatsappWebhookBody,
     @Req() req: RawBodyRequest<Request>,
     @Headers('x-hub-signature-256') signature?: string,
   ) {
@@ -116,7 +142,7 @@ export class ChatbotController {
             } else if (value?.statuses && value.statuses.length > 0) {
               for (const statusEvent of value.statuses) {
                 this.logger.debug(
-                  `Status update recibido: ${statusEvent.status} para el mensaje ${statusEvent.id}`,
+                  `Status update recibido: ${statusEvent.status ?? '(sin estado)'} para el mensaje ${statusEvent.id ?? '(sin id)'}`,
                 );
               }
             }
@@ -174,7 +200,7 @@ export class ChatbotController {
    *      reintento de Meta pueda volver a procesarse (no se pierde el mensaje).
    */
   private async dispatch(
-    event: any,
+    event: WhatsappInboundEvent,
     wamid: string | undefined,
     senderId: string | undefined,
   ): Promise<void> {
@@ -209,7 +235,7 @@ export class ChatbotController {
    *      volver temporalmente al modo permisivo (con warning).
    */
   private async verifyMetaSignature(
-    body: any,
+    body: WhatsappWebhookBody,
     rawBody?: Buffer,
     signature?: string,
   ): Promise<boolean> {
