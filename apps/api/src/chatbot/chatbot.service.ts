@@ -16,7 +16,10 @@ import {
 } from './chatbot.constants';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
-import { AppointmentsService } from 'src/appointments/appointments.service';
+import {
+  AppointmentsService,
+  AvailableSlot,
+} from 'src/appointments/appointments.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
 import {
   InteractionLogService,
@@ -47,9 +50,20 @@ import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credenti
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 import { SurveyService } from '../survey/survey.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
-import { ResolutionStatus } from '@agenia/database';
+import {
+  ResolutionStatus,
+  Organization,
+  PatientProfile,
+} from '@agenia/database';
 import { buildWhatsappRecipient } from '@agenia/shared';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
+import {
+  getErrorMessage,
+  getErrorStack,
+  getErrorStatus,
+  getAxiosErrorDetail,
+  isMetaGraphErrorCode,
+} from '../common/error-message.util';
 import { resolveSenderIdentity, UNIDENTIFIED_SENDER } from './sender-identity';
 import type { SenderIdentity, WhatsappInboundEvent } from './sender-identity';
 
@@ -148,9 +162,9 @@ export class ChatbotService implements OnModuleInit {
     // (pago directo). Se ejecuta en silencio si ya existe; no afecta CRON ni flujos en curso.
     try {
       await this.ensureParticularEpsForAllOrganizations();
-    } catch (e) {
+    } catch (e: unknown) {
       this.logger.error(
-        `No fue posible asegurar EPS "${PARTICULAR_EPS_NAME}": ${e.message}`,
+        `No fue posible asegurar EPS "${PARTICULAR_EPS_NAME}": ${getErrorMessage(e)}`,
       );
     }
   }
@@ -198,9 +212,9 @@ export class ChatbotService implements OnModuleInit {
         `✅ EPS "${PARTICULAR_EPS_NAME}" creada para organización ${organizationId}`,
       );
       return { id: created.id, name: created.name };
-    } catch (e) {
+    } catch (e: unknown) {
       this.logger.error(
-        `Error asegurando EPS Particular para org ${organizationId}: ${e.message}`,
+        `Error asegurando EPS Particular para org ${organizationId}: ${getErrorMessage(e)}`,
       );
       return null;
     }
@@ -540,7 +554,10 @@ export class ChatbotService implements OnModuleInit {
   // `recipientId` es el identificador del paciente: su teléfono o su BSUID.
   // `buildWhatsappRecipient` decide si va en `to` o en `recipient` — mandar un
   // BSUID en `to` es un envío fallido garantizado.
-  private async sendWhatsAppMessage(recipientId: string, text: string) {
+  private async sendWhatsAppMessage(
+    recipientId: string,
+    text: string,
+  ): Promise<unknown> {
     const creds = await this.resolveCredentialsForRecipient(recipientId);
     if (!creds) {
       this.logger.error(
@@ -558,7 +575,7 @@ export class ChatbotService implements OnModuleInit {
     const url = metaGraphUrl(`${creds.phoneNumberId}/messages`);
     try {
       const response = await lastValueFrom(
-        this.httpService.post(
+        this.httpService.post<unknown>(
           url,
           {
             messaging_product: 'whatsapp',
@@ -580,15 +597,12 @@ export class ChatbotService implements OnModuleInit {
       await this.setLastSent(recipientId, text);
 
       return response.data;
-    } catch (error) {
-      const errorBody = error.response?.data || error.message || error;
-      const errorString =
-        typeof errorBody === 'object' ? JSON.stringify(errorBody) : errorBody;
+    } catch (error: unknown) {
       this.logger.error(
-        `Error enviando mensaje a ${recipientId}: ${errorString}`,
+        `Error enviando mensaje a ${recipientId}: ${getAxiosErrorDetail(error)}`,
       );
 
-      if (error.response?.data?.error?.code === 190) {
+      if (isMetaGraphErrorCode(error, 190)) {
         this.logger.error(
           `🚨 Token de Meta inválido para org ${creds.organizationId}. ` +
             `Pídele al administrador de la clínica que regenere el Access Token ` +
@@ -698,20 +712,22 @@ export class ChatbotService implements OnModuleInit {
       const token = creds.accessToken;
       const urlReq = metaGraphUrl(mediaId);
       const urlResponse = await lastValueFrom(
-        this.httpService.get(urlReq, {
+        this.httpService.get<{ url: string }>(urlReq, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       );
       const mediaUrl = urlResponse.data.url;
       const mediaResponse = await lastValueFrom(
-        this.httpService.get(mediaUrl, {
+        this.httpService.get<ArrayBuffer>(mediaUrl, {
           headers: { Authorization: `Bearer ${token}` },
           responseType: 'arraybuffer',
         }),
       );
       return Buffer.from(mediaResponse.data);
-    } catch (error) {
-      this.logger.error(`Error descargando audio ${mediaId}: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Error descargando audio ${mediaId}: ${getErrorMessage(error)}`,
+      );
       return null;
     }
   }
@@ -744,9 +760,9 @@ export class ChatbotService implements OnModuleInit {
         audio: audioInput,
         vocabularyHints,
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       // 429 cuota agotada: no reintentar (empeora), no contar como fallo permanente.
-      if (e?.status === 429) {
+      if (getErrorStatus(e) === 429) {
         this.logger.warn(
           `${provider.name} rate limit (429) — usando fallback simple, sin incrementar contador de fallos`,
         );
@@ -768,7 +784,7 @@ export class ChatbotService implements OnModuleInit {
       }
       this.logger.error(
         `Error procesando IA con ${provider.name} tras ${maxRetries} intentos`,
-        e,
+        getErrorStack(e) ?? getErrorMessage(e),
       );
 
       // Failover entre proveedores: si LLM_FAILOVER_ENABLED=true, intentar
@@ -962,9 +978,9 @@ export class ChatbotService implements OnModuleInit {
         });
         this.logger.log(`[FAILOVER] ${candidate} respondió OK`);
         return result;
-      } catch (err: any) {
+      } catch (err: unknown) {
         this.logger.warn(
-          `[FAILOVER] ${candidate} también falló: ${err?.message ?? err}`,
+          `[FAILOVER] ${candidate} también falló: ${getErrorMessage(err)}`,
         );
         continue;
       }
@@ -1051,7 +1067,7 @@ export class ChatbotService implements OnModuleInit {
   private async escalateEmergency(p: {
     organizationId: string;
     senderId: string;
-    org: any;
+    org: Organization | null;
     MSGS: ReturnType<typeof buildMessages>;
     text: string | undefined;
     currentState: ChatState;
@@ -1087,9 +1103,9 @@ export class ChatbotService implements OnModuleInit {
           alertText,
         );
         staffAlerted = result.success;
-      } catch (e: any) {
+      } catch (e: unknown) {
         this.logger.error(
-          `No fue posible alertar al staff de la emergencia (org=${p.organizationId}): ${e?.message}`,
+          `No fue posible alertar al staff de la emergencia (org=${p.organizationId}): ${getErrorMessage(e)}`,
         );
       }
     } else {
@@ -1221,7 +1237,7 @@ export class ChatbotService implements OnModuleInit {
     question: string,
     organizationId: string,
     senderId: string,
-    org: any,
+    org: Organization | null,
     botName: string,
   ): Promise<void> {
     const supportPhone = org?.supportPhone || '(601) 555-0199';
@@ -1367,8 +1383,8 @@ export class ChatbotService implements OnModuleInit {
         botReply: reply,
         metadata: { step: 'FAQ_ANSWERED', provider: provider.name },
       });
-    } catch (err) {
-      this.logger.error(`answerFAQ falló: ${err.message}`);
+    } catch (err: unknown) {
+      this.logger.error(`answerFAQ falló: ${getErrorMessage(err)}`);
       const fallback =
         `Lo siento, tuve un inconveniente al procesar su consulta. 😔\n\n` +
         `Para más información, comuníquese con nosotros al *${supportPhone}*.`;
@@ -1487,14 +1503,14 @@ export class ChatbotService implements OnModuleInit {
           body: formData,
         },
       );
-      const data = await response.json();
+      const data = (await response.json()) as { id?: string };
       if (!response.ok) {
         this.logger.error(`Error subiendo audio: ${JSON.stringify(data)}`);
         return null;
       }
-      return data.id;
-    } catch (error) {
-      this.logger.error(`Error en uploadToWhatsApp: ${error.message}`);
+      return data.id ?? null;
+    } catch (error: unknown) {
+      this.logger.error(`Error en uploadToWhatsApp: ${getErrorMessage(error)}`);
       return null;
     }
   }
@@ -1523,9 +1539,9 @@ export class ChatbotService implements OnModuleInit {
           },
         ),
       );
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
-        `Error enviando audio a ${recipientId}: ${error.response?.data || error.message}`,
+        `Error enviando audio a ${recipientId}: ${getAxiosErrorDetail(error)}`,
       );
     }
   }
@@ -1576,8 +1592,10 @@ export class ChatbotService implements OnModuleInit {
           await this.sendWhatsAppMessage(senderId, text);
         }
         return;
-      } catch (error) {
-        this.logger.error(`Error en smartReply (AI flow): ${error.message}`);
+      } catch (error: unknown) {
+        this.logger.error(
+          `Error en smartReply (AI flow): ${getErrorMessage(error)}`,
+        );
         // Ante cualquier error en el camino de audio, garantizamos respuesta
         // por texto para no dejar al usuario sin contestación.
         await this.sendWhatsAppMessage(senderId, text);
@@ -1622,9 +1640,9 @@ export class ChatbotService implements OnModuleInit {
 
       // Enlace como mensaje separado, posterior a la respuesta del flujo.
       await this.sendWhatsAppMessage(senderId, message);
-    } catch (e) {
+    } catch (e: unknown) {
       this.logger.error(
-        `No se pudo enviar el enlace de encuesta a ${senderId}: ${e.message}`,
+        `No se pudo enviar el enlace de encuesta a ${senderId}: ${getErrorMessage(e)}`,
       );
     }
   }
@@ -1740,7 +1758,7 @@ export class ChatbotService implements OnModuleInit {
      */
     nombres?: string;
     apellidos?: string;
-  }): Promise<any> {
+  }): Promise<PatientProfile | null> {
     const {
       cedula,
       nombre,
@@ -1786,9 +1804,9 @@ export class ChatbotService implements OnModuleInit {
             where: { id: patient.id },
             data: updates,
           });
-        } catch (error) {
+        } catch (error: unknown) {
           this.logger.error(
-            `Error actualizando paciente ${cedula}: ${error.message || JSON.stringify(error)}`,
+            `Error actualizando paciente ${cedula}: ${getErrorMessage(error)}`,
           );
         }
       }
@@ -1830,9 +1848,9 @@ export class ChatbotService implements OnModuleInit {
         `✅ Paciente persistido: ${nombre} (cédula ${cedula}, WA ${identity.senderId})`,
       );
       return patient;
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
-        `Error persistiendo paciente cédula ${cedula}: ${error.message || JSON.stringify(error)}`,
+        `Error persistiendo paciente cédula ${cedula}: ${getErrorMessage(error)}`,
       );
       return null;
     }
@@ -2132,9 +2150,9 @@ export class ChatbotService implements OnModuleInit {
         `🧭 Mapeo semántico (${entityKind}): "${text}" → ${match.name}`,
       );
       return { id: match.id, name: match.name };
-    } catch (e) {
+    } catch (e: unknown) {
       this.logger.warn(
-        `Mapeo semántico (${entityKind}) falló/timeout: ${e?.message}`,
+        `Mapeo semántico (${entityKind}) falló/timeout: ${getErrorMessage(e)}`,
       );
       return null;
     }
@@ -2380,10 +2398,12 @@ export class ChatbotService implements OnModuleInit {
 
     try {
       await this.processIncomingMessageUnsafe(event);
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error);
+      const errorStack = getErrorStack(error);
       this.logger.error(
-        `🚨 Error no manejado en processIncomingMessage: ${error.message}`,
-        error.stack,
+        `🚨 Error no manejado en processIncomingMessage: ${errorMessage}`,
+        errorStack,
       );
 
       // 📝 Auditoría: registrar el error no manejado
@@ -2393,8 +2413,8 @@ export class ChatbotService implements OnModuleInit {
         userMessage: userMessage || `[${messageType}]`,
         botReply: (await this.getLastSent(senderId)) || null,
         metadata: {
-          errorMessage: error.message,
-          errorStack: error.stack?.substring(0, 1000),
+          errorMessage,
+          errorStack: errorStack?.substring(0, 1000),
           messageType,
         },
       });
@@ -2475,7 +2495,11 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
     text: string | undefined,
     messageType: string | undefined,
-  ): Promise<{ org: any; organizationId: string; orgName: string } | null> {
+  ): Promise<{
+    org: Organization;
+    organizationId: string;
+    orgName: string;
+  } | null> {
     // Meta envía `phone_number_id` en `value.metadata` del payload entrante.
     const metaPhoneId: string | undefined = event.metadata?.phone_number_id;
     if (!metaPhoneId) {
@@ -2628,8 +2652,10 @@ export class ChatbotService implements OnModuleInit {
         letterOptions:
           letterOptions && letterOptions.length > 0 ? letterOptions : undefined,
       };
-    } catch (e: any) {
-      this.logger.warn(`No se pudieron cargar vocab hints: ${e?.message}`);
+    } catch (e: unknown) {
+      this.logger.warn(
+        `No se pudieron cargar vocab hints: ${getErrorMessage(e)}`,
+      );
       return undefined;
     }
   }
@@ -2681,8 +2707,10 @@ export class ChatbotService implements OnModuleInit {
       }
       const letters = [...seen].sort();
       return letters.length > 0 ? letters : undefined;
-    } catch (e: any) {
-      this.logger.warn(`No se pudieron leer letras del menú: ${e?.message}`);
+    } catch (e: unknown) {
+      this.logger.warn(
+        `No se pudieron leer letras del menú: ${getErrorMessage(e)}`,
+      );
       return undefined;
     }
   }
@@ -3072,7 +3100,7 @@ export class ChatbotService implements OnModuleInit {
     organizationId: string;
     senderId: string;
     currentState: ChatState;
-    org: any;
+    org: Organization | null;
     MSGS: ReturnType<typeof buildMessages>;
   }): Promise<{ aiData: SchedulingExtraction; stop: boolean }> {
     let { aiData } = p;
@@ -4388,8 +4416,10 @@ export class ChatbotService implements OnModuleInit {
             });
             positionWl = result.position;
             wlEntryId = result.id || null;
-          } catch (e) {
-            this.logger.error(`Error joinWaitlist (post-cedula): ${e.message}`);
+          } catch (e: unknown) {
+            this.logger.error(
+              `Error joinWaitlist (post-cedula): ${getErrorMessage(e)}`,
+            );
           }
         }
 
@@ -4723,7 +4753,7 @@ export class ChatbotService implements OnModuleInit {
         );
         const ventana = parseFechaPreferida(fechaPrefRaw);
 
-        let slots: any[];
+        let slots: AvailableSlot[];
         let slotsMode: 'normal' | 'fecha' | 'fallback' = 'normal';
         if (ventana) {
           slots = await this.appointmentsService.getAvailableSlots(
@@ -4842,7 +4872,12 @@ export class ChatbotService implements OnModuleInit {
 
         // Hay slots: mostrar menú con letras y pedir selección.
         let lineasFechas = '';
-        const slotsMetadata: any[] = [];
+        const slotsMetadata: {
+          letter: string;
+          slotId: string;
+          doctor: string;
+          fecha: string;
+        }[] = [];
         for (let i = 0; i < slots.length; i++) {
           const letra = String.fromCharCode(65 + i);
           await this.redis.set(
@@ -6151,9 +6186,9 @@ export class ChatbotService implements OnModuleInit {
           });
           position = result.position;
           waitlistEntryId = result.id || null;
-        } catch (e) {
+        } catch (e: unknown) {
           this.logger.error(
-            `Error agregando a waitlist (opt-in): ${e.message}`,
+            `Error agregando a waitlist (opt-in): ${getErrorMessage(e)}`,
           );
         }
       }
@@ -6489,8 +6524,10 @@ export class ChatbotService implements OnModuleInit {
               doctorName: slot.doctor.fullName,
               slotDate: slot.startTime,
             });
-          } catch (e) {
-            this.logger.error(`Error notificando waitlist: ${e.message}`);
+          } catch (e: unknown) {
+            this.logger.error(
+              `Error notificando waitlist: ${getErrorMessage(e)}`,
+            );
           }
         }
 
@@ -6503,8 +6540,11 @@ export class ChatbotService implements OnModuleInit {
           senderId,
           ChatState.AWAITING_POST_CANCEL_CHOICE,
         );
-      } catch (e) {
-        this.logger.error('Error cancelando cita', e);
+      } catch (e: unknown) {
+        this.logger.error(
+          'Error cancelando cita',
+          getErrorStack(e) ?? getErrorMessage(e),
+        );
         const reply = MSGS.cancelarError();
         await this.smartReply(organizationId, senderId, reply);
 
@@ -6512,7 +6552,7 @@ export class ChatbotService implements OnModuleInit {
           reason: FailureReason.CANCEL_ERROR,
           userMessage: text,
           botReply: reply,
-          metadata: { error: e.message, appointmentId: aptId },
+          metadata: { error: getErrorMessage(e), appointmentId: aptId },
         });
         await this.cleanUpCancelSession(organizationId, senderId);
       }
@@ -7085,9 +7125,9 @@ export class ChatbotService implements OnModuleInit {
               doctorName: freedSlot.doctor.fullName,
               slotDate: freedSlot.startTime,
             });
-          } catch (e) {
+          } catch (e: unknown) {
             this.logger.error(
-              `Error notificando waitlist (reprogramación): ${e.message}`,
+              `Error notificando waitlist (reprogramación): ${getErrorMessage(e)}`,
             );
           }
         }
@@ -7102,18 +7142,22 @@ export class ChatbotService implements OnModuleInit {
             chatSummary: `Cita reprogramada para ${fechaNuevaFmt}.`,
           },
         );
-      } catch (e) {
-        this.logger.error('Error reprogramando cita', e);
+      } catch (e: unknown) {
+        this.logger.error(
+          'Error reprogramando cita',
+          getErrorStack(e) ?? getErrorMessage(e),
+        );
         // El nuevo cupo fue tomado por otro paciente entre tanto → volver a ofrecer.
+        const mensaje = e instanceof Error ? e.message : undefined;
         if (
-          e.message === 'NEW_SLOT_TAKEN' ||
-          e.message === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE'
+          mensaje === 'NEW_SLOT_TAKEN' ||
+          mensaje === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE'
         ) {
           // Dos motivos distintos con el mismo desenlace (volver a ofrecer),
           // pero mensajes distintos: decir "lo tomó otro paciente" cuando el
           // cupo sigue libre le hace perder el tiempo a quien luego llama.
           const reply =
-            e.message === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE'
+            mensaje === 'NEW_SLOT_DOCTOR_NOT_BOOKABLE'
               ? MSGS.medicoNoDisponiblePorWhatsapp()
               : MSGS.slotTomado();
           await this.smartReply(organizationId, senderId, reply);
@@ -7137,7 +7181,7 @@ export class ChatbotService implements OnModuleInit {
           reason: FailureReason.MODIFY_ERROR,
           userMessage: text,
           botReply: reply,
-          metadata: { error: e.message, appointmentId: aptId },
+          metadata: { error: getErrorMessage(e), appointmentId: aptId },
         });
         await this.cleanUpModifySession(organizationId, senderId);
       }
@@ -7243,9 +7287,9 @@ export class ChatbotService implements OnModuleInit {
               doctorName: slot.doctor.fullName,
               slotDate: slot.startTime,
             });
-          } catch (e) {
+          } catch (e: unknown) {
             this.logger.error(
-              `Error notificando waitlist (cancelación vía modify): ${e.message}`,
+              `Error notificando waitlist (cancelación vía modify): ${getErrorMessage(e)}`,
             );
           }
         }
@@ -7259,8 +7303,11 @@ export class ChatbotService implements OnModuleInit {
           senderId,
           ChatState.AWAITING_POST_CANCEL_CHOICE,
         );
-      } catch (e) {
-        this.logger.error('Error cancelando cita (vía modify)', e);
+      } catch (e: unknown) {
+        this.logger.error(
+          'Error cancelando cita (vía modify)',
+          getErrorStack(e) ?? getErrorMessage(e),
+        );
         const reply = MSGS.cancelarError();
         await this.smartReply(organizationId, senderId, reply);
 
@@ -7269,7 +7316,7 @@ export class ChatbotService implements OnModuleInit {
           userMessage: text,
           botReply: reply,
           metadata: {
-            error: e.message,
+            error: getErrorMessage(e),
             appointmentId: aptId,
             via: 'MODIFY_NO_SLOTS',
           },
@@ -8084,7 +8131,8 @@ export class ChatbotService implements OnModuleInit {
     }
 
     let lineas = '';
-    const slotsMetadata: any[] = [];
+    const slotsMetadata: { letter: string; slotId: string; fecha: string }[] =
+      [];
     for (let i = 0; i < candidateSlots.length; i++) {
       const letra = String.fromCharCode(65 + i);
       await this.redis.set(
@@ -8174,11 +8222,12 @@ export class ChatbotService implements OnModuleInit {
         return { success: false, error: 'meta-api-error' };
       }
       return { success: true };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
       this.logger.error(
-        `Error en sendOutboundForOrg (org=${organizationId}, to=${to}): ${error.message}`,
+        `Error en sendOutboundForOrg (org=${organizationId}, to=${to}): ${message}`,
       );
-      return { success: false, error: error.message };
+      return { success: false, error: message };
     }
   }
 
@@ -8233,15 +8282,16 @@ export class ChatbotService implements OnModuleInit {
       });
 
       return { success: true };
-    } catch (error) {
-      this.logger.error(`Error en sendOutboundMessage: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error);
+      this.logger.error(`Error en sendOutboundMessage: ${errorMessage}`);
       await this.interactionLog.logOutbound({
         whatsappId: to,
         botReply: message,
         success: false,
-        error: error.message,
+        error: errorMessage,
       });
-      return { success: false, error: error.message };
+      return { success: false, error: errorMessage };
     }
   }
 
@@ -8310,8 +8360,10 @@ export class ChatbotService implements OnModuleInit {
         slotDate,
         botReply: reply,
       });
-    } catch (error) {
-      this.logger.error(`Error en notifyWaitlistCandidate: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Error en notifyWaitlistCandidate: ${getErrorMessage(error)}`,
+      );
     }
   }
 }

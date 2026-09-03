@@ -2,6 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@agenia/database';
 
+/** Forma reducida de un cupo que `getAvailableSlots` le entrega al chatbot. */
+export interface AvailableSlot {
+  slotId: string;
+  fecha: Date;
+  doctor: string;
+  servicio: string;
+}
+
 @Injectable()
 export class AppointmentsService {
   private readonly logger = new Logger(AppointmentsService.name);
@@ -19,7 +27,7 @@ export class AppointmentsService {
     // Ventana de fecha preferida por el paciente ("mañana", "el lunes"...).
     // Opcional: sin ella, la consulta es idéntica a la histórica (próximos cupos).
     dateWindow?: { desde: Date; hasta: Date } | null,
-  ): Promise<any[]> {
+  ): Promise<AvailableSlot[]> {
     const now = new Date();
 
     // Con ventana, acotamos a [max(desde, ahora) .. hasta] para no ofrecer
