@@ -39,6 +39,8 @@
   },
   "convenioParticular": 26,
 
+  "_serviciosEvento_G6": "CERRADA por la seccion G.6 (2026-09-03), que midio servicio por servicio que proporcion de sus citas fue a un convenio EVEN* — sin patrones ni hipotesis. Resultado: 32 servicios capita (todos por debajo del 0,6 %) y 16 evento (todos por encima del 90 %). No hay zona gris. DOS CORRECCIONES: (1) 890206 y 890306, NUTRICION, SI se facturan por evento (97,0 % y 98,2 %) y no estaban en la lista — el patron 8902%/8903% de G.5 los mezclaba con los especialistas y no se podia distinguir. El medico NU02 estaba clasificado como amarillo «la factura sale bien» en la seccion E: NO lo estaba. (2) 890284ESP salio MIXTO (72,9 %) pero NO es ambiguo: su parte de capita son exactamente los pagadores que NO tienen contrato de evento —Nueva EPS 283 (7 citas) y el personal del propio hospital 232 PERSOCIAL (6)— mas 4 de Sura que si lo tiene y son anomalias. La modalidad no es propiedad del servicio sino del par (servicio, EPS), y el modelo de AgenIA ya lo refleja: la clave es nit|REGIMEN|EVENTO. Se queda en la lista. 890342ESP no aparece en G.6 por tener 4 citas (umbral 5); su hermano 890342SUR es 100 % evento y las invariantes de par lo cubren.",
+
   "_serviciosEvento": "DERIVADA de la seccion G.2 (2026-09-03). Son los servicios de especialista, que la EPS paga POR EVENTO y no por capita: la misma EPS y el mismo regimen facturan a un contrato distinto que la atencion primaria. Sura subsidiado usa 467 SUBS en primaria y 535 EVENSURASUB con un especialista — 605 citas contra 4 en 90 dias. INCOMPLETA a proposito: falta Salud Total (39,4% del volumen de especialistas, y AgenIA no la tiene ni en su tabla Eps), Fomag y Nueva EPS. Los rellena G.5. Mientras tanto resolveConvenio LANZA en vez de replegarse, que es justo lo que se quiere: ningun especialista se puede encender hasta que su convenio este medido.",
 
   "serviciosEvento": [
@@ -46,7 +48,8 @@
     "890250ESP", "890250SUR", "890350ESP", "890350SUR",
     "890266ESP", "890266SUR", "890366ESP", "890366SUR",
     "890283ESP", "890383ESP",
-    "890284ESP", "890384ESP"
+    "890284ESP", "890384ESP",
+    "890206", "890306"
   ],
 
   "serviciosPyp": [

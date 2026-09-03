@@ -1158,3 +1158,98 @@ describe('servicios de curso de vida — los nueve que faltaban', () => {
     expect(sinMarcar).toEqual([]);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// G.6 — la modalidad medida servicio por servicio, sin patrones.
+//
+// G.5 agrupó con `8902%`/`8903%` y ese patrón no distingue a un especialista
+// de nutrición. G.6 midió, para cada servicio, qué proporción de sus citas fue
+// a un convenio `EVEN*`. El resultado no tiene zona gris: 32 servicios por
+// debajo del 0,6 % y 16 por encima del 90 %.
+// ══════════════════════════════════════════════════════════════════════════
+describe('modalidad de facturación — medida servicio por servicio (G.6)', () => {
+  const REAL = JSON.parse(
+    readFileSync(
+      join(
+        __dirname,
+        '../../../../../docs/drivers/cnt-sanvicente-anserma/mapping.json',
+      ),
+      'utf8',
+    ),
+  ) as AnsermaMapping;
+
+  const SURA = '800088702';
+  const evento = new Set(REAL.serviciosEvento ?? []);
+
+  // Los 32 que G.6 midió por debajo del 0,6 % de evento. Incluye TODO lo que
+  // toca el piloto de los cuatro verdes.
+  it.each([
+    ['S39141-1', 7014, 'control hipertensos — médicos 76 y 077'],
+    ['S39141', 5637, 'medicina general'],
+    ['890201-CI', 2531, 'PyDT — enfermera 91-1'],
+    ['I890305PL', 1114, 'planificación familiar — enfermera 91-2'],
+    ['990203', 992, 'educación individual por odontología'],
+    ['997301-1', 974, 'salud oral doble'],
+    ['S35104', 769, 'psicoterapia'],
+    ['I890301AG', 552, 'control a la gestante'],
+  ])('%s (%i citas, %s) va por CÁPITA', (servicio) => {
+    expect(evento.has(servicio as string)).toBe(false);
+    expect(
+      resolveConvenio(REAL, {
+        epsNit: SURA,
+        patientRegime: 'SUBSIDIADO',
+        serviceExternalKey: servicio as string,
+      }),
+    ).toBe(467); // el de cápita de Sura subsidiado
+  });
+
+  // 🚨 La corrección que trajo G.6: nutrición NO es cápita.
+  it.each([
+    ['890206', 370, 97.0],
+    ['890306', 57, 98.2],
+  ])(
+    '🚨 %s NUTRICIÓN (%i citas) va por EVENTO — %s %% medido',
+    (servicio) => {
+      expect(evento.has(servicio as string)).toBe(true);
+      expect(
+        resolveConvenio(REAL, {
+          epsNit: SURA,
+          patientRegime: 'SUBSIDIADO',
+          serviceExternalKey: servicio as string,
+        }),
+      ).toBe(535); // EVENSURASUB, no el 467 de cápita
+    },
+  );
+
+  it('🚨 890284ESP sale MIXTO en el agregado pero NO es ambiguo', () => {
+    // Su 27 % de cápita son exactamente los pagadores SIN contrato de evento:
+    // Nueva EPS (283, 7 citas) y el personal del propio hospital (232
+    // PERSOCIAL, 6). La modalidad no es propiedad del SERVICIO sino del par
+    // (servicio, EPS) — y la clave del mapeo ya es `nit|REGIMEN|EVENTO`, así
+    // que el modelo lo refleja sin necesitar nada más.
+    expect(
+      resolveConvenio(REAL, {
+        epsNit: SURA,
+        patientRegime: 'SUBSIDIADO',
+        serviceExternalKey: '890284ESP',
+      }),
+    ).toBe(535); // Sura tiene contrato de evento → lo usa
+
+    expect(() =>
+      resolveConvenio(REAL, {
+        epsNit: '900156264', // Nueva EPS no lo tiene
+        patientRegime: 'SUBSIDIADO',
+        serviceExternalKey: '890284ESP',
+      }),
+    ).toThrow(MappingIncompletoError); // y falla a la vista de todos
+  });
+
+  it('🔒 los cuatro médicos del piloto solo usan servicios de cápita', () => {
+    // 76 y 077 → S39141-1 · 91-1 → 890201-CI · 91-2 → I890305PL.
+    // Si alguno pasara a evento, su convenio cambiaría y habría que medirlo
+    // antes de encenderlo.
+    for (const s of ['S39141-1', '890201-CI', 'I890305PL']) {
+      expect(evento.has(s)).toBe(false);
+    }
+  });
+});

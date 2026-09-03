@@ -11,7 +11,9 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · Pendiente de correr: G.6. Nada más.
+--   · ✅ NO QUEDA NADA POR CORRER. Todas las secciones están cerradas.
+--     Volver a correr G.4 y G.6 cada vez que se encienda un médico nuevo:
+--     son las únicas que ven servicios que AgenIA todavía no conoce.
 --
 -- CONTENIDO
 --   A. ✅ CORRIDA — y la respuesta es la mala: el 72,5 % de los turnos
@@ -38,8 +40,9 @@
 --   G.5 ✅ CORRIDA — cápita vs evento confirmado, con los NIT. Salud Total es
 --      un TERCIO del hospital (10.137 citas/90d) y no estaba en AgenIA.
 --      Nueva EPS no tiene convenio de evento. Abre una duda sobre el 473.
---   G.6 🎯 PENDIENTE — la modalidad servicio por servicio, sin patrones. Es la
---      última: cierra la tabla de convenios del todo.
+--   G.6 ✅ CORRIDA — 32 servicios cápita (<0,6 %) y 16 evento (>90 %). Sin
+--      zona gris. Corrigió dos cosas: NUTRICIÓN sí es evento (el medico NU02
+--      NO estaba a salvo), y el «MIXTO» de 890284ESP no es ambiguo.
 --
 -- El detalle de POR QUÉ se pregunta cada cosa está en
 -- FASE0_DESCUBRIMIENTO_HIS.sql (bloques 31, 25, 29 y 16/19). Este archivo es
@@ -1197,7 +1200,7 @@ GO
 
 
 -- =============================================================================
--- G.6 🎯 LA ÚLTIMA — ¿qué servicios se facturan por EVENTO, uno por uno?
+-- G.6 ✅ CORRIDA Y CERRADA EL 2026-09-03 — sin zona gris, y con dos correcciones
 --
 -- G.5 confirmó que existen dos modalidades pero las agrupó por «tipo de
 -- servicio» usando un patrón (`8902%`/`8903%`), y ese patrón mete en el mismo
@@ -1243,3 +1246,54 @@ GROUP BY cl.servicio, s.NO_NOMB_SER
 HAVING COUNT(*) >= 5
 ORDER BY modalidad, citas DESC;
 GO
+
+-- ── RESULTADO DE G.6 (2026-09-03) — la tabla de convenios queda cerrada ─────
+--
+-- 48 servicios con 5 o más citas. El corte es LIMPIO, no hay zona gris:
+--
+--   32 servicios por CÁPITA   — todos por debajo del 0,6 % de evento
+--   16 servicios por EVENTO   — todos por encima del 90 %
+--    1 servicio «MIXTO»       — 890284ESP, 72,9 % (ver abajo: no es ambiguo)
+--
+-- 🚨 CORRECCIÓN 1 — NUTRICIÓN SE FACTURA POR EVENTO. Y no estaba en la lista.
+--
+--     890206  CONSULTA DE PRIMERA VEZ POR NUTRICIÓN   370 citas   97,0 %
+--     890306  CONSULTA DE CONTROL POR NUTRICIÓN        57         98,2 %
+--
+--   El patrón `8902%`/`8903%` de G.5 los metía en el mismo saco que a los
+--   especialistas y por eso no se podían distinguir: era exactamente el
+--   motivo de escribir G.6. Con la tabla anterior, una cita de nutrición de
+--   Sura subsidiado se habría facturado al 467 (cápita) en vez de al 535.
+--
+--   Consecuencia sobre la sección E: **el médico NU02 estaba clasificado como
+--   amarillo, «la factura sale bien». NO lo estaba.** Ya está corregido en el
+--   mapeo, pero conviene decirlo en la reunión.
+--
+-- 🚨 CORRECCIÓN 2 — EL «MIXTO» NO ES UNA AMBIGÜEDAD, ES UN AGREGADO ENGAÑOSO.
+--
+--   890284ESP (psiquiatría primera vez) sale al 72,9 %. Pero su 27 % de cápita
+--   son EXACTAMENTE los pagadores que no tienen contrato de evento:
+--
+--     283 NUEVASUBSID   Nueva EPS                       7 citas
+--     232 PERSOCIAL     personal del propio hospital    6
+--     467 SUBS          Sura — que SÍ lo tiene          4   ← anomalía real
+--
+--   Es decir: **la modalidad no es una propiedad del SERVICIO, sino del par
+--   (servicio, EPS)**. El mismo acto médico se factura por evento a quien
+--   tiene contrato de evento y por cápita a quien no. Su hermano 890384ESP
+--   sale al 100 % simplemente porque a él no fue ningún paciente de los
+--   pagadores sin contrato.
+--
+--   El modelo de AgenIA ya lo refleja sin cambios: la clave es
+--   `nit|REGIMEN|EVENTO`, así que Sura y Salud Total van al convenio de
+--   evento y Nueva EPS —que no tiene— hace fallar la cita en vez de facturar
+--   a ciegas.
+--
+-- ✅ Y LA CONFIRMACIÓN QUE IMPORTA PARA EL PILOTO: los cuatro médicos verdes
+--   usan solo servicios de cápita, medidos con volumen de sobra —
+--
+--     S39141-1   control hipertensos (76, 077)   7.014 citas   0,0 % evento
+--     890201-CI  PyDT (91-1)                     2.531         0,0 %
+--     I890305PL  planificación familiar (91-2)   1.114         0,0 %
+--
+--   El piloto no toca facturación por evento por ningún lado.

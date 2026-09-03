@@ -699,22 +699,141 @@ elige al agendar»*. Se resolvió por el camino corto porque
 
 #### El cambio de modelo que exige el go-live completo
 
-El servicio deja de ser una propiedad del CUPO y pasa a serlo de la CITA. El
-chatbot ya pregunta el servicio ANTES de mostrar cupos, así que el dato existe
-en el momento correcto — solo no se está guardando donde toca.
+##### El desajuste, en una frase
 
-1. `ScheduleSlot.serviceId` → opcional (el cupo pasa a ser "médico + hora").
-2. `Appointment.serviceId` → nuevo, obligatorio.
-3. `DoctorProfile.serviceId` (uno) → relación N:M médico↔servicios. La fuente
-   la da el propio HIS: `R_MEDI_ESPE ⋈ R_ESP_SER` (bloque 32: cobertura total,
-   0 médicos y 0 servicios sin fila), refinada con lo que cada médico hace de
-   verdad en 90 días.
-4. `getAvailableSlots()` filtra por *médicos que prestan ese servicio*, no por
-   `slot.serviceId`.
-5. `bookAppointment()` recibe y persiste el `serviceId` elegido.
-6. La hidratación del outbox resuelve `serviceExternalKey` desde
-   `Appointment.serviceId` en vez de `ScheduleSlot.serviceId`.
-7. Migración de las citas existentes: heredan el servicio de su cupo.
+**El hospital tiene un modelo de agenda y AgenIA tiene otro, y no son
+compatibles.** Para el hospital un turno es *«el doctor Pérez está el martes de
+8 a 12»* y lo que se haga en cada hueco se decide al agendar. Para AgenIA un
+cupo es *«el doctor Pérez, el martes a las 8:20, para ODONTOLOGÍA»* — el
+servicio va pegado al hueco desde que se crea.
+
+Mientras un médico presta un solo servicio los dos modelos coinciden y nadie
+nota nada. **47 médicos prestan más de uno**, y ahí se rompe.
+
+##### Qué hace hoy AgenIA, exactamente
+
+`mirror-availability.service.ts:103` construye cada cupo así:
+
+```ts
+const serviceId = doctorId ? servicioDe.get(doctorId) : null;
+if (!doctorId || !serviceId) { /* se descarta el cupo */ }
+```
+
+`servicioDe` es un `Map` de médico → **su único** `DoctorProfile.serviceId`. O
+sea: el turno del hospital se convierte en N cupos y a los N se les estampa el
+mismo servicio, el que alguien configuró en la ficha del médico. El HIS no
+mandó esa información — la inventa AgenIA.
+
+##### Los tres daños, en orden de gravedad
+
+**1. Factura equivocada.** Es el que convierte esto en un bloqueante. Los
+servicios que conviven en un turno cruzan la frontera de PyP:
+
+```
+S39141    Consulta ambulatoria de medicina general      5.484
+S39141-1  Consulta ambulatoria control hipertensos      3.669
+SCITOD    CITA ODONTOLOGICA                             1.077
+S39141-2  Consulta Ambulatoria Lectura de examenes      1.014
+890201-CI Citas de PyDT                                   923   ← PyP
+997301-1  CITA SALUD ORAL DOBLE                           907   ← PyP
+I890305PL CONTROL ENFERMERIA PLANIFICACION FAMILIAR       540   ← PyP
+I890301AG CONSULTA MEDICA DE CONTROL A LA GESTANTE        406   ← PyP
+```
+
+Si el paciente pide una cosa y la ficha del médico dice otra, `CD_CODI_SER_CIT`
+viaja mal. Y como el convenio se deriva del servicio (PyP → 489 PYPSUBS; normal
+→ 283 NUEVASUBSID, para Nueva EPS subsidiado), la cita se factura a un contrato
+que no cubre ese acto. Eso es una **glosa**: la EPS rechaza el cobro, el
+hospital pierde el dinero, y nadie se entera hasta la conciliación mensual.
+
+Con lo que añadió G.6, el daño es aún mayor de lo que parecía: la frontera no
+es solo PyP sino también **cápita vs evento**, y ahí un error cambia de
+contrato igual.
+
+**2. Sub-oferta.** De los N servicios que presta el médico, el chatbot solo
+puede ofrecer uno. Un médico que hace once queda reducido a uno. Esto no es
+incorrecto —lo que se agenda se agenda bien— pero desperdicia agenda.
+
+**3. Cupos descartados.** La línea de arriba tira el cupo si el médico no tiene
+`serviceId`. Un médico recién importado del HIS no lo tiene, así que su agenda
+sencillamente no existe para el chatbot hasta que alguien se lo ponga a mano.
+
+##### Por qué no hay atajo
+
+El plan B natural era leer el servicio del turno. **No existe:**
+
+- `TURNOS_MEDICOS` no tiene columna de servicio.
+- `CD_CODI_ESP_TUME` (especialidad del turno) está **NULL en los 1.223 turnos
+  futuros**. Cero excepciones.
+- El 72,5 % de los turnos mezcla servicios, hasta **siete** en uno.
+
+No es que el dato esté sucio: es que **no se captura**. El hospital tampoco lo
+sabe hasta que el paciente llega. El propio código de AgenIA ya lo anticipaba
+en un comentario —*«el turno es del médico, y el servicio se elige al
+agendar»*— y se resolvió por el camino corto porque `ScheduleSlot.serviceId`
+es `String` obligatorio en el schema.
+
+##### El cambio
+
+El servicio deja de ser propiedad del **cupo** y pasa a serlo de la **cita**.
+El dato ya existe en el momento correcto: el chatbot pregunta el servicio en
+`AWAITING_SPECIALTY`, **antes** de mostrar cupos. Solo no se está guardando
+donde toca.
+
+| # | Qué | Dónde | Riesgo |
+|---|---|---|---|
+| 1 | `ScheduleSlot.serviceId` → opcional | schema + migración | bajo |
+| 2 | `Appointment.serviceId` → nuevo, obligatorio | schema + migración | bajo |
+| 3 | `DoctorProfile.serviceId` → N:M médico↔servicios | schema + migración | **medio** |
+| 4 | `getAvailableSlots()` filtra por *médico que presta ese servicio* | `appointments.service.ts` | **alto** |
+| 5 | `bookAppointment()` recibe y persiste el `serviceId` elegido | `appointments.service.ts` | medio |
+| 6 | La hidratación del outbox lee `Appointment.serviceId` | `mirror-dispatch.service.ts:354` | medio |
+| 7 | Migración: las citas existentes heredan el servicio de su cupo | script | bajo |
+
+De dónde sale la relación N:M del punto 3: **del propio HIS**.
+`R_MEDI_ESPE ⋈ R_ESP_SER` da médico → especialidades → servicios, con cobertura
+total (bloque 32: 0 médicos y 0 servicios sin fila). Se refina con lo que cada
+médico hace de verdad en 90 días — que es la consulta **F**, ya corrida.
+
+⚠️ Con el matiz de G.4: **`R_ESP_SER` discrepa de lo observado en 22 de 54
+servicios**, así que el catálogo sirve para el esqueleto de la relación, pero
+quien manda es lo observado.
+
+##### Lo que el punto 4 hace difícil, y por qué el flujo nuevo lo arregla
+
+Hoy `getAvailableSlots()` filtra `slot.serviceId = X` — un índice, una
+comparación. Después tendrá que resolver *«qué médicos prestan X»* y filtrar
+por ahí, lo que cambia el plan de consulta del camino más caliente del chatbot.
+
+Y hay un problema de orden: para filtrar cupos por servicio hay que **saber el
+servicio antes que el médico**, y el par CUPS `8902xx`/`8903xx` no se puede
+resolver hasta saber si es primera vez o control — que es una pregunta que solo
+tiene sentido **después** de elegir el profesional.
+
+El flujo decidido el 2026-09-03 rompe ese nudo: *especialidad → médico →
+primera vez/control*. Se filtra por **especialidad** (barato, poca cardinalidad)
+y el `serviceId` exacto se resuelve **al final**, cuando ya se conocen las dos
+piezas y el par CUPS es determinista.
+
+##### El orden en el que hay que hacerlo
+
+1. **Antes:** que el hospital cierre la pregunta 1 (Bloque 2, «¿primera vez o
+   control?»). Sin esa respuesta el punto 5 no sabe qué persistir.
+2. Puntos 1-3 y 7 juntos, en una migración. Sin cambio de comportamiento.
+3. Punto 6: el outbox lee de la cita, con repliegue al cupo mientras convivan.
+4. Puntos 4-5 y los estados nuevos del FSM. Aquí sí cambia lo que ve el
+   paciente, y aquí es donde hay que probar en serio.
+
+##### Mientras tanto no está roto
+
+El piloto de los cuatro verdes **no sufre nada de esto**: sus médicos prestan un
+solo servicio con ≥95 % de concentración, así que el modelo viejo acierta. Es
+literalmente por eso que la sección E existe — es la puerta que deja pasar solo
+a los médicos para los que «el servicio del cupo» sigue siendo verdad.
+
+Y con lo medido después, el piloto está **más** confirmado: G.6 verifica que
+`S39141-1`, `890201-CI` e `I890305PL` van por cápita con 0,0 % de evento sobre
+10.659 citas. No hay ninguna arista suelta en esos cuatro médicos.
 
 Es decisión de producto además de técnica — cambia qué significa un cupo en
 todo el sistema, no solo en el espejo.
@@ -1208,20 +1327,61 @@ Las cinco están mapeadas y el default ya no existe. Ver arriba.
 Todo lo que queda por descubrir está consolidado en
 `sql/PENDIENTE_CORRER_EN_HOSPITAL.sql` — 100 % lectura. Cerradas: **A** (obliga
 a cambiar el modelo de cupo), **B**, **C**, **D**, **E** y **F**. La **G.1** se
-corrió pero no concluyó; **G.2**, **G.3**, **G.4** y **G.5** sí, y están
-cerradas arriba.
+corrió pero no concluyó. **G.2** a **G.6** están todas corridas y cerradas.
 
-Queda **una**:
+✅ **No queda nada por correr en el hospital.**
 
-- **G.6** 🎯 — la modalidad servicio por servicio, sin patrones. G.5 agrupó
-  usando `8902%`/`8903%` y ese patrón mete a nutrición en el mismo saco que a
-  los especialistas. Si nutrición factura por cápita y AgenIA la trata como
-  evento —o al revés— vuelve el mismo error silencioso. G.6 mide, para cada
-  servicio, qué proporción de sus citas fue a un convenio `EVEN*`. Es la última
-  y cierra la tabla de convenios del todo.
+Dos son de mantenimiento y hay que **repetirlas cada vez que se encienda un
+médico nuevo** — son las únicas que ven lo que AgenIA todavía no conoce:
 
-Y **hay que volver a correr G.4** cada vez que se encienda un médico nuevo: es
-la única consulta que ve los servicios que AgenIA todavía no conoce.
+- **G.4** — ¿algún servicio suyo se quedó sin especialidad?
+- **G.6** — ¿alguno se factura por evento y no está en la lista?
+
+### 🚨 G.6 cerró la tabla, y corrigió dos cosas (2026-09-03)
+
+48 servicios con 5 o más citas. **El corte es limpio, sin zona gris:** 32 por
+cápita (todos < 0,6 % de evento) y 16 por evento (todos > 90 %).
+
+**Corrección 1 — nutrición se factura por EVENTO, y no estaba en la lista.**
+
+| | | citas | % evento |
+|---|---|---|---|
+| `890206` | CONSULTA DE PRIMERA VEZ POR NUTRICIÓN | 370 | **97,0 %** |
+| `890306` | CONSULTA DE CONTROL POR NUTRICIÓN | 57 | **98,2 %** |
+
+El patrón `8902%`/`8903%` de G.5 los metía en el mismo saco que a los
+especialistas — era exactamente el motivo de escribir G.6. Con la tabla
+anterior, una cita de nutrición de Sura subsidiado se habría facturado al `467`
+de cápita en vez de al `535`.
+
+⚠️ **Consecuencia sobre la sección E: el médico NU02 estaba clasificado como
+amarillo, «la factura sale bien». No lo estaba.** Ya está corregido en el
+mapeo, pero hay que decirlo en la reunión.
+
+**Corrección 2 — el «MIXTO» no era una ambigüedad, era un agregado engañoso.**
+
+`890284ESP` (psiquiatría primera vez) salió al 72,9 %. Su 27 % de cápita son
+*exactamente* los pagadores sin contrato de evento:
+
+```
+283 NUEVASUBSID   Nueva EPS                       7 citas
+232 PERSOCIAL     personal del propio hospital    6
+467 SUBS          Sura — que SÍ lo tiene          4   ← anomalía real
+```
+
+Es decir: **la modalidad no es propiedad del servicio, sino del par (servicio,
+EPS)**. El mismo acto se factura por evento a quien tiene contrato de evento y
+por cápita a quien no. Su hermano `890384ESP` sale al 100 % solo porque a él no
+fue ningún paciente de los pagadores sin contrato.
+
+El modelo de AgenIA ya lo refleja sin tocar nada: la clave es
+`nit|RÉGIMEN|EVENTO`, así que Sura y Salud Total van al convenio de evento y
+Nueva EPS —que no tiene— hace **fallar** la cita en vez de facturar a ciegas.
+
+**Y la confirmación que importa para el piloto:** los cuatro verdes usan solo
+servicios de cápita, con volumen de sobra —`S39141-1` 7.014 citas al 0,0 %,
+`890201-CI` 2.531 al 0,0 %, `I890305PL` 1.114 al 0,0 %. **El piloto no toca
+facturación por evento por ningún lado.**
 
 ## ⏳ Pendientes de este driver
 
