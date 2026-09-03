@@ -336,9 +336,9 @@ describe('AnalyticsController', () => {
     return { service, c: new AnalyticsController(service as never) };
   };
 
-  it('las métricas se piden para la clínica del token', () => {
+  it('las métricas se piden para la clínica del token', async () => {
     const { service, c } = build();
-    c.getAnalytics(ORG, '2026-01-01', '2026-02-01');
+    await c.getAnalytics(ORG, '2026-01-01', '2026-02-01');
     expect(service.getDashboardStats).toHaveBeenCalledWith(
       ORG,
       '2026-01-01',
@@ -363,9 +363,9 @@ describe('GlobalStatsController', () => {
     return { service, c: new GlobalStatsController(service as never) };
   };
 
-  it('lista las clínicas del filtro', () => {
+  it('lista las clínicas del filtro', async () => {
     const { service, c } = build();
-    c.listOrganizations();
+    await c.listOrganizations();
     expect(service.listOrganizationsForFilter).toHaveBeenCalled();
   });
 
@@ -373,33 +373,33 @@ describe('GlobalStatsController', () => {
     ['today', 'TODAY'],
     ['WEEK', 'WEEK'],
     ['custom', 'CUSTOM'],
-  ])('el rango «%s» se normaliza a %s', (entrada, esperado) => {
+  ])('el rango «%s» se normaliza a %s', async (entrada, esperado) => {
     const { service, c } = build();
-    c.getStats(undefined, entrada);
+    await c.getStats(undefined, entrada);
     expect(service.getGlobalStats).toHaveBeenCalledWith(
       expect.objectContaining({ range: esperado }),
     );
   });
 
-  it('un rango desconocido cae a MONTH', () => {
+  it('un rango desconocido cae a MONTH', async () => {
     const { service, c } = build();
-    c.getStats(undefined, 'decada');
+    await c.getStats(undefined, 'decada');
     expect(service.getGlobalStats).toHaveBeenCalledWith(
       expect.objectContaining({ range: 'MONTH' }),
     );
   });
 
-  it('«ALL» significa todas las clínicas, no una llamada ALL', () => {
+  it('«ALL» significa todas las clínicas, no una llamada ALL', async () => {
     const { service, c } = build();
-    c.getStats('ALL');
+    await c.getStats('ALL');
     expect(service.getGlobalStats).toHaveBeenCalledWith(
       expect.objectContaining({ organizationId: null }),
     );
   });
 
-  it('una clínica concreta se pasa tal cual', () => {
+  it('una clínica concreta se pasa tal cual', async () => {
     const { service, c } = build();
-    c.getStats(ORG, 'MONTH', '2026-01-01', '2026-02-01');
+    await c.getStats(ORG, 'MONTH', '2026-01-01', '2026-02-01');
     expect(service.getGlobalStats).toHaveBeenCalledWith({
       organizationId: ORG,
       range: 'MONTH',
@@ -694,9 +694,9 @@ describe('Controladores de reportes de encuestas', () => {
       return { service, c: new SuperadminSurveyController(service as never) };
     };
 
-    it('los defaults de paginación y orden', () => {
+    it('los defaults de paginación y orden', async () => {
       const { service, c } = build();
-      c.getDetailed();
+      await c.getDetailed();
 
       expect(service.findDetailedForSuperAdmin).toHaveBeenCalledWith({
         page: 1,
@@ -711,9 +711,9 @@ describe('Controladores de reportes de encuestas', () => {
       });
     });
 
-    it('acepta orden por calificación ascendente', () => {
+    it('acepta orden por calificación ascendente', async () => {
       const { service, c } = build();
-      c.getDetailed('2', '10', 'rating', 'asc');
+      await c.getDetailed('2', '10', 'rating', 'asc');
 
       expect(service.findDetailedForSuperAdmin).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -725,18 +725,18 @@ describe('Controladores de reportes de encuestas', () => {
       );
     });
 
-    it('un campo de orden desconocido cae a createdAt desc', () => {
+    it('un campo de orden desconocido cae a createdAt desc', async () => {
       const { service, c } = build();
-      c.getDetailed(undefined, undefined, 'cedula', 'diagonal');
+      await c.getDetailed(undefined, undefined, 'cedula', 'diagonal');
 
       expect(service.findDetailedForSuperAdmin).toHaveBeenCalledWith(
         expect.objectContaining({ sortBy: 'createdAt', sortDir: 'desc' }),
       );
     });
 
-    it('un mood o un estado de resolución inventados se descartan', () => {
+    it('un mood o un estado de resolución inventados se descartan', async () => {
       const { service, c } = build();
-      c.getDetailed(
+      await c.getDetailed(
         undefined,
         undefined,
         undefined,
@@ -756,9 +756,9 @@ describe('Controladores de reportes de encuestas', () => {
       );
     });
 
-    it('una página no numérica cae a 1', () => {
+    it('una página no numérica cae a 1', async () => {
       const { service, c } = build();
-      c.getDetailed('abc');
+      await c.getDetailed('abc');
       expect(service.findDetailedForSuperAdmin).toHaveBeenCalledWith(
         expect.objectContaining({ page: 1 }),
       );
@@ -771,9 +771,9 @@ describe('Controladores de reportes de encuestas', () => {
       return { service, c: new ClinicSurveyController(service as never) };
     };
 
-    it('con el :orgId propio, devuelve las encuestas de esa clínica', () => {
+    it('con el :orgId propio, devuelve las encuestas de esa clínica', async () => {
       const { service, c } = build();
-      c.getLimited(ORG, ORG);
+      await c.getLimited(ORG, ORG);
       expect(service.findLimitedForClinic).toHaveBeenCalledWith(ORG, {
         page: 1,
         pageSize: 25,
