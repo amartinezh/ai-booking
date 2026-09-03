@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { RedisService } from '../redis/redis.service';
+import { getErrorMessage, getErrorStack } from '../common/error-message.util';
 
 /**
  * ══════════════════════════════════════════════════════════════════════════
@@ -76,9 +77,9 @@ export class InboundQueueService {
         'NX',
       );
       return res === 'OK';
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.logger.warn(
-        `Dedup no disponible (Redis): admito el mensaje ${wamid}. ${err?.message ?? ''}`,
+        `Dedup no disponible (Redis): admito el mensaje ${wamid}. ${getErrorMessage(err)}`,
       );
       return true;
     }
@@ -116,12 +117,12 @@ export class InboundQueueService {
       await this.acquire();
       try {
         await task();
-      } catch (err: any) {
+      } catch (err: unknown) {
         // `processIncomingMessage` ya audita sus propios errores; este catch es
         // la última red para que un throw inesperado no deje colgado el semáforo.
         this.logger.error(
-          `Tarea de la cola falló para ${senderId}: ${err?.message ?? err}`,
-          err?.stack,
+          `Tarea de la cola falló para ${senderId}: ${getErrorMessage(err)}`,
+          getErrorStack(err),
         );
       } finally {
         this.release();

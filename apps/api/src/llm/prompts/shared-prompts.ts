@@ -84,8 +84,8 @@ export function parseCatalogMappingResponse(raw: string): {
       .replace(/```json/gi, '')
       .replace(/```/g, '')
       .trim();
-    const parsed = JSON.parse(cleaned);
-    const id = parsed?.id;
+    const parsed = JSON.parse(cleaned) as { id?: unknown };
+    const id = parsed.id;
     return { id: typeof id === 'string' && id.trim() ? id.trim() : null };
   } catch {
     return { id: null };

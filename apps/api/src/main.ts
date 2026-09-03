@@ -4,6 +4,7 @@ import { AppModule } from './app.module';
 import { Logger } from '@nestjs/common';
 import { GlobalExceptionFilter } from './system-log/global-exception.filter';
 import { SystemLogService } from './system-log/system-log.service';
+import { getErrorMessage, getErrorStack } from './common/error-message.util';
 
 // ══════════════════════════════════════════════════════════════
 // 🛡️ CAPTURA GLOBAL DE EXCEPCIONES NO MANEJADAS
@@ -11,12 +12,10 @@ import { SystemLogService } from './system-log/system-log.service';
 // pero NO tumba el proceso. Esto evita que un error de Meta, Prisma,
 // o cualquier librería externa mate el contenedor entero.
 // ══════════════════════════════════════════════════════════════
-process.on('unhandledRejection', (reason: any) => {
+process.on('unhandledRejection', (reason: unknown) => {
   Logger.error(
-    `🚨 UnhandledRejection capturada (proceso sigue vivo): ${
-      reason?.message || JSON.stringify(reason)
-    }`,
-    reason?.stack || 'GlobalErrorHandler',
+    `🚨 UnhandledRejection capturada (proceso sigue vivo): ${getErrorMessage(reason)}`,
+    getErrorStack(reason) || 'GlobalErrorHandler',
   );
 });
 
@@ -52,4 +51,10 @@ async function bootstrap() {
   );
 }
 
-bootstrap();
+bootstrap().catch((error: unknown) => {
+  Logger.error(
+    `🚨 El servidor no pudo arrancar: ${getErrorMessage(error)}`,
+    getErrorStack(error) || 'Bootstrap',
+  );
+  process.exit(1);
+});

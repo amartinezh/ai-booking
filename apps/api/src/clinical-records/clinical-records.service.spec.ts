@@ -59,7 +59,10 @@ describe('ClinicalRecordService — aislamiento de tenant', () => {
     it('rechaza citas de otra organización (lookup scoped devuelve null)', async () => {
       await expect(
         service.createClinicalRecord(
-          { appointmentId: 'apt-de-org-b', doctorId: 'doc-1' } as CreateClinicalRecordDto,
+          {
+            appointmentId: 'apt-de-org-b',
+            doctorId: 'doc-1',
+          } as CreateClinicalRecordDto,
           ORG_A,
         ),
       ).rejects.toThrow(NotFoundException);
@@ -80,7 +83,10 @@ describe('ClinicalRecordService — aislamiento de tenant', () => {
 
       await expect(
         service.createClinicalRecord(
-          { appointmentId: 'apt-1', doctorId: 'doc-de-org-b' } as CreateClinicalRecordDto,
+          {
+            appointmentId: 'apt-1',
+            doctorId: 'doc-de-org-b',
+          } as CreateClinicalRecordDto,
           ORG_A,
         ),
       ).rejects.toThrow(ForbiddenException);
