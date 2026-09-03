@@ -12,6 +12,39 @@ import {
   MetaDiagnosisResult,
 } from './dto/diagnostics.types';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
+import { getErrorMessage } from '../common/error-message.util';
+
+/** Cuerpo de error de la Graph API cuando Meta rechaza la petición. */
+interface MetaGraphErrorBody {
+  error?: { code?: number; message?: string; error_user_msg?: string };
+}
+
+/** Lo que devuelve `GET /{phone_number_id}` cuando el token es válido. */
+interface MetaPhoneNumberResponse {
+  id?: string;
+  display_phone_number?: string;
+  verified_name?: string;
+}
+
+/** Forma mínima de un error de `HttpService`/axios, leída por duck-typing. */
+interface AxiosLikeError {
+  response?: { data?: unknown; status?: number };
+  code?: string;
+}
+
+/**
+ * Duck-typing en vez del `isAxiosError` oficial de axios: ese exige el
+ * marcador interno `isAxiosError: true`, que un test (con razón) no simula
+ * al construir `{ response: { data: {...} } }` a mano — es exactamente la
+ * forma con la que HttpService rechaza la promesa, marcador aparte. Leer
+ * `.response`/`.code` de forma optativa es lo que ya hacía este archivo
+ * bajo `any`; esto solo le pone tipo.
+ */
+function toAxiosLikeError(error: unknown): AxiosLikeError {
+  return typeof error === 'object' && error !== null
+    ? (error as AxiosLikeError)
+    : {};
+}
 
 /** Cap de latencia antes de declarar TIMEOUT (alineado con SEMANTIC_MAP_TIMEOUT). */
 const GEMINI_TIMEOUT_MS = 8000;
@@ -68,9 +101,9 @@ export class IntegrationsService {
           config.encryptedApiConfig,
         );
         model = decoded.model || '—';
-      } catch (e: any) {
+      } catch (e: unknown) {
         this.logger.warn(
-          `No se pudo descifrar AiProviderConfig de ${organizationId}: ${e.message}`,
+          `No se pudo descifrar AiProviderConfig de ${organizationId}: ${getErrorMessage(e)}`,
         );
       }
     }
@@ -105,7 +138,7 @@ export class IntegrationsService {
         rtt_ms: Date.now() - startedAt,
         model_response: (modelResponse ?? '').trim() || 'ok',
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       const rtt_ms = Date.now() - startedAt;
       const base = this.classifyGeminiError(error, rtt_ms);
       return { ...base, provider: provider.name, model };
@@ -149,14 +182,14 @@ export class IntegrationsService {
         model_response: (modelResponse ?? '').trim() || 'ok',
         model: provider.name,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       const rtt_ms = Date.now() - startedAt;
       return this.classifyGeminiError(error, rtt_ms);
     }
   }
 
   private classifyGeminiError(
-    error: any,
+    error: unknown,
     rtt_ms: number,
   ): GeminiDiagnosisResult {
     const raw = this.extractMessage(error);
@@ -168,7 +201,7 @@ export class IntegrationsService {
       haystack.includes('timed out') ||
       haystack.includes('deadline') ||
       haystack.includes('etimedout') ||
-      error?.name === 'TimeoutError'
+      (error instanceof Error && error.name === 'TimeoutError')
     ) {
       this.logger.warn(`Diagnóstico Gemini TIMEOUT tras ${rtt_ms}ms: ${raw}`);
       return {
@@ -241,7 +274,7 @@ export class IntegrationsService {
     const startedAt = Date.now();
     try {
       const response = await lastValueFrom(
-        this.http.get(url, {
+        this.http.get<MetaPhoneNumberResponse>(url, {
           // Cabecera ya saneada: garantizado sin \r \n ni espacios.
           headers: {
             Authorization: `Bearer ${sanitized.token}`,
@@ -253,23 +286,29 @@ export class IntegrationsService {
       );
 
       const rtt_ms = Date.now() - startedAt;
+      // `?? {}`: aunque el tipo de axios garantiza `.data`, un mock (o un 200
+      // real de Meta con cuerpo vacío) puede no traerlo — se prueba en
+      // integrations.service.spec.ts.
       const data = response.data ?? {};
       return {
         success: true,
         status: 'verified',
-        phone_id: String(data.id ?? creds.phoneNumberId),
+        phone_id: data.id ?? creds.phoneNumberId,
         display_number: data.display_phone_number ?? null,
         verified_name: data.verified_name ?? null,
         rtt_ms,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       return this.classifyMetaError(error);
     }
   }
 
-  private classifyMetaError(error: any): MetaDiagnosisResult {
-    const metaError = error?.response?.data?.error;
-    const status = error?.response?.status;
+  private classifyMetaError(error: unknown): MetaDiagnosisResult {
+    const axiosLike = toAxiosLikeError(error);
+    const metaError = (
+      axiosLike.response?.data as MetaGraphErrorBody | undefined
+    )?.error;
+    const status = axiosLike.response?.status;
 
     if (metaError) {
       const code = metaError.code;
@@ -293,7 +332,7 @@ export class IntegrationsService {
 
     const raw = this.extractMessage(error);
     if (
-      error?.code === 'ECONNABORTED' ||
+      axiosLike.code === 'ECONNABORTED' ||
       raw.toLowerCase().includes('timeout')
     ) {
       return {
@@ -332,15 +371,17 @@ export class IntegrationsService {
     ) as Promise<T>;
   }
 
-  private extractMessage(error: any): string {
+  private extractMessage(error: unknown): string {
     if (!error) return 'Error desconocido.';
     if (typeof error === 'string') return error;
-    if (error.response?.data) {
-      return typeof error.response.data === 'object'
-        ? JSON.stringify(error.response.data)
-        : String(error.response.data);
+    const data = toAxiosLikeError(error).response?.data;
+    if (data !== undefined) {
+      if (typeof data === 'object' && data !== null) {
+        return JSON.stringify(data);
+      }
+      return typeof data === 'string' ? data : JSON.stringify(data);
     }
-    return error.message ?? String(error);
+    return getErrorMessage(error);
   }
 }
 
