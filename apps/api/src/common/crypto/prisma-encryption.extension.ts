@@ -79,14 +79,20 @@ export const encryptionExtension = Prisma.defineExtension({
         return query(args);
       },
       async update({ args, query }) {
-        const data: any = args.data;
-        if (data.chiefComplaint)
+        // Prisma tipa `data` como unión con operadores de actualización
+        // (`{ set: string }`, etc.) además de `string` llano. Este extension
+        // solo sabe cifrar el caso llano — que es el único que usa el
+        // repo hoy — así que se comprueba en vez de asumir con `any`: un
+        // operador de actualización no debe pasar por `encryptString` sin
+        // que nadie se entere.
+        const data = args.data as Record<string, unknown>;
+        if (typeof data.chiefComplaint === 'string')
           data.chiefComplaint = encryptString(data.chiefComplaint);
-        if (data.currentIllness)
+        if (typeof data.currentIllness === 'string')
           data.currentIllness = encryptString(data.currentIllness);
-        if (data.physicalExam)
+        if (typeof data.physicalExam === 'string')
           data.physicalExam = encryptString(data.physicalExam);
-        if (data.evolutionNotes)
+        if (typeof data.evolutionNotes === 'string')
           data.evolutionNotes = encryptString(data.evolutionNotes);
         return query(args);
       },

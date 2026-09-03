@@ -8,6 +8,10 @@ import {
   Patch,
 } from '@nestjs/common';
 import { ClinicalRecordService } from './clinical-records.service';
+import type {
+  CreateClinicalRecordDto,
+  UpdateClinicalRecordDto,
+} from './clinical-records.service';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';
@@ -27,7 +31,7 @@ export class ClinicalRecordsController {
   @Post()
   @Roles('DOCTOR') // Estrictamente DOCTOR, agentes no pueden escribir historias clínicas
   async createRecord(
-    @Body() createDto: any,
+    @Body() createDto: CreateClinicalRecordDto,
     @CurrentTenant() organizationId: string,
   ) {
     return this.recordService.createClinicalRecord(createDto, organizationId);
@@ -37,7 +41,7 @@ export class ClinicalRecordsController {
   @Roles('DOCTOR')
   async updateRecord(
     @Param('id') id: string,
-    @Body() updateDto: any,
+    @Body() updateDto: UpdateClinicalRecordDto,
     @CurrentTenant() organizationId: string,
   ) {
     return this.recordService.updateClinicalRecord(

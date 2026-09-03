@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
-import { ClinicalRecordService } from './clinical-records.service';
+import {
+  ClinicalRecordService,
+  CreateClinicalRecordDto,
+  UpdateClinicalRecordDto,
+} from './clinical-records.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 // ═══════════════════════════════════════════════════════════════
@@ -55,7 +59,7 @@ describe('ClinicalRecordService — aislamiento de tenant', () => {
     it('rechaza citas de otra organización (lookup scoped devuelve null)', async () => {
       await expect(
         service.createClinicalRecord(
-          { appointmentId: 'apt-de-org-b', doctorId: 'doc-1' },
+          { appointmentId: 'apt-de-org-b', doctorId: 'doc-1' } as CreateClinicalRecordDto,
           ORG_A,
         ),
       ).rejects.toThrow(NotFoundException);
@@ -76,7 +80,7 @@ describe('ClinicalRecordService — aislamiento de tenant', () => {
 
       await expect(
         service.createClinicalRecord(
-          { appointmentId: 'apt-1', doctorId: 'doc-de-org-b' },
+          { appointmentId: 'apt-1', doctorId: 'doc-de-org-b' } as CreateClinicalRecordDto,
           ORG_A,
         ),
       ).rejects.toThrow(ForbiddenException);
@@ -99,7 +103,7 @@ describe('ClinicalRecordService — aislamiento de tenant', () => {
           patientId: 'pat-ajeno',
           chiefComplaint: 'Dolor',
           currentIllness: 'Actual',
-        },
+        } as CreateClinicalRecordDto,
         ORG_A,
       );
 
@@ -137,7 +141,7 @@ describe('ClinicalRecordService — aislamiento de tenant', () => {
           doctorId: 'doc-intruso',
           patientId: 'pat-intruso',
           status: 'SIGNED',
-        },
+        } as UpdateClinicalRecordDto,
         ORG_A,
       );
 
@@ -235,7 +239,7 @@ describe('ClinicalRecordService — aislamiento de tenant', () => {
         { userId: 'user-dueño', role: 'PATIENT' },
       );
 
-      expect(result.id).toBe('hc-1');
+      expect(result?.id).toBe('hc-1');
       expect(result).not.toHaveProperty('patient');
     });
   });

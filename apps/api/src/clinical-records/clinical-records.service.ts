@@ -8,6 +8,50 @@ import { PrismaService } from '../prisma/prisma.service';
 import * as crypto from 'crypto';
 import { RecordStatus } from '@agenia/database';
 
+/** Signos vitales tal como los envía el formulario clínico. */
+export interface VitalSignsInput {
+  bloodPressure?: string;
+  heartRate?: number;
+  temperature?: number;
+  weight?: number;
+  height?: number;
+  oxygenSat?: number;
+}
+
+export interface DiagnosisInput {
+  code?: string;
+  description: string;
+  isMain?: boolean;
+}
+
+export interface PrescriptionInput {
+  medication: string;
+  dose: string;
+  frequency: string;
+  duration: string;
+  notes?: string;
+}
+
+/** Body de `POST /clinical-records`. */
+export interface CreateClinicalRecordDto {
+  appointmentId: string;
+  doctorId: string;
+  chiefComplaint: string;
+  currentIllness: string;
+  physicalExam?: string;
+  evolutionNotes?: string;
+  vitalSigns?: VitalSignsInput;
+  diagnoses?: DiagnosisInput[];
+  prescriptions?: PrescriptionInput[];
+}
+
+/**
+ * Body de `PATCH /clinical-records/:id` (autoguardado, solo en DRAFT).
+ * Mismos campos que la creación, todos opcionales — el paciente puede
+ * guardar parcialmente mientras redacta.
+ */
+export type UpdateClinicalRecordDto = Partial<CreateClinicalRecordDto>;
+
 /**
  * 🏢 AISLAMIENTO MULTI-TENANT (PHI)
  *
@@ -22,7 +66,10 @@ export class ClinicalRecordService {
 
   constructor(private prisma: PrismaService) {}
 
-  async createClinicalRecord(data: any, organizationId: string): Promise<any> {
+  async createClinicalRecord(
+    data: CreateClinicalRecordDto,
+    organizationId: string,
+  ) {
     try {
       const {
         appointmentId,
@@ -92,9 +139,9 @@ export class ClinicalRecordService {
   // SPRINT 2 - AUTOSAVE CON CANDADO LEGAL
   async updateClinicalRecord(
     id: string,
-    data: any,
+    data: UpdateClinicalRecordDto,
     organizationId: string,
-  ): Promise<any> {
+  ) {
     const existing = await this.prisma.extended.clinicalRecord.findFirst({
       where: { id, organizationId },
     });
@@ -120,39 +167,27 @@ export class ClinicalRecordService {
     // Whitelist explícito de campos editables: el body NO puede reasignar
     // tenant, paciente, médico, cita ni estado (mass-assignment).
     const { vitalSigns, diagnoses, prescriptions } = data;
-    const prismaUpdateData: any = {
-      chiefComplaint: data.chiefComplaint,
-      currentIllness: data.currentIllness,
-      physicalExam: data.physicalExam,
-      evolutionNotes: data.evolutionNotes,
-    };
-
-    if (vitalSigns) {
-      prismaUpdateData.vitalSigns = {
-        upsert: {
-          create: vitalSigns,
-          update: vitalSigns,
-        },
-      };
-    }
-
-    if (diagnoses && Array.isArray(diagnoses)) {
-      prismaUpdateData.diagnoses = {
-        deleteMany: {}, // Borrón y cuenta nueva en DRAFT mode
-        create: diagnoses,
-      };
-    }
-
-    if (prescriptions && Array.isArray(prescriptions)) {
-      prismaUpdateData.prescriptions = {
-        deleteMany: {},
-        create: prescriptions,
-      };
-    }
 
     return this.prisma.extended.clinicalRecord.update({
       where: { id },
-      data: prismaUpdateData,
+      data: {
+        chiefComplaint: data.chiefComplaint,
+        currentIllness: data.currentIllness,
+        physicalExam: data.physicalExam,
+        evolutionNotes: data.evolutionNotes,
+        ...(vitalSigns && {
+          vitalSigns: { upsert: { create: vitalSigns, update: vitalSigns } },
+        }),
+        ...(diagnoses &&
+          Array.isArray(diagnoses) && {
+            // Borrón y cuenta nueva en DRAFT mode.
+            diagnoses: { deleteMany: {}, create: diagnoses },
+          }),
+        ...(prescriptions &&
+          Array.isArray(prescriptions) && {
+            prescriptions: { deleteMany: {}, create: prescriptions },
+          }),
+      },
     });
   }
 
@@ -164,7 +199,7 @@ export class ClinicalRecordService {
     userId: string,
     organizationId: string,
     ipAddress?: string,
-  ): Promise<any> {
+  ) {
     const existing = await this.prisma.extended.clinicalRecord.findFirst({
       where: { id, organizationId },
       include: { vitalSigns: true, diagnoses: true, prescriptions: true },
@@ -186,7 +221,7 @@ export class ClinicalRecordService {
       .digest('hex');
 
     // 2. Transacción Atómica: Sellar HC y crear la firma
-    return this.prisma.extended.$transaction(async (tx: any) => {
+    return this.prisma.extended.$transaction(async (tx) => {
       // Registrar firma digital
       await tx.digitalSignature.create({
         data: {
@@ -217,7 +252,7 @@ export class ClinicalRecordService {
     organizationId: string,
     signerUserId: string,
     ipAddress?: string,
-  ): Promise<any> {
+  ) {
     const existing = await this.prisma.extended.clinicalRecord.findFirst({
       where: { id: clinicalRecordId, organizationId },
     });
@@ -245,7 +280,7 @@ export class ClinicalRecordService {
       .update(`${content}|${timestamp.toISOString()}`)
       .digest('hex');
 
-    return this.prisma.extended.$transaction(async (tx: any) => {
+    return this.prisma.extended.$transaction(async (tx) => {
       const addendum = await tx.addendum.create({
         data: {
           content,
@@ -278,7 +313,7 @@ export class ClinicalRecordService {
     appointmentId: string,
     organizationId: string,
     requester: { userId: string; role: string },
-  ): Promise<any> {
+  ) {
     const record = await this.prisma.extended.clinicalRecord.findFirst({
       where: { appointmentId, organizationId },
       include: {
@@ -305,8 +340,7 @@ export class ClinicalRecordService {
     }
 
     // No exponer la relación auxiliar usada para el chequeo de propiedad.
-    const result = { ...record };
-    delete result.patient;
+    const { patient: _patient, ...result } = record;
     return result;
   }
 }

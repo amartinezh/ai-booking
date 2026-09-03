@@ -811,8 +811,8 @@ describe('ClinicalRecordsController', () => {
 
   it('crear y actualizar van acotados al tenant del token', async () => {
     const { service, c } = build();
-    await c.createRecord({ a: 1 }, ORG);
-    await c.updateRecord('rec-1', { b: 2 }, ORG);
+    await c.createRecord({ a: 1 } as never, ORG);
+    await c.updateRecord('rec-1', { b: 2 } as never, ORG);
 
     expect(service.createClinicalRecord).toHaveBeenCalledWith({ a: 1 }, ORG);
     expect(service.updateClinicalRecord).toHaveBeenCalledWith(
