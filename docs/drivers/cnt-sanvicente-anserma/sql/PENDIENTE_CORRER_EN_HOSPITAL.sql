@@ -11,20 +11,25 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · Pendiente de correr: G. Y la pestaña "Messages" de C.
+--   · Pendiente de correr: G.2 y G.3. Nada más.
 --
 -- CONTENIDO
 --   A. ✅ CORRIDA — y la respuesta es la mala: el 72,5 % de los turnos
 --      MEZCLA servicios. Ver el resultado dentro de la sección.
 --   B. ✅ CORRIDA (ya con la corrección de FE_HORA_CIT): 3 + 2 + 2 + 74
 --      filas. Falta pegar el CONTENIDO de esas filas.
---   C. Corrida, pero falta pegar la pestaña "Messages" con el STATISTICS IO.
+--   C. ✅ CORRIDA Y CERRADA — la forma sargable gasta 28 ms de CPU contra
+--      511 ms de la vieja. El espejo le cuesta al HIS 0,09 % de un núcleo.
 --   D. ✅ CORRIDA Y CERRADA — confirmada 18/18 contra el catálogo REGIMEN.
 --   E. ✅ CORRIDA — CERO médicos «verdes». 14 amarillos, 15 rojos.
 --   F. ✅ CORRIDA — el detalle por médico. Reclasificó el semáforo: con
 --      umbral de ruido son 4 verdes, 20 amarillos y solo 6 rojos.
---   G. 🔍 NUEVA — ¿el sufijo ESP/SUR de los especialistas depende de la EPS?
---      Si sí, AgenIA lo resuelve sola.
+--   G.1 ⚠️ CORRIDA, NO CONCLUYENTE — la escribí uniendo por R_PAC_EPS, que es
+--      un historial y multiplica cada cita. Ninguna cuota es fiable.
+--   G.2 🔍 PENDIENTE — la misma pregunta leyendo el convenio DE LA CITA
+--      (NU_NUME_CONV_CIT). Sin fan-out: esta sí decide.
+--   G.3 🧪 PENDIENTE — comprueba contra los datos que 8902xx es «primera vez»
+--      y 8903xx «control», que es lo que G.1 destapó de rebote.
 --
 -- El detalle de POR QUÉ se pregunta cada cosa está en
 -- FASE0_DESCUBRIMIENTO_HIS.sql (bloques 31, 25, 29 y 16/19). Este archivo es
@@ -264,8 +269,28 @@ ORDER BY name;
 
 
 -- =============================================================================
--- C. MEDICIÓN DE COSTO — cuánto le pesa al hospital que el agente lea (29c/29d)
+-- C. MEDICIÓN DE COSTO — ✅ CORRIDA Y CERRADA EL 2026-09-03.
 --
+-- RESULTADO (pestaña Messages, 371 filas en la ventana):
+--
+--                              exámenes   lecturas lógicas   CPU      transcurrido
+--   (29c) sargable — HOY            1          16.655        28 ms       28 ms
+--   (29d) con CONVERT — ANTES      21          23.131       511 ms       29 ms
+--
+-- Lo que importa no es el tiempo de reloj (idéntico, 28 vs 29 ms) sino el CPU:
+-- **18 veces menos**. La forma vieja tardaba lo mismo porque SQL Server la
+-- paralelizaba —21 exámenes son los hilos del plan paralelo— y para eso quemaba
+-- medio segundo de CPU del servidor del hospital en cada vuelta. El agente
+-- corre este ciclo cada 30 s (`inboundIntervalMs`): son 1,7 % de un núcleo con
+-- la forma vieja frente a 0,09 % con la actual, permanentemente y sin que nadie
+-- lo note hasta que el hospital tiene un día cargado.
+--
+-- Las 16.655 lecturas lógicas (~130 MB) salieron TODAS de la caché — 0 lecturas
+-- físicas — así que no hay E/S de disco añadida. El coste real del espejo sobre
+-- el HIS es despreciable, y la decisión del 2026-09-02 queda confirmada con
+-- números en vez de con un argumento.
+--
+-- ── Contexto original ────────────────────────────────────────────────────────
 -- La decisión ya se tomó: las cuatro consultas del driver se pasaron a la
 -- forma sargable el 2026-09-02, porque el hospital SÍ tiene un índice cuya
 -- primera columna es FE_FECH_CIT y envolverla en CONVERT lo inutilizaba.
@@ -683,7 +708,7 @@ ORDER BY d.medico, d.citas DESC;
 GO
 
 -- =============================================================================
--- G. 🔍 ¿EL SUFIJO ESP/SUR DEPENDE DE LA EPS DEL PACIENTE?
+-- G.1 🔍 ¿EL SUFIJO ESP/SUR DEPENDE DE LA EPS DEL PACIENTE? — ⚠️ CORRIDA, NO CONCLUYENTE (2026-09-03)
 --
 -- Salió del resultado de F. Dos especialistas usan pares de servicios con la
 -- MISMA descripción y distinto sufijo:
@@ -723,4 +748,148 @@ JOIN dbo.R_PAC_EPS r ON r.NU_HIST_PAC_RPE = p.hist
 LEFT JOIN dbo.EPS e  ON e.CD_NIT_EPS = r.CD_NIT_EPS_RPE
 GROUP BY p.raiz, p.sufijo, e.NO_NOMB_EPS
 ORDER BY p.raiz, p.sufijo, citas DESC;
+GO
+
+
+-- ── RESULTADO DE G.1 (2026-09-03) — la consulta no puede decidir ─────────────
+--
+-- Cuota de "EPS SURAMERICANA S.A" en cada bucket:
+--
+--   raíz      ESP        SUR      especialidad
+--   890242    0,5 %     16,1 %    dermatología
+--   890250    1,0 %     15,3 %    ginecología
+--   890342    0,0 %     15,5 %    dermatología (control)
+--   890350    0,0 %     15,7 %    ginecología (control)
+--   890266    8,9 %     17,8 %    medicina interna
+--   890366    9,5 %     16,4 %    medicina interna
+--
+-- El sufijo SUR está clarísimamente ENRIQUECIDO en Sura —15-18 % en los seis
+-- buckets, contra 0-1 % en el ESP de dermatología y ginecología— pero eso NO
+-- demuestra la hipótesis, y el defecto es de la consulta, no de los datos:
+--
+--   `R_PAC_EPS` es un HISTORIAL many-to-many y admite VARIAS filas por
+--   (paciente, EPS) —afiliaciones en distintos periodos, distintos carnés—.
+--   Cada cita se multiplica por el número de filas del paciente, así que
+--   ninguna cuota de este resultado es una proporción de CITAS. Se sabe que
+--   hay duplicados porque en el par de medicina interna salen 186 filas de
+--   Sura en un bucket que la sección F midió en 131 citas: más filas de una
+--   sola EPS que citas hay. Con un solo renglón por afiliación eso es
+--   imposible.
+--
+-- Yo dejé escrito el aviso del fan-out en la cabecera y aun así la mandé con
+-- ese JOIN. Era evitable: la cita YA lleva su propio convenio en
+-- `NU_NUME_CONV_CIT`, y de ahí se llega a la EPS sin tocar `R_PAC_EPS`.
+-- Eso es G.2, y esa sí decide.
+--
+-- Lo que G.1 sí dejó, y vale más que la pregunta original: los códigos van en
+-- PAREJAS 8902xx / 8903xx (890242/890342, 890250/890350, 890266/890366,
+-- 890283/890383, 890284/890384), que es la estructura CUPS nacional —
+-- 8902xx = consulta de PRIMERA VEZ, 8903xx = consulta de CONTROL. El propio
+-- mapping.json ya lo tenía sin saberlo: 890206 y 890306 apuntan los dos a
+-- NUTRICION. Eso convierte el patrón que asomó en F en una regla verificable,
+-- y G.3 la comprueba contra los datos del hospital.
+
+
+-- =============================================================================
+-- G.2 ✅ LA QUE SÍ DECIDE — el convenio DE LA CITA, sin fan-out
+--
+-- Misma pregunta que G.1 (¿el sufijo depende del pagador?) pero leyendo el
+-- convenio que la cita YA tiene grabado en `NU_NUME_CONV_CIT` y resolviendo la
+-- EPS por `CONVENIOS.CD_NIT_EPS_CONV`. Una fila por cita, cero multiplicación.
+--
+-- CÓMO SE LEE:
+--   · Si en el bucket SUR un convenio de Sura se lleva >80 % → CONFIRMADO: el
+--     sufijo es el pagador, AgenIA lo resuelve sola y no hay nada que preguntar.
+--   · Si sale repartido → el sufijo significa otra cosa y hay que preguntarle
+--     a la agendadora qué distingue 890266ESP de 890266SUR.
+--
+-- ⚠️ SOLO LECTURA. Sintaxis validada contra un SQL Server real.
+-- =============================================================================
+WITH pares AS (
+    SELECT LEFT(c.CD_CODI_SER_CIT, LEN(c.CD_CODI_SER_CIT) - 3) AS raiz,
+           RIGHT(c.CD_CODI_SER_CIT, 3)                         AS sufijo,
+           c.NU_NUME_CONV_CIT                                  AS convenio
+    FROM dbo.CITAS_MEDICAS c
+    WHERE c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+      AND (c.CD_CODI_SER_CIT LIKE '%ESP' OR c.CD_CODI_SER_CIT LIKE '%SUR')
+)
+SELECT  p.raiz,
+        p.sufijo,
+        p.convenio,
+        cv.CD_CODI_CONV      AS nombre_convenio,
+        e.NO_NOMB_EPS        AS eps_del_convenio,
+        COUNT(*)             AS citas,
+        CAST(100.0 * COUNT(*)
+             / SUM(COUNT(*)) OVER (PARTITION BY p.raiz, p.sufijo)
+             AS decimal(5,1)) AS pct_del_sufijo
+FROM pares p
+LEFT JOIN dbo.CONVENIOS cv ON cv.NU_NUME_CONV = p.convenio
+LEFT JOIN dbo.EPS e        ON e.CD_NIT_EPS    = cv.CD_NIT_EPS_CONV
+GROUP BY p.raiz, p.sufijo, p.convenio, cv.CD_CODI_CONV, e.NO_NOMB_EPS
+HAVING COUNT(*) >= 3
+ORDER BY p.raiz, p.sufijo, citas DESC;
+GO
+
+
+-- =============================================================================
+-- G.3 🧪 ¿8902xx ES "PRIMERA VEZ" Y 8903xx "CONTROL"? — contra los datos
+--
+-- La estructura CUPS dice que sí, pero conviene no creerle a un estándar
+-- cuando se puede mirar el dato. La prueba: para cada paciente y cada familia
+-- de servicio, ¿qué código lleva su PRIMERA cita frente a las siguientes?
+--
+-- Si la hipótesis es cierta:
+--   · fila "1-primera del paciente"  → pct_8902x ALTO   (cerca de 100)
+--   · fila "2-posterior"             → pct_8902x BAJO
+--
+-- Si las dos filas se parecen, el dígito significa otra cosa y la pregunta
+-- «¿primera vez o control?» del chatbot no sirve para elegir el código.
+--
+-- Notas de lectura:
+--   · La ventana es de 3 AÑOS (no 90 días): hace falta historia para saber si
+--     una cita es la primera. Aun así, un paciente cuya primera visita real
+--     fue hace 5 años entra como "primera" siendo un control — ese sesgo
+--     ENSUCIA la fila de arriba, nunca la limpia. Si el resultado sale nítido
+--     a pesar de él, es de fiar.
+--   · Excluye los servicios con prefijo `I` (I890301AG, I890201PL1…): son los
+--     de PyP y siguen otra convención.
+--
+-- ⚠️ SOLO LECTURA. Sintaxis validada contra un SQL Server real.
+-- =============================================================================
+WITH fam AS (
+    SELECT  c.NU_HIST_PAC_CIT                                   AS hist,
+            c.FE_FECH_CIT                                       AS fecha,
+            c.CD_CODI_SER_CIT                                   AS servicio,
+            -- Quita el 6º carácter (el 2/3) para juntar las dos mitades del par.
+            STUFF(SUBSTRING(c.CD_CODI_SER_CIT, 1, 6), 4, 1, '') AS familia,
+            SUBSTRING(c.CD_CODI_SER_CIT, 4, 1)                  AS digito
+    FROM dbo.CITAS_MEDICAS c
+    WHERE c.FE_FECH_CIT >= DATEADD(year, -3, CAST(GETDATE() AS date))
+      AND (c.CD_CODI_SER_CIT LIKE '8902%' OR c.CD_CODI_SER_CIT LIKE '8903%')
+),
+con_par AS (
+    SELECT familia
+    FROM fam
+    GROUP BY familia
+    HAVING COUNT(DISTINCT digito) = 2   -- solo familias que usan las DOS mitades
+),
+ordenadas AS (
+    SELECT f.*,
+           ROW_NUMBER() OVER (PARTITION BY f.hist, f.familia
+                              ORDER BY f.fecha, f.servicio) AS orden
+    FROM fam f
+    JOIN con_par p ON p.familia = f.familia
+)
+SELECT  o.familia,
+        CASE o.orden WHEN 1 THEN '1-primera del paciente'
+                     ELSE      '2-posterior' END               AS momento,
+        SUM(CASE WHEN o.digito = '2' THEN 1 ELSE 0 END)        AS cod_8902x,
+        SUM(CASE WHEN o.digito = '3' THEN 1 ELSE 0 END)        AS cod_8903x,
+        CAST(100.0 * SUM(CASE WHEN o.digito = '2' THEN 1 ELSE 0 END)
+             / COUNT(*) AS decimal(5,1))                       AS pct_8902x
+FROM ordenadas o
+GROUP BY o.familia,
+         CASE o.orden WHEN 1 THEN '1-primera del paciente' ELSE '2-posterior' END
+HAVING COUNT(*) >= 20
+ORDER BY o.familia, momento;
 GO

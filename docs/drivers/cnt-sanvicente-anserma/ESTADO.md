@@ -719,6 +719,50 @@ en el momento correcto — solo no se está guardando donde toca.
 Es decisión de producto además de técnica — cambia qué significa un cupo en
 todo el sistema, no solo en el espejo.
 
+#### ✅ Decisión de producto tomada: el flujo pregunta médico y luego momento (2026-09-03)
+
+El flujo de agendamiento queda así:
+
+```
+AWAITING_SPECIALTY
+   ↓
+¿tiene médico de preferencia?  (sí / no)          ← NUEVO
+   ↓ sí: nombre libre → se resuelve y se confirma
+   ↓ no, o nombre no resuelto: lista de médicos habilitados
+   ↓
+¿primera vez o control?                            ← NUEVO
+   ↓
+AWAITING_DATE → ... → AWAITING_CONFIRMATION
+```
+
+**Qué de esto ya existe y no hay que inventar:**
+
+| Pieza | Estado |
+|---|---|
+| Activación gradual médico por médico | ✅ `DoctorProfile.whatsappBookingEnabled`, ya aplicada en `getAvailableSlots()` y `bookAppointment()` ([appointments.service.ts:169](../../../apps/api/src/appointments/appointments.service.ts#L169)) y en la reprogramación ([chatbot.service.ts:7026](../../../apps/api/src/chatbot/chatbot.service.ts#L7026)) |
+| Los médicos del HIS entran apagados | ✅ `homologar.ts` los crea con `whatsappBookingEnabled: false` |
+| Nombre libre → médico | ✅ `resolvePreferredDoctorId()` ([chatbot.service.ts:1891](../../../apps/api/src/chatbot/chatbot.service.ts#L1891)): normaliza acentos, quita «Dr./Dra.», y **solo devuelve un id si la coincidencia es única** — nunca asigna un médico equivocado |
+| El servicio se guarda en la cita | ❌ el cambio de modelo de arriba |
+| Estados del FSM | ❌ faltan cuatro: preferencia sí/no, nombre, selección de lista, primera vez / control |
+
+Lo relevante: **el resolvedor de nombres ya está escrito y probado**, se usa
+hoy para la lista de espera («quiero que me llamen si se libera algo con el
+doctor Pérez»). Para el flujo de agendamiento le falta un solo filtro —
+`whatsappBookingEnabled: true` en sus dos consultas— para no ofrecer médicos
+apagados.
+
+**Por qué este flujo mejora el cambio de modelo en vez de complicarlo:** el
+punto 4 («`getAvailableSlots()` filtra por médicos que prestan ese servicio»)
+era la parte incómoda, porque obligaba a resolver el servicio antes de saber el
+médico. Con el orden médico → momento, el servicio se resuelve **al final**,
+cuando ya se conocen las dos cosas, que es cuando el par CUPS
+`8902xx`/`8903xx` es determinista.
+
+**Pendiente de confirmar con el hospital** (pregunta 1 del cuestionario): si
+los médicos **76** y **077** de HTA son del programa o son generales que además
+lo llevan. Si son comodines, el código no lo decide el médico sino si el
+paciente está en el programa, y eso es una pregunta más en el flujo.
+
 #### Mientras tanto: la puerta del piloto (sección E)
 
 El piloto se activa médico por médico (`DoctorProfile.whatsappBookingEnabled`),
@@ -831,28 +875,119 @@ abstracto.
 El documento cierra con la lista de lo que **ya** está resuelto y verificado,
 para que la reunión no empiece explicando de cero.
 
+### ✅ El coste del espejo sobre el HIS, medido (2026-09-03, sección C)
+
+La forma sargable frente a la que había antes, sobre la consulta caliente del
+ciclo de entrada:
+
+| | exámenes | lecturas lógicas | CPU | transcurrido |
+|---|---|---|---|---|
+| (29c) sargable — hoy | 1 | 16.655 | **28 ms** | 28 ms |
+| (29d) con `CONVERT` — antes | 21 | 23.131 | **511 ms** | 29 ms |
+
+Lo interesante es que el **tiempo de reloj es el mismo** (28 vs 29 ms) y el CPU
+es **18 veces menor**. La forma vieja tardaba lo mismo porque SQL Server la
+paralelizaba —los 21 exámenes son los hilos del plan— y para eso quemaba medio
+segundo de CPU del servidor del hospital en cada vuelta. A un ciclo cada 30 s
+(`inboundIntervalMs`) eso es 1,7 % de un núcleo permanentemente, contra 0,09 %
+ahora. Cero lecturas físicas: las 16.655 páginas (~130 MB) salen de caché, así
+que el espejo no añade E/S de disco.
+
+La decisión del 2026-09-02 queda confirmada con números, y el argumento para
+TI en la pregunta 6 deja de ser una promesa: **el agente le cuesta al HIS menos
+de una milésima de núcleo.**
+
+### ⚠️ La sección G se corrió y no concluyó — el defecto era de la consulta
+
+G preguntaba si el sufijo `ESP`/`SUR` depende de la EPS del paciente. La cuota
+de Sura salió así:
+
+| raíz | ESP | SUR | |
+|---|---|---|---|
+| 890242 | 0,5 % | 16,1 % | dermatología |
+| 890250 | 1,0 % | 15,3 % | ginecología |
+| 890342 | 0,0 % | 15,5 % | dermatología, control |
+| 890350 | 0,0 % | 15,7 % | ginecología, control |
+| 890266 | 8,9 % | 17,8 % | medicina interna |
+| 890366 | 9,5 % | 16,4 % | medicina interna |
+
+El enriquecimiento es evidente, pero **no demuestra nada**, y la culpa es de
+cómo escribí la consulta: uní por `R_PAC_EPS`, que es un historial
+many-to-many y admite varias filas por (paciente, EPS). Ninguna de esas cuotas
+es una proporción de citas. Se sabe que hay duplicados porque en medicina
+interna salen 186 filas de Sura en un bucket que la sección F midió en **131
+citas**: más filas de una sola EPS que citas hay en el bucket. Dejé el aviso
+del fan-out escrito en la cabecera de la propia consulta y la mandé igual.
+
+**G.2** lo arregla sin ambigüedad: la cita ya lleva su convenio en
+`NU_NUME_CONV_CIT`, y de ahí se llega a la EPS por `CONVENIOS.CD_NIT_EPS_CONV`.
+Una fila por cita, cero multiplicación.
+
+### 🔑 Lo que G sí destapó: los códigos son pares CUPS primera vez / control
+
+Mirando las raíces juntas aparece la estructura:
+
+```
+890242 / 890342   dermatología
+890250 / 890350   ginecología
+890266 / 890366   medicina interna
+890283 / 890383   pediatría
+890284 / 890384   psiquiatría
+890206 / 890306   nutrición      ← ya estaban las dos en mapping.json
+```
+
+Es la **CUPS nacional**: `8902xx` = consulta de primera vez, `8903xx` =
+consulta de control o seguimiento. El `mappingJson` ya lo llevaba dentro sin
+que nadie lo hubiera nombrado — `890206` y `890306` apuntan los dos a
+NUTRICION Y DIETETICA.
+
+Esto asciende el patrón que asomó en la sección F de "corazonada sobre los
+porcentajes" a **regla con nombre y estándar detrás**, y hace que la pregunta
+del chatbot «¿primera vez o control?» elija un dígito documentado en vez de
+adivinar entre dos códigos parecidos. **G.3** la comprueba contra los datos del
+hospital: para cada paciente y familia, si la PRIMERA cita lleva `8902xx` y las
+siguientes `8903xx`, está confirmado.
+
+### ⚠️ Cinco servicios con volumen real no tienen especialidad mapeada
+
+`especialidadPorServicio` se generó en el bloque 31d filtrando a médicos **con
+turnos futuros**. G sacó a la luz cinco servicios con citas reales en los
+últimos 90 días que quedaron fuera:
+
+```
+890242ESP   890342ESP   890342SUR   890350ESP   890350SUR
+```
+
+Hoy no rompe nada: esos médicos no tienen turnos, así que AgenIA no los ofrece.
+Pero el `especialidadPorDefecto` es `"000"` (MEDICINA GENERAL), de modo que si
+alguno se habilita —y **890350 es justo la mitad "control" de ginecología, que
+es lo primero que hace falta en cuanto el chatbot pregunte «primera vez o
+control»**— la cita entraría al HIS con la especialidad equivocada y en
+silencio. Hay que completar las cinco antes de activar ese flujo.
+
 ### 📄 Qué falta correr en el hospital
 
 Todo lo que queda por descubrir está consolidado en
-`sql/PENDIENTE_CORRER_EN_HOSPITAL.sql` — 100 % lectura. La sección D ya se
-corrió y quedó cerrada; la **A** también (obliga a cambiar el modelo de cupo),
-y la **B** y la **E** igual. Queda por correr la **F** —el detalle por médico
-que alimenta la reunión— y la pestaña *Messages* de **C**.
+`sql/PENDIENTE_CORRER_EN_HOSPITAL.sql` — 100 % lectura. Cerradas: **A** (obliga
+a cambiar el modelo de cupo), **B**, **C**, **D**, **E** y **F**. La **G.1** se
+corrió pero no concluyó. Queda por correr **G.2** (el sufijo por el convenio de
+la propia cita) y **G.3** (comprobar el par primera vez / control contra los
+datos).
 
 ## ⏳ Pendientes de este driver
 
-0. **Bloque 29 — corrido, falta solo la medición de 29c/29d.** (`sql/FASE0_DESCUBRIMIENTO_HIS.sql`)
-   — ¿cuánto le cuesta al hospital que el agente relea su agenda cada 5
-   segundos? Mide índices y tamaño de `CITAS_MEDICAS`/`TURNOS_MEDICOS`, y
-   compara las DOS formas de la consulta: la actual (que envuelve la columna
-   en `CONVERT` y por tanto **no es sargable** — ningún índice la puede
-   servir) contra una candidata equivalente que deja la columna desnuda. La
-   equivalencia ya está verificada contra el mock en los bordes; falta el
-   costo real. De ahí sale si el arreglo es cambiar código nuestro, pedirle un
-   índice al hospital, o bajar la frecuencia del bucle de entrada — que hoy
-   comparte el intervalo de 5s del long-poll de salida sin motivo. De paso
-   resuelve dos preguntas de una línea: si existen de verdad claves
-   (médico+hora) duplicadas, y si `NU_NUME_MOVI_CIT` llega a ser NULL.
+0. ✅ **Bloque 29 — CERRADO (2026-09-03).** (`sql/FASE0_DESCUBRIMIENTO_HIS.sql`,
+   sección C de `sql/PENDIENTE_CORRER_EN_HOSPITAL.sql`)
+   La medición 29c/29d confirmó el arreglo: la forma sargable gasta **28 ms de
+   CPU** contra **511 ms** de la que envolvía la columna en `CONVERT`
+   (16.655 vs 23.131 lecturas lógicas, 0 físicas en ambas). El tiempo de reloj
+   era idéntico —28 vs 29 ms— porque SQL Server paralelizaba la mala; el coste
+   estaba escondido en el CPU, no en la espera. A un ciclo cada 30 s el espejo
+   le cuesta al HIS **0,09 % de un núcleo**. No hace falta pedirle ningún
+   índice al hospital ni bajar la frecuencia del bucle. Las dos preguntas
+   colaterales también quedaron respondidas: sí existen claves (médico+hora)
+   duplicadas —la PK incluye el estado— y `NU_NUME_MOVI_CIT` llega a ser NULL
+   en 1 fila de 1.084.093, que es el defecto que se corrigió con `COALESCE`.
 
 0c. **Bloque 31 preparado, pendiente de correr — ¿de qué servicio es un cupo?**
    Lo abre el hallazgo 30f: 47 médicos prestan más de un servicio (uno, once), y

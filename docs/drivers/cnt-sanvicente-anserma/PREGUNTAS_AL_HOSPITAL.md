@@ -51,6 +51,38 @@ pasa en **6 médicos de 30**:
 | 🟡 | **20** | Varios servicios, pero **todos de la misma familia** y del mismo lado de PyP. **La factura sale bien**; solo el código puede ser impreciso. |
 | 🔴 | **6** | Mezclan PyP y no-PyP de verdad. **Aquí la factura puede salir mal.** |
 
+### Cómo se lo vamos a preguntar al paciente
+
+Decidimos que el chatbot **no adivine**: que pregunte, en el orden en que un
+paciente lo entiende.
+
+```
+1.  ¿Con qué necesita la cita?              → especialidad
+2.  ¿Tiene algún médico de preferencia?     → sí / no
+      · si dice un nombre, lo buscamos y se lo confirmamos
+      · si no, o si no lo encontramos, le mostramos
+        la lista de médicos disponibles para que elija
+3.  ¿Es su primera vez con este profesional
+    o viene a control?                      → primera vez / control
+4.  ...fecha, hora, datos
+```
+
+Dos cosas que esto resuelve de una vez:
+
+- **El médico lo elige el paciente**, no nosotros. Y solo aparecen en la lista
+  los médicos que ustedes hayan activado — el arranque es gradual, médico por
+  médico, y ninguno entra sin que ustedes lo enciendan.
+- **El paso 3 elige el código de servicio.** Su sistema ya distingue las dos
+  cosas: `890266` es *consulta de primera vez por medicina interna* y `890366`
+  es *la de control*; `890250` / `890350` lo mismo en ginecología, `890206` /
+  `890306` en nutrición. Es la codificación CUPS de siempre. Solo hace falta
+  que alguien le pregunte al paciente cuál de las dos es, y eso es exactamente
+  lo que nadie podía hacer cuando el código lo elegía un sistema a ciegas.
+
+Lo que sigue es lo que necesitamos que ustedes confirmen.
+
+---
+
 ### Lo que sí necesitamos decidir
 
 Marque una opción por bloque. Están ordenados por urgencia.
@@ -89,19 +121,34 @@ mismo: **primera vez / control / algo intermedio.**
 | **Pediatría** | ES05 | `890283` primera vez · `890383` control | 1ª vez 38 % / control 63 % |
 | **Nutrición** | NU02 | `890206` primera vez · `890306` control | 1ª vez 87 % / control 13 % |
 
-**Nuestra propuesta:** que el chatbot le pregunte al paciente
-**«¿es su primera vez con este profesional o es un control?»**. Es una pregunta
-natural, el paciente la sabe responder, y resuelve sola la mayoría de estos
-casos.
+**Nuestra propuesta** es la del paso 3 de arriba: que el chatbot pregunte
+**«¿es su primera vez con este profesional o viene a control?»**. En las cuatro
+últimas familias de la tabla eso elige el código exacto, porque el par ya
+existe en su sistema (`890266`/`890366`, `890250`/`890350`, `890283`/`890383`,
+`890206`/`890306`). En las tres primeras —medicina general, higiene oral,
+psicología— acota, pero no cierra del todo; ahí seguiríamos con el servicio más
+frecuente salvo que ustedes prefieran otra cosa.
 
 - [ ] **Sí, que el chatbot pregunte primera vez / control.** ← *lo que recomendamos*
 - [ ] No, use siempre el servicio más frecuente de cada médico.
 - [ ] Otra cosa: ______________________________________________
 
-> ⚠️ Un caso que nos gustaría confirmar aparte: los médicos **76** y **077** son
-> del programa de hipertensión y su código dominante es *control hipertensos*.
-> Si un paciente que **no** está en el programa agenda con ellos por WhatsApp,
-> ¿le corresponde igual ese código, o debería quedar como `S39141` general?
+#### ⚠️ Y una que necesitamos que nos aclaren: los médicos de hipertensión
+
+Los médicos **76** y **077** son del programa de HTA y su código dominante es
+`S39141-1` *consulta ambulatoria control hipertensos* (98 % y 95 %).
+
+Nuestra duda es qué son en realidad para el paciente que escribe por WhatsApp:
+
+- [ ] Son **médicos del programa de hipertensión**: solo deben aparecer para
+      pacientes que ya están en el programa.
+- [ ] Son **médicos generales que además llevan el programa** (comodines): si
+      agenda alguien que no es hipertenso, la cita debe quedar como `S39141`
+      consulta general.
+- [ ] Otra cosa: ______________________________________________
+
+> Importa porque son 9.400 citas cada 90 días — el grueso del volumen. Si son
+> comodines, el chatbot tiene que saber cuándo poner un código y cuándo el otro.
 
 ---
 
@@ -135,13 +182,23 @@ sufijo:
 - **ES03** (ginecología): `890250ESP` / `890250SUR`, `890350ESP` / `890350SUR`
 
 Sospechamos que `SUR` = **Sura**, es decir que el código depende de la EPS del
-paciente. Si es así, AgenIA lo resuelve sola: ya sabe la EPS al agendar.
+paciente. Si es así, AgenIA lo resuelve sola: ya sabe la EPS al agendar y no
+hay que preguntarle nada a nadie.
+
+Corrimos una consulta para comprobarlo y **quedó a medias por un error
+nuestro**: la escribimos uniendo por la tabla de afiliaciones, que guarda el
+historial completo de cada paciente, así que cada cita salía contada tantas
+veces como EPS ha tenido esa persona en su vida. El resultado apunta fuerte en
+la dirección esperada —en dermatología y ginecología, el bucket `SUR` tiene
+Sura y el `ESP` prácticamente no— pero con esos números no podemos afirmarlo.
+
+Ya tenemos la consulta corregida (**G.2**), que lee el convenio que la propia
+cita lleva grabado y no toca la tabla de afiliaciones. Es una consulta de
+lectura, de segundos.
 
 - [ ] **Sí, `SUR` es para pacientes de Sura.**
 - [ ] No, la diferencia es: ______________________________________________
-
-> Tenemos una consulta (la G) que lo comprueba contra sus datos. Si sale
-> concluyente, esta pregunta se cae sola.
+- [ ] No estoy seguro → **corremos G.2 y lo vemos en los datos.**
 
 ## 🟠 PREGUNTA 2 — El consecutivo de sesión
 
