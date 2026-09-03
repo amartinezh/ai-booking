@@ -8,6 +8,15 @@ import { Reflector } from '@nestjs/core';
 import { Role } from '@agenia/database';
 import { ROLES_KEY } from './roles.decorator';
 import * as jwt from 'jsonwebtoken';
+import type { JwtUserPayload } from './current-user.decorator';
+import { getErrorMessage } from './error-message.util';
+
+/** Lo único que este guard necesita leer/escribir de la request HTTP. */
+interface GuardedRequest {
+  cookies?: Record<string, string>;
+  headers: { authorization?: string; cookie?: string };
+  user?: JwtUserPayload;
+}
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -23,17 +32,15 @@ export class RolesGuard implements CanActivate {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<GuardedRequest>();
 
     let token = '';
-    if (request.cookies && request.cookies['auth_token']) {
+    if (request.cookies?.['auth_token']) {
       token = request.cookies['auth_token'];
     } else if (request.headers.authorization) {
       token = request.headers.authorization.split(' ')[1];
     } else if (request.headers.cookie) {
-      const match = request.headers.cookie.match(
-        new RegExp('(^| )auth_token=([^;]+)'),
-      );
+      const match = /(^| )auth_token=([^;]+)/.exec(request.headers.cookie);
       if (match) token = match[2];
     }
 
@@ -55,11 +62,10 @@ export class RolesGuard implements CanActivate {
     }
 
     try {
-      const decoded = jwt.verify(token, jwtSecret) as any;
-      request.user = decoded;
+      request.user = jwt.verify(token, jwtSecret) as JwtUserPayload;
       console.log('RolesGuard: Token decoded user:', request.user);
-    } catch (e) {
-      console.log('RolesGuard: Invalid token error:', e.message);
+    } catch (e: unknown) {
+      console.log('RolesGuard: Invalid token error:', getErrorMessage(e));
       throw new ForbiddenException('Invalid token');
     }
 
@@ -79,7 +85,7 @@ export class RolesGuard implements CanActivate {
       );
     }
 
-    const hasRole = requiredRoles.includes(user.role);
+    const hasRole = requiredRoles.includes(user.role as Role);
     if (!hasRole) {
       console.log(
         'RolesGuard: User rejected role check. Required:',
