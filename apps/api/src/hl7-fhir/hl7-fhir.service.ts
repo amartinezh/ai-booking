@@ -18,7 +18,7 @@ export class Hl7FhirService {
   async getPatientSummaryBundle(
     patientId: string,
     organizationId: string | null,
-  ): Promise<any> {
+  ) {
     // Usamos el cliente extendido para que los campos clínicos viajen descifrados
     const patientConfig = await this.prisma.extended.patientProfile.findFirst({
       where: {

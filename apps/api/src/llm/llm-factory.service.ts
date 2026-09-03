@@ -11,6 +11,7 @@ import {
 import { GeminiProvider } from './providers/gemini.provider';
 import { ChatGptProvider } from './providers/chatgpt.provider';
 import { ClaudeProvider } from './providers/claude.provider';
+import { getErrorMessage } from '../common/error-message.util';
 
 export class NoActiveLlmProviderError extends Error {
   constructor(organizationId: string) {
@@ -118,9 +119,9 @@ export class LlmFactoryService {
     try {
       const decoded = this.crypto.decryptJson<unknown>(encrypted);
       return decodeMultiProviderBlob(decoded, activeProvider);
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.logger.error(
-        `Falló desencriptado de AiProviderConfig: ${e.message}`,
+        `Falló desencriptado de AiProviderConfig: ${getErrorMessage(e)}`,
       );
       return {};
     }

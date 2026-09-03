@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@agenia/database';
+import { getErrorMessage } from '../common/error-message.util';
 
 // ══════════════════════════════════════════════════════════════
 // 📊 ESTADOS POSIBLES DE UNA INTERACCIÓN REGISTRADA
@@ -64,7 +66,7 @@ export interface LogParams {
   botReply?: string | null;
   organizationId?: string | null;
   patientUserId?: string | null;
-  metadata?: any;
+  metadata?: Record<string, unknown> | null;
 }
 
 /**
@@ -105,12 +107,12 @@ export class InteractionLogService {
           botReply,
           organizationId: params.organizationId || null,
           patientId: params.patientUserId || null,
-          metadata: params.metadata || null,
+          metadata: (params.metadata as Prisma.InputJsonValue) ?? null,
         },
       });
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
-        `Error escribiendo InteractionLog (no afecta el flujo): ${error.message}`,
+        `Error escribiendo InteractionLog (no afecta el flujo): ${getErrorMessage(error)}`,
       );
     }
   }

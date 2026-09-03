@@ -8,6 +8,7 @@ import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credenti
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 import { buildWhatsappRecipient } from '@agenia/shared';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
+import { getErrorMessage } from '../common/error-message.util';
 
 @Injectable()
 export class ChatbotCron {
@@ -66,7 +67,7 @@ export class ChatbotCron {
 
     for (const key of keys) {
       const state = await this.redis.get(key);
-      if (!state || state === ChatState.IDLE) continue;
+      if (!state || (state as ChatState) === ChatState.IDLE) continue;
 
       const rest = key.slice('chat_state:'.length);
       const [organizationId, ...phoneParts] = rest.split(':');
@@ -131,9 +132,9 @@ export class ChatbotCron {
     };
     try {
       await lastValueFrom(this.httpService.post(url, data, { headers }));
-    } catch (error: any) {
+    } catch (error: unknown) {
       this.logger.error(
-        `Error enviando mensaje de abandono a ${recipientId}: ${error.message}`,
+        `Error enviando mensaje de abandono a ${recipientId}: ${getErrorMessage(error)}`,
       );
     }
   }

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AudioDiagnosisErrorCode } from '../dto/audio-config.types';
+import { getErrorMessage } from '../../common/error-message.util';
 import {
   ElevenLabsTtsParams,
   TtsProvider,
@@ -88,15 +89,15 @@ export class ElevenLabsTtsService implements TtsProvider<ElevenLabsTtsParams> {
         `ElevenLabs TTS OK — ${audio.length} bytes, ${rtt_ms}ms, voice=${voiceId}`,
       );
       return { ok: true, audio, bytes: audio.length, rtt_ms };
-    } catch (error: any) {
+    } catch (error: unknown) {
       const rtt_ms = Date.now() - startedAt;
-      const isTimeout = error?.name === 'AbortError';
+      const isTimeout = error instanceof Error && error.name === 'AbortError';
       return {
         ok: false,
         code: isTimeout ? 'TIMEOUT' : 'UNKNOWN',
         message: isTimeout
           ? `ElevenLabs no respondió en ${ELEVENLABS_TIMEOUT_MS}ms.`
-          : `Fallo de red contactando ElevenLabs: ${error?.message ?? String(error)}`,
+          : `Fallo de red contactando ElevenLabs: ${getErrorMessage(error)}`,
         rtt_ms,
       };
     } finally {

@@ -4,6 +4,7 @@ import {
   NoActiveLlmProviderError,
 } from '../llm/llm-factory.service';
 import { ClinicalRecordDraft } from '../llm/interfaces/llm-provider.interface';
+import { getErrorStatus } from '../common/error-message.util';
 
 @Injectable()
 export class ClinicalAiService {
@@ -25,7 +26,7 @@ export class ClinicalAiService {
         base64: audioBase64,
         mimeType,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (error instanceof NoActiveLlmProviderError) {
         throw new Error(
           'Esta clínica no tiene un proveedor de IA configurado. ' +
@@ -33,14 +34,15 @@ export class ClinicalAiService {
         );
       }
       this.logger.error('Error procesando dictado de IA:', error);
-      if (error?.status === 503) {
+      if (getErrorStatus(error) === 503) {
         throw new Error(
           'El proveedor de IA está experimentando alta demanda (503). Intente de nuevo en unos segundos.',
         );
       }
+      const rawMessage = error instanceof Error ? error.message : undefined;
       throw new Error(
         'Fallo al procesar dictado de voz: ' +
-          (error?.message || 'Error desconocido'),
+          (rawMessage || 'Error desconocido'),
       );
     }
   }

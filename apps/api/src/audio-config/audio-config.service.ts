@@ -5,6 +5,7 @@ import { CryptoService } from '../common/crypto/crypto.service';
 import { GoogleTtsService } from './tts/google-tts.service';
 import { ElevenLabsTtsService } from './tts/elevenlabs-tts.service';
 import { TtsResult } from './tts/tts-provider.interface';
+import { getErrorMessage } from '../common/error-message.util';
 import {
   ALLOWED_VOICE_IDS,
   ALLOWED_VOICES,
@@ -99,10 +100,10 @@ export class AudioConfigService {
           elevenLabsVoiceId: true,
         },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Nunca tumbamos el flujo del chatbot por un problema de config: log + defaults.
       this.logger.warn(
-        `No se pudo leer audioConfig de org ${organizationId}, uso defaults: ${err.message}`,
+        `No se pudo leer audioConfig de org ${organizationId}, uso defaults: ${getErrorMessage(err)}`,
       );
     }
 
@@ -323,9 +324,9 @@ export class AudioConfigService {
     if (!ciphertext) return null;
     try {
       return this.crypto.decrypt(ciphertext);
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.logger.error(
-        `No se pudo desencriptar la API key de ElevenLabs de org ${organizationId}: ${err.message}`,
+        `No se pudo desencriptar la API key de ElevenLabs de org ${organizationId}: ${getErrorMessage(err)}`,
       );
       return null;
     }

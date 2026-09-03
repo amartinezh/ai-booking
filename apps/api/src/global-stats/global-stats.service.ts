@@ -204,7 +204,7 @@ export class GlobalStatsService {
       Prisma.AddendumWhereInput = {
       createdAt: { gte: range.gte, lte: range.lte },
     };
-    if (orgId) (where as any).organizationId = orgId;
+    if (orgId) where.organizationId = orgId;
     return where;
   }
 
@@ -236,7 +236,10 @@ export class GlobalStatsService {
     const where: Prisma.SystemLogWhereInput = {
       action: 'USER_LOGIN',
       createdAt: { gte: range.gte, lte: range.lte },
-      metadata: { path: ['role'], equals: role } as any,
+      metadata: {
+        path: ['role'],
+        equals: role,
+      } satisfies Prisma.JsonFilter<'SystemLog'>,
     };
     if (orgId) where.organizationId = orgId;
 

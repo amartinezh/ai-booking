@@ -144,7 +144,7 @@ describe('Hl7FhirService', () => {
 
       const b = await service.getPatientSummaryBundle('pac-1', ORG);
       const [, encounter, composition] = b.entry.map(
-        (e: { resource: Record<string, unknown> }) => e.resource,
+        (e: { resource: any }) => e.resource,
       );
 
       expect(encounter).toMatchObject({
