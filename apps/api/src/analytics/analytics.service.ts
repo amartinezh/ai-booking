@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@agenia/database';
 
 @Injectable()
 export class AnalyticsService {
@@ -10,18 +11,14 @@ export class AnalyticsService {
     startDate?: string,
     endDate?: string,
   ) {
-    const where: any = { organizationId };
-    if (startDate || endDate) {
-      where.scheduleSlot = { startTime: {} };
-      if (startDate) {
-        where.scheduleSlot.startTime.gte = new Date(
-          `${startDate}T00:00:00.000Z`,
-        );
-      }
-      if (endDate) {
-        where.scheduleSlot.startTime.lte = new Date(`${endDate}T23:59:59.999Z`);
-      }
-    }
+    const startTime: Prisma.DateTimeFilter = {};
+    if (startDate) startTime.gte = new Date(`${startDate}T00:00:00.000Z`);
+    if (endDate) startTime.lte = new Date(`${endDate}T23:59:59.999Z`);
+
+    const where: Prisma.AppointmentWhereInput = {
+      organizationId,
+      ...(startDate || endDate ? { scheduleSlot: { startTime } } : {}),
+    };
 
     // 1. KPIs
     const totalAppointments = await this.prisma.appointment.count({ where });

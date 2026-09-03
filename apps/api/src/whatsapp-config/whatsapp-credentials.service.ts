@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { ResolvedWhatsappCredentials } from './dto/whatsapp-config.types';
+import { getErrorMessage } from '../common/error-message.util';
 
 /**
  * Resolución de credenciales WhatsApp por organización.
@@ -64,9 +65,9 @@ export class WhatsappCredentialsService {
     if (!row?.encryptedAppSecret) return null;
     try {
       return this.crypto.decrypt(row.encryptedAppSecret) || null;
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.logger.error(
-        `Falló desencriptado de app secret para org ${row.organizationId}: ${e.message}`,
+        `Falló desencriptado de app secret para org ${row.organizationId}: ${getErrorMessage(e)}`,
       );
       return null;
     }
@@ -110,9 +111,9 @@ export class WhatsappCredentialsService {
         accessToken,
         isActive: row.isActive,
       };
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.logger.error(
-        `Falló desencriptado de access token para org ${row.organizationId}: ${e.message}`,
+        `Falló desencriptado de access token para org ${row.organizationId}: ${getErrorMessage(e)}`,
       );
       return null;
     }

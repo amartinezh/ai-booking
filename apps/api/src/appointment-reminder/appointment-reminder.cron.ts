@@ -13,6 +13,7 @@ import { InteractionLogService } from '../interaction-log/interaction-log.servic
 import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
 import { addBusinessHours, formatForPatient } from '../common/business-hours';
+import { getErrorMessage, getErrorStack } from '../common/error-message.util';
 import {
   readReminderConfig,
   ReminderConfig,
@@ -76,10 +77,10 @@ export class AppointmentReminderCronService
       }
       this.inFlight = true;
       this.runOnce()
-        .catch((err) => {
+        .catch((err: unknown) => {
           this.logger.error(
-            `Cron falló (no propagado): ${err?.message}`,
-            err?.stack,
+            `Cron falló (no propagado): ${getErrorMessage(err)}`,
+            getErrorStack(err),
           );
         })
         .finally(() => {
@@ -139,21 +140,23 @@ export class AppointmentReminderCronService
         if (outcome === 'sent') sent += 1;
         else if (outcome === 'failed') failed += 1;
         else skipped += 1;
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Cinturón de seguridad — processOne ya tiene su propio try/catch,
         // pero si algo escapa, lo absorbemos aquí para no detener el lote.
         failed += 1;
+        const message = getErrorMessage(error);
+        const stack = getErrorStack(error);
         this.logger.error(
-          `Error inesperado procesando cita ${apt.id}: ${error.message}`,
-          error.stack,
+          `Error inesperado procesando cita ${apt.id}: ${message}`,
+          stack,
         );
         await this.systemLog.error({
           action: 'REMINDER_CRON_ITEM_ERROR',
-          message: error.message,
+          message,
           organizationId: apt.organizationId ?? null,
           metadata: {
             appointmentId: apt.id,
-            stack: error.stack?.substring(0, 1000),
+            stack: stack?.substring(0, 1000),
           },
         });
       }
