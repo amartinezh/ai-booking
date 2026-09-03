@@ -84,6 +84,61 @@ function revisar(mapping: Record<string, any>): string[] {
       );
     }
   }
+  // ── El par CUPS 8902xx (primera vez) / 8903xx (control) ──────────────────
+  // Es el mismo procedimiento: cambia el momento, no la especialidad. Ni el
+  // dígito 2/3 ni el sufijo local ESP/SUR la cambian. Este chequeo existe
+  // porque `especialidadPorServicio` se generó filtrando a médicos con turnos
+  // futuros y ese filtro dejó fuera cinco servicios con citas reales — entre
+  // ellos la mitad «control» de ginecología (890350ESP/SUR).
+  const SINGLETONES_CONOCIDOS = new Set([
+    '890201-CI',
+    '890201AD',
+    '890201AV',
+    '890201PI',
+    '890208Ges',
+  ]);
+  for (const [servicio, codigo] of Object.entries(esp)) {
+    const m = /^(890)([23])(\d{2})(.*)$/.exec(servicio);
+    if (!m) continue;
+    const pareja = `890${m[2] === '2' ? '3' : '2'}${m[3]}${m[4]}`;
+
+    if (!(pareja in esp)) {
+      if (!SINGLETONES_CONOCIDOS.has(servicio)) {
+        problemas.push(
+          `${servicio} está mapeado pero su pareja CUPS ${pareja} no. Si el hospital no usa ese código, decláralo como singletón conocido; si lo usa, mapéalo — sin él la cita de ${m[2] === '2' ? 'control' : 'primera vez'} no se puede agendar.`,
+        );
+      }
+    } else if (esp[pareja] !== codigo) {
+      problemas.push(
+        `${servicio} (${codigo}) y su pareja CUPS ${pareja} (${esp[pareja]}) tienen especialidades distintas. Primera vez y control son el mismo procedimiento.`,
+      );
+    }
+  }
+
+  // El sufijo local ESP/SUR tampoco cambia la especialidad.
+  for (const [servicio, codigo] of Object.entries(esp)) {
+    if (!/(ESP|SUR)$/.test(servicio)) continue;
+    const hermano = servicio.endsWith('ESP')
+      ? `${servicio.slice(0, -3)}SUR`
+      : `${servicio.slice(0, -3)}ESP`;
+    if (hermano in esp && esp[hermano] !== codigo) {
+      problemas.push(
+        `${servicio} (${codigo}) y ${hermano} (${esp[hermano]}) tienen especialidades distintas: el sufijo ESP/SUR no cambia la especialidad.`,
+      );
+    }
+  }
+
+  // `especialidadPorDefecto` tapa huecos en silencio: un servicio sin mapear
+  // entra al HIS con esa especialidad y nadie se entera. Ver la nota en
+  // AnsermaMapping. No es un error, pero tiene que ser una decisión.
+  if (mapping.especialidadPorDefecto !== undefined) {
+    console.warn(
+      `⚠️  El mapeo declara especialidadPorDefecto="${mapping.especialidadPorDefecto}": ` +
+        `cualquier servicio fuera de especialidadPorServicio entrará al HIS con esa ` +
+        `especialidad SIN avisar. Anserma la quitó a propósito el 2026-09-03.`,
+    );
+  }
+
   return problemas;
 }
 

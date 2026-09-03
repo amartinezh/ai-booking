@@ -1,6 +1,7 @@
 {
   "_procedencia": {
     "_": "La tabla de valores de este hospital. Vive en HospitalMirrorConfig.mappingJson (en la base, no en el código) para que validarla sea un cambio de configuración y no un despliegue — pero hasta ahora solo vivía ahí, metida a mano, sin original revisable. Este archivo es ese original; se aplica con packages/database/scripts/aplicar-mapping.ts.",
+    "especialidadPorServicio_cinco_anadidos_2026-09-03": "890242ESP, 890342ESP, 890342SUR, 890350ESP y 890350SUR se anadieron el 2026-09-03. Los destapo la seccion G: tienen citas reales en 90 dias pero quedaron fuera de la generacion del 31d, que filtraba a medicos con turnos futuros. La especialidad NO se adivino: los codigos van en pares CUPS 8902xx (primera vez) / 8903xx (control) del MISMO procedimiento, y ni el digito 2/3 ni el sufijo ESP/SUR cambian la especialidad — se ve en los pares ya mapeados (890266ESP/SUR/890366ESP/SUR todos 387; 890283/890383 ambos 550; 890284/890384 ambos 345; 890206/890306 ambos 451). De ahi: 890342* = control de 890242* = 200 DERMATOLOGIA; 890350* = control de 890250* = 341 GINECOLOGIA. La consulta G.4 lo confirma contra los datos del hospital.",
     "especialidadPorServicio": "GENERADA del bloque 31d: la especialidad dominante de cada servicio en las citas reales de 90 días. 36 de 40 son inequívocos; los 4 restantes se resolvieron por mayoría (S36101 461 en 826/827, S35102 590 en 387/388, S35104 590 en 577/580, I890301AG 328 en 453/455). Verificada contra R_ESP_SER ∩ R_MEDI_ESPE en el bloque 32c: 0 contradicciones en 21.362 citas.",
     "serviciosPyp": "DERIVADA del catálogo del bloque 32e: son los servicios cuya especialidad pertenece a la familia PyDT (060 ENFERMERIA PYDT, 328 MEDICINA GENERAL PYDT, 572 ODONTOLOGIA PYDT, 591 PSICOLOGIA PYDT). Antes tenía UN solo servicio y los otros trece se habrían facturado al convenio equivocado.",
     "convenios": "DERIVADA de los datos del hospital y CERRADA (seccion D de sql/PENDIENTE_CORRER_EN_HOSPITAL.sql, 2026-09-02): el convenio dominante de cada combinacion EPS + regimen + PyP sobre 90 dias de citas reales. Cuotas: Sura subsidiado 467 (84,5% normal / 94,3% PyP), Sura contributivo 473 (84,8% / 88,0%), Nueva EPS subsidiado 283 normal (89,6%) y 489 PyP (94,4%), Nueva EPS contributivo 473 (73,4% / 65,6%). R_PAC_EPS es un historial many-to-many y su fan-out ensucia la cola de cada grupo, pero NO invalida la conclusion: el fan-out solo puede inflar un conteo, nunca esconderlo, y la cota superior de 290 NUEVAEPSCONT —el unico candidato alternativo para Nueva EPS contributivo— es de DOS citas en 90 dias. El hospital no lo usa. Los codigos de regimen se leen de los nombres de los propios convenios (01 lleva a SUBS, NUEVASUBSID y PYPSUBS; 07 a CONTRIBUTIVO), no de una suposicion.",
@@ -35,7 +36,8 @@
     "I890305PL"
   ],
 
-  "especialidadPorDefecto": "000",
+  "_sin_especialidadPorDefecto": "NO se declara a propósito (2026-09-03). Tenia \"000\" MEDICINA GENERAL y eso hacia que cualquier servicio fuera del mapa entrara al HIS mal etiquetado en silencio. La generacion del bloque 31d filtraba a medicos con turnos futuros y dejo fuera cinco servicios con citas reales — 890242ESP, 890342ESP/SUR, 890350ESP/SUR — entre ellos la mitad control de ginecologia. Sin default, resolveEspecialidad lanza MappingIncompletoError igual que mapConvenio y mapSexo: la cita falla a la vista de todos en vez de facturarse con la especialidad equivocada.",
+
   "especialidadPorServicio": {
     "S39141": "000",
     "S39141-1": "000",
@@ -74,9 +76,14 @@
     "890383ESP": "550",
     "890284ESP": "345",
     "890384ESP": "345",
+    "890242ESP": "200",
     "890242SUR": "200",
+    "890342ESP": "200",
+    "890342SUR": "200",
     "890250ESP": "341",
-    "890250SUR": "341"
+    "890250SUR": "341",
+    "890350ESP": "341",
+    "890350SUR": "341"
   },
 
   "_especialidades": {

@@ -219,9 +219,45 @@ describe('resolveEspecialidad', () => {
     expect(resolveEspecialidad(MAPPING, 'SCITOD')).toBe('461');
   });
 
-  it('un servicio sin mapear cae al valor por defecto', () => {
+  it('con default declarado, un servicio sin mapear cae en él', () => {
     expect(resolveEspecialidad(MAPPING, 'DESCONOCIDO')).toBe('000');
     expect(resolveEspecialidad(MAPPING, undefined)).toBe('000');
+  });
+
+  // ── El caso que de verdad importa ────────────────────────────────────────
+  // Sin default, un servicio sin homologar LANZA. Antes devolvía '000'
+  // (MEDICINA GENERAL) y la cita entraba al HIS mal etiquetada sin ruido: una
+  // consulta de dermatología facturada como medicina general no falla, no deja
+  // rastro y se descubre cuando la EPS glosa. Es la misma política que ya
+  // tenían `mapConvenio` y `mapSexo` — el hueco se grita, no se rellena.
+  describe('sin especialidadPorDefecto (lo que usa Anserma)', () => {
+    const SIN_DEFAULT: AnsermaMapping = {
+      ...MAPPING,
+      especialidadPorDefecto: undefined,
+    };
+
+    it('los servicios homologados siguen resolviendo igual', () => {
+      expect(resolveEspecialidad(SIN_DEFAULT, 'S39141-1')).toBe('000');
+      expect(resolveEspecialidad(SIN_DEFAULT, 'SCITOD')).toBe('461');
+    });
+
+    it('🚨 un servicio sin homologar LANZA en vez de adivinar', () => {
+      expect(() => resolveEspecialidad(SIN_DEFAULT, '890350SUR')).toThrow(
+        MappingIncompletoError,
+      );
+    });
+
+    it('el error dice QUÉ servicio falta y DÓNDE se arregla', () => {
+      expect(() => resolveEspecialidad(SIN_DEFAULT, '890350SUR')).toThrow(
+        /890350SUR.*especialidadPorServicio/s,
+      );
+    });
+
+    it('sin servicio tampoco se inventa nada', () => {
+      expect(() => resolveEspecialidad(SIN_DEFAULT, undefined)).toThrow(
+        MappingIncompletoError,
+      );
+    });
   });
 });
 
@@ -719,5 +755,143 @@ describe('convenios — la tabla que se aplica en producción', () => {
         patientRegime: 'SUBSIDIADO',
       }),
     ).toThrow(MappingIncompletoError);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// LAS ESPECIALIDADES DEL mapping.json REAL — invariantes, no valores sueltos.
+//
+// Fijar servicio por servicio no habría servido de nada: el hueco que apareció
+// el 2026-09-03 eran cinco servicios que NADIE había escrito, y un test que
+// enumera lo que hay no puede echar en falta lo que no está. Lo que sí lo
+// detecta es una invariante sobre la FORMA del mapa.
+//
+// La invariante sale de la codificación CUPS nacional: `8902xx` es la consulta
+// de primera vez y `8903xx` la de control DEL MISMO procedimiento. Cambia el
+// momento, no la especialidad. Igual el sufijo local ESP/SUR. Así que si un
+// código está mapeado, su pareja tiene que estarlo y con el mismo valor.
+// ══════════════════════════════════════════════════════════════════════════
+describe('especialidades — el mapa que se aplica en producción', () => {
+  const REAL = JSON.parse(
+    readFileSync(
+      join(
+        __dirname,
+        '../../../../../docs/drivers/cnt-sanvicente-anserma/mapping.json',
+      ),
+      'utf8',
+    ),
+  ) as AnsermaMapping & { _especialidades: Record<string, string> };
+
+  const ESP = REAL.especialidadPorServicio;
+
+  /** `890266ESP` → `{ raiz: '89066', momento: '2', resto: 'ESP' }`. */
+  const partirCups = (codigo: string) => {
+    const m = /^(890)([23])(\d{2})(.*)$/.exec(codigo);
+    return m
+      ? { raiz: `${m[1]}${m[3]}`, momento: m[2], resto: m[4] }
+      : null;
+  };
+
+  it('🚨 no se declara especialidadPorDefecto: un hueco tiene que gritar', () => {
+    // Con default, un servicio sin homologar entra al HIS como '000' MEDICINA
+    // GENERAL y nadie se entera. Ver la nota en AnsermaMapping.
+    expect(REAL.especialidadPorDefecto).toBeUndefined();
+    expect(() => resolveEspecialidad(REAL, '890350SUR-QUE-NO-EXISTE')).toThrow(
+      MappingIncompletoError,
+    );
+  });
+
+  it('🔒 primera vez y control comparten especialidad (par CUPS 8902xx/8903xx)', () => {
+    const desparejados: string[] = [];
+
+    for (const [codigo, especialidad] of Object.entries(ESP)) {
+      const p = partirCups(codigo);
+      if (!p) continue;
+
+      const otro = p.momento === '2' ? '3' : '2';
+      const pareja = `890${otro}${p.raiz.slice(3)}${p.resto}`;
+      if (!(pareja in ESP)) continue; // la mitad que no existe no es un fallo
+
+      if (ESP[pareja] !== especialidad) {
+        desparejados.push(
+          `${codigo}=${especialidad} vs ${pareja}=${ESP[pareja]}`,
+        );
+      }
+    }
+
+    expect(desparejados).toEqual([]);
+  });
+
+  it('🔒 el sufijo ESP/SUR tampoco cambia la especialidad', () => {
+    const desparejados: string[] = [];
+
+    for (const [codigo, especialidad] of Object.entries(ESP)) {
+      if (!/(ESP|SUR)$/.test(codigo)) continue;
+      const hermano = codigo.endsWith('ESP')
+        ? `${codigo.slice(0, -3)}SUR`
+        : `${codigo.slice(0, -3)}ESP`;
+      if (!(hermano in ESP)) continue;
+
+      if (ESP[hermano] !== especialidad) {
+        desparejados.push(
+          `${codigo}=${especialidad} vs ${hermano}=${ESP[hermano]}`,
+        );
+      }
+    }
+
+    expect(desparejados).toEqual([]);
+  });
+
+  // Las dos invariantes de arriba comparan valores, así que solo ven un par
+  // MAL emparejado — no un par al que le falta una mitad, que es exactamente
+  // lo que pasó con 890350SUR. Esta lo cubre: si un código CUPS está mapeado y
+  // su pareja no, hay que decirlo aquí y explicar por qué. Un hueco nuevo
+  // rompe el test en vez de esperar a la primera cita.
+  it('🔒 un CUPS sin su pareja tiene que estar declarado, no ser un olvido', () => {
+    // Los cinco de PyDT no tienen mitad de control con el MISMO sufijo: el
+    // hospital la codifica con prefijo `I` (I890301AG, I890301G, I890301RN).
+    const SINGLETONES_CONOCIDOS = new Set([
+      '890201-CI', // PyDT crecimiento infantil
+      '890201AD', // PyDT adulto
+      '890201AV', // PyDT adulto y vejez
+      '890201PI', // PyDT primera infancia
+      '890208Ges', // PyDT gestante (psicología)
+    ]);
+
+    const huerfanos: string[] = [];
+    for (const codigo of Object.keys(ESP)) {
+      const p = partirCups(codigo);
+      if (!p || SINGLETONES_CONOCIDOS.has(codigo)) continue;
+
+      const otro = p.momento === '2' ? '3' : '2';
+      const pareja = `890${otro}${p.raiz.slice(3)}${p.resto}`;
+      if (!(pareja in ESP)) huerfanos.push(`${codigo} → falta ${pareja}`);
+    }
+
+    expect(huerfanos).toEqual([]);
+  });
+
+  it('los cinco que faltaban están, y con la especialidad de su pareja', () => {
+    // Los destapó la sección G: tienen citas reales pero quedaron fuera de la
+    // generación del bloque 31d, que filtraba a médicos con turnos futuros.
+    expect(resolveEspecialidad(REAL, '890242ESP')).toBe('200'); // dermatología
+    expect(resolveEspecialidad(REAL, '890342ESP')).toBe('200'); // …su control
+    expect(resolveEspecialidad(REAL, '890342SUR')).toBe('200');
+    expect(resolveEspecialidad(REAL, '890350ESP')).toBe('341'); // ginecología
+    expect(resolveEspecialidad(REAL, '890350SUR')).toBe('341');
+  });
+
+  it('🔒 todo servicio de PyP tiene especialidad: es el que decide el convenio', () => {
+    // Un servicio de PyP sin especialidad es doblemente malo — factura al
+    // convenio de PyP y se etiqueta con la especialidad equivocada.
+    const sinEspecialidad = REAL.serviciosPyp.filter((s) => !(s in ESP));
+    expect(sinEspecialidad).toEqual([]);
+  });
+
+  it('🔒 ninguna especialidad apunta a un código que no existe en el catálogo', () => {
+    const desconocidas = [...new Set(Object.values(ESP))].filter(
+      (codigo) => !(codigo in REAL._especialidades),
+    );
+    expect(desconocidas).toEqual([]);
   });
 });

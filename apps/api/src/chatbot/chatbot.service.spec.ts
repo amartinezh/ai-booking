@@ -339,6 +339,47 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           organizationId: ORG_ID,
           serviceId: SERVICE_ID,
           isActive: true,
+          whatsappBookingEnabled: true,
+        },
+        select: { id: true, fullName: true },
+      });
+    });
+
+    // ── El filtro que faltaba ────────────────────────────────────────────
+    // `isActive` y `whatsappBookingEnabled` no son lo mismo. En un espejo de
+    // hospital la segunda arranca en `false` para TODOS —`homologar.ts` importa
+    // los 27 médicos del HIS apagados y el piloto los enciende uno a uno—, así
+    // que sin este filtro el resolvedor devolvía tan tranquilo un médico al que
+    // AgenIA no puede agendar, y el paciente quedaba en lista de espera de un
+    // cupo que nunca se le iba a ofrecer.
+    it('🚦 no resuelve a un médico apagado para WhatsApp, ni siquiera org-wide', async () => {
+      // Prisma filtra en la consulta: apagado = no aparece en NINGUNO de los
+      // dos intentos, así que ambos vuelven vacíos.
+      prisma.doctorProfile.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+
+      await expect(resolve('Dr. Pérez')).resolves.toBeNull();
+
+      for (const llamada of prisma.doctorProfile.findMany.mock.calls) {
+        expect(llamada[0].where).toMatchObject({
+          isActive: true,
+          whatsappBookingEnabled: true,
+        });
+      }
+    });
+
+    it('🚦 el fallback org-wide también exige el médico encendido', async () => {
+      prisma.doctorProfile.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'd5', fullName: 'Jorge Salazar' }]);
+
+      await expect(resolve('salazar')).resolves.toBe('d5');
+      expect(prisma.doctorProfile.findMany).toHaveBeenLastCalledWith({
+        where: {
+          organizationId: ORG_ID,
+          isActive: true,
+          whatsappBookingEnabled: true,
         },
         select: { id: true, fullName: true },
       });

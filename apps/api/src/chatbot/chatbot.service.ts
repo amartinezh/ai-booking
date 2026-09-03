@@ -1887,6 +1887,16 @@ export class ChatbotService implements OnModuleInit {
   // El paciente puede escribir "Dr. Pérez", "pérez", "Juan Pérez"...
   // Devuelve el id SÓLO si hay UNA coincidencia activa inequívoca dentro
   // de la organización, para nunca asignar un médico equivocado a la cola.
+  //
+  // Se filtra por `whatsappBookingEnabled` además de por `isActive`. Son dos
+  // cosas distintas y hacen falta las dos: `isActive` es "este médico existe y
+  // trabaja aquí"; `whatsappBookingEnabled` es "este médico está encendido
+  // para WhatsApp". En un espejo de hospital la segunda arranca en `false`
+  // para TODOS —`homologar.ts` importa los 27 médicos del HIS apagados y el
+  // piloto los va encendiendo uno a uno—, así que sin este filtro el
+  // resolvedor devolvería con toda naturalidad un médico al que AgenIA no
+  // puede agendar. En la lista de espera eso es una promesa que no se puede
+  // cumplir: el paciente queda esperando un cupo que nunca se le va a ofrecer.
   // ══════════════════════════════════════════════════════════════
   private async resolvePreferredDoctorId(
     organizationId: string,
@@ -1916,17 +1926,22 @@ export class ChatbotService implements OnModuleInit {
       return hits.length === 1 ? hits[0].id : null;
     };
 
-    // 1º intento: médicos activos de ESE servicio (más preciso).
+    // 1º intento: médicos agendables de ESE servicio (más preciso).
     const byService = await this.prisma.doctorProfile.findMany({
-      where: { organizationId, serviceId, isActive: true },
+      where: {
+        organizationId,
+        serviceId,
+        isActive: true,
+        whatsappBookingEnabled: true,
+      },
       select: { id: true, fullName: true },
     });
     const inService = pickUnique(byService);
     if (inService) return inService;
 
-    // 2º intento: cualquier médico activo de la organización.
+    // 2º intento: cualquier médico agendable de la organización.
     const inOrg = await this.prisma.doctorProfile.findMany({
-      where: { organizationId, isActive: true },
+      where: { organizationId, isActive: true, whatsappBookingEnabled: true },
       select: { id: true, fullName: true },
     });
     return pickUnique(inOrg);

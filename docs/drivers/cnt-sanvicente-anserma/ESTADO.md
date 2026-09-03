@@ -948,7 +948,73 @@ adivinar entre dos códigos parecidos. **G.3** la comprueba contra los datos del
 hospital: para cada paciente y familia, si la PRIMERA cita lleva `8902xx` y las
 siguientes `8903xx`, está confirmado.
 
-### ⚠️ Cinco servicios con volumen real no tienen especialidad mapeada
+### ✅ La especialidad ya no se adivina — y los cinco huecos están tapados (2026-09-03)
+
+`resolveEspecialidad` era la única función de mapeo que **fallaba en silencio**.
+`mapConvenio` y `mapSexo` lanzan `MappingIncompletoError` ante un hueco; esta
+devolvía `especialidadPorDefecto` (`'000'` MEDICINA GENERAL) y la cita entraba
+al HIS mal etiquetada sin que saltara nada. Una consulta de dermatología
+facturada como medicina general no da error, no deja rastro, y se descubre
+cuando la EPS glosa.
+
+Tres cambios que van juntos:
+
+1. `especialidadPorDefecto` pasa a **opcional** y Anserma **no la declara**. Un
+   servicio sin homologar lanza, con un mensaje que dice qué servicio falta y
+   dónde se arregla.
+2. Los **cinco servicios** que faltaban están mapeados (`890242ESP`,
+   `890342ESP/SUR`, `890350ESP/SUR`). No se adivinó la especialidad: ni el
+   dígito 2/3 del par CUPS ni el sufijo ESP/SUR la cambian —se ve en los pares
+   ya mapeados—, así que `890342*` es dermatología (200) y `890350*` ginecología
+   (341). **G.4** lo confirma contra los datos.
+3. `aplicar-mapping.ts` valida el par CUPS y el hermano ESP/SUR **antes de
+   escribir** en `HospitalMirrorConfig`, y avisa si alguien vuelve a declarar
+   un default.
+
+⚠️ **Los tres son un solo despliegue.** Quitar el default del `mappingJson` sin
+el cambio de código es *peor* que dejarlo: se comprobó en el entorno local y el
+agente viejo escribió la cita con `CD_CODI_ESP_CIT` **vacío**, que ni siquiera
+es un valor plausible. El orden es: desplegar el agente, y después
+`aplicar-mapping.ts`.
+
+#### Verificado de punta a punta contra el SQL Server
+
+| | |
+|---|---|
+| Servicio homologado | ✅ la cita llega: `S39141-1`, especialidad `000`, convenio `283`, `ASIGNADA POR WHATSAPP` |
+| Servicio **sin** homologar | ✅ la cita **NO llega**. El log dice: *«El servicio "890999ZZ" no tiene especialidad homologada (CD_CODI_ESP_CIT). Añádelo a especialidadPorServicio…»* |
+| Reintentos | ✅ backoff exponencial; a los 5 fallos entra en **modo seguro** y deja de escribir |
+| Reconciliación | ✅ marca la deriva: «2 cita(s) que el hospital NO tiene» |
+| Al arreglar el mapeo | ✅ **se cura sola**: el evento encolado se aplica sin replay manual |
+| Cancelación | ✅ la fila desaparece de `CITAS_MEDICAS` y queda en `CITAS_ANULADAS` con motivo `WB` |
+
+#### La red que faltaba en los tests
+
+Fijar servicio por servicio no habría servido: el hueco eran cinco códigos que
+**nadie había escrito**, y un test que enumera lo que hay no echa en falta lo
+que no está. Las invariantes nuevas sí, y se comprobó que fallan reinyectando
+el defecto original:
+
+- primera vez y control comparten especialidad (par CUPS);
+- el sufijo ESP/SUR tampoco la cambia;
+- **un CUPS sin su pareja tiene que estar declarado**, no ser un olvido (los
+  cinco singletones legítimos de PyDT están listados con su razón);
+- todo servicio de PyP tiene especialidad — es el que decide el convenio;
+- ninguna especialidad apunta a un código fuera del catálogo;
+- `especialidadPorDefecto` no se declara.
+
+### ✅ El resolvedor de médico ya no ofrece médicos apagados (2026-09-03)
+
+`resolvePreferredDoctorId` filtraba por `isActive` pero no por
+`whatsappBookingEnabled`. Son cosas distintas: la primera es «este médico
+trabaja aquí», la segunda «está encendido para WhatsApp». En un espejo de
+hospital la segunda arranca en `false` para **todos** —`homologar.ts` importa
+los 27 médicos del HIS apagados y el piloto los enciende uno a uno—, así que el
+resolvedor devolvía tan tranquilo un médico al que AgenIA no puede agendar. Hoy
+eso mete al paciente en una lista de espera de un cupo que nunca se le va a
+ofrecer; con el flujo nuevo sería peor, porque el médico se elige por nombre.
+
+### ⚠️ Cinco servicios con volumen real no tenían especialidad mapeada — ✅ RESUELTO
 
 `especialidadPorServicio` se generó en el bloque 31d filtrando a médicos **con
 turnos futuros**. G sacó a la luz cinco servicios con citas reales en los
@@ -958,12 +1024,14 @@ turnos futuros**. G sacó a la luz cinco servicios con citas reales en los
 890242ESP   890342ESP   890342SUR   890350ESP   890350SUR
 ```
 
-Hoy no rompe nada: esos médicos no tienen turnos, así que AgenIA no los ofrece.
-Pero el `especialidadPorDefecto` es `"000"` (MEDICINA GENERAL), de modo que si
-alguno se habilita —y **890350 es justo la mitad "control" de ginecología, que
-es lo primero que hace falta en cuanto el chatbot pregunte «primera vez o
-control»**— la cita entraría al HIS con la especialidad equivocada y en
-silencio. Hay que completar las cinco antes de activar ese flujo.
+No rompía nada todavía —esos médicos no tienen turnos, así que AgenIA no los
+ofrecía— pero `especialidadPorDefecto` era `"000"` MEDICINA GENERAL, de modo
+que en cuanto alguno se habilitase —y **890350 es justo la mitad "control" de
+ginecología, lo primero que hace falta cuando el chatbot pregunte «primera vez
+o control»**— la cita habría entrado al HIS con la especialidad equivocada, en
+silencio.
+
+Las cinco están mapeadas y el default ya no existe. Ver arriba.
 
 ### 📄 Qué falta correr en el hospital
 
@@ -971,8 +1039,10 @@ Todo lo que queda por descubrir está consolidado en
 `sql/PENDIENTE_CORRER_EN_HOSPITAL.sql` — 100 % lectura. Cerradas: **A** (obliga
 a cambiar el modelo de cupo), **B**, **C**, **D**, **E** y **F**. La **G.1** se
 corrió pero no concluyó. Queda por correr **G.2** (el sufijo por el convenio de
-la propia cita) y **G.3** (comprobar el par primera vez / control contra los
-datos).
+la propia cita), **G.3** (comprobar el par primera vez / control contra los
+datos) y **G.4** (la red de seguridad: la especialidad de TODOS los servicios
+con citas, sin filtrar por turnos — la que confirma los cinco añadidos y la que
+hay que volver a correr cada vez que se encienda un médico nuevo).
 
 ## ⏳ Pendientes de este driver
 

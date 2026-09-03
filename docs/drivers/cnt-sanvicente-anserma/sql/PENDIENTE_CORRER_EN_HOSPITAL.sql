@@ -11,7 +11,7 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · Pendiente de correr: G.2 y G.3. Nada más.
+--   · Pendiente de correr: G.2, G.3 y G.4. Nada más.
 --
 -- CONTENIDO
 --   A. ✅ CORRIDA — y la respuesta es la mala: el 72,5 % de los turnos
@@ -30,6 +30,10 @@
 --      (NU_NUME_CONV_CIT). Sin fan-out: esta sí decide.
 --   G.3 🧪 PENDIENTE — comprueba contra los datos que 8902xx es «primera vez»
 --      y 8903xx «control», que es lo que G.1 destapó de rebote.
+--   G.4 🧷 PENDIENTE — la red de seguridad: la especialidad de TODOS los
+--      servicios con citas, sin filtrar por turnos. Cierra el hueco que dejó
+--      el 31d y sirve para volver a correrla cada vez que se encienda un
+--      médico nuevo.
 --
 -- El detalle de POR QUÉ se pregunta cada cosa está en
 -- FASE0_DESCUBRIMIENTO_HIS.sql (bloques 31, 25, 29 y 16/19). Este archivo es
@@ -892,4 +896,70 @@ GROUP BY o.familia,
          CASE o.orden WHEN 1 THEN '1-primera del paciente' ELSE '2-posterior' END
 HAVING COUNT(*) >= 20
 ORDER BY o.familia, momento;
+GO
+
+
+-- =============================================================================
+-- G.4 🧷 LA RED DE SEGURIDAD — ¿queda algún servicio sin especialidad?
+--
+-- `especialidadPorServicio` se generó en el bloque 31d filtrando a médicos CON
+-- TURNOS FUTUROS, y ese filtro dejó fuera cinco servicios con citas reales
+-- (890242ESP, 890342ESP/SUR, 890350ESP/SUR). Se añadieron el 2026-09-03
+-- deduciéndolos del par CUPS —890342* es el control de 890242*, luego comparte
+-- especialidad— pero una deducción no es un dato. Esto lo comprueba.
+--
+-- A diferencia del 31d, esta consulta NO filtra por turnos: recorre TODOS los
+-- servicios con citas en 90 días. Si mañana alguien enciende un médico nuevo,
+-- correrla otra vez dice inmediatamente si falta homologar algo.
+--
+-- CÓMO SE LEE:
+--   · `pct` cerca de 100 y `esp_distintas_observadas` = 1 → inequívoco.
+--   · `esp_distintas_observadas` > 1 → ese servicio se factura con varias
+--     especialidades; mirar `pct` para ver si es ruido o es real.
+--   · `esp_catalogo` es lo que dice `R_ESP_SER` (el catálogo). Si NO coincide
+--     con `esp_observada`, manda lo observado: es lo que el hospital hace de
+--     verdad, no lo que su catálogo dice que debería hacer.
+--   · Cualquier servicio de esta lista que NO esté en `especialidadPorServicio`
+--     es un hueco. Desde el 2026-09-03 el agente ya no lo rellena a ciegas:
+--     lanza `MappingIncompletoError` y la cita falla a la vista de todos.
+--
+-- ⚠️ SOLO LECTURA. Sintaxis validada contra un SQL Server real.
+-- =============================================================================
+WITH observado AS (
+    SELECT  c.CD_CODI_SER_CIT AS servicio,
+            c.CD_CODI_ESP_CIT AS especialidad,
+            COUNT(*)          AS citas
+    FROM dbo.CITAS_MEDICAS c
+    WHERE c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+    GROUP BY c.CD_CODI_SER_CIT, c.CD_CODI_ESP_CIT
+),
+ranking AS (
+    SELECT  o.*,
+            SUM(o.citas) OVER (PARTITION BY o.servicio)                        AS total,
+            ROW_NUMBER() OVER (PARTITION BY o.servicio ORDER BY o.citas DESC)  AS puesto,
+            COUNT(*)     OVER (PARTITION BY o.servicio)                        AS distintas
+    FROM observado o
+),
+catalogo AS (
+    SELECT  rs.CD_CODI_SER_RES      AS servicio,
+            MIN(rs.CD_CODI_ESP_RES) AS esp_catalogo,
+            COUNT(*)                AS esp_en_catalogo
+    FROM dbo.R_ESP_SER rs
+    GROUP BY rs.CD_CODI_SER_RES
+)
+SELECT  r.servicio,
+        s.NO_NOMB_SER                                   AS nombre_servicio,
+        r.especialidad                                  AS esp_observada,
+        e.NO_NOMB_ESP                                   AS nombre_especialidad,
+        CAST(100.0 * r.citas / r.total AS decimal(5,1)) AS pct,
+        r.total                                         AS citas_90d,
+        r.distintas                                     AS esp_distintas_observadas,
+        c.esp_catalogo,
+        c.esp_en_catalogo
+FROM ranking r
+LEFT JOIN dbo.SERVICIOS      s ON s.CD_CODI_SER = r.servicio
+LEFT JOIN dbo.ESPECIALIDADES e ON e.CD_CODI_ESP = r.especialidad
+LEFT JOIN catalogo           c ON c.servicio    = r.servicio
+WHERE r.puesto = 1
+ORDER BY r.servicio;
 GO

@@ -60,8 +60,30 @@ export interface AnsermaMapping {
   serviciosPyp: string[];
   /** `CD_CODI_ESP_CIT` por servicio. Correlaciona con el servicio, no con el médico. */
   especialidadPorServicio: Record<string, string>;
-  /** Especialidad cuando el servicio no está en el mapa. */
-  especialidadPorDefecto: string;
+  /**
+   * Especialidad para un servicio que NO está en `especialidadPorServicio`.
+   *
+   * ⚠️ OPCIONAL, Y ANSERMA NO LA DECLARA — a propósito. Tenía `'000'`
+   * (MEDICINA GENERAL) y eso convertía cada servicio sin mapear en una cita
+   * mal etiquetada **en silencio**: una consulta de dermatología entrando al
+   * HIS como medicina general no da error, no deja rastro, y se descubre
+   * cuando la EPS glosa la factura.
+   *
+   * No era teórico. `especialidadPorServicio` se generó filtrando a médicos
+   * con turnos futuros, y eso dejó fuera cinco servicios con citas reales
+   * (890242ESP, 890342ESP/SUR, 890350ESP/SUR) — entre ellos la mitad «control»
+   * de ginecología, justo lo primero que hace falta cuando el chatbot empieza
+   * a preguntar «¿primera vez o control?».
+   *
+   * Sin default, `resolveEspecialidad` lanza `MappingIncompletoError`, que es
+   * lo mismo que ya hacen `mapConvenio` y `mapSexo` ante un hueco. La cita
+   * falla, se reporta y alguien añade una línea al mapping — ruidoso, visible
+   * y reparable en minutos, frente a un dato malo que nadie va a mirar.
+   *
+   * Se deja como escape para un hospital cuyo catálogo sí tenga un cajón de
+   * sastre legítimo; declararla es afirmar que adivinar es aceptable ahí.
+   */
+  especialidadPorDefecto?: string;
   /** `NU_DURA_CIT` cuando el turno no la impone. */
   duracionMinutos: number;
   /**
@@ -287,14 +309,31 @@ export function mapSexo(mapping: AnsermaMapping, gender?: string): number {
   return codigo;
 }
 
-/** `CD_CODI_ESP_CIT`. Correlaciona con el servicio, no con el médico. */
+/**
+ * `CD_CODI_ESP_CIT`. Correlaciona con el SERVICIO, no con el médico.
+ *
+ * Lanza si el servicio no está mapeado y el hospital no declaró un default.
+ * Ver la nota de `AnsermaMapping.especialidadPorDefecto`: preferimos que la
+ * cita falle a la vista de todos antes que entrar al HIS con la especialidad
+ * equivocada sin que salte nada.
+ */
 export function resolveEspecialidad(
   mapping: AnsermaMapping,
   serviceExternalKey?: string,
 ): string {
-  return (
-    mapping.especialidadPorServicio[serviceExternalKey ?? ''] ??
-    mapping.especialidadPorDefecto
+  const especialidad =
+    mapping.especialidadPorServicio[serviceExternalKey ?? ''];
+  if (especialidad !== undefined) return especialidad;
+
+  if (mapping.especialidadPorDefecto !== undefined) {
+    return mapping.especialidadPorDefecto;
+  }
+
+  throw new MappingIncompletoError(
+    `El servicio "${serviceExternalKey ?? '(vacío)'}" no tiene especialidad ` +
+      `homologada (CD_CODI_ESP_CIT). Añádelo a especialidadPorServicio en el ` +
+      `mappingJson de HospitalMirrorConfig; adivinarla escribiría una cita ` +
+      `con la especialidad equivocada en el HIS sin que nadie se entere.`,
   );
 }
 
