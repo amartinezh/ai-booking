@@ -58,4 +58,32 @@ export default tseslint.config(
       ],
     },
   },
+  // ── Pruebas ────────────────────────────────────────────────────────────
+  //
+  // Los dobles de prueba son `any` por naturaleza: un mock de Prisma o de un
+  // proveedor externo no tiene —ni debe tener— los tipos generados del real.
+  // La familia `no-unsafe-*` existe para proteger el código de PRODUCCIÓN de
+  // valores sin tipar que vienen de la red o de la base; aplicarla a los
+  // mocks solo produce ruido que esconde los hallazgos que sí importan.
+  //
+  // El resto de reglas (incluida la de fechas de CLAUDE.md y prettier) sigue
+  // activa aquí. Ver el bloque A del plan de remediación en .github/workflows:
+  // el objetivo es que el lint llegue a ser una barrera, y separar la deuda de
+  // las pruebas de la de producción es el paso que lo hace alcanzable.
+  {
+    files: ['**/*.spec.ts', 'test/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      // Un helper de prueba `async () => valor` es idiomático: describe un
+      // colaborador asíncrono aunque el cuerpo no espere nada.
+      '@typescript-eslint/require-await': 'off',
+      // `expect(servicio.metodo).toHaveBeenCalled()` es el uso normal de un
+      // espía; la regla apunta a un riesgo de `this` que aquí no existe.
+      '@typescript-eslint/unbound-method': 'off',
+    },
+  },
 );

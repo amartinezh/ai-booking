@@ -111,13 +111,26 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     // Persistir solo lo que de verdad es una avería, y solo una vez por
     // ventana. fire-and-forget — si falla no rompe la respuesta.
     if (this.shouldPersist(status, request, messageStr)) {
-      void this.logs.error({
-        action: this.deriveAction(request, status),
-        message: messageStr.slice(0, 2000),
-        metadata,
-        userId: this.extractUserId(request),
-        organizationId: this.extractOrganizationId(request),
-      });
+      // El `.catch` no es decorativo: `void` sobre una promesa rechazada es
+      // una unhandled rejection, y Node 15+ mata el proceso por eso. Hoy
+      // SystemLogService se traga sus propios fallos, así que nunca pasa —
+      // pero el filtro no puede depender de la buena educación de su
+      // colaborador para cumplir su única regla dura: nunca lanzar.
+      this.logs
+        .error({
+          action: this.deriveAction(request, status),
+          message: messageStr.slice(0, 2000),
+          metadata,
+          userId: this.extractUserId(request),
+          organizationId: this.extractOrganizationId(request),
+        })
+        .catch((e) =>
+          this.logger.warn(
+            `No se pudo persistir el error en SystemLog: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          ),
+        );
     }
 
     // Al stdout del contenedor va TODO, con el nivel que le corresponde:

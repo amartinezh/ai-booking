@@ -7,6 +7,7 @@ import type {
 import {
   AnsermaMapping,
   feHoraCitAIso,
+  feHoraCitAIsoOrNull,
   MappingIncompletoError,
   formatFeHoraCit,
   fechaCitaLocal,
@@ -461,6 +462,12 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
 
     const events: CanonicalChangeEvent[] = [];
     const ahora = new Date().toISOString();
+    /** Filas con FE_HORA_CIT ilegible: se omiten, pero se cuentan y se avisan. */
+    let horasIlegibles = 0;
+    const empujar = (ev: CanonicalChangeEvent | null) => {
+      if (ev) events.push(ev);
+      else horasIlegibles++;
+    };
 
     for (const [clave, fila] of Object.entries(actual.filas)) {
       const previo = anterior.filas[clave];
@@ -472,14 +479,14 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         if (!dentro(fila)) continue;
         // Alta nueva. Si la escribimos nosotros, no se devuelve al servidor.
         if (fila.propia) continue;
-        events.push(this.eventoDeCita('INSERT', clave, fila, ahora));
+        empujar(this.eventoDeCita('INSERT', clave, fila, ahora));
       } else if (previo.e !== fila.e && dentro(fila)) {
         // Solo se reporta el desenlace que sabemos traducir al vocabulario de
         // AgenIA. El estado 2 existe y nadie ha confirmado qué significa
         // (MAPEO_HIS.md §2.1): inventarle una asistencia a un paciente es
         // peor que no escribirla. Se avisa para que no sea un silencio.
         if (desenlaceDeAtencion(fila.e)) {
-          events.push(this.eventoDeCita('ATTENDANCE', clave, fila, ahora));
+          empujar(this.eventoDeCita('ATTENDANCE', clave, fila, ahora));
         } else {
           console.warn(
             `[driver cnt-sanvicente-anserma] ${clave}: NU_ESTA_CIT pasó de ` +
@@ -505,20 +512,37 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       if (!anterior.ventana || !dentro(previo)) continue;
       // Desapareció de CITAS_MEDICAS: es una cancelación, la haya hecho el
       // hospital sobre una cita nuestra o sobre una suya.
-      events.push(this.eventoDeCita('CANCEL', clave, previo, ahora));
+      empujar(this.eventoDeCita('CANCEL', clave, previo, ahora));
+    }
+
+    if (horasIlegibles > 0) {
+      console.warn(
+        `[driver cnt-sanvicente-anserma] ${horasIlegibles} cambio(s) omitido(s) ` +
+          `por FE_HORA_CIT ilegible. Es data legada del hospital (≈5,7 % de las ` +
+          `citas recientes); antes esto tumbaba la vuelta entera.`,
+      );
     }
 
     return { events, nextCursor: actual };
   }
 
-  /** Traduce una fila del HIS al formato canónico que entiende el motor. */
+  /**
+   * Traduce una fila del HIS al formato canónico que entiende el motor.
+   *
+   * Devuelve `null` cuando la hora del HIS no se puede interpretar. Antes
+   * lanzaba, y con eso se caía la vuelta ENTERA de detección: una sola fila
+   * sucia —y hay un 5,7 % de ellas— dejaba al hospital sin espejar nada. El
+   * llamador la omite y lleva la cuenta para que no sea un silencio.
+   */
   private eventoDeCita(
     op: 'INSERT' | 'CANCEL' | 'ATTENDANCE',
     clave: string,
     fila: SnapshotRow,
     ahora: string,
-  ): CanonicalChangeEvent {
+  ): CanonicalChangeEvent | null {
     const [medico, feHora] = clave.split('|');
+    const startTimeIso = feHoraCitAIsoOrNull(feHora, this.timeZone);
+    if (!startTimeIso) return null;
     return {
       // El `eventId` lo genera el AGENTE y debe ser estable para la misma
       // observación: si el mismo cambio se reportara dos veces (un reintento
@@ -532,7 +556,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         serviceExternalKey: fila.s ?? undefined,
         patientDocument: fila.h ?? undefined,
         // La hora del HIS es local; el protocolo viaja en UTC (plan §8).
-        startTimeIso: feHoraCitAIso(feHora, this.timeZone),
+        startTimeIso,
         // 🌐 El protocolo viaja en el vocabulario de AgenIA, no en el del
         // hospital — igual que las horas viajan en UTC. Antes se mandaba
         // `String(fila.e)`, el código crudo del HIS, contra un enum de Prisma
@@ -590,13 +614,23 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
          WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
 
     const foto: HisAppointmentSnapshot[] = [];
+    let horasIlegibles = 0;
     for (const f of filas.recordset as {
       med: string;
       hora: string;
       hist: string | null;
     }[]) {
       // El HIS guarda hora local; el protocolo viaja en UTC (plan §8).
-      const startTimeIso = feHoraCitAIso(f.hora, this.timeZone);
+      //
+      // Tolerante a propósito: una sola fila con la hora corrupta hacía
+      // fracasar la reconciliación COMPLETA, que es la última defensa contra
+      // la deriva silenciosa. Mejor una foto a la que le falta una fila —y
+      // que lo dice— que ninguna foto.
+      const startTimeIso = feHoraCitAIsoOrNull(f.hora, this.timeZone);
+      if (!startTimeIso) {
+        horasIlegibles++;
+        continue;
+      }
       const inicio = new Date(startTimeIso);
       if (inicio < window.from || inicio >= window.to) continue;
       foto.push({
@@ -604,6 +638,13 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         startTimeIso,
         patientDocument: f.hist ?? undefined,
       });
+    }
+    if (horasIlegibles > 0) {
+      console.warn(
+        `[driver cnt-sanvicente-anserma] la foto para la reconciliación omite ` +
+          `${horasIlegibles} cita(s) con FE_HORA_CIT ilegible. Aparecerán como ` +
+          `"el hospital no la tiene" — revisar esas filas en el HIS.`,
+      );
     }
     return foto;
   }
@@ -1099,7 +1140,17 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         SELECT
           CD_CODI_MED_CIT, FE_HORA_CIT, CD_CODI_SER_CIT,
           NU_HIST_PAC_CIT, NU_DURA_CIT, FE_ELAB_CIT, FE_FECH_CIT,
-          NU_DIA_CIT, NU_NUME_MOVI_CIT, NU_PRIM_CIT, NU_NUME_CONE_CIT,
+          -- COALESCE porque el origen ADMITE nulos y el destino NO.
+          --
+          -- Es la única columna del copiado con esa asimetría (comprobado
+          -- contra esquema-real.tsv, el volcado del bloque 28), y en el
+          -- catálogo vivo hay EXACTAMENTE una fila así en 1.084.093
+          -- (bloque 29f). Basta esa una: cancelarla reventaría con el error
+          -- 515, la transacción entera se iría atrás, y el paciente ya habría
+          -- recibido "cancelada" por WhatsApp mientras el hospital se queda
+          -- con la cita. El 0 es el mismo valor que este driver escribe al
+          -- crear, así que no inventa un consecutivo ajeno.
+          NU_DIA_CIT, COALESCE(NU_NUME_MOVI_CIT, 0), NU_PRIM_CIT, NU_NUME_CONE_CIT,
           NU_CONE_CALL_CIT, CD_CODI_ESP_CIT, CD_CODI_CONS_CIT,
           NU_NUME_CONV_CIT, NU_TIPO_CIT, DE_DESC_CIT, NU_AUTO_AGRU_CIT,
           CD_CODI_EST_CIT, CD_CODI_CAMP_CIT, NU_CODIGO_HSWE_CIT,

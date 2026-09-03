@@ -61,12 +61,23 @@ export interface HttpMirrorApiClientOptions {
 export class HttpMirrorApiClient implements MirrorApiClient {
   private readonly timeoutMs: number;
   private readonly longPollTimeoutMs: number;
+  /**
+   * URL base SIN barra final.
+   *
+   * Se normaliza porque el valor lo escribe una persona en el `.env` de la VM
+   * del hospital, y `https://api.agenia.co/` produce `//mirror/handshake`:
+   * una ruta que el router de la API no reconoce. El agente arrancaría,
+   * latiría y fallaría el 100 % de sus llamadas con 404 — sin una sola pista
+   * de que el problema es una barra de más.
+   */
+  private readonly baseUrl: string;
 
   constructor(
-    private readonly baseUrl: string,
+    baseUrl: string,
     private readonly agentToken: string,
     opts: HttpMirrorApiClientOptions = {},
   ) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
     this.longPollTimeoutMs = opts.longPollTimeoutMs ?? TIMEOUT_LONG_POLL_MS;
   }

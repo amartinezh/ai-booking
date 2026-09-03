@@ -51,7 +51,7 @@ describe('InboundQueueService', () => {
 
     it('fail-open: si Redis falla, admite el mensaje (no lo pierde)', async () => {
       const redis = fakeRedis();
-      redis.set.mockRejectedValueOnce(new Error('redis down'));
+      redis.set.mockRejectedValueOnce(new Error('redis down') as never);
       const q = new InboundQueueService(redis as any);
       expect(await q.admit('w1')).toBe(true);
     });

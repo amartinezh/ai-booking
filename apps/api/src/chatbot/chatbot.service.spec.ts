@@ -964,8 +964,10 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     expect(replies[0]).toContain('consulta externa');
     expect(replies[0]).toContain('agendar una cita ahora');
     // El FAQ no debe alterar el estado (sigue IDLE; no entra a AWAITING_SPECIALTY).
+    // El valor guardado en Redis es un string suelto, no el enum: se compara
+    // contra su representación textual para no cruzar tipos.
     const state = redis.store.get(`chat_state:${ORG_ID}:${SENDER}`);
-    expect(state === undefined || state === ChatState.IDLE).toBe(true);
+    expect(state === undefined || state === String(ChatState.IDLE)).toBe(true);
   });
 
   // ── Fase 3 · endurecimiento del RAG: regla 0 de emergencias ──
@@ -2974,8 +2976,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     it('la ventana se marca con TTL de 24 h', async () => {
       await service.processIncomingMessage(makeTextEvent('Hola'));
 
-      const llamada = redis.set.mock.calls.find(
-        (c: any[]) => c[0] === `wa_window:${ORG_ID}:${SENDER}`,
+      const llamada = (redis.set.mock.calls as unknown as any[][]).find(
+        (c) => c[0] === `wa_window:${ORG_ID}:${SENDER}`,
       );
       expect(llamada?.[2]).toBe('EX');
       expect(llamada?.[3]).toBe(24 * 60 * 60);
@@ -2996,7 +2998,9 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     });
 
     it('si Redis falla se asume FUERA de ventana (se cae a plantilla, que siempre es válida)', async () => {
-      redis.get.mockRejectedValueOnce(new Error('redis caído'));
+      (redis.get as jest.Mock).mockRejectedValueOnce(
+        new Error('redis caído') as never,
+      );
 
       await expect(service.isWithinServiceWindow(ORG_ID, SENDER)).resolves.toBe(
         false,

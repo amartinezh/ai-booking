@@ -102,7 +102,12 @@ async function main() {
   console.log('✓ Mapeo coherente:');
   console.log(`   ${Object.keys(crudo.especialidadPorServicio).length} servicios con especialidad`);
   console.log(`   ${crudo.serviciosPyp.length} servicios de PyP`);
-  console.log(`   ${Object.keys(crudo.convenios).length} convenios (pendientes de validar con la agendadora)`);
+  // Derivados de 90 días de citas reales del hospital y contrastados contra
+  // la cota superior de uso de cada convenio (sección D de
+  // docs/drivers/cnt-sanvicente-anserma/sql/PENDIENTE_CORRER_EN_HOSPITAL.sql).
+  console.log(
+    `   ${Object.keys(crudo.convenios).length} convenios (derivados de las citas reales del hospital)`,
+  );
 
   // Las claves con guion bajo son procedencia y notas: no viajan al agente.
   const mapping = Object.fromEntries(

@@ -278,3 +278,421 @@ describe('MirrorApplyService', () => {
     });
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// CITAS QUE NACEN EN EL HIS (dirección HIS → AgenIA).
+//
+// El driver no conoce los ids de AgenIA: reporta "el médico 76 a las 07:00".
+// Toda la traducción ocurre en `resolverCupo`, y de ella depende que AgenIA
+// deje de ofrecer por WhatsApp una hora que el hospital ya vendió — la
+// sobreventa que encontró la prueba de punta a punta.
+// ══════════════════════════════════════════════════════════════════════════
+describe('MirrorApplyService — la cita la agendó el hospital', () => {
+  let service: MirrorApplyService;
+  let prisma: any;
+  let tx: any;
+  let appointments: { bookAppointment: jest.Mock; updateAttendance: jest.Mock };
+
+  const ORG = 'org1';
+  const CUPO = {
+    id: 'slot-1',
+    organizationId: ORG,
+    doctorId: 'doc-1',
+    isAvailable: true,
+    startTime: new Date('2026-09-10T12:00:00.000Z'),
+  };
+
+  const evento = (
+    over: Partial<CanonicalChangeEvent> = {},
+  ): CanonicalChangeEvent => ({
+    eventId: 'evt-his-1',
+    entityType: 'APPOINTMENT',
+    op: 'INSERT',
+    occurredAtIso: '2026-09-02T10:00:00.000Z',
+    payload: {
+      doctorExternalKey: '76',
+      startTimeIso: '2026-09-10T12:00:00.000Z',
+      patientDocument: '9696544',
+    },
+    ...over,
+  });
+
+  const aplicar = (e: CanonicalChangeEvent) => service.applyBatch(ORG, [e]);
+
+  beforeEach(async () => {
+    tx = {
+      appointment: { findFirst: jest.fn(), update: jest.fn() },
+      scheduleSlot: { update: jest.fn() },
+      $executeRawUnsafe: jest.fn(),
+    };
+    prisma = {
+      syncInbox: { findUnique: jest.fn(async () => null), create: jest.fn() },
+      syncAudit: { create: jest.fn() },
+      appointment: { findFirst: jest.fn(async () => null), update: jest.fn() },
+      scheduleSlot: { findFirst: jest.fn(async () => CUPO), update: jest.fn() },
+      mirrorEntityMap: {
+        findFirst: jest.fn(async () => ({ agenIAId: 'doc-1' })),
+      },
+      $transaction: jest.fn((cb: any) => cb(tx)),
+    };
+    appointments = {
+      bookAppointment: jest.fn(async () => ({
+        success: true,
+        appointmentId: 'apt-1',
+      })),
+      updateAttendance: jest.fn(async () => ({ success: true })),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MirrorApplyService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: AppointmentsService, useValue: appointments },
+      ],
+    }).compile();
+    service = module.get(MirrorApplyService);
+    jest.spyOn((service as any).logger, 'log').mockImplementation(() => {});
+    jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+  });
+
+  describe('alta entrante sin paciente homologado', () => {
+    it('OCUPA el cupo igual: lo que importa es no volver a venderlo', async () => {
+      const r = await aplicar(evento());
+
+      expect(r.applied).toBe(1);
+      expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+        where: { id: 'slot-1' },
+        data: { isAvailable: false },
+      });
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
+    });
+
+    it('🪞 marca la transacción como MIRROR: el evento no rebota al HIS que lo originó', async () => {
+      await aplicar(evento());
+
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+    });
+
+    it('el cupo se busca por médico homologado + hora exacta, dentro de la org', async () => {
+      await aplicar(evento());
+
+      expect(prisma.mirrorEntityMap.findFirst).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG,
+          entityType: 'DOCTOR',
+          externalKey: '76',
+        },
+        select: { agenIAId: true },
+      });
+      expect(prisma.scheduleSlot.findFirst).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG,
+          doctorId: 'doc-1',
+          startTime: new Date('2026-09-10T12:00:00.000Z'),
+        },
+      });
+    });
+
+    it('un cupo que YA estaba ocupado no se vuelve a tocar', async () => {
+      prisma.scheduleSlot.findFirst.mockResolvedValue({
+        ...CUPO,
+        isAvailable: false,
+      });
+
+      const r = await aplicar(evento());
+
+      expect(r.applied).toBe(1);
+      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('con el paciente ya homologado se agenda de verdad, con origen MIRROR', async () => {
+      const r = await aplicar(
+        evento({
+          payload: {
+            doctorExternalKey: '76',
+            startTimeIso: '2026-09-10T12:00:00.000Z',
+            agenIAPatientId: 'pac-1',
+          },
+        }),
+      );
+
+      expect(r.applied).toBe(1);
+      expect(appointments.bookAppointment).toHaveBeenCalledWith(
+        'pac-1',
+        'slot-1',
+        null,
+        'MIRROR',
+        ORG,
+      );
+    });
+  });
+
+  describe('🚨 lo que NO se puede resolver falla explícito, nunca a medias', () => {
+    it('médico sin homologar → error contado y auditado', async () => {
+      prisma.mirrorEntityMap.findFirst.mockResolvedValue(null);
+
+      const r = await aplicar(evento());
+
+      expect(r.errors).toBe(1);
+      expect(r.applied).toBe(0);
+      expect(prisma.syncAudit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          outcome: 'ERROR',
+          direction: 'INBOUND',
+          detail: expect.stringContaining('Falta homologar'),
+        }),
+      });
+    });
+
+    it('el cupo no existe en AgenIA → error, no se inventa', async () => {
+      prisma.scheduleSlot.findFirst.mockResolvedValue(null);
+
+      const r = await aplicar(evento());
+      expect(r.errors).toBe(1);
+      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('un evento sin médico ni hora tampoco resuelve nada', async () => {
+      const r = await aplicar(evento({ payload: {} }));
+
+      expect(r.errors).toBe(1);
+      expect(prisma.mirrorEntityMap.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('una op que APPOINTMENT no soporta se rechaza', async () => {
+      const r = await aplicar(evento({ op: 'DELETE' }));
+
+      expect(r.errors).toBe(1);
+      expect(prisma.syncAudit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          detail: expect.stringContaining('op no soportada'),
+        }),
+      });
+    });
+
+    it('un entityType que no existe se rechaza en vez de aplicarse a ciegas', async () => {
+      const r = await aplicar(evento({ entityType: 'GALLETA' as never }));
+      expect(r.errors).toBe(1);
+    });
+  });
+
+  describe('cancelación hecha en el HIS', () => {
+    const cancelacion = (payload: Record<string, unknown> = {}) =>
+      evento({
+        eventId: 'evt-cancel',
+        op: 'CANCEL',
+        payload: {
+          doctorExternalKey: '76',
+          startTimeIso: '2026-09-10T12:00:00.000Z',
+          cancelReason: 'PACIENTE NO CONFIRMA',
+          cancelObservations: 'llamó a las 8am',
+          ...payload,
+        },
+      });
+
+    it('la cita de AgenIA queda CANCELLED y su cupo vuelve a estar libre', async () => {
+      prisma.appointment.findFirst.mockResolvedValue({
+        id: 'apt-1',
+        scheduleSlotId: 'slot-1',
+      });
+      tx.appointment.findFirst.mockResolvedValue({
+        id: 'apt-1',
+        scheduleSlotId: 'slot-1',
+      });
+
+      const r = await aplicar(cancelacion());
+
+      expect(r.applied).toBe(1);
+      expect(tx.appointment.update).toHaveBeenCalledWith({
+        where: { id: 'apt-1' },
+        data: {
+          status: 'CANCELLED',
+          metaLog: {
+            cancelledBy: 'MIRROR',
+            reason: 'PACIENTE NO CONFIRMA',
+            observations: 'llamó a las 8am',
+            eventId: 'evt-cancel',
+          },
+        },
+      });
+      expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+        where: { id: 'slot-1' },
+        data: { isAvailable: true },
+      });
+    });
+
+    it('si AgenIA nunca tuvo esa cita, solo libera el cupo', async () => {
+      prisma.appointment.findFirst.mockResolvedValue(null);
+      prisma.scheduleSlot.findFirst.mockResolvedValue({
+        ...CUPO,
+        isAvailable: false,
+      });
+
+      const r = await aplicar(cancelacion());
+
+      expect(r.applied).toBe(1);
+      expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+        where: { id: 'slot-1' },
+        data: { isAvailable: true },
+      });
+      expect(tx.appointment.update).not.toHaveBeenCalled();
+    });
+
+    it('cupo ya libre y sin cita: no hay nada que hacer y no es un fallo', async () => {
+      prisma.appointment.findFirst.mockResolvedValue(null);
+
+      const r = await aplicar(cancelacion());
+
+      expect(r.applied).toBe(1);
+      expect(r.errors).toBe(0);
+      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('con el id de AgenIA ya resuelto no hace falta el cupo', async () => {
+      tx.appointment.findFirst.mockResolvedValue({
+        id: 'apt-7',
+        scheduleSlotId: 'slot-7',
+      });
+
+      const r = await aplicar(cancelacion({ agenIAAppointmentId: 'apt-7' }));
+
+      expect(r.applied).toBe(1);
+      expect(prisma.mirrorEntityMap.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('🏢 una cita de OTRA clínica no se puede cancelar desde este agente', async () => {
+      tx.appointment.findFirst.mockResolvedValue(null); // el where lleva la org
+
+      const r = await aplicar(
+        cancelacion({ agenIAAppointmentId: 'apt-ajena' }),
+      );
+
+      expect(r.errors).toBe(1);
+      expect(tx.appointment.update).not.toHaveBeenCalled();
+      expect(tx.appointment.findFirst).toHaveBeenCalledWith({
+        where: { id: 'apt-ajena', organizationId: ORG },
+      });
+    });
+
+    it('sin motivo ni observaciones se guardan como null, no como undefined', async () => {
+      tx.appointment.findFirst.mockResolvedValue({
+        id: 'apt-1',
+        scheduleSlotId: 'slot-1',
+      });
+
+      await aplicar(
+        evento({
+          op: 'CANCEL',
+          payload: { agenIAAppointmentId: 'apt-1' },
+        }),
+      );
+
+      expect(tx.appointment.update.mock.calls[0][0].data.metaLog).toMatchObject(
+        { reason: null, observations: null },
+      );
+    });
+  });
+
+  describe('desenlace de atención', () => {
+    it('sin desenlace se rechaza', async () => {
+      const r = await aplicar(
+        evento({ op: 'ATTENDANCE', payload: { agenIAAppointmentId: 'apt-1' } }),
+      );
+      expect(r.errors).toBe(1);
+    });
+
+    it('un valor fuera del vocabulario se rechaza con la lista de válidos', async () => {
+      const r = await aplicar(
+        evento({
+          op: 'ATTENDANCE',
+          payload: { agenIAAppointmentId: 'apt-1', attendanceStatus: 'VINO' },
+        }),
+      );
+
+      expect(r.errors).toBe(1);
+      expect(prisma.syncAudit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          detail: expect.stringContaining('PENDING, ATTENDED, NO_SHOW'),
+        }),
+      });
+    });
+
+    it.each(['PENDING', 'ATTENDED', 'NO_SHOW'])('%s se aplica', async (v) => {
+      const r = await aplicar(
+        evento({
+          op: 'ATTENDANCE',
+          payload: { agenIAAppointmentId: 'apt-1', attendanceStatus: v },
+        }),
+      );
+
+      expect(r.applied).toBe(1);
+      expect(appointments.updateAttendance).toHaveBeenCalledWith(
+        'apt-1',
+        v,
+        ORG,
+      );
+    });
+  });
+
+  describe('auditoría e idempotencia del lote', () => {
+    it('un lote mixto reporta cada categoría por separado', async () => {
+      prisma.syncInbox.findUnique
+        .mockResolvedValueOnce({ id: 'x' }) // ya visto
+        .mockResolvedValue(null);
+      appointments.bookAppointment
+        .mockResolvedValueOnce({ success: false }) // conflicto
+        .mockResolvedValue({ success: true, appointmentId: 'a' });
+
+      const r = await service.applyBatch(ORG, [
+        evento({ eventId: 'ya-visto' }),
+        evento({
+          eventId: 'conflicto',
+          payload: { agenIAPatientId: 'p', agenIAScheduleSlotId: 's' },
+        }),
+        evento({
+          eventId: 'bueno',
+          payload: { agenIAPatientId: 'p', agenIAScheduleSlotId: 's' },
+        }),
+        evento({ eventId: 'roto', op: 'DELETE' }),
+      ]);
+
+      expect(r).toEqual({ applied: 1, skipped: 1, conflicts: 1, errors: 1 });
+    });
+
+    it('la fila de idempotencia se escribe DESPUÉS de aplicar, nunca antes', async () => {
+      const orden: string[] = [];
+      appointments.bookAppointment.mockImplementation(async () => {
+        orden.push('aplicar');
+        return { success: true, appointmentId: 'a' };
+      });
+      prisma.syncInbox.create.mockImplementation(async () => {
+        orden.push('inbox');
+      });
+
+      await aplicar(
+        evento({
+          payload: { agenIAPatientId: 'p', agenIAScheduleSlotId: 's' },
+        }),
+      );
+
+      expect(orden).toEqual(['aplicar', 'inbox']);
+    });
+
+    it('la auditoría de un conflicto se marca CONFLICT, no OK', async () => {
+      appointments.bookAppointment.mockResolvedValue({ success: false });
+
+      await aplicar(
+        evento({
+          payload: { agenIAPatientId: 'p', agenIAScheduleSlotId: 's' },
+        }),
+      );
+
+      expect(prisma.syncAudit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ outcome: 'CONFLICT' }),
+      });
+    });
+  });
+});

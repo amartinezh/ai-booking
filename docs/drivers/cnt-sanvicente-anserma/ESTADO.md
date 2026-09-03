@@ -564,6 +564,281 @@ asignado y una contraseña de 64 caracteres hex.
 **Lo que sigue faltando para encender:** correr esto contra el hospital de
 verdad, y que alguien mire la lista antes del `--aplicar`.
 
+## 📍 Última milla del INSERT — estado real (2026-09-02)
+
+Los tres campos que se arrastraban como "pendientes del bloque 21" ya no están
+en el mismo sitio. Contrastados contra `esquema-real.tsv` (el volcado del
+bloque 28) y contra el resultado del bloque 32:
+
+| Campo | Estado | Qué falta |
+|---|---|---|
+| `CD_CODI_ESP_CIT` (especialidad) | ✅ **Cerrado** por el bloque 32 | Nada. `especialidadPorServicio` se genera de la moda empírica por servicio (36 de 40 inequívocos) y se verifica contra `R_ESP_SER ∩ R_MEDI_ESPE`: 0 contradicciones en 21.362 citas. |
+| `CD_CODI_CONS_CIT` (consultorio) | ✅ **Resuelto estructuralmente** | No es una constante: sale de `turnoDelDia()` → `CD_CODI_CONS_TUME`. Falta solo validar la regla **a escala** (bloque 25a). No bloquea: si el turno no existe, el driver rechaza la cita en vez de inventar consultorio. |
+| `NU_NUME_CONE_CIT` (consecutivo de sesión) | ⚠️ **No es bloqueante** | La columna **admite nulos** en el esquema real, así que el INSERT —que no la escribe— no puede fallar por esto. Lo que queda es *fidelidad*: si los informes del hospital agrupan por sesión, las citas de WhatsApp quedan fuera de esa agrupación. Pregunta B.2 del archivo de pendientes. |
+
+**Comprobación estructural adicional (2026-09-02).** El INSERT de
+`CITAS_MEDICAS` cubre las **tres** únicas columnas NOT NULL de la tabla (las
+de la PK); todas las demás admiten nulos. No hay una omisión capaz de romper
+el alta en el hospital.
+
+### ✅ Defecto encontrado y corregido: la cancelación de una fila entre un millón
+
+`copiarAAnuladas()` copiaba `NU_NUME_MOVI_CIT` tal cual, y esa columna
+**admite nulos en `CITAS_MEDICAS` y NO los admite en `CITAS_ANULADAS`**. En el
+catálogo vivo hay exactamente **una** fila así en 1.084.093 (bloque 29f).
+Bastaba esa una: cancelarla revienta con el error 515, la transacción se va
+atrás entera, y el paciente ya recibió "cancelada" por WhatsApp mientras el
+hospital conserva la cita — el fallo más caro que puede tener el espejo.
+
+Se comprobó además, columna a columna contra `esquema-real.tsv`, que es la
+**única** del copiado con esa asimetría. Reproducido contra el SQL Server del
+mock (que hereda la misma nulabilidad): copia vieja → error 515; con
+`COALESCE(NU_NUME_MOVI_CIT, 0)` → archiva con `movi=0`. El 0 es el mismo valor
+que este driver escribe al crear, así que no inventa un consecutivo ajeno.
+Dos pruebas nuevas en `create-appointment.spec.ts`.
+
+### 🚨 Convenios — los NIT estaban cruzados (2026-09-02)
+
+La sección D del archivo de pendientes se corrió y encontró más de lo que
+buscaba.
+
+**El hallazgo.** La tabla `EPS` del hospital dice `800088702` = EPS
+SURAMERICANA y `900156264` = NUEVA EPS, que son los NIT públicos correctos.
+**AgenIA los tenía al revés** en su tabla `Eps`, y `mapping.json` repetía el
+mismo cruce. Los dos errores se cancelaban: el convenio salía bien por
+accidente. Nadie lo habría visto hasta que alguien "arreglara" uno solo — y en
+ese momento la facturación se voltea en silencio, sin un error, sin un log.
+
+**Lo que además estaba mal, y sí facturaba mal hoy.** Con los NIT ya
+descruzados, dos de las ocho combinaciones no coincidían con lo que hace el
+hospital:
+
+| Combinación | Antes | Ahora | Cuota real (90 días) |
+|---|---|---|---|
+| Nueva EPS · contributivo · normal | 283 NUEVASUBSID | **473 CONTRIBUTIVO** | 73,4 % de 2.406 |
+| Nueva EPS · contributivo · PyP | 489 PYPSUBS | **473 CONTRIBUTIVO** | 65,6 % de 390 |
+
+Las dos mandaban a un paciente **contributivo** a un contrato **subsidiado**.
+La segunda venía de que la clave de PyP era `${nit}|PYP`, sin régimen: se
+aplicaba a cualquier régimen de esa EPS. Ahora es `${nit}|${REGIMEN}|PYP`, y
+solo Nueva EPS subsidiado la tiene — Sura no tiene convenio propio de PyP, usa
+el de su régimen (467 en el 94,3 % de 2.566 citas).
+
+**Verificado en vivo.** Cita real por WhatsApp de una paciente de Nueva EPS
+contributivo → fila en `CITAS_MEDICAS` con `NU_NUME_CONV_CIT = 473`. Antes
+habría escrito 283.
+
+**El candado.** `mapping.spec.ts` ahora carga el `mapping.json` **real** (el
+que se aplica a `HospitalMirrorConfig.mappingJson`) y fija las ocho
+combinaciones **por nombre de EPS**, no por NIT. Un test escrito sobre NITs no
+habría notado nada: ni el cruce, ni el arreglo. Doce pruebas nuevas.
+
+✅ **Y el fan-out no cambia la conclusión.** `R_PAC_EPS` es un historial
+many-to-many, así que la cita de un paciente con varias afiliaciones se cuenta
+una vez por afiliación — por eso Nueva EPS contributivo sale al 73 % y no al
+85-94 % del resto. La vía obvia de deduplicar (quedarse con los pacientes de
+una sola afiliación) **no existe aquí**: esa consulta devolvió cero filas,
+porque todo paciente acumula varias.
+
+Pero no hace falta. El fan-out solo puede **inflar** un conteo, nunca
+esconderlo, así que sumar por convenio da una **cota superior** del uso real.
+Nueva EPS contributivo arrastra ~3.550 filas de cita; esas citas se
+facturaron a algo, y el único convenio de contributivo con volumen es el 473
+(cota ≤ 6.285). El 290 `NUEVAEPSCONT` —el candidato "correcto" por nombre—
+tiene una cota superior de **dos** citas en 90 días: el hospital no lo usa.
+Queda descartado sin deduplicar nada.
+
+Los códigos de régimen tampoco son una suposición: el 01 lleva a 467 `SUBS`,
+283 `NUEVASUBSID` y 489 `PYPSUBS` — tres nombres independientes que dicen
+"subsidiado" — y el 07 a 473 `CONTRIBUTIVO`. Leer el catálogo `REGIMEN`
+(consulta **D.7**, que sí existe) confirmaría la lectura, pero la tabla no
+depende de ello.
+
+> **Al desplegar en producción:** son DOS cambios que van juntos —
+> `UPDATE "Eps" SET nit=…` (intercambio en tres pasos, la llave
+> `(organizationId, nit)` es única) y `aplicar-mapping.ts`. Aplicar uno solo
+> voltea la facturación.
+
+### 🚨 El turno NO define el servicio — el modelo de cupo hay que cambiarlo (2026-09-02)
+
+La sección A del archivo de pendientes se corrió y la respuesta es la mala.
+
+| servicios en el turno | turnos | % |
+|---|---|---|
+| 1 | 512 | 27,5 % |
+| 2 | 669 | 36,0 % |
+| 3 | 394 | 21,2 % |
+| 4 | 136 | 7,3 % |
+| 5 | 88 | 4,7 % |
+| 6 | 50 | 2,7 % |
+| 7 | 11 | 0,6 % |
+
+**El 72,5 % de los turnos mezcla servicios.** Y la puerta de atrás también
+está cerrada: `CD_CODI_ESP_TUME` está en NULL en los **1.223 turnos futuros**.
+El turno no trae servicio ni especialidad — no existe ninguna fuente de
+"servicio" a nivel de turno.
+
+**Por qué importa.** Entre los servicios que conviven hay unos de PyP y otros
+no (`890201-CI` Citas de PyDT, `997301-1` Salud oral doble, `I890305PL`
+planificación familiar, `I890301AG` control gestante). El convenio depende de
+si el servicio es de PyP, así que esto no es catalogación: es facturación.
+
+**Qué hace AgenIA hoy.** `mirror-availability.service.ts` le pone a cada cupo
+el `DoctorProfile.serviceId` — el único servicio configurado del médico. De
+ahí salen dos cosas:
+
+- **Sub-oferta.** De los N servicios que presta el médico, el chatbot solo
+  puede ofrecer uno. Incompleto, no incorrecto.
+- **Código de servicio equivocado en el HIS.** Si el paciente pide una cosa y
+  el médico tiene configurada otra, `CD_CODI_SER_CIT` viaja mal — y si la
+  diferencia cruza la frontera PyP, el convenio también.
+
+El propio código ya lo anticipaba: *«el turno es del médico, y el servicio se
+elige al agendar»*. Se resolvió por el camino corto porque
+`ScheduleSlot.serviceId` es obligatorio. Los datos dicen que no alcanza.
+
+#### El cambio de modelo que exige el go-live completo
+
+El servicio deja de ser una propiedad del CUPO y pasa a serlo de la CITA. El
+chatbot ya pregunta el servicio ANTES de mostrar cupos, así que el dato existe
+en el momento correcto — solo no se está guardando donde toca.
+
+1. `ScheduleSlot.serviceId` → opcional (el cupo pasa a ser "médico + hora").
+2. `Appointment.serviceId` → nuevo, obligatorio.
+3. `DoctorProfile.serviceId` (uno) → relación N:M médico↔servicios. La fuente
+   la da el propio HIS: `R_MEDI_ESPE ⋈ R_ESP_SER` (bloque 32: cobertura total,
+   0 médicos y 0 servicios sin fila), refinada con lo que cada médico hace de
+   verdad en 90 días.
+4. `getAvailableSlots()` filtra por *médicos que prestan ese servicio*, no por
+   `slot.serviceId`.
+5. `bookAppointment()` recibe y persiste el `serviceId` elegido.
+6. La hidratación del outbox resuelve `serviceExternalKey` desde
+   `Appointment.serviceId` en vez de `ScheduleSlot.serviceId`.
+7. Migración de las citas existentes: heredan el servicio de su cupo.
+
+Es decisión de producto además de técnica — cambia qué significa un cupo en
+todo el sistema, no solo en el espejo.
+
+#### Mientras tanto: la puerta del piloto (sección E)
+
+El piloto se activa médico por médico (`DoctorProfile.whatsappBookingEnabled`),
+y no todos los médicos tienen el problema. La sección E los clasifica en tres
+semáforos:
+
+- 🟢 **VERDE** — presta un solo servicio. Lo que AgenIA escriba es exacto.
+- 🟡 **AMARILLO** — varios servicios, pero todos de la misma especialidad y
+  todos del mismo lado de la frontera PyP. Convenio y especialidad salen bien;
+  solo el código de servicio puede ser impreciso.
+- 🔴 **ROJO** — mezcla especialidades o cruza PyP. El convenio puede salir mal.
+
+**Resultado (2026-09-03).** El semáforo binario de E dio 0 verdes / 14
+amarillos / 15 rojos, pero era demasiado severo: clasificaba en rojo a un
+médico por **una sola cita** de PyP entre cientos. El detalle de la consulta F
+permitió reclasificar con un umbral de ruido (minoría < 2 %):
+
+| | Médicos | Situación |
+|---|---|---|
+| 🟢 | **4** | Un servicio concentra ≥ 95 % (76, 077, 91-1, 91-2). ~9.400 citas/90 días |
+| 🟡 | **20** | Misma familia, el PyP es ruido. La **factura sale bien** |
+| 🔴 | **6** | Mezcla PyP real: 77, 80-1, OD02, OD05, OD07, PS06 |
+
+Solo **6 de 30** pueden facturar mal. En los tres odontólogos el culpable es el
+mismo: `990203` EDUCACIÓN INDIVIDUAL POR ODONTOLOGÍA es PyP y pesa un cuarto de
+sus citas.
+
+**Y F reveló la estructura que la pregunta abstracta escondía:** casi todas las
+familias se parten en **primera vez / control** (internista 45/55, ginecología
+68/32, pediatría 38/63, nutrición 87/13, psicología 74/26). Eso convierte una
+decisión de configuración en una pregunta que el chatbot le puede hacer al
+paciente —«¿es su primera vez o es un control?»—, que es natural y la resuelve
+sola. Es la propuesta del bloque 2 de `PREGUNTAS_AL_HOSPITAL.md`.
+
+Además aparecieron pares `ESP`/`SUR` con la misma descripción en los dos
+especialistas (ES01, ES03). Si `SUR` = Sura, el código depende de la EPS y
+AgenIA lo resuelve sin preguntar nada: la consulta **G** lo comprueba.
+
+El piloto realista son los 4 verdes de inmediato y los 20 amarillos en cuanto
+el hospital apruebe la pregunta de primera vez / control.
+
+### 🚨 El lector del HIS no era tolerante — y el 5,7 % de las citas lo habría tumbado (2026-09-03)
+
+La consulta que añadí para medir la data sucia dio un número que no esperaba:
+**419 de 7.403 citas elaboradas en 30 días (5,7 %) tienen un `FE_HORA_CIT` que
+no se puede interpretar** — longitudes 12/13, `'2026/08/29 1'`, `'31'`.
+
+`MAPEO_HIS.md` §2.1 lo exige desde el bloque 5: *«el lector del agente debe ser
+tolerante; el escritor, estricto»*. El escritor lo era. **El lector no.**
+`feHoraCitAIso` lanzaba, y se llamaba sin protección en los dos únicos sitios
+donde el agente LEE el HIS:
+
+| Sitio | Qué se caía |
+|---|---|
+| `detectChanges` (vía `eventoDeCita`) | La vuelta ENTERA de detección HIS → AgenIA. Una fila sucia y el hospital deja de espejarse. |
+| `snapshotAppointments` | La reconciliación diaria completa — la última red contra la deriva silenciosa (capa 5 del plan). |
+
+Bastaba **una** de esas 419 dentro de la ventana de 90 días. No se había visto
+porque el mock local tiene datos limpios: el mismo punto ciego que escondió el
+`NO_NOMB_PAC varchar(20)` y las cuatro columnas inexistentes de
+`CITAS_ANULADAS`.
+
+**Arreglo.** `feHoraCitAIsoOrNull()` — variante tolerante que devuelve `null`.
+Los dos lectores la usan, omiten la fila y **llevan la cuenta**, con un aviso
+por vuelta. El escritor sigue con la versión estricta: poner en la agenda del
+hospital una hora que su aplicación no sabe leer sí es inaceptable.
+
+#### Y un segundo defecto que salió al escribir la prueba
+
+El regex `^\d{4}/\d{2}/\d{2} \d{2}:\d{2}$` comprueba la **forma**, no el
+**rango**, y `Date.UTC` desborda en silencio:
+
+| Entrada | Se convertía en |
+|---|---|
+| `2026/08/29 99:99` | 2 de septiembre |
+| `2026/13/45 10:00` | **14 de febrero de 2027** |
+| `2026/02/30 10:00` | 2 de marzo |
+
+Sobre la fecha de una cita eso no es un error de formato: es reportar un cambio
+en un día que no es, o mover la cita de un paciente durante la reconciliación
+— sin un solo mensaje de error. Se añadió comprobación de ida y vuelta: si al
+reconstruir la fecha no salen los mismos componentes, se rechaza. El 29 de
+febrero de un año bisiesto sigue siendo válido.
+
+**23 pruebas nuevas.** El agente pasa de 336 a 357.
+
+### 📋 El cuestionario para el hospital (2026-09-03)
+
+Todo lo que queda abierto que NO se puede resolver leyendo la base está
+consolidado en **`PREGUNTAS_AL_HOSPITAL.md`** — seis decisiones, escritas para
+que las responda la agendadora sin traducir nada técnico.
+
+La regla al redactarlo: **nada de preguntas abiertas.** Cada una llega con lo
+que ya medimos sobre sus propios datos y con opciones marcables, de modo que
+responder sea confirmar o corregir, nunca reconstruir de memoria. La pregunta 1
+(qué servicio lleva una cita de WhatsApp) va acompañada de la consulta **F**,
+que produce el detalle por médico —qué servicios presta y en qué proporción—
+para que la conversación sea sobre casos concretos y no sobre el problema en
+abstracto.
+
+| # | Quién responde | Qué desbloquea |
+|---|---|---|
+| 1 | Agendadora | 🔴 El piloto. Por médico: servicio fijo, preguntarle al paciente, o no activar |
+| 2 | Agendadora | El consecutivo de sesión: ¿algún informe agrupa por él? |
+| 3 | Agendadora / facturación | Confirmar la tabla de convenios que dedujimos |
+| 4 | Coordinación | Alcance del arranque: qué médicos, cuántas citas/día |
+| 5 | Agendadora / TI | El origen del 5,7 % de citas con hora ilegible |
+| 6 | TI | Ventana de domingo, VM, `AGENIA_SYNC`, medición de carga |
+
+El documento cierra con la lista de lo que **ya** está resuelto y verificado,
+para que la reunión no empiece explicando de cero.
+
+### 📄 Qué falta correr en el hospital
+
+Todo lo que queda por descubrir está consolidado en
+`sql/PENDIENTE_CORRER_EN_HOSPITAL.sql` — 100 % lectura. La sección D ya se
+corrió y quedó cerrada; la **A** también (obliga a cambiar el modelo de cupo),
+y la **B** y la **E** igual. Queda por correr la **F** —el detalle por médico
+que alimenta la reunión— y la pestaña *Messages* de **C**.
+
 ## ⏳ Pendientes de este driver
 
 0. **Bloque 29 — corrido, falta solo la medición de 29c/29d.** (`sql/FASE0_DESCUBRIMIENTO_HIS.sql`)

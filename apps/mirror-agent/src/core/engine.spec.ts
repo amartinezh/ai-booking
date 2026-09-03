@@ -852,3 +852,270 @@ describe('syncCatalog', () => {
     );
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// Las tres operaciones del motor que no tenían prueba y que deciden si el
+// espejo arranca (`handshake`), si el hospital ve lo que pasa en AgenIA
+// (`detectAndPushChanges`) y si alguien se entera cuando deja de verlo
+// (`sendHeartbeat`).
+// ══════════════════════════════════════════════════════════════════════════
+describe('MirrorEngine — arranque, detección de cambios y latido', () => {
+  let api: jest.Mocked<MirrorApiClient>;
+  let driver: jest.Mocked<HisDriver>;
+  let state: AgentStateStore;
+  let engine: MirrorEngine;
+  let driverCursor: { value: unknown };
+
+  beforeEach(() => {
+    api = {
+      handshake: jest.fn(),
+      getPendingEvents: jest.fn(),
+      ack: jest.fn(),
+      pushChanges: jest.fn(),
+      heartbeat: jest.fn(),
+      reconcile: jest.fn(),
+      uploadAvailability: jest.fn(),
+      uploadCatalog: jest.fn(),
+    };
+    driver = {
+      key: 'test-driver',
+      connect: jest.fn(),
+      disconnect: jest.fn(),
+      healthCheck: jest.fn(),
+      fetchAvailability: jest.fn(),
+      detectChanges: jest.fn(),
+      createAppointment: jest.fn(),
+      cancelAppointment: jest.fn(),
+      rescheduleAppointment: jest.fn(),
+      updateAttendance: jest.fn(),
+      snapshotAppointments: jest.fn(),
+      fetchCatalog: jest.fn(),
+      resolveCatalogMapping: jest.fn(),
+    };
+
+    driverCursor = { value: null };
+    state = {
+      getOutboxCursor: () => Promise.resolve('0'),
+      setOutboxCursor: () => Promise.resolve(),
+      getDriverCursor: () => Promise.resolve(driverCursor.value),
+      setDriverCursor: (c) => {
+        driverCursor.value = c;
+        return Promise.resolve();
+      },
+      hasAppliedLocally: () => Promise.resolve(false),
+      markAppliedLocally: () => Promise.resolve(),
+    };
+
+    engine = new MirrorEngine(api, driver, state, '1.2.3');
+  });
+
+  describe('handshake', () => {
+    beforeEach(() => {
+      api.handshake.mockResolvedValue({
+        ok: true,
+        serverTimeIso: '2026-09-02T10:00:00.000Z',
+        clockSkewMs: 12,
+        driverKey: 'test-driver',
+        driverConfig: { server: '192.168.1.16', database: 'PRUEBAS' },
+        mappingVersion: 3,
+        mappingJson: { convenios: {} },
+        pushEnabled: true,
+        pullEnabled: true,
+      });
+    });
+
+    it('anuncia su versión y su reloj: el servidor mide el desfase con eso', async () => {
+      await engine.handshake();
+
+      const input = api.handshake.mock.calls[0][0];
+      expect(input.driverVersion).toBe('1.2.3');
+      expect(new Date(input.agentClockIso).toISOString()).toBe(
+        input.agentClockIso,
+      );
+    });
+
+    it('🔌 la configuración y el mapeo que devuelve el servidor van AL DRIVER', async () => {
+      // Es lo único que le da al driver las credenciales del HIS: sin esto no
+      // hay conexión, y el agente late sin poder escribir una sola cita.
+      await engine.handshake();
+
+      expect(driver.connect).toHaveBeenCalledWith(
+        { server: '192.168.1.16', database: 'PRUEBAS' },
+        { convenios: {} },
+      );
+    });
+
+    it('si el servidor no responde, el error sube: no se arranca a ciegas', async () => {
+      api.handshake.mockRejectedValue(new Error('503'));
+
+      await expect(engine.handshake()).rejects.toThrow('503');
+      expect(driver.connect).not.toHaveBeenCalled();
+    });
+
+    it('si el driver no puede conectar al HIS, tampoco se sigue', async () => {
+      driver.connect.mockRejectedValue(new Error('login failed'));
+      await expect(engine.handshake()).rejects.toThrow('login failed');
+    });
+  });
+
+  describe('detectAndPushChanges (HIS → AgenIA)', () => {
+    const cambio = { eventId: 'e1', entityType: 'APPOINTMENT', op: 'CANCEL' };
+
+    it('sin cambios no se llama al servidor, pero el cursor SÍ avanza', async () => {
+      driver.detectChanges.mockResolvedValue({
+        events: [],
+        nextCursor: { ventana: 'v2' },
+      });
+
+      const r = await engine.detectAndPushChanges();
+
+      expect(r).toEqual({ pushed: 0, errores: 0 });
+      expect(api.pushChanges).not.toHaveBeenCalled();
+      expect(driverCursor.value).toEqual({ ventana: 'v2' });
+    });
+
+    it('los cambios se suben ya canonicalizados por el driver', async () => {
+      driver.detectChanges.mockResolvedValue({
+        events: [cambio as never],
+        nextCursor: { ventana: 'v2' },
+      });
+      api.pushChanges.mockResolvedValue({
+        applied: 1,
+        skipped: 0,
+        conflicts: 0,
+        errors: 0,
+      });
+
+      const r = await engine.detectAndPushChanges();
+
+      expect(api.pushChanges).toHaveBeenCalledWith({ events: [cambio] });
+      expect(r).toEqual({ pushed: 1, errores: 0 });
+    });
+
+    it('el cursor anterior se le pasa al driver: la detección es diferencial', async () => {
+      driverCursor.value = { ventana: 'v1' };
+      driver.detectChanges.mockResolvedValue({ events: [], nextCursor: {} });
+
+      await engine.detectAndPushChanges();
+      expect(driver.detectChanges).toHaveBeenCalledWith({ ventana: 'v1' });
+    });
+
+    it('🚨 un lote que el servidor no pudo aplicar se REPORTA, no se disimula', async () => {
+      // El cursor avanza igual (es una foto, no una marca de tiempo), así que
+      // lo único que evita que el fallo sea invisible es este contador.
+      driver.detectChanges.mockResolvedValue({
+        events: [cambio as never, cambio as never],
+        nextCursor: { ventana: 'v2' },
+      });
+      api.pushChanges.mockResolvedValue({
+        applied: 0,
+        skipped: 0,
+        conflicts: 0,
+        errors: 2,
+      });
+
+      const r = await engine.detectAndPushChanges();
+
+      expect(r).toEqual({ pushed: 2, errores: 2 });
+      expect(driverCursor.value).toEqual({ ventana: 'v2' });
+    });
+
+    it('una respuesta vieja del servidor (sin `errors`) cuenta como cero, no como NaN', async () => {
+      driver.detectChanges.mockResolvedValue({
+        events: [cambio as never],
+        nextCursor: {},
+      });
+      api.pushChanges.mockResolvedValue({} as never);
+
+      await expect(engine.detectAndPushChanges()).resolves.toEqual({
+        pushed: 1,
+        errores: 0,
+      });
+    });
+
+    it('si la subida falla, el cursor NO avanza: la vuelta siguiente lo reintenta', async () => {
+      driverCursor.value = { ventana: 'v1' };
+      driver.detectChanges.mockResolvedValue({
+        events: [cambio as never],
+        nextCursor: { ventana: 'v2' },
+      });
+      api.pushChanges.mockRejectedValue(new Error('red caída'));
+
+      await expect(engine.detectAndPushChanges()).rejects.toThrow('red caída');
+      expect(driverCursor.value).toEqual({ ventana: 'v1' });
+    });
+  });
+
+  describe('sendHeartbeat', () => {
+    it('el latido lleva si el HIS responde, no solo si el agente vive', async () => {
+      driver.healthCheck.mockResolvedValue({ ok: true, detail: 'SQL 14.0' });
+
+      await engine.sendHeartbeat(0);
+
+      expect(api.heartbeat).toHaveBeenCalledWith({
+        recentErrors: 0,
+        hisReachable: true,
+        hisDetail: 'SQL 14.0',
+      });
+    });
+
+    it('un HIS que responde «no» viaja tal cual', async () => {
+      driver.healthCheck.mockResolvedValue({ ok: false, detail: 'login failed' });
+
+      await engine.sendHeartbeat(3);
+
+      expect(api.heartbeat).toHaveBeenCalledWith({
+        recentErrors: 3,
+        hisReachable: false,
+        hisDetail: 'login failed',
+      });
+    });
+
+    it('🫀 si el chequeo del HIS REVIENTA, el latido sale igual marcado en rojo', async () => {
+      // Un agente que deja de latir se ve exactamente igual que uno muerto.
+      // Aquí está vivo, así que tiene que latir — diciendo qué le pasa.
+      driver.healthCheck.mockRejectedValue(new Error('ECONNREFUSED'));
+
+      await engine.sendHeartbeat(1);
+
+      expect(api.heartbeat).toHaveBeenCalledWith({
+        recentErrors: 1,
+        hisReachable: false,
+        hisDetail: 'ECONNREFUSED',
+      });
+    });
+
+    it('un fallo que no es un Error tampoco impide el latido', async () => {
+      driver.healthCheck.mockRejectedValue('algo raro');
+
+      await engine.sendHeartbeat(0);
+
+      expect(api.heartbeat).toHaveBeenCalledWith(
+        expect.objectContaining({ hisReachable: false, hisDetail: 'algo raro' }),
+      );
+    });
+  });
+
+  describe('syncCatalog', () => {
+    it('sube médicos Y servicios, y reporta cuántas quedaron homologadas', async () => {
+      driver.fetchCatalog.mockImplementation(async (kind) =>
+        kind === 'DOCTOR'
+          ? ([{ externalKey: '76', label: 'RUIZ' }] as never)
+          : ([{ externalKey: 'S1', label: 'CONSULTA' }] as never),
+      );
+      api.uploadCatalog.mockResolvedValue({
+        kind: 'DOCTOR',
+        created: 1,
+        updated: 0,
+        vanished: 0,
+        homologated: 0,
+      });
+
+      const r = await engine.syncCatalog();
+
+      expect(driver.fetchCatalog).toHaveBeenCalledTimes(2);
+      expect(r).toHaveLength(2);
+      expect(r[0]).toMatchObject({ kind: 'DOCTOR', created: 1, total: 1 });
+    });
+  });
+});

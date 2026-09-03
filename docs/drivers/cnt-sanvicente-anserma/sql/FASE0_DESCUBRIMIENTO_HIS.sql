@@ -1026,7 +1026,22 @@ FROM dbo.CITAS_MEDICAS;
 --
 --   (29f) NU_NUME_MOVI_CIT nulo en EXACTAMENTE 1 fila de 1.084.093. Basta una
 --         para romper la cancelación de esa cita (NU_NUME_MOVI_CIAN es NOT
---         NULL y se copia de ahí) ⇒ el COALESCE queda justificado. PENDIENTE.
+--         NULL y se copia de ahí) ⇒ el COALESCE queda justificado.
+--         ✅ RESUELTO (2026-09-02). `copiarAAnuladas()` ahora copia
+--         COALESCE(NU_NUME_MOVI_CIT, 0) — el 0 es el mismo valor que este
+--         driver escribe al crear, así que no inventa un consecutivo ajeno.
+--
+--         Se comprobó además que es la ÚNICA columna del copiado con esa
+--         asimetría: contrastando `esquema-real.tsv` columna a columna, no hay
+--         ninguna otra que admita nulos en CITAS_MEDICAS y los prohíba en
+--         CITAS_ANULADAS. Y el INSERT de citas cubre las TRES únicas columnas
+--         NOT NULL de CITAS_MEDICAS (las de la PK), así que no hay una
+--         omisión equivalente del otro lado.
+--
+--         Reproducido contra el SQL Server del mock, que hereda la misma
+--         asimetría: con la copia vieja → error 515 ("Cannot insert the value
+--         NULL into column 'NU_NUME_MOVI_CIAN'"); con el COALESCE → archiva
+--         con movi=0. Dos pruebas nuevas en create-appointment.spec.ts.
 -- =============================================================================
 
 -- =============================================================================

@@ -42,13 +42,21 @@ export interface AnsermaMapping {
    */
   sexo: Record<string, number>;
   /**
-   * Convenio de facturación. Clave: `${nitEps}|${REGIMEN}`, o `${nitEps}|PYP`
-   * cuando el servicio es de promoción y prevención, que usa convenio propio.
+   * Convenio de facturación.
+   *
+   * Clave: `${nitEps}|${REGIMEN}`, y opcionalmente
+   * `${nitEps}|${REGIMEN}|PYP` cuando esa combinación tiene un convenio
+   * propio de promoción y prevención. Si la clave de PyP no existe se usa la
+   * del régimen — que es lo que hace el hospital con Sura (su PyP va al
+   * convenio normal) y con Nueva EPS contributivo.
    */
   convenios: Record<string, number>;
   /** Pago directo. En el catálogo del hospital es el 26 (PARTICULARES). */
   convenioParticular: number;
-  /** Servicios de PyP: usan el convenio `|PYP` de su EPS. */
+  /**
+   * Servicios de promoción y prevención. Solo cambian el convenio si existe
+   * la clave `|PYP` de SU régimen; si no, facturan como una consulta normal.
+   */
   serviciosPyp: string[];
   /** `CD_CODI_ESP_CIT` por servicio. Correlaciona con el servicio, no con el médico. */
   especialidadPorServicio: Record<string, string>;
@@ -230,19 +238,31 @@ export function resolveConvenio(
   // Sin EPS es pago directo: el paciente paga la consulta él mismo.
   if (!datos.epsNit) return mapping.convenioParticular;
 
-  const esPyp = mapping.serviciosPyp.includes(datos.serviceExternalKey ?? '');
-  if (esPyp) {
-    const pyp = mapping.convenios[`${datos.epsNit}|PYP`];
-    if (pyp !== undefined) return pyp;
-    // Sin convenio de PyP para esa EPS se cae al régimen normal: es mejor
-    // facturar al contrato general que no facturar.
-  }
-
   if (!datos.patientRegime) {
     throw new MappingIncompletoError(
       `El paciente declara EPS ${datos.epsNit} pero no tiene régimen: sin él no ` +
         `se puede elegir el convenio (la misma EPS tiene uno por régimen).`,
     );
+  }
+
+  // PyP depende del RÉGIMEN, no solo de la EPS.
+  //
+  // Antes la clave era `${nit}|PYP`, y eso mandaba al convenio de PyP a
+  // cualquier régimen de esa EPS. Los datos del hospital dicen que no: en
+  // 90 días, el PyP de Nueva EPS SUBSIDIADO va al 489 (PYPSUBS, 94,4 % de
+  // 2.001 citas) pero el de Nueva EPS CONTRIBUTIVO va al 473 igual que una
+  // consulta normal (65,6 % de 390) — y el PyP de Sura no tiene convenio
+  // propio en absoluto: usa el 467 de su régimen (94,3 % de 2.566).
+  //
+  // Con la clave vieja, un paciente contributivo de Nueva EPS que reservara
+  // un servicio de PyP se facturaba a un contrato SUBSIDIADO.
+  const esPyp = mapping.serviciosPyp.includes(datos.serviceExternalKey ?? '');
+  if (esPyp) {
+    const pyp =
+      mapping.convenios[`${datos.epsNit}|${datos.patientRegime}|PYP`];
+    if (pyp !== undefined) return pyp;
+    // Sin convenio de PyP para esa combinación se cae al del régimen: es lo
+    // que hace el hospital con Sura y con Nueva EPS contributivo.
   }
 
   const convenio = mapping.convenios[`${datos.epsNit}|${datos.patientRegime}`];
@@ -287,6 +307,39 @@ export function resolveEspecialidad(
  * zona en esa fecha concreta — no con un offset fijo, que se rompería el día
  * que una zona tenga horario de verano.
  */
+/**
+ * Variante TOLERANTE de `feHoraCitAIso`: devuelve `null` en vez de lanzar
+ * cuando la cadena no tiene el formato esperado.
+ *
+ * POR QUÉ EXISTE
+ * `MAPEO_HIS.md` §2.1 lo pide desde el bloque 5 — «el lector del agente debe
+ * ser tolerante; el escritor, estricto»— y el lector no lo era. En el catálogo
+ * vivo, el **5,7 %** de las citas elaboradas en 30 días (419 de 7.403) tiene
+ * un `FE_HORA_CIT` que no se puede interpretar: longitudes 12/13, una fila con
+ * `'2026/08/29 1'`, otra con `'31'`.
+ *
+ * Con el lector estricto bastaba UNA de esas filas dentro de la ventana para
+ * que `detectChanges` y `snapshotAppointments` lanzaran, y con ellos se caían
+ * las dos direcciones que dependen de leer el HIS: la detección de cambios
+ * (HIS → AgenIA) y la reconciliación diaria, que es la última red contra la
+ * deriva silenciosa. No se había visto porque el mock local tiene datos
+ * limpios — el mismo punto ciego que escondió el `NO_NOMB_PAC varchar(20)`.
+ *
+ * El escritor sigue usando la versión estricta: escribir una hora que no
+ * cumple el formato de la aplicación del hospital sí es inaceptable.
+ */
+export function feHoraCitAIsoOrNull(
+  feHora: string | null | undefined,
+  timeZone: string,
+): string | null {
+  if (!feHora) return null;
+  try {
+    return feHoraCitAIso(feHora, timeZone);
+  } catch {
+    return null;
+  }
+}
+
 export function feHoraCitAIso(feHora: string, timeZone: string): string {
   const m = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/.exec(feHora.trim());
   if (!m) {
@@ -299,6 +352,32 @@ export function feHoraCitAIso(feHora: string, timeZone: string): string {
   // Se parte de interpretar los componentes como si fueran UTC y se corrige
   // con el desfase que esa zona tenía en ese instante.
   const comoUtc = Date.UTC(+y, +mo - 1, +d, +h, +mi);
+
+  // 🚨 El regex comprueba la FORMA, no el RANGO, y `Date.UTC` desborda en
+  // silencio: `2026/08/29 99:99` se convertía en el 2 de septiembre, y
+  // `2026/13/45 10:00` en el 14 de febrero del año siguiente — seis meses de
+  // diferencia, sin un solo error. Sobre la fecha de una cita eso significa
+  // reportarle al servidor un cambio en un día que no es, o colocar la cita
+  // de un paciente en otra fecha durante la reconciliación.
+  //
+  // La comprobación de ida y vuelta es la forma barata de exigir el rango:
+  // si al reconstruir la fecha no salen los mismos componentes, hubo
+  // desbordamiento. Cubre horas y minutos imposibles, meses > 12, días que
+  // ese mes no tiene, y el 29 de febrero de un año no bisiesto.
+  const reconstruida = new Date(comoUtc);
+  if (
+    reconstruida.getUTCFullYear() !== +y ||
+    reconstruida.getUTCMonth() !== +mo - 1 ||
+    reconstruida.getUTCDate() !== +d ||
+    reconstruida.getUTCHours() !== +h ||
+    reconstruida.getUTCMinutes() !== +mi
+  ) {
+    throw new MappingIncompletoError(
+      `FE_HORA_CIT con una fecha u hora que no existe: "${feHora}". ` +
+        `Tiene la forma correcta pero algún componente está fuera de rango.`,
+    );
+  }
+
   const desfase = offsetDeZonaMs(new Date(comoUtc), timeZone);
   return new Date(comoUtc - desfase).toISOString();
 }

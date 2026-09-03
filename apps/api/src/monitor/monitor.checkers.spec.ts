@@ -148,3 +148,235 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     expect(r.errorMessage).not.toContain('org1');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// Los otros tres checkers (Gemini, Meta, TTS) + el despacho y el timeout.
+// Comparten una regla dura: `checkService` NUNCA lanza. Si lanzara, se llevaría
+// por delante el tick del cron o la respuesta del endpoint en vivo.
+// ══════════════════════════════════════════════════════════════════════════
+describe('MonitorCheckers — Gemini, Meta, TTS y el despacho', () => {
+  let checkers: MonitorCheckers;
+  let prisma: any;
+  let integrations: { diagnoseGemini: jest.Mock; diagnoseMeta: jest.Mock };
+  let config: { get: jest.Mock };
+  let listVoices: jest.Mock;
+
+  const svc = (key: string, timeoutMs = 5000) =>
+    ({
+      key,
+      displayName: key,
+      group: 'google',
+      enabled: true,
+      timeoutMs,
+    }) as never;
+
+  beforeEach(async () => {
+    prisma = {
+      hospitalMirrorConfig: { findMany: jest.fn(async () => []) },
+      syncOutbox: {
+        count: jest.fn(async () => 0),
+        findFirst: jest.fn(async () => null),
+      },
+      organization: { findFirst: jest.fn(async () => ({ id: 'org-testigo' })) },
+    };
+    integrations = {
+      diagnoseGemini: jest.fn(async () => ({ success: true, rtt_ms: 120 })),
+      diagnoseMeta: jest.fn(async () => ({ success: true, rtt_ms: 90 })),
+    };
+    config = { get: jest.fn(() => undefined) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MonitorCheckers,
+        { provide: ConfigService, useValue: config },
+        { provide: IntegrationsService, useValue: integrations },
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    checkers = module.get(MonitorCheckers);
+    jest.spyOn((checkers as any).logger, 'warn').mockImplementation(() => {});
+
+    listVoices = jest.fn(async () => [{ voices: [] }]);
+    (checkers as any).ttsClient = { listVoices };
+  });
+
+  describe('organización testigo', () => {
+    it('Gemini y Meta se validan contra la organización activa más antigua', async () => {
+      await checkers.checkService(svc('gemini'));
+
+      expect(prisma.organization.findFirst).toHaveBeenCalledWith({
+        where: { isActive: true },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      expect(integrations.diagnoseGemini).toHaveBeenCalledWith('org-testigo');
+    });
+
+    it('sin ninguna organización activa el check se OMITE, no se marca en rojo', async () => {
+      prisma.organization.findFirst.mockResolvedValue(null);
+
+      const r = await checkers.checkService(svc('meta'));
+
+      expect(r).toMatchObject({
+        skip: true,
+        errorCode: 'NO_ORG',
+        status: 'UP',
+      });
+      expect(integrations.diagnoseMeta).not.toHaveBeenCalled();
+    });
+
+    it('si la consulta de la organización falla, se omite en vez de reventar', async () => {
+      prisma.organization.findFirst.mockRejectedValue(new Error('BD caída'));
+
+      const r = await checkers.checkService(svc('gemini'));
+      expect(r.skip).toBe(true);
+    });
+  });
+
+  describe('graduación por latencia', () => {
+    it('rápido → UP', async () => {
+      const r = await checkers.checkService(svc('gemini'));
+      expect(r).toMatchObject({
+        status: 'UP',
+        latencyMs: 120,
+        httpStatus: 200,
+      });
+      expect(r.errorCode).toBeNull();
+    });
+
+    it('lento pero vivo → DEGRADED, con el umbral en el mensaje', async () => {
+      integrations.diagnoseGemini.mockResolvedValue({
+        success: true,
+        rtt_ms: 4500,
+      });
+
+      const r = await checkers.checkService(svc('gemini'));
+
+      expect(r.status).toBe('DEGRADED');
+      expect(r.errorCode).toBe('HIGH_LATENCY');
+      expect(r.errorMessage).toContain('3000ms');
+    });
+
+    it('el umbral se puede mover por .env', async () => {
+      config.get.mockImplementation((k: string) =>
+        k === 'MONITOR_DEGRADED_THRESHOLD_MS' ? '100' : undefined,
+      );
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          MonitorCheckers,
+          { provide: ConfigService, useValue: config },
+          { provide: IntegrationsService, useValue: integrations },
+          { provide: PrismaService, useValue: prisma },
+        ],
+      }).compile();
+      const otro = module.get(MonitorCheckers);
+
+      await expect(otro.checkService(svc('gemini'))).resolves.toMatchObject({
+        status: 'DEGRADED',
+      });
+    });
+  });
+
+  describe('fallos del diagnóstico', () => {
+    it('Gemini caído se reporta DOWN conservando código y mensaje', async () => {
+      integrations.diagnoseGemini.mockResolvedValue({
+        success: false,
+        error_code: 'AUTH',
+        error_message: 'API key inválida',
+        rtt_ms: 80,
+      });
+
+      await expect(checkers.checkService(svc('gemini'))).resolves.toEqual({
+        status: 'DOWN',
+        latencyMs: 80,
+        errorCode: 'AUTH',
+        errorMessage: 'API key inválida',
+      });
+    });
+
+    it('Meta caído igual', async () => {
+      integrations.diagnoseMeta.mockResolvedValue({
+        success: false,
+        error_code: 'TIMEOUT',
+        error_message: 'no respondió',
+      });
+
+      await expect(checkers.checkService(svc('meta'))).resolves.toMatchObject({
+        status: 'DOWN',
+        errorCode: 'TIMEOUT',
+        latencyMs: null,
+      });
+    });
+  });
+
+  describe('Google Cloud TTS', () => {
+    it('el check es liviano: lista voces, no sintetiza (no gasta cuota)', async () => {
+      const r = await checkers.checkService(svc('tts'));
+
+      expect(listVoices).toHaveBeenCalledWith({ languageCode: 'es-US' });
+      expect(r.status).toBe('UP');
+    });
+
+    it.each([
+      ['permission denied', 'AUTH'],
+      ['could not load the default credentials', 'AUTH'],
+      ['UNAUTHENTICATED', 'AUTH'],
+      ['Deadline exceeded', 'TIMEOUT'],
+      ['request timeout', 'TIMEOUT'],
+      ['algo raro pasó', 'UNKNOWN'],
+    ])('«%s» se clasifica como %s', async (mensaje, codigo) => {
+      listVoices.mockRejectedValue(new Error(mensaje));
+
+      await expect(checkers.checkService(svc('tts'))).resolves.toMatchObject({
+        status: 'DOWN',
+        errorCode: codigo,
+      });
+    });
+
+    it('el campo `details` de gRPC también se lee', async () => {
+      listVoices.mockRejectedValue({ details: 'PERMISSION_DENIED' });
+
+      await expect(checkers.checkService(svc('tts'))).resolves.toMatchObject({
+        errorCode: 'AUTH',
+        errorMessage: 'PERMISSION_DENIED',
+      });
+    });
+  });
+
+  describe('despacho y blindaje', () => {
+    it('un servicio sin checker se reporta explícito, no en verde por omisión', async () => {
+      await expect(
+        checkers.checkService(svc('servicio-inventado')),
+      ).resolves.toMatchObject({
+        status: 'DOWN',
+        errorCode: 'NO_CHECKER',
+      });
+    });
+
+    it('🛡️ un checker que revienta NO propaga: se devuelve DOWN', async () => {
+      integrations.diagnoseGemini.mockRejectedValue(new Error('boom'));
+
+      await expect(checkers.checkService(svc('gemini'))).resolves.toMatchObject(
+        {
+          status: 'DOWN',
+          errorCode: 'UNKNOWN',
+          errorMessage: 'boom',
+        },
+      );
+    });
+
+    it('un checker que se cuelga se corta por timeout y lo dice', async () => {
+      integrations.diagnoseGemini.mockImplementation(
+        () => new Promise(() => undefined),
+      );
+
+      await expect(
+        checkers.checkService(svc('gemini', 20)),
+      ).resolves.toMatchObject({
+        status: 'DOWN',
+        errorCode: 'TIMEOUT',
+        errorMessage: expect.stringContaining('20ms'),
+      });
+    });
+  });
+});

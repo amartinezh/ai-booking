@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   AnsermaMapping,
   MappingIncompletoError,
@@ -22,11 +24,15 @@ const MAPPING: AnsermaMapping = {
   marcaOrigen: 'ASIGNADA POR WHATSAPP',
   motivoAnulacion: 'WB',
   sexo: { M: 1, F: 0 }, // confirmado contra ESEHSVP (mapping.ts, 2026-09-01)
+  // NIT REALES: 900156264 = Nueva EPS, 800088702 = EPS Suramericana.
+  // Estuvieron cruzados hasta el 2026-09-02, aquí y en la tabla Eps de
+  // AgenIA a la vez, así que el convenio salía bien por accidente.
   convenios: {
-    '800088702|SUBSIDIADO': 283, // Nueva EPS subsidiado
-    '800088702|PYP': 489, // Nueva EPS, promoción y prevención
-    '900156264|SUBSIDIADO': 467, // Sura subsidiado
-    '900156264|CONTRIBUTIVO': 473, // Sura contributivo
+    '900156264|SUBSIDIADO': 283, // Nueva EPS subsidiado
+    '900156264|SUBSIDIADO|PYP': 489, // …y su PyP, que sí tiene convenio propio
+    '900156264|CONTRIBUTIVO': 473, // Nueva EPS contributivo → el genérico
+    '800088702|SUBSIDIADO': 467, // Sura subsidiado
+    '800088702|CONTRIBUTIVO': 473, // Sura contributivo
   },
   convenioParticular: 26,
   serviciosPyp: ['I890301AG'],
@@ -109,7 +115,7 @@ describe('resolveConvenio', () => {
   });
 
   it('la MISMA EPS da convenios distintos según el régimen', () => {
-    const sura = '900156264';
+    const sura = '800088702';
     expect(
       resolveConvenio(MAPPING, { epsNit: sura, patientRegime: 'SUBSIDIADO' }),
     ).toBe(467);
@@ -118,21 +124,36 @@ describe('resolveConvenio', () => {
     ).toBe(473);
   });
 
-  it('un servicio de PyP usa el convenio propio de PyP', () => {
+  it('un servicio de PyP usa el convenio propio de PyP de SU régimen', () => {
     expect(
       resolveConvenio(MAPPING, {
-        epsNit: '800088702',
+        epsNit: '900156264', // Nueva EPS
         patientRegime: 'SUBSIDIADO',
         serviceExternalKey: 'I890301AG',
       }),
     ).toBe(489);
   });
 
-  it('si la EPS no tiene convenio de PyP, cae al del régimen', () => {
-    // Mejor facturar al contrato general que no facturar.
+  it('🚨 el PyP NO se lleva al otro régimen de la misma EPS', () => {
+    // El defecto que tenía la clave vieja `${nit}|PYP`: un contributivo de
+    // Nueva EPS con un servicio de PyP se facturaba al 489 PYPSUBS, que es un
+    // contrato SUBSIDIADO. Los datos del hospital dicen 473 (65,6% de 390
+    // citas en 90 días).
     expect(
       resolveConvenio(MAPPING, {
-        epsNit: '900156264',
+        epsNit: '900156264', // Nueva EPS
+        patientRegime: 'CONTRIBUTIVO',
+        serviceExternalKey: 'I890301AG',
+      }),
+    ).toBe(473);
+  });
+
+  it('si esa combinación no tiene convenio de PyP, cae al del régimen', () => {
+    // Es lo que hace el hospital con Sura: su PyP va al convenio normal
+    // (467, 94,3% de 2.566 citas), no a uno propio.
+    expect(
+      resolveConvenio(MAPPING, {
+        epsNit: '800088702', // Sura
         patientRegime: 'SUBSIDIADO',
         serviceExternalKey: 'I890301AG',
       }),
@@ -141,7 +162,18 @@ describe('resolveConvenio', () => {
 
   it('con EPS pero sin régimen NO adivina: falla explícito', () => {
     expect(() =>
-      resolveConvenio(MAPPING, { epsNit: '900156264' }),
+      resolveConvenio(MAPPING, { epsNit: '800088702' }),
+    ).toThrow(MappingIncompletoError);
+  });
+
+  it('tampoco adivina cuando falta el régimen y el servicio es de PyP', () => {
+    // Antes la rama de PyP resolvía ANTES de exigir el régimen, así que este
+    // caso devolvía un convenio en vez de fallar.
+    expect(() =>
+      resolveConvenio(MAPPING, {
+        epsNit: '900156264',
+        serviceExternalKey: 'I890301AG',
+      }),
     ).toThrow(MappingIncompletoError);
   });
 
@@ -585,5 +617,107 @@ describe('diaSiguienteLiteralSql', () => {
     expect(() => diaSiguienteLiteralSql('30/09/2026')).toThrow(
       MappingIncompletoError,
     );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// LA TABLA DE FACTURACIÓN REAL, no una copia de laboratorio.
+//
+// Este bloque no usa el `MAPPING` de arriba: carga el `mapping.json` que se
+// aplica de verdad a `HospitalMirrorConfig.mappingJson`. Si alguien lo edita
+// mal, falla aquí y no en la factura del hospital.
+//
+// Y fija el resultado por NOMBRE DE EPS, no por NIT, a propósito. El NIT es
+// una representación y ya estuvo mal una vez: hasta el 2026-09-02, AgenIA
+// tenía Nueva EPS con el NIT de Sura y viceversa, y este archivo repetía el
+// mismo cruce — los dos errores se cancelaban y el convenio salía correcto
+// por accidente. Un test escrito sobre NITs no habría notado nada, ni al
+// estar mal ni al arreglarse. Uno escrito sobre "qué se le factura a un
+// paciente de Nueva EPS subsidiado" sí.
+//
+// Cuotas medidas en 90 días de citas reales del hospital (sección D de
+// sql/PENDIENTE_CORRER_EN_HOSPITAL.sql, 2026-09-02).
+// ══════════════════════════════════════════════════════════════════════════
+describe('convenios — la tabla que se aplica en producción', () => {
+  const REAL = JSON.parse(
+    readFileSync(
+      join(
+        __dirname,
+        '../../../../../docs/drivers/cnt-sanvicente-anserma/mapping.json',
+      ),
+      'utf8',
+    ),
+  ) as AnsermaMapping;
+
+  /** NIT reales: los del hospital, que son los públicos. */
+  const NIT = { 'Nueva EPS': '900156264', Sura: '800088702' } as const;
+  const SERVICIO_PYP = 'I890301AG';
+  const SERVICIO_NORMAL = 'S39141-1';
+
+  it.each([
+    ['Nueva EPS', 'SUBSIDIADO', SERVICIO_NORMAL, 283, 'NUEVASUBSID', '89,6%'],
+    ['Nueva EPS', 'SUBSIDIADO', SERVICIO_PYP, 489, 'PYPSUBS', '94,4%'],
+    ['Nueva EPS', 'CONTRIBUTIVO', SERVICIO_NORMAL, 473, 'CONTRIBUTIVO', '73,4%'],
+    ['Nueva EPS', 'CONTRIBUTIVO', SERVICIO_PYP, 473, 'CONTRIBUTIVO', '65,6%'],
+    ['Sura', 'SUBSIDIADO', SERVICIO_NORMAL, 467, 'SUBS', '84,5%'],
+    ['Sura', 'SUBSIDIADO', SERVICIO_PYP, 467, 'SUBS', '94,3%'],
+    ['Sura', 'CONTRIBUTIVO', SERVICIO_NORMAL, 473, 'CONTRIBUTIVO', '84,8%'],
+    ['Sura', 'CONTRIBUTIVO', SERVICIO_PYP, 473, 'CONTRIBUTIVO', '88,0%'],
+  ])(
+    '%s · %s · %s → convenio %i (%s, %s de las citas reales)',
+    (eps, regimen, servicio, esperado) => {
+      expect(
+        resolveConvenio(REAL, {
+          epsNit: NIT[eps as keyof typeof NIT],
+          patientRegime: regimen as string,
+          serviceExternalKey: servicio as string,
+        }),
+      ).toBe(esperado);
+    },
+  );
+
+  it('sin EPS se factura como particular (26 PARTICULARES)', () => {
+    expect(resolveConvenio(REAL, {})).toBe(26);
+  });
+
+  it('🔒 la clave de PyP lleva el régimen: la vieja se lo saltaba', () => {
+    const claves = Object.keys(REAL.convenios);
+    expect(claves).toContain('900156264|SUBSIDIADO|PYP');
+    expect(
+      claves.some((k) => k.endsWith('|PYP') && k.split('|').length === 2),
+    ).toBe(false);
+  });
+
+  it('🚨 ningún régimen de Nueva EPS se factura a un contrato de Sura, ni al revés', () => {
+    // 283/489 son de Nueva EPS; 467 es de Sura. El 473 es el genérico de
+    // contributivo que el hospital usa para las dos.
+    const DE_NUEVA = [283, 489];
+    const DE_SURA = [467];
+
+    for (const regimen of ['SUBSIDIADO', 'CONTRIBUTIVO']) {
+      for (const servicio of [SERVICIO_NORMAL, SERVICIO_PYP]) {
+        const nueva = resolveConvenio(REAL, {
+          epsNit: NIT['Nueva EPS'],
+          patientRegime: regimen,
+          serviceExternalKey: servicio,
+        });
+        const sura = resolveConvenio(REAL, {
+          epsNit: NIT.Sura,
+          patientRegime: regimen,
+          serviceExternalKey: servicio,
+        });
+        expect(DE_SURA).not.toContain(nueva);
+        expect(DE_NUEVA).not.toContain(sura);
+      }
+    }
+  });
+
+  it('una EPS que no esté en la tabla falla cerrado, nunca factura al azar', () => {
+    expect(() =>
+      resolveConvenio(REAL, {
+        epsNit: '999999999',
+        patientRegime: 'SUBSIDIADO',
+      }),
+    ).toThrow(MappingIncompletoError);
   });
 });

@@ -3,7 +3,7 @@
     "_": "La tabla de valores de este hospital. Vive en HospitalMirrorConfig.mappingJson (en la base, no en el código) para que validarla sea un cambio de configuración y no un despliegue — pero hasta ahora solo vivía ahí, metida a mano, sin original revisable. Este archivo es ese original; se aplica con packages/database/scripts/aplicar-mapping.ts.",
     "especialidadPorServicio": "GENERADA del bloque 31d: la especialidad dominante de cada servicio en las citas reales de 90 días. 36 de 40 son inequívocos; los 4 restantes se resolvieron por mayoría (S36101 461 en 826/827, S35102 590 en 387/388, S35104 590 en 577/580, I890301AG 328 en 453/455). Verificada contra R_ESP_SER ∩ R_MEDI_ESPE en el bloque 32c: 0 contradicciones en 21.362 citas.",
     "serviciosPyp": "DERIVADA del catálogo del bloque 32e: son los servicios cuya especialidad pertenece a la familia PyDT (060 ENFERMERIA PYDT, 328 MEDICINA GENERAL PYDT, 572 ODONTOLOGIA PYDT, 591 PSICOLOGIA PYDT). Antes tenía UN solo servicio y los otros trece se habrían facturado al convenio equivocado.",
-    "convenios": "⚠️ PENDIENTE de validar con la agendadora del hospital. Es el único bloque de este archivo que sigue siendo una hipótesis.",
+    "convenios": "DERIVADA de los datos del hospital y CERRADA (seccion D de sql/PENDIENTE_CORRER_EN_HOSPITAL.sql, 2026-09-02): el convenio dominante de cada combinacion EPS + regimen + PyP sobre 90 dias de citas reales. Cuotas: Sura subsidiado 467 (84,5% normal / 94,3% PyP), Sura contributivo 473 (84,8% / 88,0%), Nueva EPS subsidiado 283 normal (89,6%) y 489 PyP (94,4%), Nueva EPS contributivo 473 (73,4% / 65,6%). R_PAC_EPS es un historial many-to-many y su fan-out ensucia la cola de cada grupo, pero NO invalida la conclusion: el fan-out solo puede inflar un conteo, nunca esconderlo, y la cota superior de 290 NUEVAEPSCONT —el unico candidato alternativo para Nueva EPS contributivo— es de DOS citas en 90 dias. El hospital no lo usa. Los codigos de regimen se leen de los nombres de los propios convenios (01 lleva a SUBS, NUEVASUBSID y PYPSUBS; 07 a CONTRIBUTIVO), no de una suposicion.",
     "_no_usar": "TX_ACTI_ESP del catálogo ESPECIALIDADES está en 0 para las trece especialidades, incluidas las que se usan a diario. No sirve para filtrar."
   },
 
@@ -16,12 +16,14 @@
 
   "sexo": { "M": 1, "F": 0 },
 
+  "_nit": "⚠️ Los NIT estaban CRUZADOS (2026-09-02). La tabla EPS del hospital y el NIT publico coinciden: 900156264 = NUEVA EPS, 800088702 = EPS SURAMERICANA. AgenIA los tenia al reves en su tabla Eps, y este archivo repetia el mismo cruce — los dos errores se cancelaban y el convenio salia bien por accidente. Corregidos LOS DOS a la vez: si se arregla uno solo, la facturacion se voltea en silencio.",
+
   "convenios": {
-    "800088702|SUBSIDIADO": 283,
-    "800088702|CONTRIBUTIVO": 283,
-    "800088702|PYP": 489,
-    "900156264|SUBSIDIADO": 467,
-    "900156264|CONTRIBUTIVO": 473
+    "900156264|SUBSIDIADO": 283,
+    "900156264|SUBSIDIADO|PYP": 489,
+    "900156264|CONTRIBUTIVO": 473,
+    "800088702|SUBSIDIADO": 467,
+    "800088702|CONTRIBUTIVO": 473
   },
   "convenioParticular": 26,
 

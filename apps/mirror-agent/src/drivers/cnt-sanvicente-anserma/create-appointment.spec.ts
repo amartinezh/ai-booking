@@ -1,5 +1,6 @@
 import { CntSanVicenteAnsermaDriver } from './index';
 import type { AnsermaMapping } from './mapping';
+import { feHoraCitAIso, feHoraCitAIsoOrNull } from './mapping';
 import type { CanonicalChangeEvent } from '@agenia/shared';
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -383,6 +384,39 @@ describe('cancelAppointment — solo columnas que CITAS_ANULADAS tiene', () => {
 
   it.each(INEXISTENTES)('no nombra %s: no existe en el hospital', async (col) => {
     expect(await sqlDeAnulacion()).not.toContain(col);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // La asimetría de nulabilidad entre las dos tablas (bloque 29f).
+  //
+  // `NU_NUME_MOVI_CIT` admite nulos en CITAS_MEDICAS y NO los admite en
+  // CITAS_ANULADAS. Es la ÚNICA columna del copiado con esa asimetría —
+  // comprobado columna a columna contra `esquema-real.tsv`— y en el catálogo
+  // vivo hay exactamente UNA fila así en 1.084.093. Basta esa una: sin el
+  // COALESCE, cancelarla revienta con el error 515, la transacción se va
+  // atrás entera, y el paciente ya recibió "cancelada" por WhatsApp mientras
+  // el hospital conserva la cita. El fallo más caro que puede tener el
+  // espejo, escondido en una fila entre un millón.
+  // ══════════════════════════════════════════════════════════════════════
+  it('🛡️ blinda NU_NUME_MOVI_CIT con COALESCE: el destino no admite nulos', async () => {
+    const sql = await sqlDeAnulacion();
+
+    expect(sql).toMatch(/COALESCE\(\s*NU_NUME_MOVI_CIT\s*,\s*0\s*\)/);
+    // Y no se cuela la columna cruda por otro lado del SELECT.
+    expect(sql).not.toMatch(/,\s*NU_NUME_MOVI_CIT\s*,/);
+  });
+
+  it('el 0 es el mismo valor que el driver escribe al crear la cita', async () => {
+    // Si el relleno fuese otro número, el archivo diría que hubo un
+    // movimiento que nunca existió.
+    const { driver, requests } = conDriver();
+    await driver.createAppointment(evento());
+    const insert = requests.find((r) =>
+      /INSERT INTO dbo\.CITAS_MEDICAS/.test(r.sql),
+    )!.sql;
+
+    expect(insert).toMatch(/NU_NUME_MOVI_CIT/);
+    expect(await sqlDeAnulacion()).toContain('COALESCE(NU_NUME_MOVI_CIT, 0)');
   });
 
   it('sí archiva las columnas propias de la anulación', async () => {
@@ -1061,5 +1095,166 @@ describe('detectChanges — dos filas para el mismo médico+hora', () => {
     ]).detectChanges(foto({ '76|2026/09/10 08:00': {} }) as any);
 
     expect(r.events.map((e) => e.op)).toEqual(['ATTENDANCE']);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// LECTOR TOLERANTE A LA DATA SUCIA DEL HOSPITAL
+//
+// `MAPEO_HIS.md` §2.1 lo exige desde el bloque 5: «el lector del agente debe
+// ser tolerante; el escritor, estricto». El lector NO lo era.
+//
+// La medición del 2026-09-03 puso número al riesgo: el 5,7 % de las citas
+// elaboradas en 30 días (419 de 7.403) tiene un FE_HORA_CIT que no se puede
+// interpretar. Bastaba UNA dentro de la ventana para que `detectChanges` y
+// `snapshotAppointments` lanzaran — y con ellos se caían las dos cosas que
+// dependen de leer el HIS: la detección de cambios y la reconciliación
+// diaria, que es la última red contra la deriva silenciosa.
+//
+// No se veía porque el mock local tiene datos limpios. Mismo punto ciego que
+// escondió el `NO_NOMB_PAC varchar(20)` y las cuatro columnas inexistentes de
+// CITAS_ANULADAS.
+// ══════════════════════════════════════════════════════════════════════════
+describe('data sucia del HIS — el lector no puede caerse', () => {
+  /** Las formas reales que documenta MAPEO_HIS.md, más los bordes obvios. */
+  const HORAS_SUCIAS = [
+    ['truncada a 12', '2026/08/29 1'],
+    ['solo dos dígitos', '31'],
+    ['vacía', ''],
+    ['con guiones', '2026-08-29 10:00'],
+    ['sin hora', '2026/08/29'],
+    ['texto', 'PENDIENTE'],
+    ['hora imposible', '2026/08/29 99:99'],
+  ] as const;
+
+  describe('feHoraCitAIsoOrNull', () => {
+    it('una hora bien formada se traduce igual que la versión estricta', () => {
+      expect(feHoraCitAIsoOrNull('2026/09/05 07:40', 'America/Bogota')).toBe(
+        feHoraCitAIso('2026/09/05 07:40', 'America/Bogota'),
+      );
+    });
+
+    it.each(HORAS_SUCIAS)('%s → null, sin lanzar', (_e, valor) => {
+      expect(() =>
+        feHoraCitAIsoOrNull(valor, 'America/Bogota'),
+      ).not.toThrow();
+      expect(feHoraCitAIsoOrNull(valor, 'America/Bogota')).toBeNull();
+    });
+
+    it.each([
+      ['null', null],
+      ['undefined', undefined],
+    ])('%s → null', (_e, valor) => {
+      expect(feHoraCitAIsoOrNull(valor, 'America/Bogota')).toBeNull();
+    });
+
+    it('🔒 el ESCRITOR sigue siendo estricto: ahí una hora sucia sí debe fallar', () => {
+      // Escribir en la agenda del hospital una hora que su aplicación no sabe
+      // leer es peor que no escribirla.
+      expect(() => feHoraCitAIso('2026/08/29 1', 'America/Bogota')).toThrow();
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 🚨 EL REGEX COMPRUEBA LA FORMA, NO EL RANGO.
+  //
+  // Lo encontró la prueba de arriba: `'2026/08/29 99:99'` tiene exactamente
+  // la forma esperada (cuatro dígitos, dos, dos, dos, dos), así que pasaba el
+  // regex — y `Date.UTC` desbordaba en silencio hasta el 2 de septiembre.
+  // `'2026/13/45 10:00'` se iba al 14 de FEBRERO DEL AÑO SIGUIENTE.
+  //
+  // Sobre la fecha de una cita eso no es un error de formato: es reportar un
+  // cambio en un día que no es, o mover la cita de un paciente durante la
+  // reconciliación. Y sin un solo mensaje de error.
+  // ════════════════════════════════════════════════════════════════════════
+  describe('componentes fuera de rango', () => {
+    it.each([
+      ['minutos 99', '2026/08/29 99:99', 'se iba al 2 de septiembre'],
+      ['mes 13 y día 45', '2026/13/45 10:00', 'se iba a febrero de 2027'],
+      ['30 de febrero', '2026/02/30 10:00', 'se iba al 2 de marzo'],
+      ['hora 25', '2026/08/29 25:00', 'se iba al día siguiente'],
+      ['día 00', '2026/08/00 10:00', 'se iba al mes anterior'],
+    ])('%s se RECHAZA (antes %s)', (_e, valor) => {
+      expect(() => feHoraCitAIso(valor, 'America/Bogota')).toThrow(
+        /no existe/,
+      );
+      expect(feHoraCitAIsoOrNull(valor, 'America/Bogota')).toBeNull();
+    });
+
+    it('el 29 de febrero de un año bisiesto SÍ es válido', () => {
+      expect(() =>
+        feHoraCitAIso('2028/02/29 10:00', 'America/Bogota'),
+      ).not.toThrow();
+    });
+
+    it('los bordes legítimos siguen pasando', () => {
+      for (const v of ['2026/01/01 00:00', '2026/12/31 23:59']) {
+        expect(() => feHoraCitAIso(v, 'America/Bogota')).not.toThrow();
+      }
+    });
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// La tolerancia, extremo a extremo: una fila sucia dentro de la ventana no
+// puede tumbar la vuelta. Es el escenario real — hay un 5,7 % de ellas.
+// ══════════════════════════════════════════════════════════════════════════
+describe('detectChanges y snapshotAppointments con data sucia dentro de la ventana', () => {
+  beforeEach(() => jest.useFakeTimers({ now: new Date(AHORA) }));
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it('🛡️ una hora ilegible se OMITE; las citas buenas del mismo lote sí se reportan', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const filas = [
+      filaHis({ hora: '2026/09/03 07:00', hist: 'BUENA' }),
+      // Las dos formas que documenta MAPEO_HIS.md como data legada real.
+      filaHis({ hora: '2026/09/03 1', hist: 'TRUNCADA', fecha: '2026-09-03' }),
+      filaHis({ hora: '31', hist: 'BASURA', fecha: '2026-09-03' }),
+    ];
+
+    const r = await conCitas(filas).detectChanges(foto({}) as never);
+
+    // Antes esto lanzaba y no se reportaba NADA — ni la buena.
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].payload.patientDocument).toBe('BUENA');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('omitido(s) por FE_HORA_CIT ilegible'),
+    );
+  });
+
+  it('sin filas sucias no se avisa de nada', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await conCitas([filaHis({ hora: '2026/09/03 07:00' })]).detectChanges(
+      foto({}) as never,
+    );
+
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('FE_HORA_CIT ilegible'),
+    );
+  });
+
+  it('🛡️ la foto de la reconciliación omite la fila sucia en vez de fracasar entera', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const driver = conCitas([
+      { med: '76', hora: '2026/09/03 07:00', hist: 'BUENA' },
+      { med: '76', hora: '2026/09/03 1', hist: 'SUCIA' },
+    ]);
+
+    const foto = await driver.snapshotAppointments({
+      from: new Date('2026-09-01T00:00:00.000Z'),
+      to: new Date('2026-09-30T00:00:00.000Z'),
+    });
+
+    // La reconciliación es la última red contra la deriva silenciosa: una
+    // foto incompleta que lo dice vale infinitamente más que ninguna foto.
+    expect(foto).toHaveLength(1);
+    expect(foto[0].patientDocument).toBe('BUENA');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('FE_HORA_CIT ilegible'),
+    );
   });
 });

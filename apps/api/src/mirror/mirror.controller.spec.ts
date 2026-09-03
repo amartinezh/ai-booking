@@ -249,3 +249,228 @@ describe('MirrorController — validación de /mirror/catalog', () => {
     expect(catalog.upload).not.toHaveBeenCalled();
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// Los cuatro endpoints restantes del protocolo. Ninguno tenía prueba, y todos
+// deciden algo que el agente no puede corregir por su cuenta: con qué
+// configuración arranca, qué eventos recibe, y qué se acepta como foto del
+// HIS. El `organizationId` SIEMPRE sale del guard (req.mirrorConfig), nunca
+// del cuerpo — un agente no puede hablar en nombre de otra clínica.
+// ══════════════════════════════════════════════════════════════════════════
+describe('MirrorController — handshake, events, reconcile, changes, heartbeat', () => {
+  let controller: MirrorController;
+  let dispatch: {
+    handshake: jest.Mock;
+    getPendingEvents: jest.Mock;
+    heartbeat: jest.Mock;
+  };
+  let reconciliation: { reconcile: jest.Mock };
+  let apply: { applyBatch: jest.Mock };
+
+  const req = {
+    mirrorConfig: {
+      organizationId: 'org1',
+      driverKey: 'cnt-sanvicente-anserma',
+      driverConfig: { server: '192.168.1.16' },
+    },
+  } as never;
+
+  beforeEach(async () => {
+    dispatch = {
+      handshake: jest.fn(async () => ({ ok: true })),
+      getPendingEvents: jest.fn(async () => []),
+      heartbeat: jest.fn(async () => undefined),
+    };
+    reconciliation = { reconcile: jest.fn(async () => ({ inSync: true })) };
+    apply = {
+      applyBatch: jest.fn(async () => ({
+        applied: 1,
+        skipped: 0,
+        conflicts: 0,
+        errors: 0,
+      })),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [MirrorController],
+      providers: [
+        { provide: MirrorDispatchService, useValue: dispatch },
+        { provide: MirrorReconciliationService, useValue: reconciliation },
+        { provide: MirrorApplyService, useValue: apply },
+        { provide: MirrorAvailabilityService, useValue: {} },
+        { provide: MirrorCatalogService, useValue: {} },
+      ],
+    })
+      .overrideGuard(MirrorAgentGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+
+    controller = module.get(MirrorController);
+  });
+
+  describe('POST /mirror/handshake', () => {
+    it('pasa al servicio la org, el driver y la config que resolvió el guard', async () => {
+      const body = {
+        driverVersion: '1.2.3',
+        agentClockIso: '2026-09-02T10:00:00.000Z',
+      };
+
+      await controller.handshake(req, body);
+
+      expect(dispatch.handshake).toHaveBeenCalledWith(
+        'org1',
+        'cnt-sanvicente-anserma',
+        { server: '192.168.1.16' },
+        body,
+      );
+    });
+
+    it('sin el reloj del agente se rechaza: sin él no se puede medir el desfase', () => {
+      expect(() => controller.handshake(req, {} as never)).toThrow(
+        BadRequestException,
+      );
+      expect(() => controller.handshake(req, null as never)).toThrow(
+        BadRequestException,
+      );
+      expect(dispatch.handshake).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /mirror/events', () => {
+    it('sin cursor arranca en 0 y sin límite explícito', async () => {
+      await controller.getEvents(req);
+
+      expect(dispatch.getPendingEvents).toHaveBeenCalledWith(
+        'org1',
+        0n,
+        undefined,
+      );
+    });
+
+    it('el cursor viaja como BigInt: un seq de int64 no cabe en un Number', async () => {
+      await controller.getEvents(req, '9007199254740993', '50');
+
+      expect(dispatch.getPendingEvents).toHaveBeenCalledWith(
+        'org1',
+        9007199254740993n,
+        50,
+      );
+    });
+
+    it('un cursor vacío se trata como 0, no como NaN', async () => {
+      await controller.getEvents(req, '');
+      expect(dispatch.getPendingEvents).toHaveBeenCalledWith(
+        'org1',
+        0n,
+        undefined,
+      );
+    });
+
+    it('un cursor que no es un número revienta en vez de servir basura', () => {
+      expect(() => controller.getEvents(req, 'abc')).toThrow();
+    });
+  });
+
+  describe('POST /mirror/reconcile', () => {
+    const foto = [
+      { doctorExternalKey: '76', startTimeIso: '2026-09-03T12:00:00.000Z' },
+    ];
+
+    it('la foto del HIS llega al reconciliador con su ventana', async () => {
+      await controller.reconcile(req, {
+        fromIso: '2026-09-01T00:00:00.000Z',
+        toIso: '2026-09-30T00:00:00.000Z',
+        appointments: foto,
+      });
+
+      expect(reconciliation.reconcile).toHaveBeenCalledWith('org1', foto, {
+        from: new Date('2026-09-01T00:00:00.000Z'),
+        to: new Date('2026-09-30T00:00:00.000Z'),
+      });
+    });
+
+    it('una foto VACÍA es legítima: "el hospital no tiene ninguna cita ahí"', async () => {
+      await controller.reconcile(req, { appointments: [] });
+      expect(reconciliation.reconcile).toHaveBeenCalled();
+    });
+
+    it('sin ventana usa ahora → +90 días', async () => {
+      const antes = Date.now();
+      await controller.reconcile(req, { appointments: [] });
+
+      const ventana = reconciliation.reconcile.mock.calls[0][2];
+      const dias = (ventana.to.getTime() - ventana.from.getTime()) / 86_400_000;
+      expect(dias).toBeCloseTo(90, 3);
+      expect(ventana.from.getTime()).toBeGreaterThanOrEqual(antes - 1000);
+    });
+
+    it('sin `appointments` como arreglo se rechaza', async () => {
+      await expect(controller.reconcile(req, {})).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(
+        controller.reconcile(req, { appointments: 'nope' as never }),
+      ).rejects.toThrow(BadRequestException);
+      expect(reconciliation.reconcile).not.toHaveBeenCalled();
+    });
+
+    it('una fecha ilegible se rechaza en vez de comparar contra un Invalid Date', async () => {
+      await expect(
+        controller.reconcile(req, { fromIso: 'ayer', appointments: [] }),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        controller.reconcile(req, { toIso: '32 de mayo', appointments: [] }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('POST /mirror/changes', () => {
+    it('el lote llega al aplicador con la org del guard', async () => {
+      const events = [{ eventId: 'e1', entityType: 'APPOINTMENT' }];
+      await controller.applyChanges(req, { events } as never);
+
+      expect(apply.applyBatch).toHaveBeenCalledWith('org1', events);
+    });
+
+    it('un lote vacío es válido: "no pasó nada en el HIS" es una respuesta', async () => {
+      await controller.applyChanges(req, { events: [] });
+      expect(apply.applyBatch).toHaveBeenCalledWith('org1', []);
+    });
+
+    it('sin `events` como arreglo se rechaza', () => {
+      expect(() => controller.applyChanges(req, {} as never)).toThrow(
+        BadRequestException,
+      );
+      expect(() =>
+        controller.applyChanges(req, { events: 'nope' } as never),
+      ).toThrow(BadRequestException);
+      expect(apply.applyBatch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /mirror/heartbeat', () => {
+    it('el latido llega con la org y el driver, y responde ok', async () => {
+      const body = { lagMs: 120, hisReachable: true };
+      await expect(controller.heartbeat(req, body)).resolves.toEqual({
+        ok: true,
+      });
+
+      expect(dispatch.heartbeat).toHaveBeenCalledWith(
+        'org1',
+        'cnt-sanvicente-anserma',
+        body,
+      );
+    });
+
+    it('un latido sin cuerpo se acepta: un agente viejo no reporta métricas', async () => {
+      await expect(
+        controller.heartbeat(req, undefined as never),
+      ).resolves.toEqual({ ok: true });
+      expect(dispatch.heartbeat).toHaveBeenCalledWith(
+        'org1',
+        'cnt-sanvicente-anserma',
+        {},
+      );
+    });
+  });
+});

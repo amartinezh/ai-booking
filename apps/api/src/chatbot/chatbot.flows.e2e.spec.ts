@@ -321,7 +321,11 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   const sent = (): string[] =>
     sendSpy.mock.calls.map((c: any[]) => c[1] as string);
   const lastSent = (): string => sent()[sent().length - 1] ?? '';
-  const state = (): Promise<string | null> =>
+  // `redis.store` es un Map en memoria, así que la lectura es síncrona; se
+  // declara `async` para que los `await state()` de abajo sigan siendo
+  // legítimos (antes la firma prometía una promesa que nunca lo era, y
+  // TypeScript lo rechazaba).
+  const state = async (): Promise<string | null> =>
     redis.store.get(`chat_state:${ORG_ID}:${SENDER}`) ?? null;
   const say = (body: string) => service.processIncomingMessage(textEvent(body));
 
@@ -1552,13 +1556,18 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       }
 
       // Redis "lento" solo para el mapping de cancelación.
-      const originalSet = redis.set.getMockImplementation()!;
-      redis.set.mockImplementation(async (k: string, v: string) => {
+      const originalSet = redis.set.getMockImplementation()! as (
+        k: string,
+        v: string,
+      ) => unknown;
+      // El doble de Redis declara `set` síncrono; aquí se necesita meter una
+      // demora, así que la implementación asíncrona se inyecta por `as never`.
+      redis.set.mockImplementation((async (k: string, v: string) => {
         if (k.startsWith('temp_cancel_apt_')) {
           await new Promise((r) => setTimeout(r, 30));
         }
         return originalSet(k, v);
-      });
+      }) as never);
 
       await say('cancelar cita');
       await say('1088123456');

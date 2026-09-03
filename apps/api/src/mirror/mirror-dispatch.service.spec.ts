@@ -877,3 +877,379 @@ describe('MirrorDispatchService — hidratación del evento', () => {
     expect(evento.context?.missingMappings).toBeUndefined();
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// HIDRATACIÓN — la pieza que convierte una fila cruda de `Appointment` en algo
+// que un HIS puede escribir.
+//
+// El trigger serializa la fila tal cual, y esa fila NO tiene la hora, ni el
+// médico, ni el servicio: solo cuatro UUIDs de AgenIA. Todo lo que el driver
+// necesita para construir su INSERT se resuelve aquí. Si algo falta, el evento
+// tiene que salir MARCADO como no aplicable — escribir una cita a medias en la
+// agenda de un hospital es el riesgo #1 de la tabla de riesgos del plan.
+// ══════════════════════════════════════════════════════════════════════════
+describe('MirrorDispatchService — hidratación del contexto que va al HIS', () => {
+  let service: MirrorDispatchService;
+  let prisma: any;
+
+  const ORG = 'org1';
+  const AHORA = new Date('2026-09-02T10:00:00.000Z');
+
+  const filaOutbox = (over: Record<string, unknown> = {}) => ({
+    seq: 1n,
+    eventId: 'evt-1',
+    entityType: 'APPOINTMENT',
+    entityId: 'apt-1',
+    op: 'INSERT',
+    payload: {
+      id: 'apt-1',
+      scheduleSlotId: 'slot-1',
+      patientId: 'pac-1',
+      epsId: 'eps-1',
+    },
+    origin: 'LOCAL',
+    createdAt: AHORA,
+    deliveredAt: null,
+    deadLettered: false,
+    attempts: 0,
+    nextAttemptAt: null,
+    ...over,
+  });
+
+  const SLOT = {
+    id: 'slot-1',
+    startTime: new Date('2026-09-10T12:00:00.000Z'),
+    endTime: new Date('2026-09-10T12:20:00.000Z'),
+    doctorId: 'doc-1',
+    serviceId: 'svc-1',
+  };
+  const PACIENTE = {
+    id: 'pac-1',
+    cedula: '9696544',
+    fullName: 'JUAN CARLOS PEREZ',
+    nombres: 'JUAN CARLOS',
+    apellidos: 'PEREZ',
+    dateOfBirth: new Date('1980-03-15T00:00:00.000Z'),
+    gender: 'M',
+    regime: 'SUBSIDIADO',
+  };
+  const EPS = { id: 'eps-1', nit: '800088702', name: 'NUEVA EPS' };
+  const MAPAS = [
+    { entityType: 'DOCTOR', agenIAId: 'doc-1', externalKey: '76' },
+    { entityType: 'SERVICE', agenIAId: 'svc-1', externalKey: 'S-9' },
+  ];
+
+  const traer = () => service.getPendingEvents(ORG, 0n, 100);
+
+  beforeEach(async () => {
+    prisma = {
+      hospitalMirrorConfig: { findUniqueOrThrow: jest.fn(), update: jest.fn() },
+      syncOutbox: {
+        findMany: jest.fn(async () => [filaOutbox()]),
+        findFirst: jest.fn(),
+        updateMany: jest.fn(async () => ({ count: 1 })),
+      },
+      scheduleSlot: { findMany: jest.fn(async () => [SLOT]) },
+      patientProfile: { findMany: jest.fn(async () => [PACIENTE]) },
+      eps: { findMany: jest.fn(async () => [EPS]) },
+      mirrorEntityMap: { findMany: jest.fn(async () => MAPAS) },
+      syncAudit: { create: jest.fn() },
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MirrorDispatchService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    service = module.get(MirrorDispatchService);
+    (service as any).longPollMs = 20;
+    (service as any).longPollIntervalMs = 5;
+    jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+  });
+
+  it('una cita completa sale con TODO lo que el driver necesita y sin faltantes', async () => {
+    const [evento] = await traer();
+
+    expect(evento.context).toEqual({
+      startTimeIso: '2026-09-10T12:00:00.000Z',
+      endTimeIso: '2026-09-10T12:20:00.000Z',
+      doctorExternalKey: '76',
+      serviceExternalKey: 'S-9',
+      patientDocument: '9696544',
+      patientFullName: 'JUAN CARLOS PEREZ',
+      patientNombres: 'JUAN CARLOS',
+      patientApellidos: 'PEREZ',
+      patientBirthDateIso: '1980-03-15T00:00:00.000Z',
+      patientGender: 'M',
+      patientRegime: 'SUBSIDIADO',
+      epsNit: '800088702',
+      epsName: 'NUEVA EPS',
+    });
+    expect(evento.context?.missingMappings).toBeUndefined();
+    expect(evento.seq).toBe('1'); // BigInt serializado: JSON no tiene int64
+  });
+
+  it('todas las lecturas van acotadas a la organización', async () => {
+    await traer();
+
+    for (const modelo of ['scheduleSlot', 'patientProfile', 'eps'] as const) {
+      expect(prisma[modelo].findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ organizationId: ORG }),
+        }),
+      );
+    }
+    expect(prisma.mirrorEntityMap.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organizationId: ORG }),
+      }),
+    );
+  });
+
+  it('un lote grande no dispara una consulta por cita: son cuatro, sea cual sea el tamaño', async () => {
+    prisma.syncOutbox.findMany.mockResolvedValue(
+      Array.from({ length: 50 }, (_, i) =>
+        filaOutbox({ seq: BigInt(i + 1), eventId: `e${i}`, entityId: `a${i}` }),
+      ),
+    );
+
+    await traer();
+
+    expect(prisma.scheduleSlot.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.patientProfile.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.eps.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.mirrorEntityMap.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  describe('🚨 homologaciones que faltan → el evento sale marcado NO aplicable', () => {
+    it('médico sin homologar', async () => {
+      prisma.mirrorEntityMap.findMany.mockResolvedValue([MAPAS[1]]);
+
+      const [evento] = await traer();
+
+      expect(evento.context?.missingMappings).toEqual(['DOCTOR doc-1']);
+      expect(evento.context?.doctorExternalKey).toBeUndefined();
+    });
+
+    it('servicio sin homologar', async () => {
+      prisma.mirrorEntityMap.findMany.mockResolvedValue([MAPAS[0]]);
+
+      const [evento] = await traer();
+      expect(evento.context?.missingMappings).toEqual(['SERVICE svc-1']);
+    });
+
+    it('el cupo desapareció entre la captura y la entrega', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([]);
+
+      const [evento] = await traer();
+
+      expect(evento.context?.missingMappings).toEqual(['SLOT slot-1']);
+      expect(evento.context?.startTimeIso).toBeUndefined();
+    });
+
+    it('el paciente no está: el HIS necesita la historia para dar de alta', async () => {
+      prisma.patientProfile.findMany.mockResolvedValue([]);
+
+      const [evento] = await traer();
+      expect(evento.context?.missingMappings).toContain('PATIENT pac-1');
+    });
+
+    it('la cita declara una EPS que no existe', async () => {
+      prisma.eps.findMany.mockResolvedValue([]);
+
+      const [evento] = await traer();
+      expect(evento.context?.missingMappings).toContain('EPS eps-1');
+    });
+
+    it('una cita PARTICULAR (sin EPS) no cuenta como faltante', async () => {
+      prisma.syncOutbox.findMany.mockResolvedValue([
+        filaOutbox({
+          payload: {
+            id: 'apt-1',
+            scheduleSlotId: 'slot-1',
+            patientId: 'pac-1',
+            epsId: null,
+          },
+        }),
+      ]);
+      prisma.eps.findMany.mockResolvedValue([]);
+
+      const [evento] = await traer();
+
+      expect(evento.context?.missingMappings).toBeUndefined();
+      expect(evento.context?.epsNit).toBeUndefined();
+    });
+
+    it('varios faltantes se reportan todos juntos, no solo el primero', async () => {
+      prisma.mirrorEntityMap.findMany.mockResolvedValue([]);
+      prisma.patientProfile.findMany.mockResolvedValue([]);
+
+      const [evento] = await traer();
+
+      expect(evento.context?.missingMappings).toEqual([
+        'DOCTOR doc-1',
+        'SERVICE svc-1',
+        'PATIENT pac-1',
+      ]);
+    });
+  });
+
+  describe('reagendamiento — el cupo anterior viaja en `__old`', () => {
+    const SLOT_VIEJO = {
+      id: 'slot-0',
+      startTime: new Date('2026-09-09T12:00:00.000Z'),
+      endTime: new Date('2026-09-09T12:20:00.000Z'),
+      doctorId: 'doc-1',
+      serviceId: 'svc-1',
+    };
+
+    const conOld = (oldSlotId: string | undefined) =>
+      filaOutbox({
+        op: 'UPDATE',
+        payload: {
+          id: 'apt-1',
+          scheduleSlotId: 'slot-1',
+          patientId: 'pac-1',
+          epsId: 'eps-1',
+          __old: { id: 'apt-1', scheduleSlotId: oldSlotId },
+        },
+      });
+
+    it('con el cupo movido, se adjunta la hora y el médico del anterior', async () => {
+      prisma.syncOutbox.findMany.mockResolvedValue([conOld('slot-0')]);
+      prisma.scheduleSlot.findMany.mockResolvedValue([SLOT, SLOT_VIEJO]);
+
+      const [evento] = await traer();
+
+      expect(evento.context?.previousStartTimeIso).toBe(
+        '2026-09-09T12:00:00.000Z',
+      );
+      expect(evento.context?.previousDoctorExternalKey).toBe('76');
+      expect(evento.context?.missingMappings).toBeUndefined();
+    });
+
+    it('el cupo anterior se pide en la MISMA consulta que el actual', async () => {
+      prisma.syncOutbox.findMany.mockResolvedValue([conOld('slot-0')]);
+      prisma.scheduleSlot.findMany.mockResolvedValue([SLOT, SLOT_VIEJO]);
+
+      await traer();
+
+      const where = prisma.scheduleSlot.findMany.mock.calls[0][0].where;
+      expect(where.id.in).toEqual(expect.arrayContaining(['slot-1', 'slot-0']));
+    });
+
+    it('un UPDATE que NO movió el cupo no es un reagendamiento', async () => {
+      // Desenlace de asistencia: misma fila, mismo cupo.
+      prisma.syncOutbox.findMany.mockResolvedValue([conOld('slot-1')]);
+
+      const [evento] = await traer();
+
+      expect(evento.context?.previousStartTimeIso).toBeUndefined();
+      expect(evento.context?.previousDoctorExternalKey).toBeUndefined();
+      expect(evento.context?.missingMappings).toBeUndefined();
+    });
+
+    it('si el cupo anterior ya no existe, se reporta como faltante', async () => {
+      prisma.syncOutbox.findMany.mockResolvedValue([conOld('slot-0')]);
+      prisma.scheduleSlot.findMany.mockResolvedValue([SLOT]);
+
+      const [evento] = await traer();
+      expect(evento.context?.missingMappings).toContain(
+        'SLOT slot-0 (cupo anterior)',
+      );
+    });
+
+    it('si el médico del cupo anterior no está homologado, también se reporta', async () => {
+      prisma.syncOutbox.findMany.mockResolvedValue([conOld('slot-0')]);
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        SLOT,
+        { ...SLOT_VIEJO, doctorId: 'doc-viejo' },
+      ]);
+
+      const [evento] = await traer();
+      expect(evento.context?.missingMappings).toContain(
+        'DOCTOR doc-viejo (cupo anterior)',
+      );
+    });
+  });
+
+  describe('datos opcionales del paciente', () => {
+    it('un paciente antiguo sin nombres/apellidos separados no rompe nada', async () => {
+      prisma.patientProfile.findMany.mockResolvedValue([
+        {
+          ...PACIENTE,
+          nombres: null,
+          apellidos: null,
+          dateOfBirth: null,
+          gender: null,
+          regime: null,
+        },
+      ]);
+
+      const [evento] = await traer();
+
+      expect(evento.context?.patientDocument).toBe('9696544');
+      expect(evento.context?.patientNombres).toBeUndefined();
+      expect(evento.context?.patientBirthDateIso).toBeUndefined();
+      expect(evento.context?.patientRegime).toBeUndefined();
+      expect(evento.context?.missingMappings).toBeUndefined();
+    });
+
+    it('una EPS sin NIT viaja igual con su nombre', async () => {
+      prisma.eps.findMany.mockResolvedValue([{ ...EPS, nit: null }]);
+
+      const [evento] = await traer();
+      expect(evento.context?.epsNit).toBeUndefined();
+      expect(evento.context?.epsName).toBe('NUEVA EPS');
+    });
+  });
+
+  describe('eventos que no son citas', () => {
+    it('un evento SLOT sale sin contexto: no hay nada que hidratar', async () => {
+      prisma.syncOutbox.findMany.mockResolvedValue([
+        filaOutbox({ entityType: 'SLOT', entityId: 'slot-1' }),
+      ]);
+
+      const [evento] = await traer();
+
+      expect(evento.context).toBeUndefined();
+      expect(prisma.scheduleSlot.findMany).not.toHaveBeenCalled();
+    });
+
+    it('un lote mixto hidrata solo las citas', async () => {
+      prisma.syncOutbox.findMany.mockResolvedValue([
+        filaOutbox({ seq: 1n, eventId: 'e-slot', entityType: 'SLOT' }),
+        filaOutbox({ seq: 2n, eventId: 'e-cita', entityId: 'apt-2' }),
+      ]);
+
+      const eventos = await traer();
+
+      expect(eventos[0].context).toBeUndefined();
+      expect(eventos[1].context?.doctorExternalKey).toBe('76');
+    });
+  });
+
+  describe('🛡️ si la hidratación revienta, NADA se escribe en el HIS', () => {
+    it('el evento se entrega marcado como no aplicable, con el motivo real', async () => {
+      prisma.scheduleSlot.findMany.mockRejectedValue(
+        new Error('connection terminated'),
+      );
+
+      const [evento] = await traer();
+
+      expect(evento.context?.missingMappings).toEqual([
+        'hidratación falló: connection terminated',
+      ]);
+      // La fila cruda sí viaja: el agente necesita el seq para reportar.
+      expect(evento.seq).toBe('1');
+      expect(evento.eventId).toBe('evt-1');
+    });
+
+    it('no se traga el poll entero: el agente recibe respuesta, no un 500', async () => {
+      prisma.patientProfile.findMany.mockRejectedValue(new Error('boom'));
+      await expect(traer()).resolves.toHaveLength(1);
+    });
+  });
+});
