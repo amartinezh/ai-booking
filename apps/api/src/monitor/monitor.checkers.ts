@@ -4,6 +4,7 @@ import textToSpeech from '@google-cloud/text-to-speech';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CheckResult, ServiceConfig } from './services.config';
+import { getErrorMessage } from '../common/error-message.util';
 
 /**
  * Ejecuta el health check concreto de cada servicio externo y normaliza el
@@ -43,15 +44,15 @@ export class MonitorCheckers {
     try {
       const result = await this.withTimeout(this.dispatch(svc), svc.timeoutMs);
       return result;
-    } catch (error: any) {
-      const isTimeout = error?.name === 'TimeoutError';
+    } catch (error: unknown) {
+      const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       return {
         status: 'DOWN',
         latencyMs: null,
         errorCode: isTimeout ? 'TIMEOUT' : 'UNKNOWN',
         errorMessage: isTimeout
           ? `El check superó el timeout de ${svc.timeoutMs}ms.`
-          : error?.message || 'Error desconocido en el check.',
+          : getErrorMessage(error) || 'Error desconocido en el check.',
       };
     }
   }
@@ -215,9 +216,18 @@ export class MonitorCheckers {
     try {
       await this.ttsClient.listVoices({ languageCode: 'es-US' });
       return this.gradeLatency(Date.now() - startedAt, 200);
-    } catch (error: any) {
-      const raw = error?.details || error?.message || String(error);
-      const haystack = String(raw).toLowerCase();
+    } catch (error: unknown) {
+      // El cliente de Google Cloud (gRPC) adjunta `.details`, mas informativo
+      // que `.message` para estos errores — ninguna librería de error tipada
+      // lo declara, así que se lee por duck-typing.
+      const details =
+        typeof error === 'object' && error !== null && 'details' in error
+          ? (error as { details: unknown }).details
+          : undefined;
+      const raw =
+        (typeof details === 'string' ? details : undefined) ||
+        getErrorMessage(error);
+      const haystack = raw.toLowerCase();
       let errorCode = 'UNKNOWN';
       if (
         haystack.includes('permission') ||
@@ -236,7 +246,7 @@ export class MonitorCheckers {
         status: 'DOWN',
         latencyMs: Date.now() - startedAt,
         errorCode,
-        errorMessage: String(raw),
+        errorMessage: raw,
       };
     }
   }
@@ -255,9 +265,9 @@ export class MonitorCheckers {
         select: { id: true },
       });
       return org?.id ?? null;
-    } catch (error: any) {
+    } catch (error: unknown) {
       this.logger.warn(
-        `No se pudo resolver organización testigo: ${error.message}`,
+        `No se pudo resolver organización testigo: ${getErrorMessage(error)}`,
       );
       return null;
     }

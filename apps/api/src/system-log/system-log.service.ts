@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma, SystemLog } from '@agenia/database';
+import { getErrorMessage } from '../common/error-message.util';
 
 // Espejo del enum LogLevel del schema Prisma. Usamos string literals para
 // no acoplar el resto del código a tipos generados.
@@ -8,7 +10,7 @@ export type SystemLogLevel = 'EVENT' | 'WARNING' | 'ERROR';
 export interface LogInput {
   action: string;
   message: string;
-  metadata?: Record<string, any> | null;
+  metadata?: Record<string, unknown> | null;
   userId?: string | null;
   organizationId?: string | null;
 }
@@ -57,15 +59,15 @@ export class SystemLogService {
           level,
           action: this.truncate(input.action, 120),
           message: this.truncate(input.message, 8000),
-          metadata: (input.metadata as any) ?? null,
+          metadata: (input.metadata as Prisma.InputJsonValue) ?? null,
           userId: input.userId ?? null,
           organizationId: input.organizationId ?? null,
         },
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Nunca propagar: solo loguear por consola para no entrar en bucles.
       this.logger.error(
-        `❌ No se pudo persistir SystemLog (${level} / ${input.action}): ${e?.message || e}`,
+        `❌ No se pudo persistir SystemLog (${level} / ${input.action}): ${getErrorMessage(e)}`,
       );
     }
   }
@@ -79,7 +81,7 @@ export class SystemLogService {
    * Toda búsqueda es case-insensitive y matchea `action` o `message`.
    */
   async list(params: ListLogsParams): Promise<{
-    rows: any[];
+    rows: SystemLog[];
     total: number;
     page: number;
     pageSize: number;
@@ -89,7 +91,7 @@ export class SystemLogService {
     const pageSize = Math.min(100, Math.max(5, params.pageSize ?? 25));
     const skip = (page - 1) * pageSize;
 
-    const where: any = {};
+    const where: Prisma.SystemLogWhereInput = {};
 
     if (params.level && params.level !== 'ALL') {
       where.level = params.level;
@@ -126,7 +128,7 @@ export class SystemLogService {
    * Resumen de los últimos N errores en las últimas 24 horas.
    * Alimenta la "alerta roja" del dashboard de super-admin.
    */
-  async recentErrors(limit = 5): Promise<any[]> {
+  async recentErrors(limit = 5): Promise<SystemLog[]> {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     return this.prisma.systemLog.findMany({
       where: {
@@ -138,7 +140,7 @@ export class SystemLogService {
     });
   }
 
-  async getById(id: string): Promise<any> {
+  async getById(id: string): Promise<SystemLog | null> {
     return this.prisma.systemLog.findUnique({ where: { id } });
   }
 

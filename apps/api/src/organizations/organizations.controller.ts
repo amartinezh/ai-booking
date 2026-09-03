@@ -11,6 +11,7 @@ import type { Request } from 'express';
 import { Roles } from '../common/roles.decorator';
 import { RolesGuard } from '../common/roles.guard';
 import { OrganizationsService } from './organizations.service';
+import type { JwtUserPayload } from '../common/current-user.decorator';
 import type {
   AuditActor,
   PurgeOrganizationInput,
@@ -48,8 +49,8 @@ export class OrganizationsController {
   }
 
   /** Hidrata el actor desde el JWT (lo puso RolesGuard) y la IP de la request. */
-  private extractActor(req: Request): AuditActor {
-    const user = (req as any).user ?? {};
+  private extractActor(req: Request & { user?: JwtUserPayload }): AuditActor {
+    const user = req.user ?? ({} as Partial<JwtUserPayload>);
     const forwarded = req.headers['x-forwarded-for'];
     const ipAddress =
       (Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0]) ||

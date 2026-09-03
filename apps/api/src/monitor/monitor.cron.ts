@@ -5,6 +5,7 @@ import { CronJob } from 'cron';
 import { PrismaService } from '../prisma/prisma.service';
 import { MonitorCheckers } from './monitor.checkers';
 import { ACTIVE_SERVICES, CheckResult } from './services.config';
+import { getErrorMessage, getErrorStack } from '../common/error-message.util';
 
 /** Estado en memoria del último resultado conocido de cada servicio. */
 interface KnownState {
@@ -68,9 +69,9 @@ export class MonitorCron implements OnModuleInit {
       this.logger.log(
         `📋 Estado reconstruido: ${openIncidents.length} incidente(s) abierto(s)`,
       );
-    } catch (error: any) {
+    } catch (error: unknown) {
       this.logger.error(
-        `No se pudo reconstruir estado de incidentes (¿falta la migración de ServiceIncident?): ${error.message}. El monitor arranca con estado vacío.`,
+        `No se pudo reconstruir estado de incidentes (¿falta la migración de ServiceIncident?): ${getErrorMessage(error)}. El monitor arranca con estado vacío.`,
       );
     }
 
@@ -87,8 +88,10 @@ export class MonitorCron implements OnModuleInit {
 
     // 3️⃣ Primera verificación inmediata (background) para conocer el estado ya,
     //    sin esperar al primer tick.
-    this.runHealthChecks().catch((err) =>
-      this.logger.error(`Error en verificación inicial: ${err.message}`),
+    this.runHealthChecks().catch((err: unknown) =>
+      this.logger.error(
+        `Error en verificación inicial: ${getErrorMessage(err)}`,
+      ),
     );
 
     // 4️⃣ Limpieza diaria a las 3 AM (retención de incidentes resueltos).
@@ -115,7 +118,8 @@ export class MonitorCron implements OnModuleInit {
                 status: 'DOWN',
                 latencyMs: null,
                 errorCode: 'UNHANDLED',
-                errorMessage: settled.reason?.message || 'Promise rejected',
+                errorMessage:
+                  getErrorMessage(settled.reason) || 'Promise rejected',
               };
 
         // Servicio "no aplica" en este ciclo (ej. Gemini/Meta sin organización):
@@ -142,11 +146,11 @@ export class MonitorCron implements OnModuleInit {
         }
         // UP→UP o caído→caído (incluso si cambia DOWN↔DEGRADED): no escribir.
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Nunca re-lanzar: el cron debe sobrevivir al próximo tick.
       this.logger.error(
-        `runHealthChecks crasheó: ${error.message}`,
-        error.stack,
+        `runHealthChecks crasheó: ${getErrorMessage(error)}`,
+        getErrorStack(error),
       );
     }
   }
