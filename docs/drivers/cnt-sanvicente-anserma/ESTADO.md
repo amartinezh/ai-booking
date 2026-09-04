@@ -1836,13 +1836,124 @@ por más que la EPS esté dada de alta.
 
 ---
 
+---
+
+# ✅ SECCIÓN H CORRIDA — el bloqueante se cierra (2026-09-04)
+
+El traslado de citas del MEDICO HTA al médico real **no existe como práctica**.
+Los tres resultados dicen lo mismo.
+
+## H.1 — un caso. Y ni siquiera es el que se temía.
+
+| medico_virtual | motivo | medico_real | citas |
+|---|---|---|---|
+| 76 | 05 | 077 | 1 |
+
+**Una** cita en 90 días, y el destino es `077` — la OTRA agenda virtual, no un
+médico de verdad. La hipótesis que abría el bloqueante —«al programar la semana
+mueven las citas al médico que atiende»— habría dejado cientos de filas aquí.
+Dejó una, y de agenda a agenda.
+
+## H.2 — el denominador dice que estas agendas casi no se tocan
+
+| | motivo 05 | 06 | 01 | 11 | total |
+|---|---:|---:|---:|---:|---:|
+| 077 | 37 | 7 | 4 | 1 | 49 |
+| 76 | 30 | — | 1 | — | 31 |
+| | | | | | **80** |
+
+Dos lecturas, las dos tranquilizadoras:
+
+- **1 traslado sobre 80 anulaciones = 1,25 %.** No es un patrón, es un caso
+  suelto.
+- **80 anulaciones sobre ~9.400 citas es una tasa del 0,85 %**, contra el
+  **8-9 % histórico del hospital** (92.464 anulaciones, dato de la 4ª ronda).
+  Estas agendas se cancelan **diez veces menos** que la media. Son de lo más
+  estable que tiene el hospital, justo lo contrario de lo que haría falta para
+  que el traslado masivo fuera cierto.
+
+## H.3 — no prueba traslado: prueba que hay dos caminos
+
+1.213 citas de `S39141-1` con médicos reales (MDD2 280, 77 232, MD08 192, RU65
+85…). Eso **no** es la huella de un traslado — es exactamente lo que describió
+el hospital: **la cita cercana se agenda directo con el médico ya programado; la
+lejana va a la agenda virtual.** Dos caminos que conviven, no uno que se
+convierte en el otro.
+
+## Y el argumento que cierra la puerta de atrás
+
+H.1 solo ve traslados que pasen por `CITAS_ANULADAS`. Quedaba la vía silenciosa
+(un DELETE sin archivar, o un UPDATE de la PK), que H.3 no puede descartar sola.
+Pero sí la descarta el propio HIS: **no hay triggers ni procedimientos
+almacenados de agendamiento** (Fase 0, 2ª ronda). Un traslado silencioso tendría
+que hacerlo una persona, a mano, sobre ~5.800 citas cada 90 días — unas 65 al
+día. No es plausible como rutina, y nada en el sistema lo automatiza.
+
+## 🎯 Decisión: 76 y 077 entran como médicos normales
+
+Es la propuesta que se puso sobre la mesa y los datos la respaldan. **AgenIA no
+hace nada especial con ellos:** si el hospital crea turnos ahí, el espejo los ve,
+genera cupos y agenda contra ese código. Quién atiende de verdad es gestión del
+hospital, igual que hoy con su propia agendadora.
+
+Es también la opción de menos código: es lo que el motor ya hacía. Y la de menos
+riesgo — cualquier tratamiento especial habría sido lógica nueva sobre el camino
+crítico del arranque, para un caso que resultó no existir.
+
+**Lo que sí hubo que arreglar es lo que ve el paciente.** Los cuatro perfiles del
+arranque son agendas funcionales, no personas:
+
+| código | nombre en el HIS | lo que leía el paciente |
+|---|---|---|
+| 76 | MEDICO ATENCIÓN HTA | `Dr(a). MEDICO ATENCIÓN HTA` |
+| 077 | MEDICO ATENCIÓN HTA 2 | `Dr(a). MEDICO ATENCIÓN HTA 2` |
+| 91-1 | ENFERMERA CyD HSVP | `Dr(a). ENFERMERA CyD HSVP` |
+| 91-2 | ENFERMERA SALUD REPRODUCTIVA | `Dr(a). ENFERMERA SALUD REPRODUCTIVA` |
+
+No era un caso de borde: **los cuatro médicos del arranque son agendas**, así que
+eso es lo que habría leído casi todo el paciente del piloto.
+
+El honorífico estaba quemado en **doce sitios** (ocho plantillas de los dos pools
+y cuatro listados del chatbot). Ahora lo decide `doctorLabel()` en un solo lugar
+y las plantillas reciben el nombre ya formateado:
+
+- `DoctorProfile.isFunctionalAgenda` (nuevo) marca el perfil que no es persona.
+- `docs/drivers/cnt-sanvicente-anserma/agendas-funcionales.json` declara los
+  cuatro y el nombre que verá el paciente. `homologar.ts` lo aplica al crear o
+  enlazar, y lo enseña en la lista de revisión. El nombre del HIS no se pierde:
+  queda en `MirrorEntityMap.externalLabel`.
+- Una prueba recorre `chatbot.constants.ts` entero y falla si alguien vuelve a
+  escribir el honorífico a mano en una plantilla — verificada inyectando la
+  regresión.
+
+El paciente pasa a leer **«Programa de Hipertensión»**, **«Consulta de
+Crecimiento y Desarrollo»** y **«Consulta de Planificación Familiar»**. Si el
+hospital prefiere otros nombres, se cambian en ese JSON y se vuelve a correr
+`homologar.ts` — no es despliegue.
+
+## El riesgo residual, dicho con su número
+
+Queda **~1 cita cada 90 días** que sí se mueve (el caso de H.1). Cuando pase, el
+paciente recibirá un aviso de cancelación que no le corresponde. Se asume: es un
+caso cada tres meses contra el coste de construir lógica de correlación
+«movida vs cancelada» para un patrón que no existe. Si la reconciliación diaria
+empieza a reportarlo más a menudo, se revisa — el panel del espejo ya lo enseña.
+
+## Lo que conviene preguntar de paso, sin que bloquee
+
+**Qué es el motivo `05`.** Se lleva 67 de las 80 anulaciones. Si resultara ser
+«no asistió», encajaría con pacientes citados a tres meses que se olvidan — y
+además confirmaría el pendiente 0b (hoy AgenIA los guarda como `CANCELLED` y no
+como `NO_SHOW`). Es un `SELECT * FROM dbo.MOTIVOANUL`.
+
+
 # 📊 ESTADO PARA EL PRIMER CORTE A PRODUCCIÓN (2026-09-04)
 
 ## Lo que falta, y solo esto
 
 | | qué | quién | ¿bloquea? |
 |---|---|---|---|
-| 1 | **Correr la sección H** — ¿se trasladan las citas de 76/077 al médico real? | TI (SQL de lectura) | 🔴 **Sí** |
+| 1 | ~~Correr la sección H~~ | ~~TI~~ | ✅ **Cerrado** — no hay traslado (1 caso en 90 días) |
 | 2 | **Padrón de Salud Total y de Sura** (CSV de afiliados) | Hospital | 🔴 **Sí** — sin él no agenda nadie |
 | 3 | **Dar de alta Salud Total** y apagar Nueva EPS | Nosotros — `provision-eps-piloto.ts` | 🔴 Sí, pero es una corrida |
 | 4 | **`AGENIA_SYNC_SETUP.sql` en producción** (`ESEHSVP`) | TI | 🔴 Sí |
@@ -1879,19 +1990,25 @@ por más que la EPS esté dada de alta.
 - **Los convenios vencen el 31-dic-2026**, los nueve. Ya pasó una vez que uno no
   se renovara con el mismo número (261, 481 de Salud Total). Repetir D.4/G.7 en
   diciembre.
+- **~1 cita cada 90 días sí se traslada de agenda** (el caso único de H.1). Ese
+  paciente recibirá un aviso de cancelación que no le corresponde. Asumido a
+  propósito; el panel del espejo lo enseña si empieza a repetirse.
 - **Nueva EPS contributivo sigue sin convenio conocido.** No molesta mientras
   Nueva EPS esté apagada; hay que resolverlo ANTES de encenderla.
 
 ## Cuánto falta, en una cifra
 
-**≈ 85 % listo para el primer corte.**
+**≈ 92 % listo para el primer corte.**
 
-El 15 % que falta **no es código**: es una consulta de lectura que decide si hay
-un defecto (sección H), dos archivos CSV, una VM y una fecha. De las ocho tareas
-de la lista, **cinco no dependen de nosotros**.
+Subió del 85 % porque la sección H cerró el único punto que podía convertirse en
+trabajo de desarrollo, y salió limpio: no hay traslado de citas, así que 76 y
+077 entran como médicos normales y el grueso del volumen del arranque está
+disponible desde el día uno.
 
-El único que puede convertirse en trabajo de verdad es el punto 1: si las citas
-de 76/077 se trasladan, hay que enseñarle al correlacionador a distinguir
-«movida» de «cancelada» antes de encender esos dos médicos. Se puede arrancar
-sin ellos —quedan los 11 médicos generales— pero son el grueso del volumen.
+**Lo que queda no es código.** Dos archivos CSV, una corrida de script, un
+`AGENIA_SYNC_SETUP.sql`, una VM y una fecha. De las siete tareas vivas, **cinco
+no dependen de nosotros**.
+
+El camino crítico ya no es técnico: es el **padrón**. Sin él no agenda nadie, por
+más que todo lo demás esté encendido.
 

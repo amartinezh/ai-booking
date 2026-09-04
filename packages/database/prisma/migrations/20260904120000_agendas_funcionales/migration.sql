@@ -1,0 +1,22 @@
+-- Un DoctorProfile que NO es una persona, sino una agenda de un programa.
+--
+-- Los HIS hospitalarios usan "agendas funcionales": filas en su tabla de
+-- médicos que no corresponden a nadie, creadas para poder agendar contra un
+-- programa. En el hospital de Anserma, los códigos 76 y 077 son «MEDICO
+-- ATENCIÓN HTA» y «MEDICO ATENCIÓN HTA 2», y existen porque el hospital
+-- programa a sus médicos reales por semanas mientras que un hipertenso se cita
+-- a tres meses (confirmado por el hospital el 2026-09-04). Lo mismo con 91-1 y
+-- 91-2, que son «ENFERMERA CyD» y «ENFERMERA SALUD REPRODUCTIVA».
+--
+-- Importa porque el chatbot antepone un honorífico al nombre: sin esta columna
+-- el paciente lee «Dr(a). MEDICO ATENCIÓN HTA 2». Y no es un caso de borde —
+-- los CUATRO perfiles con los que arranca el piloto son agendas, así que sería
+-- lo que vería prácticamente todo el mundo.
+--
+-- NO cambia nada del agendamiento: para el motor y para el espejo sigue siendo
+-- un médico como cualquier otro, con sus turnos y sus cupos.
+--
+-- El default es false, así que ninguna clínica existente cambia de
+-- comportamiento: todos sus médicos siguen siendo personas.
+ALTER TABLE "DoctorProfile"
+    ADD COLUMN "isFunctionalAgenda" BOOLEAN NOT NULL DEFAULT false;

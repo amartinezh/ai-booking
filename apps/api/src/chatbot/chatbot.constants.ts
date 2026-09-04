@@ -556,10 +556,10 @@ const FORMAL = {
     pick([
       `🔔 ${nombre}, tengo buenas noticias.\n\n` +
         `Se acaba de liberar un cupo en *${especialidad}* y usted era la siguiente persona en la lista.\n\n` +
-        `📅 *${fecha}*\n👨‍⚕️ Dr(a). ${doctor}\n\nLe reservé este cupo por *30 minutos*. ¿Le interesa tomarlo?\n\nResponda *SÍ* para confirmarlo o *NO* si ya no lo necesita.`,
+        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe reservé este cupo por *30 minutos*. ¿Le interesa tomarlo?\n\nResponda *SÍ* para confirmarlo o *NO* si ya no lo necesita.`,
       `🔔 ${nombre}, le tengo una buena noticia.\n\n` +
         `Se liberó un espacio para *${especialidad}* y le corresponde a usted, que era la primera persona en espera.\n\n` +
-        `📅 *${fecha}*\n👨‍⚕️ Dr(a). ${doctor}\n\nLe aparté el cupo por *30 minutos*. ¿Desea tomarlo?\n\nConfírmeme con *SÍ* o, si ya no le sirve, escriba *NO*.`,
+        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe aparté el cupo por *30 minutos*. ¿Desea tomarlo?\n\nConfírmeme con *SÍ* o, si ya no le sirve, escriba *NO*.`,
     ]),
 
   waitlistCupoRechazado: () =>
@@ -684,7 +684,7 @@ const FORMAL = {
     ]),
 
   cancelarConfirmar: (servicio: string, doctor: string, fecha: string) =>
-    `Esta es la cita que vamos a cancelar:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n📅 ${fecha}\n\n` +
+    `Esta es la cita que vamos a cancelar:\n\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n` +
     `⚠️ ¿Está completamente seguro(a)? Responda *SÍ* para cancelarla o *NO* si prefiere mantenerla.`,
 
   cancelarExitosa: () =>
@@ -816,7 +816,7 @@ const FORMAL = {
     fechaActual: string,
     fechaNueva: string,
   ) =>
-    `Vamos a *reprogramar* esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n` +
+    `Vamos a *reprogramar* esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n` +
     `📅 Actual: ${fechaActual}\n🆕 Nueva: ${fechaNueva}\n\n` +
     `¿Confirma el cambio? Responda *SÍ* para reprogramarla o *NO* para mantener la fecha actual.`,
 
@@ -1223,8 +1223,8 @@ const INFORMAL = {
     doctor: string,
   ) =>
     pick([
-      `🔔 ¡Hey ${nombre}, tengo súper buenas noticias! Se liberó un cupo para *${especialidad}* y tú eras la siguiente persona en la lista. 🌟\n\n📅 *${fecha}*\n👨‍⚕️ Dr(a). ${doctor}\n\nTe lo aparto por *30 minutos*. ¿Lo tomas? Responde *SÍ* para confirmarte o *NO* si ya no lo necesitas.`,
-      `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eras la primera en espera:\n\n📅 *${fecha}*\n👨‍⚕️ Dr(a). ${doctor}\n\nTienes *30 minutos* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
+      `🔔 ¡Hey ${nombre}, tengo súper buenas noticias! Se liberó un cupo para *${especialidad}* y tú eras la siguiente persona en la lista. 🌟\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTe lo aparto por *30 minutos*. ¿Lo tomas? Responde *SÍ* para confirmarte o *NO* si ya no lo necesitas.`,
+      `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eras la primera en espera:\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTienes *30 minutos* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
     ]),
 
   waitlistCupoRechazado: () =>
@@ -1339,7 +1339,7 @@ const INFORMAL = {
     ]),
 
   cancelarConfirmar: (servicio: string, doctor: string, fecha: string) =>
-    `Para confirmarte, esta es la cita que vamos a cancelar:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n📅 ${fecha}\n\n⚠️ ¿Seguro(a)? Responde *SÍ* para cancelarla o *NO* si prefieres dejarla.`,
+    `Para confirmarte, esta es la cita que vamos a cancelar:\n\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n⚠️ ¿Seguro(a)? Responde *SÍ* para cancelarla o *NO* si prefieres dejarla.`,
 
   cancelarExitosa: () =>
     pick([
@@ -1470,7 +1470,7 @@ const INFORMAL = {
     fechaActual: string,
     fechaNueva: string,
   ) =>
-    `Para confirmarte, vamos a *reprogramar* esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ Dr(a). ${doctor}\n` +
+    `Para confirmarte, vamos a *reprogramar* esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n` +
     `📅 Actual: ${fechaActual}\n🆕 Nueva: ${fechaNueva}\n\n` +
     `¿Confirmas el cambio? Responde *SÍ* para reprogramarla o *NO* para dejar la fecha actual.`,
 

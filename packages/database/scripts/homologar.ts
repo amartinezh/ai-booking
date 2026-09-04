@@ -85,6 +85,39 @@ async function main() {
     return;
   }
 
+  // ── Agendas funcionales: perfiles del HIS que no son personas ────────────
+  //
+  // El hospital de Anserma agenda contra «MEDICO ATENCIÓN HTA» o «ENFERMERA
+  // CyD» porque programa a sus médicos reales por semanas y un hipertenso se
+  // cita a tres meses. Para el motor son médicos normales; lo único que cambia
+  // es cómo se le nombran al paciente, que si no lee «Dr(a). MEDICO ATENCIÓN
+  // HTA 2». El archivo es opcional: un driver sin él se comporta igual que
+  // antes.
+  const cfg = await prisma.hospitalMirrorConfig.findUnique({
+    where: { organizationId: orgId },
+    select: { driverKey: true },
+  });
+  const rutaAgendas = path.resolve(
+    __dirname,
+    `../../../docs/drivers/${cfg?.driverKey ?? ''}/agendas-funcionales.json`,
+  );
+  let agendas: Record<string, string> = {};
+  if (cfg?.driverKey && fs.existsSync(rutaAgendas)) {
+    agendas =
+      (JSON.parse(fs.readFileSync(rutaAgendas, 'utf8')) as {
+        agendas?: Record<string, string>;
+      }).agendas ?? {};
+    console.log(
+      `\n📋 ${Object.keys(agendas).length} agenda(s) funcional(es) declarada(s) ` +
+        `en docs/drivers/${cfg.driverKey}/agendas-funcionales.json`,
+    );
+  }
+  /** Nombre para el paciente y flag, si este código es una agenda. */
+  const comoAgenda = (externalKey: string) =>
+    agendas[externalKey] !== undefined
+      ? { fullName: agendas[externalKey], isFunctionalAgenda: true }
+      : null;
+
   const catalogo = await prisma.mirrorCatalogEntry.findMany({
     where: { organizationId: orgId },
     orderBy: [{ entityType: 'asc' }, { externalKey: 'asc' }],
@@ -192,7 +225,11 @@ async function main() {
         const dom = p.extra.servicioDominante
           ? `  [servicio ${p.extra.servicioDominante} × ${p.extra.citasDelDominante} de ${p.extra.serviciosDistintos}]`
           : '';
-        console.log(`    ${p.externalKey.padEnd(10)} ${p.label.slice(0, 44).padEnd(46)} ${p.detalle}${dom}`);
+        // Que la revisión humana vea cuáles NO son personas y con qué nombre
+        // van a salir hacia el paciente: es lo que más se nota en WhatsApp.
+        const ag = comoAgenda(p.externalKey);
+        const agTxt = ag ? `  [agenda funcional → «${ag.fullName}»]` : '';
+        console.log(`    ${p.externalKey.padEnd(10)} ${p.label.slice(0, 44).padEnd(46)} ${p.detalle}${dom}${agTxt}`);
       }
     }
   };
@@ -258,10 +295,15 @@ async function main() {
       const user = await prisma.user.create({
         data: { email, password: inservible, role: 'DOCTOR', organizationId: orgId },
       });
+      const agenda = comoAgenda(p.externalKey);
       const d = await prisma.doctorProfile.create({
         data: {
           cedula: p.extra.cedula ?? p.externalKey,
-          fullName: p.label,
+          // Si es una agenda funcional, el nombre que ve el paciente lo pone
+          // el driver, no el HIS. El del HIS se conserva en
+          // MirrorEntityMap.externalLabel, así que no se pierde.
+          fullName: agenda?.fullName ?? p.label,
+          isFunctionalAgenda: agenda?.isFunctionalAgenda ?? false,
           organizationId: orgId,
           userId: user.id,
           // 🚦 EXPLÍCITO. El schema tiene @default(true): sin esto, cada médico
@@ -273,16 +315,25 @@ async function main() {
       agenIAId = d.id;
       creadosMed++;
       n++;
-    } else if (p.extra.servicioDominante) {
-      // Ya existía: se le fija el servicio dominante si no tenía.
+    } else {
+      // Ya existía. Se le fija el servicio dominante si no tenía, y se le
+      // aplica el nombre de agenda si el driver la declara — un perfil creado
+      // en una corrida anterior tiene todavía el nombre crudo del HIS.
       const actual = await prisma.doctorProfile.findUnique({
-        where: { id: agenIAId! }, select: { serviceId: true },
+        where: { id: agenIAId! },
+        select: { serviceId: true, isFunctionalAgenda: true },
       });
-      if (!actual?.serviceId) {
-        await prisma.doctorProfile.update({
-          where: { id: agenIAId! },
-          data: { serviceId: servPorClaveHis.get(p.extra.servicioDominante) ?? null },
-        });
+      const agenda = comoAgenda(p.externalKey);
+      const data: Record<string, unknown> = {};
+      if (!actual?.serviceId && p.extra.servicioDominante) {
+        data.serviceId = servPorClaveHis.get(p.extra.servicioDominante) ?? null;
+      }
+      if (agenda && !actual?.isFunctionalAgenda) {
+        data.fullName = agenda.fullName;
+        data.isFunctionalAgenda = true;
+      }
+      if (Object.keys(data).length > 0) {
+        await prisma.doctorProfile.update({ where: { id: agenIAId! }, data });
       }
     }
 

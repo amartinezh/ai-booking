@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { doctorLabel } from '../common/doctor-label.util';
 import { Prisma, AttendanceStatus } from '@agenia/database';
 
 /** Forma reducida de un cupo que `getAvailableSlots` le entrega al chatbot. */
@@ -68,7 +69,9 @@ export class AppointmentsService {
     return rawSlots.map((slot) => ({
       slotId: slot.id,
       fecha: slot.startTime,
-      doctor: slot.doctor.fullName,
+      // Ya formateado para el paciente: el honorífico depende de si el
+      // perfil es una persona o una agenda funcional del hospital.
+      doctor: doctorLabel(slot.doctor),
       servicio: slot.service.name,
     }));
   }

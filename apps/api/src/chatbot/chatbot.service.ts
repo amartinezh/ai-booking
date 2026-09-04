@@ -64,6 +64,7 @@ import {
   getAxiosErrorDetail,
   isMetaGraphErrorCode,
 } from '../common/error-message.util';
+import { doctorLabel } from '../common/doctor-label.util';
 import { resolveSenderIdentity, UNIDENTIFIED_SENDER } from './sender-identity';
 import type { SenderIdentity, WhatsappInboundEvent } from './sender-identity';
 
@@ -4894,7 +4895,7 @@ export class ChatbotService implements OnModuleInit {
           );
           lineasFechas +=
             `*${letra})* ${formatAppointmentLong(slots[i].fecha)} ` +
-            `· Dr. ${slots[i].doctor}\n`;
+            `· ${slots[i].doctor}\n`;
           slotsMetadata.push({
             letter: letra,
             slotId: slots[i].slotId,
@@ -6424,7 +6425,7 @@ export class ChatbotService implements OnModuleInit {
       const fechaFormateada = formatAppointmentLong(apt.scheduleSlot.startTime);
       reply = MSGS.cancelarConfirmar(
         apt.scheduleSlot.service.name,
-        apt.scheduleSlot.doctor.fullName,
+        doctorLabel(apt.scheduleSlot.doctor),
         fechaFormateada,
       );
       await this.smartReply(organizationId, senderId, reply);
@@ -6999,7 +7000,7 @@ export class ChatbotService implements OnModuleInit {
     const fechaNueva = formatAppointmentLong(newSlotFecha);
     const reply = MSGS.modificarConfirmar(
       apt.scheduleSlot.service.name,
-      apt.scheduleSlot.doctor.fullName,
+      doctorLabel(apt.scheduleSlot.doctor),
       fechaActual,
       fechaNueva,
     );
@@ -7836,7 +7837,7 @@ export class ChatbotService implements OnModuleInit {
       const fechaFormateada = formatAppointmentLong(apt.scheduleSlot.startTime);
       const reply = MSGS.cancelarConfirmar(
         apt.scheduleSlot.service.name,
-        apt.scheduleSlot.doctor.fullName,
+        doctorLabel(apt.scheduleSlot.doctor),
         fechaFormateada,
       );
       await this.smartReply(organizationId, senderId, reply);
@@ -7883,7 +7884,7 @@ export class ChatbotService implements OnModuleInit {
         SESSION_TTL,
       );
       const fecha = formatAppointmentCompact(apt.scheduleSlot.startTime);
-      lineas += `*${letra})* ${apt.scheduleSlot.service.name} · Dr. ${apt.scheduleSlot.doctor.fullName} · ${fecha}\n`;
+      lineas += `*${letra})* ${apt.scheduleSlot.service.name} · ${doctorLabel(apt.scheduleSlot.doctor)} · ${fecha}\n`;
     }
     await this.redis.set(
       `temp_cancel_max_letra:${organizationId}:${senderId}`,
@@ -8030,7 +8031,7 @@ export class ChatbotService implements OnModuleInit {
         SESSION_TTL,
       );
       const fecha = formatAppointmentCompact(apt.scheduleSlot.startTime);
-      lineas += `*${letra})* ${apt.scheduleSlot.service.name} · Dr. ${apt.scheduleSlot.doctor.fullName} · ${fecha}\n`;
+      lineas += `*${letra})* ${apt.scheduleSlot.service.name} · ${doctorLabel(apt.scheduleSlot.doctor)} · ${fecha}\n`;
     }
     await this.redis.set(
       `temp_modify_max_letra:${organizationId}:${senderId}`,
@@ -8155,7 +8156,7 @@ export class ChatbotService implements OnModuleInit {
       );
       lineas +=
         `*${letra})* ${formatAppointmentLong(candidateSlots[i].fecha)} ` +
-        `· Dr. ${candidateSlots[i].doctor}\n`;
+        `· ${candidateSlots[i].doctor}\n`;
       slotsMetadata.push({
         letter: letra,
         slotId: candidateSlots[i].slotId,

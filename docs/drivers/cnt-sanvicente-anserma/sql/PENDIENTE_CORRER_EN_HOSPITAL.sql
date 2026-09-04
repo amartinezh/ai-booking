@@ -11,13 +11,15 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · 🚨 QUEDA LA SECCIÓN H, Y BLOQUEA EL ARRANQUE (abierta 2026-09-04).
---     La respuesta del hospital sobre los médicos 76/077 —son AGENDAS
---     VIRTUALES para agendar más allá del horizonte de programación real, no
---     médicos— abre la pregunta de si esas citas se TRASLADAN luego al médico
---     que atiende. Si se trasladan, el espejo las lee como cancelaciones y le
---     avisa al paciente que su cita se cayó. Es el grueso del volumen del
---     arranque. Ver la sección H al final del archivo.
+--   · ✅ NO QUEDA NADA POR CORRER. La sección H se corrió el 2026-09-04 y
+--     CERRÓ el bloqueante: el traslado de citas del MEDICO HTA al médico real
+--     NO existe como práctica (1 caso en 90 días, y hacia la otra agenda
+--     virtual, sobre 80 anulaciones). 76 y 077 entran como médicos normales.
+--     Ver el resultado dentro de la sección H y el análisis en ESTADO.md.
+--   · Queda una curiosidad barata, que no bloquea: `SELECT * FROM
+--     dbo.MOTIVOANUL` para saber qué es el motivo 05 (67 de las 80
+--     anulaciones de esas agendas). Si es «no asistió», confirma el
+--     pendiente 0b.
 --   · D.7 se cerró SIN correr: decisión de producto, Fomag queda fuera de
 --     alcance. Volver a correr G.4 y G.6 cada vez que se encienda un médico
 --     nuevo, y D.4/G.7 en diciembre (los convenios vencen el 31-dic-2026).
@@ -1422,8 +1424,34 @@ GO
 
 
 -- =============================================================================
--- H. 🚨 BLOQUEANTE NUEVO — ¿las citas del MEDICO HTA se pasan luego al médico
---    real? (abierto el 2026-09-04 por la respuesta del hospital)
+-- H. ✅ CORRIDA Y CERRADA EL 2026-09-04 — NO hay traslado. Era el último
+--    bloqueante y salió limpio.
+--
+--    RESULTADO
+--      H.1  UNA sola cita trasladada en 90 días: 76 → 077, motivo 05. Y el
+--           destino es la OTRA agenda virtual, no un médico real. La
+--           hipótesis habría dejado cientos de filas.
+--      H.2  80 anulaciones en total (077: 49, 76: 31; el motivo 05 se lleva
+--           67). Así que el traslado es el 1,25 % de ellas. Y 80 sobre
+--           ~9.400 citas es una tasa de anulación del 0,85 %, DIEZ VECES por
+--           debajo del 8-9 % histórico del hospital: estas agendas son de lo
+--           más estable que tiene.
+--      H.3  1.213 citas de S39141-1 con médicos reales. NO es huella de
+--           traslado: es lo que describió el hospital —la cita cercana se
+--           agenda directo con el médico ya programado, la lejana va a la
+--           agenda virtual—. Dos caminos que conviven.
+--
+--    Y la puerta de atrás (traslado silencioso, sin pasar por
+--    CITAS_ANULADAS) queda cerrada por el propio HIS: no hay triggers ni SPs
+--    de agendamiento (Fase 0), así que tendría que hacerlo una persona a mano
+--    sobre ~5.800 citas cada 90 días. No es una rutina plausible.
+--
+--    DECISIÓN: 76 y 077 entran como médicos normales. AgenIA no hace nada
+--    especial con ellos; quién atiende es gestión del hospital.
+--
+-- ── El planteamiento original ────────────────────────────────────────────────
+-- H. ¿las citas del MEDICO HTA se pasan luego al médico real?
+--    (abierto el 2026-09-04 por la respuesta del hospital)
 --
 -- DE DÓNDE SALE. Se le preguntó al hospital qué son los médicos 76 y 077, y la
 -- respuesta no fue ninguna de las dos que se ofrecían:

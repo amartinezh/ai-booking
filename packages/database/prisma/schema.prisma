@@ -518,6 +518,25 @@ model DoctorProfile {
   // §5.3/§5.4). Orgs sin espejo: default true no cambia el comportamiento actual.
   whatsappBookingEnabled Boolean @default(true)
 
+  // 👥 ESTE PERFIL NO ES UNA PERSONA, ES UNA AGENDA.
+  //
+  // Los HIS hospitalarios usan "agendas funcionales": filas en su tabla de
+  // médicos que no corresponden a nadie, creadas para poder agendar contra un
+  // programa. En Anserma, los códigos 76 y 077 son «MEDICO ATENCIÓN HTA» y
+  // «MEDICO ATENCIÓN HTA 2», y existen porque el hospital programa a sus
+  // médicos reales por semanas mientras que un hipertenso se cita a tres meses
+  // (confirmado por el hospital, 2026-09-04). Lo mismo con 91-1 y 91-2, que son
+  // «ENFERMERA CyD» y «ENFERMERA SALUD REPRODUCTIVA».
+  //
+  // Importa porque el chatbot antepone un honorífico: sin esto el paciente lee
+  // «Dr(a). MEDICO ATENCIÓN HTA 2». Y no es un caso raro — los cuatro médicos
+  // del arranque del piloto de Anserma son agendas, así que sería lo que vería
+  // casi todo el mundo. Con el flag en true se muestra el nombre tal cual.
+  //
+  // NO cambia nada del agendamiento: para el motor y para el espejo es un
+  // médico como cualquier otro, con sus turnos y sus cupos.
+  isFunctionalAgenda Boolean @default(false)
+
   // 🔌 CONEXIÓN SERVICIO: La especialidad deja de ser String libre
   serviceId String?
   service   MedicalService? @relation(fields: [serviceId], references: [id])

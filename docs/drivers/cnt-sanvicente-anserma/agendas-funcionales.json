@@ -1,0 +1,16 @@
+{
+  "_": "Perfiles del HIS que NO son personas, sino agendas de un programa. La clave es el código del médico en el hospital (CD_CODI_MED); el valor es el nombre que verá el paciente en WhatsApp.",
+
+  "_por_que": "El hospital confirmó el 2026-09-04 que 76 y 077 «fueron creados en el sistema para poder hacer agendamiento futuro, ya que los medicos reales los programan por semanas y los hipertensos puede ser hasta 3 meses y mas». 91-1 y 91-2 son agendas de enfermería por el mismo motivo. Para el motor y para el espejo son médicos normales —tienen turnos, generan cupos, reciben citas— y así se tratan a propósito: el hospital gestiona quién atiende. Lo único que cambia es el nombre y que no se les antepone «Dr(a).»: sin esto el paciente lee «Dr(a). MEDICO ATENCIÓN HTA 2». Y no es un caso raro: los CUATRO perfiles del arranque del piloto son agendas.",
+
+  "_como_se_aplica": "packages/database/scripts/homologar.ts lo lee al crear o enlazar cada médico y fija DoctorProfile.fullName + isFunctionalAgenda. El nombre del HIS se conserva en MirrorEntityMap.externalLabel, así que no se pierde.",
+
+  "_nombres": "Los nombres los escogimos nosotros para que el paciente entienda a qué va. Si el hospital prefiere otros, se cambian aquí y se vuelve a correr homologar.",
+
+  "agendas": {
+    "76": "Programa de Hipertensión",
+    "077": "Programa de Hipertensión",
+    "91-1": "Consulta de Crecimiento y Desarrollo",
+    "91-2": "Consulta de Planificación Familiar"
+  }
+}

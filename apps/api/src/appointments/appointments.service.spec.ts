@@ -207,6 +207,43 @@ describe('AppointmentsService', () => {
     );
   });
 
+  // ══════════════════════════════════════════════════════════════════════
+  // El nombre que ve el paciente sale de aquí ya formateado.
+  //
+  // Los cuatro perfiles con los que arranca el piloto de Anserma —76, 077,
+  // 91-1 y 91-2— son AGENDAS FUNCIONALES del HIS, no personas. El chatbot
+  // anteponía el honorífico a mano y eso producía «Dr(a). MEDICO ATENCIÓN
+  // HTA 2» para prácticamente todos los pacientes del arranque.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('getAvailableSlots — cómo se nombra al médico', () => {
+    const cupo = (doctor: Record<string, unknown>) => ({
+      id: 's1',
+      startTime: new Date(Date.now() + 86400000),
+      doctor,
+      service: { name: 'Consulta ambulatoria control hipertensos' },
+    });
+
+    it('una persona lleva honorífico', async () => {
+      findMany.mockResolvedValueOnce([
+        cupo({ fullName: 'Juan Pérez', isFunctionalAgenda: false }),
+      ]);
+      const [slot] = await service.getAvailableSlots('Medicina', null, 'org1');
+      expect(slot.doctor).toBe('Dr(a). Juan Pérez');
+    });
+
+    it('🚨 una agenda funcional NO — nada de «Dr(a). MEDICO ATENCIÓN HTA 2»', async () => {
+      findMany.mockResolvedValueOnce([
+        cupo({
+          fullName: 'Programa de Hipertensión',
+          isFunctionalAgenda: true,
+        }),
+      ]);
+      const [slot] = await service.getAvailableSlots('Medicina', null, 'org1');
+      expect(slot.doctor).toBe('Programa de Hipertensión');
+      expect(slot.doctor).not.toMatch(/Dr/);
+    });
+  });
+
   describe('getAvailableSlots — filtro de fecha', () => {
     const whereOf = () => findMany.mock.calls[0][0].where;
 
