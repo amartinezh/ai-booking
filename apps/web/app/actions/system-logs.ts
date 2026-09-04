@@ -2,7 +2,7 @@
 
 import { getSession } from '@/lib/session';
 import { prisma } from '@/lib/prisma';
-import { LogLevel } from '@agenia/database';
+import { LogLevel, Prisma, SystemLog } from '@agenia/database';
 
 export type SystemLogLevel = 'EVENT' | 'WARNING' | 'ERROR';
 
@@ -13,7 +13,7 @@ export interface SystemLogRow {
     message: string;
     userId: string | null;
     organizationId: string | null;
-    metadata: any;
+    metadata: Prisma.JsonValue;
     createdAt: string; // ISO string para serializar al cliente
 }
 
@@ -44,7 +44,7 @@ async function ensureSuperAdmin() {
 }
 
 // Mapeo: row Prisma → DTO serializable al cliente (Date → ISO string).
-function serialize(row: any): SystemLogRow {
+function serialize(row: SystemLog): SystemLogRow {
     return {
         id: row.id,
         level: row.level as SystemLogLevel,
@@ -67,7 +67,7 @@ export async function listSystemLogs(params: ListLogsParams): Promise<ListLogsRe
     const pageSize = Math.min(100, Math.max(5, params.pageSize ?? 25));
     const skip = (page - 1) * pageSize;
 
-    const where: any = {};
+    const where: Prisma.SystemLogWhereInput = {};
 
     if (params.level && params.level !== 'ALL') {
         where.level = params.level as LogLevel;

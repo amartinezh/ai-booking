@@ -4,6 +4,7 @@ import { getSession } from '../../lib/session';
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { CommunicationStyle } from '@agenia/database';
+import { getErrorMessage } from '@/lib/error';
 
 const DEFAULT_BOT_NAME = 'AgenIA';
 
@@ -37,8 +38,8 @@ export async function updateMyOrgSettings(data: { botName: string; communication
         });
         revalidatePath('/dashboard/configuracion');
         return { success: true };
-    } catch (e: any) {
-        return { success: false, error: e.message };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
     }
 }
 
@@ -73,7 +74,7 @@ export async function updateOrgSettingsForOrg(
         });
         revalidatePath('/super-admin/organizations');
         return { success: true };
-    } catch (e: any) {
-        return { success: false, error: e.message };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
     }
 }

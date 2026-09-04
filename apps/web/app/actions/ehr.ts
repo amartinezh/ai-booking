@@ -2,8 +2,10 @@
 
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
+import { getErrorMessage } from '@/lib/error';
+import type { CreateClinicalRecordDto, UpdateClinicalRecordDto } from './ehr.types';
 
-export async function createClinicalRecord(data: any) {
+export async function createClinicalRecord(data: CreateClinicalRecordDto) {
     try {
         const cookieStore = await cookies();
         const token = cookieStore.get('auth_token')?.value || '';
@@ -11,10 +13,10 @@ export async function createClinicalRecord(data: any) {
 
         const res = await fetch(`${apiUrl}/clinical-records`, {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'Cookie': `auth_token=${token}`,
-                'Authorization': `Bearer ${token}` 
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify(data)
         });
@@ -26,9 +28,9 @@ export async function createClinicalRecord(data: any) {
 
         revalidatePath('/dashboard');
         return { success: true };
-    } catch (error: any) {
+    } catch (error) {
         console.error('Error creating EHR:', error);
-        return { success: false, error: error.message || 'Error guardando la historia clínica' };
+        return { success: false, error: getErrorMessage(error) || 'Error guardando la historia clínica' };
     }
 }
 
@@ -54,13 +56,13 @@ export async function fetchClinicalRecordByAppointment(appointmentId: string) {
         const rawText = await res.text();
         const data = rawText ? JSON.parse(rawText) : null;
         return { success: true, data };
-    } catch (error: any) {
+    } catch (error) {
         console.error('fetchClinicalRecord error:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: getErrorMessage(error) };
     }
 }
 
-export async function updateClinicalRecordAction(recordId: string, data: any) {
+export async function updateClinicalRecordAction(recordId: string, data: UpdateClinicalRecordDto) {
     try {
         const cookieStore = await cookies();
         const token = cookieStore.get('auth_token')?.value || '';
@@ -68,10 +70,10 @@ export async function updateClinicalRecordAction(recordId: string, data: any) {
 
         const res = await fetch(`${apiUrl}/clinical-records/${recordId}`, {
             method: 'PATCH',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'Cookie': `auth_token=${token}`,
-                'Authorization': `Bearer ${token}` 
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify(data)
         });
@@ -83,8 +85,8 @@ export async function updateClinicalRecordAction(recordId: string, data: any) {
 
         revalidatePath('/dashboard');
         return { success: true };
-    } catch (error: any) {
-        return { success: false, error: error.message };
+    } catch (error) {
+        return { success: false, error: getErrorMessage(error) };
     }
 }
 
@@ -96,10 +98,10 @@ export async function signClinicalRecordAction(recordId: string, userId: string)
 
         const res = await fetch(`${apiUrl}/clinical-records/${recordId}/sign`, {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'Cookie': `auth_token=${token}`,
-                'Authorization': `Bearer ${token}` 
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify({ userId, ipAddress: 'Vía Web' })
         });
@@ -111,8 +113,8 @@ export async function signClinicalRecordAction(recordId: string, userId: string)
 
         revalidatePath('/dashboard');
         return { success: true };
-    } catch (error: any) {
-        return { success: false, error: error.message };
+    } catch (error) {
+        return { success: false, error: getErrorMessage(error) };
     }
 }
 
@@ -124,10 +126,10 @@ export async function createAddendumAction(recordId: string, doctorId: string, c
 
         const res = await fetch(`${apiUrl}/clinical-records/${recordId}/addendum`, {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'Cookie': `auth_token=${token}`,
-                'Authorization': `Bearer ${token}` 
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify({ doctorId, content, ipAddress: 'Vía Web' })
         });
@@ -139,7 +141,7 @@ export async function createAddendumAction(recordId: string, doctorId: string, c
 
         revalidatePath('/dashboard');
         return { success: true };
-    } catch (error: any) {
-        return { success: false, error: error.message };
+    } catch (error) {
+        return { success: false, error: getErrorMessage(error) };
     }
 }

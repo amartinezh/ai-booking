@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use server';
 
 import { prisma } from '@/lib/prisma';
@@ -38,7 +37,7 @@ export async function getMyTickets() {
     }
 }
 
-export async function createTicket(_prev: any, formData: FormData) {
+export async function createTicket(_prev: unknown, formData: FormData) {
     try {
         const session = await getSession();
         if (!session || !session.organizationId || session.role === 'SUPER_ADMIN') {
@@ -137,7 +136,7 @@ export async function startTicketAttention(id: string) {
     }
 }
 
-export async function resolveTicket(id: string, _prev: any, formData: FormData) {
+export async function resolveTicket(id: string, _prev: unknown, formData: FormData) {
     try {
         const session = await getSession();
         if (session?.role !== 'SUPER_ADMIN') {
@@ -178,7 +177,7 @@ export async function resolveTicket(id: string, _prev: any, formData: FormData) 
     }
 }
 
-export async function updateResolutionNote(id: string, _prev: any, formData: FormData) {
+export async function updateResolutionNote(id: string, _prev: unknown, formData: FormData) {
     try {
         const session = await getSession();
         if (session?.role !== 'SUPER_ADMIN') {

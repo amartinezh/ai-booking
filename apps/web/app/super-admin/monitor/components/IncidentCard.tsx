@@ -16,10 +16,12 @@ export default function IncidentCard({
   const isOpen = !incident.resolvedAt;
   const isDown = incident.status === 'DOWN';
 
+  // eslint-disable-next-line react-hooks/purity -- snapshot de "ahora" para la duración de un incidente abierto; no se persiste ni se anima (sin setInterval), solo se recalcula en el próximo render/refetch, igual que antes.
+  const now = Date.now();
   const durationMs = incident.resolvedAt
     ? new Date(incident.resolvedAt).getTime() -
       new Date(incident.startedAt).getTime()
-    : Date.now() - new Date(incident.startedAt).getTime();
+    : now - new Date(incident.startedAt).getTime();
 
   const borderColor = isDown
     ? 'border-l-red-500'

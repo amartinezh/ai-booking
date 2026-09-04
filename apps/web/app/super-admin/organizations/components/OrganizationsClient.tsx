@@ -1,17 +1,24 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import type { Organization, WhatsappAccountConfig } from "@agenia/database";
 import { createOrganization, updateOrganization, toggleOrganizationStatus } from "../../../actions/organizations";
 import { getKnowledgeBaseForOrg, updateKnowledgeBaseForOrg } from "../../../actions/knowledge-base";
 import { getOrgSettingsForOrg, updateOrgSettingsForOrg } from "../../../actions/settings";
 import PurgeOrganizationModal from "./PurgeOrganizationModal";
 import QuickStatsModal from "./QuickStatsModal";
 
-export default function OrganizationsClient({ initialOrganizations }: { initialOrganizations: any[] }) {
+type OrganizationWithWhatsapp = Omit<Organization, "createdAt" | "updatedAt"> & {
+  createdAt: string;
+  updatedAt: string;
+  whatsappConfig: Pick<WhatsappAccountConfig, "phoneNumberId" | "displayPhoneNumber" | "isActive"> | null;
+};
+
+export default function OrganizationsClient({ initialOrganizations }: { initialOrganizations: OrganizationWithWhatsapp[] }) {
   const [organizations, setOrganizations] = useState(initialOrganizations);
   const [isPending, startTransition] = useTransition();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingOrg, setEditingOrg] = useState<any>(null);
+  const [editingOrg, setEditingOrg] = useState<OrganizationWithWhatsapp | null>(null);
   const [activeTab, setActiveTab] = useState<'general' | 'kb' | 'settings'>('general');
   const [kbContent, setKbContent] = useState('');
   const [kbLoading, setKbLoading] = useState(false);
@@ -34,7 +41,7 @@ export default function OrganizationsClient({ initialOrganizations }: { initialO
     });
   };
 
-  const handleOpenModal = async (org?: any) => {
+  const handleOpenModal = async (org?: OrganizationWithWhatsapp) => {
     if (org) {
       setEditingOrg(org);
       setFormData({

@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import type { User } from "@agenia/database";
 import { createOrgAdmin, deleteOrgAdmin } from "../../../../../actions/org-admins";
 
-export default function OrgAdminsClient({ organizationId, initialAdmins }: { organizationId: string; initialAdmins: any[] }) {
+type OrgAdmin = Pick<User, "id" | "email" | "role"> & { createdAt: string };
+
+export default function OrgAdminsClient({ organizationId, initialAdmins }: { organizationId: string; initialAdmins: OrgAdmin[] }) {
   const [admins, setAdmins] = useState(initialAdmins);
   const [isPending, startTransition] = useTransition();
   const [isModalOpen, setIsModalOpen] = useState(false);

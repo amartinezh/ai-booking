@@ -50,6 +50,24 @@ const PAGE_SIZE = 25;
 const inputCls =
   'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-200 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200';
 
+function SortIcon({
+  field,
+  sortBy,
+  sortDir,
+}: {
+  field: SurveySortField;
+  sortBy: SurveySortField;
+  sortDir: SortDir;
+}) {
+  return sortBy === field ? (
+    sortDir === 'asc' ? (
+      <ArrowUp className="inline h-3.5 w-3.5" />
+    ) : (
+      <ArrowDown className="inline h-3.5 w-3.5" />
+    )
+  ) : null;
+}
+
 export default function SurveysClient({ organizations }: Props) {
   const [rows, setRows] = useState<DetailedSurveyRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -71,8 +89,8 @@ export default function SurveysClient({ organizations }: Props) {
 
   const load = useCallback(
     (targetPage: number) => {
-      setError(null);
       startTransition(async () => {
+        setError(null);
         try {
           const res = await getDetailedSurveys({
             page: targetPage,
@@ -110,15 +128,6 @@ export default function SurveysClient({ organizations }: Props) {
       setSortDir('desc');
     }
   };
-
-  const SortIcon = ({ field }: { field: SurveySortField }) =>
-    sortBy === field ? (
-      sortDir === 'asc' ? (
-        <ArrowUp className="inline h-3.5 w-3.5" />
-      ) : (
-        <ArrowDown className="inline h-3.5 w-3.5" />
-      )
-    ) : null;
 
   return (
     <div className="space-y-6">
@@ -199,14 +208,14 @@ export default function SurveysClient({ organizations }: Props) {
             <TableHead>Paciente</TableHead>
             <TableHead>Clínica</TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('rating')}>
-              Calificación <SortIcon field="rating" />
+              Calificación <SortIcon field="rating" sortBy={sortBy} sortDir={sortDir} />
             </TableHead>
             <TableHead>Ánimo</TableHead>
             <TableHead>Mensaje</TableHead>
             <TableHead>Contexto chat</TableHead>
             <TableHead>Resolución</TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('createdAt')}>
-              Fecha <SortIcon field="createdAt" />
+              Fecha <SortIcon field="createdAt" sortBy={sortBy} sortDir={sortDir} />
             </TableHead>
           </TableRow>
         </TableHeader>

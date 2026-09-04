@@ -17,7 +17,7 @@ export default async function AgendaPage() {
     return (
         <div className="p-6 md:p-8 w-full max-w-[1600px] mx-auto">
             {slotsRes.success && depsRes.success ? (
-                <AgendaCalendarClient slots={slotsRes.data || []} deps={depsRes.data} />
+                <AgendaCalendarClient slots={slotsRes.data || []} deps={depsRes.data || { doctors: [], epsList: [] }} />
             ) : (
                 <div className="p-4 bg-red-50 text-red-500 rounded-lg font-medium border border-red-200">
                     ⚠️ Ocurrió un error cargando el motor de agenda clínica.

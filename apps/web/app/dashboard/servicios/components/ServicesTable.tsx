@@ -12,7 +12,7 @@ type ServiceWithCounts = {
     updatedAt: Date;
     _count: {
         doctors: number;
-        scheduleSlots: number;
+        slots: number;
     };
 };
 
@@ -67,7 +67,7 @@ export default function ServicesTable({ data }: { data: ServiceWithCounts[] }) {
                                         {service._count.doctors} Especialista(s)
                                     </span>
                                     <span title="Agendas Históricas Abiertas" className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded-full">
-                                        {service._count.scheduleSlots} Agendas Creadas
+                                        {service._count.slots} Agendas Creadas
                                     </span>
                                 </div>
                             </td>

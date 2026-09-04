@@ -1,11 +1,18 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useState } from 'react';
 import { deleteSlot } from '@/app/actions/agenda';
 import { formatDateShort, formatTimeOnly } from '@/lib/date';
+import type { Appointment, DoctorProfile, Eps, MedicalService, ScheduleSlot } from '@agenia/database';
 
-export default function AgendaTable({ data }: { data: any[] }) {
+type SlotWithRelations = ScheduleSlot & {
+    doctor: DoctorProfile;
+    service: MedicalService;
+    allowedEps: Eps | null;
+    appointment: Appointment | null;
+};
+
+export default function AgendaTable({ data }: { data: SlotWithRelations[] }) {
     const [loadingId, setLoadingId] = useState<string | null>(null);
 
     const handleDelete = async (id: string) => {

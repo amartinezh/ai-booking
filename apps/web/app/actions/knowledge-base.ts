@@ -3,6 +3,7 @@
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { revalidatePath } from 'next/cache';
+import { getErrorMessage } from '@/lib/error';
 
 export async function getMyKnowledgeBase() {
     const session = await getSession();
@@ -26,9 +27,9 @@ export async function updateMyKnowledgeBase(content: string) {
         });
         revalidatePath('/dashboard/conocimiento');
         return { success: true };
-    } catch (e: any) {
+    } catch (e) {
         console.error(e);
-        return { success: false, error: e.message };
+        return { success: false, error: getErrorMessage(e) };
     }
 }
 
@@ -54,8 +55,8 @@ export async function updateKnowledgeBaseForOrg(organizationId: string, content:
         });
         revalidatePath('/super-admin/organizations');
         return { success: true };
-    } catch (e: any) {
+    } catch (e) {
         console.error(e);
-        return { success: false, error: e.message };
+        return { success: false, error: getErrorMessage(e) };
     }
 }

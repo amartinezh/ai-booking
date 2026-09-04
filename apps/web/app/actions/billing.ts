@@ -3,6 +3,8 @@
 import { prisma } from '../../lib/prisma';
 import { getSession } from '../../lib/session';
 import { revalidatePath } from 'next/cache';
+import { Prisma } from '@agenia/database';
+import { getErrorMessage } from '../../lib/error';
 
 export async function updateOrganizationBilling(
     orgId: string, 
@@ -14,7 +16,7 @@ export async function updateOrganizationBilling(
             return { success: false, error: 'Unauthorized' };
         }
 
-        const updateData: any = {};
+        const updateData: Prisma.OrganizationUpdateInput = {};
         if (data.monthlyFee !== undefined) updateData.monthlyFee = data.monthlyFee;
         if (data.autoSuspend !== undefined) updateData.autoSuspend = data.autoSuspend;
         
@@ -29,7 +31,7 @@ export async function updateOrganizationBilling(
 
         revalidatePath('/super-admin/billing');
         return { success: true };
-    } catch (e: any) {
-        return { success: false, error: e.message };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
     }
 }

@@ -1,10 +1,10 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use server';
 
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getSession } from '@/lib/session';
+import { Prisma } from '@agenia/database';
 
 const formSchema = z.object({
     name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
@@ -17,7 +17,7 @@ export async function getEpsList(query?: string) {
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
 
-        const whereObj: any = { organizationId: session.organizationId };
+        const whereObj: Prisma.EpsWhereInput = { organizationId: session.organizationId };
         if (query) {
             whereObj.OR = [
                 { name: { contains: query, mode: 'insensitive' } },
@@ -41,7 +41,7 @@ export async function getEpsList(query?: string) {
     }
 }
 
-export async function createEps(prevState: any, formData: FormData) {
+export async function createEps(prevState: unknown, formData: FormData) {
     try {
         const validatedFields = formSchema.safeParse({
             name: formData.get('name'),
@@ -69,14 +69,14 @@ export async function createEps(prevState: any, formData: FormData) {
         return { success: true };
     } catch (error) {
         console.error('Error creating EPS:', error);
-        if ((error as any)?.code === 'P2002') {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
             return { success: false, error: 'Ya existe una EPS con ese nombre o NIT en esta clínica.' };
         }
         return { success: false, error: 'Ocurrió un error al crear la EPS' };
     }
 }
 
-export async function updateEps(id: string, prevState: any, formData: FormData) {
+export async function updateEps(id: string, prevState: unknown, formData: FormData) {
     try {
         const validatedFields = formSchema.safeParse({
             name: formData.get('name'),
@@ -104,7 +104,7 @@ export async function updateEps(id: string, prevState: any, formData: FormData) 
         return { success: true };
     } catch (error) {
         console.error('Error updating EPS:', error);
-        if ((error as any)?.code === 'P2002') {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
             return { success: false, error: 'Ya existe una EPS con ese nombre o NIT en esta clínica.' };
         }
         return { success: false, error: 'Ocurrió un error al actualizar' };

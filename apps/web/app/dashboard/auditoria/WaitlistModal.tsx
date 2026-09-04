@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -94,9 +93,9 @@ export default function WaitlistModal({
             }
             const json = (await res.json()) as ApiResponse;
             setData(json);
-        } catch (e: any) {
-            if (e?.name === 'AbortError') return;
-            setError(e?.message || 'Error inesperado.');
+        } catch (e) {
+            if (e instanceof DOMException && e.name === 'AbortError') return;
+            setError(e instanceof Error ? e.message : 'Error inesperado.');
         } finally {
             setLoading(false);
         }

@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma';
 import bcrypt from 'bcryptjs';
 
 import { getSession } from '../../lib/session';
+import { getErrorMessage } from '../../lib/error';
 
 export interface CreateAgentInput {
   email: string;
@@ -63,8 +64,8 @@ export async function createBookingAgent(data: CreateAgentInput) {
 
     return { success: true, agent: newAgent };
 
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error creando BOOKING_AGENT:', error);
-    return { success: false, error: error.message || 'Error interno al crear el agente' };
+    return { success: false, error: getErrorMessage(error) || 'Error interno al crear el agente' };
   }
 }

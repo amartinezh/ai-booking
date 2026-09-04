@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import { getSession } from '../../../lib/session';
 import { findEpsEnrollmentIssue } from '../../../lib/eps-enrollment';
+import { getErrorMessage } from '../../../lib/error';
 
 // Mock del Outbound de Whatsapp desde NestJS API (o invocación HTTP a nuestro NestJS)
 export async function sendManualWhatsappAction(appointmentId: string, message: string) {
@@ -55,8 +56,8 @@ export async function sendManualWhatsappAction(appointmentId: string, message: s
         }
 
         return { success: true };
-    } catch (e: any) {
-        return { success: false, error: e.message };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
     }
 }
 
@@ -156,8 +157,8 @@ export async function createManualAppointmentAction(formData: FormData) {
 
         revalidatePath('/dashboard/agendamiento');
         return { success: true };
-    } catch (e: any) {
-        return { success: false, error: e.message };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
     }
 }
 
@@ -244,7 +245,7 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
         revalidatePath('/dashboard/agendamiento');
         revalidatePath('/dashboard');
         return { success: true };
-    } catch (e: any) {
-        return { success: false, error: e.message };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
     }
 }

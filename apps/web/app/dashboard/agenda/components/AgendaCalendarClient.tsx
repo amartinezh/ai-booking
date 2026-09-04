@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { Calendar, dateFnsLocalizer, View, Views } from 'react-big-calendar';
+import { Calendar, dateFnsLocalizer, SlotInfo, View, Views } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay } from 'date-fns';
 import { es } from 'date-fns/locale/es';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
+import type { Appointment, DoctorProfile, Eps, MedicalService, ScheduleSlot } from '@agenia/database';
 import AgendaGenerator from './AgendaGenerator';
 import CloneDayModal from './CloneDayModal';
 
@@ -21,12 +22,36 @@ const localizer = dateFnsLocalizer({
     locales,
 });
 
+type DoctorWithService = DoctorProfile & { service: MedicalService | null };
+
+interface AgendaDeps {
+    doctors: DoctorWithService[];
+    epsList: Eps[];
+}
+
+type SlotWithRelations = ScheduleSlot & {
+    doctor: DoctorProfile;
+    service: MedicalService;
+    allowedEps: Eps | null;
+    appointment: Appointment | null;
+};
+
+interface CalendarSlotEvent {
+    id: string;
+    title: string;
+    start: Date;
+    end: Date;
+    resource: SlotWithRelations;
+    isReserved: boolean;
+    epsName: string;
+}
+
 export default function AgendaCalendarClient({
     slots,
     deps
 }: {
-    slots: any[],
-    deps: any
+    slots: SlotWithRelations[],
+    deps: AgendaDeps
 }) {
     const [view, setView] = useState<View>(Views.WEEK);
     const [date, setDate] = useState(new Date());
@@ -49,7 +74,7 @@ export default function AgendaCalendarClient({
         }));
     }, [slots]);
 
-    const handleSelectSlot = (slotInfo: { start: Date, end: Date, action: 'select' | 'click' | 'doubleClick' }) => {
+    const handleSelectSlot = (slotInfo: SlotInfo) => {
         const d = slotInfo.start;
         // Format YYYY-MM-DD
         const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -61,13 +86,13 @@ export default function AgendaCalendarClient({
         setIsGeneratorOpen(true);
     };
 
-    const handleSelectEvent = (event: any) => {
+    const handleSelectEvent = (event: CalendarSlotEvent) => {
         // TODO: Abrir detalles del Slot para borrarlo o ver quién lo reservó
         alert(`Slot de ${event.title}\nEstado: ${event.isReserved ? 'Reservado' : 'Disponible'}\nEPS: ${event.epsName}`);
     };
 
     // Estilos personalizados para los eventos en el calendario
-    const eventPropGetter = (event: any) => {
+    const eventPropGetter = (event: CalendarSlotEvent) => {
         let backgroundColor = '#3b82f6'; // Blue-500 default (Disponible Universal)
 
         if (event.isReserved) {

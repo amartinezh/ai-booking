@@ -126,11 +126,11 @@ export default function AudioConfigForm({ initial, assistantName }: Props) {
         setAliveResult(null);
         try {
             setAliveResult(await diagnoseAudio());
-        } catch (e: any) {
+        } catch (e) {
             setAliveResult({
                 success: false,
                 error_code: 'UNKNOWN',
-                error_message: e?.message ?? 'Error inesperado en el cliente.',
+                error_message: e instanceof Error ? e.message : 'Error inesperado en el cliente.',
             });
         } finally {
             setAliveLoading(false);

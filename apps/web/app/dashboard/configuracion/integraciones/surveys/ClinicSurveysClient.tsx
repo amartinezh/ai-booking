@@ -22,6 +22,15 @@ import { MoodBadge, moodRowClass, Stars } from '@/app/components/surveys/survey-
 
 const PAGE_SIZE = 25;
 
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  if (!active) return null;
+  return dir === 'asc' ? (
+    <ArrowUp className="inline h-3.5 w-3.5" />
+  ) : (
+    <ArrowDown className="inline h-3.5 w-3.5" />
+  );
+}
+
 export default function ClinicSurveysClient() {
   const [rows, setRows] = useState<LimitedSurveyRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -35,8 +44,8 @@ export default function ClinicSurveysClient() {
 
   const load = useCallback(
     (targetPage: number) => {
-      setError(null);
       startTransition(async () => {
+        setError(null);
         try {
           const res = await getClinicSurveys({
             page: targetPage,
@@ -68,15 +77,6 @@ export default function ClinicSurveysClient() {
       setSortDir('desc');
     }
   };
-
-  const SortIcon = ({ field }: { field: SurveySortField }) =>
-    sortBy === field ? (
-      sortDir === 'asc' ? (
-        <ArrowUp className="inline h-3.5 w-3.5" />
-      ) : (
-        <ArrowDown className="inline h-3.5 w-3.5" />
-      )
-    ) : null;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 py-2">
@@ -116,11 +116,11 @@ export default function ClinicSurveysClient() {
             <TableHead>Paciente</TableHead>
             <TableHead>Teléfono</TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('rating')}>
-              Calificación <SortIcon field="rating" />
+              Calificación <SortIcon active={sortBy === 'rating'} dir={sortDir} />
             </TableHead>
             <TableHead>Mensaje</TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('createdAt')}>
-              Fecha <SortIcon field="createdAt" />
+              Fecha <SortIcon active={sortBy === 'createdAt'} dir={sortDir} />
             </TableHead>
           </TableRow>
         </TableHeader>

@@ -5,6 +5,7 @@
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
+import { getErrorMessage } from '@/lib/error';
 import type {
     PublicWhatsappConfig,
     SaveWhatsappConfigInput,
@@ -30,9 +31,10 @@ async function callBackend(method: 'GET' | 'POST', path: string, body?: unknown)
             body: body ? JSON.stringify(body) : undefined,
             cache: 'no-store',
         });
-    } catch (e: any) {
-        console.error(`[whatsapp-config] ${method} ${path} fetch error:`, e?.message ?? e);
-        throw new Error(`No se pudo contactar al backend (${e?.message ?? 'network'}).`);
+    } catch (e) {
+        const msg = getErrorMessage(e);
+        console.error(`[whatsapp-config] ${method} ${path} fetch error:`, msg);
+        throw new Error(`No se pudo contactar al backend (${msg}).`);
     }
 
     if (!res.ok) {
@@ -65,7 +67,7 @@ export async function updateMyWhatsappConfig(
         const data = await callBackend('POST', '/whatsapp-config', input);
         revalidatePath('/dashboard/configuracion');
         return { success: true, data };
-    } catch (e: any) {
-        return { success: false, error: e.message };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
     }
 }

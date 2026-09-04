@@ -1,11 +1,11 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use server'
 
 import { prisma } from '../../../lib/prisma';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '../../../lib/session';
-import { Role } from '@agenia/database';
+import { Role, Prisma } from '@agenia/database';
+import { getErrorMessage } from '../../../lib/error';
 
 export async function saveUserAction(formData: FormData) {
     const id = formData.get('id') as string;
@@ -15,14 +15,16 @@ export async function saveUserAction(formData: FormData) {
     try {
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Contexto de Clínica no encontrado' };
-        
+        // Capturado tras el guard: TS no propaga el narrowing al closure de la transacción.
+        const organizationId = session.organizationId;
+
         // Propiedades de Agente
         const agentFullName = formData.get('agentFullName') as string;
         const agentEpsId = formData.get('agentEpsId') as string;
         const agentDoctorId = formData.get('agentDoctorId') as string;
 
         if (id) {
-            const data: any = { email, role };
+            const data: Prisma.UserUpdateInput = { email, role };
             if (password) {
                 data.password = await bcrypt.hash(password, 10);
             }
@@ -30,7 +32,7 @@ export async function saveUserAction(formData: FormData) {
             const existingUser = await prisma.user.findFirst({ where: { id, organizationId: session.organizationId, role: { not: 'SUPER_ADMIN' } }});
             if (!existingUser) return { success: false, error: 'Usuario no encontrado en este Tenant permitido para editar' };
 
-            await prisma.$transaction(async (tx: any) => {
+            await prisma.$transaction(async (tx) => {
                 await tx.user.update({ where: { id }, data });
                 
                 if (role === 'BOOKING_AGENT') {
@@ -43,6 +45,7 @@ export async function saveUserAction(formData: FormData) {
                         },
                         create: {
                             userId: id,
+                            organizationId,
                             fullName: agentFullName,
                             epsId: agentEpsId || null,
                             doctorId: agentDoctorId || null,
@@ -56,16 +59,16 @@ export async function saveUserAction(formData: FormData) {
         } else {
             // MODO CREACIÓN
             const hashedPassword = await bcrypt.hash(password || 'temporal123', 10);
-            await prisma.$transaction(async (tx: any) => {
+            await prisma.$transaction(async (tx) => {
                 const newUser = await tx.user.create({
-                    data: { email, password: hashedPassword, role, organizationId: session.organizationId }
+                    data: { email, password: hashedPassword, role, organizationId }
                 });
 
                 if (role === 'BOOKING_AGENT') {
                     await tx.agentProfile.create({
                         data: {
                             userId: newUser.id,
-                            organizationId: session.organizationId,
+                            organizationId,
                             fullName: agentFullName,
                             epsId: agentEpsId || null,
                             doctorId: agentDoctorId || null,
@@ -76,8 +79,8 @@ export async function saveUserAction(formData: FormData) {
         }
         revalidatePath('/dashboard/usuarios');
         return { success: true, error: undefined };
-    } catch (e: any) {
-        return { success: false, error: e.message || 'Error al guardar el usuario' };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) || 'Error al guardar el usuario' };
     }
 }
 
@@ -89,7 +92,7 @@ export async function deleteUserAction(id: string) {
         await prisma.user.delete({ where: { id, organizationId: session.organizationId, role: { not: 'SUPER_ADMIN' } } });
         revalidatePath('/dashboard/usuarios');
         return { success: true, error: undefined };
-    } catch (e: any) {
-        return { success: false, error: e.message || 'Error al eliminar el usuario' };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) || 'Error al eliminar el usuario' };
     }
 }

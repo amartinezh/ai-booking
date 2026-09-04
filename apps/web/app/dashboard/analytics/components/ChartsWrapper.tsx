@@ -1,29 +1,44 @@
 'use client';
 
-import { 
+import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
     PieChart, Pie, Cell, AreaChart, Area, Legend
 } from 'recharts';
+import type { TooltipContentProps } from 'recharts';
 
-export default function ChartsWrapper({ data }: { data: any }) {
-    const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
 
-    const CustomTooltip = ({ active, payload, label }: any) => {
-        if (active && payload && payload.length) {
-            return (
-                <div className="bg-white dark:bg-zinc-800 p-3 rounded-lg shadow-lg border border-zinc-100 dark:border-zinc-700 text-sm">
-                    <p className="font-semibold text-zinc-900 dark:text-white mb-1">{label}</p>
-                    {payload.map((entry: any, index: number) => (
-                        <p key={`item-${index}`} style={{ color: entry.color }}>
-                            {entry.name || 'Count'}: <span className="font-bold">{entry.value}</span>
-                        </p>
-                    ))}
-                </div>
-            );
-        }
-        return null;
+type AnalyticsChartsData = {
+    kpis: {
+        total: number;
+        completed: number;
+        cancelled: number;
     };
+    charts: {
+        specialtyDistribution: { name: string; count: number }[];
+        epsDistribution: { name: string; count: number }[];
+        originDistribution: { name: string; count: number }[];
+        temporalVolume: { date: string; count: number }[];
+    };
+};
 
+function CustomTooltip({ active, payload, label }: Partial<TooltipContentProps<number, string>>) {
+    if (active && payload && payload.length) {
+        return (
+            <div className="bg-white dark:bg-zinc-800 p-3 rounded-lg shadow-lg border border-zinc-100 dark:border-zinc-700 text-sm">
+                <p className="font-semibold text-zinc-900 dark:text-white mb-1">{label}</p>
+                {payload.map((entry, index) => (
+                    <p key={`item-${index}`} style={{ color: entry.color }}>
+                        {entry.name || 'Count'}: <span className="font-bold">{entry.value}</span>
+                    </p>
+                ))}
+            </div>
+        );
+    }
+    return null;
+}
+
+export default function ChartsWrapper({ data }: { data: AnalyticsChartsData }) {
     return (
         <div className="space-y-6">
             {/* KPI Cards */}
@@ -106,7 +121,7 @@ export default function ChartsWrapper({ data }: { data: any }) {
                                         innerRadius={70} outerRadius={100}
                                         paddingAngle={5} dataKey="count"
                                     >
-                                        {data.charts.epsDistribution.map((entry: any, index: number) => (
+                                        {data.charts.epsDistribution.map((entry, index) => (
                                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                         ))}
                                     </Pie>

@@ -51,7 +51,7 @@ export default function MonitorClientView({
   meta,
 }: Props) {
   const liveIntervalMs = (meta?.liveIntervalSeconds ?? 5) * 1000;
-  const services = meta?.services ?? [];
+  const services = useMemo(() => meta?.services ?? [], [meta]);
   const serviceName = useCallback(
     (key: string) =>
       services.find((s) => s.key === key)?.displayName ?? key,
@@ -473,24 +473,38 @@ function BgBanner({ meta }: { meta: MonitorMeta | null }) {
 }
 
 // ── Punto del gráfico coloreado según estado ────────────────────────────────
-function StatusDot(props: any) {
+interface StatusDotProps {
+  cx?: number;
+  cy?: number;
+  payload?: Record<string, number | string | null>;
+  serviceKey: string;
+}
+
+function StatusDot(props: StatusDotProps) {
   const { cx, cy, payload, serviceKey } = props;
   if (cx == null || cy == null) return null;
   const status = payload?.[`${serviceKey}__status`];
   if (status === 'UP') return null; // sin punto en UP para no saturar la línea
-  const color = STATUS_COLOR[status] ?? STATUS_COLOR.DOWN;
+  const color = STATUS_COLOR[status as string] ?? STATUS_COLOR.DOWN;
   return <circle cx={cx} cy={cy} r={5} fill={color} stroke="#fff" strokeWidth={1.5} />;
 }
 
 // ── Tooltip del gráfico en vivo ─────────────────────────────────────────────
+interface LiveTooltipProps {
+  active?: boolean;
+  payload?: Array<{ payload: Record<string, number | string | null> }>;
+  label?: string;
+  serviceName: (key: string) => string;
+}
+
 function LiveTooltip({
   active,
   payload,
   label,
   serviceName,
-}: any) {
+}: LiveTooltipProps) {
   if (!active || !payload?.length) return null;
-  const row = payload[0].payload as Record<string, any>;
+  const row = payload[0].payload;
   const keys = Object.keys(row).filter(
     (k) => !k.includes('__') && k !== 't',
   );
@@ -498,7 +512,7 @@ function LiveTooltip({
     <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg p-3 text-xs">
       <p className="font-semibold text-zinc-900 dark:text-white mb-1">{label}</p>
       {keys.map((k) => {
-        const status = row[`${k}__status`];
+        const status = row[`${k}__status`] as string;
         const err = row[`${k}__err`];
         return (
           <div key={k} className="mb-1">
@@ -509,7 +523,7 @@ function LiveTooltip({
               style={{ color: STATUS_COLOR[status] ?? STATUS_COLOR.DOWN }}
               className="font-mono"
             >
-              {statusLabel(status)} · {fmtLatency(row[k])}
+              {statusLabel(status)} · {fmtLatency(row[k] as number | null)}
             </span>
             {err && (
               <p className="font-mono text-[10px] text-red-500 break-words mt-0.5">

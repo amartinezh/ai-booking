@@ -1,12 +1,14 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client'
 
 import { useState, useTransition } from 'react';
 import PatientModal from './PatientModal';
 import { deletePatientAction } from './actions';
+import { Prisma } from '@agenia/database';
 
-export default function PatientClientView({ patients }: { patients: any[] }) {
-    const [editingPatient, setEditingPatient] = useState<any | null>(null);
+type PatientWithUser = Prisma.PatientProfileGetPayload<{ include: { user: true } }>;
+
+export default function PatientClientView({ patients }: { patients: PatientWithUser[] }) {
+    const [editingPatient, setEditingPatient] = useState<PatientWithUser | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [isPending, startTransition] = useTransition();
 

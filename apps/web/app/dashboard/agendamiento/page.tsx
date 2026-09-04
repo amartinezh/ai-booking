@@ -2,6 +2,7 @@ import { prisma } from '../../../lib/prisma';
 import { getSession } from '../../../lib/session';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
+import type { Prisma } from '@agenia/database';
 import CalendarClient from './client';
 import PageSkeleton from '../components/PageSkeleton';
 
@@ -42,8 +43,8 @@ export default async function AgendamientoPage({
     const qsService = typeof resolvedParams.serviceId === 'string' ? resolvedParams.serviceId : undefined;
 
     // Prisma WHERE clause construction
-    const whereClause: any = { organizationId: session.organizationId };
-    const slotWhere: any = {};
+    const whereClause: Prisma.AppointmentWhereInput = { organizationId: session.organizationId };
+    const slotWhere: Prisma.ScheduleSlotWhereInput = {};
 
     // 1. Omnibox Search (Patient cedula, fullName. Also checking reason)
     if (qsSearch) {

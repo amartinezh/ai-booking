@@ -30,7 +30,7 @@ export default async function AnalyticsDashboard({ startDate, endDate }: { start
         }
 
         statsData = await response.json();
-    } catch (error: any) {
+    } catch (error) {
         console.error('Error fetching analytics:', error);
         errorMsg = 'No pudimos cargar la información de analíticas. Asegúrate de que el backend esté en ejecución y tengas permisos suficientes.';
     }

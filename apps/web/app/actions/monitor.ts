@@ -6,6 +6,7 @@
 
 import { cookies } from 'next/headers';
 import { getSession } from '@/lib/session';
+import { getErrorMessage } from '@/lib/error';
 
 const INTERNAL_API_URL =
   process.env.INTERNAL_API_URL ||
@@ -168,7 +169,7 @@ export async function clearIncidents(
       `/monitor/incidents?before=${encodeURIComponent(beforeISO)}`,
       { method: 'DELETE' },
     );
-  } catch (e: any) {
-    return { error: e?.message ?? 'Error al limpiar incidentes.' };
+  } catch (e) {
+    return { error: getErrorMessage(e) };
   }
 }

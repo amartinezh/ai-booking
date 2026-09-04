@@ -42,16 +42,21 @@ export default function QuickStatsModal({ org, onClose }: QuickStatsModalProps) 
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setError(null);
-    getOrganizationQuickStats(org.id)
-      .then((res) => {
+    const run = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await getOrganizationQuickStats(org.id);
         if (!active) return;
         if (res.success) setStats(res.data);
         else setError(res.error);
-      })
-      .catch((e) => active && setError(e?.message ?? "Error inesperado"))
-      .finally(() => active && setLoading(false));
+      } catch (e) {
+        if (active) setError(e instanceof Error ? e.message : "Error inesperado");
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    void run();
     return () => {
       active = false;
     };

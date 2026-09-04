@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useState, useMemo } from 'react';
@@ -18,7 +17,7 @@ type InteractionLog = {
     failureReason: string | null;
     userMessage: string | null;
     botReply: string | null;
-    metadata: any;
+    metadata: unknown;
     createdAt: Date;
     patientId: string | null;
     // Campos opcionales agregados (ver back fix)
@@ -26,6 +25,16 @@ type InteractionLog = {
     contactedBy?: string | null;
     contactNotes?: string | null;
 };
+
+type LogMetadata = { specialty?: string; eps?: string };
+
+function readMetadata(value: unknown): LogMetadata {
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as LogMetadata) : {};
+}
+
+function getNow(): number {
+    return Date.now();
+}
 
 // ══════════════════════════════════════════════════════════════
 // MAPEO DE RAZONES DE FALLO CON METADATA VISUAL Y DE NEGOCIO
@@ -214,7 +223,7 @@ export default function AuditoriaClientView({
     // CÁLCULOS DE KPIs (memoizados)
     // ══════════════════════════════════════════════════════════
     const kpis = useMemo(() => {
-        const now = Date.now();
+        const now = getNow();
         const oneDayAgo = now - 24 * 60 * 60 * 1000;
         const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
 
@@ -247,9 +256,9 @@ export default function AuditoriaClientView({
     const specialtyBreakdown = useMemo(() => {
         const map: Record<string, number> = {};
         logs
-            .filter(l => l.failureReason === 'NO_AGENDA' && l.metadata?.specialty)
+            .filter(l => l.failureReason === 'NO_AGENDA' && readMetadata(l.metadata).specialty)
             .forEach(l => {
-                const spec = l.metadata.specialty;
+                const spec = readMetadata(l.metadata).specialty as string;
                 map[spec] = (map[spec] || 0) + 1;
             });
         return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 5);
@@ -259,7 +268,7 @@ export default function AuditoriaClientView({
     // FILTROS
     // ══════════════════════════════════════════════════════════
     const filteredLogs = useMemo(() => {
-        const now = Date.now();
+        const now = getNow();
         const ranges = {
             today: 24 * 60 * 60 * 1000,
             '7d': 7 * 24 * 60 * 60 * 1000,
@@ -281,7 +290,7 @@ export default function AuditoriaClientView({
                 const inPhone = log.whatsappId.includes(searchTerm);
                 const inMessage = log.userMessage?.toLowerCase().includes(term);
                 const inReason = log.failureReason?.toLowerCase().includes(term);
-                const inSpecialty = log.metadata?.specialty?.toLowerCase().includes(term);
+                const inSpecialty = readMetadata(log.metadata).specialty?.toLowerCase().includes(term);
                 if (!inPhone && !inMessage && !inReason && !inSpecialty) return false;
             }
 
@@ -492,7 +501,7 @@ export default function AuditoriaClientView({
 
                     <select
                         value={sortBy}
-                        onChange={(e) => setSortBy(e.target.value as any)}
+                        onChange={(e) => setSortBy(e.target.value as 'recent' | 'oldest' | 'severity')}
                         className="px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:ring-2 focus:ring-indigo-500"
                     >
                         <option value="recent">Más recientes</option>
@@ -502,7 +511,7 @@ export default function AuditoriaClientView({
 
                     <select
                         value={dateRange}
-                        onChange={(e) => setDateRange(e.target.value as any)}
+                        onChange={(e) => setDateRange(e.target.value as 'today' | '7d' | '30d' | 'all')}
                         className="px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:ring-2 focus:ring-indigo-500"
                     >
                         <option value="today">Últimas 24h</option>
@@ -592,6 +601,7 @@ export default function AuditoriaClientView({
                 ) : (
                     filteredLogs.map(log => {
                         const meta = getMeta(metaKeyOf(log));
+                        const logMeta = readMetadata(log.metadata);
                         const severityStyles = {
                             critical: 'border-l-rose-500 bg-rose-50/30 dark:bg-rose-950/10',
                             warning: 'border-l-amber-500 bg-amber-50/30 dark:bg-amber-950/10',
@@ -652,16 +662,16 @@ export default function AuditoriaClientView({
                                                 </p>
                                             </div>
 
-                                            {log.metadata?.specialty && (
+                                            {logMeta.specialty && (
                                                 <div>
                                                     <p className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide font-medium mb-0.5">
                                                         🏥 Buscaba
                                                     </p>
                                                     <p className="font-semibold text-zinc-900 dark:text-white truncate">
-                                                        {log.metadata.specialty}
-                                                        {log.metadata.eps && (
+                                                        {logMeta.specialty}
+                                                        {logMeta.eps && (
                                                             <span className="text-zinc-500 dark:text-zinc-400 font-normal">
-                                                                {' '}· {log.metadata.eps}
+                                                                {' '}· {logMeta.eps}
                                                             </span>
                                                         )}
                                                     </p>
@@ -808,7 +818,7 @@ export default function AuditoriaClientView({
                                 </div>
                             )}
 
-                            {selectedLog.metadata && Object.keys(selectedLog.metadata).length > 0 && (
+                            {selectedLog.metadata !== null && typeof selectedLog.metadata === 'object' && Object.keys(selectedLog.metadata).length > 0 && (
                                 <div>
                                     <p className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide font-medium mb-1">
                                         Metadata técnica

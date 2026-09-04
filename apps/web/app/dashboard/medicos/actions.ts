@@ -1,10 +1,11 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use server'
 
 import { prisma } from '../../../lib/prisma';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '../../../lib/session';
+import { getErrorMessage } from '../../../lib/error';
+import { Prisma } from '@agenia/database';
 
 export async function saveDoctorAction(formData: FormData) {
     const id = formData.get('id') as string;
@@ -41,7 +42,7 @@ export async function saveDoctorAction(formData: FormData) {
             }
 
             // Actualizar User
-            const userData: any = { email };
+            const userData: Prisma.UserUpdateInput = { email };
             if (password) userData.password = await bcrypt.hash(password, 10);
             await prisma.user.update({ where: { id: doctor.userId }, data: userData });
 
@@ -80,11 +81,11 @@ export async function saveDoctorAction(formData: FormData) {
         }
         revalidatePath('/dashboard/medicos');
         return { success: true };
-    } catch (e: any) {
-        if (e.code === 'P2002') {
+    } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
             return { success: false, error: 'Conflicto: el correo ya está en uso, o la cédula/Tarjeta Profesional ya existe en esta Clínica.' };
         }
-        return { success: false, error: e.message || 'Error al guardar el médico' };
+        return { success: false, error: getErrorMessage(e) || 'Error al guardar el médico' };
     }
 }
 
@@ -99,7 +100,7 @@ export async function deleteDoctorAction(id: string) {
         }
         revalidatePath('/dashboard/medicos');
         return { success: true };
-    } catch (e: any) {
-        return { success: false, error: e.message || 'Error al eliminar el médico' };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) || 'Error al eliminar el médico' };
     }
 }

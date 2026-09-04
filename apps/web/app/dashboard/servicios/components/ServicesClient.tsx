@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useState } from 'react';
@@ -7,7 +6,19 @@ import ServicesModal from './ServicesModal';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useDebouncedCallback } from 'use-debounce';
 
-export default function ServicesClient({ data }: { data: any[] }) {
+type ServiceWithCounts = {
+    id: string;
+    name: string;
+    isActive: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+    _count: {
+        doctors: number;
+        slots: number;
+    };
+};
+
+export default function ServicesClient({ data }: { data: ServiceWithCounts[] }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const router = useRouter();
     const searchParams = useSearchParams();

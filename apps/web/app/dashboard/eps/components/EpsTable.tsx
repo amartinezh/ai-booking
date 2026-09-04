@@ -1,8 +1,7 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 'use client';
 
 import { useState } from 'react';
-import { updateEps, toggleEpsStatus, deleteEps } from '@/app/actions/eps';
+import { toggleEpsStatus, deleteEps } from '@/app/actions/eps';
 import { formatDateShort } from '@/lib/date';
 
 // Ajustando tipado que coincida con lo que el server action manda (Prisma.Eps)

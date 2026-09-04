@@ -1,20 +1,28 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/no-unused-vars */
 'use client'
 
 import { useState, useTransition } from 'react';
 import UserModal from './UserModal';
 import { deleteUserAction } from './actions';
-import { useRouter } from 'next/navigation';
 import { formatDateShort } from '@/lib/date';
+import { Prisma } from '@agenia/database';
 
-export default function UserClientView({ users, epsList, doctorList }: { users: any[], epsList: any[], doctorList: any[] }) {
-    const [editingUser, setEditingUser] = useState<any | null>(null);
+type UserWithProfiles = Prisma.UserGetPayload<{
+    include: {
+        patientProfile: true,
+        doctorProfile: true,
+        agentProfile: { include: { eps: true, doctor: true } }
+    }
+}>;
+
+type EpsOption = { id: string; name: string };
+type DoctorOption = { id: string; fullName: string; cedula: string };
+
+export default function UserClientView({ users, epsList, doctorList }: { users: UserWithProfiles[], epsList: EpsOption[], doctorList: DoctorOption[] }) {
+    const [editingUser, setEditingUser] = useState<UserWithProfiles | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [roleFilter, setRoleFilter] = useState('ALL');
     const [isPending, startTransition] = useTransition();
-    const router = useRouter();
 
     const filteredUsers = users.filter(user => {
         const term = searchTerm.toLowerCase();

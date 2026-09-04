@@ -1,8 +1,19 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { sendManualWhatsappAction, createManualAppointmentAction, updateManualAppointmentAction } from './actions';
 import { formatAppointmentShort } from '@/lib/date';
+import type { Appointment, DoctorProfile, Eps, MedicalService, PatientProfile, ScheduleSlot } from '@agenia/database';
+
+type AppointmentWithRelations = Appointment & {
+    scheduleSlot: ScheduleSlot & { doctor: DoctorProfile; service: MedicalService };
+    patient: PatientProfile;
+    eps: Eps | null;
+};
+
+interface EpsOption { id: string; name: string; }
+interface ServiceOption { id: string; name: string; }
+interface DoctorOption { id: string; fullName: string; cedula: string; serviceId: string | null; }
 
 export default function AppointmentModal({
     isOpen,
@@ -15,10 +26,10 @@ export default function AppointmentModal({
 }: {
     isOpen: boolean;
     onClose: () => void;
-    eventData: any | null;
-    epsList: any[];
-    doctorList: any[];
-    servicesList: any[];
+    eventData: AppointmentWithRelations | null;
+    epsList: EpsOption[];
+    doctorList: DoctorOption[];
+    servicesList: ServiceOption[];
     defaultDate?: Date | null;
 }) {
     const [loading, setLoading] = useState(false);
@@ -29,34 +40,37 @@ export default function AppointmentModal({
     const [creationServiceId, setCreationServiceId] = useState('');
     const [editServiceId, setEditServiceId] = useState('');
 
-    useEffect(() => {
+    // Reset del formulario al abrir el modal (o cambiar de cita). Se calcula
+    // durante el render en vez de en un efecto -- evita el render extra que
+    // dispararía un setState posterior al commit para el mismo cambio de props.
+    const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+    const [prevEventData, setPrevEventData] = useState(eventData);
+    if (isOpen !== prevIsOpen || eventData !== prevEventData) {
+        setPrevIsOpen(isOpen);
+        setPrevEventData(eventData);
         if (isOpen) {
             setCreationServiceId('');
-            if (eventData) {
-                setEditServiceId(eventData.scheduleSlot?.serviceId || '');
-            } else {
-                setEditServiceId('');
-            }
+            setEditServiceId(eventData?.scheduleSlot?.serviceId || '');
             setIsEditing(false);
             setMsgMode(false);
         }
-    }, [isOpen, eventData]);
+    }
 
     if (!isOpen) return null;
 
-    const creationDoctors = creationServiceId 
-        ? doctorList.filter((d: any) => d.serviceId === creationServiceId) 
-        : []; 
+    const creationDoctors = creationServiceId
+        ? doctorList.filter((d) => d.serviceId === creationServiceId)
+        : [];
 
-    const editDoctors = editServiceId 
-        ? doctorList.filter((d: any) => d.serviceId === editServiceId) 
+    const editDoctors = editServiceId
+        ? doctorList.filter((d) => d.serviceId === editServiceId)
         : [];
 
     const handleUpdate = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         const formData = new FormData(e.target as HTMLFormElement);
-        const res = await updateManualAppointmentAction(eventData.id, formData);
+        const res = await updateManualAppointmentAction(eventData!.id, formData);
         setLoading(false);
         if (res.success) {
             setIsEditing(false);
@@ -69,7 +83,7 @@ export default function AppointmentModal({
     const handleWhatsapp = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
-        const res = await sendManualWhatsappAction(eventData.id, msgText);
+        const res = await sendManualWhatsappAction(eventData!.id, msgText);
         setLoading(false);
         if (res.success) {
             alert('Mensaje enviado por WhatsApp');
@@ -141,7 +155,7 @@ export default function AppointmentModal({
                                     <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">Médico</label>
                                     <select required name="doctorId" defaultValue={eventData.scheduleSlot?.doctorId} className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm">
                                         <option value="">Seleccione...</option>
-                                        {editDoctors.map((d: any) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+                                        {editDoctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                                     </select>
                                 </div>
                             </div>
@@ -295,7 +309,7 @@ export default function AppointmentModal({
                             <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">Médico Responsable</label>
                             <select required name="doctorId" className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm">
                                 <option value="">Seleccione...</option>
-                                {creationDoctors.map((d: any) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+                                {creationDoctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                             </select>
                         </div>
                     </div>

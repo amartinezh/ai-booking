@@ -1,18 +1,26 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 'use client';
 
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { Bell, Loader2 } from 'lucide-react';
+import { Prisma } from '@agenia/database';
 import {
     cancelAppointmentAndFreeSlot,
     updateAttendance,
     sendManualReminder,
 } from '@/app/actions/dashboard';
 import ClinicalRecordDrawer from './ClinicalRecordDrawer';
-import { useDebouncedCallback } from 'use-debounce';
 import { formatDateShort, formatTimeOnly, formatAppointmentShort } from '@/lib/date';
+
+type DashboardAppointment = Prisma.AppointmentGetPayload<{
+    include: {
+        patient: { include: { user: true } };
+        scheduleSlot: { include: { doctor: true; service: true } };
+        eps: true;
+        clinicalRecord: { select: { id: true; status: true } };
+    };
+}>;
 
 export default function DashboardClient({
     appointments,
@@ -20,9 +28,9 @@ export default function DashboardClient({
     doctorsList,
     role
 }: {
-    appointments: any[],
-    epsList: any[],
-    doctorsList: any[],
+    appointments: DashboardAppointment[],
+    epsList: { id: string; name: string }[],
+    doctorsList: { id: string; fullName: string }[],
     role: string
 }) {
     const router = useRouter();
@@ -76,14 +84,14 @@ export default function DashboardClient({
             } else {
                 toast.error(res.error ?? 'No se pudo enviar el recordatorio.', { id: toastId });
             }
-        } catch (e: any) {
-            toast.error(e?.message ?? 'Error inesperado al enviar el recordatorio.', { id: toastId });
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Error inesperado al enviar el recordatorio.', { id: toastId });
         } finally {
             setReminderLoadingId(null);
         }
     };
 
-    const [ehrAppointment, setEhrAppointment] = useState<any | null>(null);
+    const [ehrAppointment, setEhrAppointment] = useState<DashboardAppointment | null>(null);
 
     return (
         <>
@@ -273,7 +281,7 @@ export default function DashboardClient({
                                                         onClick={() => handleManualReminder(apt.id)}
                                                         disabled={isSending}
                                                         title={
-                                                            alreadySent
+                                                            reminderSentAt
                                                                 ? `Recordatorio enviado el ${formatAppointmentShort(reminderSentAt)}. Puedes reenviarlo si lo necesitas.`
                                                                 : 'Enviar recordatorio manual por WhatsApp'
                                                         }

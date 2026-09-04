@@ -7,6 +7,7 @@ import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay } from 'date-fns';
 import { es as esCO } from 'date-fns/locale';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
+import type { Appointment, DoctorProfile, Eps, MedicalService, PatientProfile, ScheduleSlot } from '@agenia/database';
 import AppointmentModal from './AppointmentModal';
 
 // Configure the localizer for react-big-calendar supporting Spanish
@@ -22,6 +23,24 @@ const localizer = dateFnsLocalizer({
   locales,
 })
 
+type AppointmentWithRelations = Appointment & {
+    scheduleSlot: ScheduleSlot & { doctor: DoctorProfile; service: MedicalService };
+    patient: PatientProfile;
+    eps: Eps | null;
+};
+
+interface EpsOption { id: string; name: string; }
+interface ServiceOption { id: string; name: string; }
+interface DoctorOption { id: string; fullName: string; cedula: string; serviceId: string | null; }
+
+interface AppointmentCalendarEvent {
+    id: string;
+    title: string;
+    start: Date;
+    end: Date;
+    resource: AppointmentWithRelations;
+}
+
 export default function CalendarClient({
     appointments,
     epsList,
@@ -29,21 +48,21 @@ export default function CalendarClient({
     servicesList,
     role
 }: {
-    appointments: any[],
-    epsList: any[],
-    doctorList: any[],
-    servicesList: any[],
+    appointments: AppointmentWithRelations[],
+    epsList: EpsOption[],
+    doctorList: DoctorOption[],
+    servicesList: ServiceOption[],
     role: string
 }) {
     const router = useRouter();
     const searchParams = useSearchParams();
 
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [selectedEvent, setSelectedEvent] = useState<any>(null);
+    const [selectedEvent, setSelectedEvent] = useState<AppointmentWithRelations | null>(null);
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
     // Map DB Appointments to Calendar Events
-    const events = appointments.map(apt => ({
+    const events: AppointmentCalendarEvent[] = appointments.map(apt => ({
         id: apt.id,
         title: `${apt.patient.fullName} - ${apt.scheduleSlot.service.name}`,
         start: new Date(apt.scheduleSlot.startTime),
@@ -138,7 +157,7 @@ export default function CalendarClient({
                         event: 'Evento',
                         noEventsInRange: 'No hay citas en este periodo.'
                     }}
-                    eventPropGetter={(event) => {
+                    eventPropGetter={(event: AppointmentCalendarEvent) => {
                         const isWhatsapp = event.resource.origin === 'WHATSAPP';
                         return {
                             className: isWhatsapp ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-blue-50 border-blue-200 text-blue-700',
@@ -154,7 +173,7 @@ export default function CalendarClient({
                         };
                     }}
                     selectable={true}
-                    onSelectEvent={(event) => {
+                    onSelectEvent={(event: AppointmentCalendarEvent) => {
                         setSelectedEvent(event.resource);
                         setSelectedDate(null);
                         setIsModalOpen(true);

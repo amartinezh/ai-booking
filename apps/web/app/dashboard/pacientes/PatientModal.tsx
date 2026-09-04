@@ -1,10 +1,12 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client'
 
 import { useState } from 'react';
 import { savePatientAction } from './actions';
+import { Prisma } from '@agenia/database';
 
-export default function PatientModal({ patient, onClose }: { patient?: any, onClose: () => void }) {
+type PatientWithUser = Prisma.PatientProfileGetPayload<{ include: { user: true } }>;
+
+export default function PatientModal({ patient, onClose }: { patient?: PatientWithUser | null, onClose: () => void }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 

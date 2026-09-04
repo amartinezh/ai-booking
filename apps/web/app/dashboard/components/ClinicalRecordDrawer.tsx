@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useState, useEffect, SetStateAction } from 'react';
@@ -47,18 +46,106 @@ const ehrSchema = z.object({
 
 type EhrFormValues = z.infer<typeof ehrSchema>;
 
+type ClinicalRecordAppointment = {
+    id: string;
+    patient: {
+        id: string;
+        fullName: string;
+        cedula: string;
+    };
+    scheduleSlot: {
+        doctor: {
+            id: string;
+            userId: string;
+        };
+    };
+};
+
+type ClinicalRecordVitalSigns = {
+    bloodPressure: string | null;
+    heartRate: number | null;
+    temperature: number | null;
+    weight: number | null;
+    height: number | null;
+    oxygenSat: number | null;
+};
+
+type ClinicalRecordDiagnosis = {
+    code: string | null;
+    description: string;
+    isMain: boolean;
+};
+
+type ClinicalRecordPrescription = {
+    medication: string;
+    dose: string;
+    frequency: string;
+    duration: string;
+    notes: string | null;
+};
+
+type ClinicalRecordAddendum = {
+    id: string;
+    content: string;
+    createdAt: string;
+};
+
+type ExistingClinicalRecord = {
+    id: string;
+    status: string;
+    chiefComplaint: string;
+    currentIllness: string;
+    physicalExam: string | null;
+    evolutionNotes: string | null;
+    vitalSigns: ClinicalRecordVitalSigns | null;
+    diagnoses: ClinicalRecordDiagnosis[];
+    prescriptions: ClinicalRecordPrescription[];
+    addendums: ClinicalRecordAddendum[];
+};
+
+type AiDictationDiagnosis = {
+    code?: string;
+    description: string;
+    isMain: boolean;
+};
+
+type AiDictationPrescription = {
+    medication: string;
+    dose: string;
+    frequency: string;
+    duration: string;
+    notes: string;
+};
+
+type AiDictationResult = {
+    vitalSigns: {
+        bloodPressure: string | null;
+        heartRate: number | null;
+        temperature: number | null;
+        oxygenSat: number | null;
+        weight: number | null;
+        height: number | null;
+    } | null;
+    chiefComplaint: string | null;
+    currentIllness: string | null;
+    physicalExam: string | null;
+    evolutionNotes: string | null;
+    diagnoses: AiDictationDiagnosis[];
+    prescriptions: AiDictationPrescription[];
+};
+
 export default function ClinicalRecordDrawer({
     appointment,
     onClose
 }: {
-    appointment: any,
+    appointment: ClinicalRecordAppointment,
     onClose: () => void
 }) {
     const [activeTab, setActiveTab] = useState<'vitals' | 'notes' | 'plan'>('vitals');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Estados para la carga de historiales existentes y adendas
-    const [existingRecord, setExistingRecord] = useState<any>(null);
+    const [existingRecord, setExistingRecord] = useState<ExistingClinicalRecord | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [addendumContent, setAddendumContent] = useState('');
     const [isSubmittingAddendum, setIsSubmittingAddendum] = useState(false);
@@ -108,7 +195,7 @@ export default function ClinicalRecordDrawer({
         setIsProcessingAI(true);
         const res = await transcribeAudioAction(audioBase64);
         if (res.success && res.data) {
-            const ai = res.data;
+            const ai = res.data as AiDictationResult;
             const currentVals = getValues();
             const missing: SetStateAction<string[]> = [];
 
@@ -148,7 +235,7 @@ export default function ClinicalRecordDrawer({
 
             // Array Appends - Remove initially empty ones if any
             if (ai.diagnoses && Array.isArray(ai.diagnoses)) {
-                ai.diagnoses.forEach((dx: any) => {
+                ai.diagnoses.forEach((dx) => {
                     appendDx({
                         description: dx.description || '',
                         code: dx.code || '',
@@ -158,7 +245,7 @@ export default function ClinicalRecordDrawer({
             }
 
             if (ai.prescriptions && Array.isArray(ai.prescriptions)) {
-                ai.prescriptions.forEach((rx: any) => {
+                ai.prescriptions.forEach((rx) => {
                     appendRx({
                         medication: rx.medication || '',
                         dose: rx.dose || '',
@@ -217,6 +304,7 @@ export default function ClinicalRecordDrawer({
     };
 
     const confirmSignatureExecution = async () => {
+        if (!existingRecord) return;
         setIsSubmitting(true);
         const userId = appointment.scheduleSlot.doctor.userId; // UserID autenticado del doctor
         const res = await signClinicalRecordAction(existingRecord.id, userId);
@@ -230,6 +318,7 @@ export default function ClinicalRecordDrawer({
     };
 
     const handleAddAddendum = async () => {
+        if (!existingRecord) return;
         setIsSubmittingAddendum(true);
         const res = await createAddendumAction(
             existingRecord.id,
@@ -482,7 +571,7 @@ export default function ClinicalRecordDrawer({
                             {/* Historial de Adendas */}
                             {existingRecord?.addendums?.length > 0 ? (
                                 <div className="space-y-4 mb-6">
-                                    {existingRecord.addendums.map((add: any, i: number) => (
+                                    {existingRecord?.addendums?.map((add, i) => (
                                         <div key={add.id} className="bg-white dark:bg-zinc-900 p-5 rounded-xl shadow-sm border border-zinc-200 dark:border-zinc-700">
                                             <div className="flex justify-between items-center mb-2">
                                                 <span className="text-xs font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300 px-2.5 py-1 rounded">Nota #{i + 1}</span>

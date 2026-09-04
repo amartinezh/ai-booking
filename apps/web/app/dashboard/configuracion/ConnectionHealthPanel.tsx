@@ -44,11 +44,11 @@ export default function ConnectionHealthPanel() {
         setLlmResult(null);
         try {
             setLlmResult(await diagnoseLlm());
-        } catch (e: any) {
+        } catch (e) {
             setLlmResult({
                 success: false,
                 error_code: 'UNKNOWN',
-                error_message: e?.message ?? 'Error inesperado en el cliente.',
+                error_message: e instanceof Error ? e.message : 'Error inesperado en el cliente.',
             });
         } finally {
             setLlmLoading(false);
@@ -60,11 +60,11 @@ export default function ConnectionHealthPanel() {
         setMetaResult(null);
         try {
             setMetaResult(await diagnoseMeta());
-        } catch (e: any) {
+        } catch (e) {
             setMetaResult({
                 success: false,
                 error_code: 'UNKNOWN',
-                error_message: e?.message ?? 'Error inesperado en el cliente.',
+                error_message: e instanceof Error ? e.message : 'Error inesperado en el cliente.',
             });
         } finally {
             setMetaLoading(false);

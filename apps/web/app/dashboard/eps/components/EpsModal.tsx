@@ -1,7 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 'use client';
 
-import { useActionState, useEffect, useState } from 'react';
+import { useActionState, useEffect } from 'react';
 import { createEps } from '@/app/actions/eps';
 
 export default function EpsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {

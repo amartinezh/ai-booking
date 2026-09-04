@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
 const SESSION_HINTS = [
     'unexpected response was received from the server',
@@ -16,22 +16,20 @@ export default function GlobalError({
     error: Error & { digest?: string };
     reset: () => void;
 }) {
-    const [redirecting, setRedirecting] = useState(false);
+    const message = `${error?.message ?? ''} ${error?.digest ?? ''}`.toLowerCase();
+    const redirecting = SESSION_HINTS.some(h => message.includes(h.toLowerCase()));
 
     useEffect(() => {
         console.error('[GlobalError]', error);
-
-        const message = `${error?.message ?? ''} ${error?.digest ?? ''}`.toLowerCase();
-        const looksLikeSessionIssue = SESSION_HINTS.some(h => message.includes(h.toLowerCase()));
-
-        if (looksLikeSessionIssue) {
-            setRedirecting(true);
-            const t = setTimeout(() => {
-                window.location.assign('/login');
-            }, 1500);
-            return () => clearTimeout(t);
-        }
     }, [error]);
+
+    useEffect(() => {
+        if (!redirecting) return;
+        const t = setTimeout(() => {
+            window.location.assign('/login');
+        }, 1500);
+        return () => clearTimeout(t);
+    }, [redirecting]);
 
     return (
         <html lang="es">

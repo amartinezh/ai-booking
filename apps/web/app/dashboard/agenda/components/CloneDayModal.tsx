@@ -3,8 +3,16 @@
 import { useTransition, useState } from 'react';
 import { cloneDaySlots } from '@/app/actions/agenda';
 import { useRouter } from 'next/navigation';
+import type { DoctorProfile, Eps, MedicalService } from '@agenia/database';
 
-export default function CloneDayModal({ deps, isOpen, onClose }: { deps: any, isOpen: boolean, onClose: () => void }) {
+type DoctorWithService = DoctorProfile & { service: MedicalService | null };
+
+interface AgendaDeps {
+    doctors: DoctorWithService[];
+    epsList: Eps[];
+}
+
+export default function CloneDayModal({ deps, isOpen, onClose }: { deps: AgendaDeps, isOpen: boolean, onClose: () => void }) {
     const [isPending, startTransition] = useTransition();
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
@@ -51,7 +59,7 @@ export default function CloneDayModal({ deps, isOpen, onClose }: { deps: any, is
                             <label className="block text-sm font-medium text-gray-700 mb-1">Médico a Clonar *</label>
                             <select name="doctorId" required className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:border-emerald-500 bg-white shadow-sm">
                                 <option value="">Seleccione al Médico</option>
-                                {deps.doctors.map((d: any) => (
+                                {deps.doctors.map((d) => (
                                     <option key={d.id} value={d.id}>
                                         Dr. {d.fullName}
                                     </option>

@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { prisma } from '../../lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '../../lib/session';
+import { getErrorMessage } from '../../lib/error';
 
 // El backend NestJS expone las acciones críticas (purge / quick-stats).
 // Reutilizamos la misma resolución de URL que el dashboard de Global Stats.
@@ -55,9 +56,9 @@ export async function createOrganization(data: { name: string; logoUrl?: string 
         });
         revalidatePath('/super-admin/organizations');
         return { success: true };
-    } catch (e: any) {
+    } catch (e) {
         console.error(e);
-        return { success: false, error: e.message };
+        return { success: false, error: getErrorMessage(e) };
     }
 }
 
@@ -75,9 +76,9 @@ export async function updateOrganization(id: string, data: { name: string; logoU
         });
         revalidatePath('/super-admin/organizations');
         return { success: true };
-    } catch (e: any) {
+    } catch (e) {
         console.error(e);
-        return { success: false, error: e.message };
+        return { success: false, error: getErrorMessage(e) };
     }
 }
 
@@ -128,9 +129,9 @@ export async function getOrganizationQuickStats(
         }
         const data = (await res.json()) as OrgQuickStats;
         return { success: true, data };
-    } catch (e: any) {
+    } catch (e) {
         console.error('getOrganizationQuickStats error:', e);
-        return { success: false, error: e?.message ?? 'Error de red al consultar estadísticas' };
+        return { success: false, error: getErrorMessage(e) };
     }
 }
 
@@ -165,8 +166,8 @@ export async function purgeOrganization(
         const data = await res.json();
         revalidatePath('/super-admin/organizations');
         return { success: true, purged: data.purged ?? {}, organizationName: data.organizationName ?? '' };
-    } catch (e: any) {
+    } catch (e) {
         console.error('purgeOrganization error:', e);
-        return { success: false, error: e?.message ?? 'Error de red al ejecutar la purga' };
+        return { success: false, error: getErrorMessage(e) };
     }
 }

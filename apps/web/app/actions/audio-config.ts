@@ -6,6 +6,7 @@
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
+import { getErrorMessage } from '@/lib/error';
 import type {
     AudioDiagnosisResult,
     PublicAudioConfig,
@@ -36,9 +37,10 @@ async function callBackend(
             body: body ? JSON.stringify(body) : undefined,
             cache: 'no-store',
         });
-    } catch (e: any) {
-        console.error(`[audio-config] ${method} ${path} fetch error:`, e?.message ?? e);
-        throw new Error(`No se pudo contactar al backend (${e?.message ?? 'network'}).`);
+    } catch (e) {
+        const msg = getErrorMessage(e);
+        console.error(`[audio-config] ${method} ${path} fetch error:`, msg);
+        throw new Error(`No se pudo contactar al backend (${msg}).`);
     }
 
     if (!res.ok) {
@@ -72,8 +74,8 @@ export async function updateMyAudioConfig(
     let orgId: string;
     try {
         orgId = await requireOrgAdmin();
-    } catch (e: any) {
-        return { success: false, error: e.message };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
     }
     try {
         const data = await callBackend(
@@ -83,8 +85,8 @@ export async function updateMyAudioConfig(
         );
         revalidatePath('/dashboard/configuracion');
         return { success: true, data };
-    } catch (e: any) {
-        return { success: false, error: e.message };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
     }
 }
 
@@ -104,11 +106,11 @@ export async function diagnoseAudio(): Promise<AudioDiagnosisResult> {
             'GET',
             `/organizations/${orgId}/audio-config/diagnose`,
         )) as AudioDiagnosisResult;
-    } catch (e: any) {
+    } catch (e) {
         return {
             success: false,
             error_code: 'UNKNOWN',
-            error_message: e?.message ?? 'Error desconocido contactando al backend.',
+            error_message: getErrorMessage(e),
         };
     }
 }

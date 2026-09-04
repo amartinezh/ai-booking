@@ -1,6 +1,7 @@
 'use server';
 
 import { cookies } from 'next/headers';
+import { getErrorMessage } from '@/lib/error';
 
 export async function transcribeAudioAction(audioBase64: string) {
     try {
@@ -27,8 +28,8 @@ export async function transcribeAudioAction(audioBase64: string) {
 
         const data = await res.json();
         return { success: true, data };
-    } catch (error: any) {
+    } catch (error) {
         console.error('transcribeAudioAction error:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: getErrorMessage(error) };
     }
 }

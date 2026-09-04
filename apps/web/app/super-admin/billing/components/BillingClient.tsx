@@ -1,14 +1,25 @@
 'use client';
 
 import { useState } from 'react';
+import type { Organization } from '@agenia/database';
 import { updateOrganizationBilling } from '../../../actions/billing';
 
-export default function BillingClient({ organizations }: { organizations: any[] }) {
+type BillingOrganization = Pick<
+    Organization,
+    'id' | 'name' | 'isActive' | 'monthlyFee' | 'lastPaymentDate' | 'autoSuspend'
+>;
+
+export default function BillingClient({ organizations }: { organizations: BillingOrganization[] }) {
     const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
 
-    const handleUpdate = async (orgId: string, currentData: any, newValues: any) => {
+    const handleUpdate = async (
+        orgId: string,
+        currentData: BillingOrganization,
+        newValues: Parameters<typeof updateOrganizationBilling>[1],
+    ) => {
         setLoadingMap(prev => ({ ...prev, [orgId]: true }));
-        const res = await updateOrganizationBilling(orgId, { ...currentData, ...newValues });
+        const payload = { ...currentData, ...newValues } as Parameters<typeof updateOrganizationBilling>[1];
+        const res = await updateOrganizationBilling(orgId, payload);
         if (!res.success) alert(res.error);
         setLoadingMap(prev => ({ ...prev, [orgId]: false }));
     };

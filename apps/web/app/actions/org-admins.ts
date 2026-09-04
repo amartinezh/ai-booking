@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '../../lib/session';
 import bcrypt from 'bcryptjs';
+import { getErrorMessage } from '../../lib/error';
 
 export async function getOrgAdmins(organizationId: string) {
     const session = await getSession();
@@ -32,9 +33,9 @@ export async function createOrgAdmin(organizationId: string, email: string, pass
         });
         revalidatePath(`/super-admin/organizations/${organizationId}/admins`);
         return { success: true };
-    } catch (e: any) {
+    } catch (e) {
         console.error(e);
-        return { success: false, error: 'Es posible que este correo ya exista. ' + e.message };
+        return { success: false, error: 'Es posible que este correo ya exista. ' + getErrorMessage(e) };
     }
 }
 
@@ -48,8 +49,8 @@ export async function deleteOrgAdmin(organizationId: string, userId: string) {
         });
         revalidatePath(`/super-admin/organizations/${organizationId}/admins`);
         return { success: true };
-    } catch (e: any) {
+    } catch (e) {
         console.error(e);
-        return { success: false, error: e.message };
+        return { success: false, error: getErrorMessage(e) };
     }
 }

@@ -1,10 +1,10 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use server';
 
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getSession } from '@/lib/session';
+import { Prisma } from '@agenia/database';
 
 const formSchema = z.object({
     name: z.string().min(3, 'El nombre debe tener al menos 3 caracteres'),
@@ -16,7 +16,7 @@ export async function getMedicalServicesList(query?: string) {
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
 
-        const whereObj: any = { organizationId: session.organizationId };
+        const whereObj: Prisma.MedicalServiceWhereInput = { organizationId: session.organizationId };
         if (query) {
             whereObj.name = { contains: query, mode: 'insensitive' };
         }
@@ -37,7 +37,7 @@ export async function getMedicalServicesList(query?: string) {
     }
 }
 
-export async function createMedicalService(prevState: any, formData: FormData) {
+export async function createMedicalService(prevState: unknown, formData: FormData) {
     try {
         const validatedFields = formSchema.safeParse({
             name: formData.get('name'),
@@ -63,7 +63,7 @@ export async function createMedicalService(prevState: any, formData: FormData) {
         return { success: true };
     } catch (error) {
         console.error('Error creating Medical Service:', error);
-        if ((error as any)?.code === 'P2002') {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
             return { success: false, error: 'Ya existe un servicio con ese nombre en esta clínica.' };
         }
         return { success: false, error: 'Ocurrió un error al crear el servicio médico' };

@@ -4,6 +4,8 @@ import { cookies } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { revalidatePath } from 'next/cache';
+import { AttendanceStatus } from '@agenia/database';
+import { getErrorMessage } from '@/lib/error';
 
 const INTERNAL_API_URL =
     process.env.INTERNAL_API_URL ||
@@ -29,7 +31,7 @@ export async function updateAttendance(appointmentId: string, status: string) {
 
         await prisma.appointment.update({
             where: whereClause,
-            data: { attendanceStatus: status as any },
+            data: { attendanceStatus: status as AttendanceStatus },
         });
 
         revalidatePath('/dashboard');
@@ -91,9 +93,9 @@ export async function sendManualReminder(appointmentId: string): Promise<{
             success: true,
             reminderSentAt: data?.appointment?.reminderSentAt ?? null,
         };
-    } catch (e: any) {
+    } catch (e) {
         console.error('Error enviando recordatorio manual:', e);
-        return { success: false, error: e?.message ?? 'Error de red al enviar el recordatorio.' };
+        return { success: false, error: getErrorMessage(e) };
     }
 }
 

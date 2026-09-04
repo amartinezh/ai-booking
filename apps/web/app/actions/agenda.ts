@@ -1,9 +1,9 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 'use server';
 
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
+import { Prisma } from '@agenia/database';
 
 export async function getAgendaDependencies() {
     try {
@@ -37,7 +37,7 @@ export async function getUpcomingSlots(doctorId?: string) {
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         thirtyDaysAgo.setHours(0, 0, 0, 0);
 
-        const whereClause: any = { startTime: { gte: thirtyDaysAgo }, organizationId: session.organizationId };
+        const whereClause: Prisma.ScheduleSlotWhereInput = { startTime: { gte: thirtyDaysAgo }, organizationId: session.organizationId };
         if (doctorId) whereClause.doctorId = doctorId;
 
         const slots = await prisma.scheduleSlot.findMany({
@@ -132,9 +132,9 @@ export async function generateBulkSlots(formData: FormData) {
             try {
                 await prisma.scheduleSlot.create({ data: slot });
                 createdCount++;
-            } catch (e: any) {
+            } catch (e) {
                 // P2002 Unique constraint failed (ya existe un slot a esa hora para ese doc)
-                if (e.code === 'P2002') continue;
+                if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') continue;
                 throw e;
             }
         }
@@ -170,7 +170,7 @@ export async function deleteSlot(id: string) {
         await prisma.scheduleSlot.delete({ where: { id, organizationId: session.organizationId } });
         revalidatePath('/dashboard/agenda');
         return { success: true };
-    } catch (e) {
+    } catch {
         return { success: false, error: 'Error eliminando el cupo' };
     }
 }
@@ -234,8 +234,8 @@ export async function cloneDaySlots(formData: FormData) {
             try {
                 await prisma.scheduleSlot.create({ data: slot });
                 createdCount++;
-            } catch (e: any) {
-                if (e.code === 'P2002') continue;
+            } catch (e) {
+                if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') continue;
                 throw e;
             }
         }

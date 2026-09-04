@@ -2,13 +2,17 @@
 
 import { useState } from 'react';
 import { saveUserAction } from './actions';
+import { Role } from '@agenia/database';
+import type { AgentProfile } from '@agenia/database';
 
-type UserData = { id?: string; email: string; role: 'ORG_ADMIN' | 'DOCTOR' | 'PATIENT' | 'BOOKING_AGENT'; agentProfile?: any };
+type UserData = { id?: string; email: string; role: Role; agentProfile?: AgentProfile | null };
+type EpsOption = { id: string; name: string };
+type DoctorOption = { id: string; fullName: string };
 
-export default function UserModal({ user, epsList, doctorList, onClose }: { user?: UserData | null, epsList: any[], doctorList: any[], onClose: () => void }) {
+export default function UserModal({ user, epsList, doctorList, onClose }: { user?: UserData | null, epsList: EpsOption[], doctorList: DoctorOption[], onClose: () => void }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
-    const [selectedRole, setSelectedRole] = useState(user?.role || 'PATIENT');
+    const [selectedRole, setSelectedRole] = useState<Role>(user?.role || 'PATIENT');
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -74,7 +78,7 @@ export default function UserModal({ user, epsList, doctorList, onClose }: { user
                         <select
                             name="role"
                             value={selectedRole}
-                            onChange={(e) => setSelectedRole(e.target.value as any)}
+                            onChange={(e) => setSelectedRole(e.target.value as Role)}
                             className="w-full bg-zinc-50 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 rounded-xl px-4 py-3 text-zinc-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                         >
                             <option value="ADMIN">Administrador</option>

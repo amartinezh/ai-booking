@@ -1,17 +1,31 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useState } from 'react';
 import AgendaTable from './AgendaTable';
 import AgendaGenerator from './AgendaGenerator';
 import { formatDateShort, formatTimeOnly } from '@/lib/date';
+import type { Appointment, DoctorProfile, Eps, MedicalService, ScheduleSlot } from '@agenia/database';
+
+type DoctorWithService = DoctorProfile & { service: MedicalService | null };
+
+interface AgendaDeps {
+    doctors: DoctorWithService[];
+    epsList: Eps[];
+}
+
+type SlotWithRelations = ScheduleSlot & {
+    doctor: DoctorProfile;
+    service: MedicalService;
+    allowedEps: Eps | null;
+    appointment: Appointment | null;
+};
 
 export default function AgendaClient({
     slots,
     deps
 }: {
-    slots: any[],
-    deps: any
+    slots: SlotWithRelations[],
+    deps: AgendaDeps
 }) {
     const [isGeneratorOpen, setIsGeneratorOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');

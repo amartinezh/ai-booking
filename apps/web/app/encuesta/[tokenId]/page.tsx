@@ -12,6 +12,10 @@ export const metadata = {
   robots: { index: false, follow: false },
 };
 
+function isNotExpired(expiresAt: Date): boolean {
+  return expiresAt.getTime() > Date.now();
+}
+
 export default async function EncuestaPage(props: {
   params: Promise<{ tokenId: string }>;
 }) {
@@ -32,8 +36,7 @@ export default async function EncuestaPage(props: {
       })
     : null;
 
-  const isValid =
-    !!survey && !survey.isUsed && survey.expiresAt.getTime() > Date.now();
+  const isValid = !!survey && !survey.isUsed && isNotExpired(survey.expiresAt);
 
   if (!isValid) {
     redirect('/');

@@ -1,10 +1,11 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use server'
 
 import { prisma } from '../../../lib/prisma';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '../../../lib/session';
+import { getErrorMessage } from '../../../lib/error';
+import { Prisma } from '@agenia/database';
 
 export async function savePatientAction(formData: FormData) {
     const id = formData.get('id') as string;
@@ -24,7 +25,7 @@ export async function savePatientAction(formData: FormData) {
             const patient = await prisma.patientProfile.findFirst({ where: { id, organizationId: session.organizationId }, include: { user: true } });
             if (!patient) throw new Error("Paciente no encontrado en esta Organización");
 
-            const userData: any = { email };
+            const userData: Prisma.UserUpdateInput = { email };
             if (password) userData.password = await bcrypt.hash(password, 10);
             await prisma.user.update({ where: { id: patient.userId }, data: userData });
 
@@ -58,8 +59,8 @@ export async function savePatientAction(formData: FormData) {
         }
         revalidatePath('/dashboard/pacientes');
         return { success: true };
-    } catch (e: any) {
-        return { success: false, error: e.message || 'Error al guardar el paciente' };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) || 'Error al guardar el paciente' };
     }
 }
 
@@ -74,7 +75,7 @@ export async function deletePatientAction(id: string) {
         }
         revalidatePath('/dashboard/pacientes');
         return { success: true };
-    } catch (e: any) {
-        return { success: false, error: e.message || 'Error al eliminar el paciente' };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) || 'Error al eliminar el paciente' };
     }
 }

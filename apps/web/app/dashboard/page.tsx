@@ -28,7 +28,7 @@ export default async function DashboardPage({
     // SUPER_ADMIN no tiene tenant: sin filtro ve la plataforma completa.
     // Los roles clínicos siempre traen organizationId en el token.
     const whereClause: Prisma.AppointmentWhereInput = { organizationId: session.organizationId ?? undefined };
-    const slotWhere: any = {};
+    const slotWhere: Prisma.ScheduleSlotWhereInput = {};
 
     if (session.role === 'PATIENT') {
         const profile = await prisma.patientProfile.findUnique({ where: { userId: session.userId } });
@@ -50,7 +50,7 @@ export default async function DashboardPage({
     }
 
     if (startDateFilter || endDateFilter) {
-        const timeConditions: any = {};
+        const timeConditions: { gte?: Date, lte?: Date } = {};
         if (startDateFilter) {
             timeConditions.gte = new Date(`${startDateFilter}T05:00:00.000Z`);
         }
@@ -87,8 +87,8 @@ export default async function DashboardPage({
     // si la cita ya tiene un recordatorio enviado.
 
     // Catálogos para Filtros
-    let epsList: any[] = [];
-    let doctorsList: any[] = [];
+    let epsList: { id: string, name: string }[] = [];
+    let doctorsList: { id: string, fullName: string }[] = [];
 
     if (session.organizationId && (session.role === 'ORG_ADMIN' || session.role === 'DOCTOR' || session.role === 'BOOKING_AGENT')) {
         epsList = await prisma.eps.findMany({ where: { organizationId: session.organizationId }, select: { id: true, name: true }, orderBy: { name: 'asc' } });

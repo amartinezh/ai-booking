@@ -5,6 +5,7 @@
 
 import { cookies } from 'next/headers';
 import { getSession } from '@/lib/session';
+import { getErrorMessage } from '@/lib/error';
 import type {
     GeminiDiagnosisResult,
     LlmDiagnosisResult,
@@ -30,9 +31,10 @@ async function callBackend(path: string) {
             },
             cache: 'no-store',
         });
-    } catch (e: any) {
-        console.error(`[integrations] GET ${path} fetch error:`, e?.message ?? e);
-        throw new Error(`No se pudo contactar al backend (${e?.message ?? 'network'}).`);
+    } catch (e) {
+        const msg = getErrorMessage(e);
+        console.error(`[integrations] GET ${path} fetch error:`, msg);
+        throw new Error(`No se pudo contactar al backend (${msg}).`);
     }
 
     if (!res.ok) {
@@ -54,11 +56,11 @@ export async function diagnoseGemini(): Promise<GeminiDiagnosisResult> {
     }
     try {
         return (await callBackend('/integrations/diagnose/gemini')) as GeminiDiagnosisResult;
-    } catch (e: any) {
+    } catch (e) {
         return {
             success: false,
             error_code: 'UNKNOWN',
-            error_message: e?.message ?? 'Error desconocido contactando al backend.',
+            error_message: getErrorMessage(e),
         };
     }
 }
@@ -79,11 +81,11 @@ export async function diagnoseLlm(): Promise<LlmDiagnosisResult> {
     }
     try {
         return (await callBackend('/integrations/diagnose/llm')) as LlmDiagnosisResult;
-    } catch (e: any) {
+    } catch (e) {
         return {
             success: false,
             error_code: 'UNKNOWN',
-            error_message: e?.message ?? 'Error desconocido contactando al backend.',
+            error_message: getErrorMessage(e),
         };
     }
 }
@@ -99,11 +101,11 @@ export async function diagnoseMeta(): Promise<MetaDiagnosisResult> {
     }
     try {
         return (await callBackend('/integrations/diagnose/meta')) as MetaDiagnosisResult;
-    } catch (e: any) {
+    } catch (e) {
         return {
             success: false,
             error_code: 'UNKNOWN',
-            error_message: e?.message ?? 'Error desconocido contactando al backend.',
+            error_message: getErrorMessage(e),
         };
     }
 }

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useState } from 'react';
@@ -7,7 +6,20 @@ import EpsModal from './EpsModal';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useDebouncedCallback } from 'use-debounce';
 
-export default function EpsClient({ data }: { data: any[] }) {
+type EpsWithCounts = {
+    id: string;
+    name: string;
+    nit: string | null;
+    isActive: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+    _count: {
+        patients: number;
+        appointments: number;
+    };
+};
+
+export default function EpsClient({ data }: { data: EpsWithCounts[] }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const router = useRouter();
     const searchParams = useSearchParams();

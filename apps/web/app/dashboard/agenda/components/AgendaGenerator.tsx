@@ -1,9 +1,16 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 'use client';
 
-import { useTransition, useState, useEffect } from 'react';
+import { useTransition, useState } from 'react';
 import { generateBulkSlots } from '@/app/actions/agenda';
 import { useRouter } from 'next/navigation';
+import type { DoctorProfile, Eps, MedicalService } from '@agenia/database';
+
+type DoctorWithService = DoctorProfile & { service: MedicalService | null };
+
+interface AgendaDeps {
+    doctors: DoctorWithService[];
+    epsList: Eps[];
+}
 
 export default function AgendaGenerator({
     deps,
@@ -12,7 +19,7 @@ export default function AgendaGenerator({
     initialDate,
     initialStartTime
 }: {
-    deps: any,
+    deps: AgendaDeps,
     isOpen: boolean,
     onClose: () => void,
     initialDate?: string,
@@ -61,7 +68,7 @@ export default function AgendaGenerator({
                             <label className="block text-sm font-medium text-gray-700 mb-1">Especialista (Servicio Autodetectado) *</label>
                             <select name="doctorId" required className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:border-indigo-500 bg-white">
                                 <option value="">Seleccione al Médico</option>
-                                {deps.doctors.map((d: any) => (
+                                {deps.doctors.map((d) => (
                                     <option key={d.id} value={d.id}>
                                         Dr. {d.fullName} — {d.service?.name || 'Sin Asignar'}
                                     </option>
@@ -73,7 +80,7 @@ export default function AgendaGenerator({
                             <label className="block text-sm font-medium text-gray-700 mb-1">Restricción Preferencial de Convenio (EPS)</label>
                             <select name="epsId" className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 focus:border-indigo-500 bg-white">
                                 <option value="none">🌐 Cupos Universales (Para cualquier EPS en el Chatbot)</option>
-                                {deps.epsList.map((e: any) => (
+                                {deps.epsList.map((e) => (
                                     <option key={e.id} value={e.id}>
                                         🔒 Exclusivo: Privilegio a {e.name}
                                     </option>

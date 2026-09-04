@@ -1,10 +1,13 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client'
 
 import { useState } from 'react';
 import { saveDoctorAction } from './actions';
+import { Prisma } from '@agenia/database';
+import type { MedicalService } from '@agenia/database';
 
-export default function DoctorModal({ doctor, services, onClose }: { doctor?: any, services: any[], onClose: () => void }) {
+type DoctorWithRelations = Prisma.DoctorProfileGetPayload<{ include: { user: true, service: true } }>;
+
+export default function DoctorModal({ doctor, services, onClose }: { doctor?: DoctorWithRelations | null, services: MedicalService[], onClose: () => void }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
@@ -100,7 +103,7 @@ export default function DoctorModal({ doctor, services, onClose }: { doctor?: an
                                 className="w-full bg-zinc-50 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 rounded-xl px-4 py-3 text-zinc-900 dark:text-white outline-none"
                             >
                                 <option value="">Seleccione el Servicio</option>
-                                {services.map((svc: any) => (
+                                {services.map((svc) => (
                                     <option key={svc.id} value={svc.id}>{svc.name}</option>
                                 ))}
                             </select>
