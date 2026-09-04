@@ -1,5 +1,22 @@
 # Preguntas al hospital — lo que falta para poder arrancar
 
+> ## ✅ RESPONDIDO EL 2026-09-04 — leer esto antes que el resto
+>
+> El hospital contestó por correo. Este documento se conserva como el
+> cuestionario que se envió; **las respuestas y lo que cambió con ellas están
+> en `ESTADO.md`, sección «RESPUESTA DEL HOSPITAL (2026-09-04)»**. Resumen:
+>
+> | | respuesta |
+> |---|---|
+> | **Alcance** | Arrancar con **Salud Total y EPS Suramericana**. Nueva EPS no entra al primer corte. |
+> | **Médicos 76 / 077** | No son médicos: son **agendas virtuales** para agendar más allá del horizonte de programación real. `S39141-1` es su código correcto. ⚠️ Abre un bloqueante: ¿se trasladan luego esas citas al médico real? → sección **H** del SQL. |
+> | **Convenios** | Confirmadas 6 de 7. La séptima estaba mal: **el 473 es de Sura, no de Nueva EPS**, y Nueva EPS contributivo no tiene convenio. Corregido en `mapping.json`. |
+> | **Script en PRUEBAS** | ✅ Autorizado. Ofrecen restaurar una copia reciente — conviene pedirla. |
+> | **Salud Total** | Pendiente: el **padrón** (CSV de afiliados). Sin él no agenda ninguno de sus pacientes. |
+>
+> Lo que sigue abierto de este cuestionario: el padrón, la fecha del corte, la
+> VM, y correr `AGENIA_SYNC_SETUP.sql` contra **producción**.
+
 > **Para:** la agendadora, la coordinación de facturación y TI del E.S.E.
 > Hospital San Vicente de Paúl (Anserma).
 > **De:** el equipo de AgenIA.

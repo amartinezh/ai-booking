@@ -1589,7 +1589,11 @@ como opcional, y este hallazgo la vuelve necesaria. No es un bloqueante para
 Salud Total ni para el arranque de medicina general: Fomag es el 2,4 % del
 volumen y puede esperar.
 
-### 🔴 1. Salud Total — un tercio de los pacientes no puede usarlo
+### ✅ 1. Salud Total — CONFIRMADA para el arranque (2026-09-04)
+
+> El hospital pidió arrancar con **Salud Total y Sura**. Nueva EPS queda
+> fuera del primer corte, lo que baja la cobertura del arranque al 78,4 %.
+> Falta darla de alta (`provision-eps-piloto.ts`) y su padrón.
 
 Sobre 18.304 citas de atención primaria en 90 días:
 
@@ -1619,7 +1623,12 @@ puede agendar**: el bot responde «su documento aún no figura dado de alta».
 Hace falta el CSV de altas de cada EPS que entre. No es desarrollo, es un
 archivo.
 
-### 🟠 3. Qué código lleva la cita de WhatsApp
+### ✅ 3. Qué código lleva la cita de WhatsApp — RESPONDIDA (2026-09-04)
+
+> La pregunta de los médicos 76/077 la contestó el hospital: son **agendas
+> virtuales**, no médicos, y `S39141-1` es su código correcto. Pero la
+> respuesta abrió un bloqueante nuevo sobre el traslado de esas citas al
+> médico real — ver «RESPUESTA DEL HOSPITAL» más abajo, punto 2.
 
 Ahora es una pregunta pequeña y con respuesta casi escrita:
 
@@ -1633,7 +1642,12 @@ Ahora es una pregunta pequeña y con respuesta casi escrita:
 - `S39141-2` lectura de exámenes: no se ofrece por WhatsApp. Es el cierre de un
   proceso que empieza en consulta, no una cita que un paciente pida en frío.
 
-### 🟠 4. La duda del convenio 473 — ahora sí entra en el arranque
+### ✅ 4. La duda del convenio 473 — RESUELTA, Y ESTABA MAL (2026-09-04)
+
+> El hospital confirmó que el 473 es de **Sura contributivo** y que Nueva EPS
+> contributivo no tiene convenio. La clave se eliminó del `mapping.json`.
+> El detalle, y el agujero del chequeo que lo dejó pasar, más abajo en
+> «RESPUESTA DEL HOSPITAL», punto 3.
 
 Con especialistas fuera, esta pasa de curiosidad a asunto en producción: los
 pacientes **contributivos de Nueva EPS** que agenden medicina general se
@@ -1669,47 +1683,215 @@ G.7 sin releer el hallazgo del régimen de excepción — sigue siendo cierto qu
 `parseRegimen` (en `packages/shared`) solo conoce SUBSIDIADO/CONTRIBUTIVO, y
 que un paciente de Fomag no tiene una respuesta correcta a esa pregunta.
 
-## 4. Qué está listo y verificado
+---
+
+# 📨 RESPUESTA DEL HOSPITAL (2026-09-04) — tres respuestas, una corrección y un bloqueante nuevo
+
+El hospital contestó el cuestionario. Lo resumido: **la tabla de convenios que
+habíamos deducido de sus datos era correcta en seis de siete combinaciones**, la
+séptima estaba mal y la habíamos marcado como duda, y una respuesta que parecía
+trámite abrió el único bloqueante que hoy queda en pie.
+
+## 1. El alcance del arranque: Salud Total y Sura. Nueva EPS no entra.
+
+> «para iniciar con SaludTotal y eps Suramericana»
+
+Cambia la cuenta de cobertura que traía el documento. Sobre las 18.304 citas de
+atención primaria en 90 días:
+
+| EPS | citas | % | ¿en el arranque? |
+|---|---|---|---|
+| Sura | 8.126 | 44,4 % | ✅ |
+| **Salud Total** | **6.196** | **33,9 %** | ✅ (hay que darla de alta) |
+| Nueva EPS | 3.525 | 19,3 % | ❌ no en el primer corte |
+| Fomag | 432 | 2,4 % | ❌ fuera de alcance (decisión de producto) |
+| Particular | 13 | 0,1 % | ✅ |
+
+**Cobertura del arranque: 78,4 %**, no el 97,6 % que se proyectaba cuando se
+daba por hecho que Nueva EPS seguía dentro. Sigue siendo mucho mejor que el
+63,7 % de hoy, y sube a 97,6 % el día que Nueva EPS entre.
+
+**Lo que esto obligó a arreglar, y no era obvio.** Nueva EPS se apaga con
+`Eps.isActive = false`. Pero los mensajes del chatbot para una EPS que no está
+en la lista decían *«no tenemos convenio con esa EPS»* — y eso es **falso**: el
+hospital tiene convenio vigente con Nueva EPS y le factura miles de citas al
+trimestre. `isActive` significa «agendable por WhatsApp hoy», no «hay
+contrato», y el mensaje confundía las dos cosas. A un afiliado de Nueva EPS se
+le habría dicho que su EPS no tiene convenio con el hospital: información falsa,
+inventada por AgenIA, que lo manda a buscar atención a otra parte. Reescritos
+los seis mensajes (pools FORMAL e INFORMAL) para hablar del CANAL y no del
+convenio. De paso se quitaron los ejemplos quemados —*«Ej: Sura, Sanitas, Nueva
+EPS, Compensar»*—: nombrarle al paciente justo la EPS que está apagada es
+invitarlo a escribir lo único que no se le puede agendar.
+
+## 2. Los médicos 76 y 077 no son médicos — y eso abre un bloqueante
+
+> «los codigos 76 y 077 se refiere a medico hta y medico hta2 fueron creados en
+> el sistema para poder hacer agendamiento futuro. ya que los medicos reales los
+> programan por semanas y los hipertensos puede ser hasta 3 meses y mas.»
+
+La respuesta no es ninguna de las dos opciones que se ofrecían (¿médicos del
+programa o comodines?). Son **agendas virtuales**: existen para poder vender
+cupos más allá del horizonte en que hay médicos reales programados, porque el
+hospital programa por semanas y un hipertenso se agenda a tres meses.
+
+**Lo que sí resuelve:** el código de servicio. `S39141-1` control hipertensos es
+el correcto para esos dos, y son cápita pura — la parte de facturación queda
+cerrada.
+
+**Lo que abre, y es serio.** Si al programar la semana real el hospital MUEVE
+esas citas al médico que de verdad atiende, en el HIS eso no puede ser un UPDATE
+inocuo: `CD_CODI_MED_CIT` es la primera columna de la PK de `CITAS_MEDICAS`.
+Cambiar de médico es quitar una fila y poner otra. Y `detectChanges` indexa la
+foto por `${médico}|${hora}`, así que la clave vieja desaparece:
+
+- el agente lo lee como **CANCELACIÓN**,
+- AgenIA le escribe al paciente **«su cita fue cancelada»**,
+- y **libera el cupo**, que se puede vender por segunda vez.
+
+No es un caso de borde: 76 y 077 son ~9.400 citas cada 90 días, el grueso del
+volumen del arranque. Si el traslado es la operación normal, cada hipertenso
+agendado por WhatsApp acaba recibiendo un aviso de cancelación falso.
+
+**No se adivina: se mide.** Se añadió la **sección H** a
+`sql/PENDIENTE_CORRER_EN_HOSPITAL.sql`, que busca la huella del traslado
+(anulaciones de 76/077 cuya misma historia y misma hora reaparecen bajo otro
+médico), su denominador, y la vía alternativa por si el hospital mueve la cita
+sin archivarla. Es la única consulta que hoy bloquea el arranque.
+
+## 3. Convenios: seis aciertos y el error que la medición no podía ver
+
+> «el convenio 473 no pertenece a Nueva Eps, Pertenece a Eps Suramericana
+> Contributivo. y el 467 eps suramericana Subsidiado. nueva eps subsidiado
+> morbilidad es el 283 y nueva eps subsidiado para promocion y prevencion es
+> 489. salud total subsidiado es 475 y salud total contributivo es 476.»
+
+| Combinación | AgenIA decía | Hospital dice | |
+|---|---|---|---|
+| Sura · subsidiado | 467 | 467 | ✅ |
+| Sura · contributivo | 473 | 473 | ✅ |
+| Nueva EPS · subsidiado morbilidad | 283 | 283 | ✅ |
+| Nueva EPS · subsidiado PyP | 489 | 489 | ✅ |
+| Salud Total · subsidiado | 475 | 475 | ✅ |
+| Salud Total · contributivo | 476 | 476 | ✅ |
+| **Nueva EPS · contributivo** | **473** | **no existe** | ❌ |
+
+**Seis de siete exactas.** Toda la cadena —deducir el convenio del volumen real
+de citas, cruzarlo con el catálogo `REGIMEN`, descruzar los NIT— resultó
+correcta donde tenía datos limpios.
+
+**La séptima confirma la sospecha que ya estaba escrita.** `mapping.json`
+llevaba desde el 2026-09-03 una nota `_convenios_pendiente_473` con las dos
+lecturas posibles: *(a)* el 473 es un genérico de contributivo, o *(b)* la
+medición está contaminada por el fan-out de `R_PAC_EPS`. Gana **(b)**. El 473 es
+de Sura y solo de Sura.
+
+Vale la pena mirar por qué falló justo esa: era **la combinación de cuota más
+baja de las ocho** (73,4 % y 65,6 %, contra 84-94 % del resto) y **la única cuyo
+convenio estaba registrado bajo el NIT de otra EPS**. Las dos señales estaban en
+los datos y se documentaron como duda en vez de como hallazgo. La lección no es
+«no deducir»: es que una cuota que baja de golpe respecto de sus hermanas es el
+síntoma del fan-out, no ruido de fondo.
+
+**Qué se cambió.** Se eliminó la clave `900156264|CONTRIBUTIVO` de
+`mapping.json`. Sin ella `resolveConvenio` **lanza**, que es lo correcto: no hay
+convenio conocido al que facturar, y adivinar es mandar un contributivo de Nueva
+EPS a un contrato de Sura. Las claves de Nueva EPS subsidiado (283 / 489) se
+conservan — el hospital las confirmó y sirven el día que entre.
+
+### Y el agujero por el que se había colado
+
+El chequeo de `aplicar-mapping.ts` cruzaba **NIT contra NIT**, así que el hueco
+de `900156264|CONTRIBUTIVO` le pasaba por delante sin verlo: el NIT de Nueva EPS
+*sí* estaba en el mapeo, por su clave de subsidiado.
+
+Eso no es un detalle de un script. El convenio se resuelve **en el agente, al
+escribir en el HIS** — es decir, DESPUÉS de haberle dicho al paciente que su
+cita quedó. Cuando falta, la cita no se escribe: muere en dead-letter y el
+paciente se presenta al hospital con una cita que allí no existe.
+
+Ahora el cruce se hace **por EPS activa × régimen**, y es un **error que aborta
+el script**, no un aviso. Y el mismo criterio se aplica antes de encender nada:
+`provision-eps-piloto.ts` (nuevo) se niega a activar una EPS a la que le falte
+el convenio de alguno de los dos regímenes.
+
+## 4. Autorización para correr el script en PRUEBAS: concedida
+
+> «En pruebas puedes correr el scrip no hay problema. si necesitas copia
+> reciente me avisas para restaurarla.»
+
+Desbloquea el paso previo al corte. **Conviene pedir la copia reciente antes de
+correrlo**: los convenios de Salud Total y los catálogos cambiaron desde la
+última copia, y validar contra datos viejos es validar otra cosa.
+
+Sigue pendiente lo de producción, que es lo que fija la fecha: correr
+`AGENIA_SYNC_SETUP.sql` contra `ESEHSVP` y confirmar el domingo del corte.
+
+## 5. Lo que sigue abierto del punto 1
+
+El hospital dijo «ya le averiguo a facturación y le vuelvo a escribir» y luego
+contestó el alcance. **No llegó el padrón de Salud Total**, que es un archivo,
+no una decisión — y sin él ni un solo paciente de Salud Total puede agendar,
+por más que la EPS esté dada de alta.
+
+---
+
+# 📊 ESTADO PARA EL PRIMER CORTE A PRODUCCIÓN (2026-09-04)
+
+## Lo que falta, y solo esto
+
+| | qué | quién | ¿bloquea? |
+|---|---|---|---|
+| 1 | **Correr la sección H** — ¿se trasladan las citas de 76/077 al médico real? | TI (SQL de lectura) | 🔴 **Sí** |
+| 2 | **Padrón de Salud Total y de Sura** (CSV de afiliados) | Hospital | 🔴 **Sí** — sin él no agenda nadie |
+| 3 | **Dar de alta Salud Total** y apagar Nueva EPS | Nosotros — `provision-eps-piloto.ts` | 🔴 Sí, pero es una corrida |
+| 4 | **`AGENIA_SYNC_SETUP.sql` en producción** (`ESEHSVP`) | TI | 🔴 Sí |
+| 5 | **Homologar contra el hospital real** (`homologar.ts`) y que alguien mire la lista antes del `--aplicar` | Nosotros + hospital | 🔴 Sí |
+| 6 | **VM del agente activa** | TI | 🔴 Sí |
+| 7 | **Domingo del corte confirmado** | TI | 🟠 Fija la fecha |
+| 8 | **Plantillas de WhatsApp verificadas contra la WABA real** | Nosotros | 🟠 Sí para el envío proactivo |
+
+## Lo que ya está y no hay que volver a tocar
 
 | | |
 |---|---|
-| Motor de espejo punta a punta | ✅ WhatsApp → API → Postgres → outbox → agente → `CITAS_MEDICAS`, con alta de paciente nuevo |
-| Cancelación | ✅ borra la fila y deja constancia en `CITAS_ANULADAS` con motivo `WB` |
-| Reprogramación | ✅ nunca deja al paciente sin ninguna cita |
-| Convenio de Sura y Nueva EPS en primaria | ✅ medido (sección D) y confirmado por G.5 |
-| Especialidad `000` de los tres `S39141*` | ✅ 100 % en G.4 |
-| Que medicina general es cápita | ✅ 0,0 % de evento en 13.673 citas (G.6) |
-| Encendido médico por médico | ✅ `whatsappBookingEnabled`, con los del HIS apagados de fábrica |
-| Resistencia a caídas | ✅ game-day 21/21: kill -9, reinicio de VM, HIS caído, sin internet, dead-letter, turno recortado |
-| Coste sobre el HIS | ✅ 0,09 % de un núcleo (sección C) |
-| Fechas en zona de Bogotá | ✅ 0 violaciones de la regla |
-| Pruebas | ✅ 2.195 en verde, typecheck 7/7 |
+| Motor de espejo punta a punta | ✅ WhatsApp → API → Postgres → outbox → agente → `CITAS_MEDICAS` |
+| Cancelación y reprogramación | ✅ con constancia en `CITAS_ANULADAS`; reagendar nunca deja al paciente sin cita |
+| Tabla de convenios | ✅ **confirmada por el hospital**, 6/7 exactas y la séptima corregida |
+| El 473 no puede volver a cruzarse | ✅ test que fija el hueco y comprueba que el 473 es solo de Sura |
+| Una EPS activa sin convenio no arranca | ✅ `aplicar-mapping.ts` aborta; `provision-eps-piloto.ts` se niega |
+| Código de servicio de medicina general | ✅ `S39141*`, cápita pura, mismo convenio en las tres variantes |
+| Especialidad `CD_CODI_ESP_CIT` | ✅ 0 contradicciones en 21.362 citas |
+| Encendido médico por médico | ✅ `whatsappBookingEnabled`, apagados de fábrica |
+| Resistencia a caídas | ✅ game-day 21/21 |
+| Coste sobre el HIS | ✅ 0,09 % de un núcleo, medido |
+| Fechas en zona de Bogotá | ✅ 0 violaciones |
+| Lint de `apps/api` | ✅ **0 problemas** (eran 594 de la familia `no-unsafe-*`; se cerraron con tipos reales, sin desactivar una sola regla) |
+| Pruebas | ✅ 1.591 API · 264 agente · 188 shared |
 
-## 5. Veredicto
-
-**Técnicamente el arranque está listo.** Lo que falta no es código: es un alta
-de EPS, dos archivos de padrón y tres respuestas cortas del hospital.
-
-Con Salud Total dentro, AgenIA cubre el **97,6 %** de la consulta externa de
-medicina general — que son ~152 citas al día, de las cuales WhatsApp tomaría
-una fracción. La carga no es un problema.
-
-**Sin Salud Total se puede arrancar igual**, cubriendo el 63,7 %, pero hay que
-saberlo: un tercio de quienes escriban recibirán una negativa, y eso desgasta
-la percepción del piloto más que cualquier fallo técnico.
-
-### Riesgos residuales, dichos sin adornos
+## Riesgos residuales — no bloquean, pero se saben
 
 - **`apps/web` no tiene ni una prueba automatizada.** El panel del staff se
   verifica a mano.
-- **No hay prueba de carga.** El volumen esperado la hace poco urgente, pero no
-  está hecha.
-- **No hay prueba de concurrencia contra Postgres real** sobre el mismo cupo.
-  El índice único parcial `uq_appointment_cupo_vigente` lo cubre por
-  construcción, y el HIS tiene su propia PK, pero no está ejercitado bajo
-  carrera real.
-- **Las plantillas de WhatsApp no están verificadas contra la WABA real** de
-  Meta en producción.
-- **`pnpm --filter api lint` está en rojo** con 594 problemas de la familia
-  `no-unsafe-*` en código de producción. Es estado previo del repo —
-  comprobado con `git stash`, el número es idéntico— pero sigue ahí.
+- **No hay prueba de carga ni de concurrencia real** sobre el mismo cupo. El
+  índice único parcial `uq_appointment_cupo_vigente` y la PK del HIS lo cubren
+  por construcción, pero no está ejercitado bajo carrera.
+- **Los convenios vencen el 31-dic-2026**, los nueve. Ya pasó una vez que uno no
+  se renovara con el mismo número (261, 481 de Salud Total). Repetir D.4/G.7 en
+  diciembre.
+- **Nueva EPS contributivo sigue sin convenio conocido.** No molesta mientras
+  Nueva EPS esté apagada; hay que resolverlo ANTES de encenderla.
+
+## Cuánto falta, en una cifra
+
+**≈ 85 % listo para el primer corte.**
+
+El 15 % que falta **no es código**: es una consulta de lectura que decide si hay
+un defecto (sección H), dos archivos CSV, una VM y una fecha. De las ocho tareas
+de la lista, **cinco no dependen de nosotros**.
+
+El único que puede convertirse en trabajo de verdad es el punto 1: si las citas
+de 76/077 se trasladan, hay que enseñarle al correlacionador a distinguir
+«movida» de «cancelada» antes de encender esos dos médicos. Se puede arrancar
+sin ellos —quedan los 11 médicos generales— pero son el grueso del volumen.
+

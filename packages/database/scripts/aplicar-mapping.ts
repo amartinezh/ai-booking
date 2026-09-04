@@ -275,6 +275,43 @@ async function main() {
     );
   }
 
+  // ── El cruce por RÉGIMEN, que es donde estaba el agujero ──────────────────
+  //
+  // El chequeo de arriba compara NIT contra NIT, y por eso no vio nada cuando
+  // faltaba `900156264|CONTRIBUTIVO`: el NIT de Nueva EPS SÍ estaba en el
+  // mapeo, por su clave de subsidiado. Un contributivo de esa EPS pasaba el
+  // control, agendaba, recibía su confirmación por WhatsApp… y la cita moría
+  // en dead-letter al escribirse, porque `resolveConvenio` lanza. El paciente
+  // se presenta al hospital con una cita que allí no existe.
+  //
+  // El convenio se resuelve en el AGENTE, al escribir en el HIS — es decir
+  // DESPUÉS de haberle dicho al paciente que su cita quedó. No hay repliegue
+  // posible en ese punto: o el convenio está, o la cita es un fantasma. Por
+  // eso esto es un ERROR y no un aviso.
+  const REGIMENES = ['SUBSIDIADO', 'CONTRIBUTIVO'];
+  const huecos: string[] = [];
+  for (const eps of epsDeLaOrg) {
+    if (!eps.isActive || !eps.nit) continue; // Una EPS apagada no agenda.
+    for (const regimen of REGIMENES) {
+      if (crudo.convenios?.[`${eps.nit}|${regimen}`] === undefined) {
+        huecos.push(`${eps.name} (${eps.nit}) · ${regimen}`);
+      }
+    }
+  }
+  if (huecos.length > 0) {
+    console.error(
+      `\n❌ Estas combinaciones EPS+régimen están ACTIVAS en AgenIA y no ` +
+        `tienen convenio en el mapeo:\n` +
+        huecos.map((h) => `     · ${h}`).join('\n') +
+        `\n\n   Sus pacientes pueden agendar por WhatsApp y recibir la ` +
+        `confirmación,\n   pero la cita NO se escribirá en el HIS: morirá en ` +
+        `dead-letter.\n\n   Arréglalo de una de estas dos formas:\n` +
+        `     · añade el convenio al mapping.json (si el hospital lo confirmó), o\n` +
+        `     · apaga esa Eps en AgenIA (isActive=false) hasta que se sepa.`,
+    );
+    process.exit(1);
+  }
+
   const actual = await prisma.hospitalMirrorConfig.findUnique({
     where: { organizationId: orgId },
     select: { mappingJson: true },

@@ -11,9 +11,16 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · ✅ NO QUEDA NADA POR CORRER. D.7 se cerró SIN correr: decisión de
---     producto, Fomag queda fuera de alcance. Volver a correr G.4 y G.6
---     cada vez que se encienda un médico nuevo.
+--   · 🚨 QUEDA LA SECCIÓN H, Y BLOQUEA EL ARRANQUE (abierta 2026-09-04).
+--     La respuesta del hospital sobre los médicos 76/077 —son AGENDAS
+--     VIRTUALES para agendar más allá del horizonte de programación real, no
+--     médicos— abre la pregunta de si esas citas se TRASLADAN luego al médico
+--     que atiende. Si se trasladan, el espejo las lee como cancelaciones y le
+--     avisa al paciente que su cita se cayó. Es el grueso del volumen del
+--     arranque. Ver la sección H al final del archivo.
+--   · D.7 se cerró SIN correr: decisión de producto, Fomag queda fuera de
+--     alcance. Volver a correr G.4 y G.6 cada vez que se encienda un médico
+--     nuevo, y D.4/G.7 en diciembre (los convenios vencen el 31-dic-2026).
 --
 -- CONTENIDO
 --   A. ✅ CORRIDA — y la respuesta es la mala: el 72,5 % de los turnos
@@ -1412,3 +1419,105 @@ GO
 --    (2,4 %), es lo que llevó a decidir que AgenIA NO va a soportar Fomag.
 --    D.7 (decodificar el 15) queda cerrada sin correr — no hay resultado
 --    posible que cambie esa decisión.
+
+
+-- =============================================================================
+-- H. 🚨 BLOQUEANTE NUEVO — ¿las citas del MEDICO HTA se pasan luego al médico
+--    real? (abierto el 2026-09-04 por la respuesta del hospital)
+--
+-- DE DÓNDE SALE. Se le preguntó al hospital qué son los médicos 76 y 077, y la
+-- respuesta no fue ninguna de las dos que se ofrecían:
+--
+--   «los codigos 76 y 077 se refiere a medico hta y medico hta2 fueron creados
+--    en el sistema para poder hacer agendamiento futuro. ya que los medicos
+--    reales los programan por semanas y los hipertensos puede ser hasta 3
+--    meses y mas.»
+--
+-- O sea: NO son médicos. Son AGENDAS VIRTUALES para poder vender cupos más
+-- allá del horizonte en que hay médicos reales programados. Eso resuelve la
+-- pregunta del código de servicio (S39141-1 control hipertensos es correcto)
+-- y abre una peor.
+--
+-- POR QUÉ PUEDE ROMPER EL ESPEJO. Si al programar la semana real el hospital
+-- MUEVE esas citas al médico que de verdad atiende, en el HIS eso no puede ser
+-- un UPDATE inocuo: `CD_CODI_MED_CIT` es la PRIMERA COLUMNA DE LA CLAVE
+-- PRIMARIA de CITAS_MEDICAS. Cambiar de médico es, por fuerza, quitar una fila
+-- y poner otra. Y `detectChanges` indexa la foto por `${médico}|${hora}`: la
+-- clave vieja desaparece.
+--
+--   ⇒ El agente lo lee como CANCELACIÓN. AgenIA le escribe al paciente
+--     «su cita fue cancelada», la marca CANCELLED y LIBERA EL CUPO —
+--     que entonces se puede vender dos veces.
+--
+-- Y no es un caso raro: los médicos 76 y 077 son ~9.400 citas cada 90 días, el
+-- grueso del volumen del arranque. Si el traslado es la operación normal del
+-- hospital, cada cita de hipertenso agendada por WhatsApp acabaría con un
+-- mensaje de cancelación falso.
+--
+-- CÓMO SE LEE EL RESULTADO
+--   · Si (H.1) devuelve MUCHAS anulaciones de 76/077 que reaparecen bajo otro
+--     médico a la misma hora y con la misma historia ⇒ EL TRASLADO EXISTE y es
+--     BLOQUEANTE: hay que enseñarle al correlacionador a distinguir "movida"
+--     de "cancelada" antes de encender estos dos médicos.
+--   · Si devuelve CERO o casi cero ⇒ la cita se queda en el MEDICO HTA hasta
+--     que el paciente es atendido, y no hay nada que arreglar. En ese caso
+--     solo queda la pregunta cosmética de qué nombre ve el paciente.
+--
+-- ⚠️ SOLO LECTURA. Correr en ESEHSVP (el catálogo vivo).
+-- =============================================================================
+
+-- ── H.1 ¿Reaparece la cita anulada de 76/077 bajo otro médico?
+--
+-- Cruza cada anulación de esos dos códigos con las citas VIVAS del mismo
+-- paciente a la misma fecha y hora, con OTRO médico. Si el hospital traslada,
+-- eso es exactamente la huella que deja.
+SELECT  a.CD_CODI_MED_CIAN            AS medico_virtual,
+        a.CD_CODI_MOTI_CIAN           AS motivo_anulacion,
+        c.CD_CODI_MED_CIT             AS medico_real,
+        COUNT(*)                      AS citas_trasladadas
+FROM dbo.CITAS_ANULADAS a
+JOIN dbo.CITAS_MEDICAS c
+  ON  c.NU_HIST_PAC_CIT = a.NU_HIST_PAC_CIAN
+  AND c.FE_HORA_CIT     = a.FE_HORA_CIAN      -- misma fecha Y misma hora
+  AND c.CD_CODI_MED_CIT <> a.CD_CODI_MED_CIAN -- pero OTRO médico
+WHERE a.CD_CODI_MED_CIAN IN ('76', '077')
+  AND a.FE_ELAB_CIAN >= DATEADD(day, -90, CAST(GETDATE() AS date))
+GROUP BY a.CD_CODI_MED_CIAN, a.CD_CODI_MOTI_CIAN, c.CD_CODI_MED_CIT
+ORDER BY citas_trasladadas DESC;
+GO
+
+-- ── H.2 El denominador: ¿cuántas anulaciones tienen en total esos dos?
+--
+-- Sin esto, H.1 no se puede leer. 50 traslados sobre 60 anulaciones es "así
+-- funciona el hospital"; 50 sobre 5.000 es ruido.
+SELECT  CD_CODI_MED_CIAN   AS medico_virtual,
+        CD_CODI_MOTI_CIAN  AS motivo,
+        COUNT(*)           AS anulaciones
+FROM dbo.CITAS_ANULADAS
+WHERE CD_CODI_MED_CIAN IN ('76', '077')
+  AND FE_ELAB_CIAN >= DATEADD(day, -90, CAST(GETDATE() AS date))
+GROUP BY CD_CODI_MED_CIAN, CD_CODI_MOTI_CIAN
+ORDER BY anulaciones DESC;
+GO
+
+-- ── H.3 ¿Y el traslado ocurre sin pasar por CITAS_ANULADAS?
+--
+-- El hospital podría mover la cita con un DELETE seco (sin archivar) o con un
+-- UPDATE de la PK. Las dos formas son invisibles para H.1 pero IGUAL de
+-- destructivas para el espejo: la clave vieja desaparece de la misma manera.
+--
+-- Esta consulta lo mira por el otro lado: citas VIVAS de hipertensos con un
+-- médico real, cuya hora cae en un turno que originalmente no era suyo. No es
+-- concluyente por sí sola, pero si sale alta refuerza la hipótesis del
+-- traslado aunque H.1 salga en cero.
+SELECT TOP 20
+       c.CD_CODI_MED_CIT   AS medico_real,
+       c.CD_CODI_SER_CIT   AS servicio,
+       COUNT(*)            AS citas
+FROM dbo.CITAS_MEDICAS c
+WHERE c.CD_CODI_SER_CIT = 'S39141-1'          -- control hipertensos
+  AND c.CD_CODI_MED_CIT NOT IN ('76', '077')  -- pero NO en la agenda virtual
+  AND c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
+GROUP BY c.CD_CODI_MED_CIT, c.CD_CODI_SER_CIT
+ORDER BY citas DESC;
+GO

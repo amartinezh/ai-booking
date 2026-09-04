@@ -30,7 +30,9 @@ const MAPPING: AnsermaMapping = {
   convenios: {
     '900156264|SUBSIDIADO': 283, // Nueva EPS subsidiado
     '900156264|SUBSIDIADO|PYP': 489, // …y su PyP, que sí tiene convenio propio
-    '900156264|CONTRIBUTIVO': 473, // Nueva EPS contributivo → el genérico
+    // Nueva EPS CONTRIBUTIVO no tiene clave A PROPÓSITO: el hospital confirmó
+    // el 2026-09-04 que el 473 es de Sura, no un genérico de contributivo, y
+    // no dio ninguno para esta combinación. El hueco es el dato.
     '800088702|SUBSIDIADO': 467, // Sura subsidiado
     '800088702|CONTRIBUTIVO': 473, // Sura contributivo
   },
@@ -137,15 +139,24 @@ describe('resolveConvenio', () => {
   it('🚨 el PyP NO se lleva al otro régimen de la misma EPS', () => {
     // El defecto que tenía la clave vieja `${nit}|PYP`: un contributivo de
     // Nueva EPS con un servicio de PyP se facturaba al 489 PYPSUBS, que es un
-    // contrato SUBSIDIADO. Los datos del hospital dicen 473 (65,6% de 390
-    // citas en 90 días).
-    expect(
-      resolveConvenio(MAPPING, {
+    // contrato SUBSIDIADO.
+    //
+    // Desde el 2026-09-04 este caso además NO tiene convenio: el hospital
+    // confirmó que el 473 es de Sura y no dio ninguno para Nueva EPS
+    // contributivo. Así que la invariante se comprueba en su forma fuerte —
+    // no es que devuelva "otro" valor, es que se niega a devolver ninguno.
+    // Lo que importa sigue siendo lo mismo: el 489 NO puede salir de aquí.
+    let devuelto: number | undefined;
+    try {
+      devuelto = resolveConvenio(MAPPING, {
         epsNit: '900156264', // Nueva EPS
         patientRegime: 'CONTRIBUTIVO',
         serviceExternalKey: 'I890301AG',
-      }),
-    ).toBe(473);
+      });
+    } catch (e) {
+      expect(e).toBeInstanceOf(MappingIncompletoError);
+    }
+    expect(devuelto).not.toBe(489);
   });
 
   it('si esa combinación no tiene convenio de PyP, cae al del régimen', () => {
@@ -686,21 +697,30 @@ describe('convenios — la tabla que se aplica en producción', () => {
   ) as AnsermaMapping;
 
   /** NIT reales: los del hospital, que son los públicos. */
-  const NIT = { 'Nueva EPS': '900156264', Sura: '800088702' } as const;
+  const NIT = {
+    'Nueva EPS': '900156264',
+    Sura: '800088702',
+    'Salud Total': '800130907',
+  } as const;
   const SERVICIO_PYP = 'I890301AG';
   const SERVICIO_NORMAL = 'S39141-1';
 
+  // ── Las combinaciones que el HOSPITAL confirmó por escrito (2026-09-04) ──
+  //
+  // Hasta esa fecha esta tabla fijaba lo MEDIDO por nosotros en la sección D.
+  // Seis de las siete salieron exactas. La séptima —Nueva EPS contributivo—
+  // estaba mal y tiene su propio test abajo: ya no es un valor, es un hueco.
   it.each([
-    ['Nueva EPS', 'SUBSIDIADO', SERVICIO_NORMAL, 283, 'NUEVASUBSID', '89,6%'],
-    ['Nueva EPS', 'SUBSIDIADO', SERVICIO_PYP, 489, 'PYPSUBS', '94,4%'],
-    ['Nueva EPS', 'CONTRIBUTIVO', SERVICIO_NORMAL, 473, 'CONTRIBUTIVO', '73,4%'],
-    ['Nueva EPS', 'CONTRIBUTIVO', SERVICIO_PYP, 473, 'CONTRIBUTIVO', '65,6%'],
-    ['Sura', 'SUBSIDIADO', SERVICIO_NORMAL, 467, 'SUBS', '84,5%'],
-    ['Sura', 'SUBSIDIADO', SERVICIO_PYP, 467, 'SUBS', '94,3%'],
-    ['Sura', 'CONTRIBUTIVO', SERVICIO_NORMAL, 473, 'CONTRIBUTIVO', '84,8%'],
-    ['Sura', 'CONTRIBUTIVO', SERVICIO_PYP, 473, 'CONTRIBUTIVO', '88,0%'],
+    ['Nueva EPS', 'SUBSIDIADO', SERVICIO_NORMAL, 283, 'NUEVASUBSID', 'morbilidad'],
+    ['Nueva EPS', 'SUBSIDIADO', SERVICIO_PYP, 489, 'PYPSUBS', 'promoción y prevención'],
+    ['Sura', 'SUBSIDIADO', SERVICIO_NORMAL, 467, 'SUBS', 'confirmado'],
+    ['Sura', 'SUBSIDIADO', SERVICIO_PYP, 467, 'SUBS', 'sin PyP propio'],
+    ['Sura', 'CONTRIBUTIVO', SERVICIO_NORMAL, 473, 'CONTRIBUTIVO', 'confirmado'],
+    ['Sura', 'CONTRIBUTIVO', SERVICIO_PYP, 473, 'CONTRIBUTIVO', 'sin PyP propio'],
+    ['Salud Total', 'SUBSIDIADO', SERVICIO_NORMAL, 475, 'STOTALSUBS', 'confirmado'],
+    ['Salud Total', 'CONTRIBUTIVO', SERVICIO_NORMAL, 476, 'STCONTRIB', 'confirmado'],
   ])(
-    '%s · %s · %s → convenio %i (%s, %s de las citas reales)',
+    '%s · %s · %s → convenio %i (%s — %s)',
     (eps, regimen, servicio, esperado) => {
       expect(
         resolveConvenio(REAL, {
@@ -716,6 +736,38 @@ describe('convenios — la tabla que se aplica en producción', () => {
     expect(resolveConvenio(REAL, {})).toBe(26);
   });
 
+  // ── El error que la medición no pudo ver, y el hospital sí ────────────────
+  //
+  // Durante dos días el mapa dijo `900156264|CONTRIBUTIVO = 473` porque la
+  // sección D lo midió así sobre 2.406 citas. El hospital lo desmintió el
+  // 2026-09-04: «el convenio 473 no pertenece a Nueva Eps, pertenece a Eps
+  // Suramericana Contributivo». La medición estaba contaminada por el fan-out
+  // de R_PAC_EPS — un paciente con varias afiliaciones cuenta su cita bajo
+  // todas —, la misma tabla que ya había invalidado la consulta G.1.
+  //
+  // Este test fija el hueco. Sin él, cualquiera que "complete" la tabla por
+  // simetría volvería a meter el 473 y facturaría pacientes de Nueva EPS a un
+  // contrato de Sura, en silencio y sin un solo error en el log.
+  it.each([[SERVICIO_NORMAL], [SERVICIO_PYP]])(
+    '🚨 Nueva EPS contributivo (%s) NO tiene convenio: se niega en vez de facturar al de Sura',
+    (servicio) => {
+      expect(() =>
+        resolveConvenio(REAL, {
+          epsNit: NIT['Nueva EPS'],
+          patientRegime: 'CONTRIBUTIVO',
+          serviceExternalKey: servicio,
+        }),
+      ).toThrow(MappingIncompletoError);
+    },
+  );
+
+  it('🔒 el 473 es de Sura y de nadie más', () => {
+    const deSura = Object.entries(REAL.convenios)
+      .filter(([, v]) => v === 473)
+      .map(([k]) => k.split('|')[0]);
+    expect([...new Set(deSura)]).toEqual([NIT.Sura]);
+  });
+
   it('🔒 la clave de PyP lleva el régimen: la vieja se lo saltaba', () => {
     const claves = Object.keys(REAL.convenios);
     expect(claves).toContain('900156264|SUBSIDIADO|PYP');
@@ -724,26 +776,38 @@ describe('convenios — la tabla que se aplica en producción', () => {
     ).toBe(false);
   });
 
-  it('🚨 ningún régimen de Nueva EPS se factura a un contrato de Sura, ni al revés', () => {
-    // 283/489 son de Nueva EPS; 467 es de Sura. El 473 es el genérico de
-    // contributivo que el hospital usa para las dos.
-    const DE_NUEVA = [283, 489];
-    const DE_SURA = [467];
+  it('🚨 ninguna EPS se factura al contrato de otra, en ninguna combinación', () => {
+    // Los contratos, ya con la corrección del hospital (2026-09-04): el 473
+    // NO es un genérico compartido, es de Sura. Esta prueba recorre TODAS las
+    // combinaciones vivas y comprueba que ningún convenio se cruza de dueño.
+    const DUEÑO: Record<number, string> = {
+      283: NIT['Nueva EPS'],
+      489: NIT['Nueva EPS'],
+      467: NIT.Sura,
+      473: NIT.Sura,
+      535: NIT.Sura,
+      97: NIT.Sura,
+      475: NIT['Salud Total'],
+      476: NIT['Salud Total'],
+      538: NIT['Salud Total'],
+      96: NIT['Salud Total'],
+    };
 
-    for (const regimen of ['SUBSIDIADO', 'CONTRIBUTIVO']) {
-      for (const servicio of [SERVICIO_NORMAL, SERVICIO_PYP]) {
-        const nueva = resolveConvenio(REAL, {
-          epsNit: NIT['Nueva EPS'],
-          patientRegime: regimen,
-          serviceExternalKey: servicio,
-        });
-        const sura = resolveConvenio(REAL, {
-          epsNit: NIT.Sura,
-          patientRegime: regimen,
-          serviceExternalKey: servicio,
-        });
-        expect(DE_SURA).not.toContain(nueva);
-        expect(DE_NUEVA).not.toContain(sura);
+    for (const nit of Object.values(NIT)) {
+      for (const regimen of ['SUBSIDIADO', 'CONTRIBUTIVO']) {
+        for (const servicio of [SERVICIO_NORMAL, SERVICIO_PYP, '890266ESP']) {
+          let convenio: number;
+          try {
+            convenio = resolveConvenio(REAL, {
+              epsNit: nit,
+              patientRegime: regimen,
+              serviceExternalKey: servicio,
+            });
+          } catch {
+            continue; // Sin convenio homologado no hay dueño que cruzar.
+          }
+          expect(DUEÑO[convenio]).toBe(nit);
+        }
       }
     }
   });

@@ -185,14 +185,22 @@ const FORMAL = {
         `_Si su consulta es particular, marque *Particular*._ 💳`,
     ]),
 
+  // ⚠️ Estos mensajes NO pueden afirmar que el hospital "no tiene convenio"
+  // con la EPS que nombró el paciente. La lista que ve viene de `Eps` filtrada
+  // por `isActive`, y ese campo dice "agendable por WhatsApp hoy", no "hay
+  // contrato". En el arranque de Anserma (2026-09-04) el hospital pidió salir
+  // solo con Salud Total y Sura: Nueva EPS queda apagada teniendo convenio
+  // vigente y miles de citas al trimestre. Decirle a uno de sus afiliados que
+  // "no tenemos convenio con su EPS" es mandarlo a otro hospital con una
+  // información falsa que se inventó AgenIA.
   epsInvalida: (lineas: string) =>
     pick([
-      `Esa EPS no está dentro del listado de EPS a las que les prestamos el servicio. 🙏\n\n` +
+      `Esa EPS no está entre las que puedo agendar por este medio en este momento. 🙏\n\n` +
         `Por favor, elija una de las siguientes opciones (con la letra o el nombre). Si paga directamente la consulta, escoja *Particular*:\n\n${lineas}`,
-      `Lo siento, no tenemos convenio con esa EPS, así que no figura en nuestro listado de atención. 🙏\n\n` +
+      `Por ahora no puedo agendar citas de esa EPS por WhatsApp. 🙏\n\n` +
         `¿Me confirma una de estas opciones, por favor? Puede responder con la letra o el nombre:\n\n${lineas}`,
-      `Esa EPS no aparece entre las que atendemos en convenio.\n\n` +
-        `Estas son las EPS disponibles — elija una con la letra o el nombre, o marque *Particular* si paga por su cuenta:\n\n${lineas}`,
+      `Esa EPS no aparece entre las que puedo atender por este canal.\n\n` +
+        `Estas son las disponibles — elija una con la letra o el nombre, o marque *Particular* si paga por su cuenta:\n\n${lineas}`,
     ]),
 
   pedirEps: () =>
@@ -203,12 +211,15 @@ const FORMAL = {
         `_(Si es por cuenta propia, escriba *"Particular"*.)_ 💳`,
     ]),
 
+  // Los ejemplos NO llevan nombres de EPS quemados: eran "Sura, Sanitas, Nueva
+  // EPS, Compensar", y nombrar una que hoy está apagada invita al paciente a
+  // escribir justo lo que no se le puede agendar.
   epsNoEncontrada: (epsQuery: string) =>
     pick([
-      `Disculpe, no logré encontrar la EPS *"${epsQuery}"* en nuestros convenios.\n\n` +
-        `¿Me la confirma, por favor? _(Ej: Sura, Sanitas, Nueva EPS, Compensar, Particular...)_`,
-      `La EPS *"${epsQuery}"* no aparece registrada.\n\n` +
-        `¿Me la escribe nuevamente? _(Ej: Sura, Sanitas, Nueva EPS, Compensar, Particular...)_`,
+      `Disculpe, no logré identificar la EPS *"${epsQuery}"*.\n\n` +
+        `¿Me la confirma, por favor? _(Si paga usted la consulta, escriba *Particular*.)_`,
+      `La EPS *"${epsQuery}"* no me aparece.\n\n` +
+        `¿Me la escribe nuevamente? _(Si paga usted la consulta, escriba *Particular*.)_`,
     ]),
 
   epsInactiva: (epsName: string) =>
@@ -894,11 +905,13 @@ const INFORMAL = {
         `_Si tu consulta es particular, escoge *Particular*._ 💳`,
     ]),
 
+  // Ver la nota del pool FORMAL: no se afirma que no haya convenio, porque
+  // `isActive` significa "agendable por WhatsApp hoy", no "hay contrato".
   epsInvalida: (lineas: string) =>
     pick([
-      `Esa EPS no está en el listado de las que atendemos en convenio. 🙏 Elige una de estas opciones con la letra o el nombre, o marca *Particular* si pagas directo:\n\n${lineas}`,
-      `Uy, no tenemos convenio con esa EPS, así que no está dentro de las que prestamos el servicio. ¿Eliges una de estas? Me dices la letra o el nombre:\n\n${lineas}`,
-      `Esa EPS no aparece entre las que manejamos. Aquí van las disponibles — escoge una con la letra o el nombre, o *Particular* si pagas por tu cuenta:\n\n${lineas}`,
+      `Esa EPS no está entre las que puedo agendar por aquí ahorita. 🙏 Elige una de estas opciones con la letra o el nombre, o marca *Particular* si pagas directo:\n\n${lineas}`,
+      `Uy, por ahora no puedo agendar citas de esa EPS por WhatsApp. ¿Eliges una de estas? Me dices la letra o el nombre:\n\n${lineas}`,
+      `Esa EPS no aparece entre las que puedo atender por este medio. Aquí van las disponibles — escoge una con la letra o el nombre, o *Particular* si pagas por tu cuenta:\n\n${lineas}`,
     ]),
 
   pedirEps: () =>
@@ -909,8 +922,8 @@ const INFORMAL = {
 
   epsNoEncontrada: (epsQuery: string) =>
     pick([
-      `No encontré la EPS *"${epsQuery}"* en nuestros convenios. ¿Me la confirmas? _(Ej: Sura, Sanitas, Nueva EPS, Compensar, Particular...)_`,
-      `Esa EPS no me apareció. ¿Me la escribes otra vez? _(Ej: Sura, Sanitas, Nueva EPS, Compensar...)_`,
+      `No logré identificar la EPS *"${epsQuery}"*. ¿Me la confirmas? _(Si pagas tú la consulta, escribe *Particular*.)_`,
+      `Esa EPS no me apareció. ¿Me la escribes otra vez? _(Si pagas tú la consulta, escribe *Particular*.)_`,
     ]),
 
   epsInactiva: (epsName: string) =>
