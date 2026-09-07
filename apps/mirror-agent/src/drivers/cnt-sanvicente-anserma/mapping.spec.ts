@@ -59,8 +59,12 @@ describe('formatFeHoraCit', () => {
   });
 
   it('mide exactamente 16 caracteres', () => {
-    expect(formatFeHoraCit('2026-09-03T12:20:00.000Z', BOGOTA)).toHaveLength(16);
-    expect(formatFeHoraCit('2026-01-05T14:05:00.000Z', BOGOTA)).toHaveLength(16);
+    expect(formatFeHoraCit('2026-09-03T12:20:00.000Z', BOGOTA)).toHaveLength(
+      16,
+    );
+    expect(formatFeHoraCit('2026-01-05T14:05:00.000Z', BOGOTA)).toHaveLength(
+      16,
+    );
   });
 
   it('convierte de UTC a la hora del hospital', () => {
@@ -172,9 +176,9 @@ describe('resolveConvenio', () => {
   });
 
   it('con EPS pero sin régimen NO adivina: falla explícito', () => {
-    expect(() =>
-      resolveConvenio(MAPPING, { epsNit: '800088702' }),
-    ).toThrow(MappingIncompletoError);
+    expect(() => resolveConvenio(MAPPING, { epsNit: '800088702' })).toThrow(
+      MappingIncompletoError,
+    );
   });
 
   it('tampoco adivina cuando falta el régimen y el servicio es de PyP', () => {
@@ -339,11 +343,7 @@ describe('cuposDelTurno', () => {
     // 07:00–08:10 con citas de 30 min: caben dos, y sobran 10 minutos que no
     // son un cupo. Ofrecerlos haría llegar al paciente cuando el médico ya se
     // fue.
-    const cupos = cuposDelTurno(
-      { ...turno, horaFin: '08:10' },
-      30,
-      TZ,
-    );
+    const cupos = cuposDelTurno({ ...turno, horaFin: '08:10' }, 30, TZ);
 
     expect(cupos.map((c) => c.feHoraCit)).toEqual([
       '2026/09/03 07:00',
@@ -369,9 +369,9 @@ describe('cuposDelTurno', () => {
   });
 
   it('una hora con formato raro falla en vez de inventar cupos', () => {
-    expect(() => cuposDelTurno({ ...turno, horaInicio: '7 am' }, 20, TZ)).toThrow(
-      /formato inesperado/,
-    );
+    expect(() =>
+      cuposDelTurno({ ...turno, horaInicio: '7 am' }, 20, TZ),
+    ).toThrow(/formato inesperado/);
   });
 
   it('una fecha con formato raro también', () => {
@@ -608,16 +608,29 @@ describe('desenlaceDeAtencion', () => {
     expect(desenlaceDeAtencion(0)).toBeNull();
   });
 
-  it('el estado 2 NO se adivina: nadie confirmó qué lo dispara', () => {
-    // Escribirle mal la asistencia a un paciente es peor que no escribirla.
-    expect(desenlaceDeAtencion(2)).toBeNull();
+  // ⚠️ Estas dos afirmaban lo CONTRARIO hasta el 2026-09-07, y la creencia que
+  // codificaban («el 2 no se sabe qué es» y «el no-show es una cancelación con
+  // motivo NA») resultó falsa al medirla contra ESEHSVP. Se dejan invertidas y
+  // con su motivo, para que nadie las vuelva a dar la vuelta sin datos nuevos.
+  it('el estado 2 es una inasistencia', () => {
+    expect(desenlaceDeAtencion(2)).toBe('NO_SHOW');
   });
 
-  it('nunca devuelve NO_SHOW: ese camino es una cancelación con motivo NA', () => {
-    // El no-show del hospital no es un estado distinto — es DELETE de
-    // CITAS_MEDICAS + archivo en CITAS_ANULADAS (MAPEO_HIS.md §2.2).
-    for (const estado of [0, 1, 2, 3, 9]) {
-      expect(desenlaceDeAtencion(estado)).not.toBe('NO_SHOW');
+  it('el no-show NO es una cancelación con motivo NA: ese motivo casi no se usa', () => {
+    // Lo que sostenía la lectura vieja era que el no-show pasaba por
+    // CITAS_ANULADAS con motivo 'NA'. Medido: `NA` se usa CUATRO veces al año,
+    // mientras el estado 2 recibe ~16.800 filas anuales. Si el no-show viviera
+    // allí, el hospital tendría cuatro inasistencias al año.
+    expect(desenlaceDeAtencion(2)).toBe('NO_SHOW');
+  });
+
+  it('un estado que el fabricante añada NO se adivina', () => {
+    // El catálogo del producto es 0/1/2/3 (el informe PA_PLANO_0256 filtra
+    // `<> 3`). El 3 no existe en esta base, y cualquier valor nuevo tiene que
+    // callar en vez de inventar: escribirle mal la asistencia a un paciente
+    // sigue siendo peor que no escribirla.
+    for (const estado of [3, 4, 9, 255]) {
+      expect(desenlaceDeAtencion(estado)).toBeNull();
     }
   });
 });
@@ -711,22 +724,64 @@ describe('convenios — la tabla que se aplica en producción', () => {
   // Seis de las siete salieron exactas. La séptima —Nueva EPS contributivo—
   // estaba mal y tiene su propio test abajo: ya no es un valor, es un hueco.
   it.each([
-    ['Nueva EPS', 'SUBSIDIADO', SERVICIO_NORMAL, 283, 'NUEVASUBSID', 'morbilidad'],
-    ['Nueva EPS', 'SUBSIDIADO', SERVICIO_PYP, 489, 'PYPSUBS', 'promoción y prevención'],
+    [
+      'Nueva EPS',
+      'SUBSIDIADO',
+      SERVICIO_NORMAL,
+      283,
+      'NUEVASUBSID',
+      'morbilidad',
+    ],
+    [
+      'Nueva EPS',
+      'SUBSIDIADO',
+      SERVICIO_PYP,
+      489,
+      'PYPSUBS',
+      'promoción y prevención',
+    ],
     ['Sura', 'SUBSIDIADO', SERVICIO_NORMAL, 467, 'SUBS', 'confirmado'],
     ['Sura', 'SUBSIDIADO', SERVICIO_PYP, 467, 'SUBS', 'sin PyP propio'],
-    ['Sura', 'CONTRIBUTIVO', SERVICIO_NORMAL, 473, 'CONTRIBUTIVO', 'confirmado'],
-    ['Sura', 'CONTRIBUTIVO', SERVICIO_PYP, 473, 'CONTRIBUTIVO', 'sin PyP propio'],
-    ['Salud Total', 'SUBSIDIADO', SERVICIO_NORMAL, 475, 'STOTALSUBS', 'confirmado'],
-    ['Salud Total', 'CONTRIBUTIVO', SERVICIO_NORMAL, 476, 'STCONTRIB', 'confirmado'],
+    [
+      'Sura',
+      'CONTRIBUTIVO',
+      SERVICIO_NORMAL,
+      473,
+      'CONTRIBUTIVO',
+      'confirmado',
+    ],
+    [
+      'Sura',
+      'CONTRIBUTIVO',
+      SERVICIO_PYP,
+      473,
+      'CONTRIBUTIVO',
+      'sin PyP propio',
+    ],
+    [
+      'Salud Total',
+      'SUBSIDIADO',
+      SERVICIO_NORMAL,
+      475,
+      'STOTALSUBS',
+      'confirmado',
+    ],
+    [
+      'Salud Total',
+      'CONTRIBUTIVO',
+      SERVICIO_NORMAL,
+      476,
+      'STCONTRIB',
+      'confirmado',
+    ],
   ])(
     '%s · %s · %s → convenio %i (%s — %s)',
     (eps, regimen, servicio, esperado) => {
       expect(
         resolveConvenio(REAL, {
           epsNit: NIT[eps as keyof typeof NIT],
-          patientRegime: regimen as string,
-          serviceExternalKey: servicio as string,
+          patientRegime: regimen,
+          serviceExternalKey: servicio,
         }),
       ).toBe(esperado);
     },
@@ -851,9 +906,7 @@ describe('especialidades — el mapa que se aplica en producción', () => {
   /** `890266ESP` → `{ raiz: '89066', momento: '2', resto: 'ESP' }`. */
   const partirCups = (codigo: string) => {
     const m = /^(890)([23])(\d{2})(.*)$/.exec(codigo);
-    return m
-      ? { raiz: `${m[1]}${m[3]}`, momento: m[2], resto: m[4] }
-      : null;
+    return m ? { raiz: `${m[1]}${m[3]}`, momento: m[2], resto: m[4] } : null;
   };
 
   it('🚨 no se declara especialidadPorDefecto: un hueco tiene que gritar', () => {
@@ -1009,8 +1062,8 @@ describe('resolveConvenio — facturación por evento', () => {
       expect(
         resolveConvenio(REAL, {
           epsNit: SURA,
-          patientRegime: regimen as string,
-          serviceExternalKey: servicio as string,
+          patientRegime: regimen,
+          serviceExternalKey: servicio,
         }),
       ).toBe(esperado);
     },
@@ -1056,9 +1109,9 @@ describe('resolveConvenio — facturación por evento', () => {
   });
 
   it('sin EPS sigue mandando el pago directo, aunque sea un especialista', () => {
-    expect(
-      resolveConvenio(REAL, { serviceExternalKey: '890266ESP' }),
-    ).toBe(REAL.convenioParticular);
+    expect(resolveConvenio(REAL, { serviceExternalKey: '890266ESP' })).toBe(
+      REAL.convenioParticular,
+    );
   });
 
   it('🔒 ningún servicio es a la vez de PyP y de evento (las reglas chocarían)', () => {
@@ -1117,8 +1170,8 @@ describe('convenios — Salud Total (NIT 800130907)', () => {
       expect(
         resolveConvenio(REAL, {
           epsNit: ST,
-          patientRegime: regimen as string,
-          serviceExternalKey: servicio as string,
+          patientRegime: regimen,
+          serviceExternalKey: servicio,
         }),
       ).toBe(esperado);
     },
@@ -1207,8 +1260,9 @@ describe('servicios de curso de vida — los nueve que faltaban', () => {
     // La invariante que habría cazado los nueve. `_especialidades` nombra la
     // familia: 060 ENFERMERIA PYDT, 328 MEDICINA GENERAL PYDT, 572
     // ODONTOLOGIA PYDT, 591 PSICOLOGIA PYDT.
-    const nombres = (REAL as unknown as { _especialidades: Record<string, string> })
-      ._especialidades;
+    const nombres = (
+      REAL as unknown as { _especialidades: Record<string, string> }
+    )._especialidades;
     const familiaPyp = new Set(
       Object.entries(nombres)
         .filter(([, n]) => /PYDT|PYP/i.test(n))
@@ -1216,7 +1270,9 @@ describe('servicios de curso de vida — los nueve que faltaban', () => {
     );
 
     const sinMarcar = Object.entries(REAL.especialidadPorServicio)
-      .filter(([s, cod]) => familiaPyp.has(cod) && !REAL.serviciosPyp.includes(s))
+      .filter(
+        ([s, cod]) => familiaPyp.has(cod) && !REAL.serviciosPyp.includes(s),
+      )
       .map(([s]) => s);
 
     expect(sinMarcar).toEqual([]);
@@ -1257,12 +1313,12 @@ describe('modalidad de facturación — medida servicio por servicio (G.6)', () 
     ['S35104', 769, 'psicoterapia'],
     ['I890301AG', 552, 'control a la gestante'],
   ])('%s (%i citas, %s) va por CÁPITA', (servicio) => {
-    expect(evento.has(servicio as string)).toBe(false);
+    expect(evento.has(servicio)).toBe(false);
     expect(
       resolveConvenio(REAL, {
         epsNit: SURA,
         patientRegime: 'SUBSIDIADO',
-        serviceExternalKey: servicio as string,
+        serviceExternalKey: servicio,
       }),
     ).toBe(467); // el de cápita de Sura subsidiado
   });
@@ -1271,19 +1327,16 @@ describe('modalidad de facturación — medida servicio por servicio (G.6)', () 
   it.each([
     ['890206', 370, 97.0],
     ['890306', 57, 98.2],
-  ])(
-    '🚨 %s NUTRICIÓN (%i citas) va por EVENTO — %s %% medido',
-    (servicio) => {
-      expect(evento.has(servicio as string)).toBe(true);
-      expect(
-        resolveConvenio(REAL, {
-          epsNit: SURA,
-          patientRegime: 'SUBSIDIADO',
-          serviceExternalKey: servicio as string,
-        }),
-      ).toBe(535); // EVENSURASUB, no el 467 de cápita
-    },
-  );
+  ])('🚨 %s NUTRICIÓN (%i citas) va por EVENTO — %s %% medido', (servicio) => {
+    expect(evento.has(servicio)).toBe(true);
+    expect(
+      resolveConvenio(REAL, {
+        epsNit: SURA,
+        patientRegime: 'SUBSIDIADO',
+        serviceExternalKey: servicio,
+      }),
+    ).toBe(535); // EVENSURASUB, no el 467 de cápita
+  });
 
   it('🚨 890284ESP sale MIXTO en el agregado pero NO es ambiguo', () => {
     // Su 27 % de cápita son exactamente los pagadores SIN contrato de evento:

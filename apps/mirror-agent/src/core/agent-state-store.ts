@@ -23,7 +23,14 @@ export interface AgentStateStore {
   getOutboxCursor(): Promise<string>;
   setOutboxCursor(seq: string): Promise<void>;
 
-  getDriverCursor(): Promise<DriverCursor | null>;
+  /**
+   * La foto del HIS de la vuelta anterior, o `null` la primera vez (y tras
+   * perder el estado local). El tipo NO lo dice: `DriverCursor` es `unknown`
+   * —cada driver guarda la forma que necesite— y `unknown | null` es el mismo
+   * tipo que `unknown`. Quien implemente esto debe devolver `null`, no
+   * `undefined`: `detectChanges` distingue "no hay foto" de "foto vacía".
+   */
+  getDriverCursor(): Promise<DriverCursor>;
   setDriverCursor(cursor: DriverCursor): Promise<void>;
 
   hasAppliedLocally(eventId: string): Promise<boolean>;

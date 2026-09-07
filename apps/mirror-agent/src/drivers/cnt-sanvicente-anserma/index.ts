@@ -6,7 +6,6 @@ import type {
 } from '@agenia/shared';
 import {
   AnsermaMapping,
-  feHoraCitAIso,
   feHoraCitAIsoOrNull,
   MappingIncompletoError,
   formatFeHoraCit,
@@ -51,6 +50,62 @@ import type {
  * un hospital real, exactamente lo que la Fase 0 existe para evitar.
  */
 /** Una fila de la instantánea: lo mínimo para detectar qué cambió. */
+/**
+ * Las filas que devuelve el SQL Server del hospital, tipadas.
+ *
+ * `mssql` entrega `recordset` como `any[]` si no se le dice qué esperar, y eso
+ * apagaba la familia `no-unsafe-*` justo donde más importa: son datos que
+ * llegan de una base ajena, con nombres de columna en la jerga del HIS. Un
+ * `f.servicio_dominante` mal escrito no fallaba en ningún sitio — producía
+ * `undefined` y una entrada de catálogo silenciosamente vacía.
+ *
+ * Los nombres son los ALIAS de cada consulta, no los de las columnas del HIS.
+ */
+interface FilaCita {
+  /** CD_CODI_MED_CIT */
+  med: string;
+  /** FE_HORA_CIT */
+  hora: string;
+  /** NU_ESTA_CIT */
+  estado: number;
+  /** CD_CODI_SER_CIT */
+  servicio: string | null;
+  /** NU_HIST_PAC_CIT */
+  hist: string | null;
+  /** NU_DURA_CIT */
+  dura: number | null;
+  /** DE_DESC_CIT — lleva la marca de origen del agente. */
+  descripcion: string | null;
+  /** FE_FECH_CIT ya convertida a `YYYY-MM-DD`. */
+  fecha: string;
+}
+
+/** Fila del catálogo de servicios (agregada por volumen de citas). */
+interface FilaServicio {
+  codigo: string;
+  nombre: string | null;
+  citas: number;
+  medicos: number;
+}
+
+/** Fila del catálogo de médicos, con su servicio dominante. */
+interface FilaMedico {
+  codigo: string;
+  nombre: string | null;
+  cargo: string | null;
+  estado: number | null;
+  cedula: string | null;
+  email: string | null;
+  servicio_dominante: string | null;
+  citas_dominante: number | null;
+  servicios: number | null;
+}
+
+/** Turno del médico: de aquí sale el consultorio. */
+interface FilaTurno {
+  consultorio: string | null;
+}
+
 interface SnapshotRow {
   /** NU_ESTA_CIT */
   e: number;
@@ -198,8 +253,11 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     try {
       await this.pool.request().query('SELECT 1 AS ok');
       return { ok: true };
-    } catch (error: any) {
-      return { ok: false, detail: error?.message };
+    } catch (error) {
+      return {
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 
@@ -385,7 +443,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       .request()
       .input('desde', sql.VarChar(8), fechaLiteralSql(ventana.desde))
       .input('hasta', sql.VarChar(8), diaSiguienteLiteralSql(ventana.hasta))
-      .query(`
+      .query<FilaCita>(`
         SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
                CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist,
                NU_DURA_CIT dura, DE_DESC_CIT descripcion,
@@ -482,9 +540,14 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         empujar(this.eventoDeCita('INSERT', clave, fila, ahora));
       } else if (previo.e !== fila.e && dentro(fila)) {
         // Solo se reporta el desenlace que sabemos traducir al vocabulario de
-        // AgenIA. El estado 2 existe y nadie ha confirmado qué significa
-        // (MAPEO_HIS.md §2.1): inventarle una asistencia a un paciente es
-        // peor que no escribirla. Se avisa para que no sea un silencio.
+        // AgenIA: 1 = ATTENDED y 2 = NO_SHOW (ambos confirmados contra
+        // ESEHSVP el 2026-09-07 — ver `desenlaceDeAtencion` en mapping.ts).
+        //
+        // El `else` ya no es el camino normal: hasta el 2026-09-07 el estado 2
+        // caía aquí y el desenlace del 14,6 % de las citas del hospital no
+        // llegaba nunca. Ahora solo cubre un valor inesperado —un 3, o algo
+        // que el fabricante añada— y ahí sigue valiendo la regla vieja:
+        // inventarle una asistencia a un paciente es peor que no escribirla.
         if (desenlaceDeAtencion(fila.e)) {
           empujar(this.eventoDeCita('ATTENDANCE', clave, fila, ahora));
         } else {
@@ -562,7 +625,9 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         // `String(fila.e)`, el código crudo del HIS, contra un enum de Prisma
         // que solo entiende PENDING/ATTENDED/NO_SHOW.
         attendanceStatus:
-          op === 'ATTENDANCE' ? (desenlaceDeAtencion(fila.e) ?? undefined) : undefined,
+          op === 'ATTENDANCE'
+            ? (desenlaceDeAtencion(fila.e) ?? undefined)
+            : undefined,
       },
     };
   }
@@ -679,7 +744,10 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     // 90 días hacia atrás: lo que se agendó de verdad, que es mejor señal de lo
     // que el hospital ofrece que cualquier bandera del catálogo.
     const desde = fechaLiteralSql(
-      fechaCitaLocal(new Date(ahoraMs - 90 * 86_400_000).toISOString(), this.timeZone),
+      fechaCitaLocal(
+        new Date(ahoraMs - 90 * 86_400_000).toISOString(),
+        this.timeZone,
+      ),
     );
     const hasta = diaSiguienteLiteralSql(hoy);
 
@@ -687,7 +755,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       const r = await pool
         .request()
         .input('desde', sql.VarChar(8), desde)
-        .input('hasta', sql.VarChar(8), hasta).query(`
+        .input('hasta', sql.VarChar(8), hasta).query<FilaServicio>(`
           SELECT c.CD_CODI_SER_CIT              AS codigo,
                  MAX(s.NO_NOMB_SER)             AS nombre,
                  COUNT(*)                       AS citas,
@@ -699,7 +767,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
            GROUP BY c.CD_CODI_SER_CIT
            ORDER BY COUNT(*) DESC`);
 
-      return r.recordset.map((f: any) => ({
+      return r.recordset.map((f) => ({
         externalKey: String(f.codigo).trim(),
         label: (f.nombre ?? String(f.codigo)).trim(),
         extra: {
@@ -713,7 +781,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       .request()
       .input('hoy', sql.VarChar(8), fechaLiteralSql(hoy))
       .input('desde', sql.VarChar(8), desde)
-      .input('hasta', sql.VarChar(8), hasta).query(`
+      .input('hasta', sql.VarChar(8), hasta).query<FilaMedico>(`
         WITH con_turnos AS (
             SELECT DISTINCT CD_MED_TUME AS med
               FROM dbo.TURNOS_MEDICOS
@@ -745,9 +813,12 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
           LEFT JOIN volumen v ON v.med = m.CD_CODI_MED AND v.rn = 1
          ORDER BY m.CD_CODI_MED`);
 
-    return r.recordset.map((f: any) => {
+    return r.recordset.map((f) => {
       const extra: Record<string, string> = {};
-      const poner = (k: string, v: unknown) => {
+      // `v` acepta solo lo que las columnas pueden traer. Con `unknown`, el
+      // `String(v)` de abajo aceptaba un objeto y lo convertía en
+      // "[object Object]" sin que nada se quejara.
+      const poner = (k: string, v: string | number | null | undefined) => {
         const t = v === null || v === undefined ? '' : String(v).trim();
         if (t !== '') extra[k] = t;
       };
@@ -825,13 +896,14 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         };
       }
 
-      const duracion = p.startTimeIso && p.endTimeIso
-        ? Math.round(
-            (new Date(p.endTimeIso).getTime() -
-              new Date(p.startTimeIso).getTime()) /
-              60000,
-          )
-        : mapping.duracionMinutos;
+      const duracion =
+        p.startTimeIso && p.endTimeIso
+          ? Math.round(
+              (new Date(p.endTimeIso).getTime() -
+                new Date(p.startTimeIso).getTime()) /
+                60000,
+            )
+          : mapping.duracionMinutos;
 
       await ej
         .request()
@@ -843,7 +915,11 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         // Literal 'YYYYMMDD', no un Date: ver fechaLiteralSql(). Un Date se
         // serializa en UTC y le pegaba cinco horas a la fecha del hospital.
         .input('fecha', sql.VarChar(8), fechaLiteralSql(feFecha))
-        .input('esp', sql.VarChar(3), resolveEspecialidad(mapping, p.serviceExternalKey))
+        .input(
+          'esp',
+          sql.VarChar(3),
+          resolveEspecialidad(mapping, p.serviceExternalKey),
+        )
         .input('cons', sql.VarChar(8), turno.consultorio)
         .input('conv', sql.Int, convenio)
         .input('desc', sql.VarChar(600), mapping.marcaOrigen)
@@ -864,13 +940,22 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
           )`);
 
       return { success: true };
-    } catch (error: any) {
+      // `sql.RequestError` es lo que lanza mssql ante un error del servidor, y
+      // su `number` es el código de error de SQL Server. Tiparlo así —en vez
+      // de `any`— es lo que garantiza que 2627/2601 se sigan comparando contra
+      // el campo que existe de verdad.
+    } catch (error) {
+      // `| null | undefined` NO sobra, y el `?.` de abajo tampoco: un driver
+      // puede recibir un `throw null` de una librería, y sin el encadenamiento
+      // opcional este mismo catch reventaría con un TypeError — sustituyendo
+      // el motivo real del fallo por otro inventado aquí dentro.
+      const err = error as Partial<sql.RequestError> | null | undefined;
       // Violación de la PK (médico + hora + estado): ese cupo YA está vendido
       // en el HIS. No es un fallo del agente, es el detector natural de
       // colisión que la Fase 0 identificó — y la política de este hospital es
       // que el HIS gana. Se reporta como fallo para que quede auditado, pero
       // con un mensaje que dice qué pasó de verdad.
-      if (error?.number === 2627 || error?.number === 2601) {
+      if (err?.number === 2627 || err?.number === 2601) {
         return {
           success: false,
           message:
@@ -945,7 +1030,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     ej: Ejecutor,
     medico: string,
     fechaIso: string,
-  ): Promise<{ consultorio: string | null } | null> {
+  ): Promise<FilaTurno | null> {
     const r = await ej
       .request()
       .input('med', sql.VarChar(4), medico)
@@ -953,7 +1038,8 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       // El `CAST(... AS date)` disimulaba el desfase mientras el agente
       // corriera al oeste de UTC — desde una zona al este, la comparación
       // caía en el día anterior y el médico "no tenía turno".
-      .input('fecha', sql.VarChar(8), fechaLiteralSql(fechaIso)).query(`
+      .input('fecha', sql.VarChar(8), fechaLiteralSql(fechaIso))
+      .query<FilaTurno>(`
         SELECT TOP 1 CD_CODI_CONS_TUME AS consultorio
           FROM dbo.TURNOS_MEDICOS
          WHERE CD_MED_TUME = @med
@@ -1009,7 +1095,8 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         medico: p.doctorExternalKey,
         feHora,
         motivo: mapping.motivoAnulacion,
-        observacion: p.cancelObservations ?? 'Cancelada por el paciente vía WhatsApp',
+        observacion:
+          p.cancelObservations ?? 'Cancelada por el paciente vía WhatsApp',
       });
 
       if (!borrada) {
@@ -1035,7 +1122,9 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
    * de citas. La observación de la anulación dice que fue un reagendamiento
    * para que su tasa de cancelación —hoy del 8-9%— no se infle sola.
    */
-  async rescheduleAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {
+  async rescheduleAppointment(
+    evt: CanonicalChangeEvent,
+  ): Promise<DriverResult> {
     const p = evt.payload;
     if (!p.previousStartTimeIso || !p.previousDoctorExternalKey) {
       return {
@@ -1114,7 +1203,8 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     // cita nueva (estado 0) también copiaba y BORRABA la cita ya atendida
     // (estado 1/2) que compartía la misma hora: un paciente ya atendido
     // desaparecía de la historia del hospital por la cancelación de otro.
-    const copia = await tx.request()
+    const copia = await tx
+      .request()
       .input('med', sql.VarChar(4), datos.medico)
       .input('hora', sql.VarChar(18), datos.feHora)
       .input('moti', sql.VarChar(2), datos.motivo)
@@ -1171,13 +1261,21 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     return true;
   }
 
-  async updateAttendance(
-    _evt: CanonicalChangeEvent,
-  ): Promise<DriverResult> {
-    // 🚧 TODO: NU_ESTA_CIT pasa de 0 a 1/2 mediante UPDATE en sitio
-    // (confirmado, MAPEO_HIS.md §2.1bis) pero qué acción exacta de la
-    // aplicación del hospital dispara cada valor no se probó — riesgo bajo
-    // (no bloquea Fase 3, la asistencia es secundaria al alta/cancelación).
+  async updateAttendance(_evt: CanonicalChangeEvent): Promise<DriverResult> {
+    // 🚧 TODO Fase 3. NU_ESTA_CIT pasa de 0 a 1/2 mediante UPDATE en sitio
+    // (confirmado, MAPEO_HIS.md §2.1bis), pero qué acción de la aplicación del
+    // hospital dispara el 2 no se ha probado, y sin eso no hay valor que
+    // escribir para un NO_SHOW. Las consultas que lo resuelven están en
+    // sql/PENDIENTE_CORRER_EN_HOSPITAL.sql sección I.
+    //
+    // ⚠️ Dos avisos para quien lo implemente, cuando la sección I conteste:
+    //  1. NU_ESTA_CIT es PARTE DE LA PK. Un UPDATE sobre ella es, para Change
+    //     Tracking, un DELETE + INSERT — y puede chocar con una fila que ya
+    //     ocupe la tupla destino (médico, hora, estado).
+    //  2. Antes de escribir hay que decidir si AgenIA DEBE hacerlo: la
+    //     asistencia la marca el hospital en su propia aplicación y el agente
+    //     ya la lee por detectChanges. Empujarla en sentido contrario es
+    //     sobrescribir el registro clínico del hospital desde fuera.
     throw new Error(
       'updateAttendance: pendiente de Fase 3+ — ver docs/drivers/cnt-sanvicente-anserma/ESTADO.md',
     );

@@ -48,7 +48,10 @@ function selectDriver(driverKey: string): HisDriver {
 
 async function main() {
   const config = loadConfig();
-  const apiClient = new HttpMirrorApiClient(config.mirrorApiUrl, config.agentToken);
+  const apiClient = new HttpMirrorApiClient(
+    config.mirrorApiUrl,
+    config.agentToken,
+  );
 
   // El driverKey real viaja embebido en el propio agentToken del lado del
   // servidor (ver mirror-token.util.ts) — el agente igual necesita saberlo
@@ -73,12 +76,18 @@ async function main() {
   // exactamente el único directorio que la unidad systemd deja escribir
   // (ReadWritePaths=/opt/agenia-mirror-agent/data).
   const state = new FileAgentStateStore(
-    process.env.MIRROR_STATE_FILE ?? path.join(process.cwd(), 'data', 'state.json'),
+    process.env.MIRROR_STATE_FILE ??
+      path.join(process.cwd(), 'data', 'state.json'),
     (m) => console.warn(m),
   );
   await state.cargar();
 
-  const engine = new MirrorEngine(apiClient, driver, state, config.driverVersion);
+  const engine = new MirrorEngine(
+    apiClient,
+    driver,
+    state,
+    config.driverVersion,
+  );
 
   console.log(`[mirror-agent] arrancando con driver "${driverKey}"...`);
   await engine.handshake();
@@ -118,7 +127,9 @@ async function main() {
         continue;
       }
       if (r.applied > 0) {
-        console.log(`[mirror-agent] AgenIA->HIS: ${r.applied} evento(s) aplicados.`);
+        console.log(
+          `[mirror-agent] AgenIA->HIS: ${r.applied} evento(s) aplicados.`,
+        );
       }
       if (r.skipped > 0) {
         // No es un error: son entidades que este driver no espeja (SLOT, por
@@ -177,7 +188,8 @@ async function main() {
               `Primer motivo: ${r.primerError ?? 'sin detalle'}`,
           );
         } else if (r.creados || r.borrados || r.conflictos) {
-          const sombra = r.modo === 'SHADOW' ? ' (modo sombra, sin escribir)' : '';
+          const sombra =
+            r.modo === 'SHADOW' ? ' (modo sombra, sin escribir)' : '';
           console.log(
             `[mirror-agent] agenda${sombra}: +${r.creados} cupo(s), -${r.borrados}, ` +
               `${r.conflictos} conflicto(s), ${r.dias} día(s) repasados.`,
@@ -208,7 +220,8 @@ async function main() {
             `[mirror-agent] catálogo ${c.kind}: ${c.total} del hospital, ` +
               `${c.homologated} homologado(s)` +
               (pendientes > 0 ? `, ${pendientes} SIN homologar` : '') +
-              (c.created > 0 ? ` (${c.created} nuevo/s)` : '') + '.',
+              (c.created > 0 ? ` (${c.created} nuevo/s)` : '') +
+              '.',
           );
         }
       } catch (error) {

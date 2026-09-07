@@ -218,9 +218,48 @@ export function diaSiguienteLiteralSql(fechaLocal: string): string {
  * · `0` = cita vigente. No es un desenlace: no hay nada que reportar.
  * · `1` = atendida. Confirmado: las citas históricas en estado 1 siguen siendo
  *   filas únicas de CITAS_MEDICAS, nunca aparecen en CITAS_ANULADAS.
- * · `2` = existe pero es raro, y NADIE ha confirmado qué lo dispara
- *   (MAPEO_HIS.md §2.1). Se devuelve `null` en vez de adivinar: escribir mal
- *   la asistencia de un paciente es peor que no escribirla.
+ * · `2` = **INCUMPLIDA — no asistió.** Confirmado el 2026-09-07 contra
+ *   ESEHSVP (sección I de `sql/PENDIENTE_CORRER_EN_HOSPITAL.sql`), sobre
+ *   cinco evidencias independientes que convergen:
+ *
+ *   1. **El catálogo del fabricante es de cuatro valores.** El informe oficial
+ *      del propio HIS (`PA_PLANO_0256`, Resolución 256) filtra
+ *      `NU_ESTA_CIT <> 3` — conoce un estado 3 que en esta base no existe. En
+ *      el ciclo de vida de una cita solo cabe una lectura: 0 = asignada,
+ *      1 = cumplida, **2 = incumplida**, 3 = anulada. El 3 no aparece porque
+ *      este hospital anula BORRANDO la fila hacia `CITAS_ANULADAS`.
+ *   2. **Firma temporal:** cero filas futuras en estado 2, y su fecha máxima
+ *      es siempre «ayer» — la frontera avanza con el calendario. Es un
+ *      proceso diario, no un legado.
+ *   3. **No hay otro sitio donde pueda vivir el no-show:** el motivo `NA`
+ *      ("NO ASISTIO") de `CITAS_ANULADAS` se usa CUATRO veces al año. El
+ *      estado 2 recibe ~16.800 filas anuales.
+ *   4. **Es una decisión por cita, no un flujo de trabajo:** 48 de 52 médicos
+ *      mezclan los estados 1 y 2, y NINGUNO cierra solo en 2. Los porcentajes
+ *      forman un continuo suave (1,7 % - 31,5 %), sin los grupos en 0 % y
+ *      100 % que delatarían una costumbre administrativa.
+ *   5. **El gradiente por servicio es clínicamente coherente**, y es lo que
+ *      lo vuelve irrefutable. Ordenado por tasa de estado 2:
+ *
+ *        Enfermería 1ª infancia / infancia ....... 43-49 %
+ *        Adolescente / joven / adulto (PyDT) ..... 29-39 %
+ *        Psicología .............................. 27-33 %
+ *        Odontología ............................. 16-23 %
+ *        Medicina general ......................... 8-13 %
+ *        Especialistas (internista, derma, gine) .. 3-11 %
+ *        Control prenatal / recién nacido ......... 2-7 %
+ *
+ *      Es exactamente el orden de adherencia esperada: lo preventivo sin
+ *      síntomas arriba, lo que costó meses conseguir abajo. Ningún artefacto
+ *      administrativo produce ese orden.
+ *
+ *   Antes esto devolvía `null` y el desenlace del 14,6 % de las citas no
+ *   llegaba nunca a AgenIA. El comentario que había aquí decía que el 2 «es
+ *   raro»: eran 3 casos del paciente de prueba contra 158.799 filas reales.
+ *
+ *   Lo que sigue abierto es la confirmación humana (que alguien del hospital
+ *   lea una de estas citas en su pantalla, I.7) y `MULTA_TEMP` (I.10). Si
+ *   alguna contradijera esto, revertir es cambiar la línea del `2`.
  *
  * ═══ Y el "no asistió" NO pasa por aquí ═══
  * Contra lo que sugiere el nombre, el no-show del hospital no es un estado
@@ -232,8 +271,10 @@ export function diaSiguienteLiteralSql(fechaLocal: string): string {
  */
 export function desenlaceDeAtencion(
   estado: number,
-): 'ATTENDED' | null {
-  return estado === 1 ? 'ATTENDED' : null;
+): 'ATTENDED' | 'NO_SHOW' | null {
+  if (estado === 1) return 'ATTENDED';
+  if (estado === 2) return 'NO_SHOW';
+  return null;
 }
 
 /**
@@ -313,8 +354,7 @@ export function resolveConvenio(
   // un servicio de PyP se facturaba a un contrato SUBSIDIADO.
   const esPyp = mapping.serviciosPyp.includes(datos.serviceExternalKey ?? '');
   if (esPyp) {
-    const pyp =
-      mapping.convenios[`${datos.epsNit}|${datos.patientRegime}|PYP`];
+    const pyp = mapping.convenios[`${datos.epsNit}|${datos.patientRegime}|PYP`];
     if (pyp !== undefined) return pyp;
     // Sin convenio de PyP para esa combinación se cae al del régimen: es lo
     // que hace el hospital con Sura y con Nueva EPS contributivo.
@@ -333,9 +373,7 @@ export function resolveConvenio(
   );
   if (esEvento) {
     const evento =
-      mapping.convenios[
-        `${datos.epsNit}|${datos.patientRegime}|EVENTO`
-      ];
+      mapping.convenios[`${datos.epsNit}|${datos.patientRegime}|EVENTO`];
     if (evento !== undefined) return evento;
 
     throw new MappingIncompletoError(
@@ -486,18 +524,25 @@ export function feHoraCitAIso(feHora: string, timeZone: string): string {
 function offsetDeZonaMs(instante: Date, timeZone: string): number {
   const partes = new Intl.DateTimeFormat('en-US', {
     timeZone,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
     hour12: false,
   }).formatToParts(instante);
   const v = (t: string) => Number(partes.find((p) => p.type === t)!.value);
   const local = Date.UTC(
-    v('year'), v('month') - 1, v('day'),
-    v('hour') % 24, v('minute'), v('second'),
+    v('year'),
+    v('month') - 1,
+    v('day'),
+    v('hour') % 24,
+    v('minute'),
+    v('second'),
   );
   return local - instante.getTime();
 }
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Disponibilidad (Fase 2): de turnos del HIS a cupos de AgenIA.
@@ -698,7 +743,6 @@ export function partirNombre(fullName?: string): NombrePartido {
   };
 }
 
-
 /**
  * Reparte nombres y apellidos que el paciente YA separó, sin adivinar nada.
  *
@@ -712,7 +756,10 @@ export function partirNombreDado(
   apellidos?: string,
 ): NombrePartido {
   const trozos = (t: string | undefined) =>
-    (t ?? '').trim().split(/\s+/).filter((x) => x.length > 0);
+    (t ?? '')
+      .trim()
+      .split(/\s+/)
+      .filter((x) => x.length > 0);
 
   const n = trozos(nombres);
   const a = trozos(apellidos);
@@ -727,7 +774,8 @@ export function partirNombreDado(
   // de tres palabras no se puede tirar, y un apellido compuesto tampoco.
   return {
     primerNombre: n[0].slice(0, ANCHO.nombre),
-    segundoNombre: n.length > 1 ? n.slice(1).join(' ').slice(0, ANCHO.nombre) : null,
+    segundoNombre:
+      n.length > 1 ? n.slice(1).join(' ').slice(0, ANCHO.nombre) : null,
     primerApellido: a.length > 0 ? a[0].slice(0, ANCHO.apellido) : null,
     segundoApellido:
       a.length > 1 ? a.slice(1).join(' ').slice(0, ANCHO.apellido) : null,

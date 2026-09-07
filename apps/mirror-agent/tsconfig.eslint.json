@@ -1,0 +1,12 @@
+{
+  // tsconfig SOLO para el lint con tipos.
+  //
+  // El `tsconfig.json` de build excluye `*.spec.ts` a propósito: las pruebas no
+  // tienen por qué acabar en `dist/`, que es lo que se copia a la VM del
+  // hospital. Pero typescript-eslint necesita que TODO archivo que lintea esté
+  // en algún proyecto de TypeScript; sin esto, los 14 archivos de prueba fallan
+  // con "was not found by the project service" y quedan sin lintear.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.ts", "eslint.config.mjs"],
+  "exclude": ["dist", "node_modules"]
+}

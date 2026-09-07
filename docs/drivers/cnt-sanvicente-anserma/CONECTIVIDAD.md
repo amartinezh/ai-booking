@@ -235,10 +235,22 @@ Todos bajo `https://app.hsvpanserma.agenia.co/api/mirror/*`, autenticados con
 | `POST /mirror/availability` | Turnos médicos → cupos |
 | `POST /mirror/catalog` | Catálogos (médicos, servicios, EPS) |
 
-Son ocho rutas, un solo host, un solo puerto. `GET /mirror/events` responde de
-inmediato (el servidor no mantiene la conexión abierta), así que **no hay
-conexiones largas que un proxy corporativo pueda cortar** — una preocupación
-razonable que en este diseño no aplica.
+Son ocho rutas, un solo host, un solo puerto.
+
+⚠️ **`GET /mirror/events` es un long-poll**: el servidor retiene la respuesta
+hasta **25 s** esperando a que haya algo que entregar
+(`mirror-dispatch.service.ts`, `DEFAULT_LONG_POLL_MS`), y el agente le concede
+45 s antes de rendirse (`mirror-api-client.ts`, `TIMEOUT_LONG_POLL_MS`). Es la
+única ruta con conexiones largas y conviene decirlo tal cual, porque cambia lo
+que hay que comprobar: un proxy corporativo con un *idle timeout* por debajo de
+25 s cortaría cada vuelta. En Anserma no hay proxy —`netsh winhttp` dio *acceso
+directo* y `curl` negoció HTTP/2 sin interceptación (§1.1 y §1.2)—, así que hoy
+no aplica; si el siguiente cliente sí tiene uno, este es el número que hay que
+pedirle a su TI.
+
+Un long-poll cortado tampoco es una pérdida de datos: el agente reintenta y los
+eventos siguen en `SyncOutbox` hasta que se confirman. El coste sería de
+latencia y de ruido en el log, no de citas perdidas.
 
 ---
 
@@ -418,7 +430,7 @@ NestJS → guard.
 
 ## 6. Ubuntu Server 26 y la versión de Node — RESUELTO
 
-`apps/mirror-agent/deploy/README.md` §1 instala **Node 20**, y las specs que se
+`apps/mirror-agent/deploy/README.md` §1 instalaba **Node 20**, y las specs que se
 le pidieron al hospital (`CORREO_PRUEBA_HIS.md`) decían Ubuntu 22.04/24.04. Nos
 entregaron 26. Dos consecuencias:
 
@@ -506,12 +518,20 @@ command -v node; command -v nodejs; ls -l /usr/bin/node /usr/bin/nodejs
 
 | Resultado | Acción |
 |---|---|
-| `/usr/bin/node` existe | Nada. La unidad funciona tal cual |
-| Solo existe `/usr/bin/nodejs` | `sudo ln -s /usr/bin/nodejs /usr/bin/node`, **o** cambiar el `ExecStart` a `/usr/bin/env node …` (systemd lo acepta: `/usr/bin/env` es ruta absoluta) |
+| `/usr/bin/node` o `/usr/local/bin/node` existe | Nada. La unidad lo resuelve sola |
+| Solo existe `/usr/bin/nodejs` | `sudo ln -s /usr/bin/nodejs /usr/bin/node` |
 
-✅ **Corregido el 2026-09-04** en `apps/mirror-agent/deploy/README.md`: §1 instala
-Node 22, la nota de specs advierte que entregaron Ubuntu 26, y §0 apunta a este
-documento.
+✅ **Cerrado en el propio archivo de la unidad.** `mirror-agent.service` ya no
+lleva la ruta quemada: arranca con `ExecStart=/usr/bin/env node …`, que systemd
+acepta (es ruta absoluta) y que resuelve por PATH — cubre tanto el
+`/usr/bin/node` del paquete como el `/usr/local/bin/node` del tarball. El único
+hueco que queda es `nodejs` sin `node`, y de eso se encargan `deploy/README.md`
+§1 y `local-vm/provision.sh`, que crean el enlace si hace falta.
+
+También se corrigieron `deploy/README.md` (§1 instala Node 22, la nota de specs
+advierte que entregaron Ubuntu 26, §0 apunta a este documento) y
+`INSTALACION_AGENTE_VPS.md` §5, que obliga a comprobar `command -v node` antes
+de instalar el servicio.
 
 ### Sobre el usuario `data`
 

@@ -49,7 +49,8 @@ export class CircuitBreaker {
 
   get estado(): EstadoCircuito {
     if (this.abiertoDesde === null) return 'CERRADO';
-    if (this.ahora() - this.abiertoDesde >= this.cooldownMs) return 'SEMIABIERTO';
+    if (this.ahora() - this.abiertoDesde >= this.cooldownMs)
+      return 'SEMIABIERTO';
     return 'ABIERTO';
   }
 

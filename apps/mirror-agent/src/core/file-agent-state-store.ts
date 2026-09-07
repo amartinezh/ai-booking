@@ -39,13 +39,14 @@ const MAX_EVENTOS_RECORDADOS = 5_000;
 interface EstadoSerializado {
   version: 1;
   outboxCursor: string;
-  driverCursor: DriverCursor | null;
+  /** `null` mientras no haya foto; ver AgentStateStore.getDriverCursor. */
+  driverCursor: DriverCursor;
   appliedEventIds: string[];
 }
 
 export class FileAgentStateStore implements AgentStateStore {
   private outboxCursor = '0';
-  private driverCursor: DriverCursor | null = null;
+  private driverCursor: DriverCursor = null;
   private appliedEventIds: string[] = [];
   private aplicados = new Set<string>();
   /** Último contenido escrito, para no reescribir lo mismo. */
@@ -117,7 +118,7 @@ export class FileAgentStateStore implements AgentStateStore {
     this.escribir();
   }
 
-  async getDriverCursor(): Promise<DriverCursor | null> {
+  async getDriverCursor(): Promise<DriverCursor> {
     return this.driverCursor;
   }
 

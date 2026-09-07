@@ -92,7 +92,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
     mirrorApiUrl,
     agentToken,
     driverVersion: env.MIRROR_DRIVER_VERSION ?? DEFAULTS.driverVersion,
-    pollIntervalMs: Number(env.MIRROR_POLL_INTERVAL_MS) || DEFAULTS.pollIntervalMs,
+    pollIntervalMs:
+      Number(env.MIRROR_POLL_INTERVAL_MS) || DEFAULTS.pollIntervalMs,
     inboundIntervalMs:
       Number(env.MIRROR_INBOUND_INTERVAL_MS) || DEFAULTS.inboundIntervalMs,
     heartbeatIntervalMs:
@@ -103,15 +104,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
       Number(env.MIRROR_RECONCILE_DELAY_MS) || DEFAULTS.reconcileDelayMs,
     reconcileDias: Number(env.MIRROR_RECONCILE_DIAS) || DEFAULTS.reconcileDias,
     availabilityIntervalMs:
-      Number(env.MIRROR_AVAILABILITY_INTERVAL_MS) || DEFAULTS.availabilityIntervalMs,
+      Number(env.MIRROR_AVAILABILITY_INTERVAL_MS) ||
+      DEFAULTS.availabilityIntervalMs,
     availabilityDelayMs:
       Number(env.MIRROR_AVAILABILITY_DELAY_MS) || DEFAULTS.availabilityDelayMs,
     availabilityDiasCercanos:
-      Number(env.MIRROR_AVAILABILITY_DIAS_CERCANOS) || DEFAULTS.availabilityDiasCercanos,
+      Number(env.MIRROR_AVAILABILITY_DIAS_CERCANOS) ||
+      DEFAULTS.availabilityDiasCercanos,
     availabilityDias:
       Number(env.MIRROR_AVAILABILITY_DIAS) || DEFAULTS.availabilityDias,
     availabilityCompletaMs:
-      Number(env.MIRROR_AVAILABILITY_COMPLETA_MS) || DEFAULTS.availabilityCompletaMs,
+      Number(env.MIRROR_AVAILABILITY_COMPLETA_MS) ||
+      DEFAULTS.availabilityCompletaMs,
     catalogIntervalMs:
       Number(env.MIRROR_CATALOG_INTERVAL_MS) || DEFAULTS.catalogIntervalMs,
     catalogDelayMs:

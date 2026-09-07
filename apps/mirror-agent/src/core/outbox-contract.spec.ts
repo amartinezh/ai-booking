@@ -14,7 +14,9 @@ import type { OutboxEventDto } from '@agenia/shared';
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** Evento tal como sale hoy de GET /mirror/events, con su contexto resuelto. */
-const eventoEntregado = (over: Partial<OutboxEventDto> = {}): OutboxEventDto => ({
+const eventoEntregado = (
+  over: Partial<OutboxEventDto> = {},
+): OutboxEventDto => ({
   seq: '42',
   eventId: 'evt-42',
   entityType: 'APPOINTMENT',

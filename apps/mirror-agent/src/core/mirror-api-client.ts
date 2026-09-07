@@ -21,7 +21,10 @@ import type {
  */
 export interface MirrorApiClient {
   handshake(input: HandshakeInput): Promise<HandshakeResult>;
-  getPendingEvents(cursorSeq: string, limit?: number): Promise<OutboxEventDto[]>;
+  getPendingEvents(
+    cursorSeq: string,
+    limit?: number,
+  ): Promise<OutboxEventDto[]>;
   ack(input: AckInput): Promise<AckResult>;
   pushChanges(input: ChangesInput): Promise<ChangesResult>;
   heartbeat(input: HeartbeatInput): Promise<void>;
@@ -31,7 +34,7 @@ export interface MirrorApiClient {
 }
 
 /**
- * Implementación real sobre `fetch` nativo de Node 20 — sin dependencias
+ * Implementación real sobre `fetch` nativo de Node (>= 18) — sin dependencias
  * nuevas de HTTP. Solo conexiones salientes HTTPS hacia AgenIA (ver
  * PLAN_ESPEJO_HOSPITAL.md §4.1).
  */

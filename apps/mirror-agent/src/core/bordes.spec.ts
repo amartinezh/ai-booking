@@ -186,9 +186,12 @@ describe('loadConfig', () => {
   it.each([
     ['sin URL', { MIRROR_AGENT_TOKEN: 'tok' }, /MIRROR_API_URL/],
     ['sin token', { MIRROR_API_URL: 'https://x' }, /MIRROR_AGENT_TOKEN/],
-  ])('%s no arranca: mejor fallar aquí que latir sin poder hablar', (_e, env, patron) => {
-    expect(() => loadConfig(env as NodeJS.ProcessEnv)).toThrow(patron);
-  });
+  ])(
+    '%s no arranca: mejor fallar aquí que latir sin poder hablar',
+    (_e, env, patron) => {
+      expect(() => loadConfig(env as NodeJS.ProcessEnv)).toThrow(patron);
+    },
+  );
 
   it('con lo mínimo arranca y trae los valores por defecto del resto', () => {
     const cfg = loadConfig(base as NodeJS.ProcessEnv);

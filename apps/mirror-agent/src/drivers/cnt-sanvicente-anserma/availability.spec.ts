@@ -122,7 +122,9 @@ describe('fetchAvailability', () => {
 
     const cupos = await driver.fetchAvailability(VENTANA);
 
-    expect(cupos.filter((c) => c.doctorExternalKey === '91-1')).toHaveLength(15);
+    expect(cupos.filter((c) => c.doctorExternalKey === '91-1')).toHaveLength(
+      15,
+    );
     expect(cupos.filter((c) => c.doctorExternalKey === '76')).toHaveLength(6);
   });
 
@@ -160,8 +162,12 @@ describe('fetchAvailability', () => {
       // La columna va DESNUDA: envolverla en CONVERT impedía usar el índice
       // que el hospital tiene sobre ella (bloque 29a). Lo que se comparan son
       // literales de fecha local, que es lo que evita el desfase de zona.
-      expect(consulta).toMatch(/FE_FECH_TUME >= @desde AND FE_FECH_TUME < @hasta/);
-      expect(consulta).not.toMatch(/CONVERT\([^)]*\)?[^)]*FE_FECH_TUME[^)]*\)\s*(>=|BETWEEN)/);
+      expect(consulta).toMatch(
+        /FE_FECH_TUME >= @desde AND FE_FECH_TUME < @hasta/,
+      );
+      expect(consulta).not.toMatch(
+        /CONVERT\([^)]*\)?[^)]*FE_FECH_TUME[^)]*\)\s*(>=|BETWEEN)/,
+      );
     });
 
     it('el turno del día cae en SU día, no en el anterior', async () => {

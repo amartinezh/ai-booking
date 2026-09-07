@@ -45,6 +45,13 @@ sudo tar -xJf node-$VER-linux-x64.tar.xz -C /usr/local --strip-components=1 \
 
 node -v   # confirmar >= v22
 
+# ⚠️ Y la RUTA del binario, no solo la versión. La unidad systemd arranca con
+# `/usr/bin/env node`, que resuelve por PATH; el único caso que NO cubre es que
+# el paquete deje `nodejs` pero no `node`. Si `command -v node` no devuelve
+# nada, el servicio muere con `status=203/EXEC`, un error que no menciona a
+# Node por ninguna parte.
+command -v node || sudo ln -s "$(command -v nodejs)" /usr/bin/node
+
 # Usuario y directorios dedicados — el agente NUNCA corre como root
 sudo useradd --system --home /opt/agenia-mirror-agent --shell /usr/sbin/nologin mirroragent
 # `dist/` hace falta ANTES del `mv` de §2 — se olvidaba, y el despliegue
@@ -89,8 +96,19 @@ sudo nano /etc/agenia-mirror-agent/agent.env   # completar MIRROR_AGENT_TOKEN re
 
 ## 4. Instalar el servicio systemd
 
+El archivo del repo se llama `mirror-agent.service`, pero la unidad **tiene que
+quedar instalada como `agenia-mirror-agent.service`**: es el nombre que usan el
+runbook, el panel y todos los comandos de abajo. Copiarlo con su nombre de
+origen hace fallar el `enable` con *"Unit agenia-mirror-agent.service not
+found"*. El `cp` de aquí abajo ya renombra — no le quites el destino.
+
 ```bash
-sudo cp apps/mirror-agent/deploy/mirror-agent.service /etc/systemd/system/
+# Desde la máquina de build (el repo no está en la VM):
+scp apps/mirror-agent/deploy/mirror-agent.service <usuario>@<VM>:/tmp/
+
+# En la VM — OJO al nombre de destino, no es el mismo que el de origen:
+sudo install -m 0644 /tmp/mirror-agent.service \
+  /etc/systemd/system/agenia-mirror-agent.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now agenia-mirror-agent
 sudo systemctl status agenia-mirror-agent
@@ -149,9 +167,20 @@ UPDATE "HospitalMirrorConfig" SET "availabilityMode" = 'SHADOW' WHERE ...;
 UPDATE "HospitalMirrorConfig" SET "availabilityMode" = 'ON' WHERE ...;
 
 # 3) Carga inicial de una vez, sin esperar al bucle (servicio parado):
-sudo -u mirroragent env $(cat /etc/agenia-mirror-agent/agent.env | xargs) \
-  node /opt/agenia-mirror-agent/dist/index.js --seed-inicial
+sudo systemctl stop agenia-mirror-agent
+
+sudo -u mirroragent bash -c 'set -a; . /etc/agenia-mirror-agent/agent.env; set +a; \
+  cd /opt/agenia-mirror-agent && exec node dist/index.js --seed-inicial'
+
+sudo systemctl start agenia-mirror-agent
 ```
+
+> ⚠️ No uses `env $(cat agent.env | xargs)`. Falla con
+> `env: #: No such file or directory` en cuanto el archivo tiene un comentario,
+> y `xargs` además parte cualquier valor con espacios. `set -a; . archivo` lee
+> el archivo como lo que es —asignaciones de shell— y respeta los comentarios.
+> El `cd` no es decorativo: fija el mismo `WorkingDirectory` que la unidad, y de
+> él depende dónde cae `data/state.json`.
 
 ⚠️ Un turno que el hospital cancela **borra** los cupos libres de AgenIA, pero
 **nunca** uno con cita viva: eso se reporta como conflicto (log + `SyncAudit`)

@@ -11,15 +11,17 @@
 --     90 días y la copia de pruebas no los tiene completos.
 --   · En SSMS: clic derecho sobre la cuadrícula → "Copy with Headers" y pegar
 --     el resultado completo. Cada consulta devuelve pocas filas a propósito.
---   · ✅ NO QUEDA NADA POR CORRER. La sección H se corrió el 2026-09-04 y
---     CERRÓ el bloqueante: el traslado de citas del MEDICO HTA al médico real
---     NO existe como práctica (1 caso en 90 días, y hacia la otra agenda
---     virtual, sobre 80 anulaciones). 76 y 077 entran como médicos normales.
---     Ver el resultado dentro de la sección H y el análisis en ESTADO.md.
---   · Queda una curiosidad barata, que no bloquea: `SELECT * FROM
---     dbo.MOTIVOANUL` para saber qué es el motivo 05 (67 de las 80
---     anulaciones de esas agendas). Si es «no asistió», confirma el
---     pendiente 0b.
+--   · ✅ NINGÚN BLOQUEANTE DE GO-LIVE PENDIENTE. La sección H se corrió el
+--     2026-09-04 y cerró el último: el traslado de citas del MEDICO HTA al
+--     médico real NO existe como práctica (1 caso en 90 días, y hacia la otra
+--     agenda virtual, sobre 80 anulaciones). 76 y 077 entran como médicos
+--     normales. Ver el resultado dentro de la sección H y ESTADO.md.
+--   · ⏳ PENDIENTE DE CORRER: la sección **I** — qué significa NU_ESTA_CIT = 2.
+--     No bloquea el go-live, pero mientras no se conteste hay un 14,6 % de la
+--     agenda histórica cuyo desenlace no llega nunca a AgenIA, y
+--     `updateAttendance()` (AgenIA→HIS) sigue sin poder implementarse porque
+--     no se sabe qué valor escribir para un «no asistió».
+--     I.8 absorbe la curiosidad del motivo 05 de MOTIVOANUL que estaba aquí.
 --   · D.7 se cerró SIN correr: decisión de producto, Fomag queda fuera de
 --     alcance. Volver a correr G.4 y G.6 cada vez que se encienda un médico
 --     nuevo, y D.4/G.7 en diciembre (los convenios vencen el 31-dic-2026).
@@ -52,6 +54,9 @@
 --   G.6 ✅ CORRIDA — 32 servicios cápita (<0,6 %) y 16 evento (>90 %). Sin
 --      zona gris. Corrigió dos cosas: NUTRICIÓN sí es evento (el medico NU02
 --      NO estaba a salvo), y el «MIXTO» de 890284ESP no es ambiguo.
+--   I. ⏳ PENDIENTE — ¿qué es NU_ESTA_CIT = 2? Ocho consultas de solo lectura;
+--      la última (I.7) genera diez citas concretas para que el hospital las
+--      mire en su pantalla, que es la única prueba definitiva.
 --   G.7 ✅ CORRIDA — los cuatro convenios de Salud Total vigentes hasta el
 --      31-dic-2026 (renovación a 4 meses). El NIT de Fomag es en realidad
 --      una FIDUCIARIA que administra varios contratos del Estado, y su
@@ -1548,4 +1553,812 @@ WHERE c.CD_CODI_SER_CIT = 'S39141-1'          -- control hipertensos
   AND c.FE_FECH_CIT >= DATEADD(day, -90, CAST(GETDATE() AS date))
 GROUP BY c.CD_CODI_MED_CIT, c.CD_CODI_SER_CIT
 ORDER BY citas DESC;
+GO
+
+-- =============================================================================
+-- I. ✅ CERRADA — NU_ESTA_CIT = 2 es INCUMPLIDA (no asistió)
+--
+-- Tres corridas: I.1-I.4 (06-sep), I.7-I.9 e I.15 (07-sep).
+-- **El driver ya lo implementa:** `desenlaceDeAtencion(2) === 'NO_SHOW'`.
+--
+-- ═══ I.15 CERRÓ LA ÚLTIMA DUDA (2026-09-07) ═══
+--
+-- La sospecha era que el estado 2 fuera flujo de trabajo («este médico cierra
+-- así») en vez de un desenlace del paciente. Queda descartado:
+--
+--        medicos_con_citas_cerradas ... 52
+--        mezclan_1_y_2 ................ 48
+--        solo_estado_1 ................. 4
+--        solo_estado_2 ................. 0   ← NINGUNO
+--
+--   · 48 de 52 médicos usan LOS DOS estados. Ninguno cierra solo en 2.
+--   · Los porcentajes forman un continuo suave del 1,70 % (MDD1) al 31,48 %
+--     (PS08), SIN los grupos en 0 % y 100 % que delatarían una costumbre.
+--   · El zoom al 2026-09-05 lo remata: 13 de 17 médicos tuvieron ambos
+--     estados ESE MISMO DÍA. Y explica el espejismo de I.7 — RU69 cerró 21/21
+--     en estado 1 ese día, que con su tasa habitual del 7,6 % ocurre una de
+--     cada cinco veces; PS06 tuvo 7 de 15 (46 %) contra su 31 % habitual. El
+--     `TOP 5` pescó justo esos dos.
+--
+-- 🎯 Y EL GRADIENTE POR SERVICIO ES LO QUE LO VUELVE IRREFUTABLE:
+--
+--        Enfermería 1ª infancia / infancia ....... 43-49 %
+--        Adolescente / joven / adulto (PyDT) ..... 29-39 %
+--        Psicología .............................. 27-33 %
+--        Odontología ............................. 16-23 %
+--        Medicina general ......................... 8-13 %
+--        Especialistas (internista, derma, gine) .. 3-11 %
+--        Control prenatal / recién nacido ......... 2-7 %
+--
+--   Es EXACTAMENTE el orden de adherencia esperada del paciente: lo
+--   preventivo y sin síntomas arriba, lo que costó meses conseguir abajo.
+--   Ningún artefacto administrativo ordena los servicios por lo que el
+--   paciente siente. Esto no lo produce una costumbre de digitación.
+--
+--   (De paso: explica por qué PS06 y PS08 encabezaban la lista de médicos —
+--    son psicólogos, no «los que cierran raro».)
+--
+-- ═══ LAS CINCO PATAS, JUNTAS ═══
+--   1. El informe oficial del HIS filtra `NU_ESTA_CIT <> 3` ⇒ el catálogo del
+--      fabricante es 0=asignada, 1=cumplida, 2=incumplida, 3=anulada.
+--   2. Cero filas futuras en estado 2; su frontera es siempre «ayer».
+--   3. El motivo `NA` de CITAS_ANULADAS se usa 4 veces al año contra ~16.800
+--      del estado 2: no hay otro sitio donde viva el no-show.
+--   4. 48/52 médicos mezclan; ninguno cierra solo en 2 ⇒ decisión por cita.
+--   5. El gradiente clínico por servicio.
+--
+-- ═══ I.10 CORRIDA (2026-09-07): apoya, pero NO era la prueba ═══
+--
+-- ⚠️ Anuncié `MULTA_TEMP` como «la firma definitiva». No lo fue: **la tabla
+--    está VACÍA** — ni el `TOP 20` ni el `GROUP BY NU_ESTA_CIT` devolvieron
+--    una sola fila. Es evidencia ESTRUCTURAL, no empírica.
+--
+--    (El sufijo `_TEMP` explica el vacío: es un buffer de proceso, como
+--     `TEMPO_ESTA` y `TEMP_CAMB_ESTADO`, que también salieron vacías en I.9.
+--     Se llena, se procesa y se vacía. O el hospital no cobra multas.)
+--
+-- 🔎 Pero su ESTRUCTURA sí dice algo, y apunta al mismo sitio:
+--
+--        NU_NUME_MULT      int       ← número de multa
+--        VL_VALO_MULT      float     ← VALOR EN DINERO
+--        NU_ESTA_MULT      tinyint   ← estado de la multa
+--        FE_HORA_CIT_MULT  varchar   ← la hora de LA CITA
+--        FE_FECH_CIT       datetime  ← la fecha de LA CITA
+--        NU_ESTA_CIT       tinyint   ← EL ESTADO DE LA CITA
+--        NU_HIST_PAC       varchar   ← el paciente
+--        PACIENTE          varchar
+--        NO_NOMB_EPS       varchar
+--        USUARIOANUL / USUARIOINAC   ← quién anuló / inactivó la multa
+--
+--    Una tabla de MULTAS que copia dentro de sí el estado de una cita solo
+--    tiene sentido si **ese estado es lo que justifica el cobro**. Y la multa
+--    que un hospital colombiano le cobra a un paciente por una cita es la de
+--    inasistencia. Encaja con `2 = incumplida` y con nada más.
+--
+--    Es una SEXTA pata, más débil que las cinco anteriores porque es de
+--    diseño y no de datos. No cambia la conclusión ni la refuta.
+--
+-- ═══ I.7 SIGUE SIN CONTESTAR ═══
+--   Se volvió a correr y devolvió lo mismo (era determinista). **Esto no es
+--   la respuesta**: la consulta solo GENERA la lista. Falta que una persona
+--   del hospital abra una de esas cinco citas en estado 2 —por ejemplo la de
+--   PS06 del 2026-09-05 a las 14:30, historia 1054924377— y diga qué etiqueta
+--   le muestra su pantalla. Cuesta un minuto y es la única prueba directa.
+--
+-- ═══ 🆕 HALLAZGO COLATERAL: EXISTE UN ESQUEMA `ADMIN` ═══
+--   `MULTA_TEMP` salió por duplicado: `dbo.MULTA_TEMP` y `ADMIN.MULTA_TEMP`
+--   (casi idénticas; la de `dbo` tiene `CD_CODI_CONV` de más). **En toda la
+--   Fase 0 nunca había aparecido un esquema distinto de `dbo`.**
+--
+--   El agente no corre peligro: prefija `dbo.` en las nueve referencias que
+--   hace (verificado), y la prueba de fuego confirmó que la cita escrita en
+--   `dbo.CITAS_MEDICAS` salió en la pantalla del hospital. Pero conviene
+--   cerrar qué más vive ahí antes de producción → **I.16**.
+--
+-- ═══ LO QUE QUEDA (nada de esto bloquea) ═══
+--   · **I.7** — la confirmación humana. La más limpia y la más barata.
+--   · **I.16** — qué hay en el esquema `ADMIN` (nuevo).
+--   · I.11-I.14 — complementarias.
+--   Si algo contradijera la conclusión, revertir es una línea en `mapping.ts`.
+--
+-- =============================================================================
+
+-- =============================================================================
+-- I. 🔍 ¿QUÉ ES NU_ESTA_CIT = 2?  — I.1-I.4 (06-sep) e I.7-I.9 (07-sep)
+--
+-- ═══ SEGUNDA CORRIDA (2026-09-07): I.7, I.8 e I.9 ═══
+--
+-- 🎯 I.8 ES LA QUE MÁS PESA, y no era la que iba a pesar. El catálogo
+--    `MOTIVOANUL` y su uso en 365 días:
+--
+--        05  PACIENTE LLAMA A CANCELAR ... 7.087   (85,4 % de las anulaciones)
+--        01  ERROR DE CAJERO ............... 567
+--        06  DOBLE CONSULTA ................ 485
+--        09  EDAD NO CORRESPONDE ............ 86
+--        WB  CANCELADO WEB ................. 16
+--        ...
+--        NA  NO ASISTIO ..................... 4   ← CUATRO. EN UN AÑO.
+--        (total ≈ 8.301 anulaciones/año)
+--
+--    · **El motivo 05 es "PACIENTE LLAMA A CANCELAR"**, no "no asistió". Eso
+--      cierra el pendiente 0b, que llevaba abierto desde agosto.
+--    · **`NA` = "NO ASISTIO" se usa 4 veces al año.** El estado 2 recibe
+--      ~16.800 filas al año (644 cada 14 días, medido en I.1). Son cuatro mil
+--      doscientas veces más. Si el no-show del hospital viviera en
+--      `CITAS_ANULADAS`, este hospital tendría CUATRO inasistencias anuales.
+--      No hay otro sitio donde pueda estar: **está en el estado 2.**
+--    · Ojo al leer el catálogo: la mitad de los motivos son de FACTURACIÓN
+--      ("NO POS", "COPAGO NO COBRADO", "EXAMEN SIN RESULTADOS", "DEVOLUCION
+--      DINERO"). `MOTIVOANUL` es un catálogo COMPARTIDO entre anular una cita
+--      y anular un cargo — no todos sus códigos aplican a una cita.
+--    · `WB` (CANCELADO WEB) es el motivo que escribe nuestro driver
+--      (`mapping.json`). Existe y ya tiene 16 usos reales: elección validada.
+--
+-- ❌ I.9 CERRÓ LAS TRES VÍAS, todas en falso. No hay catálogo de estados en
+--    la base — el significado de NU_ESTA_CIT vive solo en el código de la
+--    aplicación cliente, que no está en SQL Server:
+--
+--    · `dbo.ESTADO` → columnas `TX_NOMB_ESTA` + `NU_AUTO_ESTA`, y **VACÍA**.
+--      Además el `NU_AUTO_` delata un autonumérico, y `NU_ESTA_CIT` es un
+--      tinyint de dominio fijo (0-3). No es el catálogo aunque se llame así.
+--    · `TEMP_CAMB_ESTADO` → **VACÍA**, y sus columnas son de FARMACIA
+--      (`NUM_ORDER_MED`, `DOSIS`, `ARTICULO`, `DESPACHO`, `UVENTA`). El
+--      nombre engañaba.
+--    · `TEMPO_ESTA` → facturación de **ESTAncia hospitalaria**, no de
+--      "estado" (`CD_CODI_SER`, `VALOR_TEMP`, `NU_NUME_CONV`, `NO_NOMB_EPS`).
+--
+--    🔎 Lección sobre I.2: su `LIKE '%ESTA%'` capturaba «ESTAncia» y por eso
+--    devolvió once tablas de las que nueve eran ruido. La búsqueda por nombre
+--    no sirve en este HIS.
+--
+-- ⚠️ I.7 NO ESTÁ CONTESTADA — solo se generó la lista. La prueba es que
+--    alguien del hospital ABRA esas diez citas en su pantalla y diga qué
+--    estado muestran. Eso sigue pendiente. Lo que sí dicen los datos:
+--
+--        estado 1 → RU69 (YULIETH RIOS) ×5, servicios S39141 / -1 / -2
+--        estado 2 → RU62 (DIEGO RODRIGUEZ) ×1 y PS06 (M. GALEANO) ×4,
+--                   servicios S39141, S35102 / -1, S35104
+--
+--    · **Las diez son del MISMO DÍA (2026-09-05)** y el servicio `S39141`
+--      aparece en AMBOS estados. Luego el 2 no es «así se cierra tal día» ni
+--      «así se cierra tal servicio». Es una decisión POR CITA. Eso descarta
+--      dos alternativas de golpe.
+--    · 🚨 **Pero abre una tercera que hay que descartar:** en la muestra el
+--      estado 1 es todo de un médico y el 2 de otros dos. Puede ser un
+--      artefacto (el `TOP 5 ORDER BY FE_FECH_CIT` no desempata entre citas
+--      del mismo día, así que devuelve lo que el índice tenga a mano), pero
+--      si NO lo fuera —si unos médicos cerraran todo como 1 y otros como 2—
+--      entonces el 2 sería flujo de trabajo, no inasistencia, y no se podría
+--      usar. **Lo decide I.15.**
+--
+-- ═══ DÓNDE QUEDA LA PREGUNTA ═══
+--   Hipótesis `2` = INCUMPLIDA: más fuerte que ayer (I.8 elimina el único
+--   sitio alternativo donde podía vivir el no-show). Falta cerrar I.15 (que
+--   no sea un patrón por médico) y una confirmación humana: I.7 o I.10.
+--   **I.10 (`MULTA_TEMP`) sigue sin correr y es la más prometedora de todas.**
+--
+-- =============================================================================
+
+-- =============================================================================
+-- I. 🔍 ¿QUÉ ES NU_ESTA_CIT = 2?  — I.1-I.4 CORRIDAS EL 2026-09-06
+--
+-- ✅ RESPUESTA CASI CERRADA: **2 = INCUMPLIDA (no asistió)**. Inferencia muy
+--    fuerte, no prueba. La cierra I.7 (que el hospital lo lea en su pantalla)
+--    o I.9 (si `dbo.ESTADO` resulta ser el catálogo).
+--
+-- 🔑 EL HALLAZGO: I.3 encontró UN solo objeto que menciona NU_ESTA_CIT, el
+--    informe oficial `PA_PLANO_0256` (Resolución 256 del MinSalud), y su
+--    filtro dice:
+--
+--        WHERE NU_PRIM_CIT = 1 AND ... AND NU_ESTA_CIT <> 3 AND ...
+--
+--    **`<> 3`.** La aplicación conoce un estado 3 que en ESEHSVP no existe
+--    (I.1 solo devuelve 0, 1 y 2). Eso revela el catálogo del FABRICANTE, que
+--    es de cuatro valores, y en el ciclo de vida estándar de una cita en
+--    Colombia solo hay una lectura posible:
+--
+--        0 = ASIGNADA    1 = CUMPLIDA    2 = INCUMPLIDA    3 = ANULADA
+--
+--    · El 3 no aparece porque ESTE hospital anula BORRANDO la fila y
+--      archivándola en CITAS_ANULADAS (prueba manual del 2026-08-23). El
+--      producto soporta las dos formas; el hospital usa una.
+--    · El informe excluye solo el 3 — o sea, cuenta el 2 como cita asignada.
+--      Correcto para un indicador de oportunidad: la cita se asignó, el
+--      paciente no fue.
+--
+-- 📊 Y los números de I.1 encajan con eso, con dos confirmaciones nuevas:
+--
+--        estado  filas     %      fecha_min    fecha_max    futuras
+--        0       34.826    3,21   2024-06-14   2027-09-04   6.841
+--        1       891.859   82,16  2009-04-30   2026-10-02   1
+--        2       158.799   14,63  2009-03-05   2026-09-05   0
+--
+--    · **futuras = 0 para el estado 2**, como se predijo. Un «no asistió» no
+--      se puede marcar antes de la fecha.
+--    · **Su fecha máxima es AYER** (2026-09-05; la consulta se corrió el 06).
+--      En la corrida del 2026-08-23 el tope era el 2026-08-15, también ~una
+--      semana atrás. La frontera AVANZA con el calendario: no es un valor
+--      legado ni una migración, es un proceso vivo que corre a diario.
+--    · El ritmo cuadra: en esos 14 días entraron +4.274 al estado 1 y +644 al
+--      2 — un 13,1 %, casi idéntico al 14,63 % histórico.
+--    · Los dos estados llegan hasta 2009: el 2 no es una novedad reciente.
+--
+-- ⚠️ I.5 ESTÁ MAL PLANTEADA, no la uses como está. Decía que si las citas en
+--    estado 2 tienen convenio como las de estado 1, alguien las atendió. Es
+--    falso: `NU_NUME_CONV_CIT` se escribe al CREAR la cita (lo hace la app, y
+--    lo hace también nuestro driver en su INSERT), no al facturarla. Va a dar
+--    ~100 % en los dos estados y no distingue nada. El sustituto correcto es
+--    I.12.
+--
+-- 🆕 DOS HALLAZGOS QUE NO SE BUSCABAN, en I.1:
+--
+--    1. **27.985 citas en estado 0 con fecha PASADA** (34.826 − 6.841 futuras),
+--       desde 2024-06-14. Son ocho de cada diez filas del estado 0. El cierre
+--       0→1/2 NO se aplica siempre. Consecuencia directa para el agente: que
+--       una cita no haya cambiado de estado NO significa que se atendió.
+--       Detalle en I.13.
+--    2. **Una cita FUTURA en estado 1.** Parece anecdótico y no lo es: la PK
+--       es (médico, hora, ESTADO), así que una fila en estado 1 o 2 NO impide
+--       insertar otra en estado 0 a la misma hora. Con `availabilityMode=OFF`
+--       —que es como arranca el piloto— la agenda de AgenIA no sale de
+--       TURNOS_MEDICOS, y el detector de colisión por violación de PK no
+--       saltaría. Se mide en I.14.
+--
+-- 📋 PENDIENTES DE CORRER: I.7 (la definitiva), y la ronda I.9-I.14 de abajo.
+-- =============================================================================
+
+-- =============================================================================
+-- I. 🔍 ¿QUÉ ES NU_ESTA_CIT = 2?  — enunciado original
+--
+-- Lo que YA está confirmado y no hay que volver a preguntar:
+--
+--   · NU_ESTA_CIT es la PARTE 3 de la PK de CITAS_MEDICAS
+--     (CD_CODI_MED_CIT, FE_HORA_CIT, NU_ESTA_CIT). El estado integra la clave.
+--   · 0 = VIGENTE / agendada. Todas las citas futuras están aquí. Confirmado.
+--   · 1 = ATENDIDA. Confirmado: las históricas en 1 siguen siendo filas únicas
+--     de CITAS_MEDICAS y NUNCA aparecen en CITAS_ANULADAS. La transición 0→1
+--     es un UPDATE EN SITIO.
+--   · CANCELAR NO ES UN ESTADO: es DELETE de CITAS_MEDICAS + INSERT en
+--     CITAS_ANULADAS (prueba manual del 2026-08-23, §2.1bis del MAPEO).
+--   · 2 = ❓ NADIE HA CONFIRMADO QUÉ ES. Es lo único que falta.
+--
+-- ⚠️ CORRIGE UNA CREENCIA QUE ESTABA ESCRITA EN EL CÓDIGO. El estado 2 se creía
+-- «raro» porque solo salieron 3 casos en las muestras del paciente de prueba.
+-- El bloque 4 sobre el catálogo VIVO dice otra cosa:
+--
+--     estado 0 →      34.552 filas  (hasta 2027-08-28, hay futuras)
+--     estado 1 →     887.585 filas  (hasta 2026-10-02)
+--     estado 2 →     158.155 filas  (hasta 2026-08-15, CERO futuras)
+--
+-- 158.155 de 1.080.292 es el 14,6 % de la agenda histórica del hospital. No es
+-- una curiosidad: es uno de cada siete pacientes.
+--
+-- POR QUÉ IMPORTA AHORA
+--   1. HIS→AgenIA: hoy `desenlaceDeAtencion()` devuelve null para el 2, así que
+--      el desenlace de ese 14,6 % NUNCA llega a AgenIA. En el journal sale como
+--      «un desenlace sin significado confirmado. No se reporta.»
+--   2. AgenIA→HIS: `updateAttendance()` está sin implementar precisamente
+--      porque no se sabe qué valor escribir para un NO_SHOW. Esto lo destraba.
+--
+-- LA HIPÓTESIS MÁS FUERTE, y qué la haría caer
+--   2 = NO ASISTIÓ, marcado DESPUÉS de la fecha. Encaja con «cero futuras» y
+--   con que el 14,6 % es una tasa de inasistencia creíble en consulta externa.
+--   El motivo `NA` de CITAS_ANULADAS (285 casos) NO la contradice: 285 contra
+--   158.155 son dos órdenes de magnitud distintos, así que `NA` sería el
+--   «avisó que no venía» y el 2 el «no se presentó y nadie lo canceló».
+--   La caída de la hipótesis sería I.5: si las citas en 2 tienen convenio de
+--   facturación igual que las de 1, alguien las atendió y 2 significa otra cosa.
+--
+-- CÓMO CORRER ESTO
+--   · 100 % LECTURA. Ni un INSERT, ni un UPDATE, ni un DELETE.
+--   · En ESEHSVP (catálogo vivo). En PRUEBAS los resultados no valen: no tiene
+--     el histórico completo y el 2 vive todo en el pasado.
+--   · I.1 a I.6 se contestan solas con SQL. I.7 NO: produce la lista de filas
+--     concretas para que alguien del hospital las abra en la pantalla del HIS
+--     y diga qué etiqueta les muestra. Esa es la única prueba definitiva —
+--     ninguna consulta puede leer un nombre que la base no guarda.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- ── I.1 El censo actualizado por estado ──────────────────────────────────────
+-- Repite el bloque 4 con dos columnas nuevas que son las que deciden: cuántas
+-- filas del estado son FUTURAS, y cuánto tiempo pasa entre la fecha de la cita
+-- y el momento en que se elaboró el registro.
+--
+-- QUÉ CONFIRMARÍA LA HIPÓTESIS: futuras = 0 para el estado 2, y que su fecha
+-- máxima siga sin alcanzar a hoy (un «no asistió» solo se puede marcar después).
+SELECT NU_ESTA_CIT                                        AS estado,
+       COUNT(*)                                           AS filas,
+       CAST(100.0 * COUNT(*) / SUM(COUNT(*)) OVER () AS decimal(5,2)) AS pct,
+       MIN(FE_FECH_CIT)                                   AS fecha_min,
+       MAX(FE_FECH_CIT)                                   AS fecha_max,
+       SUM(CASE WHEN FE_FECH_CIT > GETDATE() THEN 1 ELSE 0 END) AS futuras
+FROM dbo.CITAS_MEDICAS
+GROUP BY NU_ESTA_CIT
+ORDER BY NU_ESTA_CIT;
+GO
+
+-- ── I.2 ¿La base guarda en algún sitio el NOMBRE de los estados? ─────────────
+-- Si existe un catálogo, esto se acaba aquí y no hace falta nada más. Se busca
+-- por nombre de tabla y por nombre de columna, porque el HIS no es consistente
+-- (MOTIVOANUL no se llama MOTIVOS_ANULACION).
+SELECT s.name AS esquema, t.name AS tabla,
+       (SELECT COUNT(*) FROM sys.columns c WHERE c.object_id = t.object_id) AS columnas
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE t.name LIKE '%ESTA%' OR t.name LIKE '%ESTADO%'
+ORDER BY t.name;
+
+-- Columnas que se parezcan al estado de una cita, en CUALQUIER tabla: a veces
+-- el catálogo existe con otro nombre y se delata por su columna.
+SELECT t.name AS tabla, c.name AS columna, ty.name AS tipo, c.max_length
+FROM sys.columns c
+JOIN sys.tables t  ON t.object_id = c.object_id
+JOIN sys.types ty  ON ty.user_type_id = c.user_type_id
+WHERE c.name LIKE '%ESTA%CIT%' OR c.name LIKE '%DESC%ESTA%'
+ORDER BY t.name, c.name;
+GO
+
+-- ── I.3 🔑 LA CONSULTA MÁS PROMETEDORA: qué dice el código del propio HIS ────
+-- Los informes del hospital tienen que separar «atendidas» de lo que no lo es,
+-- y para eso filtran por NU_ESTA_CIT. Un `WHERE NU_ESTA_CIT = 1` dentro de un
+-- SP llamado ..._ATENDIDAS, o un CASE que traduzca el número a texto, contesta
+-- la pregunta sin molestar a nadie.
+--
+-- Ya se sabe que NO hay SPs de agendamiento (no hay triggers ni lógica oculta);
+-- estos son de lectura/informes, que es justo donde vive la semántica.
+SELECT o.type_desc, o.name AS objeto, m.definition
+FROM sys.sql_modules m
+JOIN sys.objects o ON o.object_id = m.object_id
+WHERE m.definition LIKE '%NU_ESTA_CIT%'
+ORDER BY o.type_desc, o.name;
+GO
+
+-- ── I.4 ¿Cuándo se marca el 2, respecto a la fecha de la cita? ───────────────
+-- FE_ELAB_CIT es cuándo se CREÓ el registro, no cuándo cambió de estado (no hay
+-- columna de modificación). Pero sirve igual: si las filas en estado 2 se
+-- crearon ANTES de su propia fecha de cita, entonces nacieron como citas
+-- normales y el 2 llegó después — o sea, es un desenlace, no un tipo de cita.
+--
+-- Si en cambio muchas se crearon el mismo día o después, el 2 sería otra cosa
+-- (una cita registrada a posteriori, un traslado, un ajuste administrativo).
+SELECT NU_ESTA_CIT                                     AS estado,
+       COUNT(*)                                        AS filas,
+       SUM(CASE WHEN FE_ELAB_CIT <  CAST(FE_FECH_CIT AS date) THEN 1 ELSE 0 END) AS elaborada_antes,
+       SUM(CASE WHEN CAST(FE_ELAB_CIT AS date) = CAST(FE_FECH_CIT AS date) THEN 1 ELSE 0 END) AS mismo_dia,
+       SUM(CASE WHEN FE_ELAB_CIT >  DATEADD(day, 1, CAST(FE_FECH_CIT AS date)) THEN 1 ELSE 0 END) AS elaborada_despues,
+       AVG(CAST(DATEDIFF(day, FE_ELAB_CIT, FE_FECH_CIT) AS float))               AS dias_media_antelacion
+FROM dbo.CITAS_MEDICAS
+WHERE FE_FECH_CIT >= DATEADD(day, -365, CAST(GETDATE() AS date))
+  AND FE_FECH_CIT <  CAST(GETDATE() AS date)   -- solo pasado: el 0 no compite
+  AND FE_ELAB_CIT IS NOT NULL
+GROUP BY NU_ESTA_CIT
+ORDER BY NU_ESTA_CIT;
+GO
+
+-- ── I.5 🎯 LA QUE PUEDE TUMBAR LA HIPÓTESIS: ¿se facturaron? ─────────────────
+-- Una cita atendida se factura a un convenio (NU_NUME_CONV_CIT). Una a la que
+-- el paciente no se presentó, normalmente no.
+--
+-- CÓMO SE LEE:
+--   · Si el estado 2 tiene MUCHOS menos convenios que el 1  → 2 = no atendida.
+--     La hipótesis se sostiene y se puede implementar NO_SHOW → 2.
+--   · Si el estado 2 tiene convenio igual que el 1          → alguien la
+--     atendió. 2 significa OTRA cosa (¿otra sede? ¿reprogramada? ¿facturada
+--     aparte?) y NO se puede usar para NO_SHOW. En ese caso, I.7 manda.
+--
+-- CD_CODI_EST_CIT es la otra columna de «estado» de la tabla (varchar(3),
+-- propósito nunca confirmado). Si se mueve junto con NU_ESTA_CIT, el par
+-- cuenta la historia completa.
+SELECT NU_ESTA_CIT                                              AS estado,
+       COUNT(*)                                                 AS filas,
+       SUM(CASE WHEN NU_NUME_CONV_CIT IS NOT NULL THEN 1 ELSE 0 END) AS con_convenio,
+       CAST(100.0 * SUM(CASE WHEN NU_NUME_CONV_CIT IS NOT NULL THEN 1 ELSE 0 END)
+            / NULLIF(COUNT(*), 0) AS decimal(5,2))              AS pct_con_convenio,
+       COUNT(DISTINCT NU_NUME_CONV_CIT)                         AS convenios_distintos,
+       SUM(CASE WHEN NU_HIST_PAC_CIT IS NULL THEN 1 ELSE 0 END) AS sin_paciente,
+       COUNT(DISTINCT CD_CODI_EST_CIT)                          AS valores_cd_codi_est
+FROM dbo.CITAS_MEDICAS
+WHERE FE_FECH_CIT >= DATEADD(day, -365, CAST(GETDATE() AS date))
+  AND FE_FECH_CIT <  CAST(GETDATE() AS date)
+GROUP BY NU_ESTA_CIT
+ORDER BY NU_ESTA_CIT;
+
+-- El cruce de las dos columnas de estado, por si CD_CODI_EST_CIT desambigua.
+SELECT NU_ESTA_CIT AS estado, CD_CODI_EST_CIT AS estado_admin, COUNT(*) AS filas
+FROM dbo.CITAS_MEDICAS
+WHERE FE_FECH_CIT >= DATEADD(day, -365, CAST(GETDATE() AS date))
+  AND FE_FECH_CIT <  CAST(GETDATE() AS date)
+GROUP BY NU_ESTA_CIT, CD_CODI_EST_CIT
+ORDER BY estado, filas DESC;
+GO
+
+-- ── I.6 ¿1 y 2 son alternativas del mismo cupo, o pueden convivir? ───────────
+-- La PK permite que (médico, hora) tenga una fila en 1 y otra en 2 a la vez.
+-- Si eso NO pasa nunca, son desenlaces excluyentes del mismo cupo — que es lo
+-- que se espera de «atendida» vs «no asistió».
+--
+-- (El driver ya sobrevive a este caso: prefiere la fila en estado 0. Esto es
+--  para saber si ocurre de verdad o solo en teoría.)
+SELECT COUNT(*) AS cupos_con_estado_1_y_2
+FROM (
+    SELECT CD_CODI_MED_CIT, FE_HORA_CIT
+    FROM dbo.CITAS_MEDICAS
+    WHERE NU_ESTA_CIT IN (1, 2)
+      AND FE_FECH_CIT >= DATEADD(day, -365, CAST(GETDATE() AS date))
+    GROUP BY CD_CODI_MED_CIT, FE_HORA_CIT
+    HAVING COUNT(DISTINCT NU_ESTA_CIT) > 1
+) x;
+
+-- La proporción 1 vs 2 por mes. Una tasa estable en torno al 10-20 % es la
+-- firma de la inasistencia; picos o saltos bruscos apuntan a un uso
+-- administrativo (una migración, un cambio de proceso).
+SELECT DATEFROMPARTS(YEAR(FE_FECH_CIT), MONTH(FE_FECH_CIT), 1) AS mes,
+       SUM(CASE WHEN NU_ESTA_CIT = 1 THEN 1 ELSE 0 END) AS estado_1,
+       SUM(CASE WHEN NU_ESTA_CIT = 2 THEN 1 ELSE 0 END) AS estado_2,
+       CAST(100.0 * SUM(CASE WHEN NU_ESTA_CIT = 2 THEN 1 ELSE 0 END)
+            / NULLIF(COUNT(*), 0) AS decimal(5,2))      AS pct_estado_2
+FROM dbo.CITAS_MEDICAS
+WHERE FE_FECH_CIT >= DATEADD(month, -12, CAST(GETDATE() AS date))
+  AND FE_FECH_CIT <  CAST(GETDATE() AS date)
+  AND NU_ESTA_CIT IN (1, 2)
+GROUP BY DATEFROMPARTS(YEAR(FE_FECH_CIT), MONTH(FE_FECH_CIT), 1)
+ORDER BY mes;
+GO
+
+-- ── I.7 📋 LA PRUEBA DEFINITIVA — para pedirle al hospital ───────────────────
+-- Ninguna consulta puede devolver una etiqueta que la base no guarda. Esto
+-- genera diez citas REALES y recientes, cinco en estado 1 y cinco en estado 2,
+-- del mismo médico siempre que se pueda.
+--
+-- QUÉ PEDIR, literalmente:
+--   «¿Pueden abrir estas diez citas en la pantalla de agenda del HIS y
+--    decirnos qué estado muestra cada una? Son solo consultas, no hay que
+--    modificar nada.»
+--
+-- Si las cinco de estado 2 salen como «No asistió» / «Incumplida», cerrado.
+SELECT TOP 5
+       'estado 1' AS grupo, c.CD_CODI_MED_CIT AS medico, m.NO_NOMB_MED AS nombre_medico,
+       c.FE_FECH_CIT AS fecha, c.FE_HORA_CIT AS hora,
+       c.NU_HIST_PAC_CIT AS historia, c.CD_CODI_SER_CIT AS servicio,
+       c.NU_ESTA_CIT AS estado_en_bd
+FROM dbo.CITAS_MEDICAS c
+LEFT JOIN dbo.MEDICOS m ON m.CD_CODI_MED = c.CD_CODI_MED_CIT
+WHERE c.NU_ESTA_CIT = 1
+  AND c.FE_FECH_CIT >= DATEADD(day, -30, CAST(GETDATE() AS date))
+  AND c.FE_FECH_CIT <  CAST(GETDATE() AS date)
+  AND c.NU_HIST_PAC_CIT IS NOT NULL
+ORDER BY c.FE_FECH_CIT DESC;
+
+SELECT TOP 5
+       'estado 2' AS grupo, c.CD_CODI_MED_CIT AS medico, m.NO_NOMB_MED AS nombre_medico,
+       c.FE_FECH_CIT AS fecha, c.FE_HORA_CIT AS hora,
+       c.NU_HIST_PAC_CIT AS historia, c.CD_CODI_SER_CIT AS servicio,
+       c.NU_ESTA_CIT AS estado_en_bd
+FROM dbo.CITAS_MEDICAS c
+LEFT JOIN dbo.MEDICOS m ON m.CD_CODI_MED = c.CD_CODI_MED_CIT
+WHERE c.NU_ESTA_CIT = 2
+  AND c.FE_FECH_CIT >= DATEADD(day, -30, CAST(GETDATE() AS date))
+  AND c.FE_FECH_CIT <  CAST(GETDATE() AS date)
+  AND c.NU_HIST_PAC_CIT IS NOT NULL
+ORDER BY c.FE_FECH_CIT DESC;
+GO
+
+-- ── I.8 La curiosidad barata que ya estaba anotada arriba ────────────────────
+-- Qué es el motivo '05', que domina las anulaciones. Si resulta ser «no
+-- asistió», entonces el no-show se registra de DOS formas distintas y hay que
+-- saberlo antes de contar nada.
+SELECT CD_CODI_MOTI AS codigo, DE_DESC_MOTI AS descripcion
+FROM dbo.MOTIVOANUL
+ORDER BY CD_CODI_MOTI;
+
+SELECT a.CD_CODI_MOTI_CIAN AS motivo, mo.DE_DESC_MOTI AS descripcion, COUNT(*) AS anulaciones
+FROM dbo.CITAS_ANULADAS a
+LEFT JOIN dbo.MOTIVOANUL mo ON mo.CD_CODI_MOTI = a.CD_CODI_MOTI_CIAN
+WHERE a.FE_FECH_CIAN >= DATEADD(day, -365, CAST(GETDATE() AS date))
+GROUP BY a.CD_CODI_MOTI_CIAN, mo.DE_DESC_MOTI
+ORDER BY anulaciones DESC;
+GO
+
+-- =============================================================================
+-- I.9 - I.14  SEGUNDA RONDA — cerrar el 2 y medir lo que destapó I.1
+--
+-- Todo sigue siendo 100 % LECTURA, contra ESEHSVP.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- ── I.9 🎯 Las tres tablas que I.2 dejó sobre la mesa ────────────────────────
+-- I.2 buscaba un catálogo de estados y devolvió once tablas. Tres tienen la
+-- forma correcta y NO se miraron:
+--
+--   · dbo.ESTADO          → 2 columnas. Es EXACTAMENTE la forma de un catálogo
+--                           código+descripción, igual que MOTIVOANUL. Puede
+--                           ser el catálogo de estados de cita... o «estado
+--                           civil», o «estado/departamento». Se ve en un
+--                           segundo y si acierta, cierra la pregunta entera.
+--   · dbo.TEMP_CAMB_ESTADO → 17 columnas. El nombre dice «cambio de estado».
+--                           Si registra transiciones de cita, dice quién
+--                           marcó el 2 y cuándo.
+--   · dbo.TEMPO_ESTA      → 14 columnas.
+SELECT 'ESTADO' AS tabla, * FROM dbo.ESTADO;
+
+SELECT TOP 20 'TEMP_CAMB_ESTADO' AS tabla, * FROM dbo.TEMP_CAMB_ESTADO;
+
+SELECT TOP 20 'TEMPO_ESTA' AS tabla, * FROM dbo.TEMPO_ESTA;
+GO
+
+-- ── I.10 🔍 MULTA_TEMP: la otra tabla con una columna NU_ESTA_CIT ────────────
+-- I.2 encontró `NU_ESTA_CIT` en dos tablas: CITAS_MEDICAS y **MULTA_TEMP**.
+-- Que una tabla de MULTAS lleve el estado de la cita es una pista fuerte: en
+-- Colombia la multa por inasistencia es una figura real. Si las multas se
+-- generan sobre citas en estado 2, la pregunta está contestada.
+--
+-- (Nota: I.2 devolvió MULTA_TEMP dos veces. La consulta no seleccionaba el
+--  esquema, así que probablemente son dos tablas homónimas en esquemas
+--  distintos. Esta lo aclara.)
+SELECT s.name AS esquema, t.name AS tabla, c.name AS columna, ty.name AS tipo
+FROM sys.columns c
+JOIN sys.tables t   ON t.object_id = c.object_id
+JOIN sys.schemas s  ON s.schema_id = t.schema_id
+JOIN sys.types ty   ON ty.user_type_id = c.user_type_id
+WHERE t.name = 'MULTA_TEMP'
+ORDER BY s.name, c.column_id;
+
+SELECT TOP 20 * FROM dbo.MULTA_TEMP;
+
+-- ¿Qué estados llevan las filas de MULTA_TEMP? Si son casi todas 2, cerrado.
+SELECT NU_ESTA_CIT AS estado, COUNT(*) AS multas
+FROM dbo.MULTA_TEMP
+GROUP BY NU_ESTA_CIT
+ORDER BY multas DESC;
+GO
+
+-- ── I.11 ¿El estado 3 existe en algún sitio? ─────────────────────────────────
+-- La app filtra `NU_ESTA_CIT <> 3` pero en ESEHSVP no hay ni una fila con ese
+-- valor. Dos lecturas: (a) el 3 es de otra instalación del mismo producto y
+-- aquí no se usa, (b) se usó alguna vez y ya no. Esto lo separa: mira si el
+-- catálogo de años anteriores (ESEHSVP2024/2025, que son ARCHIVOS, no rotación)
+-- tiene filas en 3.
+--
+-- ⚠️ Si estas bases no existen o agenia_sync no las alcanza, la consulta falla:
+--    no pasa nada, es información extra. Saltarla y seguir.
+SELECT '2024' AS archivo, NU_ESTA_CIT AS estado, COUNT(*) AS filas
+FROM ESEHSVP2024.dbo.CITAS_MEDICAS GROUP BY NU_ESTA_CIT
+UNION ALL
+SELECT '2025', NU_ESTA_CIT, COUNT(*)
+FROM ESEHSVP2025.dbo.CITAS_MEDICAS GROUP BY NU_ESTA_CIT
+ORDER BY archivo, estado;
+GO
+
+-- ── I.12 ✅ EL SUSTITUTO DE I.5: ¿quedó rastro clínico de la atención? ───────
+-- I.5 no sirve (el convenio se escribe al CREAR la cita, no al facturarla).
+-- El discriminador bueno es otro: una cita ATENDIDA deja rastro en alguna
+-- tabla clínica o de facturación; una a la que el paciente no fue, no.
+--
+-- Primero hay que saber QUÉ tabla apunta a una cita. Esto lista las columnas
+-- que se llaman como las de CITAS_MEDICAS fuera de ella: son las candidatas a
+-- ser el enlace (consulta, evolución, RIPS, factura).
+SELECT s.name AS esquema, t.name AS tabla, c.name AS columna,
+       (SELECT SUM(p.rows) FROM sys.partitions p
+         WHERE p.object_id = t.object_id AND p.index_id IN (0,1)) AS filas_aprox
+FROM sys.columns c
+JOIN sys.tables t  ON t.object_id = c.object_id
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE t.name NOT IN ('CITAS_MEDICAS', 'CITAS_ANULADAS')
+  AND (c.name IN ('CD_CODI_MED_CIT', 'FE_HORA_CIT', 'NU_HIST_PAC_CIT')
+       OR c.name LIKE '%_CIT')
+ORDER BY t.name, c.name;
+
+-- Y las tablas de RIPS, que es donde por ley tiene que quedar la consulta
+-- efectivamente prestada. Si existe una tabla AC/consultas, el cruce contra
+-- CITAS_MEDICAS por (historia, fecha) separa atendidas de no atendidas mejor
+-- que ninguna otra cosa.
+SELECT s.name AS esquema, t.name AS tabla,
+       (SELECT SUM(p.rows) FROM sys.partitions p
+         WHERE p.object_id = t.object_id AND p.index_id IN (0,1)) AS filas_aprox
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE t.name LIKE '%RIPS%' OR t.name LIKE '%CONSULTA%' OR t.name LIKE '%EVOLUC%'
+ORDER BY t.name;
+GO
+
+-- ── I.13 🆕 Las 27.985 citas pasadas que siguen en estado 0 ──────────────────
+-- Ocho de cada diez filas del estado 0 tienen fecha pasada, desde 2024-06-14.
+-- El cierre 0→1/2 no se aplica siempre, y eso cambia una conclusión del
+-- driver: la AUSENCIA de transición no significa que la cita se atendiera.
+--
+-- ¿Es un servicio concreto? ¿Un médico? ¿Un periodo? La respuesta decide si
+-- hay que tratarlas de forma especial en la reconciliación.
+SELECT TOP 30
+       c.CD_CODI_SER_CIT            AS servicio,
+       s.NO_NOMB_SER                AS nombre_servicio,
+       COUNT(*)                     AS citas_abiertas,
+       MIN(c.FE_FECH_CIT)           AS mas_antigua,
+       MAX(c.FE_FECH_CIT)           AS mas_reciente,
+       COUNT(DISTINCT c.CD_CODI_MED_CIT) AS medicos
+FROM dbo.CITAS_MEDICAS c
+LEFT JOIN dbo.SERVICIOS s ON s.CD_CODI_SER = c.CD_CODI_SER_CIT
+WHERE c.NU_ESTA_CIT = 0
+  AND c.FE_FECH_CIT < CAST(GETDATE() AS date)
+GROUP BY c.CD_CODI_SER_CIT, s.NO_NOMB_SER
+ORDER BY citas_abiertas DESC;
+
+-- Por mes: ¿es deuda vieja que dejó de crecer, o sigue pasando hoy?
+SELECT DATEFROMPARTS(YEAR(FE_FECH_CIT), MONTH(FE_FECH_CIT), 1) AS mes,
+       COUNT(*) AS citas_pasadas_sin_cerrar
+FROM dbo.CITAS_MEDICAS
+WHERE NU_ESTA_CIT = 0
+  AND FE_FECH_CIT < CAST(GETDATE() AS date)
+GROUP BY DATEFROMPARTS(YEAR(FE_FECH_CIT), MONTH(FE_FECH_CIT), 1)
+ORDER BY mes;
+GO
+
+-- ── I.14 🚨 Riesgo de doble reserva que el detector de colisión NO ve ────────
+-- La PK es (médico, hora, ESTADO). Una fila en estado 1 o 2 NO impide insertar
+-- otra en estado 0 a la misma hora: el INSERT del agente tendría éxito y en la
+-- agenda del hospital aparecerían dos pacientes en el mismo cupo, SIN error.
+--
+-- Con `availabilityMode = ON` no puede pasar (fetchAvailability marca como
+-- ocupado cualquier cupo con una fila, sea cual sea su estado). Pero el piloto
+-- arranca en OFF, y ahí la agenda de AgenIA es la suya: puede ofrecer una hora
+-- que el HIS ya tiene cerrada.
+--
+-- Esto mide la exposición real. Si sale 0 o casi, es un riesgo teórico y basta
+-- con dejarlo anotado. Si sale alto, hay que filtrar por estado antes de
+-- encender a alguien en OFF.
+SELECT COUNT(*) AS cupos_futuros_cerrados_sin_proteccion_de_pk
+FROM dbo.CITAS_MEDICAS
+WHERE NU_ESTA_CIT IN (1, 2)
+  AND FE_FECH_CIT >= CAST(GETDATE() AS date);
+
+-- El detalle, para poder mirarlos uno a uno si aparecen.
+SELECT TOP 20 CD_CODI_MED_CIT AS medico, FE_FECH_CIT AS fecha,
+       FE_HORA_CIT AS hora, NU_ESTA_CIT AS estado,
+       CD_CODI_SER_CIT AS servicio, NU_HIST_PAC_CIT AS historia
+FROM dbo.CITAS_MEDICAS
+WHERE NU_ESTA_CIT IN (1, 2)
+  AND FE_FECH_CIT >= CAST(GETDATE() AS date)
+ORDER BY FE_FECH_CIT;
+GO
+
+-- =============================================================================
+-- I.15  🚨 LA QUE DECIDE: ¿el estado 2 es POR CITA o POR MÉDICO?
+--
+-- I.7 devolvió las cinco citas en estado 1 de un solo médico (RU69) y las
+-- cinco en estado 2 de otros dos (RU62, PS06). Casi seguro es un artefacto:
+-- el `TOP 5 ORDER BY FE_FECH_CIT` no desempata entre citas del mismo día y
+-- devuelve lo que el índice tenga a mano. Pero «casi seguro» no basta aquí.
+--
+-- POR QUÉ IMPORTA TANTO
+--   Si cada médico tiene MEZCLA de 1 y 2 → el estado depende de lo que pasó
+--   con ESE paciente. Es un desenlace. La hipótesis «2 = no asistió» se
+--   sostiene y se puede implementar.
+--
+--   Si los médicos se PARTEN EN DOS GRUPOS —unos casi todo 1, otros casi todo
+--   2— entonces el 2 no dice nada del paciente: dice cómo cierra la agenda
+--   ese servicio o esa persona. Sería flujo de trabajo, y usarlo para marcar
+--   NO_SHOW le colgaría a pacientes una inasistencia que no ocurrió.
+--
+-- CÓMO SE LEE
+--   Mira la columna `pct_estado_2` en la lista de médicos:
+--     · La mayoría entre ~5 % y ~30 %  → DESENLACE. Hipótesis confirmada.
+--     · Muchos en 0 % y muchos en ~100 % → FLUJO DE TRABAJO. Hipótesis MUERTA,
+--       y `desenlaceDeAtencion()` se queda como está para siempre.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- Resumen primero: ¿cuántos médicos mezclan los dos estados?
+SELECT COUNT(*)                                                   AS medicos_con_citas_cerradas,
+       SUM(CASE WHEN e1 > 0 AND e2 > 0 THEN 1 ELSE 0 END)         AS mezclan_1_y_2,
+       SUM(CASE WHEN e2 = 0 THEN 1 ELSE 0 END)                    AS solo_estado_1,
+       SUM(CASE WHEN e1 = 0 THEN 1 ELSE 0 END)                    AS solo_estado_2
+FROM (
+    SELECT CD_CODI_MED_CIT,
+           SUM(CASE WHEN NU_ESTA_CIT = 1 THEN 1 ELSE 0 END) AS e1,
+           SUM(CASE WHEN NU_ESTA_CIT = 2 THEN 1 ELSE 0 END) AS e2
+    FROM dbo.CITAS_MEDICAS
+    WHERE NU_ESTA_CIT IN (1, 2)
+      AND FE_FECH_CIT >= DATEADD(day, -180, CAST(GETDATE() AS date))
+      AND FE_FECH_CIT <  CAST(GETDATE() AS date)
+    GROUP BY CD_CODI_MED_CIT
+) x;
+
+-- Y el detalle por médico: la forma de esta columna es la respuesta.
+SELECT c.CD_CODI_MED_CIT                                    AS medico,
+       m.NO_NOMB_MED                                        AS nombre,
+       COUNT(*)                                             AS citas_cerradas,
+       SUM(CASE WHEN c.NU_ESTA_CIT = 1 THEN 1 ELSE 0 END)   AS estado_1,
+       SUM(CASE WHEN c.NU_ESTA_CIT = 2 THEN 1 ELSE 0 END)   AS estado_2,
+       CAST(100.0 * SUM(CASE WHEN c.NU_ESTA_CIT = 2 THEN 1 ELSE 0 END)
+            / NULLIF(COUNT(*), 0) AS decimal(5,2))          AS pct_estado_2
+FROM dbo.CITAS_MEDICAS c
+LEFT JOIN dbo.MEDICOS m ON m.CD_CODI_MED = c.CD_CODI_MED_CIT
+WHERE c.NU_ESTA_CIT IN (1, 2)
+  AND c.FE_FECH_CIT >= DATEADD(day, -180, CAST(GETDATE() AS date))
+  AND c.FE_FECH_CIT <  CAST(GETDATE() AS date)
+GROUP BY c.CD_CODI_MED_CIT, m.NO_NOMB_MED
+HAVING COUNT(*) >= 30          -- sin volumen el porcentaje no dice nada
+ORDER BY pct_estado_2 DESC;
+GO
+
+-- Lo mismo por servicio, por si el patrón vive ahí y no en el médico.
+SELECT c.CD_CODI_SER_CIT                                    AS servicio,
+       s.NO_NOMB_SER                                        AS nombre,
+       COUNT(*)                                             AS citas_cerradas,
+       CAST(100.0 * SUM(CASE WHEN c.NU_ESTA_CIT = 2 THEN 1 ELSE 0 END)
+            / NULLIF(COUNT(*), 0) AS decimal(5,2))          AS pct_estado_2
+FROM dbo.CITAS_MEDICAS c
+LEFT JOIN dbo.SERVICIOS s ON s.CD_CODI_SER = c.CD_CODI_SER_CIT
+WHERE c.NU_ESTA_CIT IN (1, 2)
+  AND c.FE_FECH_CIT >= DATEADD(day, -180, CAST(GETDATE() AS date))
+  AND c.FE_FECH_CIT <  CAST(GETDATE() AS date)
+GROUP BY c.CD_CODI_SER_CIT, s.NO_NOMB_SER
+HAVING COUNT(*) >= 30
+ORDER BY pct_estado_2 DESC;
+GO
+
+-- Zoom al día que salió en I.7 (2026-09-05): los dos estados conviviendo en
+-- la misma jornada, médico a médico. Si RU69 tiene también citas en estado 2
+-- ese día, el patrón de la muestra queda desmentido en el acto.
+SELECT CD_CODI_MED_CIT                                    AS medico,
+       SUM(CASE WHEN NU_ESTA_CIT = 1 THEN 1 ELSE 0 END)   AS estado_1,
+       SUM(CASE WHEN NU_ESTA_CIT = 2 THEN 1 ELSE 0 END)   AS estado_2,
+       SUM(CASE WHEN NU_ESTA_CIT = 0 THEN 1 ELSE 0 END)   AS sin_cerrar
+FROM dbo.CITAS_MEDICAS
+WHERE FE_FECH_CIT = '20260905'
+GROUP BY CD_CODI_MED_CIT
+ORDER BY medico;
+GO
+
+-- =============================================================================
+-- I.16  🆕 EL ESQUEMA `ADMIN` — hallazgo colateral de I.10
+--
+-- I.10 devolvió `MULTA_TEMP` DOS veces: una en `dbo` y otra en un esquema
+-- **`ADMIN`** que no aparece en ninguna parte de la Fase 0. Toda la
+-- documentación, todo el mapeo y las nueve consultas del driver asumen `dbo`.
+--
+-- El agente NO está en riesgo —se verificó que prefija `dbo.` en las nueve
+-- referencias, incluido el DELETE— y la prueba de fuego confirmó que la cita
+-- que escribimos en `dbo.CITAS_MEDICAS` salió en la pantalla del hospital. O
+-- sea: `dbo` es el bueno para citas.
+--
+-- Pero hay dos cosas que conviene saber antes de producción:
+--   · ¿Qué más vive en `ADMIN`? Si hubiera un `ADMIN.CITAS_MEDICAS` con datos,
+--     cualquiera que escriba una consulta sin prefijo (una migración, un
+--     informe, el siguiente que toque esto) puede acertar en la tabla
+--     equivocada sin que nada falle.
+--   · ¿Cuál es el `default_schema` del login `agenia_sync`? Si fuera `ADMIN`,
+--     una sola consulta sin prefijo bastaría para leer basura en silencio.
+--
+-- 100 % LECTURA.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- ¿Qué esquemas tienen tablas, y cuántas?
+SELECT s.name AS esquema, COUNT(*) AS tablas
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+GROUP BY s.name
+ORDER BY tablas DESC;
+
+-- Todo lo que vive fuera de `dbo`, con su volumen. Lo que importa es si
+-- alguna de las tablas del espejo (CITAS_MEDICAS, TURNOS_MEDICOS, MEDICOS,
+-- PACIENTES, SERVICIOS, CITAS_ANULADAS) aparece aquí CON FILAS.
+SELECT s.name AS esquema, t.name AS tabla,
+       (SELECT SUM(p.rows) FROM sys.partitions p
+         WHERE p.object_id = t.object_id AND p.index_id IN (0,1)) AS filas
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE s.name <> 'dbo'
+ORDER BY filas DESC, t.name;
+
+-- Y el esquema por defecto del login del agente. Debe decir `dbo`.
+SELECT name AS usuario, default_schema_name AS esquema_por_defecto, type_desc
+FROM sys.database_principals
+WHERE name IN ('agenia_sync', 'dbo', 'ADMIN')
+ORDER BY name;
 GO

@@ -25,8 +25,7 @@ export interface SyncCycleResult {
   hadErrors: boolean;
 }
 
-const mensajeDe = (e: unknown) =>
-  e instanceof Error ? e.message : String(e);
+const mensajeDe = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * Una vuelta de AgenIA -> HIS. Se autorregula sola: el `getPendingEvents` del
@@ -83,7 +82,11 @@ export async function runInbound(
           `revisar SyncAudit con outcome ERROR.`,
       );
     }
-    return { pushed: r.pushed, noAplicados: r.errores, hadErrors: r.errores > 0 };
+    return {
+      pushed: r.pushed,
+      noAplicados: r.errores,
+      hadErrors: r.errores > 0,
+    };
   } catch (error) {
     reporter.report('HIS->AgenIA', mensajeDe(error));
     return { pushed: 0, noAplicados: 0, hadErrors: true };
@@ -150,7 +153,6 @@ export async function runSyncCycle(
   return { applied, failed, pushed, hadErrors };
 }
 
-
 /**
  * Una vuelta de AgenIA -> HIS con el modo seguro delante.
  *
@@ -183,7 +185,13 @@ export async function runOutboundConFreno(
       `modo seguro activo (${breaker.resumen().fallosSeguidos} fallos seguidos): ` +
         `no se intenta escribir hasta que el HIS responda.`,
     );
-    return { applied: 0, failed: 0, skipped: 0, hadErrors: false, frenado: true };
+    return {
+      applied: 0,
+      failed: 0,
+      skipped: 0,
+      hadErrors: false,
+      frenado: true,
+    };
   }
 
   const r = await runOutbound(engine, reporter);

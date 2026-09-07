@@ -101,7 +101,9 @@ function fakePool(
   return { pool, requests, tx };
 }
 
-const evento = (over: Partial<CanonicalChangeEvent['payload']> = {}): CanonicalChangeEvent => ({
+const evento = (
+  over: Partial<CanonicalChangeEvent['payload']> = {},
+): CanonicalChangeEvent => ({
   eventId: 'evt-1',
   entityType: 'APPOINTMENT',
   op: 'INSERT',
@@ -126,7 +128,6 @@ const conDriver = (opts: Parameters<typeof fakePool>[0] = {}) => {
   driver.useConnection(pool, MAPPING);
   return { driver, requests, tx };
 };
-
 
 const insertDeCita = (requests: { params: any; sql: string }[]) =>
   requests.find((r) => /INSERT INTO dbo\.CITAS_MEDICAS/.test(r.sql))?.params;
@@ -302,7 +303,9 @@ describe('createAppointment — alta de paciente', () => {
     const { driver, requests } = conDriver({ pacienteExiste: true });
     await driver.createAppointment(evento());
 
-    const altas = requests.filter((r) => /INSERT INTO dbo\.PACIENTES/.test(r.sql));
+    const altas = requests.filter((r) =>
+      /INSERT INTO dbo\.PACIENTES/.test(r.sql),
+    );
     expect(altas).toHaveLength(0);
   });
 
@@ -310,7 +313,9 @@ describe('createAppointment — alta de paciente', () => {
     const { driver, requests } = conDriver({ pacienteExiste: false });
     await driver.createAppointment(evento());
 
-    const alta = requests.find((r) => /INSERT INTO dbo\.PACIENTES/.test(r.sql))!;
+    const alta = requests.find((r) =>
+      /INSERT INTO dbo\.PACIENTES/.test(r.sql),
+    )!;
     // Confirmado en Fase 0: la historia ES el documento, en el 100% de los
     // 78.654 pacientes del hospital.
     expect(alta.params.hist).toBe('1122334455');
@@ -328,7 +333,9 @@ describe('createAppointment — alta de paciente', () => {
       evento({ patientFullName: 'JORGE ANDRES TABORDA RUIZ' }),
     );
 
-    const alta = requests.find((r) => /INSERT INTO dbo\.PACIENTES/.test(r.sql))!;
+    const alta = requests.find((r) =>
+      /INSERT INTO dbo\.PACIENTES/.test(r.sql),
+    )!;
     expect(alta.params.nomb).toBe('JORGE');
     expect(alta.params.sgno).toBe('ANDRES');
     expect(alta.params.prap).toBe('TABORDA');
@@ -341,7 +348,9 @@ describe('createAppointment — alta de paciente', () => {
       evento({ patientFullName: `${'N'.repeat(40)} ${'A'.repeat(40)}` }),
     );
 
-    const alta = requests.find((r) => /INSERT INTO dbo\.PACIENTES/.test(r.sql))!;
+    const alta = requests.find((r) =>
+      /INSERT INTO dbo\.PACIENTES/.test(r.sql),
+    )!;
     expect((alta.params.nomb as string).length).toBe(20); // NO_NOMB_PAC
     expect((alta.params.prap as string).length).toBe(30); // DE_PRAP_PAC
   });
@@ -350,7 +359,9 @@ describe('createAppointment — alta de paciente', () => {
     const { driver, requests } = conDriver({ pacienteExiste: false });
     await driver.createAppointment(evento());
 
-    const alta = requests.find((r) => /INSERT INTO dbo\.PACIENTES/.test(r.sql))!;
+    const alta = requests.find((r) =>
+      /INSERT INTO dbo\.PACIENTES/.test(r.sql),
+    )!;
     expect(alta.sql).toMatch(/NO_NOMB_PAC/);
     expect(alta.sql).toMatch(/NO_SGNO_PAC/);
     expect(alta.sql).toMatch(/DE_PRAP_PAC/);
@@ -379,12 +390,16 @@ describe('cancelAppointment — solo columnas que CITAS_ANULADAS tiene', () => {
   const sqlDeAnulacion = async () => {
     const { driver, requests } = conDriver();
     await driver.cancelAppointment({ ...evento(), op: 'CANCEL' });
-    return requests.find((r) => /INSERT INTO dbo\.CITAS_ANULADAS/.test(r.sql))!.sql;
+    return requests.find((r) => /INSERT INTO dbo\.CITAS_ANULADAS/.test(r.sql))!
+      .sql;
   };
 
-  it.each(INEXISTENTES)('no nombra %s: no existe en el hospital', async (col) => {
-    expect(await sqlDeAnulacion()).not.toContain(col);
-  });
+  it.each(INEXISTENTES)(
+    'no nombra %s: no existe en el hospital',
+    async (col) => {
+      expect(await sqlDeAnulacion()).not.toContain(col);
+    },
+  );
 
   // ══════════════════════════════════════════════════════════════════════
   // La asimetría de nulabilidad entre las dos tablas (bloque 29f).
@@ -447,7 +462,9 @@ describe('createAppointment — colisión de cupo en el HIS', () => {
     // La PK es (médico, hora, estado): que reviente es el detector natural de
     // que el hospital ya vendió ese cupo. La política de este hospital es que
     // el HIS gana.
-    const { driver } = conDriver({ error: Object.assign(new Error('PK'), { number: 2627 }) });
+    const { driver } = conDriver({
+      error: Object.assign(new Error('PK'), { number: 2627 }),
+    });
 
     const r = await driver.createAppointment(evento());
 
@@ -761,7 +778,10 @@ const foto = (
         d: null,
         propia: false,
         // Por defecto, la fecha de la propia clave `${médico}|${hora}`.
-        f: clave.slice(clave.indexOf('|') + 1).slice(0, 10).replace(/\//g, '-'),
+        f: clave
+          .slice(clave.indexOf('|') + 1)
+          .slice(0, 10)
+          .replace(/\//g, '-'),
         ...campos,
       },
     ]),
@@ -840,20 +860,37 @@ describe('detectChanges', () => {
     expect(r.events[0].payload.attendanceStatus).toBe('ATTENDED');
   });
 
-  it('el estado 2, cuyo significado nadie confirmó, NO se reporta', async () => {
-    // MAPEO_HIS.md §2.1 lo llama "el raro" y deja su disparador sin
-    // descubrir. Inventarle una asistencia a un paciente es peor que no
-    // escribirla — y el no-show real ni siquiera pasa por aquí: llega como
-    // cancelación con motivo NA.
-    const avisos = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  it('el estado 2 se reporta como inasistencia', async () => {
+    // ⚠️ Esta prueba afirmaba lo contrario —que el 2 NO se reportaba— y por
+    // eso el desenlace del 14,6 % de las citas del hospital no llegaba nunca
+    // a AgenIA. Se invirtió el 2026-09-07 con la sección I medida contra
+    // ESEHSVP: el 2 es una inasistencia (ver `desenlaceDeAtencion`).
     const driver = conCitas([filaHis({ estado: 2 })]);
 
     const r = await driver.detectChanges(
       foto({ '76|2026/09/03 07:00': {} }) as any,
     );
 
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].op).toBe('ATTENDANCE');
+    expect(r.events[0].payload.attendanceStatus).toBe('NO_SHOW');
+  });
+
+  it('un estado que nadie conoce sigue sin reportarse, y se avisa', async () => {
+    // El catálogo del fabricante es 0/1/2/3 y el 3 no existe en esta base.
+    // Ante cualquier valor inesperado la regla vieja sigue en pie: callar y
+    // dejar rastro, nunca inventarle una asistencia a un paciente.
+    const avisos = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const driver = conCitas([filaHis({ estado: 7 })]);
+
+    const r = await driver.detectChanges(
+      foto({ '76|2026/09/03 07:00': {} }) as any,
+    );
+
     expect(r.events).toEqual([]);
-    expect(avisos).toHaveBeenCalledWith(expect.stringMatching(/sin significado confirmado/));
+    expect(avisos).toHaveBeenCalledWith(
+      expect.stringMatching(/sin significado confirmado/),
+    );
     avisos.mockRestore();
   });
 
@@ -861,7 +898,9 @@ describe('detectChanges', () => {
   // "alta del hospital" en la siguiente vuelta, y AgenIA la aplicaría sobre
   // sí misma en bucle.
   it('una cita que escribió el propio agente NO se reporta como alta', async () => {
-    const driver = conCitas([filaHis({ descripcion: 'ASIGNADA POR WHATSAPP' })]);
+    const driver = conCitas([
+      filaHis({ descripcion: 'ASIGNADA POR WHATSAPP' }),
+    ]);
 
     const r = await driver.detectChanges(foto({}) as any);
 
@@ -869,7 +908,9 @@ describe('detectChanges', () => {
   });
 
   it('...pero SÍ entra a la instantánea, para detectar si el hospital la cancela', async () => {
-    const driver = conCitas([filaHis({ descripcion: 'ASIGNADA POR WHATSAPP' })]);
+    const driver = conCitas([
+      filaHis({ descripcion: 'ASIGNADA POR WHATSAPP' }),
+    ]);
     const base = await driver.detectChanges(foto({}) as any);
 
     // El hospital la cancela: desaparece.
@@ -1010,9 +1051,9 @@ describe('detectChanges — la ventana que se mueve', () => {
       '76|2026/09/10 08:00': { e: 0, s: null, h: null, d: null, propia: false },
     };
 
-    const r = await conCitas([filaHis({ hora: '2026/09/11 09:00' })]).detectChanges(
-      cursorViejo as any,
-    );
+    const r = await conCitas([
+      filaHis({ hora: '2026/09/11 09:00' }),
+    ]).detectChanges(cursorViejo as any);
 
     expect(r.events.map((e) => e.op)).toEqual(['INSERT']);
     expect((r.nextCursor as any).ventana).toEqual(VENTANA);
@@ -1135,9 +1176,7 @@ describe('data sucia del HIS — el lector no puede caerse', () => {
     });
 
     it.each(HORAS_SUCIAS)('%s → null, sin lanzar', (_e, valor) => {
-      expect(() =>
-        feHoraCitAIsoOrNull(valor, 'America/Bogota'),
-      ).not.toThrow();
+      expect(() => feHoraCitAIsoOrNull(valor, 'America/Bogota')).not.toThrow();
       expect(feHoraCitAIsoOrNull(valor, 'America/Bogota')).toBeNull();
     });
 
@@ -1175,9 +1214,7 @@ describe('data sucia del HIS — el lector no puede caerse', () => {
       ['hora 25', '2026/08/29 25:00', 'se iba al día siguiente'],
       ['día 00', '2026/08/00 10:00', 'se iba al mes anterior'],
     ])('%s se RECHAZA (antes %s)', (_e, valor) => {
-      expect(() => feHoraCitAIso(valor, 'America/Bogota')).toThrow(
-        /no existe/,
-      );
+      expect(() => feHoraCitAIso(valor, 'America/Bogota')).toThrow(/no existe/);
       expect(feHoraCitAIsoOrNull(valor, 'America/Bogota')).toBeNull();
     });
 
@@ -1207,7 +1244,9 @@ describe('detectChanges y snapshotAppointments con data sucia dentro de la venta
   });
 
   it('🛡️ una hora ilegible se OMITE; las citas buenas del mismo lote sí se reportan', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = jest
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
     const filas = [
       filaHis({ hora: '2026/09/03 07:00', hist: 'BUENA' }),
       // Las dos formas que documenta MAPEO_HIS.md como data legada real.
@@ -1226,7 +1265,9 @@ describe('detectChanges y snapshotAppointments con data sucia dentro de la venta
   });
 
   it('sin filas sucias no se avisa de nada', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = jest
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
 
     await conCitas([filaHis({ hora: '2026/09/03 07:00' })]).detectChanges(
       foto({}) as never,
@@ -1238,7 +1279,9 @@ describe('detectChanges y snapshotAppointments con data sucia dentro de la venta
   });
 
   it('🛡️ la foto de la reconciliación omite la fila sucia en vez de fracasar entera', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = jest
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
     const driver = conCitas([
       { med: '76', hora: '2026/09/03 07:00', hist: 'BUENA' },
       { med: '76', hora: '2026/09/03 1', hist: 'SUCIA' },

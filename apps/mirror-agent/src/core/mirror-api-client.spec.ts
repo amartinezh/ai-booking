@@ -80,9 +80,9 @@ describe('HttpMirrorApiClient — la red que no contesta', () => {
   it('el mensaje sugiere dónde mirar: la salida HTTPS de la VM', async () => {
     redQueTraga();
 
-    await expect(client.handshake({ agentClockIso: 'x' } as never)).rejects.toThrow(
-      /salida HTTPS hacia https:\/\/api\.agenia\.example\.com/,
-    );
+    await expect(
+      client.handshake({ agentClockIso: 'x' } as never),
+    ).rejects.toThrow(/salida HTTPS hacia https:\/\/api\.agenia\.example\.com/);
   });
 
   it('un error de red normal se propaga tal cual', async () => {
@@ -186,8 +186,16 @@ describe('HttpMirrorApiClient — el contrato HTTP', () => {
       ['ack', '/mirror/ack', { seqs: ['1'] }],
       ['pushChanges', '/mirror/changes', { events: [] }],
       ['heartbeat', '/mirror/heartbeat', { recentErrors: 0 }],
-      ['reconcile', '/mirror/reconcile', { fromIso: 'a', toIso: 'b', appointments: [] }],
-      ['uploadAvailability', '/mirror/availability', { fromIso: 'a', toIso: 'b', slots: [] }],
+      [
+        'reconcile',
+        '/mirror/reconcile',
+        { fromIso: 'a', toIso: 'b', appointments: [] },
+      ],
+      [
+        'uploadAvailability',
+        '/mirror/availability',
+        { fromIso: 'a', toIso: 'b', slots: [] },
+      ],
       ['uploadCatalog', '/mirror/catalog', { kind: 'DOCTOR', entries: [] }],
     ])('%s → POST %s con su cuerpo', async (metodo, ruta, input) => {
       await (
@@ -262,7 +270,9 @@ describe('HttpMirrorApiClient — el contrato HTTP', () => {
     });
 
     it('un fallo de red se propaga tal cual: el bucle decide qué hacer', async () => {
-      fetchMock.mockRejectedValue(new Error('ENOTFOUND api.agenia.example.com'));
+      fetchMock.mockRejectedValue(
+        new Error('ENOTFOUND api.agenia.example.com'),
+      );
 
       await expect(client.heartbeat({})).rejects.toThrow(/ENOTFOUND/);
     });

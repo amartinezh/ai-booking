@@ -23,12 +23,46 @@ ok()   { echo -e "  \033[32m✓\033[0m $*"; }
 : "${MIRROR_DRIVER_KEY:=cnt-sanvicente-anserma}"
 
 # ─── §1  Preparar el host ──────────────────────────────────────────────────
-paso "§1 Node 20 LTS"
-if ! command -v node >/dev/null; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
+# Node >= 22, la misma versión que exige deploy/README.md §1 y que usa el CI.
+# NO Node 20: entró en fin de vida en abril de 2026, y esta VM existe para
+# probar el despliegue REAL — instalar aquí un runtime distinto del que irá al
+# hospital haría que la prueba validara otra cosa.
+#
+# Mismo orden de preferencia que el runbook: primero lo que trae la distro
+# (parches por apt, sin repos de terceros que justificarle a TI), y solo si se
+# queda corta, NodeSource. Ubuntu 26.04 del hospital trae 22.22.1; el 22.04 de
+# esta imagen trae 12, así que aquí cae por la segunda vía — y eso está bien:
+# ejercita justamente la rama que necesitará un cliente con una distro pobre.
+MAJOR_MINIMO=22
+paso "§1 Node >= ${MAJOR_MINIMO} LTS"
+
+version_mayor() { node --version 2>/dev/null | sed 's/^v//; s/\..*//'; }
+suficiente()    { [[ -n "$(version_mayor)" && "$(version_mayor)" -ge $MAJOR_MINIMO ]]; }
+
+if ! suficiente; then
+  apt-get update >/dev/null 2>&1 || true
+  apt-get install -y nodejs >/dev/null 2>&1 || true
+fi
+if ! suficiente; then
+  curl -fsSL https://deb.nodesource.com/setup_${MAJOR_MINIMO}.x | bash - >/dev/null 2>&1
   apt-get install -y nodejs >/dev/null 2>&1
 fi
-ok "node $(node --version)"
+
+# La unidad systemd arranca con `/usr/bin/env node`, que resuelve por PATH. El
+# único caso que NO cubre es que el paquete de Debian deje `nodejs` y no
+# `node`; entonces el servicio muere con `status=203/EXEC`, un error que no
+# menciona a Node por ninguna parte. Se cierra aquí, como pide el runbook.
+if ! command -v node >/dev/null && command -v nodejs >/dev/null; then
+  ln -s "$(command -v nodejs)" /usr/bin/node
+fi
+
+# Fallar aquí y no diez pasos más tarde: un agente sobre un runtime sin
+# parches, en la subred del HIS de un hospital, no se despliega.
+suficiente || {
+  echo "  ✗ Node >= ${MAJOR_MINIMO} no quedó instalado (hay: $(node --version 2>&1))." >&2
+  exit 1
+}
+ok "node $(node --version) en $(command -v node)"
 
 paso "§1 Usuario de servicio y directorios"
 # El agente NUNCA corre como root: sin shell, sin home navegable, sin login.
@@ -69,7 +103,7 @@ MIRROR_HEARTBEAT_INTERVAL_MS=${MIRROR_HEARTBEAT_INTERVAL_MS:-60000}
 MIRROR_RECONCILE_DELAY_MS=${MIRROR_RECONCILE_DELAY_MS:-120000}
 MIRROR_RECONCILE_INTERVAL_MS=${MIRROR_RECONCILE_INTERVAL_MS:-86400000}
 ENV
-# Node 20 NO usa el almacén de CAs del sistema: trae el suyo compilado. Sin
+# Node NO usa el almacén de CAs del sistema: trae el suyo compilado. Sin
 # esta línea, `update-ca-certificates` no sirve de nada y el agente muere con
 # UNABLE_TO_VERIFY_LEAF_SIGNATURE contra cualquier TLS corporativo.
 if [[ -f /usr/local/share/ca-certificates/agenia-edge.crt ]]; then

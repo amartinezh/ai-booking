@@ -130,7 +130,9 @@ describe('FileAgentStateStore', () => {
     await s.cargar();
     for (let i = 0; i < 5_050; i++) await s.markAppliedLocally(`evt-${i}`);
 
-    const guardados = JSON.parse(fs.readFileSync(archivo, 'utf8')).appliedEventIds;
+    const guardados = JSON.parse(
+      fs.readFileSync(archivo, 'utf8'),
+    ).appliedEventIds;
     expect(guardados).toHaveLength(5_000);
     // Se olvidan los más viejos, se conservan los recientes: son los únicos
     // que el servidor puede reenviar.

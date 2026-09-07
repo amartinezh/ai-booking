@@ -1,4 +1,9 @@
-import { runSyncCycle, runOutbound, runInbound, runOutboundConFreno } from './sync-cycle';
+import {
+  runSyncCycle,
+  runOutbound,
+  runInbound,
+  runOutboundConFreno,
+} from './sync-cycle';
 import { FailureReporter } from './failure-reporter';
 
 describe('runSyncCycle', () => {
@@ -100,7 +105,9 @@ describe('runSyncCycle', () => {
     const r = await runSyncCycle(engine, reporter);
 
     expect(r.failed).toBe(2);
-    expect(lines[0]).toContain('evento e1 (seq 1) rechazado: SLOT no soportado');
+    expect(lines[0]).toContain(
+      'evento e1 (seq 1) rechazado: SLOT no soportado',
+    );
     expect(lines[1]).toContain('evento e2 (seq 2) lanzo: pendiente Fase 3');
   });
 
@@ -186,7 +193,9 @@ describe('runSyncCycle', () => {
 
     expect(r.applied).toBe(1);
     expect(r.hadErrors).toBe(true);
-    expect(lines[0]).toContain('evento e9 (seq 9) rechazado: lo rechazó el HIS');
+    expect(lines[0]).toContain(
+      'evento e9 (seq 9) rechazado: lo rechazó el HIS',
+    );
   });
 
   it('runInbound aísla su fallo y no contamina la otra dirección', async () => {
@@ -260,7 +269,11 @@ describe('runOutboundConFreno', () => {
     // abierto y no se cerraría nunca.
     const cb = freno(false);
 
-    const r = await runOutboundConFreno(engineQue(vueltaOk), crearReporter().reporter, cb);
+    const r = await runOutboundConFreno(
+      engineQue(vueltaOk),
+      crearReporter().reporter,
+      cb,
+    );
 
     expect(r.hadErrors).toBe(false);
     expect(cb.registrarFallo).not.toHaveBeenCalled();
@@ -269,7 +282,11 @@ describe('runOutboundConFreno', () => {
   it('una vuelta buena cierra el circuito', async () => {
     const cb = freno(true);
 
-    await runOutboundConFreno(engineQue(vueltaOk), crearReporter().reporter, cb);
+    await runOutboundConFreno(
+      engineQue(vueltaOk),
+      crearReporter().reporter,
+      cb,
+    );
 
     expect(cb.registrarExito).toHaveBeenCalled();
     expect(cb.registrarFallo).not.toHaveBeenCalled();

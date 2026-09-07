@@ -14,7 +14,17 @@ WorkingDirectory=/opt/agenia-mirror-agent
 # Ver docs/PLAN_ESPEJO_HOSPITAL.md §9 Seguridad.
 EnvironmentFile=/etc/agenia-mirror-agent/agent.env
 
-ExecStart=/usr/bin/node /opt/agenia-mirror-agent/dist/index.js
+# `/usr/bin/env node` y NO `/usr/bin/node`: la ruta del intérprete depende de
+# cómo se instaló Node y quemarla rompe el arranque con `status=203/EXEC`, un
+# error que no menciona a Node por ninguna parte. El paquete de Debian/Ubuntu
+# puede dejar el binario en `/usr/bin/nodejs`, y el tarball oficial lo instala
+# en `/usr/local/bin/node`. `env` lo resuelve por PATH (systemd incluye
+# /usr/local/bin y /usr/bin) y acepta la forma porque es una ruta absoluta.
+#
+# El único caso que `env` NO cubre es que exista `nodejs` pero no `node`; por
+# eso INSTALACION_AGENTE_VPS.md §5 obliga a comprobar `command -v node` antes
+# de instalar esta unidad.
+ExecStart=/usr/bin/env node /opt/agenia-mirror-agent/dist/index.js
 Restart=always
 RestartSec=5
 StandardOutput=journal

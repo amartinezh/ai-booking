@@ -129,7 +129,9 @@ describe('MirrorEngine', () => {
 
   describe('pullAndApplyOutboxEvents — despacho por op', () => {
     it('op=INSERT → driver.createAppointment', async () => {
-      api.getPendingEvents.mockResolvedValueOnce([outboxEvent({ op: 'INSERT' })]);
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ op: 'INSERT' }),
+      ]);
       driver.createAppointment.mockResolvedValueOnce({ success: true });
 
       const result = await engine.pullAndApplyOutboxEvents();
@@ -146,7 +148,9 @@ describe('MirrorEngine', () => {
     });
 
     it('op=DELETE → driver.cancelAppointment', async () => {
-      api.getPendingEvents.mockResolvedValueOnce([outboxEvent({ op: 'DELETE' })]);
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ op: 'DELETE' }),
+      ]);
       driver.cancelAppointment.mockResolvedValueOnce({ success: true });
 
       await engine.pullAndApplyOutboxEvents();
@@ -155,7 +159,9 @@ describe('MirrorEngine', () => {
     });
 
     it('op=UPDATE → driver.updateAttendance', async () => {
-      api.getPendingEvents.mockResolvedValueOnce([outboxEvent({ op: 'UPDATE' })]);
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ op: 'UPDATE' }),
+      ]);
       driver.updateAttendance.mockResolvedValueOnce({ success: true });
 
       await engine.pullAndApplyOutboxEvents();
@@ -166,7 +172,9 @@ describe('MirrorEngine', () => {
 
   describe('idempotencia local', () => {
     it('event_id ya aplicado localmente → NO vuelve a llamar al driver, pero sí hace ack', async () => {
-      api.getPendingEvents.mockResolvedValueOnce([outboxEvent({ eventId: 'evt-dup' })]);
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'evt-dup' }),
+      ]);
       driver.createAppointment.mockResolvedValueOnce({ success: true });
 
       // Primera pasada: se aplica y se marca localmente.
@@ -175,7 +183,9 @@ describe('MirrorEngine', () => {
 
       // Segunda pasada: el servidor reenvía el mismo evento (ack se perdió,
       // por ejemplo) — el agente NO debe volver a tocar el HIS.
-      api.getPendingEvents.mockResolvedValueOnce([outboxEvent({ eventId: 'evt-dup' })]);
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'evt-dup' }),
+      ]);
       const result = await engine.pullAndApplyOutboxEvents();
 
       expect(driver.createAppointment).toHaveBeenCalledTimes(1); // sigue en 1
@@ -221,7 +231,11 @@ describe('MirrorEngine', () => {
 
       // Lo crítico: el ack SÍ ocurre. Sin él el servidor nunca sube `attempts`,
       // el evento no llega jamás a dead-letter y no se dispara ninguna alerta.
-      expect(api.ack).toHaveBeenCalledWith({ seqs: [], failedSeqs: ['20'], skippedSeqs: [] });
+      expect(api.ack).toHaveBeenCalledWith({
+        seqs: [],
+        failedSeqs: ['20'],
+        skippedSeqs: [],
+      });
       expect(result.failed).toBe(1);
       expect(result.applied).toBe(0);
     });
@@ -360,7 +374,11 @@ describe('MirrorEngine', () => {
 
       await engine.pullAndApplyOutboxEvents();
 
-      expect(api.ack).toHaveBeenCalledWith({ seqs: [], failedSeqs: ['72'], skippedSeqs: [] });
+      expect(api.ack).toHaveBeenCalledWith({
+        seqs: [],
+        failedSeqs: ['72'],
+        skippedSeqs: [],
+      });
     });
 
     it('missingMappings vacío no bloquea nada', async () => {
@@ -612,7 +630,11 @@ describe('MirrorEngine', () => {
         { doctorExternalKey: '76', startTimeIso: '2026-09-03T13:20:00.000Z' },
       ]);
       api.reconcile.mockResolvedValue({
-        inAgenIA: 1, inHis: 1, missingInHis: [], missingInAgenIA: [], inSync: true,
+        inAgenIA: 1,
+        inHis: 1,
+        missingInHis: [],
+        missingInAgenIA: [],
+        inSync: true,
       });
 
       await engine.reconcile(ventana);
@@ -629,7 +651,11 @@ describe('MirrorEngine', () => {
     it('le pasa al driver la misma ventana que reporta al servidor', async () => {
       driver.snapshotAppointments.mockResolvedValue([]);
       api.reconcile.mockResolvedValue({
-        inAgenIA: 0, inHis: 0, missingInHis: [], missingInAgenIA: [], inSync: true,
+        inAgenIA: 0,
+        inHis: 0,
+        missingInHis: [],
+        missingInAgenIA: [],
+        inSync: true,
       });
 
       await engine.reconcile(ventana);
@@ -640,7 +666,11 @@ describe('MirrorEngine', () => {
     it('devuelve el veredicto del servidor tal cual', async () => {
       driver.snapshotAppointments.mockResolvedValue([]);
       api.reconcile.mockResolvedValue({
-        inAgenIA: 3, inHis: 2, missingInHis: ['76|x'], missingInAgenIA: [], inSync: false,
+        inAgenIA: 3,
+        inHis: 2,
+        missingInHis: ['76|x'],
+        missingInAgenIA: [],
+        inSync: false,
       });
 
       const r = await engine.reconcile(ventana);
@@ -724,21 +754,28 @@ describe('MirrorEngine', () => {
 
       await engine.syncAvailability(ventana);
 
-      expect(api.uploadAvailability.mock.calls[0][0].slots[0].occupied).toBe(false);
+      expect(api.uploadAvailability.mock.calls[0][0].slots[0].occupied).toBe(
+        false,
+      );
     });
 
     it('si el HIS no responde, no se sube una agenda vacía', async () => {
       // Subir [] tras un fallo borraría la agenda entera de ese día.
       driver.fetchAvailability.mockRejectedValue(new Error('SQL caído'));
 
-      await expect(engine.syncAvailability(ventana)).rejects.toThrow('SQL caído');
+      await expect(engine.syncAvailability(ventana)).rejects.toThrow(
+        'SQL caído',
+      );
       expect(api.uploadAvailability).not.toHaveBeenCalled();
     });
   });
 
   describe('detectAndPushChanges', () => {
     it('sin cambios detectados → no llama pushChanges, sí actualiza el cursor', async () => {
-      driver.detectChanges.mockResolvedValueOnce({ events: [], nextCursor: 'c1' });
+      driver.detectChanges.mockResolvedValueOnce({
+        events: [],
+        nextCursor: 'c1',
+      });
 
       const result = await engine.detectAndPushChanges();
 
@@ -788,10 +825,18 @@ describe('syncCatalog', () => {
   it('sube los DOS catálogos: médicos y servicios', async () => {
     const { api, driver, engine } = nuevoMotor();
     driver.fetchCatalog.mockResolvedValue([
-      { externalKey: '76', label: 'MEDICO ATENCION HTA', extra: { cedula: '123' } },
+      {
+        externalKey: '76',
+        label: 'MEDICO ATENCION HTA',
+        extra: { cedula: '123' },
+      },
     ]);
     api.uploadCatalog.mockResolvedValue({
-      kind: 'DOCTOR', created: 1, updated: 0, vanished: 0, homologated: 0,
+      kind: 'DOCTOR',
+      created: 1,
+      updated: 0,
+      vanished: 0,
+      homologated: 0,
     });
 
     const r = await engine.syncCatalog();
@@ -805,10 +850,20 @@ describe('syncCatalog', () => {
     // Es conocimiento del HIS (cédula, cargo, servicio dominante). `core/` no
     // puede saber qué significa — solo transportarlo a quien decide.
     const { api, driver, engine } = nuevoMotor();
-    const extra = { cedula: '9696544', servicioDominante: 'S39141', loQueSea: 'x' };
-    driver.fetchCatalog.mockResolvedValue([{ externalKey: '76', label: 'X', extra }]);
+    const extra = {
+      cedula: '9696544',
+      servicioDominante: 'S39141',
+      loQueSea: 'x',
+    };
+    driver.fetchCatalog.mockResolvedValue([
+      { externalKey: '76', label: 'X', extra },
+    ]);
     api.uploadCatalog.mockResolvedValue({
-      kind: 'DOCTOR', created: 0, updated: 1, vanished: 0, homologated: 1,
+      kind: 'DOCTOR',
+      created: 0,
+      updated: 1,
+      vanished: 0,
+      homologated: 1,
     });
 
     await engine.syncCatalog();
@@ -823,10 +878,17 @@ describe('syncCatalog', () => {
   it('reporta cuántas quedan SIN homologar, que es lo que hay que mirar', async () => {
     const { api, driver, engine } = nuevoMotor();
     driver.fetchCatalog.mockResolvedValue(
-      Array.from({ length: 30 }, (_, i) => ({ externalKey: `m${i}`, label: `M${i}` })),
+      Array.from({ length: 30 }, (_, i) => ({
+        externalKey: `m${i}`,
+        label: `M${i}`,
+      })),
     );
     api.uploadCatalog.mockResolvedValue({
-      kind: 'DOCTOR', created: 0, updated: 30, vanished: 0, homologated: 12,
+      kind: 'DOCTOR',
+      created: 0,
+      updated: 30,
+      vanished: 0,
+      homologated: 12,
     });
 
     const r = await engine.syncCatalog();
@@ -841,7 +903,11 @@ describe('syncCatalog', () => {
     const { api, driver, engine } = nuevoMotor();
     driver.fetchCatalog.mockResolvedValue([]);
     api.uploadCatalog.mockResolvedValue({
-      kind: 'DOCTOR', created: 0, updated: 0, vanished: 30, homologated: 0,
+      kind: 'DOCTOR',
+      created: 0,
+      updated: 0,
+      vanished: 30,
+      homologated: 0,
     });
 
     await engine.syncCatalog();
@@ -1060,7 +1126,10 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
     });
 
     it('un HIS que responde «no» viaja tal cual', async () => {
-      driver.healthCheck.mockResolvedValue({ ok: false, detail: 'login failed' });
+      driver.healthCheck.mockResolvedValue({
+        ok: false,
+        detail: 'login failed',
+      });
 
       await engine.sendHeartbeat(3);
 
@@ -1091,7 +1160,10 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
       await engine.sendHeartbeat(0);
 
       expect(api.heartbeat).toHaveBeenCalledWith(
-        expect.objectContaining({ hisReachable: false, hisDetail: 'algo raro' }),
+        expect.objectContaining({
+          hisReachable: false,
+          hisDetail: 'algo raro',
+        }),
       );
     });
   });

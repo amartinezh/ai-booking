@@ -24,6 +24,11 @@ const RULE = 'no-restricted-syntax';
 const APPS = [
   { name: 'api', dir: 'apps/api', args: ['src'] },
   { name: 'web', dir: 'apps/web', args: ['.'] },
+  // El agente entró aquí en cuanto tuvo eslint.config.mjs propio. Es donde
+  // más duele: no MUESTRA una hora movida, la ESCRIBE en `FE_HORA_CIT` de la
+  // base del hospital. Hoy no tiene ni un `.toLocale*` y esta barrera existe
+  // para que siga así.
+  { name: 'mirror-agent', dir: 'apps/mirror-agent', args: ['src'] },
 ];
 
 const only = process.argv[2];

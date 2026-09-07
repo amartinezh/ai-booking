@@ -39,7 +39,7 @@ journalctl -u agenia-mirror-agent -n 100 --no-pager
   a morir, el journal dice por qué en la primera línea tras el arranque.
 - **`active (running)` pero sin líneas nuevas** → la VM perdió internet. El
   agente corta cada llamada a los 20 s y lo dice; si el journal está mudo,
-  comprueba `curl -I https://api.agendamiento-ia.com`.
+  comprueba `curl -sI https://app.hsvpanserma.agenia.co | head -1`.
 - **`Failed to connect to 192.168.1.16:1433`** → es el HIS, no el agente. Ver
   abajo.
 - **Nunca hizo handshake** → el token es inválido o la VM no sale a internet.
@@ -141,10 +141,16 @@ Carga inicial de una vez, con el servicio parado:
 
 ```bash
 sudo systemctl stop agenia-mirror-agent
-sudo -u mirroragent env $(cat /etc/agenia-mirror-agent/agent.env | xargs) \
-  node /opt/agenia-mirror-agent/dist/index.js --seed-inicial
+
+sudo -u mirroragent bash -c 'set -a; . /etc/agenia-mirror-agent/agent.env; set +a; \
+  cd /opt/agenia-mirror-agent && exec node dist/index.js --seed-inicial'
+
 sudo systemctl start agenia-mirror-agent
 ```
+
+> No uses `env $(cat agent.env | xargs)`: falla con
+> `env: #: No such file or directory` en cuanto el archivo tiene un comentario.
+> `set -a; . archivo` lo lee como lo que es y respeta los comentarios.
 
 ⚠️ Un turno que el hospital cancela borra los cupos libres, pero **nunca** uno
 con cita viva: eso se reporta como conflicto y lo resuelve una persona. Es un

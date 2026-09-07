@@ -99,7 +99,9 @@ export class MirrorEngine {
    * No hace falta que corra seguido: un médico nuevo del hospital no aparece
    * cada minuto. Pero sí periódicamente, porque el conjunto se mueve.
    */
-  async syncCatalog(): Promise<{ kind: string; created: number; homologated: number; total: number }[]> {
+  async syncCatalog(): Promise<
+    { kind: string; created: number; homologated: number; total: number }[]
+  > {
     const resultados = [];
     for (const kind of ['DOCTOR', 'SERVICE'] as const) {
       const entries = await this.driver.fetchCatalog(kind);
@@ -204,8 +206,7 @@ export class MirrorEngine {
         failures.push({
           seq: dto.seq,
           eventId: dto.eventId,
-          message:
-            error instanceof Error ? error.message : String(error),
+          message: error instanceof Error ? error.message : String(error),
           threw: true,
         });
       }
@@ -231,9 +232,7 @@ export class MirrorEngine {
     };
   }
 
-  private async applyOutboxEvent(
-    dto: OutboxEventDto,
-  ): Promise<DriverResult> {
+  private async applyOutboxEvent(dto: OutboxEventDto): Promise<DriverResult> {
     // 🛑 Homologación incompleta: se rechaza ANTES de llamar al driver.
     //
     // Sin esto, un evento cuyo médico no está homologado llegaría al driver

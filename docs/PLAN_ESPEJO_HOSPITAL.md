@@ -489,6 +489,6 @@ Estas seis capas son idénticas para cualquier driver — es la parte del sistem
 | Conflictos | Política de "quién gana" configurable **por organización**, no fija en el motor; doble-cupo → waitlist + alerta multicanal al agendador; todo conflicto auditado. |
 | Anti-eco | `SET LOCAL agenia.sync_origin` (Postgres) + mecanismo equivalente que cada driver implemente del lado del HIS. |
 | Fechas | Protocolo en UTC; conversión solo en la frontera de cada driver, con `Organization.timezone` (regla CLAUDE.md). |
-| Runtime agente | Node 20 + TS: `core/` genérico + un `driver` cargado por despliegue; hosting típico = VM Linux dedicada por hospital, servicio systemd. |
+| Runtime agente | Node >= 22 + TS: `core/` genérico + un `driver` cargado por despliegue; hosting típico = VM Linux dedicada por hospital, servicio systemd. |
 | Bandera | `HospitalMirrorConfig.enabled` por organización + `driverKey` que selecciona la implementación + interruptores por dirección y circuit breaker. |
 | Carga inicial | Bulk seed de agenda completa (nunca de pacientes) previo a la activación incremental — patrón genérico, ejecutado por cada driver en su Fase 2. |

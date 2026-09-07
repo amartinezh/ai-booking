@@ -60,6 +60,286 @@ El hospital creó y canceló una cita real desde su aplicación (contra `PRUEBAS
 | VM Ubuntu dedicada para el agente | ✅ **Aprobada** (2026-08-28) — TI la activa en los próximos días | `apps/mirror-agent/deploy/README.md` — checklist de despliegue ya preparado |
 | "Asignada Por" como marcador de origen | Confirmado que sí lo quieren usar para identificar citas de WhatsApp | Sigue abierto — falta encontrar dónde vive el dato (bloque 24) |
 
+## ✅ `NU_ESTA_CIT = 2` = INCUMPLIDA — CERRADO E IMPLEMENTADO (2026-09-07)
+
+Tres corridas contra `ESEHSVP`: I.1-I.4 el 06-sep, I.7-I.9 e I.15 el 07-sep.
+**`2` = no asistió.** El driver ya lo traduce:
+`desenlaceDeAtencion(2) === 'NO_SHOW'`, con sus pruebas.
+
+Con esto, el desenlace del **14,6 % de las citas del hospital** —uno de cada
+siete pacientes— empieza a llegar a AgenIA. Antes se descartaba en silencio con
+un aviso en el journal.
+
+### 🚨 I.15 mató la última alternativa
+
+La sospecha que abrió I.7 era que el estado 2 fuera flujo de trabajo («este
+médico cierra así») en vez de un desenlace del paciente:
+
+| | |
+|---|---|
+| Médicos con citas cerradas | 52 |
+| **Mezclan estados 1 y 2** | **48** |
+| Solo estado 1 | 4 |
+| **Solo estado 2** | **0** |
+
+Ninguno cierra solo en `2`, y los porcentajes forman un **continuo suave** del
+1,70 % (MDD1) al 31,48 % (PS08) — sin los grupos en 0 % y 100 % que delatarían
+una costumbre de digitación. El zoom al 2026-09-05 lo remata: **13 de 17
+médicos tuvieron ambos estados ese mismo día**.
+
+Y explica el espejismo de I.7: RU69 cerró 21/21 en estado 1 ese día, que con su
+tasa habitual del 7,6 % pasa una de cada cinco veces; PS06 tuvo 7 de 15 (46 %)
+contra su 31 % habitual. El `TOP 5` pescó justo esos dos.
+
+### 🎯 El gradiente por servicio es lo que lo vuelve irrefutable
+
+| Familia de servicio | Tasa de estado 2 |
+|---|---|
+| Enfermería 1ª infancia / infancia | 43-49 % |
+| Adolescente / joven / adulto (PyDT) | 29-39 % |
+| Psicología | 27-33 % |
+| Odontología | 16-23 % |
+| Medicina general | 8-13 % |
+| Especialistas (internista, dermatología, ginecología) | 3-11 % |
+| Control prenatal / recién nacido | 2-7 % |
+
+Es **exactamente el orden de adherencia esperada del paciente**: lo preventivo
+y sin síntomas arriba, lo que costó meses conseguir abajo. Ningún artefacto
+administrativo ordena los servicios por lo que el paciente siente.
+
+De paso explica por qué PS06 y PS08 encabezaban la lista de médicos: son
+psicólogos, no «los que cierran raro».
+
+### Las cinco patas, juntas
+
+1. El informe oficial del HIS filtra `NU_ESTA_CIT <> 3` ⇒ catálogo del
+   fabricante: 0 = asignada, 1 = cumplida, **2 = incumplida**, 3 = anulada.
+2. Cero filas futuras en estado 2; su frontera es siempre «ayer».
+3. El motivo `NA` de `CITAS_ANULADAS` se usa **4 veces al año** contra ~16.800
+   del estado 2: no hay otro sitio donde viva el no-show.
+4. 48/52 médicos mezclan; ninguno cierra solo en 2 ⇒ decisión por cita.
+5. El gradiente clínico por servicio.
+
+### I.10 (`MULTA_TEMP`): apoya, pero no era la prueba
+
+La anuncié como «la firma definitiva» y **no lo fue: la tabla está vacía** —
+ni el `TOP 20` ni el `GROUP BY` devolvieron una fila. El sufijo `_TEMP` lo
+explica: es un buffer de proceso, igual que `TEMPO_ESTA` y `TEMP_CAMB_ESTADO`,
+que también salieron vacías en I.9.
+
+Su **estructura** sí apunta al mismo sitio:
+
+| Columna | |
+|---|---|
+| `VL_VALO_MULT` | el valor en dinero de la multa |
+| `FE_FECH_CIT` + `FE_HORA_CIT_MULT` | la fecha y hora de **la cita** |
+| **`NU_ESTA_CIT`** | **el estado de esa cita** |
+| `NU_HIST_PAC`, `PACIENTE`, `NO_NOMB_EPS` | a quién se le cobra |
+
+Una tabla de multas que copia dentro de sí el estado de una cita solo tiene
+sentido si **ese estado es lo que justifica el cobro** — y la multa que un
+hospital colombiano le cobra a un paciente por una cita es la de inasistencia.
+Es una **sexta pata, más débil** que las cinco anteriores porque es de diseño y
+no de datos. No cambia la conclusión ni la refuta.
+
+### I.7 sigue sin contestar
+
+Se volvió a correr y devolvió lo mismo (es determinista). **La consulta solo
+genera la lista**; falta que una persona del hospital abra una de esas cinco
+citas en estado 2 —por ejemplo la de PS06 del 2026-09-05 a las 14:30, historia
+`1054924377`— y diga qué etiqueta le muestra su pantalla. Un minuto, y es la
+única prueba directa que queda.
+
+### 🆕 Hallazgo colateral: existe un esquema `ADMIN`
+
+`MULTA_TEMP` salió por duplicado: `dbo.MULTA_TEMP` y `ADMIN.MULTA_TEMP` (casi
+idénticas; la de `dbo` tiene `CD_CODI_CONV` de más). **En toda la Fase 0 nunca
+había aparecido un esquema distinto de `dbo`** — el mapeo entero lo asume.
+
+El agente no corre peligro, y lo verifiqué en vez de suponerlo: prefija `dbo.`
+en las **nueve** referencias que hace (incluido el `DELETE` de la cancelación),
+y la prueba de fuego ya confirmó que la cita escrita en `dbo.CITAS_MEDICAS`
+apareció en la pantalla del hospital.
+
+Pero queda una duda que conviene cerrar antes de producción: si existiera un
+`ADMIN.CITAS_MEDICAS` con datos, cualquiera que escriba una consulta sin
+prefijo —una migración, un informe, el siguiente que toque esto— acertaría en
+la tabla equivocada sin que nada fallara. **I.16** lo mira, junto con el
+`default_schema` del login `agenia_sync`.
+
+*(Detalle menor: `USUARIOANUL` / `USUARIOINAC` confirman que el producto sí
+guarda usuario en algunas tablas, con convención `USUARIO<ACCIÓN>`. No cierra
+el pendiente de «¿quién creó la cita?», pero dice dónde buscar.)*
+
+### Lo que queda, y ya no bloquea nada
+
+- **I.7** — la confirmación humana. La más limpia y la más barata.
+- **I.16** — qué vive en el esquema `ADMIN` (nuevo).
+- I.11-I.14 — complementarias.
+
+Si algo contradijera esto, **revertir es una línea** en `mapping.ts`. El riesgo
+de haberlo implementado ya es acotado: `NO_SHOW` en AgenIA es informativo
+(estadística y una etiqueta «❌ Ausente» en el panel), no bloquea al paciente ni
+dispara ninguna acción automática.
+
+### 🎯 Lo que más pesa: `NA` se usa CUATRO veces al año (I.8, 2026-09-07)
+
+El catálogo `MOTIVOANUL` y su uso real en 365 días:
+
+| Motivo | Descripción | Anulaciones |
+|---|---|---|
+| `05` | **PACIENTE LLAMA A CANCELAR** | 7.087 (85,4 %) |
+| `01` | ERROR DE CAJERO | 567 |
+| `06` | DOBLE CONSULTA | 485 |
+| `WB` | CANCELADO WEB | 16 |
+| **`NA`** | **NO ASISTIO** | **4** |
+
+El estado `2` recibe **~16.800 filas al año**. `NA` recibe **4**. Son cuatro mil
+doscientas veces más. **Si el no-show del hospital viviera en
+`CITAS_ANULADAS`, este hospital tendría cuatro inasistencias anuales.** No hay
+otro sitio donde pueda estar: está en el estado `2`.
+
+Esto invierte una conclusión que llevaba desde agosto en `MAPEO_HIS.md`, y que
+fue la que aparcó la pregunta: decía que el no-show pasaba por
+`CITAS_ANULADAS`/`NA` y que por eso el estado `2` importaba poco. Era
+exactamente al revés.
+
+Dos cosas más que cerró I.8:
+
+- **`05` = "PACIENTE LLAMA A CANCELAR"** — cierra el pendiente 0b. Y es un dato
+  de negocio: 7.000 pacientes al año llaman por teléfono a cancelar, que es
+  justo el volumen que el chatbot absorbe.
+- **`WB` (CANCELADO WEB) existe y tiene 16 usos reales.** Es el motivo que
+  escribe nuestro driver (`mapping.json`): elección validada contra la base.
+- `MOTIVOANUL` es un catálogo **compartido** con la anulación de cargos de
+  facturación ("NO POS", "COPAGO NO COBRADO", "DEVOLUCION DINERO"): no todos
+  sus códigos aplican a una cita.
+
+### ❌ I.9: las tres vías del catálogo, cerradas en falso
+
+No existe un catálogo de estados en la base. El significado de `NU_ESTA_CIT`
+vive solo en el código de la aplicación cliente, que no está en SQL Server.
+
+| Tabla | Qué resultó ser |
+|---|---|
+| `dbo.ESTADO` | **Vacía.** Y sus columnas (`TX_NOMB_ESTA`, `NU_AUTO_ESTA`) delatan un autonumérico; `NU_ESTA_CIT` es un tinyint de dominio fijo |
+| `TEMP_CAMB_ESTADO` | **Vacía**, y es de FARMACIA (`NUM_ORDER_MED`, `DOSIS`, `ARTICULO`, `DESPACHO`) |
+| `TEMPO_ESTA` | Facturación de **ESTAncia hospitalaria**. "ESTA" no era "estado" |
+
+Lección para la próxima ronda: el `LIKE '%ESTA%'` de I.2 capturaba «ESTAncia» y
+por eso devolvió once tablas de las que nueve eran ruido. En este HIS la
+búsqueda por nombre de tabla no sirve.
+
+### ⚠️ I.7 todavía no está contestada — y abrió una duda
+
+Solo se generó la lista; falta que alguien del hospital abra esas diez citas en
+su pantalla. Lo que sí dicen los datos:
+
+- **Las diez son del mismo día (2026-09-05)** y el servicio `S39141` aparece en
+  ambos estados ⇒ el `2` **no** es «así se cierra tal día» ni «así se cierra
+  tal servicio». Es una decisión por cita. Dos alternativas descartadas.
+- 🚨 **Pero en la muestra el estado 1 es todo de un médico (RU69) y el 2 de
+  otros dos (RU62, PS06).** Casi seguro es un artefacto —el `TOP 5 ORDER BY
+  FE_FECH_CIT` no desempata entre citas del mismo día— pero si no lo fuera, el
+  `2` sería flujo de trabajo y no inasistencia, y marcar `NO_SHOW` con él le
+  colgaría a pacientes una falta que no cometieron. **Lo decide I.15**, que ya
+  está escrita: si cada médico mezcla 1 y 2, es desenlace; si se parten en dos
+  grupos, la hipótesis muere.
+
+### La evidencia que lo decide: el informe del propio HIS
+
+I.3 buscó `NU_ESTA_CIT` dentro del código de la base y encontró **un solo
+objeto**: `PA_PLANO_0256`, el plano de la Resolución 256 del MinSalud. Su
+filtro es:
+
+```sql
+WHERE NU_PRIM_CIT = 1 AND ... AND NU_ESTA_CIT <> 3 AND ...
+```
+
+**`<> 3`.** La aplicación conoce un estado `3` que en esta base **no existe**
+(I.1 solo devuelve 0, 1 y 2). Eso deja ver el catálogo del *fabricante*, que es
+de cuatro valores, y en el ciclo de vida de una cita en Colombia solo cabe una
+lectura:
+
+| Valor | Significado | En ESEHSVP |
+|---|---|---|
+| `0` | Asignada | 34.826 (3,2 %) |
+| `1` | Cumplida | 891.859 (82,2 %) |
+| `2` | **Incumplida — no asistió** | 158.799 (14,6 %) |
+| `3` | Anulada | **cero** |
+
+El `3` no aparece porque este hospital anula **borrando** la fila hacia
+`CITAS_ANULADAS` (prueba manual del 2026-08-23) en vez de cambiar el estado. El
+producto soporta las dos formas; el hospital usa una. Y que el informe excluya
+*solo* el 3 es coherente: para un indicador de oportunidad, una cita incumplida
+sigue siendo una cita que se asignó.
+
+### Lo que confirman los números
+
+| estado | filas | % | fecha_min | fecha_max | futuras |
+|---|---|---|---|---|---|
+| 0 | 34.826 | 3,21 | 2024-06-14 | 2027-09-04 | 6.841 |
+| 1 | 891.859 | 82,16 | 2009-04-30 | 2026-10-02 | 1 |
+| 2 | 158.799 | 14,63 | 2009-03-05 | **2026-09-05** | **0** |
+
+- **Cero futuras en estado 2**, como se predijo: un "no asistió" no se puede
+  marcar antes de la fecha.
+- **Su fecha máxima es ayer.** En la corrida del 2026-08-23 el tope era
+  2026-08-15, también ~una semana atrás. La frontera **avanza con el
+  calendario**: es un proceso vivo y diario, no un valor legado.
+- El ritmo cuadra: en esos 14 días entraron +4.274 al estado 1 y +644 al 2, un
+  13,1 % contra el 14,63 % histórico.
+- Los dos estados llegan hasta 2009: el `2` no es una novedad.
+
+Y una pista lateral de I.2: existe una tabla **`MULTA_TEMP` con una columna
+`NU_ESTA_CIT`**. Una multa ligada al estado de la cita encaja con la
+inasistencia y con nada más. Se mira en I.10.
+
+### Un error propio, corregido
+
+**I.5 estaba mal planteada.** Decía que si las citas en estado 2 tienen convenio
+como las de estado 1, alguien las atendió. Es falso: `NU_NUME_CONV_CIT` se
+escribe al **crear** la cita —lo hace la app y lo hace nuestro propio driver en
+su INSERT—, no al facturarla. Dará ~100 % en ambos estados y no distingue nada.
+El sustituto correcto es **I.12**: buscar el rastro clínico (RIPS, consulta)
+que sí separa atendida de no atendida.
+
+### Dos hallazgos que no se buscaban
+
+1. **27.985 citas con fecha pasada siguen en estado `0`** (34.826 − 6.841
+   futuras), desde 2024-06-14: ocho de cada diez filas del estado 0. El cierre
+   0→1/2 **no se aplica siempre**. Consecuencia directa: *"no cambió de estado"
+   no significa "se atendió"*, así que no vale el atajo de tratar el `0` pasado
+   como cumplido. Se caracteriza en I.13.
+2. **Una cita futura en estado `1`.** Parece anecdótico y no lo es: la PK es
+   (médico, hora, **estado**), así que una fila en estado 1 o 2 **no impide**
+   insertar otra en estado 0 a la misma hora — el INSERT del agente tendría
+   éxito y el hospital vería dos pacientes en un cupo, sin ningún error. Con
+   `availabilityMode = ON` no puede pasar (`fetchAvailability` marca ocupado
+   cualquier cupo con una fila, sea cual sea su estado — verificado). Pero el
+   piloto arranca en **OFF**, donde la agenda de AgenIA es la suya. Exposición
+   real hoy: una fila. Se mide en I.14.
+
+### Qué falta y qué se hace con ello
+
+| # | Qué | Por qué importa |
+|---|---|---|
+| **I.15** | ¿El estado 2 es por cita o por médico? | 🚨 **La que puede matar la hipótesis.** Escrita, sin correr |
+| **I.10** | `MULTA_TEMP` — la tabla de multas que lleva una columna `NU_ESTA_CIT` | La más prometedora de las que quedan: una multa ligada al estado de la cita solo encaja con la inasistencia |
+| **I.7** | Que el hospital lea diez citas en su pantalla | La única prueba definitiva: ninguna consulta devuelve una etiqueta que la base no guarda |
+| I.11-I.14 | Estado 3 en los archivos anuales, rastro clínico, las 28k sin cerrar, riesgo de doble reserva | Complementarias |
+
+`dbo.ESTADO` ya no está en la lista: I.9 la cerró (vacía, y no es de citas).
+
+Mientras tanto **el código no cambia**: `desenlaceDeAtencion()` sigue
+devolviendo `null` para el `2`. Escribirle a un paciente que no fue a una cita a
+la que sí fue es peor que no escribir nada, y con la sección I confirmada esto
+es una línea. La decisión de si AgenIA además *escribe* la asistencia hacia el
+HIS (`updateAttendance`) sigue siendo aparte, y sigue en contra: la marca el
+hospital en su aplicación y el agente ya la lee.
+
+---
+
 ## 🚧 En curso (2026-08-28)
 
 - **`AGENIA_SYNC` — listo para ejecutar.** El script (`sql/AGENIA_SYNC_SETUP.sql`) se corrigió tras la aprobación: le faltaban permisos que Fase 0 solo confirmó después de escribirlo por primera vez — `DELETE` sobre `CITAS_MEDICAS` (cancelación) e `INSERT` sobre `CITAS_ANULADAS` (registrar motivo), más `SELECT` sobre `CITAS_ANULADAS`/`MOTIVOANUL`/`CONVENIOS`/`EPS`/`CONSULTORIOS`/`R_ESP_SER`. Sección 5 (Change Tracking) se recomienda **omitir**: con 27 médicos y ~235 citas/día el polling diferencial basta sin necesidad de ese permiso adicional. Contraseña fuerte ya generada para `agenia_sync` (entregada aparte, no vive en el repo) — falta que alguien con acceso SSMS corra el script contra `PRUEBAS`.

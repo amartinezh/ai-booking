@@ -21,9 +21,10 @@ Lo que encontró la primera vez que se levantó:
 
 - `deploy/README.md` §2 movía el bundle a `dist/` sin haber creado ese
   directorio: el despliegue real habría fallado en el primer intento.
-- Node 20 **no usa el almacén de CAs del sistema**. Sin `NODE_EXTRA_CA_CERTS`,
-  `update-ca-certificates` no sirve de nada y el agente muere contra cualquier
-  TLS corporativo — que es lo normal en una red hospitalaria.
+- Node **no usa el almacén de CAs del sistema** (ninguna versión: trae el suyo
+  compilado). Sin `NODE_EXTRA_CA_CERTS`, `update-ca-certificates` no sirve de
+  nada y el agente muere contra cualquier TLS corporativo — que es lo normal en
+  una red hospitalaria.
 - El estado del agente vivía en memoria. Un reinicio del servicio dejaba al
   agente **ciego** a todo lo que hubiera pasado en el HIS mientras estuvo
   caído: se paró el servicio, el hospital agendó una cita por ventanilla, se
