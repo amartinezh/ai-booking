@@ -643,6 +643,18 @@ ${SINGLE_DOMAIN} {
 		reverse_proxy api:3000
 	}
 
+	# ── Agente espejo del hospital (mirror-agent) ───────────────────────────
+	# El agente corre DENTRO de la LAN del hospital y solo abre conexiones
+	# salientes: esta es la única vía por la que entra y sale el espejo del
+	# HIS. Sin este bloque el agente recibe 404 en el handshake y el motivo
+	# no aparece en ningún log. Lo protege MirrorAgentGuard (Bearer token por
+	# organización), no el proxy.
+	# Ver docs/drivers/cnt-sanvicente-anserma/CONECTIVIDAD.md §5.
+	handle /api/mirror* {
+		uri strip_prefix /api
+		reverse_proxy api:3000
+	}
+
 	# Cualquier otra ruta bajo /api no existe de cara a internet. Se responde
 	# 404 (no 403) para no confirmar qué endpoints hay detrás.
 	handle /api/* {
@@ -666,6 +678,18 @@ elif [[ "$DOMAIN_MODE" == "http" ]]; then
 		uri strip_prefix /api
 		reverse_proxy api:3000
 	}
+	# ── Agente espejo del hospital (mirror-agent) ───────────────────────────
+	# El agente corre DENTRO de la LAN del hospital y solo abre conexiones
+	# salientes: esta es la única vía por la que entra y sale el espejo del
+	# HIS. Sin este bloque el agente recibe 404 en el handshake y el motivo
+	# no aparece en ningún log. Lo protege MirrorAgentGuard (Bearer token por
+	# organización), no el proxy.
+	# Ver docs/drivers/cnt-sanvicente-anserma/CONECTIVIDAD.md §5.
+	handle /api/mirror* {
+		uri strip_prefix /api
+		reverse_proxy api:3000
+	}
+
 	handle /api/* {
 		respond "Not Found" 404
 	}
@@ -709,6 +733,17 @@ ${DOMAIN_API} {
 	import comunes
 
 	handle /chatbot/webhook* {
+		reverse_proxy api:3000
+	}
+
+	# ── Agente espejo del hospital (mirror-agent) ───────────────────────────
+	# El agente corre DENTRO de la LAN del hospital y solo abre conexiones
+	# salientes: esta es la única vía por la que entra y sale el espejo del
+	# HIS. Sin este bloque el agente recibe 404 en el handshake y el motivo
+	# no aparece en ningún log. Lo protege MirrorAgentGuard (Bearer token por
+	# organización), no el proxy.
+	# Ver docs/drivers/cnt-sanvicente-anserma/CONECTIVIDAD.md §5.
+	handle /mirror* {
 		reverse_proxy api:3000
 	}
 

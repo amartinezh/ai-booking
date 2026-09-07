@@ -2,7 +2,7 @@
 
 > Checklist para el día en que la VM esté activa. Specs solicitadas en
 > `docs/drivers/cnt-sanvicente-anserma/CORREO_PRUEBA_HIS.md`: Ubuntu Server
-> 22.04/24.04 LTS, 2 vCPU, 4GB RAM, 30GB disco, red a `192.168.1.16:1433`,
+> 22.04/24.04 LTS (**entregaron 26** — ver `CONECTIVIDAD.md` §6), 2 vCPU, 4GB RAM, 30GB disco, red a `192.168.1.16:1433`,
 > salida solo HTTPS 443, usuario con sudo.
 
 > 💡 Mientras la VM no esté activa, **este runbook entero se puede ejecutar hoy**
@@ -13,17 +13,37 @@
 
 ## 0. Antes de tocar la VM
 
+> 📍 **Conectividad ya diagnosticada.** Ver
+> `docs/drivers/cnt-sanvicente-anserma/CONECTIVIDAD.md`: la VM es
+> `192.168.1.175` (misma /24 que el HIS), sale por HTTPS 443 y no recibe
+> conexiones. Los checks de abajo son la verificación desde la propia VM.
+
 - [ ] Confirmar con TI: IP/hostname de la VM, método de acceso (SSH+llave, o el mismo AnyDesk).
-- [ ] Confirmar que la VM alcanza `192.168.1.16:1433` (misma LAN del hospital) — probar con `nc -zv 192.168.1.16 1433` apenas haya acceso.
-- [ ] Confirmar salida HTTPS de la VM hacia internet (`curl -I https://api.agenia.example.com` — ajustar al dominio real).
+- [x] ~~Confirmar que la VM alcanza `192.168.1.16:1433`~~ ✅ 2026-09-04: `nc` succeeded desde la VM.
+- [x] ~~Confirmar salida HTTPS de la VM hacia internet~~ ✅ 2026-09-04: `HTTP/2 200` y `issuer: O=Let's Encrypt` — sin interceptación TLS, no hace falta `NODE_EXTRA_CA_CERTS`.
 - [ ] Tener ya corrido `AGENIA_SYNC_SETUP.sql` contra `PRUEBAS` (ver checklist aparte) — se necesita la contraseña de `agenia_sync` para el `.env` del agente.
 
 ## 1. Preparar el host (una vez, con sudo)
 
 ```bash
-# Node 20 LTS
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+# Node >= 22. NO Node 20: entró en fin de vida en abril de 2026, y en la
+# subred del HIS de un hospital no se instala un runtime sin parches.
+#
+# Mirar PRIMERO qué trae la distro. En la VM del hospital (Ubuntu 26.04
+# 'resolute') el paquete de Ubuntu es preferible a NodeSource: parches por
+# apt y un repo de terceros menos que justificarle a TI.
+apt-cache policy nodejs
+
+# a) si Ubuntu ofrece >= 22:
 sudo apt-get install -y nodejs
+
+# b) si se queda corto (o NodeSource aún no publica para 'resolute'):
+VER=v22.20.0
+curl -fsSLO https://nodejs.org/dist/$VER/node-$VER-linux-x64.tar.xz
+sudo tar -xJf node-$VER-linux-x64.tar.xz -C /usr/local --strip-components=1 \
+  --exclude=CHANGELOG.md --exclude=LICENSE --exclude=README.md
+
+node -v   # confirmar >= v22
 
 # Usuario y directorios dedicados — el agente NUNCA corre como root
 sudo useradd --system --home /opt/agenia-mirror-agent --shell /usr/sbin/nologin mirroragent
@@ -58,7 +78,7 @@ sudo nano /etc/agenia-mirror-agent/agent.env   # completar MIRROR_AGENT_TOKEN re
 
 > ⚠️ **Si el hospital intercepta TLS** (proxy corporativo con su propia CA —
 > habitual en redes hospitalarias): instalar esa CA en el sistema **no basta**.
-> Node 20 trae su propio almacén compilado y no mira el del sistema, así que el
+> Node trae su propio almacén compilado y no mira el del sistema, así que el
 > agente moriría con `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Hay que añadir además:
 >
 > ```
