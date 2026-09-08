@@ -23,6 +23,9 @@ export default function DoctorModal({ doctor, services, onClose }: { doctor?: Do
         const isActiveCheckbox = e.currentTarget.isActive as HTMLInputElement;
         formData.set('isActive', isActiveCheckbox.checked ? 'true' : 'false');
 
+        const whatsappCheckbox = e.currentTarget.whatsappBookingEnabled as HTMLInputElement;
+        formData.set('whatsappBookingEnabled', whatsappCheckbox.checked ? 'true' : 'false');
+
         const res = await saveDoctorAction(formData);
         if (!res.success) {
             setError(res.error || 'Ocurrió un error inesperado');
@@ -135,6 +138,17 @@ export default function DoctorModal({ doctor, services, onClose }: { doctor?: Do
                             />
                             <label htmlFor="isActive" className="text-sm font-bold text-zinc-700 dark:text-zinc-300">
                                 Estado Activo (Disponible para agendamiento)
+                            </label>
+                        </div>
+
+                        <div className="flex items-center gap-3 md:col-span-2">
+                            <input
+                                type="checkbox" id="whatsappBookingEnabled" name="whatsappBookingEnabled"
+                                defaultChecked={doctor ? doctor.whatsappBookingEnabled : true}
+                                className="w-5 h-5 text-blue-600 bg-zinc-100 border-zinc-300 rounded focus:ring-blue-500"
+                            />
+                            <label htmlFor="whatsappBookingEnabled" className="text-sm font-bold text-zinc-700 dark:text-zinc-300">
+                                Reservas por WhatsApp (el paciente puede agendar cita con este médico)
                             </label>
                         </div>
                     </div>

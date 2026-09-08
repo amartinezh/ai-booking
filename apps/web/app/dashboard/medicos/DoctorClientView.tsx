@@ -62,9 +62,17 @@ export default function DoctorClientView({ doctors, services }: { doctors: Docto
                                         <p className="text-sm font-medium text-blue-600 dark:text-blue-400">{doctor.service?.name || 'Servicio no asignado'}</p>
                                     </div>
                                 </div>
-                                <span className={`px-2.5 py-1 text-[10px] uppercase font-bold tracking-wider rounded-lg border ${doctor.isActive ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:border-emerald-800' : 'bg-red-50 text-red-600 border-red-200 dark:bg-red-900/30 dark:border-red-800'}`}>
-                                    {doctor.isActive ? 'Activo' : 'Inactivo'}
-                                </span>
+                                <div className="flex flex-col items-end gap-1.5">
+                                    <span className={`px-2.5 py-1 text-[10px] uppercase font-bold tracking-wider rounded-lg border ${doctor.isActive ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:border-emerald-800' : 'bg-red-50 text-red-600 border-red-200 dark:bg-red-900/30 dark:border-red-800'}`}>
+                                        {doctor.isActive ? 'Activo' : 'Inactivo'}
+                                    </span>
+                                    <span
+                                        className={`px-2.5 py-1 text-[10px] uppercase font-bold tracking-wider rounded-lg border ${doctor.whatsappBookingEnabled ? 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-900/30 dark:border-blue-800' : 'bg-zinc-50 text-zinc-500 border-zinc-200 dark:bg-zinc-800/50 dark:border-zinc-700'}`}
+                                        title="Reservas por WhatsApp"
+                                    >
+                                        📱 {doctor.whatsappBookingEnabled ? 'WhatsApp ON' : 'WhatsApp OFF'}
+                                    </span>
+                                </div>
                             </div>
 
                             <div className="space-y-2 mt-5 text-sm">

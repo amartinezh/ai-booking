@@ -17,6 +17,7 @@ export async function saveDoctorAction(formData: FormData) {
     const medicalLicense = formData.get('medicalLicense') as string;
     const phone = formData.get('phone') as string;
     const isActive = formData.get('isActive') === 'true';
+    const whatsappBookingEnabled = formData.get('whatsappBookingEnabled') === 'true';
 
     try {
         const session = await getSession();
@@ -49,7 +50,7 @@ export async function saveDoctorAction(formData: FormData) {
             // Actualizar DoctorProfile
             await prisma.doctorProfile.update({
                 where: { id },
-                data: { fullName, cedula, serviceId: serviceId || null, medicalLicense, phone, isActive }
+                data: { fullName, cedula, serviceId: serviceId || null, medicalLicense, phone, isActive, whatsappBookingEnabled }
             });
         } else {
             // Creando
@@ -73,7 +74,7 @@ export async function saveDoctorAction(formData: FormData) {
 
             await prisma.doctorProfile.create({
                 data: {
-                    fullName, cedula, serviceId: serviceId || null, medicalLicense, phone, isActive,
+                    fullName, cedula, serviceId: serviceId || null, medicalLicense, phone, isActive, whatsappBookingEnabled,
                     userId: newUser.id,
                     organizationId: session.organizationId
                 }
