@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { PADRON_CSV_HEADERS } from '@agenia/shared';
 import {
+    getPadronFullErrorReportAction,
     importPadronCsvAction,
     validatePadronCsvAction,
     type PadronValidationSummary,
@@ -23,6 +24,24 @@ const MAX_FILE_BYTES = 6_000_000;
 const TEMPLATE_CSV =
     PADRON_CSV_HEADERS.join(',') +
     '\n1088123456,Ana María Pérez,Sura,3001234567,ana@mail.com,1990-05-10,F,Calle 10 #5-20\n';
+
+// Firmas binarias (primeros bytes del archivo) que jamás corresponden a un
+// CSV de texto: se revisan sobre los bytes CRUDOS, antes de decodificar nada,
+// para dar el mensaje correcto de inmediato sin gastar un roundtrip al server.
+const BINARY_SIGNATURES: Array<{ bytes: number[]; label: string }> = [
+    { bytes: [0x50, 0x4b, 0x03, 0x04], label: 'un archivo Excel (.xlsx) o ZIP' },
+    { bytes: [0x50, 0x4b, 0x05, 0x06], label: 'un archivo Excel (.xlsx) o ZIP vacío' },
+    { bytes: [0xd0, 0xcf, 0x11, 0xe0], label: 'un archivo Excel antiguo (.xls)' },
+    { bytes: [0x25, 0x50, 0x44, 0x46], label: 'un archivo PDF' },
+];
+
+async function sniffBinarySignature(file: File): Promise<string | null> {
+    const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+    for (const { bytes, label } of BINARY_SIGNATURES) {
+        if (bytes.every((b, i) => head[i] === b)) return label;
+    }
+    return null;
+}
 
 // ─────────────────────────────────────────────────────────────
 // Cargador del padrón: flujo estricto de dos pasos.
@@ -41,6 +60,7 @@ export default function PadronUploader() {
     const [error, setError] = useState<string | null>(null);
     const [isValidating, startValidating] = useTransition();
     const [isImporting, startImporting] = useTransition();
+    const [isDownloadingReport, startDownloadingReport] = useTransition();
 
     const busy = isValidating || isImporting;
     const canImport = !!report?.ok && !!csvText && !busy && !importResult;
@@ -58,12 +78,54 @@ export default function PadronUploader() {
 
         const file = event.target.files?.[0];
         if (!file) return;
-        if (file.size > MAX_FILE_BYTES) {
-            setError('El archivo supera el tamaño máximo permitido (6 MB).');
+
+        if (!/\.csv$/i.test(file.name)) {
+            setError(
+                `Extensión no permitida: "${file.name}". Seleccione un archivo .csv (si lo tiene en Excel, use Archivo → Guardar como → CSV UTF-8).`,
+            );
+            event.target.value = '';
             return;
         }
+        if (file.size > MAX_FILE_BYTES) {
+            setError('El archivo supera el tamaño máximo permitido (6 MB).');
+            event.target.value = '';
+            return;
+        }
+        if (file.size === 0) {
+            setError('El archivo está vacío.');
+            event.target.value = '';
+            return;
+        }
+
+        const binaryLabel = await sniffBinarySignature(file);
+        if (binaryLabel) {
+            setError(
+                `"${file.name}" parece ser ${binaryLabel}, no un CSV de texto. Expórtelo como "CSV UTF-8 (delimitado por comas)" y vuelva a intentarlo.`,
+            );
+            event.target.value = '';
+            return;
+        }
+
         setFileName(file.name);
         setCsvText(await file.text());
+    }
+
+    function handleDownloadErrorReport() {
+        if (!csvText) return;
+        startDownloadingReport(async () => {
+            const result = await getPadronFullErrorReportAction(csvText);
+            if (!result.success) {
+                setError(result.error);
+                return;
+            }
+            const blob = new Blob([`﻿${result.csv}`], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'errores_padron_eps.csv';
+            link.click();
+            URL.revokeObjectURL(url);
+        });
     }
 
     function handleValidate() {
@@ -114,6 +176,9 @@ export default function PadronUploader() {
                     <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
                         Columnas: <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded">{PADRON_CSV_HEADERS.join(', ')}</code>.
                         La columna <strong>eps</strong> debe coincidir con una EPS activa de la clínica.
+                    </p>
+                    <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+                        El archivo se revisa a fondo (formato, columnas, duplicados y datos de cada fila) antes de habilitar la importación.
                     </p>
                 </div>
                 <button
@@ -229,6 +294,22 @@ export default function PadronUploader() {
                                 <li className="italic">… y {report.errorCount - report.errors.length} error(es) más.</li>
                             )}
                         </ul>
+                    )}
+
+                    {report.errorCount > 0 && (
+                        <button
+                            type="button"
+                            onClick={handleDownloadErrorReport}
+                            disabled={isDownloadingReport}
+                            className="inline-flex items-center gap-2 rounded-lg border border-current/30 px-3 py-1.5 text-xs font-medium hover:bg-white/50 dark:hover:bg-zinc-900/40 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {isDownloadingReport ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                                <Download className="h-3.5 w-3.5" />
+                            )}
+                            Descargar reporte completo de errores ({report.errorCount})
+                        </button>
                     )}
                 </div>
             )}

@@ -114,4 +114,64 @@ describe('validatePadronCsv', () => {
     expect(report.ok).toBe(true);
     expect(report.totalDataRows).toBe(1);
   });
+
+  it('rechaza un .xlsx renombrado a .csv (firma ZIP) con mensaje específico', () => {
+    const fakeXlsx = 'PK' + 'basura binaria sin sentido';
+
+    const report = validatePadronCsv(fakeXlsx, EPS_CATALOG);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors).toHaveLength(1);
+    expect(report.errors[0].message).toContain('Excel (.xlsx)');
+  });
+
+  it('rechaza un PDF renombrado a .csv con mensaje específico', () => {
+    const fakePdf = '%PDF-1.4 no es un csv';
+
+    const report = validatePadronCsv(fakePdf, EPS_CATALOG);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors[0].message).toContain('PDF');
+  });
+
+  it('reporta con detalle una fila con más columnas de las que define el encabezado (coma suelta)', () => {
+    const csv = [
+      HEADER,
+      // "Pérez, Luisa" sin comillas: la coma interna corre todas las columnas siguientes.
+      '11223344,Pérez, Luisa,Sura,,,,,',
+    ].join('\n');
+
+    const report = validatePadronCsv(csv, EPS_CATALOG);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors).toHaveLength(1);
+    expect(report.errors[0].line).toBe(2);
+    expect(report.errors[0].message).toContain('9 columna(s)');
+    expect(report.errors[0].message).toContain('8');
+    // No debe intentar validar campo por campo sobre datos desalineados.
+    expect(report.errors[0].column).toBeUndefined();
+  });
+
+  it('reporta con detalle una fila con menos columnas de las que define el encabezado', () => {
+    const csv = [HEADER, '11223344,Luis Vera,Sura'].join('\n');
+
+    const report = validatePadronCsv(csv, EPS_CATALOG);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors[0].message).toContain('3 columna(s)');
+    expect(report.errors[0].message).toContain('8');
+  });
+
+  it('rechaza un archivo que supera el máximo de filas permitidas', () => {
+    const rows = Array.from(
+      { length: 20_001 },
+      (_, i) => `${10_000_000 + i},Paciente ${i},Sura,,,,,`,
+    );
+    const csv = [HEADER, ...rows].join('\n');
+
+    const report = validatePadronCsv(csv, EPS_CATALOG);
+
+    expect(report.ok).toBe(false);
+    expect(report.errors.some((e) => e.message.includes('20000 filas'))).toBe(true);
+  });
 });

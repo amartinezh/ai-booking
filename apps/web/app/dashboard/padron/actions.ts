@@ -94,6 +94,36 @@ export async function validatePadronCsvAction(
     };
 }
 
+/**
+ * Reporte de errores COMPLETO (sin el tope de MAX_ERRORS_RETURNED) para
+ * descargar como CSV cuando el archivo tiene demasiados errores para leerlos
+ * cómodamente en pantalla. Re-valida desde cero, igual que el paso de
+ * importación — nunca confía en un reporte previo del cliente.
+ */
+export async function getPadronFullErrorReportAction(
+    csvText: string,
+): Promise<{ success: true; csv: string } | { success: false; error: string }> {
+    const auth = await requireOrgAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado' };
+
+    if (typeof csvText !== 'string' || csvText.length > MAX_CSV_CHARS) {
+        return { success: false, error: 'El archivo supera el tamaño máximo permitido (6 MB).' };
+    }
+
+    const epsMap = await getActiveEpsMap(auth.organizationId);
+    const report = validatePadronCsv(csvText, [...epsMap.keys()]);
+
+    const escapeCsvCell = (value: string) => `"${value.replace(/"/g, '""')}"`;
+    const lines = ['linea,columna,mensaje'];
+    for (const err of report.errors) {
+        lines.push(
+            [String(err.line), escapeCsvCell(err.column ?? ''), escapeCsvCell(err.message)].join(','),
+        );
+    }
+
+    return { success: true, csv: lines.join('\n') };
+}
+
 /** Paso 2 — re-valida e importa (upsert por cédula dentro del tenant). */
 export async function importPadronCsvAction(csvText: string): Promise<PadronImportResult> {
     const auth = await requireOrgAdmin();

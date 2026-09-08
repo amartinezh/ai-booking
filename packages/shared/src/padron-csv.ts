@@ -68,6 +68,47 @@ const REQUIRED_HEADERS: CanonicalHeader[] = ['cedula', 'nombre_completo', 'eps']
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
+/** Tope defensivo de filas de datos por archivo (protege memoria/tiempo de respuesta). */
+const MAX_DATA_ROWS = 20_000;
+
+/**
+ * Firmas binarias inconfundibles al inicio del archivo (ZIP/xlsx, OLE/xls, PDF).
+ * Un CSV de texto real jamás empieza con estos bytes, así que esta detección
+ * nunca da falso positivo con un padrón legítimo (incluyendo codificaciones
+ * legacy tipo Windows-1252 exportadas por Excel es-CO).
+ */
+const BINARY_SIGNATURES: Array<{ prefix: string; label: string }> = [
+  { prefix: 'PK', label: 'un archivo Excel (.xlsx) o ZIP' },
+  { prefix: 'PK', label: 'un archivo Excel (.xlsx) o ZIP vacío' },
+  { prefix: 'PK', label: 'un archivo Excel (.xlsx) o ZIP' },
+  { prefix: '%PDF', label: 'un archivo PDF' },
+];
+
+function detectBinarySignature(text: string): string | null {
+  for (const { prefix, label } of BINARY_SIGNATURES) {
+    if (text.startsWith(prefix)) return label;
+  }
+  return null;
+}
+
+/**
+ * Proporción de caracteres de reemplazo (U+FFFD) en el texto: aparecen cuando
+ * el navegador decodifica bytes que no son UTF-8 válido (típico de un binario,
+ * o de un CSV legacy en Windows-1252 con muchas tildes). Solo se usa para
+ * ENRIQUECER el mensaje de error cuando el encabezado ya no calzó — nunca para
+ * decidir por sí sola que el archivo es inválido, así se evita falso positivo
+ * sobre un padrón real con acentos.
+ */
+function replacementCharDensity(text: string): number {
+  const sample = text.slice(0, 500);
+  if (!sample.length) return 0;
+  let replacementCount = 0;
+  for (let i = 0; i < sample.length; i++) {
+    if (sample.charCodeAt(i) === 0xfffd) replacementCount++;
+  }
+  return replacementCount / sample.length;
+}
+
 /** Minúsculas, sin tildes, espacios colapsados — para comparar texto humano. */
 function normalizeForMatch(value: string): string {
   return value
@@ -177,6 +218,26 @@ export function validatePadronCsv(
   const errors: PadronCsvError[] = [];
   const validRows: PadronCsvRow[] = [];
 
+  // ── Defensa en profundidad: archivo binario disfrazado de .csv ──
+  // El filtro fuerte (bytes crudos) va en el cliente antes de leer el
+  // archivo como texto; esto solo cubre llamadas directas a esta función
+  // (scripts, tests, futura API) que se salten esa capa.
+  const binaryLabel = detectBinarySignature(csvText);
+  if (binaryLabel) {
+    return {
+      ok: false,
+      totalDataRows: 0,
+      validRows: [],
+      errors: [
+        {
+          line: 1,
+          message: `El archivo parece ser ${binaryLabel}, no un CSV de texto. Expórtelo como "CSV UTF-8 (delimitado por comas)" desde Excel o Google Sheets y vuelva a intentarlo.`,
+        },
+      ],
+      delimiter: ',',
+    };
+  }
+
   // Índice EPS normalizada → nombre exacto del catálogo.
   const epsByNormalized = new Map<string, string>();
   for (const name of activeEpsNames) {
@@ -203,6 +264,15 @@ export function validatePadronCsv(
   const { indexOf, missing } = mapHeader(headerCells);
 
   if (missing.length > 0) {
+    // Un archivo con muchos caracteres de reemplazo casi nunca es un CSV de
+    // texto real (más probable: binario que no coincidió con ninguna firma
+    // conocida, o guardado en una codificación completamente distinta).
+    // Esto NO decide el resultado (ya era inválido por encabezado faltante),
+    // solo aclara la causa raíz probable.
+    const encodingHint =
+      replacementCharDensity(csvText) > 0.2
+        ? ' El archivo contiene numerosos caracteres no reconocibles: verifique que se haya guardado como texto CSV en codificación UTF-8 y no como un formato binario u otra codificación.'
+        : '';
     return {
       ok: false,
       totalDataRows: 0,
@@ -210,7 +280,7 @@ export function validatePadronCsv(
       errors: [
         {
           line: 1,
-          message: `Faltan columnas obligatorias en el encabezado: ${missing.join(', ')}. Encabezado esperado: ${PADRON_CSV_HEADERS.join(delimiter)}`,
+          message: `Faltan columnas obligatorias en el encabezado: ${missing.join(', ')}. Encabezado esperado: ${PADRON_CSV_HEADERS.join(delimiter)}${encodingHint}`,
         },
       ],
       delimiter,
@@ -219,6 +289,7 @@ export function validatePadronCsv(
 
   const seenCedulas = new Map<string, number>(); // cédula → línea donde apareció
   let totalDataRows = 0;
+  const expectedColumnCount = headerCells.length;
 
   for (let i = 1; i < lines.length; i++) {
     const line = i + 1; // 1-based
@@ -226,7 +297,33 @@ export function validatePadronCsv(
     if (!rawLine.trim()) continue; // líneas vacías (típico al final) se ignoran
 
     totalDataRows++;
+
+    if (totalDataRows > MAX_DATA_ROWS) {
+      errors.push({
+        line,
+        message: `El archivo supera el máximo de ${MAX_DATA_ROWS} filas de datos por importación. Divídalo en archivos más pequeños y vuelva a intentarlo.`,
+      });
+      break;
+    }
+
     const cells = splitCsvLine(rawLine, delimiter);
+
+    // ── Conteo de columnas ──
+    // Una fila con más o menos columnas que el encabezado casi siempre
+    // delata una coma/punto y coma suelto sin comillas, o una comilla sin
+    // cerrar más arriba en el archivo: seguir validando campo por campo
+    // sobre datos desalineados solo produciría errores confusos y engañosos
+    // (p. ej. reportar una EPS inexistente cuando en realidad es el teléfono
+    // desplazado a esa columna). Se reporta un único error claro por fila y
+    // se pasa a la siguiente.
+    if (cells.length !== expectedColumnCount) {
+      errors.push({
+        line,
+        message: `La fila tiene ${cells.length} columna(s) pero el encabezado define ${expectedColumnCount}. Revise si falta o sobra una coma/punto y coma, o si hay una comilla sin cerrar en esta fila o en una anterior.`,
+      });
+      continue;
+    }
+
     const cell = (h: CanonicalHeader): string =>
       indexOf[h] !== undefined ? (cells[indexOf[h]!] ?? '') : '';
 
