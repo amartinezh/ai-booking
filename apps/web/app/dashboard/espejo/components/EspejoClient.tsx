@@ -1,8 +1,16 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { reprocesarEvento } from '@/app/actions/espejo';
+import { reprocesarEvento, cambiarModoAgenda } from '@/app/actions/espejo';
 import { formatDateShort } from '@/lib/date';
+
+const MODOS_AGENDA = ['OFF', 'SHADOW', 'ON'] as const;
+
+const CONFIRMACION_MODO: Record<(typeof MODOS_AGENDA)[number], string> = {
+    OFF: '¿Apagar la agenda espejada? AgenIA volverá a mostrar sus propios cupos manuales, no los del hospital.',
+    SHADOW: '¿Pasar a modo sombra? Se calculará la rejilla real del hospital y se reportarán las diferencias, pero AgenIA seguirá mostrando sus propios cupos hasta que pases a ON.',
+    ON: '¿Activar la agenda real del hospital? Desde ahora los pacientes verán la disponibilidad real del HIS en vez de los cupos manuales de AgenIA. Se recomienda haber revisado al menos una semana en modo SHADOW antes de este paso.',
+};
 
 type Estado = {
     config: {
@@ -78,6 +86,20 @@ export default function EspejoClient({ data }: { data: Estado }) {
         });
     };
 
+    const cambiarModo = (modo: (typeof MODOS_AGENDA)[number]) => {
+        if (modo === config.availabilityMode) return;
+        if (!confirm(CONFIRMACION_MODO[modo])) return;
+        setAviso(null);
+        startTransition(async () => {
+            const r = await cambiarModoAgenda(modo);
+            setAviso(
+                r.success
+                    ? `Modo de agenda cambiado a ${modo}. El agente lo recoge en su próxima vuelta (hasta 15 min).`
+                    : r.error ?? 'No se pudo cambiar el modo.',
+            );
+        });
+    };
+
     // El agente puede latir puntual y no alcanzar el HIS: son dos cosas
     // distintas y se dicen por separado.
     const latido =
@@ -131,6 +153,30 @@ export default function EspejoClient({ data }: { data: Estado }) {
                 <Semaforo titulo="Citas en camino al hospital" {...cola} />
                 <Semaforo titulo="Agenda" {...agenda} />
                 <Semaforo titulo="Los dos sistemas coinciden" {...reconciliacion} />
+            </section>
+
+            <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+                <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Modo de agenda</h2>
+                <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    OFF → SHADOW → ON. El salto a ON es una decisión de negocio, no técnica: se toma
+                    después de comparar SHADOW contra la realidad durante al menos una semana.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                    {MODOS_AGENDA.map((modo) => (
+                        <button
+                            key={modo}
+                            onClick={() => cambiarModo(modo)}
+                            disabled={pendiente || modo === config.availabilityMode}
+                            className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors disabled:cursor-default ${
+                                modo === config.availabilityMode
+                                    ? 'border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900'
+                                    : 'border-zinc-300 text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800'
+                            }`}
+                        >
+                            {modo}
+                        </button>
+                    ))}
+                </div>
             </section>
 
             {aviso && (

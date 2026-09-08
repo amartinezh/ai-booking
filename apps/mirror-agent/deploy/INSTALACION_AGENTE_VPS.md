@@ -165,19 +165,24 @@ Luego `agenia restart caddy` y repite el `curl` hasta ver `401`.
 ### 2.3 Crear la configuración del espejo y generar el token
 
 💻 En tu portátil, en la raíz del repo — **con `DATABASE_URL` al túnel de
-producción** (ver el aviso de arriba: sin eso, esto escribe en tu base local
-y el hospital nunca ve nada). Este comando cifra las credenciales del
+producción Y `ENCRYPTION_KEY` de producción** (los dos gotchas de este
+comando, explicados abajo: sin `DATABASE_URL` escribe en tu base local y el
+hospital nunca ve nada; sin `ENCRYPTION_KEY` escribe con la clave equivocada
+y el agente falla al conectarse). Este comando cifra las credenciales del
 SQL Server dentro de la base de la nube y **imprime el token del agente una
 sola vez**:
 
 ```bash
+DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+ENCRYPTION_KEY="<la de /opt/agenia/.env.production>" \
 MIRROR_HIS_TARGET=hospital \
 AGENIA_SYNC_PASSWORD='<la contraseña del dato #2>' \
   pnpm --filter @agenia/database exec tsx scripts/provision-mirror-config.ts <organizationId>
 ```
 
-> ¿No sabes el `organizationId`? Corre el mismo comando sin él: lista las
-> organizaciones disponibles y sale sin escribir nada.
+> ¿No sabes el `organizationId`? Corre el mismo comando sin él (pero
+> conservando `DATABASE_URL`): lista las organizaciones disponibles y sale
+> sin escribir nada.
 
 Salida esperada:
 
@@ -195,9 +200,9 @@ volver a correr este comando (lo cual invalida el anterior).
 `MIRROR_HIS_TARGET=hospital` es lo que apunta el `driverConfig` a
 `192.168.1.16:1433` / base `PRUEBAS`. Sin esa variable apuntaría a `localhost`.
 
-> 🚨 **Un segundo gotcha propio de este script, más traicionero que el de
-> `DATABASE_URL`.** Este comando cifra `driverConfig` con `ENCRYPTION_KEY` —
-> que TAMBIÉN carga de `apps/api/.env` por defecto si no la fuerzas. Si
+> 🚨 **Por qué `ENCRYPTION_KEY` es el gotcha más traicionero de los dos.**
+> Este comando cifra `driverConfig` con esa clave — que TAMBIÉN carga de
+> `apps/api/.env` por defecto si no la fuerzas, igual que `DATABASE_URL`. Si
 > apuntaste `DATABASE_URL` a producción pero dejaste que `ENCRYPTION_KEY` se
 > colara de tu `.env` local, el `UPDATE`/`INSERT` en Postgres sale bien (nadie
 > valida la clave al escribir), pero cuando el agente haga handshake la API
@@ -205,20 +210,9 @@ volver a correr este comando (lo cual invalida el anterior).
 > exacto `unsupported state or unable to authenticate data`, que no menciona
 > "clave" por ningún lado. Pasó una vez en este despliegue.
 >
-> Fuerza también `ENCRYPTION_KEY` a la real de producción (está en
-> `/opt/agenia/.env.production`, **nunca la copies a un archivo del repo**):
->
-> ```bash
-> DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
-> ENCRYPTION_KEY="<la de /opt/agenia/.env.production>" \
-> MIRROR_HIS_TARGET=hospital \
-> AGENIA_SYNC_PASSWORD='<la contraseña del dato #2>' \
->   pnpm --filter @agenia/database exec tsx scripts/provision-mirror-config.ts <organizationId>
-> ```
->
-> Si ya lo corriste sin esto y ves el `500` de arriba en el journal del
-> agente: vuelve a correr el comando bien, y **copia el token nuevo** — se
-> regenera cada vez y el anterior queda invalidado.
+> Si ya lo corriste sin `ENCRYPTION_KEY` forzada y ves ese `500` en el journal
+> del agente: vuelve a correr el comando de arriba completo, y **copia el
+> token nuevo** — se regenera cada vez y el anterior queda invalidado.
 
 ### 2.4 Cargar la tabla de valores (`mappingJson`)
 
@@ -237,11 +231,16 @@ DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravit
 
 ### 2.5 Comprobar que los triggers del outbox existen
 
+💻 Con `DATABASE_URL` al túnel de producción (ver el aviso del principio) —
+igual que 2.4, la variable no se hereda del comando anterior: hay que
+repetirla en esta línea también.
+
 Si faltan, AgenIA nunca encola nada para el hospital y el espejo queda **muerto
 en silencio**. Es un fallo real que ya ocurrió (2026-08-31).
 
 ```bash
-pnpm --filter @agenia/database db:apply-sql
+DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+  pnpm --filter @agenia/database db:apply-sql
 ```
 
 Es idempotente: si ya estaban, no hace nada.
@@ -256,7 +255,7 @@ una sesión en el VPS de la nube: corre directo contra el contenedor de
 Postgres (☁️, con `root` u otro usuario con acceso a Docker):
 
 ```bash
-ssh root@89.117.61.28 '
+ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 '
   cd /opt/agenia
   docker compose --env-file .env.production -f docker-compose.deploy.yml \
     exec -T postgres psql -U agenia -d antigravity -c "
@@ -384,8 +383,20 @@ sudo useradd --system --home /opt/agenia-mirror-agent --shell /usr/sbin/nologin 
 
 sudo mkdir -p /opt/agenia-mirror-agent/dist /opt/agenia-mirror-agent/data /etc/agenia-mirror-agent
 sudo chown -R mirroragent:mirroragent /opt/agenia-mirror-agent
+sudo chown mirroragent:mirroragent /etc/agenia-mirror-agent
 sudo chmod 700 /etc/agenia-mirror-agent
 ```
+
+> 🚨 El `chown` de `/etc/agenia-mirror-agent` importa tanto como el `chmod`.
+> Sin él, la carpeta queda de `root` y `mirroragent` no puede ni entrar —
+> aunque en §7.3 el `agent.env` de adentro sí sea suyo. `systemctl start`
+> nunca lo nota (systemd lee `EnvironmentFile=` como root, antes de bajar
+> privilegios), así que el agente arranca bien y el hueco queda invisible
+> hasta que alguien corre el `agent.env` a mano como `mirroragent` — el Paso 3
+> de §11 (carga inicial), donde falla con `Permission denied` seguido de
+> `MIRROR_API_URL no está configurado`. Si ya tienes un VPS instalado antes de
+> este cambio: `sudo chown mirroragent:mirroragent /etc/agenia-mirror-agent`
+> lo arregla sin reinstalar nada.
 
 | Directorio | Para qué |
 |---|---|
@@ -552,7 +563,7 @@ internet, la API aceptó el token, y recibió las credenciales del SQL Server.
 | Síntoma en el journal / status | Causa | Arreglo |
 |---|---|---|
 | `status=203/EXEC` | No hay un comando llamado `node` en el PATH | §5: `sudo ln -s "$(command -v nodejs)" /usr/bin/node` y reinicia el servicio |
-| `MIRROR_API_URL no está configurado` | systemd no leyó el env | Ruta o permisos de `/etc/agenia-mirror-agent/agent.env` |
+| `MIRROR_API_URL no está configurado` | No se leyó `agent.env` | Si es al arrancar el servicio: ruta o permisos del archivo (§7.3). Si es corriendo `--seed-inicial` a mano y ves antes `Permission denied`: falta el `chown` de la CARPETA en §6 |
 | `Mirror API respondió 401` | Token mal pegado, con un `#` detrás, o `enabled = false` | §7.3 y §2.6 |
 | `Mirror API respondió 404` | Caddy no publica `/api/mirror/*` | §2.2 |
 | `Mirror API no respondió en 20s` | El VPS no sale por 443 | §4b |
@@ -566,7 +577,7 @@ internet, la API aceptó el token, y recibió las credenciales del SQL Server.
 `true` (mismo patrón sin túnel que §2.6):
 
 ```bash
-ssh root@89.117.61.28 '
+ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 '
   cd /opt/agenia
   docker compose --env-file .env.production -f docker-compose.deploy.yml \
     exec -T postgres psql -U agenia -d antigravity -tAc "
@@ -635,7 +646,7 @@ SQL puro contra el contenedor de Postgres — mismo patrón que §2.6, sin túne
 
 ```bash
 # Paso 1: al menos una semana en sombra. Cada pasada queda en SyncAudit (op='AVAILABILITY').
-ssh root@89.117.61.28 '
+ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 '
   cd /opt/agenia
   docker compose --env-file .env.production -f docker-compose.deploy.yml \
     exec -T postgres psql -U agenia -d antigravity -c "
@@ -682,7 +693,7 @@ sobrevive y el agente no vuelve a empezar de cero.
 patrón que §2.6):
 
 ```bash
-ssh root@89.117.61.28 '
+ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 '
   cd /opt/agenia
   docker compose --env-file .env.production -f docker-compose.deploy.yml \
     exec -T postgres psql -U agenia -d antigravity -c "

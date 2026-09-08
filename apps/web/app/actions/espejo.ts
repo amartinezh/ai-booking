@@ -3,6 +3,7 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
+import { MirrorAvailabilityMode } from '@agenia/database';
 
 /**
  * Panel del espejo con el HIS del hospital.
@@ -155,6 +156,57 @@ export async function reprocesarEvento(seq: string) {
             op: 'REPROCESS',
             outcome: 'OK',
             detail: `Evento seq ${seq} devuelto a la cola desde el panel.`,
+        },
+    });
+
+    revalidatePath('/dashboard/espejo');
+    return { success: true };
+}
+
+const MODOS_AGENDA = ['OFF', 'SHADOW', 'ON'] as const;
+
+/**
+ * Cambia `availabilityMode` (§11 del manual de instalación del agente).
+ *
+ * Es progresivo a propósito — OFF no toca nada, SHADOW calcula y reporta sin
+ * escribir, ON ya sustituye la agenda de AgenIA por la del hospital — y el
+ * salto a ON es una decisión de negocio, no técnica: se toma después de una
+ * semana comparando SHADOW contra la realidad. El agente lo recoge en su
+ * siguiente vuelta de `bucleAgenda` (hasta 15 min) — no hace falta reiniciar
+ * nada del lado del hospital.
+ */
+export async function cambiarModoAgenda(modo: string) {
+    const organizationId = await tenantAdmin();
+    if (!organizationId) return { success: false, error: 'Sin permisos.' };
+
+    if (!MODOS_AGENDA.includes(modo as (typeof MODOS_AGENDA)[number])) {
+        return { success: false, error: 'Modo inválido.' };
+    }
+
+    const config = await prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId },
+        select: { availabilityMode: true },
+    });
+    if (!config) {
+        return { success: false, error: 'Esta clínica no tiene espejo configurado.' };
+    }
+    if (config.availabilityMode === modo) {
+        return { success: true };
+    }
+
+    await prisma.hospitalMirrorConfig.update({
+        where: { organizationId },
+        data: { availabilityMode: modo as MirrorAvailabilityMode },
+    });
+
+    await prisma.syncAudit.create({
+        data: {
+            organizationId,
+            direction: 'CONFIG',
+            entityType: 'HospitalMirrorConfig',
+            op: 'AVAILABILITY_MODE_CHANGE',
+            outcome: 'OK',
+            detail: `availabilityMode: ${config.availabilityMode} → ${modo} (cambiado desde el panel).`,
         },
     });
 
