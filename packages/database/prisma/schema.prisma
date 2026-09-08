@@ -1282,6 +1282,18 @@ model HospitalMirrorConfig {
   mappingVersion Int   @default(1)
   mappingJson    Json?
 
+  // Combinaciones EPS+régimen SIN convenio de facturación en el HIS — a
+  // diferencia de `mappingJson`, el motor SÍ interpreta esto: es la lista
+  // que `AppointmentsService.bookAppointment` usa para rechazar una reserva
+  // ANTES de confirmarle nada al paciente, en vez de dejar que la cita muera
+  // en dead-letter después de que WhatsApp ya dijo "confirmada".
+  // Forma: [{ epsName: string, regime: string }]. Por NOMBRE de EPS, no NIT
+  // — los NIT de este mapeo estuvieron cruzados una vez (MAPEO_HIS.md §2.3).
+  // La escribe `scripts/aplicar-mapping.ts` junto con `mappingJson`: cuando
+  // cambie la agenda de convenios o se dé de alta una EPS nueva, hay que
+  // volver a correrlo para que esta lista no quede desactualizada.
+  blockedEpsRegimeCombos Json?
+
   // Importación de la AGENDA del hospital (Fase 2), separada del resto del
   // espejo a propósito: escribir citas y adueñarse de la disponibilidad son
   // decisiones distintas, y el hospital las enciende en momentos distintos.

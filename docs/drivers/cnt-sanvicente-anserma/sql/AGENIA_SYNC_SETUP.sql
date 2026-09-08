@@ -28,6 +28,18 @@ GO
 -- 2) LOGIN DEDICADO DE MÍNIMO PRIVILEGIO
 --    ⚠️ REEMPLAZAR el password por uno fuerte generado; guardarlo SOLO en el
 --    gestor de secretos del agente (config DPAPI). El agente NUNCA usa 'ADMIN'.
+--
+--    🚨 Este archivo tuvo una contraseña real en texto plano en el disco local
+--    (nunca llegó a un commit — verificado con `git diff`, HEAD siempre tuvo
+--    el placeholder). Se rotó el 2026-09-07 precisamente por eso: escribir un
+--    secreto de producción en un archivo versionado, aunque no se confirme,
+--    es la clase de descuido de un `git add -A` de distancia. Para rotarla de
+--    nuevo si hiciera falta:
+--
+--        ALTER LOGIN agenia_sync WITH PASSWORD = '<<NUEVA_PASSWORD>>';
+--
+--    Y jamás pegar el valor real aquí — solo el placeholder. El valor vive en
+--    el gestor de secretos del agente y en la respuesta de este chat.
 -- -----------------------------------------------------------------------------
 IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'agenia_sync')
     CREATE LOGIN agenia_sync
@@ -127,7 +139,15 @@ GO
 --    confirmado por la prueba manual del hospital — ver MAPEO_HIS.md §2.1bis).
 --    SIN ALTER, SIN permisos de BD, sin acceso a nada fuera de este alcance.
 -- -----------------------------------------------------------------------------
-USE PRUEBAS;   -- ⚠️ producción: USE ESEHSVP; (catálogo VIVO confirmado en Fase 0 — los sufijos de año son archivos)
+-- 🚨 ELIGE LA BASE. Este es el error más fácil de cometer de todo el guion.
+--    PRUEBAS = ensayo.  ESEHSVP = catálogo VIVO, el de producción.
+--    (Los sufijos de año —ESEHSVP2024, 2025— son ARCHIVOS, no rotación.)
+--
+--    Comprobado el 2026-09-07: `agenia_sync` NO está mapeado en ESEHSVP tras
+--    correr esta sección. Para producción **no edites esta línea**: corre en
+--    su lugar la sección **4-ESEHSVP** (justo después del cierre de esta),
+--    que es la misma idempotente y no depende de acordarse de cambiar un USE.
+USE PRUEBAS;
 GO
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = 'agenia_sync')
     CREATE USER agenia_sync FOR LOGIN agenia_sync;
@@ -155,6 +175,53 @@ GRANT INSERT, UPDATE ON dbo.CITAS_MEDICAS  TO agenia_sync;  -- alta + reflejar a
 GRANT DELETE         ON dbo.CITAS_MEDICAS  TO agenia_sync;  -- cancelación (mecanismo confirmado en Fase 0)
 GRANT INSERT         ON dbo.CITAS_ANULADAS TO agenia_sync;  -- registrar motivo/observaciones al cancelar
 GRANT INSERT, UPDATE ON dbo.PACIENTES      TO agenia_sync;  -- alta mínima de paciente nuevo (§3.3)
+GO
+
+-- -----------------------------------------------------------------------------
+-- 4-ESEHSVP) LO MISMO QUE LA SECCIÓN 4, PERO CONTRA EL CATÁLOGO VIVO
+--
+--    Se guarda como bloque APARTE —no reemplaza al de arriba— para que
+--    correr esto nunca dependa de editar a mano la línea `USE` de la sección
+--    4. Comprobado el 2026-09-07: `agenia_sync` corrió contra `PRUEBAS` pero
+--    NO existía en `ESEHSVP`. Ejecutar la sección 4 y confiar en editarla a
+--    tiempo es exactamente el error que ya pasó una vez.
+--
+--    100 % IDEMPOTENTE: se puede correr sin saber si ya se corrió antes —
+--    `CREATE USER` está guardado con `IF NOT EXISTS` y un `GRANT` repetido no
+--    falla ni cambia nada. Termina con su propia verificación.
+-- -----------------------------------------------------------------------------
+USE ESEHSVP;
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = 'agenia_sync')
+    CREATE USER agenia_sync FOR LOGIN agenia_sync;
+GO
+-- Lectura
+GRANT SELECT ON dbo.CITAS_MEDICAS   TO agenia_sync;
+GRANT SELECT ON dbo.CITAS_ANULADAS  TO agenia_sync;
+GRANT SELECT ON dbo.MEDICOS         TO agenia_sync;
+GRANT SELECT ON dbo.PACIENTES       TO agenia_sync;
+GRANT SELECT ON dbo.SERVICIOS       TO agenia_sync;
+GRANT SELECT ON dbo.TIPO_DOCUMENTO  TO agenia_sync;
+GRANT SELECT ON dbo.MUNICIPIOS      TO agenia_sync;
+GRANT SELECT ON dbo.R_PAC_EPS       TO agenia_sync;
+GRANT SELECT ON dbo.TURNOS_MEDICOS  TO agenia_sync;
+GRANT SELECT ON dbo.MOTIVOANUL      TO agenia_sync;
+GRANT SELECT ON dbo.CONVENIOS       TO agenia_sync;
+GRANT SELECT ON dbo.EPS             TO agenia_sync;
+GRANT SELECT ON dbo.CONSULTORIOS    TO agenia_sync;
+GRANT SELECT ON dbo.R_ESP_SER       TO agenia_sync;
+-- Escritura (idéntica a la sección 4 — ver ahí el porqué de cada permiso)
+GRANT INSERT, UPDATE ON dbo.CITAS_MEDICAS  TO agenia_sync;
+GRANT DELETE         ON dbo.CITAS_MEDICAS  TO agenia_sync;
+GRANT INSERT         ON dbo.CITAS_ANULADAS TO agenia_sync;
+GRANT INSERT, UPDATE ON dbo.PACIENTES      TO agenia_sync;
+GO
+
+-- Verificación inmediata: debe devolver UNA fila, esquema 'dbo'.
+-- ✅ CORRIDO Y CONFIRMADO el 2026-09-07 (captura de SSMS): agenia_sync / dbo.
+SELECT name AS usuario, default_schema_name AS esquema
+FROM sys.database_principals
+WHERE name = 'agenia_sync';
 GO
 
 -- -----------------------------------------------------------------------------

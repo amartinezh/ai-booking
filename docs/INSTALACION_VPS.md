@@ -401,7 +401,14 @@ EOF
 ```
 
 > ⚠️ **Caddy lee su configuración solo al arrancar.** Si editas el Caddyfile
-> con el sistema en marcha: `agenia restart caddy`.
+> con el sistema en marcha: `agenia restart caddy`. El instalador (§9, paso
+> 12/14) ya se encarga de esto solo: tras `up -d` fuerza un `caddy reload` sin
+> downtime, así que un `bash deploy/remote-install.sh` sobre una instalación
+> existente aplica los cambios del Caddyfile sin que tengas que hacer nada
+> aparte. Confirmado el 2026-09-07: sin este paso, el contenedor puede llevar
+> semanas corriendo con una versión vieja del archivo — el síntoma es un `404`
+> silencioso en cualquier ruta nueva, sin ningún error en el log de la
+> instalación (le pasó al bloque `/api/mirror*` del espejo hospitalario).
 
 ### Qué se publica y qué no
 

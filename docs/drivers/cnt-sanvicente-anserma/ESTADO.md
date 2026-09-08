@@ -171,11 +171,138 @@ la tabla equivocada sin que nada fallara. **I.16** lo mira, junto con el
 guarda usuario en algunas tablas, con convención `USUARIO<ACCIÓN>`. No cierra
 el pendiente de «¿quién creó la cita?», pero dice dónde buscar.)*
 
-### Lo que queda, y ya no bloquea nada
+### I.16: el esquema `ADMIN` no toca la agenda (riesgo cerrado)
 
-- **I.7** — la confirmación humana. La más limpia y la más barata.
-- **I.16** — qué vive en el esquema `ADMIN` (nuevo).
-- I.11-I.14 — complementarias.
+Tiene **7 tablas contra las 1.393 de `dbo`**, y ninguna es del espejo — no
+existe `ADMIN.CITAS_MEDICAS` ni nada parecido. Son de inventario, farmacia y
+reportes temporales:
+
+| Tabla | Filas |
+|---|---|
+| `ADMIN.IN_ROTAREPORTE` | 4.407 |
+| `ADMIN.MULTA_TEMP` | **38** |
+| `ADMIN.DESPA_TEMP` | 11 |
+| `ADMIN.MES_TEMP` | 1 |
+| `IN_KARDGRUP_TEMP`, `IN_SALDOREPORTE`, `TIPOAFIL_LIQEST_TMP` | 0 |
+
+El riesgo que abrió I.10 queda descartado **con datos**, no con suposiciones.
+
+### 🎯 Y destapó que I.10 miró la tabla equivocada
+
+`ADMIN.MULTA_TEMP` tiene **38 filas**; `dbo.MULTA_TEMP` tiene cero. I.10
+consultó la de `dbo` —la vacía— cuando su propia consulta de estructura ya
+había devuelto las dos. Descuido mío.
+
+Esas 38 multas reales, cada una con el `NU_ESTA_CIT` de la cita que la originó,
+son la última evidencia empírica al alcance sin molestar a nadie. Si casi todas
+son estado `2`, la pregunta se cierra del todo. **I.17** las lee.
+
+### 🚨 Pendiente de despliegue: `agenia_sync` no existe en `ESEHSVP`
+
+De rebote, la consulta de principals devolvió solo `dbo` y `ADMIN`. El usuario
+`agenia_sync` está documentado como el del agente (`agent.env.example`,
+`CONECTIVIDAD.md`) pero **se creó contra `PRUEBAS`, no contra el catálogo
+vivo**.
+
+No cambia una línea de código, y es trivial de resolver — pero si nadie lo pide
+antes del cutover, **el go-live falla en el primer intento con un error de
+login**. Lo que hay que pedirle a TI:
+
+- usuario `agenia_sync` mapeado en `ESEHSVP`
+- `default_schema = dbo` (el driver prefija `dbo.` igualmente, pero así nada
+  depende de ello)
+- los permisos mínimos ya acordados en `CONECTIVIDAD.md`
+
+### 🎯 I.17: 38 de 38. La séptima pata, y es prueba directa
+
+| estado de la cita | multas | valor medio |
+|---|---|---|
+| **2** | **38 (100 %)** | $2.000 |
+| 0 o 1 | 0 | — |
+
+**Cero excepciones.** No hay ni una sola multa fuera del estado 2. Si el `2`
+no fuera inasistencia, sería una coincidencia de 38 sobre 38. Es la primera
+pata que es prueba directa en vez de correlación: la tabla que registra el
+**cobro por no asistir** apunta, sin excepción, al estado 2.
+
+Contexto honesto: las 38 son de 2009-04-30 a 2009-07-21 — un tramo de tres
+meses, hace diecisiete años. `MULTA_TEMP` no se ha vuelto a usar desde
+entonces; es un mecanismo abandonado, no vigente. Eso no le resta fuerza a la
+prueba —dice qué significaba el estado 2 cuando alguien necesitó tratarlo
+como inasistencia con dinero de por medio—, pero si se habla con el hospital,
+no ofrecer reactivar cobros: esa conversación es de ellos, no del espejo.
+
+Y un detalle honesto más, del cruce contra `CITAS_MEDICAS` de hoy:
+
+| | |
+|---|---|
+| Siguen en estado 2 | 24 |
+| **Hoy en estado 1** (corregidas después) | **11** |
+| Sin match (formato de historia distinto) | 3 |
+
+Que 11 de 38 hayan pasado de 2 a 1 no contradice nada: confirma que el HIS
+permite **corregir** el estado de una cita después de cerrada — coherente con
+que `USUARIOANUL` exista en la tabla. Para el driver esto ya está cubierto por
+diseño: compara fotos, así que una corrección 2→1 vuelve a emitir el evento
+con el desenlace correcto. No hace falta tocar código.
+
+### ✅ Sección I: cerrada del todo
+
+Siete patas independientes, la última de ellas prueba directa. Nada queda
+pendiente para la pregunta original. Si alguna vez se cruza con el hospital,
+vale la pena pedir la confirmación de una cita (I.7) — no porque haga falta,
+sino porque cuesta un minuto y no sobra el "sí" de un humano en un cambio que
+toca producción. I.11-I.14 quedan abiertas pero son complementarias.
+
+### 🚨 404 en `/api/mirror/handshake` tras el redeploy — causa raíz en `install-vps.sh` (2026-09-07)
+
+Al probar el servidor recién actualizado (`curl -X POST
+https://app.hsvpanserma.agenia.co/api/mirror/handshake`) salió **404**, cuando
+debía salir **401** (el `MirrorAgentGuard` rechaza por falta de token, pero
+solo si la petición llega a NestJS).
+
+**No era el Caddyfile.** El archivo en disco tenía el bloque `/api/mirror*`
+desde que se generó, correcto carácter por carácter. El problema era que
+**Caddy nunca lo leyó**:
+
+```
+arrancado: 2026-08-19T18:49:45Z    ← el contenedor, hace tres semanas
+archivo:   2026-09-07T13:40:43     ← el Caddyfile, recién regenerado
+```
+
+`docker compose up -d` no recrea un contenedor solo porque un archivo
+bind-mounteado cambió en disco — el `Caddyfile` es `:ro` montado, no parte de
+la imagen. `install-vps.sh` regenera el archivo en cada corrida (§09) pero no
+tenía ningún paso que le avisara a Caddy. Es exactamente el escenario que ya
+advertía `docs/INSTALACION_VPS.md`: *"Caddy lee su configuración solo al
+arrancar"* — el instalador no seguía su propia advertencia.
+
+**Arreglo aplicado en caliente:** `agenia restart caddy` (como root; con
+`agenia` normal pide `sudo` y no hay TTY por SSH no interactivo). Confirmado:
+`404` → `401`.
+
+**Arreglo de raíz:** se añadió a `deploy/install-vps.sh`, justo después de
+`up -d` en el paso 12/14, un `caddy reload --config /etc/caddy/Caddyfile
+--adapter caddyfile` con reintentos (por si el socket admin de Caddy no está
+listo justo tras arrancar). Es sin downtime y no hace daño en una instalación
+nueva (recarga la misma config que ya cargó). Verificado contra el servidor
+real: el comando exacto que quedó en el script se probó ahí, y el sitio siguió
+sano después (`401` en el handshake, `200` en el panel).
+
+## ✅ `agenia_sync` en `ESEHSVP` — RESUELTO (2026-09-07)
+
+La sección **4-ESEHSVP** de `AGENIA_SYNC_SETUP.sql` se corrió contra el
+catálogo vivo. Verificación propia del script, confirmada por captura de
+SSMS:
+
+```
+usuario       esquema
+agenia_sync   dbo
+```
+
+Una fila, esquema `dbo`, tal como se esperaba. **Ya no hay ningún bloqueante
+de despliegue pendiente en este documento** — el agente puede conectarse a
+`ESEHSVP` con el usuario y los permisos correctos.
 
 Si algo contradijera esto, **revertir es una línea** en `mapping.ts`. El riesgo
 de haberlo implementado ya es acotado: `NO_SHOW` en AgenIA es informativo

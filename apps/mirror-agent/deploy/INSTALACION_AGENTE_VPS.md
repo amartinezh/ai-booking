@@ -40,6 +40,49 @@ común:
 | ☁️ | **VPS de la nube** (Contabo `89.117.61.28`) | Caddy + API + Postgres. Solo se toca en §2 |
 | 🏥 | **VPS del hospital** (`192.168.1.175`) | Donde vive el agente. Todo lo demás |
 
+> 🚨 **El símbolo 💻 dice DESDE DÓNDE se ejecuta el comando, no A QUÉ BASE
+> apunta.** Es la confusión más fácil de cometer de todo el documento, y
+> además la más silenciosa: **no siempre da error**.
+>
+> Cada script de `packages/database/scripts/*.ts` (los de §2.3, §2.4, §10, y
+> cualquier `UPDATE "HospitalMirrorConfig"` de §2.6/§11) habla con Postgres
+> por `DATABASE_URL`. Sin nada más, carga `apps/api/.env` de tu portátil —
+> que apunta a **tu Postgres LOCAL de desarrollo**, no a la nube. Si le pasas
+> el `organizationId` del hospital REAL a un comando que está mirando tu base
+> local, esa organización simplemente no existe ahí. Algunos scripts lo dicen
+> claro (`No existe ninguna Organization con id ...`); otros no tienen forma
+> de saber que preguntaste por la base equivocada y contestan algo que
+> **suena razonable pero es mentira** — por ejemplo `homologar.ts` respondiendo
+> *"No hay catálogo todavía"* cuando el catálogo real lleva rato esperando en
+> la nube, en la base que no consultaste.
+>
+> **Para hablarle a la base de PRODUCCIÓN desde tu portátil**, Postgres no
+> tiene puerto público (mismo principio de "solo salida" que el agente) —
+> se llega por un túnel SSH sobre el mismo acceso que ya tienes al VPS de la
+> nube:
+>
+> ```bash
+> ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 -f -N -L 15432:127.0.0.1:49317 root@89.117.61.28
+> ```
+>
+> (`49317` es el puerto de este VPS — `DB_HOST_PORT` en `/opt/agenia/.env.production`
+> si alguna vez cambia. La llave y el puerto se generaron al correr
+> `deploy/remote-install.sh`.)
+>
+> Y en CADA comando 💻 que toque la base, antepón `DATABASE_URL` apuntando al
+> túnel — la contraseña vive en `/opt/agenia/.env.production` (`POSTGRES_PASSWORD`),
+> **nunca la pegues en un archivo del repo**:
+>
+> ```bash
+> DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+>   pnpm --filter @agenia/database exec tsx scripts/<el-script>.ts <organizationId> [flags]
+> ```
+>
+> Cierra el túnel cuando termines (`kill` al PID de `ssh`, o simplemente cierra
+> la terminal si no usaste `-f`). Los pasos 💻 de aquí en adelante llevan un
+> recordatorio corto de un renglón — este es el único lugar donde se explica
+> el porqué completo.
+
 ---
 
 ## 1. Datos que tienes que tener a mano ANTES de empezar
@@ -68,8 +111,19 @@ por qué.
 ### 2.1 Crear el usuario del HIS en el SQL Server del hospital
 
 Una sola vez, con un login administrador del SQL Server y **visto bueno de TI**.
-Se ejecuta `docs/drivers/cnt-sanvicente-anserma/sql/AGENIA_SYNC_SETUP.sql`
-contra la base `PRUEBAS`.
+Se ejecuta `docs/drivers/cnt-sanvicente-anserma/sql/AGENIA_SYNC_SETUP.sql`.
+
+> 🚨 **Hay DOS bases, y el script tiene que correr en las dos por separado.**
+> `PRUEBAS` es la de ensayo; **`ESEHSVP` es el catálogo VIVO**, el que se usa en
+> producción. La sección 4 del script (permisos) trae `USE PRUEBAS;` a
+> propósito — **no la edites**. Para producción corre además la sección
+> **4-ESEHSVP**, justo debajo: es la misma, ya apuntando a `ESEHSVP`.
+>
+> ✅ **Ya se corrió** contra el catálogo vivo del hospital y quedó confirmado
+> el 2026-09-07 (captura de SSMS: `agenia_sync` / esquema `dbo`, una fila). Si
+> vuelves a montar este agente en otro hospital, este es el paso que hay que
+> repetir — la sección 4-ESEHSVP es idempotente, segura de correr sin saber si
+> ya se corrió antes.
 
 Antes de ejecutarlo, edita la línea del password:
 
@@ -110,7 +164,9 @@ Luego `agenia restart caddy` y repite el `curl` hasta ver `401`.
 
 ### 2.3 Crear la configuración del espejo y generar el token
 
-💻 En tu portátil, en la raíz del repo. Este comando cifra las credenciales del
+💻 En tu portátil, en la raíz del repo — **con `DATABASE_URL` al túnel de
+producción** (ver el aviso de arriba: sin eso, esto escribe en tu base local
+y el hospital nunca ve nada). Este comando cifra las credenciales del
 SQL Server dentro de la base de la nube y **imprime el token del agente una
 sola vez**:
 
@@ -139,16 +195,44 @@ volver a correr este comando (lo cual invalida el anterior).
 `MIRROR_HIS_TARGET=hospital` es lo que apunta el `driverConfig` a
 `192.168.1.16:1433` / base `PRUEBAS`. Sin esa variable apuntaría a `localhost`.
 
+> 🚨 **Un segundo gotcha propio de este script, más traicionero que el de
+> `DATABASE_URL`.** Este comando cifra `driverConfig` con `ENCRYPTION_KEY` —
+> que TAMBIÉN carga de `apps/api/.env` por defecto si no la fuerzas. Si
+> apuntaste `DATABASE_URL` a producción pero dejaste que `ENCRYPTION_KEY` se
+> colara de tu `.env` local, el `UPDATE`/`INSERT` en Postgres sale bien (nadie
+> valida la clave al escribir), pero cuando el agente haga handshake la API
+> **no puede descifrarlo con SU propia clave** — falla con `500` y el mensaje
+> exacto `unsupported state or unable to authenticate data`, que no menciona
+> "clave" por ningún lado. Pasó una vez en este despliegue.
+>
+> Fuerza también `ENCRYPTION_KEY` a la real de producción (está en
+> `/opt/agenia/.env.production`, **nunca la copies a un archivo del repo**):
+>
+> ```bash
+> DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+> ENCRYPTION_KEY="<la de /opt/agenia/.env.production>" \
+> MIRROR_HIS_TARGET=hospital \
+> AGENIA_SYNC_PASSWORD='<la contraseña del dato #2>' \
+>   pnpm --filter @agenia/database exec tsx scripts/provision-mirror-config.ts <organizationId>
+> ```
+>
+> Si ya lo corriste sin esto y ves el `500` de arriba en el journal del
+> agente: vuelve a correr el comando bien, y **copia el token nuevo** — se
+> regenera cada vez y el anterior queda invalidado.
+
 ### 2.4 Cargar la tabla de valores (`mappingJson`)
 
+💻 Con `DATABASE_URL` al túnel de producción (ver el aviso del principio).
 Sin esto el driver no sabe qué convenio ni qué especialidad escribir, y toda
 cita muere con un error de mapeo:
 
 ```bash
 # Primero en seco, para ver el diff:
-pnpm --filter @agenia/database exec tsx scripts/aplicar-mapping.ts <organizationId> --dry-run
+DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+  pnpm --filter @agenia/database exec tsx scripts/aplicar-mapping.ts <organizationId> --dry-run
 # Si el diff se ve bien:
-pnpm --filter @agenia/database exec tsx scripts/aplicar-mapping.ts <organizationId>
+DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+  pnpm --filter @agenia/database exec tsx scripts/aplicar-mapping.ts <organizationId>
 ```
 
 ### 2.5 Comprobar que los triggers del outbox existen
@@ -165,10 +249,21 @@ Es idempotente: si ya estaban, no hace nada.
 ### 2.6 Encender el espejo
 
 Mientras `enabled = false`, el guard devuelve `401` a **todo** y el trigger de
-Postgres no encola nada. Enciéndelo ahora:
+Postgres no encola nada. Enciéndelo ahora.
 
-```sql
-UPDATE "HospitalMirrorConfig" SET "enabled" = true WHERE "organizationId" = '<organizationId>';
+Este es SQL puro, no un script de Node — no hace falta el túnel si ya tienes
+una sesión en el VPS de la nube: corre directo contra el contenedor de
+Postgres (☁️, con `root` u otro usuario con acceso a Docker):
+
+```bash
+ssh root@89.117.61.28 '
+  cd /opt/agenia
+  docker compose --env-file .env.production -f docker-compose.deploy.yml \
+    exec -T postgres psql -U agenia -d antigravity -c "
+      UPDATE \"HospitalMirrorConfig\" SET enabled = true
+      WHERE \"organizationId\" = '"'"'<organizationId>'"'"';
+    "
+'
 ```
 
 > `availabilityMode` se queda en `OFF` a propósito. La agenda se enciende
@@ -308,6 +403,26 @@ sudo chmod 700 /etc/agenia-mirror-agent
 scp apps/mirror-agent/dist/agent.bundle.js data@192.168.1.175:/tmp/
 ```
 
+> 🚨 **Esto solo funciona si tu portátil está en la LAN del hospital.**
+> `192.168.1.175` es una IP privada con **cero entrada** desde internet a
+> propósito (§0) — el `scp` de arriba falla ("no route to host" / timeout)
+> desde cualquier lado que no sea la propia red del hospital. Si tu único
+> acceso es AnyDesk a una estación Windows que sí ve el VPS (el caso de
+> Anserma, ver `CONECTIVIDAD.md` §4), el archivo tiene que dar el mismo salto
+> que ya das para el SSH:
+>
+> 1. En la sesión de AnyDesk, usa su panel de transferencia de archivos
+>    (icono de archivos en la barra de la sesión) para copiar
+>    `agent.bundle.js` al escritorio de la estación Windows.
+> 2. Desde esa misma Windows (PowerShell trae `scp` integrado desde
+>    Windows 10 1809+), continúa el salto por la LAN:
+>    ```powershell
+>    scp .\agent.bundle.js data@192.168.1.175:/tmp/
+>    ```
+>
+> Es el mismo patrón de dos saltos de siempre (AnyDesk → Windows → VPS),
+> solo que esta vez carga un archivo en vez de abrir una terminal.
+
 ### 7.2 Instalarlo (🏥 en el VPS)
 
 ```bash
@@ -378,6 +493,12 @@ agenia-mirror-agent.service not found"*.
 scp apps/mirror-agent/deploy/mirror-agent.service data@192.168.1.175:/tmp/
 ```
 
+> Mismo aviso que §7.1: si `192.168.1.175` no es accesible desde tu red, este
+> archivo (unas pocas líneas de texto) es fácil de pegar directo por la
+> terminal de AnyDesk/SSH en vez de transferirlo — copia el contenido de
+> `apps/mirror-agent/deploy/mirror-agent.service` y en el VPS:
+> `cat > /tmp/mirror-agent.service <<'EOF'` ... pega ... `EOF`.
+
 ```bash
 # 🏥 En el VPS — el destino NO se llama igual que el origen:
 sudo install -m 0644 /tmp/mirror-agent.service \
@@ -441,12 +562,18 @@ internet, la API aceptó el token, y recibió las credenciales del SQL Server.
 
 ### Comprobación desde el lado de la nube
 
-💻 En Postgres, el latido debe subir cada minuto y `lastHisReachable` estar en
-`true`:
+☁️ En Postgres, el latido debe subir cada minuto y `lastHisReachable` estar en
+`true` (mismo patrón sin túnel que §2.6):
 
-```sql
-SELECT "lastHeartbeatAt", "lastHisReachable", "lastHisDetail"
-  FROM "HospitalMirrorConfig" WHERE "organizationId" = '<organizationId>';
+```bash
+ssh root@89.117.61.28 '
+  cd /opt/agenia
+  docker compose --env-file .env.production -f docker-compose.deploy.yml \
+    exec -T postgres psql -U agenia -d antigravity -tAc "
+      SELECT \"lastHeartbeatAt\", \"lastHisReachable\", \"lastHisDetail\"
+      FROM \"HospitalMirrorConfig\" WHERE \"organizationId\" = '"'"'<organizationId>'"'"';
+    "
+'
 ```
 
 O en el panel: **Dashboard → Espejo con el HIS**, cuatro semáforos en verde.
@@ -461,21 +588,34 @@ no se genera un solo cupo y ninguna cita sale ni entra** — y, peor, con el
 espejo encendido el chatbot deja de ofrecer citas a todo el mundo sin un solo
 error en el log.
 
+💻 Con `DATABASE_URL` al túnel de producción (ver el aviso del principio) —
+**este es el script donde el hueco duele más**: sin el túnel, no da error,
+dice *"No hay catálogo todavía"*, que suena a "espera un poco" en vez de
+"estás mirando la base equivocada".
+
 ```bash
-# Sin --aplicar solo muestra el plan y sale:
-pnpm --filter @agenia/database exec tsx scripts/homologar.ts <organizationId>
+# Sin --aplicar solo muestra el plan y sale. Guárdalo en un archivo para
+# revisar la lista completa sin que la terminal la recorte:
+DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+  pnpm --filter @agenia/database exec tsx scripts/homologar.ts <organizationId> \
+  | tee /tmp/homologacion-plan.txt
+less /tmp/homologacion-plan.txt
+
 # Cuando la lista se vea bien:
-pnpm --filter @agenia/database exec tsx scripts/homologar.ts <organizationId> --aplicar
+DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+  pnpm --filter @agenia/database exec tsx scripts/homologar.ts <organizationId> --aplicar
 ```
 
 Los médicos que AgenIA no tenía se crean con `whatsappBookingEnabled = false`:
 nadie se vuelve vendible por accidente. Se encienden uno a uno desde el panel.
 
-Y las aseguradoras del piloto:
+Y las aseguradoras del piloto (mismo `DATABASE_URL`):
 
 ```bash
-pnpm --filter @agenia/database exec tsx scripts/provision-eps-piloto.ts <organizationId>
-pnpm --filter @agenia/database exec tsx scripts/provision-eps-piloto.ts <organizationId> --aplicar
+DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+  pnpm --filter @agenia/database exec tsx scripts/provision-eps-piloto.ts <organizationId>
+DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+  pnpm --filter @agenia/database exec tsx scripts/provision-eps-piloto.ts <organizationId> --aplicar
 ```
 
 ---
@@ -491,12 +631,21 @@ toma después de una semana de comparación. Tres estados:
 | `SHADOW` | Calcula la rejilla del HIS y **reporta** las diferencias sin escribir nada |
 | `ON` | La agenda de AgenIA **es** la del hospital |
 
-```sql
--- Paso 1: al menos una semana en sombra. Cada pasada queda en SyncAudit (op='AVAILABILITY').
-UPDATE "HospitalMirrorConfig" SET "availabilityMode" = 'SHADOW' WHERE "organizationId" = '<org>';
+SQL puro contra el contenedor de Postgres — mismo patrón que §2.6, sin túnel:
 
--- Paso 2: cuando el hospital confirme que coincide con su pantalla de agenda:
-UPDATE "HospitalMirrorConfig" SET "availabilityMode" = 'ON' WHERE "organizationId" = '<org>';
+```bash
+# Paso 1: al menos una semana en sombra. Cada pasada queda en SyncAudit (op='AVAILABILITY').
+ssh root@89.117.61.28 '
+  cd /opt/agenia
+  docker compose --env-file .env.production -f docker-compose.deploy.yml \
+    exec -T postgres psql -U agenia -d antigravity -c "
+      UPDATE \"HospitalMirrorConfig\" SET \"availabilityMode\" = '"'"'SHADOW'"'"'
+      WHERE \"organizationId\" = '"'"'<organizationId>'"'"';
+    "
+'
+
+# Paso 2: cuando el hospital confirme que coincide con su pantalla de agenda,
+# el mismo comando cambiando 'SHADOW' por 'ON'.
 ```
 
 **Paso 3 — carga inicial** (🏥), para no esperar a que el bucle recorra 400 días
@@ -529,10 +678,18 @@ sudo systemctl restart agenia-mirror-agent      # fuerza una reconciliación a l
 **Actualizar el agente:** repite §3 y §7.1–7.2 y reinicia. `data/state.json`
 sobrevive y el agente no vuelve a empezar de cero.
 
-**Apagar el espejo sin tocar la VM** (☁️, reversible, no borra nada):
+**Apagar el espejo sin tocar la VM** (☁️, reversible, no borra nada — mismo
+patrón que §2.6):
 
-```sql
-UPDATE "HospitalMirrorConfig" SET "enabled" = false WHERE "organizationId" = '<org>';
+```bash
+ssh root@89.117.61.28 '
+  cd /opt/agenia
+  docker compose --env-file .env.production -f docker-compose.deploy.yml \
+    exec -T postgres psql -U agenia -d antigravity -c "
+      UPDATE \"HospitalMirrorConfig\" SET enabled = false
+      WHERE \"organizationId\" = '"'"'<organizationId>'"'"';
+    "
+'
 ```
 
 ⚠️ **Nunca borres `/opt/agenia-mirror-agent/data/state.json` como "limpieza".**

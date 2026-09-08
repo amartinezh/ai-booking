@@ -488,3 +488,206 @@ describe('AppointmentsService — el médico se apaga mientras el paciente decid
     expect(tx.appointment.create).not.toHaveBeenCalled();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Rechazar ANTES de confirmar una EPS+régimen sin convenio en el HIS.
+//
+// Antes esto solo lo veía `resolveConvenio`, en el mirror-agent, AL ESCRIBIR
+// la cita — es decir, DESPUÉS de que WhatsApp ya le dijo "confirmada" al
+// paciente. La cita moría en dead-letter y nadie se enteraba hasta revisar
+// la cola (caso real: Nueva EPS contributivo, ver ESTADO.md del driver
+// cnt-sanvicente-anserma — el hospital confirmó que el convenio 473 es de
+// Sura, no un genérico de "contributivo", y esa combinación no tiene ninguno).
+// ═══════════════════════════════════════════════════════════════════════════
+describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
+  const cupoLibre = () => ({
+    id: 's1',
+    isAvailable: true,
+    organizationId: 'org1',
+    doctor: { whatsappBookingEnabled: true },
+  });
+
+  const construir = async (opts: {
+    epsName?: string;
+    regime?: string | null;
+    bloqueadas?: { epsName: string; regime: string }[] | null;
+  }) => {
+    const tx = {
+      scheduleSlot: {
+        findUnique: jest.fn(() => cupoLibre()),
+        update: jest.fn(),
+      },
+      appointment: { create: jest.fn(() => ({ id: 'apt1' })) },
+      eps: {
+        findUnique: jest.fn(() => ({ name: opts.epsName ?? 'Nueva EPS' })),
+      },
+      patientProfile: {
+        // OJO: `??` habría convertido el `regime: null` explícito del test de
+        // abajo en 'CONTRIBUTIVO' de nuevo — hace falta `'regime' in opts`
+        // para distinguir "no lo pasé, usa el default" de "lo pasé, es null".
+        findUnique: jest.fn(() => ({
+          regime: 'regime' in opts ? opts.regime : 'CONTRIBUTIVO',
+        })),
+      },
+      hospitalMirrorConfig: {
+        findUnique: jest.fn(() => ({
+          blockedEpsRegimeCombos: opts.bloqueadas ?? null,
+        })),
+      },
+      $executeRawUnsafe: jest.fn(),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AppointmentsService,
+        {
+          provide: PrismaService,
+          useValue: { $transaction: jest.fn((cb: any) => cb(tx)) },
+        },
+      ],
+    }).compile();
+    return { svc: module.get<AppointmentsService>(AppointmentsService), tx };
+  };
+
+  it('🚨 EPS+régimen bloqueados → rechaza SIN crear la cita ni ocupar el cupo', async () => {
+    const { svc, tx } = await construir({
+      epsName: 'Nueva EPS',
+      regime: 'CONTRIBUTIVO',
+      bloqueadas: [{ epsName: 'Nueva EPS', regime: 'CONTRIBUTIVO' }],
+    });
+
+    const r = await svc.bookAppointment(
+      'p1',
+      's1',
+      'eps-nueva',
+      'WHATSAPP',
+      'org1',
+    );
+
+    expect(r.success).toBe(false);
+    expect(r.reason).toBe('EPS_REGIME_NOT_BILLABLE');
+    expect(tx.appointment.create).not.toHaveBeenCalled();
+    expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+  });
+
+  it('el mensaje no habla de horario: el cupo sigue libre, el problema es la EPS', async () => {
+    const { svc } = await construir({
+      bloqueadas: [{ epsName: 'Nueva EPS', regime: 'CONTRIBUTIVO' }],
+    });
+
+    const r = await svc.bookAppointment(
+      'p1',
+      's1',
+      'eps-nueva',
+      'WHATSAPP',
+      'org1',
+    );
+
+    expect(r.message).not.toMatch(/horario/i);
+  });
+
+  it('mismo régimen, OTRA EPS → no bloquea (el hueco es específico, no genérico)', async () => {
+    const { svc, tx } = await construir({
+      epsName: 'Sura',
+      regime: 'CONTRIBUTIVO',
+      bloqueadas: [{ epsName: 'Nueva EPS', regime: 'CONTRIBUTIVO' }],
+    });
+
+    const r = await svc.bookAppointment(
+      'p1',
+      's1',
+      'eps-sura',
+      'WHATSAPP',
+      'org1',
+    );
+
+    expect(r.success).toBe(true);
+    expect(tx.appointment.create).toHaveBeenCalled();
+  });
+
+  it('misma EPS, OTRO régimen → no bloquea', async () => {
+    const { svc, tx } = await construir({
+      epsName: 'Nueva EPS',
+      regime: 'SUBSIDIADO',
+      bloqueadas: [{ epsName: 'Nueva EPS', regime: 'CONTRIBUTIVO' }],
+    });
+
+    const r = await svc.bookAppointment(
+      'p1',
+      's1',
+      'eps-nueva',
+      'WHATSAPP',
+      'org1',
+    );
+
+    expect(r.success).toBe(true);
+    expect(tx.appointment.create).toHaveBeenCalled();
+  });
+
+  it('sin lista de bloqueadas (org sin espejo, o mapeo nunca aplicado) → no bloquea a nadie', async () => {
+    const { svc, tx } = await construir({ bloqueadas: null });
+
+    const r = await svc.bookAppointment(
+      'p1',
+      's1',
+      'eps-nueva',
+      'WHATSAPP',
+      'org1',
+    );
+
+    expect(r.success).toBe(true);
+    expect(tx.appointment.create).toHaveBeenCalled();
+  });
+
+  it('régimen del paciente desconocido (null) → no bloquea: solo se niega lo confirmado, no lo ignorado', async () => {
+    const { svc, tx } = await construir({
+      epsName: 'Nueva EPS',
+      regime: null,
+      bloqueadas: [{ epsName: 'Nueva EPS', regime: 'CONTRIBUTIVO' }],
+    });
+
+    const r = await svc.bookAppointment(
+      'p1',
+      's1',
+      'eps-nueva',
+      'WHATSAPP',
+      'org1',
+    );
+
+    expect(r.success).toBe(true);
+    expect(tx.appointment.create).toHaveBeenCalled();
+  });
+
+  it('paciente particular (epsId=null) → ni siquiera consulta el cruce', async () => {
+    const { svc, tx } = await construir({
+      bloqueadas: [{ epsName: 'Nueva EPS', regime: 'CONTRIBUTIVO' }],
+    });
+
+    const r = await svc.bookAppointment('p1', 's1', null, 'WHATSAPP', 'org1');
+
+    expect(r.success).toBe(true);
+    expect(tx.eps.findUnique).not.toHaveBeenCalled();
+    expect(tx.patientProfile.findUnique).not.toHaveBeenCalled();
+    expect(tx.hospitalMirrorConfig.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('origin=MIRROR se salta el chequeo: el HIS ya facturó esa cita', async () => {
+    // Misma razón que el interruptor del médico: rechazar algo que el
+    // hospital ya agendó dejaría los dos sistemas divergiendo.
+    const { svc, tx } = await construir({
+      epsName: 'Nueva EPS',
+      regime: 'CONTRIBUTIVO',
+      bloqueadas: [{ epsName: 'Nueva EPS', regime: 'CONTRIBUTIVO' }],
+    });
+
+    const r = await svc.bookAppointment(
+      'p1',
+      's1',
+      'eps-nueva',
+      'MIRROR',
+      'org1',
+    );
+
+    expect(r.success).toBe(true);
+    expect(tx.eps.findUnique).not.toHaveBeenCalled();
+  });
+});

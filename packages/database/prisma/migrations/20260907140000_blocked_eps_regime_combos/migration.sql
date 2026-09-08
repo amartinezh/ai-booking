@@ -1,0 +1,24 @@
+-- Combinaciones EPS+régimen sin convenio de facturación en el HIS.
+--
+-- `resolveConvenio` (driver del mirror-agent) ya se negaba a facturar una
+-- combinación sin contrato — lo hacía bien, pero DESPUÉS de que WhatsApp le
+-- dijera al paciente "cita confirmada". La cita moría en dead-letter y nadie
+-- se enteraba hasta revisar la cola. Ver la investigación completa en
+-- `docs/drivers/cnt-sanvicente-anserma/ESTADO.md`, caso Nueva EPS contributivo
+-- (el hospital confirmó el 2026-09-04 que el convenio 473 es de Sura, no un
+-- genérico de "contributivo", y esa combinación específica no tiene ninguno).
+--
+-- A diferencia de `mappingJson` (payload privado de cada driver, que el motor
+-- nunca interpreta), esta columna SÍ la lee el motor genérico: es la que usa
+-- `AppointmentsService.bookAppointment` para rechazar la reserva ANTES de
+-- confirmar, igual que ya hace con el interruptor `whatsappBookingEnabled`
+-- del médico. La escribe `scripts/aplicar-mapping.ts` a la vez que
+-- `mappingJson`, con el mismo cruce contra la tabla `Eps` que el script ya
+-- hacía para avisar por consola — ahora también lo persiste.
+--
+-- Por NOMBRE de EPS, no por NIT: los NIT de este mapeo estuvieron cruzados
+-- una vez (MAPEO_HIS.md §2.3) y los dos errores se cancelaban en silencio.
+-- `NULL` (el estado de toda organización existente) es "sin combinaciones
+-- bloqueadas" — no cambia nada para una clínica sin espejo ni para una con
+-- el mapeo ya limpio.
+ALTER TABLE "HospitalMirrorConfig" ADD COLUMN     "blockedEpsRegimeCombos" JSONB;

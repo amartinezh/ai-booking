@@ -477,6 +477,15 @@ const FORMAL = {
       `Ese espacio ya no se puede reservar por este canal.\n\n¿Vemos otra opción? Indíqueme con qué letra prefiere quedarse.`,
     ]),
 
+  // No es un horario ocupado: su EPS no tiene convenio vigente para su
+  // régimen en esta clínica. Cambiar de horario no lo arregla — a propósito
+  // NO se ofrece "elegir otro" aquí, para no hacerle perder el tiempo.
+  epsRegimenNoFacturable: () =>
+    pick([
+      `Le pido disculpas: su EPS no tiene convenio vigente para agendar por este medio con su tipo de afiliación.\n\nPor favor comuníquese directamente con la clínica para gestionar su cita.`,
+      `No es posible agendar esta cita por este canal: su EPS no cuenta con convenio para su régimen en este momento.\n\nLe recomiendo contactar directamente a la clínica.`,
+    ]),
+
   // ── Alta de paciente nuevo ────────────────────────────────────────────
   pedirNacimiento: () =>
     pick([
@@ -1150,6 +1159,14 @@ const INFORMAL = {
     pick([
       `Uy, ese horario ya no se puede agendar por acá. 🙏 ¿Vemos otro? Mándame la letra.`,
       `Ese espacio dejó de estar disponible por este medio. ¿Cuál otro te sirve? Dime la letra.`,
+    ]),
+
+  // Ver la nota de la versión formal: cambiar de horario no arregla esto,
+  // por eso no se ofrece "elegir otro".
+  epsRegimenNoFacturable: () =>
+    pick([
+      `Uy, qué pena: tu EPS no tiene convenio vigente para agendar por acá con tu tipo de afiliación. 🙏\n\nTe recomiendo comunicarte directamente con la clínica.`,
+      `No puedo agendarte esta cita por este medio: tu EPS no tiene convenio para tu régimen en este momento.\n\nMejor comunícate directo con la clínica.`,
     ]),
 
   // ── Alta de paciente nuevo ────────────────────────────────────────────

@@ -70,6 +70,14 @@ const FAILURE_META: Record<
         actionable: true,
         description: 'La EPS está suspendida. El paciente quería agendar pero no se pudo.',
     },
+    EPS_REGIME_NOT_BILLABLE: {
+        label: 'EPS sin convenio para su régimen',
+        icon: '🧾',
+        severity: 'warning',
+        actionable: true,
+        description:
+            'La EPS del paciente no tiene convenio de facturación para su tipo de afiliación (subsidiado/contributivo). Se le pidió llamar a la clínica en vez de dejarlo agendar una cita que no se podría facturar.',
+    },
     DOCTOR_NOT_FOUND: {
         label: 'Médico no encontrado',
         icon: '👨‍⚕️',

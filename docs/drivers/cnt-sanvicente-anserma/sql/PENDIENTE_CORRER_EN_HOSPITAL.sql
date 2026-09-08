@@ -1655,11 +1655,87 @@ GO
 --   `dbo.CITAS_MEDICAS` salió en la pantalla del hospital. Pero conviene
 --   cerrar qué más vive ahí antes de producción → **I.16**.
 --
--- ═══ LO QUE QUEDA (nada de esto bloquea) ═══
---   · **I.7** — la confirmación humana. La más limpia y la más barata.
---   · **I.16** — qué hay en el esquema `ADMIN` (nuevo).
---   · I.11-I.14 — complementarias.
---   Si algo contradijera la conclusión, revertir es una línea en `mapping.ts`.
+-- ═══ I.16 CORRIDA (2026-09-07): riesgo descartado, y dos hallazgos ═══
+--
+-- ✅ **El esquema `ADMIN` no toca la agenda.** Tiene 7 tablas contra las 1.393
+--    de `dbo`, y NINGUNA es del espejo: no existe `ADMIN.CITAS_MEDICAS` ni
+--    nada parecido. Son todas de inventario, farmacia y reportes temporales:
+--
+--        ADMIN.IN_ROTAREPORTE ....... 4.407   (rotación de inventario)
+--        ADMIN.MULTA_TEMP ............... 38
+--        ADMIN.DESPA_TEMP ............... 11   (despachos)
+--        ADMIN.MES_TEMP .................. 1
+--        ADMIN.IN_KARDGRUP_TEMP .......... 0   (kardex)
+--        ADMIN.IN_SALDOREPORTE ........... 0
+--        ADMIN.TIPOAFIL_LIQEST_TMP ....... 0
+--
+--    El riesgo que abrió I.10 queda cerrado CON DATOS, no con suposiciones.
+--
+-- 🎯 **PERO: `ADMIN.MULTA_TEMP` tiene 38 filas y `dbo.MULTA_TEMP` cero.**
+--    I.10 consultó la de `dbo` — la vacía — cuando su propia consulta de
+--    estructura ya había devuelto las dos. Descuido mío. Esas 38 multas
+--    reales, cada una con el `NU_ESTA_CIT` de su cita, son la última
+--    evidencia empírica al alcance → **I.17**.
+--
+-- 🚨 **PENDIENTE DE DESPLIEGUE, no de investigación: el usuario `agenia_sync`
+--    NO existe en `ESEHSVP`.** La consulta de principals devolvió solo `dbo` y
+--    `ADMIN`. Está documentado como el usuario del agente
+--    (`agent.env.example`, `CONECTIVIDAD.md`) pero se creó contra `PRUEBAS`.
+--
+--    El agente NO se podrá conectar al catálogo vivo hasta que TI mapee el
+--    usuario en `ESEHSVP`. Es trivial de resolver y no cambia una línea de
+--    código, pero si nadie lo pide antes del cutover, el go-live falla en el
+--    primer intento con un error de login. Lo que hay que pedir:
+--
+--        · usuario `agenia_sync` mapeado en `ESEHSVP`
+--        · `default_schema = dbo`  (el driver prefija `dbo.` igualmente,
+--          pero así nada depende de ello)
+--        · los permisos mínimos ya acordados en CONECTIVIDAD.md
+--
+-- ═══ I.17 CORRIDA (2026-09-07): 38 DE 38. CIERRA LA PREGUNTA ═══
+--
+-- 🎯 **El 100 % de las multas están sobre citas en estado 2. Cero excepciones.**
+--
+--        estado_de_la_cita   multas   valor_medio
+--        2                   38       $2.000
+--
+--    No hay ni una sola multa en estado 0 o 1. Si el estado 2 no fuera
+--    inasistencia, sería una coincidencia de 38 sobre 38. Esta es la SÉPTIMA
+--    pata, y la primera que es prueba directa en vez de correlación: la
+--    tabla que registra el COBRO por no asistir apunta, sin excepción, al
+--    estado 2.
+--
+--    (Contexto honesto: las 38 son de 2009-04-30 a 2009-07-21 — un tramo de
+--    tres meses, hace diecisiete años. `MULTA_TEMP` no se ha vuelto a usar
+--    desde entonces; es un mecanismo abandonado, no uno vigente. Eso no le
+--    resta fuerza a la prueba —lo que dice es qué significaba el estado 2
+--    cuando alguien necesitó tratarlo como inasistencia con dinero de por
+--    medio—, pero si se habla con el hospital, no ofrecer reactivar cobros:
+--    esa conversación es de ellos, no del espejo.)
+--
+-- 🔍 Y el JOIN contra `CITAS_MEDICAS` de hoy trae un detalle que vale la pena
+--    dejar anotado, sin que cambie nada:
+--
+--        24 → siguen en estado 2 (consistentes con la multa)
+--        11 → HOY están en estado 1 (se corrigieron después de la multa)
+--         3 → sin match (los `NU_HIST_PAC` con más de 10 dígitos parecen
+--             cédula, no historia — formato distinto, no lo mismo)
+--
+--    Que 11 de 38 hayan pasado de 2 a 1 no contradice nada: confirma que el
+--    HIS permite CORREGIR el estado de una cita después de cerrada (alguien
+--    reclamó, se verificó que sí asistió, se ajustó el registro y —se
+--    supone— se anuló la multa). Es coherente con que `USUARIOANUL` exista
+--    en la tabla. Para el driver esto ya está cubierto por diseño: compara
+--    fotos, así que una corrección 2→1 vuelve a emitir el evento con el
+--    desenlace correcto. No hace falta tocar código por esto.
+--
+-- ═══ ✅ SECCIÓN I CERRADA — nada queda por correr para la pregunta original ═══
+--   Siete patas independientes, la última de ellas prueba directa. Solo
+--   queda, si alguna vez se cruza con alguien del hospital, pedir que confirme
+--   una cita (I.7) — no porque haga falta, sino porque cuesta un minuto y no
+--   sobra tener el "sí" de un humano en un cambio que toca producción.
+--   Si algo lo contradijera, revertir es una línea en `mapping.ts`.
+--   I.11-I.14 quedan abiertas pero son complementarias, no bloqueantes.
 --
 -- =============================================================================
 
@@ -2361,4 +2437,63 @@ SELECT name AS usuario, default_schema_name AS esquema_por_defecto, type_desc
 FROM sys.database_principals
 WHERE name IN ('agenia_sync', 'dbo', 'ADMIN')
 ORDER BY name;
+GO
+
+-- =============================================================================
+-- I.17  🎯 LA QUE FALTABA: `ADMIN.MULTA_TEMP` SÍ TIENE DATOS
+--
+-- ⚠️ I.10 miró la tabla equivocada. Su propia consulta de estructura devolvió
+--    `MULTA_TEMP` en DOS esquemas —`dbo` y `ADMIN`— y aun así las consultas de
+--    datos fueron solo contra `dbo.MULTA_TEMP`, que está vacía. I.16 destapó
+--    el descuido:
+--
+--        dbo.MULTA_TEMP ......... 0 filas
+--        ADMIN.MULTA_TEMP ...... 38 filas   ← estas nunca se leyeron
+--
+--    Son pocas, pero es la ÚNICA evidencia empírica directa que queda al
+--    alcance sin molestar a nadie: 38 multas reales, cada una con el
+--    `NU_ESTA_CIT` de la cita que la originó.
+--
+-- CÓMO SE LEE
+--   · Si las 38 (o casi) tienen `NU_ESTA_CIT = 2` → **cerrado del todo**. El
+--     estado 2 es lo que hace que a un paciente se le cobre una multa, y la
+--     multa que un hospital cobra por una cita es la de inasistencia.
+--   · Si están repartidas entre varios estados → la multa no cuelga del
+--     estado y esta vía no dice nada (no refuta la conclusión, solo no la
+--     apoya).
+--   · `VL_VALO_MULT` y `PACIENTE` de paso dicen cuánto se cobra y a quién,
+--     que es contexto útil para la conversación con el hospital.
+--
+-- 100 % LECTURA. Son 38 filas: se pueden traer enteras.
+-- =============================================================================
+USE ESEHSVP;
+GO
+
+-- El reparto por estado de cita: esta es la respuesta.
+SELECT NU_ESTA_CIT AS estado_de_la_cita, COUNT(*) AS multas,
+       MIN(FE_FECH_CIT) AS cita_mas_antigua,
+       MAX(FE_FECH_CIT) AS cita_mas_reciente,
+       AVG(VL_VALO_MULT) AS valor_medio
+FROM ADMIN.MULTA_TEMP
+GROUP BY NU_ESTA_CIT
+ORDER BY multas DESC;
+
+-- Y las 38 enteras, para poder mirarlas una a una.
+SELECT NU_NUME_MULT AS multa, VL_VALO_MULT AS valor, NU_ESTA_MULT AS estado_multa,
+       FE_FECH_CIT AS fecha_cita, FE_HORA_CIT_MULT AS hora_cita,
+       NU_ESTA_CIT AS estado_cita, NU_HIST_PAC AS historia,
+       PACIENTE, NO_NOMB_EPS AS eps, USUARIOANUL, USUARIOINAC
+FROM ADMIN.MULTA_TEMP
+ORDER BY FE_FECH_CIT DESC;
+
+-- ¿Esas mismas citas siguen en CITAS_MEDICAS, y en qué estado están HOY?
+-- Si la multa dice 2 y la cita sigue en 2, el vínculo es directo.
+SELECT m.NU_NUME_MULT AS multa, m.NU_ESTA_CIT AS estado_en_la_multa,
+       c.NU_ESTA_CIT AS estado_en_citas_hoy,
+       m.FE_FECH_CIT AS fecha, m.NU_HIST_PAC AS historia
+FROM ADMIN.MULTA_TEMP m
+LEFT JOIN dbo.CITAS_MEDICAS c
+       ON c.FE_HORA_CIT = m.FE_HORA_CIT_MULT
+      AND c.NU_HIST_PAC_CIT = m.NU_HIST_PAC
+ORDER BY m.FE_FECH_CIT DESC;
 GO

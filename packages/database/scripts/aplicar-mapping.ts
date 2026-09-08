@@ -1,6 +1,8 @@
 /**
  * Aplica la tabla de valores de un driver al `mappingJson` de su
- * HospitalMirrorConfig.
+ * HospitalMirrorConfig, y las combinaciones EPS+régimen sin convenio a
+ * `blockedEpsRegimeCombos` (para que `AppointmentsService` las rechace ANTES
+ * de confirmar una cita, en vez de dejarlas morir en dead-letter).
  *
  * ═══ Por qué existe ═══
  * `mappingJson` decide la especialidad, el convenio de facturación y el sexo
@@ -286,35 +288,42 @@ async function main() {
   //
   // El convenio se resuelve en el AGENTE, al escribir en el HIS — es decir
   // DESPUÉS de haberle dicho al paciente que su cita quedó. No hay repliegue
-  // posible en ese punto: o el convenio está, o la cita es un fantasma. Por
-  // eso esto es un ERROR y no un aviso.
+  // posible en ese punto: o el convenio está, o la cita es un fantasma.
+  //
+  // Antes esto era `process.exit(1)`: un hueco bloqueaba aplicar el mapeo
+  // entero, aunque el resto estuviera bien. Ahora el hueco se PERSISTE en
+  // `HospitalMirrorConfig.blockedEpsRegimeCombos` y `AppointmentsService`
+  // rechaza esa combinación ANTES de confirmarle nada al paciente — así que
+  // ya no hace falta elegir entre "aplicar el mapeo" y "estar seguro": las
+  // dos cosas conviven. Por NOMBRE de EPS, no por NIT — los NIT de este
+  // mapeo estuvieron cruzados una vez (MAPEO_HIS.md §2.3).
   const REGIMENES = ['SUBSIDIADO', 'CONTRIBUTIVO'];
-  const huecos: string[] = [];
+  const huecos: { epsName: string; regime: string }[] = [];
   for (const eps of epsDeLaOrg) {
     if (!eps.isActive || !eps.nit) continue; // Una EPS apagada no agenda.
     for (const regimen of REGIMENES) {
       if (crudo.convenios?.[`${eps.nit}|${regimen}`] === undefined) {
-        huecos.push(`${eps.name} (${eps.nit}) · ${regimen}`);
+        huecos.push({ epsName: eps.name, regime: regimen });
       }
     }
   }
   if (huecos.length > 0) {
-    console.error(
-      `\n❌ Estas combinaciones EPS+régimen están ACTIVAS en AgenIA y no ` +
+    console.warn(
+      `\n⚠️  Estas combinaciones EPS+régimen están ACTIVAS en AgenIA y no ` +
         `tienen convenio en el mapeo:\n` +
-        huecos.map((h) => `     · ${h}`).join('\n') +
-        `\n\n   Sus pacientes pueden agendar por WhatsApp y recibir la ` +
-        `confirmación,\n   pero la cita NO se escribirá en el HIS: morirá en ` +
-        `dead-letter.\n\n   Arréglalo de una de estas dos formas:\n` +
-        `     · añade el convenio al mapping.json (si el hospital lo confirmó), o\n` +
-        `     · apaga esa Eps en AgenIA (isActive=false) hasta que se sepa.`,
+        huecos.map((h) => `     · ${h.epsName} · ${h.regime}`).join('\n') +
+        `\n\n   Ya NO morirán en dead-letter: quedan bloqueadas en el ` +
+        `agendamiento (AppointmentsService.bookAppointment), así que el ` +
+        `paciente se entera ANTES de recibir una confirmación falsa.\n\n` +
+        `   Si el hospital confirma un convenio real para alguna, añádelo ` +
+        `a mapping.json y vuelve a correr este script para que salga de ` +
+        `la lista.`,
     );
-    process.exit(1);
   }
 
   const actual = await prisma.hospitalMirrorConfig.findUnique({
     where: { organizationId: orgId },
-    select: { mappingJson: true },
+    select: { mappingJson: true, blockedEpsRegimeCombos: true },
   });
   if (!actual) {
     console.error(`\n❌ No hay HospitalMirrorConfig para la organización ${orgId}.`);
@@ -324,21 +333,39 @@ async function main() {
   const antes = (actual.mappingJson ?? {}) as Record<string, any>;
   const espAntes = Object.keys(antes.especialidadPorServicio ?? {}).length;
   const pypAntes = (antes.serviciosPyp ?? []).length;
+  const bloqueadasAntes =
+    (actual.blockedEpsRegimeCombos as { epsName: string; regime: string }[] | null) ?? [];
   console.log(
-    `\nEn la base ahora: ${espAntes} servicio(s) con especialidad, ${pypAntes} de PyP.`,
+    `\nEn la base ahora: ${espAntes} servicio(s) con especialidad, ${pypAntes} de PyP, ` +
+      `${bloqueadasAntes.length} combinación(es) EPS+régimen bloqueada(s).`,
   );
 
   if (dryRun) {
-    console.log('\n(--dry-run: no se escribió nada)');
+    console.log(
+      `\n(--dry-run: no se escribió nada — quedarían ${huecos.length} ` +
+        `combinación(es) bloqueada(s))`,
+    );
     await prisma.$disconnect();
     return;
   }
 
   await prisma.hospitalMirrorConfig.update({
     where: { organizationId: orgId },
-    data: { mappingJson: mapping },
+    data: {
+      mappingJson: mapping,
+      // `null` y no `[]` cuando está vacío: en la base, "sin combinaciones
+      // bloqueadas" debe leerse igual que "nunca se corrió este script",
+      // no como un valor distinto que alguien tenga que interpretar.
+      blockedEpsRegimeCombos: huecos.length > 0 ? huecos : null,
+    },
   });
   console.log('\n✓ mappingJson actualizado. El agente lo recoge en su próximo handshake.');
+  if (huecos.length > 0) {
+    console.log(
+      `✓ ${huecos.length} combinación(es) EPS+régimen quedaron bloqueadas ` +
+        `en el agendamiento.`,
+    );
+  }
   await prisma.$disconnect();
 }
 

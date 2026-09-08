@@ -877,6 +877,37 @@ ok "Esquema aplicado: $TABLES tablas"
 # ── 12. Arranque del stack ──────────────────────────────────────────────────
 step "Arranque de la aplicación"
 "${DC[@]}" up -d
+
+# `caddy` está bind-mounteado (deploy/Caddyfile:ro), así que Compose no lo
+# recrea solo porque el archivo cambió en disco: si el contenedor YA estaba
+# corriendo (una reinstalación, un `agenia update`), el `up -d` de arriba lo
+# deja "Running" tal cual estaba, sirviendo la configuración que cargó en su
+# último arranque REAL — no la que se acaba de generar. El síntoma es un 404
+# silencioso en cualquier ruta nueva del Caddyfile (comprobado: handshake del
+# mirror-agent devolviendo 404 con un Caddyfile en disco que sí lo publicaba,
+# porque Caddy llevaba corriendo desde una instalación de tres semanas antes),
+# sin ningún error en este log. `caddy reload` es sin downtime — recarga la
+# config vigente aunque el contenedor se acabe de crear (recarga la misma que
+# ya cargó al arrancar, no hace daño). Reintenta unos segundos por si el
+# socket admin de Caddy no está listo todavía justo tras el `up -d`.
+info "Recargando Caddy con la configuración vigente…"
+CADDY_RELOAD_OK=0
+for i in $(seq 1 10); do
+  if "${DC[@]}" exec -T caddy \
+       caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \
+       >/tmp/caddy-reload.out 2>&1; then
+    CADDY_RELOAD_OK=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$CADDY_RELOAD_OK" == "1" ]]; then
+  ok "Caddy sirviendo la configuración vigente"
+else
+  tail -5 /tmp/caddy-reload.out >&2 2>/dev/null || true
+  die "Caddy no recargó deploy/Caddyfile tras 10 intentos (ver error arriba). El sitio puede seguir sirviendo una configuración vieja — revisa con: docker logs agenia_proxy"
+fi
+
 info "Esperando a que api y web respondan…"
 for svc in api web; do
   cid="$("${DC[@]}" ps -q "$svc")"

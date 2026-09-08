@@ -11,6 +11,17 @@ export interface AvailableSlot {
   servicio: string;
 }
 
+/**
+ * Una combinación EPS+régimen sin convenio de facturación en el HIS — ver el
+ * comentario de `HospitalMirrorConfig.blockedEpsRegimeCombos` en el schema.
+ * Por NOMBRE de EPS, no por NIT (los NIT de este mapeo estuvieron cruzados
+ * una vez, MAPEO_HIS.md §2.3).
+ */
+interface BlockedEpsRegimeCombo {
+  epsName: string;
+  regime: string;
+}
+
 @Injectable()
 export class AppointmentsService {
   private readonly logger = new Logger(AppointmentsService.name);
@@ -135,7 +146,7 @@ export class AppointmentsService {
      * El texto vive en el pool de MSGS (que tiene estilos de comunicación por
      * clínica), no aquí: este servicio no debería estar redactando WhatsApp.
      */
-    reason?: 'SLOT_TAKEN' | 'DOCTOR_NOT_BOOKABLE';
+    reason?: 'SLOT_TAKEN' | 'DOCTOR_NOT_BOOKABLE' | 'EPS_REGIME_NOT_BILLABLE';
   }> {
     try {
       let appointmentId: string | undefined;
@@ -179,6 +190,46 @@ export class AppointmentsService {
         // es exactamente lo que el espejo existe para evitar.
         if (origin !== 'MIRROR' && !slot.doctor.whatsappBookingEnabled) {
           throw new Error('DOCTOR_NOT_BOOKABLE');
+        }
+
+        // 🧾 EPS+régimen sin convenio de facturación en el HIS. Antes esto
+        // solo lo detectaba `resolveConvenio` en el mirror-agent, AL ESCRIBIR
+        // la cita — es decir, después de que WhatsApp ya le dijo "confirmada"
+        // al paciente. La cita moría en dead-letter y nadie se enteraba hasta
+        // revisar la cola (caso real: Nueva EPS contributivo, ver ESTADO.md
+        // del driver cnt-sanvicente-anserma). Se repite aquí, ANTES de
+        // reservar el cupo, para poder decir que no en vez de mentir.
+        //
+        // Las citas MIRROR se saltan el chequeo por la misma razón que el
+        // interruptor del médico: vienen del HIS, que ya las facturó.
+        // Sin EPS (particular) tampoco aplica: no hay convenio que buscar.
+        if (origin !== 'MIRROR' && epsId) {
+          const [eps, patient, mirrorConfig] = await Promise.all([
+            tx.eps.findUnique({ where: { id: epsId }, select: { name: true } }),
+            tx.patientProfile.findUnique({
+              where: { id: patientId },
+              select: { regime: true },
+            }),
+            tx.hospitalMirrorConfig.findUnique({
+              where: { organizationId },
+              select: { blockedEpsRegimeCombos: true },
+            }),
+          ]);
+
+          const bloqueadas =
+            (mirrorConfig?.blockedEpsRegimeCombos as
+              | BlockedEpsRegimeCombo[]
+              | null) ?? [];
+
+          if (
+            eps &&
+            patient?.regime &&
+            bloqueadas.some(
+              (b) => b.epsName === eps.name && b.regime === patient.regime,
+            )
+          ) {
+            throw new Error('EPS_REGIME_NOT_BILLABLE');
+          }
         }
 
         // 2. Marcar slot como Ocupado
@@ -225,6 +276,19 @@ export class AppointmentsService {
           reason: 'DOCTOR_NOT_BOOKABLE',
           message:
             'Ese horario dejó de estar disponible para agendamiento por este medio.',
+        };
+      }
+
+      if (message === 'EPS_REGIME_NOT_BILLABLE') {
+        this.logger.warn(
+          `Reserva rechazada: EPS ${epsId} del paciente ${patientId} no tiene ` +
+            `convenio de facturación para su régimen en esta organización.`,
+        );
+        return {
+          success: false,
+          reason: 'EPS_REGIME_NOT_BILLABLE',
+          message:
+            'Esa EPS no tiene convenio vigente para agendar por este medio con tu régimen.',
         };
       }
 

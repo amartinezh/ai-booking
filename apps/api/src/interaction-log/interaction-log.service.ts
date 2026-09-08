@@ -39,6 +39,10 @@ export enum FailureReason {
   EPS_NOT_ENROLLED = 'EPS_NOT_ENROLLED',
   DOCTOR_NOT_FOUND = 'DOCTOR_NOT_FOUND',
   SLOT_TAKEN = 'SLOT_TAKEN',
+  // La EPS+régimen del paciente no tiene convenio de facturación en el HIS
+  // (HospitalMirrorConfig.blockedEpsRegimeCombos) → se rechaza ANTES de
+  // confirmar, para no dejar la cita agonizando en dead-letter después.
+  EPS_REGIME_NOT_BILLABLE = 'EPS_REGIME_NOT_BILLABLE',
   SESSION_EXPIRED = 'SESSION_EXPIRED',
   MAX_RETRIES = 'MAX_RETRIES',
   PATIENT_NOT_FOUND = 'PATIENT_NOT_FOUND',

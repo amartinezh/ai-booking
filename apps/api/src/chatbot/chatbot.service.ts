@@ -6022,6 +6022,26 @@ export class ChatbotService implements OnModuleInit {
             chatSummary: `Cita agendada (${specFinal}) para ${fechaFormateada}.`,
           },
         );
+      } else if (bookingResult.reason === 'EPS_REGIME_NOT_BILLABLE') {
+        // No es un cupo: es su EPS+régimen sin convenio. Reintentar con otro
+        // horario NUNCA lo arregla, así que a diferencia de los otros dos
+        // casos no se vuelve a AWAITING_DATE — se cierra la conversación y
+        // se le dice que hable con la clínica.
+        const reply = MSGS.epsRegimenNoFacturable();
+        await this.smartReply(organizationId, senderId, reply);
+
+        await this.auditFailure(senderId, organizationId, {
+          reason: FailureReason.EPS_REGIME_NOT_BILLABLE,
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            slotId: slotIdFinal,
+            cedula: cedulaFinal,
+            epsId: epsIdForBooking,
+          },
+        });
+        await this.cleanUpSession(organizationId, senderId);
+        return;
       } else {
         // El servicio distingue "se lo llevó otro paciente" de "el médico dejó
         // de aceptar WhatsApp". Antes ambos casos usaban el mismo texto, y el
@@ -7699,6 +7719,23 @@ export class ChatbotService implements OnModuleInit {
             botReply: reply,
           });
         }
+      } else if (bookingResult.reason === 'EPS_REGIME_NOT_BILLABLE') {
+        // No es un cupo: es su EPS+régimen sin convenio (ver la nota gemela
+        // en handleConfirmationStep). No tiene sentido devolverlo a la lista
+        // de espera de ESTE cupo — el problema no es el horario.
+        const reply = MSGS.epsRegimenNoFacturable();
+        await this.smartReply(organizationId, senderId, reply);
+
+        await this.auditFailure(senderId, organizationId, {
+          reason: FailureReason.EPS_REGIME_NOT_BILLABLE,
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            stage: 'WAITLIST_EPS_REGIME_NOT_BILLABLE',
+            slotId,
+            patientId,
+          },
+        });
       } else {
         // El servicio distingue "se lo llevó otro paciente" de "el médico dejó
         // de aceptar WhatsApp". Antes ambos casos usaban el mismo texto, y el
