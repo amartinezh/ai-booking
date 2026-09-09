@@ -194,6 +194,55 @@ cero ni pierde de vista lo ocurrido durante la actualización.
 
 ---
 
+## Actualizar la nube (web/api) sin afectar el espejo
+
+`web` y `api` son contenedores Docker **separados** en el VPS de la nube. El
+agente solo habla con `api` (`/api/mirror/*`) — nunca con `web` — así que
+reconstruir solo `web` es cero riesgo, sin importar en qué modo esté la
+agenda (`SHADOW` incluido).
+
+El servidor no tiene repo git (el código llega por `rsync`, sin `.git` a
+propósito por el token del remote), así que `agenia update` no sirve aquí.
+El camino real:
+
+```bash
+# 💻 Desde tu portátil, sincroniza el código (mismas exclusiones que el
+# instalador — no toca secretos, certificados ni el Caddyfile del servidor):
+rsync -az --delete \
+  -e "ssh -i ~/.ssh/agenia_89_117_61_28_ed25519" \
+  --exclude 'node_modules' --exclude '.next' --exclude 'dist' --exclude '.turbo' \
+  --exclude 'coverage' --exclude '*.log' --exclude '.DS_Store' --exclude '.git' \
+  --exclude '.env' --exclude '.env.production' \
+  --exclude 'deploy/secrets' --exclude 'deploy/install.conf' --exclude 'deploy/Caddyfile' \
+  ./ root@89.117.61.28:/opt/agenia/
+
+# ☁️ En el servidor, reconstruye solo lo que cambió:
+ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 'agenia build web'
+# o, si también hay cambios de apps/api:
+ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 'agenia build api web'
+```
+
+`agenia build <svc>` hace `docker compose build <svc> && docker compose up -d
+<svc>` — solo ese contenedor se recrea, sin migraciones ni tocar `postgres` ni
+`caddy`.
+
+**Si tocas `api`:** el contenedor se reinicia (unos segundos de corte). El
+agente lo tolera igual que un corte de red cualquiera — reintenta solo, no
+pierde eventos, y `availabilityMode` no se toca (vive en Postgres, un
+contenedor aparte). Si justo en ese instante corría una vuelta de
+`bucleAgenda` (la de `SHADOW`/`ON`), esa vuelta falla y queda registrada; la
+siguiente (hasta 15 min después) recalcula limpio — cada pasada es
+independiente, no un diff que dependa de la anterior.
+
+Verifica después con:
+
+```bash
+ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 'agenia verify'
+journalctl -u agenia-mirror-agent -n 10 --no-pager   # 🏥, opcional: confirma que se recuperó
+```
+
+---
+
 ## Desastre total (la VM se perdió)
 
 1. VM nueva → `apps/mirror-agent/deploy/README.md`, §1 a §4.

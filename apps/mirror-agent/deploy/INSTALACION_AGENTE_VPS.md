@@ -82,6 +82,35 @@ común:
 > la terminal si no usaste `-f`). Los pasos 💻 de aquí en adelante llevan un
 > recordatorio corto de un renglón — este es el único lugar donde se explica
 > el porqué completo.
+>
+> 🧟 **El túnel se muere solo, y no siempre avisa.** Pasó varias veces en este
+> despliegue — un cambio de wifi, el portátil suspendido un momento, o
+> simplemente rato sin tráfico— y el síntoma varía:
+>
+> - `Can't reach database server at 127.0.0.1:15432` al correr un script →
+>   el túnel ya no está. Reábrelo.
+> - `bind [127.0.0.1]:15432: Address already in use` al intentar reabrirlo →
+>   el proceso viejo sigue vivo (a medias) y retiene el puerto sin servir.
+> - `lsof -i :15432` muestra un `ssh` en `LISTEN` (parece sano) pero además
+>   una línea en `CLOSE_WAIT` → conexión de un comando anterior que nunca
+>   cerró bien; el túnel queda enredado y la siguiente conexión nueva falla
+>   igual que si estuviera muerto.
+>
+> Antes de cualquier comando 💻 que use el túnel, un vistazo evita perder el
+> tiempo:
+>
+> ```bash
+> lsof -i :15432
+> ```
+>
+> Si no aparece nada, o aparece algo con una línea en `CLOSE_WAIT`, mata el
+> proceso y reabre limpio:
+>
+> ```bash
+> kill <PID>              # el que muestre lsof; kill -9 si no responde
+> ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 -f -N -L 15432:127.0.0.1:49317 root@89.117.61.28
+> lsof -i :15432           # debe verse UN solo ssh, solo en LISTEN
+> ```
 
 ---
 
@@ -620,6 +649,39 @@ DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravit
 Los médicos que AgenIA no tenía se crean con `whatsappBookingEnabled = false`:
 nadie se vuelve vendible por accidente. Se encienden uno a uno desde el panel.
 
+> 🚨 **`--aplicar` escribe fila por fila, sin transacción.** Si revienta a la
+> mitad (pasó una vez: `The column "DoctorProfile.consultingRoomId" does not
+> exist in the current database`), lo de antes del punto de falla **ya quedó
+> escrito** — no se revierte solo. Dos cosas a comprobar:
+>
+> 1. **El error es casi siempre esquema desactualizado en producción**, no un
+>    bug del script: tu `schema.prisma` local tiene un campo que nunca se
+>    llevó a la nube (`prisma db push` local sí, producción no). Se arregla
+>    con el mismo `DATABASE_URL` del túnel, es aditivo y seguro:
+>    ```bash
+>    DATABASE_URL="postgresql://agenia:<POSTGRES_PASSWORD>@127.0.0.1:15432/antigravity?schema=public" \
+>      pnpm --filter @agenia/database exec prisma db push
+>    ```
+>    Después, vuelve a correr `--aplicar` tal cual — los servicios/médicos que
+>    ya se crearon quedan como `YA` (se detectan por `MirrorEntityMap`, no se
+>    duplican) y solo reintenta lo que faltaba.
+> 2. **Revisa un `User` huérfano.** El médico que reventó primero: se crea su
+>    `User` y JUSTO DESPUÉS su `DoctorProfile` — si el fallo fue en el
+>    segundo paso, el primero quedó suelto, sin perfil, con contraseña
+>    inservible (`medico<N>@hsvpanserma.com`). Inofensivo (nadie puede entrar,
+>    no aparece en ningún listado) pero conviene borrarlo antes de reintentar
+>    para no dejarlo tirado para siempre:
+>    ```bash
+>    ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 '
+>      cd /opt/agenia
+>      docker compose --env-file .env.production -f docker-compose.deploy.yml \
+>        exec -T postgres psql -U agenia -d antigravity -c "
+>          DELETE FROM \"User\" WHERE email = '"'"'medico<N>@hsvpanserma.com'"'"'
+>            AND NOT EXISTS (SELECT 1 FROM \"DoctorProfile\" WHERE \"userId\" = \"User\".id);
+>        "
+>    '
+>    ```
+
 Y las aseguradoras del piloto (mismo `DATABASE_URL`):
 
 ```bash
@@ -675,6 +737,17 @@ sudo systemctl start agenia-mirror-agent
 > `deploy/README.md` y en el `RUNBOOK.md`: falla con
 > `env: #: No such file or directory` en cuanto el archivo tiene un comentario.
 
+Si ves esto y el proceso termina solo, sin error de Node:
+
+```
+[mirror-agent] availabilityMode=OFF — no se escribió nada. Ponlo en SHADOW
+(para comparar) o ON (para importar) antes de la carga inicial.
+```
+
+**No es un fallo, es el candado haciendo su trabajo.** Te saltaste el Paso 1 o
+el Paso 2 — corre primero el `UPDATE` de arriba (`SHADOW` o `ON`) y repite el
+Paso 3. Cero efectos secundarios: no se tocó un solo `ScheduleSlot`.
+
 ---
 
 ## 12. El día a día
@@ -688,6 +761,13 @@ sudo systemctl restart agenia-mirror-agent      # fuerza una reconciliación a l
 
 **Actualizar el agente:** repite §3 y §7.1–7.2 y reinicia. `data/state.json`
 sobrevive y el agente no vuelve a empezar de cero.
+
+**Actualizar `web`/`api` en la nube sin tocar el agente:** son contenedores
+Docker separados — el agente solo habla con `api` (`/api/mirror/*`), nunca con
+`web`, así que reconstruir `web` no lo puede afectar. Reconstruir `api` sí lo
+interrumpe unos segundos (el contenedor se reinicia), pero el agente reintenta
+solo — no hace falta coordinar con nada de esto. Procedimiento y detalle en
+`RUNBOOK.md` → *"Actualizar la nube (web/api) sin afectar el espejo"*.
 
 **Apagar el espejo sin tocar la VM** (☁️, reversible, no borra nada — mismo
 patrón que §2.6):
@@ -763,3 +843,22 @@ dentro del valor (§7.3).
   de estado que el driver no conoce (el catálogo del fabricante es 0/1/2/3 y
   el `3` no se usa en este hospital). No rompe nada —el agente calla en vez de
   inventar— pero es señal de que algo cambió en el HIS. Ver `ESTADO.md`.
+- **`🚨 DERIVA: 0 cita(s) que el hospital NO tiene y N que AgenIA desconoce`,
+  con N en los miles, en la primera reconciliación.** El 🚨 asusta, pero tiene
+  explicación simple: la reconciliación compara los próximos 90 días de citas
+  del hospital contra lo que AgenIA tiene (`reconcileDias`). El hospital lleva
+  años agendando sin AgenIA — esas citas son reales, agendadas directo con el
+  hospital, y AgenIA nunca tuvo forma de conocerlas hasta el primer barrido.
+  Es de solo lectura: no crea ni borra nada por su cuenta. El número baja solo
+  a medida que las citas viejas se cumplen o se cancelan y entran nuevas por
+  WhatsApp.
+- **`la foto para la reconciliación omite N cita(s) con FE_HORA_CIT ilegible`.**
+  Son filas del HIS con un campo de fecha/hora que no se puede interpretar —
+  van a aparecer siempre como "el hospital no la tiene" en cada reconciliación,
+  aunque sí existan. Es un problema de calidad de datos del HIS, no del
+  espejo; repórtalo al hospital cuando haya oportunidad, no bloquea nada.
+- **Ráfagas de `evento(s) omitidos (tipo no espejado por este driver)`.** Es
+  `bucleSalida` drenando una cola acumulada de AgenIA hacia el HIS y
+  descartando (correctamente) los tipos que este driver todavía no traduce.
+  No bloquea la cola ni cuenta como error — solo se ve seguido si había mucho
+  acumulado de antes de que el espejo estuviera activo.
