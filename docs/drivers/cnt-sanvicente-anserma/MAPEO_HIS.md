@@ -320,7 +320,7 @@ Mapeo estático curado a mano en Fase 0 (solo servicios agendables), versionado 
 | 9 | ✅ **Resuelto (vivo):** 27.877 citas/90d; 1.652 elaboradas/7d ≈ 235/día; reservas hasta 12 meses ⇒ ventana **+13 meses** | Dimensiona polling y reconciliación | Bloque 13 ✔ |
 | 10 | ¿`CITAS_TELEMEDICINA` entra al alcance? | Alcance de Fase 3/4 | Decisión de negocio |
 | 15 | ✅ **RESUELTO por completo:** esquema de `CITAS_ANULADAS` + catálogo `MOTIVOANUL` (23 motivos) + muestra fila-a-fila | El agente lo lee para capturar el motivo de cada cancelación detectada | Bloques 22–23 ✔ |
-| 17 | 🆕 **Confirmado como requisito de negocio** (el hospital quiere marcar citas de WhatsApp), pero la columna/tabla exacta que guarda "Asignada Por" AÚN no se encuentra — búsqueda directa en `CITAS_MEDICAS`/`CITAS_ANULADAS` dio vacío; candidatos: `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO`, `C_USUARIO`/`USUARIO` | Marcar visualmente para el staff qué citas vienen de WhatsApp/AgenIA | **Bloque 24** (nuevo) |
+| 17 | 🎯 **CANDIDATO FUERTE ENCONTRADO (2026-09-10): `AUDITOR.AudUser`** — ver §2.6. `AUDITOR` estaba en la lista de candidatos de abajo y quedó de segundo; era el bueno. Pendiente UNA consulta de correlación para confirmarlo. Texto anterior: la columna/tabla exacta que guarda "Asignada Por" AÚN no se encuentra — búsqueda directa en `CITAS_MEDICAS`/`CITAS_ANULADAS` dio vacío; candidatos: `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO`, `C_USUARIO`/`USUARIO` | Marcar visualmente para el staff qué citas vienen de WhatsApp/AgenIA | **Bloque 24** (nuevo) |
 | 18 | 🆕 ¿Reutilizar el código de motivo `WB` (CANCELADO WEB, ya usado 90 veces) para las cancelaciones que origina AgenIA, o pedir uno nuevo dedicado (ej. `WA`)? | Que el hospital pueda diferenciar en sus reportes cancelaciones del portal web propio vs. WhatsApp/AgenIA | Decisión de negocio + posible alta de código en `MOTIVOANUL` (requiere autorización de escritura de TI) |
 | 16 | Reagendamiento no probado explícitamente (¿DELETE+INSERT o UPDATE de horario?) | Diseño del flujo de reagendar en el espejo | Prueba manual adicional corta (opcional, ya no bloquea el diseño base) |
 | 11 | ✅ **Resuelto:** plantilla del INSERT campo a campo documentada (§2.1) | Replicar el patrón exacto del INSERT | Bloque 14 ✔ |
@@ -329,3 +329,223 @@ Mapeo estático curado a mano en Fase 0 (solo servicios agendables), versionado 
 | 12 | ✅ **Resuelto: el catálogo VIVO es `ESEHSVP`** (última elaboración 2026-08-22, 1.652 citas/7d); `ESEHSVP2024/2025` = archivos de corte anual; `PRUEBAS` = copia del 15-ago | No hay rollover anual; el agente apunta siempre a `ESEHSVP`; alerta de frescura permanente | Bloque 18 ✔ |
 
 **Prueba de fuego final de Fase 0** (tras resolver 1–8): insertar/actualizar una cita en `PRUEBAS` vía SQL con el patrón completo y **verificar en la aplicación del HIS** que se ve, se puede atender y factura como una cita normal. Un funcionario del hospital valida.
+
+
+---
+
+## §2.6 · «ASIGNADA POR»: `AUDITOR` ERA EL CANDIDATO BUENO (2026-09-10)
+
+El pendiente **#17** —trazabilidad de origen, pedida explícitamente por el
+hospital el 2026-08-23— llevaba tres semanas abierto. En la lista de candidatos
+de §145 `AUDITOR` aparecía, pero se dejó de segundo: los «más prometedores»
+eran `AUDITORIA_COT`, `HIST_AUDIT`, `LOG_AUDITORIA_SGIO` y `C_USUARIO`.
+**Era `AUDITOR`.**
+
+### Su estructura es exactamente lo que se buscaba
+
+```
+AudFech            datetime      cuándo
+AudUser            varchar(60)   QUIÉN            ← "Asignada Por"
+AudTabla           varchar(100)  en qué tabla
+AudTrans           varchar(1)    1=INSERT 2=UPDATE 3=DELETE
+AudDesc            text          qué
+NU_NUME_CONE_AUDI  int           consecutivo de conexión
+AudVerExe          varchar(50)   versión del ejecutable ('20.4.0' en todo)
+AudFecExe          datetime      fecha del ejecutable
+```
+
+977.622 filas, y **la tabla más escrita de la base**: 90.120 escrituras en 34 h.
+En los últimos 3 meses registra ≈24.395 INSERT y 12.516 UPDATE de
+`CITAS_MEDICAS`, con nombre de usuario: `ANAMGARCIA`, `AMUÑOZ`, `RMEJIA`,
+`AGRISALES`, `JROJAS`… — **los usuarios de agenda del hospital, uno por uno.**
+
+### ⚠️ Lo que NO está probado
+
+El comprobante impreso de la prueba manual decía `Asignada Por: ADMINISTRADOR`,
+y `AUDITOR` tiene 8 INSERT de `CITAS_MEDICAS` de `ADMINISTRADOR`… pero **del
+2026-08-02 12:20-12:50, no del 23-ago** en que se hizo la prueba. Las fechas no
+casan, así que la correlación es **hipótesis fuerte, no hecho**.
+
+### La consulta que lo confirma (y da de paso el formato de `AudDesc`)
+
+```sql
+SELECT TOP 30 c.NU_NUME_CONE_CIT, c.FE_ELAB_CIT, c.NU_HIST_PAC_CIT,
+       c.CD_CODI_MED_CIT, a.AudUser, a.AudFech, a.AudTrans, a.AudDesc
+FROM dbo.CITAS_MEDICAS c
+OUTER APPLY (
+    SELECT TOP 1 x.AudUser, x.AudFech, x.AudTrans, x.AudDesc
+    FROM dbo.AUDITOR x
+    WHERE x.AudTabla = 'CITAS_MEDICAS' AND x.AudTrans = '1'
+      AND x.AudFech BETWEEN DATEADD(minute,-1,c.FE_ELAB_CIT)
+                        AND DATEADD(minute, 1,c.FE_ELAB_CIT)
+    ORDER BY ABS(DATEDIFF(second, x.AudFech, c.FE_ELAB_CIT))
+) a
+WHERE c.FE_ELAB_CIT >= DATEADD(day, -2, GETDATE())
+ORDER BY c.FE_ELAB_CIT DESC;
+```
+
+Si cada cita reciente tiene exactamente un registro de `AUDITOR` en el mismo
+minuto, queda confirmado y tenemos el «quién» de cada cita.
+
+### 🎯 Y esto ES la solución al requisito, no sólo su diagnóstico
+
+`PA_Ins_AUDITOR` es un **INSERT puro**: ocho parámetros, todos con default
+`NULL`, `SET NOCOUNT ON`, cero validación (SP de 2011, 1.035 caracteres).
+
+⇒ Si el driver lo llama con **`AudUser = 'AGENIA'`**, el comprobante impreso del
+hospital diría **«Asignada Por: AGENIA»** — que es literalmente lo que el
+hospital pidió el 2026-08-23: marcar las citas de WhatsApp para que el staff las
+distinga. **Sin tocar el HIS, sin columna nueva, usando su propio mecanismo.**
+
+Permiso a pedir: **`GRANT EXECUTE ON dbo.PA_Ins_AUDITOR TO agenia_sync`** —
+NO `INSERT ON dbo.AUDITOR`. Por cadena de propiedad (mismo esquema, mismo
+propietario) el `EXECUTE` basta, y es un permiso mucho más estrecho: sólo puede
+insertar auditoría, no escribir la tabla a voluntad.
+
+Y se empareja con el otro extremo de la trazabilidad que ya está resuelto: el
+código `WB` (CANCELADO WEB) de `MOTIVOANUL` para las cancelaciones (§224).
+
+## §2.7 · `CITAS_ANULADAS` NO se audita en `AUDITOR` — y no hace falta
+
+Medido el 2026-09-10: `CITAS_ANULADAS` tiene **92.886 filas** (8,55% de las
+1.086.474 de `CITAS_MEDICAS`), y **cero registros en `AUDITOR`** en 3 meses.
+Tampoco hay **ni un solo `AudTrans = 3`** para `CITAS_MEDICAS`.
+
+⇒ **La auditoría del HIS no registra las cancelaciones en absoluto**: ni el
+DELETE de `CITAS_MEDICAS` ni el INSERT en `CITAS_ANULADAS`. Y no es un defecto:
+`CITAS_ANULADAS` **es** el log de cancelaciones, exactamente como dice §2.1bis
+(«INSERT de auditoría en `CITAS_ANULADAS`»).
+
+⇒ **Consecuencia para el driver:** al auditar en `AUDITOR`, registrar sólo lo
+que la app nativa registra —INSERT y UPDATE de `CITAS_MEDICAS` y `PACIENTES`—
+para que las cifras del bot sean comparables con las de `ANAMGARCIA`. Las
+cancelaciones del agente quedan en `CITAS_ANULADAS` igual que las del hospital,
+con `CD_CODI_MOTI_CIAN` y `TX_OBSE_CIAN`.
+
+⚠️ **Nota de método, para no repetirlo:** la pregunta «¿cómo se anulan las citas
+de verdad?» se planteó el 2026-09-10 como si estuviera abierta. **Ya estaba
+contestada aquí desde el 2026-08-23**, con una prueba que ejecutó el hospital. Y
+la consulta de verificación falló por adivinar el sufijo `_CANU` cuando §126 de
+este documento dice que es **`_CIAN`**. Antes de adivinar un nombre de columna
+del HIS: buscarlo en este archivo.
+
+
+---
+
+## §2.8 · LA PLANTILLA LITERAL DEL `INSERT` DEL HIS (2026-09-10) ⭐
+
+`AUDITOR.AudDesc` no guarda una descripción: **guarda el `INSERT` completo con
+sus valores**, separados por `*` y con los literales entre `^`. Es la plantilla
+exacta de la aplicación nativa, capturada en vivo:
+
+```
+Insert Into CITAS_MEDICAS (
+  CD_CODI_MED_CIT * FE_HORA_CIT * CD_CODI_SER_CIT * NU_HIST_PAC_CIT * NU_DURA_CIT *
+  FE_ELAB_CIT * FE_FECH_CIT * NU_DIA_CIT * NU_NUME_MOVI_CIT * NU_PRIM_CIT *
+  NU_ESTA_CIT * NU_NUME_CONE_CIT * CD_CODI_ESP_CIT * NU_CONE_CALL_CIT *
+  CD_CODI_CONS_CIT * DE_DESC_CIT * NU_NUME_CONV_CIT * CD_CODI_CECO_CIT *
+  NU_TIPO_CIT * CD_CODI_LUAT_CIT * FE_SOLI_CIT
+) values(
+  ^ES04^ * ^2026/09/12 09:20^ * ^890342SUR^ * ^4570199^ * 20 * ^10/09/2026 14:39^ *
+  ^12/09/2026^ * ^0^ * 0 * 0 * 0 * 1290062 * ^200^ * 0 * ^1^ * ^^ * ^535^ * ^001^ *
+  0 * ^01^ * ^12/09/2026 09:20^
+)
+```
+
+### ✅ Lo que confirma del driver
+
+- **`FE_HORA_CIT` coincide exacto.** El hospital escribe `2026/09/12 09:20` y
+  `formatFeHoraCit()` produce `YYYY/MM/DD HH:mm`. El trabajo previo acertó.
+- **`DE_DESC_CIT` va VACÍO (`^^`) en las 30 citas de la muestra.** ⇒ la marca de
+  origen anti-eco del driver en esa columna es **segura**: el hospital nunca
+  escribe ahí, así que cualquier valor no vacío es de AgenIA. **Y es el
+  marcador visible que el hospital pidió el 2026-08-23 (pendiente #17): ya
+  está implementado.**
+- **`NU_ESTA_CIT = 0`** en todas las recién creadas. Coherente con §2.1bis.
+- **Los convenios de la muestra son exactamente los de `mapping.json`:** `535`
+  (Sura SUB EVENTO), `467` (Sura SUB), `473` (Sura CONTRIB), `475` (ST SUB),
+  `538` (ST SUB EVENTO), `283` (Nueva EPS SUB). **Validación en vivo del mapa
+  de convenios contra la operación real.**
+
+### 🔴 Divergencia 1 — `FE_SOLI_CIT`: el driver escribe la fecha equivocada
+
+El hospital escribe en `FE_SOLI_CIT` **la fecha y hora SOLICITADA de la cita**,
+no la de creación:
+
+| `FE_HORA_CIT` (asignada) | `FE_SOLI_CIT` (solicitada) |
+|---|---|
+| `2026/09/12 09:20` | `12/09/2026 09:20` |
+| `2027/03/10 09:00` | `10/03/2027 09:00` |
+| `2026/12/16 14:00` | `16/12/2026 14:00` |
+| `2026/09/11 12:30` | `11/09/2026 **13:20**` ← misma fecha, hora distinta |
+
+Coinciden en 29 de 30 y difieren en una: **`FE_SOLI_CIT` es la hora que pidió el
+paciente y `FE_HORA_CIT` la que se le asignó.** En la mayoría se le da lo que
+pidió; en ese caso pidió 13:20 y le dieron 12:30.
+
+**El driver escribe `GETDATE()` ahí** (`index.ts` ~línea 939), es decir la fecha
+de creación. ⇒ Nuestras citas quedarían con `FE_SOLI_CIT` = hoy donde el
+hospital pone la fecha de la cita. Rompe silenciosamente cualquier reporte que
+use esa columna — y el hospital tiene tres de oportunidad de citas
+(`Res 1552`, `Res 256`, `Oportunidad Citas`).
+
+**Corrección:** `FE_SOLI_CIT` debe llevar la hora solicitada por el paciente
+(que en el flujo del bot es la que escogió), no `GETDATE()`. Si no se distingue
+solicitada de asignada, usar el mismo valor que `FE_HORA_CIT` — que es lo que
+hace el hospital en 29 de 30 casos.
+
+### ⚠️ Divergencia 2 — `NU_NUME_CONE_CIT`: el driver no la escribe
+
+El hospital la llena con el **consecutivo de conexión de la sesión** (no es
+único por cita: `1290136` aparece en 12 citas seguidas de `ANAMGARCIA`,
+`1290018` en 5 de `AMUÑOZ`). Es el identificador de la tanda de trabajo.
+
+El `INSERT` del driver **omite la columna** (20 columnas contra las 21 del
+hospital), así que queda en su default. Funciona, pero nuestras citas quedan
+indistinguibles entre sí para cualquier reporte que agrupe por conexión.
+
+**A decidir:** dejarlo así (el default) o escribir un valor propio reconocible.
+`DE_DESC_CIT` ya cumple mejor la función de marcador, así que es de baja
+prioridad — pero conviene verificar que la columna sea nullable o tenga default,
+y no dependa de que hoy funcione por casualidad.
+
+### ⚠️ Formato de `FE_FECH_CIT` — verificar el tipo antes de decidir
+
+El hospital escribe `12/09/2026` (DD/MM/YYYY); el driver usa `fechaCitaLocal()`,
+que produce `2026-09-12` (ISO con guiones). **Si la columna es `datetime`, ambos
+parsean igual y no hay problema** (ISO es inequívoco). Si fuera `varchar`,
+quedarían textos distintos. El uso que hace el propio HIS
+(`WHERE FE_FECH_CIT >= DATEADD(day,-90,...)`) apunta a columna de fecha, pero
+conviene confirmarlo con `sys.columns` antes de darlo por bueno.
+
+### Otros datos de la plantilla, para referencia
+
+- **Formatos de fecha mezclados dentro del MISMO `INSERT`:** `FE_HORA_CIT` en
+  `YYYY/MM/DD HH:mm`, y `FE_ELAB_CIT`/`FE_FECH_CIT`/`FE_SOLI_CIT` en
+  `DD/MM/YYYY`. No es un error de lectura: la app lo hace así.
+- `NU_DIA_CIT` va como **string** (`^0^`); el driver manda el número `0`.
+  Conversión implícita, sin consecuencia práctica.
+- Códigos de médico heterogéneos en la misma muestra: `ES04`, `MDD2`, `MD09`,
+  `OD02`, `OD05`, `ES01`, `RU70`, `077`, `76`, `91-2` — con y sin ceros a la
+  izquierda, y con guion. Relevante para `doctorExternalKey`.
+- Servicios vistos: `890342SUR`, `S39141`, `S39141-1`, `S39141-2`, `S36203-1`,
+  `SCITOD`, `890266ESP`, **`I890305PL`** (este último con prefijo `I`, conviene
+  verificar que esté en `especialidadPorServicio`).
+- Especialidades: `000`, `060`, `200`, `387`, `461`. Centros de costo: `001`,
+  `004`, `007`. Duraciones: 15, 20, 30, 40. `CD_CODI_LUAT_CIT` = `01` en todas.
+
+### ⚠️ Nota de método: mi consulta de correlación tenía un defecto
+
+El `OUTER APPLY` emparejaba por **proximidad temporal**, y en el pico de la
+tarde se crean ~1 cita por minuto (30 citas entre las 14:11 y las 14:39). Con
+varias citas en el mismo minuto, **todas se emparejan con el mismo registro de
+`AUDITOR`**: en la fila 1 la cita es del documento `24388882` y el `AudDesc`
+habla de `4570199`.
+
+⇒ Queda probado que **cada cita tiene un registro de auditoría en su mismo
+minuto, con usuario** —y eso cierra el pendiente #17—, pero el emparejamiento
+fila-a-fila que muestra ese volcado **es engañoso**.
+
+**La buena noticia:** como `AudDesc` trae los valores, la correlación exacta no
+necesita el tiempo: se empareja por `NU_HIST_PAC_CIT` + `FE_HORA_CIT` extraídos
+del texto. Es más robusto que lo que intenté.

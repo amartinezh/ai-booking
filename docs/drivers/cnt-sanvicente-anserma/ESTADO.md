@@ -2419,3 +2419,1934 @@ no dependen de nosotros**.
 El camino crítico ya no es técnico: es el **padrón**. Sin él no agenda nadie, por
 más que todo lo demás esté encendido.
 
+
+---
+
+# 🪪 EL PADRÓN LLEGÓ — Y ABRIÓ UNA INVESTIGACIÓN (2026-09-10)
+
+La sección anterior cerraba diciendo que el camino crítico era el padrón y que
+«lo que queda no es código». Llegó el padrón. **Y sí hay código que hacer**:
+tres defectos silenciosos del importador que solo se ven con el archivo real
+delante.
+
+## 1. Qué llegó
+
+El hospital entregó los dos padrones, primero como **PDF** y luego como CSV:
+
+| Archivo | Filas medidas | Columnas | Delimitador |
+|---|---|---|---|
+| `Salud total 10-08-2026.csv` | 143 | **31** | `;` |
+| `Suramericana 19-08-2026.csv` | 71 | **17** | `;` |
+
+Los dos son claramente **muestras** de archivos mayores. El de Salud Total se
+declara a sí mismo: `MesPeriodo=9`, `AñoPeriodo=2026`, `FechaGeneracion=08/10/2026`
+⇒ es el padrón del periodo **septiembre 2026, generado el 10-ago**. El de Sura
+**no trae ninguna columna de periodo**: su fecha de corte solo existe en el
+nombre del archivo.
+
+> ⚠️ **Los PDF mienten. No volver a analizar un padrón desde un PDF.** El primer
+> análisis se hizo sobre los PDF y produjo tres conclusiones falsas: que Sura no
+> traía el documento del afiliado (el PDF había recortado sus dos primeras
+> columnas), que los nombres y direcciones venían truncados, y que la columna
+> `Telefono` traía móviles cortados a 7 dígitos. Ninguna era cierta.
+
+## 2. 🚨 Los tres defectos silenciosos del importador
+
+Medido corriendo `validatePadronCsv` —el validador de verdad— contra los
+archivos. Tal como llegan, los dos fallan en el encabezado (`eps` falta en
+ambos; `cedula` además en Sura, porque `NUMERO DE IDENTIFICACION` no es un
+alias). Pero **lo grave es lo que pasa si alguien agrega la columna `eps` a
+mano para que «pase»**:
+
+```
+SALUD TOTAL + columna eps →  143 filas · 36 válidas (25 %) · 130 errores
+                              77×  fecha_nacimiento inválida
+                              53×  teléfono inválido
+```
+
+Y las 36 que pasan entran **mal, sin un solo error**:
+
+| # | Defecto | Medición |
+|---|---|---|
+| 1 | **El alias `nombre` se come la columna equivocada.** `HEADER_ALIASES.nombre_completo` incluye `'nombre'`, y el archivo tiene una columna `Nombre` que son **solo los nombres de pila**. | Los 143 pacientes se importan **sin apellidos**. `fullName = "YULEY"` en vez de `YULEY BETANCUR ARICAPA`. |
+| 2 | **Las fechas vienen en MM/DD/AAAA y `normalizeDate` asume DD/MM/AAAA.** | De 143 fechas de nacimiento: **77 (54 %) rechazadas**, **60 (42 %) pasan con día y mes INVERTIDOS**, y solo **6 (4 %)** quedan correctas —por coincidencia, porque día = mes. |
+| 3 | **El alias `telefono` gana sobre `telefonomovil`.** `Telefono` casa con el alias; `telefonomovil` no casa con ninguno. | La columna `Telefono` es **87 % relleno** (`2000000` ×69, `0` ×48, `2000` ×4, `2999999` ×3). Y `2000000` tiene 7 dígitos ⇒ **pasa la validación**. Mientras `telefonomovil` está impecable: **131 de 143 llenos (92 %) y los 131 bien formados**. |
+
+Y el remate: **Sura viene en DD/MM/AAAA**, o sea la convención opuesta. Dos EPS,
+dos formatos, el mismo pipeline. Adivinar el formato no es aceptable.
+
+### El contenido está bien: es el mapeo
+
+Transformando los archivos al formato canónico (nombre = `Nombre + Apellido1 +
+Apellido2`, teléfono = `telefonomovil`, fecha leída como MM/DD):
+
+```
+st_mapeado.csv    → ok=true  143 filas  143 válidas  0 errores
+sura_mapeado.csv  → ok=true   71 filas   71 válidas  0 errores
+```
+
+**No hay nada que pedirle al hospital para arrancar con Salud Total.** El
+trabajo pendiente es nuestro.
+
+## 3. Lo que los archivos aportan que el HIS no tiene
+
+| Dato | Salud Total | Sura | Por qué importa |
+|---|---|---|---|
+| **Régimen** | ✅ 82 % SUBS / 18 % CONTRIB | ✅ 51 / 49 % | Resuelve el convenio (475/476 · 467/473) **sin preguntárselo al paciente**. Hoy el bot lo pregunta con `parseRegimen`. La distribución de Salud Total coincide con la medida sobre el HIS (82,4 / 17,6 %) ⇒ el archivo es consistente |
+| **Tipo de documento** | solo CC | ✅ CC 59 · TI 8 · **RC 4** | El driver escribe `NU_TIPD_PAC = 0` fijo. **El 17 % del padrón de Sura son menores con RC/TI** y entrarían al HIS tipificados como cédula — campo obligatorio de RIPS |
+| **Móvil** | ✅ 92 %, 131/131 bien formados | ❌ no existe la columna | Es el canal del bot |
+| **Nombre partido en 3** | ✅ | ✅ | El HIS lo guarda en 4 columnas; hoy `partirNombre()` adivina |
+
+**Asimetría a preguntar:** el corte de Salud Total **no tiene un solo menor de
+edad** (143/143 cédulas, y el parentesco más joven es «HIJO DE 18 A 25 AÑOS»),
+mientras Sura trae 17 % de menores, el más pequeño de 3 años. O el archivo de
+Salud Total viene filtrado a adultos, o nos mandaron un solo bloque.
+
+**Y una columna que NO hay que ingerir:** `ProgramasEspeciales` (97 % de las
+filas, 36 códigos, hasta 5 por celda) trae `ONC1 CÁNCER CONFIRMADO`,
+`SMVA IDEACIÓN Y/O CONDUCTA SUICIDA`, `PF4 PLANIFICACIÓN IVE ALTO RIESGO`,
+`VIMU VIOLENCIA FÍSICA`, `SPA2 CONSUMO DE SUSTANCIAS`, `04.7 IRC 5 CON
+HEMODIÁLISIS`, `PA01 PAPSIVI`, `MET4 Indígena`, `MET3 Gitano`. **20 filas
+(14 %) traen al menos uno.** Datos sensibles en el sentido pleno de la Ley 1581
+—salud, salud mental, salud reproductiva, violencia, condición de víctima y
+pertenencia étnica— y ninguno hace falta para autorizar un agendamiento.
+
+## 4. 🔴 Estar en el padrón ≠ poder ser atendido
+
+Hallazgo de negocio, no técnico. El padrón lista a los **capitados** a esta IPS.
+Pero `mapping.json` tiene, para las dos EPS y los dos regímenes, **convenios de
+EVENTO** (`535`/`97` Sura, `538`/`96` Salud Total), que existen precisamente
+para atender a quien **no** está capitado. Y el propio archivo de Sura confirma
+la distinción: su segunda tabla es la de **no capitados**, con una columna
+`CAUSAL DE NO CAPITA`.
+
+Hoy `rejectIfNotEnrolledInEps` bloquea a cualquiera que no esté en el padrón
+⇒ **bloquearía exactamente a la población para la que existen esos cuatro
+convenios vigentes.**
+
+Pregunta para el hospital: **¿el padrón autoriza, o solo enruta el convenio?**
+Si es lo segundo, el padrón deja de ser un portero y pasa a ser un enrutador.
+
+**Recomendación independiente de la respuesta: arrancar la puerta en modo
+observación.** Registrar durante 2-3 semanas a quién *habría* bloqueado, y solo
+entonces activar el bloqueo. Es mucho mejor descubrir una cobertura insuficiente
+en un log que en la cara de un paciente.
+
+## 5. ¿Y si leemos el padrón del HIS en vez de un CSV?
+
+Se evaluó el planteamiento de que el hospital siga subiendo el padrón como
+siempre y que el agente del VPS lo detecte y replique. **La intención operativa
+es correcta** —el hospital no aprende nada nuevo, nadie edita el archivo (que
+es justo lo que produce la corrupción del §2), la base legal ya está cubierta y
+el agente ya hace polling— pero **la fuente propuesta no contiene el dato**:
+
+- `R_PAC_EPS` tiene **376.865 filas marcadas vigentes** `(NU_ESTA_RPE=1, TX_ACTI_RPE='S')` sobre 78.654 pacientes ⇒ **≈4,8 afiliaciones VIGENTES por paciente**, y la consulta de «pacientes con una sola afiliación» devolvió **cero filas** (D.6).
+- Y **no tiene ninguna columna de fecha**: sin timestamp no se puede ni quedarse con la más reciente.
+
+Si replicáramos de ahí, el padrón de Sura incluiría gente de Salud Total y
+Nueva EPS (la puerta deja de filtrar) y **el régimen saldría de la fila
+equivocada ⇒ convenio equivocado ⇒ glosa**. Es peor que no tener padrón.
+
+Dos pérdidas adicionales: el **móvil** (el HIS depende de `DE_TELE_PAC
+varchar(10)`, cuyo llenado no hemos medido) y los **afiliados nuevos**
+(`R_PAC_EPS` apunta a `PACIENTES`: solo existe quien ya tiene historia clínica).
+
+⇒ La meta se logra apuntando el agente **al archivo**, no a la base: que vigile
+la carpeta/buzón donde el hospital ya lo deja, o que el padrón aterrice en una
+tabla de staging **dentro de `AGENIA_SYNC`** (nuestra propia base, ya creada y
+autorizada, sin tocar una columna del esquema del hospital).
+
+## 6. Contexto del servidor (medido el 2026-09-10)
+
+**SQL Server 2017 Standard (14.0.3465.1) sobre Linux (Ubuntu 18.04.6).**
+
+| Hallazgo | Consecuencia |
+|---|---|
+| **15 bases en la instancia**: `AGENIA_SYNC`, `ESEHSVP` (viva, SIMPLE), `ESEHSVP2024`, `ESEHSVP2025`, `ESEHSVPREGALIAS`, `HSVPInvAnt`, `Presupuesto20`, `PRESUPUESTO2026`, `PRUEBAS`, `PRUEBAS_ACTIVOS`, `ReportServer2019` (+TempDB) y las de sistema | **Ninguna se llama padrón/BDUA/afiliados** ⇒ si el padrón está, está **dentro de `ESEHSVP`** |
+| **Hay SSRS** (`ReportServer2019`) | Vía nueva y directa: la definición `.rdl` de cada reporte **contiene el SQL con el nombre de la tabla que consulta**. Si alguien saca un listado de capitados, ahí está |
+| **Copias anuales completas** (`ESEHSVP2024`, `ESEHSVP2025`) | Experimento natural: comparar `COUNT(*)` de `R_PAC_EPS` en las tres mide si algo carga afiliaciones periódicamente |
+| **Linux** | SSIS casi con seguridad no está en uso; y un `BULK INSERT` tendría que leer una ruta **local del Linux**, no un compartido de Windows ⇒ menos probable que el padrón entre por SQL |
+| **El servicio se reinició el 2026-09-09 01:43** (fecha de `tempdb`) | Vació `sys.dm_db_index_usage_stats` ⇒ la vía de «qué tabla se escribió último» está **ciega** para la carga de agosto |
+
+## 7. ✅ `AGENIA_SYNC_SETUP.sql` CORRIÓ EN PRODUCCIÓN — pendiente cerrado
+
+`AGENIA_SYNC` existe desde el **2026-09-07**, y los permisos se verificaron uno
+por uno el 2026-09-10: **21 permisos, coincidencia exacta con el script**.
+
+- `CONNECT`
+- **14 `SELECT`**: `CITAS_ANULADAS`, `CITAS_MEDICAS`, `CONSULTORIOS`, `CONVENIOS`, `EPS`, `MEDICOS`, `MOTIVOANUL`, `MUNICIPIOS`, `PACIENTES`, `R_ESP_SER`, `R_PAC_EPS`, `SERVICIOS`, `TIPO_DOCUMENTO`, `TURNOS_MEDICOS`
+- Escrituras: `INSERT` en `CITAS_ANULADAS`; `INSERT`/`UPDATE`/`DELETE` en `CITAS_MEDICAS`; `INSERT`/`UPDATE` en `PACIENTES`
+
+⚠️ **Lo que el login NO tiene**, y hace falta si la investigación lo confirma:
+`R_PAC_CONV`, `ESEHSVP2024`/`ESEHSVP2025` y `ReportServer2019`. La
+investigación se corre con cuenta administradora; si `R_PAC_CONV` resulta ser
+la tabla de validación, hay que agregar
+`GRANT SELECT ON dbo.R_PAC_CONV TO agenia_sync;` al setup.
+
+## 8. `sql/PADRON_DESCUBRIMIENTO.sql` — la investigación abierta
+
+Archivo nuevo, 13 secciones, 100 % lectura sobre las tablas del HIS. El marco:
+**`dbo` tiene 1.393 tablas y la Fase 0 mapeó 14** — el padrón puede estar en
+cualquiera de las otras 1.379.
+
+Las tres que deciden la arquitectura:
+
+| Sección | Qué decide |
+|---|---|
+| **P.1** ¿el carné del padrón (`Contrato_Medicard` = documento+dígito) está en `R_PAC_EPS.CD_CARN_RPE`? | Si aparece, el padrón **sí** se carga al HIS y explica el fan-out |
+| **P.2** 15 personas de los CSV contra `PACIENTES` | Existencia, fecha de nacimiento, tipo de documento, sexo y teléfono, comparados uno a uno |
+| **P.3** ¿`R_PAC_CONV` tiene ~1 fila por paciente? | Si sí, **es un estado y la lectura desde el HIS se vuelve viable**. Si tiene ~5 como `R_PAC_EPS`, queda descartada |
+
+Más: P.11 (crecimiento año contra año en las copias anuales) y P.12 (catálogo
+SSRS y búsqueda de texto dentro de las definiciones de reportes).
+
+### Dos errores de la primera corrida, y qué enseñaron
+
+1. **Faltaba `USE ESEHSVP`.** Todo corrió contra `master` → `Mens. 208: El
+   nombre de objeto 'dbo.R_PAC_EPS' no es válido`. Corregido: el archivo
+   arranca con `USE ESEHSVP; GO`.
+2. **`SUM(CASE WHEN EXISTS (subconsulta) ...)` no es válido en SQL Server** →
+   `Mens. 130, Nivel 15: No es posible usar una función de agregado con una
+   expresión que contiene un agregado o una subconsulta`. Reescrita P.3d con un
+   CTE `DISTINCT` + `LEFT JOIN`: una sola pasada y sin riesgo de fan-out.
+3. **La lección que vale para los tres archivos SQL:** el error 130 es de
+   **compilación** (nivel 15), así que —sin `GO` entre consultas— **abortó el
+   lote completo y no devolvió un solo resultado**, ni de las secciones que
+   estaban bien. Ahora cada sección termina en `GO`: un fallo se lleva su
+   sección, no el archivo.
+
+## 9. Lo que esto cambia del estado general
+
+La sección anterior decía «lo que queda no es código». **Ya no es cierto.**
+Aparecieron tres defectos del importador (§2) que corrompen datos en silencio,
+y una decisión de arquitectura pendiente: la plantilla de 8 columnas no existe
+en la vida real, y hace falta un **perfil de lectura por EPS** —formato de
+fecha declarado, mapa de encabezados, columna del documento, homologación del
+tipo de documento contra el catálogo del HIS (`0=CC, 1=TI, 2=RC`)— igual que el
+driver del espejo lee el HIS nativo.
+
+Ninguno bloquea la investigación en curso, y ninguno necesita al hospital.
+
+---
+
+# 🔎 LA INVESTIGACIÓN CERRÓ: NO HAY PADRÓN EN EL HIS (2026-09-10)
+
+`PADRON_DESCUBRIMIENTO.sql` corrió completo en producción contra `ESEHSVP`, con
+cuenta de administrador y salida a archivo (`Ctrl+Shift+F`). 39 consultas, cero
+errores. Lo que sigue son los resultados medidos, no hipótesis.
+
+## 1. La respuesta, en una frase
+
+**El padrón nunca entró al HIS, y el hospital no valida derechos al agendar
+porque no tiene con qué.** Quien está en el mostrador escoge un convenio de una
+lista de ~42 y el padrón —si se consulta— se consulta con los ojos, en el
+Excel, fuera del sistema.
+
+Eso deja sin base la premisa con la que empezó todo esto («se supone que ellos
+suben esos padrones tal como están»): **no los suben a ninguna parte.**
+
+## 2. La prueba aritmética (P.11 + P.11b) — la definitiva
+
+|                        | 2024    | 2025    | viva    | Δ 24→25 | Δ 25→viva |
+|------------------------|---------|---------|---------|---------|-----------|
+| `R_PAC_EPS` filas      | 420.420 | 433.837 | 443.325 | +13.417 | +9.488    |
+| `R_PAC_EPS` pacientes  |  75.042 |  77.279 |  78.665 |  +2.237 | +1.386    |
+| `PACIENTES`            |  75.164 |  77.405 |  78.791 |  +2.241 | +1.386    |
+
+Pacientes nuevos y afiliaciones nuevas crecen **acopladas**: 6,0 y 6,8 filas
+por paciente nuevo — que es exactamente cuántas filas recibe un paciente al
+abrirle historia (esqueleto Particulares + FOSYGA + Municipio, más 1-3 EPS).
+
+El HIS dice que Salud Total tiene 12.399 afiliados «vigentes» y Sura 12.065:
+**24.464**. Una carga única, jamás repetida, de solo esas dos EPS metería
+**2,6 veces todo el crecimiento anual de la tabla**. Mensual serían ~294.000
+filas/año contra 9.488 observadas: **factor 31**.
+
+`R_PAC_EPS` crece al ritmo de la ventanilla. Nada se carga en bloque. Nunca.
+
+## 3. Las otras tres pruebas
+
+- **P.1 — el carné no está.** 0 de los 6 carnés de Salud Total; y en las 443.325
+  filas, `carne_es_doc_mas_cero = 0`. El formato `Contrato_Medicard` no ha
+  tocado esta base jamás. (`carne_igual_a_doc` = 7.354; 186.437 sin carné.)
+- **P.4d — no hay periodo.** `CD_POL_RPE`: **0 filas con valor**. No hay dónde
+  anotar un corte, así que la tabla no registra cortes.
+- **P.5/P.6/P.8/P.9/P.11c/P.12 — no hay maquinaria.** Ni tabla de padrón, ni SP
+  cargador (los 8 de P.8 son facturación/RIPS), ni job (los 6 son backups y
+  `PA_REVISA_SALDOS`), ni paquete SSIS (los 8 son del Data Collector del
+  sistema), **ni un solo servidor vinculado**, ni reporte de afiliados entre los
+  140 de SSRS. Y tampoco existió y se borró: ninguna tabla con forma de padrón
+  aparece en las copias de 2024 ni 2025.
+
+## 4. `R_PAC_EPS` no sirve para validar: los muertos tienen nombre
+
+| EPS         | pacientes | «vigentes» | estado real                    |
+|-------------|-----------|------------|--------------------------------|
+| CAFESALUD   |    23.239 | **18.121** | absorbida por Medimás en 2017  |
+| MEDIMÁS     |    19.663 | **15.519** | liquidada en 2022              |
+| CAPRECOM    |    12.191 |  **8.315** | liquidada por decreto en 2015  |
+| SALUDCOOP   |       506 |        392 | liquidada en 2015              |
+| SALUD TOTAL |    12.806 |     12.399 | viva                           |
+| SURA        |    12.364 |     12.065 | viva                           |
+
+**18.121 personas están «vigentes» en una EPS que dejó de existir hace nueve
+años.** `NU_ESTA_RPE = 1 AND TX_ACTI_RPE = 'S'` es decoración. Las nueve EPS
+reales más grandes suman **121.388 afiliados vigentes sobre 78.791 pacientes**.
+
+NIT confirmados (P.4a): **Sura `800088702`**, **Salud Total `800130907`**.
+
+## 5. `R_PAC_CONV` es el desplegable, no el filtro
+
+La hipótesis se confirmó mecánicamente y murió como herramienta:
+
+- **97,5%** (P.3d): de 28.169 citas en 90 días, 27.475 llevan un convenio que sí
+  está en el `R_PAC_CONV` del paciente. La aplicación del HIS **sí** saca de ahí
+  la lista al agendar.
+- **42,16 convenios por paciente** (P.3b), hasta 161. Solo 561 de 78.247
+  pacientes tienen uno solo.
+- El tope de la lista son contratos municipales vencidos: `RES032`
+  (`vigente=0`, 72.121 pacientes), `PIC01` 65.270, `CONVPAI` 63.142,
+  `SALUDPUB0032013` 59.747, `CONTAPS012D2015`, `CONVENIO0032017`…
+
+Cada contrato anual del municipio se vinculó en bloque a toda la población. La
+tabla responde «¿se le puede facturar esto alguna vez?» y contesta sí a casi
+todo. Tiene **dos columnas**: `NU_HIST_PAC_RPC varchar(20)` y
+`NU_NUME_CONV_RPC int`. Sin fecha, sin estado.
+
+**→ NO pedir `GRANT SELECT ON dbo.R_PAC_CONV`.** Ya sabemos que no la
+necesitamos. Un permiso menos en producción. (Los 21 permisos verificados el
+2026-09-10 quedan como están.)
+
+## 6. `NU_AFIL_RPE` no es «tipo de afiliado»: es un índice de casilla
+
+Hallazgo inesperado de P.4c. Agrupando por `(afil, estado, activo)`, las filas
+por paciente son **1,00–1,01** en todos los grupos grandes:
+
+```
+afil 6 · 1 · S → 78.657 / 78.657 = 1,00   (Municipio de Anserma)
+afil 5 · 1 · S → 78.109 / 78.109 = 1,00   (FOSYGA)
+afil 4 · 1 · S → 73.557 / 73.557 = 1,00   (Atención a particulares)
+afil 0 · 1 · S → 73.750 / 73.342 = 1,01
+afil 1 · 1 · S → 37.082 / 37.065 = 1,00
+afil 2 · 1 · S → 26.064 / 26.063 = 1,00
+afil 3 · 1 · S →  9.735 /  9.735 = 1,00
+```
+
+Las casillas 4/5/6 están **reservadas** para las tres filas sintéticas que
+recibe todo paciente. Las 0–3 guardan aseguradoras reales, y en P.2b el orden
+es cronológico:
+
+```
+1000125390:  0 → CAFESALUD (hasta 2017)   1 → MEDIMÁS (2017-2022)
+             2 → SALUD TOTAL  ← lo que dice el padrón
+1002594089:  0 → CAFESALUD  1 → MEDIMÁS  2 → MAPFRE  3 → SALUD TOTAL
+```
+
+Se cumple en 5 de 6 pacientes multi-EPS. **La casilla más alta con aseguradora
+real parece ser la afiliación más reciente** — una forma de derivar «EPS
+actual» sin columna de fecha, que habíamos declarado imposible. Es hipótesis a
+una consulta de confirmarse, y sirve para **reconciliar, nunca para autorizar**.
+
+⚠️ Si `mapping.json` o el driver interpretan `NU_AFIL_RPE` como
+cotizante/beneficiario, están equivocados.
+
+En los 15 casos de P.2b, la EPS que dice el padrón **siempre** está presente con
+`activo='S'`: la tabla contiene la verdad, pero no puede aislarla.
+
+## 7. El HIS le dio la razón a la lectura MM/DD de Salud Total
+
+14 de 15 fechas de nacimiento coinciden exactas. Las tres ambiguas confirman el
+formato:
+
+| documento          | archivo      | HIS            | lectura        |
+|--------------------|--------------|----------------|----------------|
+| 1000125390 YULEY   | `03/11/2002` | **2002-03-11** | MM/DD ✅       |
+| 10002511 ARMANDO   | `06/01/1977` | **1977-06-01** | MM/DD ✅       |
+| 1002594089 LUISA   | `01/08/2000` | **2000-01-08** | MM/DD ✅       |
+| 10018650 CARLOS    | `09/12/1973` | **1973-12-09** | ✗ discrepa     |
+
+El archivo **no puede** ser DD/MM: `12/22/1999` (EDWIN) no tiene mes 22. Salud
+Total es MM/DD, confirmado contra fuente independiente, y **el defecto del
+importador que invierte día y mes queda probado, no inferido**.
+
+El caso de CARLOS no es formato: es una fecha transpuesta en uno de los dos
+sistemas. Con 1 de 7, pide **informe de reconciliación**, no regla nueva.
+
+Aparecieron desacuerdos de nombre que el JOIN por documento tapaba: padrón
+`BETANCUR` / HIS `BETANCOURT`; padrón `TAPASCO MELCHOR` / HIS `TAPASCO GAÑAN`
+(dos hermanas, segundo apellido distinto).
+
+**Tipo de documento y sexo: 15/15 correctos**, incluidos `RC=2` y `TI=1`.
+
+## 8. Lo que `PACIENTES` sí tiene, y lo que miente
+
+P.10, sobre 78.791 pacientes:
+
+- **Teléfono: 78.788 con dato, pero 58.761 con móvil válido (74,6%).** No es el
+  desierto que supusimos. En la muestra de 15 el HIS tenía móvil para **15 de
+  15**, incluidas las 8 de Sura donde el padrón no trae ninguno. Donde ambos
+  tienen dato discrepan en 3 de 5 (YULEY: HIS `12198523` inservible vs padrón
+  `3105226861` → gana el padrón; ARMANDO: dos móviles válidos distintos).
+  **El padrón complementa, no funda: hace falta regla de precedencia explícita.**
+- **`DE_EMAIL_PAC` lleno en 78.738 (99,9%) NO es creíble** en un hospital rural
+  de Caldas. Misma forma que la columna `Telefono` del padrón llena de
+  `2000000`. **Verificar antes de creerle.**
+- **`NU_TIPD_PAC` fijo en 0 en el driver está mal, confirmado:** CC 58.850 ·
+  TI 10.981 · RC 5.374 · MS 2.688 · CE 418 · PE 177 · PT 138 · AS 111 · CN 48 ·
+  CD 6. **19.941 pacientes (25,3%) no son cédula.**
+- **Tres columnas muertas:** `NU_IPSPRIMARIA_PAC` 148 de 78.791 (y los valores
+  son fechas y celulares); `NU_NIVE_PAC` = 0 para todos; y **`TX_COPO_PAC` no es
+  copago** — es un código de localidad (`177080` en 70.598 pacientes = 89,6%,
+  más basura como `cra 5` y `17001|`). Confirma dejar `ExentoCp`/`ExentoCm`/
+  `RangoSalarial` fuera de AgenIA: no hay contraparte donde reconciliar.
+
+## 9. Un tamaño que puede reventar el importador
+
+Medido sobre los archivos entregados: Salud Total pesa **366 bytes/fila**. Si el
+corte real son los 12.399 afiliados que dice el HIS, el CSV llega a **~4,54 MB —
+el 76% de `MAX_CSV_CHARS = 6.000.000`** en
+`apps/web/app/dashboard/padron/actions.ts`.
+
+Y levanta una pregunta nueva para el hospital: **¿los archivos entregados (143 y
+71 filas) eran muestras o el corte completo?** Contra 12.399 y 12.065, son el 1%.
+
+## 10. Rastros de agosto: identificar antes de escribir en `PACIENTES`
+
+**2026-08-13 07:38** — tres días después del corte de Salud Total:
+
+```
+07:38:22  PACIENTES        ← create_date: la tabla fue RECREADA
+07:38:24  GRUPOPOBLA_PAC   ← modify_date
+07:38:25  R_PAC_EPS        ← modify_date
+```
+
+Recrear una tabla de 78.791 filas es lo que hace SQL Server con ciertos `ALTER`.
+Casi con seguridad es migración del proveedor, pero **el agente escribe en
+`PACIENTES`** y hay que saber qué cambió. Hay un segundo lote el **2026-08-03
+18:14–18:16** (`R_REG_EPS`, `CUOTA_TIPOAFIL`, `GRUPO_POBLA`, `FREC_SER_POBLA`,
+`ANTRIESGO`…).
+
+## 11. Pistas abiertas
+
+| objeto | por qué |
+|--------|---------|
+| **`STG_DEMANDA_PYP`** — 85.293 filas, creada 24-jul-2026 | `STG` = staging y el tamaño es poblacional. El objeto con más forma de padrón de la base. Los barridos no lo vieron porque su nombre no lleva el vocabulario. |
+| **`R_REG_EPS`** — 273 filas | Decodifica los regímenes `01/02/04/07/10/13/P/F` de P.2b. Necesario para enrutar convenios. |
+| **`API_LOGS`** — 176.280 filas, creada 1-jul-2026, con `WB_CON`/`WB_LIC` | El proveedor montó un módulo API/web hace dos meses. Si expone afiliación, cambia el diseño. |
+| **`PLANO`** — 1.410 filas, creada 15-ago-2026 | «Plano» = archivo plano. Cuatro días antes del corte de Sura. |
+| **`CENSO NUEVA EPS`** (SSRS, `/08-Salud publica/`) | El único reporte de censo por EPS. Ver qué lee. |
+| `LIQU_TIPOAFIL_COND` (940), `LIQU_TIPOAFIL_SERV` (842), `CUOTA_TIPOAFIL` (401) | Reglas de copago por tipo de afiliado. |
+
+**Convención que conviene saber:** el prefijo **`_01`** es cómo este hospital
+vuelca un Excel a la base (`_01MEDICAMENTOS` tiene columnas `30_NOVEDAD`,
+`REGIMEN`, `TIPO AFILIACION PACIENTE`; también `_01CUPS`, `_01TARIFAS_UVB`,
+`_01TRAZACXC`). Aparecen, se usan y se borran: P.11c los muestra solo en la
+copia de 2025. Es el patrón que usarían si algún día cargaran el padrón.
+
+## 12. Contexto de la corrida
+
+SQL Server 2017 Standard 14.0.3465.1 en Linux (Ubuntu 18.04.6). **16 bases**
+(entra `ReportServer2019TempDB`), `HAS_DBACCESS = 1` en todas. **1.394 tablas en
+`dbo` + 7 en `ADMIN`.** Servicio arrancado **2026-09-09 01:43**, corrida a las
+12:00 del 2026-09-10 → **34 h de uptime**, así que P.7b solo ve un día y medio;
+en esa ventana **ni `R_PAC_EPS` ni `R_PAC_CONV` aparecen entre las 40 tablas más
+escritas**. Los backups van a `/media/copias/{diario,mensual}/`. Las dos
+cadenas de conexión de SSRS están cifradas y **no hay servidores vinculados**:
+todo vive en esta instancia.
+
+## 13. Lo que esto decide
+
+**El plan «el agente lee el padrón del HIS» está muerto.** El CSV es la única
+fuente de verdad, y AgenIA pasa a ser **el primer lugar del hospital donde los
+derechos se validan de verdad**. Es argumento de venta y es riesgo: mantiene en
+pie la recomendación de arrancar `rejectIfNotEnrolledInEps` en **modo
+observación** 2-3 semanas, porque hoy nadie filtra y el cambio se va a notar.
+
+Sigue abierta la pregunta no-SQL que decide la arquitectura de ingesta:
+**¿dónde pone el hospital el archivo del padrón hoy?** (carpeta / correo) — y
+ahora con una segunda: **¿lo que entregaron era muestra o corte completo?**
+
+---
+
+# 📐 EL PADRÓN VIVE EN AGENIA: DISEÑO MÍNIMO (2026-09-10)
+
+Decisión tomada tras cerrar la investigación: **el padrón se carga en AgenIA y
+AgenIA filtra las solicitudes de cita por WhatsApp usando el documento como
+única llave.** El HIS no se toca para esto. Lo que sigue es el diseño y lo que
+ya está corregido en código.
+
+## 1. Los tamaños reales, y por qué el importador fallaba
+
+Los archivos que analizamos (143 y 71 filas) eran un asomo. Los reales:
+
+| archivo                              |   peso | filas estimadas | columnas |
+|--------------------------------------|--------|-----------------|----------|
+| Base de Datos Salud total 10-08-2026 | 3,3 MB | **~9.100**      | 31       |
+| Base de Datos Suramericana 19-08-2026| 1,9 MB | **~10.500**     | 17       |
+
+(363,5 y 181,7 bytes por fila medidos sobre las muestras.)
+
+**El problema NO era el tamaño del archivo.** Los topes de entrada sobran:
+3,3 MB es el 55% de `MAX_CSV_CHARS` y ~9.100 filas el 45% de `MAX_DATA_ROWS`.
+El problema era el camino de escritura, y fallaba de tres formas:
+
+1. **`createMany` con todas las filas de golpe.** Postgres usa un int16 para el
+   número de parámetros del protocolo extendido: **32.767 es techo del
+   protocolo**. A 13 columnas por fila, el padrón real pedía **~118.000
+   parámetros**. No es «falla si el archivo es grande»: falla **siempre** por
+   encima de ~2.500 filas, con `too many bind variables in prepared statement`.
+2. **Los `update` uno por uno dentro de una sola transacción.** En una recarga
+   mensual casi todas las filas son actualizaciones: ~10.500 ida-y-vueltas
+   dentro de un mismo `BEGIN`.
+3. **El `IN (...)` de la búsqueda previa** con 10.500 cédulas de un tirón.
+
+### ✅ Corregido en `apps/web/app/dashboard/padron/actions.ts`
+
+Un solo `INSERT ... ON CONFLICT ("organizationId","cedula") DO UPDATE` por lote
+de 1.000 filas (13.000 parámetros, mitad del techo), y los ~11 lotes **dentro
+de una única transacción** con `timeout` de 120 s: se conserva la atomicidad y
+desaparece el techo. La búsqueda previa va troceada de 5.000. `createdAt` queda
+fuera del `DO UPDATE`, así que quien reaparece en el corte siguiente conserva
+la fecha en que entró. `npx tsc --noEmit` limpio.
+
+Detalle que cuesta una tarde si se pasa por alto: **cada parámetro va con cast
+explícito** (`::text`, `::timestamp(3)`). En un `VALUES` multi-fila, si el
+primer valor de una columna es `NULL` —teléfono vacío en la fila 1— Postgres no
+puede inferir el tipo y responde `could not determine data type of parameter`.
+
+## 2. El padrón se reduce a tres campos
+
+Tres fuentes, cada una con su oficio:
+
+| fuente | qué responde | por qué es la única que puede |
+|--------|--------------|-------------------------------|
+| **Padrón (CSV de la EPS)** | ¿tiene derecho hoy, en qué EPS, en qué régimen? | nadie más lo sabe: no está en el HIS |
+| **HIS (vía agente espejo)** | ¿quién es? nombres/apellidos separados, tipo de documento real, fecha de nacimiento, sexo, dirección | es el dato del hospital y es el que va a llevar la cita |
+| **WhatsApp** | ¿por dónde le hablo? | el número entrante **es** el canal; no hay que buscarlo |
+
+⇒ Del padrón sólo hace falta **documento + EPS + régimen**. De 31 y 17 columnas,
+**2 de cada archivo** (la EPS se escoge en pantalla, ver §4).
+
+Y eso disuelve, sin escribir una línea de validación, los defectos medidos:
+
+| problema medido | qué pasa con el diseño nuevo |
+|-----------------|------------------------------|
+| 77 fechas rechazadas + 60 invertidas de 143 | **no se pide fecha de nacimiento** |
+| `Nombre` sin apellidos en 143 de 143 | **no se pide el nombre** |
+| `Telefono` con 87% de relleno (`2000000`, `0`) | **no se pide teléfono** |
+| 41% de correos que son de terceros | **no se pide correo** |
+| `ProgramasEspeciales`: 14% de filas con códigos sensibles (ONC1, SMVA, PF4, VIMU, SPA2) — **~1.260 filas en el archivo real** | **no entra**: se elimina toda la exposición de Ley 1581 |
+
+El último no es una simplificación técnica, es **reducción de riesgo legal**: no
+se custodia lo que no se necesita.
+
+Confirmación de que el diseño calza con lo que ya existe: los dos porteros
+(`chatbot.service.ts:1685` y `apps/web/lib/eps-enrollment.ts`) hacen
+`findFirst` con `select: { id: true }`. **Nunca leen `fullName`, `phone` ni
+`dateOfBirth`.** La tabla ya se usa como conjunto de pertenencia y nada más.
+
+## 3. El bot no registra pacientes
+
+Hay que separar dos «registros» que se venían confundiendo:
+
+- **Registro en AgenIA** (`PatientProfile` + BSUID de WhatsApp): no se puede
+  eliminar —sostiene la conversación y el consentimiento— pero puede ser
+  implícito y mínimo: número de WhatsApp + documento. Sin formulario.
+- **Creación del paciente en el HIS** (`INSERT INTO PACIENTES`): **se elimina.**
+
+Tres beneficios concretos:
+
+1. Mata el radio de daño del `NU_TIPD_PAC = 0` fijo del driver. Sabemos que
+   **19.941 pacientes (25,3%) no son cédula**: TI 10.981, RC 5.374, MS 2.688,
+   CE 418, PE 177, PT 138, AS 111, CN 48, CD 6.
+2. **Es la razón técnica por la que el padrón baja a tres campos**: la fecha de
+   nacimiento, el sexo y la dirección sólo se pedían para satisfacer los NOT
+   NULL de `PACIENTES` al crear.
+3. Permite quitar el `INSERT ON dbo.PACIENTES` de `agenia_sync` (el `UPDATE` se
+   decide aparte: sirve para refrescar el teléfono).
+
+**El portón queda como una intersección de tres condiciones:**
+
+```
+1. ¿el documento está en un corte activo de una EPS de arranque?   → AgenIA
+2. ¿el documento existe en PACIENTES?                              → agente espejo
+3. ¿hay agenda?                                                    → como hoy
+```
+
+⚠️ **Una intersección es más estricta que cualquiera de sus partes.** Quien
+falle 1 o 2 se va al teléfono. En la muestra de 15 personas del padrón, 15
+existían en el HIS (historias abiertas entre 2009 y 2026-07-15), pero 15 sobre
+~19.600 filas no alcanza para decidir: **eso es lo que mide D.11 de
+`PADRON_DESCUBRIMIENTO_2.sql`.**
+
+⚠️ **El mensaje de rechazo debe ser uno solo para las dos causas.** Decirle «no
+lo encuentro en el listado de su EPS» ya revela algo sobre su afiliación a
+quien tenga el teléfono en la mano. Un texto neutro —«no puedo agendarle en
+línea, comuníquese con el hospital al ___»— y la causa real al log interno.
+
+Hoy `MSGS.epsNoAfiliado` manda a `/solicitud-alta/{organizationId}`: **ese
+enlace de auto-registro es justo el flujo que sale.**
+
+## 4. Cómo simplificar la carga (5 cambios, por valor)
+
+1. **La EPS se escoge en la pantalla, no en el archivo.** Elimina el defecto #1
+   de ambos archivos —ninguno trae columna `eps`; el de Sura tampoco trae
+   `cedula` reconocible— y hace imposible mezclar EPS por error. Un archivo de
+   Salud Total sólo puede traer afiliados de Salud Total.
+2. **El corte es una entidad y REEMPLAZA.** Hoy el importador **nunca desactiva
+   a nadie**: quien salió del padrón en septiembre sigue activo para siempre.
+   La semántica correcta es: upsert con `importId` nuevo, y después un solo
+   `UPDATE ... SET isActive = false WHERE epsId = <esa> AND importId <> <nuevo>`.
+   Un `UPDATE` masivo, sin recorrer filas, y el `importId` deja trazabilidad
+   («¿por qué rechazaron a Juan el 12 de octubre?» → de qué corte viene).
+   ⚠️ **Necesita una respuesta del hospital: ¿el archivo es siempre el padrón
+   completo, o a veces un parcial?** Si es parcial, desactivar a los ausentes
+   saca a gente con derecho. Mientras no se sepa, la pantalla debe confirmar
+   mostrando la cifra: «este corte desactivará 412 personas: ¿confirma?». Una
+   cifra rara delata un archivo parcial antes de hacer daño.
+3. **Sólo un campo obligatorio: el documento.** `REQUIRED_HEADERS` pasa de
+   `['cedula','nombre_completo','eps']` a `['cedula']`. Sólo ese cambio sube las
+   143 filas de Salud Total de **36 válidas a 143**.
+4. **Normalizar el documento con LA MISMA función al cargar y al consultar.**
+   Hoy divergen: el importador hace `replace(/[.\s]/g,'')` y los porteros
+   `replace(/\D/g,'')`. Son compatibles para `1.234.567`, pero **ninguno quita
+   ceros a la izquierda**: si el padrón trae `0012345` y el paciente escribe
+   `12345`, se rechaza a alguien con derecho. Una sola función compartida.
+5. **Reporte de reconciliación después de cada carga**, no un modal de «listo»:
+   cuántos del corte no existen en el HIS, en cuántos discrepa la fecha de
+   nacimiento, cuántos aparecen en el HIS con otra EPS. Ahí salen los casos como
+   CARLOS BENITEZ (fecha transpuesta) y JANNA TAPASCO (`MELCHOR` en el padrón,
+   `GAÑAN` en el HIS), y es lo que le da al hospital razones para confiar.
+
+## 5. Migración mínima de esquema
+
+```
+EpsEnrolledPatient
+  + regime        String?   -- SUBSIDIADO | CONTRIBUTIVO; enruta el convenio
+  + importId      String?   -- de qué corte viene
+  + tipoDocumento String?   -- informativo, para reconciliar
+    fullName      String → String?    (deja de ser obligatorio)
+
++ PadronImport (id, organizationId, epsId, periodo, fechaCorte, fileHash,
+                totalRows, created, updated, deactivated, createdByUserId, createdAt)
+```
+
+**Fuera, y ahora con mejor razón que antes:** `ProgramasEspeciales`,
+`Contrato_Medicard`, `Alianza`, `AntiguedadSemanas`, `RangoSalarial`,
+`ExentoCp`/`ExentoCm`, `Barrio`, la columna fija `Telefono`. Para los tres de
+copago/nivel ya no es sólo que no los necesitemos: **no hay dónde
+reconciliarlos** — `TX_COPO_PAC` no es copago (es un código de localidad,
+`177080` en el 89,6%) y `NU_NIVE_PAC` es 0 para los 78.791.
+
+`PadronSourceProfile` (perfil de lectura por EPS) **ya no hace falta**: sin
+fechas, sin nombres y sin teléfonos, lo único que varía entre archivos es qué
+columna trae el documento y el delimitador. Cabe en la misma pantalla de carga.
+
+## 6. Preguntas abiertas para el hospital
+
+1. **¿Los archivos entregados eran muestras o el corte completo?** 143 y 71
+   filas contra 3,3 MB y 1,9 MB de archivo real: lo que analizamos fue el 1%.
+2. **¿El padrón que envían las EPS es siempre completo, o a veces parcial?**
+   Decide si el corte puede desactivar a los ausentes (§4.2).
+3. **¿Dónde pone el hospital el archivo hoy?** (carpeta / correo) — decide si el
+   agente vigila un directorio o si se carga a mano por la pantalla.
+4. ¿El padrón autoriza o sólo enruta el convenio? (existen convenios por EVENTO
+   para ambas EPS y ambos regímenes, y el archivo de Sura trae «CAUSAL DE NO
+   CAPITA»).
+5. ¿Qué significa `ESTADO SUSPENSION ACTUAL = 1`? En las 71 filas vistas es
+   siempre `0`, así que no sabemos qué hacer con un 1. Por ahora: registrar, no
+   filtrar.
+
+---
+
+# 🔬 SEGUNDA RONDA: LA LLAVE SIRVE, Y APARECIÓ UN DEFECTO DE DISEÑO (2026-09-10)
+
+`PADRON_DESCUBRIMIENTO_2.sql` corrió completo (35 h de uptime, 12:49). 26
+consultas, cero errores. Resultados medidos.
+
+## 1. ✅ La llave sirve: `NU_HIST_PAC` es utilizable
+
+| | |
+|---|---|
+| pacientes | 78.791 |
+| **sólo dígitos** | **76.698 (97,34%)** |
+| con letras o signos | 2.093 (2,66%) |
+| con cero a la izquierda | 135 |
+| con espacios alrededor | **0** |
+| vacías | **0** |
+
+Y el radio de daño de esas 2.093 es **casi nulo**: de **87.669 citas en 12
+meses, sólo 5 son de historia no numérica, de 3 pacientes distintos (0,01%)**.
+Son registros muertos: existen en la tabla y no usan la agenda.
+
+**El diseño «solo el documento» se sostiene.**
+
+### Pero hay que conocer las convenciones de la casa
+
+La distribución de longitudes (D.1b) muestra cuatro familias de basura y una de
+ellas es una convención deliberada:
+
+- **Documento + sufijo con guion**: 1.315 pacientes de longitud 12 y 167 de 13
+  (`1000189976-2`, `100235838-8-7`). En D.1c son casi todos `MS` (menor sin
+  identificar): **es el documento de la madre más un consecutivo por
+  recién nacido** — `22779293-4` y `22779293-5` son dos hermanos.
+- **Códigos que acuña el hospital**: `17042A0021`, `17042A0009`, `17042S0002`
+  — **17042 es el código DANE de Anserma** + `A`/`S` + consecutivo.
+- **Ceros**: existen historias `01`, `000`, `0000`, `00001`, `000000`,
+  `0000001`, `0000000001`, `00000000012`.
+- **Literales**: `XX`, `XXXXXX`, `PIC`, `urive`, `INDOCUMENTADO`,
+  `aw155981`, `13430385h`.
+
+⇒ Estas personas **no pueden estar en un padrón** (no tienen documento), así
+que el portón las rechaza por construcción y se atienden en ventanilla. Es
+coherente. Pero fija dos reglas para la normalización (§5).
+
+## 2. ✅ La hipótesis de la casilla queda confirmada, por dos vías
+
+**D.2b, la prueba:** de **19.007 pacientes** que tienen a la vez una EPS
+liquidada y una vigente, la vigente ocupa casilla más alta en **15.854 →
+83,4%** (2.976 al contrario, 177 empatados).
+
+**D.2d, la progresión histórica leída en las casillas:**
+
+| casilla | quién domina | pacientes | vigencia real |
+|---|---|---|---|
+| 0 | **CAFESALUD** | 15.336 | murió en 2017 |
+| 0 | **CAPRECOM** | 7.939 | murió en 2015, **y no aparece en ninguna otra casilla** |
+| 1 | **MEDIMÁS** | 9.016 (su pico) | 2017-2022 |
+| 2-3 | FONDO, SALUD TOTAL, SURA | — | vivas |
+
+CAPRECOM sólo existe en la casilla 0. CAFESALUD la domina y decae (15.336 → 2.927).
+MEDIMÁS pica en la 1 (3.525 → **9.016** → 2.673). Es la historia del
+aseguramiento colombiano ordenada por número de casilla.
+
+`NU_AFIL_RPE` es un **índice de casilla por orden de llegada**, y **la casilla
+más alta con aseguradora real es la afiliación más reciente** — con 83,4% de
+acierto. Sirve para **reconciliar**, nunca para autorizar.
+
+⚠️ **Único cabo suelto:** D.2c encontró `PARENTESCO` con **7 filas**, y
+`NU_AFIL_RPE` toma **7 valores (0-6)**. Coincidencia de cardinalidad que hay que
+descartar. El argumento en contra es fuerte: las casillas 4/5/6 están
+**reservadas** a las tres filas sintéticas (Particulares/FOSYGA/Municipio) con
+ratio 1,00 sobre los 78.657 pacientes, y eso el parentesco no lo explica. Pero
+son 7 filas: se resuelven con un `SELECT *`.
+
+Los otros catálogos de D.2c **no son** de tipo de afiliado: `CUOTA_TIPOAFIL`
+(401) se indexa por `(CD_CODI_REG_CUTA, CD_NIT_EPS_CUTA)` — es copago por
+régimen y EPS, no por afiliado.
+
+## 3. ⚠️ Me equivoqué de tabla: el catálogo de régimen es `REGIMEN`, no `R_REG_EPS`
+
+`R_REG_EPS` (273 filas) resultó ser `(régimen, NIT) → VL_MAXI / VL_MAXF /
+VL_MAXA`: **topes de facturación**, no nombres. El catálogo es **`REGIMEN` (22
+filas)**: `CD_CODI_REG | NO_NOMB_REG | ID_CODI_TIUS_REG | TX_CODI_RTT_REG`.
+
+Aun así `R_REG_EPS` dejó algo valioso — **qué códigos de régimen tiene
+configurado cada EPS de arranque**:
+
+| EPS | códigos configurados |
+|---|---|
+| SURA `800088702` | 01, 02, 07, 08, 09, 10, 11, 12, 14 |
+| SALUD TOTAL `800130907` | 01, 02, 07, 08, 09, 10, 11, 12, 14, 18 |
+| Municipio Anserma `890801139` | 04, 05, 06, 16 |
+| FOSYGA `000000001` | F |
+| Particulares `000000000` | P |
+
+**El padrón trae dos valores (SUBSIDIADO/CONTRIBUTIVO) y el HIS tiene diez
+códigos por EPS.** No hay mapa 1:1, y en P.2b de la ronda anterior se vieron
+pacientes de Sura del mismo corte con 01, 07 y 10. **Falta la homologación, y
+sin ella el convenio puede salir mal → glosa.**
+
+Y D.10 dejó la cadena, sacada del SQL de un reporte de SSRS
+(`Produccion por servicio … Regimen` usa `TIPOUSUARIO.DE_DESC_TIUS AS Regimen`):
+
+```
+R_PAC_EPS.CD_CODI_REG_RPE → REGIMEN.CD_CODI_REG
+                          → REGIMEN.ID_CODI_TIUS_REG → TIPOUSUARIO.DE_DESC_TIUS
+```
+
+## 4. 🔴 El correo del HIS es relleno: 98,6% es un solo valor
+
+| correo | pacientes |
+|---|---|
+| **`pacienteshospital@gmail.com`** | **77.649** |
+| `hsvpanserma@hotmail.com` | 299 |
+| `pacientehospital@gmail.com` | 206 |
+| `pacientesanserma@gmail.com` | 92 |
+| `pacietnehospital@gmail.com` | 35 |
+| … y una docena de variantes con errores de tipeo | |
+| `pacientehospital@gmailcom` (sin punto) | 4 |
+| `pacientehospital@gmail*com` | 3 |
+
+**78.738 pacientes «con correo», sólo 287 valores distintos.** El campo no
+tiene un solo correo de paciente utilizable.
+
+Y esto es **la lección más importante de toda la ronda**, porque no es sobre el
+correo: `DE_EMAIL_PAC` es un campo obligatorio que el personal llena con un
+valor fijo para poder avanzar en la pantalla. **Todo campo obligatorio que le
+pongamos al hospital se va a convertir en una mentira.** Es evidencia empírica,
+de su propia base, a favor de pedir **un solo campo obligatorio**.
+
+## 5. El teléfono: el padrón gana, y el HIS encogió la columna
+
+| forma | pacientes | % |
+|---|---|---|
+| **móvil válido `3XXXXXXXXX`** | **58.754** | 74,6% |
+| fijo de 7-8 dígitos | 5.244 | 6,7% |
+| fijo nuevo formato `60X…` | 56 | 0,1% |
+| con caracteres no numéricos | 33 | — |
+| **otro largo** (basura) | **14.701** | 18,7% |
+
+Los más repetidos: **`0` en 13.002 pacientes (16,5%)**, `8536399` ×101,
+`6109` ×37, `1` ×28, `123456789` ×18.
+
+Contra el padrón: `telefonomovil` en **131 de 143 (92%)**, todos bien formados.
+**El padrón gana 17 puntos, y para los 13.002 con `0` es la única fuente.**
+
+### 🔴 Y el hallazgo del `ALTER` del 13-ago-2026
+
+D.5a devolvió **una sola diferencia** entre la `PACIENTES` viva y la de 2025:
+
+```
+DE_TELE_PAC:  varchar(10) en la viva  ←  varchar(50) en 2025
+```
+
+**Encogieron la columna del teléfono de 50 a 10 caracteres.** Eso explica por
+qué SQL Server recreó la tabla (reducir un varchar obliga a reescribirla), y
+plantea la pregunta de si la migración **truncó** teléfonos que venían en
+formato doble (`3001234567 / 8536399` cabía en 50).
+
+Consecuencia para el agente espejo: **cero margen**. Un móvil colombiano son
+exactamente 10 dígitos; `+573001234567` (13) o `300 123 4567` (12) hacen fallar
+o truncar el UPDATE. **El driver debe normalizar a 10 dígitos exactos antes de
+escribir en `DE_TELE_PAC`.**
+
+D.5b: **`R_PAC_EPS` no cambió nada** (0 filas de diferencia). Una preocupación
+menos.
+
+## 6. `STG_DEMANDA_PYP` no es el padrón — es algo más interesante
+
+16 columnas: `DOCUMENTO, TIPO_DOCUMENTO, PACIENTE, FECHA_NACIMIENTO, SEXO,
+DIRECCION_PACIENTE, TELEFONO_PACIENTE, DEPARTAMENTO, MUNICIPIO,
+CODIGO_ACTIVIDAD, ACTIVIDAD_PYP, CODIGO_SERVICIO, SERVICIO, FECHA_SERVICIO,
+ESTADO_ACTIVIDAD, FECHA_CARGA_STG`. 85.293 filas.
+
+**`FECHA_CARGA_STG = 2026-09-10 02:30:02.517` en las 5 filas de muestra: se
+cargó a las 2:30 de la madrugada del día de la corrida.** Y en la ronda
+anterior vimos que **los únicos 6 jobs de SQL Server son backups y
+`PA_REVISA_SALDOS`**.
+
+Tres consecuencias:
+
+1. **Hay un tercero escribiendo en producción de madrugada, y no es un job de
+   SQL Server.** Nuestro agente también escribe ahí. Hay que saber qué es, a
+   qué hora corre y si toca `PACIENTES` o `CITAS_MEDICAS`.
+2. **El molde ya existe**: convención `STG_` + columna `FECHA_CARGA_STG`. Es
+   exactamente la forma que tomaría una carga de padrón, y hay precedente en
+   la casa (también `triage_diario_staging`, 2026-07-10).
+3. **Es insumo de producto, no sólo diagnóstico**: 85.293 filas con documento,
+   teléfono, actividad de PyP y estado (`REALIZADO`). Si AgenIA hace demanda
+   inducida por WhatsApp («le corresponde su citología»), este es el insumo.
+
+`TIPO_DOCUMENTO` viene como texto (`CC`) mientras `PACIENTES.NU_TIPD_PAC` es
+numérico (`0`): otra homologación que ya existe dentro de la casa.
+
+## 7. La API del proveedor: `API_LOGS` es un mapa, no un basurero
+
+```
+NU_AUTOIN_LOG bigint | TX_SERVICE_LOG varchar(255) | FE_FECHA_LOG datetime
+NU_TIME_LOG float    | NU_STATUS_LOG int           | TX_ERROR_LOG varchar(max)
+```
+
+**No guarda payloads**: nombre del servicio, duración, status y error.
+**176.280 llamadas desde el 1-jul-2026** ≈ 2.500 al día. `TX_SERVICE_LOG`
+contiene los nombres de los endpoints.
+
+**Si existe un servicio de citas o de afiliación, el espejo debería usarlo en
+vez de escribir tablas directamente.** Es la consulta de mayor valor que queda
+pendiente y es un `GROUP BY`.
+
+Además: `WB_LIC` (23 filas) es el inventario de **módulos licenciados**;
+`PERMIUSUA_SGIO` (4 filas) tiene permisos `ACTUALIZACION_CITA`,
+`CAMBIO_FECHA_RP`, `MODIFICACION_RP` **y una columna `CLAVE varchar(100)**` —
+sistema de permisos añadido el 2026-07-30 que toca justo lo que el agente hace.
+
+## 8. Cerrado: `PLANO` y los reportes de censo
+
+- **`PLANO`** (1.410 filas): `COD_ENT = 1704200608` (DANE Anserma + código de
+  habilitación), `COD_CUM`, `VAL_MIN/VAL_MAX/VALOR/CANT`, `TIPO_O = CM/VN`.
+  Es el **plano de precios de medicamentos (SISMED)**. Nada que ver. Cerrado.
+- **`CENSO NUEVA EPS`** y **`CENSO DIARIO`** arrancan con
+  `CREATE TABLE #INGRESOS(NUMERO_REGISTRO, NIT_IPS, CODIGO_HABILITACIÓN,
+  TIPO_IDENTIFICACIÓN, …)`: es el **censo de ingresos que el hospital LE MANDA
+  a la EPS**. Dirección contraria al padrón. Cerrado: ningún reporte lee un
+  padrón.
+
+## 9. 🔴 EL DEFECTO DE DISEÑO: la llave única impide estar en dos EPS
+
+`EpsEnrolledPatient` tiene `@@unique([organizationId, cedula])`, pero los dos
+porteros consultan por `(organizationId, epsId, cedula, isActive)`.
+
+**Una persona no puede existir en dos padrones a la vez.** Y durante un
+traslado entre EPS sí aparece en los dos cortes del mismo mes. Qué pasa:
+
+```
+corte Salud Total (A):  Juan → { epsId: ST,   importId: A, activo }
+corte Sura        (B):  ON CONFLICT (org, cedula) → { epsId: SURA, importId: B }
+                        ...la baja de Sura filtra por epsId=SURA → Juan sobrevive
+corte Salud Total (C):  → { epsId: ST, importId: C }   ...y vuelve a voltearse
+```
+
+**La EPS de Juan cambia con cada carga, y quien cargue de último decide si Juan
+puede agendar.** Con la semántica de reemplazo (§10) el ping-pong es peor.
+
+**Corrección: la llave debe ser `@@unique([organizationId, epsId, cedula])`.**
+Dos filas, cada una gobernada por el corte de su propia EPS, y el portón
+encuentra la correcta. Es una migración y hay que hacerla antes del piloto.
+
+## 10. Semántica de carga, con la respuesta del hospital
+
+> **El hospital confirmó:** el padrón que envían las EPS es **siempre
+> completo**, pero **puede llegar parcial por algún error**. Debe poderse
+> cargar cuantas veces sea necesario, actualizando la información por completo.
+
+⇒ **Reemplazo por EPS, idempotente**, todo en una transacción:
+
+```sql
+-- 1. upsert de todas las filas del archivo (importId nuevo, isActive = true)
+-- 2. UPDATE EpsEnrolledPatient
+--       SET isActive = false, deactivatedByImportId = <nuevo>
+--     WHERE epsId = <esa EPS> AND importId <> <nuevo> AND isActive = true
+```
+
+Propiedades que salen gratis: **recargar el mismo archivo no cambia nada** (más
+allá de `updatedAt`); quien fue desactivado y reaparece **se reactiva solo** en
+el paso 1; y `importId` deja el rastro para responder «¿por qué rechazaron a
+Juan el 12 de octubre?».
+
+⚠️ Y como el hospital **avisó que los parciales pasan**, la baja necesita
+baranda —no un bloqueo—: **si un corte va a desactivar más del 10% del padrón
+activo de esa EPS, exigir confirmación explícita mostrando la cifra.** Un
+número raro delata el parcial antes de hacer daño. La confirmación queda
+registrada en el log del corte.
+
+## 11. Confirmado: la EPS se escoge en pantalla — con una guarda
+
+Está bien y es lo correcto (ninguno de los dos archivos trae columna `eps`).
+Pero pasa a ser **un dato que teclea un humano**, y equivocarse cuesta ~9.100
+personas con la EPS errada → convenio errado → glosa.
+
+**Guarda barata:** desde el segundo corte de una EPS, el solapamiento de
+documentos con el corte anterior debe rondar el 95%. Si baja del 70%, avisar. Y
+si los documentos del archivo se parecen más al padrón activo de **otra** EPS,
+decirlo: «estos documentos coinciden 94% con el padrón de Salud Total, ¿seguro
+que es Sura?».
+
+## 12. Un solo campo obligatorio: el documento
+
+Respaldado por §4: el hospital ya demostró qué le hace a un campo obligatorio
+que no puede llenar.
+
+| campo | régimen | por qué |
+|---|---|---|
+| `documento` | **obligatorio** | es la llave y lo único que no se puede suplir |
+| `regimen` | opcional (muy deseado) | enruta el convenio; si falta, cae a la heurística de la casilla (§2) |
+| `movil` | opcional (valioso) | 92% en el padrón vs 74,6% en el HIS, y 13.002 pacientes tienen `0` |
+| todo lo demás | **fuera** | nombres, fecha, sexo, dirección → los tiene el HIS, mejor |
+| `ProgramasEspeciales` | **prohibido** | ~1.260 filas con códigos sensibles en el archivo real |
+
+`REQUIRED_HEADERS` pasa de `['cedula','nombre_completo','eps']` a `['cedula']`.
+
+## 13. Normalización del documento: una función, dos pasadas
+
+Reglas que salen de los datos medidos:
+
+1. **Quitar espacios y puntos**: `1.234.567` → `1234567`.
+2. **NO fusionar el sufijo con guion.** `1115634392-1` es un recién nacido
+   distinto de su madre `1115634392` (1.482 pacientes con esta forma). Jamás
+   descartar el sufijo.
+3. **Rechazar los comodines**: todo-ceros (`0`, `0000`, `00000001`), `XX`,
+   `XXXXXX`, `INDOCUMENTADO`. El `^\d{4,15}$` actual ya rechaza los literales
+   pero **acepta `0000`**: hay que añadir la regla de todo-ceros.
+4. **Ceros a la izquierda: dos pasadas.** No quitarlos en la normalización
+   —fusionaría `0012345` con `12345`— pero sí permitir un **segundo intento sin
+   ceros a la izquierda cuando la búsqueda exacta falla**. Excel se come los
+   ceros iniciales de las celdas numéricas, así que el padrón puede traer
+   `12345` donde el HIS tiene `0012345` (135 casos como tope).
+
+Hoy divergen: el importador hace `replace(/[.\s]/g,'')` y los porteros
+`replace(/\D/g,'')`. **Una sola función exportada desde `@agenia/shared`,
+usada en los tres sitios** (importador, portón del chatbot, portón del staff).
+
+## 14. Preguntas que quedan para el 100%
+
+1. **Homologación del régimen** — bloqueante para facturar. Dos consultas:
+   `SELECT * FROM dbo.REGIMEN` y el join a `TIPOUSUARIO`.
+2. **El cruce padrón↔HIS (D.11)** — ¿cuántos del padrón no existen en
+   `PACIENTES`? Decide si el «hable con el hospital» manda 50 o 3.000 personas
+   al teléfono. Requiere cargar los CSV a `AGENIA_SYNC`.
+3. **¿Quién carga `STG_DEMANDA_PYP` a las 2:30 AM?** Hay un tercero escribiendo
+   en producción y nuestro agente comparte esa base.
+4. **`SELECT TX_SERVICE_LOG, COUNT(*) FROM API_LOGS GROUP BY 1`** — si hay
+   endpoint de citas o afiliación, el espejo cambia de estrategia.
+5. **`SELECT * FROM dbo.PARENTESCO`** (7 filas) — cierra el único cabo suelto
+   de la hipótesis de la casilla.
+6. **¿La migración del 13-ago truncó teléfonos?** `varchar(50)` → `varchar(10)`.
+7. **Cadencia y responsable de la carga.** Si nadie carga el corte del mes, el
+   padrón envejece y el bot rechaza a gente con derecho — **es el fallo
+   silencioso más probable del sistema**. Requiere alerta por antigüedad del
+   último corte por EPS.
+8. **Menores: ¿puede la madre agendar por su WhatsApp para el hijo?** El padrón
+   de Sura trae 17% de menores (RC y TI, el menor de 3 años). Hoy el bot asume
+   una persona por número. Es un flujo real de pediatría y no está definido.
+9. **Texto del mensaje de rechazo**, aprobado por el hospital, con teléfono y
+   horario. Uno solo para las dos causas (no está en el padrón / no existe en
+   el HIS), para no revelar la afiliación de nadie.
+10. **Modo observación** 2-3 semanas antes de bloquear de verdad.
+
+---
+
+# 🗝️ LA HOMOLOGACIÓN DEL RÉGIMEN, RESUELTA (2026-09-10)
+
+Cuatro consultas cerraron tres pendientes. Y la primera resultó ser el hallazgo
+más útil de todo el día.
+
+## 1. ✅ `REGIMEN` (22 filas): el código no es el régimen — es régimen + tipo de afiliado + nivel, fundidos
+
+```
+CD_CODI_REG  NO_NOMB_REG           TX_CODI_RTT_REG  NU_CON_LIST_REG
+01  SUB NIVEL 1                        2   4
+02  SUB NIVEL 2                        2   4
+03  SUB NIVEL 3                        2   4
+14  SUB NIVEL 0                        2   4
+17  SUB DESPLAZADO                     2   4
+04  VINCULADO NIVEL 1                  3   5
+05  VINCULADO NIVEL 2                  3   5
+06  VINCULADO NIVEL 3                  3   5
+16  VIN DESPLAZADO                     3   5
+07  COTIZANTE RANGO 1                  1   1
+08  COTIZANTE RANGO 2                  1   1
+09  COTIZANTE RANGO 3                  1   1
+18  CONTRIB DESPLAZADO                 1   1
+19  CONTRIBUTIVO CERO                  1   1
+10  BENEFICIARIO RANGO 1               1   2
+11  BENEFICIARIO RANGO 2               1   2
+12  BENEFICIARIO RANGO 3               1   2
+13  SOAT                               5  10
+15  REG ESPECIAL                       5   6
+20  ARL                                C   9
+F   FOSYGA                             3   5
+P   OTRO                               5   5
+```
+
+**`TX_CODI_RTT_REG` es el eje que necesitamos** (es el tipo de usuario de RIPS):
+
+| RTT | códigos | significa | valor para `mapping.json` |
+|---|---|---|---|
+| **1** | 07,08,09,10,11,12,18,19 | **CONTRIBUTIVO** (cotizante o beneficiario, cualquier rango) | `CONTRIBUTIVO` |
+| **2** | 01,02,03,14,17 | **SUBSIDIADO** (cualquier nivel) | `SUBSIDIADO` |
+| 3 | 04,05,06,16,F | vinculado / FOSYGA | no aplica (municipio) |
+| 5 | 13,15,P | SOAT, especial, otro | Particular |
+| C | 20 | ARL | no aplica |
+
+### La homologación es una función de una línea
+
+`mapping.json` indexa los convenios por `NIT|SUBSIDIADO|CONTRIBUTIVO[|EVENTO|PYP]`
+— **sólo dos valores de régimen**:
+
+```
+800130907|SUBSIDIADO → 475     800130907|SUBSIDIADO|EVENTO → 538
+800130907|CONTRIBUTIVO → 476   800130907|CONTRIBUTIVO|EVENTO → 96
+800088702|SUBSIDIADO → 467     800088702|SUBSIDIADO|EVENTO → 535
+800088702|CONTRIBUTIVO → 473   800088702|CONTRIBUTIVO|EVENTO → 97
+```
+
+⇒ `TX_CODI_RTT_REG = '1'` → CONTRIBUTIVO; `= '2'` → SUBSIDIADO. **Nada más.**
+
+### Y esto CONFIRMA el diseño de tres campos
+
+El código detallado (07 vs 08 vs 09) sólo cambia el **copago**:
+`CUOTA_TIPOAFIL` se indexa por `(CD_CODI_REG_CUTA, CD_NIT_EPS_CUTA)` con valores
+de consulta, procedimiento, ayudas dx, elementos y paraquirúrgicos. Y **el copago
+lo liquida el HIS al facturar, con el código que el paciente ya tiene en
+`R_PAC_EPS`.** Nuestro agente no escribe ese código: escribe un **convenio**.
+
+⇒ **El padrón NO necesita traer `RangoSalarial` ni el nivel de SISBÉN.** Quedan
+fuera, como estaban, y ahora con la razón demostrada en vez de supuesta.
+
+### Validación cruzada: los 15 pacientes de P.2b cuadran sin una excepción
+
+| paciente | EPS | código HIS | nombre del código | → |
+|---|---|---|---|---|
+| 1000125390 | Salud Total | 01 | SUB NIVEL 1 | SUBSIDIADO |
+| 10002511 | Salud Total | 01 | SUB NIVEL 1 | SUBSIDIADO |
+| 1002593948 | Salud Total | 07 | COTIZANTE RANGO 1 | CONTRIBUTIVO |
+| 10018650 | Cafesalud | 02 | SUB NIVEL 2 | SUBSIDIADO |
+| 1128282352 | Sura | 07 | COTIZANTE RANGO 1 | CONTRIBUTIVO |
+| 3512461 | Sura | 10 | BENEFICIARIO RANGO 1 | CONTRIBUTIVO |
+| 1054927743 | Nueva EPS | 10 | BENEFICIARIO RANGO 1 | CONTRIBUTIVO |
+| todos | Municipio Anserma | 04 | **VINCULADO NIVEL 1** | población pobre no asegurada |
+| todos | FOSYGA | F | FOSYGA | — |
+| todos | Particulares | P | OTRO | Particular |
+
+El `04` que llevan los 78.657 pacientes en la fila del Municipio es
+**VINCULADO NIVEL 1**: el respaldo municipal para cuando nadie más responde.
+Encaja con que sea universal.
+
+## 2. ✅ `PARENTESCO` cierra el cabo suelto de la casilla
+
+```
+01 PADRE   02 MADRE   03 ESPOSO (A)   04 HIJO (A)
+05 ABUELO (A)   06 OTROS   07 HERMANO (A)
+```
+
+**Los códigos son 01-07. `NU_AFIL_RPE` va de 0 a 6. Los rangos no coinciden.**
+
+Y el argumento semántico remata: si fuera parentesco, los 78.657 pacientes
+tendrían «OTROS» en su fila del Municipio, 78.109 «ABUELO(A)» en la de FOSYGA y
+73.557 «HIJO(A)» en la de Particulares. Absurdo.
+
+⇒ **`NU_AFIL_RPE` es índice de casilla por orden de llegada. Confirmado y
+cerrado.** La coincidencia de cardinalidad (7 y 7) era eso: coincidencia — y ni
+siquiera los rangos calzaban.
+
+## 3. 🔴 `API_LOGS`: la pista muere, pero deja una alarma para el hospital
+
+```
+TX_SERVICE_LOG          llamadas   con error   %
+Consultar paciente        88.147     58.201    66,0%
+Consultar profesional     88.133      1.442     1,6%
+2026-07-09 17:15  →  2026-09-10 09:24  (63 días)
+```
+
+**Sólo dos servicios, y ninguno de agenda ni de afiliación.**
+
+⇒ **La API del proveedor no nos sirve. El espejo sigue escribiendo tablas.
+Pista cerrada, decisión tomada.**
+
+Pero quedan dos cosas que decirle al hospital:
+
+1. **58.201 fallos en 63 días ≈ 924 al día**, y el servicio hermano —que se
+   llama en pareja, 88.147 contra 88.133, 14 de diferencia— falla el 1,6%. La
+   misma pantalla llama a los dos y uno funciona y el otro no.
+2. Puede no ser una avería: si «Consultar paciente» devuelve no-2xx cuando el
+   documento no existe todavía, el 66% es simplemente «paciente nuevo» usado
+   como flujo. **`TX_ERROR_LOG` lo dice.** Pedirlo **agrupado por mensaje
+   distinto**, nunca filas crudas: esa columna puede traer datos del paciente.
+
+Y si resultara ser un servicio **externo** de verificación de derechos
+(ADRES/BDUA), sería la fuente de verdad que buscamos toda la investigación —
+funcionando una de cada tres veces. Vale los dos minutos de averiguarlo.
+
+## 4. ✅ `WB_LIC` cerrado
+
+23 filas, seis columnas, todas hexadecimal de longitud variable (60-130
+caracteres). No son hashes —la longitud varía con el contenido—: es cifrado del
+proveedor sobre la tabla de licenciamiento de módulos. **No es nuestro asunto y
+no hay que intentar descifrarla.** Cerrado.
+
+---
+
+# ✅ DECISIONES DEL HOSPITAL / PRODUCTO (2026-09-10)
+
+## D-1. Cadencia: la carga es manual, del ORG_ADMIN del tenant
+
+Ya funciona así (`requireOrgAdmin` en las server actions). **Consecuencia
+obligatoria, no opcional:** si la carga depende de que una persona se acuerde,
+se va a olvidar, y **el fallo es silencioso** — el padrón viejo sigue
+respondiendo: admite a quien ya se fue y rechaza al que acaba de afiliarse.
+
+Diseño mínimo:
+- Alerta en el **dashboard principal** (no escondida en la pantalla del padrón)
+  cuando el corte más reciente de una EPS activa pase de N días (30 por
+  defecto, configurable).
+- **No relajar el portón automáticamente** por padrón viejo: sería una puerta
+  abierta silenciosa, que es peor que un rechazo visible.
+- Sí **sellar cada rechazo con la antigüedad del padrón que lo causó**. Cuando
+  el hospital reclame «rechazaron a alguien con derecho», el log responde: «el
+  padrón de Sura tenía 75 días».
+
+## D-2. Menores: no se evalúa. Cualquier documento válido agenda
+
+Decisión tomada: se pide el documento y se intenta agendar. Sin vínculo
+titular/beneficiario. Simplifica mucho y es lo correcto para el piloto.
+
+Queda registrada la trazabilidad que sí tenemos: cada cita guarda el documento
+del paciente **y** el número de WhatsApp desde el que se pidió.
+
+⚠️ Una salvedad con mitigación concreta, y seguimos: agendar de más cuesta una
+silla vacía, pero **cancelar la cita de un tercero** —si el bot permite
+consultar o cancelar por documento— sí es daño real. Recomendación:
+**dar de alta sin más, pero para consultar o cancelar exigir que el WhatsApp
+coincida con el que agendó** (o con el teléfono del padrón/HIS). Mantiene la
+simplicidad del alta y cierra el abuso obvio.
+
+## D-3. Mensaje de rechazo: configurable desde el panel del tenant
+
+Un solo texto para las dos causas (no está en el padrón / no existe en el HIS),
+para no revelar la afiliación de nadie.
+
+Estado actual a corregir: `MSGS.epsNoAfiliado` vive **dos veces** en
+`apps/api/src/chatbot/chatbot.constants.ts` (líneas 235 y 946 — variantes de
+tono por `CommunicationStyle`), y **ambas mandan al enlace
+`/solicitud-alta/{organizationId}`**, que es justo el auto-registro que sale.
+
+Diseño:
+- Campo nuevo en `Organization`, junto a los que ya existen (`supportPhone`,
+  `timezone`, `knowledgeBase`): `padronRejectionMessage String? @db.Text`.
+- **`supportPhone` ya existe** — el texto puede usarlo con un marcador simple,
+  o el admin escribe el teléfono a mano. Preferible el marcador: un teléfono
+  duplicado se desincroniza.
+- Si el campo está vacío → cae al texto por defecto (que conserva las dos
+  variantes de tono). **Nunca enviar un mensaje vacío.**
+- Conservar del mensaje actual lo que está bien: **la oferta de agendar como
+  Particular**. Es una salida legítima y hoy la ofrece.
+- El portón del staff (`apps/web/lib/eps-enrollment.ts`) **sí puede seguir
+  mostrando la causa real**: quien lo lee es personal del hospital.
+
+## D-4. El cruce padrón↔HIS deja de ser una medición y pasa a ser el reporte
+
+La pregunta era: **¿cuántas personas del padrón no existen en `PACIENTES`?**
+Importa porque el portón nuevo es una intersección y **a esa gente el bot la
+manda al teléfono**. Si son 200 de 9.100, son 200 llamadas al mes y el piloto
+va. Si son 3.000, un tercio de la gente termina llamando y el piloto fracasa
+por algo que se podía prever.
+
+**Y la respuesta buena es la que ya pidió el negocio:** el reporte de
+reconciliación tras cada carga **es exactamente esta medición, hecha
+funcionalidad.** En vez de medirlo a mano una vez, se mide solo cada mes y
+queda registrado.
+
+⚠️ Restricción de arquitectura que hay que respetar: **la web no alcanza al
+HIS.** El padrón se carga en la web (VPS/cloud) y `PACIENTES` sólo es
+alcanzable desde el agente espejo, dentro de la red del hospital. Así que la
+reconciliación **no puede ser sincrónica** dentro de la carga:
+
+```
+1. El admin carga el CSV        → corte queda IMPORTADO
+2. Se encola trabajo de reconciliación
+3. El agente espejo lo recoge, consulta el HIS por lotes, devuelve el resultado
+4. El corte pasa a RECONCILIADO y el reporte se completa
+```
+
+El front debe mostrar el corte como **«importado · reconciliación pendiente»** y
+completarse después. Es un estado más en `PadronImport`, no un rediseño.
+
+**Para dimensionar antes de construir** sigue sirviendo la vía manual (D.11 del
+SQL): cargar los documentos a `AGENIA_SYNC.dbo.STG_PADRON` con el asistente de
+SSMS y hacer `LEFT JOIN ESEHSVP.dbo.PACIENTES`. Una tarde, y sabemos si el
+diseño es viable antes de escribir el front.
+
+## D-5. Por qué importa quién carga `STG_DEMANDA_PYP` a las 2:30 AM
+
+No es curiosidad. Son cuatro riesgos concretos:
+
+1. **Nuestro agente no es el único que escribe en `ESEHSVP`.** Si ese proceso
+   toca `PACIENTES` o `CITAS_MEDICAS` a la misma hora que sincronizamos, hay
+   carrera. Y si hace `DELETE`/`TRUNCATE` masivos, puede pisar trabajo nuestro.
+2. **Ventana de mantenimiento**: hay que saber a qué hora NO sincronizar.
+3. **Puede ser el canal del padrón.** Si ya existe un proceso que carga staging
+   desde fuera cada noche, ése es el camino por el que podría llegar el padrón
+   sin que nadie lo suba a mano — y resolvería D-1 de raíz.
+4. **No hay ningún job de SQL Server que lo haga** (los 6 son backups y
+   `PA_REVISA_SALDOS`). Así que es un script externo o el módulo nuevo del
+   proveedor, escribiendo en producción sin registro en el servidor.
+
+Cómo averiguarlo, en orden de esfuerzo:
+
+```sql
+-- (a) ¿Es diario, semanal, o fue una sola vez? ¿Y borra y recarga?
+SELECT CAST(FECHA_CARGA_STG AS date) AS dia, COUNT(*) AS filas,
+       MIN(FECHA_CARGA_STG) AS primera, MAX(FECHA_CARGA_STG) AS ultima
+FROM dbo.STG_DEMANDA_PYP GROUP BY CAST(FECHA_CARGA_STG AS date) ORDER BY dia DESC;
+
+-- (b) Rango de FECHA_SERVICIO: dice qué ventana de tiempo arma el proceso
+SELECT MIN(FECHA_SERVICIO), MAX(FECHA_SERVICIO), COUNT(DISTINCT DOCUMENTO)
+FROM dbo.STG_DEMANDA_PYP;
+
+-- (c) Las 29 filas de LOG_AUDITORIA_SGIO traen QUERY_EJECUTADA
+SELECT * FROM dbo.LOG_AUDITORIA_SGIO ORDER BY FECHA_ACCION DESC;
+
+-- (d) AUDITOR (977.622 filas) es la auditoría del HIS: ver su estructura
+SELECT c.name, ty.name AS tipo FROM sys.columns c
+JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+WHERE c.object_id = OBJECT_ID('dbo.AUDITOR') ORDER BY c.column_id;
+```
+
+Y en paralelo, la vía corta: **preguntarle a TI del hospital.** Si la respuesta
+es «lo montó el proveedor para la demanda inducida de PyP», con eso basta.
+
+---
+
+# 🐍 HAY UNA SEGUNDA APLICACIÓN ESCRIBIENDO EN `ESEHSVP` (2026-09-10)
+
+Las dos consultas de D-5 contestaron la pregunta de las 2:30 AM y destaparon
+algo más importante.
+
+## 1. `STG_DEMANDA_PYP`: borra y recarga, atómica, 02:30
+
+```
+dia         filas    primera                  ultima
+2026-09-10  85.293   2026-09-10 02:30:02.517  2026-09-10 02:30:02.517
+```
+
+**Un solo día, un solo timestamp, idéntico al milisegundo en las 85.293 filas.**
+Tres lecturas:
+
+1. **La carga es atómica.** El mismo milisegundo en todas las filas significa
+   que el valor se capturó UNA vez en una variable, no con un
+   `DEFAULT GETDATE()` por fila. Es un `INSERT … SELECT` o un `executemany`
+   con parámetro.
+2. **Borra y recarga completa.** La tabla existe desde el 2026-07-24 y sólo
+   tiene datos del 2026-09-10: no acumula. El proceso hace
+   `TRUNCATE`/`DELETE` + `INSERT` de 85.293 filas.
+3. **No se puede saber si corre a diario** con un solo punto de datos, pero que
+   la única corrida visible sea justo la de hoy —48 días después de crearse la
+   tabla— apunta a que **corre seguido y siempre reemplaza**.
+
+### Lo que esto fija para nuestro agente
+
+- **Ventana de mantenimiento: no sincronizar entre 02:15 y 03:00.** Una
+  operación de 85.293 filas dentro de `ESEHSVP` genera E/S y bloqueos, y
+  necesita LEER de `PACIENTES` y de las tablas de 4505/facturación para armar
+  la demanda de PyP.
+- **`STG_DEMANDA_PYP` no guarda historia.** Si la queremos como insumo de
+  demanda inducida por WhatsApp, hay que leerla el mismo día o copiarla.
+  `FECHA_CARGA_STG` sirve de sello de frescura.
+
+## 2. 🔴 `LOG_AUDITORIA_SGIO`: la aplicación es Python + pyodbc
+
+La columna `QUERY_EJECUTADA` delata la tecnología entera:
+
+```
+{CALL SP_CONSULTAR_ORDEN_SERVICIO (?, ?, ?)} | Params: ('1054922923',
+    datetime.date(2026, 8, 1), datetime.date(2026, 8, 31))
+```
+
+- `{CALL sp (?, ?, ?)}` es **sintaxis de escape ODBC** para llamar un
+  procedimiento almacenado.
+- `datetime.date(2026, 8, 1)` es el **`repr()` de Python**, dentro de una tupla
+  de Python.
+
+⇒ **Es una aplicación en Python con pyodbc.** No es el HIS original, que por la
+nomenclatura de columnas (`NU_`, `TX_`, `CD_`, `DE_`, `FE_`, `VL_`) es una app
+de escritorio de otra época.
+
+### Y todo lo demás encaja: es una app web estrenada el 2026-07-30
+
+| evidencia | qué dice |
+|---|---|
+| `PERMIUSUA_SGIO` y `LOG_AUDITORIA_SGIO` creadas **2026-07-30 15:55** | |
+| primer `INGRESO_SISTEMA` **2026-07-30 15:57:55** | dos minutos después: es el estreno |
+| pantallas: `Pantalla Login`, `Sidebar`, `Parametrización Permisos`, `Liberar Cargos con Cita` | login + sidebar = **aplicación web** |
+| `WB_CON` / `WB_LIC` creadas 2026-07-01 | **WB = web**; `WB_LIC` es su licenciamiento |
+| `API_LOGS`, primer registro 2026-07-09 | `Consultar paciente` / `Consultar profesional` los llama esta app |
+| `ID_IDEN_USUA=` hasta el 2026-08-05 → `ID_USUA=` desde el 2026-08-13 | **la app se actualizó** en esa ventana |
+
+Y los permisos de `PERMIUSUA_SGIO` son su menú: `MODULO_ADMIN`,
+**`ACTUALIZACION_CITA`**, `DESADMISIONAR_LAB`, `GESTION_NC`, **`RESOLUCION_202`**,
+**`CAMBIO_FECHA_RP`**, `INFORMES`, `MODIFICACION_RP`.
+
+### Qué es, casi con seguridad
+
+**`RESOLUCION_202`** es la Resolución 202 de 2021 — el reporte de actividades de
+Protección Específica y Detección Temprana. Y **`STG_DEMANDA_PYP` es demanda
+inducida de PyP.** El HIS maneja nativamente la 4505 (`RESOL4505_CONCEPTO`,
+`ACT_PAC_RES4505_MES`, `RES4505_ITEMVAL_MES`… todas entre las más escritas), que
+es la resolución **anterior**.
+
+⇒ Alguien montó en julio de 2026 una **app web en Python para la Resolución 202
+y PyP**, más un puñado de herramientas operativas que el HIS no hace o hace mal
+(notas crédito, desadmisionar laboratorio, registro presupuestal). Y
+`STG_DEMANDA_PYP` es su tabla de staging nocturna.
+
+La carga de las 2:30 **no aparece en `LOG_AUDITORIA_SGIO`** (su último registro
+es del 2026-08-31), así que el cargador es un proceso programado del mismo
+equipo, sin auditoría, no la app interactiva.
+
+## 3. 🔴 Lo que sí es un riesgo para el espejo
+
+**Existe una segunda aplicación con permiso explícito de `ACTUALIZACION_CITA` y
+`CAMBIO_FECHA_RP` sobre la misma base donde el agente escribe citas.**
+
+Es exactamente lo que rompe un espejo: si esa app cambia la fecha de una cita
+que ya reflejamos en AgenIA, o la toca entre nuestra lectura y nuestra
+escritura, hay divergencia **silenciosa** — nadie se enterará hasta que un
+paciente llegue el día equivocado.
+
+Lo que la modera hoy: **29 eventos en 32 días**, 4-5 usuarios (`administrador`,
+`GGALLO`, `YGUAPACHA`, y se mencionan `DRESTREPOG` y
+`GLORIA FERNANDA GALLO GIRALDO`), y **nada desde el 2026-08-31** — hace 10 días.
+Está prácticamente sin usar.
+
+Lo que NO sabemos, y hay que saber: **`LOG_AUDITORIA_SGIO` no registra ni una
+sola escritura.** Sus acciones son `INGRESO_SISTEMA`, `CIERRE_SESION`,
+`ACTUALIZAR_PERMISOS` y `CONSULTA_REALIZADA`. O nadie ha actualizado una cita
+todavía, **o la app no audita sus escrituras** — y en ese caso este log no
+sirve para vigilarla.
+
+## 4. Dos observaciones menores
+
+- **Faltan los `ID_LOG` 17 a 20**, entre el 2026-08-13 13:46 y las 15:36. Lo más
+  probable y benigno: `INSERT` fallidos que consumieron identidades (SQL Server
+  no las devuelve). No hay señal de borrado deliberado.
+- ⚠️ **`QUERY_EJECUTADA` guarda documentos de paciente en claro**: `'1054922923'`,
+  `'24392768'`, `'11351646614'`. Es una tabla de auditoría con datos
+  identificables en texto libre, a nivel de depuración, en producción. No es
+  nuestro sistema y no es nuestra decisión — pero es **el patrón exacto que
+  decidimos evitar** en `PadronImportRow` al prohibir guardar la fila cruda de
+  un aceptado. Sirve de contraste para sostener esa decisión.
+
+## 5. Consultas que cierran el asunto
+
+```sql
+-- (a) ⭐ Los objetos nuevos del proveedor/app desde junio: revelan qué hace
+SELECT o.name, o.type_desc, o.create_date, o.modify_date, LEN(m.definition) AS largo
+FROM sys.sql_modules m JOIN sys.objects o ON o.object_id = m.object_id
+WHERE o.create_date >= '2026-06-01' OR o.modify_date >= '2026-06-01'
+ORDER BY o.modify_date DESC;
+-- Si aparece un SP de actualizar/mover citas, el segundo escritor queda confirmado.
+
+-- (b) ¿Hay más objetos de esa app?
+SELECT name, create_date FROM sys.tables WHERE name LIKE '%SGIO%' ORDER BY create_date;
+
+-- (c) Quién puede tocar citas desde esa app. SIN la columna CLAVE, a propósito.
+SELECT ID_USUA, TIPO_USUARIO, MODULO_ADMIN, ACTUALIZACION_CITA,
+       CAMBIO_FECHA_RP, MODIFICACION_RP, RESOLUCION_202, INFORMES
+FROM dbo.PERMIUSUA_SGIO;
+
+-- (d) AUDITOR (977.622 filas) es la auditoría del HIS nativo: ver si registra
+--     usuario + tabla + acción. Si lo hace, ahí está el rastro de TODA escritura.
+SELECT c.column_id, c.name, ty.name AS tipo, c.max_length
+FROM sys.columns c JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+WHERE c.object_id = OBJECT_ID('dbo.AUDITOR') ORDER BY c.column_id;
+```
+
+## 6. Y una pregunta para el hospital que ya no es técnica
+
+**¿Quién hizo esa aplicación y quién la mantiene?** Porque a partir del piloto
+van a ser **dos sistemas externos escribiendo en `CITAS_MEDICAS`**: esa app y
+nuestro agente. Hace falta saber a quién llamar cuando una cita aparezca
+distinta en los dos lados, y avisarles que existimos.
+
+---
+
+# 🧭 EL SEGUNDO ESCRITOR SE DESINFLA, Y APARECEN DOS COSAS NUEVAS (2026-09-10)
+
+## 1. ⚠️ Corrección: el riesgo del «segundo escritor sobre `CITAS_MEDICAS`» era exagerado
+
+En la sección anterior advertí que existía una aplicación con permiso de
+`ACTUALIZACION_CITA` escribiendo en la misma tabla que nuestro agente. Los datos
+lo bajan mucho de nivel. Tres razones:
+
+**No existe ningún procedimiento de actualizar o mover citas.** El inventario
+completo de objetos nuevos desde junio no tiene nada parecido. Los únicos que
+corresponden a la app SGIO son de lectura o de otra cosa:
+
+| objeto | tipo | creado | qué es |
+|---|---|---|---|
+| `SP_CONSULTAR_ORDEN_SERVICIO` | SP, 1.872 ch | 2026-07-10 | **consulta**: (documento, desde, hasta) |
+| `DESADMISION_LABORATORIO` | SP, 1.498 ch | 2026-07-31 | el permiso `DESADMISIONAR_LAB` |
+| `V_USUARIOS_TODOS_MODULOS` | vista, 2.749 ch | 2026-08-13 13:37 | alimenta la pantalla de permisos — el log muestra `ACTUALIZAR_PERMISOS` a las 13:45 del mismo día |
+
+**Y ningún usuario real tiene el permiso:**
+
+```
+ID_USUA        TIPO  ADMIN  ACTUALIZACION_CITA  CAMBIO_FECHA_RP  MODIFICACION_RP  RES_202  INFORMES
+ADMINISTRADOR   1      1            1                  1                1            1        1
+DRESTREPOG      0      0            0                  0                1            0        0
+GGALLO          0      0            0                  0                1            0        0
+YGUAPACHA       0      0            0                  0                1            0        0
+```
+
+`ADMINISTRADOR` lo tiene todo en 1 porque es el superusuario: no es evidencia de
+uso. **Los tres humanos reales sólo tienen `MODIFICACION_RP`** — registro
+presupuestal. Y encaja con la pantalla que aparece en el log («Liberar Cargos
+con Cita», que es facturación) y con `SP_CONSULTAR_ORDEN_SERVICIO`, que es de
+lectura.
+
+⇒ **`ACTUALIZACION_CITA` es un permiso declarado sin funcionalidad detrás y sin
+usuarios.** Sigue valiendo avisar que existimos, pero no es un bloqueante.
+
+## 2. El 1-jul-2026 18:43-18:47 fue una actualización mayor del producto
+
+Todo este bloque cayó en cuatro minutos, y es del **proveedor del HIS**:
+
+```
+18:43:16  VW_FACTURAS_CREDITO              vista,   9.726 ch
+18:44:15  SP_INTEROPERABILIDAD_IHC_V2      SP,     80.354 ch   ⭐
+18:44:26  TR_AUDITORIA_FC                  TRIGGER, 3.310 ch   🔴
+18:44:26  TR_AUDITORIA_TFP                 TRIGGER, 2.562 ch   🔴
+18:44:32  QRY_FACTURACION_ELECTRONICA      SP,    131.669 ch
+18:44:32  PA_CUSTOMTAGSS_NCRE              SP,     19.788 ch
+18:47:51  PA_FACTURACION_ELECTRONICA_NCRE  SP,    116.702 ch
+```
+
+Más las tablas que la ronda 1 fechó el mismo minuto: `ARTICULO_IUM`,
+`SERVICIOS_CUPS`, `PRINCIPIOSMED_DCI`, `MEDICAMENTOS_DCI`, `HOMO_CIE10_CIE11`,
+`API_LOGS`, `WB_CON`, `WB_LIC`, `AUDITORIA_FC`, `AUDITORIA_TFP`.
+
+**Es facturación electrónica + interoperabilidad de historia clínica + API.**
+
+### Dos correcciones a lo que dije antes
+
+- **`API_LOGS` es del proveedor, no de la app Python.** Se creó a las
+  18:44:26 dentro de este bloque. `Consultar paciente` / `Consultar profesional`
+  son llamadas del **producto** a servicios externos, probablemente de
+  facturación electrónica o de interoperabilidad.
+- **La app SGIO es muy probablemente un módulo web del mismo proveedor**, no un
+  tercero: `WB_LIC` es una tabla de **licenciamiento cifrado por módulos**, del
+  1-jul, y las tablas `*_SGIO` llegaron el 30-jul. Es la secuencia de un
+  despliegue de producto: infraestructura primero, módulo después. **Cambia a
+  quién hay que avisar: al proveedor, que ya es interlocutor conocido.**
+
+### Y una pista que vale la pena: `SP_INTEROPERABILIDAD_IHC_V2`
+
+80.354 caracteres, del 1-jul-2026. La ronda 1 había visto
+`SP_INTEROPERABILIDAD` (22.894 ch, de 2023). **IHC = Interoperabilidad de
+Historia Clínica** (Resolución 866 de 2021). Un SP de 80 KB que implementa la
+IHC del MinSalud tiene, casi por obligación normativa, estructuras normalizadas
+de paciente y de afiliación. Vale leerlo.
+
+## 3. 🔴 Hay dos triggers nuevos y no sabemos sobre qué tablas están
+
+`TR_AUDITORIA_FC` y `TR_AUDITORIA_TFP`, activos desde el 1-jul-2026, alimentando
+`AUDITORIA_FC` (19.086 filas) y `AUDITORIA_TFP` (14.634 filas).
+
+**Es una omisión nuestra que hay que cerrar ya:** nunca medimos qué triggers hay
+sobre las tablas que el agente escribe. Si hay uno sobre `CITAS_MEDICAS`,
+`CITAS_ANULADAS` o `PACIENTES`, **cada INSERT/UPDATE nuestro ejecuta código del
+proveedor dentro de nuestra transacción** — con su latencia, sus bloqueos y sus
+posibles fallos.
+
+Por el nombre, `FC` = Facturas de Crédito (existe `VW_FACTURAS_CREDITO`) y
+probablemente no nos toca. Pero eso es una suposición, y ya nos ha costado.
+
+## 4. 🔴 El proveedor despliega en producción en horario laboral, sin aviso
+
+```
+VWFORM_CompraArti     2026-09-10 12:17:51   ← 32 minutos antes de nuestra corrida
+VWFORM_ArtEntCompr    2026-09-10 12:17:39
+VWREP_InfCompraArticulo 2026-09-08 17:44
+VWFORM_CuenXSerie / ActSerCompr / CompraActi   2026-08-25 14:24 (los tres, mismo segundo)
+VWREP_InfCompraActivo 2026-08-13 09:15
+```
+
+**Mientras investigábamos, el proveedor estaba creando objetos nuevos en
+producción.** Tres despliegues en cuatro semanas, todos en horario de oficina.
+
+⇒ **El esquema del HIS cambia sin aviso, y nuestro agente depende del esquema.**
+Esto justifica `apps/api/src/mirror/mirror-schema-check.service.ts` y obliga a
+verificar que cubra **todas** las tablas y columnas que el driver usa, no una
+muestra. Es la defensa que ya tenemos; hay que confirmar que está completa.
+
+## 5. ✅ `AUDITOR` es la respuesta definitiva a «quién escribe»
+
+```
+1  AudFech            datetime         cuándo
+2  AudUser            varchar(60)      QUIÉN
+3  AudTabla           varchar(100)     EN QUÉ TABLA
+4  AudTrans           varchar(1)       I / U / D
+5  AudDesc            text             qué
+6  NU_NUME_CONE_AUDI  int              conexión
+7  AudVerExe          varchar(50)      ⭐ VERSIÓN DEL EJECUTABLE
+8  AudFecExe          datetime         fecha del ejecutable
+```
+
+977.622 filas, y en la ronda 1 fue **la tabla más escrita de todas: 90.120
+escrituras en 34 horas.** Está viva y registra todo.
+
+**`AudVerExe` es lo que la hace valiosa: identifica qué aplicación hizo cada
+escritura.** Con eso se cierra la pregunta del segundo escritor con evidencia en
+vez de inferencia:
+
+```sql
+SELECT AudTabla, AudTrans, AudUser, AudVerExe,
+       COUNT(*) AS veces, MIN(AudFech) AS primera, MAX(AudFech) AS ultima
+FROM dbo.AUDITOR
+WHERE AudTabla IN ('CITAS_MEDICAS','CITAS_ANULADAS','PACIENTES','R_PAC_EPS')
+  AND AudFech >= DATEADD(month, -3, GETDATE())
+GROUP BY AudTabla, AudTrans, AudUser, AudVerExe
+ORDER BY veces DESC;
+```
+
+### Y una decisión de diseño que esto abre
+
+`AUDITOR` se llena vía `PA_Ins_AUDITOR` (SP de 2008, modificado el 2026-03-17).
+**Si la app nativa lo llama explícitamente y no hay trigger, nuestro agente NO
+quedará auditado** — el hospital no verá en su propia auditoría lo que hizo el
+bot.
+
+Eso es exactamente lo contrario de lo que le da tranquilidad a un hospital.
+Opciones:
+
+- **(a)** Si hay un trigger sobre `CITAS_MEDICAS` que alimenta `AUDITOR`,
+  nuestras escrituras quedan auditadas **gratis**. Hay que comprobarlo.
+- **(b)** Si no lo hay: pedir `GRANT EXECUTE ON dbo.PA_Ins_AUDITOR` (o `INSERT
+  ON dbo.AUDITOR`) y que el driver registre sus propias escrituras con un
+  `AudUser`/`AudVerExe` propio, reconocible. Un permiso más, y a cambio el
+  hospital audita el bot con sus herramientas de siempre.
+- **(c)** No hacerlo, y apoyarnos sólo en nuestra trazabilidad
+  (`InteractionLog`, `SyncOutbox`) — que existe, pero vive en nuestro lado.
+
+Recomendación: **(a) si se puede, (b) si el hospital lo pide.** La decisión
+depende de la consulta de triggers.
+
+## 6. Las dos consultas que quedan
+
+```sql
+-- ⭐ (1) LA QUE FALTA: triggers sobre las tablas que el agente escribe
+SELECT  OBJECT_SCHEMA_NAME(t.parent_id) AS esquema,
+        OBJECT_NAME(t.parent_id)        AS tabla_padre,
+        t.name                          AS trigger_name,
+        t.is_disabled,
+        t.create_date, t.modify_date,
+        LEN(m.definition)               AS largo,
+        CASE WHEN m.definition LIKE '%AUDITOR%' THEN 'sí' ELSE '' END AS toca_AUDITOR
+FROM sys.triggers t
+LEFT JOIN sys.sql_modules m ON m.object_id = t.object_id
+WHERE t.parent_class = 1
+ORDER BY tabla_padre, t.name;
+
+-- (2) Quién escribe de verdad en nuestras tablas (ver §5)
+```
+
+## 7. Cambia a quién hay que avisar
+
+Ya no es «un tercero desconocido»: es **el proveedor del HIS**. Y hay dos cosas
+que decirle, ninguna urgente pero ambas necesarias antes del piloto:
+
+1. **Existimos y vamos a escribir en `CITAS_MEDICAS`, `CITAS_ANULADAS` y
+   `PACIENTES`** con el usuario `agenia_sync`. Que lo sepan y que nos avisen
+   cuando cambien esas tablas.
+2. **`Consultar paciente` falla el 66% de las veces** (58.201 de 88.147 en 63
+   días ≈ 924 al día) mientras su servicio hermano falla el 1,6%. Puede ser un
+   404 legítimo usado como flujo, o puede estar roto. Ellos lo sabrán en un
+   minuto.
+
+---
+
+# 🎯 `AUDITOR` CIERRA EL CÍRCULO (2026-09-10)
+
+## 1. ✅ Ningún trigger toca nuestras tablas
+
+**Toda la base de 1.394 tablas tiene sólo cuatro triggers:**
+
+| tabla padre | trigger | creado | toca `AUDITOR` |
+|---|---|---|---|
+| `FACTURA_ELECTRONICA` | `TR_AUDITORIA_FC` | 2026-07-01 | sí |
+| `TM_FACTURA_PLANO` | `TR_AUDITORIA_TFP` | 2026-07-01 | sí |
+| `IN_KARDEX` | `TR_IN_KARDEX` | 2024-10-08 | — |
+| `IN_KARDEXLOTE` | `TR_IN_KARDEXLOTE` | 2025-10-22 | — |
+
+**Ninguno está sobre `CITAS_MEDICAS`, `CITAS_ANULADAS` ni `PACIENTES`.**
+
+⇒ **Riesgo cerrado:** nuestras escrituras no disparan código del proveedor. Sin
+latencia extra, sin bloqueos ajenos, sin fallos ajenos dentro de nuestra
+transacción.
+
+⇒ **Y decide la otra pregunta: `AUDITOR` NO se alimenta por trigger.** Los
+977.622 registros los escribe la aplicación explícitamente, vía
+`PA_Ins_AUDITOR`. **Así que el agente NO va a quedar auditado por sí solo.** La
+opción (a) del turno anterior queda descartada.
+
+## 2. ✅ No hay segundo escritor: todo es la app de escritorio 20.4.0
+
+`AudTrans`: **1 = INSERT · 2 = UPDATE · 3 = DELETE**.
+
+**Todos los registros de los últimos 3 meses tienen `AudVerExe = 20.4.0`. Todos,
+sin una sola excepción.** Ni una versión distinta, ni un valor vacío.
+
+⇒ La app SGIO en Python **no ha escrito** en `CITAS_MEDICAS` ni en `PACIENTES`.
+Junto con lo ya sabido —no existe SP de actualizar citas, y ningún usuario real
+tiene `ACTUALIZACION_CITA`— el asunto queda cerrado: **el único escritor de
+citas y pacientes es la app de escritorio del HIS, versión 20.4.0.**
+
+⚠️ Con un límite honesto: `AUDITOR` lo llama **la aplicación**, no un trigger.
+Un cliente que no llame a `PA_Ins_AUDITOR` sería invisible aquí. La prueba de
+esto está en el punto 5.
+
+## 3. ⭐ El volumen real de la operación (2026-06-10 → 2026-09-10, 92 días)
+
+| tabla | INSERT | UPDATE | DELETE |
+|---|---|---|---|
+| `CITAS_MEDICAS` | **≈ 24.395** | **≈ 12.514** | 0 |
+| `PACIENTES` | **≈ 551** | ≈ 3.858 | **1** |
+
+### Y de aquí salen cuatro cifras que valen para el producto
+
+**(a) 265 citas creadas al día calendario** (≈370 por día hábil). Y las últimas
+escrituras del volcado son de **14:31-14:32 del 2026-09-10**, minutos antes de
+la consulta: es un sistema vivo, con gente agendando en ese momento.
+
+**(b) 🎯 El 70% de las citas las crean TRES personas:**
+
+```
+ANAMGARCIA   6.721        │  los tres juntos: 17.046 de 24.395 = 69,9%
+AMUÑOZ       5.179        │  con AGRISALES (1.511) y JROJAS (1.498)
+RMEJIA       5.146        │  → 20.055 = 82,2% entre cinco personas
+```
+
+**Ése es el caso de negocio de AgenIA, medido en la base del cliente.** Si el
+bot toma incluso el 30% de la demanda, son ~80 citas diarias que esas tres
+personas dejan de teclear.
+
+**(c) El 51% de las citas se MODIFICA después de creada** (12.514 updates sobre
+24.395 inserts). No basta con detectar citas nuevas: **una de cada dos cambia**,
+y el espejo tiene que verlo. Dimensiona la reconciliación que ya existe.
+
+**(d) ≈180 pacientes nuevos al mes** (551 en 3 meses). Es una **cota superior
+para D.11**: si el hospital abre 180 historias nuevas al mes, ya tiene 78.791
+pacientes registrados, y el padrón trae ~19.600 personas de una población que el
+hospital atiende masivamente, entonces **el solapamiento padrón↔HIS tiene que
+ser muy alto** y la gente que el bot mandaría al teléfono son decenas al mes, no
+miles. No sustituye la medición de D.11, pero **da confianza al diseño de
+«el que no está en el HIS habla con el hospital».**
+
+## 4. 🔴 No hay ventana nocturna: se escribe 24/7
+
+Hay escrituras a las 23:47, 00:03, 00:09, 01:32, 02:07, 03:26, 04:43, 05:35,
+06:41, 20:01, 20:33, 21:29. Y usuarios que lo explican: **`PORTEROS`** (56
+updates de `PACIENTES`, a las 23:47 y a las 06:41), **`ROTANTE1`**,
+`JCARDENAS`. **Urgencias trabaja de noche y admite pacientes de madrugada.**
+
+Combinado con la carga de `STG_DEMANDA_PYP` a las 02:30: **no existe una ventana
+limpia.** Hay que diseñar el espejo para **concurrencia, no para ventanas** — lo
+cual ya hace, pero conviene dejar de buscar una hora tranquila porque no hay.
+
+## 5. 🔴 La auditoría NO es completa: `R_PAC_EPS` no aparece
+
+**Cero escrituras auditadas de `R_PAC_EPS` en 3 meses.** Pero P.11 midió que la
+tabla creció +9.488 filas entre 2025 y la viva, y sabemos que cada paciente
+nuevo recibe ~6 filas: 551 pacientes × 6 ≈ 3.300 filas por trimestre.
+
+⇒ **`R_PAC_EPS` sí se escribe, pero la aplicación no la audita.** Eso confirma
+que `AUDITOR` cubre unas tablas y no otras, y por tanto la conclusión del punto
+2 vale **para las tablas auditadas**.
+
+Y de paso **refuerza la conclusión de la investigación del padrón**: las
+afiliaciones sólo cambian cuando se abre una historia nueva. Nadie las mantiene.
+Los 443.325 registros son sedimento.
+
+⚠️ **`CITAS_ANULADAS` tampoco aparece: cero registros en 3 meses.** Y el agente
+tiene `INSERT` concedido sobre ella. Dos explicaciones posibles y hay que saber
+cuál: o la app no audita esa tabla, o **las citas no se anulan ahí sino con un
+UPDATE de estado en `CITAS_MEDICAS`** (que explicaría parte de los 12.514
+updates). **Es una pregunta abierta que toca directamente al driver.**
+
+## 6. ✅ Decisión: el agente debe auditar en `AUDITOR`
+
+Como **no hay trigger**, la recomendación del turno anterior se resuelve en la
+opción (b), y con más fuerza de la que pensaba:
+
+**Pedir `GRANT EXECUTE ON dbo.PA_Ins_AUDITOR` y que el driver registre sus
+escrituras con `AudUser = 'AGENIA'` y su propio `AudVerExe`.**
+
+Tres razones, en orden de peso:
+
+1. **El hospital ve el bot con sus herramientas de siempre.** Si algo sale mal,
+   el rastro está donde ellos lo buscan, no en un log nuestro que no saben
+   consultar.
+2. **Da la comparativa que vende el producto**: «AGENIA creó 340 citas este mes;
+   ANAMGARCIA 2.200». Con el mismo `AudUser`/`AudVerExe` que ya usan.
+3. Cuesta **un permiso** y ya sabemos que el SP existe y es pequeño
+   (`PA_Ins_AUDITOR`, 1.035 caracteres, modificado el 2026-03-17).
+
+Consulta que falta para implementarlo:
+
+```sql
+SELECT m.definition FROM sys.sql_modules m
+WHERE m.object_id = OBJECT_ID('dbo.PA_Ins_AUDITOR');   -- 1.035 ch, cabe entero
+
+-- Y de paso, cómo se anulan las citas de verdad (§5):
+SELECT COUNT(*) AS filas, MIN(FE_FECH_CANU) AS primera, MAX(FE_FECH_CANU) AS ultima
+FROM dbo.CITAS_ANULADAS;                                -- ajustar el nombre de la fecha
+SELECT AudTabla, AudTrans, COUNT(*) AS veces
+FROM dbo.AUDITOR
+WHERE AudTabla LIKE '%CITA%' AND AudFech >= DATEADD(month, -3, GETDATE())
+GROUP BY AudTabla, AudTrans ORDER BY veces DESC;
+```
+
+## 7. Detalle sucio, para cuando importe
+
+**`JCARDENAS ` tiene un espacio al final** en `AudUser varchar(60)`. Si algún día
+filtramos auditoría por usuario, `LTRIM(RTRIM(...))` obligatorio.
+
+---
+
+# 🎯 `AUDITOR` RESUELVE EL PENDIENTE #17 (2026-09-10)
+
+## 1. `PA_Ins_AUDITOR` es un INSERT puro — trivialmente llamable
+
+```sql
+CREATE PROCEDURE PA_Ins_AUDITOR
+  @AudFech datetime = NULL, @AudUser varchar(60) = NULL,
+  @AudTabla varchar(100) = NULL, @AudTrans varchar(1) = NULL,
+  @AudDesc text = NULL, @NU_NUME_CONE_AUDI int = NULL,
+  @AudVerExe varchar(50) = NULL, @AudFecExe datetime = NULL
+AS BEGIN
+  SET NOCOUNT ON;
+  INSERT INTO AUDITOR (...) VALUES (...);
+END
+```
+
+Ocho parámetros, **todos con default `NULL`**, `SET NOCOUNT ON`, cero
+validación, cero lógica. SP de 2011 (comentario: Juan Alejandro García Sotelo,
+tarea 7783), 1.035 caracteres.
+
+**Permiso a pedir: `GRANT EXECUTE ON dbo.PA_Ins_AUDITOR TO agenia_sync` — NO
+`INSERT ON dbo.AUDITOR`.** Por cadena de propiedad (mismo esquema, mismo
+propietario) el `EXECUTE` basta, y es un permiso **mucho más estrecho**: sólo
+puede insertar auditoría, no escribir la tabla a voluntad. Y `SET NOCOUNT ON`
+garantiza que no interfiere con nuestros rowcounts.
+
+## 2. 🎯 Esto cierra el pendiente #17 de `MAPEO_HIS.md`
+
+El hospital pidió explícitamente el **2026-08-23** marcar las citas de WhatsApp
+para que el staff las distinga. El comprobante impreso decía
+`Asignada Por: ADMINISTRADOR`, pero **no existe ninguna columna de usuario en
+`CITAS_MEDICAS`** (se buscó `USUA/ASIG/OPER/LOGIN/CREADOR`: vacío). Llevaba tres
+semanas abierto.
+
+`AUDITOR` estaba en la lista de candidatos de ese documento **y quedó de
+segundo** — los «más prometedores» eran `AUDITORIA_COT`, `HIST_AUDIT`,
+`LOG_AUDITORIA_SGIO`, `C_USUARIO`. **Era `AUDITOR`.**
+
+**Y no es sólo el diagnóstico, es la solución:** si el driver llama
+`PA_Ins_AUDITOR` con **`AudUser = 'AGENIA'`**, el comprobante del hospital
+diría **«Asignada Por: AGENIA»**. Sin tocar el HIS, sin columna nueva, usando su
+propio mecanismo. Detalle en `MAPEO_HIS.md` §2.6.
+
+⚠️ **Hipótesis fuerte, no hecho.** El comprobante de la prueba decía
+`ADMINISTRADOR` y `AUDITOR` tiene 8 INSERT de `ADMINISTRADOR`… pero del
+**2026-08-02 12:20-12:50, no del 23-ago**. Las fechas no casan. La consulta de
+correlación que lo confirma —y que de paso da el formato de `AudDesc`, necesario
+para escribir nuestros registros igual que los suyos— está en `MAPEO_HIS.md`
+§2.6.
+
+## 3. ✅ `CITAS_ANULADAS`: la pregunta ya estaba contestada, y por nosotros
+
+- `CITAS_ANULADAS`: **92.886 filas** = 8,55% de las 1.086.474 de `CITAS_MEDICAS`.
+- **Cero registros en `AUDITOR`** en 3 meses, y **ni un solo `AudTrans = 3`**
+  para `CITAS_MEDICAS`.
+
+⇒ **La auditoría del HIS no registra las cancelaciones en absoluto.** Y no es un
+defecto: `CITAS_ANULADAS` **es** el log de cancelaciones.
+
+**Y esto ya estaba resuelto en `MAPEO_HIS.md` §2.1bis desde el 2026-08-23, con
+una prueba que ejecutó el hospital**: cancelar = DELETE de `CITAS_MEDICAS` +
+INSERT en `CITAS_ANULADAS`, columnas con sufijo `_CIAN`, 24 columnas, sin PK ni
+índices, con `CD_CODI_MOTI_CIAN` y `TX_OBSE_CIAN`.
+
+⚠️ **Nota de método:** planteé esa pregunta como si estuviera abierta, y la
+consulta de verificación falló por adivinar el sufijo `_CANU` cuando nuestro
+propio documento dice `_CIAN` desde hace tres semanas. **Antes de adivinar un
+nombre de columna del HIS: buscarlo en `MAPEO_HIS.md`.** Anotado allí también.
+
+## 4. Corrección de una cifra publicada
+
+Los UPDATE de `CITAS_MEDICAS` en 3 meses son **12.516**, no 12.514 — el conteo
+del servidor contra mi suma a mano de la lista larga. El ratio
+update/insert queda en **51,3%** (12.516 / 24.395). Los INSERT sí eran 24.395
+exactos.
+
+## 5. Criterio de auditoría para el driver
+
+Registrar en `AUDITOR` **sólo lo que la app nativa registra**: INSERT y UPDATE de
+`CITAS_MEDICAS` y `PACIENTES`. Así las cifras del bot son comparables con las de
+`ANAMGARCIA` y compañía, que es lo que hace útil el reporte
+(«AGENIA creó 340 citas este mes; ANAMGARCIA 2.200»).
+
+Las cancelaciones del agente quedan donde quedan las del hospital: en
+`CITAS_ANULADAS`, con su motivo. Ya existe además el código `WB`
+(CANCELADO WEB) en `MOTIVOANUL` para distinguirlas — y sigue abierta la
+pregunta al hospital de si prefieren un código nuevo dedicado.
+
+Y en `@AudDesc`: el número de cita y el documento —que es lo que el hospital
+necesita para rastrear y que ya está en `CITAS_MEDICAS`— y **nada más**. Ni
+mensajes de WhatsApp ni payloads. Es el mismo criterio con el que rechazamos
+guardar la fila cruda del padrón, y el contraejemplo está en la misma base:
+`LOG_AUDITORIA_SGIO.QUERY_EJECUTADA` guarda documentos de paciente en texto
+libre de depuración.
+
+---
+
+# ⭐ `AudDesc` TRAE EL `INSERT` LITERAL DEL HIS — Y DESTAPA UN DEFECTO DEL DRIVER (2026-09-10)
+
+`AUDITOR.AudDesc` no guarda una descripción: **guarda el `INSERT` completo con
+sus valores.** Detalle columna por columna en `MAPEO_HIS.md` §2.8. Resumen:
+
+## ✅ Pendiente #17 resuelto y triple confirmación del trabajo previo
+
+1. **Cada cita tiene su registro de `AUDITOR` en el mismo minuto, con usuario.**
+   `RCASTAÑO`, `AMUÑOZ`, `ANAMGARCIA`, `RMEJIA`, `JROJAS`, `MQUINTERO`… El
+   «Asignada Por» que el hospital pidió el 2026-08-23 sale de `AudUser`.
+2. **`FE_HORA_CIT` coincide exacto** con lo que produce `formatFeHoraCit()`:
+   `YYYY/MM/DD HH:mm`. El trabajo previo acertó.
+3. **`DE_DESC_CIT` va vacío (`^^`) en las 30 citas de la muestra.** La marca de
+   origen anti-eco es segura —el hospital nunca escribe ahí— **y ya es el
+   marcador visible que pidieron.**
+4. **Los convenios en vivo son exactamente los de `mapping.json`:** 535, 467,
+   473, 475, 538, 283. Validación del mapa contra la operación real.
+
+## 🔴 Defecto del driver: `FE_SOLI_CIT` lleva la fecha equivocada
+
+El hospital escribe ahí **la fecha y hora SOLICITADA de la cita**:
+
+| `FE_HORA_CIT` (asignada) | `FE_SOLI_CIT` (solicitada) |
+|---|---|
+| `2026/09/12 09:20` | `12/09/2026 09:20` |
+| `2027/03/10 09:00` | `10/03/2027 09:00` |
+| `2026/09/11 12:30` | `11/09/2026 **13:20**` ← pidió 13:20, le dieron 12:30 |
+
+Coinciden en 29 de 30 y difieren en una — o sea: **`FE_SOLI_CIT` es la hora que
+pidió el paciente, `FE_HORA_CIT` la que se le asignó.**
+
+**El driver escribe `GETDATE()`** (`apps/mirror-agent/src/drivers/cnt-sanvicente-anserma/index.ts`
+~939), es decir la fecha de creación. Nuestras citas quedarían con
+`FE_SOLI_CIT` = hoy donde el hospital pone la fecha de la cita.
+
+**Rompe silenciosamente los reportes de oportunidad** — y el hospital tiene tres
+(`Res 1552`, `Res 256`, `Oportunidad Citas`). Es un cambio de una línea:
+`FE_SOLI_CIT` debe llevar la hora solicitada (la que escogió el paciente en el
+bot), o en su defecto el mismo valor que `FE_HORA_CIT`, que es lo que hace el
+hospital en 29 de 30 casos.
+
+## ⚠️ Divergencia menor: `NU_NUME_CONE_CIT`
+
+El hospital la llena con el **consecutivo de conexión de la sesión** —no es
+único por cita: `1290136` aparece en 12 citas seguidas de `ANAMGARCIA`— y el
+`INSERT` del driver **omite la columna** (20 contra 21). Funciona, así que
+acepta el default; conviene confirmar que sea nullable o con default y no que
+hoy funcione por casualidad.
+
+## 📊 Y un dato del ritmo real
+
+**30 citas entre las 14:11 y las 14:39: casi una por minuto.** Confirma el pico
+de la tarde y las ~370 citas por día hábil.
+
+## ⚠️ Nota de método: mi consulta de correlación tenía un defecto
+
+El `OUTER APPLY` emparejaba por proximidad temporal. Con ~1 cita por minuto,
+**varias citas del mismo minuto se emparejan con el mismo registro de
+`AUDITOR`**: en la primera fila la cita es del documento `24388882` y el
+`AudDesc` habla de `4570199`.
+
+La conclusión sobre `AudUser` se sostiene (hay auditoría por cita, con usuario),
+pero **el emparejamiento fila-a-fila de ese volcado es engañoso** y no debe
+citarse como prueba de correlación 1:1. La correlación exacta no necesita el
+tiempo: `AudDesc` trae los valores, así que se empareja por `NU_HIST_PAC_CIT` +
+`FE_HORA_CIT` extraídos del texto.
+
+## Lo que queda por hacer, en orden
+
+1. **Arreglar `FE_SOLI_CIT`** en el driver (una línea + prueba).
+2. Verificar el tipo de `FE_FECH_CIT` (`datetime` vs `varchar`) para saber si el
+   formato ISO del driver divergiere del `DD/MM/YYYY` del hospital.
+3. Verificar que `I890305PL` esté en `especialidadPorServicio` de
+   `mapping.json`.
+4. Pedir `GRANT EXECUTE ON dbo.PA_Ins_AUDITOR` y escribir la auditoría con
+   `AudUser = 'AGENIA'` — con el formato de `AudDesc` ya conocido.
+5. La cola del padrón: migración (llave `(org, epsId, cedula)`, `regimen`,
+   `importId`, `PadronImport`/`PadronImportRow`), normalización compartida en
+   `@agenia/shared`, y el front del log de cargas.
