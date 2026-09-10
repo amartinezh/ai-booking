@@ -70,9 +70,46 @@ describe('findEpsEnrollmentIssue', () => {
         const db = fakeDb({ eps: { id: 'eps-1', name: 'Sanitas' }, enrolled: null });
         const issue = await findEpsEnrollmentIssue(db, { ...BASE_PARAMS, epsId: 'eps-1', cedula: '123.456.789-0' });
         expect(db.epsEnrolledPatient.findFirst).toHaveBeenCalledWith(
-            expect.objectContaining({ where: expect.objectContaining({ cedula: '1234567890' }) }),
+            expect.objectContaining({
+                where: expect.objectContaining({ cedula: { in: ['1234567890'] } }),
+            }),
         );
         expect(issue).toContain('1234567890');
+    });
+
+    // ── segunda pasada: ceros a la izquierda ──
+    // Excel se come los ceros iniciales de una celda numérica al exportar: el
+    // padrón puede traer "0012345" donde el paciente escribe "12345". Antes
+    // de este cambio, esa discrepancia rechazaba a alguien con derecho real
+    // — ver docs/drivers/cnt-sanvicente-anserma/ESTADO.md, "Normalización del
+    // documento: una función, dos pasadas".
+    it('busca TAMBIÉN sin ceros a la izquierda, en la misma consulta', async () => {
+        const db = fakeDb({ eps: { id: 'eps-1', name: 'Sanitas' }, enrolled: null });
+        await findEpsEnrollmentIssue(db, { ...BASE_PARAMS, epsId: 'eps-1', cedula: '0012345' });
+        expect(db.epsEnrolledPatient.findFirst).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({ cedula: { in: ['0012345', '12345'] } }),
+            }),
+        );
+    });
+
+    it('no duplica el candidato cuando el documento ya no tiene ceros a la izquierda', async () => {
+        const db = fakeDb({ eps: { id: 'eps-1', name: 'Sanitas' }, enrolled: null });
+        await findEpsEnrollmentIssue(db, { ...BASE_PARAMS, epsId: 'eps-1', cedula: '12345' });
+        expect(db.epsEnrolledPatient.findFirst).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({ cedula: { in: ['12345'] } }),
+            }),
+        );
+    });
+
+    it('encuentra al paciente aunque el padrón lo tenga con ceros a la izquierda', async () => {
+        // Simula que la fila del padrón quedó como "0012345" y el paciente
+        // escribió "12345": el mock de Prisma no filtra de verdad, pero esto
+        // documenta el caso que la consulta con `in` debe resolver en producción.
+        const db = fakeDb({ eps: { id: 'eps-1', name: 'Sanitas' }, enrolled: { id: 'enroll-1' } });
+        const issue = await findEpsEnrollmentIssue(db, { ...BASE_PARAMS, epsId: 'eps-1', cedula: '12345' });
+        expect(issue).toBeNull();
     });
 
     it('busca la EPS y la alta dentro del organizationId del tenant (aislamiento multi-tenant)', async () => {

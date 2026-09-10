@@ -1,32 +1,76 @@
 // ─────────────────────────────────────────────────────────────
-// PADRÓN EPS — Parser y validador del CSV de pacientes dados de alta.
+// PADRÓN EPS — Parser y validador del CSV de afiliados activos.
 //
-// Lógica 100% pura (sin I/O, sin Prisma): recibe el texto del archivo y el
-// catálogo de EPS activas de la clínica, y devuelve un reporte detallado con
-// las filas normalizadas válidas y los errores por línea. La pantalla de
-// importación llama esto dos veces (regla de oro): al VALIDAR y de nuevo al
-// IMPORTAR, para que nunca entre a la base un archivo alterado entre pasos.
+// Lógica 100% pura (sin I/O, sin Prisma): recibe el texto del archivo y
+// devuelve un reporte detallado con las filas normalizadas válidas y los
+// errores por línea. La pantalla de importación llama esto dos veces (regla
+// de oro): al VALIDAR y de nuevo al IMPORTAR, para que nunca entre a la base
+// un archivo alterado entre pasos.
+//
+// FORMATO MÍNIMO, A PROPÓSITO — un solo campo obligatorio: `cedula`.
+//
+// Antes el archivo pedía cédula + nombre + EPS (y aceptaba teléfono, email,
+// fecha de nacimiento, género y dirección). Analizado contra los padrones
+// reales del Hospital San Vicente de Paúl (Anserma, 2026-09-10): con esas
+// columnas, el 77% de las filas se rechazaba por fechas mal formadas o
+// teléfonos que eran relleno (`Telefono` = "2000000" en el 87% de los
+// casos), y de las que pasaban, entraban con nombre sin apellidos y fecha de
+// nacimiento invertida en silencio (MM/DD leído como DD/MM).
+//
+// Ninguno de esos datos hace falta: el HIS del hospital, vía el agente
+// espejo, ya tiene el nombre completo bien partido, la fecha de nacimiento,
+// el sexo y la dirección — y es la fuente correcta, no una copia de la EPS.
+// El padrón solo tiene que responder una pregunta que nadie más responde:
+// ¿tiene derecho hoy, en qué EPS, en qué régimen? Por eso:
+//
+//   - `cedula`   — obligatoria: es la llave.
+//   - `regimen`  — opcional pero muy deseado: enruta el convenio de
+//                  facturación (SUBSIDIADO/CONTRIBUTIVO). Sin él, el driver
+//                  cae a una heurística sobre R_PAC_EPS del HIS.
+//   - `telefono` — opcional pero valioso: en la muestra medida, el padrón
+//                  tenía móvil válido en 92% de los casos contra 74,6% en
+//                  el HIS, y para 13.002 pacientes del HIS el teléfono es
+//                  literalmente "0" — el padrón es la única fuente.
+//
+// La EPS del archivo NO se lee de una columna: se elige en la pantalla antes
+// de subir el archivo (un archivo = una EPS), lo que además hace imposible
+// mezclar afiliados de EPS distintas por un valor de columna mal escrito.
+//
+// `ProgramasEspeciales` y cualquier dato clínico/sensible del padrón original
+// (oncología, salud mental, IVE, violencia — ~14% de las filas reales del
+// hospital piloto) NO tienen columna aquí y nunca la tendrán: no se custodia
+// lo que no se necesita.
 // ─────────────────────────────────────────────────────────────
+
+import { esDocumentoValido, normalizeDocumento } from './documento';
+
+export type PadronRegime = 'SUBSIDIADO' | 'CONTRIBUTIVO';
 
 export interface PadronCsvRow {
   /** Línea física en el archivo (1-based, contando el encabezado). */
   line: number;
+  /** Ya normalizada con `normalizeDocumento` — solo dígitos. */
   cedula: string;
-  fullName: string;
-  /** Nombre EXACTO de la EPS según el catálogo de la clínica (ya casado). */
-  epsName: string;
+  /** null si el archivo no la trae o la celda viene vacía (columna opcional). */
+  regime: PadronRegime | null;
+  /** null si el archivo no la trae o la celda viene vacía (columna opcional). */
   phone: string | null;
-  email: string | null;
-  /** Normalizada a ISO `yyyy-mm-dd`. */
-  dateOfBirth: string | null;
-  gender: 'M' | 'F' | 'OTRO' | null;
-  address: string | null;
 }
 
 export interface PadronCsvError {
   line: number;
   column?: string;
   message: string;
+  /**
+   * Valor crudo (sin normalizar) de la columna `cedula` en esa línea, cuando
+   * la fila alcanzó a parsearse campo por campo (no aplica a errores de
+   * encabezado o de conteo de columnas, donde no hay celda de cédula fiable
+   * que citar). La usa el importador para poder trazar una fila rechazada
+   * SIN guardar el resto de la fila — es el documento, no un dato sensible;
+   * es lo mismo que ya aparece dentro del texto de `message` cuando la
+   * cédula es la columna que falló.
+   */
+  rawCedula?: string;
 }
 
 export interface PadronCsvReport {
@@ -39,34 +83,25 @@ export interface PadronCsvReport {
 }
 
 /** Columnas del formato oficial (encabezado de la plantilla descargable). */
-export const PADRON_CSV_HEADERS = [
-  'cedula',
-  'nombre_completo',
-  'eps',
-  'telefono',
-  'email',
-  'fecha_nacimiento',
-  'genero',
-  'direccion',
-] as const;
+export const PADRON_CSV_HEADERS = ['cedula', 'regimen', 'telefono'] as const;
 
 type CanonicalHeader = (typeof PADRON_CSV_HEADERS)[number];
 
 // Aliases tolerados por columna (comparados sin tildes ni mayúsculas).
 const HEADER_ALIASES: Record<CanonicalHeader, string[]> = {
-  cedula: ['cedula', 'documento', 'dni', 'identificacion', 'numero de documento'],
-  nombre_completo: ['nombre_completo', 'nombre completo', 'nombre', 'nombres'],
-  eps: ['eps', 'aseguradora', 'convenio'],
-  telefono: ['telefono', 'celular', 'whatsapp', 'movil'],
-  email: ['email', 'correo', 'correo electronico'],
-  fecha_nacimiento: ['fecha_nacimiento', 'fecha de nacimiento', 'nacimiento'],
-  genero: ['genero', 'sexo'],
-  direccion: ['direccion', 'domicilio'],
+  cedula: [
+    'cedula',
+    'documento',
+    'dni',
+    'identificacion',
+    'numero de documento',
+    'numero de identificacion',
+  ],
+  regimen: ['regimen', 'tipo de afiliacion', 'tipo afiliacion', 'tipoafiliacion'],
+  telefono: ['telefono', 'celular', 'whatsapp', 'movil', 'telefonomovil'],
 };
 
-const REQUIRED_HEADERS: CanonicalHeader[] = ['cedula', 'nombre_completo', 'eps'];
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const REQUIRED_HEADERS: CanonicalHeader[] = ['cedula'];
 
 /** Tope defensivo de filas de datos por archivo (protege memoria/tiempo de respuesta). */
 const MAX_DATA_ROWS = 20_000;
@@ -78,9 +113,7 @@ const MAX_DATA_ROWS = 20_000;
  * legacy tipo Windows-1252 exportadas por Excel es-CO).
  */
 const BINARY_SIGNATURES: Array<{ prefix: string; label: string }> = [
-  { prefix: 'PK', label: 'un archivo Excel (.xlsx) o ZIP' },
-  { prefix: 'PK', label: 'un archivo Excel (.xlsx) o ZIP vacío' },
-  { prefix: 'PK', label: 'un archivo Excel (.xlsx) o ZIP' },
+  { prefix: 'PK', label: 'un archivo Excel (.xlsx) o ZIP' },
   { prefix: '%PDF', label: 'un archivo PDF' },
 ];
 
@@ -178,43 +211,21 @@ function mapHeader(
   return { indexOf, missing };
 }
 
-/** Acepta `yyyy-mm-dd` o `dd/mm/yyyy` y normaliza a ISO. null = inválida. */
-function normalizeDate(raw: string): string | null {
-  let year: number, month: number, day: number;
-  let match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (match) {
-    [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  } else {
-    match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (!match) return null;
-    [day, month, year] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  }
-  const date = new Date(Date.UTC(year, month - 1, day));
-  const valid =
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day;
-  if (!valid || year < 1900 || date.getTime() > Date.now()) return null;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${year}-${pad(month)}-${pad(day)}`;
-}
-
-function normalizeGender(raw: string): 'M' | 'F' | 'OTRO' | null {
+function normalizeRegime(raw: string): PadronRegime | null {
   const value = normalizeForMatch(raw);
-  if (['m', 'masculino', 'hombre'].includes(value)) return 'M';
-  if (['f', 'femenino', 'mujer'].includes(value)) return 'F';
-  if (['otro', 'o', 'other'].includes(value)) return 'OTRO';
+  if (['subsidiado', 'sub', 's'].includes(value)) return 'SUBSIDIADO';
+  if (['contributivo', 'contrib', 'c'].includes(value)) return 'CONTRIBUTIVO';
   return null;
 }
 
 /**
- * Valida a fondo el CSV del padrón contra el catálogo de EPS activas.
- * Nunca lanza: todos los problemas se devuelven como errores por línea.
+ * Valida a fondo el CSV del padrón. Nunca lanza: todos los problemas se
+ * devuelven como errores por línea.
+ *
+ * NO recibe el catálogo de EPS: la EPS del archivo se elige en la pantalla
+ * (un archivo = una EPS), no se lee de una columna.
  */
-export function validatePadronCsv(
-  csvText: string,
-  activeEpsNames: string[],
-): PadronCsvReport {
+export function validatePadronCsv(csvText: string): PadronCsvReport {
   const errors: PadronCsvError[] = [];
   const validRows: PadronCsvRow[] = [];
 
@@ -236,12 +247,6 @@ export function validatePadronCsv(
       ],
       delimiter: ',',
     };
-  }
-
-  // Índice EPS normalizada → nombre exacto del catálogo.
-  const epsByNormalized = new Map<string, string>();
-  for (const name of activeEpsNames) {
-    epsByNormalized.set(normalizeForMatch(name), name);
   }
 
   const lines = csvText
@@ -312,10 +317,8 @@ export function validatePadronCsv(
     // Una fila con más o menos columnas que el encabezado casi siempre
     // delata una coma/punto y coma suelto sin comillas, o una comilla sin
     // cerrar más arriba en el archivo: seguir validando campo por campo
-    // sobre datos desalineados solo produciría errores confusos y engañosos
-    // (p. ej. reportar una EPS inexistente cuando en realidad es el teléfono
-    // desplazado a esa columna). Se reporta un único error claro por fila y
-    // se pasa a la siguiente.
+    // sobre datos desalineados solo produciría errores confusos y engañosos.
+    // Se reporta un único error claro por fila y se pasa a la siguiente.
     if (cells.length !== expectedColumnCount) {
       errors.push({
         line,
@@ -329,13 +332,13 @@ export function validatePadronCsv(
 
     const rowErrors: PadronCsvError[] = [];
 
-    // ── cédula ──
-    const cedula = cell('cedula').replace(/[.\s]/g, '');
-    if (!/^\d{4,15}$/.test(cedula)) {
+    // ── cédula (obligatoria) ──
+    const cedula = normalizeDocumento(cell('cedula'));
+    if (!esDocumentoValido(cedula)) {
       rowErrors.push({
         line,
         column: 'cedula',
-        message: `Cédula inválida "${cell('cedula')}": debe tener entre 4 y 15 dígitos.`,
+        message: `Cédula inválida "${cell('cedula')}": debe tener entre 4 y 15 dígitos y no ser solo ceros.`,
       });
     } else {
       const firstLine = seenCedulas.get(cedula);
@@ -350,27 +353,18 @@ export function validatePadronCsv(
       }
     }
 
-    // ── nombre ──
-    const fullName = cell('nombre_completo').replace(/\s+/g, ' ').trim();
-    if (fullName.length < 3) {
-      rowErrors.push({
-        line,
-        column: 'nombre_completo',
-        message: 'El nombre completo es obligatorio (mínimo 3 caracteres).',
-      });
-    }
-
-    // ── EPS ──
-    const epsRaw = cell('eps');
-    const epsMatched = epsByNormalized.get(normalizeForMatch(epsRaw));
-    if (!epsRaw.trim()) {
-      rowErrors.push({ line, column: 'eps', message: 'La EPS es obligatoria.' });
-    } else if (!epsMatched) {
-      rowErrors.push({
-        line,
-        column: 'eps',
-        message: `La EPS "${epsRaw}" no existe o no está activa en el catálogo de la clínica.`,
-      });
+    // ── régimen (opcional) ──
+    let regime: PadronRegime | null = null;
+    const regimeRaw = cell('regimen');
+    if (regimeRaw) {
+      regime = normalizeRegime(regimeRaw);
+      if (!regime) {
+        rowErrors.push({
+          line,
+          column: 'regimen',
+          message: `Régimen no reconocido "${regimeRaw}": use SUBSIDIADO o CONTRIBUTIVO.`,
+        });
+      }
     }
 
     // ── teléfono (opcional) ──
@@ -389,72 +383,18 @@ export function validatePadronCsv(
       }
     }
 
-    // ── email (opcional) ──
-    let email: string | null = null;
-    const emailRaw = cell('email');
-    if (emailRaw) {
-      if (!EMAIL_REGEX.test(emailRaw)) {
-        rowErrors.push({
-          line,
-          column: 'email',
-          message: `Email inválido "${emailRaw}".`,
-        });
-      } else {
-        email = emailRaw.toLowerCase();
-      }
-    }
-
-    // ── fecha de nacimiento (opcional) ──
-    let dateOfBirth: string | null = null;
-    const dobRaw = cell('fecha_nacimiento');
-    if (dobRaw) {
-      dateOfBirth = normalizeDate(dobRaw);
-      if (!dateOfBirth) {
-        rowErrors.push({
-          line,
-          column: 'fecha_nacimiento',
-          message: `Fecha de nacimiento inválida "${dobRaw}": use AAAA-MM-DD o DD/MM/AAAA (no futura).`,
-        });
-      }
-    }
-
-    // ── género (opcional) ──
-    let gender: 'M' | 'F' | 'OTRO' | null = null;
-    const genderRaw = cell('genero');
-    if (genderRaw) {
-      gender = normalizeGender(genderRaw);
-      if (!gender) {
-        rowErrors.push({
-          line,
-          column: 'genero',
-          message: `Género inválido "${genderRaw}": use M, F u OTRO.`,
-        });
-      }
-    }
-
-    const address = cell('direccion').trim() || null;
-
     if (rowErrors.length > 0) {
-      errors.push(...rowErrors);
+      const rawCedula = cell('cedula');
+      errors.push(...rowErrors.map((e) => (rawCedula ? { ...e, rawCedula } : e)));
     } else {
-      validRows.push({
-        line,
-        cedula,
-        fullName,
-        epsName: epsMatched!,
-        phone,
-        email,
-        dateOfBirth,
-        gender,
-        address,
-      });
+      validRows.push({ line, cedula, regime, phone });
     }
   }
 
   if (totalDataRows === 0) {
     errors.push({
       line: 1,
-      message: 'El archivo no contiene filas de pacientes (solo encabezado).',
+      message: 'El archivo no contiene filas de afiliados (solo encabezado).',
     });
   }
 

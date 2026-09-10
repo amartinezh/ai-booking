@@ -68,6 +68,7 @@ model Organization {
   chatSurveys           ChatSurvey[]
   epsEnrolledPatients   EpsEnrolledPatient[]
   epsEnrollmentRequests EpsEnrollmentRequest[]
+  padronImports         PadronImport[]
 
   // 🪞 ESPEJO HOSPITAL (ver PLAN_ESPEJO_HOSPITAL.md) — 1:1, config del driver HIS de esta org.
   hospitalMirrorConfig HospitalMirrorConfig?
@@ -330,6 +331,9 @@ model User {
   // Tickets de soporte que reportó este usuario
   supportTickets SupportTicket[]
 
+  // Cortes del padrón que este usuario cargó
+  padronImports PadronImport[]
+
   // 🏢 TENANT ISOLATION
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
@@ -354,6 +358,7 @@ model Eps {
   agents           AgentProfile[] // Agentes limitados a agendar paciente de esta EPS
   waitlistEntries  WaitlistEntry[]
   enrolledPatients EpsEnrolledPatient[] // Padrón: pacientes dados de alta para agendar por esta EPS
+  padronImports    PadronImport[] // Cortes del padrón cargados para esta EPS
 
   // 🏢 TENANT ISOLATION — obligatorio: una EPS siempre pertenece a una clínica.
   // La unicidad de name/nit es por organización: dos clínicas pueden tener
@@ -1154,12 +1159,27 @@ model EpsEnrolledPatient {
   id String @id @default(uuid())
 
   cedula      String
-  fullName    String
+  // Nullable a propósito (2026-09-10): el formato mínimo del padrón solo
+  // exige la cédula. El nombre completo real vive en el HIS, vía el agente
+  // espejo — no en una copia del padrón de la EPS. Ver
+  // docs/drivers/cnt-sanvicente-anserma/ESTADO.md, "Un solo campo
+  // obligatorio: el documento".
+  fullName    String?
   phone       String?
   email       String?
+  // dateOfBirth/gender/address quedaron deliberadamente fuera del formato
+  // del padrón (mismo documento); estas columnas no se pueblan desde el
+  // importador y solo existen por si algún día entran por otra vía.
   dateOfBirth DateTime?
   gender      String? // 'M', 'F', 'OTRO'
   address     String?
+
+  // Régimen de afiliación ('SUBSIDIADO' | 'CONTRIBUTIVO'), igual convención
+  // que PatientProfile.regime: resuelve el convenio de facturación en el
+  // HIS. Nullable: el padrón puede no traerlo, y el driver del espejo cae a
+  // la heurística de "casilla más alta con aseguradora real" en R_PAC_EPS
+  // (confirmada al 83,4% contra EPS liquidadas — ver ESTADO.md, ronda 2).
+  regime String?
 
   // Baja lógica: permite retirar a un paciente del padrón sin perder trazabilidad.
   isActive Boolean @default(true)
@@ -1168,6 +1188,12 @@ model EpsEnrolledPatient {
   epsId String
   eps   Eps    @relation(fields: [epsId], references: [id], onDelete: Cascade)
 
+  // De qué corte viene esta fila (null = anterior a este campo, o alta
+  // manual). Sirve para el reemplazo por EPS (ver PadronImport) y para
+  // responder "¿por qué está/no está habilitado este paciente?".
+  importId String?
+  import   PadronImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+
   // 🏢 TENANT ISOLATION — obligatorio: el padrón es por clínica.
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1175,8 +1201,95 @@ model EpsEnrolledPatient {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([organizationId, cedula])
+  // La llave ANTES era (organizationId, cedula): una persona no podía estar
+  // en el padrón de dos EPS a la vez. Durante un traslado real sí aparece en
+  // los cortes de las dos EPS del mismo mes — con la llave vieja, la EPS de
+  // esa persona cambiaba según cuál de los dos archivos se hubiera cargado
+  // de último, sin relación con la fecha real del traslado. Ver ESTADO.md,
+  // "EL DEFECTO DE DISEÑO: la llave única impide estar en dos EPS" (2026-09-10).
+  @@unique([organizationId, epsId, cedula])
   @@index([organizationId, epsId])
+  @@index([organizationId, cedula])
+  @@index([importId])
+}
+
+// Un corte del padrón: metadatos de una carga de CSV, para trazabilidad y
+// para el reemplazo por EPS (ver PadronImportRow para el detalle fila a
+// fila). "El padrón que envían las EPS es siempre completo, pero puede
+// llegar parcial por algún error" (confirmado por el hospital, 2026-09-10):
+// cada carga reemplaza POR COMPLETO el padrón activo de esa EPS, y puede
+// repetirse cuantas veces haga falta sin dejar residuos — es idempotente.
+model PadronImport {
+  id String @id @default(uuid())
+
+  epsId String
+  eps   Eps    @relation(fields: [epsId], references: [id], onDelete: Cascade)
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  fileName String
+  // SHA-256 del contenido exacto del archivo. Recargar el mismo archivo dos
+  // veces es idempotente por diseño (mismo resultado), pero el hash permite
+  // detectarlo y mostrarlo en el historial sin adivinar por el nombre.
+  fileHash String
+
+  totalDataRows Int
+  validRows     Int
+  errorRows     Int
+
+  created     Int @default(0)
+  updated     Int @default(0)
+  reactivated Int @default(0)
+  deactivated Int @default(0)
+
+  // Cuando el corte iba a desactivar más del 10% del padrón activo de esa
+  // EPS, la pantalla exige confirmación explícita antes de aplicarlo (guarda
+  // contra el "puede llegar parcial por error" que describió el hospital).
+  // Null = no hizo falta confirmar (por debajo del umbral).
+  deactivationWasConfirmed Boolean?
+
+  createdByUserId String
+  createdBy       User   @relation(fields: [createdByUserId], references: [id])
+
+  rows             PadronImportRow[]
+  enrolledPatients EpsEnrolledPatient[]
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, epsId, createdAt])
+}
+
+// Detalle fila a fila de un corte — lo que hace evidente el proceso de carga
+// para el buscador avanzado por documento.
+//
+// 🔒 NUNCA guarda la fila cruda de una fila ACEPTADA: el padrón original del
+// hospital piloto traía columnas con datos sensibles (oncología, salud
+// mental, IVE, violencia — ~14% de sus filas) que decidimos no custodiar. Lo
+// mismo aplica aquí por diseño: solo se guarda la cédula y el resultado; de
+// una fila RECHAZADA, además el valor de la columna que falló — nunca la
+// fila completa.
+model PadronImportRow {
+  id String @id @default(uuid())
+
+  importId String
+  import   PadronImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  line Int
+
+  cedulaCruda       String
+  // Null cuando la cédula ni siquiera tenía forma válida (fila rechazada).
+  cedulaNormalizada String?
+
+  // 'CREADO' | 'ACTUALIZADO' | 'REACTIVADO' | 'SIN_CAMBIO' | 'RECHAZADO'
+  resultado String
+
+  // Solo para RECHAZADO.
+  errorColumn  String?
+  errorMessage String?
+
+  @@index([importId, resultado])
+  @@index([importId, cedulaNormalizada])
 }
 
 // -----------------------------------------------------------------------------
@@ -1318,7 +1431,7 @@ model HospitalMirrorConfig {
   // estuviera mirando el servidor en ese momento.
   lastHisReachable Boolean?
   lastHisDetail    String?
-  lastPushCursor  BigInt    @default(0)
+  lastPushCursor   BigInt   @default(0)
 
   // 🔔 Alertas de conflicto (doble-cupo → WaitlistEntry): configurable, se puede
   // apagar sin tocar código. Ver PLAN_ESPEJO_HOSPITAL.md §5.1/§7.
@@ -1472,7 +1585,7 @@ model SyncOutbox {
   // reporta un fallo, se corre hacia adelante 2^intentos segundos con techo
   // de 5 minutos: sin esto, un evento que el HIS rechaza siempre se
   // reintentaria en cada vuelta del agente y saturaria el log y la BD.
-  nextAttemptAt  DateTime?
+  nextAttemptAt DateTime?
 
   @@index([organizationId, seq])
   // Cubre la consulta caliente del dispatcher: pendientes de una organizacion

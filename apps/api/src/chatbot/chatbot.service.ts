@@ -45,6 +45,8 @@ import {
   parseSexo,
   parseRegimen,
   isParticularEps,
+  normalizeDocumento,
+  documentoSinCerosIniciales,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
@@ -1679,11 +1681,26 @@ export class ChatbotService implements OnModuleInit {
       return false;
     }
 
-    const cedula = (params.cedula || '').replace(/\D/g, '');
+    const cedula = normalizeDocumento(params.cedula);
     if (!cedula) return false; // la cédula vacía ya se rechaza aguas arriba
 
+    // Misma función que usa el importador del padrón (documento.ts) y el
+    // portón gemelo del staff (eps-enrollment.ts). Dos pasadas: el documento
+    // tal como llegó, y si no aparece, la variante sin ceros a la izquierda
+    // — Excel se come los ceros iniciales de una celda numérica al exportar,
+    // así que el padrón puede traer "0012345" donde el paciente escribe
+    // "12345". Antes de esto esa discrepancia rechazaba a alguien con
+    // derecho real (ver ESTADO.md, "Normalización del documento").
+    const candidatosCedula = [
+      ...new Set([cedula, documentoSinCerosIniciales(cedula)]),
+    ];
     const enrolled = await this.prisma.epsEnrolledPatient.findFirst({
-      where: { organizationId, epsId: eps.id, cedula, isActive: true },
+      where: {
+        organizationId,
+        epsId: eps.id,
+        cedula: { in: candidatosCedula },
+        isActive: true,
+      },
       select: { id: true },
     });
     if (enrolled) return false;

@@ -37,6 +37,8 @@ function fakePool(
     error?: any;
     /** Filas que afecta la copia a CITAS_ANULADAS: 0 = la cita no existía. */
     filasAnuladas?: number;
+    /** Simula el permiso EXECUTE sobre PA_Ins_AUDITOR aún no concedido. */
+    auditError?: any;
   } = {},
 ) {
   const requests: { params: Record<string, unknown>; sql: string }[] = [];
@@ -62,6 +64,9 @@ function fakePool(
         }
         if (opts.error && /INSERT INTO dbo\.CITAS_MEDICAS/.test(sqlText)) {
           throw opts.error;
+        }
+        if (opts.auditError && /EXEC dbo\.PA_Ins_AUDITOR/.test(sqlText)) {
+          throw opts.auditError;
         }
         if (/FROM dbo\.PACIENTES/.test(sqlText)) {
           return { recordset: opts.pacienteExiste === false ? [] : [{ x: 1 }] };
@@ -139,6 +144,37 @@ describe('createAppointment — valores que se le escriben al HIS', () => {
 
     // 12:00 UTC son las 07:00 en Bogotá — la hora que el paciente vio.
     expect(insertDeCita(requests)!.hora).toBe('2026/09/03 07:00');
+  });
+
+  it('FE_SOLI_CIT lleva la hora que pidió el paciente, no la de creación', async () => {
+    // Defecto real, encontrado leyendo el INSERT literal que AUDITOR.AudDesc
+    // guarda de la app nativa (MAPEO_HIS.md §2.8, 2026-09-10): el hospital
+    // escribe ahí la fecha/hora SOLICITADA, no GETDATE(). En el flujo del bot
+    // el cupo agendado ES el que pidió el paciente, así que debe coincidir
+    // exactamente con FE_HORA_CIT — igual que hace el hospital en 29 de 30
+    // citas de la muestra medida.
+    const { driver, requests } = conDriver();
+    await driver.createAppointment(evento());
+
+    const p = insertDeCita(requests)!;
+    expect(p.hora).toBe('2026/09/03 07:00');
+    expect(p.soli).toBe('2026-09-03T07:00:00');
+  });
+
+  it('FE_SOLI_CIT se mueve con la hora de la cita, no queda fijo', async () => {
+    // Prueba de que `soli` deriva de `hora` y no de un valor fijo o de
+    // `Date.now()`: con otra hora de inicio, otro `soli` — mismo minuto.
+    const { driver, requests } = conDriver();
+    await driver.createAppointment(
+      evento({
+        startTimeIso: '2026-09-04T14:35:00.000Z',
+        endTimeIso: '2026-09-04T14:55:00.000Z',
+      }),
+    );
+
+    const p = insertDeCita(requests)!;
+    expect(p.hora).toBe('2026/09/04 09:35');
+    expect(p.soli).toBe('2026-09-04T09:35:00');
   });
 
   it('escribe médico, servicio e historia tal como los homologó el servidor', async () => {
@@ -366,6 +402,83 @@ describe('createAppointment — alta de paciente', () => {
     expect(alta.sql).toMatch(/NO_SGNO_PAC/);
     expect(alta.sql).toMatch(/DE_PRAP_PAC/);
     expect(alta.sql).toMatch(/DE_SGAP_PAC/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// «Asignada Por» — el hospital pidió el 2026-08-23 marcar visualmente las
+// citas de WhatsApp. `AUDITOR.AudUser` es exactamente esa columna en la app
+// nativa (MAPEO_HIS.md §2.6): cada alta de CITAS_MEDICAS o PACIENTES queda
+// registrada llamando a `PA_Ins_AUDITOR`, el mismo SP que usa el HIS.
+//
+// Deliberadamente best-effort: el permiso EXECUTE es un GRANT nuevo
+// (sql/AGENIA_SYNC_SETUP.sql) que puede tardar en llegar a cada entorno, y
+// una auditoría fallida NUNCA debe impedir agendar una cita.
+// ══════════════════════════════════════════════════════════════════════════
+describe('createAppointment — auditoría en AUDITOR ("Asignada Por")', () => {
+  const auditoriaDe = (
+    requests: { params: any; sql: string }[],
+    tabla: 'CITAS_MEDICAS' | 'PACIENTES',
+  ) =>
+    requests.find(
+      (r) =>
+        /EXEC dbo\.PA_Ins_AUDITOR/.test(r.sql) && r.params.tabla === tabla,
+    );
+
+  it('audita el alta de la cita con AudUser=AGENIA y la llave natural de la fila', async () => {
+    const { driver, requests } = conDriver();
+    await driver.createAppointment(evento());
+
+    const aud = auditoriaDe(requests, 'CITAS_MEDICAS')!;
+    expect(aud).toBeDefined();
+    expect(aud.params.user).toBe('AGENIA');
+    expect(aud.params.trans).toBe('1'); // 1 = INSERT, igual que la app nativa
+    expect(aud.params.desc).toContain('médico=91-1');
+    expect(aud.params.desc).toContain('hora=2026/09/03 07:00');
+    expect(aud.params.desc).toContain('documento=1122334455');
+    // Nunca el payload completo ni nada de la conversación de WhatsApp:
+    expect(aud.params.desc).not.toMatch(/whatsapp/i);
+  });
+
+  it('audita el alta del paciente solo cuando el HIS no lo conocía', async () => {
+    const { driver: driverNuevo, requests: reqNuevo } = conDriver({
+      pacienteExiste: false,
+    });
+    await driverNuevo.createAppointment(evento());
+    expect(auditoriaDe(reqNuevo, 'PACIENTES')).toBeDefined();
+
+    const { driver: driverExiste, requests: reqExiste } = conDriver({
+      pacienteExiste: true,
+    });
+    await driverExiste.createAppointment(evento());
+    expect(auditoriaDe(reqExiste, 'PACIENTES')).toBeUndefined();
+  });
+
+  it('si el permiso sobre PA_Ins_AUDITOR falta, la cita se crea igual', async () => {
+    // La prueba de que "best-effort" no es solo un comentario: con el GRANT
+    // EXECUTE sin conceder (Msg 229 típico), createAppointment debe reportar
+    // éxito de todas formas.
+    const { driver, requests } = conDriver({
+      auditError: { message: 'The EXECUTE permission was denied.', number: 229 },
+    });
+    const r = await driver.createAppointment(evento());
+
+    expect(r.success).toBe(true);
+    expect(insertDeCita(requests)).toBeDefined(); // la cita SÍ quedó escrita
+  });
+
+  it('la falta de auditoría del paciente tampoco impide darlo de alta', async () => {
+    const { driver, requests } = conDriver({
+      pacienteExiste: false,
+      auditError: { message: 'The EXECUTE permission was denied.', number: 229 },
+    });
+    const r = await driver.createAppointment(evento());
+
+    expect(r.success).toBe(true);
+    const altaPaciente = requests.find((req) =>
+      /INSERT INTO dbo\.PACIENTES/.test(req.sql),
+    );
+    expect(altaPaciente).toBeDefined();
   });
 });
 

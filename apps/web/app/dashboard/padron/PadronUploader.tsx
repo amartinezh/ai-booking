@@ -1,11 +1,14 @@
 'use client';
 
-import { useRef, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
+    AlertTriangle,
     CheckCircle2,
     Download,
     FileSpreadsheet,
+    History,
     Loader2,
     ShieldCheck,
     Upload,
@@ -13,17 +16,18 @@ import {
 } from 'lucide-react';
 import { PADRON_CSV_HEADERS } from '@agenia/shared';
 import {
+    getActiveEpsOptionsAction,
     getPadronFullErrorReportAction,
     importPadronCsvAction,
     validatePadronCsvAction,
+    type EpsOption,
+    type PadronImportResult,
     type PadronValidationSummary,
 } from './actions';
 
 const MAX_FILE_BYTES = 6_000_000;
 
-const TEMPLATE_CSV =
-    PADRON_CSV_HEADERS.join(',') +
-    '\n1088123456,Ana María Pérez,Sura,3001234567,ana@mail.com,1990-05-10,F,Calle 10 #5-20\n';
+const TEMPLATE_CSV = PADRON_CSV_HEADERS.join(',') + '\n1088123456,SUBSIDIADO,3001234567\n';
 
 // Firmas binarias (primeros bytes del archivo) que jamás corresponden a un
 // CSV de texto: se revisan sobre los bytes CRUDOS, antes de decodificar nada,
@@ -44,30 +48,57 @@ async function sniffBinarySignature(file: File): Promise<string | null> {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Cargador del padrón: flujo estricto de dos pasos.
-//   1) VALIDAR  → reporte detallado (sin tocar la base de datos).
+// Cargador del padrón: flujo estricto de dos pasos, con la EPS elegida en
+// pantalla (no se lee de una columna del archivo — un archivo = una EPS).
+//   1) VALIDAR  → reporte detallado (sin tocar la base de datos), incluido
+//      cuánta gente de esa EPS quedaría desactivada si se aplica tal cual.
 //   2) IMPORTAR → solo se habilita si la validación fue exitosa; cualquier
-//      cambio de archivo invalida el reporte y obliga a validar de nuevo.
+//      cambio de archivo o de EPS invalida el reporte y obliga a validar de
+//      nuevo. Si la baja supera el 10% del padrón activo de la EPS, pide una
+//      confirmación explícita antes de aplicar el corte.
 // ─────────────────────────────────────────────────────────────
 export default function PadronUploader() {
     const router = useRouter();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    const [epsOptions, setEpsOptions] = useState<EpsOption[] | null>(null);
+    const [epsLoadError, setEpsLoadError] = useState<string | null>(null);
+    const [selectedEpsId, setSelectedEpsId] = useState<string>('');
+
     const [fileName, setFileName] = useState<string | null>(null);
     const [csvText, setCsvText] = useState<string | null>(null);
     const [report, setReport] = useState<PadronValidationSummary | null>(null);
-    const [importResult, setImportResult] = useState<{ created: number; updated: number } | null>(null);
+    const [confirmDeactivation, setConfirmDeactivation] = useState(false);
+    const [importResult, setImportResult] = useState<PadronImportResult | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [isValidating, startValidating] = useTransition();
     const [isImporting, startImporting] = useTransition();
     const [isDownloadingReport, startDownloadingReport] = useTransition();
 
+    useEffect(() => {
+        getActiveEpsOptionsAction().then((result) => {
+            if (result.success) {
+                setEpsOptions(result.eps);
+                if (result.eps.length === 1) setSelectedEpsId(result.eps[0].id);
+            } else {
+                setEpsLoadError(result.error);
+            }
+        });
+    }, []);
+
     const busy = isValidating || isImporting;
-    const canImport = !!report?.ok && !!csvText && !busy && !importResult;
+    const canValidate = !!csvText && !!selectedEpsId && !busy;
+    const canImport =
+        !!report?.ok &&
+        !!csvText &&
+        !busy &&
+        !importResult &&
+        (!report.needsDeactivationConfirmation || confirmDeactivation);
 
     function resetOutcome() {
         setReport(null);
         setImportResult(null);
+        setConfirmDeactivation(false);
         setError(null);
     }
 
@@ -129,10 +160,10 @@ export default function PadronUploader() {
     }
 
     function handleValidate() {
-        if (!csvText) return;
+        if (!csvText || !selectedEpsId) return;
         resetOutcome();
         startValidating(async () => {
-            const result = await validatePadronCsvAction(csvText);
+            const result = await validatePadronCsvAction(csvText, selectedEpsId);
             if (result.success) {
                 setReport(result.report);
             } else {
@@ -142,13 +173,24 @@ export default function PadronUploader() {
     }
 
     function handleImport() {
-        if (!csvText || !report?.ok) return;
+        if (!csvText || !report?.ok || !selectedEpsId) return;
         setError(null);
         startImporting(async () => {
-            const result = await importPadronCsvAction(csvText);
+            const result = await importPadronCsvAction(
+                csvText,
+                selectedEpsId,
+                fileName ?? 'padron.csv',
+                confirmDeactivation,
+            );
             if (result.success) {
-                setImportResult({ created: result.created ?? 0, updated: result.updated ?? 0 });
+                setImportResult(result);
                 router.refresh(); // refresca la tabla server-side del padrón
+            } else if (result.needsDeactivationConfirmation) {
+                // La cifra cambió entre validar e importar (alguien más
+                // tocó el padrón mientras tanto): re-exponer la guarda.
+                setError(result.error ?? null);
+                setConfirmDeactivation(false);
+                setReport((prev) => (prev ? { ...prev, needsDeactivationConfirmation: true } : prev));
             } else {
                 setError(result.error ?? 'Error al importar el padrón');
             }
@@ -171,24 +213,70 @@ export default function PadronUploader() {
                 <div>
                     <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
                         <FileSpreadsheet className="h-5 w-5 text-teal-600" />
-                        Importar pacientes desde CSV
+                        Importar corte del padrón desde CSV
                     </h2>
                     <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
                         Columnas: <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded">{PADRON_CSV_HEADERS.join(', ')}</code>.
-                        La columna <strong>eps</strong> debe coincidir con una EPS activa de la clínica.
+                        Solo <strong>cedula</strong> es obligatoria — la EPS se elige aquí abajo, no en el archivo.
                     </p>
                     <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
-                        El archivo se revisa a fondo (formato, columnas, duplicados y datos de cada fila) antes de habilitar la importación.
+                        Cada archivo reemplaza por completo el padrón activo de la EPS elegida: quien no venga en
+                        este corte queda inactivo. Puede recargar el mismo archivo cuantas veces necesite.
                     </p>
                 </div>
-                <button
-                    type="button"
-                    onClick={downloadTemplate}
-                    className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                >
-                    <Download className="h-4 w-4" /> Plantilla CSV
-                </button>
+                <div className="flex items-center gap-2">
+                    <Link
+                        href="/dashboard/padron/historial"
+                        className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                        <History className="h-4 w-4" /> Historial de cargas
+                    </Link>
+                    <button
+                        type="button"
+                        onClick={downloadTemplate}
+                        className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                        <Download className="h-4 w-4" /> Plantilla CSV
+                    </button>
+                </div>
             </header>
+
+            {/* Selector de EPS — un archivo = una EPS */}
+            <div className="flex flex-col gap-1.5">
+                <label htmlFor="padron-eps" className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                    EPS de este archivo
+                </label>
+                {epsLoadError ? (
+                    <p className="text-sm text-red-600 dark:text-red-400">{epsLoadError}</p>
+                ) : epsOptions === null ? (
+                    <p className="text-sm text-zinc-400">Cargando EPS activas…</p>
+                ) : epsOptions.length === 0 ? (
+                    <p className="text-sm text-amber-600 dark:text-amber-400">
+                        La clínica no tiene EPS activas. Cree las EPS en &quot;Aseguradoras (EPS)&quot; antes de
+                        importar el padrón.
+                    </p>
+                ) : (
+                    <select
+                        id="padron-eps"
+                        value={selectedEpsId}
+                        onChange={(e) => {
+                            setSelectedEpsId(e.target.value);
+                            resetOutcome();
+                        }}
+                        disabled={busy}
+                        className="max-w-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-200 focus:border-teal-400 focus:outline-none disabled:opacity-50"
+                    >
+                        <option value="" disabled>
+                            Seleccione una EPS…
+                        </option>
+                        {epsOptions.map((eps) => (
+                            <option key={eps.id} value={eps.id}>
+                                {eps.name}
+                            </option>
+                        ))}
+                    </select>
+                )}
+            </div>
 
             {/* Selector de archivo */}
             <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/40 px-6 py-8 text-center transition-colors hover:border-teal-400 hover:bg-teal-50/50 dark:hover:bg-teal-900/10">
@@ -211,7 +299,8 @@ export default function PadronUploader() {
                 <button
                     type="button"
                     onClick={handleValidate}
-                    disabled={!csvText || busy}
+                    disabled={!canValidate}
+                    title={!selectedEpsId ? 'Seleccione primero la EPS de este archivo' : undefined}
                     className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     {isValidating ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
@@ -225,7 +314,7 @@ export default function PadronUploader() {
                     className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    2. Importar pacientes
+                    2. Importar corte
                 </button>
             </div>
 
@@ -235,14 +324,20 @@ export default function PadronUploader() {
                 </div>
             )}
 
-            {/* Resultado de la importación */}
-            {importResult && (
+            {/* Resultado de la importación: el resumen completo del corte */}
+            {importResult?.success && (
                 <div className="flex items-start gap-2 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-400">
                     <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
-                    <span>
-                        Importación exitosa: <strong>{importResult.created}</strong> paciente(s) nuevo(s) y{' '}
-                        <strong>{importResult.updated}</strong> actualizado(s). Ya pueden agendar por su EPS.
-                    </span>
+                    <div className="space-y-1">
+                        <p className="font-semibold">Corte aplicado.</p>
+                        <p>
+                            <strong>{importResult.created ?? 0}</strong> alta(s) nueva(s),{' '}
+                            <strong>{importResult.updated ?? 0}</strong> actualizado(s),{' '}
+                            <strong>{importResult.reactivated ?? 0}</strong> reactivado(s) y{' '}
+                            <strong>{importResult.deactivated ?? 0}</strong> desactivado(s) por no venir en este
+                            archivo. Ya pueden agendar por su EPS quienes quedaron activos.
+                        </p>
+                    </div>
                 </div>
             )}
 
@@ -258,8 +353,8 @@ export default function PadronUploader() {
                     <p className="font-semibold flex items-center gap-2">
                         {report.ok ? (
                             <>
-                                <CheckCircle2 className="h-4 w-4" /> Archivo válido: {report.validCount} paciente(s) listo(s)
-                                para importar.
+                                <CheckCircle2 className="h-4 w-4" /> Archivo válido para <strong>{report.epsName}</strong>:{' '}
+                                {report.validCount} afiliado(s) listo(s) para importar.
                             </>
                         ) : (
                             <>
@@ -269,16 +364,29 @@ export default function PadronUploader() {
                         )}
                     </p>
 
-                    {report.rowsPerEps.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                            {report.rowsPerEps.map(({ epsName, count }) => (
-                                <span
-                                    key={epsName}
-                                    className="rounded-full bg-white/70 dark:bg-zinc-900/40 px-3 py-1 text-xs font-medium"
-                                >
-                                    {epsName}: {count}
-                                </span>
-                            ))}
+                    {report.ok && (
+                        <p className="text-xs opacity-80">
+                            {report.activeForEps} afiliado(s) de {report.epsName} están activos hoy; este corte
+                            desactivaría {report.wouldDeactivate} por no venir en el archivo.
+                        </p>
+                    )}
+
+                    {report.ok && report.needsDeactivationConfirmation && (
+                        <div className="rounded-lg bg-white/70 dark:bg-zinc-900/40 p-3 space-y-2">
+                            <p className="flex items-start gap-2 font-medium">
+                                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+                                Este corte desactivaría más del 10% del padrón activo de {report.epsName} (
+                                {report.wouldDeactivate} de {report.activeForEps}). Si el archivo llegó incompleto
+                                por error, cancele y revíselo antes de continuar.
+                            </p>
+                            <label className="flex items-center gap-2 text-xs">
+                                <input
+                                    type="checkbox"
+                                    checked={confirmDeactivation}
+                                    onChange={(e) => setConfirmDeactivation(e.target.checked)}
+                                />
+                                Confirmo que el archivo es correcto y completo: aplicar la desactivación masiva.
+                            </label>
                         </div>
                     )}
 

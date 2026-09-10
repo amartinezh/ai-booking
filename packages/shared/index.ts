@@ -36,7 +36,13 @@ export type {
   PadronCsvRow,
   PadronCsvError,
   PadronCsvReport,
+  PadronRegime,
 } from './src/padron-csv';
+export {
+  normalizeDocumento,
+  documentoSinCerosIniciales,
+  esDocumentoValido,
+} from './src/documento';
 export { PARTICULAR_EPS_NAME, isParticularEps } from './src/eps';
 export {
   isWhatsappPhoneId,

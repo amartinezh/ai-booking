@@ -308,6 +308,39 @@ export function fechaLiteralSql(fechaLocal: string): string {
 }
 
 /**
+ * `FE_SOLI_CIT` como literal de texto: la fecha Y HORA solicitada de la cita.
+ *
+ * Recibe el mismo `'YYYY/MM/DD HH:MM'` que se escribe en `FE_HORA_CIT` y
+ * devuelve `'YYYY-MM-DDTHH:MM:00'`.
+ *
+ * POR QUÉ CON LA `T` Y NO CON ESPACIO
+ * `FE_SOLI_CIT` es `datetime` (MAPEO_HIS.md §2.5). Para ese tipo,
+ * `'YYYY-MM-DD HH:MM'` —con espacio— SÍ depende del `DATEFORMAT`/idioma de la
+ * sesión; el ISO 8601 estricto con `T` es invariante, igual que el `YYYYMMDD`
+ * de `fechaLiteralSql()`. Se pasa como texto y no como `Date` por la misma
+ * razón que allí: un `Date` viaja en UTC y le pega cinco horas a la hora del
+ * hospital.
+ *
+ * POR QUÉ EXISTE
+ * El hospital escribe en `FE_SOLI_CIT` la hora que PIDIÓ el paciente, no la de
+ * creación: en la muestra de 30 citas de `AUDITOR` (2026-09-10) coincide con
+ * `FE_HORA_CIT` en 29, y en la que difiere el paciente pidió las 13:20 y le
+ * asignaron las 12:30. El driver escribía `GETDATE()` ahí —la fecha de
+ * creación—, lo que falsea en silencio los tres reportes de oportunidad del
+ * hospital (Res 1552, Res 256, Oportunidad Citas). Ver MAPEO_HIS.md §2.8.
+ */
+export function fechaHoraLiteralSql(feHoraCit: string): string {
+  const m = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/.exec(feHoraCit);
+  if (!m) {
+    throw new MappingIncompletoError(
+      `Fecha-hora con formato inesperado: "${feHoraCit}". ` +
+        `Se esperaba 'YYYY/MM/DD HH:MM'.`,
+    );
+  }
+  return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00`;
+}
+
+/**
  * Convenio de facturación de la cita.
  *
  * Regla confirmada en Fase 0 y validada de forma cruzada con la prueba manual

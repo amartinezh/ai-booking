@@ -1,4 +1,4 @@
-import { isParticularEps } from '@agenia/shared';
+import { documentoSinCerosIniciales, isParticularEps, normalizeDocumento } from '@agenia/shared';
 import { prisma } from './prisma';
 
 // ─────────────────────────────────────────────────────────────
@@ -33,11 +33,20 @@ export async function findEpsEnrollmentIssue(
     // EPS inexistente en el tenant: no es asunto del padrón (otra validación falla luego).
     if (!eps || isParticularEps(eps.name)) return null;
 
-    const normalizedCedula = cedula.replace(/\D/g, '');
+    const normalizedCedula = normalizeDocumento(cedula);
     if (!normalizedCedula) return null; // La cédula vacía se rechaza por otra validación.
 
+    // Misma función que usa el importador del padrón — ver documento.ts.
+    // Dos pasadas: primero el documento tal como llegó, y si no aparece, la
+    // variante sin ceros a la izquierda. Excel se come los ceros iniciales de
+    // una celda numérica al exportar: el padrón puede traer "0012345" donde
+    // el paciente escribe "12345" (o viceversa), y antes de este cambio esa
+    // discrepancia rechazaba a alguien con derecho real.
+    const candidatos = new Set(
+        [normalizedCedula, documentoSinCerosIniciales(normalizedCedula)].filter(Boolean),
+    );
     const enrolled = await db.epsEnrolledPatient.findFirst({
-        where: { organizationId, epsId: eps.id, cedula: normalizedCedula, isActive: true },
+        where: { organizationId, epsId: eps.id, cedula: { in: [...candidatos] }, isActive: true },
         select: { id: true },
     });
     if (enrolled) return null;

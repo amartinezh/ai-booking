@@ -2717,6 +2717,27 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(all).not.toContain('/solicitud-alta/');
     });
 
+    // Excel se come los ceros iniciales de una celda numérica al exportar:
+    // el padrón puede traer "0012345" donde el paciente escribe "12345".
+    // Misma normalización que usa el importador del padrón y el portón
+    // gemelo del staff (eps-enrollment.ts) — ver documento.ts.
+    it('busca por la cédula tal como llegó Y sin ceros a la izquierda, en la misma consulta', async () => {
+      armarConfirmacionPendiente();
+      redis.store.set(`temp_cedula:${ORG_ID}:${SENDER}`, '0088123456');
+      prisma.eps.findFirst.mockResolvedValue({ id: 'eps-sura', name: 'Sura' });
+      prisma.epsEnrolledPatient.findFirst.mockResolvedValue({ id: 'padron-1' });
+
+      await service.processIncomingMessage(makeTextEvent('SI'));
+
+      expect(prisma.epsEnrolledPatient.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            cedula: { in: ['0088123456', '88123456'] },
+          }),
+        }),
+      );
+    });
+
     it('EPS "Particular" (pago directo) → NO consulta el padrón ni bloquea', async () => {
       armarConfirmacionPendiente();
       redis.store.set(`temp_eps_id:${ORG_ID}:${SENDER}`, 'eps-part');

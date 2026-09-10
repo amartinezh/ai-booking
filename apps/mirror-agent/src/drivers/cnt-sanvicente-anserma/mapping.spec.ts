@@ -5,6 +5,7 @@ import {
   MappingIncompletoError,
   fechaCitaLocal,
   fechaLiteralSql,
+  fechaHoraLiteralSql,
   diaSiguienteLiteralSql,
   desenlaceDeAtencion,
   feHoraCitAIso,
@@ -590,6 +591,70 @@ describe('fechaLiteralSql', () => {
   it('una fecha con formato inesperado falla en vez de escribir basura', () => {
     expect(() => fechaLiteralSql('02/09/2026')).toThrow(MappingIncompletoError);
     expect(() => fechaLiteralSql('')).toThrow(MappingIncompletoError);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// `FE_SOLI_CIT` llevaba `GETDATE()` —la fecha de creación— donde el hospital
+// escribe la fecha y hora SOLICITADA de la cita. Se descubrió leyendo el
+// INSERT literal que `AUDITOR.AudDesc` guarda de la app nativa (2026-09-10):
+// coincide con `FE_HORA_CIT` en 29 de 30 citas, y en la que difiere el
+// paciente pidió las 13:20 y le dieron las 12:30. Falseaba en silencio los
+// tres reportes de oportunidad del hospital. Ver MAPEO_HIS.md §2.8.
+// ══════════════════════════════════════════════════════════════════════════
+describe('fechaHoraLiteralSql', () => {
+  const BOGOTA = 'America/Bogota';
+
+  it('convierte el FE_HORA_CIT del hospital en un literal ISO 8601', () => {
+    expect(fechaHoraLiteralSql('2026/09/12 09:20')).toBe('2026-09-12T09:20:00');
+  });
+
+  it('usa la T de ISO 8601 y no un espacio', () => {
+    // Con espacio, `YYYY-MM-DD HH:MM` SÍ depende del DATEFORMAT de la sesión
+    // para una columna `datetime`; con la T es invariante. Un espacio aquí
+    // convertiría el 12 de septiembre en el 9 de diciembre bajo `SET
+    // DATEFORMAT mdy`, sin dar error.
+    const out = fechaHoraLiteralSql('2026/09/12 09:20');
+    expect(out).toContain('T');
+    expect(out).not.toContain(' ');
+  });
+
+  it('acepta exactamente lo que produce formatFeHoraCit', () => {
+    // El acoplamiento es a propósito: si `formatFeHoraCit` cambia de formato,
+    // esta prueba se cae en vez de escribirle basura al hospital.
+    const feHora = formatFeHoraCit('2026-09-03T12:20:00.000Z', BOGOTA);
+    expect(() => fechaHoraLiteralSql(feHora)).not.toThrow();
+    expect(fechaHoraLiteralSql(feHora)).toBe('2026-09-03T07:20:00');
+  });
+
+  it('el resultado NO depende de la zona del proceso', () => {
+    const tz = process.env.TZ;
+    try {
+      process.env.TZ = 'Asia/Tokyo';
+      const enTokio = fechaHoraLiteralSql('2026/09/12 09:20');
+      process.env.TZ = 'UTC';
+      const enUtc = fechaHoraLiteralSql('2026/09/12 09:20');
+      expect(enTokio).toBe('2026-09-12T09:20:00');
+      expect(enUtc).toBe('2026-09-12T09:20:00');
+    } finally {
+      process.env.TZ = tz;
+    }
+  });
+
+  it('un formato inesperado falla en vez de escribir basura', () => {
+    // Con guiones (el formato que el hospital NUNCA usa en FE_HORA_CIT):
+    expect(() => fechaHoraLiteralSql('2026-09-12 09:20')).toThrow(
+      MappingIncompletoError,
+    );
+    // Sin hora:
+    expect(() => fechaHoraLiteralSql('2026/09/12')).toThrow(
+      MappingIncompletoError,
+    );
+    // Con segundos (la app escribe 16 caracteres exactos):
+    expect(() => fechaHoraLiteralSql('2026/09/12 09:20:00')).toThrow(
+      MappingIncompletoError,
+    );
+    expect(() => fechaHoraLiteralSql('')).toThrow(MappingIncompletoError);
   });
 });
 

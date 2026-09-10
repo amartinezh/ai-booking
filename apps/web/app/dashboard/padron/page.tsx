@@ -77,14 +77,22 @@ export default async function PadronPage({
 
     return (
         <div className="max-w-6xl mx-auto animate-fade-in space-y-8">
-            <header>
-                <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900 dark:text-white mb-2">
-                    🪪 Padrón EPS (Altas)
-                </h1>
-                <p className="text-zinc-500 dark:text-zinc-400 text-lg leading-relaxed max-w-3xl">
-                    Solo los pacientes de este padrón pueden agendar citas <strong>por EPS</strong> a través del
-                    asistente virtual. Las citas <em>Particular</em> (pago directo) no requieren alta.
-                </p>
+            <header className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                    <h1 className="text-3xl font-extrabold tracking-tight text-zinc-900 dark:text-white mb-2">
+                        🪪 Padrón EPS (Altas)
+                    </h1>
+                    <p className="text-zinc-500 dark:text-zinc-400 text-lg leading-relaxed max-w-3xl">
+                        Solo los afiliados de este padrón pueden agendar citas <strong>por EPS</strong> a través del
+                        asistente virtual. Las citas <em>Particular</em> (pago directo) no requieren alta.
+                    </p>
+                </div>
+                <Link
+                    href="/dashboard/padron/historial"
+                    className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                    Historial de cargas →
+                </Link>
             </header>
 
             {/* Métricas del padrón */}
@@ -160,7 +168,11 @@ export default async function PadronPage({
                                 <TableRow key={patient.id}>
                                     <TableCell className="font-mono text-sm">{patient.cedula}</TableCell>
                                     <TableCell className="font-medium text-zinc-800 dark:text-zinc-100">
-                                        {patient.fullName}
+                                        {patient.fullName ?? (
+                                            <span className="text-zinc-400 italic font-normal">
+                                                (nombre en el HIS)
+                                            </span>
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-sm">{patient.eps.name}</TableCell>
                                     <TableCell className="text-sm text-zinc-500">{patient.phone ?? '—'}</TableCell>

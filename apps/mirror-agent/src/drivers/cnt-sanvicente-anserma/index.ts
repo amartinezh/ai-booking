@@ -11,6 +11,7 @@ import {
   formatFeHoraCit,
   fechaCitaLocal,
   fechaLiteralSql,
+  fechaHoraLiteralSql,
   diaSiguienteLiteralSql,
   desenlaceDeAtencion,
   mapSexo,
@@ -924,7 +925,15 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         .input('conv', sql.Int, convenio)
         .input('desc', sql.VarChar(600), mapping.marcaOrigen)
         .input('ceco', sql.VarChar(11), mapping.centroCostos ?? null)
-        .input('luat', sql.VarChar(2), mapping.lugarAtencion).query(`
+        .input('luat', sql.VarChar(2), mapping.lugarAtencion)
+        // `FE_SOLI_CIT` NO es la fecha de creación: es la fecha y hora que
+        // SOLICITÓ el paciente. El hospital la escribe igual a `FE_HORA_CIT`
+        // salvo cuando le asigna otro cupo del que pidió (29 de 30 en la
+        // muestra de `AUDITOR` del 2026-09-10 — MAPEO_HIS.md §2.8). Como el
+        // bot agenda exactamente el cupo que el paciente escogió, aquí
+        // coinciden siempre. Iba `GETDATE()` y falseaba en silencio los tres
+        // reportes de oportunidad del hospital.
+        .input('soli', sql.VarChar(19), fechaHoraLiteralSql(feHora)).query(`
           INSERT INTO dbo.CITAS_MEDICAS (
             CD_CODI_MED_CIT, FE_HORA_CIT, NU_ESTA_CIT, CD_CODI_SER_CIT,
             NU_HIST_PAC_CIT, NU_DURA_CIT, FE_ELAB_CIT, FE_FECH_CIT,
@@ -936,8 +945,14 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
             @hist, @dura, GETDATE(), @fecha,
             0, 0, 0, 0,
             0, @esp, @cons, @conv,
-            @desc, @ceco, @luat, GETDATE()
+            @desc, @ceco, @luat, @soli
           )`);
+
+      await this.auditarEnHIS(ej, {
+        tabla: 'CITAS_MEDICAS',
+        trans: '1',
+        desc: `AgenIA — alta de cita: médico=${p.doctorExternalKey} hora=${feHora} documento=${p.patientDocument}`,
+      });
 
       return { success: true };
       // `sql.RequestError` es lo que lanza mssql ante un error del servidor, y
@@ -1023,6 +1038,70 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
           FE_NACI_PAC, NU_SEXO_PAC, FE_HIST_PAC, NU_EXTR_PAC
         ) VALUES (@hist, @docu, 0, @nomb, @sgno, @prap, @sgap,
                   @naci, @sexo, GETDATE(), 0)`);
+
+    await this.auditarEnHIS(ej, {
+      tabla: 'PACIENTES',
+      trans: '1',
+      desc: `AgenIA — alta de paciente: documento=${p.patientDocument}`,
+    });
+  }
+
+  /**
+   * Versión que se reporta en `AUDITOR.AudVerExe`, junto a la de la app
+   * nativa ('20.4.0' en toda la muestra medida el 2026-09-10). No necesita
+   * seguir la del `package.json` del monorepo — es un identificador estable
+   * para que el hospital filtre "qué hizo AGENIA" en su propia auditoría.
+   */
+  private static readonly AUDIT_VERSION = 'AGENIA-1';
+
+  /**
+   * Registra la escritura en `dbo.AUDITOR`, igual que hace la aplicación
+   * nativa del hospital (confirmado 2026-09-10 — MAPEO_HIS.md §2.6-2.8:
+   * `AudUser` es literalmente el "Asignada Por" que el hospital pidió el
+   * 2026-08-23, y `AUDITOR` no se llena por trigger sino porque cada app
+   * llama a `PA_Ins_AUDITOR` explícitamente).
+   *
+   * ⚠️ BEST-EFFORT A PROPÓSITO: nunca debe tumbar la escritura real. El
+   * permiso `EXECUTE ON dbo.PA_Ins_AUDITOR` es un GRANT nuevo (ver
+   * sql/AGENIA_SYNC_SETUP.sql) que puede no estar aplicado todavía en algún
+   * entorno — y aunque lo esté, perder una línea de auditoría es aceptable;
+   * perder o abortar una cita no. Por eso el catch de aquí no relanza, solo
+   * avisa por consola: un `Msg 229` (EXECUTE denegado) es severidad 14, no
+   * "doom-ea" la transacción activa si la llamada corre dentro de una — pero
+   * aun si SQL Server se comportara distinto, este catch es la barrera real.
+   *
+   * Alcance deliberado, no exhaustivo: solo INSERT de `CITAS_MEDICAS` y
+   * `PACIENTES`, que es lo único que la app nativa audita hoy (medido en 3
+   * meses de `AUDITOR`). Las cancelaciones del agente NO se auditan aquí — el
+   * hospital tampoco audita las suyas; quedan en `CITAS_ANULADAS` con su
+   * motivo (§2.7). `AudDesc` lleva solo la llave natural de la fila —nunca
+   * datos de la conversación de WhatsApp ni el payload completo— mismo
+   * criterio que se usó para no guardar la fila cruda de un padrón aceptado.
+   */
+  private async auditarEnHIS(
+    ej: Ejecutor,
+    params: { tabla: 'CITAS_MEDICAS' | 'PACIENTES'; trans: '1' | '2'; desc: string },
+  ): Promise<void> {
+    try {
+      await ej
+        .request()
+        .input('fech', sql.DateTime, new Date())
+        .input('user', sql.VarChar(60), 'AGENIA')
+        .input('tabla', sql.VarChar(100), params.tabla)
+        .input('trans', sql.VarChar(1), params.trans)
+        .input('desc', sql.VarChar(600), params.desc)
+        .input('ver', sql.VarChar(50), CntSanVicenteAnsermaDriver.AUDIT_VERSION)
+        .query(`
+          EXEC dbo.PA_Ins_AUDITOR
+            @AudFech = @fech, @AudUser = @user, @AudTabla = @tabla,
+            @AudTrans = @trans, @AudDesc = @desc, @AudVerExe = @ver`);
+    } catch (error) {
+      console.warn(
+        `[driver cnt-sanvicente-anserma] no se pudo auditar en AUDITOR ` +
+          `(${params.tabla}, trans=${params.trans}): ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /** Turno del médico ese día: de ahí salen el consultorio y la disponibilidad. */

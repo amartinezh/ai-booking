@@ -175,6 +175,13 @@ GRANT INSERT, UPDATE ON dbo.CITAS_MEDICAS  TO agenia_sync;  -- alta + reflejar a
 GRANT DELETE         ON dbo.CITAS_MEDICAS  TO agenia_sync;  -- cancelación (mecanismo confirmado en Fase 0)
 GRANT INSERT         ON dbo.CITAS_ANULADAS TO agenia_sync;  -- registrar motivo/observaciones al cancelar
 GRANT INSERT, UPDATE ON dbo.PACIENTES      TO agenia_sync;  -- alta mínima de paciente nuevo (§3.3)
+-- "Asignada Por" (pedido por el hospital 2026-08-23): el agente audita sus
+-- altas en dbo.AUDITOR igual que la app nativa, llamando a este SP — NUNCA
+-- INSERT directo sobre AUDITOR. EXECUTE es más estrecho que INSERT sobre la
+-- tabla: el SP es un INSERT puro sin lógica (MAPEO_HIS.md §2.6), así que este
+-- permiso no puede usarse para nada distinto de auditar. Best-effort en el
+-- driver: si este GRANT no se aplica, las citas se siguen creando igual.
+GRANT EXECUTE ON dbo.PA_Ins_AUDITOR TO agenia_sync;
 GO
 
 -- -----------------------------------------------------------------------------
@@ -215,6 +222,7 @@ GRANT INSERT, UPDATE ON dbo.CITAS_MEDICAS  TO agenia_sync;
 GRANT DELETE         ON dbo.CITAS_MEDICAS  TO agenia_sync;
 GRANT INSERT         ON dbo.CITAS_ANULADAS TO agenia_sync;
 GRANT INSERT, UPDATE ON dbo.PACIENTES      TO agenia_sync;
+GRANT EXECUTE ON dbo.PA_Ins_AUDITOR TO agenia_sync;  -- ver el porqué en la sección 4
 GO
 
 -- Verificación inmediata: debe devolver UNA fila, esquema 'dbo'.
@@ -248,6 +256,14 @@ GO
 EXECUTE AS LOGIN = 'agenia_sync';
 SELECT TOP 1 CD_CODI_MED_CIT, FE_FECH_CIT FROM PRUEBAS.dbo.CITAS_MEDICAS;   -- debe funcionar
 SELECT COUNT(*) FROM AGENIA_SYNC.dbo.LocalQueue;                            -- debe funcionar
+-- EXEC de PA_Ins_AUDITOR SÍ debe funcionar (auditoría "Asignada Por") —
+-- probarlo dentro de una transacción con ROLLBACK, para no dejar la fila:
+-- BEGIN TRAN;
+--   EXEC PRUEBAS.dbo.PA_Ins_AUDITOR @AudFech = GETDATE(), @AudUser = 'AGENIA',
+--        @AudTabla = 'CITAS_MEDICAS', @AudTrans = '1',
+--        @AudDesc = 'prueba de permiso — no es una cita real',
+--        @AudVerExe = 'AGENIA-1';
+-- ROLLBACK;
 -- DELETE sobre CITAS_MEDICAS SÍ debe funcionar (es la cancelación, ver arriba) —
 -- probarlo dentro de una transacción con ROLLBACK, nunca contra una fila real:
 -- BEGIN TRAN;

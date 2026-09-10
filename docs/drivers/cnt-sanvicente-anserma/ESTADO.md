@@ -4350,3 +4350,252 @@ tiempo: `AudDesc` trae los valores, así que se empareja por `NU_HIST_PAC_CIT` +
 5. La cola del padrón: migración (llave `(org, epsId, cedula)`, `regimen`,
    `importId`, `PadronImport`/`PadronImportRow`), normalización compartida en
    `@agenia/shared`, y el front del log de cargas.
+
+---
+
+# ✅ `FE_SOLI_CIT` CORREGIDO Y PROBADO (2026-09-10)
+
+Primer ajuste de la cola de trabajo, cerrado de punta a punta.
+
+## Verificaciones previas (sin tocar código)
+
+Antes de tocar el driver confirmé los tres puntos que quedaban abiertos de la
+sesión anterior — los tres se cerraron sin necesidad de cambios:
+
+- **`FE_FECH_CIT` es `datetime`** (`MAPEO_HIS.md` línea 63) → el literal ISO
+  `YYYYMMDD` que ya escribe `fechaLiteralSql()` es correcto; no había
+  divergencia real con el `DD/MM/YYYY` que muestra la app al leer.
+- **`NU_NUME_CONE_CIT` es `int` NULLABLE** (línea 67) → omitirla en el INSERT
+  es seguro. Confirmado también que es consecutivo de sesión del operador, no
+  identificador de fila (mismo hallazgo que `NU_NUME_CONE_CIAN`, §213).
+- **`I890305PL` está en `mapping.json`**, mapeado a especialidad `060`
+  (ENFERMERIA PYDT) y presente en `serviciosPyp`. Los seis servicios de la
+  muestra de `AUDITOR` están todos cubiertos.
+
+## El cambio
+
+- **`mapping.ts`**: nueva función pura `fechaHoraLiteralSql(feHoraCit)`, que
+  convierte `'YYYY/MM/DD HH:MM'` (el mismo formato de `FE_HORA_CIT`) a
+  `'YYYY-MM-DDTHH:MM:00'` — ISO 8601 con `T`, invariante ante `DATEFORMAT`,
+  igual criterio que `fechaLiteralSql()`.
+- **`index.ts`**: el INSERT de `createAppointment` pasa de `FE_SOLI_CIT =
+  GETDATE()` a `FE_SOLI_CIT = @soli`, con `@soli = fechaHoraLiteralSql(feHora)`
+  — la misma hora que `FE_HORA_CIT`, que es lo que hace el hospital en 29 de
+  30 casos de la muestra (el bot agenda exactamente el cupo que el paciente
+  escogió, así que aquí siempre coinciden).
+
+## Pruebas
+
+- **`mapping.spec.ts`**: 5 casos nuevos para `fechaHoraLiteralSql` — conversión
+  correcta, uso de `T` (no espacio, por la dependencia de `DATEFORMAT`),
+  acoplamiento con el formato real de `formatFeHoraCit`, independencia de la
+  zona del proceso, y rechazo de formatos inesperados (guiones, sin hora, con
+  segundos).
+- **`create-appointment.spec.ts`**: 2 casos de integración — `FE_SOLI_CIT`
+  coincide con `FE_HORA_CIT` en el evento base, y se mueve correctamente con
+  otra hora de inicio (no es un valor fijo ni depende de `Date.now()`).
+
+**Resultado: 433/433 tests del mirror-agent, `tsc --noEmit` limpio.**
+
+## Cola restante, en orden
+
+1. ~~`FE_SOLI_CIT`~~ ✅
+2. Pedir `GRANT EXECUTE ON dbo.PA_Ins_AUDITOR TO agenia_sync` y escribir la
+   auditoría del driver con `AudUser = 'AGENIA'` (formato de `AudDesc`
+   conocido, ver §2.8 de `MAPEO_HIS.md`).
+3. La cola del padrón: migración de esquema (llave `(org, epsId, cedula)`,
+   `regimen`, `importId`, `PadronImport`/`PadronImportRow`), normalización de
+   documento compartida en `@agenia/shared`, y el front del log de cargas.
+
+---
+
+# ✅ AUDITORÍA "ASIGNADA POR" IMPLEMENTADA (2026-09-10)
+
+Segundo ajuste de la cola, cerrado de punta a punta: el driver ya audita sus
+propias escrituras en `AUDITOR`, igual que la app nativa.
+
+## El cambio
+
+- **`index.ts`**: método privado `auditarEnHIS(ej, { tabla, trans, desc })`
+  que llama a `EXEC dbo.PA_Ins_AUDITOR` con `AudUser = 'AGENIA'`,
+  `AudVerExe = 'AGENIA-1'` y `AudFech = GETDATE()`. Se invoca desde dos
+  puntos, justo después de que el INSERT real tuvo éxito:
+  - `crearCita`, tras el INSERT en `CITAS_MEDICAS` — `AudDesc` lleva la llave
+    natural (médico + hora + documento), no un payload.
+  - `ensurePaciente`, tras el INSERT en `PACIENTES` — solo cuando el paciente
+    no existía (alta real), nunca en el camino donde ya existía.
+- **Deliberadamente best-effort**: `auditarEnHIS` atrapa cualquier error y
+  solo lo reporta por `console.warn`, nunca lo relanza. Si el `GRANT EXECUTE`
+  no está aplicado en algún entorno, la cita se sigue creando — perder una
+  línea de auditoría es aceptable, perder o abortar una cita no.
+- **Alcance limitado a propósito**: solo INSERT de `CITAS_MEDICAS` y
+  `PACIENTES` — lo único que la app nativa audita hoy (§5 y §2.7 de este
+  documento). Las cancelaciones del agente NO se auditan aquí, igual que las
+  del hospital: quedan en `CITAS_ANULADAS` con su motivo.
+- **`AGENIA_SYNC_SETUP.sql`**: `GRANT EXECUTE ON dbo.PA_Ins_AUDITOR TO
+  agenia_sync` añadido en las dos secciones (PRUEBAS y 4-ESEHSVP), con la
+  misma explicación de por qué `EXECUTE` y no `INSERT` directo sobre
+  `AUDITOR` — el SP es un INSERT puro sin lógica (MAPEO_HIS.md §2.6), así que
+  el permiso no sirve para nada más que auditar. También se añadió el
+  fragmento de verificación de la sección 6 (dentro de una transacción con
+  `ROLLBACK`, para no dejar una fila de prueba).
+
+## Pruebas
+
+`create-appointment.spec.ts`, nuevo `describe('createAppointment — auditoría
+en AUDITOR ("Asignada Por")')` con 4 casos:
+
+1. La cita se audita con `AudUser=AGENIA`, `trans='1'` y el `AudDesc` con
+   médico/hora/documento — y sin ninguna mención a WhatsApp.
+2. El paciente se audita solo cuando el HIS no lo conocía (alta real), nunca
+   cuando ya existía.
+3. **Si el permiso falta (simulado con `Msg 229`), la cita se crea igual** —
+   la prueba de que "best-effort" no es solo un comentario.
+4. Lo mismo para el alta de paciente: sin el permiso, el paciente igual queda
+   creado en `PACIENTES`.
+
+También se añadió `auditError` al mock `fakePool` de los tests, para poder
+simular el permiso ausente sin tocar SQL Server.
+
+**Resultado: 437/437 tests del mirror-agent (96/96 en el driver de Anserma),
+`tsc --noEmit` limpio.**
+
+## ⚠️ Pendiente de acción del hospital (no de código)
+
+Correr `AGENIA_SYNC_SETUP.sql` actualizado contra `ESEHSVP` (sección
+4-ESEHSVP) para aplicar el nuevo `GRANT EXECUTE`. Hasta que eso ocurra, el
+driver funciona exactamente igual que hoy — el `console.warn` de auditoría
+fallida es la única señal, y no interrumpe nada.
+
+## Cola restante, en orden
+
+1. ~~`FE_SOLI_CIT`~~ ✅
+2. ~~`PA_Ins_AUDITOR` / "Asignada Por"~~ ✅ (código listo; falta que el
+   hospital aplique el GRANT)
+3. La cola del padrón: migración de esquema (llave `(org, epsId, cedula)`,
+   `regimen`, `importId`, `PadronImport`/`PadronImportRow`), normalización de
+   documento compartida en `@agenia/shared`, y el front del log de cargas.
+
+---
+
+# ✅ EL PADRÓN VIVE EN AGENIA: CONSTRUIDO Y PROBADO (2026-09-10)
+
+Tercer y último ajuste de la cola, cerrado de punta a punta: el diseño
+acordado en las secciones anteriores (§12-13 de "EL PADRÓN VIVE EN AGENIA" y
+las cinco aclaraciones posteriores) quedó implementado, migrado y probado.
+
+## 1. `@agenia/shared`: normalización compartida + validador mínimo
+
+- **`documento.ts` (nuevo)**: `normalizeDocumento`, `documentoSinCerosIniciales`,
+  `esDocumentoValido` — la única fuente de verdad para comparar un documento,
+  usada ahora por el importador y los dos portones de agendamiento. Antes
+  divergían (`.replace(/[.\s]/g,'')` vs `.replace(/\D/g,'')`) y ninguno
+  rechazaba un documento de puros ceros. 11 pruebas.
+- **`padron-csv.ts` (reescrito)**: `PADRON_CSV_HEADERS = ['cedula', 'regimen',
+  'telefono']`, `REQUIRED_HEADERS = ['cedula']`. La EPS ya NO se lee de una
+  columna — se elige en pantalla, así que `validatePadronCsv(csvText)` perdió
+  el parámetro `activeEpsNames`. `PadronCsvError` ganó `rawCedula?` para poder
+  trazar una fila rechazada sin guardar la fila completa. 17 pruebas.
+
+## 2. `packages/database`: llave por EPS + `PadronImport`/`PadronImportRow`
+
+Migración `20260910130000_padron_import_tracking`, generada con
+`prisma migrate diff` (sin tocar ninguna base real) y **validada de punta a
+punta en una base Postgres desechable**: se empujó el schema anterior, se le
+aplicó SOLO el SQL de esta migración, y se confirmó **diff residual vacío**
+contra el `schema.prisma` final antes de borrar la base de prueba.
+
+- `EpsEnrolledPatient`: llave única pasa de `(organizationId, cedula)` a
+  `(organizationId, epsId, cedula)` — cierra el defecto de diseño documentado
+  arriba (una persona no podía estar en el padrón de dos EPS a la vez, y con
+  el reemplazo por EPS el ping-pong habría sido peor). `fullName` pasa a
+  nullable. Nuevos: `regime`, `importId`.
+- `PadronImport` (nuevo): metadatos de un corte — EPS, archivo, hash SHA-256,
+  totales, quién y cuándo, y si hizo falta confirmar la baja masiva.
+- `PadronImportRow` (nuevo): detalle fila a fila. **Nunca guarda la fila cruda
+  de una fila aceptada** — solo cédula y resultado (CREADO/ACTUALIZADO/
+  REACTIVADO/RECHAZADO); de una rechazada, además la columna y el mensaje del
+  error.
+
+⚠️ Al validar la migración se encontró que la base de desarrollo LOCAL del
+usuario (`agenia` en `localhost`) tiene un drift preexistente entre
+`_prisma_migrations` y el esquema real (objetos ya creados, historial vacío) —
+**no relacionado con este cambio**. No se tocó: se validó todo en una base
+desechable aparte.
+
+## 3. Los dos portones: normalización compartida, dos pasadas
+
+- **`apps/web/lib/eps-enrollment.ts`**: usa `normalizeDocumento` +
+  `documentoSinCerosIniciales`; la consulta pasa de `cedula: exacta` a
+  `cedula: { in: [candidatos] }`. 13 pruebas (4 nuevas).
+- **`apps/api/.../chatbot.service.ts`** (`rejectIfNotEnrolledInEps`): mismo
+  cambio. 193 pruebas del archivo, 5 pruebas del gate (1 nueva).
+- Ninguno de los dos toca los cientos de otros `.replace(/\D/g,'')` que
+  `chatbot.service.ts` usa para leer texto libre del paciente durante la
+  conversación — eso es un problema distinto (parseo de lenguaje natural), no
+  el gate del padrón.
+
+## 4. `apps/web/app/dashboard/padron/actions.ts`: reescrito completo
+
+- **La EPS se elige en pantalla** (`getActiveEpsOptionsAction`), no se lee de
+  una columna: `validatePadronCsvAction(csvText, epsId)` e
+  `importPadronCsvAction(csvText, epsId, fileName, confirmDeactivation)`.
+- **Reemplazo idempotente por EPS**: `upsertPadronChunk` dentro de una
+  transacción, seguido de `deactivateAbsent` — un único `UPDATE` con
+  `IS DISTINCT FROM` (no `<>`, que en SQL excluiría en silencio a los
+  `importId IS NULL` de altas manuales o anteriores a este campo).
+- **`phone`/`regime` con `COALESCE`** en el `DO UPDATE`: una celda vacía en
+  el corte nuevo nunca borra un valor bueno que ya existía.
+- **Guarda del 10%**: `measureDeactivationImpact` mide antes de validar Y
+  antes de importar (regla de oro: nunca confiar en la cifra del paso
+  anterior); si supera el umbral, `importPadronCsvAction` devuelve
+  `needsDeactivationConfirmation: true` en vez de aplicar el corte.
+- Escribe `PadronImport` + `PadronImportRow` (aceptadas y rechazadas) en la
+  misma transacción que el upsert y la baja.
+
+## 5. UI: selector de EPS, guarda visible, resumen completo, historial
+
+- **`PadronUploader.tsx`**: selector de EPS: (auto-selecciona si la clínica
+  tiene una sola activa); si el corte superaría el 10% de baja, muestra la
+  cifra y exige un checkbox de confirmación explícita antes de habilitar
+  "Importar"; el resumen final ya no es solo creados/actualizados — muestra
+  altas, actualizados, reactivados y desactivados.
+- **`/dashboard/padron/historial`** (nuevo): lista de cortes con filtros por
+  EPS y rango de fechas, y un **buscador avanzado por documento** que
+  muestra la línea de tiempo de una persona a través de todos los cortes en
+  los que apareció (aceptada o rechazada), sin importar la EPS.
+- **`/dashboard/padron/historial/[importId]`** (nuevo): detalle fila a fila
+  de un corte, filtrable por resultado, con enlace directo al historial de
+  cada documento.
+
+## 6. Verificación
+
+```
+@agenia/shared    build limpio · 208/208 tests (9 suites)
+@agenia/database  prisma validate ok · migración verificada con diff residual vacío
+apps/web          tsc limpio · next build limpio (incl. las 2 rutas nuevas) · 92/92 tests · lint limpio
+apps/api          tsc limpio · 1611/1611 tests (49 suites) · lint limpio
+apps/mirror-agent tsc limpio · 437/437 tests (15 suites) — sin cambios en este ajuste, confirmado intacto
+```
+
+Un detalle real que atrapó la suite: el mock de `epsEnrolledPatient.findFirst`
+en `chatbot.flows.e2e.spec.ts` comparaba `where.cedula` como si fuera siempre
+un string exacto; con la consulta de dos pasadas ahora llega
+`{ in: [...] }`, y dos pruebas (1.10 y 7.2b) empezaron a fallar porque el
+mock nunca encontraba al paciente. Corregido el mock, no el código de
+producción — era la prueba la que asumía una forma de consulta que ya no es
+la real.
+
+## 7. Con esto se cierra la cola completa de ajustes
+
+1. ~~`FE_SOLI_CIT`~~ ✅
+2. ~~`PA_Ins_AUDITOR` / "Asignada Por"~~ ✅ (código listo; falta que el
+   hospital aplique el GRANT)
+3. ~~El padrón vive en AgenIA~~ ✅ (esquema, normalización compartida,
+   importador con reemplazo por EPS, guarda de baja masiva, historial con
+   buscador avanzado)
+
+Nada queda bloqueado por decisiones de diseño pendientes. Lo que sigue es
+operativo: que el hospital corra `AGENIA_SYNC_SETUP.sql` actualizado, y que
+alguien empiece a cargar el primer corte real del padrón desde la pantalla
+nueva.

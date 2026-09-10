@@ -187,12 +187,20 @@ function createPrisma(db: Db) {
       update: jest.fn(() => ({})),
     },
     epsEnrolledPatient: {
-      findFirst: jest.fn(
-        ({ where }: any) =>
+      // `where.cedula` llega como `{ in: [...] }`: el gate busca por la
+      // cédula tal como llegó Y por la variante sin ceros a la izquierda en
+      // una sola consulta (ver documento.ts / ESTADO.md, "Normalización del
+      // documento: una función, dos pasadas").
+      findFirst: jest.fn(({ where }: any) => {
+        const candidatos: string[] = Array.isArray(where.cedula?.in)
+          ? where.cedula.in
+          : [where.cedula];
+        return (
           db.enrolled.find(
-            (e) => e.cedula === where.cedula && e.epsId === where.epsId,
-          ) ?? null,
-      ),
+            (e) => candidatos.includes(e.cedula) && e.epsId === where.epsId,
+          ) ?? null
+        );
+      }),
     },
     patientProfile: {
       findFirst: jest.fn(
