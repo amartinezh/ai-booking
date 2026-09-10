@@ -85,6 +85,8 @@ export interface PadronValidationSummary {
     wouldDeactivate: number;
     /** true si wouldDeactivate supera el umbral — la pantalla debe pedir confirmación. */
     needsDeactivationConfirmation: boolean;
+    /** Líneas de "basura" antes del encabezado real que el analizador ignoró. */
+    ignoredPreambleLines: number;
 }
 
 export interface PadronImportResult {
@@ -203,6 +205,7 @@ export async function validatePadronCsvAction(
             wouldDeactivate,
             needsDeactivationConfirmation:
                 activeForEps > 0 && wouldDeactivate / activeForEps > DEACTIVATION_CONFIRM_THRESHOLD,
+            ignoredPreambleLines: report.ignoredPreambleLines,
         },
     };
 }

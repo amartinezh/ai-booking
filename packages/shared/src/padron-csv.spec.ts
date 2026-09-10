@@ -177,6 +177,45 @@ describe('validatePadronCsv', () => {
     expect(soloHeader.errors[0].rawCedula).toBeUndefined();
   });
 
+  it('ignora líneas de "basura" antes del encabezado real y lo reporta', () => {
+    const csv = [
+      'Hospital San Vicente de Paúl',
+      'Corte del padrón - agosto 2026',
+      '',
+      HEADER,
+      '11223344,SUBSIDIADO,3001234567',
+    ].join('\n');
+
+    const report = validatePadronCsv(csv);
+
+    expect(report.ok).toBe(true);
+    expect(report.ignoredPreambleLines).toBe(3);
+    expect(report.totalDataRows).toBe(1);
+    expect(report.validRows[0]).toMatchObject({ line: 5, cedula: '11223344' });
+  });
+
+  it('reporta ignoredPreambleLines en 0 cuando el encabezado ya está en la primera línea', () => {
+    const csv = [HEADER, '11223344,,'].join('\n');
+    const report = validatePadronCsv(csv);
+    expect(report.ignoredPreambleLines).toBe(0);
+  });
+
+  it('encuentra columnas reales del hospital (nombre, eps, email, etc.) e ignora las que no necesita', () => {
+    const csv = [
+      'cedula,nombre_completo,eps,telefono,email,fecha_nacimiento,genero,direccion',
+      '2455707906,Juan Carlos Pérez Gutiérrez,Salud Total,+57 344 246 1083,juan.perez99@outlook.com,,M,',
+    ].join('\n');
+
+    const report = validatePadronCsv(csv);
+
+    expect(report.ok).toBe(true);
+    expect(report.validRows[0]).toMatchObject({
+      cedula: '2455707906',
+      regime: null, // no hay columna "regimen": queda null, no es error
+      phone: '573442461083',
+    });
+  });
+
   it('mantiene el documento normalizado (sin ceros iniciales colapsados)', () => {
     // El importador y los portones de agendamiento comparten normalización,
     // pero deliberadamente NO quitan ceros a la izquierda en la primera

@@ -80,6 +80,11 @@ export interface PadronCsvReport {
   validRows: PadronCsvRow[];
   errors: PadronCsvError[];
   delimiter: ',' | ';';
+  /**
+   * Líneas antes del encabezado real que se ignoraron (título del reporte,
+   * líneas en blanco, etc.). 0 en el caso normal (encabezado en la línea 1).
+   */
+  ignoredPreambleLines: number;
 }
 
 /** Columnas del formato oficial (encabezado de la plantilla descargable). */
@@ -105,6 +110,14 @@ const REQUIRED_HEADERS: CanonicalHeader[] = ['cedula'];
 
 /** Tope defensivo de filas de datos por archivo (protege memoria/tiempo de respuesta). */
 const MAX_DATA_ROWS = 20_000;
+
+/**
+ * Líneas iniciales que se escanean buscando el encabezado real. Los padrones
+ * reales a veces traen 1-2 líneas de "basura" antes del encabezado (título
+ * del reporte, fecha de corte, línas en blanco de un export de Excel) — se
+ * ignoran en vez de contarlas como fila de datos rota.
+ */
+const HEADER_SEARCH_MAX_LINES = 25;
 
 /**
  * Firmas binarias inconfundibles al inicio del archivo (ZIP/xlsx, OLE/xls, PDF).
@@ -142,8 +155,13 @@ function replacementCharDensity(text: string): number {
   return replacementCount / sample.length;
 }
 
-/** Minúsculas, sin tildes, espacios colapsados — para comparar texto humano. */
-function normalizeForMatch(value: string): string {
+/**
+ * Minúsculas, sin tildes, espacios colapsados — para comparar texto humano.
+ * Exportada: la reutiliza el detector de EPS (padron-eps-detect.ts) para
+ * comparar el nombre de la EPS contra la columna del archivo o el nombre del
+ * archivo, con la misma noción de "igual" que ya usa el mapeo de encabezados.
+ */
+export function normalizeForMatch(value: string): string {
   return value
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -156,14 +174,19 @@ function normalizeForMatch(value: string): string {
  * Detecta el delimitador mirando el encabezado: los exports de Excel en
  * es-CO usan `;`, los estándar `,`. Gana el que más columnas produzca.
  */
-function detectDelimiter(headerLine: string): ',' | ';' {
+export function detectDelimiter(headerLine: string): ',' | ';' {
   const commas = headerLine.split(',').length;
   const semis = headerLine.split(';').length;
   return semis > commas ? ';' : ',';
 }
 
-/** Split de UNA línea CSV respetando comillas dobles (RFC 4180 básico). */
-function splitCsvLine(line: string, delimiter: ',' | ';'): string[] {
+/**
+ * Split de UNA línea CSV respetando comillas dobles (RFC 4180 básico).
+ * Exportada por la misma razón que `normalizeForMatch` — la reutiliza el
+ * detector de EPS para leer la columna `eps`/`aseguradora` sin duplicar el
+ * parser de comillas.
+ */
+export function splitCsvLine(line: string, delimiter: ',' | ';'): string[] {
   const cells: string[] = [];
   let current = '';
   let inQuotes = false;
@@ -246,6 +269,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
         },
       ],
       delimiter: ',',
+      ignoredPreambleLines: 0,
     };
   }
 
@@ -253,20 +277,60 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
     .replace(/^﻿/, '') // BOM de Excel
     .split(/\r\n|\r|\n/);
 
-  const headerLine = lines[0] ?? '';
-  if (!headerLine.trim()) {
+  if (!lines.some((l) => l.trim())) {
     return {
       ok: false,
       totalDataRows: 0,
       validRows: [],
       errors: [{ line: 1, message: 'El archivo está vacío o no tiene encabezado.' }],
       delimiter: ',',
+      ignoredPreambleLines: 0,
     };
   }
 
-  const delimiter = detectDelimiter(headerLine);
-  const headerCells = splitCsvLine(headerLine, delimiter);
-  const { indexOf, missing } = mapHeader(headerCells);
+  // ── Encabezado: puede no estar en la primera línea ──
+  // Los padrones reales a veces traen basura antes del encabezado real
+  // (título del reporte, fecha de corte, líneas en blanco de un export de
+  // Excel). Se escanean las primeras HEADER_SEARCH_MAX_LINES buscando la
+  // primera que ya traiga la columna obligatoria (cedula); esa se usa como
+  // encabezado y todo lo anterior se ignora sin penalizar el archivo. Si
+  // ninguna línea del rango calza, se cae al comportamiento de siempre
+  // (primera línea no vacía = encabezado) para dar el mensaje de columnas
+  // faltantes de siempre.
+  let headerLineIndex = -1;
+  let delimiter: ',' | ';' = ',';
+  let headerCells: string[] = [];
+  let indexOf: Partial<Record<CanonicalHeader, number>> = {};
+  let missing: CanonicalHeader[] = REQUIRED_HEADERS;
+
+  const scanLimit = Math.min(lines.length, HEADER_SEARCH_MAX_LINES);
+  for (let h = 0; h < scanLimit; h++) {
+    const candidateLine = lines[h];
+    if (!candidateLine || !candidateLine.trim()) continue;
+
+    const candidateDelimiter = detectDelimiter(candidateLine);
+    const candidateCells = splitCsvLine(candidateLine, candidateDelimiter);
+    const candidateMap = mapHeader(candidateCells);
+
+    if (headerLineIndex === -1) {
+      // Primera línea no vacía: candidato por defecto si ninguna calza mejor
+      // (preserva el mensaje histórico de "faltan columnas").
+      headerLineIndex = h;
+      delimiter = candidateDelimiter;
+      headerCells = candidateCells;
+      indexOf = candidateMap.indexOf;
+      missing = candidateMap.missing;
+    }
+
+    if (candidateMap.missing.length === 0) {
+      headerLineIndex = h;
+      delimiter = candidateDelimiter;
+      headerCells = candidateCells;
+      indexOf = candidateMap.indexOf;
+      missing = candidateMap.missing;
+      break;
+    }
+  }
 
   if (missing.length > 0) {
     // Un archivo con muchos caracteres de reemplazo casi nunca es un CSV de
@@ -284,19 +348,21 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
       validRows: [],
       errors: [
         {
-          line: 1,
+          line: headerLineIndex + 1,
           message: `Faltan columnas obligatorias en el encabezado: ${missing.join(', ')}. Encabezado esperado: ${PADRON_CSV_HEADERS.join(delimiter)}${encodingHint}`,
         },
       ],
       delimiter,
+      ignoredPreambleLines: 0,
     };
   }
 
+  const ignoredPreambleLines = headerLineIndex;
   const seenCedulas = new Map<string, number>(); // cédula → línea donde apareció
   let totalDataRows = 0;
   const expectedColumnCount = headerCells.length;
 
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = headerLineIndex + 1; i < lines.length; i++) {
     const line = i + 1; // 1-based
     const rawLine = lines[i];
     if (!rawLine.trim()) continue; // líneas vacías (típico al final) se ignoran
@@ -393,7 +459,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
 
   if (totalDataRows === 0) {
     errors.push({
-      line: 1,
+      line: headerLineIndex + 1,
       message: 'El archivo no contiene filas de afiliados (solo encabezado).',
     });
   }
@@ -404,5 +470,6 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
     validRows,
     errors,
     delimiter,
+    ignoredPreambleLines,
   };
 }

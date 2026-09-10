@@ -38,6 +38,8 @@ export type {
   PadronCsvReport,
   PadronRegime,
 } from './src/padron-csv';
+export { detectPadronEps } from './src/padron-eps-detect';
+export type { PadronEpsCandidate, PadronEpsDetection } from './src/padron-eps-detect';
 export {
   normalizeDocumento,
   documentoSinCerosIniciales,

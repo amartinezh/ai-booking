@@ -39,6 +39,7 @@ export default async function PadronHistorialPage({
         desde?: string;
         hasta?: string;
         page?: string;
+        conRechazos?: string;
     }>;
 }) {
     const session = await getSession();
@@ -46,8 +47,9 @@ export default async function PadronHistorialPage({
     if (session.role !== 'ORG_ADMIN' || !session.organizationId) redirect('/dashboard');
     const organizationId = session.organizationId;
 
-    const { doc, eps: epsFilter, desde, hasta, page: pageParam } = await searchParams;
+    const { doc, eps: epsFilter, desde, hasta, page: pageParam, conRechazos } = await searchParams;
     const page = Math.max(1, Number(pageParam) || 1);
+    const soloConRechazos = conRechazos === '1';
 
     const epsOptions = await prisma.eps.findMany({
         where: { organizationId },
@@ -57,7 +59,7 @@ export default async function PadronHistorialPage({
 
     const filtersHref = (overrides: Record<string, string | undefined>) => {
         const params = new URLSearchParams();
-        const merged = { doc, eps: epsFilter, desde, hasta, ...overrides };
+        const merged = { doc, eps: epsFilter, desde, hasta, conRechazos, ...overrides };
         for (const [k, v] of Object.entries(merged)) if (v) params.set(k, v);
         return `/dashboard/padron/historial?${params.toString()}`;
     };
@@ -166,9 +168,10 @@ export default async function PadronHistorialPage({
                   },
               }
             : {}),
+        ...(soloConRechazos ? { errorRows: { gt: 0 } } : {}),
     };
 
-    const [total, imports] = await Promise.all([
+    const [total, imports, totales] = await Promise.all([
         prisma.padronImport.count({ where }),
         prisma.padronImport.findMany({
             where,
@@ -180,6 +183,10 @@ export default async function PadronHistorialPage({
             skip: (page - 1) * PAGE_SIZE,
             take: PAGE_SIZE,
         }),
+        prisma.padronImport.aggregate({
+            where,
+            _sum: { totalDataRows: true, errorRows: true, deactivated: true },
+        }),
     ]);
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -188,6 +195,22 @@ export default async function PadronHistorialPage({
             <Header />
 
             <BuscadorDocumento doc="" />
+
+            {/* Resumen de lo filtrado — para ver de un vistazo el tamaño del corte sin abrir cada fila */}
+            <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <SummaryCard label="Cortes" value={total} />
+                <SummaryCard label="Filas procesadas" value={totales._sum.totalDataRows ?? 0} />
+                <SummaryCard
+                    label="Filas rechazadas"
+                    value={totales._sum.errorRows ?? 0}
+                    tone="text-red-500"
+                />
+                <SummaryCard
+                    label="Bajas aplicadas"
+                    value={totales._sum.deactivated ?? 0}
+                    tone="text-zinc-500"
+                />
+            </section>
 
             {/* Filtros */}
             <section className="rounded-2xl bg-white dark:bg-zinc-900 ring-1 ring-zinc-200 dark:ring-zinc-800 p-4">
@@ -225,13 +248,17 @@ export default async function PadronHistorialPage({
                             className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-200"
                         />
                     </div>
+                    <label className="flex items-center gap-2 pb-2 text-sm text-zinc-600 dark:text-zinc-300">
+                        <input type="checkbox" name="conRechazos" value="1" defaultChecked={soloConRechazos} />
+                        Solo cortes con rechazos
+                    </label>
                     <button
                         type="submit"
                         className="rounded-lg bg-zinc-800 dark:bg-zinc-700 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700"
                     >
                         Filtrar
                     </button>
-                    {(epsFilter || desde || hasta) && (
+                    {(epsFilter || desde || hasta || soloConRechazos) && (
                         <Link
                             href="/dashboard/padron/historial"
                             className="text-sm text-zinc-500 hover:underline"
@@ -264,7 +291,7 @@ export default async function PadronHistorialPage({
                             <TableRow>
                                 <TableCell colSpan={10} className="py-10 text-center text-zinc-400">
                                     Sin cortes cargados todavía
-                                    {epsFilter || desde || hasta ? ' con estos filtros' : ''}.
+                                    {epsFilter || desde || hasta || soloConRechazos ? ' con estos filtros' : ''}.
                                 </TableCell>
                             </TableRow>
                         ) : (
@@ -275,6 +302,7 @@ export default async function PadronHistorialPage({
                                     </TableCell>
                                     <TableCell className="text-sm">{imp.eps.name}</TableCell>
                                     <TableCell className="text-sm max-w-[14rem] truncate">
+                                        <FileFormatBadge fileName={imp.fileName} />{' '}
                                         <Link
                                             href={`/dashboard/padron/historial/${imp.id}`}
                                             className="text-teal-600 hover:underline"
@@ -383,6 +411,25 @@ function BuscadorDocumento({ doc }: { doc: string }) {
                 )}
             </form>
         </section>
+    );
+}
+
+function SummaryCard({ label, value, tone }: { label: string; value: number; tone?: string }) {
+    return (
+        <div className="rounded-2xl bg-white dark:bg-zinc-900 ring-1 ring-zinc-200 dark:ring-zinc-800 p-4">
+            <p className="text-xs font-medium text-zinc-500">{label}</p>
+            <p className={`text-2xl font-extrabold ${tone ?? 'text-zinc-900 dark:text-white'}`}>{value}</p>
+        </div>
+    );
+}
+
+/** CSV o XLSX, a partir de la extensión del nombre de archivo guardado en el log. */
+export function FileFormatBadge({ fileName }: { fileName: string }) {
+    const isXlsx = /\.xlsx$/i.test(fileName);
+    return (
+        <span className="inline-block rounded-full bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 align-middle">
+            {isXlsx ? 'XLSX' : 'CSV'}
+        </span>
     );
 }
 

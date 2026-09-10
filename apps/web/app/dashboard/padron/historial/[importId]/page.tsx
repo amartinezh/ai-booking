@@ -11,7 +11,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/app/components/ui/table';
-import { ResultadoBadge } from '../page';
+import { FileFormatBadge, ResultadoBadge } from '../page';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,8 +77,8 @@ export default async function PadronImportDetailPage({
                         Corte del {formatAppointmentLong(imp.createdAt)}
                     </h1>
                     <p className="text-zinc-500 dark:text-zinc-400">
-                        {imp.eps.name} — <span className="font-mono">{imp.fileName}</span> — cargado por{' '}
-                        {imp.createdBy.email}
+                        {imp.eps.name} — <FileFormatBadge fileName={imp.fileName} />{' '}
+                        <span className="font-mono">{imp.fileName}</span> — cargado por {imp.createdBy.email}
                     </p>
                 </div>
                 <Link

@@ -9,12 +9,14 @@ import {
     Download,
     FileSpreadsheet,
     History,
+    Info,
     Loader2,
+    Sparkles,
     ShieldCheck,
     Upload,
     XCircle,
 } from 'lucide-react';
-import { PADRON_CSV_HEADERS } from '@agenia/shared';
+import { detectPadronEps, PADRON_CSV_HEADERS, type PadronEpsDetection } from '@agenia/shared';
 import {
     getActiveEpsOptionsAction,
     getPadronFullErrorReportAction,
@@ -26,26 +28,62 @@ import {
 } from './actions';
 
 const MAX_FILE_BYTES = 6_000_000;
+const ALLOWED_EXTENSIONS = /\.(csv|xlsx)$/i;
 
 const TEMPLATE_CSV = PADRON_CSV_HEADERS.join(',') + '\n1088123456,SUBSIDIADO,3001234567\n';
 
-// Firmas binarias (primeros bytes del archivo) que jamás corresponden a un
-// CSV de texto: se revisan sobre los bytes CRUDOS, antes de decodificar nada,
-// para dar el mensaje correcto de inmediato sin gastar un roundtrip al server.
-const BINARY_SIGNATURES: Array<{ bytes: number[]; label: string }> = [
-    { bytes: [0x50, 0x4b, 0x03, 0x04], label: 'un archivo Excel (.xlsx) o ZIP' },
-    { bytes: [0x50, 0x4b, 0x05, 0x06], label: 'un archivo Excel (.xlsx) o ZIP vacío' },
-    { bytes: [0xd0, 0xcf, 0x11, 0xe0], label: 'un archivo Excel antiguo (.xls)' },
-    { bytes: [0x25, 0x50, 0x44, 0x46], label: 'un archivo PDF' },
+// Firmas binarias (primeros bytes del archivo), revisadas sobre los bytes
+// CRUDOS antes de decodificar nada. `zip` es la firma de un .xlsx real (es un
+// contenedor ZIP) — ya no se bloquea sin más: se acepta cuando la extensión
+// es .xlsx. `ole` (.xls antiguo) y `pdf` siguen sin soportarse en ningún caso.
+const BINARY_SIGNATURES: Array<{ bytes: number[]; label: string; kind: 'zip' | 'ole' | 'pdf' }> = [
+    { bytes: [0x50, 0x4b, 0x03, 0x04], label: 'un archivo Excel (.xlsx) o ZIP', kind: 'zip' },
+    { bytes: [0x50, 0x4b, 0x05, 0x06], label: 'un archivo Excel (.xlsx) o ZIP vacío', kind: 'zip' },
+    { bytes: [0xd0, 0xcf, 0x11, 0xe0], label: 'un archivo Excel antiguo (.xls)', kind: 'ole' },
+    { bytes: [0x25, 0x50, 0x44, 0x46], label: 'un archivo PDF', kind: 'pdf' },
 ];
 
-async function sniffBinarySignature(file: File): Promise<string | null> {
+async function sniffBinarySignature(
+    file: File,
+): Promise<{ label: string; kind: 'zip' | 'ole' | 'pdf' } | null> {
     const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
-    for (const { bytes, label } of BINARY_SIGNATURES) {
-        if (bytes.every((b, i) => head[i] === b)) return label;
+    for (const { bytes, label, kind } of BINARY_SIGNATURES) {
+        if (bytes.every((b, i) => head[i] === b)) return { label, kind };
     }
     return null;
 }
+
+/** Lee un archivo con progreso REAL (bytes leídos / total) vía FileReader. */
+function readFileWithProgress(
+    file: File,
+    mode: 'text' | 'arraybuffer',
+    onProgress: (percent: number) => void,
+): Promise<string | ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onprogress = (e) => {
+            if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+        };
+        reader.onerror = () => reject(reader.error ?? new Error('No se pudo leer el archivo.'));
+        reader.onload = () => resolve(reader.result as string | ArrayBuffer);
+        if (mode === 'text') reader.readAsText(file);
+        else reader.readAsArrayBuffer(file);
+    });
+}
+
+/** Convierte un workbook de Excel a CSV: usa la primera hoja que tenga datos. */
+async function xlsxToCsv(buffer: ArrayBuffer): Promise<string | null> {
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.read(buffer, { type: 'array' });
+    for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
+        if (csv.split(/\r?\n/).some((l) => l.trim())) return csv;
+    }
+    return null;
+}
+
+type UploadProgress = { label: string; percent: number } | null;
 
 // ─────────────────────────────────────────────────────────────
 // Cargador del padrón: flujo estricto de dos pasos, con la EPS elegida en
@@ -66,7 +104,9 @@ export default function PadronUploader() {
     const [selectedEpsId, setSelectedEpsId] = useState<string>('');
 
     const [fileName, setFileName] = useState<string | null>(null);
+    const [sourceFormat, setSourceFormat] = useState<'CSV' | 'XLSX' | null>(null);
     const [csvText, setCsvText] = useState<string | null>(null);
+    const [epsDetection, setEpsDetection] = useState<PadronEpsDetection | null>(null);
     const [report, setReport] = useState<PadronValidationSummary | null>(null);
     const [confirmDeactivation, setConfirmDeactivation] = useState(false);
     const [importResult, setImportResult] = useState<PadronImportResult | null>(null);
@@ -74,6 +114,9 @@ export default function PadronUploader() {
     const [isValidating, startValidating] = useTransition();
     const [isImporting, startImporting] = useTransition();
     const [isDownloadingReport, startDownloadingReport] = useTransition();
+    const [isReadingFile, setIsReadingFile] = useState(false);
+    const [progress, setProgress] = useState<UploadProgress>(null);
+    const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     useEffect(() => {
         getActiveEpsOptionsAction().then((result) => {
@@ -86,7 +129,36 @@ export default function PadronUploader() {
         });
     }, []);
 
-    const busy = isValidating || isImporting;
+    useEffect(() => {
+        return () => {
+            if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+        };
+    }, []);
+
+    // Progreso simulado para los pasos de servidor (validar/importar): son un
+    // único roundtrip sin eventos intermedios, así que se anima suavemente
+    // hacia el 90% mientras se espera y se cierra en 100% al responder. No es
+    // un progreso real fila-a-fila (eso requeriría partir la importación en
+    // varias llamadas y romper la transacción atómica del corte), pero le da
+    // al usuario una señal honesta de que el proceso avanza.
+    function startSimulatedProgress(label: string) {
+        setProgress({ label, percent: 8 });
+        if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+        progressTimerRef.current = setInterval(() => {
+            setProgress((prev) => (prev ? { label: prev.label, percent: prev.percent + (90 - prev.percent) * 0.15 } : prev));
+        }, 250);
+    }
+
+    function finishSimulatedProgress() {
+        if (progressTimerRef.current) {
+            clearInterval(progressTimerRef.current);
+            progressTimerRef.current = null;
+        }
+        setProgress((prev) => (prev ? { ...prev, percent: 100 } : prev));
+        setTimeout(() => setProgress(null), 400);
+    }
+
+    const busy = isValidating || isImporting || isReadingFile;
     const canValidate = !!csvText && !!selectedEpsId && !busy;
     const canImport =
         !!report?.ok &&
@@ -102,21 +174,43 @@ export default function PadronUploader() {
         setError(null);
     }
 
+    /**
+     * Intenta identificar la EPS del archivo (columna `eps`/`aseguradora`, o
+     * si no hay, el nombre del archivo) contra las EPS activas de la clínica.
+     * Solo PRE-SELECCIONA el selector cuando hay una coincidencia inequívoca
+     * — la persona siempre puede revisarla y cambiarla antes de validar.
+     */
+    function detectEps(text: string, name: string) {
+        if (!epsOptions || epsOptions.length === 0) {
+            setEpsDetection(null);
+            return;
+        }
+        const detection = detectPadronEps(text, name, epsOptions);
+        setEpsDetection(detection);
+        if (detection) setSelectedEpsId(detection.eps.id);
+    }
+
     async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
         resetOutcome();
         setCsvText(null);
         setFileName(null);
+        setSourceFormat(null);
+        setEpsDetection(null);
+        setProgress(null);
 
         const file = event.target.files?.[0];
         if (!file) return;
 
-        if (!/\.csv$/i.test(file.name)) {
+        const extensionMatch = ALLOWED_EXTENSIONS.exec(file.name);
+        if (!extensionMatch) {
             setError(
-                `Extensión no permitida: "${file.name}". Seleccione un archivo .csv (si lo tiene en Excel, use Archivo → Guardar como → CSV UTF-8).`,
+                `Extensión no permitida: "${file.name}". Seleccione un archivo .csv o .xlsx (si lo tiene en otro formato, use Archivo → Guardar como → CSV UTF-8 o Excel).`,
             );
             event.target.value = '';
             return;
         }
+        const extension = extensionMatch[1].toLowerCase() as 'csv' | 'xlsx';
+
         if (file.size > MAX_FILE_BYTES) {
             setError('El archivo supera el tamaño máximo permitido (6 MB).');
             event.target.value = '';
@@ -128,17 +222,65 @@ export default function PadronUploader() {
             return;
         }
 
-        const binaryLabel = await sniffBinarySignature(file);
-        if (binaryLabel) {
+        const signature = await sniffBinarySignature(file);
+
+        setIsReadingFile(true);
+        try {
+            if (extension === 'csv') {
+                if (signature) {
+                    setError(
+                        `"${file.name}" parece ser ${signature.label}, no un CSV de texto. Expórtelo como "CSV UTF-8 (delimitado por comas)", o cárguelo directamente como .xlsx.`,
+                    );
+                    event.target.value = '';
+                    return;
+                }
+                setProgress({ label: 'Leyendo archivo…', percent: 0 });
+                const text = (await readFileWithProgress(file, 'text', (percent) =>
+                    setProgress({ label: 'Leyendo archivo…', percent }),
+                )) as string;
+                setFileName(file.name);
+                setSourceFormat('CSV');
+                setCsvText(text);
+                detectEps(text, file.name);
+                return;
+            }
+
+            // extension === 'xlsx'
+            if (signature && signature.kind !== 'zip') {
+                setError(
+                    `"${file.name}" tiene extensión .xlsx pero su contenido parece ser ${signature.label}. Verifique el archivo y vuelva a intentarlo.`,
+                );
+                event.target.value = '';
+                return;
+            }
+
+            setProgress({ label: 'Leyendo archivo…', percent: 0 });
+            const buffer = (await readFileWithProgress(file, 'arraybuffer', (percent) =>
+                setProgress({ label: 'Leyendo archivo…', percent: Math.round(percent * 0.6) }),
+            )) as ArrayBuffer;
+            setProgress({ label: 'Analizando hojas de Excel…', percent: 65 });
+            const text = await xlsxToCsv(buffer);
+            setProgress({ label: 'Analizando hojas de Excel…', percent: 95 });
+            if (!text) {
+                setError(`"${file.name}" no tiene datos en ninguna hoja.`);
+                event.target.value = '';
+                return;
+            }
+            setFileName(file.name);
+            setSourceFormat('XLSX');
+            setCsvText(text);
+            detectEps(text, file.name);
+        } catch {
             setError(
-                `"${file.name}" parece ser ${binaryLabel}, no un CSV de texto. Expórtelo como "CSV UTF-8 (delimitado por comas)" y vuelva a intentarlo.`,
+                extension === 'xlsx'
+                    ? `"${file.name}" no pudo leerse como Excel (.xlsx). Verifique que no esté dañado ni protegido con contraseña, o expórtelo como CSV.`
+                    : `"${file.name}" no pudo leerse. Intente de nuevo.`,
             );
             event.target.value = '';
-            return;
+        } finally {
+            setIsReadingFile(false);
+            setProgress(null);
         }
-
-        setFileName(file.name);
-        setCsvText(await file.text());
     }
 
     function handleDownloadErrorReport() {
@@ -163,11 +305,16 @@ export default function PadronUploader() {
         if (!csvText || !selectedEpsId) return;
         resetOutcome();
         startValidating(async () => {
-            const result = await validatePadronCsvAction(csvText, selectedEpsId);
-            if (result.success) {
-                setReport(result.report);
-            } else {
-                setError(result.error);
+            startSimulatedProgress('Validando archivo…');
+            try {
+                const result = await validatePadronCsvAction(csvText, selectedEpsId);
+                if (result.success) {
+                    setReport(result.report);
+                } else {
+                    setError(result.error);
+                }
+            } finally {
+                finishSimulatedProgress();
             }
         });
     }
@@ -176,23 +323,28 @@ export default function PadronUploader() {
         if (!csvText || !report?.ok || !selectedEpsId) return;
         setError(null);
         startImporting(async () => {
-            const result = await importPadronCsvAction(
-                csvText,
-                selectedEpsId,
-                fileName ?? 'padron.csv',
-                confirmDeactivation,
-            );
-            if (result.success) {
-                setImportResult(result);
-                router.refresh(); // refresca la tabla server-side del padrón
-            } else if (result.needsDeactivationConfirmation) {
-                // La cifra cambió entre validar e importar (alguien más
-                // tocó el padrón mientras tanto): re-exponer la guarda.
-                setError(result.error ?? null);
-                setConfirmDeactivation(false);
-                setReport((prev) => (prev ? { ...prev, needsDeactivationConfirmation: true } : prev));
-            } else {
-                setError(result.error ?? 'Error al importar el padrón');
+            startSimulatedProgress('Importando corte…');
+            try {
+                const result = await importPadronCsvAction(
+                    csvText,
+                    selectedEpsId,
+                    fileName ?? 'padron.csv',
+                    confirmDeactivation,
+                );
+                if (result.success) {
+                    setImportResult(result);
+                    router.refresh(); // refresca la tabla server-side del padrón
+                } else if (result.needsDeactivationConfirmation) {
+                    // La cifra cambió entre validar e importar (alguien más
+                    // tocó el padrón mientras tanto): re-exponer la guarda.
+                    setError(result.error ?? null);
+                    setConfirmDeactivation(false);
+                    setReport((prev) => (prev ? { ...prev, needsDeactivationConfirmation: true } : prev));
+                } else {
+                    setError(result.error ?? 'Error al importar el padrón');
+                }
+            } finally {
+                finishSimulatedProgress();
             }
         });
     }
@@ -213,11 +365,13 @@ export default function PadronUploader() {
                 <div>
                     <h2 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
                         <FileSpreadsheet className="h-5 w-5 text-teal-600" />
-                        Importar corte del padrón desde CSV
+                        Importar corte del padrón desde CSV o Excel
                     </h2>
                     <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-                        Columnas: <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded">{PADRON_CSV_HEADERS.join(', ')}</code>.
-                        Solo <strong>cedula</strong> es obligatoria — la EPS se elige aquí abajo, no en el archivo.
+                        El analizador identifica solo, entre las columnas que traiga el archivo, la que use para{' '}
+                        <strong>cedula</strong> (obligatoria) y, si vienen, <strong>regimen</strong> y{' '}
+                        <strong>telefono</strong>. Puede tener más columnas o filas de título antes del encabezado:
+                        se ignoran. La EPS se elige aquí abajo, no en el archivo.
                     </p>
                     <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
                         Cada archivo reemplaza por completo el padrón activo de la EPS elegida: quien no venga en
@@ -276,23 +430,58 @@ export default function PadronUploader() {
                         ))}
                     </select>
                 )}
+                {epsDetection && (
+                    <p className="flex items-center gap-1.5 text-xs text-teal-700 dark:text-teal-400">
+                        <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                        EPS detectada automáticamente por {epsDetection.source}:{' '}
+                        <strong>{epsDetection.eps.name}</strong>. Verifique que sea correcta antes de continuar.
+                    </p>
+                )}
             </div>
 
             {/* Selector de archivo */}
             <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/40 px-6 py-8 text-center transition-colors hover:border-teal-400 hover:bg-teal-50/50 dark:hover:bg-teal-900/10">
                 <Upload className="h-8 w-8 text-zinc-400" />
                 <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                    {fileName ?? 'Haga clic para seleccionar el archivo .csv del padrón'}
+                    {fileName ? (
+                        <>
+                            {fileName}
+                            {sourceFormat && (
+                                <span className="ml-2 inline-block rounded-full bg-zinc-200 dark:bg-zinc-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
+                                    {sourceFormat}
+                                </span>
+                            )}
+                        </>
+                    ) : (
+                        'Haga clic para seleccionar el archivo .csv o .xlsx del padrón'
+                    )}
                 </span>
-                <span className="text-xs text-zinc-400">Máximo 6 MB — UTF-8, separado por coma o punto y coma</span>
+                <span className="text-xs text-zinc-400">
+                    Máximo 6 MB — CSV (UTF-8, coma o punto y coma) o Excel (.xlsx)
+                </span>
                 <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".csv,text/csv"
+                    accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     onChange={handleFileChange}
                     className="hidden"
                 />
             </label>
+
+            {progress && (
+                <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+                        <span>{progress.label}</span>
+                        <span>{Math.round(progress.percent)}%</span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                        <div
+                            className="h-full rounded-full bg-teal-500 transition-[width] duration-200 ease-out"
+                            style={{ width: `${progress.percent}%` }}
+                        />
+                    </div>
+                </div>
+            )}
 
             {/* Botonera del flujo Validar → Importar */}
             <div className="flex flex-wrap items-center gap-3">
@@ -337,6 +526,14 @@ export default function PadronUploader() {
                             <strong>{importResult.deactivated ?? 0}</strong> desactivado(s) por no venir en este
                             archivo. Ya pueden agendar por su EPS quienes quedaron activos.
                         </p>
+                        {importResult.importId && (
+                            <Link
+                                href={`/dashboard/padron/historial/${importResult.importId}`}
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:underline"
+                            >
+                                Ver detalle completo de esta carga en el log →
+                            </Link>
+                        )}
                     </div>
                 </div>
             )}
@@ -368,6 +565,14 @@ export default function PadronUploader() {
                         <p className="text-xs opacity-80">
                             {report.activeForEps} afiliado(s) de {report.epsName} están activos hoy; este corte
                             desactivaría {report.wouldDeactivate} por no venir en el archivo.
+                        </p>
+                    )}
+
+                    {report.ignoredPreambleLines > 0 && (
+                        <p className="flex items-start gap-1.5 text-xs opacity-80">
+                            <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                            Se ignoraron {report.ignoredPreambleLines} línea(s) antes del encabezado real (título,
+                            filas en blanco, etc.).
                         </p>
                     )}
 
