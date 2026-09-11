@@ -1,0 +1,98 @@
+checkHealth — espejo San Vicente de Paúl (Anserma)
+Generado: 2026-09-11T16:15:37Z
+Organización: 97f18182-d0d9-4a3b-9eb6-4fbc031b917c
+
+== 1) Verificando conexión a la nube ==
+  [OK]   SSH a 89.117.61.28 responde
+
+== 2) Estado de HospitalMirrorConfig ==
+  enabled=t  availabilityMode=SHADOW  pushEnabled=t  pullEnabled=t
+  latido hace 54s  lastHisReachable=t  detalle=""
+  [OK]   Espejo habilitado
+  [OK]   Latido reciente (54s)
+  [OK]   El agente alcanza el SQL Server del HIS
+  [OK]   availabilityMode=SHADOW — comparando sin escribir
+
+== 3) Cola de sincronización (SyncOutbox) ==
+  pendientes=0  dead_letters=0
+  [OK]   Sin dead-letters
+
+== 4) Homologación (catálogo del HIS vs MirrorEntityMap) ==
+   entityType | total_catalogo | homologados 
+  ------------+----------------+-------------
+   SERVICE    |             52 |          52
+   DOCTOR     |             18 |          16
+  (2 rows)
+  
+
+== 5) Reconciliación — últimas 5 pasadas ==
+          createdAt        | outcome  |                                               detalle                                                
+  -------------------------+----------+------------------------------------------------------------------------------------------------------
+   2026-09-11 00:01:11.756 | CONFLICT | {"window":{"fromIso":"2026-09-11T00:01:10.337Z","toIso":"2026-12-10T00:01:10.337Z"},"inAgenIA":0,"in
+   2026-09-10 06:49:55.05  | CONFLICT | {"window":{"fromIso":"2026-09-10T06:49:53.213Z","toIso":"2026-12-09T06:49:53.213Z"},"inAgenIA":0,"in
+   2026-09-09 22:53:15.363 | CONFLICT | {"window":{"fromIso":"2026-09-09T22:53:13.706Z","toIso":"2026-12-08T22:53:13.706Z"},"inAgenIA":0,"in
+   2026-09-08 22:53:13.435 | CONFLICT | {"window":{"fromIso":"2026-09-08T22:53:11.954Z","toIso":"2026-12-07T22:53:11.954Z"},"inAgenIA":0,"in
+   2026-09-08 00:50:23.609 | CONFLICT | {"window":{"fromIso":"2026-09-08T00:50:22.153Z","toIso":"2026-12-07T00:50:22.153Z"},"inAgenIA":0,"in
+  (5 rows)
+  
+
+== 6) Agenda / SHADOW — últimas 5 pasadas ==
+          createdAt        | outcome |                                               detalle                                                
+  -------------------------+---------+------------------------------------------------------------------------------------------------------
+   2026-09-11 16:06:17.982 | OK      | {"window":{"fromIso":"2026-09-24T00:00:00.000Z","toIso":"2026-09-25T00:00:00.000Z"},"mode":"SHADOW",
+   2026-09-11 16:06:17.687 | OK      | {"window":{"fromIso":"2026-09-23T00:00:00.000Z","toIso":"2026-09-24T00:00:00.000Z"},"mode":"SHADOW",
+   2026-09-11 16:06:17.419 | OK      | {"window":{"fromIso":"2026-09-22T00:00:00.000Z","toIso":"2026-09-23T00:00:00.000Z"},"mode":"SHADOW",
+   2026-09-11 16:06:17.17  | OK      | {"window":{"fromIso":"2026-09-21T00:00:00.000Z","toIso":"2026-09-22T00:00:00.000Z"},"mode":"SHADOW",
+   2026-09-11 16:06:16.958 | OK      | {"window":{"fromIso":"2026-09-20T00:00:00.000Z","toIso":"2026-09-21T00:00:00.000Z"},"mode":"SHADOW",
+  (5 rows)
+  
+
+== 7) Sanity — padrón y activación WhatsApp (aún sin encender) ==
+  padrón=0  médicos_con_whatsapp=0  médicos_totales=16
+  [!]    Padrón vacío — pendiente conocido, bloquea agendamiento real
+  [OK]   Ningún médico activo por WhatsApp todavía (esperado, aún no se usa)
+
+== 8) Salud del stack Docker (agenia verify) ==
+  
+  ── Contenedores 
+  ✔ postgres → running (healthy)
+  ✔ redis → running (healthy)
+  ✔ api → running (healthy)
+  ✔ web → running (healthy)
+  ✔ caddy → running
+  
+  ── Conectividad interna 
+  ✔ Redis responde PONG
+  ✔ PostgreSQL acepta conexiones
+  ✔ Esquema aplicado (41 tablas)
+  ✔ API escuchando en el puerto 3000
+  ✔ WEB alcanza la API por la red interna
+  
+  ── Acceso público 
+  ✔ Panel https://app.hsvpanserma.agenia.co → HTTP 200
+  ✔ Webhook publicado y rechazando tokens desconocidos (403)
+  
+  ── Seguridad 
+  ✔ PostgreSQL y Redis no expuestos públicamente
+  ✔ Resto de la API no expuesto a Internet (404 en rutas internas)
+  
+  ── Recursos 
+    disco / : 27G usados de 96G (28%)
+    memoria : 1.2Gi usados de 11Gi
+  
+  ✔ Todo correcto.
+  [OK]   agenia verify sin fallos
+
+== 9) PENDIENTE — solo se puede correr desde dentro del hospital (🏥) ==
+  Este script NO puede alcanzar 192.168.1.175 (sin entrada desde internet a
+  propósito). Correr manualmente vía AnyDesk → estación Windows → SSH:
+
+    systemctl status agenia-mirror-agent --no-pager
+    journalctl -u agenia-mirror-agent --since yesterday --no-pager \
+      | grep -iE "error|fatal|🚨|falló" | sort | uniq -c | sort -rn
+    nc -zv 192.168.1.16 1433
+    curl -sI https://app.hsvpanserma.agenia.co | head -1
+
+== Resumen ==
+  Fallos: 0   Avisos: 1
+  Todo lo verificable desde la nube está sano.

@@ -1,0 +1,86 @@
+
+📋 4 agenda(s) funcional(es) declarada(s) en docs/drivers/cnt-sanvicente-anserma/agendas-funcionales.json
+
+═══ SERVICIOS (52) ═══
+
+  YA — 52
+    890201-CI  Citas de PyDT                                  ya homologado
+    890201AA   Consulta al Adolescente por medico             ya homologado
+    890201AD   Consulta Medica de Atencion al Adulto          ya homologado
+    890201AJ   Consulta Atencion al Joven Medicina General    ya homologado
+    890201AV   Consulta Medica Atencion a la Vejez            ya homologado
+    890201CP   Consulta Inicial Preconcepcional               ya homologado
+    890201INF  Consulta x Medico Infancia                     ya homologado
+    890201PI   Consulta x Medico 1ra Infancia                 ya homologado
+    890205-LM  CONSULTA LACTANCIA MATERNA-ENF                 ya homologado
+    890205AA   Consulta x Enfermeria Al Adolescente           ya homologado
+    890205CAM  TAMIZAJE PARA CANCER DE MAMA(VALORACIONCLINI   ya homologado
+    890206     CONSULTA DE PRIMERA VEZ POR NUTRICIÓN Y DIET   ya homologado
+    890208Ges  Valoracion Psicologia de la Gestante primera   ya homologado
+    890242ESP  CONSULTA DE PRIMERA VEZ POR ESPECIALISTA EN    ya homologado
+    890242SUR  Consulta de primera vez por especialista en    ya homologado
+    890250ESP  CONSULTA PRIMERA VEZ ESPECIALISTA EN GINECOL   ya homologado
+    890250SUR  Consulta Primera Vez Especialista En Ginecol   ya homologado
+    890266ESP  CONSULTA PRIMERA VEZ MEDICO INTERNISTA         ya homologado
+    890266SUR  Consulta Primera Vez Médico Internista         ya homologado
+    890283ESP  CONSULTA DE PRIMERA VEZ POR ESPECIALISTA EN    ya homologado
+    890284ESP  CONSULTA POR ESPECIALISTA EN PSIQUIATRIA       ya homologado
+    890306     CONSULTA DE CONTROL POR NUTRICIÓN Y DIETÉTIC   ya homologado
+    890342ESP  CONSULTA DE CONTROL O DE SEGUIMIENTO POR ESP   ya homologado
+    890342SUR  Consulta de control o de seguimiento por esp   ya homologado
+    890350ESP  CONSULTA DE CONTROL  POR ESPECIALISTA EN GIN   ya homologado
+    890350SUR  Consulta De Control  Por Especialista En Gin   ya homologado
+    890366ESP  CONSULTA DE CONTROL O SEGUIMIENTO POR INTERN   ya homologado
+    890366SUR  Consulta De Control O Seguimiento Por Intern   ya homologado
+    890383ESP  CONSULTA DE CONTROL O DE SEGUIMIENTO POR ESP   ya homologado
+    890384ESP  CONSULTA DE CONTROL POR PSIQUIATRIA            ya homologado
+    990203     EDUCACION INDIVIDUAL POR ODONTOLOGIA           ya homologado
+    997301-1   CITA SALUD ORAL DOBLE                          ya homologado
+    I890201AG  CONSULTA MEDICA PRIMERA VEZ  A LA GESTANTE     ya homologado
+    I890201PL1 CONSULTA MEDICA PRIMERA VEZ PLANIFICACION FA   ya homologado
+    I890301AG  CONSULTA MEDICA DE CONTROL A LA GESTANTE       ya homologado
+    I890301G   CONSULTA MEDICA DE CONTROL POST PARTO          ya homologado
+    I890301RN  CONSULTA MEDICA DE CONTROL RN                  ya homologado
+    I890305PL  CONTROL ENFERMERIA PLANIFICACION FAMILIAR      ya homologado
+    S35102     Valoración por Psicólogo                       ya homologado
+    S35102-1   Consulta de Control por Psicologo              ya homologado
+    S35104     Psicoterapia individual por Psicólogo* sesió   ya homologado
+    S36101     Examen clínico de primera vez                  ya homologado
+    S36101-2   Exámen clínico de primera vez - Primera Infa   ya homologado
+    S36101-3   Exámen clínico de primera vez - Gestante       ya homologado
+    S36203-1   CITA ODONTOLOGICA DOBLE RESINA                 ya homologado
+    S39141     Consulta ambulatoria de medicina general       ya homologado
+    S39141-1   Consulta ambularoria control hipertensos       ya homologado
+    S39141-2   Consulta Ambulatoria Lectura de examenes       ya homologado
+    SCITOD     CITA ODONTOLOGICA                              ya homologado
+    SCITOD2    CITA ODONTOLOGICA DOBLE EXODONCIA              ya homologado
+    SCITOD3    CITA ODONTOLOGICA DOBLE ENDODONCIA             ya homologado
+    SSAO       Cita de salud Oral                             ya homologado
+
+═══ MÉDICOS (18) ═══
+
+  YA — 16
+    76         MEDICO ATENCION HTA                            ya homologado  [servicio S39141-1 × 1438 de 3]  [agenda funcional → «Programa de Hipertensión»]
+    91-1       ENFERMERA CYD HSVP                             ya homologado  [servicio 890201-CI × 918 de 2]  [agenda funcional → «Consulta de Crecimiento y Desarrollo»]
+    91-2       ENFERMERA SALUD REPRODUCTIVA                   ya homologado  [servicio I890305PL × 523 de 2]  [agenda funcional → «Consulta de Planificación Familiar»]
+    ACO2       ISABELA DUQUE VELEZ                            ya homologado  [servicio SSAO × 168 de 3]
+    HO02       PAOLA ANDREA MONSALVE ALARCON                  ya homologado  [servicio 997301-1 × 253 de 3]
+    HO03       JUAN CAMILO SANCHEZ ZAPATA                     ya homologado  [servicio 997301-1 × 234 de 3]
+    HO04       NICOLE MEJIA ROJAS                             ya homologado  [servicio 997301-1 × 218 de 4]
+    MDD1       MEDICO DISPONIBLE HSVP 01                      ya homologado  [servicio S39141 × 417 de 4]
+    MDD2       MEDICO DISPONIBLE HSVP 02                      ya homologado  [servicio S39141 × 743 de 4]
+    NU02       KAREN LORENA CUELLAR HUACA                     ya homologado  [servicio 890206 × 357 de 2]
+    OD02       ANDRES CARDONA FRANCO                          ya homologado  [servicio SCITOD × 277 de 9]
+    OD05       XIOMARA CASTRILLON VARGAS                      ya homologado  [servicio SCITOD × 368 de 8]
+    OD07       JUAN FELIPE MAPURA MAFLA                       ya homologado  [servicio SCITOD × 289 de 9]
+    PS06       MARIA VERONICA GALEANO SAAVEDRA                ya homologado  [servicio S35104 × 379 de 5]
+    PS08       DIANA MARCELA BERMUDEZ GUTIERREZ               ya homologado  [servicio S35104 × 207 de 4]
+    R001       VICTOR ALFONSO QUINTERO RAMIREZ                ya homologado  [servicio S39141 × 147 de 3]
+
+  REVISAR — 2
+    077        MEDICO ATENCION HTA 2                          su cédula se repite en 2 médicos del HIS (documento de relleno)  [servicio S39141-1 × 1274 de 3]  [agenda funcional → «Programa de Hipertensión»]
+    77         MEDICO ATENCION GESTANTE HTA                   su cédula se repite en 2 médicos del HIS (documento de relleno)  [servicio I890301AG × 426 de 12]
+
+0 equivalencia(s) por escribir, 2 para revisar a mano.
+
+(sin --aplicar no se escribió nada: esta lista es para que alguien la mire)

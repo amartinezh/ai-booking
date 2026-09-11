@@ -147,6 +147,23 @@ GO
 --    correr esta sección. Para producción **no edites esta línea**: corre en
 --    su lugar la sección **4-ESEHSVP** (justo después del cierre de esta),
 --    que es la misma idempotente y no depende de acordarse de cambiar un USE.
+--
+--    🚨 Y AL REVÉS TAMBIÉN PASA: comprobado el 2026-09-10, esta vez fue
+--    PRUEBAS la que se quedó sin el `USER agenia_sync` (esta sección nunca se
+--    corrió contra ella, o la base se recreó después y se perdió). El agente
+--    fallaba con `ConnectionError: Login failed for user 'agenia_sync'` —
+--    contraseña y token correctos, cuenta sin bloquear, modo mixto activo —
+--    y ni la nube ni el agente pueden distinguir esa causa de una contraseña
+--    mala: SQL Server le da al cliente el mismo mensaje genérico en los dos
+--    casos. La única forma de verlo es el log del propio SQL Server:
+--
+--        EXEC sp_readerrorlog 0, 1, 'Login failed';
+--
+--    Si el `Reason:` dice `Failed to open the explicitly specified database
+--    '<base>'` (no "password did not match" ni "account is disabled"), es
+--    exactamente esto: falta correr esta sección (o la 4-ESEHSVP) contra esa
+--    base. Diagnóstico completo en
+--    `docs/drivers/cnt-sanvicente-anserma/COMPILAR_Y_ACTUALIZAR.md` §5.
 USE PRUEBAS;
 GO
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = 'agenia_sync')
