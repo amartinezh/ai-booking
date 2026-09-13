@@ -79,6 +79,9 @@ model Organization {
   mirrorEntityMaps     MirrorEntityMap[]
   mirrorCatalogEntries MirrorCatalogEntry[]
 
+  // 📣 Avisos masivos (exclusivo cnt-sanvicente-anserma) — ver PLAN_AVISOS_MASIVOS.md.
+  massNoticeBatches MassNoticeBatch[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -276,6 +279,10 @@ model WhatsappAccountConfig {
 enum WhatsappTemplateKind {
   APPOINTMENT_REMINDER
   WAITLIST_SLOT_OFFER
+  // Aviso masivo (pasivo) de cancelación por especialista — exclusivo del
+  // driver cnt-sanvicente-anserma. Ver
+  // docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §7.
+  APPOINTMENT_CANCELLED_MASS
 }
 
 model WhatsappTemplate {
@@ -312,6 +319,125 @@ model WhatsappTemplate {
 }
 
 // -----------------------------------------------------------------------------
+// 📣 AVISOS MASIVOS — cancelación pasiva por WhatsApp cuando un especialista
+// visitante no puede asistir. EXCLUSIVO del driver cnt-sanvicente-anserma —
+// ver docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md.
+//
+// ⚠️ Esto NO es una plataforma general de notificaciones masivas (§4 del
+// plan). Los nombres son genéricos porque el código en español sale peor,
+// no porque el diseño se piense reutilizable: lo único que impide que se
+// filtre a otro tenant es la Llave 2 (`HospitalMirrorConfig.driverKey` +
+// `organizationId`), comprobada en cada acción — nunca una FK a esta tabla.
+// -----------------------------------------------------------------------------
+
+/// Un lote = "lo que se decidió mandar de una vez". Existe por tres razones:
+/// revisar a quién se le va a escribir ANTES de apretar el botón, demostrar a
+/// quién se le escribió DESPUÉS, y sobrevivir a que la fuente sea asíncrona
+/// (Fase 2: el agente contesta en su siguiente vuelta, no al instante).
+model MassNoticeBatch {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// 'CANCELACION' | 'RECORDATORIO' — String y no enum: el vocabulario de una
+  /// función de un solo driver no merece una migración por cada variante.
+  kind   String
+  /// 'CSV' | 'ESPEJO' | 'AGENIA' — de dónde salió la lista. Se audita porque
+  /// la confianza en el teléfono no es la misma en los tres casos.
+  source String
+  /// 'BORRADOR' | 'ENVIANDO' | 'ENVIADO' | 'CANCELADO'
+  status String @default("BORRADOR")
+
+  doctorExternalKey String?
+  doctorLabel       String?
+  serviceLabel      String?
+  dateFrom          DateTime
+  dateTo            DateTime
+
+  /// El texto exacto (o plantilla + parámetros) que se usó. Sin esto, dentro
+  /// de seis meses nadie puede decir qué se le dijo al paciente.
+  messageTemplate String? @db.Text
+  messagePreview  String? @db.Text
+
+  /// Nota libre que el operador escribe UNA vez por lote y viaja como {{5}}
+  /// de la plantilla aprobada (PLAN_AVISOS_MASIVOS.md §7.2). null/"" ⇒ el
+  /// envío usa la frase por defecto de la plantilla — nunca una variable
+  /// vacía hacia Meta.
+  notaAdicional String? @db.Text
+
+  candidates Int @default(0)
+  selected   Int @default(0)
+  sent       Int @default(0)
+  failed     Int @default(0)
+  skipped    Int @default(0)
+
+  createdByUserId String
+  createdBy       User      @relation(fields: [createdByUserId], references: [id])
+  createdAt       DateTime  @default(now())
+  sentAt          DateTime?
+  /// Fecha en que se purgaron nombre y teléfono de los destinatarios (§9.3).
+  purgedAt        DateTime?
+
+  recipients MassNoticeRecipient[]
+
+  @@index([organizationId, createdAt])
+}
+
+/// Una fila por persona dentro de un lote.
+model MassNoticeRecipient {
+  id      String          @id @default(uuid())
+  batchId String
+  batch   MassNoticeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  /// Denormalizado del lote a propósito: sin esto, "¿a este documento ya se
+  /// le avisó de esta cita en OTRO lote?" obliga a un join contra
+  /// MassNoticeBatch en la consulta más caliente de la pantalla. Se escribe
+  /// una vez al crear la fila y nunca cambia.
+  organizationId String
+
+  patientDocument String
+  /// Nullable porque se PURGAN a los N días (§9.3): la traza de "a este
+  /// documento se le escribió tal día" sobrevive; el dato de contacto no.
+  patientName     String?
+  phoneE164       String?
+
+  appointmentAtUtc   DateTime
+  doctorExternalKey  String?
+  serviceExternalKey String?
+
+  /// Cuando el paciente SÍ existe en AgenIA, se prefiere su BSUID al
+  /// teléfono: es el identificador estable de Meta y el teléfono puede haber
+  /// caducado de su caché de 30 días. Ver PatientProfile.bsuid.
+  agenIAPatientId String?
+
+  /// Snapshot tomado AL POBLAR el lote: ¿ya existía un envío ENVIADO para
+  /// este mismo (patientDocument, appointmentAtUtc) en OTRO lote? Es una
+  /// fotografía, no una fuente viva — si se repobla, se recalcula.
+  /// Determina el default de `selected` y el badge "Aviso previo" de la
+  /// pantalla (PLAN_AVISOS_MASIVOS.md §6.1).
+  previousSentAt      DateTime?
+  previousSentBatchId String?
+
+  /// Por defecto `true`, EXCEPTO cuando `previousSentAt` no es null: a un
+  /// paciente ya avisado no se le vuelve a marcar solo — el operador tiene
+  /// que decidirlo a propósito, viendo el badge.
+  selected     Boolean   @default(true)
+  /// 'PENDIENTE' | 'ENVIADO' | 'FALLIDO' | 'OMITIDO'
+  outcome      String    @default("PENDIENTE")
+  error        String?
+  sentAt       DateTime?
+  usedTemplate String?
+
+  /// Idempotencia: reapretar el botón no vuelve a escribirle a nadie que ya
+  /// recibió el mensaje EN ESTE lote — solo reintenta PENDIENTE y FALLIDO.
+  @@unique([batchId, patientDocument, appointmentAtUtc])
+  @@index([batchId, outcome])
+  /// Cubre "¿algún envío ENVIADO previo para (organización, documento, hora
+  /// de cita)?" — la consulta que llena `previousSentAt` al poblar un lote.
+  @@index([organizationId, patientDocument, appointmentAtUtc])
+}
+
+// -----------------------------------------------------------------------------
 // 🔐 AUTH & CORE USER (Mínimo necesario para login)
 // -----------------------------------------------------------------------------
 model User {
@@ -333,6 +459,9 @@ model User {
 
   // Cortes del padrón que este usuario cargó
   padronImports PadronImport[]
+
+  // Lotes de avisos masivos que este usuario armó (PLAN_AVISOS_MASIVOS.md)
+  massNoticeBatches MassNoticeBatch[]
 
   // 🏢 TENANT ISOLATION
   organizationId String?
@@ -1438,6 +1567,22 @@ model HospitalMirrorConfig {
   conflictAlertsEnabled Boolean @default(true)
   agendadorWhatsapp     String? // número E.164 del agendador responsable
   agendadorEmail        String? // correo del agendador responsable
+
+  // ⚠️ EXCLUSIVO del driver cnt-sanvicente-anserma — ver
+  // docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md.
+  //
+  // Avisos masivos (pasivos) de cancelación por WhatsApp cuando un
+  // especialista visitante no puede asistir. NO comparte fila con
+  // `driverConfig`: ese campo guarda credenciales del HIS y lo lee el guard
+  // del agente en cada petición — un formulario de pantalla que hiciera
+  // read-modify-write ahí puede, en un mal día, dejar al hospital sin token.
+  //
+  // null = la función no existe para este tenant (el caso de todos menos
+  // uno). Forma: { enabled, fuente: 'CSV'|'ESPEJO', maxDestinatariosPorLote,
+  // ventanaDiasMax, ritmoMensajesPorMinuto, retencionDiasDatosPersonales,
+  // medicosHabilitados }. Json y no columnas sueltas: afinar un tope no debe
+  // costar un despliegue (mismo criterio que `driverConfig`/`mappingJson`).
+  avisosMasivos Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

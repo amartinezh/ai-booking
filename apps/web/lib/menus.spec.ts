@@ -48,4 +48,52 @@ describe('getMenusForRole', () => {
         const menus = getMenusForRole('ORG_ADMIN', { conEspejo: true });
         expect(menus.filter((m) => m.href === '/dashboard/espejo')).toHaveLength(1);
     });
+
+    // ── Avisos masivos (PLAN_AVISOS_MASIVOS.md §1.3) ──────────────────────
+    // A diferencia de Espejo, esta opción es de DOS roles, no solo ORG_ADMIN.
+
+    it('sin conAvisos, ni ORG_ADMIN ni BOOKING_AGENT incluyen la opción de avisos', () => {
+        expect(getMenusForRole('ORG_ADMIN').some((m) => m.href === '/dashboard/espejo/avisos')).toBe(false);
+        expect(getMenusForRole('BOOKING_AGENT').some((m) => m.href === '/dashboard/espejo/avisos')).toBe(
+            false,
+        );
+    });
+
+    it('con conAvisos=true, ORG_ADMIN incluye Avisos justo antes de Soporte', () => {
+        const menus = getMenusForRole('ORG_ADMIN', { conAvisos: true });
+        const avisosIdx = menus.findIndex((m) => m.href === '/dashboard/espejo/avisos');
+        const soporteIdx = menus.findIndex((m) => m.href === '/dashboard/soporte');
+        expect(avisosIdx).toBeGreaterThan(-1);
+        expect(avisosIdx).toBe(soporteIdx - 1);
+    });
+
+    it('con conAvisos=true, BOOKING_AGENT TAMBIÉN incluye Avisos — a diferencia de Espejo', () => {
+        const menus = getMenusForRole('BOOKING_AGENT', { conAvisos: true });
+        expect(menus.some((m) => m.href === '/dashboard/espejo/avisos')).toBe(true);
+    });
+
+    it('conAvisos=true no afecta a roles sin acceso (PATIENT, DOCTOR)', () => {
+        expect(getMenusForRole('PATIENT', { conAvisos: true }).some((m) => m.href === '/dashboard/espejo/avisos')).toBe(false);
+        expect(getMenusForRole('DOCTOR', { conAvisos: true }).some((m) => m.href === '/dashboard/espejo/avisos')).toBe(false);
+    });
+
+    it('conEspejo y conAvisos juntos no duplican ni pisan ninguna opción existente', () => {
+        const antes = getMenusForRole('ORG_ADMIN').map((m) => m.href);
+        const menus = getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true });
+
+        expect(menus.some((m) => m.href === '/dashboard/espejo')).toBe(true);
+        expect(menus.some((m) => m.href === '/dashboard/espejo/avisos')).toBe(true);
+        // Ninguna opción original desapareció ni cambió de identidad.
+        for (const href of antes) {
+            expect(menus.some((m) => m.href === href)).toBe(true);
+        }
+        expect(menus).toHaveLength(antes.length + 2);
+    });
+
+    it('no duplica Avisos si getMenusForRole se llama varias veces con conAvisos=true', () => {
+        getMenusForRole('BOOKING_AGENT', { conAvisos: true });
+        getMenusForRole('BOOKING_AGENT', { conAvisos: true });
+        const menus = getMenusForRole('BOOKING_AGENT', { conAvisos: true });
+        expect(menus.filter((m) => m.href === '/dashboard/espejo/avisos')).toHaveLength(1);
+    });
 });

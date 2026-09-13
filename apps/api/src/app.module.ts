@@ -23,6 +23,7 @@ import { OrganizationsModule } from './organizations/organizations.module';
 import { SurveyModule } from './survey/survey.module';
 import { MonitorModule } from './monitor/monitor.module';
 import { MirrorModule } from './mirror/mirror.module';
+import { MassNoticeModule } from './mass-notice/mass-notice.module';
 
 @Module({
   imports: [
@@ -69,6 +70,9 @@ import { MirrorModule } from './mirror/mirror.module';
     // 🪞 Espejo de citas con HIS externos (patrón de drivers) — Fase 1.
     // Ver docs/PLAN_ESPEJO_HOSPITAL.md.
     MirrorModule,
+    // 📣 Avisos masivos — EXCLUSIVO del driver cnt-sanvicente-anserma. Ver
+    // docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md.
+    MassNoticeModule,
   ],
 })
 export class AppModule {}

@@ -19,6 +19,10 @@ export enum InteractionStatus {
   WAITLIST_JOINED = 'WAITLIST_JOINED', // Paciente entró a waitlist
   REMINDER_SENT = 'REMINDER_SENT', // Recordatorio automático de cita enviado
   EMERGENCY_ESCALATED = 'EMERGENCY_ESCALATED', // 🚑 Posible emergencia médica → derivación inmediata (123/urgencias/humano)
+  // Aviso masivo (pasivo) de cancelación por especialista — exclusivo del
+  // driver cnt-sanvicente-anserma. Ver
+  // docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §7.4.
+  MASS_NOTICE_SENT = 'MASS_NOTICE_SENT',
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -262,6 +266,44 @@ export class InteractionLogService {
         slotDate: params.slotDate.toISOString(),
         businessHoursBefore: params.businessHoursBefore,
         reminderAutomatic: true,
+        error: params.error || null,
+      },
+    });
+  }
+
+  /**
+   * Helper: registrar UN mensaje de un lote de avisos masivos (uno por uno —
+   * ver PLAN_AVISOS_MASIVOS.md §7.4, esto no es una campaña, es un mensaje
+   * individual por destinatario). Lo invoca MassNoticeService al completar
+   * cada envío (éxito o falla) dentro del lote.
+   */
+  async logMassNoticeSent(params: {
+    whatsappId: string;
+    organizationId: string;
+    batchId: string;
+    recipientId: string;
+    patientDocument?: string | null;
+    doctorLabel?: string | null;
+    appointmentAtUtc: Date;
+    success: boolean;
+    botReply: string;
+    error?: string | null;
+  }): Promise<void> {
+    await this.log({
+      whatsappId: params.whatsappId,
+      organizationId: params.organizationId,
+      status: params.success
+        ? InteractionStatus.MASS_NOTICE_SENT
+        : InteractionStatus.FAILED,
+      failureReason: params.success ? null : FailureReason.META_API_ERROR,
+      botReply: params.botReply,
+      metadata: {
+        batchId: params.batchId,
+        recipientId: params.recipientId,
+        patientDocument: params.patientDocument || null,
+        doctorLabel: params.doctorLabel || null,
+        appointmentAtUtc: params.appointmentAtUtc.toISOString(),
+        massNotice: true,
         error: params.error || null,
       },
     });

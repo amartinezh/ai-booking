@@ -28,12 +28,16 @@ const ACCENT_STYLES: Record<MenuAccent, { tile: string; glow: string }> = {
 export default function QuickAccessGrid({
     role,
     conEspejo = false,
+    conAvisos = false,
 }: {
     role: UserRole;
     conEspejo?: boolean;
+    conAvisos?: boolean;
 }) {
     // La Visión General es la página actual: no tiene sentido como acceso rápido.
-    const items = getMenusForRole(role, { conEspejo }).filter((item) => item.href !== '/dashboard');
+    const items = getMenusForRole(role, { conEspejo, conAvisos }).filter(
+        (item) => item.href !== '/dashboard',
+    );
 
     if (items.length === 0) return null;
 

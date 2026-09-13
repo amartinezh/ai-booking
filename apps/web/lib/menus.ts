@@ -97,16 +97,38 @@ const ESPEJO: MenuItem = {
     accent: 'violet',
 };
 
+/**
+ * EXCLUSIVO del driver cnt-sanvicente-anserma (ver
+ * docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §1). A
+ * diferencia de `ESPEJO` —que solo se inserta para `ORG_ADMIN`—, esta
+ * aparece para `ORG_ADMIN` y `BOOKING_AGENT` (§1.3: los dos operan la
+ * pantalla; solo `ORG_ADMIN` ve el enlace de configuración dentro de ella).
+ */
+const AVISOS: MenuItem = {
+    label: 'Avisos de cancelación',
+    href: '/dashboard/espejo/avisos',
+    icon: '📣',
+    description: 'Aviso masivo por WhatsApp si un especialista no puede asistir',
+    accent: 'rose',
+};
+
+function insertBeforeSoporte(menus: MenuItem[], item: MenuItem): MenuItem[] {
+    const i = menus.findIndex((m) => m.href === '/dashboard/soporte');
+    return i === -1 ? [...menus, item] : [...menus.slice(0, i), item, ...menus.slice(i)];
+}
+
 export function getMenusForRole(
     role: UserRole,
-    opts: { conEspejo?: boolean } = {},
+    opts: { conEspejo?: boolean; conAvisos?: boolean } = {},
 ): MenuItem[] {
-    const menus = MENUS_BY_ROLE[role] ?? [];
-    if (!opts.conEspejo || role !== 'ORG_ADMIN') return menus;
+    let menus = MENUS_BY_ROLE[role] ?? [];
 
-    // Antes de Soporte, que siempre cierra la lista.
-    const i = menus.findIndex((m) => m.href === '/dashboard/soporte');
-    return i === -1
-        ? [...menus, ESPEJO]
-        : [...menus.slice(0, i), ESPEJO, ...menus.slice(i)];
+    if (opts.conEspejo && role === 'ORG_ADMIN') {
+        menus = insertBeforeSoporte(menus, ESPEJO);
+    }
+    if (opts.conAvisos && (role === 'ORG_ADMIN' || role === 'BOOKING_AGENT')) {
+        menus = insertBeforeSoporte(menus, AVISOS);
+    }
+
+    return menus;
 }

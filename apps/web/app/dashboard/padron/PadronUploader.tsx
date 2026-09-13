@@ -18,6 +18,12 @@ import {
 } from 'lucide-react';
 import { detectPadronEps, PADRON_CSV_HEADERS, type PadronEpsDetection } from '@agenia/shared';
 import {
+    readFileWithProgress,
+    sniffBinarySignature,
+    xlsxToCsv,
+    type UploadProgress,
+} from '@/lib/spreadsheet-upload';
+import {
     getActiveEpsOptionsAction,
     getPadronFullErrorReportAction,
     importPadronCsvAction,
@@ -31,59 +37,6 @@ const MAX_FILE_BYTES = 6_000_000;
 const ALLOWED_EXTENSIONS = /\.(csv|xlsx)$/i;
 
 const TEMPLATE_CSV = PADRON_CSV_HEADERS.join(',') + '\n1088123456,SUBSIDIADO,3001234567\n';
-
-// Firmas binarias (primeros bytes del archivo), revisadas sobre los bytes
-// CRUDOS antes de decodificar nada. `zip` es la firma de un .xlsx real (es un
-// contenedor ZIP) — ya no se bloquea sin más: se acepta cuando la extensión
-// es .xlsx. `ole` (.xls antiguo) y `pdf` siguen sin soportarse en ningún caso.
-const BINARY_SIGNATURES: Array<{ bytes: number[]; label: string; kind: 'zip' | 'ole' | 'pdf' }> = [
-    { bytes: [0x50, 0x4b, 0x03, 0x04], label: 'un archivo Excel (.xlsx) o ZIP', kind: 'zip' },
-    { bytes: [0x50, 0x4b, 0x05, 0x06], label: 'un archivo Excel (.xlsx) o ZIP vacío', kind: 'zip' },
-    { bytes: [0xd0, 0xcf, 0x11, 0xe0], label: 'un archivo Excel antiguo (.xls)', kind: 'ole' },
-    { bytes: [0x25, 0x50, 0x44, 0x46], label: 'un archivo PDF', kind: 'pdf' },
-];
-
-async function sniffBinarySignature(
-    file: File,
-): Promise<{ label: string; kind: 'zip' | 'ole' | 'pdf' } | null> {
-    const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
-    for (const { bytes, label, kind } of BINARY_SIGNATURES) {
-        if (bytes.every((b, i) => head[i] === b)) return { label, kind };
-    }
-    return null;
-}
-
-/** Lee un archivo con progreso REAL (bytes leídos / total) vía FileReader. */
-function readFileWithProgress(
-    file: File,
-    mode: 'text' | 'arraybuffer',
-    onProgress: (percent: number) => void,
-): Promise<string | ArrayBuffer> {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onprogress = (e) => {
-            if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-        };
-        reader.onerror = () => reject(reader.error ?? new Error('No se pudo leer el archivo.'));
-        reader.onload = () => resolve(reader.result as string | ArrayBuffer);
-        if (mode === 'text') reader.readAsText(file);
-        else reader.readAsArrayBuffer(file);
-    });
-}
-
-/** Convierte un workbook de Excel a CSV: usa la primera hoja que tenga datos. */
-async function xlsxToCsv(buffer: ArrayBuffer): Promise<string | null> {
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    for (const sheetName of workbook.SheetNames) {
-        const sheet = workbook.Sheets[sheetName];
-        const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
-        if (csv.split(/\r?\n/).some((l) => l.trim())) return csv;
-    }
-    return null;
-}
-
-type UploadProgress = { label: string; percent: number } | null;
 
 // ─────────────────────────────────────────────────────────────
 // Cargador del padrón: flujo estricto de dos pasos, con la EPS elegida en

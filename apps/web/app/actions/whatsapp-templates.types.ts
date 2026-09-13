@@ -3,7 +3,8 @@
 /** Tipos de plantilla que el backend sabe enviar. */
 export type WhatsappTemplateKind =
     | 'APPOINTMENT_REMINDER'
-    | 'WAITLIST_SLOT_OFFER';
+    | 'WAITLIST_SLOT_OFFER'
+    | 'APPOINTMENT_CANCELLED_MASS';
 
 export interface WhatsappTemplateDto {
     id: string;
@@ -42,5 +43,17 @@ export const TEMPLATE_CONTRACTS: Record<
         description:
             'Avisa a un paciente en lista de espera que se liberó un cupo.',
         variables: ['Nombre del paciente', 'Servicio', 'Fecha y hora'],
+    },
+    APPOINTMENT_CANCELLED_MASS: {
+        label: 'Aviso de cancelación (avisos masivos)',
+        description:
+            'EXCLUSIVA del driver cnt-sanvicente-anserma — ver PLAN_AVISOS_MASIVOS.md §7.1. Se usa desde Avisos de cancelación (/dashboard/espejo/avisos) cuando un especialista no puede asistir. El 100% de estos envíos cae fuera de la ventana de 24 h, así que sin esta plantilla el aviso no sale nunca.',
+        variables: [
+            'Nombre del paciente',
+            'Servicio',
+            'Médico',
+            'Fecha y hora',
+            'Nota adicional (o la frase por defecto si el operador la deja vacía)',
+        ],
     },
 };
