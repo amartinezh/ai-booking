@@ -7,6 +7,7 @@ import type {
 } from '@agenia/shared';
 import type { MirrorApiClient } from './mirror-api-client';
 import type { DriverResult, HisDriver } from './driver.interface';
+import { isNoticeRosterCapable } from './driver.interface';
 import type { AgentStateStore } from './agent-state-store';
 
 /**
@@ -114,6 +115,60 @@ export class MirrorEngine {
       });
     }
     return resultados;
+  }
+
+  /**
+   * Avisos masivos, Fase 2 (fuente espejo) — EXCLUSIVO del driver
+   * cnt-sanvicente-anserma. Ver
+   * docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §5.
+   *
+   * Bajo demanda, no réplica continua: solo pregunta si hay peticiones
+   * ("tráeme las citas del Dr. X entre el 25 y el 26") y, si las hay, las
+   * resuelve UNA POR UNA — un fallo con un médico no debe impedir que las
+   * demás peticiones de esta vuelta se resuelvan igual (mismo criterio que
+   * `recorrerAgenda`: un día malo no tumba el barrido completo).
+   *
+   * `skipped: true` cuando el driver activo NO implementa avisos masivos —
+   * no es un error, es "este driver no hace esto" (ver
+   * `isNoticeRosterCapable`). El motor genérico sigue sin saber que esta
+   * función existe salvo por esta comprobación estructural.
+   */
+  async syncNoticeRequests(): Promise<{
+    skipped: boolean;
+    processed: number;
+    errores: number;
+    primerError?: string;
+  }> {
+    if (!isNoticeRosterCapable(this.driver)) {
+      return { skipped: true, processed: 0, errores: 0 };
+    }
+
+    const requests = await this.api.getPendingNoticeRequests();
+    let processed = 0;
+    let errores = 0;
+    let primerError: string | undefined;
+
+    for (const req of requests) {
+      try {
+        const candidates = await this.driver.fetchNoticeRoster({
+          doctorExternalKey: req.doctorExternalKey,
+          fromIso: req.fromIso,
+          toIso: req.toIso,
+        });
+        await this.api.pushNoticeRoster({
+          requestId: req.requestId,
+          candidates,
+        });
+        processed++;
+      } catch (error) {
+        errores++;
+        if (!primerError) {
+          primerError = error instanceof Error ? error.message : String(error);
+        }
+      }
+    }
+
+    return { skipped: false, processed, errores, primerError };
   }
 
   async handshake(): Promise<void> {

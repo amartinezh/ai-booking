@@ -13,6 +13,9 @@ import type {
   AvailabilityResult,
   CatalogInput,
   CatalogResult,
+  NoticeRequestDto,
+  NoticeRosterInput,
+  NoticeRosterResult,
 } from '@agenia/shared';
 
 /**
@@ -31,6 +34,13 @@ export interface MirrorApiClient {
   reconcile(input: ReconcileInput): Promise<ReconcileResult>;
   uploadAvailability(input: AvailabilityInput): Promise<AvailabilityResult>;
   uploadCatalog(input: CatalogInput): Promise<CatalogResult>;
+  /**
+   * Avisos masivos, Fase 2 (§5) — EXCLUSIVO del driver cnt-sanvicente-anserma.
+   * Un agente de otro driver simplemente nunca tiene peticiones pendientes
+   * (nadie las crea para él) y esta llamada siempre devuelve `[]`.
+   */
+  getPendingNoticeRequests(): Promise<NoticeRequestDto[]>;
+  pushNoticeRoster(input: NoticeRosterInput): Promise<NoticeRosterResult>;
 }
 
 /**
@@ -165,5 +175,13 @@ export class HttpMirrorApiClient implements MirrorApiClient {
 
   uploadCatalog(input: CatalogInput): Promise<CatalogResult> {
     return this.request('POST', '/mirror/catalog', input);
+  }
+
+  getPendingNoticeRequests(): Promise<NoticeRequestDto[]> {
+    return this.request('GET', '/mirror/notice-requests');
+  }
+
+  pushNoticeRoster(input: NoticeRosterInput): Promise<NoticeRosterResult> {
+    return this.request('POST', '/mirror/notice-roster', input);
   }
 }

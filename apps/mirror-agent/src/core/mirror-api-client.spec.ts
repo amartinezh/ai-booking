@@ -182,6 +182,17 @@ describe('HttpMirrorApiClient — el contrato HTTP', () => {
       expect(llamada().url).not.toContain('limit');
     });
 
+    it('getPendingNoticeRequests → GET /mirror/notice-requests, sin cuerpo', async () => {
+      fetchMock.mockResolvedValue(respuesta([]));
+
+      await client.getPendingNoticeRequests();
+
+      const { url, init } = llamada();
+      expect(url).toBe(`${BASE}/mirror/notice-requests`);
+      expect(init.method).toBe('GET');
+      expect(init.body).toBeUndefined();
+    });
+
     it.each([
       ['ack', '/mirror/ack', { seqs: ['1'] }],
       ['pushChanges', '/mirror/changes', { events: [] }],
@@ -197,6 +208,11 @@ describe('HttpMirrorApiClient — el contrato HTTP', () => {
         { fromIso: 'a', toIso: 'b', slots: [] },
       ],
       ['uploadCatalog', '/mirror/catalog', { kind: 'DOCTOR', entries: [] }],
+      [
+        'pushNoticeRoster',
+        '/mirror/notice-roster',
+        { requestId: 'req-1', candidates: [] },
+      ],
     ])('%s → POST %s con su cuerpo', async (metodo, ruta, input) => {
       await (
         client as unknown as Record<string, (i: unknown) => Promise<unknown>>

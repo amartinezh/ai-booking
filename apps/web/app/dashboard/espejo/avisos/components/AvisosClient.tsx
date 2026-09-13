@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { formatAppointmentLong } from '@/lib/date';
 import { readFileWithProgress, sniffBinarySignature, xlsxToCsv } from '@/lib/spreadsheet-upload';
 import {
@@ -12,8 +12,11 @@ import {
     updateBatchNotaAdicionalAction,
     sendBatchAction,
     updateAvisosConfigAction,
+    requestNoticeRosterAction,
+    getNoticeRequestStatusAction,
     type AvisosValidationSummary,
     type AvisosBatchView,
+    type DoctorCatalogOption,
 } from '@/app/actions/avisos';
 import RecipientsTable from './RecipientsTable';
 import BatchHistory from './BatchHistory';
@@ -22,9 +25,25 @@ const ALLOWED_EXTENSIONS = /\.(csv|xlsx)$/i;
 const MAX_FILE_BYTES = 2_000_000;
 const DEFAULT_NOTA = 'Le ofrecemos disculpas por el inconveniente.';
 const MAX_NOTA_CHARS = 150;
+// El agente resuelve la petición en su siguiente vuelta (~30 s, §5) — se
+// consulta cada 3 s y se abandona a los 90 s (tres vueltas de margen) para no
+// dejar a alguien mirando una rueda girar para siempre si el agente está caído.
+const POLL_INTERVAL_MS = 3_000;
+const POLL_TIMEOUT_MS = 90_000;
+
+/** Suma días a una fecha-calendario "YYYY-MM-DD" (aritmética de calendario
+ * pura, no presentación — la regla de `.toLocale*` de CLAUDE.md no aplica
+ * aquí). Usa UTC internamente solo para que sumar un día no dependa del
+ * huso horario del navegador. */
+function addDaysToDateString(dateStr: string, days: number): string {
+    const d = new Date(`${dateStr}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+}
 
 type AvisosMasivosConfig = {
     enabled?: boolean;
+    fuente?: 'CSV' | 'ESPEJO';
     ritmoMensajesPorMinuto?: number;
     maxDestinatariosPorLote?: number;
 };
@@ -34,16 +53,19 @@ export default function AvisosClient({
     conAvisos,
     initialConfig,
     initialBatches,
+    initialDoctors,
 }: {
     isOrgAdmin: boolean;
     conAvisos: boolean;
     initialConfig: AvisosMasivosConfig | null;
     initialBatches: AvisosBatchView[];
+    initialDoctors: DoctorCatalogOption[];
 }) {
     const [configOpen, setConfigOpen] = useState(!conAvisos);
     const [config, setConfig] = useState<AvisosMasivosConfig | null>(initialConfig);
     const [configForm, setConfigForm] = useState({
         enabled: initialConfig?.enabled ?? false,
+        fuente: initialConfig?.fuente ?? 'CSV',
         ritmoMensajesPorMinuto: initialConfig?.ritmoMensajesPorMinuto ?? 30,
         maxDestinatariosPorLote: initialConfig?.maxDestinatariosPorLote ?? 300,
     });
@@ -65,13 +87,23 @@ export default function AvisosClient({
     const [isLoading, startLoadingBatch] = useTransition();
     const [error, setError] = useState<string | null>(null);
 
+    // ── Paso 1 (fuente ESPEJO): "Traer del hospital" — §5, §6 ──
+    const [selectedDoctorKey, setSelectedDoctorKey] = useState('');
+    const [fromDate, setFromDate] = useState('');
+    const [toDate, setToDate] = useState('');
+    const [isRequestingRoster, startRequestingRoster] = useTransition();
+    const [isPolling, setIsPolling] = useState(false);
+    const [truncatedNotice, setTruncatedNotice] = useState(false);
+    const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const pollDeadlineRef = useRef<number>(0);
+
     // ── Paso 2/3 ──
     const [notaAdicional, setNotaAdicional] = useState('');
     const [confirmText, setConfirmText] = useState('');
     const [isSending, startSending] = useTransition();
     const [sendResult, setSendResult] = useState<string | null>(null);
 
-    const busy = isReadingFile || isValidating || isLoading || isSending;
+    const busy = isReadingFile || isValidating || isLoading || isSending || isRequestingRoster || isPolling;
 
     async function refreshBatches() {
         const res = await listBatchesAction();
@@ -83,12 +115,13 @@ export default function AvisosClient({
         const res = await getBatchAction(batchId);
         if (!res.success) {
             setError(res.error);
-            return;
+            return null;
         }
         setBatch(res.batch);
         setNotaAdicional(res.batch.notaAdicional ?? '');
         setSendResult(null);
         setConfirmText('');
+        return res.batch;
     }
 
     function resetPaso1() {
@@ -99,11 +132,107 @@ export default function AvisosClient({
         if (fileInputRef.current) fileInputRef.current.value = '';
     }
 
+    function stopPolling() {
+        if (pollTimerRef.current) {
+            clearInterval(pollTimerRef.current);
+            pollTimerRef.current = null;
+        }
+        setIsPolling(false);
+    }
+
+    // Al desmontar (ej. navegar fuera de la pantalla), no dejar un intervalo
+    // huérfano preguntándole al backend por una petición que nadie mira.
+    useEffect(() => {
+        return () => {
+            if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+        };
+    }, []);
+
     function startNewBatch() {
         setBatch(null);
         setDoctorLabel('');
         setServiceLabel('');
+        setSelectedDoctorKey('');
+        setFromDate('');
+        setToDate('');
+        setTruncatedNotice(false);
+        stopPolling();
         resetPaso1();
+    }
+
+    async function pollNoticeRequest(requestId: string, batchId: string) {
+        const status = await getNoticeRequestStatusAction(requestId);
+        if (!status.success) {
+            stopPolling();
+            setError(status.error ?? 'No se pudo consultar el estado de la petición.');
+            return;
+        }
+        if (status.status === 'RESUELTA') {
+            stopPolling();
+            setTruncatedNotice(Boolean(status.truncated));
+            await openBatch(batchId);
+            await refreshBatches();
+            return;
+        }
+        if (status.status === 'ERROR') {
+            stopPolling();
+            setError(status.requestError || 'El hospital no pudo resolver la petición.');
+            return;
+        }
+        // Sigue PENDIENTE — el agente resuelve en su siguiente vuelta (~30 s).
+        if (Date.now() > pollDeadlineRef.current) {
+            stopPolling();
+            setError(
+                'El agente no respondió a tiempo. Verifique que esté conectado e intente de nuevo en un momento.',
+            );
+        }
+    }
+
+    function beginPolling(requestId: string, batchId: string) {
+        stopPolling();
+        setIsPolling(true);
+        pollDeadlineRef.current = Date.now() + POLL_TIMEOUT_MS;
+        pollTimerRef.current = setInterval(() => {
+            void pollNoticeRequest(requestId, batchId);
+        }, POLL_INTERVAL_MS);
+    }
+
+    /** Paso 1 (fuente ESPEJO) — "1. Traer del hospital". Repetible (§3.3.4, §5):
+     * con `existingBatchId` repuebla el mismo lote en vez de crear uno nuevo. */
+    function handleTraerDelHospital(existingBatchId?: string) {
+        if (!selectedDoctorKey || !fromDate || !toDate) {
+            setError('Elija un médico y un rango de fechas.');
+            return;
+        }
+        if (fromDate > toDate) {
+            setError('La fecha "desde" no puede ser posterior a la fecha "hasta".');
+            return;
+        }
+        setError(null);
+        setTruncatedNotice(false);
+        const doctor = initialDoctors.find((d) => d.externalKey === selectedDoctorKey);
+        // Medianoche de Bogotá (UTC-5 fijo, sin horario de verano — igual que
+        // el resto del driver). "Hasta" es el día SIGUIENTE al último día
+        // pedido: el filtro por instante en el agente usa `< toIso`, así que
+        // hay que correr el borde un día para que el último día quede incluido.
+        const fromIso = `${fromDate}T05:00:00.000Z`;
+        const toIso = `${addDaysToDateString(toDate, 1)}T05:00:00.000Z`;
+
+        startRequestingRoster(async () => {
+            const res = await requestNoticeRosterAction({
+                batchId: existingBatchId,
+                doctorExternalKey: selectedDoctorKey,
+                doctorLabel: doctor?.label ?? selectedDoctorKey,
+                serviceLabel,
+                fromIso,
+                toIso,
+            });
+            if (!res.success || !res.requestId || !res.batchId) {
+                setError(res.error ?? 'No se pudo pedir la lista al hospital.');
+                return;
+            }
+            beginPolling(res.requestId, res.batchId);
+        });
     }
 
     async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -274,6 +403,7 @@ export default function AvisosClient({
     }
 
     const featureOn = config?.enabled ?? conAvisos;
+    const fuenteActual = config?.fuente ?? 'CSV';
 
     return (
         <div className="space-y-8">
@@ -312,6 +442,26 @@ export default function AvisosClient({
                                     className="h-4 w-4 rounded border-zinc-300 text-rose-600 focus:ring-rose-500"
                                 />
                                 Habilitar avisos de cancelación para esta clínica
+                            </label>
+                            <label className="block text-sm text-zinc-700 dark:text-zinc-300">
+                                Cómo se arma la lista de pacientes
+                                <select
+                                    value={configForm.fuente}
+                                    onChange={(e) =>
+                                        setConfigForm((f) => ({
+                                            ...f,
+                                            fuente: e.target.value as 'CSV' | 'ESPEJO',
+                                        }))
+                                    }
+                                    className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm"
+                                >
+                                    <option value="CSV">Subir hoja electrónica (CSV o Excel)</option>
+                                    <option value="ESPEJO">Traer del hospital (directo del espejo)</option>
+                                </select>
+                                <span className="mt-1 block text-xs text-zinc-400">
+                                    &quot;Traer del hospital&quot; solo funciona con el agente conectado y
+                                    el catálogo de médicos ya sincronizado.
+                                </span>
                             </label>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <label className="text-sm text-zinc-700 dark:text-zinc-300">
@@ -379,7 +529,7 @@ export default function AvisosClient({
                         </div>
                     )}
 
-                    {!batch && (
+                    {!batch && fuenteActual !== 'ESPEJO' && (
                         <section className="space-y-4 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
                             <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
                                 Paso 1 · Armar la lista
@@ -466,6 +616,90 @@ export default function AvisosClient({
                         </section>
                     )}
 
+                    {!batch && fuenteActual === 'ESPEJO' && (
+                        <section className="space-y-4 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
+                            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                                Paso 1 · Traer del hospital
+                            </h2>
+
+                            {initialDoctors.length === 0 ? (
+                                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                                    El catálogo de médicos del hospital todavía no está disponible. Espere a
+                                    que el agente sincronice, o contacte soporte si el espejo lleva rato
+                                    activo.
+                                </p>
+                            ) : (
+                                <>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                        <label className="text-sm text-zinc-700 dark:text-zinc-300">
+                                            Médico especialista *
+                                            <select
+                                                value={selectedDoctorKey}
+                                                onChange={(e) => setSelectedDoctorKey(e.target.value)}
+                                                disabled={busy}
+                                                className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm disabled:opacity-50"
+                                            >
+                                                <option value="">— elegir —</option>
+                                                {initialDoctors.map((d) => (
+                                                    <option key={d.externalKey} value={d.externalKey}>
+                                                        {d.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label className="text-sm text-zinc-700 dark:text-zinc-300">
+                                            Cita desde *
+                                            <input
+                                                type="date"
+                                                value={fromDate}
+                                                onChange={(e) => setFromDate(e.target.value)}
+                                                disabled={busy}
+                                                className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm disabled:opacity-50"
+                                            />
+                                        </label>
+                                        <label className="text-sm text-zinc-700 dark:text-zinc-300">
+                                            Cita hasta *
+                                            <input
+                                                type="date"
+                                                value={toDate}
+                                                onChange={(e) => setToDate(e.target.value)}
+                                                disabled={busy}
+                                                className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm disabled:opacity-50"
+                                            />
+                                        </label>
+                                    </div>
+                                    <label className="block text-sm text-zinc-700 dark:text-zinc-300">
+                                        Servicio (opcional, aparece en el mensaje)
+                                        <input
+                                            type="text"
+                                            value={serviceLabel}
+                                            onChange={(e) => setServiceLabel(e.target.value)}
+                                            placeholder="Ej. Medicina Interna"
+                                            disabled={busy}
+                                            className="mt-1 w-full sm:w-1/3 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm disabled:opacity-50"
+                                        />
+                                    </label>
+
+                                    <button
+                                        onClick={() => handleTraerDelHospital()}
+                                        disabled={!selectedDoctorKey || !fromDate || !toDate || busy}
+                                        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        {isRequestingRoster || isPolling
+                                            ? 'Consultando al hospital…'
+                                            : 'Traer del hospital'}
+                                    </button>
+                                    {isPolling && (
+                                        <p className="text-xs text-zinc-500">
+                                            El agente del hospital responde en su siguiente vuelta (hasta
+                                            ~30 s) — esta pantalla revisa sola, no hace falta recargar.
+                                        </p>
+                                    )}
+                                </>
+                            )}
+                        </section>
+                    )}
+
                     {batch && (
                         <section className="space-y-5 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
                             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -490,7 +724,7 @@ export default function AvisosClient({
                                 )}
                             </div>
 
-                            {batch.status === 'BORRADOR' && (
+                            {batch.status === 'BORRADOR' && batch.source !== 'ESPEJO' && (
                                 <p className="text-xs text-zinc-500">
                                     ¿Falta alguien o hay que corregir el archivo? Vuelva al Paso 1 con el
                                     archivo corregido y presione &quot;Cargar información&quot; de nuevo —
@@ -498,14 +732,92 @@ export default function AvisosClient({
                                 </p>
                             )}
 
+                            {batch.status === 'BORRADOR' && batch.source === 'ESPEJO' && (
+                                <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
+                                    <p className="text-xs text-zinc-500">
+                                        ¿Falta alguien, o el especialista abrió más cupos? Elija de nuevo y
+                                        vuelva a traer — reemplaza la lista, se puede repetir cuantas veces
+                                        haga falta.
+                                    </p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        <label className="text-sm text-zinc-700 dark:text-zinc-300">
+                                            Médico especialista
+                                            <select
+                                                value={selectedDoctorKey}
+                                                onChange={(e) => setSelectedDoctorKey(e.target.value)}
+                                                disabled={busy}
+                                                className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm disabled:opacity-50"
+                                            >
+                                                <option value="">— elegir —</option>
+                                                {initialDoctors.map((d) => (
+                                                    <option key={d.externalKey} value={d.externalKey}>
+                                                        {d.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label className="text-sm text-zinc-700 dark:text-zinc-300">
+                                            Cita desde
+                                            <input
+                                                type="date"
+                                                value={fromDate}
+                                                onChange={(e) => setFromDate(e.target.value)}
+                                                disabled={busy}
+                                                className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm disabled:opacity-50"
+                                            />
+                                        </label>
+                                        <label className="text-sm text-zinc-700 dark:text-zinc-300">
+                                            Cita hasta
+                                            <input
+                                                type="date"
+                                                value={toDate}
+                                                onChange={(e) => setToDate(e.target.value)}
+                                                disabled={busy}
+                                                className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm disabled:opacity-50"
+                                            />
+                                        </label>
+                                    </div>
+                                    <button
+                                        onClick={() => handleTraerDelHospital(batch.id)}
+                                        disabled={!selectedDoctorKey || !fromDate || !toDate || busy}
+                                        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        {isRequestingRoster || isPolling
+                                            ? 'Consultando al hospital…'
+                                            : 'Volver a traer del hospital'}
+                                    </button>
+                                    {isPolling && (
+                                        <p className="text-xs text-zinc-500">
+                                            El agente del hospital responde en su siguiente vuelta (hasta
+                                            ~30 s) — esta pantalla revisa sola, no hace falta recargar.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {truncatedNotice && (
+                                <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+                                    El hospital trajo más citas de las que caben en un lote — la lista se
+                                    recortó al máximo configurado. Reduzca el rango de fechas si falta
+                                    alguien puntual.
+                                </div>
+                            )}
+
                             <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
                                 Paso 2 · Escoger y revisar
                             </h3>
-                            <RecipientsTable
-                                recipients={batch.recipients}
-                                onToggle={handleToggle}
-                                disabled={busy || batch.status !== 'BORRADOR'}
-                            />
+                            {batch.source === 'ESPEJO' && batch.candidates === 0 ? (
+                                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                                    Este especialista no tiene citas en el rango pedido — puede que su
+                                    próxima visita aún no esté agendada.
+                                </p>
+                            ) : (
+                                <RecipientsTable
+                                    recipients={batch.recipients}
+                                    onToggle={handleToggle}
+                                    disabled={busy || batch.status !== 'BORRADOR'}
+                                />
+                            )}
 
                             {batch.status === 'BORRADOR' && (
                                 <label className="block text-sm text-zinc-700 dark:text-zinc-300">

@@ -6,6 +6,7 @@ import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { MirrorApplyService } from './mirror-apply.service';
 import { MirrorAvailabilityService } from './mirror-availability.service';
 import { MirrorCatalogService } from './mirror-catalog.service';
+import { MirrorNoticeService } from './mirror-notice.service';
 import { MirrorAgentGuard } from './mirror-agent.guard';
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -49,7 +50,7 @@ describe('MirrorController — validación de /mirror/ack', () => {
         { provide: MirrorApplyService, useValue: {} },
         { provide: MirrorAvailabilityService, useValue: availability },
         { provide: MirrorCatalogService, useValue: catalog },
-        { provide: MirrorCatalogService, useValue: catalog },
+        { provide: MirrorNoticeService, useValue: {} },
       ],
     })
       // El guard tiene su propia batería de pruebas (mirror-agent.guard.spec).
@@ -135,6 +136,7 @@ describe('MirrorController — validación de /mirror/availability', () => {
         { provide: MirrorApplyService, useValue: {} },
         { provide: MirrorAvailabilityService, useValue: availability },
         { provide: MirrorCatalogService, useValue: {} },
+        { provide: MirrorNoticeService, useValue: {} },
       ],
     })
       .overrideGuard(MirrorAgentGuard)
@@ -210,6 +212,7 @@ describe('MirrorController — validación de /mirror/catalog', () => {
         { provide: MirrorApplyService, useValue: {} },
         { provide: MirrorAvailabilityService, useValue: {} },
         { provide: MirrorCatalogService, useValue: catalog },
+        { provide: MirrorNoticeService, useValue: {} },
       ],
     })
       .overrideGuard(MirrorAgentGuard)
@@ -266,6 +269,7 @@ describe('MirrorController — handshake, events, reconcile, changes, heartbeat'
   };
   let reconciliation: { reconcile: jest.Mock };
   let apply: { applyBatch: jest.Mock };
+  let notice: { getPendingRequests: jest.Mock; applyRoster: jest.Mock };
 
   const req = {
     mirrorConfig: {
@@ -290,6 +294,14 @@ describe('MirrorController — handshake, events, reconcile, changes, heartbeat'
         errors: 0,
       })),
     };
+    notice = {
+      getPendingRequests: jest.fn(async () => []),
+      applyRoster: jest.fn(async () => ({
+        requestId: 'req-1',
+        applied: 1,
+        truncated: false,
+      })),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MirrorController],
@@ -299,6 +311,7 @@ describe('MirrorController — handshake, events, reconcile, changes, heartbeat'
         { provide: MirrorApplyService, useValue: apply },
         { provide: MirrorAvailabilityService, useValue: {} },
         { provide: MirrorCatalogService, useValue: {} },
+        { provide: MirrorNoticeService, useValue: notice },
       ],
     })
       .overrideGuard(MirrorAgentGuard)
@@ -471,6 +484,74 @@ describe('MirrorController — handshake, events, reconcile, changes, heartbeat'
         'cnt-sanvicente-anserma',
         {},
       );
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Avisos masivos, Fase 2 (fuente espejo) — PLAN_AVISOS_MASIVOS.md §5.
+  // EXCLUSIVO del driver cnt-sanvicente-anserma; la exclusividad la aplica
+  // MirrorNoticeService (ya probado en mirror-notice.service.spec.ts). Aquí
+  // solo se prueba lo que le toca al controlador: pasar organizationId Y
+  // driverKey del guard (nunca del cuerpo), y validar la forma del roster.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('GET /mirror/notice-requests', () => {
+    it('pasa organizationId y driverKey del guard al servicio', async () => {
+      await controller.getNoticeRequests(req);
+
+      expect(notice.getPendingRequests).toHaveBeenCalledWith(
+        'org1',
+        'cnt-sanvicente-anserma',
+      );
+    });
+  });
+
+  describe('POST /mirror/notice-roster', () => {
+    const CANDIDATOS = [
+      {
+        doctorExternalKey: '76',
+        startTimeIso: '2026-09-24T12:00:00.000Z',
+        patientDocument: '111',
+      },
+    ];
+
+    it('un roster válido llega al servicio con la org del guard', async () => {
+      await controller.applyNoticeRoster(req, {
+        requestId: 'req-1',
+        candidates: CANDIDATOS,
+      });
+
+      expect(notice.applyRoster).toHaveBeenCalledWith(
+        'org1',
+        'cnt-sanvicente-anserma',
+        {
+          requestId: 'req-1',
+          candidates: CANDIDATOS,
+        },
+      );
+    });
+
+    it('candidates vacío es válido: "no encontré a nadie" es una respuesta', async () => {
+      await controller.applyNoticeRoster(req, {
+        requestId: 'req-1',
+        candidates: [],
+      });
+      expect(notice.applyRoster).toHaveBeenCalled();
+    });
+
+    it('sin requestId se rechaza', () => {
+      expect(() =>
+        controller.applyNoticeRoster(req, { candidates: CANDIDATOS } as never),
+      ).toThrow(BadRequestException);
+      expect(notice.applyRoster).not.toHaveBeenCalled();
+    });
+
+    it('candidates que no es arreglo se rechaza', () => {
+      expect(() =>
+        controller.applyNoticeRoster(req, {
+          requestId: 'req-1',
+          candidates: 'nope',
+        } as never),
+      ).toThrow(BadRequestException);
     });
   });
 });

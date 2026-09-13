@@ -8,6 +8,7 @@ import { MirrorSchemaCheckService } from './mirror-schema-check.service';
 import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { MirrorAvailabilityService } from './mirror-availability.service';
 import { MirrorCatalogService } from './mirror-catalog.service';
+import { MirrorNoticeService } from './mirror-notice.service';
 
 /**
  * Motor genérico de espejo de citas con HIS externos (patrón de drivers).
@@ -29,7 +30,15 @@ import { MirrorCatalogService } from './mirror-catalog.service';
     MirrorReconciliationService,
     MirrorAvailabilityService,
     MirrorCatalogService,
+    // 📣 Avisos masivos, Fase 2 (fuente espejo) — EXCLUSIVO del driver
+    // cnt-sanvicente-anserma. Ver mirror-notice.service.ts para por qué vive
+    // aquí y no en mass-notice/.
+    MirrorNoticeService,
   ],
-  exports: [MirrorApplyService, MirrorReconciliationService],
+  exports: [
+    MirrorApplyService,
+    MirrorReconciliationService,
+    MirrorNoticeService,
+  ],
 })
 export class MirrorModule {}

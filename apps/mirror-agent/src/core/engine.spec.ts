@@ -86,6 +86,8 @@ describe('MirrorEngine', () => {
       reconcile: jest.fn(),
       uploadAvailability: jest.fn(),
       uploadCatalog: jest.fn(),
+      getPendingNoticeRequests: jest.fn(),
+      pushNoticeRoster: jest.fn(),
     };
     driver = {
       key: 'test-driver',
@@ -920,6 +922,110 @@ describe('syncCatalog', () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// `syncNoticeRequests` — avisos masivos, Fase 2 (fuente espejo). Ver
+// docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §5.
+//
+// La garantía que importa: un driver que NO implementa avisos masivos (todo
+// driver futuro, por defecto) nunca llama a la API de avisos — el motor
+// genérico detecta la capacidad y se queda callado, en vez de forzar a ese
+// driver a stub-ear un método que no le sirve de nada.
+// ══════════════════════════════════════════════════════════════════════════
+describe('syncNoticeRequests', () => {
+  const nuevoMotor = (driverConCapacidad: boolean) => {
+    const api: any = {
+      getPendingNoticeRequests: jest.fn(async () => []),
+      pushNoticeRoster: jest.fn(async () => ({
+        requestId: 'x',
+        applied: 0,
+        truncated: false,
+      })),
+    };
+    const driver: any = driverConCapacidad
+      ? { fetchNoticeRoster: jest.fn(async () => []) }
+      : {};
+    const state: any = {};
+    return {
+      api,
+      driver,
+      engine: new MirrorEngine(api, driver, state, '0.0.0-test'),
+    };
+  };
+
+  it('un driver SIN fetchNoticeRoster se salta por completo: ni pregunta a la API', async () => {
+    const { api, engine } = nuevoMotor(false);
+
+    const r = await engine.syncNoticeRequests();
+
+    expect(r).toEqual({ skipped: true, processed: 0, errores: 0 });
+    expect(api.getPendingNoticeRequests).not.toHaveBeenCalled();
+  });
+
+  it('sin peticiones pendientes, no hace nada más — no es un error', async () => {
+    const { engine } = nuevoMotor(true);
+
+    const r = await engine.syncNoticeRequests();
+
+    expect(r).toEqual({ skipped: false, processed: 0, errores: 0 });
+  });
+
+  it('resuelve cada petición: pregunta al driver y sube el roster', async () => {
+    const { api, driver, engine } = nuevoMotor(true);
+    api.getPendingNoticeRequests.mockResolvedValue([
+      { requestId: 'req-1', doctorExternalKey: '76', fromIso: 'a', toIso: 'b' },
+    ]);
+    const candidatos = [
+      { doctorExternalKey: '76', startTimeIso: 'x', patientDocument: '111' },
+    ];
+    driver.fetchNoticeRoster.mockResolvedValue(candidatos);
+
+    const r = await engine.syncNoticeRequests();
+
+    expect(driver.fetchNoticeRoster).toHaveBeenCalledWith({
+      doctorExternalKey: '76',
+      fromIso: 'a',
+      toIso: 'b',
+    });
+    expect(api.pushNoticeRoster).toHaveBeenCalledWith({
+      requestId: 'req-1',
+      candidates: candidatos,
+    });
+    expect(r).toEqual({ skipped: false, processed: 1, errores: 0 });
+  });
+
+  it('un fallo en UNA petición no detiene las demás de la misma vuelta', async () => {
+    const { api, driver, engine } = nuevoMotor(true);
+    api.getPendingNoticeRequests.mockResolvedValue([
+      {
+        requestId: 'req-malo',
+        doctorExternalKey: '76',
+        fromIso: 'a',
+        toIso: 'b',
+      },
+      {
+        requestId: 'req-bueno',
+        doctorExternalKey: '91-1',
+        fromIso: 'a',
+        toIso: 'b',
+      },
+    ]);
+    driver.fetchNoticeRoster
+      .mockRejectedValueOnce(new Error('el HIS no respondió'))
+      .mockResolvedValueOnce([]);
+
+    const r = await engine.syncNoticeRequests();
+
+    expect(driver.fetchNoticeRoster).toHaveBeenCalledTimes(2);
+    expect(api.pushNoticeRoster).toHaveBeenCalledTimes(1);
+    expect(r).toEqual({
+      skipped: false,
+      processed: 1,
+      errores: 1,
+      primerError: 'el HIS no respondió',
+    });
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // Las tres operaciones del motor que no tenían prueba y que deciden si el
 // espejo arranca (`handshake`), si el hospital ve lo que pasa en AgenIA
 // (`detectAndPushChanges`) y si alguien se entera cuando deja de verlo
@@ -942,6 +1048,8 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
       reconcile: jest.fn(),
       uploadAvailability: jest.fn(),
       uploadCatalog: jest.fn(),
+      getPendingNoticeRequests: jest.fn(),
+      pushNoticeRoster: jest.fn(),
     };
     driver = {
       key: 'test-driver',

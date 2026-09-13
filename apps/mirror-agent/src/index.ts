@@ -231,6 +231,42 @@ async function main() {
     }
   };
 
+  // Avisos masivos, Fase 2 (fuente espejo) — EXCLUSIVO del driver
+  // cnt-sanvicente-anserma. Ver PLAN_AVISOS_MASIVOS.md §5.
+  //
+  // Sin espera inicial (a diferencia de catálogo/agenda/reconciliación): una
+  // petición de aviso la acaba de crear un humano desde la pantalla y está
+  // esperando la respuesta — no tiene sentido hacerlo esperar un "delay" de
+  // arranque pensado para barridos de fondo.
+  //
+  // `engine.syncNoticeRequests()` ya decide todo lo que hay que decidir: si
+  // este driver ni siquiera implementa avisos (`skipped: true`, cualquier
+  // driver que no sea cnt-sanvicente-anserma), y si algo falló con UNA
+  // petición sin tumbar las demás de la misma vuelta.
+  const bucleAvisos = async () => {
+    for (;;) {
+      try {
+        const r = await engine.syncNoticeRequests();
+        if (!r.skipped && r.processed > 0) {
+          console.log(
+            `[mirror-agent] avisos masivos: ${r.processed} petición(es) resuelta(s)` +
+              (r.errores > 0 ? `, ${r.errores} con error` : '') +
+              '.',
+          );
+        }
+        if (r.errores > 0) {
+          reporter.report(
+            'avisos masivos',
+            `${r.errores} petición(es) no se pudieron resolver. Primer motivo: ${r.primerError ?? 'sin detalle'}`,
+          );
+        }
+      } catch (error) {
+        reporter.report('avisos masivos', mensajeDeError(error));
+      }
+      await dormir(config.noticeIntervalMs);
+    }
+  };
+
   // Capa 5 del plan §6: la única defensa que detecta deriva silenciosa.
   //
   // Estaba a medias: el endpoint del servidor existía y NADIE lo llamaba. Es
@@ -306,6 +342,7 @@ async function main() {
     bucleReconciliacion(),
     bucleAgenda(),
     bucleCatalogo(),
+    bucleAvisos(),
   ]);
 }
 

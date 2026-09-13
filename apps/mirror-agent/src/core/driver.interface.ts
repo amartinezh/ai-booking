@@ -2,6 +2,7 @@ import type {
   CanonicalChangeEvent,
   HisAppointmentSnapshot,
   HisCatalogEntry,
+  HisNoticeCandidate,
 } from '@agenia/shared';
 
 /**
@@ -122,4 +123,43 @@ export interface HisDriver {
     kind: CatalogKind,
     agenIAId: string,
   ): Promise<string | null>;
+}
+
+/**
+ * Avisos masivos, Fase 2 (fuente espejo) — EXCLUSIVO del driver
+ * cnt-sanvicente-anserma. Ver
+ * docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §5.
+ *
+ * A propósito NO forma parte de `HisDriver`. Ese contrato es el que CUALQUIER
+ * driver futuro tiene que implementar de punta a punta — meterle un método
+ * exclusivo de un cliente concreto obligaría a un segundo hospital a stub-ear
+ * algo que nunca va a usar, justo lo que el plan (§4) descarta explícitamente
+ * ("esto no es una plataforma general de notificaciones masivas"). En cambio,
+ * es una interfaz de CAPACIDAD, opt-in: `core/engine.ts` comprueba en tiempo
+ * de ejecución si el driver activo la implementa (`isNoticeRosterCapable`) y,
+ * si no, simplemente no hace nada — ningún driver está obligado a saber qué
+ * es esto.
+ */
+export interface NoticeRosterCapableDriver {
+  /**
+   * Las citas VIGENTES de un médico en una ventana, con datos de CONTACTO —
+   * la única vía por la que un teléfono del HIS sale hacia la nube en todo
+   * este agente, y solo cuando el tenant pidió exactamente esta ventana para
+   * este médico (bajo demanda, nunca una réplica continua — §5).
+   */
+  fetchNoticeRoster(params: {
+    doctorExternalKey: string;
+    fromIso: string;
+    toIso: string;
+  }): Promise<HisNoticeCandidate[]>;
+}
+
+/** Guarda de tipo estructural: ¿el driver activo implementa avisos masivos? */
+export function isNoticeRosterCapable(
+  driver: HisDriver,
+): driver is HisDriver & NoticeRosterCapableDriver {
+  return (
+    typeof (driver as Partial<NoticeRosterCapableDriver>).fetchNoticeRoster ===
+    'function'
+  );
 }

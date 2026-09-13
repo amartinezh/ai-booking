@@ -399,3 +399,76 @@ export interface AvailabilityResult {
    */
   conflicts: string[];
 }
+
+// ── GET /mirror/notice-requests · POST /mirror/notice-roster ────────────────
+//
+// Avisos masivos, Fase 2 (fuente espejo) — EXCLUSIVO del driver
+// cnt-sanvicente-anserma. Ver
+// docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §5.
+//
+// A diferencia de todo lo demás en este archivo, este par de endpoints NO es
+// un contrato genérico que cualquier driver deba implementar: es opt-in. Un
+// driver que no atiende avisos masivos simplemente nunca responde a
+// `GET /mirror/notice-requests` (no hay ninguna petición pendiente para él,
+// porque el motor genérico ni siquiera sabe crear una si el tenant no tiene
+// la Llave 3 encendida). Por eso estos tipos NO se agregan a `HisDriver`
+// (`apps/mirror-agent/src/core/driver.interface.ts`): viven aparte, y el
+// agente los usa con una comprobación estructural de "¿este driver sabe
+// hacer esto?", no con un método obligatorio que todo driver futuro tendría
+// que stub-ear sin necesitarlo.
+//
+// BAJO DEMANDA, NO RÉPLICA CONTINUA: los teléfonos del HIS solo viajan cuando
+// hay una cancelación real que comunicar — nunca una copia permanente de los
+// contactos de la agenda.
+
+/**
+ * Una cita del HIS, tal como la ve el agente, para poblar un lote de avisos.
+ * Es la contraparte de `HisAppointmentSnapshot` (reconciliación) pero con
+ * datos de CONTACTO — la única vía por la que un teléfono del HIS sale hacia
+ * la nube en todo este protocolo, y solo cuando el tenant pidió exactamente
+ * esta ventana para este médico.
+ */
+export interface HisNoticeCandidate {
+  doctorExternalKey: string;
+  serviceExternalKey?: string;
+  /** UTC. La conversión desde la hora local del HIS la hace el driver. */
+  startTimeIso: string;
+  patientDocument: string;
+  patientFullName?: string;
+  /** DE_TELE_PAC (u homólogo) tal como está en el HIS. Se normaliza en el servidor. */
+  patientPhone?: string;
+  /**
+   * DE_TELE_ACOM_PAC (u homólogo) — fuente secundaria explícita (§3.4/J.5):
+   * rescata ~41 % de quienes no tienen celular propio. El servidor solo lo
+   * usa cuando `patientPhone` falta o no normaliza, y SIEMPRE lo marca
+   * (`MassNoticeRecipient.phoneIsCompanion`) para que la pantalla lo
+   * etiquete — nunca en silencio.
+   */
+  companionPhone?: string;
+}
+
+/** Una petición pendiente, tal como la ve el agente al hacer polling. */
+export interface NoticeRequestDto {
+  requestId: string;
+  doctorExternalKey: string;
+  fromIso: string;
+  toIso: string;
+}
+
+export interface NoticeRosterInput {
+  requestId: string;
+  candidates: HisNoticeCandidate[];
+}
+
+export interface NoticeRosterResult {
+  requestId: string;
+  /** Candidatos que se escribieron como MassNoticeRecipient del lote. */
+  applied: number;
+  /**
+   * `true` si `candidates` traía más de `maxDestinatariosPorLote` y se
+   * truncó — nunca en silencio: el servidor SIEMPRE lo dice, y la pantalla
+   * lo muestra (§5: "si se pasa, se responde truncado y se dice en la
+   * pantalla — nunca se recorta en silencio").
+   */
+  truncated: boolean;
+}

@@ -409,6 +409,9 @@ export interface AvisosRecipientView {
     patientDocument: string;
     patientName: string | null;
     phoneMasked: string;
+    /** §3.4/J.5 — el celular mostrado es del acompañante, no del paciente. Se
+     * etiqueta siempre en pantalla (RecipientsTable), nunca en silencio. */
+    phoneIsCompanion: boolean;
     appointmentAtUtc: Date;
     selected: boolean;
     outcome: string;
@@ -478,6 +481,7 @@ export async function getBatchAction(
                 patientDocument: r.patientDocument,
                 patientName: r.patientName,
                 phoneMasked: maskPhone(r.phoneE164),
+                phoneIsCompanion: r.phoneIsCompanion,
                 appointmentAtUtc: r.appointmentAtUtc,
                 selected: r.selected,
                 outcome: r.outcome,
@@ -621,6 +625,188 @@ export async function sendBatchAction(batchId: string): Promise<EnviarAvisosResu
         return { success: true, status: data.status, sent: data.sent, failed: data.failed, skipped: data.skipped };
     } catch (e) {
         console.error('Error enviando lote de avisos masivos:', e);
+        return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
+// PASO 1, FUENTE ESPEJO (Fase 2) — "Traer del hospital".
+//
+// Bajo demanda, no réplica continua (§5): esto solo se ejecuta cuando un
+// humano pide explícitamente "las citas del Dr. X entre tal y tal fecha".
+// Crear el lote es CRUD directo (como el resto); pedirle la lista al agente
+// va por la API porque el canal /mirror/* vive ahí, autenticado con el
+// token del agente — el web nunca le habla al agente directamente.
+// ════════════════════════════════════════════════════════════════
+
+export interface DoctorCatalogOption {
+    externalKey: string;
+    label: string;
+}
+
+/** Médicos del catálogo del HIS, para el selector de "Traer del hospital". Los sube el agente (§ catálogo) — no es un catálogo propio de esta pantalla. */
+export async function getDoctorCatalogAction(): Promise<
+    { success: true; doctors: DoctorCatalogOption[] } | { success: false; error: string }
+> {
+    const auth = await requireAvisosAccess();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+
+    const entries = await prisma.mirrorCatalogEntry.findMany({
+        where: { organizationId: auth.organizationId, entityType: 'DOCTOR' },
+        orderBy: { label: 'asc' },
+        select: { externalKey: true, label: true },
+    });
+
+    return { success: true, doctors: entries };
+}
+
+export interface PedirRosterResult {
+    success: boolean;
+    error?: string;
+    batchId?: string;
+    requestId?: string;
+}
+
+/**
+ * Crea (o repuebla — §3.3.4/§5: "el botón no es de un solo uso") el lote
+ * `source='ESPEJO'` y la petición que el agente resolverá en su siguiente
+ * vuelta (~30 s). La pantalla, con el `requestId`, hace polling con
+ * `getNoticeRequestStatusAction` hasta ver RESUELTA (o ERROR).
+ *
+ * Con `batchId`: reusa el lote existente (mismo criterio que
+ * `loadAvisosFileAction` con el CSV — solo un lote en BORRADOR admite
+ * repoblarse) y actualiza médico/servicio/rango; `applyRoster`, del lado del
+ * agente, reemplaza los candidatos PENDIENTE cuando responda. Sin `batchId`:
+ * primera pedida, crea el lote.
+ */
+export async function requestNoticeRosterAction(input: {
+    batchId?: string;
+    doctorExternalKey: string;
+    doctorLabel: string;
+    serviceLabel?: string;
+    fromIso: string;
+    toIso: string;
+}): Promise<PedirRosterResult> {
+    const auth = await requireAvisosAccess();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+
+    if (auth.config.fuente !== 'ESPEJO') {
+        return { success: false, error: 'La fuente espejo no está habilitada para esta clínica.' };
+    }
+    if (!input.doctorExternalKey || !input.fromIso || !input.toIso) {
+        return { success: false, error: 'Elija un médico y un rango de fechas.' };
+    }
+
+    let batchId = input.batchId;
+    if (batchId) {
+        const existing = await prisma.massNoticeBatch.findFirst({
+            where: { id: batchId, organizationId: auth.organizationId },
+            select: { id: true, status: true, source: true },
+        });
+        if (!existing) return { success: false, error: 'Lote no encontrado.' };
+        if (existing.status !== 'BORRADOR') {
+            return {
+                success: false,
+                error: `Este lote está en estado ${existing.status} — no se puede repoblar (solo un lote en borrador admite traer de nuevo).`,
+            };
+        }
+        await prisma.massNoticeBatch.update({
+            where: { id: batchId },
+            data: {
+                doctorExternalKey: input.doctorExternalKey,
+                doctorLabel: input.doctorLabel,
+                serviceLabel: input.serviceLabel?.trim() || null,
+                dateFrom: new Date(input.fromIso),
+                dateTo: new Date(input.toIso),
+            },
+        });
+    } else {
+        const created = await prisma.massNoticeBatch.create({
+            data: {
+                organizationId: auth.organizationId,
+                kind: 'CANCELACION',
+                source: 'ESPEJO',
+                status: 'BORRADOR',
+                doctorExternalKey: input.doctorExternalKey,
+                doctorLabel: input.doctorLabel,
+                serviceLabel: input.serviceLabel?.trim() || null,
+                dateFrom: new Date(input.fromIso),
+                dateTo: new Date(input.toIso),
+                createdByUserId: auth.userId,
+            },
+        });
+        batchId = created.id;
+    }
+
+    try {
+        const cookieStore = await cookies();
+        const token = cookieStore.get('auth_token')?.value;
+
+        const res = await fetch(`${INTERNAL_API_URL}/mass-notice/${batchId}/notice-request`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Cookie: `auth_token=${token}` } : {}),
+            },
+            body: JSON.stringify({
+                doctorExternalKey: input.doctorExternalKey,
+                fromIso: input.fromIso,
+                toIso: input.toIso,
+            }),
+            cache: 'no-store',
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            return { success: false, error: `Backend ${res.status}: ${errText}` };
+        }
+
+        const data = await res.json();
+        revalidatePath('/dashboard/espejo/avisos');
+        return { success: true, batchId, requestId: data.requestId };
+    } catch (e) {
+        console.error('Error pidiendo el roster al agente:', e);
+        return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+export interface NoticeRequestStatusResult {
+    success: boolean;
+    error?: string;
+    status?: string;
+    requestError?: string | null;
+    /** §5: nunca se recorta en silencio — si el driver trajo más candidatos
+     * que `maxDestinatariosPorLote`, la pantalla lo tiene que decir. */
+    truncated?: boolean;
+}
+
+/** Polling: ¿ya resolvió el agente la petición? */
+export async function getNoticeRequestStatusAction(requestId: string): Promise<NoticeRequestStatusResult> {
+    const auth = await requireAvisosAccess();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+
+    try {
+        const cookieStore = await cookies();
+        const token = cookieStore.get('auth_token')?.value;
+
+        const res = await fetch(`${INTERNAL_API_URL}/mass-notice/notice-request/${requestId}`, {
+            headers: { ...(token ? { Cookie: `auth_token=${token}` } : {}) },
+            cache: 'no-store',
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            return { success: false, error: `Backend ${res.status}: ${errText}` };
+        }
+
+        const data = await res.json();
+        return {
+            success: true,
+            status: data.status,
+            requestError: data.error ?? null,
+            truncated: Boolean(data.truncated),
+        };
+    } catch (e) {
         return { success: false, error: getErrorMessage(e) };
     }
 }

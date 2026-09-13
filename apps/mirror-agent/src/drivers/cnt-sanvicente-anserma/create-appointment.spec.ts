@@ -421,8 +421,7 @@ describe('createAppointment — auditoría en AUDITOR ("Asignada Por")', () => {
     tabla: 'CITAS_MEDICAS' | 'PACIENTES',
   ) =>
     requests.find(
-      (r) =>
-        /EXEC dbo\.PA_Ins_AUDITOR/.test(r.sql) && r.params.tabla === tabla,
+      (r) => /EXEC dbo\.PA_Ins_AUDITOR/.test(r.sql) && r.params.tabla === tabla,
     );
 
   it('audita el alta de la cita con AudUser=AGENIA y la llave natural de la fila', async () => {
@@ -459,7 +458,10 @@ describe('createAppointment — auditoría en AUDITOR ("Asignada Por")', () => {
     // EXECUTE sin conceder (Msg 229 típico), createAppointment debe reportar
     // éxito de todas formas.
     const { driver, requests } = conDriver({
-      auditError: { message: 'The EXECUTE permission was denied.', number: 229 },
+      auditError: {
+        message: 'The EXECUTE permission was denied.',
+        number: 229,
+      },
     });
     const r = await driver.createAppointment(evento());
 
@@ -470,7 +472,10 @@ describe('createAppointment — auditoría en AUDITOR ("Asignada Por")', () => {
   it('la falta de auditoría del paciente tampoco impide darlo de alta', async () => {
     const { driver, requests } = conDriver({
       pacienteExiste: false,
-      auditError: { message: 'The EXECUTE permission was denied.', number: 229 },
+      auditError: {
+        message: 'The EXECUTE permission was denied.',
+        number: 229,
+      },
     });
     const r = await driver.createAppointment(evento());
 

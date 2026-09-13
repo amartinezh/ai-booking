@@ -3,6 +3,7 @@ import type {
   CanonicalChangeEvent,
   HisAppointmentSnapshot,
   HisCatalogEntry,
+  HisNoticeCandidate,
 } from '@agenia/shared';
 import {
   AnsermaMapping,
@@ -105,6 +106,34 @@ interface FilaMedico {
 /** Turno del médico: de aquí sale el consultorio. */
 interface FilaTurno {
   consultorio: string | null;
+}
+
+/**
+ * Fila del roster de avisos masivos (Fase 2, §5) — CITAS_MEDICAS ⋈ PACIENTES.
+ * Es la ÚNICA consulta de este driver que trae datos de CONTACTO del
+ * paciente (nombre, teléfono): las demás solo mueven el documento.
+ */
+interface FilaNoticeRoster {
+  /** CD_CODI_MED_CIT */
+  med: string;
+  /** CD_CODI_SER_CIT */
+  servicio: string | null;
+  /** FE_HORA_CIT */
+  hora: string;
+  /** NU_HIST_PAC_CIT */
+  hist: string | null;
+  /** NO_NOMB_PAC — primer nombre */
+  nombre: string | null;
+  /** NO_SGNO_PAC — segundo nombre */
+  segNombre: string | null;
+  /** DE_PRAP_PAC — primer apellido */
+  apellido: string | null;
+  /** DE_SGAP_PAC — segundo apellido */
+  segApellido: string | null;
+  /** DE_TELE_PAC — tal cual, sin normalizar (el servidor lo hace) */
+  telefono: string | null;
+  /** DE_TELE_ACOM_PAC — teléfono del acompañante (§3.4/J.5), fuente secundaria */
+  telefonoAcom: string | null;
 }
 
 interface SnapshotRow {
@@ -716,6 +745,108 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
   }
 
   /**
+   * Avisos masivos, Fase 2 (fuente espejo) — EXCLUSIVO de este driver. Ver
+   * docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §5.
+   *
+   * Satisface `NoticeRosterCapableDriver` (driver.interface.ts) de forma
+   * ESTRUCTURAL — nunca se declara con `implements`, a propósito: es una
+   * capacidad opt-in, no parte del contrato `HisDriver` que todo driver debe
+   * cumplir.
+   *
+   * ═══ Por qué es la única consulta con datos de contacto ═══
+   * Todas las demás consultas de este archivo mueven el documento del
+   * paciente (`NU_HIST_PAC_CIT`) y nada más — el nombre y el teléfono NUNCA
+   * salen del hospital salvo aquí, y solo para el médico y la ventana EXACTOS
+   * que un humano pidió desde la pantalla (bajo demanda, nunca una réplica
+   * continua de `PACIENTES`).
+   *
+   * ═══ Por qué el join es LEFT y no INNER ═══
+   * Si `PACIENTES` no tiene la historia (no debería pasar — MAPEO_HIS.md §2.3
+   * confirma historia=documento en el 100% de 78.654 pacientes, pero un HIS
+   * de producción no es un mock), la cita igual se reporta: sin nombre y sin
+   * teléfono simplemente no hay a quién escribirle, y eso lo decide el
+   * servidor (documento inválido → fila descartada), no este driver.
+   *
+   * ═══ Por qué no hace falta la lógica de "fila duplicada" de `detectChanges` ═══
+   * `NU_ESTA_CIT = 0` en el propio WHERE ya selecciona solo la fila VIGENTE —
+   * la misma que esa lógica elige a mano cuando hay más de una fila por
+   * médico+hora.
+   */
+  async fetchNoticeRoster(params: {
+    doctorExternalKey: string;
+    fromIso: string;
+    toIso: string;
+  }): Promise<HisNoticeCandidate[]> {
+    const pool = this.requirePool();
+    const from = new Date(params.fromIso);
+    const to = new Date(params.toIso);
+    const fechaDesde = fechaCitaLocal(from.toISOString(), this.timeZone);
+    const fechaHasta = fechaCitaLocal(to.toISOString(), this.timeZone);
+    // Bordes sargables — mismo criterio que snapshotAppointments/detectChanges:
+    // ver diaSiguienteLiteralSql().
+    const desdeSql = fechaLiteralSql(fechaDesde);
+    const hastaSql = diaSiguienteLiteralSql(fechaHasta);
+
+    const filas = await pool
+      .request()
+      .input('medico', sql.VarChar(4), params.doctorExternalKey)
+      .input('desde', sql.VarChar(8), desdeSql)
+      .input('hasta', sql.VarChar(8), hastaSql).query<FilaNoticeRoster>(`
+        SELECT c.CD_CODI_MED_CIT med, c.CD_CODI_SER_CIT servicio, c.FE_HORA_CIT hora,
+               c.NU_HIST_PAC_CIT hist,
+               p.NO_NOMB_PAC nombre, p.NO_SGNO_PAC segNombre,
+               p.DE_PRAP_PAC apellido, p.DE_SGAP_PAC segApellido,
+               p.DE_TELE_PAC telefono, p.DE_TELE_ACOM_PAC telefonoAcom
+          FROM dbo.CITAS_MEDICAS c
+          LEFT JOIN dbo.PACIENTES p ON p.NU_HIST_PAC = c.NU_HIST_PAC_CIT
+         WHERE c.CD_CODI_MED_CIT = @medico
+           AND c.FE_FECH_CIT >= @desde AND c.FE_FECH_CIT < @hasta
+           AND c.NU_ESTA_CIT = 0`);
+
+    const candidatos: HisNoticeCandidate[] = [];
+    let horasIlegibles = 0;
+    let sinHistoria = 0;
+    for (const f of filas.recordset) {
+      const startTimeIso = feHoraCitAIsoOrNull(f.hora, this.timeZone);
+      if (!startTimeIso) {
+        horasIlegibles++;
+        continue;
+      }
+      if (!f.hist) {
+        sinHistoria++;
+        continue;
+      }
+      // Filtro fino: los bordes SQL son por FECHA (día), pero fromIso/toIso
+      // piden una ventana de INSTANTES — una cita a las 23:50 del día límite
+      // puede caer fuera de la hora exacta aunque el día entre.
+      const inicio = new Date(startTimeIso);
+      if (inicio < from || inicio >= to) continue;
+
+      const nombreCompleto = [f.nombre, f.segNombre, f.apellido, f.segApellido]
+        .map((parte) => parte?.trim())
+        .filter(Boolean)
+        .join(' ');
+
+      candidatos.push({
+        doctorExternalKey: f.med,
+        serviceExternalKey: f.servicio ?? undefined,
+        startTimeIso,
+        patientDocument: f.hist,
+        patientFullName: nombreCompleto || undefined,
+        patientPhone: f.telefono?.trim() || undefined,
+        companionPhone: f.telefonoAcom?.trim() || undefined,
+      });
+    }
+    if (horasIlegibles > 0 || sinHistoria > 0) {
+      console.warn(
+        `[driver cnt-sanvicente-anserma] avisos masivos (médico ${params.doctorExternalKey}): ` +
+          `${horasIlegibles} cita(s) con hora ilegible, ${sinHistoria} sin historia — omitidas.`,
+      );
+    }
+    return candidatos;
+  }
+
+  /**
    * El catálogo del hospital, acotado a lo que de verdad se agenda.
    *
    * ═══ Qué entra y qué no ═══
@@ -1080,7 +1211,11 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
    */
   private async auditarEnHIS(
     ej: Ejecutor,
-    params: { tabla: 'CITAS_MEDICAS' | 'PACIENTES'; trans: '1' | '2'; desc: string },
+    params: {
+      tabla: 'CITAS_MEDICAS' | 'PACIENTES';
+      trans: '1' | '2';
+      desc: string;
+    },
   ): Promise<void> {
     try {
       await ej

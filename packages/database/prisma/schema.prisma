@@ -80,7 +80,8 @@ model Organization {
   mirrorCatalogEntries MirrorCatalogEntry[]
 
   // 📣 Avisos masivos (exclusivo cnt-sanvicente-anserma) — ver PLAN_AVISOS_MASIVOS.md.
-  massNoticeBatches MassNoticeBatch[]
+  massNoticeBatches    MassNoticeBatch[]
+  noticeRosterRequests NoticeRosterRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -378,9 +379,52 @@ model MassNoticeBatch {
   /// Fecha en que se purgaron nombre y teléfono de los destinatarios (§9.3).
   purgedAt        DateTime?
 
-  recipients MassNoticeRecipient[]
+  recipients     MassNoticeRecipient[]
+  rosterRequests NoticeRosterRequest[]
 
   @@index([organizationId, createdAt])
+}
+
+/// Fase 2 (PLAN_AVISOS_MASIVOS.md §5) — una petición "tráeme las citas del
+/// Dr. X entre el 25 y el 26" hecha desde la pantalla, que el agente
+/// on-premise resuelve en su siguiente vuelta (bajo demanda, no réplica
+/// continua — §5: "los teléfonos solo viajan cuando hay una cancelación real
+/// que comunicar"). Tabla aparte de `MassNoticeBatch` porque la petición y su
+/// resolución son asíncronas: el servidor la crea, el agente la lee por
+/// `GET /mirror/notice-requests` y la resuelve por
+/// `POST /mirror/notice-roster` — puede tardar hasta el intervalo del lazo
+/// del agente (~30 s), y la pantalla necesita saber en qué estado quedó.
+model NoticeRosterRequest {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  batchId String
+  batch   MassNoticeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  doctorExternalKey String
+  /// Ventana pedida. Acotada por `avisosMasivos.ventanaDiasMax` al crearla
+  /// (§5: "una petición más ancha se rechaza: nadie cancela un año de
+  /// agenda").
+  fromIso           DateTime
+  toIso             DateTime
+
+  /// 'PENDIENTE' | 'RESUELTA' | 'ERROR'
+  status    String  @default("PENDIENTE")
+  /// Motivo cuando el driver no pudo resolver la petición (ej. el HIS no
+  /// respondió). NO es un motivo de negocio — eso se ve en el propio lote.
+  error     String?
+  /// §5: si el driver trajo más candidatos que `maxDestinatariosPorLote`, se
+  /// recorta — pero nunca en silencio. La pantalla, al ver esto en true,
+  /// avisa que la lista quedó incompleta.
+  truncated Boolean @default(false)
+
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  /// Cubre tanto "¿qué tiene pendiente este agente ahora?" (el poll del
+  /// agente) como "¿ya me contestaron?" (el poll de la pantalla).
+  @@index([organizationId, status, createdAt])
 }
 
 /// Una fila por persona dentro de un lote.
@@ -395,11 +439,18 @@ model MassNoticeRecipient {
   /// una vez al crear la fila y nunca cambia.
   organizationId String
 
-  patientDocument String
+  patientDocument  String
   /// Nullable porque se PURGAN a los N días (§9.3): la traza de "a este
   /// documento se le escribió tal día" sobrevive; el dato de contacto no.
-  patientName     String?
-  phoneE164       String?
+  patientName      String?
+  phoneE164        String?
+  /// §3.4/J.5, §5 — Fase 2 (fuente espejo) puede rescatar el 41 % de quienes
+  /// no tienen celular propio con el teléfono del acompañante registrado
+  /// (`DE_TELE_ACOM_PAC`). `true` cuando `phoneE164` viene de ahí, NUNCA en
+  /// silencio: la pantalla lo etiqueta ("se le escribirá al acompañante
+  /// registrado"). El CSV (Fase 1) no tiene columna de acompañante — siempre
+  /// queda en `false` para esas filas.
+  phoneIsCompanion Boolean @default(false)
 
   appointmentAtUtc   DateTime
   doctorExternalKey  String?

@@ -16,6 +16,7 @@ import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { MirrorApplyService } from './mirror-apply.service';
 import { MirrorAvailabilityService } from './mirror-availability.service';
 import { MirrorCatalogService } from './mirror-catalog.service';
+import { MirrorNoticeService } from './mirror-notice.service';
 import type {
   AckInput,
   AckResult,
@@ -29,6 +30,9 @@ import type {
   AvailabilityResult,
   CatalogInput,
   CatalogResult,
+  NoticeRequestDto,
+  NoticeRosterInput,
+  NoticeRosterResult,
 } from './dto/mirror.types';
 
 type AgentRequest = Request & MirrorAgentRequest;
@@ -47,6 +51,7 @@ export class MirrorController {
     private readonly apply: MirrorApplyService,
     private readonly availability: MirrorAvailabilityService,
     private readonly catalog: MirrorCatalogService,
+    private readonly notice: MirrorNoticeService,
   ) {}
 
   @Post('handshake')
@@ -167,6 +172,41 @@ export class MirrorController {
       throw new BadRequestException('entries debe ser un arreglo.');
     }
     return this.catalog.upload(req.mirrorConfig.organizationId, body);
+  }
+
+  /**
+   * GET /mirror/notice-requests — avisos masivos, Fase 2 (fuente espejo).
+   * EXCLUSIVO del driver cnt-sanvicente-anserma — ver
+   * docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §5.
+   *
+   * El agente pregunta cada ~30 s si hay una petición pendiente ("tráeme
+   * las citas del Dr. X entre el 25 y el 26", creada desde la pantalla).
+   * `MirrorNoticeService.assertEnabled` responde 403 aunque el token del
+   * agente sea válido si la clínica no tiene la Llave 3 encendida.
+   */
+  @Get('notice-requests')
+  getNoticeRequests(@Req() req: AgentRequest): Promise<NoticeRequestDto[]> {
+    const { organizationId, driverKey } = req.mirrorConfig;
+    return this.notice.getPendingRequests(organizationId, driverKey);
+  }
+
+  /**
+   * POST /mirror/notice-roster — el driver responde con lo que encontró
+   * para esa petición. Puebla el lote con la misma semántica idempotente
+   * que el CSV/Excel de Fase 1 (§3.3.4).
+   */
+  @Post('notice-roster')
+  applyNoticeRoster(
+    @Req() req: AgentRequest,
+    @Body() body: NoticeRosterInput,
+  ): Promise<NoticeRosterResult> {
+    if (!body?.requestId || !Array.isArray(body?.candidates)) {
+      throw new BadRequestException(
+        'requestId y candidates (arreglo) son obligatorios.',
+      );
+    }
+    const { organizationId, driverKey } = req.mirrorConfig;
+    return this.notice.applyRoster(organizationId, driverKey, body);
   }
 
   @Post('ack')

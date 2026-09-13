@@ -44,6 +44,16 @@ export interface AgentConfig {
   catalogIntervalMs: number;
   /** Espera antes de la primera subida, tras arrancar. */
   catalogDelayMs: number;
+
+  // ── Avisos masivos, Fase 2 (fuente espejo) — EXCLUSIVO del driver
+  // cnt-sanvicente-anserma. Ver PLAN_AVISOS_MASIVOS.md §5. ──────────────
+  /**
+   * Cada cuánto se pregunta si hay una petición de roster pendiente. Rápido
+   * y a propósito: un humano acaba de pedir "tráeme las citas del Dr. X"
+   * desde la pantalla y está esperando la respuesta — no es un barrido de
+   * fondo como el catálogo, que puede tardar un día sin que nadie lo note.
+   */
+  noticeIntervalMs: number;
 }
 
 const DEFAULTS = {
@@ -74,6 +84,11 @@ const DEFAULTS = {
   // 25 al día siguiente— así que tampoco vale hacerlo solo al arrancar.
   catalogIntervalMs: 24 * 60 * 60_000,
   catalogDelayMs: 15_000,
+  // 30 s: rápido para que un aviso pedido desde la pantalla no se sienta
+  // colgado, pero sin martillar la API — este driver es el único que
+  // implementa avisos hoy, así que en cualquier otro tenant esta llamada
+  // siempre vuelve vacía (§5, HisDriver §4 del plan: opt-in, no genérico).
+  noticeIntervalMs: 30_000,
   driverVersion: '0.1.0-fase1',
 };
 
@@ -120,5 +135,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
       Number(env.MIRROR_CATALOG_INTERVAL_MS) || DEFAULTS.catalogIntervalMs,
     catalogDelayMs:
       Number(env.MIRROR_CATALOG_DELAY_MS) || DEFAULTS.catalogDelayMs,
+    noticeIntervalMs:
+      Number(env.MIRROR_NOTICE_INTERVAL_MS) || DEFAULTS.noticeIntervalMs,
   };
 }

@@ -1,7 +1,7 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { getTenantMirrorFlags } from '@/lib/mirror-flags';
-import { getAvisosConfigAction, listBatchesAction } from '@/app/actions/avisos';
+import { getAvisosConfigAction, listBatchesAction, getDoctorCatalogAction } from '@/app/actions/avisos';
 import AvisosClient from './components/AvisosClient';
 
 /**
@@ -30,9 +30,14 @@ export default async function AvisosPage() {
     // hace por él.
     if (!conAvisosDriver) redirect('/dashboard');
 
-    const [configRes, batchesRes] = await Promise.all([
+    const [configRes, batchesRes, doctorsRes] = await Promise.all([
         isOrgAdmin ? getAvisosConfigAction() : Promise.resolve(null),
         conAvisos ? listBatchesAction() : Promise.resolve(null),
+        // El catálogo lo sube el agente (§ catálogo, no exclusivo de avisos) —
+        // se trae siempre que haya espejo con el driver correcto, no solo
+        // cuando la fuente ya es ESPEJO: así, si un admin recién activa
+        // "Traer del hospital", el selector no llega vacío la primera vez.
+        getDoctorCatalogAction(),
     ]);
 
     return (
@@ -42,6 +47,7 @@ export default async function AvisosPage() {
                 conAvisos={conAvisos}
                 initialConfig={configRes?.success ? configRes.config : null}
                 initialBatches={batchesRes?.success ? batchesRes.batches : []}
+                initialDoctors={doctorsRes.success ? doctorsRes.doctors : []}
             />
         </div>
     );

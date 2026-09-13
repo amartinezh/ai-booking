@@ -35,12 +35,19 @@ describe('loadConfig', () => {
       MIRROR_RECONCILE_INTERVAL_MS: '300000',
       MIRROR_RECONCILE_DELAY_MS: '10000',
       MIRROR_RECONCILE_DIAS: '30',
+      MIRROR_NOTICE_INTERVAL_MS: '15000',
     });
 
     expect(c.pollIntervalMs).toBe(1_000);
     expect(c.reconcileIntervalMs).toBe(300_000);
     expect(c.reconcileDelayMs).toBe(10_000);
     expect(c.reconcileDias).toBe(30);
+    expect(c.noticeIntervalMs).toBe(15_000);
+  });
+
+  it('avisos masivos (Fase 2): sin configurar, cae a 30 s', () => {
+    const c = loadConfig(minimo);
+    expect(c.noticeIntervalMs).toBe(30_000);
   });
 
   it('un valor que no es número cae al defecto en vez de dejar NaN', () => {

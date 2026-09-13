@@ -1,9 +1,11 @@
 # Plan — Avisos masivos por WhatsApp (driver CNT / Hospital San Vicente de Paúl, Anserma)
 
-> **Estado:** **Fase 1 implementada** (§10) — esquema, parser CSV/Excel, envío,
-> pantalla y menú, con 1987 tests nuevos/existentes en verde. Falta trabajo
-> humano, no código: aprobar la plantilla en Meta y encender la Llave 3 desde
-> la pantalla. Fase 2 (fuente espejo) sigue sin bloqueantes pero sin construir.
+> **Estado:** **Fase 1 y Fase 2 implementadas** (§10) — esquema, parser
+> CSV/Excel, fuente espejo bajo demanda (protocolo, driver, lazo del agente,
+> pantalla), envío, teléfono del acompañante como respaldo explícito (§3.4/J.5)
+> y menú, con 2497 tests nuevos/existentes en verde (shared 234 · api 1664 ·
+> mirror-agent 455 · web 144). Falta trabajo humano, no código: aprobar la
+> plantilla en Meta y encender la Llave 3 desde la pantalla.
 > **Fecha:** 2026-09-13.
 > **Alcance:** función EXCLUSIVA de este driver y de este tenant. Ver §1.
 
@@ -1030,15 +1032,42 @@ código:**
 para cuando se necesiten): descargar la plantilla del CSV desde la pantalla,
 exportar a CSV los "sin celular", y la purga de retención de §9.3 (Fase 3).
 
-### Fase 2 — Fuente espejo · **sin bloqueantes**
+### Fase 2 — Fuente espejo · ✅ implementada (2026-09-13)
+
 Cobertura de datos aprobada con margen (92,0 % contra el umbral del 80 %, §3.2) y
-habeas data avalado por el director del hospital (§9.1). Nada impide construirla
-ya, más allá de las prioridades del equipo.
-`HisNoticeCandidate` en el protocolo · `fetchNoticeRoster()` en el driver ·
-`GET /mirror/notice-requests` + `POST /mirror/notice-roster` · lazo nuevo en el
-agente · selector de fuente en la pantalla · estado vacío explícito para
-especialidades sin agenda abierta (J.2) · teléfono del acompañante como fuente
-secundaria explícita (J.5).
+habeas data avalado por el director del hospital (§9.1).
+
+| Pieza | Archivo | Estado |
+|---|---|---|
+| Esquema (§4) | `packages/database/prisma/schema.prisma` + migraciones `20260913150000_notice_roster_requests`, `20260913160000_notice_roster_truncated`, `20260913170000_notice_companion_phone` | ✅ `NoticeRosterRequest` (con `truncated`) + `MassNoticeRecipient.phoneIsCompanion`, validadas contra `prisma migrate diff` |
+| Protocolo (§5) | `packages/shared/src/mirror-protocol.ts` — `HisNoticeCandidate` (con `companionPhone`), `NoticeRequestDto`, `NoticeRosterInput`, `NoticeRosterResult` (con `truncated`) | ✅ Tipos compartidos agente↔API, nada modificado del protocolo existente |
+| Driver | `apps/mirror-agent/src/drivers/cnt-sanvicente-anserma/index.ts` — `fetchNoticeRoster()` (join `CITAS_MEDICAS ⋈ PACIENTES`, bordes SQL sargables + filtro fino por instante) | ✅ 11 tests (`notice-roster.spec.ts`) — incluye `DE_TELE_ACOM_PAC` (J.5) |
+| Capacidad opt-in | `apps/mirror-agent/src/core/driver.interface.ts` — `NoticeRosterCapableDriver` + `isNoticeRosterCapable()` (type guard estructural, nunca `implements`) | ✅ El contrato `HisDriver` genérico queda intacto — ver §0 |
+| Lazo del agente | `apps/mirror-agent/src/core/engine.ts` (`syncNoticeRequests()`) + `mirror-api-client.ts` + `config.ts` (`MIRROR_NOTICE_INTERVAL_MS`, 30 s por defecto) + `index.ts` (`bucleAvisos`) | ✅ Bajo demanda, nunca réplica continua (§5) |
+| Endpoints agente↔nube | `apps/api/src/mirror/mirror-notice.service.ts` + `mirror.controller.ts` — `GET /mirror/notice-requests`, `POST /mirror/notice-roster` (`MirrorAgentGuard`) | ✅ 26 tests (`mirror-notice.service.spec.ts`) — Llave 2/3, idempotencia por `requestId`, truncamiento nunca en silencio, respaldo del acompañante |
+| Endpoints pantalla↔API | `apps/api/src/mass-notice/mass-notice.controller.ts` — `POST /mass-notice/:batchId/notice-request`, `GET /mass-notice/notice-request/:requestId` (`RolesGuard`, JWT de staff) | ✅ Cubiertos en `mass-notice.controller.spec.ts` |
+| CRUD (web) | `apps/web/app/actions/avisos.ts` — `getDoctorCatalogAction`, `requestNoticeRosterAction` (crea o repuebla lote existente, §3.3.4), `getNoticeRequestStatusAction` (con `truncated`), `getBatchAction` (con `phoneIsCompanion`) | ✅ 40 tests (`avisos.spec.ts`) |
+| Pantalla | `apps/web/app/dashboard/espejo/avisos/components/AvisosClient.tsx` | ✅ Selector médico + rango de fechas · polling cada 3 s (timeout 90 s) · repoblar sin salir del lote · estado vacío explícito (J.2) · aviso de truncamiento · badge "del acompañante" en `RecipientsTable.tsx` (J.5, nunca en silencio) · selector de fuente CSV/ESPEJO en Configuración |
+
+**Regresión completa en verde:** `pnpm --filter @agenia/shared exec jest`
+(234/234) · `pnpm --filter api exec jest` (1664/1664) · `pnpm --filter
+mirror-agent exec jest` (455/455) · `pnpm --filter web exec jest` (144/144) ·
+`pnpm --filter web build` · `pnpm --filter api build` · `pnpm --filter
+mirror-agent build` · `pnpm --filter web lint` / `pnpm --filter api lint` (0
+errores) · `node scripts/check-date-rule.mjs` (0 violaciones) · `npx tsc
+--noEmit` (web, 0 errores).
+
+**No verificado en este entorno:** sin Docker disponible en este sandbox, no
+hubo una prueba de extremo a extremo contra una base de datos real ni una
+sesión de navegador real (mismo límite que Fase 1). La cobertura de arriba es
+enteramente por typecheck + suites automatizadas + build; falta el primer
+ensayo manual real antes de producción (§11).
+
+**Deliberadamente fuera de esta entrega:** `medicosHabilitados` (filtro de
+médicos permitidos en `avisosMasivos`, declarado en el tipo pero sin
+aplicarse), `ventanaDiasMax` configurable desde la pantalla (el default de 30
+días se aplica del lado del servidor, §5) — ninguno bloquea el uso real,
+quedan para Fase 3 si hacen falta.
 
 ### Fase 3 — Pulido
 Purga de retención · exportar los "sin celular" · recordatorio masivo (mismo motor,

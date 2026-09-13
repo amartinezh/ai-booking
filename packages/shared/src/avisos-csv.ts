@@ -148,7 +148,13 @@ function mapHeader(
  * teléfono es EL destinatario del WhatsApp: tiene que ser un celular real —
  * 10 dígitos, empieza por 3 — o el envío no tiene a quién llegarle.
  */
-function normalizePhoneToE164Co(raw: string): string | null {
+/**
+ * Exportada: la reutiliza `MirrorNoticeService` (Fase 2, fuente espejo) para
+ * normalizar `HisNoticeCandidate.patientPhone` — el mismo criterio de celular
+ * colombiano vale sin importar si el teléfono llegó por CSV/Excel o desde el
+ * HIS vía el agente.
+ */
+export function normalizePhoneToE164Co(raw: string): string | null {
   let digits = raw.replace(/[\s\-().]/g, '');
   if (digits.startsWith('+')) digits = digits.slice(1);
   if (digits.length === 12 && digits.startsWith('57')) digits = digits.slice(2);

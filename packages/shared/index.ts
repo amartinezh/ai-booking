@@ -40,7 +40,11 @@ export type {
 } from './src/padron-csv';
 export { detectPadronEps } from './src/padron-eps-detect';
 export type { PadronEpsCandidate, PadronEpsDetection } from './src/padron-eps-detect';
-export { validateAvisosCsv, AVISOS_CSV_HEADERS } from './src/avisos-csv';
+export {
+  validateAvisosCsv,
+  AVISOS_CSV_HEADERS,
+  normalizePhoneToE164Co,
+} from './src/avisos-csv';
 export type { AvisosCsvRow, AvisosCsvError, AvisosCsvReport } from './src/avisos-csv';
 export {
   normalizeDocumento,
@@ -75,4 +79,8 @@ export type {
   HisCatalogEntry,
   CatalogInput,
   CatalogResult,
+  HisNoticeCandidate,
+  NoticeRequestDto,
+  NoticeRosterInput,
+  NoticeRosterResult,
 } from './src/mirror-protocol';

@@ -56,7 +56,14 @@ export default function RecipientsTable({
                                 <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
                                     {formatAppointmentCompact(r.appointmentAtUtc)}
                                 </td>
-                                <td className="px-3 py-2 font-mono text-xs text-zinc-500">{r.phoneMasked}</td>
+                                <td className="px-3 py-2 font-mono text-xs text-zinc-500">
+                                    {r.phoneMasked}
+                                    {r.phoneIsCompanion && (
+                                        <span className="ml-1.5 inline-flex items-center rounded-full bg-sky-50 dark:bg-sky-950/40 px-1.5 py-0.5 font-sans text-[10px] font-medium text-sky-700 dark:text-sky-300">
+                                            del acompañante
+                                        </span>
+                                    )}
+                                </td>
                                 <td className="px-3 py-2">
                                     {r.previousSentAt ? (
                                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">

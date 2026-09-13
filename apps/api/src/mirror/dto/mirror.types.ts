@@ -22,4 +22,8 @@ export type {
   HisCatalogEntry,
   CatalogInput,
   CatalogResult,
+  HisNoticeCandidate,
+  NoticeRequestDto,
+  NoticeRosterInput,
+  NoticeRosterResult,
 } from '@agenia/shared';
