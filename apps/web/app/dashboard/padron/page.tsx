@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { formatAppointmentCompact } from '@/lib/date';
 import PadronUploader from './PadronUploader';
+import PadronClearPanel from './PadronClearPanel';
 import {
     Table,
     TableBody,
@@ -119,6 +120,8 @@ export default async function PadronPage({
             </section>
 
             <PadronUploader />
+
+            <PadronClearPanel />
 
             {/* Padrón vigente */}
             <section className="space-y-4">

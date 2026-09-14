@@ -20,7 +20,8 @@ import { MirrorAvailabilityMode } from '@agenia/database';
 
 const MINUTO = 60_000;
 
-async function tenantAdmin(): Promise<string | null> {
+/** Compartido con app/actions/sync-audit.ts: mismo aislamiento de tenant. */
+export async function tenantAdmin(): Promise<string | null> {
     const session = await getSession();
     if (session?.role !== 'ORG_ADMIN' || !session.organizationId) return null;
     return session.organizationId;

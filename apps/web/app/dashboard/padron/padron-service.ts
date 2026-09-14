@@ -132,6 +132,24 @@ export interface PadronImportResult {
     deactivated?: number;
 }
 
+/** 'ALL' = todo el padrón de la EPS; 'ACTIVE'/'INACTIVE' filtran por `isActive`. */
+export type PadronEstadoFiltro = 'ALL' | 'ACTIVE' | 'INACTIVE';
+const ESTADOS_FILTRO: readonly PadronEstadoFiltro[] = ['ALL', 'ACTIVE', 'INACTIVE'];
+
+export interface PadronClearPreview {
+    epsId: string;
+    epsName: string;
+    estado: PadronEstadoFiltro;
+    /** Cuántos registros coinciden con el filtro hoy — puede cambiar si alguien más toca el padrón antes de confirmar. */
+    count: number;
+}
+
+export interface PadronClearResult {
+    success: boolean;
+    error?: string;
+    deletedCount?: number;
+}
+
 export async function requireOrgAdmin(): Promise<{ organizationId: string; userId: string } | null> {
     const session = await getSession();
     if (!session || session.role !== 'ORG_ADMIN' || !session.organizationId) return null;
@@ -265,6 +283,104 @@ export async function runGetPadronFullErrorReport(
         console.error('[padron] runGetPadronFullErrorReport:', e);
         const message = e instanceof Error ? e.message : 'Error al generar el reporte';
         return { success: false, error: `Error inesperado al generar el reporte: ${message}` };
+    }
+}
+
+function estadoFiltroWhere(estado: PadronEstadoFiltro): { isActive?: boolean } {
+    if (estado === 'ACTIVE') return { isActive: true };
+    if (estado === 'INACTIVE') return { isActive: false };
+    return {};
+}
+
+/**
+ * Paso 1 de "vaciar padrón" — cuenta cuántos registros coinciden con la EPS y
+ * el filtro de estado elegidos, SIN borrar nada. Es lo contrario de
+ * `runValidatePadronCsv`: aquí no hay archivo, solo un conteo para que la
+ * pantalla muestre el impacto antes de pedir la confirmación final.
+ */
+export async function runPreviewClearPadronEps(
+    epsId: string,
+    estado: PadronEstadoFiltro,
+): Promise<{ success: true; preview: PadronClearPreview } | { success: false; error: string }> {
+    const auth = await requireOrgAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado' };
+
+    if (typeof epsId !== 'string' || !epsId) {
+        return { success: false, error: 'Seleccione la EPS que quiere vaciar.' };
+    }
+    if (!ESTADOS_FILTRO.includes(estado)) {
+        return { success: false, error: 'Seleccione qué registros quiere borrar.' };
+    }
+
+    const eps = await requireActiveEps(auth.organizationId, epsId);
+    if (!eps) {
+        return { success: false, error: 'La EPS seleccionada no existe o no está activa en la clínica.' };
+    }
+
+    const count = await prisma.epsEnrolledPatient.count({
+        where: { organizationId: auth.organizationId, epsId: eps.id, ...estadoFiltroWhere(estado) },
+    });
+
+    return { success: true, preview: { epsId: eps.id, epsName: eps.name, estado, count } };
+}
+
+/**
+ * Paso 2 de "vaciar padrón" — BORRA definitivamente (DELETE, no baja lógica)
+ * los registros de `EpsEnrolledPatient` que coincidan con la EPS y el filtro
+ * elegidos. Lo contrario real de importar (que solo crea/actualiza/desactiva):
+ * aquí las filas desaparecen y no hay CSV que recargar para revertirlo.
+ *
+ * `EpsEnrolledPatient` es una tabla hoja (nada más la referencia por FK), así
+ * que el DELETE no arrastra nada más. Tampoco necesita troceo como el
+ * importador: un `deleteMany` con un WHERE sobre columnas indexadas usa un
+ * puñado de parámetros sin importar cuántas filas borre, muy distinto del
+ * `VALUES` multi-fila del upsert que sí revienta el límite de Postgres.
+ *
+ * Exige escribir el nombre EXACTO de la EPS como confirmación — un checkbox
+ * no alcanza aquí: a diferencia de la guarda del 10% al importar (que se
+ * puede deshacer recargando el CSV correcto), este borrado no tiene vuelta
+ * atrás.
+ */
+export async function runClearPadronEps(
+    epsId: string,
+    estado: PadronEstadoFiltro,
+    confirmEpsName: string,
+): Promise<PadronClearResult> {
+    const auth = await requireOrgAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado' };
+
+    if (typeof epsId !== 'string' || !epsId) {
+        return { success: false, error: 'Seleccione la EPS que quiere vaciar.' };
+    }
+    if (!ESTADOS_FILTRO.includes(estado)) {
+        return { success: false, error: 'Seleccione qué registros quiere borrar.' };
+    }
+
+    const eps = await requireActiveEps(auth.organizationId, epsId);
+    if (!eps) {
+        return { success: false, error: 'La EPS seleccionada no existe o no está activa en la clínica.' };
+    }
+
+    if (typeof confirmEpsName !== 'string' || confirmEpsName.trim() !== eps.name) {
+        return { success: false, error: `Escriba "${eps.name}" exactamente para confirmar la eliminación.` };
+    }
+
+    try {
+        const result = await prisma.epsEnrolledPatient.deleteMany({
+            where: { organizationId: auth.organizationId, epsId: eps.id, ...estadoFiltroWhere(estado) },
+        });
+
+        console.warn(
+            `[padron] runClearPadronEps: usuario ${auth.userId} eliminó ${result.count} registro(s) de ` +
+                `"${eps.name}" (org ${auth.organizationId}, filtro ${estado}).`,
+        );
+
+        revalidatePath('/dashboard/padron');
+        return { success: true, deletedCount: result.count };
+    } catch (e: unknown) {
+        console.error('[padron] runClearPadronEps:', e);
+        const message = e instanceof Error ? e.message : 'Error al limpiar el padrón';
+        return { success: false, error: `Error inesperado al limpiar: ${message}` };
     }
 }
 

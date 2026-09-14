@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import Link from 'next/link';
 import { reprocesarEvento, cambiarModoAgenda } from '@/app/actions/espejo';
 import { formatDateShort } from '@/lib/date';
 
@@ -136,16 +137,24 @@ export default function EspejoClient({ data }: { data: Estado }) {
 
     return (
         <div className="space-y-8">
-            <header>
-                <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">
-                    Espejo con el sistema del hospital
-                </h1>
-                <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                    Driver <code className="font-mono">{config.driverKey}</code> ·{' '}
-                    {config.enabled ? 'activo' : 'desactivado'}
-                    {!config.pushEnabled && ' · escritura al hospital PAUSADA'}
-                    {!config.pullEnabled && ' · lectura del hospital PAUSADA'}
-                </p>
+            <header className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">
+                        Espejo con el sistema del hospital
+                    </h1>
+                    <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                        Driver <code className="font-mono">{config.driverKey}</code> ·{' '}
+                        {config.enabled ? 'activo' : 'desactivado'}
+                        {!config.pushEnabled && ' · escritura al hospital PAUSADA'}
+                        {!config.pullEnabled && ' · lectura del hospital PAUSADA'}
+                    </p>
+                </div>
+                <Link
+                    href="/dashboard/espejo/auditoria"
+                    className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                    Ver auditoría detallada →
+                </Link>
             </header>
 
             <section className="grid gap-4 sm:grid-cols-2">

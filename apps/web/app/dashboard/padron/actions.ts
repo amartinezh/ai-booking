@@ -16,9 +16,24 @@
 // ─────────────────────────────────────────────────────────────
 
 import { prisma } from '@/lib/prisma';
-import { requireOrgAdmin, type EpsOption } from './padron-service';
+import {
+    requireOrgAdmin,
+    runClearPadronEps,
+    runPreviewClearPadronEps,
+    type EpsOption,
+    type PadronClearPreview,
+    type PadronClearResult,
+    type PadronEstadoFiltro,
+} from './padron-service';
 
-export type { EpsOption, PadronValidationSummary, PadronImportResult } from './padron-service';
+export type {
+    EpsOption,
+    PadronValidationSummary,
+    PadronImportResult,
+    PadronClearPreview,
+    PadronClearResult,
+    PadronEstadoFiltro,
+} from './padron-service';
 
 /** Para poblar el selector de EPS de la pantalla de carga. */
 export async function getActiveEpsOptionsAction(): Promise<
@@ -33,4 +48,21 @@ export async function getActiveEpsOptionsAction(): Promise<
         orderBy: { name: 'asc' },
     });
     return { success: true, eps };
+}
+
+/** Paso 1 de "vaciar padrón": cuenta el impacto sin borrar nada. Payload minúsculo (dos strings), a diferencia del CSV — sí puede ser Server Action. */
+export async function previewClearPadronEpsAction(
+    epsId: string,
+    estado: PadronEstadoFiltro,
+): Promise<{ success: true; preview: PadronClearPreview } | { success: false; error: string }> {
+    return runPreviewClearPadronEps(epsId, estado);
+}
+
+/** Paso 2: borra definitivamente, solo si `confirmEpsName` coincide exacto con el nombre de la EPS. */
+export async function clearPadronEpsAction(
+    epsId: string,
+    estado: PadronEstadoFiltro,
+    confirmEpsName: string,
+): Promise<PadronClearResult> {
+    return runClearPadronEps(epsId, estado, confirmEpsName);
 }
