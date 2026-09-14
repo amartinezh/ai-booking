@@ -178,36 +178,47 @@ export async function validatePadronCsvAction(
         return { success: false, error: 'Seleccione la EPS de este archivo antes de validar.' };
     }
 
-    const eps = await requireActiveEps(auth.organizationId, epsId);
-    if (!eps) {
-        return { success: false, error: 'La EPS seleccionada no existe o no está activa en la clínica.' };
+    // Sin try/catch, cualquier excepción de aquí para abajo (Prisma, un error
+    // de programación) subía sin control y Next.js la enmascaraba en
+    // producción con un 500 genérico ("digest") sin mensaje — imposible de
+    // diagnosticar desde el navegador del hospital. Regla de oro del resto
+    // del archivo: nunca dejar una acción del padrón sin capturar sus errores.
+    try {
+        const eps = await requireActiveEps(auth.organizationId, epsId);
+        if (!eps) {
+            return { success: false, error: 'La EPS seleccionada no existe o no está activa en la clínica.' };
+        }
+
+        const report = validatePadronCsv(csvText);
+
+        const { activeForEps, wouldDeactivate } = await measureDeactivationImpact(
+            auth.organizationId,
+            eps.id,
+            report.validRows.map((row) => row.cedula),
+        );
+
+        return {
+            success: true,
+            report: {
+                ok: report.ok,
+                totalDataRows: report.totalDataRows,
+                validCount: report.validRows.length,
+                errorCount: report.errors.length,
+                errors: report.errors.slice(0, MAX_ERRORS_RETURNED),
+                epsId: eps.id,
+                epsName: eps.name,
+                activeForEps,
+                wouldDeactivate,
+                needsDeactivationConfirmation:
+                    activeForEps > 0 && wouldDeactivate / activeForEps > DEACTIVATION_CONFIRM_THRESHOLD,
+                ignoredPreambleLines: report.ignoredPreambleLines,
+            },
+        };
+    } catch (e: unknown) {
+        console.error('[padron] validatePadronCsvAction:', e);
+        const message = e instanceof Error ? e.message : 'Error al validar el archivo';
+        return { success: false, error: `Error inesperado al validar: ${message}` };
     }
-
-    const report = validatePadronCsv(csvText);
-
-    const { activeForEps, wouldDeactivate } = await measureDeactivationImpact(
-        auth.organizationId,
-        eps.id,
-        report.validRows.map((row) => row.cedula),
-    );
-
-    return {
-        success: true,
-        report: {
-            ok: report.ok,
-            totalDataRows: report.totalDataRows,
-            validCount: report.validRows.length,
-            errorCount: report.errors.length,
-            errors: report.errors.slice(0, MAX_ERRORS_RETURNED),
-            epsId: eps.id,
-            epsName: eps.name,
-            activeForEps,
-            wouldDeactivate,
-            needsDeactivationConfirmation:
-                activeForEps > 0 && wouldDeactivate / activeForEps > DEACTIVATION_CONFIRM_THRESHOLD,
-            ignoredPreambleLines: report.ignoredPreambleLines,
-        },
-    };
 }
 
 /**
@@ -227,17 +238,23 @@ export async function getPadronFullErrorReportAction(
         return { success: false, error: 'El archivo supera el tamaño máximo permitido (6 MB).' };
     }
 
-    const report = validatePadronCsv(csvText);
+    try {
+        const report = validatePadronCsv(csvText);
 
-    const escapeCsvCell = (value: string) => `"${value.replace(/"/g, '""')}"`;
-    const lines = ['linea,columna,mensaje'];
-    for (const err of report.errors) {
-        lines.push(
-            [String(err.line), escapeCsvCell(err.column ?? ''), escapeCsvCell(err.message)].join(','),
-        );
+        const escapeCsvCell = (value: string) => `"${value.replace(/"/g, '""')}"`;
+        const lines = ['linea,columna,mensaje'];
+        for (const err of report.errors) {
+            lines.push(
+                [String(err.line), escapeCsvCell(err.column ?? ''), escapeCsvCell(err.message)].join(','),
+            );
+        }
+
+        return { success: true, csv: lines.join('\n') };
+    } catch (e: unknown) {
+        console.error('[padron] getPadronFullErrorReportAction:', e);
+        const message = e instanceof Error ? e.message : 'Error al generar el reporte';
+        return { success: false, error: `Error inesperado al generar el reporte: ${message}` };
     }
-
-    return { success: true, csv: lines.join('\n') };
 }
 
 type EstadoPrevio = { isActive: boolean };
