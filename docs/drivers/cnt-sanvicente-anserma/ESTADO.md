@@ -4599,3 +4599,123 @@ Nada queda bloqueado por decisiones de diseño pendientes. Lo que sigue es
 operativo: que el hospital corra `AGENIA_SYNC_SETUP.sql` actualizado, y que
 alguien empiece a cargar el primer corte real del padrón desde la pantalla
 nueva.
+
+---
+
+# 🔴 CAUSA RAÍZ REAL DEL 500 EN PRODUCCIÓN: SERVER ACTIONS NO SIRVEN PARA UN CSV DE VARIOS MB (2026-09-14)
+
+El hospital reportó `500 Internal Server Error` al validar el padrón real de
+Sura desde `app.hsvpanserma.agenia.co`. Investigación completa, causa
+confirmada por inspección directa del código fuente de React/Next (no por
+especulación), y corregida de raíz.
+
+## El camino del diagnóstico
+
+1. **Primer síntoma**: 500 enmascarado por Next.js ("digest", sin mensaje).
+   Se sospechó un bug en la validación → se envolvió `validatePadronCsvAction`
+   en `try/catch` para exponer el mensaje real. Desplegado.
+2. **El error persistió, con el MISMO digest.** Se investigó si el deploy
+   había llegado: **descubrimos que el pipeline de GitHub Actions llevaba roto
+   desde el 2026-09-10** (`pnpm/action-setup@v4` rechaza tener la versión
+   fijada dos veces — en el `with: version` del workflow Y en
+   `packageManager` de `package.json` — con "Multiple versions of pnpm
+   specified"). Corregido (se quitó la fijación redundante del workflow), pero
+   **no era la causa de este bug**: el hospital despliega por `update.sh`
+   (SSH directo al VPS), independiente de GitHub Actions, y ese camino sí
+   había estado llevando el código a producción todo este tiempo.
+3. **Con el fix del `try/catch` confirmado en producción** (logs del
+   contenedor vía `docker logs agenia_web`), apareció el mensaje real:
+   `Error: Maximum array nesting exceeded. Large nested arrays can be
+   dangerous. Try adding intermediate objects.` — con **el mismo digest de
+   siempre**, y `at ignore-listed frames` (sin una sola línea de código
+   nuestro en el stack): la excepción es de React, no nuestra, y ocurre
+   **antes** de que el `try/catch` pueda verla.
+
+## La causa real, confirmada por lectura directa del código fuente
+
+`bumpArrayCount` en `react-server-dom-turbopack-server.*.js` (el codificador
+de Flight que usan las Server Actions de Next.js para mandar los ARGUMENTOS
+del cliente al servidor):
+
+```js
+function bumpArrayCount(arrayContext, slots, response) {
+  if ((arrayContext.count += slots) > response._arraySizeLimit && arrayContext.fork)
+    throw Error("Maximum array nesting exceeded. Large nested arrays can be dangerous. Try adding intermediate objects.");
+}
+```
+
+`_arraySizeLimit` por defecto es **1.000.000**. Y la llamada relevante:
+
+```js
+null !== arrayRoot && bumpArrayCount(arrayRoot, value.length, response);
+```
+
+**Cuenta cada CARÁCTER de un string dentro de un arreglo como un "slot".**
+Los argumentos de una Server Action viajan como un arreglo (`[csvText,
+epsId]`), así que un `csvText` de más de ~1.000.000 de caracteres agota el
+límite en una sola llamada — **sin importar el contenido ni el formato del
+archivo**. El padrón real de Sura (varios MB, muy por encima del límite de
+`MAX_CSV_CHARS = 6.000.000`) lo dispara siempre.
+
+`next.config.ts` sube `serverActions.bodySizeLimit` a `8mb`, pero eso solo
+controla el tamaño del CUERPO HTTP — no toca este límite interno de "slots"
+del decodificador de Flight, que no es configurable desde afuera. Cualquier
+CSV de más de ~1 MB de texto habría fallado igual, con cualquier contenido.
+
+## La corrección: sacar el CSV del mecanismo de Server Actions
+
+Las Server Actions de Next.js no están pensadas para cargar archivos de
+varios MB como argumento — es un patrón conocido y documentado (el límite de
+`bodySizeLimit` de 1 MB por defecto ya insinuaba esto). La solución correcta y
+oficial: mover las tres operaciones que cargan el CSV completo a **Route
+Handlers** normales, que leen el cuerpo con `request.json()` — el parser
+JSON estándar de Node, sin el codificador de argumentos de Flight de por
+medio.
+
+- **`padron-service.ts`** (nuevo, sin `'use server'`): toda la lógica que
+  antes vivía en `actions.ts` — `runValidatePadronCsv`,
+  `runGetPadronFullErrorReport`, `runImportPadronCsv` — sin cambios de
+  comportamiento, solo de superficie de invocación.
+- **`app/api/padron/{validate,import,error-report}/route.ts`** (nuevos):
+  `POST` que parsea `request.json()` con manejo explícito de JSON inválido
+  (400) y delega en `padron-service.ts`.
+- **`actions.ts`**: se reduce a la única operación que sigue siendo una
+  Server Action de verdad — `getActiveEpsOptionsAction` (payload minúsculo,
+  muy lejos del límite).
+- **`PadronUploader.tsx`**: los tres flujos (validar, importar, descargar
+  reporte de errores) pasan de llamar funciones importadas a `fetch()` contra
+  las rutas nuevas, con el mismo manejo de estado/UI de antes.
+
+**Sobre CSRF**: la cookie de sesión (`auth_token`) ya usa `sameSite: 'lax'`,
+que bloquea el envío de la cookie en peticiones POST cross-site — la misma
+protección que tenía la Server Action, sin hueco nuevo al pasar a una Route
+Handler.
+
+## Verificación
+
+```
+tsc --noEmit         limpio
+next build            limpio — las 3 rutas nuevas aparecen listadas (ƒ)
+jest                  21/21 suites, 174/174 tests (11 nuevos, incluida una
+                      prueba con un string de 2.000.000 de caracteres —
+                      la escala exacta que antes reventaba)
+eslint                limpio (solo quedan warnings preexistentes de <img>)
+```
+
+## Pendiente: desplegar
+
+El fix vive en el working tree, sin commitear (no se hacen commits sin que se
+pida). Falta:
+1. Commitear y desplegar (vía `update.sh`, que es la vía que de verdad ha
+   estado funcionando).
+2. Reintentar la carga del archivo real de Sura desde el navegador —
+   debería funcionar de punta a punta esta vez, ya no solo mostrar un mensaje
+   de error más claro.
+
+## Lección para el resto del proyecto
+
+**Cualquier operación futura que reciba un archivo/texto potencialmente
+grande como argumento (más de ~1 MB) NO debe ser una Server Action.** Debe
+ser un Route Handler. Esto no es específico del padrón — aplica a cualquier
+carga de archivo en `apps/web` (por ejemplo, si `avisos masivos` alguna vez
+recibe un CSV de teléfonos a exportar/importar de tamaño similar).

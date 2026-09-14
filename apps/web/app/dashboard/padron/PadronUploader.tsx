@@ -25,9 +25,6 @@ import {
 } from '@/lib/spreadsheet-upload';
 import {
     getActiveEpsOptionsAction,
-    getPadronFullErrorReportAction,
-    importPadronCsvAction,
-    validatePadronCsvAction,
     type EpsOption,
     type PadronImportResult,
     type PadronValidationSummary,
@@ -37,6 +34,30 @@ const MAX_FILE_BYTES = 6_000_000;
 const ALLOWED_EXTENSIONS = /\.(csv|xlsx)$/i;
 
 const TEMPLATE_CSV = PADRON_CSV_HEADERS.join(',') + '\n1088123456,SUBSIDIADO,3001234567\n';
+
+// ─────────────────────────────────────────────────────────────
+// Validar, importar y el reporte completo de errores NO son Server Actions:
+// son Route Handlers normales, llamados con fetch(). El csvText del padrón
+// real del hospital pesa varios MB, y una Server Action de Next.js codifica
+// sus argumentos con el "reply encoder" de React Flight, que cuenta cada
+// CARÁCTER de un string dentro del arreglo de argumentos como un "slot"
+// contra un límite interno de 1.000.000 — un csvText de varios MB lo revienta
+// SIEMPRE, con "Error: Maximum array nesting exceeded", antes de que el
+// código de la función llegue a ejecutarse (así falló en producción con el
+// archivo real de Sura, 2026-09-14). Ver el comentario de cabecera de
+// padron-service.ts para el detalle completo.
+// ─────────────────────────────────────────────────────────────
+async function postPadronJson<T>(path: string, body: unknown): Promise<T> {
+    const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        throw new Error(`El servidor respondió ${res.status} al llamar ${path}.`);
+    }
+    return (await res.json()) as T;
+}
 
 // ─────────────────────────────────────────────────────────────
 // Cargador del padrón: flujo estricto de dos pasos, con la EPS elegida en
@@ -239,18 +260,24 @@ export default function PadronUploader() {
     function handleDownloadErrorReport() {
         if (!csvText) return;
         startDownloadingReport(async () => {
-            const result = await getPadronFullErrorReportAction(csvText);
-            if (!result.success) {
-                setError(result.error);
-                return;
+            try {
+                const result = await postPadronJson<
+                    { success: true; csv: string } | { success: false; error: string }
+                >('/api/padron/error-report', { csvText });
+                if (!result.success) {
+                    setError(result.error);
+                    return;
+                }
+                const blob = new Blob([`﻿${result.csv}`], { type: 'text/csv;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'errores_padron_eps.csv';
+                link.click();
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                setError(err instanceof Error ? err.message : 'Error al generar el reporte de errores.');
             }
-            const blob = new Blob([`﻿${result.csv}`], { type: 'text/csv;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = 'errores_padron_eps.csv';
-            link.click();
-            URL.revokeObjectURL(url);
         });
     }
 
@@ -260,12 +287,16 @@ export default function PadronUploader() {
         startValidating(async () => {
             startSimulatedProgress('Validando archivo…');
             try {
-                const result = await validatePadronCsvAction(csvText, selectedEpsId);
+                const result = await postPadronJson<
+                    { success: true; report: PadronValidationSummary } | { success: false; error: string }
+                >('/api/padron/validate', { csvText, epsId: selectedEpsId });
                 if (result.success) {
                     setReport(result.report);
                 } else {
                     setError(result.error);
                 }
+            } catch (err) {
+                setError(err instanceof Error ? err.message : 'Error al validar el archivo.');
             } finally {
                 finishSimulatedProgress();
             }
@@ -278,12 +309,12 @@ export default function PadronUploader() {
         startImporting(async () => {
             startSimulatedProgress('Importando corte…');
             try {
-                const result = await importPadronCsvAction(
+                const result = await postPadronJson<PadronImportResult>('/api/padron/import', {
                     csvText,
-                    selectedEpsId,
-                    fileName ?? 'padron.csv',
+                    epsId: selectedEpsId,
+                    fileName: fileName ?? 'padron.csv',
                     confirmDeactivation,
-                );
+                });
                 if (result.success) {
                     setImportResult(result);
                     router.refresh(); // refresca la tabla server-side del padrón
@@ -296,6 +327,8 @@ export default function PadronUploader() {
                 } else {
                     setError(result.error ?? 'Error al importar el padrón');
                 }
+            } catch (err) {
+                setError(err instanceof Error ? err.message : 'Error al importar el padrón.');
             } finally {
                 finishSimulatedProgress();
             }
