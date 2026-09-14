@@ -131,6 +131,25 @@ servidor solo el/los contenedor(es) que cambiaron.
 > habla con `api` (`/api/mirror/*`), nunca con `web` — reconstruir solo `web`
 > es cero riesgo para el espejo, sin importar en qué `availabilityMode` esté.
 
+### 3.0 Atajo — un solo comando para lo de rutina
+
+`./update.sh` (raíz del repo) encadena §3.1 + §3.4 (build `api`+`web`) +
+§3.5(a) + §3.6 — sincroniza, reconstruye `api` y `web`, migra si hace falta y
+verifica, en una sola corrida desde tu portátil:
+
+```bash
+./update.sh              # actualización completa
+./update.sh --dry-run    # solo muestra qué archivos sincronizaría el rsync
+./update.sh --skip-migrate  # si sabes que este cambio no tocó packages/database
+```
+
+Es el mismo destino (`89.117.61.28`) que usa `./deploy.sh` — ambos llaman al
+script genérico de `deploy/` (`remote-install.sh` para instalar la primera
+vez, `update-vps.sh` para actualizar después) con los datos de este cliente
+ya puestos. Para otro VPS, o para ver cada paso por separado (útil si algo
+falla a medio camino y hay que diagnosticar cuál de los cuatro pasos fue),
+sigue el detalle manual de abajo — es exactamente lo mismo que hace el atajo.
+
 ### 3.1 Sincronizar el código (siempre, sea cual sea lo que cambió)
 
 ```bash
