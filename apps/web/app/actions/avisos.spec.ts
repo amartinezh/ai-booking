@@ -239,6 +239,7 @@ describe('loadAvisosFileAction', () => {
             expect.objectContaining({
                 data: expect.objectContaining({
                     organizationId: 'org-1',
+                    kind: 'CANCELACION',
                     source: 'CSV',
                     status: 'BORRADOR',
                     doctorLabel: 'Dr. Serna',
@@ -293,6 +294,60 @@ describe('loadAvisosFileAction', () => {
                         previousSentBatchId: 'batch-old',
                     }),
                 ],
+            }),
+        );
+    });
+
+    it('con kind: "RECORDATORIO", crea el lote con ese kind (Fase 3, §10)', async () => {
+        asOrgAdmin();
+        mockMirrorFindUnique.mockResolvedValue(CNT_SANVICENTE_CONFIG);
+        mockPatientFindMany.mockResolvedValue([]);
+        mockRecipientFindMany.mockResolvedValue([]);
+        const tx = {
+            massNoticeBatch: {
+                create: jest.fn().mockResolvedValue({ id: 'batch-recordatorio' }),
+                update: jest.fn().mockResolvedValue({}),
+            },
+            massNoticeRecipient: { createMany: jest.fn().mockResolvedValue({}) },
+        };
+        mockTransaction.mockImplementation(async (cb: (t: typeof tx) => unknown) => cb(tx));
+
+        await loadAvisosFileAction({
+            doctorLabel: 'Dr. Serna',
+            csvText: VALID_CSV,
+            kind: 'RECORDATORIO',
+        });
+
+        expect(tx.massNoticeBatch.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ kind: 'RECORDATORIO' }),
+            }),
+        );
+    });
+
+    it('un valor de kind inválido cae a "CANCELACION" (no se confía en el input)', async () => {
+        asOrgAdmin();
+        mockMirrorFindUnique.mockResolvedValue(CNT_SANVICENTE_CONFIG);
+        mockPatientFindMany.mockResolvedValue([]);
+        mockRecipientFindMany.mockResolvedValue([]);
+        const tx = {
+            massNoticeBatch: {
+                create: jest.fn().mockResolvedValue({ id: 'batch-x' }),
+                update: jest.fn().mockResolvedValue({}),
+            },
+            massNoticeRecipient: { createMany: jest.fn().mockResolvedValue({}) },
+        };
+        mockTransaction.mockImplementation(async (cb: (t: typeof tx) => unknown) => cb(tx));
+
+        await loadAvisosFileAction({
+            doctorLabel: 'Dr. Serna',
+            csvText: VALID_CSV,
+            kind: 'OTRA_COSA' as never,
+        });
+
+        expect(tx.massNoticeBatch.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ kind: 'CANCELACION' }),
             }),
         );
     });
@@ -598,6 +653,7 @@ describe('requestNoticeRosterAction', () => {
             expect.objectContaining({
                 data: expect.objectContaining({
                     organizationId: 'org-1',
+                    kind: 'CANCELACION',
                     source: 'ESPEJO',
                     status: 'BORRADOR',
                     doctorExternalKey: '76',
@@ -615,6 +671,24 @@ describe('requestNoticeRosterAction', () => {
                     fromIso: INPUT.fromIso,
                     toIso: INPUT.toIso,
                 }),
+            }),
+        );
+    });
+
+    it('con kind: "RECORDATORIO", crea el lote con ese kind (Fase 3, §10)', async () => {
+        asOrgAdmin();
+        mockMirrorFindUnique.mockResolvedValue(CNT_SANVICENTE_CONFIG_ESPEJO);
+        mockBatchCreate.mockResolvedValue({ id: 'batch-espejo-recordatorio' });
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ requestId: 'req-1' }),
+        }) as unknown as typeof fetch;
+
+        await requestNoticeRosterAction({ ...INPUT, kind: 'RECORDATORIO' });
+
+        expect(mockBatchCreate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ kind: 'RECORDATORIO' }),
             }),
         );
     });

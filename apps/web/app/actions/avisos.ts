@@ -253,6 +253,8 @@ export async function loadAvisosFileAction(input: {
     doctorLabel: string;
     serviceLabel?: string;
     csvText: string;
+    /** Fase 3 (§10): 'CANCELACION' (default, histórico de Fase 1) | 'RECORDATORIO'. */
+    kind?: 'CANCELACION' | 'RECORDATORIO';
 }): Promise<CargarAvisosResult> {
     const auth = await requireAvisosAccess();
     if (!auth) return { success: false, error: 'Acceso denegado.' };
@@ -328,12 +330,14 @@ export async function loadAvisosFileAction(input: {
         };
     });
 
+    const kind = input.kind === 'RECORDATORIO' ? 'RECORDATORIO' : 'CANCELACION';
+
     await prisma.$transaction(async (tx) => {
         if (!batchId) {
             const created = await tx.massNoticeBatch.create({
                 data: {
                     organizationId: auth.organizationId,
-                    kind: 'CANCELACION',
+                    kind,
                     source: 'CSV',
                     status: 'BORRADOR',
                     doctorLabel: input.doctorLabel.trim(),
@@ -347,7 +351,10 @@ export async function loadAvisosFileAction(input: {
         } else {
             // Repoblar: reemplaza por completo el conjunto de candidatos
             // (§3.3.4) — solo toca PENDIENTE, nunca una fila ya ENVIADO/FALLIDO
-            // (no debería haberlas en BORRADOR, pero es defensivo).
+            // (no debería haberlas en BORRADOR, pero es defensivo). `kind` se
+            // deja fijo en el valor con el que se creó el lote — no viene de
+            // `input.kind` de nuevo, para que un reintento sin ese campo no lo
+            // resetee sin querer a 'CANCELACION' a mitad de una repoblación.
             await tx.massNoticeRecipient.deleteMany({ where: { batchId, outcome: 'PENDIENTE' } });
             await tx.massNoticeBatch.update({
                 where: { id: batchId },
@@ -686,6 +693,8 @@ export async function requestNoticeRosterAction(input: {
     serviceLabel?: string;
     fromIso: string;
     toIso: string;
+    /** Fase 3 (§10): 'CANCELACION' (default) | 'RECORDATORIO'. Solo se usa al CREAR — ver nota en la rama de repoblar. */
+    kind?: 'CANCELACION' | 'RECORDATORIO';
 }): Promise<PedirRosterResult> {
     const auth = await requireAvisosAccess();
     if (!auth) return { success: false, error: 'Acceso denegado.' };
@@ -724,7 +733,7 @@ export async function requestNoticeRosterAction(input: {
         const created = await prisma.massNoticeBatch.create({
             data: {
                 organizationId: auth.organizationId,
-                kind: 'CANCELACION',
+                kind: input.kind === 'RECORDATORIO' ? 'RECORDATORIO' : 'CANCELACION',
                 source: 'ESPEJO',
                 status: 'BORRADOR',
                 doctorExternalKey: input.doctorExternalKey,

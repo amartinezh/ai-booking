@@ -284,6 +284,11 @@ enum WhatsappTemplateKind {
   // driver cnt-sanvicente-anserma. Ver
   // docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §7.
   APPOINTMENT_CANCELLED_MASS
+  // Fase 3 (§10, "recordatorio masivo, mismo motor, otro kind") — mismo lote
+  // y mismo `MassNoticeService`, pero para avisar de antemano en vez de
+  // cancelar. Plantilla propia porque el cuerpo aprobado en Meta es distinto
+  // texto fijo, no porque el contrato de variables cambie (sigue siendo 5).
+  APPOINTMENT_REMINDER_MASS
 }
 
 model WhatsappTemplate {

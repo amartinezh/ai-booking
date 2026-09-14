@@ -23,7 +23,8 @@ import BatchHistory from './BatchHistory';
 
 const ALLOWED_EXTENSIONS = /\.(csv|xlsx)$/i;
 const MAX_FILE_BYTES = 2_000_000;
-const DEFAULT_NOTA = 'Le ofrecemos disculpas por el inconveniente.';
+const DEFAULT_NOTA_CANCELACION = 'Le ofrecemos disculpas por el inconveniente.';
+const DEFAULT_NOTA_RECORDATORIO = 'Le esperamos.';
 const MAX_NOTA_CHARS = 150;
 // El agente resuelve la petición en su siguiente vuelta (~30 s, §5) — se
 // consulta cada 3 s y se abandona a los 90 s (tres vueltas de margen) para no
@@ -74,6 +75,9 @@ export default function AvisosClient({
 
     const [batches, setBatches] = useState<AvisosBatchView[]>(initialBatches);
     const [batch, setBatch] = useState<AvisosBatchView | null>(null);
+
+    // ── Paso 1: tipo de aviso — Fase 3 (§10): "mismo motor, otro kind" ──
+    const [kind, setKind] = useState<'CANCELACION' | 'RECORDATORIO'>('CANCELACION');
 
     // ── Paso 1: archivo ──
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -150,6 +154,7 @@ export default function AvisosClient({
 
     function startNewBatch() {
         setBatch(null);
+        setKind('CANCELACION');
         setDoctorLabel('');
         setServiceLabel('');
         setSelectedDoctorKey('');
@@ -226,6 +231,7 @@ export default function AvisosClient({
                 serviceLabel,
                 fromIso,
                 toIso,
+                kind,
             });
             if (!res.success || !res.requestId || !res.batchId) {
                 setError(res.error ?? 'No se pudo pedir la lista al hospital.');
@@ -318,6 +324,7 @@ export default function AvisosClient({
                 doctorLabel,
                 serviceLabel,
                 csvText,
+                kind,
             });
             if (!res.success || !res.batchId) {
                 setError(res.error ?? 'No se pudo cargar la información.');
@@ -354,18 +361,23 @@ export default function AvisosClient({
 
     const seleccionados = batch?.recipients.filter((r) => r.selected && r.hasValidPhone) ?? [];
     const previewRecipient = seleccionados[0];
+    const esRecordatorio = (batch?.kind ?? kind) === 'RECORDATORIO';
     const preview = useMemo(() => {
         if (!batch || !previewRecipient) return null;
         const nombre = previewRecipient.patientName?.split(' ')[0] ?? 'Paciente';
         const servicio = batch.serviceLabel ?? 'su consulta';
         const medico = batch.doctorLabel ?? 'su médico';
         const fecha = formatAppointmentLong(previewRecipient.appointmentAtUtc);
-        const nota = notaAdicional.trim() || DEFAULT_NOTA;
-        return (
-            `Hola ${nombre}. Le escribimos respecto a su cita de ${servicio} con ${medico}, ` +
-            `programada para el ${fecha}: fue cancelada. ${nota} Nos comunicaremos con usted para ` +
-            `reprogramarla, o puede escribirnos por este mismo medio.`
-        );
+        const esRecordatorioBatch = batch.kind === 'RECORDATORIO';
+        const nota =
+            notaAdicional.trim() ||
+            (esRecordatorioBatch ? DEFAULT_NOTA_RECORDATORIO : DEFAULT_NOTA_CANCELACION);
+        return esRecordatorioBatch
+            ? `Hola ${nombre}. Le recordamos su cita de ${servicio} con ${medico}, ` +
+                  `programada para el ${fecha}. ${nota}`
+            : `Hola ${nombre}. Le escribimos respecto a su cita de ${servicio} con ${medico}, ` +
+                  `programada para el ${fecha}: fue cancelada. ${nota} Nos comunicaremos con usted para ` +
+                  `reprogramarla, o puede escribirnos por este mismo medio.`;
     }, [batch, previewRecipient, notaAdicional]);
 
     function handleSend() {
@@ -409,13 +421,14 @@ export default function AvisosClient({
         <div className="space-y-8">
             <header className="space-y-2">
                 <h1 className="text-2xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                    📣 Avisos de cancelación
+                    📣 Avisos masivos
                 </h1>
                 <p className="text-sm text-zinc-600 dark:text-zinc-400 max-w-3xl">
-                    Para cuando un especialista no puede asistir a la sesión programada. Se envía{' '}
-                    <strong>persona por persona</strong>, no es una campaña masiva — úselo para el puñado
-                    de pacientes de un día de agenda. El mensaje sigue siendo pasivo: informa, pero la
-                    cita en sí se cancela por el proceso de siempre del hospital.
+                    Para el día de agenda de un especialista — cuando no puede asistir, o para
+                    recordar la sesión de antemano. Se envía <strong>persona por persona</strong>, no
+                    es una campaña masiva — úselo para el puñado de pacientes de un día de agenda. El
+                    aviso de cancelación es pasivo: informa, pero la cita en sí se cancela por el
+                    proceso de siempre del hospital.
                 </p>
             </header>
 
@@ -527,6 +540,60 @@ export default function AvisosClient({
                         <div className="rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
                             {error}
                         </div>
+                    )}
+
+                    {!batch && (
+                        <section className="space-y-3 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5">
+                            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                                Tipo de aviso
+                            </h2>
+                            <div className="flex flex-wrap gap-3">
+                                <label
+                                    className={`flex-1 min-w-55 cursor-pointer rounded-lg border p-3 text-sm ${
+                                        kind === 'CANCELACION'
+                                            ? 'border-rose-400 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-700'
+                                            : 'border-zinc-200 dark:border-zinc-800'
+                                    }`}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="kind"
+                                        checked={kind === 'CANCELACION'}
+                                        onChange={() => setKind('CANCELACION')}
+                                        className="mr-2"
+                                    />
+                                    <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                                        Cancelación
+                                    </span>
+                                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                                        El especialista no puede asistir — informa que la cita se
+                                        canceló.
+                                    </p>
+                                </label>
+                                <label
+                                    className={`flex-1 min-w-55 cursor-pointer rounded-lg border p-3 text-sm ${
+                                        kind === 'RECORDATORIO'
+                                            ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-700'
+                                            : 'border-zinc-200 dark:border-zinc-800'
+                                    }`}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="kind"
+                                        checked={kind === 'RECORDATORIO'}
+                                        onChange={() => setKind('RECORDATORIO')}
+                                        className="mr-2"
+                                    />
+                                    <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                                        Recordatorio
+                                    </span>
+                                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                                        Recuerda de antemano un día de agenda del especialista — la
+                                        cita sigue en pie.
+                                    </p>
+                                </label>
+                            </div>
+                        </section>
                     )}
 
                     {!batch && fuenteActual !== 'ESPEJO' && (
@@ -816,6 +883,7 @@ export default function AvisosClient({
                                     recipients={batch.recipients}
                                     onToggle={handleToggle}
                                     disabled={busy || batch.status !== 'BORRADOR'}
+                                    batchId={batch.id}
                                 />
                             )}
 
@@ -828,7 +896,9 @@ export default function AvisosClient({
                                         onBlur={handleNotaBlur}
                                         maxLength={MAX_NOTA_CHARS}
                                         rows={2}
-                                        placeholder={DEFAULT_NOTA}
+                                        placeholder={
+                                            esRecordatorio ? DEFAULT_NOTA_RECORDATORIO : DEFAULT_NOTA_CANCELACION
+                                        }
                                         className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm"
                                     />
                                     <span className="text-xs text-zinc-400">

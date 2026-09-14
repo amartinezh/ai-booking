@@ -1,11 +1,13 @@
 # Plan — Avisos masivos por WhatsApp (driver CNT / Hospital San Vicente de Paúl, Anserma)
 
-> **Estado:** **Fase 1 y Fase 2 implementadas** (§10) — esquema, parser
+> **Estado:** **Fase 1, Fase 2 y Fase 3 implementadas** (§10) — esquema, parser
 > CSV/Excel, fuente espejo bajo demanda (protocolo, driver, lazo del agente,
-> pantalla), envío, teléfono del acompañante como respaldo explícito (§3.4/J.5)
-> y menú, con 2497 tests nuevos/existentes en verde (shared 234 · api 1664 ·
-> mirror-agent 455 · web 144). Falta trabajo humano, no código: aprobar la
-> plantilla en Meta y encender la Llave 3 desde la pantalla.
+> pantalla), envío, teléfono del acompañante como respaldo explícito (§3.4/J.5),
+> recordatorio masivo (mismo motor, otro `kind`), purga de retención automática
+> (§9.3), exportar los "sin celular" y métrica de entrega, con 2528 tests
+> nuevos/existentes en verde (shared 234 · api 1676 · mirror-agent 455 · web
+> 163). Falta trabajo humano, no código: aprobar las plantillas en Meta
+> (cancelación y recordatorio) y encender la Llave 3 desde la pantalla.
 > **Fecha:** 2026-09-13.
 > **Alcance:** función EXCLUSIVA de este driver y de este tenant. Ver §1.
 
@@ -1069,9 +1071,35 @@ aplicarse), `ventanaDiasMax` configurable desde la pantalla (el default de 30
 días se aplica del lado del servidor, §5) — ninguno bloquea el uso real,
 quedan para Fase 3 si hacen falta.
 
-### Fase 3 — Pulido
-Purga de retención · exportar los "sin celular" · recordatorio masivo (mismo motor,
-otro `kind`) · métrica de entrega.
+### Fase 3 — Pulido · ✅ implementada (2026-09-13)
+
+| Pieza | Archivo | Estado |
+|---|---|---|
+| Recordatorio masivo (mismo motor, otro `kind`) | Esquema: `WhatsappTemplateKind.APPOINTMENT_REMINDER_MASS` (migración `20260913180000_appointment_reminder_mass_template`) · `apps/api/src/mass-notice/mass-notice.service.ts` (`templateKindFor()`/`defaultNotaAdicionalFor()` ramifican por `batch.kind`) · `apps/web/app/actions/avisos.ts` (`loadAvisosFileAction`/`requestNoticeRosterAction` aceptan `kind`) · `AvisosClient.tsx` (selector Cancelación/Recordatorio en Paso 1, vista previa y nota por defecto por tipo) | ✅ 4 tests nuevos en `mass-notice.service.spec.ts` + 4 en `avisos.spec.ts`. La supresión de recordatorio duplicado (§8) se generalizó: aplica a los dos `kind`, no solo a cancelación |
+| Purga de retención (§9.3) | `MassNoticeService.purgeExpiredRecipients()` + `purgeExpiredRecipientsCron()` (`@Cron(EVERY_DAY_AT_3AM)`) — por tenant, usa SU `avisosMasivos.retencionDiasDatosPersonales` (default 30 días); ninguna columna nueva, sin `$transaction` (repetir una purga ya hecha es un no-op idempotente) | ✅ 8 tests nuevos — default, override por tenant, agregación multi-tenant, y que el cron no propague errores |
+| Exportar los "sin celular" | `apps/web/lib/avisos-export.ts` (`buildSinCelularCsv()`, puro) + botón "⬇ Descargar CSV" en `RecipientsTable.tsx` — Blob + `<a download>` en el cliente, sin roundtrip al servidor (`batch.recipients` ya está cargado) | ✅ 8 tests (`avisos-export.spec.ts`) — escapado CSV (comas, comillas), fecha vía el helper canónico (nunca `.toLocale*` crudo) |
+| Métrica de entrega | `apps/web/lib/avisos-metrics.ts` (`deliveryRate()`/`aggregateDeliveryRate()`, puros: `sent / (sent + failed)`, `skipped` queda fuera del cálculo a propósito) + `BatchHistory.tsx` (badge de tasa por lote + "entrega global" agregada arriba del historial, con semáforo ≥90 %/≥50 %/resto) | ✅ 8 tests (`avisos-metrics.spec.ts`) — `null` (no `0%`) cuando el lote no tiene intentos todavía |
+| Menú | `apps/web/lib/menus.ts` — label `"Avisos de cancelación"` → `"Avisos masivos"` (ya no es solo cancelación) | ✅ Cubierto por `menus.spec.ts` (no depende del texto exacto) |
+
+**Regresión completa en verde:** `pnpm --filter @agenia/shared exec jest`
+(234/234) · `pnpm --filter api exec jest` (1676/1676) · `pnpm --filter
+mirror-agent exec jest` (455/455) · `pnpm --filter web exec jest` (163/163) ·
+`pnpm --filter web build` · `pnpm --filter api build` · `pnpm --filter
+mirror-agent build` · `pnpm --filter web lint` / `pnpm --filter api lint` (0
+errores) · `node scripts/check-date-rule.mjs` (0 violaciones) · `npx tsc
+--noEmit` (web, 0 errores) · `prisma validate` sin cambios.
+
+**No verificado en este entorno:** mismo límite que Fase 1 y Fase 2 — sin
+Docker en el sandbox, no hubo prueba de extremo a extremo contra una base de
+datos real ni sesión de navegador real. En particular, el cron de purga
+(`EVERY_DAY_AT_3AM`) nunca corrió de verdad — su lógica está probada
+unitariamente, pero no se vio un ciclo real de 24 h.
+
+**Lo único que falta para que el recordatorio masivo salga en producción —
+tampoco es código:** someter `APPOINTMENT_REMINDER_MASS` a aprobación de Meta,
+igual que se hizo con `APPOINTMENT_CANCELLED_MASS` en la Fase 0/1. Sin eso,
+`findTemplate` no la encuentra y `sendBatch` responde "no hay plantilla
+aprobada" — mismo comportamiento ya probado para cancelación.
 
 ---
 

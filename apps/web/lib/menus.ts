@@ -105,10 +105,10 @@ const ESPEJO: MenuItem = {
  * pantalla; solo `ORG_ADMIN` ve el enlace de configuración dentro de ella).
  */
 const AVISOS: MenuItem = {
-    label: 'Avisos de cancelación',
+    label: 'Avisos masivos',
     href: '/dashboard/espejo/avisos',
     icon: '📣',
-    description: 'Aviso masivo por WhatsApp si un especialista no puede asistir',
+    description: 'Aviso o recordatorio por WhatsApp para el día de agenda de un especialista',
     accent: 'rose',
 };
 

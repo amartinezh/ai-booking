@@ -19,6 +19,8 @@ describe('MassNoticeService', () => {
     sendResult?: { success: boolean; error?: string; templateName?: string };
     patientProfile?: any;
     matchingAppointment?: any;
+    retentionConfigs?: any[];
+    retentionBatches?: any[];
   }) => {
     const recipients = overrides?.recipients ?? [
       {
@@ -42,6 +44,7 @@ describe('MassNoticeService', () => {
                 avisosMasivos: { enabled: true, ritmoMensajesPorMinuto: 6000 }, // rápido en tests
               },
         ),
+        findMany: jest.fn(async () => overrides?.retentionConfigs ?? []),
       },
       massNoticeBatch: {
         findFirst: jest.fn(async () =>
@@ -60,11 +63,13 @@ describe('MassNoticeService', () => {
                 sentAt: null,
               },
         ),
+        findMany: jest.fn(async () => overrides?.retentionBatches ?? []),
         update: jest.fn(async () => ({})),
       },
       massNoticeRecipient: {
         findMany: jest.fn(async () => recipients),
         update: jest.fn(async () => ({})),
+        updateMany: jest.fn(async () => ({ count: 0 })),
         count: jest.fn(async ({ where }: any) => {
           if (where.outcome === 'ENVIADO')
             return overrides?.sendResult?.success === false
@@ -357,5 +362,251 @@ describe('MassNoticeService', () => {
         }),
       }),
     );
+  });
+
+  // ── Fase 3: recordatorio masivo — mismo motor, otro `kind` (§10) ────────
+  describe('kind: RECORDATORIO (Fase 3)', () => {
+    it('busca la plantilla APPOINTMENT_REMINDER_MASS, no la de cancelación', async () => {
+      const ctx = build({
+        batch: {
+          id: 'batch-1',
+          organizationId: ORG,
+          kind: 'RECORDATORIO',
+          status: 'BORRADOR',
+          doctorLabel: 'Dr. Serna',
+          serviceLabel: 'Medicina Interna',
+          notaAdicional: null,
+          sent: 0,
+          failed: 0,
+          skipped: 0,
+          sentAt: null,
+        },
+      });
+
+      await ctx.service.sendBatch('batch-1', ORG);
+
+      expect(ctx.templates.findTemplate).toHaveBeenCalledWith(
+        ORG,
+        'APPOINTMENT_REMINDER_MASS',
+      );
+      expect(ctx.templates.sendTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'APPOINTMENT_REMINDER_MASS' }),
+      );
+    });
+
+    it('sin nota adicional, usa "Le esperamos." — no la frase de cancelación', async () => {
+      const ctx = build({
+        batch: {
+          id: 'batch-1',
+          organizationId: ORG,
+          kind: 'RECORDATORIO',
+          status: 'BORRADOR',
+          doctorLabel: 'Dr. Serna',
+          serviceLabel: 'Medicina Interna',
+          notaAdicional: null,
+          sent: 0,
+          failed: 0,
+          skipped: 0,
+          sentAt: null,
+        },
+      });
+
+      await ctx.service.sendBatch('batch-1', ORG);
+
+      expect(ctx.templates.sendTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bodyParams: expect.arrayContaining(['Le esperamos.']),
+        }),
+      );
+    });
+
+    it('sin plantilla de recordatorio aprobada, el mensaje de error la nombra explícitamente', async () => {
+      const ctx = build({
+        batch: {
+          id: 'batch-1',
+          organizationId: ORG,
+          kind: 'RECORDATORIO',
+          status: 'BORRADOR',
+          doctorLabel: 'Dr. Serna',
+          serviceLabel: 'Medicina Interna',
+          notaAdicional: null,
+          sent: 0,
+          failed: 0,
+          skipped: 0,
+          sentAt: null,
+        },
+        template: null,
+      });
+
+      const result = await ctx.service.sendBatch('batch-1', ORG);
+
+      expect(result.error).toContain('APPOINTMENT_REMINDER_MASS');
+    });
+
+    it('un envío exitoso de recordatorio también suprime el recordatorio automático duplicado', async () => {
+      const ctx = build({
+        batch: {
+          id: 'batch-1',
+          organizationId: ORG,
+          kind: 'RECORDATORIO',
+          status: 'BORRADOR',
+          doctorLabel: 'Dr. Serna',
+          serviceLabel: 'Medicina Interna',
+          notaAdicional: null,
+          sent: 0,
+          failed: 0,
+          skipped: 0,
+          sentAt: null,
+        },
+        recipients: [
+          {
+            id: 'rec-1',
+            patientDocument: '111',
+            patientName: 'Ana Pérez',
+            phoneE164: '+573001112233',
+            appointmentAtUtc: new Date('2026-09-24T12:00:00.000Z'),
+            agenIAPatientId: 'patient-agenia-1',
+          },
+        ],
+        matchingAppointment: { id: 'apt-1' },
+      });
+
+      await ctx.service.sendBatch('batch-1', ORG);
+
+      expect(ctx.prisma.appointment.update).toHaveBeenCalledWith({
+        where: { id: 'apt-1' },
+        data: { reminderSentAt: expect.any(Date) },
+      });
+    });
+  });
+
+  // ── Fase 3: purga de retención (§9.3) ────────────────────────────────────
+  describe('purgeExpiredRecipients (§9.3, Fase 3)', () => {
+    it('sin tenants con el driver, no hace nada', async () => {
+      const ctx = build({ retentionConfigs: [] });
+
+      const result = await ctx.service.purgeExpiredRecipients();
+
+      expect(result).toEqual({ purgedBatches: 0 });
+      expect(ctx.prisma.massNoticeBatch.findMany).not.toHaveBeenCalled();
+    });
+
+    it('solo busca tenants con driverKey cnt-sanvicente-anserma', async () => {
+      const ctx = build({ retentionConfigs: [] });
+
+      await ctx.service.purgeExpiredRecipients();
+
+      expect(ctx.prisma.hospitalMirrorConfig.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { driverKey: 'cnt-sanvicente-anserma' },
+        }),
+      );
+    });
+
+    it('un lote vencido: vacía nombre/teléfono de sus destinatarios y marca purgedAt', async () => {
+      const ctx = build({
+        retentionConfigs: [
+          {
+            organizationId: ORG,
+            avisosMasivos: { enabled: true, retencionDiasDatosPersonales: 30 },
+          },
+        ],
+        retentionBatches: [{ id: 'batch-vencido' }],
+      });
+
+      const result = await ctx.service.purgeExpiredRecipients();
+
+      expect(result).toEqual({ purgedBatches: 1 });
+      expect(ctx.prisma.massNoticeRecipient.updateMany).toHaveBeenCalledWith({
+        where: { batchId: 'batch-vencido' },
+        data: { patientName: null, phoneE164: null },
+      });
+      expect(ctx.prisma.massNoticeBatch.update).toHaveBeenCalledWith({
+        where: { id: 'batch-vencido' },
+        data: { purgedAt: expect.any(Date) },
+      });
+    });
+
+    it('sin retencionDiasDatosPersonales configurada, usa 30 días por defecto', async () => {
+      const ctx = build({
+        retentionConfigs: [
+          { organizationId: ORG, avisosMasivos: { enabled: true } },
+        ],
+        retentionBatches: [],
+      });
+
+      await ctx.service.purgeExpiredRecipients();
+
+      const where = ctx.prisma.massNoticeBatch.findMany.mock.calls[0][0].where;
+      const cutoff = where.OR[1].createdAt.lt as Date;
+      const esperado = Date.now() - 30 * 86_400_000;
+      expect(Math.abs(cutoff.getTime() - esperado)).toBeLessThan(5_000);
+    });
+
+    it('respeta un retencionDiasDatosPersonales distinto por tenant', async () => {
+      const ctx = build({
+        retentionConfigs: [
+          {
+            organizationId: ORG,
+            avisosMasivos: { enabled: true, retencionDiasDatosPersonales: 7 },
+          },
+        ],
+        retentionBatches: [],
+      });
+
+      await ctx.service.purgeExpiredRecipients();
+
+      const where = ctx.prisma.massNoticeBatch.findMany.mock.calls[0][0].where;
+      const cutoff = where.OR[1].createdAt.lt as Date;
+      const esperado = Date.now() - 7 * 86_400_000;
+      expect(Math.abs(cutoff.getTime() - esperado)).toBeLessThan(5_000);
+    });
+
+    it('solo mira lotes con purgedAt: null — nunca repurga uno ya purgado', async () => {
+      const ctx = build({
+        retentionConfigs: [
+          { organizationId: ORG, avisosMasivos: { enabled: true } },
+        ],
+        retentionBatches: [],
+      });
+
+      await ctx.service.purgeExpiredRecipients();
+
+      expect(ctx.prisma.massNoticeBatch.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            organizationId: ORG,
+            purgedAt: null,
+          }),
+        }),
+      );
+    });
+
+    it('agrega el conteo de lotes purgados a través de varios tenants', async () => {
+      const ctx = build({
+        retentionConfigs: [
+          { organizationId: 'org-a', avisosMasivos: { enabled: true } },
+          { organizationId: 'org-b', avisosMasivos: { enabled: true } },
+        ],
+        retentionBatches: [{ id: 'batch-1' }, { id: 'batch-2' }],
+      });
+
+      const result = await ctx.service.purgeExpiredRecipients();
+
+      // El mock de findMany no distingue por organización — devuelve los
+      // mismos 2 lotes para cada uno de los 2 tenants: 4 en total.
+      expect(result).toEqual({ purgedBatches: 4 });
+    });
+
+    it('purgeExpiredRecipientsCron() no propaga si la purga falla', async () => {
+      const ctx = build();
+      ctx.prisma.hospitalMirrorConfig.findMany.mockRejectedValueOnce(
+        new Error('boom'),
+      );
+
+      await expect(
+        ctx.service.purgeExpiredRecipientsCron(),
+      ).resolves.toBeUndefined();
+    });
   });
 });

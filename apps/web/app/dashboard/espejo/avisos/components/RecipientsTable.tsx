@@ -1,6 +1,7 @@
 'use client';
 
 import { formatAppointmentCompact, formatDateShort } from '@/lib/date';
+import { buildSinCelularCsv, sinCelularFileName } from '@/lib/avisos-export';
 import type { AvisosRecipientView } from '@/app/actions/avisos';
 
 /**
@@ -12,13 +13,31 @@ export default function RecipientsTable({
     recipients,
     onToggle,
     disabled,
+    batchId,
 }: {
     recipients: AvisosRecipientView[];
     onToggle: (recipientId: string, selected: boolean) => void;
     disabled: boolean;
+    /** Fase 3 (§10, "exportar los sin celular") — nombra el archivo descargado. */
+    batchId: string;
 }) {
     const conCelular = recipients.filter((r) => r.hasValidPhone);
     const sinCelular = recipients.filter((r) => !r.hasValidPhone);
+
+    // Blob + <a download> en memoria: no hay nada que descargar del
+    // servidor, `recipients` ya está cargado en el cliente (§10).
+    function handleDescargarSinCelular() {
+        const csv = buildSinCelularCsv(sinCelular);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = sinCelularFileName(batchId);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
 
     return (
         <div className="space-y-4">
@@ -81,12 +100,24 @@ export default function RecipientsTable({
 
             {sinCelular.length > 0 && (
                 <div className="rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 p-4">
-                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                        {sinCelular.length} paciente(s) sin celular válido — no se les puede enviar WhatsApp
-                    </p>
-                    <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
-                        No se cuelan entre los enviados. Alguien tiene que llamarlos:
-                    </p>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                                {sinCelular.length} paciente(s) sin celular válido — no se les puede
+                                enviar WhatsApp
+                            </p>
+                            <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                                No se cuelan entre los enviados. Alguien tiene que llamarlos:
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleDescargarSinCelular}
+                            className="shrink-0 rounded-lg border border-amber-300 dark:border-amber-800 bg-white dark:bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950/60"
+                        >
+                            ⬇ Descargar CSV
+                        </button>
+                    </div>
                     <ul className="mt-2 space-y-1 text-sm text-amber-800 dark:text-amber-300">
                         {sinCelular.map((r) => (
                             <li key={r.id} className="flex gap-2">
