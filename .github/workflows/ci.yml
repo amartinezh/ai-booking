@@ -42,9 +42,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Sin `with: version`: la versión ya está fijada en el "packageManager"
+      # de package.json ("pnpm@9.0.0"), que este action lee solo. Tenerla en
+      # los dos sitios rompió el CI de todo push desde el 2026-09-10 —
+      # `pnpm/action-setup@v4` empezó a tratar la doble fijación como error
+      # fatal ("Multiple versions of pnpm specified") en vez de preferir una.
+      # Ningún push llegó a fallar por una regresión real: deploy.yml nunca
+      # pudo pasar de aquí (`needs: ci`), así que el VPS se ha estado
+      # actualizando estos días solo por la vía manual (update.sh → SSH
+      # directo), sin que corriera ni una sola prueba antes.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
