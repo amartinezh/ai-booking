@@ -293,6 +293,14 @@ viejo, y reiniciar el servicio. **El estado local
 (`/opt/agenia-mirror-agent/data/state.json`) sobrevive** — el agente no
 empieza de cero ni pierde de vista lo ocurrido durante la actualización.
 
+> 💡 **Atajo para §4.1-§4.2:** `./prepararActualizacionAgente.sh` (💻 en tu
+> portátil) compila `shared`, genera el bundle, lo valida con `node --check`
+> ANTES de transmitir nada, calcula su sha256 (para confirmar después que la
+> transferencia por AnyDesk llegó completa) e imprime los comandos exactos de
+> los dos escenarios de abajo, con las rutas ya puestas — no reemplaza la
+> transmisión manual (sigue siendo manual, por la topología de red del
+> hospital), solo te ahorra escribir los comandos de memoria.
+
 ### 4.1 Compilar el bundle nuevo (💻 en tu portátil)
 
 ```bash
