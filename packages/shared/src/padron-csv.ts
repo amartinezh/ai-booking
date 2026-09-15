@@ -74,11 +74,18 @@ export interface PadronCsvError {
 }
 
 export interface PadronCsvReport {
-  /** true sólo si el archivo tiene al menos una fila y CERO errores. */
+  /** true sólo si el archivo tiene al menos una fila y CERO errores (los warnings NO cuentan). */
   ok: boolean;
   totalDataRows: number;
   validRows: PadronCsvRow[];
   errors: PadronCsvError[];
+  /**
+   * Inconsistencias que NO bloquean el archivo: hoy, solo cédulas
+   * duplicadas. La fila se ignora igual (queda solo la primera aparición en
+   * `validRows`), pero se informa en vez de rechazar todo el archivo — el
+   * usuario decide si importar el resto tal cual.
+   */
+  warnings: PadronCsvError[];
   delimiter: ',' | ';';
   /**
    * Líneas antes del encabezado real que se ignoraron (título del reporte,
@@ -250,6 +257,7 @@ function normalizeRegime(raw: string): PadronRegime | null {
  */
 export function validatePadronCsv(csvText: string): PadronCsvReport {
   const errors: PadronCsvError[] = [];
+  const warnings: PadronCsvError[] = [];
   const validRows: PadronCsvRow[] = [];
 
   // ── Defensa en profundidad: archivo binario disfrazado de .csv ──
@@ -270,6 +278,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
       ],
       delimiter: ',',
       ignoredPreambleLines: 0,
+      warnings: [],
     };
   }
 
@@ -285,6 +294,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
       errors: [{ line: 1, message: 'El archivo está vacío o no tiene encabezado.' }],
       delimiter: ',',
       ignoredPreambleLines: 0,
+      warnings: [],
     };
   }
 
@@ -354,6 +364,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
       ],
       delimiter,
       ignoredPreambleLines: 0,
+      warnings: [],
     };
   }
 
@@ -397,6 +408,12 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
       indexOf[h] !== undefined ? (cells[indexOf[h]!] ?? '') : '';
 
     const rowErrors: PadronCsvError[] = [];
+    // Duplicada NO es un error que bloquee el archivo: es información. La
+    // fila igual se ignora (solo la primera aparición de cada cédula entra a
+    // `validRows`), pero el usuario decide si importar el resto tal cual —
+    // un padrón real de varios miles de filas casi siempre trae algún
+    // duplicado y no tiene sentido obligar a editar el CSV a mano por eso.
+    let esDuplicada = false;
 
     // ── cédula (obligatoria) ──
     const cedula = normalizeDocumento(cell('cedula'));
@@ -409,10 +426,16 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
     } else {
       const firstLine = seenCedulas.get(cedula);
       if (firstLine !== undefined) {
-        rowErrors.push({
+        esDuplicada = true;
+        warnings.push({
           line,
           column: 'cedula',
-          message: `Cédula ${cedula} duplicada en el archivo (ya aparece en la línea ${firstLine}).`,
+          message: `Cédula ${cedula} duplicada en el archivo (ya aparece en la línea ${firstLine}); esta línea se ignora.`,
+          // A diferencia de los errores (donde rawCedula es el texto crudo de
+          // la celda, sin normalizar), acá SÍ es la cédula normalizada: ya
+          // pasó esDocumentoValido, y así el log de importación puede
+          // mostrarla como cédula real en vez de "sin forma válida".
+          rawCedula: cedula,
         });
       } else {
         seenCedulas.set(cedula, line);
@@ -451,7 +474,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
     if (rowErrors.length > 0) {
       const rawCedula = cell('cedula');
       errors.push(...rowErrors.map((e) => (rawCedula ? { ...e, rawCedula } : e)));
-    } else {
+    } else if (!esDuplicada) {
       validRows.push({ line, cedula, regime, phone });
     }
   }
@@ -468,6 +491,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
     totalDataRows,
     validRows,
     errors,
+    warnings,
     delimiter,
     ignoredPreambleLines,
   };

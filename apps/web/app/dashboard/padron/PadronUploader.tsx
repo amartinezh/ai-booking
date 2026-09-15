@@ -512,6 +512,12 @@ export default function PadronUploader() {
                             <strong>{importResult.deactivated ?? 0}</strong> desactivado(s) por no venir en este
                             archivo. Ya pueden agendar por su EPS quienes quedaron activos.
                         </p>
+                        {!!importResult.duplicatesIgnored && (
+                            <p className="text-xs opacity-80">
+                                <strong>{importResult.duplicatesIgnored}</strong> línea(s) con cédula duplicada en el
+                                archivo se ignoraron (solo se importó la primera aparición de cada una).
+                            </p>
+                        )}
                         {importResult.importId && (
                             <Link
                                 href={`/dashboard/padron/historial/${importResult.importId}`}
@@ -537,7 +543,10 @@ export default function PadronUploader() {
                         {report.ok ? (
                             <>
                                 <CheckCircle2 className="h-4 w-4" /> Archivo válido para <strong>{report.epsName}</strong>:{' '}
-                                {report.validCount} afiliado(s) listo(s) para importar.
+                                {report.validCount} afiliado(s) listo(s) para importar
+                                {report.warningCount > 0
+                                    ? ` (${report.warningCount} línea(s) duplicada(s) se van a ignorar, vea abajo).`
+                                    : '.'}
                             </>
                         ) : (
                             <>
@@ -595,7 +604,31 @@ export default function PadronUploader() {
                         </ul>
                     )}
 
-                    {report.errorCount > 0 && (
+                    {report.warningCount > 0 && (
+                        <div className="rounded-lg bg-white/70 dark:bg-zinc-900/40 p-3 space-y-2">
+                            <p className="flex items-start gap-2 font-medium text-amber-700 dark:text-amber-400">
+                                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                                {report.warningCount} línea(s) con cédula duplicada en el archivo. No bloquean la
+                                importación: solo se va a usar la primera aparición de cada cédula, el resto se
+                                ignora. Si importa, quedan ignoradas así — usted decide.
+                            </p>
+                            <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg bg-white/60 dark:bg-zinc-900/40 p-3 text-xs">
+                                {report.warnings.map((warn, idx) => (
+                                    <li key={idx}>
+                                        <strong>Línea {warn.line}</strong>
+                                        {warn.column ? ` · ${warn.column}` : ''}: {warn.message}
+                                    </li>
+                                ))}
+                                {report.warningCount > report.warnings.length && (
+                                    <li className="italic">
+                                        … y {report.warningCount - report.warnings.length} advertencia(s) más.
+                                    </li>
+                                )}
+                            </ul>
+                        </div>
+                    )}
+
+                    {(report.errorCount > 0 || report.warningCount > 0) && (
                         <button
                             type="button"
                             onClick={handleDownloadErrorReport}
@@ -607,7 +640,8 @@ export default function PadronUploader() {
                             ) : (
                                 <Download className="h-3.5 w-3.5" />
                             )}
-                            Descargar reporte completo de errores ({report.errorCount})
+                            Descargar reporte completo ({report.errorCount} error(es), {report.warningCount}{' '}
+                            advertencia(s))
                         </button>
                     )}
                 </div>

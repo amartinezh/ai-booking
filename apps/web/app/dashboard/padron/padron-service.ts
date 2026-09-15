@@ -108,6 +108,10 @@ export interface PadronValidationSummary {
     errorCount: number;
     /** Muestra de errores (máx. MAX_ERRORS_RETURNED) para corregir el archivo. */
     errors: PadronCsvError[];
+    /** Cédulas duplicadas u otras inconsistencias que NO bloquean el archivo. */
+    warningCount: number;
+    /** Muestra de warnings (máx. MAX_ERRORS_RETURNED) — se ignoran al importar, no hace falta corregirlas. */
+    warnings: PadronCsvError[];
     epsId: string;
     epsName: string;
     /** Afiliados actualmente activos de esta EPS, antes de aplicar el corte. */
@@ -130,6 +134,8 @@ export interface PadronImportResult {
     updated?: number;
     reactivated?: number;
     deactivated?: number;
+    /** Filas con cédula duplicada dentro del archivo, ignoradas (solo entró la primera aparición). */
+    duplicatesIgnored?: number;
 }
 
 /** 'ALL' = todo el padrón de la EPS; 'ACTIVE'/'INACTIVE' filtran por `isActive`. */
@@ -234,6 +240,8 @@ export async function runValidatePadronCsv(
                 validCount: report.validRows.length,
                 errorCount: report.errors.length,
                 errors: report.errors.slice(0, MAX_ERRORS_RETURNED),
+                warningCount: report.warnings.length,
+                warnings: report.warnings.slice(0, MAX_ERRORS_RETURNED),
                 epsId: eps.id,
                 epsName: eps.name,
                 activeForEps,
@@ -271,10 +279,17 @@ export async function runGetPadronFullErrorReport(
         const report = validatePadronCsv(csvText);
 
         const escapeCsvCell = (value: string) => `"${value.replace(/"/g, '""')}"`;
-        const lines = ['linea,columna,mensaje'];
+        const lines = ['tipo,linea,columna,mensaje'];
         for (const err of report.errors) {
             lines.push(
-                [String(err.line), escapeCsvCell(err.column ?? ''), escapeCsvCell(err.message)].join(','),
+                ['ERROR', String(err.line), escapeCsvCell(err.column ?? ''), escapeCsvCell(err.message)].join(','),
+            );
+        }
+        for (const warn of report.warnings) {
+            lines.push(
+                ['ADVERTENCIA', String(warn.line), escapeCsvCell(warn.column ?? ''), escapeCsvCell(warn.message)].join(
+                    ',',
+                ),
             );
         }
 
@@ -514,21 +529,30 @@ async function writeAcceptedRows(
     }
 }
 
-/** Filas RECHAZADAS del log — cédula cruda (cuando el parser la alcanzó a leer) + el error. */
-async function writeRejectedRows(
+/**
+ * Filas que NO entraron a `EpsEnrolledPatient`, con su motivo — cédula cruda
+ * (cuando el parser la alcanzó a leer) + el mensaje. Sirve tanto para
+ * `RECHAZADO` (error real, bloqueaba el archivo) como para `DUPLICADO`
+ * (warning: la fila se ignoró pero el archivo se importó igual).
+ */
+async function writeSkippedRows(
     tx: Prisma.TransactionClient,
     importId: string,
-    errors: PadronCsvError[],
+    items: PadronCsvError[],
+    resultado: 'RECHAZADO' | 'DUPLICADO',
 ): Promise<void> {
-    const data = errors.map((err) => ({
+    const data = items.map((item) => ({
         id: randomUUID(),
         importId,
-        line: err.line,
-        cedulaCruda: err.rawCedula ?? '',
-        cedulaNormalizada: null,
-        resultado: 'RECHAZADO',
-        errorColumn: err.column ?? null,
-        errorMessage: err.message,
+        line: item.line,
+        cedulaCruda: item.rawCedula ?? '',
+        // Para DUPLICADO, rawCedula YA es la cédula normalizada (ver
+        // padron-csv.ts): la fila pasó la validación de forma, solo se
+        // ignoró por repetida. Para RECHAZADO no hay garantía de eso.
+        cedulaNormalizada: resultado === 'DUPLICADO' ? (item.rawCedula ?? null) : null,
+        resultado,
+        errorColumn: item.column ?? null,
+        errorMessage: item.message,
     }));
     for (let i = 0; i < data.length; i += UPSERT_CHUNK_ROWS) {
         await tx.padronImportRow.createMany({ data: data.slice(i, i + UPSERT_CHUNK_ROWS) });
@@ -645,7 +669,10 @@ export async function runImportPadronCsv(
 
                 await writeAcceptedRows(tx, importId, report.validRows, estadoPrevio);
                 if (report.errors.length > 0) {
-                    await writeRejectedRows(tx, importId, report.errors);
+                    await writeSkippedRows(tx, importId, report.errors, 'RECHAZADO');
+                }
+                if (report.warnings.length > 0) {
+                    await writeSkippedRows(tx, importId, report.warnings, 'DUPLICADO');
                 }
 
                 return deactivatedCount;
@@ -655,7 +682,15 @@ export async function runImportPadronCsv(
 
         revalidatePath('/dashboard/padron');
         revalidatePath('/dashboard/padron/historial');
-        return { success: true, importId, created, updated, reactivated, deactivated };
+        return {
+            success: true,
+            importId,
+            created,
+            updated,
+            reactivated,
+            deactivated,
+            duplicatesIgnored: report.warnings.length,
+        };
     } catch (e: unknown) {
         console.error('[padron] runImportPadronCsv:', e);
         const message = e instanceof Error ? e.message : 'Error al importar el padrón';

@@ -16,7 +16,7 @@ import { FileFormatBadge, ResultadoBadge } from '../page';
 export const dynamic = 'force-dynamic';
 
 const PAGE_SIZE = 50;
-const RESULTADOS = ['CREADO', 'ACTUALIZADO', 'REACTIVADO', 'RECHAZADO'] as const;
+const RESULTADOS = ['CREADO', 'ACTUALIZADO', 'REACTIVADO', 'RECHAZADO', 'DUPLICADO'] as const;
 
 // ─────────────────────────────────────────────────────────────
 // DETALLE DE UN CORTE — cada línea del archivo, con su resultado. Filtrable
@@ -169,7 +169,7 @@ export default async function PadronImportDetailPage({
                                     <ResultadoBadge resultado={row.resultado} />
                                 </TableCell>
                                 <TableCell className="text-xs text-zinc-500">
-                                    {row.resultado === 'RECHAZADO'
+                                    {row.resultado === 'RECHAZADO' || row.resultado === 'DUPLICADO'
                                         ? `${row.errorColumn ? `${row.errorColumn}: ` : ''}${row.errorMessage ?? ''}`
                                         : row.cedulaNormalizada && (
                                               <Link

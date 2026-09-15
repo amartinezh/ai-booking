@@ -97,8 +97,25 @@ describe('validatePadronCsv', () => {
     const byLine = (line: number) => report.errors.find((e) => e.line === line);
     expect(byLine(2)?.column).toBe('cedula');
     expect(byLine(3)?.column).toBe('cedula'); // todo-ceros también es inválida
-    expect(byLine(5)?.message).toContain('duplicada');
-    expect(byLine(5)?.message).toContain('línea 4');
+
+    // La duplicada NO es un error que bloquee el archivo: es un warning.
+    expect(byLine(5)).toBeUndefined();
+    const duplicada = report.warnings.find((w) => w.line === 5);
+    expect(duplicada?.message).toContain('duplicada');
+    expect(duplicada?.message).toContain('línea 4');
+  });
+
+  it('un archivo con SOLO cédulas duplicadas queda ok:true — el duplicado no bloquea el archivo', () => {
+    const csv = [HEADER, '11112222,,', '11112222,,', '33334444,,'].join('\n');
+
+    const report = validatePadronCsv(csv);
+
+    expect(report.ok).toBe(true);
+    expect(report.errors).toHaveLength(0);
+    expect(report.validRows).toHaveLength(2); // solo la primera aparición de cada cédula
+    expect(report.warnings).toHaveLength(1);
+    expect(report.warnings[0]).toMatchObject({ line: 3, column: 'cedula', rawCedula: '11112222' });
+    expect(report.warnings[0].message).toContain('se ignora');
   });
 
   it('valida régimen cuando viene con datos corruptos (telefono corrupto se tolera aparte)', () => {
