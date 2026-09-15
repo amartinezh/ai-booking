@@ -78,10 +78,10 @@ describe('validatePadronCsv', () => {
     expect(soloHeader.errors[0].message).toContain('solo encabezado');
   });
 
-  it('reporta errores por línea: cédula inválida y duplicados', () => {
+  it('cédula inválida o duplicada son warnings, no errores: no bloquean el archivo', () => {
     const csv = [
       HEADER,
-      'abc,,', // cédula no numérica → línea 2
+      'abc,,', // cédula no numérica (ej. fila de pie de página) → línea 2
       '0000,,', // todo-ceros → línea 3
       '33334444,,', // OK → línea 4
       '33334444,,', // cédula duplicada → línea 5
@@ -89,18 +89,18 @@ describe('validatePadronCsv', () => {
 
     const report = validatePadronCsv(csv);
 
-    expect(report.ok).toBe(false);
+    expect(report.ok).toBe(true); // ninguna de las cuatro filas produce un error bloqueante
+    expect(report.errors).toHaveLength(0);
     expect(report.totalDataRows).toBe(4);
     expect(report.validRows).toHaveLength(1);
     expect(report.validRows[0].line).toBe(4);
 
-    const byLine = (line: number) => report.errors.find((e) => e.line === line);
+    const byLine = (line: number) => report.warnings.find((w) => w.line === line);
     expect(byLine(2)?.column).toBe('cedula');
+    expect(byLine(2)?.message).toContain('se ignora');
     expect(byLine(3)?.column).toBe('cedula'); // todo-ceros también es inválida
 
-    // La duplicada NO es un error que bloquee el archivo: es un warning.
-    expect(byLine(5)).toBeUndefined();
-    const duplicada = report.warnings.find((w) => w.line === 5);
+    const duplicada = byLine(5);
     expect(duplicada?.message).toContain('duplicada');
     expect(duplicada?.message).toContain('línea 4');
   });
@@ -116,6 +116,24 @@ describe('validatePadronCsv', () => {
     expect(report.warnings).toHaveLength(1);
     expect(report.warnings[0]).toMatchObject({ line: 3, column: 'cedula', rawCedula: '11112222' });
     expect(report.warnings[0].message).toContain('se ignora');
+  });
+
+  it('tolera filas de pie de página al final del archivo (cédula no numérica) sin bloquear el resto', () => {
+    const csv = [
+      HEADER,
+      '11112222,SUBSIDIADO,',
+      '33334444,CONTRIBUTIVO,',
+      'NOMBRE DE LA IPS,,',
+      'ESE HOSPITAL SAN VICENTE DE PAUL,,',
+    ].join('\n');
+
+    const report = validatePadronCsv(csv);
+
+    expect(report.ok).toBe(true);
+    expect(report.errors).toHaveLength(0);
+    expect(report.validRows).toHaveLength(2);
+    expect(report.warnings).toHaveLength(2);
+    expect(report.warnings.every((w) => w.message.includes('Cédula inválida'))).toBe(true);
   });
 
   it('valida régimen cuando viene con datos corruptos (telefono corrupto se tolera aparte)', () => {

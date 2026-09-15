@@ -134,8 +134,8 @@ export interface PadronImportResult {
     updated?: number;
     reactivated?: number;
     deactivated?: number;
-    /** Filas con cédula duplicada dentro del archivo, ignoradas (solo entró la primera aparición). */
-    duplicatesIgnored?: number;
+    /** Filas ignoradas por cédula duplicada o inválida (no bloquearon el archivo, pero no se importaron). */
+    warningsIgnored?: number;
 }
 
 /** 'ALL' = todo el padrón de la EPS; 'ACTIVE'/'INACTIVE' filtran por `isActive`. */
@@ -539,7 +539,7 @@ async function writeSkippedRows(
     tx: Prisma.TransactionClient,
     importId: string,
     items: PadronCsvError[],
-    resultado: 'RECHAZADO' | 'DUPLICADO',
+    resultado: 'RECHAZADO' | 'DUPLICADO' | 'INVALIDA',
 ): Promise<void> {
     const data = items.map((item) => ({
         id: randomUUID(),
@@ -548,7 +548,7 @@ async function writeSkippedRows(
         cedulaCruda: item.rawCedula ?? '',
         // Para DUPLICADO, rawCedula YA es la cédula normalizada (ver
         // padron-csv.ts): la fila pasó la validación de forma, solo se
-        // ignoró por repetida. Para RECHAZADO no hay garantía de eso.
+        // ignoró por repetida. Para RECHAZADO/INVALIDA no hay garantía de eso.
         cedulaNormalizada: resultado === 'DUPLICADO' ? (item.rawCedula ?? null) : null,
         resultado,
         errorColumn: item.column ?? null,
@@ -683,8 +683,13 @@ export async function runImportPadronCsv(
                 if (report.errors.length > 0) {
                     await writeSkippedRows(tx, importId, report.errors, 'RECHAZADO');
                 }
-                if (report.warnings.length > 0) {
-                    await writeSkippedRows(tx, importId, report.warnings, 'DUPLICADO');
+                const duplicadas = report.warnings.filter((w) => w.kind === 'DUPLICADA');
+                const invalidas = report.warnings.filter((w) => w.kind !== 'DUPLICADA');
+                if (duplicadas.length > 0) {
+                    await writeSkippedRows(tx, importId, duplicadas, 'DUPLICADO');
+                }
+                if (invalidas.length > 0) {
+                    await writeSkippedRows(tx, importId, invalidas, 'INVALIDA');
                 }
 
                 return deactivatedCount;
@@ -701,7 +706,7 @@ export async function runImportPadronCsv(
             updated,
             reactivated,
             deactivated,
-            duplicatesIgnored: report.warnings.length,
+            warningsIgnored: report.warnings.length,
         };
     } catch (e: unknown) {
         console.error('[padron] runImportPadronCsv:', e);

@@ -142,7 +142,9 @@ export default async function PadronHistorialPage({
                                             <ResultadoBadge resultado={row.resultado} />
                                         </TableCell>
                                         <TableCell className="text-xs text-zinc-500 max-w-xs">
-                                            {row.resultado === 'RECHAZADO' || row.resultado === 'DUPLICADO'
+                                            {row.resultado === 'RECHAZADO' ||
+                                            row.resultado === 'DUPLICADO' ||
+                                            row.resultado === 'INVALIDA'
                                                 ? `${row.errorColumn ? `${row.errorColumn}: ` : ''}${row.errorMessage ?? ''}`
                                                 : '—'}
                                         </TableCell>
@@ -440,6 +442,7 @@ export function ResultadoBadge({ resultado }: { resultado: string }) {
         REACTIVADO: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400',
         RECHAZADO: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400',
         DUPLICADO: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
+        INVALIDA: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400',
     };
     return (
         <span

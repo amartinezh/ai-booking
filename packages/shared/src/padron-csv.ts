@@ -71,6 +71,13 @@ export interface PadronCsvError {
    * cédula es la columna que falló.
    */
   rawCedula?: string;
+  /**
+   * Solo en `PadronCsvReport.warnings`: distingue por qué se ignoró la fila,
+   * para que el importador pueda registrar el motivo correcto en el log de
+   * auditoría (`PadronImportRow.resultado`) en vez de etiquetar todo como
+   * "duplicado".
+   */
+  kind?: 'DUPLICADA' | 'INVALIDA';
 }
 
 export interface PadronCsvReport {
@@ -408,25 +415,32 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
       indexOf[h] !== undefined ? (cells[indexOf[h]!] ?? '') : '';
 
     const rowErrors: PadronCsvError[] = [];
-    // Duplicada NO es un error que bloquee el archivo: es información. La
-    // fila igual se ignora (solo la primera aparición de cada cédula entra a
-    // `validRows`), pero el usuario decide si importar el resto tal cual —
-    // un padrón real de varios miles de filas casi siempre trae algún
-    // duplicado y no tiene sentido obligar a editar el CSV a mano por eso.
-    let esDuplicada = false;
+    // Ni cédula inválida ni duplicada bloquean el archivo entero: son
+    // información, no un error que obligue a editar el CSV a mano. Los
+    // padrones reales de la EPS traen basura real — filas de pie de página
+    // que el exportador de Excel arrastra como si fueran datos ("NOMBRE DE
+    // LA IPS", el nombre del hospital repetido al final) tienen "cédula" no
+    // numérica y, sin esto, tumbaban la carga de miles de filas buenas por
+    // dos líneas de relleno al final del archivo. La fila se ignora igual
+    // (no entra a `validRows`, no hay cédula válida con la que importarla),
+    // pero el usuario decide si el resto del archivo se importa tal cual.
+    let seOmite = false;
 
     // ── cédula (obligatoria) ──
     const cedula = normalizeDocumento(cell('cedula'));
     if (!esDocumentoValido(cedula)) {
-      rowErrors.push({
+      seOmite = true;
+      warnings.push({
         line,
         column: 'cedula',
-        message: `Cédula inválida "${cell('cedula')}": debe tener entre 4 y 15 dígitos y no ser solo ceros.`,
+        message: `Cédula inválida "${cell('cedula')}": debe tener entre 4 y 15 dígitos y no ser solo ceros; esta línea se ignora.`,
+        rawCedula: cell('cedula') || undefined,
+        kind: 'INVALIDA',
       });
     } else {
       const firstLine = seenCedulas.get(cedula);
       if (firstLine !== undefined) {
-        esDuplicada = true;
+        seOmite = true;
         warnings.push({
           line,
           column: 'cedula',
@@ -436,6 +450,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
           // pasó esDocumentoValido, y así el log de importación puede
           // mostrarla como cédula real en vez de "sin forma válida".
           rawCedula: cedula,
+          kind: 'DUPLICADA',
         });
       } else {
         seenCedulas.set(cedula, line);
@@ -474,7 +489,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
     if (rowErrors.length > 0) {
       const rawCedula = cell('cedula');
       errors.push(...rowErrors.map((e) => (rawCedula ? { ...e, rawCedula } : e)));
-    } else if (!esDuplicada) {
+    } else if (!seOmite) {
       validRows.push({ line, cedula, regime, phone });
     }
   }

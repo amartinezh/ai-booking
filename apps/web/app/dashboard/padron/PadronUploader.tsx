@@ -512,10 +512,10 @@ export default function PadronUploader() {
                             <strong>{importResult.deactivated ?? 0}</strong> desactivado(s) por no venir en este
                             archivo. Ya pueden agendar por su EPS quienes quedaron activos.
                         </p>
-                        {!!importResult.duplicatesIgnored && (
+                        {!!importResult.warningsIgnored && (
                             <p className="text-xs opacity-80">
-                                <strong>{importResult.duplicatesIgnored}</strong> línea(s) con cédula duplicada en el
-                                archivo se ignoraron (solo se importó la primera aparición de cada una).
+                                <strong>{importResult.warningsIgnored}</strong> línea(s) se ignoraron por cédula
+                                duplicada o inválida (vea el detalle en el log de esta carga).
                             </p>
                         )}
                         {importResult.importId && (
@@ -545,7 +545,7 @@ export default function PadronUploader() {
                                 <CheckCircle2 className="h-4 w-4" /> Archivo válido para <strong>{report.epsName}</strong>:{' '}
                                 {report.validCount} afiliado(s) listo(s) para importar
                                 {report.warningCount > 0
-                                    ? ` (${report.warningCount} línea(s) duplicada(s) se van a ignorar, vea abajo).`
+                                    ? ` (${report.warningCount} línea(s) con advertencia se van a ignorar, vea abajo).`
                                     : '.'}
                             </>
                         ) : (
@@ -608,9 +608,10 @@ export default function PadronUploader() {
                         <div className="rounded-lg bg-white/70 dark:bg-zinc-900/40 p-3 space-y-2">
                             <p className="flex items-start gap-2 font-medium text-amber-700 dark:text-amber-400">
                                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                                {report.warningCount} línea(s) con cédula duplicada en el archivo. No bloquean la
-                                importación: solo se va a usar la primera aparición de cada cédula, el resto se
-                                ignora. Si importa, quedan ignoradas así — usted decide.
+                                {report.warningCount} línea(s) con cédula duplicada o inválida en el archivo. No
+                                bloquean la importación: esas líneas simplemente se ignoran (no hay con qué
+                                identificarlas o ya entró la primera aparición). Si importa, quedan así — usted
+                                decide.
                             </p>
                             <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg bg-white/60 dark:bg-zinc-900/40 p-3 text-xs">
                                 {report.warnings.map((warn, idx) => (
