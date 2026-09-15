@@ -14,7 +14,8 @@ export async function saveDoctorAction(formData: FormData) {
     const fullName = formData.get('fullName') as string;
     const cedula = formData.get('cedula') as string;
     const serviceId = formData.get('serviceId') as string;
-    const medicalLicense = formData.get('medicalLicense') as string;
+    const medicalLicenseRaw = formData.get('medicalLicense') as string;
+    const medicalLicense = medicalLicenseRaw?.trim() || null;
     const phone = formData.get('phone') as string;
     const isActive = formData.get('isActive') === 'true';
     const whatsappBookingEnabled = formData.get('whatsappBookingEnabled') === 'true';
