@@ -433,18 +433,17 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
       }
     }
 
-    // ── teléfono (opcional) ──
+    // ── teléfono (opcional, y con mucha basura real en los padrones de EPS:
+    // "0", relleno, fijos truncados). Es dato de valor cuando viene bien,
+    // pero nunca motivo para rechazar la fila entera — la cédula ya la
+    // identifica. Si no parece un teléfono real, se descarta en silencio en
+    // vez de reportarse como error: rechazar la fila perdía también la
+    // cédula/régimen, que sí eran buenos.
     let phone: string | null = null;
     const phoneRaw = cell('telefono');
     if (phoneRaw) {
       const digits = phoneRaw.replace(/[\s\-().]/g, '').replace(/^\+/, '');
-      if (!/^\d{7,15}$/.test(digits)) {
-        rowErrors.push({
-          line,
-          column: 'telefono',
-          message: `Teléfono inválido "${phoneRaw}": debe tener entre 7 y 15 dígitos.`,
-        });
-      } else {
+      if (/^\d{7,15}$/.test(digits)) {
         phone = digits;
       }
     }

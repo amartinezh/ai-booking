@@ -31,6 +31,18 @@ describe('validatePadronCsv', () => {
     });
   });
 
+  it('tolera un teléfono con formato de basura ("0", muy corto) sin rechazar la fila', () => {
+    const csv = [HEADER, '12345678,SUBSIDIADO,0', '87654321,SUBSIDIADO,2999'].join('\n');
+
+    const report = validatePadronCsv(csv);
+
+    expect(report.ok).toBe(true);
+    expect(report.errors).toHaveLength(0);
+    expect(report.validRows).toHaveLength(2);
+    expect(report.validRows[0]).toMatchObject({ cedula: '12345678', regime: 'SUBSIDIADO', phone: null });
+    expect(report.validRows[1]).toMatchObject({ cedula: '87654321', regime: 'SUBSIDIADO', phone: null });
+  });
+
   it('acepta el delimitador ";" de Excel es-CO y encabezados con alias/tildes', () => {
     const csv = ['Cédula;Tipo de Afiliación;Celular', '12345678;contributivo;'].join('\r\n');
 
@@ -89,14 +101,14 @@ describe('validatePadronCsv', () => {
     expect(byLine(5)?.message).toContain('línea 4');
   });
 
-  it('valida los campos opcionales cuando vienen con datos corruptos', () => {
+  it('valida régimen cuando viene con datos corruptos (telefono corrupto se tolera aparte)', () => {
     const csv = [HEADER, '55556666,RARO,12'].join('\n');
 
     const report = validatePadronCsv(csv);
 
     expect(report.ok).toBe(false);
     const columns = report.errors.map((e) => e.column);
-    expect(columns).toEqual(expect.arrayContaining(['regimen', 'telefono']));
+    expect(columns).toEqual(['regimen']);
   });
 
   it('ignora líneas vacías al final y tolera el BOM de Excel', () => {
@@ -166,7 +178,7 @@ describe('validatePadronCsv', () => {
   });
 
   it('adjunta la cédula cruda a los errores de una fila, para poder trazarla sin guardar toda la fila', () => {
-    const csv = [HEADER, '55556666,RARO,12'].join('\n'); // regimen y telefono inválidos
+    const csv = [HEADER, '55556666,RARO,12'].join('\n'); // regimen inválido (telefono "12" se tolera)
     const report = validatePadronCsv(csv);
 
     expect(report.errors.every((e) => e.rawCedula === '55556666')).toBe(true);
