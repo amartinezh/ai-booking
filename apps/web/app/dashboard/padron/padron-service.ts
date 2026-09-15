@@ -632,6 +632,33 @@ export async function runImportPadronCsv(
 
         const deactivated = await prisma.$transaction(
             async (tx) => {
+                // El padre (`PadronImport`) tiene que existir ANTES que
+                // cualquier hijo que lo referencie por FK — `EpsEnrolledPatient`
+                // (vía upsertPadronChunk) y `PadronImportRow` (vía
+                // writeAcceptedRows/writeSkippedRows) ambos apuntan a este id.
+                // `deactivated` se completa después con un UPDATE puntual: su
+                // valor real solo se conoce tras aplicar el corte, pero la fila
+                // padre no puede esperar a eso.
+                await tx.padronImport.create({
+                    data: {
+                        id: importId,
+                        epsId: eps.id,
+                        organizationId,
+                        fileName: fileName?.trim() || 'padron.csv',
+                        fileHash,
+                        totalDataRows: report.totalDataRows,
+                        validRows: report.validRows.length,
+                        errorRows: report.errors.length,
+                        created,
+                        updated,
+                        reactivated,
+                        deactivated: 0,
+                        deactivationWasConfirmed: needsConfirmation ? true : null,
+                        createdByUserId: userId,
+                        createdAt: importedAt,
+                    },
+                });
+
                 for (let i = 0; i < report.validRows.length; i += UPSERT_CHUNK_ROWS) {
                     await upsertPadronChunk(tx, report.validRows.slice(i, i + UPSERT_CHUNK_ROWS), {
                         organizationId,
@@ -647,24 +674,9 @@ export async function runImportPadronCsv(
                     importId,
                 });
 
-                await tx.padronImport.create({
-                    data: {
-                        id: importId,
-                        epsId: eps.id,
-                        organizationId,
-                        fileName: fileName?.trim() || 'padron.csv',
-                        fileHash,
-                        totalDataRows: report.totalDataRows,
-                        validRows: report.validRows.length,
-                        errorRows: report.errors.length,
-                        created,
-                        updated,
-                        reactivated,
-                        deactivated: deactivatedCount,
-                        deactivationWasConfirmed: needsConfirmation ? true : null,
-                        createdByUserId: userId,
-                        createdAt: importedAt,
-                    },
+                await tx.padronImport.update({
+                    where: { id: importId },
+                    data: { deactivated: deactivatedCount },
                 });
 
                 await writeAcceptedRows(tx, importId, report.validRows, estadoPrevio);
