@@ -149,12 +149,20 @@ export default function EspejoClient({ data }: { data: Estado }) {
                         {!config.pullEnabled && ' · lectura del hospital PAUSADA'}
                     </p>
                 </div>
-                <Link
-                    href="/dashboard/espejo/auditoria"
-                    className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                >
-                    Ver auditoría detallada →
-                </Link>
+                <div className="flex flex-wrap gap-2">
+                    <Link
+                        href="/dashboard/espejo/homologacion"
+                        className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                        Homologar médicos →
+                    </Link>
+                    <Link
+                        href="/dashboard/espejo/auditoria"
+                        className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                        Ver auditoría detallada →
+                    </Link>
+                </div>
             </header>
 
             <section className="grid gap-4 sm:grid-cols-2">
