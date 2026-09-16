@@ -351,10 +351,22 @@ export class MirrorEngine {
         ) {
           return this.driver.rescheduleAppointment(canonical);
         }
-        return this.driver.updateAttendance({
-          ...canonical,
-          op: 'ATTENDANCE',
-        });
+        // Ni cancelación ni reagendamiento: lo único que queda es un cambio
+        // de asistencia. Escribir asistencia hacia el HIS está DECIDIDO EN
+        // CONTRA, no "pendiente" — la marca el hospital en su propia
+        // aplicación y el agente ya la lee por detectChanges (ver
+        // docs/drivers/cnt-sanvicente-anserma/ESTADO.md, "la decisión...
+        // sigue en contra"). Enrutar aquí a updateAttendance() —que siempre
+        // lanza, sea cual sea el evento— solo quemaba diez intentos y
+        // terminaba en dead-letter. Mismo tratamiento que una entidad que
+        // este driver no espeja: "saltado", no "fallo" (ver el bloque de
+        // `entityType !== 'APPOINTMENT'` arriba).
+        return {
+          success: false,
+          unsupported: true,
+          message:
+            'UPDATE de cita sin cancelación ni reagendamiento (asistencia u otro campo): este driver no escribe asistencia hacia el HIS por decisión de producto.',
+        };
       }
 
       default:

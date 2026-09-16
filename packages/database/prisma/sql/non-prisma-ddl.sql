@@ -105,9 +105,24 @@ CREATE TRIGGER trg_sync_outbox_doctor_profile
   AFTER INSERT OR UPDATE OR DELETE ON "DoctorProfile"
   FOR EACH ROW EXECUTE FUNCTION fn_sync_outbox('DOCTOR');
 
+-- `UPDATE OF <columnas>`, no `UPDATE` a secas: sin esto, CUALQUIER UPDATE de
+-- `Appointment` generaba un evento hacia el HIS, incluidos campos 100%
+-- internos de AgenIA como `reminderSentAt` (lo toca el cron de recordatorios
+-- en cada cita agendada). Esos eventos no tenían nada que ofrecerle al HIS,
+-- caían siempre en el mismo cajón sin implementar del motor (ver
+-- core/engine.ts, case 'UPDATE') y terminaban quemando sus diez intentos en
+-- dead-letter — no por un fallo real, sino por un campo que al hospital no le
+-- importa. La lista es un ALLOWLIST a propósito (falla seguro): un campo
+-- interno nuevo que se agregue después no dispara el trigger por accidente,
+-- hay que agregarlo aquí a mano si alguna vez sí le importa al HIS.
+-- Postgres dispara `UPDATE OF` cuando la columna aparece en el SET del
+-- UPDATE — que es exactamente lo que genera Prisma: solo los campos que de
+-- verdad cambiaron.
 DROP TRIGGER IF EXISTS trg_sync_outbox_appointment ON "Appointment";
 CREATE TRIGGER trg_sync_outbox_appointment
-  AFTER INSERT OR UPDATE OR DELETE ON "Appointment"
+  AFTER INSERT OR DELETE OR UPDATE OF
+    status, "scheduleSlotId", "patientId", "epsId", reason, "attendanceStatus"
+  ON "Appointment"
   FOR EACH ROW EXECUTE FUNCTION fn_sync_outbox('APPOINTMENT');
 
 -- ═══════════════════════════════════════════════════════════════════════════

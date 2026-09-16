@@ -154,7 +154,9 @@ describe('fetchNoticeRoster', () => {
   });
 
   it('trae también DE_TELE_ACOM_PAC como companionPhone (§3.4/J.5) — el servidor decide si lo usa', async () => {
-    const { driver } = conDriver([{ ...FILA_BASE, telefonoAcom: '3009876543' }]);
+    const { driver } = conDriver([
+      { ...FILA_BASE, telefonoAcom: '3009876543' },
+    ]);
 
     const roster = await driver.fetchNoticeRoster(VENTANA);
 

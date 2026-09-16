@@ -160,15 +160,18 @@ describe('MirrorEngine', () => {
       expect(driver.cancelAppointment).toHaveBeenCalledTimes(1);
     });
 
-    it('op=UPDATE → driver.updateAttendance', async () => {
+    it('op=UPDATE sin cancelación ni reagendamiento → se salta, no llama a ningún método de escritura', async () => {
       api.getPendingEvents.mockResolvedValueOnce([
         outboxEvent({ op: 'UPDATE' }),
       ]);
-      driver.updateAttendance.mockResolvedValueOnce({ success: true });
 
-      await engine.pullAndApplyOutboxEvents();
+      const result = await engine.pullAndApplyOutboxEvents();
 
-      expect(driver.updateAttendance).toHaveBeenCalledTimes(1);
+      expect(driver.updateAttendance).not.toHaveBeenCalled();
+      expect(driver.cancelAppointment).not.toHaveBeenCalled();
+      expect(driver.rescheduleAppointment).not.toHaveBeenCalled();
+      expect(result.skippedUnsupported).toBe(1);
+      expect(result.failed).toBe(0);
     });
   });
 
@@ -476,7 +479,15 @@ describe('MirrorEngine', () => {
       expect(driver.createAppointment).not.toHaveBeenCalled();
     });
 
-    it('el cupo NO cambió → es asistencia, no reagendamiento', async () => {
+    // ⚠️ DEAD-LETTER FANTASMA. `updateAttendance()` está sin implementar a
+    // propósito (decisión en contra, no "pendiente" — ver ESTADO.md: la
+    // asistencia la marca el hospital en su app, el agente ya la lee).
+    // Antes de este fix, CUALQUIER UPDATE que no fuera cancelación ni
+    // reagendamiento caía aquí y `updateAttendance()` siempre lanzaba — así
+    // que hasta un campo 100% interno de AgenIA como `reminderSentAt` (lo
+    // toca el cron de recordatorios en cada cita) quemaba diez intentos y
+    // terminaba en dead-letter sin que nada estuviera realmente roto.
+    it('el cupo NO cambió (asistencia o cualquier otro campo) → se salta, NO llama a updateAttendance', async () => {
       api.getPendingEvents.mockResolvedValueOnce([
         conPayload(
           { id: 'apt1', status: 'SCHEDULED', attendanceStatus: 'ATTENDED' },
@@ -486,12 +497,13 @@ describe('MirrorEngine', () => {
           },
         ),
       ]);
-      driver.updateAttendance.mockResolvedValueOnce({ success: true });
 
-      await engine.pullAndApplyOutboxEvents();
+      const result = await engine.pullAndApplyOutboxEvents();
 
-      expect(driver.updateAttendance).toHaveBeenCalledTimes(1);
+      expect(driver.updateAttendance).not.toHaveBeenCalled();
       expect(driver.rescheduleAppointment).not.toHaveBeenCalled();
+      expect(result.skippedUnsupported).toBe(1);
+      expect(result.failed).toBe(0);
     });
 
     it('una cancelación gana sobre un cambio de cupo simultáneo', async () => {
