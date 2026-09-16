@@ -1724,6 +1724,46 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(p.gender).toBe('M');
     });
 
+    it('8.9 dos pacientes NUEVOS y distintos desde el mismo WhatsApp no se contaminan entre sí', async () => {
+      // Regresión: `siguienteDatoDeAlta` guardaba nombres/apellidos/nacimiento/
+      // sexo/régimen bajo organizationId:senderId — nunca la cédula. Si el
+      // mismo número daba de alta a una SEGUNDA persona nueva antes de que
+      // expirara la sesión de la primera, el bot encontraba esos campos "ya
+      // guardados" y se los adjudicaba en silencio a la segunda persona, sin
+      // volver a preguntar. Detectado dando de alta a "Pedro" y luego, en el
+      // mismo hilo, a "Juan" — Juan terminó con el apellido y la fecha de
+      // nacimiento de Pedro.
+      await hastaElNombre(); // primera persona: Juan Pérez, cédula 1088123456
+      await responderAlta(say);
+      await say('Sí'); // confirma y agenda
+
+      // Segunda persona, MISMO hilo de WhatsApp, cédula distinta, nombre y
+      // apellido distintos.
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say('99887766');
+      await say('Pedro');
+
+      // Si el bug sigue vivo, esto saltaría directo a AWAITING_CONFIRMATION
+      // (o a otro estado) reutilizando el apellido de Juan sin preguntar.
+      expect(lastSent()).toMatch(/apellido/i);
+      expect(await state()).toBe(ChatState.AWAITING_APELLIDOS);
+
+      await say('Gómez');
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+      expect(lastSent()).toMatch(/fecha de nacimiento/i);
+
+      await responderAlta(say);
+      await say('Sí');
+
+      const pedro = db.patients.find((p) => p.cedula === '99887766');
+      expect(pedro?.fullName).toContain('Pedro');
+      expect(pedro?.fullName).toContain('Gómez');
+      expect(pedro?.fullName).not.toContain('Pérez');
+    });
+
     it('8.8 a un paciente que YA existe no se le pregunta nada de esto', async () => {
       db.patients.push({
         id: 'pat-viejo',

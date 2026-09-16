@@ -5084,6 +5084,37 @@ export class ChatbotService implements OnModuleInit {
           );
         }
       } else {
+        // 🚨 Todo el estado temporal del alta (nombres, apellidos, nacimiento,
+        // sexo, régimen) vive bajo `organizationId:senderId` — el número de
+        // WhatsApp, NUNCA la cédula. Si el mismo número da de alta a una
+        // SEGUNDA persona nueva (otro hijo, un familiar) antes de que esa
+        // sesión expire, el código de abajo encuentra esos campos "ya
+        // guardados" y se salta las preguntas — pero son los datos de la
+        // primera persona, no de esta. Sin este guardia, un paciente nuevo
+        // podía quedar con el apellido, la fecha de nacimiento y el sexo de
+        // alguien más, en silencio, sin volver a preguntar nada.
+        const cedulaAltaPrevia = await this.redis.get(
+          this.altaCedulaKey(organizationId, senderId),
+        );
+        if (cedulaAltaPrevia && cedulaAltaPrevia !== finalCedula) {
+          await Promise.all([
+            this.redis.del(`temp_nombre:${organizationId}:${senderId}`),
+            this.redis.del(`temp_nombres:${organizationId}:${senderId}`),
+            this.redis.del(`temp_apellidos:${organizationId}:${senderId}`),
+            this.redis.del(
+              this.altaKey(organizationId, senderId, 'nacimiento'),
+            ),
+            this.redis.del(this.altaKey(organizationId, senderId, 'sexo')),
+            this.redis.del(this.altaKey(organizationId, senderId, 'regimen')),
+          ]);
+        }
+        await this.redis.set(
+          this.altaCedulaKey(organizationId, senderId),
+          finalCedula,
+          'EX',
+          SESSION_TTL,
+        );
+
         // Paciente nuevo: pedir nombre.
         if (!finalNombre) {
           const reply = MSGS.primeraVez();
@@ -5467,6 +5498,17 @@ export class ChatbotService implements OnModuleInit {
     dato: 'nacimiento' | 'sexo' | 'regimen',
   ): string {
     return `temp_alta_${dato}:${organizationId}:${senderId}`;
+  }
+
+  /**
+   * De quién son los datos temporales de alta que haya en Redis ahora mismo.
+   * Sirve para detectar cuándo el mismo número de WhatsApp arranca el alta de
+   * una SEGUNDA persona nueva antes de que expire la sesión de la primera —
+   * sin esto, `siguienteDatoDeAlta` encontraba nombres/apellidos/nacimiento/
+   * sexo/régimen "ya guardados" y se los adjudicaba a la persona equivocada.
+   */
+  private altaCedulaKey(organizationId: string, senderId: string): string {
+    return `temp_alta_cedula:${organizationId}:${senderId}`;
   }
 
   /** Qué dato falta todavía, o null si ya están todos. */
