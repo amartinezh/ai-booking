@@ -2184,6 +2184,14 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(letra('la a')).toBe('A');
       expect(letra('opción dos')).toBe('B');
       expect(letra('la primera')).toBe('A');
+      // Regresión: rellenos ENCADENADOS ("la " + "opción "), la forma más
+      // natural de decir una opción en español — producción (17/sep) lo
+      // transcribía bien pero lo reportaba "no se logró identificar" porque
+      // el replace original solo quitaba UN prefijo, dejando "opcion a" sin
+      // resolver.
+      expect(letra('la opción a')).toBe('A');
+      expect(letra('la letra b')).toBe('B');
+      expect(letra('el número a')).toBe('A');
       // No reconoce ruido ni nombres de servicio/EPS (cae a otros resolvers).
       expect(letra('quiero la de las tres de la tarde con ese doctor')).toBe(
         '',

@@ -7588,10 +7588,18 @@ export class ChatbotService implements OnModuleInit {
     // Una sola letra (caso típico por texto): "a", "b".
     if (/^[a-z]$/.test(t)) return t.toUpperCase();
 
-    // Quita un prefijo introductorio ("opción/letra/la/el/número") y se queda
-    // con el núcleo de la selección.
+    // Quita el prefijo introductorio ("opción/letra/la/el/número") y se queda
+    // con el núcleo de la selección. El `+` exterior encadena varios rellenos
+    // seguidos ("la opción a" = "la " + "opcion "): con un solo `replace` sin
+    // repetición, "la opción a" solo perdía "la " y quedaba "opcion a" (no
+    // coincide con ninguna letra ni fonética) → la selección por voz más
+    // natural en español se reportaba como "Esa opción no se logró
+    // identificar" pese a que el STT transcribió bien.
     const core = t
-      .replace(/^(?:la|el|las|los|opcion|opciones|letra|numero|numeral)\s+/, '')
+      .replace(
+        /^(?:(?:la|el|las|los|opcion|opciones|letra|numero|numeral)\s+)+/,
+        '',
+      )
       .trim();
 
     // Nombre fonético de la letra dicho solo (incluye errores típicos del STT).
