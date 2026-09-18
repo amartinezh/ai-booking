@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppointmentsService } from '../appointments/appointments.service';
+import { WaitlistService } from '../waitlist/waitlist.service';
 import { CanonicalChangeEvent, ChangesResult } from './dto/mirror.types';
 import { AttendanceStatus } from '@agenia/database';
 import { getErrorMessage } from '../common/error-message.util';
@@ -25,6 +26,37 @@ function esAttendanceStatus(valor: string): valor is AttendanceStatus {
   return ATTENDANCE_VALIDOS.has(valor);
 }
 
+/**
+ * Por qué esto no es simplemente `ScheduleSlot | null`.
+ *
+ * Las tres razones por las que un evento del HIS puede no resolverse a un cupo
+ * de AgenIA NO son el mismo suceso, y tratarlas igual tiene un precio concreto
+ * en producción:
+ *
+ *   · `MEDICO_NO_ESPEJADO` — el hospital agendó con un médico que AgenIA no
+ *     homologa. **No está roto nada.** Se espeja a propósito un subconjunto de
+ *     la agenda (en Anserma, el servicio contratado); el resto de los ~235
+ *     eventos diarios del hospital son de médicos que no vendemos y que no nos
+ *     corresponde conocer.
+ *   · `SIN_CUPO` — el médico SÍ está homologado, pero falta el cupo. Eso sí es
+ *     una laguna real del espejo y tiene que doler.
+ *   · `EVENTO_INCOMPLETO` — el evento llegó sin médico o sin hora: está mal
+ *     formado y no se puede interpretar.
+ *
+ * Antes las tres devolvían `null` y las tres acababan en `throw` → fila ERROR.
+ * Con el hospital trabajando de verdad contra producción eso son ~200 filas
+ * ERROR diarias por algo que funciona como se diseñó, y entre ese ruido se
+ * pierde el error que sí importa. Es el mismo antipatrón que ya se corrigió en
+ * la salida (`skippedSeqs` para los eventos SLOT que el driver no espeja) y en
+ * el desenlace de atención, que ya devolvía SKIPPED: faltaba alinear el alta y
+ * la cancelación entrantes.
+ */
+type ResolucionCupo =
+  | { tipo: 'OK'; cupo: { id: string; isAvailable: boolean } }
+  | { tipo: 'MEDICO_NO_ESPEJADO' }
+  | { tipo: 'SIN_CUPO' }
+  | { tipo: 'EVENTO_INCOMPLETO' };
+
 @Injectable()
 export class MirrorApplyService {
   private readonly logger = new Logger(MirrorApplyService.name);
@@ -32,6 +64,7 @@ export class MirrorApplyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly appointmentsService: AppointmentsService,
+    private readonly waitlistService: WaitlistService,
   ) {}
 
   async applyBatch(
@@ -131,10 +164,19 @@ export class MirrorApplyService {
         entityType: event.entityType,
       },
     });
+    // SKIPPED se audita como SKIPPED. Antes un evento omitido se registraba
+    // como 'OK', que es mentira por omisión: quien mañana pregunte "¿por qué
+    // esta cita del hospital no está en AgenIA?" necesita leer SKIPPED, no un
+    // OK que promete lo contrario. Mismo criterio que ya usa la salida en
+    // `markSkipped`.
+    //
+    // APPLIED se sigue escribiendo como 'OK' a propósito: es el valor que
+    // lleva toda la auditoría histórica y el que consultan los tableros.
+    // Renombrarlo ahora partiría en dos la serie por un matiz de vocabulario.
     await this.audit(
       organizationId,
       event,
-      outcome === 'CONFLICT' ? 'CONFLICT' : 'OK',
+      outcome === 'APPLIED' ? 'OK' : outcome,
     );
 
     return outcome;
@@ -168,8 +210,10 @@ export class MirrorApplyService {
   private async resolverCupo(
     organizationId: string,
     payload: CanonicalChangeEvent['payload'],
-  ) {
-    if (!payload.doctorExternalKey || !payload.startTimeIso) return null;
+  ): Promise<ResolucionCupo> {
+    if (!payload.doctorExternalKey || !payload.startTimeIso) {
+      return { tipo: 'EVENTO_INCOMPLETO' };
+    }
 
     const mapa = await this.prisma.mirrorEntityMap.findFirst({
       where: {
@@ -179,21 +223,23 @@ export class MirrorApplyService {
       },
       select: { agenIAId: true },
     });
-    if (!mapa) return null;
+    if (!mapa) return { tipo: 'MEDICO_NO_ESPEJADO' };
 
-    return this.prisma.scheduleSlot.findFirst({
+    const cupo = await this.prisma.scheduleSlot.findFirst({
       where: {
         organizationId,
         doctorId: mapa.agenIAId,
         startTime: new Date(payload.startTimeIso),
       },
     });
+
+    return cupo ? { tipo: 'OK', cupo } : { tipo: 'SIN_CUPO' };
   }
 
   private async applyAppointmentCreate(
     organizationId: string,
     event: CanonicalChangeEvent,
-  ): Promise<'APPLIED' | 'CONFLICT'> {
+  ): Promise<'APPLIED' | 'CONFLICT' | 'SKIPPED'> {
     const { agenIAPatientId } = event.payload;
     let { agenIAScheduleSlotId } = event.payload;
 
@@ -202,14 +248,32 @@ export class MirrorApplyService {
     // WhatsApp aunque el hospital ya lo hubiera vendido — la sobreventa que
     // encontró la prueba de punta a punta.
     if (!agenIAScheduleSlotId) {
-      const cupo = await this.resolverCupo(organizationId, event.payload);
-      if (!cupo) {
+      const resuelto = await this.resolverCupo(organizationId, event.payload);
+
+      if (resuelto.tipo === 'MEDICO_NO_ESPEJADO') {
+        // Cita del hospital con un médico que no espejamos: correcto que no
+        // llegue a AgenIA. Se cierra como SKIPPED, no como error. Ver la nota
+        // larga sobre `ResolucionCupo`.
+        this.logger.debug(
+          `Alta entrante de un médico no espejado ` +
+            `(${event.payload.doctorExternalKey}). Se omite.`,
+        );
+        return 'SKIPPED';
+      }
+
+      if (resuelto.tipo !== 'OK') {
         throw new Error(
           `Cita entrante del HIS sin cupo equivalente en AgenIA ` +
             `(médico ${event.payload.doctorExternalKey}, ${event.payload.startTimeIso}). ` +
-            `Falta homologar el médico o generar el cupo.`,
+            `${
+              resuelto.tipo === 'SIN_CUPO'
+                ? 'El médico está homologado pero falta generar el cupo.'
+                : 'El evento llegó sin médico o sin hora.'
+            }`,
         );
       }
+
+      const { cupo } = resuelto;
 
       // Ocupar el cupo es lo que evita la sobreventa, y hay que hacerlo
       // aunque el paciente no se pueda homologar: da igual quién tenga la
@@ -276,29 +340,62 @@ export class MirrorApplyService {
   private async applyAppointmentCancel(
     organizationId: string,
     event: CanonicalChangeEvent,
-  ): Promise<'APPLIED'> {
+  ): Promise<'APPLIED' | 'SKIPPED'> {
     const { cancelReason, cancelObservations } = event.payload;
     let { agenIAAppointmentId } = event.payload;
 
     // 🏥 Cancelación hecha en el HIS: llega identificada por médico y hora.
     // Se resuelve al cupo y de ahí a la cita, si es que AgenIA tenía una.
     if (!agenIAAppointmentId) {
-      const cupo = await this.resolverCupo(organizationId, event.payload);
-      if (!cupo) {
+      const resuelto = await this.resolverCupo(organizationId, event.payload);
+
+      if (resuelto.tipo === 'MEDICO_NO_ESPEJADO') {
+        // El hospital canceló una cita de un médico que no espejamos. No hay
+        // cupo nuestro que liberar ni paciente nuestro al que avisarle.
+        this.logger.debug(
+          `Cancelación entrante de un médico no espejado ` +
+            `(${event.payload.doctorExternalKey}). Se omite.`,
+        );
+        return 'SKIPPED';
+      }
+
+      if (resuelto.tipo !== 'OK') {
         throw new Error(
           `Cancelación entrante del HIS sin cupo equivalente en AgenIA ` +
-            `(médico ${event.payload.doctorExternalKey}, ${event.payload.startTimeIso}).`,
+            `(médico ${event.payload.doctorExternalKey}, ${event.payload.startTimeIso}). ` +
+            `${
+              resuelto.tipo === 'SIN_CUPO'
+                ? 'El médico está homologado pero falta generar el cupo.'
+                : 'El evento llegó sin médico o sin hora.'
+            }`,
         );
       }
 
+      const { cupo } = resuelto;
+
+      // ⚠️ `status: { not: 'CANCELLED' }` NO sobra. Un mismo cupo puede tener
+      // VARIAS citas: las canceladas se conservan como historia y el índice
+      // parcial `uq_appointment_cupo_vigente` solo exige que haya una VIGENTE.
+      // Ese estado no es teórico — la campaña de certificación del 2026-09-18
+      // dejó tres cupos con una cita cancelada y otra nueva encima.
+      //
+      // Sin el filtro, `findFirst` elegía entre ellas sin orden ni criterio:
+      // podía devolver una cita ya cancelada (y volver a "cancelarla", inocuo)
+      // o —el caso que importa— la cita VIVA del paciente que tomó el cupo
+      // después, y cancelársela por una cancelación que no era la suya.
       const cita = await this.prisma.appointment.findFirst({
-        where: { scheduleSlotId: cupo.id, organizationId },
+        where: {
+          scheduleSlotId: cupo.id,
+          organizationId,
+          status: { not: 'CANCELLED' },
+        },
       });
 
       if (!cita) {
-        // El hospital canceló una cita que AgenIA nunca tuvo (la agendó él
-        // mismo). Lo único que corresponde es liberar el cupo para que vuelva
-        // a ofrecerse por WhatsApp.
+        // O el hospital canceló una cita suya, que AgenIA nunca tuvo, o es la
+        // re-entrega de una cancelación ya aplicada. En ambos casos lo único
+        // que corresponde es que el cupo quede libre para volver a ofrecerse
+        // por WhatsApp.
         if (!cupo.isAvailable) {
           await this.prisma.$transaction(async (tx) => {
             await tx.$executeRawUnsafe(
@@ -312,6 +409,7 @@ export class MirrorApplyService {
           this.logger.log(
             `Cupo ${cupo.id} liberado: el hospital canceló una cita que AgenIA no tenía.`,
           );
+          await this.avisarListaDeEspera(organizationId, cupo.id);
         }
         return 'APPLIED';
       }
@@ -319,7 +417,7 @@ export class MirrorApplyService {
       agenIAAppointmentId = cita.id;
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    const cupoLiberadoId = await this.prisma.$transaction(async (tx) => {
       // Anti-eco: ver la nota equivalente en AppointmentsService.bookAppointment.
       await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
 
@@ -349,9 +447,65 @@ export class MirrorApplyService {
         where: { id: appointment.scheduleSlotId },
         data: { isAvailable: true },
       });
+
+      return appointment.scheduleSlotId;
     });
 
+    await this.avisarListaDeEspera(organizationId, cupoLiberadoId);
+
     return 'APPLIED';
+  }
+
+  /**
+   * Avisa al primero de la lista de espera que este cupo volvió a estar libre.
+   *
+   * 🚨 POR QUÉ EXISTE. Cuando el paciente cancela por WhatsApp, el chatbot ya
+   * avisa a la lista de espera. Cuando cancela el HOSPITAL —que es de donde
+   * sale la mayoría de las cancelaciones: 2.134 de 2.409 en 90 días son
+   * "PACIENTE LLAMA A CANCELAR"— no avisaba nadie. El cupo quedaba libre en
+   * silencio, para quien pasara a conversar por casualidad.
+   *
+   * Con una agenda holgada eso solo es una oportunidad perdida. Con el 30% de
+   * la agenda que el hospital destina al canal, donde casi todo el que escribe
+   * termina en lista de espera, es la diferencia entre una lista que se drena
+   * y una que solo acumula: dentro del pozo MDD hay ~1,1 cancelaciones diarias
+   * frente a ~4,4 cupos nuevos, o sea que era un cuarto de la capacidad real
+   * del canal el que no llegaba a quien llevaba días esperando.
+   *
+   * Va FUERA de la transacción y con su propio try/catch a propósito: el aviso
+   * es un efecto secundario. No debe poder deshacer una cancelación ya
+   * aplicada ni dejarla a medias porque WhatsApp esté caído; y el evento del
+   * HIS ya está aplicado y auditado aunque el mensaje no salga.
+   */
+  private async avisarListaDeEspera(
+    organizationId: string,
+    slotId: string,
+  ): Promise<void> {
+    try {
+      const cupo = await this.prisma.scheduleSlot.findFirst({
+        where: { id: slotId, organizationId },
+        include: { doctor: true },
+      });
+
+      // Se relee el cupo en vez de fiarse de lo que se acaba de escribir: si
+      // entre la cancelación y este punto alguien ya tomó la hora, avisar
+      // sería ofrecer un cupo que ya no está.
+      if (!cupo || !cupo.isAvailable) return;
+
+      await this.waitlistService.notifyWaitlist({
+        slotId: cupo.id,
+        serviceId: cupo.serviceId,
+        epsId: cupo.allowedEpsId,
+        organizationId,
+        doctorName: cupo.doctor.fullName,
+        slotDate: cupo.startTime,
+      });
+    } catch (error: unknown) {
+      this.logger.error(
+        `Cancelación aplicada, pero no se pudo avisar a la lista de espera ` +
+          `del cupo ${slotId}: ${getErrorMessage(error)}`,
+      );
+    }
   }
 
   /**
@@ -393,12 +547,13 @@ export class MirrorApplyService {
     }
 
     if (!agenIAAppointmentId) {
-      const cupo = await this.resolverCupo(organizationId, event.payload);
-      const cita = cupo
-        ? await this.prisma.appointment.findFirst({
-            where: { scheduleSlotId: cupo.id, organizationId },
-          })
-        : null;
+      const resuelto = await this.resolverCupo(organizationId, event.payload);
+      const cita =
+        resuelto.tipo === 'OK'
+          ? await this.prisma.appointment.findFirst({
+              where: { scheduleSlotId: resuelto.cupo.id, organizationId },
+            })
+          : null;
 
       if (!cita) {
         // El hospital atendió una cita que AgenIA nunca tuvo: la agendó él
@@ -426,7 +581,7 @@ export class MirrorApplyService {
   private async audit(
     organizationId: string,
     event: CanonicalChangeEvent,
-    outcome: 'OK' | 'CONFLICT' | 'ERROR',
+    outcome: 'OK' | 'SKIPPED' | 'CONFLICT' | 'ERROR',
     detail?: string,
   ): Promise<void> {
     await this.prisma.syncAudit.create({

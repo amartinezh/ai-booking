@@ -304,6 +304,26 @@ Mapeo estático curado a mano en Fase 0 (solo servicios agendables), versionado 
 5. **Escala pequeña confirmada:** 27 médicos (dato real de producción, confirmado 2026-08-23 — la cifra de "15" reportada al inicio de la Fase 0 era incorrecta), 26.290 citas en 90 días ≈ **250–300 citas/día hábil** (bloque 13). Consecuencia de diseño: el **polling diferencial es sobradamente suficiente** (Change Tracking pasa a opcional) y la reconciliación compara la ventana completa en segundos. ⚠️ Hay reservas hasta **12 meses adelante** (agosto 2027) ⇒ la ventana de sincronización/reconciliación es **+13 meses**, no +90 días.
 6. **Ventana de mantenimiento: los domingos.** Todo despliegue, activación de fase, corte a producción y game-day se programa en domingo; la reconciliación pesada nocturna evita el horario de agenda activa.
 7. **Marco legal cubierto: existe contrato** de tratamiento de datos con el hospital (Ley 1581). Referenciarlo en el runbook y en la autorización formal de creación de `AGENIA_SYNC`.
+8. **⭐ LOS MÉDICOS DE LA AGENDA SON CÓDIGOS VIRTUALES, Y EL MÉDICO REAL NUNCA TOCA `CITAS_MEDICAS`** (respuesta del hospital, 2026-09-18).
+
+   Códigos virtuales confirmados: **`MDD1`, `MDD2`, `91` (enfermería HTA), `77` (médico atención gestante HTA), `76` (médico atención HTA), `077` (médico atención HTA 2)**.
+
+   Razón operativa, en palabras del hospital: *"la agenda de turnos es muy dinámica… se programan hasta con meses de anticipación y el médico que realmente va a atender la consulta se define generalmente máximo por semana, de acuerdo a las necesidades y número de médicos disponibles"*.
+
+   El médico que finalmente atiende se registra **en la historia clínica, no en la cita**, en dos columnas del prefijo `HICL`:
+
+   | Columna | Contenido |
+   |---|---|
+   | `CD_MED_ASIG_HICL` | el médico **asignado**, tomado de la agenda (el código virtual) |
+   | `CD_MED_REAL_HICL` | el médico que **realmente hizo la consulta** — es el que aparece en el histórico del paciente |
+
+   🚨 **POR QUÉ ESTO ES CRÍTICO PARA EL ESPEJO.** El detector de cambios identifica cada cita por la clave `CD_CODI_MED_CIT|FE_HORA_CIT`: el médico es parte de la clave. Si la reasignación reescribiera el médico en `CITAS_MEDICAS`, la clave vieja desaparecería de la instantánea y el agente reportaría una **cancelación** de una cita perfectamente viva — AgenIA la cancelaría y revendería esa hora.
+
+   No ocurre, y ahora se sabe por diseño y no solo por estadística: la reasignación vive en `HICL`. Verificado además contra los datos (2026-09-18, 90 días): el **97,4%** de las citas de `MDD2`, el **98,8%** de `MD08` y el **95,5%** de `MDD1` alcanzan estado 1 o 2 **bajo el mismo código con el que nacieron**.
+
+   Consecuencia práctica: los códigos virtuales se homologan como médicos corrientes y el espejo funciona sin cambios.
+
+9. **`MDD1` NO se debe exponer a canales digitales** (respuesta del hospital, 2026-09-18). A `MDD2` *"es el que siempre agendan"*. A `MDD1` *"le crean turno si no sale a remisión, al comienzo del día, y es quien atiende las citas prioritarias surgidas de urgencias"* — triage IV y V. Sus cupos son capacidad reservada para pacientes prioritarios que ya están en el hospital; venderlos por WhatsApp se la quitaría. Coincide con el dato: el **99,7%** de las citas de `MDD1` se crean el mismo día en que se prestan.
 
 ## 5. Incógnitas bloqueantes (resolver con `FASE0_DESCUBRIMIENTO_HIS.sql`)
 

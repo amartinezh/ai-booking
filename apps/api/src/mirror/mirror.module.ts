@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AppointmentsModule } from '../appointments/appointments.module';
+import { WaitlistModule } from '../waitlist/waitlist.module';
 import { MirrorController } from './mirror.controller';
 import { MirrorAgentGuard } from './mirror-agent.guard';
 import { MirrorDispatchService } from './mirror-dispatch.service';
@@ -18,7 +19,11 @@ import { MirrorNoticeService } from './mirror-notice.service';
  * apps/mirror-agent/src/drivers/<driverKey>/.
  */
 @Module({
-  imports: [AppointmentsModule],
+  // WaitlistModule: una cancelación nacida en el HIS libera el cupo y hay que
+  // avisarle a quien lleva días esperando — ver `avisarListaDeEspera` en
+  // mirror-apply.service.ts. No necesita `forwardRef`: la cadena es
+  // Mirror → Waitlist → Chatbot y el chatbot no conoce al espejo.
+  imports: [AppointmentsModule, WaitlistModule],
   controllers: [MirrorController],
   providers: [
     MirrorAgentGuard,
