@@ -550,8 +550,18 @@ export class MirrorApplyService {
       const resuelto = await this.resolverCupo(organizationId, event.payload);
       const cita =
         resuelto.tipo === 'OK'
-          ? await this.prisma.appointment.findFirst({
-              where: { scheduleSlotId: resuelto.cupo.id, organizationId },
+          ? // Mismo filtro que en `applyAppointmentCancel`, y por la misma
+            // razón: un cupo puede tener una cita CANCELLED como historia y
+            // una vigente encima. Sin `status: { not: 'CANCELLED' }`, el
+            // desenlace de atención podía escribirse sobre la cita
+            // equivocada — una ya cancelada, mientras la vigente del
+            // paciente que de verdad asistió se quedaba en PENDING.
+            await this.prisma.appointment.findFirst({
+              where: {
+                scheduleSlotId: resuelto.cupo.id,
+                organizationId,
+                status: { not: 'CANCELLED' },
+              },
             })
           : null;
 

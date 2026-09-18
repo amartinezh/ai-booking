@@ -39,7 +39,12 @@ implementados** (2026-09-18), con tests y sin tocar datos:
 | 10 | Avisar a la lista de espera cuando la cancelación nace en el HIS | ✅ implementado |
 | 9 | `SKIPPED` en vez de `ERROR` para médicos que no espejamos | ✅ implementado |
 
-Suite completa de la API en verde: **1.684 tests, 52 suites**.
+Suite completa de la API en verde: **1.685 tests, 52 suites**.
+
+Un tercer defecto de la misma familia (`eventId` que colisiona entre dos
+instancias del mismo cupo, en `apps/mirror-agent`) también quedó corregido —
+ver hallazgo 11 — con suite completa del agente en verde: **460 tests,
+17 suites**.
 
 ### Sobre arrancar con el 30%
 
@@ -400,6 +405,49 @@ El motivo `WB` ("CANCELADO WEB"), que es el que escribe nuestro driver, ya
 existe y registra 4 usos en producción en los últimos 90 días. Como no es
 exclusivo nuestro, para distinguir las cancelaciones de AgenIA hay que
 filtrar además por `DE_DESC_CIAN LIKE '%ASIGNADA POR WHATSAPP%'`.
+
+### 11. 🔴 El `eventId` de cancelación/alta podía colisionar entre dos instancias distintas del mismo cupo
+
+**✅ RESUELTO (2026-09-18), en `apps/mirror-agent`.**
+
+El `eventId` que arma el driver era `cnt:${op}:${médico}|${hora}:${estado}` —
+determinista por diseño, para que reintentar la ENTREGA de la misma
+observación (una respuesta perdida por un corte de red) produjera el mismo id
+y la idempotencia del servidor lo absorbiera sin duplicar nada.
+
+El problema es que ese trío se **repite** cada vez que el mismo cupo se agenda
+y se cancela más de una vez, que es el régimen normal de un pozo compartido
+como `MDD2` (hallazgo 1-quater): agendar vuelve a generar estado 0 en la misma
+clave, y cancelar vuelve a reportar el mismo estado 0 que tenía antes de
+desaparecer. `SyncInbox` recuerda cada `eventId` **para siempre**, sin TTL —
+la segunda cancelación de ese cupo llegaba con un `eventId` idéntico al de la
+primera, la idempotencia la confundía con un reintento y la descartaba en
+silencio. La cita quedaba viva en AgenIA mientras en el HIS ya no existía,
+hasta que la reconciliación diaria lo notara.
+
+No era hipotético: **la propia campaña de certificación produjo el patrón
+"cancelada + viva sobre el mismo cupo" de forma orgánica, en tres cupos.**
+
+**Arreglo:** el `eventId` ahora incluye `FE_ELAB_CIT` de la fila concreta
+(instante de creación, que no cambia mientras la fila existe). Dos instancias
+distintas del mismo médico+hora+estado nacen en instantes distintos y ya no
+colisionan; un reintento de la MISMA observación sigue leyendo la misma
+`FE_ELAB_CIT` y conserva el mismo `eventId`. Cubierto con un spec nuevo
+(`detect-changes.spec.ts`, 5 casos) que no existía antes para `detectChanges`.
+
+De paso apareció el defecto gemelo del hallazgo 10 en el tercer camino que
+comparte el mismo patrón: `applyAttendanceUpdate` también buscaba la cita del
+cupo sin filtrar por estado. Ya corregido con el mismo `status: { not:
+'CANCELLED' }`.
+
+**Hallazgo adyacente, anotado y NO corregido:** si el mismo cupo se cancela y
+se reagenda **dentro de una sola vuelta de `detectChanges`** (sin que ninguna
+vuelta intermedia lo detecte vacío), el diff no emite nada — compara solo el
+estado, y ve la clave presente en las dos fotos con el mismo estado 0. Exigiría
+comparar también la fila real, no solo el estado: un cambio más grande al
+algoritmo de diff que el que pedía esta corrección. Ventana de riesgo angosta
+(tiene que ocurrir dentro de un ciclo de sondeo) pero real, dado el hallazgo de
+arriba.
 
 ### 10. 🔴 Las cancelaciones del hospital liberan el cupo pero NO avisan a la lista de espera
 

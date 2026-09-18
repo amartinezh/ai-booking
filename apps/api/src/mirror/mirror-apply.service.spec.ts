@@ -795,6 +795,42 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         ORG,
       );
     });
+
+    it('🚨 resuelto por médico+hora, la cita buscada en el cupo tiene que ser la VIGENTE, no una ya cancelada', async () => {
+      // Mismo defecto que ya se corrigió en la cancelación entrante y por la
+      // misma razón: un cupo puede tener una cita CANCELLED como historia y
+      // una vigente encima (la campaña de certificación dejó tres así). Sin
+      // el filtro, el desenlace de atención podía escribirse sobre la cita
+      // equivocada.
+      prisma.appointment.findFirst.mockResolvedValue({
+        id: 'apt-vigente',
+        scheduleSlotId: 'slot-1',
+      });
+
+      await aplicar(
+        evento({
+          op: 'ATTENDANCE',
+          payload: {
+            doctorExternalKey: '76',
+            startTimeIso: '2026-09-10T12:00:00.000Z',
+            attendanceStatus: 'ATTENDED',
+          },
+        }),
+      );
+
+      expect(prisma.appointment.findFirst).toHaveBeenCalledWith({
+        where: {
+          scheduleSlotId: 'slot-1',
+          organizationId: ORG,
+          status: { not: 'CANCELLED' },
+        },
+      });
+      expect(appointments.updateAttendance).toHaveBeenCalledWith(
+        'apt-vigente',
+        'ATTENDED',
+        ORG,
+      );
+    });
   });
 
   describe('auditoría e idempotencia del lote', () => {

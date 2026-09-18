@@ -80,6 +80,17 @@ interface FilaCita {
   descripcion: string | null;
   /** FE_FECH_CIT ya convertida a `YYYY-MM-DD`. */
   fecha: string;
+  /**
+   * FE_ELAB_CIT ya convertida a texto estable (estilo 121, con milisegundos).
+   *
+   * Sirve para UNA sola cosa: distinguir esta FILA CONCRETA de cualquier otra
+   * que algún día vuelva a ocupar el mismo médico+hora. Ver la nota grande
+   * sobre `eventId` en `eventoDeCita` — no se interpreta como fecha en ningún
+   * cálculo, por eso el CONVERT a texto en vez de dejar que `mssql` la
+   * serialice como `Date` (con el mismo riesgo de UTC/local que ya mordió a
+   * `fetchAvailability` y a `detectChanges`).
+   */
+  elaborada: string | null;
 }
 
 /** Fila del catálogo de servicios (agregada por volumen de citas). */
@@ -156,6 +167,15 @@ interface SnapshotRow {
    * arrastre a la ventana con ella.
    */
   f: string;
+  /**
+   * `FE_ELAB_CIT` de ESTA fila — ver `FilaCita.elaborada` y la nota grande en
+   * `eventoDeCita`. Opcional porque una foto persistida por una versión
+   * anterior de este agente no la tiene: se lee `undefined` esa única vuelta,
+   * nunca revienta, y el evento que salga de ahí pierde el discriminador solo
+   * esa vez — exactamente igual de expuesto que estaba antes de este cambio,
+   * nunca peor.
+   */
+  el?: string | null;
 }
 
 /** Rango de fechas LOCALES que cubre una foto, inclusive en los dos extremos. */
@@ -477,7 +497,11 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
                CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist,
                NU_DURA_CIT dura, DE_DESC_CIT descripcion,
-               CONVERT(varchar(10), FE_FECH_CIT, 23) fecha
+               CONVERT(varchar(10), FE_FECH_CIT, 23) fecha,
+               -- Estilo 121 (ODBC canónico, con milisegundos): texto estable,
+               -- sin la ambigüedad UTC/local de dejar que mssql serialice un
+               -- Date. Ver FilaCita.elaborada.
+               CONVERT(varchar(23), FE_ELAB_CIT, 121) elaborada
           FROM dbo.CITAS_MEDICAS
          WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
 
@@ -523,6 +547,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         h: elegida.hist,
         d: elegida.dura,
         f: elegida.fecha,
+        el: elegida.elaborada,
         propia: elegida.descripcion === mapping.marcaOrigen,
       };
     }
@@ -626,6 +651,36 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
    * lanzaba, y con eso se caía la vuelta ENTERA de detección: una sola fila
    * sucia —y hay un 5,7 % de ellas— dejaba al hospital sin espejar nada. El
    * llamador la omite y lleva la cuenta para que no sea un silencio.
+   *
+   * 🚨 EL `eventId` LLEVA `fila.el` (FE_ELAB_CIT) A PROPÓSITO — no es
+   * cosmético, evita una colisión real.
+   *
+   * Antes era `cnt:${op}:${clave}:${fila.e}` — solo médico, hora y estado.
+   * Ese trío se REPITE cada vez que el mismo cupo se agenda y se cancela más
+   * de una vez, que es el régimen normal de un pozo de cupos compartido
+   * (MDD1/MDD2, ver MAPEO_HIS.md §4.8): agendar vuelve a generar estado 0 en
+   * la misma clave, y cancelar vuelve a reportar el mismo estado 0 que tenía
+   * antes de desaparecer. El servidor recuerda cada `eventId` para siempre en
+   * `SyncInbox` (sin TTL) — la SEGUNDA cancelación de ese cupo llegaba con el
+   * `eventId` IDÉNTICO a la primera, la idempotencia la confundía con un
+   * reintento y la descartaba en silencio. La cita quedaba viva en AgenIA
+   * mientras en el HIS ya no existía, hasta que la reconciliación diaria lo
+   * notara — un paciente creyendo tener una cita que el hospital no tiene, o
+   * la lista de espera sin avisarse.
+   *
+   * `FE_ELAB_CIT` es el instante en que SE CREÓ esta fila en concreto. No
+   * cambia mientras la fila exista (nunca se reescribe tras el alta) — así
+   * que reintentar la entrega de la MISMA observación (una respuesta perdida
+   * por un corte de red) produce el mismo `eventId`, y la idempotencia sigue
+   * protegiendo eso. Pero una fila NUEVA —aunque comparta médico, hora y
+   * estado con la anterior— nace en un instante distinto, así que ya no
+   * colisiona.
+   *
+   * (Se probó primero con la hora de ESTA vuelta de `detectChanges` en vez de
+   * la de creación de la fila: se descartó porque esa hora cambia en cada
+   * reintento y habría roto la protección contra reintentos que sí hace
+   * falta conservar — habría podido avisar dos veces a la lista de espera
+   * por la misma cancelación.)
    */
   private eventoDeCita(
     op: 'INSERT' | 'CANCEL' | 'ATTENDANCE',
@@ -640,7 +695,10 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       // El `eventId` lo genera el AGENTE y debe ser estable para la misma
       // observación: si el mismo cambio se reportara dos veces (un reintento
       // tras un corte de red), la idempotencia del servidor lo absorbe.
-      eventId: `cnt:${op}:${clave}:${fila.e}`,
+      // `fila.el` es lo que distingue esta observación de otra igual de
+      // (médico, hora, estado) pero de una fila distinta — ver la nota grande
+      // arriba.
+      eventId: `cnt:${op}:${clave}:${fila.e}:${fila.el ?? 'na'}`,
       entityType: 'APPOINTMENT',
       op,
       occurredAtIso: ahora,
