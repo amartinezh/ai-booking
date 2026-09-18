@@ -105,6 +105,107 @@ describe('HttpMirrorApiClient — la red que no contesta', () => {
       /respondió 401 en POST \/mirror\/heartbeat: token inválido/,
     );
   });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // El filtro de excepciones por defecto de NestJS mete un `timestamp` en
+  // cada cuerpo de error. `FailureReporter` calla los fallos repetidos
+  // comparando el mensaje completo — con el timestamp crudo ahí dentro, dos
+  // fallos IDÉNTICOS nunca se veían iguales y la deduplicación nunca
+  // encontraba nada que silenciar. Se vio en producción: 2.833 líneas de
+  // journal en 24h por el MISMO 403, una por cada sondeo de ~30s.
+  // ════════════════════════════════════════════════════════════════════════
+  it('el timestamp del cuerpo de error NO viaja en el mensaje: dos 403 idénticos deben verse iguales', async () => {
+    const cuerpoDeNest = (ts: string) =>
+      JSON.stringify({
+        statusCode: 403,
+        message: {
+          message:
+            'Los avisos masivos por espejo no están habilitados para esta clínica.',
+          error: 'Forbidden',
+          statusCode: 403,
+        },
+        timestamp: ts,
+        path: '/mirror/notice-requests',
+      });
+
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () => cuerpoDeNest('2026-09-18T18:00:00.000Z'),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () => cuerpoDeNest('2026-09-18T18:00:30.000Z'),
+      }) as unknown as typeof fetch;
+
+    const [primero, segundo] = await Promise.all([
+      client.heartbeat({}).catch((e: Error) => e.message),
+      client.heartbeat({}).catch((e: Error) => e.message),
+    ]);
+
+    expect(primero).toBe(segundo);
+    // Y el resto del cuerpo —lo que sí distingue un 403 de otro motivo—
+    // sigue ahí, legible, para quien necesite diagnosticar.
+    expect(primero).toContain('no están habilitados para esta clínica');
+    expect(primero).not.toContain('timestamp');
+  });
+
+  it('dos errores realmente DISTINTOS siguen viéndose distintos (nunca se confunden)', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () =>
+          JSON.stringify({
+            statusCode: 403,
+            message: 'no habilitado',
+            timestamp: '2026-09-18T18:00:00.000Z',
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () =>
+          JSON.stringify({
+            statusCode: 500,
+            message: 'internal error',
+            timestamp: '2026-09-18T18:00:30.000Z',
+          }),
+      }) as unknown as typeof fetch;
+
+    const primero = await client.heartbeat({}).catch((e: Error) => e.message);
+    const segundo = await client.heartbeat({}).catch((e: Error) => e.message);
+
+    expect(primero).not.toBe(segundo);
+  });
+
+  it('un cuerpo que no es JSON se deja tal cual, sin reventar', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 502,
+      text: async () => '<html>Bad Gateway</html>',
+    })) as unknown as typeof fetch;
+
+    await expect(client.heartbeat({})).rejects.toThrow(
+      /respondió 502 en POST \/mirror\/heartbeat: <html>Bad Gateway<\/html>/,
+    );
+  });
+
+  it('un cuerpo JSON sin `timestamp` se deja tal cual', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ statusCode: 400, message: 'malo' }),
+    })) as unknown as typeof fetch;
+
+    await expect(client.heartbeat({})).rejects.toThrow(
+      /respondió 400 en POST \/mirror\/heartbeat: \{"statusCode":400,"message":"malo"\}/,
+    );
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════

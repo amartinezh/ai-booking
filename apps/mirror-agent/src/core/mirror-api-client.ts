@@ -64,6 +64,46 @@ const TIMEOUT_MS = 20_000;
 /** El pull usa long-poll: el servidor retiene la respuesta hasta 25 s. */
 const TIMEOUT_LONG_POLL_MS = 45_000;
 
+/**
+ * Quita el `timestamp` del cuerpo de error antes de que entre al mensaje de
+ * la excepción.
+ *
+ * 🚨 POR QUÉ EXISTE. El filtro de excepciones por defecto de NestJS devuelve
+ * `{"statusCode":...,"message":...,"error":...,"timestamp":"...","path":...}`
+ * — y `FailureReporter` (core/failure-reporter.ts) decide si calla un fallo
+ * repetido comparando el MENSAJE COMPLETO contra el anterior. Con el
+ * `timestamp` crudo dentro, dos fallos IDÉNTICOS (mismo endpoint, mismo
+ * motivo, mismo 403) nunca se ven iguales — cada petición trae un instante
+ * distinto — así que el deduplicador nunca encontraba una repetición que
+ * silenciar y el agente escupía la línea entera en cada vuelta del bucle.
+ *
+ * Se vio en producción con `avisos masivos` contra Anserma (org sin esa
+ * función habilitada, 2026-09-18): 2.833 líneas de `journalctl` en 24h por el
+ * mismo 403, uno por cada sondeo de ~30s — enterrando cualquier error nuevo
+ * que sí necesite verse. No es exclusivo de avisos masivos: CUALQUIER bucle
+ * de este agente (agenda, catálogo, reconciliación) que falle contra un
+ * endpoint que devuelva este formato queda expuesto igual, así que se arregla
+ * en el único sitio por el que pasan todas las llamadas — no donde se detectó
+ * el síntoma.
+ *
+ * Si el cuerpo no es JSON o no tiene esta forma, se deja tal cual: es
+ * best-effort sobre el formato conocido, nunca a costa de perder el detalle
+ * de un error que no lo sigue.
+ */
+function estabilizarCuerpoError(text: string): string {
+  if (!text) return text;
+  try {
+    const cuerpo = JSON.parse(text) as Record<string, unknown>;
+    if ('timestamp' in cuerpo) {
+      delete cuerpo.timestamp;
+      return JSON.stringify(cuerpo);
+    }
+    return text;
+  } catch {
+    return text;
+  }
+}
+
 export interface HttpMirrorApiClientOptions {
   /** Plazo para las llamadas normales. */
   timeoutMs?: number;
@@ -128,7 +168,7 @@ export class HttpMirrorApiClient implements MirrorApiClient {
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(
-        `Mirror API respondió ${res.status} en ${method} ${path}: ${text}`,
+        `Mirror API respondió ${res.status} en ${method} ${path}: ${estabilizarCuerpoError(text)}`,
       );
     }
 

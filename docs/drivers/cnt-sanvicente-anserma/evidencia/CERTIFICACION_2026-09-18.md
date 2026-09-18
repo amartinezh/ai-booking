@@ -43,8 +43,9 @@ Suite completa de la API en verde: **1.685 tests, 52 suites**.
 
 Un tercer defecto de la misma familia (`eventId` que colisiona entre dos
 instancias del mismo cupo, en `apps/mirror-agent`) también quedó corregido —
-ver hallazgo 11 — con suite completa del agente en verde: **460 tests,
-17 suites**.
+ver hallazgo 11 — y un cuarto, de observabilidad pura (hallazgo 12), detectado
+al verificar el despliegue del anterior contra el propio VPS del hospital.
+Suite completa del agente en verde: **464 tests, 17 suites**.
 
 ### Sobre arrancar con el 30%
 
@@ -405,6 +406,29 @@ El motivo `WB` ("CANCELADO WEB"), que es el que escribe nuestro driver, ya
 existe y registra 4 usos en producción en los últimos 90 días. Como no es
 exclusivo nuestro, para distinguir las cancelaciones de AgenIA hay que
 filtrar además por `DE_DESC_CIAN LIKE '%ASIGNADA POR WHATSAPP%'`.
+
+### 12. 🔵 El journal del agente repetía la misma línea de error en cada sondeo
+
+**✅ RESUELTO (2026-09-18), en `apps/mirror-agent`.** Detectado verificando el
+`checkHealthAgente.sh` tras instalar el hallazgo 11: reportó **2.833 líneas**
+de error/fatal en 24h, todas el mismo 403 de `avisos masivos` (función no
+habilitada para esta clínica — hallazgo esperado, sin relación con la
+certificación).
+
+`FailureReporter` ya existía para esto exactamente: calla un fallo repetido y
+solo reemite un recuento cada 20 repeticiones — pero decide "es el mismo
+fallo" comparando el MENSAJE COMPLETO contra el anterior. El cuerpo de error
+que arma NestJS por defecto incluye un `timestamp` que cambia en cada
+petición, así que dos fallos idénticos (mismo endpoint, mismo motivo, mismo
+403) nunca se veían iguales — la deduplicación nunca encontraba nada que
+silenciar.
+
+**Arreglo:** el `timestamp` se quita del cuerpo antes de que entre al mensaje
+de la excepción, en el único punto por el que pasan las ocho llamadas del
+agente (`mirror-api-client.ts`) — no donde se detectó el síntoma. Beneficia
+por igual a agenda, catálogo, avisos masivos y reconciliación. 5 tests nuevos,
+incluido uno que confirma que dos errores genuinamente distintos (403 vs 500)
+siguen viéndose distintos y nunca se confunden.
 
 ### 11. 🔴 El `eventId` de cancelación/alta podía colisionar entre dos instancias distintas del mismo cupo
 
