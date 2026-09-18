@@ -148,7 +148,14 @@ export async function runSyncCycle(
     reporter.report('HIS->AgenIA', mensajeDe(entrada.reason));
   }
 
-  if (!hadErrors) reporter.reset();
+  // Se nombran las DOS etapas explícitamente — nunca un reset "de todo" (ver
+  // la nota grande en FailureReporter). Este ciclo solo puede hablar por
+  // 'AgenIA->HIS' y 'HIS->AgenIA'; olvidar el fallo de agenda, catálogo,
+  // avisos masivos o reconciliación no es asunto suyo.
+  if (!hadErrors) {
+    reporter.reset('AgenIA->HIS');
+    reporter.reset('HIS->AgenIA');
+  }
 
   return { applied, failed, pushed, hadErrors };
 }

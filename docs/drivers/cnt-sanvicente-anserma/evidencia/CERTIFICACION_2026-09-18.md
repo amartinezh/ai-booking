@@ -423,12 +423,68 @@ petición, así que dos fallos idénticos (mismo endpoint, mismo motivo, mismo
 403) nunca se veían iguales — la deduplicación nunca encontraba nada que
 silenciar.
 
-**Arreglo:** el `timestamp` se quita del cuerpo antes de que entre al mensaje
-de la excepción, en el único punto por el que pasan las ocho llamadas del
-agente (`mirror-api-client.ts`) — no donde se detectó el síntoma. Beneficia
-por igual a agenda, catálogo, avisos masivos y reconciliación. 5 tests nuevos,
-incluido uno que confirma que dos errores genuinamente distintos (403 vs 500)
-siguen viéndose distintos y nunca se confunden.
+**Primer arreglo (parcial):** el `timestamp` se quita del cuerpo antes de que
+entre al mensaje de la excepción, en el único punto por el que pasan las ocho
+llamadas del agente (`mirror-api-client.ts`). Necesario, pero no suficiente:
+se instaló, y el siguiente `checkHealthAgente.sh` —corrido de inmediato tras el
+despliegue— siguió mostrando **2.824 líneas** en 24h, con nuevas repeticiones
+(sin `timestamp`, confirmando que ESE arreglo sí estaba activo) apareciendo
+cada pocos minutos igual.
+
+**Causa raíz completa, encontrada con esa segunda evidencia:** un único
+`FailureReporter` se reparte entre los **seis bucles independientes** de
+`index.ts` (sync-cycle, agenda, catálogo, avisos masivos, reconciliación), y
+su deduplicación vivía en un solo `lastKey`/`repeats` **global**, no por etapa.
+Dos formas de romperlo, las dos activas en producción:
+
+1. Cualquier bucle reportando SU propio fallo pisaba el `lastKey` de los
+   demás — el journal del usuario lo muestra literal: entre dos 403 de
+   `avisos masivos` aparece un `🚨 DERIVA` de reconciliación (su primera
+   corrida, a los 2 min de arrancar) y un `502` de heartbeat, cada uno
+   reiniciando la cuenta ajena.
+2. `sync-cycle.ts` llama a `reporter.reset()` sin argumentos cada vez que su
+   propio ciclo sale limpio. Un `reset()` sin argumentos borraba el progreso
+   de amortiguación de avisos masivos (intervalo ~30s) aunque el motivo no
+   tuviera nada que ver con avisos masivos.
+
+   **Corrección sobre la frecuencia real, con datos del propio despliegue:**
+   el diagnóstico inicial especulaba "varias veces por minuto" para el reset
+   de sync-cycle. El journal del hospital, con las DOS versiones desplegadas
+   en producción, mide lo que de verdad ocurre: con solo el arreglo del
+   `timestamp` (sin el de por-etapa), el recuento de `avisos masivos` corrió
+   **limpio durante casi 2 horas seguidas** (20, 40, 60… 220 repeticiones, una
+   cada ~10 min, sin interrupción) antes de verse interrumpido una vez. O sea:
+   el reset global de sync-cycle en este agente ocurre con mucha menos
+   frecuencia de la que se supuso — más cerca de una vez por hora que de
+   varias por minuto. El mecanismo del bug (un reset ajeno o un fallo ajeno
+   pisando la cuenta de otro) es real e inequívoco —el journal lo muestra dos
+   veces, una en el arranque (reconciliación + heartbeat) y otra en régimen
+   normal (~19:14 y ~20:15, sin causa identificada en el log disponible)— pero
+   su frecuencia es más baja de lo que se dijo primero. No cambia la
+   corrección: sigue siendo un fallo real, y el arreglo por etapa lo cierra
+   sin depender de qué tan seguido ocurra.
+
+**Arreglo completo:** `FailureReporter` pasa de un par de campos globales a un
+`Map<etapa, estado>` — cada etapa lleva su propio contador, inmune a lo que
+reporten o reinicien las demás. `reset()` ahora exige la etapa a limpiar (ya no
+existe la forma "resetear todo"); `sync-cycle.ts` limpia explícitamente sus dos
+etapas (`AgenIA->HIS`, `HIS->AgenIA`) y ninguna otra. 4 tests nuevos que
+reproducen el bug exacto visto en producción (un fallo ajeno entre medias no
+reinicia el contador propio; un `reset()` ajeno tampoco). Suite completa del
+agente en verde tras el cambio: **466 tests, 17 suites**.
+
+Los dos arreglos son necesarios y se complementan: el del `timestamp` hace que
+dos ocurrencias del MISMO fallo se reconozcan como iguales; el del `Map` por
+etapa hace que ese reconocimiento sobreviva a que el agente tenga varios
+bucles corriendo a la vez, que es su forma normal de operar.
+
+**Desplegado y confirmado (2026-09-18 22:15).** Instalado en `vps-citas`
+(`./ageniaUpdate.sh`), handshake OK, backup automático guardado. El
+`checkHealthAgente.sh` corrido justo después ya no muestra el patrón de una
+línea por sondeo: la última entrada visible antes del reinicio fue
+`"el mismo fallo lleva 220 repeticiones"` a las 22:06:59 — dos horas de
+amortiguación correcta y continua desde el arranque anterior, exactamente lo
+que se esperaba.
 
 ### 11. 🔴 El `eventId` de cancelación/alta podía colisionar entre dos instancias distintas del mismo cupo
 
