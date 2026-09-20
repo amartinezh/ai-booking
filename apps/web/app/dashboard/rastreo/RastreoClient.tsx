@@ -6,6 +6,7 @@ import { MOTIVOS_CONSULTA, MAX_NOTA_MOTIVO } from '@agenia/shared';
 import {
     abrirExpedienteAction,
     buscarPacientesAction,
+    iniciarConsultaHisAction,
     investigarCupoHisAction,
     opcionesCupoHisAction,
 } from '@/app/actions/rastreo';
@@ -175,6 +176,68 @@ function Pantalla({
         });
     };
 
+    // ── Consulta en vivo al HIS (Fase 2) ───────────────────────
+    // La pantalla sabe el motivo y lo que se escribió; el panel solo pide y espera.
+    // Al llegar la respuesta se REABRE el expediente con los ids, para que los
+    // veredictos los calcule el servidor con lo que respondió el hospital.
+    const consultaHisA =
+        expedienteA?.identidad
+            ? {
+                  iniciar: () =>
+                      iniciarConsultaHisAction({
+                          organizationId: orgParaServidor,
+                          modo: 'A',
+                          pacienteId: expedienteA.identidad!.pacienteId,
+                          motivo,
+                          nota,
+                      }),
+                  aplicar: async (ids: string[]) => {
+                      const r = await abrirExpedienteAction({
+                          organizationId: orgParaServidor,
+                          sujeto: expedienteA.sujeto,
+                          motivo,
+                          nota,
+                          captura,
+                          consultaHisIds: ids,
+                      });
+                      if (!r.success) return r.error;
+                      setExpedienteA(r.data);
+                      return null;
+                  },
+              }
+            : undefined;
+
+    const consultaHisB = expedienteB
+        ? {
+              iniciar: () =>
+                  iniciarConsultaHisAction({
+                      organizationId: orgParaServidor,
+                      modo: 'B',
+                      documento,
+                      medicoClave,
+                      fecha: fechaB,
+                      hora: horaB,
+                      motivo,
+                      nota,
+                  }),
+              aplicar: async (ids: string[]) => {
+                  const r = await investigarCupoHisAction({
+                      organizationId: orgParaServidor,
+                      documento,
+                      medicoClave,
+                      fecha: fechaB,
+                      hora: horaB,
+                      motivo,
+                      nota,
+                      consultaHisIds: ids,
+                  });
+                  if (!r.success) return r.error;
+                  setExpedienteB(r.data);
+                  return null;
+              },
+          }
+        : undefined;
+
     const volverAlFormulario = () => {
         setVista('FORMULARIO');
         setError(null);
@@ -343,9 +406,10 @@ function Pantalla({
                     nota={nota}
                     organizationId={orgParaServidor}
                     onVolver={() => setVista('CANDIDATOS')}
+                    consultaHis={consultaHisA}
                 />
             ) : vista === 'EXPEDIENTE_B' && expedienteB ? (
-                <ExpedienteBVista data={expedienteB} onVolver={volverAlFormulario} />
+                <ExpedienteBVista data={expedienteB} onVolver={volverAlFormulario} organizationId={orgParaServidor} consultaHis={consultaHisB} />
             ) : null}
         </div>
     );

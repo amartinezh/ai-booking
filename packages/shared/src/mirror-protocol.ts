@@ -277,6 +277,15 @@ export interface HeartbeatInput {
    */
   hisReachable?: boolean;
   hisDetail?: string;
+  /**
+   * ¿El driver activo implementa la consulta en vivo (`PatientLookupCapableDriver`)?
+   *
+   * Sin esto el servidor no puede distinguir "el agente está ocupado" de "este
+   * agente nunca va a contestar" (un driver sin la capacidad, o un agente
+   * anterior a ella), y el funcionario esperaría los 30 s de la pantalla para
+   * recibir un error genérico. Con esto, la pantalla lo dice antes de encolar.
+   */
+  lookupCapable?: boolean;
 }
 
 // ── POST /mirror/reconcile ──────────────────────────────────────────────────
@@ -495,4 +504,76 @@ export interface NoticeRosterResult {
    * pantalla — nunca se recorta en silencio").
    */
   truncated: boolean;
+}
+
+// ── Consulta en vivo al HIS (rastreo de paciente, Fase 2) ────────────────────
+//
+// docs/PLAN_RASTREO_PACIENTE.md §7. Un funcionario que investiga una cita
+// necesita saber qué tiene el HIS AHORA, y la API no alcanza al HIS (plan del
+// espejo §4.1): la respuesta viaja por el agente. Mismo patrón que los avisos
+// masivos (`NoticeRequestDto`): el agente pregunta si hay peticiones, las
+// resuelve una a una y contesta.
+//
+// Es una capacidad OPT-IN del driver (`PatientLookupCapableDriver`) y de la
+// organización (`HospitalMirrorConfig.lookupEnabled`): un hospital cuyo driver
+// no la implemente no tiene que saber que existe.
+
+/** `BY_DOCUMENT`: "¿qué citas tiene este documento?". `BY_SLOT`: "¿quién tiene este cupo?". */
+export type HisLookupKind = 'BY_DOCUMENT' | 'BY_SLOT';
+
+/** Un cupo del HIS: médico (su clave en el HIS) y hora de inicio en UTC. */
+export interface HisLookupSlot {
+  doctorExternalKey: string;
+  startTimeIso: string;
+}
+
+/**
+ * Una petición pendiente, tal como la ve el agente al hacer polling.
+ *
+ * `BY_SLOT` NO lleva el documento del paciente a propósito: quién ocupa un
+ * cupo se pregunta sin decir a quién se busca, y la comparación con el
+ * paciente la hace el servidor al recibir la respuesta. Así el documento de un
+ * paciente solo viaja hacia el hospital cuando se le pregunta POR ese
+ * documento.
+ */
+export interface HisLookupRequestDto {
+  requestId: string;
+  kind: HisLookupKind;
+  /** `BY_DOCUMENT`: el documento tal cual y, si difiere, sin ceros a la izquierda (1 o 2). */
+  patientDocuments?: string[];
+  /** `BY_DOCUMENT`: ventana de fechas. */
+  fromIso?: string;
+  toIso?: string;
+  /** `BY_SLOT`: de 1 a `LIMITES_CONSULTA_HIS.maxCupos` cupos. */
+  slots?: HisLookupSlot[];
+}
+
+/** Estado de una cita en el HIS, ya traducido por el driver. */
+export type HisLookupStatus = 'SCHEDULED' | 'ATTENDED' | 'NO_SHOW' | 'OTHER';
+
+export interface HisLookupAppointment {
+  doctorExternalKey: string;
+  /** UTC. La conversión desde la hora local del HIS la hace el driver. */
+  startTimeIso: string;
+  serviceExternalKey?: string;
+  /** Documento tal como está en el HIS. El servidor decide qué se guarda de él. */
+  patientDocument: string | null;
+  status: HisLookupStatus;
+}
+
+export interface HisLookupResultInput {
+  requestId: string;
+  appointments: HisLookupAppointment[];
+  /** El driver recortó el resultado al tope de filas: nunca en silencio. */
+  truncated?: boolean;
+  /** El driver no pudo resolverla (HIS caído, timeout…). Se le muestra al usuario. */
+  error?: string;
+  /** Este driver no implementa la consulta en vivo. */
+  unsupported?: boolean;
+}
+
+export interface HisLookupResultOutput {
+  requestId: string;
+  /** `false` si la petición ya no estaba pendiente (reintento del agente): idempotente. */
+  stored: boolean;
 }

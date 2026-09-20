@@ -8,7 +8,7 @@ import {
     type EvidenciaRastreoA,
     type SaludEspejo,
 } from '@agenia/shared';
-import type { CitaExpediente, ExpedienteA, ExpedienteB } from '@/lib/rastreo/tipos';
+import type { CitaExpediente, ExpedienteA, ExpedienteB, HisEnVivoVista } from '@/lib/rastreo/tipos';
 
 jest.mock('@/app/actions/rastreo', () => ({
     buscarPacientesAction: jest.fn(),
@@ -16,14 +16,18 @@ jest.mock('@/app/actions/rastreo', () => ({
     opcionesCupoHisAction: jest.fn(),
     investigarCupoHisAction: jest.fn(),
     revelarIdentidadAction: jest.fn(),
+    iniciarConsultaHisAction: jest.fn(),
+    progresoConsultaHisAction: jest.fn(),
 }));
 jest.mock('@/app/actions/espejo', () => ({ reprocesarEvento: jest.fn() }));
 
 import {
     abrirExpedienteAction,
     buscarPacientesAction,
+    iniciarConsultaHisAction,
     investigarCupoHisAction,
     opcionesCupoHisAction,
+    progresoConsultaHisAction,
     revelarIdentidadAction,
 } from '@/app/actions/rastreo';
 import { reprocesarEvento } from '@/app/actions/espejo';
@@ -35,6 +39,8 @@ const mOpciones = opcionesCupoHisAction as jest.Mock;
 const mInvestigar = investigarCupoHisAction as jest.Mock;
 const mRevelar = revelarIdentidadAction as jest.Mock;
 const mReprocesar = reprocesarEvento as jest.Mock;
+const mIniciarHis = iniciarConsultaHisAction as jest.Mock;
+const mProgresoHis = progresoConsultaHisAction as jest.Mock;
 
 // ── Fixtures armados con el clasificador REAL, no a mano ─────────────────────
 
@@ -50,6 +56,14 @@ const espejoSano: SaludEspejo = {
     lastHeartbeatIso: hace(1 * MIN),
     hisReachable: true,
     hisDetail: null,
+};
+
+/** Lo que ve un rol con la consulta en vivo disponible y todavía sin consultar. */
+const hisEnVivoListo: HisEnVivoVista = {
+    visible: true,
+    disponibilidad: { puede: true, razon: null },
+    consulta: null,
+    aviso: null,
 };
 
 const citaDeadLetter: CitaRastreo = {
@@ -131,6 +145,7 @@ function expediente(
         espejo: espejoSano,
         verInternos: internos,
         capturaIndicada: false,
+        hisEnVivo: hisEnVivoListo,
         ...over,
     };
 }
@@ -522,6 +537,7 @@ describe('RastreoClient — escenario B', () => {
             identidad: { encontrada: true, pacienteId: 'pac-1', nombre: 'María L•••', documento: '•••3456', coincidencia: 'EXACTA', perfilesConVariante: 0, conWhatsapp: true },
             auditorias: [{ resultado: 'OK', op: 'INSERT', nota: 'cita del HIS con paciente sin homologar: solo se ocupó el cupo, no se creó Appointment', atIso: hace(3 * 60 * MIN) }],
             espejo: espejoSano,
+            hisEnVivo: hisEnVivoListo,
         };
         mInvestigar.mockResolvedValue({ success: true, data: b });
         const user = userEvent.setup();
@@ -610,4 +626,184 @@ describe('RastreoClient — SUPER_ADMIN', () => {
         await user.click(screen.getByRole('tab', { name: 'Lo agendaron en el HIS' }));
         await waitFor(() => expect(mOpciones).toHaveBeenCalledWith({ organizationId: 'org-a' }));
     });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Consulta en vivo al HIS (Fase 2): la pantalla pide con el motivo que ya tiene,
+// sondea y REABRE el expediente con los ids, para que los veredictos los calcule
+// el servidor con lo que respondió el hospital.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('RastreoClient — consulta en vivo al HIS', () => {
+    const consultaHecha: HisEnVivoVista = {
+        ...hisEnVivoListo,
+        consulta: {
+            consultadoIso: AHORA,
+            porDocumento: {
+                desdeIso: hace(7 * 86_400_000),
+                hastaIso: dentroDe(60 * 86_400_000),
+                citas: [{ startIso: dentroDe(3 * 86_400_000), medico: 'Dr(a). Ana Ruiz', estado: 'SCHEDULED' }],
+                truncado: false,
+            },
+            cuposConsultados: 1,
+        },
+    };
+    const TIEMPO_PRUEBA = 15_000;
+    const ESPERA_SONDEO = { timeout: 6_000 };
+
+    beforeEach(() => {
+        mIniciarHis.mockResolvedValue({ success: true, data: { ids: ['r1', 'r2'], esperaMs: 30_000 } });
+        mProgresoHis.mockResolvedValue({ success: true, data: { estado: 'LISTA', detalle: null } });
+    });
+
+    async function abrirExpediente(user: ReturnType<typeof userEvent.setup>) {
+        await buscar(user);
+        await user.click(await screen.findByRole('button', { name: 'Abrir expediente' }));
+        await screen.findByText(/Consulta registrada/);
+    }
+
+    it('escenario A: pide con el motivo escrito, sondea y reabre el expediente con los ids', async () => {
+        mAbrir.mockResolvedValueOnce({ success: true, data: expediente() }).mockResolvedValueOnce({
+            success: true,
+            data: expediente({ hisEnVivo: consultaHecha }),
+        });
+        const user = userEvent.setup();
+        render(<RastreoClient {...propsBase} />);
+        await abrirExpediente(user);
+
+        await user.click(screen.getByRole('button', { name: 'Consultar el HIS ahora' }));
+
+        expect(await screen.findByRole('heading', { name: 'Citas de este paciente en el HIS' }, ESPERA_SONDEO)).toBeInTheDocument();
+        // La consulta lleva el motivo y el paciente; la clínica sale del token (null), no de la pantalla.
+        expect(mIniciarHis).toHaveBeenCalledWith({
+            organizationId: null,
+            modo: 'A',
+            pacienteId: 'pac-1',
+            motivo: 'PACIENTE_EN_VENTANILLA',
+            nota: '',
+        });
+        expect(mProgresoHis).toHaveBeenCalledWith({ organizationId: null, ids: ['r1', 'r2'] });
+        // El expediente se REABRE con los ids (los veredictos los calcula el servidor).
+        expect(mAbrir).toHaveBeenCalledTimes(2);
+        expect(mAbrir).toHaveBeenLastCalledWith({
+            organizationId: null,
+            sujeto: { tipo: 'PACIENTE', id: 'pac-1' },
+            motivo: 'PACIENTE_EN_VENTANILLA',
+            nota: '',
+            captura: { fecha: '', hora: '', medico: '' },
+            consultaHisIds: ['r1', 'r2'],
+        });
+        expect(screen.getByRole('button', { name: 'Volver a consultar al HIS' })).toBeEnabled();
+    }, TIEMPO_PRUEBA);
+
+    it('escenario A: si el servidor la rechaza (agente caído, límite…) se ve el motivo y NO se reabre nada', async () => {
+        mIniciarHis.mockResolvedValue({ success: false, error: 'El agente del hospital no da señales desde hace 9 min.' });
+        const user = userEvent.setup();
+        render(<RastreoClient {...propsBase} />);
+        await abrirExpediente(user);
+
+        await user.click(screen.getByRole('button', { name: 'Consultar el HIS ahora' }));
+
+        expect(await screen.findByText(/no da señales desde hace 9 min/)).toBeInTheDocument();
+        expect(mProgresoHis).not.toHaveBeenCalled();
+        expect(mAbrir).toHaveBeenCalledTimes(1);
+    });
+
+    it('escenario A: el botón queda apagado con la razón cuando el servidor dice que no se puede', async () => {
+        mAbrir.mockResolvedValue({
+            success: true,
+            data: expediente({
+                hisEnVivo: { ...hisEnVivoListo, disponibilidad: { puede: false, razon: 'La consulta en vivo al HIS no está habilitada para esta clínica.' } },
+            }),
+        });
+        const user = userEvent.setup();
+        render(<RastreoClient {...propsBase} />);
+        await abrirExpediente(user);
+
+        expect(screen.getByRole('button', { name: 'Consultar el HIS ahora' })).toBeDisabled();
+        expect(screen.getByText(/no está habilitada para esta clínica/)).toBeInTheDocument();
+    });
+
+    it('🔒 un rol sin la consulta (DOCTOR) o una clínica sin espejo NO ven el panel', async () => {
+        mAbrir.mockResolvedValue({
+            success: true,
+            data: expediente({ hisEnVivo: { visible: false, disponibilidad: { puede: false, razon: null }, consulta: null, aviso: null } }),
+        });
+        const user = userEvent.setup();
+        render(<RastreoClient {...propsBase} />);
+        await abrirExpediente(user);
+
+        expect(screen.queryByText('Consulta en vivo al HIS')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Consultar el HIS/ })).not.toBeInTheDocument();
+    });
+
+    it('un remitente sin perfil (sin documento con el cual preguntar) no ve el panel aunque el rol lo tenga', async () => {
+        mBuscar.mockResolvedValue({
+            success: true,
+            data: {
+                candidatos: [{ ...candidato, tipo: 'REMITENTE', id: '573009998877', nombre: '', documento: null, eps: null, citas: 0 }],
+                hayMas: false,
+                interpretadoComo: 'DOCUMENTO_O_TELEFONO',
+            },
+        });
+        mAbrir.mockResolvedValue({ success: true, data: expediente({ identidad: null, remitente: '•••8877', sujeto: { tipo: 'REMITENTE', whatsappId: '573009998877' } }) });
+        const user = userEvent.setup();
+        render(<RastreoClient {...propsBase} />);
+        await buscar(user);
+        await user.click(await screen.findByRole('button', { name: 'Abrir expediente' }));
+        await screen.findByText(/Consulta registrada/);
+
+        expect(screen.queryByRole('button', { name: /Consultar el HIS/ })).not.toBeInTheDocument();
+    });
+
+    it('escenario B: pide con lo escrito en el formulario, y el rótulo "Parcial" pasa a "con consulta en vivo"', async () => {
+        const b = (hisEnVivo: HisEnVivoVista): ExpedienteB => ({
+            modo: 'B',
+            generadoIso: AHORA,
+            zonaHoraria: 'America/Bogota',
+            resultado: clasificarRastreoB({
+                ahoraIso: AHORA,
+                cupoDescripcion: 'Cupo del HIS: MEDICO HTA, lun 5 oct, 10:00 a m',
+                paciente: { perfilEncontrado: true, coincidencia: 'EXACTA', perfilesConVariante: 0, conWhatsapp: true },
+                cupoEnAgenIA: { medicoHomologado: true, cupoExiste: true, citaDelPacienteEnAgenIA: false, auditorias: [] },
+                espejo: espejoSano,
+            }),
+            cupo: { medico: 'MEDICO HTA', inicioIso: '2026-10-05T15:00:00.000Z', homologado: true },
+            identidad: { encontrada: true, pacienteId: 'pac-1', nombre: 'María L•••', documento: '•••3456', coincidencia: 'EXACTA', perfilesConVariante: 0, conWhatsapp: true },
+            auditorias: [],
+            espejo: espejoSano,
+            hisEnVivo,
+        });
+        mInvestigar.mockResolvedValueOnce({ success: true, data: b(hisEnVivoListo) }).mockResolvedValueOnce({
+            success: true,
+            data: b({ ...hisEnVivoListo, consulta: { ...consultaHecha.consulta!, porDocumento: null } }),
+        });
+        const user = userEvent.setup();
+        render(<RastreoClient {...propsBase} />);
+        await user.click(screen.getByRole('tab', { name: 'Lo agendaron en el HIS' }));
+        await screen.findByRole('option', { name: 'MEDICO HTA' });
+        await user.type(screen.getByLabelText('Cédula del paciente'), '1088123456');
+        await user.selectOptions(screen.getByLabelText('Médico del HIS'), '76');
+        await user.type(screen.getByLabelText('Fecha de la cita en el HIS'), '2026-10-05');
+        await user.type(screen.getByLabelText('Hora de la cita en el HIS'), '10:00');
+        await user.selectOptions(screen.getByLabelText(/Motivo de la consulta/), 'RECLAMO_PQRS');
+        await user.click(screen.getByRole('button', { name: 'Investigar' }));
+        expect(await screen.findByText(/Parcial: sin consulta en vivo al HIS/)).toBeInTheDocument();
+
+        await user.click(screen.getByRole('button', { name: 'Consultar el HIS ahora' }));
+
+        expect(await screen.findByText(/Con consulta en vivo al HIS, hecha a las/, undefined, ESPERA_SONDEO)).toBeInTheDocument();
+        expect(screen.queryByText(/Parcial: sin consulta en vivo/)).not.toBeInTheDocument();
+        expect(mIniciarHis).toHaveBeenCalledWith({
+            organizationId: null,
+            modo: 'B',
+            documento: '1088123456',
+            medicoClave: '76',
+            fecha: '2026-10-05',
+            hora: '10:00',
+            motivo: 'RECLAMO_PQRS',
+            nota: '',
+        });
+        expect(mInvestigar).toHaveBeenLastCalledWith(expect.objectContaining({ documento: '1088123456', medicoClave: '76', consultaHisIds: ['r1', 'r2'] }));
+    }, TIEMPO_PRUEBA);
 });

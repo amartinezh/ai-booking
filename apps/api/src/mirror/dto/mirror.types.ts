@@ -27,4 +27,7 @@ export type {
   NoticeRequestDto,
   NoticeRosterInput,
   NoticeRosterResult,
+  HisLookupRequestDto,
+  HisLookupResultInput,
+  HisLookupResultOutput,
 } from '@agenia/shared';

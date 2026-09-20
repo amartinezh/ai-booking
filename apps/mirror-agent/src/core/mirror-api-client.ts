@@ -16,6 +16,9 @@ import type {
   NoticeRequestDto,
   NoticeRosterInput,
   NoticeRosterResult,
+  HisLookupRequestDto,
+  HisLookupResultInput,
+  HisLookupResultOutput,
 } from '@agenia/shared';
 
 /**
@@ -41,6 +44,12 @@ export interface MirrorApiClient {
    */
   getPendingNoticeRequests(): Promise<NoticeRequestDto[]>;
   pushNoticeRoster(input: NoticeRosterInput): Promise<NoticeRosterResult>;
+  /**
+   * Consulta en vivo al HIS (rastreo de paciente, Fase 2). Con el interruptor de
+   * la clínica apagado —el estado por defecto— la API responde `[]`.
+   */
+  getPendingLookupRequests(): Promise<HisLookupRequestDto[]>;
+  pushLookupResult(input: HisLookupResultInput): Promise<HisLookupResultOutput>;
 }
 
 /**
@@ -223,5 +232,15 @@ export class HttpMirrorApiClient implements MirrorApiClient {
 
   pushNoticeRoster(input: NoticeRosterInput): Promise<NoticeRosterResult> {
     return this.request('POST', '/mirror/notice-roster', input);
+  }
+
+  getPendingLookupRequests(): Promise<HisLookupRequestDto[]> {
+    return this.request('GET', '/mirror/lookup-requests');
+  }
+
+  pushLookupResult(
+    input: HisLookupResultInput,
+  ): Promise<HisLookupResultOutput> {
+    return this.request('POST', '/mirror/lookup-result', input);
   }
 }

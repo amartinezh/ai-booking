@@ -1355,6 +1355,23 @@ describe('listarConsultas', () => {
     expect(db.patientLookupLog.count).toHaveBeenCalledWith({ where: { organizationId: ORG } });
   });
 
+  it('🏥 marca las consultas que incluyeron lo que el HIS respondió en vivo (la bitácora las distingue)', async () => {
+    const db = mockDb();
+    const fila = (id: string, queryKind: string, liveHisRequested: boolean) => ({
+      id, createdAt: new Date(AHORA), actorUserId: 'u-9', actorRole: 'ORG_ADMIN', mode: 'A', queryKind,
+      queryMasked: '•••3456', reason: 'RECLAMO_PQRS', reasonNote: null, candidateIds: [], openedPatientId: 'pac-1', verdicts: null, liveHisRequested,
+    });
+    db.patientLookupLog.findMany.mockResolvedValue([fila('a', 'LIVE_HIS', true), fila('b', 'OPEN', true), fila('c', 'OPEN', false)]);
+
+    const r = await listarConsultas(como(db), admin());
+
+    expect(r.success && r.data.filas.map((f) => [f.tipo, f.enVivo])).toEqual([
+      ['LIVE_HIS', true],
+      ['OPEN', true],
+      ['OPEN', false],
+    ]);
+  });
+
   it('SUPER_ADMIN ve las de la clínica elegida', async () => {
     const db = mockDb();
     await listarConsultas(como(db), superAdmin('org-9'));

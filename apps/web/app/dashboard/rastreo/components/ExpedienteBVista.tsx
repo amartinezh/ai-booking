@@ -1,16 +1,29 @@
 'use client';
 
-import { formatAppointmentShort } from '@/lib/date';
+import { formatAppointmentShort, formatTimeOnly } from '@/lib/date';
 import type { ExpedienteB } from '@/lib/rastreo/tipos';
 import { VeredictoCard } from './Veredicto';
+import ConsultaHis, { type ConsultaHisProps } from './ConsultaHis';
 
 /**
  * Escenario B (docs/PLAN_RASTREO_PACIENTE.md §3.2): "la agendaron en el HIS y no
  * le aparece en WhatsApp". Sin la consulta en vivo (Fase 2) AgenIA no puede
  * afirmar que la cita exista en el HIS: la pantalla lo rotula así arriba del
- * todo, y cada veredicto lo repite en "lo que no puede afirmar".
+ * todo, y cada veredicto lo repite en "lo que no puede afirmar". Con la consulta
+ * hecha, el rótulo cambia a la hora en que el hospital respondió.
  */
-export default function ExpedienteBVista({ data, onVolver }: { data: ExpedienteB; onVolver: () => void }) {
+export default function ExpedienteBVista({
+    data,
+    onVolver,
+    organizationId = null,
+    consultaHis,
+}: {
+    data: ExpedienteB;
+    onVolver: () => void;
+    organizationId?: string | null;
+    /** Cómo pedir y aplicar la consulta en vivo al HIS (la pantalla sabe el motivo y los datos). */
+    consultaHis?: Pick<ConsultaHisProps, 'iniciar' | 'aplicar' | 'intervaloMs'>;
+}) {
     const tz = data.zonaHoraria;
     const { principal, veredictos, notas } = data.resultado;
     const otros = veredictos.filter((v) => v !== principal);
@@ -25,9 +38,15 @@ export default function ExpedienteBVista({ data, onVolver }: { data: ExpedienteB
                 <p className="text-sm text-zinc-600 dark:text-zinc-300">
                     {data.cupo.medico} · {formatAppointmentShort(data.cupo.inicioIso, { timeZone: tz })}
                 </p>
-                <p className="mt-2 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-                    Parcial: sin consulta en vivo al HIS. Solo se sabe qué aviso recibió AgenIA del hospital.
-                </p>
+                {data.hisEnVivo.consulta ? (
+                    <p className="mt-2 inline-block rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-xs font-medium text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200">
+                        Con consulta en vivo al HIS, hecha a las {formatTimeOnly(data.hisEnVivo.consulta.consultadoIso, { timeZone: tz })}.
+                    </p>
+                ) : (
+                    <p className="mt-2 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                        Parcial: sin consulta en vivo al HIS. Solo se sabe qué aviso recibió AgenIA del hospital.
+                    </p>
+                )}
             </div>
 
             {notas.length > 0 && (
@@ -39,6 +58,7 @@ export default function ExpedienteBVista({ data, onVolver }: { data: ExpedienteB
             )}
 
             <VeredictoCard veredicto={principal} principal />
+            {consultaHis && <ConsultaHis vista={data.hisEnVivo} organizationId={organizationId} zonaHoraria={tz} {...consultaHis} />}
             {otros.map((v) => (
                 <VeredictoCard key={v.codigo} veredicto={v} />
             ))}

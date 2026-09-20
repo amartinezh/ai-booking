@@ -267,6 +267,38 @@ async function main() {
     }
   };
 
+  // Consulta en vivo al HIS (rastreo de paciente, Fase 2; plan §7).
+  //
+  // Sin espera inicial y con un intervalo corto: quien pidió la consulta está
+  // mirando la pantalla, que se rinde a los 30 s. Con el interruptor de la
+  // clínica apagado (el estado por defecto) la API responde vacío y cada vuelta
+  // cuesta una lectura mínima. `engine.syncLookupRequests()` ya decide todo lo
+  // que hay que decidir: si este driver ni siquiera la implementa, y qué hacer
+  // cuando una petición falla (avisarle a la pantalla, sin tumbar las demás).
+  const bucleConsultas = async () => {
+    for (;;) {
+      try {
+        const r = await engine.syncLookupRequests();
+        if (!r.skipped && (r.processed > 0 || r.errores > 0)) {
+          console.log(
+            `[mirror-agent] consulta en vivo: ${r.processed} petición(es) resuelta(s)` +
+              (r.errores > 0 ? `, ${r.errores} con error` : '') +
+              '.',
+          );
+        }
+        if (r.errores > 0) {
+          reporter.report(
+            'consulta en vivo',
+            `${r.errores} petición(es) no se pudieron resolver. Primer motivo: ${r.primerError ?? 'sin detalle'}`,
+          );
+        }
+      } catch (error) {
+        reporter.report('consulta en vivo', mensajeDeError(error));
+      }
+      await dormir(config.lookupIntervalMs);
+    }
+  };
+
   // Capa 5 del plan §6: la única defensa que detecta deriva silenciosa.
   //
   // Estaba a medias: el endpoint del servidor existía y NADIE lo llamaba. Es
@@ -343,6 +375,7 @@ async function main() {
     bucleAgenda(),
     bucleCatalogo(),
     bucleAvisos(),
+    bucleConsultas(),
   ]);
 }
 

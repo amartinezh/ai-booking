@@ -10,11 +10,18 @@ import {
     opcionesCupoHis,
     revelarIdentidad,
 } from '@/lib/rastreo/servicio';
+import {
+    iniciarConsultaHis,
+    progresoDeConsultaHis,
+    type EntradaIniciarConsultaHis,
+} from '@/lib/rastreo/servicio-his';
 import type { DatosCaptura } from '@/lib/rastreo/evidencia';
 import type {
+    ConsultaHisIniciada,
     ExpedienteA,
     ExpedienteB,
     OpcionMedico,
+    ProgresoConsultaHis,
     Resultado,
     ResultadoBusqueda,
     SujetoRastreo,
@@ -54,6 +61,8 @@ export async function abrirExpedienteAction(entrada: {
     motivo: string;
     nota?: string;
     captura?: DatosCaptura;
+    /** Ids devueltos por `iniciarConsultaHisAction`: aplica lo que respondió el HIS. */
+    consultaHisIds?: string[];
 }): Promise<Resultado<ExpedienteA>> {
     const a = await actor(entrada?.organizationId);
     if (!a.ok) return error(a.error);
@@ -76,6 +85,8 @@ export async function investigarCupoHisAction(entrada: {
     hora: string;
     motivo: string;
     nota?: string;
+    /** Ids devueltos por `iniciarConsultaHisAction`: aplica lo que respondió el HIS. */
+    consultaHisIds?: string[];
 }): Promise<Resultado<ExpedienteB>> {
     const a = await actor(entrada?.organizationId);
     if (!a.ok) return error(a.error);
@@ -91,4 +102,27 @@ export async function revelarIdentidadAction(entrada: {
     const a = await actor(entrada?.organizationId);
     if (!a.ok) return error(a.error);
     return revelarIdentidad(prisma, a.actor, entrada);
+}
+
+/**
+ * Pide una consulta en vivo al HIS del hospital (Fase 2). Devuelve los ids que la
+ * pantalla sondea con `progresoConsultaHisAction`; los datos del HIS no viajan
+ * aquí: llegan al reabrir el expediente con esos ids.
+ */
+export async function iniciarConsultaHisAction(
+    entrada: { organizationId?: string | null } & EntradaIniciarConsultaHis,
+): Promise<Resultado<ConsultaHisIniciada>> {
+    const a = await actor(entrada?.organizationId);
+    if (!a.ok) return error(a.error);
+    return iniciarConsultaHis(prisma, a.actor, entrada);
+}
+
+/** Cómo va una consulta en vivo: en curso, lista o fallida. */
+export async function progresoConsultaHisAction(entrada: {
+    organizationId?: string | null;
+    ids: string[];
+}): Promise<Resultado<ProgresoConsultaHis>> {
+    const a = await actor(entrada?.organizationId);
+    if (!a.ok) return error(a.error);
+    return progresoDeConsultaHis(prisma, a.actor, entrada);
 }

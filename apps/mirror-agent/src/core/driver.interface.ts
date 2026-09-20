@@ -2,6 +2,8 @@ import type {
   CanonicalChangeEvent,
   HisAppointmentSnapshot,
   HisCatalogEntry,
+  HisLookupAppointment,
+  HisLookupRequestDto,
   HisNoticeCandidate,
 } from '@agenia/shared';
 
@@ -161,5 +163,48 @@ export function isNoticeRosterCapable(
   return (
     typeof (driver as Partial<NoticeRosterCapableDriver>).fetchNoticeRoster ===
     'function'
+  );
+}
+
+/**
+ * Consulta en vivo al HIS (rastreo de paciente, Fase 2) — capacidad OPT-IN.
+ * Ver docs/PLAN_RASTREO_PACIENTE.md §7.
+ *
+ * Igual que `NoticeRosterCapableDriver`, a propósito NO forma parte de
+ * `HisDriver`: un segundo hospital no tiene que implementar algo que quizá no
+ * use. El motor comprueba en tiempo de ejecución si el driver activo la tiene
+ * (`isPatientLookupCapable`) y se lo dice al servidor en cada latido; con un
+ * driver que no la tiene, la pantalla dice "este hospital no admite la consulta
+ * en vivo" en vez de dejar al funcionario esperando.
+ */
+export interface PatientLookupCapableDriver {
+  /**
+   * Contesta UNA petición de consulta: solo lectura, parametrizada, con tope de
+   * filas y de tiempo (`LIMITES_CONSULTA_HIS`).
+   *
+   * Devuelve las filas del HIS tal como están, con la hora ya en UTC. Qué se
+   * guarda de ellas (enmascarar documentos de terceros, descartar lo que nadie
+   * pidió) lo decide el SERVIDOR, no el driver.
+   *
+   * `truncated` es `true` si el resultado puede estar incompleto (se llegó al
+   * tope de filas, o se omitió alguna fila ilegible): nunca en silencio.
+   *
+   * Lanza si no puede contestar (HIS caído, tiempo agotado, petición inválida):
+   * un error es "no lo sé", y eso jamás debe confundirse con una lista vacía,
+   * que significa "el HIS no tiene nada".
+   */
+  lookupAppointments(query: HisLookupRequestDto): Promise<{
+    appointments: HisLookupAppointment[];
+    truncated: boolean;
+  }>;
+}
+
+/** Guarda de tipo estructural: ¿el driver activo implementa la consulta en vivo? */
+export function isPatientLookupCapable(
+  driver: HisDriver,
+): driver is HisDriver & PatientLookupCapableDriver {
+  return (
+    typeof (driver as Partial<PatientLookupCapableDriver>)
+      .lookupAppointments === 'function'
   );
 }

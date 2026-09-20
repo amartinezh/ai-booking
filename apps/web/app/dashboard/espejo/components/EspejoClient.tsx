@@ -23,6 +23,9 @@ type Estado = {
         lastHeartbeatAt: Date | null;
         lastHisReachable: boolean | null;
         lastHisDetail: string | null;
+        /** Consulta en vivo del rastreo de pacientes. Solo lectura: se enciende por clínica, tras medir el costo en el hospital. */
+        lookupEnabled: boolean;
+        lastLookupCapable: boolean | null;
     };
     edadLatidoMin: number | null;
     pendientes: number;
@@ -136,6 +139,20 @@ export default function EspejoClient({ data }: { data: Estado }) {
             : { estado: 'mal' as const, detalle: `Los dos sistemas no coinciden (${formatDateShort(data.ultimaReconciliacion.createdAt)}). Revise los conflictos.` }
         : { estado: 'atencion' as const, detalle: 'Todavía no ha corrido ninguna comparación completa.' };
 
+    // Solo se muestra si está ENCENDIDA: apagada es el estado por defecto y no es un
+    // problema. Lo que sí lo es: encendida con un agente que no la admite.
+    const consultaEnVivo = config.lookupEnabled
+        ? config.lastLookupCapable === true
+            ? { estado: 'ok' as const, detalle: 'Encendida: el rastreo de pacientes puede preguntarle al hospital en vivo.' }
+            : {
+                  estado: 'mal' as const,
+                  detalle:
+                      config.lastLookupCapable === false
+                          ? 'Encendida, pero el driver del agente no la implementa: las consultas van a fallar.'
+                          : 'Encendida, pero el agente no informa que la admita (puede estar desactualizado): actualícelo o las consultas van a fallar.',
+              }
+        : null;
+
     return (
         <div className="space-y-8">
             <header className="flex flex-wrap items-start justify-between gap-3">
@@ -171,6 +188,7 @@ export default function EspejoClient({ data }: { data: Estado }) {
                 <Semaforo titulo="Citas en camino al hospital" {...cola} />
                 <Semaforo titulo="Agenda" {...agenda} />
                 <Semaforo titulo="Los dos sistemas coinciden" {...reconciliacion} />
+                {consultaEnVivo && <Semaforo titulo="Consulta en vivo al HIS (rastreo)" {...consultaEnVivo} />}
             </section>
 
             <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">

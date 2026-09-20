@@ -88,6 +88,8 @@ describe('MirrorEngine', () => {
       uploadCatalog: jest.fn(),
       getPendingNoticeRequests: jest.fn(),
       pushNoticeRoster: jest.fn(),
+      getPendingLookupRequests: jest.fn(),
+      pushLookupResult: jest.fn(),
     };
     driver = {
       key: 'test-driver',
@@ -1127,6 +1129,8 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
       uploadCatalog: jest.fn(),
       getPendingNoticeRequests: jest.fn(),
       pushNoticeRoster: jest.fn(),
+      getPendingLookupRequests: jest.fn(),
+      pushLookupResult: jest.fn(),
     };
     driver = {
       key: 'test-driver',
@@ -1307,6 +1311,7 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
         recentErrors: 0,
         hisReachable: true,
         hisDetail: 'SQL 14.0',
+        lookupCapable: false,
       });
     });
 
@@ -1322,6 +1327,7 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
         recentErrors: 3,
         hisReachable: false,
         hisDetail: 'login failed',
+        lookupCapable: false,
       });
     });
 
@@ -1336,6 +1342,7 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
         recentErrors: 1,
         hisReachable: false,
         hisDetail: 'ECONNREFUSED',
+        lookupCapable: false,
       });
     });
 
@@ -1350,6 +1357,200 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
           hisDetail: 'algo raro',
         }),
       );
+    });
+  });
+
+  describe('sendHeartbeat — consulta en vivo', () => {
+    it('un driver CON la capacidad lo declara en el latido', async () => {
+      driver.healthCheck.mockResolvedValue({ ok: true });
+      (driver as unknown as Record<string, unknown>).lookupAppointments =
+        jest.fn();
+
+      await engine.sendHeartbeat(0);
+
+      expect(api.heartbeat).toHaveBeenCalledWith(
+        expect.objectContaining({ lookupCapable: true }),
+      );
+    });
+
+    it('un driver SIN la capacidad declara false (no lo omite: false es una respuesta)', async () => {
+      driver.healthCheck.mockResolvedValue({ ok: true });
+
+      await engine.sendHeartbeat(0);
+
+      expect(api.heartbeat).toHaveBeenCalledWith(
+        expect.objectContaining({ lookupCapable: false }),
+      );
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // `syncLookupRequests` — consulta en vivo al HIS (rastreo de paciente,
+  // Fase 2). Hay una persona mirando la pantalla: lo que se prueba es que un
+  // driver sin la capacidad ni pregunta, que una petición inválida NO llega al
+  // HIS, y que un fallo se le AVISA al servidor (si no, la pantalla espera 30 s
+  // igual que si el agente estuviera caído).
+  // ══════════════════════════════════════════════════════════════════════
+  describe('syncLookupRequests', () => {
+    const DESDE = '2026-09-01T05:00:00.000Z';
+    const HASTA = '2026-12-01T05:00:00.000Z';
+    const porDocumento = (over: Record<string, unknown> = {}) => ({
+      requestId: 'req-1',
+      kind: 'BY_DOCUMENT' as const,
+      patientDocuments: ['1088123456'],
+      fromIso: DESDE,
+      toIso: HASTA,
+      ...over,
+    });
+    const lookup = () =>
+      (driver as unknown as { lookupAppointments: jest.Mock })
+        .lookupAppointments;
+
+    beforeEach(() => {
+      (driver as unknown as Record<string, unknown>).lookupAppointments =
+        jest.fn(async () => ({ appointments: [], truncated: false }));
+      api.pushLookupResult.mockResolvedValue({
+        requestId: 'req-1',
+        stored: true,
+      });
+    });
+
+    it('un driver SIN la capacidad se salta por completo: ni pregunta a la API', async () => {
+      delete (driver as unknown as Record<string, unknown>).lookupAppointments;
+
+      const r = await engine.syncLookupRequests();
+
+      expect(r).toEqual({ skipped: true, processed: 0, errores: 0 });
+      expect(api.getPendingLookupRequests).not.toHaveBeenCalled();
+    });
+
+    it('sin peticiones pendientes no hace nada más — no es un error', async () => {
+      api.getPendingLookupRequests.mockResolvedValue([]);
+
+      await expect(engine.syncLookupRequests()).resolves.toEqual({
+        skipped: false,
+        processed: 0,
+        errores: 0,
+      });
+      expect(lookup()).not.toHaveBeenCalled();
+    });
+
+    it('resuelve cada petición: consulta al driver y sube lo que encontró', async () => {
+      const peticion = porDocumento();
+      const citas = [
+        {
+          doctorExternalKey: '76',
+          startTimeIso: '2026-09-22T15:00:00.000Z',
+          patientDocument: '1088123456',
+          status: 'SCHEDULED',
+        },
+      ];
+      api.getPendingLookupRequests.mockResolvedValue([peticion]);
+      lookup().mockResolvedValue({ appointments: citas, truncated: true });
+
+      const r = await engine.syncLookupRequests();
+
+      expect(lookup()).toHaveBeenCalledWith(peticion);
+      expect(api.pushLookupResult).toHaveBeenCalledWith({
+        requestId: 'req-1',
+        appointments: citas,
+        truncated: true,
+      });
+      expect(r).toEqual({ skipped: false, processed: 1, errores: 0 });
+    });
+
+    it('🚨 una lista vacía se sube como lista vacía (significa "el HIS no tiene nada"), sin error', async () => {
+      api.getPendingLookupRequests.mockResolvedValue([porDocumento()]);
+
+      await engine.syncLookupRequests();
+
+      expect(api.pushLookupResult).toHaveBeenCalledWith({
+        requestId: 'req-1',
+        appointments: [],
+        truncated: false,
+      });
+      expect(api.pushLookupResult.mock.calls[0][0]).not.toHaveProperty('error');
+    });
+
+    it('🔒 una petición INVÁLIDA no llega al HIS: se responde con error', async () => {
+      api.getPendingLookupRequests.mockResolvedValue([
+        porDocumento({ patientDocuments: ["1'; DROP TABLE CITAS_MEDICAS;--"] }),
+      ]);
+
+      const r = await engine.syncLookupRequests();
+
+      expect(lookup()).not.toHaveBeenCalled();
+      expect(api.pushLookupResult).toHaveBeenCalledWith({
+        requestId: 'req-1',
+        appointments: [],
+        error: expect.stringContaining('Petición inválida'),
+      });
+      expect(r).toMatchObject({ processed: 0, errores: 1 });
+    });
+
+    it('si el HIS falla, se le AVISA al servidor con el motivo (la pantalla no espera 30 s)', async () => {
+      api.getPendingLookupRequests.mockResolvedValue([porDocumento()]);
+      lookup().mockRejectedValue(
+        new Error('La consulta al HIS superó el tiempo máximo'),
+      );
+
+      const r = await engine.syncLookupRequests();
+
+      expect(api.pushLookupResult).toHaveBeenCalledWith({
+        requestId: 'req-1',
+        appointments: [],
+        error: 'La consulta al HIS superó el tiempo máximo',
+      });
+      expect(r).toEqual({
+        skipped: false,
+        processed: 0,
+        errores: 1,
+        primerError: 'La consulta al HIS superó el tiempo máximo',
+      });
+    });
+
+    it('un fallo en UNA petición no detiene las demás de la vuelta', async () => {
+      api.getPendingLookupRequests.mockResolvedValue([
+        porDocumento({ requestId: 'req-malo' }),
+        porDocumento({ requestId: 'req-bueno' }),
+      ]);
+      lookup()
+        .mockRejectedValueOnce(new Error('boom'))
+        .mockResolvedValueOnce({ appointments: [], truncated: false });
+
+      const r = await engine.syncLookupRequests();
+
+      expect(api.pushLookupResult).toHaveBeenCalledTimes(2);
+      expect(api.pushLookupResult).toHaveBeenLastCalledWith({
+        requestId: 'req-bueno',
+        appointments: [],
+        truncated: false,
+      });
+      expect(r).toMatchObject({
+        processed: 1,
+        errores: 1,
+        primerError: 'boom',
+      });
+    });
+
+    it('si no se puede ni avisar del error, la vuelta sigue (la petición expirará en el servidor)', async () => {
+      api.getPendingLookupRequests.mockResolvedValue([
+        porDocumento({ requestId: 'a' }),
+        porDocumento({ requestId: 'b' }),
+      ]);
+      lookup().mockRejectedValue(new Error('HIS caído'));
+      api.pushLookupResult.mockRejectedValue(new Error('sin red'));
+
+      await expect(engine.syncLookupRequests()).resolves.toMatchObject({
+        errores: 2,
+      });
+      expect(lookup()).toHaveBeenCalledTimes(2);
+    });
+
+    it('un fallo al preguntar por las peticiones se propaga (el lazo lo reporta)', async () => {
+      api.getPendingLookupRequests.mockRejectedValue(new Error('API caída'));
+
+      await expect(engine.syncLookupRequests()).rejects.toThrow('API caída');
     });
   });
 

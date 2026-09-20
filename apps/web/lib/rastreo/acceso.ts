@@ -42,6 +42,12 @@ export interface PermisosRastreo {
   verPersonal: boolean;
   /** BOOKING_AGENT: sus citas visibles se acotan a la EPS y al médico que tiene asignados. */
   aplicaScopeAgente: boolean;
+  /**
+   * Pedir una consulta en vivo al HIS del hospital (Fase 2, plan §7). Es una
+   * consulta sobre la base PRODUCTIVA del hospital, así que se da solo a quien ya
+   * ve el estado del espejo y atiende reclamos: no a DOCTOR, que no ve la sync.
+   */
+  hisEnVivo: boolean;
 }
 
 const NADA: PermisosRastreo = {
@@ -54,6 +60,7 @@ const NADA: PermisosRastreo = {
   verConsultas: false,
   verPersonal: false,
   aplicaScopeAgente: false,
+  hisEnVivo: false,
 };
 
 /**
@@ -71,6 +78,7 @@ const MATRIZ: Partial<Record<RolRastreo, PermisosRastreo>> = {
     verConsultas: true,
     verPersonal: true,
     aplicaScopeAgente: false,
+    hisEnVivo: true,
   },
   BOOKING_AGENT: {
     buscar: true,
@@ -83,6 +91,7 @@ const MATRIZ: Partial<Record<RolRastreo, PermisosRastreo>> = {
     verConsultas: false,
     verPersonal: false,
     aplicaScopeAgente: true,
+    hisEnVivo: true,
   },
   DOCTOR: {
     buscar: true,
@@ -94,6 +103,7 @@ const MATRIZ: Partial<Record<RolRastreo, PermisosRastreo>> = {
     verConsultas: false,
     verPersonal: false,
     aplicaScopeAgente: false,
+    hisEnVivo: false,
   },
   SUPER_ADMIN: {
     buscar: true,
@@ -107,6 +117,7 @@ const MATRIZ: Partial<Record<RolRastreo, PermisosRastreo>> = {
     verConsultas: true,
     verPersonal: true,
     aplicaScopeAgente: false,
+    hisEnVivo: true,
   },
 };
 

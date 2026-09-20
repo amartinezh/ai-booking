@@ -86,6 +86,7 @@ model Organization {
   // 🔎 Rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md, Fase 0).
   whatsappMessageLogs WhatsappMessageLog[]
   patientLookupLogs   PatientLookupLog[]
+  hisLookupRequests   HisLookupRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1617,8 +1618,14 @@ model HospitalMirrorConfig {
   availabilityMode MirrorAvailabilityMode @default(OFF)
 
   // Interruptor de emergencia por dirección — independiente de `enabled`.
-  pushEnabled Boolean @default(true) // AgenIA → HIS
-  pullEnabled Boolean @default(true) // HIS → AgenIA
+  pushEnabled   Boolean @default(true) // AgenIA → HIS
+  pullEnabled   Boolean @default(true) // HIS → AgenIA
+  // 🔎 Consulta EN VIVO al HIS desde el rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md §7).
+  // APAGADA por defecto y sin pantalla para encenderla, igual que los dos de
+  // arriba: es una decisión de CARGA sobre la base del hospital, no de la
+  // clínica. Se enciende a mano (ver el RUNBOOK del driver) DESPUÉS de medir el
+  // costo de la consulta en el laboratorio del hospital.
+  lookupEnabled Boolean @default(false)
 
   // Observabilidad del agente on-premise.
   lastHeartbeatAt DateTime?
@@ -1627,9 +1634,14 @@ model HospitalMirrorConfig {
   // el agente puede latir puntual y no poder escribir una sola cita. Antes esto
   // solo salía por log, así que la única forma de enterarse era que alguien
   // estuviera mirando el servidor en ese momento.
-  lastHisReachable Boolean?
-  lastHisDetail    String?
-  lastPushCursor   BigInt   @default(0)
+  lastHisReachable  Boolean?
+  lastHisDetail     String?
+  // ¿El driver del agente implementa la consulta en vivo? Lo reporta el agente en
+  // cada latido. `null` = nunca lo reportó (un agente anterior a la función): se
+  // trata como "no", para que la pantalla lo diga antes de encolar en vez de
+  // dejar al funcionario esperando una respuesta que nadie va a dar.
+  lastLookupCapable Boolean?
+  lastPushCursor    BigInt   @default(0)
 
   // 🔔 Alertas de conflicto (doble-cupo → WaitlistEntry): configurable, se puede
   // apagar sin tocar código. Ver PLAN_ESPEJO_HOSPITAL.md §5.1/§7.
@@ -1981,4 +1993,57 @@ model PatientLookupLog {
 
   @@index([organizationId, createdAt])
   @@index([organizationId, actorUserId, createdAt])
+}
+
+/// Una consulta EN VIVO al HIS (rastreo de paciente, Fase 2, plan §7). Replica el
+/// patrón de `NoticeRosterRequest`: la pantalla crea la fila, el agente la
+/// resuelve en su siguiente vuelta (segundos) y la pantalla, con polling, la lee.
+///
+/// PRIVACIDAD. `params` lleva el documento de un paciente y `result` lo que el
+/// HIS tenía de él: por eso NO viven más de `LIMITES_CONSULTA_HIS.purgaMs` (15
+/// min). Pasado `purgeAt`, un cron los borra (`params` a `{}`, `result` a NULL) y
+/// marca `purgedAt`; quedan solo los metadatos (quién, cuándo, de qué tipo, con
+/// qué estado) y la bitácora `PatientLookupLog`. El documento completo de un
+/// TERCERO nunca se guarda: al recibir la respuesta el servidor lo compara con
+/// el del paciente y conserva solo el veredicto y el documento enmascarado.
+model HisLookupRequest {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Quién la pidió. Sin FK: el usuario puede borrarse y esto es bitácora.
+  requestedByUserId String
+
+  /// 'BY_DOCUMENT' (¿qué citas tiene este documento?) | 'BY_SLOT' (¿quién tiene este cupo?)
+  kind String
+
+  /// Lo que se pregunta. Contiene un documento: se BORRA al purgar.
+  params Json
+
+  /// 'PENDIENTE' | 'RESUELTA' | 'ERROR' | 'EXPIRADA'
+  status String @default("PENDIENTE")
+
+  /// Lo que respondió el HIS, ya sin documentos de terceros. NULL hasta que se resuelve y tras purgar.
+  result    Json?
+  /// Por qué falló (lo que dijo el driver, truncado). Se muestra solo a quien puede ver internos.
+  error     String?
+  /// El driver recortó la respuesta al tope de filas: nunca en silencio.
+  truncated Boolean @default(false)
+
+  /// PatientProfile.id al que se refiere, sin FK. La pantalla lo comprueba al leer
+  /// el resultado: quien lo pide debe estar consultando al MISMO paciente.
+  patientId String?
+
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+  /// Cuándo se borran `params` y `result`.
+  purgeAt    DateTime
+  /// Cuándo se borraron. NULL = todavía no.
+  purgedAt   DateTime?
+
+  /// "¿qué tiene pendiente este agente?" (su poll) y "¿ya me contestaron?" (el de la pantalla).
+  @@index([organizationId, status, createdAt])
+  /// La purga: filas sin purgar cuyo plazo venció.
+  @@index([purgedAt, purgeAt])
 }

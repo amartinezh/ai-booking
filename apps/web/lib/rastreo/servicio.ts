@@ -37,6 +37,7 @@ import {
   leerCancelacionPersonal,
   type AuditoriaCupo,
   type CitaRastreo,
+  type EvidenciaHis,
   type EvidenciaRastreoA,
   type EvidenciaRastreoB,
   type MotivoConsulta,
@@ -44,6 +45,15 @@ import {
 } from '@agenia/shared';
 import { aUtc } from './zona-horaria';
 import { SIN_PERMISOS, type ActorRastreo } from './acceso';
+import {
+  cargarEvidenciaHis,
+  disponibilidadHis,
+  documentosDelPaciente,
+  etiquetasDeMedicosHis,
+  idsValidos,
+  progresoConsulta,
+  vistaDeConsulta,
+} from './consulta-his';
 import {
   analizarConversacion,
   coincideConCaptura,
@@ -68,6 +78,7 @@ import type {
   ExpedienteA,
   ExpedienteB,
   FilaConsulta,
+  HisEnVivoVista,
   HistorialVista,
   IdentidadVista,
   ListaConsultas,
@@ -85,7 +96,7 @@ type Db = PrismaClient;
 
 /** Cuántos candidatos se devuelven como máximo. */
 export const MAX_CANDIDATOS = 10;
-const MAX_CITAS = 100;
+export const MAX_CITAS = 100;
 const DIAS_CONVERSACION = 90;
 const DIAS_AUDITORIA_HIS = 120;
 const TAMANO_PAGINA = 25;
@@ -99,7 +110,7 @@ export const MSG_LIMITE =
   'Hiciste demasiadas búsquedas seguidas. Espera unos minutos e intenta de nuevo.';
 export const MSG_NO_REGISTRADA =
   'No se pudo registrar la consulta y, por seguridad, no se muestran datos. Intenta de nuevo.';
-const MSG_PACIENTE_NO_ENCONTRADO = 'Paciente no encontrado.';
+export const MSG_PACIENTE_NO_ENCONTRADO = 'Paciente no encontrado.';
 
 /**
  * Límite de tasa por usuario (§6, punto 5): 30 búsquedas en 10 minutos por
@@ -117,7 +128,7 @@ export function limitesDeBusqueda(): { max: number; ventanaMin: number } {
 // Ayudas comunes
 // ─────────────────────────────────────────────────────────────
 
-function validarMotivo(
+export function validarMotivo(
   motivo: unknown,
   nota: unknown,
 ): Resultado<{ motivo: MotivoConsulta; nota: string | null }> {
@@ -149,10 +160,12 @@ interface FilaBitacora {
   candidateIds: string[];
   openedPatientId: string | null;
   verdicts?: { codigo: string; citaId: string | null }[];
+  /** ¿Esta consulta incluye lo que respondió el HIS en vivo? */
+  liveHisRequested?: boolean;
 }
 
 /** Anota la consulta. Devuelve false si no se pudo: el llamador NO debe entregar datos. */
-async function registrar(
+export async function registrar(
   db: Db,
   actor: ActorRastreo,
   fila: FilaBitacora,
@@ -171,7 +184,7 @@ async function registrar(
         candidateIds: fila.candidateIds,
         openedPatientId: fila.openedPatientId,
         verdicts: fila.verdicts,
-        liveHisRequested: false,
+        liveHisRequested: fila.liveHisRequested ?? false,
       },
     });
     return true;
@@ -181,7 +194,7 @@ async function registrar(
   }
 }
 
-async function superaElLimite(db: Db, actor: ActorRastreo): Promise<boolean> {
+export async function superaElLimite(db: Db, actor: ActorRastreo): Promise<boolean> {
   const { max, ventanaMin } = limitesDeBusqueda();
   const recientes = await db.patientLookupLog.count({
     where: {
@@ -195,7 +208,7 @@ async function superaElLimite(db: Db, actor: ActorRastreo): Promise<boolean> {
 }
 
 /** DOCTOR: solo pacientes con los que tiene una cita suya (misma regla que `TenantRbacGuard`). */
-function filtroRelacion(actor: ActorRastreo): Prisma.PatientProfileWhereInput {
+export function filtroRelacion(actor: ActorRastreo): Prisma.PatientProfileWhereInput {
   if (!actor.permisos.soloConRelacionTerapeutica) return {};
   return {
     appointments: {
@@ -208,7 +221,7 @@ function filtroRelacion(actor: ActorRastreo): Prisma.PatientProfileWhereInput {
 }
 
 /** El alcance que limita las CITAS visibles (BOOKING_AGENT: su EPS y su médico; DOCTOR: las suyas). */
-function alcanceDeCitas(
+export function alcanceDeCitas(
   actor: ActorRastreo,
 ): Prisma.AppointmentWhereInput | null {
   const w: Prisma.AppointmentWhereInput = {};
@@ -220,11 +233,11 @@ function alcanceDeCitas(
 }
 
 /** Sin `actor.scopeDoctorId` un DOCTOR no tiene a quién ver: falla cerrado. */
-function actorIncoherente(actor: ActorRastreo): boolean {
+export function actorIncoherente(actor: ActorRastreo): boolean {
   return actor.permisos.soloConRelacionTerapeutica && !actor.scopeDoctorId;
 }
 
-async function zonaHorariaDe(db: Db, organizationId: string): Promise<string> {
+export async function zonaHorariaDe(db: Db, organizationId: string): Promise<string> {
   const org = await db.organization.findUnique({
     where: { id: organizationId },
     select: { timezone: true },
@@ -232,7 +245,7 @@ async function zonaHorariaDe(db: Db, organizationId: string): Promise<string> {
   return org?.timezone || DEFAULT_TIMEZONE;
 }
 
-const SELECCION_PACIENTE = {
+export const SELECCION_PACIENTE = {
   eps: { select: { name: true } },
   _count: { select: { appointments: true } },
 } as const;
@@ -462,6 +475,8 @@ export async function armarExpedienteA(
     motivo: unknown;
     nota?: unknown;
     captura?: DatosCaptura;
+    /** Ids de una consulta en vivo al HIS ya hecha (`iniciarConsultaHis`): se leen y se aplican al veredicto. */
+    consultaHisIds?: unknown;
   },
 ): Promise<Resultado<ExpedienteA>> {
   if (!actor.permisos.buscar || actorIncoherente(actor)) {
@@ -525,6 +540,7 @@ export async function armarExpedienteA(
             scheduleSlot: {
               select: {
                 startTime: true,
+                doctorId: true,
                 doctor: { select: { fullName: true, isFunctionalAgenda: true } },
                 service: { select: { name: true } },
               },
@@ -549,6 +565,8 @@ export async function armarExpedienteA(
         lastHeartbeatAt: true,
         lastHisReachable: true,
         lastHisDetail: true,
+        lookupEnabled: true,
+        lastLookupCapable: true,
       },
     }),
     nivel !== 'NINGUNA'
@@ -692,6 +710,32 @@ export async function armarExpedienteA(
       : Promise.resolve([]),
   ]);
 
+  // ── Lo que respondió el HIS en vivo (Fase 2) ───────────────
+  // Solo con perfil (un remitente sin perfil no tiene documento con el cual
+  // preguntar) y solo quien tiene el permiso.
+  const evidenciaHis =
+    permisos.hisEnVivo && conEspejo && paciente
+      ? await cargarEvidenciaHis(db, {
+          organizationId: org,
+          userId: actor.userId,
+          ids: entrada.consultaHisIds,
+          documentos: documentosDelPaciente(paciente.cedula),
+        })
+      : null;
+  // La clave del médico en el HIS: con ella cada cita se ubica en lo que respondió.
+  const claveDelMedico = new Map<string, string>();
+  if (evidenciaHis) {
+    const mapas = await db.mirrorEntityMap.findMany({
+      where: {
+        organizationId: org,
+        entityType: 'DOCTOR',
+        agenIAId: { in: [...new Set(citasBD.map((c) => c.scheduleSlot.doctorId))] },
+      },
+      select: { agenIAId: true, externalKey: true },
+    });
+    for (const m of mapas) claveDelMedico.set(m.agenIAId, m.externalKey);
+  }
+
   const eventosPorCita = agrupar(eventosBD, (e) => e.entityId);
   const mensajesPorCita = agrupar(
     mensajesBD.filter((m) => m.appointmentId !== null),
@@ -720,6 +764,7 @@ export async function armarExpedienteA(
       origin: a.origin,
       createdAtIso: a.createdAt.toISOString(),
       ...base,
+      doctorExternalKey: claveDelMedico.get(a.scheduleSlot.doctorId) ?? null,
       eps: a.eps?.name ?? null,
       cancelacion:
         a.status === 'CANCELLED'
@@ -752,7 +797,7 @@ export async function armarExpedienteA(
     };
     return {
       ...evidencia,
-      lineaDeVida: construirLineaDeVida(evidencia, { espejo }),
+      lineaDeVida: construirLineaDeVida(evidencia, { espejo, his: evidenciaHis }),
       eventosSync: permisos.verInternos ? eventos.map(aVistaDeEvento) : null,
       recordatorioIso: a.reminderSentAt ? a.reminderSentAt.toISOString() : null,
     };
@@ -770,6 +815,7 @@ export async function armarExpedienteA(
     conversacion: analisis?.resumen ?? null,
     espejo,
     capturaIndicada: hayCaptura(captura),
+    his: evidenciaHis,
   };
   const resultado = clasificarRastreoA(evidencia);
 
@@ -785,8 +831,11 @@ export async function armarExpedienteA(
     candidateIds: paciente ? [paciente.id] : [],
     openedPatientId: paciente?.id ?? null,
     verdicts: resultado.veredictos.map((v) => ({ codigo: v.codigo, citaId: v.citaId })),
+    liveHisRequested: evidenciaHis !== null,
   });
   if (!registrada) return { success: false, error: MSG_NO_REGISTRADA };
+
+  const hisEnVivo = await armarHisEnVivo(db, actor, configEspejo, ahora, evidenciaHis, entrada.consultaHisIds);
 
   const identidad: IdentidadVista | null = paciente
     ? {
@@ -836,7 +885,52 @@ export async function armarExpedienteA(
       espejo,
       verInternos: permisos.verInternos,
       capturaIndicada: hayCaptura(captura),
+      hisEnVivo,
     },
+  };
+}
+
+/**
+ * Lo que la pantalla necesita de la consulta en vivo: si se ofrece, si se puede
+ * pedir ahora (y si no, por qué) y, si ya se hizo, lo que respondió el HIS.
+ */
+async function armarHisEnVivo(
+  db: Db,
+  actor: ActorRastreo,
+  config: Parameters<typeof disponibilidadHis>[0],
+  ahora: Date,
+  evidencia: EvidenciaHis | null,
+  ids: unknown,
+): Promise<HisEnVivoVista> {
+  const visible = actor.permisos.hisEnVivo && config !== null;
+  if (!visible) {
+    return { visible: false, disponibilidad: { puede: false, razon: null }, consulta: null, aviso: null };
+  }
+  const disponibilidad = disponibilidadHis(config, ahora);
+  if (!evidencia) return { visible: true, disponibilidad, consulta: null, aviso: null };
+
+  const etiqueta = await etiquetasDeMedicosHis(
+    db,
+    actor.organizationId,
+    evidencia.porDocumento?.citas.map((c) => c.doctorExternalKey) ?? [],
+    (p) => etiquetaMedico(p.fullName, p.isFunctionalAgenda),
+  );
+  // Si una de las dos búsquedas falló, el resultado es parcial y hay que decirlo.
+  const idsLimpios = idsValidos(ids);
+  const progreso = idsLimpios
+    ? await progresoConsulta(db, {
+        organizationId: actor.organizationId,
+        userId: actor.userId,
+        ids: idsLimpios,
+        ahora,
+        verDetalleTecnico: actor.permisos.verInternos,
+      })
+    : null;
+  return {
+    visible: true,
+    disponibilidad,
+    consulta: vistaDeConsulta(evidencia, etiqueta),
+    aviso: progreso?.estado === 'LISTA' ? progreso.detalle : null,
   };
 }
 
@@ -882,6 +976,8 @@ const CONFIG_ESPEJO = {
   lastHeartbeatAt: true,
   lastHisReachable: true,
   lastHisDetail: true,
+  lookupEnabled: true,
+  lastLookupCapable: true,
 } as const;
 
 /** Los médicos del HIS que se pueden elegir para investigar un cupo. */
@@ -946,12 +1042,29 @@ export async function opcionesCupoHis(
   };
 }
 
-interface PerfilPorDocumento {
+export interface PerfilPorDocumento {
   id: string;
   cedula: string;
   fullName: string;
   whatsappId: string | null;
   bsuid: string | null;
+}
+
+/**
+ * Los perfiles de la clínica cuyo documento es el escrito o difiere de él solo en
+ * ceros a la izquierda (Excel se los come). `sinCeros` es la variante sin ceros.
+ */
+export async function perfilesPorDocumento(
+  db: Db,
+  organizationId: string,
+  sinCeros: string,
+): Promise<PerfilPorDocumento[]> {
+  return db.$queryRaw<PerfilPorDocumento[]>(Prisma.sql`
+    SELECT id, cedula, "fullName", "whatsappId", bsuid
+    FROM "PatientProfile"
+    WHERE "organizationId" = ${organizationId}
+      AND regexp_replace("cedula", '^0+', '') = ${sinCeros}
+    LIMIT 10`);
 }
 
 export async function investigarCupoB(
@@ -964,6 +1077,8 @@ export async function investigarCupoB(
     hora: unknown;
     motivo: unknown;
     nota?: unknown;
+    /** Ids de una consulta en vivo al HIS ya hecha (`iniciarConsultaHis`): se leen y se aplican al veredicto. */
+    consultaHisIds?: unknown;
   },
 ): Promise<Resultado<ExpedienteB>> {
   if (!actor.permisos.modoB) return { success: false, error: SIN_PERMISOS };
@@ -1018,12 +1133,7 @@ export async function investigarCupoB(
   // ── El paciente: el documento tal cual y sus variantes con ceros ──
   const digitos = doc.digitos;
   const sinCeros = doc.documentos[doc.documentos.length - 1];
-  const perfiles = await db.$queryRaw<PerfilPorDocumento[]>(Prisma.sql`
-    SELECT id, cedula, "fullName", "whatsappId", bsuid
-    FROM "PatientProfile"
-    WHERE "organizationId" = ${org}
-      AND regexp_replace("cedula", '^0+', '') = ${sinCeros}
-    LIMIT 10`);
+  const perfiles = await perfilesPorDocumento(db, org, sinCeros);
   const exacto = perfiles.find((p) => p.cedula === digitos) ?? null;
   const perfil = exacto ?? perfiles[0] ?? null;
 
@@ -1069,10 +1179,21 @@ export async function investigarCupoB(
   }));
   const espejo = saludDelEspejo(config);
   const ahora = new Date();
+  // Lo que respondió el HIS en vivo (Fase 2): solo de una consulta que ESTE usuario
+  // pidió, y sobre ESTE documento.
+  const evidenciaHis = actor.permisos.hisEnVivo
+    ? await cargarEvidenciaHis(db, {
+        organizationId: org,
+        userId: actor.userId,
+        ids: entrada.consultaHisIds,
+        documentos: doc.documentos,
+      })
+    : null;
   const evidencia: EvidenciaRastreoB = {
     ahoraIso: ahora.toISOString(),
     zonaHoraria: tz,
     cupoDescripcion: `Cupo del HIS: ${etiquetaDoctor}, ${formatAppointmentCompact(inicio, { timeZone: tz })}`,
+    cupo: { doctorExternalKey: medicoClave, startIso: inicio.toISOString() },
     paciente: {
       perfilEncontrado: perfil !== null,
       coincidencia: exacto ? 'EXACTA' : perfil ? 'SIN_CEROS' : null,
@@ -1086,6 +1207,7 @@ export async function investigarCupoB(
       citaDelPacienteEnAgenIA: citaDelPaciente !== null,
     },
     espejo,
+    his: evidenciaHis,
   };
   const resultado = clasificarRastreoB(evidencia);
 
@@ -1098,8 +1220,11 @@ export async function investigarCupoB(
     candidateIds: perfiles.map((p) => p.id),
     openedPatientId: perfil?.id ?? null,
     verdicts: resultado.veredictos.map((v) => ({ codigo: v.codigo, citaId: v.citaId })),
+    liveHisRequested: evidenciaHis !== null,
   });
   if (!registrada) return { success: false, error: MSG_NO_REGISTRADA };
+
+  const hisEnVivo = await armarHisEnVivo(db, actor, config, ahora, evidenciaHis, entrada.consultaHisIds);
 
   return {
     success: true,
@@ -1120,6 +1245,7 @@ export async function investigarCupoB(
       },
       auditorias,
       espejo,
+      hisEnVivo,
     },
   };
 }
@@ -1216,6 +1342,7 @@ export async function listarConsultas(
     nota: f.reasonNote,
     candidatos: Array.isArray(f.candidateIds) ? f.candidateIds.length : 0,
     abrioExpediente: f.openedPatientId !== null || f.queryKind === 'OPEN',
+    enVivo: f.liveHisRequested === true,
     veredictos: Array.isArray(f.verdicts)
       ? (f.verdicts as { codigo?: string }[]).map((v) => v.codigo ?? '').filter(Boolean)
       : [],

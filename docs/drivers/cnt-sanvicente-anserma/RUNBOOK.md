@@ -272,6 +272,19 @@ UPDATE "HospitalMirrorConfig" SET "enabled" = false WHERE "organizationId" = '<o
 Parar el servicio en la VM tiene el mismo efecto y es reversible igual. Ninguna
 de las dos cosas borra nada.
 
+### Apagar solo la consulta en vivo del rastreo
+
+Si el hospital nota carga por las consultas del rastreo de pacientes, se apaga solo
+eso; el espejo sigue igual. Tiene efecto en el próximo sondeo del agente (unos
+segundos) y no pierde nada:
+
+```sql
+UPDATE "HospitalMirrorConfig" SET "lookupEnabled" = false WHERE "organizationId" = '<org>';
+```
+
+Está **apagada por defecto** y se enciende a mano después de medir su costo en el
+laboratorio. Ver [`CONSULTA_EN_VIVO.md`](CONSULTA_EN_VIVO.md).
+
 ---
 
 ## Prueba de desastre (game-day)

@@ -17,6 +17,7 @@ import { MirrorApplyService } from './mirror-apply.service';
 import { MirrorAvailabilityService } from './mirror-availability.service';
 import { MirrorCatalogService } from './mirror-catalog.service';
 import { MirrorNoticeService } from './mirror-notice.service';
+import { MirrorLookupService } from './mirror-lookup.service';
 import type {
   AckInput,
   AckResult,
@@ -33,6 +34,9 @@ import type {
   NoticeRequestDto,
   NoticeRosterInput,
   NoticeRosterResult,
+  HisLookupRequestDto,
+  HisLookupResultInput,
+  HisLookupResultOutput,
 } from './dto/mirror.types';
 
 type AgentRequest = Request & MirrorAgentRequest;
@@ -52,6 +56,7 @@ export class MirrorController {
     private readonly availability: MirrorAvailabilityService,
     private readonly catalog: MirrorCatalogService,
     private readonly notice: MirrorNoticeService,
+    private readonly lookup: MirrorLookupService,
   ) {}
 
   @Post('handshake')
@@ -207,6 +212,33 @@ export class MirrorController {
     }
     const { organizationId, driverKey } = req.mirrorConfig;
     return this.notice.applyRoster(organizationId, driverKey, body);
+  }
+
+  /**
+   * GET /mirror/lookup-requests — consulta en vivo al HIS (rastreo de paciente,
+   * Fase 2; docs/PLAN_RASTREO_PACIENTE.md §7). El agente pregunta cada pocos
+   * segundos si alguien pidió "¿qué tiene el HIS de este paciente?". Con el
+   * interruptor de la clínica apagado responde `[]`, no un error.
+   */
+  @Get('lookup-requests')
+  getLookupRequests(@Req() req: AgentRequest): Promise<HisLookupRequestDto[]> {
+    return this.lookup.getPendingRequests(req.mirrorConfig.organizationId);
+  }
+
+  /**
+   * POST /mirror/lookup-result — el agente responde una petición: las citas que
+   * encontró, o `error` / `unsupported` si no pudo. El servidor decide qué se
+   * guarda (enmascara terceros, descarta lo que no se pidió).
+   */
+  @Post('lookup-result')
+  applyLookupResult(
+    @Req() req: AgentRequest,
+    @Body() body: HisLookupResultInput,
+  ): Promise<HisLookupResultOutput> {
+    if (typeof body?.requestId !== 'string' || body.requestId === '') {
+      throw new BadRequestException('requestId es obligatorio.');
+    }
+    return this.lookup.applyResult(req.mirrorConfig.organizationId, body);
   }
 
   @Post('ack')

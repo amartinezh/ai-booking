@@ -1,6 +1,6 @@
 # Plan: Rastreo de paciente (consulta de citas y diagnóstico de discrepancias AgenIA ↔ HIS)
 
-> **Estado:** Diseño con alcance y perfiles confirmados (2026-09-20). **Fases 0 y 1 implementadas, verificadas y commiteadas (2026-09-20, `1ed83cf`); el registro de quién cancela desde el panel, después** — ver «Estado de la Fase 0» (§8) y «Estado de la Fase 1» (§9). Faltan la consulta en vivo al HIS (Fase 2) y el vigilante y la bandeja (Fase 3).
+> **Estado:** Diseño con alcance y perfiles confirmados (2026-09-20). **Fases 0 y 1 implementadas, verificadas y commiteadas (2026-09-20, `1ed83cf`); el registro de quién cancela desde el panel, después** — ver «Estado de la Fase 0» (§8) y «Estado de la Fase 1» (§9). **Fase 2 (consulta en vivo al HIS) implementada y verificada, pendiente de commit; NO está encendida: falta medir su costo en el laboratorio del hospital** — ver «Estado de la Fase 2» (§9). Falta el vigilante y la bandeja (Fase 3).
 > **Fecha:** 2026-09-20.
 > **Alcance:** Pantalla para que el personal de una clínica busque a un paciente por cualquier dato (cédula, nombre, teléfono, BSUID), vea su historial con foco en las **citas**, y averigüe por qué una cita "no aparece" en uno de los dos sistemas: AgenIA (WhatsApp) o el HIS del hospital. Es del **motor genérico**: no contiene detalles de un HIS concreto (esos viven en `docs/drivers/<driverKey>/`).
 > **Base del análisis:** lectura del código en el commit `b6a2101`. No se ejecutó nada contra producción: los hallazgos son de diseño, no mediciones.
@@ -228,7 +228,7 @@ La reconciliación diaria ya recibe una foto del HIS con el documento de cada pa
 
 ### Estado de la Fase 0 (2026-09-20)
 
-Implementada, con tests y verificada contra un Postgres 15 desechable (BD en el estado anterior, migraciones previas selladas como aplicadas, y `db:deploy` corrido dos veces: el mismo camino que usa el contenedor `migrator`). **Sin commit.**
+Implementada, con tests y verificada contra un Postgres 15 desechable (BD en el estado anterior, migraciones previas selladas como aplicadas, y `db:deploy` corrido dos veces: el mismo camino que usa el contenedor `migrator`). Commiteada con la Fase 1 (`1ed83cf`).
 
 | # | Hecho | Dónde |
 |---|---|---|
@@ -278,7 +278,7 @@ Implementada, con tests y verificada contra un Postgres 15 desechable (BD en el 
 - Clasificador puro en `@agenia/shared` con tests de tabla.
 *Aceptación:* un caso sintético por veredicto; tests de aislamiento de tenant y por rol (patrón de `sync-audit.spec.ts`); DOCTOR sin relación terapéutica es rechazado; BOOKING_AGENT respeta su scope; funciona en una clínica sin espejo mostrando solo el lado AgenIA.
 
-**Fase 2 — Consulta en vivo al HIS (§7).**
+**Fase 2 — Consulta en vivo al HIS (§7).** ✅ **Implementada el 2026-09-20; ⏳ falta la medición en el laboratorio del hospital** (ver «Estado de la Fase 2»).
 *Aceptación:* probada primero en el laboratorio del hospital con el costo de la consulta medido; interruptor apagado por defecto; prueba con el agente caído (falla rápido); B completo; `ENTREGADA_PERO_AUSENTE` y `OTRA_IDENTIDAD` operativos.
 
 **Fase 3 — Vigilante y bandeja** (§10, #2 y #3).
@@ -288,7 +288,7 @@ Implementada, con tests y verificada contra un Postgres 15 desechable (BD en el 
 
 ### Estado de la Fase 1 (2026-09-20)
 
-Implementada, con tests y verificada de extremo a extremo. **Sin commit.** No lleva migración nueva: usa las tablas e índices de la Fase 0.
+Implementada, con tests y verificada de extremo a extremo. Commiteada en `1ed83cf`. No lleva migración nueva: usa las tablas e índices de la Fase 0.
 
 | Pieza | Dónde |
 |---|---|
@@ -373,6 +373,52 @@ Implementada, con tests y verificada de extremo a extremo. **Sin commit.** No ll
 
 ---
 
+### Estado de la Fase 2 (2026-09-20)
+
+Implementada y verificada. **Sin commit.** Lleva **una migración aditiva** (`20260921100000_rastreo_paciente_fase2_consulta_en_vivo`): la tabla `HisLookupRequest` y dos columnas en `HospitalMirrorConfig`. **No está encendida**: `lookupEnabled` sale en `false` y no hay interruptor en pantalla.
+
+| Pieza | Dónde |
+|---|---|
+| Contrato agente↔API (`HisLookup*`) y `lookupCapable` en el latido | `packages/shared/src/mirror-protocol.ts` |
+| Reglas puras compartidas: límites, validación, enmascarado de terceros, resolución de la respuesta | `packages/shared/src/his-lookup.ts` |
+| Veredictos con lo que respondió el HIS (`CONFIRMADA_EN_EL_HIS`, `ENTREGADA_PERO_AUSENTE`, `OTRA_IDENTIDAD`, `NO_ESTA_EN_EL_HIS`), B completo, línea de vida | `packages/shared/src/patient-trace.ts` |
+| Tabla, interruptor y capacidad reportada | `packages/database/prisma/schema.prisma` + la migración |
+| API del agente: `GET /mirror/lookup-requests`, `POST /mirror/lookup-result`, cron de expiración y purga | `apps/api/src/mirror/mirror-lookup.service.ts` (+ controlador y módulo) |
+| Agente: capacidad opt-in (`PatientLookupCapableDriver`), sondeo cada 3 s, cliente HTTP | `apps/mirror-agent/src/core/{driver.interface,engine,mirror-api-client}.ts`, `config.ts`, `index.ts` |
+| Driver de Anserma: las dos consultas SQL | `apps/mirror-agent/src/drivers/cnt-sanvicente-anserma/lookup.ts` |
+| Web: qué se pregunta, disponibilidad, creación y lectura de peticiones | `apps/web/lib/rastreo/consulta-his.ts`, `servicio-his.ts`; integración en `servicio.ts` |
+| Pantalla: panel «Consulta en vivo al HIS» con sondeo | `apps/web/app/dashboard/rastreo/components/ConsultaHis.tsx` |
+| Estado en el panel del espejo (solo lectura) y marca «en vivo» en la bitácora | `EspejoClient.tsx`, `TablaConsultas.tsx` |
+
+**Cómo funciona.** El personal pulsa «Consultar el HIS ahora» → la web valida permisos, disponibilidad y topes, anota la consulta en `PatientLookupLog` (`LIVE_HIS`) y crea las peticiones → el agente las toma, consulta el HIS y responde → la web sondea, y al llegar **reabre el expediente con los ids** para que los veredictos los calcule el servidor con lo que respondió el hospital. Lo del HIS no se guarda: `params` y `result` se borran a los 15 min.
+
+**Decisiones tomadas por defecto (revisables).**
+
+- **Quién puede pedirla:** ORG_ADMIN, BOOKING_AGENT y SUPER_ADMIN (tras elegir clínica); nunca DOCTOR (es lectura sobre la base productiva del hospital y él no ve ni la sincronización). Permiso nuevo `hisEnVivo` (`acceso.ts`).
+- **Qué se pregunta.** Escenario A: un cupo por cada cita vigente creada en AgenIA con médico homologado (las 10 más cercanas) **y** las citas del paciente por documento. Escenario B: el cupo exacto **y** el documento en la semana alrededor. Un BOOKING_AGENT acotado a una EPS o a un médico **no** pide la lista por documento: mostraría lo que su alcance le oculta.
+- **Privacidad.** La consulta por cupo **no lleva el documento del paciente** al agente. El documento de un tercero que ocupa un cupo se guarda **solo enmascarado**. Cada lectura exige la misma clínica y el mismo usuario que la pidió, sobre el mismo documento.
+- **Topes.** 10 consultas por usuario cada 10 min y 5 en curso por clínica; 10 s de tiempo por petición en el HIS (cancelada en el servidor); 60 s de vida de una petición; 15 min de vida de los datos.
+- **Un error no es «vacío».** Una respuesta sin lista, un HIS caído o un tiempo agotado dejan la petición en `ERROR`; jamás se presentan como «el HIS no tiene nada».
+- **Sin interruptor en pantalla.** Se enciende con un `UPDATE` por clínica después de medir (ver `CONSULTA_EN_VIVO.md`). El panel del espejo lo muestra en solo lectura y en rojo si está encendida con un agente que no la admite.
+
+**Verificación (2026-09-20).**
+
+- Pruebas unitarias en los cuatro paquetes, todas en verde: shared 529, API 1.790 (311 en `mirror/`), agente 528, web 644.
+- **Pruebas de mutación** sobre las defensas: 7/7 defectos deliberados detectados en el SQL del driver, 17/17 en la web, 8/9 en el panel (el sobreviviente es un mutante equivalente: `setState` tras desmontar no tiene efecto observable en React 18).
+- **Postgres 15 real:** la migración aplica sobre el esquema anterior y `prisma migrate diff` da **cero deriva**; 67 comprobaciones de extremo a extremo (flujo completo, privacidad, aislamiento entre clínicas y usuarios, roles, falla rápido, topes, respuestas malformadas o tardías, expiración, purga, escenario B, FK en cascada).
+- **HTTP de extremo a extremo:** motor + cliente HTTP + driver de Anserma reales del agente contra el controlador Nest real y la base real: 22 comprobaciones (los tres veredictos nuevos, un HIS que falla, interruptor apagado, contrato 400/404).
+- **Un defecto real encontrado y corregido por la prueba de extremo a extremo:** el HIS guarda la hora **al minuto** y un cupo de AgenIA puede traer segundos; comparados al milisegundo, la fila del HIS de ese mismo cupo se descartaba y el resultado era un falso «el HIS no la tiene». `mismoInstante` ahora compara al minuto (con pruebas que fallaban antes del arreglo). Las pruebas unitarias no lo vieron porque usaban horas redondas.
+
+**Lo que NO está verificado.**
+
+- **El SQL contra un SQL Server real.** Se prueba el texto y los parámetros con un pool simulado, y la lógica con un «HIS» en memoria; no se ha corrido contra el motor del hospital.
+- **El costo sobre su base.** Solo hay una estimación por los volúmenes documentados. La consulta por documento recorre un rango de fechas y filtra por historia: es la que puede pesar. Sin la medición del laboratorio la Fase 2 **no cumple** su criterio de aceptación.
+- La red real entre la VM del hospital y la nube (el resto del protocolo ya la ejerce).
+
+**Pendiente para cerrar la Fase 2:** (1) medir en el laboratorio y llenar la tabla de `CONSULTA_EN_VIVO.md`; (2) ajustar la ventana o dejarla solo por cupo según el resultado; (3) desplegar en el orden migración → API → agente → web y encender por clínica.
+
+---
+
 ## 10. Herramientas complementarias (backlog priorizado)
 
 Salen de los mismos hallazgos. Esfuerzo: estimación gruesa (S/M/L).
@@ -414,7 +460,7 @@ Opciones que se evaluarán entonces:
 2. ~~**SUPER_ADMIN y el texto de las conversaciones.**~~ ✅ Resuelto por defecto en la Fase 1: ve los **hechos** (cuántos mensajes, cómo terminó, motivos de fallo) y **no** el texto. Sigue siendo una decisión revisable.
 3. **Lista de motivos** de consulta (§6): adoptada tal como se propuso (`PACIENTE_EN_VENTANILLA`, `RECLAMO_PQRS`, `SOPORTE_TECNICO`, `OTRO`); ampliarla es cambiar una constante en `@agenia/shared` (`MOTIVOS_CONSULTA`). Queda abierto si alcanza en producción.
 4. **Retención** de `PatientLookupLog` e `InteractionLog`. Hoy solo `avisosMasivos.retencionDiasDatosPersonales` define una.
-5. **Ventana por defecto** de la consulta en vivo (p. ej. −30 / +90 días) y su tope: se fija tras medir el costo en el laboratorio.
+5. **Ventana por defecto** de la consulta en vivo. Fijada en la Fase 2 en **−7 / +60 días, estirada hasta cubrir las citas relevantes y con tope de 180** (por cupo, la ventana no interviene). Es una propuesta: se confirma o se acorta tras medir el costo en el laboratorio (`docs/drivers/<driverKey>/CONSULTA_EN_VIVO.md`).
 6. ~~**¿El envío por Meta devuelve el `wamid` al llamador?**~~ ✅ Resuelto en la Fase 0: sí. Los cuatro puntos de envío reciben la respuesta de la Cloud API y de ahí sale `messages[0].id`; están todos enganchados al libro (§8 #7).
 7. **Fuera de la ventana de 24 h de Meta** un mensaje libre no sale: el "enviar confirmación" del escenario B tendría que usar una plantilla (`WhatsappTemplate`).
 8. ~~**Volver a cancelar una cita ya cancelada** liberaba el cupo aunque otra cita ya lo ocupara.~~ ✅ Corregido (ver «Corrección: re-cancelar» en §9).
@@ -430,7 +476,7 @@ Opciones que se evaluarán entonces:
 | La consulta en vivo carga la base productiva del hospital | Ventana y filas acotadas, timeout, límite de tasa, interruptor apagado por defecto, medir antes en el laboratorio (§7.4) |
 | Un veredicto equivocado lleva a acusar al paciente | Lenguaje neutro; cada veredicto declara su fuente y lo que no sabe; `SIN_RASTRO` nunca dice "no agendó" (§3.3) |
 | Agente caído: la pantalla se queda esperando | Falla rápido con el latido y `lastHisReachable` (§7.2) |
-| La vista B parece completa antes de la Fase 2 | Rotulada "sin consulta al HIS" hasta que exista (§9) |
+| La vista B parece completa antes de la consulta en vivo | Sigue rotulada "Parcial: sin consulta en vivo al HIS" hasta que se hace la consulta; entonces dice a qué hora respondió el hospital (§9) |
 | El vigilante y la pantalla clasifican distinto | Un solo clasificador puro en `@agenia/shared` (§3.3) |
 | El acceso de BOOKING_AGENT al texto de conversaciones se amplía sin control | Solo el paciente consultado, dentro del expediente, con motivo registrado (§0, §6) |
 

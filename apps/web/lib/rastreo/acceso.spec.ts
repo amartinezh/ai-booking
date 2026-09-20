@@ -27,7 +27,31 @@ describe('permisosDeRol — la matriz de §5', () => {
       verConsultas: true,
       verPersonal: true,
       aplicaScopeAgente: false,
+      hisEnVivo: true,
     });
+  });
+
+  // La consulta en vivo lee la base PRODUCTIVA del hospital: es de quien ya ve el
+  // estado del espejo y atiende reclamos, no de quien solo revisa a sus pacientes.
+  it('🏥 la consulta en vivo al HIS: ORG_ADMIN, BOOKING_AGENT y SUPER_ADMIN; nadie más', () => {
+    expect(permisosDeRol('ORG_ADMIN').hisEnVivo).toBe(true);
+    expect(permisosDeRol('BOOKING_AGENT').hisEnVivo).toBe(true);
+    expect(permisosDeRol('SUPER_ADMIN').hisEnVivo).toBe(true);
+    expect(permisosDeRol('DOCTOR').hisEnVivo).toBe(false);
+    expect(permisosDeRol('PATIENT').hisEnVivo).toBe(false);
+    expect(permisosDeRol('GENERAL_OBSERVER').hisEnVivo).toBe(false);
+    expect(permisosDeRol('ROL_FUTURO' as never).hisEnVivo).toBe(false);
+    expect(permisosDeRol(null).hisEnVivo).toBe(false);
+  });
+
+  it('quien puede consultar el HIS en vivo puede buscar y ve el estado del espejo (nunca al revés)', () => {
+    for (const rol of ['ORG_ADMIN', 'BOOKING_AGENT', 'DOCTOR', 'SUPER_ADMIN', 'PATIENT', 'GENERAL_OBSERVER'] as const) {
+      const p = permisosDeRol(rol);
+      if (p.hisEnVivo) {
+        expect(p.buscar).toBe(true);
+        expect(p.verSync).toBe(true);
+      }
+    }
   });
 
   it('👤 solo quien revisa casos (ORG_ADMIN, SUPER_ADMIN) ve QUIÉN del personal hizo algo; los demás, solo el rol', () => {

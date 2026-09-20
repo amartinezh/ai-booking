@@ -141,6 +141,23 @@ describe('MirrorDispatchService', () => {
       expect(datosDelUpdate().lastHisReachable).toBeNull();
     });
 
+    // La consulta en vivo al HIS solo se encola si el agente dice que su driver
+    // la implementa; "no lo dice" (agente anterior) debe valer como "no puede".
+    it('guarda si el driver del agente implementa la consulta en vivo', async () => {
+      await service.heartbeat('org1', 'driver-x', { lookupCapable: true });
+      expect(datosDelUpdate().lastLookupCapable).toBe(true);
+    });
+
+    it('guarda que NO la implementa (es distinto de no haberlo dicho)', async () => {
+      await service.heartbeat('org1', 'driver-x', { lookupCapable: false });
+      expect(datosDelUpdate().lastLookupCapable).toBe(false);
+    });
+
+    it('un agente anterior a la consulta en vivo deja el campo en nulo', async () => {
+      await service.heartbeat('org1', 'driver-x', {});
+      expect(datosDelUpdate().lastLookupCapable).toBeNull();
+    });
+
     it('un detalle largo se recorta: no se rompe el insert por un stack trace', async () => {
       await service.heartbeat('org1', 'driver-x', {
         hisReachable: false,

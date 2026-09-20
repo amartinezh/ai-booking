@@ -7,6 +7,7 @@ import { MirrorApplyService } from './mirror-apply.service';
 import { MirrorAvailabilityService } from './mirror-availability.service';
 import { MirrorCatalogService } from './mirror-catalog.service';
 import { MirrorNoticeService } from './mirror-notice.service';
+import { MirrorLookupService } from './mirror-lookup.service';
 import { MirrorAgentGuard } from './mirror-agent.guard';
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -51,6 +52,7 @@ describe('MirrorController — validación de /mirror/ack', () => {
         { provide: MirrorAvailabilityService, useValue: availability },
         { provide: MirrorCatalogService, useValue: catalog },
         { provide: MirrorNoticeService, useValue: {} },
+        { provide: MirrorLookupService, useValue: {} },
       ],
     })
       // El guard tiene su propia batería de pruebas (mirror-agent.guard.spec).
@@ -164,6 +166,7 @@ describe('MirrorController — validación de /mirror/availability', () => {
         { provide: MirrorAvailabilityService, useValue: availability },
         { provide: MirrorCatalogService, useValue: {} },
         { provide: MirrorNoticeService, useValue: {} },
+        { provide: MirrorLookupService, useValue: {} },
       ],
     })
       .overrideGuard(MirrorAgentGuard)
@@ -240,6 +243,7 @@ describe('MirrorController — validación de /mirror/catalog', () => {
         { provide: MirrorAvailabilityService, useValue: {} },
         { provide: MirrorCatalogService, useValue: catalog },
         { provide: MirrorNoticeService, useValue: {} },
+        { provide: MirrorLookupService, useValue: {} },
       ],
     })
       .overrideGuard(MirrorAgentGuard)
@@ -297,6 +301,7 @@ describe('MirrorController — handshake, events, reconcile, changes, heartbeat'
   let reconciliation: { reconcile: jest.Mock };
   let apply: { applyBatch: jest.Mock };
   let notice: { getPendingRequests: jest.Mock; applyRoster: jest.Mock };
+  let lookup: { getPendingRequests: jest.Mock; applyResult: jest.Mock };
 
   const req = {
     mirrorConfig: {
@@ -330,6 +335,11 @@ describe('MirrorController — handshake, events, reconcile, changes, heartbeat'
       })),
     };
 
+    lookup = {
+      getPendingRequests: jest.fn(async () => []),
+      applyResult: jest.fn(async () => ({ requestId: 'req-1', stored: true })),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MirrorController],
       providers: [
@@ -339,6 +349,7 @@ describe('MirrorController — handshake, events, reconcile, changes, heartbeat'
         { provide: MirrorAvailabilityService, useValue: {} },
         { provide: MirrorCatalogService, useValue: {} },
         { provide: MirrorNoticeService, useValue: notice },
+        { provide: MirrorLookupService, useValue: lookup },
       ],
     })
       .overrideGuard(MirrorAgentGuard)
@@ -579,6 +590,66 @@ describe('MirrorController — handshake, events, reconcile, changes, heartbeat'
           candidates: 'nope',
         } as never),
       ).toThrow(BadRequestException);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Consulta en vivo al HIS (rastreo de paciente, Fase 2). Lo que le toca al
+  // controlador: la organización sale del guard —un agente no puede responder
+  // ni leer peticiones de otra clínica— y una respuesta sin requestId no llega
+  // al servicio.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('GET /mirror/lookup-requests', () => {
+    it('pasa SOLO la organización del guard al servicio', async () => {
+      await controller.getLookupRequests(req);
+
+      expect(lookup.getPendingRequests).toHaveBeenCalledWith('org1');
+    });
+
+    it('devuelve lo que el servicio entrega', async () => {
+      const pendiente = { requestId: 'r-1', kind: 'BY_SLOT', slots: [] };
+      lookup.getPendingRequests.mockResolvedValueOnce([pendiente]);
+
+      await expect(controller.getLookupRequests(req)).resolves.toEqual([
+        pendiente,
+      ]);
+    });
+  });
+
+  describe('POST /mirror/lookup-result', () => {
+    it('una respuesta válida llega al servicio con la org del guard', async () => {
+      const body = { requestId: 'req-1', appointments: [] };
+
+      await expect(controller.applyLookupResult(req, body)).resolves.toEqual({
+        requestId: 'req-1',
+        stored: true,
+      });
+      expect(lookup.applyResult).toHaveBeenCalledWith('org1', body);
+    });
+
+    it('una respuesta con error o unsupported (sin citas) se acepta', async () => {
+      await controller.applyLookupResult(req, {
+        requestId: 'req-1',
+        error: 'timeout',
+      } as never);
+      await controller.applyLookupResult(req, {
+        requestId: 'req-1',
+        unsupported: true,
+      } as never);
+
+      expect(lookup.applyResult).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+      ['sin requestId', { appointments: [] }],
+      ['requestId vacío', { requestId: '', appointments: [] }],
+      ['requestId que no es texto', { requestId: 5, appointments: [] }],
+      ['sin cuerpo', undefined],
+    ])('%s se rechaza', (_n, body) => {
+      expect(() => controller.applyLookupResult(req, body as never)).toThrow(
+        BadRequestException,
+      );
+      expect(lookup.applyResult).not.toHaveBeenCalled();
     });
   });
 });

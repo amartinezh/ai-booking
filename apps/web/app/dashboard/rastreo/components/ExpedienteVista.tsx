@@ -7,6 +7,7 @@ import { revelarIdentidadAction } from '@/app/actions/rastreo';
 import { reprocesarEvento } from '@/app/actions/espejo';
 import type { CitaExpediente, ExpedienteA } from '@/lib/rastreo/tipos';
 import { LineaDeVida, VeredictoCard } from './Veredicto';
+import ConsultaHis, { type ConsultaHisProps } from './ConsultaHis';
 
 /**
  * El expediente de un paciente (docs/PLAN_RASTREO_PACIENTE.md §4.3): el
@@ -36,12 +37,15 @@ export default function ExpedienteVista({
     nota,
     organizationId,
     onVolver,
+    consultaHis,
 }: {
     data: ExpedienteA;
     motivo: string;
     nota: string;
     organizationId: string | null;
     onVolver: () => void;
+    /** Cómo pedir y aplicar la consulta en vivo al HIS (la pantalla sabe el motivo y los datos). */
+    consultaHis?: Pick<ConsultaHisProps, 'iniciar' | 'aplicar' | 'intervaloMs'>;
 }) {
     const tz = data.zonaHoraria;
     const [pendiente, startTransition] = useTransition();
@@ -115,6 +119,11 @@ export default function ExpedienteVista({
             />
 
             {data.espejo && <SaludEspejoAviso data={data} />}
+
+            {/* Sin perfil (un remitente que nunca se identificó) no hay documento con el cual preguntar. */}
+            {consultaHis && data.identidad && (
+                <ConsultaHis vista={data.hisEnVivo} organizationId={organizationId} zonaHoraria={tz} {...consultaHis} />
+            )}
 
             {otros.length > 0 && (
                 <details className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">

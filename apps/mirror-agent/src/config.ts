@@ -54,6 +54,15 @@ export interface AgentConfig {
    * fondo como el catálogo, que puede tardar un día sin que nadie lo note.
    */
   noticeIntervalMs: number;
+
+  // ── Consulta en vivo al HIS (rastreo de paciente, Fase 2) ──────────────
+  /**
+   * Cada cuánto se pregunta si hay una consulta pendiente. Más rápido que los
+   * avisos a propósito: quien la pidió está mirando la pantalla, que se rinde a
+   * los 30 s. Con el interruptor de la clínica apagado (el estado por defecto)
+   * cada pregunta cuesta una lectura mínima y vuelve vacía.
+   */
+  lookupIntervalMs: number;
 }
 
 const DEFAULTS = {
@@ -89,6 +98,10 @@ const DEFAULTS = {
   // implementa avisos hoy, así que en cualquier otro tenant esta llamada
   // siempre vuelve vacía (§5, HisDriver §4 del plan: opt-in, no genérico).
   noticeIntervalMs: 30_000,
+  // 3 s: el peor caso de una consulta pedida desde la pantalla es esperar una
+  // vuelta completa antes de que el agente la vea, y la pantalla se rinde a los
+  // 30 s. Con 3 s sobra margen para el HIS y la respuesta.
+  lookupIntervalMs: 3_000,
   driverVersion: '0.1.0-fase1',
 };
 
@@ -137,5 +150,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
       Number(env.MIRROR_CATALOG_DELAY_MS) || DEFAULTS.catalogDelayMs,
     noticeIntervalMs:
       Number(env.MIRROR_NOTICE_INTERVAL_MS) || DEFAULTS.noticeIntervalMs,
+    lookupIntervalMs:
+      Number(env.MIRROR_LOOKUP_INTERVAL_MS) || DEFAULTS.lookupIntervalMs,
   };
 }

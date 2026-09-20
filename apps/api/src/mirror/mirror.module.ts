@@ -10,6 +10,7 @@ import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { MirrorAvailabilityService } from './mirror-availability.service';
 import { MirrorCatalogService } from './mirror-catalog.service';
 import { MirrorNoticeService } from './mirror-notice.service';
+import { MirrorLookupService } from './mirror-lookup.service';
 
 /**
  * Motor genérico de espejo de citas con HIS externos (patrón de drivers).
@@ -39,6 +40,9 @@ import { MirrorNoticeService } from './mirror-notice.service';
     // cnt-sanvicente-anserma. Ver mirror-notice.service.ts para por qué vive
     // aquí y no en mass-notice/.
     MirrorNoticeService,
+    // 🔎 Consulta en vivo al HIS (rastreo de paciente, Fase 2): el lado del
+    // agente (pendientes / resultado) y el cron que expira y purga.
+    MirrorLookupService,
   ],
   exports: [
     MirrorApplyService,

@@ -604,6 +604,9 @@ export class MirrorDispatchService {
         // el panel sin que nadie esté mirando el log en ese instante.
         lastHisReachable: input.hisReachable ?? null,
         lastHisDetail: input.hisDetail?.slice(0, 500) ?? null,
+        // `null` = "no lo dice" (un agente anterior a la consulta en vivo): la
+        // pantalla lo trata como "no puede", no como "sí".
+        lastLookupCapable: input.lookupCapable ?? null,
       },
     });
 

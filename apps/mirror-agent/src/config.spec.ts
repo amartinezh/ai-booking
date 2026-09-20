@@ -50,6 +50,27 @@ describe('loadConfig', () => {
     expect(c.noticeIntervalMs).toBe(30_000);
   });
 
+  it('consulta en vivo (rastreo): sin configurar, sondea cada 3 s, y se ajusta por entorno', () => {
+    // Más rápido que los avisos: quien la pidió está mirando una pantalla que se
+    // rinde a los 30 s.
+    expect(loadConfig(minimo).lookupIntervalMs).toBe(3_000);
+    expect(
+      loadConfig({ ...minimo, MIRROR_LOOKUP_INTERVAL_MS: '1000' })
+        .lookupIntervalMs,
+    ).toBe(1_000);
+  });
+
+  it('consulta en vivo: un valor que no es número o es cero cae al defecto (no un bucle cerrado contra la API)', () => {
+    expect(
+      loadConfig({ ...minimo, MIRROR_LOOKUP_INTERVAL_MS: 'rápido' })
+        .lookupIntervalMs,
+    ).toBe(3_000);
+    expect(
+      loadConfig({ ...minimo, MIRROR_LOOKUP_INTERVAL_MS: '0' })
+        .lookupIntervalMs,
+    ).toBe(3_000);
+  });
+
   it('un valor que no es número cae al defecto en vez de dejar NaN', () => {
     // `Number('cada hora')` es NaN, y un setTimeout con NaN dispara de
     // inmediato: el agente machacaría al hospital en un bucle cerrado.

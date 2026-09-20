@@ -23,6 +23,12 @@ import {
   formatAppointmentCompact,
   formatAppointmentShort,
 } from './date-format';
+import {
+  mismoInstante,
+  ocupanteDelCupo,
+  type EstadoCitaHis,
+  type EvidenciaHis,
+} from './his-lookup';
 
 // ─────────────────────────────────────────────────────────────
 // Veredictos
@@ -32,10 +38,10 @@ import {
  * Lista cerrada. Códigos en ASCII (van a la bitácora `PatientLookupLog.verdicts`
  * y a la base): el plan los escribe con tilde solo en la prosa.
  *
- * Los que necesitan la consulta en vivo al HIS (`ENTREGADA_PERO_AUSENTE`,
- * `OTRA_IDENTIDAD`, `NO_ESTA_EN_EL_HIS`) llegan con la Fase 2 y se añaden aquí
- * entonces: `TEXTO_VEREDICTO` es un `Record` exhaustivo, así que olvidar el
- * texto de uno nuevo no compila.
+ * Los cuatro que necesitan la consulta en vivo al HIS (`CONFIRMADA_EN_EL_HIS`,
+ * `ENTREGADA_PERO_AUSENTE`, `OTRA_IDENTIDAD`, `NO_ESTA_EN_EL_HIS`) solo salen
+ * cuando la evidencia trae `his`. `TEXTO_VEREDICTO` es un `Record` exhaustivo,
+ * así que olvidar el texto de un código nuevo no compila.
  */
 export const VEREDICTO = {
   // Escenario A — "agendé por WhatsApp y el HIS no la tiene"
@@ -48,6 +54,11 @@ export const VEREDICTO = {
   CITA_VIGENTE: 'CITA_VIGENTE',
   FUERA_DE_ALCANCE: 'FUERA_DE_ALCANCE',
   SIN_RASTRO: 'SIN_RASTRO',
+  // Con la consulta en vivo al HIS (Fase 2)
+  CONFIRMADA_EN_EL_HIS: 'CONFIRMADA_EN_EL_HIS',
+  ENTREGADA_PERO_AUSENTE: 'ENTREGADA_PERO_AUSENTE',
+  OTRA_IDENTIDAD: 'OTRA_IDENTIDAD',
+  NO_ESTA_EN_EL_HIS: 'NO_ESTA_EN_EL_HIS',
   // Escenario B — "la agendaron en el HIS y no sale en WhatsApp"
   MEDICO_NO_ESPEJADO: 'MEDICO_NO_ESPEJADO',
   SIN_CUPO: 'SIN_CUPO',
@@ -133,6 +144,22 @@ export const TEXTO_VEREDICTO: Record<
     severidad: 'warn',
   },
   SIN_RASTRO: { titulo: 'AgenIA no tiene registro', severidad: 'info' },
+  CONFIRMADA_EN_EL_HIS: {
+    titulo: 'La cita está en AgenIA y en el HIS',
+    severidad: 'ok',
+  },
+  ENTREGADA_PERO_AUSENTE: {
+    titulo: 'AgenIA la entregó al hospital, pero el HIS no la tiene',
+    severidad: 'bad',
+  },
+  OTRA_IDENTIDAD: {
+    titulo: 'El HIS tiene esa hora a nombre de otro documento',
+    severidad: 'warn',
+  },
+  NO_ESTA_EN_EL_HIS: {
+    titulo: 'El HIS no tiene ninguna cita en ese cupo',
+    severidad: 'warn',
+  },
   MEDICO_NO_ESPEJADO: {
     titulo: 'Ese médico no está en el espejo de AgenIA',
     severidad: 'info',
@@ -163,7 +190,10 @@ export const TEXTO_VEREDICTO: Record<
 const PRIORIDAD: Record<CodigoVeredicto, number> = {
   CONFIRMADA_NO_LLEGO: 1,
   EVENTO_DEL_HIS_NO_APLICADO: 1,
+  ENTREGADA_PERO_AUSENTE: 1,
+  OTRA_IDENTIDAD: 2,
   SIN_CUPO: 2,
+  NO_ESTA_EN_EL_HIS: 3,
   CITA_DEL_HIS_NO_ESPEJADA: 3,
   SIN_EVENTO_DEL_HIS: 4,
   ENTREGADA_SIN_VERIFICAR: 5,
@@ -173,6 +203,7 @@ const PRIORIDAD: Record<CodigoVeredicto, number> = {
   MEDICO_NO_ESPEJADO: 9,
   IDENTIDAD_NO_COINCIDE: 10,
   CITA_VIGENTE: 11,
+  CONFIRMADA_EN_EL_HIS: 11,
   EN_LISTA_DE_ESPERA: 12,
   NUNCA_CONFIRMO: 13,
   SIN_RASTRO: 14,
@@ -238,6 +269,12 @@ export interface CitaRastreo {
   createdAtIso: string;
   startIso: string;
   doctor: string;
+  /**
+   * La clave del médico en el HIS (`MirrorEntityMap`). Es lo que permite ubicar
+   * la cita en lo que devuelve la consulta en vivo; `null`/ausente = el médico
+   * no está homologado y esa cita no se puede buscar en el HIS.
+   */
+  doctorExternalKey?: string | null;
   service: string;
   eps: string | null;
   cancelacion: CancelacionCita | null;
@@ -299,6 +336,8 @@ export interface EvidenciaRastreoA {
   /** null = la clínica no tiene espejo, o este rol no ve el estado de sync. */
   espejo: SaludEspejo | null;
   capturaIndicada: boolean;
+  /** Lo que el HIS respondió en vivo (Fase 2). Ausente = no se consultó. */
+  his?: EvidenciaHis | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -388,6 +427,171 @@ function veredicto(
 }
 
 // ─────────────────────────────────────────────────────────────
+// Lo que respondió el HIS en vivo (Fase 2)
+// ─────────────────────────────────────────────────────────────
+
+/** Qué tiene el HIS en el cupo de una cita, visto desde AgenIA. */
+export type PresenciaHis =
+  | { tipo: 'PRESENTE'; estado: EstadoCitaHis; consultadoIso: string }
+  | { tipo: 'AUSENTE'; consultadoIso: string }
+  | {
+      tipo: 'OTRA_PERSONA';
+      estado: EstadoCitaHis;
+      /** Enmascarado; `null` si la fila del HIS no trae documento. */
+      documentoTercero: string | null;
+      mismoConCeros: boolean;
+      consultadoIso: string;
+    };
+
+function presenciaDelCupo(
+  his: EvidenciaHis,
+  doctorExternalKey: string,
+  startIso: string,
+): PresenciaHis | null {
+  const cupo = his.cupos.find(
+    (c) =>
+      c.doctorExternalKey === doctorExternalKey &&
+      mismoInstante(c.startIso, startIso),
+  );
+  // Ese cupo no se preguntó: no se puede afirmar nada, ni que esté ni que falte.
+  if (!cupo) return null;
+  const consultadoIso = his.consultadoIso;
+  const o = ocupanteDelCupo(cupo.filas);
+  if (o.tipo === 'NADIE') return { tipo: 'AUSENTE', consultadoIso };
+  if (o.tipo === 'PACIENTE') {
+    return { tipo: 'PRESENTE', estado: o.estado, consultadoIso };
+  }
+  return {
+    tipo: 'OTRA_PERSONA',
+    estado: o.estado,
+    documentoTercero: o.documentoTercero,
+    mismoConCeros: o.mismoConCeros,
+    consultadoIso,
+  };
+}
+
+/**
+ * ¿Está la cita en el HIS? `null` = no se sabe (no se consultó, o el médico no
+ * está homologado y no hay clave con la que buscar su cupo).
+ */
+export function presenciaEnHis(
+  cita: { doctorExternalKey?: string | null; startIso: string },
+  his: EvidenciaHis | null | undefined,
+): PresenciaHis | null {
+  if (!his || !cita.doctorExternalKey) return null;
+  return presenciaDelCupo(his, cita.doctorExternalKey, cita.startIso);
+}
+
+const ESTADO_HIS_TEXTO: Record<EstadoCitaHis, string> = {
+  SCHEDULED: 'vigente',
+  ATTENDED: 'ya atendida',
+  NO_SHOW: 'con inasistencia registrada',
+  OTHER: 'en un estado que AgenIA no reconoce',
+};
+
+/**
+ * Las citas del paciente en el HIS con el MISMO médico en las 24 h alrededor del
+ * cupo: la pista más útil cuando "no está a esa hora" (quedó en otra).
+ */
+function citasCercanasEnHis(
+  his: EvidenciaHis,
+  doctorExternalKey: string,
+  startIso: string,
+  ctx: Ctx,
+): string[] {
+  const centro = Date.parse(startIso);
+  return (his.porDocumento?.citas ?? [])
+    .filter(
+      (c) =>
+        c.titular === 'PACIENTE' &&
+        c.doctorExternalKey === doctorExternalKey &&
+        !mismoInstante(c.startIso, startIso) &&
+        Math.abs(Date.parse(c.startIso) - centro) <= MS_DIA,
+    )
+    .slice(0, 3)
+    .map(
+      (c) =>
+        `El HIS sí tiene al paciente con ese médico el ${cuando(c.startIso, ctx)} (${ESTADO_HIS_TEXTO[c.status]}).`,
+    );
+}
+
+function textoEstadoSync(s: EstadoSync): string {
+  switch (s.estado) {
+    case 'DEAD_LETTER':
+      return `rendido tras ${s.attempts} intento(s)`;
+    case 'RETRYING':
+      return `en reintento (intento ${s.attempts} de ${MAX_INTENTOS_ENTREGA})`;
+    case 'PENDING':
+      return 'en cola';
+    case 'NO_EVENT':
+      return 'inexistente';
+    default:
+      return 'entregado';
+  }
+}
+
+/** Cómo se dice, en una frase, que el documento del HIS no es el del paciente. */
+function frasePorOtroDocumento(
+  p: Extract<PresenciaHis, { tipo: 'OTRA_PERSONA' }>,
+): string {
+  const doc = p.documentoTercero ? ` (${p.documentoTercero})` : '';
+  return p.mismoConCeros
+    ? `el mismo número de documento pero con ceros a la izquierda distintos${doc}`
+    : `otro documento${doc}`;
+}
+
+/**
+ * Notas del escenario A con lo que el HIS tiene del paciente: sus citas que
+ * AgenIA no conoce (típicamente las de ventanilla) y las que AgenIA canceló y
+ * el HIS conserva.
+ */
+function notasHisA(ev: EvidenciaRastreoA, ctx: Ctx): string[] {
+  const doc = ev.his?.porDocumento;
+  if (!doc) return [];
+  const notas: string[] = [];
+  const coincide = (
+    h: { doctorExternalKey: string; startIso: string },
+    c: CitaRastreo,
+  ) =>
+    !!c.doctorExternalKey &&
+    c.doctorExternalKey === h.doctorExternalKey &&
+    mismoInstante(c.startIso, h.startIso);
+
+  const propias = doc.citas.filter((h) => h.titular === 'PACIENTE');
+  const desconocidas = propias.filter(
+    (h) => !ev.citas.some((c) => coincide(h, c)),
+  );
+  if (desconocidas.length > 0) {
+    const lista = desconocidas
+      .slice(0, 3)
+      .map((h) => `${cuando(h.startIso, ctx)} (${ESTADO_HIS_TEXTO[h.status]})`)
+      .join('; ');
+    notas.push(
+      `El HIS tiene ${desconocidas.length} cita(s) de este paciente que AgenIA no tiene registradas (por ejemplo, agendadas en ventanilla): ${lista}${desconocidas.length > 3 ? ' y otras' : ''}.`,
+    );
+  }
+
+  // Canceladas en AgenIA que el hospital sigue teniendo vigentes: la cancelación no llegó.
+  for (const h of propias.filter((x) => x.status === 'SCHEDULED')) {
+    const canceladaAqui = ev.citas.find(
+      (c) => c.status === 'CANCELLED' && coincide(h, c),
+    );
+    if (canceladaAqui) {
+      notas.push(
+        `La cita del ${cuando(h.startIso, ctx)} figura cancelada en AgenIA, pero el HIS la conserva vigente: la cancelación no llegó al hospital.`,
+      );
+    }
+  }
+
+  if (doc.truncado) {
+    notas.push(
+      'La lista de citas del HIS se recortó al máximo: puede haber más.',
+    );
+  }
+  return notas;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Escenario A
 // ─────────────────────────────────────────────────────────────
 
@@ -433,6 +637,8 @@ export function clasificarRastreoA(ev: EvidenciaRastreoA): ResultadoRastreo {
       );
     }
   }
+
+  notas.push(...notasHisA(ev, ctx));
 
   // El principal: primero lo que coincide con la captura; luego lo más accionable.
   const idsCaptura = new Set(
@@ -613,10 +819,78 @@ function veredictoDeCita(
   const e = ev.espejo!;
   const salud = saludDelEspejo(e, ctx);
 
+  // ── Con la consulta en vivo, el HIS tiene la última palabra ──
+  const presencia = presenciaEnHis(c, ev.his);
+  const horaHis = ev.his ? cuandoExacto(ev.his.consultadoIso, ctx) : '';
+  if (presencia?.tipo === 'PRESENTE') {
+    evidencia.push(
+      `Consulta en vivo al HIS (${horaHis}): el cupo figura a nombre del paciente, ${ESTADO_HIS_TEXTO[presencia.estado]}.`,
+    );
+    if (s.estado !== 'DELIVERED') {
+      evidencia.push(
+        `AgenIA todavía muestra el evento de envío como ${textoEstadoSync(s)}, pero el hospital ya la tiene.`,
+      );
+    }
+    return veredicto('CONFIRMADA_EN_EL_HIS', {
+      fuente: 'AGENIA_Y_HIS',
+      resumen:
+        'La cita está en AgenIA y también en el hospital, a nombre del paciente: los dos sistemas coinciden.',
+      evidencia,
+      noSabemos,
+      accion:
+        'Si el paciente o el hospital dicen no verla, comparar cómo la buscan: el HIS la tiene con el documento del paciente, en ese médico y esa hora.',
+      citaId: c.id,
+    });
+  }
+  if (presencia?.tipo === 'OTRA_PERSONA') {
+    evidencia.push(
+      `Consulta en vivo al HIS (${horaHis}): ese médico y esa hora existen en el HIS y figuran a nombre de ${frasePorOtroDocumento(presencia)}.`,
+    );
+    return veredicto('OTRA_IDENTIDAD', {
+      fuente: 'AGENIA_Y_HIS',
+      resumen: presencia.mismoConCeros
+        ? 'El hospital tiene esa hora a nombre del mismo número de documento, pero escrito con ceros a la izquierda distintos: casi seguro es la misma persona mal digitada en uno de los dos sistemas.'
+        : 'El hospital tiene esa hora a nombre de otro documento: puede ser un error de digitación al agendar, o que la reservara un familiar.',
+      evidencia,
+      noSabemos: [
+        ...noSabemos,
+        'AgenIA no puede saber a quién pertenece el otro documento ni cuál de los dos sistemas tiene el dato correcto.',
+      ],
+      accion: presencia.mismoConCeros
+        ? 'Corregir el documento (la misma cadena, sin ceros de más) en el sistema donde esté mal escrito.'
+        : 'Confirmar en ventanilla con quién se agendó esa hora. Si fue un error de digitación, corregir el documento en el HIS; si esa persona no es el paciente, reubicarlo.',
+      citaId: c.id,
+    });
+  }
+  const lineasAusente =
+    presencia?.tipo === 'AUSENTE'
+      ? [
+          `Consulta en vivo al HIS (${horaHis}): no hay ninguna cita en ese médico y esa hora.`,
+          ...citasCercanasEnHis(ev.his!, c.doctorExternalKey!, c.startIso, ctx),
+        ]
+      : [];
+  const fuente: FuenteVeredicto = presencia ? 'AGENIA_Y_HIS' : 'AGENIA';
+
   if (s.estado === 'DELIVERED') {
     evidencia.push(
       `AgenIA la entregó al agente del hospital el ${cuandoExacto(s.deliveredAtIso ?? s.creadoIso ?? c.createdAtIso, ctx)}.`,
     );
+    if (presencia?.tipo === 'AUSENTE') {
+      evidencia.push(...lineasAusente);
+      return veredicto('ENTREGADA_PERO_AUSENTE', {
+        fuente: 'AGENIA_Y_HIS',
+        resumen:
+          'AgenIA entregó la cita al hospital, pero el HIS no la tiene en ese cupo: los dos sistemas no coinciden.',
+        evidencia,
+        noSabemos: [
+          ...noSabemos,
+          'AgenIA no sabe por qué desapareció: pudo cancelarla el hospital sin que llegara el aviso, o no haberse escrito nunca en su sistema.',
+        ],
+        accion:
+          'Escalar: es una deriva entre los dos sistemas. Mientras tanto, agendar al paciente directamente en el HIS y avisarle. Un administrador puede revisar los conflictos y la última reconciliación en el panel del espejo.',
+        citaId: c.id,
+      });
+    }
     return veredicto('ENTREGADA_SIN_VERIFICAR', {
       fuente: 'AGENIA',
       resumen:
@@ -638,8 +912,9 @@ function veredictoDeCita(
     evidencia.push(
       `El evento de envío lleva ${hace(s.oldestPendingIso ?? s.creadoIso, ctx.ahoraMs)} en cola y el agente está al día.`,
     );
+    evidencia.push(...lineasAusente);
     return veredicto('EN_CAMINO_AL_HIS', {
-      fuente: 'AGENIA',
+      fuente,
       resumen:
         'La cita se acaba de crear y va en camino al HIS: es normal que tarde unos segundos.',
       evidencia,
@@ -651,8 +926,9 @@ function veredictoDeCita(
 
   evidencia.push(...detalleDeCausa(causa, s, ctx));
   evidencia.push(...salud);
+  evidencia.push(...lineasAusente);
   return veredicto('CONFIRMADA_NO_LLEGO', {
-    fuente: 'AGENIA',
+    fuente,
     resumen:
       'El paciente tiene la cita confirmada en AgenIA, pero el hospital NO la tiene todavía. Su versión es coherente con lo registrado.',
     evidencia,
@@ -888,6 +1164,8 @@ export interface EvidenciaRastreoB {
   zonaHoraria?: string;
   /** "Dr(a). X, mar 22 sep, 10:00 a. m.": el cupo que el HIS dice tener. */
   cupoDescripcion: string;
+  /** El cupo consultado (médico del HIS y hora): con él se ubica la respuesta en vivo. */
+  cupo?: { doctorExternalKey: string; startIso: string } | null;
   paciente: {
     perfilEncontrado: boolean;
     /** Cómo se halló el perfil: el documento tal cual o sin ceros a la izquierda. */
@@ -905,6 +1183,8 @@ export interface EvidenciaRastreoB {
   };
   /** null = la clínica no tiene espejo. */
   espejo: SaludEspejo | null;
+  /** Lo que el HIS respondió en vivo (Fase 2). Ausente = no se consultó. */
+  his?: EvidenciaHis | null;
 }
 
 const NOTA_SIN_APPOINTMENT = 'no se creó Appointment';
@@ -950,10 +1230,124 @@ export function clasificarRastreoB(ev: EvidenciaRastreoB): ResultadoRastreo {
     );
   }
 
-  const ordenados = [...veredictos].sort(
+  const ordenados = aplicarHisB(ev, veredictos, ctx).sort(
     (a, b) => PRIORIDAD[a.codigo] - PRIORIDAD[b.codigo],
   );
   return { principal: ordenados[0], veredictos: ordenados, notas };
+}
+
+/**
+ * Con la consulta en vivo (Fase 2), lo que el HIS dice del cupo pasa por encima
+ * de lo que AgenIA solo puede deducir de sus eventos:
+ *
+ *  · nadie lo ocupa → `NO_ESTA_EN_EL_HIS`, y la ausencia de evento en AgenIA
+ *    deja de ser un hallazgo aparte (la explica esto);
+ *  · lo ocupa otro documento → `OTRA_IDENTIDAD`, sin quitar el resto;
+ *  · lo ocupa el paciente → los veredictos de AgenIA se confirman con el HIS y
+ *    dejan de decir "no sé a nombre de quién".
+ */
+function aplicarHisB(
+  ev: EvidenciaRastreoB,
+  veredictos: Veredicto[],
+  ctx: Ctx,
+): Veredicto[] {
+  const his = ev.his;
+  const cupoBuscado = ev.cupo;
+  if (!his || !cupoBuscado) return veredictos;
+  const presencia = presenciaDelCupo(
+    his,
+    cupoBuscado.doctorExternalKey,
+    cupoBuscado.startIso,
+  );
+  if (!presencia) return veredictos;
+
+  const hora = cuandoExacto(his.consultadoIso, ctx);
+  const cupo = ev.cupoDescripcion;
+
+  if (presencia.tipo === 'AUSENTE') {
+    const nuevo = veredicto('NO_ESTA_EN_EL_HIS', {
+      fuente: 'HIS_EN_VIVO',
+      resumen:
+        'El HIS no tiene ninguna cita en ese médico y esa hora: no hay una cita en ese cupo que el paciente pueda ver, ni en AgenIA ni en el hospital.',
+      evidencia: [
+        `${cupo}.`,
+        `Consulta en vivo al HIS (${hora}): no hay ninguna cita en ese cupo.`,
+        ...citasCercanasEnHis(
+          his,
+          cupoBuscado.doctorExternalKey,
+          cupoBuscado.startIso,
+          ctx,
+        ),
+      ],
+      noSabemos: [
+        'Por qué no está: pudo cancelarse, agendarse en otro cupo (mira las citas del paciente en el HIS, si aparecen arriba) o no haberse registrado nunca.',
+      ],
+      accion:
+        'Confirmar en ventanilla la fecha, la hora y el médico exactos con el paciente. Si tiene un comprobante del hospital, la cita pudo cancelarse: revisar en el HIS quién y cuándo.',
+    });
+    // Que AgenIA no haya recibido un evento ya no es un hallazgo aparte: lo explica esto.
+    return [nuevo, ...veredictos.filter((v) => v.codigo !== 'SIN_EVENTO_DEL_HIS')];
+  }
+
+  if (presencia.tipo === 'OTRA_PERSONA') {
+    const nuevo = veredicto('OTRA_IDENTIDAD', {
+      fuente: 'HIS_EN_VIVO',
+      resumen: presencia.mismoConCeros
+        ? 'El hospital tiene esa hora a nombre del mismo número de documento, pero escrito con ceros a la izquierda distintos: casi seguro es la misma persona mal digitada en uno de los dos sistemas.'
+        : 'El hospital tiene esa hora a nombre de otro documento: puede ser un error de digitación al agendar, o que la reservara un familiar.',
+      evidencia: [
+        `${cupo}.`,
+        `Consulta en vivo al HIS (${hora}): ese cupo existe y figura a nombre de ${frasePorOtroDocumento(presencia)}.`,
+      ],
+      noSabemos: [
+        'AgenIA no puede saber a quién pertenece el otro documento ni cuál de los dos sistemas tiene el dato correcto.',
+      ],
+      accion: presencia.mismoConCeros
+        ? 'Corregir el documento (la misma cadena, sin ceros de más) en el sistema donde esté mal escrito.'
+        : 'Confirmar en ventanilla con quién se agendó esa hora. Si fue un error de digitación, corregir el documento en el HIS.',
+    });
+    return [nuevo, ...veredictos];
+  }
+
+  // PRESENTE: el HIS la tiene a nombre del paciente.
+  const lineaHis = `Consulta en vivo al HIS (${hora}): el cupo figura a nombre del paciente, ${ESTADO_HIS_TEXTO[presencia.estado]}.`;
+  return veredictos.map((v) => {
+    switch (v.codigo) {
+      case 'CITA_VIGENTE':
+        return veredicto('CONFIRMADA_EN_EL_HIS', {
+          fuente: 'AGENIA_Y_HIS',
+          resumen:
+            'La cita del paciente está en AgenIA y también en el HIS, en ese cupo: los dos sistemas coinciden.',
+          evidencia: [...v.evidencia, lineaHis],
+          noSabemos: [],
+          accion: v.accion,
+        });
+      case 'SIN_EVENTO_DEL_HIS':
+        return {
+          ...v,
+          fuente: 'AGENIA_Y_HIS',
+          resumen:
+            'El HIS sí tiene la cita a nombre del paciente, pero AgenIA no recibió del hospital ningún aviso de ella.',
+          evidencia: [...v.evidencia, lineaHis],
+          noSabemos: [],
+          accion:
+            'Escalar: el agente del espejo no reportó esa cita al servidor. Revisar el estado del agente y la última reconciliación en el panel del espejo.',
+        };
+      case 'CITA_DEL_HIS_NO_ESPEJADA':
+      case 'MEDICO_NO_ESPEJADO':
+      case 'SIN_CUPO':
+      case 'EVENTO_DEL_HIS_NO_APLICADO':
+        return {
+          ...v,
+          fuente: 'AGENIA_Y_HIS',
+          evidencia: [...v.evidencia, lineaHis],
+          // La consulta en vivo respondió lo que AgenIA no podía saber.
+          noSabemos: v.noSabemos.filter((n) => !n.startsWith('A nombre de quién')),
+        };
+      default:
+        return v;
+    }
+  });
 }
 
 function veredictoDelCupo(ev: EvidenciaRastreoB, ctx: Ctx): Veredicto {
@@ -1117,11 +1511,12 @@ export interface PasoLinea {
  *
  * Cada paso dice qué se sabe: ✓ ok, ✗ falló, ⏳ pendiente, ? sin registro y
  * "na" cuando no aplica a esta cita o el rol no lo ve. El último paso queda
- * siempre "sin verificar" hasta que exista la consulta en vivo (Fase 2).
+ * "sin verificar" hasta que se haga la consulta en vivo al HIS (Fase 2); con
+ * ella pasa a ✓ (está a nombre del paciente) o ✗ (no está, o es de otro).
  */
 export function construirLineaDeVida(
   c: CitaRastreo,
-  opciones: { espejo: SaludEspejo | null },
+  opciones: { espejo: SaludEspejo | null; his?: EvidenciaHis | null },
 ): PasoLinea[] {
   const pasos: PasoLinea[] = [];
   const paso = (
@@ -1193,12 +1588,41 @@ export function construirLineaDeVida(
       paso('entregado_al_agente', 'Entregado al agente', 'pending', null, 'En cola.');
     }
   }
-  paso(
-    'presente_en_el_his',
-    'Presente en el HIS',
-    'unknown',
-    null,
-    'Sin verificar: requiere la consulta en vivo al HIS.',
-  );
+  const presencia = presenciaEnHis(c, opciones.his);
+  if (!presencia) {
+    paso(
+      'presente_en_el_his',
+      'Presente en el HIS',
+      'unknown',
+      null,
+      opciones.his
+        ? 'Este cupo no se pudo consultar en el HIS (el médico no está homologado).'
+        : 'Sin verificar: requiere la consulta en vivo al HIS.',
+    );
+  } else if (presencia.tipo === 'PRESENTE') {
+    paso(
+      'presente_en_el_his',
+      'Presente en el HIS',
+      'ok',
+      presencia.consultadoIso,
+      'Consultado en vivo: figura a nombre del paciente.',
+    );
+  } else if (presencia.tipo === 'AUSENTE') {
+    paso(
+      'presente_en_el_his',
+      'Presente en el HIS',
+      'fail',
+      presencia.consultadoIso,
+      'Consultado en vivo: el HIS no tiene esa cita.',
+    );
+  } else {
+    paso(
+      'presente_en_el_his',
+      'Presente en el HIS',
+      'fail',
+      presencia.consultadoIso,
+      `Consultado en vivo: el HIS la tiene a nombre de ${frasePorOtroDocumento(presencia)}.`,
+    );
+  }
   return pasos;
 }

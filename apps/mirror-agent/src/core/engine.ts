@@ -5,9 +5,13 @@ import type {
   ReconcileResult,
   AvailabilityResult,
 } from '@agenia/shared';
+import { validarConsultaHis } from '@agenia/shared';
 import type { MirrorApiClient } from './mirror-api-client';
 import type { DriverResult, HisDriver } from './driver.interface';
-import { isNoticeRosterCapable } from './driver.interface';
+import {
+  isNoticeRosterCapable,
+  isPatientLookupCapable,
+} from './driver.interface';
 import type { AgentStateStore } from './agent-state-store';
 
 /**
@@ -165,6 +169,69 @@ export class MirrorEngine {
         if (!primerError) {
           primerError = error instanceof Error ? error.message : String(error);
         }
+      }
+    }
+
+    return { skipped: false, processed, errores, primerError };
+  }
+
+  /**
+   * Consulta en vivo al HIS (rastreo de paciente, Fase 2; plan §7). Un
+   * funcionario está mirando la pantalla mientras esto corre.
+   *
+   * A diferencia de los avisos, AQUÍ SE REPORTA EL FALLO AL SERVIDOR: quien pidió
+   * la consulta está esperando y la pantalla se rinde a los 30 s; un error que
+   * solo queda en el log del agente la deja esperando lo mismo que si el agente
+   * estuviera caído. Con el error, la pantalla lo dice en segundos.
+   *
+   * Cada petición se valida ANTES de tocar el HIS, aunque el servidor ya lo haya
+   * hecho: un agente que ejecuta sin mirar lo que le mandan es un agente que se
+   * puede usar para consultar cualquier cosa.
+   *
+   * `skipped: true` si el driver activo no implementa la consulta (no es un
+   * error: "este hospital no hace esto") — y ni siquiera se le pregunta a la API.
+   */
+  async syncLookupRequests(): Promise<{
+    skipped: boolean;
+    processed: number;
+    errores: number;
+    primerError?: string;
+  }> {
+    if (!isPatientLookupCapable(this.driver)) {
+      return { skipped: true, processed: 0, errores: 0 };
+    }
+
+    const requests = await this.api.getPendingLookupRequests();
+    let processed = 0;
+    let errores = 0;
+    let primerError: string | undefined;
+
+    for (const req of requests) {
+      try {
+        const invalida = validarConsultaHis(req);
+        if (invalida) throw new Error(`Petición inválida: ${invalida}`);
+
+        const { appointments, truncated } =
+          await this.driver.lookupAppointments(req);
+        await this.api.pushLookupResult({
+          requestId: req.requestId,
+          appointments,
+          truncated,
+        });
+        processed++;
+      } catch (error) {
+        errores++;
+        const mensaje = error instanceof Error ? error.message : String(error);
+        primerError ??= mensaje;
+        // Que el aviso del error falle tampoco puede tumbar la vuelta: la
+        // petición simplemente expirará en el servidor.
+        await this.api
+          .pushLookupResult({
+            requestId: req.requestId,
+            appointments: [],
+            error: mensaje,
+          })
+          .catch(() => undefined);
       }
     }
 
@@ -436,7 +503,14 @@ export class MirrorEngine {
       hisDetail = error instanceof Error ? error.message : String(error);
     }
 
-    await this.api.heartbeat({ recentErrors, hisReachable, hisDetail });
+    await this.api.heartbeat({
+      recentErrors,
+      hisReachable,
+      hisDetail,
+      // Sin esto el servidor no distingue "el agente está ocupado" de "este
+      // agente nunca va a contestar una consulta en vivo".
+      lookupCapable: isPatientLookupCapable(this.driver),
+    });
   }
 }
 

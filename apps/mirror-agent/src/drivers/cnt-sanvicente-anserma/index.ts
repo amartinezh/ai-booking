@@ -3,8 +3,11 @@ import type {
   CanonicalChangeEvent,
   HisAppointmentSnapshot,
   HisCatalogEntry,
+  HisLookupRequestDto,
   HisNoticeCandidate,
 } from '@agenia/shared';
+import { consultarCitasEnVivo } from './lookup';
+import type { ResultadoConsultaEnVivo } from './lookup';
 import {
   AnsermaMapping,
   feHoraCitAIsoOrNull,
@@ -902,6 +905,21 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       );
     }
     return candidatos;
+  }
+
+  /**
+   * Consulta en vivo al HIS (rastreo de paciente, Fase 2). Ver `lookup.ts` para
+   * las consultas y sus defensas, y docs/drivers/cnt-sanvicente-anserma/
+   * CONSULTA_EN_VIVO.md para lo que hay que medir antes de encenderla.
+   *
+   * Satisface `PatientLookupCapableDriver` (driver.interface.ts) de forma
+   * ESTRUCTURAL — nunca se declara con `implements`, a propósito: es una
+   * capacidad opt-in, no parte del contrato `HisDriver`.
+   */
+  async lookupAppointments(
+    query: HisLookupRequestDto,
+  ): Promise<ResultadoConsultaEnVivo> {
+    return consultarCitasEnVivo(this.requirePool(), this.timeZone, query);
   }
 
   /**

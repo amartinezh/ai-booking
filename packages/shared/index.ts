@@ -80,6 +80,7 @@ export {
   clasificarRastreoA,
   clasificarRastreoB,
   construirLineaDeVida,
+  presenciaEnHis,
 } from './src/patient-trace';
 export type {
   CodigoVeredicto,
@@ -104,6 +105,7 @@ export type {
   EvidenciaRastreoB,
   EstadoPaso,
   PasoLinea,
+  PresenciaHis,
 } from './src/patient-trace';
 export {
   CANCELADA_POR,
@@ -111,6 +113,28 @@ export {
   leerCancelacionPersonal,
 } from './src/appointment-cancel';
 export type { CancelacionPersonal } from './src/appointment-cancel';
+export {
+  LIMITES_CONSULTA_HIS,
+  aCitaHisVista,
+  clasificarTitular,
+  mismoInstante,
+  combinarEvidenciaHis,
+  leerResultadoGuardado,
+  ocupanteDelCupo,
+  parametrosADto,
+  resolverRespuestaHis,
+  validarConsultaHis,
+} from './src/his-lookup';
+export type {
+  CitaHisVista,
+  EstadoCitaHis,
+  EvidenciaHis,
+  OcupanteCupo,
+  ParamsConsultaPorCupo,
+  ParamsConsultaPorDocumento,
+  ResultadoConsultaHis,
+  TitularHis,
+} from './src/his-lookup';
 export { SYNC_AUDIT_DIRECTION } from './src/sync-audit';
 export type { SyncAuditDirection } from './src/sync-audit';
 export type {
@@ -140,4 +164,11 @@ export type {
   NoticeRequestDto,
   NoticeRosterInput,
   NoticeRosterResult,
+  HisLookupKind,
+  HisLookupSlot,
+  HisLookupRequestDto,
+  HisLookupStatus,
+  HisLookupAppointment,
+  HisLookupResultInput,
+  HisLookupResultOutput,
 } from './src/mirror-protocol';

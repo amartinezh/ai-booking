@@ -9,6 +9,7 @@ const TIPO: Record<string, string> = {
     NAME: 'Búsqueda por nombre',
     OPEN: 'Expediente abierto',
     REVEAL: 'Datos completos mostrados',
+    LIVE_HIS: 'Consulta en vivo al HIS',
 };
 const MOTIVO: Record<string, string> = {
     PACIENTE_EN_VENTANILLA: 'Paciente en ventanilla',
@@ -61,6 +62,11 @@ export default function TablaConsultas({ lista, hrefBase }: { lista: ListaConsul
                                 </td>
                                 <td className="p-3">
                                     {TIPO[f.tipo] ?? f.tipo} · {f.modo === 'B' ? 'Lo agendaron en el HIS' : 'Dice que agendó'}
+                                    {f.enVivo && f.tipo !== 'LIVE_HIS' && (
+                                        <span className="ml-2 rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
+                                            con datos en vivo del HIS
+                                        </span>
+                                    )}
                                     <span className="block font-mono text-xs text-zinc-500">{f.busqueda}</span>
                                 </td>
                                 <td className="p-3">
@@ -70,7 +76,7 @@ export default function TablaConsultas({ lista, hrefBase }: { lista: ListaConsul
                                 <td className="p-3 text-xs">
                                     {f.veredictos.length > 0
                                         ? f.veredictos.join(', ')
-                                        : f.tipo === 'OPEN' || f.tipo === 'REVEAL'
+                                        : f.tipo === 'OPEN' || f.tipo === 'REVEAL' || f.tipo === 'LIVE_HIS'
                                           ? '—'
                                           : `${f.candidatos} candidato(s)`}
                                 </td>

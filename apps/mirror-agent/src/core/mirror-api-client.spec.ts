@@ -294,6 +294,17 @@ describe('HttpMirrorApiClient — el contrato HTTP', () => {
       expect(init.body).toBeUndefined();
     });
 
+    it('getPendingLookupRequests → GET /mirror/lookup-requests, sin cuerpo', async () => {
+      fetchMock.mockResolvedValue(respuesta([]));
+
+      await client.getPendingLookupRequests();
+
+      const { url, init } = llamada();
+      expect(url).toBe(`${BASE}/mirror/lookup-requests`);
+      expect(init.method).toBe('GET');
+      expect(init.body).toBeUndefined();
+    });
+
     it.each([
       ['ack', '/mirror/ack', { seqs: ['1'] }],
       ['pushChanges', '/mirror/changes', { events: [] }],
@@ -313,6 +324,11 @@ describe('HttpMirrorApiClient — el contrato HTTP', () => {
         'pushNoticeRoster',
         '/mirror/notice-roster',
         { requestId: 'req-1', candidates: [] },
+      ],
+      [
+        'pushLookupResult',
+        '/mirror/lookup-result',
+        { requestId: 'req-1', appointments: [], truncated: false },
       ],
     ])('%s → POST %s con su cuerpo', async (metodo, ruta, input) => {
       await (

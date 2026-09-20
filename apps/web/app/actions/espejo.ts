@@ -54,6 +54,9 @@ export async function getEstadoEspejo() {
             lastHeartbeatAt: true,
             lastHisReachable: true,
             lastHisDetail: true,
+            // Consulta en vivo del rastreo (Fase 2): se muestran, no se cambian aquí.
+            lookupEnabled: true,
+            lastLookupCapable: true,
         },
     });
     if (!config) {
