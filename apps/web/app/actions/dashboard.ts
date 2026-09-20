@@ -118,7 +118,7 @@ export async function cancelAppointmentAndFreeSlot(appointmentId: string, schedu
         // liberar un slot ajeno pasando un scheduleSlotId arbitrario.
         const appointment = await prisma.appointment.findFirst({
             where: whereClause,
-            select: { id: true, scheduleSlotId: true, status: true, metaLog: true }
+            select: { id: true, scheduleSlotId: true, metaLog: true }
         });
         if (!appointment) {
             return { success: false, error: 'Cita no encontrada en su organización.' };
@@ -131,29 +131,32 @@ export async function cancelAppointmentAndFreeSlot(appointmentId: string, schedu
         // una cancelación del personal no dejaba ningún rastro y, ante un "yo no
         // cancelé esa cita", no había forma de saber si fue el paciente, el hospital
         // o alguien de la clínica (ver @agenia/shared `appointment-cancel`).
-        // Si la cita YA estaba cancelada (doble clic, página vieja) no se toca el
-        // metaLog: la constancia original es la que vale y no debe pisarse.
-        const metaLog =
-            appointment.status === 'CANCELLED'
-                ? undefined
-                : armarMetaLogCancelacionPersonal(appointment.metaLog, {
-                    userId: session.userId,
-                    role: session.role,
-                    at: new Date(),
-                });
+        const metaLog = armarMetaLogCancelacionPersonal(appointment.metaLog, {
+            userId: session.userId,
+            role: session.role,
+            at: new Date(),
+        });
 
-        // En una transacción: Cancelar o eliminar la cita (en este caso cambiar estado a CANCELLED)
-        // Y liberar el slot para que la IA/WhatsApp lo pueda re-vender.
-        await prisma.$transaction([
-            prisma.appointment.update({
-                where: { id: appointment.id },
-                data: { status: 'CANCELLED', metaLog }
-            }),
-            prisma.scheduleSlot.update({
+        // Cancelar y liberar el cupo (para que la IA/WhatsApp lo pueda re-vender) en
+        // una transacción, y solo libera el cupo QUIEN REALMENTE CANCELA: el cambio va
+        // condicionado a que la cita no esté ya cancelada. Una cita ya cancelada (doble
+        // clic, página vieja, cancelada antes por el paciente o por el hospital) liberó
+        // su cupo cuando se canceló, y ese cupo pudo venderse a otra cita: liberarlo de
+        // nuevo dejaría a AgenIA ofreciendo una hora ocupada. También evita pisar la
+        // constancia original y un evento redundante hacia el HIS (el trigger se dispara
+        // por `status` en el SET aunque no cambie). Si dos peticiones llegan a la vez,
+        // Postgres reevalúa el filtro y solo una encuentra la cita sin cancelar.
+        await prisma.$transaction(async (tx) => {
+            const { count } = await tx.appointment.updateMany({
+                where: { id: appointment.id, status: { not: 'CANCELLED' } },
+                data: { status: 'CANCELLED', metaLog },
+            });
+            if (count === 0) return;
+            await tx.scheduleSlot.update({
                 where: { id: appointment.scheduleSlotId },
-                data: { isAvailable: true } // Liberación al mercado
-            })
-        ]);
+                data: { isAvailable: true },
+            });
+        });
 
         revalidatePath('/dashboard');
         return { success: true };

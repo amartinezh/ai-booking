@@ -347,17 +347,29 @@ Implementada, con tests y verificada de extremo a extremo. **Sin commit.** No ll
 `verPersonal` coincide con `verConsultas` a propósito: es el mismo criterio que ya rige en la bitácora, donde el correo de quien consultó lo ve solo el administrador. **Es una decisión mía, no confirmada**: si BOOKING_AGENT debe ver a quién de sus compañeros canceló, es cambiar una celda de la matriz.
 
 **Decisiones.**
-1. **No se pisa una constancia existente.** Si la cita ya estaba `CANCELLED` (doble clic, página vieja), el `metaLog` no se toca: la constancia original es la que vale.
+1. **No se pisa una constancia existente, y solo libera el cupo quien realmente cancela.** El cambio va condicionado a que la cita no esté ya cancelada (`updateMany` con `status: { not: 'CANCELLED' }` dentro de una transacción interactiva); el cupo se libera solo si ese cambio tocó una fila. Una cita ya cancelada (doble clic, página vieja, cancelada antes por el paciente o por el hospital) no se vuelve a escribir. Ver «Corrección: re-cancelar» más abajo.
 2. **Se conserva lo que la cita ya tuviera en `metaLog`** y se agregan las claves encima.
 3. **El hospital gana** si por algún motivo traía ambas marcas, y la constancia del personal gana sobre el log de WhatsApp (`metaLog` es la fuente más fuerte).
 4. **El texto de "desconocido" se precisó**: ahora dice que solo aplica a las cancelaciones **anteriores** a que se registrara quién las hacía. Esas no se pueden reconstruir: no hay backfill posible.
 
-**Verificación.** Además de los tests unitarios (rompiendo el código a propósito en cinco puntos), se ejecutó la acción **real por HTTP contra un Next y un Postgres 15 reales**: cancela y libera el cupo como antes; deja el `metaLog` con el id, el rol y una hora dentro de la ventana de la llamada; el trigger del outbox genera **exactamente un** evento `UPDATE` con `status=CANCELLED`, origen `LOCAL`, la constancia y la fila anterior (`__old`) intactas, así que la cancelación **sigue viajando al HIS**; un segundo cancelar no pisa la constancia; y el rastreo muestra a cada rol lo que le toca (25 comprobaciones).
+**Verificación.** Además de los tests unitarios (rompiendo el código a propósito en cinco puntos), se ejecutó la acción **real por HTTP contra un Next y un Postgres 15 reales**: cancela y libera el cupo como antes; deja el `metaLog` con el id, el rol y una hora dentro de la ventana de la llamada; el trigger del outbox genera **exactamente un** evento `UPDATE` con `status=CANCELLED`, origen `LOCAL`, la constancia y la fila anterior (`__old`) intactas, así que la cancelación **sigue viajando al HIS**; un segundo cancelar no pisa la constancia; y el rastreo muestra a cada rol lo que le toca.
 
 **Hallazgos.**
 - Un **SUPER_ADMIN no puede llegar a esta acción por la interfaz**: el middleware lo desvía fuera de `/dashboard`. El código admite su rol y hay un test, pero en la práctica solo cancelan ORG_ADMIN, BOOKING_AGENT y DOCTOR. La resolución del correo de un SUPER_ADMIN (que no tiene clínica) se comprobó sembrando la constancia directamente en la base.
 - **La acción no aplica el alcance del agente.** Un BOOKING_AGENT con EPS o médico asignados puede cancelar cualquier cita de la clínica por esta vía, aunque el rastreo y el agendamiento sí lo acoten. Es comportamiento anterior; **no se tocó**.
-- **Volver a cancelar una cita ya cancelada libera el cupo de nuevo**, incluso si otra cita ya lo ocupó. Ahora la constancia no se pisa, pero el cupo sí se sigue liberando. Es anterior y **no se tocó**: ver el punto abierto §12 #8.
+- ✅ **Volver a cancelar una cita ya cancelada liberaba el cupo de nuevo**, incluso si otra cita ya lo ocupó. **Corregido** justo después: ver «Corrección: re-cancelar» más abajo.
+
+#### Corrección: re-cancelar una cita ya cancelada (2026-09-20)
+
+**Qué pasaba.** `cancelAppointmentAndFreeSlot` no comprobaba el estado de la cita: al volver a cancelar una ya cancelada (doble clic, o una página vieja que aún ofrecía "Cancelar") ponía `isAvailable = true` en el cupo. El índice único parcial `uq_appointment_cupo_vigente` solo cuenta citas **no** canceladas, así que otra cita **sí puede** tomar el cupo tras la primera cancelación; liberarlo por encima dejaba a AgenIA ofreciendo una hora ocupada (y el paciente veía "ese espacio acaba de reservarse" al confirmar).
+
+**Se reprodujo antes de corregir**, contra Next y Postgres reales, con una segunda cita de otra paciente ocupando el cupo liberado: la re-cancelación **volvía a liberar el cupo** y, además, **metía un evento `UPDATE` redundante en la cola hacia el HIS** — algo que el hallazgo original no decía: el trigger `UPDATE OF status …` se dispara porque `status` figura en el `SET` aunque no cambie, y el driver habría intentado cancelar en el hospital una cita ya cancelada.
+
+**La corrección.** El cambio pasó a un `updateMany` condicionado a que la cita no esté ya cancelada, dentro de una transacción interactiva; el cupo se libera solo si ese cambio tocó una fila. Como todo va en un único `updateMany` filtrado, también quedan resueltos, sin código adicional: no se pisa la constancia original, no hay evento redundante hacia el HIS, y dos cancelaciones simultáneas (doble clic real) liberan el cupo una sola vez, porque Postgres reevalúa el filtro sobre la fila ya cambiada y la segunda petición encuentra cero filas. La acción **sigue respondiendo `success`** (es idempotente: el estado buscado ya se cumple) y refresca la página para que muestre CANCELADA.
+
+**Comprobado contra Postgres real.** Antes de corregir, el escenario fallaba en 3 puntos; después, pasan las 31 comprobaciones del escenario completo. Además, **cinco carreras reales** —cuatro cancelaciones simultáneas por HTTP sobre cada una de cinco citas nuevas— dieron siempre: las cuatro respuestas `success`, la cita cancelada, el cupo libre y **exactamente un** evento `UPDATE` de la cita y uno del cupo (la constancia quedó a veces del admin y a veces del agente, prueba de que la carrera es real y de que solo una petición cambió algo). La cancelación de una sola petición sigue liberando el cupo.
+
+**Sigue sin tocar:** la acción no aplica el alcance de EPS/médico del BOOKING_AGENT (§12 #9).
 
 ---
 
@@ -405,7 +417,8 @@ Opciones que se evaluarán entonces:
 5. **Ventana por defecto** de la consulta en vivo (p. ej. −30 / +90 días) y su tope: se fija tras medir el costo en el laboratorio.
 6. ~~**¿El envío por Meta devuelve el `wamid` al llamador?**~~ ✅ Resuelto en la Fase 0: sí. Los cuatro puntos de envío reciben la respuesta de la Cloud API y de ahí sale `messages[0].id`; están todos enganchados al libro (§8 #7).
 7. **Fuera de la ventana de 24 h de Meta** un mensaje libre no sale: el "enviar confirmación" del escenario B tendría que usar una plantilla (`WhatsappTemplate`).
-8. **Volver a cancelar una cita ya cancelada** desde el panel libera el cupo aunque otra cita ya lo ocupe (el índice único parcial `uq_appointment_cupo_vigente` sigue impidiendo una segunda cita vigente, pero el bot volvería a ofrecer un cupo tomado). Hoy solo se alcanza con un doble clic o una página vieja. Corregirlo es no liberar el cupo si la cita ya estaba `CANCELLED`; se dejó fuera de esta corrección porque cambia el comportamiento de una acción existente.
+8. ~~**Volver a cancelar una cita ya cancelada** liberaba el cupo aunque otra cita ya lo ocupara.~~ ✅ Corregido (ver «Corrección: re-cancelar» en §9).
+9. **`cancelAppointmentAndFreeSlot` no aplica el alcance de EPS/médico del BOOKING_AGENT**: un agente con EPS o médico asignados puede cancelar cualquier cita de la clínica por esta vía, aunque el agendamiento y el rastreo sí lo acoten. Comportamiento anterior; no se tocó.
 
 ---
 
