@@ -274,7 +274,52 @@ describe('clasificarRastreoA — CANCELADA', () => {
     expect(r.principal.evidencia.join(' ')).toContain('PACIENTE LLAMA A CANCELAR');
   });
 
-  it('sin rastro de quién: lo dice y explica por qué (el panel no deja constancia)', () => {
+  it('por el personal de la clínica: quién (con lo que el rol pueda ver) y cuándo', () => {
+    const r = clasificarRastreoA(
+      evA({
+        citas: [
+          cita({
+            status: 'CANCELLED',
+            cancelacion: { por: 'PERSONAL', atIso: hace(1 * DIA), motivo: null, actor: 'agente de reservas · agente@clinica.co' },
+          }),
+        ],
+      }),
+    );
+
+    expect(r.principal.codigo).toBe(VEREDICTO.CANCELADA);
+    const evidencia = r.principal.evidencia.join(' ');
+    expect(evidencia).toContain('La canceló el personal de la clínica (agente de reservas · agente@clinica.co)');
+    expect(evidencia).toMatch(/ el \d{2}\/\d{2}\/\d{4}/);
+    // Con constancia no hay nada que declarar como desconocido.
+    expect(r.principal.noSabemos).toEqual([]);
+    expect(r.principal.accion).toContain('revisarlo con quien la canceló');
+  });
+
+  it('por el personal, sin actor (el rol no ve identidades): no inventa ni deja un paréntesis vacío', () => {
+    const r = clasificarRastreoA(
+      evA({ citas: [cita({ status: 'CANCELLED', cancelacion: { por: 'PERSONAL', atIso: hace(DIA), motivo: null } })] }),
+    );
+    const evidencia = r.principal.evidencia.join(' ');
+    expect(evidencia).toContain('La canceló el personal de la clínica el ');
+    expect(evidencia).not.toContain('()');
+  });
+
+  it('por el personal, con la fecha ilegible: lo dice en lo que NO se sabe, no la inventa', () => {
+    const r = clasificarRastreoA(
+      evA({ citas: [cita({ status: 'CANCELLED', cancelacion: { por: 'PERSONAL', atIso: null, motivo: null, actor: 'administrador' } })] }),
+    );
+    expect(r.principal.evidencia.join(' ')).toContain('La canceló el personal de la clínica (administrador).');
+    expect(r.principal.noSabemos.join(' ')).toContain('no trae una fecha legible');
+  });
+
+  it('el texto de la cancelación por el personal no acusa a nadie (ni al paciente ni al personal)', () => {
+    const r = clasificarRastreoA(
+      evA({ citas: [cita({ status: 'CANCELLED', cancelacion: { por: 'PERSONAL', atIso: hace(DIA), motivo: null, actor: 'agente de reservas' } })] }),
+    );
+    expect(texto(r)).not.toMatch(/mient|mentir|falso|fraude|engañ|culpa|error del personal/i);
+  });
+
+  it('sin rastro de quién: lo dice y aclara que solo aplica a las anteriores al registro de constancia', () => {
     const r = clasificarRastreoA(
       evA({
         citas: [cita({ status: 'CANCELLED', cancelacion: { por: 'DESCONOCIDO', atIso: null, motivo: null } })],
@@ -282,6 +327,7 @@ describe('clasificarRastreoA — CANCELADA', () => {
     );
     expect(r.principal.evidencia.join(' ')).toContain('no tiene registro de quién la canceló');
     expect(r.principal.noSabemos.join(' ')).toContain('panel del personal');
+    expect(r.principal.noSabemos.join(' ')).toContain('antes de que se registrara');
   });
 });
 

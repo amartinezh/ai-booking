@@ -31,6 +31,15 @@ export interface PermisosRastreo {
   modoB: boolean;
   /** La bitácora de consultas de la clínica. */
   verConsultas: boolean;
+  /**
+   * Ver QUIÉN del personal hizo algo (el correo de quien canceló una cita). Los
+   * demás roles ven solo el rol ("agente de reservas"): saber que la cancelaron
+   * en la clínica y cuándo basta para atender al paciente; el nombre de un
+   * compañero solo le hace falta a quien revisa el caso. Es el mismo criterio
+   * que ya rige en la bitácora, donde el correo del consultante lo ve solo el
+   * administrador.
+   */
+  verPersonal: boolean;
   /** BOOKING_AGENT: sus citas visibles se acotan a la EPS y al médico que tiene asignados. */
   aplicaScopeAgente: boolean;
 }
@@ -43,6 +52,7 @@ const NADA: PermisosRastreo = {
   verInternos: false,
   modoB: false,
   verConsultas: false,
+  verPersonal: false,
   aplicaScopeAgente: false,
 };
 
@@ -59,6 +69,7 @@ const MATRIZ: Partial<Record<RolRastreo, PermisosRastreo>> = {
     verInternos: true,
     modoB: true,
     verConsultas: true,
+    verPersonal: true,
     aplicaScopeAgente: false,
   },
   BOOKING_AGENT: {
@@ -70,6 +81,7 @@ const MATRIZ: Partial<Record<RolRastreo, PermisosRastreo>> = {
     verInternos: false,
     modoB: true,
     verConsultas: false,
+    verPersonal: false,
     aplicaScopeAgente: true,
   },
   DOCTOR: {
@@ -80,6 +92,7 @@ const MATRIZ: Partial<Record<RolRastreo, PermisosRastreo>> = {
     verInternos: false,
     modoB: false,
     verConsultas: false,
+    verPersonal: false,
     aplicaScopeAgente: false,
   },
   SUPER_ADMIN: {
@@ -92,6 +105,7 @@ const MATRIZ: Partial<Record<RolRastreo, PermisosRastreo>> = {
     verInternos: false,
     modoB: true,
     verConsultas: true,
+    verPersonal: true,
     aplicaScopeAgente: false,
   },
 };

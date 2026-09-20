@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { revalidatePath } from 'next/cache';
 import { AttendanceStatus } from '@agenia/database';
+import { armarMetaLogCancelacionPersonal } from '@agenia/shared';
 import { getErrorMessage } from '@/lib/error';
 
 const INTERNAL_API_URL =
@@ -117,7 +118,7 @@ export async function cancelAppointmentAndFreeSlot(appointmentId: string, schedu
         // liberar un slot ajeno pasando un scheduleSlotId arbitrario.
         const appointment = await prisma.appointment.findFirst({
             where: whereClause,
-            select: { id: true, scheduleSlotId: true }
+            select: { id: true, scheduleSlotId: true, status: true, metaLog: true }
         });
         if (!appointment) {
             return { success: false, error: 'Cita no encontrada en su organización.' };
@@ -126,12 +127,27 @@ export async function cancelAppointmentAndFreeSlot(appointmentId: string, schedu
             return { success: false, error: 'El cupo indicado no corresponde a la cita.' };
         }
 
+        // Quién y cuándo canceló. `Appointment` no tiene `updatedAt`, así que sin esto
+        // una cancelación del personal no dejaba ningún rastro y, ante un "yo no
+        // cancelé esa cita", no había forma de saber si fue el paciente, el hospital
+        // o alguien de la clínica (ver @agenia/shared `appointment-cancel`).
+        // Si la cita YA estaba cancelada (doble clic, página vieja) no se toca el
+        // metaLog: la constancia original es la que vale y no debe pisarse.
+        const metaLog =
+            appointment.status === 'CANCELLED'
+                ? undefined
+                : armarMetaLogCancelacionPersonal(appointment.metaLog, {
+                    userId: session.userId,
+                    role: session.role,
+                    at: new Date(),
+                });
+
         // En una transacción: Cancelar o eliminar la cita (en este caso cambiar estado a CANCELLED)
         // Y liberar el slot para que la IA/WhatsApp lo pueda re-vender.
         await prisma.$transaction([
             prisma.appointment.update({
                 where: { id: appointment.id },
-                data: { status: 'CANCELLED' }
+                data: { status: 'CANCELLED', metaLog }
             }),
             prisma.scheduleSlot.update({
                 where: { id: appointment.scheduleSlotId },

@@ -105,6 +105,12 @@ export type {
   EstadoPaso,
   PasoLinea,
 } from './src/patient-trace';
+export {
+  CANCELADA_POR,
+  armarMetaLogCancelacionPersonal,
+  leerCancelacionPersonal,
+} from './src/appointment-cancel';
+export type { CancelacionPersonal } from './src/appointment-cancel';
 export { SYNC_AUDIT_DIRECTION } from './src/sync-audit';
 export type { SyncAuditDirection } from './src/sync-audit';
 export type {

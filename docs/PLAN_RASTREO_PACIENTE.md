@@ -1,6 +1,6 @@
 # Plan: Rastreo de paciente (consulta de citas y diagnóstico de discrepancias AgenIA ↔ HIS)
 
-> **Estado:** Diseño con alcance y perfiles confirmados (2026-09-20). **Fases 0 y 1 implementadas y verificadas (2026-09-20), sin commit** — ver «Estado de la Fase 0» (§8) y «Estado de la Fase 1» (§9). Faltan la consulta en vivo al HIS (Fase 2) y el vigilante y la bandeja (Fase 3).
+> **Estado:** Diseño con alcance y perfiles confirmados (2026-09-20). **Fases 0 y 1 implementadas, verificadas y commiteadas (2026-09-20, `1ed83cf`); el registro de quién cancela desde el panel, después** — ver «Estado de la Fase 0» (§8) y «Estado de la Fase 1» (§9). Faltan la consulta en vivo al HIS (Fase 2) y el vigilante y la bandeja (Fase 3).
 > **Fecha:** 2026-09-20.
 > **Alcance:** Pantalla para que el personal de una clínica busque a un paciente por cualquier dato (cédula, nombre, teléfono, BSUID), vea su historial con foco en las **citas**, y averigüe por qué una cita "no aparece" en uno de los dos sistemas: AgenIA (WhatsApp) o el HIS del hospital. Es del **motor genérico**: no contiene detalles de un HIS concreto (esos viven en `docs/drivers/<driverKey>/`).
 > **Base del análisis:** lectura del código en el commit `b6a2101`. No se ejecutó nada contra producción: los hallazgos son de diseño, no mediciones.
@@ -67,7 +67,7 @@ El sistema no dice "miente". Da un **veredicto de una lista cerrada**, con la ev
 |---|---|---|---|
 | `NUNCA_CONFIRMÓ` | Sin `Appointment` ni `BOOKING_CONFIRMED` en la ventana; la conversación termina en un fallo registrado (`SLOT_TAKEN`, `EPS_REGIME_NOT_BILLABLE`, `ABANDONED`, `MAX_RETRIES`…) | AgenIA | Agendar ahora. Lo que muestra la captura suele ser el menú de opciones |
 | `EN_LISTA_DE_ESPERA` | `WaitlistEntry` en `WAITING` o `NOTIFIED` | AgenIA | Aclarar que "te avisamos si se libera" no es una cita |
-| `CANCELADA` | `status = CANCELLED`; `metaLog.cancelledBy` dice quién | AgenIA | Decir quién y cuándo canceló (el paciente por WhatsApp, o el hospital) |
+| `CANCELADA` | `status = CANCELLED`; `metaLog.cancelledBy` dice quién (`MIRROR` = el hospital, `STAFF` = el personal desde el panel); si no, un `APPOINTMENT_CANCELLED` en la conversación = el paciente por WhatsApp | AgenIA | Decir quién y cuándo canceló (el paciente por WhatsApp, el hospital o el personal de la clínica). Las cancelaciones del panel anteriores al registro de constancia salen como "sin registro" |
 | `CONFIRMADA_NO_LLEGÓ` | `Appointment` SCHEDULED con evento pendiente / en reintento / dead-letter / `missingMappings`; o espejo apagado, `pushEnabled` en false o agente sin latido | AgenIA | Mostrar la causa exacta y, solo ORG_ADMIN, reprocesar. Si el HIS rechazó porque el cupo ya estaba vendido: reubicar al paciente (el hospital gana) |
 | `ENTREGADA_PERO_AUSENTE` | El outbox tiene `deliveredAt` y la consulta en vivo no encuentra la cita | HIS en vivo | Deriva: escalar |
 | `OTRA_IDENTIDAD` | La consulta por cupo (médico y hora) encuentra la cita con otro documento; o hay otra conversación con otro teléfono o cédula | HIS en vivo / AgenIA | Corregir el documento. Caso plausible: un familiar reservó con la cédula de otra persona |
@@ -318,7 +318,7 @@ Implementada, con tests y verificada de extremo a extremo. **Sin commit.** No ll
 7. **Cambiar de organización (SUPER_ADMIN) remonta la pantalla** (`key`) en vez de sincronizar estado con efectos: no hay forma de mezclar datos de dos clínicas en pantalla.
 
 **Hallazgos.**
-- 🔴 **Las cancelaciones hechas desde el panel del personal no dejan ningún rastro** (`cancelAppointmentAndFreeSlot` no escribe `metaLog` ni un log, y `Appointment` no tiene `updatedAt`): no se puede saber quién ni cuándo. El veredicto `CANCELADA` lo dice así ("AgenIA no tiene registro de quién la canceló"). Arreglarlo es una línea (`metaLog: { cancelledBy: 'STAFF', userId }` en esa acción), **no se hizo** porque toca una acción existente que nadie pidió cambiar.
+- ✅ **Las cancelaciones hechas desde el panel del personal no dejaban ningún rastro** (`cancelAppointmentAndFreeSlot` no escribía `metaLog` ni un log, y `Appointment` no tiene `updatedAt`): no se podía saber quién ni cuándo. **Resuelto** — ver «Registro de quién cancela desde el panel» más abajo.
 - El trigger del outbox solo registra eventos con el espejo **encendido** (`enabled = true`): una cita creada antes de activarlo o con él apagado no tiene evento. Es lo que significa `NO_EVENT`, y el texto lo dice.
 - Un `redirect()` dentro de un componente de servidor responde `200` con la orden de redirigir en el cuerpo (streaming de Next), no un `3xx`. Importa para quien pruebe estas pantallas por HTTP.
 - El extremo a extremo encontró código muerto mío (`listarConsultasAction`, que nadie usaba): se eliminó.
@@ -330,6 +330,34 @@ Implementada, con tests y verificada de extremo a extremo. **Sin commit.** No ll
 - El escenario B y el respaldo de "ceros a la izquierda" leen los perfiles de la clínica con `regexp_replace` (no hay índice para eso): sin problema con miles de pacientes; si una clínica llegara a cientos de miles, hay que revisarlo.
 - La búsqueda por nombre exige `fn_norm_texto` (DDL de la Fase 0). Sin `db:apply-sql`, falla con error de base de datos: `agenia update` y `agenia migrate` ya lo corren.
 - La retención de `PatientLookupLog` sigue sin definirse (punto abierto §12 #4).
+
+### Registro de quién cancela desde el panel (2026-09-20, después del commit `1ed83cf`)
+
+**Qué cambia.** `cancelAppointmentAndFreeSlot` ([`dashboard.ts`](../apps/web/app/actions/dashboard.ts)) ahora deja en `Appointment.metaLog`, junto al cambio de estado, `{ cancelledBy: 'STAFF', cancelledByUserId, cancelledByRole, cancelledAt }`. Sigue la convención que el hospital ya usaba (`cancelledBy: 'MIRROR'`). Se guarda el **id** de quien canceló, no su correo: el correo se resuelve al mostrarlo. No hay migración (`metaLog` ya existía).
+
+**Cómo se comparte.** El escritor (la acción) y el lector (el rastreo) usan las mismas claves desde `@agenia/shared` (`appointment-cancel.ts`: `armarMetaLogCancelacionPersonal`, `leerCancelacionPersonal`, `CANCELADA_POR`), con un test de ida y vuelta. Es la misma razón por la que existe `SYNC_AUDIT_DIRECTION`: una errata en una de las dos puntas dejaría cancelaciones "sin rastro" sin que ningún test unitario lo viera.
+
+**Qué ve cada rol.** El veredicto `CANCELADA` dice "La canceló el personal de la clínica (…) el <fecha>". El paréntesis depende del permiso nuevo `verPersonal` (`acceso.ts`):
+
+| Rol | Ve |
+|---|---|
+| ORG_ADMIN, SUPER_ADMIN | El rol y el correo: "agente de reservas · agente@clinica.co" (o "usuario eliminado" si la cuenta ya no existe) |
+| BOOKING_AGENT, DOCTOR | Solo el rol: "agente de reservas". Ni siquiera se consulta al usuario, así que el correo no viaja al navegador |
+
+`verPersonal` coincide con `verConsultas` a propósito: es el mismo criterio que ya rige en la bitácora, donde el correo de quien consultó lo ve solo el administrador. **Es una decisión mía, no confirmada**: si BOOKING_AGENT debe ver a quién de sus compañeros canceló, es cambiar una celda de la matriz.
+
+**Decisiones.**
+1. **No se pisa una constancia existente.** Si la cita ya estaba `CANCELLED` (doble clic, página vieja), el `metaLog` no se toca: la constancia original es la que vale.
+2. **Se conserva lo que la cita ya tuviera en `metaLog`** y se agregan las claves encima.
+3. **El hospital gana** si por algún motivo traía ambas marcas, y la constancia del personal gana sobre el log de WhatsApp (`metaLog` es la fuente más fuerte).
+4. **El texto de "desconocido" se precisó**: ahora dice que solo aplica a las cancelaciones **anteriores** a que se registrara quién las hacía. Esas no se pueden reconstruir: no hay backfill posible.
+
+**Verificación.** Además de los tests unitarios (rompiendo el código a propósito en cinco puntos), se ejecutó la acción **real por HTTP contra un Next y un Postgres 15 reales**: cancela y libera el cupo como antes; deja el `metaLog` con el id, el rol y una hora dentro de la ventana de la llamada; el trigger del outbox genera **exactamente un** evento `UPDATE` con `status=CANCELLED`, origen `LOCAL`, la constancia y la fila anterior (`__old`) intactas, así que la cancelación **sigue viajando al HIS**; un segundo cancelar no pisa la constancia; y el rastreo muestra a cada rol lo que le toca (25 comprobaciones).
+
+**Hallazgos.**
+- Un **SUPER_ADMIN no puede llegar a esta acción por la interfaz**: el middleware lo desvía fuera de `/dashboard`. El código admite su rol y hay un test, pero en la práctica solo cancelan ORG_ADMIN, BOOKING_AGENT y DOCTOR. La resolución del correo de un SUPER_ADMIN (que no tiene clínica) se comprobó sembrando la constancia directamente en la base.
+- **La acción no aplica el alcance del agente.** Un BOOKING_AGENT con EPS o médico asignados puede cancelar cualquier cita de la clínica por esta vía, aunque el rastreo y el agendamiento sí lo acoten. Es comportamiento anterior; **no se tocó**.
+- **Volver a cancelar una cita ya cancelada libera el cupo de nuevo**, incluso si otra cita ya lo ocupó. Ahora la constancia no se pisa, pero el cupo sí se sigue liberando. Es anterior y **no se tocó**: ver el punto abierto §12 #8.
 
 ---
 
@@ -377,6 +405,7 @@ Opciones que se evaluarán entonces:
 5. **Ventana por defecto** de la consulta en vivo (p. ej. −30 / +90 días) y su tope: se fija tras medir el costo en el laboratorio.
 6. ~~**¿El envío por Meta devuelve el `wamid` al llamador?**~~ ✅ Resuelto en la Fase 0: sí. Los cuatro puntos de envío reciben la respuesta de la Cloud API y de ahí sale `messages[0].id`; están todos enganchados al libro (§8 #7).
 7. **Fuera de la ventana de 24 h de Meta** un mensaje libre no sale: el "enviar confirmación" del escenario B tendría que usar una plantilla (`WhatsappTemplate`).
+8. **Volver a cancelar una cita ya cancelada** desde el panel libera el cupo aunque otra cita ya lo ocupe (el índice único parcial `uq_appointment_cupo_vigente` sigue impidiendo una segunda cita vigente, pero el bot volvería a ofrecer un cupo tomado). Hoy solo se alcanza con un doble clic o una página vieja. Corregirlo es no liberar el cupo si la cita ya estaba `CANCELLED`; se dejó fuera de esta corrección porque cambia el comportamiento de una acción existente.
 
 ---
 

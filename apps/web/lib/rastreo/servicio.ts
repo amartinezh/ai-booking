@@ -34,6 +34,7 @@ import {
   escaparLike,
   esMotivoConsulta,
   formatAppointmentCompact,
+  leerCancelacionPersonal,
   type AuditoriaCupo,
   type CitaRastreo,
   type EvidenciaRastreoA,
@@ -49,6 +50,7 @@ import {
   derivarCancelacion,
   derivarSync,
   elegirConfirmacion,
+  etiquetaActorPersonal,
   etiquetaMedico,
   filasDeConversacion,
   hayCaptura,
@@ -613,7 +615,22 @@ export async function armarExpedienteA(
     )
     .map((c) => c.id);
 
-  const [eventosBD, mensajesBD, auditoriasBajas] = await Promise.all([
+  // Quién del personal canceló, para nombrarlo SOLO a quien puede verlo. Los ids
+  // salen del `metaLog` de citas ya acotadas a esta clínica (no de la entrada del
+  // cliente). La búsqueda es por id y sin acotar por organización a propósito:
+  // un SUPER_ADMIN que cancela no pertenece a ninguna.
+  const idsPersonal = permisos.verPersonal
+    ? [
+        ...new Set(
+          citasBD
+            .filter((c) => c.status === 'CANCELLED')
+            .map((c) => leerCancelacionPersonal(c.metaLog)?.userId)
+            .filter((id): id is string => !!id),
+        ),
+      ]
+    : [];
+
+  const [eventosBD, mensajesBD, auditoriasBajas, personalBD] = await Promise.all([
     verSync && idsNacidasAqui.length > 0
       ? db.syncOutbox.findMany({
           where: {
@@ -667,6 +684,12 @@ export async function armarExpedienteA(
           select: { entityId: true, createdAt: true },
         })
       : Promise.resolve([]),
+    idsPersonal.length > 0
+      ? db.user.findMany({
+          where: { id: { in: idsPersonal } },
+          select: { id: true, email: true },
+        })
+      : Promise.resolve([]),
   ]);
 
   const eventosPorCita = agrupar(eventosBD, (e) => e.entityId);
@@ -674,6 +697,7 @@ export async function armarExpedienteA(
     mensajesBD.filter((m) => m.appointmentId !== null),
     (m) => m.appointmentId as string,
   );
+  const emailDelPersonal = new Map(personalBD.map((u) => [u.id, u.email]));
   const bajaHis = new Map<string, Date>();
   for (const a of auditoriasBajas) {
     if (a.entityId && !bajaHis.has(a.entityId)) bajaHis.set(a.entityId, a.createdAt);
@@ -688,6 +712,7 @@ export async function armarExpedienteA(
       service: a.scheduleSlot.service.name,
     };
     const eventos = eventosPorCita.get(a.id) ?? [];
+    const personal = a.status === 'CANCELLED' ? leerCancelacionPersonal(a.metaLog) : null;
     const evidencia: CitaRastreo = {
       id: a.id,
       status: a.status,
@@ -702,6 +727,16 @@ export async function armarExpedienteA(
               metaLog: a.metaLog,
               canceladaPorPacienteEn: analisis?.canceladasPorPaciente.get(a.id) ?? null,
               auditoriaHisEn: bajaHis.get(a.id) ?? null,
+              // Quien puede ver personas: el correo (o "usuario eliminado" si la
+              // cuenta ya no existe). Quien no: solo el rol.
+              actorPersonal: personal
+                ? etiquetaActorPersonal(
+                    personal.role,
+                    !permisos.verPersonal || !personal.userId
+                      ? null
+                      : (emailDelPersonal.get(personal.userId) ?? 'usuario eliminado'),
+                  )
+                : null,
             })
           : null,
       sync:

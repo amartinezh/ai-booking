@@ -4,6 +4,7 @@ import {
   derivarCancelacion,
   derivarSync,
   elegirConfirmacion,
+  etiquetaActorPersonal,
   etiquetaMedico,
   filasDeConversacion,
   hayCaptura,
@@ -227,8 +228,38 @@ describe('derivarCancelacion', () => {
     expect(derivarCancelacion({ metaLog: { cancelledBy: 'MIRROR' }, canceladaPorPacienteEn: T(7) }).por).toBe('HIS');
   });
 
-  it('sin rastro (el personal desde el panel no deja nada) → DESCONOCIDO', () => {
+  it('sin rastro (una cancelación del panel ANTERIOR a que se guardara la constancia) → DESCONOCIDO', () => {
     expect(derivarCancelacion({ metaLog: null })).toEqual({ por: 'DESCONOCIDO', atIso: null, motivo: null });
+  });
+
+  describe('el personal desde el panel (metaLog.cancelledBy = STAFF)', () => {
+    const constancia = { cancelledBy: 'STAFF', cancelledByUserId: 'u-1', cancelledByRole: 'BOOKING_AGENT', cancelledAt: T(12).toISOString() };
+
+    it('quién y cuándo salen de la constancia', () => {
+      expect(derivarCancelacion({ metaLog: constancia, actorPersonal: 'agente de reservas · agente@a.co' })).toEqual({
+        por: 'PERSONAL',
+        atIso: T(12).toISOString(),
+        motivo: null,
+        actor: 'agente de reservas · agente@a.co',
+      });
+    });
+
+    it('sin actor redactado, cae al ROL (nunca queda vacío ni expone una identidad)', () => {
+      expect(derivarCancelacion({ metaLog: constancia }).actor).toBe('agente de reservas');
+    });
+
+    it('🚨 la constancia gana sobre el log de WhatsApp: metaLog es la fuente más fuerte', () => {
+      expect(derivarCancelacion({ metaLog: constancia, canceladaPorPacienteEn: T(3) }).por).toBe('PERSONAL');
+    });
+
+    it('el hospital gana sobre el personal si por algún motivo trajera ambas marcas (MIRROR se evalúa primero)', () => {
+      expect(derivarCancelacion({ metaLog: { ...constancia, cancelledBy: 'MIRROR' } }).por).toBe('HIS');
+    });
+
+    it('una constancia con la fecha ilegible sigue siendo del personal, sin inventar la hora', () => {
+      const r = derivarCancelacion({ metaLog: { ...constancia, cancelledAt: 'basura' } });
+      expect(r).toMatchObject({ por: 'PERSONAL', atIso: null });
+    });
   });
 });
 
@@ -303,5 +334,26 @@ describe('etiquetaMedico', () => {
   it('un nombre vacío no deja un honorífico suelto', () => {
     expect(etiquetaMedico('  ')).toBe('');
     expect(etiquetaMedico(null)).toBe('');
+  });
+});
+
+describe('etiquetaActorPersonal', () => {
+  it.each([
+    ['ORG_ADMIN', 'administrador'],
+    ['BOOKING_AGENT', 'agente de reservas'],
+    ['DOCTOR', 'médico'],
+    ['SUPER_ADMIN', 'súper administrador'],
+  ])('%s se dice "%s"', (rol, texto) => {
+    expect(etiquetaActorPersonal(rol, null)).toBe(texto);
+  });
+
+  it('con identidad la agrega después del rol', () => {
+    expect(etiquetaActorPersonal('BOOKING_AGENT', 'agente@a.co')).toBe('agente de reservas · agente@a.co');
+  });
+
+  it('un rol desconocido o ausente es "personal": no inventa uno', () => {
+    expect(etiquetaActorPersonal('ROL_FUTURO', null)).toBe('personal');
+    expect(etiquetaActorPersonal(null, null)).toBe('personal');
+    expect(etiquetaActorPersonal(undefined, 'x@y.co')).toBe('personal · x@y.co');
   });
 });

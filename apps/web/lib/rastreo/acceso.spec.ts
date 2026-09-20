@@ -25,8 +25,25 @@ describe('permisosDeRol — la matriz de §5', () => {
       verInternos: true,
       modoB: true,
       verConsultas: true,
+      verPersonal: true,
       aplicaScopeAgente: false,
     });
+  });
+
+  it('👤 solo quien revisa casos (ORG_ADMIN, SUPER_ADMIN) ve QUIÉN del personal hizo algo; los demás, solo el rol', () => {
+    expect(permisosDeRol('ORG_ADMIN').verPersonal).toBe(true);
+    expect(permisosDeRol('SUPER_ADMIN').verPersonal).toBe(true);
+    expect(permisosDeRol('BOOKING_AGENT').verPersonal).toBe(false);
+    expect(permisosDeRol('DOCTOR').verPersonal).toBe(false);
+    expect(permisosDeRol('PATIENT').verPersonal).toBe(false);
+    expect(permisosDeRol('GENERAL_OBSERVER').verPersonal).toBe(false);
+    expect(permisosDeRol('ROL_FUTURO' as never).verPersonal).toBe(false);
+  });
+
+  it('quien ve la bitácora (donde aparecen los correos del personal) es exactamente quien ve al personal', () => {
+    for (const rol of ['ORG_ADMIN', 'BOOKING_AGENT', 'DOCTOR', 'SUPER_ADMIN', 'PATIENT', 'GENERAL_OBSERVER'] as const) {
+      expect(permisosDeRol(rol).verPersonal).toBe(permisosDeRol(rol).verConsultas);
+    }
   });
 
   it('BOOKING_AGENT ve el TEXTO de las conversaciones (decisión 2) pero no los internos ni la bitácora', () => {

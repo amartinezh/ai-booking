@@ -218,9 +218,16 @@ export interface MensajeConfirmacion {
 }
 
 export interface CancelacionCita {
-  por: 'PACIENTE_WHATSAPP' | 'HIS' | 'DESCONOCIDO';
+  por: 'PACIENTE_WHATSAPP' | 'HIS' | 'PERSONAL' | 'DESCONOCIDO';
   atIso: string | null;
   motivo: string | null;
+  /**
+   * Solo si `por` es `PERSONAL`: quién, ya redactado para mostrar
+   * ("agente de reservas · agente@clinica.co"). Lo compone quien arma la
+   * evidencia porque decide QUÉ puede ver el rol que consulta: a algunos solo se
+   * les dice el rol, no la persona.
+   */
+  actor?: string | null;
 }
 
 export interface CitaRastreo {
@@ -678,10 +685,20 @@ function veredictoCancelada(
     evidencia.push(
       `La canceló el hospital desde su sistema${can.atIso ? ` el ${cuandoExacto(can.atIso, ctx)}` : ''}${can.motivo ? ` (motivo: ${can.motivo})` : ''}.`,
     );
+  } else if (can?.por === 'PERSONAL') {
+    evidencia.push(
+      `La canceló el personal de la clínica${can.actor ? ` (${can.actor})` : ''}${can.atIso ? ` el ${cuandoExacto(can.atIso, ctx)}` : ''}.`,
+    );
+    if (!can.atIso) {
+      noSabemos.push('La constancia de la cancelación no trae una fecha legible.');
+    }
   } else {
     evidencia.push('AgenIA no tiene registro de quién la canceló.');
+    // Solo las cancelaciones ANTERIORES a que el panel dejara constancia caen
+    // aquí; las de ahora en adelante salen como `PERSONAL`. Se dice así para no
+    // dar a entender que el panel sigue sin registrar nada.
     noSabemos.push(
-      'Las cancelaciones hechas desde el panel del personal no dejan constancia de quién ni cuándo.',
+      'Las cancelaciones hechas desde el panel del personal antes de que se registrara quién las hacía no dejan constancia de quién ni cuándo.',
     );
   }
 
@@ -692,7 +709,9 @@ function veredictoCancelada(
     evidencia,
     noSabemos,
     accion:
-      'Decirle quién y cuándo se canceló. Si aún necesita la cita, agendar de nuevo.',
+      can?.por === 'PERSONAL'
+        ? 'Decirle que la canceló el personal de la clínica y cuándo. Si el paciente asegura que no lo pidió, revisarlo con quien la canceló; si aún necesita la cita, agendar de nuevo.'
+        : 'Decirle quién y cuándo se canceló. Si aún necesita la cita, agendar de nuevo.',
     citaId: c.id,
   });
 }

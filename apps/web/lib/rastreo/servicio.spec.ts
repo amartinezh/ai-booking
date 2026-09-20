@@ -747,9 +747,131 @@ describe('armarExpedienteA', () => {
       expect(r.success && r.data.citas[0].cancelacion?.por).toBe('PACIENTE_WHATSAPP');
     });
 
-    it('cancelación sin rastro (panel del personal) → DESCONOCIDO', async () => {
+    it('cancelación sin rastro (anterior a que el panel dejara constancia) → DESCONOCIDO', async () => {
       const r = await abrir(preparar([citaBD({ status: 'CANCELLED' })]), admin());
       expect(r.success && r.data.citas[0].cancelacion?.por).toBe('DESCONOCIDO');
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Cancelación hecha por el personal desde el panel. Antes no dejaba rastro;
+    // ahora `metaLog` trae quién (id y rol) y cuándo, y cada rol ve de "quién"
+    // lo que le corresponde: el administrador, el correo; los demás, el rol.
+    // ══════════════════════════════════════════════════════════════════════
+    describe('cancelación del personal desde el panel (metaLog.cancelledBy = STAFF)', () => {
+      const CUANDO = new Date(AHORA - 2 * DIA).toISOString();
+      const constancia = (over: Record<string, unknown> = {}) => ({
+        cancelledBy: 'STAFF',
+        cancelledByUserId: 'u-9',
+        cancelledByRole: 'BOOKING_AGENT',
+        cancelledAt: CUANDO,
+        ...over,
+      });
+      const citaCancelada = (over: Record<string, unknown> = {}) => citaBD({ status: 'CANCELLED', metaLog: constancia(over) });
+      const conUsuario = (db: Db) => {
+        db.user.findMany.mockResolvedValue([{ id: 'u-9', email: 'agente@clinica.co' }]);
+        return db;
+      };
+
+      it('ORG_ADMIN: ve quién (rol y correo) y cuándo', async () => {
+        const db = conUsuario(preparar([citaCancelada()]));
+        const r = await abrir(db, admin());
+
+        expect(r.success && r.data.resultado.principal.codigo).toBe('CANCELADA');
+        expect(r.success && r.data.citas[0].cancelacion).toEqual({
+          por: 'PERSONAL',
+          atIso: CUANDO,
+          motivo: null,
+          actor: 'agente de reservas · agente@clinica.co',
+        });
+        expect(r.success && r.data.resultado.principal.evidencia.join(' ')).toContain(
+          'La canceló el personal de la clínica (agente de reservas · agente@clinica.co)',
+        );
+      });
+
+      it('resuelve el correo con UNA consulta por id (sin acotar por clínica: un SUPER_ADMIN que cancela no pertenece a ninguna)', async () => {
+        const db = conUsuario(preparar([citaCancelada()]));
+        await abrir(db, admin());
+
+        expect(db.user.findMany).toHaveBeenCalledTimes(1);
+        expect(db.user.findMany).toHaveBeenCalledWith({ where: { id: { in: ['u-9'] } }, select: { id: true, email: true } });
+      });
+
+      it('👤 BOOKING_AGENT: solo el ROL, y ni siquiera se consulta al usuario', async () => {
+        const db = conUsuario(preparar([citaCancelada()]));
+        const r = await abrir(db, agente());
+
+        expect(r.success && r.data.citas[0].cancelacion?.actor).toBe('agente de reservas');
+        expect(db.user.findMany).not.toHaveBeenCalled();
+        expect(JSON.stringify(r)).not.toContain('agente@clinica.co');
+      });
+
+      it('👤 DOCTOR: solo el rol, sin consultar al usuario', async () => {
+        const db = conUsuario(preparar([citaCancelada()]));
+        // Ana es la médica de la cita: la ve, pero no sabe quién del personal la canceló.
+        const r = await abrir(db, doctor());
+
+        expect(r.success && r.data.citas[0].cancelacion).toMatchObject({ por: 'PERSONAL', actor: 'agente de reservas' });
+        expect(db.user.findMany).not.toHaveBeenCalled();
+        expect(JSON.stringify(r)).not.toContain('agente@clinica.co');
+      });
+
+      it('SUPER_ADMIN ve el correo, incluso el de otro SUPER_ADMIN (que no tiene clínica)', async () => {
+        const db = preparar([citaCancelada({ cancelledByRole: 'SUPER_ADMIN' })]);
+        db.user.findMany.mockResolvedValue([{ id: 'u-9', email: 'soporte@plataforma.co' }]);
+
+        const r = await abrir(db, superAdmin());
+
+        expect(r.success && r.data.citas[0].cancelacion?.actor).toBe('súper administrador · soporte@plataforma.co');
+      });
+
+      it('la cuenta ya no existe → "usuario eliminado" (a quien puede ver identidades), no un hueco ni un error', async () => {
+        const r = await abrir(preparar([citaCancelada()]), admin()); // findMany → []
+        expect(r.success && r.data.citas[0].cancelacion?.actor).toBe('agente de reservas · usuario eliminado');
+      });
+
+      it('una constancia sin id de usuario: rol solo, sin consultar', async () => {
+        const db = preparar([citaCancelada({ cancelledByUserId: undefined })]);
+        const r = await abrir(db, admin());
+
+        expect(r.success && r.data.citas[0].cancelacion?.actor).toBe('agente de reservas');
+        expect(db.user.findMany).not.toHaveBeenCalled();
+      });
+
+      it('varias citas canceladas por la misma persona: un solo id en la consulta', async () => {
+        const db = conUsuario(
+          preparar([
+            citaCancelada(),
+            citaBD({ id: 'apt-2', status: 'CANCELLED', metaLog: constancia() }),
+            citaBD({ id: 'apt-3', status: 'CANCELLED', metaLog: constancia({ cancelledByUserId: 'u-10' }) }),
+          ]),
+        );
+        await abrir(db, admin());
+        expect((db.user.findMany.mock.calls[0][0] as { where: { id: { in: string[] } } }).where.id.in.sort()).toEqual(['u-10', 'u-9']);
+      });
+
+      it('sin citas canceladas por el personal no se consulta a ningún usuario', async () => {
+        const db = preparar([
+          citaBD(),
+          citaBD({ id: 'apt-2', status: 'CANCELLED', metaLog: { cancelledBy: 'MIRROR', reason: 'x' } }),
+          citaBD({ id: 'apt-3', status: 'CANCELLED' }),
+        ]);
+        await abrir(db, admin());
+        expect(db.user.findMany).not.toHaveBeenCalled();
+      });
+
+      it('una cita vigente con un metaLog raro NO se lee como cancelada por el personal', async () => {
+        const db = preparar([citaBD({ metaLog: constancia() })]); // status SCHEDULED
+        const r = await abrir(db, admin());
+        expect(r.success && r.data.citas[0].cancelacion).toBeNull();
+        expect(db.user.findMany).not.toHaveBeenCalled();
+      });
+
+      it('el hospital sigue ganando: una cancelación MIRROR no se atribuye al personal', async () => {
+        const db = preparar([citaBD({ status: 'CANCELLED', metaLog: { cancelledBy: 'MIRROR', reason: 'PACIENTE LLAMA' } })]);
+        db.syncAudit.findMany.mockResolvedValue([{ entityId: 'apt-1', createdAt: new Date(AHORA - DIA) }]);
+        const r = await abrir(db, admin());
+        expect(r.success && r.data.citas[0].cancelacion?.por).toBe('HIS');
+      });
     });
 
     it('la captura elige la cita principal y se anota en las notas', async () => {

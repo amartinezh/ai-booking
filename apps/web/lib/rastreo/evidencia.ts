@@ -9,6 +9,7 @@
  * Los tipos de entrada son estructurales (lo mínimo que se lee de cada fila),
  * no los de Prisma: así una consulta con `select` distinto sigue encajando.
  */
+import { leerCancelacionPersonal } from '@agenia/shared';
 import type {
   CancelacionCita,
   EsperaRastreo,
@@ -270,18 +271,45 @@ export function filasDeConversacion(
 // Cancelación: quién y cuándo
 // ─────────────────────────────────────────────────────────────
 
+const ROL_PERSONAL: Record<string, string> = {
+  ORG_ADMIN: 'administrador',
+  BOOKING_AGENT: 'agente de reservas',
+  DOCTOR: 'médico',
+  SUPER_ADMIN: 'súper administrador',
+};
+
 /**
- * Quién canceló una cita, con lo único que AgenIA registra:
+ * "agente de reservas · agente@clinica.co", o solo el rol cuando quien consulta
+ * no puede ver identidades (`identidad` = null). Un rol desconocido o ausente se
+ * dice "personal": es mejor que inventar uno o dejar un hueco en la frase.
+ */
+export function etiquetaActorPersonal(
+  role: string | null | undefined,
+  identidad: string | null,
+): string {
+  const rol = (role && ROL_PERSONAL[role]) || 'personal';
+  return identidad ? `${rol} · ${identidad}` : rol;
+}
+
+/**
+ * Quién canceló una cita, con lo que AgenIA registra:
  *
  *  · el hospital deja `metaLog.cancelledBy = 'MIRROR'` (y un SyncAudit con la hora);
+ *  · el personal desde el panel deja `metaLog.cancelledBy = 'STAFF'` con el id, el
+ *    rol y la hora (`@agenia/shared`, `appointment-cancel`);
  *  · el paciente por WhatsApp deja un InteractionLog `APPOINTMENT_CANCELLED`;
- *  · el personal desde el panel NO deja nada, y `Appointment` no tiene
- *    `updatedAt`: ni quién ni cuándo se pueden reconstruir. Se dice así.
+ *  · una cancelación del panel ANTERIOR a que se guardara la constancia no dejó
+ *    nada, y `Appointment` no tiene `updatedAt`: ni quién ni cuándo se pueden
+ *    reconstruir. Se dice así.
+ *
+ * `actorPersonal` ya viene redactado por quien conoce el permiso del rol que
+ * consulta (`etiquetaActorPersonal`); aquí solo se coloca.
  */
 export function derivarCancelacion(datos: {
   metaLog: unknown;
   canceladaPorPacienteEn?: Date | null;
   auditoriaHisEn?: Date | null;
+  actorPersonal?: string | null;
 }): CancelacionCita {
   const meta = metadataComoObjeto(datos.metaLog);
   if (meta.cancelledBy === 'MIRROR') {
@@ -292,6 +320,15 @@ export function derivarCancelacion(datos: {
           ? meta.observations.trim()
           : null;
     return { por: 'HIS', atIso: iso(datos.auditoriaHisEn), motivo };
+  }
+  const personal = leerCancelacionPersonal(datos.metaLog);
+  if (personal) {
+    return {
+      por: 'PERSONAL',
+      atIso: personal.atIso,
+      motivo: null,
+      actor: datos.actorPersonal ?? etiquetaActorPersonal(personal.role, null),
+    };
   }
   if (datos.canceladaPorPacienteEn) {
     return {
