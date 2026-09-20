@@ -50,12 +50,14 @@ function build(opts: {
     })),
   };
 
+  const messageLog = { recordOutbound: jest.fn().mockResolvedValue(undefined) };
   const cron = new ChatbotCron(
     redis as any,
     httpService as any,
     whatsappCredentials as any,
+    messageLog as any,
   );
-  return { cron, redis, httpService, whatsappCredentials };
+  return { cron, redis, httpService, whatsappCredentials, messageLog };
 }
 
 describe('ChatbotCron — cierre por inactividad', () => {
@@ -89,6 +91,26 @@ describe('ChatbotCron — cierre por inactividad', () => {
     // Limpió la sesión (incluye chat_state).
     const deleted = (redis.del.mock.calls[0] as string[]) ?? [];
     expect(deleted).toContain(KEY);
+  });
+
+  it('el aviso de cierre queda en el libro de mensajes como SYSTEM_NOTICE', async () => {
+    const { cron, httpService, messageLog } = build({
+      state: ChatState.AWAITING_SPECIALTY,
+      ttl: SESSION_TTL - 301,
+    });
+    httpService.post.mockReturnValue(
+      of({ data: { messages: [{ id: 'wamid.CIERRE' }] } }),
+    );
+
+    await cron.handleAbandonedSessions();
+
+    expect(messageLog.recordOutbound).toHaveBeenCalledWith({
+      organizationId: ORG,
+      recipientId: PHONE,
+      messageType: 'TEXT',
+      metaResponse: { messages: [{ id: 'wamid.CIERRE' }] },
+      context: { kind: 'SYSTEM_NOTICE' },
+    });
   });
 
   it('respeta el umbral configurable por env (2 min)', async () => {

@@ -12,6 +12,7 @@ export type {
   OutboxEventDto,
   OutboxEventContext,
   AckInput,
+  AckFailure,
   AckResult,
   AvailabilityInput,
   AvailabilityResult,

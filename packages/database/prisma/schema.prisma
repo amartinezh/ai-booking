@@ -83,6 +83,10 @@ model Organization {
   massNoticeBatches    MassNoticeBatch[]
   noticeRosterRequests NoticeRosterRequest[]
 
+  // 🔎 Rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md, Fase 0).
+  whatsappMessageLogs WhatsappMessageLog[]
+  patientLookupLogs   PatientLookupLog[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -853,6 +857,10 @@ model Appointment {
   // necesitando buscar por cupo, pero sin impedir que un cupo acumule
   // cancelaciones.
   @@index([scheduleSlotId])
+  // Historial de citas de UN paciente. Sin él, "las citas de este paciente"
+  // (flujos de cancelar/reprogramar del bot y el rastreo de paciente) recorría
+  // toda la tabla: `patientId` es una FK y Postgres no indexa las FK solo.
+  @@index([organizationId, patientId])
 }
 
 enum MirrorAvailabilityMode {
@@ -915,6 +923,11 @@ model InteractionLog {
   contactedAt  DateTime? // Cuándo el funcionario contactó al paciente
   contactedBy  String? // Email/nombre del funcionario que contactó
   contactNotes String?   @db.Text // Resultado del contacto
+
+  // Reconstruir la conversación de UN remitente (rastreo de paciente). Esta
+  // tabla no tenía ningún índice: buscar por `whatsappId` era un scan completo
+  // de todos los mensajes de todas las clínicas.
+  @@index([organizationId, whatsappId, createdAt])
 }
 
 // -----------------------------------------------------------------------------
@@ -1788,6 +1801,12 @@ model SyncOutbox {
   // reintentaria en cada vuelta del agente y saturaria el log y la BD.
   nextAttemptAt DateTime?
 
+  // Motivo del ÚLTIMO fallo que reportó el agente (el mensaje del driver o el
+  // rechazo del HIS), truncado. Antes el motivo solo existía en el journal de
+  // la VM del hospital y había que entrar por SSH para saber por qué un evento
+  // cayó a dead-letter. Se limpia cuando el evento por fin se entrega.
+  lastError String?
+
   @@index([organizationId, seq])
   // Cubre la consulta caliente del dispatcher: pendientes de una organizacion
   // en orden de seq. El indice parcial equivalente con el predicado completo
@@ -1820,15 +1839,146 @@ model SyncAudit {
   id             String       @id @default(uuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
-  direction      String // 'OUTBOUND' (AgenIA→HIS) | 'INBOUND' (HIS→AgenIA)
+  // Vocabulario REAL (constantes en `SYNC_AUDIT_DIRECTION`, @agenia/shared):
+  //   'AGENIA_TO_HIS' — AgenIA→HIS (dispatch, reproceso desde el panel)
+  //   'INBOUND'       — HIS→AgenIA, eventos de citas aplicados por /mirror/changes
+  //   'HIS_TO_AGENIA' — HIS→AgenIA, importación de la agenda (disponibilidad)
+  //   'RECONCILE'     — reconciliación diaria
+  //   'CONFIG'        — cambios de configuración del espejo
+  // El comentario anterior decía 'OUTBOUND', valor que ningún código escribe.
+  // Las filas históricas NO se migran: el vocabulario es texto libre.
+  direction      String
   entityType     String
   entityId       String?
   op             String // INSERT | UPDATE | DELETE | CANCEL
-  outcome        String // OK | CONFLICT | ERROR | DEAD_LETTER
+  outcome        String // OK | SKIPPED | CONFLICT | ERROR | DEAD_LETTER
+  // Para eventos de citas nacidos en el HIS, empieza con `cupo=<médico>|<hora UTC>`
+  // (no es PHI): permite correlacionar un evento con una consulta al HIS aunque
+  // el paciente no esté homologado y `entityId` quede vacío.
   detail         String?      @db.Text
   eventId        String?
   createdAt      DateTime     @default(now())
 
   @@index([organizationId, createdAt])
   @@index([eventId])
+}
+
+// -----------------------------------------------------------------------------
+// 🔎 RASTREO DE PACIENTE (docs/PLAN_RASTREO_PACIENTE.md, Fase 0)
+// -----------------------------------------------------------------------------
+
+enum WhatsappMessageType {
+  TEXT
+  AUDIO
+  TEMPLATE
+}
+
+/// Para qué se envió el mensaje. Distinto de `WhatsappTemplateKind`, que solo
+/// clasifica plantillas: aquí también caben las respuestas libres del bot.
+enum WhatsappMessageKind {
+  BOT_REPLY
+  BOOKING_CONFIRMATION
+  APPOINTMENT_REMINDER
+  WAITLIST_OFFER
+  MASS_NOTICE
+  MANUAL
+  SYSTEM_NOTICE
+}
+
+/// Estado de entrega según Meta. El orden importa: solo se avanza
+/// (ACCEPTED < SENT < DELIVERED < READ); FAILED solo desde ACCEPTED o SENT.
+enum WhatsappMessageStatus {
+  ACCEPTED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+/// Libro de mensajes SALIENTES de WhatsApp.
+///
+/// POR QUÉ EXISTE. `InteractionLog` guarda el texto que el bot generó, pero no
+/// el id que Meta le asignó ni si llegó: los estados sent/delivered/read que
+/// Meta manda al webhook se descartaban. Con esto se puede afirmar "el mensaje
+/// salió a esta hora y Meta lo dio por entregado/leído/fallido", que es lo único
+/// que separa una disputa de "me dijeron que estaba confirmada" de un hecho.
+///
+/// NO guarda el texto del mensaje (ya está en InteractionLog; duplicarlo solo
+/// multiplicaría los datos de salud). Sí guarda el destinatario, que es un dato
+/// personal: se borra con la clínica (onDelete Cascade).
+///
+/// Valor probatorio: los estados llegan por el webhook de Meta, cuya firma
+/// X-Hub-Signature-256 es OBLIGATORIA por defecto. Solo con
+/// META_REQUIRE_SIGNATURE=false (relajación pensada para migraciones) un estado
+/// podría estar falsificado; con ese flag encendido este libro no es evidencia.
+model WhatsappMessageLog {
+  id String @id @default(uuid())
+
+  /// Id del mensaje que Meta asigna al aceptar el envío (`wamid.…`). Es la
+  /// llave con la que llegan después los estados.
+  wamid String @unique
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Teléfono o BSUID tal como se usó para enviar; el mismo valor que
+  /// `InteractionLog.whatsappId`, para poder cruzar ambas tablas.
+  recipientId String
+
+  messageType WhatsappMessageType
+  kind        WhatsappMessageKind
+
+  /// Cita a la que se refiere el mensaje, cuando se sabe. Sin FK a propósito:
+  /// es evidencia y debe sobrevivir al borrado de la cita.
+  appointmentId String?
+
+  status      WhatsappMessageStatus @default(ACCEPTED)
+  /// Cuándo ocurrió `status` (la hora que reporta Meta; la de aceptación al inicio).
+  statusAt    DateTime              @default(now())
+  errorCode   String?
+  errorDetail String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, recipientId, createdAt])
+  @@index([appointmentId])
+}
+
+/// Bitácora de las consultas hechas en la pantalla de rastreo de paciente.
+/// Append-only por convención (igual que `GlobalAuditLog`): solo se inserta.
+///
+/// Es un buscador de datos personales de salud; sin registro de quién consultó
+/// a quién y por qué, es la puerta ideal para curiosear. Nunca guarda el dato
+/// buscado completo: `queryMasked` va enmascarado.
+model PatientLookupLog {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Quién consultó. Escalares planos, sin FK: el actor puede borrarse luego.
+  actorUserId String
+  actorRole   String
+
+  /// 'A' (dice que agendó por WhatsApp) | 'B' (lo agendaron en el HIS).
+  mode        String
+  /// 'CEDULA' | 'PHONE' | 'BSUID' | 'NAME'
+  queryKind   String
+  queryMasked String
+
+  /// Código de la lista cerrada de motivos (la define la pantalla) + nota opcional.
+  reason     String
+  reasonNote String? @db.Text
+
+  /// PatientProfile.id devueltos como candidatos. Sin FK: sobrevive al borrado del paciente.
+  candidateIds     Json
+  openedPatientId  String?
+  /// Veredictos emitidos: sirve para medir la frecuencia de cada causa.
+  verdicts         Json?
+  liveHisRequested Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, actorUserId, createdAt])
 }

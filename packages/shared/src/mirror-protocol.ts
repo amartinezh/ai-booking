@@ -129,6 +129,20 @@ export interface OutboxEventDto {
 
 // ── POST /mirror/ack ─────────────────────────────────────────────────────────
 
+/**
+ * Un evento que el agente no pudo aplicar, con el MOTIVO.
+ *
+ * `failedSeqs` solo llevaba el número: el motivo (el rechazo del HIS, el dato
+ * que faltaba) se quedaba en el journal de la VM del hospital, y saber por qué
+ * un evento cayó a dead-letter exigía entrar por SSH. Ver
+ * docs/PLAN_RASTREO_PACIENTE.md §8 #4.
+ */
+export interface AckFailure {
+  seq: string;
+  /** Mensaje del driver o excepción capturada. El servidor lo trunca. */
+  error: string;
+}
+
 export interface AckInput {
   /** Los `seq` (como string) que el agente aplicó con éxito hacia el HIS. */
   seqs: string[];
@@ -139,6 +153,16 @@ export interface AckInput {
    * pendientes (sin ack) hasta agotar los reintentos.
    */
   failedSeqs?: string[];
+  /**
+   * Los mismos fallos de `failedSeqs`, CON su motivo. Campo ADITIVO y opcional:
+   * un agente antiguo que no lo manda sigue funcionando (el servidor cuenta el
+   * intento igual, solo que sin motivo), y un servidor antiguo lo ignora
+   * (no hay validación estricta de campos). Por eso el agente sigue mandando
+   * también `failedSeqs`: mientras convivan versiones, esa es la lista que
+   * ambos entienden. Un `seq` presente aquí pero no en `failedSeqs` cuenta como
+   * fallido igualmente.
+   */
+  failures?: AckFailure[];
   /**
    * `seq` que el agente NO va a aplicar nunca con la versión de driver que
    * corre — por ejemplo un `entityType` que ese driver no espeja. Son

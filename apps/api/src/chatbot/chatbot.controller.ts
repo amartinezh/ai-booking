@@ -20,15 +20,16 @@ import { ChatbotService } from './chatbot.service';
 import { resolveSenderIdentity, WhatsappInboundEvent } from './sender-identity';
 import { InboundQueueService } from './inbound-queue.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
+import {
+  WhatsappMessageLogService,
+  type MetaStatusUpdate,
+} from '../whatsapp-config/whatsapp-message-log.service';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';
 
 /** Un mensaje entregado con estado (enviado/entregado/leído/fallido). */
-interface WhatsappStatusUpdate {
-  status?: string;
-  id?: string;
-}
+type WhatsappStatusUpdate = MetaStatusUpdate;
 
 /** `value` de un `change` en formato WhatsApp Cloud API. */
 interface WhatsappChangeValue {
@@ -58,6 +59,7 @@ export class ChatbotController {
     private readonly chatbotService: ChatbotService,
     private readonly whatsappCredentials: WhatsappCredentialsService,
     private readonly inboundQueue: InboundQueueService,
+    private readonly messageLog: WhatsappMessageLogService,
   ) {}
 
   // 1. Verificación del Webhook (Facebook te llama aquí primero).
@@ -144,6 +146,9 @@ export class ChatbotController {
                 this.logger.debug(
                   `Status update recibido: ${statusEvent.status ?? '(sin estado)'} para el mensaje ${statusEvent.id ?? '(sin id)'}`,
                 );
+                // Libro de mensajes: antes el estado se descartaba aquí. Nunca
+                // lanza, así que no puede impedir el 200 que Meta espera.
+                await this.messageLog.applyStatus(statusEvent);
               }
             }
           }
@@ -186,6 +191,7 @@ export class ChatbotController {
       body.to,
       body.message,
       organizationId,
+      { kind: 'MANUAL' },
     );
     return { success: true };
   }

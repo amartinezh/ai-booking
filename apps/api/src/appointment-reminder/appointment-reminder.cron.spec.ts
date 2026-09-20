@@ -98,6 +98,23 @@ describe('AppointmentReminderCronService — plantilla vs texto libre', () => {
     );
   });
 
+  it('📬 el recordatorio queda ligado a SU cita en el libro de mensajes (plantilla y texto libre)', async () => {
+    const fuera = build({ withinWindow: false });
+    await run(fuera);
+    expect(fuera.templates.sendTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ appointmentId: 'apt-1' }),
+    );
+
+    const dentro = build({ withinWindow: true });
+    await run(dentro);
+    expect(dentro.chatbot.sendOutboundForOrg).toHaveBeenCalledWith(
+      ORG,
+      PHONE,
+      expect.any(String),
+      { kind: 'APPOINTMENT_REMINDER', appointmentId: 'apt-1' },
+    );
+  });
+
   it('el BSUID manda sobre el teléfono como destinatario', async () => {
     const ctx = build({ withinWindow: false });
     await run(ctx, cita({ patient: { bsuid: BSUID } }));

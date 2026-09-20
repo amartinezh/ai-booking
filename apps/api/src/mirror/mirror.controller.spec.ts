@@ -104,6 +104,33 @@ describe('MirrorController — validación de /mirror/ack', () => {
     );
   });
 
+  it('failures (el motivo del fallo) llega intacto al servicio', async () => {
+    await ack({
+      seqs: [],
+      failedSeqs: ['9'],
+      failures: [{ seq: '9', error: 'HIS rechazó' }],
+    });
+
+    expect(dispatch.ack).toHaveBeenCalledWith('org1', {
+      seqs: [],
+      failedSeqs: ['9'],
+      failures: [{ seq: '9', error: 'HIS rechazó' }],
+    });
+  });
+
+  it('un ack cuyo único contenido es failures es válido: cuenta como fallido', async () => {
+    await ack({ seqs: [], failures: [{ seq: '9', error: 'x' }] });
+
+    expect(dispatch.ack).toHaveBeenCalled();
+  });
+
+  it('failures que no es un arreglo se rechaza', () => {
+    expect(() => ack({ seqs: [], failures: 'oops' })).toThrow(
+      BadRequestException,
+    );
+    expect(dispatch.ack).not.toHaveBeenCalled();
+  });
+
   it('sin seqs no hay ack posible', () => {
     expect(() => ack({ failedSeqs: ['1'] })).toThrow(BadRequestException);
   });

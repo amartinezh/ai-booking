@@ -57,6 +57,56 @@ export {
   whatsappRecipientField,
   buildWhatsappRecipient,
 } from './src/whatsapp-recipient';
+export {
+  MOTIVOS_CONSULTA,
+  MAX_NOTA_MOTIVO,
+  MIN_PALABRAS_NOMBRE,
+  esMotivoConsulta,
+  clasificarBusqueda,
+  variantesDeTelefono,
+  enmascararDocumento,
+  enmascararIdentificadorWhatsapp,
+  enmascararNombre,
+  escaparLike,
+} from './src/patient-search';
+export type { MotivoConsulta, BusquedaClasificada } from './src/patient-search';
+export {
+  VEREDICTO,
+  TEXTO_VEREDICTO,
+  VENTANA_CITAS_DIAS,
+  AGENTE_SIN_SENAL_MIN,
+  COLA_ATASCADA_MIN,
+  MAX_INTENTOS_ENTREGA,
+  clasificarRastreoA,
+  clasificarRastreoB,
+  construirLineaDeVida,
+} from './src/patient-trace';
+export type {
+  CodigoVeredicto,
+  Severidad,
+  FuenteVeredicto,
+  CausaNoLlego,
+  Veredicto,
+  ResultadoRastreo,
+  EstadoCita,
+  Asistencia,
+  OrigenCita,
+  EstadoSync,
+  EstadoMensaje,
+  MensajeConfirmacion,
+  CancelacionCita,
+  CitaRastreo,
+  SaludEspejo,
+  ResumenConversacion,
+  EsperaRastreo,
+  EvidenciaRastreoA,
+  AuditoriaCupo,
+  EvidenciaRastreoB,
+  EstadoPaso,
+  PasoLinea,
+} from './src/patient-trace';
+export { SYNC_AUDIT_DIRECTION } from './src/sync-audit';
+export type { SyncAuditDirection } from './src/sync-audit';
 export type {
   CanonicalEntityType,
   CanonicalOp,
@@ -65,6 +115,7 @@ export type {
   OutboxEventDto,
   OutboxEventContext,
   AckInput,
+  AckFailure,
   AckResult,
   CanonicalChangeEvent,
   ChangesInput,

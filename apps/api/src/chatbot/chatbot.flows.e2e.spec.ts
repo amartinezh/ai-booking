@@ -12,6 +12,7 @@ import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { LlmFactoryService } from '../llm/llm-factory.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
+import { WhatsappMessageLogService } from '../whatsapp-config/whatsapp-message-log.service';
 import { SurveyService } from '../survey/survey.service';
 import { AudioConfigService } from '../audio-config/audio-config.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
@@ -400,6 +401,10 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         { provide: WaitlistService, useValue: waitlist },
         { provide: InteractionLogService, useValue: interactionLog },
         {
+          provide: WhatsappMessageLogService,
+          useValue: { recordOutbound: jest.fn() },
+        },
+        {
           provide: KnowledgeBaseService,
           useValue: {
             hasContent: jest.fn(() => false),
@@ -551,6 +556,19 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(turnoNacimiento[0].userMessage).toBe('15/03/1980');
 
       expect(interactionLog.logBookingConfirmed).toHaveBeenCalledTimes(1);
+
+      // 📬 La confirmación sale ligada a SU cita en el libro de mensajes: es
+      // lo que permite responder después "¿le llegó la confirmación de esta
+      // cita?" sin adivinar por hora y teléfono.
+      const confirmaciones = sendSpy.mock.calls.filter(
+        (c: any[]) => c[2]?.kind === 'BOOKING_CONFIRMATION',
+      );
+      expect(confirmaciones).toHaveLength(1);
+      expect(confirmaciones[0][2]).toEqual({
+        kind: 'BOOKING_CONFIRMATION',
+        appointmentId: 'apt-new',
+      });
+
       expect(surveySpy).toHaveBeenCalledWith(
         ORG_ID,
         SENDER,

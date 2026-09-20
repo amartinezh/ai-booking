@@ -2,10 +2,26 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { buildWhatsappRecipient } from '@agenia/shared';
-import type { WhatsappTemplateKind } from '@agenia/database';
+import type {
+  WhatsappMessageKind,
+  WhatsappTemplateKind,
+} from '@agenia/database';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsappCredentialsService } from './whatsapp-credentials.service';
+import { WhatsappMessageLogService } from './whatsapp-message-log.service';
 import { metaGraphUrl } from './meta-graph';
+
+/**
+ * Para qué se manda cada plantilla, en el vocabulario del libro de mensajes.
+ * `Record` sobre TODOS los tipos: agregar una plantilla nueva sin decir aquí
+ * qué es no compila, en vez de registrarse en silencio con el tipo equivocado.
+ */
+const TIPO_DE_MENSAJE: Record<WhatsappTemplateKind, WhatsappMessageKind> = {
+  APPOINTMENT_REMINDER: 'APPOINTMENT_REMINDER',
+  WAITLIST_SLOT_OFFER: 'WAITLIST_OFFER',
+  APPOINTMENT_CANCELLED_MASS: 'MASS_NOTICE',
+  APPOINTMENT_REMINDER_MASS: 'MASS_NOTICE',
+};
 
 /**
  * ══════════════════════════════════════════════════════════════════════════
@@ -29,6 +45,7 @@ export class WhatsappTemplateService {
     private readonly prisma: PrismaService,
     private readonly httpService: HttpService,
     private readonly whatsappCredentials: WhatsappCredentialsService,
+    private readonly messageLog: WhatsappMessageLogService,
   ) {}
 
   /**
@@ -119,6 +136,8 @@ export class WhatsappTemplateService {
     recipientId: string;
     kind: WhatsappTemplateKind;
     bodyParams?: string[];
+    /** Cita a la que se refiere (recordatorios): queda en el libro de mensajes. */
+    appointmentId?: string | null;
   }): Promise<{ success: boolean; error?: string; templateName?: string }> {
     const { organizationId, recipientId, kind, bodyParams = [] } = params;
 
@@ -166,8 +185,8 @@ export class WhatsappTemplateService {
     };
 
     try {
-      await lastValueFrom(
-        this.httpService.post(
+      const response = await lastValueFrom(
+        this.httpService.post<unknown>(
           metaGraphUrl(`${creds.phoneNumberId}/messages`),
           body,
           {
@@ -178,6 +197,18 @@ export class WhatsappTemplateService {
           },
         ),
       );
+      // Se registra ANTES de devolver y sin lanzar nunca: si el libro falla,
+      // la plantilla ya salió y el llamador debe enterarse de que se envió.
+      await this.messageLog.recordOutbound({
+        organizationId,
+        recipientId,
+        messageType: 'TEMPLATE',
+        metaResponse: response.data,
+        context: {
+          kind: TIPO_DE_MENSAJE[kind],
+          appointmentId: params.appointmentId ?? null,
+        },
+      });
       return { success: true, templateName: template.name };
     } catch (error) {
       // El error de Axios llega sin tipar; se extrae el cuerpo de Meta si viene.

@@ -35,6 +35,7 @@ type Estado = {
         op: string;
         attempts: number;
         createdAt: Date;
+        lastError: string | null;
     }[];
     ultimaReconciliacion: { createdAt: Date; outcome: string; detail: string | null } | null;
     ultimaAgenda: { createdAt: Date; outcome: string; detail: string | null } | null;
@@ -236,6 +237,14 @@ export default function EspejoClient({ data }: { data: Estado }) {
                                             <span className="block font-mono text-xs text-zinc-500">
                                                 {e.entityId}
                                             </span>
+                                            {e.lastError && (
+                                                <span
+                                                    className="mt-1 block max-w-md break-words text-xs text-red-600 dark:text-red-400"
+                                                    title="Motivo del último fallo que reportó el agente"
+                                                >
+                                                    {e.lastError}
+                                                </span>
+                                            )}
                                         </td>
                                         <td className="p-3 tabular-nums text-zinc-600 dark:text-zinc-400">
                                             {formatDateShort(e.createdAt)}

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
 import {
   AckInput,
   AckResult,
@@ -35,6 +36,12 @@ export function backoffMs(attempts: number): number {
   const exponente = Math.min(attempts, 20);
   return Math.min(2 ** exponente * 1000, MAX_BACKOFF_MS);
 }
+/** Tope del motivo de fallo que se guarda en `SyncOutbox.lastError`. Un mensaje
+ *  de driver puede traer una traza entera; con esto basta para diagnosticar. */
+const MAX_LAST_ERROR_CHARS = 1000;
+/** Un `seq` válido: dígitos. Lo que no lo sea se ignora en vez de romper el ack
+ *  entero — `BigInt('abc')` lanza. */
+const SEQ_RE = /^\d+$/;
 /** Skew de reloj tolerado antes de alertar (ver plan §7). */
 const CLOCK_SKEW_ALERT_MS = 30_000;
 
@@ -427,15 +434,32 @@ export class MirrorDispatchService {
       where: { organizationId, seq: { in: seqs } },
       // `nextAttemptAt: null` limpia el backoff de un evento que había fallado
       // antes y ahora sí se aplicó: la fila queda entregada y limpia, sin una
-      // marca de reintento futuro que ya no significa nada.
-      data: { deliveredAt: new Date(), nextAttemptAt: null },
+      // marca de reintento futuro que ya no significa nada. Lo mismo el motivo
+      // del último fallo: un evento entregado no tiene "error vigente".
+      data: { deliveredAt: new Date(), nextAttemptAt: null, lastError: null },
     });
 
     // Los que el agente reporta como fallidos NO se marcan delivered — quedan
     // pendientes para el próximo pull hasta agotar reintentos (ver plan §6,
     // capa 4: dead-letter con alerta, nunca descarte silencioso).
-    for (const seq of input.failedSeqs ?? []) {
-      await this.markAttemptFailed(organizationId, seq);
+    //
+    // `failures` trae el motivo; `failedSeqs` es la lista que entienden todas
+    // las versiones del agente. Se unen: un agente antiguo sin `failures` cuenta
+    // el intento igual (sin motivo), y un `seq` solo presente en `failures`
+    // también cuenta. Cada `seq` se procesa UNA vez — contarlo dos habría
+    // gastado dos intentos de los diez por un solo fallo.
+    const motivos = new Map<string, string>();
+    for (const f of input.failures ?? []) {
+      if (f && typeof f.seq === 'string' && SEQ_RE.test(f.seq)) {
+        motivos.set(f.seq, typeof f.error === 'string' ? f.error : '');
+      }
+    }
+    const fallidos = new Set<string>([
+      ...(input.failedSeqs ?? []),
+      ...motivos.keys(),
+    ]);
+    for (const seq of fallidos) {
+      await this.markAttemptFailed(organizationId, seq, motivos.get(seq));
     }
 
     for (const seq of input.skippedSeqs ?? []) {
@@ -483,7 +507,7 @@ export class MirrorDispatchService {
     await this.prisma.syncAudit.create({
       data: {
         organizationId,
-        direction: 'AGENIA_TO_HIS',
+        direction: SYNC_AUDIT_DIRECTION.AGENIA_TO_HIS,
         entityType: evento.entityType,
         entityId: evento.entityId,
         op: evento.op,
@@ -507,7 +531,11 @@ export class MirrorDispatchService {
    * condiciones cierra esa puerta; si no afectó ninguna fila, el seq no es de
    * quien dice serlo y se ignora dejando rastro.
    */
-  async markAttemptFailed(organizationId: string, seq: string): Promise<void> {
+  async markAttemptFailed(
+    organizationId: string,
+    seq: string,
+    error?: string,
+  ): Promise<void> {
     // Se lee ANTES para calcular el backoff sobre el número de intentos que
     // tendrá tras este fallo. `updateMany` no devuelve la fila actualizada.
     const previo = await this.prisma.syncOutbox.findFirst({
@@ -525,6 +553,12 @@ export class MirrorDispatchService {
         // menos de un minuto, mandando a dead-letter un HIS que solo estaba
         // reiniciándose.
         nextAttemptAt: new Date(Date.now() + backoffMs(intentos)),
+        // Sin motivo (agente antiguo) NO se toca lo que hubiera: `undefined`
+        // le dice a Prisma que ignore el campo. Con motivo vacío tampoco se
+        // pisa el anterior con nada.
+        lastError: error?.trim()
+          ? error.trim().slice(0, MAX_LAST_ERROR_CHARS)
+          : undefined,
       },
     });
 

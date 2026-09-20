@@ -5,6 +5,7 @@ import { lastValueFrom } from 'rxjs';
 import { RedisService } from '../redis/redis.service';
 import { ChatState, SESSION_TTL } from './chatbot.constants';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
+import { WhatsappMessageLogService } from '../whatsapp-config/whatsapp-message-log.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 import { buildWhatsappRecipient } from '@agenia/shared';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
@@ -50,6 +51,7 @@ export class ChatbotCron {
     private readonly redis: RedisService,
     private readonly httpService: HttpService,
     private readonly whatsappCredentials: WhatsappCredentialsService,
+    private readonly messageLog: WhatsappMessageLogService,
   ) {}
 
   // Corre cada minuto para honrar umbrales cortos (p.ej. 5 min) con buena
@@ -131,7 +133,16 @@ export class ChatbotCron {
       'Content-Type': 'application/json',
     };
     try {
-      await lastValueFrom(this.httpService.post(url, data, { headers }));
+      const response = await lastValueFrom(
+        this.httpService.post<unknown>(url, data, { headers }),
+      );
+      await this.messageLog.recordOutbound({
+        organizationId: creds.organizationId,
+        recipientId,
+        messageType: 'TEXT',
+        metaResponse: response.data,
+        context: { kind: 'SYSTEM_NOTICE' },
+      });
     } catch (error: unknown) {
       this.logger.error(
         `Error enviando mensaje de abandono a ${recipientId}: ${getErrorMessage(error)}`,

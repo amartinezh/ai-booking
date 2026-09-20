@@ -5,6 +5,7 @@ import { ChatbotController } from './chatbot.controller';
 import { ChatbotService } from './chatbot.service';
 import { InboundQueueService } from './inbound-queue.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
+import { WhatsappMessageLogService } from '../whatsapp-config/whatsapp-message-log.service';
 
 describe('ChatbotController', () => {
   let controller: ChatbotController;
@@ -18,6 +19,7 @@ describe('ChatbotController', () => {
   };
   // Cola de entrada fake: `admit` deduplica en memoria y `enqueue` ejecuta la
   // tarea de inmediato (síncrono) para poder afirmar que se procesó el mensaje.
+  let messageLog: { applyStatus: jest.Mock };
   let inboundQueue: {
     admit: jest.Mock;
     releaseAdmission: jest.Mock;
@@ -65,6 +67,7 @@ describe('ChatbotController', () => {
       organizationIdByVerifyToken: jest.fn(() => null),
       appSecretByPhoneNumberId: jest.fn(() => null),
     };
+    messageLog = { applyStatus: jest.fn().mockResolvedValue(true) };
     inboundQueue = {
       seen: new Set<string>(),
       inFlight: 0,
@@ -89,6 +92,7 @@ describe('ChatbotController', () => {
         { provide: ChatbotService, useValue: chatbotService },
         { provide: WhatsappCredentialsService, useValue: credentials },
         { provide: InboundQueueService, useValue: inboundQueue },
+        { provide: WhatsappMessageLogService, useValue: messageLog },
       ],
     }).compile();
 
@@ -285,6 +289,81 @@ describe('ChatbotController', () => {
   });
 
   // ══════════════════════════════════════════════════════════════
+  // 📬 Estados de entrega de Meta → libro de mensajes
+  // ══════════════════════════════════════════════════════════════
+  describe('estados de entrega (statuses)', () => {
+    const statusBody = () => ({
+      object: 'whatsapp_business_account',
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: '123456789012345' },
+                statuses: [
+                  {
+                    id: 'wamid.A',
+                    status: 'delivered',
+                    timestamp: '1789900000',
+                  },
+                  {
+                    id: 'wamid.B',
+                    status: 'failed',
+                    timestamp: '1789900001',
+                    errors: [{ code: 131047, title: 'Re-engagement' }],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    it('cada estado de un webhook FIRMADO se aplica al libro', async () => {
+      credentials.appSecretByPhoneNumberId.mockResolvedValue(APP_SECRET);
+      const body = statusBody();
+      const { req, signature } = signedRequest(body, APP_SECRET);
+
+      const result = await controller.handleMessage(body, req, signature);
+
+      expect(result).toBe('EVENT_RECEIVED');
+      expect(messageLog.applyStatus).toHaveBeenCalledTimes(2);
+      expect(messageLog.applyStatus).toHaveBeenNthCalledWith(1, {
+        id: 'wamid.A',
+        status: 'delivered',
+        timestamp: '1789900000',
+      });
+      expect(messageLog.applyStatus).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ id: 'wamid.B', status: 'failed' }),
+      );
+    });
+
+    it('🔏 un webhook SIN firma válida NO toca el libro: un estado falsificado no puede probar una entrega', async () => {
+      credentials.appSecretByPhoneNumberId.mockResolvedValue(APP_SECRET);
+      const body = statusBody();
+      const { req } = signedRequest(body, 'otro-secreto');
+
+      await expect(
+        controller.handleMessage(body, req, 'sha256=falsa'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(messageLog.applyStatus).not.toHaveBeenCalled();
+    });
+
+    it('si el libro fallara, el webhook igual responde 200 (Meta reintentaría en bucle)', async () => {
+      credentials.appSecretByPhoneNumberId.mockResolvedValue(APP_SECRET);
+      messageLog.applyStatus.mockResolvedValue(false);
+      const body = statusBody();
+      const { req, signature } = signedRequest(body, APP_SECRET);
+
+      await expect(
+        controller.handleMessage(body, req, signature),
+      ).resolves.toBe('EVENT_RECEIVED');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════
   // 🏢 Outbound con tenant del token
   // ══════════════════════════════════════════════════════════════
   describe('outbound', () => {
@@ -299,6 +378,8 @@ describe('ChatbotController', () => {
         '573001234567',
         'Recordatorio',
         'org-1',
+        // Es un mensaje que un funcionario escribió a mano: así queda en el libro.
+        { kind: 'MANUAL' },
       );
     });
 

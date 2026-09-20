@@ -20,6 +20,7 @@ export default async function SuperAdminLayout({ children }: { children: React.R
         { label: 'Mesa de Ayuda', href: '/super-admin/support', icon: '🛟' },
         { label: 'Monitor de Servicios', href: '/super-admin/monitor', icon: '📡' },
         { label: 'Auditoría y Logs', href: '/super-admin/logs', icon: '🩻' },
+        { label: 'Rastreo de paciente', href: '/super-admin/rastreo', icon: '🔎' },
     ];
 
     return (

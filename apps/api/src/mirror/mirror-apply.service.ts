@@ -4,6 +4,7 @@ import { AppointmentsService } from '../appointments/appointments.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { CanonicalChangeEvent, ChangesResult } from './dto/mirror.types';
 import { AttendanceStatus } from '@agenia/database';
+import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
 import { getErrorMessage } from '../common/error-message.util';
 
 /**
@@ -24,6 +25,40 @@ const ATTENDANCE_VALIDOS = new Set<string>(Object.values(AttendanceStatus));
 
 function esAttendanceStatus(valor: string): valor is AttendanceStatus {
   return ATTENDANCE_VALIDOS.has(valor);
+}
+
+/**
+ * Clave del cupo tal como la reporta el driver: `<médico del HIS>|<hora UTC>`.
+ *
+ * Es lo único que identifica una cita nacida en el HIS mientras el paciente no
+ * esté homologado (y hoy nunca lo está — ver `applyAppointmentCreate`). NO es un
+ * dato de salud: es un código de médico y una hora. Por eso puede vivir en
+ * `SyncAudit.detail` y servir de puente con una consulta en vivo al HIS
+ * (docs/PLAN_RASTREO_PACIENTE.md §7.3), sin guardar el documento del paciente.
+ *
+ * La hora se normaliza a ISO para que la búsqueda por texto sea determinista.
+ */
+export function claveCupo(
+  payload: CanonicalChangeEvent['payload'],
+): string | null {
+  if (!payload.doctorExternalKey || !payload.startTimeIso) return null;
+  const hora = new Date(payload.startTimeIso);
+  if (Number.isNaN(hora.getTime())) return null;
+  return `${payload.doctorExternalKey}|${hora.toISOString()}`;
+}
+
+/**
+ * Lo que un evento descubre sobre sí mismo mientras se aplica y que la fila de
+ * auditoría necesita: el id del cupo o de la cita a los que se resolvió y una
+ * nota de qué pasó.
+ *
+ * Es un parámetro de SALIDA por llamada, no estado de la clase: `applyBatch`
+ * puede tener varios lotes en vuelo. Cambiar el tipo de retorno de los tres
+ * `applyAppointment*` habría movido también todos sus tests para nada.
+ */
+interface TrazaAuditoria {
+  entityId?: string;
+  nota?: string;
 }
 
 /**
@@ -116,10 +151,15 @@ export class MirrorApplyService {
     }
 
     let outcome: 'APPLIED' | 'CONFLICT' | 'SKIPPED' = 'APPLIED';
+    const traza: TrazaAuditoria = {};
 
     switch (event.entityType) {
       case 'APPOINTMENT':
-        outcome = await this.applyAppointmentEvent(organizationId, event);
+        outcome = await this.applyAppointmentEvent(
+          organizationId,
+          event,
+          traza,
+        );
         break;
 
       case 'SLOT':
@@ -177,6 +217,8 @@ export class MirrorApplyService {
       organizationId,
       event,
       outcome === 'APPLIED' ? 'OK' : outcome,
+      undefined,
+      traza,
     );
 
     return outcome;
@@ -185,14 +227,15 @@ export class MirrorApplyService {
   private async applyAppointmentEvent(
     organizationId: string,
     event: CanonicalChangeEvent,
+    traza: TrazaAuditoria,
   ): Promise<'APPLIED' | 'CONFLICT' | 'SKIPPED'> {
     switch (event.op) {
       case 'INSERT':
-        return this.applyAppointmentCreate(organizationId, event);
+        return this.applyAppointmentCreate(organizationId, event, traza);
       case 'CANCEL':
-        return this.applyAppointmentCancel(organizationId, event);
+        return this.applyAppointmentCancel(organizationId, event, traza);
       case 'ATTENDANCE':
-        return this.applyAttendanceUpdate(organizationId, event);
+        return this.applyAttendanceUpdate(organizationId, event, traza);
       default:
         throw new Error(
           `op no soportada para APPOINTMENT: ${event.op} (event_id=${event.eventId})`,
@@ -239,6 +282,7 @@ export class MirrorApplyService {
   private async applyAppointmentCreate(
     organizationId: string,
     event: CanonicalChangeEvent,
+    traza: TrazaAuditoria,
   ): Promise<'APPLIED' | 'CONFLICT' | 'SKIPPED'> {
     const { agenIAPatientId } = event.payload;
     let { agenIAScheduleSlotId } = event.payload;
@@ -258,6 +302,8 @@ export class MirrorApplyService {
           `Alta entrante de un médico no espejado ` +
             `(${event.payload.doctorExternalKey}). Se omite.`,
         );
+        traza.nota =
+          'médico no espejado: el hospital agendó con un médico que AgenIA no homologa';
         return 'SKIPPED';
       }
 
@@ -274,11 +320,15 @@ export class MirrorApplyService {
       }
 
       const { cupo } = resuelto;
+      traza.entityId = cupo.id;
 
       // Ocupar el cupo es lo que evita la sobreventa, y hay que hacerlo
       // aunque el paciente no se pueda homologar: da igual quién tenga la
       // cita, lo que importa es que AgenIA deje de ofrecer esa hora.
-      if (!cupo.isAvailable) return 'APPLIED'; // ya estaba ocupado: nada que hacer
+      if (!cupo.isAvailable) {
+        traza.nota = 'el cupo ya estaba ocupado; nada que hacer';
+        return 'APPLIED'; // ya estaba ocupado: nada que hacer
+      }
 
       if (!agenIAPatientId) {
         await this.prisma.$transaction(async (tx) => {
@@ -292,6 +342,12 @@ export class MirrorApplyService {
           `Cupo ${cupo.id} marcado como ocupado por una cita del HIS ` +
             `(paciente ${event.payload.patientDocument ?? 'desconocido'} sin homologar).`,
         );
+        // Deja constancia del hecho que el rastreo de paciente necesita saber:
+        // esta cita del HIS NO creó ningún `Appointment`. Sin la nota, la fila
+        // decía "OK" y nada más, y el documento solo estaba en el log del
+        // contenedor. No se escribe el documento aquí: es un dato personal.
+        traza.nota =
+          'cita del HIS con paciente sin homologar: solo se ocupó el cupo, no se creó Appointment';
         return 'APPLIED';
       }
 
@@ -331,6 +387,8 @@ export class MirrorApplyService {
       this.logger.warn(
         `Conflicto de slot al aplicar cita entrante del mirror (org ${organizationId}, slot ${agenIAScheduleSlotId}, event_id=${event.eventId}).`,
       );
+      traza.entityId ??= agenIAScheduleSlotId;
+      traza.nota = 'el cupo ya estaba ocupado en AgenIA';
       return 'CONFLICT';
     }
 
@@ -340,6 +398,7 @@ export class MirrorApplyService {
   private async applyAppointmentCancel(
     organizationId: string,
     event: CanonicalChangeEvent,
+    traza: TrazaAuditoria,
   ): Promise<'APPLIED' | 'SKIPPED'> {
     const { cancelReason, cancelObservations } = event.payload;
     let { agenIAAppointmentId } = event.payload;
@@ -356,6 +415,8 @@ export class MirrorApplyService {
           `Cancelación entrante de un médico no espejado ` +
             `(${event.payload.doctorExternalKey}). Se omite.`,
         );
+        traza.nota =
+          'médico no espejado: no hay cupo ni paciente de AgenIA afectados';
         return 'SKIPPED';
       }
 
@@ -372,6 +433,7 @@ export class MirrorApplyService {
       }
 
       const { cupo } = resuelto;
+      traza.entityId = cupo.id;
 
       // ⚠️ `status: { not: 'CANCELLED' }` NO sobra. Un mismo cupo puede tener
       // VARIAS citas: las canceladas se conservan como historia y el índice
@@ -410,11 +472,17 @@ export class MirrorApplyService {
             `Cupo ${cupo.id} liberado: el hospital canceló una cita que AgenIA no tenía.`,
           );
           await this.avisarListaDeEspera(organizationId, cupo.id);
+          traza.nota =
+            'cupo liberado: el hospital canceló una cita que AgenIA no tenía';
+        } else {
+          traza.nota = 'el cupo ya estaba libre; nada que hacer';
         }
         return 'APPLIED';
       }
 
       agenIAAppointmentId = cita.id;
+      traza.entityId = cita.id;
+      traza.nota = 'cancelación aplicada a la cita de AgenIA';
     }
 
     const cupoLiberadoId = await this.prisma.$transaction(async (tx) => {
@@ -525,6 +593,7 @@ export class MirrorApplyService {
   private async applyAttendanceUpdate(
     organizationId: string,
     event: CanonicalChangeEvent,
+    traza: TrazaAuditoria,
   ): Promise<'APPLIED' | 'SKIPPED'> {
     const { attendanceStatus } = event.payload;
     let { agenIAAppointmentId } = event.payload;
@@ -548,6 +617,7 @@ export class MirrorApplyService {
 
     if (!agenIAAppointmentId) {
       const resuelto = await this.resolverCupo(organizationId, event.payload);
+      if (resuelto.tipo === 'OK') traza.entityId = resuelto.cupo.id;
       const cita =
         resuelto.tipo === 'OK'
           ? // Mismo filtro que en `applyAppointmentCancel`, y por la misma
@@ -573,10 +643,13 @@ export class MirrorApplyService {
           `Desenlace de atención de una cita que AgenIA no tiene ` +
             `(médico ${event.payload.doctorExternalKey}, ${event.payload.startTimeIso}). Se omite.`,
         );
+        traza.nota =
+          'cita de ventanilla: AgenIA no la tiene, no hay asistencia que actualizar';
         return 'SKIPPED';
       }
 
       agenIAAppointmentId = cita.id;
+      traza.entityId = cita.id;
     }
 
     await this.appointmentsService.updateAttendance(
@@ -593,21 +666,42 @@ export class MirrorApplyService {
     event: CanonicalChangeEvent,
     outcome: 'OK' | 'SKIPPED' | 'CONFLICT' | 'ERROR',
     detail?: string,
+    traza?: TrazaAuditoria,
   ): Promise<void> {
     await this.prisma.syncAudit.create({
       data: {
         organizationId,
-        direction: 'INBOUND',
+        direction: SYNC_AUDIT_DIRECTION.INBOUND,
         entityType: event.entityType,
+        // Los ids que el evento ya traía mandan; si venía por médico y hora
+        // (toda cita nacida en el HIS), se usa el que se resolvió al aplicarlo.
         entityId:
           event.payload.agenIAAppointmentId ??
           event.payload.agenIAScheduleSlotId ??
+          traza?.entityId ??
           null,
         op: event.op,
         outcome,
-        detail: detail ?? null,
+        detail: this.armarDetalle(event, detail ?? traza?.nota),
         eventId: event.eventId,
       },
     });
+  }
+
+  /**
+   * `cupo=<médico>|<hora UTC>` al principio, y después lo que haya que decir.
+   * Solo en eventos de citas: es la forma de encontrar, desde la base, qué pasó
+   * con "el Dr. 76 a las 7:00" sin conocer al paciente.
+   */
+  private armarDetalle(
+    event: CanonicalChangeEvent,
+    texto?: string,
+  ): string | null {
+    const cupo =
+      event.entityType === 'APPOINTMENT' ? claveCupo(event.payload) : null;
+    const partes = [cupo ? `cupo=${cupo}` : null, texto ?? null].filter(
+      (p): p is string => p !== null,
+    );
+    return partes.length > 0 ? partes.join('; ') : null;
   }
 }

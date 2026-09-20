@@ -214,7 +214,60 @@ describe('MirrorEngine', () => {
         seqs: ['10'],
         failedSeqs: ['11'],
         skippedSeqs: [],
+        failures: [{ seq: '11', error: 'HIS lo rechazó' }],
       });
+    });
+  });
+
+  // El motivo de cada fallo viaja al servidor. Antes solo existía en el journal
+  // de esta VM: saber por qué un evento cayó a dead-letter exigía entrar por SSH
+  // (docs/PLAN_RASTREO_PACIENTE.md §8 #4).
+  describe('el ack lleva el MOTIVO de cada fallo', () => {
+    it('failedSeqs sigue yendo (lo entienden todas las versiones de la API) y failures la completa con el porqué', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'motivo-1', seq: '90' }),
+        outboxEvent({ eventId: 'motivo-2', seq: '91' }),
+      ]);
+      driver.createAppointment
+        .mockResolvedValueOnce({
+          success: false,
+          message: 'violación de PK: cupo ya vendido',
+        })
+        .mockRejectedValueOnce(new Error('Failed to connect'));
+
+      await engine.pullAndApplyOutboxEvents();
+
+      const ack = api.ack.mock.calls[0][0];
+      expect(ack.failedSeqs).toEqual(['90', '91']);
+      expect(ack.failures).toEqual([
+        { seq: '90', error: 'violación de PK: cupo ya vendido' },
+        { seq: '91', error: 'Failed to connect' },
+      ]);
+    });
+
+    it('un rechazo del driver SIN mensaje igual deja un motivo legible, nunca vacío', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'motivo-3', seq: '92' }),
+      ]);
+      driver.createAppointment.mockResolvedValueOnce({ success: false });
+
+      await engine.pullAndApplyOutboxEvents();
+
+      const failures = api.ack.mock.calls[0][0].failures ?? [];
+      expect(failures).toEqual([
+        { seq: '92', error: 'rechazado por el driver, sin detalle' },
+      ]);
+    });
+
+    it('un lote sin fallos manda failures vacío', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'motivo-4', seq: '93' }),
+      ]);
+      driver.createAppointment.mockResolvedValueOnce({ success: true });
+
+      await engine.pullAndApplyOutboxEvents();
+
+      expect(api.ack.mock.calls[0][0].failures).toEqual([]);
     });
   });
 
@@ -240,6 +293,9 @@ describe('MirrorEngine', () => {
         seqs: [],
         failedSeqs: ['20'],
         skippedSeqs: [],
+        failures: [
+          { seq: '20', error: 'createAppointment: pendiente de Fase 3' },
+        ],
       });
       expect(result.failed).toBe(1);
       expect(result.applied).toBe(0);
@@ -283,6 +339,7 @@ describe('MirrorEngine', () => {
         seqs: ['31'],
         failedSeqs: ['30'],
         skippedSeqs: [],
+        failures: [{ seq: '30', error: expect.any(String) }],
       });
     });
 
@@ -383,6 +440,12 @@ describe('MirrorEngine', () => {
         seqs: [],
         failedSeqs: ['72'],
         skippedSeqs: [],
+        failures: [
+          {
+            seq: '72',
+            error: expect.stringContaining('homologación incompleta'),
+          },
+        ],
       });
     });
 
@@ -590,6 +653,8 @@ describe('MirrorEngine', () => {
         seqs: [],
         failedSeqs: [],
         skippedSeqs: ['7'],
+        // Un evento saltado no es un fallo: no lleva motivo.
+        failures: [],
       });
     });
 

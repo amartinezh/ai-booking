@@ -443,6 +443,135 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
     });
   });
 
+  // ══════════════════════════════════════════════════════════════════════
+  // Rastro en SyncAudit de los eventos nacidos en el HIS (rastreo de paciente,
+  // docs/PLAN_RASTREO_PACIENTE.md §8 #5). Antes la fila decía "OK" con
+  // entityId y detail nulos y el documento solo aparecía en el log del
+  // contenedor: desde la base era imposible saber si el evento había llegado.
+  // La clave `cupo=<médico>|<hora UTC>` no es un dato de salud.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('auditoría de eventos del HIS: cupo=médico|hora', () => {
+    const CLAVE = 'cupo=76|2026-09-10T12:00:00.000Z';
+    const fila = () =>
+      (prisma.syncAudit.create.mock.calls[0] as [{ data: any }])[0].data;
+
+    it('alta sin paciente homologado: deja el cupo, el id del cupo y la nota de que NO se creó Appointment', async () => {
+      await aplicar(evento());
+
+      expect(fila()).toMatchObject({
+        outcome: 'OK',
+        direction: 'INBOUND',
+        entityId: 'slot-1',
+        detail: expect.stringContaining(CLAVE),
+      });
+      expect(fila().detail).toContain('no se creó Appointment');
+    });
+
+    it('🔒 NO escribe el documento del paciente en la auditoría', async () => {
+      await aplicar(evento());
+
+      expect(JSON.stringify(fila())).not.toContain('9696544');
+    });
+
+    it('la hora se normaliza a ISO UTC aunque el driver la mande con otro formato', async () => {
+      await aplicar(
+        evento({
+          payload: {
+            doctorExternalKey: '76',
+            startTimeIso: '2026-09-10T07:00:00-05:00',
+            patientDocument: '9696544',
+          },
+        }),
+      );
+
+      expect(fila().detail).toContain(CLAVE);
+    });
+
+    it('médico no espejado → SKIPPED con la clave del cupo, para poder responder "por qué no está"', async () => {
+      prisma.mirrorEntityMap.findFirst.mockResolvedValue(null);
+
+      await aplicar(evento());
+
+      expect(fila()).toMatchObject({
+        outcome: 'SKIPPED',
+        detail: expect.stringContaining(CLAVE),
+      });
+      expect(fila().detail).toContain('médico no espejado');
+    });
+
+    it('sin cupo → ERROR: la clave va DELANTE y el motivo original se conserva', async () => {
+      prisma.scheduleSlot.findFirst.mockResolvedValue(null);
+
+      await aplicar(evento());
+
+      expect(fila().outcome).toBe('ERROR');
+      expect(fila().detail.startsWith(CLAVE)).toBe(true);
+      expect(fila().detail).toContain('falta generar el cupo');
+    });
+
+    it('un cupo que ya estaba ocupado también deja rastro', async () => {
+      prisma.scheduleSlot.findFirst.mockResolvedValue({
+        ...CUPO,
+        isAvailable: false,
+      });
+
+      await aplicar(evento());
+
+      expect(fila().detail).toContain(CLAVE);
+      expect(fila().detail).toContain('ya estaba ocupado');
+    });
+
+    it('cancelación del hospital resuelta a una cita de AgenIA: entityId es LA CITA', async () => {
+      prisma.appointment.findFirst.mockResolvedValue({
+        id: 'apt-9',
+        scheduleSlotId: 'slot-1',
+      });
+      tx.appointment.findFirst.mockResolvedValue({
+        id: 'apt-9',
+        scheduleSlotId: 'slot-1',
+      });
+
+      await aplicar(evento({ op: 'CANCEL' }));
+
+      expect(fila()).toMatchObject({ outcome: 'OK', entityId: 'apt-9' });
+      expect(fila().detail).toContain(CLAVE);
+      expect(fila().detail).toContain('cancelación aplicada');
+    });
+
+    it('cancelación de una cita que AgenIA nunca tuvo: deja el cupo y dice que se liberó', async () => {
+      prisma.scheduleSlot.findFirst.mockResolvedValue({
+        ...CUPO,
+        isAvailable: false,
+      });
+
+      await aplicar(evento({ op: 'CANCEL' }));
+
+      expect(fila().entityId).toBe('slot-1');
+      expect(fila().detail).toContain('cupo liberado');
+    });
+
+    it('un evento que YA trae sus ids de AgenIA conserva el suyo (no lo pisa el resuelto)', async () => {
+      await aplicar(
+        evento({
+          payload: {
+            doctorExternalKey: '76',
+            startTimeIso: '2026-09-10T12:00:00.000Z',
+            agenIAPatientId: 'pac-1',
+            agenIAScheduleSlotId: 'slot-explicito',
+          },
+        }),
+      );
+
+      expect(fila().entityId).toBe('slot-explicito');
+    });
+
+    it('un evento que no es de una cita no lleva clave de cupo', async () => {
+      await aplicar(evento({ entityType: 'SLOT' }));
+
+      expect(fila().detail).not.toContain('cupo=');
+    });
+  });
+
   describe('🚨 lo que NO se puede resolver falla explícito, nunca a medias', () => {
     // ⚠️ Este caso cambió de ERROR a SKIPPED a propósito (2026-09-18).
     //

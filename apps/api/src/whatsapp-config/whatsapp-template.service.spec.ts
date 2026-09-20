@@ -60,12 +60,16 @@ describe('WhatsappTemplateService', () => {
           : opts.creds,
       ),
     };
+    const messageLog = {
+      recordOutbound: jest.fn().mockResolvedValue(undefined),
+    };
     const service = new WhatsappTemplateService(
       prisma as any,
       { post } as any,
       credentials as any,
+      messageLog as any,
     );
-    return { service, post, prisma, credentials };
+    return { service, post, prisma, credentials, messageLog };
   };
 
   const send = async (
@@ -188,5 +192,61 @@ describe('WhatsappTemplateService', () => {
 
     expect(res).toEqual({ success: false, error: 'missing-params' });
     expect(ctx.prisma.whatsappTemplate.findFirst).not.toHaveBeenCalled();
+  });
+  describe('libro de mensajes', () => {
+    it('registra el envío con la respuesta de Meta, tipo TEMPLATE y el tipo de mensaje de la plantilla', async () => {
+      const ctx = build();
+
+      await ctx.service.sendTemplate({
+        organizationId: ORG,
+        recipientId: PHONE,
+        kind: 'APPOINTMENT_REMINDER' as any,
+        appointmentId: 'apt-7',
+      });
+
+      expect(ctx.messageLog.recordOutbound).toHaveBeenCalledWith({
+        organizationId: ORG,
+        recipientId: PHONE,
+        messageType: 'TEMPLATE',
+        metaResponse: { messages: [{ id: 'w1' }] },
+        context: { kind: 'APPOINTMENT_REMINDER', appointmentId: 'apt-7' },
+      });
+    });
+
+    it.each([
+      ['APPOINTMENT_REMINDER', 'APPOINTMENT_REMINDER'],
+      ['WAITLIST_SLOT_OFFER', 'WAITLIST_OFFER'],
+      ['APPOINTMENT_CANCELLED_MASS', 'MASS_NOTICE'],
+      ['APPOINTMENT_REMINDER_MASS', 'MASS_NOTICE'],
+    ])(
+      'la plantilla %s se registra como %s',
+      async (kindPlantilla, esperado) => {
+        const ctx = build({
+          template: { name: 'x', language: 'es_CO', kind: kindPlantilla },
+        });
+
+        await ctx.service.sendTemplate({
+          organizationId: ORG,
+          recipientId: PHONE,
+          kind: kindPlantilla as any,
+        });
+
+        expect(ctx.messageLog.recordOutbound).toHaveBeenCalledWith(
+          expect.objectContaining({
+            context: { kind: esperado, appointmentId: null },
+          }),
+        );
+      },
+    );
+
+    it('un envío que Meta rechaza NO se registra: no hay wamid que seguir', async () => {
+      const postImpl = jest.fn(() => throwError(() => new Error('rechazada')));
+      const ctx = build({ postImpl });
+
+      const res = await send(ctx);
+
+      expect(res.success).toBe(false);
+      expect(ctx.messageLog.recordOutbound).not.toHaveBeenCalled();
+    });
   });
 });

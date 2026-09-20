@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
 
 /**
  * Reconciliación entre AgenIA y el HIS — la capa 5 de las seis defensas del
@@ -225,7 +226,7 @@ export class MirrorReconciliationService {
     await this.prisma.syncAudit.create({
       data: {
         organizationId,
-        direction: 'RECONCILE',
+        direction: SYNC_AUDIT_DIRECTION.RECONCILE,
         entityType: 'APPOINTMENT',
         op: 'COMPARE',
         outcome: report.inSync ? 'OK' : 'CONFLICT',

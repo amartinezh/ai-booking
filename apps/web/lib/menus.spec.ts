@@ -8,7 +8,7 @@ describe('getMenusForRole', () => {
 
     it('devuelve el menú de médico para DOCTOR', () => {
         const menus = getMenusForRole('DOCTOR');
-        expect(menus.map((m) => m.href)).toEqual(['/dashboard', '/dashboard/soporte']);
+        expect(menus.map((m) => m.href)).toEqual(['/dashboard', '/dashboard/rastreo', '/dashboard/soporte']);
         expect(menus[0].label).toBe('Mi Agenda');
     });
 
@@ -95,5 +95,27 @@ describe('getMenusForRole', () => {
         getMenusForRole('BOOKING_AGENT', { conAvisos: true });
         const menus = getMenusForRole('BOOKING_AGENT', { conAvisos: true });
         expect(menus.filter((m) => m.href === '/dashboard/espejo/avisos')).toHaveLength(1);
+    });
+
+    // ── Rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md §5) ────────────
+
+    it.each(['ORG_ADMIN', 'BOOKING_AGENT', 'DOCTOR'] as const)('%s tiene el rastreo de paciente', (rol) => {
+        expect(getMenusForRole(rol).some((m) => m.href === '/dashboard/rastreo')).toBe(true);
+    });
+
+    it.each(['PATIENT', 'GENERAL_OBSERVER'] as const)('%s NO tiene el rastreo de paciente', (rol) => {
+        expect(getMenusForRole(rol).some((m) => m.href === '/dashboard/rastreo')).toBe(false);
+    });
+
+    it('el rastreo aparece con o sin espejo: sirve para investigar aunque no haya HIS', () => {
+        expect(getMenusForRole('ORG_ADMIN', { conEspejo: false }).some((m) => m.href === '/dashboard/rastreo')).toBe(true);
+        expect(getMenusForRole('ORG_ADMIN', { conEspejo: true }).some((m) => m.href === '/dashboard/rastreo')).toBe(true);
+    });
+
+    it('el rastreo no se duplica ni se muta el menú compartido entre llamadas', () => {
+        getMenusForRole('BOOKING_AGENT', { conAvisos: true });
+        getMenusForRole('BOOKING_AGENT', { conAvisos: true });
+        const menus = getMenusForRole('BOOKING_AGENT', { conAvisos: true });
+        expect(menus.filter((m) => m.href === '/dashboard/rastreo')).toHaveLength(1);
     });
 });

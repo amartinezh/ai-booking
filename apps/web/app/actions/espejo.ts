@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
 import { MirrorAvailabilityMode } from '@agenia/database';
+import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
 
 /**
  * Panel del espejo con el HIS del hospital.
@@ -71,6 +72,9 @@ export async function getEstadoEspejo() {
                 select: {
                     seq: true, eventId: true, entityType: true, entityId: true,
                     op: true, attempts: true, createdAt: true,
+                    // El motivo del último fallo que reportó el agente: antes solo
+                    // estaba en el journal de la VM del hospital.
+                    lastError: true,
                 },
             }),
             prisma.syncOutbox.findFirst({
@@ -79,7 +83,7 @@ export async function getEstadoEspejo() {
                 select: { createdAt: true },
             }),
             prisma.syncAudit.findFirst({
-                where: { organizationId, direction: 'RECONCILE' },
+                where: { organizationId, direction: SYNC_AUDIT_DIRECTION.RECONCILE },
                 orderBy: { createdAt: 'desc' },
                 select: { createdAt: true, outcome: true, detail: true },
             }),
@@ -152,7 +156,7 @@ export async function reprocesarEvento(seq: string) {
     await prisma.syncAudit.create({
         data: {
             organizationId,
-            direction: 'AGENIA_TO_HIS',
+            direction: SYNC_AUDIT_DIRECTION.AGENIA_TO_HIS,
             entityType: 'OUTBOX',
             op: 'REPROCESS',
             outcome: 'OK',
@@ -203,7 +207,7 @@ export async function cambiarModoAgenda(modo: string) {
     await prisma.syncAudit.create({
         data: {
             organizationId,
-            direction: 'CONFIG',
+            direction: SYNC_AUDIT_DIRECTION.CONFIG,
             entityType: 'HospitalMirrorConfig',
             op: 'AVAILABILITY_MODE_CHANGE',
             outcome: 'OK',

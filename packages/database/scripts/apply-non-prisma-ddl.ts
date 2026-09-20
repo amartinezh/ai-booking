@@ -117,7 +117,7 @@ function stripComments(stmt: string): boolean {
  * silencio fue exactamente el defecto que este script viene a cerrar.
  */
 const OBJETOS_ESPERADOS = {
-  funciones: ['fn_sync_outbox'],
+  funciones: ['fn_sync_outbox', 'fn_norm_texto'],
   triggers: [
     'trg_sync_outbox_schedule_slot',
     'trg_sync_outbox_doctor_profile',
@@ -127,7 +127,15 @@ const OBJETOS_ESPERADOS = {
   // única global que llevaba `Appointment.scheduleSlotId`. Si alguien corre
   // `prisma db push` sin este paso, no queda NINGUNA garantía de "una cita
   // vigente por cupo" y el mismo horario se puede vender dos veces.
-  indices: ['idx_outbox_pending', 'uq_appointment_cupo_vigente'],
+  //
+  // `idx_patient_fullname_trgm` (búsqueda de pacientes por nombre) no es parcial
+  // sino un GIN sobre una expresión; comparte el mismo riesgo de silencio: si
+  // falta, la búsqueda por nombre degrada a un scan sin que nada avise.
+  indices: [
+    'idx_outbox_pending',
+    'uq_appointment_cupo_vigente',
+    'idx_patient_fullname_trgm',
+  ],
 };
 
 async function main() {
@@ -182,7 +190,7 @@ async function main() {
     console.log(
       `[db:apply-sql] verificado: ${OBJETOS_ESPERADOS.funciones.length} funcion(es), ` +
         `${OBJETOS_ESPERADOS.triggers.length} trigger(s), ` +
-        `${OBJETOS_ESPERADOS.indices.length} indice(s) parcial(es).`,
+        `${OBJETOS_ESPERADOS.indices.length} indice(s).`,
     );
   } finally {
     await prisma.$disconnect();

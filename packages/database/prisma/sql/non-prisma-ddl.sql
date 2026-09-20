@@ -145,3 +145,33 @@ DROP INDEX IF EXISTS "Appointment_scheduleSlotId_key";
 CREATE UNIQUE INDEX IF NOT EXISTS "uq_appointment_cupo_vigente"
   ON "Appointment" ("scheduleSlotId")
   WHERE status <> 'CANCELLED';
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Búsqueda de pacientes por NOMBRE (rastreo de paciente, Fase 0).
+--
+-- docs/PLAN_RASTREO_PACIENTE.md §4.2 y §8. Sin esto, buscar "maria lopez" es un
+-- `ILIKE '%...%'` sin índice — un scan de todos los pacientes — y además falla
+-- con las tildes: "María" no casa con "maria".
+--
+--   · pg_trgm  → índice GIN que acelera LIKE '%texto%' y la similitud.
+--   · unaccent → quita tildes.
+--   · fn_norm_texto() → minúsculas + sin tildes, la MISMA expresión que tiene
+--     que usar la consulta para que Postgres pueda usar el índice.
+--
+-- `unaccent()` está declarada STABLE, no IMMUTABLE, y Postgres solo indexa
+-- expresiones inmutables. Este envoltorio la declara inmutable: es el patrón
+-- habitual y es seguro mientras el diccionario de unaccent no cambie, lo que en
+-- la práctica no ocurre. Si algún día cambiara, basta reconstruir el índice.
+--
+-- Ambas extensiones vienen en la imagen oficial de Postgres y son "trusted"
+-- desde PG 13 (las puede crear el dueño de la base, no hace falta superusuario).
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+
+CREATE OR REPLACE FUNCTION fn_norm_texto(text) RETURNS text AS $$
+  SELECT lower(public.unaccent('public.unaccent', $1))
+$$ LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT;
+
+CREATE INDEX IF NOT EXISTS "idx_patient_fullname_trgm"
+  ON "PatientProfile" USING gin (fn_norm_texto("fullName") gin_trgm_ops);

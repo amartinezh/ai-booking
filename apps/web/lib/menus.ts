@@ -38,6 +38,20 @@ export interface MenuItem {
 const OVERVIEW: MenuItem = { label: 'Visión General', href: '/dashboard', icon: '📋', description: 'Monitoreo central de citas', accent: 'blue' };
 const SUPPORT: MenuItem = { label: 'Soporte', href: '/dashboard/soporte', icon: '🛟', description: 'Tickets de ayuda técnica', accent: 'slate' };
 
+/**
+ * Rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md). Lo ven ORG_ADMIN,
+ * BOOKING_AGENT y DOCTOR — con vistas distintas: el permiso real lo aplica el
+ * servidor (`lib/rastreo/acceso.ts`), esto solo decide si aparece el enlace.
+ * GENERAL_OBSERVER y PATIENT no lo tienen.
+ */
+const RASTREO: MenuItem = {
+    label: 'Rastreo de paciente',
+    href: '/dashboard/rastreo',
+    icon: '🔎',
+    description: 'Consulta y diagnóstico de las citas de un paciente',
+    accent: 'indigo',
+};
+
 const PATIENT_MENUS: MenuItem[] = [
     { label: 'Mis Citas Programadas', href: '/dashboard', icon: '📅', description: 'Consulta tus próximas citas', accent: 'blue' },
     SUPPORT,
@@ -45,6 +59,7 @@ const PATIENT_MENUS: MenuItem[] = [
 
 const DOCTOR_MENUS: MenuItem[] = [
     { label: 'Mi Agenda', href: '/dashboard', icon: '🩺', description: 'Flujo de atención del día', accent: 'blue' },
+    RASTREO,
     SUPPORT,
 ];
 
@@ -58,6 +73,7 @@ const ADMIN_MENUS: MenuItem[] = [
     { label: 'Usuarios', href: '/dashboard/usuarios', icon: '👥', description: 'Cuentas y perfiles de acceso', accent: 'indigo' },
     { label: 'Médicos', href: '/dashboard/medicos', icon: '⚕️', description: 'Cuerpo médico de la clínica', accent: 'sky' },
     { label: 'Caja Negra (Auditoría)', href: '/dashboard/auditoria', icon: '🕵️', description: 'Trazabilidad del chatbot', accent: 'slate' },
+    RASTREO,
     { label: 'Encuestas (CSAT)', href: '/dashboard/configuracion/integraciones/surveys', icon: '⭐', description: 'Opiniones de pacientes', accent: 'orange' },
     { label: 'Solicitudes de Alta', href: '/dashboard/solicitudes-alta', icon: '📨', description: 'Revisiones pedidas por ciudadanos', accent: 'rose' },
     { label: 'Configuración', href: '/dashboard/configuracion', icon: '⚙️', description: 'IA, WhatsApp, voz y marca', accent: 'fuchsia' },
@@ -67,6 +83,7 @@ const ADMIN_MENUS: MenuItem[] = [
 const AGENT_MENUS: MenuItem[] = [
     OVERVIEW,
     { label: 'Agendamiento', href: '/dashboard/agendamiento', icon: '📅', description: 'Reserva de citas asistida', accent: 'emerald' },
+    RASTREO,
     SUPPORT,
 ];
 

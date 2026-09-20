@@ -274,6 +274,7 @@ export class AppointmentReminderCronService
           apt.organizationId,
           phone,
           message,
+          { kind: 'APPOINTMENT_REMINDER', appointmentId: apt.id },
         )
       : await this.sendReminderTemplate(apt, phone);
 
@@ -376,6 +377,7 @@ export class AppointmentReminderCronService
       organizationId: apt.organizationId,
       recipientId,
       kind: 'APPOINTMENT_REMINDER',
+      appointmentId: apt.id,
       bodyParams: [
         apt.patient?.fullName?.split(' ')[0] ?? 'Paciente',
         apt.scheduleSlot.service?.name ?? 'su consulta',

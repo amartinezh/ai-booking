@@ -270,8 +270,15 @@ export class MirrorEngine {
     if (acked.length > 0 || failed.length > 0 || skipped.length > 0) {
       await this.api.ack({
         seqs: acked,
+        // Se manda la lista de siempre Y la misma con el motivo. `failedSeqs`
+        // es la que entienden todas las versiones de la API; `failures` la
+        // completa con el porqué (el rechazo del HIS, el dato que faltaba), que
+        // antes solo quedaba en el journal de esta VM: saber por qué un evento
+        // cayó a dead-letter exigía entrar por SSH. Un servidor que aún no
+        // conoce `failures` simplemente lo ignora.
         failedSeqs: failed,
         skippedSeqs: skipped,
+        failures: failures.map((f) => ({ seq: f.seq, error: f.message })),
       });
     }
 

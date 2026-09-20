@@ -219,10 +219,11 @@ export class MirrorController {
     if (
       !hasSeqs ||
       !esArreglo(body?.failedSeqs) ||
-      !esArreglo(body?.skippedSeqs)
+      !esArreglo(body?.skippedSeqs) ||
+      !esArreglo(body?.failures)
     ) {
       throw new BadRequestException(
-        'seqs, failedSeqs y skippedSeqs (si vienen) deben ser arreglos.',
+        'seqs, failedSeqs, skippedSeqs y failures (si vienen) deben ser arreglos.',
       );
     }
     // 🚨 Olvidar skippedSeqs aquí bloqueaba el lote entero: un tick en el que
@@ -233,7 +234,8 @@ export class MirrorController {
     if (
       body.seqs.length === 0 &&
       !body.failedSeqs?.length &&
-      !body.skippedSeqs?.length
+      !body.skippedSeqs?.length &&
+      !body.failures?.length
     ) {
       throw new BadRequestException(
         'Debe reportar al menos un seq exitoso, fallido u omitido.',

@@ -13,6 +13,7 @@ import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { LlmFactoryService } from '../llm/llm-factory.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
+import { WhatsappMessageLogService } from '../whatsapp-config/whatsapp-message-log.service';
 import { SurveyService } from '../survey/survey.service';
 import { AudioConfigService } from '../audio-config/audio-config.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
@@ -112,6 +113,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     logBookingConfirmed: jest.Mock;
   };
   let sendSpy: jest.SpyInstance;
+  let messageLog: { recordOutbound: jest.Mock };
 
   // Devuelve los textos enviados al paciente (todo pasa por sendWhatsAppMessage).
   const sentMessages = (): string[] =>
@@ -119,6 +121,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
   beforeEach(async () => {
     redis = createFakeRedis();
+    messageLog = { recordOutbound: jest.fn().mockResolvedValue(undefined) };
 
     provider = {
       name: 'GEMINI',
@@ -234,6 +237,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           provide: TtsFactoryService,
           useValue: { synthesize: jest.fn(() => null) },
         },
+        { provide: WhatsappMessageLogService, useValue: messageLog },
       ],
     }).compile();
 
@@ -251,6 +255,85 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  // ── Libro de mensajes salientes ────────────────────────────────
+  // `sendWhatsAppMessage` es el sender de texto de TODO el bot (~30 llamadores).
+  // Aquí se prueba el sender REAL (el `beforeEach` lo sustituye por un spy):
+  // que lo que sale por Meta quede en el libro con su wamid.
+  describe('libro de mensajes (sendWhatsAppMessage real)', () => {
+    const META_OK = {
+      messaging_product: 'whatsapp',
+      messages: [{ id: 'wamid.LIBRO' }],
+    };
+
+    const prepararEnvioReal = () => {
+      sendSpy.mockRestore();
+      const s = service as any;
+      redis.store.set(`origin_org:${SENDER}`, ORG_ID);
+      s.whatsappCredentials.forOrg = jest.fn(() => ({
+        organizationId: ORG_ID,
+        phoneNumberId: 'pnid',
+        accessToken: 'tok',
+        isActive: true,
+      }));
+      s.httpService.post = jest.fn(() => of({ data: META_OK }));
+      return s;
+    };
+
+    it('registra el envío con el wamid de Meta, la org y el contexto del llamador', async () => {
+      const s = prepararEnvioReal();
+
+      await s.sendWhatsAppMessage(SENDER, 'Su cita fue confirmada', {
+        kind: 'BOOKING_CONFIRMATION',
+        appointmentId: 'apt-1',
+      });
+
+      expect(messageLog.recordOutbound).toHaveBeenCalledWith({
+        organizationId: ORG_ID,
+        recipientId: SENDER,
+        messageType: 'TEXT',
+        metaResponse: META_OK,
+        context: { kind: 'BOOKING_CONFIRMATION', appointmentId: 'apt-1' },
+      });
+    });
+
+    it('sin contexto lo registra igual (el servicio del libro lo asume respuesta del bot)', async () => {
+      const s = prepararEnvioReal();
+
+      await s.sendWhatsAppMessage(SENDER, 'Hola');
+
+      expect(messageLog.recordOutbound).toHaveBeenCalledWith(
+        expect.objectContaining({ recipientId: SENDER, context: undefined }),
+      );
+    });
+
+    it('un envío que Meta rechaza NO se registra', async () => {
+      const s = prepararEnvioReal();
+      s.httpService.post = jest.fn(() => {
+        throw new Error('Meta caída');
+      });
+
+      const r = await s.sendWhatsAppMessage(SENDER, 'Hola');
+
+      expect(r).toBeNull();
+      expect(messageLog.recordOutbound).not.toHaveBeenCalled();
+    });
+
+    it('🚨 se registra ANTES de guardar el último mensaje: el webhook de estados puede llegar enseguida', async () => {
+      const s = prepararEnvioReal();
+      redis.set.mockClear();
+
+      await s.sendWhatsAppMessage(SENDER, 'Hola');
+
+      const ordenLibro = messageLog.recordOutbound.mock.invocationCallOrder[0];
+      const ordenLastSent = redis.set.mock.calls.findIndex((c: unknown[]) =>
+        String(c[0]).startsWith('last_sent:'),
+      );
+      expect(ordenLastSent).toBeGreaterThanOrEqual(0);
+      const ordenRedis = redis.set.mock.invocationCallOrder[ordenLastSent];
+      expect(ordenLibro).toBeLessThan(ordenRedis);
+    });
   });
 
   // ── Helpers de auditoría (auditFailure / auditSuccess) ──────────
@@ -605,13 +688,17 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
 
       // 📟 Alerta al staff: supportPhone normalizado a dígitos, con el
       // teléfono del paciente y su mensaje para el seguimiento humano.
+      // El tercer argumento es el contexto del libro de mensajes: la alerta
+      // sale por `sendOutboundForOrg`, que siempre lo reenvía (aquí, sin nada).
       expect(sendSpy).toHaveBeenCalledWith(
         '6068538838',
         expect.stringContaining('ALERTA: POSIBLE EMERGENCIA'),
+        undefined,
       );
       expect(sendSpy).toHaveBeenCalledWith(
         '6068538838',
         expect.stringContaining(SENDER),
+        undefined,
       );
 
       // Sesión cerrada → IDLE, con status de auditoría dedicado. El envío

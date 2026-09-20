@@ -49,6 +49,10 @@ import {
   documentoSinCerosIniciales,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
+import {
+  WhatsappMessageLogService,
+  type OutboundMessageContext,
+} from '../whatsapp-config/whatsapp-message-log.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
 import { SurveyService } from '../survey/survey.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
@@ -156,6 +160,7 @@ export class ChatbotService implements OnModuleInit {
     private whatsappCredentials: WhatsappCredentialsService,
     private surveyService: SurveyService,
     private ttsFactory: TtsFactoryService,
+    private messageLog: WhatsappMessageLogService,
   ) {}
 
   async onModuleInit() {
@@ -557,9 +562,15 @@ export class ChatbotService implements OnModuleInit {
   // `recipientId` es el identificador del paciente: su teléfono o su BSUID.
   // `buildWhatsappRecipient` decide si va en `to` o en `recipient` — mandar un
   // BSUID en `to` es un envío fallido garantizado.
+  //
+  // `ctx` (opcional) lo pasa quien SABE para qué es el mensaje (confirmación de
+  // cita, oferta de lista de espera...). Sin él se registra como respuesta del
+  // bot en el libro de mensajes (WhatsappMessageLog), que guarda el wamid y el
+  // estado de entrega que Meta reporta después.
   private async sendWhatsAppMessage(
     recipientId: string,
     text: string,
+    ctx?: OutboundMessageContext,
   ): Promise<unknown> {
     const creds = await this.resolveCredentialsForRecipient(recipientId);
     if (!creds) {
@@ -595,6 +606,17 @@ export class ChatbotService implements OnModuleInit {
           },
         ),
       );
+
+      // Justo tras la respuesta de Meta, antes de cualquier otro await: el
+      // webhook de estados puede llegar enseguida y necesita encontrar la fila.
+      // Nunca lanza (ver WhatsappMessageLogService).
+      await this.messageLog.recordOutbound({
+        organizationId: creds.organizationId,
+        recipientId,
+        messageType: 'TEXT',
+        metaResponse: response.data,
+        context: ctx,
+      });
 
       // Guardar el último mensaje enviado para audit logging
       await this.setLastSent(recipientId, text);
@@ -1522,10 +1544,11 @@ export class ChatbotService implements OnModuleInit {
     recipientId: string,
     mediaId: string,
     creds: ResolvedWhatsappCredentials,
+    ctx?: OutboundMessageContext,
   ) {
     try {
-      await lastValueFrom(
-        this.httpService.post(
+      const response = await lastValueFrom(
+        this.httpService.post<unknown>(
           metaGraphUrl(`${creds.phoneNumberId}/messages`),
           {
             messaging_product: 'whatsapp',
@@ -1542,6 +1565,15 @@ export class ChatbotService implements OnModuleInit {
           },
         ),
       );
+      // En modo voz el paciente puede recibir SOLO el audio: sin registrarlo, la
+      // confirmación de su cita no dejaría ningún rastro en el libro.
+      await this.messageLog.recordOutbound({
+        organizationId: creds.organizationId,
+        recipientId,
+        messageType: 'AUDIO',
+        metaResponse: response.data,
+        context: ctx,
+      });
     } catch (error: unknown) {
       this.logger.error(
         `Error enviando audio a ${recipientId}: ${getAxiosErrorDetail(error)}`,
@@ -1559,6 +1591,7 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
     text: string,
     audioText?: string,
+    ctx?: OutboundMessageContext,
   ) {
     const isAiFlow =
       (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
@@ -1582,7 +1615,12 @@ export class ChatbotService implements OnModuleInit {
           if (audioBuffer) {
             const mediaId = await this.uploadToWhatsApp(audioBuffer, creds);
             if (mediaId) {
-              await this.sendWhatsAppAudioMessage(senderId, mediaId, creds);
+              await this.sendWhatsAppAudioMessage(
+                senderId,
+                mediaId,
+                creds,
+                ctx,
+              );
               audioSent = true;
             }
           }
@@ -1592,7 +1630,7 @@ export class ChatbotService implements OnModuleInit {
         // (c) el audio no se pudo entregar (fallback para no dejar al usuario sin
         // respuesta alguna).
         if (audioText || showTextInAudioMode || !audioSent) {
-          await this.sendWhatsAppMessage(senderId, text);
+          await this.sendWhatsAppMessage(senderId, text, ctx);
         }
         return;
       } catch (error: unknown) {
@@ -1601,11 +1639,11 @@ export class ChatbotService implements OnModuleInit {
         );
         // Ante cualquier error en el camino de audio, garantizamos respuesta
         // por texto para no dejar al usuario sin contestación.
-        await this.sendWhatsAppMessage(senderId, text);
+        await this.sendWhatsAppMessage(senderId, text, ctx);
         return;
       }
     }
-    await this.sendWhatsAppMessage(senderId, text);
+    await this.sendWhatsAppMessage(senderId, text, ctx);
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -6027,7 +6065,17 @@ export class ChatbotService implements OnModuleInit {
       if (bookingResult.success) {
         const fechaFormateada = formatAppointmentLong(fechaVistaFinal);
         const reply = MSGS.citaConfirmada(orgName, fechaFormateada);
-        await this.smartReply(organizationId, senderId, reply);
+        const confirmacion: OutboundMessageContext = {
+          kind: 'BOOKING_CONFIRMATION',
+          appointmentId: bookingResult.appointmentId,
+        };
+        await this.smartReply(
+          organizationId,
+          senderId,
+          reply,
+          undefined,
+          confirmacion,
+        );
 
         // 📝 Auditoría: cita agendada (evento de negocio crítico)
         const slotInfo = await this.prisma.scheduleSlot.findUnique({
@@ -6056,6 +6104,7 @@ export class ChatbotService implements OnModuleInit {
               slotInfo?.service?.name || specFinal,
               fechaFormateada,
             ),
+            confirmacion,
           );
         }
 
@@ -7750,7 +7799,17 @@ export class ChatbotService implements OnModuleInit {
           orgInfo?.name || 'nuestra Clínica',
           fechaFormateada,
         );
-        await this.smartReply(organizationId, senderId, reply);
+        const confirmacion: OutboundMessageContext = {
+          kind: 'BOOKING_CONFIRMATION',
+          appointmentId: bookingResult.appointmentId,
+        };
+        await this.smartReply(
+          organizationId,
+          senderId,
+          reply,
+          undefined,
+          confirmacion,
+        );
 
         // En flujo de VOZ el paciente solo escuchó la confirmación; le dejamos
         // un resumen escrito como respaldo. `sendWhatsAppMessage` directo (no
@@ -7768,6 +7827,7 @@ export class ChatbotService implements OnModuleInit {
               slot.service.name,
               fechaFormateada,
             ),
+            confirmacion,
           );
         }
 
@@ -8308,6 +8368,7 @@ export class ChatbotService implements OnModuleInit {
     organizationId: string,
     to: string,
     message: string,
+    ctx?: OutboundMessageContext,
   ): Promise<{ success: boolean; error?: string }> {
     if (!organizationId || !to || !message) {
       return { success: false, error: 'missing-params' };
@@ -8322,7 +8383,7 @@ export class ChatbotService implements OnModuleInit {
         SESSION_TTL,
       );
 
-      const result = await this.sendWhatsAppMessage(to, message);
+      const result = await this.sendWhatsAppMessage(to, message, ctx);
       if (!result) {
         return { success: false, error: 'meta-api-error' };
       }
@@ -8347,6 +8408,7 @@ export class ChatbotService implements OnModuleInit {
     to: string,
     message: string,
     organizationId: string,
+    ctx?: OutboundMessageContext,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!organizationId) {
@@ -8377,7 +8439,7 @@ export class ChatbotService implements OnModuleInit {
       // Seed del tenant: la próxima respuesta entrante del paciente (y los
       // flujos que aún dependan del caché) resuelven a esta misma clínica.
       await this.redis.set(`origin_org:${to}`, org.id, 'EX', SESSION_TTL);
-      await this.smartReply(org.id, to, message);
+      await this.smartReply(org.id, to, message, undefined, ctx);
 
       await this.interactionLog.logOutbound({
         whatsappId: to,
@@ -8453,7 +8515,9 @@ export class ChatbotService implements OnModuleInit {
         fechaFormateada,
         doctor,
       );
-      await this.sendWhatsAppMessage(whatsappId, reply);
+      await this.sendWhatsAppMessage(whatsappId, reply, {
+        kind: 'WAITLIST_OFFER',
+      });
 
       // 📝 Auditoría: notificación de waitlist enviada
       await this.interactionLog.logWaitlistNotification({

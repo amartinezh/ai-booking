@@ -157,7 +157,11 @@ describe('MirrorDispatchService', () => {
 
       expect(prisma.syncOutbox.updateMany).toHaveBeenCalledWith({
         where: { organizationId: 'org1', seq: { in: [BigInt(1), BigInt(2)] } },
-        data: { deliveredAt: expect.any(Date), nextAttemptAt: null },
+        data: {
+          deliveredAt: expect.any(Date),
+          nextAttemptAt: null,
+          lastError: null,
+        },
       });
     });
 
@@ -252,6 +256,140 @@ describe('MirrorDispatchService', () => {
         (c: any[]) => c[0]?.data?.deadLettered === true,
       );
       expect(marcasDeadLetter).toHaveLength(0);
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // El motivo del fallo viaja con el seq. Antes solo existía en el journal de
+    // la VM del hospital: saber por qué un evento cayó a dead-letter exigía
+    // entrar por SSH (docs/PLAN_RASTREO_PACIENTE.md §8 #4).
+    // ══════════════════════════════════════════════════════════════════════
+    describe('failures — el motivo del fallo viaja con el seq', () => {
+      const fila = (attempts = 2) => ({
+        seq: BigInt(9),
+        eventId: 'e9',
+        attempts,
+        deadLettered: false,
+        nextAttemptAt: new Date(),
+      });
+      /** Los argumentos de los updateMany que subieron `attempts`. */
+      const incrementos = () =>
+        prisma.syncOutbox.updateMany.mock.calls
+          .map((c: any[]) => c[0])
+          .filter((a: any) => a?.data?.attempts?.increment === 1);
+
+      beforeEach(() => {
+        prisma.syncOutbox.findFirst.mockResolvedValue(fila());
+      });
+
+      it('guarda el motivo en lastError junto con el intento', async () => {
+        await service.ack('org1', {
+          seqs: [],
+          failedSeqs: ['9'],
+          failures: [{ seq: '9', error: 'violación de PK: cupo ya vendido' }],
+        });
+
+        expect(prisma.syncOutbox.updateMany).toHaveBeenCalledWith({
+          where: { seq: BigInt(9), organizationId: 'org1' },
+          data: {
+            attempts: { increment: 1 },
+            nextAttemptAt: expect.any(Date),
+            lastError: 'violación de PK: cupo ya vendido',
+          },
+        });
+      });
+
+      it('🔁 un agente ANTIGUO (solo failedSeqs) cuenta el intento igual y no toca lastError', async () => {
+        await service.ack('org1', { seqs: [], failedSeqs: ['9'] });
+
+        const [llamada] = incrementos();
+        expect(llamada.data.attempts).toEqual({ increment: 1 });
+        // `undefined` = Prisma ignora el campo: el motivo anterior se conserva.
+        expect(llamada.data.lastError).toBeUndefined();
+      });
+
+      it('🚨 el mismo seq en failedSeqs Y en failures gasta UN intento, no dos', async () => {
+        await service.ack('org1', {
+          seqs: [],
+          failedSeqs: ['9'],
+          failures: [{ seq: '9', error: 'boom' }],
+        });
+
+        expect(incrementos()).toHaveLength(1);
+      });
+
+      it('un seq solo presente en failures también cuenta como fallido', async () => {
+        await service.ack('org1', {
+          seqs: [],
+          failures: [{ seq: '9', error: 'boom' }],
+        });
+
+        expect(incrementos()).toHaveLength(1);
+        expect(incrementos()[0].data.lastError).toBe('boom');
+      });
+
+      it('cada seq lleva SU motivo (no el del vecino)', async () => {
+        await service.ack('org1', {
+          seqs: [],
+          failedSeqs: ['9', '10'],
+          failures: [
+            { seq: '9', error: 'motivo del nueve' },
+            { seq: '10', error: 'motivo del diez' },
+          ],
+        });
+
+        const porSeq = new Map(
+          incrementos().map((a: any) => [
+            String(a.where.seq),
+            a.data.lastError,
+          ]),
+        );
+        expect(porSeq.get('9')).toBe('motivo del nueve');
+        expect(porSeq.get('10')).toBe('motivo del diez');
+      });
+
+      it('trunca el motivo: un mensaje de driver puede traer una traza entera', async () => {
+        await service.ack('org1', {
+          seqs: [],
+          failures: [{ seq: '9', error: 'x'.repeat(5000) }],
+        });
+
+        expect(incrementos()[0].data.lastError).toHaveLength(1000);
+      });
+
+      it('un motivo vacío o en blanco NO pisa el anterior', async () => {
+        await service.ack('org1', {
+          seqs: [],
+          failures: [{ seq: '9', error: '   ' }],
+        });
+
+        expect(incrementos()[0].data.lastError).toBeUndefined();
+      });
+
+      it('un seq no numérico en failures se ignora sin romper el ack (BigInt lanzaría)', async () => {
+        await expect(
+          service.ack('org1', {
+            seqs: ['1'],
+            failures: [
+              { seq: 'abc', error: 'x' },
+              { seq: '9', error: 'ok' },
+              null as never,
+            ],
+          }),
+        ).resolves.toEqual({ acknowledged: 1 });
+
+        expect(incrementos()).toHaveLength(1);
+        expect(incrementos()[0].where.seq).toBe(BigInt(9));
+      });
+
+      it('un evento que por fin se entrega pierde su motivo de error', async () => {
+        await service.ack('org1', { seqs: ['9'] });
+
+        expect(prisma.syncOutbox.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ lastError: null }),
+          }),
+        );
+      });
     });
 
     it('failedSeqs que alcanza el máximo de intentos → se marca dead-letter', async () => {
@@ -489,7 +627,11 @@ describe('MirrorDispatchService — entrega con backoff', () => {
 
       expect(prisma.syncOutbox.updateMany).toHaveBeenCalledWith({
         where: { organizationId: 'org1', seq: { in: [BigInt(1)] } },
-        data: { deliveredAt: expect.any(Date), nextAttemptAt: null },
+        data: {
+          deliveredAt: expect.any(Date),
+          nextAttemptAt: null,
+          lastError: null,
+        },
       });
     });
   });

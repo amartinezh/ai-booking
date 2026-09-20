@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
 import type { AvailabilityInput, AvailabilityResult } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -278,7 +279,7 @@ export class MirrorAvailabilityService {
     await this.prisma.syncAudit.create({
       data: {
         organizationId,
-        direction: 'HIS_TO_AGENIA',
+        direction: SYNC_AUDIT_DIRECTION.HIS_TO_AGENIA,
         entityType: 'SLOT',
         op: 'AVAILABILITY',
         outcome: resumen.conflicts.length > 0 ? 'CONFLICT' : 'OK',
