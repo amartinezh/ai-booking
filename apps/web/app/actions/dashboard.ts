@@ -7,6 +7,7 @@ import { revalidatePath } from 'next/cache';
 import { AttendanceStatus } from '@agenia/database';
 import { armarMetaLogCancelacionPersonal } from '@agenia/shared';
 import { getErrorMessage } from '@/lib/error';
+import { citaFueraDeAlcance } from '@/lib/alcance-agente';
 
 const INTERNAL_API_URL =
     process.env.INTERNAL_API_URL ||
@@ -115,13 +116,35 @@ export async function cancelAppointmentAndFreeSlot(appointmentId: string, schedu
         }
 
         // El slot a liberar se toma de la MISMA cita (no del cliente): evita
-        // liberar un slot ajeno pasando un scheduleSlotId arbitrario.
+        // liberar un slot ajeno pasando un scheduleSlotId arbitrario. La EPS y el
+        // médico de su cupo se leen para poder comprobar el alcance del agente.
         const appointment = await prisma.appointment.findFirst({
             where: whereClause,
-            select: { id: true, scheduleSlotId: true, metaLog: true }
+            select: {
+                id: true,
+                scheduleSlotId: true,
+                metaLog: true,
+                epsId: true,
+                scheduleSlot: { select: { doctorId: true } },
+            }
         });
         if (!appointment) {
             return { success: false, error: 'Cita no encontrada en su organización.' };
+        }
+
+        // 🔐 Un agente con EPS o médico asignados solo actúa sobre lo que el panel le
+        // lista (§12 #9 del plan del rastreo): sin esto podía cancelar cualquier cita
+        // de la clínica por esta vía. Se comprueba ANTES que el cupo: una cita fuera de
+        // su alcance no debe enterarse de nada más. Si el perfil no se puede leer, el
+        // `catch` de abajo responde con error y NO se cancela (falla cerrado).
+        if (session.role === 'BOOKING_AGENT') {
+            const perfil = await prisma.agentProfile.findUnique({
+                where: { userId: session.userId },
+                select: { epsId: true, doctorId: true },
+            });
+            if (citaFueraDeAlcance(perfil, { epsId: appointment.epsId, doctorId: appointment.scheduleSlot.doctorId })) {
+                return { success: false, error: 'Esta cita está fuera de su alcance (EPS o médico asignados).' };
+            }
         }
         if (scheduleSlotId && scheduleSlotId !== appointment.scheduleSlotId) {
             return { success: false, error: 'El cupo indicado no corresponde a la cita.' };

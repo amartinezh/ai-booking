@@ -356,7 +356,7 @@ Implementada, con tests y verificada de extremo a extremo. Commiteada en `1ed83c
 
 **Hallazgos.**
 - Un **SUPER_ADMIN no puede llegar a esta acción por la interfaz**: el middleware lo desvía fuera de `/dashboard`. El código admite su rol y hay un test, pero en la práctica solo cancelan ORG_ADMIN, BOOKING_AGENT y DOCTOR. La resolución del correo de un SUPER_ADMIN (que no tiene clínica) se comprobó sembrando la constancia directamente en la base.
-- **La acción no aplica el alcance del agente.** Un BOOKING_AGENT con EPS o médico asignados puede cancelar cualquier cita de la clínica por esta vía, aunque el rastreo y el agendamiento sí lo acoten. Es comportamiento anterior; **no se tocó**.
+- ✅ **La acción no aplicaba el alcance del agente.** Un BOOKING_AGENT con EPS o médico asignados podía cancelar cualquier cita de la clínica por esta vía, aunque el rastreo y el agendamiento sí lo acoten. **Corregido**: ver «Corrección: alcance del BOOKING_AGENT» más abajo.
 - ✅ **Volver a cancelar una cita ya cancelada liberaba el cupo de nuevo**, incluso si otra cita ya lo ocupó. **Corregido** justo después: ver «Corrección: re-cancelar» más abajo.
 
 #### Corrección: re-cancelar una cita ya cancelada (2026-09-20)
@@ -369,7 +369,24 @@ Implementada, con tests y verificada de extremo a extremo. Commiteada en `1ed83c
 
 **Comprobado contra Postgres real.** Antes de corregir, el escenario fallaba en 3 puntos; después, pasan las 31 comprobaciones del escenario completo. Además, **cinco carreras reales** —cuatro cancelaciones simultáneas por HTTP sobre cada una de cinco citas nuevas— dieron siempre: las cuatro respuestas `success`, la cita cancelada, el cupo libre y **exactamente un** evento `UPDATE` de la cita y uno del cupo (la constancia quedó a veces del admin y a veces del agente, prueba de que la carrera es real y de que solo una petición cambió algo). La cancelación de una sola petición sigue liberando el cupo.
 
-**Sigue sin tocar:** la acción no aplica el alcance de EPS/médico del BOOKING_AGENT (§12 #9).
+#### Corrección: alcance del BOOKING_AGENT al cancelar (2026-09-20)
+
+**Qué pasaba (§12 #9).** El panel le **lista** a un agente con EPS o médico asignados solo las citas de esa EPS y ese médico (`app/dashboard/page.tsx`), y el rastreo se las acota igual (`alcanceDeCitas`). Pero la acción de cancelar solo comprobaba la clínica: con una pestaña vieja o una petición armada a mano, ese agente cancelaba **cualquier** cita de la clínica. La lista solo esconde botones; la regla tiene que vivir en la acción.
+
+**La corrección.** `cancelAppointmentAndFreeSlot` lee la EPS de la cita y el médico de su cupo y, si quien cancela es un BOOKING_AGENT, comprueba su `AgentProfile` con `citaFueraDeAlcance` ([`apps/web/lib/alcance-agente.ts`](../apps/web/lib/alcance-agente.ts)) antes de tocar nada. La regla es la de la lista:
+
+| Perfil del agente | Puede cancelar |
+|---|---|
+| Sin perfil, o perfil sin EPS ni médico ("GLOBAL") | Cualquier cita de la clínica (como hasta ahora) |
+| EPS asignada | Solo citas de esa EPS. Una cita **sin EPS** queda fuera: la lista tampoco se la muestra |
+| Médico asignado | Solo citas del cupo de ese médico, sea cual sea su EPS |
+| Las dos | Hay que cumplir **las dos** |
+
+Fuera de alcance responde «Esta cita está fuera de su alcance (EPS o médico asignados).» y **no cambia nada**. **Falla cerrado**: si no se puede leer el perfil no se cancela, y una cita de la que no se sabe la EPS o el médico queda fuera. La comprobación va antes que la del cupo. Solo aplica a BOOKING_AGENT: ORG_ADMIN y SUPER_ADMIN ni consultan el perfil (los DOCTOR, ver abajo).
+
+**Verificación.** 30 pruebas nuevas (predicado puro y acción); **12 defectos deliberados detectados** (quitar la comprobación, aplicarla a todos los roles, ignorar la EPS o el médico, `OR` en vez de `AND`, fallar abierto, comparar contra el campo equivocado…). Y la **acción real por HTTP contra un Next y un Postgres 15 reales** (contenedor desechable), con sesiones firmadas de agentes de cada tipo: 18 comprobaciones. Dentro de su alcance cancela, libera el cupo, deja la constancia y encola **un** evento hacia el HIS; fuera de su alcance —otra EPS, cita sin EPS, otro médico, cumplir solo una de las dos— **rechaza sin cambiar la cita, sin liberar el cupo y sin encolar ningún evento**; los agentes globales y el ORG_ADMIN siguen cancelando todo; una cita de otra clínica sigue sin existir para el agente.
+
+**Lo que esta corrección NO cubre** (hallazgos nuevos, §12 #10–#12): las demás acciones sobre citas tampoco aplican el alcance. Se dejaron **sin tocar**: cada una necesita decidir una regla y no era lo pedido.
 
 ---
 
@@ -464,7 +481,10 @@ Opciones que se evaluarán entonces:
 6. ~~**¿El envío por Meta devuelve el `wamid` al llamador?**~~ ✅ Resuelto en la Fase 0: sí. Los cuatro puntos de envío reciben la respuesta de la Cloud API y de ahí sale `messages[0].id`; están todos enganchados al libro (§8 #7).
 7. **Fuera de la ventana de 24 h de Meta** un mensaje libre no sale: el "enviar confirmación" del escenario B tendría que usar una plantilla (`WhatsappTemplate`).
 8. ~~**Volver a cancelar una cita ya cancelada** liberaba el cupo aunque otra cita ya lo ocupara.~~ ✅ Corregido (ver «Corrección: re-cancelar» en §9).
-9. **`cancelAppointmentAndFreeSlot` no aplica el alcance de EPS/médico del BOOKING_AGENT**: un agente con EPS o médico asignados puede cancelar cualquier cita de la clínica por esta vía, aunque el agendamiento y el rastreo sí lo acoten. Comportamiento anterior; no se tocó.
+9. ~~**`cancelAppointmentAndFreeSlot` no aplica el alcance de EPS/médico del BOOKING_AGENT.**~~ ✅ Corregido (ver «Corrección: alcance del BOOKING_AGENT» en §9).
+10. **`updateAttendance` y el recordatorio manual (`POST /appointments/:id/send-manual-reminder`, en la API) tampoco aplican el alcance del agente**: un agente con EPS o médico asignados puede marcar la asistencia y mandar recordatorios de cualquier cita de la clínica. Mismo arreglo (`citaFueraDeAlcance`); pendiente de decidir.
+11. **Un DOCTOR puede cancelar —y marcar asistencia de— cualquier cita de la clínica** con `cancelAppointmentAndFreeSlot` y `updateAttendance`, aunque su panel solo le lista las suyas. Hay que decidir la regla: ¿solo las de su cupo?, ¿puede cubrir a un colega?
+12. **Las acciones del agendamiento (`createManualAppointmentAction`, `updateManualAppointmentAction`, `sendManualWhatsappAction`) solo comprueban que haya sesión con clínica**: ni el rol ni el alcance. La EPS y el médico vienen del formulario; el alcance del agente solo se aplica en la página que lista.
 
 ---
 
