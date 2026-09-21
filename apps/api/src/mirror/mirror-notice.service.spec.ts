@@ -91,17 +91,28 @@ describe('MirrorNoticeService', () => {
   };
 
   // ── Llave 2/3 ──────────────────────────────────────────────────────────
+  //
+  // La LECTURA con una llave apagada responde lista vacía, no 403: el agente la
+  // sondea cada ~30 s porque su driver tiene la capacidad, aunque la clínica la
+  // tenga apagada, y un 403 en cada vuelta dejaba ~150 líneas de error al día en
+  // el journal de la VM de Anserma (2026-09-21), tapando los errores de verdad.
+  // Lo que la llave protege se conserva: el agente no recibe NINGUNA petición y
+  // ni siquiera se consulta la tabla. La ESCRITURA sigue respondiendo 403.
   describe('las tres llaves', () => {
-    it('getPendingRequests rechaza si el driver no es cnt-sanvicente-anserma', async () => {
+    const sinLeerLaTabla = (ctx: ReturnType<typeof build>) =>
+      expect(ctx.prisma.noticeRosterRequest.findMany).not.toHaveBeenCalled();
+
+    it('getPendingRequests con otro driver: lista vacía, sin tocar la tabla', async () => {
       const ctx = build({
         hospitalMirrorConfig: { ...CONFIG_ESPEJO_ON, driverKey: 'otro-driver' },
       });
       await expect(
         ctx.service.getPendingRequests(ORG, 'otro-driver'),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      ).resolves.toEqual([]);
+      sinLeerLaTabla(ctx);
     });
 
-    it('getPendingRequests rechaza si avisosMasivos.enabled es false', async () => {
+    it('getPendingRequests con avisosMasivos.enabled = false: lista vacía, sin tocar la tabla', async () => {
       const ctx = build({
         hospitalMirrorConfig: {
           ...CONFIG_ESPEJO_ON,
@@ -110,10 +121,11 @@ describe('MirrorNoticeService', () => {
       });
       await expect(
         ctx.service.getPendingRequests(ORG, DRIVER),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      ).resolves.toEqual([]);
+      sinLeerLaTabla(ctx);
     });
 
-    it('rechaza si fuente NO es ESPEJO, aunque avisosMasivos esté encendido (fuente CSV)', async () => {
+    it('getPendingRequests con fuente CSV (no ESPEJO): lista vacía, sin tocar la tabla', async () => {
       const ctx = build({
         hospitalMirrorConfig: {
           ...CONFIG_ESPEJO_ON,
@@ -122,10 +134,19 @@ describe('MirrorNoticeService', () => {
       });
       await expect(
         ctx.service.getPendingRequests(ORG, DRIVER),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      ).resolves.toEqual([]);
+      sinLeerLaTabla(ctx);
     });
 
-    it('applyRoster respeta la misma comprobación antes de tocar la petición', async () => {
+    it('getPendingRequests sin fila de espejo: lista vacía', async () => {
+      const ctx = build({ hospitalMirrorConfig: null });
+      await expect(
+        ctx.service.getPendingRequests(ORG, DRIVER),
+      ).resolves.toEqual([]);
+      sinLeerLaTabla(ctx);
+    });
+
+    it('🔒 applyRoster (ESCRIBE) sigue respondiendo 403 antes de tocar la petición', async () => {
       const ctx = build({ hospitalMirrorConfig: null });
       await expect(
         ctx.service.applyRoster(ORG, DRIVER, {
@@ -134,6 +155,29 @@ describe('MirrorNoticeService', () => {
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(ctx.prisma.noticeRosterRequest.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('🔒 applyRoster con la función apagada, o con otro driver: 403 con el motivo', async () => {
+      const apagada = build({
+        hospitalMirrorConfig: {
+          ...CONFIG_ESPEJO_ON,
+          avisosMasivos: { enabled: false, fuente: 'ESPEJO' },
+        },
+      });
+      await expect(
+        apagada.service.applyRoster(ORG, DRIVER, {
+          requestId: 'req-1',
+          candidates: [],
+        }),
+      ).rejects.toThrow('no están habilitados para esta clínica');
+
+      const otroDriver = build({ hospitalMirrorConfig: CONFIG_ESPEJO_ON });
+      await expect(
+        otroDriver.service.applyRoster(ORG, 'otro-driver', {
+          requestId: 'req-1',
+          candidates: [],
+        }),
+      ).rejects.toThrow('no están disponibles para este driver');
     });
   });
 

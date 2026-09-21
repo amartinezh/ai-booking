@@ -65,18 +65,20 @@ export class MirrorNoticeService {
   /**
    * Llave 2 (driver exacto) + Llave 3 (`avisosMasivos.enabled` y
    * `fuente === 'ESPEJO'`), del lado del servidor — defensa en profundidad
-   * incluso con un token de agente válido (§5: "si `avisosMasivos.enabled`
-   * es falso o `fuente !== 'ESPEJO'`, el endpoint responde 403 aunque el
-   * token del agente sea válido").
+   * incluso con un token de agente válido (§5).
+   *
+   * UNA sola evaluación de las llaves, que usan las dos rutas: la de lectura
+   * responde lista vacía y la de escritura, 403. Así no hay dos copias de la
+   * regla que puedan divergir.
    */
-  private async assertEnabled(
+  private async evaluarLlaves(
     organizationId: string,
     driverKey: string,
-  ): Promise<AvisosMasivosConfig> {
+  ): Promise<{ avisos: AvisosMasivosConfig } | { motivo: string }> {
     if (driverKey !== 'cnt-sanvicente-anserma') {
-      throw new ForbiddenException(
-        'Los avisos masivos no están disponibles para este driver.',
-      );
+      return {
+        motivo: 'Los avisos masivos no están disponibles para este driver.',
+      };
     }
     const config = await this.prisma.hospitalMirrorConfig.findUnique({
       where: { organizationId },
@@ -85,11 +87,22 @@ export class MirrorNoticeService {
     const avisos = (config?.avisosMasivos ??
       null) as AvisosMasivosConfig | null;
     if (!avisos?.enabled || avisos.fuente !== 'ESPEJO') {
-      throw new ForbiddenException(
-        'Los avisos masivos por espejo no están habilitados para esta clínica.',
-      );
+      return {
+        motivo:
+          'Los avisos masivos por espejo no están habilitados para esta clínica.',
+      };
     }
-    return avisos;
+    return { avisos };
+  }
+
+  /** Para las rutas que ESCRIBEN: con una llave apagada, 403. */
+  private async assertEnabled(
+    organizationId: string,
+    driverKey: string,
+  ): Promise<AvisosMasivosConfig> {
+    const llaves = await this.evaluarLlaves(organizationId, driverKey);
+    if ('motivo' in llaves) throw new ForbiddenException(llaves.motivo);
+    return llaves.avisos;
   }
 
   /**
@@ -104,7 +117,17 @@ export class MirrorNoticeService {
     organizationId: string,
     driverKey: string,
   ): Promise<NoticeRequestDto[]> {
-    await this.assertEnabled(organizationId, driverKey);
+    // Con la función apagada NO hay nada que hacer, y eso no es un error del
+    // agente: se responde lista vacía, igual que la consulta en vivo
+    // (`MirrorLookupService.getPendingRequests`). Antes era un 403, y como el
+    // agente sondea cada ~30 s porque su DRIVER tiene la capacidad (aunque la
+    // CLÍNICA la tenga apagada), dejaba ~150 líneas de error al día en el journal
+    // de la VM — medido en Anserma el 2026-09-21 — que tapaban los errores de
+    // verdad. La defensa en profundidad se conserva: el agente no recibe ninguna
+    // petición, y ni siquiera se consulta la tabla. La ruta que ESCRIBE
+    // (`applyRoster`) sigue respondiendo 403.
+    const llaves = await this.evaluarLlaves(organizationId, driverKey);
+    if ('motivo' in llaves) return [];
 
     const pending = await this.prisma.noticeRosterRequest.findMany({
       where: { organizationId, status: 'PENDIENTE' },

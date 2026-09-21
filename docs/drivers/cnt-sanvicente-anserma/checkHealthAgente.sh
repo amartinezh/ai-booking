@@ -15,15 +15,17 @@
 #
 # QUÉ CHEQUEA (🏥, todo de solo lectura — nada de `restart`, nada de escritura)
 #   1. Servicio systemd: activo, habilitado, cuántas veces se ha reiniciado
-#   2. Última vez que hubo handshake OK y última reconciliación OK
+#   2. Última vez que hubo handshake OK, y la última reconciliación con su
+#      resultado (sin diferencias, o la deriva que encontró)
 #   3. Errores/fatales en el journal de las últimas 24h
 #   4. Conectividad al SQL Server del HIS (192.168.1.16:1433)
 #   5. Conectividad + certificado TLS hacia la nube
 #   6. Versión y ruta de Node
 #   7. Archivos del agente: bundle instalado (fecha/tamaño), agent.env
 #      (solo permisos y dueño — NUNCA su contenido, ahí vive el token)
-#   8. Estado local (data/state.json): existe y cuándo se actualizó por
-#      última vez — si es muy viejo con el servicio "activo", es sospechoso
+#   8. Estado local (data/state.json): existe, y cuándo CAMBIÓ por última
+#      vez. Es informativo, no una señal de vida: el agente solo lo reescribe
+#      cuando su contenido cambia (ver la nota en esa sección).
 #   9. Disco y memoria
 #
 # Uso:
@@ -86,11 +88,33 @@ else
   err "nunca se vio 'handshake OK' en el journal disponible"
 fi
 
-LAST_RECONCILE="$(journalctl -u "$SERVICE" --no-pager 2>/dev/null | grep "reconciliación OK" | tail -1 || true)"
-if [[ -n "$LAST_RECONCILE" ]]; then
-  ok "última reconciliación OK: ${LAST_RECONCILE%% agenia-mirror-agent*}"
+# La reconciliación deja UNA de dos líneas: «reconciliación OK» si no encontró
+# diferencias, o «🚨 DERIVA: …» si las encontró. Antes solo se buscaba la
+# primera, y una reconciliación que SÍ corrió pero halló deriva se reportaba
+# como «no ha corrido» — la falsa alarma del 2026-09-21 en Anserma.
+LAST_RECONCILE="$(journalctl -u "$SERVICE" --no-pager 2>/dev/null \
+  | grep -E "reconciliación OK|DERIVA:" | tail -1 || true)"
+if [[ -z "$LAST_RECONCILE" ]]; then
+  warn "la reconciliación no ha corrido todavía (corre cada 24h; la primera, a los 2 min de arrancar)"
+elif [[ "$LAST_RECONCILE" == *"reconciliación OK"* ]]; then
+  ok "última reconciliación sin diferencias: ${LAST_RECONCILE%% agenia-mirror-agent*}"
 else
-  warn "no se ha visto ninguna 'reconciliación OK' todavía (corre cada 24h, la primera a los 2 min de arrancar)"
+  ok "la reconciliación corre — la última: ${LAST_RECONCILE%% agenia-mirror-agent*}"
+  if [[ "$LAST_RECONCILE" =~ DERIVA:\ ([0-9]+)\ cita.*\ y\ ([0-9]+)\ que ]]; then
+    FALTAN_EN_HIS="${BASH_REMATCH[1]}"
+    DESCONOCE_AGENIA="${BASH_REMATCH[2]}"
+    # Las dos direcciones NO pesan igual:
+    if [[ "$FALTAN_EN_HIS" -gt 0 ]]; then
+      err "${FALTAN_EN_HIS} cita(s) que AgenIA dio por confirmadas y el HOSPITAL NO TIENE — un paciente puede llegar a una cita que allá no existe. Revisar la Bandeja de sincronización del panel."
+    else
+      ok "todo lo que AgenIA agendó, el hospital lo tiene (0 faltantes)"
+    fi
+    if [[ "$DESCONOCE_AGENIA" -gt 0 ]]; then
+      warn "${DESCONOCE_AGENIA} cita(s) del hospital que AgenIA desconoce: el bot no las ve (no las recuerda ni las cancela). No es un fallo del agente: es el escenario 2 del plan del rastreo (§11), y suele crecer con los médicos sin homologar."
+    fi
+  else
+    warn "la última reconciliación encontró deriva, pero no se pudo leer el detalle: ${LAST_RECONCILE%% agenia-mirror-agent*}"
+  fi
 fi
 
 head1 "3) Errores/fatales en las últimas 24h"
@@ -169,11 +193,22 @@ head1 "8) Estado local (data/state.json)"
 STATE_FILE="$AGENT_ROOT/data/state.json"
 if [[ -f "$STATE_FILE" ]]; then
   MTIME_H="$(( ( $(date +%s) - $(stat -c '%Y' "$STATE_FILE" 2>/dev/null || stat -f '%m' "$STATE_FILE") ) / 3600 ))"
-  echo "  última modificación: hace ${MTIME_H}h"
-  if systemctl is-active --quiet "$SERVICE" && [[ "$MTIME_H" -gt 2 ]]; then
-    warn "el servicio está activo pero el estado no se actualiza hace ${MTIME_H}h — sospechoso, puede estar frenado sin avanzar"
-  else
-    ok "estado local presente y razonablemente reciente"
+  ok "estado local presente"
+  echo "  último CAMBIO del estado: hace ${MTIME_H}h"
+  # NO es una señal de vida, y por eso ya no es un aviso: el agente solo
+  # reescribe este archivo cuando su contenido CAMBIA (un envío nuevo al
+  # hospital, o un cambio detectado en el HIS) — ver `escribir()` en
+  # apps/mirror-agent/src/core/file-agent-state-store.ts. Un archivo viejo con el
+  # servicio activo significa «no hubo nada que guardar», no «está frenado».
+  # Antes se avisaba a partir de 2 h y era una falsa alarma (Anserma, 2026-09-21).
+  # La señal de vida es el LATIDO, que se ve desde la nube: ./checkHealth.sh en
+  # tu portátil (sección 2).
+  echo "  (solo cambia cuando hay algo que guardar; la señal de vida es el latido,"
+  echo "   que se ve con ./checkHealth.sh desde tu portátil)"
+  if [[ "$MTIME_H" -gt 8 ]]; then
+    echo "  Si esperabas actividad del hospital en ese lapso y no la hubo aquí, mira"
+    echo "  en el panel: Espejo → Auditoría, dirección INBOUND. Si está vacío, el"
+    echo "  hospital agenda en médicos que AgenIA no espeja (sin homologar)."
   fi
 else
   warn "no existe $STATE_FILE todavía (normal si es la primera vez que arranca)"

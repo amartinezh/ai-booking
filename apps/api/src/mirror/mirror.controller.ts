@@ -186,8 +186,10 @@ export class MirrorController {
    *
    * El agente pregunta cada ~30 s si hay una petición pendiente ("tráeme
    * las citas del Dr. X entre el 25 y el 26", creada desde la pantalla).
-   * `MirrorNoticeService.assertEnabled` responde 403 aunque el token del
-   * agente sea válido si la clínica no tiene la Llave 3 encendida.
+   * Con la función apagada para la clínica responde lista VACÍA (no hay nada
+   * que hacer), no 403: el agente la sondea igual cada 30 s y un error en cada
+   * vuelta llenaba el journal de la VM. La escritura (`notice-roster`) sí
+   * responde 403.
    */
   @Get('notice-requests')
   getNoticeRequests(@Req() req: AgentRequest): Promise<NoticeRequestDto[]> {

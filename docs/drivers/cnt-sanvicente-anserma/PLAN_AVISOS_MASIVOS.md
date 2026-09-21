@@ -717,9 +717,21 @@ Barandas del endpoint:
 - Un solo médico por petición.
 - Tope de `maxDestinatariosPorLote` filas; si se pasa, se responde truncado **y se
   dice en la pantalla** — nunca se recorta en silencio.
-- Si `avisosMasivos.enabled` es falso o `fuente !== 'ESPEJO'`, el endpoint
-  responde 403 aunque el token del agente sea válido. La tercera llave se comprueba
-  también aquí.
+- Si `avisosMasivos.enabled` es falso o `fuente !== 'ESPEJO'`, el agente **no recibe
+  ninguna petición** aunque su token sea válido. La tercera llave se comprueba también
+  aquí.
+  - La **lectura** (`GET /mirror/notice-requests`) responde **lista vacía** y ni siquiera
+    consulta la tabla.
+  - La **escritura** (`POST /mirror/notice-roster`) responde **403**.
+
+  *Corrección del 2026-09-21.* Al principio las dos respondían 403. Pero el agente
+  sondea la lectura cada ~30 s porque su **driver** tiene la capacidad, aunque la
+  **clínica** tenga la función apagada, y un 403 en cada vuelta dejaba ~150 líneas de
+  error al día en el journal de la VM de Anserma, que tapaban los errores de verdad (el
+  mismo día había dos dead-letters de seis días que no se veían entre tanto ruido). Lo
+  que la llave protege —que el agente no obtenga peticiones— se cumple igual con la
+  lista vacía; es lo mismo que ya hacía la consulta en vivo del rastreo con su propio
+  interruptor.
 
 ---
 

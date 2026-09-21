@@ -152,13 +152,13 @@ fi
 head1 "9) PENDIENTE — solo se puede correr desde dentro del hospital (🏥)"
 cat <<'EOF'
   Este script NO puede alcanzar 192.168.1.175 (sin entrada desde internet a
-  propósito). Correr manualmente vía AnyDesk → estación Windows → SSH:
+  propósito). El lado del hospital lo cubre, en un solo comando, el script
+  que ya está instalado allá:
 
-    systemctl status agenia-mirror-agent --no-pager
-    journalctl -u agenia-mirror-agent --since yesterday --no-pager \
-      | grep -iE "error|fatal|🚨|falló" | sort | uniq -c | sort -rn
-    nc -zv 192.168.1.16 1433
-    curl -sI https://app.hsvpanserma.agenia.co | head -1
+    ./checkHealthAgente.sh        # 🏥 en el VPS del hospital (AnyDesk → Windows → SSH)
+
+  Revisa el servicio, los hitos y errores del journal, la conectividad al HIS
+  y a la nube, el bundle instalado, el estado local y los recursos.
 EOF
 
 head1 "Resumen"
