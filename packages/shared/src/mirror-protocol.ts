@@ -566,6 +566,22 @@ export interface HisLookupResultInput {
   appointments: HisLookupAppointment[];
   /** El driver recortó el resultado al tope de filas: nunca en silencio. */
   truncated?: boolean;
+  /**
+   * Cupos en los que el HIS tiene filas cuya hora NO se puede interpretar, y que por
+   * eso no van en `appointments`.
+   *
+   * Por qué existe: la consulta por cupo compara la hora con `=`, y el hospital guarda
+   * parte de las horas en un formato que no cumple `'YYYY/MM/DD HH:MM'`
+   * (`MAPEO_HIS.md` §2.1). Esas filas no coinciden, el cupo llega vacío y la pantalla
+   * concluía «el HIS no tiene ninguna cita en ese cupo»: un falso negativo. Con esto el
+   * servidor sabe distinguir «no hay nada» de «hay algo que no se pudo leer».
+   */
+  unreadableSlots?: {
+    doctorExternalKey: string;
+    startTimeIso: string;
+    /** Cuántas filas ilegibles hay en ese médico y ese día. */
+    count: number;
+  }[];
   /** El driver no pudo resolverla (HIS caído, timeout…). Se le muestra al usuario. */
   error?: string;
   /** Este driver no implementa la consulta en vivo. */

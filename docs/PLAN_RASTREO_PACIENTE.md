@@ -574,7 +574,21 @@ Opciones que se evaluarán entonces:
     - en la línea de vida el paso queda en «no se sabe», no en fallo;
     - la pantalla avisa, en ámbar, que **que aquí no aparezca una cita no significa que el hospital no la tenga**.
 
-    ⏳ **Queda la otra mitad**, que sí necesita la PARTE G: si las horas ilegibles resultan apreciables, la consulta por cupo debería buscar también las variantes (`FE_HORA_CIT IN (@hora, @variante…)`, sigue siendo un seek). Encontrar la fila no basta para saber la hora —`'2026/09/18 2'` no dice si son las 02:00 o las 14:00—, así que el veredicto seguiría sin inventarla.
+    ✅ **Cerrado del todo el 2026-09-21.** Al cerrar la primera mitad se vio que **no bastaba**: en la consulta por cupo el aviso del agente (`truncated`) casi nunca se enciende, porque la comparación es `FE_HORA_CIT = @hora` y la fila con la hora ilegible simplemente **no se devuelve** — no hay nada que marcar como ilegible. La tubería quedó bien (y sirve para la consulta por documento, donde la fila sí llega y se descarta), pero el caso real seguía sin detectarse.
+
+    Se resolvió **detectando, no adivinando**. Cuando un cupo viene vacío, el agente hace una segunda consulta acotada a ese médico y ese DÍA, pidiendo solo las filas cuya hora no cumple el formato:
+
+    ```sql
+    WHERE CD_CODI_MED_CIT = @med
+      AND FE_HORA_CIT LIKE @dia            -- 'YYYY/MM/DD%', prefijo de la PK
+      AND FE_HORA_CIT NOT LIKE @patron     -- '[0-9][0-9][0-9][0-9]/…  [0-9][0-9]:[0-9][0-9]'
+    ```
+
+    Se descartó la idea de buscar variantes (`FE_HORA_CIT IN (@hora, @variante…)`) porque exigía **suponer** qué significa `'2026/09/18 2'`, y no se sabe si son las 02:00 o las 14:00. Contar no supone nada: el agente reporta `unreadableSlots` (médico, cupo y cuántas), el servidor lo guarda **por cupo** (`ilegibles`) y el veredicto `HORA_ILEGIBLE_EN_EL_HIS` dice la verdad sin inventar la hora.
+
+    Verificado contra un SQL Server real con 176.800 citas: la consulta del cupo **no encuentra** la fila (3 lecturas lógicas) y la nueva **sí la encuentra** con un `Clustered Index Seek` y **5 lecturas lógicas**. Solo corre cuando el cupo vino vacío. 12 mutantes deliberados sobre la detección y el mapeo, los 12 detectados.
+
+    La PARTE G del script sigue siendo útil, pero ya solo como **información** (cuántas son y en qué médicos se concentran, para hablar con el hospital): no condiciona encender la consulta en vivo.
 
 ---
 

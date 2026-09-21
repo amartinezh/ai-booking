@@ -388,6 +388,39 @@ describe('MirrorLookupService', () => {
       const porCupo = () =>
         build({ request: peticion({ kind: 'BY_SLOT', params: PARAMS_CUPO }) });
 
+      // El agente avisa de las filas cuya HORA no pudo interpretar. Si la API se
+      // comiera ese dato, un cupo vacío volvería a leerse como «el hospital no
+      // tiene la cita» — el falso negativo de §12 #17.
+      it('🚨 los cupos con horas ilegibles que reporta el agente se GUARDAN', async () => {
+        const { service, prisma } = porCupo();
+
+        await service.applyResult(ORG, {
+          requestId: 'req-1',
+          appointments: [],
+          unreadableSlots: [
+            { doctorExternalKey: '76', startTimeIso: INI, count: 2 },
+          ],
+        });
+
+        expect(datosUltimoUpdate(prisma).data).toMatchObject({
+          status: 'RESUELTA',
+          result: { kind: 'BY_SLOT', cupos: [{ ilegibles: 2 }] },
+        });
+      });
+
+      it('sin ese aviso, el cupo queda en cero (un cupo vacío sí es un cupo vacío)', async () => {
+        const { service, prisma } = porCupo();
+
+        await service.applyResult(ORG, {
+          requestId: 'req-1',
+          appointments: [],
+        });
+
+        expect(datosUltimoUpdate(prisma).data).toMatchObject({
+          result: { cupos: [{ ilegibles: 0 }] },
+        });
+      });
+
       it('🔒 el cupo lo ocupa OTRA persona: se guarda su documento ENMASCARADO, nunca completo', async () => {
         const { service, prisma } = porCupo();
 

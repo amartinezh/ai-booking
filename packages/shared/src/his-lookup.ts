@@ -342,6 +342,11 @@ export type ResultadoConsultaHis =
         doctorExternalKey: string;
         startIso: string;
         filas: CitaHisVista[];
+        /**
+         * Filas que el HIS tiene en ese médico y ese día con una hora que no se puede
+         * interpretar. `> 0` ⇒ un cupo vacío NO autoriza a decir «no hay nada».
+         */
+        ilegibles: number;
       }[];
       /**
        * El agente no pudo entregar entera la respuesta de esta consulta: recortó por
@@ -432,11 +437,36 @@ function filasLegibles(crudo: unknown): HisLookupAppointment[] {
  *
  * `null` si `params` no es una petición válida.
  */
+/**
+ * Lee los `unreadableSlots` que reportó el agente y devuelve un buscador por
+ * médico+hora. Tolerante: lo que no tenga forma se ignora (viene de la red).
+ */
+function lectorDeIlegibles(
+  crudo: unknown,
+): (doctorExternalKey: string, startTimeIso: string) => number {
+  const filas = (Array.isArray(crudo) ? crudo : []).filter(esObjeto);
+  // Una sola pasada de validación, donde se usa el dato: una clave que no sea la
+  // cadena exacta no puede casar, una hora ilegible no pasa `mismoInstante` y un
+  // recuento que no sea un número positivo no cuenta.
+  return (doctorExternalKey, startTimeIso) =>
+    filas
+      .filter(
+        (c) =>
+          c.doctorExternalKey === doctorExternalKey &&
+          typeof c.startTimeIso === 'string' &&
+          mismoInstante(c.startTimeIso, startTimeIso) &&
+          typeof c.count === 'number' &&
+          c.count > 0,
+      )
+      .reduce((total, c) => total + Math.floor(c.count as number), 0);
+}
+
 export function resolverRespuestaHis(
   kind: string,
   params: unknown,
   respuestaCruda: unknown,
   truncadaPorElAgente = false,
+  cuposIlegibles: unknown = null,
 ): ResultadoConsultaHis | null {
   if (!esObjeto(params)) return null;
   const filas = filasLegibles(respuestaCruda);
@@ -464,6 +494,7 @@ export function resolverRespuestaHis(
   if (kind === 'BY_SLOT') {
     const dto = parametrosADto('x', 'BY_SLOT', params);
     if (!dto) return null;
+    const ilegiblesDe = lectorDeIlegibles(cuposIlegibles);
     const comparar = Array.isArray(params.compareDocuments)
       ? (params.compareDocuments as unknown[]).filter(
           (d): d is string => typeof d === 'string',
@@ -482,6 +513,7 @@ export function resolverRespuestaHis(
           )
           .slice(0, MAX_FILAS_POR_CUPO)
           .map((f) => aCitaHisVista(f, comparar)),
+        ilegibles: ilegiblesDe(s.doctorExternalKey, s.startTimeIso),
       })),
       truncado: truncadaPorElAgente,
     };
@@ -539,6 +571,7 @@ export function leerResultadoGuardado(json: unknown): ResultadoConsultaHis | nul
         doctorExternalKey: c.doctorExternalKey as string,
         startIso: c.startIso as string,
         filas: lista(c.filas),
+        ilegibles: typeof c.ilegibles === 'number' && c.ilegibles > 0 ? c.ilegibles : 0,
       }));
     return { kind: 'BY_SLOT', cupos, truncado: json.truncado === true };
   }
@@ -566,7 +599,7 @@ export function combinarEvidenciaHis(
       : null,
     cupos: resultados.flatMap((r) =>
       r.kind === 'BY_SLOT'
-        ? r.cupos.map((c) => ({ ...c, incompleto: r.truncado }))
+        ? r.cupos.map((c) => ({ ...c, incompleto: r.truncado || c.ilegibles > 0 }))
         : [],
     ),
   };

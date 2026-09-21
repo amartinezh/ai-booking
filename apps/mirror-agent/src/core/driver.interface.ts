@@ -189,6 +189,12 @@ export interface PatientLookupCapableDriver {
    * `truncated` es `true` si el resultado puede estar incompleto (se llegó al
    * tope de filas, o se omitió alguna fila ilegible): nunca en silencio.
    *
+   * `unreadableSlots` (opcional) declara los cupos donde el HIS tiene filas cuya
+   * HORA no se puede interpretar y que por eso no van en `appointments`. Sin esto,
+   * un cupo vacío se confunde con «el hospital no tiene nada ahí», y para las
+   * horas que este HIS guarda en otro formato eso es un falso negativo. Un driver
+   * que no sepa distinguirlo simplemente no lo manda.
+   *
    * Lanza si no puede contestar (HIS caído, tiempo agotado, petición inválida):
    * un error es "no lo sé", y eso jamás debe confundirse con una lista vacía,
    * que significa "el HIS no tiene nada".
@@ -196,6 +202,11 @@ export interface PatientLookupCapableDriver {
   lookupAppointments(query: HisLookupRequestDto): Promise<{
     appointments: HisLookupAppointment[];
     truncated: boolean;
+    unreadableSlots?: {
+      doctorExternalKey: string;
+      startTimeIso: string;
+      count: number;
+    }[];
   }>;
 }
 

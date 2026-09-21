@@ -119,7 +119,21 @@ Riesgo por escenario: en el **A** (la cita la creó AgenIA) no aplica, porque es
 - en el escenario A no se acusa una deriva entre los dos sistemas: la cita queda «sin verificar», diciendo por qué;
 - la pantalla avisa en ámbar que **que ahí no aparezca una cita no significa que el hospital no la tenga**.
 
-⏳ **Lo que sigue dependiendo de la PARTE G:** si las horas ilegibles resultan apreciables en la ventana que la consulta usa, conviene que la consulta por cupo busque también las variantes (`FE_HORA_CIT IN (@hora, @variante…)`, que sigue siendo un seek). Ojo: encontrar la fila no alcanza para saber **a qué hora** es la cita — `'2026/09/18 2'` no dice si son las 02:00 o las 14:00 —, así que el veredicto seguiría sin inventar la hora.
+✅ **Y cerrado del todo el mismo día.** La primera corrección no alcanzaba: en la consulta por cupo el aviso del agente casi nunca se enciende, porque la fila con la hora ilegible **no la devuelve** la comparación `FE_HORA_CIT = @hora`. Ahora, **cuando un cupo viene vacío**, el agente hace una segunda consulta acotada a ese médico y ese día:
+
+```sql
+SELECT TOP (25) …
+  FROM dbo.CITAS_MEDICAS
+ WHERE CD_CODI_MED_CIT = @med
+   AND FE_HORA_CIT LIKE @dia          -- 'YYYY/MM/DD%' → prefijo de la PK
+   AND FE_HORA_CIT NOT LIKE @patron   -- el formato legible, como clases de caracteres
+```
+
+Reporta **cuántas** hay (`unreadableSlots`), y nada más: `'2026/09/18 2'` no dice si son las 02:00 o las 14:00, así que **no se adivina la hora**. El servidor lo guarda por cupo y el veredicto lo dice tal cual.
+
+**Costo, medido contra un SQL Server real con 176.800 citas:** la consulta del cupo no encuentra la fila (3 lecturas lógicas); la nueva sí la encuentra, con un **`Clustered Index Seek`** y **5 lecturas lógicas**. Solo corre cuando el cupo vino vacío, así que en el caso normal no cuesta nada.
+
+La PARTE G sigue siendo útil para saber **cuántas** son y en qué médicos se concentran —y poder hablarlo con el hospital—, pero ya no condiciona encender la consulta.
 
 ## El script de medición (cómo se obtuvieron esos números)
 

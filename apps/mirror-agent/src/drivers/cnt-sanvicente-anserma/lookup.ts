@@ -74,6 +74,70 @@ export interface ResultadoConsultaEnVivo {
   appointments: HisLookupAppointment[];
   /** El resultado puede estar incompleto: se llegó al tope de filas o se omitió alguna fila ilegible. */
   truncated: boolean;
+  /**
+   * Cupos donde el HIS tiene filas cuya hora no se puede interpretar (`unreadableSlots`
+   * del protocolo). Solo lo llena la consulta por cupo: la de documento no filtra por
+   * hora, así que esas filas sí llegan y se cuentan como ilegibles en `truncated`.
+   */
+  unreadableSlots?: {
+    doctorExternalKey: string;
+    startTimeIso: string;
+    count: number;
+  }[];
+}
+
+/**
+ * La forma que el lector del agente exige: `'YYYY/MM/DD HH:MM'`. En SQL Server se
+ * escribe con clases de caracteres — no hay expresiones regulares en `LIKE`.
+ */
+const PATRON_HORA_LEGIBLE =
+  '[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9] [0-9][0-9]:[0-9][0-9]';
+
+/**
+ * ¿Tiene el HIS, en ese médico y ese DÍA, filas con una hora que no se puede
+ * interpretar? Se pregunta SOLO cuando el cupo exacto vino vacío.
+ *
+ * POR QUÉ HACE FALTA
+ * La consulta por cupo compara `FE_HORA_CIT = @hora` con la hora formateada por
+ * AgenIA. El hospital guarda parte de las horas en otro formato (`'2026/08/29 1'`,
+ * `MAPEO_HIS.md` §2.1: 5,7 % de las citas elaboradas en 30 días), así que esas filas
+ * NO coinciden: el cupo llega vacío y la pantalla concluía «el HIS no tiene ninguna
+ * cita en ese cupo» — un falso negativo, el error que el rastreo existe para evitar.
+ *
+ * COSTO
+ * `CD_CODI_MED_CIT = @med AND FE_HORA_CIT LIKE '<día>%'` es un prefijo de la PK
+ * `(médico, hora, estado)`: una búsqueda por rango, no un barrido. Son las citas de un
+ * médico en un día (unas decenas). Solo corre cuando el cupo vino vacío.
+ *
+ * NO intenta adivinar la hora: `'2026/09/18 2'` no dice si son las 02:00 o las 14:00.
+ * Solo cuenta, para que el servidor no pueda afirmar una ausencia que no sabe.
+ */
+async function contarHorasIlegibles(
+  pool: sql.ConnectionPool,
+  med: string,
+  horaFormateada: string,
+  limite: number,
+): Promise<number> {
+  const dia = horaFormateada.slice(0, 10); // 'YYYY/MM/DD'
+  if (dia.length !== 10) return 0;
+  const req = pool
+    .request()
+    .input('med', sql.VarChar(4), med)
+    .input('dia', sql.VarChar(11), `${dia}%`)
+    .input('patron', sql.VarChar(64), PATRON_HORA_LEGIBLE);
+  const filas = await ejecutarConTope(
+    req,
+    `
+        SELECT TOP (25)
+               CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
+               CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist
+          FROM dbo.CITAS_MEDICAS
+         WHERE CD_CODI_MED_CIT = @med
+           AND FE_HORA_CIT LIKE @dia
+           AND FE_HORA_CIT NOT LIKE @patron`,
+    limite,
+  );
+  return filas.length;
 }
 
 /**
@@ -225,6 +289,9 @@ async function porCupo(
   }
 
   const appointments: HisLookupAppointment[] = [];
+  const unreadableSlots: NonNullable<
+    ResultadoConsultaEnVivo['unreadableSlots']
+  > = [];
   let truncated = false;
   // De a uno: cada cupo es una búsqueda por la PK, y así el tiempo se reparte
   // sobre un presupuesto único en vez de abrir hasta diez consultas a la vez
@@ -251,8 +318,30 @@ async function porCupo(
     );
     appointments.push(...citas);
     if (filas.length > MAX_FILAS_POR_CUPO || ilegibles > 0) truncated = true;
+
+    // Cupo vacío: antes de dejar que el servidor concluya «no hay nada», comprobar si
+    // el HIS tiene ahí filas con una hora que no se puede interpretar.
+    if (filas.length === 0) {
+      const cuantas = await contarHorasIlegibles(
+        pool,
+        c.doctorExternalKey,
+        formatFeHoraCit(c.startTimeIso, timeZone),
+        limite,
+      );
+      if (cuantas > 0) {
+        unreadableSlots.push({
+          doctorExternalKey: c.doctorExternalKey,
+          startTimeIso: c.startTimeIso,
+          count: cuantas,
+        });
+      }
+    }
   }
-  return { appointments, truncated };
+  return {
+    appointments,
+    truncated,
+    unreadableSlots: unreadableSlots.length > 0 ? unreadableSlots : undefined,
+  };
 }
 
 /**

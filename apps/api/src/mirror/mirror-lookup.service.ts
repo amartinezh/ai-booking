@@ -165,6 +165,8 @@ export class MirrorLookupService {
       request.params,
       input.appointments,
       input.truncated === true,
+      // Lo valida y lo normaliza `resolverRespuestaHis`: viene de la red.
+      input.unreadableSlots,
     );
     if (!resultado) {
       const cerrada = await this.cerrar(

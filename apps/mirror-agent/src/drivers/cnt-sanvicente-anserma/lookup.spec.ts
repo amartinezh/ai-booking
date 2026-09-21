@@ -105,10 +105,20 @@ describe('consultarCitasEnVivo — por cupo', () => {
 
     await consultarCitasEnVivo(pool, TZ, porCupo());
 
-    expect(consultas).toHaveLength(1);
+    // Dos: la del cupo y, porque vino vacío, la que comprueba si el HIS tiene ahí
+    // filas con una hora que no se puede interpretar.
+    expect(consultas).toHaveLength(2);
     // 15:00 UTC = 10:00 en Bogotá, con BARRAS y 16 caracteres.
     expect(consultas[0].params.hora.valor).toBe('2026/09/22 10:00');
     expect(consultas[0].params.med.valor).toBe('76');
+  });
+
+  it('un cupo OCUPADO no gasta la segunda consulta', async () => {
+    const { pool, consultas } = conPool([[fila()]]);
+
+    await consultarCitasEnVivo(pool, TZ, porCupo());
+
+    expect(consultas).toHaveLength(1);
   });
 
   it('los parámetros tienen el tipo y el largo de las columnas', async () => {
@@ -203,9 +213,10 @@ describe('consultarCitasEnVivo — por cupo', () => {
 
   it('una consulta por cupo, en orden, y junta lo que encuentra', async () => {
     const { pool, consultas } = conPool([
-      [fila({ med: '76' })],
-      [],
-      [fila({ med: '91', hist: '52123456' })],
+      [fila({ med: '76' })], // cupo 76: ocupado
+      [], // cupo 80: vacío…
+      [], // …y su comprobación de horas ilegibles, que tampoco encuentra nada
+      [fila({ med: '91', hist: '52123456' })], // cupo 91: ocupado
     ]);
 
     const r = await consultarCitasEnVivo(
@@ -221,12 +232,92 @@ describe('consultarCitasEnVivo — por cupo', () => {
     expect(consultas.map((c) => c.params.med.valor)).toEqual([
       '76',
       '80',
+      '80',
       '91',
     ]);
     expect(r.appointments.map((a) => a.doctorExternalKey)).toEqual([
       '76',
       '91',
     ]);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // El hospital guarda parte de las horas en un formato que no cumple
+  // 'YYYY/MM/DD HH:MM' (MAPEO_HIS.md §2.1). La consulta del cupo compara la hora
+  // con `=`, así que esas filas NO coinciden y el cupo llega vacío: el servidor
+  // concluía «el HIS no tiene ninguna cita en ese cupo», un falso negativo.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('🚨 horas que el HIS guardó de forma ilegible', () => {
+    /** Cupo vacío y, en la segunda consulta, dos filas de ese médico ese día. */
+    const conIlegibles = () =>
+      conPool([[], [fila({ hora: '2026/09/22 1' }), fila({ hora: '31' })]]);
+
+    it('un cupo vacío se comprueba, y lo encontrado se DECLARA por cupo', async () => {
+      const { pool } = conIlegibles();
+
+      const r = await consultarCitasEnVivo(pool, TZ, porCupo());
+
+      expect(r.appointments).toEqual([]);
+      expect(r.unreadableSlots).toEqual([
+        { doctorExternalKey: '76', startTimeIso: INI, count: 2 },
+      ]);
+    });
+
+    it('NO se inventa la hora: solo se cuenta', async () => {
+      const { pool } = conIlegibles();
+      const r = await consultarCitasEnVivo(pool, TZ, porCupo());
+      // Nada de '2026/09/22 1' ni de '31' se convierte en una cita.
+      expect(r.appointments).toHaveLength(0);
+      expect(JSON.stringify(r)).not.toContain('"31"');
+    });
+
+    it('la comprobación es un PREFIJO de la PK (médico + día), no un barrido', async () => {
+      const { pool, consultas } = conIlegibles();
+
+      await consultarCitasEnVivo(pool, TZ, porCupo());
+
+      const c = consultas[1];
+      expect(c.texto).toMatch(
+        /CD_CODI_MED_CIT\s*=\s*@med\s+AND\s+FE_HORA_CIT\s+LIKE\s+@dia\s+AND\s+FE_HORA_CIT\s+NOT\s+LIKE\s+@patron/,
+      );
+      expect(c.params.dia.valor).toBe('2026/09/22%');
+      expect(c.params.med.valor).toBe('76');
+    });
+
+    it('🔒 sigue siendo solo lectura y sin valores en el texto SQL', async () => {
+      const { pool, consultas } = conIlegibles();
+
+      await consultarCitasEnVivo(pool, TZ, porCupo());
+
+      const { texto } = consultas[1];
+      expect(texto.trim()).toMatch(/^SELECT\b/);
+      expect(texto).not.toMatch(
+        /\b(INSERT|UPDATE|DELETE|DROP|EXEC|MERGE|ALTER)\b/i,
+      );
+      expect(texto).not.toContain('2026');
+      expect(texto).not.toContain('76');
+    });
+
+    it('el patrón de hora legible viaja como parámetro, no en el texto', async () => {
+      const { pool, consultas } = conIlegibles();
+      await consultarCitasEnVivo(pool, TZ, porCupo());
+      expect(consultas[1].params.patron.valor).toBe(
+        '[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9] [0-9][0-9]:[0-9][0-9]',
+      );
+    });
+
+    it('si no hay ninguna, el campo no se manda', async () => {
+      const { pool } = conPool([[], []]);
+      const r = await consultarCitasEnVivo(pool, TZ, porCupo());
+      expect(r.unreadableSlots).toBeUndefined();
+    });
+
+    it('el tope de tiempo también cubre la comprobación', async () => {
+      const { pool } = conIlegibles();
+      await expect(
+        consultarCitasEnVivo(pool, TZ, porCupo(), { timeoutMs: -1 }),
+      ).rejects.toThrow(/tiempo máximo/);
+    });
   });
 
   it('🚨 una clave de médico que NO CABE en la columna se rechaza antes de tocar el HIS', async () => {

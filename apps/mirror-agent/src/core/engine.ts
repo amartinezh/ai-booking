@@ -211,12 +211,13 @@ export class MirrorEngine {
         const invalida = validarConsultaHis(req);
         if (invalida) throw new Error(`Petición inválida: ${invalida}`);
 
-        const { appointments, truncated } =
+        const { appointments, truncated, unreadableSlots } =
           await this.driver.lookupAppointments(req);
         await this.api.pushLookupResult({
           requestId: req.requestId,
           appointments,
           truncated,
+          unreadableSlots,
         });
         processed++;
       } catch (error) {

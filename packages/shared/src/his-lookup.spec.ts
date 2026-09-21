@@ -358,7 +358,7 @@ describe('resolverRespuestaHis', () => {
       const r = resolverRespuestaHis('BY_SLOT', porCupo, [filaCruda()]);
       expect(r).toEqual({
         kind: 'BY_SLOT',
-        cupos: [{ doctorExternalKey: '76', startIso: INI, filas: [expect.objectContaining({ titular: 'PACIENTE', documentoTercero: null })] }],
+        cupos: [{ doctorExternalKey: '76', startIso: INI, filas: [expect.objectContaining({ titular: 'PACIENTE', documentoTercero: null })], ilegibles: 0 }],
         truncado: false,
       });
     });
@@ -376,6 +376,64 @@ describe('resolverRespuestaHis', () => {
       const leido = leerResultadoGuardado(JSON.parse(JSON.stringify(guardado)));
       expect(leido).toMatchObject({ kind: 'BY_SLOT', truncado: true });
       expect(leerResultadoGuardado({ kind: 'BY_SLOT', cupos: [] })).toMatchObject({ truncado: false });
+    });
+
+    // Lo que el agente reporta viene de la red: se valida y se normaliza aquí.
+    describe('cupos con horas ilegibles reportados por el agente', () => {
+      const ilegible = (over: Record<string, unknown> = {}) => [
+        { doctorExternalKey: '76', startTimeIso: INI, count: 2, ...over },
+      ];
+
+      it('se anotan en SU cupo y vuelven incompleto solo a ese', () => {
+        const r = resolverRespuestaHis('BY_SLOT', porCupo, [], false, ilegible());
+        expect(r).toMatchObject({ cupos: [{ ilegibles: 2 }], truncado: false });
+
+        const ev = combinarEvidenciaHis([r!], INI);
+        expect(ev.cupos[0].incompleto) .toBe(true);
+      });
+
+      it('un cupo que nadie reportó sigue completo', () => {
+        const r = resolverRespuestaHis('BY_SLOT', porCupo, [], false, ilegible({ doctorExternalKey: '99' }));
+        expect(r).toMatchObject({ cupos: [{ ilegibles: 0 }] });
+        expect(combinarEvidenciaHis([r!], INI).cupos[0].incompleto).toBe(false);
+      });
+
+    // El HIS no tiene segundos y un cupo de AgenIA sí puede traerlos: comparar
+    // cadenas o milisegundos volvería a producir el falso negativo que ya costó
+    // un arreglo (ver `mismoInstante`).
+    it('compara la hora al MINUTO: segundos distintos y "+00:00" son el mismo cupo', () => {
+      for (const variante of ['2026-09-22T15:00:45.000Z', '2026-09-22T15:00:00+00:00']) {
+        const r = resolverRespuestaHis('BY_SLOT', porCupo, [], false, ilegible({ startTimeIso: variante }));
+        expect(r).toMatchObject({ cupos: [{ ilegibles: 2 }] });
+      }
+      // Otro minuto, en cambio, es otro cupo.
+      const otro = resolverRespuestaHis('BY_SLOT', porCupo, [], false, ilegible({ startTimeIso: '2026-09-22T15:20:00.000Z' }));
+      expect(otro).toMatchObject({ cupos: [{ ilegibles: 0 }] });
+    });
+
+      it('🔒 basura de la red se ignora sin romper nada', () => {
+        for (const crudo of [null, 'x', 42, [null], [{}], [{ doctorExternalKey: 76, count: 2 }], [{ doctorExternalKey: '76', startTimeIso: INI, count: 0 }], [{ doctorExternalKey: '76', startTimeIso: INI, count: -3 }], [{ doctorExternalKey: '76', startTimeIso: 'no-es-fecha', count: 2 }]]) {
+          const r = resolverRespuestaHis('BY_SLOT', porCupo, [], false, crudo);
+          expect(r).toMatchObject({ cupos: [{ ilegibles: 0 }] });
+        }
+      });
+
+      it('suma si el agente reporta el mismo cupo dos veces', () => {
+        const r = resolverRespuestaHis('BY_SLOT', porCupo, [], false, [
+          { doctorExternalKey: '76', startTimeIso: INI, count: 2 },
+          { doctorExternalKey: '76', startTimeIso: INI, count: 1 },
+        ]);
+        expect(r).toMatchObject({ cupos: [{ ilegibles: 3 }] });
+      });
+
+      it('se vuelve a leer desde la base', () => {
+        const guardado = resolverRespuestaHis('BY_SLOT', porCupo, [], false, ilegible());
+        const leido = leerResultadoGuardado(JSON.parse(JSON.stringify(guardado)));
+        expect(leido).toMatchObject({ cupos: [{ ilegibles: 2 }] });
+        // Un resultado viejo, sin el campo, se lee como 0.
+        expect(leerResultadoGuardado({ kind: 'BY_SLOT', cupos: [{ doctorExternalKey: '76', startIso: INI, filas: [] }] }))
+          .toMatchObject({ cupos: [{ ilegibles: 0 }] });
+      });
     });
 
     it('al combinar la evidencia, el recorte marca CADA cupo de esa consulta', () => {
