@@ -57,11 +57,24 @@ SET ANSI_NULLS ON;
 GO
 
 /* -----------------------------------------------------------------------------
-   PARTE A — PERMISOS Y CONTEXTO  (correr con el login agenia_sync)
-   Si algo de aquí falla, el agente no podría consultar: es lo primero que hay
-   que saber. No se esperan permisos nuevos (ya lee esta tabla).
+   PARTE A — ¿PUEDE EL LOGIN DEL AGENTE CORRER LAS CONSULTAS?
+   Correr con el login del DBA. NO hace falta la contraseña de `agenia_sync`.
+
+   QUÉ SE ESTÁ PROBANDO. El agente entra al HIS con `agenia_sync`, un login de
+   mínimo privilegio (`AGENIA_SYNC_SETUP.sql` §4). La consulta en vivo NO pide
+   permisos nuevos —lee `CITAS_MEDICAS`, que ya lee— pero eso hay que
+   COMPROBARLO, no suponerlo: si falta el `GRANT`, el agente contestará un error
+   a cada consulta y la pantalla dirá «el hospital no respondió».
+
+   CÓMO. `EXECUTE AS LOGIN` cambia la identidad de la sesión: lo que sigue corre
+   con el permiso REAL del agente, sin pedirle a nadie su contraseña (vive en el
+   gestor de secretos de la VM, y no debe circular para esto).
+
+   ⚠️ Si este bloque falla con «Cannot execute as the server principal…», es que
+   el login no se llama así o que quien corre el script no puede impersonar. En
+   ese caso, entrar a SSMS CON el login `agenia_sync` y correr solo esta parte.
    -------------------------------------------------------------------------- */
-PRINT '=== PARTE A — permisos y contexto ===';
+PRINT '=== PARTE A — permisos del login del agente (agenia_sync) ===';
 
 IF DB_NAME() <> 'PRUEBAS'
 BEGIN
@@ -72,14 +85,108 @@ END;
 SELECT
     servidor         = @@SERVERNAME,
     base             = DB_NAME(),
-    login_actual     = SUSER_SNAME(),
-    usuario_en_la_bd = USER_NAME(),
+    quien_corre_esto = SUSER_SNAME(),
     version_sql      = CAST(SERVERPROPERTY('ProductVersion') AS varchar(32)),
     nivel_compat     = (SELECT compatibility_level FROM sys.databases WHERE name = DB_NAME()),
     fecha_servidor   = SYSDATETIME();
 
-/* ¿Puede leer la tabla? */
-SELECT TOP (1) puede_leer_citas_medicas = 1 FROM dbo.CITAS_MEDICAS WITH (NOLOCK);
+/* ¿Existe el login y tiene usuario en esta base? Si algo de esto sale en blanco,
+   el `EXECUTE AS` de abajo va a fallar y aquí se ve por qué. */
+SELECT
+    login_existe        = CASE WHEN EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'agenia_sync') THEN 'sí' ELSE 'NO' END,
+    usuario_en_esta_bd  = CASE WHEN EXISTS (SELECT 1 FROM sys.database_principals WHERE name = 'agenia_sync') THEN 'sí' ELSE 'NO' END;
+
+/* Los permisos que la base declara para ese usuario sobre CITAS_MEDICAS. Es la
+   respuesta "en papel"; el bloque siguiente la comprueba en la práctica. */
+SELECT
+    permiso = p.permission_name,
+    estado  = p.state_desc,
+    sobre   = OBJECT_NAME(p.major_id)
+FROM sys.database_permissions p
+JOIN sys.database_principals u ON u.principal_id = p.grantee_principal_id
+WHERE u.name = 'agenia_sync'
+  AND p.major_id = OBJECT_ID('dbo.CITAS_MEDICAS')
+ORDER BY p.permission_name;
+GO
+
+/* ── A.2 — Las TRES consultas, corriendo COMO agenia_sync ─────────────────────
+   Los valores son de relleno a propósito: el permiso no depende de que haya
+   filas. Lo que se comprueba es que ninguna devuelva «SELECT permission denied».
+   La tercera se agregó el 2026-09-21 y es la que evita el falso negativo de las
+   horas ilegibles (§12 #17 del plan): también hay que confirmarla. */
+BEGIN TRY
+    EXECUTE AS LOGIN = 'agenia_sync';
+
+    SELECT
+        ejecutando_como    = SUSER_SNAME(),   -- debe decir agenia_sync
+        usuario_en_la_bd   = USER_NAME();
+
+    /* 1. Lectura básica de la tabla. */
+    SELECT TOP (1) lee_citas_medicas = 1 FROM dbo.CITAS_MEDICAS WITH (NOLOCK);
+
+    /* 2. Por cupo (la consulta barata del agente). */
+    EXEC sp_executesql
+      N'SELECT TOP (@tope) CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
+               CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist
+          FROM dbo.CITAS_MEDICAS
+         WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora',
+      N'@med varchar(4), @hora varchar(18), @tope int',
+      @med = '0', @hora = '1900/01/01 00:00', @tope = 11;
+
+    /* 3. Por documento. */
+    EXEC sp_executesql
+      N'SELECT TOP (@tope) CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
+               CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist
+          FROM dbo.CITAS_MEDICAS
+         WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta
+           AND NU_HIST_PAC_CIT IN (@hist0, @hist1)
+         ORDER BY FE_FECH_CIT, FE_HORA_CIT',
+      N'@desde varchar(8), @hasta varchar(8), @hist0 varchar(20), @hist1 varchar(20), @tope int',
+      @desde = '19000101', @hasta = '19000102', @hist0 = '0', @hist1 = '0', @tope = 51;
+
+    /* 4. Horas ilegibles (NUEVA). Mismo permiso: solo agrega LIKE / NOT LIKE. */
+    EXEC sp_executesql
+      N'SELECT TOP (25) CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
+               CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist
+          FROM dbo.CITAS_MEDICAS
+         WHERE CD_CODI_MED_CIT = @med
+           AND FE_HORA_CIT LIKE @dia
+           AND FE_HORA_CIT NOT LIKE @patron',
+      N'@med varchar(4), @dia varchar(11), @patron varchar(64)',
+      @med = '0', @dia = '1900/01/01%',
+      @patron = '[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9] [0-9][0-9]:[0-9][0-9]';
+
+    REVERT;
+    PRINT '   OK: agenia_sync corrió las tres consultas. La consulta en vivo NO pide permisos nuevos.';
+END TRY
+BEGIN CATCH
+    /* Volver a la identidad propia antes de reportar, pase lo que pase. */
+    IF SUSER_SNAME() <> ORIGINAL_LOGIN() REVERT;
+    PRINT '   FALLO corriendo como agenia_sync: ' + ERROR_MESSAGE();
+    PRINT '   → Si dice "The SELECT permission was denied", falta este GRANT (está en';
+    PRINT '     AGENIA_SYNC_SETUP.sql seccion 4, y se aplica en CADA base):';
+    PRINT '        GRANT SELECT ON dbo.CITAS_MEDICAS TO agenia_sync;';
+    PRINT '   → Si dice "Cannot execute as the server principal", correr esta PARTE A';
+    PRINT '     entrando a SSMS con el login agenia_sync.';
+END CATCH;
+GO
+
+/* ── A.3 — El catálogo VIVO (ESEHSVP), que es donde el agente consulta de verdad
+   `PRUEBAS` es una copia; en producción el agente lee `ESEHSVP`, y los permisos se
+   conceden por base. Esto lee UNA fila (una lectura de página): inocuo. Si falla,
+   los GRANT de la sección 4 no se aplicaron al catálogo vivo. */
+BEGIN TRY
+    EXECUTE AS LOGIN = 'agenia_sync';
+    EXEC ESEHSVP.sys.sp_executesql
+      N'SELECT TOP (1) lee_citas_medicas_en_el_catalogo_vivo = 1 FROM dbo.CITAS_MEDICAS WITH (NOLOCK)';
+    REVERT;
+    PRINT '   OK: agenia_sync también lee CITAS_MEDICAS en ESEHSVP (el catálogo vivo).';
+END TRY
+BEGIN CATCH
+    IF SUSER_SNAME() <> ORIGINAL_LOGIN() REVERT;
+    PRINT '   FALLO leyendo ESEHSVP como agenia_sync: ' + ERROR_MESSAGE();
+    PRINT '   → Aplicar la seccion 4 de AGENIA_SYNC_SETUP.sql contra ESEHSVP.';
+END CATCH;
 GO
 
 /* -----------------------------------------------------------------------------
@@ -318,6 +425,29 @@ BEGIN
     END;
     SET @i += 1;
 END;
+
+/* --- E.3  HORAS ILEGIBLES (la consulta agregada el 2026-09-21) --------------
+   Solo corre cuando un cupo viene vacío, así que este es su peor caso: el médico
+   más cargado del día. Debe ser un SEEK por la PK (médico + prefijo del día). */
+DECLARE @diaDelCupo varchar(11) = LEFT(@hora, 10) + '%';
+
+SET STATISTICS IO, TIME ON;
+PRINT '--- E.3 horas ilegibles del mismo médico y día, corrida 1 ---';
+SET @t = SYSDATETIME();
+EXEC sp_executesql
+  N'SELECT TOP (25) CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
+           CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist
+      FROM dbo.CITAS_MEDICAS
+     WHERE CD_CODI_MED_CIT = @med
+       AND FE_HORA_CIT LIKE @dia
+       AND FE_HORA_CIT NOT LIKE @patron',
+  N'@med varchar(4), @dia varchar(11), @patron varchar(64)',
+  @med = @med, @dia = @diaDelCupo,
+  @patron = '[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9] [0-9][0-9]:[0-9][0-9]';
+SET @filas = @@ROWCOUNT;
+SET STATISTICS IO, TIME OFF;
+INSERT @resultado
+VALUES ('Horas ilegibles', 'médico + día', '1a', @filas, DATEDIFF(millisecond, @t, SYSDATETIME()));
 
 PRINT '';
 PRINT '=== RESUMEN (copiar esta tabla) ===';

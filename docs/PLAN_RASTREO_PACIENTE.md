@@ -430,12 +430,12 @@ Implementada y verificada. **Sin commit.** Lleva **una migración aditiva** (`20
 
 - ~~**El SQL contra un SQL Server real.**~~ ✅ Ejecutado el 2026-09-20 contra `PRUEBAS` (SQL Server 2017 14.0.3465.1), una copia del 99,8 % del catálogo vivo, con el script [`sql/MEDICION_CONSULTA_EN_VIVO.sql`](drivers/cnt-sanvicente-anserma/sql/MEDICION_CONSULTA_EN_VIVO.sql).
 - ~~**El costo sobre su base.**~~ ✅ Medido: **3** lecturas lógicas por cupo (`Clustered Index Seek`) y **18 / 43 / 60** por documento con ventanas de 7 / 67 / 180 días, con milisegundos de un dígito. La premisa del diseño era **falsa**: `CITAS_MEDICAS` tiene tres índices que empiezan por `NU_HIST_PAC_CIT`, así que el motor busca por el documento y no recorre el rango de fechas. La estimación previa (21.000–56.000 filas) erraba por tres órdenes de magnitud. **No hay que acortar la ventana ni pedir un índice.**
-- **El permiso del login del agente.** La medición se corrió con `ADMIN`, no con `agenia_sync`: que el agente pueda leer con su permiso mínimo **sigue sin confirmarse** (es repetir la PARTE A del script).
+- ~~**El permiso del login del agente.**~~ ✅ Confirmado el 2026-09-21: la PARTE A se corrió impersonando `agenia_sync` (`ejecutando_como = agenia_sync`) y las tres consultas pasaron en `PRUEBAS` y en `ESEHSVP`. **No hace falta ningún `GRANT` nuevo.** Nota: ese login tiene además `INSERT/UPDATE/DELETE` sobre `CITAS_MEDICAS` por diseño (el espejo escribe y la cancelación borra), así que el «solo lectura» de la consulta en vivo lo garantiza el código y su prueba, no el permiso.
 - **Las citas con `FE_HORA_CIT` ilegible.** La medición se topó con una (`'2026/09/19 3'`) y destapó un falso negativo: la consulta por cupo compara la hora con `=`, así que una cita guardada así no se encuentra y la pantalla afirmaría «el HIS no tiene ninguna cita en ese cupo». Ver §12 #17.
 - La red real entre la VM del hospital y la nube (el resto del protocolo ya la ejerce).
 - La concurrencia (5 consultas a la vez mientras el hospital agenda) y la cancelación por tiempo agotado: necesitan el agente corriendo.
 
-**Pendiente para cerrar la Fase 2:** (1) confirmar la PARTE A con `agenia_sync`; (2) correr la PARTE G para dimensionar las horas ilegibles y decidir §12 #17; (3) desplegar en el orden migración → API → agente → web y encender por clínica.
+**Pendiente para cerrar la Fase 2:** (1) la PARTE G (informativa: cuántas horas ilegibles hay y el peor caso de costo) y el número de la PARTE E.3 (la consulta nueva); (2) la prueba con el agente vivo: actualizarlo, encender `lookupEnabled` en la clínica de prueba y hacer una consulta de punta a punta contra `PRUEBAS`, comprobando la concurrencia (5 a la vez) y que un tiempo agotado CANCELA la consulta en el servidor (`sys.dm_exec_requests`); (3) desplegar en el orden migración → API → **agente** → web y encender por clínica.
 
 ### Estado de la Fase 3 (2026-09-20)
 

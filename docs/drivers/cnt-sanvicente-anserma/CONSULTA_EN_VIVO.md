@@ -79,6 +79,10 @@ SELECT TOP (@tope)
 
 Corrida con [`sql/MEDICION_CONSULTA_EN_VIVO.sql`](sql/MEDICION_CONSULTA_EN_VIVO.sql) sobre `PRUEBAS`, servidor `sql2017-pro2-dp`, SQL Server 2017 Standard 14.0.3465.1, nivel de compatibilidad 140.
 
+**El permiso del agente: confirmado (2026-09-21).** La PARTE A se corrió impersonando el login del agente (`ejecutando_como = agenia_sync`, no `ADMIN`) y las tres consultas —por cupo, por documento y la de horas ilegibles— pasaron sin error, en `PRUEBAS` y en `ESEHSVP`. **La consulta en vivo no pide ningún `GRANT` nuevo.**
+
+> 🔎 De paso, esa salida deja ver que `agenia_sync` tiene `SELECT`, `INSERT`, `UPDATE` y `DELETE` sobre `CITAS_MEDICAS`. Es **por diseño**: el espejo escribe las citas en el HIS y la cancelación hace un `DELETE` puntual (`AGENIA_SYNC_SETUP.sql` §4). Conviene tenerlo presente: que la consulta en vivo sea de **solo lectura** lo garantiza nuestro código —y una prueba que falla si aparece un `INSERT/UPDATE/DELETE` en el texto SQL—, **no** el permiso del login. Si se quisiera que también lo garantice la base, haría falta un segundo login de solo lectura para las consultas, y que el agente abra una conexión aparte con él. Hoy no está, y no es un requisito para encender.
+
 **La copia es representativa:** `PRUEBAS` tiene **1.087.077** filas y `ESEHSVP` (vivo) **1.089.082** — 99,8 %. Los datos del índice agrupado ocupan 178 MB en las dos (los 855 MB que reporta `ESTADO.md` deben incluir los 11 índices no agrupados).
 
 | Consulta | Ventana | Lecturas lógicas | Filas | CPU / transcurrido | Plan |
