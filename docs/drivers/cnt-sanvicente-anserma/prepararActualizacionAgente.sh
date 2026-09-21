@@ -144,6 +144,7 @@ ${BOLD}Después de copiarlo (cualquiera de los dos escenarios):${N}
     journalctl -u agenia-mirror-agent -n 50 --no-pager
 
 ${BOLD}Por último, verifica desde los dos lados:${N}
-  ./checkHealthAgente.sh   ${D}# 🏥 en el VPS del hospital${N}
-  ./checkHealth.sh         ${D}# 💻 en tu portátil, ve lo que la nube reporta${N}
+  ./checkHealthAgente.sh   ${D}# 🏥 EN el VPS del hospital (ya está instalado allá)${N}
+  ./checkHealth.sh         ${D}# 💻 en tu portátil, desde la RAÍZ del repo${N}
+                           ${D}#    (o docs/drivers/<driver>/checkHealth.sh)${N}
 EOF

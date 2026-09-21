@@ -274,7 +274,8 @@ localmente; es él quien abre su propia conexión SSH hacia la nube
 — no necesita ni requiere que tú entres manualmente a ningún servidor:
 
 ```bash
-# 💻 En tu portátil, dentro de docs/drivers/cnt-sanvicente-anserma/:
+# 💻 En tu portátil, desde la raíz del repo (o dentro de
+#    docs/drivers/cnt-sanvicente-anserma/, que es donde queda el informe):
 ./checkHealth.sh
 ```
 
@@ -395,7 +396,7 @@ reporta):
 Desde el lado de la nube, sin tocar el hospital:
 
 ```bash
-./checkHealth.sh   # confirma latido reciente y lastHisReachable=true tras la actualización
+./checkHealth.sh   # 💻 en tu portátil, desde la raíz del repo: confirma latido reciente y lastHisReachable=true tras la actualización
 ```
 
 > ⚠️ **Cambios que solo tocan `apps/mirror-agent/src/` no afectan a `web` ni
@@ -534,7 +535,7 @@ código que corre encima de él.
 | Revertir el agente al bundle anterior | `./actualizarAgente.sh --rollback` (🏥) |
 | Verificar el agente tras actualizarlo | `journalctl -u agenia-mirror-agent -f` (🏥) o `./checkHealthAgente.sh` (🏥) |
 | Rotar/sincronizar la contraseña de `agenia_sync` | `./rotarClaveHIS.sh` (§5) |
-| Foto de salud completa (lado nube) | `./checkHealth.sh` (💻) |
+| Foto de salud completa (lado nube, 💻 desde la raíz del repo) | `./checkHealth.sh` (💻) |
 | Foto de salud completa (lado hospital) | `./checkHealthAgente.sh` (🏥) |
 | Respaldar la base antes de algo riesgoso | `agenia backup` |
 
