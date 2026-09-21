@@ -6,6 +6,22 @@ import { cookies } from 'next/headers';
 import { getSession } from '../../../lib/session';
 import { findEpsEnrollmentIssue } from '../../../lib/eps-enrollment';
 import { getErrorMessage } from '../../../lib/error';
+import {
+    MSG_FUERA_DE_ALCANCE,
+    MSG_SIN_PERMISO_AGENDA,
+    alcanceDeLaSesion,
+    citaFueraDeAlcance,
+    puedeOperarAgenda,
+} from '../../../lib/alcance-agente';
+
+/**
+ * 🔐 Las tres acciones de este archivo comprobaban SOLO que hubiera sesión con
+ * clínica: ni el rol ni el alcance (§12 #12 del plan del rastreo). Una acción de
+ * servidor es un endpoint público — cualquier sesión de la clínica, incluida la de un
+ * PACIENTE, llega con el id de la acción—, así que por esta vía se podían crear y
+ * mover citas de cualquiera. Ahora cada una exige, en este orden: rol de agenda,
+ * clínica del token y el alcance con el que la pantalla lista las citas.
+ */
 
 // Mock del Outbound de Whatsapp desde NestJS API (o invocación HTTP a nuestro NestJS)
 export async function sendManualWhatsappAction(appointmentId: string, message: string) {
@@ -14,13 +30,21 @@ export async function sendManualWhatsappAction(appointmentId: string, message: s
     try {
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        if (!puedeOperarAgenda(session.role)) {
+            return { success: false, error: MSG_SIN_PERMISO_AGENDA };
+        }
 
         const appointment = await prisma.appointment.findFirst({
             where: { id: appointmentId, organizationId: session.organizationId },
-            include: { patient: true }
+            include: { patient: true, scheduleSlot: { select: { doctorId: true } } }
         });
 
         if (!appointment) return { success: false, error: 'Cita no encontrada.' };
+
+        const alcance = await alcanceDeLaSesion(prisma, session);
+        if (citaFueraDeAlcance(alcance, { epsId: appointment.epsId, doctorId: appointment.scheduleSlot.doctorId })) {
+            return { success: false, error: MSG_FUERA_DE_ALCANCE };
+        }
 
         // Destinatario: el BSUID manda sobre el teléfono (es el identificador
         // estable). Antes esto caía en `|| patient.cedula` — una cédula NO es
@@ -76,8 +100,18 @@ export async function createManualAppointmentAction(formData: FormData) {
 
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        if (!puedeOperarAgenda(session.role)) {
+            return { success: false, error: MSG_SIN_PERMISO_AGENDA };
+        }
         // Capturado tras el guard: TS no propaga el narrowing al closure de la transacción.
         const organizationId = session.organizationId;
+
+        // 🔐 La cita que se va a crear tiene que caber en el alcance de quien la crea:
+        // la EPS y el médico salen del formulario, así que se comprueban esos.
+        const alcance = await alcanceDeLaSesion(prisma, session);
+        if (citaFueraDeAlcance(alcance, { epsId, doctorId })) {
+            return { success: false, error: MSG_FUERA_DE_ALCANCE };
+        }
 
         // 🪪 PADRÓN EPS: agendar por EPS exige que la cédula esté dada de alta.
         // Read puro previo a la transacción: falla rápido, sin escrituras a medias.
@@ -177,8 +211,27 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
 
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        if (!puedeOperarAgenda(session.role)) {
+            return { success: false, error: MSG_SIN_PERMISO_AGENDA };
+        }
         // Capturado tras el guard: TS no propaga el narrowing al closure de la transacción.
         const organizationId = session.organizationId;
+
+        // 🔐 Alcance por DUPLICADO: la cita como está HOY y como va a quedar. Con solo
+        // una de las dos, un agente acotado podría sacar una cita suya hacia otro
+        // médico, o traerse la de un compañero hacia el suyo.
+        const alcance = await alcanceDeLaSesion(prisma, session);
+        if (alcance) {
+            const original = await prisma.appointment.findFirst({
+                where: { id: appointmentId, organizationId },
+                select: { epsId: true, scheduleSlot: { select: { doctorId: true } } },
+            });
+            if (!original) return { success: false, error: 'Cita original no encontrada.' };
+            const fuera =
+                citaFueraDeAlcance(alcance, { epsId: original.epsId, doctorId: original.scheduleSlot.doctorId }) ||
+                citaFueraDeAlcance(alcance, { epsId, doctorId });
+            if (fuera) return { success: false, error: MSG_FUERA_DE_ALCANCE };
+        }
 
         // 🪪 PADRÓN EPS: reagendar/actualizar por EPS también exige estar de alta.
         const enrollmentIssue = await findEpsEnrollmentIssue(prisma, {

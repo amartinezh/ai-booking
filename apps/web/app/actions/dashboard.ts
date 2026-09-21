@@ -7,7 +7,11 @@ import { revalidatePath } from 'next/cache';
 import { AttendanceStatus } from '@agenia/database';
 import { armarMetaLogCancelacionPersonal } from '@agenia/shared';
 import { getErrorMessage } from '@/lib/error';
-import { citaFueraDeAlcance } from '@/lib/alcance-agente';
+import {
+    MSG_FUERA_DE_ALCANCE,
+    alcanceDeLaSesion,
+    citaFueraDeAlcance,
+} from '@/lib/alcance-agente';
 
 const INTERNAL_API_URL =
     process.env.INTERNAL_API_URL ||
@@ -29,6 +33,22 @@ export async function updateAttendance(appointmentId: string, status: string) {
         const whereClause: { id: string; organizationId?: string } = { id: appointmentId };
         if (session.role !== 'SUPER_ADMIN' && session.organizationId) {
             whereClause.organizationId = session.organizationId;
+        }
+
+        // 🔐 El alcance, ANTES de escribir (§12 #10 del plan del rastreo): un agente
+        // acotado a una EPS o a un médico —y un médico a su propia agenda— solo marca
+        // la asistencia de lo que su panel le lista. Hay que leer la cita para saberlo:
+        // la EPS es de la cita y el médico, de su cupo.
+        const cita = await prisma.appointment.findFirst({
+            where: whereClause,
+            select: { id: true, epsId: true, scheduleSlot: { select: { doctorId: true } } },
+        });
+        if (!cita) {
+            return { success: false, error: 'Cita no encontrada en su organización.' };
+        }
+        const alcance = await alcanceDeLaSesion(prisma, session);
+        if (citaFueraDeAlcance(alcance, { epsId: cita.epsId, doctorId: cita.scheduleSlot.doctorId })) {
+            return { success: false, error: MSG_FUERA_DE_ALCANCE };
         }
 
         await prisma.appointment.update({
@@ -65,6 +85,27 @@ export async function sendManualReminder(appointmentId: string): Promise<{
     }
 
     try {
+        // 🔐 El alcance, antes de mandar un WhatsApp al paciente de otro (§12 #10).
+        // ⚠️ Esta comprobación vive aquí, en el único punto por el que la pantalla
+        // llega. El endpoint `POST /appointments/:id/send-manual-reminder` de la API
+        // sigue aplicando solo rol y tenant: quien tenga un token válido puede
+        // llamarlo directo y saltarse el alcance (§12 #10b del plan).
+        const alcanceRecordatorio = await alcanceDeLaSesion(prisma, session);
+        if (alcanceRecordatorio) {
+            const whereCita: { id: string; organizationId?: string } = { id: appointmentId };
+            if (session.organizationId) whereCita.organizationId = session.organizationId;
+            const cita = await prisma.appointment.findFirst({
+                where: whereCita,
+                select: { epsId: true, scheduleSlot: { select: { doctorId: true } } },
+            });
+            if (!cita) {
+                return { success: false, error: 'Cita no encontrada en su organización.' };
+            }
+            if (citaFueraDeAlcance(alcanceRecordatorio, { epsId: cita.epsId, doctorId: cita.scheduleSlot.doctorId })) {
+                return { success: false, error: MSG_FUERA_DE_ALCANCE };
+            }
+        }
+
         const cookieStore = await cookies();
         const token = cookieStore.get('auth_token')?.value;
 
@@ -132,19 +173,14 @@ export async function cancelAppointmentAndFreeSlot(appointmentId: string, schedu
             return { success: false, error: 'Cita no encontrada en su organización.' };
         }
 
-        // 🔐 Un agente con EPS o médico asignados solo actúa sobre lo que el panel le
-        // lista (§12 #9 del plan del rastreo): sin esto podía cancelar cualquier cita
-        // de la clínica por esta vía. Se comprueba ANTES que el cupo: una cita fuera de
+        // 🔐 Cada uno actúa solo sobre lo que su panel le lista (§12 #9 y #11 del plan
+        // del rastreo): el agente sobre su EPS y su médico, el MÉDICO sobre su propia
+        // agenda. Sin esto, cualquiera de los dos cancelaba cualquier cita de la clínica. Se comprueba ANTES que el cupo: una cita fuera de
         // su alcance no debe enterarse de nada más. Si el perfil no se puede leer, el
         // `catch` de abajo responde con error y NO se cancela (falla cerrado).
-        if (session.role === 'BOOKING_AGENT') {
-            const perfil = await prisma.agentProfile.findUnique({
-                where: { userId: session.userId },
-                select: { epsId: true, doctorId: true },
-            });
-            if (citaFueraDeAlcance(perfil, { epsId: appointment.epsId, doctorId: appointment.scheduleSlot.doctorId })) {
-                return { success: false, error: 'Esta cita está fuera de su alcance (EPS o médico asignados).' };
-            }
+        const alcance = await alcanceDeLaSesion(prisma, session);
+        if (citaFueraDeAlcance(alcance, { epsId: appointment.epsId, doctorId: appointment.scheduleSlot.doctorId })) {
+            return { success: false, error: MSG_FUERA_DE_ALCANCE };
         }
         if (scheduleSlotId && scheduleSlotId !== appointment.scheduleSlotId) {
             return { success: false, error: 'El cupo indicado no corresponde a la cita.' };

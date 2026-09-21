@@ -3,6 +3,7 @@ jest.mock('@/lib/prisma', () => {
         appointment: { update: jest.fn(), findFirst: jest.fn(), updateMany: jest.fn() },
         scheduleSlot: { update: jest.fn() },
         agentProfile: { findUnique: jest.fn() },
+        doctorProfile: { findUnique: jest.fn() },
         $transaction: jest.fn(),
     };
     // Transacción interactiva: el callback recibe el mismo doble como `tx`.
@@ -25,9 +26,15 @@ const mockUpdateMany = prisma.appointment.updateMany as jest.Mock;
 const mockSlotUpdate = prisma.scheduleSlot.update as jest.Mock;
 const mockTransaction = prisma.$transaction as jest.Mock;
 const mockAgentProfile = prisma.agentProfile.findUnique as jest.Mock;
+const mockDoctorProfile = prisma.doctorProfile.findUnique as jest.Mock;
 
 describe('updateAttendance — scoping por tenant', () => {
-    beforeEach(() => jest.clearAllMocks());
+    beforeEach(() => {
+        jest.clearAllMocks();
+        // Desde el arreglo de §12 #10 la acción lee la cita para poder comprobar el
+        // alcance (la EPS es de la cita; el médico, de su cupo).
+        mockFindFirst.mockResolvedValue({ id: 'apt-1', epsId: 'eps-1', scheduleSlot: { doctorId: 'doc-1' } });
+    });
 
     it('rechaza a un rol sin permiso (PATIENT)', async () => {
         mockGetSession.mockResolvedValue({ role: 'PATIENT', organizationId: 'org-1' });
@@ -56,6 +63,55 @@ describe('updateAttendance — scoping por tenant', () => {
         await updateAttendance('apt-1', 'ATTENDED');
 
         expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'apt-1' } }));
+    });
+
+    it('🎯 un BOOKING_AGENT acotado a otra EPS no puede marcar la asistencia', async () => {
+        mockGetSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1', userId: 'u-1' });
+        mockAgentProfile.mockResolvedValue({ epsId: 'eps-9', doctorId: null });
+
+        const res = await updateAttendance('apt-1', 'ATTENDED');
+
+        expect(res.success).toBe(false);
+        expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('🎯 un DOCTOR no puede marcar la asistencia de la agenda de un colega', async () => {
+        mockGetSession.mockResolvedValue({ role: 'DOCTOR', organizationId: 'org-1', userId: 'u-2' });
+        mockDoctorProfile.mockResolvedValue({ id: 'doc-9' });
+
+        const res = await updateAttendance('apt-1', 'ATTENDED');
+
+        expect(res.success).toBe(false);
+        expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('un DOCTOR sí marca la de SU propia agenda', async () => {
+        mockGetSession.mockResolvedValue({ role: 'DOCTOR', organizationId: 'org-1', userId: 'u-2' });
+        mockDoctorProfile.mockResolvedValue({ id: 'doc-1' });
+        mockUpdate.mockResolvedValue({});
+
+        await expect(updateAttendance('apt-1', 'ATTENDED')).resolves.toEqual({ success: true });
+        expect(mockUpdate).toHaveBeenCalled();
+    });
+
+    it('una cita de otra clínica responde «no encontrada» y no se escribe', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
+        mockFindFirst.mockResolvedValue(null);
+
+        const res = await updateAttendance('apt-1', 'ATTENDED');
+
+        expect(res.success).toBe(false);
+        expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('si no se puede leer el perfil del agente, NO se marca (falla cerrado)', async () => {
+        mockGetSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1', userId: 'u-1' });
+        mockAgentProfile.mockRejectedValue(new Error('db caída'));
+
+        const res = await updateAttendance('apt-1', 'ATTENDED');
+
+        expect(res.success).toBe(false);
+        expect(mockUpdate).not.toHaveBeenCalled();
     });
 
     it('devuelve error genérico si Prisma falla, sin filtrar detalles internos', async () => {
@@ -141,6 +197,8 @@ describe('cancelAppointmentAndFreeSlot', () => {
 
     it.each(['ORG_ADMIN', 'DOCTOR', 'SUPER_ADMIN'])('%s también deja constancia, con SU rol', async (role) => {
         mockGetSession.mockResolvedValue({ ...AGENTE, role, userId: `u-${role}` });
+        // Un DOCTOR queda acotado a su propia agenda: la del doble ES la suya.
+        mockDoctorProfile.mockResolvedValue({ id: 'doc-1' });
         await cancelAppointmentAndFreeSlot('apt-1', 'slot-1');
         expect(argsDelCambio().data.metaLog).toMatchObject({ cancelledByRole: role, cancelledByUserId: `u-${role}` });
     });
