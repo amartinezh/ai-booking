@@ -36,6 +36,7 @@ const CONSULTADO: HisEnVivoVista = {
             truncado: false,
         },
         cuposConsultados: 1,
+        cuposIncompletos: 0,
     },
 };
 
@@ -52,6 +53,36 @@ const props = (over: Partial<Parameters<typeof ConsultaHis>[0]> = {}) => ({
 beforeEach(() => {
     jest.clearAllMocks();
     mProgreso.mockResolvedValue({ success: true, data: { estado: 'LISTA', detalle: null } });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Si el hospital contestó algo que no se pudo leer, la pantalla NO puede dejar
+// que el funcionario concluya «el hospital no tiene la cita»: es el falso
+// negativo que esta pantalla existe para evitar.
+// ══════════════════════════════════════════════════════════════════════════
+describe('ConsultaHis — la respuesta del hospital llegó incompleta', () => {
+    const conIncompletos = (n: number) => ({ ...CONSULTADO, consulta: { ...CONSULTADO.consulta!, cuposIncompletos: n } });
+
+    it('lo advierte, y dice explícitamente que la ausencia no se puede concluir', () => {
+        render(<ConsultaHis {...props({ vista: conIncompletos(1) })} />);
+
+        const aviso = screen.getByRole('alert');
+        expect(aviso).toHaveTextContent('no se pudo leer entera');
+        expect(aviso).toHaveTextContent('no significa que el hospital no la tenga');
+    });
+
+    it('concuerda en singular y en plural', () => {
+        const { unmount } = render(<ConsultaHis {...props({ vista: conIncompletos(1) })} />);
+        expect(screen.getByRole('alert')).toHaveTextContent('un cupo');
+        unmount();
+        render(<ConsultaHis {...props({ vista: conIncompletos(3) })} />);
+        expect(screen.getByRole('alert')).toHaveTextContent('3 cupos');
+    });
+
+    it('si la respuesta vino completa, no hay aviso', () => {
+        render(<ConsultaHis {...props({ vista: conIncompletos(0) })} />);
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
 });
 
 describe('ConsultaHis — qué se ofrece', () => {

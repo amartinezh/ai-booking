@@ -170,7 +170,7 @@ describe('BandejaClient — filtros y páginas', () => {
     });
 
     it('cambiar de pestaña vuelve a la página 1 (la página 3 de «activas» no existe en «cerradas»)', () => {
-        pintar([fila()], { filtros: { estado: 'MIAS', pagina: 3 } as never });
+        pintar([fila()], { filtros: { estado: 'MIAS', pagina: 3 } });
         const nav = screen.getByRole('navigation', { name: 'Estado' });
         expect(within(nav).getByText('Cerradas')).toHaveAttribute('href', '/dashboard/bandeja?estado=CERRADAS');
     });
@@ -184,7 +184,7 @@ describe('BandejaClient — filtros y páginas', () => {
     });
 
     it('cambiar el tipo o la gravedad estando en la página 3 vuelve a la 1 (la página 3 del filtro nuevo puede no existir)', () => {
-        pintar([fila()], { filtros: { estado: 'ACTIVAS', pagina: 3 } as never });
+        pintar([fila()], { filtros: { estado: 'ACTIVAS', pagina: 3 } });
         fireEvent.change(screen.getByLabelText('Tipo'), { target: { value: 'ERROR_SYNC' } });
         expect(push).toHaveBeenLastCalledWith('/dashboard/bandeja?tipo=ERROR_SYNC');
         fireEvent.change(screen.getByLabelText('Gravedad'), { target: { value: 'ALTA' } });

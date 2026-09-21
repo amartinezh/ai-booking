@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
+import { citaFueraDeAlcance } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatbotService } from '../chatbot/chatbot.service';
 import { OrganizationSettingsService } from '../chatbot/organization-settings.service';
@@ -430,9 +431,19 @@ export class AppointmentReminderCronService
   // Si la cita ya tenía `reminderSentAt`, se permite el reenvío manual
   // (el operador clínico tiene la última palabra) y el campo se actualiza
   // al nuevo timestamp.
+  /**
+   * Recordatorio manual de UNA cita, pedido desde el panel.
+   *
+   * 🔐 `actor` NO es opcional a propósito (§12 #10b del plan del rastreo): este
+   * endpoint aplicaba solo rol y tenant, así que un agente acotado a una EPS o a un
+   * médico podía mandarle un WhatsApp al paciente de cualquier otro llamándolo
+   * directo con su token. La regla es la MISMA que aplica la web
+   * (`citaFueraDeAlcance`, en `@agenia/shared`): una sola copia para los dos lados.
+   */
   async sendManualForAppointment(
     appointmentId: string,
     organizationId: string,
+    actor: { userId: string; role: string },
   ): Promise<{
     success: boolean;
     outcome: 'sent' | 'failed' | 'skipped';
@@ -471,6 +482,18 @@ export class AppointmentReminderCronService
         success: false,
         outcome: 'skipped',
         error: 'Cita no encontrada o no pertenece a esta clínica.',
+      };
+    }
+
+    const fuera = await this.citaFueraDelAlcanceDelActor(actor, {
+      epsId: apt.epsId,
+      doctorId: apt.scheduleSlot?.doctorId ?? null,
+    });
+    if (fuera) {
+      return {
+        success: false,
+        outcome: 'skipped',
+        error: 'Esta cita está fuera de su alcance (EPS o médico asignados).',
       };
     }
 
@@ -538,5 +561,49 @@ export class AppointmentReminderCronService
       outcome,
       error: 'No fue posible enviar el recordatorio.',
     };
+  }
+
+  /**
+   * El alcance del actor, leído de sus perfiles: un BOOKING_AGENT por su
+   * `AgentProfile` (EPS y médico), un DOCTOR por su propia agenda. Los demás roles
+   * no quedan acotados.
+   *
+   * Si el perfil no se puede leer, devuelve `true` (fuera de alcance): falla CERRADO,
+   * porque no saber quién es no puede habilitar un envío al paciente de otro.
+   */
+  private async citaFueraDelAlcanceDelActor(
+    actor: { userId: string; role: string },
+    cita: { epsId: string | null; doctorId: string | null },
+  ): Promise<boolean> {
+    try {
+      if (actor.role === 'BOOKING_AGENT') {
+        const perfil = await this.prisma.agentProfile.findUnique({
+          where: { userId: actor.userId },
+          select: { epsId: true, doctorId: true },
+        });
+        return citaFueraDeAlcance(
+          { epsId: perfil?.epsId || null, doctorId: perfil?.doctorId || null },
+          cita,
+        );
+      }
+      if (actor.role === 'DOCTOR') {
+        const perfil = await this.prisma.doctorProfile.findUnique({
+          where: { userId: actor.userId },
+          select: { id: true },
+        });
+        return citaFueraDeAlcance(
+          { epsId: null, doctorId: perfil?.id || null },
+          cita,
+        );
+      }
+      return false;
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo resolver el alcance de ${actor.userId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return true;
+    }
   }
 }

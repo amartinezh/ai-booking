@@ -472,7 +472,8 @@ const MENSAJE_VACIO: Record<FiltroEstado, string> = {
 
 interface Props {
     lista: ListaExcepciones;
-    filtros: { estado: FiltroEstado; tipo?: TipoExcepcion; gravedad?: SeveridadExcepcion };
+    /** Los mismos que `leerFiltros` saca de la URL; `pagina` la usan los enlaces de paginación. */
+    filtros: { estado: FiltroEstado; tipo?: TipoExcepcion; gravedad?: SeveridadExcepcion; pagina?: number };
     /** `null` si no se pudo leer el estado de los avisos. */
     avisos: EstadoAvisos | null;
     puedeConfigurarAvisos: boolean;

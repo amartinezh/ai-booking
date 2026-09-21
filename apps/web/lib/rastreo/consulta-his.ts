@@ -489,6 +489,7 @@ export function vistaDeConsulta(
         }
       : null,
     cuposConsultados: evidencia.cupos.length,
+    cuposIncompletos: evidencia.cupos.filter((c) => c.incompleto).length,
   };
 }
 

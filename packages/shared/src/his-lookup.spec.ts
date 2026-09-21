@@ -359,7 +359,31 @@ describe('resolverRespuestaHis', () => {
       expect(r).toEqual({
         kind: 'BY_SLOT',
         cupos: [{ doctorExternalKey: '76', startIso: INI, filas: [expect.objectContaining({ titular: 'PACIENTE', documentoTercero: null })] }],
+        truncado: false,
       });
+    });
+
+    // Antes este dato se perdía aquí, y una cita con la hora en un formato ilegible
+    // (5,7 % en el catálogo del hospital) se convertía en «el HIS no tiene nada en
+    // ese cupo»: un falso negativo. Ahora el recorte viaja hasta el veredicto.
+    it('🚨 el recorte del agente se CONSERVA en la consulta por cupo', () => {
+      const r = resolverRespuestaHis('BY_SLOT', porCupo, [], true);
+      expect(r).toMatchObject({ kind: 'BY_SLOT', truncado: true });
+    });
+
+    it('y se vuelve a leer desde la base', () => {
+      const guardado = resolverRespuestaHis('BY_SLOT', porCupo, [], true);
+      const leido = leerResultadoGuardado(JSON.parse(JSON.stringify(guardado)));
+      expect(leido).toMatchObject({ kind: 'BY_SLOT', truncado: true });
+      expect(leerResultadoGuardado({ kind: 'BY_SLOT', cupos: [] })).toMatchObject({ truncado: false });
+    });
+
+    it('al combinar la evidencia, el recorte marca CADA cupo de esa consulta', () => {
+      const r = resolverRespuestaHis('BY_SLOT', porCupo, [], true)!;
+      const ev = combinarEvidenciaHis([r], INI);
+      expect(ev.cupos.every((c) => c.incompleto)).toBe(true);
+      const limpio = combinarEvidenciaHis([resolverRespuestaHis('BY_SLOT', porCupo, [])!], INI);
+      expect(limpio.cupos.every((c) => c.incompleto)).toBe(false);
     });
 
     it('🔒 cupo ocupado por OTRA persona: el documento sale ENMASCARADO y nunca completo', () => {

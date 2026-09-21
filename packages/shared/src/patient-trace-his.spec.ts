@@ -74,10 +74,16 @@ const filaHis = (over: Partial<CitaHisVista> = {}): CitaHisVista => ({
 });
 
 /** Un cupo consultado con las filas que el HIS tenga ahí. */
-const cupoHis = (filas: Partial<CitaHisVista>[], key = '76', startIso = INICIO) => ({
+const cupoHis = (
+  filas: Partial<CitaHisVista>[],
+  key = '76',
+  startIso = INICIO,
+  incompleto = false,
+) => ({
   doctorExternalKey: key,
   startIso,
   filas: filas.map((f) => filaHis({ doctorExternalKey: key, startIso, ...f })),
+  incompleto,
 });
 
 const his = (over: Partial<EvidenciaHis> = {}): EvidenciaHis => ({
@@ -163,6 +169,25 @@ describe('clasificarRastreoA + consulta en vivo', () => {
       const r = clasificarRastreoA(evA({ his: his({ cupos: [cupoHis([{ titular: 'SIN_DOCUMENTO' }])] }) }));
       expect(r.principal.evidencia.join(' ')).not.toContain('()');
     });
+  });
+
+  // Escenario A: la cita SÍ existe en AgenIA y se entregó. Si la respuesta del HIS
+  // sobre ese cupo no se pudo leer, no hay deriva demostrada: hay algo sin verificar.
+  describe('🚨 escenario A con la respuesta del HIS incompleta', () => {
+    const incompleto = () => his({ cupos: [cupoHis([], '76', INICIO, true)] });
+
+    it('NO se acusa una deriva entre los dos sistemas', () => {
+      const r = clasificarRastreoA(evA({ his: incompleto() }));
+
+      expect(r.veredictos.map((v) => v.codigo)).not.toContain(VEREDICTO.ENTREGADA_PERO_AUSENTE);
+      expect(r.principal.codigo).toBe(VEREDICTO.ENTREGADA_SIN_VERIFICAR);
+    });
+
+    it('y se dice POR QUÉ no se pudo verificar', () => {
+      const r = clasificarRastreoA(evA({ his: incompleto() }));
+      expect(r.principal.evidencia.join(' ')).toContain('llegó incompleta');
+    });
+
   });
 
   describe('AUSENTE: el HIS no tiene nada en ese cupo', () => {
@@ -332,6 +357,12 @@ describe('construirLineaDeVida + consulta en vivo', () => {
     expect(ultimo(cita(), his({ cupos: [cupoHis([])] }))).toMatchObject({ estado: 'fail', detalle: expect.stringContaining('no tiene esa cita') });
   });
 
+  it('🚨 respuesta INCOMPLETA → "?" y no ✗: no se sabe, que es distinto de no estar', () => {
+    const p = ultimo(cita(), his({ cupos: [cupoHis([], '76', INICIO, true)] }));
+    expect(p.estado).toBe('unknown');
+    expect(p.detalle).toContain('no se pudo leer entera');
+  });
+
   it('OTRA_PERSONA → ✗ con el documento enmascarado', () => {
     const p = ultimo(cita(), his({ cupos: [cupoHis([{ titular: 'OTRO', documentoTercero: '•••3456' }])] }));
     expect(p.estado).toBe('fail');
@@ -394,6 +425,45 @@ describe('clasificarRastreoB + consulta en vivo', () => {
     expect(r.principal.fuente).toBe('HIS_EN_VIVO');
     expect(r.principal.evidencia.join(' ')).toContain('no hay ninguna cita en ese cupo');
     expect(r.veredictos.map((v) => v.codigo)).not.toContain(VEREDICTO.SIN_EVENTO_DEL_HIS);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // El hospital guarda parte de las horas en un formato que no se puede leer
+  // (MAPEO_HIS.md §2.1: 5,7 % de las citas; la medición del 2026-09-20 se topó
+  // con una). La consulta por cupo compara la hora EXACTA, así que esas filas no
+  // coinciden y el cupo llega vacío. Decir entonces «el HIS no tiene nada» es un
+  // falso negativo: justo el diagnóstico que esta pantalla existe para evitar.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('🚨 la respuesta del HIS llegó incompleta', () => {
+    const incompleto = () => his({ cupos: [cupoHis([], '76', INICIO, true)] });
+
+    it('NO se afirma que la cita no esté: se dice que no se pudo leer', () => {
+      const r = clasificarRastreoB(evB({ his: incompleto() }));
+
+      expect(r.principal.codigo).toBe(VEREDICTO.HORA_ILEGIBLE_EN_EL_HIS);
+      expect(r.veredictos.map((v) => v.codigo)).not.toContain(VEREDICTO.NO_ESTA_EN_EL_HIS);
+      expect(r.principal.fuente).toBe('HIS_EN_VIVO');
+      expect(r.principal.noSabemos.join(' ')).toContain('Si hay o no una cita en ese cupo');
+    });
+
+    it('manda al funcionario a mirarlo en el sistema del hospital', () => {
+      const r = clasificarRastreoB(evB({ his: incompleto() }));
+      expect(r.principal.accion).toContain('aplicación del hospital');
+    });
+
+    it('sigue sin acusar a nadie', () => {
+      expect(texto(clasificarRastreoB(evB({ his: incompleto() })))).not.toMatch(ACUSA);
+    });
+
+    it('con la respuesta COMPLETA, el veredicto de ausencia no cambia', () => {
+      const r = clasificarRastreoB(evB({ his: his({ cupos: [cupoHis([], '76', INICIO, false)] }) }));
+      expect(r.principal.codigo).toBe(VEREDICTO.NO_ESTA_EN_EL_HIS);
+    });
+
+    it('si el cupo SÍ trae filas legibles, el recorte no borra al ocupante', () => {
+      const r = clasificarRastreoB(evB({ his: his({ cupos: [cupoHis([{}], '76', INICIO, true)] }) }));
+      expect(r.veredictos.map((v) => v.codigo)).not.toContain(VEREDICTO.HORA_ILEGIBLE_EN_EL_HIS);
+    });
   });
 
   it('NADIE con pistas: el HIS sí tiene al paciente con ese médico en otra hora', () => {

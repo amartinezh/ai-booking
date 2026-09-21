@@ -228,8 +228,20 @@ export interface EvidenciaHis {
     citas: CitaHisVista[];
     truncado: boolean;
   } | null;
-  /** Por cada cupo consultado, lo que el HIS tiene ahí (vacío = nadie). */
-  cupos: { doctorExternalKey: string; startIso: string; filas: CitaHisVista[] }[];
+  /**
+   * Por cada cupo consultado, lo que el HIS tiene ahí.
+   *
+   * ⚠️ `filas` vacío NO significa siempre "no hay nadie": si `incompleto` es `true`,
+   * el hospital devolvió algo que no se pudo leer —típicamente una cita cuya hora
+   * guardó en un formato que no cumple `'YYYY/MM/DD HH:MM'` (`MAPEO_HIS.md` §2.1)— y
+   * entonces la ausencia NO se puede afirmar. Medido en el hospital el 2026-09-20.
+   */
+  cupos: {
+    doctorExternalKey: string;
+    startIso: string;
+    filas: CitaHisVista[];
+    incompleto: boolean;
+  }[];
 }
 
 /** Quién ocupa un cupo en el HIS. */
@@ -331,6 +343,13 @@ export type ResultadoConsultaHis =
         startIso: string;
         filas: CitaHisVista[];
       }[];
+      /**
+       * El agente no pudo entregar entera la respuesta de esta consulta: recortó por
+       * el tope de filas, o había filas ilegibles (una hora que no cumple el formato).
+       * ANTES se descartaba aquí, y una cita con la hora ilegible se volvía un
+       * "el HIS no tiene nada en ese cupo" — un falso negativo.
+       */
+      truncado: boolean;
     };
 
 const ESTADOS_HIS: ReadonlySet<string> = new Set([
@@ -464,6 +483,7 @@ export function resolverRespuestaHis(
           .slice(0, MAX_FILAS_POR_CUPO)
           .map((f) => aCitaHisVista(f, comparar)),
       })),
+      truncado: truncadaPorElAgente,
     };
   }
 
@@ -520,7 +540,7 @@ export function leerResultadoGuardado(json: unknown): ResultadoConsultaHis | nul
         startIso: c.startIso as string,
         filas: lista(c.filas),
       }));
-    return { kind: 'BY_SLOT', cupos };
+    return { kind: 'BY_SLOT', cupos, truncado: json.truncado === true };
   }
   return null;
 }
@@ -544,6 +564,10 @@ export function combinarEvidenciaHis(
           truncado: porDoc.truncado,
         }
       : null,
-    cupos: resultados.flatMap((r) => (r.kind === 'BY_SLOT' ? r.cupos : [])),
+    cupos: resultados.flatMap((r) =>
+      r.kind === 'BY_SLOT'
+        ? r.cupos.map((c) => ({ ...c, incompleto: r.truncado }))
+        : [],
+    ),
   };
 }

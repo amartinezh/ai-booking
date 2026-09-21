@@ -84,25 +84,35 @@ describe('AppointmentReminderController', () => {
     return { service, c: new AppointmentReminderController(service as never) };
   };
 
-  it('dispara el recordatorio manual de esa cita y esa clínica', async () => {
+  /** El actor sale del token: es lo que acota a un agente o a un médico (§12 #10b). */
+  const USUARIO = { userId: 'u-1', email: 'x@y.co', role: 'BOOKING_AGENT' };
+
+  it('dispara el recordatorio manual de esa cita, esa clínica y ESE actor', async () => {
     const { service, c } = build();
-    await c.sendManualReminder(ORG, 'apt-1');
-    expect(service.sendManualForAppointment).toHaveBeenCalledWith('apt-1', ORG);
+    await c.sendManualReminder(ORG, USUARIO as never, 'apt-1');
+    expect(service.sendManualForAppointment).toHaveBeenCalledWith(
+      'apt-1',
+      ORG,
+      {
+        userId: 'u-1',
+        role: 'BOOKING_AGENT',
+      },
+    );
   });
 
   it('sin organización en el token → 403, sin tocar el servicio', async () => {
     const { service, c } = build();
-    await expect(c.sendManualReminder('', 'apt-1')).rejects.toThrow(
-      ForbiddenException,
-    );
+    await expect(
+      c.sendManualReminder('', USUARIO as never, 'apt-1'),
+    ).rejects.toThrow(ForbiddenException);
     expect(service.sendManualForAppointment).not.toHaveBeenCalled();
   });
 
   it('sin id de cita → 400', async () => {
     const { c } = build();
-    await expect(c.sendManualReminder(ORG, '')).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(
+      c.sendManualReminder(ORG, USUARIO as never, ''),
+    ).rejects.toThrow(BadRequestException);
   });
 });
 

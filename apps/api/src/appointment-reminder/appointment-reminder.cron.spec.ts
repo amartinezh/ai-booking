@@ -223,6 +223,9 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         })),
         update: jest.fn(async () => ({})),
       },
+      // Perfiles: el servicio los lee para acotar a un agente o a un médico (§12 #10b).
+      agentProfile: { findUnique: jest.fn(async () => null as unknown) },
+      doctorProfile: { findUnique: jest.fn(async () => null as unknown) },
     };
     const interactionLog = { logReminderSent: jest.fn(async () => {}) };
     const systemLog = {
@@ -475,11 +478,13 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
   });
 
   describe('sendManualForAppointment (botón del dashboard)', () => {
+    /** Un ORG_ADMIN no queda acotado: es el actor de los ejemplos que ya existían. */
+    const ADMIN = { userId: 'u-admin', role: 'ORG_ADMIN' };
     it('envía y devuelve el reminderSentAt ya actualizado', async () => {
       const { service, prisma, systemLog } = build();
       prisma.appointment.findFirst.mockResolvedValue(cita());
 
-      const r = await service.sendManualForAppointment('apt-1', ORG);
+      const r = await service.sendManualForAppointment('apt-1', ORG, ADMIN);
 
       expect(r.success).toBe(true);
       expect(r.outcome).toBe('sent');
@@ -489,9 +494,123 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       );
     });
 
+    // ══════════════════════════════════════════════════════════════════
+    // §12 #10b: este endpoint aplicaba solo ROL y TENANT. Un agente acotado a
+    // una EPS o a un médico podía mandarle un WhatsApp al paciente de cualquier
+    // otro llamándolo directo con su token, saltándose la pantalla. La regla es
+    // la misma que aplica la web (`citaFueraDeAlcance`, en @agenia/shared).
+    // ══════════════════════════════════════════════════════════════════
+    describe('🎯 el alcance del actor, también aquí', () => {
+      const conCita = () => {
+        const ctx = build();
+        ctx.prisma.appointment.findFirst.mockResolvedValue(
+          cita({
+            epsId: 'eps-1',
+            scheduleSlot: {
+              startTime: new Date('2026-09-01T14:00:00.000Z'),
+              doctorId: 'doc-1',
+              doctor: { fullName: 'Dr. Ruiz' },
+              service: { name: 'Cardiología' },
+            },
+          }),
+        );
+        return ctx;
+      };
+
+      it('un agente acotado a OTRA EPS no manda el recordatorio', async () => {
+        const { service, prisma, chatbot } = conCita();
+        prisma.agentProfile.findUnique.mockResolvedValue({
+          epsId: 'eps-9',
+          doctorId: null,
+        });
+
+        const r = await service.sendManualForAppointment('apt-1', ORG, {
+          userId: 'u-1',
+          role: 'BOOKING_AGENT',
+        });
+
+        expect(r).toMatchObject({ success: false, outcome: 'skipped' });
+        expect(r.error).toContain('fuera de su alcance');
+        expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+      });
+
+      it('un agente acotado a OTRO médico tampoco', async () => {
+        const { service, prisma, chatbot } = conCita();
+        prisma.agentProfile.findUnique.mockResolvedValue({
+          epsId: null,
+          doctorId: 'doc-9',
+        });
+
+        const r = await service.sendManualForAppointment('apt-1', ORG, {
+          userId: 'u-1',
+          role: 'BOOKING_AGENT',
+        });
+
+        expect(r.success).toBe(false);
+        expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+      });
+
+      it('dentro de su alcance, sí', async () => {
+        const { service, prisma } = conCita();
+        prisma.agentProfile.findUnique.mockResolvedValue({
+          epsId: 'eps-1',
+          doctorId: 'doc-1',
+        });
+
+        const r = await service.sendManualForAppointment('apt-1', ORG, {
+          userId: 'u-1',
+          role: 'BOOKING_AGENT',
+        });
+
+        expect(r.success).toBe(true);
+      });
+
+      it('un DOCTOR queda acotado a SU agenda', async () => {
+        const { service, prisma, chatbot } = conCita();
+        prisma.doctorProfile.findUnique.mockResolvedValue({ id: 'doc-9' });
+
+        const ajena = await service.sendManualForAppointment('apt-1', ORG, {
+          userId: 'u-2',
+          role: 'DOCTOR',
+        });
+        expect(ajena.success).toBe(false);
+        expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+
+        prisma.doctorProfile.findUnique.mockResolvedValue({ id: 'doc-1' });
+        const suya = await service.sendManualForAppointment('apt-1', ORG, {
+          userId: 'u-2',
+          role: 'DOCTOR',
+        });
+        expect(suya.success).toBe(true);
+      });
+
+      it('un ORG_ADMIN no queda acotado y ni siquiera lee perfiles', async () => {
+        const { service, prisma } = conCita();
+
+        const r = await service.sendManualForAppointment('apt-1', ORG, ADMIN);
+
+        expect(r.success).toBe(true);
+        expect(prisma.agentProfile.findUnique).not.toHaveBeenCalled();
+        expect(prisma.doctorProfile.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('💥 si el perfil no se puede leer, NO se envía (falla cerrado)', async () => {
+        const { service, prisma, chatbot } = conCita();
+        prisma.agentProfile.findUnique.mockRejectedValue(new Error('db caída'));
+
+        const r = await service.sendManualForAppointment('apt-1', ORG, {
+          userId: 'u-1',
+          role: 'BOOKING_AGENT',
+        });
+
+        expect(r.success).toBe(false);
+        expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+      });
+    });
+
     it('🏢 la cita se busca acotada a la clínica que la pide', async () => {
       const { service, prisma } = build();
-      await service.sendManualForAppointment('apt-1', ORG);
+      await service.sendManualForAppointment('apt-1', ORG, ADMIN);
 
       expect(prisma.appointment.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -503,7 +622,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
     it('una cita de otra clínica (o inexistente) se rechaza sin enviar nada', async () => {
       const { service, chatbot } = build();
 
-      const r = await service.sendManualForAppointment('apt-ajena', ORG);
+      const r = await service.sendManualForAppointment('apt-ajena', ORG, ADMIN);
 
       expect(r).toMatchObject({ success: false, outcome: 'skipped' });
       expect(r.error).toContain('no pertenece');
@@ -516,7 +635,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         const { service, prisma, chatbot } = build();
         prisma.appointment.findFirst.mockResolvedValue(cita({ status }));
 
-        const r = await service.sendManualForAppointment('apt-1', ORG);
+        const r = await service.sendManualForAppointment('apt-1', ORG, ADMIN);
 
         expect(r.success).toBe(false);
         expect(r.error).toContain(status);
@@ -537,7 +656,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         }),
       );
 
-      const r = await service.sendManualForAppointment('apt-1', ORG);
+      const r = await service.sendManualForAppointment('apt-1', ORG, ADMIN);
 
       expect(r).toMatchObject({ success: false, outcome: 'skipped' });
       expect(r.error).toContain('WhatsApp');
@@ -549,7 +668,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       });
       prisma.appointment.findFirst.mockResolvedValue(cita());
 
-      const r = await service.sendManualForAppointment('apt-1', ORG);
+      const r = await service.sendManualForAppointment('apt-1', ORG, ADMIN);
 
       expect(r).toMatchObject({ success: false, outcome: 'failed' });
       expect(r.error).toContain('credenciales');
@@ -561,7 +680,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         cita({ reminderSentAt: new Date('2026-08-30T00:00:00Z') }),
       );
 
-      const r = await service.sendManualForAppointment('apt-1', ORG);
+      const r = await service.sendManualForAppointment('apt-1', ORG, ADMIN);
 
       expect(r.success).toBe(true);
       expect(prisma.appointment.update).toHaveBeenCalled();

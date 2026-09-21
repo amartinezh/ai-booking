@@ -545,7 +545,7 @@ describe('vistaDeConsulta — lo que se le muestra a quien atiende', () => {
       ],
       truncado: true,
     },
-    cupos: [{ doctorExternalKey: '76', startIso: enDias(2), filas: [] }],
+    cupos: [{ doctorExternalKey: '76', startIso: enDias(2), filas: [], incompleto: false }],
   };
 
   it('el médico va por su nombre, no por su clave; conserva el recorte', () => {
@@ -554,6 +554,25 @@ describe('vistaDeConsulta — lo que se le muestra a quien atiende', () => {
     expect(v.porDocumento?.citas).toEqual([{ startIso: enDias(2), medico: 'Dra. 76', estado: 'SCHEDULED' }]);
     expect(v.porDocumento?.truncado).toBe(true);
     expect(v.cuposConsultados).toBe(1);
+  });
+
+  // El hospital guarda parte de las horas en un formato ilegible: entonces el cupo
+  // llega vacío sin que eso signifique que no haya cita. La pantalla tiene que poder
+  // decirlo, así que la vista lleva la cuenta.
+  it('🚨 cuenta los cupos cuya respuesta no se pudo leer entera', () => {
+    const conIncompletos = {
+      ...evidencia,
+      cupos: [
+        { doctorExternalKey: '76', startIso: enDias(2), filas: [], incompleto: true },
+        { doctorExternalKey: '77', startIso: enDias(3), filas: [], incompleto: false },
+      ],
+    };
+
+    const v = vistaDeConsulta(conIncompletos, (c) => c);
+
+    expect(v.cuposConsultados).toBe(2);
+    expect(v.cuposIncompletos).toBe(1);
+    expect(vistaDeConsulta(evidencia, (c) => c).cuposIncompletos).toBe(0);
   });
 
   it('🔒 nunca lleva un documento', () => {

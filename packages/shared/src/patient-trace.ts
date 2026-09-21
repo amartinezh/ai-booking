@@ -59,6 +59,7 @@ export const VEREDICTO = {
   ENTREGADA_PERO_AUSENTE: 'ENTREGADA_PERO_AUSENTE',
   OTRA_IDENTIDAD: 'OTRA_IDENTIDAD',
   NO_ESTA_EN_EL_HIS: 'NO_ESTA_EN_EL_HIS',
+  HORA_ILEGIBLE_EN_EL_HIS: 'HORA_ILEGIBLE_EN_EL_HIS',
   // Escenario B — "la agendaron en el HIS y no sale en WhatsApp"
   MEDICO_NO_ESPEJADO: 'MEDICO_NO_ESPEJADO',
   SIN_CUPO: 'SIN_CUPO',
@@ -160,6 +161,10 @@ export const TEXTO_VEREDICTO: Record<
     titulo: 'El HIS no tiene ninguna cita en ese cupo',
     severidad: 'warn',
   },
+  HORA_ILEGIBLE_EN_EL_HIS: {
+    titulo: 'El hospital respondió algo que no se pudo leer',
+    severidad: 'warn',
+  },
   MEDICO_NO_ESPEJADO: {
     titulo: 'Ese médico no está en el espejo de AgenIA',
     severidad: 'info',
@@ -194,6 +199,8 @@ const PRIORIDAD: Record<CodigoVeredicto, number> = {
   OTRA_IDENTIDAD: 2,
   SIN_CUPO: 2,
   NO_ESTA_EN_EL_HIS: 3,
+  // Va antes que «no está»: es MÁS específico y, sobre todo, lo contradice.
+  HORA_ILEGIBLE_EN_EL_HIS: 2,
   CITA_DEL_HIS_NO_ESPEJADA: 3,
   SIN_EVENTO_DEL_HIS: 4,
   ENTREGADA_SIN_VERIFICAR: 5,
@@ -434,6 +441,11 @@ function veredicto(
 export type PresenciaHis =
   | { tipo: 'PRESENTE'; estado: EstadoCitaHis; consultadoIso: string }
   | { tipo: 'AUSENTE'; consultadoIso: string }
+  /**
+   * El HIS contestó por ese cupo, pero su respuesta no se pudo leer entera (una hora
+   * en formato ilegible, o un recorte). NO es ausencia: es no saber.
+   */
+  | { tipo: 'ILEGIBLE'; consultadoIso: string }
   | {
       tipo: 'OTRA_PERSONA';
       estado: EstadoCitaHis;
@@ -457,7 +469,13 @@ function presenciaDelCupo(
   if (!cupo) return null;
   const consultadoIso = his.consultadoIso;
   const o = ocupanteDelCupo(cupo.filas);
-  if (o.tipo === 'NADIE') return { tipo: 'AUSENTE', consultadoIso };
+  if (o.tipo === 'NADIE') {
+    // Sin filas legibles Y con la respuesta incompleta, «no hay nada» sería mentira:
+    // pudo venir una cita cuya hora el hospital guardó de forma ilegible.
+    return cupo.incompleto
+      ? { tipo: 'ILEGIBLE', consultadoIso }
+      : { tipo: 'AUSENTE', consultadoIso };
+  }
   if (o.tipo === 'PACIENTE') {
     return { tipo: 'PRESENTE', estado: o.estado, consultadoIso };
   }
@@ -861,6 +879,13 @@ function veredictoDeCita(
         : 'Confirmar en ventanilla con quién se agendó esa hora. Si fue un error de digitación, corregir el documento en el HIS; si esa persona no es el paciente, reubicarlo.',
       citaId: c.id,
     });
+  }
+  // El HIS contestó por el cupo pero su respuesta no se pudo leer: NO es ausencia.
+  // Se deja dicho en la evidencia y la cita se queda «sin verificar», que es la verdad.
+  if (presencia?.tipo === 'ILEGIBLE') {
+    evidencia.push(
+      `Consulta en vivo al HIS (${horaHis}): la respuesta sobre ese cupo llegó incompleta y no se pudo verificar si la cita está allá.`,
+    );
   }
   const lineasAusente =
     presencia?.tipo === 'AUSENTE'
@@ -1309,6 +1334,24 @@ function aplicarHisB(
     return [nuevo, ...veredictos];
   }
 
+  if (presencia.tipo === 'ILEGIBLE') {
+    const nuevo = veredicto('HORA_ILEGIBLE_EN_EL_HIS', {
+      fuente: 'HIS_EN_VIVO',
+      resumen:
+        'El hospital contestó por ese cupo, pero su respuesta no se pudo leer entera: puede haber una cita ahí. NO se puede afirmar que no exista.',
+      evidencia: [
+        `${cupo}.`,
+        `Consulta en vivo al HIS (${hora}): la respuesta llegó incompleta (una hora guardada en un formato que AgenIA no puede interpretar, o un recorte por tope de filas).`,
+      ],
+      noSabemos: [
+        'Si hay o no una cita en ese cupo. La consulta compara la hora exacta, y una hora que el hospital guardó en otro formato no coincide.',
+      ],
+      accion:
+        'Mirar ese cupo directamente en la aplicación del hospital antes de concluir nada. Si se repite, avisar a soporte: es un dato del HIS que AgenIA no puede leer.',
+    });
+    return [nuevo, ...veredictos];
+  }
+
   // PRESENTE: el HIS la tiene a nombre del paciente.
   const lineaHis = `Consulta en vivo al HIS (${hora}): el cupo figura a nombre del paciente, ${ESTADO_HIS_TEXTO[presencia.estado]}.`;
   return veredictos.map((v) => {
@@ -1614,6 +1657,14 @@ export function construirLineaDeVida(
       'fail',
       presencia.consultadoIso,
       'Consultado en vivo: el HIS no tiene esa cita.',
+    );
+  } else if (presencia.tipo === 'ILEGIBLE') {
+    paso(
+      'presente_en_el_his',
+      'Presente en el HIS',
+      'unknown',
+      presencia.consultadoIso,
+      'Consultado en vivo: el hospital contestó, pero su respuesta no se pudo leer entera.',
     );
   } else {
     paso(

@@ -86,10 +86,10 @@ export async function sendManualReminder(appointmentId: string): Promise<{
 
     try {
         // 🔐 El alcance, antes de mandar un WhatsApp al paciente de otro (§12 #10).
-        // ⚠️ Esta comprobación vive aquí, en el único punto por el que la pantalla
-        // llega. El endpoint `POST /appointments/:id/send-manual-reminder` de la API
-        // sigue aplicando solo rol y tenant: quien tenga un token válido puede
-        // llamarlo directo y saltarse el alcance (§12 #10b del plan).
+        // La API aplica esta MISMA regla en el endpoint (§12 #10b), con la función
+        // compartida `citaFueraDeAlcance`: la de aquí ahorra el viaje y da un mensaje
+        // claro; la de allá es la frontera de verdad, porque el endpoint se puede
+        // llamar directo con un token.
         const alcanceRecordatorio = await alcanceDeLaSesion(prisma, session);
         if (alcanceRecordatorio) {
             const whereCita: { id: string; organizationId?: string } = { id: appointmentId };

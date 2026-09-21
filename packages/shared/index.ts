@@ -173,6 +173,8 @@ export type {
   HisLookupResultOutput,
 } from './src/mirror-protocol';
 
+export { citaFueraDeAlcance } from './src/alcance-agente';
+export type { AlcanceAgente } from './src/alcance-agente';
 export { derivarSync } from './src/sync-state';
 export type { FilaOutbox } from './src/sync-state';
 

@@ -12,6 +12,10 @@ import { AppointmentReminderCronService } from './appointment-reminder.cron';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';
+import {
+  CurrentUser,
+  type JwtUserPayload,
+} from '../common/current-user.decorator';
 
 /**
  * Endpoints HTTP del módulo de recordatorios.
@@ -42,10 +46,16 @@ export class AppointmentReminderController {
   @Roles('BOOKING_AGENT', 'DOCTOR', 'ORG_ADMIN')
   async sendManualReminder(
     @CurrentTenant() organizationId: string,
+    @CurrentUser() user: JwtUserPayload,
     @Param('id') id: string,
   ) {
     if (!organizationId) throw new ForbiddenException('Sin organización.');
     if (!id) throw new BadRequestException('Falta el id de la cita.');
-    return this.reminderService.sendManualForAppointment(id, organizationId);
+    // El actor sale del TOKEN, nunca del body: es lo que acota a un agente o a un
+    // médico a las citas que su panel le lista (§12 #10b).
+    return this.reminderService.sendManualForAppointment(id, organizationId, {
+      userId: user.userId,
+      role: user.role,
+    });
   }
 }

@@ -113,10 +113,13 @@ Para el resto del espejo eso significa *saltarse* una fila. **Para la consulta e
 
 Riesgo por escenario: en el **A** (la cita la creó AgenIA) no aplica, porque esa fila la escribió nuestro agente con el escritor estricto. En el **B** —«la agendaron en el HIS y no sale en WhatsApp», justo el que la consulta en vivo venía a completar— **sí aplica**, porque esa fila la escribió la aplicación del hospital.
 
-**Antes de encender hay que dimensionarlo**: la PARTE G del script cuenta cuántas citas de la ventana futura tienen la hora ilegible, con qué formas y en qué médicos se concentran. Según el resultado:
+✅ **Corregido el 2026-09-21 lo que no dependía de medir nada.** El recorte que reporta el agente se perdía en la consulta por cupo (`resolverRespuestaHis` lo descartaba); ahora viaja hasta el veredicto, y con una respuesta incompleta:
 
-- **Si son muy pocas** → basta con mostrar `truncated` en la pantalla y no afirmar «no está en el HIS» cuando la respuesta pudo venir incompleta.
-- **Si son apreciables** → la consulta por cupo debe buscar también las variantes (`FE_HORA_CIT IN (@hora, @variante…)`, que sigue siendo un seek). Ojo: encontrar la fila no alcanza para saber **a qué hora** es la cita — `'2026/09/18 2'` no dice si son las 02:00 o las 14:00 —, así que el veredicto honesto sería «el hospital tiene una cita en ese cupo con una hora que su sistema guardó en un formato que no se puede interpretar», no una hora inventada.
+- **no** se concluye `NO_ESTA_EN_EL_HIS`, sino el veredicto nuevo `HORA_ILEGIBLE_EN_EL_HIS`, que dice qué no se sabe y manda a mirar el cupo en la aplicación del hospital;
+- en el escenario A no se acusa una deriva entre los dos sistemas: la cita queda «sin verificar», diciendo por qué;
+- la pantalla avisa en ámbar que **que ahí no aparezca una cita no significa que el hospital no la tenga**.
+
+⏳ **Lo que sigue dependiendo de la PARTE G:** si las horas ilegibles resultan apreciables en la ventana que la consulta usa, conviene que la consulta por cupo busque también las variantes (`FE_HORA_CIT IN (@hora, @variante…)`, que sigue siendo un seek). Ojo: encontrar la fila no alcanza para saber **a qué hora** es la cita — `'2026/09/18 2'` no dice si son las 02:00 o las 14:00 —, así que el veredicto seguiría sin inventar la hora.
 
 ## El script de medición (cómo se obtuvieron esos números)
 

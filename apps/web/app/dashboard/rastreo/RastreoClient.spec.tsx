@@ -646,6 +646,7 @@ describe('RastreoClient — consulta en vivo al HIS', () => {
                 truncado: false,
             },
             cuposConsultados: 1,
+        cuposIncompletos: 0,
         },
     };
     const TIEMPO_PRUEBA = 15_000;

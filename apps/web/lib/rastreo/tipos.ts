@@ -84,6 +84,12 @@ export interface ConsultaHisVista {
   } | null;
   /** Cuántos cupos concretos se consultaron. */
   cuposConsultados: number;
+  /**
+   * De esos cupos, en cuántos el hospital contestó algo que NO se pudo leer entero
+   * (una hora en formato ilegible, o un recorte). En esos, «no hay nada» no se puede
+   * afirmar, y la pantalla tiene que decirlo.
+   */
+  cuposIncompletos: number;
 }
 
 /** Lo que la pantalla necesita para ofrecer y mostrar la consulta en vivo. */

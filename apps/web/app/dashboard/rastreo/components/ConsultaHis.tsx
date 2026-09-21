@@ -152,6 +152,12 @@ export default function ConsultaHis({
                             )}
                         </div>
                     )}
+                    {consulta.cuposIncompletos > 0 && (
+                        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                            El hospital contestó, pero su respuesta sobre {consulta.cuposIncompletos === 1 ? 'un cupo' : `${consulta.cuposIncompletos} cupos`} no se pudo leer entera
+                            (suele ser una hora guardada en un formato que AgenIA no interpreta). <strong>Que aquí no aparezca una cita no significa que el hospital no la tenga</strong>: verifícalo en la aplicación del hospital.
+                        </p>
+                    )}
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">
                         Esto no se guarda: al salir de esta pantalla hay que volver a consultar. La consulta queda anotada en la bitácora.
                     </p>
