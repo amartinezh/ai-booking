@@ -218,6 +218,8 @@ describe('WhatsappTemplateService', () => {
       ['WAITLIST_SLOT_OFFER', 'WAITLIST_OFFER'],
       ['APPOINTMENT_CANCELLED_MASS', 'MASS_NOTICE'],
       ['APPOINTMENT_REMINDER_MASS', 'MASS_NOTICE'],
+      // El aviso al agendador (Fase 3 del rastreo) va al PERSONAL, no a un paciente.
+      ['SYNC_EXCEPTION_ALERT', 'SYSTEM_NOTICE'],
     ])(
       'la plantilla %s se registra como %s',
       async (kindPlantilla, esperado) => {

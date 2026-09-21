@@ -281,10 +281,10 @@ Implementada, con tests y verificada contra un Postgres 15 desechable (BD en el 
 **Fase 2 — Consulta en vivo al HIS (§7).** ✅ **Implementada el 2026-09-20; ⏳ falta la medición en el laboratorio del hospital** (ver «Estado de la Fase 2»).
 *Aceptación:* probada primero en el laboratorio del hospital con el costo de la consulta medido; interruptor apagado por defecto; prueba con el agente caído (falla rápido); B completo; `ENTREGADA_PERO_AUSENTE` y `OTRA_IDENTIDAD` operativos.
 
-**Fase 3 — Vigilante y bandeja** (§10, #2 y #3).
+**Fase 3 — Vigilante y bandeja** (§10, #2 y #3). ✅ **Implementada el 2026-09-20; ⏳ falta configurar el agendador y la plantilla de Meta en cada clínica** (ver «Estado de la Fase 3»).
 *Aceptación:* una cita de prueba retenida más allá del umbral genera alerta al agendador antes de la hora de la cita; la bandeja la ve BOOKING_AGENT.
 
-> **Al cerrar la Fase 3 se retoma §11.**
+> **Al cerrar la Fase 3 se retoma §11.** La Fase 3 está cerrada en código: §11 (la causa raíz del escenario 2) es lo siguiente por decidir.
 
 ### Estado de la Fase 1 (2026-09-20)
 
@@ -434,6 +434,74 @@ Implementada y verificada. **Sin commit.** Lleva **una migración aditiva** (`20
 
 **Pendiente para cerrar la Fase 2:** (1) medir en el laboratorio y llenar la tabla de `CONSULTA_EN_VIVO.md`; (2) ajustar la ventana o dejarla solo por cupo según el resultado; (3) desplegar en el orden migración → API → agente → web y encender por clínica.
 
+### Estado de la Fase 3 (2026-09-20)
+
+Implementada y verificada. **Sin commit.** Lleva **una migración aditiva** (`20260922100000_rastreo_paciente_fase3_bandeja_excepciones`): las tablas `SyncException` y `SyncExceptionLog` y el valor `SYNC_EXCEPTION_ALERT` de `WhatsappTemplateKind`. No toca el agente ni el protocolo. **Los avisos por WhatsApp no salen solos**: falta, en cada clínica, el número del agendador y la plantilla aprobada por Meta (ver «Para que el aviso salga»); mientras tanto la bandeja funciona y lo dice.
+
+| Pieza | Dónde |
+|---|---|
+| Estado del envío de una cita (`derivarSync`), movido de la web para que vigilante y pantalla clasifiquen igual | `packages/shared/src/sync-state.ts` |
+| Reglas puras: qué es una retención, gravedad por cercanía, identidad de una excepción (`claveExcepcion`), cuándo avisar, máquina de estados de la bandeja, variables de la plantilla | `packages/shared/src/sync-watch.ts` |
+| Tablas y migración | `packages/database/prisma/schema.prisma` + la migración |
+| Ciclo de vida en la base: abrir, actualizar, escalar, reabrir, cerrar solo, reclamar el aviso (compare-and-set) | `apps/api/src/mirror/mirror-exceptions.service.ts` |
+| El vigilante (cron cada 2 min): cola del envío, dead-letters, auditoría de `ERROR`/`CONFLICT`, y la deriva de la reconciliación | `apps/api/src/mirror/mirror-watchdog.service.ts`; la reconciliación le pasa su `missingInHis` (`mirror-reconciliation.service.ts`) |
+| El aviso al agendador por plantilla de WhatsApp | `apps/api/src/mirror/mirror-alert.service.ts` |
+| Lectura, alcance, acciones y avisos de la bandeja | `apps/web/lib/bandeja/{acceso,vista,servicio,filtros,pendientes}.ts`, `app/actions/bandeja.ts` |
+| Pantalla `/dashboard/bandeja`, opción del menú con la cifra de pendientes | `apps/web/app/dashboard/bandeja/`, `lib/menus.ts`, `layout.tsx`, `QuickAccessGrid.tsx` |
+
+**Cómo funciona.** Cada 2 minutos, por cada clínica con el espejo encendido, el vigilante:
+
+1. Mira los eventos de AgenIA → HIS sin entregar de los últimos 14 días (solo si el envío no está pausado a propósito con `pushEnabled=false`). Una cita **vigente, nacida en AgenIA y todavía futura** cuyo envío lleva **10 minutos o más** sin llegar (la misma cifra que la pantalla, `COLA_ATASCADA_MIN`) abre una excepción `CITA_NO_ENTREGADA`; un evento en dead-letter la abre **de inmediato**, sin esperar. Un dead-letter que ninguna cita explica abre `EVENTO_RENDIDO`.
+2. Agrupa los `ERROR` y `CONFLICT` de la auditoría de las últimas 24 h (`ERROR_SYNC`, `CONFLICTO_SYNC`), con el número de veces.
+3. Recibe de la reconciliación las citas que el hospital no tiene (`DERIVA_EN_HIS`): hasta ahora se devolvían y no se guardaban.
+4. Cierra solo lo que ya no se cumple (llegó, se canceló, volvió a la normalidad, no se repite hace 3 días) y **reabre** lo que vuelve a ocurrir.
+5. Manda **un solo WhatsApp** al agendador con el resumen (cuántas y la más próxima), solo de lo que nadie ha tomado, y otra vez únicamente si una cita **se acercó** (gravedad más alta).
+
+La bandeja las lista por urgencia (gravedad, y dentro de ella la cita más próxima) con `Tomar → Resolver / Descartar / Soltar / Reabrir`. **Cerrar exige una nota** (la constancia); cada cambio deja una línea de historial con quién y cuándo, en la misma transacción.
+
+**Decisiones tomadas por defecto (revisables).**
+
+- **Quién la trabaja:** ORG_ADMIN y BOOKING_AGENT. Un agente con EPS o médico asignados ve y trabaja **solo lo suyo**, con la regla de su lista de citas (`citaFueraDeAlcance`); una excepción sin EPS o sin médico conocidos queda **fuera** para él (falla cerrado). DOCTOR y SUPER_ADMIN no entran. Solo el ORG_ADMIN ve el detalle técnico (el último error del agente, que puede nombrar servidores del hospital), el correo de quien la tiene y configura los avisos; el resto ve un resumen armado desde datos estructurados.
+- **De quién es:** quien la toma es su dueño; otro agente no se la quita ni la cierra; el ORG_ADMIN puede reasignarla, soltarla o cerrarla. Lo cerrado **a mano es firme**: aunque el evento siga sin entregarse, no se reabre ni vuelve a avisar. Lo que cerró el **sistema** sí se reabre solo si el problema vuelve, y no se puede reabrir a mano (no serviría de nada).
+- **Una cita cuya hora ya pasó sin llegar se queda abierta**: no se cierra sola, porque nadie sabe si el paciente fue atendido. Es para un humano. No vuelve a avisar (el aviso es para *antes* de la hora).
+- **Gravedad:** la retención parte de MEDIA (ALTA si se rindió) y **sube** al acercarse la cita (menos de 24 h: ALTA; menos de 4 h: CRÍTICA); nunca baja sola.
+- **Aviso:** solo `CITA_NO_ENTREGADA` y `DERIVA_EN_HIS` avisan (lo demás es para revisar). **Sin datos del paciente**: ni nombre, ni documento, ni teléfono (el mensaje va a un teléfono personal y pasa por Meta); el detalle se ve en la bandeja, tras la sesión. Solo por **WhatsApp y por plantilla**: fuera de la ventana de 24 h de Meta un mensaje libre no sale, y el agendador casi nunca le ha escrito al número de la clínica.
+- **`conflictAlertsEnabled` pasa a ser el interruptor de todos los avisos** (su nombre viene de un diseño de conflictos de doble cupo, §5.1 del plan del espejo, que nunca se construyó). Ya venía en `true`. Apagado, la bandeja se llena igual: solo no se avisa.
+- **Nunca se reclama un aviso que no puede salir** (sin número, sin plantilla, avisos apagados): las filas no se tocan. Si el envío falla, la reclamación se devuelve y la vuelta siguiente reintenta. Con dos réplicas de la API corriendo el cron, cada aviso lo gana una sola (compare-and-set).
+- **La deriva no se guarda si la foto del hospital llegó vacía** (`inHis=0`): en un hospital vivo eso es una lectura fallida, y «faltan todas» inundaría la bandeja. Tope de 200 por vuelta; si se corta, no se cierra nada solo.
+- **La cifra del menú** cuenta las abiertas sin dueño con el alcance de quien mira. Se calcula al cargar el dashboard: entre una página y otra no se refresca sola (sí tras cada acción).
+
+**Para que el aviso salga (por clínica).**
+
+1. Crear en Meta la plantilla (categoría *Utilidad*, con **tres variables**) y esperar su aprobación. Texto sugerido:
+   > Aviso de AgenIA: {{1}} confirmadas por WhatsApp no han llegado al hospital. La más próxima: {{2}}. Causa probable: {{3}}. Revise la Bandeja de sincronización en AgenIA.
+   Variables: {{1}} «3 citas»; {{2}} «Dr(a). Ana Ruiz, lun, 22 sep, 03:00 p m»; {{3}} una frase corta (el agente no da señales / no alcanza el HIS / el envío está fallando o rechazándose).
+2. Registrarla en **Configuración → plantillas** como «Aviso al agendador (excepciones de sincronización)», con el nombre e idioma **exactos** de la aprobación.
+3. En la **Bandeja de sincronización → Configurar avisos** (ORG_ADMIN): el celular del agendador y activar los avisos. Queda constancia en la bitácora del espejo, con el número enmascarado.
+
+La bandeja muestra en verde «los avisos están activos» o en ámbar **por qué no salen** (espejo apagado, avisos apagados, falta el número, falta la plantilla). Un aviso que no sale en silencio es peor que uno que no existe.
+
+**Al desplegar:** el primer aviso puede resumir un atraso que ya existía (citas futuras con envíos rendidos desde antes). Es correcto —esas citas siguen sin estar en el hospital—, pero conviene avisar al agendador. Orden: migración → API → web.
+
+**Verificación (2026-09-20).**
+
+- Pruebas unitarias, todas en verde: shared 639, API 1.892 (497 en `mirror/` y `whatsapp-config/`), agente 528, web 850.
+- **Pruebas de mutación** sobre las defensas: 28/28 en las reglas puras compartidas, 53/53 en los tres servicios de la API, 148/148 en los servicios, la vista y los permisos de la bandeja (web) y 43/45 en la pantalla (los dos sobrevivientes son equivalentes: un `return null` que solo evita un contenedor vacío, y una comprobación redundante sobre un estado al que solo se llega con el permiso).
+- **Postgres 15 real:** la migración aplica y `prisma migrate diff` da **cero deriva**; **17 escenarios del vigilante** con viaje en el tiempo (umbral, dead-letter inmediato, escalada MEDIA→ALTA→CRÍTICA con un aviso por escalón, entrega y reapertura, cita cancelada, hora pasada, decisión humana firme, **dos réplicas a la vez con dos conexiones → una sola excepción y un solo aviso**, sin plantilla, sin número, envío fallido y reintento, aislamiento entre clínicas, envío pausado, auditoría agrupada y cerrada a los 3 días, deriva) y **9 de la web** (alcance del agente con perfil real, orden por urgencia con SQL real, **dos personas tomando la misma excepción a la vez**, ciclo completo con historial, «no encontrada» idéntico entre fuera de alcance / otra clínica / inexistente, **reversión real de la transacción si falla la constancia**, avisos, paginación y **lectura de lo que escribió el vigilante de la API**).
+- **Nest real:** la aplicación completa compila y resuelve los proveedores nuevos sin ciclos.
+- **HTTP de extremo a extremo** contra el `next build` real y la base real, con cookies JWT firmadas (~50 comprobaciones): redirecciones por rol, alcance del agente en la página y en la cifra del menú, paciente enmascarado en el HTML servido, detalle técnico ausente del HTML del agente, las tres acciones de servidor (sin sesión → 401, «Sin permisos.», fuera de alcance, ciclo completo, entradas basura sin 500).
+- **Un defecto encontrado por las pruebas de mutación y corregido:** `hayDuenio` se recibía y nunca se leía; ahora una excepción EN_REVISION sin dueño (dato imposible, pero no se deja trabada) puede tomarla cualquiera. Y una corrección de coherencia: al cerrarse sola una excepción, también suelta a su dueño.
+- Aceptación de §9: *una cita retenida más allá del umbral genera alerta al agendador antes de la hora de la cita; la bandeja la ve BOOKING_AGENT* → **cumplida con envío simulado** (escenarios 1, 4 y 5) y la bandeja vista por HTTP con BOOKING_AGENT.
+
+**Lo que NO está verificado.**
+
+- **El envío real por Meta.** Se probó con un servicio de plantillas que cumple el mismo contrato; nadie ha recibido todavía este WhatsApp. Necesita la plantilla aprobada de cada clínica. El error de Meta llega literal al log y a `ENVIO_FALLIDO`.
+- **El canal de correo.** `agendadorEmail` **no se usa**: la API no tiene transporte de correo. Decidir uno es otro trabajo (§12 #13).
+- **Cómo se ve en un navegador real.** Se verificó el HTML servido y los componentes con Testing Library; no hay revisión visual ni prueba de accesibilidad con lector de pantalla.
+- **La carga con muchas excepciones abiertas** (la lista trae hasta 500 activas para ordenarlas por urgencia; más allá, la pantalla lo dice).
+
+**Pendiente para cerrar la Fase 3:** (1) desplegar (migración → API → web); (2) por clínica, el número del agendador y la plantilla; (3) la prueba de aceptación real: con el envío del agente pausado a propósito en la clínica de prueba, una cita de prueba debe generar el WhatsApp al agendador antes de su hora.
+
 ---
 
 ## 10. Herramientas complementarias (backlog priorizado)
@@ -443,8 +511,8 @@ Salen de los mismos hallazgos. Esfuerzo: estimación gruesa (S/M/L).
 | # | Herramienta | Por qué | Esfuerzo |
 |---|---|---|---|
 | 1 | **Libro de mensajes WhatsApp** | Responde "¿le llegó?" en ambos escenarios y detecta fallos de Meta. *Entra en la Fase 0 (§8 #7).* | S–M |
-| 2 | **Vigilante "confirmada pero no en el HIS"** | Alerta a `agendadorWhatsapp` / `agendadorEmail` (ya existen en `HospitalMirrorConfig`) cuando una cita de WhatsApp pasa N minutos sin entregarse o cae en dead-letter. Avisa antes de que el paciente llegue. Convierte el runbook en un aviso proactivo | M |
-| 3 | **Bandeja de excepciones de sincronización** | Hoy `/dashboard/espejo` es solo de ORG_ADMIN. Reúne dead-letters, `ERROR`/`CONFLICT` y el `missingInHis` de la reconciliación (hoy se devuelve pero no se persiste), cada uno con dueño y estado | M |
+| 2 | ✅ **Vigilante "confirmada pero no en el HIS"** *(Fase 3; por WhatsApp — el correo no se hizo, §12 #13)* | Alerta a `agendadorWhatsapp` / `agendadorEmail` (ya existen en `HospitalMirrorConfig`) cuando una cita de WhatsApp pasa N minutos sin entregarse o cae en dead-letter. Avisa antes de que el paciente llegue. Convierte el runbook en un aviso proactivo | M |
+| 3 | ✅ **Bandeja de excepciones de sincronización** *(Fase 3)* | Hoy `/dashboard/espejo` es solo de ORG_ADMIN. Reúne dead-letters, `ERROR`/`CONFLICT` y el `missingInHis` de la reconciliación (hoy se devuelve pero no se persiste), cada uno con dueño y estado | M |
 | 4 | **Canario sintético** | Una cita de prueba de punta a punta cada hora sobre un médico de prueba; mide el p95 de confirmar → HIS. Detecta el escenario 1 de forma sistémica antes que los pacientes. Requiere acordar un médico de prueba con el hospital | M–L |
 | 5 | **`traceId` de punta a punta** y el agente del espejo como servicio del Monitor | Une conversación → cita → outbox → agente. El Monitor (`ServiceIncident`) hoy cubre Gemini, TTS y Meta pero no el agente | M |
 | 6 | **Corrección de identidad** | Fusionar duplicados y reasignar una cita a otra cédula, con vista previa y auditoría | M |
@@ -485,6 +553,10 @@ Opciones que se evaluarán entonces:
 10. **`updateAttendance` y el recordatorio manual (`POST /appointments/:id/send-manual-reminder`, en la API) tampoco aplican el alcance del agente**: un agente con EPS o médico asignados puede marcar la asistencia y mandar recordatorios de cualquier cita de la clínica. Mismo arreglo (`citaFueraDeAlcance`); pendiente de decidir.
 11. **Un DOCTOR puede cancelar —y marcar asistencia de— cualquier cita de la clínica** con `cancelAppointmentAndFreeSlot` y `updateAttendance`, aunque su panel solo le lista las suyas. Hay que decidir la regla: ¿solo las de su cupo?, ¿puede cubrir a un colega?
 12. **Las acciones del agendamiento (`createManualAppointmentAction`, `updateManualAppointmentAction`, `sendManualWhatsappAction`) solo comprueban que haya sesión con clínica**: ni el rol ni el alcance. La EPS y el médico vienen del formulario; el alcance del agente solo se aplica en la página que lista.
+13. **Canal de correo para el aviso al agendador.** `agendadorEmail` existe y no se usa: la API no tiene transporte de correo (SMTP o proveedor transaccional). Decidir uno, o dar por bueno solo el WhatsApp.
+14. **Qué pasa cuando el agendador no lee el aviso.** Hoy no hay reintento ni escalamiento a otra persona: se avisa una vez por gravedad. La bandeja y su cifra en el menú son el respaldo. Si en producción se ignora, evaluar un segundo destinatario o un recordatorio.
+15. **Cita cuya hora ya pasó sin llegar al hospital.** Se queda abierta hasta que alguien la resuelva o descarte (§9, Fase 3). Si se acumulan, decidir una regla de vencimiento (por ejemplo, cerrarlas a los N días con la nota «venció sin resolución»).
+16. **La cifra del menú no se refresca sola** entre páginas (sí tras cada acción). Si hace falta en vivo, un sondeo o un evento del servidor.
 
 ---
 
@@ -499,13 +571,17 @@ Opciones que se evaluarán entonces:
 | La vista B parece completa antes de la consulta en vivo | Sigue rotulada "Parcial: sin consulta en vivo al HIS" hasta que se hace la consulta; entonces dice a qué hora respondió el hospital (§9) |
 | El vigilante y la pantalla clasifican distinto | Un solo clasificador puro en `@agenia/shared` (§3.3) |
 | El acceso de BOOKING_AGENT al texto de conversaciones se amplía sin control | Solo el paciente consultado, dentro del expediente, con motivo registrado (§0, §6) |
+| El aviso no sale y nadie se entera | La bandeja dice en ámbar **por qué** no salen (falta número, plantilla, avisos apagados); nunca se reclama un aviso que no puede salir, y si el envío falla se reintenta |
+| Alertas en exceso que el agendador termina silenciando | Un solo mensaje por vuelta con el resumen, solo lo que nadie tomó, y otra vez únicamente si la cita se acercó |
+| El aviso filtra datos del paciente hacia un teléfono personal y hacia Meta | La plantilla lleva solo cantidad, médico, hora y causa probable; una prueba fija que ningún dato del paciente aparece en las variables |
+| Un agente acotado ve excepciones fuera de su alcance | La misma regla que su lista de citas, en la lectura **y** en cada acción; lo que no tiene EPS o médico conocidos queda fuera |
 
 ---
 
 ## 14. Relación con otros documentos
 
 - [`PLAN_ESPEJO_HOSPITAL.md`](PLAN_ESPEJO_HOSPITAL.md): §4.1 (la API no alcanza el HIS), §5.3 (pacientes no se precargan), §6 capa 5 (reconciliación).
-- `docs/drivers/<driverKey>/RUNBOOK.md`: las secciones "Hay citas que no llegaron al hospital" y "Los dos sistemas no coinciden" siguen siendo la guía de **resolución**. Esta pantalla automatiza sus primeros pasos de **diagnóstico**; no las reemplaza.
+- `docs/drivers/<driverKey>/RUNBOOK.md`: las secciones "Hay citas que no llegaron al hospital" y "Los dos sistemas no coinciden" siguen siendo la guía de **resolución**. Esta pantalla automatiza sus primeros pasos de **diagnóstico**; no las reemplaza. La sección «La Bandeja de sincronización y los avisos al agendador» del mismo runbook cubre lo que agregó la Fase 3.
 - [`MONITOR_SERVICIOS.md`](MONITOR_SERVICIOS.md): el modelo de incidentes que reutilizaría §10 #5.
 
 ---
@@ -520,4 +596,7 @@ Opciones que se evaluarán entonces:
 - La consulta al HIS replica el patrón de `NoticeRosterRequest` y una capacidad opt-in del driver; el motor genérico no conoce el SQL.
 - Motivo obligatorio y bitácora por consulta; enmascarado por defecto; el tenant sale siempre del token.
 - SUPER_ADMIN solo con organización elegida, en `/super-admin/rastreo`.
+- Una excepción se identifica por **el problema, no por la fila** (`claveExcepcion`): el vigilante la vuelve a encontrar en cada vuelta y actualiza la misma; un problema nuevo de la misma cita es otra excepción.
+- Lo cerrado a mano es firme; lo cerrado por el sistema se reabre solo si el problema vuelve. Cerrar exige nota; todo cambio de estado es un compare-and-set con su constancia en la misma transacción.
+- El aviso es un resumen sin datos del paciente, por plantilla, una vez por gravedad, y nunca se reclama si no puede salir.
 - La causa raíz del escenario 2 queda diferida al cierre de este plan (§11).

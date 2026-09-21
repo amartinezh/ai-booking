@@ -21,6 +21,8 @@ const TIPO_DE_MENSAJE: Record<WhatsappTemplateKind, WhatsappMessageKind> = {
   WAITLIST_SLOT_OFFER: 'WAITLIST_OFFER',
   APPOINTMENT_CANCELLED_MASS: 'MASS_NOTICE',
   APPOINTMENT_REMINDER_MASS: 'MASS_NOTICE',
+  // Aviso al personal (no a un paciente): el libro lo distingue de los envíos a pacientes.
+  SYNC_EXCEPTION_ALERT: 'SYSTEM_NOTICE',
 };
 
 /**

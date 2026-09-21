@@ -97,6 +97,64 @@ en AgenIA y el paciente la cree confirmada. Alguien tiene que llamarlo.
 
 ---
 
+## La Bandeja de sincronización y los avisos al agendador
+
+Desde la Fase 3 del rastreo (`docs/PLAN_RASTREO_PACIENTE.md`) no hace falta abrir el panel
+para enterarse: un vigilante revisa cada 2 minutos y **avisa por WhatsApp al agendador**
+cuando una cita confirmada por WhatsApp lleva **10 minutos o más** sin llegar al hospital
+(o un envío se rindió), antes de la hora de la cita. Cada problema queda como una
+excepción en **Bandeja de sincronización** (`/dashboard/bandeja`, para ORG_ADMIN y
+BOOKING_AGENT — este último solo ve lo de su EPS y su médico).
+
+**Qué hace quien recibe el aviso.**
+
+1. Abre la bandeja: las excepciones van por urgencia (la cita más cercana primero).
+2. **Tomar** la que va a atender (nadie más puede quitársela, salvo el administrador).
+3. Arreglar la causa como arriba («Hay citas que no llegaron al hospital»): *Reintentar* en
+   el panel del espejo, o llamar al paciente si el hospital ya vendió ese cupo.
+4. **Resolver** (o **Descartar** si no hacía falta) **con una nota** de qué se hizo: es la
+   constancia. Lo cerrado a mano no se reabre solo, aunque el evento siga sin entregarse.
+
+Lo que el sistema ve resuelto (llegó al hospital, se canceló) se cierra **solo** y queda
+«Se cerró sola»; si el problema vuelve, se reabre y **vuelve a avisar**.
+
+**Una cita cuya hora ya pasó sin llegar** se queda abierta: alguien tiene que mirar si el
+paciente fue atendido y cerrarla con su nota.
+
+**El aviso no llega.** La cabecera de la bandeja lo dice en ámbar y explica por qué:
+
+| Dice | Qué falta |
+|---|---|
+| «El espejo con el hospital está apagado» | `enabled = true` en `HospitalMirrorConfig` |
+| «Los avisos por WhatsApp están apagados» | Activarlos en *Configurar avisos* (ORG_ADMIN) |
+| «Falta el número de WhatsApp del agendador» | Escribirlo en *Configurar avisos* |
+| «Falta la plantilla «Aviso al agendador»…» | Aprobarla en Meta y registrarla en *Configuración → plantillas* con el nombre exacto |
+
+Sin plantilla el mensaje **no puede salir**: fuera de la ventana de 24 h de Meta un mensaje
+libre no llega, y el agendador casi nunca le escribió al número de la clínica. Si Meta
+rechaza el envío, el error queda en el log de la API (`[MirrorAlertService] Aviso al
+agendador NO enviado…`) y se reintenta en la vuelta siguiente.
+
+**Mirar sin abrir la pantalla** (solo lectura):
+
+```sql
+-- Lo que espera a alguien, lo más urgente primero
+SELECT "kind", "severity", "status", "appointmentStartAt", "occurrences", "notifiedAt"
+FROM "SyncException"
+WHERE "organizationId" = '<org>' AND "status" IN ('ABIERTA','EN_REVISION')
+ORDER BY "appointmentStartAt" NULLS LAST;
+
+-- Quién hizo qué con una excepción
+SELECT "createdAt", "action", "actorRole", "note"
+FROM "SyncExceptionLog" WHERE "exceptionId" = '<id>' ORDER BY "createdAt";
+```
+
+**Al desplegar por primera vez** el primer aviso puede resumir un atraso que ya existía
+(citas futuras con envíos rendidos desde antes): es correcto, esas citas siguen sin estar
+en el hospital. Conviene avisarle al agendador.
+
+---
+
 ## "Los dos sistemas no coinciden"
 
 La reconciliación corre sola una vez al día y compara la agenda entera. Reporta
@@ -284,6 +342,16 @@ UPDATE "HospitalMirrorConfig" SET "lookupEnabled" = false WHERE "organizationId"
 
 Está **apagada por defecto** y se enciende a mano después de medir su costo en el
 laboratorio. Ver [`CONSULTA_EN_VIVO.md`](CONSULTA_EN_VIVO.md).
+
+### Apagar solo los avisos al agendador
+
+Si los avisos molestan o el número ya no es el correcto, se apagan sin tocar el espejo ni la
+bandeja (las excepciones se siguen abriendo, solo no se avisa). Lo normal es hacerlo desde la
+bandeja (*Configurar avisos*, ORG_ADMIN); por SQL, con efecto en la vuelta siguiente:
+
+```sql
+UPDATE "HospitalMirrorConfig" SET "conflictAlertsEnabled" = false WHERE "organizationId" = '<org>';
+```
 
 ---
 

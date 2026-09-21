@@ -29,13 +29,15 @@ export default function QuickAccessGrid({
     role,
     conEspejo = false,
     conAvisos = false,
+    pendientesBandeja = 0,
 }: {
     role: UserRole;
     conEspejo?: boolean;
     conAvisos?: boolean;
+    pendientesBandeja?: number;
 }) {
     // La Visión General es la página actual: no tiene sentido como acceso rápido.
-    const items = getMenusForRole(role, { conEspejo, conAvisos }).filter(
+    const items = getMenusForRole(role, { conEspejo, conAvisos, pendientesBandeja }).filter(
         (item) => item.href !== '/dashboard',
     );
 
@@ -61,6 +63,14 @@ export default function QuickAccessGrid({
                             <span className="flex flex-col gap-0.5">
                                 <span className="text-xs md:text-sm font-semibold leading-tight text-zinc-800 dark:text-zinc-100">
                                     {item.label}
+                                    {item.badge ? (
+                                        <span
+                                            className="ml-1.5 rounded-full bg-red-600 px-1.5 py-0.5 align-middle text-[10px] font-bold text-white"
+                                            aria-label={`${item.badge} pendientes`}
+                                        >
+                                            {item.badge}
+                                        </span>
+                                    ) : null}
                                 </span>
                                 <span className="hidden md:block text-[11px] leading-snug text-zinc-400 dark:text-zinc-500">
                                     {item.description}

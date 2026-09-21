@@ -172,3 +172,35 @@ export type {
   HisLookupResultInput,
   HisLookupResultOutput,
 } from './src/mirror-protocol';
+
+export { derivarSync } from './src/sync-state';
+export type { FilaOutbox } from './src/sync-state';
+
+export {
+  ESTADOS_ACTIVOS,
+  ESTADOS_EXCEPCION,
+  ORDEN_SEVERIDAD_EXCEPCION,
+  SEVERIDADES_EXCEPCION,
+  TIPOS_CON_AVISO,
+  TIPOS_EXCEPCION,
+  TITULO_EXCEPCION,
+  UMBRALES_VIGILANTE,
+  claveExcepcion,
+  evaluarRetencion,
+  eventoCulpable,
+  parametrosPlantillaAviso,
+  requiereAviso,
+  resumenRetencion,
+  severidadPorCercania,
+  transicionExcepcion,
+} from './src/sync-watch';
+export type {
+  AccionExcepcion,
+  EstadoExcepcion,
+  ItemAviso,
+  MotivoRetencion,
+  ResultadoTransicion,
+  Retencion,
+  SeveridadExcepcion,
+  TipoExcepcion,
+} from './src/sync-watch';

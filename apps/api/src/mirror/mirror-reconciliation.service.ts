@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
+import {
+  MirrorWatchdogService,
+  type DerivaItem,
+} from './mirror-watchdog.service';
 
 /**
  * Reconciliación entre AgenIA y el HIS — la capa 5 de las seis defensas del
@@ -52,7 +56,10 @@ export interface ReconciliationReport {
 export class MirrorReconciliationService {
   private readonly logger = new Logger(MirrorReconciliationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly watchdog: MirrorWatchdogService,
+  ) {}
 
   /**
    * Contrasta la instantánea del HIS contra las citas vigentes de AgenIA.
@@ -75,6 +82,8 @@ export class MirrorReconciliationService {
       },
       select: {
         id: true,
+        patientId: true,
+        epsId: true,
         scheduleSlot: { select: { startTime: true, doctorId: true } },
       },
     });
@@ -87,12 +96,24 @@ export class MirrorReconciliationService {
     const claveHis = new Map(mapas.map((m) => [m.agenIAId, m.externalKey]));
 
     const enAgenIA = new Set<string>();
+    // La cita detrás de cada llave, para poder decir CUÁL falta (la bandeja de
+    // excepciones necesita la cita, no solo `médico|hora`).
+    const citaPorClave = new Map<string, DerivaItem>();
     for (const cita of citas) {
       const medico = claveHis.get(cita.scheduleSlot.doctorId);
       // Un médico sin homologar no puede compararse: su cita nunca llegó al
       // HIS y contarla como "falta" sería ruido. Ya lo reporta el dispatcher.
       if (!medico) continue;
-      enAgenIA.add(`${medico}|${cita.scheduleSlot.startTime.toISOString()}`);
+      const clave = `${medico}|${cita.scheduleSlot.startTime.toISOString()}`;
+      enAgenIA.add(clave);
+      citaPorClave.set(clave, {
+        appointmentId: cita.id,
+        patientId: cita.patientId ?? null,
+        epsId: cita.epsId ?? null,
+        doctorId: cita.scheduleSlot.doctorId,
+        startTime: cita.scheduleSlot.startTime,
+        clave,
+      });
     }
 
     const enHis = new Set(
@@ -193,6 +214,28 @@ export class MirrorReconciliationService {
     };
 
     await this.registrar(organizationId, report);
+
+    // La deriva HACIA el hospital no se repara sola (escribir o borrar en su base a
+    // partir de una comparación lo decide una persona): pasa a la bandeja de
+    // excepciones, con la cita y su alcance, para que esa persona la vea y la cierre.
+    // Nunca debe romper la reconciliación: el informe ya quedó en `SyncAudit`.
+    try {
+      await this.watchdog.registrarDeriva(
+        organizationId,
+        window,
+        missingInHis.flatMap((clave) => {
+          const cita = citaPorClave.get(clave);
+          return cita ? [cita] : [];
+        }),
+        enHis.size,
+      );
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo pasar la deriva a la bandeja (org ${organizationId}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
     return report;
   }
 

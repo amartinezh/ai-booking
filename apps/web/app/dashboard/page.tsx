@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma';
 import { Prisma } from '@agenia/database';
 import { getSession } from '@/lib/session';
 import { getTenantMirrorFlags } from '@/lib/mirror-flags';
+import { pendientesParaMenu } from '@/lib/bandeja/pendientes';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 import DashboardClient from './components/DashboardClient';
@@ -67,6 +68,7 @@ export default async function DashboardPage({
 
     // Las tarjetas de espejo/avisos solo se ofrecen a las clínicas que las tienen.
     const { conEspejo, conAvisos } = await getTenantMirrorFlags(session.organizationId);
+    const pendientesBandeja = await pendientesParaMenu(prisma, session, conEspejo);
 
     const appointments = await prisma.appointment.findMany({
         where: whereClause,
@@ -114,7 +116,7 @@ export default async function DashboardPage({
             </header>
 
             {/* Accesos rápidos: iconos a las opciones del menú, según el rol. */}
-            <QuickAccessGrid role={session.role} conEspejo={conEspejo} conAvisos={conAvisos} />
+            <QuickAccessGrid role={session.role} conEspejo={conEspejo} conAvisos={conAvisos} pendientesBandeja={pendientesBandeja} />
 
             <Suspense fallback={<PageSkeleton />}>
                 <DashboardClient

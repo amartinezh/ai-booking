@@ -6,6 +6,7 @@ import LogoutButton from './components/LogoutButton';
 import BrandLogo from '@/app/components/BrandLogo';
 import { getMenusForRole } from '../../lib/menus';
 import { getTenantMirrorFlags } from '../../lib/mirror-flags';
+import { pendientesParaMenu } from '../../lib/bandeja/pendientes';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
     const session = await getSession();
@@ -45,7 +46,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
     // avisos masivos, solo para las que además tienen el driver correcto y
     // la función encendida (PLAN_AVISOS_MASIVOS.md §1).
     const { conEspejo, conAvisos } = await getTenantMirrorFlags(session.organizationId);
-    const menus = getMenusForRole(role, { conEspejo, conAvisos });
+    // La cifra de la bandeja de sincronización (solo quien la trabaja, solo con espejo).
+    const pendientesBandeja = await pendientesParaMenu(prisma, session, conEspejo);
+    const menus = getMenusForRole(role, { conEspejo, conAvisos, pendientesBandeja });
 
     return (
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans">
@@ -70,6 +73,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
                         >
                             <span className="text-xl">{item.icon}</span>
                             {item.label}
+                            {item.badge ? (
+                                <span
+                                    className="ml-auto rounded-full bg-red-600 px-2 py-0.5 text-xs font-bold text-white"
+                                    aria-label={`${item.badge} pendientes`}
+                                >
+                                    {item.badge}
+                                </span>
+                            ) : null}
                         </Link>
                     ))}
                 </nav>
@@ -110,6 +121,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     {menus.map((item, idx) => (
                         <Link key={idx} href={item.href} className="px-3 py-2 bg-white dark:bg-zinc-900 shadow-sm rounded-lg text-xs font-semibold text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800">
                             {item.icon} {item.label}
+                            {item.badge ? ` (${item.badge})` : ''}
                         </Link>
                     ))}
                 </div>

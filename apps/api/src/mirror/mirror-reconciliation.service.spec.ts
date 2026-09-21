@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { MirrorWatchdogService } from './mirror-watchdog.service';
 
 // ══════════════════════════════════════════════════════════════════════════
 // Capa 5 de las seis defensas del plan (§6) y la ÚNICA que detecta deriva
@@ -10,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 describe('MirrorReconciliationService', () => {
   let service: MirrorReconciliationService;
   let prisma: any;
+  let watchdog: { registrarDeriva: jest.Mock };
   let errores: string[];
   let avisos: string[];
 
@@ -20,6 +22,8 @@ describe('MirrorReconciliationService', () => {
 
   const citaAgenIA = (doctorId: string, startIso: string) => ({
     id: `apt-${startIso}`,
+    patientId: 'pac-1',
+    epsId: 'eps-1',
     scheduleSlot: { startTime: new Date(startIso), doctorId },
   });
 
@@ -50,10 +54,12 @@ describe('MirrorReconciliationService', () => {
       ),
       syncAudit: { create: jest.fn(() => ({})) },
     };
+    watchdog = { registrarDeriva: jest.fn(async () => undefined) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MirrorReconciliationService,
         { provide: PrismaService, useValue: prisma },
+        { provide: MirrorWatchdogService, useValue: watchdog },
       ],
     }).compile();
     service = module.get(MirrorReconciliationService);
@@ -107,6 +113,91 @@ describe('MirrorReconciliationService', () => {
     );
 
     expect(r.missingInAgenIA).toEqual(['91-1|2026-09-03T13:00:00.000Z']);
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // La deriva HACIA el hospital pasa a la bandeja de excepciones (Fase 3 del
+  // rastreo): la reconciliación no la repara sola, así que se la da a una persona.
+  // ════════════════════════════════════════════════════════════════════════
+  describe('la deriva pasa a la bandeja de excepciones', () => {
+    it('cada cita que el hospital no tiene se entrega CON su cita, su paciente y su alcance', async () => {
+      prisma.appointment.findMany.mockResolvedValue([
+        citaAgenIA('doc-1', '2026-09-03T12:00:00.000Z'),
+        citaAgenIA('doc-1', '2026-09-04T12:00:00.000Z'),
+      ]);
+
+      await service.reconcile(
+        'org1',
+        [{ doctorExternalKey: '76', startTimeIso: '2026-09-04T12:00:00.000Z' }],
+        VENTANA,
+      );
+
+      expect(watchdog.registrarDeriva).toHaveBeenCalledTimes(1);
+      const [org, ventana, items, inHis] =
+        watchdog.registrarDeriva.mock.calls[0];
+      expect(org).toBe('org1');
+      expect(ventana).toBe(VENTANA);
+      // Solo la que falta, no la que sí está.
+      expect(items).toEqual([
+        {
+          appointmentId: 'apt-2026-09-03T12:00:00.000Z',
+          patientId: 'pac-1',
+          epsId: 'eps-1',
+          doctorId: 'doc-1',
+          startTime: new Date('2026-09-03T12:00:00.000Z'),
+          clave: '76|2026-09-03T12:00:00.000Z',
+        },
+      ]);
+      expect(inHis).toBe(1);
+    });
+
+    it('la lectura de las citas trae el paciente y la EPS (con eso se arma el alcance)', async () => {
+      await service.reconcile('org1', [], VENTANA);
+
+      const select = prisma.appointment.findMany.mock.calls[0][0].select;
+      expect(select.patientId).toBe(true);
+      expect(select.epsId).toBe(true);
+    });
+
+    it('cuando todo coincide igual se avisa (con cero citas): así se cierran solas las que ya llegaron', async () => {
+      prisma.appointment.findMany.mockResolvedValue([
+        citaAgenIA('doc-1', '2026-09-03T12:00:00.000Z'),
+      ]);
+
+      await service.reconcile(
+        'org1',
+        [{ doctorExternalKey: '76', startTimeIso: '2026-09-03T12:00:00.000Z' }],
+        VENTANA,
+      );
+
+      expect(watchdog.registrarDeriva.mock.calls[0][2]).toEqual([]);
+    });
+
+    it('una cita de un médico SIN homologar no se entrega: no se puede comparar', async () => {
+      prisma.mirrorEntityMap.findMany.mockResolvedValue([]);
+      prisma.appointment.findMany.mockResolvedValue([
+        citaAgenIA('doc-9', '2026-09-03T12:00:00.000Z'),
+      ]);
+
+      await service.reconcile('org1', [], VENTANA);
+
+      expect(watchdog.registrarDeriva.mock.calls[0][2]).toEqual([]);
+    });
+
+    it('🛡️ si la bandeja falla, la reconciliación NO: el informe ya quedó en la auditoría', async () => {
+      watchdog.registrarDeriva.mockRejectedValueOnce(new Error('db caída'));
+      prisma.appointment.findMany.mockResolvedValue([
+        citaAgenIA('doc-1', '2026-09-03T12:00:00.000Z'),
+      ]);
+
+      const r = await service.reconcile('org1', [], VENTANA);
+
+      expect(r.missingInHis).toEqual(['76|2026-09-03T12:00:00.000Z']);
+      expect(prisma.syncAudit.create).toHaveBeenCalledTimes(1);
+      expect(errores.join(' ')).toMatch(
+        /No se pudo pasar la deriva a la bandeja.*db caída/,
+      );
+    });
   });
 
   // ════════════════════════════════════════════════════════════════════════

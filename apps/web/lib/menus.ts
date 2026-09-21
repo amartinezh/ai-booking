@@ -33,6 +33,8 @@ export interface MenuItem {
     /** Subtítulo corto para la tarjeta de acceso rápido. */
     description: string;
     accent: MenuAccent;
+    /** Cuántas cosas esperan al usuario en esa opción (solo la bandeja); 0 o ausente = sin cifra. */
+    badge?: number;
 }
 
 const OVERVIEW: MenuItem = { label: 'Visión General', href: '/dashboard', icon: '📋', description: 'Monitoreo central de citas', accent: 'blue' };
@@ -129,6 +131,20 @@ const AVISOS: MenuItem = {
     accent: 'rose',
 };
 
+/**
+ * Bandeja de excepciones de sincronización (docs/PLAN_RASTREO_PACIENTE.md §10 #3).
+ * Solo en las clínicas con espejo —sin HIS no hay nada que sincronizar— y para quien
+ * la trabaja: ORG_ADMIN y BOOKING_AGENT. El permiso real y el alcance del agente los
+ * aplica el servidor (`lib/bandeja/acceso.ts`); esto solo decide si aparece el enlace.
+ */
+const BANDEJA: MenuItem = {
+    label: 'Bandeja de sincronización',
+    href: '/dashboard/bandeja',
+    icon: '🚨',
+    description: 'Citas que no llegaron al hospital y cambios sin aplicar',
+    accent: 'orange',
+};
+
 function insertBeforeSoporte(menus: MenuItem[], item: MenuItem): MenuItem[] {
     const i = menus.findIndex((m) => m.href === '/dashboard/soporte');
     return i === -1 ? [...menus, item] : [...menus.slice(0, i), item, ...menus.slice(i)];
@@ -136,12 +152,21 @@ function insertBeforeSoporte(menus: MenuItem[], item: MenuItem): MenuItem[] {
 
 export function getMenusForRole(
     role: UserRole,
-    opts: { conEspejo?: boolean; conAvisos?: boolean } = {},
+    opts: { conEspejo?: boolean; conAvisos?: boolean; pendientesBandeja?: number } = {},
 ): MenuItem[] {
     let menus = MENUS_BY_ROLE[role] ?? [];
 
     if (opts.conEspejo && role === 'ORG_ADMIN') {
         menus = insertBeforeSoporte(menus, ESPEJO);
+    }
+    if (opts.conEspejo && (role === 'ORG_ADMIN' || role === 'BOOKING_AGENT')) {
+        // Copia: `BANDEJA` es compartido y la cifra es de este usuario.
+        menus = insertBeforeSoporte(
+            menus,
+            opts.pendientesBandeja && opts.pendientesBandeja > 0
+                ? { ...BANDEJA, badge: opts.pendientesBandeja }
+                : BANDEJA,
+        );
     }
     if (opts.conAvisos && (role === 'ORG_ADMIN' || role === 'BOOKING_AGENT')) {
         menus = insertBeforeSoporte(menus, AVISOS);

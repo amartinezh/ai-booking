@@ -88,6 +88,9 @@ model Organization {
   patientLookupLogs   PatientLookupLog[]
   hisLookupRequests   HisLookupRequest[]
 
+  // 🚨 Bandeja de excepciones de sincronización (Fase 3 del rastreo).
+  syncExceptions SyncException[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -294,6 +297,12 @@ enum WhatsappTemplateKind {
   // cancelar. Plantilla propia porque el cuerpo aprobado en Meta es distinto
   // texto fijo, no porque el contrato de variables cambie (sigue siendo 5).
   APPOINTMENT_REMINDER_MASS
+  // Fase 3 del rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md §10 #2): aviso al
+  // AGENDADOR cuando una cita confirmada por WhatsApp no llega al hospital. Va a un
+  // teléfono del personal, no a un paciente, y por eso necesita una plantilla
+  // aprobada (fuera de la ventana de 24 h un mensaje libre no sale). Tres variables:
+  // cuántas citas, la más próxima y la causa probable — sin datos del paciente.
+  SYNC_EXCEPTION_ALERT
 }
 
 model WhatsappTemplate {
@@ -1643,11 +1652,18 @@ model HospitalMirrorConfig {
   lastLookupCapable Boolean?
   lastPushCursor    BigInt   @default(0)
 
-  // 🔔 Alertas de conflicto (doble-cupo → WaitlistEntry): configurable, se puede
-  // apagar sin tocar código. Ver PLAN_ESPEJO_HOSPITAL.md §5.1/§7.
+  // 🔔 Alertas PROACTIVAS al agendador: configurable, se puede apagar sin tocar
+  // código. Ver PLAN_ESPEJO_HOSPITAL.md §5.1/§7. El nombre quedó por su primer uso
+  // planeado (conflictos de doble cupo), que nunca se construyó; desde la Fase 3 del
+  // rastreo es el interruptor de TODOS los avisos del vigilante de excepciones
+  // (`SyncException`). Con él apagado la bandeja se llena igual: solo no se avisa.
   conflictAlertsEnabled Boolean @default(true)
-  agendadorWhatsapp     String? // número E.164 del agendador responsable
-  agendadorEmail        String? // correo del agendador responsable
+  // Número E.164 del agendador responsable: destino del aviso por WhatsApp
+  // (plantilla `SYNC_EXCEPTION_ALERT`).
+  agendadorWhatsapp     String?
+  // Correo del agendador. HOY NO SE USA: la API no tiene transporte de correo. Queda
+  // para cuando se decida uno (ver el plan del rastreo, Fase 3).
+  agendadorEmail        String?
 
   // ⚠️ EXCLUSIVO del driver cnt-sanvicente-anserma — ver
   // docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md.
@@ -2006,6 +2022,104 @@ model PatientLookupLog {
 /// qué estado) y la bitácora `PatientLookupLog`. El documento completo de un
 /// TERCERO nunca se guarda: al recibir la respuesta el servidor lo compara con
 /// el del paciente y conserva solo el veredicto y el documento enmascarado.
+/// 🚨 Bandeja de excepciones de sincronización (docs/PLAN_RASTREO_PACIENTE.md §10 #2
+/// y #3, Fase 3).
+///
+/// Cada fila es un PROBLEMA de la sincronización con el HIS que alguien tiene que
+/// mirar, con dueño y estado. Las abre el vigilante de la API (un cron sobre el
+/// outbox y la auditoría, y la reconciliación) y las trabaja el personal desde la
+/// web. Es la misma clasificación que ve el rastreo de paciente (`@agenia/shared`,
+/// `sync-watch`).
+///
+/// SIN FK a citas ni pacientes: es una bitácora de trabajo, sobrevive a que el dato
+/// se borre. Y sin datos personales en el texto: `title` se muestra a quien atiende
+/// y `detail` (técnico) solo a quien ve internos.
+model SyncException {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// CITA_NO_ENTREGADA | EVENTO_RENDIDO | CONFLICTO_SYNC | ERROR_SYNC | DERIVA_EN_HIS
+  kind      String
+  /// Identifica el PROBLEMA, no la fila (`claveExcepcion`): el vigilante lo vuelve a
+  /// encontrar en cada vuelta y actualiza esta misma fila en vez de abrir otra.
+  dedupeKey String
+  /// BAJA | MEDIA | ALTA | CRITICA. Sube cuando la cita se acerca.
+  severity  String
+  /// ABIERTA | EN_REVISION | RESUELTA | DESCARTADA | AUTO_RESUELTA
+  status    String @default("ABIERTA")
+
+  /// Texto corto y SIN datos personales.
+  title  String
+  /// Detalle técnico: el motivo del agente, el detalle de la auditoría.
+  detail String?
+
+  /// Sobre qué es. Sin FK a propósito.
+  appointmentId      String?
+  patientId          String?
+  entityType         String?
+  entityId           String?
+  /// `SyncOutbox.seq` del evento culpable.
+  outboxSeq          BigInt?
+  /// Alcance: con esto un BOOKING_AGENT acotado a una EPS o a un médico ve SOLO lo
+  /// suyo, igual que en su lista de citas. Vacío = no se sabe, y con un alcance
+  /// acotado eso significa «fuera» (falla cerrado).
+  epsId              String?
+  doctorId           String?
+  appointmentStartAt DateTime?
+  /// Lo estructurado que no merece columna (motivo, minutos retenida, intentos…).
+  meta               Json?
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  /// Cuántas veces la encontró el vigilante (o la auditoría la repitió).
+  occurrences Int      @default(1)
+
+  /// El dueño. `assignedToUserId` es no nulo si y solo si el estado es EN_REVISION.
+  assignedToUserId String?
+  assignedAt       DateTime?
+  resolvedAt       DateTime?
+  /// null = la cerró el sistema (AUTO_RESUELTA).
+  resolvedByUserId String?
+  /// La constancia de qué se hizo: obligatoria al resolver o descartar.
+  resolutionNote   String?
+
+  /// Aviso proactivo al agendador: cuándo y con qué gravedad. Es lo que impide
+  /// avisar dos veces de lo mismo y lo que reclaman entre sí dos réplicas de la API.
+  notifiedAt       DateTime?
+  notifiedSeverity String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  logs SyncExceptionLog[]
+
+  @@unique([organizationId, dedupeKey])
+  /// La bandeja y la insignia del menú: activas de una clínica por gravedad.
+  @@index([organizationId, status, severity])
+  @@index([organizationId, appointmentStartAt])
+}
+
+/// Historial de una excepción: append-only, una fila por cosa que pasó (la abrió el
+/// sistema, la tomó alguien, subió de gravedad, se avisó, se cerró…). Sin él, una
+/// excepción cerrada solo diría el último estado, no quién hizo qué.
+model SyncExceptionLog {
+  id          String        @id @default(uuid())
+  exceptionId String
+  exception   SyncException @relation(fields: [exceptionId], references: [id], onDelete: Cascade)
+
+  /// CREADA | ESCALADA | AVISADA | TOMADA | SOLTADA | RESUELTA | DESCARTADA | REABIERTA
+  /// | AUTO_RESUELTA | REAPARECIDA
+  action      String
+  /// null = el sistema.
+  actorUserId String?
+  actorRole   String?
+  note        String?
+  createdAt   DateTime @default(now())
+
+  @@index([exceptionId, createdAt])
+}
+
 model HisLookupRequest {
   id String @id @default(uuid())
 

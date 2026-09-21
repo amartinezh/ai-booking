@@ -5,7 +5,8 @@ export type WhatsappTemplateKind =
     | 'APPOINTMENT_REMINDER'
     | 'WAITLIST_SLOT_OFFER'
     | 'APPOINTMENT_CANCELLED_MASS'
-    | 'APPOINTMENT_REMINDER_MASS';
+    | 'APPOINTMENT_REMINDER_MASS'
+    | 'SYNC_EXCEPTION_ALERT';
 
 export interface WhatsappTemplateDto {
     id: string;
@@ -67,6 +68,16 @@ export const TEMPLATE_CONTRACTS: Record<
             'Médico',
             'Fecha y hora',
             'Nota adicional (o la frase por defecto si el operador la deja vacía)',
+        ],
+    },
+    SYNC_EXCEPTION_ALERT: {
+        label: 'Aviso al agendador (excepciones de sincronización)',
+        description:
+            'Va a un teléfono del PERSONAL —el número del agendador que se configura en la Bandeja de sincronización—, no a un paciente. Avisa que hay citas confirmadas por WhatsApp que no llegaron al hospital. Lleva solo el resumen, SIN datos del paciente: el detalle se ve en la bandeja, tras iniciar sesión. Sin esta plantilla el aviso no sale (fuera de la ventana de 24 h un mensaje libre no llega) y la excepción queda solo en la bandeja.',
+        variables: [
+            'Cantidad de citas (por ejemplo «3 citas»)',
+            'La más próxima (médico y hora)',
+            'Causa probable',
         ],
     },
 };

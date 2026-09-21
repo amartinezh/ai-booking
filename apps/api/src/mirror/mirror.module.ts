@@ -11,6 +11,10 @@ import { MirrorAvailabilityService } from './mirror-availability.service';
 import { MirrorCatalogService } from './mirror-catalog.service';
 import { MirrorNoticeService } from './mirror-notice.service';
 import { MirrorLookupService } from './mirror-lookup.service';
+import { MirrorExceptionsService } from './mirror-exceptions.service';
+import { MirrorAlertService } from './mirror-alert.service';
+import { MirrorWatchdogService } from './mirror-watchdog.service';
+import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module';
 
 /**
  * Motor genérico de espejo de citas con HIS externos (patrón de drivers).
@@ -24,7 +28,9 @@ import { MirrorLookupService } from './mirror-lookup.service';
   // avisarle a quien lleva días esperando — ver `avisarListaDeEspera` en
   // mirror-apply.service.ts. No necesita `forwardRef`: la cadena es
   // Mirror → Waitlist → Chatbot y el chatbot no conoce al espejo.
-  imports: [AppointmentsModule, WaitlistModule],
+  // WhatsappConfigModule: el aviso al agendador sale por una plantilla aprobada
+  // (`WhatsappTemplateService`). No crea ciclo: no conoce este módulo.
+  imports: [AppointmentsModule, WaitlistModule, WhatsappConfigModule],
   controllers: [MirrorController],
   providers: [
     MirrorAgentGuard,
@@ -43,6 +49,11 @@ import { MirrorLookupService } from './mirror-lookup.service';
     // 🔎 Consulta en vivo al HIS (rastreo de paciente, Fase 2): el lado del
     // agente (pendientes / resultado) y el cron que expira y purga.
     MirrorLookupService,
+    // 🚨 Vigilante y bandeja de excepciones (Fase 3 del rastreo): el cron que abre
+    // y cierra las excepciones, el ciclo de vida en la base y el aviso al agendador.
+    MirrorExceptionsService,
+    MirrorAlertService,
+    MirrorWatchdogService,
   ],
   exports: [
     MirrorApplyService,

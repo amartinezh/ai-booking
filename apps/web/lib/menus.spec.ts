@@ -27,12 +27,13 @@ describe('getMenusForRole', () => {
         expect(menus.some((m) => m.href === '/dashboard/espejo')).toBe(false);
     });
 
-    it('con conEspejo=true, ORG_ADMIN incluye Espejo justo antes de Soporte', () => {
+    it('con conEspejo=true, ORG_ADMIN incluye Espejo, seguido de la Bandeja de sincronización, antes de Soporte', () => {
         const menus = getMenusForRole('ORG_ADMIN', { conEspejo: true });
         const espejoIdx = menus.findIndex((m) => m.href === '/dashboard/espejo');
         const soporteIdx = menus.findIndex((m) => m.href === '/dashboard/soporte');
         expect(espejoIdx).toBeGreaterThan(-1);
-        expect(espejoIdx).toBe(soporteIdx - 1);
+        expect(menus[espejoIdx + 1].href).toBe('/dashboard/bandeja');
+        expect(espejoIdx).toBe(soporteIdx - 2);
     });
 
     it('conEspejo=true no afecta a roles distintos de ORG_ADMIN', () => {
@@ -87,7 +88,8 @@ describe('getMenusForRole', () => {
         for (const href of antes) {
             expect(menus.some((m) => m.href === href)).toBe(true);
         }
-        expect(menus).toHaveLength(antes.length + 2);
+        // Espejo, Bandeja de sincronización y Avisos.
+        expect(menus).toHaveLength(antes.length + 3);
     });
 
     it('no duplica Avisos si getMenusForRole se llama varias veces con conAvisos=true', () => {
@@ -117,5 +119,56 @@ describe('getMenusForRole', () => {
         getMenusForRole('BOOKING_AGENT', { conAvisos: true });
         const menus = getMenusForRole('BOOKING_AGENT', { conAvisos: true });
         expect(menus.filter((m) => m.href === '/dashboard/rastreo')).toHaveLength(1);
+    });
+});
+
+describe('Bandeja de sincronización (Fase 3 del rastreo)', () => {
+    const HREF = '/dashboard/bandeja';
+    const tiene = (menus: { href: string }[]) => menus.some((m) => m.href === HREF);
+
+    it('sin espejo no aparece para nadie: sin HIS no hay nada que sincronizar', () => {
+        for (const rol of ['ORG_ADMIN', 'BOOKING_AGENT', 'DOCTOR', 'PATIENT', 'GENERAL_OBSERVER', 'SUPER_ADMIN'] as const) {
+            expect(tiene(getMenusForRole(rol))).toBe(false);
+            expect(tiene(getMenusForRole(rol, { conEspejo: false, pendientesBandeja: 4 }))).toBe(false);
+        }
+    });
+
+    it('con espejo la ven ORG_ADMIN y BOOKING_AGENT — quienes la trabajan —, y nadie más', () => {
+        expect(tiene(getMenusForRole('ORG_ADMIN', { conEspejo: true }))).toBe(true);
+        expect(tiene(getMenusForRole('BOOKING_AGENT', { conEspejo: true }))).toBe(true);
+        for (const rol of ['DOCTOR', 'PATIENT', 'GENERAL_OBSERVER', 'SUPER_ADMIN'] as const) {
+            expect(tiene(getMenusForRole(rol, { conEspejo: true }))).toBe(false);
+        }
+    });
+
+    it('queda justo antes de Soporte, después del Espejo, y no desplaza a los demás', () => {
+        const menus = getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true });
+        const hrefs = menus.map((m) => m.href);
+        expect(hrefs.indexOf(HREF)).toBe(hrefs.indexOf('/dashboard/espejo') + 1);
+        expect(hrefs.indexOf('/dashboard/soporte')).toBe(hrefs.length - 1);
+        expect(hrefs).toContain('/dashboard/espejo/avisos');
+        expect(new Set(hrefs).size).toBe(hrefs.length);
+    });
+
+    it('la cifra de pendientes solo se pone si hay pendientes', () => {
+        const con = getMenusForRole('BOOKING_AGENT', { conEspejo: true, pendientesBandeja: 3 }).find((m) => m.href === HREF);
+        expect(con?.badge).toBe(3);
+        for (const n of [0, undefined]) {
+            const sin = getMenusForRole('BOOKING_AGENT', { conEspejo: true, pendientesBandeja: n }).find((m) => m.href === HREF);
+            expect(sin?.badge).toBeUndefined();
+        }
+    });
+
+    it('la cifra de un usuario NO se le pega al menú de otro (el ítem base es compartido)', () => {
+        getMenusForRole('ORG_ADMIN', { conEspejo: true, pendientesBandeja: 9 });
+        const otro = getMenusForRole('ORG_ADMIN', { conEspejo: true }).find((m) => m.href === HREF);
+        expect(otro?.badge).toBeUndefined();
+    });
+
+    it('no se duplica al llamar varias veces', () => {
+        getMenusForRole('ORG_ADMIN', { conEspejo: true });
+        getMenusForRole('ORG_ADMIN', { conEspejo: true });
+        const menus = getMenusForRole('ORG_ADMIN', { conEspejo: true });
+        expect(menus.filter((m) => m.href === HREF)).toHaveLength(1);
     });
 });
