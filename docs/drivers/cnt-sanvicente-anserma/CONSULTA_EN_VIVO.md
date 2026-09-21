@@ -1,8 +1,10 @@
 # Consulta en vivo al HIS (rastreo de paciente, Fase 2)
 
-> **Estado (2026-09-20):** implementada y verificada contra Postgres real y por HTTP de extremo a extremo. **El SQL NO se ha ejecutado contra un SQL Server real** y **el costo sobre la base del hospital NO está medido**. Por eso `HospitalMirrorConfig.lookupEnabled` sale **apagado** y no hay ningún interruptor en pantalla: se enciende a mano, clínica por clínica, **después de la medición de este documento**.
+> **Estado (2026-09-20, tarde):** implementada, verificada contra Postgres real y por HTTP de extremo a extremo, y **MEDIDA contra el SQL Server del hospital** (`PRUEBAS`, SQL Server 2017 14.0.3465.1). El costo salió **muy por debajo** de los umbrales: la consulta por cupo cuesta **3 lecturas lógicas** y la más pesada por documento **60**, no las decenas de miles que se estimaban (ver «Resultado de la medición»). **No hace falta acortar la ventana ni pedirle un índice al hospital.**
 >
-> Diseño general: [`PLAN_RASTREO_PACIENTE.md`](../../PLAN_RASTREO_PACIENTE.md) §7. Este archivo es lo específico de este hospital: el SQL, cómo medirlo y cómo encenderlo.
+> Quedan dos cosas antes de encender: (1) repetir la PARTE A del script con el login `agenia_sync` (la medición se corrió con `ADMIN`, así que el permiso mínimo del agente **no** está confirmado); (2) decidir qué se hace con las citas cuyo `FE_HORA_CIT` el HIS guarda en un formato ilegible, porque la consulta **por cupo** no las encuentra y la pantalla afirmaría «el HIS no tiene ninguna cita en ese cupo» — ver «El riesgo que destapó la medición».
+>
+> Diseño general: [`PLAN_RASTREO_PACIENTE.md`](../../PLAN_RASTREO_PACIENTE.md) §7. Este archivo es lo específico de este hospital: el SQL, cómo medirlo y cómo encenderlo. La medición está lista para ejecutar en [`sql/MEDICION_CONSULTA_EN_VIVO.sql`](sql/MEDICION_CONSULTA_EN_VIVO.sql).
 
 ## Para qué sirve
 
@@ -47,7 +49,17 @@ SELECT TOP (@tope)
 
 `@desde`/`@hasta` son literales `'YYYYMMDD'` con el borde superior **exclusivo**, y la columna va **desnuda**: es la forma sargable que ya usan `fetchAvailability`, `detectChanges` y `snapshotAppointments` (`diaSiguienteLiteralSql`). Envolver `FE_FECH_CIT` en una función apagaría el índice del hospital (`CITAS_MEDICASFE_FECH_CIT` / `IDX_ESEHSVP_CITAS_MEDICAS31931_31930`, ver `ESTADO.md`).
 
-**Esta consulta no es barata.** El hospital no tiene un índice por historia útil aquí: la consulta recorre el **rango de fechas** y filtra por `NU_HIST_PAC_CIT`. `@hist1` es la variante sin ceros a la izquierda, si difiere.
+`@hist1` es la variante sin ceros a la izquierda, si difiere.
+
+> ⚠️ **Corrección (2026-09-20, tras medir).** Este documento decía que «esta consulta no es barata» porque «el hospital no tiene un índice por historia útil aquí» y que por eso recorría el rango de fechas. **Es falso.** La PARTE C del script de medición mostró que `CITAS_MEDICAS` tiene **12 índices**, y **tres** empiezan por `NU_HIST_PAC_CIT`:
+>
+> | Índice | Clave | Incluye |
+> |---|---|---|
+> | `CITAS_MEDICASNU_HIST_PAC_CIT` | `NU_HIST_PAC_CIT` | — |
+> | `IDX_ESEHSVP_CITAS_MEDICAS56579_56578` | `NU_HIST_PAC_CIT, NU_NUME_MOVI_CIT, NU_ESTA_CIT` | — |
+> | `IDX_ESEHSVP_CITAS_MEDICAS56577_56576` | `NU_HIST_PAC_CIT, NU_NUME_MOVI_CIT, CD_CODI_CECO_CIT, NU_ESTA_CIT` | `CD_CODI_ESP_CIT, CD_CODI_SER_CIT, NU_NUME_CONV_CIT, NU_TIPO_CIT` |
+>
+> El motor **busca por el documento** (`Index Seek` + `Merge Interval`, un seek por cada valor del `IN`) y descarta por fecha después. Por eso el tamaño de la ventana casi no influye y la consulta resultó barata. El índice sobre `FE_FECH_CIT` sigue importando para las otras consultas del driver (disponibilidad, detección de cambios, reconciliación), que sí van por rango de fechas.
 
 ## Lo que la protege
 
@@ -63,38 +75,98 @@ SELECT TOP (@tope)
 | Límite de **10 consultas por usuario cada 10 min** (`RASTREO_MAX_CONSULTAS_HIS`, `RASTREO_VENTANA_MIN`) y **5 en curso por clínica** | `servicio-his.ts` |
 | Un error o un tiempo agotado es un **error**, nunca una lista vacía | `lookup.ts` / `MirrorLookupService.applyResult` |
 
-## Costo esperado — ESTIMADO, no medido
+## Resultado de la medición (2026-09-20, `PRUEBAS` del hospital)
 
-Con los volúmenes ya documentados (`CITAS_MEDICAS`: 1.084.093 filas / 855 MB; 27.877 citas en 90 días ≈ 310 al día):
+Corrida con [`sql/MEDICION_CONSULTA_EN_VIVO.sql`](sql/MEDICION_CONSULTA_EN_VIVO.sql) sobre `PRUEBAS`, servidor `sql2017-pro2-dp`, SQL Server 2017 Standard 14.0.3465.1, nivel de compatibilidad 140.
 
-| Consulta | Filas que el motor debe recorrer (estimado) |
-|---|---|
-| Por cupo | 1 búsqueda por la PK (unas pocas filas) |
-| Por documento, ventana por defecto (~67 días) | ≈ 21.000 filas del rango de fechas |
-| Por documento, ventana máxima (180 días) | ≈ 56.000 filas |
+**La copia es representativa:** `PRUEBAS` tiene **1.087.077** filas y `ESEHSVP` (vivo) **1.089.082** — 99,8 %. Los datos del índice agrupado ocupan 178 MB en las dos (los 855 MB que reporta `ESTADO.md` deben incluir los 11 índices no agrupados).
 
-Es del mismo orden que la instantánea de la reconciliación diaria (90 días), pero **disparada por una persona**, hasta 10 veces cada 10 min por usuario. Por eso se mide antes.
+| Consulta | Ventana | Lecturas lógicas | Filas | CPU / transcurrido | Plan |
+|---|---|---|---|---|---|
+| Por cupo | — | **3** | 1 | 0 ms / 0–4 ms | `Clustered Index Seek` + `Top` |
+| Por documento | 7 d | **18** | 4 | 1–4 ms / 0–8 ms | `Index Seek` + `Merge Interval` + `Nested Loops` |
+| Por documento | 67 d (por defecto) | **43** | 5 | 2–3 ms / 0–4 ms | igual |
+| Por documento | 180 d (máxima) | **60** | 5 | 3–4 ms / 3–4 ms | igual |
+| Por documento | 180 d, documento inexistente | **6** | 0 | 1 ms / 0 ms | igual |
 
-## Medición en el laboratorio del hospital — OBLIGATORIA antes de encender
+Promedios acumulados (PARTE F): por cupo 3 lecturas por ejecución; por documento 31, con 1 ms de CPU y 2 ms transcurridos de media (máximo 3 ms).
+
+**Veredicto: pasa con un margen enorme.** Los umbrales propuestos eran < 100 ms por cupo y < 3 s por documento en la ventana por defecto; lo medido son **3 y 43 lecturas lógicas**, con milisegundos de un dígito. En consecuencia:
+
+- **No hay que acortar la ventana.** Entre 7 y 180 días la diferencia es de 18 a 60 lecturas: irrelevante.
+- **No hay que pedirle ningún índice al hospital.** Ya tiene tres por `NU_HIST_PAC_CIT`.
+- **La estimación previa de este documento erraba por tres órdenes de magnitud** (calculaba 21.000–56.000 filas recorridas) porque partía de que no existía un índice por historia.
+- **El «peor caso» que planteó el script tampoco era el peor**: sin citas es el caso más BARATO (6 lecturas), porque el seek por documento no encuentra nada y no llega a tocar el rango de fechas. El verdadero techo es un paciente con **historia larga**: el motor lee todas sus citas y descarta por fecha. Lo mide la PARTE G, que quedó pendiente de correr.
+
+Cierra el punto abierto §12 #5 del plan: la ventana se queda en **−7 / +60 días, máximo 180**, tal como está.
+
+## El riesgo que destapó la medición: horas que el HIS guarda ilegibles
+
+La consulta de descubrimiento (PARTE D) eligió como cupo de prueba `PS06` a las `2026/09/19 3`. **Esa hora no cumple el formato** `'YYYY/MM/DD HH:MM'`, y no es un caso aislado: `MAPEO_HIS.md` §2.1 ya había documentado que el **5,7 %** de las citas elaboradas en 30 días tiene un `FE_HORA_CIT` que no se puede interpretar (longitudes 12/13, valores como `'2026/08/29 1'` o `'31'`). El lector del agente es tolerante a propósito: devuelve `null` y marca la fila como ilegible.
+
+Para el resto del espejo eso significa *saltarse* una fila. **Para la consulta en vivo significa afirmar algo falso**, y por dos caminos distintos:
+
+| Consulta | Qué pasa con una cita de hora ilegible | Consecuencia |
+|---|---|---|
+| **Por cupo** | La hora se construye desde el instante (`formatFeHoraCit` → `'2026/09/19 03:00'`) y se compara con `=`. Contra `'2026/09/19 3'` **no coincide**: cero filas | La pantalla concluye **«El HIS no tiene ninguna cita en ese cupo»** (`NO_ESTA_EN_EL_HIS`). Es un **falso negativo**, y contradice el principio del plan §3.3: un veredicto nunca debe afirmar lo que no sabe |
+| **Por documento** | La fila llega, no se puede interpretar la hora, se descarta y se marca `truncated` | La cita **no aparece** en la lista del HIS. `truncated` viaja del agente a la API y se guarda… pero **la web no lo lee en ningún sitio**: la pantalla no avisa de que la respuesta vino incompleta |
+
+Riesgo por escenario: en el **A** (la cita la creó AgenIA) no aplica, porque esa fila la escribió nuestro agente con el escritor estricto. En el **B** —«la agendaron en el HIS y no sale en WhatsApp», justo el que la consulta en vivo venía a completar— **sí aplica**, porque esa fila la escribió la aplicación del hospital.
+
+**Antes de encender hay que dimensionarlo**: la PARTE G del script cuenta cuántas citas de la ventana futura tienen la hora ilegible, con qué formas y en qué médicos se concentran. Según el resultado:
+
+- **Si son muy pocas** → basta con mostrar `truncated` en la pantalla y no afirmar «no está en el HIS» cuando la respuesta pudo venir incompleta.
+- **Si son apreciables** → la consulta por cupo debe buscar también las variantes (`FE_HORA_CIT IN (@hora, @variante…)`, que sigue siendo un seek). Ojo: encontrar la fila no alcanza para saber **a qué hora** es la cita — `'2026/09/18 2'` no dice si son las 02:00 o las 14:00 —, así que el veredicto honesto sería «el hospital tiene una cita en ese cupo con una hora que su sistema guardó en un formato que no se puede interpretar», no una hora inventada.
+
+## El script de medición (cómo se obtuvieron esos números)
 
 Aceptación del plan (§9): *«probada primero en el laboratorio del hospital con el costo de la consulta medido»*. Con el mismo criterio de la Fase 0 del espejo: se corre en el laboratorio (`PRUEBAS`) sobre una copia representativa, **no** en producción.
 
-1. **Permisos.** Con el login `agenia_sync`: `SELECT TOP 1 * FROM dbo.CITAS_MEDICAS`. No se esperan permisos nuevos (ya lee esa tabla) — **a confirmar con el hospital**.
-2. **Por cupo.** Con un médico y una hora reales: `SET STATISTICS IO, TIME ON;` y la consulta de arriba. Anotar lecturas lógicas y tiempo. Debe ser un *Index Seek* / *Clustered Index Seek* sobre la PK.
-3. **Por documento.** Con una historia real y ventanas de **7, 60 y 180 días**: `SET STATISTICS IO, TIME ON;` más el **plan de ejecución real**. Anotar: operador sobre `FE_FECH_CIT` (¿*Seek* o *Scan*?), si hay *Key Lookup* para leer `NU_HIST_PAC_CIT` (si el índice no la incluye, cada fila del rango cuesta una lectura extra), lecturas lógicas, tiempo en caché fría y caliente.
-4. **Concurrencia.** 5 consultas por documento a la vez, mientras la aplicación del hospital agenda: comprobar que no bloquean sus inserciones (la consulta usa el aislamiento por defecto, como el resto del driver) y que sus tiempos no se degradan.
-5. **Cancelación.** Forzar un tiempo agotado (`timeoutMs` bajo) y confirmar que la consulta desaparece de `sys.dm_exec_requests` — la garantía de que un HIS lento no acumula trabajo.
+Todo está en un solo script, listo para abrir en SSMS: [`sql/MEDICION_CONSULTA_EN_VIVO.sql`](sql/MEDICION_CONSULTA_EN_VIVO.sql). Es **estrictamente solo lectura** (solo `SELECT`, `READ UNCOMMITTED`, ningún objeto creado ni alterado) y ejecuta **las mismas dos consultas que corre el agente**, con los mismos tipos de parámetro, para que el plan medido sea el que correrá en producción. Se verificó contra un SQL Server real antes de entregarlo (corre limpio, sin errores, tanto en SSMS como en `sqlcmd`).
 
-Resultados (llenar):
+Qué hace, por partes:
 
-| Consulta | Ventana | Lecturas lógicas | Tiempo frío / caliente | Plan | ¿Acepta el hospital? |
+| Parte | Qué responde | Con qué login |
+|---|---|---|
+| A | ¿Puede el agente leer `CITAS_MEDICAS` sin permisos nuevos? | `agenia_sync` |
+| B | ¿Es representativa la copia `PRUEBAS` frente al catálogo vivo? (por metadatos, sin leer filas) | DBA |
+| C | ¿Algún índice sobre `FE_FECH_CIT` **incluye** `NU_HIST_PAC_CIT`? Es lo que decide si cada fila del rango cuesta una lectura extra | DBA |
+| D | Elige de los datos un médico, una hora y una historia reales con los que medir | DBA |
+| E | **La medición**: por cupo, y por documento en ventanas de 7 d, 67 d (la de por defecto) y 180 d (la máxima), más el **peor caso** | DBA o `agenia_sync` |
+| F | Qué plan usó cada consulta (¿*Seek* o *Scan*? ¿hay *Key Lookup*? ¿parallelismo?) y cuántas lecturas lógicas | DBA (necesita `VIEW SERVER STATE`) |
+
+**El peor caso es una historia que NO existe**, y es además el más frecuente al diagnosticar: si el paciente no tiene citas, el `TOP 51` no puede cortar antes y hay que recorrer el rango de fechas completo. Esa fila de la medición es la que decide.
+
+🚫 **El script NO usa `DBCC DROPCLEANBUFFERS`, a propósito.** `PRUEBAS` vive en la **misma instancia** que `ESEHSVP` (`192.168.1.16:1433`), así que ese comando vaciaría la caché de la base viva y volvería lenta la aplicación del hospital durante minutos. En su lugar mide dos veces y reporta las **lecturas lógicas**, que no dependen de la caché. Si el DBA quiere una medición en frío de verdad, el script explica cómo hacerlo afectando solo a `PRUEBAS` (`SET OFFLINE`/`SET ONLINE`).
+
+Resultados (llenar con la salida del script y con la pestaña *Messages*):
+
+| Consulta | Ventana | Lecturas lógicas | CPU / tiempo | Plan (operadores) | ¿Acepta el hospital? |
 |---|---|---|---|---|---|
 | Por cupo | — | | | | |
 | Por documento | 7 d | | | | |
-| Por documento | 60 d | | | | |
-| Por documento | 180 d | | | | |
+| Por documento | 67 d (por defecto) | | | | |
+| Por documento | 180 d (máxima) | | | | |
+| **Por documento, historia inexistente** | 180 d | | | | |
 
-**Umbrales propuestos** (a confirmar con quien administra la base del hospital): por cupo < 100 ms; por documento en la ventana por defecto < 3 s en caché fría. Si la de 60 días no cabe, se acorta la ventana por defecto (`ventanaPorDocumento`, [`consulta-his.ts`](../../../apps/web/lib/rastreo/consulta-his.ts)); si ni la de 7 días cabe, se deja la consulta **solo por cupo** (basta cambiar `incluirPorDocumento`) y se propone al hospital un índice por `NU_HIST_PAC_CIT`. Cierra el punto abierto §12 #5 del plan.
+**Cómo se lee.** Mirar las **lecturas lógicas**, no los milisegundos: con la tabla en caché los tiempos salen en pocos ms y engañan. Dos señales concretas:
+
+- Si el plan hace un **Scan** del índice agrupado y las lecturas lógicas son parecidas en las tres ventanas, el motor recorre la tabla completa y **acortar la ventana no arreglaría nada**. En el ensayo local del script (una copia pequeña) pasó justo eso; la tabla del hospital es 18 veces más grande y puede decidir distinto — por eso se mide allá y no se supone.
+- Si aparece `Parallelism`, el plan usa varios núcleos y el CPU pesa más de lo que sugiere el tiempo transcurrido, sobre todo en una instancia ocupada.
+
+**Umbrales propuestos** (a confirmar con quien administra la base): por cupo < 100 ms y un *Index Seek*; por documento en la ventana por defecto < 3 s en caché fría. Según el resultado:
+
+- **Todo dentro de los umbrales** → se enciende `lookupEnabled` por clínica (abajo).
+- **La de 67 d no cabe** → se acorta la ventana por defecto (`ventanaPorDocumento`, [`consulta-his.ts`](../../../apps/web/lib/rastreo/consulta-his.ts)).
+- **Ni la de 7 d cabe** → se deja **solo la consulta por cupo** (`incluirPorDocumento`) y se le propone al hospital un índice por `NU_HIST_PAC_CIT`.
+- **Aparece un *Key Lookup*** donde se esperaba cubrir la consulta → antes de tocar nuestras ventanas, ver si a un índice existente le falta un `INCLUDE (NU_HIST_PAC_CIT)`: puede ser una mejora barata para el hospital, no solo para nosotros.
+
+Cierra el punto abierto §12 #5 del plan.
+
+**Lo que este script NO puede medir** (necesita el agente corriendo, es la segunda ronda):
+
+1. **Concurrencia**: 5 consultas por documento a la vez mientras el hospital agenda, comprobando que no se degradan sus inserciones. Se aproxima abriendo 5 ventanas de SSMS con la PARTE E.
+2. **Cancelación por tiempo agotado**: que la consulta desaparezca de `sys.dm_exec_requests` cuando el agente la cancela a los 10 s (`ejecutarConTope`). Es una prueba del agente, no del SQL.
 
 ## Encender y apagar (por clínica, a mano)
 

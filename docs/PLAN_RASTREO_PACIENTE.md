@@ -278,7 +278,7 @@ Implementada, con tests y verificada contra un Postgres 15 desechable (BD en el 
 - Clasificador puro en `@agenia/shared` con tests de tabla.
 *Aceptación:* un caso sintético por veredicto; tests de aislamiento de tenant y por rol (patrón de `sync-audit.spec.ts`); DOCTOR sin relación terapéutica es rechazado; BOOKING_AGENT respeta su scope; funciona en una clínica sin espejo mostrando solo el lado AgenIA.
 
-**Fase 2 — Consulta en vivo al HIS (§7).** ✅ **Implementada el 2026-09-20; ⏳ falta la medición en el laboratorio del hospital** (ver «Estado de la Fase 2»).
+**Fase 2 — Consulta en vivo al HIS (§7).** ✅ **Implementada y MEDIDA en el laboratorio del hospital el 2026-09-20: el costo pasa con margen amplio** (3 lecturas lógicas por cupo, 43 en la ventana por defecto). ⏳ Antes de encender faltan dos cosas, ninguna de costo: confirmar el permiso con el login `agenia_sync` y decidir qué hacer con las horas ilegibles del HIS (§12 #17). Ver «Estado de la Fase 2».
 *Aceptación:* probada primero en el laboratorio del hospital con el costo de la consulta medido; interruptor apagado por defecto; prueba con el agente caído (falla rápido); B completo; `ENTREGADA_PERO_AUSENTE` y `OTRA_IDENTIDAD` operativos.
 
 **Fase 3 — Vigilante y bandeja** (§10, #2 y #3). ✅ **Implementada el 2026-09-20; ⏳ falta configurar el agendador y la plantilla de Meta en cada clínica** (ver «Estado de la Fase 3»).
@@ -428,11 +428,14 @@ Implementada y verificada. **Sin commit.** Lleva **una migración aditiva** (`20
 
 **Lo que NO está verificado.**
 
-- **El SQL contra un SQL Server real.** Se prueba el texto y los parámetros con un pool simulado, y la lógica con un «HIS» en memoria; no se ha corrido contra el motor del hospital.
-- **El costo sobre su base.** Solo hay una estimación por los volúmenes documentados. La consulta por documento recorre un rango de fechas y filtra por historia: es la que puede pesar. Sin la medición del laboratorio la Fase 2 **no cumple** su criterio de aceptación.
+- ~~**El SQL contra un SQL Server real.**~~ ✅ Ejecutado el 2026-09-20 contra `PRUEBAS` (SQL Server 2017 14.0.3465.1), una copia del 99,8 % del catálogo vivo, con el script [`sql/MEDICION_CONSULTA_EN_VIVO.sql`](drivers/cnt-sanvicente-anserma/sql/MEDICION_CONSULTA_EN_VIVO.sql).
+- ~~**El costo sobre su base.**~~ ✅ Medido: **3** lecturas lógicas por cupo (`Clustered Index Seek`) y **18 / 43 / 60** por documento con ventanas de 7 / 67 / 180 días, con milisegundos de un dígito. La premisa del diseño era **falsa**: `CITAS_MEDICAS` tiene tres índices que empiezan por `NU_HIST_PAC_CIT`, así que el motor busca por el documento y no recorre el rango de fechas. La estimación previa (21.000–56.000 filas) erraba por tres órdenes de magnitud. **No hay que acortar la ventana ni pedir un índice.**
+- **El permiso del login del agente.** La medición se corrió con `ADMIN`, no con `agenia_sync`: que el agente pueda leer con su permiso mínimo **sigue sin confirmarse** (es repetir la PARTE A del script).
+- **Las citas con `FE_HORA_CIT` ilegible.** La medición se topó con una (`'2026/09/19 3'`) y destapó un falso negativo: la consulta por cupo compara la hora con `=`, así que una cita guardada así no se encuentra y la pantalla afirmaría «el HIS no tiene ninguna cita en ese cupo». Ver §12 #17.
 - La red real entre la VM del hospital y la nube (el resto del protocolo ya la ejerce).
+- La concurrencia (5 consultas a la vez mientras el hospital agenda) y la cancelación por tiempo agotado: necesitan el agente corriendo.
 
-**Pendiente para cerrar la Fase 2:** (1) medir en el laboratorio y llenar la tabla de `CONSULTA_EN_VIVO.md`; (2) ajustar la ventana o dejarla solo por cupo según el resultado; (3) desplegar en el orden migración → API → agente → web y encender por clínica.
+**Pendiente para cerrar la Fase 2:** (1) confirmar la PARTE A con `agenia_sync`; (2) correr la PARTE G para dimensionar las horas ilegibles y decidir §12 #17; (3) desplegar en el orden migración → API → agente → web y encender por clínica.
 
 ### Estado de la Fase 3 (2026-09-20)
 
@@ -545,7 +548,7 @@ Opciones que se evaluarán entonces:
 2. ~~**SUPER_ADMIN y el texto de las conversaciones.**~~ ✅ Resuelto por defecto en la Fase 1: ve los **hechos** (cuántos mensajes, cómo terminó, motivos de fallo) y **no** el texto. Sigue siendo una decisión revisable.
 3. **Lista de motivos** de consulta (§6): adoptada tal como se propuso (`PACIENTE_EN_VENTANILLA`, `RECLAMO_PQRS`, `SOPORTE_TECNICO`, `OTRO`); ampliarla es cambiar una constante en `@agenia/shared` (`MOTIVOS_CONSULTA`). Queda abierto si alcanza en producción.
 4. **Retención** de `PatientLookupLog` e `InteractionLog`. Hoy solo `avisosMasivos.retencionDiasDatosPersonales` define una.
-5. **Ventana por defecto** de la consulta en vivo. Fijada en la Fase 2 en **−7 / +60 días, estirada hasta cubrir las citas relevantes y con tope de 180** (por cupo, la ventana no interviene). Es una propuesta: se confirma o se acorta tras medir el costo en el laboratorio (`docs/drivers/<driverKey>/CONSULTA_EN_VIVO.md`).
+5. ~~**Ventana por defecto** de la consulta en vivo.~~ ✅ Resuelto por la medición del 2026-09-20: se **queda como está** (−7 / +60 días, tope 180). Entre 7 y 180 días la diferencia es de 18 a 60 lecturas lógicas, porque el motor busca por documento y no por rango de fechas.
 6. ~~**¿El envío por Meta devuelve el `wamid` al llamador?**~~ ✅ Resuelto en la Fase 0: sí. Los cuatro puntos de envío reciben la respuesta de la Cloud API y de ahí sale `messages[0].id`; están todos enganchados al libro (§8 #7).
 7. **Fuera de la ventana de 24 h de Meta** un mensaje libre no sale: el "enviar confirmación" del escenario B tendría que usar una plantilla (`WhatsappTemplate`).
 8. ~~**Volver a cancelar una cita ya cancelada** liberaba el cupo aunque otra cita ya lo ocupara.~~ ✅ Corregido (ver «Corrección: re-cancelar» en §9).
@@ -557,6 +560,11 @@ Opciones que se evaluarán entonces:
 14. **Qué pasa cuando el agendador no lee el aviso.** Hoy no hay reintento ni escalamiento a otra persona: se avisa una vez por gravedad. La bandeja y su cifra en el menú son el respaldo. Si en producción se ignora, evaluar un segundo destinatario o un recordatorio.
 15. **Cita cuya hora ya pasó sin llegar al hospital.** Se queda abierta hasta que alguien la resuelva o descarte (§9, Fase 3). Si se acumulan, decidir una regla de vencimiento (por ejemplo, cerrarlas a los N días con la nota «venció sin resolución»).
 16. **La cifra del menú no se refresca sola** entre páginas (sí tras cada acción). Si hace falta en vivo, un sondeo o un evento del servidor.
+17. **Citas con `FE_HORA_CIT` ilegible y el veredicto `NO_ESTA_EN_EL_HIS`** (hallado al medir la Fase 2, 2026-09-20). El HIS guarda parte de las horas en un formato que no cumple `'YYYY/MM/DD HH:MM'` (`MAPEO_HIS.md` §2.1: 5,7 % de las citas elaboradas en 30 días; valores como `'2026/08/29 1'`). Consecuencias, las dos malas:
+    - La consulta **por cupo** compara con `=` y no encuentra esas filas → la pantalla afirma «el HIS no tiene ninguna cita en ese cupo», que es **falso** y contradice §3.3 (un veredicto no afirma lo que no sabe). Afecta al escenario **B**, el que la consulta en vivo venía a completar; no al **A**, cuyas filas las escribe nuestro agente con el escritor estricto.
+    - La consulta **por documento** descarta esas filas y marca `truncated`. El agente lo calcula y la API lo guarda, pero **la web no lo lee**: la pantalla no avisa de que la respuesta del hospital vino incompleta. Eso último es un defecto llano, no una decisión.
+
+    Qué hacer se decide con la PARTE G del script (cuántas son, de qué formas y en qué médicos se concentran). Mínimo: mostrar `truncated` y no afirmar «no está en el HIS» cuando la respuesta pudo venir incompleta. Si son apreciables: buscar también las variantes (`FE_HORA_CIT IN (@hora, @variante…)`, sigue siendo un seek) y decir la verdad — que el hospital tiene una cita ahí con una hora que su sistema no guardó de forma interpretable —, sin inventar la hora.
 
 ---
 

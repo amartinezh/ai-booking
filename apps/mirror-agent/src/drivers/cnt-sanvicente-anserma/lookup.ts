@@ -26,10 +26,14 @@ import {
  *     `CITAS_MEDICAS` es (médico, hora, estado): igualar médico y hora es una
  *     búsqueda por prefijo de la clave, la consulta más barata que tiene este
  *     driver. No lleva el documento del paciente: el servidor compara.
- *   · `BY_DOCUMENT` — "¿qué citas tiene este documento?". NO es barata: el único
- *     índice del hospital útil aquí empieza por `FE_FECH_CIT`, así que se lee un
- *     rango de fechas y se filtra por historia. De ahí la ventana obligatoria y
- *     acotada (`LIMITES_CONSULTA_HIS.ventanaDiasMax`) y el tope de filas.
+ *   · `BY_DOCUMENT` — "¿qué citas tiene este documento?". MEDIDA en el hospital el
+ *     2026-09-20 (`CONSULTA_EN_VIVO.md`): cuesta entre 18 y 60 lecturas lógicas
+ *     según la ventana, porque `CITAS_MEDICAS` tiene tres índices que empiezan por
+ *     `NU_HIST_PAC_CIT` y el motor busca por el documento, no por el rango de
+ *     fechas. Se diseñó suponiendo lo contrario —que había que recorrer el rango—,
+ *     y la ventana acotada (`LIMITES_CONSULTA_HIS.ventanaDiasMax`) más el tope de
+ *     filas se conservan igual: acotan el resultado y lo que se le muestra al
+ *     funcionario, no solo el costo.
  *
  * ═══ Defensas sobre la base productiva del hospital ═══
  *   · Solo `SELECT`, con parámetros: ningún valor de la petición entra al texto
