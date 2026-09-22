@@ -104,6 +104,96 @@ ORDER BY t.FE_FECH_TUME, t.CD_MED_TUME;
 GO
 
 /* -----------------------------------------------------------------------------
+   CONSULTA DE APOYO 2 — ¿va a funcionar PREPARAR con estos parámetros? (solo lectura)
+   Comprueba, para un médico candidato, las DOS cosas por las que PREPARAR se detiene:
+   que tenga una cita del último año de la cual copiar servicio y convenio (error
+   50007), y que su turno tenga 4 cupos libres el día de prueba (error 50008) y 1 el
+   día del recordatorio. Vale la pena correrla antes: cuesta segundos y ahorra leer
+   un THROW. Llene los tres valores de arriba con los que piensa usar.
+   -------------------------------------------------------------------------- */
+DECLARE @med   varchar(4) = '';   -- ← el candidato a @MED_HOMOLOGADO
+DECLARE @dias  int        = 8;    -- ← el @DIAS que piensa usar
+DECLARE @diasR int        = 1;    -- ← el @DIAS_RECORDATORIO que piensa usar
+
+IF @med <> ''
+BEGIN
+    DECLARE @hoyA  date = CAST(GETDATE() AS date);
+    DECLARE @diaA  date = DATEADD(day, @dias,  @hoyA);
+    DECLARE @diaRA date = DATEADD(day, @diasR, @hoyA);
+
+    DECLARE @serA varchar(12), @convA int, @espA varchar(3), @duraA int;
+    SELECT TOP (1) @serA = CD_CODI_SER_CIT, @convA = NU_NUME_CONV_CIT,
+                   @espA = CD_CODI_ESP_CIT, @duraA = NULLIF(NU_DURA_CIT, 0)
+      FROM dbo.CITAS_MEDICAS
+     WHERE CD_CODI_MED_CIT = @med
+       AND FE_FECH_CIT >= DATEADD(day, -365, @hoyA)
+       AND (DE_DESC_CIT IS NULL OR DE_DESC_CIT NOT LIKE 'PRUEBA E2E AGENIA%')
+     ORDER BY FE_FECH_CIT DESC;
+    SET @duraA = COALESCE(@duraA, 20);
+
+    SELECT referencia = CASE WHEN @serA IS NULL
+                             THEN '>>> NO HAY: PREPARAR se detendrá (error 50007). Elija otro médico.'
+                             ELSE 'sí, se puede' END,
+           servicio = @serA, convenio = @convA, especialidad = @espA, duracion_min = @duraA;
+
+    -- Los cupos libres, con la MISMA cuenta que hace PREPARAR y el mismo filtro de
+    -- turnos que usa el driver. Los días se listan siempre, incluso sin turno: una
+    -- fila que desaparece no dice nada, un «SIN TURNO» sí.
+    ;WITH dias AS (
+        SELECT dia = @diaA,  para_que = 'día de prueba (necesita 4 libres)'
+        UNION ALL
+        SELECT dia = @diaRA, para_que = 'recordatorio 1b (necesita 1 libre)'
+    ), t AS (
+        SELECT dia, ini, fin FROM (
+            SELECT dia = CAST(FE_FECH_TUME AS date),
+                   ini = CAST(FE_HOIN_TUME AS time),
+                   fin = CAST(FE_HOFI_TUME AS time),
+                   rn  = ROW_NUMBER() OVER (PARTITION BY CAST(FE_FECH_TUME AS date)
+                                            ORDER BY FE_HOFI_TUME DESC)
+              FROM dbo.TURNOS_MEDICOS
+             WHERE CD_MED_TUME = @med
+               AND CAST(FE_FECH_TUME AS date) IN (@diaA, @diaRA)
+               AND ISNULL(NU_TIPO_TUME, 0) = 0
+               AND ISNULL(ID_DISP_TUME, '1') = '1') z
+         WHERE rn = 1
+    ), n AS (
+        SELECT TOP (200) i = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) - 1 FROM sys.all_objects
+    ), rejilla AS (
+        SELECT t.dia,
+               inicio = DATEADD(minute, n.i * @duraA, CAST(t.dia AS datetime) + CAST(t.ini AS datetime))
+          FROM t JOIN n
+            ON DATEADD(minute, (n.i + 1) * @duraA, CAST(t.ini AS datetime)) <= CAST(t.fin AS datetime)
+    ), marcados AS (
+        -- El EXISTS va AQUÍ y no dentro del SUM: SQL Server no admite una subconsulta
+        -- dentro de una función de agregado (error 130).
+        SELECT r.dia,
+               ocupado = CASE WHEN EXISTS (
+                                SELECT 1 FROM dbo.CITAS_MEDICAS x
+                                 WHERE x.CD_CODI_MED_CIT = @med
+                                   AND x.FE_HORA_CIT = CONVERT(char(10), r.dia, 111) + ' '
+                                                     + CONVERT(char(5), r.inicio, 108))
+                              THEN 1 ELSE 0 END
+          FROM rejilla r
+    ), conteo AS (
+        SELECT m.dia, cupos = COUNT(*), libres = SUM(1 - m.ocupado)
+          FROM marcados m GROUP BY m.dia
+    )
+    SELECT dia      = CONVERT(char(10), d.dia, 111),
+           d.para_que,
+           cupos    = ISNULL(c.cupos, 0),
+           libres   = ISNULL(c.libres, 0),
+           veredicto = CASE
+               WHEN c.dia IS NULL THEN '>>> SIN TURNO útil ese día'
+               WHEN d.dia = @diaA  AND c.libres < 4 THEN '>>> faltan cupos libres (PREPARAR se detiene)'
+               WHEN d.dia = @diaRA AND c.libres < 1 THEN '>>> sin cupo: el 1b no se prepara (avisa y sigue)'
+               ELSE 'OK' END
+      FROM dias d
+      LEFT JOIN conteo c ON c.dia = d.dia
+     ORDER BY d.dia;
+END;
+GO
+
+/* -----------------------------------------------------------------------------
    PARTE 1 — PARÁMETROS (llenar) y PARTE 2 — ESCRITURA
    Un solo lote a propósito: las variables no sobreviven a un GO.
    -------------------------------------------------------------------------- */
@@ -176,6 +266,11 @@ DECLARE @txtDia  char(10) = CONVERT(char(10), @dia, 111);    -- 'YYYY/MM/DD'
 DECLARE @txtDia2 char(10) = CONVERT(char(10), @dia2, 111);
 
 -- ── Turno del médico homologado el día de prueba ────────────────────────────
+-- Con el MISMO filtro que el driver usa para generar cupos (`ISNULL(NU_TIPO_TUME,0)=0`
+-- y `ISNULL(ID_DISP_TUME,'1')='1'`). Sin él se podía elegir el turno que termina más
+-- tarde aunque AgenIA lo ignore: las citas de prueba caerían en un turno sin cupos en
+-- AgenIA y el escenario 1 fallaría sin que se entendiera por qué. Varios médicos del
+-- hospital tienen DOS turnos el mismo día, así que el caso es real.
 DECLARE @tIni time, @tFin time, @consultorio varchar(8);
 SELECT TOP (1)
     @tIni = CAST(FE_HOIN_TUME AS time),
@@ -183,9 +278,11 @@ SELECT TOP (1)
     @consultorio = CD_CODI_CONS_TUME
 FROM dbo.TURNOS_MEDICOS
 WHERE CD_MED_TUME = @MED_HOMOLOGADO AND CAST(FE_FECH_TUME AS date) = @dia
+  AND ISNULL(NU_TIPO_TUME, 0) = 0
+  AND ISNULL(ID_DISP_TUME, '1') = '1'
 ORDER BY FE_HOFI_TUME DESC;
 IF @tIni IS NULL
-    THROW 50006, '@MED_HOMOLOGADO no tiene turno ese día. Elija otro @DIAS u otro médico (consulta de apoyo).', 1;
+    THROW 50006, '@MED_HOMOLOGADO no tiene ese día ningún turno de los que AgenIA usa (NU_TIPO_TUME=0 e ID_DISP_TUME=1). Elija otro @DIAS u otro médico (consulta de apoyo).', 1;
 
 -- ── Valores de referencia: copiados de una cita REAL de cada médico ─────────
 -- Si el médico sin homologar no tiene citas recientes, se usa la referencia del
@@ -293,6 +390,8 @@ DECLARE @tIniR time, @tFinR time;
 SELECT TOP (1) @tIniR = CAST(FE_HOIN_TUME AS time), @tFinR = CAST(FE_HOFI_TUME AS time)
 FROM dbo.TURNOS_MEDICOS
 WHERE CD_MED_TUME = @MED_HOMOLOGADO AND CAST(FE_FECH_TUME AS date) = @diaR
+  AND ISNULL(NU_TIPO_TUME, 0) = 0
+  AND ISNULL(ID_DISP_TUME, '1') = '1'
 ORDER BY FE_HOFI_TUME DESC;
 
 DECLARE @horaR varchar(18) = NULL, @inicioR datetime = NULL;

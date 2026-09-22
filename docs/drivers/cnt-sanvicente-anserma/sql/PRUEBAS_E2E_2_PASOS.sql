@@ -197,6 +197,9 @@ DECLARE @tIniD time, @tFinD time;
 SELECT TOP (1) @tIniD = CAST(FE_HOIN_TUME AS time), @tFinD = CAST(FE_HOFI_TUME AS time)
   FROM dbo.TURNOS_MEDICOS
  WHERE CD_MED_TUME = @medD AND CAST(FE_FECH_TUME AS date) = @fechaD
+   -- Mismo filtro que el driver: si no, se podría elegir un turno que AgenIA ignora.
+   AND ISNULL(NU_TIPO_TUME, 0) = 0
+   AND ISNULL(ID_DISP_TUME, '1') = '1'
  ORDER BY FE_HOFI_TUME DESC;
 IF @tIniD IS NULL
     THROW 50014, 'Paso D: ese médico no tiene turno ese día.', 1;
@@ -287,6 +290,9 @@ DECLARE @tIniE time, @tFinE time;
 SELECT TOP (1) @tIniE = CAST(FE_HOIN_TUME AS time), @tFinE = CAST(FE_HOFI_TUME AS time)
   FROM dbo.TURNOS_MEDICOS
  WHERE CD_MED_TUME = @medE AND CAST(FE_FECH_TUME AS date) = @fechaE
+   -- Mismo filtro que el driver: si no, se podría elegir un turno que AgenIA ignora.
+   AND ISNULL(NU_TIPO_TUME, 0) = 0
+   AND ISNULL(ID_DISP_TUME, '1') = '1'
  ORDER BY FE_HOFI_TUME DESC;
 IF @tIniE IS NULL
     THROW 50024, 'Paso E: ese médico no tiene turno ese día.', 1;

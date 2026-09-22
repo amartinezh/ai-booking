@@ -1,7 +1,15 @@
+-- ⛔ POSTGRESQL, la base de AgenIA. Si abrió esto en SSMS, CIÉRRELO: no es para el
+--    SQL Server del hospital. Lo que va en SSMS son los archivos SIN «POSTGRES».
 -- =============================================================================
 -- PRUEBAS E2E — 4. LIMPIAR EL LADO DE AGENIA  (PostgreSQL, no SQL Server)
 -- ⚠️ BORRA. Solo las filas de los documentos sintéticos y de UNA organización.
 -- =============================================================================
+--
+-- LO QUE NO BORRA, a propósito: el médico que se creó y homologó para la campaña
+-- (`PRUEBAS_E2E_0_AGENIA_POSTGRES_PREPARAR.sql`, PARTE 3). Homologar a un médico de
+-- medicina general es trabajo que el piloto necesita con campaña o sin ella, así que
+-- se queda. Si de verdad se quiere deshacer: «Espejo → Homologar médicos» tiene el
+-- botón de deshomologar, y el médico se desactiva desde la pantalla de médicos.
 --
 -- POR QUÉ EXISTE. Hasta el alta en caliente, una prueba E2E solo dejaba basura en
 -- el HIS: los pacientes los creaba el probador desde WhatsApp y el guion 3 los
@@ -32,7 +40,7 @@
 --
 -- CÓMO SE CORRE, en el VPS de AgenIA:
 --   docker compose exec -T postgres psql -U agenia -d agenia \
---     -v org=<ID-DE-LA-ORGANIZACION> -v confirmo=0 -f PRUEBAS_E2E_4_LIMPIAR_AGENIA.sql
+--     -v org=<ID-DE-LA-ORGANIZACION> -v confirmo=0 -f PRUEBAS_E2E_4_AGENIA_POSTGRES_LIMPIAR.sql
 -- El id de la organización es el que imprime `./checkHealth.sh` en su cabecera.
 -- =============================================================================
 
@@ -98,7 +106,12 @@ UNION ALL
 SELECT 'MirrorPatientOptOut (la baja del D10)', count(*)
   FROM "MirrorPatientOptOut" o
  WHERE o."organizationId" = (SELECT org FROM e2e_ctx)
-   AND o.document IN (SELECT doc FROM e2e_doc);
+   AND o.document IN (SELECT doc FROM e2e_doc)
+UNION ALL
+SELECT 'EpsEnrolledPatient (el padrón de prueba)', count(*)
+  FROM "EpsEnrolledPatient" p
+ WHERE p."organizationId" = (SELECT org FROM e2e_ctx)
+   AND p.cedula IN (SELECT doc FROM e2e_doc);
 
 -- 🚦 Las que impiden seguir: una cita de prueba sin cancelar. Borrarla aquí dejaría
 -- el cupo marcado como ocupado y sin cita, que es justo lo que la reconciliación
@@ -184,6 +197,13 @@ DELETE FROM "User" u
 DELETE FROM "MirrorPatientOptOut" o
  WHERE o."organizationId" = (SELECT org FROM e2e_ctx)
    AND o.document IN (SELECT doc FROM e2e_doc);
+
+-- 6) El padrón de prueba que dio de alta PRUEBAS_E2E_0_AGENIA_POSTGRES_PREPARAR.sql. Se borra
+--    en vez de desactivarse: son filas sintéticas, no un afiliado que se fue. Y va
+--    acotado a los documentos sintéticos, nunca a un corte entero de la EPS.
+DELETE FROM "EpsEnrolledPatient" p
+ WHERE p."organizationId" = (SELECT org FROM e2e_ctx)
+   AND p.cedula IN (SELECT doc FROM e2e_doc);
 
 COMMIT;
 

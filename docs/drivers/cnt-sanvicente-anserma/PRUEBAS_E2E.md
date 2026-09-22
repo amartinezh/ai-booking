@@ -6,9 +6,10 @@ Veintidós escenarios, con documentos **sintéticos**, que recorren lo que AgenI
 |---|---|
 | [`sql/PRUEBAS_E2E_1_PREPARAR.sql`](sql/PRUEBAS_E2E_1_PREPARAR.sql) | Deja el HIS (`PRUEBAS`) listo: 21 pacientes y las citas «del hospital» |
 | [`sql/PRUEBAS_E2E_2_PASOS.sql`](sql/PRUEBAS_E2E_2_PASOS.sql) | Cinco acciones del hospital que se corren **durante** la prueba (A a E) |
+| [`sql/PRUEBAS_E2E_0_AGENIA_POSTGRES_PREPARAR.sql`](sql/PRUEBAS_E2E_0_AGENIA_POSTGRES_PREPARAR.sql) | **PostgreSQL.** Da de alta los 21 documentos en el padrón **sin tocar el padrón real**, y homologa al médico de la campaña si hace falta |
 | [`sql/PRUEBAS_E2E_VERIFICAR.sql`](sql/PRUEBAS_E2E_VERIFICAR.sql) | **Solo lectura.** Qué quedó registrado en el HIS: pacientes, citas, el convenio campo a campo, cancelaciones y el cuadro de mando por escenario |
 | [`sql/PRUEBAS_E2E_3_LIMPIAR.sql`](sql/PRUEBAS_E2E_3_LIMPIAR.sql) | Deja `PRUEBAS` (el HIS) como estaba |
-| [`sql/PRUEBAS_E2E_4_LIMPIAR_AGENIA.sql`](sql/PRUEBAS_E2E_4_LIMPIAR_AGENIA.sql) | Deja **AgenIA** como estaba: borra los pacientes que creó el alta en caliente |
+| [`sql/PRUEBAS_E2E_4_AGENIA_POSTGRES_LIMPIAR.sql`](sql/PRUEBAS_E2E_4_AGENIA_POSTGRES_LIMPIAR.sql) | **PostgreSQL.** Deja AgenIA como estaba: borra los pacientes que creó el alta en caliente y el padrón de prueba |
 | [`padron/e2e/padron_e2e_eps_a.csv`](padron/e2e/padron_e2e_eps_a.csv) | Padrón de prueba, EPS A (19 documentos) |
 | [`padron/e2e/padron_e2e_eps_b.csv`](padron/e2e/padron_e2e_eps_b.csv) | Padrón de prueba, EPS B (2 documentos) |
 
@@ -26,22 +27,32 @@ Los 22 documentos son `9990000001` … `9990000022`: diez dígitos que empiezan 
 
 Los padrones de prueba van **sin teléfono** a propósito: así ningún mensaje sale a nadie por el padrón. Las pruebas por WhatsApp se hacen escribiendo desde el teléfono del probador y dando la cédula sintética.
 
+### 🚨 El padrón de prueba NO se sube por la pantalla de importar
+
+**«Importar corte del padrón» reemplaza, no añade.** Todo afiliado que no venga en el archivo queda `isActive = false` (`deactivateAbsent`, en `apps/web/app/dashboard/padron/padron-service.ts`). Subir un CSV de 19 documentos a Salud Total desactivaría a sus **9.153 afiliados reales**, y desde ese momento cualquier paciente de verdad recibiría «su documento aún no figura dado de alta». La pantalla avisa cuando la baja pasa del 10 %, pero ese aviso se puede confirmar y seguir adelante.
+
+Por eso el alta va con [`sql/PRUEBAS_E2E_0_AGENIA_POSTGRES_PREPARAR.sql`](sql/PRUEBAS_E2E_0_AGENIA_POSTGRES_PREPARAR.sql), que inserta 21 filas y nada más, con `importId = NULL` — lo que el esquema documenta como «alta manual». Trae una red de seguridad de regalo: si alguien olvida la limpieza, el siguiente corte real de esa EPS los desactiva por ausentes.
+
+**Y tampoco sirve crear una «EPS de prueba»:** el convenio de facturación se resuelve por NIT + régimen contra el `mappingJson`, y con un NIT que no esté ahí `resolveConvenio` **lanza** — ninguna reserva por WhatsApp llegaría al HIS y los escenarios 12, 13 y 17 no se podrían probar. Los documentos de prueba van en **EPS reales** justamente para que la cita se escriba con el convenio que el hospital usa de verdad, que es lo que la PARTE 3 del guion de verificar comprueba. Los CSV de `padron/e2e/` se conservan como la lista de referencia de qué documento va en qué EPS.
+
 **Con una excepción, y es deliberada.** El alta en caliente crea el paciente con el teléfono que encuentra en la **ficha del HIS** y le manda el recordatorio: sin un móvil de verdad ahí no se puede probar ni el recordatorio ni la regla del teléfono compartido. Por eso `PRUEBAS_E2E_1_PREPARAR.sql` pide `@TEL_PRUEBA` —**el móvil del probador**— y lo escribe en dos fichas: la del paciente 1 y la del 21. A ese número van a llegar WhatsApps de verdad. El guion se niega a correr si ese número ya es de algún paciente del hospital.
 
 ---
 
 ## Antes de empezar
 
-### 0. 🚨 Comprobar que `PRUEBAS` todavía tiene agenda futura
+### 0. Comprobar que `PRUEBAS` todavía tiene agenda futura — ✅ medido el 2026-09-22
 
-**Esto se mira antes que nada, y el 2026-09-21 la respuesta era NO.** La medición de ese día (`sql/MEDICION_ALTA_EN_CALIENTE.sql`, PARTES E y F) encontró que `PRUEBAS` **dejó de alimentarse el viernes 11 de septiembre**: la última cita elaborada es del 18 y el sábado 12 —que debería traer ~285— está en cero. Si el feed de citas está congelado, `TURNOS_MEDICOS` lo está también, y entonces no hay turnos futuros de los cuales sacar cupos.
+**Sí la tiene: 1.062 turnos útiles desde hoy hasta el 2027-09-30.** Se corrió la consulta de apoyo del guion con el filtro del driver (`ISNULL(NU_TIPO_TUME,0)=0 AND ISNULL(ID_DISP_TUME,'1')='1'`) y los 1.062 turnos futuros son **todos** utilizables por AgenIA. La campaña se puede ejecutar.
 
-Consecuencia directa: **`PRUEBAS_E2E_1_PREPARAR.sql` se va a detener** con *«@MED_HOMOLOGADO no tiene turno ese día»*, y no es un error del guion. Es lo mismo que el hallazgo del 2026-09-17 («el único médico activo no tiene cupos futuros, su agenda no se publicó más allá del 16/sep»), que probablemente nunca fue el hospital sin publicar: era la copia congelada.
+**Esto corrige una conclusión apresurada.** El día anterior, al ver que `PRUEBAS` dejó de recibir citas el 11 de septiembre (`sql/MEDICION_ALTA_EN_CALIENTE.sql`, PARTES E y F), se supuso que `TURNOS_MEDICOS` estaría congelada igual y que eso explicaba el hallazgo del 2026-09-17 («el único médico activo no tiene cupos futuros»). **No es así:** la tabla de turnos tiene agenda publicada hasta un año adelante, porque el hospital la publica con mucha anticipación y lo que hay se escribió antes del corte. Así que aquel hallazgo era de **ese médico en concreto**, no de la copia. Las dos cosas son ciertas a la vez: no entran citas nuevas desde el 11, y hay agenda futura de sobra.
 
-Corra la **consulta de apoyo** del guion (lista turnos de los próximos 30 días) antes de tocar nada:
+Aun así conviene correr la consulta antes de cada campaña, porque de ella salen los parámetros:
 
-- **Si devuelve turnos** en el rango de `@DIAS`: adelante, la copia se está alimentando.
-- **Si sale vacía**: la campaña no se puede correr. Hay que arreglar el feed de `PRUEBAS` con el hospital, o apuntar el agente al catálogo vivo (`ESEHSVP`), que requiere que TI cree allá el usuario `agenia_sync` — hoy solo existe en `PRUEBAS`.
+- **Si devuelve turnos** en el rango de `@DIAS`: adelante.
+- **Si sale vacía o `utiles_para_agenia` es 0**: la campaña no se puede correr. Hay que arreglar el feed de `PRUEBAS` con el hospital, o apuntar el agente al catálogo vivo (`ESEHSVP`), que requiere que TI cree allá el usuario `agenia_sync` — hoy solo existe en `PRUEBAS`.
+
+Y no olvidar lo que sigue siendo verdad: **las citas de `PRUEBAS` están 11 días atrasadas**. Para la campaña no estorba (los escenarios traen sus propias citas), pero el agente de producción apuntado ahí no espeja nada real.
 
 ### 1. Saber a qué base apunta el agente de producción — decide dónde se prueba
 
@@ -95,7 +106,7 @@ Corra primero con `@CONFIRMO = 0`: valida todo y muestra la vista previa sin esc
 | Fase | Qué | Tiempo aprox. |
 |---|---|---|
 | 0 | `PRUEBAS_E2E_1_PREPARAR.sql` | 5 min |
-| 1 | Subir `padron_e2e_eps_a.csv` en la EPS A y `padron_e2e_eps_b.csv` en la EPS B | 5 min |
+| 1 | Dar de alta los 21 documentos con `PRUEBAS_E2E_0_AGENIA_POSTGRES_PREPARAR.sql`. **NO por la pantalla de importar padrón** — ver el aviso de abajo | 5 min |
 | 2 | Esperar a que el agente tome las altas del hospital. Comprobar en **Espejo → Auditoría**, dirección `INBOUND` | 5–10 min |
 | 3 | Escenarios **de lectura**: 1, 2, 3, 5, 6, 7, 8, 9, 11 | 30 min |
 | 4 | **Alta en caliente**: crear a mano los dos perfiles del 22, correr el **PASO D** y el **PASO E**, y esperar una vuelta del agente → escenarios 21 y 22 | 20 min |
@@ -219,8 +230,8 @@ Un fallo en el **15** no bloquea por sí mismo si el aviso al agendador sale: la
 1. **Cancelar en AgenIA** (desde el panel) las citas de prueba que sigan vigentes — incluidas **las que creó el alta en caliente**, que ya son citas normales. **Primero aquí**: si se borran solo en el HIS, AgenIA las sigue teniendo, la reconciliación las reporta como deriva y la bandeja avisa al agendador por algo que no pasó.
 2. Resolver o descartar las excepciones de prueba en la bandeja, con la nota *«prueba E2E»*.
 3. Correr `PRUEBAS_E2E_3_LIMPIAR.sql` contra **PRUEBAS** (el HIS): primero con `@CONFIRMO = 0`, que lista lo que borraría **y avisa si AgenIA aún tiene alguna cita viva**; luego con `@CONFIRMO = 1`.
-4. Correr `PRUEBAS_E2E_4_LIMPIAR_AGENIA.sql` contra la base de **AgenIA**, primero con `confirmo=0`. Esto es nuevo y no se puede saltar: el alta en caliente crea allá un `PatientProfile` y un `User` por cada paciente que el hospital agendó, y la baja de recordatorios del 1b deja una fila que impediría repetir el escenario. El guion se niega a borrar si queda alguna cita de prueba sin cancelar (el paso 1), y libera el cupo que el escenario 22 dejó ocupado sin cita.
-5. Retirar los dos padrones de prueba en AgenIA.
+4. Correr `PRUEBAS_E2E_4_AGENIA_POSTGRES_LIMPIAR.sql` contra la base de **AgenIA**, primero con `confirmo=0`. Esto es nuevo y no se puede saltar: el alta en caliente crea allá un `PatientProfile` y un `User` por cada paciente que el hospital agendó, y la baja de recordatorios del 1b deja una fila que impediría repetir el escenario. El guion se niega a borrar si queda alguna cita de prueba sin cancelar (el paso 1), y libera el cupo que el escenario 22 dejó ocupado sin cita.
+5. El padrón de prueba lo borra el propio `PRUEBAS_E2E_4_AGENIA_POSTGRES_LIMPIAR.sql` del paso 4 (21 filas, acotadas a los documentos sintéticos). **No** hay que reimportar ningún corte.
 6. Si la consulta en vivo no sale a producción: `lookupEnabled = false`.
 7. Devolver el número del agendador al teléfono real, y el de respaldo al del coordinador (o vaciarlo).
 8. Comprobar que el teléfono B **no** quedó en ningún perfil: `./checkHealth.sh` no lo mira, pero el paso 4 lo borra al borrar el perfil del paciente 1. Si el probador vuelve a recibir un recordatorio después de la limpieza, algo quedó.
