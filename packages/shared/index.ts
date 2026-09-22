@@ -214,6 +214,20 @@ export type {
   TipoExcepcion,
 } from './src/sync-watch';
 
+export { saludoPorHora } from './src/saludo';
+export type { Saludo, SaludoOptions } from './src/saludo';
+
+export {
+  TEMPLATE_CONTRACTS,
+  choqueDeNombre,
+  variablesEsperadas,
+} from './src/whatsapp-template-contracts';
+export type {
+  ChoqueDeNombre,
+  ContratoPlantilla,
+  TemplateKind,
+} from './src/whatsapp-template-contracts';
+
 export { decidirAlta, decidirTelefono, notaDeAlta } from './src/alta-en-caliente';
 export type {
   DecisionAlta,

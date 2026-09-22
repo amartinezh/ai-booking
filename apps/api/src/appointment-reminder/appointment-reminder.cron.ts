@@ -12,6 +12,7 @@ import { OrganizationSettingsService } from '../chatbot/organization-settings.se
 import { InteractionLogService } from '../interaction-log/interaction-log.service';
 import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
+import { saludoPorHora } from '@agenia/shared';
 import { addBusinessHours, formatForPatient } from '../common/business-hours';
 import { getErrorMessage, getErrorStack } from '../common/error-message.util';
 import { citaFueraDelAlcanceDelActor } from '../common/alcance-actor.util';
@@ -227,7 +228,10 @@ export class AppointmentReminderCronService
             service: { select: { name: true } },
           },
         },
-        organization: { select: { id: true, name: true } },
+        // `timezone` es lo que decide si el paciente lee «Buenos días» o
+        // «Buenas tardes»: el cron corre cada 15 min y el contenedor no
+        // siempre está en la hora de la clínica (ver CLAUDE.md, multi-tenant).
+        organization: { select: { id: true, name: true, timezone: true } },
       },
       // Procesamos en orden cronológico — las citas más cercanas primero.
       orderBy: { scheduleSlot: { startTime: 'asc' } },
@@ -417,7 +421,8 @@ export class AppointmentReminderCronService
     }
 
     return (
-      `Buenos días${patientName ? ' ' + patientName : ''}. Le saluda *${botName}*, asistente virtual de *${clinicName}*.\n\n` +
+      `${saludoPorHora(new Date(), { timeZone: apt.organization?.timezone ?? undefined })}` +
+      `${patientName ? ' ' + patientName : ''}. Le saluda *${botName}*, asistente virtual de *${clinicName}*.\n\n` +
       `Le recordamos su cita de *${serviceName}* con *${doctorName}* programada para el *${fecha}*.\n\n` +
       `Si requiere reagendar o cancelar, por favor responda *cancelar cita* y le ayudaremos. Le esperamos. 🩺`
     );
@@ -478,7 +483,10 @@ export class AppointmentReminderCronService
             service: { select: { name: true } },
           },
         },
-        organization: { select: { id: true, name: true } },
+        // `timezone` es lo que decide si el paciente lee «Buenos días» o
+        // «Buenas tardes»: el cron corre cada 15 min y el contenedor no
+        // siempre está en la hora de la clínica (ver CLAUDE.md, multi-tenant).
+        organization: { select: { id: true, name: true, timezone: true } },
       },
     });
 

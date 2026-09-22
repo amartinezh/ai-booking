@@ -1,4 +1,5 @@
 import { of, throwError } from 'rxjs';
+import { variablesEsperadas, type TemplateKind } from '@agenia/shared';
 import { WhatsappTemplateService } from './whatsapp-template.service';
 
 /** Forma del cuerpo que se le manda a la Graph API para una plantilla. */
@@ -31,6 +32,7 @@ describe('WhatsappTemplateService', () => {
     template?: Record<string, unknown> | null;
     creds?: Record<string, unknown> | null;
     postImpl?: jest.Mock;
+    configuradas?: Array<{ kind: string; name: string }>;
   }) => {
     const post =
       opts?.postImpl ??
@@ -46,6 +48,10 @@ describe('WhatsappTemplateService', () => {
               }
             : opts.template,
         ),
+        // Las ya configuradas de la clínica: es contra ellas que `upsertForOrg`
+        // comprueba que un nombre no sirva a dos tipos incompatibles.
+        findMany: jest.fn(() => opts?.configuradas ?? []),
+        upsert: jest.fn((args: any) => ({ id: 't1', ...args.create })),
       },
     };
     const credentials = {
@@ -72,10 +78,18 @@ describe('WhatsappTemplateService', () => {
     return { service, post, prisma, credentials, messageLog };
   };
 
+  /**
+   * Las 4 variables que APPOINTMENT_REMINDER declara en su contrato. El
+   * ayudante las manda por defecto porque un envío con otra cantidad ya no
+   * llega a Meta: lo corta el propio servicio (ver el contrato compartido en
+   * packages/shared/src/whatsapp-template-contracts.ts).
+   */
+  const CUATRO = ['Ana', 'Cardiología', 'Dr. Ruiz', 'martes 3pm'];
+
   const send = async (
     ctx: ReturnType<typeof build>,
     recipientId = PHONE,
-    bodyParams?: string[],
+    bodyParams: string[] = CUATRO,
   ) =>
     ctx.service.sendTemplate({
       organizationId: ORG,
@@ -132,12 +146,22 @@ describe('WhatsappTemplateService', () => {
     ]);
   });
 
-  it('sin variables NO manda `components` (Meta rechaza lo que no case con la aprobación)', async () => {
+  // 🚨 Antes esto comprobaba que un envío SIN variables omitiera
+  // `components`. Ya no puede ocurrir: los seis tipos declaran variables en
+  // su contrato, así que mandar cero es un error de programación, no una
+  // variante válida. Y el precio de dejarlo pasar lo cobra Meta —rechazo por
+  // «number of parameters does not match», con el envío ya contado contra la
+  // calidad de la WABA—, así que se corta aquí.
+  it.each([
+    ['ninguna', []],
+    ['de menos', ['Ana', 'Cardiología']],
+    ['de más', ['Ana', 'Cardiología', 'Dr. Ruiz', 'martes 3pm', 'sobra']],
+  ])('con %s variables no se llama a Meta', async (_caso, params) => {
     const ctx = build();
-    await send(ctx, PHONE, []);
+    const res = await send(ctx, PHONE, params as string[]);
 
-    const body = bodyOf(ctx.post);
-    expect(body.template).not.toHaveProperty('components');
+    expect(res).toEqual({ success: false, error: 'body-params-mismatch' });
+    expect(ctx.post).not.toHaveBeenCalled();
   });
 
   it('clínica sin plantilla configurada → error explícito, sin llamar a Meta', async () => {
@@ -193,6 +217,111 @@ describe('WhatsappTemplateService', () => {
     expect(res).toEqual({ success: false, error: 'missing-params' });
     expect(ctx.prisma.whatsappTemplate.findFirst).not.toHaveBeenCalled();
   });
+  describe('configurar una plantilla', () => {
+    // 🚨 El estado REAL del servidor el 2026-09-22: los cinco tipos apuntaban
+    // a `recordatorio_cita`. Cuatro de los cinco mandan una cantidad de
+    // variables distinta de las 4 que esa plantilla declara, así que Meta los
+    // habría rechazado uno a uno. El panel mostraba el contrato pero nadie lo
+    // comprobaba; ahora no se puede guardar.
+    it('rechaza reusar el nombre de otra plantilla con otra cantidad de variables', async () => {
+      const ctx = build({
+        configuradas: [
+          { kind: 'APPOINTMENT_REMINDER', name: 'recordatorio_cita' },
+        ],
+      });
+
+      await expect(
+        ctx.service.upsertForOrg(ORG, {
+          kind: 'SYNC_EXCEPTION_ALERT' as any,
+          name: 'recordatorio_cita',
+        }),
+      ).rejects.toThrow(/no puede servir a las dos/);
+
+      expect(ctx.prisma.whatsappTemplate.upsert).not.toHaveBeenCalled();
+    });
+
+    it('el mensaje dice qué crear en Meta, no solo que está mal', async () => {
+      const ctx = build({
+        configuradas: [
+          { kind: 'APPOINTMENT_REMINDER', name: 'recordatorio_cita' },
+        ],
+      });
+
+      await expect(
+        ctx.service.upsertForOrg(ORG, {
+          kind: 'APPOINTMENT_CANCELLED_MASS' as any,
+          name: 'recordatorio_cita',
+        }),
+      ).rejects.toThrow(/5 variables/);
+    });
+
+    it('un nombre propio se guarda sin estorbo', async () => {
+      const ctx = build({
+        configuradas: [
+          { kind: 'APPOINTMENT_REMINDER', name: 'recordatorio_cita' },
+        ],
+      });
+
+      await ctx.service.upsertForOrg(ORG, {
+        kind: 'SYNC_EXCEPTION_ALERT' as any,
+        name: 'aviso_agendador_sync',
+      });
+
+      expect(ctx.prisma.whatsappTemplate.upsert).toHaveBeenCalled();
+    });
+
+    // ⚠️ Lo primero que se hace al descubrir el choque es APAGAR la plantilla
+    // mal configurada. Si el guardián lo impidiera, no habría salida: habría
+    // que inventarle un nombre falso para poder desactivarla.
+    it('deja APAGAR una plantilla aunque su nombre choque', async () => {
+      const ctx = build({
+        configuradas: [
+          { kind: 'APPOINTMENT_REMINDER', name: 'recordatorio_cita' },
+        ],
+      });
+
+      await ctx.service.upsertForOrg(ORG, {
+        kind: 'SYNC_EXCEPTION_ALERT' as any,
+        name: 'recordatorio_cita',
+        isActive: false,
+      });
+
+      expect(ctx.prisma.whatsappTemplate.upsert).toHaveBeenCalled();
+    });
+
+    it('una plantilla APAGADA no le estorba a nadie', async () => {
+      const ctx = build({ configuradas: [] }); // findMany filtra por isActive
+
+      await ctx.service.upsertForOrg(ORG, {
+        kind: 'APPOINTMENT_CANCELLED_MASS' as any,
+        name: 'recordatorio_cita',
+      });
+
+      expect(ctx.prisma.whatsappTemplate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { organizationId: ORG, isActive: true },
+        }),
+      );
+      expect(ctx.prisma.whatsappTemplate.upsert).toHaveBeenCalled();
+    });
+
+    it('reguardar el MISMO tipo con su mismo nombre no se bloquea a sí mismo', async () => {
+      const ctx = build({
+        configuradas: [
+          { kind: 'APPOINTMENT_REMINDER', name: 'recordatorio_cita' },
+        ],
+      });
+
+      await ctx.service.upsertForOrg(ORG, {
+        kind: 'APPOINTMENT_REMINDER' as any,
+        name: 'recordatorio_cita',
+        language: 'es_CO',
+      });
+
+      expect(ctx.prisma.whatsappTemplate.upsert).toHaveBeenCalled();
+    });
+  });
+
   describe('libro de mensajes', () => {
     it('registra el envío con la respuesta de Meta, tipo TEMPLATE y el tipo de mensaje de la plantilla', async () => {
       const ctx = build();
@@ -202,6 +331,7 @@ describe('WhatsappTemplateService', () => {
         recipientId: PHONE,
         kind: 'APPOINTMENT_REMINDER' as any,
         appointmentId: 'apt-7',
+        bodyParams: CUATRO,
       });
 
       expect(ctx.messageLog.recordOutbound).toHaveBeenCalledWith({
@@ -231,6 +361,12 @@ describe('WhatsappTemplateService', () => {
           organizationId: ORG,
           recipientId: PHONE,
           kind: kindPlantilla as any,
+          // Cada tipo manda una cantidad distinta (3, 4 o 5): se toma del
+          // contrato para que esta prueba no se quede vieja si cambia.
+          bodyParams: Array.from(
+            { length: variablesEsperadas(kindPlantilla as TemplateKind) },
+            (_, i) => `v${i + 1}`,
+          ),
         });
 
         expect(ctx.messageLog.recordOutbound).toHaveBeenCalledWith(

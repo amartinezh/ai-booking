@@ -454,6 +454,24 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       expect(textoEnviado(chatbot).toLowerCase()).toContain('cancelar');
     });
 
+    // 🐛 El saludo estaba fijo en «Buenos días». El cron corre cada 15 min, y
+    // en la campaña E2E del 2026-09-22 llegó un recordatorio a las 2:21 p. m.
+    // dando los buenos días. Es la primera línea que lee el paciente.
+    it.each([
+      ['2026-09-22T14:00:00Z', '09:00 en Bogotá', 'Buenos días'],
+      ['2026-09-22T19:21:00Z', '02:21 p. m. en Bogotá', 'Buenas tardes'],
+      ['2026-09-23T01:00:00Z', '08:00 p. m. en Bogotá', 'Buenas noches'],
+    ])('a las %s (%s) saluda «%s»', async (ahoraIso, _local, saludo) => {
+      jest.useFakeTimers().setSystemTime(new Date(ahoraIso));
+      try {
+        const { service, chatbot } = build({ eligibles: [cita()] });
+        await service.runOnce();
+        expect(textoEnviado(chatbot).startsWith(saludo)).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('la fecha se presenta en hora de Bogotá, no en la UTC del contenedor', async () => {
       const { service, chatbot } = build({ eligibles: [cita()] });
       await service.runOnce();

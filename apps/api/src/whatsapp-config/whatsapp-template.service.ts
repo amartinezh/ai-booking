@@ -1,7 +1,12 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
-import { buildWhatsappRecipient } from '@agenia/shared';
+import {
+  TEMPLATE_CONTRACTS,
+  buildWhatsappRecipient,
+  choqueDeNombre,
+  variablesEsperadas,
+} from '@agenia/shared';
 import type {
   WhatsappMessageKind,
   WhatsappTemplateKind,
@@ -100,6 +105,36 @@ export class WhatsappTemplateService {
       );
     }
 
+    // 🚨 Un mismo nombre no puede servir a dos tipos que mandan distinta
+    // cantidad de variables: Meta rechaza uno de los dos envíos SIEMPRE, con
+    // «number of parameters does not match», y el aviso que no salió solo se
+    // descubre cuando alguien lo echa en falta. Se detectó el 2026-09-22 con
+    // los cinco tipos apuntando a `recordatorio_cita`. Ver
+    // packages/shared/src/whatsapp-template-contracts.ts.
+    //
+    // Solo entre plantillas ACTIVAS, y solo si esta va a quedar activa: una
+    // apagada no envía nada, así que no puede chocar con nadie. Sin esta
+    // salvedad el guardián se volvería una trampa — impediría APAGAR una
+    // plantilla mal configurada, que es justo lo primero que hay que hacer
+    // cuando se descubre el choque.
+    const activa = input.isActive ?? true;
+    if (activa) {
+      const yaActivas = await this.prisma.whatsappTemplate.findMany({
+        where: { organizationId, isActive: true },
+        select: { kind: true, name: true },
+      });
+      const choque = choqueDeNombre(input.kind, name, yaActivas);
+      if (choque) {
+        throw new BadRequestException(
+          `La plantilla "${name}" ya está asignada a «${TEMPLATE_CONTRACTS[choque.kind].label}», ` +
+            `que manda ${choque.variables} variables, y «${TEMPLATE_CONTRACTS[input.kind].label}» manda ` +
+            `${variablesEsperadas(input.kind)}. Una misma plantilla de Meta no puede servir a las dos: ` +
+            `cree en Meta una plantilla aparte con ${variablesEsperadas(input.kind)} variables ` +
+            `(${TEMPLATE_CONTRACTS[input.kind].variables.join(', ')}).`,
+        );
+      }
+    }
+
     const language = input.language?.trim() || 'es';
     const data = {
       name,
@@ -147,6 +182,19 @@ export class WhatsappTemplateService {
 
     if (!organizationId || !recipientId) {
       return { success: false, error: 'missing-params' };
+    }
+
+    // El contrato compartido es la única fuente de verdad sobre cuántos
+    // `{{n}}` manda cada tipo. Si el código que arma `bodyParams` se separa
+    // de él, el rechazo de Meta llega como un código opaco y con el envío ya
+    // contado contra la calidad de la WABA; aquí se ve antes de salir.
+    const esperadas = variablesEsperadas(kind);
+    if (bodyParams.length !== esperadas) {
+      this.logger.error(
+        `Plantilla ${kind} (org ${organizationId}): se iban a mandar ${bodyParams.length} ` +
+          `variables y el contrato declara ${esperadas}. Envío cancelado antes de llamar a Meta.`,
+      );
+      return { success: false, error: 'body-params-mismatch' };
     }
 
     const template = await this.findTemplate(organizationId, kind);
