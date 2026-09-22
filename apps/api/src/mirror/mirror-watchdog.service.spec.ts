@@ -64,6 +64,8 @@ describe('MirrorWatchdogService', () => {
     activas?: Record<string, unknown>[];
     /** Estado actual de eventos por seq (la comprobación del cierre). */
     eventosPorSeq?: Record<string, unknown>[];
+    /** Lo que devuelve la consulta del vencimiento (`updatedAt: { lt }`). */
+    olvidadas?: Record<string, unknown>[];
   }
 
   const build = (e: Escenario = {}) => {
@@ -94,11 +96,19 @@ describe('MirrorWatchdogService', () => {
       },
       syncException: {
         findMany: jest.fn(
-          async (arg: { where: { kind?: unknown; lastSeenAt?: unknown } }) => {
+          async (arg: {
+            where: {
+              kind?: unknown;
+              lastSeenAt?: unknown;
+              updatedAt?: unknown;
+            };
+          }) => {
             const kinds =
               (arg.where.kind as { in?: string[] } | string | undefined) ??
               undefined;
             const lista = typeof kinds === 'string' ? [kinds] : kinds?.in;
+            // El vencimiento (§12 #15) se distingue por pedir `updatedAt`.
+            if (arg.where.updatedAt) return e.olvidadas ?? [];
             // Auditoría vieja (`lastSeenAt: { lt }`) y envío/deriva se distinguen por su filtro.
             if (arg.where.lastSeenAt)
               return (e.activas ?? []).filter((a) =>
@@ -114,6 +124,7 @@ describe('MirrorWatchdogService', () => {
     const exceptions = {
       registrar: jest.fn(async (..._a: unknown[]) => 'CREADA'),
       autoResolver: jest.fn(async (..._a: unknown[]) => true),
+      vencer: jest.fn(async (..._a: unknown[]) => true),
     };
     const alert = {
       avisar: jest.fn(async (..._a: unknown[]) => ({
@@ -889,6 +900,75 @@ describe('MirrorWatchdogService', () => {
 
       await expect(service.vigilarTodas()).resolves.toBeUndefined();
       await expect(service.vigilarTodas()).resolves.toBeUndefined(); // la guarda se liberó
+    });
+  });
+  // ═══════════════════════════════════════════════════════════════════════
+  describe('vencimiento (§12 #15): la cita pasó hace días y nadie la cerró', () => {
+    const DIA = 24 * HORA;
+    const haceDias = (d: number) => new Date(AHORA.getTime() - d * DIA);
+    const olvidada = (over: Record<string, unknown> = {}) => ({
+      id: 'ex-9',
+      status: 'ABIERTA',
+      appointmentStartAt: haceDias(8),
+      updatedAt: haceDias(8),
+      ...over,
+    });
+
+    it('cierra como VENCIDA, con la fecha tal como se leyó (compare-and-set)', async () => {
+      const fila = olvidada();
+      const { service, exceptions } = build({ olvidadas: [fila] });
+
+      const r = await service.vigilarOrganizacion(ORG, AHORA);
+
+      expect(r.vencidas).toBe(1);
+      expect(exceptions.vencer).toHaveBeenCalledWith(
+        ORG,
+        { id: 'ex-9', updatedAt: fila.updatedAt },
+        AHORA,
+      );
+      // No es un cierre «porque ya llegó»: no pasa por autoResolver.
+      expect(exceptions.autoResolver).not.toHaveBeenCalled();
+    });
+
+    it('la consulta pide lo ACTIVO de ESA clínica con cita y última actividad anteriores al plazo', async () => {
+      const { service, prisma } = build();
+      await service.vigilarOrganizacion(ORG, AHORA);
+
+      const consulta = prisma.syncException.findMany.mock.calls
+        .map((c) => c[0] as { where: Record<string, unknown> })
+        .find((c) => c.where.updatedAt);
+      expect(consulta?.where).toEqual({
+        organizationId: ORG,
+        status: { in: ['ABIERTA', 'EN_REVISION'] },
+        appointmentStartAt: { lt: haceDias(7) },
+        updatedAt: { lt: haceDias(7) },
+      });
+    });
+
+    it('la regla la decide `debeVencer`: una fila que la consulta trajo pero no cumple, no vence', async () => {
+      // Sin hora de cita (no debería llegar por la consulta, pero si llega, no vence).
+      const { service, exceptions } = build({
+        olvidadas: [olvidada({ appointmentStartAt: null })],
+      });
+      const r = await service.vigilarOrganizacion(ORG, AHORA);
+      expect(r.vencidas).toBe(0);
+      expect(exceptions.vencer).not.toHaveBeenCalled();
+    });
+
+    it('👤 si alguien la tocó en el último instante (el compare-and-set pierde), no se cuenta', async () => {
+      const { service, exceptions } = build({ olvidadas: [olvidada()] });
+      exceptions.vencer.mockResolvedValueOnce(false);
+      const r = await service.vigilarOrganizacion(ORG, AHORA);
+      expect(r.vencidas).toBe(0);
+    });
+
+    it('vence igual con el envío al hospital PAUSADO: lo que vence es el tiempo, no el envío', async () => {
+      const { service, exceptions } = build({
+        config: { enabled: true, pushEnabled: false },
+        olvidadas: [olvidada()],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.vencer).toHaveBeenCalledTimes(1);
     });
   });
 });

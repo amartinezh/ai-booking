@@ -71,7 +71,9 @@ const avisosOk = (over: Partial<EstadoAvisos> = {}): EstadoAvisos => ({
     alertasActivas: true,
     plantilla: true,
     tieneNumero: true,
+    tieneRespaldo: false,
     numero: null,
+    respaldo: null,
     ...over,
 });
 
@@ -448,7 +450,7 @@ describe('BandejaClient — avisos al agendador', () => {
         await userEvent.click(screen.getByRole('checkbox'));
         await userEvent.click(screen.getByRole('button', { name: 'Guardar' }));
 
-        await waitFor(() => expect(guardar).toHaveBeenCalledWith({ numero: '300 111 2233', activos: true }));
+        await waitFor(() => expect(guardar).toHaveBeenCalledWith({ numero: '300 111 2233', respaldo: '', activos: true }));
         expect(await screen.findByRole('status')).toHaveTextContent('Guardado.');
         expect(refresh).toHaveBeenCalled();
     });
@@ -458,7 +460,26 @@ describe('BandejaClient — avisos al agendador', () => {
         await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
         expect(screen.getByRole('checkbox')).toBeChecked();
         await userEvent.click(screen.getByRole('button', { name: 'Guardar' }));
-        await waitFor(() => expect(guardar).toHaveBeenCalledWith({ numero: '573001234567', activos: true }));
+        await waitFor(() => expect(guardar).toHaveBeenCalledWith({ numero: '573001234567', respaldo: '', activos: true }));
+    });
+
+    it('§12 #14: el formulario trae el respaldo actual y lo guarda junto con el número', async () => {
+        pintar([fila()], { puedeConfigurarAvisos: true, avisos: avisosOk({ numero: '573001234567', respaldo: '573007654321', tieneRespaldo: true }) });
+        await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
+        const campo = screen.getByLabelText('Celular de respaldo (opcional)');
+        expect(campo).toHaveValue('573007654321');
+        await userEvent.clear(campo);
+        await userEvent.type(campo, '300 222 3344');
+        await userEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+        await waitFor(() => expect(guardar).toHaveBeenCalledWith({ numero: '573001234567', respaldo: '300 222 3344', activos: true }));
+    });
+
+    it('cuando salen, explica los recordatorios y menciona al respaldo solo si lo hay', () => {
+        const { unmount } = pintar([fila()], { avisos: avisosOk({ tieneRespaldo: true }) });
+        expect(screen.getByText(/se le recuerda \(hasta 2 veces\), también al número de respaldo/)).toBeInTheDocument();
+        unmount();
+        pintar([fila()], { avisos: avisosOk({ tieneRespaldo: false }) });
+        expect(screen.getByText(/se le recuerda \(hasta 2 veces\)\./)).toBeInTheDocument();
     });
 
     it('un número inválido muestra el error del servidor y no refresca', async () => {

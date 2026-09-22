@@ -13,6 +13,7 @@ import type { CitaExpediente, ExpedienteA, ExpedienteB, HisEnVivoVista } from '@
 jest.mock('@/app/actions/rastreo', () => ({
     buscarPacientesAction: jest.fn(),
     abrirExpedienteAction: jest.fn(),
+    enviarConfirmacionHisAction: jest.fn(),
     opcionesCupoHisAction: jest.fn(),
     investigarCupoHisAction: jest.fn(),
     revelarIdentidadAction: jest.fn(),
@@ -24,6 +25,7 @@ jest.mock('@/app/actions/espejo', () => ({ reprocesarEvento: jest.fn() }));
 import {
     abrirExpedienteAction,
     buscarPacientesAction,
+    enviarConfirmacionHisAction,
     iniciarConsultaHisAction,
     investigarCupoHisAction,
     opcionesCupoHisAction,
@@ -37,6 +39,7 @@ const mBuscar = buscarPacientesAction as jest.Mock;
 const mAbrir = abrirExpedienteAction as jest.Mock;
 const mOpciones = opcionesCupoHisAction as jest.Mock;
 const mInvestigar = investigarCupoHisAction as jest.Mock;
+const mConfirmar = enviarConfirmacionHisAction as jest.Mock;
 const mRevelar = revelarIdentidadAction as jest.Mock;
 const mReprocesar = reprocesarEvento as jest.Mock;
 const mIniciarHis = iniciarConsultaHisAction as jest.Mock;
@@ -533,7 +536,8 @@ describe('RastreoClient — escenario B', () => {
                 },
                 espejo: espejoSano,
             }),
-            cupo: { medico: 'MEDICO HTA', inicioIso: '2026-10-05T15:00:00.000Z', homologado: true },
+            cupo: { medico: 'MEDICO HTA', inicioIso: '2026-10-05T15:00:00.000Z', homologado: true, slotId: 'slot-1' },
+            puedeConfirmar: true,
             identidad: { encontrada: true, pacienteId: 'pac-1', nombre: 'María L•••', documento: '•••3456', coincidencia: 'EXACTA', perfilesConVariante: 0, conWhatsapp: true },
             auditorias: [{ resultado: 'OK', op: 'INSERT', nota: 'cita del HIS con paciente sin homologar: solo se ocupó el cupo, no se creó Appointment', atIso: hace(3 * 60 * MIN) }],
             espejo: espejoSano,
@@ -565,6 +569,24 @@ describe('RastreoClient — escenario B', () => {
         expect(screen.getByRole('region', { name: /Veredicto: El hospital agendó ese cupo/ })).toHaveAttribute('data-codigo', 'CITA_DEL_HIS_NO_ESPEJADA');
         expect(screen.getByText(/A nombre de quién está la cita en el HIS/)).toBeInTheDocument();
         expect(screen.getByText('Eventos del HIS para ese cupo')).toBeInTheDocument();
+
+        // §12 #7: la confirmación al paciente, con el MISMO motivo de la consulta. Sin consulta
+        // en vivo, quien atiende tiene que afirmar que lo verificó en el HIS antes de enviar.
+        const boton = screen.getByRole('button', { name: 'Enviar confirmación por WhatsApp' });
+        expect(boton).toBeDisabled();
+        await user.click(screen.getByLabelText('Verifiqué en el HIS que esta cita está a nombre de este paciente.'));
+        mConfirmar.mockResolvedValueOnce({ success: true, data: { via: 'PLANTILLA' } });
+        await user.click(boton);
+        expect(mConfirmar).toHaveBeenCalledWith({
+            organizationId: null,
+            pacienteId: 'pac-1',
+            slotId: 'slot-1',
+            verificacion: 'FUNCIONARIO',
+            motivo: 'RECLAMO_PQRS',
+            nota: '',
+        });
+        expect(await screen.findByRole('status')).toHaveTextContent(/plantilla de confirmación/);
+        expect(screen.getByRole('button', { name: 'Enviada' })).toBeDisabled();
     });
 });
 
@@ -769,7 +791,8 @@ describe('RastreoClient — consulta en vivo al HIS', () => {
                 cupoEnAgenIA: { medicoHomologado: true, cupoExiste: true, citaDelPacienteEnAgenIA: false, auditorias: [] },
                 espejo: espejoSano,
             }),
-            cupo: { medico: 'MEDICO HTA', inicioIso: '2026-10-05T15:00:00.000Z', homologado: true },
+            cupo: { medico: 'MEDICO HTA', inicioIso: '2026-10-05T15:00:00.000Z', homologado: true, slotId: 'slot-1' },
+            puedeConfirmar: true,
             identidad: { encontrada: true, pacienteId: 'pac-1', nombre: 'María L•••', documento: '•••3456', coincidencia: 'EXACTA', perfilesConVariante: 0, conWhatsapp: true },
             auditorias: [],
             espejo: espejoSano,

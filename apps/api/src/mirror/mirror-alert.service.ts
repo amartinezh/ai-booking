@@ -1,10 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { SyncException } from '@agenia/database';
 import {
   AGENTE_SIN_SENAL_MIN,
   DEFAULT_TIMEZONE,
   TIPOS_CON_AVISO,
+  UMBRALES_VIGILANTE,
+  enmascararIdentificadorWhatsapp,
   parametrosPlantillaAviso,
   requiereAviso,
+  requiereRecordatorio,
   type EstadoExcepcion,
   type ItemAviso,
   type SeveridadExcepcion,
@@ -21,13 +25,20 @@ import { MirrorExceptionsService } from './mirror-exceptions.service';
  * paciente llegue, en vez de esperar a que alguien abra la bandeja.
  *
  * ═══ Cómo se cuida al agendador ═══
- *  · UN solo mensaje por vuelta y clínica, con el resumen (cuántas y la más próxima),
- *    no uno por cita: veinte WhatsApp seguidos se silencian y el aviso deja de servir.
+ *  · UN solo mensaje por vuelta, clínica y clase (aviso o recordatorio), con el
+ *    resumen (cuántas y la más próxima), no uno por cita: veinte WhatsApp seguidos
+ *    se silencian y el aviso deja de servir.
  *  · Una vez por gravedad (`requiereAviso`): vuelve a avisar solo si la cita se acercó.
  *  · Solo de lo que nadie ha tomado: si alguien ya se ocupa, avisar es ruido.
  *
+ * ═══ Si nadie lo atiende (§12 #14) ═══
+ * Si tras el aviso nadie toma la excepción en `recordatorioMin`, se RECUERDA, hasta
+ * `maxRecordatorios` veces (`requiereRecordatorio`). El recordatorio va al agendador
+ * Y al número de respaldo (`agendadorRespaldoWhatsapp`), si lo hay: es el escalamiento
+ * a otra persona. «Nadie la tomó» es la señal, no el «leído» de Meta.
+ *
  * ═══ Cómo se cuida al paciente ═══
- *  · El mensaje sale hacia el teléfono personal del agendador y pasa por Meta: dice
+ *  · El mensaje sale hacia teléfonos personales del personal y pasa por Meta: dice
  *    QUÉ pasa y cuándo, SIN datos del paciente. El detalle está en la bandeja, tras la
  *    sesión (`parametrosPlantillaAviso` lo garantiza y lo prueba).
  *
@@ -35,18 +46,21 @@ import { MirrorExceptionsService } from './mirror-exceptions.service';
  * El agendador casi nunca le ha escrito al número de la clínica: fuera de la
  * ventana de 24 h de Meta un mensaje libre no sale. Sin la plantilla aprobada el
  * aviso NO sale y la excepción queda solo en la bandeja — nada se pierde, pero nadie
- * se entera hasta que la abre. Por eso la bandeja lo dice.
+ * se entera hasta que la abre. Por eso la bandeja lo dice. El recordatorio usa la
+ * MISMA plantilla: no hay que aprobar otra.
  *
  * ═══ Dos réplicas de la API ═══
  * Cada excepción se RECLAMA con un compare-and-set antes de enviar (`reclamarAviso`):
- * solo una réplica gana, y si el envío falla la reclamación se devuelve para que la
- * vuelta siguiente reintente.
+ * solo una réplica gana, y si el envío al agendador falla la reclamación se devuelve
+ * para que la vuelta siguiente reintente. Que falle SOLO el respaldo no devuelve nada:
+ * el agendador ya lo recibió.
  *
- * El correo (`agendadorEmail`) NO se usa: la API no tiene transporte de correo.
+ * El correo (`agendadorEmail`) NO se usa, por decisión (§12 #13): el aviso es solo por
+ * WhatsApp.
  */
 
 export type ResultadoAviso =
-  | { enviado: true; citas: number }
+  | { enviado: true; citas: number; recordatorios: number }
   | {
       enviado: false;
       motivo:
@@ -58,6 +72,20 @@ export type ResultadoAviso =
         | 'ENVIO_FALLIDO';
       detalle?: string;
     };
+
+type ResultadoLote =
+  | { estado: 'ENVIADO'; cuantas: number }
+  | { estado: 'YA_RECLAMADO' }
+  | { estado: 'FALLIDO'; detalle?: string };
+
+type Clase = 'AVISO' | 'RECORDATORIO';
+
+interface ConfigAviso {
+  agendadorWhatsapp: string;
+  agendadorRespaldoWhatsapp: string | null;
+  lastHeartbeatAt: Date | null;
+  lastHisReachable: boolean | null;
+}
 
 /** Tope de excepciones que se consideran por vuelta. */
 const MAX_CANDIDATAS = 200;
@@ -85,19 +113,21 @@ export class MirrorAlertService {
       orderBy: { appointmentStartAt: 'asc' },
       take: MAX_CANDIDATAS,
     });
-    const debidas = candidatas.filter((e) =>
-      requiereAviso(
-        {
-          kind: e.kind as TipoExcepcion,
-          severity: e.severity as SeveridadExcepcion,
-          status: e.status as EstadoExcepcion,
-          notifiedSeverity: e.notifiedSeverity,
-          appointmentStartIso: e.appointmentStartAt?.toISOString() ?? null,
-        },
-        ahora.toISOString(),
-      ),
+    const ahoraIso = ahora.toISOString();
+    const vista = (e: SyncException) => ({
+      kind: e.kind as TipoExcepcion,
+      severity: e.severity as SeveridadExcepcion,
+      status: e.status as EstadoExcepcion,
+      notifiedSeverity: e.notifiedSeverity,
+      notifiedAtIso: e.notifiedAt?.toISOString() ?? null,
+      reminderCount: e.reminderCount,
+      appointmentStartIso: e.appointmentStartAt?.toISOString() ?? null,
+    });
+    const nuevas = candidatas.filter((e) => requiereAviso(vista(e), ahoraIso));
+    const recordar = candidatas.filter((e) =>
+      requiereRecordatorio(vista(e), ahoraIso),
     );
-    if (debidas.length === 0)
+    if (nuevas.length === 0 && recordar.length === 0)
       return { enviado: false, motivo: 'NADA_QUE_AVISAR' };
 
     // Antes de reclamar nada: si el aviso no puede salir, no se toca ninguna fila
@@ -108,6 +138,7 @@ export class MirrorAlertService {
         enabled: true,
         conflictAlertsEnabled: true,
         agendadorWhatsapp: true,
+        agendadorRespaldoWhatsapp: true,
         lastHeartbeatAt: true,
         lastHisReachable: true,
       },
@@ -115,6 +146,7 @@ export class MirrorAlertService {
     if (!config?.enabled || !config.conflictAlertsEnabled) {
       return { enviado: false, motivo: 'APAGADO' };
     }
+    // El respaldo es un segundo destinatario, no un sustituto: sin agendador no hay aviso.
     if (!config.agendadorWhatsapp)
       return { enviado: false, motivo: 'SIN_DESTINO' };
     const plantilla = await this.templates.findTemplate(
@@ -123,24 +155,80 @@ export class MirrorAlertService {
     );
     if (!plantilla) return { enviado: false, motivo: 'SIN_PLANTILLA' };
 
-    // Reclamar: solo lo que esta réplica ganó se avisa.
-    const reclamadas: typeof debidas = [];
-    for (const e of debidas) {
+    const destino: ConfigAviso = {
+      agendadorWhatsapp: config.agendadorWhatsapp,
+      agendadorRespaldoWhatsapp: config.agendadorRespaldoWhatsapp,
+      lastHeartbeatAt: config.lastHeartbeatAt,
+      lastHisReachable: config.lastHisReachable,
+    };
+    const avisos = nuevas.length
+      ? await this.enviarLote(organizationId, nuevas, 'AVISO', destino, ahora)
+      : null;
+    const recordatorios = recordar.length
+      ? await this.enviarLote(
+          organizationId,
+          recordar,
+          'RECORDATORIO',
+          destino,
+          ahora,
+        )
+      : null;
+
+    const enviadas = (r: ResultadoLote | null) =>
+      r?.estado === 'ENVIADO' ? r.cuantas : 0;
+    if (enviadas(avisos) + enviadas(recordatorios) > 0) {
+      return {
+        enviado: true,
+        citas: enviadas(avisos),
+        recordatorios: enviadas(recordatorios),
+      };
+    }
+    const fallido = [avisos, recordatorios].find(
+      (r): r is Extract<ResultadoLote, { estado: 'FALLIDO' }> =>
+        r?.estado === 'FALLIDO',
+    );
+    if (fallido) {
+      return {
+        enviado: false,
+        motivo: 'ENVIO_FALLIDO',
+        detalle: fallido.detalle,
+      };
+    }
+    return { enviado: false, motivo: 'YA_RECLAMADO' };
+  }
+
+  /**
+   * Reclama, envía y deja constancia de UN lote (todos avisos o todos recordatorios).
+   * El agendador es el destinatario que cuenta: si su envío falla, se devuelve todo.
+   * El respaldo solo recibe recordatorios.
+   */
+  private async enviarLote(
+    organizationId: string,
+    lote: SyncException[],
+    clase: Clase,
+    destino: ConfigAviso,
+    ahora: Date,
+  ): Promise<ResultadoLote> {
+    // Reclamar: solo lo que esta réplica ganó se envía.
+    const reclamadas: SyncException[] = [];
+    for (const e of lote) {
       if (
         await this.exceptions.reclamarAviso(
           {
             id: e.id,
             severity: e.severity,
             notifiedSeverity: e.notifiedSeverity,
+            notifiedAt: e.notifiedAt,
+            reminderCount: e.reminderCount,
           },
           ahora,
+          clase,
         )
       ) {
         reclamadas.push(e);
       }
     }
-    if (reclamadas.length === 0)
-      return { enviado: false, motivo: 'YA_RECLAMADO' };
+    if (reclamadas.length === 0) return { estado: 'YA_RECLAMADO' };
 
     const [medicos, org] = await Promise.all([
       this.prisma.doctorProfile.findMany({
@@ -172,19 +260,26 @@ export class MirrorAlertService {
       severity: e.severity as SeveridadExcepcion,
     }));
     const sinSenal =
-      !config.lastHeartbeatAt ||
-      ahora.getTime() - config.lastHeartbeatAt.getTime() >
+      !destino.lastHeartbeatAt ||
+      ahora.getTime() - destino.lastHeartbeatAt.getTime() >
         AGENTE_SIN_SENAL_MIN * 60_000;
+    // El número del recordatorio: el más alto del lote (el que más lleva sin atender).
+    const numero =
+      clase === 'RECORDATORIO'
+        ? Math.max(...reclamadas.map((e) => e.reminderCount + 1))
+        : undefined;
+    const bodyParams = parametrosPlantillaAviso(items, {
+      agenteSinSenal: sinSenal,
+      hisAlcanzable: destino.lastHisReachable,
+      timeZone: org?.timezone || DEFAULT_TIMEZONE,
+      recordatorio: numero,
+    });
 
     const resultado = await this.templates.sendTemplate({
       organizationId,
-      recipientId: config.agendadorWhatsapp,
+      recipientId: destino.agendadorWhatsapp,
       kind: 'SYNC_EXCEPTION_ALERT',
-      bodyParams: parametrosPlantillaAviso(items, {
-        agenteSinSenal: sinSenal,
-        hisAlcanzable: config.lastHisReachable,
-        timeZone: org?.timezone || DEFAULT_TIMEZONE,
-      }),
+      bodyParams,
     });
 
     if (!resultado.success) {
@@ -195,32 +290,67 @@ export class MirrorAlertService {
             id: e.id,
             notifiedAt: e.notifiedAt,
             notifiedSeverity: e.notifiedSeverity,
+            reminderCount: e.reminderCount,
           },
           ahora,
         );
       }
       this.logger.warn(
-        `Aviso al agendador NO enviado (org ${organizationId}): ${resultado.error ?? 'sin detalle'}.`,
+        `${clase === 'AVISO' ? 'Aviso' : 'Recordatorio'} al agendador NO enviado (org ${organizationId}): ${resultado.error ?? 'sin detalle'}.`,
       );
-      return {
-        enviado: false,
-        motivo: 'ENVIO_FALLIDO',
-        detalle: resultado.error,
-      };
+      return { estado: 'FALLIDO', detalle: resultado.error };
+    }
+
+    // El escalamiento: el recordatorio también le llega al respaldo, si es otro número.
+    let respaldo: 'SIN_RESPALDO' | 'ENVIADO' | 'FALLIDO' = 'SIN_RESPALDO';
+    const numeroRespaldo = destino.agendadorRespaldoWhatsapp;
+    if (
+      clase === 'RECORDATORIO' &&
+      numeroRespaldo &&
+      numeroRespaldo !== destino.agendadorWhatsapp
+    ) {
+      const r = await this.templates.sendTemplate({
+        organizationId,
+        recipientId: numeroRespaldo,
+        kind: 'SYNC_EXCEPTION_ALERT',
+        bodyParams,
+      });
+      respaldo = r.success ? 'ENVIADO' : 'FALLIDO';
+      if (!r.success) {
+        this.logger.warn(
+          `Recordatorio al RESPALDO ${enmascararIdentificadorWhatsapp(numeroRespaldo)} NO enviado (org ${organizationId}): ${r.error ?? 'sin detalle'}. El agendador sí lo recibió.`,
+        );
+      }
     }
 
     for (const e of reclamadas) {
-      await this.exceptions.anotar(
-        e.id,
-        'AVISADA',
-        null,
-        null,
-        'Aviso por WhatsApp al agendador.',
-      );
+      if (clase === 'AVISO') {
+        await this.exceptions.anotar(
+          e.id,
+          'AVISADA',
+          null,
+          null,
+          'Aviso por WhatsApp al agendador.',
+        );
+      } else {
+        const destinatarios =
+          respaldo === 'ENVIADO'
+            ? 'al agendador y al respaldo'
+            : respaldo === 'FALLIDO'
+              ? 'al agendador (al respaldo no salió)'
+              : 'al agendador';
+        await this.exceptions.anotar(
+          e.id,
+          'RECORDADA',
+          null,
+          null,
+          `Recordatorio ${e.reminderCount + 1} de ${UMBRALES_VIGILANTE.maxRecordatorios} por WhatsApp ${destinatarios}: nadie la había tomado.`,
+        );
+      }
     }
     this.logger.log(
-      `Aviso al agendador enviado (org ${organizationId}): ${reclamadas.length} excepción(es).`,
+      `${clase === 'AVISO' ? 'Aviso' : 'Recordatorio'} al agendador enviado (org ${organizationId}): ${reclamadas.length} excepción(es).`,
     );
-    return { enviado: true, citas: reclamadas.length };
+    return { estado: 'ENVIADO', cuantas: reclamadas.length };
   }
 }

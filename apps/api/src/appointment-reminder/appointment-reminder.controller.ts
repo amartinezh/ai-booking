@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   ForbiddenException,
   HttpCode,
@@ -9,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AppointmentReminderCronService } from './appointment-reminder.cron';
+import { HisConfirmationService } from './his-confirmation.service';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';
@@ -31,7 +33,44 @@ import {
 export class AppointmentReminderController {
   constructor(
     private readonly reminderService: AppointmentReminderCronService,
+    private readonly hisConfirmation: HisConfirmationService,
   ) {}
+
+  /**
+   * Confirmarle al paciente, por WhatsApp, una cita que agendó el HOSPITAL y que el
+   * bot no le muestra (rastreo de paciente, escenario B — §12 #7 del plan). Dentro de
+   * la ventana de 24 h sale como texto; fuera, con la plantilla
+   * `HIS_APPOINTMENT_CONFIRMATION`.
+   *
+   * Los mismos roles que pueden investigar un cupo en el rastreo (ORG_ADMIN y
+   * BOOKING_AGENT). El actor y la clínica salen del TOKEN; del body solo el cupo, el
+   * paciente y cómo se verificó. El destinatario NUNCA viene del body: es el WhatsApp
+   * que AgenIA tiene del paciente.
+   *
+   * Va antes de `:id/...` solo por orden de lectura: las rutas no chocan.
+   */
+  @Post('his-confirmation')
+  @HttpCode(HttpStatus.OK)
+  @Roles('ORG_ADMIN', 'BOOKING_AGENT')
+  async sendHisConfirmation(
+    @CurrentTenant() organizationId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Body()
+    body: {
+      scheduleSlotId?: unknown;
+      patientId?: unknown;
+      verificacion?: unknown;
+    },
+  ) {
+    if (!organizationId) throw new ForbiddenException('Sin organización.');
+    return this.hisConfirmation.enviar({
+      organizationId,
+      actor: { userId: user.userId, role: user.role },
+      scheduleSlotId: body?.scheduleSlotId,
+      patientId: body?.patientId,
+      verificacion: body?.verificacion,
+    });
+  }
 
   /**
    * Dispara un recordatorio manual de una cita SCHEDULED.

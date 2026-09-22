@@ -181,6 +181,7 @@ export type { FilaOutbox } from './src/sync-state';
 export {
   ESTADOS_ACTIVOS,
   ESTADOS_EXCEPCION,
+  NOTA_VENCIDA,
   ORDEN_SEVERIDAD_EXCEPCION,
   SEVERIDADES_EXCEPCION,
   TIPOS_CON_AVISO,
@@ -188,14 +189,18 @@ export {
   TITULO_EXCEPCION,
   UMBRALES_VIGILANTE,
   claveExcepcion,
+  debeVencer,
   evaluarRetencion,
   eventoCulpable,
   parametrosPlantillaAviso,
   requiereAviso,
+  requiereRecordatorio,
   resumenRetencion,
   severidadPorCercania,
   transicionExcepcion,
 } from './src/sync-watch';
+
+export { RETENCION_DATOS, diasDeRetencion } from './src/retencion';
 export type {
   AccionExcepcion,
   EstadoExcepcion,

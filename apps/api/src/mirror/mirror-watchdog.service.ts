@@ -5,6 +5,7 @@ import {
   TITULO_EXCEPCION,
   UMBRALES_VIGILANTE,
   claveExcepcion,
+  debeVencer,
   evaluarRetencion,
   severidadPorCercania,
   type FilaOutbox,
@@ -29,7 +30,8 @@ import { MirrorExceptionsService } from './mirror-exceptions.service';
  *   3. y, cuando termina la reconciliación, la DERIVA (`registrarDeriva`): citas que
  *      AgenIA da por hechas y el hospital no tiene.
  *
- * Después cierra solas las que ya no se cumplen y avisa al agendador.
+ * Después cierra solas las que ya no se cumplen, da por VENCIDAS las de citas que
+ * pasaron hace días sin que nadie las cerrara (§12 #15) y avisa al agendador.
  *
  * ═══ Reglas que importan ═══
  *  · La clasificación es la de `@agenia/shared` (`evaluarRetencion`, `derivarSync`):
@@ -37,8 +39,10 @@ import { MirrorExceptionsService } from './mirror-exceptions.service';
  *  · Solo se cierra sola una excepción cuando lo que la abrió DEJÓ de cumplirse de
  *    verdad (llegó, se canceló, se reprocesó) — nunca porque falten datos: un escaneo
  *    truncado o con el envío pausado no prueba que algo llegó.
- *  · Una cita cuya hora YA pasó no se cierra sola: seguir sin llegar es justo lo que
- *    hay que revisar. Solo la cierra una persona, o que por fin llegue.
+ *  · Una cita cuya hora YA pasó no se cierra sola en el momento: seguir sin llegar es
+ *    justo lo que hay que revisar. La cierra una persona, que por fin llegue, o —si
+ *    pasan `vencimientoDias` sin que nadie la toque— el vencimiento, que la marca
+ *    `VENCIDA` (no `AUTO_RESUELTA`: el problema no se resolvió).
  *  · Las excepciones de citas llevan la EPS y el médico: con eso un agente acotado a
  *    una EPS o a un médico ve SOLO lo suyo (lo mismo que se arregló en la acción de
  *    cancelar, §12 #9).
@@ -83,6 +87,7 @@ export interface ResumenVigilancia {
   actualizadas: number;
   reabiertas: number;
   autoResueltas: number;
+  vencidas: number;
   aviso: ResultadoAviso | null;
   /** El escaneo del outbox no se hizo o quedó incompleto: por eso no se cerró nada solo. */
   outboxIncompleto: boolean;
@@ -145,6 +150,7 @@ export class MirrorWatchdogService {
       actualizadas: 0,
       reabiertas: 0,
       autoResueltas: 0,
+      vencidas: 0,
       aviso: null,
       outboxIncompleto: true,
     };
@@ -165,6 +171,7 @@ export class MirrorWatchdogService {
       ));
     }
     await this.vigilarAuditoria(organizationId, ahora, resumen);
+    resumen.vencidas = await this.vencerLasOlvidadas(organizationId, ahora);
 
     try {
       resumen.aviso = await this.alert.avisar(organizationId, ahora);
@@ -552,6 +559,66 @@ export class MirrorWatchdogService {
         resumen.autoResueltas++;
       }
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Vencimiento (§12 #15)
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Cierra como `VENCIDA` lo activo de citas cuya hora pasó hace más de
+   * `vencimientoDias` y que nadie movió en ese tiempo (`debeVencer`). La consulta ya
+   * filtra por fechas —usa el índice por `appointmentStartAt`— y `debeVencer` decide:
+   * la regla vive en un solo sitio. No depende del outbox: vence igual con el envío
+   * pausado, porque lo que vence es el tiempo, no el estado del envío.
+   */
+  private async vencerLasOlvidadas(
+    organizationId: string,
+    ahora: Date,
+  ): Promise<number> {
+    const limite = new Date(
+      ahora.getTime() - UMBRALES_VIGILANTE.vencimientoDias * MS_DIA,
+    );
+    const candidatas = await this.prisma.syncException.findMany({
+      where: {
+        organizationId,
+        status: { in: ['ABIERTA', 'EN_REVISION'] },
+        appointmentStartAt: { lt: limite },
+        updatedAt: { lt: limite },
+      },
+      select: {
+        id: true,
+        status: true,
+        appointmentStartAt: true,
+        updatedAt: true,
+      },
+      take: MAX_DERIVA,
+    });
+    let vencidas = 0;
+    for (const c of candidatas) {
+      if (
+        !debeVencer(
+          {
+            status: c.status,
+            appointmentStartIso: c.appointmentStartAt?.toISOString() ?? null,
+            updatedAtIso: c.updatedAt.toISOString(),
+          },
+          ahora.toISOString(),
+        )
+      ) {
+        continue;
+      }
+      if (
+        await this.exceptions.vencer(
+          organizationId,
+          { id: c.id, updatedAt: c.updatedAt },
+          ahora,
+        )
+      ) {
+        vencidas++;
+      }
+    }
+    return vencidas;
   }
 
   // ─────────────────────────────────────────────────────────────

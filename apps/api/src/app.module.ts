@@ -24,6 +24,7 @@ import { SurveyModule } from './survey/survey.module';
 import { MonitorModule } from './monitor/monitor.module';
 import { MirrorModule } from './mirror/mirror.module';
 import { MassNoticeModule } from './mass-notice/mass-notice.module';
+import { RetentionModule } from './retention/retention.module';
 
 @Module({
   imports: [
@@ -73,6 +74,9 @@ import { MassNoticeModule } from './mass-notice/mass-notice.module';
     // 📣 Avisos masivos — EXCLUSIVO del driver cnt-sanvicente-anserma. Ver
     // docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md.
     MassNoticeModule,
+    // 🧹 Retención de datos personales: purga nocturna de conversaciones (180 d) y
+    // de la bitácora del rastreo (365 d). Ver docs/PLAN_RASTREO_PACIENTE.md §12 #4.
+    RetentionModule,
   ],
 })
 export class AppModule {}

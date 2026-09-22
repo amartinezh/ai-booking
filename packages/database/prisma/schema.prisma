@@ -303,6 +303,11 @@ enum WhatsappTemplateKind {
   // aprobada (fuera de la ventana de 24 h un mensaje libre no sale). Tres variables:
   // cuántas citas, la más próxima y la causa probable — sin datos del paciente.
   SYNC_EXCEPTION_ALERT
+  // Rastreo de paciente, escenario B (§12 #7): confirmarle al PACIENTE una cita que
+  // el hospital agendó y que el bot no le muestra. Se usa solo fuera de la ventana
+  // de 24 h (dentro, sale como texto libre). Cuatro variables, las mismas del
+  // recordatorio: nombre, servicio, médico, fecha y hora.
+  HIS_APPOINTMENT_CONFIRMATION
 }
 
 model WhatsappTemplate {
@@ -1661,8 +1666,13 @@ model HospitalMirrorConfig {
   // Número E.164 del agendador responsable: destino del aviso por WhatsApp
   // (plantilla `SYNC_EXCEPTION_ALERT`).
   agendadorWhatsapp     String?
-  // Correo del agendador. HOY NO SE USA: la API no tiene transporte de correo. Queda
-  // para cuando se decida uno (ver el plan del rastreo, Fase 3).
+  // Número E.164 de RESPALDO: si nadie toma la excepción en la bandeja tras el
+  // aviso, los recordatorios salen al agendador Y a este número (plan del rastreo,
+  // §12 #14). Opcional: sin él, el recordatorio va solo al agendador.
+  agendadorRespaldoWhatsapp String?
+  // Correo del agendador. NO SE USA por decisión (plan del rastreo §12 #13,
+  // 2026-09-21): el aviso es solo por WhatsApp y la API no tiene transporte de
+  // correo. La columna se conserva para no migrar el día que se decida uno.
   agendadorEmail        String?
 
   // ⚠️ EXCLUSIVO del driver cnt-sanvicente-anserma — ver
@@ -2046,7 +2056,7 @@ model SyncException {
   dedupeKey String
   /// BAJA | MEDIA | ALTA | CRITICA. Sube cuando la cita se acerca.
   severity  String
-  /// ABIERTA | EN_REVISION | RESUELTA | DESCARTADA | AUTO_RESUELTA
+  /// ABIERTA | EN_REVISION | RESUELTA | DESCARTADA | AUTO_RESUELTA | VENCIDA
   status    String @default("ABIERTA")
 
   /// Texto corto y SIN datos personales.
@@ -2088,6 +2098,9 @@ model SyncException {
   /// avisar dos veces de lo mismo y lo que reclaman entre sí dos réplicas de la API.
   notifiedAt       DateTime?
   notifiedSeverity String?
+  /// Recordatorios enviados desde el último aviso de esta gravedad porque nadie la
+  /// tomó (§12 #14). Vuelve a 0 cuando la gravedad sube: eso es un aviso nuevo.
+  reminderCount    Int       @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2108,8 +2121,8 @@ model SyncExceptionLog {
   exceptionId String
   exception   SyncException @relation(fields: [exceptionId], references: [id], onDelete: Cascade)
 
-  /// CREADA | ESCALADA | AVISADA | TOMADA | SOLTADA | RESUELTA | DESCARTADA | REABIERTA
-  /// | AUTO_RESUELTA | REAPARECIDA
+  /// CREADA | ESCALADA | AVISADA | RECORDADA | TOMADA | SOLTADA | RESUELTA | DESCARTADA
+  /// | REABIERTA | AUTO_RESUELTA | VENCIDA | REAPARECIDA
   action      String
   /// null = el sistema.
   actorUserId String?

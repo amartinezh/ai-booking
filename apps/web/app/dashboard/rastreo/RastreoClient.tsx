@@ -6,6 +6,7 @@ import { MOTIVOS_CONSULTA, MAX_NOTA_MOTIVO } from '@agenia/shared';
 import {
     abrirExpedienteAction,
     buscarPacientesAction,
+    enviarConfirmacionHisAction,
     iniciarConsultaHisAction,
     investigarCupoHisAction,
     opcionesCupoHisAction,
@@ -238,6 +239,12 @@ function Pantalla({
           }
         : undefined;
 
+    // «Enviar confirmación por WhatsApp» (escenario B, §12 #7): con el mismo motivo.
+    const enviarConfirmacionB = expedienteB
+        ? (datos: { pacienteId: string; slotId: string; verificacion: 'HIS_EN_VIVO' | 'FUNCIONARIO' }) =>
+              enviarConfirmacionHisAction({ organizationId: orgParaServidor, ...datos, motivo, nota })
+        : undefined;
+
     const volverAlFormulario = () => {
         setVista('FORMULARIO');
         setError(null);
@@ -409,7 +416,13 @@ function Pantalla({
                     consultaHis={consultaHisA}
                 />
             ) : vista === 'EXPEDIENTE_B' && expedienteB ? (
-                <ExpedienteBVista data={expedienteB} onVolver={volverAlFormulario} organizationId={orgParaServidor} consultaHis={consultaHisB} />
+                <ExpedienteBVista
+                    data={expedienteB}
+                    onVolver={volverAlFormulario}
+                    organizationId={orgParaServidor}
+                    consultaHis={consultaHisB}
+                    enviarConfirmacion={enviarConfirmacionB}
+                />
             ) : null}
         </div>
     );

@@ -1150,6 +1150,19 @@ describe('investigarCupoB', () => {
       expect(r.success && r.data.resultado.principal.codigo).toBe('CITA_DEL_HIS_NO_ESPEJADA');
       // La clave `cupo=…` no se repite en la nota que ve el funcionario.
       expect(r.success && r.data.auditorias[0].nota).toBe('cita del HIS con paciente sin homologar: solo se ocupó el cupo, no se creó Appointment');
+      // §12 #7: lo que la pantalla necesita para ofrecer la confirmación al paciente.
+      expect(r.success && r.data.cupo.slotId).toBe('slot-1');
+      expect(r.success && r.data.puedeConfirmar).toBe(true);
+    });
+
+    it('§12 #7: un SUPER_ADMIN investiga pero NO confirma (no atiende pacientes); sin cupo en AgenIA no hay slotId', async () => {
+      const db = preparar();
+      db.scheduleSlot.findFirst.mockResolvedValue(null);
+      const r = await investigarCupoB(como(db), superAdmin(), entrada());
+      expect(r.success && r.data.puedeConfirmar).toBe(false);
+      expect(r.success && r.data.cupo.slotId).toBeNull();
+      const a = await investigarCupoB(como(preparar()), agente(), entrada());
+      expect(a.success && a.data.puedeConfirmar).toBe(true);
     });
 
     it('MEDICO_NO_ESPEJADO: solo está en el catálogo del HIS', async () => {

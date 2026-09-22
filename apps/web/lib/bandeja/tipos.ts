@@ -94,6 +94,10 @@ export interface EstadoAvisos {
   alertasActivas: boolean;
   plantilla: boolean;
   tieneNumero: boolean;
+  /** Hay un número de respaldo para los recordatorios (§12 #14). */
+  tieneRespaldo: boolean;
   /** El número, solo para quien lo configura (ORG_ADMIN). */
   numero: string | null;
+  /** El respaldo, solo para quien lo configura (ORG_ADMIN). */
+  respaldo: string | null;
 }

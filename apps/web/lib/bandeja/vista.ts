@@ -291,6 +291,7 @@ const ETIQUETA_ACCION: Record<string, string> = {
   REAPARECIDA: 'El problema volvió',
   ESCALADA: 'Subió de gravedad',
   AVISADA: 'Se avisó al agendador',
+  RECORDADA: 'Se le recordó al agendador (nadie la había tomado)',
   TOMADA: 'La tomó',
   REASIGNADA: 'Se la quitó a quien la tenía',
   SOLTADA: 'La soltó',
@@ -298,6 +299,7 @@ const ETIQUETA_ACCION: Record<string, string> = {
   DESCARTADA: 'La descartó',
   REABIERTA: 'La reabrió',
   AUTO_RESUELTA: 'Se cerró sola',
+  VENCIDA: 'Venció sin resolución',
 };
 
 export function mapearHistorial(

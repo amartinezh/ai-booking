@@ -722,7 +722,8 @@ describe('clasificarRastreoB', () => {
     expect(r.principal.resumen).toContain('el bot no se la muestra');
     // Sin la consulta en vivo, no sabe a nombre de quién está.
     expect(r.principal.noSabemos.join(' ')).toContain('A nombre de quién');
-    expect(r.principal.accion).toContain('enviarle la confirmación por WhatsApp');
+    // La acción remite al botón que la hace (§12 #7), no a algo que el personal tenga que improvisar.
+    expect(r.principal.accion).toContain('Enviar confirmación por WhatsApp');
   });
 
   it('CITA_DEL_HIS_NO_ESPEJADA también cuando hay un evento OK sin la nota exacta', () => {

@@ -1463,7 +1463,7 @@ function veredictoDelCupo(ev: EvidenciaRastreoB, ctx: Ctx): Veredicto {
         'A nombre de quién está la cita en el HIS: AgenIA no guarda el documento (la consulta en vivo lo confirmaría).',
       ],
       accion:
-        'Decirle que la cita del hospital es válida y que el bot no la muestra por esta razón. Ofrecerle enviarle la confirmación por WhatsApp.',
+        'Decirle que la cita del hospital es válida y que el bot no la muestra por esta razón. Ofrecerle la confirmación por WhatsApp: botón «Enviar confirmación por WhatsApp» de esta pantalla.',
     });
   }
 
@@ -1495,7 +1495,7 @@ function veredictoDelCupo(ev: EvidenciaRastreoB, ctx: Ctx): Veredicto {
         'A nombre de quién está la cita en el HIS: AgenIA no guarda el documento.',
       ],
       accion:
-        'Decirle que la cita del hospital es válida. Ofrecerle enviarle la confirmación por WhatsApp.',
+        'Decirle que la cita del hospital es válida. Ofrecerle la confirmación por WhatsApp: botón «Enviar confirmación por WhatsApp» de esta pantalla.',
     });
   }
 

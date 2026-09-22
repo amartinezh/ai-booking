@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@agenia/database';
 import {
+  NOTA_VENCIDA,
   ORDEN_SEVERIDAD_EXCEPCION,
   type SeveridadExcepcion,
   type TipoExcepcion,
@@ -20,7 +21,9 @@ import { PrismaService } from '../prisma/prisma.service';
  *   · la gravedad solo SUBE: si la cita se acerca, escala; nunca baja sola;
  *   · una decisión HUMANA es firme: lo que alguien resolvió o descartó a mano no se
  *     reabre porque el problema de fondo siga ahí (el evento sigue sin entregarse
- *     aunque la cita ya se agendó en ventanilla);
+ *     aunque la cita ya se agendó en ventanilla). Lo `VENCIDA` también es firme: su
+ *     cita pasó hace días, y reabrirla sola cada vez que el vigilante la re-encuentra
+ *     la haría parpadear (una persona sí puede reabrirla);
  *   · lo que el sistema cerró solo (`AUTO_RESUELTA`) SÍ se reabre si el problema
  *     vuelve, y vuelve a avisar;
  *   · dos réplicas de la API pueden correr el cron a la vez: todo cambio de estado
@@ -110,8 +113,12 @@ export class MirrorExceptionsService {
       }
     }
 
-    // Una decisión humana es firme.
-    if (existente.status === 'RESUELTA' || existente.status === 'DESCARTADA') {
+    // Una decisión humana es firme, y un vencimiento también.
+    if (
+      existente.status === 'RESUELTA' ||
+      existente.status === 'DESCARTADA' ||
+      existente.status === 'VENCIDA'
+    ) {
       return 'IGNORADA';
     }
 
@@ -129,6 +136,7 @@ export class MirrorExceptionsService {
           resolutionNote: null,
           notifiedAt: null,
           notifiedSeverity: null,
+          reminderCount: 0,
           lastSeenAt: e.lastSeenAt ?? ahora,
           occurrences: e.occurrences ?? existente.occurrences,
         },
@@ -219,35 +227,62 @@ export class MirrorExceptionsService {
   }
 
   /**
-   * Reclama el derecho a AVISAR de esta excepción. Solo una llamada gana: es lo que
-   * impide que dos réplicas manden el mismo aviso, y que se avise dos veces de lo
-   * mismo. Devuelve `true` si esta llamada la reclamó.
+   * Reclama el derecho a AVISAR (o a RECORDAR) de esta excepción. Solo una llamada
+   * gana: es lo que impide que dos réplicas manden el mismo mensaje, y que se avise
+   * dos veces de lo mismo. Devuelve `true` si esta llamada la reclamó.
+   *
+   * Un aviso fija la gravedad avisada y pone a cero los recordatorios. Un
+   * recordatorio no cambia la gravedad, así que el compare-and-set se hace también
+   * sobre la hora del último envío y la cuenta: si otra réplica recordó primero,
+   * alguna de las dos ya no coincide.
    */
   async reclamarAviso(
     exception: {
       id: string;
       severity: string;
       notifiedSeverity: string | null;
+      notifiedAt?: Date | null;
+      reminderCount?: number;
     },
     ahora: Date,
+    tipo: 'AVISO' | 'RECORDATORIO' = 'AVISO',
   ): Promise<boolean> {
+    if (tipo === 'RECORDATORIO') {
+      const previos = exception.reminderCount ?? 0;
+      const { count } = await this.prisma.syncException.updateMany({
+        where: {
+          id: exception.id,
+          status: 'ABIERTA',
+          notifiedSeverity: exception.notifiedSeverity,
+          notifiedAt: exception.notifiedAt ?? null,
+          reminderCount: previos,
+        },
+        data: { notifiedAt: ahora, reminderCount: previos + 1 },
+      });
+      return count === 1;
+    }
     const { count } = await this.prisma.syncException.updateMany({
       where: {
         id: exception.id,
         status: 'ABIERTA',
         notifiedSeverity: exception.notifiedSeverity,
       },
-      data: { notifiedAt: ahora, notifiedSeverity: exception.severity },
+      data: {
+        notifiedAt: ahora,
+        notifiedSeverity: exception.severity,
+        reminderCount: 0,
+      },
     });
     return count === 1;
   }
 
-  /** El aviso no salió: se devuelve la reclamación para que la próxima vuelta reintente. */
+  /** El envío no salió: se devuelve la reclamación para que la próxima vuelta reintente. */
   async devolverAviso(
     exception: {
       id: string;
       notifiedAt: Date | null;
       notifiedSeverity: string | null;
+      reminderCount?: number;
     },
     reclamadaEn: Date,
   ): Promise<void> {
@@ -256,8 +291,42 @@ export class MirrorExceptionsService {
       data: {
         notifiedAt: exception.notifiedAt,
         notifiedSeverity: exception.notifiedSeverity,
+        reminderCount: exception.reminderCount ?? 0,
       },
     });
+  }
+
+  /**
+   * §12 #15. La cierra como `VENCIDA`: su cita pasó hace días y nadie la cerró. El
+   * compare-and-set incluye `updatedAt` tal como se leyó: si alguien la tomó o la
+   * reabrió entre la lectura y este cierre, ya no coincide y no se pisa.
+   */
+  async vencer(
+    organizationId: string,
+    exception: { id: string; updatedAt: Date },
+    ahora: Date = new Date(),
+  ): Promise<boolean> {
+    const exceptionId = exception.id;
+    const { count } = await this.prisma.syncException.updateMany({
+      where: {
+        id: exceptionId,
+        organizationId,
+        status: { in: ['ABIERTA', 'EN_REVISION'] },
+        updatedAt: exception.updatedAt,
+      },
+      data: {
+        status: 'VENCIDA',
+        assignedToUserId: null,
+        assignedAt: null,
+        resolvedAt: ahora,
+        resolvedByUserId: null,
+        resolutionNote: NOTA_VENCIDA,
+      },
+    });
+    if (count === 1) {
+      await this.anotar(exceptionId, 'VENCIDA', null, null, NOTA_VENCIDA);
+    }
+    return count === 1;
   }
 
   /** Deja constancia en el historial. Nunca lanza: perder una línea no debe tumbar al vigilante. */

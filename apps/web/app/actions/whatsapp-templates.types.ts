@@ -6,7 +6,8 @@ export type WhatsappTemplateKind =
     | 'WAITLIST_SLOT_OFFER'
     | 'APPOINTMENT_CANCELLED_MASS'
     | 'APPOINTMENT_REMINDER_MASS'
-    | 'SYNC_EXCEPTION_ALERT';
+    | 'SYNC_EXCEPTION_ALERT'
+    | 'HIS_APPOINTMENT_CONFIRMATION';
 
 export interface WhatsappTemplateDto {
     id: string;
@@ -77,7 +78,13 @@ export const TEMPLATE_CONTRACTS: Record<
         variables: [
             'Cantidad de citas (por ejemplo «3 citas»)',
             'La más próxima (médico y hora)',
-            'Causa probable',
+            'Causa probable (en un recordatorio empieza por «RECORDATORIO 1 de 2: nadie la ha tomado en la bandeja»)',
         ],
+    },
+    HIS_APPOINTMENT_CONFIRMATION: {
+        label: 'Confirmación de una cita del hospital',
+        description:
+            'Se envía desde el Rastreo de paciente («Lo agendaron en el HIS») con el botón «Enviar confirmación por WhatsApp», cuando el hospital agendó una cita que el bot no le muestra al paciente. Solo se usa si el paciente no le ha escrito a la clínica en las últimas 24 h: dentro de ese plazo sale como texto normal. El cuerpo debe decir que la cita la asignó el hospital y que para cancelarla o cambiarla hay que comunicarse con el hospital (el bot no la conoce).',
+        variables: ['Nombre del paciente', 'Servicio', 'Médico', 'Fecha y hora'],
     },
 };

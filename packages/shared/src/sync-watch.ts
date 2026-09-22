@@ -70,8 +70,13 @@ export const ORDEN_SEVERIDAD_EXCEPCION: Record<SeveridadExcepcion, number> = {
 
 /**
  * `ABIERTA` (nadie la trabaja) → `EN_REVISION` (tiene dueño) → un cierre:
- * `RESUELTA` / `DESCARTADA` (lo decidió una persona, con nota) o `AUTO_RESUELTA`
- * (la condición dejó de cumplirse sola: ya llegó al hospital, se canceló…).
+ * `RESUELTA` / `DESCARTADA` (lo decidió una persona, con nota), `AUTO_RESUELTA`
+ * (la condición dejó de cumplirse sola: ya llegó al hospital, se canceló…) o
+ * `VENCIDA` (la cita pasó hace días y nadie la cerró: §12 #15, `debeVencer`).
+ *
+ * `VENCIDA` no es `AUTO_RESUELTA`: el problema NO se resolvió, solo dejó de tener
+ * sentido perseguirlo. Por eso se nombra aparte, para que quien revise el historial
+ * no lo confunda con «ya llegó».
  */
 export const ESTADOS_EXCEPCION = [
   'ABIERTA',
@@ -79,6 +84,7 @@ export const ESTADOS_EXCEPCION = [
   'RESUELTA',
   'DESCARTADA',
   'AUTO_RESUELTA',
+  'VENCIDA',
 ] as const;
 export type EstadoExcepcion = (typeof ESTADOS_EXCEPCION)[number];
 export const ESTADOS_ACTIVOS = ['ABIERTA', 'EN_REVISION'] as const;
@@ -100,6 +106,21 @@ export const UMBRALES_VIGILANTE = {
   auditoriaVentanaHoras: 24,
   /** Un conflicto o error de auditoría sin nuevas ocurrencias en tanto tiempo se da por superado. */
   auditoriaSinRecurrenciaDias: 3,
+  /**
+   * §12 #14. Minutos tras un aviso sin que NADIE tome la excepción en la bandeja
+   * antes de recordarlo. «Nadie la tomó» es la señal, no el «leído» de Meta: leer
+   * el WhatsApp no es ocuparse, y el leído depende de que el agendador lo tenga
+   * activado.
+   */
+  recordatorioMin: 30,
+  /** Recordatorios por gravedad. Si la gravedad sube, es un aviso nuevo y vuelve a contar. */
+  maxRecordatorios: 2,
+  /**
+   * §12 #15. Una excepción de una cita cuya hora pasó hace más de esto, y que nadie
+   * tocó en ese tiempo, se cierra como `VENCIDA`. Una semana deja margen para
+   * llamar al paciente y averiguar qué pasó (¿llegó y no lo atendieron?).
+   */
+  vencimientoDias: 7,
 } as const;
 
 // ─────────────────────────────────────────────────────────────
@@ -302,6 +323,71 @@ export function requiereAviso(
   return ORDEN_SEVERIDAD_EXCEPCION[e.severity] > previa;
 }
 
+/**
+ * §12 #14. ¿Hay que RECORDAR el aviso? Solo cuando ya se avisó de esta gravedad y
+ * nadie tomó la excepción en `recordatorioMin`, hasta `maxRecordatorios` veces. Las
+ * mismas reglas del aviso (tipo, abierta, antes de la hora) siguen valiendo.
+ *
+ * Si la gravedad subió, no es un recordatorio: es un aviso nuevo (`requiereAviso`),
+ * y los dos nunca coinciden para la misma excepción.
+ */
+export function requiereRecordatorio(
+  e: {
+    kind: TipoExcepcion;
+    severity: SeveridadExcepcion;
+    status: EstadoExcepcion;
+    notifiedSeverity: string | null;
+    notifiedAtIso: string | null;
+    reminderCount: number;
+    appointmentStartIso: string | null;
+  },
+  ahoraIso: string,
+): boolean {
+  if (!TIPOS_CON_AVISO.includes(e.kind)) return false;
+  if (e.status !== 'ABIERTA') return false;
+  if (!e.notifiedSeverity || !e.notifiedAtIso) return false;
+  if (requiereAviso(e, ahoraIso)) return false;
+  if (e.reminderCount >= UMBRALES_VIGILANTE.maxRecordatorios) return false;
+  const ahora = Date.parse(ahoraIso);
+  if (e.appointmentStartIso) {
+    const inicio = Date.parse(e.appointmentStartIso);
+    if (!Number.isNaN(inicio) && inicio <= ahora) return false;
+  }
+  const avisada = Date.parse(e.notifiedAtIso);
+  if (Number.isNaN(avisada)) return false;
+  return ahora - avisada >= UMBRALES_VIGILANTE.recordatorioMin * MS_MIN;
+}
+
+// ─────────────────────────────────────────────────────────────
+// ¿Ya venció?
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * §12 #15. ¿Se cierra esta excepción como `VENCIDA`? Solo si sigue activa, es de una
+ * cita cuya hora pasó hace más de `vencimientoDias`, y NADIE la movió en ese tiempo
+ * (`updatedAt`: tomarla, soltarla o reabrirla le da otra semana). Así quien la está
+ * trabajando no la pierde de un día para otro, y reabrir una vencida sirve.
+ *
+ * Sin hora de cita no vence: un error de auditoría o un cambio de cupo no tienen un
+ * «después» que lo vuelva inútil (y los de auditoría ya se cierran solos).
+ */
+export function debeVencer(
+  e: { status: string; appointmentStartIso: string | null; updatedAtIso: string },
+  ahoraIso: string,
+): boolean {
+  if (!(ESTADOS_ACTIVOS as readonly string[]).includes(e.status)) return false;
+  if (!e.appointmentStartIso) return false;
+  const ahora = Date.parse(ahoraIso);
+  const inicio = Date.parse(e.appointmentStartIso);
+  const movida = Date.parse(e.updatedAtIso);
+  if ([ahora, inicio, movida].some(Number.isNaN)) return false;
+  const limite = ahora - UMBRALES_VIGILANTE.vencimientoDias * 24 * 60 * MS_MIN;
+  return inicio < limite && movida < limite;
+}
+
+/** La constancia de un vencimiento: la misma frase en el historial y en el cierre. */
+export const NOTA_VENCIDA = `Venció sin resolución: la hora de la cita pasó hace más de ${UMBRALES_VIGILANTE.vencimientoDias} días y nadie la cerró.`;
+
 // ─────────────────────────────────────────────────────────────
 // La máquina de estados de la bandeja
 // ─────────────────────────────────────────────────────────────
@@ -322,6 +408,7 @@ const CERRADAS: readonly EstadoExcepcion[] = [
   'RESUELTA',
   'DESCARTADA',
   'AUTO_RESUELTA',
+  'VENCIDA',
 ];
 
 /**
@@ -421,6 +508,10 @@ function paraPlantilla(texto: string, max: number): string {
  * hacia el teléfono personal de quien agenda y por una plantilla que pasa por Meta:
  * dice QUÉ pasa y cuándo, y el detalle se ve en la bandeja, tras la sesión.
  *
+ * Un RECORDATORIO (§12 #14) usa la misma plantilla —no hace falta aprobar otra en
+ * Meta— y lo dice al principio de la causa, que es texto libre: quien lo recibe
+ * sabe que es la segunda vez y que nadie se ha ocupado.
+ *
  * Devuelve `[]` si no hay nada que avisar: quien llama no debe enviar.
  */
 export function parametrosPlantillaAviso(
@@ -429,6 +520,8 @@ export function parametrosPlantillaAviso(
     agenteSinSenal: boolean;
     hisAlcanzable: boolean | null;
     timeZone: string;
+    /** El número del recordatorio (1, 2…), o nada si es el primer aviso. */
+    recordatorio?: number;
   },
 ): string[] {
   if (items.length === 0) return [];
@@ -455,6 +548,12 @@ export function parametrosPlantillaAviso(
       hayEnvio
         ? 'además la comparación diaria no encontró citas en el hospital'
         : 'la comparación diaria con el hospital no encontró estas citas allá',
+    );
+  }
+
+  if (ctx.recordatorio) {
+    causas.unshift(
+      `RECORDATORIO ${ctx.recordatorio} de ${UMBRALES_VIGILANTE.maxRecordatorios}: nadie la ha tomado en la bandeja`,
     );
   }
 

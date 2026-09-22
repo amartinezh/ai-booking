@@ -174,7 +174,7 @@ describe('MirrorExceptionsService', () => {
   });
 
   describe('una decisión humana es firme', () => {
-    it.each(['RESUELTA', 'DESCARTADA'])(
+    it.each(['RESUELTA', 'DESCARTADA', 'VENCIDA'])(
       'una %s NO se reabre aunque el problema siga ahí',
       async (status) => {
         const { service, prisma } = build(fila({ status }));
@@ -216,6 +216,7 @@ describe('MirrorExceptionsService', () => {
         resolutionNote: null,
         notifiedAt: null,
         notifiedSeverity: null,
+        reminderCount: 0,
       });
       expect(acciones(prisma)).toEqual(['REAPARECIDA']);
     });
@@ -411,7 +412,12 @@ describe('MirrorExceptionsService', () => {
 
       expect(prisma.syncException.updateMany.mock.calls[0][0]).toEqual({
         where: { id: 'ex-1', status: 'ABIERTA', notifiedSeverity: null },
-        data: { notifiedAt: AHORA, notifiedSeverity: 'MEDIA' },
+        // Un aviso (primero o por subir de gravedad) empieza la cuenta de recordatorios.
+        data: {
+          notifiedAt: AHORA,
+          notifiedSeverity: 'MEDIA',
+          reminderCount: 0,
+        },
       });
     });
 
@@ -442,14 +448,117 @@ describe('MirrorExceptionsService', () => {
       const previo = new Date('2026-09-22T10:00:00.000Z');
 
       await service.devolverAviso(
-        { id: 'ex-1', notifiedAt: previo, notifiedSeverity: 'MEDIA' },
+        {
+          id: 'ex-1',
+          notifiedAt: previo,
+          notifiedSeverity: 'MEDIA',
+          reminderCount: 1,
+        },
         AHORA,
       );
 
       expect(prisma.syncException.updateMany.mock.calls[0][0]).toEqual({
         where: { id: 'ex-1', notifiedAt: AHORA },
-        data: { notifiedAt: previo, notifiedSeverity: 'MEDIA' },
+        data: {
+          notifiedAt: previo,
+          notifiedSeverity: 'MEDIA',
+          reminderCount: 1,
+        },
       });
+    });
+  });
+
+  describe('reclamar un RECORDATORIO (§12 #14)', () => {
+    const previo = new Date('2026-09-22T14:20:00.000Z');
+
+    it('no cambia la gravedad avisada: suma uno a la cuenta y mueve la hora del último envío', async () => {
+      const { service, prisma } = build();
+
+      await expect(
+        service.reclamarAviso(
+          {
+            id: 'ex-1',
+            severity: 'MEDIA',
+            notifiedSeverity: 'MEDIA',
+            notifiedAt: previo,
+            reminderCount: 1,
+          },
+          AHORA,
+          'RECORDATORIO',
+        ),
+      ).resolves.toBe(true);
+
+      expect(prisma.syncException.updateMany.mock.calls[0][0]).toEqual({
+        // 🏁 Como la gravedad no cambia, el compare-and-set va también sobre la hora y
+        // la cuenta: la réplica que llegue segunda ya no coincide en ninguna de las dos.
+        where: {
+          id: 'ex-1',
+          status: 'ABIERTA',
+          notifiedSeverity: 'MEDIA',
+          notifiedAt: previo,
+          reminderCount: 1,
+        },
+        data: { notifiedAt: AHORA, reminderCount: 2 },
+      });
+    });
+
+    it('🏁 si otra réplica recordó primero (0 filas), esta no envía', async () => {
+      const { service, prisma } = build();
+      prisma.syncException.updateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(
+        service.reclamarAviso(
+          {
+            id: 'ex-1',
+            severity: 'MEDIA',
+            notifiedSeverity: 'MEDIA',
+            notifiedAt: previo,
+            reminderCount: 0,
+          },
+          AHORA,
+          'RECORDATORIO',
+        ),
+      ).resolves.toBe(false);
+    });
+  });
+
+  describe('vencer (§12 #15)', () => {
+    const leida = new Date('2026-09-10T08:00:00.000Z');
+
+    it('cierra como VENCIDA solo lo activo, de esa clínica y SIN TOCAR desde que se leyó', async () => {
+      const { service, prisma } = build();
+
+      await expect(
+        service.vencer(ORG, { id: 'ex-1', updatedAt: leida }, AHORA),
+      ).resolves.toBe(true);
+
+      const arg = prisma.syncException.updateMany.mock.calls[0][0] as {
+        where: unknown;
+        data: Record<string, unknown>;
+      };
+      expect(arg.where).toEqual({
+        id: 'ex-1',
+        organizationId: ORG,
+        status: { in: ['ABIERTA', 'EN_REVISION'] },
+        updatedAt: leida,
+      });
+      expect(arg.data).toMatchObject({
+        status: 'VENCIDA',
+        assignedToUserId: null,
+        resolvedAt: AHORA,
+        // null = la cerró el sistema, igual que AUTO_RESUELTA.
+        resolvedByUserId: null,
+        resolutionNote: expect.stringMatching(/sin resolución/),
+      });
+      expect(acciones(prisma)).toEqual(['VENCIDA']);
+    });
+
+    it('👤 si alguien la tomó o reabrió entre la lectura y el cierre (0 filas): no se pisa ni se anota', async () => {
+      const { service, prisma } = build();
+      prisma.syncException.updateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(
+        service.vencer(ORG, { id: 'ex-1', updatedAt: leida }, AHORA),
+      ).resolves.toBe(false);
+      expect(prisma.syncExceptionLog.create).not.toHaveBeenCalled();
     });
   });
 

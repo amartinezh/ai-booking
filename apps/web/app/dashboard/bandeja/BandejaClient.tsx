@@ -7,6 +7,7 @@ import {
     SEVERIDADES_EXCEPCION,
     TIPOS_EXCEPCION,
     TITULO_EXCEPCION,
+    UMBRALES_VIGILANTE,
     type AccionExcepcion,
     type SeveridadExcepcion,
     type TipoExcepcion,
@@ -64,6 +65,7 @@ const ETIQUETA_ESTADO: Record<string, string> = {
     RESUELTA: 'Resuelta',
     DESCARTADA: 'Descartada',
     AUTO_RESUELTA: 'Se cerró sola',
+    VENCIDA: 'Venció sin resolución',
 };
 
 const ETIQUETA_ACCION: Record<AccionExcepcion, string> = {
@@ -99,8 +101,10 @@ function PanelAvisos({
 }) {
     const router = useRouter();
     const idNumero = useId();
+    const idRespaldo = useId();
     const [editando, setEditando] = useState(false);
     const [numero, setNumero] = useState(avisos.numero ?? '');
+    const [respaldo, setRespaldo] = useState(avisos.respaldo ?? '');
     const [activos, setActivos] = useState(avisos.alertasActivas);
     const [mensaje, setMensaje] = useState<{ ok: boolean; texto: string } | null>(null);
     const [guardando, iniciar] = useTransition();
@@ -108,7 +112,7 @@ function PanelAvisos({
     function guardar() {
         setMensaje(null);
         iniciar(async () => {
-            const r = await guardarAvisosAction({ numero, activos });
+            const r = await guardarAvisosAction({ numero, respaldo, activos });
             if (!r.success) {
                 setMensaje({ ok: false, texto: r.error });
                 return;
@@ -134,7 +138,7 @@ function PanelAvisos({
                     </h2>
                     <p className="mt-1 text-sm leading-snug opacity-90">
                         {avisos.salen
-                            ? 'Si una cita confirmada no llega al hospital, se le avisa al agendador antes de la hora de la cita.'
+                            ? `Si una cita confirmada no llega al hospital, se le avisa al agendador antes de la hora de la cita. Si en ${UMBRALES_VIGILANTE.recordatorioMin} min nadie la toma aquí, se le recuerda (hasta ${UMBRALES_VIGILANTE.maxRecordatorios} veces)${avisos.tieneRespaldo ? ', también al número de respaldo' : ''}.`
                             : `${avisos.razon ?? ''} Mientras tanto las excepciones solo aparecen en esta bandeja: hay que abrirla para enterarse.`}
                     </p>
                 </div>
@@ -166,6 +170,22 @@ function PanelAvisos({
                         />
                         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                             Es un teléfono personal: el aviso lleva solo un resumen, sin datos de ningún paciente. Déjalo vacío para no avisar a nadie.
+                        </p>
+                    </div>
+                    <div>
+                        <label htmlFor={idRespaldo} className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                            Celular de respaldo (opcional)
+                        </label>
+                        <input
+                            id={idRespaldo}
+                            className={CAMPO}
+                            inputMode="tel"
+                            placeholder="300 765 4321"
+                            value={respaldo}
+                            onChange={(e) => setRespaldo(e.target.value)}
+                        />
+                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                            Otra persona (un coordinador, por ejemplo). No recibe el primer aviso: recibe los recordatorios, cuando pasan {UMBRALES_VIGILANTE.recordatorioMin} min sin que nadie tome la excepción en esta bandeja.
                         </p>
                     </div>
                     <label className="flex items-center gap-2 text-sm">

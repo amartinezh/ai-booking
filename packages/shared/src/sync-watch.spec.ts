@@ -1,13 +1,16 @@
 import {
   ESTADOS_ACTIVOS,
+  NOTA_VENCIDA,
   ORDEN_SEVERIDAD_EXCEPCION,
   TIPOS_CON_AVISO,
   UMBRALES_VIGILANTE,
   claveExcepcion,
+  debeVencer,
   eventoCulpable,
   evaluarRetencion,
   parametrosPlantillaAviso,
   requiereAviso,
+  requiereRecordatorio,
   resumenRetencion,
   severidadPorCercania,
   transicionExcepcion,
@@ -345,6 +348,118 @@ describe('requiereAviso — ¿corresponde avisarle al agendador?', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+describe('requiereRecordatorio — §12 #14: nadie tomó la excepción tras el aviso', () => {
+  const exc = (over: Record<string, unknown> = {}) => ({
+    kind: 'CITA_NO_ENTREGADA' as const,
+    severity: 'MEDIA' as const,
+    status: 'ABIERTA' as const,
+    notifiedSeverity: 'MEDIA' as string | null,
+    notifiedAtIso: desdeAhora(-31 * MIN) as string | null,
+    reminderCount: 0,
+    appointmentStartIso: desdeAhora(2 * 24 * HORA) as string | null,
+    ...over,
+  });
+  const recordar = (over: Record<string, unknown> = {}) =>
+    requiereRecordatorio(exc(over) as never, AHORA);
+
+  it('avisada hace más de 30 min y nadie la tomó: sí', () => {
+    expect(UMBRALES_VIGILANTE.recordatorioMin).toBe(30);
+    expect(recordar()).toBe(true);
+  });
+
+  it('todavía no: el aviso salió hace 29 min', () => {
+    expect(recordar({ notifiedAtIso: desdeAhora(-29 * MIN) })).toBe(false);
+  });
+
+  it('el plazo se cuenta desde el ÚLTIMO envío (aviso o recordatorio), no desde el primero', () => {
+    expect(recordar({ reminderCount: 1, notifiedAtIso: desdeAhora(-10 * MIN) })).toBe(false);
+    expect(recordar({ reminderCount: 1, notifiedAtIso: desdeAhora(-30 * MIN) })).toBe(true);
+  });
+
+  it('como mucho maxRecordatorios por gravedad: después solo queda la bandeja', () => {
+    expect(UMBRALES_VIGILANTE.maxRecordatorios).toBe(2);
+    expect(recordar({ reminderCount: 1 })).toBe(true);
+    expect(recordar({ reminderCount: 2 })).toBe(false);
+  });
+
+  it('👤 si alguien la tomó, no se recuerda: ya hay quien se ocupe', () => {
+    expect(recordar({ status: 'EN_REVISION' })).toBe(false);
+  });
+
+  it('nunca avisada: eso es un aviso, no un recordatorio', () => {
+    expect(recordar({ notifiedSeverity: null, notifiedAtIso: null })).toBe(false);
+  });
+
+  it('🔼 si la gravedad SUBIÓ, es un aviso nuevo (requiereAviso), no un recordatorio: nunca los dos', () => {
+    const subio = exc({ severity: 'ALTA', notifiedSeverity: 'MEDIA' });
+    expect(requiereRecordatorio(subio as never, AHORA)).toBe(false);
+    expect(requiereAviso(subio as never, AHORA)).toBe(true);
+  });
+
+  it('🕐 una cita que ya empezó no se recuerda', () => {
+    expect(recordar({ appointmentStartIso: desdeAhora(-MIN) })).toBe(false);
+  });
+
+  it('solo de los tipos que le importan al agendador', () => {
+    expect(recordar({ kind: 'DERIVA_EN_HIS' })).toBe(true);
+    expect(recordar({ kind: 'ERROR_SYNC' })).toBe(false);
+  });
+
+  it('una fecha de aviso ilegible no lanza ni recuerda', () => {
+    expect(recordar({ notifiedAtIso: 'no-es-fecha' })).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+describe('debeVencer — §12 #15: la cita pasó hace días y nadie la cerró', () => {
+  const DIA = 24 * HORA;
+  const exc = (over: Record<string, unknown> = {}) => ({
+    status: 'ABIERTA',
+    appointmentStartIso: desdeAhora(-8 * DIA) as string | null,
+    updatedAtIso: desdeAhora(-8 * DIA),
+    ...over,
+  });
+  const vence = (over: Record<string, unknown> = {}) => debeVencer(exc(over), AHORA);
+
+  it('cita hace 8 días y nadie la tocó en 8 días: vence', () => {
+    expect(UMBRALES_VIGILANTE.vencimientoDias).toBe(7);
+    expect(vence()).toBe(true);
+  });
+
+  it('cita hace 6 días: todavía no (queda margen para averiguar qué pasó)', () => {
+    expect(vence({ appointmentStartIso: desdeAhora(-6 * DIA) })).toBe(false);
+  });
+
+  it('👤 alguien la movió hace 2 días (la tomó, la soltó, la reabrió): no vence', () => {
+    expect(vence({ updatedAtIso: desdeAhora(-2 * DIA) })).toBe(false);
+    expect(vence({ status: 'EN_REVISION', updatedAtIso: desdeAhora(-2 * DIA) })).toBe(false);
+  });
+
+  it('una en revisión olvidada también vence', () => {
+    expect(vence({ status: 'EN_REVISION' })).toBe(true);
+  });
+
+  it('una cerrada no vence (ya está cerrada)', () => {
+    for (const status of ['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA', 'VENCIDA']) {
+      expect(vence({ status })).toBe(false);
+    }
+  });
+
+  it('sin hora de cita no hay «después»: no vence', () => {
+    expect(vence({ appointmentStartIso: null })).toBe(false);
+  });
+
+  it('una fecha ilegible no lanza ni vence', () => {
+    expect(vence({ updatedAtIso: 'x' })).toBe(false);
+  });
+
+  it('la nota dice qué pasó, con el plazo', () => {
+    expect(NOTA_VENCIDA).toMatch(/sin resolución/);
+    expect(NOTA_VENCIDA).toMatch(/7 días/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 describe('transicionExcepcion — la máquina de estados de la bandeja', () => {
   const t = (
     estado: EstadoExcepcion,
@@ -418,13 +533,13 @@ describe('transicionExcepcion — la máquina de estados de la bandeja', () => {
       expect(t('EN_REVISION', accion, { hayDuenio: true, esAdmin: true, nota })).toEqual({ ok: true, estado: final });
     });
 
-    it.each(['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA'] as const)('una %s ya está cerrada', (e) => {
+    it.each(['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA', 'VENCIDA'] as const)('una %s ya está cerrada', (e) => {
       expect(t(e, accion, { nota })).toMatchObject({ ok: false });
     });
   });
 
   describe('REABRIR', () => {
-    it.each(['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA'] as const)('una %s vuelve a abierta', (e) => {
+    it.each(['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA', 'VENCIDA'] as const)('una %s vuelve a abierta', (e) => {
       expect(t(e, 'REABRIR')).toEqual({ ok: true, estado: 'ABIERTA' });
     });
 
@@ -541,5 +656,18 @@ describe('parametrosPlantillaAviso — el texto que va a la plantilla de WhatsAp
 
   it('sin elementos: no hay nada que decir (quien llama no debe enviar)', () => {
     expect(parametrosPlantillaAviso([], ctx)).toEqual([]);
+  });
+
+  it('🔁 un recordatorio usa la MISMA plantilla y lo dice al principio de la causa', () => {
+    const p = parametrosPlantillaAviso([item()], { ...ctx, recordatorio: 1 });
+    expect(p).toHaveLength(3);
+    expect(p[2]).toMatch(/^RECORDATORIO 1 de 2: nadie la ha tomado en la bandeja; /);
+    // La causa sigue ahí: el recordatorio no la reemplaza.
+    expect(p[2]).toMatch(/fallando|rechaz|revis/i);
+    expect(p[2].length).toBeLessThanOrEqual(200);
+  });
+
+  it('el primer aviso no lleva la marca', () => {
+    expect(parametrosPlantillaAviso([item()], ctx)[2]).not.toMatch(/RECORDATORIO/);
   });
 });

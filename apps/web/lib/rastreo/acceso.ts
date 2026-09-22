@@ -150,6 +150,17 @@ type DbActor = Pick<
 export const SIN_PERMISOS = 'Sin permisos.';
 
 /**
+ * Quién puede enviarle al paciente la confirmación de una cita del hospital
+ * (escenario B, §12 #7): quien investiga cupos del HIS Y atiende pacientes. Los
+ * mismos roles que el endpoint de la API; SUPER_ADMIN no, porque no atiende.
+ */
+export const ROLES_CONFIRMACION: readonly string[] = ['ORG_ADMIN', 'BOOKING_AGENT'];
+
+export function puedeConfirmar(actor: Pick<ActorRastreo, 'role' | 'permisos'>): boolean {
+  return actor.permisos.modoB && ROLES_CONFIRMACION.includes(actor.role);
+}
+
+/**
  * Arma el actor a partir de la sesión.
  *
  * `organizacionElegida` solo se mira si el rol es SUPER_ADMIN. Para cualquier

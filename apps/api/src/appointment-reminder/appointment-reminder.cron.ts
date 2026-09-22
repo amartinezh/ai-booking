@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import { citaFueraDeAlcance } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatbotService } from '../chatbot/chatbot.service';
 import { OrganizationSettingsService } from '../chatbot/organization-settings.service';
@@ -15,6 +14,7 @@ import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
 import { addBusinessHours, formatForPatient } from '../common/business-hours';
 import { getErrorMessage, getErrorStack } from '../common/error-message.util';
+import { citaFueraDelAlcanceDelActor } from '../common/alcance-actor.util';
 import {
   readReminderConfig,
   ReminderConfig,
@@ -575,35 +575,6 @@ export class AppointmentReminderCronService
     actor: { userId: string; role: string },
     cita: { epsId: string | null; doctorId: string | null },
   ): Promise<boolean> {
-    try {
-      if (actor.role === 'BOOKING_AGENT') {
-        const perfil = await this.prisma.agentProfile.findUnique({
-          where: { userId: actor.userId },
-          select: { epsId: true, doctorId: true },
-        });
-        return citaFueraDeAlcance(
-          { epsId: perfil?.epsId || null, doctorId: perfil?.doctorId || null },
-          cita,
-        );
-      }
-      if (actor.role === 'DOCTOR') {
-        const perfil = await this.prisma.doctorProfile.findUnique({
-          where: { userId: actor.userId },
-          select: { id: true },
-        });
-        return citaFueraDeAlcance(
-          { epsId: null, doctorId: perfil?.id || null },
-          cita,
-        );
-      }
-      return false;
-    } catch (error: unknown) {
-      this.logger.error(
-        `No se pudo resolver el alcance de ${actor.userId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return true;
-    }
+    return citaFueraDelAlcanceDelActor(this.prisma, actor, cita, this.logger);
   }
 }

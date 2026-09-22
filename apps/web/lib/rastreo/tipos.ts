@@ -194,7 +194,10 @@ export interface ExpedienteB {
   generadoIso: string;
   zonaHoraria: string;
   resultado: ResultadoRastreo;
-  cupo: { medico: string; inicioIso: string; homologado: boolean };
+  /** `slotId`: el cupo de AgenIA en esa hora, si existe (id opaco, para confirmar). */
+  cupo: { medico: string; inicioIso: string; homologado: boolean; slotId: string | null };
+  /** ¿Puede este usuario enviarle la confirmación al paciente (§12 #7)? */
+  puedeConfirmar: boolean;
   identidad: {
     encontrada: boolean;
     pacienteId: string | null;
@@ -217,7 +220,7 @@ export interface FilaConsulta {
   actorEmail: string | null;
   actorRol: string;
   modo: string;
-  /** CEDULA, PHONE, BSUID, NAME, OPEN o REVEAL. */
+  /** CEDULA, PHONE, BSUID, NAME, OPEN, REVEAL, LIVE_HIS o CONFIRM. */
   tipo: string;
   busqueda: string;
   motivo: string;

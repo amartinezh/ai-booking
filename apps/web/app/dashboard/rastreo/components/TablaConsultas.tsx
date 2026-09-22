@@ -10,6 +10,7 @@ const TIPO: Record<string, string> = {
     OPEN: 'Expediente abierto',
     REVEAL: 'Datos completos mostrados',
     LIVE_HIS: 'Consulta en vivo al HIS',
+    CONFIRM: 'Confirmación enviada al paciente',
 };
 const MOTIVO: Record<string, string> = {
     PACIENTE_EN_VENTANILLA: 'Paciente en ventanilla',
@@ -76,7 +77,7 @@ export default function TablaConsultas({ lista, hrefBase }: { lista: ListaConsul
                                 <td className="p-3 text-xs">
                                     {f.veredictos.length > 0
                                         ? f.veredictos.join(', ')
-                                        : f.tipo === 'OPEN' || f.tipo === 'REVEAL' || f.tipo === 'LIVE_HIS'
+                                        : f.tipo === 'OPEN' || f.tipo === 'REVEAL' || f.tipo === 'LIVE_HIS' || f.tipo === 'CONFIRM'
                                           ? '—'
                                           : `${f.candidatos} candidato(s)`}
                                 </td>

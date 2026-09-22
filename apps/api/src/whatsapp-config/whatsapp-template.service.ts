@@ -23,6 +23,8 @@ const TIPO_DE_MENSAJE: Record<WhatsappTemplateKind, WhatsappMessageKind> = {
   APPOINTMENT_REMINDER_MASS: 'MASS_NOTICE',
   // Aviso al personal (no a un paciente): el libro lo distingue de los envíos a pacientes.
   SYNC_EXCEPTION_ALERT: 'SYSTEM_NOTICE',
+  // Confirmación al paciente de una cita que agendó el hospital (rastreo, §12 #7).
+  HIS_APPOINTMENT_CONFIRMATION: 'BOOKING_CONFIRMATION',
 };
 
 /**

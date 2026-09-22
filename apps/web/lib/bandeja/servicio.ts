@@ -75,8 +75,12 @@ export const MSG_NUMERO_INVALIDO =
   'Escribe un celular colombiano válido: 10 dígitos, empieza por 3 (ej. 300 123 4567).';
 export const MSG_SIN_ESPEJO =
   'El espejo con el hospital no está configurado para esta clínica.';
+export const MSG_RESPALDO_SIN_AGENDADOR =
+  'El respaldo recibe los recordatorios que no atendió el agendador: primero escribe el número del agendador.';
+export const MSG_RESPALDO_IGUAL =
+  'El respaldo debe ser OTRO número: es a quien se escala cuando el agendador no atiende el aviso.';
 
-const ESTADOS_CERRADOS: EstadoExcepcion[] = ['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA'];
+const ESTADOS_CERRADOS: EstadoExcepcion[] = ['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA', 'VENCIDA'];
 const ACCIONES: readonly AccionExcepcion[] = [
   'TOMAR',
   'SOLTAR',
@@ -531,6 +535,7 @@ export async function estadoAvisos(
         enabled: true,
         conflictAlertsEnabled: true,
         agendadorWhatsapp: true,
+        agendadorRespaldoWhatsapp: true,
       },
     }),
     db.whatsappTemplate.findFirst({
@@ -567,45 +572,67 @@ export async function estadoAvisos(
       alertasActivas,
       plantilla: tienePlantilla,
       tieneNumero,
-      // El número completo, solo para quien lo configura.
+      tieneRespaldo: !!config?.agendadorRespaldoWhatsapp,
+      // Los números completos, solo para quien los configura.
       numero: actor.permisos.configurarAvisos
         ? (config?.agendadorWhatsapp ?? null)
+        : null,
+      respaldo: actor.permisos.configurarAvisos
+        ? (config?.agendadorRespaldoWhatsapp ?? null)
         : null,
     },
   };
 }
 
+/** Un celular del formulario → como lo espera el envío (solo dígitos, con el 57); `''` = ninguno. */
+function leerCelular(valor: unknown): { ok: true; numero: string | null } | { ok: false } {
+  const crudo = typeof valor === 'string' ? valor.trim() : '';
+  if (!crudo) return { ok: true, numero: null };
+  const e164 = normalizePhoneToE164Co(crudo);
+  return e164 ? { ok: true, numero: e164.replace(/\D/g, '') } : { ok: false };
+}
+
 /**
  * Configura a quién se le avisa y si se avisa (solo ORG_ADMIN). Deja constancia en la
- * bitácora del espejo, con el número enmascarado: es un teléfono personal.
+ * bitácora del espejo, con los números enmascarados: son teléfonos personales.
  *
- * El número se guarda como lo espera el envío de WhatsApp: solo dígitos, con el 57.
- * Vacío = sin destinatario (los avisos dejan de salir, la bandeja sigue).
+ *  · `numero`: el agendador. Vacío = sin destinatario (los avisos dejan de salir, la
+ *    bandeja sigue).
+ *  · `respaldo` (§12 #14): a quién se escala cuando nadie toma la excepción tras el
+ *    aviso; recibe los recordatorios junto con el agendador. Opcional, y nunca sin
+ *    agendador ni igual a él (sería el mismo teléfono, no un escalamiento).
  */
 export async function guardarAvisos(
   db: Db,
   actor: ActorBandeja,
-  entrada: { numero: unknown; activos: unknown },
-): Promise<Resultado<{ numero: string | null; activos: boolean }>> {
+  entrada: { numero: unknown; activos: unknown; respaldo?: unknown },
+): Promise<
+  Resultado<{ numero: string | null; respaldo: string | null; activos: boolean }>
+> {
   if (!actor.permisos.configurarAvisos) {
     return { success: false, error: SIN_PERMISOS };
   }
   if (typeof entrada.activos !== 'boolean') {
     return { success: false, error: 'Indica si los avisos están activos.' };
   }
-  const crudo = typeof entrada.numero === 'string' ? entrada.numero.trim() : '';
-  let numero: string | null = null;
-  if (crudo) {
-    const e164 = normalizePhoneToE164Co(crudo);
-    if (!e164) return { success: false, error: MSG_NUMERO_INVALIDO };
-    numero = e164.replace(/\D/g, '');
-  }
+  const principal = leerCelular(entrada.numero);
+  if (!principal.ok) return { success: false, error: MSG_NUMERO_INVALIDO };
+  const segundo = leerCelular(entrada.respaldo);
+  if (!segundo.ok) return { success: false, error: MSG_NUMERO_INVALIDO };
+  const numero = principal.numero;
+  const respaldo = segundo.numero;
+  if (respaldo && !numero) return { success: false, error: MSG_RESPALDO_SIN_AGENDADOR };
+  if (respaldo && respaldo === numero) return { success: false, error: MSG_RESPALDO_IGUAL };
 
   try {
     return await db.$transaction(async (tx) => {
       const { count } = await tx.hospitalMirrorConfig.updateMany({
         where: { organizationId: actor.organizationId },
-        data: { agendadorWhatsapp: numero, conflictAlertsEnabled: entrada.activos as boolean },
+        data: {
+          agendadorWhatsapp: numero,
+          agendadorRespaldoWhatsapp: respaldo,
+          conflictAlertsEnabled: entrada.activos as boolean,
+        },
       });
       if (count !== 1) return { success: false as const, error: MSG_SIN_ESPEJO };
       await tx.syncAudit.create({
@@ -617,12 +644,14 @@ export async function guardarAvisos(
           outcome: 'OK',
           detail: `Avisos al agendador: ${entrada.activos ? 'activos' : 'apagados'}, destino ${
             numero ? enmascararIdentificadorWhatsapp(numero) : 'sin número'
+          }, respaldo ${
+            respaldo ? enmascararIdentificadorWhatsapp(respaldo) : 'sin número'
           } (cambiado desde el panel por ${actor.role}).`,
         },
       });
       return {
         success: true as const,
-        data: { numero, activos: entrada.activos as boolean },
+        data: { numero, respaldo, activos: entrada.activos as boolean },
       };
     });
   } catch (error: unknown) {

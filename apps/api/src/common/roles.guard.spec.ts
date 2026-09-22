@@ -1,4 +1,4 @@
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import * as jwt from 'jsonwebtoken';
 import { RolesGuard } from './roles.guard';
@@ -188,6 +188,82 @@ describe('RolesGuard', () => {
       role: 'ADMIN',
       organizationId: 'org-1',
       id: 'u-9',
+    });
+  });
+  describe('🔒 lo que queda en los logs (pendiente de producción #11)', () => {
+    const EMAIL = 'ana.perez@clinica.co';
+
+    const espiar = () => {
+      const salidas: unknown[][] = [];
+      for (const m of ['log', 'warn', 'debug', 'error', 'verbose'] as const) {
+        jest
+          .spyOn(Logger.prototype, m)
+          .mockImplementation((...a: unknown[]) => void salidas.push(a));
+      }
+      (console.log as jest.Mock).mockImplementation(
+        (...a: unknown[]) => void salidas.push(a),
+      );
+      (console.error as jest.Mock).mockImplementation(
+        (...a: unknown[]) => void salidas.push(a),
+      );
+      return () => JSON.stringify(salidas);
+    };
+
+    it('una petición APROBADA no escribe nada: ni el usuario, ni su correo, ni el token', () => {
+      const texto = espiar();
+      const req = peticionConToken({
+        role: 'ADMIN',
+        organizationId: 'org-1',
+        userId: 'u1',
+        email: EMAIL,
+      });
+      expect(guard.canActivate(contexto(req))).toBe(true);
+      expect(texto()).toBe('[]');
+    });
+
+    it('un rechazo por rol dice qué rol se exigía y cuál traía, SIN identidad', () => {
+      const texto = espiar();
+      const req = peticionConToken({
+        role: 'PATIENT',
+        organizationId: 'org-1',
+        userId: 'u1',
+        email: EMAIL,
+      });
+      expect(() => guard.canActivate(contexto(req))).toThrow(
+        ForbiddenException,
+      );
+      expect(texto()).toMatch(/exige ADMIN, trae PATIENT/);
+      expect(texto()).not.toContain(EMAIL);
+      expect(texto()).not.toContain('u1');
+    });
+
+    it('un token forjado se rechaza sin imprimir el token', () => {
+      const texto = espiar();
+      const token = jwt.sign(
+        { role: 'ADMIN', organizationId: 'org-1', email: EMAIL },
+        'otro-secreto',
+      );
+      const req = { headers: { authorization: `Bearer ${token}` } };
+      expect(() => guard.canActivate(contexto(req))).toThrow(
+        ForbiddenException,
+      );
+      expect(texto()).toMatch(/invalid signature/);
+      expect(texto()).not.toContain(token);
+      expect(texto()).not.toContain(EMAIL);
+    });
+
+    it('sin organización: dice el rol, no el usuario', () => {
+      const texto = espiar();
+      const req = peticionConToken({
+        role: 'ADMIN',
+        userId: 'u1',
+        email: EMAIL,
+      });
+      expect(() => guard.canActivate(contexto(req))).toThrow(
+        ForbiddenException,
+      );
+      expect(texto()).toMatch(/rol ADMIN sin organización/);
+      expect(texto()).not.toContain(EMAIL);
     });
   });
 });

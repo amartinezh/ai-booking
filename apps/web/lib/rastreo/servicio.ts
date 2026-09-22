@@ -44,7 +44,7 @@ import {
   type ResultadoRastreo,
 } from '@agenia/shared';
 import { aUtc } from './zona-horaria';
-import { SIN_PERMISOS, type ActorRastreo } from './acceso';
+import { SIN_PERMISOS, puedeConfirmar, type ActorRastreo } from './acceso';
 import {
   cargarEvidenciaHis,
   disponibilidadHis,
@@ -1233,7 +1233,13 @@ export async function investigarCupoB(
       generadoIso: ahora.toISOString(),
       zonaHoraria: tz,
       resultado,
-      cupo: { medico: etiquetaDoctor, inicioIso: inicio.toISOString(), homologado: mapa !== null },
+      cupo: {
+        medico: etiquetaDoctor,
+        inicioIso: inicio.toISOString(),
+        homologado: mapa !== null,
+        slotId: cupo?.id ?? null,
+      },
+      puedeConfirmar: puedeConfirmar(actor),
       identidad: {
         encontrada: perfil !== null,
         pacienteId: perfil?.id ?? null,

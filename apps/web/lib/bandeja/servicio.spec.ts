@@ -9,6 +9,8 @@ import {
   MSG_NO_ENCONTRADA,
   MSG_NO_GUARDADA,
   MSG_NUMERO_INVALIDO,
+  MSG_RESPALDO_IGUAL,
+  MSG_RESPALDO_SIN_AGENDADOR,
   MSG_SIN_ESPEJO,
   TAMANO_PAGINA,
   aplicarAccion,
@@ -802,7 +804,16 @@ describe('estadoAvisos — ¿salen los avisos? Si no, por qué', () => {
     const r = await estadoAvisos(db, admin());
     expect(r).toEqual({
       success: true,
-      data: { salen: true, razon: null, alertasActivas: true, plantilla: true, tieneNumero: true, numero: '573001234567' },
+      data: {
+        salen: true,
+        razon: null,
+        alertasActivas: true,
+        plantilla: true,
+        tieneNumero: true,
+        tieneRespaldo: false,
+        numero: '573001234567',
+        respaldo: null,
+      },
     });
   });
 
@@ -855,6 +866,19 @@ describe('estadoAvisos — ¿salen los avisos? Si no, por qué', () => {
     expect(JSON.stringify(d)).not.toContain('3001234567');
   });
 
+  it('🔒 el respaldo (§12 #14), igual: el administrador lo ve, el agente solo sabe que existe', async () => {
+    const db = mockDb();
+    config(db, { agendadorRespaldoWhatsapp: '573007654321' });
+    plantilla(db);
+    expect(((await estadoAvisos(db, admin())) as any).data).toMatchObject({
+      tieneRespaldo: true,
+      respaldo: '573007654321',
+    });
+    const d = ((await estadoAvisos(db, agente())) as any).data;
+    expect(d).toMatchObject({ tieneRespaldo: true, respaldo: null });
+    expect(JSON.stringify(d)).not.toContain('3007654321');
+  });
+
   it('sin permiso de ver: «Sin permisos.»', async () => {
     await expect(estadoAvisos(mockDb(), doctor())).resolves.toEqual({ success: false, error: SIN_PERMISOS });
   });
@@ -880,7 +904,7 @@ describe('guardarAvisos', () => {
   it('guarda el celular como lo espera el envío (solo dígitos, con el 57) y activa los avisos', async () => {
     const db = conConfig();
     const r = await guardarAvisos(db, admin(), { numero: '300 123 4567', activos: true });
-    expect(r).toEqual({ success: true, data: { numero: '573001234567', activos: true } });
+    expect(r).toEqual({ success: true, data: { numero: '573001234567', respaldo: null, activos: true } });
     expect(cfg(db)).toMatchObject({ agendadorWhatsapp: '573001234567', conflictAlertsEnabled: true });
   });
 
@@ -902,7 +926,7 @@ describe('guardarAvisos', () => {
   it('vacío: quita el destinatario (los avisos dejan de salir)', async () => {
     const db = conConfig({ agendadorWhatsapp: '573001234567', conflictAlertsEnabled: true });
     const r = await guardarAvisos(db, admin(), { numero: '  ', activos: false });
-    expect(r).toEqual({ success: true, data: { numero: null, activos: false } });
+    expect(r).toEqual({ success: true, data: { numero: null, respaldo: null, activos: false } });
     expect(cfg(db)).toMatchObject({ agendadorWhatsapp: null, conflictAlertsEnabled: false });
   });
 
@@ -948,6 +972,42 @@ describe('guardarAvisos', () => {
     const db = conConfig({ agendadorWhatsapp: '573001234567' });
     await guardarAvisos(db, admin(), { numero: '', activos: false });
     expect(db.syncAudit.filas[0].detail).toMatch(/apagados.*sin número/);
+  });
+
+  describe('el número de respaldo (§12 #14)', () => {
+    it('se guarda normalizado junto al del agendador, y la constancia lo enmascara', async () => {
+      const db = conConfig();
+      const r = await guardarAvisos(db, admin(), { numero: '300 123 4567', respaldo: '+57 300 765 4321', activos: true });
+      expect(r).toEqual({ success: true, data: { numero: '573001234567', respaldo: '573007654321', activos: true } });
+      expect(cfg(db)).toMatchObject({ agendadorWhatsapp: '573001234567', agendadorRespaldoWhatsapp: '573007654321' });
+      const detalle = db.syncAudit.filas[0].detail as string;
+      expect(detalle).toMatch(/respaldo •••4321/);
+      expect(detalle).not.toContain('3007654321');
+    });
+
+    it('vacío: se quita el respaldo (los recordatorios van solo al agendador)', async () => {
+      const db = conConfig({ agendadorWhatsapp: '573001234567', agendadorRespaldoWhatsapp: '573007654321' });
+      await guardarAvisos(db, admin(), { numero: '3001234567', respaldo: '', activos: true });
+      expect(cfg(db).agendadorRespaldoWhatsapp).toBeNull();
+      expect(db.syncAudit.filas[0].detail).toMatch(/respaldo sin número/);
+    });
+
+    it('sin respaldo en la entrada (cliente viejo): se trata como vacío', async () => {
+      const db = conConfig({ agendadorRespaldoWhatsapp: '573007654321' });
+      await guardarAvisos(db, admin(), { numero: '3001234567', activos: true });
+      expect(cfg(db).agendadorRespaldoWhatsapp).toBeNull();
+    });
+
+    it.each([
+      ['inválido', { numero: '3001234567', respaldo: '12345' }, MSG_NUMERO_INVALIDO],
+      ['sin agendador (es un segundo destinatario, no un sustituto)', { numero: '', respaldo: '3007654321' }, MSG_RESPALDO_SIN_AGENDADOR],
+      ['igual al agendador (no sería un escalamiento)', { numero: '300 123 4567', respaldo: '+573001234567' }, MSG_RESPALDO_IGUAL],
+    ])('%s: se rechaza y NO se toca nada', async (_n, entrada, error) => {
+      const db = conConfig();
+      await expect(guardarAvisos(db, admin(), { ...entrada, activos: true })).resolves.toEqual({ success: false, error });
+      expect(db.hospitalMirrorConfig.updateMany).not.toHaveBeenCalled();
+      expect(db.syncAudit.filas).toHaveLength(0);
+    });
   });
 
   it('sin fila de espejo para la clínica: se dice y NO se deja constancia de algo que no pasó', async () => {

@@ -40,7 +40,9 @@ En este orden: **migración → API → agente → web**, con la Fase 3 (vigilan
 | Qué | Dónde | Para qué escenarios |
 |---|---|---|
 | Número del agendador = un **teléfono de pruebas** | Bandeja de sincronización → Configurar avisos | 14, 15, 16 |
+| Número de **respaldo** = un **segundo teléfono de pruebas** | Bandeja de sincronización → Configurar avisos | 14 (recordatorio) |
 | Plantilla «Aviso al agendador» aprobada en Meta | Configuración → plantillas | 14, 15, 16 |
+| Plantilla «Confirmación de una cita del hospital» aprobada en Meta | Configuración → plantillas | panel (confirmación fuera de 24 h) |
 | Consulta en vivo **encendida** en la clínica (`lookupEnabled`) | SQL en la nube (`CONSULTA_EN_VIVO.md`) | 3, 5, 6, 7, 8, 9, 11, 16 |
 | Dos EPS elegidas en AgenIA: **EPS A** y **EPS B** | Al subir cada padrón | todos; 17 y 18 para el alcance |
 | Un usuario **BOOKING_AGENT acotado a la EPS A** | Usuarios | pruebas del panel |
@@ -110,7 +112,7 @@ Detener y arrancar el agente, en el VPS del hospital: `sudo systemctl stop ageni
 
 | # | Documento | Qué se prueba | Qué hacer | Resultado esperado |
 |---|---|---|---|---|
-| 14 | 9990000014 | **La aceptación de la Fase 3**: una cita que no llega al hospital avisa al agendador **antes** de la hora | 1) Detener el agente. 2) Reservar por WhatsApp. 3) Esperar **12 minutos**. 4) Arrancar el agente | A los ~10–12 min: en la **Bandeja de sincronización**, **«Cita que el hospital aún no tiene»** (*«Lleva N min en la cola…»*), y **un WhatsApp al teléfono del agendador** con la causa *«el agente del hospital no da señales»*. Rastreo A: **«Confirmada en AgenIA, pero NO ha llegado al HIS»**. Al arrancar: la cita llega y la excepción **se cierra sola** (*«Se cerró sola»*) |
+| 14 | 9990000014 | **La aceptación de la Fase 3**: una cita que no llega al hospital avisa al agendador **antes** de la hora | 1) Detener el agente. 2) Reservar por WhatsApp. 3) Esperar **12 minutos**. 4) Arrancar el agente | A los ~10–12 min: en la **Bandeja de sincronización**, **«Cita que el hospital aún no tiene»** (*«Lleva N min en la cola…»*), y **un WhatsApp al teléfono del agendador** con la causa *«el agente del hospital no da señales»*. Rastreo A: **«Confirmada en AgenIA, pero NO ha llegado al HIS»**. Si nadie toma la excepción, a los **30 min** del aviso llega un **recordatorio** al agendador **y al respaldo**, con la causa empezando por *«RECORDATORIO 1 de 2: nadie la ha tomado en la bandeja»*; en el historial, *«Se le recordó al agendador»*. Al arrancar: la cita llega y la excepción **se cierra sola** (*«Se cerró sola»*) |
 | 15 | 9990000015 | **Colisión**: el hospital da el cupo antes de que llegue la reserva | 1) Detener el agente. 2) Reservar por WhatsApp y anotar médico y hora. 3) Correr el **PASO B** con ese cupo. 4) Arrancar el agente | El envío choca: *«ya está ocupado en el HIS»*. En la bandeja, la excepción pasa por *«está fallando (intento N de 10)»* y, al rendirse, por *«se rindió tras 10 intentos»*, con **aviso inmediato** al agendador. La política es que **el hospital gana**: hay que llamar al paciente |
 | 16 | 9990000016 | **Deriva**: una cita de AgenIA desaparece del hospital sin cancelación | 1) Reservar por WhatsApp y esperar a que llegue al HIS. 2) Correr el **PASO C**. 3) Reiniciar el agente (la reconciliación corre a los 2 min) | Bandeja: **«El hospital no tiene una cita que AgenIA da por hecha»**, con aviso. `./checkHealthAgente.sh`: **FALLO**, *«1 cita(s) que AgenIA dio por confirmadas y el HOSPITAL NO TIENE»*. **(en vivo)** Rastreo A: **«AgenIA la entregó al hospital, pero el HIS no la tiene»** |
 
@@ -125,6 +127,8 @@ Detener y arrancar el agente, en el VPS del hospital: `sudo systemctl stop ageni
 | El **DOCTOR** queda acotado a su agenda | Entrar como el médico homologado y tratar de cancelar o marcar asistencia de una cita de otro médico | Rechazado con el mismo mensaje |
 | Un **PACIENTE** no puede crear ni mover citas | Con una sesión de paciente, intentar las acciones de Agendamiento | *«No tiene permisos para operar la agenda»* |
 | Trabajar una excepción | En la bandeja del escenario 15: **Tomar**, intentar **Resolver** sin nota, y luego con nota | Sin nota lo rechaza; con nota queda *«Resuelta»* con quién y cuándo en el historial |
+| Tomar la excepción detiene los recordatorios | En el escenario 14, **Tomar** la excepción antes de los 30 min | No llega ningún recordatorio |
+| Confirmar una cita del hospital | Rastreo B del escenario 1 (el 9990000001, que AgenIA no conoce) | Aparece el bloque **«Confirmarle la cita al paciente»**, pero sin botón: *«El paciente no tiene perfil en AgenIA: dale la confirmación por otro medio»*. El envío completo (texto dentro de 24 h, plantilla fuera) está cubierto por las pruebas automáticas y la verificación contra Postgres real |
 | Otro agente no se la quita | Con la excepción tomada por un agente, entrar como otro | No ve los botones de soltar ni cerrar; el ORG_ADMIN sí puede reasignarla |
 
 ---
@@ -161,4 +165,4 @@ Un fallo en el **15** no bloquea por sí mismo si el aviso al agendador sale: la
 3. Correr `PRUEBAS_E2E_3_LIMPIAR.sql`: primero con `@CONFIRMO = 0`, que lista lo que borraría **y avisa si AgenIA aún tiene alguna cita viva**; luego con `@CONFIRMO = 1`.
 4. Retirar los dos padrones de prueba en AgenIA.
 5. Si la consulta en vivo no sale a producción: `lookupEnabled = false`.
-6. Devolver el número del agendador al teléfono real.
+6. Devolver el número del agendador al teléfono real, y el de respaldo al del coordinador (o vaciarlo).

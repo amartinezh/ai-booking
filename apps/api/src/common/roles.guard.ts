@@ -3,6 +3,7 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Role } from '@agenia/database';
@@ -18,8 +19,19 @@ interface GuardedRequest {
   user?: JwtUserPayload;
 }
 
+/**
+ * 🔒 Lo que este guard deja en los logs NUNCA incluye el contenido del token: el
+ * payload trae el correo del usuario, y el journal de la API no es un lugar para
+ * datos personales (plan del rastreo, pendiente de producción #11). Antes se
+ * imprimía el usuario completo en CADA petición autenticada. Ahora:
+ *   · petición aprobada → nada (era una línea por request: ruido y datos);
+ *   · rechazo → una advertencia con el rol exigido y el que trae, sin identidad;
+ *   · sin token → debug (lo dispara cualquier escaneo, no es un incidente).
+ */
 @Injectable()
 export class RolesGuard implements CanActivate {
+  private readonly logger = new Logger(RolesGuard.name);
+
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
@@ -45,7 +57,7 @@ export class RolesGuard implements CanActivate {
     }
 
     if (!token) {
-      console.log('RolesGuard: No token provided');
+      this.logger.debug('Petición rechazada: sin token.');
       throw new ForbiddenException('A token must be provided for analytics');
     }
 
@@ -53,8 +65,8 @@ export class RolesGuard implements CanActivate {
     // forjar tokens de cualquier clínica. Sin la variable, se rechaza todo.
     const jwtSecret = process.env.JWT_SECRET;
     if (!jwtSecret) {
-      console.error(
-        'RolesGuard: JWT_SECRET no está configurado — se rechaza toda autenticación. Defina la variable de entorno (mismo valor que el web).',
+      this.logger.error(
+        'JWT_SECRET no está configurado — se rechaza toda autenticación. Defina la variable de entorno (mismo valor que el web).',
       );
       throw new ForbiddenException(
         'Autenticación no disponible: el servidor no tiene JWT_SECRET configurado.',
@@ -63,23 +75,20 @@ export class RolesGuard implements CanActivate {
 
     try {
       request.user = jwt.verify(token, jwtSecret) as JwtUserPayload;
-      console.log('RolesGuard: Token decoded user:', request.user);
     } catch (e: unknown) {
-      console.log('RolesGuard: Invalid token error:', getErrorMessage(e));
+      // El motivo de la librería («jwt expired», «invalid signature»), nunca el token.
+      this.logger.warn(`Token rechazado: ${getErrorMessage(e)}.`);
       throw new ForbiddenException('Invalid token');
     }
 
     const user = request.user;
     if (!user) {
-      console.log('RolesGuard: User is undefined');
+      this.logger.warn('Token válido pero sin usuario.');
       throw new ForbiddenException('A valid token must be provided');
     }
 
     if (user.role !== 'SUPER_ADMIN' && !user.organizationId) {
-      console.log(
-        'RolesGuard: User rejected due to missing organizationId. User has:',
-        user.organizationId,
-      );
+      this.logger.warn(`Rechazado: rol ${user.role} sin organización.`);
       throw new ForbiddenException(
         'Este usuario no pertenece a ninguna organización válida u organización inactiva.',
       );
@@ -87,18 +96,14 @@ export class RolesGuard implements CanActivate {
 
     const hasRole = requiredRoles.includes(user.role as Role);
     if (!hasRole) {
-      console.log(
-        'RolesGuard: User rejected role check. Required:',
-        requiredRoles,
-        'Has:',
-        user.role,
+      this.logger.warn(
+        `Rechazado por rol: exige ${requiredRoles.join('|')}, trae ${user.role}.`,
       );
       throw new ForbiddenException(
         'You do not have the required role to access this resource',
       );
     }
 
-    console.log('RolesGuard: API Request Approved.');
     return true;
   }
 }

@@ -55,8 +55,9 @@ export async function aplicarAccionExcepcionAction(entrada: {
 
 export async function guardarAvisosAction(entrada: {
     numero: string;
+    respaldo?: string;
     activos: boolean;
-}): Promise<Resultado<{ numero: string | null; activos: boolean }>> {
+}): Promise<Resultado<{ numero: string | null; respaldo: string | null; activos: boolean }>> {
     const a = await actor();
     if (!a.ok) return error(a.error);
     const r = await guardarAvisos(prisma, a.actor, entrada ?? { numero: '', activos: false });

@@ -88,9 +88,13 @@ describe('accionesDisponibles — lo que se pinta como botón', () => {
     expect(accionesDisponibles('AUTO_RESUELTA', { ...sinDuenio, permisos: admin })).toEqual([]);
   });
 
+  it('⌛ VENCIDA (§12 #15): se puede reabrir. El sistema NO la reabre solo, así que si hace falta la reabre una persona', () => {
+    expect(accionesDisponibles('VENCIDA', { ...sinDuenio, permisos: agente })).toEqual(['REABRIR']);
+  });
+
   it('sin permiso de trabajar no hay ningún botón, en ningún estado', () => {
     const solo = { trabajar: false, administrar: true };
-    for (const estado of ['ABIERTA', 'EN_REVISION', 'RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA']) {
+    for (const estado of ['ABIERTA', 'EN_REVISION', 'RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA', 'VENCIDA']) {
       expect(accionesDisponibles(estado, { esDuenio: true, hayDuenio: true, permisos: solo })).toEqual([]);
     }
   });
@@ -367,12 +371,26 @@ describe('mapearHistorial', () => {
     ]);
     expect(h[0].atIso).toBe(haceMin(30).toISOString());
   });
+
+  it('el recordatorio y el vencimiento (§12 #14 y #15) se dicen en palabras, como obra del sistema', () => {
+    const h = mapearHistorial(
+      [
+        { action: 'RECORDADA', actorUserId: null, actorRole: null, note: 'Recordatorio 1 de 2 por WhatsApp al agendador y al respaldo: nadie la había tomado.', createdAt: haceMin(5) },
+        { action: 'VENCIDA', actorUserId: null, actorRole: null, note: 'Venció sin resolución: …', createdAt: haceMin(1) },
+      ],
+      ctx(),
+    );
+    expect(h.map((e) => [e.accion, e.por])).toEqual([
+      ['Se le recordó al agendador (nadie la había tomado)', 'El sistema'],
+      ['Venció sin resolución', 'El sistema'],
+    ]);
+  });
 });
 
 describe('esEstadoActivo', () => {
   it('ABIERTA y EN_REVISION son activas; lo demás (y lo desconocido) no', () => {
     expect(esEstadoActivo('ABIERTA')).toBe(true);
     expect(esEstadoActivo('EN_REVISION')).toBe(true);
-    for (const e of ['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA', 'X']) expect(esEstadoActivo(e)).toBe(false);
+    for (const e of ['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA', 'VENCIDA', 'X']) expect(esEstadoActivo(e)).toBe(false);
   });
 });
