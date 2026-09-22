@@ -14,6 +14,7 @@ import {
   DEFAULT_MAX_RETRIES,
   SEMANTIC_MAP_TIMEOUT_MS,
 } from './chatbot.constants';
+import { textoParaCoincidencia } from './texto-para-coincidencia.util';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import {
@@ -1057,12 +1058,12 @@ export class ChatbotService implements OnModuleInit {
       doctor: null,
       fechaSolicitada: null,
       intent: 'otro' as const,
-      isEscape: this.escapeRegex.test(t),
+      isEscape: this.escapeRegex.test(textoParaCoincidencia(t)),
       outOfContext: false,
       ininteligible: false,
       isFallback: false,
-      isCancellation: this.cancelRegex.test(t),
-      isModification: this.modifyRegex.test(t),
+      isCancellation: this.cancelRegex.test(textoParaCoincidencia(t)),
+      isModification: this.modifyRegex.test(textoParaCoincidencia(t)),
       isEmergency: this.isEmergencyText(t),
       isRateLimited: false,
     };
@@ -2369,7 +2370,7 @@ export class ChatbotService implements OnModuleInit {
       if (id && name) return { id, name };
     }
     // 2) "Particular" por patrón (tolerancia a typos / sinónimos del archivo de patrones)
-    const raw = (text || '').trim();
+    const raw = textoParaCoincidencia(text);
     if (raw && this.particularRegex.test(raw)) {
       const part = await this.ensureParticularEpsForOrg(organizationId);
       if (part) return part;
@@ -2791,16 +2792,20 @@ export class ChatbotService implements OnModuleInit {
     isQuickModify: boolean;
   } {
     const isQuickCancel =
-      messageType === 'text' && !!text && this.cancelRegex.test(text.trim());
+      messageType === 'text' &&
+      !!text &&
+      this.cancelRegex.test(textoParaCoincidencia(text));
 
     const isQuickEscape =
-      messageType === 'text' && !!text && this.escapeRegex.test(text.trim());
+      messageType === 'text' &&
+      !!text &&
+      this.escapeRegex.test(textoParaCoincidencia(text));
 
     const isQuickModify =
       messageType === 'text' &&
       !!text &&
       currentState === ChatState.IDLE &&
-      this.modifyRegex.test(text.trim());
+      this.modifyRegex.test(textoParaCoincidencia(text));
 
     return { isQuickCancel, isQuickEscape, isQuickModify };
   }
@@ -3436,7 +3441,7 @@ export class ChatbotService implements OnModuleInit {
     } = p;
     await this.cleanUpSession(organizationId, senderId);
 
-    const isGreeting = this.greetingRegex.test(text?.trim() || '');
+    const isGreeting = this.greetingRegex.test(textoParaCoincidencia(text));
 
     if (isGreeting) {
       // Saludo → mostrar bienvenida + menú de servicios con letras (Paso 1).
@@ -3495,12 +3500,11 @@ export class ChatbotService implements OnModuleInit {
    * TEXTO como a la TRANSCRIPCIÓN de un audio → paridad voz↔texto.
    */
   private matchesGoodbye(text: string | undefined | null): boolean {
-    if (!text) return false;
-    const normalized = text
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s]/gu, ' ') // signos, emojis → espacio
-      .replace(/\s+/g, ' ')
-      .trim();
+    // La normalización que antes vivía aquí dentro es ahora
+    // `textoParaCoincidencia`, compartida por TODOS los diccionarios anclados:
+    // era la única tolerante, y por eso «chao.» funcionaba mientras `*"Hola"*`
+    // no. Ver el porqué en texto-para-coincidencia.util.ts.
+    const normalized = textoParaCoincidencia(text);
     if (!normalized) return false;
     return this.goodbyeRegex.test(normalized);
   }
@@ -3829,7 +3833,7 @@ export class ChatbotService implements OnModuleInit {
       messageType === 'text' &&
       !!text &&
       currentState === ChatState.IDLE &&
-      this.farewellRegex.test(text.trim())
+      this.farewellRegex.test(textoParaCoincidencia(text))
     ) {
       const reply = MSGS.despedidaCorta();
       await this.smartReply(organizationId, senderId, reply);
