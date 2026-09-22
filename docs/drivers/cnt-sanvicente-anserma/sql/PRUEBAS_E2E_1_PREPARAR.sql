@@ -310,6 +310,13 @@ BEGIN
     WHERE NOT EXISTS (SELECT 1 FROM dbo.CITAS_MEDICAS x
                       WHERE x.CD_CODI_MED_CIT = @MED_HOMOLOGADO
                         AND x.FE_HORA_CIT = @txtDiaR + ' ' + CONVERT(char(5), c.inicio, 108))
+      -- Y tampoco un cupo que este mismo plan ya reservó: si @DIAS_RECORDATORIO
+      -- coincide con @DIAS, los cuatro cupos de los escenarios todavía NO están en
+      -- CITAS_MEDICAS (solo en @plan), así que la comprobación de arriba no los ve y
+      -- se elegiría uno ocupado. La escritura fallaría por clave duplicada.
+      AND NOT EXISTS (SELECT 1 FROM @plan p
+                      WHERE p.med = @MED_HOMOLOGADO
+                        AND p.hora = @txtDiaR + ' ' + CONVERT(char(5), c.inicio, 108))
     ORDER BY c.inicio DESC;
 END;
 
@@ -321,6 +328,16 @@ ELSE
     PRINT '   AVISO: @MED_HOMOLOGADO no tiene turno con cupo libre el ' + @txtDiaR
         + '. El escenario 1b (recordatorio de una cita del hospital) NO queda preparado: '
         + 'pruebe otro @DIAS_RECORDATORIO. Todo lo demás sí se prepara.';
+
+-- ¿Y choca alguna del plan CON OTRA DEL PLAN? Red de seguridad: la PK del HIS es
+-- (médico, hora, estado), así que dos filas iguales aquí harían fallar el INSERT a
+-- mitad de camino. Mejor detenerse antes y decir cuál, que leer un error 2627.
+IF EXISTS (SELECT med, hora, estado FROM @plan GROUP BY med, hora, estado HAVING COUNT(*) > 1)
+BEGIN
+    SELECT cupo_repetido_en_el_plan = p.med + ' ' + p.hora, estado = p.estado, veces = COUNT(*)
+    FROM @plan p GROUP BY p.med, p.hora, p.estado HAVING COUNT(*) > 1;
+    THROW 50014, 'Dos citas del plan piden el mismo cupo (ver arriba). Suele ser @DIAS_RECORDATORIO pisando el día de prueba: elija otro.', 1;
+END;
 
 -- ¿Choca alguna con una cita real? (PK: médico + hora + estado)
 IF EXISTS (SELECT 1 FROM @plan p JOIN dbo.CITAS_MEDICAS c

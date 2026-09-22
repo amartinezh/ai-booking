@@ -40,7 +40,13 @@ SET XACT_ABORT ON;
 IF DB_NAME() <> 'PRUEBAS' THROW 50000, 'Solo en PRUEBAS.', 1;
 
 DECLARE @docA varchar(20) = '9990000004';
-DECLARE @motivoA varchar(2) = (SELECT TOP (1) CD_CODI_MOTI FROM dbo.MOTIVOANUL ORDER BY CD_CODI_MOTI);
+-- El motivo: se prefiere uno que hable de que el PACIENTE canceló, porque es lo que
+-- este paso simula. Con `TOP (1) ORDER BY código` salía el primero del catálogo —en
+-- el mock, «ERROR DE CAJERO»— y esa fila se queda para siempre en CITAS_ANULADAS,
+-- que es la bitácora del hospital: ensuciarla con un motivo falso es gratuito.
+DECLARE @motivoA varchar(2) = (
+    SELECT TOP (1) CD_CODI_MOTI FROM dbo.MOTIVOANUL
+     ORDER BY CASE WHEN DE_DESC_MOTI LIKE '%PACIENTE%' THEN 0 ELSE 1 END, CD_CODI_MOTI);
 
 BEGIN TRANSACTION;
 

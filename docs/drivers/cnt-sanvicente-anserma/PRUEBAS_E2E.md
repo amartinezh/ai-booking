@@ -6,12 +6,15 @@ Veintidós escenarios, con documentos **sintéticos**, que recorren lo que AgenI
 |---|---|
 | [`sql/PRUEBAS_E2E_1_PREPARAR.sql`](sql/PRUEBAS_E2E_1_PREPARAR.sql) | Deja el HIS (`PRUEBAS`) listo: 21 pacientes y las citas «del hospital» |
 | [`sql/PRUEBAS_E2E_2_PASOS.sql`](sql/PRUEBAS_E2E_2_PASOS.sql) | Cinco acciones del hospital que se corren **durante** la prueba (A a E) |
+| [`sql/PRUEBAS_E2E_VERIFICAR.sql`](sql/PRUEBAS_E2E_VERIFICAR.sql) | **Solo lectura.** Qué quedó registrado en el HIS: pacientes, citas, el convenio campo a campo, cancelaciones y el cuadro de mando por escenario |
 | [`sql/PRUEBAS_E2E_3_LIMPIAR.sql`](sql/PRUEBAS_E2E_3_LIMPIAR.sql) | Deja `PRUEBAS` (el HIS) como estaba |
 | [`sql/PRUEBAS_E2E_4_LIMPIAR_AGENIA.sql`](sql/PRUEBAS_E2E_4_LIMPIAR_AGENIA.sql) | Deja **AgenIA** como estaba: borra los pacientes que creó el alta en caliente |
 | [`padron/e2e/padron_e2e_eps_a.csv`](padron/e2e/padron_e2e_eps_a.csv) | Padrón de prueba, EPS A (19 documentos) |
 | [`padron/e2e/padron_e2e_eps_b.csv`](padron/e2e/padron_e2e_eps_b.csv) | Padrón de prueba, EPS B (2 documentos) |
 
-Los tres guiones del HIS se verificaron contra un SQL Server con el esquema real y un login **en español** (como el del hospital): las guardas rechazan los parámetros malos, la escritura es de todo o nada, un segundo intento se niega, los pasos se deshacen si afectan una fila de más, y la limpieza borra solo lo sintético y deja intacto lo real.
+Los guiones del HIS se verificaron contra un SQL Server con el esquema real y un login **en español** (como el del hospital): las guardas rechazan los parámetros malos, la escritura es de todo o nada, un segundo intento se niega, los pasos se deshacen si afectan una fila de más, y la limpieza borra solo lo sintético y deja intacto lo real.
+
+Lo añadido para el alta en caliente se verificó igual el **2026-09-22**, recorriendo el ciclo completo contra un SQL Server 2022 con el esquema del hospital: PREPARAR valida sin escribir y luego escribe **21 pacientes y 70 citas**; el teléfono del probador queda en las dos fichas y en ninguna más; cuando el médico no tiene turno el día del recordatorio, **avisa y sigue** en vez de abortar; si el día del recordatorio coincide con el de prueba, elige un cupo distinto de los cuatro reservados (y hay una guarda que detiene el guion si dos citas del plan pidieran el mismo cupo); los pasos **D** y **E** entran por el primer cupo libre del turno, sin pisar los reservados; el guion de verificar enseña las cinco partes y su cuadro de mando pasa a `OK` a medida que cada paso corre; y la limpieza deja **cero** filas sintéticas dejando intacto lo que ya estaba.
 
 El cuarto —el de AgenIA— se verificó el 2026-09-21 contra un **PostgreSQL real** con el esquema de producción y el disparador del outbox puestos: alcanza los cuatro perfiles sintéticos (incluido el `0009990000022`, por los ceros a la izquierda) y **no toca** al paciente real sembrado al lado; se **niega a borrar** mientras quede una cita de prueba sin cancelar; libera el cupo que quedó ocupado sin cita; y los tres eventos de outbox que genera nacen con origen `MIRROR` y entregados, así que **ninguna de sus escrituras viaja al hospital**.
 
@@ -100,13 +103,26 @@ Corra primero con `@CONFIRMO = 0`: valida todo y muestra la vista previa sin esc
 | 6 | Escenarios **de falla** (detienen el agente): 14, 15, 16 | 60–90 min |
 | 7 | Pruebas del panel | 20 min |
 | 8 | El **1b** cuando llegue el recordatorio (depende de la hora de la cita de mañana, no del reloj de la prueba) | 10 min |
-| 9 | Limpieza — **los dos lados**: primero el HIS, después AgenIA | 20 min |
+| 9 | `PRUEBAS_E2E_VERIFICAR.sql` completo: la PARTE 3 campo a campo y el cuadro de mando de la PARTE 5 | 15 min |
+| 10 | Limpieza — **los dos lados**: primero el HIS, después AgenIA | 20 min |
 
 La fase 4 va **antes** que la 5 por un motivo: el escenario 21 exige que el paciente 1 ya se haya quedado con el teléfono, y el 22 que los dos perfiles ambiguos ya existan. Si se corren los pasos D y E antes de tiempo, los dos escenarios se pierden **sin dar error** — AgenIA simplemente da de alta al paciente, que es el comportamiento normal.
 
 ---
 
-## Los 20 escenarios
+## En qué dirección va cada escenario
+
+No todos empiezan en el mismo sitio, y eso cambia qué se mira para darlos por buenos.
+
+**De WhatsApp al hospital** (escenarios 4, 10, 12, 13, 14, 15, 16, 17, 18, 20). Empiezan con el probador escribiéndole al bot desde su teléfono y dando la cédula sintética. El bot ofrece cupos, el paciente confirma, AgenIA encola la cita, el agente la escribe en el HIS. **Aquí sí se cierra con SQL**: `PRUEBAS_E2E_VERIFICAR.sql` enseña la cita en `CITAS_MEDICAS` con la marca `ASIGNADA POR WHATSAPP` y, en su PARTE 3, **campo a campo** — servicio, especialidad, convenio, consultorio, centro de costos, duración— al lado de una cita real reciente del mismo médico para comparar. Eso es lo que hay que revisar: que la cita esté no basta, el convenio es el que decide a quién se le factura.
+
+**Del hospital a WhatsApp** (escenarios 1, 1b, 2, 3, 5, 6, 7, 8, 9, 11, 19, 21, 22). Empiezan al revés: un guion SQL escribe en el HIS lo que el hospital habría agendado, el agente lo detecta y **lo que se verifica es AgenIA** — que el cupo deje de ofrecerse por WhatsApp, que el paciente quede creado, que el bot le muestre la cita, que el recordatorio llegue, que la bandeja abra la excepción. Para estos el SQL es el punto de partida, no la comprobación.
+
+**Y una comprobación que va al revés de lo que uno espera** (1-eco): aquí el SQL sirve para confirmar que el HIS **no** recibió nada. Una cita nacida en el hospital no debe volver al hospital, así que la PARTE 2 del guion de verificar tiene que mostrar **una sola** fila por cupo y ninguna con la marca de AgenIA.
+
+El guion de verificar es de solo lectura y se puede correr tantas veces como se quiera: entre escenarios, para ver cómo va, y al final para el cuadro de mando.
+
+## Los escenarios
 
 **Cómo leer la tabla.** «Rastreo A» = Rastreo de paciente → *Dice que agendó*. «Rastreo B» = *Lo agendaron en el HIS*, con el médico y la hora. Los títulos entre comillas son los que muestra la pantalla, literales.
 
