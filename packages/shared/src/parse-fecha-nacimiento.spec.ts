@@ -11,6 +11,22 @@ const HOY = new Date('2026-08-31T12:00:00.000Z');
 const parse = (t: string) => parseFechaNacimiento(t, { hoy: HOY });
 
 describe('parseFechaNacimiento', () => {
+  describe('🚨 el paciente COPIA el ejemplo que el bot le da, con su negrita', () => {
+    // Hallazgo de la campaña E2E del 2026-09-22: el bot dice «Por ejemplo:
+    // *15/03/1980*», el paciente lo copia de WhatsApp, y los asteriscos viajan
+    // con el texto. Antes esto devolvía null y el mensaje de error repetía el
+    // mismo ejemplo en negrita: bucle.
+    it.each([
+      ['*15/03/1980*', '1980-03-15'],
+      ['_15/03/1980_', '1980-03-15'],
+      ['~15/03/1980~', '1980-03-15'],
+      ['`15/03/1980`', '1980-03-15'],
+      ['*15 de marzo de 1980*', '1980-03-15'],
+    ])('%s → %s', (entrada, esperado) => {
+      expect(parse(entrada)?.iso.slice(0, 10)).toBe(esperado);
+    });
+  });
+
   describe('formatos que un paciente escribe de verdad', () => {
     it.each([
       ['15/03/1980', '1980-03-15'],

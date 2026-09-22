@@ -89,6 +89,10 @@ Si la consulta en vivo **no** va a salir a producción, enciéndala solo para la
 | **B** — `@TEL_PRUEBA` | Es el paciente 1. Recibe su recordatorio y responde «no quiero recordatorios» (1b) |
 | **C** y **D** | Agendador y respaldo de la bandeja. Pueden ser de personal del hospital |
 
+🚨 **Ninguno de los cuatro puede ser el número de la clínica** — el de la cuenta de empresa de WhatsApp, del que salen todos los envíos. El 2026-09-22 se puso ese número como `@TEL_PRUEBA` y el recordatorio no llegó nunca: Meta no entrega un mensaje que la cuenta se manda a sí misma. Además deja un `PatientProfile` cuyo WhatsApp es el número del remitente, que es una bomba de relojería para cualquier lógica que identifique al paciente por su número.
+
+Nada lo detecta hoy: el guion del HIS no conoce ese número, y AgenIA tampoco, porque `WhatsappAccountConfig.displayPhoneNumber` está **vacío**. Vale la pena llenarlo —es el número tal como lo muestra Meta— para poder añadir la comprobación más adelante.
+
 ### 4. Los parámetros de PREPARAR
 
 - `@MED_HOMOLOGADO`: un médico que esté en **Espejo → Homologación** y que tenga turno el día de prueba (la consulta de apoyo del guion los lista). Conviene que además tenga turno **mañana**, por lo de `@DIAS_RECORDATORIO`.

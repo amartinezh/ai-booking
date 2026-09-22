@@ -50,12 +50,24 @@ export interface ParseNacimientoOptions {
   hoy?: Date;
 }
 
-/** Quita tildes y normaliza espacios: "MARZO" y "márzo" deben valer igual. */
+/**
+ * Quita tildes y normaliza espacios: "MARZO" y "márzo" deben valer igual.
+ *
+ * Y quita el MARCADO DE WHATSAPP (`*negrita*`, `_cursiva_`, `~tachado~`,
+ * `` `mono` ``). Suena a detalle cosmético y no lo es: el bot le propone al
+ * paciente un ejemplo —«Por ejemplo: *15/03/1980*»— que se ve en negrita, y
+ * copiar un mensaje de WhatsApp se lleva los asteriscos con él. En la campaña
+ * E2E del 2026-09-22 pasó exactamente eso: llegó `*15/03/1980*`, el parser
+ * devolvió null y el paciente quedó en bucle, porque el mensaje de error
+ * repite el mismo ejemplo en negrita. Copiar el ejemplo que a uno le dan es
+ * lo más natural del mundo; el que tiene que ser tolerante es el lector.
+ */
 function normalizar(texto: string): string {
   return texto
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
+    .replace(/[*_~`]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
