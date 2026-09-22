@@ -215,6 +215,14 @@ export interface CanonicalChangeEvent {
     patientApellidos?: string;
     patientBirthDateIso?: string;
     patientGender?: string;
+    /**
+     * Teléfono del TITULAR tal como lo tiene el HIS, sin normalizar (el servidor lo
+     * hace). Lo trae el driver en las citas que nacen en el hospital para que AgenIA
+     * pueda dar de alta al paciente y mandarle el recordatorio
+     * (docs/PLAN_ALTA_EN_CALIENTE.md, D1). NUNCA el del acompañante: ese teléfono es
+     * de un tercero y solo lo usan los avisos masivos, que es otra decisión (D2).
+     */
+    patientPhone?: string;
     /** Régimen: la misma EPS tiene convenios distintos según cuál sea. */
     patientRegime?: string;
     /** NIT de la EPS: de aquí sale el convenio de facturación. */

@@ -581,8 +581,19 @@ describe('MirrorDispatchService — entrega con backoff', () => {
         organizationId: 'org1',
         deliveredAt: null,
         deadLettered: false,
+        // 🪞 Anti-eco: lo que nació en el HIS no vuelve al HIS.
+        origin: { not: 'MIRROR' },
       });
       expect(JSON.stringify(where)).not.toContain('gt');
+    });
+
+    it('🪞 lo nacido en el HIS se excluye en la CONSULTA, no después: si no, taparía la cola', async () => {
+      await service.getPendingEvents('org1', BigInt(0));
+      const args = prisma.syncOutbox.findMany.mock.calls[0][0];
+      expect(args.where.origin).toEqual({ not: 'MIRROR' });
+      // Las filas del espejo son las más viejas (menor `seq`): si se filtraran
+      // después de leer, ocuparían la ventana entera y las entregables no entrarían.
+      expect(args.orderBy).toEqual({ seq: 'asc' });
     });
 
     it('un evento con seq POR DEBAJO del cursor se sigue entregando', async () => {

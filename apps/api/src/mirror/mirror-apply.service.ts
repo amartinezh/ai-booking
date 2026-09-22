@@ -1,9 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  MirrorPatientService,
+  type ResultadoAlta,
+} from './mirror-patient.service';
+import { MirrorExceptionsService } from './mirror-exceptions.service';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { CanonicalChangeEvent, ChangesResult } from './dto/mirror.types';
 import { AttendanceStatus } from '@agenia/database';
+import {
+  TITULO_EXCEPCION,
+  claveExcepcion,
+  enmascararDocumento,
+} from '@agenia/shared';
 import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
 import { getErrorMessage } from '../common/error-message.util';
 
@@ -87,7 +97,17 @@ interface TrazaAuditoria {
  * la cancelación entrantes.
  */
 type ResolucionCupo =
-  | { tipo: 'OK'; cupo: { id: string; isAvailable: boolean } }
+  | {
+      tipo: 'OK';
+      cupo: {
+        id: string;
+        isAvailable: boolean;
+        // Médico y hora: los usa la excepción de documento ambiguo (D3) para que
+        // quien la trabaje sepa de qué cupo habla sin abrir la base.
+        doctorId: string;
+        startTime: Date;
+      };
+    }
   | { tipo: 'MEDICO_NO_ESPEJADO' }
   | { tipo: 'SIN_CUPO' }
   | { tipo: 'EVENTO_INCOMPLETO' };
@@ -100,6 +120,8 @@ export class MirrorApplyService {
     private readonly prisma: PrismaService,
     private readonly appointmentsService: AppointmentsService,
     private readonly waitlistService: WaitlistService,
+    private readonly patients: MirrorPatientService,
+    private readonly exceptions: MirrorExceptionsService,
   ) {}
 
   async applyBatch(
@@ -279,12 +301,62 @@ export class MirrorApplyService {
     return cupo ? { tipo: 'OK', cupo } : { tipo: 'SIN_CUPO' };
   }
 
+  /** Ocupar el cupo sin crear cita: marca la transacción como MIRROR (anti-eco). */
+  private async ocuparCupoSinCita(cupoId: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+      await tx.scheduleSlot.update({
+        where: { id: cupoId },
+        data: { isAvailable: false },
+      });
+    });
+  }
+
+  /**
+   * Abre (o actualiza) la excepción de documento ambiguo. Sin documento completo ni
+   * nombre: el detalle técnico lleva el documento ENMASCARADO y los ids de los
+   * perfiles, que es lo que necesita quien lo va a corregir.
+   */
+  private async abrirIdentidadAmbigua(
+    organizationId: string,
+    event: CanonicalChangeEvent,
+    cupo: { id: string; doctorId: string; startTime: Date },
+    alta: Extract<ResultadoAlta, { pacienteId: null }>,
+  ): Promise<void> {
+    const documento = enmascararDocumento(event.payload.patientDocument) ?? '?';
+    const clave = `${event.payload.doctorExternalKey ?? '?'}|${cupo.startTime.toISOString()}`;
+    try {
+      await this.exceptions.registrar(organizationId, {
+        kind: 'IDENTIDAD_AMBIGUA',
+        dedupeKey: claveExcepcion.identidadAmbigua(documento, clave),
+        severity: 'MEDIA',
+        title: TITULO_EXCEPCION.IDENTIDAD_AMBIGUA,
+        detail:
+          `Cupo ${clave}; documento ${documento} con ${alta.candidatos.length} ` +
+          `perfiles posibles (${alta.candidatos.join(', ')}). ` +
+          'No se creó la cita: corregir el documento en el sistema donde esté mal escrito.',
+        entityType: 'APPOINTMENT',
+        entityId: cupo.id,
+        doctorId: cupo.doctorId,
+        appointmentStartAt: cupo.startTime,
+        meta: { candidatos: alta.candidatos.length, cupo: clave },
+      });
+    } catch (error: unknown) {
+      // Que la bandeja falle no debe deshacer la ocupación del cupo.
+      this.logger.error(
+        `No se pudo abrir la excepción de documento ambiguo (org ${organizationId}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
   private async applyAppointmentCreate(
     organizationId: string,
     event: CanonicalChangeEvent,
     traza: TrazaAuditoria,
   ): Promise<'APPLIED' | 'CONFLICT' | 'SKIPPED'> {
-    const { agenIAPatientId } = event.payload;
+    let agenIAPatientId = event.payload.agenIAPatientId;
     let { agenIAScheduleSlotId } = event.payload;
 
     // 🏥 Cita nacida en el HIS: el driver la reporta por médico y hora, no por
@@ -331,24 +403,35 @@ export class MirrorApplyService {
       }
 
       if (!agenIAPatientId) {
-        await this.prisma.$transaction(async (tx) => {
-          await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
-          await tx.scheduleSlot.update({
-            where: { id: cupo.id },
-            data: { isAvailable: false },
-          });
-        });
-        this.logger.log(
-          `Cupo ${cupo.id} marcado como ocupado por una cita del HIS ` +
-            `(paciente ${event.payload.patientDocument ?? 'desconocido'} sin homologar).`,
+        // 🏥 ALTA EN CALIENTE (docs/PLAN_ALTA_EN_CALIENTE.md): se reutiliza el
+        // paciente que AgenIA ya tenga, o se crea con lo que manda el hospital.
+        // Con paciente, la cita se crea de verdad y a partir de ahí el bot la
+        // muestra y el cron le manda el recordatorio. Sin él, se hace lo de
+        // antes —ocupar el cupo— para no volver a vender esa hora.
+        const alta = await this.patients.resolverOCrear(
+          organizationId,
+          event.payload,
         );
-        // Deja constancia del hecho que el rastreo de paciente necesita saber:
-        // esta cita del HIS NO creó ningún `Appointment`. Sin la nota, la fila
-        // decía "OK" y nada más, y el documento solo estaba en el log del
-        // contenedor. No se escribe el documento aquí: es un dato personal.
-        traza.nota =
-          'cita del HIS con paciente sin homologar: solo se ocupó el cupo, no se creó Appointment';
-        return 'APPLIED';
+        if (alta.pacienteId !== null) {
+          agenIAPatientId = alta.pacienteId;
+          traza.nota = alta.nota;
+        } else {
+          await this.ocuparCupoSinCita(cupo.id);
+          this.logger.log(
+            `Cupo ${cupo.id} marcado como ocupado por una cita del HIS sin ` +
+              `paciente en AgenIA (${alta.motivo}).`,
+          );
+          // Deja constancia del hecho que el rastreo de paciente necesita saber:
+          // esta cita del HIS NO creó ningún `Appointment`. No se escribe el
+          // documento: es un dato personal.
+          traza.nota = `solo se ocupó el cupo, no se creó la cita: ${alta.nota}`;
+          if (alta.motivo === 'DOCUMENTO_AMBIGUO') {
+            // Lo tiene que resolver una persona (D3): elegir mal mezcla dos
+            // historias. Va a la bandeja, no al teléfono de nadie.
+            await this.abrirIdentidadAmbigua(organizationId, event, cupo, alta);
+          }
+          return 'APPLIED';
+        }
       }
 
       agenIAScheduleSlotId = cupo.id;

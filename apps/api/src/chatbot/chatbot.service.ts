@@ -47,6 +47,7 @@ import {
   isParticularEps,
   normalizeDocumento,
   documentoSinCerosIniciales,
+  variantesDeTelefono,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import {
@@ -3334,6 +3335,87 @@ export class ChatbotService implements OnModuleInit {
    * una palabra de reset ("salir", etc.), responde "Sin problema". Audita ambos
    * caminos. Terminal: el caller hace return tras llamar.
    */
+  /**
+   * ¿El paciente está pidiendo dejar de recibir recordatorios, o volver a recibirlos?
+   * Frases FIJAS y sin LLM (D2): es una decisión sobre sus datos, no una intención que
+   * se pueda inferir «casi». El texto se normaliza igual que el resto (sin tildes).
+   */
+  private intencionDeRecordatorios(
+    text: string | null,
+  ): 'DAR_DE_BAJA' | 'ACTIVAR' | null {
+    const t = this.normalizeSynonym(text || '').trim();
+    if (!t || (!t.includes('recordatorio') && t !== 'no recordar')) return null;
+    if (
+      /^(activar|activen|quiero|si quiero|deseo)\s+(los\s+|mis\s+)?recordatorios?$/.test(
+        t,
+      )
+    ) {
+      return 'ACTIVAR';
+    }
+    const baja =
+      /^no recordar$/.test(t) ||
+      /^(no|ya no)\s+(quiero|deseo|me interesa)\s+(mas\s+|recibir\s+)*(mas\s+)?(los\s+|sus\s+|estos\s+)?recordatorios?$/.test(
+        t,
+      ) ||
+      /^(baja|baja de|quitar|quiten|cancelar|cancele[n]?|apagar|apaguen|desactivar|desactiven|no envien|no me envien|dejen de enviar(me)?)\s+(los\s+|mis\s+|de\s+)?recordatorios?$/.test(
+        t,
+      ) ||
+      /^dejar de recibir recordatorios?$/.test(t);
+    return baja ? 'DAR_DE_BAJA' : null;
+  }
+
+  /**
+   * Apaga (o enciende) los recordatorios de quien escribe. Se aplica a TODOS los
+   * perfiles de esta clínica que respondan a ese número: si un celular está en dos
+   * historias (una familia lo comparte), «no me escriban» vale para el número.
+   *
+   * No cancela ninguna cita, y el mensaje lo dice: quien pide la baja no está pidiendo
+   * perder su cita. Queda la constancia en la caja negra.
+   */
+  private async handleRecordatorios(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | null;
+    activar: boolean;
+    MSGS: ReturnType<typeof buildMessages>;
+  }): Promise<void> {
+    const { organizationId, senderId, activar, MSGS } = p;
+    // El número tal como llegó (puede ser un BSUID) y sus dos formas de teléfono
+    // (con y sin el 57), sin repetir.
+    const identificadores = [
+      ...new Set([
+        senderId,
+        ...variantesDeTelefono(senderId.replace(/\D/g, '')),
+      ]),
+    ];
+    const { count } = await this.prisma.patientProfile.updateMany({
+      where: {
+        organizationId,
+        OR: [
+          { whatsappId: { in: identificadores } },
+          { bsuid: { in: identificadores } },
+        ],
+      },
+      data: { remindersOptOut: !activar },
+    });
+
+    const reply =
+      count === 0
+        ? MSGS.recordatoriosSinRegistro()
+        : activar
+          ? MSGS.recordatoriosActivados()
+          : MSGS.recordatoriosBaja();
+    await this.smartReply(organizationId, senderId, reply);
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: p.text || '[audio]',
+      botReply: reply,
+      metadata: {
+        step: activar ? 'RECORDATORIOS_ACTIVADOS' : 'RECORDATORIOS_BAJA',
+        perfilesAfectados: count,
+      },
+    });
+  }
+
   private async handleEscape(p: {
     organizationId: string;
     senderId: string;
@@ -3987,6 +4069,23 @@ export class ChatbotService implements OnModuleInit {
         currentState,
         MSGS,
         via: 'voice_llm',
+      });
+      return;
+    }
+
+    // 🔔 BAJA (o alta) DE RECORDATORIOS — docs/PLAN_ALTA_EN_CALIENTE.md, D2.
+    // Va ANTES de las demás intenciones: «no quiero más recordatorios» no es una
+    // cancelación de cita, y confundirlas le cancelaría la cita a quien solo pidió
+    // que dejáramos de escribirle. Se decide con frases fijas, sin LLM: es una
+    // decisión sobre sus datos y no puede quedar a interpretación.
+    const recordatorios = this.intencionDeRecordatorios(text ?? null);
+    if (recordatorios) {
+      await this.handleRecordatorios({
+        organizationId,
+        senderId,
+        text: text ?? null,
+        activar: recordatorios === 'ACTIVAR',
+        MSGS,
       });
       return;
     }

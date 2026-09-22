@@ -201,6 +201,7 @@ export {
 } from './src/sync-watch';
 
 export { RETENCION_DATOS, diasDeRetencion } from './src/retencion';
+
 export type {
   AccionExcepcion,
   EstadoExcepcion,
@@ -211,3 +212,13 @@ export type {
   SeveridadExcepcion,
   TipoExcepcion,
 } from './src/sync-watch';
+
+export { decidirAlta, decidirTelefono, notaDeAlta } from './src/alta-en-caliente';
+export type {
+  DecisionAlta,
+  DuenoDeTelefono,
+  EntradaAlta,
+  MotivoSinAlta,
+  PerfilCandidato,
+  TelefonoDecidido,
+} from './src/alta-en-caliente';

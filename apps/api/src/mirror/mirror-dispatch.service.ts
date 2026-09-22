@@ -158,7 +158,18 @@ export class MirrorDispatchService {
     const ahora = new Date();
 
     const candidatos = await this.prisma.syncOutbox.findMany({
-      where: { organizationId, deliveredAt: null, deadLettered: false },
+      // 🪞 ANTI-ECO, por partida doble: el disparador ya marca como entregado lo que
+      // nace en el HIS, y aquí se vuelve a excluir. Si una de esas filas quedara
+      // pendiente por cualquier vía, el hospital recibiría de vuelta lo que él mismo
+      // agendó — con el alta en caliente, una cita duplicada. Va en el WHERE y no
+      // como filtro posterior: si no, esas filas ocuparían la ventana de lectura
+      // para siempre (son las más viejas) y taparían a las que sí hay que entregar.
+      where: {
+        organizationId,
+        deliveredAt: null,
+        deadLettered: false,
+        origin: { not: 'MIRROR' },
+      },
       orderBy: { seq: 'asc' },
       take: limit * SCAN_WINDOW_FACTOR,
     });

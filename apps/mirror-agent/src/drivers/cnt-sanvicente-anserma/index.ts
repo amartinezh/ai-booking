@@ -19,6 +19,7 @@ import {
   diaSiguienteLiteralSql,
   desenlaceDeAtencion,
   mapSexo,
+  sexoDesdeHis,
   resolveConvenio,
   resolveEspecialidad,
   cuposDelTurno,
@@ -149,6 +150,23 @@ interface FilaNoticeRoster {
   /** DE_TELE_ACOM_PAC — teléfono del acompañante (§3.4/J.5), fuente secundaria */
   telefonoAcom: string | null;
 }
+
+/** Una fila de `PACIENTES` con lo que hace falta para dar de alta al paciente. */
+interface FilaPacienteHis {
+  hist: string | null;
+  nombre: string | null;
+  segNombre: string | null;
+  apellido: string | null;
+  segApellido: string | null;
+  telefono: string | null;
+  /** `FE_NACI_PAC` como `YYYY-MM-DD` (estilo 23). */
+  naci: string | null;
+  /** `NU_SEXO_PAC`: el código del HIS (1 = M, 0 = F en este hospital). */
+  sexo: number | null;
+}
+
+/** Documentos por consulta al pedir los datos de los pacientes de las citas nuevas. */
+const LOTE_PACIENTES = 200;
 
 interface SnapshotRow {
   /** NU_ESTA_CIT */
@@ -644,7 +662,100 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       );
     }
 
+    await this.enriquecerAltasConPaciente(pool, events);
+
     return { events, nextCursor: actual };
+  }
+
+  /**
+   * Completa las ALTAS con los datos del paciente que el HIS ya tiene: nombre,
+   * teléfono, nacimiento y sexo (docs/PLAN_ALTA_EN_CALIENTE.md, D1). Sin ellos AgenIA
+   * no puede dar de alta al paciente de una cita nacida en el hospital, y sin paciente
+   * no hay cita, ni recordatorio, ni «mis citas» por WhatsApp.
+   *
+   * ⚡ POR QUÉ NO VA EN LA CONSULTA CALIENTE. La detección recorre 90 días de
+   * `CITAS_MEDICAS` (más de un millón de filas en total) en cada vuelta; un `JOIN` a
+   * `PACIENTES` ahí se paga por cada fila de la ventana, vuelta tras vuelta, para un
+   * dato que solo hace falta cuando aparece una cita NUEVA. Aquí se piden solo los
+   * documentos de las altas de ESTA vuelta —casi siempre ninguno o unos pocos—, por su
+   * clave primaria y en lotes.
+   *
+   * 🔒 Solo el teléfono del TITULAR (`DE_TELE_PAC`). El del acompañante es de un
+   * tercero: no entra (D2).
+   *
+   * Si esta consulta falla, NO se rompe la vuelta: los eventos salen sin estos datos y
+   * el servidor decide qué hacer (abrir la cita sin paciente, como hasta hoy). Perder
+   * el teléfono de un recordatorio es molesto; perder la detección de cambios deja al
+   * hospital sin espejar.
+   */
+  private async enriquecerAltasConPaciente(
+    pool: sql.ConnectionPool,
+    events: CanonicalChangeEvent[],
+  ): Promise<void> {
+    const mapping = this.requireMapping();
+    const altas = events.filter(
+      (e) => e.op === 'INSERT' && !!e.payload.patientDocument,
+    );
+    if (altas.length === 0) return;
+
+    const documentos = [
+      ...new Set(altas.map((e) => e.payload.patientDocument as string)),
+    ];
+    const porDocumento = new Map<string, FilaPacienteHis>();
+    try {
+      for (let i = 0; i < documentos.length; i += LOTE_PACIENTES) {
+        const lote = documentos.slice(i, i + LOTE_PACIENTES);
+        const req = pool.request();
+        const marcadores = lote.map((doc, n) => {
+          req.input(`h${n}`, sql.VarChar(20), doc);
+          return `@h${n}`;
+        });
+        const filas = await req.query<FilaPacienteHis>(`
+          SELECT NU_HIST_PAC hist,
+                 NO_NOMB_PAC nombre, NO_SGNO_PAC segNombre,
+                 DE_PRAP_PAC apellido, DE_SGAP_PAC segApellido,
+                 DE_TELE_PAC telefono,
+                 -- Estilo 23 (YYYY-MM-DD): texto estable, sin la ambigüedad
+                 -- UTC/local de dejar que mssql serialice un Date.
+                 CONVERT(varchar(10), FE_NACI_PAC, 23) naci,
+                 NU_SEXO_PAC sexo
+            FROM dbo.PACIENTES
+           WHERE NU_HIST_PAC IN (${marcadores.join(', ')})`);
+        for (const f of filas.recordset) {
+          if (f.hist) porDocumento.set(f.hist.trim(), f);
+        }
+      }
+    } catch (error: unknown) {
+      console.warn(
+        `[driver cnt-sanvicente-anserma] no se pudieron leer los datos de ` +
+          `${documentos.length} paciente(s) de citas nuevas: ` +
+          `${error instanceof Error ? error.message : String(error)}. ` +
+          `Las altas salen sin nombre ni teléfono.`,
+      );
+      return;
+    }
+
+    for (const evento of altas) {
+      const f = porDocumento.get(
+        (evento.payload.patientDocument as string).trim(),
+      );
+      if (!f) continue;
+      const nombreCompleto = [f.nombre, f.segNombre, f.apellido, f.segApellido]
+        .map((parte) => parte?.trim())
+        .filter(Boolean)
+        .join(' ');
+      if (nombreCompleto) evento.payload.patientFullName = nombreCompleto;
+      const telefono = f.telefono?.trim();
+      if (telefono) evento.payload.patientPhone = telefono;
+      // El HIS guarda la fecha de nacimiento NOT NULL, pero hay filas legadas
+      // con valores imposibles: si no se puede leer, se omite en vez de mandar
+      // basura que el servidor tendría que descartar igual.
+      if (f.naci && /^\d{4}-\d{2}-\d{2}$/.test(f.naci.trim())) {
+        evento.payload.patientBirthDateIso = f.naci.trim();
+      }
+      const sexo = sexoDesdeHis(mapping, f.sexo);
+      if (sexo) evento.payload.patientGender = sexo;
+    }
   }
 
   /**

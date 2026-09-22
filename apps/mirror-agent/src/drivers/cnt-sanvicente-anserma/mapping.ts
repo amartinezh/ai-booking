@@ -442,6 +442,21 @@ export function mapSexo(mapping: AnsermaMapping, gender?: string): number {
 }
 
 /**
+ * El camino inverso de `mapSexo`: del código del HIS (`NU_SEXO_PAC`) a la letra que
+ * usa AgenIA. Se necesita al LEER un paciente del hospital para darlo de alta en
+ * caliente (docs/PLAN_ALTA_EN_CALIENTE.md). Devuelve `undefined` si el hospital
+ * guardó un valor que este mapeo no conoce: mejor un paciente sin sexo —que AgenIA
+ * no exige— que inventarle uno.
+ */
+export function sexoDesdeHis(
+  mapping: AnsermaMapping,
+  codigo: number | null | undefined,
+): string | undefined {
+  if (codigo === null || codigo === undefined) return undefined;
+  return Object.keys(mapping.sexo).find((k) => mapping.sexo[k] === codigo);
+}
+
+/**
  * `CD_CODI_ESP_CIT`. Correlaciona con el SERVICIO, no con el médico.
  *
  * Lanza si el servicio no está mapeado y el hospital no declaró un default.

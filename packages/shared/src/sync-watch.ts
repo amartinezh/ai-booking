@@ -32,6 +32,10 @@ import { derivarSync, type FilaOutbox } from './sync-state';
  *  · `CONFLICTO_SYNC` / `ERROR_SYNC` — lo que la auditoría registró como conflicto o error.
  *  · `DERIVA_EN_HIS`     — la reconciliación no encontró en el hospital una cita que
  *    AgenIA da por hecha (el paciente cree que tiene cita y allá no está).
+ *  · `IDENTIDAD_AMBIGUA` — llegó una cita del hospital y hay más de un paciente de
+ *    AgenIA que podría ser esa persona (el mismo documento escrito con ceros a la
+ *    izquierda distintos). No se da de alta: elegir mal mezcla dos historias
+ *    (docs/PLAN_ALTA_EN_CALIENTE.md, D3).
  */
 export const TIPOS_EXCEPCION = [
   'CITA_NO_ENTREGADA',
@@ -39,6 +43,7 @@ export const TIPOS_EXCEPCION = [
   'CONFLICTO_SYNC',
   'ERROR_SYNC',
   'DERIVA_EN_HIS',
+  'IDENTIDAD_AMBIGUA',
 ] as const;
 export type TipoExcepcion = (typeof TIPOS_EXCEPCION)[number];
 
@@ -57,6 +62,7 @@ export const TITULO_EXCEPCION: Record<TipoExcepcion, string> = {
   CONFLICTO_SYNC: 'Conflicto entre AgenIA y el hospital',
   ERROR_SYNC: 'Error al aplicar un cambio',
   DERIVA_EN_HIS: 'El hospital no tiene una cita que AgenIA da por hecha',
+  IDENTIDAD_AMBIGUA: 'Cita del hospital con un documento ambiguo',
 };
 
 export const SEVERIDADES_EXCEPCION = ['BAJA', 'MEDIA', 'ALTA', 'CRITICA'] as const;
@@ -275,6 +281,9 @@ export function evaluarRetencion(entrada: {
  * otra excepción y sí debe avisar.
  */
 export const claveExcepcion = {
+  /** Una por documento y cupo: el mismo caso sin resolver no abre una fila por vuelta. */
+  identidadAmbigua: (documentoEnmascarado: string, cupo: string) =>
+    `identidad:${documentoEnmascarado}:${cupo}`,
   citaNoEntregada: (appointmentId: string, seq: bigint | string | number) =>
     `cita:${appointmentId}:${String(seq)}`,
   eventoRendido: (seq: bigint | string | number) => `evento:${String(seq)}`,

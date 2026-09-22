@@ -5,6 +5,7 @@ import { MirrorController } from './mirror.controller';
 import { MirrorAgentGuard } from './mirror-agent.guard';
 import { MirrorDispatchService } from './mirror-dispatch.service';
 import { MirrorApplyService } from './mirror-apply.service';
+import { MirrorPatientService } from './mirror-patient.service';
 import { MirrorSchemaCheckService } from './mirror-schema-check.service';
 import { MirrorReconciliationService } from './mirror-reconciliation.service';
 import { MirrorAvailabilityService } from './mirror-availability.service';
@@ -36,6 +37,7 @@ import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module'
     MirrorAgentGuard,
     MirrorDispatchService,
     MirrorApplyService,
+    MirrorPatientService,
     // Grita al arrancar si el DDL del espejo no llegó a la base. Ver la nota
     // larga en mirror-schema-check.service.ts.
     MirrorSchemaCheckService,

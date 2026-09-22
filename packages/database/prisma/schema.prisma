@@ -86,6 +86,7 @@ model Organization {
   // 🔎 Rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md, Fase 0).
   whatsappMessageLogs WhatsappMessageLog[]
   patientLookupLogs   PatientLookupLog[]
+  mirrorPatientOptOuts MirrorPatientOptOut[]
   hisLookupRequests   HisLookupRequest[]
 
   // 🚨 Bandeja de excepciones de sincronización (Fase 3 del rastreo).
@@ -683,6 +684,12 @@ model PatientProfile {
   regime String?
 
   // 🔌 CONEXIÓN EPS: El paciente declara su EPS base
+  /// ¿Pidió no recibir recordatorios por WhatsApp? (docs/PLAN_ALTA_EN_CALIENTE.md, D2)
+  /// Lo respeta el cron de recordatorios, sea la cita de WhatsApp o del hospital: a
+  /// quien dijo que no, no se le vuelve a escribir. No impide que el personal le
+  /// escriba a mano ni que el bot conteste lo que él pregunte.
+  remindersOptOut Boolean @default(false)
+
   epsId String?
   eps   Eps?    @relation(fields: [epsId], references: [id])
 
@@ -2131,6 +2138,35 @@ model SyncExceptionLog {
   createdAt   DateTime @default(now())
 
   @@index([exceptionId, createdAt])
+}
+
+/// 🚫 Documentos que NO se vuelven a dar de alta solos desde el hospital
+/// (docs/PLAN_ALTA_EN_CALIENTE.md, D10).
+///
+/// Cuando alguien pide que se borre un perfil que AgenIA creó al llegar una cita del
+/// HIS, borrarlo no basta: la siguiente cita de ese documento lo volvería a crear. Esta
+/// tabla es la memoria de esa decisión, y sobrevive al borrado del perfil — por eso
+/// guarda el DOCUMENTO y no una FK.
+///
+/// El documento se guarda NORMALIZADO y sin ceros a la izquierda, que es la forma con
+/// la que se compara (`documentoSinCerosIniciales`): así una cita que llega con
+/// `0012345` tampoco recrea al que se dio de baja como `12345`.
+model MirrorPatientOptOut {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Documento normalizado y sin ceros a la izquierda.
+  document String
+
+  /// Por qué se pidió (texto corto del funcionario). Sin datos de salud.
+  reason String?
+  /// Quién lo registró. Escalar plano, sin FK: es bitácora y sobrevive al usuario.
+  createdByUserId String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([organizationId, document])
 }
 
 model HisLookupRequest {

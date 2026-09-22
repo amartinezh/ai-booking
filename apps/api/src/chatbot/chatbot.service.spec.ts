@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { of } from 'rxjs';
 import { ChatbotService } from './chatbot.service';
-import { ChatState, MSGS } from './chatbot.constants';
+import { ChatState, MSGS, buildMessages } from './chatbot.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
@@ -154,6 +154,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         findFirst: jest.fn(() => null),
         create: jest.fn(({ data }: any) => ({ id: 'pat-1', ...data })),
         update: jest.fn(({ data }: any) => ({ id: 'pat-1', ...data })),
+        updateMany: jest.fn(async () => ({ count: 1 })),
       },
       medicalService: {
         findMany: jest.fn(() => []),
@@ -261,6 +262,120 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   // `sendWhatsAppMessage` es el sender de texto de TODO el bot (~30 llamadores).
   // Aquí se prueba el sender REAL (el `beforeEach` lo sustituye por un spy):
   // que lo que sale por Meta quede en el libro con su wamid.
+  // ══════════════════════════════════════════════════════════════════════
+  // 🔔 Baja de recordatorios (docs/PLAN_ALTA_EN_CALIENTE.md, D2). Con el alta en
+  // caliente, AgenIA le escribe a pacientes que nunca le escribieron al bot: tiene
+  // que haber una forma de decir «no me escriban», y tiene que ser inequívoca.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('baja de recordatorios por WhatsApp', () => {
+    const detectar = (texto: string) =>
+      (service as any).intencionDeRecordatorios(texto);
+
+    it.each([
+      'no quiero recordatorios',
+      'no quiero más recordatorios',
+      'no deseo recibir recordatorios',
+      'ya no quiero recordatorios',
+      'no recordar',
+      'baja de recordatorios',
+      'quitar recordatorios',
+      'desactivar recordatorios',
+      'no me envien recordatorios',
+      'dejen de enviarme recordatorios',
+      'dejar de recibir recordatorios',
+      'NO QUIERO RECORDATORIOS',
+    ])('«%s» se entiende como baja', (texto) => {
+      expect(detectar(texto)).toBe('DAR_DE_BAJA');
+    });
+
+    it.each([
+      'activar recordatorios',
+      'quiero los recordatorios',
+      'activen mis recordatorios',
+    ])('«%s» vuelve a activarlos', (texto) => {
+      expect(detectar(texto)).toBe('ACTIVAR');
+    });
+
+    it.each([
+      'cancelar cita',
+      'quiero cancelar mi cita',
+      'hola',
+      'no',
+      '',
+      'me recordaron la cita ayer y no pude ir',
+      'quiero una cita de recordatorio?',
+    ])(
+      '«%s» NO es una baja: no se toca nada por una frase parecida',
+      (texto) => {
+        expect(detectar(texto)).toBeNull();
+      },
+    );
+
+    it('🚨 «cancelar recordatorios» es una baja, NO una cancelación de cita', () => {
+      expect(detectar('cancelar recordatorios')).toBe('DAR_DE_BAJA');
+      // Y la intención de cancelar una CITA sigue siendo otra cosa.
+      expect(detectar('cancelar cita')).toBeNull();
+    });
+
+    it('apaga los recordatorios de TODOS los perfiles de ese número, en esa clínica', async () => {
+      (service as any).smartReply = jest.fn(async () => undefined);
+
+      await (service as any).handleRecordatorios({
+        organizationId: ORG_ID,
+        senderId: '573001112233',
+        text: 'no quiero recordatorios',
+        activar: false,
+        MSGS: buildMessages('FORMAL'),
+      });
+
+      expect(prisma.patientProfile.updateMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG_ID,
+          OR: [
+            { whatsappId: { in: ['573001112233', '3001112233'] } },
+            { bsuid: { in: ['573001112233', '3001112233'] } },
+          ],
+        },
+        data: { remindersOptOut: true },
+      });
+      const reply = ((service as any).smartReply as jest.Mock).mock
+        .calls[0][2] as string;
+      // Lo que más importa del mensaje: que NO se entienda como una cancelación de cita.
+      expect(reply).toMatch(/no se cancelan|siguen en pie|siguen ahí/i);
+    });
+
+    it('activar vuelve a ponerlos en marcha', async () => {
+      (service as any).smartReply = jest.fn(async () => undefined);
+      await (service as any).handleRecordatorios({
+        organizationId: ORG_ID,
+        senderId: '573001112233',
+        text: 'activar recordatorios',
+        activar: true,
+        MSGS: buildMessages('FORMAL'),
+      });
+      expect(prisma.patientProfile.updateMany.mock.calls[0][0].data).toEqual({
+        remindersOptOut: false,
+      });
+    });
+
+    it('un número sin historia registrada recibe una respuesta honesta', async () => {
+      prisma.patientProfile.updateMany.mockResolvedValueOnce({ count: 0 });
+      (service as any).smartReply = jest.fn(async () => undefined);
+
+      await (service as any).handleRecordatorios({
+        organizationId: ORG_ID,
+        senderId: '573009998877',
+        text: 'no recordar',
+        activar: false,
+        MSGS: buildMessages('FORMAL'),
+      });
+
+      const reply = ((service as any).smartReply as jest.Mock).mock
+        .calls[0][2] as string;
+      expect(reply).toMatch(/no encuentro|no tengo ninguna historia/i);
+    });
+  });
+
   describe('libro de mensajes (sendWhatsAppMessage real)', () => {
     const META_OK = {
       messaging_product: 'whatsapp',

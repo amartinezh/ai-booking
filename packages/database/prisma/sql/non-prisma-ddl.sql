@@ -73,14 +73,25 @@ BEGIN
     v_payload := to_jsonb(COALESCE(NEW, OLD));
   END IF;
 
-  INSERT INTO "SyncOutbox"("organizationId", "entityType", "entityId", "op", "payload", "origin")
+  -- 🚨 `current_setting(..., true)` devuelve NULL solo si el parametro NUNCA se
+  -- definio en esta conexion. Tras la primera transaccion que hizo
+  -- `SET LOCAL agenia.sync_origin`, al terminar esa transaccion el valor vuelve a
+  -- la CADENA VACIA, no a NULL — y las conexiones se reutilizan (pool). Con un
+  -- COALESCE a secas, todo lo que AgenIA escribiera despues en esa misma conexion
+  -- quedaba con origin = '' en vez de 'LOCAL': ni local ni espejo.
+  --
+  -- ANTI-ECO: lo que nace en el HIS se registra para auditoria pero NACE ENTREGADO
+  -- (`deliveredAt` = ahora), que es la forma de que el dispatcher no lo devuelva al
+  -- hospital que lo origino sin dejarlo pendiente para siempre tapando la cola.
+  INSERT INTO "SyncOutbox"("organizationId", "entityType", "entityId", "op", "payload", "origin", "deliveredAt")
   VALUES (
     v_org_id,
     TG_ARGV[0],
     COALESCE(NEW.id, OLD.id),
     TG_OP,
     v_payload,
-    COALESCE(v_origin, 'LOCAL')
+    COALESCE(NULLIF(v_origin, ''), 'LOCAL'),
+    CASE WHEN COALESCE(NULLIF(v_origin, ''), 'LOCAL') = 'MIRROR' THEN now() ELSE NULL END
   );
 
   RETURN COALESCE(NEW, OLD);

@@ -188,6 +188,8 @@ export function resumenPublico(
       return `Un cambio que llegó del hospital no se pudo aplicar en AgenIA${veces}.`;
     case 'DERIVA_EN_HIS':
       return 'La comparación con el hospital no encontró esta cita. Puede haberse cancelado allá, agendado en otro cupo o no haberse registrado nunca.';
+    case 'IDENTIDAD_AMBIGUA':
+      return `El hospital agendó una cita y hay ${numero(meta.candidatos) || 'más de un'} paciente(s) en AgenIA con ese mismo documento escrito distinto (ceros a la izquierda). No se creó la cita: hay que corregir el documento en el sistema donde esté mal escrito${veces}.`;
     default:
       return fila.title;
   }

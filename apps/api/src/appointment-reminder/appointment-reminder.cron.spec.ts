@@ -290,6 +290,20 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       expect(where.scheduleSlot.startTime.lte).toBeInstanceOf(Date);
     });
 
+    it('🔔 excluye a quien pidió no recibir recordatorios (D2): ni se le envía ni se le marca', async () => {
+      const { service, prisma } = build();
+      await service.runOnce();
+
+      const where = (
+        prisma.appointment.findMany.mock.calls[0] as unknown as [
+          { where: Record<string, any> },
+        ]
+      )[0].where;
+      // En la CONSULTA, no al enviar: si se filtrara después, la cita quedaría
+      // con `reminderSentAt` puesto — «ya se le avisó» de algo que nunca salió.
+      expect(where.patient).toEqual({ remindersOptOut: false });
+    });
+
     it('procesa en orden cronológico y con tope de seguridad', async () => {
       const { service, prisma } = build();
       await service.runOnce();

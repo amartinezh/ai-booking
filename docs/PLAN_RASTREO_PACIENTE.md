@@ -524,7 +524,11 @@ Salen de los mismos hallazgos. Esfuerzo: estimación gruesa (S/M/L).
 
 ---
 
-## 11. Diferido: la causa raíz del escenario 2
+## 11. ~~Diferido:~~ RESUELTO — la causa raíz del escenario 2
+
+**Decidido el 2026-09-21: se hace la opción (ii), el alta en caliente.** El diseño, las diez decisiones que lo acompañan y su estado viven en [`PLAN_ALTA_EN_CALIENTE.md`](PLAN_ALTA_EN_CALIENTE.md); ya está implementado y falta medirlo en el hospital y desplegarlo. Desde entonces una cita que nace en el HIS **sí** crea la cita (y el paciente, si hace falta) en AgenIA: el bot se la muestra, le llega recordatorio y puede cancelarla por WhatsApp.
+
+Lo que sigue es el texto con el que se tomó la decisión.
 
 Este plan **no cambia lo que ve el paciente**. Da al personal la forma de diagnosticar, pero el bot seguirá sin conocer las citas nacidas en el HIS (§2.1). Por decisión del 2026-09-20 se decide **al terminar todo este plan**.
 

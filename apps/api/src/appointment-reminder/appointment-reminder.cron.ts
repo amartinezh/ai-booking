@@ -206,6 +206,11 @@ export class AppointmentReminderCronService
         scheduleSlot: {
           startTime: { gt: now, lte: threshold },
         },
+        // 🔔 A quien pidió no recibir recordatorios no se le escribe, venga la cita
+        // de WhatsApp o del hospital (docs/PLAN_ALTA_EN_CALIENTE.md, D2). Se filtra
+        // en la consulta y no al enviar: así tampoco se le marca `reminderSentAt`,
+        // que sería decir «ya se le avisó» de algo que nunca salió.
+        patient: { remindersOptOut: false },
       },
       include: {
         patient: {

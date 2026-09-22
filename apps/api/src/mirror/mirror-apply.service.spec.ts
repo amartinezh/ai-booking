@@ -3,6 +3,8 @@ import { MirrorApplyService } from './mirror-apply.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
+import { MirrorPatientService } from './mirror-patient.service';
+import { MirrorExceptionsService } from './mirror-exceptions.service';
 import { CanonicalChangeEvent } from './dto/mirror.types';
 
 describe('MirrorApplyService', () => {
@@ -66,6 +68,21 @@ describe('MirrorApplyService', () => {
         {
           provide: WaitlistService,
           useValue: { notifyWaitlist: jest.fn() },
+        },
+        {
+          provide: MirrorPatientService,
+          useValue: {
+            resolverOCrear: jest.fn(async () => ({
+              pacienteId: null,
+              motivo: 'SIN_NOMBRE',
+              candidatos: [],
+              nota: 'no se creó el paciente: el HIS no dio el nombre',
+            })),
+          },
+        },
+        {
+          provide: MirrorExceptionsService,
+          useValue: { registrar: jest.fn() },
         },
       ],
     }).compile();
@@ -298,6 +315,15 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
   let tx: any;
   let appointments: { bookAppointment: jest.Mock; updateAttendance: jest.Mock };
   let waitlist: { notifyWaitlist: jest.Mock };
+  /** El alta en caliente: por defecto NO consigue paciente (el caso de antes). */
+  let pacientes: { resolverOCrear: jest.Mock };
+  let excepciones: { registrar: jest.Mock };
+  const sinPaciente = (motivo = 'SIN_NOMBRE', candidatos: string[] = []) => ({
+    pacienteId: null,
+    motivo,
+    candidatos,
+    nota: 'no se creó el paciente: el HIS no dio el nombre',
+  });
 
   const ORG = 'org1';
   const CUPO = {
@@ -354,6 +380,8 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       updateAttendance: jest.fn(async () => ({ success: true })),
     };
     waitlist = { notifyWaitlist: jest.fn(async () => undefined) };
+    pacientes = { resolverOCrear: jest.fn(async () => sinPaciente()) };
+    excepciones = { registrar: jest.fn(async () => 'CREADA') };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -361,6 +389,8 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AppointmentsService, useValue: appointments },
         { provide: WaitlistService, useValue: waitlist },
+        { provide: MirrorPatientService, useValue: pacientes },
+        { provide: MirrorExceptionsService, useValue: excepciones },
       ],
     }).compile();
     service = module.get(MirrorApplyService);
@@ -369,7 +399,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
     jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
   });
 
-  describe('alta entrante sin paciente homologado', () => {
+  describe('alta entrante que no consigue paciente', () => {
     it('OCUPA el cupo igual: lo que importa es no volver a venderlo', async () => {
       const r = await aplicar(evento());
 
@@ -444,6 +474,127 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
   });
 
   // ══════════════════════════════════════════════════════════════════════
+  // Alta en caliente (docs/PLAN_ALTA_EN_CALIENTE.md): con paciente, la cita del
+  // hospital se crea de verdad — y desde ahí el bot la muestra y el cron le manda
+  // el recordatorio. Sin paciente, se hace lo de antes: ocupar el cupo.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('alta en caliente del paciente del hospital', () => {
+    it('✅ el alta consigue paciente → se AGENDA de verdad, con origen MIRROR', async () => {
+      pacientes.resolverOCrear.mockResolvedValueOnce({
+        pacienteId: 'pac-nuevo',
+        creado: true,
+        nota: 'paciente creado desde el HIS, con WhatsApp',
+      });
+
+      const r = await aplicar(evento());
+
+      expect(r.applied).toBe(1);
+      expect(appointments.bookAppointment).toHaveBeenCalledWith(
+        'pac-nuevo',
+        'slot-1',
+        null,
+        'MIRROR',
+        ORG,
+      );
+      // No se ocupa el cupo a mano: lo hace la reserva, en su transacción.
+      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+      // La nota del alta queda en la auditoría.
+      expect(prisma.syncAudit.create.mock.calls[0][0].data.detail).toContain(
+        'paciente creado desde el HIS',
+      );
+    });
+
+    it('el alta recibe lo que manda el hospital (documento, nombre, teléfono)', async () => {
+      await aplicar(
+        evento({
+          payload: {
+            doctorExternalKey: '76',
+            startTimeIso: '2026-09-10T12:00:00.000Z',
+            patientDocument: '9696544',
+            patientFullName: 'MARIA LOPEZ',
+            patientPhone: '3001112233',
+          },
+        }),
+      );
+
+      expect(pacientes.resolverOCrear).toHaveBeenCalledWith(
+        ORG,
+        expect.objectContaining({
+          patientDocument: '9696544',
+          patientFullName: 'MARIA LOPEZ',
+          patientPhone: '3001112233',
+        }),
+      );
+    });
+
+    it('un paciente que YA venía homologado no pasa por el alta', async () => {
+      await aplicar(
+        evento({
+          payload: {
+            doctorExternalKey: '76',
+            startTimeIso: '2026-09-10T12:00:00.000Z',
+            agenIAPatientId: 'pac-1',
+          },
+        }),
+      );
+      expect(pacientes.resolverOCrear).not.toHaveBeenCalled();
+    });
+
+    it('🚨 D3 documento ambiguo → NO se crea la cita, se ocupa el cupo y se abre la excepción', async () => {
+      pacientes.resolverOCrear.mockResolvedValueOnce(
+        sinPaciente('DOCUMENTO_AMBIGUO', ['pac-1', 'pac-2']),
+      );
+
+      const r = await aplicar(evento());
+
+      expect(r.applied).toBe(1);
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
+      expect(tx.scheduleSlot.update).toHaveBeenCalled();
+      const arg = excepciones.registrar.mock.calls[0][1];
+      expect(arg).toMatchObject({
+        kind: 'IDENTIDAD_AMBIGUA',
+        severity: 'MEDIA',
+        entityId: 'slot-1',
+        doctorId: 'doc-1',
+        meta: { candidatos: 2 },
+      });
+      // 🔒 El detalle lleva el documento ENMASCARADO y los perfiles, nunca el número.
+      expect(arg.detail).toContain('•••6544');
+      expect(arg.detail).not.toContain('9696544');
+      expect(arg.detail).toContain('pac-1, pac-2');
+      // La misma clave para el mismo caso: no una fila por vuelta del agente.
+      expect(arg.dedupeKey).toBe(
+        'identidad:•••6544:76|2026-09-10T12:00:00.000Z',
+      );
+    });
+
+    it('los demás motivos NO abren excepción: no hay nada que una persona pueda arreglar', async () => {
+      for (const motivo of [
+        'SIN_NOMBRE',
+        'BAJA_SOLICITADA',
+        'DOCUMENTO_INVALIDO',
+      ]) {
+        excepciones.registrar.mockClear();
+        pacientes.resolverOCrear.mockResolvedValueOnce(sinPaciente(motivo));
+        await aplicar(evento({ eventId: `evt-${motivo}` }));
+        expect(excepciones.registrar).not.toHaveBeenCalled();
+      }
+    });
+
+    it('🛡️ si la bandeja falla, la cita del hospital NO se pierde: el cupo queda ocupado', async () => {
+      pacientes.resolverOCrear.mockResolvedValueOnce(
+        sinPaciente('DOCUMENTO_AMBIGUO', ['pac-1', 'pac-2']),
+      );
+      excepciones.registrar.mockRejectedValueOnce(new Error('base caída'));
+
+      const r = await aplicar(evento());
+
+      expect(r.applied).toBe(1);
+      expect(tx.scheduleSlot.update).toHaveBeenCalled();
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
   // Rastro en SyncAudit de los eventos nacidos en el HIS (rastreo de paciente,
   // docs/PLAN_RASTREO_PACIENTE.md §8 #5). Antes la fila decía "OK" con
   // entityId y detail nulos y el documento solo aparecía en el log del
@@ -464,7 +615,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         entityId: 'slot-1',
         detail: expect.stringContaining(CLAVE),
       });
-      expect(fila().detail).toContain('no se creó Appointment');
+      expect(fila().detail).toContain('no se creó la cita');
     });
 
     it('🔒 NO escribe el documento del paciente en la auditoría', async () => {

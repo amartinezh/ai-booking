@@ -590,6 +590,26 @@ const FORMAL = {
       `Volvamos a empezar. ¿Qué necesita?`,
     ]),
 
+  // 🔔 Baja de recordatorios (docs/PLAN_ALTA_EN_CALIENTE.md, D2). Se aclara lo que NO
+  // cambia —la cita sigue en pie— para que nadie crea que se canceló al pedir la baja.
+  recordatoriosBaja: () =>
+    pick([
+      `Listo: no le enviaremos más recordatorios de sus citas. 🔔\n\nSus citas siguen en pie; esto solo afecta los mensajes de aviso. Si más adelante quiere volver a recibirlos, escríbame *"activar recordatorios"*.`,
+      `Hecho, dejamos de enviarle recordatorios. 🔔\n\nOjo: sus citas NO se cancelan, solo dejamos de avisarle. Para volver a recibirlos, escríbame *"activar recordatorios"*.`,
+    ]),
+
+  recordatoriosActivados: () =>
+    pick([
+      `Listo, volveremos a enviarle los recordatorios de sus citas. 🔔`,
+      `Hecho: los recordatorios quedan activos otra vez. 🔔`,
+    ]),
+
+  recordatoriosSinRegistro: () =>
+    pick([
+      `No encuentro una historia registrada con este número, así que no hay recordatorios que desactivar. 🤔\n\nSi le llegan mensajes nuestros, por favor comuníquese con la clínica para revisarlo.`,
+      `Con este número no tengo ninguna historia registrada, así que no le estamos enviando recordatorios. Si aun así los recibe, por favor avísele a la clínica.`,
+    ]),
+
   outOfContext: (botName: string = BOT_NAME) =>
     pick([
       `Disculpe, soy *${botName}* y le acompaño únicamente con el agendamiento de citas médicas. 🏥\n\n¿Me indica qué especialidad necesita o el nombre del médico que está buscando?`,
@@ -1261,6 +1281,24 @@ const INFORMAL = {
       `¡Listo, arrancamos de cero! 😊 Cuéntame, ¿en qué te puedo ayudar?`,
       `Sin problema, refrescamos. 🌻 ¿Qué necesitas hoy?`,
       `Tranquilo(a), volvemos a empezar. 😊 Dime, ¿qué te ayudo a buscar?`,
+    ]),
+
+  recordatoriosBaja: () =>
+    pick([
+      `¡Listo! No te enviamos más recordatorios. 🔔\n\nTus citas siguen ahí, ¿sí? Esto es solo por los mensajes. Si quieres volver a recibirlos, escríbeme *"activar recordatorios"*. 😊`,
+      `Hecho, dejo de recordarte. 🔔 Tus citas NO se cancelan. Si cambias de opinión, mándame *"activar recordatorios"*. 💚`,
+    ]),
+
+  recordatoriosActivados: () =>
+    pick([
+      `¡Listo! Vuelvo a enviarte los recordatorios de tus citas. 🔔😊`,
+      `Hecho, los recordatorios quedan activos otra vez. 🔔`,
+    ]),
+
+  recordatoriosSinRegistro: () =>
+    pick([
+      `No tengo ninguna historia registrada con este número, así que no te estamos enviando recordatorios. 🤔 Si de todos modos te llegan, avísale a la clínica.`,
+      `Con este número no encuentro historia, así que no hay recordatorios que apagar. Si recibes mensajes nuestros, cuéntale a la clínica. 🙏`,
     ]),
 
   outOfContext: (botName: string = BOT_NAME) =>
