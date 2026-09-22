@@ -4,7 +4,7 @@
    =============================================================================
 
    Deja PRUEBAS como estaba antes de PRUEBAS_E2E_1_PREPARAR.sql. Borra, SOLO para
-   los documentos sintéticos (9990000001 … 9990000020 y 09990000008):
+   los documentos sintéticos (9990000001 … 9990000022 y 09990000008):
      · sus citas en CITAS_MEDICAS — las que se prepararon Y las que AgenIA escribió
        al reservar por WhatsApp durante la prueba;
      · sus copias en CITAS_ANULADAS;
@@ -37,7 +37,8 @@ DECLARE @docs TABLE (doc varchar(20) PRIMARY KEY);
 INSERT @docs (doc)
 SELECT '99900000' + RIGHT('0' + CAST(n AS varchar(2)), 2)
 FROM (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),
-             (11),(12),(13),(14),(15),(16),(17),(18),(19),(20)) v(n)
+             (11),(12),(13),(14),(15),(16),(17),(18),(19),(20),
+             (21),(22)) v(n)
 UNION ALL SELECT '09990000008';
 
 -- ── Vista previa ────────────────────────────────────────────────────────────

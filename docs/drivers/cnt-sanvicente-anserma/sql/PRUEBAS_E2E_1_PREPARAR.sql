@@ -3,13 +3,22 @@
    Base objetivo: PRUEBAS.   ⚠️ Este guion SÍ ESCRIBE (PACIENTES y CITAS_MEDICAS).
    =============================================================================
 
-   QUÉ ES. Deja en el HIS el estado de partida de los 20 escenarios de
-   `PRUEBAS_E2E.md`: 19 pacientes SINTÉTICOS y las citas «agendadas por el
+   QUÉ ES. Deja en el HIS el estado de partida de los escenarios de
+   `PRUEBAS_E2E.md`: 21 pacientes SINTÉTICOS y las citas «agendadas por el
    hospital» que los escenarios necesitan. Lo que se prueba desde AgenIA
    (WhatsApp, panel) lo explica ese documento, escenario por escenario.
 
+   📱 ESTE GUION PIDE UN TELÉFONO DE VERDAD. El alta en caliente
+   (`PLAN_ALTA_EN_CALIENTE.md`) crea el paciente en AgenIA con el teléfono que
+   encuentra en la ficha del HIS, y le manda el recordatorio. Sin un móvil real en
+   `DE_TELE_PAC` no se puede probar ni el recordatorio (escenario 1b) ni la regla
+   del teléfono que ya es de otro (escenario 21), que son dos de los cuatro
+   criterios de aceptación de ese plan. Por eso `@TEL_PRUEBA` es obligatorio y
+   tiene que ser **el móvil del probador**: a ese número LLEGARÁN WhatsApps.
+   Se escribe en DOS fichas a propósito (la 1 y la 21) — eso es el escenario 21.
+
    GARANTÍAS — verificables leyendo el archivo:
-     · SOLO documentos sintéticos: 9990000001 … 9990000020 (y 09990000008, la
+     · SOLO documentos sintéticos: 9990000001 … 9990000022 (y 09990000008, la
        variante con cero a la izquierda del escenario 8). Diez dígitos que empiezan
        por 999 no son un rango de cédulas colombianas en uso. Si alguno ya existe
        en PACIENTES, el guion se detiene sin escribir nada.
@@ -102,6 +111,14 @@ DECLARE @CONFIRMO          bit        = 0;    -- 1 = sí, escribir. Con 0 solo v
 DECLARE @MED_HOMOLOGADO    varchar(4) = '';   -- homologado en AgenIA, CON turno el día de prueba
 DECLARE @MED_SIN_HOMOLOGAR varchar(4) = '';   -- existe en el HIS y NO está homologado en AgenIA
 DECLARE @DIAS              int        = 10;   -- día de prueba = hoy + @DIAS (dentro de lo que el bot ofrece)
+-- 📱 El móvil DEL PROBADOR, 10 dígitos empezando por 3. Va en la ficha de los
+-- pacientes 1 y 21: a ese número le llegan el recordatorio y los mensajes del bot.
+DECLARE @TEL_PRUEBA        varchar(10) = '';
+-- Día de la cita del recordatorio (escenario 1b). 1 = mañana. El cron manda el
+-- recordatorio 24 HORAS HÁBILES antes (`REMINDER_BUSINESS_HOURS_BEFORE`) y corre
+-- cada 15 min, así que con la cita mañana el recordatorio sale dentro de la sesión
+-- de prueba. Con el día de prueba (hoy + 10) no saldría hasta dentro de una semana.
+DECLARE @DIAS_RECORDATORIO int        = 1;
 
 PRINT '';
 PRINT '=== PARTE 2 — preparar los escenarios ===';
@@ -121,13 +138,30 @@ IF NOT EXISTS (SELECT 1 FROM dbo.MEDICOS WHERE CD_CODI_MED = @MED_HOMOLOGADO)
 IF NOT EXISTS (SELECT 1 FROM dbo.MEDICOS WHERE CD_CODI_MED = @MED_SIN_HOMOLOGAR)
     THROW 50004, '@MED_SIN_HOMOLOGAR no existe en MEDICOS.', 1;
 
+-- 📱 El teléfono del probador. Mismo criterio que `normalizePhoneToE164Co`: un móvil
+-- colombiano son 10 dígitos que empiezan por 3. Cualquier otra cosa la descarta AgenIA
+-- y el paciente quedaría creado sin teléfono, así que la prueba no probaría nada.
+IF @TEL_PRUEBA = ''
+    THROW 50011, 'Falta @TEL_PRUEBA: el móvil del probador. Sin él no se pueden probar el recordatorio de una cita del hospital (1b) ni el teléfono compartido (21). Ver la cabecera.', 1;
+IF @TEL_PRUEBA NOT LIKE '3[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+    THROW 50012, '@TEL_PRUEBA tiene que ser un móvil de 10 dígitos que empiece por 3 (sin +57, sin espacios): es lo único que AgenIA acepta como destinatario.', 1;
+
+-- Si ese número ya es de un paciente REAL del hospital, la regla D4 del alta en
+-- caliente vería un dueño previo y el escenario 21 daría un resultado engañoso —
+-- además de que el recordatorio de ese paciente real podría acabar aquí.
+IF EXISTS (SELECT 1 FROM dbo.PACIENTES
+            WHERE REPLACE(REPLACE(ISNULL(DE_TELE_PAC, ''), ' ', ''), '-', '') = @TEL_PRUEBA)
+    THROW 50013, '@TEL_PRUEBA ya está en la ficha de un paciente del hospital. Use otro móvil del probador.', 1;
+
 -- ── Los documentos sintéticos ───────────────────────────────────────────────
 DECLARE @docs TABLE (n int PRIMARY KEY, doc varchar(20), doc_his varchar(20));
 INSERT @docs (n, doc, doc_his)
 SELECT n, d, CASE WHEN n = 8 THEN '0' + d ELSE d END
 FROM (SELECT n, doc = '99900000' + RIGHT('0' + CAST(n AS varchar(2)), 2)
       FROM (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),
-                   (11),(12),(13),(14),(15),(16),(17),(18),(19),(20)) v(n)) x(n, d);
+                   (11),(12),(13),(14),(15),(16),(17),(18),(19),(20),
+                   -- 21: el gemelo del teléfono (D4). 22: el documento ambiguo (D3).
+                   (21),(22)) v(n)) x(n, d);
 
 -- ¿Ya hay datos de prueba, o —imposible pero se comprueba— un paciente real con esos números?
 IF EXISTS (SELECT 1 FROM dbo.PACIENTES p JOIN @docs d ON p.NU_HIST_PAC IN (d.doc, d.doc_his))
@@ -247,6 +281,47 @@ SELECT 5, '9990000005', @MED_HOMOLOGADO,
        1, 'historia larga'
 FROM k;
 
+-- ── 1b: la cita CERCANA, la del recordatorio ─────────────────────────────────
+-- El cron manda el recordatorio 24 horas HÁBILES antes de la cita, así que la del
+-- día de prueba (hoy + @DIAS) no sirve: no saldría durante la sesión. Esta va
+-- mañana (o el día que diga @DIAS_RECORDATORIO), en el primer cupo libre del turno.
+-- Es el criterio de aceptación de la Fase 4 del alta en caliente: un paciente que
+-- nunca escribió al bot recibe el recordatorio de una cita que agendó el hospital.
+DECLARE @diaR    date     = DATEADD(day, @DIAS_RECORDATORIO, @hoy);
+DECLARE @txtDiaR char(10) = CONVERT(char(10), @diaR, 111);
+DECLARE @tIniR time, @tFinR time;
+SELECT TOP (1) @tIniR = CAST(FE_HOIN_TUME AS time), @tFinR = CAST(FE_HOFI_TUME AS time)
+FROM dbo.TURNOS_MEDICOS
+WHERE CD_MED_TUME = @MED_HOMOLOGADO AND CAST(FE_FECH_TUME AS date) = @diaR
+ORDER BY FE_HOFI_TUME DESC;
+
+DECLARE @horaR varchar(18) = NULL, @inicioR datetime = NULL;
+IF @tIniR IS NOT NULL
+BEGIN
+    ;WITH nR AS (
+        SELECT TOP (200) i = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) - 1 FROM sys.all_objects
+    ), candR AS (
+        SELECT inicio = DATEADD(minute, nR.i * @dura, CAST(@diaR AS datetime) + CAST(@tIniR AS datetime))
+        FROM nR
+        WHERE DATEADD(minute, (nR.i + 1) * @dura, CAST(@tIniR AS datetime)) <= CAST(@tFinR AS datetime)
+    )
+    SELECT TOP (1) @horaR = @txtDiaR + ' ' + CONVERT(char(5), c.inicio, 108), @inicioR = c.inicio
+    FROM candR c
+    WHERE NOT EXISTS (SELECT 1 FROM dbo.CITAS_MEDICAS x
+                      WHERE x.CD_CODI_MED_CIT = @MED_HOMOLOGADO
+                        AND x.FE_HORA_CIT = @txtDiaR + ' ' + CONVERT(char(5), c.inicio, 108))
+    ORDER BY c.inicio DESC;
+END;
+
+IF @horaR IS NOT NULL
+    INSERT @plan (esc, doc, med, hora, fecha, inicio, estado, nota)
+    VALUES (1, '9990000001', @MED_HOMOLOGADO, @horaR, @diaR, @inicioR, 0,
+            'cita cercana: la del recordatorio (1b)');
+ELSE
+    PRINT '   AVISO: @MED_HOMOLOGADO no tiene turno con cupo libre el ' + @txtDiaR
+        + '. El escenario 1b (recordatorio de una cita del hospital) NO queda preparado: '
+        + 'pruebe otro @DIAS_RECORDATORIO. Todo lo demás sí se prepara.';
+
 -- ¿Choca alguna con una cita real? (PK: médico + hora + estado)
 IF EXISTS (SELECT 1 FROM @plan p JOIN dbo.CITAS_MEDICAS c
            ON c.CD_CODI_MED_CIT = p.med AND c.FE_HORA_CIT = p.hora AND c.NU_ESTA_CIT = p.estado)
@@ -287,34 +362,41 @@ BEGIN TRANSACTION;
 -- Fechas como 'YYYYMMDD' a propósito: es el único formato que SQL Server lee igual
 -- con cualquier idioma del login; en español (DATEFORMAT dmy) '1985-03-14' se lee
 -- como año-DÍA-mes y revienta. El driver usa este mismo formato (fechaLiteralSql).
+-- El TELÉFONO va solo en dos fichas: la del 1 (alta en caliente con recordatorio) y
+-- la del 21 (el mismo número, que la regla D4 tiene que rechazar). Los demás se quedan
+-- sin teléfono a propósito: así el alta los crea igual pero no le escribe a nadie.
 INSERT INTO dbo.PACIENTES (
     NU_HIST_PAC, NU_DOCU_PAC, NU_TIPD_PAC,
     NO_NOMB_PAC, NO_SGNO_PAC, DE_PRAP_PAC, DE_SGAP_PAC,
-    FE_NACI_PAC, NU_SEXO_PAC, FE_HIST_PAC, NU_EXTR_PAC
+    DE_TELE_PAC, FE_NACI_PAC, NU_SEXO_PAC, FE_HIST_PAC, NU_EXTR_PAC
 )
-SELECT d.doc_his, d.doc_his, 0, v.n1, v.n2, v.a1, v.a2, v.naci, v.sexo, GETDATE(), 0
+SELECT d.doc_his, d.doc_his, 0, v.n1, v.n2, v.a1, v.a2, v.tel, v.naci, v.sexo, GETDATE(), 0
 FROM @docs d
 JOIN (VALUES
-    (1,  'PRUEBA',   'UNO',      'ÁLVAREZ',   'PEÑA',      '19850314', 0),
-    (2,  'PRUEBA',   NULL,       'DOS',       NULL,        '19900701', 1),
-    (3,  'PRUEBA',   'TRES',     'MUÑOZ',     'ÑÁÑEZ',     '19721130', 0),
-    (4,  'PRUEBA',   'CUATRO',   'OSPINA',    'RÍOS',      '20010109', 1),
-    (5,  'PRUEBA',   'CINCO',    'HISTORIA',  'LARGA',     '19480522', 0),   -- adulta mayor
-    (6,  'PRUEBA',   'SEIS',     'ATENDIDA',  NULL,        '19950917', 1),
-    (7,  'PRUEBA',   'SIETE',    'NO',        'ASISTIÓ',   '19990228', 0),
-    (8,  'PRUEBA',   'OCHO',     'CERO',      'IZQUIERDA', '19801212', 1),
-    (9,  'PRUEBA',   'NUEVE',    'RECLAMA',   'CUPO',      '19930606', 0),
-    (10, 'PRUEBA',   'DIEZ',     'SIN',       'CITAS',     '19700404', 1),
-    (11, 'PRUEBA',   'ONCE',     'MUY',       'LEJANA',    '19880808', 0),
-    (13, 'PRUEBA',   'TRECE',    'WHATSAPP',  NULL,        '19911010', 1),
-    (14, 'PRUEBA',   'CATORCE',  'AGENTE',    'CAÍDO',     '19870115', 0),
-    (15, 'PRUEBA',   'QUINCE',   'CUPO',      'CHOCA',     '19790303', 1),
-    (16, 'PRUEBA',   'DIECISÉIS','CITA',      'PERDIDA',   '19830909', 0),
-    (17, 'PRUEBA',   'DIECISIETE','CANCELA',  'WHATSAPP',  '19961224', 1),
-    (18, 'PRUEBA',   'DIECIOCHO','LISTA',     'ESPERA',    '20120505', 0),   -- menor de edad
-    (19, 'PRUEBA',   'DIECINUEVE','OTRA',     'PERSONA',   '19750707', 1),
-    (20, 'PRUEBA',   'VEINTE',   'SIN',       'PADRÓN',    '19940214', 0)
-) v(n, n1, n2, a1, a2, naci, sexo) ON v.n = d.n;
+    (1,  'PRUEBA',   'UNO',      'ÁLVAREZ',   'PEÑA',      @TEL_PRUEBA, '19850314', 0),
+    (2,  'PRUEBA',   NULL,       'DOS',       NULL,        NULL,        '19900701', 1),
+    (3,  'PRUEBA',   'TRES',     'MUÑOZ',     'ÑÁÑEZ',     NULL,        '19721130', 0),
+    (4,  'PRUEBA',   'CUATRO',   'OSPINA',    'RÍOS',      NULL,        '20010109', 1),
+    (5,  'PRUEBA',   'CINCO',    'HISTORIA',  'LARGA',     NULL,        '19480522', 0),   -- adulta mayor
+    (6,  'PRUEBA',   'SEIS',     'ATENDIDA',  NULL,        NULL,        '19950917', 1),
+    (7,  'PRUEBA',   'SIETE',    'NO',        'ASISTIÓ',   NULL,        '19990228', 0),
+    (8,  'PRUEBA',   'OCHO',     'CERO',      'IZQUIERDA', NULL,        '19801212', 1),
+    (9,  'PRUEBA',   'NUEVE',    'RECLAMA',   'CUPO',      NULL,        '19930606', 0),
+    (10, 'PRUEBA',   'DIEZ',     'SIN',       'CITAS',     NULL,        '19700404', 1),
+    (11, 'PRUEBA',   'ONCE',     'MUY',       'LEJANA',    NULL,        '19880808', 0),
+    (13, 'PRUEBA',   'TRECE',    'WHATSAPP',  NULL,        NULL,        '19911010', 1),
+    (14, 'PRUEBA',   'CATORCE',  'AGENTE',    'CAÍDO',     NULL,        '19870115', 0),
+    (15, 'PRUEBA',   'QUINCE',   'CUPO',      'CHOCA',     NULL,        '19790303', 1),
+    (16, 'PRUEBA',   'DIECISÉIS','CITA',      'PERDIDA',   NULL,        '19830909', 0),
+    (17, 'PRUEBA',   'DIECISIETE','CANCELA',  'WHATSAPP',  NULL,        '19961224', 1),
+    (18, 'PRUEBA',   'DIECIOCHO','LISTA',     'ESPERA',    NULL,        '20120505', 0),   -- menor de edad
+    (19, 'PRUEBA',   'DIECINUEVE','OTRA',     'PERSONA',   NULL,        '19750707', 1),
+    (20, 'PRUEBA',   'VEINTE',   'SIN',       'PADRÓN',    NULL,        '19940214', 0),
+    -- Mismo móvil que el 1: al darlo de alta, AgenIA NO puede asignárselo (D4).
+    (21, 'PRUEBA',   'VEINTIUNO','TELÉFONO',  'COMPARTIDO',@TEL_PRUEBA, '19821111', 1),
+    -- El de la identidad ambigua (D3): en AgenIA se le crean a mano DOS perfiles.
+    (22, 'PRUEBA',   'VEINTIDÓS','DOCUMENTO', 'AMBIGUO',   NULL,        '19900202', 0)
+) v(n, n1, n2, a1, a2, tel, naci, sexo) ON v.n = d.n;
 
 -- Las citas, con las MISMAS columnas que escribe el driver en producción.
 INSERT INTO dbo.CITAS_MEDICAS (
@@ -355,6 +437,8 @@ SELECT
     en_el_his = CASE
         WHEN d.n = 12 THEN 'NO existe (lo crea el driver al reservar por WhatsApp)'
         WHEN d.n = 5  THEN 'paciente + 60 citas pasadas atendidas'
+        WHEN d.n = 21 THEN 'paciente CON el mismo móvil del 1 — su cita la crea el PASO E'
+        WHEN d.n = 22 THEN 'solo el paciente — su cita la crea el PASO D, después de los dos perfiles'
         WHEN c.FE_HORA_CIT IS NOT NULL THEN 'paciente + cita ' + c.CD_CODI_MED_CIT + ' ' + c.FE_HORA_CIT
              + ' (estado ' + CAST(c.NU_ESTA_CIT AS varchar(1)) + ')'
         ELSE 'solo el paciente'
@@ -376,5 +460,7 @@ UNION ALL SELECT 'cupo escenario 1', @S1
 UNION ALL SELECT 'cupo escenario 4 (se cancelará)', @S2
 UNION ALL SELECT 'cupo escenarios 9 / 19', @S3
 UNION ALL SELECT 'cupo escenario 8', @S4
-UNION ALL SELECT 'día del escenario 3 (hora ilegible)', @txtDia2;
+UNION ALL SELECT 'día del escenario 3 (hora ilegible)', @txtDia2
+UNION ALL SELECT 'cupo escenario 1b (recordatorio)', COALESCE(@horaR, 'NO PREPARADO: sin turno libre ese día')
+UNION ALL SELECT 'móvil del probador (fichas 1 y 21)', @TEL_PRUEBA;
 GO

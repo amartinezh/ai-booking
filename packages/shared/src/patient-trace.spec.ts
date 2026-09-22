@@ -1,6 +1,7 @@
 import {
   AGENTE_SIN_SENAL_MIN,
   COLA_ATASCADA_MIN,
+  NOTA_SIN_APPOINTMENT,
   VEREDICTO,
   TEXTO_VEREDICTO,
   clasificarRastreoA,
@@ -769,6 +770,23 @@ describe('clasificarRastreoB', () => {
 
     const mudo = clasificarRastreoB(evB({ espejo: espejoSano({ lastHeartbeatIso: null }) }));
     expect(mudo.principal.evidencia.join(' ')).toContain('nunca ha dado señales');
+  });
+
+  it('🚨 reconoce la nota TAL COMO LA ESCRIBE el alta en caliente, no solo la vieja', () => {
+    // Regresión real: el alta en caliente reescribió esta nota y el veredicto dejó de
+    // reconocerla, cayendo en la rama genérica — que da el mismo código pero pierde la
+    // explicación y la acción que nombra el botón de confirmación. La nota se compone
+    // con la MISMA constante que usa `MirrorApplyService`, así que si alguien vuelve a
+    // cambiar el texto, esto falla en vez de degradarse en silencio.
+    const nota = `solo se ocupó el cupo, ${NOTA_SIN_APPOINTMENT}: documento ambiguo`;
+    const r = clasificarRastreoB(
+      evB({ cupoEnAgenIA: { auditorias: [auditoria('OK', nota)] } }),
+    );
+
+    expect(r.principal.codigo).toBe(VEREDICTO.CITA_DEL_HIS_NO_ESPEJADA);
+    // La rama específica, no la genérica: esta frase solo existe en la específica.
+    expect(r.principal.resumen).toContain('para no volver a venderlo');
+    expect(r.principal.accion).toContain('Enviar confirmación por WhatsApp');
   });
 
   it('IDENTIDAD_NO_COINCIDE: hay otro perfil que solo difiere por ceros; va detrás del veredicto del cupo', () => {

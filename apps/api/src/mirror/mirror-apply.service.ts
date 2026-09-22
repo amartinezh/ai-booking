@@ -14,7 +14,7 @@ import {
   claveExcepcion,
   enmascararDocumento,
 } from '@agenia/shared';
-import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
+import { SYNC_AUDIT_DIRECTION, NOTA_SIN_APPOINTMENT } from '@agenia/shared';
 import { getErrorMessage } from '../common/error-message.util';
 
 /**
@@ -424,7 +424,10 @@ export class MirrorApplyService {
           // Deja constancia del hecho que el rastreo de paciente necesita saber:
           // esta cita del HIS NO creó ningún `Appointment`. No se escribe el
           // documento: es un dato personal.
-          traza.nota = `solo se ocupó el cupo, no se creó la cita: ${alta.nota}`;
+          // `NOTA_SIN_APPOINTMENT` es la marca que busca el veredicto del rastreo B
+          // para poder decir POR QUÉ el bot no le muestra la cita: se usa la
+          // constante, no el texto, para que no vuelva a desincronizarse.
+          traza.nota = `solo se ocupó el cupo, ${NOTA_SIN_APPOINTMENT}: ${alta.nota}`;
           if (alta.motivo === 'DOCUMENTO_AMBIGUO') {
             // Lo tiene que resolver una persona (D3): elegir mal mezcla dos
             // historias. Va a la bandeja, no al teléfono de nadie.

@@ -6,6 +6,7 @@ import { WaitlistService } from '../waitlist/waitlist.service';
 import { MirrorPatientService } from './mirror-patient.service';
 import { MirrorExceptionsService } from './mirror-exceptions.service';
 import { CanonicalChangeEvent } from './dto/mirror.types';
+import { NOTA_SIN_APPOINTMENT } from '@agenia/shared';
 
 describe('MirrorApplyService', () => {
   let service: MirrorApplyService;
@@ -615,7 +616,10 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         entityId: 'slot-1',
         detail: expect.stringContaining(CLAVE),
       });
-      expect(fila().detail).toContain('no se creó la cita');
+      // La MARCA de @agenia/shared, no un texto parecido: es lo que el veredicto del
+      // rastreo B busca para explicar por qué el bot no le muestra la cita. Probarlo
+      // con la constante es lo que impide que los dos lados vuelvan a separarse.
+      expect(fila().detail).toContain(NOTA_SIN_APPOINTMENT);
     });
 
     it('🔒 NO escribe el documento del paciente en la auditoría', async () => {

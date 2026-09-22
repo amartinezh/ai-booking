@@ -1,28 +1,44 @@
 # Pruebas de punta a punta antes de producción — San Vicente de Paúl (Anserma)
 
-Veinte escenarios, con documentos **sintéticos**, que recorren lo que AgenIA hace con el HIS: citas que nacen en el hospital, citas que nacen por WhatsApp, cancelaciones de los dos lados, fallos del agente y del hospital, la bandeja de sincronización, la consulta en vivo y los permisos del panel.
+Veintidós escenarios, con documentos **sintéticos**, que recorren lo que AgenIA hace con el HIS: citas que nacen en el hospital —y el paciente que se crea con ellas—, citas que nacen por WhatsApp, cancelaciones de los dos lados, fallos del agente y del hospital, la bandeja de sincronización, la consulta en vivo y los permisos del panel.
 
 | Archivo | Para qué |
 |---|---|
-| [`sql/PRUEBAS_E2E_1_PREPARAR.sql`](sql/PRUEBAS_E2E_1_PREPARAR.sql) | Deja el HIS (`PRUEBAS`) listo: 19 pacientes y las citas «del hospital» |
-| [`sql/PRUEBAS_E2E_2_PASOS.sql`](sql/PRUEBAS_E2E_2_PASOS.sql) | Tres acciones del hospital que se corren **durante** la prueba (A, B, C) |
-| [`sql/PRUEBAS_E2E_3_LIMPIAR.sql`](sql/PRUEBAS_E2E_3_LIMPIAR.sql) | Deja `PRUEBAS` como estaba |
-| [`padron/e2e/padron_e2e_eps_a.csv`](padron/e2e/padron_e2e_eps_a.csv) | Padrón de prueba, EPS A (17 documentos) |
+| [`sql/PRUEBAS_E2E_1_PREPARAR.sql`](sql/PRUEBAS_E2E_1_PREPARAR.sql) | Deja el HIS (`PRUEBAS`) listo: 21 pacientes y las citas «del hospital» |
+| [`sql/PRUEBAS_E2E_2_PASOS.sql`](sql/PRUEBAS_E2E_2_PASOS.sql) | Cinco acciones del hospital que se corren **durante** la prueba (A a E) |
+| [`sql/PRUEBAS_E2E_3_LIMPIAR.sql`](sql/PRUEBAS_E2E_3_LIMPIAR.sql) | Deja `PRUEBAS` (el HIS) como estaba |
+| [`sql/PRUEBAS_E2E_4_LIMPIAR_AGENIA.sql`](sql/PRUEBAS_E2E_4_LIMPIAR_AGENIA.sql) | Deja **AgenIA** como estaba: borra los pacientes que creó el alta en caliente |
+| [`padron/e2e/padron_e2e_eps_a.csv`](padron/e2e/padron_e2e_eps_a.csv) | Padrón de prueba, EPS A (19 documentos) |
 | [`padron/e2e/padron_e2e_eps_b.csv`](padron/e2e/padron_e2e_eps_b.csv) | Padrón de prueba, EPS B (2 documentos) |
 
-Los tres guiones se verificaron contra un SQL Server con el esquema real del HIS y un login **en español** (como el del hospital): las guardas rechazan los parámetros malos, la escritura es de todo o nada, un segundo intento se niega, los pasos se deshacen si afectan una fila de más, y la limpieza borra solo lo sintético y deja intacto lo real.
+Los tres guiones del HIS se verificaron contra un SQL Server con el esquema real y un login **en español** (como el del hospital): las guardas rechazan los parámetros malos, la escritura es de todo o nada, un segundo intento se niega, los pasos se deshacen si afectan una fila de más, y la limpieza borra solo lo sintético y deja intacto lo real.
+
+El cuarto —el de AgenIA— se verificó el 2026-09-21 contra un **PostgreSQL real** con el esquema de producción y el disparador del outbox puestos: alcanza los cuatro perfiles sintéticos (incluido el `0009990000022`, por los ceros a la izquierda) y **no toca** al paciente real sembrado al lado; se **niega a borrar** mientras quede una cita de prueba sin cancelar; libera el cupo que quedó ocupado sin cita; y los tres eventos de outbox que genera nacen con origen `MIRROR` y entregados, así que **ninguna de sus escrituras viaja al hospital**.
 
 ---
 
 ## Por qué documentos sintéticos y no del padrón real
 
-Los 20 documentos son `9990000001` … `9990000020`: diez dígitos que empiezan por 999, un rango que no usan las cédulas colombianas. Probar con pacientes **reales** tendría dos efectos que no se pueden deshacer: el bot y los recordatorios **les escribirían por WhatsApp**, y sus historias en el hospital quedarían con citas inventadas. La variedad del padrón real —régimen, ceros a la izquierda, edad, nombres compuestos, tildes y eñes, EPS distintas— está reproducida en los sintéticos.
+Los 22 documentos son `9990000001` … `9990000022`: diez dígitos que empiezan por 999, un rango que no usan las cédulas colombianas. Probar con pacientes **reales** tendría dos efectos que no se pueden deshacer: el bot y los recordatorios **les escribirían por WhatsApp**, y sus historias en el hospital quedarían con citas inventadas. La variedad del padrón real —régimen, ceros a la izquierda, edad, nombres compuestos, tildes y eñes, EPS distintas— está reproducida en los sintéticos.
 
 Los padrones de prueba van **sin teléfono** a propósito: así ningún mensaje sale a nadie por el padrón. Las pruebas por WhatsApp se hacen escribiendo desde el teléfono del probador y dando la cédula sintética.
+
+**Con una excepción, y es deliberada.** El alta en caliente crea el paciente con el teléfono que encuentra en la **ficha del HIS** y le manda el recordatorio: sin un móvil de verdad ahí no se puede probar ni el recordatorio ni la regla del teléfono compartido. Por eso `PRUEBAS_E2E_1_PREPARAR.sql` pide `@TEL_PRUEBA` —**el móvil del probador**— y lo escribe en dos fichas: la del paciente 1 y la del 21. A ese número van a llegar WhatsApps de verdad. El guion se niega a correr si ese número ya es de algún paciente del hospital.
 
 ---
 
 ## Antes de empezar
+
+### 0. 🚨 Comprobar que `PRUEBAS` todavía tiene agenda futura
+
+**Esto se mira antes que nada, y el 2026-09-21 la respuesta era NO.** La medición de ese día (`sql/MEDICION_ALTA_EN_CALIENTE.sql`, PARTES E y F) encontró que `PRUEBAS` **dejó de alimentarse el viernes 11 de septiembre**: la última cita elaborada es del 18 y el sábado 12 —que debería traer ~285— está en cero. Si el feed de citas está congelado, `TURNOS_MEDICOS` lo está también, y entonces no hay turnos futuros de los cuales sacar cupos.
+
+Consecuencia directa: **`PRUEBAS_E2E_1_PREPARAR.sql` se va a detener** con *«@MED_HOMOLOGADO no tiene turno ese día»*, y no es un error del guion. Es lo mismo que el hallazgo del 2026-09-17 («el único médico activo no tiene cupos futuros, su agenda no se publicó más allá del 16/sep»), que probablemente nunca fue el hospital sin publicar: era la copia congelada.
+
+Corra la **consulta de apoyo** del guion (lista turnos de los próximos 30 días) antes de tocar nada:
+
+- **Si devuelve turnos** en el rango de `@DIAS`: adelante, la copia se está alimentando.
+- **Si sale vacía**: la campaña no se puede correr. Hay que arreglar el feed de `PRUEBAS` con el hospital, o apuntar el agente al catálogo vivo (`ESEHSVP`), que requiere que TI cree allá el usuario `agenia_sync` — hoy solo existe en `PRUEBAS`.
 
 ### 1. Saber a qué base apunta el agente de producción — decide dónde se prueba
 
@@ -41,6 +57,7 @@ En este orden: **migración → API → agente → web**, con la Fase 3 (vigilan
 |---|---|---|
 | Número del agendador = un **teléfono de pruebas** | Bandeja de sincronización → Configurar avisos | 14, 15, 16 |
 | Número de **respaldo** = un **segundo teléfono de pruebas** | Bandeja de sincronización → Configurar avisos | 14 (recordatorio) |
+| `@TEL_PRUEBA` = un móvil del probador **distinto** del que use para escribirle al bot | Parámetro de PREPARAR | 1, 1b, 21 |
 | Plantilla «Aviso al agendador» aprobada en Meta | Configuración → plantillas | 14, 15, 16 |
 | Plantilla «Confirmación de una cita del hospital» aprobada en Meta | Configuración → plantillas | panel (confirmación fuera de 24 h) |
 | Consulta en vivo **encendida** en la clínica (`lookupEnabled`) | SQL en la nube (`CONSULTA_EN_VIVO.md`) | 3, 5, 6, 7, 8, 9, 11, 16 |
@@ -50,11 +67,21 @@ En este orden: **migración → API → agente → web**, con la Fase 3 (vigilan
 
 Si la consulta en vivo **no** va a salir a producción, enciéndala solo para la prueba y apáguela al terminar. Sin ella, las partes marcadas **(en vivo)** de la tabla no se pueden comprobar.
 
+**Por qué hacen falta dos móviles del probador.** El bot identifica a quien escribe **por su número**. Como `@TEL_PRUEBA` queda en la ficha del paciente 1, en cuanto el alta en caliente corra ese número **es** el paciente 9990000001 para AgenIA. Si el probador usara ese mismo teléfono para hacerse pasar por el 9990000013, el bot lo saludaría como el 1 y los escenarios de WhatsApp saldrían mal. Así que:
+
+| Teléfono | Papel |
+|---|---|
+| **A** — el que escribe al bot | Con él se hacen los escenarios de WhatsApp dando la cédula sintética de cada uno |
+| **B** — `@TEL_PRUEBA` | Es el paciente 1. Recibe su recordatorio y responde «no quiero recordatorios» (1b) |
+| **C** y **D** | Agendador y respaldo de la bandeja. Pueden ser de personal del hospital |
+
 ### 4. Los parámetros de PREPARAR
 
-- `@MED_HOMOLOGADO`: un médico que esté en **Espejo → Homologación** y que tenga turno el día de prueba (la consulta de apoyo del guion los lista).
+- `@MED_HOMOLOGADO`: un médico que esté en **Espejo → Homologación** y que tenga turno el día de prueba (la consulta de apoyo del guion los lista). Conviene que además tenga turno **mañana**, por lo de `@DIAS_RECORDATORIO`.
 - `@MED_SIN_HOMOLOGAR`: un médico que aparezca en **Espejo → Homologación** como **sin homologar** (hoy hay 19). Tiene que estar en esa lista, no solo en el HIS: de ahí sale el selector de médicos del Rastreo.
 - `@DIAS`: el día de prueba = hoy + `@DIAS`. Dentro de lo que el bot ofrece (≈ 7 a 13 días).
+- `@TEL_PRUEBA`: el móvil del probador, 10 dígitos empezando por 3. **Obligatorio** (ver arriba).
+- `@DIAS_RECORDATORIO`: el día de la cita del escenario 1b. **1 = mañana**, y ese es el valor bueno: el cron manda el recordatorio 24 **horas hábiles** antes y corre cada 15 minutos, así que con la cita mañana el recordatorio sale durante la sesión de prueba; con la del día de prueba no saldría hasta dentro de una semana. Si el médico no tiene turno con cupo libre ese día, el guion **avisa y sigue**: el 1b se queda sin preparar y todo lo demás no.
 
 Corra primero con `@CONFIRMO = 0`: valida todo y muestra la vista previa sin escribir. Luego con `@CONFIRMO = 1`. Anote la tabla final (el día de prueba y los cupos).
 
@@ -68,10 +95,14 @@ Corra primero con `@CONFIRMO = 0`: valida todo y muestra la vista previa sin esc
 | 1 | Subir `padron_e2e_eps_a.csv` en la EPS A y `padron_e2e_eps_b.csv` en la EPS B | 5 min |
 | 2 | Esperar a que el agente tome las altas del hospital. Comprobar en **Espejo → Auditoría**, dirección `INBOUND` | 5–10 min |
 | 3 | Escenarios **de lectura**: 1, 2, 3, 5, 6, 7, 8, 9, 11 | 30 min |
-| 4 | Escenarios **por WhatsApp**: 10, 12, 13, 17, 18, 20, y el 4 | 45 min |
-| 5 | Escenarios **de falla** (detienen el agente): 14, 15, 16 | 60–90 min |
-| 6 | Pruebas del panel | 20 min |
-| 7 | Limpieza | 15 min |
+| 4 | **Alta en caliente**: crear a mano los dos perfiles del 22, correr el **PASO D** y el **PASO E**, y esperar una vuelta del agente → escenarios 21 y 22 | 20 min |
+| 5 | Escenarios **por WhatsApp**: 10, 12, 13, 17, 18, 20, y el 4 | 45 min |
+| 6 | Escenarios **de falla** (detienen el agente): 14, 15, 16 | 60–90 min |
+| 7 | Pruebas del panel | 20 min |
+| 8 | El **1b** cuando llegue el recordatorio (depende de la hora de la cita de mañana, no del reloj de la prueba) | 10 min |
+| 9 | Limpieza — **los dos lados**: primero el HIS, después AgenIA | 20 min |
+
+La fase 4 va **antes** que la 5 por un motivo: el escenario 21 exige que el paciente 1 ya se haya quedado con el teléfono, y el 22 que los dos perfiles ambiguos ya existan. Si se corren los pasos D y E antes de tiempo, los dos escenarios se pierden **sin dar error** — AgenIA simplemente da de alta al paciente, que es el comportamiento normal.
 
 ---
 
@@ -83,8 +114,9 @@ Corra primero con `@CONFIRMO = 0`: valida todo y muestra la vista previa sin esc
 
 | # | Documento | Qué se prueba | Qué dejó PREPARAR en el HIS | Qué hacer en AgenIA | Resultado esperado |
 |---|---|---|---|---|---|
-| 1 | 9990000001 | Cita del hospital con médico homologado y paciente que AgenIA no conoce. **Con el alta en caliente** (`PLAN_ALTA_EN_CALIENTE.md`), este escenario cambia de resultado | Cita en el **cupo 1** | Pedir por WhatsApp ese médico ese día. Escribirle al bot como ese paciente y preguntar por sus citas. Luego Rastreo B con ese cupo | El cupo 1 **ya no se ofrece** por WhatsApp. **El bot SÍ le muestra la cita** y el paciente queda creado en AgenIA con el nombre y el teléfono del HIS. Rastreo B: **«La cita existe en AgenIA»**. *(Sin el alta en caliente desplegada, el resultado es el anterior: «El hospital agendó ese cupo y AgenIA no creó la cita»)* |
-| 1b | 9990000001 | Recordatorio de una cita del hospital, y la baja | Esperar el recordatorio de esa cita (o adelantar la hora del cupo). Luego responder **«no quiero recordatorios»** | Le llega el recordatorio como a cualquier cita. Tras la baja, el bot confirma que **sus citas siguen en pie** y no le llega ningún recordatorio más |
+| 1 | 9990000001 | Cita del hospital con médico homologado y paciente que AgenIA no conoce. **Con el alta en caliente** (`PLAN_ALTA_EN_CALIENTE.md`), este escenario cambia de resultado | **Dos** citas: una en el **cupo 1** del día de prueba y otra **mañana** (la del recordatorio) | Pedir por WhatsApp ese médico ese día. Escribirle al bot desde el **teléfono B** y preguntar por sus citas. Luego Rastreo B con ese cupo | El cupo 1 **ya no se ofrece** por WhatsApp. **El bot SÍ le muestra las dos citas** y el paciente queda creado en AgenIA con el nombre y el teléfono del HIS, con **un solo perfil** aunque hayan llegado dos citas suyas en la misma vuelta. Rastreo B: **«La cita existe en AgenIA»** |
+| 1-eco | 9990000001 | 🔁 **El anti-eco**: lo que nace en el hospital no vuelve al hospital | — | En **Espejo → Auditoría** filtrar por esas dos citas | Solo aparecen movimientos `INBOUND`. **Ningún `OUTBOUND`**, y en el HIS sigue habiendo **una sola** fila por cupo. Si el hospital recibiera un alta de vuelta, chocaría contra su propia clave primaria: es el defecto que se corrigió en el disparador del outbox y solo una corrida real lo demuestra |
+| 1b | 9990000001 | Recordatorio de una cita del hospital, y la baja | La cita de **mañana** | Esperar el recordatorio (sale 24 horas **hábiles** antes; el cron corre cada 15 min). Luego responder **«no quiero recordatorios»** desde el teléfono B | Al **teléfono B** le llega el recordatorio de una cita que él nunca pidió por WhatsApp — es el criterio de aceptación de la Fase 4 del alta en caliente. Tras la baja, el bot confirma que **sus citas siguen en pie** y no le llega ningún recordatorio más |
 | 2 | 9990000002 | Cita con un médico que AgenIA no espeja | Cita del médico sin homologar a las 05:10 | Rastreo B con ese médico y hora | **«Ese médico no está en el espejo de AgenIA»** |
 | 3 | 9990000003 | Hora que el hospital guardó en un formato ilegible | Cita con hora `YYYY/MM/DD 3`, en el **día siguiente** al de prueba | Rastreo B del médico homologado ese día, a **cualquier hora vacía**, con la consulta en vivo | **(en vivo)** **«El hospital respondió algo que no se pudo leer»** + aviso ámbar: *«que aquí no aparezca una cita no significa que el hospital no la tenga»*. Nunca «El HIS no tiene ninguna cita en ese cupo» |
 | 5 | 9990000005 | Paciente con historia larga (60 citas pasadas) | 60 citas atendidas, una por semana, desde hace 14 días | Rastreo A con la consulta en vivo por documento | **(en vivo)** No muestra citas (la búsqueda por documento mira desde 7 días atrás, y todas son anteriores) y responde rápido. Es el peor caso de costo: compare con la PARTE G de `MEDICION_CONSULTA_EN_VIVO.sql` |
@@ -94,6 +126,8 @@ Corra primero con `@CONFIRMO = 0`: valida todo y muestra la vista previa sin esc
 | 9 | 9990000009 | El cupo lo tiene otra persona | Nada (el cupo 9/19 lo ocupa el 19) | Rastreo B del paciente 9 en el **cupo 9/19** | **(en vivo)** **«El HIS tiene esa hora a nombre de otro documento»**, con el documento enmascarado (`•••0019`) |
 | 11 | 9990000011 | Cita más allá de la ventana de la consulta en vivo | Cita a 200 días | Rastreo A, consulta en vivo | **(en vivo)** La cita **no aparece**: sin citas en AgenIA, la búsqueda por documento va de 7 días atrás a 60 adelante (y nunca pasa de 180 días). Es el comportamiento esperado, no un fallo |
 | 19 | 9990000019 | Apoyo del 9: «la otra persona» | Cita en el cupo 9/19 | — | — |
+| 21 | 9990000021 | 🔴 **El teléfono que ya es de otro** (D4). Es el caso más frecuente de todos: **el 43,8 % de los pacientes del hospital con móvil lo comparte** con otra historia, y hay números en 37 historias (medición del 2026-09-21) | Paciente con el **mismo móvil** que el 1, sin cita | Con el paciente 1 ya creado en AgenIA **con** el teléfono, correr el **PASO E** y esperar una vuelta del agente | El paciente 21 se crea en AgenIA **sin teléfono**, y su cita también. **Al teléfono B NO le llega ningún recordatorio de esta cita.** En el rastreo, la nota dice que el teléfono es de otro documento. Si le llegara, sería una persona viendo la cita de otra |
+| 22 | 9990000022 | **El documento ambiguo** (D3): dos perfiles que podrían ser la misma persona | Paciente sin cita | 1) Crear a mano en AgenIA **dos** perfiles con el mismo documento escrito distinto: `9990000022` y `0009990000022`. 2) Correr el **PASO D**. 3) Esperar una vuelta | AgenIA **ocupa el cupo pero NO crea la cita**, y en la bandeja aparece **«Cita del hospital con un documento ambiguo»** con el documento enmascarado y los dos perfiles. No elige ninguno: fusionar a dos personas no se deshace. El cupo deja de ofrecerse por WhatsApp |
 
 ### Citas que nacen por WhatsApp (fase 4)
 
@@ -129,8 +163,7 @@ Detener y arrancar el agente, en el VPS del hospital: `sudo systemctl stop ageni
 | Un **PACIENTE** no puede crear ni mover citas | Con una sesión de paciente, intentar las acciones de Agendamiento | *«No tiene permisos para operar la agenda»* |
 | Trabajar una excepción | En la bandeja del escenario 15: **Tomar**, intentar **Resolver** sin nota, y luego con nota | Sin nota lo rechaza; con nota queda *«Resuelta»* con quién y cuándo en el historial |
 | Tomar la excepción detiene los recordatorios | En el escenario 14, **Tomar** la excepción antes de los 30 min | No llega ningún recordatorio |
-| Documento ambiguo (alta en caliente) | Crear a mano en AgenIA dos perfiles con el mismo documento escrito distinto (`9990000009` y `0009990000009`) y hacer que el hospital agende una cita de ese documento | La cita **no** se crea, el cupo queda ocupado y en la bandeja aparece **«Cita del hospital con un documento ambiguo»**, con el documento enmascarado |
-| Confirmar una cita del hospital | Rastreo B del escenario 1 (el 9990000001, que AgenIA no conoce) | Aparece el bloque **«Confirmarle la cita al paciente»**, pero sin botón: *«El paciente no tiene perfil en AgenIA: dale la confirmación por otro medio»*. El envío completo (texto dentro de 24 h, plantilla fuera) está cubierto por las pruebas automáticas y la verificación contra Postgres real |
+| Confirmar una cita del hospital | Rastreo B del **escenario 22** con su cupo. Antes, ponerle el **teléfono A** a uno de los dos perfiles ambiguos (ya terminaron los escenarios de WhatsApp, así que ese número queda libre para esto) | Aparece el bloque **«Confirmarle la cita al paciente»** con botón. Al pulsarlo, al teléfono A le llega la confirmación diciendo que **la cita la asignó el hospital** y que para cambiarla hay que comunicarse con él. Un segundo intento en menos de 10 minutos no repite el mensaje. Fuera de la ventana de 24 h de Meta sale con la plantilla `HIS_APPOINTMENT_CONFIRMATION`; sin ella aprobada, la pantalla lo dice y no envía |
 | Otro agente no se la quita | Con la excepción tomada por un agente, entrar como otro | No ve los botones de soltar ni cerrar; el ORG_ADMIN sí puede reasignarla |
 
 ---
@@ -143,7 +176,10 @@ Dicho para que nadie lo dé por probado:
 - **El canal de correo** del aviso al agendador: no existe (§12 #13 del plan).
 - **Los avisos masivos**: la función está apagada para la clínica.
 - **Los 19 médicos sin homologar**, más allá del escenario 2: es una tarea de homologación, no de prueba.
-- **La causa raíz del escenario 2** (§11): la prueba confirma que el bot **no ve** las citas del hospital (escenario 1); decidir qué hacer con eso es otra cosa.
+- **El estado `VENCIDA`**: el vigilante cierra una excepción cuando la hora de la cita pasó hace **más de 7 días** y nadie la movió en 7 días. No hay forma de provocarlo en una sesión sin manipular fechas en la base. Cubierto por las pruebas automáticas y la verificación contra Postgres real.
+- **La purga de retención** (180 / 365 días): el cron corre a las 3:30 a. m. y en una base nueva no hay nada tan viejo que borrar. Lo que sí conviene mirar a la mañana siguiente es que quede su constancia en `SystemLog` (`DATA_RETENTION_PURGE`) — que corrió es lo que hay que ver, no que borró.
+- 🔴 **La baja del paciente creado por el alta en caliente** (D10). La regla está implementada y el motor la respeta —un documento dado de baja no se vuelve a crear solo— pero **hoy nada la puede activar**: `MirrorPatientService.registrarBaja` no tiene quien la llame, ni endpoint ni pantalla ni intención del bot. La baja que sí se prueba (escenario 1b) es la de los **recordatorios**, que es otra cosa: el perfil sigue existiendo. Hasta que exista la vía, la única forma de dar de baja un documento es un `INSERT` a mano en `MirrorPatientOptOut`.
+- 🔴 **El recordatorio manual y la baja**: el cron respeta `remindersOptOut`, pero el botón «enviar recordatorio» del panel **no lo comprueba**. Si tras el escenario 1b alguien pulsa ese botón, el mensaje sale igual. No es un fallo del guion de pruebas, es una decisión pendiente: o el botón respeta la baja, o al menos avisa a quien lo pulsa.
 
 ---
 
@@ -153,8 +189,10 @@ Se puede salir a producción si:
 
 1. Los escenarios **1, 2, 4, 10, 12, 13, 14, 16, 17 y 20** dan el resultado esperado, y el **18** también si se pudo provocar. Son el funcionamiento del espejo, del bot y del aviso.
 2. El **14** cumple la aceptación de la Fase 3: el WhatsApp al agendador llega **antes** de la hora de la cita.
-3. Las **pruebas del panel** no dejan ver ni tocar nada fuera del alcance.
-4. Si la consulta en vivo sale a producción: los escenarios **(en vivo)** dan su resultado, y **ninguno** afirma «El HIS no tiene ninguna cita en ese cupo» donde hay una cita (3, 8, 9).
+3. Del alta en caliente, los cuatro que son su criterio de aceptación: **1** (crea paciente y cita, un solo perfil), **1-eco** (no rebota al hospital), **1b** (recordatorio y baja) y **21** (no le asigna el teléfono de otro). El **21** es el que más importa de los cuatro en producción: el 43,8 % de los pacientes con móvil lo comparte, así que ese camino se va a recorrer todos los días. Si el recordatorio del 21 llega al teléfono B, **no se sale a producción**: es una persona recibiendo —y pudiendo cancelar— la cita de otra.
+4. El **22** deja la excepción en la bandeja y **no** crea la cita. Elegir un perfil por su cuenta sería mezclar dos historias clínicas.
+5. Las **pruebas del panel** no dejan ver ni tocar nada fuera del alcance.
+6. Si la consulta en vivo sale a producción: los escenarios **(en vivo)** dan su resultado, y **ninguno** afirma «El HIS no tiene ninguna cita en ese cupo» donde hay una cita (3, 8, 9).
 
 Un fallo en el **15** no bloquea por sí mismo si el aviso al agendador sale: la colisión es rara y la política es que el hospital gana. Pero hay que saber cómo se comporta antes de abrir.
 
@@ -162,9 +200,11 @@ Un fallo en el **15** no bloquea por sí mismo si el aviso al agendador sale: la
 
 ## Limpieza — en este orden
 
-1. **Cancelar en AgenIA** (desde el panel) las citas de prueba que sigan vigentes. **Primero aquí**: si se borran solo en el HIS, AgenIA las sigue teniendo, la reconciliación las reporta como deriva y la bandeja avisa al agendador por algo que no pasó.
+1. **Cancelar en AgenIA** (desde el panel) las citas de prueba que sigan vigentes — incluidas **las que creó el alta en caliente**, que ya son citas normales. **Primero aquí**: si se borran solo en el HIS, AgenIA las sigue teniendo, la reconciliación las reporta como deriva y la bandeja avisa al agendador por algo que no pasó.
 2. Resolver o descartar las excepciones de prueba en la bandeja, con la nota *«prueba E2E»*.
-3. Correr `PRUEBAS_E2E_3_LIMPIAR.sql`: primero con `@CONFIRMO = 0`, que lista lo que borraría **y avisa si AgenIA aún tiene alguna cita viva**; luego con `@CONFIRMO = 1`.
-4. Retirar los dos padrones de prueba en AgenIA.
-5. Si la consulta en vivo no sale a producción: `lookupEnabled = false`.
-6. Devolver el número del agendador al teléfono real, y el de respaldo al del coordinador (o vaciarlo).
+3. Correr `PRUEBAS_E2E_3_LIMPIAR.sql` contra **PRUEBAS** (el HIS): primero con `@CONFIRMO = 0`, que lista lo que borraría **y avisa si AgenIA aún tiene alguna cita viva**; luego con `@CONFIRMO = 1`.
+4. Correr `PRUEBAS_E2E_4_LIMPIAR_AGENIA.sql` contra la base de **AgenIA**, primero con `confirmo=0`. Esto es nuevo y no se puede saltar: el alta en caliente crea allá un `PatientProfile` y un `User` por cada paciente que el hospital agendó, y la baja de recordatorios del 1b deja una fila que impediría repetir el escenario. El guion se niega a borrar si queda alguna cita de prueba sin cancelar (el paso 1), y libera el cupo que el escenario 22 dejó ocupado sin cita.
+5. Retirar los dos padrones de prueba en AgenIA.
+6. Si la consulta en vivo no sale a producción: `lookupEnabled = false`.
+7. Devolver el número del agendador al teléfono real, y el de respaldo al del coordinador (o vaciarlo).
+8. Comprobar que el teléfono B **no** quedó en ningún perfil: `./checkHealth.sh` no lo mira, pero el paso 4 lo borra al borrar el perfil del paciente 1. Si el probador vuelve a recibir un recordatorio después de la limpieza, algo quedó.

@@ -77,6 +77,7 @@ export {
   AGENTE_SIN_SENAL_MIN,
   COLA_ATASCADA_MIN,
   MAX_INTENTOS_ENTREGA,
+  NOTA_SIN_APPOINTMENT,
   clasificarRastreoA,
   clasificarRastreoB,
   construirLineaDeVida,

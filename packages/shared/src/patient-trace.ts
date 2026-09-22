@@ -1212,7 +1212,14 @@ export interface EvidenciaRastreoB {
   his?: EvidenciaHis | null;
 }
 
-const NOTA_SIN_APPOINTMENT = 'no se creó Appointment';
+/**
+ * La marca que el espejo deja en la auditoría cuando ocupa el cupo pero NO crea la
+ * cita. Se **exporta** para que quien la escribe (`MirrorApplyService`) y quien la
+ * lee (el veredicto de aquí abajo) usen la misma cadena: cuando eran dos literales
+ * sueltos, el alta en caliente reescribió la nota y el veredicto dejó de reconocerla
+ * en silencio — sin fallar ninguna prueba, porque cada lado probaba su propio texto.
+ */
+export const NOTA_SIN_APPOINTMENT = 'no se creó Appointment';
 const NOTA_FALTA_CUPO = 'falta generar el cupo';
 
 /**
