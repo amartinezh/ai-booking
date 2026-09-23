@@ -1679,6 +1679,55 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await decirNombre(say);
     };
 
+    // ═══════════════════════════════════════════════════════════════════
+    // 🔒 NADA SE GUARDA ANTES DE QUE EL PACIENTE AUTORICE (Ley 1581)
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // El resumen es donde el paciente lee que al responder SÍ autoriza el
+    // tratamiento de sus datos —incluidos los sensibles de salud—. Guardar su
+    // ficha antes de enseñarle ese aviso es tratarlos sin autorización.
+    //
+    // Se descubrió en la campaña E2E del 2026-09-22: un paciente contestó
+    // nombre, nacimiento, sexo y régimen, respondió NO a la confirmación, y su
+    // ficha completa se quedó guardada igual — escrita dos minutos ANTES de
+    // que dijera que no.
+    describe('8.0 el consentimiento va primero', () => {
+      it('con el resumen a la vista, todavía NO existe la ficha', async () => {
+        await hastaElNombre();
+        await responderAlta(say);
+
+        expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+        expect(lastSent()).toMatch(/Ley 1581/);
+        expect(db.patients).toHaveLength(0);
+      });
+
+      it('si responde NO, no queda ni ficha ni usuario', async () => {
+        await hastaElNombre();
+        await responderAlta(say);
+        await say('No');
+
+        expect(db.patients).toHaveLength(0);
+        expect(appointments.bookAppointment).not.toHaveBeenCalled();
+      });
+
+      it('al responder SÍ nace la ficha, y con los datos del alta completos', async () => {
+        await hastaElNombre();
+        await responderAlta(say);
+        await say('Sí');
+
+        expect(db.patients).toHaveLength(1);
+        const creado = db.patients[0];
+        // Sin estos tres el driver NO puede dar de alta al paciente en el HIS
+        // (`FE_NACI_PAC` y `NU_SEXO_PAC` son NOT NULL) — escenario 12 de las
+        // pruebas E2E. Viajaban en la escritura temprana; ahora tienen que
+        // llegar desde la sesión hasta la confirmación.
+        expect(creado.dateOfBirth).toEqual(new Date('1980-03-15'));
+        expect(creado.gender).toBe('M');
+        expect(creado.nombres).toBe('Juan');
+        expect(creado.apellidos).toBe('Pérez');
+      });
+    });
+
     it('8.1 a un paciente NUEVO se le piden nacimiento y sexo', async () => {
       await hastaElNombre();
       expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);

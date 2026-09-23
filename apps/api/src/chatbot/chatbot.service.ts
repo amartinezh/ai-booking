@@ -5338,17 +5338,24 @@ export class ChatbotService implements OnModuleInit {
         }
       }
 
-      if (finalNombre) {
-        await this.ensurePatientPersisted({
-          cedula: finalCedula,
-          nombre: finalNombre,
-          identity,
-          organizationId: organizationId,
-          epsId: epsIdForPatient,
-          ...(await this.datosDeAltaGuardados(organizationId, senderId)),
-        });
-      }
-
+      // 🔒 AQUÍ NO SE GUARDA NADA DEL PACIENTE — A PROPÓSITO.
+      //
+      // El resumen que viene a continuación es donde el paciente lee que, al
+      // responder SÍ, «autoriza el tratamiento de sus datos personales
+      // —incluidos los datos sensibles de salud—» conforme a la Ley 1581 de
+      // 2012. Escribir su ficha ANTES de enseñarle ese aviso es tratar sus
+      // datos sin su autorización, que es justo lo que la ley ordena al revés.
+      //
+      // Aquí se creaba el `PatientProfile` (y su `User` temporal) con nombres,
+      // apellidos, fecha de nacimiento, sexo y régimen. Se comprobó en la
+      // campaña E2E del 2026-09-22: un paciente contestó todas las preguntas,
+      // respondió NO a la confirmación... y su ficha completa se quedó
+      // guardada igual. Dos minutos antes de que dijera que no.
+      //
+      // Lo capturado sigue vivo en la sesión de Redis y se persiste en la
+      // confirmación, que además ya aborta con SESSION_EXPIRED si esa sesión
+      // se perdió — así que no hay ventana en la que el sí llegue sin datos.
+      //
       // Mostrar resumen y pasar a confirmación.
       const nombreAgend = finalNombre || patient?.fullName || 'Paciente';
       const fechaVistaFinal = await this.redis.get(
@@ -5972,18 +5979,35 @@ export class ChatbotService implements OnModuleInit {
     // sintético con la cédula, pero eso re-resuelve el tenant, ensucia la
     // auditoría con un mensaje que el paciente nunca escribió y se arriesga a
     // recursión. Una llamada directa dice lo que hace.
-    await this.persistirYMostrarResumen(ctx);
+    await this.mostrarResumenParaConfirmar(ctx);
   }
 
   /**
-   * Persiste al paciente y muestra el resumen previo a la confirmación.
+   * Muestra el resumen previo a la confirmación. NO guarda nada.
    *
    * Sale del flujo principal para que el alta de paciente nuevo pueda retomar
    * exactamente aquí cuando termina de recoger nacimiento, sexo y régimen —
    * sin duplicar la construcción del resumen ni el consentimiento de Habeas
    * Data, que es justo el tipo de cosa que se desincroniza con el tiempo.
+   *
+   * 🔒 SE LLAMABA `persistirYMostrarResumen`, y el nombre era exacto: creaba
+   * el `PatientProfile` con nombres, apellidos, nacimiento, sexo y régimen
+   * JUSTO ANTES de enseñarle al paciente el aviso que dice que, al responder
+   * SÍ, autoriza el tratamiento de sus datos —incluidos los sensibles de
+   * salud— conforme a la Ley 1581 de 2012. Es el orden invertido: primero se
+   * trataban los datos, después se pedía permiso.
+   *
+   * Se midió en la campaña E2E del 2026-09-22: un paciente contestó las cinco
+   * preguntas, respondió NO a la confirmación, y su ficha completa se quedó
+   * guardada igual — escrita dos minutos antes de que dijera que no.
+   *
+   * Lo capturado vive en la sesión de Redis hasta la confirmación, que aborta
+   * con SESSION_EXPIRED si esa sesión se perdió: no hay ventana en la que un
+   * SÍ llegue sin los datos.
    */
-  private async persistirYMostrarResumen(ctx: ChatTurnContext): Promise<void> {
+  private async mostrarResumenParaConfirmar(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
     const { organizationId, senderId, MSGS, text } = ctx;
     const g = (k: string) =>
       this.redis.get(`${k}:${organizationId}:${senderId}`);
@@ -6007,21 +6031,9 @@ export class ChatbotService implements OnModuleInit {
       ? await this.prisma.eps.findUnique({ where: { id: epsId } })
       : null;
 
-    // "Particular" existe como fila de `Eps` solo para poder aparecer en el
-    // menú: NO es una afiliación, y ni el paciente ni la cita deben quedar
-    // ligados a ella. Misma traducción que hace el flujo normal con
-    // `epsIdForPatient`; replicarla aquí es obligatorio, no cosmético.
-    const epsIdParaPaciente = eps && !isParticularEps(eps.name) ? eps.id : null;
-
-    await this.ensurePatientPersisted({
-      cedula,
-      nombre: nombre || 'Paciente',
-      identity: ctx.identity,
-      organizationId,
-      epsId: epsIdParaPaciente,
-      ...(await this.datosDeAltaGuardados(organizationId, senderId)),
-    });
-
+    // Solo para MOSTRAR su nombre en el resumen. La traducción de "Particular"
+    // a `null` —que no es una afiliación y no debe quedar ligada al paciente ni
+    // a la cita— la hace ahora la confirmación, que es donde se guarda.
     const reply = MSGS.resumenCita(
       nombre || 'Paciente',
       cedula,
@@ -6129,12 +6141,21 @@ export class ChatbotService implements OnModuleInit {
         epsIdFinal,
       );
 
+      // 🔒 EL PACIENTE NACE AQUÍ, no antes: este es el primer punto del flujo
+      // posterior al SÍ, es decir, a la autorización de la Ley 1581 que el
+      // resumen le acaba de mostrar. Los datos del alta (nacimiento, sexo,
+      // régimen y la frontera nombres/apellidos) viajaban antes en la escritura
+      // temprana que había junto al resumen; ahora se recogen aquí de la sesión.
+      // Sin ellos, un paciente que el hospital no tenga no se puede dar de alta
+      // en `PACIENTES` (FE_NACI_PAC y NU_SEXO_PAC son NOT NULL) — es el
+      // escenario 12 de las pruebas E2E.
       const patient = await this.ensurePatientPersisted({
         cedula: cedulaFinal,
         nombre: nombreFinal || 'Paciente Registrado',
         identity,
         organizationId: organizationId,
         epsId: epsIdForBooking,
+        ...(await this.datosDeAltaGuardados(organizationId, senderId)),
       });
 
       if (!patient) {

@@ -53,7 +53,7 @@ describe('textoParaCoincidencia', () => {
       ['Chao.', DESPEDIDA],
       ['¿Particular?', PARTICULAR],
     ])('%s coincide igual que escrito', (entrada, re) => {
-      expect(coincide(re as RegExp, entrada as string)).toBe(true);
+      expect(coincide(re, entrada)).toBe(true);
     });
   });
 

@@ -158,7 +158,7 @@ describe('WhatsappTemplateService', () => {
     ['de más', ['Ana', 'Cardiología', 'Dr. Ruiz', 'martes 3pm', 'sobra']],
   ])('con %s variables no se llama a Meta', async (_caso, params) => {
     const ctx = build();
-    const res = await send(ctx, PHONE, params as string[]);
+    const res = await send(ctx, PHONE, params);
 
     expect(res).toEqual({ success: false, error: 'body-params-mismatch' });
     expect(ctx.post).not.toHaveBeenCalled();

@@ -1834,7 +1834,16 @@ model SyncOutbox {
   op             String // 'INSERT' | 'UPDATE' | 'DELETE'
   payload        Json // fila completa serializada (NEW u OLD) — formato canónico AgenIA
   origin         String       @default("LOCAL") // 'LOCAL' | 'MIRROR' (anti-eco)
-  createdAt      DateTime     @default(now())
+  // ⏱️ UTC EXPLÍCITO, no `now()` a secas. Esta fila la inserta el disparador
+  // `fn_sync_outbox()` sin nombrar esta columna, así que el valor lo pone el
+  // DEFAULT de la base — y `CURRENT_TIMESTAMP` se evalúa en la zona del
+  // servidor, que en el despliegue es `America/Bogota` (docker-compose pasa
+  // `TZ` a todos los servicios). Como la columna no guarda zona y Prisma la
+  // lee como UTC, cada evento se veía 5 h antes de cuando ocurrió, y una
+  // entrega de 2 segundos parecía de 5 horas en el Rastreo de paciente.
+  // Medido en producción el 2026-09-22; ver la migración
+  // 20260925100000_reloj_del_outbox_en_utc.
+  createdAt      DateTime     @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)"))
   deliveredAt    DateTime? // null = pendiente
   attempts       Int          @default(0)
   deadLettered   Boolean      @default(false)
