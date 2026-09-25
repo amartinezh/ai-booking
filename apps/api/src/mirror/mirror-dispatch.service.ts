@@ -359,6 +359,11 @@ export class MirrorDispatchService {
 
       const missing: string[] = [];
       const context: OutboxEventContext = {};
+      // Un DELETE se anula en el HIS por médico + hora (`cancelAppointment`):
+      // servicio, paciente y EPS no se usan. Exigirlos dejaba sin entregar
+      // justo el caso típico de un borrado físico —el paciente ya se borró
+      // junto con la cita— y la cita seguía viva en el HIS.
+      const soloAnula = dto.op === 'DELETE';
 
       if (slot) {
         context.startTimeIso = slot.startTime.toISOString();
@@ -370,7 +375,7 @@ export class MirrorDispatchService {
 
         const servicio = claveExterna.get(`SERVICE:${slot.serviceId}`);
         if (servicio) context.serviceExternalKey = servicio;
-        else missing.push(`SERVICE ${slot.serviceId}`);
+        else if (!soloAnula) missing.push(`SERVICE ${slot.serviceId}`);
       } else {
         // El cupo desapareció entre la captura y la entrega. No es
         // recuperable desde aquí, pero tampoco se descarta en silencio.
@@ -414,7 +419,7 @@ export class MirrorDispatchService {
           context.patientBirthDateIso = paciente.dateOfBirth.toISOString();
         if (paciente.gender) context.patientGender = paciente.gender;
         if (paciente.regime) context.patientRegime = paciente.regime;
-      } else {
+      } else if (!soloAnula) {
         missing.push(`PATIENT ${String(fila.patientId)}`);
       }
 
@@ -423,7 +428,7 @@ export class MirrorDispatchService {
       if (eps) {
         if (eps.nit) context.epsNit = eps.nit;
         context.epsName = eps.name;
-      } else if (fila.epsId) {
+      } else if (fila.epsId && !soloAnula) {
         missing.push(`EPS ${String(fila.epsId as string)}`);
       }
 

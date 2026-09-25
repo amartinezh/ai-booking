@@ -1252,6 +1252,30 @@ describe('MirrorDispatchService — hidratación del contexto que va al HIS', ()
       expect(evento.context?.epsNit).toBeUndefined();
     });
 
+    it('🗑️ un DELETE sin paciente, servicio ni EPS SÍ se entrega: se anula por médico + hora', async () => {
+      prisma.syncOutbox.findMany.mockResolvedValue([filaOutbox({ op: 'DELETE' })]);
+      prisma.patientProfile.findMany.mockResolvedValue([]);
+      prisma.eps.findMany.mockResolvedValue([]);
+      prisma.mirrorEntityMap.findMany.mockResolvedValue([MAPAS[0]]);
+
+      const [evento] = await traer();
+
+      expect(evento.context?.missingMappings).toBeUndefined();
+      expect(evento.context).toMatchObject({
+        doctorExternalKey: '76',
+        startTimeIso: '2026-09-10T12:00:00.000Z',
+      });
+    });
+
+    it('🗑️ un DELETE sin médico o sin cupo sigue sin entregarse: sin ellos no se sabe qué anular', async () => {
+      prisma.syncOutbox.findMany.mockResolvedValue([filaOutbox({ op: 'DELETE' })]);
+      prisma.mirrorEntityMap.findMany.mockResolvedValue([]);
+      expect((await traer())[0].context?.missingMappings).toEqual(['DOCTOR doc-1']);
+
+      prisma.scheduleSlot.findMany.mockResolvedValue([]);
+      expect((await traer())[0].context?.missingMappings).toEqual(['SLOT slot-1']);
+    });
+
     it('varios faltantes se reportan todos juntos, no solo el primero', async () => {
       prisma.mirrorEntityMap.findMany.mockResolvedValue([]);
       prisma.patientProfile.findMany.mockResolvedValue([]);
