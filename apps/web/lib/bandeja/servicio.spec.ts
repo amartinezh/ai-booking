@@ -19,6 +19,7 @@ import {
   estadoAvisos,
   guardarAvisos,
   listarExcepciones,
+  listarMedicosConExcepciones,
   resumenBandeja,
 } from './servicio';
 import { MSG_NO_REABRIR_AUTO } from './vista';
@@ -41,9 +42,26 @@ type Fila = Record<string, any>;
 
 function coincide(fila: Fila, where: Record<string, any> = {}): boolean {
   return Object.entries(where).every(([campo, cond]) => {
+    if (campo === 'OR') {
+      return (cond as Record<string, any>[]).some((sub) => coincide(fila, sub));
+    }
     const v = fila[campo];
     if (cond && typeof cond === 'object' && !(cond instanceof Date)) {
       if ('in' in cond) return (cond.in as unknown[]).includes(v);
+      if ('not' in cond) return v !== cond.not;
+      if ('contains' in cond) {
+        if (v == null) return false;
+        const hay = cond.mode === 'insensitive' ? String(v).toLowerCase() : String(v);
+        const buscado = cond.mode === 'insensitive' ? String(cond.contains).toLowerCase() : String(cond.contains);
+        return hay.includes(buscado);
+      }
+      if ('gte' in cond || 'lte' in cond) {
+        const t = v instanceof Date ? v.getTime() : v;
+        if (t == null) return false;
+        if ('gte' in cond && t < (cond.gte as Date).getTime()) return false;
+        if ('lte' in cond && t > (cond.lte as Date).getTime()) return false;
+        return true;
+      }
       throw new Error(`el doble no soporta la condición sobre «${campo}»`);
     }
     return v === cond;
@@ -82,6 +100,15 @@ class Tabla {
 
   findMany = jest.fn(async (args: any = {}) => {
     let r = ordenar(this.filas.filter((f) => coincide(f, args.where)), args.orderBy);
+    if (args.distinct) {
+      const vistos = new Set<string>();
+      r = r.filter((f) => {
+        const clave = (args.distinct as string[]).map((c) => f[c]).join('|');
+        if (vistos.has(clave)) return false;
+        vistos.add(clave);
+        return true;
+      });
+    }
     if (args.skip) r = r.slice(args.skip);
     if (args.take != null) r = r.slice(0, args.take);
     return r.map((f) => ({ ...f }));
@@ -394,6 +421,110 @@ describe('listarExcepciones — orden, filtros y páginas', () => {
     sembrar(db);
     await listarExcepciones(db, admin(), {}, AHORA);
     expect(db.syncException.findMany.mock.calls[0][0]).toMatchObject({ take: MAX_ACTIVAS });
+  });
+
+  it('🕐 orden RECIENTES: la más nueva primero, sin el tope de MAX_ACTIVAS ni reordenar por gravedad', async () => {
+    const db = mockDb();
+    const vieja = sembrar(db, { severity: 'CRITICA', firstSeenAt: haceMin(300) });
+    const media = sembrar(db, { severity: 'BAJA', firstSeenAt: haceMin(60) });
+    const nueva = sembrar(db, { severity: 'BAJA', firstSeenAt: haceMin(1) });
+
+    const r = await listarExcepciones(db, admin(), { orden: 'RECIENTES' }, AHORA);
+    expect(ids(r as any)).toEqual([nueva.id, media.id, vieja.id]);
+  });
+
+  it('🕐 sin `orden` en el objeto de filtros (quien llama sin pasar por la URL), el servicio sigue por defecto en URGENCIA', async () => {
+    const db = mockDb();
+    sembrar(db, { severity: 'BAJA', appointmentStartAt: enMin(600) });
+    const critica = sembrar(db, { severity: 'CRITICA', appointmentStartAt: enMin(60) });
+
+    const r = await listarExcepciones(db, admin(), {}, AHORA);
+    expect(ids(r as any)[0]).toBe(critica.id);
+  });
+
+  it('🩺 filtra por médico', async () => {
+    const db = mockDb();
+    const deAna = sembrar(db, { doctorId: 'doc-1' });
+    sembrar(db, { doctorId: 'doc-2' });
+
+    expect(ids((await listarExcepciones(db, admin(), { medicoId: 'doc-1' }, AHORA)) as any)).toEqual([deAna.id]);
+  });
+
+  it('📅 filtra por rango de fecha (firstSeenAt), en hora de Bogotá', async () => {
+    const db = mockDb();
+    // 2026-09-24 00:00 Bogotá = 2026-09-24T05:00:00Z; 23:59:59.999 Bogotá = 2026-09-25T04:59:59.999Z.
+    const dentro = sembrar(db, { firstSeenAt: new Date('2026-09-24T12:00:00.000Z') });
+    const justoAlBorde = sembrar(db, { firstSeenAt: new Date('2026-09-25T04:59:59.999Z') });
+    sembrar(db, { firstSeenAt: new Date('2026-09-23T23:00:00.000Z') }); // 2026-09-23 18:00 Bogotá: fuera
+    sembrar(db, { firstSeenAt: new Date('2026-09-25T05:00:00.000Z') }); // 2026-09-25 00:00 Bogotá: fuera
+
+    const r = await listarExcepciones(db, admin(), { desde: '2026-09-24', hasta: '2026-09-24' }, AHORA);
+    expect(new Set(ids(r as any))).toEqual(new Set([dentro.id, justoAlBorde.id]));
+  });
+
+  it('🔎 el texto libre busca en el título, la nota de cierre, el médico y el paciente', async () => {
+    const db = mockDb();
+    sembrarCatalogo(db);
+    // `patientId: null` en las tres primeras: el valor por defecto de `sembrar` es
+    // 'pac-1' (el mismo paciente de `sembrarCatalogo`), y ahí «López» las encontraría
+    // a todas por el paciente, no por lo que cada prueba quiere aislar.
+    const porTitulo = sembrar(db, { title: 'Conflicto raro con el HIS', patientId: null });
+    const porNota = sembrar(db, {
+      status: 'RESUELTA',
+      resolvedAt: haceMin(5),
+      resolutionNote: 'Se agendó a mano en el HIS',
+      patientId: null,
+    });
+    const porMedico = sembrar(db, { doctorId: 'doc-2', patientId: null }); // Luis Pérez
+    const porPaciente = sembrar(db, { patientId: 'pac-1' }); // María López Núñez
+
+    expect(ids((await listarExcepciones(db, admin(), { q: 'conflicto' }, AHORA)) as any)).toEqual([porTitulo.id]);
+    expect(ids((await listarExcepciones(db, admin(), { estado: 'CERRADAS', q: 'agendó' }, AHORA)) as any)).toEqual([porNota.id]);
+    expect(ids((await listarExcepciones(db, admin(), { q: 'pérez' }, AHORA)) as any)).toEqual([porMedico.id]);
+    expect(ids((await listarExcepciones(db, admin(), { q: 'lópez' }, AHORA)) as any)).toEqual([porPaciente.id]);
+  });
+
+  it('🔒 el texto libre NO busca en `detail` para quien no puede ver internos (sería leerlo por otra puerta)', async () => {
+    const db = mockDb();
+    sembrarCatalogo(db);
+    sembrar(db, { epsId: null, doctorId: null, detail: 'ECONNREFUSED 10.0.0.5:1433' });
+
+    expect(ids((await listarExcepciones(db, admin(), { q: 'ECONNREFUSED' }, AHORA)) as any)).toHaveLength(1);
+    expect(ids((await listarExcepciones(db, agente(), { q: 'ECONNREFUSED' }, AHORA)) as any)).toHaveLength(0);
+  });
+});
+
+describe('listarMedicosConExcepciones', () => {
+  it('los médicos con alguna excepción, sin duplicar y ordenados por nombre', async () => {
+    const db = mockDb();
+    sembrarCatalogo(db);
+    sembrar(db, { doctorId: 'doc-2' });
+    sembrar(db, { doctorId: 'doc-2' });
+    sembrar(db, { doctorId: 'doc-1' });
+    sembrar(db, { doctorId: null });
+
+    expect(await listarMedicosConExcepciones(db, admin())).toEqual([
+      { id: 'doc-1', nombre: 'Ana Ruiz' },
+      { id: 'doc-2', nombre: 'Luis Pérez' },
+    ]);
+  });
+
+  it('🎯 un agente acotado a un médico solo ve ese médico en las opciones', async () => {
+    const db = mockDb();
+    sembrarCatalogo(db);
+    sembrar(db, { doctorId: 'doc-1' });
+    sembrar(db, { doctorId: 'doc-2' });
+
+    expect(await listarMedicosConExcepciones(db, agente({ scopeDoctorId: 'doc-1' }))).toEqual([
+      { id: 'doc-1', nombre: 'Ana Ruiz' },
+    ]);
+  });
+
+  it('sin permiso de ver: lista vacía', async () => {
+    const db = mockDb();
+    sembrarCatalogo(db);
+    sembrar(db, { doctorId: 'doc-1' });
+    expect(await listarMedicosConExcepciones(db, doctor())).toEqual([]);
   });
 });
 

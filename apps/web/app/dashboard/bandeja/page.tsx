@@ -36,6 +36,7 @@ export default async function BandejaPage({ searchParams }: { searchParams: Prom
                 <BandejaClient
                     lista={lista.data}
                     filtros={filtros}
+                    medicos={lista.data.medicos}
                     avisos={avisos.success ? avisos.data : null}
                     puedeConfigurarAvisos={a.actor.permisos.configurarAvisos}
                 />

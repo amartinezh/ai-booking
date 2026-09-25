@@ -64,11 +64,33 @@ export interface ExcepcionDetalle extends ExcepcionVista {
 
 export type FiltroEstado = 'ACTIVAS' | 'MIAS' | 'SIN_DUENO' | 'CERRADAS';
 
+/**
+ * RECIENTES: la más nueva primero (por `firstSeenAt`). URGENCIA: gravedad y,
+ * dentro de ella, la cita más próxima (el orden histórico de la bandeja).
+ * Solo aplica a los estados activos: las CERRADAS siempre van por fecha de
+ * cierre, sea cual sea `orden`.
+ */
+export type OrdenBandeja = 'RECIENTES' | 'URGENCIA';
+
 export interface FiltrosBandeja {
   estado?: FiltroEstado;
   tipo?: TipoExcepcion;
   gravedad?: SeveridadExcepcion;
+  /** Médico de la cita relacionada (`SyncException.doctorId`). */
+  medicoId?: string;
+  /** `YYYY-MM-DD`, en hora de pared de Bogotá. Filtra por `firstSeenAt`. */
+  desde?: string;
+  hasta?: string;
+  /** Busca en el título, la nota de cierre, el detalle técnico (si se puede ver) y el nombre del médico o del paciente. */
+  q?: string;
+  orden?: OrdenBandeja;
   pagina?: number;
+}
+
+/** Una opción del filtro «Médico»: solo los que ya tuvieron alguna excepción. */
+export interface MedicoFiltro {
+  id: string;
+  nombre: string;
 }
 
 export interface ResumenBandeja {
@@ -85,6 +107,10 @@ export interface ListaExcepciones {
   pagina: number;
   paginas: number;
   resumen: ResumenBandeja;
+  /** Opciones del filtro «Médico»; no cambia con los demás filtros (para no verse encogiendo). */
+  medicos: MedicoFiltro[];
+  /** Se truncó a `MAX_ACTIVAS` (solo pasa en orden URGENCIA): hay más de las que se ven. */
+  truncada: boolean;
 }
 
 /** ¿Están saliendo los avisos al agendador? Si no, por qué. */

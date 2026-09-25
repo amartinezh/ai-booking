@@ -41,6 +41,8 @@ import type {
   FiltrosBandeja,
   FiltroEstado,
   ListaExcepciones,
+  MedicoFiltro,
+  OrdenBandeja,
   Resultado,
   ResumenBandeja,
 } from './tipos';
@@ -273,6 +275,115 @@ export async function contarPendientes(
 const rango = (s: string): number =>
   ORDEN_SEVERIDAD_EXCEPCION[s as SeveridadExcepcion] ?? -1;
 
+// ─────────────────────────────────────────────────────────────
+// Fecha, texto libre y médico (filtros de la bandeja)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Bogotá es UTC-5 todo el año, sin horario de verano (mismo criterio que el
+ * resto del repo, p.ej. `avisos-csv.ts`). `YYYY-MM-DD` inválido → `null`, y el
+ * filtro se ignora en vez de reventar: la fecha ya la validó `leerFiltros`,
+ * pero esta función no confía en eso.
+ */
+function diaBogota(ymd: string | undefined, finDelDia: boolean): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd ?? '');
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  // Medianoche Bogotá = 05:00 UTC mismo día. 23:59:59.999 Bogotá = 04:59:59.999 UTC
+  // del día siguiente — Date.UTC normaliza el desborde de horas (23 + 5 = 28) solo.
+  return finDelDia
+    ? new Date(Date.UTC(+y, +mo - 1, +d, 23 + 5, 59, 59, 999))
+    : new Date(Date.UTC(+y, +mo - 1, +d, 0 + 5, 0, 0, 0));
+}
+
+function rangoFecha(
+  desde: string | undefined,
+  hasta: string | undefined,
+): Prisma.DateTimeFilter | undefined {
+  const gte = diaBogota(desde, false);
+  const lte = diaBogota(hasta, true);
+  if (!gte && !lte) return undefined;
+  return { ...(gte ? { gte } : {}), ...(lte ? { lte } : {}) };
+}
+
+/**
+ * Médicos y pacientes de ESTA clínica cuyo nombre (o cédula) coincide con el
+ * texto buscado: lo que después se usa para que el texto libre también
+ * encuentre una excepción por «Fabio» o por «1053123456», no solo por el
+ * título o la nota de cierre.
+ */
+async function candidatosTexto(
+  db: Db,
+  actor: ActorBandeja,
+  q: string,
+): Promise<{ doctorIds: string[]; patientIds: string[] }> {
+  const [medicos, pacientes] = await Promise.all([
+    db.doctorProfile.findMany({
+      where: { organizationId: actor.organizationId, fullName: { contains: q, mode: 'insensitive' } },
+      select: { id: true },
+    }),
+    db.patientProfile.findMany({
+      where: {
+        organizationId: actor.organizationId,
+        OR: [{ fullName: { contains: q, mode: 'insensitive' } }, { cedula: { contains: q } }],
+      },
+      select: { id: true },
+    }),
+  ]);
+  return { doctorIds: medicos.map((m) => m.id), patientIds: pacientes.map((p) => p.id) };
+}
+
+/**
+ * `title`, `resolutionNote` y (solo para quien puede ver internos) `detail`,
+ * más médico y paciente por nombre/cédula. `detail` puede nombrar servidores
+ * del hospital (ver `vista.ts`): buscarlo para quien no lo puede leer en la
+ * tarjeta sería un forma indirecta de leerlo igual, así que se excluye.
+ */
+async function filtroDeTexto(
+  db: Db,
+  actor: ActorBandeja,
+  q: string,
+): Promise<Prisma.SyncExceptionWhereInput> {
+  const candidatos = await candidatosTexto(db, actor, q);
+  const or: Prisma.SyncExceptionWhereInput[] = [
+    { title: { contains: q, mode: 'insensitive' } },
+    { resolutionNote: { contains: q, mode: 'insensitive' } },
+  ];
+  if (actor.permisos.verInternos) or.push({ detail: { contains: q, mode: 'insensitive' } });
+  if (candidatos.doctorIds.length) or.push({ doctorId: { in: candidatos.doctorIds } });
+  if (candidatos.patientIds.length) or.push({ patientId: { in: candidatos.patientIds } });
+  return { OR: or };
+}
+
+/**
+ * Las opciones del filtro «Médico»: todo médico que alguna vez tuvo una
+ * excepción dentro del alcance de este actor, sin importar los demás
+ * filtros (para que la lista de opciones no se vea encogiendo sola).
+ */
+export async function listarMedicosConExcepciones(
+  db: Db,
+  actor: ActorBandeja,
+): Promise<MedicoFiltro[]> {
+  if (!actor.permisos.ver) return [];
+  const alcance = alcanceDeExcepciones(actor);
+  // Si el alcance YA fija un médico (agente acotado), no se pisa con `{ not: null }`:
+  // un `doctorId` fijo ya excluye los nulos, y sobreescribirlo dejaría ver a todos.
+  const where = alcance.doctorId ? alcance : { ...alcance, doctorId: { not: null } };
+  const filas = await db.syncException.findMany({
+    where,
+    select: { doctorId: true },
+    distinct: ['doctorId'],
+  });
+  const ids = [...new Set(filas.map((f) => f.doctorId).filter((id): id is string => !!id))];
+  if (ids.length === 0) return [];
+  const medicos = await db.doctorProfile.findMany({
+    where: { id: { in: ids }, organizationId: actor.organizationId },
+    select: { id: true, fullName: true },
+    orderBy: { fullName: 'asc' },
+  });
+  return medicos.map((m) => ({ id: m.id, nombre: m.fullName }));
+}
+
 export async function listarExcepciones(
   db: Db,
   actor: ActorBandeja,
@@ -294,17 +405,28 @@ export async function listarExcepciones(
   )
     ? filtros.gravedad
     : undefined;
+  // A diferencia de `estado`/`tipo`/`gravedad` (listas cerradas), el orden por
+  // defecto cuando NO llega nada es URGENCIA: lo que ya prueba este archivo y
+  // lo que sigue esperando quien llama al servicio sin pasar por la URL. Quien
+  // sí pasa por `leerFiltros` (la pantalla) recibe RECIENTES por defecto ahí.
+  const orden: OrdenBandeja = filtros.orden === 'RECIENTES' ? 'RECIENTES' : 'URGENCIA';
+  const q = filtros.q?.trim();
+  const firstSeenAt = rangoFecha(filtros.desde, filtros.hasta);
 
   const where: Prisma.SyncExceptionWhereInput = {
     ...alcanceDeExcepciones(actor),
     ...filtroDeEstado(estado, actor),
     ...(tipo ? { kind: tipo } : {}),
     ...(gravedad ? { severity: gravedad } : {}),
+    ...(filtros.medicoId ? { doctorId: filtros.medicoId } : {}),
+    ...(firstSeenAt ? { firstSeenAt } : {}),
+    ...(q ? await filtroDeTexto(db, actor, q) : {}),
   };
 
   const resumen = await resumenBandeja(db, actor);
   let filas: FilaExcepcion[];
   let total: number;
+  let truncada = false;
   let pagina = Math.max(1, Math.floor(Number(filtros.pagina)) || 1);
 
   if (estado === 'CERRADAS') {
@@ -313,6 +435,18 @@ export async function listarExcepciones(
     filas = await db.syncException.findMany({
       where,
       orderBy: [{ resolvedAt: 'desc' }, { lastSeenAt: 'desc' }],
+      skip: (pagina - 1) * TAMANO_PAGINA,
+      take: TAMANO_PAGINA,
+    });
+  } else if (orden === 'RECIENTES') {
+    // La más nueva primero: `firstSeenAt` sí es ordenable en SQL, así que se pagina
+    // en la base directamente (sin el tope de MAX_ACTIVAS ni el reordenamiento en
+    // memoria que necesita URGENCIA).
+    total = await db.syncException.count({ where });
+    pagina = Math.min(pagina, Math.max(1, Math.ceil(total / TAMANO_PAGINA)));
+    filas = await db.syncException.findMany({
+      where,
+      orderBy: [{ firstSeenAt: 'desc' }],
       skip: (pagina - 1) * TAMANO_PAGINA,
       take: TAMANO_PAGINA,
     });
@@ -329,13 +463,20 @@ export async function listarExcepciones(
       ],
       take: MAX_ACTIVAS,
     });
+    truncada = traidas.length === MAX_ACTIVAS;
     traidas.sort((a, b) => rango(b.severity) - rango(a.severity));
     total = traidas.length;
     pagina = Math.min(pagina, Math.max(1, Math.ceil(total / TAMANO_PAGINA)));
     filas = traidas.slice((pagina - 1) * TAMANO_PAGINA, pagina * TAMANO_PAGINA);
   }
 
-  const ctx = await cargarContexto(db, actor, filas, ahora);
+  // Las opciones del filtro «Médico» no dependen de `filas`: se piden en paralelo con
+  // el contexto de la página, después de la consulta principal (no antes: esta función
+  // es la que de verdad importa cuando algo sale lento).
+  const [ctx, medicos] = await Promise.all([
+    cargarContexto(db, actor, filas, ahora),
+    listarMedicosConExcepciones(db, actor),
+  ]);
   return {
     success: true,
     data: {
@@ -344,6 +485,8 @@ export async function listarExcepciones(
       pagina,
       paginas: Math.max(1, Math.ceil(total / TAMANO_PAGINA)),
       resumen,
+      medicos,
+      truncada,
     },
   };
 }

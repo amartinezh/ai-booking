@@ -18,13 +18,15 @@ import {
     guardarAvisosAction,
 } from '@/app/actions/bandeja';
 import { formatAppointmentCompact } from '@/lib/date';
-import { FILTROS_ESTADO, hrefBandeja } from '@/lib/bandeja/filtros';
+import { FILTROS_ESTADO, ORDENES_BANDEJA, hrefBandeja } from '@/lib/bandeja/filtros';
 import type {
     EstadoAvisos,
     ExcepcionDetalle,
     ExcepcionVista,
     FiltroEstado,
     ListaExcepciones,
+    MedicoFiltro,
+    OrdenBandeja,
 } from '@/lib/bandeja/tipos';
 
 /**
@@ -57,6 +59,11 @@ const ESTILO_GRAVEDAD: Record<SeveridadExcepcion, string> = {
     MEDIA: 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900',
     ALTA: 'bg-orange-50 text-orange-800 border-orange-200 dark:bg-orange-950/40 dark:text-orange-200 dark:border-orange-900',
     CRITICA: 'bg-red-50 text-red-800 border-red-300 dark:bg-red-950/40 dark:text-red-200 dark:border-red-900',
+};
+
+const ETIQUETA_ORDEN: Record<OrdenBandeja, string> = {
+    RECIENTES: 'Más recientes primero',
+    URGENCIA: 'Urgencia (cita más próxima)',
 };
 
 const ETIQUETA_ESTADO: Record<string, string> = {
@@ -352,6 +359,9 @@ function Tarjeta({ f }: { f: ExcepcionVista }) {
                 <span className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
                     {ETIQUETA_ESTADO[f.estado] ?? f.estado}
                 </span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Detectada {formatAppointmentCompact(f.primeraVezIso)}
+                </span>
                 {f.dueno && (
                     <span className="text-xs text-zinc-500 dark:text-zinc-400">
                         {f.dueno.esMio ? 'La tienes tú' : `La tiene ${f.dueno.etiqueta}`}
@@ -490,19 +500,88 @@ const MENSAJE_VACIO: Record<FiltroEstado, string> = {
     CERRADAS: 'Todavía no hay excepciones cerradas.',
 };
 
+type Filtros = {
+    estado: FiltroEstado;
+    tipo?: TipoExcepcion;
+    gravedad?: SeveridadExcepcion;
+    medicoId?: string;
+    desde?: string;
+    hasta?: string;
+    q?: string;
+    orden?: OrdenBandeja;
+    pagina?: number;
+};
+
+/**
+ * El texto libre no navega en cada tecla (sería un `router.push` por letra):
+ * se guarda en estado local y solo se manda al enviar el formulario (Enter o
+ * el botón). Si el filtro cambia por fuera (p. ej. «Limpiar filtros»), el
+ * campo se sincroniza con lo que diga la URL.
+ */
+function BuscarTexto({ q, hrefConQ }: { q?: string; hrefConQ: (q: string | undefined) => string }) {
+    const router = useRouter();
+    const idQ = useId();
+    const [valor, setValor] = useState(q ?? '');
+    // Ajustar estado durante el render (no en un efecto) cuando `q` cambia por fuera
+    // (p. ej. «Limpiar filtros»): es el patrón que React recomienda para esto y evita
+    // el render extra de un `useEffect` que solo copiara la prop al estado.
+    const [qPrevio, setQPrevio] = useState(q);
+    if (q !== qPrevio) {
+        setQPrevio(q);
+        setValor(q ?? '');
+    }
+
+    return (
+        <form
+            className="flex flex-1 min-w-55 items-center gap-2"
+            onSubmit={(e) => {
+                e.preventDefault();
+                router.push(hrefConQ(valor.trim() || undefined));
+            }}
+        >
+            <label htmlFor={idQ} className="sr-only">
+                Buscar por médico, paciente, título o nota
+            </label>
+            <input
+                id={idQ}
+                type="search"
+                className={CAMPO}
+                placeholder="Buscar por médico, paciente, título o nota…"
+                value={valor}
+                onChange={(e) => setValor(e.target.value)}
+            />
+            <button type="submit" className={BOTON_SECUNDARIO}>
+                Buscar
+            </button>
+        </form>
+    );
+}
+
 interface Props {
     lista: ListaExcepciones;
     /** Los mismos que `leerFiltros` saca de la URL; `pagina` la usan los enlaces de paginación. */
-    filtros: { estado: FiltroEstado; tipo?: TipoExcepcion; gravedad?: SeveridadExcepcion; pagina?: number };
+    filtros: Filtros;
+    /** Opciones del filtro «Médico»: los que ya tuvieron alguna excepción. */
+    medicos: MedicoFiltro[];
     /** `null` si no se pudo leer el estado de los avisos. */
     avisos: EstadoAvisos | null;
     puedeConfigurarAvisos: boolean;
 }
 
-export default function BandejaClient({ lista, filtros, avisos, puedeConfigurarAvisos }: Props) {
+export default function BandejaClient({ lista, filtros, medicos, avisos, puedeConfigurarAvisos }: Props) {
     const router = useRouter();
     const { resumen } = lista;
     const enCerradas = filtros.estado === 'CERRADAS';
+    const idDesde = useId();
+    const idHasta = useId();
+    const hayFiltrosAvanzados = !!(
+        filtros.tipo ||
+        filtros.gravedad ||
+        filtros.medicoId ||
+        filtros.desde ||
+        filtros.hasta ||
+        filtros.q
+    );
 
     return (
         <div className="space-y-6">
@@ -511,8 +590,12 @@ export default function BandejaClient({ lista, filtros, avisos, puedeConfigurarA
                     Bandeja de sincronización
                 </h1>
                 <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                    Citas que AgenIA confirmó y el hospital todavía no tiene, y cambios que no se pudieron aplicar. Se
-                    ordenan por urgencia: la cita más cercana primero.
+                    Citas que AgenIA confirmó y el hospital todavía no tiene, y cambios que no se pudieron aplicar.
+                    {enCerradas
+                        ? ' Se ordenan por fecha de cierre, la más reciente primero.'
+                        : filtros.orden === 'URGENCIA'
+                          ? ' Se ordenan por urgencia: la cita más cercana primero.'
+                          : ' Se ordenan por fecha, las más recientes primero.'}
                 </p>
             </header>
 
@@ -542,7 +625,10 @@ export default function BandejaClient({ lista, filtros, avisos, puedeConfigurarA
                         </Link>
                     ))}
                 </nav>
-                <div className="flex flex-wrap gap-3">
+
+                <BuscarTexto q={filtros.q} hrefConQ={(q) => hrefBandeja({ ...filtros, q, pagina: 1 })} />
+
+                <div className="flex flex-wrap items-end gap-3">
                     <label className="text-sm text-zinc-600 dark:text-zinc-300">
                         <span className="mr-2">Tipo</span>
                         <select
@@ -585,12 +671,83 @@ export default function BandejaClient({ lista, filtros, avisos, puedeConfigurarA
                             ))}
                         </select>
                     </label>
+                    {medicos.length > 0 && (
+                        <label className="text-sm text-zinc-600 dark:text-zinc-300">
+                            <span className="mr-2">Médico</span>
+                            <select
+                                className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                                value={filtros.medicoId ?? ''}
+                                onChange={(e) =>
+                                    router.push(hrefBandeja({ ...filtros, medicoId: e.target.value || undefined, pagina: 1 }))
+                                }
+                            >
+                                <option value="">Todos</option>
+                                {medicos.map((m) => (
+                                    <option key={m.id} value={m.id}>
+                                        {m.nombre}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
+                    <label htmlFor={idDesde} className="text-sm text-zinc-600 dark:text-zinc-300">
+                        <span className="mr-2">Desde</span>
+                        <input
+                            id={idDesde}
+                            type="date"
+                            className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                            value={filtros.desde ?? ''}
+                            max={filtros.hasta}
+                            onChange={(e) =>
+                                router.push(hrefBandeja({ ...filtros, desde: e.target.value || undefined, pagina: 1 }))
+                            }
+                        />
+                    </label>
+                    <label htmlFor={idHasta} className="text-sm text-zinc-600 dark:text-zinc-300">
+                        <span className="mr-2">Hasta</span>
+                        <input
+                            id={idHasta}
+                            type="date"
+                            className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                            value={filtros.hasta ?? ''}
+                            min={filtros.desde}
+                            onChange={(e) =>
+                                router.push(hrefBandeja({ ...filtros, hasta: e.target.value || undefined, pagina: 1 }))
+                            }
+                        />
+                    </label>
+                    {!enCerradas && (
+                        <label className="text-sm text-zinc-600 dark:text-zinc-300">
+                            <span className="mr-2">Ordenar</span>
+                            <select
+                                className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                                value={filtros.orden ?? 'RECIENTES'}
+                                onChange={(e) =>
+                                    router.push(hrefBandeja({ ...filtros, orden: e.target.value as OrdenBandeja, pagina: 1 }))
+                                }
+                            >
+                                {ORDENES_BANDEJA.map((o) => (
+                                    <option key={o} value={o}>
+                                        {ETIQUETA_ORDEN[o]}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
+                    {hayFiltrosAvanzados && (
+                        <Link
+                            href={hrefBandeja({ estado: filtros.estado, orden: filtros.orden, pagina: 1 })}
+                            className="text-sm font-medium text-indigo-700 underline-offset-2 hover:underline dark:text-indigo-300"
+                        >
+                            Limpiar filtros
+                        </Link>
+                    )}
                 </div>
             </section>
 
             {lista.filas.length === 0 ? (
                 <p className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
-                    {MENSAJE_VACIO[filtros.estado]}
+                    {hayFiltrosAvanzados ? 'No hay excepciones que coincidan con esos filtros.' : MENSAJE_VACIO[filtros.estado]}
                 </p>
             ) : (
                 <ul className="space-y-3">
@@ -622,9 +779,10 @@ export default function BandejaClient({ lista, filtros, avisos, puedeConfigurarA
                 </nav>
             )}
 
-            {!enCerradas && lista.total >= 500 && (
+            {lista.truncada && (
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Se muestran las 500 más próximas. Resuelve o descarta las que ya no importan para ver el resto.
+                    Se muestran las 500 más próximas. Resuelve o descarta las que ya no importan para ver el resto, o
+                    cambia el orden a «{ETIQUETA_ORDEN.RECIENTES}» para ver todas.
                 </p>
             )}
         </div>

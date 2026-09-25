@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import BandejaClient from './BandejaClient';
-import type { EstadoAvisos, ExcepcionDetalle, ExcepcionVista, ListaExcepciones } from '@/lib/bandeja/tipos';
+import type { EstadoAvisos, ExcepcionDetalle, ExcepcionVista, ListaExcepciones, MedicoFiltro } from '@/lib/bandeja/tipos';
 
 const refresh = jest.fn();
 const push = jest.fn();
@@ -62,8 +62,12 @@ const lista = (filas: ExcepcionVista[], over: Partial<ListaExcepciones> = {}): L
         criticas: 0,
         porGravedad: { BAJA: 0, MEDIA: 0, ALTA: filas.length, CRITICA: 0 },
     },
+    medicos: [],
+    truncada: false,
     ...over,
 });
+
+const medico = (over: Partial<MedicoFiltro> = {}): MedicoFiltro => ({ id: 'doc-1', nombre: 'Ana Ruiz', ...over });
 
 const avisosOk = (over: Partial<EstadoAvisos> = {}): EstadoAvisos => ({
     salen: true,
@@ -85,6 +89,7 @@ const pintar = (
         <BandejaClient
             lista={lista(filas)}
             filtros={{ estado: 'ACTIVAS' }}
+            medicos={[]}
             avisos={avisosOk()}
             puedeConfigurarAvisos={false}
             {...over}
@@ -150,6 +155,7 @@ describe('BandejaClient — la lista', () => {
             <BandejaClient
                 lista={lista([fila()], { resumen: { activas: 7, sinDueno: 5, mias: 2, criticas: 1, porGravedad: { BAJA: 0, MEDIA: 3, ALTA: 3, CRITICA: 1 } } })}
                 filtros={{ estado: 'ACTIVAS' }}
+                medicos={[]}
                 avisos={avisosOk()}
                 puedeConfigurarAvisos={false}
             />,
@@ -208,6 +214,7 @@ describe('BandejaClient — filtros y páginas', () => {
             <BandejaClient
                 lista={lista([fila()], { pagina: 2, paginas: 3, total: 60 })}
                 filtros={{ estado: 'CERRADAS', pagina: 2 }}
+                medicos={[]}
                 avisos={avisosOk()}
                 puedeConfigurarAvisos={false}
             />,
@@ -219,10 +226,87 @@ describe('BandejaClient — filtros y páginas', () => {
     });
 });
 
+describe('BandejaClient — buscar y filtrar (fecha, texto, médico, orden)', () => {
+    it('🔎 el texto libre NO navega en cada tecla: solo al enviar (Enter o el botón «Buscar»)', async () => {
+        pintar([fila()]);
+        const campo = screen.getByPlaceholderText(/Buscar por médico, paciente, título o nota/);
+        await userEvent.type(campo, 'fabio');
+        expect(push).not.toHaveBeenCalled();
+        await userEvent.click(screen.getByRole('button', { name: 'Buscar' }));
+        expect(push).toHaveBeenLastCalledWith('/dashboard/bandeja?q=fabio');
+    });
+
+    it('el campo de texto se sincroniza si el filtro cambia por fuera (p. ej. «Limpiar filtros»)', () => {
+        const { rerender } = pintar([fila()], { filtros: { estado: 'ACTIVAS', q: 'algo' } });
+        expect(screen.getByPlaceholderText(/Buscar por médico/)).toHaveValue('algo');
+        rerender(
+            <BandejaClient lista={lista([fila()])} filtros={{ estado: 'ACTIVAS' }} medicos={[]} avisos={avisosOk()} puedeConfigurarAvisos={false} />,
+        );
+        expect(screen.getByPlaceholderText(/Buscar por médico/)).toHaveValue('');
+    });
+
+    it('📅 «Desde»/«Hasta» navegan al cambiar', () => {
+        pintar([fila()], { filtros: { estado: 'ACTIVAS' } });
+        fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-09-01' } });
+        expect(push).toHaveBeenLastCalledWith('/dashboard/bandeja?desde=2026-09-01');
+        fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-09-24' } });
+        expect(push).toHaveBeenLastCalledWith('/dashboard/bandeja?hasta=2026-09-24');
+    });
+
+    it('🩺 el filtro «Médico» solo aparece si hay opciones, y navega al elegir', () => {
+        const { unmount } = pintar([fila()], { medicos: [] });
+        expect(screen.queryByLabelText('Médico')).not.toBeInTheDocument();
+        unmount();
+
+        pintar([fila()], { medicos: [medico(), medico({ id: 'doc-2', nombre: 'Luis Pérez' })] });
+        fireEvent.change(screen.getByLabelText('Médico'), { target: { value: 'doc-2' } });
+        expect(push).toHaveBeenLastCalledWith('/dashboard/bandeja?medicoId=doc-2');
+    });
+
+    it('«Ordenar» solo aparece fuera de Cerradas, y navega al cambiar', () => {
+        const { unmount } = pintar([fila()], { filtros: { estado: 'CERRADAS' } });
+        expect(screen.queryByLabelText('Ordenar')).not.toBeInTheDocument();
+        unmount();
+
+        pintar([fila()], { filtros: { estado: 'ACTIVAS' } });
+        fireEvent.change(screen.getByLabelText('Ordenar'), { target: { value: 'URGENCIA' } });
+        expect(push).toHaveBeenLastCalledWith('/dashboard/bandeja?orden=URGENCIA');
+    });
+
+    it('🧹 «Limpiar filtros» solo aparece con algún filtro avanzado activo, y deja estado y orden', () => {
+        const { unmount } = pintar([fila()], { filtros: { estado: 'ACTIVAS' } });
+        expect(screen.queryByText('Limpiar filtros')).not.toBeInTheDocument();
+        unmount();
+
+        pintar([fila()], { filtros: { estado: 'MIAS', q: 'fabio', medicoId: 'doc-1', orden: 'URGENCIA' } });
+        expect(screen.getByText('Limpiar filtros')).toHaveAttribute('href', '/dashboard/bandeja?estado=MIAS&orden=URGENCIA');
+    });
+
+    it('la tarjeta muestra cuándo se detectó la excepción', () => {
+        pintar([fila({ primeraVezIso: '2026-09-22T14:30:00.000Z' })]);
+        expect(screen.getByText(/Detectada/)).toBeInTheDocument();
+    });
+
+    it('el encabezado dice cómo está ordenado', () => {
+        const { unmount } = pintar([fila()], { filtros: { estado: 'ACTIVAS' } });
+        expect(screen.getByText(/Se ordenan por fecha, las más recientes primero/)).toBeInTheDocument();
+        unmount();
+
+        pintar([fila()], { filtros: { estado: 'ACTIVAS', orden: 'URGENCIA' } });
+        expect(screen.getByText(/Se ordenan por urgencia: la cita más cercana primero/)).toBeInTheDocument();
+    });
+});
+
 describe('BandejaClient — los extremos de la paginación', () => {
     const enPagina = (pagina: number) =>
         render(
-            <BandejaClient lista={lista([fila()], { pagina, paginas: 3, total: 60 })} filtros={{ estado: 'ACTIVAS' }} avisos={avisosOk()} puedeConfigurarAvisos={false} />,
+            <BandejaClient
+                lista={lista([fila()], { pagina, paginas: 3, total: 60 })}
+                filtros={{ estado: 'ACTIVAS' }}
+                medicos={[]}
+                avisos={avisosOk()}
+                puedeConfigurarAvisos={false}
+            />,
         );
 
     it('en la primera página no hay «Anterior»', () => {
@@ -238,22 +322,28 @@ describe('BandejaClient — los extremos de la paginación', () => {
     });
 });
 
-describe('BandejaClient — el tope de activas', () => {
-    const conTotal = (total: number, estado: 'ACTIVAS' | 'CERRADAS') =>
+describe('BandejaClient — el tope de activas (orden URGENCIA)', () => {
+    const conTope = (truncada: boolean, estado: 'ACTIVAS' | 'CERRADAS' = 'ACTIVAS') =>
         render(
-            <BandejaClient lista={lista([fila()], { total, paginas: 20 })} filtros={{ estado }} avisos={avisosOk()} puedeConfigurarAvisos={false} />,
+            <BandejaClient
+                lista={lista([fila()], { total: 500, paginas: 20, truncada })}
+                filtros={{ estado, orden: 'URGENCIA' }}
+                medicos={[]}
+                avisos={avisosOk()}
+                puedeConfigurarAvisos={false}
+            />,
         );
 
-    it('con 500 activas avisa que solo se muestran las más próximas; con menos, no', () => {
-        const { unmount } = conTotal(500, 'ACTIVAS');
+    it('cuando el servidor dice que se truncó, avisa que solo se muestran las más próximas', () => {
+        const { unmount } = conTope(true);
         expect(screen.getByText(/Se muestran las 500 más próximas/)).toBeInTheDocument();
         unmount();
-        conTotal(499, 'ACTIVAS');
+        conTope(false);
         expect(screen.queryByText(/Se muestran las 500 más próximas/)).not.toBeInTheDocument();
     });
 
-    it('las cerradas se paginan en la base: ahí no aplica el aviso del tope', () => {
-        conTotal(500, 'CERRADAS');
+    it('las cerradas nunca se truncan: ahí no aplica el aviso', () => {
+        conTope(false, 'CERRADAS');
         expect(screen.queryByText(/Se muestran las 500 más próximas/)).not.toBeInTheDocument();
     });
 });
