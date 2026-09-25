@@ -52,11 +52,13 @@ en el sistema: las pruebas humanas todavía no han empezado.
 | `ScheduleSlot` reabiertos | 225 (los que las citas vigentes tenían ocupados) | — |
 
 El borrado de `Appointment` disparó el trigger de sincronización saliente
-para cada fila (`trg_sync_outbox_appointment`), encolando el evento de
-cancelación/borrado hacia el HIS en `PRUEBAS` para cada cita que seguía
-vigente. Cola verificada inmediatamente después: 367 eventos pendientes,
-drenados por el agente en sus vueltas normales de sondeo — sin intervención
-manual necesaria.
+para cada fila (`trg_sync_outbox_appointment`), encolando un evento `DELETE`
+hacia el HIS en `PRUEBAS` por cada cita (345 en total).
+
+> **Corregido el 2026-09-25.** Este párrafo decía originalmente que la cola
+> se había vaciado sola, "sin intervención manual necesaria". **No fue así:**
+> ninguno de los 345 eventos `DELETE` llegó al HIS en ese momento. Ver
+> [§4](#4-corrección-2026-09-25-las-anulaciones-no-llegaron-al-his).
 
 ## 2. Alcance de médicos — el trío certificado el 18-sep ya no aplica tal cual
 
@@ -106,6 +108,49 @@ igual que se dejó configurado antes del 18-sep.
   Salud Total 9.153 afiliados activos, Sura 10.205 — cifras idénticas a las
   de la certificación original, confirmando que el padrón no se degradó en
   el intervalo.
+
+## 4. Corrección (2026-09-25): las anulaciones no llegaron al HIS
+
+**Qué pasó.** La limpieza del §1 borró, en una sola transacción, las citas
+y **también a sus pacientes**. Al entregar cada evento `DELETE` al agente,
+la API buscaba al paciente para completar los datos de la cita. El paciente
+ya no existía, así que marcaba el evento como "homologación incompleta" y el
+agente, correctamente, se negaba a tocar el HIS. Tras 10 reintentos en unas
+10 horas, los 345 eventos quedaron rendidos. A las 9:50 p. m. del 24-sep
+aparecieron como 345 tarjetas "Un cambio se rindió sin llegar al hospital"
+en la Bandeja de sincronización.
+
+**La causa era un defecto de la API, no del agente.** Para anular, el
+driver solo usa médico y hora (`cancelAppointment` → `CITAS_MEDICAS` por
+`CD_CODI_MED_CIT` + `FE_HORA_CIT` + `NU_ESTA_CIT = 0`). Aun así, la API le
+exigía paciente, servicio y EPS a un `DELETE`. Se corrigió en
+`apps/api/src/mirror/mirror-dispatch.service.ts`: un `DELETE` ahora solo
+exige cupo y médico homologado, con pruebas de regresión.
+
+**Consecuencia real, ya resuelta.** De los 345 eventos:
+
+| Grupo | Cantidad | Riesgo | Qué se hizo |
+|---|---:|---|---|
+| Citas **vigentes** al borrarse | 227 (224 nacidas en el HIS, 3 por WhatsApp) | Seguían activas en `PRUEBAS`: cupos libres en AgenIA pero ocupados en el HIS | Reencoladas tras desplegar el arreglo. Las 227 se entregaron sin errores; el agente las movió a `CITAS_ANULADAS` |
+| Citas **ya canceladas** antes del borrado | 118 | Ninguno: el HIS ya tenía su anulación | Se dejaron rendidas **a propósito**. Anular otra vez por médico + hora podría borrar la cita de otra persona que haya tomado ese cupo después |
+
+Verificación desde el lado del HIS: el agente reportó de vuelta **173
+cancelaciones** (`SyncAudit`, `INBOUND CANCEL`), exactamente las citas
+futuras del grupo de 227. Las 54 citas pasadas se anularon igual, pero
+quedan fuera de la ventana que el agente vigila y por eso no se reportan de
+vuelta. Las 345 tarjetas se borraron de la bandeja. Las 118 que el
+vigilante vuelve a detectar se cierran como "descartadas" con nota: una
+decisión humana no se reabre.
+
+**Regla para cualquier limpieza futura de datos de prueba:**
+
+1. **Cancelar** las citas (cambio de estado, no borrado) y esperar a que la
+   cola de salida quede entregada (`SyncOutbox.deliveredAt` no nulo, sin
+   `deadLettered`).
+2. Solo entonces **borrar** citas y pacientes.
+3. Revisar la Bandeja de sincronización al día siguiente, **no**
+   inmediatamente: el agente tarda horas en rendirse, y una cola "pendiente"
+   justo después del borrado no prueba que vaya a entregarse.
 
 ## Pendiente para cuando se decida pasar de `PRUEBAS` a `ESEHSVP`
 
