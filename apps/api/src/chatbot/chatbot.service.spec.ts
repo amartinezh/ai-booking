@@ -2003,9 +2003,19 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         .spyOn(service as any, 'downloadWhatsAppAudio')
         .mockResolvedValue(Buffer.from('fake-ogg'));
 
-      // sampleSlot cae a las 10:00 de Bogotá (2026-06-05T15:00Z).
+      // sampleSlot cae a las 10:00 de Bogotá (2026-06-05T15:00Z). El menú
+      // (recortado a mitad mañana / mitad tarde) NO lo trae: solo ofrece las
+      // 8:00. La hora dicha se casa contra TODOS los cupos del día, así que
+      // las 10 se encuentran igual.
       redis.store.set(fechaPrefKey, 'mañana a las 10');
-      slots().mockResolvedValueOnce([sampleSlot]);
+      const ocho = {
+        ...sampleSlot,
+        slotId: 'slot-8',
+        fecha: new Date('2026-06-05T13:00:00Z'),
+      };
+      slots()
+        .mockResolvedValueOnce([ocho])
+        .mockResolvedValueOnce([ocho, sampleSlot]);
       provider.extractSchedulingIntent.mockResolvedValueOnce(
         extraction({ transcript: 'Nueva EPS', eps: 'Nueva EPS' }),
       );
@@ -2026,6 +2036,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         'slot-X',
       );
       expect(redis.store.get(stateKey)).toBe(ChatState.AWAITING_CEDULA);
+      expect(slots().mock.calls[1][4]).toEqual({ todos: true });
     });
 
     it('voz: el audio LEE las próximas opciones ("opción A ... con el Doctor Pérez")', async () => {
@@ -2065,6 +2076,78 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(spoken).toContain('opción A');
       expect(spoken).toContain('opción B');
       expect(spoken).toContain('Pérez');
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // Resumen previo a la confirmación, en flujo de VOZ.
+  // Retroalimentación del 2026-09-24: el paciente agendó todo por audio y el
+  // último paso —el resumen que pide el SÍ— le llegó solo por texto. Se
+  // enviaba con sendWhatsAppMessage directo, saltándose smartReply.
+  // ════════════════════════════════════════════════════════════════
+  describe('resumen de la cita en flujo de voz', () => {
+    const avanzarConCedulaConocida = async () => {
+      redis.store.set(`temp_cedula:${ORG_ID}:${SENDER}`, '12345');
+      redis.store.set(`temp_nombre:${ORG_ID}:${SENDER}`, 'Fabio López');
+      redis.store.set(
+        `temp_especialidad:${ORG_ID}:${SENDER}`,
+        'Consulta ambulatoria de medicina general',
+      );
+      redis.store.set(`temp_eps_query:${ORG_ID}:${SENDER}`, 'Particular');
+      await (service as any).advanceAfterSlotSelected({
+        organizationId: ORG_ID,
+        senderId: SENDER,
+        slotId: 'slot-X',
+        slotFechaStr: '2026-09-30T13:30:00.000Z',
+        MSGS: buildMessages('FORMAL'),
+        userMessage: '[audio]',
+        selectedLetter: 'A',
+        via: 'letter',
+      });
+    };
+
+    it('en voz el resumen también se ESCUCHA, y el texto con el aviso legal llega igual', async () => {
+      redis.store.set(`is_ai_flow:${ORG_ID}:${SENDER}`, 'true');
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok', isActive: true });
+      const ttsSpy = jest
+        .spyOn(service as any, 'generateTTS')
+        .mockResolvedValue(Buffer.from('ogg'));
+      jest
+        .spyOn(service as any, 'uploadToWhatsApp')
+        .mockResolvedValue('media-1');
+      const audioSpy = jest
+        .spyOn(service as any, 'sendWhatsAppAudioMessage')
+        .mockResolvedValue(undefined);
+
+      await avanzarConCedulaConocida();
+
+      expect(audioSpy).toHaveBeenCalledTimes(1);
+      const hablado = ttsSpy.mock.calls[0][1] as string;
+      expect(hablado).toContain('Fabio López');
+      expect(hablado).toContain('medicina general');
+      expect(hablado).toContain(' sí ');
+      // Nada de enlaces ni marcado de WhatsApp en la voz.
+      expect(hablado).not.toMatch(/https?:|\*/);
+
+      // El texto completo sigue llegando: es el registro del consentimiento.
+      const [texto] = sentMessages();
+      expect(texto).toContain('Ley 1581');
+      expect(texto).toContain('12345');
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_CONFIRMATION,
+      );
+    });
+
+    it('en texto no cambia nada: solo el resumen escrito, sin audio', async () => {
+      const ttsSpy = jest.spyOn(service as any, 'generateTTS');
+
+      await avanzarConCedulaConocida();
+
+      expect(ttsSpy).not.toHaveBeenCalled();
+      expect(sentMessages()).toHaveLength(1);
+      expect(sentMessages()[0]).toContain('Ley 1581');
     });
   });
 

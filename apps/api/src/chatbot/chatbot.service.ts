@@ -852,6 +852,24 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
+   * Versión HABLADA del resumen previo a la confirmación. Sin el nombre de
+   * relleno 'Paciente' (sonaría a plantilla) y con la fecha dicha como se
+   * dice ("mañana a las 8 y media de la mañana"), no como se escribe.
+   */
+  private resumenCitaHablado(
+    MSGS: ReturnType<typeof buildMessages>,
+    nombre: string | null | undefined,
+    servicio: string,
+    fechaIso: string | null | undefined,
+  ): string {
+    const nombreHablado = nombre && nombre !== 'Paciente' ? nombre : '';
+    const fechaHablada = fechaIso
+      ? formatAppointmentSpoken(fechaIso)
+      : 'la fecha que eligió';
+    return MSGS.resumenCitaAudio(nombreHablado, servicio, fechaHablada);
+  }
+
+  /**
    * Arma la frase hablada de las próximas N citas para el audio del menú de
    * cupos: "opción A, mañana a las 3 de la tarde con el Doctor Pérez. opción B,
    * ...". Las letras coinciden con el listado de texto (mismo orden A, B, C…).
@@ -5012,8 +5030,20 @@ export class ChatbotService implements OnModuleInit {
           const horaPref =
             parseHoraPreferida(aiData.transcript ?? text ?? null) ??
             parseHoraPreferida(fechaPrefRaw);
-          if (horaPref) {
-            const matches = slots.filter((s) => matchesHora(s.fecha, horaPref));
+          if (horaPref && ventana) {
+            // Contra TODOS los cupos del día, no solo los que se ofrecen en el
+            // menú (mitad mañana, mitad tarde): "a las 3" puede existir aunque
+            // no esté entre los ofrecidos.
+            const delDia = await this.appointmentsService.getAvailableSlots(
+              resolvedServiceName as string,
+              epsIdForSlots,
+              organizationId,
+              { desde: ventana.desde, hasta: ventana.hasta },
+              { todos: true },
+            );
+            const matches = delDia.filter((s) =>
+              matchesHora(s.fecha, horaPref),
+            );
             if (matches.length === 1) {
               await this.advanceAfterSlotSelected({
                 organizationId,
@@ -5372,7 +5402,21 @@ export class ChatbotService implements OnModuleInit {
         fechaFormateadaResumen,
         this.configService.get<string>('PRIVACY_POLICY_URL'),
       );
-      await this.sendWhatsAppMessage(senderId, replyResumen);
+      // smartReply y no texto directo: en flujo de voz el resumen también se
+      // ESCUCHA (el paciente lo recibía solo escrito, retroalimentación del
+      // 2026-09-24). El texto completo —con el aviso de la Ley 1581 y el
+      // enlace— viaja siempre, porque `audioText` lo obliga.
+      await this.smartReply(
+        organizationId,
+        senderId,
+        replyResumen,
+        this.resumenCitaHablado(
+          MSGS,
+          nombreAgend,
+          resolvedServiceName as string,
+          fechaVistaFinal,
+        ),
+      );
       await this.setUserState(
         organizationId,
         senderId,
@@ -5581,7 +5625,12 @@ export class ChatbotService implements OnModuleInit {
         fechaFormateada,
         this.configService.get<string>('PRIVACY_POLICY_URL'),
       );
-      await this.sendWhatsAppMessage(senderId, reply);
+      await this.smartReply(
+        organizationId,
+        senderId,
+        reply,
+        this.resumenCitaHablado(MSGS, nombrePrevio, specAgend, slotFechaStr),
+      );
       await this.setUserState(
         organizationId,
         senderId,
@@ -6042,7 +6091,12 @@ export class ChatbotService implements OnModuleInit {
       fechaVista ? formatAppointmentLong(fechaVista) : '',
       this.configService.get<string>('PRIVACY_POLICY_URL'),
     );
-    await this.sendWhatsAppMessage(senderId, reply);
+    await this.smartReply(
+      organizationId,
+      senderId,
+      reply,
+      this.resumenCitaHablado(MSGS, nombre, servicio ?? '', fechaVista),
+    );
     await this.setUserState(
       organizationId,
       senderId,

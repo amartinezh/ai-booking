@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { CommunicationStyle } from '@agenia/database';
 import { getErrorMessage } from '@/lib/error';
+import { normalizarCuposOfrecidos } from '@agenia/shared';
 
 const DEFAULT_BOT_NAME = 'AgenIA';
 
@@ -16,25 +17,33 @@ export async function getMyOrgSettings() {
 
     const s = await prisma.organizationSettings.findUnique({
         where: { organizationId: session.organizationId! },
-        select: { botName: true, communicationStyle: true },
+        select: { botName: true, communicationStyle: true, slotsOfferedCount: true },
     });
     return {
         botName: s?.botName ?? DEFAULT_BOT_NAME,
         communicationStyle: (s?.communicationStyle ?? 'FORMAL') as CommStyle,
+        slotsOfferedCount: normalizarCuposOfrecidos(s?.slotsOfferedCount),
     };
 }
 
-export async function updateMyOrgSettings(data: { botName: string; communicationStyle?: CommStyle }) {
+export async function updateMyOrgSettings(data: {
+    botName: string;
+    communicationStyle?: CommStyle;
+    slotsOfferedCount?: number;
+}) {
     const session = await getSession();
     if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
 
     const botName = data.botName.trim() || DEFAULT_BOT_NAME;
     const communicationStyle: CommunicationStyle = data.communicationStyle === 'INFORMAL' ? 'INFORMAL' : 'FORMAL';
+    // Se acota aquí (2-12) y no solo en el <input>: la server action se puede
+    // llamar con cualquier número. El bot vuelve a acotar al leerlo.
+    const slotsOfferedCount = normalizarCuposOfrecidos(data.slotsOfferedCount);
     try {
         await prisma.organizationSettings.upsert({
             where: { organizationId: session.organizationId! },
-            create: { organizationId: session.organizationId!, botName, communicationStyle },
-            update: { botName, communicationStyle },
+            create: { organizationId: session.organizationId!, botName, communicationStyle, slotsOfferedCount },
+            update: { botName, communicationStyle, slotsOfferedCount },
         });
         revalidatePath('/dashboard/configuracion');
         return { success: true };

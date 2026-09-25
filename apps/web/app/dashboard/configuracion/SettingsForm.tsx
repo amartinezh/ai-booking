@@ -1,13 +1,15 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { MessageCircle, Sparkles, GraduationCap } from 'lucide-react';
+import { MessageCircle, Sparkles, GraduationCap, CalendarClock } from 'lucide-react';
 import { updateMyOrgSettings, type CommStyle } from '@/app/actions/settings';
+import { CUPOS_OFRECIDOS } from '@agenia/shared';
 
 type Props = {
     initial: {
         botName: string;
         communicationStyle: CommStyle;
+        slotsOfferedCount: number;
     };
 };
 
@@ -20,6 +22,9 @@ const PREVIEW_INFORMAL = (botName: string) =>
 export default function SettingsForm({ initial }: Props) {
     const [botName, setBotName] = useState(initial.botName);
     const [style, setStyle] = useState<CommStyle>(initial.communicationStyle);
+    const [slotsOffered, setSlotsOffered] = useState(initial.slotsOfferedCount);
+    const deManiana = Math.ceil(slotsOffered / 2);
+    const deTarde = slotsOffered - deManiana;
     const [isPending, startTransition] = useTransition();
     const [saved, setSaved] = useState(false);
 
@@ -27,7 +32,11 @@ export default function SettingsForm({ initial }: Props) {
         e.preventDefault();
         setSaved(false);
         startTransition(async () => {
-            const res = await updateMyOrgSettings({ botName, communicationStyle: style });
+            const res = await updateMyOrgSettings({
+                botName,
+                communicationStyle: style,
+                slotsOfferedCount: slotsOffered,
+            });
             if (res.success) {
                 setSaved(true);
                 setTimeout(() => setSaved(false), 3000);
@@ -126,6 +135,53 @@ export default function SettingsForm({ initial }: Props) {
                     <p className="text-xs text-zinc-400 mt-3">
                         El tono solo afecta el lenguaje y la estructura visual de los mensajes. La lógica de agendamiento, validaciones y conexión con la base de datos no se ve afectada.
                     </p>
+                </div>
+            </section>
+
+            {/* ── Sección: Cupos ofrecidos ───────────────────── */}
+            <section>
+                <div className="mb-5 flex items-start gap-3">
+                    <div className="rounded-xl bg-emerald-100 dark:bg-emerald-900/30 p-2.5 text-emerald-600 dark:text-emerald-400">
+                        <CalendarClock className="w-5 h-5" />
+                    </div>
+                    <div>
+                        <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Horarios que ofrece el asistente</h2>
+                        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+                            Cuántas opciones de cita muestra el asistente cuando el paciente agenda o reprograma. Se reparten entre mañana y tarde, empezando por las más próximas.
+                        </p>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                    <div>
+                        <label htmlFor="slotsOffered" className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                            Número de opciones
+                        </label>
+                        <input
+                            id="slotsOffered"
+                            type="number"
+                            required
+                            min={CUPOS_OFRECIDOS.MIN}
+                            max={CUPOS_OFRECIDOS.MAX}
+                            step={1}
+                            value={slotsOffered}
+                            onChange={e => {
+                                const n = Number(e.target.value);
+                                if (Number.isFinite(n)) setSlotsOffered(n);
+                            }}
+                            className="w-32 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all dark:text-white"
+                        />
+                        <p className="text-xs text-zinc-400 mt-1.5">
+                            Entre {CUPOS_OFRECIDOS.MIN} y {CUPOS_OFRECIDOS.MAX}. Recomendado: {CUPOS_OFRECIDOS.DEFAULT}.
+                        </p>
+                    </div>
+
+                    <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4 text-sm text-emerald-800 dark:text-emerald-300">
+                        <p className="font-semibold mb-1">Así se reparten</p>
+                        <p>
+                            {deManiana} de la mañana y {deTarde} de la tarde. Si una franja no tiene suficientes, la otra completa.
+                        </p>
+                    </div>
                 </div>
             </section>
 

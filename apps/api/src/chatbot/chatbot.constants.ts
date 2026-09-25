@@ -429,6 +429,27 @@ const FORMAL = {
         `¿Lo confirmamos? Responda *SÍ* para agendarle o *NO* si prefiere cancelar.\n\n${CONSENT_1581_FORMAL(policyUrl)}`,
     ]),
 
+  // AUDIO del resumen (solo en flujo de voz). El paciente habló todo el flujo
+  // y el resumen le llegaba SOLO por texto (retroalimentación 2026-09-24): el
+  // último paso, el que pide el SÍ, era el único que no escuchaba. Aquí va lo
+  // que se entiende de oído —servicio, día y hora, la pregunta— y el aviso de
+  // datos en una frase; la cédula, la EPS, el texto legal completo y el enlace
+  // a la política siguen llegando por escrito en el mismo turno (smartReply
+  // con `audioText` envía siempre el texto).
+  resumenCitaAudio: (
+    nombre: string,
+    especialidad: string,
+    fechaHablada: string,
+  ) =>
+    pick([
+      `${nombre ? `${nombre}, ` : ''}antes de agendarle confirmemos los datos: su cita de ${especialidad} quedaría para ${fechaHablada}. ` +
+        `Si todo está correcto, respóndame sí y queda agendada; si necesita cambiar algo, dígame no. ` +
+        `Al responder sí también autoriza el tratamiento de sus datos personales; le dejo los detalles y la política por escrito.`,
+      `${nombre ? `${nombre}, ` : ''}revisemos antes de cerrar: ${especialidad}, ${fechaHablada}. ` +
+        `¿Está todo bien? Respóndame sí para dejarla confirmada, o no si algo no corresponde. ` +
+        `Con su sí autoriza además el tratamiento de sus datos personales; en el mensaje de texto le dejo el resumen completo y la política.`,
+    ]),
+
   citaConfirmada: (clinicaName: string, fecha: string) =>
     pick([
       `Todo quedó confirmado. Su cita está reservada en *${clinicaName}*.\n\n📅 _${fecha}_\n\n` +
@@ -1137,6 +1158,21 @@ const INFORMAL = {
       `Ya casi terminamos${nombre ? `, ${nombre}` : ''} 🌟. Estos son tus datos:\n\n` +
         `👤 ${nombre}\n🪪 ${cedula}\n💳 ${eps}\n🏥 ${especialidad}\n📅 ${fecha}\n\n` +
         `¿Cerramos? *SÍ* para agendar, *NO* si prefieres cancelar.\n\n${CONSENT_1581_INFORMAL(policyUrl)}`,
+    ]),
+
+  // AUDIO del resumen (solo en flujo de voz; ver la versión formal). Tuteo.
+  resumenCitaAudio: (
+    nombre: string,
+    especialidad: string,
+    fechaHablada: string,
+  ) =>
+    pick([
+      `${nombre ? `${nombre}, ` : ''}antes de agendarte revisemos los datos: tu cita de ${especialidad} quedaría para ${fechaHablada}. ` +
+        `Si todo está bien, respóndeme sí y queda agendada; si quieres cambiar algo, dime no. ` +
+        `Al responder sí también autorizas el tratamiento de tus datos personales; te dejo los detalles y la política por escrito.`,
+      `${nombre ? `${nombre}, ` : ''}ya casi terminamos: ${especialidad}, ${fechaHablada}. ` +
+        `¿Todo bien? Dime sí para confirmarla, o no si algo no cuadra. ` +
+        `Con tu sí autorizas además el tratamiento de tus datos personales; en el mensaje de texto te dejo el resumen completo y la política.`,
     ]),
 
   citaConfirmada: (clinicaName: string, fecha: string) =>

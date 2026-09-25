@@ -2,6 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { doctorLabel } from '../common/doctor-label.util';
 import { Prisma, AttendanceStatus } from '@agenia/database';
+import {
+  CUPOS_OFRECIDOS,
+  normalizarCuposOfrecidos,
+  seleccionarCuposManianaTarde,
+} from '@agenia/shared';
 
 /** Forma reducida de un cupo que `getAvailableSlots` le entrega al chatbot. */
 export interface AvailableSlot {
@@ -39,6 +44,10 @@ export class AppointmentsService {
     // Ventana de fecha preferida por el paciente ("mañana", "el lunes"...).
     // Opcional: sin ella, la consulta es idéntica a la histórica (próximos cupos).
     dateWindow?: { desde: Date; hasta: Date } | null,
+    // `todos`: devuelve la bolsa completa de próximos cupos, sin recortar a
+    // los que se ofrecen. Solo para casar una hora dicha por voz ("mañana a
+    // las 3"): esa hora puede no estar entre los ofrecidos y aun así existir.
+    opts: { todos?: boolean } = {},
   ): Promise<AvailableSlot[]> {
     const now = new Date();
 
@@ -59,25 +68,37 @@ export class AppointmentsService {
     // siendo `true`, así que para una clínica sin espejo esto no cambia nada.
     const doctorFilter = await this.buildDoctorFilter(organizationId);
 
-    const rawSlots = await this.prisma.scheduleSlot.findMany({
-      where: {
-        organizationId: organizationId, // 🏢 AISLAMIENTO DE TENANT
-        isAvailable: true,
-        startTime: startTimeFilter,
-        service: {
-          name: { contains: serviceName, mode: 'insensitive' },
+    const [rawSlots, org] = await Promise.all([
+      this.prisma.scheduleSlot.findMany({
+        where: {
+          organizationId: organizationId, // 🏢 AISLAMIENTO DE TENANT
+          isAvailable: true,
+          startTime: startTimeFilter,
+          service: {
+            name: { contains: serviceName, mode: 'insensitive' },
+          },
+          doctor: doctorFilter,
+          // Filtro clave: El slot debe ser universal (null) o ser exclusivo para la EPS del paciente
+          OR: [{ allowedEpsId: null }, { allowedEpsId: epsId }],
         },
-        doctor: doctorFilter,
-        // Filtro clave: El slot debe ser universal (null) o ser exclusivo para la EPS del paciente
-        OR: [{ allowedEpsId: null }, { allowedEpsId: epsId }],
-      },
-      include: { doctor: true, service: true },
-      orderBy: { startTime: 'asc' },
-      take: 10, // Retornamos los próximos 10 cupos
-    });
+        include: { doctor: true, service: true },
+        orderBy: { startTime: 'asc' },
+        // Una bolsa amplia de próximos cupos para poder elegir entre mañana y
+        // tarde: los 10 primeros de una agenda llena caían todos en la misma
+        // mañana. Lo que se ofrece se recorta abajo.
+        take: CUPOS_OFRECIDOS.POOL,
+      }),
+      this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: {
+          timezone: true,
+          settings: { select: { slotsOfferedCount: true } },
+        },
+      }),
+    ]);
 
     // Mapeamos para que Gemini lo pueda entender fácil
-    return rawSlots.map((slot) => ({
+    const slots = rawSlots.map((slot) => ({
       slotId: slot.id,
       fecha: slot.startTime,
       // Ya formateado para el paciente: el honorífico depende de si el
@@ -85,6 +106,15 @@ export class AppointmentsService {
       doctor: doctorLabel(slot.doctor),
       servicio: slot.service.name,
     }));
+    if (opts.todos) return slots;
+
+    // Cuántos ofrece lo decide la clínica (OrganizationSettings), repartidos
+    // mitad mañana y mitad tarde en SU zona horaria.
+    return seleccionarCuposManianaTarde(
+      slots,
+      normalizarCuposOfrecidos(org?.settings?.slotsOfferedCount),
+      { timeZone: org?.timezone ?? undefined },
+    );
   }
 
   /**

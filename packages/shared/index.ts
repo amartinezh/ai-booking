@@ -237,3 +237,10 @@ export type {
   PerfilCandidato,
   TelefonoDecidido,
 } from './src/alta-en-caliente';
+
+export {
+  CUPOS_OFRECIDOS,
+  normalizarCuposOfrecidos,
+  seleccionarCuposManianaTarde,
+} from './src/cupos-ofrecidos';
+export type { SeleccionCuposOptions } from './src/cupos-ofrecidos';

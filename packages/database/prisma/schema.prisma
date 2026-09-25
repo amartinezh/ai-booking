@@ -116,6 +116,11 @@ model OrganizationSettings {
   //   INFORMAL  → "tú", conversacional, viñetas integradas en párrafo
   communicationStyle CommunicationStyle @default(FORMAL)
 
+  // Cuántos cupos ofrece el bot al agendar o reprogramar, repartidos mitad
+  // mañana y mitad tarde (ver @agenia/shared cupos-ofrecidos.ts). Lo edita el
+  // ORG_ADMIN en /dashboard/configuracion. Rango válido 2-12.
+  slotsOfferedCount Int @default(6)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

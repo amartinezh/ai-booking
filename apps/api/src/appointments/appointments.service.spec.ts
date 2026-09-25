@@ -7,9 +7,12 @@ describe('AppointmentsService', () => {
   let findMany: jest.Mock;
   let mirrorConfig: { findUnique: jest.Mock };
   let entityMap: { findMany: jest.Mock };
+  let orgFindUnique: jest.Mock;
 
   beforeEach(async () => {
     findMany = jest.fn(() => []);
+    // Sin fila de ajustes: la clínica ofrece el default (6).
+    orgFindUnique = jest.fn(() => null);
     // Por defecto: organización SIN espejo. Es el caso de cualquier clínica
     // normal, y el que no debe cambiar de comportamiento.
     mirrorConfig = { findUnique: jest.fn(() => null) };
@@ -32,6 +35,7 @@ describe('AppointmentsService', () => {
             },
             hospitalMirrorConfig: mirrorConfig,
             mirrorEntityMap: entityMap,
+            organization: { findUnique: orgFindUnique },
             $transaction: jest.fn(),
           },
         },
@@ -244,6 +248,67 @@ describe('AppointmentsService', () => {
     });
   });
 
+  // Retroalimentación del 2026-09-24: con la agenda llena el menú traía 10
+  // cupos de la misma mañana. Ahora se ofrecen N (ajuste de la clínica),
+  // mitad mañana y mitad tarde.
+  describe('getAvailableSlots — cuántos cupos se ofrecen', () => {
+    // Cupo a esa hora de Bogotá (UTC-5), dentro de 30 días.
+    const enBogota = (h: number, m = 0) => {
+      const d = new Date(Date.now() + 30 * 86400000);
+      d.setUTCHours(h + 5, m, 0, 0);
+      return d;
+    };
+    const agendaLlena = () =>
+      [
+        ...[0, 15, 30, 45].flatMap((m) => [7, 8].map((h) => enBogota(h, m))),
+        ...[0, 15, 30, 45].map((m) => enBogota(14, m)),
+      ]
+        .sort((a, b) => a.getTime() - b.getTime())
+        .map((startTime, i) => ({
+          id: `s${i}`,
+          startTime,
+          doctor: { fullName: 'Ana', isFunctionalAgenda: false },
+          service: { name: 'Medicina' },
+        }));
+    const hora = (d: Date) => d.getUTCHours() - 5;
+
+    it('consulta una bolsa amplia, no solo los 10 más próximos', async () => {
+      await service.getAvailableSlots('Medicina', null, 'org1');
+      expect(findMany.mock.calls[0][0].take).toBeGreaterThan(10);
+    });
+
+    it('sin ajuste ofrece 6: 3 de mañana y 3 de tarde', async () => {
+      findMany.mockResolvedValueOnce(agendaLlena());
+      const slots = await service.getAvailableSlots('Medicina', null, 'org1');
+      expect(slots).toHaveLength(6);
+      expect(slots.filter((s) => hora(s.fecha) < 12)).toHaveLength(3);
+      expect(slots.filter((s) => hora(s.fecha) >= 12)).toHaveLength(3);
+    });
+
+    it('respeta el número que configuró la clínica', async () => {
+      findMany.mockResolvedValueOnce(agendaLlena());
+      orgFindUnique.mockResolvedValueOnce({
+        timezone: null,
+        settings: { slotsOfferedCount: 4 },
+      });
+      const slots = await service.getAvailableSlots('Medicina', null, 'org1');
+      expect(slots).toHaveLength(4);
+      expect(orgFindUnique.mock.calls[0][0].where).toEqual({ id: 'org1' });
+    });
+
+    it('con { todos: true } devuelve la bolsa completa (match de hora por voz)', async () => {
+      findMany.mockResolvedValueOnce(agendaLlena());
+      const slots = await service.getAvailableSlots(
+        'Medicina',
+        null,
+        'org1',
+        null,
+        { todos: true },
+      );
+      expect(slots).toHaveLength(12);
+    });
+  });
+
   describe('getAvailableSlots — filtro de fecha', () => {
     const whereOf = () => findMany.mock.calls[0][0].where;
 
@@ -303,6 +368,7 @@ describe('AppointmentsService — activación por médico', () => {
           provide: PrismaService,
           useValue: {
             scheduleSlot: { findMany: slotFindMany },
+            organization: { findUnique: jest.fn(() => null) },
             hospitalMirrorConfig: mirrorConfig,
             mirrorEntityMap: entityMap,
           },
