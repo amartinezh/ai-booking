@@ -13,6 +13,9 @@
 #    3. `agenia migrate`        — aplica migraciones Prisma pendientes
 #                                  (no-op seguro si no hay ninguna).
 #    4. `agenia verify`         — batería de comprobaciones post-arranque.
+#    5. `docker builder prune`  — borra la caché de construcción de más de
+#                                  72 h. Solo esa caché: nunca contenedores,
+#                                  imágenes en uso ni volúmenes (la base).
 #
 #  NO reemplaza `agenia update`: ese comando ya hace lo mismo pero corre EN
 #  el servidor y necesita `git pull`, así que solo sirve si el VPS tiene un
@@ -31,6 +34,7 @@
 #    bash deploy/update-vps.sh --host <ip> --ssh-key ~/.ssh/mi_llave
 #    bash deploy/update-vps.sh --host <ip> --dry-run     # solo muestra el rsync
 #    bash deploy/update-vps.sh --host <ip> --skip-migrate # build+verify, sin migrar
+#    bash deploy/update-vps.sh --host <ip> --skip-prune   # sin limpiar la caché
 #
 #  Requiere: haber corrido el instalador (deploy/remote-install.sh) antes, y
 #  tener acceso SSH con la llave dedicada que ese instalador crea.
@@ -53,7 +57,9 @@ trap 'on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
 VPS_IP=""; SSH_KEY=""; SSH_PORT="22"; REMOTE_DIR="/opt/agenia"; REMOTE_USER="root"
 DRY_RUN=0; SKIP_MIGRATE=0; SKIP_VERIFY=0
 
-usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; }
+SKIP_PRUNE=0
+
+usage() { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -65,6 +71,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run)       DRY_RUN=1 ;;
     --skip-migrate)  SKIP_MIGRATE=1 ;;
     --skip-verify)   SKIP_VERIFY=1 ;;
+    --skip-prune)    SKIP_PRUNE=1 ;;
     -h|--help)       usage; exit 0 ;;
     *) die "Opción desconocida: $1 (usa --help)" ;;
   esac
@@ -132,6 +139,23 @@ if [[ $SKIP_VERIFY -eq 1 ]]; then
 else
   head1 "4/4 · Verificando"
   ssh_remote "agenia verify"
+fi
+
+# ── 5. Limpiar caché de construcción ────────────────────────────────────────
+# Cada `agenia build` deja capas de caché que nadie borra: el 2026-09-25 eran
+# 65 GB de un disco de 96 GB. Se conserva lo de las últimas 72 h para que el
+# próximo build siga siendo rápido. La salida se reduce a la línea del total:
+# la lista completa de capas borradas tardó tanto en imprimirse por SSH que
+# cortó la sesión. Si falla, el despliegue ya está hecho: solo se avisa.
+if [[ $SKIP_PRUNE -eq 1 ]]; then
+  warn "Limpieza: --skip-prune, se omite."
+else
+  head1 "Limpiando caché de construcción (> 72 h)"
+  if liberado=$(ssh_remote "docker builder prune -f --filter until=72h 2>&1 | tail -n 1"); then
+    ok "${liberado:-Sin caché vieja que borrar}"
+  else
+    warn "No se pudo limpiar la caché (el despliegue sí quedó hecho). Manual: docker builder prune -f --filter until=72h"
+  fi
 fi
 
 cat <<EOF
