@@ -1824,7 +1824,10 @@ export class ChatbotService implements OnModuleInit {
     identity: SenderIdentity;
     organizationId: string;
     epsId?: string | null;
-    /** Solo al CREAR: el HIS los exige y una clínica sin espejo los ignora. */
+    /**
+     * El HIS los exige y una clínica sin espejo los ignora. Al CREAR se guardan
+     * tal cual; en un paciente que ya existe solo rellenan lo que le falte.
+     */
     dateOfBirth?: Date;
     gender?: string;
     regime?: string;
@@ -1866,14 +1869,27 @@ export class ChatbotService implements OnModuleInit {
       // Tipado explícito (antes `any`): con `any` en `data`, el resultado del
       // update contagiaba `any` a `patient` y todo acceso posterior quedaba sin
       // verificar por el compilador.
-      const updates: { whatsappId?: string; bsuid?: string; epsId?: string } =
-        {};
+      const updates: {
+        whatsappId?: string;
+        bsuid?: string;
+        epsId?: string;
+        dateOfBirth?: Date;
+        gender?: string;
+        regime?: string;
+      } = {};
       if (phoneToPersist && !patient.whatsappId)
         updates.whatsappId = phoneToPersist;
       // El BSUID sí se refresca aunque ya haya uno: es el identificador con el
       // que le responderemos, así que un valor viejo lo dejaría inalcanzable.
       if (bsuid && patient.bsuid !== bsuid) updates.bsuid = bsuid;
       if (epsId && !patient.epsId) updates.epsId = epsId;
+      // Lo que el paciente acaba de contestar porque su ficha no lo tenía (ver
+      // `siguienteDatoDeAlta`). Solo rellena huecos: nunca pisa un dato que ya
+      // estaba, venga del HIS o de un alta anterior.
+      if (dateOfBirth && !patient.dateOfBirth)
+        updates.dateOfBirth = dateOfBirth;
+      if (gender && !patient.gender) updates.gender = gender;
+      if (regime && !patient.regime) updates.regime = regime;
       if (Object.keys(updates).length > 0) {
         try {
           patient = await this.prisma.patientProfile.update({
@@ -1953,6 +1969,7 @@ export class ChatbotService implements OnModuleInit {
       `temp_waitlist_eps_id:${organizationId}:${senderId}`,
       `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
       `temp_waitlist_pending:${organizationId}:${senderId}`,
+      `temp_waitlist_regimen:${organizationId}:${senderId}`,
       `error_count:${organizationId}:${senderId}`,
       `is_ai_flow:${organizationId}:${senderId}`,
     ];
@@ -5254,6 +5271,28 @@ export class ChatbotService implements OnModuleInit {
             SESSION_TTL,
           );
         }
+        // Al paciente existente ahora también se le completan nacimiento, sexo
+        // y régimen desde la sesión: esos datos tienen que ser de ESTA cédula.
+        // Mismo guardia que el del paciente nuevo, de abajo — sin él, el
+        // régimen que dio otra persona desde este número se le pegaba a esta.
+        const cedulaAltaPrevia = await this.redis.get(
+          this.altaCedulaKey(organizationId, senderId),
+        );
+        if (cedulaAltaPrevia !== finalCedula) {
+          await Promise.all([
+            this.redis.del(
+              this.altaKey(organizationId, senderId, 'nacimiento'),
+            ),
+            this.redis.del(this.altaKey(organizationId, senderId, 'sexo')),
+            this.redis.del(this.altaKey(organizationId, senderId, 'regimen')),
+          ]);
+          await this.redis.set(
+            this.altaCedulaKey(organizationId, senderId),
+            finalCedula,
+            'EX',
+            SESSION_TTL,
+          );
+        }
       } else {
         // 🚨 Todo el estado temporal del alta (nombres, apellidos, nacimiento,
         // sexo, régimen) vive bajo `organizationId:senderId` — el número de
@@ -5347,25 +5386,25 @@ export class ChatbotService implements OnModuleInit {
       // PACIENTES, y sin el régimen no se puede resolver el convenio de
       // facturación (la misma EPS tiene convenios distintos por régimen).
       //
-      // Solo se preguntan cuando el paciente NO existe todavía. A quien ya
-      // está registrado no se le pregunta nada: sus datos ya están.
-      if (!patient) {
-        const siguiente = await this.siguienteDatoDeAlta(
+      // Al paciente nuevo se le pregunta todo; al que ya existe, solo lo que
+      // le falte a su ficha (ver `siguienteDatoDeAlta`). A quien la tiene
+      // completa no se le pregunta nada.
+      const siguiente = await this.siguienteDatoDeAlta(
+        organizationId,
+        senderId,
+        epsIdForPatient,
+        patient,
+      );
+      if (siguiente) {
+        await this.pedirDatoDeAlta(
           organizationId,
           senderId,
-          epsIdForPatient,
+          siguiente,
+          MSGS,
+          resolvedEpsName,
+          text,
         );
-        if (siguiente) {
-          await this.pedirDatoDeAlta(
-            organizationId,
-            senderId,
-            siguiente,
-            MSGS,
-            resolvedEpsName,
-            text,
-          );
-          return;
-        }
+        return;
       }
 
       // 🔒 AQUÍ NO SE GUARDA NADA DEL PACIENTE — A PROPÓSITO.
@@ -5708,23 +5747,48 @@ export class ChatbotService implements OnModuleInit {
     return `temp_alta_cedula:${organizationId}:${senderId}`;
   }
 
-  /** Qué dato falta todavía, o null si ya están todos. */
+  /** El cupo de la lista de espera que quedó esperando el régimen del paciente. */
+  private listaRegimenKey(organizationId: string, senderId: string): string {
+    return `temp_waitlist_regimen:${organizationId}:${senderId}`;
+  }
+
+  /**
+   * Qué dato falta todavía, o null si ya están todos.
+   *
+   * `perfil` es el paciente que YA existe, o null si es nuevo. Un paciente que ya
+   * existe no está necesariamente completo: el alta en caliente lo crea con lo que
+   * trae el HIS (nacimiento y sexo, nunca el régimen), y los que se registraron
+   * antes de que el bot preguntara estos datos no tienen ninguno. Antes a quien ya
+   * existía no se le preguntaba nada — caso real del 2026-09-26: una paciente de
+   * Salud Total sin régimen agendó, el bot le confirmó y el agente rechazó la cita
+   * diez veces porque sin régimen no hay convenio. El hospital nunca la tuvo.
+   * Ahora se pregunta solo lo que le falta a SU ficha, y nada más.
+   */
   private async siguienteDatoDeAlta(
     organizationId: string,
     senderId: string,
     epsId: string | null,
+    perfil: Pick<
+      PatientProfile,
+      'dateOfBirth' | 'gender' | 'regime'
+    > | null = null,
   ): Promise<'nacimiento' | 'sexo' | 'regimen' | null> {
     if (
+      !perfil?.dateOfBirth &&
       !(await this.redis.get(
         this.altaKey(organizationId, senderId, 'nacimiento'),
       ))
     )
       return 'nacimiento';
-    if (!(await this.redis.get(this.altaKey(organizationId, senderId, 'sexo'))))
+    if (
+      !perfil?.gender &&
+      !(await this.redis.get(this.altaKey(organizationId, senderId, 'sexo')))
+    )
       return 'sexo';
 
     // El régimen solo aplica con EPS: un particular paga directo y su convenio
     // no depende de nada. Preguntárselo sería una pregunta de más para nada.
+    if (perfil?.regime) return null;
     if (!epsId) return null;
     const eps = await this.prisma.eps.findUnique({ where: { id: epsId } });
     if (!eps || isParticularEps(eps.name)) return null;
@@ -5756,6 +5820,10 @@ export class ChatbotService implements OnModuleInit {
       },
     }[dato];
 
+    // Esta pregunta es del alta, no de la lista de espera: un cupo de lista que
+    // quedó esperando el régimen en otra conversación no debe reservarse con la
+    // respuesta de esta (ver `handleAwaitingRegime`).
+    await this.redis.del(this.listaRegimenKey(organizationId, senderId));
     await this.smartReply(organizationId, senderId, porDato.reply);
     await this.auditarAlta(
       organizationId,
@@ -5983,6 +6051,33 @@ export class ChatbotService implements OnModuleInit {
       );
       return;
     }
+    // ¿Se le preguntó al confirmar un cupo de la lista de espera? Entonces el
+    // paciente ya existe: se completa su ficha y se reserva ESE cupo.
+    const deLista = await this.redis.get(
+      this.listaRegimenKey(organizationId, senderId),
+    );
+    if (deLista) {
+      await this.redis.del(this.listaRegimenKey(organizationId, senderId));
+      const { slotId, patientId } = JSON.parse(deLista) as {
+        slotId: string;
+        patientId: string;
+      };
+      // Solo rellena el hueco: no pisa un régimen que ya estuviera.
+      await this.prisma.patientProfile.updateMany({
+        where: { id: patientId, organizationId, regime: null },
+        data: { regime: regimen },
+      });
+      await this.reservarCupoDeLista(
+        organizationId,
+        senderId,
+        text,
+        MSGS,
+        slotId,
+        patientId,
+      );
+      return;
+    }
+
     await this.redis.set(
       this.altaKey(organizationId, senderId, 'regimen'),
       regimen,
@@ -5999,13 +6094,23 @@ export class ChatbotService implements OnModuleInit {
    */
   private async continuarAlta(ctx: ChatTurnContext): Promise<void> {
     const { organizationId, senderId, MSGS } = ctx;
-    const epsId = await this.redis.get(
-      `temp_eps_id:${organizationId}:${senderId}`,
-    );
+    const [epsId, cedula] = await Promise.all([
+      this.redis.get(`temp_eps_id:${organizationId}:${senderId}`),
+      this.redis.get(`temp_cedula:${organizationId}:${senderId}`),
+    ]);
+    // Sin esto, al paciente existente al que solo le faltaba el régimen se le
+    // pedirían después nacimiento y sexo que su ficha ya tiene.
+    const perfil = cedula
+      ? await this.prisma.patientProfile.findFirst({
+          where: { cedula, organizationId },
+          select: { dateOfBirth: true, gender: true, regime: true },
+        })
+      : null;
     const siguiente = await this.siguienteDatoDeAlta(
       organizationId,
       senderId,
       epsId,
+      perfil,
     );
 
     if (siguiente) {
@@ -6327,6 +6432,35 @@ export class ChatbotService implements OnModuleInit {
           },
         });
         await this.cleanUpSession(organizationId, senderId);
+        return;
+      } else if (bookingResult.reason === 'PATIENT_REGIME_MISSING') {
+        // Red de seguridad: `siguienteDatoDeAlta` ya debió pedirlo antes del
+        // resumen. Si aun así llega sin régimen, NO se confirma una cita que el
+        // hospital no va a poder recibir: se le pregunta, y al contestar vuelve
+        // al resumen por el camino de siempre (`continuarAlta`). El cupo no se
+        // ocupó, así que sigue libre mientras responde.
+        const eps = epsIdForBooking
+          ? await this.prisma.eps.findUnique({ where: { id: epsIdForBooking } })
+          : null;
+        const reply = MSGS.pedirRegimen(eps?.name ?? PARTICULAR_EPS_NAME);
+        await this.redis.del(this.listaRegimenKey(organizationId, senderId));
+        await this.smartReply(organizationId, senderId, reply);
+        await this.setUserState(
+          organizationId,
+          senderId,
+          ChatState.AWAITING_REGIME,
+        );
+        await this.extenderSesionDeAlta(organizationId, senderId);
+        await this.auditFailure(senderId, organizationId, {
+          reason: FailureReason.PATIENT_REGIME_MISSING,
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            stage: 'BOOKING_PATIENT_REGIME_MISSING',
+            slotId: slotIdFinal,
+            cedula: cedulaFinal,
+          },
+        });
         return;
       } else {
         // El servicio distingue "se lo llevó otro paciente" de "el médico dejó
@@ -7914,6 +8048,159 @@ export class ChatbotService implements OnModuleInit {
     return '';
   }
 
+  /**
+   * Reserva el cupo que la lista de espera le ofreció al paciente y le contesta.
+   * Sale de `handleWaitlistConfirmStep` para poder retomarla después de pedirle
+   * el régimen (`handleAwaitingRegime`), sin duplicar la confirmación.
+   */
+  private async reservarCupoDeLista(
+    organizationId: string,
+    senderId: string,
+    text: string | undefined,
+    MSGS: ReturnType<typeof buildMessages>,
+    slotId: string,
+    patientId: string,
+  ): Promise<void> {
+    const patient = await this.prisma.patientProfile.findUnique({
+      where: { id: patientId },
+      include: { eps: true },
+    });
+
+    const bookingResult = await this.appointmentsService.bookAppointment(
+      patientId,
+      slotId,
+      patient?.epsId || null,
+      'WHATSAPP',
+      organizationId,
+    );
+
+    if (bookingResult.success) {
+      const slot = await this.prisma.scheduleSlot.findUnique({
+        where: { id: slotId },
+        include: { doctor: true, service: true },
+      });
+      const fechaFormateada = slot ? formatAppointmentLong(slot.startTime) : '';
+      const orgInfo = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+      });
+      const reply = MSGS.citaConfirmada(
+        orgInfo?.name || 'nuestra Clínica',
+        fechaFormateada,
+      );
+      const confirmacion: OutboundMessageContext = {
+        kind: 'BOOKING_CONFIRMATION',
+        appointmentId: bookingResult.appointmentId,
+      };
+      await this.smartReply(
+        organizationId,
+        senderId,
+        reply,
+        undefined,
+        confirmacion,
+      );
+
+      // En flujo de VOZ el paciente solo escuchó la confirmación; le dejamos
+      // un resumen escrito como respaldo. `sendWhatsAppMessage` directo (no
+      // `smartReply`) para garantizar texto y no re-sintetizar a audio.
+      const isVoiceFlow =
+        (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
+        'true';
+      if (isVoiceFlow && slot && patient) {
+        await this.sendWhatsAppMessage(
+          senderId,
+          MSGS.resumenCitaConfirmadaTexto(
+            patient.fullName || 'Paciente',
+            patient.cedula,
+            patient.eps?.name || PARTICULAR_EPS_NAME,
+            slot.service.name,
+            fechaFormateada,
+          ),
+          confirmacion,
+        );
+      }
+
+      // 📝 Auditoría: cita agendada desde waitlist
+      if (slot && patient) {
+        await this.interactionLog.logBookingConfirmed({
+          whatsappId: senderId,
+          organizationId,
+          appointmentId: bookingResult.appointmentId || 'unknown',
+          patientCedula: patient.cedula,
+          serviceName: slot.service.name,
+          doctorName: slot.doctor.fullName,
+          slotDate: slot.startTime,
+          epsName: patient.eps?.name,
+          userMessage: text,
+          botReply: reply,
+        });
+      }
+    } else if (bookingResult.reason === 'PATIENT_REGIME_MISSING') {
+      // Quien entró a la lista de espera no pasó por el alta: la lista no
+      // alimenta al HIS y no se le preguntó el régimen. Ahora que el cupo SÍ va
+      // al hospital, se le pregunta aquí y se reserva el MISMO cupo al contestar
+      // (`handleAwaitingRegime`). El cupo no se ocupó: sigue libre mientras tanto.
+      await this.redis.set(
+        this.listaRegimenKey(organizationId, senderId),
+        JSON.stringify({ slotId, patientId }),
+        'EX',
+        SESSION_TTL,
+      );
+      const reply = MSGS.pedirRegimen(
+        patient?.eps?.name ?? PARTICULAR_EPS_NAME,
+      );
+      await this.smartReply(organizationId, senderId, reply);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_REGIME,
+      );
+      await this.extenderSesionDeAlta(organizationId, senderId);
+      await this.auditFailure(senderId, organizationId, {
+        reason: FailureReason.PATIENT_REGIME_MISSING,
+        userMessage: text,
+        botReply: reply,
+        metadata: {
+          stage: 'WAITLIST_PATIENT_REGIME_MISSING',
+          slotId,
+          patientId,
+        },
+      });
+    } else if (bookingResult.reason === 'EPS_REGIME_NOT_BILLABLE') {
+      // No es un cupo: es su EPS+régimen sin convenio (ver la nota gemela
+      // en handleConfirmationStep). No tiene sentido devolverlo a la lista
+      // de espera de ESTE cupo — el problema no es el horario.
+      const reply = MSGS.epsRegimenNoFacturable();
+      await this.smartReply(organizationId, senderId, reply);
+
+      await this.auditFailure(senderId, organizationId, {
+        reason: FailureReason.EPS_REGIME_NOT_BILLABLE,
+        userMessage: text,
+        botReply: reply,
+        metadata: {
+          stage: 'WAITLIST_EPS_REGIME_NOT_BILLABLE',
+          slotId,
+          patientId,
+        },
+      });
+    } else {
+      // El servicio distingue "se lo llevó otro paciente" de "el médico dejó
+      // de aceptar WhatsApp". Antes ambos casos usaban el mismo texto, y el
+      // segundo le mentía al paciente: el horario seguía libre.
+      const reply =
+        bookingResult.reason === 'DOCTOR_NOT_BOOKABLE'
+          ? MSGS.medicoNoDisponiblePorWhatsapp()
+          : MSGS.slotTomado();
+      await this.smartReply(organizationId, senderId, reply);
+
+      await this.auditFailure(senderId, organizationId, {
+        reason: FailureReason.SLOT_TAKEN,
+        userMessage: text,
+        botReply: reply,
+        metadata: { stage: 'WAITLIST_SLOT_TAKEN', slotId, patientId },
+      });
+    }
+  }
+
   private async handleWaitlistConfirmStep(
     organizationId: string,
     senderId: string,
@@ -7949,115 +8236,14 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      const patient = await this.prisma.patientProfile.findUnique({
-        where: { id: patientId },
-        include: { eps: true },
-      });
-
-      const bookingResult = await this.appointmentsService.bookAppointment(
-        patientId,
-        slotId,
-        patient?.epsId || null,
-        'WHATSAPP',
+      await this.reservarCupoDeLista(
         organizationId,
+        senderId,
+        text,
+        MSGS,
+        slotId,
+        patientId,
       );
-
-      if (bookingResult.success) {
-        const slot = await this.prisma.scheduleSlot.findUnique({
-          where: { id: slotId },
-          include: { doctor: true, service: true },
-        });
-        const fechaFormateada = slot
-          ? formatAppointmentLong(slot.startTime)
-          : '';
-        const orgInfo = await this.prisma.organization.findUnique({
-          where: { id: organizationId },
-        });
-        const reply = MSGS.citaConfirmada(
-          orgInfo?.name || 'nuestra Clínica',
-          fechaFormateada,
-        );
-        const confirmacion: OutboundMessageContext = {
-          kind: 'BOOKING_CONFIRMATION',
-          appointmentId: bookingResult.appointmentId,
-        };
-        await this.smartReply(
-          organizationId,
-          senderId,
-          reply,
-          undefined,
-          confirmacion,
-        );
-
-        // En flujo de VOZ el paciente solo escuchó la confirmación; le dejamos
-        // un resumen escrito como respaldo. `sendWhatsAppMessage` directo (no
-        // `smartReply`) para garantizar texto y no re-sintetizar a audio.
-        const isVoiceFlow =
-          (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
-          'true';
-        if (isVoiceFlow && slot && patient) {
-          await this.sendWhatsAppMessage(
-            senderId,
-            MSGS.resumenCitaConfirmadaTexto(
-              patient.fullName || 'Paciente',
-              patient.cedula,
-              patient.eps?.name || PARTICULAR_EPS_NAME,
-              slot.service.name,
-              fechaFormateada,
-            ),
-            confirmacion,
-          );
-        }
-
-        // 📝 Auditoría: cita agendada desde waitlist
-        if (slot && patient) {
-          await this.interactionLog.logBookingConfirmed({
-            whatsappId: senderId,
-            organizationId,
-            appointmentId: bookingResult.appointmentId || 'unknown',
-            patientCedula: patient.cedula,
-            serviceName: slot.service.name,
-            doctorName: slot.doctor.fullName,
-            slotDate: slot.startTime,
-            epsName: patient.eps?.name,
-            userMessage: text,
-            botReply: reply,
-          });
-        }
-      } else if (bookingResult.reason === 'EPS_REGIME_NOT_BILLABLE') {
-        // No es un cupo: es su EPS+régimen sin convenio (ver la nota gemela
-        // en handleConfirmationStep). No tiene sentido devolverlo a la lista
-        // de espera de ESTE cupo — el problema no es el horario.
-        const reply = MSGS.epsRegimenNoFacturable();
-        await this.smartReply(organizationId, senderId, reply);
-
-        await this.auditFailure(senderId, organizationId, {
-          reason: FailureReason.EPS_REGIME_NOT_BILLABLE,
-          userMessage: text,
-          botReply: reply,
-          metadata: {
-            stage: 'WAITLIST_EPS_REGIME_NOT_BILLABLE',
-            slotId,
-            patientId,
-          },
-        });
-      } else {
-        // El servicio distingue "se lo llevó otro paciente" de "el médico dejó
-        // de aceptar WhatsApp". Antes ambos casos usaban el mismo texto, y el
-        // segundo le mentía al paciente: el horario seguía libre.
-        const reply =
-          bookingResult.reason === 'DOCTOR_NOT_BOOKABLE'
-            ? MSGS.medicoNoDisponiblePorWhatsapp()
-            : MSGS.slotTomado();
-        await this.smartReply(organizationId, senderId, reply);
-
-        await this.auditFailure(senderId, organizationId, {
-          reason: FailureReason.SLOT_TAKEN,
-          userMessage: text,
-          botReply: reply,
-          metadata: { stage: 'WAITLIST_SLOT_TAKEN', slotId, patientId },
-        });
-      }
     } else if (decision === 'NO') {
       await this.waitlistService.confirmFromWaitlist({
         whatsappId: senderId,

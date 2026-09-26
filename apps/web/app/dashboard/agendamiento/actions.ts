@@ -6,6 +6,7 @@ import { cookies } from 'next/headers';
 import { getSession } from '../../../lib/session';
 import { findEpsEnrollmentIssue } from '../../../lib/eps-enrollment';
 import { getErrorMessage } from '../../../lib/error';
+import { MSG_FALTA_REGIMEN, faltaRegimenParaElEspejo, parseRegimen } from '@agenia/shared';
 import {
     MSG_FUERA_DE_ALCANCE,
     MSG_SIN_PERMISO_AGENDA,
@@ -85,6 +86,32 @@ export async function sendManualWhatsappAction(appointmentId: string, message: s
     }
 }
 
+/** El régimen elegido en el formulario, o null si se dejó en «no registrado». */
+function regimenDelFormulario(formData: FormData): 'SUBSIDIADO' | 'CONTRIBUTIVO' | null {
+    const valor = formData.get('regime');
+    return typeof valor === 'string' ? parseRegimen(valor) : null;
+}
+
+/**
+ * 🧾 ¿Esta cita llegaría al hospital sin el régimen con el que se elige el convenio?
+ *
+ * Misma regla que la reserva por WhatsApp (`faltaRegimenParaElEspejo`, gemela de
+ * `resolveConvenio` del driver): con espejo activo, una EPS con NIT exige régimen.
+ * Sin él el agente rechaza la cita diez veces y se rinde, y el hospital nunca la
+ * tiene — caso real del 2026-09-26. Se comprueba ANTES de escribir nada.
+ */
+async function faltaRegimen(
+    organizationId: string,
+    epsId: string,
+    regimen: string | null | undefined,
+): Promise<boolean> {
+    const [espejo, eps] = await Promise.all([
+        prisma.hospitalMirrorConfig.findUnique({ where: { organizationId }, select: { enabled: true } }),
+        prisma.eps.findFirst({ where: { id: epsId, organizationId }, select: { nit: true } }),
+    ]);
+    return faltaRegimenParaElEspejo({ espejoActivo: !!espejo?.enabled, epsNit: eps?.nit, regimen });
+}
+
 export async function createManualAppointmentAction(formData: FormData) {
     try {
         const patientCedula = formData.get('cedula') as string;
@@ -122,6 +149,16 @@ export async function createManualAppointmentAction(formData: FormData) {
         });
         if (enrollmentIssue) return { success: false, error: enrollmentIssue };
 
+        // 🧾 El régimen del formulario manda; si se dejó vacío, vale el que ya tenga la ficha.
+        const regimenForm = regimenDelFormulario(formData);
+        const fichaPrevia = await prisma.patientProfile.findFirst({
+            where: { cedula: patientCedula, organizationId },
+            select: { regime: true },
+        });
+        if (await faltaRegimen(organizationId, epsId, regimenForm ?? fichaPrevia?.regime)) {
+            return { success: false, error: MSG_FALTA_REGIMEN };
+        }
+
         // 1. Transaction to find/create patient and assign slot
         await prisma.$transaction(async (tx) => {
             // Find or insert Patient
@@ -139,8 +176,15 @@ export async function createManualAppointmentAction(formData: FormData) {
                         fullName: patientName,
                         userId: user.id,
                         epsId: epsId,
-                        organizationId
+                        organizationId,
+                        ...(regimenForm ? { regime: regimenForm } : {}),
                     }
+                });
+            } else if (regimenForm && regimenForm !== patient.regime) {
+                // Lo eligió el personal a propósito: completa o corrige la ficha.
+                patient = await tx.patientProfile.update({
+                    where: { id: patient.id },
+                    data: { regime: regimenForm },
                 });
             }
 
@@ -241,6 +285,17 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
         });
         if (enrollmentIssue) return { success: false, error: enrollmentIssue };
 
+        // 🧾 Misma barrera que al crear: la cita reagendada también viaja al HIS.
+        const regimenForm = regimenDelFormulario(formData);
+        const actual = await prisma.appointment.findFirst({
+            where: { id: appointmentId, organizationId },
+            select: { patient: { select: { regime: true } } },
+        });
+        if (!actual) return { success: false, error: 'Cita original no encontrada.' };
+        if (await faltaRegimen(organizationId, epsId, regimenForm ?? actual.patient.regime)) {
+            return { success: false, error: MSG_FALTA_REGIMEN };
+        }
+
         await prisma.$transaction(async (tx) => {
             const appointment = await tx.appointment.findFirst({
                 where: { id: appointmentId, organizationId },
@@ -252,7 +307,7 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
             // 1. Actulizar Datos de Paciente Básicos
             await tx.patientProfile.update({
                 where: { id: appointment.patientId },
-                data: { fullName: patientName, epsId: epsId }
+                data: { fullName: patientName, epsId: epsId, ...(regimenForm ? { regime: regimenForm } : {}) }
             });
 
             const startDate = new Date(startDateStr);

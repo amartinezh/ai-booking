@@ -4,6 +4,7 @@ import { doctorLabel } from '../common/doctor-label.util';
 import { Prisma, AttendanceStatus } from '@agenia/database';
 import {
   CUPOS_OFRECIDOS,
+  faltaRegimenParaElEspejo,
   normalizarCuposOfrecidos,
   seleccionarCuposManianaTarde,
 } from '@agenia/shared';
@@ -176,7 +177,11 @@ export class AppointmentsService {
      * El texto vive en el pool de MSGS (que tiene estilos de comunicación por
      * clínica), no aquí: este servicio no debería estar redactando WhatsApp.
      */
-    reason?: 'SLOT_TAKEN' | 'DOCTOR_NOT_BOOKABLE' | 'EPS_REGIME_NOT_BILLABLE';
+    reason?:
+      | 'SLOT_TAKEN'
+      | 'DOCTOR_NOT_BOOKABLE'
+      | 'EPS_REGIME_NOT_BILLABLE'
+      | 'PATIENT_REGIME_MISSING';
   }> {
     try {
       let appointmentId: string | undefined;
@@ -235,16 +240,34 @@ export class AppointmentsService {
         // Sin EPS (particular) tampoco aplica: no hay convenio que buscar.
         if (origin !== 'MIRROR' && epsId) {
           const [eps, patient, mirrorConfig] = await Promise.all([
-            tx.eps.findUnique({ where: { id: epsId }, select: { name: true } }),
+            tx.eps.findUnique({
+              where: { id: epsId },
+              select: { name: true, nit: true },
+            }),
             tx.patientProfile.findUnique({
               where: { id: patientId },
               select: { regime: true },
             }),
             tx.hospitalMirrorConfig.findUnique({
               where: { organizationId },
-              select: { blockedEpsRegimeCombos: true },
+              select: { enabled: true, blockedEpsRegimeCombos: true },
             }),
           ]);
+
+          // 🧾 Sin régimen no hay convenio, y sin convenio el agente rechaza la
+          // cita diez veces y se rinde: el hospital nunca la tiene mientras el
+          // paciente cree tenerla (caso real del 2026-09-26, un paciente que ya
+          // existía sin régimen). Se frena ANTES de reservar, con la misma regla
+          // del driver, para que quien llama pida el dato en vez de confirmar.
+          if (
+            faltaRegimenParaElEspejo({
+              espejoActivo: !!mirrorConfig?.enabled,
+              epsNit: eps?.nit,
+              regimen: patient?.regime,
+            })
+          ) {
+            throw new Error('PATIENT_REGIME_MISSING');
+          }
 
           const bloqueadas =
             (mirrorConfig?.blockedEpsRegimeCombos as
@@ -319,6 +342,19 @@ export class AppointmentsService {
           reason: 'EPS_REGIME_NOT_BILLABLE',
           message:
             'Esa EPS no tiene convenio vigente para agendar por este medio con tu régimen.',
+        };
+      }
+
+      if (message === 'PATIENT_REGIME_MISSING') {
+        this.logger.warn(
+          `Reserva frenada: el paciente ${patientId} declara EPS ${epsId} pero ` +
+            `no tiene régimen, y sin él el espejo no puede elegir el convenio.`,
+        );
+        return {
+          success: false,
+          reason: 'PATIENT_REGIME_MISSING',
+          message:
+            'Falta el régimen del paciente para poder agendar con su EPS.',
         };
       }
 

@@ -577,6 +577,8 @@ describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
     epsName?: string;
     regime?: string | null;
     bloqueadas?: { epsName: string; regime: string }[] | null;
+    nit?: string | null;
+    espejo?: boolean;
   }) => {
     const tx = {
       scheduleSlot: {
@@ -585,7 +587,10 @@ describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
       },
       appointment: { create: jest.fn(() => ({ id: 'apt1' })) },
       eps: {
-        findUnique: jest.fn(() => ({ name: opts.epsName ?? 'Nueva EPS' })),
+        findUnique: jest.fn(() => ({
+          name: opts.epsName ?? 'Nueva EPS',
+          nit: opts.nit ?? null,
+        })),
       },
       patientProfile: {
         // OJO: `??` habría convertido el `regime: null` explícito del test de
@@ -597,6 +602,7 @@ describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
       },
       hospitalMirrorConfig: {
         findUnique: jest.fn(() => ({
+          enabled: opts.espejo ?? false,
           blockedEpsRegimeCombos: opts.bloqueadas ?? null,
         })),
       },
@@ -755,5 +761,108 @@ describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
 
     expect(r.success).toBe(true);
     expect(tx.eps.findUnique).not.toHaveBeenCalled();
+  });
+
+  // Caso real del 2026-09-26: una paciente de Salud Total que ya existía sin
+  // régimen agendó por WhatsApp, el bot le confirmó y el agente rechazó la cita
+  // diez veces («no tiene régimen»). El hospital nunca la tuvo.
+  describe('régimen que el espejo necesita para elegir el convenio', () => {
+    const saludTotal = {
+      epsName: 'Salud Total',
+      nit: '800130907',
+      espejo: true,
+      regime: null,
+    };
+
+    it('🚨 espejo activo + EPS con NIT + paciente sin régimen → frena SIN crear la cita ni ocupar el cupo', async () => {
+      const { svc, tx } = await construir(saludTotal);
+
+      const r = await svc.bookAppointment(
+        'p1',
+        's1',
+        'eps-st',
+        'WHATSAPP',
+        'org1',
+      );
+
+      expect(r.success).toBe(false);
+      expect(r.reason).toBe('PATIENT_REGIME_MISSING');
+      expect(tx.appointment.create).not.toHaveBeenCalled();
+      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('también frena una cita MANUAL: el personal tampoco puede mandar al HIS una cita sin convenio', async () => {
+      const { svc } = await construir(saludTotal);
+
+      const r = await svc.bookAppointment(
+        'p1',
+        's1',
+        'eps-st',
+        'MANUAL',
+        'org1',
+      );
+
+      expect(r.reason).toBe('PATIENT_REGIME_MISSING');
+    });
+
+    it('con el régimen puesto, la reserva pasa', async () => {
+      const { svc, tx } = await construir({
+        ...saludTotal,
+        regime: 'SUBSIDIADO',
+      });
+
+      const r = await svc.bookAppointment(
+        'p1',
+        's1',
+        'eps-st',
+        'WHATSAPP',
+        'org1',
+      );
+
+      expect(r.success).toBe(true);
+      expect(tx.appointment.create).toHaveBeenCalled();
+    });
+
+    it('sin espejo activo no se exige: una clínica sin HIS no factura contra convenios', async () => {
+      const { svc } = await construir({ ...saludTotal, espejo: false });
+
+      const r = await svc.bookAppointment(
+        'p1',
+        's1',
+        'eps-st',
+        'WHATSAPP',
+        'org1',
+      );
+
+      expect(r.success).toBe(true);
+    });
+
+    it('una EPS sin NIT viaja como particular al HIS: no se exige régimen', async () => {
+      const { svc } = await construir({ ...saludTotal, nit: null });
+
+      const r = await svc.bookAppointment(
+        'p1',
+        's1',
+        'eps-st',
+        'WHATSAPP',
+        'org1',
+      );
+
+      expect(r.success).toBe(true);
+    });
+
+    it('origin=MIRROR no se frena: la cita nació en el HIS, que ya la tiene', async () => {
+      const { svc } = await construir(saludTotal);
+
+      const r = await svc.bookAppointment(
+        'p1',
+        's1',
+        'eps-st',
+        'MIRROR',
+        'org1',
+      );
+
+      expect(r.success).toBe(true);
+    });
   });
 });

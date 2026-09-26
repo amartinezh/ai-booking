@@ -10,12 +10,14 @@
  */
 jest.mock('../../../lib/prisma', () => {
     const prisma = {
-        appointment: { findFirst: jest.fn(), update: jest.fn() },
+        appointment: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
         patientProfile: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
         scheduleSlot: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
         user: { create: jest.fn() },
         agentProfile: { findUnique: jest.fn() },
         doctorProfile: { findUnique: jest.fn() },
+        hospitalMirrorConfig: { findUnique: jest.fn() },
+        eps: { findFirst: jest.fn() },
         $transaction: jest.fn(),
     };
     prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
@@ -276,5 +278,100 @@ describe('🎯 el alcance del agente y del médico', () => {
                 expect.objectContaining({ where: { id: 'apt-1', organizationId: 'org-1' } }),
             );
         });
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 🧾 El régimen que el hospital necesita para elegir el convenio
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Caso real del 2026-09-26: una cita de Salud Total sin régimen llegó al agente, que
+// la rechazó diez veces y se rindió; el hospital nunca la tuvo. El panel escribe la
+// cita por su cuenta (no pasa por la reserva de la API), así que necesita su propia
+// barrera, con la MISMA regla.
+describe('🧾 régimen del paciente con espejo activo', () => {
+    const mockEspejo = prisma.hospitalMirrorConfig.findUnique as jest.Mock;
+    const mockEps = prisma.eps.findFirst as jest.Mock;
+    const mockFicha = prisma.patientProfile.findFirst as jest.Mock;
+
+    beforeEach(() => {
+        mockEspejo.mockResolvedValue({ enabled: true });
+        mockEps.mockResolvedValue({ nit: '800130907' });
+        mockFicha.mockResolvedValue({ id: 'pac-1', regime: null });
+        (prisma.scheduleSlot.findFirst as jest.Mock).mockResolvedValue(null);
+        (prisma.scheduleSlot.create as jest.Mock).mockResolvedValue({ id: 'slot-n' });
+        (prisma.patientProfile.update as jest.Mock).mockImplementation(async ({ data }) => ({ id: 'pac-1', ...data }));
+    });
+
+    it('🚨 crear: EPS con NIT, ficha sin régimen y formulario sin régimen → no se escribe nada', async () => {
+        const res = await createManualAppointmentAction(form());
+
+        expect(res).toEqual({ success: false, error: expect.stringMatching(/régimen/) });
+        noSeEscribioNada();
+    });
+
+    it('crear: con el régimen en el formulario, agenda y lo guarda en la ficha', async () => {
+        const res = await createManualAppointmentAction(form({ regime: 'SUBSIDIADO' }));
+
+        expect(res.success).toBe(true);
+        expect(prisma.patientProfile.update).toHaveBeenCalledWith(
+            expect.objectContaining({ data: { regime: 'SUBSIDIADO' } }),
+        );
+    });
+
+    it('crear: paciente nuevo con régimen en el formulario nace con él', async () => {
+        mockFicha.mockResolvedValue(null);
+        (prisma.user.create as jest.Mock).mockResolvedValue({ id: 'u-n' });
+        (prisma.patientProfile.create as jest.Mock).mockResolvedValue({ id: 'pac-n' });
+
+        await createManualAppointmentAction(form({ regime: 'CONTRIBUTIVO' }));
+
+        expect(prisma.patientProfile.create).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ regime: 'CONTRIBUTIVO' }) }),
+        );
+    });
+
+    it('crear: si la ficha ya tiene régimen, el formulario puede quedar vacío', async () => {
+        mockFicha.mockResolvedValue({ id: 'pac-1', regime: 'CONTRIBUTIVO' });
+
+        const res = await createManualAppointmentAction(form());
+
+        expect(res.success).toBe(true);
+    });
+
+    it('sin espejo activo no se exige', async () => {
+        mockEspejo.mockResolvedValue({ enabled: false });
+
+        const res = await createManualAppointmentAction(form());
+
+        expect(res).toEqual({ success: true });
+    });
+
+    it('una EPS sin NIT (particular) no lo exige', async () => {
+        mockEps.mockResolvedValue({ nit: null });
+
+        const res = await createManualAppointmentAction(form());
+
+        expect(res.success).toBe(true);
+    });
+
+    it('🚨 modificar: la cita reagendada tampoco sale sin régimen', async () => {
+        mockFindFirst.mockResolvedValue({ ...CITA, patient: { regime: null } });
+
+        const res = await updateManualAppointmentAction('apt-1', form());
+
+        expect(res).toEqual({ success: false, error: expect.stringMatching(/régimen/) });
+        noSeEscribioNada();
+    });
+
+    it('modificar: con régimen en el formulario, lo guarda en la ficha', async () => {
+        mockFindFirst.mockResolvedValue({ ...CITA, patient: { regime: null } });
+
+        const res = await updateManualAppointmentAction('apt-1', form({ regime: 'SUBSIDIADO' }));
+
+        expect(res.success).toBe(true);
+        expect(prisma.patientProfile.update).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ regime: 'SUBSIDIADO' }) }),
+        );
     });
 });

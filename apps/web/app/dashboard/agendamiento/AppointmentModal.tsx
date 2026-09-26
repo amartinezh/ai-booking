@@ -168,6 +168,15 @@ export default function AppointmentModal({
                                 <p className="mt-1 text-[11px] text-zinc-400">Para agendar por EPS el paciente debe estar en el Padrón EPS. Use “Particular” para pago directo.</p>
                             </div>
                             <div>
+                                <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">Régimen del paciente</label>
+                                <select name="regime" defaultValue={eventData.patient?.regime ?? ''} className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm">
+                                    <option value="">No registrado / Particular</option>
+                                    <option value="SUBSIDIADO">Subsidiado</option>
+                                    <option value="CONTRIBUTIVO">Contributivo</option>
+                                </select>
+                                <p className="mt-1 text-[11px] text-zinc-400">Con EPS, el hospital lo necesita para elegir el convenio: sin él la cita no llega al HIS.</p>
+                            </div>
+                            <div>
                                 <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">Fecha y Hora</label>
                                 <input required name="startDate" type="datetime-local" defaultValue={dStrEdit} className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm" />
                             </div>
@@ -321,6 +330,15 @@ export default function AppointmentModal({
                             {epsList.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                         </select>
                         <p className="mt-1 text-[11px] text-zinc-400">Para agendar por EPS el paciente debe estar en el Padrón EPS. Use “Particular” para pago directo.</p>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">Régimen del paciente</label>
+                        <select name="regime" defaultValue="" className="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 text-sm">
+                            <option value="">No registrado / Particular</option>
+                            <option value="SUBSIDIADO">Subsidiado</option>
+                            <option value="CONTRIBUTIVO">Contributivo</option>
+                        </select>
+                        <p className="mt-1 text-[11px] text-zinc-400">Con EPS, el hospital lo necesita para elegir el convenio: sin él la cita no llega al HIS.</p>
                     </div>
 
                     <div>

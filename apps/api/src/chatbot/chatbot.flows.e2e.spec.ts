@@ -590,6 +590,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         organizationId: ORG_ID,
         epsId: null,
         whatsappId: SENDER,
+        // Ficha completa: a la que le falta algo sí se le pregunta (ver 8.10).
+        dateOfBirth: new Date('1975-06-01'),
+        gender: 'F',
       });
 
       await say('Hola');
@@ -1831,13 +1834,15 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(pedro?.fullName).not.toContain('Pérez');
     });
 
-    it('8.8 a un paciente que YA existe no se le pregunta nada de esto', async () => {
+    it('8.8 a un paciente que YA existe con su ficha completa no se le pregunta nada de esto', async () => {
       db.patients.push({
         id: 'pat-viejo',
         cedula: '1088123456',
         fullName: 'Juan Pérez',
         organizationId: ORG_ID,
         epsId: null,
+        dateOfBirth: new Date('1980-03-15'),
+        gender: 'M',
       });
 
       await say('Hola');
@@ -1848,6 +1853,129 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       // Sin nombre, sin nacimiento, sin sexo: directo al resumen.
       expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+    });
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 🧾 EL PACIENTE QUE YA EXISTE NO ESTÁ NECESARIAMENTE COMPLETO
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // Caso real del 2026-09-26: una paciente de Salud Total que ya existía sin
+    // régimen (el alta en caliente crea al paciente con nacimiento y sexo del
+    // HIS, pero nunca con régimen) agendó por WhatsApp. El bot no le preguntó
+    // nada, le confirmó la cita, y el agente la rechazó diez veces: sin régimen
+    // no hay convenio. El hospital nunca la tuvo y la paciente creía tener cita.
+    describe('8.10 al paciente existente se le pregunta SOLO lo que le falta', () => {
+      const existente = (extra: Record<string, unknown> = {}) =>
+        db.patients.push({
+          id: 'pat-his',
+          cedula: '1088123456',
+          fullName: 'Juan Pérez',
+          organizationId: ORG_ID,
+          epsId: EPS_SURA.id,
+          dateOfBirth: new Date('1980-03-15'),
+          gender: 'M',
+          regime: null,
+          ...extra,
+        });
+      const hastaLaCedulaConSura = async () => {
+        db.enrolled.push({ cedula: '1088123456', epsId: EPS_SURA.id });
+        await say('Hola');
+        await say('A');
+        await say('B'); // Sura
+        await say('A');
+        await say('1088123456');
+      };
+
+      it('🚨 con EPS y sin régimen: pregunta el régimen, y solo eso', async () => {
+        existente();
+        await hastaLaCedulaConSura();
+
+        expect(await state()).toBe(ChatState.AWAITING_REGIME);
+        expect(lastSent()).toMatch(/subsidiad|contributiv/i);
+
+        await say('A'); // subsidiado
+        // Nacimiento y sexo ya estaban en su ficha: no se vuelven a pedir.
+        expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      });
+
+      it('al responder SÍ el régimen queda en su ficha, sin pisar lo demás', async () => {
+        existente();
+        await hastaLaCedulaConSura();
+        await say('A');
+        await say('Sí');
+
+        const p = db.patients.find((x) => x.id === 'pat-his');
+        expect(p.regime).toBe('SUBSIDIADO');
+        expect(p.dateOfBirth).toEqual(new Date('1980-03-15'));
+        expect(p.gender).toBe('M');
+        expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      });
+
+      it('si ya tiene régimen no se le pregunta, y nunca se le cambia', async () => {
+        existente({ regime: 'CONTRIBUTIVO' });
+        await hastaLaCedulaConSura();
+
+        expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+        await say('Sí');
+        expect(db.patients[0].regime).toBe('CONTRIBUTIVO');
+      });
+
+      it('una ficha vieja sin nacimiento ni sexo los pide (el HIS los exige para darlo de alta)', async () => {
+        existente({ dateOfBirth: null, gender: null });
+        await hastaLaCedulaConSura();
+
+        expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+        await responderAlta(say, { conEps: true });
+        expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+        await say('Sí');
+
+        const p = db.patients[0];
+        expect(p.dateOfBirth).toEqual(new Date('1980-03-15'));
+        expect(p.gender).toBe('M');
+        expect(p.regime).toBe('CONTRIBUTIVO');
+      });
+
+      it('el régimen que dio OTRA persona desde el mismo WhatsApp no se le pega', async () => {
+        // Primera persona, nueva, con Sura: contesta SUBSIDIADO y agenda.
+        db.enrolled.push({ cedula: '99887766', epsId: EPS_SURA.id });
+        await say('Hola');
+        await say('A');
+        await say('B');
+        await say('A');
+        await say('99887766');
+        await decirNombre(say);
+        await responderAlta(say);
+        await say('A'); // subsidiado
+        await say('Sí');
+
+        // Segunda persona, ya existente y sin régimen, mismo hilo.
+        existente();
+        await hastaLaCedulaConSura();
+
+        expect(await state()).toBe(ChatState.AWAITING_REGIME);
+      });
+
+      it('red de seguridad: si la reserva se frena por falta de régimen, lo pregunta y vuelve al resumen', async () => {
+        existente({ regime: 'CONTRIBUTIVO' });
+        await hastaLaCedulaConSura();
+        appointments.bookAppointment.mockResolvedValueOnce({
+          success: false,
+          reason: 'PATIENT_REGIME_MISSING',
+        });
+        await say('Sí');
+
+        // NUNCA se le dice «confirmada» a una cita que el hospital no va a tener.
+        expect(lastSent()).not.toMatch(/confirmad/i);
+        expect(await state()).toBe(ChatState.AWAITING_REGIME);
+        expect(interactionLog.logFailure).toHaveBeenCalledWith(
+          expect.objectContaining({ reason: 'PATIENT_REGIME_MISSING' }),
+        );
+
+        await say('B');
+        expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+        await say('Sí');
+        expect(appointments.bookAppointment).toHaveBeenCalledTimes(2);
+      });
     });
   });
 });

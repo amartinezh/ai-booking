@@ -1,4 +1,4 @@
-import { PARTICULAR_EPS_NAME, isParticularEps } from './eps';
+import { PARTICULAR_EPS_NAME, isParticularEps, faltaRegimenParaElEspejo } from './eps';
 
 /**
  * «Particular» decide algo concreto: una cita de pago directo NO exige que el
@@ -33,5 +33,41 @@ describe('isParticularEps', () => {
     ['undefined', undefined],
   ])('%s NO es Particular', (_e, valor) => {
     expect(isParticularEps(valor)).toBe(false);
+  });
+});
+
+/**
+ * La regla gemela de `resolveConvenio` del driver: si una se mueve y la otra no,
+ * vuelve el caso del 2026-09-26 (cita confirmada que el hospital nunca recibió).
+ */
+describe('faltaRegimenParaElEspejo', () => {
+  const base = { espejoActivo: true, epsNit: '800130907', regimen: null };
+
+  it('con espejo, EPS con NIT y sin régimen: falta', () => {
+    expect(faltaRegimenParaElEspejo(base)).toBe(true);
+  });
+
+  it.each([
+    ['cadena vacía', ''],
+    ['solo espacios', '   '],
+    ['undefined', undefined],
+  ])('un régimen %s cuenta como ausente', (_e, regimen) => {
+    expect(faltaRegimenParaElEspejo({ ...base, regimen })).toBe(true);
+  });
+
+  it.each(['SUBSIDIADO', 'CONTRIBUTIVO'])('con régimen %s no falta', (regimen) => {
+    expect(faltaRegimenParaElEspejo({ ...base, regimen })).toBe(false);
+  });
+
+  it('sin espejo activo no aplica', () => {
+    expect(faltaRegimenParaElEspejo({ ...base, espejoActivo: false })).toBe(false);
+  });
+
+  it.each([
+    ['sin NIT (null)', null],
+    ['NIT vacío', ''],
+    ['NIT en blanco', '  '],
+  ])('una EPS %s viaja como particular: no hace falta régimen', (_e, epsNit) => {
+    expect(faltaRegimenParaElEspejo({ ...base, epsNit })).toBe(false);
   });
 });

@@ -70,6 +70,14 @@ const FAILURE_META: Record<
         actionable: true,
         description: 'La EPS está suspendida. El paciente quería agendar pero no se pudo.',
     },
+    PATIENT_REGIME_MISSING: {
+        label: 'Faltaba el régimen del paciente',
+        icon: '🧾',
+        severity: 'warning',
+        actionable: false,
+        description:
+            'El paciente iba a agendar por su EPS sin régimen registrado (subsidiado/contributivo). La reserva se frenó antes de confirmar y el bot se lo preguntó. Si se repite, algún camino llega a la reserva sin haberlo pedido.',
+    },
     EPS_REGIME_NOT_BILLABLE: {
         label: 'EPS sin convenio para su régimen',
         icon: '🧾',

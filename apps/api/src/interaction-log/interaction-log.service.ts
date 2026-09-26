@@ -47,6 +47,11 @@ export enum FailureReason {
   // (HospitalMirrorConfig.blockedEpsRegimeCombos) → se rechaza ANTES de
   // confirmar, para no dejar la cita agonizando en dead-letter después.
   EPS_REGIME_NOT_BILLABLE = 'EPS_REGIME_NOT_BILLABLE',
+  // El paciente declara una EPS con NIT pero no tiene régimen: sin él el espejo
+  // no puede elegir el convenio y el agente rechazaría la cita. La reserva se
+  // frena ANTES de confirmar y el bot se lo pregunta. No debería verse: el alta
+  // ya lo pide; si aparece, algún camino llegó a la reserva sin preguntarlo.
+  PATIENT_REGIME_MISSING = 'PATIENT_REGIME_MISSING',
   SESSION_EXPIRED = 'SESSION_EXPIRED',
   MAX_RETRIES = 'MAX_RETRIES',
   PATIENT_NOT_FOUND = 'PATIENT_NOT_FOUND',

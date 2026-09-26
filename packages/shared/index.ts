@@ -51,7 +51,12 @@ export {
   documentoSinCerosIniciales,
   esDocumentoValido,
 } from './src/documento';
-export { PARTICULAR_EPS_NAME, isParticularEps } from './src/eps';
+export {
+  PARTICULAR_EPS_NAME,
+  isParticularEps,
+  faltaRegimenParaElEspejo,
+  MSG_FALTA_REGIMEN,
+} from './src/eps';
 export {
   isWhatsappPhoneId,
   whatsappRecipientField,
