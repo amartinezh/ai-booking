@@ -163,7 +163,16 @@ export class WaitlistService {
     whatsappId: string;
     organizationId: string;
     confirmed: boolean;
-  }): Promise<{ slotId: string | null; patientId: string | null }> {
+  }): Promise<{
+    slotId: string | null;
+    patientId: string | null;
+    /**
+     * La EPS con la que el paciente ENTRÓ a la lista (null = particular). La cita se
+     * reserva con esta, no con la de su ficha: quien está en el padrón de una EPS
+     * puede pedir una cita particular, y la ficha solo guarda su EPS de siempre.
+     */
+    epsId: string | null;
+  }> {
     const { whatsappId, organizationId, confirmed } = params;
 
     const entry = await this.prisma.waitlistEntry.findFirst({
@@ -171,7 +180,7 @@ export class WaitlistService {
       include: { patient: true },
     });
 
-    if (!entry) return { slotId: null, patientId: null };
+    if (!entry) return { slotId: null, patientId: null, epsId: null };
 
     const metadata = readWaitlistMetadata(entry.metadata);
     const slotId = metadata.pendingSlotId ?? null;
@@ -181,7 +190,7 @@ export class WaitlistService {
         where: { id: entry.id },
         data: { status: 'CONFIRMED' },
       });
-      return { slotId, patientId: entry.patientId };
+      return { slotId, patientId: entry.patientId, epsId: entry.epsId };
     }
 
     // Rechazó: marcar como cancelado y ofrecer al siguiente
@@ -201,7 +210,7 @@ export class WaitlistService {
       });
     }
 
-    return { slotId: null, patientId: null };
+    return { slotId: null, patientId: null, epsId: null };
   }
 
   // ════════════════════════════════════════════════════════════

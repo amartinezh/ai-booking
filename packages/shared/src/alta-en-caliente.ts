@@ -251,3 +251,20 @@ export function huecosQueRellenaElPadron(
   }
   return cambios;
 }
+
+/**
+ * El régimen del padrón para agendar con `epsId`, SOLO si no hay ninguna duda; si no,
+ * null y el bot se lo pregunta al paciente (preguntar nunca es un error; adivinar sí).
+ *
+ * Más estricta que `afiliacionDelPadron` a propósito: además de una sola EPS y un
+ * solo régimen, esa EPS tiene que ser LA MISMA con la que el paciente está agendando.
+ * El régimen es de una afiliación concreta; el de otra EPS elegiría otro convenio.
+ */
+export function regimenSeguroDelPadron(
+  filas: FilaPadron[],
+  epsId: string | null | undefined,
+): Regimen | null {
+  if (!epsId) return null;
+  const afiliacion = afiliacionDelPadron(filas);
+  return afiliacion.epsId === epsId ? afiliacion.regime : null;
+}

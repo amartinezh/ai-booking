@@ -51,6 +51,7 @@ export {
   documentoSinCerosIniciales,
   esDocumentoValido,
 } from './src/documento';
+export { reconocerEps } from './src/eps-colombia';
 export {
   PARTICULAR_EPS_NAME,
   isParticularEps,
@@ -239,6 +240,7 @@ export {
   decidirTelefono,
   huecosQueRellenaElPadron,
   notaDeAlta,
+  regimenSeguroDelPadron,
 } from './src/alta-en-caliente';
 export type {
   AfiliacionPadron,

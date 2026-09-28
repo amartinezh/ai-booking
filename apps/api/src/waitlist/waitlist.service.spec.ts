@@ -287,7 +287,9 @@ describe('WaitlistService', () => {
         confirmed: true,
       });
 
-      expect(r).toEqual({ slotId: 'slot-7', patientId: 'p1' });
+      // La EPS con la que ENTRÓ a la lista: la cita se reserva con esa, no con la
+      // de su ficha (quien está en el padrón puede pedirla particular).
+      expect(r).toEqual({ slotId: 'slot-7', patientId: 'p1', epsId: 'eps-1' });
       expect(prisma.waitlistEntry.update).toHaveBeenCalledWith({
         where: { id: 'w1' },
         data: { status: 'CONFIRMED' },
@@ -313,7 +315,7 @@ describe('WaitlistService', () => {
         confirmed: false,
       });
 
-      expect(r).toEqual({ slotId: null, patientId: null });
+      expect(r).toEqual({ slotId: null, patientId: null, epsId: null });
       expect(prisma.waitlistEntry.update).toHaveBeenNthCalledWith(1, {
         where: { id: 'w1' },
         data: { status: 'CANCELLED' },
@@ -332,7 +334,7 @@ describe('WaitlistService', () => {
         confirmed: true,
       });
 
-      expect(r).toEqual({ slotId: null, patientId: null });
+      expect(r).toEqual({ slotId: null, patientId: null, epsId: null });
       expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
     });
 

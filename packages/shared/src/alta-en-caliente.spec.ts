@@ -2,6 +2,7 @@ import { normalizePhoneToE164Co } from './avisos-csv';
 import {
   afiliacionDelPadron,
   huecosQueRellenaElPadron,
+  regimenSeguroDelPadron,
   decidirAlta,
   decidirTelefono,
   notaDeAlta,
@@ -297,5 +298,36 @@ describe("huecosQueRellenaElPadron", () => {
         { epsId: "st", regime: null },
       ),
     ).toEqual({ epsId: "st" });
+  });
+});
+
+// Lo que usa el bot para NO preguntar el régimen: solo con certeza total.
+describe('regimenSeguroDelPadron', () => {
+  const st = { epsId: 'st', regime: 'SUBSIDIADO' };
+
+  it('una sola EPS en el padrón, la misma con la que agenda, un régimen: lo toma', () => {
+    expect(regimenSeguroDelPadron([st], 'st')).toBe('SUBSIDIADO');
+  });
+
+  it('agenda con OTRA EPS: no lo toma (sería el régimen de otra afiliación)', () => {
+    expect(regimenSeguroDelPadron([st], 'sura')).toBeNull();
+  });
+
+  it('el documento está en dos EPS: no lo toma, aunque una sea la elegida', () => {
+    expect(
+      regimenSeguroDelPadron([st, { epsId: 'sura', regime: 'SUBSIDIADO' }], 'st'),
+    ).toBeNull();
+  });
+
+  it('filas de la misma EPS que se contradicen: no lo toma', () => {
+    expect(
+      regimenSeguroDelPadron([st, { epsId: 'st', regime: 'CONTRIBUTIVO' }], 'st'),
+    ).toBeNull();
+  });
+
+  it('sin régimen en el padrón, sin filas o sin EPS elegida: null', () => {
+    expect(regimenSeguroDelPadron([{ epsId: 'st', regime: null }], 'st')).toBeNull();
+    expect(regimenSeguroDelPadron([], 'st')).toBeNull();
+    expect(regimenSeguroDelPadron([st], null)).toBeNull();
   });
 });

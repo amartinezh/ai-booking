@@ -47,6 +47,7 @@ import {
   parseRegimen,
   isParticularEps,
   normalizeDocumento,
+  reconocerEps,
   documentoSinCerosIniciales,
   variantesDeTelefono,
 } from '@agenia/shared';
@@ -122,6 +123,8 @@ export class ChatbotService implements OnModuleInit {
     /^(cambiar (mi |la )?cita|reprogramar|reagendar|modificar (mi |la )?cita|mover (mi |la )?cita)/i;
   private greetingRegex: RegExp = /^(hola)$/i;
   private particularRegex: RegExp = /^(particular)$/i;
+  // Las mismas palabras, en CUALQUIER parte de la frase («la quiero particular»).
+  private particularEnFraseRegex: RegExp = /(^|\s)(particular)(\s|$)/i;
   private farewellRegex: RegExp = /^(gracias)$/i;
   // Cierre/despedida: el paciente quiere TERMINAR la conversación ("chao",
   // "salir", "no quiero agendar"...). Match EXACTO; se aplica en cualquier
@@ -336,6 +339,10 @@ export class ChatbotService implements OnModuleInit {
     if (particularWords.length > 0) {
       this.particularRegex = new RegExp(
         `^(${particularWords.join('|')})$`,
+        'i',
+      );
+      this.particularEnFraseRegex = new RegExp(
+        `(^|\\s)(${particularWords.join('|')})(\\s|$)`,
         'i',
       );
     }
@@ -1970,6 +1977,7 @@ export class ChatbotService implements OnModuleInit {
       `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
       `temp_waitlist_pending:${organizationId}:${senderId}`,
       `temp_waitlist_regimen:${organizationId}:${senderId}`,
+      `temp_eps_oferta_particular:${organizationId}:${senderId}`,
       `error_count:${organizationId}:${senderId}`,
       `is_ai_flow:${organizationId}:${senderId}`,
     ];
@@ -2392,7 +2400,7 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
     text: string | null,
     geminiEps: string | null,
-  ): Promise<{ id: string; name: string } | null> {
+  ): Promise<{ id: string; name: string } | 'AMBIGUA' | null> {
     // 1) Letra (tolerante a voz: "be"→B, "la a"→A, etc.)
     const candidate = this.extractOptionLetter(text);
     if (candidate) {
@@ -2416,11 +2424,39 @@ export class ChatbotService implements OnModuleInit {
       select: { id: true, name: true },
     });
 
+    // 2b) «Particular» dentro de una frase. Si la frase nombra TAMBIÉN otra EPS
+    // («tengo Sura pero la quiero particular», «no quiero particular, por Sura»),
+    // no se elige por el paciente: antes ganaba el nombre más largo del catálogo,
+    // o sea, Sura o Particular según cómo se llamara la EPS. Se le pregunta.
+    if (raw && this.particularEnFraseRegex.test(raw)) {
+      // Solo cuenta una EPS que la clínica SÍ ofrece: «tengo Coomeva pero la
+      // quiero particular» con Coomeva fuera del menú no tiene otra lectura.
+      const ofrecidas = epsList.filter((e) => !isParticularEps(e.name));
+      const nombrada = reconocerEps(text);
+      const otraEps =
+        (nombrada !== null &&
+          ofrecidas.some((e) => reconocerEps(e.name) === nombrada)) ||
+        this.matchCatalogByName(text, ofrecidas) !== null;
+      if (otraEps) return 'AMBIGUA';
+      const part = await this.ensureParticularEpsForOrg(organizationId);
+      if (part) return part;
+    }
+
     // 3) Match determinista por nombre (bidireccional, sin LLM).
     const byName =
       this.matchCatalogByName(text, epsList) ||
       this.matchCatalogByName(geminiEps, epsList);
     if (byName) return byName;
+
+    // 3b) Una EPS real reconocida por su nombre se resuelve SOLO contra sí misma:
+    // la del menú que sea la misma EPS aunque se escriba distinto («mutualser» →
+    // «Asociación Mutual Ser»), o ninguna. Nunca pasa al mapeo semántico: el LLM
+    // podía «acercar» Coomeva a otra EPS del menú, y agendar con el convenio de
+    // otra EPS es peor que decirle que la suya no está (ver `epsNoDisponible`).
+    const nombrada = reconocerEps(text) ?? reconocerEps(geminiEps);
+    if (nombrada) {
+      return epsList.find((e) => reconocerEps(e.name) === nombrada) ?? null;
+    }
 
     // 4) Mapeo semántico (LLM) contra el catálogo real de EPS — último recurso.
     const phrase = (text || geminiEps || '').trim();
@@ -2433,6 +2469,81 @@ export class ChatbotService implements OnModuleInit {
     if (semantic) return semantic;
 
     return null;
+  }
+
+  /**
+   * ¿El paciente nombró una EPS que esta clínica NO atiende? Devuelve su nombre para
+   * decírselo, o null si no nombró ninguna reconocible (entonces se le repite el
+   * menú, como siempre). Solo tiene sentido después de que `resolveEpsFromInput`
+   * no encontró nada en el menú.
+   *
+   * Dos fuentes, ambas deterministas: el catálogo de EPS de Colombia
+   * (`reconocerEps`) y las EPS que la clínica tiene desactivadas (por su nombre
+   * exacto, para las que no estén en el catálogo).
+   */
+  private async epsNoDisponible(
+    organizationId: string,
+    text: string | null,
+    geminiEps: string | null,
+  ): Promise<string | null> {
+    const epsList = await this.prisma.eps.findMany({
+      where: { organizationId },
+      select: { name: true, isActive: true },
+    });
+    const nombrada = reconocerEps(text) ?? reconocerEps(geminiEps);
+    if (nombrada) {
+      // Si la clínica la tiene ACTIVA, no está «no disponible»: no se ofrece nada.
+      const activa = epsList.some(
+        (e) => e.isActive && reconocerEps(e.name) === nombrada,
+      );
+      return activa ? null : nombrada;
+    }
+    const norm = (t: string | null) => textoParaCoincidencia(t) ?? '';
+    const escrita = norm(text) || norm(geminiEps);
+    if (!escrita) return null;
+    const inactiva = epsList.find(
+      (e) =>
+        !e.isActive && !isParticularEps(e.name) && norm(e.name) === escrita,
+    );
+    return inactiva?.name ?? null;
+  }
+
+  /**
+   * Le dice que su EPS no está disponible y le ofrece la cita particular. La
+   * respuesta (SÍ/NO) se lee en el mismo paso de EPS, con la marca que deja aquí.
+   */
+  private async ofrecerParticular(
+    organizationId: string,
+    senderId: string,
+    nombreEps: string,
+    MSGS: ReturnType<typeof buildMessages>,
+    userMessage: string | undefined,
+  ): Promise<void> {
+    await this.redis.set(
+      this.ofertaParticularKey(organizationId, senderId),
+      nombreEps,
+      'EX',
+      SESSION_TTL,
+    );
+    const reply = MSGS.epsNoDisponibleOfrecerParticular(nombreEps);
+    await this.smartReply(organizationId, senderId, reply);
+    await this.setUserState(organizationId, senderId, ChatState.AWAITING_EPS);
+    await this.auditFailure(senderId, organizationId, {
+      reason: FailureReason.EPS_NOT_FOUND,
+      userMessage: userMessage || '[audio]',
+      botReply: reply,
+      metadata: {
+        stage: 'EPS_NO_DISPONIBLE_OFERTA_PARTICULAR',
+        eps: nombreEps,
+      },
+    });
+  }
+
+  private ofertaParticularKey(
+    organizationId: string,
+    senderId: string,
+  ): string {
+    return `temp_eps_oferta_particular:${organizationId}:${senderId}`;
   }
 
   // Despachador de la máquina de estados: ChatState → handler. Construido una
@@ -4810,13 +4921,66 @@ export class ChatbotService implements OnModuleInit {
       if (!resolvedEpsId || !resolvedEpsName) {
         const inputForEps =
           currentState === ChatState.AWAITING_EPS ? text : null;
-        const match = await this.resolveEpsFromInput(
-          organizationId,
-          senderId,
-          inputForEps ?? null,
-          finalEps,
-        );
 
+        // ¿Contesta a «su EPS no está disponible, ¿desea una cita particular?»?
+        // SÍ → sigue como Particular en este mismo turno; NO → se despide. Otra
+        // cosa (una letra del menú, otra EPS) se resuelve como siempre.
+        const ofertaPendiente =
+          currentState === ChatState.AWAITING_EPS
+            ? await this.redis.get(
+                this.ofertaParticularKey(organizationId, senderId),
+              )
+            : null;
+        if (ofertaPendiente) {
+          await this.redis.del(
+            this.ofertaParticularKey(organizationId, senderId),
+          );
+        }
+        const respuestaOferta = ofertaPendiente
+          ? this.interpretYesNo(text)
+          : null;
+        if (respuestaOferta === 'NO') {
+          const reply = MSGS.epsNoDisponibleDespedida();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.auditLog(senderId, organizationId, {
+            status: InteractionStatus.ESCAPED,
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: {
+              event: 'EPS_NO_DISPONIBLE_PARTICULAR_RECHAZADA',
+              eps: ofertaPendiente,
+            },
+          });
+          await this.cleanUpSession(organizationId, senderId);
+          return;
+        }
+
+        const match =
+          respuestaOferta === 'SI'
+            ? await this.ensureParticularEpsForOrg(organizationId)
+            : await this.resolveEpsFromInput(
+                organizationId,
+                senderId,
+                inputForEps ?? null,
+                finalEps,
+              );
+
+        if (match === 'AMBIGUA') {
+          const { lineas } = await this.buildEpsMenu(organizationId, senderId);
+          const reply = MSGS.epsParticularOEps(lineas);
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(
+            organizationId,
+            senderId,
+            ChatState.AWAITING_EPS,
+          );
+          await this.auditSuccess(senderId, organizationId, {
+            userMessage: text || '[audio]',
+            botReply: reply,
+            metadata: { step: 'EPS_PARTICULAR_O_EPS_ACLARAR' },
+          });
+          return;
+        }
         if (match) {
           resolvedEpsId = match.id;
           resolvedEpsName = match.name;
@@ -4833,6 +4997,24 @@ export class ChatbotService implements OnModuleInit {
             SESSION_TTL,
           );
         } else if (currentState === ChatState.AWAITING_EPS && text) {
+          // Nombró una EPS real que esta clínica no atiende: repetirle el menú
+          // solo gasta reintentos. Se le dice, y se le ofrece la cita particular.
+          // Va antes que la FAQ: «¿atienden Coomeva?» se contesta justo así.
+          const noDisponible = await this.epsNoDisponible(
+            organizationId,
+            text,
+            finalEps,
+          );
+          if (noDisponible) {
+            await this.ofrecerParticular(
+              organizationId,
+              senderId,
+              noDisponible,
+              MSGS,
+              text,
+            );
+            return;
+          }
           // No mapeó a una EPS del menú. Igual que en el paso de servicio:
           // si es una pregunta abierta y hay KB, respondemos desde la base de
           // conocimiento sin perder el estado (sigue en AWAITING_EPS).
@@ -4893,6 +5075,25 @@ export class ChatbotService implements OnModuleInit {
       }
 
       if (!resolvedEpsId || !resolvedEpsName) {
+        // La EPS vino en un mensaje anterior («quiero cita con Coomeva»): si no la
+        // atendemos, se dice ya, sin pasar por el menú.
+        if (currentState !== ChatState.AWAITING_EPS) {
+          const noDisponible = await this.epsNoDisponible(
+            organizationId,
+            null,
+            finalEps,
+          );
+          if (noDisponible) {
+            await this.ofrecerParticular(
+              organizationId,
+              senderId,
+              noDisponible,
+              MSGS,
+              text,
+            );
+            return;
+          }
+        }
         const { lineas, count } = await this.buildEpsMenu(
           organizationId,
           senderId,
@@ -5394,6 +5595,7 @@ export class ChatbotService implements OnModuleInit {
         senderId,
         epsIdForPatient,
         patient,
+        finalCedula,
       );
       if (siguiente) {
         await this.pedirDatoDeAlta(
@@ -5772,6 +5974,7 @@ export class ChatbotService implements OnModuleInit {
       PatientProfile,
       'dateOfBirth' | 'gender' | 'regime'
     > | null = null,
+    cedula: string | null = null,
   ): Promise<'nacimiento' | 'sexo' | 'regimen' | null> {
     if (
       !perfil?.dateOfBirth &&
@@ -5793,11 +5996,30 @@ export class ChatbotService implements OnModuleInit {
     const eps = await this.prisma.eps.findUnique({ where: { id: epsId } });
     if (!eps || isParticularEps(eps.name)) return null;
 
-    if (
-      !(await this.redis.get(this.altaKey(organizationId, senderId, 'regimen')))
-    )
-      return 'regimen';
-    return null;
+    if (await this.redis.get(this.altaKey(organizationId, senderId, 'regimen')))
+      return null;
+
+    // El padrón de ESA EPS lo dice sin ninguna duda (una sola EPS, la elegida, y un
+    // solo régimen): no se le pregunta lo que ya se sabe. Se guarda en la sesión
+    // como si lo hubiera contestado, y viaja por el mismo camino hasta su ficha al
+    // decir SÍ. Con cualquier duda, se pregunta: preguntar nunca es un error.
+    const delPadron = cedula
+      ? await this.appointmentsService.regimenDelPadron(
+          organizationId,
+          cedula,
+          epsId,
+        )
+      : null;
+    if (delPadron) {
+      await this.redis.set(
+        this.altaKey(organizationId, senderId, 'regimen'),
+        delPadron,
+        'EX',
+        SESSION_TTL,
+      );
+      return null;
+    }
+    return 'regimen';
   }
 
   private async pedirDatoDeAlta(
@@ -6058,9 +6280,10 @@ export class ChatbotService implements OnModuleInit {
     );
     if (deLista) {
       await this.redis.del(this.listaRegimenKey(organizationId, senderId));
-      const { slotId, patientId } = JSON.parse(deLista) as {
+      const { slotId, patientId, epsId } = JSON.parse(deLista) as {
         slotId: string;
         patientId: string;
+        epsId: string | null;
       };
       // Solo rellena el hueco: no pisa un régimen que ya estuviera.
       await this.prisma.patientProfile.updateMany({
@@ -6074,6 +6297,7 @@ export class ChatbotService implements OnModuleInit {
         MSGS,
         slotId,
         patientId,
+        epsId ?? null,
       );
       return;
     }
@@ -6111,6 +6335,7 @@ export class ChatbotService implements OnModuleInit {
       senderId,
       epsId,
       perfil,
+      cedula,
     );
 
     if (siguiente) {
@@ -8060,16 +8285,26 @@ export class ChatbotService implements OnModuleInit {
     MSGS: ReturnType<typeof buildMessages>,
     slotId: string,
     patientId: string,
+    epsId: string | null,
   ): Promise<void> {
     const patient = await this.prisma.patientProfile.findUnique({
       where: { id: patientId },
       include: { eps: true },
     });
 
+    // 🚨 La EPS de la CITA es la de la entrada en la lista (null = particular), no
+    // la de la ficha. Antes se usaba `patient.epsId`: un paciente del padrón de Sura
+    // que entró a la lista como PARTICULAR salía agendado —y facturado— por Sura, y
+    // uno que entró por su EPS pero con la ficha sin EPS, como particular.
+    const eps = epsId
+      ? await this.prisma.eps.findUnique({ where: { id: epsId } })
+      : null;
+    const epsNombre = eps?.name || PARTICULAR_EPS_NAME;
+
     const bookingResult = await this.appointmentsService.bookAppointment(
       patientId,
       slotId,
-      patient?.epsId || null,
+      epsId,
       'WHATSAPP',
       organizationId,
     );
@@ -8111,7 +8346,7 @@ export class ChatbotService implements OnModuleInit {
           MSGS.resumenCitaConfirmadaTexto(
             patient.fullName || 'Paciente',
             patient.cedula,
-            patient.eps?.name || PARTICULAR_EPS_NAME,
+            epsNombre,
             slot.service.name,
             fechaFormateada,
           ),
@@ -8129,7 +8364,7 @@ export class ChatbotService implements OnModuleInit {
           serviceName: slot.service.name,
           doctorName: slot.doctor.fullName,
           slotDate: slot.startTime,
-          epsName: patient.eps?.name,
+          epsName: eps?.name,
           userMessage: text,
           botReply: reply,
         });
@@ -8141,13 +8376,11 @@ export class ChatbotService implements OnModuleInit {
       // (`handleAwaitingRegime`). El cupo no se ocupó: sigue libre mientras tanto.
       await this.redis.set(
         this.listaRegimenKey(organizationId, senderId),
-        JSON.stringify({ slotId, patientId }),
+        JSON.stringify({ slotId, patientId, epsId }),
         'EX',
         SESSION_TTL,
       );
-      const reply = MSGS.pedirRegimen(
-        patient?.eps?.name ?? PARTICULAR_EPS_NAME,
-      );
+      const reply = MSGS.pedirRegimen(epsNombre);
       await this.smartReply(organizationId, senderId, reply);
       await this.setUserState(
         organizationId,
@@ -8215,7 +8448,7 @@ export class ChatbotService implements OnModuleInit {
     const decision = this.interpretYesNo(text);
 
     if (decision === 'SI') {
-      const { slotId, patientId } =
+      const { slotId, patientId, epsId } =
         await this.waitlistService.confirmFromWaitlist({
           whatsappId: senderId,
           organizationId,
@@ -8243,6 +8476,7 @@ export class ChatbotService implements OnModuleInit {
         MSGS,
         slotId,
         patientId,
+        epsId,
       );
     } else if (decision === 'NO') {
       await this.waitlistService.confirmFromWaitlist({

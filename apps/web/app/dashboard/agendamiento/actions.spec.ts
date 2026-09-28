@@ -18,6 +18,7 @@ jest.mock('../../../lib/prisma', () => {
         doctorProfile: { findUnique: jest.fn() },
         hospitalMirrorConfig: { findUnique: jest.fn() },
         eps: { findFirst: jest.fn() },
+        epsEnrolledPatient: { findMany: jest.fn(async () => []) },
         $transaction: jest.fn(),
     };
     prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
@@ -298,6 +299,7 @@ describe('🧾 régimen del paciente con espejo activo', () => {
         mockEspejo.mockResolvedValue({ enabled: true });
         mockEps.mockResolvedValue({ nit: '800130907' });
         mockFicha.mockResolvedValue({ id: 'pac-1', regime: null });
+        (prisma.epsEnrolledPatient.findMany as jest.Mock).mockResolvedValue([]);
         (prisma.scheduleSlot.findFirst as jest.Mock).mockResolvedValue(null);
         (prisma.scheduleSlot.create as jest.Mock).mockResolvedValue({ id: 'slot-n' });
         (prisma.patientProfile.update as jest.Mock).mockImplementation(async ({ data }) => ({ id: 'pac-1', ...data }));
@@ -337,6 +339,38 @@ describe('🧾 régimen del paciente con espejo activo', () => {
         const res = await createManualAppointmentAction(form());
 
         expect(res.success).toBe(true);
+    });
+
+    it('crear: formulario y ficha sin régimen, pero el padrón de ESA EPS lo da sin duda → agenda y lo guarda', async () => {
+        (prisma.epsEnrolledPatient.findMany as jest.Mock).mockResolvedValue([{ epsId: 'eps-1', regime: 'CONTRIBUTIVO' }]);
+
+        const res = await createManualAppointmentAction(form());
+
+        expect(res.success).toBe(true);
+        expect(prisma.patientProfile.update).toHaveBeenCalledWith(
+            expect.objectContaining({ data: { regime: 'CONTRIBUTIVO' } }),
+        );
+    });
+
+    it('crear: el padrón es de OTRA EPS → no lo usa y frena', async () => {
+        (prisma.epsEnrolledPatient.findMany as jest.Mock).mockResolvedValue([{ epsId: 'eps-9', regime: 'CONTRIBUTIVO' }]);
+
+        const res = await createManualAppointmentAction(form());
+
+        expect(res).toEqual({ success: false, error: expect.stringMatching(/régimen/) });
+        noSeEscribioNada();
+    });
+
+    it('modificar: la ficha sin régimen se completa desde el padrón', async () => {
+        mockFindFirst.mockResolvedValue({ ...CITA, patient: { regime: null, cedula: '1053123456' } });
+        (prisma.epsEnrolledPatient.findMany as jest.Mock).mockResolvedValue([{ epsId: 'eps-1', regime: 'SUBSIDIADO' }]);
+
+        const res = await updateManualAppointmentAction('apt-1', form());
+
+        expect(res.success).toBe(true);
+        expect(prisma.patientProfile.update).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ regime: 'SUBSIDIADO' }) }),
+        );
     });
 
     it('sin espejo activo no se exige', async () => {

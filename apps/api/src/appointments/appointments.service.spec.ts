@@ -579,6 +579,7 @@ describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
     bloqueadas?: { epsName: string; regime: string }[] | null;
     nit?: string | null;
     espejo?: boolean;
+    padron?: { epsId: string; regime: string | null }[];
   }) => {
     const tx = {
       scheduleSlot: {
@@ -598,7 +599,12 @@ describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
         // para distinguir "no lo pasé, usa el default" de "lo pasé, es null".
         findUnique: jest.fn(() => ({
           regime: 'regime' in opts ? opts.regime : 'CONTRIBUTIVO',
+          cedula: '1088123456',
         })),
+        update: jest.fn(),
+      },
+      epsEnrolledPatient: {
+        findMany: jest.fn(() => opts.padron ?? []),
       },
       hospitalMirrorConfig: {
         findUnique: jest.fn(() => ({
@@ -849,6 +855,95 @@ describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
       );
 
       expect(r.success).toBe(true);
+    });
+
+    describe('antes de frenar, el padrón de ESA EPS (solo si no hay duda)', () => {
+      it('una sola EPS en el padrón, la de la cita, con régimen: completa la ficha y reserva', async () => {
+        const { svc, tx } = await construir({
+          ...saludTotal,
+          padron: [{ epsId: 'eps-st', regime: 'SUBSIDIADO' }],
+        });
+
+        const r = await svc.bookAppointment(
+          'p1',
+          's1',
+          'eps-st',
+          'WHATSAPP',
+          'org1',
+        );
+
+        expect(r.success).toBe(true);
+        expect(tx.patientProfile.update).toHaveBeenCalledWith({
+          where: { id: 'p1' },
+          data: { regime: 'SUBSIDIADO' },
+        });
+        expect(tx.appointment.create).toHaveBeenCalled();
+        // El padrón se lee dentro de la transacción, en la clínica de la cita.
+        expect(tx.epsEnrolledPatient.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              organizationId: 'org1',
+              isActive: true,
+            }),
+          }),
+        );
+      });
+
+      it.each([
+        [
+          'el padrón es de OTRA EPS',
+          [{ epsId: 'eps-sura', regime: 'SUBSIDIADO' }],
+        ],
+        [
+          'el documento está en dos EPS',
+          [
+            { epsId: 'eps-st', regime: 'SUBSIDIADO' },
+            { epsId: 'eps-sura', regime: 'SUBSIDIADO' },
+          ],
+        ],
+        [
+          'las filas se contradicen',
+          [
+            { epsId: 'eps-st', regime: 'SUBSIDIADO' },
+            { epsId: 'eps-st', regime: 'CONTRIBUTIVO' },
+          ],
+        ],
+        ['el padrón no tiene régimen', [{ epsId: 'eps-st', regime: null }]],
+        ['no está en el padrón', []],
+      ])('%s → frena igual, sin tocar la ficha', async (_caso, padron) => {
+        const { svc, tx } = await construir({ ...saludTotal, padron });
+
+        const r = await svc.bookAppointment(
+          'p1',
+          's1',
+          'eps-st',
+          'WHATSAPP',
+          'org1',
+        );
+
+        expect(r.reason).toBe('PATIENT_REGIME_MISSING');
+        expect(tx.patientProfile.update).not.toHaveBeenCalled();
+        expect(tx.appointment.create).not.toHaveBeenCalled();
+      });
+
+      it('el régimen tomado del padrón pasa también por las combinaciones bloqueadas', async () => {
+        const { svc, tx } = await construir({
+          ...saludTotal,
+          padron: [{ epsId: 'eps-st', regime: 'CONTRIBUTIVO' }],
+          bloqueadas: [{ epsName: 'Salud Total', regime: 'CONTRIBUTIVO' }],
+        });
+
+        const r = await svc.bookAppointment(
+          'p1',
+          's1',
+          'eps-st',
+          'WHATSAPP',
+          'org1',
+        );
+
+        expect(r.reason).toBe('EPS_REGIME_NOT_BILLABLE');
+        expect(tx.appointment.create).not.toHaveBeenCalled();
+      });
     });
 
     it('origin=MIRROR no se frena: la cita nació en el HIS, que ya la tiene', async () => {

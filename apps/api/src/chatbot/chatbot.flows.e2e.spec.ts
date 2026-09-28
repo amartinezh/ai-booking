@@ -8,6 +8,7 @@ import { RedisService } from '../redis/redis.service';
 import { AppointmentsService } from 'src/appointments/appointments.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
 import { InteractionLogService } from '../interaction-log/interaction-log.service';
+import { regimenSeguroDelPadron } from '@agenia/shared';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { LlmFactoryService } from '../llm/llm-factory.service';
@@ -115,11 +116,11 @@ const audioEvent = (id = 'media-1') => ({
 type Db = {
   orgsByPhoneId: Record<string, any>;
   services: { id: string; name: string; organizationId?: string }[];
-  epsList: { id: string; name: string }[];
+  epsList: { id: string; name: string; isActive?: boolean }[];
   patients: any[];
   appointments: any[];
   slots: any[];
-  enrolled: { cedula: string; epsId: string }[];
+  enrolled: { cedula: string; epsId: string; regime?: string | null }[];
 };
 
 function createPrisma(db: Db) {
@@ -166,7 +167,15 @@ function createPrisma(db: Db) {
       findFirst: jest.fn(() => null),
     },
     eps: {
-      findMany: jest.fn(() => db.epsList),
+      // Respeta `isActive` como la consulta real (sin el campo, la EPS está activa).
+      findMany: jest.fn(({ where }: any = {}) =>
+        db.epsList
+          .map((e) => ({ isActive: true, ...e }))
+          .filter(
+            (e) =>
+              where?.isActive === undefined || e.isActive === where.isActive,
+          ),
+      ),
       findFirst: jest.fn(({ where }: any) => {
         if (where?.id) return db.epsList.find((e) => e.id === where.id) ?? null;
         if (where?.name?.equals) {
@@ -311,6 +320,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   let appointments: {
     getAvailableSlots: jest.Mock;
     bookAppointment: jest.Mock;
+    regimenDelPadron: jest.Mock;
   };
   let waitlist: {
     joinWaitlist: jest.Mock;
@@ -371,6 +381,17 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         success: true,
         appointmentId: 'apt-new',
       })),
+      // La regla REAL sobre el padrón del doble: lo que se prueba es qué hace el
+      // bot con la respuesta, y la respuesta tiene que ser la de producción.
+      regimenDelPadron: jest.fn(
+        (_org: string, cedula: string, epsId: string | null) =>
+          regimenSeguroDelPadron(
+            db.enrolled
+              .filter((e) => e.cedula === cedula)
+              .map((e) => ({ epsId: e.epsId, regime: e.regime ?? null })),
+            epsId,
+          ),
+      ),
     };
     waitlist = {
       joinWaitlist: jest.fn(() => ({ id: 'wl-1', position: 2 })),
@@ -1298,6 +1319,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       waitlist.confirmFromWaitlist.mockResolvedValue({
         slotId: 'slot-free',
         patientId: 'pat-wl',
+        epsId: null,
       });
 
       await service.notifyWaitlistCandidate({
@@ -1955,6 +1977,69 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         expect(await state()).toBe(ChatState.AWAITING_REGIME);
       });
 
+      // El padrón de la EPS ya trae el régimen: si no hay NINGUNA duda (una sola
+      // EPS, la elegida, y un solo régimen), no se le pregunta al paciente.
+      describe('régimen tomado del padrón', () => {
+        const conPadron = (
+          filas: { epsId: string; regime: string | null }[],
+        ) => {
+          db.enrolled = filas.map((f) => ({ cedula: '1088123456', ...f }));
+        };
+        const hastaLaCedula = async () => {
+          await say('Hola');
+          await say('A');
+          await say('B'); // Sura
+          await say('A');
+          await say('1088123456');
+        };
+
+        it('paciente existente sin régimen: no se le pregunta y al SÍ queda en su ficha', async () => {
+          existente();
+          conPadron([{ epsId: EPS_SURA.id, regime: 'SUBSIDIADO' }]);
+          await hastaLaCedula();
+
+          expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+          await say('Sí');
+          expect(db.patients[0].regime).toBe('SUBSIDIADO');
+          expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+        });
+
+        it('paciente nuevo: nacimiento y sexo sí, el régimen ya no', async () => {
+          conPadron([{ epsId: EPS_SURA.id, regime: 'CONTRIBUTIVO' }]);
+          await hastaLaCedula();
+          await decirNombre(say);
+          await responderAlta(say); // sin el turno del régimen
+
+          expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+          await say('Sí');
+          expect(db.patients[0].regime).toBe('CONTRIBUTIVO');
+        });
+
+        it.each([
+          ['el padrón no trae régimen', [{ epsId: EPS_SURA.id, regime: null }]],
+          [
+            'el documento está en dos EPS',
+            [
+              { epsId: EPS_SURA.id, regime: 'SUBSIDIADO' },
+              { epsId: EPS_PARTICULAR.id, regime: 'SUBSIDIADO' },
+            ],
+          ],
+          [
+            'las filas de la EPS se contradicen',
+            [
+              { epsId: EPS_SURA.id, regime: 'SUBSIDIADO' },
+              { epsId: EPS_SURA.id, regime: 'CONTRIBUTIVO' },
+            ],
+          ],
+        ])('con duda (%s) se le pregunta', async (_caso, filas) => {
+          existente();
+          conPadron(filas);
+          await hastaLaCedula();
+
+          expect(await state()).toBe(ChatState.AWAITING_REGIME);
+        });
+      });
+
       it('red de seguridad: si la reserva se frena por falta de régimen, lo pregunta y vuelve al resumen', async () => {
         existente({ regime: 'CONTRIBUTIVO' });
         await hastaLaCedulaConSura();
@@ -1975,6 +2060,293 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
         await say('Sí');
         expect(appointments.bookAppointment).toHaveBeenCalledTimes(2);
+      });
+    });
+  });
+  // ══════════════════════════════════════════════════════════════════
+  // 9. EPS que la clínica no atiende
+  //
+  // Antes, «Coomeva» en el paso de EPS repetía el menú y gastaba un reintento,
+  // una y otra vez, hasta cerrar la sesión: una interacción que no valía la pena.
+  // Ahora se le dice que esa EPS no está disponible y se le ofrece la cita
+  // particular. SÍ → sigue como Particular; NO → se despide.
+  // ══════════════════════════════════════════════════════════════════
+  describe('9. EPS no disponible → ofrecer cita particular', () => {
+    beforeEach(() => {
+      db.slots = [slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA)];
+      appointments.getAvailableSlots.mockImplementation(() =>
+        db.slots.map((s) => ({
+          slotId: s.id,
+          fecha: s.startTime,
+          doctor: s.doctor.fullName,
+          servicio: s.service.name,
+        })),
+      );
+    });
+
+    const hastaElMenuDeEps = async () => {
+      await say('Hola');
+      await say('A');
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+    };
+
+    it('9.1 nombra una EPS real que no está en el menú: se le dice y se le ofrece particular', async () => {
+      await hastaElMenuDeEps();
+      await say('Coomeva');
+
+      expect(lastSent()).toMatch(
+        /La EPS \*Coomeva\* no se encuentra disponible|no es posible agendar con la EPS \*Coomeva\*/i,
+      );
+      expect(lastSent()).toMatch(/particular/i);
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+      // No se cuenta como un error del paciente: no gasta reintentos.
+      expect(
+        redis.store.get(`error_count:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
+    });
+
+    it('9.2 SÍ → sigue como Particular, en el mismo turno, hasta agendar sin EPS', async () => {
+      await hastaElMenuDeEps();
+      await say('Coomeva');
+      await say('Sí');
+
+      // Ya está viendo los horarios: no se le vuelve a preguntar la EPS.
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+        'Particular',
+      );
+
+      await say('A');
+      await say('1088123456');
+      await decirNombre(say);
+      await responderAlta(say); // Particular: sin régimen
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      await say('Sí');
+
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      // Particular viaja como «sin EPS»: ni padrón ni convenio.
+      expect(appointments.bookAppointment.mock.calls[0][2]).toBeNull();
+    });
+
+    it('9.3 NO → se despide y cierra la conversación, sin agendar', async () => {
+      await hastaElMenuDeEps();
+      await say('Coomeva');
+      await say('No');
+
+      expect(lastSent()).toMatch(/particular/i);
+      expect(await state()).toBe(ChatState.IDLE);
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
+      expect(
+        redis.store.has(`temp_eps_oferta_particular:${ORG_ID}:${SENDER}`),
+      ).toBe(false);
+    });
+
+    it('9.4 en vez de contestar, elige una EPS del menú: se toma esa', async () => {
+      db.enrolled.push({ cedula: '1088123456', epsId: EPS_SURA.id });
+      await hastaElMenuDeEps();
+      await say('Coomeva');
+      await say('B'); // Sura
+
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+        'Sura',
+      );
+    });
+
+    it('9.5 una EPS que SÍ está en el menú, escrita por su nombre, no dispara la oferta', async () => {
+      await hastaElMenuDeEps();
+      await say('eps sura');
+
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      expect(lastSent()).not.toMatch(/no se encuentra disponible/i);
+    });
+
+    it('9.6 algo que no es una EPS sigue repitiendo el menú, como antes', async () => {
+      await hastaElMenuDeEps();
+      await say('asdfgh');
+
+      expect(lastSent()).not.toMatch(/particular\*\. ¿Desea/i);
+      expect(lastSent()).not.toMatch(/no se encuentra disponible/i);
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+    });
+
+    it('9.7 🚨 el LLM no puede «acercar» una EPS nombrada a otra del menú', async () => {
+      // Si el mapeo semántico devolviera Sura para «Coomeva», se agendaría con
+      // el convenio de otra EPS. Una EPS reconocida nunca llega al LLM.
+      provider.mapEntityToCatalog.mockResolvedValue({ id: EPS_SURA.id });
+      await hastaElMenuDeEps();
+      await say('Coomeva');
+
+      expect(provider.mapEntityToCatalog).not.toHaveBeenCalled();
+      expect(lastSent()).toMatch(/Coomeva/);
+      expect(
+        redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
+    });
+
+    it('9.8 una EPS que la clínica tiene DESACTIVADA también se ofrece como particular', async () => {
+      db.epsList.push({ id: 'eps-coomeva', name: 'Coomeva', isActive: false });
+      await hastaElMenuDeEps();
+      await say('coomeva');
+
+      expect(lastSent()).toMatch(/Coomeva/);
+      expect(lastSent()).toMatch(/particular/i);
+    });
+
+    it('9.9 la EPS dicha en el primer mensaje se contesta sin pasar por el menú', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ eps: 'Coomeva' }),
+      );
+      await say('Hola, necesito una cita, tengo Coomeva');
+      await say('A'); // servicio
+
+      expect(lastSent()).toMatch(/Coomeva/);
+      expect(lastSent()).toMatch(/particular/i);
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+    });
+  });
+  // ══════════════════════════════════════════════════════════════════
+  // 10. Afiliado a una EPS (y en su padrón) que quiere una cita PARTICULAR
+  //
+  // La EPS de la CITA es la que elige el paciente; la de su ficha es solo su
+  // EPS de siempre. Con Particular no hay padrón, ni régimen, ni convenio de
+  // EPS: el HIS la recibe con el convenio particular.
+  // ══════════════════════════════════════════════════════════════════
+  describe('10. En el padrón de su EPS pero quiere cita particular', () => {
+    beforeEach(() => {
+      db.slots = [slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA)];
+      appointments.getAvailableSlots.mockImplementation(() =>
+        db.slots.map((s) => ({
+          slotId: s.id,
+          fecha: s.startTime,
+          doctor: s.doctor.fullName,
+          servicio: s.service.name,
+        })),
+      );
+      // Afiliado a Sura, en su padrón y con régimen: todo lo que haría falta
+      // para agendar por la EPS… pero pide particular.
+      db.enrolled.push({
+        cedula: '1088123456',
+        epsId: EPS_SURA.id,
+        regime: 'SUBSIDIADO',
+      });
+      db.patients.push({
+        id: 'pat-sura',
+        cedula: '1088123456',
+        fullName: 'Juan Pérez',
+        organizationId: ORG_ID,
+        epsId: EPS_SURA.id,
+        dateOfBirth: new Date('1980-03-15'),
+        gender: 'M',
+        regime: null,
+      });
+    });
+
+    const hastaElMenuDeEps = async () => {
+      await say('Hola');
+      await say('A');
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+    };
+
+    it('10.1 elige Particular en el menú: agenda sin EPS y su ficha sigue siendo de Sura', async () => {
+      await hastaElMenuDeEps();
+      await say('A'); // Particular
+      await say('A'); // horario
+      await say('1088123456');
+
+      // Sin régimen que preguntar ni padrón que exigir: directo al resumen.
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      expect(lastSent()).toMatch(/Particular/);
+      await say('Sí');
+
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      expect(appointments.bookAppointment.mock.calls[0][2]).toBeNull();
+      const ficha = db.patients.find((p) => p.id === 'pat-sura');
+      expect(ficha.epsId).toBe(EPS_SURA.id);
+      // El régimen del padrón es de su afiliación a Sura: una cita particular no
+      // lo toca (ni lo necesita).
+      expect(ficha.regime).toBeNull();
+    });
+
+    it('10.2 «la quiero particular por favor» en una frase también es Particular', async () => {
+      await hastaElMenuDeEps();
+      await say('la quiero particular por favor');
+
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+        'Particular',
+      );
+    });
+
+    it.each([
+      ['tengo sura pero la quiero particular'],
+      ['no quiero particular, por sura'],
+    ])(
+      '10.3 «%s» nombra las dos: no elige por él, le pregunta',
+      async (frase) => {
+        await hastaElMenuDeEps();
+        await say(frase);
+
+        expect(await state()).toBe(ChatState.AWAITING_EPS);
+        expect(lastSent()).toMatch(/particular/i);
+        expect(lastSent()).toMatch(/A\)\* Particular/);
+        expect(
+          redis.store.get(`temp_eps_id:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+
+        await say('A'); // Particular
+        expect(await state()).toBe(ChatState.AWAITING_DATE);
+        expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+          'Particular',
+        );
+      },
+    );
+
+    it('10.4 «tengo Coomeva pero la quiero particular»: Coomeva no está, así que es Particular', async () => {
+      await hastaElMenuDeEps();
+      await say('tengo coomeva pero la quiero particular');
+
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      expect(redis.store.get(`temp_eps_query:${ORG_ID}:${SENDER}`)).toBe(
+        'Particular',
+      );
+    });
+
+    describe('10.5 lista de espera: la cita sale con la EPS con la que ENTRÓ, no con la de su ficha', () => {
+      const confirmarCupoDeLista = async (epsIdDeLaEntrada: string | null) => {
+        db.slots.push(slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA));
+        waitlist.confirmFromWaitlist.mockResolvedValue({
+          slotId: 'slot-free',
+          patientId: 'pat-sura',
+          epsId: epsIdDeLaEntrada,
+        });
+        await service.notifyWaitlistCandidate({
+          whatsappId: SENDER,
+          organizationId: ORG_ID,
+          nombre: 'Juan Pérez',
+          especialidad: 'Medicina General',
+          doctor: 'Ana Pérez',
+          slotDate: FECHA_C,
+        });
+        await say('Sí');
+      };
+
+      it('🚨 entró como particular → se agenda particular aunque su ficha sea de Sura', async () => {
+        await confirmarCupoDeLista(null);
+
+        expect(appointments.bookAppointment).toHaveBeenCalledWith(
+          'pat-sura',
+          'slot-free',
+          null,
+          'WHATSAPP',
+          ORG_ID,
+        );
+      });
+
+      it('entró por Sura → se agenda por Sura', async () => {
+        await confirmarCupoDeLista(EPS_SURA.id);
+
+        expect(appointments.bookAppointment.mock.calls[0][2]).toBe(EPS_SURA.id);
       });
     });
   });

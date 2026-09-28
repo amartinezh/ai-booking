@@ -507,6 +507,29 @@ const FORMAL = {
       `No es posible agendar esta cita por este canal: su EPS no cuenta con convenio para su régimen en este momento.\n\nLe recomiendo contactar directamente a la clínica.`,
     ]),
 
+  // El paciente nombró una EPS real que esta clínica no atiende. En vez de repetirle
+  // el menú hasta agotar los reintentos, se le dice y se le ofrece la salida que sí
+  // existe: la cita particular. SÍ → sigue como Particular; NO → se despide.
+  epsNoDisponibleOfrecerParticular: (nombreEps: string) =>
+    pick([
+      `La EPS *${nombreEps}* no se encuentra disponible en este momento para agendamiento.\n\nTiene la opción de solicitar una cita *particular*. ¿Desea agendarla? Responda *SÍ* o *NO*.`,
+      `Por ahora no es posible agendar con la EPS *${nombreEps}*.\n\nSi lo desea, puede solicitar su cita como *particular* (pago directo). ¿Desea agendarla? Responda *SÍ* o *NO*.`,
+    ]),
+
+  // Nombró su EPS y también «particular» en la misma frase: se le pregunta cuál,
+  // en vez de elegir por él (las dos opciones se facturan distinto).
+  epsParticularOEps: (lineas: string) =>
+    pick([
+      `Menciona su EPS y también una cita *particular*. Para no equivocarme, ¿con cuál desea agendar? Escriba la letra:\n\n${lineas}`,
+      `Para agendar correctamente: ¿desea la cita por su EPS o como *particular* (pago directo)? Indíqueme la letra:\n\n${lineas}`,
+    ]),
+
+  epsNoDisponibleDespedida: () =>
+    pick([
+      `Entendido. Si más adelante desea agendar una cita particular, con gusto le ayudo. ¡Que tenga un buen día!`,
+      `Comprendo. Cuando lo necesite, puede escribirme de nuevo para agendar como particular. ¡Hasta pronto!`,
+    ]),
+
   // ── Alta de paciente nuevo ────────────────────────────────────────────
   pedirNacimiento: () =>
     pick([
@@ -1223,6 +1246,24 @@ const INFORMAL = {
     pick([
       `Uy, qué pena: tu EPS no tiene convenio vigente para agendar por acá con tu tipo de afiliación. 🙏\n\nTe recomiendo comunicarte directamente con la clínica.`,
       `No puedo agendarte esta cita por este medio: tu EPS no tiene convenio para tu régimen en este momento.\n\nMejor comunícate directo con la clínica.`,
+    ]),
+
+  epsNoDisponibleOfrecerParticular: (nombreEps: string) =>
+    pick([
+      `La EPS *${nombreEps}* no está disponible en este momento para agendar por acá. 🙏\n\nPuedes pedir tu cita como *particular*. ¿Quieres agendarla? Responde *SÍ* o *NO*.`,
+      `Por ahora no puedo agendarte con *${nombreEps}*.\n\nSi quieres, la sacamos como *particular* (pago directo). ¿Te la agendo? Responde *SÍ* o *NO*.`,
+    ]),
+
+  epsParticularOEps: (lineas: string) =>
+    pick([
+      `Me mencionas tu EPS y también cita *particular*. Para no equivocarme, ¿con cuál la agendamos? Mándame la letra:\n\n${lineas}`,
+      `¿La cita va por tu EPS o como *particular* (pago directo)? Dime la letra:\n\n${lineas}`,
+    ]),
+
+  epsNoDisponibleDespedida: () =>
+    pick([
+      `¡Listo! Si más adelante quieres una cita particular, aquí estoy. 😊`,
+      `Entendido. Cuando quieras agendar como particular, me escribes. ¡Que estés muy bien!`,
     ]),
 
   // ── Alta de paciente nuevo ────────────────────────────────────────────

@@ -4,7 +4,10 @@ import { doctorLabel } from '../common/doctor-label.util';
 import { Prisma, AttendanceStatus } from '@agenia/database';
 import {
   CUPOS_OFRECIDOS,
+  documentoSinCerosIniciales,
   faltaRegimenParaElEspejo,
+  regimenSeguroDelPadron,
+  type Regimen,
   normalizarCuposOfrecidos,
   seleccionarCuposManianaTarde,
 } from '@agenia/shared';
@@ -159,6 +162,35 @@ export class AppointmentsService {
     return { ...base, id: { in: homologados.map((m) => m.agenIAId) } };
   }
 
+  /**
+   * El régimen del padrón para agendar a este documento con `epsId`, solo si no hay
+   * NINGUNA duda (`regimenSeguroDelPadron`): una sola EPS en el padrón, la misma de
+   * la cita, y un solo régimen. Si no, null: el bot se lo pregunta al paciente.
+   *
+   * Se busca por el documento tal cual y sin ceros a la izquierda, como el resto del
+   * padrón. `db` permite leerlo dentro de la transacción de la reserva.
+   */
+  async regimenDelPadron(
+    organizationId: string,
+    cedula: string,
+    epsId: string | null,
+    db: Pick<Prisma.TransactionClient, 'epsEnrolledPatient'> = this.prisma,
+  ): Promise<Regimen | null> {
+    if (!epsId || !cedula) return null;
+    const filas = await db.epsEnrolledPatient.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        cedula: {
+          in: [...new Set([cedula, documentoSinCerosIniciales(cedula)])],
+        },
+      },
+      select: { epsId: true, regime: true },
+      take: 10,
+    });
+    return regimenSeguroDelPadron(filas, epsId);
+  }
+
   // 2. LÓGICA DE TRANSACCIÓN
   // `organizationId` es OBLIGATORIO: el chequeo de tenant del slot ya no es
   // condicional — sin él, un slotId de otra clínica se podía reservar.
@@ -246,7 +278,7 @@ export class AppointmentsService {
             }),
             tx.patientProfile.findUnique({
               where: { id: patientId },
-              select: { regime: true },
+              select: { regime: true, cedula: true },
             }),
             tx.hospitalMirrorConfig.findUnique({
               where: { organizationId },
@@ -266,7 +298,25 @@ export class AppointmentsService {
               regimen: patient?.regime,
             })
           ) {
-            throw new Error('PATIENT_REGIME_MISSING');
+            // Última oportunidad antes de frenar: si el padrón de ESA EPS lo dice
+            // sin ninguna duda, se completa la ficha y la reserva sigue. Cubre todo
+            // camino que llegue aquí (lista de espera incluida) sin preguntar lo que
+            // ya se sabe. Con cualquier duda, se frena y quien llama pregunta.
+            const delPadron = patient
+              ? await this.regimenDelPadron(
+                  organizationId,
+                  patient.cedula,
+                  epsId,
+                  tx,
+                )
+              : null;
+            if (!delPadron) throw new Error('PATIENT_REGIME_MISSING');
+            await tx.patientProfile.update({
+              where: { id: patientId },
+              data: { regime: delPadron },
+            });
+            // Para el chequeo de combinaciones bloqueadas de abajo.
+            patient!.regime = delPadron;
           }
 
           const bloqueadas =
