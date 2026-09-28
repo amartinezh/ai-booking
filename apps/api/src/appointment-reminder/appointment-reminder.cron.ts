@@ -568,9 +568,14 @@ export class AppointmentReminderCronService
       };
     }
 
-    // Con WhatsApp, como siempre; o con Telegram (docs/PLAN_TELEGRAM.md): el
-    // canal lo decide processOne con la misma regla que el cron.
-    if (!apt.patient?.whatsappId && !apt.patient?.telegramChatId) {
+    // ¿Hay a quién escribirle? La MISMA regla con la que processOne elige el
+    // canal (`destinoDeContacto`): BSUID o teléfono de WhatsApp, o chat de
+    // Telegram. Antes aquí se exigía `whatsappId`, y un paciente que ocultó su
+    // número (solo BSUID) se rechazaba aunque el cron sí le escribía.
+    const destino = apt.patient
+      ? destinoDeContacto(apt.patient, apt.origin)
+      : null;
+    if (!destino) {
       return {
         success: false,
         outcome: 'skipped',
@@ -616,7 +621,9 @@ export class AppointmentReminderCronService
         success: false,
         outcome,
         error:
-          'Meta no aceptó el envío del recordatorio. Revise las credenciales de WhatsApp o vuelva a intentar.',
+          destino.canal === 'TELEGRAM'
+            ? 'No se pudo entregar el recordatorio por Telegram (ni por WhatsApp, si el paciente lo tiene). Revise la conexión del bot en Configuración o vuelva a intentar.'
+            : 'Meta no aceptó el envío del recordatorio. Revise las credenciales de WhatsApp o vuelva a intentar.',
       };
     }
 
