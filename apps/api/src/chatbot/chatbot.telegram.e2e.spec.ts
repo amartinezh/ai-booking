@@ -826,6 +826,71 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
       expectNothingToMeta();
     });
 
+    it('3.1b 🐛 «A» hablada en el menú de servicios: el LLM recibe las letras del menú y «A a» elige la A', async () => {
+      await say('Hola');
+      expect(state()).toBe(ChatState.AWAITING_SPECIALTY);
+      // Lo que devolvió Gemini en el caso real: oyó la letra, pero la marcó ininteligible.
+      provider.extractSchedulingIntent.mockResolvedValue(
+        extraction({ transcript: 'A a', ininteligible: true }),
+      );
+      await service.processIncomingMessage(tgVoice('voz-letra'));
+
+      const hints =
+        provider.extractSchedulingIntent.mock.calls.at(-1)![0].vocabularyHints;
+      expect(hints).toMatchObject({
+        letterOptions: ['A', 'B'],
+        menuAcceptsNames: true,
+      });
+      expect(state()).toBe(ChatState.AWAITING_EPS);
+      expect(tgSent().join(' ')).not.toMatch(
+        /no (logré|pude) entender|no se escuch/i,
+      );
+    });
+
+    it('3.1c lo mismo en el menú de EPS («be be» → B = Sura)', async () => {
+      await say('Hola');
+      await say('A');
+      expect(state()).toBe(ChatState.AWAITING_EPS);
+      provider.extractSchedulingIntent.mockResolvedValue(
+        extraction({ transcript: 'be be', ininteligible: true }),
+      );
+      await service.processIncomingMessage(tgVoice('voz-eps'));
+      const hints =
+        provider.extractSchedulingIntent.mock.calls.at(-1)![0].vocabularyHints;
+      expect(hints).toMatchObject({ menuAcceptsNames: true });
+      expect(hints.letterOptions).toContain('B');
+      expect(state()).not.toBe(ChatState.AWAITING_EPS);
+    });
+
+    it('3.1d en el menú, decir el NOMBRE por voz sigue funcionando', async () => {
+      await say('Hola');
+      provider.extractSchedulingIntent.mockResolvedValue(
+        extraction({ transcript: 'Odontología', especialidad: 'Odontología' }),
+      );
+      await service.processIncomingMessage(tgVoice('voz-nombre'));
+      expect(state()).toBe(ChatState.AWAITING_EPS);
+      expect(appointments.getAvailableSlots).not.toHaveBeenCalled();
+    });
+
+    it('3.1e también por WhatsApp (el arreglo es del bot, no del canal)', async () => {
+      jest.spyOn(service as any, 'sendWhatsAppMessage').mockResolvedValue(true);
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('x'));
+      await service.processIncomingMessage(textEvent('Hola'));
+      expect(state(SENDER)).toBe(ChatState.AWAITING_SPECIALTY);
+      provider.extractSchedulingIntent.mockResolvedValue(
+        extraction({ transcript: 'A a', ininteligible: true }),
+      );
+      await service.processIncomingMessage({
+        from: SENDER,
+        type: 'audio',
+        audio: { id: 'media-1' },
+        metadata: { phone_number_id: PHONE_ID },
+      } as never);
+      expect(state(SENDER)).toBe(ChatState.AWAITING_EPS);
+    });
+
     it('3.2 si la voz no se puede enviar, la respuesta llega por texto', async () => {
       channel.sendVoice.mockResolvedValue({
         ok: false,

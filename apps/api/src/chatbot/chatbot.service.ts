@@ -3043,6 +3043,13 @@ export class ChatbotService implements OnModuleInit {
         services: svcNames.length > 0 ? svcNames : undefined,
         letterOptions:
           letterOptions && letterOptions.length > 0 ? letterOptions : undefined,
+        // En los menús de servicio y EPS también vale el nombre de la opción.
+        ...(letterOptions &&
+        letterOptions.length > 0 &&
+        (currentState === ChatState.AWAITING_SPECIALTY ||
+          currentState === ChatState.AWAITING_EPS)
+          ? { menuAcceptsNames: true }
+          : {}),
       };
     } catch (e: unknown) {
       this.logger.warn(
@@ -3086,6 +3093,17 @@ export class ChatbotService implements OnModuleInit {
       case ChatState.AWAITING_MODIFY_NEW_SLOT:
         pattern = `temp_modify_slot_*:${organizationId}:${senderId}`;
         regex = /^temp_modify_slot_([A-Z]):/;
+        break;
+      // Menús de servicio y de EPS (buildServiceMenu / buildEpsMenu): cada
+      // opción guarda `temp_<menú>_<letra>_id` y `_name`. Sin sus letras, una
+      // «A» hablada salía `ininteligible` (2026-09-28).
+      case ChatState.AWAITING_SPECIALTY:
+        pattern = `temp_service_*_id:${organizationId}:${senderId}`;
+        regex = /^temp_service_([A-Z])_id:/;
+        break;
+      case ChatState.AWAITING_EPS:
+        pattern = `temp_eps_*_id:${organizationId}:${senderId}`;
+        regex = /^temp_eps_([A-Z])_id:/;
         break;
       default:
         return undefined;
@@ -8468,6 +8486,18 @@ export class ChatbotService implements OnModuleInit {
       '8': 8,
     };
     if (core in ordinal) return String.fromCharCode(64 + ordinal[core]);
+
+    // La misma letra dicha dos o tres veces: el STT transcribe «A a» o «be, be»
+    // cuando el paciente repite la letra para que se le entienda (caso real en
+    // el menú de servicios, 2026-09-28). Sin ambigüedad solo si TODAS las
+    // palabras son la misma letra: «a b» o «a medicina» no eligen nada.
+    const partes = core.split(' ');
+    if (partes.length >= 2 && partes.length <= 3) {
+      const letras = partes.map((p) =>
+        /^[a-z]$/.test(p) ? p.toUpperCase() : (phonetic[p] ?? ''),
+      );
+      if (letras[0] && letras.every((l) => l === letras[0])) return letras[0];
+    }
 
     return '';
   }

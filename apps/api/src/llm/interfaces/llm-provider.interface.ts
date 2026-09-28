@@ -41,6 +41,14 @@ export interface VocabularyHints {
   eps?: string[];
   services?: string[];
   letterOptions?: string[];
+  /**
+   * El menú de letras también acepta el NOMBRE de la opción (menús de
+   * servicio y de EPS: «A» o «Medicina General», «B» o «Sura»). Cambia la
+   * instrucción al LLM: una letra suelta se transcribe como letra, pero un
+   * nombre se transcribe literal, sin convertirlo en letra. En horarios y
+   * citas (solo letra) queda en falso y la instrucción es la de siempre.
+   */
+  menuAcceptsNames?: boolean;
 }
 
 /**

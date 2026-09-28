@@ -105,6 +105,7 @@ export function buildVocabularyAnchor(hints?: {
   eps?: string[];
   services?: string[];
   letterOptions?: string[];
+  menuAcceptsNames?: boolean;
 }): string {
   const eps = (hints?.eps ?? [])
     .filter((s) => s && s.trim())
@@ -122,7 +123,19 @@ export function buildVocabularyAnchor(hints?: {
 
   // Modo selección por letra: si está presente, suele ser el único modo
   // relevante del turno (el paciente está escogiendo de un menú A/B/C...).
-  if (letters.length > 0) {
+  if (letters.length > 0 && hints?.menuAcceptsNames) {
+    // Menú de servicio / EPS: se elige con la letra O con el nombre. Una letra
+    // suelta sin esta pista sale `ininteligible` (caso real: «A» hablada en el
+    // menú de servicios, 2026-09-28), pero la regla «prefiere la letra» de los
+    // horarios aquí podría convertir «Sura» en una letra: por eso va aparte.
+    blocks.push(
+      [
+        'MENÚ CON LETRAS — el paciente está eligiendo una opción de un menú con letras visibles.',
+        `Letras válidas del menú actual: ${letters.join(', ')}.`,
+        'Puede responder con la LETRA de la opción o con su NOMBRE. Si el audio es muy corto y suena a una de esas letras ("A", "Ah", "la a", "be", "ce"), transcríbelo EXACTAMENTE como esa letra mayúscula en "transcript" y NO lo marques `ininteligible` ni `outOfContext`. Si dice un nombre (un servicio, una EPS), transcríbelo literal: NO lo conviertas en una letra.',
+      ].join('\n'),
+    );
+  } else if (letters.length > 0) {
     blocks.push(
       [
         'MODO SELECCIÓN POR LETRA — el paciente está eligiendo una opción de un menú con letras visibles.',
