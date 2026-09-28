@@ -771,6 +771,37 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
   });
 
   // ──────────────────────────────────────────────────────────────────
+  describe('2b. Cada canal nombra el suyo', () => {
+    // Se fija el azar en la variante de `epsInvalida` que nombra el canal.
+    const conVarianteDelCanal = () =>
+      jest.spyOn(Math, 'random').mockReturnValue(0.34);
+
+    it('una EPS que no se reconoce: por Telegram dice «Telegram», nunca «WhatsApp»', async () => {
+      await say('Hola');
+      await say('A');
+      conVarianteDelCanal();
+      await say('zzzz qqqq');
+      const texto = lastTg();
+      expect(texto).toContain('por Telegram');
+      expect(texto).not.toMatch(/whatsapp/i);
+    });
+
+    it('la misma conversación por WhatsApp sigue diciendo «WhatsApp»', async () => {
+      const waSay = (body: string) =>
+        service.processIncomingMessage(textEvent(body));
+      const envios = jest
+        .spyOn(service as any, 'sendWhatsAppMessage')
+        .mockResolvedValue(true);
+      await waSay('Hola');
+      await waSay('A');
+      conVarianteDelCanal();
+      await waSay('zzzz qqqq');
+      const texto = envios.mock.calls.at(-1)![1] as string;
+      expect(texto).toContain('por WhatsApp');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
   describe('3. Voz', () => {
     it('3.1 la nota de voz se baja de Telegram, se transcribe y la respuesta sale como voz por Telegram', async () => {
       provider.extractSchedulingIntent.mockResolvedValue(

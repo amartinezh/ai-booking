@@ -13,6 +13,7 @@ import {
   PARTICULAR_EPS_NAME,
   DEFAULT_MAX_RETRIES,
   SEMANTIC_MAP_TIMEOUT_MS,
+  type CanalDelBot,
 } from './chatbot.constants';
 import { textoParaCoincidencia } from './texto-para-coincidencia.util';
 import { KnowledgeBaseService } from './knowledge-base.service';
@@ -124,6 +125,10 @@ interface ChatTurnContext {
   retriesKey: string;
   retriesCount: number;
 }
+
+/** Canal del paciente, para los textos que lo nombran (docs/PLAN_TELEGRAM.md). */
+const canalDe = (senderId: string): CanalDelBot =>
+  isTelegramSender(senderId) ? 'TELEGRAM' : 'WHATSAPP';
 
 @Injectable()
 export class ChatbotService implements OnModuleInit {
@@ -3966,7 +3971,8 @@ export class ChatbotService implements OnModuleInit {
     const communicationStyle = organizationId
       ? await this.organizationSettings.getCommunicationStyle(organizationId)
       : 'FORMAL';
-    const MSGS = buildMessages(communicationStyle);
+    // ✈️ Por Telegram, los textos que nombran el canal dicen «Telegram».
+    const MSGS = buildMessages(communicationStyle, canalDe(senderId));
 
     const currentState = await this.getUserState(organizationId, senderId);
     this.logger.log(
@@ -8635,6 +8641,7 @@ export class ChatbotService implements OnModuleInit {
     // Sombra del pool de mensajes según el estilo activo de la org.
     const MSGS = buildMessages(
       await this.organizationSettings.getCommunicationStyle(organizationId),
+      canalDe(senderId),
     );
     const respuesta = text?.toUpperCase().trim() || '';
     // Acepta SÍ/NO por texto y por voz (transcripción), de forma tolerante.
@@ -8713,6 +8720,7 @@ export class ChatbotService implements OnModuleInit {
     // Sombra del pool de mensajes según el estilo activo de la org.
     const MSGS = buildMessages(
       await this.organizationSettings.getCommunicationStyle(organizationId),
+      canalDe(senderId),
     );
     const patient = await this.prisma.patientProfile.findFirst({
       where: { cedula, organizationId },
@@ -8885,6 +8893,7 @@ export class ChatbotService implements OnModuleInit {
   ) {
     const MSGS = buildMessages(
       await this.organizationSettings.getCommunicationStyle(organizationId),
+      canalDe(senderId),
     );
     const patient = await this.prisma.patientProfile.findFirst({
       where: { cedula, organizationId },
@@ -9033,6 +9042,7 @@ export class ChatbotService implements OnModuleInit {
   ) {
     const MSGS = buildMessages(
       await this.organizationSettings.getCommunicationStyle(organizationId),
+      canalDe(senderId),
     );
 
     const apt = await this.prisma.appointment.findUnique({
@@ -9285,6 +9295,7 @@ export class ChatbotService implements OnModuleInit {
       // Sombra del pool de mensajes según el estilo activo de la org.
       const MSGS = buildMessages(
         await this.organizationSettings.getCommunicationStyle(organizationId),
+        canalDe(whatsappId),
       );
       const fechaFormateada = formatAppointmentLong(slotDate);
       await this.setUserState(

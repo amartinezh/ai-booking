@@ -1641,7 +1641,51 @@ const INFORMAL = {
 // ─────────────────────────────────────────────────────────────
 export type Messages = typeof FORMAL;
 
-export function buildMessages(style: CommStyle = 'FORMAL'): Messages {
+/** Por dónde conversa el paciente (docs/PLAN_TELEGRAM.md). */
+export type CanalDelBot = 'WHATSAPP' | 'TELEGRAM';
+
+/**
+ * Los mensajes que NOMBRAN el canal («no puedo agendar esa EPS por
+ * WhatsApp», «esté pendiente de su WhatsApp»). Por Telegram tienen que decir
+ * «Telegram». Si se agrega otro texto que nombre el canal, va en esta lista:
+ * `chatbot.messages.canal.spec.ts` falla mientras algún mensaje del pool de
+ * Telegram diga «WhatsApp».
+ */
+export const MENSAJES_QUE_NOMBRAN_EL_CANAL = [
+  'epsInvalida',
+  'unidoAWaitlist',
+] as const satisfies ReadonlyArray<keyof Messages>;
+
+const nombrarTelegram = (texto: string): string =>
+  texto.replace(/\bWhatsApp\b/g, 'Telegram');
+
+/** El mismo pool, pero los mensajes que nombran el canal dicen «Telegram». */
+function paraTelegram(pool: Messages): Messages {
+  const copia: Record<string, unknown> = { ...pool };
+  for (const clave of MENSAJES_QUE_NOMBRAN_EL_CANAL) {
+    const original = pool[clave] as (...args: never[]) => string;
+    copia[clave] = (...args: never[]) => nombrarTelegram(original(...args));
+  }
+  return copia as Messages;
+}
+
+const FORMAL_TELEGRAM = paraTelegram(FORMAL);
+const INFORMAL_TELEGRAM = paraTelegram(INFORMAL);
+
+/**
+ * El pool de mensajes del estilo de la clínica y del canal del paciente.
+ *
+ * Para WhatsApp devuelve EL MISMO objeto de siempre (`FORMAL` / `INFORMAL`):
+ * lo que lee un paciente de WhatsApp no cambia ni en un carácter. Para
+ * Telegram, una copia en la que solo cambian los mensajes que nombran el canal.
+ */
+export function buildMessages(
+  style: CommStyle = 'FORMAL',
+  canal: CanalDelBot = 'WHATSAPP',
+): Messages {
+  if (canal === 'TELEGRAM') {
+    return style === 'INFORMAL' ? INFORMAL_TELEGRAM : FORMAL_TELEGRAM;
+  }
   return style === 'INFORMAL' ? INFORMAL : FORMAL;
 }
 
