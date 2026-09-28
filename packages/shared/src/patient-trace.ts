@@ -222,7 +222,7 @@ const PRIORIDAD: Record<CodigoVeredicto, number> = {
 
 export type EstadoCita = 'SCHEDULED' | 'COMPLETED' | 'CANCELLED';
 export type Asistencia = 'PENDING' | 'ATTENDED' | 'NO_SHOW';
-export type OrigenCita = 'MANUAL' | 'WHATSAPP' | 'MIRROR';
+export type OrigenCita = 'MANUAL' | 'WHATSAPP' | 'MIRROR' | 'TELEGRAM';
 
 /** Dónde está una cita creada en AgenIA respecto a su envío al HIS. */
 export interface EstadoSync {
@@ -388,6 +388,7 @@ const ORIGEN_TEXTO: Record<OrigenCita, string> = {
   WHATSAPP: 'WhatsApp',
   MANUAL: 'el personal (agendamiento manual)',
   MIRROR: 'el hospital (espejo del HIS)',
+  TELEGRAM: 'Telegram',
 };
 
 /** Frases para los motivos de fallo del bot que explican por qué no se llegó a confirmar. */

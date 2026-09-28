@@ -64,6 +64,12 @@ export {
   buildWhatsappRecipient,
 } from './src/whatsapp-recipient';
 export {
+  TELEGRAM_SENDER_PREFIX,
+  isTelegramSender,
+  toTelegramSenderId,
+  chatIdFromTelegramSender,
+} from './src/telegram-identity';
+export {
   MOTIVOS_CONSULTA,
   MAX_NOTA_MOTIVO,
   MIN_PALABRAS_NOMBRE,

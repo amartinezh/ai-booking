@@ -43,6 +43,10 @@ model Organization {
   whatsappConfig    WhatsappAccountConfig?
   whatsappTemplates WhatsappTemplate[]
 
+  // Canal de Telegram por clínica (1:1) — token cifrado. Ver docs/PLAN_TELEGRAM.md.
+  telegramConfig      TelegramBotConfig?
+  telegramMessageLogs TelegramMessageLog[]
+
   // Configuración de voz/audio (TTS) por clínica (1:1) — pitch, rate, voz, codec
   audioConfig OrganizationAudioConfig?
 
@@ -84,10 +88,10 @@ model Organization {
   noticeRosterRequests NoticeRosterRequest[]
 
   // 🔎 Rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md, Fase 0).
-  whatsappMessageLogs WhatsappMessageLog[]
-  patientLookupLogs   PatientLookupLog[]
+  whatsappMessageLogs  WhatsappMessageLog[]
+  patientLookupLogs    PatientLookupLog[]
   mirrorPatientOptOuts MirrorPatientOptOut[]
-  hisLookupRequests   HisLookupRequest[]
+  hisLookupRequests    HisLookupRequest[]
 
   // 🚨 Bandeja de excepciones de sincronización (Fase 3 del rastreo).
   syncExceptions SyncException[]
@@ -275,6 +279,47 @@ model WhatsappAccountConfig {
 
   // false hasta que la clínica termine de configurar y validar la conexión.
   isActive Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// ✈️ CANAL DE TELEGRAM POR CLÍNICA (docs/PLAN_TELEGRAM.md)
+// -----------------------------------------------------------------------------
+//
+// Telegram no manda un «phone_number_id»: lo único que dice de qué bot (y de
+// qué clínica) viene un update es la URL a la que llega. Por eso cada clínica
+// tiene su `webhookRouteKey` en la URL y su `secret_token`, que Telegram
+// devuelve en el header X-Telegram-Bot-Api-Secret-Token de cada POST (T1).
+model TelegramBotConfig {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Id del bot según `getMe`. ÚNICO: un mismo bot no puede atender a dos
+  // clínicas, o los pacientes de una verían la agenda de la otra.
+  botId String? @unique
+
+  // "@ClinicaXBot" sin la arroba. Para mostrar y armar el enlace t.me/…
+  botUsername String?
+
+  // Token de BotFather cifrado (AES-256-GCM, mismo CryptoService que Meta).
+  encryptedBotToken String? @db.Text
+
+  // Aleatorio, va en la URL: /telegram/webhook/<webhookRouteKey>.
+  webhookRouteKey String @unique
+
+  // secret_token registrado con setWebhook, cifrado. Un POST sin él (o con el
+  // de otra clínica) se rechaza antes de llegar al bot.
+  encryptedWebhookSecret String? @db.Text
+
+  // false hasta que setWebhook + getWebhookInfo confirmen la conexión.
+  isActive Boolean @default(false)
+
+  lastWebhookSetAt DateTime?
+  // Último error visible en el panel (token revocado, webhook caído…).
+  lastError        String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -658,6 +703,21 @@ model PatientProfile {
   whatsappId String?
   bsuid      String?
 
+  // ✈️ IDENTIDAD DE TELEGRAM — también POR ORGANIZACIÓN (docs/PLAN_TELEGRAM.md).
+  //
+  // El `chat_id` del chat privado con el bot de ESTA clínica, sin el prefijo
+  // `tg:` que usa el bot como remitente. Va en su propia columna y NUNCA en
+  // `whatsappId`: ese campo alimenta los recordatorios y el enlace `wa.me`, y un
+  // chat_id ahí sería un envío fallido a Meta o, peor, el teléfono de otro.
+  //
+  // Se une a la ficha por cédula, como WhatsApp: la misma persona por los dos
+  // canales es UNA ficha con los dos identificadores.
+  telegramChatId    String?
+  // Cuándo Telegram respondió 403 (el paciente bloqueó al bot). Mientras esté
+  // puesto, el recordatorio va por WhatsApp (T4). Se borra cuando vuelve a
+  // escribir por Telegram.
+  telegramBlockedAt DateTime?
+
   // Cédula única POR CLÍNICA (ver @@unique): la misma persona puede ser
   // paciente de varias clínicas, cada una con su propio PatientProfile.
   cedula      String
@@ -716,6 +776,7 @@ model PatientProfile {
 
   @@unique([organizationId, cedula])
   @@unique([organizationId, bsuid])
+  @@unique([organizationId, telegramChatId])
   @@index([organizationId, whatsappId])
 }
 
@@ -900,6 +961,7 @@ enum AppointmentOrigin {
   MANUAL
   WHATSAPP
   MIRROR // Creada/reflejada desde el HIS de un hospital (ver PLAN_ESPEJO_HOSPITAL.md)
+  TELEGRAM // Agendada por el bot en Telegram (ver PLAN_TELEGRAM.md). Viaja al HIS igual que WHATSAPP.
 }
 
 enum Role {
@@ -1674,10 +1736,10 @@ model HospitalMirrorConfig {
   // planeado (conflictos de doble cupo), que nunca se construyó; desde la Fase 3 del
   // rastreo es el interruptor de TODOS los avisos del vigilante de excepciones
   // (`SyncException`). Con él apagado la bandeja se llena igual: solo no se avisa.
-  conflictAlertsEnabled Boolean @default(true)
+  conflictAlertsEnabled     Boolean @default(true)
   // Número E.164 del agendador responsable: destino del aviso por WhatsApp
   // (plantilla `SYNC_EXCEPTION_ALERT`).
-  agendadorWhatsapp     String?
+  agendadorWhatsapp         String?
   // Número E.164 de RESPALDO: si nadie toma la excepción en la bandeja tras el
   // aviso, los recordatorios salen al agendador Y a este número (plan del rastreo,
   // §12 #14). Opcional: sin él, el recordatorio va solo al agendador.
@@ -1685,7 +1747,7 @@ model HospitalMirrorConfig {
   // Correo del agendador. NO SE USA por decisión (plan del rastreo §12 #13,
   // 2026-09-21): el aviso es solo por WhatsApp y la API no tiene transporte de
   // correo. La columna se conserva para no migrar el día que se decida uno.
-  agendadorEmail        String?
+  agendadorEmail            String?
 
   // ⚠️ EXCLUSIVO del driver cnt-sanvicente-anserma — ver
   // docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md.
@@ -2003,6 +2065,63 @@ model WhatsappMessageLog {
   @@index([appointmentId])
 }
 
+enum TelegramMessageType {
+  TEXT
+  VOICE
+}
+
+/// Para qué se envió. Mismos valores que `WhatsappMessageKind` salvo
+/// `MASS_NOTICE`: los avisos masivos no salen por Telegram (T7).
+enum TelegramMessageKind {
+  BOT_REPLY
+  BOOKING_CONFIRMATION
+  APPOINTMENT_REMINDER
+  WAITLIST_OFFER
+  MANUAL
+  SYSTEM_NOTICE
+}
+
+/// Telegram no reporta entregado/leído: solo sabemos si aceptó el envío.
+enum TelegramMessageStatus {
+  ACCEPTED
+  FAILED
+}
+
+/// Libro de mensajes SALIENTES de Telegram (T6). Hermano de
+/// `WhatsappMessageLog` y separado a propósito: aquel guarda estados que Meta
+/// firma, y Telegram no reporta ninguno.
+///
+/// NO guarda el texto (ya está en InteractionLog). Sí el chat, que es un dato
+/// personal: se borra con la clínica.
+model TelegramMessageLog {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// `chat_id` sin prefijo, el mismo valor que `PatientProfile.telegramChatId`.
+  chatId String
+
+  /// `message_id` que devuelve Telegram; único solo dentro del chat. null si
+  /// el envío falló.
+  messageId Int?
+
+  messageType TelegramMessageType
+  kind        TelegramMessageKind
+
+  /// Cita a la que se refiere, cuando se sabe. Sin FK: es evidencia.
+  appointmentId String?
+
+  status      TelegramMessageStatus
+  errorCode   String?
+  errorDetail String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, chatId, createdAt])
+  @@index([appointmentId])
+}
+
 /// Bitácora de las consultas hechas en la pantalla de rastreo de paciente.
 /// Append-only por convención (igual que `GlobalAuditLog`): solo se inserta.
 ///
@@ -2174,7 +2293,7 @@ model MirrorPatientOptOut {
   document String
 
   /// Por qué se pidió (texto corto del funcionario). Sin datos de salud.
-  reason String?
+  reason          String?
   /// Quién lo registró. Escalar plano, sin FK: es bitácora y sobrevive al usuario.
   createdByUserId String?
 

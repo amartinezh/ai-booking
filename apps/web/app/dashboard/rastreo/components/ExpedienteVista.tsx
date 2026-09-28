@@ -18,7 +18,7 @@ import ConsultaHis, { type ConsultaHisProps } from './ConsultaHis';
 
 const ESTADO_CITA = { SCHEDULED: 'Programada', COMPLETED: 'Completada', CANCELLED: 'Cancelada' } as const;
 const ASISTENCIA = { PENDING: 'Sin desenlace', ATTENDED: 'Asistió', NO_SHOW: 'No asistió' } as const;
-const ORIGEN = { WHATSAPP: 'WhatsApp', MANUAL: 'Manual', MIRROR: 'Hospital (HIS)' } as const;
+const ORIGEN = { WHATSAPP: 'WhatsApp', MANUAL: 'Manual', MIRROR: 'Hospital (HIS)', TELEGRAM: 'Telegram' } as const;
 const CHIP = 'inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300';
 
 function Seccion({ titulo, ayuda, children }: { titulo: string; ayuda?: string; children: React.ReactNode }) {

@@ -465,6 +465,11 @@ describe('clasificarRastreoA — en camino, entregada y vigente', () => {
     expect(r.principal.accion).toContain('Esperar');
   });
 
+  it('una cita agendada por Telegram dice que la creó Telegram (docs/PLAN_TELEGRAM.md)', () => {
+    const r = clasificarRastreoA(evA({ citas: [cita({ origin: 'TELEGRAM' })] }));
+    expect(r.principal.evidencia.join(' ')).toContain('Creada por Telegram');
+  });
+
   it('ENTREGADA_SIN_VERIFICAR: dice que AgenIA no puede ver el HIS', () => {
     const r = clasificarRastreoA(evA({ citas: [cita()] }));
 
