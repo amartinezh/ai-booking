@@ -215,6 +215,7 @@ export default function DashboardClient({
                                                     {apt.status === 'CANCELLED' ? 'CANCELADA' : apt.status}
                                                 </span>
                                                 {apt.origin === 'WHATSAPP' && apt.status === 'SCHEDULED' && <div className="mt-1 ml-1 text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full inline-block border border-indigo-200">🤖 AI Bot</div>}
+                                                {apt.origin === 'TELEGRAM' && apt.status === 'SCHEDULED' && <div className="mt-1 ml-1 text-[10px] bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded-full inline-block border border-sky-200">✈️ Bot Telegram</div>}
                                                 {apt.origin === 'MANUAL' && apt.status === 'SCHEDULED' && <div className="mt-1 ml-1 text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-full inline-block border border-blue-200">👤 Manual</div>}
                                             </div>
 

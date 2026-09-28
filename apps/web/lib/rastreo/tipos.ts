@@ -143,6 +143,11 @@ export interface IdentidadVista {
   documento: string | null;
   whatsapp: string | null;
   bsuid: string | null;
+  /**
+   * Solo si el paciente escribió por Telegram (docs/PLAN_TELEGRAM.md). No se
+   * muestra el chat: basta saber si está vinculado o si bloqueó al bot.
+   */
+  telegram?: 'VINCULADO' | 'BLOQUEADO';
   eps: string | null;
   regimen: string | null;
   creadoIso: string;

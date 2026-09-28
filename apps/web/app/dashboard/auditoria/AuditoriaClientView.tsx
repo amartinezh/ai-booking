@@ -7,7 +7,8 @@ import {
     formatWhatsappIdentifier,
     whatsappIdentifierLabel,
     whatsappDeepLink,
-    NO_DEEP_LINK_REASON,
+    noDeepLinkReason,
+    isTelegramSender,
 } from '@/lib/whatsapp';
 
 type InteractionLog = {
@@ -728,10 +729,12 @@ export default function AuditoriaClientView({
                                                 </a>
                                             ) : (
                                                 <span
-                                                    title={NO_DEEP_LINK_REASON}
+                                                    title={noDeepLinkReason(log.whatsappId)}
                                                     className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-lg bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 cursor-not-allowed"
                                                 >
-                                                    <span>🔒</span> Sin número
+                                                    {isTelegramSender(log.whatsappId)
+                                                        ? <><span>✈️</span> Telegram</>
+                                                        : <><span>🔒</span> Sin número</>}
                                                 </span>
                                             );
                                         })()}
@@ -886,10 +889,12 @@ export default function AuditoriaClientView({
                                     </a>
                                 ) : (
                                     <span
-                                        title={NO_DEEP_LINK_REASON}
+                                        title={noDeepLinkReason(selectedLog.whatsappId)}
                                         className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 font-semibold rounded-lg bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 cursor-not-allowed"
                                     >
-                                        <span>🔒</span> Sin número para enlace directo
+                                        {isTelegramSender(selectedLog.whatsappId)
+                                            ? <><span>✈️</span> Paciente de Telegram: use el envío manual</>
+                                            : <><span>🔒</span> Sin número para enlace directo</>}
                                     </span>
                                 );
                             })()}

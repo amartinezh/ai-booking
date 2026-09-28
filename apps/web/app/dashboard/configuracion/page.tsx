@@ -11,6 +11,8 @@ import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
 import WhatsappChannelForm from './WhatsappChannelForm';
 import WhatsappTemplatesForm from './WhatsappTemplatesForm';
+import TelegramChannelForm from './TelegramChannelForm';
+import { getMyTelegramConfig } from '@/app/actions/telegram-config';
 import AudioConfigForm from './AudioConfigForm';
 import ConnectionHealthPanel from './ConnectionHealthPanel';
 import Link from 'next/link';
@@ -71,13 +73,24 @@ export default async function ConfiguracionPage({
     let whatsappConfigError: string | null = null;
     let whatsappTemplates: Awaited<ReturnType<typeof getMyWhatsappTemplates>> | null = null;
     let whatsappTemplatesError: string | null = null;
+    let telegramCard: Awaited<ReturnType<typeof getMyTelegramConfig>> | null = null;
+    let telegramCardError: string | null = null;
 
     if (activeTab === 'integrations') {
-        const [aiRes, waRes, tplRes] = await Promise.allSettled([
+        const [aiRes, waRes, tplRes, tgRes] = await Promise.allSettled([
             getMyAiConfig(),
             getMyWhatsappConfig(),
             getMyWhatsappTemplates(),
+            getMyTelegramConfig(),
         ]);
+        // Telegram, aislado como los demás: si falla, solo su tarjeta lo dice.
+        if (tgRes.status === 'fulfilled') {
+            telegramCard = tgRes.value;
+        } else {
+            console.error('[configuracion] Telegram config load failed:', tgRes.reason);
+            telegramCardError =
+                tgRes.reason?.message ?? 'Error desconocido cargando el canal de Telegram.';
+        }
         if (tplRes.status === 'fulfilled') {
             whatsappTemplates = tplRes.value;
         } else {
@@ -185,6 +198,15 @@ export default async function ConfiguracionPage({
                                 detail={whatsappTemplatesError}
                             />
                         )}
+                        <div className="border-t border-zinc-200 dark:border-zinc-800" />
+                        {telegramCard ? (
+                            <TelegramChannelForm initial={serializeTelegramCard(telegramCard)} />
+                        ) : (
+                            <SectionLoadError
+                                title="No pudimos cargar el canal de Telegram"
+                                detail={telegramCardError}
+                            />
+                        )}
                     </div>
                 )}
                 {activeTab === 'kb' && (
@@ -217,4 +239,20 @@ function SectionLoadError({ title, detail }: { title: string; detail: string | n
             </p>
         </div>
     );
+}
+
+/** Las fechas de la API llegan como texto; se normalizan para el componente cliente. */
+function serializeTelegramCard(
+    card: Awaited<ReturnType<typeof getMyTelegramConfig>>,
+): Awaited<ReturnType<typeof getMyTelegramConfig>> {
+    if (!card.enabled) return card;
+    const c = card.config;
+    return {
+        enabled: true,
+        config: {
+            ...c,
+            lastWebhookSetAt: c.lastWebhookSetAt ? String(c.lastWebhookSetAt) : null,
+            updatedAt: c.updatedAt ? String(c.updatedAt) : null,
+        },
+    };
 }

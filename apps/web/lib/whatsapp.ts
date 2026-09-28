@@ -13,17 +13,30 @@
  * El predicado vive en `@agenia/shared` para que backend y frontend respondan
  * exactamente lo mismo a "¿esto es un teléfono?".
  */
-import { isWhatsappPhoneId } from '@agenia/shared';
+import {
+  chatIdFromTelegramSender,
+  isTelegramSender,
+  isWhatsappPhoneId,
+} from '@agenia/shared';
 
-export { isWhatsappPhoneId };
+export { isWhatsappPhoneId, isTelegramSender };
 
-/** Identificador tal como se le muestra al funcionario. */
+/**
+ * Identificador tal como se le muestra al funcionario.
+ *
+ * Un remitente de Telegram (`tg:<chat_id>`, docs/PLAN_TELEGRAM.md) se muestra
+ * como chat de Telegram: su número NO es un teléfono y no debe parecerlo.
+ */
 export function formatWhatsappIdentifier(identifier: string): string {
+  if (isTelegramSender(identifier)) {
+    return `Chat ${chatIdFromTelegramSender(identifier) ?? identifier}`;
+  }
   return isWhatsappPhoneId(identifier) ? `+${identifier.trim()}` : identifier;
 }
 
 /** Etiqueta del campo, honesta sobre qué se está mostrando. */
 export function whatsappIdentifierLabel(identifier: string): string {
+  if (isTelegramSender(identifier)) return '✈️ Telegram';
   return isWhatsappPhoneId(identifier) ? '📞 Teléfono' : '🆔 ID de WhatsApp';
 }
 
@@ -45,3 +58,14 @@ export function whatsappDeepLink(
 /** Motivo mostrado al funcionario cuando no hay enlace posible. */
 export const NO_DEEP_LINK_REASON =
   'Este paciente ocultó su número en WhatsApp: no existe un enlace wa.me para él. Escríbale desde el envío manual del dashboard.';
+
+/** Motivo cuando el paciente escribió por Telegram (no tiene un wa.me). */
+export const NO_DEEP_LINK_REASON_TELEGRAM =
+  'Este paciente escribió por Telegram: no hay un enlace wa.me para él. Escríbale desde el envío manual del dashboard, que le llega por Telegram.';
+
+/** El motivo que corresponde a ESTE identificador. */
+export function noDeepLinkReason(identifier: string): string {
+  return isTelegramSender(identifier)
+    ? NO_DEEP_LINK_REASON_TELEGRAM
+    : NO_DEEP_LINK_REASON;
+}

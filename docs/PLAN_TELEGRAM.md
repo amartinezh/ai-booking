@@ -1,6 +1,6 @@
 # Canal de Telegram
 
-**Estado: FASES 0, 1 y 2 HECHAS (2026-09-28).** Fase 0 en `bc0e917`, Fase 1 en `b018cc7`, Fase 2 sin commit. Decisiones aprobadas. El usuario aprobó T1 … T9 (§5) el 2026-09-28 tal como estaban recomendadas; en T4 se confirmó además la caída a WhatsApp.
+**Estado: FASES 0 a 3 HECHAS (2026-09-28).** Fase 0 en `bc0e917`, Fase 1 en `b018cc7`, Fase 2 en `9371eaf`, Fase 3 sin commit. Decisiones aprobadas. El usuario aprobó T1 … T9 (§5) el 2026-09-28 tal como estaban recomendadas; en T4 se confirmó además la caída a WhatsApp.
 
 ## 1. Qué se pide
 
@@ -147,7 +147,7 @@ El backend hace todo lo demás, en este orden y **sin activar nada hasta que tod
 3. `setWebhook(url = PUBLIC_API_URL/telegram/webhook/<routeKey>, secret_token, allowed_updates=["message"], drop_pending_updates=true)`.
 4. `getWebhookInfo` → confirma que quedó registrado; solo entonces `isActive = true`.
 
-La tarjeta muestra: estado (conectado / con error, con `last_error_message` de `getWebhookInfo`), el enlace `t.me/<usuario>` y un QR para ponerlo en la sede, botón **Verificar conexión** (`POST /telegram-config/verify`: si Telegram sigue apuntando a nosotros, mensajes retenidos y último error) y botón **Desconectar**. *Cambio en la Fase 1:* se descartó «Enviar mensaje de prueba» porque un bot no puede escribirle a nadie que no le haya escrito antes (`deleteWebhook` + `isActive=false`). El token nunca vuelve al navegador (solo «••••1234»).
+La tarjeta muestra: estado (conectado / con error, con `last_error_message` de `getWebhookInfo`), el enlace `t.me/<usuario>` (con Copiar y Abrir; el QR se dejó fuera: el web no tiene librería de QR y no se agregó una dependencia solo para eso), botón **Verificar conexión** (`POST /telegram-config/verify`: si Telegram sigue apuntando a nosotros, mensajes retenidos y último error) y botón **Desconectar**. *Cambio en la Fase 1:* se descartó «Enviar mensaje de prueba» porque un bot no puede escribirle a nadie que no le haya escrito antes (`deleteWebhook` + `isActive=false`). El token nunca vuelve al navegador (solo «••••1234»).
 
 Además, en lo que ve el personal:
 - `lib/whatsapp.ts`: un `tg:…` se muestra como «✈️ Telegram» y **nunca** genera enlace `wa.me` (hoy el prefijo ya hace que `isWhatsappPhoneId` dé falso, así que no se inventa un número; solo falta la etiqueta).
@@ -224,7 +224,7 @@ Además, en lo que ve el personal:
 | 0 ✅ | Migración aditiva `20260928100000_canal_telegram` + `@agenia/shared/telegram-identity` (`isTelegramSender`, `toTelegramSenderId`, `chatIdFromTelegramSender`) con sus tests; `TELEGRAM` en `OrigenCita` del rastreo y su etiqueta en el expediente | Sí: no cambia comportamiento |
 | 1 ✅ | Módulo `telegram/`: `TelegramCoreModule` (cliente, config, envío + libro) y `TelegramModule` (webhook + endpoints del panel, solo con `TELEGRAM_ENABLED=true`) | Sí, apagado. **No encender antes de la Fase 2** |
 | 2 ✅ | Puntos 1-9 del bot (§4.3; el 10 es la Fase 4) + suite de conversaciones con `tg:` + regresión de WhatsApp | Sí, apagado. Desde aquí el interruptor ya se puede encender en la clínica de prueba |
-| 3 | Panel: tarjeta de configuración, etiquetas, insignias. Rastreo: las ramas `origin === 'WHATSAPP'` de `patient-trace.ts` (líneas ~1031, ~1061, ~1581: confirmación y paso «Conversación») deben reconocer también `TELEGRAM` y leer `TelegramMessageLog` | Sí |
+| 3 ✅ | Panel: tarjeta de configuración, etiquetas, insignias. Rastreo: las ramas `origin === 'WHATSAPP'` de `patient-trace.ts` (líneas ~1031, ~1061, ~1581: confirmación y paso «Conversación») deben reconocer también `TELEGRAM` y leer `TelegramMessageLog` | Sí |
 | 4 | Recordatorio y confirmación HIS por canal (T4) + libro de mensajes (T6) | Sí |
 | 5 | Encendido en clínica de prueba → medir → primera clínica real | — |
 
@@ -269,3 +269,12 @@ Tres cosas que aparecieron al hacerlo, las tres corregidas:
 Pruebas: `chatbot.telegram.e2e.spec.ts` (17 conversaciones por el bot real: agendar paciente nuevo y existente, madre e hijo con el mismo chat, WhatsApp y Telegram a la vez sin mezclarse, baja de recordatorios que no toca al celular con los mismos dígitos, voz de ida y vuelta, lista de espera, mensaje del panel, clínica inactiva o borrada, canal ausente, payload de Meta que imita Telegram). Las credenciales de WhatsApp del doble están ACTIVAS a propósito, para que una fuga llegara de verdad a `http.post`. Mutación: se quitó cada una de las 8 guardas del bot, una a la vez, y cada mutante hizo fallar la suite. Más: cron de inactividad, identidad, fachada y red de plantillas. **Los 2 250 tests de antes pasan sin editar ninguno** (la suite de flujos de WhatsApp incluida); total API 2 294.
 
 Arranque real (Postgres y Redis desechables, `TELEGRAM_ENABLED=true`): un `/start` por el webhook llegó al bot con la clínica correcta, el bot respondió por Telegram (el Telegram real rechazó el token falso y el canal se apagó solo), auditoría `tg:777 / org-tg / SUCCESS`, cero filas en el libro de Meta, el token no aparece en el log.
+
+**Fase 3 (2026-09-28).** El panel conoce Telegram.
+
+- **Tarjeta «Canal de Telegram»** (Configuración → Integraciones, bajo las plantillas de WhatsApp): tres estados. Con `TELEGRAM_ENABLED` apagado la API responde 404 y la tarjeta lo explica («no está habilitado en este servidor»), no es un error. Encendido y sin bot: los tres pasos de BotFather y un campo para el token. Conectado: @usuario, token •••últimos 4, fecha de conexión (con `@/lib/date`, hora de Bogotá), enlace `t.me` con Copiar/Abrir, **Verificar conexión** y **Desconectar**. Los errores de la API (`BadRequest` anidado por el filtro global) llegan a la clínica tal cual están redactados.
+- **Una sola regla de canal, compartida:** `destinoDeContacto` en `@agenia/shared` (T4: el canal de la cita, con caída al otro; Telegram «no disponible» = sin chat o bloqueado). La usa ya el botón «Contactar» de la agenda y la usará el recordatorio en la Fase 4, para que los dos nunca contesten distinto. Para una cita de WhatsApp da el destinatario de siempre (BSUID ?? teléfono).
+- **Etiquetas:** un `tg:` se muestra «✈️ Telegram» / «Chat <n>» y nunca genera `wa.me`; la auditoría dice «paciente de Telegram: use el envío manual» en vez de «ocultó su número». Lista de pacientes: insignia de Telegram (y «bloqueado» si aplica); un paciente solo de Telegram ya no sale como «No registrado». Agenda y dashboard: insignia para citas `TELEGRAM`, y «Contactar» también para ellas.
+- **Rastreo:** la conversación se busca también bajo `tg:<chat>`; la confirmación de una cita de Telegram sale de `TelegramMessageLog` con su propio vocabulario (Telegram solo dice aceptada o fallida: el texto no inventa «leída» ni habla de Meta); la línea de vida cuenta la conversación del bot en Telegram. El libro de Telegram **solo se consulta si hay citas de Telegram**, así que el rastreo de un paciente de WhatsApp hace exactamente las mismas lecturas que antes (por eso sus 928 tests no se tocaron). El expediente dice «Telegram: vinculado / bloqueó al bot» sin mostrar el chat; el campo ni existe para un paciente de WhatsApp.
+
+Verificado con web real (`next start`) contra la API real (Postgres y Redis desechables, `DATABASE_URL`, URLs de la API y `JWT_SECRET` sobrescritos): los tres estados de la tarjeta se ven como se diseñaron; conectar con token mal formado, falso (el Telegram real lo rechaza) o vacío devuelve el mensaje legible; «Verificar» con el token falso sembrado apagó el canal y la tarjeta pasó a «Desconectado» con el motivo. Tests: web 938 (10 nuevos), shared 893 (23 nuevos), API 2 294; `next build`, lint (solo los 4 avisos de `<img>` de siempre) y builds en verde.

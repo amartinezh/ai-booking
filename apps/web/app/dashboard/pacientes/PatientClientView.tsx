@@ -80,10 +80,25 @@ export default function PatientClientView({ patients }: { patients: PatientWithU
                                         <span className="text-sm text-zinc-900 dark:text-white font-medium">{patient.cedula}</span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        {patient.whatsappId ? (
-                                            <span className="px-3 py-1 inline-flex text-xs font-bold rounded-lg bg-green-50 text-green-700 border border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800/40">
-                                                💬 {patient.whatsappId}
-                                            </span>
+                                        {patient.whatsappId || patient.telegramChatId ? (
+                                            <div className="flex flex-col items-start gap-1">
+                                                {patient.whatsappId && (
+                                                    <span className="px-3 py-1 inline-flex text-xs font-bold rounded-lg bg-green-50 text-green-700 border border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800/40">
+                                                        💬 {patient.whatsappId}
+                                                    </span>
+                                                )}
+                                                {/* Telegram (docs/PLAN_TELEGRAM.md): el chat no es un teléfono, así que no se muestra su número. */}
+                                                {patient.telegramChatId && (
+                                                    <span
+                                                        title={patient.telegramBlockedAt ? 'El paciente bloqueó al bot de Telegram: los recordatorios le llegan por WhatsApp.' : 'Escribió por Telegram'}
+                                                        className={`px-3 py-1 inline-flex text-xs font-bold rounded-lg border ${patient.telegramBlockedAt
+                                                            ? 'bg-zinc-100 text-zinc-500 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700'
+                                                            : 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-900/20 dark:text-sky-400 dark:border-sky-800/40'}`}
+                                                    >
+                                                        ✈️ Telegram{patient.telegramBlockedAt ? ' (bloqueado)' : ''}
+                                                    </span>
+                                                )}
+                                            </div>
                                         ) : (
                                             <span className="text-xs text-zinc-400 italic">No registrado</span>
                                         )}

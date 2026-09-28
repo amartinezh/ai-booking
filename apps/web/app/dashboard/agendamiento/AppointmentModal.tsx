@@ -86,7 +86,7 @@ export default function AppointmentModal({
         const res = await sendManualWhatsappAction(eventData!.id, msgText);
         setLoading(false);
         if (res.success) {
-            alert('Mensaje enviado por WhatsApp');
+            alert(res.canal === 'TELEGRAM' ? 'Mensaje enviado por Telegram' : 'Mensaje enviado por WhatsApp');
             setMsgMode(false);
             setMsgText('');
         } else {
@@ -228,6 +228,10 @@ export default function AppointmentModal({
                                 <span className="text-xs bg-emerald-50 text-emerald-700 font-bold px-2 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
                                     🤖 Creado por Vicente (Bot)
                                 </span>
+                            ) : eventData.origin === 'TELEGRAM' ? (
+                                <span className="text-xs bg-sky-50 text-sky-700 font-bold px-2 py-1 rounded-full border border-sky-200 flex items-center gap-1">
+                                    ✈️ Creado por Vicente (Bot) en Telegram
+                                </span>
                             ) : (
                                 <span className="text-xs bg-blue-50 text-blue-700 font-bold px-2 py-1 rounded-full border border-blue-200 flex items-center gap-1">
                                     👤 Creación Manual Agente
@@ -237,7 +241,9 @@ export default function AppointmentModal({
 
                         {msgMode && (
                             <form onSubmit={handleWhatsapp} className="mt-6 border-t border-zinc-200 dark:border-zinc-800 pt-4 animate-in slide-in-from-top-2">
-                                <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-2">Mensaje WhatsApp Saliente a {eventData.patient?.fullName}</label>
+                                <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-2">
+                                    {eventData.origin === 'TELEGRAM' ? 'Mensaje saliente (por Telegram)' : 'Mensaje WhatsApp Saliente'} a {eventData.patient?.fullName}
+                                </label>
                                 <textarea 
                                     required
                                     rows={3}
@@ -249,7 +255,7 @@ export default function AppointmentModal({
                                 <div className="flex gap-2 justify-end">
                                     <button type="button" onClick={() => setMsgMode(false)} className="px-3 py-1.5 text-xs text-zinc-600 font-semibold hover:bg-zinc-100 rounded-md">Cancelar</button>
                                     <button disabled={loading} type="submit" className="bg-emerald-500 text-white font-bold text-xs px-3 py-1.5 rounded-md hover:bg-emerald-600 disabled:opacity-50">
-                                        Enviar WhatsApp
+                                        {eventData.origin === 'TELEGRAM' ? 'Enviar' : 'Enviar WhatsApp'}
                                     </button>
                                 </div>
                             </form>
@@ -258,7 +264,7 @@ export default function AppointmentModal({
 
                     {!msgMode && (
                         <div className="border-t border-zinc-200 dark:border-zinc-800 p-4 bg-zinc-50 dark:bg-zinc-900/50 flex justify-end gap-3">
-                            {eventData.origin === 'WHATSAPP' && (
+                            {(eventData.origin === 'WHATSAPP' || eventData.origin === 'TELEGRAM') && (
                                 <button onClick={() => setMsgMode(true)} className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-2 px-4 rounded-lg flex items-center gap-2 text-sm transition-colors">
                                     <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12.002 0A12 12 0 0 0 0 12c0 2.124.553 4.128 1.523 5.86L.002 24l5.955-1.562a11.96 11.96 0 0 0 6.044 1.565A12 12 0 1 0 12.002 0zM7.4 8.6c.14-.14.33-.2.53-.26.21-.06.4-.04.57.1.18.15.54.91.59 1.02.04.1.06.21 0 .31-.06.1-.1.17-.2.3l-.29.35c-.09.11-.19.22-.07.43.12.21.54.89 1.15 1.43.79.71 1.48.93 1.69 1.03.2.1.32.09.43-.03l.5-.6c.12-.13.26-.17.43-.1.17.07 1.1.52 1.28.61.19.09.31.14.36.22.04.08.04.47-.11 1.05-.14.59-.83 1.15-1.56 1.25-.72.11-1.46.2-4.04-1.28-2.58-1.5-4.22-3.96-4.35-4.14-.12-.18-1.04-1.38-1.04-2.63 0-1.25.65-1.87.89-2.12z"/></svg>
                                     Contactar

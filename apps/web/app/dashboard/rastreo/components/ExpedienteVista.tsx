@@ -151,6 +151,14 @@ export default function ExpedienteVista({
                         <Dato etiqueta="Documento" valor={revelado?.documento ?? data.identidad.documento} />
                         <Dato etiqueta="WhatsApp" valor={revelado ? revelado.whatsapp : data.identidad.whatsapp} />
                         <Dato etiqueta="BSUID" valor={revelado ? revelado.bsuid : data.identidad.bsuid} />
+                        {data.identidad.telegram && (
+                            <Dato
+                                etiqueta="Telegram"
+                                valor={data.identidad.telegram === 'BLOQUEADO'
+                                    ? 'Bloqueó al bot (los recordatorios van por WhatsApp)'
+                                    : 'Vinculado'}
+                            />
+                        )}
                         <Dato etiqueta="EPS" valor={data.identidad.eps} />
                         <Dato etiqueta="Régimen" valor={data.identidad.regimen} />
                         <Dato etiqueta="Perfil creado" valor={formatAppointmentShort(data.identidad.creadoIso, { timeZone: tz })} />

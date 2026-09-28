@@ -42,6 +42,7 @@ import {
   type EvidenciaRastreoB,
   type MotivoConsulta,
   type ResultadoRastreo,
+  toTelegramSenderId,
 } from '@agenia/shared';
 import { aUtc } from './zona-horaria';
 import { SIN_PERMISOS, puedeConfirmar, type ActorRastreo } from './acceso';
@@ -514,8 +515,13 @@ export async function armarExpedienteA(
     return { success: false, error: 'Sujeto inválido.' };
   }
 
+  // ✈️ Con Telegram, la conversación del paciente también está bajo `tg:<chat>`.
   const senderIds = paciente
-    ? [paciente.whatsappId, paciente.bsuid].filter((x): x is string => !!x)
+    ? [
+        paciente.whatsappId,
+        paciente.bsuid,
+        toTelegramSenderId(paciente.telegramChatId),
+      ].filter((x): x is string => !!x)
     : [remitente!];
 
   const ahora = new Date();
@@ -625,6 +631,7 @@ export async function armarExpedienteA(
   // ── Lecturas que dependen de las citas ─────────────────────
   const idsCitas = citasBD.map((c) => c.id);
   const idsNacidasAqui = citasBD.filter((c) => c.origin !== 'MIRROR').map((c) => c.id);
+  const idsCitasTelegram = citasBD.filter((c) => c.origin === 'TELEGRAM').map((c) => c.id);
   const idsCanceladasPorHis = citasBD
     .filter(
       (c) =>
@@ -648,7 +655,7 @@ export async function armarExpedienteA(
       ]
     : [];
 
-  const [eventosBD, mensajesBD, auditoriasBajas, personalBD] = await Promise.all([
+  const [eventosBD, mensajesWaBD, auditoriasBajas, personalBD, mensajesTgBD] = await Promise.all([
     verSync && idsNacidasAqui.length > 0
       ? db.syncOutbox.findMany({
           where: {
@@ -708,7 +715,41 @@ export async function armarExpedienteA(
           select: { id: true, email: true },
         })
       : Promise.resolve([]),
+    // ✈️ Confirmaciones que salieron por Telegram: su propio libro (T6). Solo
+    // se consulta si hay citas de Telegram: el rastreo de un paciente de
+    // WhatsApp hace exactamente las mismas lecturas que antes.
+    nivel !== 'NINGUNA' && idsCitasTelegram.length > 0
+      ? db.telegramMessageLog.findMany({
+          where: {
+            organizationId: org,
+            appointmentId: { in: idsCitasTelegram },
+            kind: 'BOOKING_CONFIRMATION',
+          },
+          select: {
+            appointmentId: true,
+            status: true,
+            createdAt: true,
+            errorCode: true,
+            errorDetail: true,
+          },
+        })
+      : Promise.resolve([]),
   ]);
+
+  // Los dos libros como una sola lista por cita. Telegram no tiene «hora del
+  // estado» aparte: aceptar o fallar ocurre al enviar.
+  const mensajesBD = [
+    ...mensajesWaBD,
+    ...mensajesTgBD.map((m) => ({
+      appointmentId: m.appointmentId,
+      status: m.status,
+      createdAt: m.createdAt,
+      statusAt: m.createdAt,
+      errorCode: m.errorCode,
+      errorDetail: m.errorDetail,
+      canal: 'TELEGRAM' as const,
+    })),
+  ];
 
   // ── Lo que respondió el HIS en vivo (Fase 2) ───────────────
   // Solo con perfil (un remitente sin perfil no tiene documento con el cual
@@ -844,6 +885,9 @@ export async function armarExpedienteA(
         documento: enmascararDocumento(paciente.cedula),
         whatsapp: paciente.whatsappId ? enmascararIdentificadorWhatsapp(paciente.whatsappId) : null,
         bsuid: paciente.bsuid ? enmascararIdentificadorWhatsapp(paciente.bsuid) : null,
+        ...(paciente.telegramChatId
+          ? { telegram: paciente.telegramBlockedAt ? ('BLOQUEADO' as const) : ('VINCULADO' as const) }
+          : {}),
         eps: paciente.eps?.name ?? null,
         regimen: paciente.regime ?? null,
         creadoIso: paciente.createdAt.toISOString(),

@@ -13,6 +13,7 @@ import {
     parseRegimen,
     regimenSeguroDelPadron,
     type Regimen,
+    destinoDeContacto,
 } from '@agenia/shared';
 import {
     MSG_FUERA_DE_ALCANCE,
@@ -58,13 +59,18 @@ export async function sendManualWhatsappAction(appointmentId: string, message: s
         // estable). Antes esto caía en `|| patient.cedula` — una cédula NO es
         // un destinatario de WhatsApp: el envío fallaba o, peor, llegaba a
         // quien tuviera ese número. Sin identificador, no se envía.
-        const recipient = appointment.patient.bsuid || appointment.patient.whatsappId;
-        if (!recipient) {
+        //
+        // ✈️ Telegram (docs/PLAN_TELEGRAM.md, T4): el canal lo decide la MISMA
+        // regla que el recordatorio (`destinoDeContacto`): el de la cita, con
+        // caída al otro. Para una cita de WhatsApp da el destinatario de siempre.
+        const destino = destinoDeContacto(appointment.patient, appointment.origin);
+        if (!destino) {
             return {
                 success: false,
                 error: 'El paciente no tiene un identificador de WhatsApp registrado.',
             };
         }
+        const recipient = destino.destinatario;
 
         // El endpoint /chatbot/outbound ahora exige sesión (RolesGuard) y envía
         // por la línea de la clínica del token, así que reenviamos la cookie.
@@ -87,7 +93,7 @@ export async function sendManualWhatsappAction(appointmentId: string, message: s
             throw new Error('Error enviando mensaje via API');
         }
 
-        return { success: true };
+        return { success: true, canal: destino.canal };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
     }

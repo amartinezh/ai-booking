@@ -158,7 +158,8 @@ export default function CalendarClient({
                         noEventsInRange: 'No hay citas en este periodo.'
                     }}
                     eventPropGetter={(event: AppointmentCalendarEvent) => {
-                        const isWhatsapp = event.resource.origin === 'WHATSAPP';
+                        // Citas del bot, por cualquiera de sus canales (docs/PLAN_TELEGRAM.md).
+                        const isWhatsapp = event.resource.origin === 'WHATSAPP' || event.resource.origin === 'TELEGRAM';
                         return {
                             className: isWhatsapp ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-blue-50 border-blue-200 text-blue-700',
                             style: {

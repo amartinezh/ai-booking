@@ -70,6 +70,12 @@ export {
   chatIdFromTelegramSender,
 } from './src/telegram-identity';
 export {
+  destinoDeContacto,
+  type CanalDeContacto,
+  type DestinoDeContacto,
+  type IdentidadDeContacto,
+} from './src/canal-contacto';
+export {
   MOTIVOS_CONSULTA,
   MAX_NOTA_MOTIVO,
   MIN_PALABRAS_NOMBRE,

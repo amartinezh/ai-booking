@@ -248,6 +248,12 @@ export type EstadoMensaje =
 
 export interface MensajeConfirmacion {
   status: EstadoMensaje;
+  /**
+   * Por dónde salió. Ausente = WhatsApp (todo lo anterior a Telegram). Telegram
+   * solo reporta ACCEPTED o FAILED: no hay «entregado» ni «leído» que mostrar
+   * (docs/PLAN_TELEGRAM.md, T6).
+   */
+  canal?: 'WHATSAPP' | 'TELEGRAM';
   /** Cuándo aceptó Meta el envío. */
   enviadoIso: string;
   /** Cuándo ocurrió `status`. */
@@ -1028,6 +1034,28 @@ function lineasConfirmacion(
   const noSabemos: string[] = [];
   const m = c.confirmacion;
 
+  // ✈️ Telegram: su propio libro y su propio vocabulario. Se decide aparte para
+  // que los textos de WhatsApp de abajo sigan siendo exactamente los de siempre.
+  if (c.origin === 'TELEGRAM' || m?.canal === 'TELEGRAM') {
+    if (!m) {
+      noSabemos.push('No hay registro de la confirmación por Telegram.');
+    } else if (m.status === 'FAILED') {
+      evidencia.push(
+        `La confirmación por Telegram NO se entregó${m.errorDetalle ? ` (${m.errorDetalle})` : ''}.`,
+      );
+    } else {
+      evidencia.push(
+        `La confirmación por Telegram se envió el ${cuandoExacto(m.enviadoIso, ctx)} y Telegram la aceptó. Telegram no informa si el paciente la leyó.`,
+      );
+    }
+    if (c.confirmadaEnConversacion === false) {
+      noSabemos.push(
+        'La conversación con el bot no tiene el registro de confirmación de esta cita.',
+      );
+    }
+    return { evidencia, noSabemos };
+  }
+
   if (!m) {
     if (c.origin === 'WHATSAPP') {
       noSabemos.push(
@@ -1578,8 +1606,8 @@ export function construirLineaDeVida(
     detalle: string | null = null,
   ) => pasos.push({ clave, etiqueta, estado, atIso, detalle });
 
-  // 1. Conversación
-  if (c.origin !== 'WHATSAPP') {
+  // 1. Conversación (el bot conversa por WhatsApp y por Telegram)
+  if (c.origin !== 'WHATSAPP' && c.origin !== 'TELEGRAM') {
     paso(
       'conversacion',
       'Conversación',
@@ -1602,8 +1630,12 @@ export function construirLineaDeVida(
     paso('confirmacion_entregada', 'Confirmación entregada', 'unknown', null, 'Sin registro en el libro de mensajes.');
   } else {
     paso('confirmacion_enviada', 'Confirmación enviada', 'ok', m.enviadoIso);
-    if (m.status === 'FAILED') {
-      paso('confirmacion_entregada', 'Confirmación entregada', 'fail', m.estadoIso, m.errorDetalle ?? 'Meta la marcó como fallida.');
+    if (m.canal === 'TELEGRAM' && m.status !== 'FAILED') {
+      // Que Telegram la acepte es la entrega: el mensaje ya está en el chat
+      // (si el paciente hubiera bloqueado al bot, el envío habría fallado).
+      paso('confirmacion_entregada', 'Confirmación entregada', 'ok', m.estadoIso, 'Telegram la aceptó (no informa lectura).');
+    } else if (m.status === 'FAILED') {
+      paso('confirmacion_entregada', 'Confirmación entregada', 'fail', m.estadoIso, m.errorDetalle ?? (m.canal === 'TELEGRAM' ? 'Telegram no la aceptó.' : 'Meta la marcó como fallida.'));
     } else if (m.status === 'DELIVERED' || m.status === 'READ') {
       paso('confirmacion_entregada', 'Confirmación entregada', 'ok', m.estadoIso, m.status === 'READ' ? 'Leída.' : null);
     } else {

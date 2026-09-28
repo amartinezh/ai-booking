@@ -40,6 +40,8 @@ export interface FilaMensaje {
   statusAt: Date;
   errorCode: string | null;
   errorDetail: string | null;
+  /** De qué libro salió. Ausente = WhatsApp (docs/PLAN_TELEGRAM.md). */
+  canal?: 'WHATSAPP' | 'TELEGRAM';
 }
 
 const RANGO_MENSAJE: Record<EstadoMensaje, number> = {
@@ -71,6 +73,8 @@ export function elegirConfirmacion(
     estadoIso: mejor.statusAt.toISOString(),
     errorDetalle:
       mejor.errorDetail ?? (mejor.errorCode ? `código ${mejor.errorCode}` : null),
+    // Solo se marca Telegram: una confirmación de WhatsApp queda como siempre.
+    ...(mejor.canal === 'TELEGRAM' ? { canal: 'TELEGRAM' as const } : {}),
   };
 }
 
