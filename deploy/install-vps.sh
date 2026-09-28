@@ -629,16 +629,28 @@ ${SINGLE_DOMAIN} {
 	}
 
 	# ── SUPERFICIE PÚBLICA DE LA API ────────────────────────────────────────
-	# Solo el webhook de Meta necesita ser alcanzable desde internet. El resto
-	# de la API (historias clínicas, analytics, super-admin, FHIR…) lo consume
-	# el panel por la red interna de Docker (http://api:3000), así que no se
-	# publica: reduce la superficie de ataque de ~19 controladores a 1 ruta.
+	# Solo los webhooks (Meta y Telegram) y el agente espejo necesitan ser
+	# alcanzables desde internet. El resto de la API (historias clínicas,
+	# analytics, super-admin, FHIR…) lo consume el panel por la red interna de
+	# Docker (http://api:3000), así que no se publica: reduce la superficie de
+	# ataque de ~19 controladores a unas pocas rutas.
 	#
 	# Para publicar otra ruta, añade aquí su bloque 'handle' con el mismo
 	# patrón (matcher + uri strip_prefix /api + reverse_proxy).
 	#
 	# OJO: la imagen de la API escucha en 3000, no en 3001.
 	handle /api/chatbot/webhook* {
+		uri strip_prefix /api
+		reverse_proxy api:3000
+	}
+
+	# ── Webhook de Telegram (docs/PLAN_TELEGRAM.md) ─────────────────────────
+	# Telegram llama aquí con cada mensaje de un paciente. Solo el webhook:
+	# /telegram-config (conectar el bot) lo usa el panel por la red interna y
+	# NO se publica. Lo protege el secret_token de cada clínica (401 sin él),
+	# no el proxy. Sin este bloque Telegram recibe 404 y los mensajes se
+	# quedan retenidos sin ningún error en los logs de la API.
+	handle /api/telegram/webhook/* {
 		uri strip_prefix /api
 		reverse_proxy api:3000
 	}
@@ -678,6 +690,17 @@ elif [[ "$DOMAIN_MODE" == "http" ]]; then
 		uri strip_prefix /api
 		reverse_proxy api:3000
 	}
+	# ── Webhook de Telegram (docs/PLAN_TELEGRAM.md) ─────────────────────────
+	# Telegram llama aquí con cada mensaje de un paciente. Solo el webhook:
+	# /telegram-config (conectar el bot) lo usa el panel por la red interna y
+	# NO se publica. Lo protege el secret_token de cada clínica (401 sin él),
+	# no el proxy. Sin este bloque Telegram recibe 404 y los mensajes se
+	# quedan retenidos sin ningún error en los logs de la API.
+	handle /api/telegram/webhook/* {
+		uri strip_prefix /api
+		reverse_proxy api:3000
+	}
+
 	# ── Agente espejo del hospital (mirror-agent) ───────────────────────────
 	# El agente corre DENTRO de la LAN del hospital y solo abre conexiones
 	# salientes: esta es la única vía por la que entra y sale el espejo del
@@ -733,6 +756,12 @@ ${DOMAIN_API} {
 	import comunes
 
 	handle /chatbot/webhook* {
+		reverse_proxy api:3000
+	}
+
+	# ── Webhook de Telegram (docs/PLAN_TELEGRAM.md) ─────────────────────────
+	# Solo el webhook; /telegram-config es interno. Ver el modo de un dominio.
+	handle /telegram/webhook/* {
 		reverse_proxy api:3000
 	}
 

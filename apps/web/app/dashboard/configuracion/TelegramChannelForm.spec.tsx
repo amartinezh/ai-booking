@@ -137,4 +137,25 @@ describe('TelegramChannelForm', () => {
             expect(screen.getByText(/Connection timed out/)).toBeInTheDocument();
         });
     });
+
+    it('«apunta a AgenIA» pero con mensajes retenidos y error: avisa que no llegan (caso del primer encendido)', async () => {
+        (verifyMyTelegram as jest.Mock).mockResolvedValue({
+            success: true,
+            data: { ...conectado(), webhookOk: true, pendingUpdateCount: 3, telegramLastError: 'Wrong response from the webhook: 404 Not Found' },
+        });
+        render(<TelegramChannelForm initial={{ enabled: true, config: conectado() }} />);
+        await userEvent.click(screen.getByRole('button', { name: /Verificar conexión/ }));
+        await waitFor(() => expect(screen.getByText(/no logra entregar los mensajes/)).toBeInTheDocument());
+    });
+
+    it('sin retenidos no hay alarma, aunque Telegram recuerde un error viejo', async () => {
+        (verifyMyTelegram as jest.Mock).mockResolvedValue({
+            success: true,
+            data: { ...conectado(), webhookOk: true, pendingUpdateCount: 0, telegramLastError: 'Wrong response from the webhook: 404 Not Found' },
+        });
+        render(<TelegramChannelForm initial={{ enabled: true, config: conectado() }} />);
+        await userEvent.click(screen.getByRole('button', { name: /Verificar conexión/ }));
+        await waitFor(() => expect(screen.getByText(/apunta a AgenIA/)).toBeInTheDocument());
+        expect(screen.queryByText(/no logra entregar/)).not.toBeInTheDocument();
+    });
 });

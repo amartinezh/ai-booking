@@ -226,7 +226,7 @@ Además, en lo que ve el personal:
 | 2 ✅ | Puntos 1-9 del bot (§4.3; el 10 es la Fase 4) + suite de conversaciones con `tg:` + regresión de WhatsApp | Sí, apagado. Desde aquí el interruptor ya se puede encender en la clínica de prueba |
 | 3 ✅ | Panel: tarjeta de configuración, etiquetas, insignias. Rastreo: las ramas `origin === 'WHATSAPP'` de `patient-trace.ts` (líneas ~1031, ~1061, ~1581: confirmación y paso «Conversación») deben reconocer también `TELEGRAM` y leer `TelegramMessageLog` | Sí |
 | 4 ✅ | Recordatorio y confirmación HIS por canal (T4, con caída a WhatsApp) + formato de WhatsApp traducido a HTML de Telegram + QR en el panel | Sí |
-| 5 | Encendido en clínica de prueba → medir → primera clínica real | — |
+| 5 | Encendido en clínica de prueba → medir → primera clínica real. **Runbook: [`ENCENDIDO_TELEGRAM.md`](ENCENDIDO_TELEGRAM.md)** | — |
 
 ## 8. Riesgos
 

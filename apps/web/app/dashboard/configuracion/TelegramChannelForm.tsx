@@ -227,6 +227,14 @@ function TelegramChannel({ initial }: { initial: PublicTelegramConfig }) {
                                     {status.webhookOk ? 'apunta a AgenIA' : 'NO apunta a AgenIA — vuelva a conectar el bot'}
                                 </strong>
                             </div>
+                            {/* «Apunta a AgenIA» solo compara la URL registrada. Si además hay
+                                mensajes retenidos con un error, Telegram NO logra entregarlos
+                                (p. ej. el proxy responde 404): eso es lo que importa ver. */}
+                            {status.webhookOk && (status.pendingUpdateCount ?? 0) > 0 && status.telegramLastError && (
+                                <div className="text-rose-700 dark:text-rose-400 font-semibold">
+                                    ⚠️ Telegram no logra entregar los mensajes de los pacientes al servidor. Avise al equipo técnico de AgenIA.
+                                </div>
+                            )}
                             {status.pendingUpdateCount !== null && status.pendingUpdateCount > 0 && (
                                 <div>Mensajes esperando entrega: {status.pendingUpdateCount}</div>
                             )}

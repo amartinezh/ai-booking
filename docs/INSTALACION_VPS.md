@@ -388,6 +388,14 @@ app.tudominio.com {
 		reverse_proxy api:3000
 	}
 
+	# Webhook de Telegram (docs/PLAN_TELEGRAM.md). Solo el webhook: la
+	# configuración del bot (/telegram-config) la usa el panel por la red
+	# interna. Sin este bloque Telegram recibe 404 y retiene los mensajes.
+	handle /api/telegram/webhook/* {
+		uri strip_prefix /api
+		reverse_proxy api:3000
+	}
+
 	# 404 (no 403) para no confirmar qué endpoints hay detrás.
 	handle /api/* {
 		respond "Not Found" 404

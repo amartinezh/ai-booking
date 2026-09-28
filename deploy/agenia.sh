@@ -257,6 +257,30 @@ cmd_verify() {
     fi
   fi
 
+  # ── Telegram (docs/PLAN_TELEGRAM.md) ────────────────────────────────────
+  # Solo si está encendido. POST porque la ruta solo acepta POST: un GET daría
+  # 404 tanto si Caddy la bloquea como si no, y no distinguiría nada. Sin el
+  # secreto de la clínica la API responde 401: ese 401 prueba la cadena entera
+  # (proxy → API). Un 404 es el proxy sin el bloque del webhook: Telegram
+  # recibe 404 y los mensajes de los pacientes se quedan retenidos sin que la
+  # API registre nada (pasó en el primer encendido, 2026-09-28).
+  if [[ "${TELEGRAM_ENABLED:-}" == "true" && -n "${PUBLIC_API_URL:-}" ]]; then
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST \
+      -H 'Content-Type: application/json' -d '{}' \
+      "${PUBLIC_API_URL}/telegram/webhook/agenia-verify-probe" || echo 000)"
+    case "$code" in
+      401) ok "Webhook de Telegram publicado y exigiendo el secreto (401)" ;;
+      404) err "Webhook de Telegram → 404: el proxy no lo publica. Falta el bloque 'handle' de /telegram/webhook/* en deploy/Caddyfile (ver deploy/install-vps.sh)"; fails=$((fails+1)) ;;
+      *)   err "Webhook de Telegram ${PUBLIC_API_URL}/telegram/webhook → HTTP $code (se esperaba 401)"; fails=$((fails+1)) ;;
+    esac
+    # La configuración del bot la usa el panel por la red interna: no se publica.
+    code="$(probe "${PUBLIC_API_URL}/telegram-config")"
+    case "$code" in
+      404) ok "Configuración de Telegram no expuesta a Internet (404)" ;;
+      *)   err "La configuración de Telegram SÍ está expuesta (${PUBLIC_API_URL}/telegram-config → $code)"; fails=$((fails+1)) ;;
+    esac
+  fi
+
   head1 "Seguridad"
   if ss -ltnp 2>/dev/null | grep -qE '0\.0\.0\.0:(5432|6379)|\[::\]:(5432|6379)'; then
     err "PostgreSQL o Redis expuestos a Internet"; fails=$((fails+1))
