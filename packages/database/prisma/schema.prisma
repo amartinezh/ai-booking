@@ -700,6 +700,13 @@ model PatientProfile {
   // adopta el Parent BSUID (CO.ENT.*) porque su función es correlacionar al
   // mismo usuario entre portafolios vinculados — justo lo contrario del
   // aislamiento fuerte que queremos entre tenants sobre datos de salud.
+  //
+  // Por clínica, pero NO único: el BSUID es la CUENTA de WhatsApp, no la
+  // persona (esa es la cédula). Una madre con el número oculto que agenda para
+  // ella y para su hijo deja el mismo BSUID en dos fichas, igual que un celular
+  // compartido en `whatsappId`. Con llave única la segunda ficha no se creaba,
+  // y a una ficha ya existente se le perdía el régimen junto con el BSUID
+  // (van en el mismo update). Ver migración 20260928120000.
   whatsappId String?
   bsuid      String?
 
@@ -780,7 +787,7 @@ model PatientProfile {
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, cedula])
-  @@unique([organizationId, bsuid])
+  @@index([organizationId, bsuid])
   @@index([organizationId, whatsappId])
   @@index([organizationId, telegramChatId])
 }
