@@ -9176,7 +9176,14 @@ export class ChatbotService implements OnModuleInit {
 
       const result = await this.sendWhatsAppMessage(to, message, ctx);
       if (!result) {
-        return { success: false, error: 'meta-api-error' };
+        // Un `tg:` no pasó por Meta: el error lo dice, para que la auditoría
+        // (y la caída a WhatsApp del recordatorio) no lo confunda.
+        return {
+          success: false,
+          error: isTelegramSender(to)
+            ? 'telegram-send-failed'
+            : 'meta-api-error',
+        };
       }
       return { success: true };
     } catch (error: unknown) {

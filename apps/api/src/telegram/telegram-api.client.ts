@@ -85,20 +85,23 @@ export class TelegramApiClient {
   }
 
   /**
-   * Envía texto PLANO (sin `parse_mode`): el bot escribe con `*` y `_` de
-   * WhatsApp y en Markdown de Telegram un asterisco sin pareja rompe el envío
-   * con 400. Quien llame debe partir antes los textos de más de 4 096
+   * Envía texto. Por defecto PLANO (sin `parse_mode`); con `html: true`, en
+   * el modo HTML de Telegram, que es al que se traduce el formato de WhatsApp
+   * (ver telegram-format.ts). Nunca Markdown: un asterisco sin pareja rompe el
+   * envío con 400. Quien llame debe partir antes los textos de más de 4 096
    * caracteres (ver `splitTelegramText`).
    */
   sendMessage(
     token: string,
     chatId: string,
     text: string,
+    opts: { html?: boolean } = {},
   ): Promise<TelegramResult<TelegramSentMessage>> {
     return this.call<TelegramSentMessage>(token, 'sendMessage', {
       chat_id: chatId,
       text,
       link_preview_options: { is_disabled: true },
+      ...(opts.html ? { parse_mode: 'HTML' } : {}),
     });
   }
 

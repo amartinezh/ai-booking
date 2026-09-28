@@ -12,7 +12,7 @@ import { OrganizationSettingsService } from '../chatbot/organization-settings.se
 import { InteractionLogService } from '../interaction-log/interaction-log.service';
 import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
-import { saludoPorHora } from '@agenia/shared';
+import { destinoDeContacto, saludoPorHora } from '@agenia/shared';
 import { addBusinessHours, formatForPatient } from '../common/business-hours';
 import { getErrorMessage, getErrorStack } from '../common/error-message.util';
 import { citaFueraDelAlcanceDelActor } from '../common/alcance-actor.util';
@@ -220,6 +220,9 @@ export class AppointmentReminderCronService
             fullName: true,
             whatsappId: true,
             bsuid: true,
+            // Telegram (docs/PLAN_TELEGRAM.md, T4): el canal del recordatorio.
+            telegramChatId: true,
+            telegramBlockedAt: true,
           },
         },
         scheduleSlot: {
@@ -257,36 +260,52 @@ export class AppointmentReminderCronService
       this.logger.warn(`Cita ${apt.id} sin organizationId — omitida.`);
       return 'skipped';
     }
-    // El BSUID manda sobre el teléfono: es el identificador estable, y el
-    // teléfono puede haber caducado de la caché de 30 días de Meta.
-    const phone = apt.patient?.bsuid || apt.patient?.whatsappId;
-    if (!phone) {
+    // ¿Por qué canal? La regla compartida con el panel (`destinoDeContacto`,
+    // docs/PLAN_TELEGRAM.md T4): el de la cita, con caída al otro. Para una
+    // cita que no es de Telegram da lo de siempre: el BSUID manda sobre el
+    // teléfono (es el identificador estable, y el teléfono puede haber
+    // caducado de la caché de 30 días de Meta).
+    const destino = apt.patient
+      ? destinoDeContacto(apt.patient, apt.origin)
+      : null;
+    if (!destino) {
       this.logger.warn(
         `Cita ${apt.id} sin identificador de WhatsApp del paciente (${apt.patient?.cedula ?? 'sin cédula'}) — omitida.`,
       );
       return 'skipped';
     }
+    let phone = destino.destinatario;
 
     const slotDate = apt.scheduleSlot.startTime;
     const message = await this.buildMessage(apt);
 
-    // ⏱️ VENTANA DE ATENCIÓN. Un recordatorio sale el día ANTES de la cita, así
-    // que casi siempre cae FUERA de las 24 h desde el último mensaje del
-    // paciente. Ahí Meta rechaza el texto libre y exige plantilla aprobada:
-    // hasta ahora se mandaba texto libre siempre y esos envíos fallaban.
-    const withinWindow = await this.chatbot.isWithinServiceWindow(
-      apt.organizationId,
-      phone,
-    );
-
-    const result = withinWindow
-      ? await this.chatbot.sendOutboundForOrg(
-          apt.organizationId,
-          phone,
-          message,
-          { kind: 'APPOINTMENT_REMINDER', appointmentId: apt.id },
-        )
-      : await this.sendReminderTemplate(apt, phone);
+    let result: { success: boolean; error?: string };
+    if (destino.canal === 'TELEGRAM') {
+      // ✈️ Telegram no tiene ventana de 24 h ni plantillas: texto libre siempre.
+      result = await this.chatbot.sendOutboundForOrg(
+        apt.organizationId,
+        phone,
+        message,
+        { kind: 'APPOINTMENT_REMINDER', appointmentId: apt.id },
+      );
+      // T4: si Telegram no entrega (bloqueó al bot, canal caído), cae a
+      // WhatsApp por el camino de siempre, si el paciente lo tiene.
+      const respaldo = result.success
+        ? null
+        : destinoDeContacto(
+            { ...apt.patient, telegramChatId: null },
+            'WHATSAPP',
+          );
+      if (respaldo) {
+        this.logger.warn(
+          `Recordatorio de la cita ${apt.id} no salió por Telegram (${result.error ?? 'sin detalle'}): se intenta por WhatsApp.`,
+        );
+        phone = respaldo.destinatario;
+        result = await this.sendViaWhatsapp(apt, phone, message);
+      }
+    } else {
+      result = await this.sendViaWhatsapp(apt, phone, message);
+    }
 
     if (result.error === 'template-not-configured') {
       // No es un fallo de red que reintentar: falta que la clínica apruebe y
@@ -359,6 +378,34 @@ export class AppointmentReminderCronService
       error: result.error ?? 'unknown',
     });
     return 'failed';
+  }
+
+  /**
+   * El recordatorio por WhatsApp, exactamente como era antes de Telegram:
+   * texto libre dentro de la ventana de 24 h, plantilla aprobada fuera.
+   */
+  private async sendViaWhatsapp(
+    apt: Awaited<ReturnType<typeof this.findEligibleAppointments>>[number],
+    phone: string,
+    message: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    // ⏱️ VENTANA DE ATENCIÓN. Un recordatorio sale el día ANTES de la cita, así
+    // que casi siempre cae FUERA de las 24 h desde el último mensaje del
+    // paciente. Ahí Meta rechaza el texto libre y exige plantilla aprobada:
+    // hasta ahora se mandaba texto libre siempre y esos envíos fallaban.
+    const withinWindow = await this.chatbot.isWithinServiceWindow(
+      apt.organizationId,
+      phone,
+    );
+
+    return withinWindow
+      ? await this.chatbot.sendOutboundForOrg(
+          apt.organizationId,
+          phone,
+          message,
+          { kind: 'APPOINTMENT_REMINDER', appointmentId: apt.id },
+        )
+      : await this.sendReminderTemplate(apt, phone);
   }
 
   /**
@@ -475,6 +522,9 @@ export class AppointmentReminderCronService
             fullName: true,
             whatsappId: true,
             bsuid: true,
+            // Telegram (docs/PLAN_TELEGRAM.md, T4): el canal del recordatorio.
+            telegramChatId: true,
+            telegramBlockedAt: true,
           },
         },
         scheduleSlot: {
@@ -518,7 +568,9 @@ export class AppointmentReminderCronService
       };
     }
 
-    if (!apt.patient?.whatsappId) {
+    // Con WhatsApp, como siempre; o con Telegram (docs/PLAN_TELEGRAM.md): el
+    // canal lo decide processOne con la misma regla que el cron.
+    if (!apt.patient?.whatsappId && !apt.patient?.telegramChatId) {
       return {
         success: false,
         outcome: 'skipped',

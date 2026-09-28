@@ -13,6 +13,7 @@ import { formatForPatient } from '../common/business-hours';
 import { doctorLabel } from '../common/doctor-label.util';
 import { citaFueraDelAlcanceDelActor } from '../common/alcance-actor.util';
 import { getErrorMessage } from '../common/error-message.util';
+import { destinoDeContacto } from '@agenia/shared';
 
 /**
  * 📨 Confirmarle al PACIENTE, por WhatsApp, una cita que agendó el HOSPITAL y que el
@@ -155,13 +156,18 @@ export class HisConfirmationService {
         fullName: true,
         whatsappId: true,
         bsuid: true,
+        telegramChatId: true,
+        telegramBlockedAt: true,
         epsId: true,
       },
     });
     if (!paciente) return no(MSG_CONFIRMACION.paciente);
-    // El BSUID manda sobre el teléfono, como en los recordatorios.
-    const destino = paciente.bsuid || paciente.whatsappId;
-    if (!destino) return no(MSG_CONFIRMACION.sinWhatsapp);
+    // El BSUID manda sobre el teléfono, como en los recordatorios. La cita nació
+    // en el hospital (MIRROR), así que va por WhatsApp como siempre y solo cae a
+    // Telegram si el paciente no tiene WhatsApp (docs/PLAN_TELEGRAM.md, T4).
+    const contacto = destinoDeContacto(paciente, 'MIRROR');
+    if (!contacto) return no(MSG_CONFIRMACION.sinWhatsapp);
+    const destino = contacto.destinatario;
 
     if (
       await citaFueraDelAlcanceDelActor(
@@ -187,10 +193,10 @@ export class HisConfirmationService {
     let via: 'TEXTO' | 'PLANTILLA';
     let texto: string;
     try {
-      const dentro = await this.chatbot.isWithinServiceWindow(
-        organizationId,
-        destino,
-      );
+      // ✈️ Telegram no tiene ventana de 24 h: siempre texto libre.
+      const dentro =
+        contacto.canal === 'TELEGRAM' ||
+        (await this.chatbot.isWithinServiceWindow(organizationId, destino));
       if (dentro) {
         via = 'TEXTO';
         texto = await this.mensajeLibre(organizationId, {
@@ -247,6 +253,7 @@ export class HisConfirmationService {
         via,
         scheduleSlotId: cupo.id,
         enviadoPor: actor.role,
+        ...(contacto.canal === 'TELEGRAM' ? { canal: 'TELEGRAM' } : {}),
       },
     });
     await this.systemLog.event({

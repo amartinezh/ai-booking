@@ -5,7 +5,12 @@ import type {
 } from '@agenia/database';
 import { PrismaService } from '../prisma/prisma.service';
 import { getErrorMessage } from '../common/error-message.util';
-import { TelegramApiClient, splitTelegramText } from './telegram-api.client';
+import {
+  TELEGRAM_MAX_TEXT,
+  TelegramApiClient,
+  splitTelegramText,
+} from './telegram-api.client';
+import { stripWhatsappFormat, whatsappToTelegramHtml } from './telegram-format';
 import { TelegramConfigService } from './telegram-config.service';
 import type {
   TelegramOutboundContext,
@@ -38,7 +43,12 @@ export class TelegramSenderService {
     private readonly config: TelegramConfigService,
   ) {}
 
-  /** Texto plano; si pasa del tope de Telegram se envía en varios mensajes. */
+  /**
+   * Texto del bot. El formato de WhatsApp (`*negrita*`…) se traduce al HTML de
+   * Telegram; si Telegram rechazara ese HTML, el trozo se reenvía en texto
+   * plano sin las marcas: el mensaje llega igual. Si pasa del tope de
+   * Telegram se envía en varios mensajes.
+   */
   async sendText(
     organizationId: string,
     chatId: string,
@@ -49,8 +59,32 @@ export class TelegramSenderService {
     if (!token) return FAILED_NO_CHANNEL;
 
     let last: TelegramSendOutcome = FAILED_NO_CHANNEL;
-    for (const part of splitTelegramText(text)) {
-      const res = await this.api.sendMessage(token, chatId, part);
+    // Se parte ANTES de traducir, con margen: las etiquetas y los `&amp;`
+    // alargan el texto, y partir HTML podría cortar una etiqueta.
+    for (const part of splitTelegramText(text, SPLIT_BEFORE_HTML)) {
+      const html = whatsappToTelegramHtml(part);
+      let res =
+        html.length <= TELEGRAM_MAX_TEXT
+          ? await this.api.sendMessage(token, chatId, html, { html: true })
+          : await this.api.sendMessage(
+              token,
+              chatId,
+              stripWhatsappFormat(part),
+            );
+      if (
+        !res.ok &&
+        res.errorCode === 400 &&
+        /parse entities/i.test(res.description)
+      ) {
+        this.logger.warn(
+          `Telegram rechazó el formato de un mensaje al chat ${chatId}: se reenvía en texto plano.`,
+        );
+        res = await this.api.sendMessage(
+          token,
+          chatId,
+          stripWhatsappFormat(part),
+        );
+      }
       last = await this.settle(organizationId, chatId, 'TEXT', ctx, res);
       // Si un trozo falla, los siguientes no se mandan: un listado de
       // horarios cortado a la mitad confunde más que no recibirlo.
@@ -208,3 +242,10 @@ const FAILED_NO_CHANNEL: TelegramSendOutcome = {
   errorCode: null,
   blocked: false,
 };
+
+/**
+ * Tope de cada trozo ANTES de traducir a HTML. Deja ~600 caracteres para las
+ * etiquetas y los escapes; si aun así el HTML pasara de 4 096, ese trozo se
+ * manda en texto plano.
+ */
+const SPLIT_BEFORE_HTML = 3500;

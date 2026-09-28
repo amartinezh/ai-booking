@@ -1,6 +1,6 @@
 # Canal de Telegram
 
-**Estado: FASES 0 a 3 HECHAS (2026-09-28).** Fase 0 en `bc0e917`, Fase 1 en `b018cc7`, Fase 2 en `9371eaf`, Fase 3 sin commit. Decisiones aprobadas. El usuario aprobó T1 … T9 (§5) el 2026-09-28 tal como estaban recomendadas; en T4 se confirmó además la caída a WhatsApp.
+**Estado: FASES 0 a 4 HECHAS (2026-09-28).** Falta la Fase 5 (encender en la clínica de prueba). Fases 0-3 en `bc0e917`, `b018cc7`, `9371eaf`, `6ea8f3e`; Fase 4 sin commit. Decisiones aprobadas. El usuario aprobó T1 … T9 (§5) el 2026-09-28 tal como estaban recomendadas; en T4 se confirmó además la caída a WhatsApp.
 
 ## 1. Qué se pide
 
@@ -147,7 +147,7 @@ El backend hace todo lo demás, en este orden y **sin activar nada hasta que tod
 3. `setWebhook(url = PUBLIC_API_URL/telegram/webhook/<routeKey>, secret_token, allowed_updates=["message"], drop_pending_updates=true)`.
 4. `getWebhookInfo` → confirma que quedó registrado; solo entonces `isActive = true`.
 
-La tarjeta muestra: estado (conectado / con error, con `last_error_message` de `getWebhookInfo`), el enlace `t.me/<usuario>` (con Copiar y Abrir; el QR se dejó fuera: el web no tiene librería de QR y no se agregó una dependencia solo para eso), botón **Verificar conexión** (`POST /telegram-config/verify`: si Telegram sigue apuntando a nosotros, mensajes retenidos y último error) y botón **Desconectar**. *Cambio en la Fase 1:* se descartó «Enviar mensaje de prueba» porque un bot no puede escribirle a nadie que no le haya escrito antes (`deleteWebhook` + `isActive=false`). El token nunca vuelve al navegador (solo «••••1234»).
+La tarjeta muestra: estado (conectado / con error, con `last_error_message` de `getWebhookInfo`), el enlace `t.me/<usuario>` (con Copiar y Abrir) y su **QR** (`qrcode.react`, generado en el navegador, negro sobre blanco, con «Descargar QR (PNG)» a 1024 px para imprimir en la sede), botón **Verificar conexión** (`POST /telegram-config/verify`: si Telegram sigue apuntando a nosotros, mensajes retenidos y último error) y botón **Desconectar**. *Cambio en la Fase 1:* se descartó «Enviar mensaje de prueba» porque un bot no puede escribirle a nadie que no le haya escrito antes (`deleteWebhook` + `isActive=false`). El token nunca vuelve al navegador (solo «••••1234»).
 
 Además, en lo que ve el personal:
 - `lib/whatsapp.ts`: un `tg:…` se muestra como «✈️ Telegram» y **nunca** genera enlace `wa.me` (hoy el prefijo ya hace que `isWhatsappPhoneId` dé falso, así que no se inventa un número; solo falta la etiqueta).
@@ -205,7 +205,7 @@ Además, en lo que ve el personal:
 - El webhook **siempre** contesta 200 rápido y procesa en la cola (Telegram reintenta lo que no recibe 200 y bloquea el resto de mensajes de ese bot mientras tanto). Si la cola está saturada se libera el dedup y se devuelve 503 para que Telegram reintente. Esto es **distinto** de WhatsApp, que hoy libera el dedup pero igual responde 200 ([`chatbot.controller.ts`](../apps/api/src/chatbot/chatbot.controller.ts), `dispatch`); no se cambia allí.
 - Dedup por `update_id` (Telegram reenvía). Serialización por `tg:<chat_id>` con la misma cola: los mensajes de un paciente se procesan en orden.
 - Límites de Telegram: ~1 mensaje/segundo por chat, ~30/s por bot. El cliente respeta `retry_after` en 429 y espacia los envíos en ráfaga (el bot a veces manda 2-3 mensajes seguidos).
-- Textos de más de 4 096 caracteres se parten. Se envía **sin** `parse_mode` (texto plano): el bot usa `*` y `_` de WhatsApp y en Markdown de Telegram romperían el envío con 400. Si más adelante se quiere negrita, se convierte a HTML con escape.
+- Textos de más de 4 096 caracteres se parten. El formato de WhatsApp (`*negrita*`, `_cursiva_`, `~tachado~`, ```mono```) se traduce al **HTML** de Telegram (nunca Markdown, que rompe con 400 ante un asterisco suelto), escapando antes `& < >`; si Telegram aun así rechaza el HTML, el trozo se reenvía en texto plano sin marcas (Fase 4).
 - 403 «bot was blocked by the user» → se registra y se marca en la ficha; el recordatorio cae a WhatsApp (T4).
 - Token revocado en BotFather (401) → `isActive=false`, `lastError`, aviso en el panel y en el monitor de servicios.
 - Un fallo de Telegram nunca lanza hacia el bot: igual que `sendWhatsAppMessage`, devuelve `null` y se registra.
@@ -225,7 +225,7 @@ Además, en lo que ve el personal:
 | 1 ✅ | Módulo `telegram/`: `TelegramCoreModule` (cliente, config, envío + libro) y `TelegramModule` (webhook + endpoints del panel, solo con `TELEGRAM_ENABLED=true`) | Sí, apagado. **No encender antes de la Fase 2** |
 | 2 ✅ | Puntos 1-9 del bot (§4.3; el 10 es la Fase 4) + suite de conversaciones con `tg:` + regresión de WhatsApp | Sí, apagado. Desde aquí el interruptor ya se puede encender en la clínica de prueba |
 | 3 ✅ | Panel: tarjeta de configuración, etiquetas, insignias. Rastreo: las ramas `origin === 'WHATSAPP'` de `patient-trace.ts` (líneas ~1031, ~1061, ~1581: confirmación y paso «Conversación») deben reconocer también `TELEGRAM` y leer `TelegramMessageLog` | Sí |
-| 4 | Recordatorio y confirmación HIS por canal (T4) + libro de mensajes (T6) | Sí |
+| 4 ✅ | Recordatorio y confirmación HIS por canal (T4, con caída a WhatsApp) + formato de WhatsApp traducido a HTML de Telegram + QR en el panel | Sí |
 | 5 | Encendido en clínica de prueba → medir → primera clínica real | — |
 
 ## 8. Riesgos
@@ -278,3 +278,15 @@ Arranque real (Postgres y Redis desechables, `TELEGRAM_ENABLED=true`): un `/star
 - **Rastreo:** la conversación se busca también bajo `tg:<chat>`; la confirmación de una cita de Telegram sale de `TelegramMessageLog` con su propio vocabulario (Telegram solo dice aceptada o fallida: el texto no inventa «leída» ni habla de Meta); la línea de vida cuenta la conversación del bot en Telegram. El libro de Telegram **solo se consulta si hay citas de Telegram**, así que el rastreo de un paciente de WhatsApp hace exactamente las mismas lecturas que antes (por eso sus 928 tests no se tocaron). El expediente dice «Telegram: vinculado / bloqueó al bot» sin mostrar el chat; el campo ni existe para un paciente de WhatsApp.
 
 Verificado con web real (`next start`) contra la API real (Postgres y Redis desechables, `DATABASE_URL`, URLs de la API y `JWT_SECRET` sobrescritos): los tres estados de la tarjeta se ven como se diseñaron; conectar con token mal formado, falso (el Telegram real lo rechaza) o vacío devuelve el mensaje legible; «Verificar» con el token falso sembrado apagó el canal y la tarjeta pasó a «Desconectado» con el motivo. Tests: web 938 (10 nuevos), shared 893 (23 nuevos), API 2 294; `next build`, lint (solo los 4 avisos de `<img>` de siempre) y builds en verde.
+
+**Fase 4 (2026-09-28).** El recordatorio y la confirmación del hospital, por canal.
+
+- **Recordatorio** (`appointment-reminder.cron.ts`): el destino lo decide `destinoDeContacto` (la misma regla del botón «Contactar»). Cita `TELEGRAM` → Telegram, texto libre (no hay ventana ni plantilla); si Telegram no entrega → **WhatsApp por el camino de siempre** (ventana de 24 h o plantilla), si el paciente lo tiene. Cita de cualquier otro origen → WhatsApp idéntico a antes: el código de ventana/plantilla pasó tal cual a `sendViaWhatsapp`. Un paciente que bloqueó al bot va directo a WhatsApp. Un paciente solo de Telegram con cita del hospital antes se omitía; ahora le llega por Telegram. El envío manual del recordatorio acepta también a un paciente solo de Telegram (para WhatsApp la condición no cambió).
+- **Confirmación de cita del HIS**: es `MIRROR`, así que sigue por WhatsApp y solo usa Telegram si el paciente no tiene WhatsApp (texto libre, nunca plantilla); la auditoría lleva `canal: 'TELEGRAM'` solo en ese caso.
+- **Auditoría honesta**: un envío fallido a un `tg:` devuelve `telegram-send-failed`, no `meta-api-error`.
+- **Formato**: apareció al revisar la confirmación: todos los textos del bot usan `*negrita*` de WhatsApp y por Telegram en texto plano el paciente vería los asteriscos. `telegram-format.ts` los traduce a HTML de Telegram (escape primero; los `_` de una URL no se vuelven cursiva) y el envío reenvía en texto plano si Telegram rechaza el formato. Solo afecta a Telegram.
+- **QR** en la tarjeta del panel con `qrcode.react` 4.2.0 (sin dependencias, React 19, ISC).
+
+Pruebas: recordatorio (13 casos: canal de la cita, caída con plantilla y con texto libre, bloqueado, solo Telegram, los tres orígenes de WhatsApp intactos), confirmación HIS (4), formato (15 + 4 en el envío), tarjeta con QR (8). Mutación: se quitó cada pieza nueva (canal Telegram, caída a WhatsApp, Telegram sin ventana, HTML, reenvío en texto plano) y cada mutante hizo fallar la suite. **Los 70 tests de recordatorios y confirmación de antes pasan sin editar**. Totales: API 2 327, shared 893, web 946; builds y lint en verde.
+
+Arranque real (Postgres/Redis desechables, cita `TELEGRAM` de un paciente con los dos canales, recordatorio manual por HTTP): salió por Telegram con `kind APPOINTMENT_REMINDER` y la cita en el libro; el Telegram real rechazó el token falso (401), el canal se apagó solo y **cayó a WhatsApp**, que sin plantilla lo registró como no enviado; `reminderSentAt` quedó vacío (correcto: no salió).

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
+import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import {
     Send,
     KeyRound,
@@ -10,6 +11,7 @@ import {
     RefreshCw,
     Power,
     ExternalLink,
+    Download,
 } from 'lucide-react';
 import {
     connectMyTelegram,
@@ -213,6 +215,7 @@ function TelegramChannel({ initial }: { initial: PublicTelegramConfig }) {
                                     <ExternalLink className="w-3.5 h-3.5" /> Abrir
                                 </a>
                             </div>
+                            <BotQr link={config.botLink} username={config.botUsername} />
                         </div>
                     )}
 
@@ -302,6 +305,68 @@ function TelegramChannel({ initial }: { initial: PublicTelegramConfig }) {
                     </button>
                 </div>
             </form>
+        </div>
+    );
+}
+
+/**
+ * QR del enlace t.me del bot, para la sede (recepción, carteleras, fórmulas).
+ *
+ * Se genera en el navegador con `qrcode.react`: el enlace no viaja a ningún
+ * servicio de terceros. Siempre negro sobre blanco, también en modo oscuro: un
+ * QR invertido no lo leen muchas cámaras. La descarga sale de un canvas aparte
+ * de 1024 px para que impreso no se vea pixelado.
+ */
+function BotQr({ link, username }: { link: string; username: string | null }) {
+    const printRef = useRef<HTMLCanvasElement>(null);
+
+    const handleDownload = () => {
+        const canvas = printRef.current;
+        if (!canvas) return;
+        const a = document.createElement('a');
+        a.href = canvas.toDataURL('image/png');
+        a.download = `qr-telegram-${username ?? 'bot'}.png`;
+        a.click();
+    };
+
+    return (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 pt-2">
+            <div className="rounded-xl bg-white p-3 ring-1 ring-zinc-200 dark:ring-zinc-700">
+                <QRCodeSVG
+                    value={link}
+                    size={148}
+                    level="M"
+                    marginSize={1}
+                    bgColor="#ffffff"
+                    fgColor="#000000"
+                    title={`Código QR para abrir ${username ? `@${username}` : 'el bot'} en Telegram`}
+                />
+            </div>
+            <div className="space-y-2">
+                <p className="text-xs text-zinc-600 dark:text-zinc-400 max-w-xs">
+                    Imprímalo en la sede: el paciente lo escanea con la cámara y abre el
+                    chat con el bot, sin buscarlo.
+                </p>
+                <button
+                    type="button"
+                    onClick={handleDownload}
+                    className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 flex items-center gap-1"
+                >
+                    <Download className="w-3.5 h-3.5" /> Descargar QR (PNG)
+                </button>
+            </div>
+            {/* Versión de impresión: no se muestra, solo alimenta la descarga. */}
+            <QRCodeCanvas
+                ref={printRef}
+                value={link}
+                size={1024}
+                level="M"
+                marginSize={4}
+                bgColor="#ffffff"
+                fgColor="#000000"
+                className="hidden"
+                aria-hidden
+            />
         </div>
     );
 }

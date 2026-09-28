@@ -869,7 +869,7 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
       });
       await expect(
         service.sendOutboundForOrg(ORG_ID, TG, 'Hola'),
-      ).resolves.toEqual({ success: false, error: 'meta-api-error' });
+      ).resolves.toEqual({ success: false, error: 'telegram-send-failed' });
       expectNothingToMeta();
     });
   });

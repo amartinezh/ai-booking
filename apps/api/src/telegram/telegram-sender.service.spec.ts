@@ -65,7 +65,9 @@ describe('TelegramSenderService', () => {
       kind: 'BOOKING_CONFIRMATION',
       appointmentId: 'apt-1',
     });
-    expect(api.sendMessage).toHaveBeenCalledWith(TOKEN, CHAT, 'Hola');
+    expect(api.sendMessage).toHaveBeenCalledWith(TOKEN, CHAT, 'Hola', {
+      html: true,
+    });
     expect(res).toEqual({
       ok: true,
       messageId: 101,
@@ -226,6 +228,58 @@ describe('TelegramSenderService', () => {
     expect(logged()[0]).toMatchObject({
       messageType: 'VOICE',
       status: 'FAILED',
+    });
+  });
+
+  describe('formato', () => {
+    it('el *negrita* de WhatsApp llega como negrita de Telegram (HTML), escapado', async () => {
+      await sender.sendText(ORG, CHAT, 'Su cita con *Dr. Ruiz & Cía* <hoy>');
+      expect(api.sendMessage).toHaveBeenCalledWith(
+        TOKEN,
+        CHAT,
+        'Su cita con <b>Dr. Ruiz &amp; Cía</b> &lt;hoy&gt;',
+        { html: true },
+      );
+    });
+
+    it('si Telegram rechaza el HTML, reenvía en texto plano sin marcas y registra UN envío', async () => {
+      api.sendMessage
+        .mockResolvedValueOnce({
+          ok: false,
+          errorCode: 400,
+          description:
+            "Bad Request: can't parse entities: unsupported start tag",
+        })
+        .mockResolvedValueOnce({ ok: true, result: { message_id: 9 } });
+      const res = await sender.sendText(ORG, CHAT, 'Su cita es el *lunes*');
+      expect(api.sendMessage).toHaveBeenLastCalledWith(
+        TOKEN,
+        CHAT,
+        'Su cita es el lunes',
+      );
+      expect(res).toMatchObject({ ok: true, messageId: 9 });
+      expect(logged()).toHaveLength(1);
+      expect(logged()[0]).toMatchObject({ status: 'ACCEPTED', messageId: 9 });
+    });
+
+    it('otros 400 no se reintentan en texto plano', async () => {
+      api.sendMessage.mockResolvedValue({
+        ok: false,
+        errorCode: 400,
+        description: 'Bad Request: chat not found',
+      });
+      await sender.sendText(ORG, CHAT, 'Hola');
+      expect(api.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('ningún trozo enviado pasa del tope de Telegram, ni con muchas marcas', async () => {
+      const texto = Array.from(
+        { length: 400 },
+        (_, i) => `*Opción ${i}* & más`,
+      ).join('\n');
+      await sender.sendText(ORG, CHAT, texto);
+      for (const c of api.sendMessage.mock.calls)
+        expect((c[2] as string).length).toBeLessThanOrEqual(4096);
     });
   });
 });
