@@ -102,7 +102,7 @@ export class TelegramWebhookController {
               TELEGRAM_UNSUPPORTED_REPLY,
             );
           })
-        : this.inboundQueue.enqueue(decision.event.telegram.senderId, () =>
+        : this.inboundQueue.enqueue(decision.senderId, () =>
             this.chatbot.processIncomingMessage(decision.event),
           );
 

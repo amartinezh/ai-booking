@@ -6,6 +6,7 @@ import {
   buildWhatsappRecipient,
   choqueDeNombre,
   variablesEsperadas,
+  isTelegramSender,
 } from '@agenia/shared';
 import type {
   WhatsappMessageKind,
@@ -182,6 +183,17 @@ export class WhatsappTemplateService {
 
     if (!organizationId || !recipientId) {
       return { success: false, error: 'missing-params' };
+    }
+
+    // ✈️ Un remitente de Telegram no es destinatario de Meta: con plantilla o
+    // sin ella, enviarlo a la Graph API solo sería un fallo (y ruido en la
+    // calidad de la WABA). Ningún llamador debería llegar aquí con un `tg:`;
+    // esto es la red por si alguno lo hace (docs/PLAN_TELEGRAM.md §8).
+    if (isTelegramSender(recipientId)) {
+      this.logger.error(
+        `Plantilla ${kind} (org ${organizationId}): el destinatario es de Telegram. Envío cancelado antes de llamar a Meta.`,
+      );
+      return { success: false, error: 'not-a-whatsapp-recipient' };
     }
 
     // El contrato compartido es la única fuente de verdad sobre cuántos

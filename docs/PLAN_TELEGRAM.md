@@ -1,6 +1,6 @@
 # Canal de Telegram
 
-**Estado: FASES 0 y 1 HECHAS (2026-09-28).** Fase 0 en `bc0e917`; Fase 1 sin commit. Decisiones aprobadas. El usuario aprobó T1 … T9 (§5) el 2026-09-28 tal como estaban recomendadas; en T4 se confirmó además la caída a WhatsApp.
+**Estado: FASES 0, 1 y 2 HECHAS (2026-09-28).** Fase 0 en `bc0e917`, Fase 1 en `b018cc7`, Fase 2 sin commit. Decisiones aprobadas. El usuario aprobó T1 … T9 (§5) el 2026-09-28 tal como estaban recomendadas; en T4 se confirmó además la caída a WhatsApp.
 
 ## 1. Qué se pide
 
@@ -131,7 +131,7 @@ Nada existente cambia de tipo ni de nombre. `WaitlistEntry.whatsappId` e `Intera
 | 9 | `chatbot.cron.ts:108` | El aviso de cierre por inactividad llama a Meta directo: si la clave es `tg:…`, mandarlo por `telegramSender`. Sin esto, a los de Telegram se les cerraría la sesión en silencio y se intentaría un envío a Meta que falla |
 | 10 | Recordatorio y confirmación HIS | Elegir canal según T4; si es Telegram, texto libre (no hay ventana ni plantilla) |
 
-Los mensajes que dicen «WhatsApp» (encuesta, textos de `chatbot.constants.ts`) se revisan: donde el texto nombre el canal, se pasa a neutro o se parametriza. Es texto, no lógica.
+Los mensajes que dicen «WhatsApp» (encuesta, textos de `chatbot.constants.ts`) se revisan: donde el texto nombre el canal, se pasa a neutro o se parametriza. Es texto, no lógica. **Pendiente, por decidir:** cuatro textos al paciente lo nombran (`chatbot.constants.ts:200, 317, 986, 1084`: «no puedo agendar esa EPS por WhatsApp», «esté pendiente de su WhatsApp» al entrar a la lista de espera). Por Telegram suenan raros; cambiarlos cambia también lo que hoy lee el paciente de WhatsApp, así que no se tocaron en la Fase 2.
 
 ### 4.4 Panel (`apps/web/app/dashboard/configuracion`, pestaña Integraciones)
 
@@ -223,7 +223,7 @@ Además, en lo que ve el personal:
 |---|---|---|
 | 0 ✅ | Migración aditiva `20260928100000_canal_telegram` + `@agenia/shared/telegram-identity` (`isTelegramSender`, `toTelegramSenderId`, `chatIdFromTelegramSender`) con sus tests; `TELEGRAM` en `OrigenCita` del rastreo y su etiqueta en el expediente | Sí: no cambia comportamiento |
 | 1 ✅ | Módulo `telegram/`: `TelegramCoreModule` (cliente, config, envío + libro) y `TelegramModule` (webhook + endpoints del panel, solo con `TELEGRAM_ENABLED=true`) | Sí, apagado. **No encender antes de la Fase 2** |
-| 2 | Los 10 puntos del bot (§4.3) + tests de flujo con `tg:` + regresión de WhatsApp | Sí, apagado |
+| 2 ✅ | Puntos 1-9 del bot (§4.3; el 10 es la Fase 4) + suite de conversaciones con `tg:` + regresión de WhatsApp | Sí, apagado. Desde aquí el interruptor ya se puede encender en la clínica de prueba |
 | 3 | Panel: tarjeta de configuración, etiquetas, insignias. Rastreo: las ramas `origin === 'WHATSAPP'` de `patient-trace.ts` (líneas ~1031, ~1061, ~1581: confirmación y paso «Conversación») deben reconocer también `TELEGRAM` y leer `TelegramMessageLog` | Sí |
 | 4 | Recordatorio y confirmación HIS por canal (T4) + libro de mensajes (T6) | Sí |
 | 5 | Encendido en clínica de prueba → medir → primera clínica real | — |
@@ -257,3 +257,15 @@ Además, en lo que ve el personal:
 - Webhook: ruta desconocida y secreto inválido responden igual (401); canal inactivo → 200 sin procesar; dedup por `tg:<routeKey>:<update_id>`; cola llena → libera dedup y 503.
 
 Verificado arrancando la API real (Postgres y Redis desechables): con el interruptor apagado las rutas de Telegram dan 404 y no se mapea ninguna; encendido, los 9 casos del webhook responden como se diseñó, el webhook de WhatsApp sigue igual, la foto disparó el aviso, el Telegram real rechazó el token falso con 401 y el canal se apagó solo, con su fila FAILED en el libro; el token no aparece en el log. Tal como se esperaba, el texto llegó al bot y este lo registró como «remitente no identificado»: enseñarle a reconocerlo es la Fase 2. API: 2 250 tests (130 nuevos), `nest build` y lint en verde.
+
+**Fase 2 (2026-09-28).** El bot atiende Telegram. Los puntos 1-9 de §4.3, cada uno tras `isTelegramSender` / `telegramOriginOf`, con el código de WhatsApp textualmente igual (dentro del `else` o después del `return`; revisado línea borrada por línea borrada). Todo lo que el bot necesita de Telegram entra por una fachada, `TelegramChannelService`, inyectada con `@Optional()`: sin ella los tests de siempre construyen el bot igual y un `tg:` se pierde con log, pero nunca viaja a Meta. Red extra: `WhatsappTemplateService.sendTemplate` corta un `tg:` antes de llamar a Meta.
+
+Tres cosas que aparecieron al hacerlo, las tres corregidas:
+
+1. **🔏 Falsificación de canal.** La idea original era marcar el evento con campos normales (`channel`, `telegram.organizationId`). Pero el webhook de Meta pasa al bot los `messages[]` tal como vienen en el JSON: con `META_REQUIRE_SIGNATURE=false`, un payload inventado podía declararse de Telegram y elegir la clínica. La marca es ahora un `Symbol` (`TELEGRAM_ORIGIN`), que ningún JSON puede fabricar, y el webhook de WhatsApp no se tocó.
+2. **Chat único por clínica (error de la Fase 0).** `@@unique([organizationId, telegramChatId])` impedía que una madre agendara para ella y para su hijo desde el mismo Telegram: la segunda ficha no se creaba y la cita no se reservaba. Migración `20260928110000_telegram_chat_no_unico` lo cambia por un índice normal (verificada en Postgres: entra sobre datos, cero deriva, dos fichas con el mismo chat).
+3. **Ciclo de `import` que tumbaba la API.** `chatbot.module.ts` importaba el núcleo desde `telegram.module.ts`, que a su vez importa `ChatbotModule`: al cargar, uno quedaba `undefined` y la API **no arrancaba** con `TELEGRAM_ENABLED=true` (apagado no se notaba: `AppModule` ni carga el módulo). Ningún test unitario podía verlo; lo encontró el arranque real. `TelegramCoreModule` vive ahora en su propio archivo y `app.module.imports.spec.ts` recorre el grafo de módulos y falla si algún import queda `undefined` (probado: con el ciclo de vuelta, falla).
+
+Pruebas: `chatbot.telegram.e2e.spec.ts` (17 conversaciones por el bot real: agendar paciente nuevo y existente, madre e hijo con el mismo chat, WhatsApp y Telegram a la vez sin mezclarse, baja de recordatorios que no toca al celular con los mismos dígitos, voz de ida y vuelta, lista de espera, mensaje del panel, clínica inactiva o borrada, canal ausente, payload de Meta que imita Telegram). Las credenciales de WhatsApp del doble están ACTIVAS a propósito, para que una fuga llegara de verdad a `http.post`. Mutación: se quitó cada una de las 8 guardas del bot, una a la vez, y cada mutante hizo fallar la suite. Más: cron de inactividad, identidad, fachada y red de plantillas. **Los 2 250 tests de antes pasan sin editar ninguno** (la suite de flujos de WhatsApp incluida); total API 2 294.
+
+Arranque real (Postgres y Redis desechables, `TELEGRAM_ENABLED=true`): un `/start` por el webhook llegó al bot con la clínica correcta, el bot respondió por Telegram (el Telegram real rechazó el token falso y el canal se apagó solo), auditoría `tg:777 / org-tg / SUCCESS`, cero filas en el libro de Meta, el token no aparece en el log.

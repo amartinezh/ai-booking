@@ -1,4 +1,5 @@
 import { adaptTelegramUpdate } from './telegram-inbound.adapter';
+import { TELEGRAM_ORIGIN, telegramOriginOf } from '../chatbot/sender-identity';
 import type { TelegramMessage, TelegramUpdate } from './telegram.types';
 
 /**
@@ -30,17 +31,31 @@ describe('adaptTelegramUpdate', () => {
       expect(d.action).toBe('message');
       if (d.action !== 'message') return;
       expect(d.event).toMatchObject({
-        channel: 'telegram',
         type: 'text',
         text: { body: 'Quiero una cita' },
-        telegram: {
-          organizationId: ORG,
-          chatId: '3001112233',
-          senderId: 'tg:3001112233',
-          updateId: 555,
-          messageId: 7,
-        },
       });
+      expect(d.senderId).toBe('tg:3001112233');
+      expect(telegramOriginOf(d.event)).toEqual({
+        organizationId: ORG,
+        chatId: '3001112233',
+        senderId: 'tg:3001112233',
+      });
+    });
+
+    it('la marca de Telegram es un Symbol: no viaja en JSON (no se puede falsificar desde Meta)', () => {
+      const d = adaptTelegramUpdate(upd(), ORG, ROUTE);
+      if (d.action !== 'message') throw new Error('se esperaba message');
+      expect(Object.getOwnPropertySymbols(d.event)).toContain(TELEGRAM_ORIGIN);
+      const copia = JSON.parse(JSON.stringify(d.event));
+      expect(telegramOriginOf(copia)).toBeNull();
+      // Un payload de Meta con campos parecidos tampoco cuenta como Telegram.
+      expect(
+        telegramOriginOf(
+          JSON.parse(
+            '{"from":"1","channel":"telegram","telegram":{"organizationId":"org-2"}}',
+          ),
+        ),
+      ).toBeNull();
     });
 
     it('NO pone el chat_id en `from` ni en `user_id` (serían teléfono y BSUID de WhatsApp)', () => {

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
@@ -63,8 +63,13 @@ import {
   ResolutionStatus,
   Organization,
   PatientProfile,
+  Prisma,
 } from '@agenia/database';
-import { buildWhatsappRecipient } from '@agenia/shared';
+import {
+  buildWhatsappRecipient,
+  chatIdFromTelegramSender,
+  isTelegramSender,
+} from '@agenia/shared';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
 import {
   getErrorMessage,
@@ -74,8 +79,17 @@ import {
   isMetaGraphErrorCode,
 } from '../common/error-message.util';
 import { doctorLabel } from '../common/doctor-label.util';
-import { resolveSenderIdentity, UNIDENTIFIED_SENDER } from './sender-identity';
-import type { SenderIdentity, WhatsappInboundEvent } from './sender-identity';
+import {
+  resolveSenderIdentity,
+  telegramOriginOf,
+  UNIDENTIFIED_SENDER,
+} from './sender-identity';
+import type {
+  SenderIdentity,
+  TelegramOrigin,
+  WhatsappInboundEvent,
+} from './sender-identity';
+import { TelegramChannelService } from '../telegram/telegram-channel.service';
 
 // La forma del evento entrante y la resolución de "quién escribió" viven en
 // sender-identity.ts (ver allí el porqué del orden BSUID → teléfono → PSID).
@@ -166,6 +180,10 @@ export class ChatbotService implements OnModuleInit {
     private surveyService: SurveyService,
     private ttsFactory: TtsFactoryService,
     private messageLog: WhatsappMessageLogService,
+    // Canal de Telegram (docs/PLAN_TELEGRAM.md). Opcional: sin él (tests,
+    // despliegues sin el módulo) un remitente `tg:` no se atiende, pero
+    // tampoco viaja nunca a Meta.
+    @Optional() private readonly telegramChannel?: TelegramChannelService,
   ) {}
 
   async onModuleInit() {
@@ -581,6 +599,11 @@ export class ChatbotService implements OnModuleInit {
     text: string,
     ctx?: OutboundMessageContext,
   ): Promise<unknown> {
+    // ✈️ Telegram: todo texto del bot pasa por aquí, así que esta es LA puerta
+    // de salida del canal. Un `tg:` nunca llega a la Graph API de Meta.
+    if (isTelegramSender(recipientId)) {
+      return this.sendTelegramText(recipientId, text, ctx);
+    }
     const creds = await this.resolveCredentialsForRecipient(recipientId);
     if (!creds) {
       this.logger.error(
@@ -646,6 +669,40 @@ export class ChatbotService implements OnModuleInit {
 
       return null;
     }
+  }
+
+  /**
+   * Texto por Telegram. Mismo contrato que `sendWhatsAppMessage`: devuelve
+   * algo verdadero solo si salió, `null` si no, y nunca lanza. La clínica sale
+   * del mismo `origin_org:${senderId}` que usa WhatsApp.
+   */
+  private async sendTelegramText(
+    recipientId: string,
+    text: string,
+    ctx?: OutboundMessageContext,
+  ): Promise<{ telegramMessageId: number | null } | null> {
+    const organizationId = await this.redis.get(`origin_org:${recipientId}`);
+    if (!organizationId) {
+      this.logger.error(
+        `CRÍTICO: no hay clínica asociada a ${recipientId}. Mensaje de Telegram NO enviado.`,
+      );
+      return null;
+    }
+    if (!this.telegramChannel) {
+      this.logger.error(
+        `CRÍTICO: el canal de Telegram no está cargado. Mensaje NO enviado a ${recipientId}.`,
+      );
+      return null;
+    }
+    const outcome = await this.telegramChannel.sendText(
+      organizationId,
+      recipientId,
+      text,
+      ctx,
+    );
+    if (!outcome.ok) return null;
+    await this.setLastSent(recipientId, text);
+    return { telegramMessageId: outcome.messageId };
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -1624,6 +1681,19 @@ export class ChatbotService implements OnModuleInit {
       (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
       'true';
 
+    // ✈️ Telegram en modo voz: la nota se manda directo (no hay que «subirla»
+    // antes como en Meta). El texto, como siempre, por sendWhatsAppMessage.
+    if (isAiFlow && isTelegramSender(senderId)) {
+      await this.smartReplyTelegramVoice(
+        organizationId,
+        senderId,
+        text,
+        audioText,
+        ctx,
+      );
+      return;
+    }
+
     if (isAiFlow) {
       // En modo voz, mostrar TAMBIÉN el texto está controlado por .env.
       // Por defecto OFF: solo se envía el audio. A futuro se puede prender con
@@ -1671,6 +1741,45 @@ export class ChatbotService implements OnModuleInit {
       }
     }
     await this.sendWhatsAppMessage(senderId, text, ctx);
+  }
+
+  /** `smartReply` en modo voz por Telegram. Misma política de texto que Meta. */
+  private async smartReplyTelegramVoice(
+    organizationId: string,
+    senderId: string,
+    text: string,
+    audioText?: string,
+    ctx?: OutboundMessageContext,
+  ): Promise<void> {
+    const showTextInAudioMode =
+      this.configService.get<string>('SHOW_TEXT_IN_AUDIO_MODE', 'false') ===
+      'true';
+    try {
+      let audioSent = false;
+      if (this.telegramChannel) {
+        const audioBuffer = await this.generateTTS(
+          organizationId,
+          audioText ?? text,
+        );
+        if (audioBuffer) {
+          const outcome = await this.telegramChannel.sendVoice(
+            organizationId,
+            senderId,
+            audioBuffer,
+            ctx,
+          );
+          audioSent = outcome.ok;
+        }
+      }
+      if (audioText || showTextInAudioMode || !audioSent) {
+        await this.sendWhatsAppMessage(senderId, text, ctx);
+      }
+    } catch (error: unknown) {
+      this.logger.error(
+        `Error en smartReply (voz por Telegram): ${getErrorMessage(error)}`,
+      );
+      await this.sendWhatsAppMessage(senderId, text, ctx);
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -1862,8 +1971,14 @@ export class ChatbotService implements OnModuleInit {
     // el Business-scoped user ID. Compat hacia atrás: mientras Meta no mande
     // BSUID, `senderId` ES el teléfono (o el PSID legacy de Messenger) y se
     // sigue guardando en `whatsappId` exactamente como antes.
-    const phoneToPersist =
-      identity.phone ?? (identity.bsuid ? null : identity.senderId);
+    //
+    // ✈️ Telegram: el remitente (`tg:<chat_id>`) NO es un teléfono. Va a
+    // `telegramChatId` y `whatsappId` no se toca: ahí alimentaría recordatorios
+    // y enlaces `wa.me` hacia un número que no existe.
+    const telegramChatId = identity.telegramChatId ?? null;
+    const phoneToPersist = telegramChatId
+      ? null
+      : (identity.phone ?? (identity.bsuid ? null : identity.senderId));
     const { bsuid } = identity;
 
     // Cédula única POR CLÍNICA: buscamos solo dentro del tenant actual para
@@ -1879,6 +1994,8 @@ export class ChatbotService implements OnModuleInit {
       const updates: {
         whatsappId?: string;
         bsuid?: string;
+        telegramChatId?: string;
+        telegramBlockedAt?: null;
         epsId?: string;
         dateOfBirth?: Date;
         gender?: string;
@@ -1889,6 +2006,12 @@ export class ChatbotService implements OnModuleInit {
       // El BSUID sí se refresca aunque ya haya uno: es el identificador con el
       // que le responderemos, así que un valor viejo lo dejaría inalcanzable.
       if (bsuid && patient.bsuid !== bsuid) updates.bsuid = bsuid;
+      // Igual que el BSUID: es el chat por el que se le responde, así que se
+      // refresca, y un chat que vuelve a escribir ya no está bloqueado.
+      if (telegramChatId && patient.telegramChatId !== telegramChatId) {
+        updates.telegramChatId = telegramChatId;
+        updates.telegramBlockedAt = null;
+      }
       if (epsId && !patient.epsId) updates.epsId = epsId;
       // Lo que el paciente acaba de contestar porque su ficha no lo tenía (ver
       // `siguienteDatoDeAlta`). Solo rellena huecos: nunca pisa un dato que ya
@@ -1931,6 +2054,7 @@ export class ChatbotService implements OnModuleInit {
           ...(apellidos ? { apellidos } : {}),
           whatsappId: phoneToPersist,
           bsuid,
+          ...(telegramChatId ? { telegramChatId } : {}),
           userId: tempUser.id,
           epsId: epsId || null,
           organizationId,
@@ -2704,6 +2828,12 @@ export class ChatbotService implements OnModuleInit {
     organizationId: string;
     orgName: string;
   } | null> {
+    // ✈️ Telegram: la clínica ya la resolvió (y autenticó) el webhook por su ruta.
+    const telegram = telegramOriginOf(event);
+    if (telegram) {
+      return this.resolveTelegramTenant(telegram, senderId, text, messageType);
+    }
+
     // Meta envía `phone_number_id` en `value.metadata` del payload entrante.
     const metaPhoneId: string | undefined = event.metadata?.phone_number_id;
     if (!metaPhoneId) {
@@ -2754,6 +2884,51 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
+   * Tenant de un evento de Telegram. Igual que la rama de Meta salvo dos cosas:
+   * la clínica viene del webhook (no de un phone_number_id) y NO se marca la
+   * ventana de 24 h, que en Telegram no existe. Si la ficha tenía el chat como
+   * bloqueado, se limpia: acaba de escribir.
+   */
+  private async resolveTelegramTenant(
+    telegram: TelegramOrigin,
+    senderId: string,
+    text: string | undefined,
+    messageType: string | undefined,
+  ): Promise<{
+    org: Organization;
+    organizationId: string;
+    orgName: string;
+  } | null> {
+    const org = await this.prisma.organization.findUnique({
+      where: { id: telegram.organizationId },
+    });
+    if (!org) {
+      this.logger.warn(
+        `Update de Telegram para una organización que ya no existe (${telegram.organizationId}). Descartado.`,
+      );
+      return null;
+    }
+
+    await this.redis.set(`origin_org:${senderId}`, org.id, 'EX', SESSION_TTL);
+    await this.telegramChannel?.noteInbound(org.id, telegram.chatId);
+
+    if (!org.isActive) {
+      const reply =
+        'Esta línea clínica se encuentra inactiva temporalmente por mantenimiento administrativo.';
+      await this.sendWhatsAppMessage(senderId, reply);
+      await this.auditFailure(senderId, org.id, {
+        reason: FailureReason.ORG_INACTIVE,
+        userMessage: text || `[${messageType}]`,
+        botReply: reply,
+        metadata: { orgName: org.name, channel: 'TELEGRAM' },
+      });
+      return null;
+    }
+
+    return { org, organizationId: org.id, orgName: org.name };
+  }
+
+  /**
    * Pipeline de audio de un turno: avisa al paciente ("🎧…"), descarga el audio
    * de WhatsApp y lo transcribe vía el extractor LLM. Si la transcripción tiene
    * contenido útil, la adopta como `text` del turno —⭐ unificación voz↔texto:
@@ -2781,10 +2956,18 @@ export class ChatbotService implements OnModuleInit {
       senderId,
       '🎧 Permítame un momento, lo estoy escuchando...',
     );
-    const audioCreds = await this.resolveCredentialsForOrg(organizationId);
-    const audioBuffer = audioCreds
-      ? await this.downloadWhatsAppAudio(audioId, audioCreds)
-      : null;
+    let audioBuffer: Buffer | null;
+    if (isTelegramSender(senderId)) {
+      // ✈️ Nota de voz de Telegram: se baja por su file_id.
+      audioBuffer =
+        (await this.telegramChannel?.downloadVoice(organizationId, audioId)) ??
+        null;
+    } else {
+      const audioCreds = await this.resolveCredentialsForOrg(organizationId);
+      audioBuffer = audioCreds
+        ? await this.downloadWhatsAppAudio(audioId, audioCreds)
+        : null;
+    }
     if (audioBuffer) {
       // Capa 1 (anclaje de vocabulario): pasamos el catálogo activo del tenant
       // + las letras visibles del menú (cuando el estado es de selección por
@@ -3531,22 +3714,32 @@ export class ChatbotService implements OnModuleInit {
     MSGS: ReturnType<typeof buildMessages>;
   }): Promise<void> {
     const { organizationId, senderId, activar, MSGS } = p;
-    // El número tal como llegó (puede ser un BSUID) y sus dos formas de teléfono
-    // (con y sin el 57), sin repetir.
-    const identificadores = [
-      ...new Set([
-        senderId,
-        ...variantesDeTelefono(senderId.replace(/\D/g, '')),
-      ]),
-    ];
-    const { count } = await this.prisma.patientProfile.updateMany({
-      where: {
+    // ✈️ Telegram: solo por su chat. Quitarle los no-dígitos a `tg:3001234567`
+    // da `3001234567`, que puede ser el celular de OTRO paciente: se le
+    // apagarían sus recordatorios.
+    const telegramChatId = chatIdFromTelegramSender(senderId);
+    let where: Prisma.PatientProfileWhereInput;
+    if (isTelegramSender(senderId)) {
+      where = { organizationId, telegramChatId: telegramChatId ?? '' };
+    } else {
+      // El número tal como llegó (puede ser un BSUID) y sus dos formas de teléfono
+      // (con y sin el 57), sin repetir.
+      const identificadores = [
+        ...new Set([
+          senderId,
+          ...variantesDeTelefono(senderId.replace(/\D/g, '')),
+        ]),
+      ];
+      where = {
         organizationId,
         OR: [
           { whatsappId: { in: identificadores } },
           { bsuid: { in: identificadores } },
         ],
-      },
+      };
+    }
+    const { count } = await this.prisma.patientProfile.updateMany({
+      where,
       data: { remindersOptOut: !activar },
     });
 
@@ -6566,7 +6759,7 @@ export class ChatbotService implements OnModuleInit {
         patient.id,
         slotIdFinal,
         epsIdForBooking,
-        'WHATSAPP',
+        isTelegramSender(senderId) ? 'TELEGRAM' : 'WHATSAPP',
         organizationId,
       );
 
@@ -8305,7 +8498,7 @@ export class ChatbotService implements OnModuleInit {
       patientId,
       slotId,
       epsId,
-      'WHATSAPP',
+      isTelegramSender(senderId) ? 'TELEGRAM' : 'WHATSAPP',
       organizationId,
     );
 

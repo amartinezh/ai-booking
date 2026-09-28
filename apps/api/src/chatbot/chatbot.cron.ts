@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
@@ -7,7 +7,8 @@ import { ChatState, SESSION_TTL } from './chatbot.constants';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { WhatsappMessageLogService } from '../whatsapp-config/whatsapp-message-log.service';
 import { ResolvedWhatsappCredentials } from '../whatsapp-config/dto/whatsapp-config.types';
-import { buildWhatsappRecipient } from '@agenia/shared';
+import { buildWhatsappRecipient, isTelegramSender } from '@agenia/shared';
+import { TelegramChannelService } from '../telegram/telegram-channel.service';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
 import { getErrorMessage } from '../common/error-message.util';
 
@@ -52,6 +53,7 @@ export class ChatbotCron {
     private readonly httpService: HttpService,
     private readonly whatsappCredentials: WhatsappCredentialsService,
     private readonly messageLog: WhatsappMessageLogService,
+    @Optional() private readonly telegramChannel?: TelegramChannelService,
   ) {}
 
   // Corre cada minuto para honrar umbrales cortos (p.ej. 5 min) con buena
@@ -99,6 +101,17 @@ export class ChatbotCron {
           `(umbral ${umbral}s${enAlta ? ', alta en curso' : ''}, estado: ${state}). Cerrando.`,
       );
 
+      // ✈️ Telegram: el aviso sale por el bot de Telegram de la clínica, no
+      // por Meta (un `tg:` enviado a la Graph API es un fallo seguro).
+      if (isTelegramSender(whatsappPhone)) {
+        await this.sendAbandonedNotificationTelegram(
+          organizationId,
+          whatsappPhone,
+        );
+        await this.cleanUpSession(organizationId, whatsappPhone);
+        continue;
+      }
+
       const creds = await this.whatsappCredentials.forOrg(organizationId);
       if (!creds || !creds.isActive) {
         this.logger.warn(
@@ -110,6 +123,25 @@ export class ChatbotCron {
 
       await this.cleanUpSession(organizationId, whatsappPhone);
     }
+  }
+
+  private async sendAbandonedNotificationTelegram(
+    organizationId: string,
+    senderId: string,
+  ): Promise<void> {
+    if (!this.telegramChannel) {
+      this.logger.warn(
+        `Canal de Telegram no cargado. Aviso de cierre NO enviado a ${senderId}.`,
+      );
+      return;
+    }
+    // Nunca lanza (ver TelegramChannelService); el resultado queda en su libro.
+    await this.telegramChannel.sendText(
+      organizationId,
+      senderId,
+      ABANDONED_NOTICE,
+      { kind: 'SYSTEM_NOTICE' },
+    );
   }
 
   private async sendAbandonedNotification(
@@ -125,7 +157,7 @@ export class ChatbotCron {
       type: 'text',
       text: {
         preview_url: false,
-        body: "Hola. Lo siento, he cerrado nuestra comunicación por inactividad prolongada por su seguridad y privacidad de datos. ¡En caso de querer un servicio aquí estoy, solo escríbame 'Hola' nuevamente!",
+        body: ABANDONED_NOTICE,
       },
     };
     const headers = {
@@ -204,3 +236,7 @@ export class ChatbotCron {
     );
   }
 }
+
+/** Aviso de cierre por inactividad (el mismo texto para WhatsApp y Telegram). */
+const ABANDONED_NOTICE =
+  "Hola. Lo siento, he cerrado nuestra comunicación por inactividad prolongada por su seguridad y privacidad de datos. ¡En caso de querer un servicio aquí estoy, solo escríbame 'Hola' nuevamente!";

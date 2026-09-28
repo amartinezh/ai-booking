@@ -1,5 +1,9 @@
 import { toTelegramSenderId } from '@agenia/shared';
-import type { WhatsappInboundEvent } from '../chatbot/sender-identity';
+import {
+  TELEGRAM_ORIGIN,
+  type TelegramOrigin,
+  type WhatsappInboundEvent,
+} from '../chatbot/sender-identity';
 import type { TelegramMessage, TelegramUpdate } from './telegram.types';
 
 /**
@@ -7,25 +11,17 @@ import type { TelegramMessage, TelegramUpdate } from './telegram.types';
  *
  * Reutiliza `WhatsappInboundEvent` (texto en `text.body`, voz en `audio.id`,
  * id del mensaje en `id`) para que la voz y el texto recorran el MISMO camino
- * del bot que en WhatsApp. Lo que lo distingue es `channel` + `telegram`, que
- * el bot lee en la Fase 2 para saber quién escribió y de qué clínica.
+ * del bot que en WhatsApp. Lo que lo distingue es la marca `TELEGRAM_ORIGIN`
+ * (un `Symbol`, que ningún JSON puede falsificar): de ahí saca el bot quién
+ * escribió y de qué clínica.
  *
  * Deliberadamente NO lleva `from` ni `user_id`: esos campos significan
  * «teléfono» y «BSUID» de WhatsApp, y un `chat_id` puesto ahí se guardaría
  * como teléfono del paciente.
  */
 export interface TelegramInboundEvent extends WhatsappInboundEvent {
-  channel: 'telegram';
   type: 'text' | 'audio';
-  telegram: {
-    organizationId: string;
-    /** `chat_id` sin prefijo. */
-    chatId: string;
-    /** Remitente del bot: `tg:<chat_id>`. */
-    senderId: string;
-    updateId: number;
-    messageId: number | null;
-  };
+  [TELEGRAM_ORIGIN]: TelegramOrigin;
 }
 
 /** Qué hacer con un update. */
@@ -41,7 +37,12 @@ export type TelegramUpdateDecision =
       what: string;
     }
   /** Texto o nota de voz: va al bot. */
-  | { action: 'message'; event: TelegramInboundEvent; dedupKey: string };
+  | {
+      action: 'message';
+      event: TelegramInboundEvent;
+      senderId: string;
+      dedupKey: string;
+    };
 
 /** Lo que se le contesta a una foto, sticker, documento… (T8). */
 export const TELEGRAM_UNSUPPORTED_REPLY =
@@ -95,15 +96,8 @@ export function adaptTelegramUpdate(
   const dedupKey = `tg:${routeKey}:${updateId}`;
 
   const base = {
-    channel: 'telegram' as const,
     id: dedupKey,
-    telegram: {
-      organizationId,
-      chatId,
-      senderId,
-      updateId,
-      messageId: msg.message_id ?? null,
-    },
+    [TELEGRAM_ORIGIN]: { organizationId, chatId, senderId },
   };
 
   if (typeof msg.text === 'string') {
@@ -113,6 +107,7 @@ export function adaptTelegramUpdate(
     }
     return {
       action: 'message',
+      senderId,
       dedupKey,
       event: { ...base, type: 'text', text: { body: text } },
     };
@@ -121,6 +116,7 @@ export function adaptTelegramUpdate(
   if (msg.voice?.file_id) {
     return {
       action: 'message',
+      senderId,
       dedupKey,
       event: { ...base, type: 'audio', audio: { id: msg.voice.file_id } },
     };

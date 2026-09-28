@@ -10,6 +10,7 @@ import type { TelegramSenderService } from './telegram-sender.service';
 import type { InboundQueueService } from '../chatbot/inbound-queue.service';
 import type { ChatbotService } from '../chatbot/chatbot.service';
 import type { TelegramUpdate } from './telegram.types';
+import { telegramOriginOf } from '../chatbot/sender-identity';
 
 /**
  * Webhook de Telegram (T1). Lo que no puede fallar:
@@ -131,11 +132,11 @@ describe('TelegramWebhookController', () => {
 
     await tasks[0]();
     const event = chatbot.processIncomingMessage.mock.calls[0][0];
-    expect(event).toMatchObject({
-      channel: 'telegram',
-      type: 'text',
-      text: { body: 'Hola' },
-      telegram: { organizationId: ORG, chatId: '777', senderId: 'tg:777' },
+    expect(event).toMatchObject({ type: 'text', text: { body: 'Hola' } });
+    expect(telegramOriginOf(event)).toEqual({
+      organizationId: ORG,
+      chatId: '777',
+      senderId: 'tg:777',
     });
   });
 

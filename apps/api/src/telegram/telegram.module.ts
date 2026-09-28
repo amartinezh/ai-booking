@@ -1,22 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ChatbotModule } from '../chatbot/chatbot.module';
-import { TelegramApiClient } from './telegram-api.client';
-import { TelegramConfigService } from './telegram-config.service';
-import { TelegramSenderService } from './telegram-sender.service';
+import { TelegramCoreModule } from './telegram-core.module';
 import { TelegramWebhookController } from './telegram-webhook.controller';
 import { TelegramConfigController } from './telegram-config.controller';
 
-/**
- * Núcleo del canal: cliente de la Bot API, configuración por clínica y envío.
- * No registra rutas. Es lo que el bot importa para responder por Telegram
- * (Fase 2), sin crear un ciclo con el módulo de las rutas, que a su vez
- * importa el bot.
- */
-@Module({
-  providers: [TelegramApiClient, TelegramConfigService, TelegramSenderService],
-  exports: [TelegramApiClient, TelegramConfigService, TelegramSenderService],
-})
-export class TelegramCoreModule {}
+export { TelegramCoreModule } from './telegram-core.module';
 
 /**
  * Rutas del canal: el webhook que llama Telegram y la configuración del panel.

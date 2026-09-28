@@ -198,7 +198,9 @@ export class AppointmentsService {
     patientId: string,
     scheduleSlotId: string,
     epsId: string | null,
-    origin: 'WHATSAPP' | 'MANUAL' | 'MIRROR',
+    // TELEGRAM se trata igual que WHATSAPP: solo MIRROR se salta el
+    // interruptor del médico y el chequeo de convenio (docs/PLAN_TELEGRAM.md).
+    origin: 'WHATSAPP' | 'MANUAL' | 'MIRROR' | 'TELEGRAM',
     organizationId: string,
   ): Promise<{
     success: boolean;

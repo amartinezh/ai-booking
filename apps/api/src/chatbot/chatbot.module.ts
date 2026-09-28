@@ -13,6 +13,7 @@ import { LlmModule } from '../llm/llm.module';
 import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module';
 import { AudioConfigModule } from '../audio-config/audio-config.module';
 import { SurveyModule } from '../survey/survey.module';
+import { TelegramCoreModule } from '../telegram/telegram-core.module';
 
 @Module({
   imports: [
@@ -24,6 +25,9 @@ import { SurveyModule } from '../survey/survey.module';
     WhatsappConfigModule,
     AudioConfigModule,
     SurveyModule,
+    // Envío por Telegram (sin rutas: el webhook vive en TelegramModule, que
+    // solo se registra con TELEGRAM_ENABLED=true).
+    TelegramCoreModule,
   ],
   controllers: [ChatbotController],
   providers: [

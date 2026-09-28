@@ -14,6 +14,28 @@
  */
 
 /**
+ * Marca de un evento que llegó por Telegram (docs/PLAN_TELEGRAM.md §3).
+ *
+ * Es un `Symbol` y no un campo normal A PROPÓSITO: el webhook de Meta pasa al
+ * bot los objetos `messages[]` tal como vienen en el JSON, y un JSON no puede
+ * fabricar una propiedad `Symbol`. Así, ni un payload falsificado (con
+ * META_REQUIRE_SIGNATURE=false) puede hacerse pasar por Telegram ni elegir la
+ * clínica. Solo `TelegramWebhookController`, que ya validó el secreto de la
+ * clínica, la pone.
+ */
+export const TELEGRAM_ORIGIN: unique symbol = Symbol('agenia.telegram-origin');
+
+/** Lo que el webhook de Telegram garantiza del evento que entrega al bot. */
+export interface TelegramOrigin {
+  /** Clínica dueña del bot (resuelta por la ruta del webhook, no por el payload). */
+  organizationId: string;
+  /** `chat_id` sin prefijo. */
+  chatId: string;
+  /** Remitente del bot: `tg:<chat_id>`. */
+  senderId: string;
+}
+
+/**
  * Evento entrante del webhook de Meta, ya desempacado por ChatbotController.
  * El controller extrae `value.messages[0]` (formato WhatsApp Cloud API) o
  * `entry.messaging[0]` (formato Messenger legacy) e inyecta `metadata`.
@@ -51,6 +73,15 @@ export interface WhatsappInboundEvent {
   message?: { text?: string; mid?: string };
   audio?: { id?: string };
   metadata?: { phone_number_id?: string };
+  /** Solo en eventos de Telegram. Ver TELEGRAM_ORIGIN. */
+  [TELEGRAM_ORIGIN]?: TelegramOrigin;
+}
+
+/** Origen de Telegram del evento, o `null` si es de WhatsApp. */
+export function telegramOriginOf(
+  event: WhatsappInboundEvent | null | undefined,
+): TelegramOrigin | null {
+  return event?.[TELEGRAM_ORIGIN] ?? null;
 }
 
 /** Identidad resuelta de un evento entrante. */
@@ -71,6 +102,11 @@ export interface SenderIdentity {
   bsuid: string | null;
   /** Teléfono si el webhook lo trajo. */
   phone: string | null;
+  /**
+   * `chat_id` de Telegram (sin prefijo). Solo existe en eventos de Telegram;
+   * en WhatsApp la propiedad ni siquiera se crea.
+   */
+  telegramChatId?: string;
 }
 
 /**
@@ -95,6 +131,18 @@ export function resolveSenderIdentity(
   event: WhatsappInboundEvent | null | undefined,
 ): SenderIdentity | null {
   if (!event) return null;
+
+  // Telegram primero: su remitente no es teléfono ni BSUID, y `from`/`user_id`
+  // no se miran aunque vinieran.
+  const telegram = telegramOriginOf(event);
+  if (telegram) {
+    return {
+      senderId: telegram.senderId,
+      bsuid: null,
+      phone: null,
+      telegramChatId: telegram.chatId,
+    };
+  }
 
   const bsuid = clean(event.user_id);
   const phone = clean(event.from);
