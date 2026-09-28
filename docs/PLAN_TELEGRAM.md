@@ -1,6 +1,6 @@
 # Canal de Telegram
 
-**Estado: FASE 0 HECHA (2026-09-28), sin subir.** Decisiones aprobadas. El usuario aprobó T1 … T9 (§5) el 2026-09-28 tal como estaban recomendadas; en T4 se confirmó además la caída a WhatsApp.
+**Estado: FASES 0 y 1 HECHAS (2026-09-28).** Fase 0 en `bc0e917`; Fase 1 sin commit. Decisiones aprobadas. El usuario aprobó T1 … T9 (§5) el 2026-09-28 tal como estaban recomendadas; en T4 se confirmó además la caída a WhatsApp.
 
 ## 1. Qué se pide
 
@@ -147,7 +147,7 @@ El backend hace todo lo demás, en este orden y **sin activar nada hasta que tod
 3. `setWebhook(url = PUBLIC_API_URL/telegram/webhook/<routeKey>, secret_token, allowed_updates=["message"], drop_pending_updates=true)`.
 4. `getWebhookInfo` → confirma que quedó registrado; solo entonces `isActive = true`.
 
-La tarjeta muestra: estado (conectado / con error, con `last_error_message` de `getWebhookInfo`), el enlace `t.me/<usuario>` y un QR para ponerlo en la sede, botón **Enviar mensaje de prueba** y botón **Desconectar** (`deleteWebhook` + `isActive=false`). El token nunca vuelve al navegador (solo «••••1234»).
+La tarjeta muestra: estado (conectado / con error, con `last_error_message` de `getWebhookInfo`), el enlace `t.me/<usuario>` y un QR para ponerlo en la sede, botón **Verificar conexión** (`POST /telegram-config/verify`: si Telegram sigue apuntando a nosotros, mensajes retenidos y último error) y botón **Desconectar**. *Cambio en la Fase 1:* se descartó «Enviar mensaje de prueba» porque un bot no puede escribirle a nadie que no le haya escrito antes (`deleteWebhook` + `isActive=false`). El token nunca vuelve al navegador (solo «••••1234»).
 
 Además, en lo que ve el personal:
 - `lib/whatsapp.ts`: un `tg:…` se muestra como «✈️ Telegram» y **nunca** genera enlace `wa.me` (hoy el prefijo ya hace que `isWhatsappPhoneId` dé falso, así que no se inventa un número; solo falta la etiqueta).
@@ -222,7 +222,7 @@ Además, en lo que ve el personal:
 | Fase | Qué | Se puede subir sola |
 |---|---|---|
 | 0 ✅ | Migración aditiva `20260928100000_canal_telegram` + `@agenia/shared/telegram-identity` (`isTelegramSender`, `toTelegramSenderId`, `chatIdFromTelegramSender`) con sus tests; `TELEGRAM` en `OrigenCita` del rastreo y su etiqueta en el expediente | Sí: no cambia comportamiento |
-| 1 | Módulo `telegram/`: cliente, config, controller, adaptador (con `TELEGRAM_ENABLED=false`) | Sí |
+| 1 ✅ | Módulo `telegram/`: `TelegramCoreModule` (cliente, config, envío + libro) y `TelegramModule` (webhook + endpoints del panel, solo con `TELEGRAM_ENABLED=true`) | Sí, apagado. **No encender antes de la Fase 2** |
 | 2 | Los 10 puntos del bot (§4.3) + tests de flujo con `tg:` + regresión de WhatsApp | Sí, apagado |
 | 3 | Panel: tarjeta de configuración, etiquetas, insignias. Rastreo: las ramas `origin === 'WHATSAPP'` de `patient-trace.ts` (líneas ~1031, ~1061, ~1581: confirmación y paso «Conversación») deben reconocer también `TELEGRAM` y leer `TelegramMessageLog` | Sí |
 | 4 | Recordatorio y confirmación HIS por canal (T4) + libro de mensajes (T6) | Sí |
@@ -248,3 +248,12 @@ Además, en lo que ve el personal:
 ## 10. Bitácora
 
 **Fase 0 (2026-09-28).** Migración verificada en Postgres 15 desechable sobre una base con pacientes: entra en una transacción, cero deriva (`migrate diff --exit-code` = 0), filas previas intactas, `telegramChatId` único por clínica (el mismo chat en otra clínica sí entra), un `botId` no puede ser de dos clínicas, borrar la clínica borra su bot y su libro. Añadir `TELEGRAM` al enum lo detectó el typecheck del web en dos sitios del rastreo (tipo `OrigenCita` y etiquetas del expediente); se agregó el valor, sin cambiar lógica. Sin regresiones: API 2 120 tests, shared 870, web 928, `nest build` y `tsc` del web en verde, lint sin avisos de fechas.
+
+**Fase 1 (2026-09-28).** Módulo `apps/api/src/telegram/` en dos piezas para que la Fase 2 no cree un ciclo: `TelegramCoreModule` (sin rutas; lo importará el bot) y `TelegramModule` (rutas; importa el bot). Lo único que se tocó fuera del módulo: `ChatbotModule` **exporta** `InboundQueueService` (misma instancia, un solo tope de concurrencia para los dos canales), `AppModule` registra `TelegramModule` solo con el interruptor, y `@agenia/database` exporta los tipos nuevos.
+
+- Cliente: nunca lanza, un reintento ante 429 si la espera es ≤ 10 s, texto plano, partición a 4 096 caracteres cortando en salto de línea o espacio. El token va en la URL, así que ningún error se arma con la URL: un test verifica que no aparece en ningún log.
+- Conectar: formato → `getMe` → un bot no puede ser de dos clínicas → se guarda apagado → `setWebhook` → `getWebhookInfo` confirma la URL → recién ahí se activa. Reconectar el mismo bot conserva la ruta y rota el secreto; cambiar de bot desengancha el viejo y renueva la ruta.
+- Envío: libro `TelegramMessageLog` en cada envío (ACCEPTED/FAILED), 403 → `telegramBlockedAt` en la ficha de esa clínica, 401 → canal apagado con el motivo.
+- Webhook: ruta desconocida y secreto inválido responden igual (401); canal inactivo → 200 sin procesar; dedup por `tg:<routeKey>:<update_id>`; cola llena → libera dedup y 503.
+
+Verificado arrancando la API real (Postgres y Redis desechables): con el interruptor apagado las rutas de Telegram dan 404 y no se mapea ninguna; encendido, los 9 casos del webhook responden como se diseñó, el webhook de WhatsApp sigue igual, la foto disparó el aviso, el Telegram real rechazó el token falso con 401 y el canal se apagó solo, con su fila FAILED en el libro; el token no aparece en el log. Tal como se esperaba, el texto llegó al bot y este lo registró como «remitente no identificado»: enseñarle a reconocerlo es la Fase 2. API: 2 250 tests (130 nuevos), `nest build` y lint en verde.

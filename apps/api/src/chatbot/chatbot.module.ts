@@ -33,6 +33,13 @@ import { SurveyModule } from '../survey/survey.module';
     KnowledgeBaseService,
     OrganizationSettingsService,
   ],
-  exports: [ChatbotService, KnowledgeBaseService, OrganizationSettingsService],
+  exports: [
+    ChatbotService,
+    KnowledgeBaseService,
+    OrganizationSettingsService,
+    // El webhook de Telegram encola en la MISMA cola que WhatsApp: un solo
+    // tope de concurrencia y de backpressure para todo lo que entra.
+    InboundQueueService,
+  ],
 })
 export class ChatbotModule {}

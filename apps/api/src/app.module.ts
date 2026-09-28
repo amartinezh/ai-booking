@@ -25,6 +25,7 @@ import { MonitorModule } from './monitor/monitor.module';
 import { MirrorModule } from './mirror/mirror.module';
 import { MassNoticeModule } from './mass-notice/mass-notice.module';
 import { RetentionModule } from './retention/retention.module';
+import { TelegramModule, telegramEnabled } from './telegram/telegram.module';
 
 @Module({
   imports: [
@@ -77,6 +78,10 @@ import { RetentionModule } from './retention/retention.module';
     // 🧹 Retención de datos personales: purga nocturna de conversaciones (180 d) y
     // de la bitácora del rastreo (365 d). Ver docs/PLAN_RASTREO_PACIENTE.md §12 #4.
     RetentionModule,
+    // Canal de Telegram (docs/PLAN_TELEGRAM.md, T9): con TELEGRAM_ENABLED
+    // apagado no se registra ninguna ruta. Se evalúa DESPUÉS de
+    // ConfigModule.forRoot, que ya cargó el .env en process.env.
+    ...(telegramEnabled() ? [TelegramModule] : []),
   ],
 })
 export class AppModule {}
