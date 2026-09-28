@@ -233,13 +233,22 @@ export type {
   TemplateKind,
 } from './src/whatsapp-template-contracts';
 
-export { decidirAlta, decidirTelefono, notaDeAlta } from './src/alta-en-caliente';
+export {
+  afiliacionDelPadron,
+  decidirAlta,
+  decidirTelefono,
+  huecosQueRellenaElPadron,
+  notaDeAlta,
+} from './src/alta-en-caliente';
 export type {
+  AfiliacionPadron,
   DecisionAlta,
   DuenoDeTelefono,
+  FilaPadron,
   EntradaAlta,
   MotivoSinAlta,
   PerfilCandidato,
+  Regimen,
   TelefonoDecidido,
 } from './src/alta-en-caliente';
 

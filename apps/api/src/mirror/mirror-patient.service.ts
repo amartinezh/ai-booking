@@ -1,13 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@agenia/database';
 import {
+  afiliacionDelPadron,
   decidirAlta,
   documentoSinCerosIniciales,
+  huecosQueRellenaElPadron,
   normalizeDocumento,
   normalizePhoneToE164Co,
   notaDeAlta,
   variantesDeTelefono,
   type CanonicalChangeEvent,
+  type AfiliacionPadron,
   type DecisionAlta,
   type MotivoSinAlta,
   type PerfilCandidato,
@@ -30,7 +33,7 @@ import { getErrorMessage } from '../common/error-message.util';
  *  · No toca el HIS: es la dirección de entrada.
  *  · No fusiona perfiles. Si el documento es ambiguo, no elige (D3).
  *  · No sobrescribe un WhatsApp que el paciente ya tenía en AgenIA: el del HIS solo
- *    se usa para rellenar un hueco.
+ *    se usa para rellenar un hueco. Lo mismo la EPS y el régimen que vienen del padrón.
  */
 
 export type ResultadoAlta =
@@ -45,6 +48,12 @@ export type ResultadoAlta =
 
 /** Perfiles que se traen para decidir; más de esto ya es un problema de datos, no un caso. */
 const MAX_CANDIDATOS = 10;
+
+/** Un perfil candidato con lo que el padrón puede completarle. */
+type PerfilConAfiliacion = PerfilCandidato & {
+  epsId: string | null;
+  regime: string | null;
+};
 
 @Injectable()
 export class MirrorPatientService {
@@ -92,6 +101,7 @@ export class MirrorPatientService {
 
     if (decision.accion === 'REUTILIZAR') {
       await this.completarTelefono(decision, perfiles);
+      await this.completarDesdePadron(organizationId, decision, perfiles);
       return { pacienteId: decision.pacienteId, creado: false, nota };
     }
 
@@ -146,9 +156,9 @@ export class MirrorPatientService {
   private async perfilesPorDocumento(
     organizationId: string,
     sinCeros: string,
-  ): Promise<PerfilCandidato[]> {
-    return this.prisma.$queryRaw<PerfilCandidato[]>(Prisma.sql`
-      SELECT id, cedula, "whatsappId", bsuid
+  ): Promise<PerfilConAfiliacion[]> {
+    return this.prisma.$queryRaw<PerfilConAfiliacion[]>(Prisma.sql`
+      SELECT id, cedula, "whatsappId", bsuid, "epsId", regime
         FROM "PatientProfile"
        WHERE "organizationId" = ${organizationId}
          AND regexp_replace("cedula", '^0+', '') = ${sinCeros}
@@ -179,7 +189,7 @@ export class MirrorPatientService {
    */
   private async completarTelefono(
     decision: Extract<DecisionAlta, { accion: 'REUTILIZAR' }>,
-    perfiles: PerfilCandidato[],
+    perfiles: PerfilConAfiliacion[],
   ): Promise<void> {
     const numero = decision.telefono.numero;
     if (!numero) return;
@@ -199,11 +209,51 @@ export class MirrorPatientService {
   }
 
   /**
+   * Un paciente que ya existía sin EPS o sin régimen: el padrón rellena el hueco, con
+   * la misma regla que al crearlo (`huecosQueRellenaElPadron`). Sin régimen, su
+   * siguiente cita por WhatsApp no podía llegar al hospital (caso del 2026-09-26); con
+   * él, el bot tampoco tiene que preguntárselo. No es crítico: si falla, la cita del
+   * hospital se aplica igual.
+   */
+  private async completarDesdePadron(
+    organizationId: string,
+    decision: Extract<DecisionAlta, { accion: 'REUTILIZAR' }>,
+    perfiles: PerfilConAfiliacion[],
+  ): Promise<void> {
+    const perfil = perfiles.find((p) => p.id === decision.pacienteId);
+    // Con EPS y régimen ya puestos no hay hueco: ni se consulta el padrón.
+    if (!perfil || (perfil.epsId && perfil.regime)) return;
+    try {
+      const cambios = huecosQueRellenaElPadron(
+        perfil,
+        await this.afiliacionDelPadron(organizationId, perfil.cedula),
+      );
+      if (Object.keys(cambios).length === 0) return;
+      // `epsId`/`regime: null` en el WHERE: si el bot o el personal lo puso entre
+      // la lectura y esta escritura, gana el suyo.
+      await this.prisma.patientProfile.updateMany({
+        where: {
+          id: perfil.id,
+          ...(cambios.epsId ? { epsId: null } : {}),
+          ...(cambios.regime ? { regime: null } : {}),
+        },
+        data: cambios,
+      });
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo completar desde el padrón el paciente ${perfil.id}: ${getErrorMessage(error)}`,
+      );
+    }
+  }
+
+  /**
    * Crea el paciente con lo MÍNIMO (D9): documento, nombre, teléfono y, si el evento
    * los trae, nacimiento, sexo y régimen. Nada de dirección, correo ni diagnóstico.
    *
    * La EPS se hereda del padrón cuando el documento está dado de alta en una sola EPS
-   * (D6): sin ella, un agendador acotado a una EPS no vería la cita en su bandeja.
+   * (D6): sin ella, un agendador acotado a una EPS no vería la cita en su bandeja. Y
+   * con ella, el régimen que el padrón le da en ESA EPS: el HIS nunca lo manda, y sin
+   * él el espejo no puede elegir el convenio de su siguiente cita por WhatsApp.
    *
    * El `User` es el mismo patrón temporal del bot: el paciente no tiene contraseña ni
    * entra al panel, pero `PatientProfile.userId` es obligatorio.
@@ -213,7 +263,11 @@ export class MirrorPatientService {
     decision: Extract<DecisionAlta, { accion: 'CREAR' }>,
     payload: CanonicalChangeEvent['payload'],
   ): Promise<string> {
-    const epsId = await this.epsDelPadron(organizationId, decision.documento);
+    const padron = await this.afiliacionDelPadron(
+      organizationId,
+      decision.documento,
+    );
+    const regimen = payload.patientRegime ?? padron.regime;
     const nacimiento = this.fechaValida(payload.patientBirthDateIso);
     return this.prisma.$transaction(async (tx) => {
       const usuario = await tx.user.create({
@@ -231,10 +285,10 @@ export class MirrorPatientService {
           whatsappId: decision.telefono.numero,
           userId: usuario.id,
           organizationId,
-          epsId,
+          epsId: padron.epsId,
           ...(nacimiento ? { dateOfBirth: nacimiento } : {}),
           ...(payload.patientGender ? { gender: payload.patientGender } : {}),
-          ...(payload.patientRegime ? { regime: payload.patientRegime } : {}),
+          ...(regimen ? { regime: regimen } : {}),
         },
         select: { id: true },
       });
@@ -242,21 +296,23 @@ export class MirrorPatientService {
     });
   }
 
-  /** La EPS del padrón, solo si el documento está dado de alta en UNA sola. */
-  private async epsDelPadron(
+  /**
+   * La EPS y el régimen del padrón, solo si no hay duda (`afiliacionDelPadron`). Se
+   * busca por el documento tal cual y sin ceros a la izquierda.
+   */
+  private async afiliacionDelPadron(
     organizationId: string,
     documento: string,
-  ): Promise<string | null> {
+  ): Promise<AfiliacionPadron> {
     const candidatos = [
       ...new Set([documento, documentoSinCerosIniciales(documento)]),
     ];
     const filas = await this.prisma.epsEnrolledPatient.findMany({
       where: { organizationId, cedula: { in: candidatos }, isActive: true },
-      select: { epsId: true },
-      distinct: ['epsId'],
-      take: 2,
+      select: { epsId: true, regime: true },
+      take: MAX_CANDIDATOS,
     });
-    return filas.length === 1 ? filas[0].epsId : null;
+    return afiliacionDelPadron(filas);
   }
 
   /** Una fecha del HIS utilizable; hay filas legadas con valores imposibles. */

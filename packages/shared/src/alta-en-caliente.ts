@@ -175,3 +175,79 @@ export function notaDeAlta(d: DecisionAlta): string {
       }[d.motivo];
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// Lo que se hereda del padrón de la EPS
+// ─────────────────────────────────────────────────────────────
+
+export type Regimen = "SUBSIDIADO" | "CONTRIBUTIVO";
+
+/** Una fila activa del padrón (`EpsEnrolledPatient`) para el documento. */
+export interface FilaPadron {
+  epsId: string;
+  regime: string | null;
+}
+
+export interface AfiliacionPadron {
+  epsId: string | null;
+  regime: Regimen | null;
+}
+
+const REGIMENES: readonly Regimen[] = ["SUBSIDIADO", "CONTRIBUTIVO"];
+
+/**
+ * La EPS y el régimen que el padrón le da a un documento, solo si no hay duda.
+ *
+ * El HIS nunca manda el régimen, y sin él el espejo no puede elegir el convenio de la
+ * EPS (hay uno por régimen): el paciente creado por el alta en caliente quedaba sin
+ * él, y su siguiente cita por WhatsApp no llegaba al hospital (caso real del
+ * 2026-09-26). El padrón de la EPS sí lo trae — lo tenían los 121 pacientes nacidos
+ * en el HIS que estaban sin régimen.
+ *
+ *  · **EPS (D6):** solo si el documento está activo en UNA sola EPS. En dos, elegir
+ *    sería adivinar.
+ *  · **Régimen:** el de ESA EPS, y solo si sus filas coinciden. El documento puede
+ *    estar dos veces en la misma EPS (con y sin ceros a la izquierda); si esas filas
+ *    dicen regímenes distintos, no se elige: el bot se lo pregunta al paciente.
+ *    Un régimen que no sea SUBSIDIADO o CONTRIBUTIVO no cuenta.
+ */
+export function afiliacionDelPadron(filas: FilaPadron[]): AfiliacionPadron {
+  const epsIds = [...new Set(filas.map((f) => f.epsId))];
+  if (epsIds.length !== 1) return { epsId: null, regime: null };
+
+  const regimenes = [
+    ...new Set(
+      filas
+        .map((f) => (f.regime ?? "").trim().toUpperCase())
+        .filter((r): r is Regimen =>
+          (REGIMENES as readonly string[]).includes(r),
+        ),
+    ),
+  ];
+  return {
+    epsId: epsIds[0],
+    regime: regimenes.length === 1 ? regimenes[0] : null,
+  };
+}
+
+/**
+ * Qué huecos de un paciente que YA existe rellena el padrón. Nunca pisa: un dato que
+ * ya estaba lo puso el paciente (al bot) o el personal, y vale más que el padrón.
+ *
+ * El régimen es de una EPS concreta: solo se copia si el paciente no tiene EPS o
+ * tiene justo la del padrón. Con otra EPS, el régimen del padrón sería el de otra
+ * afiliación.
+ */
+export function huecosQueRellenaElPadron(
+  perfil: { epsId: string | null; regime: string | null },
+  padron: AfiliacionPadron,
+): { epsId?: string; regime?: Regimen } {
+  const cambios: { epsId?: string; regime?: Regimen } = {};
+  if (!padron.epsId) return cambios;
+  if (!perfil.epsId) cambios.epsId = padron.epsId;
+  const mismaEps = !perfil.epsId || perfil.epsId === padron.epsId;
+  if (!perfil.regime?.trim() && padron.regime && mismaEps) {
+    cambios.regime = padron.regime;
+  }
+  return cambios;
+}

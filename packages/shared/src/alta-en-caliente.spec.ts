@@ -1,5 +1,7 @@
 import { normalizePhoneToE164Co } from './avisos-csv';
 import {
+  afiliacionDelPadron,
+  huecosQueRellenaElPadron,
   decidirAlta,
   decidirTelefono,
   notaDeAlta,
@@ -189,5 +191,111 @@ describe('notaDeAlta — la constancia, sin datos personales', () => {
     }
     expect(notaDeAlta(casos[0])).toMatch(/creado desde el HIS, con WhatsApp/);
     expect(notaDeAlta(casos[4])).toMatch(/ya es de otro paciente/);
+  });
+});
+
+// Caso real del 2026-09-26: el HIS nunca manda el régimen, el alta en caliente creó a
+// la paciente sin él y su cita por WhatsApp no llegó al hospital. El padrón lo tenía.
+describe("afiliacionDelPadron", () => {
+  it("una EPS y un régimen: los hereda", () => {
+    expect(
+      afiliacionDelPadron([{ epsId: "st", regime: "SUBSIDIADO" }]),
+    ).toEqual({ epsId: "st", regime: "SUBSIDIADO" });
+  });
+
+  it("normaliza mayúsculas y espacios", () => {
+    expect(
+      afiliacionDelPadron([{ epsId: "st", regime: " contributivo " }]).regime,
+    ).toBe("CONTRIBUTIVO");
+  });
+
+  it("sin filas: nada", () => {
+    expect(afiliacionDelPadron([])).toEqual({ epsId: null, regime: null });
+  });
+
+  it("en DOS EPS no elige ni la EPS ni el régimen (D6)", () => {
+    expect(
+      afiliacionDelPadron([
+        { epsId: "st", regime: "SUBSIDIADO" },
+        { epsId: "sura", regime: "SUBSIDIADO" },
+      ]),
+    ).toEqual({ epsId: null, regime: null });
+  });
+
+  it("dos filas de la MISMA EPS que coinciden (con y sin ceros): hereda", () => {
+    expect(
+      afiliacionDelPadron([
+        { epsId: "st", regime: "SUBSIDIADO" },
+        { epsId: "st", regime: "SUBSIDIADO" },
+      ]),
+    ).toEqual({ epsId: "st", regime: "SUBSIDIADO" });
+  });
+
+  it("dos filas de la misma EPS que se contradicen: hereda la EPS, NO el régimen", () => {
+    expect(
+      afiliacionDelPadron([
+        { epsId: "st", regime: "SUBSIDIADO" },
+        { epsId: "st", regime: "CONTRIBUTIVO" },
+      ]),
+    ).toEqual({ epsId: "st", regime: null });
+  });
+
+  it("una fila sin régimen no anula la que sí lo tiene", () => {
+    expect(
+      afiliacionDelPadron([
+        { epsId: "st", regime: null },
+        { epsId: "st", regime: "CONTRIBUTIVO" },
+      ]).regime,
+    ).toBe("CONTRIBUTIVO");
+  });
+
+  it.each(["", "ESPECIAL", "N/A"])("un régimen «%s» no cuenta", (regime) => {
+    expect(afiliacionDelPadron([{ epsId: "st", regime }]).regime).toBeNull();
+  });
+});
+
+describe("huecosQueRellenaElPadron", () => {
+  const padron = { epsId: "st", regime: "SUBSIDIADO" as const };
+
+  it("🚨 el caso real: misma EPS y sin régimen → rellena el régimen", () => {
+    expect(
+      huecosQueRellenaElPadron({ epsId: "st", regime: null }, padron),
+    ).toEqual({ regime: "SUBSIDIADO" });
+  });
+
+  it("sin EPS ni régimen → rellena los dos", () => {
+    expect(
+      huecosQueRellenaElPadron({ epsId: null, regime: null }, padron),
+    ).toEqual({ epsId: "st", regime: "SUBSIDIADO" });
+  });
+
+  it("nunca pisa un régimen que ya estaba", () => {
+    expect(
+      huecosQueRellenaElPadron({ epsId: "st", regime: "CONTRIBUTIVO" }, padron),
+    ).toEqual({});
+  });
+
+  it("con OTRA EPS no copia el régimen: sería el de otra afiliación", () => {
+    expect(
+      huecosQueRellenaElPadron({ epsId: "sura", regime: null }, padron),
+    ).toEqual({});
+  });
+
+  it("un padrón ambiguo (sin EPS) no rellena nada", () => {
+    expect(
+      huecosQueRellenaElPadron(
+        { epsId: null, regime: null },
+        { epsId: null, regime: null },
+      ),
+    ).toEqual({});
+  });
+
+  it("padrón con EPS pero sin régimen: solo la EPS", () => {
+    expect(
+      huecosQueRellenaElPadron(
+        { epsId: null, regime: null },
+        { epsId: "st", regime: null },
+      ),
+    ).toEqual({ epsId: "st" });
   });
 });

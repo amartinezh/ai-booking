@@ -20,10 +20,12 @@ describe('MirrorPatientService', () => {
         cedula: string;
         whatsappId: string | null;
         bsuid: string | null;
+        epsId?: string | null;
+        regime?: string | null;
       }[];
       baja?: boolean;
       duenosDelTelefono?: { id: string; cedula: string }[];
-      padron?: { epsId: string }[];
+      padron?: { epsId: string; regime?: string | null }[];
       crearFalla?: Error;
     } = {},
   ) => {
@@ -46,6 +48,7 @@ describe('MirrorPatientService', () => {
       patientProfile: {
         findMany: jest.fn(async () => opts.duenosDelTelefono ?? []),
         update: jest.fn(async () => ({})),
+        updateMany: jest.fn(async () => ({ count: 1 })),
       },
       epsEnrolledPatient: { findMany: jest.fn(async () => opts.padron ?? []) },
     };
@@ -250,6 +253,118 @@ describe('MirrorPatientService', () => {
       await expect(service.resolverOCrear(ORG, payload())).rejects.toThrow(
         'sin espacio',
       );
+    });
+  });
+
+  // Caso real del 2026-09-26: el HIS nunca manda el régimen y el alta en caliente
+  // creaba al paciente sin él; su siguiente cita por WhatsApp no llegó al hospital.
+  // El padrón de la EPS sí lo tenía (el de los 121 pacientes en esa situación).
+  describe('🧾 régimen heredado del padrón', () => {
+    it('paciente nuevo: nace con la EPS y el régimen del padrón', async () => {
+      const { service, tx } = build({
+        padron: [{ epsId: 'eps-st', regime: 'SUBSIDIADO' }],
+      });
+      await service.resolverOCrear(ORG, payload());
+
+      const data = tx.patientProfile.create.mock.calls[0][0].data;
+      expect(data.epsId).toBe('eps-st');
+      expect(data.regime).toBe('SUBSIDIADO');
+    });
+
+    it('paciente nuevo en DOS EPS: ni EPS ni régimen (D6)', async () => {
+      const { service, tx } = build({
+        padron: [
+          { epsId: 'eps-st', regime: 'SUBSIDIADO' },
+          { epsId: 'eps-sura', regime: 'SUBSIDIADO' },
+        ],
+      });
+      await service.resolverOCrear(ORG, payload());
+
+      const data = tx.patientProfile.create.mock.calls[0][0].data;
+      expect(data.epsId).toBeNull();
+      expect(data).not.toHaveProperty('regime');
+    });
+
+    it('paciente existente de esa EPS sin régimen: se le rellena, sin pisar si alguien lo puso antes', async () => {
+      const { service, prisma } = build({
+        perfiles: [
+          perfil({ whatsappId: '573009998877', epsId: 'eps-st', regime: null }),
+        ],
+        padron: [{ epsId: 'eps-st', regime: 'SUBSIDIADO' }],
+      });
+      await service.resolverOCrear(ORG, payload());
+
+      expect(prisma.patientProfile.updateMany).toHaveBeenCalledWith({
+        where: { id: 'pac-1', regime: null },
+        data: { regime: 'SUBSIDIADO' },
+      });
+    });
+
+    it('paciente existente sin EPS ni régimen: se le rellenan los dos', async () => {
+      const { service, prisma } = build({
+        perfiles: [
+          perfil({ whatsappId: '573009998877', epsId: null, regime: null }),
+        ],
+        padron: [{ epsId: 'eps-st', regime: 'CONTRIBUTIVO' }],
+      });
+      await service.resolverOCrear(ORG, payload());
+
+      expect(prisma.patientProfile.updateMany).toHaveBeenCalledWith({
+        where: { id: 'pac-1', epsId: null, regime: null },
+        data: { epsId: 'eps-st', regime: 'CONTRIBUTIVO' },
+      });
+    });
+
+    it('con EPS y régimen ya puestos ni se consulta el padrón', async () => {
+      const { service, prisma } = build({
+        perfiles: [
+          perfil({
+            whatsappId: '573009998877',
+            epsId: 'eps-st',
+            regime: 'CONTRIBUTIVO',
+          }),
+        ],
+        padron: [{ epsId: 'eps-st', regime: 'SUBSIDIADO' }],
+      });
+      await service.resolverOCrear(ORG, payload());
+
+      expect(prisma.epsEnrolledPatient.findMany).not.toHaveBeenCalled();
+      expect(prisma.patientProfile.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('con OTRA EPS en su ficha no se copia el régimen: sería el de otra afiliación', async () => {
+      const { service, prisma } = build({
+        perfiles: [
+          perfil({
+            whatsappId: '573009998877',
+            epsId: 'eps-sura',
+            regime: null,
+          }),
+        ],
+        padron: [{ epsId: 'eps-st', regime: 'SUBSIDIADO' }],
+      });
+      await service.resolverOCrear(ORG, payload());
+
+      expect(prisma.patientProfile.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('si completar falla, la cita del hospital sigue adelante', async () => {
+      const { service, prisma } = build({
+        perfiles: [
+          perfil({ whatsappId: '573009998877', epsId: 'eps-st', regime: null }),
+        ],
+        padron: [{ epsId: 'eps-st', regime: 'SUBSIDIADO' }],
+      });
+      prisma.patientProfile.updateMany.mockRejectedValueOnce(
+        new Error('base caída'),
+      );
+
+      await expect(
+        service.resolverOCrear(ORG, payload()),
+      ).resolves.toMatchObject({
+        pacienteId: 'pac-1',
+        creado: false,
+      });
     });
   });
 
