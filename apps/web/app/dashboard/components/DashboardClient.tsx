@@ -12,6 +12,7 @@ import {
 } from '@/app/actions/dashboard';
 import ClinicalRecordDrawer from './ClinicalRecordDrawer';
 import { formatDateShort, formatTimeOnly, formatAppointmentShort } from '@/lib/date';
+import { canalDelRecordatorio } from '@/lib/canal-recordatorio';
 
 type DashboardAppointment = Prisma.AppointmentGetPayload<{
     include: {
@@ -62,15 +63,15 @@ export default function DashboardClient({
         setLoadingId(null);
     };
 
-    // ── Recordatorio MANUAL por WhatsApp ─────────────────────────────────
+    // ── Recordatorio MANUAL (por WhatsApp o por Telegram) ─────────────────
     // Estado local que guarda el último `reminderSentAt` por appointment
     // para que la UI reaccione inmediatamente sin esperar el revalidate.
     const [reminderLoadingId, setReminderLoadingId] = useState<string | null>(null);
     const [localReminderSentAt, setLocalReminderSentAt] = useState<Record<string, string>>({});
 
-    const handleManualReminder = async (appointmentId: string) => {
+    const handleManualReminder = async (appointmentId: string, canal: string) => {
         setReminderLoadingId(appointmentId);
-        const toastId = toast.loading('Enviando recordatorio por WhatsApp...');
+        const toastId = toast.loading(`Enviando recordatorio por ${canal}...`);
         try {
             const res = await sendManualReminder(appointmentId);
             if (res.success) {
@@ -276,15 +277,17 @@ export default function DashboardClient({
                                                     localReminderSentAt[apt.id] ?? apt.reminderSentAt ?? null;
                                                 const alreadySent = Boolean(reminderSentAt);
                                                 const isSending = reminderLoadingId === apt.id;
+                                                // Por dónde saldrá DE VERDAD (la regla del envío, T4 de docs/PLAN_TELEGRAM.md).
+                                                const canal = canalDelRecordatorio(apt.patient, apt.origin);
                                                 return (
                                                     <button
                                                         type="button"
-                                                        onClick={() => handleManualReminder(apt.id)}
+                                                        onClick={() => handleManualReminder(apt.id, canal)}
                                                         disabled={isSending}
                                                         title={
                                                             reminderSentAt
                                                                 ? `Recordatorio enviado el ${formatAppointmentShort(reminderSentAt)}. Puedes reenviarlo si lo necesitas.`
-                                                                : 'Enviar recordatorio manual por WhatsApp'
+                                                                : `Enviar recordatorio manual por ${canal}`
                                                         }
                                                         className={`w-full text-xs font-semibold px-3 py-1.5 rounded-md flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                                                             alreadySent
@@ -300,7 +303,7 @@ export default function DashboardClient({
                                                         ) : (
                                                             <>
                                                                 <Bell className="w-3.5 h-3.5" />
-                                                                {alreadySent ? 'Reenviar recordatorio' : 'Recordar por WhatsApp'}
+                                                                {alreadySent ? 'Reenviar recordatorio' : `Recordar por ${canal}`}
                                                             </>
                                                         )}
                                                     </button>
