@@ -304,6 +304,26 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       expect(where.patient).toEqual({ remindersOptOut: false });
     });
 
+    it('🔕 excluye a las clínicas que apagaron los recordatorios, en la consulta de cada vuelta', async () => {
+      const { service, prisma } = build();
+      await service.runOnce();
+      await service.runOnce();
+
+      // Se lee en CADA vuelta: prender o apagar surte efecto sin reiniciar.
+      expect(prisma.appointment.findMany).toHaveBeenCalledTimes(2);
+      for (const call of prisma.appointment.findMany.mock.calls as unknown as [
+        { where: Record<string, any> },
+      ][]) {
+        // Sin fila de settings cuenta como prendido (el default de la columna).
+        expect(call[0].where.organization).toEqual({
+          OR: [
+            { settings: { is: null } },
+            { settings: { is: { remindersEnabled: true } } },
+          ],
+        });
+      }
+    });
+
     it('procesa en orden cronológico y con tope de seguridad', async () => {
       const { service, prisma } = build();
       await service.runOnce();

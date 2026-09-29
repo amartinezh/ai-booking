@@ -17,13 +17,41 @@ export async function getMyOrgSettings() {
 
     const s = await prisma.organizationSettings.findUnique({
         where: { organizationId: session.organizationId! },
-        select: { botName: true, communicationStyle: true, slotsOfferedCount: true },
+        select: { botName: true, communicationStyle: true, slotsOfferedCount: true, remindersEnabled: true },
     });
     return {
         botName: s?.botName ?? DEFAULT_BOT_NAME,
         communicationStyle: (s?.communicationStyle ?? 'FORMAL') as CommStyle,
         slotsOfferedCount: normalizarCuposOfrecidos(s?.slotsOfferedCount),
+        // Sin fila de settings = prendido, igual que el default de la columna y
+        // que la consulta del cron.
+        remindersEnabled: s?.remindersEnabled ?? true,
     };
+}
+
+/**
+ * Prende o apaga los recordatorios automáticos de la clínica. Va aparte de
+ * `updateMyOrgSettings` porque el interruptor guarda al instante (no espera
+ * al botón «Guardar») y el cron lo lee en su siguiente vuelta.
+ */
+export async function setMyRemindersEnabled(enabled: boolean) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
+
+    // `=== true`: la server action se puede llamar con cualquier cosa; lo que
+    // no sea exactamente `true` apaga (falla hacia no escribirle a nadie).
+    const remindersEnabled = enabled === true;
+    try {
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, remindersEnabled },
+            update: { remindersEnabled },
+        });
+        revalidatePath('/dashboard/configuracion');
+        return { success: true, remindersEnabled };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
+    }
 }
 
 export async function updateMyOrgSettings(data: {

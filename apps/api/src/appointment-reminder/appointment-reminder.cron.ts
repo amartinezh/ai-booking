@@ -212,6 +212,16 @@ export class AppointmentReminderCronService
         // en la consulta y no al enviar: así tampoco se le marca `reminderSentAt`,
         // que sería decir «ya se le avisó» de algo que nunca salió.
         patient: { remindersOptOut: false },
+        // 🔕 El interruptor de la clínica (/dashboard/configuracion). También en la
+        // consulta y no al enviar, por la misma razón que el opt-out: apagado no
+        // marca nada, y como se lee en cada vuelta, prenderlo o apagarlo surte
+        // efecto sin reiniciar. Sin fila de settings = prendido (su default).
+        organization: {
+          OR: [
+            { settings: { is: null } },
+            { settings: { is: { remindersEnabled: true } } },
+          ],
+        },
       },
       include: {
         patient: {

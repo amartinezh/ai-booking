@@ -7,6 +7,7 @@ import { getMyWhatsappConfig } from '@/app/actions/whatsapp-config';
 import { getMyWhatsappTemplates } from '@/app/actions/whatsapp-templates';
 import { getMyAudioConfig } from '@/app/actions/audio-config';
 import SettingsForm from './SettingsForm';
+import RemindersToggle from './RemindersToggle';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
 import WhatsappChannelForm from './WhatsappChannelForm';
@@ -147,6 +148,8 @@ export default async function ConfiguracionPage({
             <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xl shadow-zinc-200/50 dark:shadow-black/20 p-6 md:p-8">
                 {activeTab === 'chatbot' && (
                     <div className="space-y-12">
+                        {settings && <RemindersToggle initialEnabled={settings.remindersEnabled} />}
+                        {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && <SettingsForm initial={settings} />}
                         <div className="border-t border-zinc-200 dark:border-zinc-800" />
                         {chatbotAudioConfig ? (

@@ -125,6 +125,14 @@ model OrganizationSettings {
   // ORG_ADMIN en /dashboard/configuracion. Rango válido 2-12.
   slotsOfferedCount Int @default(6)
 
+  // Interruptor de los recordatorios AUTOMÁTICOS de citas (cron). El cron lo
+  // consulta en cada vuelta, así que prenderlo o apagarlo desde
+  // /dashboard/configuracion surte efecto sin reiniciar la API. Apagado, las
+  // citas no se marcan como recordadas: al prenderlo, las que sigan dentro de
+  // la ventana reciben su recordatorio. El botón manual del dashboard no se
+  // afecta (lo dispara una persona). Clínica sin fila de settings = prendido.
+  remindersEnabled Boolean @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
