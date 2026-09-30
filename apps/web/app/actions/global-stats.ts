@@ -35,17 +35,17 @@ export interface GlobalStatsResponse {
         loginsScheduler: number;
         appointmentsScheduled: number;
         appointmentsFailed: number;
-        whatsappEscalations: number;
+        emergencyEscalations: number;
         newPatients: number;
         signedClinicalRecords: number;
         legalAddendums: number;
-        aiMessagesProcessed: number;
+        botMessagesReceived: number;
         activeOrganizations: number;
     };
     trends: {
         appointmentsScheduled: TrendPoint[];
         newPatients: TrendPoint[];
-        aiMessagesProcessed: TrendPoint[];
+        botMessagesReceived: TrendPoint[];
         signedClinicalRecords: TrendPoint[];
     };
 }

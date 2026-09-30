@@ -47,6 +47,10 @@ model Organization {
   telegramConfig      TelegramBotConfig?
   telegramMessageLogs TelegramMessageLog[]
 
+  // Actividad por canal (mensajes entrantes, citas, problemas) para las
+  // gráficas de «Canales en vivo». Sin texto; remitente seudonimizado.
+  channelActivityLogs ChannelActivityLog[]
+
   // Configuración de voz/audio (TTS) por clínica (1:1) — pitch, rate, voz, codec
   audioConfig OrganizationAudioConfig?
 
@@ -1037,6 +1041,9 @@ model InteractionLog {
   // tabla no tenía ningún índice: buscar por `whatsappId` era un scan completo
   // de todos los mensajes de todas las clínicas.
   @@index([organizationId, whatsappId, createdAt])
+  // Rangos de fecha (detalle de «Canales en vivo» y la purga de retención, que
+  // borra por `createdAt`): el índice de arriba no sirve sin `whatsappId`.
+  @@index([createdAt])
 }
 
 // -----------------------------------------------------------------------------
@@ -2362,4 +2369,57 @@ model HisLookupRequest {
   @@index([organizationId, status, createdAt])
   /// La purga: filas sin purgar cuyo plazo venció.
   @@index([purgedAt, purgeAt])
+}
+
+// -----------------------------------------------------------------------------
+// 📈 ACTIVIDAD POR CANAL (WhatsApp / Telegram)
+// -----------------------------------------------------------------------------
+
+enum ChannelKind {
+  WHATSAPP
+  TELEGRAM
+}
+
+/// Qué pasó. `INBOUND` es UN mensaje que llegó al bot (exacto: se escribe al
+/// entrar, antes de cualquier lógica). Los demás marcan el desenlace de ese
+/// remitente, para poder decir «escribió y no agendó» sin la caja negra:
+///   BOOKED  — agendó una cita.
+///   MANAGE  — vino a cancelar o reprogramar una cita que ya tenía (no es una
+///             cita perdida: no se cuenta en «escribió y no agendó»).
+///   PROBLEM — el turno falló o el paciente abandonó tras los reintentos.
+enum ChannelActivityEvent {
+  INBOUND
+  BOOKED
+  MANAGE
+  PROBLEM
+}
+
+/// Registro liviano de la actividad de los canales del bot, para las gráficas
+/// de «Canales en vivo».
+///
+/// POR QUÉ NO BASTA `InteractionLog`: se escribe en ~117 puntos del flujo (no
+/// uno por mensaje), así que no da el número exacto de mensajes, y se purga a
+/// los 180 días, así que la vista «Año» saldría recortada.
+///
+/// NO guarda texto ni el identificador del remitente: `senderHash` es un HMAC
+/// (clave del servidor, irreversible) de clínica + remitente. Alcanza para
+/// contar personas distintas y cruzar sus eventos, no para saber quién es.
+/// Se purga a los 400 días (RETENCION_DATOS.actividadCanalesDias).
+model ChannelActivityLog {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  channel    ChannelKind
+  event      ChannelActivityEvent
+  senderHash String
+
+  /// Solo `INBOUND`: 'text' | 'audio'.
+  messageType String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([createdAt])
 }

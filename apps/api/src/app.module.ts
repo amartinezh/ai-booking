@@ -19,6 +19,7 @@ import { AudioConfigModule } from './audio-config/audio-config.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { AppointmentReminderModule } from './appointment-reminder/appointment-reminder.module';
 import { GlobalStatsModule } from './global-stats/global-stats.module';
+import { ChannelStatsModule } from './channel-stats/channel-stats.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { SurveyModule } from './survey/survey.module';
 import { MonitorModule } from './monitor/monitor.module';
@@ -60,6 +61,7 @@ import { TelegramModule, telegramEnabled } from './telegram/telegram.module';
     AppointmentsModule,
     AnalyticsModule,
     GlobalStatsModule,
+    ChannelStatsModule,
     // 🏢 Acciones críticas del Super Admin sobre tenants (purge + quick-stats).
     OrganizationsModule,
     ClinicalRecordsModule,

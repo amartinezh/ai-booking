@@ -70,6 +70,22 @@ export async function loginUser(formData: FormData) {
             maxAge: 60 * 60 * 8,
         });
 
+        // 6. Dejar constancia del ingreso: alimenta «Logueos por rol» de
+        //    Estadísticas Globales (SystemLog 'USER_LOGIN', rol en metadata).
+        //    Nunca bloquea el login si la escritura falla.
+        await prisma.systemLog
+            .create({
+                data: {
+                    level: 'EVENT',
+                    action: 'USER_LOGIN',
+                    message: `Ingreso de usuario (${user.role})`,
+                    userId: user.id,
+                    organizationId: user.organizationId,
+                    metadata: { role: user.role },
+                },
+            })
+            .catch((e: unknown) => console.error('No se pudo registrar USER_LOGIN:', e));
+
         return { success: true, role: user.role };
     } catch (error) {
         console.error('Error en login:', error);

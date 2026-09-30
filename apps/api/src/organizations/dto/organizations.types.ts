@@ -47,7 +47,7 @@ export interface QuickStats {
     closedAppointmentsWithRecord: number;
     /** Citas cerradas (COMPLETED) SIN historia clínica asociada. */
     closedAppointmentsWithoutRecord: number;
-    /** Mensajes procesados por la IA (SystemLog: AI_MESSAGE_PROCESSED). */
-    aiMessagesProcessed: number;
+    /** Mensajes que llegaron al bot por WhatsApp y Telegram (ChannelActivityLog INBOUND). */
+    botMessagesReceived: number;
   };
 }

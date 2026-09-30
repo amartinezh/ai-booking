@@ -20,6 +20,8 @@ import {
 } from '../prompts/shared-prompts';
 
 const CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
+// Ficha del modelo: gratis, no consume tokens (sonda de salud).
+const MODELS_URL = 'https://api.openai.com/v1/models';
 const AUDIO_TRANSCRIPTIONS_URL =
   'https://api.openai.com/v1/audio/transcriptions';
 
@@ -156,6 +158,25 @@ export class ChatGptProvider implements LLMProvider {
       ],
     });
     return parseCatalogMappingResponse(raw);
+  }
+
+  async ping(): Promise<string> {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+    };
+    if (this.orgHeader) headers['OpenAI-Organization'] = this.orgHeader;
+    const res = await fetch(`${MODELS_URL}/${encodeURIComponent(this.model)}`, {
+      headers,
+    });
+    if (!res.ok) {
+      const err = new Error(
+        `OpenAI ${res.status}: ${await res.text()}`,
+      ) as Error & { status: number };
+      err.status = res.status;
+      throw err;
+    }
+    const json = (await res.json()) as { id?: string };
+    return json.id || this.model;
   }
 
   // ── HTTP helpers ──────────────────────────────────────────────────────────

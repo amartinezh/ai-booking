@@ -5,6 +5,7 @@ import {
   InteractionStatus,
 } from './interaction-log.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ChannelActivityService } from './channel-activity.service';
 
 /**
  * La "caja negra": lo único que queda cuando un paciente reclama que su cita
@@ -16,15 +17,18 @@ import { PrismaService } from '../prisma/prisma.service';
 describe('InteractionLogService', () => {
   let service: InteractionLogService;
   let prisma: { interactionLog: { create: jest.Mock } };
+  let channelActivity: { record: jest.Mock };
 
   const datos = () => prisma.interactionLog.create.mock.calls[0][0].data;
 
   beforeEach(async () => {
     prisma = { interactionLog: { create: jest.fn().mockResolvedValue({}) } };
+    channelActivity = { record: jest.fn().mockResolvedValue(undefined) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InteractionLogService,
         { provide: PrismaService, useValue: prisma },
+        { provide: ChannelActivityService, useValue: channelActivity },
       ],
     }).compile();
     service = module.get(InteractionLogService);
@@ -247,6 +251,83 @@ describe('InteractionLogService', () => {
       expect(datos().metadata.patientCedula).toBeNull();
       expect(datos().metadata.doctorName).toBeNull();
       expect(datos().metadata.serviceName).toBeNull();
+    });
+  });
+
+  describe('desenlace para las gráficas de canales', () => {
+    it('una cita confirmada marca BOOKED para ese remitente y esa clínica', async () => {
+      await service.logBookingConfirmed({
+        whatsappId: 'tg:123',
+        organizationId: 'org-1',
+        appointmentId: 'a1',
+        patientCedula: '1',
+        serviceName: 's',
+        doctorName: 'd',
+        slotDate: new Date(),
+      });
+      expect(channelActivity.record).toHaveBeenCalledWith({
+        organizationId: 'org-1',
+        senderId: 'tg:123',
+        event: 'BOOKED',
+      });
+    });
+
+    it('un fallo del turno o un abandono marca PROBLEM', async () => {
+      await service.logFailure({
+        whatsappId: '57300',
+        organizationId: 'org-1',
+        reason: FailureReason.NO_AGENDA,
+      });
+      await service.log({
+        whatsappId: '57300',
+        organizationId: 'org-1',
+        status: InteractionStatus.ABANDONED,
+      });
+      expect(channelActivity.record).toHaveBeenCalledTimes(2);
+      expect(channelActivity.record.mock.calls[0][0].event).toBe('PROBLEM');
+    });
+
+    it('un envío NUESTRO fallido (panel, recordatorio, aviso) no es una conversación caída', async () => {
+      await service.logOutbound({
+        whatsappId: '57300',
+        botReply: 'x',
+        success: false,
+      });
+      await service.logReminderSent({
+        whatsappId: '57300',
+        organizationId: 'org-1',
+        appointmentId: 'a',
+        slotDate: new Date(),
+        businessHoursBefore: 24,
+        success: false,
+        botReply: 'x',
+      });
+      expect(channelActivity.record).not.toHaveBeenCalled();
+    });
+
+    it('cancelar o reprogramar marca MANAGE: no es una cita perdida', async () => {
+      await service.log({
+        whatsappId: '57300',
+        organizationId: 'org-1',
+        status: InteractionStatus.CANCELLATION_FLOW,
+      });
+      await service.log({
+        whatsappId: '57300',
+        organizationId: 'org-1',
+        status: InteractionStatus.MODIFICATION_FLOW,
+      });
+      expect(channelActivity.record.mock.calls.map((c) => c[0].event)).toEqual([
+        'MANAGE',
+        'MANAGE',
+      ]);
+    });
+
+    it('un turno normal no marca nada', async () => {
+      await service.logSuccess({
+        whatsappId: '57300',
+        organizationId: 'org-1',
+      });
+      expect(channelActivity.record).not.toHaveBeenCalled();
     });
   });
 });

@@ -35,10 +35,10 @@ describe('GlobalStatsService', () => {
         groupBy: jest.fn(async () => [{ organizationId: 'b' }]),
       },
       addendum: { count: jest.fn(async () => 5) },
+      interactionLog: { count: jest.fn(async () => 6) },
+      channelActivityLog: { count: jest.fn(async () => 8) },
       organization: { findMany: jest.fn(async () => []) },
-      $queryRaw: jest.fn(async () => [
-        { day: new Date('2026-05-10T00:00:00Z'), count: 7n },
-      ]),
+      $queryRaw: jest.fn(async () => [{ day: '2026-05-10', count: 7n }]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -50,72 +50,82 @@ describe('GlobalStatsService', () => {
     service = module.get(GlobalStatsService);
   });
 
-  describe('resolución del rango temporal', () => {
+  describe('resolución del rango temporal — hora de Bogotá, no UTC', () => {
+    // 30-sep-2026 20:30 en Bogotá = 1-oct 01:30 UTC: con UTC, «hoy» ya era
+    // el 1 de octubre y el mes, octubre.
+    const NOCHE_BOGOTA = new Date('2026-10-01T01:30:00.000Z');
+    beforeEach(() => {
+      jest.useFakeTimers({
+        now: NOCHE_BOGOTA,
+        doNotFake: ['nextTick', 'setImmediate'],
+      });
+    });
+    afterEach(() => jest.useRealTimers());
+
     const rango = async (
       filtros: Parameters<typeof service.getGlobalStats>[0],
     ) => {
       const r = await service.getGlobalStats(filtros);
-      return {
-        gte: new Date(r.filters.startDate),
-        lte: new Date(r.filters.endDate),
-      };
+      return { gte: r.filters.startDate, lte: r.filters.endDate };
     };
 
-    it('CUSTOM respeta las fechas dadas, de medianoche a fin del día', async () => {
-      const { gte, lte } = await rango({
-        range: 'CUSTOM',
-        startDate: '2026-05-01',
-        endDate: '2026-05-31',
+    it('CUSTOM respeta las fechas dadas, de medianoche a fin del día de Bogotá', async () => {
+      await expect(
+        rango({
+          range: 'CUSTOM',
+          startDate: '2026-05-01',
+          endDate: '2026-05-31',
+        }),
+      ).resolves.toEqual({
+        gte: '2026-05-01T05:00:00.000Z',
+        lte: '2026-06-01T04:59:59.999Z',
       });
-
-      expect(gte.toISOString()).toBe('2026-05-01T00:00:00.000Z');
-      expect(lte.toISOString()).toBe('2026-05-31T23:59:59.999Z');
     });
 
     it('CUSTOM sin fechas cae al mes actual, no a un rango vacío', async () => {
-      const { gte, lte } = await rango({ range: 'CUSTOM' });
-      const ahora = new Date();
-      expect(gte.getUTCMonth()).toBe(ahora.getUTCMonth());
-      expect(lte.getTime()).toBeGreaterThan(gte.getTime());
+      const { gte } = await rango({ range: 'CUSTOM' });
+      expect(gte).toBe('2026-09-01T05:00:00.000Z');
     });
 
-    it('TODAY cubre exactamente el día en curso', async () => {
-      const { gte, lte } = await rango({ range: 'TODAY' });
-      expect(gte.getUTCHours()).toBe(0);
-      expect(lte.getUTCHours()).toBe(23);
-      expect(gte.toISOString().slice(0, 10)).toBe(
-        lte.toISOString().slice(0, 10),
-      );
+    it('🕗 TODAY a las 8:30 p. m. sigue siendo el día de hoy en Bogotá', async () => {
+      await expect(rango({ range: 'TODAY' })).resolves.toEqual({
+        gte: '2026-09-30T05:00:00.000Z',
+        lte: '2026-10-01T04:59:59.999Z',
+      });
     });
 
     it('WEEK va de lunes a domingo, siete días completos', async () => {
-      const { gte, lte } = await rango({ range: 'WEEK' });
-      expect(gte.getUTCDay()).toBe(1); // lunes
-      expect(lte.getUTCDay()).toBe(0); // domingo
-      const dias = (lte.getTime() - gte.getTime()) / 86_400_000;
-      expect(dias).toBeCloseTo(7, 0);
+      await expect(rango({ range: 'WEEK' })).resolves.toEqual({
+        gte: '2026-09-28T05:00:00.000Z',
+        lte: '2026-10-05T04:59:59.999Z',
+      });
     });
 
     it('YEAR va del 1 de enero al 31 de diciembre', async () => {
-      const { gte, lte } = await rango({ range: 'YEAR' });
-      expect(gte.getUTCMonth()).toBe(0);
-      expect(gte.getUTCDate()).toBe(1);
-      expect(lte.getUTCMonth()).toBe(11);
-      expect(lte.getUTCDate()).toBe(31);
+      await expect(rango({ range: 'YEAR' })).resolves.toEqual({
+        gte: '2026-01-01T05:00:00.000Z',
+        lte: '2027-01-01T04:59:59.999Z',
+      });
     });
 
     it.each([
       ['MONTH explícito', 'MONTH'],
       ['sin rango', undefined],
     ])('%s cubre el mes en curso completo', async (_e, range) => {
-      const { gte, lte } = await rango({ range: range as never });
-      expect(gte.getUTCDate()).toBe(1);
-      expect(lte.getUTCMonth()).toBe(gte.getUTCMonth());
-      // El último día del mes, sea cual sea su longitud.
-      const finDeMes = new Date(
-        Date.UTC(lte.getUTCFullYear(), lte.getUTCMonth() + 1, 0),
-      ).getUTCDate();
-      expect(lte.getUTCDate()).toBe(finDeMes);
+      await expect(rango({ range: range as never })).resolves.toEqual({
+        gte: '2026-09-01T05:00:00.000Z',
+        lte: '2026-10-01T04:59:59.999Z',
+      });
+    });
+
+    it('las tendencias agrupan por el día de Bogotá, no de UTC', async () => {
+      await service.getGlobalStats({ range: 'MONTH' });
+      const sql = prisma.$queryRaw.mock.calls
+        .map((c: [TemplateStringsArray, ...unknown[]]) => c[0].join('?'))
+        .join('\n');
+      expect(sql).not.toContain('date_trunc');
+      expect(sql).toContain("AT TIME ZONE 'UTC') AT TIME ZONE");
+      expect(prisma.$queryRaw.mock.calls[0]).toContain('America/Bogota');
     });
   });
 
@@ -123,7 +133,11 @@ describe('GlobalStatsService', () => {
     it('con clínica, TODOS los contadores la llevan', async () => {
       await service.getGlobalStats({ organizationId: ORG, range: 'MONTH' });
 
-      for (const llamada of prisma.systemLog.count.mock.calls) {
+      for (const llamada of [
+        ...prisma.systemLog.count.mock.calls,
+        ...prisma.interactionLog.count.mock.calls,
+        ...prisma.channelActivityLog.count.mock.calls,
+      ]) {
         expect(llamada[0].where.organizationId).toBe(ORG);
       }
       for (const llamada of prisma.appointment.count.mock.calls) {
@@ -250,7 +264,7 @@ describe('GlobalStatsService', () => {
       expect(Object.keys(r.trends)).toEqual([
         'appointmentsScheduled',
         'newPatients',
-        'aiMessagesProcessed',
+        'botMessagesReceived',
         'signedClinicalRecords',
       ]);
       expect(prisma.$queryRaw).toHaveBeenCalledTimes(4);
@@ -269,6 +283,32 @@ describe('GlobalStatsService', () => {
     expect(prisma.appointment.findMany).toBeUndefined();
     expect(prisma.patientProfile.findMany).toBeUndefined();
     expect(prisma.clinicalRecord.findMany).toBeUndefined();
+  });
+
+  describe('los contadores que antes salían siempre en 0', () => {
+    it('mensajes recibidos por el bot: cada mensaje entrante registrado (exacto)', async () => {
+      const r = await service.getGlobalStats({ range: 'MONTH' });
+      expect(r.metrics.botMessagesReceived).toBe(8);
+      expect(prisma.channelActivityLog.count.mock.calls[0][0].where.event).toBe(
+        'INBOUND',
+      );
+    });
+
+    it('emergencias derivadas: lo que el bot sí registra (EMERGENCY_ESCALATED)', async () => {
+      const r = await service.getGlobalStats({ range: 'MONTH' });
+      expect(r.metrics.emergencyEscalations).toBe(6);
+      expect(prisma.interactionLog.count.mock.calls[0][0].where.status).toBe(
+        'EMERGENCY_ESCALATED',
+      );
+    });
+
+    it('ya no se cuentan acciones de SystemLog que nadie escribe', async () => {
+      await service.getGlobalStats({ range: 'MONTH' });
+      const acciones = prisma.systemLog.count.mock.calls.map(
+        (c: [{ where: { action: string } }]) => c[0].where.action,
+      );
+      expect(new Set(acciones)).toEqual(new Set(['USER_LOGIN']));
+    });
   });
 
   it('devuelve los once contadores del tablero', async () => {
@@ -352,8 +392,21 @@ describe('AnalyticsService — el tablero de una clínica', () => {
 
     const filtro =
       prisma.appointment.count.mock.calls[0][0].where.scheduleSlot.startTime;
-    if (desde) expect(filtro.gte.toISOString()).toBe(`${desde}T00:00:00.000Z`);
-    if (hasta) expect(filtro.lte.toISOString()).toBe(`${hasta}T23:59:59.999Z`);
+    // Días completos de BOGOTÁ (UTC−5), no de UTC.
+    if (desde) expect(filtro.gte.toISOString()).toBe(`${desde}T05:00:00.000Z`);
+    if (hasta) {
+      const siguiente = new Date(`${hasta}T05:00:00.000Z`);
+      siguiente.setUTCDate(siguiente.getUTCDate() + 1);
+      expect(filtro.lte.getTime()).toBe(siguiente.getTime() - 1);
+    }
+  });
+
+  it('una cita a las 8 p. m. de Bogotá cuenta en SU día, no en el siguiente', async () => {
+    prisma.appointment.findMany.mockResolvedValue([
+      cita('X', null, '2026-05-11T01:00:00Z'), // 10-may 20:00 Bogotá
+    ]);
+    const r = await service.getDashboardStats(ORG);
+    expect(r.charts.temporalVolume).toEqual([{ date: '2026-05-10', count: 1 }]);
   });
 
   it('los KPI cuentan total, completadas y canceladas por separado', async () => {

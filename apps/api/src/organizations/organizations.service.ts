@@ -298,7 +298,7 @@ export class OrganizationsService {
       totalScheduledAppointments,
       closedAppointmentsWithRecord,
       closedAppointmentsWithoutRecord,
-      aiMessagesProcessed,
+      botMessagesReceived,
     ] = await Promise.all([
       this.prisma.user.count({
         where: { organizationId, role: 'DOCTOR' },
@@ -324,8 +324,10 @@ export class OrganizationsService {
           clinicalRecord: { is: null },
         },
       }),
-      this.prisma.systemLog.count({
-        where: { organizationId, action: 'AI_MESSAGE_PROCESSED' },
+      // Mensajes que llegaron al bot (exacto: uno por mensaje entrante). Antes
+      // leía SystemLog 'AI_MESSAGE_PROCESSED', que nadie escribe: siempre 0.
+      this.prisma.channelActivityLog.count({
+        where: { organizationId, event: 'INBOUND' },
       }),
     ]);
 
@@ -339,7 +341,7 @@ export class OrganizationsService {
         totalScheduledAppointments,
         closedAppointmentsWithRecord,
         closedAppointmentsWithoutRecord,
-        aiMessagesProcessed,
+        botMessagesReceived,
       },
     };
   }

@@ -54,7 +54,34 @@ export class MonitorService {
 
   // ── MODO B: check en vivo (efímero) ──────────────────────────────────────────
 
-  async runLiveCheck() {
+  /**
+   * Último check en vivo (o el que está en curso), compartido entre todas las
+   * pestañas y administradores durante `MONITOR_LIVE_CACHE_SECONDS`. Los checks
+   * ya no gastan tokens (ver `LLMProvider.ping`), pero Meta y Telegram sí
+   * limitan llamadas: sin esto, N pestañas abiertas eran N veces las llamadas.
+   */
+  private liveCache: {
+    at: number;
+    result: Promise<Awaited<ReturnType<MonitorService['doLiveCheck']>>>;
+  } | null = null;
+
+  runLiveCheck() {
+    const ttlMs =
+      Number(this.config.get('MONITOR_LIVE_CACHE_SECONDS') ?? 10) * 1000;
+    const now = Date.now();
+    if (this.liveCache && now - this.liveCache.at < ttlMs) {
+      return this.liveCache.result;
+    }
+    const result = this.doLiveCheck();
+    this.liveCache = { at: now, result };
+    // Un fallo inesperado no debe quedar cacheado.
+    result.catch(() => {
+      this.liveCache = null;
+    });
+    return result;
+  }
+
+  private async doLiveCheck() {
     const results = await Promise.allSettled(
       ACTIVE_SERVICES.map((svc) => this.checkers.checkService(svc)),
     );
@@ -145,7 +172,7 @@ export class MonitorService {
         this.config.get('MONITOR_BG_INTERVAL_MINUTES') ?? 15,
       ),
       liveIntervalSeconds: Number(
-        this.config.get('MONITOR_LIVE_INTERVAL_SECONDS') ?? 5,
+        this.config.get('MONITOR_LIVE_INTERVAL_SECONDS') ?? 15,
       ),
       services: SERVICES_CONFIG.map((s) => ({
         key: s.key,

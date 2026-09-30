@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { InteractionLogService } from './interaction-log.service';
+import { ChannelActivityService } from './channel-activity.service';
 
 /**
  * Módulo de auditoría.
@@ -8,7 +9,7 @@ import { InteractionLogService } from './interaction-log.service';
  * NO se importa explícitamente acá. NestJS lo provee automáticamente.
  */
 @Module({
-  providers: [InteractionLogService],
-  exports: [InteractionLogService],
+  providers: [InteractionLogService, ChannelActivityService],
+  exports: [InteractionLogService, ChannelActivityService],
 })
 export class InteractionLogModule {}

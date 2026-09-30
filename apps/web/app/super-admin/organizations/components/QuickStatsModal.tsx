@@ -158,8 +158,8 @@ export default function QuickStatsModal({ org, onClose }: QuickStatsModalProps) 
               </div>
 
               <StatCard
-                label="Mensajes de IA procesados"
-                value={m.aiMessagesProcessed}
+                label="Mensajes recibidos por el bot"
+                value={m.botMessagesReceived}
                 icon="🤖"
                 accent="bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-900/40 dark:text-fuchsia-300"
               />

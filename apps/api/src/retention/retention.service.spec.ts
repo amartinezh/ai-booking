@@ -18,6 +18,7 @@ describe('RetentionService', () => {
       /** Tamaños de los lotes que devuelve cada búsqueda, en orden. */
       conversaciones?: number[];
       consultas?: number[];
+      actividad?: number[];
     } = {},
   ) => {
     const lotes = (tamanos: number[]) => {
@@ -31,6 +32,14 @@ describe('RetentionService', () => {
     const prisma = {
       interactionLog: {
         findMany: lotes(opts.conversaciones ?? []),
+        deleteMany: jest.fn(
+          async (arg: { where: { id: { in: string[] } } }) => ({
+            count: arg.where.id.in.length,
+          }),
+        ),
+      },
+      channelActivityLog: {
+        findMany: lotes(opts.actividad ?? []),
         deleteMany: jest.fn(
           async (arg: { where: { id: { in: string[] } } }) => ({
             count: arg.where.id.in.length,
@@ -70,6 +79,7 @@ describe('RetentionService', () => {
     expect(r).toEqual({
       conversaciones: { dias: 180, borradas: 3, completa: true },
       consultasRastreo: { dias: 365, borradas: 2, completa: true },
+      actividadCanales: { dias: 400, borradas: 0, completa: true },
     });
     // Borra exactamente las filas que encontró, por id.
     expect(prisma.interactionLog.deleteMany.mock.calls[0][0]).toEqual({
@@ -148,5 +158,16 @@ describe('RetentionService', () => {
     // Tras el error se puede volver a correr (el candado se suelta).
     await expect(service.purgarCron()).resolves.toBeUndefined();
     expect(prisma.interactionLog.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('actividad de canales: borra lo de hace más de 400 días (la vista «Año» queda completa)', async () => {
+    const { service, prisma } = build({ actividad: [4] });
+    const r = await service.purgar(AHORA);
+    expect(corte(prisma.channelActivityLog.findMany)).toEqual(haceDias(400));
+    expect(r.actividadCanales).toEqual({
+      dias: 400,
+      borradas: 4,
+      completa: true,
+    });
   });
 });

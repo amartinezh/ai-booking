@@ -50,7 +50,7 @@ export default function MonitorClientView({
   initialSummary,
   meta,
 }: Props) {
-  const liveIntervalMs = (meta?.liveIntervalSeconds ?? 5) * 1000;
+  const liveIntervalMs = (meta?.liveIntervalSeconds ?? 15) * 1000;
   const services = useMemo(() => meta?.services ?? [], [meta]);
   const serviceName = useCallback(
     (key: string) =>
@@ -210,7 +210,7 @@ export default function MonitorClientView({
               🔴 Monitoreo en vivo
             </h2>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 max-w-xl">
-              Verifica los servicios cada {meta?.liveIntervalSeconds ?? 5}{' '}
+              Verifica los servicios cada {meta?.liveIntervalSeconds ?? 15}{' '}
               segundos en tiempo real, solo mientras tengas esta ventana
               abierta. No se guarda nada en la base de datos.
             </p>

@@ -6,12 +6,19 @@ describe('RETENCION_DATOS — los plazos decididos', () => {
     expect(RETENCION_DATOS).toEqual({
       conversacionesDias: 180,
       bitacoraRastreoDias: 365,
+      actividadCanalesDias: 400,
       minimoDias: 30,
     });
   });
 
   it('la bitácora de accesos vive más que lo consultado: sirve para responder «¿quién miró mis datos?»', () => {
     expect(RETENCION_DATOS.bitacoraRastreoDias).toBeGreaterThan(RETENCION_DATOS.conversacionesDias);
+  });
+});
+
+describe('actividad de canales', () => {
+  it('cubre un año calendario completo: la vista «Año» de las gráficas no puede quedar recortada', () => {
+    expect(RETENCION_DATOS.actividadCanalesDias).toBeGreaterThanOrEqual(366);
   });
 });
 

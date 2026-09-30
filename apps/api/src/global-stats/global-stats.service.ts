@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@agenia/database';
+import { resolverRangoEstadisticas } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 // ══════════════════════════════════════════════════════════════
@@ -11,11 +12,18 @@ import { PrismaService } from '../prisma/prisma.service';
 //   - Soporta filtros de rango por gte/lte sobre el campo correcto:
 //       · SystemLog / Patient / ClinicalRecord / Addendum → createdAt
 //       · Appointment                                     → scheduleSlot.startTime
+//   - Los rangos (hoy, semana, mes, año) y los días de las tendencias son los
+//     de Bogotá, no los de UTC (ver CLAUDE.md, fechas): antes «hoy» empezaba a
+//     las 7 p. m. del día anterior.
 //
-// Convención de acciones SystemLog (ya definida en el proyecto):
-//   - 'USER_LOGIN'           → login exitoso (metadata.role = Role)
-//   - 'WHATSAPP_ESCALATION'  → conversación elevada a humano
-//   - 'AI_MESSAGE_PROCESSED' → cada respuesta generada por el LLM
+// Fuentes de los contadores que antes salían SIEMPRE en 0 (leían acciones de
+// SystemLog que nadie escribía):
+//   - 'USER_LOGIN'  → lo escribe el login de la web (metadata.role = Role).
+//   - Mensajes recibidos por el bot → ChannelActivityLog (event INBOUND),
+//     un registro exacto por mensaje entrante.
+//   - Emergencias derivadas → InteractionLog status EMERGENCY_ESCALATED (el
+//     bot no tiene «paso a humano»; la derivación por emergencia es lo que
+//     existe). La caja negra se purga a los 180 días.
 // ══════════════════════════════════════════════════════════════
 
 export type TimeRange = 'TODAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'CUSTOM';
@@ -33,9 +41,12 @@ interface ResolvedRange {
 }
 
 export interface TrendPoint {
-  date: string; // yyyy-mm-dd
+  date: string; // yyyy-mm-dd, día de Bogotá
   count: number;
 }
+
+/** Zona de los rangos y tendencias. Multi-tenant: vendrá de Organization.timezone. */
+const TIME_ZONE = 'America/Bogota';
 
 @Injectable()
 export class GlobalStatsService {
@@ -57,16 +68,16 @@ export class GlobalStatsService {
       loginsScheduler,
       appointmentsScheduled,
       appointmentsFailed,
-      whatsappEscalations,
+      emergencyEscalations,
       newPatients,
       signedClinicalRecords,
       legalAddendums,
-      aiMessagesProcessed,
+      botMessagesReceived,
       activeOrganizations,
       // Trends (un solo bucket por día — barato porque agrupa en SQL).
       appointmentsTrend,
       patientsTrend,
-      aiMessagesTrend,
+      botMessagesTrend,
       signedRecordsTrend,
     ] = await Promise.all([
       this.countLoginsByRole('ORG_ADMIN', range, orgId),
@@ -74,16 +85,16 @@ export class GlobalStatsService {
       this.countLoginsByRole('BOOKING_AGENT', range, orgId),
       this.countAppointmentsByStatus('SCHEDULED', range, orgId),
       this.countAppointmentsFailed(range, orgId),
-      this.countSystemLogAction('WHATSAPP_ESCALATION', range, orgId),
+      this.countEmergencyEscalations(range, orgId),
       this.countNewPatients(range, orgId),
       this.countSignedClinicalRecords(range, orgId),
       this.countLegalAddendums(range, orgId),
-      this.countSystemLogAction('AI_MESSAGE_PROCESSED', range, orgId),
+      this.countBotMessagesReceived(range, orgId),
       this.countActiveOrganizations(range, orgId),
       // Tendencias por día.
       this.trendAppointmentsScheduled(range, orgId),
       this.trendNewPatients(range, orgId),
-      this.trendSystemLogAction('AI_MESSAGE_PROCESSED', range, orgId),
+      this.trendBotMessagesReceived(range, orgId),
       this.trendSignedClinicalRecords(range, orgId),
     ]);
 
@@ -102,19 +113,19 @@ export class GlobalStatsService {
         // Citas (puntos 4, 5).
         appointmentsScheduled,
         appointmentsFailed,
-        // Bot / IA (punto 6).
-        whatsappEscalations,
+        // Bot (punto 6): derivaciones por posible emergencia médica.
+        emergencyEscalations,
         // HealthTech relevantes (puntos 7–11).
         newPatients,
         signedClinicalRecords,
         legalAddendums,
-        aiMessagesProcessed,
+        botMessagesReceived,
         activeOrganizations,
       },
       trends: {
         appointmentsScheduled: appointmentsTrend,
         newPatients: patientsTrend,
-        aiMessagesProcessed: aiMessagesTrend,
+        botMessagesReceived: botMessagesTrend,
         signedClinicalRecords: signedRecordsTrend,
       },
     };
@@ -133,63 +144,15 @@ export class GlobalStatsService {
   // ────────────────────────────────────────────────────────────
 
   private resolveRange(filters: StatsFilters): ResolvedRange {
-    const now = new Date();
-
-    if (filters.range === 'CUSTOM' && filters.startDate && filters.endDate) {
-      return {
-        gte: new Date(`${filters.startDate}T00:00:00.000Z`),
-        lte: new Date(`${filters.endDate}T23:59:59.999Z`),
-      };
-    }
-
-    switch (filters.range) {
-      case 'TODAY': {
-        const start = new Date(now);
-        start.setUTCHours(0, 0, 0, 0);
-        const end = new Date(now);
-        end.setUTCHours(23, 59, 59, 999);
-        return { gte: start, lte: end };
-      }
-      case 'WEEK': {
-        // Lunes a domingo de la semana actual (UTC).
-        const start = new Date(now);
-        const day = start.getUTCDay(); // 0 dom .. 6 sab
-        const offset = day === 0 ? 6 : day - 1;
-        start.setUTCDate(start.getUTCDate() - offset);
-        start.setUTCHours(0, 0, 0, 0);
-        const end = new Date(start);
-        end.setUTCDate(start.getUTCDate() + 6);
-        end.setUTCHours(23, 59, 59, 999);
-        return { gte: start, lte: end };
-      }
-      case 'YEAR': {
-        const start = new Date(
-          Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0),
-        );
-        const end = new Date(
-          Date.UTC(now.getUTCFullYear(), 11, 31, 23, 59, 59, 999),
-        );
-        return { gte: start, lte: end };
-      }
-      case 'MONTH':
-      default: {
-        const start = new Date(
-          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
-        );
-        const end = new Date(
-          Date.UTC(
-            now.getUTCFullYear(),
-            now.getUTCMonth() + 1,
-            0,
-            23,
-            59,
-            59,
-            999,
-          ),
-        );
-        return { gte: start, lte: end };
-      }
-    }
+    // Rango en la hora de Bogotá (helper compartido con «Canales en vivo»).
+    // `lte` es el último milisegundo del rango, como siempre usó este servicio.
+    const r = resolverRangoEstadisticas({
+      range: filters.range,
+      startDate: filters.startDate,
+      endDate: filters.endDate,
+      timeZone: TIME_ZONE,
+    });
+    return { gte: r.gte, lte: new Date(r.lt.getTime() - 1) };
   }
 
   // ────────────────────────────────────────────────────────────
@@ -269,17 +232,28 @@ export class GlobalStatsService {
     });
   }
 
-  private countSystemLogAction(
-    action: string,
+  private countEmergencyEscalations(
     range: ResolvedRange,
     orgId: string | null,
   ): Promise<number> {
-    const where: Prisma.SystemLogWhereInput = {
-      action,
+    const where: Prisma.InteractionLogWhereInput = {
+      status: 'EMERGENCY_ESCALATED',
       createdAt: { gte: range.gte, lte: range.lte },
     };
     if (orgId) where.organizationId = orgId;
-    return this.prisma.systemLog.count({ where });
+    return this.prisma.interactionLog.count({ where });
+  }
+
+  private countBotMessagesReceived(
+    range: ResolvedRange,
+    orgId: string | null,
+  ): Promise<number> {
+    const where: Prisma.ChannelActivityLogWhereInput = {
+      event: 'INBOUND',
+      createdAt: { gte: range.gte, lte: range.lte },
+    };
+    if (orgId) where.organizationId = orgId;
+    return this.prisma.channelActivityLog.count({ where });
   }
 
   private countNewPatients(
@@ -370,8 +344,9 @@ export class GlobalStatsService {
   }
 
   // ────────────────────────────────────────────────────────────
-  // TRENDS (agregación SQL por día — pasa por $queryRaw porque
-  // Prisma groupBy no soporta date_trunc nativo).
+  // TRENDS (agregación SQL por día de Bogotá — pasa por $queryRaw porque
+  // Prisma groupBy no agrupa por expresiones). `timestamp(3)` guarda UTC sin
+  // zona: `AT TIME ZONE 'UTC'` lo marca como UTC y el segundo lo pasa a Bogotá.
   // ────────────────────────────────────────────────────────────
 
   private async trendAppointmentsScheduled(
@@ -379,9 +354,9 @@ export class GlobalStatsService {
     orgId: string | null,
   ): Promise<TrendPoint[]> {
     const rows = await this.prisma.$queryRaw<
-      Array<{ day: Date; count: bigint }>
+      Array<{ day: string; count: bigint }>
     >`
-      SELECT date_trunc('day', s."startTime") AS day, COUNT(a.id)::bigint AS count
+      SELECT to_char((s."startTime" AT TIME ZONE 'UTC') AT TIME ZONE ${TIME_ZONE}, 'YYYY-MM-DD') AS day, COUNT(a.id)::bigint AS count
       FROM "Appointment" a
       INNER JOIN "ScheduleSlot" s ON s.id = a."scheduleSlotId"
       WHERE a.status = 'SCHEDULED'
@@ -391,10 +366,7 @@ export class GlobalStatsService {
       GROUP BY day
       ORDER BY day ASC
     `;
-    return rows.map((r) => ({
-      date: r.day.toISOString().slice(0, 10),
-      count: Number(r.count),
-    }));
+    return rows.map((r) => ({ date: r.day, count: Number(r.count) }));
   }
 
   private async trendNewPatients(
@@ -402,9 +374,9 @@ export class GlobalStatsService {
     orgId: string | null,
   ): Promise<TrendPoint[]> {
     const rows = await this.prisma.$queryRaw<
-      Array<{ day: Date; count: bigint }>
+      Array<{ day: string; count: bigint }>
     >`
-      SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::bigint AS count
+      SELECT to_char(("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${TIME_ZONE}, 'YYYY-MM-DD') AS day, COUNT(*)::bigint AS count
       FROM "PatientProfile"
       WHERE "createdAt" >= ${range.gte}
         AND "createdAt" <= ${range.lte}
@@ -412,33 +384,26 @@ export class GlobalStatsService {
       GROUP BY day
       ORDER BY day ASC
     `;
-    return rows.map((r) => ({
-      date: r.day.toISOString().slice(0, 10),
-      count: Number(r.count),
-    }));
+    return rows.map((r) => ({ date: r.day, count: Number(r.count) }));
   }
 
-  private async trendSystemLogAction(
-    action: string,
+  private async trendBotMessagesReceived(
     range: ResolvedRange,
     orgId: string | null,
   ): Promise<TrendPoint[]> {
     const rows = await this.prisma.$queryRaw<
-      Array<{ day: Date; count: bigint }>
+      Array<{ day: string; count: bigint }>
     >`
-      SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::bigint AS count
-      FROM "SystemLog"
-      WHERE action = ${action}
+      SELECT to_char(("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${TIME_ZONE}, 'YYYY-MM-DD') AS day, COUNT(*)::bigint AS count
+      FROM "ChannelActivityLog"
+      WHERE event = 'INBOUND'
         AND "createdAt" >= ${range.gte}
         AND "createdAt" <= ${range.lte}
         AND (${orgId}::text IS NULL OR "organizationId" = ${orgId})
       GROUP BY day
       ORDER BY day ASC
     `;
-    return rows.map((r) => ({
-      date: r.day.toISOString().slice(0, 10),
-      count: Number(r.count),
-    }));
+    return rows.map((r) => ({ date: r.day, count: Number(r.count) }));
   }
 
   private async trendSignedClinicalRecords(
@@ -446,9 +411,9 @@ export class GlobalStatsService {
     orgId: string | null,
   ): Promise<TrendPoint[]> {
     const rows = await this.prisma.$queryRaw<
-      Array<{ day: Date; count: bigint }>
+      Array<{ day: string; count: bigint }>
     >`
-      SELECT date_trunc('day', "createdAt") AS day, COUNT(*)::bigint AS count
+      SELECT to_char(("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${TIME_ZONE}, 'YYYY-MM-DD') AS day, COUNT(*)::bigint AS count
       FROM "ClinicalRecord"
       WHERE status = 'SIGNED'
         AND "createdAt" >= ${range.gte}
@@ -457,9 +422,6 @@ export class GlobalStatsService {
       GROUP BY day
       ORDER BY day ASC
     `;
-    return rows.map((r) => ({
-      date: r.day.toISOString().slice(0, 10),
-      count: Number(r.count),
-    }));
+    return rows.map((r) => ({ date: r.day, count: Number(r.count) }));
   }
 }

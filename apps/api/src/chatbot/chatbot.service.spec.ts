@@ -9,6 +9,8 @@ import { RedisService } from '../redis/redis.service';
 import { AppointmentsService } from 'src/appointments/appointments.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
 import { InteractionLogService } from '../interaction-log/interaction-log.service';
+import { ChannelActivityService } from '../interaction-log/channel-activity.service';
+const channelActivity = { record: jest.fn(async () => undefined) };
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { LlmFactoryService } from '../llm/llm-factory.service';
@@ -216,6 +218,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           useValue: { joinWaitlist: jest.fn(), notifyWaitlist: jest.fn() },
         },
         { provide: InteractionLogService, useValue: interactionLog },
+        { provide: ChannelActivityService, useValue: channelActivity },
         { provide: KnowledgeBaseService, useValue: knowledgeBase },
         {
           provide: OrganizationSettingsService,

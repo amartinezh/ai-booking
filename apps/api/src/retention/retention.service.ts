@@ -13,6 +13,7 @@ import { getErrorMessage } from '../common/error-message.util';
  *
  *   · `InteractionLog`   — el texto de las conversaciones del bot: 180 días.
  *   · `PatientLookupLog` — quién consultó a qué paciente en el rastreo: 365 días.
+ *   · `ChannelActivityLog` — cuándo escribió alguien (remitente seudonimizado): 400 días.
  *
  * Pasado el plazo las filas se BORRAN. Ninguna otra tabla depende de ellas (no
  * tienen FK entrantes) y nada lee tan atrás.
@@ -39,6 +40,7 @@ const MS_DIA = 86_400_000;
 export interface ResultadoPurga {
   conversaciones: { dias: number; borradas: number; completa: boolean };
   consultasRastreo: { dias: number; borradas: number; completa: boolean };
+  actividadCanales: { dias: number; borradas: number; completa: boolean };
 }
 
 @Injectable()
@@ -77,6 +79,10 @@ export class RetentionService {
       'RETENCION_BITACORA_RASTREO_DIAS',
       RETENCION_DATOS.bitacoraRastreoDias,
     );
+    const actividad = this.plazo(
+      'RETENCION_ACTIVIDAD_CANALES_DIAS',
+      RETENCION_DATOS.actividadCanalesDias,
+    );
 
     const r1 = await this.borrarEnLotes(
       new Date(ahora.getTime() - conversaciones * MS_DIA),
@@ -101,21 +107,37 @@ export class RetentionService {
         this.prisma.patientLookupLog.deleteMany({ where: { id: { in: ids } } }),
     );
 
+    const r3 = await this.borrarEnLotes(
+      new Date(ahora.getTime() - actividad * MS_DIA),
+      (antesDe) =>
+        this.prisma.channelActivityLog.findMany({
+          where: { createdAt: { lt: antesDe } },
+          select: { id: true },
+          take: LOTE,
+        }),
+      (ids) =>
+        this.prisma.channelActivityLog.deleteMany({
+          where: { id: { in: ids } },
+        }),
+    );
+
     const resultado: ResultadoPurga = {
       conversaciones: { dias: conversaciones, ...r1 },
       consultasRastreo: { dias: consultas, ...r2 },
+      actividadCanales: { dias: actividad, ...r3 },
     };
 
-    if (r1.borradas + r2.borradas > 0 || !r1.completa || !r2.completa) {
-      const pendiente = !r1.completa || !r2.completa;
+    const pendiente = !r1.completa || !r2.completa || !r3.completa;
+    if (r1.borradas + r2.borradas + r3.borradas > 0 || pendiente) {
       this.logger.log(
-        `Retención: ${r1.borradas} conversación(es) de más de ${conversaciones} días y ` +
-          `${r2.borradas} consulta(s) del rastreo de más de ${consultas} días borradas` +
+        `Retención: ${r1.borradas} conversación(es) de más de ${conversaciones} días, ` +
+          `${r2.borradas} consulta(s) del rastreo de más de ${consultas} días y ` +
+          `${r3.borradas} registro(s) de actividad de canales de más de ${actividad} días borrados` +
           (pendiente ? '; quedan más, siguen la próxima noche.' : '.'),
       );
       await this.systemLog.event({
         action: 'DATA_RETENTION_PURGE',
-        message: `Purga de retención: ${r1.borradas} conversaciones y ${r2.borradas} consultas del rastreo.`,
+        message: `Purga de retención: ${r1.borradas} conversaciones, ${r2.borradas} consultas del rastreo y ${r3.borradas} registros de actividad de canales.`,
         metadata: resultado as unknown as Record<string, unknown>,
       });
     }

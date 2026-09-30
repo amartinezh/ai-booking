@@ -96,6 +96,25 @@ describe('MonitorService', () => {
       const r = await service.runLiveCheck();
       expect(new Date(r.timestamp).toISOString()).toBe(r.timestamp);
     });
+
+    it('varias pestañas dentro de la ventana de caché comparten UN solo check', async () => {
+      await Promise.all([service.runLiveCheck(), service.runLiveCheck()]);
+      await service.runLiveCheck();
+      expect(checkers.checkService).toHaveBeenCalledTimes(
+        ACTIVE_SERVICES.length,
+      );
+    });
+
+    it('vencida la ventana, se vuelve a chequear', async () => {
+      config.get.mockImplementation((k: string, def?: unknown) =>
+        k === 'MONITOR_LIVE_CACHE_SECONDS' ? '0' : def,
+      );
+      await service.runLiveCheck();
+      await service.runLiveCheck();
+      expect(checkers.checkService).toHaveBeenCalledTimes(
+        ACTIVE_SERVICES.length * 2,
+      );
+    });
   });
 
   describe('listIncidents — filtros del histórico', () => {
@@ -260,7 +279,7 @@ describe('MonitorService', () => {
       const m = service.meta();
       expect(m.bgEnabled).toBe(true);
       expect(m.bgIntervalMinutes).toBe(15);
-      expect(m.liveIntervalSeconds).toBe(5);
+      expect(m.liveIntervalSeconds).toBe(15);
       expect(m.services.length).toBeGreaterThan(0);
       expect(m.services[0]).toEqual(
         expect.objectContaining({ key: expect.any(String) }),

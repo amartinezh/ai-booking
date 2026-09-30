@@ -21,6 +21,9 @@ import {
   parseCatalogMappingResponse,
 } from '../prompts/shared-prompts';
 
+// Ficha del modelo: gratis, no consume tokens (sonda de salud).
+const MODELS_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+
 // Modelos de respaldo, ordenados por disponibilidad: cuando el modelo
 // configurado por la organización devuelve 503 (saturado) o 404 (retirado),
 // se reintenta con el siguiente. Se priorizan los más livianos/disponibles.
@@ -34,6 +37,7 @@ export class GeminiProvider implements LLMProvider {
   readonly name = 'GEMINI' as const;
   private readonly logger = new Logger(GeminiProvider.name);
   private readonly client: GoogleGenerativeAI;
+  private readonly apiKey: string;
   private readonly model: string;
   // Cadena de modelos a intentar: el configurado primero, luego los de respaldo.
   private readonly modelCandidates: string[];
@@ -42,6 +46,7 @@ export class GeminiProvider implements LLMProvider {
     if (!config.apiKey) {
       throw new Error('Gemini: apiKey vacío en AiProviderConfig.');
     }
+    this.apiKey = config.apiKey;
     this.client = new GoogleGenerativeAI(config.apiKey);
     this.model = config.model || 'gemini-2.0-flash';
     this.modelCandidates = [
@@ -158,6 +163,21 @@ export class GeminiProvider implements LLMProvider {
       return model.generateContent([systemPrompt, `Pregunta: "${question}"`]);
     });
     return result.response.text().trim();
+  }
+
+  async ping(): Promise<string> {
+    const res = await fetch(`${MODELS_URL}/${encodeURIComponent(this.model)}`, {
+      headers: { 'x-goog-api-key': this.apiKey },
+    });
+    if (!res.ok) {
+      const err = new Error(
+        `Gemini ${res.status}: ${await res.text()}`,
+      ) as Error & { status: number };
+      err.status = res.status;
+      throw err;
+    }
+    const json = (await res.json()) as { name?: string };
+    return json.name?.replace(/^models\//, '') || this.model;
   }
 
   async mapEntityToCatalog(input: {

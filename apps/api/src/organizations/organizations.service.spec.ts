@@ -66,7 +66,7 @@ describe('OrganizationsService', () => {
       user: { count: jest.fn(async () => 0) },
       patientProfile: { count: jest.fn(async () => 0) },
       appointment: { count: jest.fn(async () => 0) },
-      systemLog: { count: jest.fn(async () => 0) },
+      channelActivityLog: { count: jest.fn(async () => 0) },
       $transaction: jest.fn(async (cb: any) => cb(tx)),
     };
     config = { get: jest.fn(() => CLAVE) };
@@ -291,7 +291,7 @@ describe('OrganizationsService', () => {
       prisma.user.count.mockResolvedValue(3);
       prisma.patientProfile.count.mockResolvedValue(120);
       prisma.appointment.count.mockResolvedValue(40);
-      prisma.systemLog.count.mockResolvedValue(999);
+      prisma.channelActivityLog.count.mockResolvedValue(999);
 
       const r = await service.quickStats(ORG);
 
@@ -305,7 +305,7 @@ describe('OrganizationsService', () => {
           totalScheduledAppointments: 40,
           closedAppointmentsWithRecord: 40,
           closedAppointmentsWithoutRecord: 40,
-          aiMessagesProcessed: 999,
+          botMessagesReceived: 999,
         },
       });
     });
@@ -317,7 +317,7 @@ describe('OrganizationsService', () => {
         prisma.user,
         prisma.patientProfile,
         prisma.appointment,
-        prisma.systemLog,
+        prisma.channelActivityLog,
       ]) {
         for (const llamada of modelo.count.mock.calls) {
           expect(llamada[0].where.organizationId).toBe(ORG);

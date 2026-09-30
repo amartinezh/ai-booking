@@ -10,6 +10,8 @@ import { RedisService } from '../redis/redis.service';
 import { AppointmentsService } from 'src/appointments/appointments.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
 import { InteractionLogService } from '../interaction-log/interaction-log.service';
+import { ChannelActivityService } from '../interaction-log/channel-activity.service';
+const channelActivity = { record: jest.fn(async () => undefined) };
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { LlmFactoryService } from '../llm/llm-factory.service';
@@ -399,6 +401,7 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
         { provide: AppointmentsService, useValue: appointments },
         { provide: WaitlistService, useValue: waitlist },
         { provide: InteractionLogService, useValue: interactionLog },
+        { provide: ChannelActivityService, useValue: channelActivity },
         {
           provide: WhatsappMessageLogService,
           useValue: { recordOutbound: jest.fn() },
@@ -771,6 +774,31 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
   });
 
   // ──────────────────────────────────────────────────────────────────
+  describe('2c. Actividad por canal (gráficas de «Canales en vivo»)', () => {
+    it('cada mensaje entrante se registra UNA vez, con su remitente, para su clínica', async () => {
+      channelActivity.record.mockClear();
+      await service.processIncomingMessage(textEvent('Hola'));
+      await say('Hola');
+      const inbound = channelActivity.record.mock.calls
+        .map((c) => c[0])
+        .filter((c) => c.event === 'INBOUND');
+      expect(inbound).toEqual([
+        {
+          organizationId: ORG_ID,
+          senderId: SENDER,
+          event: 'INBOUND',
+          messageType: 'text',
+        },
+        {
+          organizationId: ORG_ID,
+          senderId: TG,
+          event: 'INBOUND',
+          messageType: 'text',
+        },
+      ]);
+    });
+  });
+
   describe('2b. Cada canal nombra el suyo', () => {
     // Se fija el azar en la variante de `epsInvalida` que nombra el canal.
     const conVarianteDelCanal = () =>

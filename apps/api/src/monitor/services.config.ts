@@ -34,7 +34,7 @@ export interface ServiceConfig {
   /** Nombre legible para la UI. */
   displayName: string;
   /** Agrupador visual. */
-  group: 'google' | 'meta' | 'espejo';
+  group: 'google' | 'meta' | 'espejo' | 'telegram';
   /** Si el check está activo. Los deshabilitados se omiten por completo. */
   enabled: boolean;
   /** Timeout duro de la llamada, en ms. */
@@ -76,6 +76,17 @@ export const SERVICES_CONFIG: ServiceConfig[] = [
     key: 'mirror',
     displayName: 'Espejo con el HIS',
     group: 'espejo',
+    enabled: true,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+  },
+  {
+    // ✈️ Bot de Telegram de cada clínica. Nace del 404 del proxy (commit
+    // 3d393f8): Telegram retenía los mensajes y nada en el monitor lo veía.
+    // `getWebhookInfo` es gratis y dice si Telegram apunta a nosotros y
+    // cuántos mensajes tiene retenidos.
+    key: 'telegram',
+    displayName: 'Telegram Bot API',
+    group: 'telegram',
     enabled: true,
     timeoutMs: DEFAULT_TIMEOUT_MS,
   },

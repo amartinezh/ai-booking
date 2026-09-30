@@ -230,6 +230,15 @@ export interface LLMProvider {
     /** Etiqueta para el prompt, p.ej. "servicio médico" o "EPS o aseguradora". */
     entityKind: string;
   }): Promise<{ id: string | null }>;
+
+  /**
+   * Sonda de salud SIN costo: consulta la ficha del modelo configurado
+   * (endpoint de metadatos del proveedor), nunca genera texto. Valida API key
+   * y que el modelo exista sin gastar un solo token. Es lo que usan el monitor
+   * de servicios y el botón «Verificar» — pagar tokens por un reporte
+   * informativo no tiene sentido. Devuelve el id del modelo confirmado.
+   */
+  ping(): Promise<string>;
 }
 
 /**

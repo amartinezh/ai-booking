@@ -122,11 +122,9 @@ export class IntegrationsService {
 
     const startedAt = Date.now();
     try {
+      // Sonda sin costo: lee la ficha del modelo, no genera texto (0 tokens).
       const modelResponse = await this.withTimeout(
-        provider.answerFAQ(
-          'Eres un sonda de salud. Responde única y exactamente con el texto que envíe el usuario, sin agregar nada.',
-          'echo: ok',
-        ),
+        provider.ping(),
         GEMINI_TIMEOUT_MS,
         'LLM_TIMEOUT',
       );
@@ -164,12 +162,10 @@ export class IntegrationsService {
 
     const startedAt = Date.now();
     try {
-      // Prompt minimal y determinista: pedimos un eco corto.
+      // Sonda sin costo: lee la ficha del modelo, no genera texto (0 tokens).
+      // Antes pedía un eco al LLM y el monitor en vivo lo repetía cada 5 s.
       const modelResponse = await this.withTimeout(
-        provider.answerFAQ(
-          'Eres un sonda de salud. Responde única y exactamente con el texto que envíe el usuario, sin agregar nada.',
-          'echo: ok',
-        ),
+        provider.ping(),
         GEMINI_TIMEOUT_MS,
         'SEMANTIC_MAP_TIMEOUT',
       );

@@ -1,6 +1,31 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@agenia/database';
+import { horaLocalAUtc } from '@agenia/shared';
+
+/** Zona de los filtros y del volumen diario. Multi-tenant: Organization.timezone. */
+const TIME_ZONE = 'America/Bogota';
+
+/** `yyyy-mm-dd` → medianoche de ESE día en Bogotá (instante UTC). null si no es fecha. */
+function inicioDelDia(fecha: string, diasExtra = 0): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fecha);
+  if (!m) return null;
+  return horaLocalAUtc(
+    Number(m[1]),
+    Number(m[2]),
+    Number(m[3]) + diasExtra,
+    0,
+    TIME_ZONE,
+  );
+}
+
+/** Día de Bogotá de un instante, como `yyyy-mm-dd` (en-CA da ese formato). */
+const diaLocal = new Intl.DateTimeFormat('en-CA', {
+  timeZone: TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 
 @Injectable()
 export class AnalyticsService {
@@ -11,9 +36,13 @@ export class AnalyticsService {
     startDate?: string,
     endDate?: string,
   ) {
+    // Días completos de Bogotá: antes se cortaba a medianoche UTC (7 p. m.
+    // en Colombia) y las citas de la noche caían en el día equivocado.
     const startTime: Prisma.DateTimeFilter = {};
-    if (startDate) startTime.gte = new Date(`${startDate}T00:00:00.000Z`);
-    if (endDate) startTime.lte = new Date(`${endDate}T23:59:59.999Z`);
+    const desde = startDate ? inicioDelDia(startDate) : null;
+    const finExcl = endDate ? inicioDelDia(endDate, 1) : null;
+    if (desde) startTime.gte = desde;
+    if (finExcl) startTime.lte = new Date(finExcl.getTime() - 1);
 
     const where: Prisma.AppointmentWhereInput = {
       organizationId,
@@ -85,7 +114,7 @@ export class AnalyticsService {
     const temporalMap: Record<string, number> = {};
     temporalRaw.forEach((apt) => {
       if (apt.scheduleSlot?.startTime) {
-        const dateStr = apt.scheduleSlot.startTime.toISOString().split('T')[0];
+        const dateStr = diaLocal.format(apt.scheduleSlot.startTime);
         temporalMap[dateStr] = (temporalMap[dateStr] || 0) + 1;
       }
     });

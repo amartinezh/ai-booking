@@ -11,6 +11,9 @@
  *  · `PatientLookupLog` — la bitácora de QUIÉN consultó a QUÉ paciente en el rastreo.
  *    Es un registro de acceso: se guarda más tiempo que lo consultado, porque su
  *    razón de ser es poder responder, meses después, «¿quién miró mis datos?». Un año.
+ *  · `ChannelActivityLog` — solo CUÁNDO escribió alguien por WhatsApp/Telegram, con el
+ *    remitente seudonimizado (HMAC, irreversible) y sin texto. Alimenta las gráficas
+ *    de canales, cuya vista más larga es «este año»: 400 días la cubren completa.
  *
  * Pasado el plazo las filas se BORRAN (no se anonimizan): ninguna pantalla ni métrica
  * lee estas tablas más atrás de unos días (la auditoría muestra las últimas 200, el
@@ -23,6 +26,7 @@
 export const RETENCION_DATOS = {
   conversacionesDias: 180,
   bitacoraRastreoDias: 365,
+  actividadCanalesDias: 400,
   minimoDias: 30,
 } as const;
 

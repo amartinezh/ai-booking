@@ -272,3 +272,14 @@ export {
   seleccionarCuposManianaTarde,
 } from './src/cupos-ofrecidos';
 export type { SeleccionCuposOptions } from './src/cupos-ofrecidos';
+
+export {
+  resolverRangoEstadisticas,
+  horaLocalAUtc,
+  FORMATO_SQL_BUCKET,
+} from './src/rango-estadisticas';
+export type {
+  RangoEstadisticas,
+  Granularidad,
+  RangoResuelto,
+} from './src/rango-estadisticas';

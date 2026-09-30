@@ -8,6 +8,8 @@ import { RedisService } from '../redis/redis.service';
 import { AppointmentsService } from 'src/appointments/appointments.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
 import { InteractionLogService } from '../interaction-log/interaction-log.service';
+import { ChannelActivityService } from '../interaction-log/channel-activity.service';
+const channelActivity = { record: jest.fn(async () => undefined) };
 import { regimenSeguroDelPadron } from '@agenia/shared';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
@@ -421,6 +423,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         { provide: AppointmentsService, useValue: appointments },
         { provide: WaitlistService, useValue: waitlist },
         { provide: InteractionLogService, useValue: interactionLog },
+        { provide: ChannelActivityService, useValue: channelActivity },
         {
           provide: WhatsappMessageLogService,
           useValue: { recordOutbound: jest.fn() },

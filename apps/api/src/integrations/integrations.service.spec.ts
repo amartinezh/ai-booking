@@ -48,7 +48,7 @@ describe('IntegrationsService', () => {
 
   const proveedor = (over: Record<string, unknown> = {}) => ({
     name: 'GEMINI',
-    answerFAQ: jest.fn(async () => '  echo: ok  '),
+    ping: jest.fn(async () => '  gemini-2.5-flash  '),
     ...over,
   });
 
@@ -92,7 +92,7 @@ describe('IntegrationsService', () => {
         status: 'alive',
         provider: 'GEMINI',
         model: 'gemini-2.5-flash',
-        model_response: 'echo: ok',
+        model_response: 'gemini-2.5-flash',
       });
       expect(r.rtt_ms).toBeGreaterThanOrEqual(0);
     });
@@ -165,7 +165,7 @@ describe('IntegrationsService', () => {
 
     it('una respuesta vacía del modelo se reporta como «ok», no como cadena vacía', async () => {
       llmFactory.forOrgOrNull.mockResolvedValue(
-        proveedor({ answerFAQ: jest.fn(async () => '   ') }),
+        proveedor({ ping: jest.fn(async () => '   ') }),
       );
       await expect(service.diagnoseLlm(ORG)).resolves.toMatchObject({
         model_response: 'ok',
@@ -175,7 +175,7 @@ describe('IntegrationsService', () => {
     it('un fallo del proveedor conserva provider y model en la respuesta', async () => {
       llmFactory.forOrgOrNull.mockResolvedValue(
         proveedor({
-          answerFAQ: jest.fn(async () => {
+          ping: jest.fn(async () => {
             throw new Error('403 permission denied');
           }),
         }),
@@ -199,7 +199,7 @@ describe('IntegrationsService', () => {
         success: true,
         status: 'alive',
         model: 'GEMINI',
-        model_response: 'echo: ok',
+        model_response: 'gemini-2.5-flash',
       });
     });
 
@@ -212,7 +212,7 @@ describe('IntegrationsService', () => {
 
     it('una respuesta nula se reporta como «ok»', async () => {
       llmFactory.forOrgOrNull.mockResolvedValue(
-        proveedor({ answerFAQ: jest.fn(async () => null) }),
+        proveedor({ ping: jest.fn(async () => null) }),
       );
       await expect(service.diagnoseGemini(ORG)).resolves.toMatchObject({
         model_response: 'ok',
@@ -225,7 +225,7 @@ describe('IntegrationsService', () => {
     const conError = async (error: unknown) => {
       llmFactory.forOrgOrNull.mockResolvedValue(
         proveedor({
-          answerFAQ: jest.fn(async () => {
+          ping: jest.fn(async () => {
             throw error;
           }),
         }),
@@ -497,7 +497,7 @@ describe('IntegrationsService', () => {
     it('un cuelgue del proveedor termina clasificado como TIMEOUT en el diagnóstico', async () => {
       llmFactory.forOrgOrNull.mockResolvedValue(
         proveedor({
-          answerFAQ: jest.fn(async () => {
+          ping: jest.fn(async () => {
             const e = new Error('SEMANTIC_MAP_TIMEOUT');
             e.name = 'TimeoutError';
             throw e;

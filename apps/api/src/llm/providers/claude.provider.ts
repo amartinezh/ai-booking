@@ -19,6 +19,8 @@ import {
 } from '../prompts/shared-prompts';
 
 const MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+// Ficha del modelo: gratis, no consume tokens (sonda de salud).
+const MODELS_URL = 'https://api.anthropic.com/v1/models';
 const ANTHROPIC_VERSION = '2023-06-01';
 
 export class ClaudeProvider implements LLMProvider {
@@ -125,6 +127,24 @@ export class ClaudeProvider implements LLMProvider {
       max_tokens: 128,
     });
     return parseCatalogMappingResponse(raw);
+  }
+
+  async ping(): Promise<string> {
+    const res = await fetch(`${MODELS_URL}/${encodeURIComponent(this.model)}`, {
+      headers: {
+        'x-api-key': this.apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+      },
+    });
+    if (!res.ok) {
+      const err = new Error(
+        `Anthropic ${res.status}: ${await res.text()}`,
+      ) as Error & { status: number };
+      err.status = res.status;
+      throw err;
+    }
+    const json = (await res.json()) as { id?: string };
+    return json.id || this.model;
   }
 
   // ── HTTP helper ───────────────────────────────────────────────────────────

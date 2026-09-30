@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@agenia/database';
 import { getErrorMessage } from '../common/error-message.util';
+import { ChannelActivityService } from './channel-activity.service';
 
 // ══════════════════════════════════════════════════════════════
 // 📊 ESTADOS POSIBLES DE UNA INTERACCIÓN REGISTRADA
@@ -96,7 +97,10 @@ export interface LogParams {
 export class InteractionLogService {
   private readonly logger = new Logger(InteractionLogService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly channelActivity: ChannelActivityService,
+  ) {}
 
   /**
    * Registra una interacción de forma asíncrona.
@@ -127,6 +131,17 @@ export class InteractionLogService {
       this.logger.error(
         `Error escribiendo InteractionLog (no afecta el flujo): ${getErrorMessage(error)}`,
       );
+    }
+
+    // 📈 Desenlace de la conversación para las gráficas de canales. Va aparte
+    // de la caja negra (que se purga a los 180 días) y nunca lanza.
+    const desenlace = desenlaceDeCanal(params);
+    if (desenlace) {
+      await this.channelActivity.record({
+        organizationId: params.organizationId,
+        senderId: params.whatsappId,
+        event: desenlace,
+      });
     }
   }
 
@@ -347,4 +362,36 @@ export class InteractionLogService {
     if (text.length <= maxLen) return text;
     return text.substring(0, maxLen - 3) + '...';
   }
+}
+
+/**
+ * Qué cuenta como desenlace de una conversación en las gráficas de canales:
+ *  - Cita confirmada → `BOOKED`.
+ *  - Flujo de cancelar o reprogramar → `MANAGE` (vino por una cita que ya tenía).
+ *  - Abandono (excedió reintentos) o fallo del turno → `PROBLEM`.
+ *
+ * Los fallos de ENVÍOS iniciados por nosotros (mensaje desde el panel,
+ * recordatorio automático, aviso masivo) no son una conversación que se cayó:
+ * el paciente no escribió. Se excluyen por la marca que ya ponen sus helpers.
+ */
+export function desenlaceDeCanal(
+  params: Pick<LogParams, 'status' | 'metadata'>,
+): 'BOOKED' | 'MANAGE' | 'PROBLEM' | null {
+  if (params.status === InteractionStatus.BOOKING_CONFIRMED) return 'BOOKED';
+  if (
+    params.status === InteractionStatus.CANCELLATION_FLOW ||
+    params.status === InteractionStatus.MODIFICATION_FLOW
+  ) {
+    return 'MANAGE';
+  }
+  if (params.status === InteractionStatus.ABANDONED) return 'PROBLEM';
+  if (params.status === InteractionStatus.FAILED) {
+    const m = params.metadata ?? {};
+    const envioNuestro =
+      m.outbound === true ||
+      m.reminderAutomatic === true ||
+      m.massNotice === true;
+    return envioNuestro ? null : 'PROBLEM';
+  }
+  return null;
 }

@@ -68,6 +68,7 @@ const DOCTOR_MENUS: MenuItem[] = [
 const ADMIN_MENUS: MenuItem[] = [
     OVERVIEW,
     { label: 'Analíticas de Negocio', href: '/dashboard/analytics', icon: '📊', description: 'Indicadores y tendencias', accent: 'violet' },
+    { label: 'Canales en vivo', href: '/dashboard/canales', icon: '📈', description: 'WhatsApp y Telegram en cifras', accent: 'emerald' },
     { label: 'Agendas (Slots)', href: '/dashboard/agenda', icon: '📅', description: 'Generación y gestión de cupos', accent: 'emerald' },
     { label: 'Servicios de Salud', href: '/dashboard/servicios', icon: '💉', description: 'Catálogo de especialidades', accent: 'cyan' },
     { label: 'Aseguradoras (EPS)', href: '/dashboard/eps', icon: '🏦', description: 'Convenios y aseguradoras', accent: 'amber' },
@@ -91,6 +92,7 @@ const AGENT_MENUS: MenuItem[] = [
 
 const OBSERVER_MENUS: MenuItem[] = [
     { label: 'Analíticas de Negocio', href: '/dashboard/analytics', icon: '📊', description: 'Indicadores y tendencias', accent: 'violet' },
+    { label: 'Canales en vivo', href: '/dashboard/canales', icon: '📈', description: 'WhatsApp y Telegram en cifras', accent: 'emerald' },
     SUPPORT,
 ];
 

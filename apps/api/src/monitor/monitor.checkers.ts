@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import textToSpeech from '@google-cloud/text-to-speech';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { TelegramConfigService } from '../telegram/telegram-config.service';
 import { CheckResult, ServiceConfig } from './services.config';
 import { getErrorMessage } from '../common/error-message.util';
 
@@ -30,6 +31,7 @@ export class MonitorCheckers {
     private readonly config: ConfigService,
     private readonly integrations: IntegrationsService,
     private readonly prisma: PrismaService,
+    private readonly telegramConfig: TelegramConfigService,
   ) {
     this.degradedThresholdMs =
       Number(this.config.get('MONITOR_DEGRADED_THRESHOLD_MS')) || 3000;
@@ -67,6 +69,8 @@ export class MonitorCheckers {
         return this.checkMeta();
       case 'mirror':
         return this.checkMirror();
+      case 'telegram':
+        return this.checkTelegram();
       default:
         return Promise.resolve({
           status: 'DOWN',
@@ -165,6 +169,74 @@ export class MonitorCheckers {
       status: peor,
       latencyMs: Date.now() - inicio,
       errorCode: peor === 'UP' ? null : 'MIRROR_UNHEALTHY',
+      errorMessage: problemas.length > 0 ? problemas.join(' | ') : null,
+    };
+  }
+
+  // ── Telegram ───────────────────────────────────────────────────────────────
+
+  /**
+   * Revisa el bot de CADA clínica con Telegram encendido (no una testigo: un
+   * webhook caído en una clínica no lo delata otra). `getWebhookInfo` no
+   * cuesta nada y es lo mismo que hace el botón «Verificar» del panel.
+   *
+   *   - Telegram ya no apunta a nosotros o el token fue revocado → DOWN: los
+   *     pacientes escriben y nadie los lee.
+   *   - Mensajes retenidos por encima del umbral, o retenidos con un error de
+   *     entrega → DEGRADED: Telegram no logra entregarnos (el caso del 404).
+   */
+  private async checkTelegram(): Promise<CheckResult> {
+    const inicio = Date.now();
+    if (this.config.get<string>('TELEGRAM_ENABLED')?.trim() !== 'true') {
+      return { status: 'UP', latencyMs: null, skip: true };
+    }
+
+    const bots = await this.prisma.telegramBotConfig.findMany({
+      where: { isActive: true, organization: { isActive: true } },
+      select: {
+        organizationId: true,
+        organization: { select: { name: true } },
+      },
+    });
+    if (bots.length === 0) {
+      return { status: 'UP', latencyMs: Date.now() - inicio, skip: true };
+    }
+
+    const umbralRetenidos =
+      Number(this.config.get('MONITOR_TELEGRAM_PENDING_MAX')) || 10;
+    const problemas: string[] = [];
+    let peor: CheckResult['status'] = 'UP';
+
+    const estados = await Promise.all(
+      bots.map((b) => this.telegramConfig.verify(b.organizationId)),
+    );
+    estados.forEach((st, i) => {
+      const clinica = bots[i].organization.name;
+      const retenidos = st.pendingUpdateCount ?? 0;
+      if (!st.webhookOk) {
+        peor = 'DOWN';
+        problemas.push(
+          `${clinica}: Telegram no entrega al webhook` +
+            (st.telegramLastError ? ` (${st.telegramLastError})` : '') +
+            '.',
+        );
+      } else if (
+        retenidos > umbralRetenidos ||
+        (retenidos > 0 && st.telegramLastError)
+      ) {
+        if (peor !== 'DOWN') peor = 'DEGRADED';
+        problemas.push(
+          `${clinica}: ${retenidos} mensaje(s) retenidos en Telegram` +
+            (st.telegramLastError ? ` — ${st.telegramLastError}` : '') +
+            '.',
+        );
+      }
+    });
+
+    return {
+      status: peor,
+      latencyMs: Date.now() - inicio,
+      errorCode: peor === 'UP' ? null : 'TELEGRAM_UNHEALTHY',
       errorMessage: problemas.length > 0 ? problemas.join(' | ') : null,
     };
   }

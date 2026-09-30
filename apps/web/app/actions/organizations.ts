@@ -107,7 +107,7 @@ export interface OrgQuickStats {
         totalScheduledAppointments: number;
         closedAppointmentsWithRecord: number;
         closedAppointmentsWithoutRecord: number;
-        aiMessagesProcessed: number;
+        botMessagesReceived: number;
     };
 }
 

@@ -167,7 +167,7 @@ function LlmResultCard({
                     },
                     {
                         icon: <Brain className="w-3.5 h-3.5" />,
-                        label: 'Respuesta del modelo',
+                        label: 'Modelo confirmado (sin consumo)',
                         value: result.model_response,
                     },
                 ]}

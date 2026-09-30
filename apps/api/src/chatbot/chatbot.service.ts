@@ -28,6 +28,7 @@ import {
   InteractionStatus,
   FailureReason,
 } from '../interaction-log/interaction-log.service';
+import { ChannelActivityService } from '../interaction-log/channel-activity.service';
 import * as fs from 'fs';
 import * as path from 'path';
 import { LlmFactoryService } from '../llm/llm-factory.service';
@@ -178,6 +179,7 @@ export class ChatbotService implements OnModuleInit {
     private appointmentsService: AppointmentsService,
     private waitlistService: WaitlistService,
     private interactionLog: InteractionLogService,
+    private readonly channelActivity: ChannelActivityService,
     private knowledgeBase: KnowledgeBaseService,
     private organizationSettings: OrganizationSettingsService,
     private llmFactory: LlmFactoryService,
@@ -3973,6 +3975,17 @@ export class ChatbotService implements OnModuleInit {
     const tenant = await this.resolveTenant(event, senderId, text, messageType);
     if (!tenant) return;
     const { org, organizationId, orgName } = tenant;
+
+    // 📈 Un registro por mensaje que llega a una clínica, sea cual sea su tipo
+    // (también stickers o imágenes que el bot ignora: el paciente sí escribió).
+    // Los webhooks ya descartaron los reintentos duplicados, así que el conteo
+    // es exacto. Sin texto; remitente seudonimizado. Nunca lanza.
+    await this.channelActivity.record({
+      organizationId,
+      senderId,
+      event: 'INBOUND',
+      messageType,
+    });
 
     if (messageType !== 'text' && messageType !== 'audio') return;
 

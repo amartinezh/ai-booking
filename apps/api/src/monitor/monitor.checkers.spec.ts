@@ -4,6 +4,7 @@ import { MonitorCheckers } from './monitor.checkers';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SERVICES_CONFIG } from './services.config';
+import { TelegramConfigService } from '../telegram/telegram-config.service';
 
 // ══════════════════════════════════════════════════════════════════════════
 // El checker del espejo nace de un fallo real: el 2026-08-31 el agente
@@ -53,6 +54,7 @@ describe('MonitorCheckers — espejo con el HIS', () => {
         { provide: ConfigService, useValue: { get: jest.fn(() => undefined) } },
         { provide: IntegrationsService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
+        { provide: TelegramConfigService, useValue: {} },
       ],
     }).compile();
     checkers = module.get(MonitorCheckers);
@@ -191,6 +193,7 @@ describe('MonitorCheckers — Gemini, Meta, TTS y el despacho', () => {
         { provide: ConfigService, useValue: config },
         { provide: IntegrationsService, useValue: integrations },
         { provide: PrismaService, useValue: prisma },
+        { provide: TelegramConfigService, useValue: {} },
       ],
     }).compile();
     checkers = module.get(MonitorCheckers);
@@ -267,6 +270,7 @@ describe('MonitorCheckers — Gemini, Meta, TTS y el despacho', () => {
           { provide: ConfigService, useValue: config },
           { provide: IntegrationsService, useValue: integrations },
           { provide: PrismaService, useValue: prisma },
+          { provide: TelegramConfigService, useValue: {} },
         ],
       }).compile();
       const otro = module.get(MonitorCheckers);
@@ -378,5 +382,113 @@ describe('MonitorCheckers — Gemini, Meta, TTS y el despacho', () => {
         errorMessage: expect.stringContaining('20ms'),
       });
     });
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Telegram: nace del 404 del proxy (commit 3d393f8). Telegram retenía los
+// mensajes y el monitor no miraba Telegram.
+// ══════════════════════════════════════════════════════════════════════════
+describe('MonitorCheckers — Telegram', () => {
+  let checkers: MonitorCheckers;
+  let prisma: any;
+  let telegram: { verify: jest.Mock };
+  let env: Record<string, string | undefined>;
+  const svc = SERVICES_CONFIG.find((s) => s.key === 'telegram')!;
+
+  const estado = (over: Record<string, unknown> = {}) => ({
+    webhookOk: true,
+    pendingUpdateCount: 0,
+    telegramLastError: null,
+    ...over,
+  });
+
+  beforeEach(async () => {
+    env = { TELEGRAM_ENABLED: 'true' };
+    prisma = {
+      telegramBotConfig: {
+        findMany: jest.fn(async () => [
+          { organizationId: 'org1', organization: { name: 'Clínica Uno' } },
+        ]),
+      },
+    };
+    telegram = { verify: jest.fn(async () => estado()) };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MonitorCheckers,
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn((k: string) => env[k]) },
+        },
+        { provide: IntegrationsService, useValue: {} },
+        { provide: PrismaService, useValue: prisma },
+        { provide: TelegramConfigService, useValue: telegram },
+      ],
+    }).compile();
+    checkers = module.get(MonitorCheckers);
+  });
+
+  it('está registrado y activo', () => {
+    expect(svc?.enabled).toBe(true);
+  });
+
+  it('con el canal apagado (TELEGRAM_ENABLED) no aplica y no llama a Telegram', async () => {
+    env.TELEGRAM_ENABLED = undefined;
+    const r = await checkers.checkService(svc);
+    expect(r.skip).toBe(true);
+    expect(telegram.verify).not.toHaveBeenCalled();
+  });
+
+  it('sin clínicas con bot activo no aplica', async () => {
+    prisma.telegramBotConfig.findMany.mockResolvedValue([]);
+    expect((await checkers.checkService(svc)).skip).toBe(true);
+  });
+
+  it('webhook sano y sin retenidos → UP', async () => {
+    const r = await checkers.checkService(svc);
+    expect(r.status).toBe('UP');
+    expect(r.errorMessage).toBeNull();
+  });
+
+  it('Telegram ya no apunta a nosotros → DOWN, nombrando la clínica', async () => {
+    telegram.verify.mockResolvedValue(
+      estado({
+        webhookOk: false,
+        telegramLastError: 'Wrong response from the webhook: 404 Not Found',
+      }),
+    );
+    const r = await checkers.checkService(svc);
+    expect(r.status).toBe('DOWN');
+    expect(r.errorMessage).toContain('Clínica Uno');
+    expect(r.errorMessage).toContain('404');
+  });
+
+  it('mensajes retenidos con error de entrega → DEGRADED (el caso del 404 del proxy)', async () => {
+    telegram.verify.mockResolvedValue(
+      estado({ pendingUpdateCount: 3, telegramLastError: '404 Not Found' }),
+    );
+    const r = await checkers.checkService(svc);
+    expect(r.status).toBe('DEGRADED');
+    expect(r.errorMessage).toContain('3 mensaje(s) retenidos');
+  });
+
+  it('pocos retenidos sin error no alarma: es tráfico en curso', async () => {
+    telegram.verify.mockResolvedValue(estado({ pendingUpdateCount: 2 }));
+    expect((await checkers.checkService(svc)).status).toBe('UP');
+  });
+
+  it('revisa TODAS las clínicas, y una caída pesa más que una lenta', async () => {
+    prisma.telegramBotConfig.findMany.mockResolvedValue([
+      { organizationId: 'org1', organization: { name: 'Uno' } },
+      { organizationId: 'org2', organization: { name: 'Dos' } },
+    ]);
+    telegram.verify
+      .mockResolvedValueOnce(estado({ pendingUpdateCount: 50 }))
+      .mockResolvedValueOnce(estado({ webhookOk: false }));
+    const r = await checkers.checkService(svc);
+    expect(telegram.verify).toHaveBeenCalledTimes(2);
+    expect(r.status).toBe('DOWN');
+    expect(r.errorMessage).toContain('Uno');
+    expect(r.errorMessage).toContain('Dos');
   });
 });

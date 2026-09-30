@@ -569,3 +569,58 @@ describe('ClaudeProvider', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// ping(): la sonda de salud del monitor NO puede gastar tokens. Solo un GET a
+// la ficha del modelo; nunca un POST de generación.
+describe('ping — sonda de salud sin consumo', () => {
+  const originalFetch = global.fetch;
+  let fetchMock: jest.Mock;
+
+  beforeEach(() => {
+    fetchMock = jest.fn(async () => ({
+      ok: true,
+      json: async () => ({ id: 'modelo-x', name: 'models/modelo-x' }),
+    }));
+    global.fetch = fetchMock as never;
+  });
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it.each([
+    [
+      'Gemini',
+      () => new GeminiProvider({ apiKey: 'k', model: 'modelo-x' } as never),
+      'generativelanguage.googleapis.com/v1beta/models/modelo-x',
+    ],
+    [
+      'ChatGPT',
+      () => new ChatGptProvider({ apiKey: 'k', model: 'modelo-x' } as never),
+      'api.openai.com/v1/models/modelo-x',
+    ],
+    [
+      'Claude',
+      () => new ClaudeProvider({ apiKey: 'k', model: 'modelo-x' } as never),
+      'api.anthropic.com/v1/models/modelo-x',
+    ],
+  ])('%s: GET a la ficha del modelo, sin cuerpo', async (_n, build, url) => {
+    await expect(build().ping()).resolves.toBe('modelo-x');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [calledUrl, init] = fetchMock.mock.calls[0];
+    expect(String(calledUrl)).toContain(url);
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(init.body).toBeUndefined();
+  });
+
+  it('un 401 se propaga con status (el diagnóstico lo clasifica como AUTH)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => 'invalid x-api-key',
+    });
+    await expect(
+      new ClaudeProvider({ apiKey: 'k' } as never).ping(),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+});
