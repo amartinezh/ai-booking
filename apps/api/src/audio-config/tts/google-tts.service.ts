@@ -12,6 +12,26 @@ import { getGrpcErrorDetail } from '../../common/error-message.util';
 const GOOGLE_TTS_TIMEOUT_MS = 8000;
 
 /**
+ * Interruptor MANUAL de Google Cloud TTS. Apagado salvo `GOOGLE_TTS_ENABLED=true`.
+ *
+ * Decisión del 2026-10-02: la voz de las clínicas sale por ElevenLabs y Google
+ * quedó sin credenciales en producción. Encendido, su check fallaba cada 15 min
+ * (más un UnhandledRejection del cliente gRPC) sin que nadie lo usara. Se
+ * enciende a mano solo ante una emergencia de ElevenLabs o un cambio de
+ * proveedor (junto con GOOGLE_APPLICATION_CREDENTIALS y reinicio de la API).
+ *
+ * Apagado: el cliente de Google ni se crea, el monitor omite el check, y si
+ * ElevenLabs falla el bot responde solo con texto.
+ */
+export function isGoogleTtsEnabled(): boolean {
+  return process.env.GOOGLE_TTS_ENABLED?.trim().toLowerCase() === 'true';
+}
+
+/** Mensaje común cuando algo pide Google TTS con el interruptor apagado. */
+export const GOOGLE_TTS_DISABLED_MESSAGE =
+  'Google Cloud TTS está apagado (GOOGLE_TTS_ENABLED no es true). Se enciende manualmente solo ante una emergencia o un cambio de proveedor.';
+
+/**
  * Proveedor de producción / Plan B: Google Cloud TTS.
  *
  * Stateless respecto al tenant: recibe la voz, pitch, velocidad y códec ya
@@ -21,13 +41,29 @@ const GOOGLE_TTS_TIMEOUT_MS = 8000;
 export class GoogleTtsService implements TtsProvider<GoogleTtsParams> {
   readonly name = 'GOOGLE' as const;
   private readonly logger = new Logger(GoogleTtsService.name);
-  private readonly ttsClient = new textToSpeech.TextToSpeechClient();
+  /**
+   * Perezoso: crear el cliente ya dispara la búsqueda de credenciales de
+   * Google, así que con el interruptor apagado no se crea nunca.
+   */
+  private ttsClient?: InstanceType<typeof textToSpeech.TextToSpeechClient>;
+
+  private client() {
+    return (this.ttsClient ??= new textToSpeech.TextToSpeechClient());
+  }
 
   async generate(text: string, params: GoogleTtsParams): Promise<TtsResult> {
+    if (!isGoogleTtsEnabled()) {
+      return {
+        ok: false,
+        code: 'NOT_CONFIGURED',
+        message: GOOGLE_TTS_DISABLED_MESSAGE,
+        rtt_ms: 0,
+      };
+    }
     const startedAt = Date.now();
     try {
       const [response] = await this.withTimeout(
-        this.ttsClient.synthesizeSpeech({
+        this.client().synthesizeSpeech({
           input: { text },
           voice: { languageCode: params.languageCode, name: params.voiceId },
           audioConfig: {

@@ -421,7 +421,15 @@ describe('TtsFactoryService — el Plan B', () => {
     ...over,
   });
 
+  // Estas pruebas describen el Plan B ENCENDIDO; el apagado tiene su bloque.
+  const envPrevio = process.env.GOOGLE_TTS_ENABLED;
+  afterEach(() => {
+    if (envPrevio === undefined) delete process.env.GOOGLE_TTS_ENABLED;
+    else process.env.GOOGLE_TTS_ENABLED = envPrevio;
+  });
+
   beforeEach(async () => {
+    process.env.GOOGLE_TTS_ENABLED = 'true';
     audioConfig = { getEffective: jest.fn(async () => cfg()) };
     google = {
       generate: jest.fn(async () => ({ ok: true, audio: Buffer.from('g') })),
@@ -469,6 +477,64 @@ describe('TtsFactoryService — el Plan B', () => {
   it('la configuración se resuelve por organización, no del .env', async () => {
     await factory.synthesize(ORG, 'hola');
     expect(audioConfig.getEffective).toHaveBeenCalledWith(ORG);
+  });
+
+  describe('🔌 Google apagado (GOOGLE_TTS_ENABLED sin «true», el valor por defecto)', () => {
+    const elevenLabsCaido = () => {
+      audioConfig.getEffective.mockResolvedValue(
+        cfg({
+          activeProvider: 'ELEVENLABS',
+          elevenLabs: { apiKey: 'sk', voiceId: 'v1' },
+        }),
+      );
+      elevenLabs.generate.mockResolvedValue({
+        ok: false,
+        code: 'QUOTA',
+        message: 'sin cuota',
+        rtt_ms: 200,
+      });
+    };
+
+    it.each([undefined, '', 'false', '1'])(
+      'con %p, si ElevenLabs falla NO cae a Google: solo texto',
+      async (valor) => {
+        if (valor === undefined) delete process.env.GOOGLE_TTS_ENABLED;
+        else process.env.GOOGLE_TTS_ENABLED = valor;
+        elevenLabsCaido();
+
+        await expect(factory.synthesize(ORG, 'hola')).resolves.toBeNull();
+        expect(google.generate).not.toHaveBeenCalled();
+      },
+    );
+
+    it('el fallo de ElevenLabs se registra, pero no un «fallback a Google» que no ocurrió', async () => {
+      delete process.env.GOOGLE_TTS_ENABLED;
+      elevenLabsCaido();
+
+      await factory.synthesize(ORG, 'hola');
+
+      expect(systemLog.error).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'TTS_ELEVENLABS_QUOTA' }),
+      );
+      expect(systemLog.warning).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'TTS_ELEVENLABS_FALLBACK_GOOGLE' }),
+      );
+    });
+
+    it('con Google como proveedor activo: ni se intenta ni se loguea error por mensaje', async () => {
+      delete process.env.GOOGLE_TTS_ENABLED;
+
+      await expect(factory.synthesize(ORG, 'hola')).resolves.toBeNull();
+      expect(google.generate).not.toHaveBeenCalled();
+      expect(factory['logger'].error).not.toHaveBeenCalled();
+    });
+
+    it('«TRUE» con espacios también enciende (el .env no es estricto)', async () => {
+      process.env.GOOGLE_TTS_ENABLED = ' TRUE ';
+      await expect(factory.synthesize(ORG, 'hola')).resolves.toEqual(
+        Buffer.from('g'),
+      );
+    });
   });
 
   describe('ElevenLabs activo', () => {

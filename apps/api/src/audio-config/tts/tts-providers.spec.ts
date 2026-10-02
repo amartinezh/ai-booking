@@ -23,7 +23,14 @@ describe('GoogleTtsService', () => {
     speakingRate: 1,
   } as never;
 
+  const envPrevio = process.env.GOOGLE_TTS_ENABLED;
+  afterEach(() => {
+    if (envPrevio === undefined) delete process.env.GOOGLE_TTS_ENABLED;
+    else process.env.GOOGLE_TTS_ENABLED = envPrevio;
+  });
+
   beforeEach(() => {
+    process.env.GOOGLE_TTS_ENABLED = 'true';
     service = new GoogleTtsService();
     synthesizeSpeech = jest.fn(async () => [
       { audioContent: new Uint8Array([1, 2, 3]) },
@@ -32,6 +39,28 @@ describe('GoogleTtsService', () => {
       synthesizeSpeech,
     };
     jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
+  });
+
+  it('🔌 apagado (por defecto): no llama a Google y lo dice claro', async () => {
+    delete process.env.GOOGLE_TTS_ENABLED;
+
+    await expect(service.generate('hola', PARAMS)).resolves.toMatchObject({
+      ok: false,
+      code: 'NOT_CONFIGURED',
+      message: expect.stringContaining('GOOGLE_TTS_ENABLED'),
+    });
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
+  });
+
+  it('🔌 apagado, el cliente de Google ni se crea (crearlo ya busca credenciales)', async () => {
+    delete process.env.GOOGLE_TTS_ENABLED;
+    const nuevo = new GoogleTtsService();
+
+    await nuevo.generate('hola', PARAMS);
+
+    expect(
+      (nuevo as unknown as { ttsClient?: unknown }).ttsClient,
+    ).toBeUndefined();
   });
 
   it('devuelve el audio con su tamaño y su latencia', async () => {

@@ -314,6 +314,24 @@ describe('MonitorCheckers — Gemini, Meta, TTS y el despacho', () => {
   });
 
   describe('Google Cloud TTS', () => {
+    const envPrevio = process.env.GOOGLE_TTS_ENABLED;
+    beforeEach(() => {
+      process.env.GOOGLE_TTS_ENABLED = 'true';
+    });
+    afterEach(() => {
+      if (envPrevio === undefined) delete process.env.GOOGLE_TTS_ENABLED;
+      else process.env.GOOGLE_TTS_ENABLED = envPrevio;
+    });
+
+    it('🔌 apagado (por defecto): se omite, sin llamar a Google ni abrir incidente', async () => {
+      delete process.env.GOOGLE_TTS_ENABLED;
+
+      await expect(checkers.checkService(svc('tts'))).resolves.toMatchObject({
+        skip: true,
+      });
+      expect(listVoices).not.toHaveBeenCalled();
+    });
+
     it('el check es liviano: lista voces, no sintetiza (no gasta cuota)', async () => {
       const r = await checkers.checkService(svc('tts'));
 

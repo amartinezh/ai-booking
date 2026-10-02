@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SystemLogService } from '../../system-log/system-log.service';
 import { AudioConfigService } from '../audio-config.service';
-import { GoogleTtsService } from './google-tts.service';
+import { GoogleTtsService, isGoogleTtsEnabled } from './google-tts.service';
 import { ElevenLabsTtsService } from './elevenlabs-tts.service';
 
 /**
@@ -16,6 +16,10 @@ import { ElevenLabsTtsService } from './elevenlabs-tts.service';
  *    silencioso a Google** con la config Google de ESA MISMA clínica y registra
  *    el evento en SystemLog.
  *  - `activeProvider = GOOGLE`     → usa Google directamente.
+ *
+ * Google tiene interruptor manual (`GOOGLE_TTS_ENABLED`, apagado por defecto):
+ * apagado, no hay Plan B de voz y el bot responde SOLO CON TEXTO. Ver
+ * `isGoogleTtsEnabled`.
  *
  * Aislamiento: ElevenLabs solo se invoca si la clínica lo activó; jamás se leen
  * credenciales de otra organización (todo va scoped por `organizationId`).
@@ -70,6 +74,10 @@ export class TtsFactoryService {
         });
       }
 
+      // Sin Plan B encendido: el fallo de ElevenLabs ya quedó en SystemLog
+      // arriba; el turno sale solo con texto.
+      if (!isGoogleTtsEnabled()) return null;
+
       this.logger.warn(
         `Fallback silencioso ElevenLabs → Google (org ${organizationId}).`,
       );
@@ -84,7 +92,9 @@ export class TtsFactoryService {
       return fb.ok ? fb.audio : null;
     }
 
-    // Proveedor activo = GOOGLE.
+    // Proveedor activo = GOOGLE. Con el interruptor apagado no se intenta
+    // (y no se registra un error por cada mensaje): solo texto.
+    if (!isGoogleTtsEnabled()) return null;
     const res = await this.google.generate(text, cfg.google);
     if (!res.ok) {
       this.logger.error(

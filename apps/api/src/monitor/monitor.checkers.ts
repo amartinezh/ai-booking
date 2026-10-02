@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TelegramConfigService } from '../telegram/telegram-config.service';
 import { CheckResult, ServiceConfig } from './services.config';
 import { getErrorMessage } from '../common/error-message.util';
+import { isGoogleTtsEnabled } from '../audio-config/tts/google-tts.service';
 
 /**
  * Ejecuta el health check concreto de cada servicio externo y normaliza el
@@ -22,7 +23,8 @@ import { getErrorMessage } from '../common/error-message.util';
 @Injectable()
 export class MonitorCheckers {
   private readonly logger = new Logger(MonitorCheckers.name);
-  private readonly ttsClient = new textToSpeech.TextToSpeechClient();
+  /** Perezoso: no se crea mientras Google TTS esté apagado (GOOGLE_TTS_ENABLED). */
+  private ttsClient?: InstanceType<typeof textToSpeech.TextToSpeechClient>;
 
   /** Umbral de latencia: por encima, un check exitoso se marca DEGRADED. */
   private readonly degradedThresholdMs: number;
@@ -284,8 +286,13 @@ export class MonitorCheckers {
    * cuota de caracteres). Usa las credenciales globales del cliente TTS.
    */
   private async checkTts(): Promise<CheckResult> {
+    // Apagado a propósito: no aplica (ni incidente ni ruido en los logs).
+    if (!isGoogleTtsEnabled()) {
+      return { status: 'UP', latencyMs: null, skip: true };
+    }
     const startedAt = Date.now();
     try {
+      this.ttsClient ??= new textToSpeech.TextToSpeechClient();
       await this.ttsClient.listVoices({ languageCode: 'es-US' });
       return this.gradeLatency(Date.now() - startedAt, 200);
     } catch (error: unknown) {
