@@ -3071,6 +3071,25 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
   describe('Identidad del remitente entrante', () => {
     const BSUID = 'CO.13491208655302741918';
 
+    // Payload real del 2026-10-02 (paciente con número oculto): Meta manda el
+    // BSUID en `from_user_id` y NO manda `from`. Antes se descartaba.
+    it('payload real de Meta: SIN `from` y CON `from_user_id` → se responde por el BSUID', async () => {
+      await service.processIncomingMessage({
+        from_user_id: BSUID,
+        id: 'wamid.X',
+        type: 'text',
+        text: { body: 'Hola' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+
+      expect(sentMessages().length).toBeGreaterThan(0);
+      expect(redis.store.has(`chat_state:${ORG_ID}:${BSUID}`)).toBe(true);
+      expect(sendSpy.mock.calls[0][0]).toBe(BSUID);
+      expect(interactionLog.logFailure).not.toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'SENDER_UNIDENTIFIED' }),
+      );
+    });
+
     it('payload SIN teléfono pero CON user_id (BSUID) → se procesa normalmente', async () => {
       await service.processIncomingMessage({
         user_id: BSUID,
@@ -3086,17 +3105,18 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(sendSpy.mock.calls[0][0]).toBe(BSUID);
     });
 
-    it('con teléfono Y BSUID, la sesión se indexa por el BSUID (estable)', async () => {
+    it('con teléfono Y BSUID, la sesión sigue indexada por el teléfono (como siempre)', async () => {
       await service.processIncomingMessage({
         from: SENDER,
-        user_id: BSUID,
+        from_user_id: BSUID,
         type: 'text',
         text: { body: 'Hola' },
         metadata: { phone_number_id: PHONE_ID },
       });
 
-      expect(redis.store.has(`chat_state:${ORG_ID}:${BSUID}`)).toBe(true);
-      expect(redis.store.has(`chat_state:${ORG_ID}:${SENDER}`)).toBe(false);
+      expect(redis.store.has(`chat_state:${ORG_ID}:${SENDER}`)).toBe(true);
+      expect(redis.store.has(`chat_state:${ORG_ID}:${BSUID}`)).toBe(false);
+      expect(sendSpy.mock.calls[0][0]).toBe(SENDER);
     });
 
     // ── La falla silenciosa que este cambio corrige ─────────────────────

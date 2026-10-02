@@ -94,7 +94,7 @@ import type {
 import { TelegramChannelService } from '../telegram/telegram-channel.service';
 
 // La forma del evento entrante y la resolución de "quién escribió" viven en
-// sender-identity.ts (ver allí el porqué del orden BSUID → teléfono → PSID).
+// sender-identity.ts (ver allí el porqué del orden teléfono → BSUID → PSID).
 // Se re-exporta el tipo para no romper importaciones existentes.
 export type { WhatsappInboundEvent } from './sender-identity';
 
@@ -2793,7 +2793,7 @@ export class ChatbotService implements OnModuleInit {
     const eventKeys = Object.keys(event ?? {});
 
     this.logger.error(
-      `🚨 Webhook SIN remitente identificable: no vino user_id (BSUID), ni from ` +
+      `🚨 Webhook SIN remitente identificable: no vino from_user_id (BSUID), ni from ` +
         `(teléfono), ni sender.id (PSID). El mensaje NO se procesó. ` +
         `phone_number_id=${metaPhoneId ?? 'ausente'} tipo=${event?.type ?? 'desconocido'} ` +
         `claves=[${eventKeys.join(', ') || 'ninguna'}]. Si esto se repite, Meta ` +

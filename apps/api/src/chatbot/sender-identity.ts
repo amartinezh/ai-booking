@@ -4,8 +4,11 @@
  * ══════════════════════════════════════════════════════════════════════════
  *
  * Desde 2026 un usuario de WhatsApp puede ocultar su número tras un username.
- * Cuando lo hace, Meta deja de enviar `wa_id`/`from` en el webhook y manda en
- * su lugar el BSUID (Business-scoped user ID, ej. `CO.13491208655302741918`).
+ * Cuando lo hace, Meta deja de enviar `wa_id`/`from` en el webhook y solo
+ * manda el BSUID (Business-scoped user ID, ej. `CO.13491208655302741918`) en
+ * `messages[].from_user_id`. Ojo: en `messages[]` el campo NO se llama
+ * `user_id` (ese nombre es el de `contacts[]`). Leer solo `user_id` dejó sin
+ * respuesta al primer paciente con número oculto (2026-10-02).
  *
  * Este módulo es el ÚNICO lugar donde se decide "quién escribió". Aislarlo así
  * evita que cada punto de entrada (controller, cola, servicio) improvise su
@@ -53,15 +56,22 @@ export interface WhatsappInboundEvent {
   /**
    * BSUID: identidad estable del paciente frente a NUESTRO portafolio de
    * negocio, y lo único que Meta garantiza en todo webhook tras el cambio de
-   * usernames.
+   * usernames. Es el nombre real del campo en `messages[]`.
+   */
+  from_user_id?: string;
+  /**
+   * BSUID con el nombre que usa `contacts[]`. En `messages[]` no viene, pero
+   * se acepta por tolerancia (y lo usan las pruebas antiguas).
    */
   user_id?: string;
   /**
-   * Parent BSUID (`CO.ENT.*`). Correlaciona al MISMO usuario entre portafolios
+   * Parent BSUID (`CO.ENT.*`), con sus dos nombres (`messages[]` y
+   * `contacts[]`). Correlaciona al MISMO usuario entre portafolios
    * vinculados. Se declara para dejar constancia de que existe y de que NO lo
    * usamos: sería exactamente la llave de join cross-tenant sobre datos de
    * salud que el aislamiento por organización evita. No se lee ni se persiste.
    */
+  from_parent_user_id?: string;
   parent_user_id?: string;
   /** wamid del mensaje (formato WhatsApp Cloud API). Usado para dedup/cola. */
   id?: string;
@@ -90,12 +100,15 @@ export interface SenderIdentity {
    * Clave canónica del remitente: namespace de sesión en Redis, `whatsappId`
    * de auditoría y destinatario de las respuestas del turno.
    *
-   * Prioriza el BSUID sobre el teléfono a propósito. El teléfono es VOLÁTIL
-   * (va y viene con la caché de 30 días de Meta): si se prefiriera, la clave
-   * cambiaría el día que la caché caduque, en mitad de una relación ya
-   * establecida, partiendo la sesión y el historial del paciente. El BSUID es
-   * estable dentro del portafolio, así que la clave cambia UNA vez —cuando
-   * Meta empiece a enviarlo— y nunca más.
+   * Prioriza el TELÉFONO; el BSUID solo es la clave cuando el teléfono no
+   * viene (paciente con número oculto). Decisión del 2026-10-02: Meta manda
+   * el BSUID desde abril pero nunca se leyó, así que toda la historia (sesiones,
+   * lista de espera, auditoría, fichas) está atada al teléfono. Preferir el
+   * BSUID habría cambiado la clave de TODOS los pacientes al desplegar y los
+   * habría pasado a todos al envío por `recipient`, nunca usado en producción.
+   * Costo aceptado: si a un paciente le desaparece el teléfono del webhook,
+   * su clave cambia a BSUID en ese momento. El BSUID se guarda igual en su
+   * columna para todos (ver persistencia del paciente).
    */
   senderId: string;
   /** BSUID si el webhook lo trajo. */
@@ -144,12 +157,12 @@ export function resolveSenderIdentity(
     };
   }
 
-  const bsuid = clean(event.user_id);
+  const bsuid = clean(event.from_user_id) ?? clean(event.user_id);
   const phone = clean(event.from);
   // PSID de Messenger: sirve como clave de sesión, pero no es teléfono ni BSUID.
   const legacyId = clean(event.sender?.id);
 
-  const senderId = bsuid ?? phone ?? legacyId;
+  const senderId = phone ?? bsuid ?? legacyId;
   if (!senderId) return null;
 
   return { senderId, bsuid, phone };
