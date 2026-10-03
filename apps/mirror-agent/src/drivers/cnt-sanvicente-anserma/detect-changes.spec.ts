@@ -202,3 +202,31 @@ describe('detectChanges — eventId no colisiona entre instancias distintas', ()
     expect(r.events[0].eventId).toContain(':na');
   });
 });
+
+describe('detectChanges — anti-eco con las marcas de cada canal', () => {
+  // Una cita que escribió el propio agente no puede volver a AgenIA como un
+  // alta del hospital. Con Telegram hay DOS marcas propias: si solo se
+  // reconociera la de WhatsApp, cada cita de Telegram regresaría duplicada.
+  it.each([
+    ['WhatsApp', 'ASIGNADA POR WHATSAPP'],
+    ['Telegram', 'ASIGNADA POR TELEGRAM'],
+  ])(
+    'una cita con la marca de %s no se reporta como alta',
+    async (_c, marca) => {
+      const base = await conDriver([]).detectChanges(null);
+      const ronda = await conDriver([
+        filaCita({ descripcion: marca }),
+      ]).detectChanges(base.nextCursor);
+      expect(ronda.events).toHaveLength(0);
+    },
+  );
+
+  it('una cita del hospital (sin marca) sí se reporta como alta', async () => {
+    const base = await conDriver([]).detectChanges(null);
+    const ronda = await conDriver([
+      filaCita({ descripcion: 'ASIGNADA EN VENTANILLA' }),
+    ]).detectChanges(base.nextCursor);
+    expect(ronda.events).toHaveLength(1);
+    expect(ronda.events[0].op).toBe('INSERT');
+  });
+});

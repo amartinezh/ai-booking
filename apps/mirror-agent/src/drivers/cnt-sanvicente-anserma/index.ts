@@ -26,6 +26,9 @@ import {
   duracionDeServicio,
   partirNombre,
   partirNombreDado,
+  marcaDeOrigen,
+  esMarcaPropia,
+  nombreDelCanal,
 } from './mapping';
 import type {
   CanonicalSlot,
@@ -569,7 +572,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         d: elegida.dura,
         f: elegida.fecha,
         el: elegida.elaborada,
-        propia: elegida.descripcion === mapping.marcaOrigen,
+        propia: esMarcaPropia(mapping, elegida.descripcion),
       };
     }
 
@@ -1241,7 +1244,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         )
         .input('cons', sql.VarChar(8), turno.consultorio)
         .input('conv', sql.Int, convenio)
-        .input('desc', sql.VarChar(600), mapping.marcaOrigen)
+        .input('desc', sql.VarChar(600), marcaDeOrigen(mapping, p.origin))
         .input('ceco', sql.VarChar(11), mapping.centroCostos ?? null)
         .input('luat', sql.VarChar(2), mapping.lugarAtencion)
         // `FE_SOLI_CIT` NO es la fecha de creación: es la fecha y hora que
@@ -1405,17 +1408,22 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     },
   ): Promise<void> {
     try {
-      await ej
+      await // La hora la pone el reloj del HIS (GETDATE), igual que FE_ELAB_CIT.
+      // Iba `new Date()` como sql.DateTime y mssql lo serializa en UTC:
+      // AUDITOR quedaba cinco horas adelante de la cita que auditaba
+      // (16:07:55 contra 11:07:55 en PRUEBAS, 2026-10-03). Un EXEC no
+      // admite GETDATE() como argumento, de ahí la variable.
+      ej
         .request()
-        .input('fech', sql.DateTime, new Date())
         .input('user', sql.VarChar(60), 'AGENIA')
         .input('tabla', sql.VarChar(100), params.tabla)
         .input('trans', sql.VarChar(1), params.trans)
         .input('desc', sql.VarChar(600), params.desc)
         .input('ver', sql.VarChar(50), CntSanVicenteAnsermaDriver.AUDIT_VERSION)
         .query(`
+          DECLARE @ahora datetime = GETDATE();
           EXEC dbo.PA_Ins_AUDITOR
-            @AudFech = @fech, @AudUser = @user, @AudTabla = @tabla,
+            @AudFech = @ahora, @AudUser = @user, @AudTabla = @tabla,
             @AudTrans = @trans, @AudDesc = @desc, @AudVerExe = @ver`);
     } catch (error) {
       console.warn(
@@ -1497,7 +1505,8 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         feHora,
         motivo: mapping.motivoAnulacion,
         observacion:
-          p.cancelObservations ?? 'Cancelada por el paciente vía WhatsApp',
+          p.cancelObservations ??
+          `Cancelada por el paciente vía ${nombreDelCanal(p.origin)}`,
       });
 
       if (!borrada) {
@@ -1543,7 +1552,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         medico: p.previousDoctorExternalKey,
         feHora: formatFeHoraCit(p.previousStartTimeIso, this.timeZone),
         motivo: mapping.motivoAnulacion,
-        observacion: 'Reagendada por el paciente vía WhatsApp',
+        observacion: `Reagendada por el paciente vía ${nombreDelCanal(p.origin)}`,
       });
 
       // El alta de la cita nueva reusa la MISMA lógica que un alta suelta

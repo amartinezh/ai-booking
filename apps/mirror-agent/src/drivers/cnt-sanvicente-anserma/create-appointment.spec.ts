@@ -194,6 +194,21 @@ describe('createAppointment — valores que se le escriben al HIS', () => {
     expect(insertDeCita(requests)!.desc).toBe('ASIGNADA POR WHATSAPP');
   });
 
+  it('una cita agendada por Telegram lleva la marca de Telegram', async () => {
+    const { driver, requests } = conDriver();
+    await driver.createAppointment(evento({ origin: 'TELEGRAM' }));
+
+    expect(insertDeCita(requests)!.desc).toBe('ASIGNADA POR TELEGRAM');
+  });
+
+  it('una cita de WhatsApp, o sin canal conocido, conserva la marca de WhatsApp', async () => {
+    for (const origin of ['WHATSAPP', undefined]) {
+      const { driver, requests } = conDriver();
+      await driver.createAppointment(evento({ origin }));
+      expect(insertDeCita(requests)!.desc).toBe('ASIGNADA POR WHATSAPP');
+    }
+  });
+
   it('fija la sede en la principal y el centro de costos del mapeo', async () => {
     const { driver, requests } = conDriver();
     await driver.createAppointment(evento());
@@ -439,6 +454,21 @@ describe('createAppointment — auditoría en AUDITOR ("Asignada Por")', () => {
     expect(aud.params.desc).not.toMatch(/whatsapp/i);
   });
 
+  it('la hora de AudFech la pone el reloj del HIS, no un Date del agente', async () => {
+    // mssql serializa un Date en UTC: AUDITOR quedaba cinco horas adelante
+    // de la cita (16:07:55 contra FE_ELAB_CIT 11:07:55, PRUEBAS 2026-10-03).
+    // Con GETDATE() la auditoría y la cita salen del mismo reloj.
+    const { driver, requests } = conDriver({ pacienteExiste: false });
+    await driver.createAppointment(evento());
+
+    for (const tabla of ['CITAS_MEDICAS', 'PACIENTES'] as const) {
+      const aud = auditoriaDe(requests, tabla)!;
+      expect(aud.sql).toMatch(/@ahora\s+datetime\s*=\s*GETDATE\(\)/i);
+      expect(aud.sql).toMatch(/@AudFech\s*=\s*@ahora/);
+      expect(aud.params).not.toHaveProperty('fech');
+    }
+  });
+
   it('audita el alta del paciente solo cuando el HIS no lo conocía', async () => {
     const { driver: driverNuevo, requests: reqNuevo } = conDriver({
       pacienteExiste: false,
@@ -660,6 +690,22 @@ describe('cancelAppointment', () => {
     expect((copia as any).params.obse).toMatch(/WhatsApp/);
   });
 
+  it('la observación nombra el canal donde se agendó la cita', async () => {
+    const tg = conDriver();
+    await tg.driver.cancelAppointment(eventoCancel({ origin: 'TELEGRAM' }));
+    expect(
+      (sqlDe(tg.requests, /INSERT INTO dbo\.CITAS_ANULADAS/) as any).params
+        .obse,
+    ).toBe('Cancelada por el paciente vía Telegram');
+
+    const wa = conDriver();
+    await wa.driver.cancelAppointment(eventoCancel({ origin: 'WHATSAPP' }));
+    expect(
+      (sqlDe(wa.requests, /INSERT INTO dbo\.CITAS_ANULADAS/) as any).params
+        .obse,
+    ).toBe('Cancelada por el paciente vía WhatsApp');
+  });
+
   it('identifica la cita por médico y hora, que es su clave en el HIS', async () => {
     const { driver, requests } = conDriver();
     await driver.cancelAppointment(eventoCancel());
@@ -741,6 +787,18 @@ describe('rescheduleAppointment', () => {
 
     const anulada = sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)! as any;
     expect(anulada.params.obse).toMatch(/Reagendada/);
+  });
+
+  it('reagendar por Telegram: observación y marca de la cita nueva de Telegram', async () => {
+    const { driver, requests } = conDriver();
+    await driver.rescheduleAppointment({
+      ...eventoResched(),
+      payload: { ...eventoResched().payload, origin: 'TELEGRAM' },
+    });
+
+    const anulada = sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)! as any;
+    expect(anulada.params.obse).toBe('Reagendada por el paciente vía Telegram');
+    expect(insertDeCita(requests)!.desc).toBe('ASIGNADA POR TELEGRAM');
   });
 
   it('sin el cupo anterior NO borra nada: no adivina cuál era', async () => {

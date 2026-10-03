@@ -548,6 +548,8 @@ export function translateOutboxAppointment(
       // El estado distingue una cancelación de una actualización de asistencia:
       // las dos llegan como UPDATE desde Postgres.
       status: typeof row.status === 'string' ? row.status : undefined,
+      // El canal sale de la fila cruda: el trigger la serializa completa.
+      origin: typeof row.origin === 'string' ? row.origin : undefined,
       previousStartTimeIso: ctx.previousStartTimeIso,
       previousDoctorExternalKey: ctx.previousDoctorExternalKey,
       // Todo lo que el driver necesita para construir la escritura.

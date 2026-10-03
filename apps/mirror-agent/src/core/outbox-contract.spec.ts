@@ -106,6 +106,22 @@ describe('contrato del evento de cita', () => {
     expect(canonical.payload.doctorExternalKey).toBeUndefined();
   });
 
+  it('lleva el canal donde se agendó, sacado de la fila cruda', () => {
+    // La fila del trigger trae `origin` (Appointment.origin): con él el driver
+    // marca la cita en el HIS como de Telegram o de WhatsApp.
+    const canonical = translateOutboxAppointment(
+      eventoEntregado({
+        payload: { id: 'apt-1', patientId: 'pat-1', origin: 'TELEGRAM' },
+      }),
+    );
+    expect(canonical.payload.origin).toBe('TELEGRAM');
+
+    // Sin `origin` (fila de antes del canal) queda indefinido, no inventado.
+    expect(
+      translateOutboxAppointment(eventoEntregado()).payload.origin,
+    ).toBeUndefined();
+  });
+
   it('sin id en la fila cruda, la identidad cae al entityId del outbox', () => {
     const canonical = translateOutboxAppointment(
       eventoEntregado({ payload: { patientId: 'pat-1' } }),

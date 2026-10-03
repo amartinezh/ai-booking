@@ -233,6 +233,13 @@ export interface CanonicalChangeEvent {
     attendanceStatus?: string;
     /** Estado de la cita en AgenIA: 'SCHEDULED' | 'COMPLETED' | 'CANCELLED'. */
     status?: string;
+    /**
+     * Canal donde se agendó la cita en AgenIA (`Appointment.origin`):
+     * 'WHATSAPP' | 'TELEGRAM' | 'MANUAL' | 'MIRROR'. El driver lo usa para
+     * marcar la cita en el HIS con el canal correcto. Ausente en servidores
+     * anteriores: el driver cae a la marca de WhatsApp.
+     */
+    origin?: string;
     /** Cupo anterior, cuando el evento es un reagendamiento. */
     previousStartTimeIso?: string;
     previousDoctorExternalKey?: string;

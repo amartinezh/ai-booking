@@ -19,6 +19,12 @@ export interface AnsermaMapping {
   centroCostos?: string;
   /** Texto que marca el origen en `DE_DESC_CIT`. Decidido con el hospital. */
   marcaOrigen: string;
+  /**
+   * Marca de las citas que el paciente agendó por Telegram. Opcional: sin
+   * ella va `MARCA_ORIGEN_TELEGRAM_POR_DEFECTO`. `marcaOrigen` sigue siendo
+   * la de WhatsApp y la de cualquier origen que no sea Telegram.
+   */
+  marcaOrigenTelegram?: string;
   /** `CD_CODI_MOTI_CIAN` del agente. Decidido: 'WB' (CANCELADO WEB). */
   motivoAnulacion: string;
   /**
@@ -427,6 +433,47 @@ export function resolveConvenio(
     );
   }
   return convenio;
+}
+
+export const MARCA_ORIGEN_TELEGRAM_POR_DEFECTO = 'ASIGNADA POR TELEGRAM';
+
+/**
+ * Marca de `DE_DESC_CIT` según el canal donde se agendó la cita
+ * (`Appointment.origin`). Solo Telegram tiene una propia: WhatsApp, MANUAL o
+ * un origen desconocido (un servidor que aún no lo envía) usan `marcaOrigen`,
+ * que es lo que se escribía antes de existir Telegram.
+ */
+export function marcaDeOrigen(
+  mapping: AnsermaMapping,
+  origin?: string,
+): string {
+  if (origin === 'TELEGRAM') {
+    return mapping.marcaOrigenTelegram ?? MARCA_ORIGEN_TELEGRAM_POR_DEFECTO;
+  }
+  return mapping.marcaOrigen;
+}
+
+/**
+ * ¿La escribió este agente? Es el ANTI-ECO de `detectChanges`: una cita con
+ * marca propia no se reporta como alta del hospital. Tiene que reconocer
+ * TODAS las marcas que `marcaDeOrigen` puede escribir — si reconociera solo
+ * la de WhatsApp, cada cita de Telegram volvería a AgenIA como una cita
+ * nueva agendada en el hospital.
+ */
+export function esMarcaPropia(
+  mapping: AnsermaMapping,
+  descripcion: string | null | undefined,
+): boolean {
+  if (!descripcion) return false;
+  return (
+    descripcion === mapping.marcaOrigen ||
+    descripcion === marcaDeOrigen(mapping, 'TELEGRAM')
+  );
+}
+
+/** Nombre del canal para las observaciones de `CITAS_ANULADAS`. */
+export function nombreDelCanal(origin?: string): 'Telegram' | 'WhatsApp' {
+  return origin === 'TELEGRAM' ? 'Telegram' : 'WhatsApp';
 }
 
 /** AgenIA 'M'/'F' → `NU_SEXO_PAC`. Ver la advertencia en `AnsermaMapping.sexo`. */
