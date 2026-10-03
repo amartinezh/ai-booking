@@ -8935,6 +8935,11 @@ export class ChatbotService implements OnModuleInit {
    */
   private esConsultaDeCitas(text: string | undefined | null): boolean {
     const t = sinTildes(textoParaCoincidencia(text));
+    // «Consultar» A SECAS es consultar sus citas (decisión del 2026-10-03:
+    // en prueba se leía como «quiero una consulta médica» y abría el menú).
+    // Solo como mensaje completo: contenida, «quiero consultar con un
+    // médico» abriría la consulta de citas.
+    if (t === 'consultar') return true;
     if (!t || !this.lookupRegex.test(t)) return false;
     if (/(?:^| )no (?:tengo|tiene|tenemos)(?= |$)/.test(t)) return false;
     return !/(?:^| )(?:cancel\w*|anul\w*|cambi\w*|reprogram\w*|reagend\w*|modific\w*|mover|muev\w*|agendar\w*|agendame|reservar|separar|sacar|pedir|recordatorios?)(?= |$)/.test(

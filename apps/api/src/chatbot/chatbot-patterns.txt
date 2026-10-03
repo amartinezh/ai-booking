@@ -412,6 +412,9 @@ posponer la cita
 # No dispara si el mismo mensaje pide cancelar o cambiar la cita, ni si dice
 # «no tengo cita» (ver esConsultaDeCitas en chatbot.service.ts).
 # Evite frases sueltas como «mi cita»: «quiero cancelar mi cita» la contiene.
+# «Consultar» A SECAS (el mensaje entero) también abre la consulta, pero no
+# va aquí: contenida, «quiero consultar con un médico» dispararía. Ver
+# esConsultaDeCitas.
 # ----------------------------------------------------------
 [lookup]
 que citas tengo
@@ -431,6 +434,10 @@ ver mi cita
 ver mis citas
 consultar mi cita
 consultar mis citas
+consultar cita
+consultar citas
+consultar la cita
+consultar las citas
 revisar mi cita
 revisar mis citas
 cuando es mi cita

@@ -509,6 +509,38 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
     });
 
+    it.each(['Consultar', 'consultar', 'Consultar.', 'CONSULTAR'])(
+      'captura del 2026-10-03: «%s» a secas muestra sus citas, no el menú de servicios',
+      async (texto) => {
+        seedPaciente();
+        seedCita('apt-1', MANANA);
+
+        await say(texto);
+        expect(lastSent()).toContain('Citas de *Juan Pérez*');
+        expect(state()).toBe(ChatState.AWAITING_LOOKUP_CHOICE);
+        expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+      },
+    );
+
+    it('«Consultar» con el menú de servicios abierto también muestra sus citas', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+
+      await say('Hola');
+      expect(state()).toBe(ChatState.AWAITING_SPECIALTY);
+      await say('Consultar');
+      expect(lastSent()).toContain('Citas de *Juan Pérez*');
+      expect(state()).toBe(ChatState.AWAITING_LOOKUP_CHOICE);
+    });
+
+    it('«consultar las citas» (frase) también abre la consulta', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+
+      await say('quiero consultar las citas');
+      expect(lastSent()).toContain('Citas de *Juan Pérez*');
+    });
+
     it('sin «hoy», lo que ya pasó hoy no se lista', async () => {
       seedPaciente();
       seedCita('apt-hoy-1', HOY_8AM);
@@ -722,6 +754,12 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
     it('«quiero cancelar mis citas» va a cancelación', async () => {
       await say('quiero cancelar mis citas');
       expect(state()).not.toBe(ChatState.AWAITING_LOOKUP_CHOICE);
+      expect(pasos()).toHaveLength(0);
+    });
+
+    it('«quiero consultar con un médico» NO es consultar sus citas (lo decide el LLM)', async () => {
+      await say('quiero consultar con un médico');
+      expect(provider.extractSchedulingIntent).toHaveBeenCalled();
       expect(pasos()).toHaveLength(0);
     });
 
