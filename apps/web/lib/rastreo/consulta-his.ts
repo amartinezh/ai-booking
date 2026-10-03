@@ -26,10 +26,13 @@ import {
   combinarEvidenciaHis,
   documentoSinCerosIniciales,
   esDocumentoValido,
+  estadoConexionHis,
   leerResultadoGuardado,
   validarConsultaHis,
+  type ConfigConexionHis,
   type EvidenciaHis,
   type HisLookupKind,
+  type MotivoConexionHis,
   type ParamsConsultaPorCupo,
   type ParamsConsultaPorDocumento,
   type ResultadoConsultaHis,
@@ -49,52 +52,34 @@ const MS_DIA = 86_400_000;
 // ¿Se puede consultar ahora?
 // ─────────────────────────────────────────────────────────────
 
-export interface ConfigHis {
-  enabled: boolean;
-  lookupEnabled: boolean;
-  lastLookupCapable: boolean | null;
-  lastHeartbeatAt: Date | null;
-  lastHisReachable: boolean | null;
-}
+/** Las señales de `HospitalMirrorConfig`; la regla vive en `@agenia/shared`. */
+export type ConfigHis = ConfigConexionHis;
 
 /**
  * Falla RÁPIDO (plan §7.2): si el agente no puede contestar, lo dice antes de
- * encolar. El orden va de lo que se arregla en la clínica a lo que se arregla en
- * el hospital; cada motivo está escrito para quien atiende, sin nombres internos.
+ * encolar. La decisión es `estadoConexionHis`, la misma con que el bot decide si
+ * puede preguntarle al hospital: aquí solo se traduce el motivo para quien
+ * atiende, sin nombres internos.
  */
 export function disponibilidadHis(
   config: ConfigHis | null,
   ahora: Date,
 ): DisponibilidadHis {
-  const no = (razon: string): DisponibilidadHis => ({ puede: false, razon });
-  if (!config) return no('Esta clínica no tiene espejo con un HIS.');
-  if (!config.enabled) {
-    return no('El espejo con el HIS está deshabilitado en esta clínica.');
-  }
-  if (!config.lookupEnabled) {
-    return no('La consulta en vivo al HIS no está habilitada para esta clínica.');
-  }
-  if (!config.lastHeartbeatAt) {
-    return no('El agente del hospital no ha dado señales.');
-  }
-  const minutos = Math.floor(
-    (ahora.getTime() - config.lastHeartbeatAt.getTime()) / 60_000,
-  );
-  if (minutos > LIMITES_CONSULTA_HIS.latidoMaxMin) {
-    return no(`El agente del hospital no da señales desde hace ${minutos} min.`);
-  }
-  if (config.lastHisReachable === false) {
-    return no(
+  const { motivo, minutosSinLatido } = estadoConexionHis(config, ahora);
+  if (!motivo) return { puede: true, razon: null };
+  const razon: Record<MotivoConexionHis, string> = {
+    SIN_ESPEJO: 'Esta clínica no tiene espejo con un HIS.',
+    ESPEJO_DESHABILITADO: 'El espejo con el HIS está deshabilitado en esta clínica.',
+    CONSULTA_DESHABILITADA:
+      'La consulta en vivo al HIS no está habilitada para esta clínica.',
+    SIN_LATIDO: 'El agente del hospital no ha dado señales.',
+    LATIDO_VIEJO: `El agente del hospital no da señales desde hace ${minutosSinLatido} min.`,
+    HIS_INALCANZABLE:
       'El agente no puede comunicarse con el sistema del hospital en este momento.',
-    );
-  }
-  // `null` (un agente anterior a la consulta en vivo, que no lo dice) cuenta como "no".
-  if (config.lastLookupCapable !== true) {
-    return no(
+    AGENTE_SIN_CONSULTA:
       'El agente instalado en el hospital no admite la consulta en vivo (puede estar desactualizado).',
-    );
-  }
-  return { puede: true, razon: null };
+  };
+  return { puede: false, razon: razon[motivo] };
 }
 
 // ─────────────────────────────────────────────────────────────

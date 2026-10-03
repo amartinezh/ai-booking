@@ -154,6 +154,20 @@ export type {
   ResultadoConsultaHis,
   TitularHis,
 } from './src/his-lookup';
+export {
+  estadoConexionHis,
+  remitenteEsDelPaciente,
+  diaLocal,
+  inicioDelDiaLocal,
+} from './src/consulta-citas';
+export type {
+  EstadoConexionHis,
+  MotivoConexionHis,
+  ConfigConexionHis,
+  ConexionHis,
+  CanalesDelPaciente,
+  RemitenteDelTurno,
+} from './src/consulta-citas';
 export { SYNC_AUDIT_DIRECTION } from './src/sync-audit';
 export type { SyncAuditDirection } from './src/sync-audit';
 export type {

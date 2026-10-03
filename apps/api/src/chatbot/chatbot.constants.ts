@@ -46,6 +46,13 @@ export enum ChatState {
   AWAITING_MODIFY_NEW_SLOT = 'AWAITING_MODIFY_NEW_SLOT',
   AWAITING_MODIFY_CONFIRM = 'AWAITING_MODIFY_CONFIRM',
   AWAITING_MODIFY_NO_SLOTS_CANCEL = 'AWAITING_MODIFY_NO_SLOTS_CANCEL',
+  // ── CONSULTA DE CITAS ("¿qué citas tengo?") ──────────────────
+  // Solo lectura. Se pide la cédula cuando el remitente no identifica a un
+  // único paciente; el detalle solo se muestra si quien escribe es el paciente
+  // (si no, una respuesta mínima y se cierra). Tras el detalle, CHOICE ofrece
+  // cancelar / reprogramar / agendar otra / nada más.
+  AWAITING_LOOKUP_CEDULA = 'AWAITING_LOOKUP_CEDULA',
+  AWAITING_LOOKUP_CHOICE = 'AWAITING_LOOKUP_CHOICE',
 }
 
 // Nombre canónico del registro EPS para pago directo (debe existir en BD por org).
@@ -796,6 +803,56 @@ const FORMAL = {
   cancelarError: () =>
     `Lo lamento, el sistema presentó un inconveniente al intentar cancelar la cita.\n\nPara no dejar el proceso a medias, por favor comuníquese con nuestro Call Center y allí le ayudan enseguida.`,
 
+  // ── CONSULTA DE CITAS ("¿qué citas tengo?") ──────────────────
+  consultaPedirCedula: () =>
+    pick([
+      `Con gusto le consulto sus citas. 🔍\n\n¿Me indica el *número de cédula* del paciente, por favor?`,
+      `Claro, reviso sus citas. 🔍\n\nPara ubicarlas, ¿me comparte la *cédula* del paciente?`,
+    ]),
+
+  // `cuerpo` ya trae las citas (ver armarCuerpoConsulta en el servicio).
+  consultaDetalle: (nombre: string, cuerpo: string) =>
+    `📋 Citas de *${nombre}*:\n\n${cuerpo}`,
+
+  // Frase corta para AUDIO: el listado de citas va por texto.
+  consultaDetalleAudio: (nombre: string) =>
+    `${nombre}, le dejo sus citas en el mensaje de texto, con las opciones para cancelarlas o cambiarlas.`,
+
+  consultaTituloHoy: () => `*Hoy:*`,
+  consultaSinCitasHoy: () => `Hoy no tiene citas agendadas.`,
+  consultaTituloProximas: () => `*Próximas:*`,
+
+  consultaOpciones: () =>
+    `¿Desea hacer algo con ellas? Responda con la letra:\n\n` +
+    `*A)* Cancelar una cita\n*B)* Cambiar la fecha de una cita\n*C)* Agendar una cita nueva\n*D)* Nada más, gracias`,
+
+  consultaOpcionInvalida: () =>
+    `Por favor responda con la letra *A*, *B*, *C* o *D*.\n\n` +
+    `*A)* Cancelar una cita\n*B)* Cambiar la fecha de una cita\n*C)* Agendar una cita nueva\n*D)* Nada más, gracias`,
+
+  consultaSinCitas: (nombre: string) =>
+    `*${nombre}* no tiene citas próximas registradas. 📭\n\nSi desea agendar una, escríbame *"Hola"* y le muestro los servicios.`,
+
+  // Con quién se comunica el paciente: la clínica, con su teléfono si lo hay.
+  contactoClinica: (telefono: string) => `la clínica al *${telefono}*`,
+  contactoClinicaSinTelefono: () => `la clínica`,
+
+  // Quien escribe NO es el paciente: ni nombre, ni especialidad, ni médico, ni
+  // hora. Sin citas (o sin ese documento) usa consultaMinimaSinCitas, que no
+  // distingue "no existe" de "no tiene citas".
+  consultaMinima: (cantidad: string, contacto: string) =>
+    `Con ese documento hay citas próximas registradas: *${cantidad}*. 🔒\n\n` +
+    `Por seguridad, el detalle solo lo muestro cuando me escribe desde el WhatsApp registrado del paciente. ` +
+    `Para más información comuníquese con ${contacto}.`,
+
+  consultaMinimaSinCitas: (contacto: string) =>
+    `No encuentro citas próximas registradas con ese documento. 🔍\n\nPara más información comuníquese con ${contacto}.`,
+
+  // La clínica tiene hospital, pero el bot no le preguntó en vivo: una cita
+  // agendada allá puede no haber llegado todavía.
+  consultaAvisoHospital: (contacto: string) =>
+    `ℹ️ Si agendó directamente en el hospital, es posible que alguna cita no aparezca aquí; puede confirmarla con ${contacto}.`,
+
   respuestaInvalidaSiNo: () =>
     pick([
       `No logré interpretar su respuesta. ¿Me ayuda respondiendo *SÍ* para confirmar o *NO* para cancelar?`,
@@ -1509,6 +1566,48 @@ const INFORMAL = {
   cancelarError: () =>
     `Qué pena, tuve un inconveniente cancelando la cita. 😔 Para no dejarte a medias, llama al Call Center y ahí te ayudan enseguida. 🙏`,
 
+  // ── CONSULTA DE CITAS ("¿qué citas tengo?") ──────────────────
+  consultaPedirCedula: () =>
+    pick([
+      `¡Claro! Te reviso tus citas. 🔍 ¿Me pasas la *cédula* del paciente?`,
+      `Con gusto miro tus citas. 😊 ¿Me compartes la *cédula* del paciente?`,
+    ]),
+
+  consultaDetalle: (nombre: string, cuerpo: string) =>
+    `📋 Citas de *${nombre}*:\n\n${cuerpo}`,
+
+  consultaDetalleAudio: (nombre: string) =>
+    `${nombre}, te dejo tus citas en el mensaje de texto, con las opciones para cancelarlas o cambiarlas.`,
+
+  consultaTituloHoy: () => `*Hoy:*`,
+  consultaSinCitasHoy: () => `Hoy no tienes citas agendadas.`,
+  consultaTituloProximas: () => `*Próximas:*`,
+
+  consultaOpciones: () =>
+    `¿Quieres hacer algo con ellas? Mándame la letra:\n\n` +
+    `*A)* Cancelar una cita\n*B)* Cambiar la fecha de una cita\n*C)* Agendar una cita nueva\n*D)* Nada más, gracias`,
+
+  consultaOpcionInvalida: () =>
+    `Mándame la letra *A*, *B*, *C* o *D*, porfa. 🙏\n\n` +
+    `*A)* Cancelar una cita\n*B)* Cambiar la fecha de una cita\n*C)* Agendar una cita nueva\n*D)* Nada más, gracias`,
+
+  consultaSinCitas: (nombre: string) =>
+    `Revisé y *${nombre}* no tiene citas próximas. 📭 Si quieres agendar una, escríbeme *"Hola"* y te muestro los servicios. 😊`,
+
+  contactoClinica: (telefono: string) => `la clínica al *${telefono}*`,
+  contactoClinicaSinTelefono: () => `la clínica`,
+
+  consultaMinima: (cantidad: string, contacto: string) =>
+    `Con ese documento hay citas próximas registradas: *${cantidad}*. 🔒\n\n` +
+    `Por seguridad, el detalle solo lo muestro cuando me escriben desde el WhatsApp registrado del paciente. ` +
+    `Para más info comunícate con ${contacto}.`,
+
+  consultaMinimaSinCitas: (contacto: string) =>
+    `No encuentro citas próximas registradas con ese documento. 🔍\n\nPara más info comunícate con ${contacto}.`,
+
+  consultaAvisoHospital: (contacto: string) =>
+    `ℹ️ Si agendaste directamente en el hospital, puede que alguna cita no aparezca aquí; puedes confirmarla con ${contacto}.`,
+
   respuestaInvalidaSiNo: () =>
     pick([
       `Mmm, no te entendí. 🙏 ¿Me ayudas respondiendo *SÍ* o *NO*?`,
@@ -1654,6 +1753,7 @@ export type CanalDelBot = 'WHATSAPP' | 'TELEGRAM';
 export const MENSAJES_QUE_NOMBRAN_EL_CANAL = [
   'epsInvalida',
   'unidoAWaitlist',
+  'consultaMinima',
 ] as const satisfies ReadonlyArray<keyof Messages>;
 
 const nombrarTelegram = (texto: string): string =>

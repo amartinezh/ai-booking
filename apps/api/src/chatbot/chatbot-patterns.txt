@@ -14,6 +14,8 @@
 #   - [escape]    → coincidencia EXACTA (^...$). REINICIO: "Sin problema. Empezamos de cero."
 #                   (volver al menú / empezar otra vez), NO un cierre.
 #   - [cancel]    → coincidencia de INICIO (^...). Inician flujo de cancelación DE UNA CITA.
+#   - [lookup]    → frase CONTENIDA en el mensaje (sin tildes ni signos). El paciente
+#                   PREGUNTA por sus citas ya agendadas: solo lectura, no agenda nada.
 #
 # Diferencia clave (léase antes de mover palabras entre secciones):
 #   [goodbye] = "me voy / chao / no quiero seguir"  → cierra la conversación.
@@ -401,6 +403,48 @@ correr la cita
 adelantar la cita
 aplazar la cita
 posponer la cita
+
+# ----------------------------------------------------------
+# CONSULTA DE CITAS ("¿qué citas tengo?")
+# El paciente PREGUNTA por citas que ya tiene. Se buscan CONTENIDAS en el
+# mensaje, escritas sin tildes (el mensaje se compara sin tildes ni signos):
+# «¿Qué citas tengo hoy?» contiene «que citas tengo».
+# No dispara si el mismo mensaje pide cancelar o cambiar la cita, ni si dice
+# «no tengo cita» (ver esConsultaDeCitas en chatbot.service.ts).
+# Evite frases sueltas como «mi cita»: «quiero cancelar mi cita» la contiene.
+# ----------------------------------------------------------
+[lookup]
+que citas tengo
+cuales citas tengo
+cuales son mis citas
+cual es mi cita
+que cita tengo
+cuantas citas tengo
+tengo cita
+tengo citas
+tengo alguna cita
+tengo una cita agendada
+tengo citas agendadas
+tengo citas pendientes
+mis citas
+ver mi cita
+ver mis citas
+consultar mi cita
+consultar mis citas
+revisar mi cita
+revisar mis citas
+cuando es mi cita
+cuando tengo cita
+cuando tengo la cita
+para cuando es mi cita
+para cuando tengo cita
+a que hora es mi cita
+a que hora tengo cita
+a que hora tengo la cita
+que dia es mi cita
+que dia tengo cita
+con que medico es mi cita
+con quien es mi cita
 
 # ----------------------------------------------------------
 # 🛡️ INSULTOS / LENGUAJE OFENSIVO

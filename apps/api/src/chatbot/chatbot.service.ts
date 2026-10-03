@@ -52,6 +52,10 @@ import {
   reconocerEps,
   documentoSinCerosIniciales,
   variantesDeTelefono,
+  estadoConexionHis,
+  remitenteEsDelPaciente,
+  diaLocal,
+  inicioDelDiaLocal,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import {
@@ -131,6 +135,23 @@ interface ChatTurnContext {
 const canalDe = (senderId: string): CanalDelBot =>
   isTelegramSender(senderId) ? 'TELEGRAM' : 'WHATSAPP';
 
+/** Quita tildes. Solo para comparar, igual que `textoParaCoincidencia`. */
+const sinTildes = (texto: string): string =>
+  texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+/**
+ * Estados desde los que «¿qué citas tengo?» abre la consulta. Fuera de ellos el
+ * paciente va a mitad de algo (eligiendo horario, dando su nombre, confirmando)
+ * y una frase con «mis citas» no debe tirarle el agendamiento.
+ */
+const LOOKUP_ENTRY_STATES: ChatState[] = [
+  ChatState.IDLE,
+  ChatState.AWAITING_SPECIALTY,
+  ChatState.AWAITING_EPS,
+  ChatState.AWAITING_LOOKUP_CEDULA,
+  ChatState.AWAITING_LOOKUP_CHOICE,
+];
+
 @Injectable()
 export class ChatbotService implements OnModuleInit {
   private readonly logger = new Logger(ChatbotService.name);
@@ -141,6 +162,10 @@ export class ChatbotService implements OnModuleInit {
   // Frases de reprogramación ("cambiar mi cita", "reagendar", ...). Match de inicio.
   private modifyRegex: RegExp =
     /^(cambiar (mi |la )?cita|reprogramar|reagendar|modificar (mi |la )?cita|mover (mi |la )?cita)/i;
+  // Consulta de citas ("¿qué citas tengo?"). Frase CONTENIDA en el texto ya
+  // normalizado sin tildes (ver esConsultaDeCitas). Sección [lookup] del .txt.
+  private lookupRegex: RegExp =
+    /(?:^| )(que citas tengo|tengo cita|mis citas|cuando es mi cita)(?= |$)/;
   private greetingRegex: RegExp = /^(hola)$/i;
   private particularRegex: RegExp = /^(particular)$/i;
   // Las mismas palabras, en CUALQUIER parte de la frase («la quiero particular»).
@@ -291,6 +316,7 @@ export class ChatbotService implements OnModuleInit {
     const escapeWords: string[] = [];
     const cancelPhrases: string[] = [];
     const modifyPhrases: string[] = [];
+    const lookupPhrases: string[] = [];
     const particularWords: string[] = [];
     const insultWords: string[] = [];
     const emergencyPhrases: string[] = [];
@@ -312,6 +338,8 @@ export class ChatbotService implements OnModuleInit {
         currentSection = 'cancel';
       } else if (line === '[modify]') {
         currentSection = 'modify';
+      } else if (line === '[lookup]') {
+        currentSection = 'lookup';
       } else if (line === '[particular]') {
         currentSection = 'particular';
       } else if (line === '[insults]') {
@@ -330,6 +358,11 @@ export class ChatbotService implements OnModuleInit {
         cancelPhrases.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'modify') {
         modifyPhrases.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      } else if (currentSection === 'lookup') {
+        // Se normaliza igual que el texto entrante (esConsultaDeCitas): sin
+        // tildes ni signos, así que no quedan especiales de regex.
+        const normalized = sinTildes(textoParaCoincidencia(line));
+        if (normalized) lookupPhrases.push(normalized);
       } else if (currentSection === 'particular') {
         particularWords.push(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       } else if (currentSection === 'insults') {
@@ -360,6 +393,11 @@ export class ChatbotService implements OnModuleInit {
     }
     if (modifyPhrases.length > 0) {
       this.modifyRegex = new RegExp(`^(${modifyPhrases.join('|')})`, 'i');
+    }
+    if (lookupPhrases.length > 0) {
+      this.lookupRegex = new RegExp(
+        `(?:^| )(${lookupPhrases.join('|')})(?= |$)`,
+      );
     }
     if (particularWords.length > 0) {
       this.particularRegex = new RegExp(
@@ -2109,6 +2147,8 @@ export class ChatbotService implements OnModuleInit {
       `temp_waitlist_pending:${organizationId}:${senderId}`,
       `temp_waitlist_regimen:${organizationId}:${senderId}`,
       `temp_eps_oferta_particular:${organizationId}:${senderId}`,
+      `temp_lookup_cedula:${organizationId}:${senderId}`,
+      `temp_lookup_hoy:${organizationId}:${senderId}`,
       `error_count:${organizationId}:${senderId}`,
       `is_ai_flow:${organizationId}:${senderId}`,
     ];
@@ -2717,6 +2757,10 @@ export class ChatbotService implements OnModuleInit {
       this.handleAwaitingModifyConfirm(ctx),
     [ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL]: (ctx) =>
       this.handleAwaitingModifyNoSlotsCancel(ctx),
+    [ChatState.AWAITING_LOOKUP_CEDULA]: (ctx) =>
+      this.handleAwaitingLookupCedula(ctx),
+    [ChatState.AWAITING_LOOKUP_CHOICE]: (ctx) =>
+      this.handleAwaitingLookupChoice(ctx),
   };
 
   // ══════════════════════════════════════════════════════════════
@@ -3277,7 +3321,8 @@ export class ChatbotService implements OnModuleInit {
       text &&
       (currentState === ChatState.AWAITING_CEDULA ||
         currentState === ChatState.AWAITING_CANCEL_CEDULA ||
-        currentState === ChatState.AWAITING_MODIFY_CEDULA)
+        currentState === ChatState.AWAITING_MODIFY_CEDULA ||
+        currentState === ChatState.AWAITING_LOOKUP_CEDULA)
     ) {
       // En pasos de cédula, extraemos dígitos directamente sin llamar a Gemini.
       // Esto evita que "000", "123", etc. sean clasificados como ininteligibles.
@@ -4135,6 +4180,8 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_MODIFY_NEW_SLOT ||
       currentState === ChatState.AWAITING_MODIFY_CONFIRM ||
       currentState === ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL ||
+      // Consulta de citas: elegir qué hacer con ellas (A-D), sin LLM.
+      currentState === ChatState.AWAITING_LOOKUP_CHOICE ||
       // Escenario 2: la confirmación de interrupción es un paso SÍ/NO por texto;
       // como los demás pasos estrictos, no llama al LLM y fluye al switch.
       currentState === ChatState.AWAITING_INTERRUPT_CONFIRMATION;
@@ -4170,7 +4217,8 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_DATE ||
       currentState === ChatState.AWAITING_CANCEL_SELECTION ||
       currentState === ChatState.AWAITING_MODIFY_SELECTION ||
-      currentState === ChatState.AWAITING_MODIFY_NEW_SLOT;
+      currentState === ChatState.AWAITING_MODIFY_NEW_SLOT ||
+      currentState === ChatState.AWAITING_LOOKUP_CHOICE;
 
     // Pasos de SELECCIÓN DE MENÚ (servicio / EPS). El texto en estos pasos
     // NO llama al LLM (ver más abajo), así que su `intent` queda en 'otro' y
@@ -4273,6 +4321,30 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // ══════════════════════════════════════════════════════════
+    // 🔍 CONSULTA DE CITAS POR TEXTO ("¿qué citas tengo?")
+    // Determinista y antes del LLM: con el menú abierto el texto ni llega al
+    // LLM, y la regla local de "quiere agendar" veía «citas» y re-mostraba el
+    // menú. La voz y las paráfrasis se atienden tras el LLM (isLookup).
+    // ══════════════════════════════════════════════════════════
+    if (
+      messageType === 'text' &&
+      LOOKUP_ENTRY_STATES.includes(currentState) &&
+      this.esConsultaDeCitas(text)
+    ) {
+      await this.startLookupFlow({
+        organizationId,
+        senderId,
+        identity,
+        text,
+        isAudio: false,
+        cedula: this.cedulaEnTexto(text),
+        MSGS,
+        via: 'text_regex',
+      });
+      return;
+    }
+
     // Determinación de `aiData` del turno: init + cadena de extracción
     // (quick-flags; primer turno / no-estricto → LLM; audio → STT con adopción
     // de transcripción; cédula → dígitos; nombre tal cual; menú → sin LLM).
@@ -4359,7 +4431,8 @@ export class ChatbotService implements OnModuleInit {
       isAudio &&
       (currentState === ChatState.AWAITING_CEDULA ||
         currentState === ChatState.AWAITING_CANCEL_CEDULA ||
-        currentState === ChatState.AWAITING_MODIFY_CEDULA)
+        currentState === ChatState.AWAITING_MODIFY_CEDULA ||
+        currentState === ChatState.AWAITING_LOOKUP_CEDULA)
     ) {
       const stop = await this.normalizeVoiceCedula({
         aiData,
@@ -4496,6 +4569,24 @@ export class ChatbotService implements OnModuleInit {
         aiData,
         text,
         MSGS,
+      });
+      return;
+    }
+
+    // 🔍 Consulta de citas por VOZ o por paráfrasis que solo el LLM reconoce.
+    if (
+      LOOKUP_ENTRY_STATES.includes(currentState) &&
+      (aiData.isLookup || (isAudio && this.esConsultaDeCitas(text)))
+    ) {
+      await this.startLookupFlow({
+        organizationId,
+        senderId,
+        identity,
+        text,
+        isAudio,
+        cedula: aiData.cedula,
+        MSGS,
+        via: aiData.isLookup ? 'llm' : 'voice_regex',
       });
       return;
     }
@@ -4817,10 +4908,14 @@ export class ChatbotService implements OnModuleInit {
       currentState === ChatState.AWAITING_MODIFY_CONFIRM ||
       currentState === ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL;
 
+    // La consulta de citas tampoco pasa por la cascada: su paso de cédula lo
+    // atiende su handler (el de elegir A-D ya es un paso estricto).
+    const isLookupFlow = currentState === ChatState.AWAITING_LOOKUP_CEDULA;
+
     // ══════════════════════════════════════════════════════════
     // FLUJO PRINCIPAL DE AGENDAMIENTO (pasos no-estrictos)
     // ══════════════════════════════════════════════════════════
-    if (!isStrictStep && !isCancelFlow && !isModifyFlow) {
+    if (!isStrictStep && !isCancelFlow && !isModifyFlow && !isLookupFlow) {
       // ════════════════════════════════════════════════════════
       // NUEVO PROTOCOLO DE ATENCIÓN
       //   PASO 1: SERVICIO  (menú con letras + NLP + voz)
@@ -8750,6 +8845,483 @@ export class ChatbotService implements OnModuleInit {
     }
 
     await this.cleanUpSession(organizationId, senderId);
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // CONSULTA DE CITAS ("¿qué citas tengo?") — solo lectura
+  // ──────────────────────────────────────────────────────────────
+  // Fase A: muestra las citas registradas en AgenIA (que, con el alta en
+  // caliente, ya incluyen las agendadas en el hospital desde que se encendió).
+  // NO le pregunta al HIS en vivo: si la clínica tiene hospital, lo advierte.
+  //
+  // Regla de identidad (decisión del 2026-10-02): el detalle (servicio,
+  // médico, hora) solo se muestra si quien escribe es el paciente
+  // (remitenteEsDelPaciente). A cualquier otro, una respuesta mínima que no
+  // distingue "no existe ese documento" de "no tiene citas".
+  // ══════════════════════════════════════════════════════════════
+
+  /**
+   * ¿El texto PREGUNTA por citas ya agendadas? Frases de [lookup] contenidas
+   * en el texto sin tildes ni signos, con dos salvedades: «no tengo cita» es lo
+   * contrario, y si en el mismo mensaje pide cancelar, cambiar o agendar, manda
+   * eso (lo resuelven sus propios flujos o el LLM).
+   */
+  private esConsultaDeCitas(text: string | undefined | null): boolean {
+    const t = sinTildes(textoParaCoincidencia(text));
+    if (!t || !this.lookupRegex.test(t)) return false;
+    if (/(?:^| )no (?:tengo|tiene|tenemos)(?= |$)/.test(t)) return false;
+    return !/(?:^| )(?:cancel\w*|anul\w*|cambi\w*|reprogram\w*|reagend\w*|modific\w*|mover|muev\w*|agendar\w*|agendame|reservar|separar|sacar|pedir|recordatorios?)(?= |$)/.test(
+      t,
+    );
+  }
+
+  /** Una cédula escrita en el mismo mensaje («mis citas, cédula 1088123456»). */
+  private cedulaEnTexto(text: string | undefined | null): string | null {
+    const m = /\d[\d.\s]{4,}\d/.exec(text ?? '');
+    const digits = m ? m[0].replace(/\D/g, '') : '';
+    return digits.length >= 5 ? digits : null;
+  }
+
+  /**
+   * Arranca la consulta. Orden: la cédula del mensaje; si no hay, el paciente
+   * que identifica al remitente (si es UNO solo); si no, se pide la cédula.
+   * Terminal: el caller hace return tras llamar.
+   */
+  private async startLookupFlow(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string | undefined;
+    isAudio: boolean;
+    cedula: string | null;
+    MSGS: ReturnType<typeof buildMessages>;
+    via: 'text_regex' | 'voice_regex' | 'llm';
+  }): Promise<void> {
+    const { organizationId, senderId, identity, text, isAudio, MSGS, via } = p;
+    await this.cleanUpSession(organizationId, senderId);
+    await this.redis.set(
+      `is_ai_flow:${organizationId}:${senderId}`,
+      isAudio ? 'true' : 'false',
+      'EX',
+      SESSION_TTL,
+    );
+    if (/(?:^| )hoy(?= |$)/.test(sinTildes(textoParaCoincidencia(text)))) {
+      await this.redis.set(
+        `temp_lookup_hoy:${organizationId}:${senderId}`,
+        '1',
+        'EX',
+        SESSION_TTL,
+      );
+    }
+
+    const cedula = (p.cedula ?? '').replace(/\D/g, '');
+    if (cedula) {
+      await this.showLookup({
+        organizationId,
+        senderId,
+        identity,
+        cedula,
+        userMessage: text || '[audio]',
+        MSGS,
+        via,
+      });
+      return;
+    }
+
+    const propios = await this.pacientesDelRemitente(organizationId, identity);
+    if (propios.length === 1) {
+      await this.showLookup({
+        organizationId,
+        senderId,
+        identity,
+        cedula: propios[0].cedula,
+        userMessage: text || '[audio]',
+        MSGS,
+        via,
+      });
+      return;
+    }
+
+    // Ninguno, o varios (un celular compartido por la familia): que diga de quién.
+    const reply = MSGS.consultaPedirCedula();
+    await this.smartReply(organizationId, senderId, reply);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_LOOKUP_CEDULA,
+    );
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: text || '[audio]',
+      botReply: reply,
+      metadata: {
+        step: 'LOOKUP_ASK_CEDULA',
+        via,
+        perfilesDelRemitente: propios.length,
+      },
+    });
+  }
+
+  /**
+   * Fichas de esta clínica que responden al canal de quien escribe. La consulta
+   * es un primer filtro; la decisión la toma `remitenteEsDelPaciente`, la misma
+   * regla que decide si se muestra el detalle.
+   */
+  private async pacientesDelRemitente(
+    organizationId: string,
+    identity: SenderIdentity,
+  ): Promise<PatientProfile[]> {
+    const or: Prisma.PatientProfileWhereInput[] = [];
+    if (identity.telegramChatId) {
+      or.push({ telegramChatId: identity.telegramChatId });
+    } else {
+      const telefonos = variantesDeTelefono(
+        (identity.phone ?? '').replace(/\D/g, ''),
+      );
+      if (telefonos.length > 0) or.push({ whatsappId: { in: telefonos } });
+      if (identity.bsuid) or.push({ bsuid: identity.bsuid });
+    }
+    if (or.length === 0) return [];
+    const candidatos = await this.prisma.patientProfile.findMany({
+      where: { organizationId, OR: or },
+      take: 5,
+    });
+    return candidatos.filter((c) => remitenteEsDelPaciente(c, identity));
+  }
+
+  /** Busca y responde. Deja la sesión en AWAITING_LOOKUP_CHOICE o cerrada. */
+  private async showLookup(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    cedula: string;
+    userMessage: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    via: string;
+  }): Promise<void> {
+    const { organizationId, senderId, identity, cedula, userMessage, MSGS } = p;
+    const ahora = new Date();
+    const [org, mirror, patient] = await Promise.all([
+      this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { supportPhone: true, timezone: true },
+      }),
+      this.prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId },
+        select: {
+          enabled: true,
+          lookupEnabled: true,
+          lastLookupCapable: true,
+          lastHeartbeatAt: true,
+          lastHisReachable: true,
+        },
+      }),
+      this.prisma.patientProfile.findFirst({
+        where: { cedula, organizationId },
+      }),
+    ]);
+    const timeZone = org?.timezone || undefined;
+    const contacto = org?.supportPhone
+      ? MSGS.contactoClinica(org.supportPhone)
+      : MSGS.contactoClinicaSinTelefono();
+    // Fase A: el estado se registra (sirve para decidir la Fase B) pero no se
+    // le pregunta al HIS. Con hospital, cualquier estado lleva la advertencia.
+    const conexion = estadoConexionHis(mirror, ahora);
+    const pidioHoy = !!(await this.redis.get(
+      `temp_lookup_hoy:${organizationId}:${senderId}`,
+    ));
+
+    // Desde la medianoche local: «¿qué citas tengo hoy?» a las 3 p. m. debe ver
+    // también la de las 8 a. m. (sigue SCHEDULED hasta que alguien la cierre).
+    const citas = patient
+      ? await this.prisma.appointment.findMany({
+          where: {
+            patientId: patient.id,
+            status: 'SCHEDULED',
+            scheduleSlot: {
+              startTime: { gte: inicioDelDiaLocal(ahora, timeZone) },
+            },
+          },
+          include: {
+            scheduleSlot: { include: { doctor: true, service: true } },
+          },
+          orderBy: { scheduleSlot: { startTime: 'asc' } },
+          take: 20,
+        })
+      : [];
+    const hoy = diaLocal(ahora, timeZone);
+    const deHoy = citas.filter(
+      (c) => diaLocal(c.scheduleSlot.startTime, timeZone) === hoy,
+    );
+    const futuras = citas.filter((c) => c.scheduleSlot.startTime >= ahora);
+    // Sin "hoy" solo cuenta lo que no ha pasado; con "hoy", también lo de hoy.
+    const relevantes = pidioHoy
+      ? citas.filter((c) => deHoy.includes(c) || futuras.includes(c))
+      : futuras;
+
+    const esDelRemitente =
+      !!patient && remitenteEsDelPaciente(patient, identity);
+    const metadata = {
+      via: p.via,
+      conexionHis: conexion.estado,
+      motivoConexionHis: conexion.motivo,
+      citas: relevantes.length,
+      pidioHoy,
+    };
+
+    if (!esDelRemitente) {
+      const reply =
+        relevantes.length > 0
+          ? MSGS.consultaMinima(String(relevantes.length), contacto)
+          : MSGS.consultaMinimaSinCitas(contacto);
+      await this.smartReply(organizationId, senderId, reply);
+      await this.cleanUpSession(organizationId, senderId);
+      // Sin la cédula en la bitácora: quien la escribió no probó ser su dueño.
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: '[cédula]',
+        botReply: reply,
+        metadata: {
+          ...metadata,
+          step: 'LOOKUP_MINIMAL',
+          pacienteExiste: !!patient,
+        },
+      });
+      return;
+    }
+
+    const aviso =
+      conexion.estado === 'SIN_HOSPITAL'
+        ? ''
+        : `\n\n${MSGS.consultaAvisoHospital(contacto)}`;
+
+    if (relevantes.length === 0) {
+      const reply = MSGS.consultaSinCitas(patient.fullName) + aviso;
+      await this.smartReply(organizationId, senderId, reply);
+      await this.cleanUpSession(organizationId, senderId);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage,
+        botReply: reply,
+        metadata: { ...metadata, step: 'LOOKUP_NONE' },
+      });
+      return;
+    }
+
+    const linea = (c: (typeof citas)[number]) =>
+      `• ${c.scheduleSlot.service.name} · ${doctorLabel(c.scheduleSlot.doctor)} · ` +
+      formatAppointmentCompact(c.scheduleSlot.startTime, { timeZone });
+    let cuerpo: string;
+    if (pidioHoy) {
+      const despues = futuras.filter((c) => !deHoy.includes(c));
+      cuerpo =
+        `${MSGS.consultaTituloHoy()}\n` +
+        (deHoy.length > 0
+          ? deHoy.map(linea).join('\n')
+          : MSGS.consultaSinCitasHoy());
+      if (despues.length > 0) {
+        cuerpo += `\n\n${MSGS.consultaTituloProximas()}\n${despues.map(linea).join('\n')}`;
+      }
+    } else {
+      cuerpo = relevantes.map(linea).join('\n');
+    }
+
+    const reply =
+      MSGS.consultaDetalle(patient.fullName, cuerpo) +
+      aviso +
+      `\n\n${MSGS.consultaOpciones()}`;
+    await this.redis.set(
+      `temp_lookup_cedula:${organizationId}:${senderId}`,
+      patient.cedula,
+      'EX',
+      SESSION_TTL,
+    );
+    // En voz: el audio solo anuncia; el listado va por texto.
+    await this.smartReply(
+      organizationId,
+      senderId,
+      reply,
+      MSGS.consultaDetalleAudio(patient.fullName),
+    );
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_LOOKUP_CHOICE,
+    );
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage,
+      botReply: reply,
+      metadata: { ...metadata, step: 'LOOKUP_SHOWN', patientId: patient.id },
+    });
+  }
+
+  /** Handler de estado: AWAITING_LOOKUP_CEDULA. */
+  private async handleAwaitingLookupCedula(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const {
+      organizationId,
+      senderId,
+      identity,
+      text,
+      aiData,
+      MSGS,
+      retriesKey,
+      retriesCount,
+    } = ctx;
+    const cedula = (aiData.cedula || text || '').replace(/\D/g, '');
+    if (!cedula) {
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
+      const reply = MSGS.cancelarCedulaInvalida();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditFailure(senderId, organizationId, {
+        reason: FailureReason.PATIENT_NOT_FOUND,
+        userMessage: text,
+        botReply: reply,
+        metadata: { stage: 'LOOKUP_CEDULA_INVALID' },
+      });
+      return;
+    }
+    await this.showLookup({
+      organizationId,
+      senderId,
+      identity,
+      cedula,
+      userMessage: text || '[audio]',
+      MSGS,
+      via: 'cedula',
+    });
+  }
+
+  /**
+   * Handler de estado: AWAITING_LOOKUP_CHOICE. Solo se llega aquí tras mostrar
+   * el detalle, es decir, con el remitente ya reconocido como el paciente: A y
+   * B entran a cancelar / reprogramar con su cédula, sin volver a pedirla.
+   */
+  private async handleAwaitingLookupChoice(
+    ctx: ChatTurnContext,
+  ): Promise<void> {
+    const {
+      organizationId,
+      senderId,
+      text,
+      MSGS,
+      botName,
+      orgName,
+      retriesKey,
+      retriesCount,
+    } = ctx;
+    const letra = this.extractOptionLetter(text);
+    const cedula = await this.redis.get(
+      `temp_lookup_cedula:${organizationId}:${senderId}`,
+    );
+
+    if ((letra === 'A' || letra === 'B') && !cedula) {
+      const reply = MSGS.sesionExpirada();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.cleanUpSession(organizationId, senderId);
+      await this.auditFailure(senderId, organizationId, {
+        reason: FailureReason.SESSION_EXPIRED,
+        userMessage: text,
+        botReply: reply,
+        metadata: { stage: 'LOOKUP_CHOICE_NO_CEDULA' },
+      });
+      return;
+    }
+
+    if (letra === 'A' && cedula) {
+      await this.cleanUpSession(organizationId, senderId);
+      await this.redis.set(
+        `temp_cancel_cedula:${organizationId}:${senderId}`,
+        cedula,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.handleCancelCedulaStep(organizationId, senderId, cedula);
+      await this.auditLog(senderId, organizationId, {
+        status: InteractionStatus.CANCELLATION_FLOW,
+        userMessage: text || '[audio]',
+        botReply:
+          (await this.getLastSent(senderId)) || '[cancelación iniciada]',
+        metadata: { event: 'LOOKUP_TO_CANCEL' },
+      });
+      return;
+    }
+
+    if (letra === 'B' && cedula) {
+      await this.cleanUpSession(organizationId, senderId);
+      await this.redis.set(
+        `temp_modify_cedula:${organizationId}:${senderId}`,
+        cedula,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.handleModifyCedulaStep(organizationId, senderId, cedula);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text || '[audio]',
+        botReply:
+          (await this.getLastSent(senderId)) || '[modificación iniciada]',
+        metadata: { event: 'LOOKUP_TO_MODIFY' },
+      });
+      return;
+    }
+
+    if (letra === 'C') {
+      await this.cleanUpSession(organizationId, senderId);
+      const { lineas, count } = await this.buildServiceMenu(
+        organizationId,
+        senderId,
+      );
+      const reply =
+        count > 0
+          ? MSGS.repromptAgendarServicio(lineas)
+          : MSGS.bienvenida(
+              orgName,
+              'Ej: Medicina General, Odontología',
+              botName,
+            );
+      await this.smartReply(organizationId, senderId, reply);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_SPECIALTY,
+      );
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { event: 'LOOKUP_TO_NEW_BOOKING' },
+      });
+      return;
+    }
+
+    if (letra === 'D') {
+      const reply = MSGS.despedidaCorta();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.cleanUpSession(organizationId, senderId);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { event: 'LOOKUP_DONE' },
+      });
+      return;
+    }
+
+    await this.redis.set(
+      retriesKey,
+      (retriesCount + 1).toString(),
+      'EX',
+      SESSION_TTL,
+    );
+    const reply = MSGS.consultaOpcionInvalida();
+    await this.smartReply(organizationId, senderId, reply);
+    await this.auditFailure(senderId, organizationId, {
+      reason: FailureReason.OUT_OF_CONTEXT,
+      userMessage: text,
+      botReply: reply,
+      metadata: { stage: 'LOOKUP_CHOICE_INVALID', letra },
+    });
   }
 
   // ══════════════════════════════════════════════════════════════

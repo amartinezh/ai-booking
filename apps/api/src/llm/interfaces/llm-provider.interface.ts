@@ -120,6 +120,13 @@ export interface SchedulingExtraction {
    */
   isModification: boolean;
   /**
+   * El paciente PREGUNTA por sus citas ya agendadas ("¿qué citas tengo?",
+   * "¿cuándo es mi cita?"). No quiere agendar ni cambiar nada: el bot le
+   * muestra sus citas. Opcional: un proveedor o un fallback que no lo pone
+   * equivale a `false`.
+   */
+  isLookup?: boolean;
+  /**
    * 🚑 El mensaje describe una POSIBLE emergencia médica en curso (Tarea D:
    * dolor torácico, dificultad respiratoria, ideación suicida, sobredosis...).
    * Es ORTOGONAL a `intent`: "necesito una cita urgente porque llevo tres días
@@ -153,6 +160,7 @@ export interface RawSchedulingExtraction {
   ininteligible?: unknown;
   isCancellation?: unknown;
   isModification?: unknown;
+  isLookup?: unknown;
   isEmergency?: unknown;
 }
 

@@ -127,6 +127,7 @@ export class ChatGptProvider implements LLMProvider {
       isFallback: false,
       isCancellation: Boolean(parsed.isCancellation),
       isModification: Boolean(parsed.isModification),
+      isLookup: Boolean(parsed.isLookup),
       isEmergency: Boolean(parsed.isEmergency),
       isRateLimited: false,
     };

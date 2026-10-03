@@ -29,6 +29,7 @@ const CAMPOS_EXTRACCION = [
   'isFallback',
   'isCancellation',
   'isModification',
+  'isLookup',
   'isEmergency',
   'isRateLimited',
 ];
