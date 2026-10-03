@@ -53,6 +53,27 @@ describe('OrganizationSettingsService', () => {
     });
   });
 
+  describe('isBookingEnabled', () => {
+    it('apagado se respeta', async () => {
+      prisma.organizationSettings.findUnique.mockResolvedValue({
+        bookingEnabled: false,
+      });
+      await expect(service.isBookingEnabled(ORG)).resolves.toBe(false);
+      expect(prisma.organizationSettings.findUnique).toHaveBeenCalledWith({
+        where: { organizationId: ORG },
+        select: { bookingEnabled: true },
+      });
+    });
+
+    it.each([
+      ['sin fila', null],
+      ['prendido', { bookingEnabled: true }],
+    ])('%s → el bot opera (el default)', async (_e, fila) => {
+      prisma.organizationSettings.findUnique.mockResolvedValue(fila);
+      await expect(service.isBookingEnabled(ORG)).resolves.toBe(true);
+    });
+  });
+
   describe('getMaxRetries', () => {
     it('devuelve el configurado', async () => {
       prisma.organizationSettings.findUnique.mockResolvedValue({

@@ -195,6 +195,8 @@ function createPrisma(db: Db) {
         ({ where }: any) =>
           db.patients.find((p) => p.cedula === where.cedula) ?? null,
       ),
+      // La baja de recordatorios («no quiero más recordatorios»).
+      updateMany: jest.fn(() => ({ count: db.patients.length })),
       // La consulta por canal del remitente (OR de teléfono / BSUID / chat).
       findMany: jest.fn(({ where }: any) =>
         db.patients.filter((p) =>
@@ -297,6 +299,8 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
   let provider: { name: string; extractSchedulingIntent: jest.Mock };
   let interactionLog: Record<string, jest.Mock>;
   let sendSpy: jest.SpyInstance;
+  /** `OrganizationSettings.bookingEnabled` de la clínica (se lee en cada turno). */
+  let bookingEnabled: boolean;
 
   const sent = (): string[] =>
     sendSpy.mock.calls.map((c: any[]) => c[1] as string);
@@ -367,6 +371,7 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       ],
     });
     redis = createFakeRedis();
+    bookingEnabled = true;
     db = {
       patients: [],
       appointments: [],
@@ -430,6 +435,7 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
             getBotName: jest.fn(() => 'Vicente'),
             getMaxRetries: jest.fn(() => 3),
             getCommunicationStyle: jest.fn(() => 'FORMAL'),
+            isBookingEnabled: jest.fn(() => bookingEnabled),
           },
         },
         {
@@ -1092,6 +1098,139 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       responde([filaHis({ startIso: EN_5_DIAS })]);
       await barrido();
       expect(sent()).toHaveLength(antes);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 🔒 Interruptor de operaciones apagado: solo consultas
+  // ──────────────────────────────────────────────────────────────────
+  describe('🔒 operaciones apagadas (solo consultas)', () => {
+    const AVISO = 'no está activa para agendar, cancelar ni cambiar citas';
+    const HOSPITAL = `el hospital al *${SOPORTE}*`;
+
+    beforeEach(() => {
+      bookingEnabled = false;
+    });
+
+    it('«Hola» se presenta con el aviso y no abre el menú de servicios', async () => {
+      await say('Hola');
+      const r = lastSent();
+      expect(r).toContain('Le saluda *Vicente*');
+      expect(r).toContain(AVISO);
+      expect(r).toContain(HOSPITAL);
+      expect(r).toContain('*"consultar"*');
+      expect(r).not.toContain('¿En qué servicio');
+      expect(state()).toBe(ChatState.IDLE);
+    });
+
+    it('el segundo aviso de la conversación ya no se presenta', async () => {
+      await say('Hola');
+      await say('Hola');
+      expect(lastSent()).toContain(AVISO);
+      expect(lastSent()).not.toContain('Le saluda');
+    });
+
+    it('pedir una cita recibe el aviso, sin ACK ni menú', async () => {
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ intent: 'agendar_cita', especialidad: 'Odontología' }),
+      );
+      await say('Quiero una cita de odontología');
+      expect(sent()).toHaveLength(1);
+      expect(lastSent()).toContain(AVISO);
+      expect(state()).toBe(ChatState.IDLE);
+    });
+
+    it('«cancelar cita» recibe el aviso y no pide la cédula', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('cancelar cita');
+      expect(lastSent()).toContain(AVISO);
+      expect(state()).toBe(ChatState.IDLE);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('cambiar la fecha (por el LLM) recibe el aviso', async () => {
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ intent: 'modificar_cita', isModification: true }),
+      );
+      await say('necesito mover mi cita para otro día');
+      expect(lastSent()).toContain(AVISO);
+      expect(state()).toBe(ChatState.IDLE);
+    });
+
+    it('«consultar» muestra sus citas sin las opciones A-D y remite al hospital', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('consultar');
+      const r = lastSent();
+      expect(r).toContain('Citas de *Juan Pérez*');
+      expect(r).toContain('Medicina General');
+      expect(r).not.toContain('*A)* Cancelar una cita');
+      expect(r).toContain(`comuníquese con ${HOSPITAL}`);
+      expect(r).toContain('solo permite consultarlas');
+      expect(state()).toBe(ChatState.IDLE);
+    });
+
+    it('sin citas no invita a agendar escribiendo «Hola»', async () => {
+      seedPaciente();
+      await say('que citas tengo');
+      const r = lastSent();
+      expect(r).toContain('no tiene citas próximas');
+      expect(r).not.toContain('"Hola"');
+      expect(r).toContain(HOSPITAL);
+    });
+
+    it('apagarlo a mitad de un agendamiento descarta el flujo: la letra recibe el aviso', async () => {
+      bookingEnabled = true;
+      await say('Hola');
+      expect(state()).toBe(ChatState.AWAITING_SPECIALTY);
+
+      bookingEnabled = false;
+      await say('A');
+      expect(lastSent()).toContain(AVISO);
+      expect(state()).toBe(ChatState.IDLE);
+    });
+
+    it('apagarlo a mitad de un agendamiento no impide consultar', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      bookingEnabled = true;
+      await say('Hola');
+
+      bookingEnabled = false;
+      await say('mis citas');
+      expect(lastSent()).toContain('Citas de *Juan Pérez*');
+      expect(lastSent()).not.toContain('*A)* Cancelar una cita');
+    });
+
+    it('las opciones A-D mostradas antes de apagarlo ya no cancelan', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      bookingEnabled = true;
+      await say('mis citas');
+      expect(state()).toBe(ChatState.AWAITING_LOOKUP_CHOICE);
+
+      bookingEnabled = false;
+      await say('A');
+      expect(lastSent()).toContain(AVISO);
+      expect(state()).toBe(ChatState.IDLE);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('la baja de recordatorios sigue funcionando (no es una operación sobre la cita)', async () => {
+      seedPaciente();
+      await say('no quiero mas recordatorios');
+      expect(lastSent()).toContain('recordatorios');
+      expect(lastSent()).toContain('activar recordatorios');
+      expect(lastSent()).not.toContain(AVISO);
+    });
+
+    it('queda en la bitácora por qué se respondió el aviso', async () => {
+      await say('cancelar cita');
+      const pasoAviso = interactionLog.logSuccess.mock.calls
+        .map((c: any[]) => c[0])
+        .find((e: any) => e?.metadata?.step === 'SOLO_CONSULTAS');
+      expect(pasoAviso?.metadata).toMatchObject({ motivo: 'CANCELAR' });
     });
   });
 });

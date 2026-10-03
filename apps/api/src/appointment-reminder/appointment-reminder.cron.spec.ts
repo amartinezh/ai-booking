@@ -474,6 +474,30 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       expect(textoEnviado(chatbot).toLowerCase()).toContain('cancelar');
     });
 
+    it.each(['FORMAL', 'INFORMAL'])(
+      '🔒 %s: con las operaciones del bot apagadas remite al hospital, no a «cancelar cita»',
+      async (estilo) => {
+        const { service, chatbot } = build({
+          eligibles: [
+            cita({
+              organization: {
+                id: ORG,
+                name: 'Hospital San Vicente',
+                supportPhone: '6068538838',
+                settings: { bookingEnabled: false },
+              },
+            }),
+          ],
+          estilo,
+        });
+        await service.runOnce();
+
+        const texto = textoEnviado(chatbot);
+        expect(texto).not.toContain('*cancelar cita*');
+        expect(texto).toContain('el hospital al *6068538838*');
+      },
+    );
+
     // 🐛 El saludo estaba fijo en «Buenos días». El cron corre cada 15 min, y
     // en la campaña E2E del 2026-09-22 llegó un recordatorio a las 2:21 p. m.
     // dando los buenos días. Es la primera línea que lee el paciente.

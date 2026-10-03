@@ -17,7 +17,13 @@ export async function getMyOrgSettings() {
 
     const s = await prisma.organizationSettings.findUnique({
         where: { organizationId: session.organizationId! },
-        select: { botName: true, communicationStyle: true, slotsOfferedCount: true, remindersEnabled: true },
+        select: {
+            botName: true,
+            communicationStyle: true,
+            slotsOfferedCount: true,
+            remindersEnabled: true,
+            bookingEnabled: true,
+        },
     });
     return {
         botName: s?.botName ?? DEFAULT_BOT_NAME,
@@ -26,6 +32,8 @@ export async function getMyOrgSettings() {
         // Sin fila de settings = prendido, igual que el default de la columna y
         // que la consulta del cron.
         remindersEnabled: s?.remindersEnabled ?? true,
+        // Igual: sin fila = el bot agenda, cancela y cambia (default de la columna).
+        bookingEnabled: s?.bookingEnabled ?? true,
     };
 }
 
@@ -49,6 +57,31 @@ export async function setMyRemindersEnabled(enabled: boolean) {
         });
         revalidatePath('/dashboard/configuracion');
         return { success: true, remindersEnabled };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * Prende o apaga lo que el paciente puede hacer por el bot (agendar, cancelar,
+ * cambiar citas). Apagado, el bot solo consulta. Guarda al instante, como el de
+ * recordatorios; el bot lo lee en cada mensaje.
+ */
+export async function setMyBookingEnabled(enabled: boolean) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
+
+    // `=== true`: lo que no sea exactamente `true` apaga (falla hacia que el bot
+    // no escriba en la agenda).
+    const bookingEnabled = enabled === true;
+    try {
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, bookingEnabled },
+            update: { bookingEnabled },
+        });
+        revalidatePath('/dashboard/configuracion');
+        return { success: true, bookingEnabled };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
     }

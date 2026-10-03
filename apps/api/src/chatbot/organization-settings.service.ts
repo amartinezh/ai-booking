@@ -36,6 +36,20 @@ export class OrganizationSettingsService {
     return (s?.communicationStyle as CommStyle) || DEFAULT_STYLE;
   }
 
+  /**
+   * ¿El bot puede agendar, cancelar y cambiar citas en esta clínica? Apagado
+   * (/dashboard/configuracion) solo consulta. Sin fila de settings = prendido,
+   * igual que el default de la columna. Se lee en cada mensaje: sin caché, para
+   * que apagarlo surta efecto en el siguiente mensaje del paciente.
+   */
+  async isBookingEnabled(organizationId: string): Promise<boolean> {
+    const s = await this.prisma.organizationSettings.findUnique({
+      where: { organizationId },
+      select: { bookingEnabled: true },
+    });
+    return s?.bookingEnabled ?? true;
+  }
+
   async getSettings(organizationId: string): Promise<{
     botName: string;
     maxRetriesPerStep: number;

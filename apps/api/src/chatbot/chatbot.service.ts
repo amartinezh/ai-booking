@@ -137,7 +137,23 @@ interface ChatTurnContext {
   orgName: string;
   retriesKey: string;
   retriesCount: number;
+  /**
+   * ¿La clínica deja agendar, cancelar y cambiar citas por el bot?
+   * (`OrganizationSettings.bookingEnabled`). Apagado, solo se consultan.
+   */
+  bookingEnabled: boolean;
 }
+
+/**
+ * Estados en los que el paciente puede seguir con el interruptor de
+ * operaciones apagado: los de la consulta de citas (solo lectura). Cualquier
+ * otro es un agendamiento, una cancelación o un cambio a medias.
+ */
+const ESTADOS_SOLO_CONSULTA: ChatState[] = [
+  ChatState.IDLE,
+  ChatState.AWAITING_LOOKUP_CEDULA,
+  ChatState.AWAITING_LOOKUP_CHOICE,
+];
 
 /** Canal del paciente, para los textos que lo nombran (docs/PLAN_TELEGRAM.md). */
 const canalDe = (senderId: string): CanalDelBot =>
@@ -3867,6 +3883,42 @@ export class ChatbotService implements OnModuleInit {
       : p.MSGS.menuServicios(p.orgName, p.lineas, p.botName);
   }
 
+  /**
+   * 🔒 SOLO CONSULTAS — la clínica apagó agendar, cancelar y cambiar citas por
+   * el bot (`OrganizationSettings.bookingEnabled`). Responde que la plataforma
+   * por ahora solo consulta citas y con quién comunicarse; se presenta si aún
+   * no lo hizo en esta conversación. Deja la sesión en IDLE, lista para
+   * «consultar». Terminal: el caller hace return tras llamar.
+   */
+  private async responderSoloConsultas(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    org: Organization | null;
+    orgName: string;
+    botName: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    motivo: 'AGENDAR' | 'CANCELAR' | 'MODIFICAR';
+  }): Promise<void> {
+    const { organizationId, senderId, MSGS } = p;
+    const contacto = p.org?.supportPhone
+      ? MSGS.contactoClinica(p.org.supportPhone)
+      : MSGS.contactoClinicaSinTelefono();
+    const key = this.presentadoKey(organizationId, senderId);
+    const yaSePresento = !!(await this.redis.get(key));
+    await this.cleanUpSession(organizationId, senderId);
+    await this.redis.set(key, '1', 'EX', PRESENTACION_TTL);
+    const reply = yaSePresento
+      ? MSGS.soloConsultas(contacto)
+      : MSGS.soloConsultasBienvenida(p.orgName, contacto, p.botName);
+    await this.smartReply(organizationId, senderId, reply);
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: p.text || '[audio]',
+      botReply: reply,
+      metadata: { step: 'SOLO_CONSULTAS', motivo: p.motivo },
+    });
+  }
+
   private async handleEscape(p: {
     organizationId: string;
     senderId: string;
@@ -3875,6 +3927,8 @@ export class ChatbotService implements OnModuleInit {
     MSGS: ReturnType<typeof buildMessages>;
     orgName: string;
     botName: string;
+    org: Organization | null;
+    bookingEnabled: boolean;
   }): Promise<void> {
     const {
       organizationId,
@@ -3888,6 +3942,21 @@ export class ChatbotService implements OnModuleInit {
     await this.cleanUpSession(organizationId, senderId);
 
     const isGreeting = this.greetingRegex.test(textoParaCoincidencia(text));
+
+    // 🔒 Solo consultas: el saludo no abre el menú de servicios.
+    if (isGreeting && !p.bookingEnabled) {
+      await this.responderSoloConsultas({
+        organizationId,
+        senderId,
+        text,
+        org: p.org,
+        orgName,
+        botName,
+        MSGS,
+        motivo: 'AGENDAR',
+      });
+      return;
+    }
 
     if (isGreeting) {
       // Saludo → mostrar bienvenida + menú de servicios con letras (Paso 1).
@@ -4096,7 +4165,14 @@ export class ChatbotService implements OnModuleInit {
     // ✈️ Por Telegram, los textos que nombran el canal dicen «Telegram».
     const MSGS = buildMessages(communicationStyle, canalDe(senderId));
 
-    const currentState = await this.getUserState(organizationId, senderId);
+    // 🔒 Interruptor de operaciones de la clínica (/dashboard/configuracion).
+    // Se lee en cada mensaje: apagarlo surte efecto en el siguiente turno.
+    const bookingEnabled =
+      await this.organizationSettings.isBookingEnabled(organizationId);
+
+    // `let`: con el interruptor apagado, un flujo de operación a medias se
+    // descarta y el turno sigue como si la conversación empezara (ver abajo).
+    let currentState = await this.getUserState(organizationId, senderId);
     this.logger.log(
       `[Tenant: ${organizationId}] Usuario ${senderId} en estado: ${currentState}. Tipo: ${messageType}`,
     );
@@ -4202,6 +4278,21 @@ export class ChatbotService implements OnModuleInit {
         },
       );
       return;
+    }
+
+    // 🔒 SOLO CONSULTAS: si la clínica apagó las operaciones mientras el
+    // paciente agendaba, cancelaba o cambiaba una cita (o esperaba la respuesta
+    // a un cupo de la lista de espera), ese flujo ya no puede terminar. Se
+    // descarta y el mensaje se atiende desde cero: «consultar» abre la consulta
+    // y todo lo demás recibe el aviso de solo consultas (más abajo). Va antes
+    // de clasificar el paso, para que un «A» o un «SÍ» sueltos no se lean como
+    // respuesta a un paso que ya no existe.
+    if (!bookingEnabled && !ESTADOS_SOLO_CONSULTA.includes(currentState)) {
+      this.logger.log(
+        `[Tenant: ${organizationId}] Operaciones apagadas: se descarta el flujo ${currentState} de ${senderId}`,
+      );
+      await this.cleanUpSession(organizationId, senderId);
+      currentState = ChatState.IDLE;
     }
 
     const isStrictStep =
@@ -4589,6 +4680,30 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // 🔒 SOLO CONSULTAS: cancelar o cambiar una cita no se ofrece; el aviso
+    // dice con quién comunicarse. Va después de la baja de recordatorios, que
+    // no es una operación sobre la cita y sigue funcionando.
+    if (
+      !bookingEnabled &&
+      (aiData.isCancellation ||
+        isQuickCancel ||
+        aiData.isModification ||
+        isQuickModify)
+    ) {
+      await this.responderSoloConsultas({
+        organizationId,
+        senderId,
+        text,
+        org,
+        orgName,
+        botName,
+        MSGS,
+        motivo:
+          aiData.isCancellation || isQuickCancel ? 'CANCELAR' : 'MODIFICAR',
+      });
+      return;
+    }
+
     if (aiData.isCancellation || isQuickCancel) {
       await this.startCancellationFlow({
         organizationId,
@@ -4646,6 +4761,8 @@ export class ChatbotService implements OnModuleInit {
         MSGS,
         orgName,
         botName,
+        org,
+        bookingEnabled,
       });
       return;
     }
@@ -4766,6 +4883,25 @@ export class ChatbotService implements OnModuleInit {
 
     if (aiData.cedula || aiData.especialidad || aiData.eps || aiData.doctor) {
       await this.redis.del(retriesKey);
+    }
+
+    // 🔒 SOLO CONSULTAS: lo que llega aquí en IDLE termina en la cascada de
+    // agendamiento (ACK del primer turno, menú de servicios...). Con las
+    // operaciones apagadas se responde el aviso en su lugar. La consulta, las
+    // FAQ, la despedida y los guardrails ya se atendieron arriba; los pasos de
+    // la consulta (cédula, opción) siguen a sus handlers.
+    if (!bookingEnabled && currentState === ChatState.IDLE) {
+      await this.responderSoloConsultas({
+        organizationId,
+        senderId,
+        text,
+        org,
+        orgName,
+        botName,
+        MSGS,
+        motivo: 'AGENDAR',
+      });
+      return;
     }
 
     if (currentState === ChatState.AWAITING_WAITLIST_CONFIRM) {
@@ -6079,6 +6215,7 @@ export class ChatbotService implements OnModuleInit {
       orgName,
       retriesKey,
       retriesCount,
+      bookingEnabled,
     };
 
     // Despacho por estado. Estados con handler registrado → se delega; el
@@ -9072,7 +9209,7 @@ export class ChatbotService implements OnModuleInit {
   }): Promise<void> {
     const { organizationId, senderId, identity, cedula, userMessage, MSGS } = p;
     const ahora = new Date();
-    const [org, mirror, patient] = await Promise.all([
+    const [org, mirror, patient, bookingEnabled] = await Promise.all([
       this.prisma.organization.findUnique({
         where: { id: organizationId },
         select: { supportPhone: true, timezone: true },
@@ -9091,6 +9228,8 @@ export class ChatbotService implements OnModuleInit {
       this.prisma.patientProfile.findFirst({
         where: { cedula, organizationId },
       }),
+      // 🔒 Apagado, la consulta no ofrece cancelar / cambiar / agendar.
+      this.organizationSettings.isBookingEnabled(organizationId),
     ]);
     const timeZone = org?.timezone || undefined;
     const contacto = org?.supportPhone
@@ -9148,6 +9287,7 @@ export class ChatbotService implements OnModuleInit {
       modoBotHis: modoBot,
       citas: relevantes.length,
       pidioHoy,
+      soloConsultas: !bookingEnabled,
     };
 
     if (!esDelRemitente) {
@@ -9200,7 +9340,11 @@ export class ChatbotService implements OnModuleInit {
     }
 
     if (relevantes.length === 0) {
-      const reply = MSGS.consultaSinCitas(patient.fullName) + aviso;
+      const reply =
+        (bookingEnabled
+          ? MSGS.consultaSinCitas(patient.fullName)
+          : MSGS.consultaSinCitasSoloLectura(patient.fullName, contacto)) +
+        aviso;
       await this.smartReply(organizationId, senderId, reply);
       await this.cleanUpSession(organizationId, senderId);
       await this.auditSuccess(senderId, organizationId, {
@@ -9227,6 +9371,28 @@ export class ChatbotService implements OnModuleInit {
       }
     } else {
       cuerpo = relevantes.map(linea).join('\n');
+    }
+
+    // 🔒 Solo consultas: el detalle cierra con quién comunicarse en lugar de
+    // las opciones A-D, y la conversación vuelve a IDLE (no hay qué elegir).
+    if (!bookingEnabled) {
+      const reply =
+        MSGS.consultaDetalle(patient.fullName, cuerpo) +
+        aviso +
+        `\n\n${MSGS.consultaSoloLectura(contacto)}`;
+      await this.smartReply(
+        organizationId,
+        senderId,
+        reply,
+        MSGS.consultaDetalleAudioSoloLectura(patient.fullName),
+      );
+      await this.cleanUpSession(organizationId, senderId);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage,
+        botReply: reply,
+        metadata: { ...metadata, step: 'LOOKUP_SHOWN', patientId: patient.id },
+      });
+      return;
     }
 
     const reply =
@@ -9432,6 +9598,29 @@ export class ChatbotService implements OnModuleInit {
     const cedula = await this.redis.get(
       `temp_lookup_cedula:${organizationId}:${senderId}`,
     );
+
+    // 🔒 Las opciones se mostraron antes de que la clínica apagara las
+    // operaciones: cancelar, cambiar o agendar ya no se pueden.
+    if (
+      !ctx.bookingEnabled &&
+      (letra === 'A' || letra === 'B' || letra === 'C')
+    ) {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+      });
+      await this.responderSoloConsultas({
+        organizationId,
+        senderId,
+        text,
+        org,
+        orgName,
+        botName,
+        MSGS,
+        motivo:
+          letra === 'A' ? 'CANCELAR' : letra === 'B' ? 'MODIFICAR' : 'AGENDAR',
+      });
+      return;
+    }
 
     if ((letra === 'A' || letra === 'B') && !cedula) {
       const reply = MSGS.sesionExpirada();

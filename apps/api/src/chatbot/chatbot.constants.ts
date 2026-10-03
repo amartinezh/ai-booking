@@ -118,6 +118,22 @@ export const CONSENT_1581_INFORMAL = (policyUrl?: string) =>
   (policyUrl ? `\n📄 Consúltala aquí: ${policyUrl}` : '');
 
 // ─────────────────────────────────────────────────────────────
+// SOLO CONSULTAS — la clínica apagó en /dashboard/configuracion agendar,
+// cancelar y cambiar citas por el bot (`OrganizationSettings.bookingEnabled`).
+// El paciente solo consulta; a cualquier otra operación se le responde esto.
+// `contacto` sale de contactoClinica / contactoClinicaSinTelefono.
+// ─────────────────────────────────────────────────────────────
+const SOLO_CONSULTAS_FORMAL = (contacto: string) =>
+  `En este momento la plataforma no está activa para agendar, cancelar ni cambiar citas; solo está activa la *consulta de sus citas*. 🔍\n\n` +
+  `Para agendar una cita o hacer cualquier cambio, por favor comuníquese con ${contacto}.\n\n` +
+  `Si desea ver sus citas, escríbame *"consultar"*.`;
+
+const SOLO_CONSULTAS_INFORMAL = (contacto: string) =>
+  `Por ahora la plataforma no está activa para agendar, cancelar ni cambiar citas; solo está activa la *consulta de tus citas*. 🔍\n\n` +
+  `Para agendar una cita o hacer cualquier cambio, comunícate con ${contacto}. 🙏\n\n` +
+  `Si quieres ver tus citas, escríbeme *"consultar"*.`;
+
+// ─────────────────────────────────────────────────────────────
 // Helper: selección pseudo-aleatoria de variantes.
 // Permite que el bot no repita exactamente la misma frase cada vez.
 // ─────────────────────────────────────────────────────────────
@@ -887,6 +903,28 @@ const FORMAL = {
 
   // Cuando el servicio de una cita del hospital no está homologado.
   consultaCitaHospital: () => `Cita en el hospital`,
+
+  // ── SOLO CONSULTAS (ver SOLO_CONSULTAS_FORMAL) ───────────────
+  soloConsultas: (contacto: string) => SOLO_CONSULTAS_FORMAL(contacto),
+
+  // El mismo aviso, presentándose: primer mensaje de la conversación.
+  soloConsultasBienvenida: (
+    clinicaName: string,
+    contacto: string,
+    botName: string = BOT_NAME,
+  ) =>
+    `Le saluda *${botName}*, asistente virtual de *${clinicaName}*.\n\n` +
+    SOLO_CONSULTAS_FORMAL(contacto),
+
+  // Cierre de la consulta sin las opciones A-D (cancelar, cambiar, agendar).
+  consultaSoloLectura: (contacto: string) =>
+    `Para cancelar o cambiar alguna de estas citas, o para agendar una nueva, comuníquese con ${contacto}: por ahora la plataforma solo permite consultarlas.`,
+
+  consultaSinCitasSoloLectura: (nombre: string, contacto: string) =>
+    `*${nombre}* no tiene citas próximas registradas. 📭\n\nPara agendar una cita, comuníquese con ${contacto}: por ahora la plataforma solo permite consultarlas.`,
+
+  consultaDetalleAudioSoloLectura: (nombre: string) =>
+    `${nombre}, le dejo sus citas en el mensaje de texto.`,
 
   respuestaInvalidaSiNo: () =>
     pick([
@@ -1664,6 +1702,25 @@ const INFORMAL = {
     `No pude confirmar con el hospital ahora. 🙏 Si agendaste directamente allá, puedes confirmar tu cita con ${contacto}.`,
 
   consultaCitaHospital: () => `Cita en el hospital`,
+
+  soloConsultas: (contacto: string) => SOLO_CONSULTAS_INFORMAL(contacto),
+
+  soloConsultasBienvenida: (
+    clinicaName: string,
+    contacto: string,
+    botName: string = BOT_NAME,
+  ) =>
+    `¡Hola! 😊 Soy *${botName}*, de *${clinicaName}*.\n\n` +
+    SOLO_CONSULTAS_INFORMAL(contacto),
+
+  consultaSoloLectura: (contacto: string) =>
+    `Para cancelar o cambiar alguna de estas citas, o para agendar una nueva, comunícate con ${contacto}: por ahora la plataforma solo permite consultarlas. 🙏`,
+
+  consultaSinCitasSoloLectura: (nombre: string, contacto: string) =>
+    `Revisé y *${nombre}* no tiene citas próximas. 📭 Para agendar una, comunícate con ${contacto}: por ahora la plataforma solo permite consultarlas.`,
+
+  consultaDetalleAudioSoloLectura: (nombre: string) =>
+    `${nombre}, te dejo tus citas en el mensaje de texto.`,
 
   respuestaInvalidaSiNo: () =>
     pick([

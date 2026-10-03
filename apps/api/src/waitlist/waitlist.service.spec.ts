@@ -23,6 +23,7 @@ describe('WaitlistService', () => {
       update: jest.Mock;
       count: jest.Mock;
     };
+    organizationSettings: { findUnique: jest.Mock };
   };
   let chatbot: {
     notifyWaitlistCandidate: jest.Mock;
@@ -56,6 +57,8 @@ describe('WaitlistService', () => {
         update: jest.fn().mockResolvedValue({}),
         count: jest.fn().mockResolvedValue(0),
       },
+      // Sin fila de settings = operaciones prendidas (el default).
+      organizationSettings: { findUnique: jest.fn().mockResolvedValue(null) },
     };
     chatbot = {
       notifyWaitlistCandidate: jest.fn().mockResolvedValue(undefined),
@@ -262,6 +265,19 @@ describe('WaitlistService', () => {
         doctor: 'Dra. Ruiz',
         slotDate: params.slotDate,
       });
+    });
+
+    it('con las operaciones del bot apagadas no ofrece el cupo y la cola queda intacta', async () => {
+      prisma.organizationSettings.findUnique.mockResolvedValue({
+        bookingEnabled: false,
+      });
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+
+      await service.notifyWaitlist(params);
+
+      expect(prisma.waitlistEntry.findFirst).not.toHaveBeenCalled();
+      expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
+      expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
     });
 
     it('sin nadie esperando no escribe ni notifica a nadie', async () => {

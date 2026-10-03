@@ -244,7 +244,17 @@ export class AppointmentReminderCronService
         // `timezone` es lo que decide si el paciente lee «Buenos días» o
         // «Buenas tardes»: el cron corre cada 15 min y el contenedor no
         // siempre está en la hora de la clínica (ver CLAUDE.md, multi-tenant).
-        organization: { select: { id: true, name: true, timezone: true } },
+        // `supportPhone` y `settings`: con las operaciones del bot apagadas el
+        // recordatorio remite al hospital en vez de a «cancelar cita».
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            timezone: true,
+            supportPhone: true,
+            settings: { select: { bookingEnabled: true } },
+          },
+        },
       },
       // Procesamos en orden cronológico — las citas más cercanas primero.
       orderBy: { scheduleSlot: { startTime: 'asc' } },
@@ -468,12 +478,19 @@ export class AppointmentReminderCronService
     const doctorName = apt.scheduleSlot.doctor?.fullName ?? 'su médico';
     const serviceName = apt.scheduleSlot.service?.name ?? 'su consulta';
     const fecha = formatForPatient(apt.scheduleSlot.startTime);
+    // 🔒 Operaciones del bot apagadas: el bot no puede cancelar ni cambiar la
+    // cita, así que el recordatorio no lo ofrece. Sin fila de settings = prendido.
+    const botOpera = apt.organization?.settings?.bookingEnabled ?? true;
+    const telefono = apt.organization?.supportPhone;
+    const hospital = telefono ? `el hospital al *${telefono}*` : 'el hospital';
 
     if (style === 'INFORMAL') {
       return (
         `¡Hola${patientName ? ' ' + patientName : ''}! 👋 Soy *${botName}* de *${clinicName}*.\n\n` +
         `Te recuerdo tu cita de *${serviceName}* con *${doctorName}* el *${fecha}*.\n\n` +
-        `Si necesitas reagendar o cancelar, escríbeme *cancelar cita* y te ayudo. ¡Te esperamos! 🩺`
+        (botOpera
+          ? `Si necesitas reagendar o cancelar, escríbeme *cancelar cita* y te ayudo. ¡Te esperamos! 🩺`
+          : `Si necesitas reagendar o cancelar, comunícate con ${hospital}. ¡Te esperamos! 🩺`)
       );
     }
 
@@ -481,7 +498,9 @@ export class AppointmentReminderCronService
       `${saludoPorHora(new Date(), { timeZone: apt.organization?.timezone ?? undefined })}` +
       `${patientName ? ' ' + patientName : ''}. Le saluda *${botName}*, asistente virtual de *${clinicName}*.\n\n` +
       `Le recordamos su cita de *${serviceName}* con *${doctorName}* programada para el *${fecha}*.\n\n` +
-      `Si requiere reagendar o cancelar, por favor responda *cancelar cita* y le ayudaremos. Le esperamos. 🩺`
+      (botOpera
+        ? `Si requiere reagendar o cancelar, por favor responda *cancelar cita* y le ayudaremos. Le esperamos. 🩺`
+        : `Si requiere reagendar o cancelar, por favor comuníquese con ${hospital}. Le esperamos. 🩺`)
     );
   }
 
@@ -546,7 +565,17 @@ export class AppointmentReminderCronService
         // `timezone` es lo que decide si el paciente lee «Buenos días» o
         // «Buenas tardes»: el cron corre cada 15 min y el contenedor no
         // siempre está en la hora de la clínica (ver CLAUDE.md, multi-tenant).
-        organization: { select: { id: true, name: true, timezone: true } },
+        // `supportPhone` y `settings`: con las operaciones del bot apagadas el
+        // recordatorio remite al hospital en vez de a «cancelar cita».
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            timezone: true,
+            supportPhone: true,
+            settings: { select: { bookingEnabled: true } },
+          },
+        },
       },
     });
 

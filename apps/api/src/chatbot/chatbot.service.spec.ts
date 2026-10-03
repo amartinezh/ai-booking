@@ -186,6 +186,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       getBotName: jest.fn(() => 'Geni'),
       getMaxRetries: jest.fn(() => 3),
       getCommunicationStyle: jest.fn(() => 'FORMAL'),
+      isBookingEnabled: jest.fn(() => true),
     };
 
     interactionLog = {

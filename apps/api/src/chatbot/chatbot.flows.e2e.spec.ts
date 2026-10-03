@@ -441,6 +441,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
             getBotName: jest.fn(() => 'AgenIA'),
             getMaxRetries: jest.fn(() => 3),
             getCommunicationStyle: jest.fn(() => 'FORMAL'),
+            isBookingEnabled: jest.fn(() => true),
           },
         },
         {

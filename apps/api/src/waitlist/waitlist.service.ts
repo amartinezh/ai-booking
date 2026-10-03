@@ -106,6 +106,20 @@ export class WaitlistService {
     const { slotId, serviceId, epsId, organizationId, doctorName, slotDate } =
       params;
 
+    // 🔒 Con las operaciones del bot apagadas (/dashboard/configuracion) no se
+    // ofrece el cupo: el «SÍ» del paciente sería una cita agendada por el bot.
+    // La cola queda intacta (nadie pasa a NOTIFIED) y se retoma al encenderlo.
+    const settings = await this.prisma.organizationSettings.findUnique({
+      where: { organizationId },
+      select: { bookingEnabled: true },
+    });
+    if (settings?.bookingEnabled === false) {
+      this.logger.log(
+        `Operaciones del bot apagadas en ${organizationId}: no se ofrece el cupo ${slotId} a la lista de espera`,
+      );
+      return;
+    }
+
     // Buscar al primer candidato FIFO compatible (universal o de la EPS específica)
     const candidate = await this.prisma.waitlistEntry.findFirst({
       where: {
