@@ -463,7 +463,7 @@ export class AppointmentReminderCronService
     const botName = await this.organizationSettings.getBotName(
       apt.organizationId,
     );
-    const clinicName = apt.organization?.name ?? 'su clínica';
+    const clinicName = apt.organization?.name ?? 'su hospital';
     const patientName = apt.patient?.fullName?.split(' ')[0] ?? '';
     const doctorName = apt.scheduleSlot.doctor?.fullName ?? 'su médico';
     const serviceName = apt.scheduleSlot.service?.name ?? 'su consulta';

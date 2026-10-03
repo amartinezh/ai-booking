@@ -284,7 +284,7 @@ export class HisConfirmationService {
         select: { name: true },
       }),
     ]);
-    const clinica = org?.name ?? 'su clínica';
+    const clinica = org?.name ?? 'su hospital';
     // Sin «escríbeme cancelar cita»: el bot no conoce esta cita (nació en el hospital)
     // y no podría cancelarla. Decírselo evita una segunda frustración.
     return (

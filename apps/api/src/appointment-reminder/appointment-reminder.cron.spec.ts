@@ -525,7 +525,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       expect(texto).not.toContain('undefined');
       expect(texto).toContain('su médico');
       expect(texto).toContain('su consulta');
-      expect(texto).toContain('su clínica');
+      expect(texto).toContain('su hospital');
     });
   });
 

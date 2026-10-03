@@ -81,7 +81,7 @@ export class SurveyService {
       id: survey.id,
       resolutionStatus: survey.resolutionStatus,
       chatSummary: survey.chatSummary,
-      organizationName: survey.organization?.name ?? 'la clínica',
+      organizationName: survey.organization?.name ?? 'el hospital',
     };
   }
 

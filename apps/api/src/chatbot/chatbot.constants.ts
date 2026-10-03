@@ -529,8 +529,8 @@ const FORMAL = {
   // NO se ofrece "elegir otro" aquí, para no hacerle perder el tiempo.
   epsRegimenNoFacturable: () =>
     pick([
-      `Le pido disculpas: su EPS no tiene convenio vigente para agendar por este medio con su tipo de afiliación.\n\nPor favor comuníquese directamente con la clínica para gestionar su cita.`,
-      `No es posible agendar esta cita por este canal: su EPS no cuenta con convenio para su régimen en este momento.\n\nLe recomiendo contactar directamente a la clínica.`,
+      `Le pido disculpas: su EPS no tiene convenio vigente para agendar por este medio con su tipo de afiliación.\n\nPor favor comuníquese directamente con el hospital para gestionar su cita.`,
+      `No es posible agendar esta cita por este canal: su EPS no cuenta con convenio para su régimen en este momento.\n\nLe recomiendo contactar directamente al hospital.`,
     ]),
 
   // El paciente nombró una EPS real que esta clínica no atiende. En vez de repetirle
@@ -676,14 +676,14 @@ const FORMAL = {
 
   recordatoriosSinRegistro: () =>
     pick([
-      `No encuentro una historia registrada con este número, así que no hay recordatorios que desactivar. 🤔\n\nSi le llegan mensajes nuestros, por favor comuníquese con la clínica para revisarlo.`,
-      `Con este número no tengo ninguna historia registrada, así que no le estamos enviando recordatorios. Si aun así los recibe, por favor avísele a la clínica.`,
+      `No encuentro una historia registrada con este número, así que no hay recordatorios que desactivar. 🤔\n\nSi le llegan mensajes nuestros, por favor comuníquese con el hospital para revisarlo.`,
+      `Con este número no tengo ninguna historia registrada, así que no le estamos enviando recordatorios. Si aun así los recibe, por favor avísele al hospital.`,
     ]),
 
   outOfContext: (botName: string = BOT_NAME) =>
     pick([
       `Disculpe, soy *${botName}* y le acompaño únicamente con el agendamiento de citas médicas. 🏥\n\n¿Me indica qué especialidad necesita o el nombre del médico que está buscando?`,
-      `Mi labor es ayudarle a agendar citas médicas aquí en la clínica.\n\n¿Qué servicio o médico está buscando?`,
+      `Mi labor es ayudarle a agendar citas médicas aquí en el hospital.\n\n¿Qué servicio o médico está buscando?`,
       `Únicamente puedo colaborarle con citas médicas.\n\n¿Me indica qué especialidad necesita o con cuál doctor desea su cita?`,
     ]),
 
@@ -852,9 +852,9 @@ const FORMAL = {
   consultaSinCitas: (nombre: string) =>
     `*${nombre}* no tiene citas próximas registradas. 📭\n\nSi desea agendar una, escríbame *"Hola"* y le muestro los servicios.`,
 
-  // Con quién se comunica el paciente: la clínica, con su teléfono si lo hay.
-  contactoClinica: (telefono: string) => `la clínica al *${telefono}*`,
-  contactoClinicaSinTelefono: () => `la clínica`,
+  // Con quién se comunica el paciente: el hospital, con su teléfono si lo hay.
+  contactoClinica: (telefono: string) => `el hospital al *${telefono}*`,
+  contactoClinicaSinTelefono: () => `el hospital`,
 
   // Quien escribe NO es el paciente: ni nombre, ni especialidad, ni médico, ni
   // hora. Sin citas (o sin ese documento) usa consultaMinimaSinCitas, que no
@@ -1346,8 +1346,8 @@ const INFORMAL = {
   // por eso no se ofrece "elegir otro".
   epsRegimenNoFacturable: () =>
     pick([
-      `Uy, qué pena: tu EPS no tiene convenio vigente para agendar por acá con tu tipo de afiliación. 🙏\n\nTe recomiendo comunicarte directamente con la clínica.`,
-      `No puedo agendarte esta cita por este medio: tu EPS no tiene convenio para tu régimen en este momento.\n\nMejor comunícate directo con la clínica.`,
+      `Uy, qué pena: tu EPS no tiene convenio vigente para agendar por acá con tu tipo de afiliación. 🙏\n\nTe recomiendo comunicarte directamente con el hospital.`,
+      `No puedo agendarte esta cita por este medio: tu EPS no tiene convenio para tu régimen en este momento.\n\nMejor comunícate directo con el hospital.`,
     ]),
 
   epsNoDisponibleOfrecerParticular: (nombreEps: string) =>
@@ -1476,8 +1476,8 @@ const INFORMAL = {
 
   recordatoriosSinRegistro: () =>
     pick([
-      `No tengo ninguna historia registrada con este número, así que no te estamos enviando recordatorios. 🤔 Si de todos modos te llegan, avísale a la clínica.`,
-      `Con este número no encuentro historia, así que no hay recordatorios que apagar. Si recibes mensajes nuestros, cuéntale a la clínica. 🙏`,
+      `No tengo ninguna historia registrada con este número, así que no te estamos enviando recordatorios. 🤔 Si de todos modos te llegan, avísale al hospital.`,
+      `Con este número no encuentro historia, así que no hay recordatorios que apagar. Si recibes mensajes nuestros, cuéntale al hospital. 🙏`,
     ]),
 
   outOfContext: (botName: string = BOT_NAME) =>
@@ -1639,8 +1639,8 @@ const INFORMAL = {
   consultaSinCitas: (nombre: string) =>
     `Revisé y *${nombre}* no tiene citas próximas. 📭 Si quieres agendar una, escríbeme *"Hola"* y te muestro los servicios. 😊`,
 
-  contactoClinica: (telefono: string) => `la clínica al *${telefono}*`,
-  contactoClinicaSinTelefono: () => `la clínica`,
+  contactoClinica: (telefono: string) => `el hospital al *${telefono}*`,
+  contactoClinicaSinTelefono: () => `el hospital`,
 
   consultaMinima: (cantidad: string, contacto: string) =>
     `Con ese documento hay citas próximas registradas: *${cantidad}*. 🔒\n\n` +
