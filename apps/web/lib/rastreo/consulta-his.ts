@@ -24,7 +24,6 @@ import {
   LIMITES_CONSULTA_HIS,
   VENTANA_CITAS_DIAS,
   combinarEvidenciaHis,
-  documentoSinCerosIniciales,
   esDocumentoValido,
   estadoConexionHis,
   leerResultadoGuardado,
@@ -101,12 +100,8 @@ export interface CitaParaConsulta {
   doctorExternalKey: string | null;
 }
 
-/** El documento tal cual y, si difiere, sin ceros a la izquierda (lo que el HIS puede tener). */
-export function documentosDelPaciente(cedula: string): string[] {
-  const propio = cedula.trim();
-  if (!propio) return [];
-  return [...new Set([propio, documentoSinCerosIniciales(propio)])].filter(Boolean);
-}
+/** El documento tal cual y, si difiere, sin ceros a la izquierda: vive en shared (lo usa también el bot). */
+export { documentosDelPaciente } from '@agenia/shared';
 
 /**
  * Ventana de la búsqueda por documento (A): cubre las citas relevantes de AgenIA y,
@@ -261,6 +256,9 @@ export async function pendientesDeLaClinica(
   return db.hisLookupRequest.count({
     where: {
       organizationId,
+      // Las del bot tienen su propio tope (LIMITES_CONSULTA_BOT): no le quitan
+      // cupo a la ventanilla.
+      origin: 'STAFF',
       status: 'PENDIENTE',
       createdAt: { gte: new Date(ahora.getTime() - LIMITES_CONSULTA_HIS.expiraMs) },
     },

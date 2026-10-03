@@ -872,6 +872,22 @@ const FORMAL = {
   consultaAvisoHospital: (contacto: string) =>
     `ℹ️ Si agendó directamente en el hospital, es posible que alguna cita no aparezca aquí; puede confirmarla con ${contacto}.`,
 
+  // ── Fase B: el bot le pregunta al hospital (docs/PLAN_CONSULTA_CITAS.md) ──
+  // Promete solo lo que cumple: si el hospital no trae nada nuevo, el bot calla (D6).
+  consultaConfirmandoHospital: () =>
+    `⏳ Estoy confirmando con el hospital; si tiene alguna otra cita, le escribo en un momento.`,
+
+  // Las citas que solo están en el hospital son de solo lectura (D7).
+  consultaHisNuevas: (lineas: string, contacto: string) =>
+    `🏥 El hospital tiene estas citas a su nombre:\n\n${lineas}\n\n` +
+    `Para cambiarlas o cancelarlas, comuníquese con ${contacto}.`,
+
+  consultaHisNoDisponible: (contacto: string) =>
+    `No pude confirmar con el hospital en este momento. Si agendó directamente allá, puede confirmar su cita con ${contacto}.`,
+
+  // Cuando el servicio de una cita del hospital no está homologado.
+  consultaCitaHospital: () => `Cita en el hospital`,
+
   respuestaInvalidaSiNo: () =>
     pick([
       `No logré interpretar su respuesta. ¿Me ayuda respondiendo *SÍ* para confirmar o *NO* para cancelar?`,
@@ -1636,6 +1652,18 @@ const INFORMAL = {
 
   consultaAvisoHospital: (contacto: string) =>
     `ℹ️ Si agendaste directamente en el hospital, puede que alguna cita no aparezca aquí; puedes confirmarla con ${contacto}.`,
+
+  consultaConfirmandoHospital: () =>
+    `⏳ Estoy confirmando con el hospital; si tienes alguna otra cita, te escribo en un momento.`,
+
+  consultaHisNuevas: (lineas: string, contacto: string) =>
+    `🏥 El hospital tiene estas citas a tu nombre:\n\n${lineas}\n\n` +
+    `Para cambiarlas o cancelarlas, comunícate con ${contacto}.`,
+
+  consultaHisNoDisponible: (contacto: string) =>
+    `No pude confirmar con el hospital ahora. 🙏 Si agendaste directamente allá, puedes confirmar tu cita con ${contacto}.`,
+
+  consultaCitaHospital: () => `Cita en el hospital`,
 
   respuestaInvalidaSiNo: () =>
     pick([

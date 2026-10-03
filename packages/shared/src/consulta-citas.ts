@@ -16,7 +16,8 @@
  *      UTC (ver CLAUDE.md): sin zona explícita, "hoy" cambia a las 7 p. m.
  */
 import { DEFAULT_TIMEZONE } from './date-format';
-import { LIMITES_CONSULTA_HIS } from './his-lookup';
+import { LIMITES_CONSULTA_HIS, mismoInstante } from './his-lookup';
+import type { CitaHisVista } from './his-lookup';
 import { variantesDeTelefono } from './patient-search';
 import { horaLocalAUtc } from './rango-estadisticas';
 
@@ -170,4 +171,78 @@ export function inicioDelDiaLocal(
 ): Date {
   const [y, m, d] = diaLocal(instante, timeZone).split('-').map(Number);
   return horaLocalAUtc(y, m, d, 0, timeZone);
+}
+
+// ─────────────────────────────────────────────────────────────
+// 4. Fase B: el bot le pregunta al HIS (docs/PLAN_CONSULTA_CITAS.md §3)
+// ─────────────────────────────────────────────────────────────
+
+/** Topes PROPIOS del bot: no comparten cupo con los del personal (§3.4). */
+export const LIMITES_CONSULTA_BOT = {
+  /** Peticiones del bot en curso por clínica (las del personal tienen sus 5 aparte). */
+  pendientesPorClinica: 3,
+  /** Una consulta al HIS por paciente en esta ventana: preguntar otra vez no recarga el hospital. */
+  porPacienteMin: 10,
+  /** Dentro de esta ventana, el resultado de la consulta anterior se reutiliza tal cual. */
+  reutilizarMin: 5,
+  /** Hasta cuántos días adelante se buscan citas (desde hoy a medianoche, hora local). */
+  diasAdelante: 60,
+  /** Un resultado que el bot no atendió en este tiempo ya no se le comunica al paciente. */
+  seguimientoMaxMin: 10,
+} as const;
+
+/** Ventana de la búsqueda por documento del bot: hoy 00:00 local → +60 días. */
+export function ventanaConsultaBot(
+  ahora: Date,
+  timeZone: string = DEFAULT_TIMEZONE,
+): { desde: Date; hasta: Date } {
+  const desde = inicioDelDiaLocal(ahora, timeZone);
+  const hasta = new Date(
+    desde.getTime() + LIMITES_CONSULTA_BOT.diasAdelante * 86_400_000,
+  );
+  return { desde, hasta };
+}
+
+/** Una cita que AgenIA ya conoce, para no repetirla. */
+export interface CitaConocida {
+  startIso: string;
+  /** Clave del médico en el HIS; `null` si su médico no está homologado. */
+  doctorExternalKey: string | null;
+}
+
+/**
+ * Lo que el HIS tiene y AgenIA no, listo para mostrarle al PACIENTE.
+ *
+ * · Solo filas cuyo titular es el paciente (también con ceros distintos): las
+ *   de un tercero nunca, aunque compartan cupo.
+ * · Solo citas vigentes (`SCHEDULED`) desde `desde`.
+ * · Es la misma cita si coincide la hora al minuto (el HIS guarda minutos) y el
+ *   médico; si el médico de la cita de AgenIA no está homologado, basta la hora:
+ *   mejor callar una cita que mostrarla dos veces.
+ */
+export function citasHisNuevas(
+  citasHis: CitaHisVista[],
+  conocidas: CitaConocida[],
+  desde: Date,
+): CitaHisVista[] {
+  const vistas: CitaHisVista[] = [];
+  for (const c of citasHis) {
+    if (c.titular !== 'PACIENTE' && c.titular !== 'MISMO_CON_CEROS') continue;
+    if (c.status !== 'SCHEDULED') continue;
+    if (Date.parse(c.startIso) < desde.getTime()) continue;
+    const yaEsta = (k: CitaConocida) =>
+      mismoInstante(k.startIso, c.startIso) &&
+      (k.doctorExternalKey === null ||
+        k.doctorExternalKey === c.doctorExternalKey);
+    if (conocidas.some(yaEsta)) continue;
+    // El HIS puede devolver la misma cita dos veces (dos documentos del paciente).
+    const repetida = vistas.some(
+      (v) =>
+        mismoInstante(v.startIso, c.startIso) &&
+        v.doctorExternalKey === c.doctorExternalKey,
+    );
+    if (repetida) continue;
+    vistas.push(c);
+  }
+  return vistas.sort((a, b) => Date.parse(a.startIso) - Date.parse(b.startIso));
 }

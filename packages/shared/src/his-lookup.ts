@@ -310,6 +310,19 @@ export function mismoInstante(aIso: string, bIso: string): boolean {
 // Lo que la web pide, lo que el servidor guarda y lo que se lee después
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Los documentos con que se busca a un paciente en el HIS: el escrito y, si
+ * difiere, sin ceros a la izquierda (el HIS puede tener cualquiera de los dos).
+ * Lo usan la pantalla del rastreo y el bot.
+ */
+export function documentosDelPaciente(cedula: string): string[] {
+  const propio = cedula.trim();
+  if (!propio) return [];
+  return [...new Set([propio, documentoSinCerosIniciales(propio)])].filter(
+    Boolean,
+  );
+}
+
 /** `HisLookupRequest.params` de una petición por documento. */
 export interface ParamsConsultaPorDocumento {
   patientDocuments: string[];

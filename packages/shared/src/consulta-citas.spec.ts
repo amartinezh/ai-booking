@@ -1,11 +1,18 @@
 import {
+  citasHisNuevas,
+  LIMITES_CONSULTA_BOT,
+  ventanaConsultaBot,
   diaLocal,
   estadoConexionHis,
   inicioDelDiaLocal,
   remitenteEsDelPaciente,
   type ConfigConexionHis,
 } from './consulta-citas';
-import { LIMITES_CONSULTA_HIS } from './his-lookup';
+import {
+  LIMITES_CONSULTA_HIS,
+  documentosDelPaciente,
+  type CitaHisVista,
+} from './his-lookup';
 
 const AHORA = new Date('2026-10-02T15:00:00Z');
 const haceMin = (min: number) => new Date(AHORA.getTime() - min * 60_000);
@@ -168,5 +175,104 @@ describe('diaLocal / inicioDelDiaLocal', () => {
     expect(inicioDelDiaLocal(t, 'Europe/Madrid').toISOString()).toBe(
       '2026-10-02T22:00:00.000Z',
     );
+  });
+});
+
+describe('documentosDelPaciente', () => {
+  it('el documento y, si difiere, sin ceros a la izquierda', () => {
+    expect(documentosDelPaciente('1088123456')).toEqual(['1088123456']);
+    expect(documentosDelPaciente('0012345')).toEqual(['0012345', '12345']);
+    expect(documentosDelPaciente('  ')).toEqual([]);
+  });
+});
+
+describe('ventanaConsultaBot', () => {
+  it('de hoy a medianoche (Bogotá) a 60 días', () => {
+    const { desde, hasta } = ventanaConsultaBot(AHORA);
+    expect(desde.toISOString()).toBe('2026-10-02T05:00:00.000Z');
+    expect((hasta.getTime() - desde.getTime()) / 86_400_000).toBe(
+      LIMITES_CONSULTA_BOT.diasAdelante,
+    );
+  });
+});
+
+describe('citasHisNuevas', () => {
+  const DESDE = new Date('2026-10-02T05:00:00Z');
+  // Horas NO redondas: el HIS guarda minutos, AgenIA segundos y milisegundos.
+  const cita = (over: Partial<CitaHisVista> = {}): CitaHisVista => ({
+    doctorExternalKey: 'MED-1',
+    startIso: '2026-10-05T14:30:00.000Z',
+    serviceExternalKey: 'SRV-1',
+    status: 'SCHEDULED',
+    titular: 'PACIENTE',
+    documentoTercero: null,
+    ...over,
+  });
+
+  it('una cita del HIS que AgenIA no tiene → nueva', () => {
+    expect(citasHisNuevas([cita()], [], DESDE)).toHaveLength(1);
+  });
+
+  it('la misma cita (mismo médico, misma hora al minuto) no se repite', () => {
+    const conocida = {
+      startIso: '2026-10-05T14:30:27.412Z',
+      doctorExternalKey: 'MED-1',
+    };
+    expect(citasHisNuevas([cita()], [conocida], DESDE)).toEqual([]);
+  });
+
+  it('misma hora con OTRO médico sí es otra cita', () => {
+    const conocida = {
+      startIso: '2026-10-05T14:30:00.000Z',
+      doctorExternalKey: 'MED-2',
+    };
+    expect(citasHisNuevas([cita()], [conocida], DESDE)).toHaveLength(1);
+  });
+
+  it('si el médico de AgenIA no está homologado, basta la hora (mejor callar que duplicar)', () => {
+    const conocida = {
+      startIso: '2026-10-05T14:30:00.000Z',
+      doctorExternalKey: null,
+    };
+    expect(citasHisNuevas([cita()], [conocida], DESDE)).toEqual([]);
+  });
+
+  it('🔒 nunca filas de un tercero; sí el mismo documento con ceros distintos', () => {
+    const r = citasHisNuevas(
+      [
+        cita({ titular: 'OTRO', documentoTercero: '•••9999' }),
+        cita({ titular: 'SIN_DOCUMENTO', startIso: '2026-10-06T14:30:00.000Z' }),
+        cita({ titular: 'MISMO_CON_CEROS', startIso: '2026-10-07T14:30:00.000Z' }),
+      ],
+      [],
+      DESDE,
+    );
+    expect(r.map((c) => c.titular)).toEqual(['MISMO_CON_CEROS']);
+  });
+
+  it('solo vigentes y desde el inicio de la ventana', () => {
+    const r = citasHisNuevas(
+      [
+        cita({ status: 'ATTENDED' }),
+        cita({ status: 'NO_SHOW', startIso: '2026-10-06T14:30:00.000Z' }),
+        cita({ startIso: '2026-10-01T14:30:00.000Z' }),
+      ],
+      [],
+      DESDE,
+    );
+    expect(r).toEqual([]);
+  });
+
+  it('la misma cita devuelta dos veces por el HIS sale una vez, y en orden', () => {
+    const tarde = cita({ startIso: '2026-10-09T20:00:00.000Z' });
+    const r = citasHisNuevas(
+      [tarde, cita(), cita({ titular: 'MISMO_CON_CEROS' })],
+      [],
+      DESDE,
+    );
+    expect(r.map((c) => c.startIso)).toEqual([
+      '2026-10-05T14:30:00.000Z',
+      '2026-10-09T20:00:00.000Z',
+    ]);
   });
 });

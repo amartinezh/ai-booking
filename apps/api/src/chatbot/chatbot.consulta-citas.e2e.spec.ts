@@ -18,6 +18,7 @@ import { SurveyService } from '../survey/survey.service';
 import { AudioConfigService } from '../audio-config/audio-config.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
 import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
+import { ConsultaHisBotService } from './consulta-his-bot.service';
 
 // ════════════════════════════════════════════════════════════════════
 // CONSULTA DE CITAS ("¿qué citas tengo?") — E2E conversacional
@@ -103,7 +104,34 @@ type Db = {
   appointments: any[];
   slots: any[];
   mirror: any;
+  /** HisLookupRequest */
+  requests: any[];
+  /** MirrorEntityMap */
+  maps: any[];
+  doctors: any[];
 };
+
+/**
+ * Un `where` de Prisma sobre una fila en memoria: igualdad, `null`, `{ in }`,
+ * `{ gte }` y `{ lt }`. Suficiente para las consultas del bot al HIS; lo que no
+ * entiende lo rechaza (mejor una prueba que falla que una que pasa por error).
+ */
+function cumple(fila: any, where: any = {}): boolean {
+  return Object.entries(where).every(([k, cond]: [string, any]) => {
+    const v = fila[k];
+    if (cond === null) return v === null || v === undefined;
+    if (cond instanceof Date) return v?.getTime() === cond.getTime();
+    if (typeof cond === 'object') {
+      return Object.entries(cond).every(([op, x]: [string, any]) => {
+        if (op === 'in') return x.includes(v);
+        if (op === 'gte') return v >= x;
+        if (op === 'lt') return v < x;
+        throw new Error(`operador no soportado en el doble: ${op}`);
+      });
+    }
+    return v === cond;
+  });
+}
 
 function createPrisma(db: Db) {
   const slotDe = (a: any) => db.slots.find((s) => s.id === a.scheduleSlotId);
@@ -150,7 +178,11 @@ function createPrisma(db: Db) {
       findUnique: jest.fn(() => db.mirror),
     },
     medicalService: {
-      findMany: jest.fn(() => [SVC_MEDICINA, SVC_ODONTO]),
+      findMany: jest.fn(({ where }: any = {}) =>
+        [SVC_MEDICINA, SVC_ODONTO].filter(
+          (sv) => !where?.id?.in || where.id.in.includes(sv.id),
+        ),
+      ),
       findFirst: jest.fn(() => null),
     },
     eps: {
@@ -175,7 +207,46 @@ function createPrisma(db: Db) {
         ),
       ),
     },
-    doctorProfile: { findMany: jest.fn(() => []) },
+    doctorProfile: {
+      findMany: jest.fn(({ where }: any = {}) =>
+        db.doctors.filter((d) => !where?.id?.in || where.id.in.includes(d.id)),
+      ),
+    },
+    mirrorEntityMap: {
+      findMany: jest.fn(({ where }: any) =>
+        db.maps.filter((m) => cumple(m, where)),
+      ),
+    },
+    hisLookupRequest: {
+      findFirst: jest.fn(({ where }: any) => {
+        const filas = db.requests.filter((r) => cumple(r, where));
+        return filas.sort((a, b) => b.createdAt - a.createdAt)[0] ?? null;
+      }),
+      count: jest.fn(
+        ({ where }: any) => db.requests.filter((r) => cumple(r, where)).length,
+      ),
+      create: jest.fn(({ data }: any) => {
+        const r = {
+          id: `req-${db.requests.length + 1}`,
+          status: 'PENDIENTE',
+          result: null,
+          botFollowupAt: null,
+          purgedAt: null,
+          createdAt: new Date(),
+          ...data,
+        };
+        db.requests.push(r);
+        return { id: r.id };
+      }),
+      findMany: jest.fn(({ where }: any) =>
+        db.requests.filter((r) => cumple(r, where)),
+      ),
+      updateMany: jest.fn(({ where, data }: any) => {
+        const filas = db.requests.filter((r) => cumple(r, where));
+        for (const r of filas) Object.assign(r, data);
+        return { count: filas.length };
+      }),
+    },
     appointment: {
       findMany: jest.fn(({ where }: any) => {
         const desde: Date | undefined = where.scheduleSlot?.startTime?.gte;
@@ -214,6 +285,7 @@ const slotRow = (id: string, fecha: Date, doctor: string, service: any) => ({
   organizationId: ORG_ID,
   serviceId: service.id,
   allowedEpsId: null,
+  doctorId: `doc-${doctor}`,
   doctor: { fullName: doctor, whatsappBookingEnabled: true },
   service,
 });
@@ -295,7 +367,15 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       ],
     });
     redis = createFakeRedis();
-    db = { patients: [], appointments: [], slots: [], mirror: null };
+    db = {
+      patients: [],
+      appointments: [],
+      slots: [],
+      mirror: null,
+      requests: [],
+      maps: [],
+      doctors: [],
+    };
     provider = {
       name: 'GEMINI',
       extractSchedulingIntent: jest.fn(() => extraction()),
@@ -313,6 +393,8 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ChatbotService,
+        // El servicio REAL de la Fase B, sobre el mismo doble de la base.
+        ConsultaHisBotService,
         { provide: PrismaService, useValue: createPrisma(db) },
         { provide: ConfigService, useValue: { get: jest.fn(() => undefined) } },
         { provide: HttpService, useValue: { post: jest.fn() } },
@@ -548,10 +630,11 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(pasos()[0].metadata.conexionHis).toBe('SIN_HOSPITAL');
     });
 
-    it('con hospital (aunque la conexión esté viva) advierte que una cita del hospital podría faltar: la Fase A no le pregunta al HIS', async () => {
+    it('con el interruptor del bot apagado manda el del bot, no el del personal: APAGADA, advierte y no consulta', async () => {
       db.mirror = {
         enabled: true,
-        lookupEnabled: true,
+        lookupEnabled: true, // el del personal, prendido
+        botLookupMode: 'OFF',
         lastLookupCapable: true,
         lastHeartbeatAt: new Date(AHORA.getTime() - 60_000),
         lastHisReachable: true,
@@ -559,7 +642,8 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       await say('que citas tengo');
       expect(lastSent()).toContain('directamente en el hospital');
       expect(lastSent()).toContain(SOPORTE);
-      expect(pasos()[0].metadata.conexionHis).toBe('VIVA');
+      expect(pasos()[0].metadata.conexionHis).toBe('APAGADA');
+      expect(db.requests).toHaveLength(0);
     });
 
     it('con el espejo apagado registra APAGADA y también advierte', async () => {
@@ -662,6 +746,314 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       );
       await say('me recuerda para qué día me dieron la consulta?');
       expect(lastSent()).toContain('Citas de *Juan Pérez*');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // Fase B: el bot le pregunta al HIS (docs/PLAN_CONSULTA_CITAS.md)
+  // ──────────────────────────────────────────────────────────────────
+  describe('Fase B — consulta al HIS en vivo', () => {
+    const MED_AGENIA = 'doc-Dr apt-1';
+    // Horas NO redondas en AgenIA: el HIS guarda minutos.
+    const MANANA_CON_SEGUNDOS = new Date(MANANA.getTime() + 27_412);
+    const EN_5_DIAS = '2026-10-07T19:30:00.000Z';
+
+    const viva = (modo: 'OFF' | 'SHADOW' | 'ON') => ({
+      enabled: true,
+      lookupEnabled: false, // el del personal: no importa para el bot
+      botLookupMode: modo,
+      lastLookupCapable: true,
+      lastHeartbeatAt: new Date(AHORA.getTime() - 60_000),
+      lastHisReachable: true,
+    });
+    const filaHis = (over: Record<string, unknown> = {}) => ({
+      doctorExternalKey: 'MED-HIS-1',
+      startIso: MANANA.toISOString(),
+      serviceExternalKey: 'SRV-HIS-1',
+      status: 'SCHEDULED',
+      titular: 'PACIENTE',
+      documentoTercero: null,
+      ...over,
+    });
+    /** Lo que hace el agente: responde la petición (vía MirrorLookupService). */
+    const responde = (citas: unknown[], status = 'RESUELTA') => {
+      const r = db.requests.at(-1);
+      Object.assign(r, {
+        status,
+        result:
+          status === 'RESUELTA'
+            ? {
+                kind: 'BY_DOCUMENT',
+                desdeIso: r.params.fromIso,
+                hastaIso: r.params.toIso,
+                citas,
+                truncado: false,
+              }
+            : null,
+      });
+    };
+    const barrido = () => service.atenderSeguimientosHis();
+    const resultados = () =>
+      interactionLog.logSuccess.mock.calls
+        .map((c: any[]) => c[0])
+        .filter((e: any) => e?.metadata?.step === 'HIS_LOOKUP_RESULT');
+
+    beforeEach(() => {
+      seedPaciente();
+      // La cita de AgenIA de mañana es la MISMA que el HIS tiene (médico homologado).
+      db.slots.push({
+        ...slotRow('slot-apt-1', MANANA_CON_SEGUNDOS, 'Dr apt-1', SVC_MEDICINA),
+      });
+      db.appointments.push({
+        id: 'apt-1',
+        patientId: 'pat-1',
+        scheduleSlotId: 'slot-apt-1',
+        status: 'SCHEDULED',
+        organizationId: ORG_ID,
+      });
+      db.maps.push(
+        {
+          organizationId: ORG_ID,
+          entityType: 'DOCTOR',
+          agenIAId: MED_AGENIA,
+          externalKey: 'MED-HIS-1',
+          externalLabel: 'MEDICO UNO',
+        },
+        {
+          organizationId: ORG_ID,
+          entityType: 'DOCTOR',
+          agenIAId: 'doc-ana',
+          externalKey: 'MED-HIS-2',
+          externalLabel: 'ANA GOMEZ (HIS)',
+        },
+        {
+          organizationId: ORG_ID,
+          entityType: 'SERVICE',
+          agenIAId: SVC_ODONTO.id,
+          externalKey: 'SRV-HIS-2',
+          externalLabel: null,
+        },
+      );
+      db.doctors.push({
+        id: 'doc-ana',
+        fullName: 'Ana Gómez',
+        isFunctionalAgenda: false,
+      });
+    });
+
+    it('ON + conexión viva: responde ya con AgenIA, encola la consulta y promete escribir solo si hay algo más', async () => {
+      db.mirror = viva('ON');
+      await say('que citas tengo');
+
+      const r = lastSent();
+      expect(r).toContain('Citas de *Juan Pérez*');
+      expect(r).toContain('Estoy confirmando con el hospital');
+      expect(r).not.toContain('directamente en el hospital');
+      expect(state()).toBe(ChatState.AWAITING_LOOKUP_CHOICE);
+
+      expect(db.requests).toHaveLength(1);
+      const req = db.requests[0];
+      expect(req).toMatchObject({
+        origin: 'BOT',
+        requestedByUserId: 'chatbot',
+        kind: 'BY_DOCUMENT',
+        patientId: 'pat-1',
+      });
+      expect(req.params.patientDocuments).toEqual([CEDULA]);
+      // Hoy a medianoche (Bogotá) → 60 días.
+      expect(req.params.fromIso).toBe('2026-10-02T05:00:00.000Z');
+      // El remitente vive en Redis, no en la base.
+      expect(JSON.stringify(req)).not.toContain(SENDER);
+      expect(redis.store.get(`bot_his_req:${req.id}`)).toBe(SENDER);
+    });
+
+    it('el segundo mensaje trae SOLO lo nuevo del paciente, con nombres; nunca lo de un tercero', async () => {
+      db.mirror = viva('ON');
+      await say('que citas tengo');
+      const antes = sent().length;
+
+      responde([
+        filaHis(), // la misma de AgenIA (misma hora al minuto, médico homologado)
+        filaHis({
+          doctorExternalKey: 'MED-HIS-2',
+          serviceExternalKey: 'SRV-HIS-2',
+          startIso: EN_5_DIAS,
+        }),
+        filaHis({
+          titular: 'OTRO',
+          documentoTercero: '•••9999',
+          startIso: '2026-10-08T15:00:00.000Z',
+        }),
+      ]);
+      await barrido();
+
+      expect(sent()).toHaveLength(antes + 1);
+      const r = lastSent();
+      expect(r).toContain('El hospital tiene estas citas a su nombre');
+      expect(r).toContain('Odontología · Dr(a). Ana Gómez');
+      expect(r).not.toContain('MED-HIS');
+      expect(r).not.toContain('9999');
+      expect(r.match(/^• /gm)).toHaveLength(1);
+      expect(resultados()[0].metadata).toMatchObject({
+        modoBotHis: 'ON',
+        status: 'RESUELTA',
+        citasHis: 2,
+        nuevas: 1,
+        enviado: true,
+      });
+    });
+
+    it('D6: si el hospital no trae nada nuevo, silencio (pero se registra)', async () => {
+      db.mirror = viva('ON');
+      await say('que citas tengo');
+      const antes = sent().length;
+      responde([filaHis()]);
+      await barrido();
+      expect(sent()).toHaveLength(antes);
+      expect(resultados()[0].metadata).toMatchObject({
+        nuevas: 0,
+        enviado: false,
+      });
+    });
+
+    it('si el hospital no contesta a tiempo, se le dice (se le había prometido escribir)', async () => {
+      db.mirror = viva('ON');
+      await say('que citas tengo');
+      responde([], 'EXPIRADA');
+      await barrido();
+      expect(lastSent()).toContain('No pude confirmar con el hospital');
+      expect(lastSent()).toContain(SOPORTE);
+    });
+
+    it('si el paciente ya cambió de tema, no se le interrumpe', async () => {
+      db.mirror = viva('ON');
+      await say('que citas tengo');
+      await say('C'); // agendar una nueva → menú de servicios
+      expect(state()).toBe(ChatState.AWAITING_SPECIALTY);
+      const antes = sent().length;
+      responde([filaHis({ startIso: EN_5_DIAS })]);
+      await barrido();
+      expect(sent()).toHaveLength(antes);
+      expect(resultados()[0].metadata.enviado).toBe(false);
+    });
+
+    it('dos réplicas barriendo a la vez: un solo mensaje', async () => {
+      db.mirror = viva('ON');
+      await say('que citas tengo');
+      responde([filaHis({ startIso: EN_5_DIAS })]);
+      const antes = sent().length;
+      await Promise.all([barrido(), barrido()]);
+      await barrido();
+      expect(sent()).toHaveLength(antes + 1);
+    });
+
+    it('SHADOW: el paciente ve exactamente la Fase A; la consulta solo mide (D8)', async () => {
+      db.mirror = viva('SHADOW');
+      await say('que citas tengo');
+      expect(lastSent()).toContain('directamente en el hospital');
+      expect(lastSent()).not.toContain('Estoy confirmando');
+      expect(db.requests).toHaveLength(1);
+
+      const antes = sent().length;
+      responde([filaHis({ startIso: EN_5_DIAS })]);
+      await barrido();
+      expect(sent()).toHaveLength(antes);
+      expect(resultados()[0].metadata).toMatchObject({
+        modoBotHis: 'SHADOW',
+        nuevas: 1,
+        enviado: false,
+      });
+    });
+
+    it('preguntar otra vez enseguida reutiliza el resultado: no vuelve a cargar el hospital', async () => {
+      db.mirror = viva('ON');
+      await say('que citas tengo');
+      responde([
+        filaHis({ startIso: EN_5_DIAS, doctorExternalKey: 'MED-HIS-2' }),
+      ]);
+      await barrido();
+
+      await say('D');
+      await say('que citas tengo');
+      expect(db.requests).toHaveLength(1);
+      expect(lastSent()).toContain('El hospital tiene estas citas a su nombre');
+      expect(lastSent()).toContain('Ana Gómez');
+      expect(lastSent()).not.toContain('Estoy confirmando');
+    });
+
+    it('con una consulta del paciente aún en curso no se encola otra; se advierte como en la Fase A', async () => {
+      db.mirror = viva('ON');
+      await say('que citas tengo');
+      await say('D');
+      await say('que citas tengo');
+      expect(db.requests).toHaveLength(1);
+      expect(lastSent()).toContain('directamente en el hospital');
+    });
+
+    it('tope del bot por clínica: con 3 en curso no encola la cuarta', async () => {
+      db.mirror = viva('ON');
+      for (let i = 0; i < 3; i++) {
+        db.requests.push({
+          id: `otra-${i}`,
+          organizationId: ORG_ID,
+          origin: 'BOT',
+          status: 'PENDIENTE',
+          patientId: `otro-${i}`,
+          createdAt: new Date(),
+          botFollowupAt: null,
+        });
+      }
+      await say('que citas tengo');
+      expect(db.requests).toHaveLength(3);
+      expect(lastSent()).toContain('directamente en el hospital');
+    });
+
+    it('las del personal no cuentan para el tope del bot', async () => {
+      db.mirror = viva('ON');
+      for (let i = 0; i < 5; i++) {
+        db.requests.push({
+          id: `staff-${i}`,
+          organizationId: ORG_ID,
+          origin: 'STAFF',
+          status: 'PENDIENTE',
+          createdAt: new Date(),
+        });
+      }
+      await say('que citas tengo');
+      expect(db.requests.filter((r) => r.origin === 'BOT')).toHaveLength(1);
+    });
+
+    it('conexión caída (agente sin latido reciente): no consulta y advierte', async () => {
+      db.mirror = {
+        ...viva('ON'),
+        lastHeartbeatAt: new Date(AHORA.getTime() - 10 * 60_000),
+      };
+      await say('que citas tengo');
+      expect(db.requests).toHaveLength(0);
+      expect(lastSent()).toContain('directamente en el hospital');
+      expect(pasos()[0].metadata).toMatchObject({
+        conexionHis: 'CAIDA',
+        accionHis: 'SIN_CONSULTA',
+      });
+    });
+
+    it('🔒 a quien no es el paciente no se le consulta el hospital', async () => {
+      db.mirror = viva('ON');
+      db.patients[0].whatsappId = OTRO_NUMERO;
+      await say('mis citas');
+      await say(CEDULA);
+      expect(lastSent()).toContain('hay citas próximas registradas');
+      expect(db.requests).toHaveLength(0);
+    });
+
+    it('si apagan el bot mientras la consulta estaba en curso, no se le escribe', async () => {
+      db.mirror = viva('ON');
+      await say('que citas tengo');
+      db.mirror.botLookupMode = 'OFF';
+      const antes = sent().length;
+      responde([filaHis({ startIso: EN_5_DIAS })]);
+      await barrido();
+      expect(sent()).toHaveLength(antes);
     });
   });
 });

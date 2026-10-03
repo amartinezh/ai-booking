@@ -57,9 +57,14 @@ export class MirrorLookupService {
   ): Promise<HisLookupRequestDto[]> {
     const config = await this.prisma.hospitalMirrorConfig.findUnique({
       where: { organizationId },
-      select: { lookupEnabled: true },
+      select: { lookupEnabled: true, botLookupMode: true },
     });
-    if (!config?.lookupEnabled) return [];
+    // Cada origen con su interruptor (docs/PLAN_CONSULTA_CITAS.md, D4): apagar
+    // la consulta del bot no deja sin consulta a la ventanilla, ni al revés.
+    const origenes: string[] = [];
+    if (config?.lookupEnabled) origenes.push('STAFF');
+    if (config && config.botLookupMode !== 'OFF') origenes.push('BOT');
+    if (origenes.length === 0) return [];
 
     // Una petición más vieja que `expiraMs` ya no la espera nadie: no se le
     // entrega al agente (un HIS lento no debe trabajar para una pantalla que se
@@ -69,6 +74,7 @@ export class MirrorLookupService {
       where: {
         organizationId,
         status: 'PENDIENTE',
+        origin: { in: origenes },
         createdAt: { gte: desde },
       },
       orderBy: { createdAt: 'asc' },

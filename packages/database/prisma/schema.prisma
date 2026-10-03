@@ -981,6 +981,15 @@ enum MirrorAvailabilityMode {
   ON
 }
 
+/// Consulta de citas del BOT al HIS en vivo (docs/PLAN_CONSULTA_CITAS.md, Fase B).
+/// OFF: el bot no consulta. SHADOW: consulta y mide, pero no le muestra nada nuevo
+/// al paciente. ON: consulta y le escribe si el hospital tiene citas que AgenIA no.
+enum MirrorBotLookupMode {
+  OFF
+  SHADOW
+  ON
+}
+
 enum AppointmentOrigin {
   MANUAL
   WHATSAPP
@@ -1741,6 +1750,11 @@ model HospitalMirrorConfig {
   // clínica. Se enciende a mano (ver el RUNBOOK del driver) DESPUÉS de medir el
   // costo de la consulta en el laboratorio del hospital.
   lookupEnabled Boolean @default(false)
+  // 🤖 Consulta en vivo desde el BOT («¿qué citas tengo?»). Interruptor PROPIO,
+  // separado del de arriba (docs/PLAN_CONSULTA_CITAS.md, D4): la carga del bot
+  // crece con los pacientes y la del personal no; el hospital aprueba cada una.
+  // Sin pantalla: se cambia a mano, como `lookupEnabled`.
+  botLookupMode MirrorBotLookupMode @default(OFF)
 
   // Observabilidad del agente on-premise.
   lastHeartbeatAt DateTime?
@@ -2354,6 +2368,12 @@ model HisLookupRequest {
   /// El driver recortó la respuesta al tope de filas: nunca en silencio.
   truncated Boolean @default(false)
 
+  /// 'STAFF' (pantalla del rastreo) | 'BOT' (consulta de citas del chatbot).
+  /// Los topes de cada uno no cuentan las peticiones del otro.
+  origin String @default("STAFF")
+  /// Cuándo el bot atendió el resultado (segundo mensaje o silencio). Solo BOT.
+  botFollowupAt DateTime?
+
   /// PatientProfile.id al que se refiere, sin FK. La pantalla lo comprueba al leer
   /// el resultado: quien lo pide debe estar consultando al MISMO paciente.
   patientId String?
@@ -2369,6 +2389,8 @@ model HisLookupRequest {
   @@index([organizationId, status, createdAt])
   /// La purga: filas sin purgar cuyo plazo venció.
   @@index([purgedAt, purgeAt])
+  /// El barrido del bot: resultados de sus consultas que aún no atendió.
+  @@index([origin, botFollowupAt, createdAt])
 }
 
 // -----------------------------------------------------------------------------

@@ -97,6 +97,13 @@ import type {
   WhatsappInboundEvent,
 } from './sender-identity';
 import { TelegramChannelService } from '../telegram/telegram-channel.service';
+import {
+  ConsultaHisBotService,
+  type CitaHisParaMostrar,
+  type PlanHisBot,
+  type SeguimientoHis,
+} from './consulta-his-bot.service';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 // La forma del evento entrante y la resolución de "quién escribió" viven en
 // sender-identity.ts (ver allí el porqué del orden teléfono → BSUID → PSID).
@@ -217,6 +224,9 @@ export class ChatbotService implements OnModuleInit {
     // despliegues sin el módulo) un remitente `tg:` no se atiende, pero
     // tampoco viaja nunca a Meta.
     @Optional() private readonly telegramChannel?: TelegramChannelService,
+    // Fase B de la consulta de citas (docs/PLAN_CONSULTA_CITAS.md): el bot le
+    // pregunta al HIS. Opcional: sin él, la consulta se queda en la Fase A.
+    @Optional() private readonly consultaHis?: ConsultaHisBotService,
   ) {}
 
   async onModuleInit() {
@@ -9067,6 +9077,7 @@ export class ChatbotService implements OnModuleInit {
         select: {
           enabled: true,
           lookupEnabled: true,
+          botLookupMode: true,
           lastLookupCapable: true,
           lastHeartbeatAt: true,
           lastHisReachable: true,
@@ -9080,9 +9091,17 @@ export class ChatbotService implements OnModuleInit {
     const contacto = org?.supportPhone
       ? MSGS.contactoClinica(org.supportPhone)
       : MSGS.contactoClinicaSinTelefono();
-    // Fase A: el estado se registra (sirve para decidir la Fase B) pero no se
-    // le pregunta al HIS. Con hospital, cualquier estado lleva la advertencia.
-    const conexion = estadoConexionHis(mirror, ahora);
+    // El estado de la conexión PARA EL BOT (su interruptor, no el del personal).
+    // Queda en la bitácora con cada consulta.
+    const { modo: modoBot, conexion } = this.consultaHis
+      ? this.consultaHis.conexionDelBot(mirror, ahora)
+      : {
+          modo: 'OFF' as const,
+          conexion: estadoConexionHis(
+            mirror ? { ...mirror, lookupEnabled: false } : null,
+            ahora,
+          ),
+        };
     const pidioHoy = !!(await this.redis.get(
       `temp_lookup_hoy:${organizationId}:${senderId}`,
     ));
@@ -9117,10 +9136,11 @@ export class ChatbotService implements OnModuleInit {
 
     const esDelRemitente =
       !!patient && remitenteEsDelPaciente(patient, identity);
-    const metadata = {
+    const metadata: Record<string, unknown> = {
       via: p.via,
       conexionHis: conexion.estado,
       motivoConexionHis: conexion.motivo,
+      modoBotHis: modoBot,
       citas: relevantes.length,
       pidioHoy,
     };
@@ -9145,10 +9165,34 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    const aviso =
-      conexion.estado === 'SIN_HOSPITAL'
-        ? ''
-        : `\n\n${MSGS.consultaAvisoHospital(contacto)}`;
+    // Fase B: ¿se le pregunta al HIS? Solo aquí, con el remitente ya probado.
+    const plan: PlanHisBot = this.consultaHis
+      ? await this.consultaHis.planificar({
+          organizationId,
+          senderId,
+          patient,
+          modo: modoBot,
+          conexion,
+          ahora,
+          timeZone,
+        })
+      : { accion: 'SIN_CONSULTA' };
+    metadata.accionHis = plan.accion;
+    if (plan.accion === 'CONSULTANDO') metadata.requestId = plan.requestId;
+    // En sombra el paciente ve exactamente la Fase A: se consulta para medir.
+    const hisVisible = modoBot === 'ON';
+    let aviso = '';
+    if (hisVisible && plan.accion === 'CONSULTANDO') {
+      aviso = `\n\n${MSGS.consultaConfirmandoHospital()}`;
+    } else if (hisVisible && plan.accion === 'REUTILIZADA') {
+      // Ya se sabe qué tiene el hospital: sin advertencia, y lo nuevo, a la vista.
+      aviso =
+        plan.nuevas.length > 0
+          ? `\n\n${MSGS.consultaHisNuevas(this.lineasHis(plan.nuevas, MSGS, timeZone), contacto)}`
+          : '';
+    } else if (conexion.estado !== 'SIN_HOSPITAL') {
+      aviso = `\n\n${MSGS.consultaAvisoHospital(contacto)}`;
+    }
 
     if (relevantes.length === 0) {
       const reply = MSGS.consultaSinCitas(patient.fullName) + aviso;
@@ -9206,6 +9250,115 @@ export class ChatbotService implements OnModuleInit {
       userMessage,
       botReply: reply,
       metadata: { ...metadata, step: 'LOOKUP_SHOWN', patientId: patient.id },
+    });
+  }
+
+  /** Las citas que solo están en el hospital, una por línea, con nombres. */
+  private lineasHis(
+    citas: CitaHisParaMostrar[],
+    MSGS: ReturnType<typeof buildMessages>,
+    timeZone: string | undefined,
+  ): string {
+    return citas
+      .map(
+        (c) =>
+          `• ${c.servicio || MSGS.consultaCitaHospital()}` +
+          (c.medico ? ` · ${c.medico}` : '') +
+          ` · ${formatAppointmentCompact(new Date(c.startIso), { timeZone })}`,
+      )
+      .join('\n');
+  }
+
+  /**
+   * Fase B, segundo mensaje (D5): atiende los resultados del HIS que el bot
+   * pidió. Cada 5 s; reclamar es un compare-and-set, así que con varias réplicas
+   * solo una le escribe al paciente.
+   */
+  @Cron(CronExpression.EVERY_5_SECONDS)
+  async atenderSeguimientosHis(): Promise<void> {
+    if (!this.consultaHis) return;
+    try {
+      const ahora = new Date();
+      const seguimientos = await this.consultaHis.reclamarSeguimientos(
+        ahora,
+        async (organizationId) =>
+          (
+            await this.prisma.organization.findUnique({
+              where: { id: organizationId },
+              select: { timezone: true },
+            })
+          )?.timezone || undefined,
+      );
+      for (const s of seguimientos) {
+        try {
+          await this.atenderSeguimientoHis(s);
+        } catch (error: unknown) {
+          this.logger.error(
+            `Seguimiento de la consulta al HIS ${s.requestId} falló: ${getErrorMessage(error)}`,
+          );
+        }
+      }
+    } catch (error: unknown) {
+      this.logger.error(
+        `Barrido de consultas al HIS del bot falló: ${getErrorMessage(error)}`,
+      );
+    }
+  }
+
+  private async atenderSeguimientoHis(s: SeguimientoHis): Promise<void> {
+    const { organizationId, senderId } = s;
+    const [org, mirror] = await Promise.all([
+      this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { supportPhone: true, timezone: true },
+      }),
+      this.prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId },
+        select: { botLookupMode: true },
+      }),
+    ]);
+    const modo = mirror?.botLookupMode ?? 'OFF';
+    const MSGS = buildMessages(
+      await this.organizationSettings.getCommunicationStyle(organizationId),
+      canalDe(senderId),
+    );
+    const contacto = org?.supportPhone
+      ? MSGS.contactoClinica(org.supportPhone)
+      : MSGS.contactoClinicaSinTelefono();
+
+    // Solo se le escribe si está en ON, sigue en la consulta (o ya la cerró) y
+    // hay algo que decir: con novedades, o si el hospital no contestó (se le
+    // prometió escribir). Sin novedades: silencio (D6).
+    const estado = await this.getUserState(organizationId, senderId);
+    const sigueAhi =
+      estado === ChatState.IDLE || estado === ChatState.AWAITING_LOOKUP_CHOICE;
+    let reply: string | null = null;
+    if (modo === 'ON' && sigueAhi) {
+      if (s.status !== 'RESUELTA') {
+        reply = MSGS.consultaHisNoDisponible(contacto);
+      } else if (s.nuevas.length > 0) {
+        reply = MSGS.consultaHisNuevas(
+          this.lineasHis(s.nuevas, MSGS, org?.timezone || undefined),
+          contacto,
+        );
+      }
+    }
+    if (reply) await this.smartReply(organizationId, senderId, reply);
+
+    // La medición del criterio de entrada (D8) sale de aquí, en SHADOW y en ON.
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: '[consulta al hospital]',
+      botReply: reply ?? '[sin mensaje]',
+      metadata: {
+        step: 'HIS_LOOKUP_RESULT',
+        requestId: s.requestId,
+        modoBotHis: modo,
+        status: s.status,
+        citasHis: s.citasHis,
+        nuevas: s.nuevas.length,
+        enviado: !!reply,
+        estadoConversacion: estado,
+      },
     });
   }
 

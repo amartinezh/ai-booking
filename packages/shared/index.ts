@@ -138,6 +138,7 @@ export {
   clasificarTitular,
   mismoInstante,
   combinarEvidenciaHis,
+  documentosDelPaciente,
   leerResultadoGuardado,
   ocupanteDelCupo,
   parametrosADto,
@@ -159,6 +160,9 @@ export {
   remitenteEsDelPaciente,
   diaLocal,
   inicioDelDiaLocal,
+  LIMITES_CONSULTA_BOT,
+  ventanaConsultaBot,
+  citasHisNuevas,
 } from './src/consulta-citas';
 export type {
   EstadoConexionHis,
@@ -167,6 +171,7 @@ export type {
   ConexionHis,
   CanalesDelPaciente,
   RemitenteDelTurno,
+  CitaConocida,
 } from './src/consulta-citas';
 export { SYNC_AUDIT_DIRECTION } from './src/sync-audit';
 export type { SyncAuditDirection } from './src/sync-audit';

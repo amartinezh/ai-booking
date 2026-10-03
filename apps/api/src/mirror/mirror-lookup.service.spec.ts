@@ -52,6 +52,7 @@ describe('MirrorLookupService', () => {
 
   const build = (opts?: {
     lookupEnabled?: boolean | null;
+    botLookupMode?: 'OFF' | 'SHADOW' | 'ON';
     pendientes?: unknown[];
     request?: unknown;
     updateManyCount?: number;
@@ -61,7 +62,10 @@ describe('MirrorLookupService', () => {
         findUnique: jest.fn(async () =>
           opts?.lookupEnabled === null
             ? null
-            : { lookupEnabled: opts?.lookupEnabled ?? true },
+            : {
+                lookupEnabled: opts?.lookupEnabled ?? true,
+                botLookupMode: opts?.botLookupMode ?? 'OFF',
+              },
         ),
       },
       hisLookupRequest: {
@@ -89,6 +93,31 @@ describe('MirrorLookupService', () => {
     it('con el interruptor APAGADO devuelve [] sin mirar las peticiones (y sin error)', async () => {
       const { service, prisma } = build({ lookupEnabled: false });
 
+      await expect(service.getPendingRequests(ORG)).resolves.toEqual([]);
+      expect(prisma.hisLookupRequest.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each<[string, boolean, 'OFF' | 'SHADOW' | 'ON', string[]]>([
+      ['solo el personal', true, 'OFF', ['STAFF']],
+      ['solo el bot (en sombra también consulta)', false, 'SHADOW', ['BOT']],
+      ['los dos', true, 'ON', ['STAFF', 'BOT']],
+    ])(
+      'cada origen con su interruptor: %s',
+      async (_caso, lookupEnabled, botLookupMode, origenes) => {
+        const { service, prisma } = build({ lookupEnabled, botLookupMode });
+        await service.getPendingRequests(ORG);
+        const arg = prisma.hisLookupRequest.findMany.mock.calls[0][0] as {
+          where: { origin: { in: string[] } };
+        };
+        expect(arg.where.origin.in).toEqual(origenes);
+      },
+    );
+
+    it('con los dos interruptores apagados no mira las peticiones', async () => {
+      const { service, prisma } = build({
+        lookupEnabled: false,
+        botLookupMode: 'OFF',
+      });
       await expect(service.getPendingRequests(ORG)).resolves.toEqual([]);
       expect(prisma.hisLookupRequest.findMany).not.toHaveBeenCalled();
     });

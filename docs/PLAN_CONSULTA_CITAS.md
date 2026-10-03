@@ -1,6 +1,6 @@
 # Plan — «¿Qué citas tengo?» en el bot
 
-Estado: **Fase A en producción de código** (commit del 2026-10-02). **Fase B: definida y con sus decisiones tomadas (2026-10-02); sin empezar, bloqueada por B0.**
+Estado: **Fase A en producción de código** (commit del 2026-10-02). **Fase B: B1, B2 y el mecanismo de B3 implementados el 2026-10-02, APAGADOS por defecto** (`botLookupMode = OFF`). Encender en sombra espera a B0 (§4.1).
 
 ## 0. Decisiones confirmadas
 
@@ -9,7 +9,7 @@ Estado: **Fase A en producción de código** (commit del 2026-10-02). **Fase B: 
 | D1 | La consulta muestra las citas de AgenIA y **también pregunta al HIS en vivo, pero solo si la conexión con el hospital está prendida**. El código es genérico: cualquier hospital, o ninguno. | Usuario, 2026-10-02 |
 | D2 | **El detalle (servicio, médico, hora) solo cuando quien escribe es el paciente**; a cualquier otro, una respuesta mínima (cuántas citas, sin distinguir «no existe» de «sin citas»). | Usuario, 2026-10-02 |
 | D3 | Se empieza por la Fase A (solo AgenIA + advertencia). | Usuario, 2026-10-02 |
-| D4 | El bot tiene **interruptor propio** (`botLookupEnabled`), separado de `lookupEnabled` del personal. | Usuario, 2026-10-02 |
+| D4 | El bot tiene **interruptor propio** (implementado como `botLookupMode`: OFF · SHADOW · ON), separado de `lookupEnabled` del personal. | Usuario, 2026-10-02 |
 | D5 | **Dos mensajes**: AgenIA al instante y el seguimiento del hospital después; el turno no espera al HIS. | Usuario, 2026-10-02 |
 | D6 | Si el hospital no trae nada nuevo, **silencio** (sin segundo mensaje). | Usuario, 2026-10-02 |
 | D7 | El paciente **no** puede cancelar por el bot una cita que solo existe en el HIS (en esta fase). | Usuario, 2026-10-02 |
@@ -43,16 +43,17 @@ Mismo canal y mismo agente: `HisLookupRequest` con `kind = 'BY_DOCUMENT'`, el ag
 Cambios en la base (migración aditiva):
 
 - `HisLookupRequest.requestedBy` deja de ser solo un usuario: columna nueva `origin` (`'STAFF' | 'BOT'`, default `'STAFF'`); para el bot, `requestedByUserId = 'chatbot'` y además se guarda el remitente seudonimizado (no el teléfono).
-- `HospitalMirrorConfig.botLookupEnabled Boolean @default(false)`: **interruptor propio del bot**, separado de `lookupEnabled`. La carga del bot crece con los pacientes y la del personal no; el hospital debe poder aceptar una sin la otra.
+- `HospitalMirrorConfig.botLookupMode` (`OFF` · `SHADOW` · `ON`, default `OFF`): **interruptor propio del bot** (D4), separado de `lookupEnabled`. La carga del bot crece con los pacientes y la del personal no; el hospital debe poder aceptar una sin la otra. Es un modo y no un sí/no para que el modo sombra de B3 sea un valor del mismo interruptor, como `availabilityMode`.
+- `HisLookupRequest.botFollowupAt`: cuándo el bot atendió el resultado (compare-and-set entre réplicas).
 
-El bot solo consulta si `estadoConexionHis(...) === 'VIVA'` **y** `botLookupEnabled`.
+El bot solo consulta si `botLookupMode ≠ OFF` **y** `estadoConexionHis(...)`, con el interruptor del bot en lugar del del personal, da `VIVA`. El agente recibe las peticiones `STAFF` si `lookupEnabled` y las `BOT` si `botLookupMode ≠ OFF`.
 
 ### 3.2 Conversación asíncrona (no bloquear el turno)
 
 El turno no espera al HIS. Si esperara, la cola de mensajes del paciente (`inbound-queue`) quedaría retenida hasta 30-60 s.
 
 1. El paciente pregunta → el bot responde **de inmediato** con lo de AgenIA y, en la misma burbuja, «Estoy confirmando con el hospital, le aviso en un momento». El paciente ya puede elegir A-D.
-2. Al llegar la respuesta del agente (`MirrorLookupService.applyResult`), si `origin = 'BOT'` se emite un evento que el chatbot atiende:
+2. Cada 5 s el chatbot barre las peticiones `BOT` ya cerradas y sin `botFollowupAt` (`ConsultaHisBotService.reclamarSeguimientos`). Es un barrido y no un evento de `applyResult` para no acoplar el módulo del espejo al del chatbot y para tratar igual una respuesta, un error y un vencimiento. Con cada una:
    - **Hay citas que AgenIA no tenía** → un segundo mensaje: «El hospital tiene además: …».
    - **No hay nada nuevo** → **ningún** mensaje (D6).
 3. Si vence (`EXPIRADA`, 60 s) o el agente responde `ERROR` → un mensaje con la advertencia de la Fase A. El paciente nunca queda esperando sin respuesta.
@@ -79,13 +80,43 @@ Superado un límite → respuesta de la Fase A, sin error para el paciente.
 
 ## 4. Pasos
 
-| Paso | Contenido | Sale cuando |
+| Paso | Contenido | Estado |
 |---|---|---|
-| B0 | **Prerrequisito externo:** medir en el laboratorio del hospital el costo de la consulta por documento (`CONSULTA_EN_VIVO.md` del driver, la tabla pendiente de la Fase 2 del rastreo). | La medición cumple su criterio de aceptación. |
-| B1 | Migración (`origin`, `botLookupEnabled`) + emisión del evento en `applyResult` + mover el etiquetado de médicos a shared. | Unitarias, Postgres real con cero deriva. |
-| B2 | Bot: encolar en VIVA, mensaje inmediato, seguimiento por evento/vencimiento, deduplicación, límites. | E2E conversacional con agente simulado (resuelta, vacía, error, vencida, paciente que cambió de tema) y mutación. |
-| B3 | **Modo sombra** una semana en una clínica: el bot consulta el HIS pero **no le dice nada nuevo al paciente**; solo registra cuántas veces el HIS tenía citas que AgenIA no. | Datos de §5. |
-| B4 | Encender `botLookupEnabled` por clínica (a mano, como `lookupEnabled`). | Decisión con los datos de B3. |
+| B0 | **Prerrequisito externo:** medir en el laboratorio del hospital el costo de la consulta por documento (`CONSULTA_EN_VIVO.md` del driver, la tabla pendiente de la Fase 2 del rastreo). | **Pendiente (hospital).** |
+| B1 | Migración `20261002100000_consulta_citas_bot_his` (`botLookupMode`, `origin`, `botFollowupAt`); el agente recibe cada origen según su interruptor; el tope de la ventanilla no cuenta las del bot. | Hecho. Postgres 15 real: cero deriva. |
+| B2 | `ConsultaHisBotService` (plan, límites, seguimiento, deduplicación, nombres) + mensajes y barrido en `ChatbotService`. | Hecho. 14 E2E conversacionales, 12 mutantes detectados, punta a punta con Postgres real (plan → agente → `applyResult` → seguimiento, dos réplicas, vencida). |
+| B3 | **Modo sombra** una semana en una clínica: `botLookupMode = 'SHADOW'`. | Mecanismo hecho; encenderlo espera a B0. |
+| B4 | `botLookupMode = 'ON'` por clínica. | Según §5 (D8). |
+
+### 4.1 Encender, medir y apagar
+
+Sin pantalla, como `lookupEnabled`, se cambia con SQL por clínica. **Requisito previo:** B0 aprobado y el agente del hospital reportando `lastLookupCapable = true`.
+
+```sql
+-- B3: modo sombra (el paciente no ve nada distinto de la Fase A)
+UPDATE "HospitalMirrorConfig" SET "botLookupMode" = 'SHADOW' WHERE "organizationId" = '<org>';
+-- B4: encendido (solo si §5 lo justifica)
+UPDATE "HospitalMirrorConfig" SET "botLookupMode" = 'ON'     WHERE "organizationId" = '<org>';
+-- Apagado inmediato (las peticiones en curso dejan de entregarse al agente)
+UPDATE "HospitalMirrorConfig" SET "botLookupMode" = 'OFF'    WHERE "organizationId" = '<org>';
+```
+
+Medición de D8, una fila por consulta al hospital atendida:
+
+```sql
+SELECT
+  count(*)                                                    AS consultas,
+  count(*) FILTER (WHERE metadata->>'status' = 'RESUELTA')    AS respondidas,
+  count(*) FILTER (WHERE (metadata->>'nuevas')::int > 0)      AS con_diferencias,
+  round(100.0 * count(*) FILTER (WHERE (metadata->>'nuevas')::int > 0)
+        / NULLIF(count(*) FILTER (WHERE metadata->>'status' = 'RESUELTA'), 0), 2) AS pct
+FROM "InteractionLog"
+WHERE "organizationId" = '<org>'
+  AND metadata->>'step' = 'HIS_LOOKUP_RESULT'
+  AND "createdAt" >= now() - interval '7 days';
+```
+
+Las consultas que el bot NO hizo (conexión caída, topes) quedan en la fila de la consulta (`metadata.accionHis`: `SIN_CONSULTA` · `LIMITADA` · `CONSULTANDO` · `REUTILIZADA`, y `metadata.conexionHis`).
 
 ## 5. Criterio de entrada
 
