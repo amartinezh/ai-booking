@@ -1,6 +1,6 @@
 # Plan — «¿Qué citas tengo?» en el bot
 
-Estado: **Fase A en producción de código** (commit del 2026-10-02). **Fase B: definida aquí, sin empezar.**
+Estado: **Fase A en producción de código** (commit del 2026-10-02). **Fase B: definida y con sus decisiones tomadas (2026-10-02); sin empezar, bloqueada por B0.**
 
 ## 0. Decisiones confirmadas
 
@@ -9,6 +9,11 @@ Estado: **Fase A en producción de código** (commit del 2026-10-02). **Fase B: 
 | D1 | La consulta muestra las citas de AgenIA y **también pregunta al HIS en vivo, pero solo si la conexión con el hospital está prendida**. El código es genérico: cualquier hospital, o ninguno. | Usuario, 2026-10-02 |
 | D2 | **El detalle (servicio, médico, hora) solo cuando quien escribe es el paciente**; a cualquier otro, una respuesta mínima (cuántas citas, sin distinguir «no existe» de «sin citas»). | Usuario, 2026-10-02 |
 | D3 | Se empieza por la Fase A (solo AgenIA + advertencia). | Usuario, 2026-10-02 |
+| D4 | El bot tiene **interruptor propio** (`botLookupEnabled`), separado de `lookupEnabled` del personal. | Usuario, 2026-10-02 |
+| D5 | **Dos mensajes**: AgenIA al instante y el seguimiento del hospital después; el turno no espera al HIS. | Usuario, 2026-10-02 |
+| D6 | Si el hospital no trae nada nuevo, **silencio** (sin segundo mensaje). | Usuario, 2026-10-02 |
+| D7 | El paciente **no** puede cancelar por el bot una cita que solo existe en el HIS (en esta fase). | Usuario, 2026-10-02 |
+| D8 | Umbral de entrada: se enciende solo si **≥ 2 %** de las consultas del modo sombra tienen diferencias. | Usuario, 2026-10-02 |
 
 ## 1. Fase A — hecha
 
@@ -49,7 +54,7 @@ El turno no espera al HIS. Si esperara, la cola de mensajes del paciente (`inbou
 1. El paciente pregunta → el bot responde **de inmediato** con lo de AgenIA y, en la misma burbuja, «Estoy confirmando con el hospital, le aviso en un momento». El paciente ya puede elegir A-D.
 2. Al llegar la respuesta del agente (`MirrorLookupService.applyResult`), si `origin = 'BOT'` se emite un evento que el chatbot atiende:
    - **Hay citas que AgenIA no tenía** → un segundo mensaje: «El hospital tiene además: …».
-   - **No hay nada nuevo** → un mensaje corto («Confirmado con el hospital: son todas»), o **ninguno**. Esto queda por decidir (P3).
+   - **No hay nada nuevo** → **ningún** mensaje (D6).
 3. Si vence (`EXPIRADA`, 60 s) o el agente responde `ERROR` → un mensaje con la advertencia de la Fase A. El paciente nunca queda esperando sin respuesta.
 
 Si el paciente ya cambió de tema (otro estado, o cerró la conversación), el segundo mensaje se descarta: no se interrumpe un agendamiento en curso.
@@ -59,7 +64,7 @@ Si el paciente ya cambió de tema (otro estado, o cerró la conversación), el s
 - **Solo las filas cuyo titular es el paciente** (`titular` de `CitaHisVista`); las de terceros, nunca.
 - Sin duplicados con AgenIA: misma clave de médico (`MirrorEntityMap`, `DOCTOR`) **y** misma hora al minuto (`mismoInstante`; el HIS guarda minutos).
 - Nombres: médico y servicio por `MirrorEntityMap` → perfil de AgenIA → etiqueta del catálogo (la regla de `etiquetasDeMedicosHis` de la web, que se mueve a shared). Sin mapeo: «cita en el hospital» con fecha y hora, sin la clave cruda.
-- Las citas que solo existen en el HIS se muestran como **solo lectura**: A/B (cancelar, cambiar fecha) actúan sobre citas de AgenIA. Si el paciente quiere tocar una del hospital, el bot le da el teléfono. Que el bot pueda cancelarlas sería otra decisión, con el hospital (ver P4).
+- Las citas que solo existen en el HIS se muestran como **solo lectura**: A/B (cancelar, cambiar fecha) actúan sobre citas de AgenIA. Si el paciente quiere tocar una del hospital, el bot le da el teléfono. Que el bot no las cancele es la decisión D7; reabrirla requiere acuerdo con el hospital.
 
 ### 3.4 Límites (nuevos, del bot)
 
@@ -89,17 +94,11 @@ Con la Fase A ya en uso se mide, de la bitácora:
 - cuántas consultas hay por semana y en qué `conexionHis` (si casi siempre es APAGADA o CAIDA, la Fase B no cambiaría nada todavía);
 - en el modo sombra (B3), en qué proporción de consultas el HIS tenía al menos una cita que AgenIA no mostraba.
 
-**Regla propuesta:** si en B3 menos del 2 % de las consultas tienen diferencias, no se enciende la Fase B. Se mantiene la advertencia y se revisa por qué faltan esas pocas citas en el alta en caliente: arreglar la llegada es mejor que consultar cada vez.
+**Regla (D8):** si en B3 menos del 2 % de las consultas tienen diferencias, no se enciende la Fase B. Se mantiene la advertencia y se revisa por qué faltan esas pocas citas en el alta en caliente: arreglar la llegada es mejor que consultar cada vez.
 
-## 6. Puntos abiertos (decide el usuario)
+## 6. Puntos abiertos
 
-| # | Pregunta | Recomendación |
-|---|---|---|
-| P1 | ¿Interruptor propio del bot (`botLookupEnabled`) o reutilizar `lookupEnabled`? | Propio: la carga es distinta y el hospital la aprueba por separado. |
-| P2 | ¿Respuesta asíncrona (dos mensajes) o esperar al HIS en el mismo turno? | Asíncrona (§3.2). |
-| P3 | Si el HIS no trae nada nuevo, ¿mensaje de confirmación o silencio? | Silencio: un segundo mensaje sin novedad es ruido; quitar la advertencia ya dice lo mismo. |
-| P4 | ¿El paciente puede cancelar por el bot una cita que solo existe en el HIS? | No en la Fase B; requiere acuerdo con el hospital (mismo punto pendiente del alta en caliente). |
-| P5 | ¿Umbral del criterio de entrada (§5)? | 2 % de consultas con diferencias. |
+Ninguno de diseño: P1-P5 se cerraron el 2026-10-02 (D4-D8 en §0). Lo único que bloquea es externo: la medición de B0.
 
 ## 7. Riesgos
 
