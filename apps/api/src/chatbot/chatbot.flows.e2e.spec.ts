@@ -2353,4 +2353,73 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       });
     });
   });
+
+  // ──────────────────────────────────────────────────────────────────
+  // El bot se presenta UNA vez por conversación
+  // Captura de Telegram del 2026-10-02: tras «Sin problema, comencemos de
+  // nuevo. ¿En qué le ayudo?», el siguiente menú volvía a decir «Soy Vicente,
+  // su asistente virtual…» como si fuera otra conversación.
+  // ──────────────────────────────────────────────────────────────────
+  describe('presentación del bot', () => {
+    const SE_PRESENTA = /Le saluda \*|Le habla \*|Soy \*/;
+
+    it('tras «comencemos de nuevo», el menú sale sin volver a presentarse', async () => {
+      await say('Hola');
+      expect(lastSent()).toMatch(SE_PRESENTA);
+
+      await say('Cancelar'); // salida del menú → «comencemos de nuevo»
+      expect(await state()).toBe(ChatState.IDLE);
+      // Cualquiera de las variantes de MSGS.escape().
+      expect(lastSent()).toMatch(/comencemos de nuevo|Volvamos a empezar/);
+
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ intent: 'agendar_cita' }),
+      );
+      await say('necesito una cita');
+      expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+      expect(lastSent()).toContain('Medicina General');
+      expect(lastSent()).not.toMatch(SE_PRESENTA);
+    });
+
+    it('un segundo «Hola» en la misma conversación tampoco repite la presentación', async () => {
+      await say('Hola');
+      await say('Hola');
+      expect(lastSent()).toContain('Medicina General');
+      expect(lastSent()).not.toMatch(SE_PRESENTA);
+    });
+
+    it('el primer contacto sí se presenta, aunque no empiece por «Hola»', async () => {
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ intent: 'agendar_cita' }),
+      );
+      await say('necesito una cita');
+      expect(lastSent()).toMatch(SE_PRESENTA);
+    });
+
+    it('tras despedirse, una conversación nueva vuelve a presentarse', async () => {
+      await say('Hola');
+      await say('chao');
+      expect(await state()).toBe(ChatState.IDLE);
+      await say('Hola');
+      expect(lastSent()).toMatch(SE_PRESENTA);
+    });
+
+    it('si el ACK del primer turno ya se presentó, el menú que sigue no lo repite', async () => {
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ intent: 'agendar_cita', cedula: '1088123456' }),
+      );
+      await say('quiero una cita, mi cédula es 1088123456');
+      const [ack, menu] = sent().slice(-2);
+      expect(ack).toMatch(/Le saluda \*/);
+      expect(menu).not.toMatch(SE_PRESENTA);
+
+      // Y si sale y vuelve a pedir cita en la misma conversación, tampoco.
+      await say('Cancelar');
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ intent: 'agendar_cita' }),
+      );
+      await say('necesito una cita');
+      expect(lastSent()).not.toMatch(SE_PRESENTA);
+    });
+  });
 });

@@ -66,6 +66,12 @@ export const DEFAULT_MAX_RETRIES = 3;
 // Tiempo de expiración de la sesión conversacional en Redis (1 hora)
 export const SESSION_TTL = 3600;
 
+// Cuánto recuerda el bot que ya se presentó («Le saluda Vicente…»). Dentro de
+// esta ventana el menú de servicios sale sin presentación: tras un «comencemos
+// de nuevo» volver a presentarse suena a que el bot no escuchó. La despedida y
+// el cierre por inactividad la borran antes: una conversación nueva sí saluda.
+export const PRESENTACION_TTL = 30 * 60;
+
 /**
  * Ventana de atención de Meta: 24 h desde el último mensaje del paciente.
  * Dentro se puede responder con texto libre; fuera hay que usar una plantilla
@@ -165,6 +171,19 @@ const FORMAL = {
         `*¿Cuál de estos servicios necesita hoy?*\n\n` +
         `${lineas}\n` +
         `_Responda con la letra, escriba el nombre o envíe un audio, como prefiera._ 🎙️`,
+    ]),
+
+  // El mismo menú, sin presentarse: el bot ya lo hizo en esta conversación.
+  menuServiciosSinPresentacion: (lineas: string) =>
+    pick([
+      `Con gusto le ayudo. 🏥\n\n` +
+        `*¿En qué servicio le puedo colaborar?* Puede responder con la letra:\n\n` +
+        `${lineas}\n` +
+        `_También puede escribir el nombre del servicio o enviar un audio de voz._ 🎙️`,
+      `Claro que sí. 🏥\n\n` +
+        `*¿Qué servicio necesita?* Estas son las opciones disponibles:\n\n` +
+        `${lineas}\n` +
+        `_Puede responder con la letra, el nombre del servicio o un audio._ 🎙️`,
     ]),
 
   servicioInvalido: (lineas: string) =>
@@ -1016,6 +1035,16 @@ const INFORMAL = {
         `Estoy aquí para que reservar tu cita sea cosa de un minuto. ¿Cuál de estos servicios necesitas hoy?\n\n` +
         `${lineas}\n` +
         `_Respóndeme con la letra, el nombre o un audio de voz, como te parezca mejor._ 🎙️`,
+    ]),
+
+  menuServiciosSinPresentacion: (lineas: string) =>
+    pick([
+      `¡Claro! 😊 Estos son los servicios disponibles:\n\n` +
+        `${lineas}\n` +
+        `_Respóndeme con la letra, escríbeme el nombre o mándame un audio, como prefieras._ 🎙️`,
+      `¡Con gusto! 🌻 ¿Cuál de estos servicios necesitas?\n\n` +
+        `${lineas}\n` +
+        `_Puedes responder con la letra (A, B, C...), escribirme el nombre o mandarme un audio._ 😊`,
     ]),
 
   servicioInvalido: (lineas: string) =>

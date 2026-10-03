@@ -205,6 +205,11 @@ export class ChatbotCron {
       `temp_waitlist_pending:${base}`,
       `error_count:${base}`,
       `is_ai_flow:${base}`,
+      // Consulta de citas ("¿qué citas tengo?").
+      `temp_lookup_cedula:${base}`,
+      `temp_lookup_hoy:${base}`,
+      // La conversación terminó: la próxima vez el bot vuelve a presentarse.
+      `bot_presentado:${base}`,
     ];
     // Los cupos ofrecidos van scoped por organización como el resto de la
     // sesión (ver slotKey/slotDateKey en ChatbotService): sin el tenant en el

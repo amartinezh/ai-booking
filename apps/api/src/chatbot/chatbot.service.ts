@@ -7,6 +7,7 @@ import { RedisService } from '../redis/redis.service';
 import {
   ChatState,
   SESSION_TTL,
+  PRESENTACION_TTL,
   SERVICE_WINDOW_TTL,
   WAITLIST_CONFIRM_TTL,
   buildMessages,
@@ -3830,6 +3831,32 @@ export class ChatbotService implements OnModuleInit {
     });
   }
 
+  private presentadoKey(organizationId: string, senderId: string): string {
+    return `bot_presentado:${organizationId}:${senderId}`;
+  }
+
+  /**
+   * El menú de servicios con la presentación del bot («Le saluda Vicente…»)
+   * solo si no se presentó ya en esta conversación (ver PRESENTACION_TTL). Sin
+   * esto, tras «Sin problema, comencemos de nuevo. ¿En qué le ayudo?» el
+   * siguiente mensaje volvía a presentarse como si fuera otra conversación.
+   */
+  private async menuServiciosPresentandose(p: {
+    organizationId: string;
+    senderId: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    orgName: string;
+    botName: string;
+    lineas: string;
+  }): Promise<string> {
+    const key = this.presentadoKey(p.organizationId, p.senderId);
+    const yaSePresento = !!(await this.redis.get(key));
+    await this.redis.set(key, '1', 'EX', PRESENTACION_TTL);
+    return yaSePresento
+      ? p.MSGS.menuServiciosSinPresentacion(p.lineas)
+      : p.MSGS.menuServicios(p.orgName, p.lineas, p.botName);
+  }
+
   private async handleEscape(p: {
     organizationId: string;
     senderId: string;
@@ -3860,7 +3887,14 @@ export class ChatbotService implements OnModuleInit {
       );
       const reply =
         count > 0
-          ? MSGS.menuServicios(orgName, lineas, botName)
+          ? await this.menuServiciosPresentandose({
+              organizationId,
+              senderId,
+              MSGS,
+              orgName,
+              botName,
+              lineas,
+            })
           : MSGS.bienvenida(
               orgName,
               'Ej: Medicina General, Odontología',
@@ -3933,6 +3967,8 @@ export class ChatbotService implements OnModuleInit {
   }): Promise<void> {
     const { organizationId, senderId, text, currentState, MSGS } = p;
     await this.cleanUpSession(organizationId, senderId);
+    // Se despidió: si vuelve, es otra conversación y el bot se presenta otra vez.
+    await this.redis.del(this.presentadoKey(organizationId, senderId));
     const reply = MSGS.despedidaCorta();
     await this.smartReply(organizationId, senderId, reply);
     await this.auditSuccess(senderId, organizationId, {
@@ -4873,6 +4909,13 @@ export class ChatbotService implements OnModuleInit {
       });
       await this.smartReply(organizationId, senderId, ack);
       sentTurn1Ack = true;
+      // El ACK ya trae la presentación («Le saluda…»).
+      await this.redis.set(
+        this.presentadoKey(organizationId, senderId),
+        '1',
+        'EX',
+        PRESENTACION_TTL,
+      );
 
       await this.auditSuccess(senderId, organizationId, {
         userMessage: text || '[audio]',
@@ -5209,7 +5252,14 @@ export class ChatbotService implements OnModuleInit {
           count > 0
             ? sentTurn1Ack
               ? MSGS.repromptAgendarServicio(lineas)
-              : MSGS.menuServicios(orgName, lineas, botName)
+              : await this.menuServiciosPresentandose({
+                  organizationId,
+                  senderId,
+                  MSGS,
+                  orgName,
+                  botName,
+                  lineas,
+                })
             : MSGS.bienvenida(
                 orgName,
                 'Ej: Medicina General, Odontología',
@@ -7603,7 +7653,14 @@ export class ChatbotService implements OnModuleInit {
       );
       const reply =
         count > 0
-          ? MSGS.menuServicios(orgName, lineas, botName)
+          ? await this.menuServiciosPresentandose({
+              organizationId,
+              senderId,
+              MSGS,
+              orgName,
+              botName,
+              lineas,
+            })
           : MSGS.bienvenida(
               orgName,
               'Ej: Medicina General, Odontología',

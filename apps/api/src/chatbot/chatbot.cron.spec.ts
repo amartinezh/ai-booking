@@ -93,6 +93,25 @@ describe('ChatbotCron — cierre por inactividad', () => {
     expect(deleted).toContain(KEY);
   });
 
+  it('el cierre por inactividad borra lo de la consulta de citas y la marca de presentación', async () => {
+    const { cron, redis } = build({
+      state: ChatState.AWAITING_LOOKUP_CHOICE,
+      ttl: SESSION_TTL - 400,
+    });
+
+    await cron.handleAbandonedSessions();
+
+    const deleted = (redis.del.mock.calls[0] as string[]) ?? [];
+    for (const clave of [
+      'temp_lookup_cedula',
+      'temp_lookup_hoy',
+      // Conversación terminada: si vuelve, el bot se presenta otra vez.
+      'bot_presentado',
+    ]) {
+      expect(deleted).toContain(`${clave}:${ORG}:${PHONE}`);
+    }
+  });
+
   it('el aviso de cierre queda en el libro de mensajes como SYSTEM_NOTICE', async () => {
     const { cron, httpService, messageLog } = build({
       state: ChatState.AWAITING_SPECIALTY,
