@@ -6415,8 +6415,10 @@ export class ChatbotService implements OnModuleInit {
     }
 
     // Sin cédula previa → pedir cédula (Paso 4 del protocolo).
+    // smartReply (no texto directo): en flujo de voz la pregunta también se
+    // escucha, igual que el resumen de arriba.
     const reply = MSGS.pedirCedulaPostSlot(fechaFormateada);
-    await this.sendWhatsAppMessage(senderId, reply);
+    await this.smartReply(organizationId, senderId, reply);
     await this.setUserState(
       organizationId,
       senderId,

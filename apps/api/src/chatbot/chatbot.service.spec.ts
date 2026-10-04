@@ -2153,6 +2153,54 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       expect(sentMessages()).toHaveLength(1);
       expect(sentMessages()[0]).toContain('Ley 1581');
     });
+
+    // Prueba por voz del 2026-10-04: sin cédula previa, la pregunta por la
+    // cédula tras elegir el horario llegaba solo por texto.
+    const avanzarSinCedula = () =>
+      (service as any).advanceAfterSlotSelected({
+        organizationId: ORG_ID,
+        senderId: SENDER,
+        slotId: 'slot-X',
+        slotFechaStr: '2026-09-30T13:30:00.000Z',
+        MSGS: buildMessages('FORMAL'),
+        userMessage: 'A',
+        selectedLetter: 'A',
+        via: 'letter',
+      });
+
+    it('en voz la pregunta por la cédula también se ESCUCHA', async () => {
+      redis.store.set(`is_ai_flow:${ORG_ID}:${SENDER}`, 'true');
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 'tok', isActive: true });
+      const ttsSpy = jest
+        .spyOn(service as any, 'generateTTS')
+        .mockResolvedValue(Buffer.from('ogg'));
+      jest
+        .spyOn(service as any, 'uploadToWhatsApp')
+        .mockResolvedValue('media-1');
+      const audioSpy = jest
+        .spyOn(service as any, 'sendWhatsAppAudioMessage')
+        .mockResolvedValue(undefined);
+
+      await avanzarSinCedula();
+
+      expect(audioSpy).toHaveBeenCalledTimes(1);
+      expect(ttsSpy.mock.calls[0][1] as string).toMatch(/c[eé]dula/);
+      expect(redis.store.get(`chat_state:${ORG_ID}:${SENDER}`)).toBe(
+        ChatState.AWAITING_CEDULA,
+      );
+    });
+
+    it('en texto la pregunta por la cédula sigue siendo solo texto', async () => {
+      const ttsSpy = jest.spyOn(service as any, 'generateTTS');
+
+      await avanzarSinCedula();
+
+      expect(ttsSpy).not.toHaveBeenCalled();
+      expect(sentMessages()).toHaveLength(1);
+      expect(sentMessages()[0]).toMatch(/c[eé]dula/);
+    });
   });
 
   // ════════════════════════════════════════════════════════════════
