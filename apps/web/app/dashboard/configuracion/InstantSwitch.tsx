@@ -20,6 +20,7 @@ export default function InstantSwitch({
     detailOn,
     detailOff,
     footnote,
+    confirmMessage,
 }: {
     initialEnabled: boolean;
     save: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
@@ -34,6 +35,11 @@ export default function InstantSwitch({
     detailOn: string;
     detailOff: string;
     footnote?: string;
+    /**
+     * Texto a confirmar antes de guardar el cambio hacia `next`; null = sin
+     * confirmación. Para interruptores cuyo efecto no se deshace solo.
+     */
+    confirmMessage?: (next: boolean) => string | null;
 }) {
     const [enabled, setEnabled] = useState(initialEnabled);
     const [error, setError] = useState<string | null>(null);
@@ -41,6 +47,8 @@ export default function InstantSwitch({
 
     const toggle = () => {
         const next = !enabled;
+        const pregunta = confirmMessage?.(next);
+        if (pregunta && !confirm(pregunta)) return;
         setError(null);
         startTransition(async () => {
             const res = await save(next);

@@ -319,16 +319,38 @@ escribe en la de AgenIA.
 
 ## Apagar el espejo, rápido
 
-```sql
--- Corta AgenIA → HIS, deja HIS → AgenIA vivo (o al revés).
-UPDATE "HospitalMirrorConfig" SET "pushEnabled" = false WHERE "organizationId" = '<org>';
+**Solo el envío AgenIA → HIS** (lo normal): interruptor «Envío de AgenIA hacia el
+hospital» en `/dashboard/espejo` (ORG_ADMIN). Queda en la auditoría
+(`PUSH_ENABLED_CHANGE`). Lo hace cumplir la API: mientras esté apagado, el
+despachador le responde al agente con listas vacías, así que no se escribe nada en
+el HIS. Surte efecto en el siguiente segundo y no hay que tocar la VM. Lo que llega
+del hospital (agenda y citas de ventanilla) sigue entrando. Los eventos esperan en
+la cola y salen al volver a encenderlo; el panel avisa cuántos son antes de hacerlo.
+Un lote que el agente ya recibió antes de apagarlo se termina de escribir.
 
--- Corta todo. Los eventos se siguen acumulando: no se pierde nada.
+> ⚠️ Antes del 2026-10-04 `pushEnabled` solo se mostraba y **no detenía nada**.
+> Con una API anterior a esa fecha, el único corte real es `enabled = false` o
+> parar el servicio.
+
+Por SQL, si el panel no está disponible:
+
+```sql
+UPDATE "HospitalMirrorConfig" SET "pushEnabled" = false WHERE "organizationId" = '<org>';
+```
+
+**Todo el espejo, en ambos sentidos:**
+
+```sql
 UPDATE "HospitalMirrorConfig" SET "enabled" = false WHERE "organizationId" = '<org>';
 ```
 
-Parar el servicio en la VM tiene el mismo efecto y es reversible igual. Ninguna
-de las dos cosas borra nada.
+El guard rechaza al agente, así que no entra ni sale nada. Ojo: con `enabled = false`
+el disparador tampoco captura los cambios nuevos de AgenIA. Lo que se agende
+mientras tanto **no** queda en la cola y no llegará al hospital al volver a
+encenderlo. Para pausar sin perder eventos, use el interruptor de envío.
+
+Parar el servicio en la VM corta los dos sentidos sin perder eventos. Ninguna de
+estas opciones borra nada.
 
 ### Apagar solo la consulta en vivo del rastreo
 

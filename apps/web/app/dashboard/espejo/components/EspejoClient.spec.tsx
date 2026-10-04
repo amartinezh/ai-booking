@@ -1,7 +1,11 @@
 import { render, screen } from '@testing-library/react';
 import EspejoClient from './EspejoClient';
 
-jest.mock('@/app/actions/espejo', () => ({ reprocesarEvento: jest.fn(), cambiarModoAgenda: jest.fn() }));
+jest.mock('@/app/actions/espejo', () => ({
+    reprocesarEvento: jest.fn(),
+    cambiarModoAgenda: jest.fn(),
+    cambiarEnvioAlHospital: jest.fn(),
+}));
 jest.mock('next/link', () => ({
     __esModule: true,
     default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
@@ -62,7 +66,22 @@ describe('EspejoClient — consulta en vivo del rastreo', () => {
     it('es solo lectura: no hay ningún control para encenderla desde aquí', () => {
         render(<EspejoClient data={base({ lookupEnabled: true, lastLookupCapable: true })} />);
         expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-        expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+        // El único interruptor del panel es el del envío al hospital.
+        expect(screen.getAllByRole('switch')).toHaveLength(1);
+        expect(screen.queryByRole('switch', { name: /consulta en vivo/i })).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: /consulta en vivo/i })).not.toBeInTheDocument();
+    });
+});
+
+describe('EspejoClient — envío al hospital', () => {
+    it('apagado, el semáforo de la cola dice que está retenida y no que «todo llegó»', () => {
+        render(<EspejoClient data={{ ...base({ pushEnabled: false }), pendientes: 2 }} />);
+        expect(screen.getByText(/Envío al hospital APAGADO: 2 evento\(s\) retenidos/)).toBeInTheDocument();
+        expect(screen.queryByText(/Todo lo que se agendó por WhatsApp llegó al hospital/)).not.toBeInTheDocument();
+    });
+
+    it('muestra el interruptor con el estado real', () => {
+        render(<EspejoClient data={base({ pushEnabled: false })} />);
+        expect(screen.getByRole('switch', { name: /Envío de AgenIA hacia el hospital/ })).toHaveAttribute('aria-checked', 'false');
     });
 });

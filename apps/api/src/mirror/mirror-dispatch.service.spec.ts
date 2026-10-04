@@ -5,7 +5,11 @@ import { PrismaService } from '../prisma/prisma.service';
 describe('MirrorDispatchService', () => {
   let service: MirrorDispatchService;
   let prisma: {
-    hospitalMirrorConfig: { findUniqueOrThrow: jest.Mock; update: jest.Mock };
+    hospitalMirrorConfig: {
+      findUniqueOrThrow: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+    };
     syncOutbox: {
       findMany: jest.Mock;
       findFirst: jest.Mock;
@@ -31,6 +35,8 @@ describe('MirrorDispatchService', () => {
             pullEnabled: true,
           }),
         ),
+        // El interruptor de envío al hospital, que el long-poll consulta en cada vuelta.
+        findUnique: jest.fn(() => Promise.resolve({ pushEnabled: true })),
         update: jest.fn(() => Promise.resolve({})),
       },
       syncOutbox: {
@@ -96,6 +102,68 @@ describe('MirrorDispatchService', () => {
       expect(where.deliveredAt).toBeNull();
       expect(where.deadLettered).toBe(false);
       expect(where.organizationId).toBe('org1');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 🛑 Interruptor del envío al hospital. Antes `pushEnabled` solo se mostraba
+  // en el panel: con él apagado las citas seguían llegando al HIS. Ahora el
+  // despachador no le entrega nada al agente mientras esté apagado.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('getPendingEvents — envío al hospital pausado (pushEnabled)', () => {
+    const evento = {
+      seq: BigInt(7),
+      eventId: 'e7',
+      entityType: 'APPOINTMENT',
+      entityId: 'cita-1',
+      op: 'INSERT',
+      payload: {},
+      createdAt: new Date(),
+    };
+
+    it('apagado: no entrega nada aunque haya eventos pendientes, ni los lee', async () => {
+      prisma.hospitalMirrorConfig.findUnique.mockResolvedValue({
+        pushEnabled: false,
+      });
+      prisma.syncOutbox.findMany.mockResolvedValue([evento]);
+
+      const result = await service.getPendingEvents('org1', BigInt(0));
+
+      expect(result).toEqual([]);
+      expect(prisma.syncOutbox.findMany).not.toHaveBeenCalled();
+      // No toca la cola: los eventos esperan a que se vuelva a encender.
+      expect(prisma.syncOutbox.updateMany).not.toHaveBeenCalled();
+      expect(prisma.syncOutbox.update).not.toHaveBeenCalled();
+    });
+
+    it('se consulta en cada vuelta: encenderlo a mitad del long-poll entrega en esa misma llamada', async () => {
+      prisma.hospitalMirrorConfig.findUnique
+        .mockResolvedValueOnce({ pushEnabled: false })
+        .mockResolvedValue({ pushEnabled: true });
+      prisma.syncOutbox.findMany.mockResolvedValue([evento]);
+
+      const result = await service.getPendingEvents('org1', BigInt(0));
+
+      expect(result).toHaveLength(1);
+      expect(
+        prisma.hospitalMirrorConfig.findUnique.mock.calls.length,
+      ).toBeGreaterThanOrEqual(2);
+    });
+
+    it('falla cerrado: sin configuración no sale nada hacia el hospital', async () => {
+      prisma.hospitalMirrorConfig.findUnique.mockResolvedValue(null);
+      prisma.syncOutbox.findMany.mockResolvedValue([evento]);
+
+      expect(await service.getPendingEvents('org1', BigInt(0))).toEqual([]);
+      expect(prisma.syncOutbox.findMany).not.toHaveBeenCalled();
+    });
+
+    it('consulta el interruptor de SU clínica', async () => {
+      await service.getPendingEvents('org-xyz', BigInt(0));
+
+      expect(prisma.hospitalMirrorConfig.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { organizationId: 'org-xyz' } }),
+      );
     });
   });
 
@@ -528,6 +596,7 @@ describe('MirrorDispatchService — entrega con backoff', () => {
     prisma = {
       hospitalMirrorConfig: {
         findUniqueOrThrow: jest.fn(() => Promise.resolve({})),
+        findUnique: jest.fn(() => Promise.resolve({ pushEnabled: true })),
         update: jest.fn(() => Promise.resolve({})),
       },
       syncOutbox: {
@@ -871,6 +940,7 @@ describe('MirrorDispatchService — hidratación del evento', () => {
     prisma = {
       hospitalMirrorConfig: {
         findUniqueOrThrow: jest.fn(() => Promise.resolve({})),
+        findUnique: jest.fn(() => Promise.resolve({ pushEnabled: true })),
         update: jest.fn(() => Promise.resolve({})),
       },
       syncOutbox: {
@@ -1113,7 +1183,11 @@ describe('MirrorDispatchService — hidratación del contexto que va al HIS', ()
 
   beforeEach(async () => {
     prisma = {
-      hospitalMirrorConfig: { findUniqueOrThrow: jest.fn(), update: jest.fn() },
+      hospitalMirrorConfig: {
+        findUniqueOrThrow: jest.fn(),
+        findUnique: jest.fn(async () => ({ pushEnabled: true })),
+        update: jest.fn(),
+      },
       syncOutbox: {
         findMany: jest.fn(async () => [filaOutbox()]),
         findFirst: jest.fn(),
@@ -1253,7 +1327,9 @@ describe('MirrorDispatchService — hidratación del contexto que va al HIS', ()
     });
 
     it('🗑️ un DELETE sin paciente, servicio ni EPS SÍ se entrega: se anula por médico + hora', async () => {
-      prisma.syncOutbox.findMany.mockResolvedValue([filaOutbox({ op: 'DELETE' })]);
+      prisma.syncOutbox.findMany.mockResolvedValue([
+        filaOutbox({ op: 'DELETE' }),
+      ]);
       prisma.patientProfile.findMany.mockResolvedValue([]);
       prisma.eps.findMany.mockResolvedValue([]);
       prisma.mirrorEntityMap.findMany.mockResolvedValue([MAPAS[0]]);
@@ -1268,12 +1344,18 @@ describe('MirrorDispatchService — hidratación del contexto que va al HIS', ()
     });
 
     it('🗑️ un DELETE sin médico o sin cupo sigue sin entregarse: sin ellos no se sabe qué anular', async () => {
-      prisma.syncOutbox.findMany.mockResolvedValue([filaOutbox({ op: 'DELETE' })]);
+      prisma.syncOutbox.findMany.mockResolvedValue([
+        filaOutbox({ op: 'DELETE' }),
+      ]);
       prisma.mirrorEntityMap.findMany.mockResolvedValue([]);
-      expect((await traer())[0].context?.missingMappings).toEqual(['DOCTOR doc-1']);
+      expect((await traer())[0].context?.missingMappings).toEqual([
+        'DOCTOR doc-1',
+      ]);
 
       prisma.scheduleSlot.findMany.mockResolvedValue([]);
-      expect((await traer())[0].context?.missingMappings).toEqual(['SLOT slot-1']);
+      expect((await traer())[0].context?.missingMappings).toEqual([
+        'SLOT slot-1',
+      ]);
     });
 
     it('varios faltantes se reportan todos juntos, no solo el primero', async () => {

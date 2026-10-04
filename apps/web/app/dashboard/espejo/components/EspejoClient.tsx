@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { reprocesarEvento, cambiarModoAgenda } from '@/app/actions/espejo';
 import { formatDateShort } from '@/lib/date';
+import EnvioHospitalToggle from './EnvioHospitalToggle';
 
 const MODOS_AGENDA = ['OFF', 'SHADOW', 'ON'] as const;
 
@@ -116,8 +117,15 @@ export default function EspejoClient({ data }: { data: Estado }) {
                 ? { estado: 'mal' as const, detalle: `El agente está vivo pero NO alcanza el sistema del hospital: ${config.lastHisDetail ?? 'sin detalle'}. Ninguna cita se está espejando.` }
                 : { estado: 'ok' as const, detalle: `Latido hace ${data.edadLatidoMin} min y el sistema del hospital responde.` };
 
-    const cola =
-        data.deadLetters.length > 0
+    const cola = !config.pushEnabled
+        ? {
+              estado: 'atencion' as const,
+              detalle:
+                  data.pendientes > 0
+                      ? `Envío al hospital APAGADO: ${data.pendientes} evento(s) retenidos en cola; salen al encenderlo.`
+                      : 'Envío al hospital APAGADO: AgenIA no escribe nada en el sistema del hospital.',
+          }
+        : data.deadLetters.length > 0
             ? { estado: 'mal' as const, detalle: `${data.deadLetters.length} evento(s) se rindieron: el hospital NO los tiene y nadie los va a reintentar solo.` }
             : data.pendientes > 0
               ? { estado: 'atencion' as const, detalle: `${data.pendientes} evento(s) en camino${data.colaDesde ? `, el más viejo desde ${formatDateShort(data.colaDesde)}` : ''}.` }
@@ -190,6 +198,10 @@ export default function EspejoClient({ data }: { data: Estado }) {
                 <Semaforo titulo="Los dos sistemas coinciden" {...reconciliacion} />
                 {consultaEnVivo && <Semaforo titulo="Consulta en vivo al HIS (rastreo)" {...consultaEnVivo} />}
             </section>
+
+            <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+                <EnvioHospitalToggle initialEnabled={config.pushEnabled} enCola={data.pendientes} />
+            </div>
 
             <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Modo de agenda</h2>

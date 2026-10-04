@@ -126,7 +126,15 @@ export class MirrorDispatchService {
     const deadline = Date.now() + this.longPollMs;
 
     while (true) {
-      const rows = await this.selectDeliverable(organizationId, limit);
+      // 🛑 Interruptor del envío al hospital (`pushEnabled`). Se consulta en CADA
+      // vuelta y no una vez al entrar: apagarlo a mitad de un long-poll de 25 s
+      // tiene que surtir efecto en el siguiente segundo, no en la siguiente
+      // llamada. Pausado, el agente recibe listas vacías y no escribe nada en
+      // el HIS; los eventos siguen en la cola y salen al volver a encenderlo.
+      // Antes este campo solo se mostraba: nadie lo hacía cumplir.
+      const rows = (await this.envioAlHospitalHabilitado(organizationId))
+        ? await this.selectDeliverable(organizationId, limit)
+        : [];
 
       if (rows.length > 0 || Date.now() >= deadline) {
         return this.hydrateSafely(organizationId, rows);
@@ -154,6 +162,21 @@ export class MirrorDispatchService {
    * el rendimiento no cambia en el caso normal: una cita acumula uno o dos
    * eventos pendientes, no cientos.
    */
+  /**
+   * ¿Se le puede entregar algo al agente para que lo escriba en el HIS? Falla
+   * cerrado: sin fila de configuración, o con cualquier valor que no sea
+   * exactamente `true`, no sale nada hacia el hospital.
+   */
+  private async envioAlHospitalHabilitado(
+    organizationId: string,
+  ): Promise<boolean> {
+    const config = await this.prisma.hospitalMirrorConfig.findUnique({
+      where: { organizationId },
+      select: { pushEnabled: true },
+    });
+    return config?.pushEnabled === true;
+  }
+
   private async selectDeliverable(organizationId: string, limit: number) {
     const ahora = new Date();
 
