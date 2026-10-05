@@ -960,4 +960,79 @@ describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
       expect(r.success).toBe(true);
     });
   });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 🪞 Asistencia que llega del hospital: tiene que escribirse con origen
+  // MIRROR. Sin eso el disparador la registraba como cambio de AgenIA y cada
+  // «atendida» del hospital dejaba un evento en la cola de vuelta al HIS.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('updateAttendance — origen de la escritura', () => {
+    const armar = async () => {
+      const tx = {
+        $executeRawUnsafe: jest.fn(async () => 0),
+        appointment: { update: jest.fn(async () => ({ id: 'apt-1' })) },
+      };
+      const prisma = {
+        appointment: {
+          findFirst: jest.fn(async () => ({ id: 'apt-1' })),
+          update: jest.fn(async () => ({ id: 'apt-1' })),
+        },
+        $transaction: jest.fn(async (cb: (t: typeof tx) => unknown) => cb(tx)),
+      };
+      const m = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          { provide: PrismaService, useValue: prisma },
+        ],
+      }).compile();
+      return { svc: m.get(AppointmentsService), prisma, tx };
+    };
+
+    it('desde el hospital: marca la transacción como MIRROR ANTES de escribir', async () => {
+      const { svc, prisma, tx } = await armar();
+
+      await svc.updateAttendance('apt-1', 'ATTENDED' as never, 'org-1', {
+        origen: 'MIRROR',
+      });
+
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      expect(tx.appointment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'apt-1' },
+          data: { attendanceStatus: 'ATTENDED' },
+        }),
+      );
+      expect(tx.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.appointment.update.mock.invocationCallOrder[0],
+      );
+      // Fuera de la transacción no se escribe nada.
+      expect(prisma.appointment.update).not.toHaveBeenCalled();
+    });
+
+    it('desde el panel (sin origen): escritura normal, sin marca MIRROR', async () => {
+      const { svc, prisma, tx } = await armar();
+
+      await svc.updateAttendance('apt-1', 'NO_SHOW' as never, 'org-1');
+
+      expect(prisma.appointment.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { attendanceStatus: 'NO_SHOW' } }),
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.$executeRawUnsafe).not.toHaveBeenCalled();
+    });
+
+    it('una cita de otra clínica no se toca, venga de donde venga', async () => {
+      const { svc, prisma, tx } = await armar();
+      prisma.appointment.findFirst.mockResolvedValue(null as never);
+
+      await expect(
+        svc.updateAttendance('apt-1', 'ATTENDED' as never, 'otra-org', {
+          origen: 'MIRROR',
+        }),
+      ).rejects.toThrow('no pertenece');
+      expect(tx.appointment.update).not.toHaveBeenCalled();
+    });
+  });
 });

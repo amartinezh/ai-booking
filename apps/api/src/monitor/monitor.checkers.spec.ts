@@ -102,6 +102,60 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     expect(r.errorMessage).toContain('no avanza');
   });
 
+  it('con el envío al hospital PAUSADO, la cola retenida no se reporta como «no avanza»', async () => {
+    conEstado({
+      configs: [
+        {
+          organizationId: 'org1',
+          lastHeartbeatAt: haceMinutos(1),
+          pushEnabled: false,
+        },
+      ],
+      pendienteDesde: haceMinutos(300),
+    });
+
+    const r = await checkers.checkService(svc);
+
+    expect(r.status).toBe('UP');
+    expect(r.errorMessage).toBeNull();
+  });
+
+  it('en pausa se sigue vigilando lo demás: dead-letter y latido', async () => {
+    conEstado({
+      configs: [
+        {
+          organizationId: 'org1',
+          lastHeartbeatAt: haceMinutos(60),
+          pushEnabled: false,
+        },
+      ],
+      deadLetters: 2,
+      pendienteDesde: haceMinutos(300),
+    });
+
+    const r = await checkers.checkService(svc);
+
+    expect(r.status).toBe('DOWN');
+    expect(r.errorMessage).toContain('dead-letter');
+    expect(r.errorMessage).toContain('Sin heartbeat');
+    expect(r.errorMessage).not.toContain('no avanza');
+  });
+
+  it('con el envío ENCENDIDO, la cola atascada sí alarma', async () => {
+    conEstado({
+      configs: [
+        {
+          organizationId: 'org1',
+          lastHeartbeatAt: haceMinutos(1),
+          pushEnabled: true,
+        },
+      ],
+      pendienteDesde: haceMinutos(30),
+    });
+
+    expect((await checkers.checkService(svc)).status).toBe('DEGRADED');
+  });
+
   it('un evento pendiente RECIENTE no alarma: la cola respira', async () => {
     conEstado({ pendienteDesde: haceMinutos(2) });
 

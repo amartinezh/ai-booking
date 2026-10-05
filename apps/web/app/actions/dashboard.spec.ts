@@ -94,6 +94,17 @@ describe('updateAttendance — scoping por tenant', () => {
         expect(mockUpdate).toHaveBeenCalled();
     });
 
+    it('🏥 la asistencia de una cita del hospital no se cambia desde AgenIA', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
+        mockFindFirst.mockResolvedValue({ id: 'apt-1', epsId: 'eps-1', origin: 'MIRROR', scheduleSlot: { doctorId: 'doc-1' } });
+
+        const res = await updateAttendance('apt-1', 'NO_SHOW');
+
+        expect(res.success).toBe(false);
+        expect(res.error).toContain('la registra el hospital');
+        expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
     it('una cita de otra clínica responde «no encontrada» y no se escribe', async () => {
         mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
         mockFindFirst.mockResolvedValue(null);

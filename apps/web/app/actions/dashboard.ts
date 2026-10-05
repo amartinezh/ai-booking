@@ -41,10 +41,19 @@ export async function updateAttendance(appointmentId: string, status: string) {
         // la EPS es de la cita y el médico, de su cupo.
         const cita = await prisma.appointment.findFirst({
             where: whereClause,
-            select: { id: true, epsId: true, scheduleSlot: { select: { doctorId: true } } },
+            select: { id: true, epsId: true, origin: true, scheduleSlot: { select: { doctorId: true } } },
         });
         if (!cita) {
             return { success: false, error: 'Cita no encontrada en su organización.' };
+        }
+        // 🏥 La asistencia de una cita del hospital la registra el HOSPITAL y llega por
+        // el espejo: es su registro clínico. Cambiarla aquí dejaría a AgenIA diciendo
+        // algo distinto que el HIS (y AgenIA no escribe asistencia hacia el HIS).
+        if (cita.origin === 'MIRROR') {
+            return {
+                success: false,
+                error: 'La asistencia de las citas del hospital la registra el hospital en su sistema; AgenIA la muestra tal cual.',
+            };
         }
         const alcance = await alcanceDeLaSesion(prisma, session);
         if (citaFueraDeAlcance(alcance, { epsId: cita.epsId, doctorId: cita.scheduleSlot.doctorId })) {

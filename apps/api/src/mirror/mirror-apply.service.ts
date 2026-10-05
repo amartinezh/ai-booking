@@ -738,10 +738,13 @@ export class MirrorApplyService {
       traza.entityId = cita.id;
     }
 
+    // 🪞 Anti-eco: la asistencia nace en el HIS. Con origen MIRROR el outbox la
+    // registra como entregada y no vuelve al hospital que la marcó.
     await this.appointmentsService.updateAttendance(
       agenIAAppointmentId,
       attendanceStatus,
       organizationId,
+      { origen: 'MIRROR' },
     );
 
     return 'APPLIED';

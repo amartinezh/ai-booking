@@ -103,7 +103,11 @@ export class MonitorCheckers {
 
     const configs = await this.prisma.hospitalMirrorConfig.findMany({
       where: { enabled: true },
-      select: { organizationId: true, lastHeartbeatAt: true },
+      select: {
+        organizationId: true,
+        lastHeartbeatAt: true,
+        pushEnabled: true,
+      },
     });
 
     // Ninguna organización con espejo: no aplica, ni verde ni rojo.
@@ -144,7 +148,14 @@ export class MonitorCheckers {
         );
       }
 
-      if (masViejo) {
+      // Con el envío al hospital PAUSADO a propósito (interruptor del panel del
+      // espejo) los eventos se quedan en la cola por decisión, no por falla:
+      // que no avance es lo esperado y no se reporta. El dead-letter y el
+      // latido se siguen vigilando igual. Mismo criterio que el vigilante de la
+      // bandeja (`MirrorWatchdogService`), que tampoco vigila la cola en pausa.
+      // Antes, dos asistencias retenidas abrieron un incidente falso
+      // «mirror DEGRADED: la cola no avanza» (2026-10-05).
+      if (masViejo && cfg.pushEnabled !== false) {
         const antiguedad = ahora - masViejo.createdAt.getTime();
         if (antiguedad > umbralPendienteMs) {
           if (peor !== 'DOWN') peor = 'DEGRADED';

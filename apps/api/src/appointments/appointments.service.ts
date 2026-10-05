@@ -434,10 +434,18 @@ export class AppointmentsService {
   // 3. CONTROL DE ASISTENCIA
   // `organizationId` obligatorio: el controller solo admite roles clínicos,
   // que siempre traen tenant en el token.
+  //
+  // `opts.origen = 'MIRROR'`: la asistencia la marcó el HOSPITAL y llega por el
+  // espejo. La escritura va en una transacción con `agenia.sync_origin =
+  // 'MIRROR'` para que el disparador del outbox la registre como nacida en el
+  // HIS (nace entregada) y no como un cambio de AgenIA que volvería al hospital
+  // (anti-eco). Sin esto cada «atendida» del hospital dejaba un evento LOCAL en
+  // la cola hacia el HIS (visto en producción el 2026-10-05).
   async updateAttendance(
     appointmentId: string,
     status: AttendanceStatus,
     organizationId: string,
+    opts: { origen?: 'MIRROR' } = {},
   ) {
     // Verificamos antes para evitar NotFoundExceptions por isolation o seguridad
     const apt = await this.prisma.appointment.findFirst({
@@ -446,14 +454,25 @@ export class AppointmentsService {
     if (!apt)
       throw new Error('Cita no encontrada o no pertenece a tu Organización.');
 
-    const updated = await this.prisma.appointment.update({
-      where: { id: appointmentId },
-      data: { attendanceStatus: status },
-      include: {
-        patient: true,
-        scheduleSlot: { include: { doctor: true, service: true } },
-      },
-    });
+    const actualizar = (db: Pick<PrismaService, 'appointment'>) =>
+      db.appointment.update({
+        where: { id: appointmentId },
+        data: { attendanceStatus: status },
+        include: {
+          patient: true,
+          scheduleSlot: { include: { doctor: true, service: true } },
+        },
+      });
+
+    const updated =
+      opts.origen === 'MIRROR'
+        ? await this.prisma.$transaction(async (tx) => {
+            await tx.$executeRawUnsafe(
+              `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+            );
+            return actualizar(tx);
+          })
+        : await actualizar(this.prisma);
 
     return {
       success: true,

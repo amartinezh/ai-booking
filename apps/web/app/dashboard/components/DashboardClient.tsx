@@ -23,6 +23,33 @@ type DashboardAppointment = Prisma.AppointmentGetPayload<{
     };
 }>;
 
+/**
+ * Estado principal de la cita. Una cita vigente que ya tiene desenlace de
+ * asistencia se muestra por ese desenlace («ATENDIDA» / «NO ASISTIÓ») y no como
+ * «SCHEDULED»: era lo que el personal no veía cuando el hospital la marcaba.
+ */
+function estadoDeLaCita(apt: { status: string; attendanceStatus: string }) {
+    if (apt.status === 'CANCELLED') {
+        return { texto: 'CANCELADA', clase: 'bg-zinc-50 text-zinc-600 border-zinc-200' };
+    }
+    if (apt.status === 'SCHEDULED' && apt.attendanceStatus === 'ATTENDED') {
+        return { texto: 'ATENDIDA', clase: 'bg-emerald-600 text-white border-emerald-700' };
+    }
+    if (apt.status === 'SCHEDULED' && apt.attendanceStatus === 'NO_SHOW') {
+        return { texto: 'NO ASISTIÓ', clase: 'bg-red-50 text-red-700 border-red-200' };
+    }
+    if (apt.status === 'SCHEDULED') {
+        return { texto: apt.status, clase: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+    }
+    return { texto: apt.status, clase: 'bg-zinc-50 text-zinc-600 border-zinc-200' };
+}
+
+const ASISTENCIA_DEL_HOSPITAL: Record<string, { texto: string; clase: string }> = {
+    ATTENDED: { texto: '✅ Atendida', clase: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
+    NO_SHOW: { texto: '❌ No asistió', clase: 'bg-red-100 text-red-800 border-red-300' },
+    PENDING: { texto: 'En espera', clase: 'bg-amber-50 text-amber-600 border-amber-200' },
+};
+
 export default function DashboardClient({
     appointments,
     epsList,
@@ -212,16 +239,34 @@ export default function DashboardClient({
 
                                         <td className="px-6 py-5 whitespace-nowrap text-center">
                                             <div className="mb-2">
-                                                <span className={`px-4 py-1.5 inline-flex text-xs font-bold rounded-full border ${apt.status === 'SCHEDULED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-50 text-zinc-600 border-zinc-200'}`}>
-                                                    {apt.status === 'CANCELLED' ? 'CANCELADA' : apt.status}
+                                                <span className={`px-4 py-1.5 inline-flex text-xs font-bold rounded-full border ${estadoDeLaCita(apt).clase}`}>
+                                                    {estadoDeLaCita(apt).texto}
                                                 </span>
                                                 {apt.origin === 'WHATSAPP' && apt.status === 'SCHEDULED' && <div className="mt-1 ml-1 text-[10px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full inline-block border border-indigo-200">🤖 AI Bot</div>}
                                                 {apt.origin === 'TELEGRAM' && apt.status === 'SCHEDULED' && <div className="mt-1 ml-1 text-[10px] bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded-full inline-block border border-sky-200">✈️ Bot Telegram</div>}
                                                 {apt.origin === 'MANUAL' && apt.status === 'SCHEDULED' && <div className="mt-1 ml-1 text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-full inline-block border border-blue-200">👤 Manual</div>}
+                                                {apt.origin === 'MIRROR' && <div className="mt-1 ml-1 text-[10px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full inline-block border border-teal-200" title="Agendada en el sistema del hospital">🏥 Hospital</div>}
                                             </div>
 
+                                            {/* ASISTENCIA REGISTRADA POR EL HOSPITAL: solo lectura. Es el
+                                                registro clínico del HIS; AgenIA la refleja, no la edita. */}
+                                            {apt.status === 'SCHEDULED' && role !== 'PATIENT' && apt.origin === 'MIRROR' && (
+                                                <div className="mt-2 flex flex-col items-center gap-0.5">
+                                                    <span
+                                                        className={`text-xs font-semibold px-2 py-1 rounded-md border ${(ASISTENCIA_DEL_HOSPITAL[apt.attendanceStatus] ?? ASISTENCIA_DEL_HOSPITAL.PENDING).clase}`}
+                                                    >
+                                                        {(ASISTENCIA_DEL_HOSPITAL[apt.attendanceStatus] ?? ASISTENCIA_DEL_HOSPITAL.PENDING).texto}
+                                                    </span>
+                                                    <span className="text-[10px] text-zinc-500">
+                                                        {apt.attendanceStatus === 'PENDING'
+                                                            ? 'La registra el hospital'
+                                                            : 'Asistencia registrada por el hospital'}
+                                                    </span>
+                                                </div>
+                                            )}
+
                                             {/* ATTENDANCE TOGGLE */}
-                                            {apt.status === 'SCHEDULED' && role !== 'PATIENT' && (
+                                            {apt.status === 'SCHEDULED' && role !== 'PATIENT' && apt.origin !== 'MIRROR' && (
                                                 <div className="mt-2 inline-flex flex-col items-center">
                                                     <select 
                                                         value={apt.attendanceStatus} 

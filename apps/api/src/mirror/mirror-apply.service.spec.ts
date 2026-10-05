@@ -249,6 +249,7 @@ describe('MirrorApplyService', () => {
         'apt-9',
         'ATTENDED',
         'org-1',
+        { origen: 'MIRROR' },
       );
       expect(r).toMatchObject({ applied: 1, errors: 0 });
     });
@@ -1077,6 +1078,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         'apt-1',
         v,
         ORG,
+        { origen: 'MIRROR' },
       );
     });
 
@@ -1113,6 +1115,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         'apt-vigente',
         'ATTENDED',
         ORG,
+        { origen: 'MIRROR' },
       );
     });
   });
