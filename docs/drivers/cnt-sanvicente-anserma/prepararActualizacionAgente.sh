@@ -137,7 +137,9 @@ ${BOLD}Después de copiarlo (cualquiera de los dos escenarios):${N}
 
   ${D}Atajo recomendado — hace la instalación, el reinicio y la verificación${N}
   ${D}de una vez, con rollback disponible si algo sale mal (ver su cabecera):${N}
-    ${BOLD}./actualizarAgente.sh${N}          ${D}# 🏥 en el VPS del hospital, con el bundle en /tmp${N}
+    ${BOLD}./actualizarAgente.sh ${SHA}${N}
+    ${D}# 🏥 en el VPS del hospital, con el bundle en /tmp; con el SHA-256 confirma${N}
+    ${D}# que llegó completo y que NO es el mismo binario que ya está instalado${N}
 
   ${D}O a mano, si prefieres ir paso a paso (COMPILAR_Y_ACTUALIZAR.md §4.3-§4.4):${N}
     sudo systemctl restart agenia-mirror-agent

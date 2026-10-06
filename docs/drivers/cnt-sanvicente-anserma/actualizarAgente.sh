@@ -24,8 +24,21 @@
 #   scp/AnyDesk el bundle nuevo a /tmp/agent.bundle.js, luego:
 #     ./actualizarAgente.sh
 #
+#   Con el SHA-256 que imprimió ./update-agente.sh en tu portátil (recomendado:
+#   confirma que llegó COMPLETO y que es el bundle que acabas de compilar):
+#     ./actualizarAgente.sh 3f9a…c2
+#
 #   Para revertir al binario anterior sin recompilar nada:
 #     ./actualizarAgente.sh --rollback
+#
+# Mejoras del 2026-10-06 (tras instalar sin querer un bundle viejo):
+#   4. Compara el SHA-256 del bundle con el esperado (si se pasa) y avisa si es
+#      IDÉNTICO al que ya está instalado — reiniciar con el mismo binario no
+#      actualiza nada y antes no lo decía.
+#   5. Toma la marca de tiempo ANTES del restart: el handshake llega en ~1 s y
+#      podía quedar fuera de la ventana que se vigila.
+#   6. `sudo journalctl`: el usuario `data` sin el grupo systemd-journal no ve
+#      el journal del servicio, y la espera terminaba siempre en «timeout».
 # =============================================================================
 set -Eeuo pipefail
 
@@ -49,11 +62,10 @@ die()  { err "$*"; exit 1; }
 # Sondea el journal DESDE el instante del restart hasta ver un desenlace
 # reconocible, en vez de dormir un tiempo fijo y adivinar por el estado.
 wait_for_outcome() {
-  local since waited=0
-  since="$(date '+%Y-%m-%d %H:%M:%S')"
+  local since="$1" waited=0
   while (( waited < WAIT_TIMEOUT )); do
     local log
-    log="$(journalctl -u "$SERVICE" --since "$since" --no-pager 2>/dev/null)"
+    log="$(sudo journalctl -u "$SERVICE" --since "$since" --no-pager 2>/dev/null)"
     if grep -q "handshake OK" <<<"$log"; then echo ok; return 0; fi
     if grep -q "error fatal en el arranque" <<<"$log"; then echo fail; return 0; fi
     sleep 1; waited=$((waited + 1))
@@ -63,15 +75,17 @@ wait_for_outcome() {
 
 restart_and_check() {
   head1 "Reiniciando $SERVICE"
+  local since
+  since="$(date '+%Y-%m-%d %H:%M:%S')"
   sudo systemctl restart "$SERVICE"
   printf '  Esperando resultado en el journal (hasta %ss)...\n' "$WAIT_TIMEOUT"
-  case "$(wait_for_outcome)" in
+  case "$(wait_for_outcome "$since")" in
     ok)
       ok "handshake OK — el agente arrancó bien."
       ;;
     fail)
       err "El journal muestra 'error fatal en el arranque'. Detalle:"
-      journalctl -u "$SERVICE" -n 30 --no-pager | sed 's/^/    /'
+      sudo journalctl -u "$SERVICE" -n 30 --no-pager | sed 's/^/    /'
       exit 1
       ;;
     timeout)
@@ -101,6 +115,20 @@ node --check "$BUNDLE" \
   || die "El bundle no pasa 'node --check' — la transferencia puede haber llegado corrupta/truncada. Vuelve a copiarlo."
 ok "Bundle válido ($(du -h "$BUNDLE" | cut -f1))"
 
+SHA_NUEVO="$(sha256sum "$BUNDLE" | awk '{print $1}')"
+ok "SHA-256 del bundle: $SHA_NUEVO"
+ESPERADO="${1:-}"
+if [[ -n "$ESPERADO" ]]; then
+  [[ "$SHA_NUEVO" == "$ESPERADO" ]] \
+    || die "El SHA-256 no coincide con el esperado ($ESPERADO): la copia llegó incompleta o es OTRO archivo. Vuelve a copiarlo."
+  ok "Coincide con el SHA-256 esperado."
+else
+  warn "No pasaste el SHA-256 esperado: no se puede confirmar que sea el bundle recién compilado."
+fi
+if [[ -f "$DEST" ]] && [[ "$(sudo sha256sum "$DEST" | awk '{print $1}')" == "$SHA_NUEVO" ]]; then
+  die "Ese bundle es IDÉNTICO al que ya está instalado: no hay nada que actualizar. ¿Copiaste el archivo correcto?"
+fi
+
 head1 "Respaldando el binario actual"
 sudo mkdir -p "$BACKUP_DIR"
 if [[ -f "$DEST" ]]; then
@@ -120,4 +148,4 @@ ok "Instalado en $DEST"
 restart_and_check
 
 head1 "Últimas líneas del journal"
-journalctl -u "$SERVICE" -n 20 --no-pager | sed 's/^/  /'
+sudo journalctl -u "$SERVICE" -n 20 --no-pager | sed 's/^/  /'
