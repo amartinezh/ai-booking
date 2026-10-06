@@ -39,6 +39,8 @@ function fakePool(
     filasAnuladas?: number;
     /** Simula el permiso EXECUTE sobre PA_Ins_AUDITOR aún no concedido. */
     auditError?: any;
+    /** Citas del médico ese día que ve la revisión de cruces (H11). */
+    citasDelDia?: { hora: string; dura: number | null }[];
   } = {},
 ) {
   const requests: { params: Record<string, unknown>; sql: string }[] = [];
@@ -67,6 +69,11 @@ function fakePool(
         }
         if (opts.auditError && /EXEC dbo\.PA_Ins_AUDITOR/.test(sqlText)) {
           throw opts.auditError;
+        }
+        if (
+          /FROM dbo\.CITAS_MEDICAS WITH \(UPDLOCK, HOLDLOCK\)/.test(sqlText)
+        ) {
+          return { recordset: opts.citasDelDia ?? [] };
         }
         if (/FROM dbo\.PACIENTES/.test(sqlText)) {
           return { recordset: opts.pacienteExiste === false ? [] : [{ x: 1 }] };
@@ -1475,5 +1482,112 @@ describe('detectChanges y snapshotAppointments con data sucia dentro de la venta
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('FE_HORA_CIT ilegible'),
     );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🛡️ H11 (docs/PLAN_AGENDA_HUECOS.md): la llave del HIS solo frena la MISMA
+// hora. Antes de escribir, el agente revisa que la cita no se CRUCE con otra
+// del médico ese día. El evento es de 07:00 a 07:20 (12:00Z-12:20Z).
+// ══════════════════════════════════════════════════════════════════════════
+describe('createAppointment — revisión de cruces antes de escribir (H11)', () => {
+  it('una cita que se cruza (07:10 de 20 min) se rechaza como RECHAZO DEL HIS y no se escribe nada', async () => {
+    const { driver, requests, tx } = conDriver({
+      citasDelDia: [{ hora: '2026/09/03 07:10', dura: 20 }],
+    });
+
+    const r = await driver.createAppointment(evento());
+
+    expect(r.success).toBe(false);
+    expect(r.rechazoDelHis).toBe(true);
+    expect(r.message).toContain(
+      'se cruza con otra cita del HIS (07:10, 20 min)',
+    );
+    expect(insertDeCita(requests)).toBeUndefined();
+    expect(tx.rolledBack).toBe(true);
+    expect(tx.committed).toBe(false);
+  });
+
+  it('una cita que termina justo cuando empieza la nueva (06:40-07:00) NO se cruza', async () => {
+    const { driver, requests, tx } = conDriver({
+      citasDelDia: [{ hora: '2026/09/03 06:40', dura: 20 }],
+    });
+
+    const r = await driver.createAppointment(evento());
+
+    expect(r.success).toBe(true);
+    expect(insertDeCita(requests)).toBeDefined();
+    expect(tx.committed).toBe(true);
+  });
+
+  it('una cita SIN duración en el HIS se mide con la del médico (06:45 + 20 = 07:05 → se cruza)', async () => {
+    const { driver, requests } = conDriver({
+      citasDelDia: [{ hora: '2026/09/03 06:45', dura: null }],
+    });
+
+    const r = await driver.createAppointment(evento());
+
+    expect(r.success).toBe(false);
+    expect(insertDeCita(requests)).toBeUndefined();
+  });
+
+  it("las citas extra SIN hora ('2026/09/03 1') no ocupan tiempo: se ignoran", async () => {
+    const { driver, requests } = conDriver({
+      citasDelDia: [{ hora: '2026/09/03 1', dura: 20 }],
+    });
+
+    const r = await driver.createAppointment(evento());
+
+    expect(r.success).toBe(true);
+    expect(insertDeCita(requests)).toBeDefined();
+  });
+
+  it('la revisión toma bloqueo de rango, va acotada al médico y al día, y ocurre ANTES del INSERT', async () => {
+    const { driver, requests } = conDriver();
+
+    await driver.createAppointment(evento());
+
+    const iRevision = requests.findIndex((r) =>
+      /WITH \(UPDLOCK, HOLDLOCK\)/.test(r.sql),
+    );
+    const iInsert = requests.findIndex((r) =>
+      /INSERT INTO dbo\.CITAS_MEDICAS/.test(r.sql),
+    );
+    expect(iRevision).toBeGreaterThanOrEqual(0);
+    expect(iRevision).toBeLessThan(iInsert);
+    expect(requests[iRevision].params).toMatchObject({
+      med: '91-1',
+      desde: '20260903',
+      hasta: '20260904',
+    });
+  });
+
+  it('el alta va en una transacción: confirma si sale bien', async () => {
+    const { driver, tx } = conDriver();
+
+    await driver.createAppointment(evento());
+
+    expect(tx.begun).toBe(true);
+    expect(tx.committed).toBe(true);
+    expect(tx.rolledBack).toBe(false);
+  });
+
+  it('…y revierte si el alta no se puede hacer (sin turno ese día)', async () => {
+    const { driver, tx } = conDriver({ turno: null });
+
+    const r = await driver.createAppointment(evento());
+
+    expect(r.success).toBe(false);
+    expect(tx.rolledBack).toBe(true);
+    expect(tx.committed).toBe(false);
+  });
+
+  it('la violación de la llave del HIS (misma hora) también es un RECHAZO DEL HIS', async () => {
+    const { driver } = conDriver({ error: { number: 2627 } });
+
+    const r = await driver.createAppointment(evento());
+
+    expect(r.success).toBe(false);
+    expect(r.rechazoDelHis).toBe(true);
   });
 });

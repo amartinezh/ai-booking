@@ -141,6 +141,13 @@ export interface AckFailure {
   seq: string;
   /** Mensaje del driver o excepción capturada. El servidor lo trunca. */
   error: string;
+  /**
+   * `true` cuando el HIS RECHAZÓ la cita de forma definitiva: la hora ya está
+   * tomada o se cruza con otra cita del mismo médico. Reintentarla no cambia el
+   * resultado. Campo ADITIVO (docs/PLAN_AGENDA_HUECOS.md, H10/H11): un servidor
+   * que aún no lo conoce lo ignora y cuenta el intento como cualquier fallo.
+   */
+  rechazoDelHis?: boolean;
 }
 
 export interface AckInput {

@@ -31,6 +31,7 @@ function conDriver(
   turnos: unknown[],
   ocupadas: unknown[] = [],
   mapping: AnsermaMapping = MAPPING,
+  huecos: unknown[] = [],
 ) {
   const sqls: string[] = [];
   const req: any = {
@@ -39,6 +40,7 @@ function conDriver(
       sqls.push(sql);
       if (/FROM dbo\.TURNOS_MEDICOS/.test(sql)) return { recordset: turnos };
       if (/FROM dbo\.CITAS_MEDICAS/.test(sql)) return { recordset: ocupadas };
+      if (/FROM dbo\.CITAS_DISPONIBLES/.test(sql)) return { recordset: huecos };
       return { recordset: [] };
     },
   };
@@ -279,5 +281,109 @@ describe('fetchAvailability', () => {
     await expect(
       new CntSanVicenteAnsermaDriver().fetchAvailability(VENTANA),
     ).rejects.toThrow();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🏥 Modo «huecos» (docs/PLAN_AGENDA_HUECOS.md, H1/H3 b'). La cuadrícula del
+// turno es la misma que muestra la agenda del hospital; un cupo solo queda
+// libre si cabe ENTERO en un tramo libre de CITAS_DISPONIBLES y no se cruza
+// con ninguna cita real. Turno 07:00-12:00 = 12:00Z-17:00Z en UTC.
+// ══════════════════════════════════════════════════════════════════════════
+describe('fetchAvailability — modo huecos', () => {
+  const HUECOS = { ...MAPPING, fuenteAgenda: 'HUECOS' } as AnsermaMapping;
+  const hueco = (
+    ini: string,
+    fin: string,
+    over: Record<string, unknown> = {},
+  ) => ({
+    med: '91-1',
+    fecha: '2026-09-03',
+    ini,
+    fin,
+    ...over,
+  });
+  const libre = (
+    cupos: { startTimeIso: string; occupied?: boolean }[],
+    hhmmUtc: string,
+  ) =>
+    !cupos.find((c) => c.startTimeIso === `2026-09-03T${hhmmUtc}:00.000Z`)!
+      .occupied;
+
+  it('solo quedan libres los cupos de la cuadrícula que caben enteros en un hueco', async () => {
+    const { driver } = conDriver([turno()], [], HUECOS, [
+      hueco('07:20', '08:00'),
+    ]);
+
+    const cupos = await driver.fetchAvailability(VENTANA);
+
+    expect(libre(cupos, '12:00')).toBe(false); // 07:00: fuera del hueco
+    expect(libre(cupos, '12:20')).toBe(true); // 07:20-07:40: dentro
+    expect(libre(cupos, '12:40')).toBe(true); // 07:40-08:00: dentro (borde exacto)
+    expect(libre(cupos, '13:00')).toBe(false); // 08:00: fuera
+    expect(cupos).toHaveLength(15); // la cuadrícula no cambia: solo la ocupación
+  });
+
+  it('un cupo que cabe a medias en el hueco no se ofrece', async () => {
+    const { driver } = conDriver([turno()], [], HUECOS, [
+      hueco('07:30', '08:00'),
+    ]);
+
+    const cupos = await driver.fetchAvailability(VENTANA);
+
+    expect(libre(cupos, '12:20')).toBe(false); // 07:20-07:40 empieza antes del hueco
+    expect(libre(cupos, '12:40')).toBe(true); // 07:40-08:00
+  });
+
+  it('el tiempo BLOQUEADO por el hospital (turno sin hueco) no se ofrece', async () => {
+    const { driver } = conDriver([turno()], [], HUECOS, []);
+
+    const cupos = await driver.fetchAvailability(VENTANA);
+
+    expect(cupos.every((c) => c.occupied)).toBe(true);
+  });
+
+  it('🛡️ si CITAS_DISPONIBLES está desactualizada, la cita real manda (H5)', async () => {
+    // El hueco dice libre todo el turno, pero hay una cita a las 07:20.
+    const { driver } = conDriver(
+      [turno()],
+      [{ med: '91-1', hora: '2026/09/03 07:20', dura: 20 }],
+      HUECOS,
+      [hueco('07:00', '12:00')],
+    );
+
+    const cupos = await driver.fetchAvailability(VENTANA);
+
+    expect(libre(cupos, '12:00')).toBe(true);
+    expect(libre(cupos, '12:20')).toBe(false);
+  });
+
+  it('un hueco de OTRO médico o de OTRO día no libera nada', async () => {
+    const { driver } = conDriver([turno()], [], HUECOS, [
+      hueco('07:00', '12:00', { med: 'PS08' }),
+      hueco('07:00', '12:00', { fecha: '2026-09-04' }),
+    ]);
+
+    const cupos = await driver.fetchAvailability(VENTANA);
+
+    expect(cupos.every((c) => c.occupied)).toBe(true);
+  });
+
+  it('modo TURNOS (por defecto) no lee CITAS_DISPONIBLES y no cambia nada', async () => {
+    const { driver, sqls } = conDriver([turno()]);
+
+    const cupos = await driver.fetchAvailability(VENTANA);
+
+    expect(sqls.some((q) => /CITAS_DISPONIBLES/.test(q))).toBe(false);
+    expect(cupos.every((c) => !c.occupied)).toBe(true);
+  });
+
+  it('lee los huecos acotados por fecha, sin envolver la columna (usa el índice)', async () => {
+    const { driver, sqls } = conDriver([turno()], [], HUECOS, []);
+
+    await driver.fetchAvailability(VENTANA);
+
+    const q = sqls.find((x) => /FROM dbo\.CITAS_DISPONIBLES/.test(x))!;
+    expect(q).toMatch(/WHERE FE_FECH_CIDI >= @desde AND FE_FECH_CIDI < @hasta/);
   });
 });

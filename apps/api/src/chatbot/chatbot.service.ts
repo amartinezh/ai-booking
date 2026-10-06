@@ -103,6 +103,10 @@ import {
   type PlanHisBot,
   type SeguimientoHis,
 } from './consulta-his-bot.service';
+import {
+  ConfirmacionHisService,
+  ABANDONO_CONFIRMACION_HIS_MS,
+} from './confirmacion-his.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 
 // La forma del evento entrante y la resolución de "quién escribió" viven en
@@ -243,6 +247,9 @@ export class ChatbotService implements OnModuleInit {
     // Fase B de la consulta de citas (docs/PLAN_CONSULTA_CITAS.md): el bot le
     // pregunta al HIS. Opcional: sin él, la consulta se queda en la Fase A.
     @Optional() private readonly consultaHis?: ConsultaHisBotService,
+    // H10 (docs/PLAN_AGENDA_HUECOS.md): no se confirma una cita hasta que el
+    // hospital la registra. Opcional: sin él (tests), se confirma como antes.
+    @Optional() private readonly confirmacionHis?: ConfirmacionHisService,
   ) {}
 
   async onModuleInit() {
@@ -4167,8 +4174,13 @@ export class ChatbotService implements OnModuleInit {
 
     // 🔒 Interruptor de operaciones de la clínica (/dashboard/configuracion).
     // Se lee en cada mensaje: apagarlo surte efecto en el siguiente turno.
+    //
+    // 🏥 H10: con espejo, agendar exige además el envío al hospital encendido.
+    // Con `pushEnabled` apagado la cita nunca llegaría al HIS y el bot no
+    // podría confirmarla: se comporta como «solo consultas».
     const bookingEnabled =
-      await this.organizationSettings.isBookingEnabled(organizationId);
+      (await this.organizationSettings.isBookingEnabled(organizationId)) &&
+      ((await this.confirmacionHis?.puedeAgendar(organizationId)) ?? true);
 
     // `let`: con el interruptor apagado, un flujo de operación a medias se
     // descarta y el turno sigue como si la conversación empezara (ver abajo).
@@ -7096,6 +7108,55 @@ export class ChatbotService implements OnModuleInit {
 
       if (bookingResult.success) {
         const fechaFormateada = formatAppointmentLong(fechaVistaFinal);
+
+        // 🏥 H10: la confirmación final solo sale con la cita en el HIS.
+        const enElHospital = await this.confirmarConElHospital({
+          organizationId,
+          senderId,
+          MSGS,
+          appointmentId: bookingResult.appointmentId,
+          fechaTexto: fechaFormateada,
+        });
+        if (enElHospital === 'RECHAZADA') {
+          // El hospital ya tenía ocupado ese horario (o se cruza con otra
+          // cita): la API anuló la cita en AgenIA. Se le ofrece elegir otro,
+          // igual que cuando otro paciente toma el cupo.
+          const reply = MSGS.slotTomado();
+          await this.smartReply(organizationId, senderId, reply);
+          await this.setUserState(
+            organizationId,
+            senderId,
+            ChatState.AWAITING_DATE,
+          );
+          await this.auditFailure(senderId, organizationId, {
+            reason: FailureReason.SLOT_TAKEN,
+            userMessage: text,
+            botReply: reply,
+            metadata: {
+              stage: 'HIS_REJECTED',
+              slotId: slotIdFinal,
+              cedula: cedulaFinal,
+              appointmentId: bookingResult.appointmentId,
+            },
+          });
+          return;
+        }
+        if (enElHospital === 'PENDIENTE') {
+          // Ya se le dijo que se le escribe al quedar registrada (el barrido
+          // de confirmaciones pendientes lo hace). No se confirma nada aquí.
+          await this.auditLog(senderId, organizationId, {
+            status: InteractionStatus.SUCCESS,
+            userMessage: text,
+            botReply: '[confirmación pendiente del hospital]',
+            metadata: {
+              stage: 'HIS_CONFIRMATION_PENDING',
+              appointmentId: bookingResult.appointmentId,
+            },
+          });
+          await this.cleanUpSession(organizationId, senderId);
+          return;
+        }
+
         const reply = MSGS.citaConfirmada(orgName, fechaFormateada);
         const confirmacion: OutboundMessageContext = {
           kind: 'BOOKING_CONFIRMATION',
@@ -8858,6 +8919,24 @@ export class ChatbotService implements OnModuleInit {
         include: { doctor: true, service: true },
       });
       const fechaFormateada = slot ? formatAppointmentLong(slot.startTime) : '';
+
+      // 🏥 H10: tampoco se confirma un cupo de la lista sin el hospital.
+      const enElHospital = await this.confirmarConElHospital({
+        organizationId,
+        senderId,
+        MSGS,
+        appointmentId: bookingResult.appointmentId,
+        fechaTexto: fechaFormateada,
+      });
+      if (enElHospital === 'RECHAZADA') {
+        await this.smartReply(organizationId, senderId, MSGS.slotTomado());
+        await this.cleanUpSession(organizationId, senderId);
+        return;
+      }
+      if (enElHospital === 'PENDIENTE') {
+        await this.cleanUpSession(organizationId, senderId);
+        return;
+      }
       const orgInfo = await this.prisma.organization.findUnique({
         where: { id: organizationId },
       });
@@ -9440,6 +9519,139 @@ export class ChatbotService implements OnModuleInit {
           ` · ${formatAppointmentCompact(new Date(c.startIso), { timeZone })}`,
       )
       .join('\n');
+  }
+
+  /**
+   * 🏥 H10 (docs/PLAN_AGENDA_HUECOS.md): espera a que la cita quede registrada
+   * en el HIS antes de confirmarla. Mientras, le dice al paciente que espere
+   * unos segundos. Si el hospital no responde a tiempo, NO confirma: le dice que
+   * se le escribe al quedar registrada y deja la cita en la lista que atiende
+   * `atenderConfirmacionesHisPendientes`. Sin espejo (o sin el servicio), la
+   * cita vive solo en AgenIA y se confirma como siempre.
+   */
+  private async confirmarConElHospital(p: {
+    organizationId: string;
+    senderId: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    appointmentId: string | undefined;
+    fechaTexto: string;
+  }): Promise<'CONFIRMADA' | 'RECHAZADA' | 'PENDIENTE'> {
+    if (!this.confirmacionHis || !p.appointmentId) return 'CONFIRMADA';
+    if (!(await this.confirmacionHis.requiereConfirmacion(p.organizationId))) {
+      return 'CONFIRMADA';
+    }
+
+    await this.smartReply(
+      p.organizationId,
+      p.senderId,
+      p.MSGS.confirmandoCita(),
+    );
+    const estado = await this.confirmacionHis.esperar(
+      p.organizationId,
+      p.appointmentId,
+    );
+    if (estado === 'PENDIENTE') {
+      await this.confirmacionHis.registrarPendiente({
+        organizationId: p.organizationId,
+        senderId: p.senderId,
+        appointmentId: p.appointmentId,
+        fechaTexto: p.fechaTexto,
+        desde: new Date().toISOString(),
+      });
+      await this.smartReply(
+        p.organizationId,
+        p.senderId,
+        p.MSGS.citaEnRegistro(p.fechaTexto),
+      );
+    }
+    return estado;
+  }
+
+  /**
+   * 🏥 H10, segundo mensaje: las citas cuyo registro en el HIS no llegó a
+   * tiempo. Cada 10 s. Confirmada → confirmación final. Rechazada → se le
+   * avisa y se le invita a elegir otro horario. Sin resultado en 24 h → se
+   * abandona (la bandeja de excepciones ya avisó al personal).
+   */
+  @Cron(CronExpression.EVERY_10_SECONDS)
+  async atenderConfirmacionesHisPendientes(): Promise<void> {
+    if (!this.confirmacionHis) return;
+    try {
+      const pendientes = await this.confirmacionHis.pendientes();
+      for (const p of pendientes) {
+        try {
+          const estado = await this.confirmacionHis.estado(
+            p.organizationId,
+            p.appointmentId,
+          );
+          const vencida =
+            Date.now() - new Date(p.desde).getTime() >
+            ABANDONO_CONFIRMACION_HIS_MS;
+          if (estado === 'PENDIENTE' && !vencida) continue;
+          if (!(await this.confirmacionHis.reclamar(p))) continue;
+          await this.atenderConfirmacionHisPendiente(p, estado, vencida);
+        } catch (error: unknown) {
+          this.logger.error(
+            `Confirmación pendiente del HIS (cita ${p.appointmentId}) falló: ${getErrorMessage(error)}`,
+          );
+        }
+      }
+    } catch (error: unknown) {
+      this.logger.error(
+        `Barrido de confirmaciones pendientes del HIS falló: ${getErrorMessage(error)}`,
+      );
+    }
+  }
+
+  private async atenderConfirmacionHisPendiente(
+    p: {
+      organizationId: string;
+      senderId: string;
+      appointmentId: string;
+      fechaTexto: string;
+    },
+    estado: 'CONFIRMADA' | 'RECHAZADA' | 'PENDIENTE',
+    vencida: boolean,
+  ): Promise<void> {
+    const { organizationId, senderId } = p;
+    const MSGS = buildMessages(
+      await this.organizationSettings.getCommunicationStyle(organizationId),
+      canalDe(senderId),
+    );
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { name: true, supportPhone: true },
+    });
+
+    let reply: string | null = null;
+    if (estado === 'CONFIRMADA') {
+      reply = MSGS.citaConfirmada(org?.name || 'nuestra Clínica', p.fechaTexto);
+      await this.smartReply(organizationId, senderId, reply, undefined, {
+        kind: 'BOOKING_CONFIRMATION',
+        appointmentId: p.appointmentId,
+      });
+    } else if (estado === 'RECHAZADA') {
+      const contacto = org?.supportPhone
+        ? MSGS.contactoClinica(org.supportPhone)
+        : MSGS.contactoClinicaSinTelefono();
+      reply = MSGS.citaNoRegistradaEnHospital(p.fechaTexto, contacto);
+      await this.smartReply(organizationId, senderId, reply);
+    }
+
+    await this.auditLog(senderId, organizationId, {
+      status:
+        estado === 'CONFIRMADA'
+          ? InteractionStatus.SUCCESS
+          : InteractionStatus.FAILED,
+      userMessage: '[confirmación del hospital]',
+      botReply: reply ?? '[sin mensaje: confirmación abandonada tras 24 h]',
+      metadata: {
+        stage: 'HIS_CONFIRMATION_FOLLOWUP',
+        appointmentId: p.appointmentId,
+        estado,
+        vencida,
+      },
+    });
   }
 
   /**

@@ -261,6 +261,31 @@ describe('MirrorEngine', () => {
       ]);
     });
 
+    it('🏥 un RECHAZO DEFINITIVO del HIS viaja marcado, y sigue contando como fallo para las APIs viejas', async () => {
+      api.getPendingEvents.mockResolvedValueOnce([
+        outboxEvent({ eventId: 'rechazo-1', seq: '94' }),
+      ]);
+      driver.createAppointment.mockResolvedValueOnce({
+        success: false,
+        rechazoDelHis: true,
+        message: 'se cruza con otra cita del HIS',
+      });
+
+      await engine.pullAndApplyOutboxEvents();
+
+      const ack = api.ack.mock.calls[0][0];
+      // Una API que no conoce `rechazoDelHis` lo ignora y lo trata como fallo:
+      // sin el seq en failedSeqs, quedaría pendiente y se reintentaría para siempre.
+      expect(ack.failedSeqs).toEqual(['94']);
+      expect(ack.failures).toEqual([
+        {
+          seq: '94',
+          error: 'se cruza con otra cita del HIS',
+          rechazoDelHis: true,
+        },
+      ]);
+    });
+
     it('un lote sin fallos manda failures vacío', async () => {
       api.getPendingEvents.mockResolvedValueOnce([
         outboxEvent({ eventId: 'motivo-4', seq: '93' }),

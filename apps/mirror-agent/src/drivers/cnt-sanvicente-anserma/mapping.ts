@@ -130,6 +130,21 @@ export interface AnsermaMapping {
    */
   duracionPorMedico?: Record<string, number>;
   /**
+   * De dónde sale la disponibilidad que se le ofrece al bot
+   * (docs/PLAN_AGENDA_HUECOS.md, H1/H3):
+   *
+   *   · 'TURNOS' (por defecto) — la cuadrícula del turno; ocupado = una cita
+   *     del HIS se cruza con el cupo.
+   *   · 'HUECOS' — la misma cuadrícula, pero un cupo solo queda LIBRE si además
+   *     cabe entero dentro de un hueco de `CITAS_DISPONIBLES` (los tramos
+   *     libres que calcula la aplicación del hospital). Así se respeta el
+   *     tiempo que el hospital bloquea. Las citas reales se restan siempre
+   *     (H5): esa tabla está desactualizada en ~6 % de los turnos.
+   *
+   * Volver a 'TURNOS' es la vuelta atrás: el siguiente barrido rehace la agenda.
+   */
+  fuenteAgenda?: 'TURNOS' | 'HUECOS';
+  /**
    * Días hacia adelante que vigila `detectChanges`.
    *
    * El hospital reserva hasta 12 meses, pero la instantánea completa de 13

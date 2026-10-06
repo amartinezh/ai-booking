@@ -6,6 +6,7 @@ import { InboundQueueService } from './inbound-queue.service';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { ConsultaHisBotService } from './consulta-his-bot.service';
+import { ConfirmacionHisService } from './confirmacion-his.service';
 import { HttpModule } from '@nestjs/axios';
 import { AppointmentsModule } from 'src/appointments/appointments.module';
 import { WaitlistModule } from 'src/waitlist/waitlist.module';
@@ -38,6 +39,7 @@ import { TelegramCoreModule } from '../telegram/telegram-core.module';
     KnowledgeBaseService,
     OrganizationSettingsService,
     ConsultaHisBotService,
+    ConfirmacionHisService,
   ],
   exports: [
     ChatbotService,

@@ -26,6 +26,8 @@ export interface EventFailure {
   message: string;
   /** true si el driver lanzó una excepción en vez de devolver {success:false}. */
   threw?: boolean;
+  /** El HIS rechazó la cita de forma definitiva (ver DriverResult.rechazoDelHis). */
+  rechazoDelHis?: boolean;
 }
 
 /**
@@ -322,6 +324,7 @@ export class MirrorEngine {
             seq: dto.seq,
             eventId: dto.eventId,
             message: result.message ?? 'rechazado por el driver, sin detalle',
+            ...(result.rechazoDelHis ? { rechazoDelHis: true } : {}),
           });
         }
       } catch (error) {
@@ -346,7 +349,11 @@ export class MirrorEngine {
         // conoce `failures` simplemente lo ignora.
         failedSeqs: failed,
         skippedSeqs: skipped,
-        failures: failures.map((f) => ({ seq: f.seq, error: f.message })),
+        failures: failures.map((f) => ({
+          seq: f.seq,
+          error: f.message,
+          ...(f.rechazoDelHis ? { rechazoDelHis: true } : {}),
+        })),
       });
     }
 

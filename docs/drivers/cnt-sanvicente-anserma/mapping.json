@@ -19,6 +19,9 @@
   "marcaOrigen": "ASIGNADA POR WHATSAPP",
   "motivoAnulacion": "WB",
   "duracionMinutos": 20,
+  "_agenda": "Agenda por huecos del hospital (docs/PLAN_AGENDA_HUECOS.md). duracionPorMedico = duración del servicio que AgenIA vende para cada médico, medida en ESEHSVP el 2026-10-06 (H2); el resto usa duracionMinutos. fuenteAgenda HUECOS (H1/H3 b'): un cupo de la cuadrícula del turno solo queda libre si cabe entero en un hueco de CITAS_DISPONIBLES y no se cruza con una cita real. Aplicar SOLO después de actualizar el agente en la VM (un agente viejo ignora fuenteAgenda pero sí aplica las duraciones). Vuelta atrás: fuenteAgenda TURNOS.",
+  "duracionPorMedico": { "91-1": 30, "91-2": 30, "PS06": 30, "PS08": 30, "HO02": 40, "HO03": 40, "HO04": 40 },
+  "fuenteAgenda": "HUECOS",
   "ventanaVigilanciaDias": 90,
 
   "sexo": { "M": 1, "F": 0 },

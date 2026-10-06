@@ -446,6 +446,59 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       );
     };
 
+    // 🏥 Modo «huecos» (PLAN_AGENDA_HUECOS.md, H1/H3 b'): un cupo de la
+    // cuadrícula solo queda libre si cabe ENTERO dentro de un tramo libre que
+    // la aplicación del hospital calculó en `CITAS_DISPONIBLES`. Respeta el
+    // tiempo bloqueado (un turno de 4 h con solo 20 min libres). Las citas
+    // reales se siguen restando arriba: la tabla puede estar desactualizada.
+    const modoHuecos = mapping.fuenteAgenda === 'HUECOS';
+    const huecosPorMedicoYDia = new Map<
+      string,
+      { inicio: number; fin: number }[]
+    >();
+    if (modoHuecos) {
+      const huecos = await pool
+        .request()
+        .input('desde', sql.VarChar(8), desdeSql)
+        .input('hasta', sql.VarChar(8), hastaSql).query(`
+          SELECT CD_MED_CIDI med,
+                 CONVERT(varchar(10), FE_FECH_CIDI, 23) fecha,
+                 CONVERT(varchar(5), FE_HOIN_CIDI, 108) ini,
+                 CONVERT(varchar(5), FE_HOFI_CIDI, 108) fin
+            FROM dbo.CITAS_DISPONIBLES
+           WHERE FE_FECH_CIDI >= @desde AND FE_FECH_CIDI < @hasta`);
+      for (const h of huecos.recordset as {
+        med: string;
+        fecha: string;
+        ini: string;
+        fin: string;
+      }[]) {
+        const dia = h.fecha.replace(/-/g, '/');
+        const a = feHoraCitAIsoOrNull(`${dia} ${h.ini}`, this.timeZone);
+        const b = feHoraCitAIsoOrNull(`${dia} ${h.fin}`, this.timeZone);
+        if (!a || !b) continue;
+        const clave = `${String(h.med).trim()}|${h.fecha}`;
+        const lista = huecosPorMedicoYDia.get(clave) ?? [];
+        lista.push({
+          inicio: new Date(a).getTime(),
+          fin: new Date(b).getTime(),
+        });
+        huecosPorMedicoYDia.set(clave, lista);
+      }
+    }
+    const cabeEnUnHueco = (
+      med: string,
+      fecha: string,
+      startIso: string,
+      endIso: string,
+    ) => {
+      const a = new Date(startIso).getTime();
+      const b = new Date(endIso).getTime();
+      return (huecosPorMedicoYDia.get(`${med}|${fecha}`) ?? []).some(
+        (h) => h.inicio <= a && b <= h.fin,
+      );
+    };
+
     const cupos: CanonicalSlot[] = [];
     for (const t of turnos.recordset as {
       med: string;
@@ -471,7 +524,14 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
           endTimeIso: cupo.endTimeIso,
           occupied:
             vendidas.has(`${t.med}|${cupo.feHoraCit}`) ||
-            seCruzaConUnaCita(t.med, cupo.startTimeIso, cupo.endTimeIso),
+            seCruzaConUnaCita(t.med, cupo.startTimeIso, cupo.endTimeIso) ||
+            (modoHuecos &&
+              !cabeEnUnHueco(
+                t.med,
+                t.fecha,
+                cupo.startTimeIso,
+                cupo.endTimeIso,
+              )),
         });
       }
     }
@@ -1205,7 +1265,20 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
   }
 
   async createAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {
-    return this.crearCita(this.requirePool(), evt);
+    // En una transacción: la revisión de cruces de `crearCita` (H11) toma un
+    // bloqueo de rango sobre las citas de ese médico ese día, y ese bloqueo
+    // tiene que durar hasta el INSERT. Si algo falla, no queda nada a medias.
+    const tx = this.requirePool().transaction();
+    await tx.begin();
+    try {
+      const resultado = await this.crearCita(tx, evt);
+      if (resultado.success) await tx.commit();
+      else await tx.rollback();
+      return resultado;
+    } catch (error) {
+      await tx.rollback().catch(() => undefined);
+      throw error;
+    }
   }
 
   /**
@@ -1271,6 +1344,30 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
                 60000,
             )
           : mapping.duracionMinutos;
+
+      // 🛡️ H11 (PLAN_AGENDA_HUECOS.md): la llave del HIS solo frena la MISMA
+      // hora. Antes de escribir se revisa que la cita no se CRUCE con ninguna
+      // otra del médico ese día (una de 06:30 de 20 min choca con una de
+      // 06:40). `UPDLOCK, HOLDLOCK` deja el rango tomado hasta el final de la
+      // transacción: entre esta lectura y el INSERT no se cuela nadie que
+      // también lea con bloqueo. Solo lee `CITAS_MEDICAS`; no toca huecos.
+      const choque = await this.citaQueSeCruza(
+        ej,
+        p.doctorExternalKey!,
+        feFecha,
+        p.startTimeIso!,
+        duracion,
+      );
+      if (choque) {
+        return {
+          success: false,
+          rechazoDelHis: true,
+          message:
+            `El cupo del médico ${p.doctorExternalKey} a las ` +
+            `${formatFeHoraCit(p.startTimeIso!, this.timeZone)} se cruza con otra ` +
+            `cita del HIS (${choque.hora}, ${choque.minutos} min).`,
+        };
+      }
 
       await ej
         .request()
@@ -1339,6 +1436,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       if (err?.number === 2627 || err?.number === 2601) {
         return {
           success: false,
+          rechazoDelHis: true,
           message:
             `El cupo del médico ${p.doctorExternalKey} a las ` +
             `${formatFeHoraCit(p.startTimeIso!, this.timeZone)} ya está ocupado en el HIS.`,
@@ -1349,6 +1447,50 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       }
       throw error;
     }
+  }
+
+  /**
+   * La primera cita del HIS de ese médico, ese día, que se cruza con
+   * `[inicio, inicio + minutos)`, o null. Cada cita se mide con SU duración
+   * (`NU_DURA_CIT`); sin ella, con la del médico. Las horas ilegibles (citas
+   * extra sin hora) se ignoran: no ocupan tiempo de agenda.
+   */
+  private async citaQueSeCruza(
+    ej: Ejecutor,
+    medico: string,
+    feFecha: string,
+    inicioIso: string,
+    minutos: number,
+  ): Promise<{ hora: string; minutos: number } | null> {
+    const mapping = this.requireMapping();
+    const filas = await ej
+      .request()
+      .input('med', sql.VarChar(4), medico)
+      .input('desde', sql.VarChar(8), fechaLiteralSql(feFecha))
+      .input('hasta', sql.VarChar(8), diaSiguienteLiteralSql(feFecha)).query(`
+        SELECT FE_HORA_CIT hora, NU_DURA_CIT dura
+          FROM dbo.CITAS_MEDICAS WITH (UPDLOCK, HOLDLOCK)
+         WHERE CD_CODI_MED_CIT = @med
+           AND FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
+
+    const a = new Date(inicioIso).getTime();
+    const b = a + minutos * 60_000;
+    for (const f of (filas.recordset ?? []) as {
+      hora: string;
+      dura: number | null;
+    }[]) {
+      const iso = feHoraCitAIsoOrNull(String(f.hora).trim(), this.timeZone);
+      if (!iso) continue;
+      const ini = new Date(iso).getTime();
+      const dur =
+        f.dura && f.dura > 0
+          ? f.dura
+          : duracionDeServicio(mapping, undefined, medico);
+      if (ini < b && a < ini + dur * 60_000) {
+        return { hora: String(f.hora).trim().slice(-5), minutos: dur };
+      }
+    }
+    return null;
   }
 
   /**

@@ -46,6 +46,13 @@ export interface DriverResult {
    * respuesta va a ser la misma hasta que se despliegue otro driver.
    */
   unsupported?: boolean;
+  /**
+   * `true` cuando el HIS rechazó la cita de forma definitiva (la hora ya está
+   * tomada o se cruza con otra cita del mismo médico). Viaja en el acuse para
+   * que el servidor deje de reintentarla y el bot le ofrezca otra hora al
+   * paciente (docs/PLAN_AGENDA_HUECOS.md, H10/H11).
+   */
+  rechazoDelHis?: boolean;
 }
 
 export interface DetectChangesResult {

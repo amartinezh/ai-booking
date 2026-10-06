@@ -524,6 +524,24 @@ const FORMAL = {
       `No se agendó nada todavía.\n\nCuando esté listo(a), escríbame *"Hola"* y lo intentamos otra vez. Que tenga un buen día.`,
     ]),
 
+  // 🏥 H10 (docs/PLAN_AGENDA_HUECOS.md): la cita no se confirma hasta que el
+  // hospital la registra. Esto se dice mientras se espera (unos segundos).
+  confirmandoCita: () =>
+    pick([
+      `Un momento, por favor. Estoy confirmando su cita con el sistema del hospital; en unos segundos le doy la confirmación. ⏳`,
+      `Deme unos segundos: estoy registrando su cita en el sistema del hospital. ⏳`,
+    ]),
+
+  // El hospital no respondió a tiempo: NO se confirma. Se le escribe después.
+  citaEnRegistro: (fecha: string) =>
+    `El hospital aún no termina de registrar su cita del _${fecha}_. ⏳\n\n` +
+    `Apenas quede registrada le escribo por aquí para confirmársela. No necesita volver a agendarla.`,
+
+  // El hospital la rechazó DESPUÉS del aviso anterior (llegó tarde el resultado).
+  citaNoRegistradaEnHospital: (fecha: string, contacto: string) =>
+    `Lo lamento: el hospital no pudo registrar su cita del _${fecha}_ porque ese horario ya no estaba disponible.\n\n` +
+    `Escríbame *"Hola"* para elegir otro horario, o comuníquese con ${contacto}.`,
+
   slotTomado: () =>
     pick([
       `Lo lamento, ese horario lo acaba de tomar otro paciente.\n\n¿Elegimos otro de los disponibles? Escriba la letra nuevamente, por favor.`,
@@ -1365,6 +1383,21 @@ const INFORMAL = {
       `Tranquilo(a), lo dejamos por ahora. 🌻 Cuando quieras retomar, me dices *"Hola"*.`,
       `No te preocupes, no se agendó nada. 😊 Cuando estés listo(a), escríbeme *"Hola"* y arrancamos otra vez.`,
     ]),
+
+  // 🏥 H10: ver la versión formal.
+  confirmandoCita: () =>
+    pick([
+      `Dame unos segundos ⏳, estoy confirmando tu cita con el sistema del hospital.`,
+      `Un momentico ⏳: estoy registrando tu cita en el sistema del hospital.`,
+    ]),
+
+  citaEnRegistro: (fecha: string) =>
+    `El hospital todavía está registrando tu cita del _${fecha}_. ⏳\n\n` +
+    `Apenas quede lista te escribo por aquí para confirmártela. No tienes que agendarla otra vez.`,
+
+  citaNoRegistradaEnHospital: (fecha: string, contacto: string) =>
+    `Qué pena 😔: el hospital no pudo registrar tu cita del _${fecha}_ porque ese horario ya no estaba disponible.\n\n` +
+    `Escríbeme *"Hola"* para elegir otro horario, o comunícate con ${contacto}.`,
 
   slotTomado: () =>
     pick([

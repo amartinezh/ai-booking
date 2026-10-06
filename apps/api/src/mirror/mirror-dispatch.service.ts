@@ -488,9 +488,14 @@ export class MirrorDispatchService {
     // también cuenta. Cada `seq` se procesa UNA vez — contarlo dos habría
     // gastado dos intentos de los diez por un solo fallo.
     const motivos = new Map<string, string>();
+    // 🏥 H10/H11 (docs/PLAN_AGENDA_HUECOS.md): el HIS rechazó la cita de forma
+    // definitiva (hora tomada o cruce). Reintentarla no cambia nada: se anula en
+    // AgenIA para que el bot le ofrezca otra hora al paciente.
+    const rechazos = new Set<string>();
     for (const f of input.failures ?? []) {
       if (f && typeof f.seq === 'string' && SEQ_RE.test(f.seq)) {
         motivos.set(f.seq, typeof f.error === 'string' ? f.error : '');
+        if (f.rechazoDelHis === true) rechazos.add(f.seq);
       }
     }
     const fallidos = new Set<string>([
@@ -498,6 +503,12 @@ export class MirrorDispatchService {
       ...motivos.keys(),
     ]);
     for (const seq of fallidos) {
+      if (
+        rechazos.has(seq) &&
+        (await this.markRejectedByHis(organizationId, seq, motivos.get(seq)))
+      ) {
+        continue;
+      }
       await this.markAttemptFailed(organizationId, seq, motivos.get(seq));
     }
 
@@ -506,6 +517,94 @@ export class MirrorDispatchService {
     }
 
     return { acknowledged: result.count };
+  }
+
+  /**
+   * 🏥 El HIS rechazó el ALTA de una cita de forma definitiva: la hora ya estaba
+   * tomada o se cruza con otra cita del médico (H11). Reintentarla diez veces
+   * no cambia el resultado y deja al paciente creyendo que tiene cita.
+   *
+   * En una sola transacción con origen MIRROR (no vuelve al HIS, que nunca la
+   * tuvo): la cita se anula en AgenIA con el motivo en `metaLog`, el cupo se
+   * CIERRA (el hospital ya tiene ese tiempo ocupado: liberarlo lo volvería a
+   * ofrecer) y el evento se cierra con el motivo. No se avisa a la lista de
+   * espera por la misma razón. El bot ve la cita anulada y le ofrece otra hora
+   * (H10).
+   *
+   * Devuelve false si el evento no es un alta de cita de esta clínica: entonces
+   * se trata como cualquier fallo.
+   */
+  async markRejectedByHis(
+    organizationId: string,
+    seq: string,
+    motivo?: string,
+  ): Promise<boolean> {
+    const evento = await this.prisma.syncOutbox.findFirst({
+      where: { seq: BigInt(seq), organizationId },
+      select: { eventId: true, entityType: true, entityId: true, op: true },
+    });
+    if (
+      !evento ||
+      evento.entityType !== 'APPOINTMENT' ||
+      evento.op !== 'INSERT'
+    ) {
+      return false;
+    }
+    const texto = (motivo ?? '').trim() || 'el HIS rechazó la cita';
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+      const cita = await tx.appointment.findFirst({
+        where: { id: evento.entityId, organizationId },
+        select: { id: true, status: true, scheduleSlotId: true, metaLog: true },
+      });
+      if (cita && cita.status !== 'CANCELLED') {
+        const previo =
+          cita.metaLog &&
+          typeof cita.metaLog === 'object' &&
+          !Array.isArray(cita.metaLog)
+            ? (cita.metaLog as Record<string, unknown>)
+            : {};
+        await tx.appointment.update({
+          where: { id: cita.id },
+          data: {
+            status: 'CANCELLED',
+            metaLog: {
+              ...previo,
+              rechazoDelHis: { motivo: texto, en: new Date().toISOString() },
+            },
+          },
+        });
+        await tx.scheduleSlot.update({
+          where: { id: cita.scheduleSlotId },
+          data: { isAvailable: false },
+        });
+      }
+      await tx.syncOutbox.updateMany({
+        where: { seq: BigInt(seq), organizationId },
+        data: {
+          deliveredAt: new Date(),
+          nextAttemptAt: null,
+          attempts: { increment: 1 },
+          lastError: `Rechazada por el HIS: ${texto}`.slice(0, 500),
+        },
+      });
+      await tx.syncAudit.create({
+        data: {
+          organizationId,
+          direction: SYNC_AUDIT_DIRECTION.AGENIA_TO_HIS,
+          entityType: 'APPOINTMENT',
+          entityId: evento.entityId,
+          op: 'INSERT',
+          outcome: 'CONFLICT',
+          eventId: evento.eventId,
+          detail:
+            `El HIS rechazó la cita (${texto}). Se anuló en AgenIA y el cupo ` +
+            `quedó cerrado; el bot le ofrece otra hora al paciente.`,
+        },
+      });
+    });
+    return true;
   }
 
   /**

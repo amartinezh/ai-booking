@@ -814,6 +814,204 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   // ──────────────────────────────────────────────────────────────────
   // 2. CANCELACIÓN
   // ──────────────────────────────────────────────────────────────────
+  // ──────────────────────────────────────────────────────────────────
+  // 🏥 H10 (docs/PLAN_AGENDA_HUECOS.md): el bot NO confirma la cita hasta que
+  // el hospital la registra. Mientras, pide unos segundos.
+  // ──────────────────────────────────────────────────────────────────
+  describe('1H. Confirmación con el hospital (H10)', () => {
+    let confirmacion: {
+      requiereConfirmacion: jest.Mock;
+      puedeAgendar: jest.Mock;
+      esperar: jest.Mock;
+      registrarPendiente: jest.Mock;
+      pendientes: jest.Mock;
+      estado: jest.Mock;
+      reclamar: jest.Mock;
+    };
+
+    beforeEach(() => {
+      db.slots = [
+        slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA),
+        slotRow('slot-b', FECHA_B, 'Luis Gómez', SVC_MEDICINA),
+      ];
+      appointments.getAvailableSlots.mockImplementation(() =>
+        db.slots
+          .filter((s) => s.isAvailable)
+          .map((s) => ({
+            slotId: s.id,
+            fecha: s.startTime,
+            doctor: s.doctor.fullName,
+            servicio: s.service.name,
+          })),
+      );
+      confirmacion = {
+        requiereConfirmacion: jest.fn(async () => true),
+        puedeAgendar: jest.fn(async () => true),
+        esperar: jest.fn(async () => 'CONFIRMADA'),
+        registrarPendiente: jest.fn(async () => undefined),
+        pendientes: jest.fn(async () => []),
+        estado: jest.fn(async () => 'PENDIENTE'),
+        reclamar: jest.fn(async () => true),
+      };
+      (service as any).confirmacionHis = confirmacion;
+    });
+
+    const agendarHastaElSi = async () => {
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say('1088123456');
+      await decirNombre(say);
+      await responderAlta(say);
+      await say('Sí');
+    };
+    const confirmacionesFinales = () =>
+      sendSpy.mock.calls.filter(
+        (c: any[]) => c[2]?.kind === 'BOOKING_CONFIRMATION',
+      );
+
+    it('CONFIRMADA: primero pide unos segundos, después confirma (y solo después)', async () => {
+      await agendarHastaElSi();
+
+      expect(confirmacion.esperar).toHaveBeenCalledWith(ORG_ID, 'apt-new');
+      const textos = sent();
+      const iEspera = textos.findIndex((t) =>
+        /(confirmando|registrando) su cita/i.test(t),
+      );
+      const iConfirma = sendSpy.mock.calls.findIndex(
+        (c: any[]) => c[2]?.kind === 'BOOKING_CONFIRMATION',
+      );
+      expect(iEspera).toBeGreaterThanOrEqual(0);
+      expect(iConfirma).toBeGreaterThan(iEspera);
+      expect(interactionLog.logBookingConfirmed).toHaveBeenCalledTimes(1);
+      expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    it('RECHAZADA por el hospital: NO confirma y le ofrece elegir otro horario', async () => {
+      confirmacion.esperar.mockResolvedValueOnce('RECHAZADA');
+
+      await agendarHastaElSi();
+
+      expect(confirmacionesFinales()).toHaveLength(0);
+      expect(interactionLog.logBookingConfirmed).not.toHaveBeenCalled();
+      expect(lastSent()).toMatch(/acaba de (tomar|reservarse)/i);
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      // Puede elegir otra letra sin reiniciar.
+      await say('B');
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+    });
+
+    it('sin respuesta a tiempo: NO confirma, avisa que le escribe y deja la cita pendiente', async () => {
+      confirmacion.esperar.mockResolvedValueOnce('PENDIENTE');
+
+      await agendarHastaElSi();
+
+      expect(confirmacionesFinales()).toHaveLength(0);
+      expect(lastSent()).toMatch(/aún no termina de registrar/i);
+      expect(confirmacion.registrarPendiente).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: ORG_ID,
+          senderId: SENDER,
+          appointmentId: 'apt-new',
+        }),
+      );
+      expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    it('una clínica SIN espejo confirma como siempre, sin pedir espera', async () => {
+      confirmacion.requiereConfirmacion.mockResolvedValue(false);
+
+      await agendarHastaElSi();
+
+      expect(confirmacion.esperar).not.toHaveBeenCalled();
+      expect(
+        sent().some((t) => /(confirmando|registrando) su cita/i.test(t)),
+      ).toBe(false);
+      expect(confirmacionesFinales()).toHaveLength(1);
+    });
+
+    it('con el envío al hospital APAGADO el bot no agenda: queda en «solo consultas»', async () => {
+      confirmacion.puedeAgendar.mockResolvedValue(false);
+
+      await say('Hola');
+
+      expect(lastSent()).toMatch(/no está activa para agendar/i);
+      expect(appointments.getAvailableSlots).not.toHaveBeenCalled();
+    });
+
+    describe('barrido de confirmaciones pendientes', () => {
+      const pendiente = (desde = new Date().toISOString()) => ({
+        organizationId: ORG_ID,
+        senderId: SENDER,
+        appointmentId: 'apt-new',
+        fechaTexto: 'lunes 5 de octubre, 8:00 a. m.',
+        desde,
+      });
+
+      it('cuando el hospital la registra, llega la confirmación final ligada a la cita', async () => {
+        confirmacion.pendientes.mockResolvedValue([pendiente()]);
+        confirmacion.estado.mockResolvedValue('CONFIRMADA');
+
+        await service.atenderConfirmacionesHisPendientes();
+
+        expect(confirmacion.reclamar).toHaveBeenCalled();
+        expect(confirmacionesFinales()).toHaveLength(1);
+        expect(confirmacionesFinales()[0][2]).toEqual({
+          kind: 'BOOKING_CONFIRMATION',
+          appointmentId: 'apt-new',
+        });
+      });
+
+      it('si el hospital la rechaza, se le avisa con el teléfono del hospital', async () => {
+        confirmacion.pendientes.mockResolvedValue([pendiente()]);
+        confirmacion.estado.mockResolvedValue('RECHAZADA');
+        prisma.organization.findUnique.mockResolvedValue({
+          id: ORG_ID,
+          name: ORG_NAME,
+          supportPhone: '6068538838',
+        });
+
+        await service.atenderConfirmacionesHisPendientes();
+
+        expect(confirmacionesFinales()).toHaveLength(0);
+        expect(lastSent()).toMatch(/no pudo registrar su cita/i);
+        expect(lastSent()).toContain('6068538838');
+      });
+
+      it('si sigue pendiente, no se le escribe ni se reclama', async () => {
+        confirmacion.pendientes.mockResolvedValue([pendiente()]);
+        confirmacion.estado.mockResolvedValue('PENDIENTE');
+
+        await service.atenderConfirmacionesHisPendientes();
+
+        expect(confirmacion.reclamar).not.toHaveBeenCalled();
+        expect(sendSpy).not.toHaveBeenCalled();
+      });
+
+      it('si otra réplica ya la tomó, esta no le escribe', async () => {
+        confirmacion.pendientes.mockResolvedValue([pendiente()]);
+        confirmacion.estado.mockResolvedValue('CONFIRMADA');
+        confirmacion.reclamar.mockResolvedValue(false);
+
+        await service.atenderConfirmacionesHisPendientes();
+
+        expect(sendSpy).not.toHaveBeenCalled();
+      });
+
+      it('pendiente por más de 24 h: se abandona sin escribirle', async () => {
+        const hace25h = new Date(Date.now() - 25 * 3600_000).toISOString();
+        confirmacion.pendientes.mockResolvedValue([pendiente(hace25h)]);
+        confirmacion.estado.mockResolvedValue('PENDIENTE');
+
+        await service.atenderConfirmacionesHisPendientes();
+
+        expect(confirmacion.reclamar).toHaveBeenCalled();
+        expect(sendSpy).not.toHaveBeenCalled();
+      });
+    });
+  });
+
   describe('2. Cancelación', () => {
     const CEDULA = '1088123456';
 

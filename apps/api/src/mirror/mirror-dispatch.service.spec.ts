@@ -1529,3 +1529,144 @@ describe('MirrorDispatchService — hidratación del contexto que va al HIS', ()
     });
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🏥 H10/H11 (docs/PLAN_AGENDA_HUECOS.md): cuando el HIS rechaza el ALTA de una
+// cita de forma definitiva (hora tomada o cruce), reintentarla no sirve. La API
+// la anula en AgenIA para que el bot le ofrezca otra hora al paciente.
+// ══════════════════════════════════════════════════════════════════════════
+describe('MirrorDispatchService — rechazo definitivo del HIS', () => {
+  const ORG = 'org-1';
+  let prisma: any;
+  let tx: any;
+  let service: MirrorDispatchService;
+
+  const evento = (over: Record<string, unknown> = {}) => ({
+    eventId: 'ev-1',
+    entityType: 'APPOINTMENT',
+    entityId: 'apt-1',
+    op: 'INSERT',
+    ...over,
+  });
+
+  beforeEach(() => {
+    tx = {
+      $executeRawUnsafe: jest.fn(async () => 0),
+      appointment: {
+        findFirst: jest.fn(async () => ({
+          id: 'apt-1',
+          status: 'SCHEDULED',
+          scheduleSlotId: 'slot-1',
+          metaLog: { origenBot: true },
+        })),
+        update: jest.fn(async () => ({})),
+      },
+      scheduleSlot: { update: jest.fn(async () => ({})) },
+      syncOutbox: { updateMany: jest.fn(async () => ({ count: 1 })) },
+      syncAudit: { create: jest.fn(async () => ({})) },
+    };
+    prisma = {
+      syncOutbox: {
+        updateMany: jest.fn(async () => ({ count: 0 })),
+        findFirst: jest.fn(async () => evento()),
+      },
+      syncAudit: { create: jest.fn(async () => ({})) },
+      $transaction: jest.fn(async (cb: (t: any) => unknown) => cb(tx)),
+    };
+    service = new MirrorDispatchService(prisma);
+  });
+
+  const ackConRechazo = () =>
+    service.ack(ORG, {
+      seqs: [],
+      failedSeqs: ['7'],
+      failures: [
+        {
+          seq: '7',
+          error: 'se cruza con otra cita del HIS',
+          rechazoDelHis: true,
+        },
+      ],
+    });
+
+  it('anula la cita en AgenIA con origen MIRROR, guarda el motivo y CIERRA el cupo', async () => {
+    await ackConRechazo();
+
+    expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+      `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+    );
+    expect(tx.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.appointment.update.mock.invocationCallOrder[0],
+    );
+    const upd = tx.appointment.update.mock.calls[0][0];
+    expect(upd.where).toEqual({ id: 'apt-1' });
+    expect(upd.data.status).toBe('CANCELLED');
+    expect(upd.data.metaLog.origenBot).toBe(true); // no pisa lo que había
+    expect(upd.data.metaLog.rechazoDelHis.motivo).toBe(
+      'se cruza con otra cita del HIS',
+    );
+    // El hospital ya tiene ese tiempo ocupado: liberarlo lo volvería a ofrecer.
+    expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+      where: { id: 'slot-1' },
+      data: { isAvailable: false },
+    });
+  });
+
+  it('cierra el evento (no se reintenta) con el motivo y deja constancia en la auditoría', async () => {
+    await ackConRechazo();
+
+    const cierre = tx.syncOutbox.updateMany.mock.calls[0][0];
+    expect(cierre.where).toEqual({ seq: BigInt(7), organizationId: ORG });
+    expect(cierre.data.deliveredAt).toBeInstanceOf(Date);
+    expect(cierre.data.lastError).toContain('Rechazada por el HIS');
+    expect(tx.syncAudit.create.mock.calls[0][0].data).toMatchObject({
+      organizationId: ORG,
+      entityId: 'apt-1',
+      op: 'INSERT',
+      outcome: 'CONFLICT',
+    });
+    // No pasó además por el camino de reintentos.
+    expect(prisma.syncOutbox.updateMany).toHaveBeenCalledTimes(1); // solo el de `seqs`
+  });
+
+  it('una cita ya anulada no se toca otra vez, pero el evento igual se cierra', async () => {
+    tx.appointment.findFirst.mockResolvedValue({
+      id: 'apt-1',
+      status: 'CANCELLED',
+      scheduleSlotId: 'slot-1',
+      metaLog: null,
+    });
+
+    await ackConRechazo();
+
+    expect(tx.appointment.update).not.toHaveBeenCalled();
+    expect(tx.syncOutbox.updateMany).toHaveBeenCalled();
+  });
+
+  it('la marca en un evento que NO es alta de cita se trata como fallo normal (se reintenta)', async () => {
+    prisma.syncOutbox.findFirst.mockResolvedValue(
+      evento({ entityType: 'SLOT' }),
+    );
+
+    await ackConRechazo();
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    // markAttemptFailed: sube intentos en vez de cerrar.
+    const llamadas = prisma.syncOutbox.updateMany.mock.calls.map(
+      (c: any[]) => c[0].data,
+    );
+    expect(
+      llamadas.some((d: any) => d.attempts?.increment === 1 && !d.deliveredAt),
+    ).toBe(true);
+  });
+
+  it('sin la marca, un fallo sigue el camino de siempre', async () => {
+    await service.ack(ORG, {
+      seqs: [],
+      failedSeqs: ['7'],
+      failures: [{ seq: '7', error: 'timeout' }],
+    });
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
