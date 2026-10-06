@@ -83,6 +83,74 @@ describe('fetchAvailability', () => {
     expect(cupos[1].occupied).toBe(true); // 07:20
   });
 
+  // ════════════════════════════════════════════════════════════════════════
+  // 🏥 El hospital agenda a cualquier minuto y con la duración que quiera. Un
+  // cupo de la rejilla está ocupado si CUALQUIER cita del médico se cruza con
+  // él, no solo si empieza a la misma hora (2026-10-06: citas de 30 min de
+  // PS08 a las 15:00 contra una rejilla de 20 min).
+  // ════════════════════════════════════════════════════════════════════════
+  it('una cita fuera de la rejilla ocupa los cupos con los que se CRUZA, con su duración real', async () => {
+    // Rejilla 07:00, 07:20, 07:40… Cita del hospital 07:30 de 30 min (07:30-08:00).
+    const { driver } = conDriver(
+      [turno()],
+      [{ med: '91-1', hora: '2026/09/03 07:30', dura: 30 }],
+    );
+
+    const cupos = await driver.fetchAvailability(VENTANA);
+    const ocupado = (hhmmUtc: string) =>
+      cupos.find((c) => c.startTimeIso === `2026-09-03T${hhmmUtc}:00.000Z`)!
+        .occupied;
+
+    expect(ocupado('12:00')).toBe(false); // 07:00-07:20
+    expect(ocupado('12:20')).toBe(true); // 07:20-07:40 se cruza
+    expect(ocupado('12:40')).toBe(true); // 07:40-08:00 se cruza
+    expect(ocupado('13:00')).toBe(false); // 08:00-08:20: borde exacto, no se cruza
+  });
+
+  it('sin duración en el HIS, la cita se mide con la duración del médico', async () => {
+    // 07:05 sin NU_DURA_CIT → 20 min (07:05-07:25): tapa 07:00 y 07:20.
+    const { driver } = conDriver(
+      [turno()],
+      [{ med: '91-1', hora: '2026/09/03 07:05', dura: null }],
+    );
+
+    const cupos = await driver.fetchAvailability(VENTANA);
+
+    expect(cupos[0].occupied).toBe(true); // 07:00
+    expect(cupos[1].occupied).toBe(true); // 07:20
+    expect(cupos[2].occupied).toBe(false); // 07:40
+  });
+
+  it('una cita de OTRO médico no ocupa los cupos de este', async () => {
+    const { driver } = conDriver(
+      [turno()],
+      [{ med: 'PS08', hora: '2026/09/03 07:30', dura: 30 }],
+    );
+
+    const cupos = await driver.fetchAvailability(VENTANA);
+
+    expect(cupos.every((c) => !c.occupied)).toBe(true);
+  });
+
+  it('una hora ilegible del HIS se ignora sin romper el barrido', async () => {
+    const { driver } = conDriver(
+      [turno()],
+      [{ med: '91-1', hora: 'basura', dura: 30 }],
+    );
+
+    await expect(driver.fetchAvailability(VENTANA)).resolves.toHaveLength(15);
+  });
+
+  it('pide la duración de cada cita al HIS (NU_DURA_CIT)', async () => {
+    const { driver, sqls } = conDriver([turno()]);
+
+    await driver.fetchAvailability(VENTANA);
+
+    expect(sqls.find((q) => /FROM dbo\.CITAS_MEDICAS/.test(q))).toMatch(
+      /NU_DURA_CIT/,
+    );
+  });
+
   it('la ocupación viaja EN el mismo cupo, no en un segundo viaje', async () => {
     // Entre traer la rejilla y marcar lo ocupado cabría una ventana en la que
     // AgenIA ofrecería una hora recién vendida.

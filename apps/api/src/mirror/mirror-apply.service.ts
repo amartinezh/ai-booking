@@ -69,6 +69,8 @@ export function claveCupo(
 interface TrazaAuditoria {
   entityId?: string;
   nota?: string;
+  /** Lo que pasó ANTES de la nota final (p. ej. que el cupo se creó a la medida). */
+  prefijo?: string;
 }
 
 /**
@@ -83,8 +85,9 @@ interface TrazaAuditoria {
  *     la agenda (en Anserma, el servicio contratado); el resto de los ~235
  *     eventos diarios del hospital son de médicos que no vendemos y que no nos
  *     corresponde conocer.
- *   · `SIN_CUPO` — el médico SÍ está homologado, pero falta el cupo. Eso sí es
- *     una laguna real del espejo y tiene que doler.
+ *   · `SIN_CUPO` — el médico SÍ está homologado, pero ningún cupo de AgenIA
+ *     empieza a esa hora. Para un alta, AgenIA crea el cupo a la medida de la
+ *     cita (`crearCupoALaMedida`): la agenda la define el hospital.
  *   · `EVENTO_INCOMPLETO` — el evento llegó sin médico o sin hora: está mal
  *     formado y no se puede interpretar.
  *
@@ -109,8 +112,13 @@ type ResolucionCupo =
       };
     }
   | { tipo: 'MEDICO_NO_ESPEJADO' }
-  | { tipo: 'SIN_CUPO' }
+  | { tipo: 'SIN_CUPO'; doctorId: string }
   | { tipo: 'EVENTO_INCOMPLETO' };
+
+/** Duración por defecto cuando ni el hospital ni la configuración la dicen. */
+const DURACION_POR_DEFECTO_MIN = 20;
+/** Una cita más larga que esto es un dato raro del HIS, no una duración: se ignora. */
+const DURACION_MAXIMA_MIN = 8 * 60;
 
 @Injectable()
 export class MirrorApplyService {
@@ -298,7 +306,156 @@ export class MirrorApplyService {
       },
     });
 
-    return cupo ? { tipo: 'OK', cupo } : { tipo: 'SIN_CUPO' };
+    return cupo
+      ? { tipo: 'OK', cupo }
+      : { tipo: 'SIN_CUPO', doctorId: mapa.agenIAId };
+  }
+
+  /**
+   * Cupo a la medida de una cita del hospital que no cae en ningún cupo de
+   * AgenIA. Hora de inicio = la de la cita; fin = su duración real
+   * (`endTimeIso`, que el driver saca de la duración que el HIS guarda en cada
+   * cita) o, si no viene, la configurada para ese médico.
+   *
+   * Nace LIBRE para que el flujo de siempre (alta del paciente + reserva, u
+   * ocupar sin cita) lo tome justo después. Y en la misma transacción se
+   * CIERRAN los cupos libres del médico que se cruzan con esa cita: con una
+   * cita de 15:00 a 15:30, los cupos de 14:50 y 15:10 ya no se pueden ofrecer.
+   * Todo con origen MIRROR: nace en el HIS y no vuelve a él.
+   */
+  private async crearCupoALaMedida(
+    organizationId: string,
+    doctorId: string,
+    payload: CanonicalChangeEvent['payload'],
+    traza: TrazaAuditoria,
+  ): Promise<{
+    id: string;
+    isAvailable: boolean;
+    doctorId: string;
+    startTime: Date;
+  }> {
+    const inicio = new Date(payload.startTimeIso!);
+    const minutos = await this.duracionDeLaCita(
+      organizationId,
+      payload,
+      inicio,
+    );
+    const fin = new Date(inicio.getTime() + minutos * 60_000);
+
+    const serviceId = await this.servicioDelCupo(
+      organizationId,
+      doctorId,
+      payload.serviceExternalKey,
+    );
+    if (!serviceId) {
+      throw new Error(
+        `Cita entrante del HIS sin cupo en AgenIA (médico ${payload.doctorExternalKey}, ` +
+          `${payload.startTimeIso}) y no se pudo crear uno: ni el servicio de la cita ` +
+          'está homologado ni el médico tiene un servicio asignado.',
+      );
+    }
+
+    const cupo = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+      // Si otra vía (el barrido de agenda) acaba de crear ese mismo cupo, se usa.
+      const existente = await tx.scheduleSlot.findFirst({
+        where: { organizationId, doctorId, startTime: inicio },
+      });
+      const elCupo =
+        existente ??
+        (await tx.scheduleSlot.create({
+          data: {
+            organizationId,
+            doctorId,
+            serviceId,
+            startTime: inicio,
+            endTime: fin,
+            isAvailable: true,
+          },
+        }));
+      await tx.scheduleSlot.updateMany({
+        where: {
+          organizationId,
+          doctorId,
+          id: { not: elCupo.id },
+          isAvailable: true,
+          startTime: { lt: fin },
+          endTime: { gt: inicio },
+        },
+        data: { isAvailable: false },
+      });
+      return elCupo;
+    });
+
+    traza.entityId = cupo.id;
+    traza.prefijo = `cupo creado a la medida de la cita del hospital (${minutos} min)`;
+    this.logger.log(
+      `Cupo creado a la medida de una cita del hospital (médico ` +
+        `${payload.doctorExternalKey}, ${payload.startTimeIso}, ${minutos} min).`,
+    );
+    return cupo;
+  }
+
+  /**
+   * Duración de una cita del hospital: la que dice el HIS si viene y es
+   * sensata; si no, la configurada para ese médico en el mapeo del driver
+   * (`duracionPorMedico`), la general (`duracionMinutos`) o 20.
+   */
+  private async duracionDeLaCita(
+    organizationId: string,
+    payload: CanonicalChangeEvent['payload'],
+    inicio: Date,
+  ): Promise<number> {
+    if (payload.endTimeIso) {
+      const min = Math.round(
+        (new Date(payload.endTimeIso).getTime() - inicio.getTime()) / 60_000,
+      );
+      if (Number.isFinite(min) && min > 0 && min <= DURACION_MAXIMA_MIN) {
+        return min;
+      }
+    }
+    const config = await this.prisma.hospitalMirrorConfig.findUnique({
+      where: { organizationId },
+      select: { mappingJson: true },
+    });
+    const mapeo = (config?.mappingJson ?? {}) as {
+      duracionMinutos?: unknown;
+      duracionPorMedico?: Record<string, unknown>;
+    };
+    const candidatos = [
+      payload.doctorExternalKey
+        ? mapeo.duracionPorMedico?.[payload.doctorExternalKey]
+        : undefined,
+      mapeo.duracionMinutos,
+    ];
+    for (const c of candidatos) {
+      if (typeof c === 'number' && c > 0 && c <= DURACION_MAXIMA_MIN) return c;
+    }
+    return DURACION_POR_DEFECTO_MIN;
+  }
+
+  /** El servicio de la cita si está homologado; si no, el del médico. */
+  private async servicioDelCupo(
+    organizationId: string,
+    doctorId: string,
+    serviceExternalKey: string | undefined,
+  ): Promise<string | null> {
+    if (serviceExternalKey) {
+      const mapa = await this.prisma.mirrorEntityMap.findFirst({
+        where: {
+          organizationId,
+          entityType: 'SERVICE',
+          externalKey: serviceExternalKey,
+        },
+        select: { agenIAId: true },
+      });
+      if (mapa) return mapa.agenIAId;
+    }
+    const medico = await this.prisma.doctorProfile.findUnique({
+      where: { id: doctorId },
+      select: { serviceId: true },
+    });
+    return medico?.serviceId ?? null;
   }
 
   /** Ocupar el cupo sin crear cita: marca la transacción como MIRROR (anti-eco). */
@@ -379,19 +536,30 @@ export class MirrorApplyService {
         return 'SKIPPED';
       }
 
-      if (resuelto.tipo !== 'OK') {
+      if (resuelto.tipo === 'EVENTO_INCOMPLETO') {
         throw new Error(
           `Cita entrante del HIS sin cupo equivalente en AgenIA ` +
             `(médico ${event.payload.doctorExternalKey}, ${event.payload.startTimeIso}). ` +
-            `${
-              resuelto.tipo === 'SIN_CUPO'
-                ? 'El médico está homologado pero falta generar el cupo.'
-                : 'El evento llegó sin médico o sin hora.'
-            }`,
+            'El evento llegó sin médico o sin hora.',
         );
       }
 
-      const { cupo } = resuelto;
+      // 🏥 La cita del hospital MANDA. Si su hora no coincide con un cupo de
+      // AgenIA —el hospital agendó fuera de la rejilla (otra duración, otro
+      // desfase) o el turno todavía no se ha importado—, AgenIA se acomoda:
+      // crea el cupo a la medida de esa cita y la aplica como cualquier otra.
+      // Antes se rechazaba con ERROR y, como el cursor del agente es una foto,
+      // nunca se reintentaba: la cita quedaba fuera de AgenIA (sin bot ni
+      // recordatorio) y los cupos vecinos se seguían ofreciendo (2026-10-06).
+      const cupo =
+        resuelto.tipo === 'OK'
+          ? resuelto.cupo
+          : await this.crearCupoALaMedida(
+              organizationId,
+              resuelto.doctorId,
+              event.payload,
+              traza,
+            );
       traza.entityId = cupo.id;
 
       // Ocupar el cupo es lo que evita la sobreventa, y hay que hacerlo
@@ -506,15 +674,21 @@ export class MirrorApplyService {
         return 'SKIPPED';
       }
 
+      if (resuelto.tipo === 'SIN_CUPO') {
+        // Ningún cupo de AgenIA empieza a esa hora: la cita cancelada nunca
+        // estuvo en AgenIA (p. ej. una de antes del corte, fuera de la rejilla).
+        // No hay nada que cancelar aquí; los cupos vecinos que esa cita tapaba
+        // los vuelve a calcular el barrido de agenda con la ocupación real.
+        traza.nota =
+          'el hospital canceló una cita que AgenIA no tenía y ningún cupo empieza a esa hora';
+        return 'SKIPPED';
+      }
+
       if (resuelto.tipo !== 'OK') {
         throw new Error(
           `Cancelación entrante del HIS sin cupo equivalente en AgenIA ` +
             `(médico ${event.payload.doctorExternalKey}, ${event.payload.startTimeIso}). ` +
-            `${
-              resuelto.tipo === 'SIN_CUPO'
-                ? 'El médico está homologado pero falta generar el cupo.'
-                : 'El evento llegó sin médico o sin hora.'
-            }`,
+            'El evento llegó sin médico o sin hora.',
         );
       }
 
@@ -771,7 +945,12 @@ export class MirrorApplyService {
           null,
         op: event.op,
         outcome,
-        detail: this.armarDetalle(event, detail ?? traza?.nota),
+        detail: this.armarDetalle(
+          event,
+          [traza?.prefijo, detail ?? traza?.nota]
+            .filter((t): t is string => !!t)
+            .join('; ') || undefined,
+        ),
         eventId: event.eventId,
       },
     });

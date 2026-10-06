@@ -125,6 +125,7 @@ export class MirrorAvailabilityService {
         id: true,
         doctorId: true,
         startTime: true,
+        endTime: true,
         isAvailable: true,
         // Dos preguntas distintas sobre el mismo cupo:
         //  · ¿tiene una cita VIVA? → no se puede liberar ni borrar: hay un
@@ -132,12 +133,43 @@ export class MirrorAvailabilityService {
         //  · ¿tiene CUALQUIER cita, aunque esté cancelada? → no se puede
         //    BORRAR: la fila cancelada es historia clínica y la llave foránea
         //    la sostiene. Se puede cerrar, pero no eliminar.
-        appointments: { select: { id: true, status: true } },
+        appointments: { select: { id: true, status: true, origin: true } },
       },
     });
     const existentePorClave = new Map(
       existentes.map((e) => [`${e.doctorId}|${e.startTime.toISOString()}`, e]),
     );
+
+    // 🏥 Intervalos ocupados por citas VIVAS, por médico. Una cita del hospital
+    // puede no coincidir con la rejilla (otra duración, otro desfase: AgenIA le
+    // crea un cupo a la medida), y entonces tapa a los cupos vecinos que se
+    // cruzan con ella. Sin esto, cada pasada volvía a liberar esos vecinos —el
+    // HIS no tiene cita a ESA hora exacta— y el bot podía vender 14:50 encima
+    // de una cita de 15:00 a 15:30.
+    const ocupadosPorMedico = new Map<
+      string,
+      { clave: string; inicio: number; fin: number }[]
+    >();
+    for (const e of existentes) {
+      if (!e.appointments.some((a) => a.status !== 'CANCELLED')) continue;
+      const lista = ocupadosPorMedico.get(e.doctorId) ?? [];
+      lista.push({
+        clave: `${e.doctorId}|${e.startTime.toISOString()}`,
+        inicio: e.startTime.getTime(),
+        fin: e.endTime.getTime(),
+      });
+      ocupadosPorMedico.set(e.doctorId, lista);
+    }
+    const tapadoPorOtraCita = (
+      clave: string,
+      c: { doctorId: string; start: Date; end: Date },
+    ) =>
+      (ocupadosPorMedico.get(c.doctorId) ?? []).some(
+        (o) =>
+          o.clave !== clave &&
+          o.inicio < c.end.getTime() &&
+          c.start.getTime() < o.fin,
+      );
 
     const aCrear: typeof deseados extends Map<string, infer V> ? V[] : never =
       [];
@@ -148,6 +180,8 @@ export class MirrorAvailabilityService {
     const conflicts: string[] = [];
 
     for (const [clave, cupo] of deseados) {
+      if (!cupo.occupied && tapadoPorOtraCita(clave, cupo))
+        cupo.occupied = true;
       const actual = existentePorClave.get(clave);
       if (!actual) {
         aCrear.push(cupo);
@@ -167,7 +201,16 @@ export class MirrorAvailabilityService {
       if (deseados.has(clave)) continue;
 
       // El hospital ya no tiene esa hora en su agenda.
-      if (actual.appointments.some((a) => a.status !== 'CANCELLED')) {
+      const vivas = actual.appointments.filter((a) => a.status !== 'CANCELLED');
+
+      // 🏥 Cupo a la medida de una cita DEL HOSPITAL (fuera de la rejilla de
+      // turnos): no es un sobrante ni un conflicto — el hospital tiene esa cita,
+      // y si la cancela llega como cancelación. Se deja tal cual.
+      if (vivas.length > 0 && vivas.every((a) => a.origin === 'MIRROR')) {
+        continue;
+      }
+
+      if (vivas.length > 0) {
         // Hay un paciente con cita a una hora en la que su médico ya no
         // atiende. No es un cupo sobrante: es un problema para una persona.
         conflicts.push(clave);

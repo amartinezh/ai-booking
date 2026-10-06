@@ -36,16 +36,34 @@ describe('MirrorAvailabilityService', () => {
       conCita?: boolean;
       conCitaCancelada?: boolean;
       id?: string;
+      /** De dónde vino la cita (por defecto una de WhatsApp, agendada en AgenIA). */
+      origen?: string;
+      minutos?: number;
     } = {},
   ) => ({
     id: opts.id ?? `slot-${startIso}`,
     doctorId: 'doc-1',
     startTime: new Date(startIso),
+    endTime: new Date(
+      new Date(startIso).getTime() + (opts.minutos ?? 20) * 60_000,
+    ),
     isAvailable: opts.isAvailable ?? true,
     appointments: opts.conCita
-      ? [{ id: 'apt-1', status: 'SCHEDULED' }]
+      ? [
+          {
+            id: 'apt-1',
+            status: 'SCHEDULED',
+            origin: opts.origen ?? 'WHATSAPP',
+          },
+        ]
       : opts.conCitaCancelada
-        ? [{ id: 'apt-1', status: 'CANCELLED' }]
+        ? [
+            {
+              id: 'apt-1',
+              status: 'CANCELLED',
+              origin: opts.origen ?? 'WHATSAPP',
+            },
+          ]
         : [],
   });
 
@@ -190,6 +208,119 @@ describe('MirrorAvailabilityService', () => {
         where: { id: { in: ['sobrante'] } },
       });
       expect(r.removed).toBe(1);
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 🏥 Cupos a la medida de citas del HOSPITAL (fuera de la rejilla). La
+    // agenda la define el hospital: AgenIA se acomoda a sus citas.
+    // ══════════════════════════════════════════════════════════════════════
+    describe('citas del hospital fuera de la rejilla', () => {
+      it('un cupo a la medida con cita viva del hospital no se borra NI se reporta como conflicto', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoAgenIA('2026-09-03T15:00:00.000Z', {
+            conCita: true,
+            origen: 'MIRROR',
+            isAvailable: false,
+            id: 'a-la-medida',
+            minutos: 30,
+          }),
+        ]);
+
+        const r = await aplicar([cupoHis('2026-09-03T14:50:00.000Z')]);
+
+        expect(r.conflicts).toEqual([]);
+        expect(tx.scheduleSlot.deleteMany).not.toHaveBeenCalled();
+        const tocados = tx.scheduleSlot.updateMany.mock.calls.flatMap(
+          (c: any[]) => c[0].where.id.in,
+        );
+        expect(tocados).not.toContain('a-la-medida');
+      });
+
+      it('los cupos NUEVOS de la rejilla que se cruzan con esa cita nacen ocupados; los que no, libres', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoAgenIA('2026-09-03T15:00:00.000Z', {
+            conCita: true,
+            origen: 'MIRROR',
+            isAvailable: false,
+            minutos: 30,
+          }),
+        ]);
+
+        await aplicar([
+          cupoHis('2026-09-03T14:30:00.000Z'), // 14:30-14:50: no se cruza
+          cupoHis('2026-09-03T14:50:00.000Z'), // 14:50-15:10: se cruza
+          cupoHis('2026-09-03T15:10:00.000Z'), // 15:10-15:30: se cruza
+          cupoHis('2026-09-03T15:30:00.000Z'), // 15:30-15:50: no (borde exacto)
+        ]);
+
+        const creados = tx.scheduleSlot.createMany.mock.calls[0][0].data;
+        const libre = (iso: string) =>
+          creados.find((c: any) => c.startTime.toISOString() === iso)
+            .isAvailable;
+        expect(libre('2026-09-03T14:30:00.000Z')).toBe(true);
+        expect(libre('2026-09-03T14:50:00.000Z')).toBe(false);
+        expect(libre('2026-09-03T15:10:00.000Z')).toBe(false);
+        expect(libre('2026-09-03T15:30:00.000Z')).toBe(true);
+      });
+
+      it('un cupo EXISTENTE de la rejilla que se cruza con esa cita no se vuelve a liberar', async () => {
+        // El HIS lo da por libre (no hay cita a ESA hora exacta), pero la cita
+        // de 15:00 a 15:30 lo tapa: liberarlo sería vender encima.
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoAgenIA('2026-09-03T15:00:00.000Z', {
+            conCita: true,
+            origen: 'MIRROR',
+            isAvailable: false,
+            minutos: 30,
+          }),
+          cupoAgenIA('2026-09-03T15:10:00.000Z', {
+            isAvailable: true,
+            id: 'vecino',
+          }),
+        ]);
+
+        await aplicar([cupoHis('2026-09-03T15:10:00.000Z', false)]);
+
+        expect(tx.scheduleSlot.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: ['vecino'] } },
+          data: { isAvailable: false },
+        });
+      });
+
+      it('una cita CANCELADA no tapa a nadie', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoAgenIA('2026-09-03T15:00:00.000Z', {
+            conCitaCancelada: true,
+            origen: 'MIRROR',
+            minutos: 30,
+          }),
+        ]);
+
+        await aplicar([cupoHis('2026-09-03T15:10:00.000Z')]);
+
+        expect(
+          tx.scheduleSlot.createMany.mock.calls[0][0].data[0].isAvailable,
+        ).toBe(true);
+      });
+
+      it('una cita viva de OTRO médico no tapa los cupos de este', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          {
+            ...cupoAgenIA('2026-09-03T15:00:00.000Z', {
+              conCita: true,
+              origen: 'MIRROR',
+              minutos: 30,
+            }),
+            doctorId: 'doc-otro',
+          },
+        ]);
+
+        await aplicar([cupoHis('2026-09-03T15:10:00.000Z')]);
+
+        expect(
+          tx.scheduleSlot.createMany.mock.calls[0][0].data[0].isAvailable,
+        ).toBe(true);
+      });
     });
 
     it('🚨 un cupo que desaparece PERO tiene cita no se borra: se reporta', async () => {

@@ -230,3 +230,33 @@ describe('detectChanges — anti-eco con las marcas de cada canal', () => {
     expect(ronda.events[0].op).toBe('INSERT');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🏥 La duración la define el HOSPITAL: cada cita viaja con la suya
+// (`NU_DURA_CIT`). Con ella el servidor le crea a la cita un cupo a la medida
+// cuando no cae en la rejilla de AgenIA.
+// ══════════════════════════════════════════════════════════════════════════
+describe('detectChanges — la cita viaja con su duración real', () => {
+  const altaCon = async (dura: unknown) => {
+    const base = await conDriver([]).detectChanges(null);
+    const r = await conDriver([
+      filaCita({ hora: '2026/10/10 07:00', dura }),
+    ]).detectChanges(base.nextCursor);
+    return r.events[0];
+  };
+
+  it('una cita de 30 min llega con fin a los 30 min (07:00 en Bogotá = 12:00 UTC)', async () => {
+    const e = await altaCon(30);
+    expect(e.op).toBe('INSERT');
+    expect(e.payload.startTimeIso).toBe('2026-10-10T12:00:00.000Z');
+    expect(e.payload.endTimeIso).toBe('2026-10-10T12:30:00.000Z');
+  });
+
+  it('sin duración en el HIS no se inventa un fin: el servidor usa la configurada', async () => {
+    expect((await altaCon(null)).payload.endTimeIso).toBeUndefined();
+  });
+
+  it('una duración de 0 tampoco se usa', async () => {
+    expect((await altaCon(0)).payload.endTimeIso).toBeUndefined();
+  });
+});

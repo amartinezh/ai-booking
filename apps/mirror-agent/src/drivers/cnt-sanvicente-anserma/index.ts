@@ -396,13 +396,13 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
            AND ISNULL(NU_TIPO_TUME, 0) = 0
            AND ISNULL(ID_DISP_TUME, '1') = '1'`);
 
-    // Las horas ya vendidas. Mismo criterio de fecha local, y la clave es la
-    // que usa la PK de la cita: médico + FE_HORA_CIT.
+    // Las horas ya vendidas, con la DURACIÓN que el hospital le dio a cada cita
+    // (`NU_DURA_CIT`). Mismo criterio de fecha local.
     const ocupadas = await pool
       .request()
       .input('desde', sql.VarChar(8), desdeSql)
       .input('hasta', sql.VarChar(8), hastaSql).query(`
-        SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora
+        SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_DURA_CIT dura
           FROM dbo.CITAS_MEDICAS
          WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
 
@@ -411,6 +411,40 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         (f: { med: string; hora: string }) => `${f.med}|${f.hora.trim()}`,
       ),
     );
+
+    // 🏥 La agenda la define el HOSPITAL. Su aplicación deja agendar a
+    // cualquier minuto y con la duración que quiera (15:00 de 30 min, 07:05…),
+    // así que la hora exacta no basta: un cupo de la rejilla está ocupado si
+    // CUALQUIER cita del médico se CRUZA con él. Sin esto AgenIA ofrecía 14:50
+    // encima de una cita de 15:00 a 15:30 (visto en producción, 2026-10-06).
+    const citasPorMedico = new Map<string, { inicio: number; fin: number }[]>();
+    for (const f of ocupadas.recordset as {
+      med: string;
+      hora: string;
+      dura: number | null;
+    }[]) {
+      const inicioIso = feHoraCitAIsoOrNull(f.hora.trim(), this.timeZone);
+      if (!inicioIso) continue;
+      const inicio = new Date(inicioIso).getTime();
+      const minutos =
+        f.dura && f.dura > 0
+          ? f.dura
+          : duracionDeServicio(mapping, undefined, f.med);
+      const lista = citasPorMedico.get(f.med) ?? [];
+      lista.push({ inicio, fin: inicio + minutos * 60_000 });
+      citasPorMedico.set(f.med, lista);
+    }
+    const seCruzaConUnaCita = (
+      med: string,
+      startIso: string,
+      endIso: string,
+    ) => {
+      const a = new Date(startIso).getTime();
+      const b = new Date(endIso).getTime();
+      return (citasPorMedico.get(med) ?? []).some(
+        (c) => c.inicio < b && a < c.fin,
+      );
+    };
 
     const cupos: CanonicalSlot[] = [];
     for (const t of turnos.recordset as {
@@ -435,7 +469,9 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
           doctorExternalKey: t.med,
           startTimeIso: cupo.startTimeIso,
           endTimeIso: cupo.endTimeIso,
-          occupied: vendidas.has(`${t.med}|${cupo.feHoraCit}`),
+          occupied:
+            vendidas.has(`${t.med}|${cupo.feHoraCit}`) ||
+            seCruzaConUnaCita(t.med, cupo.startTimeIso, cupo.endTimeIso),
         });
       }
     }
@@ -825,6 +861,15 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         patientDocument: fila.h ?? undefined,
         // La hora del HIS es local; el protocolo viaja en UTC (plan §8).
         startTimeIso,
+        // 🏥 La duración que el hospital le dio a ESTA cita (`NU_DURA_CIT`). Con
+        // ella AgenIA crea el cupo a la medida cuando la cita no cae en su
+        // rejilla. Sin dato, el servidor usa la duración configurada del médico.
+        endTimeIso:
+          fila.d && fila.d > 0
+            ? new Date(
+                new Date(startTimeIso).getTime() + fila.d * 60_000,
+              ).toISOString()
+            : undefined,
         // 🌐 El protocolo viaja en el vocabulario de AgenIA, no en el del
         // hospital — igual que las horas viajan en UTC. Antes se mandaba
         // `String(fila.e)`, el código crudo del HIS, contra un enum de Prisma

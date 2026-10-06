@@ -361,7 +361,18 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
   beforeEach(async () => {
     tx = {
       appointment: { findFirst: jest.fn(), update: jest.fn() },
-      scheduleSlot: { update: jest.fn() },
+      scheduleSlot: {
+        update: jest.fn(),
+        // Cupo a la medida: se busca (por si el barrido lo acaba de crear), se
+        // crea y se cierran los vecinos que se cruzan.
+        findFirst: jest.fn(async () => null),
+        create: jest.fn(async ({ data }: any) => ({
+          id: 'slot-nuevo',
+          isAvailable: true,
+          ...data,
+        })),
+        updateMany: jest.fn(async () => ({ count: 0 })),
+      },
       $executeRawUnsafe: jest.fn(),
     };
     prisma = {
@@ -371,6 +382,10 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       scheduleSlot: { findFirst: jest.fn(async () => CUPO), update: jest.fn() },
       mirrorEntityMap: {
         findFirst: jest.fn(async () => ({ agenIAId: 'doc-1' })),
+      },
+      hospitalMirrorConfig: { findUnique: jest.fn(async () => null) },
+      doctorProfile: {
+        findUnique: jest.fn(async () => ({ serviceId: 'srv-1' })),
       },
       $transaction: jest.fn((cb: any) => cb(tx)),
     };
@@ -655,14 +670,14 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       expect(fila().detail).toContain('médico no espejado');
     });
 
-    it('sin cupo → ERROR: la clave va DELANTE y el motivo original se conserva', async () => {
+    it('sin cupo → el cupo se crea a la medida y queda constancia, con la clave DELANTE', async () => {
       prisma.scheduleSlot.findFirst.mockResolvedValue(null);
 
       await aplicar(evento());
 
-      expect(fila().outcome).toBe('ERROR');
+      expect(fila().outcome).toBe('OK');
       expect(fila().detail.startsWith(CLAVE)).toBe(true);
-      expect(fila().detail).toContain('falta generar el cupo');
+      expect(fila().detail).toContain('cupo creado a la medida');
     });
 
     it('un cupo que ya estaba ocupado también deja rastro', async () => {
@@ -764,18 +779,18 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       });
     });
 
-    it('médico homologado pero SIN cupo → sigue siendo error: eso sí es una laguna', async () => {
+    it('médico homologado pero sin servicio en ningún lado → error explícito, sin crear nada', async () => {
       prisma.scheduleSlot.findFirst.mockResolvedValue(null);
+      prisma.doctorProfile.findUnique.mockResolvedValue({ serviceId: null });
 
       const r = await aplicar(evento());
 
       expect(r.errors).toBe(1);
-      expect(r.skipped).toBe(0);
-      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+      expect(tx.scheduleSlot.create).not.toHaveBeenCalled();
       expect(prisma.syncAudit.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           outcome: 'ERROR',
-          detail: expect.stringContaining('falta generar el cupo'),
+          detail: expect.stringContaining('no se pudo crear uno'),
         }),
       });
     });
@@ -1038,6 +1053,208 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
           status: { not: 'CANCELLED' },
         },
       });
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 🏥 La agenda la define el hospital. Una cita suya que no cae en ningún cupo
+  // de AgenIA (otra duración, otro desfase, o un turno que aún no se importó)
+  // ya no se rechaza: AgenIA crea el cupo a la medida. Antes quedaba en ERROR y
+  // el agente no la reintentaba nunca (21 citas reales el 2026-10-06).
+  // ════════════════════════════════════════════════════════════════════════
+  describe('cita del hospital que no cae en ningún cupo de AgenIA', () => {
+    const INICIO = '2026-11-06T20:00:00.000Z'; // 15:00 en Bogotá
+    const sinCupo = (payload: Record<string, unknown> = {}) =>
+      evento({
+        payload: {
+          doctorExternalKey: 'PS08',
+          startTimeIso: INICIO,
+          patientDocument: '9696544',
+          ...payload,
+        },
+      });
+
+    beforeEach(() => {
+      prisma.scheduleSlot.findFirst.mockResolvedValue(null);
+    });
+
+    it('crea el cupo con la hora y la duración REAL de la cita del hospital', async () => {
+      const r = await aplicar(
+        sinCupo({ endTimeIso: '2026-11-06T20:30:00.000Z' }),
+      );
+
+      expect(r.applied).toBe(1);
+      expect(r.errors).toBe(0);
+      expect(tx.scheduleSlot.create).toHaveBeenCalledWith({
+        data: {
+          organizationId: ORG,
+          doctorId: 'doc-1',
+          serviceId: 'srv-1',
+          startTime: new Date(INICIO),
+          endTime: new Date('2026-11-06T20:30:00.000Z'),
+          isAvailable: true,
+        },
+      });
+    });
+
+    it('🪞 todo con origen MIRROR: el cupo nace del HIS y no vuelve a él', async () => {
+      await aplicar(sinCupo());
+
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      expect(tx.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.scheduleSlot.create.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('cierra los cupos LIBRES del médico que se cruzan con la cita (no se puede vender 14:50 ni 15:10)', async () => {
+      await aplicar(sinCupo({ endTimeIso: '2026-11-06T20:30:00.000Z' }));
+
+      expect(tx.scheduleSlot.updateMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG,
+          doctorId: 'doc-1',
+          id: { not: 'slot-nuevo' },
+          isAvailable: true,
+          startTime: { lt: new Date('2026-11-06T20:30:00.000Z') },
+          endTime: { gt: new Date(INICIO) },
+        },
+        data: { isAvailable: false },
+      });
+    });
+
+    it('sin paciente que dar de alta, ocupa el cupo nuevo igual (no se vuelve a vender esa hora)', async () => {
+      await aplicar(sinCupo());
+
+      expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+        where: { id: 'slot-nuevo' },
+        data: { isAvailable: false },
+      });
+    });
+
+    it('con paciente, la cita se reserva en el cupo nuevo (bot y recordatorio la ven)', async () => {
+      pacientes.resolverOCrear.mockResolvedValue({
+        pacienteId: 'pac-1',
+        motivo: 'CREADO',
+        candidatos: [],
+        nota: 'paciente creado',
+      });
+
+      await aplicar(sinCupo());
+
+      expect(appointments.bookAppointment).toHaveBeenCalledWith(
+        'pac-1',
+        'slot-nuevo',
+        null,
+        'MIRROR',
+        ORG,
+      );
+    });
+
+    it('si el barrido acaba de crear ese mismo cupo, lo usa en vez de duplicarlo', async () => {
+      tx.scheduleSlot.findFirst.mockResolvedValue({
+        id: 'slot-del-barrido',
+        isAvailable: true,
+        doctorId: 'doc-1',
+        startTime: new Date(INICIO),
+      });
+
+      await aplicar(sinCupo());
+
+      expect(tx.scheduleSlot.create).not.toHaveBeenCalled();
+      expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+        where: { id: 'slot-del-barrido' },
+        data: { isAvailable: false },
+      });
+    });
+
+    describe('duración cuando el hospital no la manda', () => {
+      const finCreado = () =>
+        tx.scheduleSlot.create.mock.calls[0][0].data.endTime as Date;
+      const minutos = () =>
+        (finCreado().getTime() - new Date(INICIO).getTime()) / 60_000;
+
+      it('usa la del médico en el mapeo', async () => {
+        prisma.hospitalMirrorConfig.findUnique.mockResolvedValue({
+          mappingJson: { duracionMinutos: 20, duracionPorMedico: { PS08: 30 } },
+        });
+        await aplicar(sinCupo());
+        expect(minutos()).toBe(30);
+      });
+
+      it('si el médico no tiene, la general del mapeo', async () => {
+        prisma.hospitalMirrorConfig.findUnique.mockResolvedValue({
+          mappingJson: { duracionMinutos: 15 },
+        });
+        await aplicar(sinCupo());
+        expect(minutos()).toBe(15);
+      });
+
+      it('sin mapeo, 20 minutos', async () => {
+        await aplicar(sinCupo());
+        expect(minutos()).toBe(20);
+      });
+
+      it('una duración absurda del HIS (fin antes del inicio) se ignora', async () => {
+        await aplicar(sinCupo({ endTimeIso: '2026-11-06T19:00:00.000Z' }));
+        expect(minutos()).toBe(20);
+      });
+
+      it('una duración de más de 8 horas se ignora', async () => {
+        await aplicar(sinCupo({ endTimeIso: '2026-11-07T20:00:00.000Z' }));
+        expect(minutos()).toBe(20);
+      });
+    });
+
+    it('el servicio de la cita, si está homologado, manda sobre el del médico', async () => {
+      prisma.mirrorEntityMap.findFirst.mockImplementation(
+        async ({ where }: any) =>
+          where.entityType === 'SERVICE'
+            ? { agenIAId: 'srv-de-la-cita' }
+            : { agenIAId: 'doc-1' },
+      );
+
+      await aplicar(sinCupo({ serviceExternalKey: '890208' }));
+
+      expect(tx.scheduleSlot.create.mock.calls[0][0].data.serviceId).toBe(
+        'srv-de-la-cita',
+      );
+    });
+
+    it('servicio de la cita sin homologar → el del médico', async () => {
+      prisma.mirrorEntityMap.findFirst.mockImplementation(
+        async ({ where }: any) =>
+          where.entityType === 'SERVICE' ? null : { agenIAId: 'doc-1' },
+      );
+
+      await aplicar(sinCupo({ serviceExternalKey: '999999' }));
+
+      expect(tx.scheduleSlot.create.mock.calls[0][0].data.serviceId).toBe(
+        'srv-1',
+      );
+    });
+
+    it('una CANCELACIÓN sin cupo se omite (la cita nunca estuvo en AgenIA), no es error', async () => {
+      const r = await aplicar(
+        evento({
+          eventId: 'evt-cancel-sin-cupo',
+          op: 'CANCEL',
+          payload: { doctorExternalKey: 'PS08', startTimeIso: INICIO },
+        }),
+      );
+
+      expect(r).toMatchObject({ skipped: 1, errors: 0 });
+      expect(tx.scheduleSlot.create).not.toHaveBeenCalled();
+    });
+
+    it('un médico que no espejamos sigue omitiéndose: no se le crean cupos', async () => {
+      prisma.mirrorEntityMap.findFirst.mockResolvedValue(null);
+
+      const r = await aplicar(sinCupo());
+
+      expect(r.skipped).toBe(1);
+      expect(tx.scheduleSlot.create).not.toHaveBeenCalled();
     });
   });
 
