@@ -40,8 +40,13 @@ export async function recorrerAgenda(
   const inicio = opts.desde ? new Date(opts.desde) : new Date();
   inicio.setHours(0, 0, 0, 0);
 
+  // 🚨 'SIN_RESPUESTA' y no 'OFF': el modo lo dice el SERVIDOR al recibir un
+  // día. Si TODOS los días fallan antes (p. ej. el HIS niega un SELECT), el
+  // barrido no sabe el modo, y arrancar en 'OFF' hacía que el agente
+  // reportara «availabilityMode=OFF» y escondiera el error real (2026-10-06:
+  // faltaba el permiso sobre CITAS_DISPONIBLES y el registro decía OFF).
   const total: ResumenAgenda = {
-    modo: 'OFF',
+    modo: 'SIN_RESPUESTA',
     creados: 0,
     actualizados: 0,
     borrados: 0,

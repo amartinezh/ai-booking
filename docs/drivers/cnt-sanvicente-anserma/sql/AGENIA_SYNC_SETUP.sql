@@ -179,6 +179,7 @@ GRANT SELECT ON dbo.TIPO_DOCUMENTO  TO agenia_sync;
 GRANT SELECT ON dbo.MUNICIPIOS      TO agenia_sync;
 GRANT SELECT ON dbo.R_PAC_EPS       TO agenia_sync;
 GRANT SELECT ON dbo.TURNOS_MEDICOS  TO agenia_sync;
+GRANT SELECT ON dbo.CITAS_DISPONIBLES TO agenia_sync;  -- huecos libres de cada turno (docs/PLAN_AGENDA_HUECOS.md, H1; solo lectura)
 GRANT SELECT ON dbo.MOTIVOANUL      TO agenia_sync;  -- validar código de motivo al cancelar
 GRANT SELECT ON dbo.CONVENIOS       TO agenia_sync;  -- resolver convenio (EPS+régimen+PyP, §2.3)
 GRANT SELECT ON dbo.EPS             TO agenia_sync;
@@ -229,6 +230,7 @@ GRANT SELECT ON dbo.TIPO_DOCUMENTO  TO agenia_sync;
 GRANT SELECT ON dbo.MUNICIPIOS      TO agenia_sync;
 GRANT SELECT ON dbo.R_PAC_EPS       TO agenia_sync;
 GRANT SELECT ON dbo.TURNOS_MEDICOS  TO agenia_sync;
+GRANT SELECT ON dbo.CITAS_DISPONIBLES TO agenia_sync;  -- huecos libres de cada turno (docs/PLAN_AGENDA_HUECOS.md, H1; solo lectura)
 GRANT SELECT ON dbo.MOTIVOANUL      TO agenia_sync;
 GRANT SELECT ON dbo.CONVENIOS       TO agenia_sync;
 GRANT SELECT ON dbo.EPS             TO agenia_sync;

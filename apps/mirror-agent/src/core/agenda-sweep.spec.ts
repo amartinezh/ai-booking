@@ -185,3 +185,23 @@ describe('recorrerAgenda — un día malo no tumba el resto', () => {
     expect(r.primerError).toBeUndefined();
   });
 });
+
+describe('recorrerAgenda — cuando TODOS los días fallan', () => {
+  it('no dice OFF: el modo queda SIN_RESPUESTA y el error real se conserva', async () => {
+    const engine = {
+      syncAvailability: jest.fn(async () => {
+        throw new Error(
+          "Se denegó el permiso SELECT en el objeto 'CITAS_DISPONIBLES'",
+        );
+      }),
+    };
+
+    const r = await recorrerAgenda(engine as never, { dias: 3 });
+
+    expect(r.modo).not.toBe('OFF');
+    expect(r.modo).toBe('SIN_RESPUESTA');
+    expect(r.diasConError).toBe(3);
+    expect(r.dias).toBe(0);
+    expect(r.primerError).toContain('CITAS_DISPONIBLES');
+  });
+});
