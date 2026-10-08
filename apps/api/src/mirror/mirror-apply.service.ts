@@ -515,6 +515,7 @@ export class MirrorApplyService {
   ): Promise<'APPLIED' | 'CONFLICT' | 'SKIPPED'> {
     let agenIAPatientId = event.payload.agenIAPatientId;
     let { agenIAScheduleSlotId } = event.payload;
+    let cupoYaCerrado = false;
 
     // 🏥 Cita nacida en el HIS: el driver la reporta por médico y hora, no por
     // id de AgenIA. Sin resolverla, ese cupo seguiría ofreciéndose por
@@ -565,9 +566,27 @@ export class MirrorApplyService {
       // Ocupar el cupo es lo que evita la sobreventa, y hay que hacerlo
       // aunque el paciente no se pueda homologar: da igual quién tenga la
       // cita, lo que importa es que AgenIA deje de ofrecer esa hora.
-      if (!cupo.isAvailable) {
-        traza.nota = 'el cupo ya estaba ocupado; nada que hacer';
-        return 'APPLIED'; // ya estaba ocupado: nada que hacer
+      //
+      // 🚨 Cupo ocupado NO es lo mismo que cupo con cita. El barrido de agenda
+      // (cada 5 min) y la reconciliación leen la MISMA cita del HIS y cierran el
+      // cupo segundos antes de que llegue este evento. Antes eso bastaba para
+      // descartarlo y la cita no entraba nunca a AgenIA: sin bot ni recordatorio
+      // (27 citas del 6 al 8 de octubre de 2026). Solo se descarta si el cupo ya
+      // tiene su cita vigente; si no, la cita del hospital se monta sobre él.
+      const cupoCerradoSinCita = !cupo.isAvailable;
+      if (cupoCerradoSinCita) {
+        const vigente = await this.prisma.appointment.findFirst({
+          where: {
+            scheduleSlotId: cupo.id,
+            organizationId,
+            status: { not: 'CANCELLED' },
+          },
+          select: { id: true },
+        });
+        if (vigente) {
+          traza.nota = 'el cupo ya estaba ocupado; nada que hacer';
+          return 'APPLIED'; // ya tiene su cita: nada que hacer
+        }
       }
 
       if (!agenIAPatientId) {
@@ -584,7 +603,7 @@ export class MirrorApplyService {
           agenIAPatientId = alta.pacienteId;
           traza.nota = alta.nota;
         } else {
-          await this.ocuparCupoSinCita(cupo.id);
+          if (!cupoCerradoSinCita) await this.ocuparCupoSinCita(cupo.id);
           this.logger.log(
             `Cupo ${cupo.id} marcado como ocupado por una cita del HIS sin ` +
               `paciente en AgenIA (${alta.motivo}).`,
@@ -606,6 +625,7 @@ export class MirrorApplyService {
       }
 
       agenIAScheduleSlotId = cupo.id;
+      cupoYaCerrado = cupoCerradoSinCita;
     }
 
     if (!agenIAPatientId || !agenIAScheduleSlotId) {
@@ -627,6 +647,7 @@ export class MirrorApplyService {
       null,
       'MIRROR',
       organizationId,
+      { cupoCerradoPorElHis: cupoYaCerrado },
     );
 
     if (!result.success) {

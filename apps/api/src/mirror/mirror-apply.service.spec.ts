@@ -456,7 +456,29 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       });
     });
 
-    it('un cupo que YA estaba ocupado no se vuelve a tocar', async () => {
+    it('un cupo que YA tiene su cita vigente no se vuelve a tocar', async () => {
+      prisma.scheduleSlot.findFirst.mockResolvedValue({
+        ...CUPO,
+        isAvailable: false,
+      });
+      prisma.appointment.findFirst.mockResolvedValue({ id: 'apt-vigente' });
+
+      const r = await aplicar(evento());
+
+      expect(r.applied).toBe(1);
+      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+      expect(pacientes.resolverOCrear).not.toHaveBeenCalled();
+      expect(prisma.appointment.findFirst).toHaveBeenCalledWith({
+        where: {
+          scheduleSlotId: 'slot-1',
+          organizationId: ORG,
+          status: { not: 'CANCELLED' },
+        },
+        select: { id: true },
+      });
+    });
+
+    it('cupo ya cerrado SIN cita y sin paciente: no se reescribe, queda constancia', async () => {
       prisma.scheduleSlot.findFirst.mockResolvedValue({
         ...CUPO,
         isAvailable: false,
@@ -466,6 +488,9 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
 
       expect(r.applied).toBe(1);
       expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+      expect(prisma.syncAudit.create.mock.calls[0][0].data.detail).toContain(
+        'solo se ocupó el cupo',
+      );
     });
 
     it('con el paciente ya homologado se agenda de verdad, con origen MIRROR', async () => {
@@ -486,6 +511,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         null,
         'MIRROR',
         ORG,
+        { cupoCerradoPorElHis: false },
       );
     });
   });
@@ -512,12 +538,40 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         null,
         'MIRROR',
         ORG,
+        { cupoCerradoPorElHis: false },
       );
       // No se ocupa el cupo a mano: lo hace la reserva, en su transacción.
       expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
       // La nota del alta queda en la auditoría.
       expect(prisma.syncAudit.create.mock.calls[0][0].data.detail).toContain(
         'paciente creado desde el HIS',
+      );
+    });
+
+    it('🚨 cupo que el barrido cerró segundos antes (sin cita): la cita del hospital SÍ entra', async () => {
+      // Caso real 2026-10-08: la reconciliación cerró MDD2 16:50 a las 15:36:35 y
+      // el INSERT llegó a las 15:36:43. Antes se descartaba como «ya ocupado» y el
+      // paciente quedaba sin cita en AgenIA (sin bot ni recordatorio).
+      prisma.scheduleSlot.findFirst.mockResolvedValue({
+        ...CUPO,
+        isAvailable: false,
+      });
+      pacientes.resolverOCrear.mockResolvedValueOnce({
+        pacienteId: 'pac-nuevo',
+        creado: true,
+        nota: 'paciente creado desde el HIS, con WhatsApp',
+      });
+
+      const r = await aplicar(evento());
+
+      expect(r.applied).toBe(1);
+      expect(appointments.bookAppointment).toHaveBeenCalledWith(
+        'pac-nuevo',
+        'slot-1',
+        null,
+        'MIRROR',
+        ORG,
+        { cupoCerradoPorElHis: true },
       );
     });
 
@@ -685,6 +739,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         ...CUPO,
         isAvailable: false,
       });
+      prisma.appointment.findFirst.mockResolvedValue({ id: 'apt-vigente' });
 
       await aplicar(evento());
 
@@ -1149,6 +1204,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         null,
         'MIRROR',
         ORG,
+        { cupoCerradoPorElHis: false },
       );
     });
 

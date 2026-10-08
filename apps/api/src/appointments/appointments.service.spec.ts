@@ -108,6 +108,67 @@ describe('AppointmentsService', () => {
       expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
     });
 
+    it('🏥 cupo cerrado por el barrido para ESTA cita del HIS → MIRROR la monta encima', async () => {
+      const { svc, tx } = await serviceWithSlot({
+        id: 's1',
+        isAvailable: false,
+        organizationId: 'org1',
+      });
+
+      const result = await svc.bookAppointment(
+        'p1',
+        's1',
+        null,
+        'MIRROR',
+        'org1',
+        { cupoCerradoPorElHis: true },
+      );
+
+      expect(result.success).toBe(true);
+      expect(tx.appointment.create).toHaveBeenCalled();
+    });
+
+    it('🛡️ el permiso de cupo cerrado NO vale para WhatsApp ni el panel', async () => {
+      for (const origen of ['WHATSAPP', 'TELEGRAM', 'MANUAL'] as const) {
+        const { svc, tx } = await serviceWithSlot({
+          id: 's1',
+          isAvailable: false,
+          organizationId: 'org1',
+        });
+
+        const result = await svc.bookAppointment(
+          'p1',
+          's1',
+          null,
+          origen,
+          'org1',
+          { cupoCerradoPorElHis: true },
+        );
+
+        expect(result.success).toBe(false);
+        expect(tx.appointment.create).not.toHaveBeenCalled();
+      }
+    });
+
+    it('🛡️ MIRROR sin el permiso sigue rechazando el cupo cerrado', async () => {
+      const { svc, tx } = await serviceWithSlot({
+        id: 's1',
+        isAvailable: false,
+        organizationId: 'org1',
+      });
+
+      const result = await svc.bookAppointment(
+        'p1',
+        's1',
+        null,
+        'MIRROR',
+        'org1',
+      );
+
+      expect(result.success).toBe(false);
+      expect(tx.appointment.create).not.toHaveBeenCalled();
+    });
+
     it('slot inexistente → success:false (misma rama del catch)', async () => {
       const { svc } = await serviceWithSlot(null);
 

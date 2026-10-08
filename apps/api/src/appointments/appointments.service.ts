@@ -202,6 +202,13 @@ export class AppointmentsService {
     // interruptor del médico y el chequeo de convenio (docs/PLAN_TELEGRAM.md).
     origin: 'WHATSAPP' | 'MANUAL' | 'MIRROR' | 'TELEGRAM',
     organizationId: string,
+    /**
+     * Solo MIRROR: el cupo ya lo cerró el barrido de agenda o la reconciliación
+     * por ESTA misma cita del HIS, que llega segundos después. Se acepta cerrado;
+     * la llave única parcial `uq_appointment_cupo_vigente` sigue impidiendo dos
+     * citas vigentes en el mismo cupo.
+     */
+    opts: { cupoCerradoPorElHis?: boolean } = {},
   ): Promise<{
     success: boolean;
     message?: string;
@@ -238,10 +245,12 @@ export class AppointmentsService {
         // `!slot.doctor` no deberia pasar nunca: `doctorId` es NOT NULL con FK
         // y la consulta lo incluye. Si aun asi falta, el cupo esta corrupto y
         // se trata como invalido — fallar cerrado, no reservar a ciegas.
+        const aceptaCerrado =
+          origin === 'MIRROR' && opts.cupoCerradoPorElHis === true;
         if (
           !slot ||
           !slot.doctor ||
-          !slot.isAvailable ||
+          (!slot.isAvailable && !aceptaCerrado) ||
           slot.organizationId !== organizationId
         ) {
           throw new Error('SLOT_TAKEN_OR_INVALID');
