@@ -187,13 +187,17 @@ async function main() {
             `${r.diasConError} de ${dias} día(s) no se pudieron sincronizar. ` +
               `Primer motivo: ${r.primerError ?? 'sin detalle'}`,
           );
-        } else if (r.creados || r.borrados || r.conflictos) {
-          const sombra =
-            r.modo === 'SHADOW' ? ' (modo sombra, sin escribir)' : '';
-          console.log(
-            `[mirror-agent] agenda${sombra}: +${r.creados} cupo(s), -${r.borrados}, ` +
-              `${r.conflictos} conflicto(s), ${r.dias} día(s) repasados.`,
-          );
+        } else {
+          // Pasada limpia: un fallo igual más adelante se vuelve a escribir.
+          reporter.reset('agenda');
+          if (r.creados || r.borrados || r.conflictos) {
+            const sombra =
+              r.modo === 'SHADOW' ? ' (modo sombra, sin escribir)' : '';
+            console.log(
+              `[mirror-agent] agenda${sombra}: +${r.creados} cupo(s), -${r.borrados}, ` +
+                `${r.conflictos} conflicto(s), ${r.dias} día(s) repasados.`,
+            );
+          }
         }
       } catch (error) {
         reporter.report('agenda', mensajeDeError(error));

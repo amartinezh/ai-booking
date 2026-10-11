@@ -111,6 +111,7 @@ describe('sync-cycle — reporte de fallos', () => {
         report: (dir: string, msg: string) => reportados.push(`${dir}: ${msg}`),
         reportAll: (dir: string, msgs: string[]) =>
           msgs.forEach((m) => reportados.push(`${dir}: ${m}`)),
+        reset: () => undefined,
       } as unknown as FailureReporter,
     };
   };

@@ -209,6 +209,48 @@ describe('runSyncCycle', () => {
     expect(lines[0]).toContain('HIS->AgenIA: HIS caído');
   });
 
+  // 🐛 Producción usa runInbound/runOutbound en bucles separados, no
+  // runSyncCycle: sin reset propio, un fallo idéntico a uno de días antes se
+  // contaba en el heartbeat pero no se escribía nunca (2026-10-09 23:38).
+  it('runInbound: tras una vuelta limpia el mismo fallo se vuelve a escribir', async () => {
+    const fallando = engineDoble({
+      detectAndPushChanges: jest.fn().mockRejectedValue(new Error('timeout')),
+    });
+
+    await runInbound(fallando, reporter); // se escribe
+    await runInbound(fallando, reporter); // repetido: callado
+    expect(lines).toHaveLength(1);
+
+    await runInbound(engineDoble(), reporter); // vuelta limpia -> reset
+    await runInbound(fallando, reporter); // días después, el mismo fallo
+    expect(lines).toHaveLength(2);
+  });
+
+  it('runOutbound: tras una vuelta limpia el mismo fallo se vuelve a escribir', async () => {
+    const fallando = engineDoble({
+      pullAndApplyOutboxEvents: jest.fn().mockRejectedValue(new Error('502')),
+    });
+
+    await runOutbound(fallando, reporter);
+    await runOutbound(fallando, reporter);
+    expect(lines).toHaveLength(1);
+
+    await runOutbound(engineDoble(), reporter);
+    await runOutbound(fallando, reporter);
+    expect(lines).toHaveLength(2);
+  });
+
+  it('una vuelta limpia de una dirección NO olvida el fallo de la otra', async () => {
+    const entradaFalla = engineDoble({
+      detectAndPushChanges: jest.fn().mockRejectedValue(new Error('timeout')),
+    });
+
+    await runInbound(entradaFalla, reporter);
+    await runOutbound(engineDoble(), reporter); // limpia, pero es la otra etapa
+    await runInbound(entradaFalla, reporter); // sigue siendo repetición
+    expect(lines).toHaveLength(1);
+  });
+
   it('runInbound devuelve cuántos cambios subió', async () => {
     const engine = engineDoble({
       detectAndPushChanges: jest.fn().mockResolvedValue({ pushed: 7 }),

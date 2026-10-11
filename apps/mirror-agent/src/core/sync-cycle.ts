@@ -52,6 +52,10 @@ export async function runOutbound(
             `${f.threw ? ' lanzo' : ' rechazado'}: ${f.message}`,
         ),
       );
+    } else {
+      // Vuelta limpia: si el mismo fallo vuelve más adelante, se escribe
+      // completo otra vez en vez de quedar callado como «repetición».
+      reporter.reset('AgenIA->HIS');
     }
     return {
       applied: r.applied,
@@ -81,6 +85,12 @@ export async function runInbound(
           `aplicar en AgenIA. No se reintentan (el cursor es una foto): ` +
           `revisar SyncAudit con outcome ERROR.`,
       );
+    } else {
+      // 🚨 Sin esto, en producción (bucles separados de index.ts, que no usan
+      // runSyncCycle) la etapa no se olvidaba NUNCA: un fallo idéntico a uno de
+      // días antes se contaba en el heartbeat pero no se escribía en el journal
+      // (Anserma, 2026-10-09 23:38: «1 errores recientes» y journal vacío).
+      reporter.reset('HIS->AgenIA');
     }
     return {
       pushed: r.pushed,
