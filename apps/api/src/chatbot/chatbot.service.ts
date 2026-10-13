@@ -14,11 +14,22 @@ import {
   PARTICULAR_EPS_NAME,
   DEFAULT_MAX_RETRIES,
   SEMANTIC_MAP_TIMEOUT_MS,
+  OPCIONES_CONSULTA,
+  TEXTO_OPERACION,
+  lineasOpcionesConsulta,
+  letrasOpcionesConsulta,
+  accionesNoDisponibles,
   type CanalDelBot,
+  type OpcionConsulta,
 } from './chatbot.constants';
 import { textoParaCoincidencia } from './texto-para-coincidencia.util';
 import { KnowledgeBaseService } from './knowledge-base.service';
-import { OrganizationSettingsService } from './organization-settings.service';
+import {
+  OrganizationSettingsService,
+  CLAVE_OPERACION,
+  type OperacionBot,
+  type OperacionesBot,
+} from './organization-settings.service';
 import {
   AppointmentsService,
   AvailableSlot,
@@ -142,21 +153,83 @@ interface ChatTurnContext {
   retriesKey: string;
   retriesCount: number;
   /**
-   * ¿La clínica deja agendar, cancelar y cambiar citas por el bot?
-   * (`OrganizationSettings.bookingEnabled`). Apagado, solo se consultan.
+   * Qué deja hacer la clínica por el bot en este turno, operación por
+   * operación: sus interruptores (/dashboard/configuracion) y, con espejo, el
+   * envío al hospital encendido. Ver `operacionesDisponibles`.
    */
-  bookingEnabled: boolean;
+  operaciones: OperacionesBot;
 }
 
 /**
- * Estados en los que el paciente puede seguir con el interruptor de
- * operaciones apagado: los de la consulta de citas (solo lectura). Cualquier
- * otro es un agendamiento, una cancelación o un cambio a medias.
+ * Estados en los que el paciente puede seguir con las operaciones apagadas:
+ * los de la consulta de citas (solo lectura). Cualquier otro es un
+ * agendamiento, una cancelación o un cambio a medias.
  */
 const ESTADOS_SOLO_CONSULTA: ChatState[] = [
   ChatState.IDLE,
   ChatState.AWAITING_LOOKUP_CEDULA,
   ChatState.AWAITING_LOOKUP_CHOICE,
+];
+
+const ESTADOS_DE_CANCELAR: ChatState[] = [
+  ChatState.AWAITING_CANCEL_CEDULA,
+  ChatState.AWAITING_CANCEL_RETRY_CEDULA,
+  ChatState.AWAITING_CANCEL_SELECTION,
+  ChatState.AWAITING_CANCEL_CONFIRM,
+  // Cambiar la fecha sin cupos: lo que queda pendiente es un SÍ que CANCELA.
+  ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL,
+];
+
+const ESTADOS_DE_MODIFICAR: ChatState[] = [
+  ChatState.AWAITING_MODIFY_CEDULA,
+  ChatState.AWAITING_MODIFY_RETRY_CEDULA,
+  ChatState.AWAITING_MODIFY_SELECTION,
+  ChatState.AWAITING_MODIFY_NEW_SLOT,
+  ChatState.AWAITING_MODIFY_CONFIRM,
+];
+
+/**
+ * La operación que el paciente tiene a medias en este estado, para saber qué
+ * interruptor la gobierna. `null`: consulta o reposo, que siempre se pueden.
+ * Todo lo demás es agendar (incluida la lista de espera, la elección tras
+ * cancelar —que abre un agendamiento— y la interrupción de un agendamiento).
+ */
+export function operacionDelEstado(estado: ChatState): OperacionBot | null {
+  if (ESTADOS_SOLO_CONSULTA.includes(estado)) return null;
+  if (ESTADOS_DE_CANCELAR.includes(estado)) return 'CANCELAR';
+  if (ESTADOS_DE_MODIFICAR.includes(estado)) return 'MODIFICAR';
+  return 'AGENDAR';
+}
+
+/** Las tres apagadas: el bot solo consulta («solo consultas»). */
+const soloConsultas = (o: OperacionesBot): boolean =>
+  !o.agendar && !o.cancelar && !o.modificar;
+
+/** Las operaciones que sí se pueden, en el orden en que se le nombran al paciente. */
+const operacionesPermitidas = (o: OperacionesBot): OperacionBot[] =>
+  (['AGENDAR', 'CANCELAR', 'MODIFICAR'] as const).filter(
+    (op) => o[CLAVE_OPERACION[op]],
+  );
+
+/**
+ * Las opciones tras consultar las citas: solo las que la clínica deja hacer
+ * por el bot, más «nada más». Con las tres prendidas son las A-D de siempre.
+ */
+const opcionesDeConsulta = (o: OperacionesBot): OpcionConsulta[] =>
+  OPCIONES_CONSULTA.map((x) => x.opcion).filter(
+    (op) => op === 'NADA' || o[CLAVE_OPERACION[op]],
+  );
+
+/**
+ * Lo que significaba cada letra antes de que las opciones dependieran de los
+ * interruptores. Para una consulta mostrada antes del despliegue (sin las
+ * opciones guardadas en la sesión).
+ */
+const OPCIONES_CONSULTA_FIJAS: OpcionConsulta[] = [
+  'CANCELAR',
+  'MODIFICAR',
+  'AGENDAR',
+  'NADA',
 ];
 
 /** Canal del paciente, para los textos que lo nombran (docs/PLAN_TELEGRAM.md). */
@@ -2183,6 +2256,7 @@ export class ChatbotService implements OnModuleInit {
       `temp_eps_oferta_particular:${organizationId}:${senderId}`,
       `temp_lookup_cedula:${organizationId}:${senderId}`,
       `temp_lookup_hoy:${organizationId}:${senderId}`,
+      `temp_lookup_opciones:${organizationId}:${senderId}`,
       `error_count:${organizationId}:${senderId}`,
       `is_ai_flow:${organizationId}:${senderId}`,
     ];
@@ -3891,8 +3965,8 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
-   * 🔒 SOLO CONSULTAS — la clínica apagó agendar, cancelar y cambiar citas por
-   * el bot (`OrganizationSettings.bookingEnabled`). Responde que la plataforma
+   * 🔒 SOLO CONSULTAS — la clínica apagó las TRES operaciones del bot:
+   * agendar, cancelar y cambiar citas. Responde que la plataforma
    * por ahora solo consulta citas y con quién comunicarse; se presenta si aún
    * no lo hizo en esta conversación. Deja la sesión en IDLE, lista para
    * «consultar». Terminal: el caller hace return tras llamar.
@@ -3926,6 +4000,109 @@ export class ChatbotService implements OnModuleInit {
     });
   }
 
+  /**
+   * Qué puede hacer el paciente por el bot AHORA en esta clínica: los tres
+   * interruptores de /dashboard/configuracion y, con espejo, el envío al
+   * hospital encendido.
+   *
+   * 🏥 H10: con `pushEnabled` apagado, ni la cita nueva, ni la cancelación, ni
+   * el cambio de fecha llegarían al HIS —el paciente creería algo que el
+   * hospital no tiene—, así que las tres se comportan como apagadas.
+   */
+  private async operacionesDisponibles(
+    organizationId: string,
+  ): Promise<OperacionesBot> {
+    const [interruptores, hisRecibeCambios] = await Promise.all([
+      this.organizationSettings.operacionesDelBot(organizationId),
+      this.confirmacionHis
+        ? this.confirmacionHis.puedeAgendar(organizationId)
+        : Promise.resolve(true),
+    ]);
+    return {
+      agendar: interruptores.agendar && hisRecibeCambios,
+      cancelar: interruptores.cancelar && hisRecibeCambios,
+      modificar: interruptores.modificar && hisRecibeCambios,
+    };
+  }
+
+  /** Las opciones de la consulta guardadas en la sesión, si son legibles. */
+  private opcionesGuardadas(raw: string | null): OpcionConsulta[] | null {
+    if (!raw) return null;
+    try {
+      const v: unknown = JSON.parse(raw);
+      const validas = OPCIONES_CONSULTA.map((o) => o.opcion);
+      return Array.isArray(v) &&
+        v.length > 0 &&
+        v.every((o) => validas.includes(o as OpcionConsulta))
+        ? (v as OpcionConsulta[])
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 🔒 La operación que pidió el paciente está apagada en esta clínica.
+   *
+   * Con las TRES apagadas es «solo consultas» (`responderSoloConsultas`, el
+   * aviso de siempre). Con solo una o dos, el aviso dice cuál no se puede, con
+   * quién hacerla y qué SÍ se puede por aquí, con la frase que lo abre: decirle
+   * «solo consultas» a quien sí puede cancelar sería falso.
+   *
+   * Deja la sesión en IDLE. Terminal: el caller hace return tras llamar.
+   */
+  private async responderOperacionNoDisponible(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    org: Organization | null;
+    orgName: string;
+    botName: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    motivo: OperacionBot;
+    operaciones: OperacionesBot;
+  }): Promise<void> {
+    if (soloConsultas(p.operaciones)) {
+      await this.responderSoloConsultas(p);
+      return;
+    }
+    const { organizationId, senderId, MSGS, motivo } = p;
+    const contacto = p.org?.supportPhone
+      ? MSGS.contactoClinica(p.org.supportPhone)
+      : MSGS.contactoClinicaSinTelefono();
+    const disponibles = operacionesPermitidas(p.operaciones);
+    const lineas = [
+      MSGS.lineaDisponibleConsultar(),
+      ...disponibles.map((op) =>
+        MSGS.lineaDisponible(
+          TEXTO_OPERACION[op].etiqueta,
+          TEXTO_OPERACION[op].atajo,
+        ),
+      ),
+    ].join('\n');
+    const { nombre, hacerla } = TEXTO_OPERACION[motivo];
+    const key = this.presentadoKey(organizationId, senderId);
+    const yaSePresento = !!(await this.redis.get(key));
+    await this.cleanUpSession(organizationId, senderId);
+    await this.redis.set(key, '1', 'EX', PRESENTACION_TTL);
+    const reply = yaSePresento
+      ? MSGS.operacionNoDisponible(nombre, hacerla, contacto, lineas)
+      : MSGS.operacionNoDisponibleBienvenida(
+          p.orgName,
+          nombre,
+          hacerla,
+          contacto,
+          lineas,
+          p.botName,
+        );
+    await this.smartReply(organizationId, senderId, reply);
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: p.text || '[audio]',
+      botReply: reply,
+      metadata: { step: 'OPERACION_NO_DISPONIBLE', motivo, disponibles },
+    });
+  }
+
   private async handleEscape(p: {
     organizationId: string;
     senderId: string;
@@ -3935,7 +4112,7 @@ export class ChatbotService implements OnModuleInit {
     orgName: string;
     botName: string;
     org: Organization | null;
-    bookingEnabled: boolean;
+    operaciones: OperacionesBot;
   }): Promise<void> {
     const {
       organizationId,
@@ -3950,9 +4127,10 @@ export class ChatbotService implements OnModuleInit {
 
     const isGreeting = this.greetingRegex.test(textoParaCoincidencia(text));
 
-    // 🔒 Solo consultas: el saludo no abre el menú de servicios.
-    if (isGreeting && !p.bookingEnabled) {
-      await this.responderSoloConsultas({
+    // 🔒 Sin agendar por el bot, el saludo no abre el menú de servicios: dice
+    // qué se puede hacer por aquí (o «solo consultas» si no se puede nada).
+    if (isGreeting && !p.operaciones.agendar) {
+      await this.responderOperacionNoDisponible({
         organizationId,
         senderId,
         text,
@@ -3961,6 +4139,7 @@ export class ChatbotService implements OnModuleInit {
         botName,
         MSGS,
         motivo: 'AGENDAR',
+        operaciones: p.operaciones,
       });
       return;
     }
@@ -4172,15 +4351,10 @@ export class ChatbotService implements OnModuleInit {
     // ✈️ Por Telegram, los textos que nombran el canal dicen «Telegram».
     const MSGS = buildMessages(communicationStyle, canalDe(senderId));
 
-    // 🔒 Interruptor de operaciones de la clínica (/dashboard/configuracion).
-    // Se lee en cada mensaje: apagarlo surte efecto en el siguiente turno.
-    //
-    // 🏥 H10: con espejo, agendar exige además el envío al hospital encendido.
-    // Con `pushEnabled` apagado la cita nunca llegaría al HIS y el bot no
-    // podría confirmarla: se comporta como «solo consultas».
-    const bookingEnabled =
-      (await this.organizationSettings.isBookingEnabled(organizationId)) &&
-      ((await this.confirmacionHis?.puedeAgendar(organizationId)) ?? true);
+    // 🔒 Interruptores de operaciones de la clínica (/dashboard/configuracion):
+    // agendar, cancelar y cambiar la fecha, cada uno por su lado. Se leen en
+    // cada mensaje: apagar uno surte efecto en el siguiente turno.
+    const operaciones = await this.operacionesDisponibles(organizationId);
 
     // `let`: con el interruptor apagado, un flujo de operación a medias se
     // descarta y el turno sigue como si la conversación empezara (ver abajo).
@@ -4292,16 +4466,17 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    // 🔒 SOLO CONSULTAS: si la clínica apagó las operaciones mientras el
-    // paciente agendaba, cancelaba o cambiaba una cita (o esperaba la respuesta
-    // a un cupo de la lista de espera), ese flujo ya no puede terminar. Se
-    // descarta y el mensaje se atiende desde cero: «consultar» abre la consulta
-    // y todo lo demás recibe el aviso de solo consultas (más abajo). Va antes
-    // de clasificar el paso, para que un «A» o un «SÍ» sueltos no se lean como
-    // respuesta a un paso que ya no existe.
-    if (!bookingEnabled && !ESTADOS_SOLO_CONSULTA.includes(currentState)) {
+    // 🔒 OPERACIÓN APAGADA A MEDIAS: si la clínica apagó la operación que el
+    // paciente tenía en curso (agendaba, cancelaba o cambiaba una cita, o
+    // esperaba la respuesta a un cupo de la lista de espera), ese flujo ya no
+    // puede terminar. Se descarta y el mensaje se atiende desde cero:
+    // «consultar» abre la consulta y lo que pida una operación apagada recibe
+    // su aviso (más abajo). Va antes de clasificar el paso, para que un «A» o un
+    // «SÍ» sueltos no se lean como respuesta a un paso que ya no existe.
+    const enCurso = operacionDelEstado(currentState);
+    if (enCurso && !operaciones[CLAVE_OPERACION[enCurso]]) {
       this.logger.log(
-        `[Tenant: ${organizationId}] Operaciones apagadas: se descarta el flujo ${currentState} de ${senderId}`,
+        `[Tenant: ${organizationId}] Operación ${enCurso} apagada: se descarta el flujo ${currentState} de ${senderId}`,
       );
       await this.cleanUpSession(organizationId, senderId);
       currentState = ChatState.IDLE;
@@ -4458,7 +4633,13 @@ export class ChatbotService implements OnModuleInit {
       ChatState.AWAITING_CEDULA,
       ChatState.AWAITING_CONFIRMATION,
     ];
-    if (isQuickCancel && SCHEDULING_FLOW_STATES.includes(currentState)) {
+    // Solo si la clínica deja cancelar por el bot: si no, «cancelar» cae más
+    // abajo en el aviso de que cancelar no está disponible por aquí.
+    if (
+      isQuickCancel &&
+      operaciones.cancelar &&
+      SCHEDULING_FLOW_STATES.includes(currentState)
+    ) {
       await this.promptSchedulingInterrupt({
         organizationId,
         senderId,
@@ -4662,6 +4843,7 @@ export class ChatbotService implements OnModuleInit {
     if (
       isAudio &&
       aiData.isCancellation &&
+      operaciones.cancelar &&
       SCHEDULING_FLOW_STATES.includes(currentState)
     ) {
       await this.promptSchedulingInterrupt({
@@ -4692,28 +4874,29 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    // 🔒 SOLO CONSULTAS: cancelar o cambiar una cita no se ofrece; el aviso
-    // dice con quién comunicarse. Va después de la baja de recordatorios, que
-    // no es una operación sobre la cita y sigue funcionando.
-    if (
-      !bookingEnabled &&
-      (aiData.isCancellation ||
-        isQuickCancel ||
-        aiData.isModification ||
-        isQuickModify)
-    ) {
-      await this.responderSoloConsultas({
-        organizationId,
-        senderId,
-        text,
-        org,
-        orgName,
-        botName,
-        MSGS,
-        motivo:
-          aiData.isCancellation || isQuickCancel ? 'CANCELAR' : 'MODIFICAR',
-      });
-      return;
+    // 🔒 Cancelar o cambiar una cita con su interruptor apagado: no se abre el
+    // flujo; el aviso dice con quién comunicarse y qué sí se puede por aquí. Va
+    // después de la baja de recordatorios, que no es una operación sobre la
+    // cita y sigue funcionando. Si el paciente pide las dos cosas, manda
+    // cancelar, igual que el router de abajo.
+    const pideCancelar = aiData.isCancellation || isQuickCancel;
+    const pideModificar = aiData.isModification || isQuickModify;
+    if (pideCancelar || pideModificar) {
+      const motivo: OperacionBot = pideCancelar ? 'CANCELAR' : 'MODIFICAR';
+      if (!operaciones[CLAVE_OPERACION[motivo]]) {
+        await this.responderOperacionNoDisponible({
+          organizationId,
+          senderId,
+          text,
+          org,
+          orgName,
+          botName,
+          MSGS,
+          motivo,
+          operaciones,
+        });
+        return;
+      }
     }
 
     if (aiData.isCancellation || isQuickCancel) {
@@ -4774,7 +4957,7 @@ export class ChatbotService implements OnModuleInit {
         orgName,
         botName,
         org,
-        bookingEnabled,
+        operaciones,
       });
       return;
     }
@@ -4897,13 +5080,13 @@ export class ChatbotService implements OnModuleInit {
       await this.redis.del(retriesKey);
     }
 
-    // 🔒 SOLO CONSULTAS: lo que llega aquí en IDLE termina en la cascada de
-    // agendamiento (ACK del primer turno, menú de servicios...). Con las
-    // operaciones apagadas se responde el aviso en su lugar. La consulta, las
-    // FAQ, la despedida y los guardrails ya se atendieron arriba; los pasos de
-    // la consulta (cédula, opción) siguen a sus handlers.
-    if (!bookingEnabled && currentState === ChatState.IDLE) {
-      await this.responderSoloConsultas({
+    // 🔒 SIN AGENDAR: lo que llega aquí en IDLE termina en la cascada de
+    // agendamiento (ACK del primer turno, menú de servicios...). Con agendar
+    // apagado se responde el aviso en su lugar. La consulta, las FAQ, la
+    // despedida, los guardrails, cancelar y cambiar ya se atendieron arriba;
+    // los pasos de la consulta (cédula, opción) siguen a sus handlers.
+    if (!operaciones.agendar && currentState === ChatState.IDLE) {
+      await this.responderOperacionNoDisponible({
         organizationId,
         senderId,
         text,
@@ -4912,6 +5095,7 @@ export class ChatbotService implements OnModuleInit {
         botName,
         MSGS,
         motivo: 'AGENDAR',
+        operaciones,
       });
       return;
     }
@@ -6227,7 +6411,7 @@ export class ChatbotService implements OnModuleInit {
       orgName,
       retriesKey,
       retriesCount,
-      bookingEnabled,
+      operaciones,
     };
 
     // Despacho por estado. Estados con handler registrado → se delega; el
@@ -7782,14 +7966,9 @@ export class ChatbotService implements OnModuleInit {
           }
         }
 
-        // Preguntar si desea agendar en otro horario
-        const replyOfrecer = MSGS.cancelarOfreceAgendar();
-        await this.smartReply(organizationId, senderId, replyOfrecer);
-        await this.cleanUpCancelSession(organizationId, senderId);
-        await this.setUserState(
-          organizationId,
-          senderId,
-          ChatState.AWAITING_POST_CANCEL_CHOICE,
+        // Preguntar si desea agendar en otro horario (si se puede por el bot).
+        await this.cerrarTrasCancelar(ctx, () =>
+          this.cleanUpCancelSession(organizationId, senderId),
         );
       } catch (e: unknown) {
         this.logger.error(
@@ -7835,6 +8014,41 @@ export class ChatbotService implements OnModuleInit {
         metadata: { invalidResponse: respuesta, stage: 'CANCEL_CONFIRM' },
       });
     }
+  }
+
+  /**
+   * Cierre tras cancelar una cita: se ofrece reagendar solo si la clínica deja
+   * agendar por el bot. Si no, se despide y cierra con la encuesta, igual que
+   * cuando el paciente responde que no quiere reagendar.
+   */
+  private async cerrarTrasCancelar(
+    ctx: ChatTurnContext,
+    limpiarFlujo: () => Promise<void>,
+  ): Promise<void> {
+    const { organizationId, senderId, MSGS } = ctx;
+    if (ctx.operaciones.agendar) {
+      const replyOfrecer = MSGS.cancelarOfreceAgendar();
+      await this.smartReply(organizationId, senderId, replyOfrecer);
+      await limpiarFlujo();
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_POST_CANCEL_CHOICE,
+      );
+      return;
+    }
+    const reply = MSGS.cancelarDespedida();
+    await this.smartReply(organizationId, senderId, reply);
+    await this.cleanUpSession(organizationId, senderId);
+    await this.sendSurveyLink(
+      organizationId,
+      senderId,
+      ResolutionStatus.CANCELLED,
+      {
+        chatSummary:
+          'Cita cancelada con éxito; agendar por el asistente está apagado, no se ofreció reagendar.',
+      },
+    );
   }
 
   /** Handler de estado: AWAITING_POST_CANCEL_CHOICE. Extraído de processIncomingMessageUnsafe (#2). */
@@ -7943,6 +8157,28 @@ export class ChatbotService implements OnModuleInit {
     const prevState = await this.redis.get(
       `temp_interrupt_prev_state:${organizationId}:${senderId}`,
     );
+
+    // 🔒 La clínica apagó cancelar entre la pregunta y la respuesta.
+    if (decision === 'SI' && !ctx.operaciones.cancelar) {
+      await this.redis.del(
+        `temp_interrupt_prev_state:${organizationId}:${senderId}`,
+      );
+      const org = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+      });
+      await this.responderOperacionNoDisponible({
+        organizationId,
+        senderId,
+        text,
+        org,
+        orgName: ctx.orgName,
+        botName: ctx.botName,
+        MSGS,
+        motivo: 'CANCELAR',
+        operaciones: ctx.operaciones,
+      });
+      return;
+    }
 
     if (decision === 'SI') {
       // Confirmó: abandonamos el agendamiento e iniciamos la cancelación,
@@ -8553,13 +8789,8 @@ export class ChatbotService implements OnModuleInit {
         }
 
         // Reutilizamos el cierre del flujo de cancelación: ofrecer reagendar.
-        const replyOfrecer = MSGS.cancelarOfreceAgendar();
-        await this.smartReply(organizationId, senderId, replyOfrecer);
-        await this.cleanUpModifySession(organizationId, senderId);
-        await this.setUserState(
-          organizationId,
-          senderId,
-          ChatState.AWAITING_POST_CANCEL_CHOICE,
+        await this.cerrarTrasCancelar(ctx, () =>
+          this.cleanUpModifySession(organizationId, senderId),
         );
       } catch (e: unknown) {
         this.logger.error(
@@ -9290,7 +9521,7 @@ export class ChatbotService implements OnModuleInit {
   }): Promise<void> {
     const { organizationId, senderId, identity, cedula, userMessage, MSGS } = p;
     const ahora = new Date();
-    const [org, mirror, patient, bookingEnabled] = await Promise.all([
+    const [org, mirror, patient, operaciones] = await Promise.all([
       this.prisma.organization.findUnique({
         where: { id: organizationId },
         select: { supportPhone: true, timezone: true },
@@ -9309,8 +9540,8 @@ export class ChatbotService implements OnModuleInit {
       this.prisma.patientProfile.findFirst({
         where: { cedula, organizationId },
       }),
-      // 🔒 Apagado, la consulta no ofrece cancelar / cambiar / agendar.
-      this.organizationSettings.isBookingEnabled(organizationId),
+      // 🔒 La consulta solo ofrece lo que la clínica deja hacer por el bot.
+      this.operacionesDisponibles(organizationId),
     ]);
     const timeZone = org?.timezone || undefined;
     const contacto = org?.supportPhone
@@ -9368,7 +9599,8 @@ export class ChatbotService implements OnModuleInit {
       modoBotHis: modoBot,
       citas: relevantes.length,
       pidioHoy,
-      soloConsultas: !bookingEnabled,
+      soloConsultas: soloConsultas(operaciones),
+      operaciones,
     };
 
     if (!esDelRemitente) {
@@ -9422,9 +9654,11 @@ export class ChatbotService implements OnModuleInit {
 
     if (relevantes.length === 0) {
       const reply =
-        (bookingEnabled
+        (operaciones.agendar
           ? MSGS.consultaSinCitas(patient.fullName)
-          : MSGS.consultaSinCitasSoloLectura(patient.fullName, contacto)) +
+          : soloConsultas(operaciones)
+            ? MSGS.consultaSinCitasSoloLectura(patient.fullName, contacto)
+            : MSGS.consultaSinCitasSinAgendar(patient.fullName, contacto)) +
         aviso;
       await this.smartReply(organizationId, senderId, reply);
       await this.cleanUpSession(organizationId, senderId);
@@ -9456,7 +9690,7 @@ export class ChatbotService implements OnModuleInit {
 
     // 🔒 Solo consultas: el detalle cierra con quién comunicarse en lugar de
     // las opciones A-D, y la conversación vuelve a IDLE (no hay qué elegir).
-    if (!bookingEnabled) {
+    if (soloConsultas(operaciones)) {
       const reply =
         MSGS.consultaDetalle(patient.fullName, cuerpo) +
         aviso +
@@ -9476,22 +9710,41 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // Solo lo que la clínica deja hacer por el bot, con letras seguidas; lo
+    // demás, con quién hacerlo. Las opciones quedan en la sesión: la letra que
+    // responda el paciente se lee contra ESTA lista, no contra una fija.
+    const opciones = opcionesDeConsulta(operaciones);
+    const noDisponibles = (
+      ['CANCELAR', 'MODIFICAR', 'AGENDAR'] as const
+    ).filter((op) => !operaciones[CLAVE_OPERACION[op]]);
     const reply =
       MSGS.consultaDetalle(patient.fullName, cuerpo) +
       aviso +
-      `\n\n${MSGS.consultaOpciones()}`;
+      `\n\n${MSGS.consultaOpcionesDe(lineasOpcionesConsulta(opciones))}` +
+      (noDisponibles.length > 0
+        ? `\n\n${MSGS.consultaNoDisponibles(accionesNoDisponibles(noDisponibles), contacto)}`
+        : '');
     await this.redis.set(
       `temp_lookup_cedula:${organizationId}:${senderId}`,
       patient.cedula,
       'EX',
       SESSION_TTL,
     );
-    // En voz: el audio solo anuncia; el listado va por texto.
+    await this.redis.set(
+      `temp_lookup_opciones:${organizationId}:${senderId}`,
+      JSON.stringify(opciones),
+      'EX',
+      SESSION_TTL,
+    );
+    // En voz: el audio solo anuncia; el listado va por texto. Si no se puede
+    // cancelar ni cambiar, el audio no lo promete.
     await this.smartReply(
       organizationId,
       senderId,
       reply,
-      MSGS.consultaDetalleAudio(patient.fullName),
+      operaciones.cancelar || operaciones.modificar
+        ? MSGS.consultaDetalleAudio(patient.fullName)
+        : MSGS.consultaDetalleAudioSoloLectura(patient.fullName),
     );
     await this.setUserState(
       organizationId,
@@ -9812,17 +10065,30 @@ export class ChatbotService implements OnModuleInit {
     const cedula = await this.redis.get(
       `temp_lookup_cedula:${organizationId}:${senderId}`,
     );
+    // La letra se lee contra las opciones que se le MOSTRARON (dependen de los
+    // interruptores de la clínica). Sin ellas en la sesión —consulta mostrada
+    // antes de este cambio— vale el orden fijo de siempre (A-D).
+    const opciones =
+      this.opcionesGuardadas(
+        await this.redis.get(
+          `temp_lookup_opciones:${organizationId}:${senderId}`,
+        ),
+      ) ?? OPCIONES_CONSULTA_FIJAS;
+    const elegida: OpcionConsulta | undefined = letra
+      ? opciones[letra.charCodeAt(0) - 65]
+      : undefined;
 
-    // 🔒 Las opciones se mostraron antes de que la clínica apagara las
-    // operaciones: cancelar, cambiar o agendar ya no se pueden.
+    // 🔒 Las opciones se mostraron antes de que la clínica apagara esa
+    // operación: ya no se puede por el bot.
     if (
-      !ctx.bookingEnabled &&
-      (letra === 'A' || letra === 'B' || letra === 'C')
+      elegida &&
+      elegida !== 'NADA' &&
+      !ctx.operaciones[CLAVE_OPERACION[elegida]]
     ) {
       const org = await this.prisma.organization.findUnique({
         where: { id: organizationId },
       });
-      await this.responderSoloConsultas({
+      await this.responderOperacionNoDisponible({
         organizationId,
         senderId,
         text,
@@ -9830,13 +10096,13 @@ export class ChatbotService implements OnModuleInit {
         orgName,
         botName,
         MSGS,
-        motivo:
-          letra === 'A' ? 'CANCELAR' : letra === 'B' ? 'MODIFICAR' : 'AGENDAR',
+        motivo: elegida,
+        operaciones: ctx.operaciones,
       });
       return;
     }
 
-    if ((letra === 'A' || letra === 'B') && !cedula) {
+    if ((elegida === 'CANCELAR' || elegida === 'MODIFICAR') && !cedula) {
       const reply = MSGS.sesionExpirada();
       await this.smartReply(organizationId, senderId, reply);
       await this.cleanUpSession(organizationId, senderId);
@@ -9849,7 +10115,7 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    if (letra === 'A' && cedula) {
+    if (elegida === 'CANCELAR' && cedula) {
       await this.cleanUpSession(organizationId, senderId);
       await this.redis.set(
         `temp_cancel_cedula:${organizationId}:${senderId}`,
@@ -9868,7 +10134,7 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    if (letra === 'B' && cedula) {
+    if (elegida === 'MODIFICAR' && cedula) {
       await this.cleanUpSession(organizationId, senderId);
       await this.redis.set(
         `temp_modify_cedula:${organizationId}:${senderId}`,
@@ -9886,7 +10152,7 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    if (letra === 'C') {
+    if (elegida === 'AGENDAR') {
       await this.cleanUpSession(organizationId, senderId);
       const { lineas, count } = await this.buildServiceMenu(
         organizationId,
@@ -9914,7 +10180,7 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    if (letra === 'D') {
+    if (elegida === 'NADA') {
       const reply = MSGS.despedidaCorta();
       await this.smartReply(organizationId, senderId, reply);
       await this.cleanUpSession(organizationId, senderId);
@@ -9932,7 +10198,10 @@ export class ChatbotService implements OnModuleInit {
       'EX',
       SESSION_TTL,
     );
-    const reply = MSGS.consultaOpcionInvalida();
+    const reply = MSGS.consultaOpcionInvalidaDe(
+      letrasOpcionesConsulta(opciones),
+      lineasOpcionesConsulta(opciones),
+    );
     await this.smartReply(organizationId, senderId, reply);
     await this.auditFailure(senderId, organizationId, {
       reason: FailureReason.OUT_OF_CONTEXT,
@@ -10306,6 +10575,35 @@ export class ChatbotService implements OnModuleInit {
     );
     // Excluimos el cupo que el paciente ya tiene (no tiene sentido "moverla" al mismo).
     const candidateSlots = slots.filter((s) => s.slotId !== apt.scheduleSlotId);
+
+    // 🔒 Sin cupos y sin poder cancelar por el bot: no se ofrece cancelarla;
+    // la cita se queda como está y se dice con quién cancelarla.
+    if (
+      candidateSlots.length === 0 &&
+      !(await this.operacionesDisponibles(organizationId)).cancelar
+    ) {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { supportPhone: true },
+      });
+      const contacto = org?.supportPhone
+        ? MSGS.contactoClinica(org.supportPhone)
+        : MSGS.contactoClinicaSinTelefono();
+      const reply = MSGS.modificarSinCuposSinCancelar(serviceName, contacto);
+      await this.smartReply(organizationId, senderId, reply);
+      await this.cleanUpModifySession(organizationId, senderId);
+      await this.cleanUpSession(organizationId, senderId);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: '[modify]',
+        botReply: reply,
+        metadata: {
+          step: 'MODIFY_NO_SLOTS_SIN_CANCELAR',
+          appointmentId,
+          service: serviceName,
+        },
+      });
+      return;
+    }
 
     if (candidateSlots.length === 0) {
       // Sin cupos alternativos → ofrecer cancelar la cita actual.

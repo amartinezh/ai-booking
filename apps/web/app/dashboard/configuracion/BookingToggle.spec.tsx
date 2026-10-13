@@ -10,14 +10,19 @@ import { setMyBookingEnabled } from '@/app/actions/settings';
 
 const mockSet = setMyBookingEnabled as jest.Mock;
 
-/** Interruptor de agendar/cancelar/cambiar por el bot: guarda al instante. */
+/** Interruptor de agendar citas nuevas por el bot: guarda al instante. */
 describe('BookingToggle', () => {
     beforeEach(() => jest.clearAllMocks());
 
-    it('apagado se muestra como «Solo consultas»', () => {
+    it('habla solo de agendar: cancelar y cambiar tienen su propio interruptor', () => {
+        render(<BookingToggle initialEnabled />);
+        expect(screen.getByText('Agendar citas por el asistente')).toBeInTheDocument();
+    });
+
+    it('apagado se muestra como «Apagado»', () => {
         render(<BookingToggle initialEnabled={false} />);
         expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'false');
-        expect(screen.getByText('Solo consultas')).toBeInTheDocument();
+        expect(screen.getByText('Apagado')).toBeInTheDocument();
     });
 
     it('apagar guarda al instante, sin botón «Guardar»', async () => {
@@ -28,7 +33,7 @@ describe('BookingToggle', () => {
 
         expect(mockSet).toHaveBeenCalledWith(false);
         await waitFor(() => expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'false'));
-        expect(screen.getByText('Solo consultas')).toBeInTheDocument();
+        expect(screen.getByText('Apagado')).toBeInTheDocument();
     });
 
     it('si no se guarda, el interruptor sigue mostrando lo que de verdad quedó y avisa', async () => {

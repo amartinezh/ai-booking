@@ -74,6 +74,39 @@ describe('OrganizationSettingsService', () => {
     });
   });
 
+  describe('operacionesDelBot', () => {
+    it('lee los tres interruptores en una sola consulta, cada uno por su lado', async () => {
+      prisma.organizationSettings.findUnique.mockResolvedValue({
+        bookingEnabled: false,
+        cancelEnabled: true,
+        rescheduleEnabled: false,
+      });
+      await expect(service.operacionesDelBot(ORG)).resolves.toEqual({
+        agendar: false,
+        cancelar: true,
+        modificar: false,
+      });
+      expect(prisma.organizationSettings.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.organizationSettings.findUnique).toHaveBeenCalledWith({
+        where: { organizationId: ORG },
+        select: {
+          bookingEnabled: true,
+          cancelEnabled: true,
+          rescheduleEnabled: true,
+        },
+      });
+    });
+
+    it('sin fila de settings → las tres prendidas (el default de las columnas)', async () => {
+      prisma.organizationSettings.findUnique.mockResolvedValue(null);
+      await expect(service.operacionesDelBot(ORG)).resolves.toEqual({
+        agendar: true,
+        cancelar: true,
+        modificar: true,
+      });
+    });
+  });
+
   describe('getMaxRetries', () => {
     it('devuelve el configurado', async () => {
       prisma.organizationSettings.findUnique.mockResolvedValue({

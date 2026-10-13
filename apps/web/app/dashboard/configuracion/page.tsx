@@ -9,6 +9,8 @@ import { getMyAudioConfig } from '@/app/actions/audio-config';
 import SettingsForm from './SettingsForm';
 import RemindersToggle from './RemindersToggle';
 import BookingToggle from './BookingToggle';
+import CancelToggle from './CancelToggle';
+import RescheduleToggle from './RescheduleToggle';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
 import WhatsappChannelForm from './WhatsappChannelForm';
@@ -150,6 +152,10 @@ export default async function ConfiguracionPage({
                 {activeTab === 'chatbot' && (
                     <div className="space-y-12">
                         {settings && <BookingToggle initialEnabled={settings.bookingEnabled} />}
+                        {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
+                        {settings && <CancelToggle initialEnabled={settings.cancelEnabled} />}
+                        {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
+                        {settings && <RescheduleToggle initialEnabled={settings.rescheduleEnabled} />}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && <RemindersToggle initialEnabled={settings.remindersEnabled} />}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}

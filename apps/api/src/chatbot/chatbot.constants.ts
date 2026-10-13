@@ -118,9 +118,11 @@ export const CONSENT_1581_INFORMAL = (policyUrl?: string) =>
   (policyUrl ? `\n📄 Consúltala aquí: ${policyUrl}` : '');
 
 // ─────────────────────────────────────────────────────────────
-// SOLO CONSULTAS — la clínica apagó en /dashboard/configuracion agendar,
-// cancelar y cambiar citas por el bot (`OrganizationSettings.bookingEnabled`).
-// El paciente solo consulta; a cualquier otra operación se le responde esto.
+// SOLO CONSULTAS — la clínica apagó en /dashboard/configuracion las TRES
+// operaciones del bot: agendar, cancelar y cambiar citas (`bookingEnabled`,
+// `cancelEnabled`, `rescheduleEnabled`). El paciente solo consulta; a
+// cualquier otra operación se le responde esto. Con solo una o dos apagadas
+// se usa OPERACIÓN NO DISPONIBLE (abajo).
 // `contacto` sale de contactoClinica / contactoClinicaSinTelefono.
 // ─────────────────────────────────────────────────────────────
 const SOLO_CONSULTAS_FORMAL = (contacto: string) =>
@@ -132,6 +134,84 @@ const SOLO_CONSULTAS_INFORMAL = (contacto: string) =>
   `Por ahora la plataforma no está activa para agendar, cancelar ni cambiar citas; solo está activa la *consulta de tus citas*. 🔍\n\n` +
   `Para agendar una cita o hacer cualquier cambio, comunícate con ${contacto}. 🙏\n\n` +
   `Si quieres ver tus citas, escríbeme *"consultar"*.`;
+
+// ─────────────────────────────────────────────────────────────
+// OPERACIÓN NO DISPONIBLE — la clínica apagó en /dashboard/configuracion UNA o
+// dos de las operaciones del bot (agendar, cancelar, cambiar la fecha), no las
+// tres (eso es SOLO CONSULTAS, arriba). El aviso dice cuál no está, con quién
+// hacerla y qué SÍ se puede por aquí, con la frase exacta que lo abre.
+//
+// Los mensajes del pool reciben TEXTO ya armado (como `menuServicios` recibe
+// sus `lineas`); estas piezas, iguales en los dos estilos, son con las que el
+// servicio lo arma.
+// ─────────────────────────────────────────────────────────────
+export type OperacionDelPaciente = 'AGENDAR' | 'CANCELAR' | 'MODIFICAR';
+
+/** Una opción del menú tras consultar las citas («¿Desea hacer algo con ellas?»). */
+export type OpcionConsulta = OperacionDelPaciente | 'NADA';
+
+/** Orden y texto de las opciones tras la consulta. */
+export const OPCIONES_CONSULTA: ReadonlyArray<{
+  opcion: OpcionConsulta;
+  etiqueta: string;
+}> = [
+  { opcion: 'CANCELAR', etiqueta: 'Cancelar una cita' },
+  { opcion: 'MODIFICAR', etiqueta: 'Cambiar la fecha de una cita' },
+  { opcion: 'AGENDAR', etiqueta: 'Agendar una cita nueva' },
+  { opcion: 'NADA', etiqueta: 'Nada más, gracias' },
+];
+
+/** Cómo se nombra cada operación en los avisos, y la frase que la abre. */
+export const TEXTO_OPERACION: Record<
+  OperacionDelPaciente,
+  { nombre: string; hacerla: string; etiqueta: string; atajo: string }
+> = {
+  AGENDAR: {
+    nombre: 'agendar citas',
+    hacerla: 'agendar una cita',
+    etiqueta: 'Agendar una cita',
+    atajo: '"Hola"',
+  },
+  CANCELAR: {
+    nombre: 'cancelar citas',
+    hacerla: 'cancelar una cita',
+    etiqueta: 'Cancelar una cita',
+    atajo: '"cancelar cita"',
+  },
+  MODIFICAR: {
+    nombre: 'cambiar la fecha de una cita',
+    hacerla: 'cambiar la fecha de una cita',
+    etiqueta: 'Cambiar la fecha de una cita',
+    atajo: '"cambiar cita"',
+  },
+};
+
+/** «a», «a o b», «a, b o c». */
+export const unirConO = (partes: string[]): string =>
+  partes.length <= 1
+    ? (partes[0] ?? '')
+    : `${partes.slice(0, -1).join(', ')} o ${partes[partes.length - 1]}`;
+
+/** Las opciones tras la consulta, con su letra: «*A)* Cancelar una cita». */
+export const lineasOpcionesConsulta = (opciones: OpcionConsulta[]): string =>
+  opciones
+    .map((o, i) => {
+      const etiqueta = OPCIONES_CONSULTA.find((x) => x.opcion === o)!.etiqueta;
+      return `*${String.fromCharCode(65 + i)})* ${etiqueta}`;
+    })
+    .join('\n');
+
+/** «*A*, *B*, *C* o *D*» para las opciones mostradas. */
+export const letrasOpcionesConsulta = (opciones: OpcionConsulta[]): string =>
+  unirConO(opciones.map((_, i) => `*${String.fromCharCode(65 + i)}*`));
+
+/** «cancelar una cita o cambiar la fecha de una cita»: lo que no se puede. */
+export const accionesNoDisponibles = (ops: OperacionDelPaciente[]): string =>
+  unirConO(
+    ops.map((o) =>
+      o === 'AGENDAR' ? 'agendar una cita nueva' : TEXTO_OPERACION[o].hacerla,
+    ),
+  );
 
 // ─────────────────────────────────────────────────────────────
 // Helper: selección pseudo-aleatoria de variantes.
@@ -875,13 +955,22 @@ const FORMAL = {
   consultaSinCitasHoy: () => `Hoy no tiene citas agendadas.`,
   consultaTituloProximas: () => `*Próximas:*`,
 
+  // Solo las opciones que la clínica deja hacer por el bot, con letras seguidas.
+  // `lineas` sale de `lineasOpcionesConsulta`: solo lo que se puede por el bot.
+  consultaOpcionesDe: (lineas: string) =>
+    `¿Desea hacer algo con ellas? Responda con la letra:\n\n` + lineas,
+
+  // `letras` sale de `letrasOpcionesConsulta`; `lineas`, como arriba.
+  consultaOpcionInvalidaDe: (letras: string, lineas: string) =>
+    `Por favor responda con la letra ${letras}.\n\n` + lineas,
+
   consultaOpciones: () =>
     `¿Desea hacer algo con ellas? Responda con la letra:\n\n` +
-    `*A)* Cancelar una cita\n*B)* Cambiar la fecha de una cita\n*C)* Agendar una cita nueva\n*D)* Nada más, gracias`,
+    lineasOpcionesConsulta(OPCIONES_CONSULTA.map((o) => o.opcion)),
 
   consultaOpcionInvalida: () =>
     `Por favor responda con la letra *A*, *B*, *C* o *D*.\n\n` +
-    `*A)* Cancelar una cita\n*B)* Cambiar la fecha de una cita\n*C)* Agendar una cita nueva\n*D)* Nada más, gracias`,
+    lineasOpcionesConsulta(OPCIONES_CONSULTA.map((o) => o.opcion)),
 
   consultaSinCitas: (nombre: string) =>
     `*${nombre}* no tiene citas próximas registradas. 📭\n\nSi desea agendar una, escríbame *"Hola"* y le muestro los servicios.`,
@@ -943,6 +1032,55 @@ const FORMAL = {
 
   consultaDetalleAudioSoloLectura: (nombre: string) =>
     `${nombre}, le dejo sus citas en el mensaje de texto.`,
+
+  // ── OPERACIÓN NO DISPONIBLE (ver TEXTO_OPERACION) ─────────────────────
+  // `operacion` / `hacerla` salen de TEXTO_OPERACION; `disponibles`, de
+  // `lineaDisponible`, una por cada cosa que sí se puede por aquí.
+  operacionNoDisponible: (
+    operacion: string,
+    hacerla: string,
+    contacto: string,
+    disponibles: string,
+  ) =>
+    `En este momento no es posible *${operacion}* por este medio. 🙏\n\n` +
+    `Para ${hacerla}, por favor comuníquese con ${contacto}.\n\n` +
+    `Por aquí sí puedo ayudarle a:\n${disponibles}`,
+
+  // El mismo aviso, presentándose: primer mensaje de la conversación.
+  operacionNoDisponibleBienvenida: (
+    clinicaName: string,
+    operacion: string,
+    hacerla: string,
+    contacto: string,
+    disponibles: string,
+    botName: string = BOT_NAME,
+  ) =>
+    `Le saluda *${botName}*, asistente virtual de *${clinicaName}*.\n\n` +
+    `En este momento no es posible *${operacion}* por este medio. 🙏\n\n` +
+    `Para ${hacerla}, por favor comuníquese con ${contacto}.\n\n` +
+    `Por aquí sí puedo ayudarle a:\n${disponibles}`,
+
+  // Una línea de lo que sí se puede: «• Cancelar una cita: escríbame "…"».
+  lineaDisponible: (etiqueta: string, atajo: string) =>
+    `• ${etiqueta}: escríbame *${atajo}*`,
+
+  lineaDisponibleConsultar: () =>
+    `• Consultar sus citas: escríbame *"consultar"*`,
+
+  // Tras las opciones de la consulta: lo que no se puede hacer por el bot.
+  // `acciones` sale de `accionesNoDisponibles`.
+  consultaNoDisponibles: (acciones: string, contacto: string) =>
+    `Para ${acciones}, comuníquese con ${contacto}.`,
+
+  // Sin citas y sin poder agendar por el bot (cancelar o cambiar sí).
+  consultaSinCitasSinAgendar: (nombre: string, contacto: string) =>
+    `*${nombre}* no tiene citas próximas registradas. 📭\n\nPara agendar una cita, comuníquese con ${contacto}.`,
+
+  // Cambiar la fecha sin cupos, cuando la clínica no deja cancelar por el bot:
+  // no se ofrece cancelarla; la cita se queda como está.
+  modificarSinCuposSinCancelar: (servicio: string, contacto: string) =>
+    `Revisé la agenda de *${servicio}* y por el momento no hay *otros horarios disponibles* para reprogramar su cita, así que la conservo tal como está.\n\n` +
+    `Si necesita cancelarla, por favor comuníquese con ${contacto}.`,
 
   respuestaInvalidaSiNo: () =>
     pick([
@@ -1699,13 +1837,21 @@ const INFORMAL = {
   consultaSinCitasHoy: () => `Hoy no tienes citas agendadas.`,
   consultaTituloProximas: () => `*Próximas:*`,
 
+  // `lineas` sale de `lineasOpcionesConsulta`: solo lo que se puede por el bot.
+  consultaOpcionesDe: (lineas: string) =>
+    `¿Quieres hacer algo con ellas? Mándame la letra:\n\n` + lineas,
+
+  // `letras` sale de `letrasOpcionesConsulta`; `lineas`, como arriba.
+  consultaOpcionInvalidaDe: (letras: string, lineas: string) =>
+    `Mándame la letra ${letras}, porfa. 🙏\n\n` + lineas,
+
   consultaOpciones: () =>
     `¿Quieres hacer algo con ellas? Mándame la letra:\n\n` +
-    `*A)* Cancelar una cita\n*B)* Cambiar la fecha de una cita\n*C)* Agendar una cita nueva\n*D)* Nada más, gracias`,
+    lineasOpcionesConsulta(OPCIONES_CONSULTA.map((o) => o.opcion)),
 
   consultaOpcionInvalida: () =>
     `Mándame la letra *A*, *B*, *C* o *D*, porfa. 🙏\n\n` +
-    `*A)* Cancelar una cita\n*B)* Cambiar la fecha de una cita\n*C)* Agendar una cita nueva\n*D)* Nada más, gracias`,
+    lineasOpcionesConsulta(OPCIONES_CONSULTA.map((o) => o.opcion)),
 
   consultaSinCitas: (nombre: string) =>
     `Revisé y *${nombre}* no tiene citas próximas. 📭 Si quieres agendar una, escríbeme *"Hola"* y te muestro los servicios. 😊`,
@@ -1754,6 +1900,45 @@ const INFORMAL = {
 
   consultaDetalleAudioSoloLectura: (nombre: string) =>
     `${nombre}, te dejo tus citas en el mensaje de texto.`,
+
+  operacionNoDisponible: (
+    operacion: string,
+    hacerla: string,
+    contacto: string,
+    disponibles: string,
+  ) =>
+    `Por ahora no puedo *${operacion}* por aquí. 🙏\n\n` +
+    `Para ${hacerla}, comunícate con ${contacto}.\n\n` +
+    `Lo que sí puedo hacer por ti:\n${disponibles}`,
+
+  operacionNoDisponibleBienvenida: (
+    clinicaName: string,
+    operacion: string,
+    hacerla: string,
+    contacto: string,
+    disponibles: string,
+    botName: string = BOT_NAME,
+  ) =>
+    `¡Hola! 😊 Soy *${botName}*, de *${clinicaName}*.\n\n` +
+    `Por ahora no puedo *${operacion}* por aquí. 🙏\n\n` +
+    `Para ${hacerla}, comunícate con ${contacto}.\n\n` +
+    `Lo que sí puedo hacer por ti:\n${disponibles}`,
+
+  lineaDisponible: (etiqueta: string, atajo: string) =>
+    `• ${etiqueta}: escríbeme *${atajo}*`,
+
+  lineaDisponibleConsultar: () =>
+    `• Consultar tus citas: escríbeme *"consultar"*`,
+
+  consultaNoDisponibles: (acciones: string, contacto: string) =>
+    `Para ${acciones}, comunícate con ${contacto}. 🙏`,
+
+  consultaSinCitasSinAgendar: (nombre: string, contacto: string) =>
+    `Revisé y *${nombre}* no tiene citas próximas. 📭 Para agendar una, comunícate con ${contacto}.`,
+
+  modificarSinCuposSinCancelar: (servicio: string, contacto: string) =>
+    `Revisé la agenda de *${servicio}* y por ahora no hay *otros horarios* para mover tu cita, así que la dejo tal cual. 🙏\n\n` +
+    `Si necesitas cancelarla, comunícate con ${contacto}.`,
 
   respuestaInvalidaSiNo: () =>
     pick([

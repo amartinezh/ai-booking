@@ -475,7 +475,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
     });
 
     it.each(['FORMAL', 'INFORMAL'])(
-      '🔒 %s: con las operaciones del bot apagadas remite al hospital, no a «cancelar cita»',
+      '🔒 %s: con cancelar y cambiar apagados remite al hospital, no al bot',
       async (estilo) => {
         const { service, chatbot } = build({
           eligibles: [
@@ -484,7 +484,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
                 id: ORG,
                 name: 'Hospital San Vicente',
                 supportPhone: '6068538838',
-                settings: { bookingEnabled: false },
+                settings: { cancelEnabled: false, rescheduleEnabled: false },
               },
             }),
           ],
@@ -494,9 +494,87 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
 
         const texto = textoEnviado(chatbot);
         expect(texto).not.toContain('*cancelar cita*');
+        expect(texto).not.toContain('*cambiar cita*');
         expect(texto).toContain('el hospital al *6068538838*');
       },
     );
+
+    // Cada operación tiene su interruptor: el recordatorio ofrece por el bot
+    // solo la que está prendida y remite al hospital para la otra.
+    it.each([
+      ['FORMAL', true, true],
+      ['FORMAL', true, false],
+      ['FORMAL', false, true],
+      ['INFORMAL', true, true],
+      ['INFORMAL', true, false],
+      ['INFORMAL', false, true],
+    ])(
+      '%s: cancelar=%s, cambiar=%s → ofrece por el bot solo lo prendido',
+      async (estilo, cancelEnabled, rescheduleEnabled) => {
+        const { service, chatbot } = build({
+          eligibles: [
+            cita({
+              organization: {
+                id: ORG,
+                name: 'Hospital San Vicente',
+                supportPhone: '6068538838',
+                settings: { cancelEnabled, rescheduleEnabled },
+              },
+            }),
+          ],
+          estilo,
+        });
+        await service.runOnce();
+
+        const texto = textoEnviado(chatbot);
+        expect(texto.includes('*cancelar cita*')).toBe(cancelEnabled);
+        expect(texto.includes('*cambiar cita*')).toBe(rescheduleEnabled);
+        // Lo que no se puede por el bot, con el hospital.
+        expect(texto.includes('el hospital al *6068538838*')).toBe(
+          !(cancelEnabled && rescheduleEnabled),
+        );
+      },
+    );
+
+    it('🏥 con espejo y el envío al hospital apagado no ofrece el bot, aunque los interruptores estén prendidos', async () => {
+      const { service, chatbot } = build({
+        eligibles: [
+          cita({
+            organization: {
+              id: ORG,
+              name: 'Hospital San Vicente',
+              supportPhone: '6068538838',
+              settings: { cancelEnabled: true, rescheduleEnabled: true },
+              hospitalMirrorConfig: { enabled: true, pushEnabled: false },
+            },
+          }),
+        ],
+      });
+      await service.runOnce();
+
+      const texto = textoEnviado(chatbot);
+      expect(texto).not.toContain('*cancelar cita*');
+      expect(texto).not.toContain('*cambiar cita*');
+      expect(texto).toContain('el hospital al *6068538838*');
+    });
+
+    it('🏥 con espejo y el envío al hospital encendido sí lo ofrece', async () => {
+      const { service, chatbot } = build({
+        eligibles: [
+          cita({
+            organization: {
+              id: ORG,
+              name: 'Hospital San Vicente',
+              settings: { cancelEnabled: true, rescheduleEnabled: false },
+              hospitalMirrorConfig: { enabled: true, pushEnabled: true },
+            },
+          }),
+        ],
+      });
+      await service.runOnce();
+
+      expect(textoEnviado(chatbot)).toContain('*cancelar cita*');
+    });
 
     // 🐛 El saludo estaba fijo en «Buenos días». El cron corre cada 15 min, y
     // en la campaña E2E del 2026-09-22 llegó un recordatorio a las 2:21 p. m.

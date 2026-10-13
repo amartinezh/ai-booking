@@ -187,6 +187,11 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       getMaxRetries: jest.fn(() => 3),
       getCommunicationStyle: jest.fn(() => 'FORMAL'),
       isBookingEnabled: jest.fn(() => true),
+      operacionesDelBot: jest.fn(() => ({
+        agendar: true,
+        cancelar: true,
+        modificar: true,
+      })),
     };
 
     interactionLog = {

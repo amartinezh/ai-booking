@@ -244,15 +244,22 @@ export class AppointmentReminderCronService
         // `timezone` es lo que decide si el paciente lee «Buenos días» o
         // «Buenas tardes»: el cron corre cada 15 min y el contenedor no
         // siempre está en la hora de la clínica (ver CLAUDE.md, multi-tenant).
-        // `supportPhone` y `settings`: con las operaciones del bot apagadas el
-        // recordatorio remite al hospital en vez de a «cancelar cita».
+        // `supportPhone`, `settings` y el espejo: con cancelar o cambiar
+        // apagados el recordatorio remite al hospital en vez de al bot.
         organization: {
           select: {
             id: true,
             name: true,
             timezone: true,
             supportPhone: true,
-            settings: { select: { bookingEnabled: true } },
+            settings: {
+              select: { cancelEnabled: true, rescheduleEnabled: true },
+            },
+            // 🏥 Con espejo y el envío al hospital apagado, el bot no cancela
+            // ni cambia citas (H10): el recordatorio no puede ofrecerlo.
+            hospitalMirrorConfig: {
+              select: { enabled: true, pushEnabled: true },
+            },
           },
         },
       },
@@ -478,9 +485,15 @@ export class AppointmentReminderCronService
     const doctorName = apt.scheduleSlot.doctor?.fullName ?? 'su médico';
     const serviceName = apt.scheduleSlot.service?.name ?? 'su consulta';
     const fecha = formatForPatient(apt.scheduleSlot.startTime);
-    // 🔒 Operaciones del bot apagadas: el bot no puede cancelar ni cambiar la
-    // cita, así que el recordatorio no lo ofrece. Sin fila de settings = prendido.
-    const botOpera = apt.organization?.settings?.bookingEnabled ?? true;
+    // 🔒 El recordatorio solo ofrece lo que el bot de verdad puede hacer: cada
+    // operación tiene su interruptor (/dashboard/configuracion) y, con espejo,
+    // exige el envío al hospital encendido. Lo que no, remite al hospital. Sin
+    // fila de settings = prendidos.
+    const espejo = apt.organization?.hospitalMirrorConfig;
+    const hisRecibeCambios = !espejo?.enabled || espejo.pushEnabled;
+    const settings = apt.organization?.settings;
+    const cancelar = (settings?.cancelEnabled ?? true) && hisRecibeCambios;
+    const cambiar = (settings?.rescheduleEnabled ?? true) && hisRecibeCambios;
     const telefono = apt.organization?.supportPhone;
     const hospital = telefono ? `el hospital al *${telefono}*` : 'el hospital';
 
@@ -488,9 +501,13 @@ export class AppointmentReminderCronService
       return (
         `¡Hola${patientName ? ' ' + patientName : ''}! 👋 Soy *${botName}* de *${clinicName}*.\n\n` +
         `Te recuerdo tu cita de *${serviceName}* con *${doctorName}* el *${fecha}*.\n\n` +
-        (botOpera
-          ? `Si necesitas reagendar o cancelar, escríbeme *cancelar cita* y te ayudo. ¡Te esperamos! 🩺`
-          : `Si necesitas reagendar o cancelar, comunícate con ${hospital}. ¡Te esperamos! 🩺`)
+        (cancelar && cambiar
+          ? `Si necesitas cambiar la fecha, escríbeme *cambiar cita*; si no puedes ir, escríbeme *cancelar cita*. ¡Te esperamos! 🩺`
+          : cancelar
+            ? `Si no puedes ir, escríbeme *cancelar cita* y te ayudo. Para cambiar la fecha, comunícate con ${hospital}. ¡Te esperamos! 🩺`
+            : cambiar
+              ? `Si necesitas cambiar la fecha, escríbeme *cambiar cita* y te ayudo. Para cancelarla, comunícate con ${hospital}. ¡Te esperamos! 🩺`
+              : `Si necesitas reagendar o cancelar, comunícate con ${hospital}. ¡Te esperamos! 🩺`)
       );
     }
 
@@ -498,9 +515,13 @@ export class AppointmentReminderCronService
       `${saludoPorHora(new Date(), { timeZone: apt.organization?.timezone ?? undefined })}` +
       `${patientName ? ' ' + patientName : ''}. Le saluda *${botName}*, asistente virtual de *${clinicName}*.\n\n` +
       `Le recordamos su cita de *${serviceName}* con *${doctorName}* programada para el *${fecha}*.\n\n` +
-      (botOpera
-        ? `Si requiere reagendar o cancelar, por favor responda *cancelar cita* y le ayudaremos. Le esperamos. 🩺`
-        : `Si requiere reagendar o cancelar, por favor comuníquese con ${hospital}. Le esperamos. 🩺`)
+      (cancelar && cambiar
+        ? `Si requiere cambiar la fecha, responda *cambiar cita*; si no puede asistir, responda *cancelar cita*. Le esperamos. 🩺`
+        : cancelar
+          ? `Si no puede asistir, por favor responda *cancelar cita* y le ayudaremos. Para cambiar la fecha, comuníquese con ${hospital}. Le esperamos. 🩺`
+          : cambiar
+            ? `Si requiere cambiar la fecha, por favor responda *cambiar cita* y le ayudaremos. Para cancelarla, comuníquese con ${hospital}. Le esperamos. 🩺`
+            : `Si requiere reagendar o cancelar, por favor comuníquese con ${hospital}. Le esperamos. 🩺`)
     );
   }
 
@@ -565,15 +586,22 @@ export class AppointmentReminderCronService
         // `timezone` es lo que decide si el paciente lee «Buenos días» o
         // «Buenas tardes»: el cron corre cada 15 min y el contenedor no
         // siempre está en la hora de la clínica (ver CLAUDE.md, multi-tenant).
-        // `supportPhone` y `settings`: con las operaciones del bot apagadas el
-        // recordatorio remite al hospital en vez de a «cancelar cita».
+        // `supportPhone`, `settings` y el espejo: con cancelar o cambiar
+        // apagados el recordatorio remite al hospital en vez de al bot.
         organization: {
           select: {
             id: true,
             name: true,
             timezone: true,
             supportPhone: true,
-            settings: { select: { bookingEnabled: true } },
+            settings: {
+              select: { cancelEnabled: true, rescheduleEnabled: true },
+            },
+            // 🏥 Con espejo y el envío al hospital apagado, el bot no cancela
+            // ni cambia citas (H10): el recordatorio no puede ofrecerlo.
+            hospitalMirrorConfig: {
+              select: { enabled: true, pushEnabled: true },
+            },
           },
         },
       },

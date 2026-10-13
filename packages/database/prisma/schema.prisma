@@ -137,14 +137,21 @@ model OrganizationSettings {
   // afecta (lo dispara una persona). Clínica sin fila de settings = prendido.
   remindersEnabled Boolean @default(true)
 
-  // Interruptor de las OPERACIONES del paciente por el bot (WhatsApp y
-  // Telegram): agendar, cancelar y cambiar la fecha de una cita. Apagado, el
-  // bot solo consulta citas y a todo lo demás responde que la plataforma por
-  // ahora solo permite consultas y que se comunique con el hospital; tampoco
-  // se ofrecen cupos de la lista de espera. Se lee en cada mensaje, así que
-  // surte efecto sin reiniciar. El personal sigue operando desde el panel.
-  // Clínica sin fila de settings = prendido.
-  bookingEnabled Boolean @default(true)
+  // Interruptores de lo que el PACIENTE puede hacer por el bot (WhatsApp y
+  // Telegram), uno por operación. Se leen en cada mensaje, así que surten
+  // efecto sin reiniciar. El personal sigue operando desde el panel. Con los
+  // tres apagados el bot solo consulta citas («solo consultas»). Con espejo
+  // del hospital, cada operación exige además el envío al hospital encendido
+  // (`HospitalMirrorConfig.pushEnabled`): sin él, el cambio nunca llegaría al
+  // HIS. Clínica sin fila de settings = prendidos.
+  //
+  // Agendar citas nuevas (y aceptar cupos de la lista de espera). Hasta el
+  // 2026-10-13 también gobernaba cancelar y cambiar.
+  bookingEnabled    Boolean @default(true)
+  // Cancelar una cita existente.
+  cancelEnabled     Boolean @default(true)
+  // Cambiar la fecha de una cita existente (reprogramar).
+  rescheduleEnabled Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

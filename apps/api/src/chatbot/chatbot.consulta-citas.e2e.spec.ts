@@ -301,6 +301,13 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
   let sendSpy: jest.SpyInstance;
   /** `OrganizationSettings.bookingEnabled` de la clínica (se lee en cada turno). */
   let bookingEnabled: boolean;
+  /**
+   * `cancelEnabled` / `rescheduleEnabled`. `null` = siguen a `bookingEnabled`,
+   * que es como nacen en la migración: las pruebas de «solo consultas» apagan
+   * las tres con solo `bookingEnabled = false`.
+   */
+  let cancelEnabled: boolean | null;
+  let rescheduleEnabled: boolean | null;
 
   const sent = (): string[] =>
     sendSpy.mock.calls.map((c: any[]) => c[1] as string);
@@ -372,6 +379,8 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
     });
     redis = createFakeRedis();
     bookingEnabled = true;
+    cancelEnabled = null;
+    rescheduleEnabled = null;
     db = {
       patients: [],
       appointments: [],
@@ -436,6 +445,11 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
             getMaxRetries: jest.fn(() => 3),
             getCommunicationStyle: jest.fn(() => 'FORMAL'),
             isBookingEnabled: jest.fn(() => bookingEnabled),
+            operacionesDelBot: jest.fn(() => ({
+              agendar: bookingEnabled,
+              cancelar: cancelEnabled ?? bookingEnabled,
+              modificar: rescheduleEnabled ?? bookingEnabled,
+            })),
           },
         },
         {
@@ -1231,6 +1245,178 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
         .map((c: any[]) => c[0])
         .find((e: any) => e?.metadata?.step === 'SOLO_CONSULTAS');
       expect(pasoAviso?.metadata).toMatchObject({ motivo: 'CANCELAR' });
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 🔒 Un interruptor por operación: agendar, cancelar, cambiar la fecha
+  // ──────────────────────────────────────────────────────────────────
+  describe('🔒 interruptores por operación', () => {
+    const SOLO_CONSULTAS =
+      'no está activa para agendar, cancelar ni cambiar citas';
+    const HOSPITAL = `el hospital al *${SOPORTE}*`;
+
+    it('cancelar apagado: «cancelar cita» recibe su aviso y dice qué sí se puede', async () => {
+      cancelEnabled = false;
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('cancelar cita');
+      const r = lastSent();
+      expect(r).toContain('no es posible *cancelar citas*');
+      expect(r).toContain(
+        `Para cancelar una cita, por favor comuníquese con ${HOSPITAL}`,
+      );
+      expect(r).toContain(
+        'Cambiar la fecha de una cita: escríbame *"cambiar cita"*',
+      );
+      expect(r).toContain('Agendar una cita: escríbame *"Hola"*');
+      expect(r).toContain('Consultar sus citas: escríbame *"consultar"*');
+      expect(r).not.toContain('Cancelar una cita:');
+      expect(r).not.toContain(SOLO_CONSULTAS);
+      expect(state()).toBe(ChatState.IDLE);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('cambiar apagado: «cambiar cita» recibe su aviso, cancelar se sigue ofreciendo', async () => {
+      rescheduleEnabled = false;
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('cambiar cita');
+      const r = lastSent();
+      expect(r).toContain('no es posible *cambiar la fecha de una cita*');
+      expect(r).toContain('Cancelar una cita: escríbame *"cancelar cita"*');
+      expect(r).not.toContain('Cambiar la fecha de una cita:');
+      expect(state()).toBe(ChatState.IDLE);
+    });
+
+    it('agendar apagado: «Hola» no abre el menú y dice que cancelar y cambiar sí se pueden', async () => {
+      bookingEnabled = false;
+      cancelEnabled = true;
+      rescheduleEnabled = true;
+      await say('Hola');
+      const r = lastSent();
+      expect(r).toContain('Le saluda *Vicente*');
+      expect(r).toContain('no es posible *agendar citas*');
+      expect(r).toContain('Cancelar una cita: escríbame *"cancelar cita"*');
+      expect(r).not.toContain('¿En qué servicio');
+      expect(r).not.toContain(SOLO_CONSULTAS);
+      expect(state()).toBe(ChatState.IDLE);
+    });
+
+    it('agendar apagado no impide cancelar: «cancelar cita» abre la cancelación', async () => {
+      bookingEnabled = false;
+      cancelEnabled = true;
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('cancelar cita');
+      expect(lastSent()).not.toContain('no es posible');
+      expect(state()).toMatch(/^AWAITING_CANCEL_/);
+    });
+
+    it('la consulta ofrece solo lo que se puede, con letras seguidas, y dice dónde hacer lo demás', async () => {
+      cancelEnabled = false;
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('consultar');
+      const r = lastSent();
+      expect(r).toContain(
+        '*A)* Cambiar la fecha de una cita\n*B)* Agendar una cita nueva\n*C)* Nada más, gracias',
+      );
+      expect(r).not.toContain('Cancelar una cita');
+      expect(r).toContain(
+        `Para cancelar una cita, comuníquese con ${HOSPITAL}.`,
+      );
+      expect(state()).toBe(ChatState.AWAITING_LOOKUP_CHOICE);
+    });
+
+    it('la letra se lee contra las opciones mostradas: «A» es cambiar la fecha, no cancelar', async () => {
+      cancelEnabled = false;
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('consultar');
+      await say('A');
+      // Sin cupos para mover y sin poder cancelar por el bot: la cita se queda.
+      const r = lastSent();
+      expect(r).toContain('así que la conservo tal como está');
+      expect(r).toContain(
+        `Si necesita cancelarla, por favor comuníquese con ${HOSPITAL}`,
+      );
+      expect(r).not.toContain('¿Desea que *cancele la cita actual*?');
+      expect(state()).toBe(ChatState.IDLE);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('«C» con tres opciones es «nada más»; una letra fuera de rango pide solo las mostradas', async () => {
+      cancelEnabled = false;
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('consultar');
+      await say('D');
+      expect(lastSent()).toContain(
+        'Por favor responda con la letra *A*, *B* o *C*.',
+      );
+      await say('C');
+      expect(state()).toBe(ChatState.IDLE);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('apagar cancelar con las opciones ya mostradas: la «A» de antes recibe el aviso', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('consultar');
+      expect(lastSent()).toContain('*A)* Cancelar una cita');
+
+      cancelEnabled = false;
+      await say('A');
+      expect(lastSent()).toContain('no es posible *cancelar citas*');
+      expect(state()).toBe(ChatState.IDLE);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('apagar cancelar a mitad de una cancelación descarta el flujo: la cita no se toca', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('cancelar cita');
+      expect(state()).toMatch(/^AWAITING_CANCEL_/);
+
+      cancelEnabled = false;
+      await say('SÍ');
+      expect(state()).not.toMatch(/^AWAITING_CANCEL_/);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('sin citas y sin agendar por el bot: remite al hospital para agendar, sin decir «solo consultas»', async () => {
+      bookingEnabled = false;
+      cancelEnabled = true;
+      seedPaciente();
+      await say('que citas tengo');
+      const r = lastSent();
+      expect(r).toContain('no tiene citas próximas');
+      expect(r).toContain(`Para agendar una cita, comuníquese con ${HOSPITAL}`);
+      expect(r).not.toContain('solo permite consultarlas');
+      expect(r).not.toContain('"Hola"');
+    });
+
+    it('con las tres prendidas, las opciones son las A-D de siempre', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('consultar');
+      expect(lastSent()).toContain(
+        '*A)* Cancelar una cita\n*B)* Cambiar la fecha de una cita\n*C)* Agendar una cita nueva\n*D)* Nada más, gracias',
+      );
+      expect(lastSent()).not.toContain('comuníquese con');
+    });
+
+    it('queda en la bitácora qué operación se pidió y qué se ofreció en su lugar', async () => {
+      cancelEnabled = false;
+      await say('cancelar cita');
+      const paso = interactionLog.logSuccess.mock.calls
+        .map((c: any[]) => c[0])
+        .find((e: any) => e?.metadata?.step === 'OPERACION_NO_DISPONIBLE');
+      expect(paso?.metadata).toMatchObject({
+        motivo: 'CANCELAR',
+        disponibles: ['AGENDAR', 'MODIFICAR'],
+      });
     });
   });
 });

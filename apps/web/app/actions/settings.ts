@@ -23,6 +23,8 @@ export async function getMyOrgSettings() {
             slotsOfferedCount: true,
             remindersEnabled: true,
             bookingEnabled: true,
+            cancelEnabled: true,
+            rescheduleEnabled: true,
         },
     });
     return {
@@ -32,8 +34,10 @@ export async function getMyOrgSettings() {
         // Sin fila de settings = prendido, igual que el default de la columna y
         // que la consulta del cron.
         remindersEnabled: s?.remindersEnabled ?? true,
-        // Igual: sin fila = el bot agenda, cancela y cambia (default de la columna).
+        // Igual: sin fila = el bot agenda, cancela y cambia (default de las columnas).
         bookingEnabled: s?.bookingEnabled ?? true,
+        cancelEnabled: s?.cancelEnabled ?? true,
+        rescheduleEnabled: s?.rescheduleEnabled ?? true,
     };
 }
 
@@ -63,8 +67,9 @@ export async function setMyRemindersEnabled(enabled: boolean) {
 }
 
 /**
- * Prende o apaga lo que el paciente puede hacer por el bot (agendar, cancelar,
- * cambiar citas). Apagado, el bot solo consulta. Guarda al instante, como el de
+ * Prende o apaga AGENDAR citas nuevas por el bot (y aceptar cupos de la lista
+ * de espera). Cancelar y cambiar la fecha tienen su propio interruptor; con los
+ * tres apagados el bot solo consulta. Guarda al instante, como el de
  * recordatorios; el bot lo lee en cada mensaje.
  */
 export async function setMyBookingEnabled(enabled: boolean) {
@@ -82,6 +87,52 @@ export async function setMyBookingEnabled(enabled: boolean) {
         });
         revalidatePath('/dashboard/configuracion');
         return { success: true, bookingEnabled };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * Prende o apaga CANCELAR citas por el bot. Guarda al instante y el bot lo lee
+ * en cada mensaje.
+ */
+export async function setMyCancelEnabled(enabled: boolean) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
+
+    // `=== true`: lo que no sea exactamente `true` apaga (falla hacia que el bot
+    // no toque la agenda).
+    const cancelEnabled = enabled === true;
+    try {
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, cancelEnabled },
+            update: { cancelEnabled },
+        });
+        revalidatePath('/dashboard/configuracion');
+        return { success: true, cancelEnabled };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * Prende o apaga CAMBIAR LA FECHA de una cita por el bot. Guarda al instante y
+ * el bot lo lee en cada mensaje.
+ */
+export async function setMyRescheduleEnabled(enabled: boolean) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
+
+    const rescheduleEnabled = enabled === true;
+    try {
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, rescheduleEnabled },
+            update: { rescheduleEnabled },
+        });
+        revalidatePath('/dashboard/configuracion');
+        return { success: true, rescheduleEnabled };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
     }

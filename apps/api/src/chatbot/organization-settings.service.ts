@@ -7,6 +7,23 @@ const DEFAULT_MAX_RETRIES = 3;
 export type CommStyle = 'FORMAL' | 'INFORMAL';
 const DEFAULT_STYLE: CommStyle = 'FORMAL';
 
+/** Lo que el paciente puede hacer por el bot, operación por operación. */
+export interface OperacionesBot {
+  agendar: boolean;
+  cancelar: boolean;
+  modificar: boolean;
+}
+
+/** Una operación del paciente sobre sus citas (las tres de `OperacionesBot`). */
+export type OperacionBot = 'AGENDAR' | 'CANCELAR' | 'MODIFICAR';
+
+/** La clave de `OperacionesBot` que gobierna cada operación. */
+export const CLAVE_OPERACION: Record<OperacionBot, keyof OperacionesBot> = {
+  AGENDAR: 'agendar',
+  CANCELAR: 'cancelar',
+  MODIFICAR: 'modificar',
+};
+
 @Injectable()
 export class OrganizationSettingsService {
   constructor(private prisma: PrismaService) {}
@@ -37,10 +54,9 @@ export class OrganizationSettingsService {
   }
 
   /**
-   * ¿El bot puede agendar, cancelar y cambiar citas en esta clínica? Apagado
-   * (/dashboard/configuracion) solo consulta. Sin fila de settings = prendido,
-   * igual que el default de la columna. Se lee en cada mensaje: sin caché, para
-   * que apagarlo surta efecto en el siguiente mensaje del paciente.
+   * ¿El bot puede agendar citas nuevas en esta clínica? Sin fila de settings =
+   * prendido, igual que el default de la columna. Cancelar y cambiar tienen su
+   * propio interruptor: ver `operacionesDelBot`.
    */
   async isBookingEnabled(organizationId: string): Promise<boolean> {
     const s = await this.prisma.organizationSettings.findUnique({
@@ -48,6 +64,31 @@ export class OrganizationSettingsService {
       select: { bookingEnabled: true },
     });
     return s?.bookingEnabled ?? true;
+  }
+
+  /**
+   * Qué puede hacer el paciente por el bot en esta clínica, operación por
+   * operación (/dashboard/configuracion). Una sola lectura para las tres, en
+   * cada mensaje y sin caché: apagar una surte efecto en el siguiente turno.
+   * Sin fila de settings = las tres prendidas (el default de las columnas).
+   *
+   * Son los interruptores TAL CUAL. El chatbot les suma la condición del
+   * espejo (envío al hospital encendido) en `operacionesDisponibles`.
+   */
+  async operacionesDelBot(organizationId: string): Promise<OperacionesBot> {
+    const s = await this.prisma.organizationSettings.findUnique({
+      where: { organizationId },
+      select: {
+        bookingEnabled: true,
+        cancelEnabled: true,
+        rescheduleEnabled: true,
+      },
+    });
+    return {
+      agendar: s?.bookingEnabled ?? true,
+      cancelar: s?.cancelEnabled ?? true,
+      modificar: s?.rescheduleEnabled ?? true,
+    };
   }
 
   async getSettings(organizationId: string): Promise<{
