@@ -93,6 +93,29 @@ const dosVueltas = async (h: ReturnType<typeof conDriver>) => {
   return h.driver.detectChanges(base.nextCursor);
 };
 
+// ⏰ Las citas de ejemplo son del 2026-10-10 y `detectChanges` solo mira las
+// FUTURAS: con el reloj real, desde ese día estas pruebas dejaban de ver sus
+// propias citas y fallaban solas. Se fija solo la FECHA (antes de las citas);
+// los temporizadores siguen siendo los reales.
+beforeEach(() => {
+  jest.useFakeTimers({
+    now: new Date('2026-10-01T12:00:00.000Z'),
+    doNotFake: [
+      'nextTick',
+      'setImmediate',
+      'clearImmediate',
+      'setInterval',
+      'clearInterval',
+      'setTimeout',
+      'clearTimeout',
+      'queueMicrotask',
+      'hrtime',
+      'performance',
+    ],
+  });
+});
+afterEach(() => jest.useRealTimers());
+
 describe('detectChanges — datos del paciente en las citas nuevas', () => {
   it('un alta viaja con nombre completo, teléfono, nacimiento y sexo del HIS', async () => {
     const h = conDriver({ citas: [[], [cita()]], pacientes: [paciente()] });

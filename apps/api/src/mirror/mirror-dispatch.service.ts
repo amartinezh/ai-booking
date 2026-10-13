@@ -531,8 +531,11 @@ export class MirrorDispatchService {
    * espera por la misma razón. El bot ve la cita anulada y le ofrece otra hora
    * (H10).
    *
-   * Devuelve false si el evento no es un alta de cita de esta clínica: entonces
-   * se trata como cualquier fallo.
+   * Un CAMBIO de fecha rechazado (UPDATE de la cita) no se anula: vuelve a su
+   * hora anterior (`revertirCambioRechazado`).
+   *
+   * Devuelve false si el evento no es un alta ni un cambio de cita de esta
+   * clínica: entonces se trata como cualquier fallo.
    */
   async markRejectedByHis(
     organizationId: string,
@@ -541,15 +544,19 @@ export class MirrorDispatchService {
   ): Promise<boolean> {
     const evento = await this.prisma.syncOutbox.findFirst({
       where: { seq: BigInt(seq), organizationId },
-      select: { eventId: true, entityType: true, entityId: true, op: true },
+      select: {
+        eventId: true,
+        entityType: true,
+        entityId: true,
+        op: true,
+        payload: true,
+      },
     });
-    if (
-      !evento ||
-      evento.entityType !== 'APPOINTMENT' ||
-      evento.op !== 'INSERT'
-    ) {
-      return false;
+    if (!evento || evento.entityType !== 'APPOINTMENT') return false;
+    if (evento.op === 'UPDATE') {
+      return this.revertirCambioRechazado(organizationId, seq, evento, motivo);
     }
+    if (evento.op !== 'INSERT') return false;
     const texto = (motivo ?? '').trim() || 'el HIS rechazó la cita';
 
     await this.prisma.$transaction(async (tx) => {
@@ -605,6 +612,137 @@ export class MirrorDispatchService {
       });
     });
     return true;
+  }
+
+  /**
+   * 🏥 H10 para el CAMBIO de fecha: el HIS rechazó de forma definitiva mover la
+   * cita (la hora nueva ya está tomada o se cruza con otra, H11). El agente
+   * reagenda en UNA transacción (anula la vieja y crea la nueva), así que en el
+   * hospital la cita sigue en su hora de antes. AgenIA vuelve a ella.
+   *
+   * En una transacción con origen MIRROR (nada de esto viaja al HIS, que ya
+   * tiene la cita donde estaba): la cita vuelve a su cupo anterior —que el bot
+   * mantuvo reservado mientras esperaba— con el motivo en `metaLog`; el cupo
+   * nuevo queda CERRADO (el hospital ya tiene ese tiempo ocupado: liberarlo lo
+   * volvería a ofrecer) y el evento se cierra con el motivo. El bot ve la cita
+   * de vuelta en su cupo y le ofrece otra hora al paciente.
+   *
+   * Devuelve false —y entonces se trata como cualquier fallo, que acaba en la
+   * bandeja de excepciones— si el evento no es un cambio de cupo, si la cita ya
+   * no está en el cupo nuevo o si el cupo de antes ya no se puede recuperar
+   * (desapareció o tiene otra cita viva).
+   */
+  private async revertirCambioRechazado(
+    organizationId: string,
+    seq: string,
+    evento: { eventId: string; entityId: string; payload: unknown },
+    motivo?: string,
+  ): Promise<boolean> {
+    const fila =
+      evento.payload && typeof evento.payload === 'object'
+        ? (evento.payload as Record<string, unknown>)
+        : {};
+    const anterior = (fila.__old as Record<string, unknown> | undefined)
+      ?.scheduleSlotId;
+    const nuevo = fila.scheduleSlotId;
+    if (
+      typeof anterior !== 'string' ||
+      typeof nuevo !== 'string' ||
+      anterior === nuevo
+    ) {
+      return false;
+    }
+    const texto = (motivo ?? '').trim() || 'el HIS rechazó el cambio de fecha';
+
+    const revertida = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+      const cita = await tx.appointment.findFirst({
+        where: { id: evento.entityId, organizationId },
+        select: { id: true, status: true, scheduleSlotId: true, metaLog: true },
+      });
+      if (
+        !cita ||
+        cita.status === 'CANCELLED' ||
+        cita.scheduleSlotId !== nuevo
+      ) {
+        return false;
+      }
+      const cupoAnterior = await tx.scheduleSlot.findFirst({
+        where: { id: anterior, organizationId },
+        select: { id: true },
+      });
+      const ocupante = await tx.appointment.findFirst({
+        where: {
+          scheduleSlotId: anterior,
+          status: { not: 'CANCELLED' },
+          id: { not: cita.id },
+        },
+        select: { id: true },
+      });
+      if (!cupoAnterior || ocupante) return false;
+
+      const previo =
+        cita.metaLog &&
+        typeof cita.metaLog === 'object' &&
+        !Array.isArray(cita.metaLog)
+          ? (cita.metaLog as Record<string, unknown>)
+          : {};
+      await tx.appointment.update({
+        where: { id: cita.id },
+        data: {
+          scheduleSlotId: anterior,
+          metaLog: {
+            ...previo,
+            cambioRechazadoPorElHis: {
+              motivo: texto,
+              cupoRechazado: nuevo,
+              en: new Date().toISOString(),
+            },
+          },
+        },
+      });
+      await tx.scheduleSlot.update({
+        where: { id: anterior },
+        data: { isAvailable: false },
+      });
+      await tx.scheduleSlot.update({
+        where: { id: nuevo },
+        data: { isAvailable: false },
+      });
+      await tx.syncOutbox.updateMany({
+        where: { seq: BigInt(seq), organizationId },
+        data: {
+          deliveredAt: new Date(),
+          nextAttemptAt: null,
+          attempts: { increment: 1 },
+          lastError: `Cambio rechazado por el HIS: ${texto}`.slice(0, 500),
+        },
+      });
+      await tx.syncAudit.create({
+        data: {
+          organizationId,
+          direction: SYNC_AUDIT_DIRECTION.AGENIA_TO_HIS,
+          entityType: 'APPOINTMENT',
+          entityId: evento.entityId,
+          op: 'UPDATE',
+          outcome: 'CONFLICT',
+          eventId: evento.eventId,
+          detail:
+            `El HIS rechazó el cambio de fecha (${texto}). La cita volvió a su ` +
+            `hora anterior en AgenIA, igual que en el hospital, y el cupo nuevo ` +
+            `quedó cerrado; el bot le ofrece otra hora al paciente.`,
+        },
+      });
+      return true;
+    });
+
+    if (!revertida) {
+      this.logger.warn(
+        `El HIS rechazó el cambio de fecha del evento ${seq} (org ${organizationId}), ` +
+          `pero la cita no se pudo devolver a su cupo anterior: se trata como un fallo.`,
+      );
+    }
+    return revertida;
   }
 
   /**

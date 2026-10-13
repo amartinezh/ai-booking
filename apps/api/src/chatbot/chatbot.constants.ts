@@ -622,6 +622,35 @@ const FORMAL = {
     `Lo lamento: el hospital no pudo registrar su cita del _${fecha}_ porque ese horario ya no estaba disponible.\n\n` +
     `Escríbame *"Hola"* para elegir otro horario, o comuníquese con ${contacto}.`,
 
+  // ── H10 para el CAMBIO de fecha: el cambio se confirma solo cuando el HIS
+  //    lo registra. Mientras, la cita conserva también su hora de antes.
+  confirmandoCambio: () =>
+    pick([
+      `Un momento, por favor. Estoy registrando el cambio de su cita en el sistema del hospital; en unos segundos le confirmo. ⏳`,
+      `Deme unos segundos: estoy pasando su cita al nuevo horario en el sistema del hospital. ⏳`,
+    ]),
+
+  // El hospital no respondió a tiempo: se le escribe cuando quede.
+  cambioEnRegistro: (fechaNueva: string) =>
+    `El hospital aún no termina de registrar el cambio de su cita al _${fechaNueva}_. ⏳\n\n` +
+    `Apenas quede registrado le escribo por aquí para confirmárselo. No necesita volver a pedirlo.`,
+
+  // El hospital lo rechazó EN LA ESPERA: la cita sigue en su hora de antes y
+  // a continuación se le ofrecen otros horarios.
+  cambioRechazadoPorHospital: (fechaNueva: string, fechaAnterior: string) =>
+    `Lo lamento: el hospital no pudo registrar el cambio al _${fechaNueva}_ porque ese horario ya no estaba disponible. ` +
+    `Su cita *sigue el ${fechaAnterior}*.\n\nLe muestro otros horarios. 👇`,
+
+  // El hospital lo rechazó DESPUÉS del aviso de registro (llegó tarde).
+  cambioNoRegistradoEnHospital: (
+    fechaNueva: string,
+    fechaAnterior: string,
+    contacto: string,
+  ) =>
+    `Lo lamento: el hospital no pudo registrar el cambio de su cita al _${fechaNueva}_ porque ese horario ya no estaba disponible. ` +
+    `Su cita *sigue el ${fechaAnterior}*.\n\n` +
+    `Si desea otro horario, escríbame *"cambiar cita"*, o comuníquese con ${contacto}.`,
+
   slotTomado: () =>
     pick([
       `Lo lamento, ese horario lo acaba de tomar otro paciente.\n\n¿Elegimos otro de los disponibles? Escriba la letra nuevamente, por favor.`,
@@ -1536,6 +1565,29 @@ const INFORMAL = {
   citaNoRegistradaEnHospital: (fecha: string, contacto: string) =>
     `Qué pena 😔: el hospital no pudo registrar tu cita del _${fecha}_ porque ese horario ya no estaba disponible.\n\n` +
     `Escríbeme *"Hola"* para elegir otro horario, o comunícate con ${contacto}.`,
+
+  confirmandoCambio: () =>
+    pick([
+      `Dame unos segundos ⏳, estoy registrando el cambio de tu cita en el sistema del hospital.`,
+      `Un momentico ⏳: estoy pasando tu cita al nuevo horario en el sistema del hospital.`,
+    ]),
+
+  cambioEnRegistro: (fechaNueva: string) =>
+    `El hospital todavía está registrando el cambio de tu cita al _${fechaNueva}_. ⏳\n\n` +
+    `Apenas quede listo te escribo por aquí para confirmártelo. No tienes que pedirlo otra vez.`,
+
+  cambioRechazadoPorHospital: (fechaNueva: string, fechaAnterior: string) =>
+    `Qué pena 😔: el hospital no pudo registrar el cambio al _${fechaNueva}_ porque ese horario ya no estaba disponible. ` +
+    `Tu cita *sigue el ${fechaAnterior}*.\n\nTe muestro otros horarios. 👇`,
+
+  cambioNoRegistradoEnHospital: (
+    fechaNueva: string,
+    fechaAnterior: string,
+    contacto: string,
+  ) =>
+    `Qué pena 😔: el hospital no pudo registrar el cambio de tu cita al _${fechaNueva}_ porque ese horario ya no estaba disponible. ` +
+    `Tu cita *sigue el ${fechaAnterior}*.\n\n` +
+    `Si quieres otro horario, escríbeme *"cambiar cita"*, o comunícate con ${contacto}.`,
 
   slotTomado: () =>
     pick([

@@ -854,6 +854,37 @@ describe('rescheduleAppointment', () => {
     expect(r.message).toMatch(/ya está ocupado/);
     expect(tx.rolledBack).toBe(true);
     expect(tx.committed).toBe(false);
+    // 🏥 H10: es un rechazo DEFINITIVO del HIS, y se dice. La API devuelve la
+    // cita a su hora anterior y el bot le ofrece otra al paciente.
+    expect(r.rechazoDelHis).toBe(true);
+  });
+
+  it('🏥 H10/H11: la hora nueva se cruza con otra cita → rechazo DEFINITIVO, la anterior sigue', async () => {
+    // Nueva 08:00 de 20 min; el HIS tiene una de 07:50 de 20 min ese día.
+    const { driver, requests, tx } = conDriver({
+      citasDelDia: [{ hora: '2026/09/03 07:50', dura: 20 }],
+    });
+
+    const r = await driver.rescheduleAppointment(eventoResched());
+
+    expect(r.success).toBe(false);
+    expect(r.rechazoDelHis).toBe(true);
+    expect(r.message).toMatch(/la cita anterior sigue en pie/);
+    expect(r.message).toContain(
+      'se cruza con otra cita del HIS (07:50, 20 min)',
+    );
+    expect(insertDeCita(requests)).toBeUndefined();
+    expect(tx.rolledBack).toBe(true);
+    expect(tx.committed).toBe(false);
+  });
+
+  it('un fallo que NO es del HIS (médico sin turno ese día) no se marca como rechazo definitivo', async () => {
+    const { driver } = conDriver({ turno: null });
+
+    const r = await driver.rescheduleAppointment(eventoResched());
+
+    expect(r.success).toBe(false);
+    expect(r.rechazoDelHis).toBeUndefined();
   });
 
   it('anulación y alta viajan en la MISMA transacción, y se confirma una sola vez', async () => {

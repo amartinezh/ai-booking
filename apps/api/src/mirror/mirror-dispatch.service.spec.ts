@@ -1669,4 +1669,121 @@ describe('MirrorDispatchService — rechazo definitivo del HIS', () => {
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // 🏥 H10 para el CAMBIO de fecha: el HIS rechazó mover la cita. El agente
+  // reagenda en una transacción, así que en el hospital sigue en su hora de
+  // antes: AgenIA vuelve a ella (no la anula).
+  // ────────────────────────────────────────────────────────────────────────
+  describe('cambio de fecha rechazado', () => {
+    const cambio = (payload: Record<string, unknown> = {}) =>
+      evento({
+        op: 'UPDATE',
+        payload: {
+          scheduleSlotId: 'slot-new',
+          __old: { scheduleSlotId: 'slot-old' },
+          ...payload,
+        },
+      });
+    const citaEnElNuevo = {
+      id: 'apt-1',
+      status: 'SCHEDULED',
+      scheduleSlotId: 'slot-new',
+      metaLog: { origenBot: true },
+    };
+
+    beforeEach(() => {
+      prisma.syncOutbox.findFirst.mockResolvedValue(cambio());
+      tx.appointment.findFirst
+        .mockResolvedValueOnce(citaEnElNuevo) // la cita
+        .mockResolvedValueOnce(null); // nadie más en el cupo de antes
+      tx.scheduleSlot.findFirst = jest.fn(async () => ({ id: 'slot-old' }));
+    });
+
+    it('🚨 la cita VUELVE a su cupo anterior (no se anula), con origen MIRROR y el motivo', async () => {
+      await ackConRechazo();
+
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      const upd = tx.appointment.update.mock.calls[0][0];
+      expect(upd.where).toEqual({ id: 'apt-1' });
+      expect(upd.data.scheduleSlotId).toBe('slot-old');
+      expect(upd.data.status).toBeUndefined();
+      expect(upd.data.metaLog.origenBot).toBe(true);
+      expect(upd.data.metaLog.cambioRechazadoPorElHis).toMatchObject({
+        motivo: 'se cruza con otra cita del HIS',
+        cupoRechazado: 'slot-new',
+      });
+    });
+
+    it('el cupo de antes queda ocupado por la cita y el nuevo CERRADO (el HIS tiene ese tiempo)', async () => {
+      await ackConRechazo();
+
+      expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+        where: { id: 'slot-old' },
+        data: { isAvailable: false },
+      });
+      expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+        where: { id: 'slot-new' },
+        data: { isAvailable: false },
+      });
+    });
+
+    it('cierra el evento (no se reintenta) y deja constancia en la auditoría', async () => {
+      await ackConRechazo();
+
+      const cierre = tx.syncOutbox.updateMany.mock.calls[0][0];
+      expect(cierre.data.deliveredAt).toBeInstanceOf(Date);
+      expect(cierre.data.lastError).toContain('Cambio rechazado por el HIS');
+      expect(tx.syncAudit.create.mock.calls[0][0].data).toMatchObject({
+        entityId: 'apt-1',
+        op: 'UPDATE',
+        outcome: 'CONFLICT',
+      });
+      expect(prisma.syncOutbox.updateMany).toHaveBeenCalledTimes(1); // solo el de `seqs`
+    });
+
+    it('si el cupo de antes ya tiene OTRA cita viva, no se revierte: fallo normal (bandeja)', async () => {
+      tx.appointment.findFirst.mockReset();
+      tx.appointment.findFirst
+        .mockResolvedValueOnce(citaEnElNuevo)
+        .mockResolvedValueOnce({ id: 'apt-otro' });
+
+      await ackConRechazo();
+
+      expect(tx.appointment.update).not.toHaveBeenCalled();
+      expect(tx.syncOutbox.updateMany).not.toHaveBeenCalled();
+      const llamadas = prisma.syncOutbox.updateMany.mock.calls.map(
+        (c: any[]) => c[0].data,
+      );
+      expect(
+        llamadas.some(
+          (d: any) => d.attempts?.increment === 1 && !d.deliveredAt,
+        ),
+      ).toBe(true);
+    });
+
+    it('si la cita ya no está en el cupo nuevo (alguien la movió), no se toca: fallo normal', async () => {
+      tx.appointment.findFirst.mockReset();
+      tx.appointment.findFirst.mockResolvedValueOnce({
+        ...citaEnElNuevo,
+        scheduleSlotId: 'slot-otro',
+      });
+
+      await ackConRechazo();
+
+      expect(tx.appointment.update).not.toHaveBeenCalled();
+    });
+
+    it('un UPDATE que no cambia de cupo (asistencia) no es un cambio de fecha: fallo normal', async () => {
+      prisma.syncOutbox.findFirst.mockResolvedValue(
+        cambio({ __old: { scheduleSlotId: 'slot-new' } }),
+      );
+
+      await ackConRechazo();
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
 });

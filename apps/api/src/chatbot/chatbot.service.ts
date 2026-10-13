@@ -117,6 +117,8 @@ import {
 import {
   ConfirmacionHisService,
   ABANDONO_CONFIRMACION_HIS_MS,
+  type ConfirmacionPendiente,
+  type EstadoCambioHis,
 } from './confirmacion-his.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 
@@ -8551,9 +8553,18 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
+      // 🏥 H10 para el cambio de fecha: con espejo, el cambio se confirma solo
+      // cuando el HIS lo registra. Mientras tanto el cupo de ANTES sigue
+      // reservado: si el HIS lo rechaza, la cita vuelve a él
+      // (`MirrorDispatchService.markRejectedByHis`) sin que nadie se lo haya
+      // llevado entre tanto. Sin espejo, se libera en el acto, como siempre.
+      const esperaAlHospital =
+        await this.requiereConfirmacionHis(organizationId);
+
       try {
         // Reprogramación atómica: validamos que el nuevo cupo siga libre,
-        // movemos la cita a él, liberamos el cupo anterior y ocupamos el nuevo.
+        // movemos la cita a él, ocupamos el nuevo y (sin espejo) liberamos el
+        // anterior.
         await this.prisma.$transaction(async (tx) => {
           const newSlot = await tx.scheduleSlot.findUnique({
             where: { id: newSlotId },
@@ -8579,10 +8590,12 @@ export class ChatbotService implements OnModuleInit {
             where: { id: aptId },
             data: { scheduleSlotId: newSlotId },
           });
-          await tx.scheduleSlot.update({
-            where: { id: oldSlotId },
-            data: { isAvailable: true },
-          });
+          if (!esperaAlHospital) {
+            await tx.scheduleSlot.update({
+              where: { id: oldSlotId },
+              data: { isAvailable: true },
+            });
+          }
           await tx.scheduleSlot.update({
             where: { id: newSlotId },
             data: { isAvailable: false },
@@ -8590,6 +8603,88 @@ export class ChatbotService implements OnModuleInit {
         });
 
         const fechaNuevaFmt = formatAppointmentLong(newSlotFecha);
+        let cupoAnteriorLibre = !esperaAlHospital;
+
+        if (esperaAlHospital && this.confirmacionHis) {
+          const cupoAnterior = await this.prisma.scheduleSlot.findUnique({
+            where: { id: oldSlotId },
+          });
+          const fechaAnteriorFmt = cupoAnterior
+            ? formatAppointmentLong(cupoAnterior.startTime)
+            : '';
+          const enElHospital = await this.confirmarCambioConElHospital({
+            organizationId,
+            senderId,
+            MSGS,
+            appointmentId: aptId,
+            cupoNuevoId: newSlotId,
+            cupoAnteriorId: oldSlotId,
+            fechaTexto: fechaNuevaFmt,
+            fechaAnteriorTexto: fechaAnteriorFmt,
+          });
+
+          if (enElHospital === 'RECHAZADA') {
+            // La cita ya volvió a su hora de antes (la API la revirtió al
+            // recibir el rechazo): se le dice y se le ofrecen otros horarios.
+            const reply = MSGS.cambioRechazadoPorHospital(
+              fechaNuevaFmt,
+              fechaAnteriorFmt,
+            );
+            await this.smartReply(organizationId, senderId, reply);
+            await this.auditFailure(senderId, organizationId, {
+              reason: FailureReason.SLOT_TAKEN,
+              userMessage: text,
+              botReply: reply,
+              metadata: {
+                stage: 'MODIFY_RECHAZADO_POR_HIS',
+                appointmentId: aptId,
+                oldSlotId,
+                newSlotId,
+              },
+            });
+            await this.offerModifySlots(organizationId, senderId, aptId);
+            return;
+          }
+          if (enElHospital === 'PENDIENTE') {
+            // Ya se le dijo que se le escribe al quedar registrado; el barrido
+            // de pendientes libera el cupo de antes cuando el HIS confirme.
+            await this.auditSuccess(senderId, organizationId, {
+              userMessage: text,
+              botReply: MSGS.cambioEnRegistro(fechaNuevaFmt),
+              metadata: {
+                event: 'APPOINTMENT_RESCHEDULE_PENDING_HIS',
+                appointmentId: aptId,
+                oldSlotId,
+                newSlotId,
+              },
+            });
+            await this.cleanUpModifySession(organizationId, senderId);
+            return;
+          }
+          if (enElHospital === 'ANULADA') {
+            // La cita se anuló mientras se esperaba al hospital: no hay cambio
+            // que confirmar.
+            const reply = MSGS.modificarError();
+            await this.smartReply(organizationId, senderId, reply);
+            await this.auditFailure(senderId, organizationId, {
+              reason: FailureReason.MODIFY_ERROR,
+              userMessage: text,
+              botReply: reply,
+              metadata: {
+                stage: 'MODIFY_CITA_ANULADA_EN_ESPERA',
+                appointmentId: aptId,
+              },
+            });
+            await this.cleanUpModifySession(organizationId, senderId);
+            return;
+          }
+          // CONFIRMADA: el HIS ya anuló la cita vieja; su cupo queda libre.
+          cupoAnteriorLibre = await this.confirmacionHis.liberarCupoAnterior(
+            organizationId,
+            oldSlotId,
+          );
+        }
+
         const replyOk = MSGS.modificarExitosa(fechaNuevaFmt);
         await this.smartReply(organizationId, senderId, replyOk);
 
@@ -8605,25 +8700,8 @@ export class ChatbotService implements OnModuleInit {
         });
 
         // El cupo anterior queda libre → notificar a la lista de espera.
-        const freedSlot = await this.prisma.scheduleSlot.findUnique({
-          where: { id: oldSlotId },
-          include: { doctor: true },
-        });
-        if (freedSlot) {
-          try {
-            await this.waitlistService.notifyWaitlist({
-              slotId: freedSlot.id,
-              serviceId: freedSlot.serviceId,
-              epsId: freedSlot.allowedEpsId,
-              organizationId: organizationId,
-              doctorName: freedSlot.doctor.fullName,
-              slotDate: freedSlot.startTime,
-            });
-          } catch (e: unknown) {
-            this.logger.error(
-              `Error notificando waitlist (reprogramación): ${getErrorMessage(e)}`,
-            );
-          }
+        if (cupoAnteriorLibre) {
+          await this.avisarListaDeEsperaCupoLiberado(organizationId, oldSlotId);
         }
 
         await this.cleanUpModifySession(organizationId, senderId);
@@ -9774,6 +9852,101 @@ export class ChatbotService implements OnModuleInit {
       .join('\n');
   }
 
+  /** ¿Esta clínica espeja al HIS? Solo entonces hay que esperar al hospital. */
+  private async requiereConfirmacionHis(
+    organizationId: string,
+  ): Promise<boolean> {
+    return this.confirmacionHis
+      ? this.confirmacionHis.requiereConfirmacion(organizationId)
+      : false;
+  }
+
+  /**
+   * 🏥 H10 para el CAMBIO de fecha: le pide al paciente unos segundos y espera
+   * a que el HIS registre el cambio. Si no responde a tiempo, NO confirma: le
+   * dice que se le escribe al quedar registrado y deja el cambio en la lista
+   * que atiende `atenderConfirmacionesHisPendientes` (que también libera el
+   * cupo de antes al confirmarse).
+   */
+  private async confirmarCambioConElHospital(p: {
+    organizationId: string;
+    senderId: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    appointmentId: string;
+    cupoNuevoId: string;
+    cupoAnteriorId: string;
+    fechaTexto: string;
+    fechaAnteriorTexto: string;
+  }): Promise<EstadoCambioHis> {
+    const his = this.confirmacionHis!;
+    await this.smartReply(
+      p.organizationId,
+      p.senderId,
+      p.MSGS.confirmandoCambio(),
+    );
+    const seq =
+      (await his.eventoDelCambio(p.organizationId, p.appointmentId)) ??
+      undefined;
+    if (!seq) {
+      this.logger.error(
+        `Cambio de fecha de la cita ${p.appointmentId} (org ${p.organizationId}) ` +
+          'sin evento en la cola hacia el HIS: no se puede confirmar con el hospital.',
+      );
+    }
+    const estado = await his.esperarCambio(
+      p.organizationId,
+      p.appointmentId,
+      seq,
+      p.cupoNuevoId,
+    );
+    if (estado === 'PENDIENTE') {
+      await his.registrarPendiente({
+        organizationId: p.organizationId,
+        senderId: p.senderId,
+        appointmentId: p.appointmentId,
+        fechaTexto: p.fechaTexto,
+        desde: new Date().toISOString(),
+        tipo: 'CAMBIO',
+        seq,
+        cupoNuevoId: p.cupoNuevoId,
+        cupoAnteriorId: p.cupoAnteriorId,
+        fechaAnteriorTexto: p.fechaAnteriorTexto,
+      });
+      await this.smartReply(
+        p.organizationId,
+        p.senderId,
+        p.MSGS.cambioEnRegistro(p.fechaTexto),
+      );
+    }
+    return estado;
+  }
+
+  /** Un cupo quedó libre: se le ofrece al primero de la lista de espera. */
+  private async avisarListaDeEsperaCupoLiberado(
+    organizationId: string,
+    slotId: string,
+  ): Promise<void> {
+    const cupo = await this.prisma.scheduleSlot.findUnique({
+      where: { id: slotId },
+      include: { doctor: true },
+    });
+    if (!cupo) return;
+    try {
+      await this.waitlistService.notifyWaitlist({
+        slotId: cupo.id,
+        serviceId: cupo.serviceId,
+        epsId: cupo.allowedEpsId,
+        organizationId,
+        doctorName: cupo.doctor.fullName,
+        slotDate: cupo.startTime,
+      });
+    } catch (e: unknown) {
+      this.logger.error(
+        `Error notificando waitlist (reprogramación): ${getErrorMessage(e)}`,
+      );
+    }
+  }
+
   /**
    * 🏥 H10 (docs/PLAN_AGENDA_HUECOS.md): espera a que la cita quede registrada
    * en el HIS antes de confirmarla. Mientras, le dice al paciente que espere
@@ -9833,13 +10006,25 @@ export class ChatbotService implements OnModuleInit {
       const pendientes = await this.confirmacionHis.pendientes();
       for (const p of pendientes) {
         try {
+          const vencida =
+            Date.now() - new Date(p.desde).getTime() >
+            ABANDONO_CONFIRMACION_HIS_MS;
+          if (p.tipo === 'CAMBIO') {
+            const estado = await this.confirmacionHis.estadoCambio(
+              p.organizationId,
+              p.appointmentId,
+              p.seq,
+              p.cupoNuevoId ?? '',
+            );
+            if (estado === 'PENDIENTE' && !vencida) continue;
+            if (!(await this.confirmacionHis.reclamar(p))) continue;
+            await this.atenderCambioHisPendiente(p, estado, vencida);
+            continue;
+          }
           const estado = await this.confirmacionHis.estado(
             p.organizationId,
             p.appointmentId,
           );
-          const vencida =
-            Date.now() - new Date(p.desde).getTime() >
-            ABANDONO_CONFIRMACION_HIS_MS;
           if (estado === 'PENDIENTE' && !vencida) continue;
           if (!(await this.confirmacionHis.reclamar(p))) continue;
           await this.atenderConfirmacionHisPendiente(p, estado, vencida);
@@ -9900,6 +10085,77 @@ export class ChatbotService implements OnModuleInit {
       botReply: reply ?? '[sin mensaje: confirmación abandonada tras 24 h]',
       metadata: {
         stage: 'HIS_CONFIRMATION_FOLLOWUP',
+        appointmentId: p.appointmentId,
+        estado,
+        vencida,
+      },
+    });
+  }
+
+  /**
+   * 🏥 H10, segundo mensaje de un CAMBIO de fecha cuyo registro en el HIS no
+   * llegó a tiempo. Confirmado → se libera el cupo de antes (y se le ofrece a la
+   * lista de espera) y se le confirma al paciente. Rechazado → la cita ya
+   * volvió a su hora de antes: se le avisa. Anulada o sin resultado en 24 h →
+   * no se le escribe (la bandeja de excepciones ya avisó al personal; el
+   * barrido de agenda reabre el cupo de antes si el hospital lo tiene libre).
+   */
+  private async atenderCambioHisPendiente(
+    p: ConfirmacionPendiente,
+    estado: EstadoCambioHis,
+    vencida: boolean,
+  ): Promise<void> {
+    const { organizationId, senderId } = p;
+    const MSGS = buildMessages(
+      await this.organizationSettings.getCommunicationStyle(organizationId),
+      canalDe(senderId),
+    );
+
+    let reply: string | null = null;
+    if (estado === 'CONFIRMADA') {
+      if (
+        p.cupoAnteriorId &&
+        (await this.confirmacionHis!.liberarCupoAnterior(
+          organizationId,
+          p.cupoAnteriorId,
+        ))
+      ) {
+        await this.avisarListaDeEsperaCupoLiberado(
+          organizationId,
+          p.cupoAnteriorId,
+        );
+      }
+      reply = MSGS.modificarExitosa(p.fechaTexto);
+      await this.smartReply(organizationId, senderId, reply);
+    } else if (estado === 'RECHAZADA') {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { supportPhone: true },
+      });
+      const contacto = org?.supportPhone
+        ? MSGS.contactoClinica(org.supportPhone)
+        : MSGS.contactoClinicaSinTelefono();
+      reply = MSGS.cambioNoRegistradoEnHospital(
+        p.fechaTexto,
+        p.fechaAnteriorTexto ?? '',
+        contacto,
+      );
+      await this.smartReply(organizationId, senderId, reply);
+    }
+
+    await this.auditLog(senderId, organizationId, {
+      status:
+        estado === 'CONFIRMADA'
+          ? InteractionStatus.SUCCESS
+          : InteractionStatus.FAILED,
+      userMessage: '[confirmación del hospital]',
+      botReply:
+        reply ??
+        (estado === 'ANULADA'
+          ? '[sin mensaje: la cita se anuló mientras se esperaba al hospital]'
+          : '[sin mensaje: confirmación abandonada tras 24 h]'),
+      metadata: {
+        stage: 'HIS_RESCHEDULE_FOLLOWUP',
         appointmentId: p.appointmentId,
         estado,
         vencida,

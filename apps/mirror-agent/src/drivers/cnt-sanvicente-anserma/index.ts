@@ -1759,6 +1759,12 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         await tx.rollback();
         return {
           success: false,
+          // 🏥 H10: si el HIS rechazó la hora nueva de forma definitiva (ya
+          // tomada o se cruza, H11), se dice: la API devuelve la cita a su hora
+          // anterior —la que el hospital conserva tras este rollback— y el bot
+          // le ofrece otra al paciente. Sin la marca, se reintentaba diez veces
+          // y acababa en la bandeja con el paciente creyendo la fecha nueva.
+          ...(alta.rechazoDelHis ? { rechazoDelHis: true } : {}),
           message: `no se reagendó, la cita anterior sigue en pie: ${alta.message ?? 'el alta falló'}`,
         };
       }

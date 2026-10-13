@@ -53,6 +53,29 @@ function conDriver(recordset: unknown[]) {
   return driver;
 }
 
+// ⏰ Las citas de ejemplo son del 2026-10-10 y `detectChanges` solo mira las
+// FUTURAS: con el reloj real, desde ese día estas pruebas dejaban de ver sus
+// propias citas y fallaban solas. Se fija solo la FECHA (antes de las citas);
+// los temporizadores siguen siendo los reales.
+beforeEach(() => {
+  jest.useFakeTimers({
+    now: new Date('2026-10-01T12:00:00.000Z'),
+    doNotFake: [
+      'nextTick',
+      'setImmediate',
+      'clearImmediate',
+      'setInterval',
+      'clearInterval',
+      'setTimeout',
+      'clearTimeout',
+      'queueMicrotask',
+      'hrtime',
+      'performance',
+    ],
+  });
+});
+afterEach(() => jest.useRealTimers());
+
 describe('detectChanges — eventId no colisiona entre instancias distintas', () => {
   it('agendar dos veces el mismo cupo (con la cancelación detectada en medio) produce dos INSERT con eventId distinto', async () => {
     const driver = conDriver([]);

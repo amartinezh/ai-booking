@@ -145,5 +145,141 @@ describe('ConfirmacionHisService', () => {
       expect(await svc.pendientes()).toEqual([p]);
       expect(redis.hdel).toHaveBeenCalledWith(expect.any(String), 'org-1|roto');
     });
+
+    it('un alta y un CAMBIO de la misma cita no se pisan; el alta conserva su clave de antes', async () => {
+      const cambio = { ...p, tipo: 'CAMBIO' as const, seq: '9' };
+      await svc.registrarPendiente(p);
+      await svc.registrarPendiente(cambio);
+
+      expect(await svc.pendientes()).toHaveLength(2);
+      expect(redis.hset).toHaveBeenCalledWith(
+        expect.any(String),
+        'org-1|apt-1',
+        expect.any(String),
+      );
+      expect(redis.hset).toHaveBeenCalledWith(
+        expect.any(String),
+        'org-1|apt-1|CAMBIO',
+        expect.any(String),
+      );
+      expect(await svc.reclamar(cambio)).toBe(true);
+      expect(await svc.pendientes()).toEqual([p]);
+    });
+  });
+
+  // 🏥 H10 para el CAMBIO de fecha.
+  describe('cambio de fecha', () => {
+    const enElNuevo = { status: 'SCHEDULED', scheduleSlotId: 'slot-new' };
+
+    it('cita en el cupo nuevo + su evento entregado → CONFIRMADA', async () => {
+      prisma.appointment.findFirst.mockResolvedValue(enElNuevo);
+      prisma.syncOutbox.findFirst.mockResolvedValue({
+        deliveredAt: new Date(),
+      });
+      expect(await svc.estadoCambio(ORG, 'apt-1', '9', 'slot-new')).toBe(
+        'CONFIRMADA',
+      );
+      expect(prisma.syncOutbox.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { organizationId: ORG, seq: BigInt(9) },
+        }),
+      );
+    });
+
+    it('evento sin entregar → PENDIENTE', async () => {
+      prisma.appointment.findFirst.mockResolvedValue(enElNuevo);
+      prisma.syncOutbox.findFirst.mockResolvedValue({ deliveredAt: null });
+      expect(await svc.estadoCambio(ORG, 'apt-1', '9', 'slot-new')).toBe(
+        'PENDIENTE',
+      );
+    });
+
+    it('🚨 la cita volvió a otro cupo (la API la revirtió por el rechazo) → RECHAZADA, aunque el evento esté cerrado', async () => {
+      prisma.appointment.findFirst.mockResolvedValue({
+        status: 'SCHEDULED',
+        scheduleSlotId: 'slot-old',
+      });
+      prisma.syncOutbox.findFirst.mockResolvedValue({
+        deliveredAt: new Date(),
+      });
+      expect(await svc.estadoCambio(ORG, 'apt-1', '9', 'slot-new')).toBe(
+        'RECHAZADA',
+      );
+    });
+
+    it('cita anulada o inexistente → ANULADA', async () => {
+      prisma.appointment.findFirst.mockResolvedValue({
+        status: 'CANCELLED',
+        scheduleSlotId: 'slot-new',
+      });
+      expect(await svc.estadoCambio(ORG, 'apt-1', '9', 'slot-new')).toBe(
+        'ANULADA',
+      );
+      prisma.appointment.findFirst.mockResolvedValue(null);
+      expect(await svc.estadoCambio(ORG, 'apt-1', '9', 'slot-new')).toBe(
+        'ANULADA',
+      );
+    });
+
+    it('sin evento del cambio nunca se confirma (solo se detecta la reversión)', async () => {
+      prisma.appointment.findFirst.mockResolvedValue(enElNuevo);
+      prisma.syncOutbox.findFirst.mockResolvedValue({
+        deliveredAt: new Date(),
+      });
+      expect(await svc.estadoCambio(ORG, 'apt-1', undefined, 'slot-new')).toBe(
+        'PENDIENTE',
+      );
+      expect(prisma.syncOutbox.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('esperarCambio vuelve en cuanto el hospital lo registra', async () => {
+      prisma.appointment.findFirst.mockResolvedValue(enElNuevo);
+      prisma.syncOutbox.findFirst
+        .mockResolvedValueOnce({ deliveredAt: null })
+        .mockResolvedValue({ deliveredAt: new Date() });
+      expect(
+        await svc.esperarCambio(ORG, 'apt-1', '9', 'slot-new', 5_000),
+      ).toBe('CONFIRMADA');
+    });
+
+    it('eventoDelCambio sigue el último UPDATE de la cita que va HACIA el HIS', async () => {
+      prisma.syncOutbox.findFirst.mockResolvedValue({ seq: BigInt(42) });
+      expect(await svc.eventoDelCambio(ORG, 'apt-1')).toBe('42');
+      expect(prisma.syncOutbox.findFirst).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG,
+          entityType: 'APPOINTMENT',
+          entityId: 'apt-1',
+          op: 'UPDATE',
+          origin: { not: 'MIRROR' },
+        },
+        orderBy: { seq: 'desc' },
+        select: { seq: true },
+      });
+    });
+
+    it('liberarCupoAnterior: origen MIRROR y solo si nadie tiene una cita viva ahí', async () => {
+      const tx = {
+        $executeRawUnsafe: jest.fn(async () => 0),
+        scheduleSlot: { updateMany: jest.fn(async () => ({ count: 1 })) },
+      };
+      prisma.$transaction = jest.fn(async (cb: (t: any) => unknown) => cb(tx));
+
+      expect(await svc.liberarCupoAnterior(ORG, 'slot-old')).toBe(true);
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      expect(tx.scheduleSlot.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'slot-old',
+          organizationId: ORG,
+          appointments: { none: { status: { not: 'CANCELLED' } } },
+        },
+        data: { isAvailable: true },
+      });
+
+      tx.scheduleSlot.updateMany.mockResolvedValue({ count: 0 });
+      expect(await svc.liberarCupoAnterior(ORG, 'slot-old')).toBe(false);
+    });
   });
 });

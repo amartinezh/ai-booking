@@ -1457,6 +1457,217 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       // isQuickModify solo aplica en IDLE; el turno se trata como texto del menú EPS.
       expect(await state()).toBe(ChatState.AWAITING_EPS);
     });
+
+    // ────────────────────────────────────────────────────────────────
+    // 🏥 H10 para el CAMBIO de fecha: el bot no confirma el cambio hasta que
+    // el hospital lo registra, y mientras tanto el cupo de antes sigue
+    // reservado (si el hospital lo rechaza, la cita vuelve a él).
+    // ────────────────────────────────────────────────────────────────
+    describe('3H. Cambio de fecha con el hospital (H10)', () => {
+      let confirmacion: Record<string, jest.Mock>;
+      const cupo = (id: string) => db.slots.find((s) => s.id === id)!;
+      const exito = () =>
+        sent().filter((t) => /reprogramada|Moví su cita/i.test(t));
+
+      beforeEach(() => {
+        confirmacion = {
+          requiereConfirmacion: jest.fn(async () => true),
+          puedeAgendar: jest.fn(async () => true),
+          eventoDelCambio: jest.fn(async () => '77'),
+          esperarCambio: jest.fn(async () => 'CONFIRMADA'),
+          estadoCambio: jest.fn(async () => 'PENDIENTE'),
+          liberarCupoAnterior: jest.fn(async (_org: string, id: string) => {
+            cupo(id).isAvailable = true;
+            return true;
+          }),
+          registrarPendiente: jest.fn(async () => undefined),
+          pendientes: jest.fn(async () => []),
+          reclamar: jest.fn(async () => true),
+          estado: jest.fn(async () => 'PENDIENTE'),
+          esperar: jest.fn(async () => 'CONFIRMADA'),
+        };
+        (service as any).confirmacionHis = confirmacion;
+      });
+
+      const cambiarHastaElSi = async () => {
+        await say('reprogramar mi cita');
+        await say(CEDULA);
+        await say('A');
+        await say('Sí');
+      };
+
+      it('CONFIRMADA: pide unos segundos con el cupo de antes RESERVADO, y solo después confirma y lo libera', async () => {
+        let anteriorReservadoAlEsperar: boolean | undefined;
+        confirmacion.esperarCambio.mockImplementation(async () => {
+          anteriorReservadoAlEsperar = !cupo('slot-old').isAvailable;
+          return 'CONFIRMADA';
+        });
+
+        await cambiarHastaElSi();
+
+        expect(confirmacion.esperarCambio).toHaveBeenCalledWith(
+          ORG_ID,
+          'apt-0',
+          '77',
+          'slot-new',
+        );
+        expect(anteriorReservadoAlEsperar).toBe(true);
+        const textos = sent();
+        const iEspera = textos.findIndex((t) =>
+          /(registrando el cambio|pasando su cita al nuevo horario)/i.test(t),
+        );
+        const iExito = textos.findIndex((t) =>
+          /reprogramada|Moví su cita/i.test(t),
+        );
+        expect(iEspera).toBeGreaterThanOrEqual(0);
+        expect(iExito).toBeGreaterThan(iEspera);
+        expect(confirmacion.liberarCupoAnterior).toHaveBeenCalledWith(
+          ORG_ID,
+          'slot-old',
+        );
+        expect(waitlist.notifyWaitlist).toHaveBeenCalledWith(
+          expect.objectContaining({ slotId: 'slot-old' }),
+        );
+        expect(db.appointments[0].scheduleSlotId).toBe('slot-new');
+        expect(await state()).toBe(ChatState.IDLE);
+      });
+
+      it('RECHAZADA: no confirma, dice que la cita sigue en su hora de antes y ofrece otros horarios', async () => {
+        db.slots.push(slotRow('slot-alt', FECHA_C, 'Otra Dra', SVC_MEDICINA));
+        // Lo que hace la API al recibir el rechazo: la cita vuelve a su cupo y
+        // el nuevo queda cerrado.
+        confirmacion.esperarCambio.mockImplementation(async () => {
+          db.appointments[0].scheduleSlotId = 'slot-old';
+          cupo('slot-new').isAvailable = false;
+          return 'RECHAZADA';
+        });
+
+        await cambiarHastaElSi();
+
+        expect(exito()).toHaveLength(0);
+        expect(
+          sent().some(
+            (t) => /no pudo registrar el cambio/i.test(t) && /sigue el/.test(t),
+          ),
+        ).toBe(true);
+        expect(confirmacion.liberarCupoAnterior).not.toHaveBeenCalled();
+        expect(waitlist.notifyWaitlist).not.toHaveBeenCalled();
+        expect(cupo('slot-old').isAvailable).toBe(false);
+        // Puede elegir otro horario sin empezar de nuevo.
+        expect(await state()).toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
+      });
+
+      it('sin respuesta a tiempo: no confirma, avisa que le escribe y deja el cambio pendiente con sus cupos', async () => {
+        confirmacion.esperarCambio.mockResolvedValue('PENDIENTE');
+
+        await cambiarHastaElSi();
+
+        expect(exito()).toHaveLength(0);
+        expect(lastSent()).toMatch(/aún no termina de registrar el cambio/i);
+        expect(confirmacion.registrarPendiente).toHaveBeenCalledWith(
+          expect.objectContaining({
+            organizationId: ORG_ID,
+            senderId: SENDER,
+            appointmentId: 'apt-0',
+            tipo: 'CAMBIO',
+            seq: '77',
+            cupoNuevoId: 'slot-new',
+            cupoAnteriorId: 'slot-old',
+          }),
+        );
+        // El cupo de antes sigue reservado hasta que el hospital responda.
+        expect(cupo('slot-old').isAvailable).toBe(false);
+        expect(waitlist.notifyWaitlist).not.toHaveBeenCalled();
+        expect(await state()).toBe(ChatState.IDLE);
+      });
+
+      it('una clínica SIN espejo cambia como siempre: sin espera y liberando el cupo de antes en el acto', async () => {
+        confirmacion.requiereConfirmacion.mockResolvedValue(false);
+
+        await cambiarHastaElSi();
+
+        expect(confirmacion.esperarCambio).not.toHaveBeenCalled();
+        expect(cupo('slot-old').isAvailable).toBe(true);
+        expect(exito()).toHaveLength(1);
+      });
+
+      describe('barrido de cambios pendientes', () => {
+        const pendiente = {
+          organizationId: ORG_ID,
+          senderId: SENDER,
+          appointmentId: 'apt-0',
+          fechaTexto: 'martes 6 de octubre, 9:00 a. m.',
+          desde: new Date().toISOString(),
+          tipo: 'CAMBIO',
+          seq: '77',
+          cupoNuevoId: 'slot-new',
+          cupoAnteriorId: 'slot-old',
+          fechaAnteriorTexto: 'lunes 5 de octubre, 8:00 a. m.',
+        };
+
+        it('cuando el hospital lo registra: libera el cupo de antes, avisa a la lista y confirma', async () => {
+          confirmacion.pendientes.mockResolvedValue([pendiente]);
+          confirmacion.estadoCambio.mockResolvedValue('CONFIRMADA');
+
+          await service.atenderConfirmacionesHisPendientes();
+
+          expect(confirmacion.estadoCambio).toHaveBeenCalledWith(
+            ORG_ID,
+            'apt-0',
+            '77',
+            'slot-new',
+          );
+          expect(confirmacion.estado).not.toHaveBeenCalled();
+          expect(confirmacion.liberarCupoAnterior).toHaveBeenCalledWith(
+            ORG_ID,
+            'slot-old',
+          );
+          expect(waitlist.notifyWaitlist).toHaveBeenCalledWith(
+            expect.objectContaining({ slotId: 'slot-old' }),
+          );
+          expect(lastSent()).toContain('martes 6 de octubre');
+        });
+
+        it('si el hospital lo rechaza: le dice que su cita sigue en su hora de antes, con el teléfono', async () => {
+          confirmacion.pendientes.mockResolvedValue([pendiente]);
+          confirmacion.estadoCambio.mockResolvedValue('RECHAZADA');
+          prisma.organization.findUnique.mockResolvedValue({
+            id: ORG_ID,
+            name: ORG_NAME,
+            supportPhone: '6068538838',
+          });
+
+          await service.atenderConfirmacionesHisPendientes();
+
+          const r = lastSent();
+          expect(r).toMatch(/no pudo registrar el cambio/i);
+          expect(r).toContain('sigue el lunes 5 de octubre, 8:00 a. m.');
+          expect(r).toContain('"cambiar cita"');
+          expect(r).toContain('6068538838');
+          expect(confirmacion.liberarCupoAnterior).not.toHaveBeenCalled();
+        });
+
+        it('si la cita se anuló mientras tanto, no se le escribe', async () => {
+          confirmacion.pendientes.mockResolvedValue([pendiente]);
+          confirmacion.estadoCambio.mockResolvedValue('ANULADA');
+
+          await service.atenderConfirmacionesHisPendientes();
+
+          expect(confirmacion.reclamar).toHaveBeenCalled();
+          expect(sendSpy).not.toHaveBeenCalled();
+        });
+
+        it('si sigue pendiente, ni se reclama ni se le escribe', async () => {
+          confirmacion.pendientes.mockResolvedValue([pendiente]);
+          confirmacion.estadoCambio.mockResolvedValue('PENDIENTE');
+
+          await service.atenderConfirmacionesHisPendientes();
+
+          expect(confirmacion.reclamar).not.toHaveBeenCalled();
+          expect(sendSpy).not.toHaveBeenCalled();
+        });
+      });
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────
