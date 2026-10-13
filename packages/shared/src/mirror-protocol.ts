@@ -445,6 +445,13 @@ export interface AvailabilityResult {
    * Se cierran en vez de eliminarse: AgenIA deja de ofrecerlos igual.
    */
   retired: number;
+  /**
+   * Cupos sin cita viva cuya hora de FIN no coincidía con la del hospital y se
+   * corrigió (p. ej. una agenda que pasó de 20 a 30 min: el barrido empareja
+   * por hora de inicio y el fin quedaba con la duración vieja). Opcional: una
+   * API anterior no lo devuelve.
+   */
+  resized?: number;
   /** Cupos del HIS cuyo médico no está homologado, o no tiene servicio. */
   skipped: string[];
   /**

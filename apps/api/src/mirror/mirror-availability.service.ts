@@ -177,6 +177,8 @@ export class MirrorAvailabilityService {
     const aLiberar: string[] = [];
     const aBorrar: string[] = [];
     const aRetirar: string[] = [];
+    // Cupos cuya hora de FIN quedó vieja (ver más abajo): id → fin correcto.
+    const aReajustar: { id: string; end: Date }[] = [];
     const conflicts: string[] = [];
 
     for (const [clave, cupo] of deseados) {
@@ -195,6 +197,19 @@ export class MirrorAvailabilityService {
       const deberiaEstarLibre = !cupo.occupied && !tieneCitaViva;
       if (deberiaEstarLibre && !actual.isAvailable) aLiberar.push(actual.id);
       if (!deberiaEstarLibre && actual.isAvailable) aOcupar.push(actual.id);
+
+      // 🕒 El cupo se empareja por hora de INICIO, así que su FIN nunca se
+      // revisaba: cuando una agenda cambió de duración (91-1, 91-2, PS06, PS08
+      // pasaron de 20 a 30 min; HO02-04 a 40 el 2026-10-06), los cupos cuyo
+      // inicio coincidía en las dos rejillas se quedaron con 20 min —cerca de la
+      // mitad de los futuros de esos médicos—. Con el envío al hospital
+      // encendido, una cita del panel en uno de ellos habría viajado al HIS
+      // con 20 min y la revisión de cruces habría medido corto. Se corrige con
+      // el fin que da el hospital. Solo sin cita viva: la duración de una cita
+      // ya agendada es la de esa cita, no la de la rejilla.
+      if (!tieneCitaViva && actual.endTime.getTime() !== cupo.end.getTime()) {
+        aReajustar.push({ id: actual.id, end: cupo.end });
+      }
     }
 
     for (const [clave, actual] of existentePorClave) {
@@ -240,6 +255,7 @@ export class MirrorAvailabilityService {
       updated: aOcupar.length + aLiberar.length,
       removed: aBorrar.length,
       retired: aRetirar.length,
+      resized: aReajustar.length,
       skipped,
       conflicts,
     };
@@ -248,7 +264,8 @@ export class MirrorAvailabilityService {
       this.logger.log(
         `Agenda (modo sombra, org ${organizationId}, ${input.fromIso.slice(0, 10)}): ` +
           `crearía ${resumen.created}, actualizaría ${resumen.updated}, ` +
-          `borraría ${resumen.removed}. Sin escribir nada.`,
+          `borraría ${resumen.removed}, corregiría la hora de fin de ` +
+          `${aReajustar.length}. Sin escribir nada.`,
       );
       await this.registrar(organizationId, input, resumen);
       return resumen;
@@ -291,6 +308,15 @@ export class MirrorAvailabilityService {
       }
       if (aBorrar.length > 0) {
         await tx.scheduleSlot.deleteMany({ where: { id: { in: aBorrar } } });
+      }
+      // Uno por uno: cada cupo tiene su propio fin. Solo el primer barrido
+      // completo después de un cambio de duración tiene trabajo aquí (~10 por
+      // día); los demás no hacen ninguna consulta de más.
+      for (const { id, end } of aReajustar) {
+        await tx.scheduleSlot.update({
+          where: { id },
+          data: { endTime: end },
+        });
       }
     });
 

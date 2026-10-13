@@ -471,6 +471,107 @@ describe('MirrorAvailabilityService', () => {
     });
   });
 
+  // ══════════════════════════════════════════════════════════════════════
+  // 🕒 El cupo se empareja por hora de INICIO: cuando una agenda cambió de
+  // duración (20 → 30 min el 2026-10-06), los cupos cuyo inicio coincidía en
+  // las dos rejillas se quedaron con el fin viejo. El barrido lo corrige.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('hora de fin desactualizada', () => {
+    const cupoHis30 = (startTimeIso: string, occupied = false) => ({
+      ...cupoHis(startTimeIso, occupied),
+      endTimeIso: new Date(
+        new Date(startTimeIso).getTime() + 30 * 60_000,
+      ).toISOString(),
+    });
+
+    beforeEach(() => {
+      tx.scheduleSlot.update = jest.fn(() => ({}));
+    });
+
+    it('un cupo libre de 20 min que el hospital tiene de 30 toma el fin del hospital', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoAgenIA('2026-09-03T12:00:00.000Z', { id: 's1', minutos: 20 }),
+      ]);
+
+      const r = await aplicar([cupoHis30('2026-09-03T12:00:00.000Z')]);
+
+      expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+        where: { id: 's1' },
+        data: { endTime: new Date('2026-09-03T12:30:00.000Z') },
+      });
+      expect(r.resized).toBe(1);
+      // No es un cambio de disponibilidad.
+      expect(r.updated).toBe(0);
+    });
+
+    it('también un cupo cerrado (sin cita): ocupado por el hospital, pero con su duración real', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoAgenIA('2026-09-03T12:00:00.000Z', {
+          id: 's1',
+          isAvailable: false,
+          conCitaCancelada: true,
+        }),
+      ]);
+
+      const r = await aplicar([cupoHis30('2026-09-03T12:00:00.000Z', true)]);
+
+      expect(r.resized).toBe(1);
+    });
+
+    it('🚨 un cupo con cita VIVA no se toca: la duración de esa cita es la suya', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoAgenIA('2026-09-03T12:00:00.000Z', {
+          id: 's1',
+          isAvailable: false,
+          conCita: true,
+        }),
+      ]);
+
+      const r = await aplicar([cupoHis30('2026-09-03T12:00:00.000Z')]);
+
+      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+      expect(r.resized).toBe(0);
+    });
+
+    it('con el fin correcto no hay nada que corregir (ni una consulta de más)', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoAgenIA('2026-09-03T12:00:00.000Z', { id: 's1', minutos: 30 }),
+      ]);
+
+      const r = await aplicar([cupoHis30('2026-09-03T12:00:00.000Z')]);
+
+      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+      expect(r.resized).toBe(0);
+    });
+
+    it('en modo sombra solo lo cuenta', async () => {
+      conModo('SHADOW');
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoAgenIA('2026-09-03T12:00:00.000Z', { id: 's1', minutos: 20 }),
+      ]);
+
+      const r = await aplicar([cupoHis30('2026-09-03T12:00:00.000Z')]);
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(r.resized).toBe(1);
+    });
+
+    it('la corrección va con origen MIRROR, en la misma transacción del barrido', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoAgenIA('2026-09-03T12:00:00.000Z', { id: 's1', minutos: 20 }),
+      ]);
+
+      await aplicar([cupoHis30('2026-09-03T12:00:00.000Z')]);
+
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      expect(tx.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.scheduleSlot.update.mock.invocationCallOrder[0],
+      );
+    });
+  });
+
   describe('SHADOW — la semana de observación que exige el plan', () => {
     beforeEach(() => conModo('SHADOW'));
 
