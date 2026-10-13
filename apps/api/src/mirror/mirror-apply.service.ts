@@ -8,7 +8,7 @@ import { MirrorExceptionsService } from './mirror-exceptions.service';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { CanonicalChangeEvent, ChangesResult } from './dto/mirror.types';
-import { AttendanceStatus } from '@agenia/database';
+import { AttendanceStatus, Prisma } from '@agenia/database';
 import {
   TITULO_EXCEPCION,
   claveExcepcion,
@@ -109,6 +109,8 @@ type ResolucionCupo =
         // quien la trabaje sepa de qué cupo habla sin abrir la base.
         doctorId: string;
         startTime: Date;
+        /** Para cerrar los cupos vecinos que la cita del hospital tapa. */
+        endTime?: Date;
       };
     }
   | { tipo: 'MEDICO_NO_ESPEJADO' }
@@ -373,17 +375,14 @@ export class MirrorApplyService {
             isAvailable: true,
           },
         }));
-      await tx.scheduleSlot.updateMany({
-        where: {
-          organizationId,
-          doctorId,
-          id: { not: elCupo.id },
-          isAvailable: true,
-          startTime: { lt: fin },
-          endTime: { gt: inicio },
-        },
-        data: { isAvailable: false },
-      });
+      await this.cerrarCuposQueSeCruzan(
+        tx,
+        organizationId,
+        doctorId,
+        elCupo.id,
+        inicio,
+        fin,
+      );
       return elCupo;
     });
 
@@ -394,6 +393,73 @@ export class MirrorApplyService {
         `${payload.doctorExternalKey}, ${payload.startTimeIso}, ${minutos} min).`,
     );
     return cupo;
+  }
+
+  /**
+   * Cierra los cupos LIBRES del médico que se cruzan con [inicio, fin), salvo el
+   * de la propia cita. Va dentro de la transacción de quien llama, que ya puso
+   * `sync_origin = 'MIRROR'`: el cierre nace en el HIS y no vuelve a él.
+   */
+  private async cerrarCuposQueSeCruzan(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    doctorId: string,
+    cupoId: string,
+    inicio: Date,
+    fin: Date,
+  ): Promise<number> {
+    const { count } = await tx.scheduleSlot.updateMany({
+      where: {
+        organizationId,
+        doctorId,
+        id: { not: cupoId },
+        isAvailable: true,
+        startTime: { lt: fin },
+        endTime: { gt: inicio },
+      },
+      data: { isAvailable: false },
+    });
+    return count;
+  }
+
+  /**
+   * Cita del hospital que cae en un cupo que AgenIA YA tenía: también tapa a
+   * sus vecinos. Pasa cuando el cupo es de rejilla (20 min) y la cita dura más
+   * (40), o cuando un cupo a la medida se reutiliza tras cancelarse su primera
+   * cita y el barrido ya había reabierto el vecino. Caso real 2026-10-13: PS06
+   * 13-nov 07:50-08:30 con el cupo de 08:00 libre; el barrido de 5 min solo
+   * cubre 7 días, así que a un mes vista quedaba ofrecible hasta el barrido
+   * completo de la noche (y el bot ofrece fechas lejanas si el paciente las pide).
+   */
+  private async cerrarVecinosDeCupoExistente(
+    organizationId: string,
+    cupo: Extract<ResolucionCupo, { tipo: 'OK' }>['cupo'],
+    payload: CanonicalChangeEvent['payload'],
+    traza: TrazaAuditoria,
+  ): Promise<void> {
+    const inicio = new Date(payload.startTimeIso!);
+    const minutos = await this.duracionDeLaCita(
+      organizationId,
+      payload,
+      inicio,
+    );
+    const finCita = inicio.getTime() + minutos * 60_000;
+    const fin = new Date(Math.max(finCita, cupo.endTime?.getTime() ?? 0));
+
+    const cerrados = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+      return this.cerrarCuposQueSeCruzan(
+        tx,
+        organizationId,
+        cupo.doctorId,
+        cupo.id,
+        inicio,
+        fin,
+      );
+    });
+    if (cerrados > 0) {
+      traza.prefijo = `se cerraron ${cerrados} cupo(s) libre(s) que se cruzaban con la cita`;
+    }
   }
 
   /**
@@ -562,6 +628,14 @@ export class MirrorApplyService {
               traza,
             );
       traza.entityId = cupo.id;
+      if (resuelto.tipo === 'OK') {
+        await this.cerrarVecinosDeCupoExistente(
+          organizationId,
+          resuelto.cupo,
+          event.payload,
+          traza,
+        );
+      }
 
       // Ocupar el cupo es lo que evita la sobreventa, y hay que hacerlo
       // aunque el paciente no se pueda homologar: da igual quién tenga la

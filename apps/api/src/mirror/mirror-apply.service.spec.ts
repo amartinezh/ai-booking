@@ -1112,6 +1112,82 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
   });
 
   // ════════════════════════════════════════════════════════════════════════
+  // 🏥 Una cita del hospital que cae en un cupo que AgenIA YA tenía también
+  // tapa a sus vecinos. Caso real 2026-10-13: PS06 13-nov 07:50-08:30 (cupo a
+  // la medida reutilizado) con el cupo de 08:00 libre durante horas, porque el
+  // barrido de 5 min solo cubre 7 días.
+  // ════════════════════════════════════════════════════════════════════════
+  describe('cita del hospital en un cupo que ya existía', () => {
+    const CUPO_740 = {
+      ...CUPO,
+      id: 'slot-750',
+      startTime: new Date('2026-11-13T12:50:00.000Z'),
+      endTime: new Date('2026-11-13T13:30:00.000Z'),
+    };
+    const enCupo = (payload: Record<string, unknown> = {}) =>
+      evento({
+        payload: {
+          doctorExternalKey: 'PS06',
+          startTimeIso: '2026-11-13T12:50:00.000Z',
+          patientDocument: '9696544',
+          ...payload,
+        },
+      });
+
+    beforeEach(() => {
+      prisma.scheduleSlot.findFirst.mockResolvedValue(CUPO_740);
+    });
+
+    it('🚨 cierra los cupos LIBRES del médico que se cruzan con el cupo (el de 08:00)', async () => {
+      tx.scheduleSlot.updateMany.mockResolvedValue({ count: 1 });
+
+      await aplicar(enCupo());
+
+      expect(tx.scheduleSlot.updateMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG,
+          doctorId: 'doc-1',
+          id: { not: 'slot-750' },
+          isAvailable: true,
+          startTime: { lt: new Date('2026-11-13T13:30:00.000Z') },
+          endTime: { gt: new Date('2026-11-13T12:50:00.000Z') },
+        },
+        data: { isAvailable: false },
+      });
+      expect(prisma.syncAudit.create.mock.calls[0][0].data.detail).toContain(
+        'se cerraron 1 cupo(s) libre(s)',
+      );
+    });
+
+    it('si la cita dura MÁS que el cupo (rejilla de 20, cita de 40), cierra hasta el fin de la cita', async () => {
+      await aplicar(enCupo({ endTimeIso: '2026-11-13T13:50:00.000Z' }));
+
+      expect(
+        tx.scheduleSlot.updateMany.mock.calls[0][0].where.startTime,
+      ).toEqual({ lt: new Date('2026-11-13T13:50:00.000Z') });
+    });
+
+    it('🪞 el cierre va con origen MIRROR: nace en el HIS y no vuelve a él', async () => {
+      await aplicar(enCupo());
+
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      expect(tx.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.scheduleSlot.updateMany.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('sin vecinos que cerrar, la auditoría no dice nada de más', async () => {
+      await aplicar(enCupo());
+
+      expect(
+        prisma.syncAudit.create.mock.calls[0][0].data.detail,
+      ).not.toContain('se cerraron');
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
   // 🏥 La agenda la define el hospital. Una cita suya que no cae en ningún cupo
   // de AgenIA (otra duración, otro desfase, o un turno que aún no se importó)
   // ya no se rechaza: AgenIA crea el cupo a la medida. Antes quedaba en ERROR y
