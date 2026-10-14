@@ -12,6 +12,11 @@ export async function POST(
     if (!session || !session.organizationId) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    // Solo quien ve la Caja Negra: antes bastaba cualquier sesión de la
+    // clínica (un médico o un paciente podían marcar contactos).
+    if (session.role !== 'ORG_ADMIN' && session.role !== 'BOOKING_AGENT') {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     // 2. Resolver los params con await
     const { id } = await params;

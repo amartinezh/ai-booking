@@ -54,6 +54,20 @@ const RASTREO: MenuItem = {
     accent: 'indigo',
 };
 
+/**
+ * Caja Negra: conversaciones del bot que fallaron, se abandonaron o se
+ * derivaron por emergencia, para llamar al paciente y marcar el contacto. La
+ * ven ORG_ADMIN y BOOKING_AGENT —quien agenda es quien hace esas llamadas—; el
+ * permiso real lo aplican la página y sus rutas.
+ */
+const AUDITORIA: MenuItem = {
+    label: 'Caja Negra (Auditoría)',
+    href: '/dashboard/auditoria',
+    icon: '🕵️',
+    description: 'Trazabilidad del chatbot',
+    accent: 'slate',
+};
+
 const PATIENT_MENUS: MenuItem[] = [
     { label: 'Mis Citas Programadas', href: '/dashboard', icon: '📅', description: 'Consulta tus próximas citas', accent: 'blue' },
     SUPPORT,
@@ -75,7 +89,7 @@ const ADMIN_MENUS: MenuItem[] = [
     { label: 'Padrón EPS (Altas)', href: '/dashboard/padron', icon: '🪪', description: 'Pacientes habilitados por CSV', accent: 'teal' },
     { label: 'Usuarios', href: '/dashboard/usuarios', icon: '👥', description: 'Cuentas y perfiles de acceso', accent: 'indigo' },
     { label: 'Médicos', href: '/dashboard/medicos', icon: '⚕️', description: 'Cuerpo médico de la clínica', accent: 'sky' },
-    { label: 'Caja Negra (Auditoría)', href: '/dashboard/auditoria', icon: '🕵️', description: 'Trazabilidad del chatbot', accent: 'slate' },
+    AUDITORIA,
     RASTREO,
     { label: 'Encuestas (CSAT)', href: '/dashboard/configuracion/integraciones/surveys', icon: '⭐', description: 'Opiniones de pacientes', accent: 'orange' },
     { label: 'Solicitudes de Alta', href: '/dashboard/solicitudes-alta', icon: '📨', description: 'Revisiones pedidas por ciudadanos', accent: 'rose' },
@@ -86,6 +100,7 @@ const ADMIN_MENUS: MenuItem[] = [
 const AGENT_MENUS: MenuItem[] = [
     OVERVIEW,
     { label: 'Agendamiento', href: '/dashboard/agendamiento', icon: '📅', description: 'Reserva de citas asistida', accent: 'emerald' },
+    AUDITORIA,
     RASTREO,
     SUPPORT,
 ];
@@ -123,7 +138,13 @@ const ESPEJO: MenuItem = {
  * docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md §1). A
  * diferencia de `ESPEJO` —que solo se inserta para `ORG_ADMIN`—, esta
  * aparece para `ORG_ADMIN` y `BOOKING_AGENT` (§1.3: los dos operan la
- * pantalla; solo `ORG_ADMIN` ve el enlace de configuración dentro de ella).
+ * pantalla; solo `ORG_ADMIN` ve el panel de configuración dentro de ella).
+ *
+ * ORG_ADMIN la ve con solo el driver correcto (`conAvisosDriver`), aunque los
+ * avisos sigan APAGADOS: es quien los enciende, y la pantalla le muestra el
+ * panel para hacerlo. Antes solo aparecía ya encendidos —y para encenderlos
+ * había que escribir la dirección a mano—. BOOKING_AGENT, que no configura,
+ * la ve solo encendidos (`conAvisos`).
  */
 const AVISOS: MenuItem = {
     label: 'Avisos masivos',
@@ -154,7 +175,13 @@ function insertBeforeSoporte(menus: MenuItem[], item: MenuItem): MenuItem[] {
 
 export function getMenusForRole(
     role: UserRole,
-    opts: { conEspejo?: boolean; conAvisos?: boolean; pendientesBandeja?: number } = {},
+    opts: {
+        conEspejo?: boolean;
+        conAvisos?: boolean;
+        /** Espejo encendido con el driver de avisos, estén o no encendidos (ver `AVISOS`). */
+        conAvisosDriver?: boolean;
+        pendientesBandeja?: number;
+    } = {},
 ): MenuItem[] {
     let menus = MENUS_BY_ROLE[role] ?? [];
 
@@ -170,7 +197,10 @@ export function getMenusForRole(
                 : BANDEJA,
         );
     }
-    if (opts.conAvisos && (role === 'ORG_ADMIN' || role === 'BOOKING_AGENT')) {
+    const avisosVisibles =
+        (role === 'ORG_ADMIN' && (opts.conAvisos || opts.conAvisosDriver)) ||
+        (role === 'BOOKING_AGENT' && opts.conAvisos);
+    if (avisosVisibles) {
         menus = insertBeforeSoporte(menus, AVISOS);
     }
 

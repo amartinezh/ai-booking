@@ -337,7 +337,10 @@ export default function AuditoriaClientView({
     // ══════════════════════════════════════════════════════════
     const markAsContacted = async (logId: string, notes?: string) => {
         try {
-            const res = await fetch(`/api/auditoria/${logId}/contactar`, {
+            // 🐛 Antes llamaba a `/api/auditoria/…`, que no existe (en el dominio,
+            // `/api` es la API de NestJS): el botón fallaba en silencio y el
+            // contacto nunca quedaba marcado. La ruta vive junto a esta página.
+            const res = await fetch(`/dashboard/auditoria/${logId}/contactar`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ notes: notes || '' }),
@@ -351,9 +354,12 @@ export default function AuditoriaClientView({
                     )
                 );
                 setSelectedLog(null);
+            } else {
+                alert('No se pudo marcar el contacto. Intente de nuevo.');
             }
         } catch (e) {
             console.error('Error marcando como contactado', e);
+            alert('No se pudo marcar el contacto. Revise su conexión e intente de nuevo.');
         }
     };
 

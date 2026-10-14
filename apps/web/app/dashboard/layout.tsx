@@ -45,10 +45,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
     // La sección del espejo solo existe para las clínicas que lo tienen; los
     // avisos masivos, solo para las que además tienen el driver correcto y
     // la función encendida (PLAN_AVISOS_MASIVOS.md §1).
-    const { conEspejo, conAvisos } = await getTenantMirrorFlags(session.organizationId);
+    const { conEspejo, conAvisos, conAvisosDriver } = await getTenantMirrorFlags(session.organizationId);
     // La cifra de la bandeja de sincronización (solo quien la trabaja, solo con espejo).
     const pendientesBandeja = await pendientesParaMenu(prisma, session, conEspejo);
-    const menus = getMenusForRole(role, { conEspejo, conAvisos, pendientesBandeja });
+    const menus = getMenusForRole(role, { conEspejo, conAvisos, conAvisosDriver, pendientesBandeja });
 
     return (
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans">

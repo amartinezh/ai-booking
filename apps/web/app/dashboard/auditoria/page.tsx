@@ -8,8 +8,13 @@ export default async function AuditoriaPage() {
     // Obtenemos la sesión actual
     const session = await getSession();
 
-    // Validamos que exista la sesión y tenga permisos
-    if (!session || !session.organizationId || session.role !== 'ORG_ADMIN') {
+    // Validamos que exista la sesión y tenga permisos: el administrador y el
+    // agendador (quien llama al paciente y marca el contacto).
+    if (
+        !session ||
+        !session.organizationId ||
+        (session.role !== 'ORG_ADMIN' && session.role !== 'BOOKING_AGENT')
+    ) {
         redirect('/dashboard');
     }
 

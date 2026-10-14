@@ -29,15 +29,17 @@ export default function QuickAccessGrid({
     role,
     conEspejo = false,
     conAvisos = false,
+    conAvisosDriver = false,
     pendientesBandeja = 0,
 }: {
     role: UserRole;
     conEspejo?: boolean;
     conAvisos?: boolean;
+    conAvisosDriver?: boolean;
     pendientesBandeja?: number;
 }) {
     // La Visión General es la página actual: no tiene sentido como acceso rápido.
-    const items = getMenusForRole(role, { conEspejo, conAvisos, pendientesBandeja }).filter(
+    const items = getMenusForRole(role, { conEspejo, conAvisos, conAvisosDriver, pendientesBandeja }).filter(
         (item) => item.href !== '/dashboard',
     );
 

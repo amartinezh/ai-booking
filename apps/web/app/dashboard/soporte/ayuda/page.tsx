@@ -23,8 +23,8 @@ export default async function AyudaPage({
     const { tema, q } = await searchParams;
     // Las opciones del espejo solo existen en algunas clínicas: la ayuda las
     // explica igual, pero avisa cuáles no están en el menú de esta.
-    const { conEspejo, conAvisos } = await getTenantMirrorFlags(session.organizationId);
-    const rutasDisponibles = getMenusForRole(session.role, { conEspejo, conAvisos }).map((m) => m.href);
+    const { conEspejo, conAvisos, conAvisosDriver } = await getTenantMirrorFlags(session.organizationId);
+    const rutasDisponibles = getMenusForRole(session.role, { conEspejo, conAvisos, conAvisosDriver }).map((m) => m.href);
 
     return (
         <div className="max-w-6xl mx-auto w-full">

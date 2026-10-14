@@ -45,7 +45,11 @@ export async function GET(req: NextRequest) {
     if (!session) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    if (!session.organizationId || session.role !== 'ORG_ADMIN') {
+    // Los mismos dos perfiles que ven la Caja Negra (ver `AUDITORIA` en lib/menus.ts).
+    if (
+        !session.organizationId ||
+        (session.role !== 'ORG_ADMIN' && session.role !== 'BOOKING_AGENT')
+    ) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const organizationId = session.organizationId;

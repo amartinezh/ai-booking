@@ -122,6 +122,41 @@ describe('getMenusForRole', () => {
     });
 });
 
+describe('Caja Negra y Avisos para el agendador (2026-10-13)', () => {
+    const CAJA = '/dashboard/auditoria';
+    const AVISOS = '/dashboard/espejo/avisos';
+    const tiene = (menus: { href: string }[], href: string) => menus.some((m) => m.href === href);
+
+    it('BOOKING_AGENT tiene la Caja Negra, igual que ORG_ADMIN', () => {
+        expect(tiene(getMenusForRole('BOOKING_AGENT'), CAJA)).toBe(true);
+        expect(tiene(getMenusForRole('ORG_ADMIN'), CAJA)).toBe(true);
+    });
+
+    it.each(['DOCTOR', 'PATIENT', 'GENERAL_OBSERVER', 'SUPER_ADMIN'] as const)('%s no tiene la Caja Negra', (rol) => {
+        expect(tiene(getMenusForRole(rol), CAJA)).toBe(false);
+    });
+
+    it('ORG_ADMIN ve Avisos con solo el driver correcto, aunque estén APAGADOS: es quien los enciende', () => {
+        expect(tiene(getMenusForRole('ORG_ADMIN', { conAvisosDriver: true }), AVISOS)).toBe(true);
+    });
+
+    it('BOOKING_AGENT no ve Avisos mientras estén apagados (no puede encenderlos); encendidos, sí', () => {
+        expect(tiene(getMenusForRole('BOOKING_AGENT', { conAvisosDriver: true }), AVISOS)).toBe(false);
+        expect(tiene(getMenusForRole('BOOKING_AGENT', { conAvisosDriver: true, conAvisos: true }), AVISOS)).toBe(true);
+    });
+
+    it('con el driver y encendidos a la vez, Avisos aparece una sola vez', () => {
+        const menus = getMenusForRole('ORG_ADMIN', { conAvisosDriver: true, conAvisos: true });
+        expect(menus.filter((m) => m.href === AVISOS)).toHaveLength(1);
+    });
+
+    it('el driver no le da Avisos a roles sin acceso', () => {
+        for (const rol of ['DOCTOR', 'PATIENT', 'GENERAL_OBSERVER'] as const) {
+            expect(tiene(getMenusForRole(rol, { conAvisosDriver: true, conAvisos: true }), AVISOS)).toBe(false);
+        }
+    });
+});
+
 describe('Bandeja de sincronización (Fase 3 del rastreo)', () => {
     const HREF = '/dashboard/bandeja';
     const tiene = (menus: { href: string }[]) => menus.some((m) => m.href === HREF);
