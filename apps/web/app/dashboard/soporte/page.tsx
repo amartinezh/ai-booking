@@ -15,7 +15,7 @@ export default async function SupportPage() {
     return (
         <div className="max-w-6xl mx-auto w-full">
             {res.success ? (
-                <SupportClient tickets={res.data ?? []} />
+                <SupportClient tickets={res.data ?? []} mostrarAyuda={session.role === 'ORG_ADMIN'} />
             ) : (
                 <div className="p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 text-sm">
                     ⚠️ {res.error}

@@ -1,11 +1,20 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { BookOpen } from 'lucide-react';
 import type { SupportTicket } from '@agenia/database';
 import NewTicketModal from './NewTicketModal';
 import TicketCard from './TicketCard';
 
-export default function SupportClient({ tickets }: { tickets: SupportTicket[] }) {
+export default function SupportClient({
+    tickets,
+    mostrarAyuda = false,
+}: {
+    tickets: SupportTicket[];
+    /** Botón al centro de ayuda. Por ahora solo para el administrador de la clínica. */
+    mostrarAyuda?: boolean;
+}) {
     const [isOpen, setIsOpen] = useState(false);
 
     const counts = useMemo(() => {
@@ -27,22 +36,34 @@ export default function SupportClient({ tickets }: { tickets: SupportTicket[] })
                         Reporta una falla o solicítale algo al equipo técnico. Aquí verás el estado de cada solicitud.
                     </p>
                 </div>
-                <button
-                    onClick={() => setIsOpen(true)}
-                    className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-colors"
-                >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        strokeWidth={2}
-                        stroke="currentColor"
-                        className="w-4 h-4"
+                <div className="flex flex-wrap items-center gap-2">
+                    {mostrarAyuda && (
+                        <Link
+                            href="/dashboard/soporte/ayuda"
+                            title="Guías de cada opción del menú, con buscador"
+                            className="inline-flex items-center gap-2 bg-white hover:bg-zinc-50 text-zinc-800 ring-1 ring-zinc-200 px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-colors"
+                        >
+                            <BookOpen className="w-4 h-4 text-blue-600" />
+                            Ayuda
+                        </Link>
+                    )}
+                    <button
+                        onClick={() => setIsOpen(true)}
+                        className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-colors"
                     >
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                    </svg>
-                    Reportar Falla / Nueva Solicitud
-                </button>
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={2}
+                            stroke="currentColor"
+                            className="w-4 h-4"
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                        </svg>
+                        Reportar Falla / Nueva Solicitud
+                    </button>
+                </div>
             </header>
 
             <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
