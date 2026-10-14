@@ -53,12 +53,15 @@ export default function AvisosClient({
     isOrgAdmin,
     conAvisos,
     initialConfig,
+    fuente,
     initialBatches,
     initialDoctors,
 }: {
     isOrgAdmin: boolean;
     conAvisos: boolean;
     initialConfig: AvisosMasivosConfig | null;
+    /** Cómo arma la lista la clínica; llega para ORG_ADMIN y BOOKING_AGENT (el agendador no recibe `initialConfig`). */
+    fuente?: 'CSV' | 'ESPEJO';
     initialBatches: AvisosBatchView[];
     initialDoctors: DoctorCatalogOption[];
 }) {
@@ -415,7 +418,8 @@ export default function AvisosClient({
     }
 
     const featureOn = config?.enabled ?? conAvisos;
-    const fuenteActual = config?.fuente ?? 'CSV';
+    // La del administrador cuando la acaba de guardar; si no, la de la clínica.
+    const fuenteActual = config?.fuente ?? fuente ?? 'CSV';
 
     return (
         <div className="space-y-8">

@@ -30,6 +30,7 @@ import {
     requestNoticeRosterAction,
     getNoticeRequestStatusAction,
     getBatchAction,
+    getAvisosFuenteAction,
 } from './avisos';
 
 const mockGetSession = getSession as jest.Mock;
@@ -600,6 +601,34 @@ describe('getDoctorCatalogAction', () => {
                 where: { organizationId: 'org-1', entityType: 'DOCTOR' },
             }),
         );
+    });
+});
+
+describe('getAvisosFuenteAction', () => {
+    beforeEach(() => jest.clearAllMocks());
+
+    it('🐛 el AGENDADOR recibe la fuente de la clínica («Traer del hospital»), no la de archivo por defecto', async () => {
+        mockGetSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1', userId: 'agente-1' });
+        mockMirrorFindUnique.mockResolvedValue(CNT_SANVICENTE_CONFIG_ESPEJO);
+
+        await expect(getAvisosFuenteAction()).resolves.toEqual({ success: true, fuente: 'ESPEJO' });
+    });
+
+    it('sin fuente configurada es CSV', async () => {
+        asOrgAdmin();
+        mockMirrorFindUnique.mockResolvedValue(CNT_SANVICENTE_CONFIG);
+
+        await expect(getAvisosFuenteAction()).resolves.toEqual({ success: true, fuente: 'CSV' });
+    });
+
+    it('con los avisos apagados, o sin un perfil que opere la pantalla, se rechaza', async () => {
+        asOrgAdmin();
+        mockMirrorFindUnique.mockResolvedValue({ ...CNT_SANVICENTE_CONFIG_ESPEJO, avisosMasivos: { fuente: 'ESPEJO' } });
+        await expect(getAvisosFuenteAction()).resolves.toEqual({ success: false, error: 'Acceso denegado.' });
+
+        mockGetSession.mockResolvedValue({ role: 'DOCTOR', organizationId: 'org-1', userId: 'doc-1' });
+        mockMirrorFindUnique.mockResolvedValue(CNT_SANVICENTE_CONFIG_ESPEJO);
+        await expect(getAvisosFuenteAction()).resolves.toEqual({ success: false, error: 'Acceso denegado.' });
     });
 });
 

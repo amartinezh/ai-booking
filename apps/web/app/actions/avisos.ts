@@ -120,6 +120,23 @@ export async function getAvisosConfigAction(): Promise<
     return { success: true, config: (mirrorConfig?.avisosMasivos ?? null) as AvisosMasivosConfig | null };
 }
 
+/**
+ * Cómo arma la lista esta clínica (CSV o «Traer del hospital»), para quien
+ * OPERA la pantalla —ORG_ADMIN o BOOKING_AGENT—, no solo para quien configura.
+ *
+ * 🐛 La página solo cargaba la configuración para ORG_ADMIN y la pantalla, sin
+ * ella, daba por hecho «Subir hoja electrónica»: el agendador veía el flujo de
+ * CSV aunque la clínica tuviera elegido «Traer del hospital». Devuelve SOLO la
+ * fuente: el resto de la configuración sigue siendo del administrador.
+ */
+export async function getAvisosFuenteAction(): Promise<
+    { success: true; fuente: 'CSV' | 'ESPEJO' } | { success: false; error: string }
+> {
+    const auth = await requireAvisosAccess();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+    return { success: true, fuente: auth.config.fuente === 'ESPEJO' ? 'ESPEJO' : 'CSV' };
+}
+
 export async function updateAvisosConfigAction(
     partial: AvisosMasivosConfig,
 ): Promise<{ success: true } | { success: false; error: string }> {

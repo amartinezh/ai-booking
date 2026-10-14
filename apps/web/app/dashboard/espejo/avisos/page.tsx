@@ -1,7 +1,12 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { getTenantMirrorFlags } from '@/lib/mirror-flags';
-import { getAvisosConfigAction, listBatchesAction, getDoctorCatalogAction } from '@/app/actions/avisos';
+import {
+    getAvisosConfigAction,
+    getAvisosFuenteAction,
+    listBatchesAction,
+    getDoctorCatalogAction,
+} from '@/app/actions/avisos';
 import AvisosClient from './components/AvisosClient';
 
 /**
@@ -30,8 +35,12 @@ export default async function AvisosPage() {
     // hace por él.
     if (!conAvisosDriver) redirect('/dashboard');
 
-    const [configRes, batchesRes, doctorsRes] = await Promise.all([
+    const [configRes, fuenteRes, batchesRes, doctorsRes] = await Promise.all([
         isOrgAdmin ? getAvisosConfigAction() : Promise.resolve(null),
+        // La fuente la necesitan los dos perfiles que operan la pantalla: sin
+        // ella el agendador veía el flujo de CSV aunque la clínica trajera la
+        // lista del hospital.
+        conAvisos ? getAvisosFuenteAction() : Promise.resolve(null),
         conAvisos ? listBatchesAction() : Promise.resolve(null),
         // El catálogo lo sube el agente (§ catálogo, no exclusivo de avisos) —
         // se trae siempre que haya espejo con el driver correcto, no solo
@@ -46,6 +55,7 @@ export default async function AvisosPage() {
                 isOrgAdmin={isOrgAdmin}
                 conAvisos={conAvisos}
                 initialConfig={configRes?.success ? configRes.config : null}
+                fuente={fuenteRes?.success ? fuenteRes.fuente : undefined}
                 initialBatches={batchesRes?.success ? batchesRes.batches : []}
                 initialDoctors={doctorsRes.success ? doctorsRes.doctors : []}
             />
