@@ -109,3 +109,14 @@ export function formatForPatient(utcDate: Date): string {
     timeZone: 'America/Bogota',
   }).format(utcDate);
 }
+
+/**
+ * La misma fecha, sin el punto final de «a. m.» / «p. m.», para ponerla JUSTO
+ * antes del punto de una frase: la plantilla `recordatorio_cita` aprobada en
+ * Meta dice «… el {{4}}. Si no puede asistir…», y con el punto de la fecha el
+ * paciente leía «06:30 a. m.. Si no puede asistir». El punto de la frase
+ * completa la abreviatura.
+ */
+export function formatForPatientInSentence(utcDate: Date): string {
+  return formatForPatient(utcDate).replace(/\.$/, '');
+}

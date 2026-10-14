@@ -98,6 +98,30 @@ describe('AppointmentReminderCronService — plantilla vs texto libre', () => {
     );
   });
 
+  // La plantilla aprobada en Meta dice «… el {{4}}. Si no puede asistir…».
+  // Con la fecha terminada en «a. m.», el paciente leía «a. m.. Si no puede».
+  it('la fecha de la plantilla no trae su punto final: la frase de Meta lo pone', async () => {
+    const ctx = build({ withinWindow: false });
+    await run(ctx);
+
+    const fecha = ctx.templates.sendTemplate.mock.calls[0][0].bodyParams[3];
+    // `\s`: según el ICU de Node, entre «a.» y «m» va un espacio normal o uno
+    // de no separación (U+00A0); el arreglo funciona con los dos.
+    expect(fecha).toMatch(/[ap]\.\sm$/);
+    expect(
+      `… el ${fecha}. Si no puede asistir, por favor avísenos con anticipación.`,
+    ).not.toContain('..');
+  });
+
+  it('el texto libre tampoco deja «a. m.» seguido de otro punto', async () => {
+    const ctx = build({ withinWindow: true });
+    await run(ctx);
+
+    const texto = ctx.chatbot.sendOutboundForOrg.mock.calls[0][2] as string;
+    expect(texto).toMatch(/[ap]\.\sm\*\./);
+    expect(texto).not.toMatch(/m\.\*\./);
+  });
+
   it('📬 el recordatorio queda ligado a SU cita en el libro de mensajes (plantilla y texto libre)', async () => {
     const fuera = build({ withinWindow: false });
     await run(fuera);

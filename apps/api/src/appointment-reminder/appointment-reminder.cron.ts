@@ -13,7 +13,10 @@ import { InteractionLogService } from '../interaction-log/interaction-log.servic
 import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
 import { destinoDeContacto, saludoPorHora } from '@agenia/shared';
-import { addBusinessHours, formatForPatient } from '../common/business-hours';
+import {
+  addBusinessHours,
+  formatForPatientInSentence,
+} from '../common/business-hours';
 import { getErrorMessage, getErrorStack } from '../common/error-message.util';
 import { citaFueraDelAlcanceDelActor } from '../common/alcance-actor.util';
 import {
@@ -466,7 +469,8 @@ export class AppointmentReminderCronService
         apt.patient?.fullName?.split(' ')[0] ?? 'Paciente',
         apt.scheduleSlot.service?.name ?? 'su consulta',
         apt.scheduleSlot.doctor?.fullName ?? 'su médico',
-        formatForPatient(apt.scheduleSlot.startTime),
+        // La plantilla dice «el {{4}}.»: sin el punto de «a. m.», no «a. m..».
+        formatForPatientInSentence(apt.scheduleSlot.startTime),
       ],
     });
   }
@@ -484,7 +488,8 @@ export class AppointmentReminderCronService
     const patientName = apt.patient?.fullName?.split(' ')[0] ?? '';
     const doctorName = apt.scheduleSlot.doctor?.fullName ?? 'su médico';
     const serviceName = apt.scheduleSlot.service?.name ?? 'su consulta';
-    const fecha = formatForPatient(apt.scheduleSlot.startTime);
+    // Va seguida de un punto en las dos redacciones («el *{fecha}*.»).
+    const fecha = formatForPatientInSentence(apt.scheduleSlot.startTime);
     // 🔒 El recordatorio solo ofrece lo que el bot de verdad puede hacer: cada
     // operación tiene su interruptor (/dashboard/configuracion) y, con espejo,
     // exige el envío al hospital encendido. Lo que no, remite al hospital. Sin
