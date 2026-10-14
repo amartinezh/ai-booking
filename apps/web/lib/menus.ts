@@ -140,11 +140,12 @@ const ESPEJO: MenuItem = {
  * aparece para `ORG_ADMIN` y `BOOKING_AGENT` (§1.3: los dos operan la
  * pantalla; solo `ORG_ADMIN` ve el panel de configuración dentro de ella).
  *
- * ORG_ADMIN la ve con solo el driver correcto (`conAvisosDriver`), aunque los
- * avisos sigan APAGADOS: es quien los enciende, y la pantalla le muestra el
- * panel para hacerlo. Antes solo aparecía ya encendidos —y para encenderlos
- * había que escribir la dirección a mano—. BOOKING_AGENT, que no configura,
- * la ve solo encendidos (`conAvisos`).
+ * Los dos la ven con solo el driver correcto (`conAvisosDriver`), aunque los
+ * avisos sigan APAGADOS. ORG_ADMIN, porque es quien los enciende: la pantalla
+ * le muestra el panel para hacerlo (antes solo aparecía ya encendidos, y para
+ * encenderlos había que escribir la dirección a mano). BOOKING_AGENT, porque
+ * la clínica lo pidió así: apagados, la pantalla le dice que un administrador
+ * tiene que activarlos.
  */
 const AVISOS: MenuItem = {
     label: 'Avisos masivos',
@@ -198,8 +199,8 @@ export function getMenusForRole(
         );
     }
     const avisosVisibles =
-        (role === 'ORG_ADMIN' && (opts.conAvisos || opts.conAvisosDriver)) ||
-        (role === 'BOOKING_AGENT' && opts.conAvisos);
+        (role === 'ORG_ADMIN' || role === 'BOOKING_AGENT') &&
+        (opts.conAvisos || opts.conAvisosDriver);
     if (avisosVisibles) {
         menus = insertBeforeSoporte(menus, AVISOS);
     }

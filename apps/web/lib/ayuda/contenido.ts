@@ -1386,7 +1386,7 @@ export const TEMAS: TemaAyuda[] = [
         paraQueSirve:
             'Cuando un especialista no puede asistir, o cuando quieres recordar de antemano su día de agenda, armas la lista de pacientes de ese día y les envías el mensaje. No es una campaña masiva: es para el puñado de pacientes de un día. El aviso de cancelación solo informa; la cita se cancela por el proceso de siempre del hospital.',
         disponibilidad:
-            'Solo aparece en las clínicas conectadas al sistema del hospital. El Administrador la ve siempre, aunque la función esté apagada, porque es quien la enciende desde esta misma pantalla; los Agentes de Reservas la ven cuando ya está encendida.',
+            'Solo aparece en las clínicas conectadas al sistema del hospital. La ven el Administrador y los Agentes de Reservas, aunque la función esté apagada: el Administrador la enciende desde esta misma pantalla, y mientras tanto a los Agentes de Reservas la pantalla les indica que un administrador debe activarla.',
         guias: [
             {
                 titulo: 'Enviar un aviso',

@@ -140,9 +140,14 @@ describe('Caja Negra y Avisos para el agendador (2026-10-13)', () => {
         expect(tiene(getMenusForRole('ORG_ADMIN', { conAvisosDriver: true }), AVISOS)).toBe(true);
     });
 
-    it('BOOKING_AGENT no ve Avisos mientras estén apagados (no puede encenderlos); encendidos, sí', () => {
-        expect(tiene(getMenusForRole('BOOKING_AGENT', { conAvisosDriver: true }), AVISOS)).toBe(false);
+    it('BOOKING_AGENT también ve Avisos con solo el driver (apagados, la pantalla le pide al administrador activarlos)', () => {
+        expect(tiene(getMenusForRole('BOOKING_AGENT', { conAvisosDriver: true }), AVISOS)).toBe(true);
         expect(tiene(getMenusForRole('BOOKING_AGENT', { conAvisosDriver: true, conAvisos: true }), AVISOS)).toBe(true);
+    });
+
+    it('sin el driver (otra clínica u otro HIS) ninguno de los dos la ve', () => {
+        expect(tiene(getMenusForRole('BOOKING_AGENT', { conEspejo: true }), AVISOS)).toBe(false);
+        expect(tiene(getMenusForRole('ORG_ADMIN', { conEspejo: true }), AVISOS)).toBe(false);
     });
 
     it('con el driver y encendidos a la vez, Avisos aparece una sola vez', () => {
