@@ -23,6 +23,7 @@ import {
   type OpcionConsulta,
 } from './chatbot.constants';
 import { textoParaCoincidencia } from './texto-para-coincidencia.util';
+import { clasificarRespuestaAlBot } from './respuesta-recordatorio';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import {
   OrganizationSettingsService,
@@ -4043,6 +4044,117 @@ export class ChatbotService implements OnModuleInit {
     }
   }
 
+  /** «• Consultar sus citas: escríbame "consultar"» y una línea por cada operación permitida. */
+  private lineasDeLoDisponible(
+    MSGS: ReturnType<typeof buildMessages>,
+    operaciones: OperacionesBot,
+  ): string {
+    return [
+      MSGS.lineaDisponibleConsultar(),
+      ...operacionesPermitidas(operaciones).map((op) =>
+        MSGS.lineaDisponible(
+          TEXTO_OPERACION[op].etiqueta,
+          TEXTO_OPERACION[op].atajo,
+        ),
+      ),
+    ].join('\n');
+  }
+
+  /**
+   * La cita de quien escribe que recibió un recordatorio hace poco (48 h) y
+   * todavía no ha pasado: la que explica por qué el paciente nos contesta.
+   * Se busca por el mismo canal que lo identifica (chat de Telegram, o teléfono
+   * en cualquiera de sus formas o BSUID), igual que la consulta de citas.
+   */
+  private async citaRecordadaDelRemitente(
+    organizationId: string,
+    identity: SenderIdentity,
+  ) {
+    const ahora = Date.now();
+    const deQuien: Prisma.PatientProfileWhereInput[] = [];
+    if (identity.telegramChatId) {
+      deQuien.push({ telegramChatId: identity.telegramChatId });
+    } else {
+      const telefonos = variantesDeTelefono(
+        (identity.phone ?? '').replace(/\D/g, ''),
+      );
+      if (telefonos.length > 0) {
+        deQuien.push({ whatsappId: { in: telefonos } });
+      }
+      if (identity.bsuid) deQuien.push({ bsuid: identity.bsuid });
+    }
+    if (deQuien.length === 0) return null;
+
+    return this.prisma.appointment.findFirst({
+      where: {
+        organizationId,
+        status: 'SCHEDULED',
+        reminderSentAt: { gte: new Date(ahora - 48 * 3_600_000) },
+        scheduleSlot: { startTime: { gte: new Date(ahora - 3_600_000) } },
+        patient: { OR: deQuien },
+      },
+      include: { scheduleSlot: { include: { service: true } } },
+      orderBy: { scheduleSlot: { startTime: 'asc' } },
+    });
+  }
+
+  /**
+   * 💬 Respuestas que el bot atiende sin la IA (2026-10-13, primer lote de
+   * recordatorios: a todas se les respondía «la plataforma no está activa…»):
+   *
+   *   «Sí voy», «gracias», «ok» tras su recordatorio → «¡Gracias por confirmar!
+   *   Le esperamos el {fecha}».
+   *   «¿De dónde me hablan?» → quién escribe y, si acaba de recibir un
+   *   recordatorio, por cuál cita.
+   *
+   * Devuelve true si atendió el mensaje. Una confirmación SIN recordatorio
+   * reciente no se atiende aquí: sigue el camino de siempre (un «gracias»
+   * suelto es una despedida).
+   */
+  private async atenderRespuestaAlBot(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    botName: string;
+    orgName: string;
+    timeZone: string | undefined;
+  }): Promise<boolean> {
+    const tipo = clasificarRespuestaAlBot(p.text);
+    if (!tipo) return false;
+
+    const cita = await this.citaRecordadaDelRemitente(
+      p.organizationId,
+      p.identity,
+    );
+    if (tipo === 'CONFIRMA' && !cita) return false;
+
+    const fecha = cita
+      ? formatAppointmentLong(cita.scheduleSlot.startTime, {
+          timeZone: p.timeZone,
+        })
+      : '';
+    const servicio = cita?.scheduleSlot.service?.name ?? '';
+    const reply =
+      tipo === 'CONFIRMA'
+        ? p.MSGS.recordatorioConfirmado(fecha, servicio)
+        : cita
+          ? p.MSGS.quienEscribeConCita(p.botName, p.orgName, servicio, fecha)
+          : p.MSGS.quienEscribe(p.botName, p.orgName);
+
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text,
+      botReply: reply,
+      metadata: {
+        step: tipo === 'CONFIRMA' ? 'RECORDATORIO_CONFIRMADO' : 'QUIEN_ESCRIBE',
+        appointmentId: cita?.id ?? null,
+      },
+    });
+    return true;
+  }
+
   /**
    * 🔒 La operación que pidió el paciente está apagada en esta clínica.
    *
@@ -4073,15 +4185,7 @@ export class ChatbotService implements OnModuleInit {
       ? MSGS.contactoClinica(p.org.supportPhone)
       : MSGS.contactoClinicaSinTelefono();
     const disponibles = operacionesPermitidas(p.operaciones);
-    const lineas = [
-      MSGS.lineaDisponibleConsultar(),
-      ...disponibles.map((op) =>
-        MSGS.lineaDisponible(
-          TEXTO_OPERACION[op].etiqueta,
-          TEXTO_OPERACION[op].atajo,
-        ),
-      ),
-    ].join('\n');
+    const lineas = this.lineasDeLoDisponible(MSGS, p.operaciones);
     const { nombre, hacerla } = TEXTO_OPERACION[motivo];
     const key = this.presentadoKey(organizationId, senderId);
     const yaSePresento = !!(await this.redis.get(key));
@@ -4578,6 +4682,27 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // 💬 Respuesta al bot: «sí voy» / «gracias» tras un recordatorio, o «¿de
+    // dónde me hablan?». Antes de la despedida: un «muchas gracias» de quien
+    // acaba de recibir su recordatorio es una confirmación, no un adiós.
+    if (
+      messageType === 'text' &&
+      !!text &&
+      currentState === ChatState.IDLE &&
+      (await this.atenderRespuestaAlBot({
+        organizationId,
+        senderId,
+        identity,
+        text,
+        MSGS,
+        botName,
+        orgName,
+        timeZone: org?.timezone || undefined,
+      }))
+    ) {
+      return;
+    }
+
     // EARLY RETURN: despedida en IDLE — no reabrir el flujo de agendamiento
     if (
       messageType === 'text' &&
@@ -5047,7 +5172,18 @@ export class ChatbotService implements OnModuleInit {
         'EX',
         SESSION_TTL,
       );
-      const reply = MSGS.outOfContext(botName);
+      // Con agendar apagado no se invita a agendar («¿qué servicio busca?»
+      // contradecía el aviso de que por aquí no se agenda): se dice qué sí se
+      // puede y con quién hacer lo demás.
+      const reply = operaciones.agendar
+        ? MSGS.outOfContext(botName)
+        : MSGS.outOfContextSinAgendar(
+            botName,
+            this.lineasDeLoDisponible(MSGS, operaciones),
+            org?.supportPhone
+              ? MSGS.contactoClinica(org.supportPhone)
+              : MSGS.contactoClinicaSinTelefono(),
+          );
       await this.smartReply(organizationId, senderId, reply);
 
       await this.auditFailure(senderId, organizationId, {

@@ -823,6 +823,36 @@ const FORMAL = {
       `Con este número no tengo ninguna historia registrada, así que no le estamos enviando recordatorios. Si aun así los recibe, por favor avísele al hospital.`,
     ]),
 
+  // ── Respuestas a un RECORDATORIO (ver respuesta-recordatorio.ts) ────
+  // «Sí voy», «gracias», «ok» tras recibir el recordatorio de su cita.
+  recordatorioConfirmado: (fecha: string, servicio: string) =>
+    `¡Gracias por confirmar! 🙌 Le esperamos el *${fecha}* para su cita de *${servicio}*.`,
+
+  // «¿De dónde me hablan?» de quien acaba de recibir un recordatorio.
+  quienEscribeConCita: (
+    botName: string,
+    clinicaName: string,
+    servicio: string,
+    fecha: string,
+  ) =>
+    `Le escribe *${botName}*, asistente virtual de *${clinicaName}*, por su cita de *${servicio}* del *${fecha}*. 🏥`,
+
+  // «¿De dónde me hablan?» sin recordatorio reciente.
+  quienEscribe: (botName: string, clinicaName: string) =>
+    `Le escribe *${botName}*, asistente virtual de *${clinicaName}*. 🏥\n\n` +
+    `Si desea ver sus citas, escríbame *"consultar"*.`,
+
+  // Fuera de tema con agendar APAGADO: no invita a agendar. `disponibles`
+  // sale de `lineaDisponible`; `contacto`, de contactoClinica.
+  outOfContextSinAgendar: (
+    botName: string,
+    disponibles: string,
+    contacto: string,
+  ) =>
+    `Disculpe, soy *${botName}* y por aquí solo puedo ayudarle con sus citas. 🏥\n\n` +
+    `Puedo ayudarle a:\n${disponibles}\n\n` +
+    `Para cualquier otra gestión, comuníquese con ${contacto}.`,
+
   outOfContext: (botName: string = BOT_NAME) =>
     pick([
       `Disculpe, soy *${botName}* y le acompaño únicamente con el agendamiento de citas médicas. 🏥\n\n¿Me indica qué especialidad necesita o el nombre del médico que está buscando?`,
@@ -1740,6 +1770,30 @@ const INFORMAL = {
       `No tengo ninguna historia registrada con este número, así que no te estamos enviando recordatorios. 🤔 Si de todos modos te llegan, avísale al hospital.`,
       `Con este número no encuentro historia, así que no hay recordatorios que apagar. Si recibes mensajes nuestros, cuéntale al hospital. 🙏`,
     ]),
+
+  recordatorioConfirmado: (fecha: string, servicio: string) =>
+    `¡Gracias por confirmar! 🙌 Te esperamos el *${fecha}* para tu cita de *${servicio}*.`,
+
+  quienEscribeConCita: (
+    botName: string,
+    clinicaName: string,
+    servicio: string,
+    fecha: string,
+  ) =>
+    `¡Hola! Te escribe *${botName}*, asistente virtual de *${clinicaName}*, por tu cita de *${servicio}* del *${fecha}*. 🏥`,
+
+  quienEscribe: (botName: string, clinicaName: string) =>
+    `¡Hola! Te escribe *${botName}*, asistente virtual de *${clinicaName}*. 🏥\n\n` +
+    `Si quieres ver tus citas, escríbeme *"consultar"*.`,
+
+  outOfContextSinAgendar: (
+    botName: string,
+    disponibles: string,
+    contacto: string,
+  ) =>
+    `Disculpa, soy *${botName}* y por aquí solo puedo ayudarte con tus citas. 🏥\n\n` +
+    `Puedo ayudarte a:\n${disponibles}\n\n` +
+    `Para cualquier otra gestión, comunícate con ${contacto}.`,
 
   outOfContext: (botName: string = BOT_NAME) =>
     pick([

@@ -268,6 +268,39 @@ function createPrisma(db: Db) {
         const a = db.appointments.find((x) => x.id === where.id);
         return a ? { ...a, scheduleSlot: slotDe(a) } : null;
       }),
+      // La cita recordada de quien escribe (respuesta al recordatorio).
+      findFirst: jest.fn(({ where }: any) => {
+        if (!where.reminderSentAt) return null;
+        const canales: any[] = where.patient?.OR ?? [];
+        const esDelRemitente = (pac: any) =>
+          canales.some(
+            (c) =>
+              (c.whatsappId?.in ?? []).includes(pac.whatsappId) ||
+              (!!c.bsuid && c.bsuid === pac.bsuid) ||
+              (!!c.telegramChatId && c.telegramChatId === pac.telegramChatId),
+          );
+        return (
+          db.appointments
+            .filter(
+              (a) =>
+                a.organizationId === where.organizationId &&
+                a.status === where.status &&
+                a.reminderSentAt &&
+                a.reminderSentAt >= where.reminderSentAt.gte,
+            )
+            .map((a) => ({ ...a, scheduleSlot: slotDe(a) }))
+            .filter(
+              (a) =>
+                a.scheduleSlot.startTime >= where.scheduleSlot.startTime.gte &&
+                esDelRemitente(db.patients.find((x) => x.id === a.patientId)),
+            )
+            .sort(
+              (x, y) =>
+                x.scheduleSlot.startTime.getTime() -
+                y.scheduleSlot.startTime.getTime(),
+            )[0] ?? null
+        );
+      }),
       update: tx.appointment.update,
     },
     scheduleSlot: {
@@ -1417,6 +1450,125 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
         motivo: 'CANCELAR',
         disponibles: ['AGENDAR', 'MODIFICAR'],
       });
+    });
+  });
+  // ──────────────────────────────────────────────────────────────────
+  // 💬 Respuestas a un recordatorio y «¿de dónde me hablan?» (2026-10-13)
+  // ──────────────────────────────────────────────────────────────────
+  describe('💬 respuestas al bot tras un recordatorio', () => {
+    const HACE_2H = new Date(AHORA.getTime() - 2 * 3_600_000);
+    const conRecordatorio = () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      db.appointments[0].reminderSentAt = HACE_2H;
+    };
+    const paso = (step: string) =>
+      interactionLog.logSuccess.mock.calls
+        .map((c: any[]) => c[0])
+        .find((e: any) => e?.metadata?.step === step);
+
+    beforeEach(() => {
+      // Como en producción la noche del primer lote: operaciones apagadas.
+      bookingEnabled = false;
+    });
+
+    it.each([
+      'Si dios quiere mañana boy ala cita',
+      'Ok muchas gracias',
+      'Bueno',
+    ])(
+      '«%s» tras el recordatorio → «¡Gracias por confirmar!» con su fecha, no el aviso de solo consultas',
+      async (texto) => {
+        conRecordatorio();
+        await say(texto);
+        const r = lastSent();
+        expect(r).toContain('¡Gracias por confirmar!');
+        expect(r).toContain('Le esperamos el *');
+        expect(r).toContain('Medicina General');
+        expect(r).not.toContain('no está activa');
+        // No abre ningún flujo: la sesión sigue en reposo (sin estado = IDLE).
+        expect([null, ChatState.IDLE]).toContain(state());
+        expect(paso('RECORDATORIO_CONFIRMADO')?.metadata).toMatchObject({
+          appointmentId: 'apt-1',
+        });
+        expect(db.appointments[0].status).toBe('SCHEDULED');
+      },
+    );
+
+    it('«muchas gracias» SIN recordatorio reciente sigue siendo una despedida', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA); // sin reminderSentAt
+      await say('Muchas gracias');
+      expect(lastSent()).not.toContain('Gracias por confirmar');
+    });
+
+    it('un recordatorio de hace más de 48 h ya no da contexto', async () => {
+      conRecordatorio();
+      db.appointments[0].reminderSentAt = new Date(
+        AHORA.getTime() - 50 * 3_600_000,
+      );
+      await say('Ok muchas gracias');
+      expect(lastSent()).not.toContain('Gracias por confirmar');
+    });
+
+    it('🛡️ el recordatorio de OTRO paciente no le da contexto a quien escribe', async () => {
+      conRecordatorio();
+      await say('Ok muchas gracias', '573009998877');
+      expect(lastSent()).not.toContain('Gracias por confirmar');
+    });
+
+    it('🛡️ «no voy a poder ir» tras el recordatorio nunca se toma por confirmación', async () => {
+      conRecordatorio();
+      await say('Esque no voy a poder ir ala cita mañana');
+      expect(lastSent()).not.toContain('Gracias por confirmar');
+    });
+
+    it('«De donde me ablan» tras el recordatorio → quién escribe y por cuál cita', async () => {
+      conRecordatorio();
+      await say('De donde me ablan');
+      const r = lastSent();
+      expect(r).toContain(
+        'Le escribe *Vicente*, asistente virtual de *Hospital San Vicente*',
+      );
+      expect(r).toContain('por su cita de *Medicina General* del *');
+      expect(r).not.toContain('no está activa');
+      expect(paso('QUIEN_ESCRIBE')?.metadata).toMatchObject({
+        appointmentId: 'apt-1',
+      });
+    });
+
+    it('«¿De dónde me hablan?» sin recordatorio → quién escribe y cómo ver sus citas', async () => {
+      await say('¿De dónde me hablan?');
+      const r = lastSent();
+      expect(r).toContain(
+        'Le escribe *Vicente*, asistente virtual de *Hospital San Vicente*',
+      );
+      expect(r).toContain('*"consultar"*');
+      expect(r).not.toContain('por su cita');
+    });
+  });
+
+  describe('🔒 fuera de tema con agendar apagado', () => {
+    it('no invita a agendar: dice qué sí se puede y da el teléfono del hospital', async () => {
+      bookingEnabled = false;
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ outOfContext: true }),
+      );
+      await say('Esque de celular no da para yamar números que sea telefono');
+      const r = lastSent();
+      expect(r).toContain('solo puedo ayudarle con sus citas');
+      expect(r).toContain('Consultar sus citas: escríbame *"consultar"*');
+      expect(r).toContain(`el hospital al *${SOPORTE}*`);
+      expect(r).not.toContain('¿Qué servicio');
+      expect(r).not.toContain('especialidad necesita');
+    });
+
+    it('con agendar encendido conserva el mensaje de siempre (invita a agendar)', async () => {
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ outOfContext: true }),
+      );
+      await say('¿Cuál es la capital de Francia?');
+      expect(lastSent()).not.toContain('solo puedo ayudarle con sus citas');
     });
   });
 });
