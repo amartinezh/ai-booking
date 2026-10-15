@@ -12,7 +12,11 @@ import { OrganizationSettingsService } from '../chatbot/organization-settings.se
 import { InteractionLogService } from '../interaction-log/interaction-log.service';
 import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
-import { destinoDeContacto, saludoPorHora } from '@agenia/shared';
+import {
+  compuertasHis,
+  destinoDeContacto,
+  saludoPorHora,
+} from '@agenia/shared';
 import {
   addBusinessHours,
   formatForPatientInSentence,
@@ -555,13 +559,17 @@ export class AppointmentReminderCronService
     const fecha = formatForPatientInSentence(apt.scheduleSlot.startTime);
     // 🔒 El recordatorio solo ofrece lo que el bot de verdad puede hacer: cada
     // operación tiene su interruptor (/dashboard/configuracion) y, con espejo,
-    // exige el envío al hospital encendido. Lo que no, remite al hospital. Sin
-    // fila de settings = prendidos.
+    // ese interruptor es también su compuerta hacia el hospital
+    // (`compuerta-his.ts`): cancelar y cambiar fecha llegan al HIS aunque el
+    // envío de citas nuevas esté apagado. Lo que no, remite al hospital. Sin
+    // fila de settings y sin espejo = prendidos.
     const espejo = apt.organization?.hospitalMirrorConfig;
-    const hisRecibeCambios = !espejo?.enabled || espejo.pushEnabled;
     const settings = apt.organization?.settings;
-    const cancelar = (settings?.cancelEnabled ?? true) && hisRecibeCambios;
-    const cambiar = (settings?.rescheduleEnabled ?? true) && hisRecibeCambios;
+    const compuertas = espejo?.enabled ? compuertasHis(espejo, settings) : null;
+    const cancelar =
+      (settings?.cancelEnabled ?? true) && (compuertas?.cancelar ?? true);
+    const cambiar =
+      (settings?.rescheduleEnabled ?? true) && (compuertas?.modificar ?? true);
     const telefono = apt.organization?.supportPhone;
     const hospital = telefono ? `el hospital al *${telefono}*` : 'el hospital';
 

@@ -62,6 +62,9 @@ export enum FailureReason {
   PATIENT_NOT_FOUND = 'PATIENT_NOT_FOUND',
   NO_APPOINTMENTS_TO_CANCEL = 'NO_APPOINTMENTS_TO_CANCEL',
   NO_APPOINTMENTS_TO_MODIFY = 'NO_APPOINTMENTS_TO_MODIFY',
+  // Pidió cancelar o cambiar la cita de una cédula cuyo paciente no es de quien
+  // escribe (otro WhatsApp, otro chat de Telegram): por seguridad no se toca.
+  PATIENT_CHANNEL_MISMATCH = 'PATIENT_CHANNEL_MISMATCH',
   CANCEL_ERROR = 'CANCEL_ERROR',
   MODIFY_ERROR = 'MODIFY_ERROR',
   UNHANDLED_ERROR = 'UNHANDLED_ERROR',

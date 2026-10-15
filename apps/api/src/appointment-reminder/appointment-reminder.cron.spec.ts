@@ -641,7 +641,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       },
     );
 
-    it('🏥 con espejo y el envío al hospital apagado no ofrece el bot, aunque los interruptores estén prendidos', async () => {
+    it('🚪 con espejo y el envío de citas nuevas apagado, cancelar y cambiar se ofrecen con su interruptor (2026-10-15)', async () => {
       const { service, chatbot } = build({
         eligibles: [
           cita({
@@ -649,8 +649,30 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
               id: ORG,
               name: 'Hospital San Vicente',
               supportPhone: '6068538838',
-              settings: { cancelEnabled: true, rescheduleEnabled: true },
+              settings: { cancelEnabled: true, rescheduleEnabled: false },
               hospitalMirrorConfig: { enabled: true, pushEnabled: false },
+            },
+          }),
+        ],
+      });
+      await service.runOnce();
+
+      const texto = textoEnviado(chatbot);
+      expect(texto).toContain('*cancelar cita*');
+      expect(texto).not.toContain('*cambiar cita*');
+      expect(texto).toContain('el hospital al *6068538838*');
+    });
+
+    it('🚪 con espejo, sin fila de settings no se ofrece nada: la compuerta hacia el hospital falla cerrada', async () => {
+      const { service, chatbot } = build({
+        eligibles: [
+          cita({
+            organization: {
+              id: ORG,
+              name: 'Hospital San Vicente',
+              supportPhone: '6068538838',
+              settings: null,
+              hospitalMirrorConfig: { enabled: true, pushEnabled: true },
             },
           }),
         ],
@@ -660,7 +682,6 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       const texto = textoEnviado(chatbot);
       expect(texto).not.toContain('*cancelar cita*');
       expect(texto).not.toContain('*cambiar cita*');
-      expect(texto).toContain('el hospital al *6068538838*');
     });
 
     it('🏥 con espejo y el envío al hospital encendido sí lo ofrece', async () => {

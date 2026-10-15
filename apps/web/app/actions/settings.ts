@@ -5,7 +5,11 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { CommunicationStyle } from '@agenia/database';
 import { getErrorMessage } from '@/lib/error';
-import { normalizarCuposOfrecidos } from '@agenia/shared';
+import {
+    SYNC_AUDIT_DIRECTION,
+    normalizarCuposOfrecidos,
+    operacionHisDelEvento,
+} from '@agenia/shared';
 
 const DEFAULT_BOT_NAME = 'AgenIA';
 
@@ -134,15 +138,85 @@ export async function setMyCancelEnabled(enabled: boolean) {
     // no toque la agenda).
     const cancelEnabled = enabled === true;
     try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { cancelEnabled: true },
+        });
         await prisma.organizationSettings.upsert({
             where: { organizationId: session.organizationId! },
             create: { organizationId: session.organizationId!, cancelEnabled },
             update: { cancelEnabled },
         });
+        if (antes?.cancelEnabled !== cancelEnabled) {
+            await auditarCompuertaHis({
+                organizationId: session.organizationId!,
+                actor: session.email ?? session.userId ?? 'desconocido',
+                operacion: 'CANCELAR',
+                encendido: cancelEnabled,
+            });
+        }
         revalidatePath('/dashboard/configuracion');
         return { success: true, cancelEnabled };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * 🚪 Con espejo, «Cancelar» y «Cambiar fecha» son también la compuerta de esa
+ * operación hacia el sistema del hospital (2026-10-15, `compuerta-his.ts`):
+ * encenderlos abre escrituras en el HIS. Queda la constancia en la auditoría del
+ * espejo, como el interruptor del envío al hospital (`cambiarEnvioAlHospital`),
+ * con cuántos cambios de ese tipo esperaban en la cola (salen al encenderlo).
+ * Sin espejo no hay hospital al que escribir: no se anota nada. Que la anotación
+ * falle no deshace el cambio del interruptor.
+ */
+async function auditarCompuertaHis(p: {
+    organizationId: string;
+    actor: string;
+    operacion: 'CANCELAR' | 'MODIFICAR';
+    encendido: boolean;
+}): Promise<void> {
+    try {
+        const espejo = await prisma.hospitalMirrorConfig.findUnique({
+            where: { organizationId: p.organizationId },
+            select: { enabled: true },
+        });
+        if (!espejo?.enabled) return;
+        const pendientes = await prisma.syncOutbox.findMany({
+            where: {
+                organizationId: p.organizationId,
+                deliveredAt: null,
+                deadLettered: false,
+                origin: { not: 'MIRROR' },
+                entityType: 'APPOINTMENT',
+                op: { in: ['UPDATE', 'DELETE'] },
+            },
+            select: { entityType: true, op: true, payload: true },
+            take: 1000,
+        });
+        const enCola = pendientes.filter((e) => operacionHisDelEvento(e) === p.operacion).length;
+        const nombre = p.operacion === 'CANCELAR' ? 'Cancelar citas' : 'Cambiar la fecha de una cita';
+        const queLlega = p.operacion === 'CANCELAR' ? 'las cancelaciones' : 'los cambios de fecha';
+        await prisma.syncAudit.create({
+            data: {
+                organizationId: p.organizationId,
+                direction: SYNC_AUDIT_DIRECTION.CONFIG,
+                entityType: 'OrganizationSettings',
+                op: p.operacion === 'CANCELAR' ? 'CANCEL_ENABLED_CHANGE' : 'RESCHEDULE_ENABLED_CHANGE',
+                outcome: 'OK',
+                detail:
+                    `«${nombre}» ${p.encendido ? 'ENCENDIDO' : 'APAGADO'} desde Configuración por ${p.actor}: ` +
+                    (p.encendido
+                        ? `${queLlega} (del asistente y del panel) llegan al sistema del hospital aunque el envío de citas nuevas esté apagado; `
+                        : `${queLlega} dejan de llegar al sistema del hospital y esperan en la cola; `) +
+                    `${enCola} en cola en ese momento.`,
+            },
+        });
+    } catch (e) {
+        console.error('[configuración] no se pudo anotar el cambio en la auditoría del espejo', {
+            error: getErrorMessage(e),
+        });
     }
 }
 
@@ -156,11 +230,23 @@ export async function setMyRescheduleEnabled(enabled: boolean) {
 
     const rescheduleEnabled = enabled === true;
     try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { rescheduleEnabled: true },
+        });
         await prisma.organizationSettings.upsert({
             where: { organizationId: session.organizationId! },
             create: { organizationId: session.organizationId!, rescheduleEnabled },
             update: { rescheduleEnabled },
         });
+        if (antes?.rescheduleEnabled !== rescheduleEnabled) {
+            await auditarCompuertaHis({
+                organizationId: session.organizationId!,
+                actor: session.email ?? session.userId ?? 'desconocido',
+                operacion: 'MODIFICAR',
+                encendido: rescheduleEnabled,
+            });
+        }
         revalidatePath('/dashboard/configuracion');
         return { success: true, rescheduleEnabled };
     } catch (e) {

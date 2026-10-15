@@ -41,6 +41,11 @@ function fakePool(
     auditError?: any;
     /** Citas del médico ese día que ve la revisión de cruces (H11). */
     citasDelDia?: { hora: string; dura: number | null }[];
+    /**
+     * La cita viva del médico a esa hora que lee la cancelación antes de borrar:
+     * `null` = no hay. Por defecto, la del paciente de `evento()`.
+     */
+    citaViva?: { hist: string | null } | null;
   } = {},
 ) {
   const requests: { params: Record<string, unknown>; sql: string }[] = [];
@@ -63,6 +68,17 @@ function fakePool(
         requests.push({ params, sql: sqlText });
         if (/INSERT INTO dbo\.CITAS_ANULADAS/.test(sqlText)) {
           return { rowsAffected: [opts.filasAnuladas ?? 1], recordset: [] };
+        }
+        if (
+          /SELECT NU_HIST_PAC_CIT hist\s+FROM dbo\.CITAS_MEDICAS WITH \(UPDLOCK, ROWLOCK, HOLDLOCK\)/.test(
+            sqlText,
+          )
+        ) {
+          const viva =
+            opts.citaViva === undefined
+              ? { hist: '1122334455' }
+              : opts.citaViva;
+          return { recordset: viva ? [viva] : [] };
         }
         if (opts.error && /INSERT INTO dbo\.CITAS_MEDICAS/.test(sqlText)) {
           throw opts.error;
@@ -761,6 +777,74 @@ describe('cancelAppointment', () => {
     expect(r.success).toBe(false);
     expect(requests).toHaveLength(0);
   });
+
+  // ── 🛡️ Solo la cita del MISMO paciente (2026-10-15) ──────────────────────
+
+  it('antes de borrar lee la cita viva CON BLOQUEO, y es lo primero que hace', async () => {
+    const { driver, requests } = conDriver();
+    await driver.cancelAppointment(eventoCancel());
+    expect(requests[0].sql).toMatch(
+      /SELECT NU_HIST_PAC_CIT hist\s+FROM dbo\.CITAS_MEDICAS WITH \(UPDLOCK, ROWLOCK, HOLDLOCK\)/,
+    );
+    expect(requests[0].sql).toMatch(/NU_ESTA_CIT\s*=\s*0/);
+  });
+
+  it('🛡️ si en el hospital esa hora es de OTRO paciente, no copia ni borra nada: rechazo del HIS', async () => {
+    const { driver, requests, tx } = conDriver({
+      citaViva: { hist: '99887766' },
+    });
+
+    const r = await driver.cancelAppointment(eventoCancel());
+
+    expect(r.success).toBe(false);
+    expect(r.rechazoDelHis).toBe(true);
+    expect(r.message).toMatch(/otro paciente/);
+    expect(sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)).toBeUndefined();
+    expect(sqlDe(requests, /DELETE FROM dbo\.CITAS_MEDICAS/)).toBeUndefined();
+    expect(tx.committed).toBe(false);
+    expect(tx.rolledBack).toBe(true);
+  });
+
+  it('el documento se compara sin relleno ni ceros a la izquierda, y el borrado repite el valor GUARDADO', async () => {
+    const guardado = '001122334455  ';
+    const { driver, requests } = conDriver({ citaViva: { hist: guardado } });
+
+    const r = await driver.cancelAppointment(eventoCancel());
+
+    expect(r.success).toBe(true);
+    const copia = sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)! as any;
+    const borra = sqlDe(requests, /DELETE FROM dbo\.CITAS_MEDICAS/)! as any;
+    expect(copia.params.hist).toBe(guardado);
+    expect(borra.params.hist).toBe(guardado);
+    expect(copia.sql).toMatch(/NU_HIST_PAC_CIT = @hist/);
+    expect(borra.sql).toMatch(/NU_HIST_PAC_CIT = @hist/);
+  });
+
+  it('sin cita viva a esa hora es éxito y no escribe nada', async () => {
+    const { driver, requests, tx } = conDriver({ citaViva: null });
+    const r = await driver.cancelAppointment(eventoCancel());
+    expect(r.success).toBe(true);
+    expect(r.message).toMatch(/ya no existía/);
+    expect(sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)).toBeUndefined();
+    expect(tx.committed).toBe(false);
+  });
+
+  it('🛡️ una cita del HIS sin documento válido no se toma por del paciente', async () => {
+    const { driver, requests } = conDriver({ citaViva: { hist: '0000' } });
+    const r = await driver.cancelAppointment(eventoCancel());
+    expect(r.rechazoDelHis).toBe(true);
+    expect(sqlDe(requests, /DELETE FROM dbo\.CITAS_MEDICAS/)).toBeUndefined();
+  });
+
+  it('🛡️ sin documento del paciente no toca la base', async () => {
+    const { driver, requests } = conDriver();
+    const r = await driver.cancelAppointment(
+      eventoCancel({ patientDocument: undefined }),
+    );
+    expect(r.success).toBe(false);
+    expect(r.rechazoDelHis).toBeUndefined();
+    expect(requests).toHaveLength(0);
+  });
 });
 
 describe('rescheduleAppointment', () => {
@@ -918,6 +1002,38 @@ describe('rescheduleAppointment', () => {
     });
 
     expect(insertDeCita(requests)!.conv).toBe(473);
+  });
+
+  it('🛡️ si la cita ANTERIOR en el hospital es de otro paciente, no borra ni crea nada: rechazo del HIS', async () => {
+    const { driver, requests, tx } = conDriver({
+      citaViva: { hist: '99887766' },
+    });
+
+    const r = await driver.rescheduleAppointment(eventoResched());
+
+    expect(r.success).toBe(false);
+    expect(r.rechazoDelHis).toBe(true);
+    expect(sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)).toBeUndefined();
+    expect(insertDeCita(requests)).toBeUndefined();
+    expect(tx.committed).toBe(false);
+    expect(tx.rolledBack).toBe(true);
+  });
+
+  it('si la cita anterior ya no estaba en el hospital, igual crea la nueva', async () => {
+    const { driver, requests } = conDriver({ citaViva: null });
+    const r = await driver.rescheduleAppointment(eventoResched());
+    expect(r.success).toBe(true);
+    expect(insertDeCita(requests)!.hora).toBe('2026/09/03 08:00');
+  });
+
+  it('🛡️ sin documento del paciente no toca la base', async () => {
+    const { driver, requests } = conDriver();
+    const r = await driver.rescheduleAppointment({
+      ...eventoResched(),
+      payload: { ...eventoResched().payload, patientDocument: undefined },
+    });
+    expect(r.success).toBe(false);
+    expect(requests).toHaveLength(0);
   });
 });
 

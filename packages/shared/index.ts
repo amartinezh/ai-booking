@@ -214,6 +214,18 @@ export type {
 export { citaFueraDeAlcance } from './src/alcance-agente';
 export type { AlcanceAgente } from './src/alcance-agente';
 export { derivarSync } from './src/sync-state';
+export {
+  algunaCompuertaAbierta,
+  compuertaAbierta,
+  compuertasHis,
+  eventoPuedeSalir,
+  operacionHisDelEvento,
+} from './src/compuerta-his';
+export type {
+  CompuertasHis,
+  EventoHaciaElHis,
+  OperacionHis,
+} from './src/compuerta-his';
 export type { FilaOutbox } from './src/sync-state';
 
 export {

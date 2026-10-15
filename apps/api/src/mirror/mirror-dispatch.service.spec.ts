@@ -10,6 +10,7 @@ describe('MirrorDispatchService', () => {
       findUnique: jest.Mock;
       update: jest.Mock;
     };
+    organizationSettings: { findUnique: jest.Mock };
     syncOutbox: {
       findMany: jest.Mock;
       findFirst: jest.Mock;
@@ -38,6 +39,14 @@ describe('MirrorDispatchService', () => {
         // El interruptor de envío al hospital, que el long-poll consulta en cada vuelta.
         findUnique: jest.fn(() => Promise.resolve({ pushEnabled: true })),
         update: jest.fn(() => Promise.resolve({})),
+      },
+      // «Cancelar» y «Cambiar fecha» (compuertas por operación): encendidas, así
+      // todo sale como con el envío de antes salvo donde la prueba diga otra cosa.
+      organizationSettings: {
+        findUnique: jest.fn(async () => ({
+          cancelEnabled: true as boolean,
+          rescheduleEnabled: true as boolean,
+        })),
       },
       syncOutbox: {
         findMany: jest.fn(() => Promise.resolve([])),
@@ -121,9 +130,13 @@ describe('MirrorDispatchService', () => {
       createdAt: new Date(),
     };
 
-    it('apagado: no entrega nada aunque haya eventos pendientes, ni los lee', async () => {
+    it('apagado (y cancelar y cambiar también): no entrega nada aunque haya eventos pendientes, ni los lee', async () => {
       prisma.hospitalMirrorConfig.findUnique.mockResolvedValue({
         pushEnabled: false,
+      });
+      prisma.organizationSettings.findUnique.mockResolvedValue({
+        cancelEnabled: false,
+        rescheduleEnabled: false,
       });
       prisma.syncOutbox.findMany.mockResolvedValue([evento]);
 
@@ -152,6 +165,7 @@ describe('MirrorDispatchService', () => {
 
     it('falla cerrado: sin configuración no sale nada hacia el hospital', async () => {
       prisma.hospitalMirrorConfig.findUnique.mockResolvedValue(null);
+      prisma.organizationSettings.findUnique.mockResolvedValue(null);
       prisma.syncOutbox.findMany.mockResolvedValue([evento]);
 
       expect(await service.getPendingEvents('org1', BigInt(0))).toEqual([]);
@@ -164,6 +178,118 @@ describe('MirrorDispatchService', () => {
       expect(prisma.hospitalMirrorConfig.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({ where: { organizationId: 'org-xyz' } }),
       );
+      expect(prisma.organizationSettings.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { organizationId: 'org-xyz' } }),
+      );
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 🚪 Una compuerta por operación (2026-10-15): el envío al hospital queda
+  // para las citas nuevas; cancelar y cambiar fecha salen con SU interruptor.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('getPendingEvents — compuertas por operación', () => {
+    const fila = (
+      seq: number,
+      entityId: string,
+      op: string,
+      payload: Record<string, unknown> = {},
+      entityType = 'APPOINTMENT',
+    ) => ({
+      seq: BigInt(seq),
+      eventId: `e${seq}`,
+      entityType,
+      entityId,
+      op,
+      payload,
+      createdAt: new Date(),
+      nextAttemptAt: null,
+    });
+    const cancelacion = (seq: number, id: string) =>
+      fila(seq, id, 'UPDATE', { status: 'CANCELLED', scheduleSlotId: 's1' });
+    const cambio = (seq: number, id: string) =>
+      fila(seq, id, 'UPDATE', {
+        status: 'SCHEDULED',
+        scheduleSlotId: 's2',
+        __old: { scheduleSlotId: 's1' },
+      });
+    const compuertas = (push: boolean, cancel: boolean, cambiar: boolean) => {
+      prisma.hospitalMirrorConfig.findUnique.mockResolvedValue({
+        pushEnabled: push,
+      });
+      prisma.organizationSettings.findUnique.mockResolvedValue({
+        cancelEnabled: cancel,
+        rescheduleEnabled: cambiar,
+      });
+    };
+    /** La lectura de candidatos devuelve `pendientes`; la de altas, `altas`. */
+    const cola = (pendientes: unknown[], altas: unknown[] = []) =>
+      prisma.syncOutbox.findMany.mockImplementation(async (arg: any) =>
+        arg.where.op === 'INSERT' ? altas : pendientes,
+      );
+    const seqs = (r: { seq: string }[]) => r.map((e) => e.seq);
+
+    it('envío apagado y cancelar encendido: la cancelación sale', async () => {
+      compuertas(false, true, false);
+      cola([cancelacion(10, 'cita-1')]);
+      expect(seqs(await service.getPendingEvents('org1', BigInt(0)))).toEqual([
+        '10',
+      ]);
+    });
+
+    it('envío apagado: solo se leen UPDATE/DELETE de citas (los cupos no tapan la ventana)', async () => {
+      compuertas(false, true, false);
+      cola([]);
+      await service.getPendingEvents('org1', BigInt(0));
+      const where = prisma.syncOutbox.findMany.mock.calls[0][0].where;
+      expect(where.entityType).toBe('APPOINTMENT');
+      expect(where.op).toEqual({ in: ['UPDATE', 'DELETE'] });
+    });
+
+    it('envío apagado: ni el alta ni el cambio de fecha (si cambiar está apagado) salen', async () => {
+      compuertas(false, true, false);
+      cola([cambio(11, 'cita-2'), cancelacion(12, 'cita-3')]);
+      expect(seqs(await service.getPendingEvents('org1', BigInt(0)))).toEqual([
+        '12',
+      ]);
+    });
+
+    it('🔢 la cancelación de una cita cuya ALTA espera al envío no sale antes que el alta', async () => {
+      compuertas(false, true, false);
+      cola(
+        [cancelacion(20, 'cita-4')],
+        [{ entityId: 'cita-4', seq: BigInt(15) }],
+      );
+      expect(await service.getPendingEvents('org1', BigInt(0))).toEqual([]);
+    });
+
+    it('cambiar fecha encendido sin envío: el cambio sale; la cancelación no (cancelar apagado)', async () => {
+      compuertas(false, false, true);
+      cola([cancelacion(30, 'cita-5'), cambio(31, 'cita-6')]);
+      expect(seqs(await service.getPendingEvents('org1', BigInt(0)))).toEqual([
+        '31',
+      ]);
+    });
+
+    it('envío encendido y cancelar apagado: el alta y los cupos salen; la cancelación espera, y con ella lo que siga de esa cita', async () => {
+      compuertas(true, false, false);
+      cola([
+        fila(40, 'cita-7', 'INSERT'),
+        cancelacion(41, 'cita-8'),
+        fila(42, 'cita-8', 'UPDATE', { status: 'SCHEDULED' }),
+        fila(43, 'slot-1', 'UPDATE', {}, 'SCHEDULE_SLOT'),
+      ]);
+      expect(seqs(await service.getPendingEvents('org1', BigInt(0)))).toEqual([
+        '40',
+        '43',
+      ]);
+    });
+
+    it('todo apagado: no lee la cola', async () => {
+      compuertas(false, false, false);
+      cola([cancelacion(50, 'cita-9')]);
+      expect(await service.getPendingEvents('org1', BigInt(0))).toEqual([]);
+      expect(prisma.syncOutbox.findMany).not.toHaveBeenCalled();
     });
   });
 
@@ -599,6 +725,14 @@ describe('MirrorDispatchService — entrega con backoff', () => {
         findUnique: jest.fn(() => Promise.resolve({ pushEnabled: true })),
         update: jest.fn(() => Promise.resolve({})),
       },
+      // «Cancelar» y «Cambiar fecha» (compuertas por operación): encendidas, así
+      // todo sale como con el envío de antes salvo donde la prueba diga otra cosa.
+      organizationSettings: {
+        findUnique: jest.fn(async () => ({
+          cancelEnabled: true as boolean,
+          rescheduleEnabled: true as boolean,
+        })),
+      },
       syncOutbox: {
         findMany: jest.fn(() => Promise.resolve([])),
         findFirst: jest.fn(() => Promise.resolve(null)),
@@ -943,6 +1077,14 @@ describe('MirrorDispatchService — hidratación del evento', () => {
         findUnique: jest.fn(() => Promise.resolve({ pushEnabled: true })),
         update: jest.fn(() => Promise.resolve({})),
       },
+      // «Cancelar» y «Cambiar fecha» (compuertas por operación): encendidas, así
+      // todo sale como con el envío de antes salvo donde la prueba diga otra cosa.
+      organizationSettings: {
+        findUnique: jest.fn(async () => ({
+          cancelEnabled: true as boolean,
+          rescheduleEnabled: true as boolean,
+        })),
+      },
       syncOutbox: {
         findMany: jest.fn(() => Promise.resolve([])),
         findFirst: jest.fn(() => Promise.resolve(null)),
@@ -1187,6 +1329,14 @@ describe('MirrorDispatchService — hidratación del contexto que va al HIS', ()
         findUniqueOrThrow: jest.fn(),
         findUnique: jest.fn(async () => ({ pushEnabled: true })),
         update: jest.fn(),
+      },
+      // «Cancelar» y «Cambiar fecha» (compuertas por operación): encendidas, así
+      // todo sale como con el envío de antes salvo donde la prueba diga otra cosa.
+      organizationSettings: {
+        findUnique: jest.fn(async () => ({
+          cancelEnabled: true as boolean,
+          rescheduleEnabled: true as boolean,
+        })),
       },
       syncOutbox: {
         findMany: jest.fn(async () => [filaOutbox()]),
@@ -1658,6 +1808,92 @@ describe('MirrorDispatchService — rechazo definitivo del HIS', () => {
     expect(
       llamadas.some((d: any) => d.attempts?.increment === 1 && !d.deliveredAt),
     ).toBe(true);
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // 🛡️ Cancelación NO aplicada (2026-10-15): en el hospital, esa hora es de otro
+  // paciente. El agente no borró nada; la cita sigue cancelada en AgenIA.
+  // ────────────────────────────────────────────────────────────────────────
+  describe('cancelación no aplicada por el HIS (otro paciente)', () => {
+    const inicio = new Date(Date.now() + 26 * 3_600_000);
+    let exceptions: { registrar: jest.Mock };
+
+    beforeEach(() => {
+      prisma.syncOutbox.findFirst.mockResolvedValue(
+        evento({
+          op: 'UPDATE',
+          payload: { status: 'CANCELLED', scheduleSlotId: 'slot-1' },
+        }),
+      );
+      tx.appointment.findFirst.mockResolvedValue({
+        id: 'apt-1',
+        patientId: 'pac-1',
+        epsId: 'eps-1',
+        scheduleSlotId: 'slot-1',
+        metaLog: { origenBot: true },
+        scheduleSlot: { startTime: inicio, doctorId: 'doc-1' },
+      });
+      tx.scheduleSlot.updateMany = jest.fn(async () => ({ count: 1 }));
+      exceptions = { registrar: jest.fn(async () => 'CREADA') };
+      service = new MirrorDispatchService(prisma, exceptions as any);
+    });
+
+    const ackOtroPaciente = () =>
+      service.ack(ORG, {
+        seqs: [],
+        failedSeqs: ['7'],
+        failures: [
+          {
+            seq: '7',
+            error:
+              'en el hospital, la cita de ese médico a esa hora es de otro paciente',
+            rechazoDelHis: true,
+          },
+        ],
+      });
+
+    it('no reabre la cita: deja la marca en metaLog y CIERRA el cupo, con origen MIRROR', async () => {
+      await ackOtroPaciente();
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      const upd = tx.appointment.update.mock.calls[0][0];
+      expect(upd.data).not.toHaveProperty('status');
+      expect(upd.data.metaLog.origenBot).toBe(true);
+      expect(upd.data.metaLog.cancelacionNoAplicadaEnElHis.motivo).toMatch(
+        /otro paciente/,
+      );
+      expect(tx.scheduleSlot.updateMany.mock.calls[0][0].data).toEqual({
+        isAvailable: false,
+      });
+    });
+
+    it('cierra el evento sin reintentos, deja auditoría y abre el caso en la bandeja', async () => {
+      await ackOtroPaciente();
+      const cierre = tx.syncOutbox.updateMany.mock.calls[0][0];
+      expect(cierre.data.deliveredAt).toBeInstanceOf(Date);
+      expect(cierre.data.lastError).toContain('Cancelación no aplicada');
+      expect(tx.syncAudit.create.mock.calls[0][0].data).toMatchObject({
+        op: 'UPDATE',
+        outcome: 'CONFLICT',
+      });
+      expect(exceptions.registrar).toHaveBeenCalledTimes(1);
+      expect(exceptions.registrar.mock.calls[0][1]).toMatchObject({
+        kind: 'CANCELACION_NO_APLICADA',
+        dedupeKey: 'cancelacion:apt-1',
+        appointmentId: 'apt-1',
+        patientId: 'pac-1',
+        doctorId: 'doc-1',
+        appointmentStartAt: inicio,
+      });
+      expect(prisma.syncOutbox.updateMany).toHaveBeenCalledTimes(1); // solo el de `seqs`
+    });
+
+    it('si la bandeja falla, el evento igual queda cerrado', async () => {
+      exceptions.registrar.mockRejectedValue(new Error('bd'));
+      await expect(ackOtroPaciente()).resolves.toBeDefined();
+      expect(tx.syncOutbox.updateMany).toHaveBeenCalled();
+    });
   });
 
   it('sin la marca, un fallo sigue el camino de siempre', async () => {

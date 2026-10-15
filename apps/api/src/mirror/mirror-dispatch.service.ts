@@ -1,6 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
+import {
+  SYNC_AUDIT_DIRECTION,
+  TITULO_EXCEPCION,
+  algunaCompuertaAbierta,
+  claveExcepcion,
+  compuertasHis,
+  eventoPuedeSalir,
+  operacionHisDelEvento,
+  severidadPorCercania,
+  type CompuertasHis,
+} from '@agenia/shared';
+import { MirrorExceptionsService } from './mirror-exceptions.service';
 import {
   AckInput,
   AckResult,
@@ -61,7 +72,12 @@ export class MirrorDispatchService {
   private longPollMs = DEFAULT_LONG_POLL_MS;
   private longPollIntervalMs = DEFAULT_LONG_POLL_INTERVAL_MS;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // La bandeja: una cancelación que el HIS no aplicó (era de otro paciente) deja
+    // un caso para el personal. Opcional: sin él (pruebas), solo queda la auditoría.
+    @Optional() private readonly exceptions?: MirrorExceptionsService,
+  ) {}
 
   async handshake(
     organizationId: string,
@@ -126,14 +142,15 @@ export class MirrorDispatchService {
     const deadline = Date.now() + this.longPollMs;
 
     while (true) {
-      // 🛑 Interruptor del envío al hospital (`pushEnabled`). Se consulta en CADA
-      // vuelta y no una vez al entrar: apagarlo a mitad de un long-poll de 25 s
-      // tiene que surtir efecto en el siguiente segundo, no en la siguiente
-      // llamada. Pausado, el agente recibe listas vacías y no escribe nada en
-      // el HIS; los eventos siguen en la cola y salen al volver a encenderlo.
-      // Antes este campo solo se mostraba: nadie lo hacía cumplir.
-      const rows = (await this.envioAlHospitalHabilitado(organizationId))
-        ? await this.selectDeliverable(organizationId, limit)
+      // 🚪 Compuertas hacia el hospital, una por operación (`compuerta-his.ts`):
+      // citas nuevas y lo demás con `pushEnabled`; cancelaciones con «Cancelar»;
+      // cambios de fecha con «Cambiar fecha». Se consultan en CADA vuelta y no una
+      // vez al entrar: apagar una a mitad de un long-poll de 25 s tiene que surtir
+      // efecto en el siguiente segundo, no en la siguiente llamada. Lo que tiene
+      // la compuerta cerrada sigue en la cola y sale al abrirla.
+      const compuertas = await this.compuertasHaciaElHospital(organizationId);
+      const rows = algunaCompuertaAbierta(compuertas)
+        ? await this.selectDeliverable(organizationId, limit, compuertas)
         : [];
 
       if (rows.length > 0 || Date.now() >= deadline) {
@@ -163,22 +180,37 @@ export class MirrorDispatchService {
    * eventos pendientes, no cientos.
    */
   /**
-   * ¿Se le puede entregar algo al agente para que lo escriba en el HIS? Falla
+   * ¿Qué se le puede entregar al agente para que lo escriba en el HIS? Falla
    * cerrado: sin fila de configuración, o con cualquier valor que no sea
-   * exactamente `true`, no sale nada hacia el hospital.
+   * exactamente `true`, esa compuerta no deja salir nada hacia el hospital.
    */
-  private async envioAlHospitalHabilitado(
+  private async compuertasHaciaElHospital(
     organizationId: string,
-  ): Promise<boolean> {
-    const config = await this.prisma.hospitalMirrorConfig.findUnique({
-      where: { organizationId },
-      select: { pushEnabled: true },
-    });
-    return config?.pushEnabled === true;
+  ): Promise<CompuertasHis> {
+    const [config, ajustes] = await Promise.all([
+      this.prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId },
+        select: { pushEnabled: true },
+      }),
+      this.prisma.organizationSettings.findUnique({
+        where: { organizationId },
+        select: { cancelEnabled: true, rescheduleEnabled: true },
+      }),
+    ]);
+    return compuertasHis(config, ajustes);
   }
 
-  private async selectDeliverable(organizationId: string, limit: number) {
+  private async selectDeliverable(
+    organizationId: string,
+    limit: number,
+    compuertas: CompuertasHis,
+  ) {
     const ahora = new Date();
+    // Con el envío de citas nuevas apagado solo pueden salir cancelaciones y
+    // cambios de fecha: se leen solo los UPDATE/DELETE de citas. Si no, los
+    // cientos de eventos de cupos que esperan al envío llenarían la ventana de
+    // lectura y taparían a la cancelación que sí puede salir.
+    const soloCambiosDeCitas = !compuertas.agendar && !compuertas.otros;
 
     const candidatos = await this.prisma.syncOutbox.findMany({
       // 🪞 ANTI-ECO, por partida doble: el disparador ya marca como entregado lo que
@@ -192,10 +224,39 @@ export class MirrorDispatchService {
         deliveredAt: null,
         deadLettered: false,
         origin: { not: 'MIRROR' },
+        ...(soloCambiosDeCitas
+          ? { entityType: 'APPOINTMENT', op: { in: ['UPDATE', 'DELETE'] } }
+          : {}),
       },
       orderBy: { seq: 'asc' },
       take: limit * SCAN_WINDOW_FACTOR,
     });
+
+    // 🔢 El orden por cita no se rompe aunque el alta quede fuera de la lectura:
+    // una cita cuyo alta espera al envío (agendada desde el panel con el envío
+    // apagado) no puede recibir antes su cancelación —el agente diría «ya no
+    // existía» y después, al encender el envío, la crearía en el hospital—.
+    const altaPendiente = new Map<string, bigint>();
+    if (soloCambiosDeCitas && candidatos.length > 0) {
+      const altas = await this.prisma.syncOutbox.findMany({
+        where: {
+          organizationId,
+          deliveredAt: null,
+          deadLettered: false,
+          origin: { not: 'MIRROR' },
+          entityType: 'APPOINTMENT',
+          op: 'INSERT',
+          entityId: { in: [...new Set(candidatos.map((c) => c.entityId))] },
+        },
+        select: { entityId: true, seq: true },
+      });
+      for (const a of altas) {
+        const previa = altaPendiente.get(a.entityId);
+        if (previa === undefined || a.seq < previa) {
+          altaPendiente.set(a.entityId, a.seq);
+        }
+      }
+    }
 
     const entidadesVistas = new Set<string>();
     const entregables: typeof candidatos = [];
@@ -203,11 +264,15 @@ export class MirrorDispatchService {
     for (const row of candidatos) {
       const entidad = `${row.entityType}:${row.entityId}`;
       // Ya hay un evento de esta entidad en el lote, o el primero de la
-      // entidad está esperando su backoff: en ambos casos los siguientes
-      // esperan su turno, o se rompería el orden.
+      // entidad está esperando su backoff o su compuerta: en todos los casos
+      // los siguientes esperan su turno, o se rompería el orden.
       if (entidadesVistas.has(entidad)) continue;
       entidadesVistas.add(entidad);
 
+      const alta = altaPendiente.get(row.entityId);
+      if (alta !== undefined && alta < row.seq) continue;
+      // 🚪 La compuerta de SU operación está cerrada: espera en la cola.
+      if (!eventoPuedeSalir(row, compuertas)) continue;
       if (row.nextAttemptAt && row.nextAttemptAt > ahora) continue;
 
       entregables.push(row);
@@ -553,6 +618,15 @@ export class MirrorDispatchService {
       },
     });
     if (!evento || evento.entityType !== 'APPOINTMENT') return false;
+    const operacion = operacionHisDelEvento(evento);
+    if (operacion === 'CANCELAR') {
+      return this.cerrarCancelacionNoAplicada(
+        organizationId,
+        seq,
+        evento,
+        motivo,
+      );
+    }
     if (evento.op === 'UPDATE') {
       return this.revertirCambioRechazado(organizationId, seq, evento, motivo);
     }
@@ -611,6 +685,138 @@ export class MirrorDispatchService {
         },
       });
     });
+    return true;
+  }
+
+  /**
+   * 🛡️ El HIS no aplicó una CANCELACIÓN: a esa hora del médico tiene la cita de
+   * OTRO paciente (2026-10-15). El agente no borró nada; reintentarla diez veces
+   * no cambia el resultado.
+   *
+   * La cita sigue cancelada en AgenIA —el paciente pidió cancelarla, y en el
+   * hospital no está a esa hora—, pero su cupo queda CERRADO (el hospital tiene
+   * ese tiempo ocupado por otro: liberarlo lo volvería a ofrecer). El evento se
+   * cierra con el motivo, queda la auditoría y un caso en la bandeja para que
+   * alguien mire dónde quedó la cita de este paciente en el hospital. El bot ve la
+   * marca en `metaLog` y se lo dice al paciente (H10).
+   *
+   * Todo con origen MIRROR: nada de esto vuelve al HIS.
+   */
+  private async cerrarCancelacionNoAplicada(
+    organizationId: string,
+    seq: string,
+    evento: { eventId: string; entityId: string },
+    motivo?: string,
+  ): Promise<boolean> {
+    const texto =
+      (motivo ?? '').trim() || 'en el hospital esa hora es de otro paciente';
+
+    const cita = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+      const fila = await tx.appointment.findFirst({
+        where: { id: evento.entityId, organizationId },
+        select: {
+          id: true,
+          patientId: true,
+          epsId: true,
+          scheduleSlotId: true,
+          metaLog: true,
+          scheduleSlot: { select: { startTime: true, doctorId: true } },
+        },
+      });
+      if (fila) {
+        const previo =
+          fila.metaLog &&
+          typeof fila.metaLog === 'object' &&
+          !Array.isArray(fila.metaLog)
+            ? (fila.metaLog as Record<string, unknown>)
+            : {};
+        await tx.appointment.update({
+          where: { id: fila.id },
+          data: {
+            metaLog: {
+              ...previo,
+              cancelacionNoAplicadaEnElHis: {
+                motivo: texto,
+                en: new Date().toISOString(),
+              },
+            },
+          },
+        });
+        // Solo si nadie más tiene una cita viva ahí (no debería: la de este
+        // paciente está cancelada).
+        await tx.scheduleSlot.updateMany({
+          where: {
+            id: fila.scheduleSlotId,
+            appointments: { none: { status: { not: 'CANCELLED' } } },
+          },
+          data: { isAvailable: false },
+        });
+      }
+      await tx.syncOutbox.updateMany({
+        where: { seq: BigInt(seq), organizationId },
+        data: {
+          deliveredAt: new Date(),
+          nextAttemptAt: null,
+          attempts: { increment: 1 },
+          lastError: `Cancelación no aplicada por el HIS: ${texto}`.slice(
+            0,
+            500,
+          ),
+        },
+      });
+      await tx.syncAudit.create({
+        data: {
+          organizationId,
+          direction: SYNC_AUDIT_DIRECTION.AGENIA_TO_HIS,
+          entityType: 'APPOINTMENT',
+          entityId: evento.entityId,
+          op: 'UPDATE',
+          outcome: 'CONFLICT',
+          eventId: evento.eventId,
+          detail:
+            `El HIS no aplicó la cancelación (${texto}): no se borró nada en el ` +
+            `hospital. La cita sigue cancelada en AgenIA y su cupo quedó cerrado.`,
+        },
+      });
+      return fila;
+    });
+
+    if (cita && this.exceptions) {
+      try {
+        const ahora = new Date();
+        await this.exceptions.registrar(
+          organizationId,
+          {
+            kind: 'CANCELACION_NO_APLICADA',
+            dedupeKey: claveExcepcion.cancelacionNoAplicada(cita.id),
+            severity: severidadPorCercania(
+              'ALTA',
+              (cita.scheduleSlot.startTime.getTime() - ahora.getTime()) /
+                60_000,
+            ),
+            title: TITULO_EXCEPCION.CANCELACION_NO_APLICADA,
+            detail: `Motivo del agente: ${texto}`.slice(0, 1000),
+            appointmentId: cita.id,
+            patientId: cita.patientId,
+            entityType: 'APPOINTMENT',
+            entityId: cita.id,
+            outboxSeq: BigInt(seq),
+            epsId: cita.epsId,
+            doctorId: cita.scheduleSlot.doctorId,
+            appointmentStartAt: cita.scheduleSlot.startTime,
+            meta: {},
+          },
+          ahora,
+        );
+      } catch (error: unknown) {
+        this.logger.error(
+          `No se pudo abrir el caso de la cancelación no aplicada (evento ${seq}, org ${organizationId}): ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
     return true;
   }
 

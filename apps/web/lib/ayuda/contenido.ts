@@ -1103,7 +1103,7 @@ export const TEMAS: TemaAyuda[] = [
                     'Enciende o apaga «Agendar citas por el asistente», «Cancelar citas por el asistente» y «Cambiar la fecha de una cita por el asistente».',
                     'Cada interruptor se guarda al instante y aplica desde el siguiente mensaje del paciente.',
                 ],
-                nota: 'Con una operación apagada, el asistente le dice al paciente que se comunique con el hospital y qué sí puede hacer por ahí. Con las tres apagadas, solo consulta citas. El personal sigue haciendo todo desde el panel. Si la clínica está conectada al hospital, el asistente solo hace estas operaciones con el envío al hospital encendido (Espejo).',
+                nota: 'Con una operación apagada, el asistente le dice al paciente que se comunique con el hospital y qué sí puede hacer por ahí. Con las tres apagadas, solo consulta citas. El personal sigue haciendo todo desde el panel. Si la clínica está conectada al hospital: agendar necesita además el envío de citas nuevas encendido (Espejo); «Cancelar» y «Cambiar fecha» son también la compuerta de esa operación hacia el sistema del hospital (del asistente y del panel), y el asistente solo le confirma al paciente cuando el hospital lo registró. Cada cambio de estos dos queda en la auditoría del espejo.',
             },
             {
                 titulo: 'Encender o apagar los recordatorios automáticos',
@@ -1377,13 +1377,13 @@ export const TEMAS: TemaAyuda[] = [
                 ],
             },
             {
-                titulo: 'Detener el envío de citas al hospital (emergencia)',
+                titulo: 'Detener la escritura en el hospital (emergencia)',
                 pasos: [
-                    'Apaga «Envío de AgenIA hacia el hospital» y confirma.',
-                    'Desde ese momento, lo que se agende, cancele o cambie en AgenIA queda en cola y no se escribe en el hospital.',
-                    'Cuando lo vuelvas a encender, la cola sale en segundos.',
+                    'Apaga «Envío de citas nuevas hacia el hospital» y confirma: las citas que se agenden en AgenIA quedan en cola y no se escriben en el hospital.',
+                    'En Configuración, apaga también «Cancelar citas por el asistente» y «Cambiar la fecha de una cita por el asistente»: cada uno es la compuerta de su operación hacia el hospital.',
+                    'Con los tres apagados, AgenIA no escribe nada en el hospital. Al volver a encender cada uno, lo suyo sale de la cola en segundos.',
                 ],
-                nota: 'Aunque esté apagado, sigue entrando lo que viene del hospital (su agenda y las citas de ventanilla). Con el envío apagado, el asistente no agenda, no cancela ni cambia citas.',
+                nota: 'Aunque estén apagados, sigue entrando lo que viene del hospital (su agenda y las citas de ventanilla). Con el envío de citas nuevas apagado, el asistente no agenda; cancelar y cambiar la fecha dependen de su propio interruptor.',
             },
             {
                 titulo: 'Reintentar un evento que no llegó al hospital',
@@ -1520,7 +1520,7 @@ export const TEMAS: TemaAyuda[] = [
             {
                 nombre: 'Tipos de excepción',
                 explicacion:
-                    'Cita que el hospital aún no tiene · Un cambio se rindió sin llegar al hospital · Conflicto entre AgenIA y el hospital · Error al aplicar un cambio · El hospital no tiene una cita que AgenIA da por hecha · Cita del hospital con un documento ambiguo · Un paciente avisó que no irá o pide otra fecha · El teléfono de un paciente es de otra persona.',
+                    'Cita que el hospital aún no tiene · Un cambio se rindió sin llegar al hospital · Conflicto entre AgenIA y el hospital · Error al aplicar un cambio · El hospital no tiene una cita que AgenIA da por hecha · Cita del hospital con un documento ambiguo · Un paciente avisó que no irá o pide otra fecha · El teléfono de un paciente es de otra persona · Cancelación que el hospital no aplicó.',
             },
             {
                 nombre: 'Estados de cierre',
@@ -1539,6 +1539,10 @@ export const TEMAS: TemaAyuda[] = [
             {
                 pregunta: '¿Se le avisa al agendador por WhatsApp de estos avisos de pacientes?',
                 respuesta: 'No: solo quedan en la bandeja, con su cifra en el menú. Los avisos por WhatsApp son para las citas que no llegaron al hospital.',
+            },
+            {
+                pregunta: '¿Qué es «Cancelación que el hospital no aplicó»?',
+                respuesta: 'AgenIA canceló una cita, pero en el sistema del hospital esa hora del médico tiene la cita de OTRA persona, así que no se borró nada allá (borrarla habría dejado sin cita a otro paciente). La cita sigue cancelada en AgenIA. Busca en el HIS dónde quedó la cita de este paciente y cancélala allá si corresponde; luego pulsa «Resolver».',
             },
             {
                 pregunta: '¿Qué es «Cita del hospital con un documento ambiguo»?',
@@ -1648,7 +1652,7 @@ export const GLOSARIO: TerminoGlosario[] = [
         definicion: 'OFF: la agenda es la de AgenIA. SHADOW: se compara con la del hospital sin cambiar nada. ON: la agenda de AgenIA es la del hospital.',
         temaId: 'espejo',
     },
-    { termino: 'Envío al hospital', definicion: 'Interruptor que deja (o no) que AgenIA escriba citas, cancelaciones y cambios en el HIS.', temaId: 'espejo' },
+    { termino: 'Envío de citas nuevas al hospital', definicion: 'Interruptor del Espejo que deja (o no) que AgenIA escriba citas nuevas en el HIS. Las cancelaciones y los cambios de fecha pasan con su propio interruptor de Configuración.', sinonimos: ['envío al hospital'], temaId: 'espejo' },
     { termino: 'Evento rendido', definicion: 'Un envío al hospital que falló diez veces y dejó de reintentarse. Se puede devolver a la cola desde el Espejo.', sinonimos: ['dead letter'], temaId: 'espejo' },
     { termino: 'Excepción de sincronización', definicion: 'Un problema detectado entre AgenIA y el hospital que alguien debe revisar en la Bandeja.', temaId: 'bandeja' },
     { termino: 'Veredicto', definicion: 'La conclusión del Rastreo de paciente: qué consta, de qué fuente, qué no se puede afirmar y qué hacer.', temaId: 'rastreo' },

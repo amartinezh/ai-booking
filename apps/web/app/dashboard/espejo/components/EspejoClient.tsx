@@ -122,8 +122,8 @@ export default function EspejoClient({ data }: { data: Estado }) {
               estado: 'atencion' as const,
               detalle:
                   data.pendientes > 0
-                      ? `Envío al hospital APAGADO: ${data.pendientes} evento(s) retenidos en cola; salen al encenderlo.`
-                      : 'Envío al hospital APAGADO: AgenIA no escribe nada en el sistema del hospital.',
+                      ? `Envío de citas nuevas APAGADO: ${data.pendientes} evento(s) en cola. Las citas nuevas salen al encenderlo; las cancelaciones y los cambios de fecha, con su interruptor de Configuración.`
+                      : 'Envío de citas nuevas APAGADO: AgenIA no escribe citas nuevas en el sistema del hospital. Las cancelaciones y los cambios de fecha dependen de su interruptor en Configuración.',
           }
         : data.deadLetters.length > 0
             ? { estado: 'mal' as const, detalle: `${data.deadLetters.length} evento(s) se rindieron: el hospital NO los tiene y nadie los va a reintentar solo.` }
@@ -171,7 +171,7 @@ export default function EspejoClient({ data }: { data: Estado }) {
                     <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                         Driver <code className="font-mono">{config.driverKey}</code> ·{' '}
                         {config.enabled ? 'activo' : 'desactivado'}
-                        {!config.pushEnabled && ' · escritura al hospital PAUSADA'}
+                        {!config.pushEnabled && ' · envío de citas nuevas PAUSADO'}
                         {!config.pullEnabled && ' · lectura del hospital PAUSADA'}
                     </p>
                 </div>

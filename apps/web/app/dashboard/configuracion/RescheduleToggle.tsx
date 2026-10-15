@@ -3,7 +3,7 @@
 import { CalendarClock, CalendarOff } from 'lucide-react';
 import { setMyRescheduleEnabled } from '@/app/actions/settings';
 import InstantSwitch from './InstantSwitch';
-import { NOTA_ENVIO_AL_HOSPITAL } from './operaciones-bot';
+import { notaCompuertaHis } from './operaciones-bot';
 
 /**
  * Interruptor de CAMBIAR LA FECHA de una cita por el bot. Guarda al instante y
@@ -23,7 +23,7 @@ export default function RescheduleToggle({ initialEnabled }: { initialEnabled: b
             labelOff="Apagado"
             detailOn="Los pacientes pueden cambiar la fecha de sus citas con el asistente, eligiendo entre los cupos libres."
             detailOff="Si un paciente intenta cambiar la fecha, el asistente le dice que se comunique con el hospital (al teléfono de soporte, si está configurado). El recordatorio tampoco le ofrece cambiarla por el asistente."
-            footnote={`El personal sigue cambiando citas desde el panel en ambos casos. ${NOTA_ENVIO_AL_HOSPITAL}`}
+            footnote={`El personal sigue cambiando citas desde el panel en ambos casos. ${notaCompuertaHis('los cambios de fecha')}`}
         />
     );
 }

@@ -11,6 +11,7 @@ describe('ConfirmacionHisService', () => {
     const hash = new Map<string, string>();
     prisma = {
       hospitalMirrorConfig: { findUnique: jest.fn(async () => null) },
+      organizationSettings: { findUnique: jest.fn(async () => null) },
       appointment: {
         findFirst: jest.fn(async () => ({ status: 'SCHEDULED' })),
       },
@@ -115,6 +116,89 @@ describe('ConfirmacionHisService', () => {
       });
       expect(await svc.puedeAgendar(ORG)).toBe(true);
       expect(await svc.requiereConfirmacion(ORG)).toBe(true);
+    });
+  });
+
+  // 🚪 2026-10-15: una compuerta por operación.
+  describe('compuertas', () => {
+    it('sin espejo no hay compuerta (todo vive solo en AgenIA)', async () => {
+      expect(await svc.compuertas(ORG)).toBeNull();
+    });
+
+    it('con espejo: el envío abre citas nuevas; cancelar y cambiar, su interruptor', async () => {
+      prisma.hospitalMirrorConfig.findUnique.mockResolvedValue({
+        enabled: true,
+        pushEnabled: false,
+      });
+      prisma.organizationSettings.findUnique.mockResolvedValue({
+        cancelEnabled: true,
+        rescheduleEnabled: false,
+      });
+      expect(await svc.compuertas(ORG)).toEqual({
+        agendar: false,
+        cancelar: true,
+        modificar: false,
+        otros: false,
+      });
+    });
+  });
+
+  describe('cancelación', () => {
+    it('su evento entregado → CONFIRMADA', async () => {
+      prisma.appointment.findFirst.mockResolvedValue({ metaLog: null });
+      prisma.syncOutbox.findFirst.mockResolvedValue({
+        deliveredAt: new Date(),
+      });
+      expect(await svc.estadoCancelacion(ORG, 'apt-1', '9')).toBe('CONFIRMADA');
+      expect(prisma.syncOutbox.findFirst.mock.calls[0][0].where).toEqual({
+        organizationId: ORG,
+        seq: BigInt(9),
+      });
+    });
+
+    it('marca de «no aplicada» en la cita → NO_APLICADA, aunque el evento esté cerrado', async () => {
+      prisma.appointment.findFirst.mockResolvedValue({
+        metaLog: { cancelacionNoAplicadaEnElHis: { motivo: 'otro paciente' } },
+      });
+      prisma.syncOutbox.findFirst.mockResolvedValue({
+        deliveredAt: new Date(),
+      });
+      expect(await svc.estadoCancelacion(ORG, 'apt-1', '9')).toBe(
+        'NO_APLICADA',
+      );
+    });
+
+    it('sin entregar, o sin evento conocido → PENDIENTE (nunca se da por hecha)', async () => {
+      prisma.appointment.findFirst.mockResolvedValue({ metaLog: {} });
+      prisma.syncOutbox.findFirst.mockResolvedValue({ deliveredAt: null });
+      expect(await svc.estadoCancelacion(ORG, 'apt-1', '9')).toBe('PENDIENTE');
+      expect(await svc.estadoCancelacion(ORG, 'apt-1', undefined)).toBe(
+        'PENDIENTE',
+      );
+    });
+
+    it('esperarCancelacion vuelve en cuanto el hospital responde', async () => {
+      prisma.appointment.findFirst.mockResolvedValue({ metaLog: null });
+      prisma.syncOutbox.findFirst
+        .mockResolvedValueOnce({ deliveredAt: null })
+        .mockResolvedValue({ deliveredAt: new Date() });
+      expect(await svc.esperarCancelacion(ORG, 'apt-1', '9', 1_000)).toBe(
+        'CONFIRMADA',
+      );
+    });
+
+    it('una cancelación pendiente no pisa un alta ni un cambio de la misma cita', async () => {
+      const base = {
+        organizationId: ORG,
+        senderId: 's',
+        appointmentId: 'apt-1',
+        fechaTexto: 'x',
+        desde: new Date().toISOString(),
+      };
+      await svc.registrarPendiente(base);
+      await svc.registrarPendiente({ ...base, tipo: 'CAMBIO' });
+      await svc.registrarPendiente({ ...base, tipo: 'CANCELACION' });
+      expect(await svc.pendientes()).toHaveLength(3);
     });
   });
 

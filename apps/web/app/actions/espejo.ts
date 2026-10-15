@@ -223,13 +223,15 @@ export async function cambiarModoAgenda(modo: string) {
 }
 
 /**
- * Prende o apaga el ENVÍO de AgenIA hacia el hospital (`pushEnabled`).
+ * Prende o apaga el ENVÍO de CITAS NUEVAS hacia el hospital (`pushEnabled`).
  *
- * Apagado, la API no le entrega ningún evento al agente (ver
- * `MirrorDispatchService.getPendingEvents`), así que nada de lo que pase en
- * AgenIA se escribe en el HIS: ni citas nuevas, ni cancelaciones, ni cambios.
- * Lo que llega DESDE el hospital (agenda, citas de ventanilla) sigue entrando.
- * Los eventos no se pierden: esperan en la cola y salen al volver a encenderlo.
+ * Desde 2026-10-15 cada operación tiene su compuerta (`compuerta-his.ts`):
+ * apagado, la API no le entrega al agente las citas nuevas ni lo demás que no es
+ * cancelar ni cambiar fecha (`MirrorDispatchService.getPendingEvents`). Las
+ * cancelaciones y los cambios de fecha pasan con «Cancelar» y «Cambiar fecha» de
+ * Configuración. Lo que llega DESDE el hospital (agenda, citas de ventanilla)
+ * sigue entrando. Los eventos no se pierden: esperan en la cola y salen al
+ * volver a encenderlo.
  *
  * Surte efecto en el siguiente segundo del long-poll del agente; no hace falta
  * reiniciar nada en la VM del hospital.
@@ -271,7 +273,7 @@ export async function cambiarEnvioAlHospital(enabled: boolean) {
                 op: 'PUSH_ENABLED_CHANGE',
                 outcome: 'OK',
                 detail:
-                    `Envío al hospital ${pushEnabled ? 'ENCENDIDO' : 'APAGADO'} desde el panel ` +
+                    `Envío de citas nuevas al hospital ${pushEnabled ? 'ENCENDIDO' : 'APAGADO'} desde el panel ` +
                     `por ${session?.email ?? session?.userId ?? 'desconocido'}; ` +
                     `${enCola} evento(s) en cola en ese momento.`,
             },

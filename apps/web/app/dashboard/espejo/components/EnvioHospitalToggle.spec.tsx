@@ -23,7 +23,7 @@ describe('EnvioHospitalToggle', () => {
     it('apagado lo dice claro', () => {
         render(<EnvioHospitalToggle initialEnabled={false} enCola={0} />);
         expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'false');
-        expect(screen.getByText('Apagado: no se escribe nada en el hospital')).toBeInTheDocument();
+        expect(screen.getByText('Apagado: no se escriben citas nuevas en el hospital')).toBeInTheDocument();
     });
 
     it('apagar pide confirmación y guarda', async () => {
@@ -32,7 +32,7 @@ describe('EnvioHospitalToggle', () => {
 
         await userEvent.click(screen.getByRole('switch'));
 
-        expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('¿Apagar el envío al hospital?'));
+        expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('¿Apagar el envío de citas nuevas al hospital?'));
         expect(mockCambiar).toHaveBeenCalledWith(false);
         await waitFor(() => expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'false'));
     });

@@ -46,6 +46,13 @@ import { derivarSync, type FilaOutbox } from './sync-state';
  *    cancela o cambia de hora.
  *  · `TELEFONO_EQUIVOCADO` — quien contestó dice que ese número no es del paciente.
  *    El bot ya no le manda recordatorios; falta corregir el teléfono en el hospital.
+ *
+ * Y una de la escritura en el hospital (2026-10-15):
+ *
+ *  · `CANCELACION_NO_APLICADA` — AgenIA canceló una cita, pero en el hospital esa
+ *    hora del médico tiene la cita de OTRO paciente: el agente no borró nada (borrar
+ *    habría dejado sin cita a otra persona). Alguien tiene que mirar dónde quedó la
+ *    cita de este paciente en el hospital.
  */
 export const TIPOS_EXCEPCION = [
   'CITA_NO_ENTREGADA',
@@ -56,6 +63,7 @@ export const TIPOS_EXCEPCION = [
   'IDENTIDAD_AMBIGUA',
   'AVISO_INASISTENCIA',
   'TELEFONO_EQUIVOCADO',
+  'CANCELACION_NO_APLICADA',
 ] as const;
 export type TipoExcepcion = (typeof TIPOS_EXCEPCION)[number];
 
@@ -78,6 +86,7 @@ export const TITULO_EXCEPCION: Record<TipoExcepcion, string> = {
   IDENTIDAD_AMBIGUA: 'Cita del hospital con un documento ambiguo',
   AVISO_INASISTENCIA: 'Un paciente avisó que no irá o pide otra fecha',
   TELEFONO_EQUIVOCADO: 'El teléfono de un paciente es de otra persona',
+  CANCELACION_NO_APLICADA: 'Cancelación que el hospital no aplicó',
 };
 
 export const SEVERIDADES_EXCEPCION = ['BAJA', 'MEDIA', 'ALTA', 'CRITICA'] as const;
@@ -307,6 +316,9 @@ export const claveExcepcion = {
   avisoInasistencia: (appointmentId: string) => `inasistencia:${appointmentId}`,
   /** Una por paciente: el número es el mismo en todas sus citas. */
   telefonoEquivocado: (patientId: string) => `telefono:${patientId}`,
+  /** Una por cita: su cancelación no se pudo aplicar en el hospital. */
+  cancelacionNoAplicada: (appointmentId: string) =>
+    `cancelacion:${appointmentId}`,
   auditoria: (a: {
     direction: string;
     entityType: string;

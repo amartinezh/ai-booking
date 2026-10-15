@@ -262,6 +262,9 @@ function createPrisma(db: Db) {
           scheduleSlot: db.slots.find((s) => s.id === a.scheduleSlotId),
         };
       }),
+      // La cita recordada de quien escribe (respuestas al bot): en estos flujos
+      // nadie acaba de recibir un recordatorio.
+      findFirst: jest.fn(() => null),
       update: tx.appointment.update,
     },
     scheduleSlot: {
@@ -846,6 +849,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     let confirmacion: {
       requiereConfirmacion: jest.Mock;
       puedeAgendar: jest.Mock;
+      compuertas: jest.Mock;
       esperar: jest.Mock;
       registrarPendiente: jest.Mock;
       pendientes: jest.Mock;
@@ -871,6 +875,12 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       confirmacion = {
         requiereConfirmacion: jest.fn(async () => true),
         puedeAgendar: jest.fn(async () => true),
+        compuertas: jest.fn(async () => ({
+          agendar: true,
+          cancelar: true,
+          modificar: true,
+          otros: true,
+        })),
         esperar: jest.fn(async () => 'CONFIRMADA'),
         registrarPendiente: jest.fn(async () => undefined),
         pendientes: jest.fn(async () => []),
@@ -955,12 +965,34 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(confirmacionesFinales()).toHaveLength(1);
     });
 
-    it('con el envío al hospital APAGADO el bot no agenda: queda en «solo consultas»', async () => {
-      confirmacion.puedeAgendar.mockResolvedValue(false);
+    it('con el envío al hospital APAGADO (y cancelar y cambiar cerrados) el bot no agenda: queda en «solo consultas»', async () => {
+      confirmacion.compuertas.mockResolvedValue({
+        agendar: false,
+        cancelar: false,
+        modificar: false,
+        otros: false,
+      });
 
       await say('Hola');
 
       expect(lastSent()).toMatch(/no está activa para agendar/i);
+      expect(appointments.getAvailableSlots).not.toHaveBeenCalled();
+    });
+
+    it('🚪 con el envío de citas nuevas apagado pero «Cancelar» abierto, no agenda y dice que cancelar sí se puede', async () => {
+      confirmacion.compuertas.mockResolvedValue({
+        agendar: false,
+        cancelar: true,
+        modificar: false,
+        otros: false,
+      });
+
+      await say('Hola');
+
+      expect(lastSent()).not.toMatch(/no está activa para agendar, cancelar/i);
+      expect(lastSent()).toContain(
+        'Cancelar una cita: escríbame *"cancelar cita"*',
+      );
       expect(appointments.getAvailableSlots).not.toHaveBeenCalled();
     });
 
@@ -1141,12 +1173,47 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(lastSent()).toContain('Medicina General');
     });
 
+    it('🔐 2.10 la cédula de OTRO paciente (otro número) no se cancela: ni se listan sus citas', async () => {
+      db.patients.push({
+        id: 'pat-otro',
+        cedula: '1099887766',
+        fullName: 'María Gómez',
+        organizationId: ORG_ID,
+        whatsappId: '573009998877',
+      });
+      const s = slotRow('slot-otro', FECHA_A, 'Ana Pérez', SVC_MEDICINA);
+      s.isAvailable = false;
+      db.slots.push(s);
+      db.appointments.push({
+        id: 'apt-otro',
+        patientId: 'pat-otro',
+        scheduleSlotId: 'slot-otro',
+        status: 'SCHEDULED',
+        organizationId: ORG_ID,
+      });
+
+      await say('cancelar cita');
+      await say('1099887766');
+
+      expect(lastSent()).toContain(
+        'Por seguridad, solo puedo cancelar una cita',
+      );
+      expect(sent().join('\n')).not.toContain('María');
+      expect(sent().join('\n')).not.toContain('Ana Pérez');
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+      expect(interactionLog.logFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'PATIENT_CHANNEL_MISMATCH' }),
+      );
+      expect([null, ChatState.IDLE]).toContain(await state());
+    });
+
     it('2.5 cédula sin citas → entra al loop de reintento y NO penaliza reintentos', async () => {
       db.patients.push({
         id: 'pat-1',
         cedula: CEDULA,
         fullName: 'Juan Pérez',
         organizationId: ORG_ID,
+        whatsappId: SENDER,
       });
 
       await say('cancelar cita');
@@ -1492,6 +1559,12 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         confirmacion = {
           requiereConfirmacion: jest.fn(async () => true),
           puedeAgendar: jest.fn(async () => true),
+          compuertas: jest.fn(async () => ({
+            agendar: true,
+            cancelar: true,
+            modificar: true,
+            otros: true,
+          })),
           eventoDelCambio: jest.fn(async () => '77'),
           esperarCambio: jest.fn(async () => 'CONFIRMADA'),
           estadoCambio: jest.fn(async () => 'PENDIENTE'),
@@ -2029,6 +2102,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         cedula: '1088123456',
         fullName: 'Juan Pérez',
         organizationId: ORG_ID,
+        whatsappId: SENDER,
       });
       for (let i = 0; i < 2; i++) {
         const s = slotRow(`slot-${i}`, FECHA_A, `Dr ${i}`, SVC_MEDICINA);
@@ -2083,6 +2157,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         cedula: '1088123456',
         fullName: 'Juan Pérez',
         organizationId: ORG_ID,
+        whatsappId: SENDER,
       });
       for (let i = 0; i < 2; i++) {
         const s = slotRow(`slot-${i}`, FECHA_A, `Dr ${i}`, SVC_MEDICINA);

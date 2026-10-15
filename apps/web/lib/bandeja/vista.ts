@@ -210,6 +210,8 @@ export function resumenPublico(
         ? `El paciente pidió por ${canal} cambiar la fecha de su cita${veces}.${mensaje} El bot no la cambió: si corresponde, muévala en el hospital y avísele al paciente.`
         : `El paciente avisó por ${canal} que no podrá asistir${veces}.${mensaje} El bot no canceló la cita: si corresponde, cancélela en el hospital para liberar el cupo.`;
     }
+    case 'CANCELACION_NO_APLICADA':
+      return 'AgenIA canceló esta cita, pero en el sistema del hospital esa hora del médico tiene la cita de OTRA persona: no se borró nada allá. La cita sigue cancelada en AgenIA. Busque en el hospital dónde quedó la cita de este paciente y cancélela allá si corresponde.';
     case 'TELEFONO_EQUIVOCADO': {
       const varios = numero(meta.perfilesConElNumero);
       const otros =

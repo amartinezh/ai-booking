@@ -7,6 +7,15 @@ import { TelegramConfigService } from '../telegram/telegram-config.service';
 import { CheckResult, ServiceConfig } from './services.config';
 import { getErrorMessage } from '../common/error-message.util';
 import { isGoogleTtsEnabled } from '../audio-config/tts/google-tts.service';
+import { compuertasHis, eventoPuedeSalir } from '@agenia/shared';
+
+/**
+ * Cuántos pendientes (los más viejos) se miran para hallar el más viejo que SÍ
+ * puede salir. Con las compuertas cerradas puede haber cientos esperando a
+ * propósito; si los 500 más viejos esperan, el checker no ve más allá (y no hay
+ * que alarmarse por ellos).
+ */
+const MAX_PENDIENTES_MIRADOS = 500;
 
 /**
  * Ejecuta el health check concreto de cada servicio externo y normaliza el
@@ -125,20 +134,36 @@ export class MonitorCheckers {
     let peor: CheckResult['status'] = 'UP';
 
     for (const cfg of configs) {
-      const [deadLetters, masViejo] = await Promise.all([
+      const [deadLetters, pendientes, ajustes] = await Promise.all([
         this.prisma.syncOutbox.count({
           where: { organizationId: cfg.organizationId, deadLettered: true },
         }),
-        this.prisma.syncOutbox.findFirst({
+        this.prisma.syncOutbox.findMany({
           where: {
             organizationId: cfg.organizationId,
             deliveredAt: null,
             deadLettered: false,
           },
           orderBy: { createdAt: 'asc' },
-          select: { createdAt: true, eventId: true },
+          take: MAX_PENDIENTES_MIRADOS,
+          select: {
+            createdAt: true,
+            eventId: true,
+            entityType: true,
+            op: true,
+            payload: true,
+          },
+        }),
+        this.prisma.organizationSettings.findUnique({
+          where: { organizationId: cfg.organizationId },
+          select: { cancelEnabled: true, rescheduleEnabled: true },
         }),
       ]);
+      // 🚪 El más viejo de los que PUEDEN salir: lo que espera a que se abra su
+      // compuerta (envío de citas nuevas, «Cancelar», «Cambiar fecha») no es una
+      // cola atascada.
+      const compuertas = compuertasHis(cfg, ajustes);
+      const masViejo = pendientes.find((e) => eventoPuedeSalir(e, compuertas));
 
       if (deadLetters > 0) {
         peor = 'DOWN';
@@ -148,14 +173,13 @@ export class MonitorCheckers {
         );
       }
 
-      // Con el envío al hospital PAUSADO a propósito (interruptor del panel del
-      // espejo) los eventos se quedan en la cola por decisión, no por falla:
-      // que no avance es lo esperado y no se reporta. El dead-letter y el
-      // latido se siguen vigilando igual. Mismo criterio que el vigilante de la
-      // bandeja (`MirrorWatchdogService`), que tampoco vigila la cola en pausa.
-      // Antes, dos asistencias retenidas abrieron un incidente falso
-      // «mirror DEGRADED: la cola no avanza» (2026-10-05).
-      if (masViejo && cfg.pushEnabled !== false) {
+      // Con su compuerta CERRADA a propósito los eventos se quedan en la cola por
+      // decisión, no por falla: que no avancen es lo esperado y no se reporta.
+      // El dead-letter y el latido se siguen vigilando igual. Mismo criterio que
+      // el vigilante de la bandeja (`MirrorWatchdogService`). Antes, dos
+      // asistencias retenidas abrieron un incidente falso «mirror DEGRADED: la
+      // cola no avanza» (2026-10-05).
+      if (masViejo) {
         const antiguedad = ahora - masViejo.createdAt.getTime();
         if (antiguedad > umbralPendienteMs) {
           if (peor !== 'DOWN') peor = 'DEGRADED';

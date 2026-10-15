@@ -47,18 +47,37 @@ const QUIEN_ESCRIBE =
 const CAMBIAR =
   /\b(re ?agend\w*|reprogram\w*|cambi\w* (de |la |mi |esa |esta |el )*(cita|fecha|hora|horario|dia)|cambiarla|cambiarmela|moverla|mover (la |mi |esa )?cita|correrla|aplaz\w*|posterg\w*|otro dia|otra (fecha|hora))\b/;
 
-// «no puedo asistir», «no voy a poder ir», «no alcanzo a llegar», «no voy».
+// «no puedo asistir», «no voy a poder ir», «no alcanzo a llegar», «no voy», y en
+// tercera persona, de quien escribe por un hijo o un papá: «mi hija no puede ir»,
+// «no la puedo llevar».
 const AUXILIAR =
-  '(voy a poder|vamos a poder|puedo|podemos|podre|podremos|podria|podriamos|pude|alcanzo|alcanzare|alcance|me queda posible|me queda facil|me es posible|tengo como|tenemos como|logro|voy a|vamos a)';
+  '(voy a poder|vamos a poder|va a poder|van a poder|puedo|podemos|puede|pueden|podre|podremos|podra|podran|podria|podriamos|pude|alcanzo|alcanzamos|alcanza|alcanzare|alcance|me queda posible|nos queda posible|le queda posible|me queda facil|me es posible|nos es posible|le es posible|tengo como|tenemos como|tiene como|logro|voy a|vamos a|va a|van a)';
 const VERBO_IR =
-  '(ir|asistir|llegar|venir|acudir|cumplir|cumplirla|presentarme|estar)';
+  '(ir|asistir|llegar|venir|acudir|cumplir|cumplirla|presentarme|presentarse|estar|llevarla|llevarlo|llevar)';
 const NO_IRA = new RegExp(
-  `\\bno (${AUXILIAR} (a )?${VERBO_IR}|voy(?! a faltar)|vamos(?! a faltar)|ire|iremos|asistire|asistiremos|asisto|llegare)\\b`,
+  `\\bno (la |lo |le |me |nos )?(${AUXILIAR} (a )?${VERBO_IR}|voy(?! a faltar)|vamos(?! a faltar)|ire|iremos|ira|iran|asistire|asistiremos|asistira|asisto|llegare)\\b|` +
+    // «no puedo mañana», «no podemos ese día»
+    `\\bno (puedo|podemos|puede|podre|podra|podria) (ese dia|manana|hoy|a esa hora|el (lunes|martes|miercoles|jueves|viernes|sabado|domingo))\\b|` +
+    // «me es imposible ir», «nos queda imposible»
+    `\\b(me|nos|le) (es|queda|sera) imposible\\b|` +
+    // «ya no la necesito», «no necesito la cita»
+    `\\bya no (la |lo )?necesit\\w*|\\bno (la |lo )?necesit\\w* (la |esa |mi )?(cita|consulta)\\b|` +
+    // «estoy de viaje», «estamos fuera de la ciudad», «está hospitalizada»
+    `\\b(estoy|estamos|esta|estara|estare) (de viaje|fuera de (la ciudad|el pueblo|anserma|el municipio|el pais)|hospitalizad\\w*)\\b|` +
+    `\\b(imprevisto|calamidad)\\b`,
 );
-// El paciente pide cancelar. «¿por qué me cancelaron?» o «¿la cita está cancelada?»
-// preguntan por algo que hizo otro: no son su aviso.
-const CANCELA =
-  /\b(cancel(ar|arla|arlo|ala|o|e|acion)|cansel(ar|arla|arlo|ala|o|e|acion)|anular(la)?|anulo)\b/;
+// El paciente pide cancelar o quitar su cita. «¿por qué me cancelaron?» o «¿la
+// cita está cancelada?» preguntan por algo que hizo otro: no son su aviso.
+const CANCELA = new RegExp(
+  '\\b(cancel|cansel|kancel)(ar|arla|arlo|ala|arme|armela|o|e|en|enla|enlo|emos|acion|aciones)\\b|' +
+    '\\bcancela (la |mi |esa |esta )?cita\\b|' +
+    '\\b(anul(ar|arla|en|enla|e|ela|o)|desist\\w*|dejar sin efecto)\\b|' +
+    '\\b(suspend|quit|borr|elimin)\\w* (la |mi |esa |esta |el )?(cita|cupo|turno)\\b|' +
+    '\\b(liber|ced)\\w* (el |mi |ese |este )?(cupo|turno|espacio)\\b',
+);
+// «no quiero cancelar», «no la cancelen»: lo contrario.
+const NO_CANCELA =
+  /\bno (quiero |deseo |voy a |necesito |la |lo |me la )?(cancel|cansel|anul)\w*/;
 
 // Pregunta por dónde, a qué hora, qué día o con quién. «q» es «qué».
 const LUGAR_U_HORA =
@@ -105,7 +124,9 @@ export function clasificarRespuestaAlBot(
   // Pedir otra fecha gana a «no puedo ir»: «no puedo el martes, ¿me la pasan para
   // otro día?» quiere la cita, solo que otro día.
   if (CAMBIAR.test(t)) return 'CAMBIAR';
-  if (NO_IRA.test(t) || CANCELA.test(t)) return 'NO_ASISTIRA';
+  if ((NO_IRA.test(t) || CANCELA.test(t)) && !NO_CANCELA.test(t)) {
+    return 'NO_ASISTIRA';
+  }
   if (LUGAR_U_HORA.test(t)) {
     return MENCIONA_CITA.test(t) || !OTRO_TEMA.test(t) ? 'PREGUNTA_CITA' : null;
   }

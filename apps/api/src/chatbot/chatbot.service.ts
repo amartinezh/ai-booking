@@ -131,6 +131,7 @@ import {
   ABANDONO_CONFIRMACION_HIS_MS,
   type ConfirmacionPendiente,
   type EstadoCambioHis,
+  type EstadoCancelacionHis,
 } from './confirmacion-his.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 
@@ -3731,7 +3732,10 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
     currentState: ChatState,
   ): void {
-    const decision = this.interpretYesNo(text);
+    const decision =
+      currentState === ChatState.AWAITING_CANCEL_CONFIRM
+        ? this.interpretarConfirmarCancelacion(text)
+        : this.interpretYesNo(text);
     if (!decision) return;
 
     aiData.intent = 'otro';
@@ -4195,23 +4199,25 @@ export class ChatbotService implements OnModuleInit {
    * interruptores de /dashboard/configuracion y, con espejo, el envío al
    * hospital encendido.
    *
-   * 🏥 H10: con `pushEnabled` apagado, ni la cita nueva, ni la cancelación, ni
-   * el cambio de fecha llegarían al HIS —el paciente creería algo que el
-   * hospital no tiene—, así que las tres se comportan como apagadas.
+   * 🚪 Con espejo, cada operación necesita además que su cambio pueda llegar al
+   * HIS (`compuerta-his.ts`, 2026-10-15): la cita nueva, el envío al hospital
+   * encendido (`pushEnabled`); cancelar y cambiar fecha, su propio interruptor,
+   * que es también su compuerta hacia el hospital. Si el cambio no llegara, el
+   * paciente creería algo que el hospital no tiene (H10).
    */
   private async operacionesDisponibles(
     organizationId: string,
   ): Promise<OperacionesBot> {
-    const [interruptores, hisRecibeCambios] = await Promise.all([
+    const [interruptores, compuertas] = await Promise.all([
       this.organizationSettings.operacionesDelBot(organizationId),
       this.confirmacionHis
-        ? this.confirmacionHis.puedeAgendar(organizationId)
-        : Promise.resolve(true),
+        ? this.confirmacionHis.compuertas(organizationId)
+        : Promise.resolve(null),
     ]);
     return {
-      agendar: interruptores.agendar && hisRecibeCambios,
-      cancelar: interruptores.cancelar && hisRecibeCambios,
-      modificar: interruptores.modificar && hisRecibeCambios,
+      agendar: interruptores.agendar && (compuertas?.agendar ?? true),
+      cancelar: interruptores.cancelar && (compuertas?.cancelar ?? true),
+      modificar: interruptores.modificar && (compuertas?.modificar ?? true),
     };
   }
 
@@ -4269,7 +4275,7 @@ export class ChatbotService implements OnModuleInit {
         scheduleSlot: { startTime: { gte: new Date(ahora - 3_600_000) } },
         patient: { OR: deQuien },
       },
-      include: { scheduleSlot: { include: { service: true } } },
+      include: { scheduleSlot: { include: { service: true, doctor: true } } },
       orderBy: { scheduleSlot: { startTime: 'asc' } },
     });
   }
@@ -4314,7 +4320,7 @@ export class ChatbotService implements OnModuleInit {
         scheduleSlot: { startTime: { gt: new Date() } },
         patient: { OR: deQuien },
       },
-      include: { scheduleSlot: { include: { service: true } } },
+      include: { scheduleSlot: { include: { service: true, doctor: true } } },
       orderBy: { scheduleSlot: { startTime: 'asc' } },
       take: 2,
     });
@@ -4354,6 +4360,9 @@ export class ChatbotService implements OnModuleInit {
     const tipo = clasificarRespuestaAlBot(p.text);
     if (!tipo) return false;
     if (tipo === 'NUMERO_EQUIVOCADO') return this.atenderNumeroEquivocado(p);
+    if (tipo === 'NO_ASISTIRA' && p.operaciones.cancelar) {
+      return this.ofrecerCancelar(p);
+    }
     if (tipo === 'NO_ASISTIRA' || tipo === 'CAMBIAR') {
       return this.atenderAvisoDelPaciente(
         p,
@@ -4414,6 +4423,99 @@ export class ChatbotService implements OnModuleInit {
     return org?.supportPhone
       ? MSGS.contactoClinica(org.supportPhone)
       : MSGS.contactoClinicaSinTelefono();
+  }
+
+  /**
+   * ❌ «No puedo asistir», «cancelar cita», «ya no la necesito»… con cancelar
+   * ENCENDIDO (2026-10-15): el bot le ofrece cancelar y espera su SÍ. Antes, solo
+   * «cancelar cita» al principio del mensaje abría la cancelación; «Buen día, no
+   * puedo asistir» —lo que más escriben— caía a la IA y no pasaba nada.
+   *
+   *   · Con la cita del recordatorio, o su ÚNICA cita próxima: se le muestra y se
+   *     le pregunta si la cancela (`AWAITING_CANCEL_CONFIRM`, el mismo paso del
+   *     flujo de siempre: el SÍ la cancela y espera al hospital).
+   *   · Con varias y sin recordatorio: el flujo de siempre, que pide la cédula y
+   *     lista sus citas para elegir.
+   *   · Sin citas: false, sigue el camino de siempre.
+   *
+   * Solo citas de los perfiles de quien escribe: nunca la de otra persona.
+   */
+  private async ofrecerCancelar(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    org: Organization | null;
+  }): Promise<boolean> {
+    const { organizationId, senderId, MSGS } = p;
+    // «cancelar cita» tal cual (el atajo de siempre) sin un recordatorio que diga
+    // de cuál cita habla: el flujo de siempre, que pide la cédula.
+    const esElAtajo = this.cancelRegex.test(textoParaCoincidencia(p.text));
+    const cita = esElAtajo
+      ? await this.citaRecordadaDelRemitente(organizationId, p.identity)
+      : await this.citaDelAviso(organizationId, p.identity);
+    if (!cita && esElAtajo) return false;
+    if (cita) {
+      await this.redis.set(
+        `temp_selected_cancel_apt:${organizationId}:${senderId}`,
+        cita.id,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        `temp_selected_cancel_slot:${organizationId}:${senderId}`,
+        cita.scheduleSlotId,
+        'EX',
+        SESSION_TTL,
+      );
+      const reply = MSGS.cancelarOfrecer(
+        cita.scheduleSlot.service?.name ?? '',
+        doctorLabel(cita.scheduleSlot.doctor),
+        formatAppointmentLong(cita.scheduleSlot.startTime, {
+          timeZone: p.org?.timezone || undefined,
+        }),
+      );
+      await this.smartReply(organizationId, senderId, reply);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_CANCEL_CONFIRM,
+      );
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: p.text,
+        botReply: reply,
+        metadata: { step: 'CANCELAR_OFRECIDO', appointmentId: cita.id },
+      });
+      return true;
+    }
+
+    const deQuien = this.perfilesDelRemitente(p.identity);
+    if (deQuien.length === 0) return false;
+    const citas = await this.prisma.appointment.count({
+      where: {
+        organizationId,
+        status: 'SCHEDULED',
+        scheduleSlot: { startTime: { gt: new Date() } },
+        patient: { OR: deQuien },
+      },
+    });
+    if (citas === 0) return false;
+
+    const reply = MSGS.cancelarPedirCedula();
+    await this.smartReply(organizationId, senderId, reply);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_CANCEL_CEDULA,
+    );
+    await this.auditLog(senderId, organizationId, {
+      status: InteractionStatus.CANCELLATION_FLOW,
+      userMessage: p.text,
+      botReply: reply,
+      metadata: { step: 'CANCELAR_PIDE_CEDULA', citasProximas: citas },
+    });
+    return true;
   }
 
   /**
@@ -5164,6 +5266,12 @@ export class ChatbotService implements OnModuleInit {
         org,
         operaciones,
         timeZone: org?.timezone || undefined,
+      }).catch((error: unknown) => {
+        // Un atajo que falla no se lleva el mensaje: sigue el camino de siempre.
+        this.logger.error(
+          `Respuesta al bot sin IA falló (org ${organizationId}): ${getErrorMessage(error)}`,
+        );
+        return false;
       }))
     ) {
       return;
@@ -8554,9 +8662,9 @@ export class ChatbotService implements OnModuleInit {
     // SÍ/NO. El whitelist literal anterior ('SI'/'SÍ'/'SI.'/'SÍ.') rechazaba
     // respuestas naturales ("Sí, confirmo", "claro") justo en el paso más caro
     // de fallar: el paciente ya identificó su cita y quiere cancelarla.
-    // `interpretYesNo` mapea "cancelar"/"cancela" a NO, así que la rama de
-    // aborto conserva el comportamiento del antiguo literal 'CANCELAR'.
-    const decision = this.interpretYesNo(text);
+    // Aquí «cancelar» es SÍ (es lo que se le preguntó): ver
+    // `interpretarConfirmarCancelacion`.
+    const decision = this.interpretarConfirmarCancelacion(text);
 
     if (decision === 'SI') {
       const aptId = await this.redis.get(
@@ -8580,74 +8688,12 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      try {
-        await this.prisma.$transaction([
-          this.prisma.appointment.update({
-            where: { id: aptId },
-            data: { status: 'CANCELLED' },
-          }),
-          this.prisma.scheduleSlot.update({
-            where: { id: slotId },
-            data: { isAvailable: true },
-          }),
-        ]);
-
-        const replyExito = MSGS.cancelarExitosa();
-        await this.smartReply(organizationId, senderId, replyExito);
-
-        // 📝 Auditoría: cancelación exitosa
-        await this.auditSuccess(senderId, organizationId, {
-          userMessage: text,
-          botReply: replyExito,
-          metadata: {
-            event: 'APPOINTMENT_CANCELLED',
-            appointmentId: aptId,
-            slotId,
-          },
-        });
-
-        // Liberar cupo y notificar waitlist ANTES de preguntar si desea agendar
-        const slot = await this.prisma.scheduleSlot.findUnique({
-          where: { id: slotId },
-          include: { doctor: true, service: true },
-        });
-        if (slot) {
-          try {
-            await this.waitlistService.notifyWaitlist({
-              slotId: slot.id,
-              serviceId: slot.serviceId,
-              epsId: slot.allowedEpsId,
-              organizationId: organizationId,
-              doctorName: slot.doctor.fullName,
-              slotDate: slot.startTime,
-            });
-          } catch (e: unknown) {
-            this.logger.error(
-              `Error notificando waitlist: ${getErrorMessage(e)}`,
-            );
-          }
-        }
-
-        // Preguntar si desea agendar en otro horario (si se puede por el bot).
-        await this.cerrarTrasCancelar(ctx, () =>
-          this.cleanUpCancelSession(organizationId, senderId),
-        );
-      } catch (e: unknown) {
-        this.logger.error(
-          'Error cancelando cita',
-          getErrorStack(e) ?? getErrorMessage(e),
-        );
-        const reply = MSGS.cancelarError();
-        await this.smartReply(organizationId, senderId, reply);
-
-        await this.auditFailure(senderId, organizationId, {
-          reason: FailureReason.CANCEL_ERROR,
-          userMessage: text,
-          botReply: reply,
-          metadata: { error: getErrorMessage(e), appointmentId: aptId },
-        });
-        await this.cleanUpCancelSession(organizationId, senderId);
-      }
+      await this.cancelarCitaElegida(ctx, {
+        aptId,
+        slotId,
+        via: null,
+        limpiar: () => this.cleanUpCancelSession(organizationId, senderId),
+      });
     } else if (decision === 'NO') {
       const reply = MSGS.cancelarAbortada();
       await this.smartReply(organizationId, senderId, reply);
@@ -8676,6 +8722,179 @@ export class ChatbotService implements OnModuleInit {
         metadata: { invalidResponse: respuesta, stage: 'CANCEL_CONFIRM' },
       });
     }
+  }
+
+  /**
+   * Cancela la cita que el paciente acaba de confirmar (SÍ).
+   *
+   * Sin espejo, como siempre: cita cancelada y cupo libre en una transacción, y
+   * «cancelada con éxito».
+   *
+   * 🏥 Con espejo (H10 de la cancelación, 2026-10-15) el bot NO dice «cancelada»
+   * hasta que el hospital la borra: antes lo decía al marcarla en AgenIA. Se
+   * marca la cita y se espera al HIS; el cupo NO se libera todavía (si en el
+   * hospital esa hora es de otro paciente, el cupo está ocupado allá):
+   *   CONFIRMADA  → se libera el cupo (MIRROR), se avisa a la lista de espera y
+   *                 «cancelada con éxito».
+   *   NO_APLICADA → «no pude cancelarla allá»; el personal tiene el caso.
+   *   PENDIENTE   → «el hospital aún la está registrando»; el cron le escribe
+   *                 cuando llegue (`atenderConfirmacionesHisPendientes`).
+   */
+  private async cancelarCitaElegida(
+    ctx: ChatTurnContext,
+    p: {
+      aptId: string;
+      slotId: string;
+      via: 'MODIFY_NO_SLOTS' | null;
+      limpiar: () => Promise<void>;
+    },
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS } = ctx;
+    const { aptId, slotId } = p;
+    const conHospital = await this.requiereConfirmacionHis(organizationId);
+
+    try {
+      if (conHospital) {
+        await this.prisma.appointment.update({
+          where: { id: aptId },
+          data: { status: 'CANCELLED' },
+        });
+      } else {
+        await this.prisma.$transaction([
+          this.prisma.appointment.update({
+            where: { id: aptId },
+            data: { status: 'CANCELLED' },
+          }),
+          this.prisma.scheduleSlot.update({
+            where: { id: slotId },
+            data: { isAvailable: true },
+          }),
+        ]);
+      }
+    } catch (e: unknown) {
+      this.logger.error(
+        `Error cancelando cita${p.via ? ` (vía ${p.via})` : ''}`,
+        getErrorStack(e) ?? getErrorMessage(e),
+      );
+      const reply = MSGS.cancelarError();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditFailure(senderId, organizationId, {
+        reason: FailureReason.CANCEL_ERROR,
+        userMessage: text,
+        botReply: reply,
+        metadata: {
+          error: getErrorMessage(e),
+          appointmentId: aptId,
+          ...(p.via ? { via: p.via } : {}),
+        },
+      });
+      await p.limpiar();
+      return;
+    }
+
+    let estado: EstadoCancelacionHis = 'CONFIRMADA';
+    let fechaTexto = '';
+    if (conHospital) {
+      const his = this.confirmacionHis!;
+      const cupo = await this.prisma.scheduleSlot.findUnique({
+        where: { id: slotId },
+        select: { startTime: true },
+      });
+      fechaTexto = cupo
+        ? formatAppointmentLong(cupo.startTime, {
+            timeZone: (await this.zonaHorariaDe(organizationId)) ?? undefined,
+          })
+        : '';
+      await this.smartReply(
+        organizationId,
+        senderId,
+        MSGS.confirmandoCancelacion(),
+      );
+      const seq =
+        (await his.eventoDelCambio(organizationId, aptId)) ?? undefined;
+      if (!seq) {
+        this.logger.error(
+          `Cancelación de la cita ${aptId} (org ${organizationId}) sin evento en la ` +
+            'cola hacia el HIS: no se puede confirmar con el hospital.',
+        );
+      }
+      estado = await his.esperarCancelacion(organizationId, aptId, seq);
+      if (estado === 'CONFIRMADA') {
+        await his.liberarCupoAnterior(organizationId, slotId);
+      } else if (estado === 'PENDIENTE') {
+        await his.registrarPendiente({
+          organizationId,
+          senderId,
+          appointmentId: aptId,
+          fechaTexto,
+          desde: new Date().toISOString(),
+          tipo: 'CANCELACION',
+          seq,
+          cupoAnteriorId: slotId,
+        });
+      }
+    }
+
+    if (estado !== 'CONFIRMADA') {
+      const reply =
+        estado === 'NO_APLICADA'
+          ? MSGS.cancelacionNoAplicada(
+              fechaTexto,
+              this.contactoDe(MSGS, await this.organizacionDe(organizationId)),
+            )
+          : MSGS.cancelacionEnRegistro(fechaTexto);
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text,
+        botReply: reply,
+        metadata: {
+          event:
+            estado === 'NO_APLICADA'
+              ? 'APPOINTMENT_CANCEL_NOT_APPLIED_BY_HIS'
+              : 'APPOINTMENT_CANCEL_PENDING_HIS',
+          appointmentId: aptId,
+          slotId,
+          ...(p.via ? { via: p.via } : {}),
+        },
+      });
+      await p.limpiar();
+      await this.cleanUpSession(organizationId, senderId);
+      return;
+    }
+
+    const replyExito = MSGS.cancelarExitosa();
+    await this.smartReply(organizationId, senderId, replyExito);
+    // 📝 Auditoría: cancelación exitosa
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: text,
+      botReply: replyExito,
+      metadata: {
+        event: 'APPOINTMENT_CANCELLED',
+        ...(p.via ? { via: p.via } : {}),
+        appointmentId: aptId,
+        slotId,
+        ...(conHospital ? { confirmadaPorElHospital: true } : {}),
+      },
+    });
+
+    // Cupo libre: se le ofrece a la lista de espera ANTES de preguntar si desea
+    // agendar.
+    await this.avisarListaDeEsperaCupoLiberado(organizationId, slotId);
+
+    // Preguntar si desea agendar en otro horario (si se puede por el bot).
+    await this.cerrarTrasCancelar(ctx, p.limpiar);
+  }
+
+  private async organizacionDe(
+    organizationId: string,
+  ): Promise<Organization | null> {
+    return this.prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+  }
+
+  private async zonaHorariaDe(organizationId: string): Promise<string | null> {
+    return (await this.organizacionDe(organizationId))?.timezone ?? null;
   }
 
   /**
@@ -9523,77 +9742,13 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      try {
-        await this.prisma.$transaction([
-          this.prisma.appointment.update({
-            where: { id: aptId },
-            data: { status: 'CANCELLED' },
-          }),
-          this.prisma.scheduleSlot.update({
-            where: { id: slotId },
-            data: { isAvailable: true },
-          }),
-        ]);
-
-        const replyExito = MSGS.cancelarExitosa();
-        await this.smartReply(organizationId, senderId, replyExito);
-
-        await this.auditSuccess(senderId, organizationId, {
-          userMessage: text,
-          botReply: replyExito,
-          metadata: {
-            event: 'APPOINTMENT_CANCELLED',
-            via: 'MODIFY_NO_SLOTS',
-            appointmentId: aptId,
-            slotId,
-          },
-        });
-
-        const slot = await this.prisma.scheduleSlot.findUnique({
-          where: { id: slotId },
-          include: { doctor: true, service: true },
-        });
-        if (slot) {
-          try {
-            await this.waitlistService.notifyWaitlist({
-              slotId: slot.id,
-              serviceId: slot.serviceId,
-              epsId: slot.allowedEpsId,
-              organizationId: organizationId,
-              doctorName: slot.doctor.fullName,
-              slotDate: slot.startTime,
-            });
-          } catch (e: unknown) {
-            this.logger.error(
-              `Error notificando waitlist (cancelación vía modify): ${getErrorMessage(e)}`,
-            );
-          }
-        }
-
-        // Reutilizamos el cierre del flujo de cancelación: ofrecer reagendar.
-        await this.cerrarTrasCancelar(ctx, () =>
-          this.cleanUpModifySession(organizationId, senderId),
-        );
-      } catch (e: unknown) {
-        this.logger.error(
-          'Error cancelando cita (vía modify)',
-          getErrorStack(e) ?? getErrorMessage(e),
-        );
-        const reply = MSGS.cancelarError();
-        await this.smartReply(organizationId, senderId, reply);
-
-        await this.auditFailure(senderId, organizationId, {
-          reason: FailureReason.CANCEL_ERROR,
-          userMessage: text,
-          botReply: reply,
-          metadata: {
-            error: getErrorMessage(e),
-            appointmentId: aptId,
-            via: 'MODIFY_NO_SLOTS',
-          },
-        });
-        await this.cleanUpModifySession(organizationId, senderId);
-      }
+      // Reutiliza la cancelación (y su cierre: ofrecer reagendar).
+      await this.cancelarCitaElegida(ctx, {
+        aptId,
+        slotId,
+        via: 'MODIFY_NO_SLOTS',
+        limpiar: () => this.cleanUpModifySession(organizationId, senderId),
+      });
     } else if (decision === 'NO') {
       // El paciente prefiere conservar su cita: NO tocamos nada.
       const reply = MSGS.modificarSinCambios();
@@ -9754,6 +9909,35 @@ export class ChatbotService implements OnModuleInit {
     if (noRegex.test(t)) return 'NO';
     if (siRegex.test(t)) return 'SI';
     return null;
+  }
+
+  /**
+   * SÍ/NO del paso «¿cancelo esta cita?». Aquí «cancelar», «cancélela» o «anúlela»
+   * son SÍ: es justo lo que se le preguntó. En los demás pasos SÍ/NO «cancelar» es
+   * abandonar (`interpretYesNo`), y con esa regla este paso tomaba «sí, cancelar»
+   * por NO y le dejaba la cita a quien la quería cancelar (2026-10-15).
+   */
+  private interpretarConfirmarCancelacion(
+    text: string | undefined | null,
+  ): 'SI' | 'NO' | null {
+    if (!text) return null;
+    const t = text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!t) return null;
+    if (
+      /\bno (la |lo |me la )?(cancel\w*|cansel\w*|anul\w*)|\b(mantener\w*|mantenga\w*|conservar\w*|dejarla|dejela|dejenla|dejala)\b/.test(
+        t,
+      )
+    ) {
+      return 'NO';
+    }
+    if (/\b(cancel\w*|cansel\w*|anul\w*)\b/.test(t)) return 'SI';
+    return this.interpretYesNo(text);
   }
 
   // Extrae la LETRA de opción (A–Z) que eligió el usuario, tolerando voz.
@@ -10733,6 +10917,17 @@ export class ChatbotService implements OnModuleInit {
           const vencida =
             Date.now() - new Date(p.desde).getTime() >
             ABANDONO_CONFIRMACION_HIS_MS;
+          if (p.tipo === 'CANCELACION') {
+            const estado = await this.confirmacionHis.estadoCancelacion(
+              p.organizationId,
+              p.appointmentId,
+              p.seq,
+            );
+            if (estado === 'PENDIENTE' && !vencida) continue;
+            if (!(await this.confirmacionHis.reclamar(p))) continue;
+            await this.atenderCancelacionHisPendiente(p, estado, vencida);
+            continue;
+          }
           if (p.tipo === 'CAMBIO') {
             const estado = await this.confirmacionHis.estadoCambio(
               p.organizationId,
@@ -10880,6 +11075,63 @@ export class ChatbotService implements OnModuleInit {
           : '[sin mensaje: confirmación abandonada tras 24 h]'),
       metadata: {
         stage: 'HIS_RESCHEDULE_FOLLOWUP',
+        appointmentId: p.appointmentId,
+        estado,
+        vencida,
+      },
+    });
+  }
+
+  /**
+   * 🏥 H10, segundo mensaje de una CANCELACIÓN cuyo registro en el HIS no llegó
+   * a tiempo. Confirmada → se libera el cupo (y se le ofrece a la lista de
+   * espera) y se le confirma al paciente. No aplicada → se le dice; el personal
+   * tiene el caso en la bandeja. Sin resultado en 24 h → no se le escribe (la
+   * bandeja ya avisó al personal).
+   */
+  private async atenderCancelacionHisPendiente(
+    p: ConfirmacionPendiente,
+    estado: EstadoCancelacionHis,
+    vencida: boolean,
+  ): Promise<void> {
+    const { organizationId, senderId } = p;
+    const MSGS = buildMessages(
+      await this.organizationSettings.getCommunicationStyle(organizationId),
+      canalDe(senderId),
+    );
+
+    let reply: string | null = null;
+    if (estado === 'CONFIRMADA') {
+      if (
+        p.cupoAnteriorId &&
+        (await this.confirmacionHis!.liberarCupoAnterior(
+          organizationId,
+          p.cupoAnteriorId,
+        ))
+      ) {
+        await this.avisarListaDeEsperaCupoLiberado(
+          organizationId,
+          p.cupoAnteriorId,
+        );
+      }
+      reply = MSGS.cancelacionConfirmadaDespues(p.fechaTexto);
+    } else if (estado === 'NO_APLICADA') {
+      reply = MSGS.cancelacionNoAplicada(
+        p.fechaTexto,
+        this.contactoDe(MSGS, await this.organizacionDe(organizationId)),
+      );
+    }
+    if (reply) await this.smartReply(organizationId, senderId, reply);
+
+    await this.auditLog(senderId, organizationId, {
+      status:
+        estado === 'CONFIRMADA'
+          ? InteractionStatus.SUCCESS
+          : InteractionStatus.FAILED,
+      userMessage: '[confirmación del hospital]',
+      botReply: reply ?? '[sin mensaje: confirmación abandonada tras 24 h]',
+      metadata: {
+        stage: 'HIS_CANCEL_FOLLOWUP',
         appointmentId: p.appointmentId,
         estado,
         vencida,
@@ -11227,6 +11479,18 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    if (!this.perfilEsDelRemitente(patient, senderId)) {
+      await this.rechazarCitaDeOtroCanal({
+        organizationId,
+        senderId,
+        MSGS,
+        operacion: 'CANCELAR',
+        cedula,
+        patientId: patient.id,
+      });
+      return;
+    }
+
     const activeAppointments = await this.prisma.appointment.findMany({
       where: {
         patientId: patient.id,
@@ -11363,6 +11627,63 @@ export class ChatbotService implements OnModuleInit {
     });
   }
 
+  /**
+   * 🔐 ¿Este perfil es de quien escribe? Su chat de Telegram, o su teléfono (en
+   * cualquiera de sus formas) o su BSUID por WhatsApp.
+   *
+   * Cancelar y cambiar la fecha ya escriben en el hospital (2026-10-15): sin esto,
+   * cualquiera que conociera un número de documento podía cancelarle la cita a
+   * otra persona escribiendo su cédula. Mismo criterio que la consulta de citas,
+   * que solo muestra el detalle al número registrado del paciente.
+   */
+  private perfilEsDelRemitente(
+    perfil: {
+      whatsappId: string | null;
+      bsuid: string | null;
+      telegramChatId: string | null;
+    },
+    senderId: string,
+  ): boolean {
+    if (isTelegramSender(senderId)) {
+      const chat = chatIdFromTelegramSender(senderId);
+      return !!chat && perfil.telegramChatId === chat;
+    }
+    if (perfil.bsuid && perfil.bsuid === senderId) return true;
+    if (!perfil.whatsappId) return false;
+    return (
+      perfil.whatsappId === senderId ||
+      variantesDeTelefono(senderId.replace(/\D/g, '')).includes(
+        perfil.whatsappId,
+      )
+    );
+  }
+
+  /** La cédula es de un paciente que no es de quien escribe: no se toca nada. */
+  private async rechazarCitaDeOtroCanal(p: {
+    organizationId: string;
+    senderId: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    operacion: 'CANCELAR' | 'MODIFICAR';
+    cedula: string;
+    patientId: string;
+  }): Promise<void> {
+    const reply = p.MSGS.citaDeOtroCanal(
+      TEXTO_OPERACION[p.operacion].hacerla,
+      this.contactoDe(p.MSGS, await this.organizacionDe(p.organizationId)),
+    );
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.cleanUpSession(p.organizationId, p.senderId);
+    await this.auditFailure(p.senderId, p.organizationId, {
+      reason: FailureReason.PATIENT_CHANNEL_MISMATCH,
+      userMessage: p.cedula,
+      botReply: reply,
+      metadata: {
+        flow: p.operacion,
+        patientId: p.patientId,
+      },
+    });
+  }
+
   // ══════════════════════════════════════════════════════════════
   // FLUJO DE BÚSQUEDA POR CÉDULA PARA MODIFICACIÓN (REPROGRAMACIÓN)
   // Espejo de handleCancelCedulaStep: ubica al paciente, lista sus citas
@@ -11396,6 +11717,18 @@ export class ChatbotService implements OnModuleInit {
         userMessage: cedula,
         botReply: reply,
         metadata: { searchedCedula: cedula, flow: 'MODIFY' },
+      });
+      return;
+    }
+
+    if (!this.perfilEsDelRemitente(patient, senderId)) {
+      await this.rechazarCitaDeOtroCanal({
+        organizationId,
+        senderId,
+        MSGS,
+        operacion: 'MODIFICAR',
+        cedula,
+        patientId: patient.id,
       });
       return;
     }

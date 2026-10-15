@@ -144,6 +144,14 @@ const FAILURE_META: Record<
         actionable: false,
         description: 'Cédula no existe en sistema (intento de cancelación).',
     },
+    PATIENT_CHANNEL_MISMATCH: {
+        label: 'Cita de otro número o chat',
+        icon: '🔐',
+        severity: 'info',
+        actionable: false,
+        description:
+            'Pidió cancelar o cambiar la cita de una cédula que no es de quien escribe: por seguridad no se tocó.',
+    },
     NO_APPOINTMENTS_TO_CANCEL: {
         label: 'Sin citas para cancelar',
         icon: '🚫',

@@ -4,10 +4,14 @@ import {
   SYNC_AUDIT_DIRECTION,
   TITULO_EXCEPCION,
   UMBRALES_VIGILANTE,
+  algunaCompuertaAbierta,
   claveExcepcion,
+  compuertasHis,
   debeVencer,
   evaluarRetencion,
+  eventoPuedeSalir,
   severidadPorCercania,
+  type CompuertasHis,
   type FilaOutbox,
   type SeveridadExcepcion,
   type TipoExcepcion,
@@ -155,19 +159,28 @@ export class MirrorWatchdogService {
       outboxIncompleto: true,
     };
 
-    const config = await this.prisma.hospitalMirrorConfig.findUnique({
-      where: { organizationId },
-      select: { enabled: true, pushEnabled: true },
-    });
+    const [config, ajustes] = await Promise.all([
+      this.prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId },
+        select: { enabled: true, pushEnabled: true },
+      }),
+      this.prisma.organizationSettings.findUnique({
+        where: { organizationId },
+        select: { cancelEnabled: true, rescheduleEnabled: true },
+      }),
+    ]);
     if (!config?.enabled) return resumen;
 
-    // Con el envío hacia el hospital PAUSADO a propósito (el interruptor de
-    // emergencia) los eventos se acumulan por decisión, no por falla: no se vigila.
-    if (config.pushEnabled) {
+    // 🚪 Lo que tiene su compuerta hacia el hospital CERRADA (envío de citas
+    // nuevas, «Cancelar», «Cambiar fecha») se acumula por decisión, no por falla:
+    // no se vigila. Con todas cerradas no se mira la cola.
+    const compuertas = compuertasHis(config, ajustes);
+    if (algunaCompuertaAbierta(compuertas)) {
       resumen.outboxIncompleto = !(await this.vigilarOutbox(
         organizationId,
         ahora,
         resumen,
+        compuertas,
       ));
     }
     await this.vigilarAuditoria(organizationId, ahora, resumen);
@@ -199,6 +212,7 @@ export class MirrorWatchdogService {
     organizationId: string,
     ahora: Date,
     resumen: ResumenVigilancia,
+    compuertas: CompuertasHis,
   ): Promise<boolean> {
     const desde = new Date(
       ahora.getTime() - UMBRALES_VIGILANTE.eventosVentanaDias * MS_DIA,
@@ -224,6 +238,7 @@ export class MirrorWatchdogService {
         deadLettered: true,
         nextAttemptAt: true,
         lastError: true,
+        payload: true,
       },
     });
     const completo = filas.length <= MAX_EVENTOS;
@@ -233,7 +248,19 @@ export class MirrorWatchdogService {
           `se vigilan los ${MAX_EVENTOS} más viejos y no se cierra nada solo en esta vuelta.`,
       );
     }
-    const eventos = completo ? filas : filas.slice(0, MAX_EVENTOS);
+    const leidos = completo ? filas : filas.slice(0, MAX_EVENTOS);
+    // 🚪 Solo lo que puede salir. Lo rendido se ve igual: se rindió con la
+    // compuerta abierta, y que hoy esté cerrada no lo entrega.
+    const eventos = leidos.filter(
+      (e) => e.deadLettered || eventoPuedeSalir(e, compuertas),
+    );
+    // Los retenidos a propósito: su excepción (si la tenía) no se cierra como «ya
+    // llegó» o «volvió a la normalidad» — no ha llegado, solo está en pausa.
+    const pausados = new Set(
+      leidos
+        .filter((e) => !e.deadLettered && !eventoPuedeSalir(e, compuertas))
+        .map((e) => String(e.seq)),
+    );
 
     const porCita = new Map<string, typeof eventos>();
     for (const e of eventos) {
@@ -350,6 +377,7 @@ export class MirrorWatchdogService {
         organizationId,
         vigentes,
         ahora,
+        pausados,
       );
     }
     return completo;
@@ -364,6 +392,7 @@ export class MirrorWatchdogService {
     organizationId: string,
     vigentes: Set<string>,
     ahora: Date,
+    pausados: Set<string> = new Set(),
   ): Promise<number> {
     const activas = await this.prisma.syncException.findMany({
       where: {
@@ -379,7 +408,11 @@ export class MirrorWatchdogService {
         appointmentId: true,
       },
     });
-    const candidatas = activas.filter((a) => !vigentes.has(a.dedupeKey));
+    const candidatas = activas.filter(
+      (a) =>
+        !vigentes.has(a.dedupeKey) &&
+        !(a.outboxSeq !== null && pausados.has(String(a.outboxSeq))),
+    );
     if (candidatas.length === 0) return 0;
 
     const seqs = candidatas

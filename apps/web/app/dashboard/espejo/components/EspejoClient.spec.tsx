@@ -76,12 +76,12 @@ describe('EspejoClient — consulta en vivo del rastreo', () => {
 describe('EspejoClient — envío al hospital', () => {
     it('apagado, el semáforo de la cola dice que está retenida y no que «todo llegó»', () => {
         render(<EspejoClient data={{ ...base({ pushEnabled: false }), pendientes: 2 }} />);
-        expect(screen.getByText(/Envío al hospital APAGADO: 2 evento\(s\) retenidos/)).toBeInTheDocument();
+        expect(screen.getByText(/Envío de citas nuevas APAGADO: 2 evento\(s\) en cola/)).toBeInTheDocument();
         expect(screen.queryByText(/Todo lo que se agendó por WhatsApp llegó al hospital/)).not.toBeInTheDocument();
     });
 
     it('muestra el interruptor con el estado real', () => {
         render(<EspejoClient data={base({ pushEnabled: false })} />);
-        expect(screen.getByRole('switch', { name: /Envío de AgenIA hacia el hospital/ })).toHaveAttribute('aria-checked', 'false');
+        expect(screen.getByRole('switch', { name: /Envío de citas nuevas hacia el hospital/ })).toHaveAttribute('aria-checked', 'false');
     });
 });

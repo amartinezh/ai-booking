@@ -6,6 +6,11 @@ import type {
   HisLookupRequestDto,
   HisNoticeCandidate,
 } from '@agenia/shared';
+import {
+  documentoSinCerosIniciales,
+  esDocumentoValido,
+  normalizeDocumento,
+} from '@agenia/shared';
 import { consultarCitasEnVivo } from './lookup';
 import type { ResultadoConsultaEnVivo } from './lookup';
 import {
@@ -1670,6 +1675,10 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
    *
    * `CITAS_ANULADAS` no tiene PK ni índices: es un log de auditoría puro, así
    * que se inserta sin más.
+   *
+   * 🛡️ Solo se borra la cita del MISMO paciente (2026-10-15): la del médico a esa
+   * hora tiene que ser de su documento. Si en el hospital es de otro —AgenIA tenía
+   * una foto vieja de ese cupo—, no se toca nada y se reporta como rechazo del HIS.
    */
   async cancelAppointment(evt: CanonicalChangeEvent): Promise<DriverResult> {
     const p = evt.payload;
@@ -1677,6 +1686,13 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       return {
         success: false,
         message: 'faltan médico u hora para identificar la cita a cancelar',
+      };
+    }
+    if (!documentoComparable(p.patientDocument)) {
+      return {
+        success: false,
+        message:
+          'falta el documento del paciente: sin él no se puede comprobar de quién es la cita, y no se cancela',
       };
     }
 
@@ -1687,16 +1703,26 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     const tx = pool.transaction();
     await tx.begin();
     try {
-      const borrada = await this.copiarAAnuladas(tx, {
+      const resultado = await this.copiarAAnuladas(tx, {
         medico: p.doctorExternalKey,
         feHora,
+        documento: p.patientDocument as string,
         motivo: mapping.motivoAnulacion,
         observacion:
           p.cancelObservations ??
           `Cancelada por el paciente vía ${nombreDelCanal(p.origin)}`,
       });
 
-      if (!borrada) {
+      if (resultado === 'OTRO_PACIENTE') {
+        await tx.rollback();
+        return {
+          success: false,
+          rechazoDelHis: true,
+          message:
+            'en el hospital, la cita de ese médico a esa hora es de otro paciente: no se canceló nada',
+        };
+      }
+      if (resultado === 'NO_ESTABA') {
         // No estaba: o el hospital ya la canceló por su lado, o nunca llegó a
         // escribirse. En ambos casos el resultado deseado ya se cumple, así
         // que se reporta como éxito — reintentar no cambiaría nada.
@@ -1730,17 +1756,38 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       };
     }
 
+    if (!documentoComparable(p.patientDocument)) {
+      return {
+        success: false,
+        message:
+          'falta el documento del paciente: sin él no se puede comprobar de quién es la cita anterior, y no se reagenda',
+      };
+    }
+
     const mapping = this.requireMapping();
     const pool = this.requirePool();
     const tx = pool.transaction();
     await tx.begin();
     try {
-      await this.copiarAAnuladas(tx, {
+      const anterior = await this.copiarAAnuladas(tx, {
         medico: p.previousDoctorExternalKey,
         feHora: formatFeHoraCit(p.previousStartTimeIso, this.timeZone),
+        documento: p.patientDocument as string,
         motivo: mapping.motivoAnulacion,
         observacion: `Reagendada por el paciente vía ${nombreDelCanal(p.origin)}`,
       });
+      // 🛡️ La cita de antes, en el hospital, es de OTRO paciente: no se borra ni se
+      // crea nada. La API devuelve la cita a su hora anterior (H10) y el bot se lo
+      // dice al paciente. Si NO_ESTABA, se sigue como siempre: se crea la nueva.
+      if (anterior === 'OTRO_PACIENTE') {
+        await tx.rollback();
+        return {
+          success: false,
+          rechazoDelHis: true,
+          message:
+            'no se reagendó: en el hospital, la cita anterior de ese médico a esa hora es de otro paciente',
+        };
+      }
 
       // El alta de la cita nueva reusa la MISMA lógica que un alta suelta
       // —convenio, consultorio, alta de paciente, validaciones— pero sobre
@@ -1779,17 +1826,41 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
 
   /**
    * Mueve una cita de `CITAS_MEDICAS` a `CITAS_ANULADAS` dentro de una
-   * transacción. Devuelve false si no había nada que mover.
+   * transacción:
+   *
+   *   · NO_ESTABA     → no hay cita viva de ese médico a esa hora: nada que mover.
+   *   · OTRO_PACIENTE → la hay, pero de otro documento: NO se toca.
+   *   · ANULADA       → era del paciente: copiada y borrada.
+   *
+   * La cita viva se lee primero CON BLOQUEO (UPDLOCK, HOLDLOCK hasta el fin de la
+   * transacción): entre leerla y borrarla nadie la puede cambiar. Y el borrado
+   * repite el documento leído, así que solo puede tocar ESA fila.
    */
   private async copiarAAnuladas(
     tx: sql.Transaction,
     datos: {
       medico: string;
       feHora: string;
+      /** El documento del paciente de AgenIA: la cita tiene que ser suya. */
+      documento: string;
       motivo: string;
       observacion: string;
     },
-  ): Promise<boolean> {
+  ): Promise<'ANULADA' | 'NO_ESTABA' | 'OTRO_PACIENTE'> {
+    const viva = await tx
+      .request()
+      .input('med', sql.VarChar(4), datos.medico)
+      .input('hora', sql.VarChar(18), datos.feHora).query(`
+        SELECT NU_HIST_PAC_CIT hist
+          FROM dbo.CITAS_MEDICAS WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
+         WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0`);
+    const fila = (viva.recordset as { hist: string | null }[])[0];
+    if (!fila) return 'NO_ESTABA';
+    if (!mismoDocumento(fila.hist, datos.documento)) return 'OTRO_PACIENTE';
+    // El valor TAL CUAL está guardado (con sus espacios o ceros): el borrado lo
+    // repite y así solo alcanza a la fila que se comprobó.
+    const histGuardada = fila.hist as string;
+
     // Copia campo a campo: `CITAS_ANULADAS` repite las columnas de
     // `CITAS_MEDICAS` con sufijo _CIAN, más motivo y observaciones.
     //
@@ -1810,6 +1881,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       .request()
       .input('med', sql.VarChar(4), datos.medico)
       .input('hora', sql.VarChar(18), datos.feHora)
+      .input('hist', sql.VarChar(20), histGuardada)
       .input('moti', sql.VarChar(2), datos.motivo)
       .input('obse', sql.VarChar(255), datos.observacion).query(`
         -- ⚠️ CITAS_ANULADAS NO es CITAS_MEDICAS con el sufijo cambiado.
@@ -1849,19 +1921,21 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
           CD_CODI_EST_CIT, CD_CODI_CAMP_CIT, NU_CODIGO_HSWE_CIT,
           @moti, @obse
         FROM dbo.CITAS_MEDICAS
-        WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0`);
+        WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0
+          AND NU_HIST_PAC_CIT = @hist`);
 
-    if ((copia.rowsAffected[0] ?? 0) === 0) return false;
+    if ((copia.rowsAffected[0] ?? 0) === 0) return 'NO_ESTABA';
 
     await tx
       .request()
       .input('med', sql.VarChar(4), datos.medico)
       .input('hora', sql.VarChar(18), datos.feHora)
+      .input('hist', sql.VarChar(20), histGuardada)
       .query(
-        'DELETE FROM dbo.CITAS_MEDICAS WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0',
+        'DELETE FROM dbo.CITAS_MEDICAS WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0 AND NU_HIST_PAC_CIT = @hist',
       );
 
-    return true;
+    return 'ANULADA';
   }
 
   async updateAttendance(_evt: CanonicalChangeEvent): Promise<DriverResult> {
@@ -1896,4 +1970,28 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       'resolveCatalogMapping: pendiente de validación de negocio — ver docs/drivers/cnt-sanvicente-anserma/ESTADO.md',
     );
   }
+}
+
+/**
+ * El documento sin lo que no es dígito ni ceros a la izquierda: AgenIA guarda solo
+ * dígitos y el HIS puede guardar espacios de relleno o ceros delante.
+ */
+function documentoParaComparar(raw: string | null | undefined): string {
+  return documentoSinCerosIniciales(normalizeDocumento(raw));
+}
+
+/** Un documento con el que se puede decidir de quién es una cita. */
+function documentoComparable(raw: string | null | undefined): boolean {
+  return esDocumentoValido(normalizeDocumento(raw));
+}
+
+/** ¿La cita del HIS (`NU_HIST_PAC_CIT`) es del paciente con ese documento? */
+function mismoDocumento(
+  enElHis: string | null | undefined,
+  deAgenia: string,
+): boolean {
+  return (
+    documentoComparable(enElHis) &&
+    documentoParaComparar(enElHis) === documentoParaComparar(deAgenia)
+  );
 }

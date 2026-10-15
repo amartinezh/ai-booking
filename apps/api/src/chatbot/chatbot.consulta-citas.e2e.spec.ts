@@ -292,6 +292,19 @@ function createPrisma(db: Db) {
         const a = db.appointments.find((x) => x.id === where.id);
         return a ? { ...a, scheduleSlot: slotDe(a) } : null;
       }),
+      // Cuántas citas próximas tiene quien escribe («no puedo asistir» sin recordatorio).
+      count: jest.fn(({ where }: any) => {
+        const despues: Date | undefined = where.scheduleSlot?.startTime?.gt;
+        return db.appointments.filter(
+          (a) =>
+            a.status === where.status &&
+            esDeAlgunCanal(
+              where.patient?.OR ?? [],
+              db.patients.find((x) => x.id === a.patientId),
+            ) &&
+            (!despues || slotDe(a).startTime > despues),
+        ).length;
+      }),
       // La cita recordada de quien escribe (respuesta al recordatorio).
       findFirst: jest.fn(({ where }: any) => {
         if (!where.reminderSentAt) return null;
@@ -1678,12 +1691,13 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(lastSent()).not.toContain('Dejé registrado');
     });
 
-    it('🛡️ con cancelar ENCENDIDO el bot no deja el aviso: la cancelación la hace él', async () => {
+    it('🛡️ con cancelar ENCENDIDO el bot no deja el aviso: le ofrece cancelar él', async () => {
       cancelEnabled = true;
       conRecordatorio();
       await say('Buen día ,no puedo asistir');
       expect(avisos.registrar).not.toHaveBeenCalled();
       expect(lastSent()).not.toContain('Dejé registrado');
+      expect(lastSent()).toContain('¿Desea que la *cancele*?');
     });
 
     it('☎️ «está equivocado de número» con espejo → caso en la bandeja (que frena los recordatorios), sin marcar al paciente', async () => {
@@ -1740,6 +1754,243 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       await say('Número equivocado', '573009998877');
       expect(avisos.registrar).not.toHaveBeenCalled();
       expect(db.patients[0].remindersOptOut).toBeUndefined();
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // ❌ Cancelar desde «no puedo asistir», con cancelar ENCENDIDO (2026-10-15)
+  // ──────────────────────────────────────────────────────────────────
+  describe('❌ «no puedo asistir» con cancelar encendido', () => {
+    const HACE_2H = new Date(AHORA.getTime() - 2 * 3_600_000);
+    const conRecordatorio = () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      db.appointments[0].reminderSentAt = HACE_2H;
+    };
+    const cupo = () => db.slots.find((x) => x.id === 'slot-apt-1');
+
+    beforeEach(() => {
+      // Como en producción: agendar y cambiar apagados, solo cancelar.
+      bookingEnabled = false;
+      cancelEnabled = true;
+      rescheduleEnabled = false;
+    });
+
+    it('le muestra la cita del recordatorio y le pregunta si la cancela; nada se toca todavía', async () => {
+      conRecordatorio();
+      await say('Buen día ,no puedo asistir');
+      const r = lastSent();
+      expect(r).toContain('Entiendo que no podrá asistir a esta cita');
+      expect(r).toContain('*Medicina General*');
+      expect(r).toContain(
+        'Responda *SÍ* para cancelarla o *NO* para mantenerla',
+      );
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it.each(['Sí', 'si, cancelar', 'Cancélela por favor', 'claro'])(
+      '«%s» → la cancela (sin espejo, en el acto) y libera el cupo',
+      async (respuesta) => {
+        conRecordatorio();
+        await say('Ya no la necesito');
+        await say(respuesta);
+        expect(db.appointments[0].status).toBe('CANCELLED');
+        expect(cupo()?.isAvailable).toBe(true);
+        expect(sent().join('\n')).toMatch(/cancel/i);
+      },
+    );
+
+    it.each(['No', 'no, mejor la mantengo', 'no la cancele'])(
+      '«%s» → la cita sigue intacta',
+      async (respuesta) => {
+        conRecordatorio();
+        await say('No voy a poder ir');
+        await say(respuesta);
+        expect(db.appointments[0].status).toBe('SCHEDULED');
+        expect(lastSent()).toMatch(/sigue/);
+      },
+    );
+
+    it('sin recordatorio, con una sola cita próxima: se la ofrece igual', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('Mi hija no puede ir a la cita');
+      expect(lastSent()).toContain('¿Desea que la *cancele*?');
+    });
+
+    it('sin recordatorio y con varias citas: el flujo de siempre (pide la cédula)', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      seedCita('apt-2', new Date('2026-10-10T14:00:00.000Z'), SVC_ODONTO);
+      await say('Buen día ,no puedo asistir');
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+    });
+
+    it('«cancelar cita» tal cual, sin recordatorio: el flujo de siempre (pide la cédula)', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('cancelar cita');
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+    });
+
+    it('«cancelar cita» tras el recordatorio: le ofrece ESA cita', async () => {
+      conRecordatorio();
+      await say('cancelar cita');
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+      expect(lastSent()).toContain('*Medicina General*');
+    });
+
+    // 🏥 Con espejo: no dice «cancelada» hasta que el hospital la borra.
+    describe('con espejo (H10 de la cancelación)', () => {
+      let his: Record<string, jest.Mock>;
+      beforeEach(() => {
+        his = {
+          requiereConfirmacion: jest.fn(async () => true),
+          compuertas: jest.fn(async () => ({
+            agendar: false,
+            cancelar: true,
+            modificar: false,
+            otros: false,
+          })),
+          eventoDelCambio: jest.fn(async () => '88'),
+          esperarCancelacion: jest.fn(async () => 'CONFIRMADA'),
+          liberarCupoAnterior: jest.fn(async (_o: string, id: string) => {
+            const c = db.slots.find((x) => x.id === id);
+            if (c) c.isAvailable = true;
+            return true;
+          }),
+          registrarPendiente: jest.fn(async () => undefined),
+          pendientes: jest.fn(async () => []),
+        };
+        (service as any).confirmacionHis = his;
+      });
+
+      it('CONFIRMADA: pide unos segundos, NO libera el cupo antes, y solo después confirma y lo libera', async () => {
+        conRecordatorio();
+        let cupoAlEsperar: boolean | undefined;
+        his.esperarCancelacion.mockImplementation(async () => {
+          cupoAlEsperar = cupo()?.isAvailable;
+          return 'CONFIRMADA';
+        });
+        await say('Buen día ,no puedo asistir');
+        await say('Sí');
+        expect(db.appointments[0].status).toBe('CANCELLED');
+        expect(cupoAlEsperar).toBe(false);
+        expect(his.esperarCancelacion).toHaveBeenCalledWith(
+          ORG_ID,
+          'apt-1',
+          '88',
+        );
+        expect(his.liberarCupoAnterior).toHaveBeenCalledWith(
+          ORG_ID,
+          'slot-apt-1',
+        );
+        const textos = sent();
+        const iEspera = textos.findIndex((t) =>
+          /cancelando su cita|registrando la cancelación/.test(t),
+        );
+        // Las tres redacciones de `cancelarExitosa`.
+        const iExito = textos.findIndex((t) =>
+          /cancelada con éxito|Cancelé su cita|Ya cancelé la cita/.test(t),
+        );
+        expect(iEspera).toBeGreaterThan(-1);
+        expect(iExito).toBeGreaterThan(iEspera);
+      });
+
+      it('PENDIENTE: no la da por cancelada, avisa que le escribe y la deja pendiente con su cupo', async () => {
+        conRecordatorio();
+        his.esperarCancelacion.mockResolvedValue('PENDIENTE');
+        await say('Buen día ,no puedo asistir');
+        await say('Sí');
+        expect(lastSent()).toContain(
+          'aún no termina de registrar la cancelación',
+        );
+        expect(his.liberarCupoAnterior).not.toHaveBeenCalled();
+        expect(cupo()?.isAvailable).toBe(false);
+        expect(his.registrarPendiente).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tipo: 'CANCELACION',
+            appointmentId: 'apt-1',
+            seq: '88',
+            cupoAnteriorId: 'slot-apt-1',
+          }),
+        );
+      });
+
+      it('NO_APLICADA: le dice que allá esa hora es de otra persona y no libera el cupo', async () => {
+        conRecordatorio();
+        his.esperarCancelacion.mockResolvedValue('NO_APLICADA');
+        await say('Buen día ,no puedo asistir');
+        await say('Sí');
+        expect(lastSent()).toContain('aparece a nombre de otra persona');
+        expect(lastSent()).toContain(`el hospital al *${SOPORTE}*`);
+        expect(his.liberarCupoAnterior).not.toHaveBeenCalled();
+        expect(cupo()?.isAvailable).toBe(false);
+      });
+
+      it.each([
+        ['CONFIRMADA', 'ya registró la cancelación', true],
+        ['NO_APLICADA', 'aparece a nombre de otra persona', false],
+      ])(
+        'después (cron): %s → se le escribe y el cupo se libera solo si se confirmó',
+        async (estado, texto, libera) => {
+          seedPaciente();
+          seedCita('apt-1', MANANA, SVC_MEDICINA, 'pat-1', 'CANCELLED');
+          his.pendientes.mockResolvedValue([
+            {
+              organizationId: ORG_ID,
+              senderId: SENDER,
+              appointmentId: 'apt-1',
+              fechaTexto: 'sábado, 3 de octubre a las 09:00 a m',
+              desde: new Date().toISOString(),
+              tipo: 'CANCELACION',
+              seq: '88',
+              cupoAnteriorId: 'slot-apt-1',
+            },
+          ]);
+          his.estadoCancelacion = jest.fn(async () => estado);
+          his.reclamar = jest.fn(async () => true);
+
+          await service.atenderConfirmacionesHisPendientes();
+
+          expect(lastSent()).toContain(texto);
+          expect(his.liberarCupoAnterior).toHaveBeenCalledTimes(libera ? 1 : 0);
+        },
+      );
+
+      it('después (cron): aún PENDIENTE y sin vencer → no le escribe ni la reclama', async () => {
+        his.pendientes.mockResolvedValue([
+          {
+            organizationId: ORG_ID,
+            senderId: SENDER,
+            appointmentId: 'apt-1',
+            fechaTexto: 'x',
+            desde: new Date().toISOString(),
+            tipo: 'CANCELACION',
+            seq: '88',
+            cupoAnteriorId: 'slot-apt-1',
+          },
+        ]);
+        his.estadoCancelacion = jest.fn(async () => 'PENDIENTE');
+        his.reclamar = jest.fn(async () => true);
+        await service.atenderConfirmacionesHisPendientes();
+        expect(his.reclamar).not.toHaveBeenCalled();
+        expect(sent()).toHaveLength(0);
+      });
+
+      it('con «Cancelar» cerrado hacia el hospital, no ofrece cancelar: deja el aviso al personal', async () => {
+        his.compuertas.mockResolvedValue({
+          agendar: false,
+          cancelar: false,
+          modificar: false,
+          otros: false,
+        });
+        conRecordatorio();
+        await say('Buen día ,no puedo asistir');
+        expect(lastSent()).toContain('Dejé registrado su aviso');
+        expect(avisos.registrar).toHaveBeenCalledTimes(1);
+      });
     });
   });
 

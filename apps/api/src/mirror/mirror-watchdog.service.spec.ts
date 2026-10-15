@@ -66,6 +66,8 @@ describe('MirrorWatchdogService', () => {
     eventosPorSeq?: Record<string, unknown>[];
     /** Lo que devuelve la consulta del vencimiento (`updatedAt: { lt }`). */
     olvidadas?: Record<string, unknown>[];
+    /** «Cancelar» y «Cambiar fecha»: por defecto apagados (como en producción). */
+    ajustes?: unknown;
   }
 
   const build = (e: Escenario = {}) => {
@@ -77,6 +79,13 @@ describe('MirrorWatchdogService', () => {
         findMany: jest.fn(async (..._a: unknown[]) => [
           { organizationId: ORG },
         ]),
+      },
+      organizationSettings: {
+        findUnique: jest.fn(async (..._a: unknown[]) =>
+          'ajustes' in e
+            ? e.ajustes
+            : { cancelEnabled: false, rescheduleEnabled: false },
+        ),
       },
       syncOutbox: {
         // La consulta del escaneo trae `deliveredAt: null`; la del cierre pide por `seq`.
@@ -388,6 +397,57 @@ describe('MirrorWatchdogService', () => {
         expect.anything(),
       );
       expect(r.outboxIncompleto).toBe(true);
+    });
+
+    // 🚪 Compuertas por operación (2026-10-15).
+    describe('con el envío de citas nuevas apagado y «Cancelar» encendido', () => {
+      const soloCancelar = {
+        config: { enabled: true, pushEnabled: false },
+        ajustes: { cancelEnabled: true, rescheduleEnabled: false },
+      };
+
+      it('mira la cola, pero un alta retenida a propósito no es una cita «no entregada»', async () => {
+        const { service, prisma, exceptions } = build({
+          ...soloCancelar,
+          eventos: [evento()],
+          citas: [cita()],
+        });
+        const r = await service.vigilarOrganizacion(ORG, AHORA);
+        expect(prisma.syncOutbox.findMany).toHaveBeenCalled();
+        expect(registradas(exceptions)).toEqual([]);
+        expect(r.outboxIncompleto).toBe(false);
+      });
+
+      it('la excepción de un alta que ahora está en pausa no se cierra como «ya llegó»', async () => {
+        const { service, exceptions } = build({
+          ...soloCancelar,
+          eventos: [evento()],
+          citas: [cita()],
+          activas: [activa()],
+          eventosPorSeq: [],
+        });
+        await service.vigilarOrganizacion(ORG, AHORA);
+        expect(exceptions.autoResolver).not.toHaveBeenCalled();
+      });
+
+      it('una cancelación rendida sí se ve', async () => {
+        const { service, exceptions } = build({
+          ...soloCancelar,
+          eventos: [
+            evento({
+              op: 'UPDATE',
+              payload: { status: 'CANCELLED', scheduleSlotId: 's1' },
+              deadLettered: true,
+              attempts: 10,
+            }),
+          ],
+          citas: [cita({ status: 'CANCELLED' })],
+        });
+        await service.vigilarOrganizacion(ORG, AHORA);
+        expect(registradas(exceptions).map((x) => x.kind)).toEqual([
+          'EVENTO_RENDIDO',
+        ]);
+      });
     });
   });
 

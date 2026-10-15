@@ -2626,6 +2626,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           fullName: 'Ana Gómez',
           cedula: '12345',
           organizationId: ORG_ID,
+          // Escribe desde su propio número: solo así puede cancelar (2026-10-15).
+          whatsappId: SENDER,
         }));
         prisma.appointment = { findMany: jest.fn(() => []) };
         prisma.$transaction = jest.fn((arg: any) =>
@@ -2706,6 +2708,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         fullName: 'Ana Gómez',
         cedula: '12345',
         organizationId: ORG_ID,
+        // Escribe desde su propio número: solo así puede cambiar la fecha.
+        whatsappId: SENDER,
       }));
       prisma.appointment = {
         findMany: jest.fn(() => []),

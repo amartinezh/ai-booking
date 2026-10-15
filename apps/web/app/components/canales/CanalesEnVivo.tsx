@@ -90,6 +90,7 @@ const MOTIVOS: Record<string, string> = {
     PATIENT_NOT_FOUND: 'Paciente no encontrado',
     NO_APPOINTMENTS_TO_CANCEL: 'Sin citas para cancelar',
     NO_APPOINTMENTS_TO_MODIFY: 'Sin citas para reprogramar',
+    PATIENT_CHANNEL_MISMATCH: 'Cita de otro número o chat',
     CANCEL_ERROR: 'Error al cancelar',
     MODIFY_ERROR: 'Error al reprogramar',
     DOCTOR_NOT_FOUND: 'Médico no encontrado',

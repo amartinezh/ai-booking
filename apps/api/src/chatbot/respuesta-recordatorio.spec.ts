@@ -66,6 +66,28 @@ describe('clasificarRespuestaAlBot', () => {
     'Y yo no puedo ir mañana',
     'Gracias, pero no puedo asistir',
     'No alcanzo a llegar, estoy trabajando',
+    // 2026-10-15: todas las formas de decir que no irá o que quiere cancelar.
+    'Mi hija no puede ir a la cita',
+    'no la puedo llevar mañana',
+    'No podemos ir',
+    'no podré asistir',
+    'Ya no la necesito',
+    'no necesito la cita',
+    'me es imposible',
+    'Estoy de viaje',
+    'estamos fuera de la ciudad',
+    'Mi mamá está hospitalizada',
+    'Se me presentó un imprevisto',
+    'quiero cancelar mi cita',
+    'Cancelenla por favor',
+    'cancela la cita',
+    'Necesito anular la cita',
+    'por favor quiten la cita',
+    'pueden eliminar mi cita',
+    'liberen el cupo',
+    'pueden ceder mi turno a otra persona',
+    'no puedo el jueves',
+    'no puedo mañana',
   ])('«%s» → NO_ASISTIRA', (texto) => {
     expect(clasificarRespuestaAlBot(texto)).toBe('NO_ASISTIRA');
   });
@@ -100,6 +122,11 @@ describe('clasificarRespuestaAlBot', () => {
     'No voy a faltar',
     'Están equivocados, mi cita es el jueves',
     'No sé si pueda ir',
+    'No quiero cancelar, solo confirmar',
+    'no la cancelen, sí voy',
+    'No va a haber problema',
+    '¿La cita está cancelada?',
+    '¿Me cancelaron la cita?',
   ])(
     '🛡️ «%s» no se toma por aviso de inasistencia, cambio ni número equivocado',
     (texto) => {

@@ -204,6 +204,12 @@ describe('resumenPublico — una frase neutra desde meta, nunca desde el detalle
     expect(r('TELEFONO_EQUIVOCADO', { perfilesConElNumero: 1 })).not.toContain('pacientes en AgenIA');
   });
 
+  it('cancelación no aplicada: dice que no se borró nada en el hospital y qué hacer', () => {
+    const t = r('CANCELACION_NO_APLICADA', {});
+    expect(t).toContain('no se borró nada');
+    expect(t).toContain('OTRA persona');
+  });
+
   it('un tipo desconocido cae al título', () => {
     expect(r('TIPO_NUEVO', {})).toBe('Título');
   });

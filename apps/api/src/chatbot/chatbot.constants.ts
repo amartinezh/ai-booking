@@ -1111,6 +1111,38 @@ const FORMAL = {
   cancelarError: () =>
     `Lo lamento, el sistema presentó un inconveniente al intentar cancelar la cita.\n\nPara no dejar el proceso a medias, por favor comuníquese con nuestro Call Center y allí le ayudan enseguida.`,
 
+  // «No puedo asistir» con cancelar ENCENDIDO: se le ofrece cancelar ESA cita.
+  cancelarOfrecer: (servicio: string, doctor: string, fecha: string) =>
+    `Entiendo que no podrá asistir a esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n` +
+    `¿Desea que la *cancele*? Así el cupo queda libre para otro paciente. Responda *SÍ* para cancelarla o *NO* para mantenerla.`,
+
+  // 🏥 H10 de la cancelación: mientras el hospital la registra.
+  confirmandoCancelacion: () =>
+    pick([
+      `Un momento, por favor. Estoy cancelando su cita en el sistema del hospital; en unos segundos le confirmo. ⏳`,
+      `Deme unos segundos: estoy registrando la cancelación en el sistema del hospital. ⏳`,
+    ]),
+
+  // El hospital no respondió a tiempo: NO se confirma. Se le escribe después.
+  cancelacionEnRegistro: (fecha: string) =>
+    `El hospital aún no termina de registrar la cancelación de su cita del _${fecha}_. ⏳\n\n` +
+    `Apenas quede registrada le escribo por aquí para confirmárselo. No necesita volver a pedirlo.`,
+
+  // La confirmó DESPUÉS del aviso anterior.
+  cancelacionConfirmadaDespues: (fecha: string) =>
+    `✅ El hospital ya registró la cancelación de su cita del _${fecha}_. El cupo quedó libre para otro paciente.`,
+
+  // En el hospital esa hora es de otro paciente: no se borró nada.
+  cancelacionNoAplicada: (fecha: string, contacto: string) =>
+    `No pude cancelar su cita del _${fecha}_ en el sistema del hospital: allí esa hora aparece a nombre de otra persona, así que no toqué nada. 🙏\n\n` +
+    `El personal del hospital ya tiene el caso para revisarlo. Si lo prefiere, comuníquese con ${contacto}.`,
+
+  // 🔐 La cédula es de un paciente que no es de quien escribe. `hacerla` sale de
+  // TEXTO_OPERACION («cancelar una cita», «cambiar la fecha de una cita»).
+  citaDeOtroCanal: (hacerla: string, contacto: string) =>
+    `Por seguridad, solo puedo ${hacerla} desde el número o el chat registrado del paciente. 🔐\n\n` +
+    `Si la cita es suya y me escribe desde otro número, comuníquese con ${contacto}.`,
+
   // ── CONSULTA DE CITAS ("¿qué citas tengo?") ──────────────────
   consultaPedirCedula: () =>
     pick([
@@ -2130,6 +2162,31 @@ const INFORMAL = {
 
   cancelarError: () =>
     `Qué pena, tuve un inconveniente cancelando la cita. 😔 Para no dejarte a medias, llama al Call Center y ahí te ayudan enseguida. 🙏`,
+
+  cancelarOfrecer: (servicio: string, doctor: string, fecha: string) =>
+    `Entiendo que no vas a poder ir a esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n` +
+    `¿Quieres que la *cancele*? Así el cupo queda libre para otra persona. Responde *SÍ* para cancelarla o *NO* para dejarla.`,
+
+  confirmandoCancelacion: () =>
+    pick([
+      `Dame unos segundos ⏳, estoy cancelando tu cita en el sistema del hospital.`,
+      `Un momentico ⏳: estoy registrando la cancelación en el sistema del hospital.`,
+    ]),
+
+  cancelacionEnRegistro: (fecha: string) =>
+    `El hospital todavía está registrando la cancelación de tu cita del _${fecha}_. ⏳\n\n` +
+    `Apenas quede lista te escribo por aquí. No tienes que pedirlo otra vez.`,
+
+  cancelacionConfirmadaDespues: (fecha: string) =>
+    `✅ ¡Listo! El hospital ya registró la cancelación de tu cita del _${fecha}_. El cupo quedó libre para otra persona.`,
+
+  cancelacionNoAplicada: (fecha: string, contacto: string) =>
+    `No pude cancelar tu cita del _${fecha}_ en el sistema del hospital: allí esa hora aparece a nombre de otra persona, así que no toqué nada. 🙏\n\n` +
+    `El personal del hospital ya tiene el caso para revisarlo. Si prefieres, comunícate con ${contacto}.`,
+
+  citaDeOtroCanal: (hacerla: string, contacto: string) =>
+    `Por seguridad, solo puedo ${hacerla} desde el número o el chat registrado del paciente. 🔐\n\n` +
+    `Si la cita es tuya y me escribes desde otro número, comunícate con ${contacto}.`,
 
   // ── CONSULTA DE CITAS ("¿qué citas tengo?") ──────────────────
   consultaPedirCedula: () =>

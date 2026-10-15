@@ -25,17 +25,39 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     configs?: any[];
     deadLetters?: number;
     pendienteDesde?: Date | null;
+    /** El evento pendiente: por defecto, el alta de una cita. */
+    pendiente?: { entityType: string; op: string; payload: unknown };
+    ajustes?: { cancelEnabled: boolean; rescheduleEnabled: boolean } | null;
   }) => {
     prisma.hospitalMirrorConfig.findMany.mockResolvedValue(
       opts.configs ?? [
-        { organizationId: 'org1', lastHeartbeatAt: haceMinutos(1) },
+        {
+          organizationId: 'org1',
+          lastHeartbeatAt: haceMinutos(1),
+          pushEnabled: true,
+        },
       ],
     );
     prisma.syncOutbox.count.mockResolvedValue(opts.deadLetters ?? 0);
-    prisma.syncOutbox.findFirst.mockResolvedValue(
+    prisma.syncOutbox.findMany.mockResolvedValue(
       opts.pendienteDesde === undefined || opts.pendienteDesde === null
-        ? null
-        : { createdAt: opts.pendienteDesde, eventId: 'e1' },
+        ? []
+        : [
+            {
+              createdAt: opts.pendienteDesde,
+              eventId: 'e1',
+              ...(opts.pendiente ?? {
+                entityType: 'APPOINTMENT',
+                op: 'INSERT',
+                payload: {},
+              }),
+            },
+          ],
+    );
+    prisma.organizationSettings.findUnique.mockResolvedValue(
+      opts.ajustes === undefined
+        ? { cancelEnabled: false, rescheduleEnabled: false }
+        : opts.ajustes,
     );
   };
 
@@ -44,8 +66,9 @@ describe('MonitorCheckers — espejo con el HIS', () => {
       hospitalMirrorConfig: { findMany: jest.fn(() => []) },
       syncOutbox: {
         count: jest.fn(() => 0),
-        findFirst: jest.fn(() => null),
+        findMany: jest.fn(() => []),
       },
+      organizationSettings: { findUnique: jest.fn(() => null) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -156,6 +179,42 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     expect((await checkers.checkService(svc)).status).toBe('DEGRADED');
   });
 
+  // 🚪 Compuertas por operación (2026-10-15).
+  it('envío apagado y «Cancelar» encendido: una cancelación atascada SÍ alarma', async () => {
+    conEstado({
+      configs: [
+        {
+          organizationId: 'org1',
+          lastHeartbeatAt: haceMinutos(1),
+          pushEnabled: false,
+        },
+      ],
+      pendienteDesde: haceMinutos(30),
+      pendiente: {
+        entityType: 'APPOINTMENT',
+        op: 'UPDATE',
+        payload: { status: 'CANCELLED' },
+      },
+      ajustes: { cancelEnabled: true, rescheduleEnabled: false },
+    });
+    expect((await checkers.checkService(svc)).status).toBe('DEGRADED');
+  });
+
+  it('envío apagado y «Cancelar» encendido: un alta retenida a propósito no alarma', async () => {
+    conEstado({
+      configs: [
+        {
+          organizationId: 'org1',
+          lastHeartbeatAt: haceMinutos(1),
+          pushEnabled: false,
+        },
+      ],
+      pendienteDesde: haceMinutos(300),
+      ajustes: { cancelEnabled: true, rescheduleEnabled: false },
+    });
+    expect((await checkers.checkService(svc)).status).toBe('UP');
+  });
+
   it('un evento pendiente RECIENTE no alarma: la cola respira', async () => {
     conEstado({ pendienteDesde: haceMinutos(2) });
 
@@ -195,7 +254,7 @@ describe('MonitorCheckers — espejo con el HIS', () => {
       { organizationId: 'org2', lastHeartbeatAt: haceMinutos(90) },
     ]);
     prisma.syncOutbox.count.mockResolvedValue(0);
-    prisma.syncOutbox.findFirst.mockResolvedValue(null);
+    prisma.syncOutbox.findMany.mockResolvedValue([]);
 
     const r = await checkers.checkService(svc);
 
@@ -231,8 +290,9 @@ describe('MonitorCheckers — Gemini, Meta, TTS y el despacho', () => {
       hospitalMirrorConfig: { findMany: jest.fn(async () => []) },
       syncOutbox: {
         count: jest.fn(async () => 0),
-        findFirst: jest.fn(async () => null),
+        findMany: jest.fn(async () => []),
       },
+      organizationSettings: { findUnique: jest.fn(async () => null) },
       organization: { findFirst: jest.fn(async () => ({ id: 'org-testigo' })) },
     };
     integrations = {

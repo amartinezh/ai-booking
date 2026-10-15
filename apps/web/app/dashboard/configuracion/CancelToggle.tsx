@@ -3,7 +3,7 @@
 import { CalendarX, CalendarOff } from 'lucide-react';
 import { setMyCancelEnabled } from '@/app/actions/settings';
 import InstantSwitch from './InstantSwitch';
-import { NOTA_ENVIO_AL_HOSPITAL } from './operaciones-bot';
+import { notaCompuertaHis } from './operaciones-bot';
 
 /**
  * Interruptor de CANCELAR citas por el bot. Guarda al instante y el bot lo lee
@@ -21,9 +21,9 @@ export default function CancelToggle({ initialEnabled }: { initialEnabled: boole
             iconOnClassName="bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400"
             labelOn="Encendido"
             labelOff="Apagado"
-            detailOn="Los pacientes pueden cancelar sus citas con el asistente; el cupo queda libre para otro paciente."
-            detailOff="Si un paciente intenta cancelar, el asistente le dice que se comunique con el hospital (al teléfono de soporte, si está configurado). El recordatorio tampoco le ofrece cancelar por el asistente."
-            footnote={`El personal sigue cancelando desde el panel en ambos casos. ${NOTA_ENVIO_AL_HOSPITAL}`}
+            detailOn="Los pacientes pueden cancelar sus citas con el asistente (también si escriben «no puedo asistir»: les pregunta si la cancela); el cupo queda libre para otro paciente."
+            detailOff="Si un paciente intenta cancelar, el asistente le dice que se comunique con el hospital (al teléfono de soporte, si está configurado) y deja su aviso en la Bandeja de sincronización. El recordatorio tampoco le ofrece cancelar por el asistente."
+            footnote={`El personal sigue cancelando desde el panel en ambos casos. ${notaCompuertaHis('las cancelaciones')}`}
         />
     );
 }

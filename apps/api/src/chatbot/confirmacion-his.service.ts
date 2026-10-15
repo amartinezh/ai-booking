@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { compuertasHis, type CompuertasHis } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { getErrorMessage } from '../common/error-message.util';
@@ -24,6 +25,9 @@ import { getErrorMessage } from '../common/error-message.util';
  * El CAMBIO de fecha espera igual (ver «CAMBIO DE FECHA» abajo): antes el bot
  * lo confirmaba al moverlo en AgenIA, y si el HIS lo rechazaba el paciente
  * quedaba con la fecha nueva en AgenIA y la vieja en el hospital.
+ *
+ * Y la CANCELACIÓN también (2026-10-15, ver «CANCELACIÓN» abajo): antes el bot
+ * decía «cancelada» al marcarla en AgenIA, antes de que el hospital la borrara.
  */
 export type EstadoConfirmacionHis = 'CONFIRMADA' | 'RECHAZADA' | 'PENDIENTE';
 
@@ -32,7 +36,7 @@ export type EstadoConfirmacionHis = 'CONFIRMADA' | 'RECHAZADA' | 'PENDIENTE';
  * existente. Las pendientes guardadas antes de existir el cambio no traen
  * `tipo`: son altas.
  */
-export type TipoConfirmacionHis = 'ALTA' | 'CAMBIO';
+export type TipoConfirmacionHis = 'ALTA' | 'CAMBIO' | 'CANCELACION';
 
 /** Lo que hace falta para escribirle al paciente cuando llegue el resultado. */
 export interface ConfirmacionPendiente {
@@ -44,11 +48,14 @@ export interface ConfirmacionPendiente {
   /** Cuándo se registró, ISO. */
   desde: string;
   tipo?: TipoConfirmacionHis;
-  /** CAMBIO: el evento del cambio en la cola hacia el HIS (`SyncOutbox.seq`). */
+  /** CAMBIO / CANCELACION: su evento en la cola hacia el HIS (`SyncOutbox.seq`). */
   seq?: string;
   /** CAMBIO: el cupo al que se movió la cita. */
   cupoNuevoId?: string;
-  /** CAMBIO: el cupo de antes, reservado hasta que el HIS confirme. */
+  /**
+   * CAMBIO: el cupo de antes, reservado hasta que el HIS confirme.
+   * CANCELACION: el cupo de la cita cancelada, que se libera al confirmarse.
+   */
   cupoAnteriorId?: string;
   /** CAMBIO: la fecha de antes, formateada (la que conserva si el HIS rechaza). */
   fechaAnteriorTexto?: string;
@@ -59,6 +66,15 @@ export interface ConfirmacionPendiente {
  * se canceló mientras tanto; no hay cambio que confirmar ni que rechazar).
  */
 export type EstadoCambioHis = EstadoConfirmacionHis | 'ANULADA';
+
+/**
+ * Resultado de una CANCELACIÓN:
+ *   CONFIRMADA  → el hospital la borró (o ya no la tenía).
+ *   NO_APLICADA → en el hospital esa hora es de OTRO paciente: no se borró nada
+ *                 (`MirrorDispatchService.cerrarCancelacionNoAplicada`).
+ *   PENDIENTE   → nada de lo anterior todavía.
+ */
+export type EstadoCancelacionHis = 'CONFIRMADA' | 'NO_APLICADA' | 'PENDIENTE';
 
 /** Tope de la espera en línea antes de decirle que se le escribe después. */
 export const ESPERA_CONFIRMACION_HIS_MS = 25_000;
@@ -85,6 +101,26 @@ export class ConfirmacionHisService {
       select: { enabled: true },
     });
     return config?.enabled === true;
+  }
+
+  /**
+   * 🚪 Qué puede llegar al HIS en esta clínica, operación por operación
+   * (`compuerta-his.ts`). `null` = sin espejo: todo vive solo en AgenIA y no hay
+   * compuerta que mirar.
+   */
+  async compuertas(organizationId: string): Promise<CompuertasHis | null> {
+    const [config, ajustes] = await Promise.all([
+      this.prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId },
+        select: { enabled: true, pushEnabled: true },
+      }),
+      this.prisma.organizationSettings.findUnique({
+        where: { organizationId },
+        select: { cancelEnabled: true, rescheduleEnabled: true },
+      }),
+    ]);
+    if (!config?.enabled) return null;
+    return compuertasHis(config, ajustes);
   }
 
   /**
@@ -215,10 +251,55 @@ export class ConfirmacionHisService {
     );
   }
 
+  // ── CANCELACIÓN ────────────────────────────────────────────────────────
+  //
+  // Igual que el cambio: cancelar genera su UPDATE (estado CANCELLED) en la cola;
+  // el agente borra la cita en el HIS y lo confirma (ack) → `deliveredAt`. Si en
+  // el hospital esa hora es de otro paciente, el agente no borra nada y la API
+  // deja la marca `cancelacionNoAplicadaEnElHis` en la cita. Su evento se lee con
+  // `eventoDelCambio` (es el último UPDATE de la cita).
+
+  async estadoCancelacion(
+    organizationId: string,
+    appointmentId: string,
+    seq: string | undefined,
+  ): Promise<EstadoCancelacionHis> {
+    const cita = await this.prisma.appointment.findFirst({
+      where: { id: appointmentId, organizationId },
+      select: { metaLog: true },
+    });
+    const meta =
+      cita?.metaLog &&
+      typeof cita.metaLog === 'object' &&
+      !Array.isArray(cita.metaLog)
+        ? (cita.metaLog as Record<string, unknown>)
+        : {};
+    if (meta.cancelacionNoAplicadaEnElHis) return 'NO_APLICADA';
+    if (!seq) return 'PENDIENTE';
+    const evento = await this.prisma.syncOutbox.findFirst({
+      where: { organizationId, seq: BigInt(seq) },
+      select: { deliveredAt: true },
+    });
+    return evento?.deliveredAt ? 'CONFIRMADA' : 'PENDIENTE';
+  }
+
+  /** Espera el resultado de la cancelación hasta `timeoutMs`; si no llega, PENDIENTE. */
+  async esperarCancelacion(
+    organizationId: string,
+    appointmentId: string,
+    seq: string | undefined,
+    timeoutMs = ESPERA_CONFIRMACION_HIS_MS,
+  ): Promise<EstadoCancelacionHis> {
+    return this.sondear(
+      () => this.estadoCancelacion(organizationId, appointmentId, seq),
+      timeoutMs,
+    );
+  }
+
   /**
-   * El HIS confirmó el cambio: el cupo de antes, que se mantuvo reservado
-   * mientras tanto, queda libre. Con origen MIRROR (el hospital ya lo liberó
-   * al anular la cita vieja: no hay nada que mandarle). Solo si nadie tiene
+   * El HIS confirmó el cambio (o la cancelación): el cupo de antes, que se
+   * mantuvo reservado mientras tanto, queda libre. Con origen MIRROR (el hospital
+   * ya lo liberó al anular la cita: no hay nada que mandarle). Solo si nadie tiene
    * una cita viva ahí. Devuelve si se liberó.
    */
   async liberarCupoAnterior(
@@ -287,4 +368,4 @@ export class ConfirmacionHisService {
  */
 const campoDe = (p: ConfirmacionPendiente): string =>
   `${p.organizationId}|${p.appointmentId}` +
-  (p.tipo === 'CAMBIO' ? '|CAMBIO' : '');
+  (p.tipo === 'CAMBIO' || p.tipo === 'CANCELACION' ? `|${p.tipo}` : '');
