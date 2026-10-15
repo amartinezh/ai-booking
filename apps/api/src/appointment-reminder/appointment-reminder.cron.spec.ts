@@ -348,6 +348,40 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       }
     });
 
+    it('💬 «solo a quien agendó él mismo»: con la opción encendida, solo citas del chat; apagada o sin settings, todas', async () => {
+      const { service, prisma } = build();
+      await service.runOnce();
+
+      const where = (
+        prisma.appointment.findMany.mock.calls[0] as unknown as [
+          { where: Record<string, any> },
+        ]
+      )[0].where;
+      // También en la CONSULTA: las que excluye no quedan marcadas como
+      // recordadas, y apagar la opción las devuelve al recordatorio.
+      expect(where.OR).toEqual([
+        { origin: { in: ['WHATSAPP', 'TELEGRAM'] } },
+        {
+          organization: {
+            OR: [
+              { settings: { is: null } },
+              { settings: { is: { remindersOnlySelfBooked: false } } },
+            ],
+          },
+        },
+      ]);
+      // No reemplaza ni relaja los demás filtros: se suma a ellos.
+      expect(where.status).toBe('SCHEDULED');
+      expect(where.reminderSentAt).toBeNull();
+      expect(where.patient).toEqual({ remindersOptOut: false });
+      expect(where.organization).toEqual({
+        OR: [
+          { settings: { is: null } },
+          { settings: { is: { remindersEnabled: true } } },
+        ],
+      });
+    });
+
     it('procesa en orden cronológico y con tope de seguridad', async () => {
       const { service, prisma } = build();
       await service.runOnce();

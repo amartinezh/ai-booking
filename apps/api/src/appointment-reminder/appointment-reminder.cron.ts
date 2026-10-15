@@ -43,6 +43,16 @@ import {
  */
 const INTERVAL_NAME = 'appointment-reminders';
 
+/**
+ * Los orígenes de una cita que el propio paciente se agendó por el chat. Con
+ * «recordatorios solo a quien agendó él mismo» encendido, solo estas reciben el
+ * recordatorio automático (ver `remindersOnlySelfBooked` en el schema).
+ */
+export const ORIGENES_AGENDADOS_POR_EL_PACIENTE = [
+  'WHATSAPP',
+  'TELEGRAM',
+] as const;
+
 @Injectable()
 export class AppointmentReminderCronService
   implements OnModuleInit, OnModuleDestroy
@@ -225,6 +235,23 @@ export class AppointmentReminderCronService
             { settings: { is: { remindersEnabled: true } } },
           ],
         },
+        // 💬 «Solo a quien agendó él mismo» (/dashboard/configuracion): con la
+        // opción encendida, solo las citas que el paciente se sacó por el chat;
+        // las del panel (MANUAL) y las del hospital (MIRROR) quedan fuera. En la
+        // consulta, como el interruptor general: las que excluye no se marcan, y
+        // si se apaga, las que sigan en plazo reciben el suyo. Sin fila de
+        // settings = apagada (su default): todas, como siempre.
+        OR: [
+          { origin: { in: [...ORIGENES_AGENDADOS_POR_EL_PACIENTE] } },
+          {
+            organization: {
+              OR: [
+                { settings: { is: null } },
+                { settings: { is: { remindersOnlySelfBooked: false } } },
+              ],
+            },
+          },
+        ],
       },
       include: {
         patient: {

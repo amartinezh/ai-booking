@@ -1114,6 +1114,15 @@ export const TEMAS: TemaAyuda[] = [
                 nota: 'Fuera de las 24 horas de conversación, WhatsApp exige la plantilla «Recordatorio de cita» (pestaña Integraciones).',
             },
             {
+                titulo: 'Enviar recordatorios solo a quien agendó por el chat',
+                pasos: [
+                    'En «Asistente Virtual», usa el interruptor «Recordatorios solo a pacientes que agendaron ellos mismos».',
+                    'Encendido, el recordatorio automático solo sale para las citas que el paciente agendó por WhatsApp o Telegram. Las que agendó el personal desde el panel o el hospital no lo reciben.',
+                    'Aplica de inmediato. Si lo apagas, las citas que aún estén dentro del plazo reciben el suyo.',
+                ],
+                nota: 'Solo funciona con los recordatorios automáticos encendidos. No cambia nada más: las citas se agendan, cancelan y atienden igual, y el botón de recordatorio manual de Visión General sigue sirviendo para cualquier cita.',
+            },
+            {
                 titulo: 'Cambiar el nombre, el tono y las horas que ofrece el asistente',
                 pasos: [
                     'En «Asistente Virtual», escribe el «Nombre del asistente virtual» (hasta 40 caracteres).',
@@ -1193,6 +1202,11 @@ export const TEMAS: TemaAyuda[] = [
                 pregunta: '¿Por qué WhatsApp necesita plantillas?',
                 respuesta:
                     'WhatsApp solo deja enviar texto libre en las 24 horas siguientes al último mensaje del paciente. Fuera de ese plazo (por ejemplo, un recordatorio del día anterior) hay que usar una plantilla aprobada por Meta.',
+            },
+            {
+                pregunta: 'Con «recordatorios solo a pacientes que agendaron ellos mismos», ¿qué citas no reciben recordatorio?',
+                respuesta:
+                    'Las que agendó el personal desde el panel y las que llegaron del sistema del hospital. Una cita que el paciente agendó por el chat lo sigue recibiendo aunque después el personal le cambie la fecha.',
             },
             {
                 pregunta: '¿El tono cambia lo que hace el asistente?',

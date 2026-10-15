@@ -22,6 +22,7 @@ export async function getMyOrgSettings() {
             communicationStyle: true,
             slotsOfferedCount: true,
             remindersEnabled: true,
+            remindersOnlySelfBooked: true,
             bookingEnabled: true,
             cancelEnabled: true,
             rescheduleEnabled: true,
@@ -34,6 +35,8 @@ export async function getMyOrgSettings() {
         // Sin fila de settings = prendido, igual que el default de la columna y
         // que la consulta del cron.
         remindersEnabled: s?.remindersEnabled ?? true,
+        // Sin fila = apagada (el default de la columna): recordatorio a todas.
+        remindersOnlySelfBooked: s?.remindersOnlySelfBooked ?? false,
         // Igual: sin fila = el bot agenda, cancela y cambia (default de las columnas).
         bookingEnabled: s?.bookingEnabled ?? true,
         cancelEnabled: s?.cancelEnabled ?? true,
@@ -61,6 +64,33 @@ export async function setMyRemindersEnabled(enabled: boolean) {
         });
         revalidatePath('/dashboard/configuracion');
         return { success: true, remindersEnabled };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * Prende o apaga «recordatorios solo a pacientes que agendaron ellos mismos»:
+ * encendida, el recordatorio automático solo sale para las citas que el
+ * paciente se agendó por el chat (WhatsApp o Telegram). Guarda al instante,
+ * como el interruptor general; el cron lo lee en su siguiente vuelta. Solo
+ * filtra el recordatorio automático: no toca ninguna otra operación.
+ */
+export async function setMyRemindersOnlySelfBooked(enabled: boolean) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
+
+    // `=== true`: lo que no sea exactamente `true` la apaga, que es el
+    // comportamiento de siempre (recordatorio a todas las citas).
+    const remindersOnlySelfBooked = enabled === true;
+    try {
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, remindersOnlySelfBooked },
+            update: { remindersOnlySelfBooked },
+        });
+        revalidatePath('/dashboard/configuracion');
+        return { success: true, remindersOnlySelfBooked };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
     }

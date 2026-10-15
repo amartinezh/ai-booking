@@ -6,7 +6,12 @@ jest.mock('next/cache', () => ({ revalidatePath: jest.fn() }));
 
 import { prisma } from '@/lib/prisma';
 import { getSession } from '../../lib/session';
-import { getMyOrgSettings, setMyBookingEnabled, setMyRemindersEnabled } from './settings';
+import {
+    getMyOrgSettings,
+    setMyBookingEnabled,
+    setMyRemindersEnabled,
+    setMyRemindersOnlySelfBooked,
+} from './settings';
 
 const mockGetSession = getSession as jest.Mock;
 const mockUpsert = prisma.organizationSettings.upsert as jest.Mock;
@@ -83,5 +88,43 @@ describe('settings — interruptor de operaciones del bot (solo consultas)', () 
         mockFindUnique.mockResolvedValue(null);
         const s = await getMyOrgSettings();
         expect(s.bookingEnabled).toBe(true);
+    });
+});
+
+describe('settings — recordatorios solo a pacientes que agendaron ellos mismos', () => {
+    beforeEach(() => jest.clearAllMocks());
+
+    it('solo el ORG_ADMIN lo cambia', async () => {
+        mockGetSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1' });
+        const res = await setMyRemindersOnlySelfBooked(true);
+        expect(res).toEqual({ success: false, error: 'Acceso denegado' });
+        expect(mockUpsert).not.toHaveBeenCalled();
+    });
+
+    it('guarda en la clínica de la sesión, y nada más que esta opción', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
+        mockUpsert.mockResolvedValue({});
+        const res = await setMyRemindersOnlySelfBooked(true);
+        expect(res).toEqual({ success: true, remindersOnlySelfBooked: true });
+        expect(mockUpsert).toHaveBeenCalledWith({
+            where: { organizationId: 'org-1' },
+            create: { organizationId: 'org-1', remindersOnlySelfBooked: true },
+            update: { remindersOnlySelfBooked: true },
+        });
+    });
+
+    it('lo que no sea exactamente true la apaga (recordatorio a todas, lo de siempre)', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
+        mockUpsert.mockResolvedValue({});
+        await setMyRemindersOnlySelfBooked('true' as unknown as boolean);
+        expect(mockUpsert.mock.calls[0][0].update).toEqual({ remindersOnlySelfBooked: false });
+    });
+
+    it('una clínica sin fila de settings la ve apagada (el default)', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
+        mockFindUnique.mockResolvedValue(null);
+        const s = await getMyOrgSettings();
+        expect(s.remindersOnlySelfBooked).toBe(false);
+        expect(s.remindersEnabled).toBe(true);
     });
 });

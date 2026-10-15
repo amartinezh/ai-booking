@@ -8,6 +8,7 @@ import { getMyWhatsappTemplates } from '@/app/actions/whatsapp-templates';
 import { getMyAudioConfig } from '@/app/actions/audio-config';
 import SettingsForm from './SettingsForm';
 import RemindersToggle from './RemindersToggle';
+import SelfBookedRemindersToggle from './SelfBookedRemindersToggle';
 import BookingToggle from './BookingToggle';
 import CancelToggle from './CancelToggle';
 import RescheduleToggle from './RescheduleToggle';
@@ -158,6 +159,10 @@ export default async function ConfiguracionPage({
                         {settings && <RescheduleToggle initialEnabled={settings.rescheduleEnabled} />}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && <RemindersToggle initialEnabled={settings.remindersEnabled} />}
+                        {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
+                        {settings && (
+                            <SelfBookedRemindersToggle initialEnabled={settings.remindersOnlySelfBooked} />
+                        )}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && <SettingsForm initial={settings} />}
                         <div className="border-t border-zinc-200 dark:border-zinc-800" />

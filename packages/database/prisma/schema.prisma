@@ -140,6 +140,16 @@ model OrganizationSettings {
   // afecta (lo dispara una persona). Clínica sin fila de settings = prendido.
   remindersEnabled Boolean @default(true)
 
+  // Recordatorios automáticos SOLO para las citas que el propio paciente
+  // agendó por el chat (origen WHATSAPP o TELEGRAM): las del panel (MANUAL) y
+  // las del hospital (MIRROR) no lo reciben. Lo filtra el cron en su consulta,
+  // así que no marca `reminderSentAt` en las que excluye: apagarlo de nuevo
+  // las devuelve al recordatorio si siguen en plazo. No toca nada más: ni el
+  // botón de recordatorio manual, ni avisos masivos, ni cómo se agendan o
+  // cancelan las citas. Se edita en /dashboard/configuracion. Apagado por
+  // defecto (el comportamiento de siempre).
+  remindersOnlySelfBooked Boolean @default(false)
+
   // Interruptores de lo que el PACIENTE puede hacer por el bot (WhatsApp y
   // Telegram), uno por operación. Se leen en cada mensaje, así que surten
   // efecto sin reiniciar. El personal sigue operando desde el panel. Con los
