@@ -2629,7 +2629,10 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           // Escribe desde su propio número: solo así puede cancelar (2026-10-15).
           whatsappId: SENDER,
         }));
-        prisma.appointment = { findMany: jest.fn(() => []) };
+        prisma.appointment = {
+          findMany: jest.fn(() => []),
+          count: jest.fn(async () => 0),
+        };
         prisma.$transaction = jest.fn((arg: any) =>
           typeof arg === 'function' ? arg(prisma) : Promise.all(arg),
         );
@@ -2713,6 +2716,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
       }));
       prisma.appointment = {
         findMany: jest.fn(() => []),
+        count: jest.fn(async () => 0),
+        findFirst: jest.fn(async () => null),
         findUnique: jest.fn(() => null),
         update: jest.fn(() => ({})),
       };

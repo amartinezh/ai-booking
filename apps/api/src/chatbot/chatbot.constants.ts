@@ -940,6 +940,11 @@ const FORMAL = {
     `Entiendo que no podrá asistir. Estas son sus citas próximas:\n\n${lineas}\n\n` +
     `¿Cuál desea *cancelar*? Responda con la letra. Si son varias, se las cancelo una por una.`,
 
+  // 🩺 Sus citas son de médicos fuera del asistente (odontología, psicología…).
+  citasFueraDelAlcance: (contacto: string) =>
+    `Las citas que tiene registradas no se pueden gestionar por este medio: se manejan directamente con el hospital. 🏥\n\n` +
+    `Por favor comuníquese con ${contacto}.`,
+
   // Tras cancelar una, si le quedan otras del recordatorio.
   cancelarOtraCita: () =>
     `Si también desea cancelar otra de sus citas, escríbame *"cancelar cita"*.`,
@@ -2052,6 +2057,10 @@ const INFORMAL = {
 
   cancelarOtraCita: () =>
     `Si también quieres cancelar otra de tus citas, escríbeme *"cancelar cita"*.`,
+
+  citasFueraDelAlcance: (contacto: string) =>
+    `Las citas que tienes registradas no se pueden gestionar por aquí: se manejan directamente con el hospital. 🏥\n\n` +
+    `Por favor comunícate con ${contacto}.`,
 
   recordatorioConfirmado: (fecha: string, servicio: string) =>
     `¡Gracias por confirmar! 🙌 Te esperamos el *${fecha}* para tu cita de *${servicio}*.`,

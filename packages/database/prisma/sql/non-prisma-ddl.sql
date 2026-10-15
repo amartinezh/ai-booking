@@ -209,6 +209,11 @@ CREATE INDEX IF NOT EXISTS "idx_patient_fullname_trgm"
 --   · REACTIVAR (una cita cancelada que vuelve a vigente) se frena SIEMPRE con
 --     espejo: para el hospital sería una cita nueva que nadie le enviaría.
 --   · Sin fila de OrganizationSettings: frena (falla cerrado).
+--   · FUERA_DE_ALCANCE (2026-10-15): AgenIA solo trabaja con las citas de los
+--     médicos con «WhatsApp ON» (`DoctorProfile.whatsappBookingEnabled`, en
+--     Médicos). Crear, cancelar o mover la cita de otro médico (odontología,
+--     psicología…) se frena aunque la operación esté encendida: esas citas se
+--     gestionan en el sistema del hospital.
 --
 -- El error lleva `AGENIA_OPERACION_APAGADA:<operación>`: la API y el panel lo
 -- reconocen (`operacionFrenadaDelError` en @agenia/shared) y lo traducen a un
@@ -257,6 +262,22 @@ BEGIN
   IF v_permitido IS DISTINCT FROM true THEN
     RAISE EXCEPTION 'AGENIA_OPERACION_APAGADA:%', v_op
       USING HINT = 'El interruptor de esta operación está apagado en Configuración: hágala directamente en el sistema del hospital.';
+  END IF;
+
+  -- El médico de la cita (y, al moverla, también el de su cupo de antes) tiene
+  -- que estar en WhatsApp ON. Un médico que no se encuentra cuenta como fuera.
+  IF NOT EXISTS (
+    SELECT 1 FROM "ScheduleSlot" ss JOIN "DoctorProfile" d ON d.id = ss."doctorId"
+     WHERE ss.id = NEW."scheduleSlotId" AND d."whatsappBookingEnabled" = true
+  ) OR (
+    TG_OP = 'UPDATE' AND NEW."scheduleSlotId" IS DISTINCT FROM OLD."scheduleSlotId"
+    AND NOT EXISTS (
+      SELECT 1 FROM "ScheduleSlot" ss JOIN "DoctorProfile" d ON d.id = ss."doctorId"
+       WHERE ss.id = OLD."scheduleSlotId" AND d."whatsappBookingEnabled" = true
+    )
+  ) THEN
+    RAISE EXCEPTION 'AGENIA_OPERACION_APAGADA:FUERA_DE_ALCANCE'
+      USING HINT = 'El médico de esta cita no tiene WhatsApp ON en Médicos: se gestiona directamente en el sistema del hospital.';
   END IF;
 
   RETURN NEW;

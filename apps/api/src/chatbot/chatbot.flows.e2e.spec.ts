@@ -265,6 +265,20 @@ function createPrisma(db: Db) {
       // La cita recordada de quien escribe (respuestas al bot): en estos flujos
       // nadie acaba de recibir un recordatorio.
       findFirst: jest.fn(() => null),
+      // Citas de médicos sin «WhatsApp ON» (fuera del alcance del bot).
+      count: jest.fn(
+        ({ where }: any) =>
+          db.appointments.filter((a) => {
+            const slot = db.slots.find((x) => x.id === a.scheduleSlotId);
+            const quiere = where.scheduleSlot?.doctor?.whatsappBookingEnabled;
+            return (
+              a.patientId === where.patientId &&
+              a.status === where.status &&
+              (quiere === undefined ||
+                (slot?.doctor?.whatsappBookingEnabled ?? true) === quiere)
+            );
+          }).length,
+      ),
       update: tx.appointment.update,
     },
     scheduleSlot: {

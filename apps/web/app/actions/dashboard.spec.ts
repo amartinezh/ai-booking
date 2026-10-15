@@ -189,6 +189,12 @@ describe('cancelAppointmentAndFreeSlot', () => {
             expect(mockUpdateMany).toHaveBeenCalled();
         });
 
+        it('🩺 la cita de un médico sin «WhatsApp ON» (odontología): el freno de la base se dice claro', async () => {
+            mockUpdateMany.mockRejectedValueOnce(new Error('ERROR: AGENIA_OPERACION_APAGADA:FUERA_DE_ALCANCE'));
+            const res = await cancelAppointmentAndFreeSlot('apt-1', 'slot-1');
+            expect(res).toEqual({ success: false, error: expect.stringMatching(/no tiene «WhatsApp ON»/) });
+        });
+
         it('si se apaga entre la comprobación y la escritura, el freno de la base se dice claro', async () => {
             mockUpdateMany.mockRejectedValueOnce(new Error('ERROR: AGENIA_OPERACION_APAGADA:CANCELAR'));
             const res = await cancelAppointmentAndFreeSlot('apt-1', 'slot-1');

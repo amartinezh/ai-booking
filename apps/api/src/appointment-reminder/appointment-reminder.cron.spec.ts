@@ -364,6 +364,21 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       expect(where.patient).toEqual({ remindersOptOut: false });
     });
 
+    it('🩺 solo citas de médicos con «WhatsApp ON»: lo demás que trae el hospital no se recuerda (y no se marca)', async () => {
+      const { service, prisma } = build();
+      await service.runOnce();
+      const where = (
+        prisma.appointment.findMany.mock.calls[0] as unknown as [
+          { where: Record<string, any> },
+        ]
+      )[0].where;
+      // En la CONSULTA: una cita de odontología ni se envía ni queda marcada.
+      expect(where.scheduleSlot.doctor).toEqual({
+        whatsappBookingEnabled: true,
+      });
+      expect(where.scheduleSlot.startTime.gt).toBeInstanceOf(Date);
+    });
+
     it('☎️ sin casos abiertos la consulta no lleva filtro por paciente', async () => {
       const { service, prisma } = build();
       await service.runOnce();
@@ -760,6 +775,27 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
   describe('sendManualForAppointment (botón del dashboard)', () => {
     /** Un ORG_ADMIN no queda acotado: es el actor de los ejemplos que ya existían. */
     const ADMIN = { userId: 'u-admin', role: 'ORG_ADMIN' };
+    it('🩺 una cita de un médico sin «WhatsApp ON» (p. ej. odontología) no se recuerda ni a mano', async () => {
+      const { service, prisma, chatbot, templates } = build();
+      prisma.appointment.findFirst.mockResolvedValue(
+        cita({
+          scheduleSlot: {
+            startTime: new Date('2026-09-01T14:00:00.000Z'),
+            doctor: { fullName: 'Dr. Muela', whatsappBookingEnabled: false },
+            service: { name: 'CITA ODONTOLOGICA' },
+          },
+        }),
+      );
+
+      const r = await service.sendManualForAppointment('apt-1', ORG, ADMIN);
+
+      expect(r).toMatchObject({ success: false, outcome: 'skipped' });
+      expect(r.error).toMatch(/WhatsApp ON/);
+      expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+      expect(templates.sendTemplate).not.toHaveBeenCalled();
+      expect(prisma.appointment.update).not.toHaveBeenCalled();
+    });
+
     it('envía y devuelve el reminderSentAt ya actualizado', async () => {
       const { service, prisma, systemLog } = build();
       prisma.appointment.findFirst.mockResolvedValue(cita());

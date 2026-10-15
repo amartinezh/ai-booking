@@ -681,7 +681,7 @@ export const TEMAS: TemaAyuda[] = [
             },
             {
                 titulo: 'Pausar las citas por WhatsApp de un médico',
-                pasos: ['Pulsa «Modificar Perfil» en su tarjeta.', 'Desmarca «Reservas por WhatsApp».', 'Guarda. El asistente deja de ofrecer sus cupos; el personal puede seguir agendándolo.'],
+                pasos: ['Pulsa «Modificar Perfil» en su tarjeta.', 'Desmarca «Reservas por WhatsApp».', 'Guarda. El asistente deja de ofrecer sus cupos, de recordar sus citas y de responder por ellas. Si la clínica está conectada al hospital, sus citas se gestionan solo en el sistema del hospital (ni el asistente ni el panel las crean, cancelan o mueven); sin conexión, el personal puede seguir agendándolo.'],
             },
             {
                 titulo: 'Cambiar la contraseña de un médico',
@@ -691,7 +691,7 @@ export const TEMAS: TemaAyuda[] = [
         ],
         elementos: [
             { nombre: 'Activo / Inactivo', explicacion: 'Si el médico está disponible para agendamiento.' },
-            { nombre: '📱 WhatsApp ON / OFF', explicacion: 'Si el asistente puede agendarle citas.' },
+            { nombre: '📱 WhatsApp ON / OFF', explicacion: 'Si AgenIA trabaja con las citas de este médico: el asistente le agenda, recuerda sus citas, responde a sus pacientes y, si están encendidos, cancela o cambia la fecha. OFF: sus citas se ven en AgenIA (las trae el hospital), pero no reciben recordatorios ni se gestionan por el asistente ni por el panel; se manejan directamente en el sistema del hospital.' },
             { nombre: 'T.P (Licencia)', explicacion: 'Su tarjeta profesional.' },
             { nombre: '🗑️ Dar de baja', explicacion: 'Elimina al médico y su acceso. No se puede deshacer.' },
         ],
@@ -699,7 +699,7 @@ export const TEMAS: TemaAyuda[] = [
             {
                 pregunta: '¿Qué diferencia hay entre «Estado Activo» y «Reservas por WhatsApp»?',
                 respuesta:
-                    '«Estado Activo» dice si el médico está disponible en la clínica. «Reservas por WhatsApp» dice si el asistente puede agendarle citas. El asistente solo agenda con médicos que tengan las dos cosas encendidas.',
+                    '«Estado Activo» dice si el médico está disponible en la clínica. «Reservas por WhatsApp» (WhatsApp ON) dice si AgenIA trabaja con sus citas: agendar, recordatorios, respuestas del asistente, cancelar y cambiar la fecha. El asistente solo agenda con médicos que tengan las dos cosas encendidas, y solo le escribe a los pacientes de médicos con WhatsApp ON.',
             },
             {
                 pregunta: '¿Es mejor inactivar o dar de baja?',

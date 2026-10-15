@@ -231,6 +231,11 @@ export class AppointmentReminderCronService
         reminderSentAt: null,
         scheduleSlot: {
           startTime: { gt: now, lte: threshold },
+          // 🩺 Solo las citas de médicos con «WhatsApp ON» (Médicos): AgenIA
+          // trabaja con ellos y con nadie más (2026-10-15: 187 de 252
+          // recordatorios —82 de odontología— eran de médicos fuera del bot,
+          // cuyas citas solo llegan a AgenIA porque las trae el hospital).
+          doctor: { whatsappBookingEnabled: true },
         },
         // ☎️ Ni a quien, según la persona que contestó, tiene el número de otro
         // (ver `pacientesConTelefonoEquivocado`). En la consulta, por lo mismo que
@@ -653,7 +658,9 @@ export class AppointmentReminderCronService
         },
         scheduleSlot: {
           include: {
-            doctor: { select: { fullName: true } },
+            doctor: {
+              select: { fullName: true, whatsappBookingEnabled: true },
+            },
             service: { select: { name: true } },
           },
         },
@@ -686,6 +693,16 @@ export class AppointmentReminderCronService
         success: false,
         outcome: 'skipped',
         error: 'Cita no encontrada o no pertenece a esta clínica.',
+      };
+    }
+
+    // 🩺 El mismo alcance que el cron: solo médicos con «WhatsApp ON».
+    if (apt.scheduleSlot?.doctor?.whatsappBookingEnabled === false) {
+      return {
+        success: false,
+        outcome: 'skipped',
+        error:
+          'El médico de esta cita no tiene «WhatsApp ON» en Médicos: AgenIA no le escribe a sus pacientes.',
       };
     }
 

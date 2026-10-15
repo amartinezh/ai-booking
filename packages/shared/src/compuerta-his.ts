@@ -115,8 +115,17 @@ export const eventoPuedeSalir = (
   c: CompuertasHis,
 ): boolean => compuertaAbierta(operacionHisDelEvento(e), c);
 
-/** Las operaciones que la base frena con su interruptor apagado (o siempre, REACTIVAR). */
-export type OperacionFrenada = 'AGENDAR' | 'CANCELAR' | 'MODIFICAR' | 'REACTIVAR';
+/**
+ * Lo que la base frena: una operación con su interruptor apagado, REACTIVAR
+ * (siempre, con espejo) y FUERA_DE_ALCANCE (la cita es de un médico sin
+ * «WhatsApp ON»: AgenIA no trabaja con ella).
+ */
+export type OperacionFrenada =
+  | 'AGENDAR'
+  | 'CANCELAR'
+  | 'MODIFICAR'
+  | 'REACTIVAR'
+  | 'FUERA_DE_ALCANCE';
 
 /**
  * Si el error es el freno de la base (`fn_interruptores_del_hospital`: «el
@@ -132,7 +141,7 @@ export function operacionFrenadaDelError(
       : typeof error === 'string'
         ? error
         : '';
-  const m = /AGENIA_OPERACION_APAGADA:(AGENDAR|CANCELAR|MODIFICAR|REACTIVAR)/.exec(
+  const m = /AGENIA_OPERACION_APAGADA:(AGENDAR|CANCELAR|MODIFICAR|REACTIVAR|FUERA_DE_ALCANCE)/.exec(
     texto,
   );
   return m ? (m[1] as OperacionFrenada) : null;
@@ -148,4 +157,6 @@ export const MENSAJE_OPERACION_APAGADA: Record<OperacionFrenada, string> = {
     '«Cambiar la fecha de una cita» está apagado en Configuración. Con la clínica conectada al sistema del hospital, las citas se mueven directamente en el sistema del hospital.',
   REACTIVAR:
     'Una cita cancelada no se puede reactivar: con la clínica conectada al sistema del hospital, agéndela de nuevo.',
+  FUERA_DE_ALCANCE:
+    'El médico de esta cita no tiene «WhatsApp ON» en Médicos: AgenIA no gestiona sus citas. Hágalo directamente en el sistema del hospital.',
 };

@@ -98,7 +98,7 @@ describe('compuertasHis — un interruptor por operación, falla cerrado', () =>
 
 describe('operacionFrenadaDelError — el freno de la base, leído desde el error de Prisma', () => {
   it('reconoce cada operación frenada', () => {
-    for (const op of ['AGENDAR', 'CANCELAR', 'MODIFICAR', 'REACTIVAR'] as const) {
+    for (const op of ['AGENDAR', 'CANCELAR', 'MODIFICAR', 'REACTIVAR', 'FUERA_DE_ALCANCE'] as const) {
       const e = new Error(
         `Invalid \`prisma.appointment.create()\` invocation: ... ERROR: AGENIA_OPERACION_APAGADA:${op}`,
       );

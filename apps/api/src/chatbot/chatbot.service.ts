@@ -258,6 +258,17 @@ const canalDe = (senderId: string): CanalDelBot =>
  */
 const MAX_CITAS_EN_RESPUESTA = 8;
 
+/**
+ * 🩺 Con qué citas trabaja AgenIA frente al paciente (2026-10-15): las de los
+ * médicos con «WhatsApp ON» en Médicos. El hospital trae TODAS sus citas (para
+ * la agenda y el rastreo), pero recordar, responder, avisar, cancelar o cambiar
+ * la fecha solo con las de esos médicos. Antes el bot confirmaba y ofrecía
+ * cancelar citas de odontología que nunca debió tocar.
+ */
+const EN_ALCANCE_DEL_BOT = {
+  doctor: { whatsappBookingEnabled: true },
+} as const;
+
 /** Quita tildes. Solo para comparar, igual que `textoParaCoincidencia`. */
 const sinTildes = (texto: string): string =>
   texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -4281,7 +4292,10 @@ export class ChatbotService implements OnModuleInit {
         organizationId,
         status: 'SCHEDULED',
         reminderSentAt: { gte: new Date(ahora - 48 * 3_600_000) },
-        scheduleSlot: { startTime: { gte: new Date(ahora - 3_600_000) } },
+        scheduleSlot: {
+          startTime: { gte: new Date(ahora - 3_600_000) },
+          ...EN_ALCANCE_DEL_BOT,
+        },
         patient: { OR: deQuien },
       },
       include: {
@@ -4304,7 +4318,7 @@ export class ChatbotService implements OnModuleInit {
       where: {
         organizationId,
         status: 'SCHEDULED',
-        scheduleSlot: { startTime: { gt: new Date() } },
+        scheduleSlot: { startTime: { gt: new Date() }, ...EN_ALCANCE_DEL_BOT },
         patient: { OR: deQuien },
       },
       include: {
@@ -8915,6 +8929,29 @@ export class ChatbotService implements OnModuleInit {
   ): Promise<void> {
     const { organizationId, senderId, text, MSGS } = ctx;
     const { aptId, slotId } = p;
+
+    // 🩺 Solo citas de médicos con «WhatsApp ON» (la lista ya las filtra; esto es
+    // por si la sesión guardó otra). Con espejo, la base también lo frena.
+    const cita = await this.prisma.appointment.findFirst({
+      where: { id: aptId, organizationId },
+      select: {
+        scheduleSlot: {
+          select: { doctor: { select: { whatsappBookingEnabled: true } } },
+        },
+      },
+    });
+    if (cita?.scheduleSlot?.doctor?.whatsappBookingEnabled === false) {
+      await this.responderCitasFueraDelAlcance({
+        organizationId,
+        senderId,
+        MSGS,
+        userMessage: text || '[audio]',
+        flow: 'CANCELAR',
+      });
+      await p.limpiar();
+      return;
+    }
+
     const conHospital = await this.requiereConfirmacionHis(organizationId);
 
     try {
@@ -11669,13 +11706,27 @@ export class ChatbotService implements OnModuleInit {
       where: {
         patientId: patient.id,
         status: 'SCHEDULED',
-        scheduleSlot: { startTime: { gte: new Date() } },
+        scheduleSlot: { startTime: { gte: new Date() }, ...EN_ALCANCE_DEL_BOT },
       },
       include: {
         scheduleSlot: { include: { doctor: true, service: true } },
       },
       orderBy: { scheduleSlot: { startTime: 'asc' } },
     });
+
+    if (
+      activeAppointments.length === 0 &&
+      (await this.tieneCitasFueraDelAlcance(patient.id))
+    ) {
+      await this.responderCitasFueraDelAlcance({
+        organizationId,
+        senderId,
+        MSGS,
+        userMessage: cedula,
+        flow: 'CANCELAR',
+      });
+      return;
+    }
 
     if (activeAppointments.length === 0) {
       // Sin citas para esta cédula → ofrecemos consultar con otra (loop).
@@ -11832,6 +11883,46 @@ export class ChatbotService implements OnModuleInit {
     );
   }
 
+  /** ¿El paciente tiene citas próximas de médicos SIN «WhatsApp ON»? */
+  private async tieneCitasFueraDelAlcance(patientId: string): Promise<boolean> {
+    const n = await this.prisma.appointment.count({
+      where: {
+        patientId,
+        status: 'SCHEDULED',
+        scheduleSlot: {
+          startTime: { gte: new Date() },
+          doctor: { whatsappBookingEnabled: false },
+        },
+      },
+    });
+    return n > 0;
+  }
+
+  /**
+   * 🩺 Sus citas son todas de médicos fuera del bot (odontología, psicología…):
+   * no se le dice «no tiene citas» —sí las tiene— sino que esas se gestionan con
+   * el hospital. No se toca nada.
+   */
+  private async responderCitasFueraDelAlcance(p: {
+    organizationId: string;
+    senderId: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    userMessage: string;
+    flow: 'CANCELAR' | 'MODIFICAR';
+  }): Promise<void> {
+    const reply = p.MSGS.citasFueraDelAlcance(
+      this.contactoDe(p.MSGS, await this.organizacionDe(p.organizationId)),
+    );
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.cleanUpSession(p.organizationId, p.senderId);
+    await this.auditLog(p.senderId, p.organizationId, {
+      status: InteractionStatus.ESCAPED,
+      userMessage: p.userMessage,
+      botReply: reply,
+      metadata: { step: 'CITAS_FUERA_DEL_ALCANCE', flow: p.flow },
+    });
+  }
+
   /** La cédula es de un paciente que no es de quien escribe: no se toca nada. */
   private async rechazarCitaDeOtroCanal(p: {
     organizationId: string;
@@ -11911,13 +12002,27 @@ export class ChatbotService implements OnModuleInit {
       where: {
         patientId: patient.id,
         status: 'SCHEDULED',
-        scheduleSlot: { startTime: { gte: new Date() } },
+        scheduleSlot: { startTime: { gte: new Date() }, ...EN_ALCANCE_DEL_BOT },
       },
       include: {
         scheduleSlot: { include: { doctor: true, service: true } },
       },
       orderBy: { scheduleSlot: { startTime: 'asc' } },
     });
+
+    if (
+      activeAppointments.length === 0 &&
+      (await this.tieneCitasFueraDelAlcance(patient.id))
+    ) {
+      await this.responderCitasFueraDelAlcance({
+        organizationId,
+        senderId,
+        MSGS,
+        userMessage: cedula,
+        flow: 'MODIFICAR',
+      });
+      return;
+    }
 
     if (activeAppointments.length === 0) {
       // Sin citas para esta cédula → ofrecemos consultar con otra (loop).

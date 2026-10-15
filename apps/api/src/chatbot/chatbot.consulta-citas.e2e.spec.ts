@@ -278,8 +278,15 @@ function createPrisma(db: Db) {
             : a.patientId === where.patientId;
         // Las recordadas de quien escribe (respuestas al recordatorio).
         const recordadaDesde: Date | undefined = where.reminderSentAt?.gte;
+        // 🩺 Solo médicos con «WhatsApp ON» cuando la consulta lo pide.
+        const alcance = where.scheduleSlot?.doctor?.whatsappBookingEnabled;
         const filas = db.appointments
           .filter((a) => delPaciente(a) && a.status === where.status)
+          .filter(
+            (a) =>
+              alcance === undefined ||
+              (slotDe(a)?.doctor?.whatsappBookingEnabled ?? true) === alcance,
+          )
           .filter(
             (a) =>
               !recordadaDesde ||
@@ -302,18 +309,31 @@ function createPrisma(db: Db) {
       // Cuántas citas próximas tiene quien escribe («no puedo asistir» sin recordatorio).
       count: jest.fn(({ where }: any) => {
         const despues: Date | undefined = where.scheduleSlot?.startTime?.gt;
+        const alcance = where.scheduleSlot?.doctor?.whatsappBookingEnabled;
         return db.appointments.filter(
           (a) =>
             a.status === where.status &&
-            esDeAlgunCanal(
-              where.patient?.OR ?? [],
-              db.patients.find((x) => x.id === a.patientId),
-            ) &&
-            (!despues || slotDe(a).startTime > despues),
+            (where.patientId
+              ? a.patientId === where.patientId
+              : esDeAlgunCanal(
+                  where.patient?.OR ?? [],
+                  db.patients.find((x) => x.id === a.patientId),
+                )) &&
+            (!despues || slotDe(a).startTime > despues) &&
+            (alcance === undefined ||
+              (slotDe(a)?.doctor?.whatsappBookingEnabled ?? true) === alcance),
         ).length;
       }),
       // La cita recordada de quien escribe (respuesta al recordatorio).
       findFirst: jest.fn(({ where }: any) => {
+        // Por id (p. ej. comprobar el médico de la cita antes de cancelarla).
+        if (where.id) {
+          const a = db.appointments.find(
+            (x) =>
+              x.id === where.id && x.organizationId === where.organizationId,
+          );
+          return a ? { ...a, scheduleSlot: slotDe(a) } : null;
+        }
         if (!where.reminderSentAt) return null;
         const canales: any[] = where.patient?.OR ?? [];
         const esDelRemitente = (pac: any) => esDeAlgunCanal(canales, pac);
@@ -2127,6 +2147,88 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
         expect(lastSent()).toContain('Dejé registrado su aviso');
         expect(avisos.registrar).toHaveBeenCalledTimes(1);
       });
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 🩺 AgenIA solo trabaja con las citas de médicos con «WhatsApp ON» (2026-10-15:
+  // el bot confirmaba citas de odontología que trae el hospital).
+  // ──────────────────────────────────────────────────────────────────
+  describe('🩺 citas de médicos sin «WhatsApp ON» (fuera del alcance)', () => {
+    const HACE_2H = new Date(AHORA.getTime() - 2 * 3_600_000);
+    const fueraDelBot = (id: string) => {
+      const slot = db.slots.find((x) => x.id === `slot-${id}`)!;
+      slot.doctor = { ...slot.doctor, whatsappBookingEnabled: false };
+    };
+
+    beforeEach(() => {
+      bookingEnabled = false;
+      cancelEnabled = true;
+      rescheduleEnabled = false;
+    });
+
+    it('«gracias» a un recordatorio de odontología no se toma por confirmación de esa cita', async () => {
+      seedPaciente();
+      seedCita('apt-od', MANANA, SVC_ODONTO);
+      fueraDelBot('apt-od');
+      db.appointments[0].reminderSentAt = HACE_2H;
+      await say('Ok muchas gracias');
+      expect(lastSent()).not.toContain('Gracias por confirmar');
+    });
+
+    it('con una cita del bot y otra de odontología recordadas, solo nombra la del bot', async () => {
+      seedPaciente();
+      seedCita('apt-mg', MANANA);
+      seedCita('apt-od', new Date(MANANA.getTime() + 60 * 60_000), SVC_ODONTO);
+      fueraDelBot('apt-od');
+      for (const a of db.appointments) a.reminderSentAt = HACE_2H;
+      await say('Ok muchas gracias');
+      const r = lastSent();
+      expect(r).toContain('¡Gracias por confirmar!');
+      expect(r).toContain('Medicina General');
+      expect(r).not.toContain('Odontología');
+    });
+
+    it('«no puedo asistir» con solo una cita de odontología: no ofrece cancelarla ni deja aviso', async () => {
+      seedPaciente();
+      seedCita('apt-od', MANANA, SVC_ODONTO);
+      fueraDelBot('apt-od');
+      db.appointments[0].reminderSentAt = HACE_2H;
+      await say('Buen día ,no puedo asistir');
+      expect(lastSent()).not.toContain('¿Desea que la *cancele*?');
+      expect(avisos.registrar).not.toHaveBeenCalled();
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('«cancelar cita» + cédula con solo citas de odontología: dice que se gestionan con el hospital y no toca nada', async () => {
+      seedPaciente();
+      seedCita('apt-od', MANANA, SVC_ODONTO);
+      fueraDelBot('apt-od');
+      await say('cancelar cita');
+      await say(CEDULA);
+      const r = lastSent();
+      expect(r).toContain('no se pueden gestionar por este medio');
+      expect(r).toContain(`el hospital al *${SOPORTE}*`);
+      expect(r).not.toContain('Odontología');
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('🛡️ aunque la sesión guarde una cita de odontología, el SÍ no la cancela', async () => {
+      seedPaciente();
+      seedCita('apt-od', MANANA, SVC_ODONTO);
+      fueraDelBot('apt-od');
+      redis.store.set(`temp_selected_cancel_apt:${ORG_ID}:${SENDER}`, 'apt-od');
+      redis.store.set(
+        `temp_selected_cancel_slot:${ORG_ID}:${SENDER}`,
+        'slot-apt-od',
+      );
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_CANCEL_CONFIRM,
+      );
+      await say('Sí');
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+      expect(lastSent()).toContain('no se pueden gestionar por este medio');
     });
   });
 
