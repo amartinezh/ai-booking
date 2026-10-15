@@ -905,6 +905,45 @@ const FORMAL = {
 
   // ── Respuestas a un RECORDATORIO (ver respuesta-recordatorio.ts) ────
   // «Sí voy», «gracias», «ok» tras recibir el recordatorio de su cita.
+  // ── Varias citas recordadas (2026-10-15) ─────────────────────────────
+  // Una línea por cita: «• *Odontología* — viernes, 16 de octubre a las 10:10».
+  lineaDeCita: (servicio: string, fecha: string) =>
+    `• *${servicio}* — ${fecha}`,
+  // …y con el nombre, cuando las citas son de varios pacientes del mismo número.
+  lineaDeCitaDe: (servicio: string, fecha: string, nombre: string) =>
+    `• *${servicio}* — ${fecha} (${nombre})`,
+
+  recordatorioConfirmadoVarias: (lineas: string) =>
+    `¡Gracias por confirmar! 🙌 Le esperamos en sus citas:\n\n${lineas}`,
+
+  quienEscribeConCitas: (
+    botName: string,
+    clinicaName: string,
+    lineas: string,
+  ) =>
+    `Le escribe *${botName}*, asistente virtual de *${clinicaName}*, por sus citas: 🏥\n\n${lineas}`,
+
+  preguntaSobreCitas: (lineas: string, clinicaName: string, contacto: string) =>
+    `Sus citas son en *${clinicaName}*: 🏥\n\n${lineas}\n\n` +
+    `Si necesita indicaciones para llegar o tiene otra pregunta sobre sus citas, comuníquese con ${contacto}.`,
+
+  avisoInasistenciaRegistradoVarias: (lineas: string, contacto: string) =>
+    `Entendido. Dejé registrado su aviso de que no podrá asistir a estas citas, para que el personal del hospital lo revise: 📝\n\n${lineas}\n\n` +
+    `Por este medio no puedo cancelarlas, así que por ahora siguen registradas. Si quiere cancelarlas de inmediato, comuníquese con ${contacto}.`,
+
+  avisoCambioRegistradoVarias: (lineas: string, contacto: string) =>
+    `Entendido. Dejé registrada su solicitud de cambiar estas citas, para que el personal del hospital la revise: 📝\n\n${lineas}\n\n` +
+    `Por este medio no puedo cambiar las fechas, así que por ahora siguen igual. Si quiere cambiarlas de inmediato, comuníquese con ${contacto}.`,
+
+  // Varias citas y quiere cancelar: que elija. `lineas` = «*A)* …» por cita.
+  cancelarElegirCual: (lineas: string) =>
+    `Entiendo que no podrá asistir. Estas son sus citas próximas:\n\n${lineas}\n\n` +
+    `¿Cuál desea *cancelar*? Responda con la letra. Si son varias, se las cancelo una por una.`,
+
+  // Tras cancelar una, si le quedan otras del recordatorio.
+  cancelarOtraCita: () =>
+    `Si también desea cancelar otra de sus citas, escríbame *"cancelar cita"*.`,
+
   recordatorioConfirmado: (fecha: string, servicio: string) =>
     `¡Gracias por confirmar! 🙌 Le esperamos el *${fecha}* para su cita de *${servicio}*.`,
 
@@ -1979,6 +2018,40 @@ const INFORMAL = {
       `No tengo ninguna historia registrada con este número, así que no te estamos enviando recordatorios. 🤔 Si de todos modos te llegan, avísale al hospital.`,
       `Con este número no encuentro historia, así que no hay recordatorios que apagar. Si recibes mensajes nuestros, cuéntale al hospital. 🙏`,
     ]),
+
+  lineaDeCita: (servicio: string, fecha: string) =>
+    `• *${servicio}* — ${fecha}`,
+  lineaDeCitaDe: (servicio: string, fecha: string, nombre: string) =>
+    `• *${servicio}* — ${fecha} (${nombre})`,
+
+  recordatorioConfirmadoVarias: (lineas: string) =>
+    `¡Gracias por confirmar! 🙌 Te esperamos en tus citas:\n\n${lineas}`,
+
+  quienEscribeConCitas: (
+    botName: string,
+    clinicaName: string,
+    lineas: string,
+  ) =>
+    `¡Hola! Te escribe *${botName}*, asistente virtual de *${clinicaName}*, por tus citas: 🏥\n\n${lineas}`,
+
+  preguntaSobreCitas: (lineas: string, clinicaName: string, contacto: string) =>
+    `Tus citas son en *${clinicaName}*: 🏥\n\n${lineas}\n\n` +
+    `Si necesitas indicaciones para llegar o tienes otra pregunta sobre tus citas, comunícate con ${contacto}.`,
+
+  avisoInasistenciaRegistradoVarias: (lineas: string, contacto: string) =>
+    `Entendido. Dejé registrado tu aviso de que no podrás ir a estas citas, para que el personal del hospital lo revise: 📝\n\n${lineas}\n\n` +
+    `Por aquí no puedo cancelarlas, así que por ahora siguen registradas. Si quieres cancelarlas de una vez, comunícate con ${contacto}.`,
+
+  avisoCambioRegistradoVarias: (lineas: string, contacto: string) =>
+    `Entendido. Dejé registrada tu solicitud de cambiar estas citas, para que el personal del hospital la revise: 📝\n\n${lineas}\n\n` +
+    `Por aquí no puedo cambiar las fechas, así que por ahora siguen igual. Si quieres cambiarlas de una vez, comunícate con ${contacto}.`,
+
+  cancelarElegirCual: (lineas: string) =>
+    `Entiendo que no vas a poder ir. Estas son tus citas próximas:\n\n${lineas}\n\n` +
+    `¿Cuál quieres *cancelar*? Responde con la letra. Si son varias, te las cancelo una por una.`,
+
+  cancelarOtraCita: () =>
+    `Si también quieres cancelar otra de tus citas, escríbeme *"cancelar cita"*.`,
 
   recordatorioConfirmado: (fecha: string, servicio: string) =>
     `¡Gracias por confirmar! 🙌 Te esperamos el *${fecha}* para tu cita de *${servicio}*.`,

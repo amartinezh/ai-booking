@@ -16,6 +16,9 @@ import { textoParaCoincidencia } from './texto-para-coincidencia.util';
  *                        de otra persona.
  *   NO_ASISTIRA        → «Buen día, no puedo asistir», «Perdón cancelar cita».
  *   CAMBIAR            → «necesito reagendar una cita», «¿la puedo mover para otro día?».
+ *   RESPUESTA_AUTOMATICA → «Gracias por comunicarte al restaurante Donde jacky.
+ *                        ¿Cómo podemos ayudarte?»: no escribió una persona sino la
+ *                        contestadora de un negocio. No se le responde.
  *
  * Determinista y conservador: ante la duda no clasifica (null) y el mensaje sigue
  * el camino de siempre. Nunca toma por confirmación algo que diga que NO irá, que
@@ -27,7 +30,8 @@ export type RespuestaAlBot =
   | 'PREGUNTA_CITA'
   | 'NUMERO_EQUIVOCADO'
   | 'NO_ASISTIRA'
-  | 'CAMBIAR';
+  | 'CAMBIAR'
+  | 'RESPUESTA_AUTOMATICA';
 
 const sinTildes = (texto: string): string =>
   texto.normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -37,10 +41,29 @@ const sinTildes = (texto: string): string =>
 const NUMERO_EQUIVOCADO =
   /\b(equivoc\w* de (numero|persona|celular|telefono|whatsapp)|(numero|celular|telefono) (esta |es )?equivocad\w*|no conozco a (esa |ese |esta |este |la |el |dicha |dicho )?(persona|senora|senor|senorita|paciente)|no conozco a nadie (con ese nombre|que se llame)|(este|ese) (numero|celular|telefono) no es de|(este|ese) no es el (numero|celular|telefono) de)\b/;
 
+// La contestadora automática de un negocio (2026-10-15: «Gracias por comunicarte al
+// restaurante Donde jacky. ¿Cómo podemos ayudarte?🥰»). Frases que un paciente no
+// le escribe a su hospital: hablan de «nosotros» y tratan al otro como cliente.
+// «Gracias por comunicarse» a secas NO: un paciente educado lo dice.
+const RESPUESTA_AUTOMATICA =
+  /\b(mensaje automatico|respuesta automatica|(como|en que) (te |le |les )?(podemos|puedo) (ayudar|servir|colaborar)\w*|bienvenid[oa]s? a\b|gracias por (contactarnos|escribirnos|preferirnos|elegirnos|comunicarte (con|a|al))|nuestro horario( de atencion)? es|(te|le|les) (responderemos|contestaremos|atenderemos|escribiremos)\b|en (este|estos) momentos? no (podemos|estamos|nos encontramos)|estamos fuera (de|del) horario)/;
+
 // Con faltas de ortografía reales: «de donde me ablan».
 // «¿Con quién es la cita?» pregunta por el médico, no por quién escribe.
-const QUIEN_ESCRIBE =
-  /\b(?<!con )(de donde|quien|quienes)\s+(me |nos |le )?(h?abl\w*|escrib\w*|llam\w*|es|son|eres)\b|\bque (entidad|empresa|hospital|numero) es\b/;
+// 2026-10-15: «este mensaje que me mandaron es para una cita, ¿para quién o qué?»
+// también pregunta quién escribe y por qué.
+const QUIEN_ESCRIBE = new RegExp(
+  [
+    '\\b(?<!con )(de donde|quien|quienes)\\s+(me |nos |le )?(h?abl\\w*|escrib\\w*|llam\\w*|mand\\w*|envi\\w*|es|son|eres)\\b',
+    '\\bque (entidad|empresa|hospital|numero) es\\b',
+    '\\bpara quien\\b',
+    '\\b(este|ese|el|su) (mensaje|whatsapp|recordatorio)( que me (mandaron|enviaron|llego|escribieron))? (es )?(para|de) (que|quien)\\b',
+    '\\b(este|ese|el) mensaje que me (mandaron|enviaron|llego|escribieron)\\b',
+    '\\bde que (se trata|es (esto|este mensaje|el mensaje|la cita)|cita (me hablan|es|se trata))\\b',
+    '\\b(que es esto|a que se refiere\\w*|no entiendo (este|el|su|ese) mensaje)\\b',
+    '\\bpor que me (escrib|mand|envi|llam)\\w*',
+  ].join('|'),
+);
 
 // «¿la puedo mover para otro día?». «cambi…» solo con la cita, la fecha o la hora
 // de por medio: «cambié de EPS» no es pedir otra fecha.
@@ -119,6 +142,9 @@ export function clasificarRespuestaAlBot(
   const t = sinTildes(textoParaCoincidencia(texto));
   if (!t) return EMOJI_CONFIRMA.test(texto) ? 'CONFIRMA' : null;
 
+  // Primero: a una contestadora no se le contesta, diga lo que diga («Donde jacky»
+  // no es una pregunta por el lugar de la cita).
+  if (RESPUESTA_AUTOMATICA.test(t)) return 'RESPUESTA_AUTOMATICA';
   if (NUMERO_EQUIVOCADO.test(t)) return 'NUMERO_EQUIVOCADO';
   if (QUIEN_ESCRIBE.test(t)) return 'QUIEN_ESCRIBE';
   // Pedir otra fecha gana a «no puedo ir»: «no puedo el martes, ¿me la pasan para

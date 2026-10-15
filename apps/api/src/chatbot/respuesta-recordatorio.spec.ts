@@ -33,6 +33,15 @@ describe('clasificarRespuestaAlBot', () => {
     'Quién es?',
     'quien me escribe',
     '¿De dónde me escriben?',
+    // 2026-10-15
+    'Buenas tardes, este mensaje que me mandaron es para una cita, para quién o qué, o cómo, cómo es',
+    '¿Para quién es la cita?',
+    'De qué se trata',
+    'No entiendo este mensaje',
+    '¿Quién me mandó esto?',
+    '¿Por qué me escriben?',
+    'Este mensaje es para quién?',
+    'de que cita me hablan',
   ])('«%s» → QUIEN_ESCRIBE', (texto) => {
     expect(clasificarRespuestaAlBot(texto)).toBe('QUIEN_ESCRIBE');
   });
@@ -135,6 +144,26 @@ describe('clasificarRespuestaAlBot', () => {
       );
     },
   );
+
+  it.each([
+    'Gracias por comunicarte al restaurante Donde jacky. ¿Cómo podemos ayudarte?🥰',
+    '¡Hola! Bienvenido a Droguería La Salud. En un momento te atendemos.',
+    'Gracias por escribirnos, te responderemos lo más pronto posible.',
+    'En este momento no podemos atenderte. Nuestro horario de atención es de 8 a 6.',
+    'Este es un mensaje automático',
+    '¿En qué te podemos ayudar?',
+  ])('«%s» → RESPUESTA_AUTOMATICA (no se le contesta)', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe('RESPUESTA_AUTOMATICA');
+  });
+
+  it.each([
+    'Gracias por comunicarse, allá estaré',
+    'Muchas gracias por el recordatorio',
+    'Gracias por avisar, no puedo asistir',
+    '¿Cuál es el horario de atención?',
+  ])('🛡️ «%s» es de una persona, no de una contestadora', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).not.toBe('RESPUESTA_AUTOMATICA');
+  });
 
   it.each([
     'Hola',

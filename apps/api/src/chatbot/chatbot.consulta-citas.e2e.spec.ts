@@ -276,8 +276,15 @@ function createPrisma(db: Db) {
                 db.patients.find((x) => x.id === a.patientId),
               )
             : a.patientId === where.patientId;
+        // Las recordadas de quien escribe (respuestas al recordatorio).
+        const recordadaDesde: Date | undefined = where.reminderSentAt?.gte;
         const filas = db.appointments
           .filter((a) => delPaciente(a) && a.status === where.status)
+          .filter(
+            (a) =>
+              !recordadaDesde ||
+              (!!a.reminderSentAt && a.reminderSentAt >= recordadaDesde),
+          )
           .map((a) => ({ ...a, scheduleSlot: slotDe(a) }))
           .filter((a) => !desde || a.scheduleSlot.startTime >= desde)
           .filter((a) => !despues || a.scheduleSlot.startTime > despues)
@@ -1669,6 +1676,85 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       });
     });
 
+    it('📝 con DOS citas recordadas, «cancelar las citas» deja un aviso por CADA cita y se las nombra', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      seedCita('apt-2', new Date(MANANA.getTime() + 60 * 60_000), SVC_ODONTO);
+      for (const a of db.appointments) a.reminderSentAt = HACE_2H;
+
+      await say(
+        'Muy buena tarde, me veo en la necesidad de cancelar las citas por problemas de salud',
+      );
+
+      expect(avisos.registrar).toHaveBeenCalledTimes(2);
+      const ids = avisos.registrar.mock.calls.map(
+        (c: any[]) => c[1].appointmentId,
+      );
+      expect(ids).toEqual(['apt-1', 'apt-2']);
+      expect(avisos.registrar.mock.calls[1][1]).toMatchObject({
+        dedupeKey: 'inasistencia:apt-2',
+        meta: { pide: 'CANCELAR', citasDelAviso: 2 },
+      });
+      const r = lastSent();
+      expect(r).toContain('no podrá asistir a estas citas');
+      expect(r).toContain('• *Medicina General* —');
+      expect(r).toContain('• *Odontología* —');
+      expect(paso('AVISO_INASISTENCIA_REGISTRADO')?.metadata).toMatchObject({
+        appointmentIds: ['apt-1', 'apt-2'],
+      });
+    });
+
+    it('con DOS citas recordadas, «gracias» confirma las dos', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      seedCita('apt-2', new Date(MANANA.getTime() + 60 * 60_000), SVC_ODONTO);
+      for (const a of db.appointments) a.reminderSentAt = HACE_2H;
+      await say('Ok muchas gracias');
+      const r = lastSent();
+      expect(r).toContain('Le esperamos en sus citas');
+      expect(r).toContain('Medicina General');
+      expect(r).toContain('Odontología');
+    });
+
+    it('«este mensaje que me mandaron es para una cita, para quién o qué» → quién escribe y por cuál cita', async () => {
+      conRecordatorio();
+      await say(
+        'Buenas tardes, este mensaje que me mandaron es para una cita, para quién o qué, o cómo, cómo es',
+      );
+      const r = lastSent();
+      expect(r).toContain('Le escribe *Vicente*');
+      expect(r).toContain('por su cita de *Medicina General* del *');
+      expect(r).not.toContain('no está activa');
+    });
+
+    it('🤖 la contestadora de un negocio no recibe respuesta y abre el caso del teléfono (con espejo)', async () => {
+      db.mirror = { enabled: true, pushEnabled: true };
+      conRecordatorio();
+      await say(
+        'Gracias por comunicarte al restaurante Donde jacky. ¿Cómo podemos ayudarte?🥰',
+      );
+      expect(sent()).toHaveLength(0);
+      expect(avisos.registrar).toHaveBeenCalledTimes(1);
+      expect(avisos.registrar.mock.calls[0][1]).toMatchObject({
+        kind: 'TELEFONO_EQUIVOCADO',
+        patientId: 'pat-1',
+        appointmentId: 'apt-1',
+        meta: { motivo: 'RESPUESTA_AUTOMATICA' },
+      });
+      expect(paso('RESPUESTA_AUTOMATICA')).toBeDefined();
+    });
+
+    it('🤖 una contestadora de un número sin paciente tampoco recibe respuesta, y no toca a nadie', async () => {
+      conRecordatorio();
+      await say(
+        'Gracias por escribirnos, te responderemos lo más pronto posible.',
+        '573009998877',
+      );
+      expect(sent()).toHaveLength(0);
+      expect(avisos.registrar).not.toHaveBeenCalled();
+      expect(db.patients[0].remindersOptOut).toBeUndefined();
+    });
+
     it('📝 «necesito reagendar» sin recordatorio, con UNA cita próxima → solicitud de cambio en la bandeja', async () => {
       seedPaciente();
       seedCita('apt-1', MANANA); // sin reminderSentAt
@@ -1819,12 +1905,62 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(lastSent()).toContain('¿Desea que la *cancele*?');
     });
 
-    it('sin recordatorio y con varias citas: el flujo de siempre (pide la cédula)', async () => {
+    it('sin recordatorio y con varias citas: le deja ELEGIR cuál (y cancela solo esa)', async () => {
       seedPaciente();
       seedCita('apt-1', MANANA);
       seedCita('apt-2', new Date('2026-10-10T14:00:00.000Z'), SVC_ODONTO);
       await say('Buen día ,no puedo asistir');
-      expect(state()).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_SELECTION);
+      const r = lastSent();
+      expect(r).toContain('¿Cuál desea *cancelar*?');
+      expect(r).toContain('*A)* Medicina General');
+      expect(r).toContain('*B)* Odontología');
+
+      await say('B');
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+      expect(lastSent()).toContain('Odontología');
+      await say('Sí');
+      expect(db.appointments.find((a) => a.id === 'apt-2')?.status).toBe(
+        'CANCELLED',
+      );
+      expect(db.appointments.find((a) => a.id === 'apt-1')?.status).toBe(
+        'SCHEDULED',
+      );
+    });
+
+    // 2026-10-15: un paciente con DOS citas al día siguiente escribió «cancelar las citas».
+    describe('con dos citas recordadas', () => {
+      const MANANA_11 = new Date(MANANA.getTime() + 60 * 60_000);
+      const conDosRecordadas = () => {
+        seedPaciente();
+        seedCita('apt-1', MANANA);
+        seedCita('apt-2', MANANA_11, SVC_ODONTO);
+        for (const a of db.appointments) a.reminderSentAt = HACE_2H;
+      };
+
+      it('«cancelar las citas» → le deja elegir entre las dos; tras cancelar una, le recuerda la otra', async () => {
+        conDosRecordadas();
+        await say(
+          'Muy buena tarde, me veo en la necesidad de cancelar las citas por problemas de salud',
+        );
+        expect(state()).toBe(ChatState.AWAITING_CANCEL_SELECTION);
+        expect(lastSent()).toContain('*A)* Medicina General');
+        expect(lastSent()).toContain('*B)* Odontología');
+
+        await say('A');
+        await say('Sí');
+        expect(db.appointments[0].status).toBe('CANCELLED');
+        expect(db.appointments[1].status).toBe('SCHEDULED');
+        expect(sent().join('\n')).toContain(
+          'Si también desea cancelar otra de sus citas',
+        );
+      });
+
+      it('«cancelar cita» tras los recordatorios también deja elegir', async () => {
+        conDosRecordadas();
+        await say('cancelar cita');
+        expect(state()).toBe(ChatState.AWAITING_CANCEL_SELECTION);
+      });
     });
 
     it('«cancelar cita» tal cual, sin recordatorio: el flujo de siempre (pide la cédula)', async () => {

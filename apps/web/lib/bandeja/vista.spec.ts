@@ -204,6 +204,24 @@ describe('resumenPublico — una frase neutra desde meta, nunca desde el detalle
     expect(r('TELEFONO_EQUIVOCADO', { perfilesConElNumero: 1 })).not.toContain('pacientes en AgenIA');
   });
 
+  it('teléfono: si contestó una contestadora automática, lo dice y que el bot no respondió', () => {
+    const t = r('TELEFONO_EQUIVOCADO', {
+      motivo: 'RESPUESTA_AUTOMATICA',
+      mensaje: 'Gracias por comunicarte al restaurante Donde jacky',
+    });
+    expect(t).toContain('contestadora automática de un negocio');
+    expect(t).toContain('el bot no le respondió');
+    expect(t).toContain('«Gracias por comunicarte al restaurante Donde jacky»');
+    expect(t).toMatch(/no se le envían recordatorios/);
+  });
+
+  it('aviso que abarca varias citas: pide revisar cada una', () => {
+    expect(r('AVISO_INASISTENCIA', { pide: 'CANCELAR', citasDelAviso: 2 })).toContain(
+      'dejó aviso en sus 2 citas recordadas',
+    );
+    expect(r('AVISO_INASISTENCIA', { pide: 'CANCELAR' })).not.toContain('citas recordadas');
+  });
+
   it('cancelación no aplicada: dice que no se borró nada en el hospital y qué hacer', () => {
     const t = r('CANCELACION_NO_APLICADA', {});
     expect(t).toContain('no se borró nada');

@@ -206,9 +206,14 @@ export function resumenPublico(
     case 'AVISO_INASISTENCIA': {
       const canal = nombreCanal(meta.canal);
       const mensaje = citaDelMensaje(meta.mensaje);
+      const varias = numero(meta.citasDelAviso);
+      const otras =
+        varias > 1
+          ? ` El mismo mensaje dejó aviso en sus ${varias} citas recordadas: revise cada una.`
+          : '';
       return meta.pide === 'MODIFICAR'
-        ? `El paciente pidió por ${canal} cambiar la fecha de su cita${veces}.${mensaje} El bot no la cambió: si corresponde, muévala en el hospital y avísele al paciente.`
-        : `El paciente avisó por ${canal} que no podrá asistir${veces}.${mensaje} El bot no canceló la cita: si corresponde, cancélela en el hospital para liberar el cupo.`;
+        ? `El paciente pidió por ${canal} cambiar la fecha de su cita${veces}.${mensaje}${otras} El bot no la cambió: si corresponde, muévala en el hospital y avísele al paciente.`
+        : `El paciente avisó por ${canal} que no podrá asistir${veces}.${mensaje}${otras} El bot no canceló la cita: si corresponde, cancélela en el hospital para liberar el cupo.`;
     }
     case 'CANCELACION_NO_APLICADA':
       return 'AgenIA canceló esta cita, pero en el sistema del hospital esa hora del médico tiene la cita de OTRA persona: no se borró nada allá. La cita sigue cancelada en AgenIA. Busque en el hospital dónde quedó la cita de este paciente y cancélela allá si corresponde.';
@@ -216,7 +221,12 @@ export function resumenPublico(
       const varios = numero(meta.perfilesConElNumero);
       const otros =
         varios > 1 ? ` Ese número lo tienen ${varios} pacientes en AgenIA.` : '';
-      return `Quien respondió por WhatsApp dice que ese número no es del paciente${veces}.${citaDelMensaje(meta.mensaje)}${otros} Mientras este caso esté abierto no se le envían recordatorios: corrija el teléfono en el hospital y en Pacientes de AgenIA, y ciérrelo (o descártelo si no era cierto).`;
+      const pausa =
+        ' Mientras este caso esté abierto no se le envían recordatorios: corrija el teléfono en el hospital y en Pacientes de AgenIA, y ciérrelo (o descártelo si no era cierto).';
+      if (meta.motivo === 'RESPUESTA_AUTOMATICA') {
+        return `Al mensaje del hospital le contestó la contestadora automática de un negocio, no una persona${veces}.${citaDelMensaje(meta.mensaje)}${otros} Probablemente ese número no es del paciente; el bot no le respondió.${pausa}`;
+      }
+      return `Quien respondió por WhatsApp dice que ese número no es del paciente${veces}.${citaDelMensaje(meta.mensaje)}${otros}${pausa}`;
     }
     default:
       return fila.title;

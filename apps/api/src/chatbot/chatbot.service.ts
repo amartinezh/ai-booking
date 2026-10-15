@@ -251,6 +251,13 @@ const OPCIONES_CONSULTA_FIJAS: OpcionConsulta[] = [
 const canalDe = (senderId: string): CanalDelBot =>
   isTelegramSender(senderId) ? 'TELEGRAM' : 'WHATSAPP';
 
+/**
+ * Cuántas citas de quien escribe se nombran en una respuesta sin IA (confirmar,
+ * avisar, elegir cuál cancelar): las letras A–H. Más que eso no es un recordatorio
+ * normal; el resto se gestiona con el hospital.
+ */
+const MAX_CITAS_EN_RESPUESTA = 8;
+
 /** Quita tildes. Solo para comparar, igual que `textoParaCoincidencia`. */
 const sinTildes = (texto: string): string =>
   texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -4254,20 +4261,23 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
-   * La cita de quien escribe que recibió un recordatorio hace poco (48 h) y
-   * todavía no ha pasado: la que explica por qué el paciente nos contesta.
-   * Se busca por el mismo canal que lo identifica (chat de Telegram, o teléfono
-   * en cualquiera de sus formas o BSUID), igual que la consulta de citas.
+   * Las citas de quien escribe que recibieron un recordatorio hace poco (48 h) y
+   * todavía no han pasado: las que explican por qué el paciente nos contesta. Se
+   * buscan por el mismo canal que lo identifica (chat de Telegram, o teléfono en
+   * cualquiera de sus formas o BSUID), igual que la consulta de citas.
+   *
+   * TODAS, no la primera (2026-10-15): un paciente con dos citas al día siguiente
+   * escribió «cancelar las citas» y el aviso quedó solo en la primera.
    */
-  private async citaRecordadaDelRemitente(
+  private async citasRecordadasDelRemitente(
     organizationId: string,
     identity: SenderIdentity,
   ) {
     const ahora = Date.now();
     const deQuien = this.perfilesDelRemitente(identity);
-    if (deQuien.length === 0) return null;
+    if (deQuien.length === 0) return [];
 
-    return this.prisma.appointment.findFirst({
+    return this.prisma.appointment.findMany({
       where: {
         organizationId,
         status: 'SCHEDULED',
@@ -4275,9 +4285,65 @@ export class ChatbotService implements OnModuleInit {
         scheduleSlot: { startTime: { gte: new Date(ahora - 3_600_000) } },
         patient: { OR: deQuien },
       },
-      include: { scheduleSlot: { include: { service: true, doctor: true } } },
+      include: {
+        scheduleSlot: { include: { service: true, doctor: true } },
+        patient: { select: { fullName: true } },
+      },
       orderBy: { scheduleSlot: { startTime: 'asc' } },
+      take: MAX_CITAS_EN_RESPUESTA,
     });
+  }
+
+  /** Las citas próximas (sin pasar) de quien escribe, recordadas o no. */
+  private async citasProximasDelRemitente(
+    organizationId: string,
+    identity: SenderIdentity,
+  ) {
+    const deQuien = this.perfilesDelRemitente(identity);
+    if (deQuien.length === 0) return [];
+    return this.prisma.appointment.findMany({
+      where: {
+        organizationId,
+        status: 'SCHEDULED',
+        scheduleSlot: { startTime: { gt: new Date() } },
+        patient: { OR: deQuien },
+      },
+      include: {
+        scheduleSlot: { include: { service: true, doctor: true } },
+        patient: { select: { fullName: true } },
+      },
+      orderBy: { scheduleSlot: { startTime: 'asc' } },
+      take: MAX_CITAS_EN_RESPUESTA,
+    });
+  }
+
+  /**
+   * «• *Odontología* — viernes, 16 de octubre a las 10:10», una por cita. Si las
+   * citas son de varios pacientes del mismo número (una familia), cada línea
+   * lleva el primer nombre: si no, no se sabe de quién es cuál.
+   */
+  private lineasDeCitas(
+    MSGS: ReturnType<typeof buildMessages>,
+    citas: {
+      patientId: string;
+      patient?: { fullName: string | null } | null;
+      scheduleSlot: { startTime: Date; service?: { name: string } | null };
+    }[],
+    timeZone: string | undefined,
+  ): string {
+    const variosPacientes = new Set(citas.map((c) => c.patientId)).size > 1;
+    return citas
+      .map((c) => {
+        const servicio = c.scheduleSlot.service?.name ?? '';
+        const fecha = formatAppointmentLong(c.scheduleSlot.startTime, {
+          timeZone,
+        });
+        const nombre = (c.patient?.fullName ?? '').trim().split(/\s+/)[0];
+        return variosPacientes && nombre
+          ? MSGS.lineaDeCitaDe(servicio, fecha, nombre)
+          : MSGS.lineaDeCita(servicio, fecha);
+      })
+      .join('\n');
   }
 
   /**
@@ -4301,30 +4367,24 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
-   * La cita de la que avisa quien dice «no puedo ir» o «quiero cambiarla»: la del
-   * recordatorio que acaba de recibir y, si no hay, su ÚNICA cita próxima. Con
-   * varias y sin recordatorio no se adivina cuál: null.
+   * Las citas de las que avisa quien dice «no puedo ir» o «quiero cambiarla»: las
+   * del recordatorio que acaba de recibir (todas) y, si no hay, su ÚNICA cita
+   * próxima. Con varias y sin recordatorio no se adivina cuál: ninguna.
    */
-  private async citaDelAviso(organizationId: string, identity: SenderIdentity) {
-    const recordada = await this.citaRecordadaDelRemitente(
+  private async citasDelAviso(
+    organizationId: string,
+    identity: SenderIdentity,
+  ) {
+    const recordadas = await this.citasRecordadasDelRemitente(
       organizationId,
       identity,
     );
-    if (recordada) return recordada;
-    const deQuien = this.perfilesDelRemitente(identity);
-    if (deQuien.length === 0) return null;
-    const proximas = await this.prisma.appointment.findMany({
-      where: {
-        organizationId,
-        status: 'SCHEDULED',
-        scheduleSlot: { startTime: { gt: new Date() } },
-        patient: { OR: deQuien },
-      },
-      include: { scheduleSlot: { include: { service: true, doctor: true } } },
-      orderBy: { scheduleSlot: { startTime: 'asc' } },
-      take: 2,
-    });
-    return proximas.length === 1 ? proximas[0] : null;
+    if (recordadas.length > 0) return recordadas;
+    const proximas = await this.citasProximasDelRemitente(
+      organizationId,
+      identity,
+    );
+    return proximas.length === 1 ? proximas : [];
   }
 
   /**
@@ -4359,6 +4419,9 @@ export class ChatbotService implements OnModuleInit {
   }): Promise<boolean> {
     const tipo = clasificarRespuestaAlBot(p.text);
     if (!tipo) return false;
+    if (tipo === 'RESPUESTA_AUTOMATICA') {
+      return this.atenderNumeroEquivocado(p, { automatica: true });
+    }
     if (tipo === 'NUMERO_EQUIVOCADO') return this.atenderNumeroEquivocado(p);
     if (tipo === 'NO_ASISTIRA' && p.operaciones.cancelar) {
       return this.ofrecerCancelar(p);
@@ -4370,10 +4433,11 @@ export class ChatbotService implements OnModuleInit {
       );
     }
 
-    const cita = await this.citaRecordadaDelRemitente(
+    const citas = await this.citasRecordadasDelRemitente(
       p.organizationId,
       p.identity,
     );
+    const cita = citas[0];
     if ((tipo === 'CONFIRMA' || tipo === 'PREGUNTA_CITA') && !cita) {
       return false;
     }
@@ -4384,19 +4448,38 @@ export class ChatbotService implements OnModuleInit {
         })
       : '';
     const servicio = cita?.scheduleSlot.service?.name ?? '';
+    // Con varias citas recordadas se nombran todas: confirmar o explicar solo la
+    // primera dejaba a la segunda como si no existiera.
+    const lineas =
+      citas.length > 1 ? this.lineasDeCitas(p.MSGS, citas, p.timeZone) : '';
     const reply =
       tipo === 'CONFIRMA'
-        ? p.MSGS.recordatorioConfirmado(fecha, servicio)
+        ? lineas
+          ? p.MSGS.recordatorioConfirmadoVarias(lineas)
+          : p.MSGS.recordatorioConfirmado(fecha, servicio)
         : tipo === 'PREGUNTA_CITA'
-          ? p.MSGS.preguntaSobreCita(
-              servicio,
-              fecha,
-              p.orgName,
-              this.contactoDe(p.MSGS, p.org),
-            )
-          : cita
-            ? p.MSGS.quienEscribeConCita(p.botName, p.orgName, servicio, fecha)
-            : p.MSGS.quienEscribe(p.botName, p.orgName);
+          ? lineas
+            ? p.MSGS.preguntaSobreCitas(
+                lineas,
+                p.orgName,
+                this.contactoDe(p.MSGS, p.org),
+              )
+            : p.MSGS.preguntaSobreCita(
+                servicio,
+                fecha,
+                p.orgName,
+                this.contactoDe(p.MSGS, p.org),
+              )
+          : lineas
+            ? p.MSGS.quienEscribeConCitas(p.botName, p.orgName, lineas)
+            : cita
+              ? p.MSGS.quienEscribeConCita(
+                  p.botName,
+                  p.orgName,
+                  servicio,
+                  fecha,
+                )
+              : p.MSGS.quienEscribe(p.botName, p.orgName);
 
     await this.smartReply(p.organizationId, p.senderId, reply);
     await this.auditSuccess(p.senderId, p.organizationId, {
@@ -4410,6 +4493,7 @@ export class ChatbotService implements OnModuleInit {
               ? 'PREGUNTA_SOBRE_CITA'
               : 'QUIEN_ESCRIBE',
         appointmentId: cita?.id ?? null,
+        ...(citas.length > 1 ? { appointmentIds: citas.map((c) => c.id) } : {}),
       },
     });
     return true;
@@ -4431,11 +4515,14 @@ export class ChatbotService implements OnModuleInit {
    * «cancelar cita» al principio del mensaje abría la cancelación; «Buen día, no
    * puedo asistir» —lo que más escriben— caía a la IA y no pasaba nada.
    *
-   *   · Con la cita del recordatorio, o su ÚNICA cita próxima: se le muestra y se
-   *     le pregunta si la cancela (`AWAITING_CANCEL_CONFIRM`, el mismo paso del
-   *     flujo de siempre: el SÍ la cancela y espera al hospital).
-   *   · Con varias y sin recordatorio: el flujo de siempre, que pide la cédula y
-   *     lista sus citas para elegir.
+   *   · Las citas del recordatorio que acaba de recibir o, si no hay, sus citas
+   *     próximas. «cancelar cita» tal cual sin recordatorio: el flujo de siempre,
+   *     que pide la cédula.
+   *   · UNA cita: se le muestra y se le pregunta si la cancela
+   *     (`AWAITING_CANCEL_CONFIRM`, el mismo paso del flujo de siempre: el SÍ la
+   *     cancela y espera al hospital).
+   *   · VARIAS: elige cuál con una letra (`AWAITING_CANCEL_SELECTION`, el mismo
+   *     paso del flujo de siempre). Antes se le ofrecía solo la primera.
    *   · Sin citas: false, sigue el camino de siempre.
    *
    * Solo citas de los perfiles de quien escribe: nunca la de otra persona.
@@ -4449,14 +4536,22 @@ export class ChatbotService implements OnModuleInit {
     org: Organization | null;
   }): Promise<boolean> {
     const { organizationId, senderId, MSGS } = p;
-    // «cancelar cita» tal cual (el atajo de siempre) sin un recordatorio que diga
-    // de cuál cita habla: el flujo de siempre, que pide la cédula.
+    const timeZone = p.org?.timezone || undefined;
     const esElAtajo = this.cancelRegex.test(textoParaCoincidencia(p.text));
-    const cita = esElAtajo
-      ? await this.citaRecordadaDelRemitente(organizationId, p.identity)
-      : await this.citaDelAviso(organizationId, p.identity);
-    if (!cita && esElAtajo) return false;
-    if (cita) {
+    const recordadas = await this.citasRecordadasDelRemitente(
+      organizationId,
+      p.identity,
+    );
+    const citas =
+      recordadas.length > 0
+        ? recordadas
+        : esElAtajo
+          ? []
+          : await this.citasProximasDelRemitente(organizationId, p.identity);
+    if (citas.length === 0) return false;
+
+    if (citas.length === 1) {
+      const cita = citas[0];
       await this.redis.set(
         `temp_selected_cancel_apt:${organizationId}:${senderId}`,
         cita.id,
@@ -4472,9 +4567,7 @@ export class ChatbotService implements OnModuleInit {
       const reply = MSGS.cancelarOfrecer(
         cita.scheduleSlot.service?.name ?? '',
         doctorLabel(cita.scheduleSlot.doctor),
-        formatAppointmentLong(cita.scheduleSlot.startTime, {
-          timeZone: p.org?.timezone || undefined,
-        }),
+        formatAppointmentLong(cita.scheduleSlot.startTime, { timeZone }),
       );
       await this.smartReply(organizationId, senderId, reply);
       await this.setUserState(
@@ -4490,30 +4583,55 @@ export class ChatbotService implements OnModuleInit {
       return true;
     }
 
-    const deQuien = this.perfilesDelRemitente(p.identity);
-    if (deQuien.length === 0) return false;
-    const citas = await this.prisma.appointment.count({
-      where: {
-        organizationId,
-        status: 'SCHEDULED',
-        scheduleSlot: { startTime: { gt: new Date() } },
-        patient: { OR: deQuien },
-      },
-    });
-    if (citas === 0) return false;
-
-    const reply = MSGS.cancelarPedirCedula();
+    // Varias: el mismo mapeo letra → cita que usa el flujo de siempre, escrito
+    // ANTES de ofrecer el menú (ver handleCancelCedulaStep).
+    const variosPacientes = new Set(citas.map((c) => c.patientId)).size > 1;
+    let lineas = '';
+    let maxLetra = 'A';
+    for (let idx = 0; idx < citas.length; idx++) {
+      const cita = citas[idx];
+      const letra = String.fromCharCode(65 + idx);
+      maxLetra = letra;
+      await this.redis.set(
+        `temp_cancel_apt_${letra}:${organizationId}:${senderId}`,
+        cita.id,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        `temp_cancel_slot_${letra}:${organizationId}:${senderId}`,
+        cita.scheduleSlotId,
+        'EX',
+        SESSION_TTL,
+      );
+      const nombre = (cita.patient?.fullName ?? '').trim().split(/\s+/)[0];
+      lineas +=
+        `*${letra})* ${cita.scheduleSlot.service?.name ?? ''} · ` +
+        `${doctorLabel(cita.scheduleSlot.doctor)} · ` +
+        formatAppointmentCompact(cita.scheduleSlot.startTime, { timeZone }) +
+        (variosPacientes && nombre ? ` (${nombre})` : '') +
+        '\n';
+    }
+    await this.redis.set(
+      `temp_cancel_max_letra:${organizationId}:${senderId}`,
+      maxLetra,
+      'EX',
+      SESSION_TTL,
+    );
+    const reply = MSGS.cancelarElegirCual(lineas.trimEnd());
     await this.smartReply(organizationId, senderId, reply);
     await this.setUserState(
       organizationId,
       senderId,
-      ChatState.AWAITING_CANCEL_CEDULA,
+      ChatState.AWAITING_CANCEL_SELECTION,
     );
-    await this.auditLog(senderId, organizationId, {
-      status: InteractionStatus.CANCELLATION_FLOW,
+    await this.auditSuccess(senderId, organizationId, {
       userMessage: p.text,
       botReply: reply,
-      metadata: { step: 'CANCELAR_PIDE_CEDULA', citasProximas: citas },
+      metadata: {
+        step: 'CANCELAR_ELEGIR_CITA',
+        appointmentIds: citas.map((c) => c.id),
+      },
     });
     return true;
   }
@@ -4545,51 +4663,67 @@ export class ChatbotService implements OnModuleInit {
   ): Promise<boolean> {
     if (p.operaciones[CLAVE_OPERACION[pide]]) return false;
     if (!this.avisosPaciente) return false;
-    const cita = await this.citaDelAviso(p.organizationId, p.identity);
-    if (!cita) return false;
+    const todas = await this.citasDelAviso(p.organizationId, p.identity);
+    if (todas.length === 0) return false;
 
+    // Un aviso por CADA cita (2026-10-15: «cancelar las citas» de quien tenía dos
+    // dejó en la bandeja solo la primera). Las que no se pudieron registrar no se
+    // le nombran al paciente: prometerle un aviso que no existe sería mentirle.
     const ahora = new Date();
-    const inicio = cita.scheduleSlot.startTime;
-    try {
-      await this.avisosPaciente.registrar(
-        p.organizationId,
-        {
-          kind: 'AVISO_INASISTENCIA',
-          dedupeKey: claveExcepcion.avisoInasistencia(cita.id),
-          severity: severidadPorCercania(
-            'MEDIA',
-            (inicio.getTime() - ahora.getTime()) / 60_000,
-          ),
-          title: TITULO_EXCEPCION.AVISO_INASISTENCIA,
-          appointmentId: cita.id,
-          patientId: cita.patientId,
-          epsId: cita.epsId,
-          doctorId: cita.scheduleSlot.doctorId,
-          appointmentStartAt: inicio,
-          meta: {
-            pide,
-            mensaje: p.text.slice(0, 300),
-            canal: canalDe(p.senderId),
+    const citas: typeof todas = [];
+    for (const cita of todas) {
+      const inicio = cita.scheduleSlot.startTime;
+      try {
+        await this.avisosPaciente.registrar(
+          p.organizationId,
+          {
+            kind: 'AVISO_INASISTENCIA',
+            dedupeKey: claveExcepcion.avisoInasistencia(cita.id),
+            severity: severidadPorCercania(
+              'MEDIA',
+              (inicio.getTime() - ahora.getTime()) / 60_000,
+            ),
+            title: TITULO_EXCEPCION.AVISO_INASISTENCIA,
+            appointmentId: cita.id,
+            patientId: cita.patientId,
+            epsId: cita.epsId,
+            doctorId: cita.scheduleSlot.doctorId,
+            appointmentStartAt: inicio,
+            meta: {
+              pide,
+              mensaje: p.text.slice(0, 300),
+              canal: canalDe(p.senderId),
+              ...(todas.length > 1 ? { citasDelAviso: todas.length } : {}),
+            },
           },
-        },
-        ahora,
-      );
-    } catch (error: unknown) {
-      this.logger.error(
-        `No se pudo registrar el aviso del paciente (cita ${cita.id}): ${getErrorMessage(error)}`,
-      );
-      return false;
+          ahora,
+        );
+        citas.push(cita);
+      } catch (error: unknown) {
+        this.logger.error(
+          `No se pudo registrar el aviso del paciente (cita ${cita.id}): ${getErrorMessage(error)}`,
+        );
+      }
     }
+    if (citas.length === 0) return false;
 
-    const fecha = formatAppointmentLong(inicio, {
-      timeZone: p.org?.timezone || undefined,
+    const timeZone = p.org?.timezone || undefined;
+    const cita = citas[0];
+    const fecha = formatAppointmentLong(cita.scheduleSlot.startTime, {
+      timeZone,
     });
     const servicio = cita.scheduleSlot.service?.name ?? '';
     const contacto = this.contactoDe(p.MSGS, p.org);
+    const lineas =
+      citas.length > 1 ? this.lineasDeCitas(p.MSGS, citas, timeZone) : '';
     const aviso =
       pide === 'CANCELAR'
-        ? p.MSGS.avisoInasistenciaRegistrado(servicio, fecha, contacto)
-        : p.MSGS.avisoCambioRegistrado(servicio, fecha, contacto);
+        ? lineas
+          ? p.MSGS.avisoInasistenciaRegistradoVarias(lineas, contacto)
+          : p.MSGS.avisoInasistenciaRegistrado(servicio, fecha, contacto)
+        : lineas
+          ? p.MSGS.avisoCambioRegistradoVarias(lineas, contacto)
+          : p.MSGS.avisoCambioRegistrado(servicio, fecha, contacto);
     // Si otra operación sigue encendida (p. ej. cambiar la fecha a quien no
     // puede ir), se la ofrece, como el aviso de operación no disponible.
     const reply = soloConsultas(p.operaciones)
@@ -4605,6 +4739,7 @@ export class ChatbotService implements OnModuleInit {
             ? 'AVISO_INASISTENCIA_REGISTRADO'
             : 'AVISO_CAMBIO_REGISTRADO',
         appointmentId: cita.id,
+        ...(citas.length > 1 ? { appointmentIds: citas.map((c) => c.id) } : {}),
       },
     });
     return true;
@@ -4627,18 +4762,42 @@ export class ChatbotService implements OnModuleInit {
    *
    * Solo WhatsApp: un chat de Telegram lo vincula el propio paciente. Si ningún
    * perfil tiene ese número, no hay nada que corregir: false.
+   *
+   * 🤖 `automatica` (2026-10-15): al recordatorio le contestó la contestadora de
+   * un negocio («Gracias por comunicarte al restaurante…»). Mismo caso para el
+   * personal —probablemente el número no es del paciente—, pero SIN responderle.
    */
-  private async atenderNumeroEquivocado(p: {
-    organizationId: string;
-    senderId: string;
-    identity: SenderIdentity;
-    text: string;
-    MSGS: ReturnType<typeof buildMessages>;
-    orgName: string;
-  }): Promise<boolean> {
-    if (isTelegramSender(p.senderId)) return false;
+  private async atenderNumeroEquivocado(
+    p: {
+      organizationId: string;
+      senderId: string;
+      identity: SenderIdentity;
+      text: string;
+      MSGS: ReturnType<typeof buildMessages>;
+      orgName: string;
+    },
+    opts: { automatica?: boolean } = {},
+  ): Promise<boolean> {
+    const automatica = opts.automatica === true;
+    // 🤖 A una contestadora no se le contesta nunca: ni el caso ni la disculpa.
+    // Si se le respondiera, ella respondería otra vez (y se le estarían mandando
+    // datos de la cita a un negocio). Por eso aquí se devuelve true aunque no
+    // haya nada que registrar.
+    const silencio = async (motivo: string): Promise<boolean> => {
+      await this.auditSuccess(p.senderId, p.organizationId, {
+        userMessage: p.text,
+        botReply: '[sin respuesta: contestadora automática]',
+        metadata: { step: 'RESPUESTA_AUTOMATICA', motivo },
+      });
+      return true;
+    };
+    if (isTelegramSender(p.senderId)) {
+      return automatica ? silencio('TELEGRAM') : false;
+    }
     const deQuien = this.perfilesDelRemitente(p.identity);
-    if (deQuien.length === 0) return false;
+    if (deQuien.length === 0) {
+      return automatica ? silencio('SIN_REMITENTE') : false;
+    }
     const where: Prisma.PatientProfileWhereInput = {
       organizationId: p.organizationId,
       OR: deQuien,
@@ -4648,7 +4807,9 @@ export class ChatbotService implements OnModuleInit {
       select: { id: true, epsId: true },
       take: 10,
     });
-    if (perfiles.length === 0) return false;
+    if (perfiles.length === 0) {
+      return automatica ? silencio('SIN_PACIENTE') : false;
+    }
 
     const espejo = await this.prisma.hospitalMirrorConfig.findUnique({
       where: { organizationId: p.organizationId },
@@ -4657,15 +4818,16 @@ export class ChatbotService implements OnModuleInit {
     let casos = 0;
     let bajas = 0;
     if (espejo?.enabled && this.avisosPaciente) {
-      // La cita del recordatorio, si la hay: con ella el caso le sale también al
-      // agendador acotado a ese médico.
-      const cita = await this.citaRecordadaDelRemitente(
+      // La cita del recordatorio de cada paciente, si la hay: con ella el caso le
+      // sale también al agendador acotado a ese médico.
+      const citas = await this.citasRecordadasDelRemitente(
         p.organizationId,
         p.identity,
       );
       const ahora = new Date();
       for (const perfil of perfiles) {
-        const deEsteRecordatorio = cita?.patientId === perfil.id ? cita : null;
+        const deEsteRecordatorio =
+          citas.find((c) => c.patientId === perfil.id) ?? null;
         try {
           const r = await this.avisosPaciente.registrar(
             p.organizationId,
@@ -4683,6 +4845,7 @@ export class ChatbotService implements OnModuleInit {
               meta: {
                 mensaje: p.text.slice(0, 300),
                 perfilesConElNumero: perfiles.length,
+                ...(automatica ? { motivo: 'RESPUESTA_AUTOMATICA' } : {}),
               },
             },
             ahora,
@@ -4706,13 +4869,15 @@ export class ChatbotService implements OnModuleInit {
       }));
     }
 
-    const reply = p.MSGS.numeroEquivocado(p.orgName);
-    await this.smartReply(p.organizationId, p.senderId, reply);
+    const reply = automatica
+      ? '[sin respuesta: contestadora automática]'
+      : p.MSGS.numeroEquivocado(p.orgName);
+    if (!automatica) await this.smartReply(p.organizationId, p.senderId, reply);
     await this.auditSuccess(p.senderId, p.organizationId, {
       userMessage: p.text,
       botReply: reply,
       metadata: {
-        step: 'NUMERO_EQUIVOCADO',
+        step: automatica ? 'RESPUESTA_AUTOMATICA' : 'NUMERO_EQUIVOCADO',
         perfilesAfectados: perfiles.length,
         casosEnBandeja: casos,
         bajasDeRecordatorios: bajas,
@@ -8880,6 +9045,16 @@ export class ChatbotService implements OnModuleInit {
     // Cupo libre: se le ofrece a la lista de espera ANTES de preguntar si desea
     // agendar.
     await this.avisarListaDeEsperaCupoLiberado(organizationId, slotId);
+
+    // ¿Le quedan otras citas del recordatorio? («cancelar las citas»): se le
+    // recuerda cómo cancelar la siguiente, una por una.
+    const quedan = await this.citasRecordadasDelRemitente(
+      organizationId,
+      ctx.identity,
+    ).catch(() => []);
+    if (quedan.some((c) => c.id !== aptId)) {
+      await this.smartReply(organizationId, senderId, MSGS.cancelarOtraCita());
+    }
 
     // Preguntar si desea agendar en otro horario (si se puede por el bot).
     await this.cerrarTrasCancelar(ctx, p.limpiar);

@@ -1493,7 +1493,7 @@ export const TEMAS: TemaAyuda[] = [
                     'Corrígelo en el HIS y también en Pacientes de AgenIA: el hospital no reemplaza un teléfono que AgenIA ya tiene.',
                     'Pulsa «Resolver» contando qué hiciste. Si el aviso no era cierto, usa «Descartar».',
                 ],
-                nota: 'Mientras el caso esté abierto, AgenIA no le envía recordatorios a ese paciente. Al cerrarlo (resuelto o descartado), vuelven solos.',
+                nota: 'Mientras el caso esté abierto, AgenIA no le envía recordatorios a ese paciente. Al cerrarlo (resuelto o descartado), vuelven solos. También se abre cuando al recordatorio le contesta la contestadora automática de un negocio («Gracias por comunicarte con…»): el asistente no le responde a una contestadora.',
             },
             {
                 titulo: 'Configurar los avisos por WhatsApp al agendador',
