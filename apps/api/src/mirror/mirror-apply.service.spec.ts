@@ -361,8 +361,19 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
   beforeEach(async () => {
     tx = {
       appointment: { findFirst: jest.fn(), update: jest.fn() },
+      // Un cupo que se libera vuelve al servicio de su médico.
+      doctorProfile: {
+        findUnique: jest.fn(async () => ({ serviceId: 'srv-1' })),
+      },
+      // Servicio del hospital sin homologar: se homologa inactivo.
+      medicalService: {
+        findFirst: jest.fn(async () => null),
+        create: jest.fn(async () => ({ id: 'srv-nuevo' })),
+      },
+      mirrorEntityMap: { create: jest.fn() },
       scheduleSlot: {
         update: jest.fn(),
+        findUnique: jest.fn(async () => ({ doctorId: 'doc-1' })),
         // Cupo a la medida: se busca (por si el barrido lo acaba de crear), se
         // crea y se cierran los vecinos que se cruzan.
         findFirst: jest.fn(async () => null),
@@ -384,6 +395,9 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         findFirst: jest.fn(async () => ({ agenIAId: 'doc-1' })),
       },
       hospitalMirrorConfig: { findUnique: jest.fn(async () => null) },
+      mirrorCatalogEntry: {
+        findFirst: jest.fn(async () => ({ label: 'Servicio de prueba' })),
+      },
       doctorProfile: {
         findUnique: jest.fn(async () => ({ serviceId: 'srv-1' })),
       },
@@ -934,7 +948,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       });
       expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
         where: { id: 'slot-1' },
-        data: { isAvailable: true },
+        data: { isAvailable: true, serviceId: 'srv-1' },
       });
     });
 
@@ -950,7 +964,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       expect(r.applied).toBe(1);
       expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
         where: { id: 'slot-1' },
-        data: { isAvailable: true },
+        data: { isAvailable: true, serviceId: 'srv-1' },
       });
       expect(tx.appointment.update).not.toHaveBeenCalled();
     });
@@ -1085,7 +1099,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       expect(tx.appointment.update).toHaveBeenCalled();
       expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
         where: { id: 'slot-1' },
-        data: { isAvailable: true },
+        data: { isAvailable: true, serviceId: 'srv-1' },
       });
     });
 
@@ -1184,6 +1198,78 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       expect(
         prisma.syncAudit.create.mock.calls[0][0].data.detail,
       ).not.toContain('se cerraron');
+    });
+
+    describe('🩺 el cupo toma el servicio de la cita del hospital', () => {
+      // El barrido crea los cupos con el servicio del médico (medicina general),
+      // pero el mismo médico atiende hipertensos en el mismo turno.
+      const conServicio = (agenIAId: string | null) =>
+        prisma.mirrorEntityMap.findFirst.mockImplementation(
+          async ({ where }: any) =>
+            where.entityType === 'SERVICE'
+              ? agenIAId && { agenIAId }
+              : { agenIAId: 'doc-1' },
+        );
+
+      const cambiosDeServicio = () =>
+        tx.scheduleSlot.update.mock.calls.filter(
+          ([arg]: any) => arg.data.serviceId !== undefined,
+        );
+
+      it('cita de hipertensos en un cupo de medicina general → el cupo pasa a hipertensos (MIRROR)', async () => {
+        conServicio('srv-hta');
+
+        await aplicar(enCupo({ serviceExternalKey: 'S39141-1' }));
+
+        expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+          where: { id: 'slot-750' },
+          data: { serviceId: 'srv-hta' },
+        });
+        const i = tx.scheduleSlot.update.mock.calls.findIndex(
+          ([arg]: any) => arg.data.serviceId,
+        );
+        expect(
+          tx.$executeRawUnsafe.mock.invocationCallOrder.some(
+            (o: number) =>
+              o < tx.scheduleSlot.update.mock.invocationCallOrder[i],
+          ),
+        ).toBe(true);
+        expect(prisma.syncAudit.create.mock.calls[0][0].data.detail).toContain(
+          'cupo con el servicio de la cita (S39141-1)',
+        );
+      });
+
+      it('mismo servicio → no se escribe nada', async () => {
+        conServicio('srv-1');
+
+        await aplicar(enCupo({ serviceExternalKey: 'S39141' }));
+
+        expect(cambiosDeServicio()).toEqual([]);
+      });
+
+      it('sin servicio en el evento → el cupo queda como estaba', async () => {
+        await aplicar(enCupo());
+
+        expect(cambiosDeServicio()).toEqual([]);
+      });
+
+      it('también cuando el cupo ya tenía su cita (la alinea igual, no crea nada)', async () => {
+        conServicio('srv-hta');
+        prisma.scheduleSlot.findFirst.mockResolvedValue({
+          ...CUPO_740,
+          isAvailable: false,
+        });
+        prisma.appointment.findFirst.mockResolvedValue({ id: 'apt-viva' });
+
+        const r = await aplicar(enCupo({ serviceExternalKey: 'S39141-1' }));
+
+        expect(r.applied).toBe(1);
+        expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+          where: { id: 'slot-750' },
+          data: { serviceId: 'srv-hta' },
+        });
+        expect(appointments.bookAppointment).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -1354,7 +1440,9 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       );
     });
 
-    it('servicio de la cita sin homologar → el del médico', async () => {
+    it('🩺 servicio de la cita sin homologar → se homologa INACTIVO, nunca el del médico', async () => {
+      // Con el del médico (medicina general), una cita de un servicio que no
+      // conocemos entraría al bot por la puerta de atrás.
       prisma.mirrorEntityMap.findFirst.mockImplementation(
         async ({ where }: any) =>
           where.entityType === 'SERVICE' ? null : { agenIAId: 'doc-1' },
@@ -1362,8 +1450,41 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
 
       await aplicar(sinCupo({ serviceExternalKey: '999999' }));
 
+      expect(tx.medicalService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            organizationId: ORG,
+            name: 'Servicio de prueba',
+            isActive: false,
+          },
+        }),
+      );
+      expect(tx.mirrorEntityMap.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          entityType: 'SERVICE',
+          externalKey: '999999',
+          agenIAId: 'srv-nuevo',
+        }),
+      });
       expect(tx.scheduleSlot.create.mock.calls[0][0].data.serviceId).toBe(
-        'srv-1',
+        'srv-nuevo',
+      );
+    });
+
+    it('servicio sin homologar con el mismo nombre que uno de AgenIA → se enlaza a ese', async () => {
+      prisma.mirrorEntityMap.findFirst.mockImplementation(
+        async ({ where }: any) =>
+          where.entityType === 'SERVICE' ? null : { agenIAId: 'doc-1' },
+      );
+      tx.medicalService.findFirst.mockResolvedValueOnce({
+        id: 'srv-existente',
+      });
+
+      await aplicar(sinCupo({ serviceExternalKey: '999999' }));
+
+      expect(tx.medicalService.create).not.toHaveBeenCalled();
+      expect(tx.scheduleSlot.create.mock.calls[0][0].data.serviceId).toBe(
+        'srv-existente',
       );
     });
 

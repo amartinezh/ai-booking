@@ -5,6 +5,20 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getSession } from '@/lib/session';
 import { Prisma } from '@agenia/database';
+import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
+
+/**
+ * 🩺 Crear, activar/inactivar y borrar servicios: solo ORG_ADMIN (la misma
+ * regla que la pantalla). «Activo» ya no es solo el menú del asistente: decide
+ * con qué citas trabaja AgenIA (recordatorios, respuestas, cancelar, cambiar la
+ * fecha), así que una acción de servidor abierta a cualquier sesión de la clínica
+ * no podía seguir así.
+ */
+async function tenantAdmin(): Promise<{ organizationId: string; actor: string } | null> {
+    const session = await getSession();
+    if (session?.role !== 'ORG_ADMIN' || !session.organizationId) return null;
+    return { organizationId: session.organizationId, actor: session.email ?? session.userId };
+}
 
 const formSchema = z.object({
     name: z.string().min(3, 'El nombre debe tener al menos 3 caracteres'),
@@ -48,14 +62,14 @@ export async function createMedicalService(prevState: unknown, formData: FormDat
             return { success: false, error: 'Datos inválidos', issues: validatedFields.error.flatten().fieldErrors };
         }
 
-        const session = await getSession();
-        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        const admin = await tenantAdmin();
+        if (!admin) return { success: false, error: 'Sin permisos.' };
 
         await prisma.medicalService.create({
             data: {
                 name: validatedFields.data.name,
                 isActive: validatedFields.data.isActive,
-                organizationId: session.organizationId
+                organizationId: admin.organizationId
             },
         });
 
@@ -72,13 +86,35 @@ export async function createMedicalService(prevState: unknown, formData: FormDat
 
 export async function toggleMedicalServiceStatus(id: string, currentStatus: boolean) {
     try {
-        const session = await getSession();
-        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        const admin = await tenantAdmin();
+        if (!admin) return { success: false, error: 'Sin permisos.' };
 
-        await prisma.medicalService.update({
-            where: { id, organizationId: session.organizationId },
+        const servicio = await prisma.medicalService.update({
+            where: { id, organizationId: admin.organizationId },
             data: { isActive: !currentStatus },
+            select: { name: true, isActive: true },
         });
+        // Con espejo, que quede quién cambió con qué citas trabaja AgenIA.
+        const espejo = await prisma.hospitalMirrorConfig.findUnique({
+            where: { organizationId: admin.organizationId },
+            select: { enabled: true },
+        });
+        if (espejo?.enabled) {
+            await prisma.syncAudit.create({
+                data: {
+                    organizationId: admin.organizationId,
+                    direction: SYNC_AUDIT_DIRECTION.CONFIG,
+                    entityType: 'MedicalService',
+                    entityId: id,
+                    op: 'SERVICE_ACTIVE_CHANGE',
+                    outcome: 'OK',
+                    detail:
+                        `«${servicio.name}» ${servicio.isActive ? 'ACTIVADO' : 'INACTIVADO'} por ${admin.actor}: ` +
+                        `AgenIA ${servicio.isActive ? 'trabaja' : 'deja de trabajar'} con sus citas ` +
+                        '(recordatorios, respuestas del asistente, cancelar y cambiar la fecha).',
+                },
+            });
+        }
         revalidatePath('/dashboard/servicios');
         return { success: true };
     } catch (error) {
@@ -89,11 +125,11 @@ export async function toggleMedicalServiceStatus(id: string, currentStatus: bool
 
 export async function deleteMedicalService(id: string) {
     try {
-        const session = await getSession();
-        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        const admin = await tenantAdmin();
+        if (!admin) return { success: false, error: 'Sin permisos.' };
 
         const service = await prisma.medicalService.findFirst({
-            where: { id, organizationId: session.organizationId },
+            where: { id, organizationId: admin.organizationId },
             include: {
                 _count: {
                     select: { doctors: true, slots: true },

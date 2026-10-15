@@ -9,10 +9,22 @@ import { validarConsultaHis } from '@agenia/shared';
 import type { MirrorApiClient } from './mirror-api-client';
 import type { DriverResult, HisDriver } from './driver.interface';
 import {
+  isAppointmentImportCapable,
   isNoticeRosterCapable,
   isPatientLookupCapable,
 } from './driver.interface';
 import type { AgentStateStore } from './agent-state-store';
+
+/** Lo que pasó con las citas que la reconciliación pidió traer. */
+export interface CitasTraidas {
+  pedidas: number;
+  /** Las que seguían vigentes en el HIS y se subieron como altas. */
+  enviadas: number;
+  aplicadas: number;
+  errores: number;
+  /** Si no se pudieron leer o subir. */
+  fallo?: string;
+}
 
 /**
  * Por qué un evento no se pudo aplicar. Se devuelve en vez de loguearse aquí
@@ -60,13 +72,48 @@ export class MirrorEngine {
    * El servidor no puede hacerlo solo: el HIS no es alcanzable desde la nube
    * por diseño, así que la instantánea la sube el agente.
    */
-  async reconcile(window: { from: Date; to: Date }): Promise<ReconcileResult> {
+  async reconcile(window: {
+    from: Date;
+    to: Date;
+  }): Promise<ReconcileResult & { traidas?: CitasTraidas }> {
     const appointments = await this.driver.snapshotAppointments(window);
-    return this.api.reconcile({
+    const result = await this.api.reconcile({
       fromIso: window.from.toISOString(),
       toIso: window.to.toISOString(),
       appointments,
     });
+    const pedidas = result.toImport ?? [];
+    if (pedidas.length === 0 || !isAppointmentImportCapable(this.driver)) {
+      return result;
+    }
+    // 🩺 Las citas que el servidor quiere y no tiene (las que el hospital agendó
+    // antes de homologar a su médico): se suben como altas. Un fallo aquí no
+    // invalida la reconciliación, que ya quedó registrada en el servidor.
+    try {
+      const events = await this.driver.importAppointments(pedidas);
+      const r =
+        events.length > 0 ? await this.api.pushChanges({ events }) : undefined;
+      return {
+        ...result,
+        traidas: {
+          pedidas: pedidas.length,
+          enviadas: events.length,
+          aplicadas: r?.applied ?? 0,
+          errores: r?.errors ?? 0,
+        },
+      };
+    } catch (error: unknown) {
+      return {
+        ...result,
+        traidas: {
+          pedidas: pedidas.length,
+          enviadas: 0,
+          aplicadas: 0,
+          errores: 0,
+          fallo: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
   }
 
   /**

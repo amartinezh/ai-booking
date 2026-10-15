@@ -255,8 +255,11 @@ async function main() {
     if (p.accion === 'YA' || p.accion === 'REVISAR') continue;
     let agenIAId = p.agenIAId;
     if (p.accion === 'CREAR') {
+      // 🩺 INACTIVO explícito: el schema tiene @default(true), y un servicio
+      // activo es uno con cuyas citas AgenIA trabaja (recordatorios, bot,
+      // cancelar). Se activa a mano en Servicios, igual que los médicos.
       const s = await prisma.medicalService.create({
-        data: { name: p.label.slice(0, 120), organizationId: orgId },
+        data: { name: p.label.slice(0, 120), organizationId: orgId, isActive: false },
       });
       agenIAId = s.id;
       creadosServ++;

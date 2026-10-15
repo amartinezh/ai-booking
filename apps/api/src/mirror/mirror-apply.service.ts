@@ -111,6 +111,8 @@ type ResolucionCupo =
         startTime: Date;
         /** Para cerrar los cupos vecinos que la cita del hospital tapa. */
         endTime?: Date;
+        /** Se alinea con el servicio de la cita del hospital. */
+        serviceId?: string;
       };
     }
   | { tipo: 'MEDICO_NO_ESPEJADO' }
@@ -500,14 +502,41 @@ export class MirrorApplyService {
     return DURACION_POR_DEFECTO_MIN;
   }
 
-  /** El servicio de la cita si está homologado; si no, el del médico. */
+  /**
+   * El servicio de la cita (homologado aquí si hacía falta, ver
+   * `servicioHomologado`); sin servicio en el evento, el del médico.
+   */
   private async servicioDelCupo(
     organizationId: string,
     doctorId: string,
     serviceExternalKey: string | undefined,
   ): Promise<string | null> {
     if (serviceExternalKey) {
-      const mapa = await this.prisma.mirrorEntityMap.findFirst({
+      return this.servicioHomologado(organizationId, serviceExternalKey);
+    }
+    const medico = await this.prisma.doctorProfile.findUnique({
+      where: { id: doctorId },
+      select: { serviceId: true },
+    });
+    return medico?.serviceId ?? null;
+  }
+
+  /**
+   * 🩺 El servicio de AgenIA que corresponde a un servicio del hospital.
+   *
+   * Si nadie lo homologó todavía, se homologa aquí con un servicio INACTIVO (se
+   * enlaza al de AgenIA con el mismo nombre si ya existe): AgenIA solo trabaja
+   * con las citas de servicios activos, y una cita de un servicio que no
+   * conocemos no puede quedar con el del médico —en Anserma, medicina general—
+   * y entrar al bot por la puerta de atrás. Quien quiera trabajar con ese
+   * servicio lo activa en Servicios.
+   */
+  private async servicioHomologado(
+    organizationId: string,
+    serviceExternalKey: string,
+  ): Promise<string> {
+    const buscar = () =>
+      this.prisma.mirrorEntityMap.findFirst({
         where: {
           organizationId,
           entityType: 'SERVICE',
@@ -515,13 +544,87 @@ export class MirrorApplyService {
         },
         select: { agenIAId: true },
       });
-      if (mapa) return mapa.agenIAId;
-    }
-    const medico = await this.prisma.doctorProfile.findUnique({
-      where: { id: doctorId },
-      select: { serviceId: true },
+    const mapa = await buscar();
+    if (mapa) return mapa.agenIAId;
+
+    const entrada = await this.prisma.mirrorCatalogEntry.findFirst({
+      where: {
+        organizationId,
+        entityType: 'SERVICE',
+        externalKey: serviceExternalKey,
+      },
+      select: { label: true },
     });
-    return medico?.serviceId ?? null;
+    const nombre = (
+      entrada?.label?.trim() || `Servicio del hospital ${serviceExternalKey}`
+    ).slice(0, 120);
+    try {
+      const id = await this.prisma.$transaction(async (tx) => {
+        const servicio =
+          (await tx.medicalService.findFirst({
+            where: { organizationId, name: nombre },
+            select: { id: true },
+          })) ??
+          (await tx.medicalService.create({
+            data: { organizationId, name: nombre, isActive: false },
+            select: { id: true },
+          }));
+        await tx.mirrorEntityMap.create({
+          data: {
+            organizationId,
+            entityType: 'SERVICE',
+            externalKey: serviceExternalKey,
+            agenIAId: servicio.id,
+            externalLabel: entrada?.label ?? null,
+          },
+        });
+        return servicio.id;
+      });
+      this.logger.warn(
+        `Servicio del hospital ${serviceExternalKey} sin homologar: se homologó ` +
+          `con «${nombre}» (inactivo si es nuevo).`,
+      );
+      return id;
+    } catch (error) {
+      // Otra cita del mismo servicio lo homologó al mismo tiempo.
+      const otra = await buscar();
+      if (otra) return otra.agenIAId;
+      throw error;
+    }
+  }
+
+  /**
+   * 🩺 Una cita del hospital que cae en un cupo que AgenIA ya tenía le pone su
+   * servicio. El barrido de agenda crea los cupos con el servicio del médico,
+   * pero el mismo médico atiende varios (en Anserma, medicina general,
+   * hipertensos y lectura de exámenes en el mismo turno): sin esto, una cita de
+   * hipertensos quedaba como de medicina general y entraba al bot.
+   */
+  private async alinearServicioDelCupo(
+    organizationId: string,
+    cupo: { id: string; serviceId?: string },
+    serviceExternalKey: string | undefined,
+    traza: TrazaAuditoria,
+  ): Promise<void> {
+    if (!serviceExternalKey) return;
+    const serviceId = await this.servicioHomologado(
+      organizationId,
+      serviceExternalKey,
+    );
+    if (serviceId === cupo.serviceId) return;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+      await tx.scheduleSlot.update({
+        where: { id: cupo.id },
+        data: { serviceId },
+      });
+    });
+    traza.prefijo = [
+      traza.prefijo,
+      `cupo con el servicio de la cita (${serviceExternalKey})`,
+    ]
+      .filter(Boolean)
+      .join('; ');
   }
 
   /** Ocupar el cupo sin crear cita: marca la transacción como MIRROR (anti-eco). */
@@ -633,6 +736,12 @@ export class MirrorApplyService {
           organizationId,
           resuelto.cupo,
           event.payload,
+          traza,
+        );
+        await this.alinearServicioDelCupo(
+          organizationId,
+          resuelto.cupo,
+          event.payload.serviceExternalKey,
           traza,
         );
       }
@@ -820,7 +929,10 @@ export class MirrorApplyService {
             );
             await tx.scheduleSlot.update({
               where: { id: cupo.id },
-              data: { isAvailable: true },
+              data: {
+                isAvailable: true,
+                ...(await this.servicioDelCupoLibre(tx, cupo.doctorId)),
+              },
             });
           });
           this.logger.log(
@@ -866,9 +978,18 @@ export class MirrorApplyService {
         },
       });
 
+      const cupoDeLaCita = await tx.scheduleSlot.findUnique({
+        where: { id: appointment.scheduleSlotId },
+        select: { doctorId: true },
+      });
       await tx.scheduleSlot.update({
         where: { id: appointment.scheduleSlotId },
-        data: { isAvailable: true },
+        data: {
+          isAvailable: true,
+          ...(cupoDeLaCita
+            ? await this.servicioDelCupoLibre(tx, cupoDeLaCita.doctorId)
+            : {}),
+        },
       });
 
       return appointment.scheduleSlotId;
@@ -877,6 +998,23 @@ export class MirrorApplyService {
     await this.avisarListaDeEspera(organizationId, cupoLiberadoId);
 
     return 'APPLIED';
+  }
+
+  /**
+   * 🩺 Un cupo que vuelve a quedar libre vuelve al servicio del médico: el
+   * servicio de la cita que lo ocupaba (ver `alinearServicioDelCupo`) era de esa
+   * cita, y el hueco el hospital lo vuelve a vender para cualquiera. Sin servicio
+   * en el médico, el cupo queda como estaba.
+   */
+  private async servicioDelCupoLibre(
+    tx: Prisma.TransactionClient,
+    doctorId: string,
+  ): Promise<{ serviceId?: string }> {
+    const medico = await tx.doctorProfile.findUnique({
+      where: { id: doctorId },
+      select: { serviceId: true },
+    });
+    return medico?.serviceId ? { serviceId: medico.serviceId } : {};
   }
 
   /**

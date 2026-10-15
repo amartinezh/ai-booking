@@ -325,6 +325,19 @@ export interface HisAppointmentSnapshot {
   /** Hora de inicio en UTC. La conversión desde la hora local del HIS la hace el driver. */
   startTimeIso: string;
   patientDocument?: string;
+  /**
+   * Servicio de la cita en el HIS (2026-10-15). Con él la reconciliación corrige
+   * el servicio del cupo en AgenIA y decide qué citas pedir (`toImport`).
+   * Opcional: un agente anterior no lo manda y entonces no se corrige ni se pide
+   * nada.
+   */
+  serviceExternalKey?: string;
+}
+
+/** Una cita concreta del HIS: su médico y su hora de inicio en UTC. */
+export interface HisAppointmentKey {
+  doctorExternalKey: string;
+  startTimeIso: string;
 }
 
 export interface ReconcileInput {
@@ -339,6 +352,15 @@ export interface ReconcileResult {
   missingInHis: string[];
   missingInAgenIA: string[];
   inSync: boolean;
+  /**
+   * 🩺 Citas del HIS que AgenIA quiere y no tiene (2026-10-15): de un médico
+   * homologado, de un servicio ACTIVO en AgenIA y sin cita vigente en su cupo.
+   * Son, sobre todo, las que el hospital agendó antes de que su médico se
+   * homologara: la detección de cambios solo ve las altas NUEVAS, así que sin
+   * esto nunca entrarían. El agente las vuelve a leer y las sube como altas
+   * (`AppointmentImportCapableDriver`). Opcional: un servidor anterior no lo manda.
+   */
+  toImport?: HisAppointmentKey[];
 }
 
 // ── POST /mirror/catalog ────────────────────────────────────────────────────

@@ -211,8 +211,12 @@ CREATE INDEX IF NOT EXISTS "idx_patient_fullname_trgm"
 --   · Sin fila de OrganizationSettings: frena (falla cerrado).
 --   · FUERA_DE_ALCANCE (2026-10-15): AgenIA solo trabaja con las citas de los
 --     médicos con «WhatsApp ON» (`DoctorProfile.whatsappBookingEnabled`, en
---     Médicos). Crear, cancelar o mover la cita de otro médico (odontología,
---     psicología…) se frena aunque la operación esté encendida: esas citas se
+--     Médicos) Y de un servicio ACTIVO (`MedicalService.isActive`, en Servicios;
+--     en Anserma solo «Consulta ambulatoria de medicina general», S39141). El
+--     servicio es el del CUPO, que el espejo pone igual al de la cita del
+--     hospital: un mismo médico atiende medicina general, hipertensos y lectura
+--     de exámenes. Crear, cancelar o mover cualquier otra cita (odontología,
+--     hipertensos…) se frena aunque la operación esté encendida: esas citas se
 --     gestionan en el sistema del hospital.
 --
 -- El error lleva `AGENIA_OPERACION_APAGADA:<operación>`: la API y el panel lo
@@ -264,20 +268,27 @@ BEGIN
       USING HINT = 'El interruptor de esta operación está apagado en Configuración: hágala directamente en el sistema del hospital.';
   END IF;
 
-  -- El médico de la cita (y, al moverla, también el de su cupo de antes) tiene
-  -- que estar en WhatsApp ON. Un médico que no se encuentra cuenta como fuera.
+  -- El cupo de la cita (y, al moverla, también el de antes) tiene que ser de un
+  -- médico en WhatsApp ON y de un servicio activo. Un cupo, médico o servicio
+  -- que no se encuentra cuenta como fuera.
   IF NOT EXISTS (
-    SELECT 1 FROM "ScheduleSlot" ss JOIN "DoctorProfile" d ON d.id = ss."doctorId"
-     WHERE ss.id = NEW."scheduleSlotId" AND d."whatsappBookingEnabled" = true
+    SELECT 1 FROM "ScheduleSlot" ss
+      JOIN "DoctorProfile" d ON d.id = ss."doctorId"
+      JOIN "MedicalService" sv ON sv.id = ss."serviceId"
+     WHERE ss.id = NEW."scheduleSlotId"
+       AND d."whatsappBookingEnabled" = true AND sv."isActive" = true
   ) OR (
     TG_OP = 'UPDATE' AND NEW."scheduleSlotId" IS DISTINCT FROM OLD."scheduleSlotId"
     AND NOT EXISTS (
-      SELECT 1 FROM "ScheduleSlot" ss JOIN "DoctorProfile" d ON d.id = ss."doctorId"
-       WHERE ss.id = OLD."scheduleSlotId" AND d."whatsappBookingEnabled" = true
+      SELECT 1 FROM "ScheduleSlot" ss
+        JOIN "DoctorProfile" d ON d.id = ss."doctorId"
+        JOIN "MedicalService" sv ON sv.id = ss."serviceId"
+       WHERE ss.id = OLD."scheduleSlotId"
+         AND d."whatsappBookingEnabled" = true AND sv."isActive" = true
     )
   ) THEN
     RAISE EXCEPTION 'AGENIA_OPERACION_APAGADA:FUERA_DE_ALCANCE'
-      USING HINT = 'El médico de esta cita no tiene WhatsApp ON en Médicos: se gestiona directamente en el sistema del hospital.';
+      USING HINT = 'La cita es de un médico sin WhatsApp ON o de un servicio inactivo: se gestiona directamente en el sistema del hospital.';
   END IF;
 
   RETURN NEW;

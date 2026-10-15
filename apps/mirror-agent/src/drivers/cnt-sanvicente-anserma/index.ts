@@ -1,6 +1,7 @@
 import * as sql from 'mssql';
 import type {
   CanonicalChangeEvent,
+  HisAppointmentKey,
   HisAppointmentSnapshot,
   HisCatalogEntry,
   HisLookupRequestDto,
@@ -989,7 +990,8 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       .request()
       .input('desde', sql.VarChar(8), desdeSql)
       .input('hasta', sql.VarChar(8), hastaSql).query(`
-        SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_HIST_PAC_CIT hist
+        SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_HIST_PAC_CIT hist,
+               CD_CODI_SER_CIT servicio
           FROM dbo.CITAS_MEDICAS
          WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta`);
 
@@ -999,6 +1001,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       med: string;
       hora: string;
       hist: string | null;
+      servicio: string | null;
     }[]) {
       // El HIS guarda hora local; el protocolo viaja en UTC (plan §8).
       //
@@ -1017,6 +1020,9 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         doctorExternalKey: f.med,
         startTimeIso,
         patientDocument: f.hist ?? undefined,
+        // 🩺 Con él, AgenIA corrige el servicio de sus cupos y sabe qué citas
+        // de los servicios con los que trabaja le faltan.
+        serviceExternalKey: f.servicio?.trim() || undefined,
       });
     }
     if (horasIlegibles > 0) {
@@ -1027,6 +1033,91 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       );
     }
     return foto;
+  }
+
+  /**
+   * 🩺 Trae las citas que la reconciliación pidió (`AppointmentImportCapableDriver`):
+   * las vuelve a leer de `CITAS_MEDICAS` —solo las VIGENTES (estado 0)— y las
+   * arma como altas, igual que `detectChanges`, con los datos del paciente.
+   *
+   * · Una sola consulta: los médicos pedidos entre la primera y la última fecha
+   *   pedidas (columna sin envolver, como en la consulta caliente), y se queda
+   *   con las de la lista.
+   * · Las que escribió este agente no se traen: ya son de AgenIA.
+   * · `eventId` = `cnt:IMPORT:` + la misma identidad de fila que el alta normal
+   *   (médico, hora, estado, FE_ELAB_CIT): pedir otra vez la misma cita no la
+   *   aplica dos veces, y una fila nueva en el mismo cupo es otra cita.
+   */
+  async importAppointments(
+    keys: HisAppointmentKey[],
+  ): Promise<CanonicalChangeEvent[]> {
+    const pool = this.requirePool();
+    const mapping = this.requireMapping();
+    const pedidas = new Set<string>();
+    const medicos = new Set<string>();
+    const fechas: string[] = [];
+    for (const k of keys) {
+      const inicio = new Date(k.startTimeIso);
+      if (!k.doctorExternalKey || Number.isNaN(inicio.getTime())) continue;
+      pedidas.add(`${k.doctorExternalKey}|${inicio.toISOString()}`);
+      medicos.add(k.doctorExternalKey);
+      fechas.push(fechaCitaLocal(inicio.toISOString(), this.timeZone));
+    }
+    if (pedidas.size === 0) return [];
+    fechas.sort();
+
+    const req = pool
+      .request()
+      .input('desde', sql.VarChar(8), fechaLiteralSql(fechas[0]))
+      .input(
+        'hasta',
+        sql.VarChar(8),
+        diaSiguienteLiteralSql(fechas[fechas.length - 1]),
+      );
+    const marcadores = [...medicos].map((m, n) => {
+      req.input(`m${n}`, sql.VarChar(20), m);
+      return `@m${n}`;
+    });
+    const filas = await req.query<FilaCita>(`
+      SELECT CD_CODI_MED_CIT med, FE_HORA_CIT hora, NU_ESTA_CIT estado,
+             CD_CODI_SER_CIT servicio, NU_HIST_PAC_CIT hist,
+             NU_DURA_CIT dura, DE_DESC_CIT descripcion,
+             CONVERT(varchar(10), FE_FECH_CIT, 23) fecha,
+             CONVERT(varchar(23), FE_ELAB_CIT, 121) elaborada
+        FROM dbo.CITAS_MEDICAS
+       WHERE FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta
+         AND NU_ESTA_CIT = 0
+         AND CD_CODI_MED_CIT IN (${marcadores.join(', ')})`);
+
+    const ahora = new Date().toISOString();
+    const events: CanonicalChangeEvent[] = [];
+    const vistas = new Set<string>();
+    for (const f of filas.recordset) {
+      const startTimeIso = feHoraCitAIsoOrNull(f.hora, this.timeZone);
+      if (!startTimeIso) continue;
+      const pedida = `${f.med}|${startTimeIso}`;
+      // Una por cupo: la PK del HIS no impide dos filas vigentes iguales.
+      if (!pedidas.has(pedida) || vistas.has(pedida)) continue;
+      if (esMarcaPropia(mapping, f.descripcion)) continue;
+      const clave = `${f.med}|${f.hora}`;
+      const fila: SnapshotRow = {
+        e: f.estado,
+        s: f.servicio,
+        h: f.hist,
+        d: f.dura,
+        f: f.fecha,
+        el: f.elaborada,
+        propia: false,
+      };
+      const evento = this.eventoDeCita('INSERT', clave, fila, ahora);
+      if (!evento) continue;
+      evento.eventId = `cnt:IMPORT:${clave}:${fila.e}:${fila.el ?? 'na'}`;
+      vistas.add(pedida);
+      events.push(evento);
+    }
+
+    await this.enriquecerAltasConPaciente(pool, events);
+    return events;
   }
 
   /**

@@ -791,6 +791,107 @@ describe('MirrorEngine', () => {
       await expect(engine.reconcile(ventana)).rejects.toThrow('SQL caído');
       expect(api.reconcile).not.toHaveBeenCalled();
     });
+
+    describe('🩺 citas que el servidor pide traer', () => {
+      const pedida = {
+        doctorExternalKey: 'MD09',
+        startTimeIso: '2026-10-20T13:00:00.000Z',
+      };
+      const alta = {
+        eventId: 'cnt:IMPORT:MD09|2026/10/20 08:00:0:x',
+        entityType: 'APPOINTMENT' as const,
+        op: 'INSERT' as const,
+        occurredAtIso: '2026-10-15T00:00:00.000Z',
+        payload: {
+          doctorExternalKey: 'MD09',
+          startTimeIso: pedida.startTimeIso,
+        },
+      };
+      const conPedidas = (toImport: (typeof pedida)[]) => {
+        driver.snapshotAppointments.mockResolvedValue([]);
+        api.reconcile.mockResolvedValue({
+          inAgenIA: 0,
+          inHis: 1,
+          missingInHis: [],
+          missingInAgenIA: [],
+          inSync: false,
+          toImport,
+        });
+      };
+
+      it('el driver las vuelve a leer y se suben como altas', async () => {
+        conPedidas([pedida]);
+        const importAppointments = jest.fn(async () => [alta]);
+        (driver as any).importAppointments = importAppointments;
+        api.pushChanges.mockResolvedValue({
+          applied: 1,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        });
+
+        const r = await engine.reconcile(ventana);
+
+        expect(importAppointments).toHaveBeenCalledWith([pedida]);
+        expect(api.pushChanges).toHaveBeenCalledWith({ events: [alta] });
+        expect(r.traidas).toEqual({
+          pedidas: 1,
+          enviadas: 1,
+          aplicadas: 1,
+          errores: 0,
+        });
+      });
+
+      it('si ya no estaban vigentes en el HIS, no se sube nada', async () => {
+        conPedidas([pedida]);
+        (driver as any).importAppointments = jest.fn(async () => []);
+
+        const r = await engine.reconcile(ventana);
+
+        expect(api.pushChanges).not.toHaveBeenCalled();
+        expect(r.traidas).toMatchObject({ pedidas: 1, enviadas: 0 });
+      });
+
+      it('un driver sin la capacidad no trae nada (y la reconciliación sigue igual)', async () => {
+        conPedidas([pedida]);
+
+        const r = await engine.reconcile(ventana);
+
+        expect(api.pushChanges).not.toHaveBeenCalled();
+        expect(r.traidas).toBeUndefined();
+        expect(r.inHis).toBe(1);
+      });
+
+      it('si falla la lectura, la reconciliación no se cae: lo dice en `fallo`', async () => {
+        conPedidas([pedida]);
+        (driver as any).importAppointments = jest.fn(async () => {
+          throw new Error('timeout');
+        });
+
+        const r = await engine.reconcile(ventana);
+
+        expect(r.inHis).toBe(1);
+        expect(r.traidas?.fallo).toBe('timeout');
+        expect(api.pushChanges).not.toHaveBeenCalled();
+      });
+
+      it('un servidor anterior (sin toImport) no dispara nada', async () => {
+        driver.snapshotAppointments.mockResolvedValue([]);
+        api.reconcile.mockResolvedValue({
+          inAgenIA: 0,
+          inHis: 0,
+          missingInHis: [],
+          missingInAgenIA: [],
+          inSync: true,
+        });
+        const importAppointments = jest.fn();
+        (driver as any).importAppointments = importAppointments;
+
+        await engine.reconcile(ventana);
+
+        expect(importAppointments).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('syncAvailability — Fase 2', () => {

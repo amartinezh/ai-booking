@@ -612,7 +612,7 @@ export const TEMAS: TemaAyuda[] = [
         categoria: 'catalogos',
         resumen: 'El catálogo de especialidades que la clínica ofrece y que el asistente puede agendar.',
         paraQueSirve:
-            'Cada médico pertenece a un servicio (Medicina General, Odontología, Pediatría…) y cada cupo hereda el servicio de su médico. Los servicios activos son el menú que el asistente le muestra al paciente cuando pide una cita, y con ellos se agrupan las Analíticas.',
+            'Cada médico pertenece a un servicio (Medicina General, Odontología, Pediatría…) y cada cupo hereda el servicio de su médico. Los servicios activos son el menú que el asistente le muestra al paciente cuando pide una cita, y con ellos se agrupan las Analíticas. Con la clínica conectada al hospital, cada cita trae el servicio que le dio el hospital, y AgenIA solo trabaja con las citas de servicios activos (y de médicos con WhatsApp ON): recordatorios, respuestas del asistente, cancelar y cambiar la fecha.',
         guias: [
             {
                 titulo: 'Crear un servicio',
@@ -642,7 +642,7 @@ export const TEMAS: TemaAyuda[] = [
         preguntas: [
             {
                 pregunta: '¿Qué pasa si inactivo un servicio?',
-                respuesta: 'El asistente deja de ofrecerlo en su menú. Las citas y los cupos existentes no se borran.',
+                respuesta: 'El asistente deja de ofrecerlo en su menú, y AgenIA deja de trabajar con sus citas: no les manda recordatorio, el asistente no las cancela ni les cambia la fecha, y tampoco se pueden crear, cancelar ni mover desde el panel si la clínica está conectada al hospital (se hace en el sistema del hospital). Las citas y los cupos existentes no se borran.',
             },
             {
                 pregunta: '¿Puedo cambiarle el nombre a un servicio?',
@@ -691,7 +691,7 @@ export const TEMAS: TemaAyuda[] = [
         ],
         elementos: [
             { nombre: 'Activo / Inactivo', explicacion: 'Si el médico está disponible para agendamiento.' },
-            { nombre: '📱 WhatsApp ON / OFF', explicacion: 'Si AgenIA trabaja con las citas de este médico: el asistente le agenda, recuerda sus citas, responde a sus pacientes y, si están encendidos, cancela o cambia la fecha. OFF: sus citas se ven en AgenIA (las trae el hospital), pero no reciben recordatorios ni se gestionan por el asistente ni por el panel; se manejan directamente en el sistema del hospital.' },
+            { nombre: '📱 WhatsApp ON / OFF', explicacion: 'Si AgenIA trabaja con las citas de este médico: el asistente le agenda, recuerda sus citas, responde a sus pacientes y, si están encendidos, cancela o cambia la fecha — solo las de servicios activos en Servicios (un mismo médico puede atender medicina general y también hipertensos o lectura de exámenes). OFF: sus citas se ven en AgenIA (las trae el hospital), pero no reciben recordatorios ni se gestionan por el asistente ni por el panel; se manejan directamente en el sistema del hospital.' },
             { nombre: 'T.P (Licencia)', explicacion: 'Su tarjeta profesional.' },
             { nombre: '🗑️ Dar de baja', explicacion: 'Elimina al médico y su acceso. No se puede deshacer.' },
         ],
@@ -699,7 +699,7 @@ export const TEMAS: TemaAyuda[] = [
             {
                 pregunta: '¿Qué diferencia hay entre «Estado Activo» y «Reservas por WhatsApp»?',
                 respuesta:
-                    '«Estado Activo» dice si el médico está disponible en la clínica. «Reservas por WhatsApp» (WhatsApp ON) dice si AgenIA trabaja con sus citas: agendar, recordatorios, respuestas del asistente, cancelar y cambiar la fecha. El asistente solo agenda con médicos que tengan las dos cosas encendidas, y solo le escribe a los pacientes de médicos con WhatsApp ON.',
+                    '«Estado Activo» dice si el médico está disponible en la clínica. «Reservas por WhatsApp» (WhatsApp ON) dice si AgenIA trabaja con sus citas: agendar, recordatorios, respuestas del asistente, cancelar y cambiar la fecha. El asistente solo agenda con médicos que tengan las dos cosas encendidas, y solo le escribe a los pacientes de médicos con WhatsApp ON por citas de servicios activos.',
             },
             {
                 pregunta: '¿Es mejor inactivar o dar de baja?',

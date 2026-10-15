@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
+import {
+  SYNC_AUDIT_DIRECTION,
+  documentoSinCerosIniciales,
+  normalizeDocumento,
+} from '@agenia/shared';
 import {
   MirrorWatchdogService,
   type DerivaItem,
@@ -27,7 +31,22 @@ export interface HisAppointmentSnapshot {
   doctorExternalKey: string;
   startTimeIso: string;
   patientDocument?: string;
+  /** Servicio de la cita en el HIS. Un agente anterior no lo manda. */
+  serviceExternalKey?: string;
 }
+
+/**
+ * Tope de citas que se le piden al agente en una reconciliación. La primera,
+ * tras homologar médicos, puede traer cientos; el resto llega en la siguiente
+ * (las más cercanas primero, que son las que tienen recordatorio).
+ */
+export const MAX_CITAS_A_TRAER = 1000;
+
+/** Documento para comparar (sin ceros a la izquierda); '' si no hay. */
+const documento = (raw: string | null | undefined): string => {
+  const normalizado = normalizeDocumento(raw);
+  return normalizado ? documentoSinCerosIniciales(normalizado) : '';
+};
 
 export interface ReconciliationReport {
   organizationId: string;
@@ -48,6 +67,22 @@ export interface ReconciliationReport {
    * vendidos. Subconjunto de `missingInAgenIA`.
    */
   repaired: string[];
+  /**
+   * 🩺 Cupos con cita cuyo servicio se corrigió al de la cita del hospital (ver
+   * `MirrorApplyService.alinearServicioDelCupo`).
+   */
+  serviceFixed: number;
+  /**
+   * 🩺 Citas del hospital que AgenIA quiere y no tiene: médico homologado,
+   * servicio activo y sin cita vigente en su cupo. El agente las trae como altas.
+   */
+  toImport: { doctorExternalKey: string; startTimeIso: string }[];
+  /**
+   * 🩺 El radar: citas de servicios activos con médicos que AgenIA NO tiene
+   * homologados, por código de médico del HIS. Para trabajar con el 100 % de un
+   * servicio hay que crear y homologar a esos médicos (homologar.ts).
+   */
+  activeServiceUnmapped: Record<string, number>;
   /** true si los dos sistemas coinciden exactamente. */
   inSync: boolean;
 }
@@ -84,7 +119,14 @@ export class MirrorReconciliationService {
         id: true,
         patientId: true,
         epsId: true,
-        scheduleSlot: { select: { startTime: true, doctorId: true } },
+        scheduleSlot: {
+          select: {
+            id: true,
+            startTime: true,
+            doctorId: true,
+            serviceId: true,
+          },
+        },
       },
     });
 
@@ -99,6 +141,8 @@ export class MirrorReconciliationService {
     // La cita detrás de cada llave, para poder decir CUÁL falta (la bandeja de
     // excepciones necesita la cita, no solo `médico|hora`).
     const citaPorClave = new Map<string, DerivaItem>();
+    // El cupo de cada cita, para corregirle el servicio.
+    const cupoPorClave = new Map<string, { id: string; serviceId?: string }>();
     for (const cita of citas) {
       const medico = claveHis.get(cita.scheduleSlot.doctorId);
       // Un médico sin homologar no puede compararse: su cita nunca llegó al
@@ -113,6 +157,10 @@ export class MirrorReconciliationService {
         doctorId: cita.scheduleSlot.doctorId,
         startTime: cita.scheduleSlot.startTime,
         clave,
+      });
+      cupoPorClave.set(clave, {
+        id: cita.scheduleSlot.id,
+        serviceId: cita.scheduleSlot.serviceId,
       });
     }
 
@@ -199,6 +247,16 @@ export class MirrorReconciliationService {
       );
     }
 
+    const { serviceFixed, toImport, activeServiceUnmapped } =
+      await this.serviciosYCitasATraer(
+        organizationId,
+        hisSnapshot,
+        window,
+        claveHis,
+        enAgenIA,
+        cupoPorClave,
+      );
+
     const report: ReconciliationReport = {
       organizationId,
       window: {
@@ -210,6 +268,9 @@ export class MirrorReconciliationService {
       missingInHis,
       missingInAgenIA,
       repaired: reparados,
+      serviceFixed,
+      toImport,
+      activeServiceUnmapped,
       inSync: missingInHis.length === 0 && missingInAgenIA.length === 0,
     };
 
@@ -237,6 +298,160 @@ export class MirrorReconciliationService {
       );
     }
     return report;
+  }
+
+  /**
+   * 🩺 AgenIA trabaja con las citas de los servicios ACTIVOS (en Anserma, solo
+   * medicina general), y el servicio de una cita es el de su cupo. Dos cosas, con
+   * el servicio que el agente manda de cada cita del hospital:
+   *
+   *   1. Corrige el servicio de los cupos con cita. El barrido de agenda crea los
+   *      cupos con el servicio del médico, y hasta el 2026-10-15 una cita del
+   *      hospital que caía en uno de ellos no se lo cambiaba: el mismo médico
+   *      atiende medicina general, hipertensos y lectura de exámenes, y una cita
+   *      de hipertensos quedaba como de medicina general. Ahora el alta lo
+   *      alinea; esto arregla las de antes y cualquier cambio que no se vio.
+   *   2. Dice qué citas del hospital hay que traer: médico homologado, servicio
+   *      activo, con documento y sin cita vigente en AgenIA. La detección de
+   *      cambios solo ve las altas NUEVAS, así que las que el hospital agendó
+   *      antes de homologar a su médico no entrarían nunca.
+   *
+   * No trae una cita que AgenIA canceló para ese mismo paciente y el hospital
+   * todavía tiene (la cancelación va en camino, o el hospital no la aplicó):
+   * traerla deshacería la cancelación. Eso lo mira una persona (Bandeja).
+   *
+   * Sin el servicio (un agente anterior) no hace ninguna de las dos.
+   */
+  private async serviciosYCitasATraer(
+    organizationId: string,
+    hisSnapshot: HisAppointmentSnapshot[],
+    window: { from: Date; to: Date },
+    claveHis: Map<string, string>,
+    enAgenIA: Set<string>,
+    cupoPorClave: Map<string, { id: string; serviceId?: string }>,
+  ): Promise<{
+    serviceFixed: number;
+    toImport: { doctorExternalKey: string; startTimeIso: string }[];
+    activeServiceUnmapped: Record<string, number>;
+  }> {
+    const conServicio = hisSnapshot.filter((c) => !!c.serviceExternalKey);
+    if (conServicio.length === 0) {
+      return { serviceFixed: 0, toImport: [], activeServiceUnmapped: {} };
+    }
+
+    const [mapasServicio, activos, canceladas] = await Promise.all([
+      this.prisma.mirrorEntityMap.findMany({
+        where: { organizationId, entityType: 'SERVICE' },
+        select: { agenIAId: true, externalKey: true },
+      }),
+      this.prisma.medicalService.findMany({
+        where: { organizationId, isActive: true },
+        select: { id: true },
+      }),
+      this.prisma.appointment.findMany({
+        where: {
+          organizationId,
+          status: 'CANCELLED',
+          scheduleSlot: { startTime: { gte: window.from, lt: window.to } },
+        },
+        select: {
+          scheduleSlot: { select: { startTime: true, doctorId: true } },
+          patient: { select: { cedula: true } },
+        },
+      }),
+    ]);
+    const servicioDe = new Map(
+      mapasServicio.map((m) => [m.externalKey, m.agenIAId]),
+    );
+    const activo = new Set(activos.map((a) => a.id));
+    const canceladaPara = new Set(
+      canceladas.flatMap((c) => {
+        const medico = claveHis.get(c.scheduleSlot.doctorId);
+        const doc = documento(c.patient?.cedula);
+        return medico && doc
+          ? [`${medico}|${c.scheduleSlot.startTime.toISOString()}|${doc}`]
+          : [];
+      }),
+    );
+    const homologados = new Set(claveHis.values());
+
+    const aCorregir = new Map<string, string[]>();
+    const aTraer: { doctorExternalKey: string; startTimeIso: string }[] = [];
+    const sinHomologar: Record<string, number> = {};
+    for (const c of conServicio) {
+      const startTimeIso = new Date(c.startTimeIso).toISOString();
+      const clave = `${c.doctorExternalKey}|${startTimeIso}`;
+      const servicio = servicioDe.get(c.serviceExternalKey as string);
+
+      const cupo = cupoPorClave.get(clave);
+      if (cupo) {
+        if (servicio && servicio !== cupo.serviceId) {
+          aCorregir.set(servicio, [
+            ...(aCorregir.get(servicio) ?? []),
+            cupo.id,
+          ]);
+        }
+        continue;
+      }
+
+      if (
+        !homologados.has(c.doctorExternalKey) &&
+        servicio &&
+        activo.has(servicio)
+      ) {
+        sinHomologar[c.doctorExternalKey] =
+          (sinHomologar[c.doctorExternalKey] ?? 0) + 1;
+        continue;
+      }
+
+      if (
+        homologados.has(c.doctorExternalKey) &&
+        !enAgenIA.has(clave) &&
+        servicio &&
+        activo.has(servicio) &&
+        documento(c.patientDocument) &&
+        !canceladaPara.has(`${clave}|${documento(c.patientDocument)}`)
+      ) {
+        aTraer.push({ doctorExternalKey: c.doctorExternalKey, startTimeIso });
+      }
+    }
+
+    let serviceFixed = 0;
+    if (aCorregir.size > 0) {
+      await this.prisma.$transaction(async (tx) => {
+        // Nace del HIS: no vuelve a él.
+        await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+        for (const [serviceId, ids] of aCorregir) {
+          const { count } = await tx.scheduleSlot.updateMany({
+            where: { organizationId, id: { in: ids } },
+            data: { serviceId },
+          });
+          serviceFixed += count;
+        }
+      });
+      this.logger.warn(
+        `Reconciliación (org ${organizationId}): ${serviceFixed} cupo(s) con cita ` +
+          `tenían un servicio distinto al de su cita en el hospital; se corrigieron.`,
+      );
+    }
+
+    if (Object.keys(sinHomologar).length > 0) {
+      this.logger.warn(
+        `Reconciliación (org ${organizationId}): citas de servicios activos con ` +
+          `médicos sin homologar (AgenIA no las tiene): ` +
+          Object.entries(sinHomologar)
+            .map(([m, n]) => `${m}=${n}`)
+            .join(', ') +
+          '.',
+      );
+    }
+
+    aTraer.sort((a, b) => a.startTimeIso.localeCompare(b.startTimeIso));
+    return {
+      serviceFixed,
+      toImport: aTraer.slice(0, MAX_CITAS_A_TRAER),
+      activeServiceUnmapped: sinHomologar,
+    };
   }
 
   /**
@@ -277,6 +492,10 @@ export class MirrorReconciliationService {
           window: report.window,
           inAgenIA: report.inAgenIA,
           inHis: report.inHis,
+          // Antes de las listas: el detalle se recorta a 4000 caracteres.
+          serviceFixed: report.serviceFixed,
+          toImport: report.toImport.length,
+          activeServiceUnmapped: report.activeServiceUnmapped,
           missingInHis: report.missingInHis,
           missingInAgenIA: report.missingInAgenIA,
           repaired: report.repaired,

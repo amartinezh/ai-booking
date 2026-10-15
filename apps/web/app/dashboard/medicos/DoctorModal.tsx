@@ -148,7 +148,7 @@ export default function DoctorModal({ doctor, services, onClose }: { doctor?: Do
                                 className="w-5 h-5 text-blue-600 bg-zinc-100 border-zinc-300 rounded focus:ring-blue-500"
                             />
                             <label htmlFor="whatsappBookingEnabled" className="text-sm font-bold text-zinc-700 dark:text-zinc-300">
-                                Reservas por WhatsApp (WhatsApp ON): AgenIA trabaja con las citas de este médico — agendar, recordatorios, respuestas del asistente, cancelar y cambiar la fecha
+                                Reservas por WhatsApp (WhatsApp ON): AgenIA trabaja con las citas de este médico de servicios activos — agendar, recordatorios, respuestas del asistente, cancelar y cambiar la fecha
                             </label>
                         </div>
                     </div>

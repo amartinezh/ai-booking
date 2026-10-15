@@ -379,6 +379,17 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       expect(where.scheduleSlot.startTime.gt).toBeInstanceOf(Date);
     });
 
+    it('🩺 y solo de servicios activos: hipertensos o lectura de exámenes del mismo médico no se recuerdan', async () => {
+      const { service, prisma } = build();
+      await service.runOnce();
+      const where = (
+        prisma.appointment.findMany.mock.calls[0] as unknown as [
+          { where: Record<string, any> },
+        ]
+      )[0].where;
+      expect(where.scheduleSlot.service).toEqual({ isActive: true });
+    });
+
     it('☎️ sin casos abiertos la consulta no lleva filtro por paciente', async () => {
       const { service, prisma } = build();
       await service.runOnce();
@@ -791,6 +802,30 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
 
       expect(r).toMatchObject({ success: false, outcome: 'skipped' });
       expect(r.error).toMatch(/WhatsApp ON/);
+      expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+      expect(templates.sendTemplate).not.toHaveBeenCalled();
+      expect(prisma.appointment.update).not.toHaveBeenCalled();
+    });
+
+    it('🩺 una cita de un servicio inactivo (p. ej. hipertensos) no se recuerda ni a mano', async () => {
+      const { service, prisma, chatbot, templates } = build();
+      prisma.appointment.findFirst.mockResolvedValue(
+        cita({
+          scheduleSlot: {
+            startTime: new Date('2026-09-01T14:00:00.000Z'),
+            doctor: { fullName: 'MDD2', whatsappBookingEnabled: true },
+            service: {
+              name: 'Consulta ambularoria control hipertensos',
+              isActive: false,
+            },
+          },
+        }),
+      );
+
+      const r = await service.sendManualForAppointment('apt-1', ORG, ADMIN);
+
+      expect(r).toMatchObject({ success: false, outcome: 'skipped' });
+      expect(r.error).toMatch(/servicio de esta cita no está activo/);
       expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
       expect(templates.sendTemplate).not.toHaveBeenCalled();
       expect(prisma.appointment.update).not.toHaveBeenCalled();

@@ -260,13 +260,17 @@ const MAX_CITAS_EN_RESPUESTA = 8;
 
 /**
  * 🩺 Con qué citas trabaja AgenIA frente al paciente (2026-10-15): las de los
- * médicos con «WhatsApp ON» en Médicos. El hospital trae TODAS sus citas (para
- * la agenda y el rastreo), pero recordar, responder, avisar, cancelar o cambiar
- * la fecha solo con las de esos médicos. Antes el bot confirmaba y ofrecía
- * cancelar citas de odontología que nunca debió tocar.
+ * médicos con «WhatsApp ON» en Médicos Y de un servicio activo en Servicios (en
+ * Anserma, solo medicina general). El hospital trae TODAS sus citas (para la
+ * agenda y el rastreo), pero recordar, responder, avisar, cancelar o cambiar la
+ * fecha solo con estas. Antes el bot confirmaba y ofrecía cancelar citas de
+ * odontología que nunca debió tocar; y un médico de medicina general también
+ * atiende hipertensos y lectura de exámenes, así que el médico solo no basta.
+ * El servicio es el del cupo: el espejo lo pone igual al de la cita del hospital.
  */
 const EN_ALCANCE_DEL_BOT = {
   doctor: { whatsappBookingEnabled: true },
+  service: { isActive: true },
 } as const;
 
 /** Quita tildes. Solo para comparar, igual que `textoParaCoincidencia`. */
@@ -8930,17 +8934,24 @@ export class ChatbotService implements OnModuleInit {
     const { organizationId, senderId, text, MSGS } = ctx;
     const { aptId, slotId } = p;
 
-    // 🩺 Solo citas de médicos con «WhatsApp ON» (la lista ya las filtra; esto es
-    // por si la sesión guardó otra). Con espejo, la base también lo frena.
+    // 🩺 Solo citas de médicos con «WhatsApp ON» y de un servicio activo (la
+    // lista ya las filtra; esto es por si la sesión guardó otra). Con espejo, la
+    // base también lo frena.
     const cita = await this.prisma.appointment.findFirst({
       where: { id: aptId, organizationId },
       select: {
         scheduleSlot: {
-          select: { doctor: { select: { whatsappBookingEnabled: true } } },
+          select: {
+            doctor: { select: { whatsappBookingEnabled: true } },
+            service: { select: { isActive: true } },
+          },
         },
       },
     });
-    if (cita?.scheduleSlot?.doctor?.whatsappBookingEnabled === false) {
+    if (
+      cita?.scheduleSlot?.doctor?.whatsappBookingEnabled === false ||
+      cita?.scheduleSlot?.service?.isActive === false
+    ) {
       await this.responderCitasFueraDelAlcance({
         organizationId,
         senderId,
@@ -9702,7 +9713,10 @@ export class ChatbotService implements OnModuleInit {
         await this.prisma.$transaction(async (tx) => {
           const newSlot = await tx.scheduleSlot.findUnique({
             where: { id: newSlotId },
-            include: { doctor: { select: { whatsappBookingEnabled: true } } },
+            include: {
+              doctor: { select: { whatsappBookingEnabled: true } },
+              service: { select: { isActive: true } },
+            },
           });
           if (
             !newSlot ||
@@ -9717,7 +9731,10 @@ export class ChatbotService implements OnModuleInit {
           // revalidarlo también aquí — si no, apagar a un médico impediría
           // reservar con él pero no MOVER una cita hacia su agenda, y el
           // hueco seguiría abierto por la puerta de atrás.
-          if (!newSlot.doctor.whatsappBookingEnabled) {
+          if (
+            !newSlot.doctor.whatsappBookingEnabled ||
+            newSlot.service?.isActive === false
+          ) {
             throw new Error('NEW_SLOT_DOCTOR_NOT_BOOKABLE');
           }
           await tx.appointment.update({
@@ -11883,7 +11900,10 @@ export class ChatbotService implements OnModuleInit {
     );
   }
 
-  /** ¿El paciente tiene citas próximas de médicos SIN «WhatsApp ON»? */
+  /**
+   * ¿El paciente tiene citas próximas fuera del bot (médico SIN «WhatsApp ON» o
+   * servicio inactivo)?
+   */
   private async tieneCitasFueraDelAlcance(patientId: string): Promise<boolean> {
     const n = await this.prisma.appointment.count({
       where: {
@@ -11891,7 +11911,10 @@ export class ChatbotService implements OnModuleInit {
         status: 'SCHEDULED',
         scheduleSlot: {
           startTime: { gte: new Date() },
-          doctor: { whatsappBookingEnabled: false },
+          OR: [
+            { doctor: { whatsappBookingEnabled: false } },
+            { service: { isActive: false } },
+          ],
         },
       },
     });

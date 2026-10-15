@@ -147,6 +147,23 @@ const esDeAlgunCanal = (canales: any[], pac: any): boolean =>
 
 function createPrisma(db: Db) {
   const slotDe = (a: any) => db.slots.find((s) => s.id === a.scheduleSlotId);
+  /**
+   * 🩺 El alcance del bot sobre el cupo de una cita, como lo pide la consulta:
+   * médico con «WhatsApp ON», servicio activo, o cualquiera de un `OR`.
+   */
+  const cupoCumple = (filtro: any, slot: any): boolean => {
+    if (!filtro) return true;
+    if (Array.isArray(filtro.OR)) {
+      return filtro.OR.some((f: any) => cupoCumple(f, slot));
+    }
+    const medico = filtro.doctor?.whatsappBookingEnabled;
+    const servicio = filtro.service?.isActive;
+    return (
+      (medico === undefined ||
+        (slot?.doctor?.whatsappBookingEnabled ?? true) === medico) &&
+      (servicio === undefined || (slot?.service?.isActive ?? true) === servicio)
+    );
+  };
   const pacientesDe = (where: any) =>
     db.patients.filter((p) =>
       where.OR
@@ -278,15 +295,10 @@ function createPrisma(db: Db) {
             : a.patientId === where.patientId;
         // Las recordadas de quien escribe (respuestas al recordatorio).
         const recordadaDesde: Date | undefined = where.reminderSentAt?.gte;
-        // 🩺 Solo médicos con «WhatsApp ON» cuando la consulta lo pide.
-        const alcance = where.scheduleSlot?.doctor?.whatsappBookingEnabled;
+        // 🩺 Solo médicos con «WhatsApp ON» y servicios activos, si lo pide.
         const filas = db.appointments
           .filter((a) => delPaciente(a) && a.status === where.status)
-          .filter(
-            (a) =>
-              alcance === undefined ||
-              (slotDe(a)?.doctor?.whatsappBookingEnabled ?? true) === alcance,
-          )
+          .filter((a) => cupoCumple(where.scheduleSlot, slotDe(a)))
           .filter(
             (a) =>
               !recordadaDesde ||
@@ -309,7 +321,7 @@ function createPrisma(db: Db) {
       // Cuántas citas próximas tiene quien escribe («no puedo asistir» sin recordatorio).
       count: jest.fn(({ where }: any) => {
         const despues: Date | undefined = where.scheduleSlot?.startTime?.gt;
-        const alcance = where.scheduleSlot?.doctor?.whatsappBookingEnabled;
+        const desde: Date | undefined = where.scheduleSlot?.startTime?.gte;
         return db.appointments.filter(
           (a) =>
             a.status === where.status &&
@@ -320,8 +332,8 @@ function createPrisma(db: Db) {
                   db.patients.find((x) => x.id === a.patientId),
                 )) &&
             (!despues || slotDe(a).startTime > despues) &&
-            (alcance === undefined ||
-              (slotDe(a)?.doctor?.whatsappBookingEnabled ?? true) === alcance),
+            (!desde || slotDe(a).startTime >= desde) &&
+            cupoCumple(where.scheduleSlot, slotDe(a)),
         ).length;
       }),
       // La cita recordada de quien escribe (respuesta al recordatorio).
@@ -2221,6 +2233,74 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       redis.store.set(
         `temp_selected_cancel_slot:${ORG_ID}:${SENDER}`,
         'slot-apt-od',
+      );
+      redis.store.set(
+        `chat_state:${ORG_ID}:${SENDER}`,
+        ChatState.AWAITING_CANCEL_CONFIRM,
+      );
+      await say('Sí');
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+      expect(lastSent()).toContain('no se pueden gestionar por este medio');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 🩺 …y solo con las de servicios ACTIVOS: el mismo médico de medicina general
+  // (WhatsApp ON) atiende hipertensos y lectura de exámenes, que no son del bot.
+  // ──────────────────────────────────────────────────────────────────
+  describe('🩺 citas de un servicio inactivo con un médico con «WhatsApp ON»', () => {
+    const HACE_2H = new Date(AHORA.getTime() - 2 * 3_600_000);
+    const SVC_HTA = {
+      id: 'svc-hta',
+      name: 'Consulta ambularoria control hipertensos',
+      isActive: false,
+    };
+
+    beforeEach(() => {
+      bookingEnabled = false;
+      cancelEnabled = true;
+      rescheduleEnabled = false;
+    });
+
+    it('«gracias» a un recordatorio de hipertensos no se toma por confirmación', async () => {
+      seedPaciente();
+      seedCita('apt-hta', MANANA, SVC_HTA);
+      db.appointments[0].reminderSentAt = HACE_2H;
+      await say('Ok muchas gracias');
+      expect(lastSent()).not.toContain('Gracias por confirmar');
+    });
+
+    it('«cancelar cita» + cédula con solo una cita de hipertensos: se gestiona con el hospital', async () => {
+      seedPaciente();
+      seedCita('apt-hta', MANANA, SVC_HTA);
+      await say('cancelar cita');
+      await say(CEDULA);
+      expect(lastSent()).toContain('no se pueden gestionar por este medio');
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('con una de medicina general y otra de hipertensos, solo ofrece la de medicina general', async () => {
+      seedPaciente();
+      seedCita('apt-mg', MANANA);
+      seedCita('apt-hta', new Date(MANANA.getTime() + 60 * 60_000), SVC_HTA);
+      for (const a of db.appointments) a.reminderSentAt = HACE_2H;
+      await say('Ok muchas gracias');
+      const r = lastSent();
+      expect(r).toContain('¡Gracias por confirmar!');
+      expect(r).toContain('Medicina General');
+      expect(r).not.toContain('hipertensos');
+    });
+
+    it('🛡️ aunque la sesión guarde la cita de hipertensos, el SÍ no la cancela', async () => {
+      seedPaciente();
+      seedCita('apt-hta', MANANA, SVC_HTA);
+      redis.store.set(
+        `temp_selected_cancel_apt:${ORG_ID}:${SENDER}`,
+        'apt-hta',
+      );
+      redis.store.set(
+        `temp_selected_cancel_slot:${ORG_ID}:${SENDER}`,
+        'slot-apt-hta',
       );
       redis.store.set(
         `chat_state:${ORG_ID}:${SENDER}`,

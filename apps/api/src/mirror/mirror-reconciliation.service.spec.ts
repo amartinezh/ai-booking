@@ -414,4 +414,200 @@ describe('MirrorReconciliationService', () => {
 
     expect(r.inSync).toBe(true);
   });
+  // ════════════════════════════════════════════════════════════════════════
+  // 🩺 AgenIA trabaja con los servicios ACTIVOS (en Anserma, medicina general),
+  // y el servicio de una cita es el de su cupo. La reconciliación lo corrige con
+  // el servicio de cada cita del hospital y pide las citas que faltan.
+  // ════════════════════════════════════════════════════════════════════════
+  describe('🩺 servicio de cada cita y citas por traer', () => {
+    const MG = 'srv-mg';
+    const HTA = 'srv-hta';
+    const H = '2026-09-03T12:00:00.000Z';
+    const H2 = '2026-09-04T12:00:00.000Z';
+    let canceladas: any[];
+
+    const citaConCupo = (serviceId: string) => ({
+      ...citaAgenIA('doc-1', H),
+      scheduleSlot: {
+        id: 'slot-1',
+        startTime: new Date(H),
+        doctorId: 'doc-1',
+        serviceId,
+      },
+    });
+    const his = (over: Record<string, unknown> = {}) => ({
+      doctorExternalKey: '76',
+      startTimeIso: H,
+      patientDocument: '9696544',
+      serviceExternalKey: 'S39141',
+      ...over,
+    });
+
+    beforeEach(() => {
+      canceladas = [];
+      prisma.mirrorEntityMap.findMany.mockImplementation(
+        async ({ where }: any) =>
+          where.entityType === 'SERVICE'
+            ? [
+                { agenIAId: MG, externalKey: 'S39141' },
+                { agenIAId: HTA, externalKey: 'S39141-1' },
+              ]
+            : [
+                { agenIAId: 'doc-1', externalKey: '76' },
+                { agenIAId: 'doc-2', externalKey: '91-1' },
+              ],
+      );
+      prisma.medicalService = {
+        findMany: jest.fn(async () => [{ id: MG }]),
+      };
+      prisma.appointment.findMany.mockImplementation(async ({ where }: any) =>
+        where.status === 'CANCELLED' ? canceladas : [],
+      );
+      prisma.scheduleSlot.updateMany = jest.fn(async ({ where }: any) => ({
+        count: where.id.in.length,
+      }));
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+    });
+
+    it('cupo de medicina general con una cita de hipertensos → el cupo pasa a hipertensos (MIRROR)', async () => {
+      prisma.appointment.findMany.mockImplementation(async ({ where }: any) =>
+        where.status === 'CANCELLED' ? [] : [citaConCupo(MG)],
+      );
+      const tx = {
+        $executeRawUnsafe: jest.fn(),
+        scheduleSlot: prisma.scheduleSlot,
+      };
+      prisma.$transaction.mockImplementation((fn: any) => fn(tx));
+
+      const r = await service.reconcile(
+        'org1',
+        [his({ serviceExternalKey: 'S39141-1' })],
+        VENTANA,
+      );
+
+      expect(prisma.scheduleSlot.updateMany).toHaveBeenCalledWith({
+        where: { organizationId: 'org1', id: { in: ['slot-1'] } },
+        data: { serviceId: HTA },
+      });
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      expect(r.serviceFixed).toBe(1);
+      expect(r.toImport).toEqual([]);
+    });
+
+    it('mismo servicio → no se escribe nada', async () => {
+      prisma.appointment.findMany.mockImplementation(async ({ where }: any) =>
+        where.status === 'CANCELLED' ? [] : [citaConCupo(MG)],
+      );
+
+      const r = await service.reconcile('org1', [his()], VENTANA);
+
+      expect(prisma.scheduleSlot.updateMany).not.toHaveBeenCalled();
+      expect(r.serviceFixed).toBe(0);
+    });
+
+    it('cita de medicina general que AgenIA no tiene → se pide traer', async () => {
+      const r = await service.reconcile('org1', [his()], VENTANA);
+
+      expect(r.toImport).toEqual([
+        { doctorExternalKey: '76', startTimeIso: H },
+      ]);
+    });
+
+    it('no se pide: servicio inactivo, sin homologar, médico sin homologar o sin documento', async () => {
+      const r = await service.reconcile(
+        'org1',
+        [
+          his({ serviceExternalKey: 'S39141-1' }),
+          his({ serviceExternalKey: 'SCITOD' }),
+          his({ doctorExternalKey: 'MD09' }),
+          his({ patientDocument: undefined }),
+        ],
+        VENTANA,
+      );
+
+      expect(r.toImport).toEqual([]);
+    });
+
+    it('🛡️ no trae una cita que AgenIA canceló para ese mismo paciente (deshacería la cancelación)', async () => {
+      canceladas = [
+        {
+          scheduleSlot: { startTime: new Date(H), doctorId: 'doc-1' },
+          patient: { cedula: '009696544' },
+        },
+      ];
+
+      const r = await service.reconcile(
+        'org1',
+        [his(), his({ startTimeIso: H2 })],
+        VENTANA,
+      );
+
+      expect(r.toImport).toEqual([
+        { doctorExternalKey: '76', startTimeIso: H2 },
+      ]);
+    });
+
+    it('la cancelada era de OTRO paciente → sí se trae (el hospital tiene esa cita)', async () => {
+      canceladas = [
+        {
+          scheduleSlot: { startTime: new Date(H), doctorId: 'doc-1' },
+          patient: { cedula: '1111' },
+        },
+      ];
+
+      const r = await service.reconcile('org1', [his()], VENTANA);
+
+      expect(r.toImport).toHaveLength(1);
+    });
+
+    it('📡 el radar: citas de servicios activos con médicos sin homologar, por médico', async () => {
+      const r = await service.reconcile(
+        'org1',
+        [
+          his({ doctorExternalKey: 'MD09' }),
+          his({ doctorExternalKey: 'MD09', startTimeIso: H2 }),
+          his({ doctorExternalKey: 'RU62' }),
+          // Servicio inactivo: no cuenta.
+          his({ doctorExternalKey: 'RU62', serviceExternalKey: 'S39141-1' }),
+        ],
+        VENTANA,
+      );
+
+      expect(r.activeServiceUnmapped).toEqual({ MD09: 2, RU62: 1 });
+      expect(r.toImport).toEqual([]);
+    });
+
+    it('las más cercanas primero', async () => {
+      const r = await service.reconcile(
+        'org1',
+        [his({ startTimeIso: H2 }), his()],
+        VENTANA,
+      );
+
+      expect(r.toImport.map((c) => c.startTimeIso)).toEqual([H, H2]);
+    });
+
+    it('un agente anterior (sin servicio) no corrige ni pide nada', async () => {
+      const r = await service.reconcile(
+        'org1',
+        [his({ serviceExternalKey: undefined })],
+        VENTANA,
+      );
+
+      expect(r.toImport).toEqual([]);
+      expect(r.serviceFixed).toBe(0);
+      expect(prisma.medicalService.findMany).not.toHaveBeenCalled();
+    });
+
+    it('la auditoría lleva cuántos se corrigieron y cuántas se pidieron', async () => {
+      await service.reconcile('org1', [his()], VENTANA);
+
+      const detalle = JSON.parse(
+        prisma.syncAudit.create.mock.calls[0][0].data.detail,
+      );
+      expect(detalle).toMatchObject({ serviceFixed: 0, toImport: 1 });
+    });
+  });
 });

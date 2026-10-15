@@ -65,6 +65,24 @@ describe('snapshotAppointments', () => {
     ]);
   });
 
+  it('🩺 lleva el servicio de cada cita (con él AgenIA corrige sus cupos y sabe qué le falta)', async () => {
+    const { driver, capturado } = conDriver([
+      {
+        med: 'MDD2',
+        hora: '2026/09/03 07:20',
+        hist: '1099887766',
+        servicio: 'S39141-1 ',
+      },
+      { med: 'MDD2', hora: '2026/09/03 07:40', hist: '1', servicio: null },
+    ]);
+
+    const foto = await driver.snapshotAppointments(VENTANA);
+
+    expect(capturado.sql).toContain('CD_CODI_SER_CIT servicio');
+    expect(foto[0].serviceExternalKey).toBe('S39141-1');
+    expect(foto[1].serviceExternalKey).toBeUndefined();
+  });
+
   it('consulta por fecha LOCAL, no por el instante UTC crudo', async () => {
     // FE_FECH_CIT es una fecha local sin zona: pasarle un Date de JS deja que
     // mssql lo serialice en UTC y desplaza el borde de la ventana hasta un

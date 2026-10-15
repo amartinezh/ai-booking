@@ -190,6 +190,7 @@ export type {
   ChangesResult,
   HeartbeatInput,
   HisAppointmentSnapshot,
+  HisAppointmentKey,
   ReconcileInput,
   ReconcileResult,
   HisSlotSnapshot,

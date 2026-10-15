@@ -231,11 +231,15 @@ export class AppointmentReminderCronService
         reminderSentAt: null,
         scheduleSlot: {
           startTime: { gt: now, lte: threshold },
-          // 🩺 Solo las citas de médicos con «WhatsApp ON» (Médicos): AgenIA
-          // trabaja con ellos y con nadie más (2026-10-15: 187 de 252
-          // recordatorios —82 de odontología— eran de médicos fuera del bot,
-          // cuyas citas solo llegan a AgenIA porque las trae el hospital).
+          // 🩺 Solo las citas de médicos con «WhatsApp ON» (Médicos) y de un
+          // servicio activo (Servicios): AgenIA trabaja con ellas y con nada más
+          // (2026-10-15: 187 de 252 recordatorios —82 de odontología— eran de
+          // médicos fuera del bot, cuyas citas solo llegan a AgenIA porque las
+          // trae el hospital; y un médico de medicina general también atiende
+          // hipertensos y lectura de exámenes). El servicio es el del cupo, que
+          // el espejo pone igual al de la cita del hospital.
           doctor: { whatsappBookingEnabled: true },
+          service: { isActive: true },
         },
         // ☎️ Ni a quien, según la persona que contestó, tiene el número de otro
         // (ver `pacientesConTelefonoEquivocado`). En la consulta, por lo mismo que
@@ -661,7 +665,7 @@ export class AppointmentReminderCronService
             doctor: {
               select: { fullName: true, whatsappBookingEnabled: true },
             },
-            service: { select: { name: true } },
+            service: { select: { name: true, isActive: true } },
           },
         },
         // `timezone` es lo que decide si el paciente lee «Buenos días» o
@@ -696,13 +700,22 @@ export class AppointmentReminderCronService
       };
     }
 
-    // 🩺 El mismo alcance que el cron: solo médicos con «WhatsApp ON».
+    // 🩺 El mismo alcance que el cron: solo médicos con «WhatsApp ON» y
+    // servicios activos.
     if (apt.scheduleSlot?.doctor?.whatsappBookingEnabled === false) {
       return {
         success: false,
         outcome: 'skipped',
         error:
           'El médico de esta cita no tiene «WhatsApp ON» en Médicos: AgenIA no le escribe a sus pacientes.',
+      };
+    }
+    if (apt.scheduleSlot?.service?.isActive === false) {
+      return {
+        success: false,
+        outcome: 'skipped',
+        error:
+          'El servicio de esta cita no está activo en Servicios: AgenIA no le escribe a sus pacientes.',
       };
     }
 

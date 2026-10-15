@@ -1,5 +1,6 @@
 import type {
   CanonicalChangeEvent,
+  HisAppointmentKey,
   HisAppointmentSnapshot,
   HisCatalogEntry,
   HisLookupAppointment,
@@ -224,5 +225,38 @@ export function isPatientLookupCapable(
   return (
     typeof (driver as Partial<PatientLookupCapableDriver>)
       .lookupAppointments === 'function'
+  );
+}
+
+/**
+ * Traer citas que el hospital ya tenía (2026-10-15) — capacidad OPT-IN.
+ *
+ * La detección de cambios solo ve las altas NUEVAS: una cita que el hospital
+ * agendó antes de que su médico se homologara (o antes de que AgenIA la quisiera)
+ * no vuelve a aparecer nunca. La reconciliación diaria dice cuáles faltan
+ * (`ReconcileResult.toImport`) y el driver las vuelve a leer del HIS y las arma
+ * como ALTAS, iguales a las de `detectChanges` (con los datos del paciente), con
+ * un `eventId` propio y estable: pedirla otra vez no la aplica dos veces.
+ *
+ * Igual que las otras capacidades, NO forma parte de `HisDriver`: un driver que
+ * no la tenga simplemente no trae nada.
+ */
+export interface AppointmentImportCapableDriver {
+  /**
+   * Las citas pedidas que SIGUEN vigentes en el HIS, como altas. Las que ya no
+   * están (canceladas mientras tanto) no se devuelven. Lanza si no puede leer.
+   */
+  importAppointments(
+    keys: HisAppointmentKey[],
+  ): Promise<CanonicalChangeEvent[]>;
+}
+
+/** Guarda de tipo estructural: ¿el driver activo sabe traer citas? */
+export function isAppointmentImportCapable(
+  driver: HisDriver,
+): driver is HisDriver & AppointmentImportCapableDriver {
+  return (
+    typeof (driver as Partial<AppointmentImportCapableDriver>)
+      .importAppointments === 'function'
   );
 }

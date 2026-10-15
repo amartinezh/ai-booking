@@ -317,6 +317,18 @@ async function main() {
         const from = new Date();
         const to = new Date(from.getTime() + config.reconcileDias * 86_400_000);
         const r = await engine.reconcile({ from, to });
+        if (r.traidas) {
+          const t = r.traidas;
+          if (t.fallo) {
+            reporter.report('citas por traer', t.fallo);
+          } else {
+            console.log(
+              `[mirror-agent] citas por traer: ${t.pedidas} pedida(s), ` +
+                `${t.enviadas} vigente(s) enviada(s), ${t.aplicadas} aplicada(s), ` +
+                `${t.errores} con error.`,
+            );
+          }
+        }
         if (r.inSync) {
           console.log(
             `[mirror-agent] reconciliación OK: ${r.inHis} cita(s), sin diferencias.`,

@@ -85,7 +85,7 @@ export default function ServicesTable({ data }: { data: ServiceWithCounts[] }) {
                                             }`}
                                     />
                                 </button>
-                                <div className="text-xs mt-1 text-gray-500">{service.isActive ? 'Prestando Servicio' : 'Sub-oferta Inactiva'}</div>
+                                <div className="text-xs mt-1 text-gray-500">{service.isActive ? 'Activo: AgenIA trabaja con sus citas' : 'Inactivo: AgenIA no toca sus citas'}</div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                 <div className="flex justify-end gap-3">
