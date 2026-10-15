@@ -371,11 +371,11 @@ describe('clasificarRastreoA — CONFIRMADA_NO_LLEGO: cada causa', () => {
       'espejo con el HIS está apagado',
     ),
     caso(
-      'envío apagado (interruptor de emergencia)',
+      '«Agendar citas» apagado (las citas nuevas no salen)',
       { estado: 'PENDING', oldestPendingIso: hace(3 * MIN), deliveredAtIso: null },
       { pushEnabled: false },
       'PUSH_OFF',
-      'interruptor de emergencia',
+      '«Agendar citas»',
     ),
     caso(
       'agente que nunca dio señales',

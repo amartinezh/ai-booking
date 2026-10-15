@@ -125,6 +125,7 @@ function mockDb() {
     chatSurvey: { findMany: vacio() },
     massNoticeRecipient: { findMany: vacio() },
     hospitalMirrorConfig: { findUnique: jest.fn(async (..._a: unknown[]) => configLista() as unknown) },
+    organizationSettings: { findUnique: jest.fn(async (..._a: unknown[]) => ({ bookingEnabled: true }) as unknown) },
     syncOutbox: { findMany: vacio() },
     whatsappMessageLog: { findMany: vacio() },
     syncAudit: { findMany: vacio() },

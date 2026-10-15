@@ -4203,14 +4203,13 @@ export class ChatbotService implements OnModuleInit {
 
   /**
    * Qué puede hacer el paciente por el bot AHORA en esta clínica: los tres
-   * interruptores de /dashboard/configuracion y, con espejo, el envío al
-   * hospital encendido.
+   * interruptores de /dashboard/configuracion.
    *
-   * 🚪 Con espejo, cada operación necesita además que su cambio pueda llegar al
-   * HIS (`compuerta-his.ts`, 2026-10-15): la cita nueva, el envío al hospital
-   * encendido (`pushEnabled`); cancelar y cambiar fecha, su propio interruptor,
-   * que es también su compuerta hacia el hospital. Si el cambio no llegara, el
-   * paciente creería algo que el hospital no tiene (H10).
+   * 🚪 Con espejo, cada interruptor es también la compuerta de su operación
+   * hacia el HIS (`compuerta-his.ts`, 2026-10-15): «Agendar», «Cancelar» y
+   * «Cambiar fecha», sin el viejo envío al hospital. Falla cerrado: sin fila de
+   * configuración, ninguna operación llega al hospital, así que el bot tampoco
+   * la ofrece (el paciente creería algo que el hospital no tiene, H10).
    */
   private async operacionesDisponibles(
     organizationId: string,

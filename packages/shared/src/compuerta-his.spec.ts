@@ -1,8 +1,10 @@
 import {
+  MENSAJE_OPERACION_APAGADA,
   algunaCompuertaAbierta,
   compuertaAbierta,
   compuertasHis,
   eventoPuedeSalir,
+  operacionFrenadaDelError,
   operacionHisDelEvento,
 } from './compuerta-his';
 
@@ -13,9 +15,13 @@ const cita = (op: string, payload: unknown) => ({
 });
 
 describe('operacionHisDelEvento — el mismo criterio que el motor del agente', () => {
-  it('alta = AGENDAR; borrado = CANCELAR', () => {
+  it('alta = AGENDAR', () => {
     expect(operacionHisDelEvento(cita('INSERT', {}))).toBe('AGENDAR');
-    expect(operacionHisDelEvento(cita('DELETE', {}))).toBe('CANCELAR');
+  });
+
+  it('🛡️ el BORRADO de una cita no es una cancelación para el hospital: nunca sale', () => {
+    // Solo sale de purgar una clínica; eso jamás debe cancelar nada en el HIS.
+    expect(operacionHisDelEvento(cita('DELETE', {}))).toBe('OTRO');
   });
 
   it('UPDATE a CANCELLED = CANCELAR, aunque también cambie el cupo', () => {
@@ -52,29 +58,31 @@ describe('operacionHisDelEvento — el mismo criterio que el motor del agente', 
   });
 });
 
-describe('compuertasHis — cada operación con su interruptor, falla cerrado', () => {
-  it('el envío al hospital abre solo citas nuevas y lo demás que no es cancelar ni cambiar', () => {
-    expect(compuertasHis({ pushEnabled: true }, { cancelEnabled: false, rescheduleEnabled: false })).toEqual({
-      agendar: true,
-      cancelar: false,
-      modificar: false,
-      otros: true,
-    });
+describe('compuertasHis — un interruptor por operación, falla cerrado', () => {
+  it('cada operación con SU interruptor de Configuración', () => {
+    expect(
+      compuertasHis({ bookingEnabled: true, cancelEnabled: false, rescheduleEnabled: true }),
+    ).toEqual({ agendar: true, cancelar: false, modificar: true, otros: false });
   });
 
-  it('cancelar y cambiar fecha salen con su interruptor aunque el envío esté apagado', () => {
-    const c = compuertasHis({ pushEnabled: false }, { cancelEnabled: true, rescheduleEnabled: true });
-    expect(c).toEqual({ agendar: false, cancelar: true, modificar: true, otros: false });
+  it('lo que no es agendar, cancelar ni cambiar de fecha nunca sale, ni con todo encendido', () => {
+    const c = compuertasHis({ bookingEnabled: true, cancelEnabled: true, rescheduleEnabled: true });
+    expect(c.otros).toBe(false);
+    expect(eventoPuedeSalir({ entityType: 'SCHEDULE_SLOT', op: 'UPDATE', payload: {} }, c)).toBe(false);
+    expect(eventoPuedeSalir(cita('DELETE', {}), c)).toBe(false);
+  });
+
+  it('cancelar sale con su interruptor aunque agendar esté apagado', () => {
+    const c = compuertasHis({ bookingEnabled: false, cancelEnabled: true, rescheduleEnabled: false });
     expect(eventoPuedeSalir(cita('UPDATE', { status: 'CANCELLED' }), c)).toBe(true);
     expect(eventoPuedeSalir(cita('INSERT', {}), c)).toBe(false);
   });
 
   it('sin configuración, o con un valor que no sea true, no sale nada', () => {
-    const c = compuertasHis(null, null);
-    expect(algunaCompuertaAbierta(c)).toBe(false);
+    expect(algunaCompuertaAbierta(compuertasHis(null))).toBe(false);
     expect(
       algunaCompuertaAbierta(
-        compuertasHis({ pushEnabled: null }, { cancelEnabled: undefined, rescheduleEnabled: null }),
+        compuertasHis({ bookingEnabled: null, cancelEnabled: undefined, rescheduleEnabled: null }),
       ),
     ).toBe(false);
   });
@@ -85,5 +93,24 @@ describe('compuertasHis — cada operación con su interruptor, falla cerrado', 
     expect(compuertaAbierta('AGENDAR', c)).toBe(false);
     expect(compuertaAbierta('MODIFICAR', c)).toBe(false);
     expect(compuertaAbierta('OTRO', c)).toBe(false);
+  });
+});
+
+describe('operacionFrenadaDelError — el freno de la base, leído desde el error de Prisma', () => {
+  it('reconoce cada operación frenada', () => {
+    for (const op of ['AGENDAR', 'CANCELAR', 'MODIFICAR', 'REACTIVAR'] as const) {
+      const e = new Error(
+        `Invalid \`prisma.appointment.create()\` invocation: ... ERROR: AGENIA_OPERACION_APAGADA:${op}`,
+      );
+      expect(operacionFrenadaDelError(e)).toBe(op);
+      expect(MENSAJE_OPERACION_APAGADA[op]).toBeTruthy();
+    }
+  });
+
+  it('cualquier otro error no es el freno', () => {
+    expect(operacionFrenadaDelError(new Error('Unique constraint failed'))).toBeNull();
+    expect(operacionFrenadaDelError(null)).toBeNull();
+    expect(operacionFrenadaDelError({ message: 'AGENIA_OPERACION_APAGADA:CANCELAR' })).toBeNull();
+    expect(operacionFrenadaDelError('AGENIA_OPERACION_APAGADA:CANCELAR')).toBe('CANCELAR');
   });
 });

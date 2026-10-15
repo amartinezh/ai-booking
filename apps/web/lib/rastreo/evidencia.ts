@@ -341,6 +341,12 @@ export function mapearEspera(
   }));
 }
 
+/**
+ * `agendarHabilitado`: el interruptor «Agendar citas» de Configuración. Desde
+ * 2026-10-15 es él —y no el viejo `pushEnabled`— el que decide si las citas
+ * nuevas de AgenIA salen hacia el hospital (`compuerta-his.ts`). Sin él (llamadas
+ * antiguas), se usa el campo de la configuración.
+ */
 export function saludDelEspejo(
   config: {
     enabled: boolean;
@@ -350,11 +356,15 @@ export function saludDelEspejo(
     lastHisReachable: boolean | null;
     lastHisDetail: string | null;
   } | null,
+  agendarHabilitado?: boolean | null,
 ): SaludEspejo | null {
   if (!config) return null;
   return {
     enabled: config.enabled,
-    pushEnabled: config.pushEnabled,
+    pushEnabled:
+      agendarHabilitado === undefined
+        ? config.pushEnabled
+        : agendarHabilitado === true,
     pullEnabled: config.pullEnabled,
     lastHeartbeatIso: iso(config.lastHeartbeatAt),
     hisReachable: config.lastHisReachable,

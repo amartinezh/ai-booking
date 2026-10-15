@@ -112,29 +112,27 @@ export class ConfirmacionHisService {
     const [config, ajustes] = await Promise.all([
       this.prisma.hospitalMirrorConfig.findUnique({
         where: { organizationId },
-        select: { enabled: true, pushEnabled: true },
+        select: { enabled: true },
       }),
       this.prisma.organizationSettings.findUnique({
         where: { organizationId },
-        select: { cancelEnabled: true, rescheduleEnabled: true },
+        select: {
+          bookingEnabled: true,
+          cancelEnabled: true,
+          rescheduleEnabled: true,
+        },
       }),
     ]);
     if (!config?.enabled) return null;
-    return compuertasHis(config, ajustes);
+    return compuertasHis(ajustes);
   }
 
   /**
-   * ¿El bot puede agendar? Con espejo, solo si el envío al hospital está
-   * encendido: con `pushEnabled` apagado la cita nunca llegaría al HIS y el bot
-   * nunca podría confirmarla (H10). Sin espejo, sí.
+   * ¿El bot puede agendar? Con espejo, solo con «Agendar» encendido (que es
+   * también su compuerta hacia el hospital). Sin espejo, sí.
    */
   async puedeAgendar(organizationId: string): Promise<boolean> {
-    const config = await this.prisma.hospitalMirrorConfig.findUnique({
-      where: { organizationId },
-      select: { enabled: true, pushEnabled: true },
-    });
-    if (!config?.enabled) return true;
-    return config.pushEnabled === true;
+    return (await this.compuertas(organizationId))?.agendar ?? true;
   }
 
   async estado(

@@ -625,7 +625,9 @@ export async function armarExpedienteA(
 
   const conEspejo = configEspejo !== null;
   const verSync = permisos.verSync && conEspejo;
-  const espejo = permisos.verSync ? saludDelEspejo(configEspejo) : null;
+  const espejo = permisos.verSync
+    ? saludDelEspejo(configEspejo, conEspejo ? await agendarHabilitado(db, org) : undefined)
+    : null;
   const analisis = nivel !== 'NINGUNA' ? analizarConversacion(logs as FilaLog[]) : null;
 
   // ── Lecturas que dependen de las citas ─────────────────────
@@ -1009,6 +1011,18 @@ function aVistaDeEvento(e: {
   };
 }
 
+/**
+ * «Agendar citas» de Configuración: con espejo, es la compuerta de las citas
+ * nuevas hacia el hospital (`compuerta-his.ts`, 2026-10-15). Falla cerrado.
+ */
+async function agendarHabilitado(db: Db, organizationId: string): Promise<boolean> {
+  const ajustes = await db.organizationSettings.findUnique({
+    where: { organizationId },
+    select: { bookingEnabled: true },
+  });
+  return ajustes?.bookingEnabled === true;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Expediente B — "lo agendaron en el HIS"
 // ─────────────────────────────────────────────────────────────
@@ -1221,7 +1235,7 @@ export async function investigarCupoB(
     nota: (a.detail ?? '').slice(prefijo.length).replace(/^;\s*/, ''),
     atIso: a.createdAt.toISOString(),
   }));
-  const espejo = saludDelEspejo(config);
+  const espejo = saludDelEspejo(config, await agendarHabilitado(db, org));
   const ahora = new Date();
   // Lo que respondió el HIS en vivo (Fase 2): solo de una consulta que ESTE usuario
   // pidió, y sobre ESTE documento.

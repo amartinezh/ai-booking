@@ -40,6 +40,7 @@ describe('OrganizationsService', () => {
 
   beforeEach(async () => {
     tx = {
+      $executeRawUnsafe: jest.fn(async () => 0),
       user: modelo(2, [{ id: 'u-1' }]),
       patientProfile: modelo(3, [{ id: 'p-1' }]),
       doctorProfile: modelo(1, [{ id: 'd-1' }]),
@@ -143,6 +144,16 @@ describe('OrganizationsService', () => {
 
   // ────────────────────────────────────────────────────────────────
   describe('purge', () => {
+    it('🛡️ todo lo que borra nace con origen MIRROR: nada viaja al hospital (un borrado no es una cancelación allá)', async () => {
+      await service.purge(ORG, CLAVE, ACTOR);
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      expect(tx.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.appointment.deleteMany.mock.invocationCallOrder[0],
+      );
+    });
+
     it('una clínica que no existe se rechaza antes de abrir la transacción', async () => {
       prisma.organization.findUnique.mockResolvedValue(null);
 

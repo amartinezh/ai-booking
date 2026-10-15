@@ -22,6 +22,7 @@ import {
     citaFueraDeAlcance,
     puedeOperarAgenda,
 } from '../../../lib/alcance-agente';
+import { mensajeDeError, operacionApagada } from '@/lib/interruptores-hospital';
 
 /**
  * 🔐 Las tres acciones de este archivo comprobaban SOLO que hubiera sesión con
@@ -169,6 +170,11 @@ export async function createManualAppointmentAction(formData: FormData) {
         // Capturado tras el guard: TS no propaga el narrowing al closure de la transacción.
         const organizationId = session.organizationId;
 
+        // 🚪 Con la clínica conectada al hospital, «Agendar» apagado = no se agenda en
+        // AgenIA (se hace en el sistema del hospital). Antes de escribir nada.
+        const agendarApagado = await operacionApagada(prisma, organizationId, 'AGENDAR');
+        if (agendarApagado) return { success: false, error: agendarApagado };
+
         // 🔐 La cita que se va a crear tiene que caber en el alcance de quien la crea:
         // la EPS y el médico salen del formulario, así que se comprueban esos.
         const alcance = await alcanceDeLaSesion(prisma, session);
@@ -277,7 +283,7 @@ export async function createManualAppointmentAction(formData: FormData) {
         revalidatePath('/dashboard/agendamiento');
         return { success: true };
     } catch (e) {
-        return { success: false, error: getErrorMessage(e) };
+        return { success: false, error: mensajeDeError(e) };
     }
 }
 
@@ -330,9 +336,23 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
         const regimenForm = regimenDelFormulario(formData);
         const actual = await prisma.appointment.findFirst({
             where: { id: appointmentId, organizationId },
-            select: { patient: { select: { regime: true, cedula: true } } },
+            select: {
+                patient: { select: { regime: true, cedula: true } },
+                scheduleSlot: { select: { doctorId: true, startTime: true } },
+            },
         });
         if (!actual) return { success: false, error: 'Cita original no encontrada.' };
+
+        // 🚪 Mover la cita (otro médico u otra hora) es CAMBIAR LA FECHA: con la
+        // clínica conectada al hospital, solo con ese interruptor encendido.
+        const fechaPedida = new Date(startDateStr);
+        const mueveLaCita =
+            actual.scheduleSlot.doctorId !== doctorId ||
+            actual.scheduleSlot.startTime.getTime() !== fechaPedida.getTime();
+        if (mueveLaCita) {
+            const cambiarApagado = await operacionApagada(prisma, organizationId, 'MODIFICAR');
+            if (cambiarApagado) return { success: false, error: cambiarApagado };
+        }
         const regimenPadron =
             regimenForm || actual.patient.regime
                 ? null
@@ -345,7 +365,7 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
         await prisma.$transaction(async (tx) => {
             const appointment = await tx.appointment.findFirst({
                 where: { id: appointmentId, organizationId },
-                include: { patient: true }
+                include: { patient: true, scheduleSlot: { select: { doctorId: true, startTime: true } } }
             });
 
             if (!appointment) throw new Error('Cita original no encontrada.');
@@ -357,6 +377,21 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
             });
 
             const startDate = new Date(startDateStr);
+
+            // Mismo médico y misma hora: la cita se queda en SU cupo. Antes se buscaba
+            // un cupo LIBRE a esa hora —el suyo está ocupado por ella misma—, se creaba
+            // otro igual y se movía la cita: con el hospital conectado, editar solo la
+            // EPS viajaba como un cambio de fecha (anular y volver a crear allá).
+            if (
+                appointment.scheduleSlot.doctorId === doctorId &&
+                appointment.scheduleSlot.startTime.getTime() === startDate.getTime()
+            ) {
+                await tx.appointment.update({
+                    where: { id: appointmentId },
+                    data: { epsId: epsId },
+                });
+                return;
+            }
             const endDate = new Date(startDate.getTime() + 30 * 60000);
 
             // 2. Gestionar la reagendación logica de Slots
@@ -400,6 +435,6 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
         revalidatePath('/dashboard');
         return { success: true };
     } catch (e) {
-        return { success: false, error: getErrorMessage(e) };
+        return { success: false, error: mensajeDeError(e) };
     }
 }

@@ -27,7 +27,11 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     pendienteDesde?: Date | null;
     /** El evento pendiente: por defecto, el alta de una cita. */
     pendiente?: { entityType: string; op: string; payload: unknown };
-    ajustes?: { cancelEnabled: boolean; rescheduleEnabled: boolean } | null;
+    ajustes?: {
+      bookingEnabled?: boolean;
+      cancelEnabled: boolean;
+      rescheduleEnabled: boolean;
+    } | null;
   }) => {
     prisma.hospitalMirrorConfig.findMany.mockResolvedValue(
       opts.configs ?? [
@@ -56,7 +60,12 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     );
     prisma.organizationSettings.findUnique.mockResolvedValue(
       opts.ajustes === undefined
-        ? { cancelEnabled: false, rescheduleEnabled: false }
+        ? // Como antes con el envío encendido: las altas cuentan.
+          {
+            bookingEnabled: true,
+            cancelEnabled: false,
+            rescheduleEnabled: false,
+          }
         : opts.ajustes,
     );
   };
@@ -125,8 +134,13 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     expect(r.errorMessage).toContain('no avanza');
   });
 
-  it('con el envío al hospital PAUSADO, la cola retenida no se reporta como «no avanza»', async () => {
+  it('con la operación APAGADA, la cola retenida no se reporta como «no avanza»', async () => {
     conEstado({
+      ajustes: {
+        bookingEnabled: false,
+        cancelEnabled: false,
+        rescheduleEnabled: false,
+      },
       configs: [
         {
           organizationId: 'org1',
@@ -145,6 +159,11 @@ describe('MonitorCheckers — espejo con el HIS', () => {
 
   it('en pausa se sigue vigilando lo demás: dead-letter y latido', async () => {
     conEstado({
+      ajustes: {
+        bookingEnabled: false,
+        cancelEnabled: false,
+        rescheduleEnabled: false,
+      },
       configs: [
         {
           organizationId: 'org1',
@@ -164,7 +183,7 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     expect(r.errorMessage).not.toContain('no avanza');
   });
 
-  it('con el envío ENCENDIDO, la cola atascada sí alarma', async () => {
+  it('con la operación ENCENDIDA, la cola atascada sí alarma', async () => {
     conEstado({
       configs: [
         {
@@ -180,7 +199,7 @@ describe('MonitorCheckers — espejo con el HIS', () => {
   });
 
   // 🚪 Compuertas por operación (2026-10-15).
-  it('envío apagado y «Cancelar» encendido: una cancelación atascada SÍ alarma', async () => {
+  it('«Agendar» apagado y «Cancelar» encendido: una cancelación atascada SÍ alarma', async () => {
     conEstado({
       configs: [
         {
@@ -200,7 +219,7 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     expect((await checkers.checkService(svc)).status).toBe('DEGRADED');
   });
 
-  it('envío apagado y «Cancelar» encendido: un alta retenida a propósito no alarma', async () => {
+  it('«Agendar» apagado y «Cancelar» encendido: un alta retenida a propósito no alarma', async () => {
     conEstado({
       configs: [
         {

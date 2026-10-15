@@ -17,6 +17,10 @@ jest.mock('../../../lib/prisma', () => {
         agentProfile: { findUnique: jest.fn() },
         doctorProfile: { findUnique: jest.fn() },
         hospitalMirrorConfig: { findUnique: jest.fn() },
+        // «Agendar», «Cancelar» y «Cambiar fecha»: encendidos salvo donde la prueba diga otra cosa.
+        organizationSettings: {
+            findUnique: jest.fn(async () => ({ bookingEnabled: true, cancelEnabled: true, rescheduleEnabled: true })),
+        },
         eps: { findFirst: jest.fn() },
         epsEnrolledPatient: { findMany: jest.fn(async () => []) },
         $transaction: jest.fn(),
@@ -46,7 +50,7 @@ const mockDoctorProfile = prisma.doctorProfile.findUnique as jest.Mock;
 const mockEnrollment = findEpsEnrollmentIssue as jest.Mock;
 
 /** La cita que el doble devuelve: EPS «eps-1», médico «doc-1». */
-const CITA = { id: 'apt-1', epsId: 'eps-1', patientId: 'pac-1', scheduleSlotId: 'slot-1', patient: { bsuid: 'CO.123', whatsappId: null }, scheduleSlot: { doctorId: 'doc-1' } };
+const CITA = { id: 'apt-1', epsId: 'eps-1', patientId: 'pac-1', scheduleSlotId: 'slot-1', patient: { bsuid: 'CO.123', whatsappId: null }, scheduleSlot: { doctorId: 'doc-1', startTime: new Date('2026-09-30T15:00:00.000Z') } };
 
 const sesion = (over: Record<string, unknown> = {}) => ({ userId: 'u-1', email: 'x@y.co', role: 'ORG_ADMIN', organizationId: 'org-1', ...over });
 
@@ -229,7 +233,7 @@ describe('🎯 el alcance del agente y del médico', () => {
         it('no puede llevarse una cita suya a la agenda de otro médico', async () => {
             mockGetSession.mockResolvedValue(sesion({ role: 'BOOKING_AGENT' }));
             mockAgentProfile.mockResolvedValue({ epsId: null, doctorId: 'doc-1' });
-            mockFindFirst.mockResolvedValue({ ...CITA, scheduleSlot: { doctorId: 'doc-1' } });
+            mockFindFirst.mockResolvedValue({ ...CITA, scheduleSlot: { doctorId: 'doc-1', startTime: new Date('2026-09-30T15:00:00.000Z') } });
 
             const res = await updateManualAppointmentAction('apt-1', form({ doctorId: 'doc-9' }));
 
@@ -251,7 +255,7 @@ describe('🎯 el alcance del agente y del médico', () => {
         it('dentro de su alcance en los dos extremos, sí modifica', async () => {
             mockGetSession.mockResolvedValue(sesion({ role: 'BOOKING_AGENT' }));
             mockAgentProfile.mockResolvedValue({ epsId: null, doctorId: 'doc-1' });
-            mockFindFirst.mockResolvedValue({ ...CITA, scheduleSlot: { doctorId: 'doc-1' } });
+            mockFindFirst.mockResolvedValue({ ...CITA, scheduleSlot: { doctorId: 'doc-1', startTime: new Date('2026-09-30T15:00:00.000Z') } });
 
             await updateManualAppointmentAction('apt-1', form({ doctorId: 'doc-1' }));
 
@@ -407,5 +411,71 @@ describe('🧾 régimen del paciente con espejo activo', () => {
         expect(prisma.patientProfile.update).toHaveBeenCalledWith(
             expect.objectContaining({ data: expect.objectContaining({ regime: 'SUBSIDIADO' }) }),
         );
+    });
+});
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 🚪 Con la clínica conectada al hospital, cada operación tiene su interruptor y
+// apagado es apagado: el panel tampoco la hace (2026-10-15). Nada queda en cola.
+// ═════════════════════════════════════════════════════════════════════════════
+describe('🚪 interruptores de la clínica conectada al hospital', () => {
+    const mockEspejo = prisma.hospitalMirrorConfig.findUnique as jest.Mock;
+    const mockAjustes = prisma.organizationSettings.findUnique as jest.Mock;
+
+    beforeEach(() => {
+        mockGetSession.mockResolvedValue(sesion({ role: 'ORG_ADMIN' }));
+        mockEspejo.mockResolvedValue({ enabled: true });
+        (prisma.eps.findFirst as jest.Mock).mockResolvedValue({ nit: null });
+        (prisma.patientProfile.findFirst as jest.Mock).mockResolvedValue({ id: 'pac-1', regime: 'SUBSIDIADO' });
+        (prisma.scheduleSlot.findFirst as jest.Mock).mockResolvedValue(null);
+        (prisma.scheduleSlot.create as jest.Mock).mockResolvedValue({ id: 'slot-n' });
+    });
+
+    it('«Agendar» apagado: no se crea la cita ni se escribe nada, y lo dice', async () => {
+        mockAjustes.mockResolvedValue({ bookingEnabled: false, cancelEnabled: true, rescheduleEnabled: true });
+        const res = await createManualAppointmentAction(form());
+        expect(res).toEqual({ success: false, error: expect.stringMatching(/«Agendar citas» está apagado/) });
+        noSeEscribioNada();
+    });
+
+    it('sin espejo no hay hospital: el panel agenda aunque «Agendar» esté apagado', async () => {
+        mockEspejo.mockResolvedValue({ enabled: false });
+        mockAjustes.mockResolvedValue({ bookingEnabled: false });
+        const res = await createManualAppointmentAction(form());
+        expect(res.success).toBe(true);
+    });
+
+    it('«Cambiar fecha» apagado: mover la cita a otra hora se rechaza antes de escribir', async () => {
+        mockAjustes.mockResolvedValue({ bookingEnabled: true, cancelEnabled: true, rescheduleEnabled: false });
+        mockFindFirst.mockResolvedValue({ ...CITA, patient: { regime: 'SUBSIDIADO', cedula: '1053123456' } });
+        const res = await updateManualAppointmentAction('apt-1', form());
+        expect(res).toEqual({ success: false, error: expect.stringMatching(/«Cambiar la fecha de una cita» está apagado/) });
+        noSeEscribioNada();
+    });
+
+    it('editar sin mover (mismo médico y hora) no es un cambio de fecha: se permite y la cita se queda en SU cupo', async () => {
+        mockAjustes.mockResolvedValue({ bookingEnabled: false, cancelEnabled: false, rescheduleEnabled: false });
+        mockFindFirst.mockResolvedValue({
+            ...CITA,
+            patient: { regime: 'SUBSIDIADO', cedula: '1053123456' },
+            scheduleSlot: { doctorId: 'doc-1', startTime: new Date('2026-10-01T15:00:00.000Z') },
+        });
+        const res = await updateManualAppointmentAction('apt-1', form({ epsId: 'eps-2' }));
+        expect(res.success).toBe(true);
+        expect(prisma.scheduleSlot.create).not.toHaveBeenCalled();
+        expect(prisma.scheduleSlot.update).not.toHaveBeenCalled();
+        expect(prisma.appointment.update).toHaveBeenCalledWith({
+            where: { id: 'apt-1' },
+            data: { epsId: 'eps-2' },
+        });
+    });
+
+    it('si el interruptor se apaga entre la comprobación y la escritura, el freno de la base se dice claro', async () => {
+        (prisma.appointment.create as jest.Mock).mockRejectedValueOnce(
+            new Error('Invalid `prisma.appointment.create()` invocation: ERROR: AGENIA_OPERACION_APAGADA:AGENDAR'),
+        );
+        const res = await createManualAppointmentAction(form());
+        expect(res).toEqual({ success: false, error: expect.stringMatching(/«Agendar citas» está apagado/) });
     });
 });

@@ -61,6 +61,11 @@ export class OrganizationsService {
 
     const auditLogId = await this.prisma.$transaction(
       async (tx: Prisma.TransactionClient) => {
+        // 🛡️ Purgar una clínica es borrar sus datos en AgenIA, NUNCA en el
+        // hospital: con origen MIRROR, el disparador del outbox marca como
+        // entregado todo lo que esta transacción borra y nada viaja al HIS (un
+        // borrado de cita se habría leído como una cancelación allá).
+        await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
         // ⚠️ Los campos `organizationId` del esquema son OPCIONALES (String?)
         // y, en la práctica, no siempre están poblados (p.ej. una HC creada
         // sin setear el tenant). Por eso NO podemos confiar solo en ese

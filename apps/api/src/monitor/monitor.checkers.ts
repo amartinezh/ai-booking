@@ -115,7 +115,6 @@ export class MonitorCheckers {
       select: {
         organizationId: true,
         lastHeartbeatAt: true,
-        pushEnabled: true,
       },
     });
 
@@ -156,13 +155,17 @@ export class MonitorCheckers {
         }),
         this.prisma.organizationSettings.findUnique({
           where: { organizationId: cfg.organizationId },
-          select: { cancelEnabled: true, rescheduleEnabled: true },
+          select: {
+            bookingEnabled: true,
+            cancelEnabled: true,
+            rescheduleEnabled: true,
+          },
         }),
       ]);
       // 🚪 El más viejo de los que PUEDEN salir: lo que espera a que se abra su
-      // compuerta (envío de citas nuevas, «Cancelar», «Cambiar fecha») no es una
-      // cola atascada.
-      const compuertas = compuertasHis(cfg, ajustes);
+      // compuerta («Agendar», «Cancelar», «Cambiar fecha») no es una cola
+      // atascada, y lo que nunca va al hospital lo cierra la API sola.
+      const compuertas = compuertasHis(ajustes);
       const masViejo = pendientes.find((e) => eventoPuedeSalir(e, compuertas));
 
       if (deadLetters > 0) {

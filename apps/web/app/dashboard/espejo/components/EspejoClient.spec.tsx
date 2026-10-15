@@ -4,7 +4,6 @@ import EspejoClient from './EspejoClient';
 jest.mock('@/app/actions/espejo', () => ({
     reprocesarEvento: jest.fn(),
     cambiarModoAgenda: jest.fn(),
-    cambiarEnvioAlHospital: jest.fn(),
 }));
 jest.mock('next/link', () => ({
     __esModule: true,
@@ -22,7 +21,6 @@ const base = (config: Partial<Parameters<typeof EspejoClient>[0]['data']['config
         driverKey: 'cnt-sanvicente-anserma',
         enabled: true,
         availabilityMode: 'SHADOW',
-        pushEnabled: true,
         pullEnabled: true,
         lastHeartbeatAt: new Date(),
         lastHisReachable: true,
@@ -31,6 +29,7 @@ const base = (config: Partial<Parameters<typeof EspejoClient>[0]['data']['config
         lastLookupCapable: null as boolean | null,
         ...config,
     },
+    operaciones: { agendar: false, cancelar: true, cambiar: false },
     edadLatidoMin: 1,
     pendientes: 0,
     colaDesde: null,
@@ -66,22 +65,29 @@ describe('EspejoClient — consulta en vivo del rastreo', () => {
     it('es solo lectura: no hay ningún control para encenderla desde aquí', () => {
         render(<EspejoClient data={base({ lookupEnabled: true, lastLookupCapable: true })} />);
         expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-        // El único interruptor del panel es el del envío al hospital.
-        expect(screen.getAllByRole('switch')).toHaveLength(1);
-        expect(screen.queryByRole('switch', { name: /consulta en vivo/i })).not.toBeInTheDocument();
+        // Este panel ya no tiene interruptores: los de cada operación viven en Configuración.
+        expect(screen.queryAllByRole('switch')).toHaveLength(0);
         expect(screen.queryByRole('button', { name: /consulta en vivo/i })).not.toBeInTheDocument();
     });
 });
 
-describe('EspejoClient — envío al hospital', () => {
-    it('apagado, el semáforo de la cola dice que está retenida y no que «todo llegó»', () => {
-        render(<EspejoClient data={{ ...base({ pushEnabled: false }), pendientes: 2 }} />);
-        expect(screen.getByText(/Envío de citas nuevas APAGADO: 2 evento\(s\) en cola/)).toBeInTheDocument();
-        expect(screen.queryByText(/Todo lo que se agendó por WhatsApp llegó al hospital/)).not.toBeInTheDocument();
+describe('EspejoClient — qué escribe AgenIA en el hospital', () => {
+    it('muestra cada operación con su estado y remite a Configuración, sin interruptores aquí', () => {
+        render(<EspejoClient data={base()} />);
+        expect(screen.getByText('Agendar citas')).toBeInTheDocument();
+        expect(screen.getByText('Cancelar citas').parentElement).toHaveTextContent('encendido');
+        expect(screen.getByText('Agendar citas').parentElement).toHaveTextContent('apagado');
+        expect(screen.getByRole('link', { name: 'Configuración' })).toHaveAttribute('href', '/dashboard/configuracion');
+        expect(screen.queryAllByRole('switch')).toHaveLength(0);
     });
 
-    it('muestra el interruptor con el estado real', () => {
-        render(<EspejoClient data={base({ pushEnabled: false })} />);
-        expect(screen.getByRole('switch', { name: /Envío de citas nuevas hacia el hospital/ })).toHaveAttribute('aria-checked', 'false');
+    it('con las tres apagadas lo dice: AgenIA no escribe nada en el hospital', () => {
+        render(<EspejoClient data={{ ...base(), operaciones: { agendar: false, cancelar: false, cambiar: false } }} />);
+        expect(screen.getByText(/AgenIA no escribe nada en el sistema del hospital/)).toBeInTheDocument();
+    });
+
+    it('con eventos en camino, el semáforo los cuenta', () => {
+        render(<EspejoClient data={{ ...base(), pendientes: 2 }} />);
+        expect(screen.getByText(/2 evento\(s\) en camino/)).toBeInTheDocument();
     });
 });

@@ -114,11 +114,23 @@ export async function setMyBookingEnabled(enabled: boolean) {
     // no escriba en la agenda).
     const bookingEnabled = enabled === true;
     try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { bookingEnabled: true },
+        });
         await prisma.organizationSettings.upsert({
             where: { organizationId: session.organizationId! },
             create: { organizationId: session.organizationId!, bookingEnabled },
             update: { bookingEnabled },
         });
+        if (antes?.bookingEnabled !== bookingEnabled) {
+            await auditarCompuertaHis({
+                organizationId: session.organizationId!,
+                actor: session.email ?? session.userId ?? 'desconocido',
+                operacion: 'AGENDAR',
+                encendido: bookingEnabled,
+            });
+        }
         revalidatePath('/dashboard/configuracion');
         return { success: true, bookingEnabled };
     } catch (e) {
@@ -163,18 +175,19 @@ export async function setMyCancelEnabled(enabled: boolean) {
 }
 
 /**
- * 🚪 Con espejo, «Cancelar» y «Cambiar fecha» son también la compuerta de esa
- * operación hacia el sistema del hospital (2026-10-15, `compuerta-his.ts`):
- * encenderlos abre escrituras en el HIS. Queda la constancia en la auditoría del
- * espejo, como el interruptor del envío al hospital (`cambiarEnvioAlHospital`),
- * con cuántos cambios de ese tipo esperaban en la cola (salen al encenderlo).
- * Sin espejo no hay hospital al que escribir: no se anota nada. Que la anotación
- * falle no deshace el cambio del interruptor.
+ * 🚪 Con espejo, «Agendar», «Cancelar» y «Cambiar fecha» son también la compuerta
+ * de esa operación hacia el sistema del hospital (2026-10-15, `compuerta-his.ts`):
+ * encendido, se hace por el asistente y desde el panel y llega al hospital;
+ * apagado, no se puede hacer en AgenIA. Queda la constancia en la auditoría del
+ * espejo, con cuántos cambios de ese tipo seguían en la cola en ese instante (lo
+ * normal: 0; apagado, la base no deja crear más). Sin espejo no hay hospital al
+ * que escribir: no se anota nada. Que la anotación falle no deshace el cambio
+ * del interruptor.
  */
 async function auditarCompuertaHis(p: {
     organizationId: string;
     actor: string;
-    operacion: 'CANCELAR' | 'MODIFICAR';
+    operacion: 'AGENDAR' | 'CANCELAR' | 'MODIFICAR';
     encendido: boolean;
 }): Promise<void> {
     try {
@@ -190,26 +203,32 @@ async function auditarCompuertaHis(p: {
                 deadLettered: false,
                 origin: { not: 'MIRROR' },
                 entityType: 'APPOINTMENT',
-                op: { in: ['UPDATE', 'DELETE'] },
+                op: { in: ['INSERT', 'UPDATE'] },
             },
             select: { entityType: true, op: true, payload: true },
             take: 1000,
         });
         const enCola = pendientes.filter((e) => operacionHisDelEvento(e) === p.operacion).length;
-        const nombre = p.operacion === 'CANCELAR' ? 'Cancelar citas' : 'Cambiar la fecha de una cita';
-        const queLlega = p.operacion === 'CANCELAR' ? 'las cancelaciones' : 'los cambios de fecha';
+        const nombre = { AGENDAR: 'Agendar citas', CANCELAR: 'Cancelar citas', MODIFICAR: 'Cambiar la fecha de una cita' }[
+            p.operacion
+        ];
+        const queLlega = { AGENDAR: 'las citas nuevas', CANCELAR: 'las cancelaciones', MODIFICAR: 'los cambios de fecha' }[
+            p.operacion
+        ];
         await prisma.syncAudit.create({
             data: {
                 organizationId: p.organizationId,
                 direction: SYNC_AUDIT_DIRECTION.CONFIG,
                 entityType: 'OrganizationSettings',
-                op: p.operacion === 'CANCELAR' ? 'CANCEL_ENABLED_CHANGE' : 'RESCHEDULE_ENABLED_CHANGE',
+                op: { AGENDAR: 'BOOKING_ENABLED_CHANGE', CANCELAR: 'CANCEL_ENABLED_CHANGE', MODIFICAR: 'RESCHEDULE_ENABLED_CHANGE' }[
+                    p.operacion
+                ],
                 outcome: 'OK',
                 detail:
                     `«${nombre}» ${p.encendido ? 'ENCENDIDO' : 'APAGADO'} desde Configuración por ${p.actor}: ` +
                     (p.encendido
-                        ? `${queLlega} (del asistente y del panel) llegan al sistema del hospital aunque el envío de citas nuevas esté apagado; `
-                        : `${queLlega} dejan de llegar al sistema del hospital y esperan en la cola; `) +
+                        ? `${queLlega} (del asistente y del panel) llegan al sistema del hospital; `
+                        : `${queLlega} ya no se pueden hacer en AgenIA (ni por el asistente ni desde el panel): se hacen en el sistema del hospital; `) +
                     `${enCola} en cola en ese momento.`,
             },
         });

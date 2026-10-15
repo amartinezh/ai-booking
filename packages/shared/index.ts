@@ -215,15 +215,18 @@ export { citaFueraDeAlcance } from './src/alcance-agente';
 export type { AlcanceAgente } from './src/alcance-agente';
 export { derivarSync } from './src/sync-state';
 export {
+  MENSAJE_OPERACION_APAGADA,
   algunaCompuertaAbierta,
   compuertaAbierta,
   compuertasHis,
   eventoPuedeSalir,
+  operacionFrenadaDelError,
   operacionHisDelEvento,
 } from './src/compuerta-his';
 export type {
   CompuertasHis,
   EventoHaciaElHis,
+  OperacionFrenada,
   OperacionHis,
 } from './src/compuerta-his';
 export type { FilaOutbox } from './src/sync-state';

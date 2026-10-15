@@ -4,7 +4,6 @@ import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { reprocesarEvento, cambiarModoAgenda } from '@/app/actions/espejo';
 import { formatDateShort } from '@/lib/date';
-import EnvioHospitalToggle from './EnvioHospitalToggle';
 
 const MODOS_AGENDA = ['OFF', 'SHADOW', 'ON'] as const;
 
@@ -19,7 +18,6 @@ type Estado = {
         driverKey: string;
         enabled: boolean;
         availabilityMode: string;
-        pushEnabled: boolean;
         pullEnabled: boolean;
         lastHeartbeatAt: Date | null;
         lastHisReachable: boolean | null;
@@ -28,6 +26,8 @@ type Estado = {
         lookupEnabled: boolean;
         lastLookupCapable: boolean | null;
     };
+    /** Lo que AgenIA puede escribir en el hospital: un interruptor por operación (Configuración). */
+    operaciones: { agendar: boolean; cancelar: boolean; cambiar: boolean };
     edadLatidoMin: number | null;
     pendientes: number;
     colaDesde: Date | null;
@@ -117,19 +117,16 @@ export default function EspejoClient({ data }: { data: Estado }) {
                 ? { estado: 'mal' as const, detalle: `El agente está vivo pero NO alcanza el sistema del hospital: ${config.lastHisDetail ?? 'sin detalle'}. Ninguna cita se está espejando.` }
                 : { estado: 'ok' as const, detalle: `Latido hace ${data.edadLatidoMin} min y el sistema del hospital responde.` };
 
-    const cola = !config.pushEnabled
-        ? {
-              estado: 'atencion' as const,
-              detalle:
-                  data.pendientes > 0
-                      ? `Envío de citas nuevas APAGADO: ${data.pendientes} evento(s) en cola. Las citas nuevas salen al encenderlo; las cancelaciones y los cambios de fecha, con su interruptor de Configuración.`
-                      : 'Envío de citas nuevas APAGADO: AgenIA no escribe citas nuevas en el sistema del hospital. Las cancelaciones y los cambios de fecha dependen de su interruptor en Configuración.',
-          }
-        : data.deadLetters.length > 0
+    const ops = data.operaciones;
+    const nadaHaciaElHospital = !ops.agendar && !ops.cancelar && !ops.cambiar;
+    const cola =
+        data.deadLetters.length > 0
             ? { estado: 'mal' as const, detalle: `${data.deadLetters.length} evento(s) se rindieron: el hospital NO los tiene y nadie los va a reintentar solo.` }
             : data.pendientes > 0
               ? { estado: 'atencion' as const, detalle: `${data.pendientes} evento(s) en camino${data.colaDesde ? `, el más viejo desde ${formatDateShort(data.colaDesde)}` : ''}.` }
-              : { estado: 'ok' as const, detalle: 'Todo lo que se agendó por WhatsApp llegó al hospital.' };
+              : nadaHaciaElHospital
+                ? { estado: 'ok' as const, detalle: 'Agendar, cancelar y cambiar la fecha están apagados: AgenIA no escribe nada en el sistema del hospital.' }
+                : { estado: 'ok' as const, detalle: 'Todo lo que se hizo en AgenIA llegó al hospital.' };
 
     const agendaTexto: Record<string, string> = {
         OFF: 'La agenda de AgenIA es la suya, no la del hospital: se puede vender una hora en la que el médico no atiende.',
@@ -171,7 +168,7 @@ export default function EspejoClient({ data }: { data: Estado }) {
                     <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                         Driver <code className="font-mono">{config.driverKey}</code> ·{' '}
                         {config.enabled ? 'activo' : 'desactivado'}
-                        {!config.pushEnabled && ' · envío de citas nuevas PAUSADO'}
+                        {nadaHaciaElHospital && ' · escritura en el hospital APAGADA'}
                         {!config.pullEnabled && ' · lectura del hospital PAUSADA'}
                     </p>
                 </div>
@@ -199,9 +196,38 @@ export default function EspejoClient({ data }: { data: Estado }) {
                 {consultaEnVivo && <Semaforo titulo="Consulta en vivo al HIS (rastreo)" {...consultaEnVivo} />}
             </section>
 
-            <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-                <EnvioHospitalToggle initialEnabled={config.pushEnabled} enCola={data.pendientes} />
-            </div>
+            <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+                <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Qué escribe AgenIA en el sistema del hospital</h2>
+                <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    Un interruptor por operación. Encendido: se hace por el asistente y desde el panel, y llega al
+                    hospital. Apagado: no se puede hacer en AgenIA y se hace directamente en el sistema del hospital;
+                    nada queda en cola. Se cambian en{' '}
+                    <Link href="/dashboard/configuracion" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
+                        Configuración
+                    </Link>
+                    .
+                </p>
+                <ul className="mt-3 grid gap-2 sm:grid-cols-3">
+                    {(
+                        [
+                            ['Agendar citas', ops.agendar],
+                            ['Cancelar citas', ops.cancelar],
+                            ['Cambiar la fecha de una cita', ops.cambiar],
+                        ] as const
+                    ).map(([nombre, encendido]) => (
+                        <li
+                            key={nombre}
+                            className={`rounded-lg border px-3 py-2 text-sm ${
+                                encendido
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                    : 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400'
+                            }`}
+                        >
+                            <span className="font-medium">{nombre}</span>: {encendido ? 'encendido' : 'apagado'}
+                        </li>
+                    ))}
+                </ul>
+            </section>
 
             <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Modo de agenda</h2>

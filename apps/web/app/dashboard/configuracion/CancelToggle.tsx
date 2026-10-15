@@ -23,7 +23,7 @@ export default function CancelToggle({ initialEnabled }: { initialEnabled: boole
             labelOff="Apagado"
             detailOn="Los pacientes pueden cancelar sus citas con el asistente (también si escriben «no puedo asistir»: les pregunta si la cancela); el cupo queda libre para otro paciente."
             detailOff="Si un paciente intenta cancelar, el asistente le dice que se comunique con el hospital (al teléfono de soporte, si está configurado) y deja su aviso en la Bandeja de sincronización. El recordatorio tampoco le ofrece cancelar por el asistente."
-            footnote={`El personal sigue cancelando desde el panel en ambos casos. ${notaCompuertaHis('las cancelaciones')}`}
+            footnote={`Sin conexión al hospital, el personal sigue cancelando desde el panel en ambos casos. ${notaCompuertaHis('las cancelaciones')}`}
         />
     );
 }

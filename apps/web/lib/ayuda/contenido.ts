@@ -1103,7 +1103,7 @@ export const TEMAS: TemaAyuda[] = [
                     'Enciende o apaga «Agendar citas por el asistente», «Cancelar citas por el asistente» y «Cambiar la fecha de una cita por el asistente».',
                     'Cada interruptor se guarda al instante y aplica desde el siguiente mensaje del paciente.',
                 ],
-                nota: 'Con una operación apagada, el asistente le dice al paciente que se comunique con el hospital y qué sí puede hacer por ahí. Con las tres apagadas, solo consulta citas. El personal sigue haciendo todo desde el panel. Si la clínica está conectada al hospital: agendar necesita además el envío de citas nuevas encendido (Espejo); «Cancelar» y «Cambiar fecha» son también la compuerta de esa operación hacia el sistema del hospital (del asistente y del panel), y el asistente solo le confirma al paciente cuando el hospital lo registró. Cada cambio de estos dos queda en la auditoría del espejo.',
+                nota: 'Con una operación apagada, el asistente le dice al paciente que se comunique con el hospital y qué sí puede hacer por ahí. Con las tres apagadas, solo consulta citas. Si la clínica está conectada al hospital, cada interruptor manda en todo: encendido, la operación se hace por el asistente y desde el panel y llega al sistema del hospital (el asistente solo le confirma al paciente cuando el hospital lo registró); apagado, no se puede hacer en AgenIA —ni por el asistente ni desde el panel— y se hace directamente en el sistema del hospital. Cada cambio queda en la auditoría del espejo. Sin conexión al hospital, el personal sigue haciendo todo desde el panel.',
             },
             {
                 titulo: 'Encender o apagar los recordatorios automáticos',
@@ -1379,11 +1379,11 @@ export const TEMAS: TemaAyuda[] = [
             {
                 titulo: 'Detener la escritura en el hospital (emergencia)',
                 pasos: [
-                    'Apaga «Envío de citas nuevas hacia el hospital» y confirma: las citas que se agenden en AgenIA quedan en cola y no se escriben en el hospital.',
-                    'En Configuración, apaga también «Cancelar citas por el asistente» y «Cambiar la fecha de una cita por el asistente»: cada uno es la compuerta de su operación hacia el hospital.',
-                    'Con los tres apagados, AgenIA no escribe nada en el hospital. Al volver a encender cada uno, lo suyo sale de la cola en segundos.',
+                    'En Configuración, apaga «Agendar citas», «Cancelar citas» y «Cambiar la fecha de una cita»: cada uno es la compuerta de su operación hacia el hospital.',
+                    'Desde ese momento esas operaciones no se pueden hacer en AgenIA, ni por el asistente ni desde el panel: se hacen directamente en el sistema del hospital. Nada queda en cola.',
+                    'En el Espejo, el recuadro «Qué escribe AgenIA en el sistema del hospital» muestra cómo quedó cada una.',
                 ],
-                nota: 'Aunque estén apagados, sigue entrando lo que viene del hospital (su agenda y las citas de ventanilla). Con el envío de citas nuevas apagado, el asistente no agenda; cancelar y cambiar la fecha dependen de su propio interruptor.',
+                nota: 'Se pueden apagar y encender por separado, para salir a producción de a una operación. Aunque estén apagadas, sigue entrando lo que viene del hospital (su agenda y las citas de ventanilla).',
             },
             {
                 titulo: 'Reintentar un evento que no llegó al hospital',
@@ -1652,7 +1652,7 @@ export const GLOSARIO: TerminoGlosario[] = [
         definicion: 'OFF: la agenda es la de AgenIA. SHADOW: se compara con la del hospital sin cambiar nada. ON: la agenda de AgenIA es la del hospital.',
         temaId: 'espejo',
     },
-    { termino: 'Envío de citas nuevas al hospital', definicion: 'Interruptor del Espejo que deja (o no) que AgenIA escriba citas nuevas en el HIS. Las cancelaciones y los cambios de fecha pasan con su propio interruptor de Configuración.', sinonimos: ['envío al hospital'], temaId: 'espejo' },
+    { termino: 'Interruptores de operaciones', definicion: 'Agendar, cancelar y cambiar la fecha, cada uno en Configuración. Con la clínica conectada al hospital, encendido la operación llega al HIS; apagado no se puede hacer en AgenIA y se hace en el HIS. Reemplazan al antiguo «envío al hospital».', sinonimos: ['envío al hospital', 'envío de citas nuevas'], temaId: 'espejo' },
     { termino: 'Evento rendido', definicion: 'Un envío al hospital que falló diez veces y dejó de reintentarse. Se puede devolver a la cola desde el Espejo.', sinonimos: ['dead letter'], temaId: 'espejo' },
     { termino: 'Excepción de sincronización', definicion: 'Un problema detectado entre AgenIA y el hospital que alguien debe revisar en la Bandeja.', temaId: 'bandeja' },
     { termino: 'Veredicto', definicion: 'La conclusión del Rastreo de paciente: qué consta, de qué fuente, qué no se puede afirmar y qué hacer.', temaId: 'rastreo' },

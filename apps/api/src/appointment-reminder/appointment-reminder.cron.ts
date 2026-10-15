@@ -303,10 +303,10 @@ export class AppointmentReminderCronService
             settings: {
               select: { cancelEnabled: true, rescheduleEnabled: true },
             },
-            // 🏥 Con espejo y el envío al hospital apagado, el bot no cancela
-            // ni cambia citas (H10): el recordatorio no puede ofrecerlo.
+            // 🏥 Con espejo, cancelar y cambiar fecha sin su interruptor no se
+            // pueden hacer en AgenIA: el recordatorio no puede ofrecerlos.
             hospitalMirrorConfig: {
-              select: { enabled: true, pushEnabled: true },
+              select: { enabled: true },
             },
           },
         },
@@ -558,14 +558,12 @@ export class AppointmentReminderCronService
     // Va seguida de un punto en las dos redacciones («el *{fecha}*.»).
     const fecha = formatForPatientInSentence(apt.scheduleSlot.startTime);
     // 🔒 El recordatorio solo ofrece lo que el bot de verdad puede hacer: cada
-    // operación tiene su interruptor (/dashboard/configuracion) y, con espejo,
-    // ese interruptor es también su compuerta hacia el hospital
-    // (`compuerta-his.ts`): cancelar y cambiar fecha llegan al HIS aunque el
-    // envío de citas nuevas esté apagado. Lo que no, remite al hospital. Sin
-    // fila de settings y sin espejo = prendidos.
+    // operación tiene su interruptor (/dashboard/configuracion), que con espejo
+    // es también su compuerta hacia el hospital (`compuerta-his.ts`). Lo que no,
+    // remite al hospital. Sin fila de settings y sin espejo = prendidos.
     const espejo = apt.organization?.hospitalMirrorConfig;
     const settings = apt.organization?.settings;
-    const compuertas = espejo?.enabled ? compuertasHis(espejo, settings) : null;
+    const compuertas = espejo?.enabled ? compuertasHis(settings) : null;
     const cancelar =
       (settings?.cancelEnabled ?? true) && (compuertas?.cancelar ?? true);
     const cambiar =
@@ -673,10 +671,10 @@ export class AppointmentReminderCronService
             settings: {
               select: { cancelEnabled: true, rescheduleEnabled: true },
             },
-            // 🏥 Con espejo y el envío al hospital apagado, el bot no cancela
-            // ni cambia citas (H10): el recordatorio no puede ofrecerlo.
+            // 🏥 Con espejo, cancelar y cambiar fecha sin su interruptor no se
+            // pueden hacer en AgenIA: el recordatorio no puede ofrecerlos.
             hospitalMirrorConfig: {
-              select: { enabled: true, pushEnabled: true },
+              select: { enabled: true },
             },
           },
         },

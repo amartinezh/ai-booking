@@ -303,7 +303,7 @@ export interface CitaRastreo {
 
 export interface SaludEspejo {
   enabled: boolean;
-  /** AgenIA → HIS. */
+  /** AgenIA → HIS de citas nuevas: el interruptor «Agendar citas» (desde 2026-10-15). */
   pushEnabled: boolean;
   /** HIS → AgenIA. */
   pullEnabled: boolean;
@@ -1156,7 +1156,7 @@ function detalleDeCausa(
       ];
     case 'PUSH_OFF':
       return [
-        'El envío de AgenIA hacia el hospital está apagado (interruptor de emergencia): las citas no salen.',
+        'El interruptor «Agendar citas» de Configuración está apagado: las citas nuevas de AgenIA no salen hacia el hospital.',
       ];
     case 'NO_EVENT':
       return [
@@ -1196,7 +1196,7 @@ function accionDeCausa(causa: CausaNoLlego): string {
       return 'Avisar a TI del hospital: el agente está vivo pero no llega al sistema. Mientras tanto, agendar al paciente directamente en el HIS.';
     case 'MIRROR_OFF':
     case 'PUSH_OFF':
-      return 'Un administrador debe reactivar el espejo o el envío desde el panel del espejo. Mientras tanto, agendar al paciente directamente en el HIS.';
+      return 'Agendar al paciente directamente en el HIS. Si la cita debe salir desde AgenIA, un administrador enciende «Agendar citas» en Configuración.';
     case 'NO_EVENT':
       return 'Escalar: una cita creada con el espejo activo debería tener su evento. Mientras tanto, agendar al paciente directamente en el HIS.';
   }

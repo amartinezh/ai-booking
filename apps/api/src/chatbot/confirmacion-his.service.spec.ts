@@ -101,18 +101,23 @@ describe('ConfirmacionHisService', () => {
       expect(await svc.requiereConfirmacion(ORG)).toBe(false);
     });
 
-    it('espejo con el envío al hospital APAGADO: no agenda (nunca habría confirmación)', async () => {
+    it('espejo con «Agendar» APAGADO: no agenda (nunca habría confirmación)', async () => {
       prisma.hospitalMirrorConfig.findUnique.mockResolvedValue({
         enabled: true,
-        pushEnabled: false,
+      });
+      prisma.organizationSettings.findUnique.mockResolvedValue({
+        bookingEnabled: false,
       });
       expect(await svc.puedeAgendar(ORG)).toBe(false);
     });
 
-    it('espejo con el envío encendido: agenda y espera confirmación', async () => {
+    it('espejo con «Agendar» encendido: agenda y espera confirmación (el viejo envío ya no cuenta)', async () => {
       prisma.hospitalMirrorConfig.findUnique.mockResolvedValue({
         enabled: true,
-        pushEnabled: true,
+        pushEnabled: false,
+      });
+      prisma.organizationSettings.findUnique.mockResolvedValue({
+        bookingEnabled: true,
       });
       expect(await svc.puedeAgendar(ORG)).toBe(true);
       expect(await svc.requiereConfirmacion(ORG)).toBe(true);
@@ -125,12 +130,13 @@ describe('ConfirmacionHisService', () => {
       expect(await svc.compuertas(ORG)).toBeNull();
     });
 
-    it('con espejo: el envío abre citas nuevas; cancelar y cambiar, su interruptor', async () => {
+    it('con espejo: cada operación con SU interruptor', async () => {
       prisma.hospitalMirrorConfig.findUnique.mockResolvedValue({
         enabled: true,
-        pushEnabled: false,
+        pushEnabled: true,
       });
       prisma.organizationSettings.findUnique.mockResolvedValue({
+        bookingEnabled: false,
         cancelEnabled: true,
         rescheduleEnabled: false,
       });

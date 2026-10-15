@@ -3,7 +3,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   SYNC_AUDIT_DIRECTION,
   TITULO_EXCEPCION,
-  algunaCompuertaAbierta,
   claveExcepcion,
   compuertasHis,
   eventoPuedeSalir,
@@ -143,15 +142,20 @@ export class MirrorDispatchService {
 
     while (true) {
       // 🚪 Compuertas hacia el hospital, una por operación (`compuerta-his.ts`):
-      // citas nuevas y lo demás con `pushEnabled`; cancelaciones con «Cancelar»;
-      // cambios de fecha con «Cambiar fecha». Se consultan en CADA vuelta y no una
-      // vez al entrar: apagar una a mitad de un long-poll de 25 s tiene que surtir
-      // efecto en el siguiente segundo, no en la siguiente llamada. Lo que tiene
-      // la compuerta cerrada sigue en la cola y sale al abrirla.
+      // altas con «Agendar», cancelaciones con «Cancelar», cambios de fecha con
+      // «Cambiar fecha». Se consultan en CADA vuelta y no una vez al entrar:
+      // apagar una a mitad de un long-poll de 25 s tiene que surtir efecto en el
+      // siguiente segundo, no en la siguiente llamada. Con el interruptor apagado
+      // la base ni deja hacer la operación (`fn_interruptores_del_hospital`), así
+      // que lo que esperaría aquí es solo lo hecho en el instante de apagarlo.
+      // Se lee la cola aunque todas estén cerradas: lo que nunca va al hospital
+      // (cupos, asistencia…) se cierra igual, para que no quede nada en ella.
       const compuertas = await this.compuertasHaciaElHospital(organizationId);
-      const rows = algunaCompuertaAbierta(compuertas)
-        ? await this.selectDeliverable(organizationId, limit, compuertas)
-        : [];
+      const rows = await this.selectDeliverable(
+        organizationId,
+        limit,
+        compuertas,
+      );
 
       if (rows.length > 0 || Date.now() >= deadline) {
         return this.hydrateSafely(organizationId, rows);
@@ -187,17 +191,15 @@ export class MirrorDispatchService {
   private async compuertasHaciaElHospital(
     organizationId: string,
   ): Promise<CompuertasHis> {
-    const [config, ajustes] = await Promise.all([
-      this.prisma.hospitalMirrorConfig.findUnique({
-        where: { organizationId },
-        select: { pushEnabled: true },
-      }),
-      this.prisma.organizationSettings.findUnique({
-        where: { organizationId },
-        select: { cancelEnabled: true, rescheduleEnabled: true },
-      }),
-    ]);
-    return compuertasHis(config, ajustes);
+    const ajustes = await this.prisma.organizationSettings.findUnique({
+      where: { organizationId },
+      select: {
+        bookingEnabled: true,
+        cancelEnabled: true,
+        rescheduleEnabled: true,
+      },
+    });
+    return compuertasHis(ajustes);
   }
 
   private async selectDeliverable(
@@ -206,11 +208,6 @@ export class MirrorDispatchService {
     compuertas: CompuertasHis,
   ) {
     const ahora = new Date();
-    // Con el envío de citas nuevas apagado solo pueden salir cancelaciones y
-    // cambios de fecha: se leen solo los UPDATE/DELETE de citas. Si no, los
-    // cientos de eventos de cupos que esperan al envío llenarían la ventana de
-    // lectura y taparían a la cancelación que sí puede salir.
-    const soloCambiosDeCitas = !compuertas.agendar && !compuertas.otros;
 
     const candidatos = await this.prisma.syncOutbox.findMany({
       // 🪞 ANTI-ECO, por partida doble: el disparador ya marca como entregado lo que
@@ -224,42 +221,15 @@ export class MirrorDispatchService {
         deliveredAt: null,
         deadLettered: false,
         origin: { not: 'MIRROR' },
-        ...(soloCambiosDeCitas
-          ? { entityType: 'APPOINTMENT', op: { in: ['UPDATE', 'DELETE'] } }
-          : {}),
       },
       orderBy: { seq: 'asc' },
       take: limit * SCAN_WINDOW_FACTOR,
     });
 
-    // 🔢 El orden por cita no se rompe aunque el alta quede fuera de la lectura:
-    // una cita cuyo alta espera al envío (agendada desde el panel con el envío
-    // apagado) no puede recibir antes su cancelación —el agente diría «ya no
-    // existía» y después, al encender el envío, la crearía en el hospital—.
-    const altaPendiente = new Map<string, bigint>();
-    if (soloCambiosDeCitas && candidatos.length > 0) {
-      const altas = await this.prisma.syncOutbox.findMany({
-        where: {
-          organizationId,
-          deliveredAt: null,
-          deadLettered: false,
-          origin: { not: 'MIRROR' },
-          entityType: 'APPOINTMENT',
-          op: 'INSERT',
-          entityId: { in: [...new Set(candidatos.map((c) => c.entityId))] },
-        },
-        select: { entityId: true, seq: true },
-      });
-      for (const a of altas) {
-        const previa = altaPendiente.get(a.entityId);
-        if (previa === undefined || a.seq < previa) {
-          altaPendiente.set(a.entityId, a.seq);
-        }
-      }
-    }
-
     const entidadesVistas = new Set<string>();
     const entregables: typeof candidatos = [];
+    /** Lo que nunca va al hospital: se cierra aquí, sin pasar por el agente. */
+    const sinEnviar: typeof candidatos = [];
 
     for (const row of candidatos) {
       const entidad = `${row.entityType}:${row.entityId}`;
@@ -269,14 +239,25 @@ export class MirrorDispatchService {
       if (entidadesVistas.has(entidad)) continue;
       entidadesVistas.add(entidad);
 
-      const alta = altaPendiente.get(row.entityId);
-      if (alta !== undefined && alta < row.seq) continue;
-      // 🚪 La compuerta de SU operación está cerrada: espera en la cola.
+      // 🚪 Cupos, médicos, asistencia, EPS, motivo, el borrado de una cita: el
+      // hospital no los recibe nunca. Se cierran ya —y no se dejan esperando—
+      // porque, si no, taparían a la cancelación que venga detrás de la misma
+      // cita (el orden por entidad la haría esperar para siempre). El siguiente
+      // evento de la entidad sale en la próxima vuelta, un segundo después.
+      if (operacionHisDelEvento(row) === 'OTRO') {
+        sinEnviar.push(row);
+        continue;
+      }
+      // La compuerta de SU operación está cerrada: espera en la cola.
       if (!eventoPuedeSalir(row, compuertas)) continue;
       if (row.nextAttemptAt && row.nextAttemptAt > ahora) continue;
 
       entregables.push(row);
       if (entregables.length >= limit) break;
+    }
+
+    if (sinEnviar.length > 0) {
+      await this.cerrarSinEnviar(organizationId, sinEnviar);
     }
 
     // La ventana de lectura se llenó y aun así no salió un lote completo:
@@ -295,6 +276,45 @@ export class MirrorDispatchService {
     }
 
     return entregables;
+  }
+
+  /**
+   * Cierra, sin entregárselos al agente, los eventos que el hospital no recibe
+   * nunca (`operacionHisDelEvento` = OTRO). Queda la constancia en la auditoría,
+   * igual que cuando era el agente el que los declinaba.
+   */
+  private async cerrarSinEnviar(
+    organizationId: string,
+    filas: {
+      seq: bigint;
+      eventId: string;
+      entityType: string;
+      entityId: string;
+      op: string;
+    }[],
+  ): Promise<void> {
+    await this.prisma.syncOutbox.updateMany({
+      where: {
+        organizationId,
+        seq: { in: filas.map((f) => f.seq) },
+        deliveredAt: null,
+      },
+      data: { deliveredAt: new Date(), nextAttemptAt: null },
+    });
+    await this.prisma.syncAudit.createMany({
+      data: filas.map((f) => ({
+        organizationId,
+        direction: SYNC_AUDIT_DIRECTION.AGENIA_TO_HIS,
+        entityType: f.entityType,
+        entityId: f.entityId,
+        op: f.op,
+        outcome: 'SKIPPED',
+        eventId: f.eventId,
+        detail:
+          'No se escribe en el hospital (cupos, médicos, asistencia, EPS, motivo o ' +
+          'borrado de una cita): se cierra sin enviarlo al agente.',
+      })),
+    });
   }
 
   /**

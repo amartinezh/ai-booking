@@ -49,7 +49,6 @@ export async function getEstadoEspejo() {
             driverKey: true,
             enabled: true,
             availabilityMode: true,
-            pushEnabled: true,
             pullEnabled: true,
             lastHeartbeatAt: true,
             lastHisReachable: true,
@@ -62,6 +61,18 @@ export async function getEstadoEspejo() {
     if (!config) {
         return { success: false as const, error: 'Esta clínica no tiene espejo configurado.' };
     }
+
+    // 🚪 Lo que AgenIA puede escribir en el hospital: un interruptor por operación,
+    // en Configuración (`compuerta-his.ts`). Aquí solo se muestra.
+    const ajustes = await prisma.organizationSettings.findUnique({
+        where: { organizationId },
+        select: { bookingEnabled: true, cancelEnabled: true, rescheduleEnabled: true },
+    });
+    const operaciones = {
+        agendar: ajustes?.bookingEnabled === true,
+        cancelar: ajustes?.cancelEnabled === true,
+        cambiar: ajustes?.rescheduleEnabled === true,
+    };
 
     const [pendientes, deadLetters, masAntiguo, ultimaReconciliacion, ultimaAgenda, conflictos, cupos] =
         await Promise.all([
@@ -114,6 +125,7 @@ export async function getEstadoEspejo() {
         success: true as const,
         data: {
             config,
+            operaciones,
             edadLatidoMin,
             pendientes,
             colaDesde: masAntiguo?.createdAt ?? null,
@@ -222,64 +234,3 @@ export async function cambiarModoAgenda(modo: string) {
     return { success: true };
 }
 
-/**
- * Prende o apaga el ENVÍO de CITAS NUEVAS hacia el hospital (`pushEnabled`).
- *
- * Desde 2026-10-15 cada operación tiene su compuerta (`compuerta-his.ts`):
- * apagado, la API no le entrega al agente las citas nuevas ni lo demás que no es
- * cancelar ni cambiar fecha (`MirrorDispatchService.getPendingEvents`). Las
- * cancelaciones y los cambios de fecha pasan con «Cancelar» y «Cambiar fecha» de
- * Configuración. Lo que llega DESDE el hospital (agenda, citas de ventanilla)
- * sigue entrando. Los eventos no se pierden: esperan en la cola y salen al
- * volver a encenderlo.
- *
- * Surte efecto en el siguiente segundo del long-poll del agente; no hace falta
- * reiniciar nada en la VM del hospital.
- */
-export async function cambiarEnvioAlHospital(enabled: boolean) {
-    const organizationId = await tenantAdmin();
-    if (!organizationId) return { success: false, error: 'Sin permisos.' };
-
-    // `=== true`: lo que no sea exactamente `true` apaga (falla hacia no
-    // escribir en el sistema del hospital).
-    const pushEnabled = enabled === true;
-
-    const config = await prisma.hospitalMirrorConfig.findUnique({
-        where: { organizationId },
-        select: { pushEnabled: true },
-    });
-    if (!config) {
-        return { success: false, error: 'Esta clínica no tiene espejo configurado.' };
-    }
-    if (config.pushEnabled === pushEnabled) {
-        return { success: true };
-    }
-
-    const session = await getSession();
-    const enCola = await prisma.syncOutbox.count({
-        where: { organizationId, deliveredAt: null, deadLettered: false },
-    });
-
-    await prisma.$transaction([
-        prisma.hospitalMirrorConfig.update({
-            where: { organizationId },
-            data: { pushEnabled },
-        }),
-        prisma.syncAudit.create({
-            data: {
-                organizationId,
-                direction: SYNC_AUDIT_DIRECTION.CONFIG,
-                entityType: 'HospitalMirrorConfig',
-                op: 'PUSH_ENABLED_CHANGE',
-                outcome: 'OK',
-                detail:
-                    `Envío de citas nuevas al hospital ${pushEnabled ? 'ENCENDIDO' : 'APAGADO'} desde el panel ` +
-                    `por ${session?.email ?? session?.userId ?? 'desconocido'}; ` +
-                    `${enCola} evento(s) en cola en ese momento.`,
-            },
-        }),
-    ]);
-
-    revalidatePath('/dashboard/espejo');
-    return { success: true };
-}

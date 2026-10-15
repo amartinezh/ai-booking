@@ -4,6 +4,11 @@ jest.mock('@/lib/prisma', () => {
         scheduleSlot: { update: jest.fn() },
         agentProfile: { findUnique: jest.fn() },
         doctorProfile: { findUnique: jest.fn() },
+        // Sin espejo por defecto: el panel opera libre.
+        hospitalMirrorConfig: { findUnique: jest.fn(async () => null) },
+        organizationSettings: {
+            findUnique: jest.fn(async () => ({ bookingEnabled: true, cancelEnabled: true, rescheduleEnabled: true })),
+        },
         $transaction: jest.fn(),
     };
     // Transacción interactiva: el callback recibe el mismo doble como `tx`.
@@ -161,6 +166,35 @@ describe('cancelAppointmentAndFreeSlot', () => {
     afterEach(() => jest.useRealTimers());
 
     const argsDelCambio = () => mockUpdateMany.mock.calls[0][0] as { where: unknown; data: { status: string; metaLog?: Record<string, unknown> } };
+
+    describe('🚪 clínica conectada al hospital: «Cancelar» apagado es apagado', () => {
+        const mockEspejo = prisma.hospitalMirrorConfig.findUnique as jest.Mock;
+        const mockAjustes = prisma.organizationSettings.findUnique as jest.Mock;
+
+        it('con «Cancelar» apagado no se cancela ni se escribe nada, y lo dice', async () => {
+            mockFindFirst.mockResolvedValue({ ...CITA, organizationId: 'org-1' });
+            mockEspejo.mockResolvedValueOnce({ enabled: true });
+            mockAjustes.mockResolvedValueOnce({ cancelEnabled: false });
+            const res = await cancelAppointmentAndFreeSlot('apt-1', 'slot-1');
+            expect(res).toEqual({ success: false, error: expect.stringMatching(/«Cancelar citas» está apagado/) });
+            expect(mockTransaction).not.toHaveBeenCalled();
+            expect(mockEspejo).toHaveBeenCalledWith(expect.objectContaining({ where: { organizationId: 'org-1' } }));
+        });
+
+        it('con «Cancelar» encendido se cancela como siempre', async () => {
+            mockFindFirst.mockResolvedValue({ ...CITA, organizationId: 'org-1' });
+            mockEspejo.mockResolvedValueOnce({ enabled: true });
+            mockAjustes.mockResolvedValueOnce({ cancelEnabled: true });
+            expect((await cancelAppointmentAndFreeSlot('apt-1', 'slot-1')).success).toBe(true);
+            expect(mockUpdateMany).toHaveBeenCalled();
+        });
+
+        it('si se apaga entre la comprobación y la escritura, el freno de la base se dice claro', async () => {
+            mockUpdateMany.mockRejectedValueOnce(new Error('ERROR: AGENIA_OPERACION_APAGADA:CANCELAR'));
+            const res = await cancelAppointmentAndFreeSlot('apt-1', 'slot-1');
+            expect(res).toEqual({ success: false, error: expect.stringMatching(/«Cancelar citas» está apagado/) });
+        });
+    });
 
     it('rechaza sin sesión y a un rol sin permiso (PATIENT) sin tocar la base', async () => {
         mockGetSession.mockResolvedValue(null);

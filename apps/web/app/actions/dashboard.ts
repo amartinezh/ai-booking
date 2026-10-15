@@ -12,6 +12,8 @@ import {
     alcanceDeLaSesion,
     citaFueraDeAlcance,
 } from '@/lib/alcance-agente';
+import { mensajeDeError, operacionApagada } from '@/lib/interruptores-hospital';
+import { operacionFrenadaDelError } from '@agenia/shared';
 
 const INTERNAL_API_URL =
     process.env.INTERNAL_API_URL ||
@@ -172,6 +174,7 @@ export async function cancelAppointmentAndFreeSlot(appointmentId: string, schedu
             where: whereClause,
             select: {
                 id: true,
+                organizationId: true,
                 scheduleSlotId: true,
                 metaLog: true,
                 epsId: true,
@@ -181,6 +184,11 @@ export async function cancelAppointmentAndFreeSlot(appointmentId: string, schedu
         if (!appointment) {
             return { success: false, error: 'Cita no encontrada en su organización.' };
         }
+
+        // 🚪 Con la clínica conectada al hospital, «Cancelar» apagado = no se cancela
+        // en AgenIA (se hace en el sistema del hospital). Antes de escribir nada.
+        const cancelarApagado = await operacionApagada(prisma, appointment.organizationId, 'CANCELAR');
+        if (cancelarApagado) return { success: false, error: cancelarApagado };
 
         // 🔐 Cada uno actúa solo sobre lo que su panel le lista (§12 #9 y #11 del plan
         // del rastreo): el agente sobre su EPS y su médico, el MÉDICO sobre su propia
@@ -230,6 +238,13 @@ export async function cancelAppointmentAndFreeSlot(appointmentId: string, schedu
         return { success: true };
     } catch (error) {
         console.error('Error cancelling appointment:', error);
-        return { success: false, error: 'Hubo un error crítico al cancelar y liberar el cupo.' };
+        // El freno de la base (el interruptor se apagó entre la comprobación y la
+        // escritura) se dice claro; cualquier otro, como siempre.
+        return {
+            success: false,
+            error: operacionFrenadaDelError(error)
+                ? mensajeDeError(error)
+                : 'Hubo un error crítico al cancelar y liberar el cupo.',
+        };
     }
 }

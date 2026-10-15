@@ -66,7 +66,7 @@ describe('MirrorWatchdogService', () => {
     eventosPorSeq?: Record<string, unknown>[];
     /** Lo que devuelve la consulta del vencimiento (`updatedAt: { lt }`). */
     olvidadas?: Record<string, unknown>[];
-    /** «Cancelar» y «Cambiar fecha»: por defecto apagados (como en producción). */
+    /** «Agendar», «Cancelar» y «Cambiar fecha». Por defecto solo «Agendar». */
     ajustes?: unknown;
   }
 
@@ -84,7 +84,12 @@ describe('MirrorWatchdogService', () => {
         findUnique: jest.fn(async (..._a: unknown[]) =>
           'ajustes' in e
             ? e.ajustes
-            : { cancelEnabled: false, rescheduleEnabled: false },
+            : // Como antes con el envío encendido: las altas se vigilan.
+              {
+                bookingEnabled: true,
+                cancelEnabled: false,
+                rescheduleEnabled: false,
+              },
         ),
       },
       syncOutbox: {
@@ -380,9 +385,14 @@ describe('MirrorWatchdogService', () => {
       }
     });
 
-    it('⏸️ con el envío hacia el hospital PAUSADO a propósito, no se vigila el outbox ni se cierra nada solo', async () => {
+    it('⏸️ con las tres operaciones APAGADAS a propósito, no se vigila el outbox ni se cierra nada solo', async () => {
       const { service, prisma, exceptions } = build({
         config: { enabled: true, pushEnabled: false },
+        ajustes: {
+          bookingEnabled: false,
+          cancelEnabled: false,
+          rescheduleEnabled: false,
+        },
         activas: [activa()],
         eventosPorSeq: [],
       });
@@ -400,10 +410,14 @@ describe('MirrorWatchdogService', () => {
     });
 
     // 🚪 Compuertas por operación (2026-10-15).
-    describe('con el envío de citas nuevas apagado y «Cancelar» encendido', () => {
+    describe('con «Agendar» apagado y «Cancelar» encendido', () => {
       const soloCancelar = {
         config: { enabled: true, pushEnabled: false },
-        ajustes: { cancelEnabled: true, rescheduleEnabled: false },
+        ajustes: {
+          bookingEnabled: false,
+          cancelEnabled: true,
+          rescheduleEnabled: false,
+        },
       };
 
       it('mira la cola, pero un alta retenida a propósito no es una cita «no entregada»', async () => {
@@ -1011,9 +1025,14 @@ describe('MirrorWatchdogService', () => {
       expect(exceptions.autoResolver).not.toHaveBeenCalled();
     });
 
-    it('corre igual con el envío al hospital PAUSADO: solo mira la cita en AgenIA', async () => {
+    it('corre igual con las tres operaciones APAGADAS: solo mira la cita en AgenIA', async () => {
       const { service, exceptions, prisma } = build({
         config: { enabled: true, pushEnabled: false },
+        ajustes: {
+          bookingEnabled: false,
+          cancelEnabled: false,
+          rescheduleEnabled: false,
+        },
         activas: [aviso()],
         citas: [cita({ status: 'CANCELLED' })],
       });
@@ -1083,9 +1102,14 @@ describe('MirrorWatchdogService', () => {
       expect(r.vencidas).toBe(0);
     });
 
-    it('vence igual con el envío al hospital PAUSADO: lo que vence es el tiempo, no el envío', async () => {
+    it('vence igual con las tres operaciones APAGADAS: lo que vence es el tiempo, no el envío', async () => {
       const { service, exceptions } = build({
         config: { enabled: true, pushEnabled: false },
+        ajustes: {
+          bookingEnabled: false,
+          cancelEnabled: false,
+          rescheduleEnabled: false,
+        },
         olvidadas: [olvidada()],
       });
       await service.vigilarOrganizacion(ORG, AHORA);

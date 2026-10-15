@@ -3,7 +3,7 @@
 import { CalendarCheck, CalendarSearch } from 'lucide-react';
 import { setMyBookingEnabled } from '@/app/actions/settings';
 import InstantSwitch from './InstantSwitch';
-import { NOTA_ENVIO_AL_HOSPITAL } from './operaciones-bot';
+import { notaCompuertaHis } from './operaciones-bot';
 
 /**
  * Interruptor de AGENDAR citas nuevas por el bot (y de los cupos de la lista de
@@ -24,7 +24,7 @@ export default function BookingToggle({ initialEnabled }: { initialEnabled: bool
             labelOff="Apagado"
             detailOn="Los pacientes pueden agendar citas nuevas con el asistente."
             detailOff="Si un paciente intenta agendar, el asistente le dice que se comunique con el hospital (al teléfono de soporte, si está configurado) y qué sí puede hacer por ahí. Tampoco se ofrecen cupos de la lista de espera. Con agendar, cancelar y cambiar apagados, el asistente solo consulta citas."
-            footnote={`El personal sigue agendando desde el panel en ambos casos. ${NOTA_ENVIO_AL_HOSPITAL}`}
+            footnote={`Sin conexión al hospital, el personal sigue agendando desde el panel en ambos casos. ${notaCompuertaHis('las citas nuevas')}`}
         />
     );
 }

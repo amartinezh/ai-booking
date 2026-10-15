@@ -186,3 +186,88 @@ $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT;
 
 CREATE INDEX IF NOT EXISTS "idx_patient_fullname_trgm"
   ON "PatientProfile" USING gin (fn_norm_texto("fullName") gin_trgm_ops);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Interruptores de la clínica conectada al hospital: «si está apagado, está
+-- apagado y punto» (2026-10-15, pedido del usuario).
+--
+-- Con el espejo activo, agendar, cancelar y cambiar la fecha de una cita tienen
+-- cada uno su interruptor (OrganizationSettings: bookingEnabled, cancelEnabled,
+-- rescheduleEnabled). Encendido, la operación se hace por el asistente y desde
+-- el panel, y llega al sistema del hospital. Apagado, NO se puede hacer en
+-- AgenIA: esta función la rechaza ANTES de escribir, venga de donde venga (el
+-- bot, el panel, un proceso o una consulta a mano). Así nunca queda en la cola
+-- un cambio que el hospital no va a recibir — que es lo que pasaba cuando el
+-- interruptor solo detenía el envío: lo hecho en el panel se acumulaba y se
+-- escribía en el hospital días después, quizás sobre horas ya ocupadas.
+--
+--   · Lo que llega DEL hospital (`agenia.sync_origin = 'MIRROR'`: el espejo, el
+--     rechazo del HIS, la cita que vuelve a su hora) nunca se frena.
+--   · Sin espejo activo no hay hospital: la clínica opera libre en AgenIA.
+--   · Solo frena altas, cancelaciones y cambios de cupo. Asistencia, EPS, motivo
+--     o el recordatorio enviado no se escriben en el hospital y pasan siempre.
+--   · REACTIVAR (una cita cancelada que vuelve a vigente) se frena SIEMPRE con
+--     espejo: para el hospital sería una cita nueva que nadie le enviaría.
+--   · Sin fila de OrganizationSettings: frena (falla cerrado).
+--
+-- El error lleva `AGENIA_OPERACION_APAGADA:<operación>`: la API y el panel lo
+-- reconocen (`operacionFrenadaDelError` en @agenia/shared) y lo traducen a un
+-- mensaje para la persona. Ver packages/shared/src/compuerta-his.ts.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION fn_interruptores_del_hospital() RETURNS trigger AS $$
+DECLARE
+  v_origin TEXT := COALESCE(NULLIF(current_setting('agenia.sync_origin', true), ''), 'LOCAL');
+  v_op TEXT;
+  v_permitido BOOLEAN;
+BEGIN
+  IF v_origin = 'MIRROR' THEN
+    RETURN NEW;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM "HospitalMirrorConfig" c
+    WHERE c."organizationId" = NEW."organizationId" AND c."enabled" = true
+  ) THEN
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    v_op := 'AGENDAR';
+  ELSIF NEW.status = 'CANCELLED' AND OLD.status IS DISTINCT FROM 'CANCELLED' THEN
+    v_op := 'CANCELAR';
+  ELSIF OLD.status = 'CANCELLED' AND NEW.status IS DISTINCT FROM 'CANCELLED' THEN
+    RAISE EXCEPTION 'AGENIA_OPERACION_APAGADA:REACTIVAR'
+      USING HINT = 'Con la clínica conectada al hospital, una cita cancelada no se reactiva: se agenda de nuevo.';
+  ELSIF NEW."scheduleSlotId" IS DISTINCT FROM OLD."scheduleSlotId"
+        AND NEW.status IS DISTINCT FROM 'CANCELLED' THEN
+    v_op := 'MODIFICAR';
+  ELSE
+    RETURN NEW;
+  END IF;
+
+  SELECT CASE v_op
+           WHEN 'AGENDAR'   THEN s."bookingEnabled"
+           WHEN 'CANCELAR'  THEN s."cancelEnabled"
+           WHEN 'MODIFICAR' THEN s."rescheduleEnabled"
+         END
+    INTO v_permitido
+    FROM "OrganizationSettings" s
+   WHERE s."organizationId" = NEW."organizationId";
+
+  IF v_permitido IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'AGENIA_OPERACION_APAGADA:%', v_op
+      USING HINT = 'El interruptor de esta operación está apagado en Configuración: hágala directamente en el sistema del hospital.';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- BEFORE (no AFTER como el del outbox): rechaza la escritura antes de que exista
+-- y antes de que el disparador del outbox la ponga en la cola. Solo las columnas
+-- que definen alta, cancelación o cambio de cupo: el resto ni lo despierta.
+DROP TRIGGER IF EXISTS trg_interruptores_del_hospital ON "Appointment";
+CREATE TRIGGER trg_interruptores_del_hospital
+  BEFORE INSERT OR UPDATE OF status, "scheduleSlotId"
+  ON "Appointment"
+  FOR EACH ROW EXECUTE FUNCTION fn_interruptores_del_hospital();

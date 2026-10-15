@@ -162,19 +162,23 @@ export class MirrorWatchdogService {
     const [config, ajustes] = await Promise.all([
       this.prisma.hospitalMirrorConfig.findUnique({
         where: { organizationId },
-        select: { enabled: true, pushEnabled: true },
+        select: { enabled: true },
       }),
       this.prisma.organizationSettings.findUnique({
         where: { organizationId },
-        select: { cancelEnabled: true, rescheduleEnabled: true },
+        select: {
+          bookingEnabled: true,
+          cancelEnabled: true,
+          rescheduleEnabled: true,
+        },
       }),
     ]);
     if (!config?.enabled) return resumen;
 
-    // 🚪 Lo que tiene su compuerta hacia el hospital CERRADA (envío de citas
-    // nuevas, «Cancelar», «Cambiar fecha») se acumula por decisión, no por falla:
-    // no se vigila. Con todas cerradas no se mira la cola.
-    const compuertas = compuertasHis(config, ajustes);
+    // 🚪 Lo que tiene su compuerta hacia el hospital CERRADA («Agendar»,
+    // «Cancelar», «Cambiar fecha») espera por decisión, no por falla: no se
+    // vigila. Con todas cerradas no se mira la cola.
+    const compuertas = compuertasHis(ajustes);
     if (algunaCompuertaAbierta(compuertas)) {
       resumen.outboxIncompleto = !(await this.vigilarOutbox(
         organizationId,
