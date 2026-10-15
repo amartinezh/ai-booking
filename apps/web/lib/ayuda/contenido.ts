@@ -454,6 +454,80 @@ export const TEMAS: TemaAyuda[] = [
         relacionados: ['padron', 'eps'],
         palabrasClave: ['reclamo', 'no aparece en el padrón', 'no estoy afiliado', 'formulario de alta', 'petición', 'revisión'],
     },
+    {
+        id: 'solicitudes-citas',
+        href: '/dashboard/solicitudes-citas',
+        titulo: 'Solicitudes de más citas',
+        icono: '📝',
+        categoria: 'operacion',
+        resumen: 'Los pacientes que llegaron al límite de citas del día o del mes y piden que se les permita agendar más.',
+        paraQueSirve:
+            'Cuando el asistente no le agenda a un paciente porque ya tiene el máximo de citas permitido (ver Límite de citas), le pide disculpas, le da el teléfono del hospital y le envía un enlace para pedir una revisión. Lo que el paciente escribe llega aquí: el límite que alcanzó, la cita que pedía, el motivo y su caso. Si apruebas, el asistente le deja agendar las citas adicionales que concedas, solo para ese día o ese mes.',
+        guias: [
+            {
+                titulo: 'Revisar una solicitud',
+                pasos: [
+                    'Entra con el filtro «Pendientes». El número rojo del menú dice cuántas hay.',
+                    'Mira «Límite alcanzado» (cuántas citas tenía y para qué día o mes) y «Cita que pedía».',
+                    'Lee el motivo y el caso (haz clic en el texto para verlo completo).',
+                    'Si procede, pulsa «Aprobar», elige cuántas citas adicionales concedes (viene marcado lo que pidió) y, si quieres, deja una nota.',
+                    'Si no procede, pulsa «Rechazar» y escribe el motivo.',
+                    'Pulsa «Confirmar».',
+                ],
+                nota: 'Aprobar no agenda la cita: le permite al paciente agendarla con el asistente. Avísale por teléfono, o agéndale tú desde Agendamiento (el personal no tiene límite).',
+            },
+            {
+                titulo: 'Llamar a quien no terminó la solicitud',
+                pasos: [
+                    'Abre el filtro «Sin radicar»: son los pacientes a los que el asistente les envió el enlace y aún no lo han llenado.',
+                    'Usa el teléfono de la columna «Contacto» para llamarlos si conviene.',
+                ],
+                nota: 'El enlace sirve 7 días. Después aparece como «Enlace vencido»; si el paciente vuelve a escribir al asistente, recibe uno nuevo.',
+            },
+            {
+                titulo: 'Buscar las solicitudes de un paciente',
+                pasos: ['Escribe su documento o su nombre en «Buscar por documento o nombre…».', 'Pulsa «Buscar». Los filtros de arriba cuentan solo lo que coincide con la búsqueda.'],
+            },
+        ],
+        elementos: [
+            { nombre: 'Pendientes / Aprobadas / Rechazadas / Todas', explicacion: 'Filtros con la cantidad de solicitudes en cada estado. «Todas» son las que el paciente envió.' },
+            { nombre: 'Sin radicar', explicacion: 'Enlaces que el asistente envió y el paciente no ha llenado.' },
+            { nombre: 'Límite alcanzado', explicacion: 'Si fue el límite diario o el mensual, el día o el mes, y cuántas citas tenía de cuántas permitidas.' },
+            { nombre: 'Cita que pedía', explicacion: 'El servicio y la hora del cupo que eligió, y si era una cita nueva o un cambio de fecha.' },
+            { nombre: 'Caso', explicacion: 'El motivo que eligió, lo que escribió y cuántas citas adicionales pide.' },
+            { nombre: 'Acción', explicacion: '«Aprobar» y «Rechazar» en las pendientes; en las revisadas, quién decidió, cuándo, las citas concedidas y la nota.' },
+        ],
+        preguntas: [
+            {
+                pregunta: '¿Qué pasa cuando apruebo?',
+                respuesta: 'El asistente suma las citas adicionales que concediste al límite de la clínica, solo para ese paciente y solo para ese día o ese mes. Al mes siguiente vuelve el límite normal.',
+            },
+            {
+                pregunta: '¿Se le avisa al paciente cuando decido?',
+                respuesta: 'No por mensaje. Si abre de nuevo el enlace, ve si fue aprobada o no. Lo mejor es llamarlo al teléfono que dejó.',
+            },
+            {
+                pregunta: '¿El paciente puede enviar muchas solicitudes?',
+                respuesta: 'No. Mientras tenga una pendiente para ese día o mes, el asistente no le envía otra; y después de 3 enviadas para el mismo periodo, solo le da el teléfono del hospital.',
+            },
+            {
+                pregunta: '¿Quién puede aprobar?',
+                respuesta: 'El administrador y el agente de reservas de la clínica. Si dos personas la abren a la vez, solo cuenta la primera decisión.',
+            },
+        ],
+        problemas: [
+            {
+                sintoma: 'Aprobé, pero el asistente sigue sin agendarle.',
+                solucion: 'Revisa que la cita que pide sea del mismo día o mes de la solicitud: la aprobación no sirve para otros periodos. Si pide otra fecha con el límite lleno, necesita otra solicitud, o agéndale desde Agendamiento.',
+            },
+            {
+                sintoma: '«La solicitud ya fue revisada o no existe».',
+                solucion: 'Otra persona la decidió primero. Recarga la página para ver la decisión.',
+            },
+        ],
+        relacionados: ['limites-citas', 'auditoria', 'rastreo'],
+        palabrasClave: ['excepción', 'más de una cita', 'cupo extra', 'autorizar cita', 'límite diario', 'límite mensual', 'tope de citas', 'aprobar', 'rechazar'],
+    },
 
     // ── Agenda y catálogos ────────────────────────────────────
     {
@@ -947,6 +1021,72 @@ export const TEMAS: TemaAyuda[] = [
 
     // ── Administración ────────────────────────────────────────
     {
+        id: 'limites-citas',
+        href: '/dashboard/limites-citas',
+        titulo: 'Límite de citas',
+        icono: '🚦',
+        categoria: 'administracion',
+        resumen: 'Cuántas citas puede tener un mismo paciente por el asistente: un máximo por día y otro por mes.',
+        paraQueSirve:
+            'Evita que una misma persona acapare los cupos del asistente. Si un paciente ya tiene el máximo de citas para ese día o ese mes, el asistente no le agenda otra (ni le asigna un cupo de la lista de espera, ni le cambia una cita a esa fecha): le pide disculpas, le da el teléfono del hospital y le envía un enlace para pedir una revisión, que llega a Solicitudes de más citas. Al empezar vienen encendidos con 1 cita al día y 3 al mes.',
+        guias: [
+            {
+                titulo: 'Cambiar el máximo de citas',
+                pasos: [
+                    'En «Citas por paciente en un mismo día» o «en un mismo mes», escribe el máximo en «Máximo de citas por día / por mes».',
+                    'Revisa a la derecha el «Mensaje que recibe el paciente».',
+                    'Pulsa «Guardar cambios».',
+                ],
+                nota: 'Aplica desde el siguiente mensaje que reciba el asistente, sin reiniciar nada. El día va de 1 a 10 y el mes de 1 a 31.',
+            },
+            {
+                titulo: 'Apagar o encender un límite',
+                pasos: ['Pulsa el interruptor del límite (día o mes): verde es encendido.', 'Pulsa «Guardar cambios».'],
+                nota: 'Con un límite apagado el asistente no revisa cuántas citas tiene el paciente en ese periodo. Los dos son independientes.',
+            },
+        ],
+        elementos: [
+            { nombre: 'Veces que se aplicó el límite', explicacion: 'Cuántas veces en los últimos 30 días el asistente frenó una cita o un cambio de fecha por el límite.' },
+            { nombre: 'Solicitudes radicadas / Pendientes por revisar', explicacion: 'Cuántos pacientes pidieron revisión en 30 días y cuántas esperan decisión. La tarjeta de pendientes lleva a Solicitudes de más citas.' },
+            { nombre: 'Mensaje que recibe el paciente', explicacion: 'Un ejemplo de lo que le escribe el asistente, con los valores que estás editando.' },
+            { nombre: 'Cómo se cuenta', explicacion: 'Las reglas del conteo y quién hizo el último cambio y cuándo.' },
+        ],
+        preguntas: [
+            {
+                pregunta: '¿Se cuenta por el día en que pidió la cita o por el día de la cita?',
+                respuesta: 'Por el día de la cita. «Una cita al día» quiere decir una cita para el mismo día; el mes es el del calendario (del 1 al último día).',
+            },
+            {
+                pregunta: '¿Qué citas cuentan?',
+                respuesta: 'Todas las citas vigentes del paciente en la clínica, agendadas o ya atendidas, sin importar si las agendó el asistente, el personal o el hospital. Las canceladas no cuentan.',
+            },
+            {
+                pregunta: '¿El personal también tiene este límite?',
+                respuesta: 'No. Solo el asistente (WhatsApp y Telegram). Desde Agendamiento se puede agendar sin límite, por ejemplo después de aprobar una solicitud.',
+            },
+            {
+                pregunta: '¿Qué teléfono le da el asistente al paciente?',
+                respuesta: 'El teléfono de soporte de la clínica. Si no está registrado, la pantalla lo avisa en amarillo y el asistente dice «comuníquese con el hospital», sin número.',
+            },
+            {
+                pregunta: '¿Quién puede cambiarlo?',
+                respuesta: 'El administrador y el agente de reservas. Debajo de la pantalla queda quién hizo el último cambio y cuándo.',
+            },
+        ],
+        problemas: [
+            {
+                sintoma: 'Un paciente dice que no tiene citas y el asistente no lo deja agendar.',
+                solucion: 'Búscalo en Rastreo de paciente: puede tener una cita de ese día o mes agendada por el hospital o por el personal, y esas también cuentan.',
+            },
+            {
+                sintoma: 'El botón «Guardar cambios» está gris.',
+                solucion: 'No hay cambios por guardar: modifica un valor o un interruptor primero.',
+            },
+        ],
+        relacionados: ['solicitudes-citas', 'configuracion', 'rastreo'],
+        palabrasClave: ['tope de citas', 'máximo de citas', 'una cita al día', 'tres citas al mes', 'restricción', 'acaparar cupos', 'cuota', 'límite diario', 'límite mensual'],
+    },
+    {
         id: 'configuracion',
         href: '/dashboard/configuracion',
         titulo: 'Configuración',
@@ -1439,6 +1579,12 @@ export const GLOSARIO: TerminoGlosario[] = [
         temaId: 'espejo',
     },
     { termino: 'Agente de Reservas', definicion: 'Rol del personal que agenda citas desde el panel y atiende en ventanilla. Puede estar limitado a una EPS o a un médico.', temaId: 'usuarios' },
+    {
+        termino: 'Límite de citas',
+        definicion: 'Máximo de citas que un paciente puede tener por el asistente el mismo día y en el mismo mes. Pasado el límite, el asistente lo remite al hospital y le ofrece pedir una revisión.',
+        sinonimos: ['tope de citas', 'máximo de citas'],
+        temaId: 'limites-citas',
+    },
     { termino: 'Cupo (slot)', definicion: 'Espacio de tiempo de un médico en el que se puede agendar una cita.', sinonimos: ['turno', 'horario', 'hueco'], temaId: 'agenda' },
     { termino: 'Cupo universal', definicion: 'Cupo que el asistente ofrece a pacientes de cualquier EPS. Se ve en azul en el calendario.', temaId: 'agenda' },
     { termino: 'Cupo exclusivo de EPS', definicion: 'Cupo que el asistente solo ofrece a afiliados de una EPS. Se ve en verde.', temaId: 'agenda' },

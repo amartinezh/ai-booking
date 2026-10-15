@@ -42,6 +42,10 @@ export enum FailureReason {
   // La cédula no figura en el padrón de pacientes dados de alta
   // (EpsEnrolledPatient) para la EPS elegida → agendamiento por EPS bloqueado.
   EPS_NOT_ENROLLED = 'EPS_NOT_ENROLLED',
+  // El paciente ya tiene el máximo de citas que la clínica permite el mismo
+  // día o el mismo mes (/dashboard/limites-citas) → el bot no asigna la cita,
+  // lo remite al hospital y le ofrece pedir una revisión.
+  APPOINTMENT_LIMIT_REACHED = 'APPOINTMENT_LIMIT_REACHED',
   DOCTOR_NOT_FOUND = 'DOCTOR_NOT_FOUND',
   SLOT_TAKEN = 'SLOT_TAKEN',
   // La EPS+régimen del paciente no tiene convenio de facturación en el HIS

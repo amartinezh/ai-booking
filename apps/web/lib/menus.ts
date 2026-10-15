@@ -68,6 +68,29 @@ const AUDITORIA: MenuItem = {
     accent: 'slate',
 };
 
+/**
+ * Límite de citas por paciente (cuántas puede tener el mismo día y en el mismo
+ * mes por el asistente) y la bandeja de quienes piden más. Los dos son de
+ * ORG_ADMIN y BOOKING_AGENT: quien agenda es quien atiende a esos pacientes.
+ * El permiso real lo aplican las páginas y sus acciones
+ * (`lib/limite-citas/acceso.ts`).
+ */
+const LIMITE_CITAS: MenuItem = {
+    label: 'Límite de citas',
+    href: '/dashboard/limites-citas',
+    icon: '🚦',
+    description: 'Máximo de citas por paciente al día y al mes',
+    accent: 'amber',
+};
+
+const SOLICITUDES_CITAS: MenuItem = {
+    label: 'Solicitudes de más citas',
+    href: '/dashboard/solicitudes-citas',
+    icon: '📝',
+    description: 'Pacientes que piden citas por encima del límite',
+    accent: 'rose',
+};
+
 const PATIENT_MENUS: MenuItem[] = [
     { label: 'Mis Citas Programadas', href: '/dashboard', icon: '📅', description: 'Consulta tus próximas citas', accent: 'blue' },
     SUPPORT,
@@ -93,6 +116,8 @@ const ADMIN_MENUS: MenuItem[] = [
     RASTREO,
     { label: 'Encuestas (CSAT)', href: '/dashboard/configuracion/integraciones/surveys', icon: '⭐', description: 'Opiniones de pacientes', accent: 'orange' },
     { label: 'Solicitudes de Alta', href: '/dashboard/solicitudes-alta', icon: '📨', description: 'Revisiones pedidas por ciudadanos', accent: 'rose' },
+    SOLICITUDES_CITAS,
+    LIMITE_CITAS,
     { label: 'Configuración', href: '/dashboard/configuracion', icon: '⚙️', description: 'IA, WhatsApp, voz y marca', accent: 'fuchsia' },
     SUPPORT,
 ];
@@ -102,6 +127,8 @@ const AGENT_MENUS: MenuItem[] = [
     { label: 'Agendamiento', href: '/dashboard/agendamiento', icon: '📅', description: 'Reserva de citas asistida', accent: 'emerald' },
     AUDITORIA,
     RASTREO,
+    SOLICITUDES_CITAS,
+    LIMITE_CITAS,
     SUPPORT,
 ];
 
@@ -182,9 +209,17 @@ export function getMenusForRole(
         /** Espejo encendido con el driver de avisos, estén o no encendidos (ver `AVISOS`). */
         conAvisosDriver?: boolean;
         pendientesBandeja?: number;
+        /** Solicitudes de más citas radicadas sin revisar (cifra del menú). */
+        pendientesSolicitudesCitas?: number;
     } = {},
 ): MenuItem[] {
     let menus = MENUS_BY_ROLE[role] ?? [];
+
+    if (opts.pendientesSolicitudesCitas && opts.pendientesSolicitudesCitas > 0) {
+        // Copia: `SOLICITUDES_CITAS` es compartido y la cifra es de esta clínica.
+        const badge = opts.pendientesSolicitudesCitas;
+        menus = menus.map((m) => (m.href === SOLICITUDES_CITAS.href ? { ...m, badge } : m));
+    }
 
     if (opts.conEspejo && role === 'ORG_ADMIN') {
         menus = insertBeforeSoporte(menus, ESPEJO);

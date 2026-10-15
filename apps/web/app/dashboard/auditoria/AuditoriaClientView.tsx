@@ -79,6 +79,14 @@ const FAILURE_META: Record<
         description:
             'El paciente iba a agendar por su EPS sin régimen registrado (subsidiado/contributivo). La reserva se frenó antes de confirmar y el bot se lo preguntó. Si se repite, algún camino llega a la reserva sin haberlo pedido.',
     },
+    APPOINTMENT_LIMIT_REACHED: {
+        label: 'Llegó al límite de citas',
+        icon: '🚦',
+        severity: 'info',
+        actionable: true,
+        description:
+            'El paciente ya tenía el máximo de citas permitido ese día o ese mes (Límite de citas). El asistente no le agendó, le dio el teléfono del hospital y le ofreció pedir una revisión (Solicitudes de más citas).',
+    },
     EPS_REGIME_NOT_BILLABLE: {
         label: 'EPS sin convenio para su régimen',
         icon: '🧾',

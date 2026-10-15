@@ -403,6 +403,8 @@ const MOTIVO_FALLO: Record<string, string> = {
   EPS_REGIME_NOT_BILLABLE:
     'la EPS y el régimen del paciente no tienen convenio para agendar por este medio',
   EPS_NOT_ENROLLED: 'la cédula no figura en el padrón de la EPS elegida',
+  APPOINTMENT_LIMIT_REACHED:
+    'el paciente ya tenía el máximo de citas permitido para ese día o ese mes',
   MAX_RETRIES: 'se agotaron los reintentos de la conversación',
   ABANDONED: 'la conversación se abandonó',
   SESSION_EXPIRED: 'la sesión expiró antes de confirmar',

@@ -78,6 +78,9 @@ model Organization {
   epsEnrollmentRequests EpsEnrollmentRequest[]
   padronImports         PadronImport[]
 
+  // 🚦 Solicitudes de más citas de las que permite el límite por paciente.
+  appointmentLimitRequests AppointmentLimitRequest[]
+
   // 🪞 ESPEJO HOSPITAL (ver PLAN_ESPEJO_HOSPITAL.md) — 1:1, config del driver HIS de esta org.
   hospitalMirrorConfig HospitalMirrorConfig?
   mirrorConflictAlerts MirrorConflictAlert[]
@@ -152,6 +155,23 @@ model OrganizationSettings {
   cancelEnabled     Boolean @default(true)
   // Cambiar la fecha de una cita existente (reprogramar).
   rescheduleEnabled Boolean @default(true)
+
+  // 🚦 LÍMITE DE CITAS POR PACIENTE (por el bot) — /dashboard/limites-citas,
+  // lo editan ORG_ADMIN y BOOKING_AGENT. Cuántas citas vigentes puede tener un
+  // paciente el MISMO DÍA y en el MISMO MES calendario (por la fecha de la
+  // cita, en la zona de la clínica). Pasado el límite, el bot no agenda, no
+  // asigna un cupo de la lista de espera ni cambia una cita de fecha: remite al
+  // teléfono del hospital y ofrece pedir una revisión (AppointmentLimitRequest).
+  // El personal agenda sin límite desde el panel. La regla vive en
+  // @agenia/shared (limite-citas.ts). Clínica sin fila de settings = los dos
+  // encendidos, con 1 y 3.
+  dailyAppointmentLimitEnabled   Boolean   @default(true)
+  maxAppointmentsPerDay          Int       @default(1)
+  monthlyAppointmentLimitEnabled Boolean   @default(true)
+  maxAppointmentsPerMonth        Int       @default(3)
+  // Quién cambió los límites por última vez (lo pueden cambiar dos roles).
+  appointmentLimitsUpdatedAt     DateTime?
+  appointmentLimitsUpdatedBy     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1668,6 +1688,92 @@ enum EnrollmentRequestStatus {
 }
 
 // -----------------------------------------------------------------------------
+// 🚦 SOLICITUDES DE MÁS CITAS (revisión del límite por paciente)
+//
+// Cuando el bot no asigna una cita porque el paciente llegó al límite del día o
+// del mes (OrganizationSettings.maxAppointmentsPer*), crea aquí una fila
+// INVITED y le manda el enlace /solicitud-citas/{id}: el `id` (UUID v4) ES el
+// token del enlace, como en la encuesta (ChatSurvey). Si el paciente argumenta
+// por qué necesita más citas, la fila pasa a PENDING y aparece en
+// /dashboard/solicitudes-citas (ORG_ADMIN y BOOKING_AGENT).
+//
+// APROBARLA concede `extraGranted` citas adicionales a esa cédula SOLO para ese
+// periodo (`kind` + `periodKey`): el bot las suma al límite de la clínica. No
+// agenda nada por sí sola; el paciente vuelve a escribir al bot, o el personal
+// le agenda desde el panel (que no tiene límite).
+//
+// Reglas de uso en @agenia/shared (limite-citas.ts) y en LimiteCitasService.
+// -----------------------------------------------------------------------------
+model AppointmentLimitRequest {
+  // UUID v4: es también el token público del enlace.
+  id String @id @default(uuid())
+
+  // Qué límite frenó al paciente y para qué periodo, en la zona de la clínica:
+  // 'YYYY-MM-DD' (DAILY) o 'YYYY-MM' (MONTHLY).
+  kind      AppointmentLimitKind
+  periodKey String
+
+  // Contexto del momento en que el bot lo frenó (para el revisor).
+  requestedSlotAt DateTime? // la hora de la cita que quería
+  serviceName     String?
+  limitAtRequest  Int // el tope que aplicaba (con adicionales ya aprobados)
+  countAtRequest  Int // citas vigentes que ya tenía en ese periodo
+  // 'BOOKING' (cita nueva o cupo de lista de espera) | 'RESCHEDULE' (cambio de fecha)
+  operation       String      @default("BOOKING")
+  channel         ChannelKind
+
+  // Paciente (cédula normalizada, como el padrón). Sin FK a PatientProfile a
+  // propósito: la excepción se busca por cédula y debe sobrevivir a una
+  // depuración de la ficha.
+  cedula   String
+  fullName String
+  // Teléfono de contacto: el de WhatsApp si el bot lo conoce; el formulario
+  // permite corregirlo (por Telegram no hay teléfono).
+  phone    String?
+
+  // Lo que escribe el paciente al radicar.
+  reasonCategory String? // MOTIVOS_SOLICITUD_CITAS
+  message        String?   @db.Text
+  extraRequested Int?
+  submittedAt    DateTime?
+  // El enlace deja de servir para radicar (la fila INVITED queda como rastro).
+  expiresAt      DateTime
+
+  status AppointmentLimitRequestStatus @default(INVITED)
+
+  // Revisión. El revisor va como escalares (sin FK), igual que el actor de
+  // GlobalAuditLog: la decisión no se debe perder si se borra el usuario.
+  extraGranted     Int?
+  reviewNote       String?   @db.Text
+  reviewedAt       DateTime?
+  reviewedByUserId String?
+  reviewedByEmail  String?
+
+  // 🏢 TENANT ISOLATION
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status, createdAt])
+  // La consulta del bot: «¿esta cédula tiene adicionales aprobadas para este periodo?».
+  @@index([organizationId, cedula, kind, periodKey])
+}
+
+enum AppointmentLimitKind {
+  DAILY // Citas el mismo día
+  MONTHLY // Citas en el mismo mes calendario
+}
+
+enum AppointmentLimitRequestStatus {
+  INVITED // El bot mandó el enlace; el paciente aún no la radica
+  PENDING // Radicada, esperando revisión
+  APPROVED // Aprobada: concede `extraGranted` citas en ese periodo
+  REJECTED // Rechazada
+}
+
+// -----------------------------------------------------------------------------
 // 📡 MONITOR DE SERVICIOS EXTERNOS (Google / Meta) — incidentes
 // -----------------------------------------------------------------------------
 // El monitor de fondo (MonitorCron, MODO A) NO guarda cada check: solo escribe
@@ -1758,14 +1864,14 @@ model HospitalMirrorConfig {
   availabilityMode MirrorAvailabilityMode @default(OFF)
 
   // Interruptor de emergencia por dirección — independiente de `enabled`.
-  pushEnabled   Boolean @default(true) // AgenIA → HIS
-  pullEnabled   Boolean @default(true) // HIS → AgenIA
+  pushEnabled   Boolean             @default(true) // AgenIA → HIS
+  pullEnabled   Boolean             @default(true) // HIS → AgenIA
   // 🔎 Consulta EN VIVO al HIS desde el rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md §7).
   // APAGADA por defecto y sin pantalla para encenderla, igual que los dos de
   // arriba: es una decisión de CARGA sobre la base del hospital, no de la
   // clínica. Se enciende a mano (ver el RUNBOOK del driver) DESPUÉS de medir el
   // costo de la consulta en el laboratorio del hospital.
-  lookupEnabled Boolean @default(false)
+  lookupEnabled Boolean             @default(false)
   // 🤖 Consulta en vivo desde el BOT («¿qué citas tengo?»). Interruptor PROPIO,
   // separado del de arriba (docs/PLAN_CONSULTA_CITAS.md, D4): la carga del bot
   // crece con los pacientes y la del personal no; el hospital aprueba cada una.
@@ -2386,7 +2492,7 @@ model HisLookupRequest {
 
   /// 'STAFF' (pantalla del rastreo) | 'BOT' (consulta de citas del chatbot).
   /// Los topes de cada uno no cuentan las peticiones del otro.
-  origin String @default("STAFF")
+  origin        String    @default("STAFF")
   /// Cuándo el bot atendió el resultado (segundo mensaje o silencio). Solo BOT.
   botFollowupAt DateTime?
 

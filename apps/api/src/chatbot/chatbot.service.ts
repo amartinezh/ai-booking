@@ -19,6 +19,7 @@ import {
   lineasOpcionesConsulta,
   letrasOpcionesConsulta,
   accionesNoDisponibles,
+  unaOVariasCitas,
   type CanalDelBot,
   type OpcionConsulta,
 } from './chatbot.constants';
@@ -35,6 +36,10 @@ import {
   AppointmentsService,
   AvailableSlot,
 } from 'src/appointments/appointments.service';
+import {
+  LimiteCitasService,
+  type LimiteDelPaciente,
+} from 'src/appointments/limite-citas.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
 import {
   InteractionLogService,
@@ -87,7 +92,9 @@ import {
 import {
   buildWhatsappRecipient,
   chatIdFromTelegramSender,
+  etiquetaPeriodo,
   isTelegramSender,
+  isWhatsappPhoneId,
 } from '@agenia/shared';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
 import {
@@ -326,6 +333,10 @@ export class ChatbotService implements OnModuleInit {
     // H10 (docs/PLAN_AGENDA_HUECOS.md): no se confirma una cita hasta que el
     // hospital la registra. Opcional: sin él (tests), se confirma como antes.
     @Optional() private readonly confirmacionHis?: ConfirmacionHisService,
+    // 🚦 Límite de citas por paciente (/dashboard/limites-citas). Opcional:
+    // sin él (tests), el bot no frena antes de reservar; la reserva igual lo
+    // aplica si su servicio lo tiene.
+    @Optional() private readonly limiteCitas?: LimiteCitasService,
   ) {}
 
   async onModuleInit() {
@@ -2059,6 +2070,173 @@ export class ChatbotService implements OnModuleInit {
     });
     await this.cleanUpSession(organizationId, senderId);
     return true;
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // HELPER 4d: LÍMITE DE CITAS POR PACIENTE
+  // Regla de negocio (/dashboard/limites-citas): el bot no le asigna a un
+  // paciente más citas de las que la clínica permite el mismo día o el mismo
+  // mes, contadas por la fecha de la cita. Se revisa en cuanto el bot conoce la
+  // cédula Y la fecha del cupo (antes de pedir nombre, nacimiento o régimen) y
+  // otra vez dentro de la reserva (`bookAppointment`), que es la palabra final.
+  //
+  // Si pasa del límite: disculpa + teléfono del hospital + enlace para pedir
+  // una revisión, auditoría y cierre de la sesión. Devuelve true si el flujo
+  // debe DETENERSE.
+  // ══════════════════════════════════════════════════════════════
+  private async rejectIfOverAppointmentLimit(p: {
+    organizationId: string;
+    senderId: string;
+    cedula: string | null | undefined;
+    /** Hora del cupo elegido (ISO o Date). */
+    fecha: Date | string | null | undefined;
+    MSGS: ReturnType<typeof buildMessages>;
+    userMessage?: string | null;
+    operacion: 'BOOKING' | 'RESCHEDULE';
+    /** Cambio de fecha: la cita que se mueve no cuenta contra sí misma. */
+    excluirCitaId?: string | null;
+    servicio?: string | null;
+  }): Promise<boolean> {
+    if (!this.limiteCitas || !p.cedula || !p.fecha) return false;
+    const fecha = new Date(p.fecha);
+    if (Number.isNaN(fecha.getTime())) return false;
+
+    let limite: LimiteDelPaciente | null;
+    try {
+      limite = await this.limiteCitas.evaluar({
+        organizationId: p.organizationId,
+        cedula: p.cedula,
+        fecha,
+        excluirCitaId: p.excluirCitaId,
+      });
+    } catch (e: unknown) {
+      // Falla abierta a propósito: la reserva lo vuelve a revisar dentro de su
+      // transacción, así que un error aquí no deja pasar a nadie; solo evita
+      // tumbar la conversación por una lectura.
+      this.logger.error(
+        `No se pudo revisar el límite de citas (org=${p.organizationId}): ${getErrorMessage(e)}`,
+      );
+      return false;
+    }
+    if (!limite) return false;
+
+    await this.avisarLimiteDeCitas({ ...p, fecha, limite });
+    if (p.operacion === 'RESCHEDULE') {
+      await this.cleanUpModifySession(p.organizationId, p.senderId);
+    } else {
+      await this.cleanUpSession(p.organizationId, p.senderId);
+    }
+    return true;
+  }
+
+  /**
+   * El aviso al paciente que llegó al límite: deja lista la solicitud de
+   * revisión (o detecta que ya hay una en curso) y le escribe. Lo usan el
+   * freno temprano y las reservas que `bookAppointment` rechaza por límite.
+   * No cierra la sesión: eso lo decide quien llama.
+   */
+  private async avisarLimiteDeCitas(p: {
+    organizationId: string;
+    senderId: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    limite: LimiteDelPaciente;
+    operacion: 'BOOKING' | 'RESCHEDULE';
+    fecha: Date;
+    servicio?: string | null;
+    userMessage?: string | null;
+  }): Promise<void> {
+    const { organizationId, senderId, MSGS, limite, operacion } = p;
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { supportPhone: true, timezone: true },
+    });
+    const contacto = org?.supportPhone
+      ? MSGS.contactoClinica(org.supportPhone)
+      : MSGS.contactoClinicaSinTelefono();
+
+    // La revisión: enlace para pedirla, aviso de que ya hay una en curso, o
+    // nada si ya radicó el máximo para ese periodo.
+    let solicitud: 'ENLACE' | 'EN_REVISION' | 'SIN_ENLACE' = 'SIN_ENLACE';
+    let solicitudId: string | undefined;
+    let revision = '';
+    try {
+      const preparada = this.limiteCitas
+        ? await this.limiteCitas.prepararSolicitud({
+            organizationId,
+            limite,
+            canal: canalDe(senderId),
+            telefono: isWhatsappPhoneId(senderId) ? senderId : null,
+            operacion,
+            fechaSolicitada: p.fecha,
+            servicio: p.servicio,
+          })
+        : ({ estado: 'SIN_ENLACE' } as const);
+      solicitud = preparada.estado;
+      if (preparada.estado === 'ENLACE') {
+        const baseUrl = (
+          this.configService.get<string>('PUBLIC_WEB_URL') ||
+          'https://agendamiento-ia.com'
+        ).replace(/\/+$/, '');
+        solicitudId = preparada.solicitudId;
+        revision = MSGS.limiteCitasRevisionEnlace(
+          `${baseUrl}/solicitud-citas/${preparada.solicitudId}`,
+        );
+      } else if (preparada.estado === 'EN_REVISION') {
+        revision = MSGS.limiteCitasRevisionEnCurso(
+          limite.tipo === 'DAILY' ? 'ese día' : 'ese mes',
+        );
+      }
+    } catch (e: unknown) {
+      // Sin solicitud, el aviso sigue saliendo con el teléfono del hospital.
+      this.logger.error(
+        `No se pudo preparar la solicitud de más citas (org=${organizationId}): ${getErrorMessage(e)}`,
+      );
+    }
+
+    const periodo = etiquetaPeriodo(
+      limite.tipo,
+      limite.periodo.clave,
+      org?.timezone ?? undefined,
+    );
+    const aviso =
+      operacion === 'RESCHEDULE'
+        ? limite.tipo === 'DAILY'
+          ? MSGS.limiteCitasCambioDia
+          : MSGS.limiteCitasCambioMes
+        : limite.tipo === 'DAILY'
+          ? MSGS.limiteCitasDia
+          : MSGS.limiteCitasMes;
+    const reply = aviso(
+      unaOVariasCitas(limite.limite),
+      unaOVariasCitas(limite.citas),
+      periodo,
+      contacto,
+      revision,
+    );
+    // Texto directo (no smartReply): lleva un enlace que no debe sintetizarse
+    // a voz — mismo criterio que el del padrón EPS y el de la encuesta.
+    await this.sendWhatsAppMessage(senderId, reply);
+
+    await this.auditFailure(senderId, organizationId, {
+      reason: FailureReason.APPOINTMENT_LIMIT_REACHED,
+      userMessage: p.userMessage || '[audio]',
+      botReply: reply,
+      metadata: {
+        stage:
+          operacion === 'RESCHEDULE'
+            ? 'APPOINTMENT_LIMIT_RESCHEDULE'
+            : 'APPOINTMENT_LIMIT_BOOKING',
+        tipo: limite.tipo,
+        periodo: limite.periodo.clave,
+        limite: limite.limite,
+        limiteBase: limite.limiteBase,
+        citas: limite.citas,
+        cedula: limite.paciente.cedula,
+        specialty: p.servicio ?? undefined,
+        solicitud,
+        solicitudId,
+      },
+    });
   }
 
   /**
@@ -6312,6 +6490,26 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
+      // 🚦 LÍMITE DE CITAS: con la cédula y la fecha del cupo ya se sabe si
+      // este paciente puede tener otra cita ese día y ese mes. Va antes de
+      // pedirle nombre, nacimiento o régimen, para no hacerlo contestar en vano.
+      if (
+        await this.rejectIfOverAppointmentLimit({
+          organizationId,
+          senderId,
+          cedula: finalCedula,
+          fecha: await this.redis.get(
+            `temp_selected_date_view:${organizationId}:${senderId}`,
+          ),
+          MSGS,
+          userMessage: text,
+          operacion: 'BOOKING',
+          servicio: resolvedServiceName,
+        })
+      ) {
+        return;
+      }
+
       // Cargar contexto del paciente (solo dentro del tenant actual).
       const patient = await this.prisma.patientProfile.findFirst({
         where: { cedula: finalCedula, organizationId },
@@ -6700,6 +6898,24 @@ export class ChatbotService implements OnModuleInit {
           epsId: epsIdPrevio,
           MSGS,
           userMessage,
+        })
+      ) {
+        return;
+      }
+
+      // 🚦 LÍMITE DE CITAS: mismo motivo que la verificación de arriba.
+      if (
+        await this.rejectIfOverAppointmentLimit({
+          organizationId,
+          senderId,
+          cedula: cedulaPrevia,
+          fecha: slotFechaStr,
+          MSGS,
+          userMessage,
+          operacion: 'BOOKING',
+          servicio: await this.redis.get(
+            `temp_especialidad:${organizationId}:${senderId}`,
+          ),
         })
       ) {
         return;
@@ -7593,6 +7809,26 @@ export class ChatbotService implements OnModuleInit {
             cedula: cedulaFinal,
           },
         });
+        return;
+      } else if (
+        bookingResult.reason === 'PATIENT_LIMIT_REACHED' &&
+        bookingResult.limite
+      ) {
+        // 🚦 La reserva tiene la palabra final del límite de citas: aquí llega
+        // quien completó el límite entre el freno temprano y el SÍ (p. ej. el
+        // hospital le dio otra cita mientras tanto). Otro horario del mismo día
+        // no lo arregla, así que se cierra como el freno temprano.
+        await this.avisarLimiteDeCitas({
+          organizationId,
+          senderId,
+          MSGS,
+          limite: bookingResult.limite,
+          operacion: 'BOOKING',
+          fecha: new Date(fechaVistaFinal),
+          servicio: specFinal,
+          userMessage: text,
+        });
+        await this.cleanUpSession(organizationId, senderId);
         return;
       } else {
         // El servicio distingue "se lo llevó otro paciente" de "el médico dejó
@@ -8610,6 +8846,7 @@ export class ChatbotService implements OnModuleInit {
           where: { id: aptId },
           include: {
             scheduleSlot: { include: { doctor: true, service: true } },
+            patient: { select: { cedula: true } },
           },
         })
       : null;
@@ -8624,6 +8861,25 @@ export class ChatbotService implements OnModuleInit {
         botReply: reply,
         metadata: { stage: 'MODIFY_NEW_SLOT_NO_APT' },
       });
+      return;
+    }
+
+    // 🚦 LÍMITE DE CITAS: mover la cita a un día o un mes en el que ya tiene
+    // el máximo sería otra forma de saltárselo. La cita que se mueve no cuenta
+    // contra sí misma (moverla dentro del mismo día o mes siempre se puede).
+    if (
+      await this.rejectIfOverAppointmentLimit({
+        organizationId,
+        senderId,
+        cedula: apt.patient?.cedula,
+        fecha: newSlotFecha,
+        MSGS,
+        userMessage: text,
+        operacion: 'RESCHEDULE',
+        excluirCitaId: apt.id,
+        servicio: apt.scheduleSlot.service.name,
+      })
+    ) {
       return;
     }
 
@@ -8694,6 +8950,30 @@ export class ChatbotService implements OnModuleInit {
       // reservado: si el HIS lo rechaza, la cita vuelve a él
       // (`MirrorDispatchService.markRejectedByHis`) sin que nadie se lo haya
       // llevado entre tanto. Sin espejo, se libera en el acto, como siempre.
+      // 🚦 El cambio de fecha hace su propia transacción y NO pasa por
+      // `bookAppointment`: el límite de citas se revisa otra vez aquí, porque
+      // pudo entrarle otra cita desde que eligió el cupo.
+      if (this.limiteCitas) {
+        const citaAMover = await this.prisma.appointment.findUnique({
+          where: { id: aptId },
+          select: { patient: { select: { cedula: true } } },
+        });
+        if (
+          await this.rejectIfOverAppointmentLimit({
+            organizationId,
+            senderId,
+            cedula: citaAMover?.patient?.cedula,
+            fecha: newSlotFecha,
+            MSGS,
+            userMessage: text,
+            operacion: 'RESCHEDULE',
+            excluirCitaId: aptId,
+          })
+        ) {
+          return;
+        }
+      }
+
       const esperaAlHospital =
         await this.requiereConfirmacionHis(organizationId);
 
@@ -9464,6 +9744,26 @@ export class ChatbotService implements OnModuleInit {
           slotId,
           patientId,
         },
+      });
+    } else if (
+      bookingResult.reason === 'PATIENT_LIMIT_REACHED' &&
+      bookingResult.limite
+    ) {
+      // 🚦 El cupo que liberó la lista de espera le daría más citas de las
+      // permitidas ese día o ese mes. Mismo aviso que al agendar.
+      const slot = await this.prisma.scheduleSlot.findUnique({
+        where: { id: slotId },
+        include: { service: true },
+      });
+      await this.avisarLimiteDeCitas({
+        organizationId,
+        senderId,
+        MSGS,
+        limite: bookingResult.limite,
+        operacion: 'BOOKING',
+        fecha: slot?.startTime ?? bookingResult.limite.periodo.desde,
+        servicio: slot?.service?.name,
+        userMessage: text,
       });
     } else if (bookingResult.reason === 'EPS_REGIME_NOT_BILLABLE') {
       // No es un cupo: es su EPS+régimen sin convenio (ver la nota gemela

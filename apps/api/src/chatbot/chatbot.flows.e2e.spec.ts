@@ -6,11 +6,19 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { RedisService } from '../redis/redis.service';
 import { AppointmentsService } from 'src/appointments/appointments.service';
+import {
+  LimiteCitasService,
+  type LimiteDelPaciente,
+} from 'src/appointments/limite-citas.service';
 import { WaitlistService } from 'src/waitlist/waitlist.service';
 import { InteractionLogService } from '../interaction-log/interaction-log.service';
 import { ChannelActivityService } from '../interaction-log/channel-activity.service';
 const channelActivity = { record: jest.fn(async () => undefined) };
-import { regimenSeguroDelPadron } from '@agenia/shared';
+import {
+  etiquetaPeriodo,
+  periodoDelLimite,
+  regimenSeguroDelPadron,
+} from '@agenia/shared';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { LlmFactoryService } from '../llm/llm-factory.service';
@@ -329,6 +337,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     notifyWaitlist: jest.Mock;
     confirmFromWaitlist: jest.Mock;
   };
+  // 🚦 Límite de citas por paciente: por defecto nadie lo alcanza, así que
+  // los flujos de siempre no cambian; la sección 11 lo enciende.
+  let limiteCitas: { evaluar: jest.Mock; prepararSolicitud: jest.Mock };
   let interactionLog: Record<string, jest.Mock>;
   let surveySpy: jest.SpyInstance;
   let sendSpy: jest.SpyInstance;
@@ -403,6 +414,13 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         patientId: null,
       })),
     };
+    limiteCitas = {
+      evaluar: jest.fn(async () => null),
+      prepararSolicitud: jest.fn(async () => ({
+        estado: 'ENLACE',
+        solicitudId: 'sol-1',
+      })),
+    };
     interactionLog = {
       logSuccess: jest.fn(async () => {}),
       logFailure: jest.fn(async () => {}),
@@ -422,6 +440,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         { provide: RedisService, useValue: redis },
         { provide: AppointmentsService, useValue: appointments },
         { provide: WaitlistService, useValue: waitlist },
+        { provide: LimiteCitasService, useValue: limiteCitas },
         { provide: InteractionLogService, useValue: interactionLog },
         { provide: ChannelActivityService, useValue: channelActivity },
         {
@@ -2765,6 +2784,333 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         await confirmarCupoDeLista(EPS_SURA.id);
 
         expect(appointments.bookAppointment.mock.calls[0][2]).toBe(EPS_SURA.id);
+      });
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 11. LÍMITE DE CITAS POR PACIENTE (/dashboard/limites-citas)
+  // El bot no le asigna a un paciente más citas de las permitidas el mismo
+  // día o el mismo mes: se disculpa, lo remite al teléfono del hospital y le
+  // deja el enlace para pedir una revisión. La regla (qué cuenta, en qué
+  // zona) se prueba en limite-citas.service.spec y en @agenia/shared; aquí,
+  // dónde la consulta el bot y qué hace con la respuesta.
+  // ──────────────────────────────────────────────────────────────────
+  describe('11. Límite de citas por paciente', () => {
+    const CEDULA = '999888';
+    const TELEFONO_HOSPITAL = '6068538838';
+
+    /** Lo que responde el servicio cuando el paciente ya tiene el máximo. */
+    const superado = (
+      tipo: 'DAILY' | 'MONTHLY',
+      fecha: Date,
+      citas = tipo === 'DAILY' ? 1 : 3,
+    ): LimiteDelPaciente => ({
+      tipo,
+      limite: tipo === 'DAILY' ? 1 : 3,
+      limiteBase: tipo === 'DAILY' ? 1 : 3,
+      citas,
+      periodo: periodoDelLimite(tipo, fecha),
+      paciente: { id: 'pat-known', cedula: CEDULA, fullName: 'María Ruiz' },
+    });
+
+    const fallasPorLimite = () =>
+      interactionLog.logFailure.mock.calls.filter(
+        (c: any[]) => c[0]?.reason === 'APPOINTMENT_LIMIT_REACHED',
+      );
+
+    beforeEach(() => {
+      db.slots = [
+        slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA),
+        slotRow('slot-b', FECHA_B, 'Luis Gómez', SVC_MEDICINA),
+      ];
+      appointments.getAvailableSlots.mockImplementation(() =>
+        db.slots
+          .filter((s) => s.isAvailable)
+          .map((s) => ({
+            slotId: s.id,
+            fecha: s.startTime,
+            doctor: s.doctor.fullName,
+            servicio: s.service.name,
+          })),
+      );
+      db.patients.push({
+        id: 'pat-known',
+        cedula: CEDULA,
+        fullName: 'María Ruiz',
+        organizationId: ORG_ID,
+        epsId: null,
+        whatsappId: SENDER,
+        dateOfBirth: new Date('1975-06-01'),
+        gender: 'F',
+      });
+      // El aviso remite al teléfono del hospital.
+      prisma.organization.findUnique.mockImplementation(() => ({
+        id: ORG_ID,
+        name: ORG_NAME,
+        supportPhone: TELEFONO_HOSPITAL,
+        timezone: null,
+      }));
+    });
+
+    it('11.1 ya tiene una cita ese día: al dar la cédula se disculpa, da el teléfono y el enlace de revisión, y no reserva', async () => {
+      limiteCitas.evaluar.mockResolvedValue(superado('DAILY', FECHA_A));
+
+      await say('Hola');
+      await say('A'); // Medicina General
+      await say('A'); // Particular
+      await say('A'); // cupo A (FECHA_A)
+      await say(CEDULA);
+
+      // Se consultó con SU cédula y la hora del cupo que eligió.
+      expect(limiteCitas.evaluar).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: ORG_ID,
+          cedula: CEDULA,
+          fecha: FECHA_A,
+        }),
+      );
+      const aviso = lastSent();
+      expect(aviso).toMatch(/Lamentamos no poder agendarle/);
+      expect(aviso).toContain('máximo *una cita* el mismo día');
+      expect(aviso).toContain(etiquetaPeriodo('DAILY', '2026-09-15'));
+      expect(aviso).toContain(TELEFONO_HOSPITAL);
+      expect(aviso).toContain('/solicitud-citas/sol-1');
+      expect(aviso).toContain('"Hola"'); // puede elegir otro día
+
+      // La solicitud se preparó con el contexto del freno.
+      expect(limiteCitas.prepararSolicitud).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: ORG_ID,
+          canal: 'WHATSAPP',
+          telefono: SENDER,
+          operacion: 'BOOKING',
+          fechaSolicitada: FECHA_A,
+          servicio: 'Medicina General',
+        }),
+      );
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
+      expect(await state()).toBe(ChatState.IDLE);
+      expect(
+        redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`),
+      ).toBeUndefined();
+
+      const [falla] = fallasPorLimite();
+      expect(falla[0].metadata).toEqual(
+        expect.objectContaining({
+          stage: 'APPOINTMENT_LIMIT_BOOKING',
+          tipo: 'DAILY',
+          periodo: '2026-09-15',
+          solicitud: 'ENLACE',
+          solicitudId: 'sol-1',
+        }),
+      );
+    });
+
+    it('11.2 límite del mes con una revisión ya en curso: no manda otro enlace, le dice que está en estudio', async () => {
+      limiteCitas.evaluar.mockResolvedValue(superado('MONTHLY', FECHA_A));
+      limiteCitas.prepararSolicitud.mockResolvedValue({
+        estado: 'EN_REVISION',
+      });
+
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say(CEDULA);
+
+      const aviso = lastSent();
+      expect(aviso).toContain('máximo *3 citas* en un mismo mes');
+      expect(aviso).toContain('*septiembre de 2026*');
+      expect(aviso).toMatch(
+        /Ya recibimos su \*solicitud de revisión\* para ese mes/,
+      );
+      expect(aviso).not.toContain('/solicitud-citas/');
+      expect(aviso).toContain(TELEFONO_HOSPITAL);
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
+    });
+
+    it('11.3 ya radicó el máximo de solicitudes: solo el teléfono del hospital', async () => {
+      limiteCitas.evaluar.mockResolvedValue(superado('DAILY', FECHA_A));
+      limiteCitas.prepararSolicitud.mockResolvedValue({ estado: 'SIN_ENLACE' });
+
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say(CEDULA);
+
+      const aviso = lastSent();
+      expect(aviso).toContain(TELEFONO_HOSPITAL);
+      expect(aviso).not.toMatch(/solicitud de revisión|solicitud-citas/);
+      expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    it('11.4 si la solicitud no se puede preparar, el aviso sale igual con el teléfono', async () => {
+      limiteCitas.evaluar.mockResolvedValue(superado('DAILY', FECHA_A));
+      limiteCitas.prepararSolicitud.mockRejectedValue(new Error('BD caída'));
+
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say(CEDULA);
+
+      expect(lastSent()).toContain(TELEFONO_HOSPITAL);
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
+      expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    it('11.5 sin límite alcanzado sigue al resumen como siempre', async () => {
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say(CEDULA);
+
+      expect(limiteCitas.evaluar).toHaveBeenCalledTimes(1);
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      expect(fallasPorLimite()).toHaveLength(0);
+    });
+
+    it('11.6 un error al revisar el límite no tumba la conversación (la reserva lo revisa otra vez)', async () => {
+      limiteCitas.evaluar.mockRejectedValue(new Error('timeout'));
+
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say(CEDULA);
+
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+    });
+
+    it('11.7 la reserva lo frena en el SÍ (le entró otra cita mientras tanto): aviso y no confirma', async () => {
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say(CEDULA);
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+
+      appointments.bookAppointment.mockResolvedValueOnce({
+        success: false,
+        reason: 'PATIENT_LIMIT_REACHED',
+        limite: superado('DAILY', FECHA_A),
+      });
+      await say('Sí');
+
+      expect(lastSent()).toMatch(/Lamentamos no poder agendarle/);
+      expect(lastSent()).toContain('/solicitud-citas/sol-1');
+      expect(interactionLog.logBookingConfirmed).not.toHaveBeenCalled();
+      expect(surveySpy).not.toHaveBeenCalled();
+      expect(fallasPorLimite()).toHaveLength(1);
+      expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    it('11.8 cupo de la lista de espera que lo pasaría del límite: aviso en vez de confirmación', async () => {
+      db.slots.push(slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA));
+      waitlist.confirmFromWaitlist.mockResolvedValue({
+        slotId: 'slot-free',
+        patientId: 'pat-known',
+        epsId: null,
+      });
+      appointments.bookAppointment.mockResolvedValueOnce({
+        success: false,
+        reason: 'PATIENT_LIMIT_REACHED',
+        limite: superado('MONTHLY', FECHA_C),
+      });
+
+      await service.notifyWaitlistCandidate({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+        nombre: 'María Ruiz',
+        especialidad: 'Medicina General',
+        doctor: 'Ana Pérez',
+        slotDate: FECHA_C,
+      });
+      await say('Sí');
+
+      expect(lastSent()).toContain('en un mismo mes');
+      expect(limiteCitas.prepararSolicitud).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operacion: 'BOOKING',
+          fechaSolicitada: FECHA_C,
+          servicio: 'Medicina General',
+        }),
+      );
+      expect(interactionLog.logBookingConfirmed).not.toHaveBeenCalled();
+      expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    describe('cambio de fecha', () => {
+      beforeEach(() => {
+        const ocupado = slotRow('slot-old', FECHA_C, 'Ana Pérez', SVC_MEDICINA);
+        ocupado.isAvailable = false;
+        db.slots.push(ocupado);
+        db.appointments.push({
+          id: 'apt-0',
+          patientId: 'pat-known',
+          scheduleSlotId: 'slot-old',
+          status: 'SCHEDULED',
+          epsId: null,
+          organizationId: ORG_ID,
+          patient: { cedula: CEDULA },
+        });
+      });
+
+      it('11.9 mover la cita a un día con el máximo: aviso de cambio y la cita no se mueve', async () => {
+        limiteCitas.evaluar.mockResolvedValue(superado('DAILY', FECHA_A));
+
+        await say('reprogramar mi cita');
+        await say(CEDULA);
+        expect(await state()).toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
+        await say('A'); // FECHA_A
+
+        // La cita que se mueve no cuenta contra sí misma.
+        expect(limiteCitas.evaluar).toHaveBeenCalledWith(
+          expect.objectContaining({
+            cedula: CEDULA,
+            fecha: FECHA_A,
+            excluirCitaId: 'apt-0',
+          }),
+        );
+        expect(lastSent()).toMatch(
+          /Lamentamos no poder cambiar su cita a esa fecha/,
+        );
+        expect(lastSent()).toContain('"cambiar cita"');
+        expect(limiteCitas.prepararSolicitud).toHaveBeenCalledWith(
+          expect.objectContaining({ operacion: 'RESCHEDULE' }),
+        );
+        expect(db.appointments[0].scheduleSlotId).toBe('slot-old');
+        expect(await state()).toBe(ChatState.IDLE);
+      });
+
+      it('11.10 se revisa otra vez al confirmar (el cambio no pasa por la reserva)', async () => {
+        await say('reprogramar mi cita');
+        await say(CEDULA);
+        await say('A');
+        expect(await state()).toBe(ChatState.AWAITING_MODIFY_CONFIRM);
+
+        limiteCitas.evaluar.mockResolvedValue(superado('DAILY', FECHA_A));
+        await say('Sí');
+
+        expect(limiteCitas.evaluar).toHaveBeenLastCalledWith(
+          expect.objectContaining({ excluirCitaId: 'apt-0', fecha: FECHA_A }),
+        );
+        expect(db.appointments[0].scheduleSlotId).toBe('slot-old');
+        expect(db.slots.find((s) => s.id === 'slot-a')!.isAvailable).toBe(true);
+        expect(await state()).toBe(ChatState.IDLE);
+      });
+
+      it('11.11 sin límite alcanzado, el cambio sigue como siempre', async () => {
+        await say('reprogramar mi cita');
+        await say(CEDULA);
+        await say('A');
+        await say('Sí');
+
+        expect(db.appointments[0].scheduleSlotId).toBe('slot-a');
+        expect(fallasPorLimite()).toHaveLength(0);
       });
     });
   });

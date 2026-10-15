@@ -212,3 +212,43 @@ describe('Bandeja de sincronización (Fase 3 del rastreo)', () => {
         expect(menus.filter((m) => m.href === HREF)).toHaveLength(1);
     });
 });
+
+describe('Límite de citas y solicitudes de más citas (2026-10-14)', () => {
+    const LIMITE = '/dashboard/limites-citas';
+    const SOLICITUDES = '/dashboard/solicitudes-citas';
+    const tiene = (menus: { href: string }[], href: string) => menus.some((m) => m.href === href);
+
+    it.each(['ORG_ADMIN', 'BOOKING_AGENT'] as const)('%s ve las dos opciones, sin depender del espejo', (rol) => {
+        for (const opts of [{}, { conEspejo: true }]) {
+            const menus = getMenusForRole(rol, opts);
+            expect(tiene(menus, LIMITE)).toBe(true);
+            expect(tiene(menus, SOLICITUDES)).toBe(true);
+            expect(menus[menus.length - 1].href).toBe('/dashboard/soporte');
+        }
+    });
+
+    it.each(['DOCTOR', 'PATIENT', 'GENERAL_OBSERVER', 'SUPER_ADMIN'] as const)('%s no las ve', (rol) => {
+        const menus = getMenusForRole(rol, { pendientesSolicitudesCitas: 5 });
+        expect(tiene(menus, LIMITE)).toBe(false);
+        expect(tiene(menus, SOLICITUDES)).toBe(false);
+    });
+
+    it('la cifra de pendientes va en «Solicitudes de más citas» y solo si hay', () => {
+        const con = getMenusForRole('BOOKING_AGENT', { pendientesSolicitudesCitas: 2 }).find((m) => m.href === SOLICITUDES);
+        expect(con?.badge).toBe(2);
+        const sin = getMenusForRole('BOOKING_AGENT', { pendientesSolicitudesCitas: 0 }).find((m) => m.href === SOLICITUDES);
+        expect(sin?.badge).toBeUndefined();
+    });
+
+    it('la cifra de una clínica no se le pega al menú de otra (el ítem base es compartido)', () => {
+        getMenusForRole('ORG_ADMIN', { pendientesSolicitudesCitas: 7 });
+        const otro = getMenusForRole('ORG_ADMIN').find((m) => m.href === SOLICITUDES);
+        expect(otro?.badge).toBeUndefined();
+    });
+
+    it('las dos cifras (bandeja y solicitudes) conviven', () => {
+        const menus = getMenusForRole('ORG_ADMIN', { conEspejo: true, pendientesBandeja: 3, pendientesSolicitudesCitas: 1 });
+        expect(menus.find((m) => m.href === '/dashboard/bandeja')?.badge).toBe(3);
+        expect(menus.find((m) => m.href === SOLICITUDES)?.badge).toBe(1);
+    });
+});

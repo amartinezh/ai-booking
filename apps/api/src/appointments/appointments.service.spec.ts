@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppointmentsService } from './appointments.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { LimiteCitasService } from './limite-citas.service';
 
 describe('AppointmentsService', () => {
   let service: AppointmentsService;
@@ -1096,4 +1097,112 @@ describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
       expect(tx.appointment.update).not.toHaveBeenCalled();
     });
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🚦 LÍMITE DE CITAS POR PACIENTE (/dashboard/limites-citas)
+//
+// La reserva es la palabra final del límite: el chatbot ya lo revisa antes de
+// pedir datos, pero aquí, dentro de la transacción, se cubre todo camino que
+// llegue a reservar (la lista de espera incluida). Solo para el bot: el
+// personal (MANUAL) y el hospital (MIRROR) no tienen límite.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('bookAppointment — límite de citas por paciente', () => {
+  const superado = {
+    tipo: 'DAILY' as const,
+    limite: 1,
+    limiteBase: 1,
+    citas: 1,
+    periodo: {
+      tipo: 'DAILY' as const,
+      clave: '2026-10-20',
+      desde: new Date('2026-10-20T05:00:00.000Z'),
+      hasta: new Date('2026-10-21T05:00:00.000Z'),
+    },
+    paciente: { id: 'p1', cedula: '1088123456', fullName: 'Ana Ruiz' },
+  };
+  const INICIO = new Date('2026-10-20T14:37:00.000Z');
+
+  const conLimite = async (respuesta: typeof superado | null) => {
+    const tx = {
+      scheduleSlot: {
+        findUnique: jest.fn(() => ({
+          id: 's1',
+          isAvailable: true,
+          organizationId: 'org1',
+          startTime: INICIO,
+          doctor: { whatsappBookingEnabled: true },
+        })),
+        update: jest.fn(),
+      },
+      patientProfile: {
+        findUnique: jest.fn(() => ({ cedula: '1088123456' })),
+      },
+      appointment: { create: jest.fn(() => ({ id: 'apt1' })) },
+      $executeRawUnsafe: jest.fn(),
+    };
+    const limiteCitas = { evaluar: jest.fn(async () => respuesta) };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AppointmentsService,
+        {
+          provide: PrismaService,
+          useValue: { $transaction: jest.fn((cb: any) => cb(tx)) },
+        },
+        { provide: LimiteCitasService, useValue: limiteCitas },
+      ],
+    }).compile();
+    return {
+      svc: module.get<AppointmentsService>(AppointmentsService),
+      tx,
+      limiteCitas,
+    };
+  };
+
+  it.each(['WHATSAPP', 'TELEGRAM'] as const)(
+    '%s: con el límite alcanzado no reserva y devuelve el detalle',
+    async (origin) => {
+      const { svc, tx, limiteCitas } = await conLimite(superado);
+
+      const r = await svc.bookAppointment('p1', 's1', null, origin, 'org1');
+
+      expect(r).toEqual(
+        expect.objectContaining({
+          success: false,
+          reason: 'PATIENT_LIMIT_REACHED',
+          limite: superado,
+        }),
+      );
+      expect(tx.appointment.create).not.toHaveBeenCalled();
+      expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+      // Se revisa con la cédula del paciente y la hora del cupo, DENTRO de la
+      // transacción (recibe el cliente `tx`).
+      expect(limiteCitas.evaluar).toHaveBeenCalledWith(
+        { organizationId: 'org1', cedula: '1088123456', fecha: INICIO },
+        tx,
+      );
+    },
+  );
+
+  it('sin límite alcanzado, la reserva pasa', async () => {
+    const { svc, tx } = await conLimite(null);
+
+    const r = await svc.bookAppointment('p1', 's1', null, 'WHATSAPP', 'org1');
+
+    expect(r.success).toBe(true);
+    expect(tx.appointment.create).toHaveBeenCalled();
+  });
+
+  it.each(['MANUAL', 'MIRROR'] as const)(
+    '%s no tiene límite: ni siquiera se consulta',
+    async (origin) => {
+      const { svc, tx, limiteCitas } = await conLimite(superado);
+
+      const r = await svc.bookAppointment('p1', 's1', null, origin, 'org1');
+
+      expect(r.success).toBe(true);
+      expect(tx.appointment.create).toHaveBeenCalled();
+      expect(limiteCitas.evaluar).not.toHaveBeenCalled();
+    },
+  );
 });

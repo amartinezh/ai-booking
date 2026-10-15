@@ -1,6 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { doctorLabel } from '../common/doctor-label.util';
+import {
+  LimiteCitasService,
+  type LimiteDelPaciente,
+} from './limite-citas.service';
 import { Prisma, AttendanceStatus } from '@agenia/database';
 import {
   CUPOS_OFRECIDOS,
@@ -31,11 +35,23 @@ interface BlockedEpsRegimeCombo {
   regime: string;
 }
 
+/** Lo lanza la transacción de la reserva para devolver el detalle del límite. */
+class LimiteCitasSuperadoError extends Error {
+  constructor(readonly limite: LimiteDelPaciente) {
+    super('PATIENT_LIMIT_REACHED');
+  }
+}
+
 @Injectable()
 export class AppointmentsService {
   private readonly logger = new Logger(AppointmentsService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    // 🚦 Límite de citas por paciente (solo reservas del bot). Opcional: sin él
+    // (pruebas que arman el servicio a mano) la reserva no lo aplica.
+    @Optional() private readonly limiteCitas?: LimiteCitasService,
+  ) {}
 
   // 1. LÓGICA DE BÚSQUEDA H.I.S
   // `organizationId` es OBLIGATORIO: con el parámetro opcional, un caller que
@@ -222,7 +238,10 @@ export class AppointmentsService {
       | 'SLOT_TAKEN'
       | 'DOCTOR_NOT_BOOKABLE'
       | 'EPS_REGIME_NOT_BILLABLE'
-      | 'PATIENT_REGIME_MISSING';
+      | 'PATIENT_REGIME_MISSING'
+      | 'PATIENT_LIMIT_REACHED';
+    /** Solo con `PATIENT_LIMIT_REACHED`: qué límite y cuántas citas tenía. */
+    limite?: LimiteDelPaciente;
   }> {
     try {
       let appointmentId: string | undefined;
@@ -268,6 +287,35 @@ export class AppointmentsService {
         // es exactamente lo que el espejo existe para evitar.
         if (origin !== 'MIRROR' && !slot.doctor.whatsappBookingEnabled) {
           throw new Error('DOCTOR_NOT_BOOKABLE');
+        }
+
+        // 🚦 LÍMITE DE CITAS POR PACIENTE: el bot no le asigna a un paciente
+        // más citas de las que la clínica permite el mismo día o el mismo mes
+        // (/dashboard/limites-citas). El chatbot ya lo revisa antes de pedir
+        // datos; esta es la palabra final, dentro de la transacción, y cubre
+        // también el cupo que ofrece la lista de espera. Solo el bot: MANUAL
+        // (el personal) y MIRROR (el hospital) no tienen límite. Va antes de
+        // las reglas de EPS para no preguntarle el régimen a quien de todos
+        // modos no va a poder agendar.
+        if (
+          (origin === 'WHATSAPP' || origin === 'TELEGRAM') &&
+          this.limiteCitas
+        ) {
+          const paciente = await tx.patientProfile.findUnique({
+            where: { id: patientId },
+            select: { cedula: true },
+          });
+          const superado = paciente
+            ? await this.limiteCitas.evaluar(
+                {
+                  organizationId,
+                  cedula: paciente.cedula,
+                  fecha: slot.startTime,
+                },
+                tx,
+              )
+            : null;
+          if (superado) throw new LimiteCitasSuperadoError(superado);
         }
 
         // 🧾 EPS+régimen sin convenio de facturación en el HIS. Antes esto
@@ -380,6 +428,20 @@ export class AppointmentsService {
       // no por este canal. Merece su propio mensaje, no el de "se lo llevó
       // otro paciente", que sería mentira.
       const message = error instanceof Error ? error.message : undefined;
+
+      if (error instanceof LimiteCitasSuperadoError) {
+        this.logger.warn(
+          `Reserva frenada: el paciente ${patientId} ya tiene ${error.limite.citas} ` +
+            `cita(s) en ${error.limite.periodo.clave} (límite ${error.limite.limite}).`,
+        );
+        return {
+          success: false,
+          reason: 'PATIENT_LIMIT_REACHED',
+          limite: error.limite,
+          message:
+            'El paciente ya tiene el máximo de citas permitido para ese periodo.',
+        };
+      }
 
       if (message === 'DOCTOR_NOT_BOOKABLE') {
         this.logger.warn(

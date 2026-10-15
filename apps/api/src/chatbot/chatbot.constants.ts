@@ -214,6 +214,21 @@ export const accionesNoDisponibles = (ops: OperacionDelPaciente[]): string =>
   );
 
 // ─────────────────────────────────────────────────────────────
+// LÍMITE DE CITAS POR PACIENTE — el paciente ya tiene el máximo de citas que
+// la clínica permite el mismo día o el mismo mes (/dashboard/limites-citas).
+// El aviso se disculpa, explica el límite, remite al teléfono del hospital y
+// cierra con la revisión: el enlace para pedirla (`limiteCitasRevisionEnlace`),
+// el aviso de que ya hay una en curso (`limiteCitasRevisionEnCurso`) o nada
+// (el paciente ya radicó el máximo). Lleva un enlace: va como TEXTO, nunca a
+// voz. Hay un mensaje por caso (día/mes × agendar/cambiar la fecha); las
+// piezas las arma el servicio con estas funciones, iguales en los dos estilos.
+// ─────────────────────────────────────────────────────────────
+
+/** «una cita», «2 citas». */
+export const unaOVariasCitas = (n: number): string =>
+  n === 1 ? 'una cita' : `${n} citas`;
+
+// ─────────────────────────────────────────────────────────────
 // Helper: selección pseudo-aleatoria de variantes.
 // Permite que el bot no repita exactamente la misma frase cada vez.
 // ─────────────────────────────────────────────────────────────
@@ -369,6 +384,71 @@ const FORMAL = {
         `_Apenas la institución apruebe su alta, podrá agendar por su EPS. Mientras tanto, si desea, ` +
         `escríbame *"Hola"* para agendar como *Particular*._ 💙`,
     ]),
+
+  // ── LÍMITE DE CITAS POR PACIENTE ──────────────────────────────────────
+  // `maximo` y `citas` salen de `unaOVariasCitas`; `dia`/`mes`, de
+  // `etiquetaPeriodo`; `contacto`, de contactoClinica; `revision`, de
+  // limiteCitasRevisionEnlace / limiteCitasRevisionEnCurso (o vacío).
+  limiteCitasDia: (
+    maximo: string,
+    citas: string,
+    dia: string,
+    contacto: string,
+    revision: string,
+  ) =>
+    `Lamentamos no poder agendarle esta cita por este medio. 🙏\n\n` +
+    `Por disposición de la institución, cada paciente puede tener máximo *${maximo}* el mismo día, ` +
+    `y usted ya tiene *${citas}* para el *${dia}*.\n\n` +
+    `Si necesita atención adicional, por favor comuníquese con ${contacto}.${revision}\n\n` +
+    `_Si lo prefiere, escríbame *"Hola"* y elija otro día._ 💙`,
+
+  limiteCitasMes: (
+    maximo: string,
+    citas: string,
+    mes: string,
+    contacto: string,
+    revision: string,
+  ) =>
+    `Lamentamos no poder agendarle esta cita por este medio. 🙏\n\n` +
+    `Por disposición de la institución, cada paciente puede tener máximo *${maximo}* en un mismo mes, ` +
+    `y usted ya tiene *${citas}* en *${mes}*.\n\n` +
+    `Si necesita atención adicional, por favor comuníquese con ${contacto}.${revision}\n\n` +
+    `_Si lo prefiere, escríbame *"Hola"* y elija una fecha de otro mes._ 💙`,
+
+  limiteCitasCambioDia: (
+    maximo: string,
+    citas: string,
+    dia: string,
+    contacto: string,
+    revision: string,
+  ) =>
+    `Lamentamos no poder cambiar su cita a esa fecha por este medio. 🙏\n\n` +
+    `Por disposición de la institución, cada paciente puede tener máximo *${maximo}* el mismo día, ` +
+    `y usted ya tiene *${citas}* para el *${dia}*.\n\n` +
+    `Si necesita atención adicional, por favor comuníquese con ${contacto}.${revision}\n\n` +
+    `_Su cita sigue como estaba. Si lo prefiere, escríbame *"cambiar cita"* y elija otro día._ 💙`,
+
+  limiteCitasCambioMes: (
+    maximo: string,
+    citas: string,
+    mes: string,
+    contacto: string,
+    revision: string,
+  ) =>
+    `Lamentamos no poder cambiar su cita a esa fecha por este medio. 🙏\n\n` +
+    `Por disposición de la institución, cada paciente puede tener máximo *${maximo}* en un mismo mes, ` +
+    `y usted ya tiene *${citas}* en *${mes}*.\n\n` +
+    `Si necesita atención adicional, por favor comuníquese con ${contacto}.${revision}\n\n` +
+    `_Su cita sigue como estaba. Si lo prefiere, escríbame *"cambiar cita"* y elija una fecha de otro mes._ 💙`,
+
+  limiteCitasRevisionEnlace: (enlace: string) =>
+    `\n\nSi considera que requiere más citas de las permitidas, puede elevar una *solicitud de revisión* ` +
+    `en este enlace seguro, explicándonos por qué las necesita; nuestro equipo estudiará su caso:\n${enlace}`,
+
+  // `periodo`: «ese día» o «ese mes».
+  limiteCitasRevisionEnCurso: (periodo: string) =>
+    `\n\nYa recibimos su *solicitud de revisión* para ${periodo} y nuestro equipo la está estudiando. ` +
+    `Si la aprueban, podrá agendar por este medio.`,
 
   cuposDisponibles: (nombre: string, epsName: string, lineas: string) =>
     pick([
@@ -1377,6 +1457,67 @@ const INFORMAL = {
         `_Apenas aprueben tu alta podrás agendar por tu EPS. Mientras tanto, si quieres, ` +
         `escríbeme *"Hola"* y te agendo como *Particular*._ 💙`,
     ]),
+
+  // ── LÍMITE DE CITAS POR PACIENTE (ver el pool formal) ─────────────────
+  limiteCitasDia: (
+    maximo: string,
+    citas: string,
+    dia: string,
+    contacto: string,
+    revision: string,
+  ) =>
+    `Qué pena contigo, no puedo agendarte esta cita por aquí. 🙏\n\n` +
+    `En el hospital cada paciente puede tener máximo *${maximo}* el mismo día, ` +
+    `y ya tienes *${citas}* para el *${dia}*.\n\n` +
+    `Si necesitas atención adicional, comunícate con ${contacto}.${revision}\n\n` +
+    `_Si prefieres, escríbeme *"Hola"* y elige otro día._ 💙`,
+
+  limiteCitasMes: (
+    maximo: string,
+    citas: string,
+    mes: string,
+    contacto: string,
+    revision: string,
+  ) =>
+    `Qué pena contigo, no puedo agendarte esta cita por aquí. 🙏\n\n` +
+    `En el hospital cada paciente puede tener máximo *${maximo}* en un mismo mes, ` +
+    `y ya tienes *${citas}* en *${mes}*.\n\n` +
+    `Si necesitas atención adicional, comunícate con ${contacto}.${revision}\n\n` +
+    `_Si prefieres, escríbeme *"Hola"* y elige una fecha de otro mes._ 💙`,
+
+  limiteCitasCambioDia: (
+    maximo: string,
+    citas: string,
+    dia: string,
+    contacto: string,
+    revision: string,
+  ) =>
+    `Qué pena contigo, no puedo cambiar tu cita a esa fecha por aquí. 🙏\n\n` +
+    `En el hospital cada paciente puede tener máximo *${maximo}* el mismo día, ` +
+    `y ya tienes *${citas}* para el *${dia}*.\n\n` +
+    `Si necesitas atención adicional, comunícate con ${contacto}.${revision}\n\n` +
+    `_Tu cita sigue como estaba. Si prefieres, escríbeme *"cambiar cita"* y elige otro día._ 💙`,
+
+  limiteCitasCambioMes: (
+    maximo: string,
+    citas: string,
+    mes: string,
+    contacto: string,
+    revision: string,
+  ) =>
+    `Qué pena contigo, no puedo cambiar tu cita a esa fecha por aquí. 🙏\n\n` +
+    `En el hospital cada paciente puede tener máximo *${maximo}* en un mismo mes, ` +
+    `y ya tienes *${citas}* en *${mes}*.\n\n` +
+    `Si necesitas atención adicional, comunícate con ${contacto}.${revision}\n\n` +
+    `_Tu cita sigue como estaba. Si prefieres, escríbeme *"cambiar cita"* y elige una fecha de otro mes._ 💙`,
+
+  limiteCitasRevisionEnlace: (enlace: string) =>
+    `\n\nSi crees que necesitas más citas de las permitidas, puedes pedir una *solicitud de revisión* ` +
+    `en este enlace seguro y contarnos por qué; el equipo estudiará tu caso:\n${enlace}`,
+
+  limiteCitasRevisionEnCurso: (periodo: string) =>
+    `\n\nYa recibimos tu *solicitud de revisión* para ${periodo} y el equipo la está estudiando. ` +
+    `Si la aprueban, podrás agendar por aquí.`,
 
   cuposDisponibles: (nombre: string, epsName: string, lineas: string) =>
     pick([

@@ -75,6 +75,7 @@ const MOTIVOS: Record<string, string> = {
     EPS_NOT_FOUND: 'EPS no encontrada',
     EPS_INACTIVE: 'EPS inactiva',
     EPS_NOT_ENROLLED: 'No está en el padrón de la EPS',
+    APPOINTMENT_LIMIT_REACHED: 'Llegó al límite de citas',
     EPS_REGIME_NOT_BILLABLE: 'EPS/régimen sin convenio',
     PATIENT_REGIME_MISSING: 'Paciente sin régimen',
     UNINTELLIGIBLE_AUDIO: 'Audio ininteligible',

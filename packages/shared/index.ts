@@ -302,3 +302,26 @@ export type {
   Granularidad,
   RangoResuelto,
 } from './src/rango-estadisticas';
+
+export {
+  LIMITE_CITAS,
+  SOLICITUD_CITAS,
+  MOTIVOS_SOLICITUD_CITAS,
+  TEXTO_TIPO_LIMITE,
+  normalizarLimiteDia,
+  normalizarLimiteMes,
+  limitesDeLaClinica,
+  periodoDelLimite,
+  etiquetaPeriodo,
+  evaluarLimiteCitas,
+  esMotivoSolicitudCitas,
+  etiquetaMotivoSolicitudCitas,
+  citasEnTexto,
+} from './src/limite-citas';
+export type {
+  TipoLimiteCitas,
+  LimitesCitas,
+  PeriodoLimite,
+  LimiteSuperado,
+  MotivoSolicitudCitas,
+} from './src/limite-citas';

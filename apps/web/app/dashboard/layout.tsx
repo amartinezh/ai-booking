@@ -7,6 +7,7 @@ import BrandLogo from '@/app/components/BrandLogo';
 import { getMenusForRole } from '../../lib/menus';
 import { getTenantMirrorFlags } from '../../lib/mirror-flags';
 import { pendientesParaMenu } from '../../lib/bandeja/pendientes';
+import { solicitudesCitasPendientes } from '../../lib/limite-citas/acceso';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
     const session = await getSession();
@@ -48,7 +49,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
     const { conEspejo, conAvisos, conAvisosDriver } = await getTenantMirrorFlags(session.organizationId);
     // La cifra de la bandeja de sincronización (solo quien la trabaja, solo con espejo).
     const pendientesBandeja = await pendientesParaMenu(prisma, session, conEspejo);
-    const menus = getMenusForRole(role, { conEspejo, conAvisos, conAvisosDriver, pendientesBandeja });
+    // La cifra de solicitudes de más citas por revisar (ORG_ADMIN y BOOKING_AGENT).
+    const pendientesSolicitudesCitas = await solicitudesCitasPendientes(prisma, session);
+    const menus = getMenusForRole(role, {
+        conEspejo,
+        conAvisos,
+        conAvisosDriver,
+        pendientesBandeja,
+        pendientesSolicitudesCitas,
+    });
 
     return (
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans">
