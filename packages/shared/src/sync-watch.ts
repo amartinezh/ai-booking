@@ -36,6 +36,16 @@ import { derivarSync, type FilaOutbox } from './sync-state';
  *    AgenIA que podría ser esa persona (el mismo documento escrito con ceros a la
  *    izquierda distintos). No se da de alta: elegir mal mezcla dos historias
  *    (docs/PLAN_ALTA_EN_CALIENTE.md, D3).
+ *
+ * Y dos que no son de la sincronización sino lo que un paciente le dijo al bot y
+ * alguien del hospital tiene que atender (2026-10-15). AgenIA no escribe NADA en el
+ * hospital por ellas: solo deja el caso para el personal.
+ *
+ *  · `AVISO_INASISTENCIA`  — el paciente avisó que no irá o pidió otra fecha, con
+ *    cancelar o cambiar fecha apagados en el bot. Se cierra sola si la cita se
+ *    cancela o cambia de hora.
+ *  · `TELEFONO_EQUIVOCADO` — quien contestó dice que ese número no es del paciente.
+ *    El bot ya no le manda recordatorios; falta corregir el teléfono en el hospital.
  */
 export const TIPOS_EXCEPCION = [
   'CITA_NO_ENTREGADA',
@@ -44,12 +54,15 @@ export const TIPOS_EXCEPCION = [
   'ERROR_SYNC',
   'DERIVA_EN_HIS',
   'IDENTIDAD_AMBIGUA',
+  'AVISO_INASISTENCIA',
+  'TELEFONO_EQUIVOCADO',
 ] as const;
 export type TipoExcepcion = (typeof TIPOS_EXCEPCION)[number];
 
 /**
- * De cuáles se le avisa al agendador. Las otras tres son técnicas: van a la bandeja
- * para quien administra, no a un teléfono.
+ * De cuáles se le avisa al agendador por WhatsApp. Las demás van solo a la bandeja:
+ * las técnicas son para quien administra, y los avisos de pacientes se atienden desde
+ * el panel, no desde un teléfono.
  */
 export const TIPOS_CON_AVISO: readonly TipoExcepcion[] = [
   'CITA_NO_ENTREGADA',
@@ -63,6 +76,8 @@ export const TITULO_EXCEPCION: Record<TipoExcepcion, string> = {
   ERROR_SYNC: 'Error al aplicar un cambio',
   DERIVA_EN_HIS: 'El hospital no tiene una cita que AgenIA da por hecha',
   IDENTIDAD_AMBIGUA: 'Cita del hospital con un documento ambiguo',
+  AVISO_INASISTENCIA: 'Un paciente avisó que no irá o pide otra fecha',
+  TELEFONO_EQUIVOCADO: 'El teléfono de un paciente es de otra persona',
 };
 
 export const SEVERIDADES_EXCEPCION = ['BAJA', 'MEDIA', 'ALTA', 'CRITICA'] as const;
@@ -288,6 +303,10 @@ export const claveExcepcion = {
     `cita:${appointmentId}:${String(seq)}`,
   eventoRendido: (seq: bigint | string | number) => `evento:${String(seq)}`,
   derivaEnHis: (appointmentId: string) => `deriva:${appointmentId}`,
+  /** Una por cita: el segundo «no puedo ir» de la misma cita suma una ocurrencia. */
+  avisoInasistencia: (appointmentId: string) => `inasistencia:${appointmentId}`,
+  /** Una por paciente: el número es el mismo en todas sus citas. */
+  telefonoEquivocado: (patientId: string) => `telefono:${patientId}`,
   auditoria: (a: {
     direction: string;
     entityType: string;

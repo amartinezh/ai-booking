@@ -92,10 +92,14 @@ import {
 import {
   buildWhatsappRecipient,
   chatIdFromTelegramSender,
+  claveExcepcion,
   etiquetaPeriodo,
   isTelegramSender,
   isWhatsappPhoneId,
+  severidadPorCercania,
+  TITULO_EXCEPCION,
 } from '@agenia/shared';
+import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
 import { metaGraphUrl } from '../whatsapp-config/meta-graph';
 import {
   getErrorMessage,
@@ -337,6 +341,11 @@ export class ChatbotService implements OnModuleInit {
     // sin él (tests), el bot no frena antes de reservar; la reserva igual lo
     // aplica si su servicio lo tiene.
     @Optional() private readonly limiteCitas?: LimiteCitasService,
+    // 📝 Avisos de pacientes para el personal («no puedo ir», «número
+    // equivocado»): quedan en la bandeja de /dashboard/bandeja. Solo escribe en
+    // AgenIA, nunca en el hospital. Opcional: sin él (tests), esos mensajes
+    // siguen el camino de siempre.
+    @Optional() private readonly avisosPaciente?: MirrorExceptionsService,
   ) {}
 
   async onModuleInit() {
@@ -4249,18 +4258,7 @@ export class ChatbotService implements OnModuleInit {
     identity: SenderIdentity,
   ) {
     const ahora = Date.now();
-    const deQuien: Prisma.PatientProfileWhereInput[] = [];
-    if (identity.telegramChatId) {
-      deQuien.push({ telegramChatId: identity.telegramChatId });
-    } else {
-      const telefonos = variantesDeTelefono(
-        (identity.phone ?? '').replace(/\D/g, ''),
-      );
-      if (telefonos.length > 0) {
-        deQuien.push({ whatsappId: { in: telefonos } });
-      }
-      if (identity.bsuid) deQuien.push({ bsuid: identity.bsuid });
-    }
+    const deQuien = this.perfilesDelRemitente(identity);
     if (deQuien.length === 0) return null;
 
     return this.prisma.appointment.findFirst({
@@ -4277,6 +4275,53 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
+   * Cómo se encuentran los perfiles de quien escribe: por su chat de Telegram, o
+   * por su teléfono en cualquiera de sus formas o su BSUID. Vacío = no se puede
+   * saber quién es.
+   */
+  private perfilesDelRemitente(
+    identity: SenderIdentity,
+  ): Prisma.PatientProfileWhereInput[] {
+    if (identity.telegramChatId) {
+      return [{ telegramChatId: identity.telegramChatId }];
+    }
+    const deQuien: Prisma.PatientProfileWhereInput[] = [];
+    const telefonos = variantesDeTelefono(
+      (identity.phone ?? '').replace(/\D/g, ''),
+    );
+    if (telefonos.length > 0) deQuien.push({ whatsappId: { in: telefonos } });
+    if (identity.bsuid) deQuien.push({ bsuid: identity.bsuid });
+    return deQuien;
+  }
+
+  /**
+   * La cita de la que avisa quien dice «no puedo ir» o «quiero cambiarla»: la del
+   * recordatorio que acaba de recibir y, si no hay, su ÚNICA cita próxima. Con
+   * varias y sin recordatorio no se adivina cuál: null.
+   */
+  private async citaDelAviso(organizationId: string, identity: SenderIdentity) {
+    const recordada = await this.citaRecordadaDelRemitente(
+      organizationId,
+      identity,
+    );
+    if (recordada) return recordada;
+    const deQuien = this.perfilesDelRemitente(identity);
+    if (deQuien.length === 0) return null;
+    const proximas = await this.prisma.appointment.findMany({
+      where: {
+        organizationId,
+        status: 'SCHEDULED',
+        scheduleSlot: { startTime: { gt: new Date() } },
+        patient: { OR: deQuien },
+      },
+      include: { scheduleSlot: { include: { service: true } } },
+      orderBy: { scheduleSlot: { startTime: 'asc' } },
+      take: 2,
+    });
+    return proximas.length === 1 ? proximas[0] : null;
+  }
+
+  /**
    * 💬 Respuestas que el bot atiende sin la IA (2026-10-13, primer lote de
    * recordatorios: a todas se les respondía «la plataforma no está activa…»):
    *
@@ -4285,9 +4330,14 @@ export class ChatbotService implements OnModuleInit {
    *   «¿De dónde me hablan?» → quién escribe y, si acaba de recibir un
    *   recordatorio, por cuál cita.
    *
-   * Devuelve true si atendió el mensaje. Una confirmación SIN recordatorio
-   * reciente no se atiende aquí: sigue el camino de siempre (un «gracias»
-   * suelto es una despedida).
+   *   (2026-10-15) «esa cita es en q lugar» tras su recordatorio → cuándo y
+   *   dónde es su cita; «está equivocado de número» → ya no se le escribe y el
+   *   personal corrige el teléfono; «no puedo asistir» / «necesito reagendar»
+   *   con esa operación apagada → el aviso queda para el personal.
+   *
+   * Devuelve true si atendió el mensaje. Una confirmación o una pregunta SIN
+   * recordatorio reciente no se atienden aquí: siguen el camino de siempre (un
+   * «gracias» suelto es una despedida).
    */
   private async atenderRespuestaAlBot(p: {
     organizationId: string;
@@ -4297,16 +4347,27 @@ export class ChatbotService implements OnModuleInit {
     MSGS: ReturnType<typeof buildMessages>;
     botName: string;
     orgName: string;
+    org: Organization | null;
+    operaciones: OperacionesBot;
     timeZone: string | undefined;
   }): Promise<boolean> {
     const tipo = clasificarRespuestaAlBot(p.text);
     if (!tipo) return false;
+    if (tipo === 'NUMERO_EQUIVOCADO') return this.atenderNumeroEquivocado(p);
+    if (tipo === 'NO_ASISTIRA' || tipo === 'CAMBIAR') {
+      return this.atenderAvisoDelPaciente(
+        p,
+        tipo === 'NO_ASISTIRA' ? 'CANCELAR' : 'MODIFICAR',
+      );
+    }
 
     const cita = await this.citaRecordadaDelRemitente(
       p.organizationId,
       p.identity,
     );
-    if (tipo === 'CONFIRMA' && !cita) return false;
+    if ((tipo === 'CONFIRMA' || tipo === 'PREGUNTA_CITA') && !cita) {
+      return false;
+    }
 
     const fecha = cita
       ? formatAppointmentLong(cita.scheduleSlot.startTime, {
@@ -4317,17 +4378,242 @@ export class ChatbotService implements OnModuleInit {
     const reply =
       tipo === 'CONFIRMA'
         ? p.MSGS.recordatorioConfirmado(fecha, servicio)
-        : cita
-          ? p.MSGS.quienEscribeConCita(p.botName, p.orgName, servicio, fecha)
-          : p.MSGS.quienEscribe(p.botName, p.orgName);
+        : tipo === 'PREGUNTA_CITA'
+          ? p.MSGS.preguntaSobreCita(
+              servicio,
+              fecha,
+              p.orgName,
+              this.contactoDe(p.MSGS, p.org),
+            )
+          : cita
+            ? p.MSGS.quienEscribeConCita(p.botName, p.orgName, servicio, fecha)
+            : p.MSGS.quienEscribe(p.botName, p.orgName);
 
     await this.smartReply(p.organizationId, p.senderId, reply);
     await this.auditSuccess(p.senderId, p.organizationId, {
       userMessage: p.text,
       botReply: reply,
       metadata: {
-        step: tipo === 'CONFIRMA' ? 'RECORDATORIO_CONFIRMADO' : 'QUIEN_ESCRIBE',
+        step:
+          tipo === 'CONFIRMA'
+            ? 'RECORDATORIO_CONFIRMADO'
+            : tipo === 'PREGUNTA_CITA'
+              ? 'PREGUNTA_SOBRE_CITA'
+              : 'QUIEN_ESCRIBE',
         appointmentId: cita?.id ?? null,
+      },
+    });
+    return true;
+  }
+
+  /** «el hospital al *606 853 8860*», o «el hospital» si no tiene teléfono. */
+  private contactoDe(
+    MSGS: ReturnType<typeof buildMessages>,
+    org: Organization | null,
+  ): string {
+    return org?.supportPhone
+      ? MSGS.contactoClinica(org.supportPhone)
+      : MSGS.contactoClinicaSinTelefono();
+  }
+
+  /**
+   * 📝 «No puedo asistir» / «necesito reagendar» con esa operación APAGADA
+   * (2026-10-15: seis avisos así en dos días, que solo quedaban en la caja negra).
+   *
+   * El aviso queda en la bandeja del personal (`AVISO_INASISTENCIA`) con la cita,
+   * el paciente y lo que escribió. NO se toca la cita ni se escribe NADA en el
+   * hospital: liberar el cupo lo decide una persona, en el hospital. Cuando la
+   * cita se cancela o cambia de hora, el vigilante cierra el aviso solo.
+   *
+   * Con la operación ENCENDIDA el bot la hace él mismo: false, sigue el camino de
+   * siempre. Sin una cita a la que atar el aviso, también: el «comuníquese con el
+   * hospital» de siempre.
+   */
+  private async atenderAvisoDelPaciente(
+    p: {
+      organizationId: string;
+      senderId: string;
+      identity: SenderIdentity;
+      text: string;
+      MSGS: ReturnType<typeof buildMessages>;
+      org: Organization | null;
+      operaciones: OperacionesBot;
+    },
+    pide: 'CANCELAR' | 'MODIFICAR',
+  ): Promise<boolean> {
+    if (p.operaciones[CLAVE_OPERACION[pide]]) return false;
+    if (!this.avisosPaciente) return false;
+    const cita = await this.citaDelAviso(p.organizationId, p.identity);
+    if (!cita) return false;
+
+    const ahora = new Date();
+    const inicio = cita.scheduleSlot.startTime;
+    try {
+      await this.avisosPaciente.registrar(
+        p.organizationId,
+        {
+          kind: 'AVISO_INASISTENCIA',
+          dedupeKey: claveExcepcion.avisoInasistencia(cita.id),
+          severity: severidadPorCercania(
+            'MEDIA',
+            (inicio.getTime() - ahora.getTime()) / 60_000,
+          ),
+          title: TITULO_EXCEPCION.AVISO_INASISTENCIA,
+          appointmentId: cita.id,
+          patientId: cita.patientId,
+          epsId: cita.epsId,
+          doctorId: cita.scheduleSlot.doctorId,
+          appointmentStartAt: inicio,
+          meta: {
+            pide,
+            mensaje: p.text.slice(0, 300),
+            canal: canalDe(p.senderId),
+          },
+        },
+        ahora,
+      );
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo registrar el aviso del paciente (cita ${cita.id}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+
+    const fecha = formatAppointmentLong(inicio, {
+      timeZone: p.org?.timezone || undefined,
+    });
+    const servicio = cita.scheduleSlot.service?.name ?? '';
+    const contacto = this.contactoDe(p.MSGS, p.org);
+    const aviso =
+      pide === 'CANCELAR'
+        ? p.MSGS.avisoInasistenciaRegistrado(servicio, fecha, contacto)
+        : p.MSGS.avisoCambioRegistrado(servicio, fecha, contacto);
+    // Si otra operación sigue encendida (p. ej. cambiar la fecha a quien no
+    // puede ir), se la ofrece, como el aviso de operación no disponible.
+    const reply = soloConsultas(p.operaciones)
+      ? aviso
+      : `${aviso}\n\n${p.MSGS.avisoTambienPuede(this.lineasDeLoDisponible(p.MSGS, p.operaciones))}`;
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text,
+      botReply: reply,
+      metadata: {
+        step:
+          pide === 'CANCELAR'
+            ? 'AVISO_INASISTENCIA_REGISTRADO'
+            : 'AVISO_CAMBIO_REGISTRADO',
+        appointmentId: cita.id,
+      },
+    });
+    return true;
+  }
+
+  /**
+   * ☎️ «Vicentico está equivocado de número» (2026-10-15): el teléfono que el
+   * hospital tiene de un paciente es de otra persona. A ese número no se le
+   * vuelve a escribir:
+   *
+   *   · Con espejo (hay bandeja): queda un caso por paciente con ese número
+   *     (`TELEFONO_EQUIVOCADO`) y el cron de recordatorios no le escribe mientras
+   *     siga abierto. Cuando el personal corrige el teléfono y lo cierra —o lo
+   *     descarta, si no era cierto—, los recordatorios vuelven solos: no queda
+   *     ninguna marca en el paciente que alguien tenga que acordarse de quitar.
+   *     AgenIA no cambia el número: lo corrige una persona (el espejo nunca pisa
+   *     un teléfono que AgenIA ya tiene, así que corregirlo solo en el hospital
+   *     no basta).
+   *   · Sin espejo no hay bandeja: se apagan sus recordatorios como en la baja.
+   *
+   * Solo WhatsApp: un chat de Telegram lo vincula el propio paciente. Si ningún
+   * perfil tiene ese número, no hay nada que corregir: false.
+   */
+  private async atenderNumeroEquivocado(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    orgName: string;
+  }): Promise<boolean> {
+    if (isTelegramSender(p.senderId)) return false;
+    const deQuien = this.perfilesDelRemitente(p.identity);
+    if (deQuien.length === 0) return false;
+    const where: Prisma.PatientProfileWhereInput = {
+      organizationId: p.organizationId,
+      OR: deQuien,
+    };
+    const perfiles = await this.prisma.patientProfile.findMany({
+      where,
+      select: { id: true, epsId: true },
+      take: 10,
+    });
+    if (perfiles.length === 0) return false;
+
+    const espejo = await this.prisma.hospitalMirrorConfig.findUnique({
+      where: { organizationId: p.organizationId },
+      select: { enabled: true },
+    });
+    let casos = 0;
+    let bajas = 0;
+    if (espejo?.enabled && this.avisosPaciente) {
+      // La cita del recordatorio, si la hay: con ella el caso le sale también al
+      // agendador acotado a ese médico.
+      const cita = await this.citaRecordadaDelRemitente(
+        p.organizationId,
+        p.identity,
+      );
+      const ahora = new Date();
+      for (const perfil of perfiles) {
+        const deEsteRecordatorio = cita?.patientId === perfil.id ? cita : null;
+        try {
+          const r = await this.avisosPaciente.registrar(
+            p.organizationId,
+            {
+              kind: 'TELEFONO_EQUIVOCADO',
+              dedupeKey: claveExcepcion.telefonoEquivocado(perfil.id),
+              severity: 'MEDIA',
+              title: TITULO_EXCEPCION.TELEFONO_EQUIVOCADO,
+              patientId: perfil.id,
+              epsId: deEsteRecordatorio?.epsId ?? perfil.epsId,
+              doctorId: deEsteRecordatorio?.scheduleSlot.doctorId ?? null,
+              appointmentId: deEsteRecordatorio?.id ?? null,
+              // Sin hora de cita: el número sigue mal aunque la cita pase, así
+              // que el caso no vence solo.
+              meta: {
+                mensaje: p.text.slice(0, 300),
+                perfilesConElNumero: perfiles.length,
+              },
+            },
+            ahora,
+          );
+          // IGNORADA: alguien ya lo había cerrado a mano y no se reabre solo; el
+          // caso no frena nada, así que ese perfil va por la baja de abajo.
+          if (r !== 'IGNORADA') casos++;
+        } catch (error: unknown) {
+          this.logger.error(
+            `No se pudo registrar el número equivocado (paciente ${perfil.id}): ${getErrorMessage(error)}`,
+          );
+        }
+      }
+    }
+    // Sin bandeja, o si el caso de alguno no quedó abierto: la baja de siempre.
+    // Prometer «no le escribiremos más» sin nada que lo cumpla sería mentirle.
+    if (casos < perfiles.length) {
+      ({ count: bajas } = await this.prisma.patientProfile.updateMany({
+        where,
+        data: { remindersOptOut: true },
+      }));
+    }
+
+    const reply = p.MSGS.numeroEquivocado(p.orgName);
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text,
+      botReply: reply,
+      metadata: {
+        step: 'NUMERO_EQUIVOCADO',
+        perfilesAfectados: perfiles.length,
+        casosEnBandeja: casos,
+        bajasDeRecordatorios: bajas,
       },
     });
     return true;
@@ -4875,6 +5161,8 @@ export class ChatbotService implements OnModuleInit {
         MSGS,
         botName,
         orgName,
+        org,
+        operaciones,
         timeZone: org?.timezone || undefined,
       }))
     ) {

@@ -16,6 +16,7 @@ import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module'
 import { AudioConfigModule } from '../audio-config/audio-config.module';
 import { SurveyModule } from '../survey/survey.module';
 import { TelegramCoreModule } from '../telegram/telegram-core.module';
+import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
 
 @Module({
   imports: [
@@ -40,6 +41,11 @@ import { TelegramCoreModule } from '../telegram/telegram-core.module';
     OrganizationSettingsService,
     ConsultaHisBotService,
     ConfirmacionHisService,
+    // 📝 Los avisos de pacientes («no puedo ir», «número equivocado») van a la
+    // misma bandeja que las excepciones del espejo. Solo depende de Prisma: se
+    // provee aquí y no se importa MirrorModule, que ya depende de este módulo
+    // (Mirror → Waitlist → Chatbot).
+    MirrorExceptionsService,
   ],
   exports: [
     ChatbotService,

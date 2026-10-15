@@ -933,6 +933,42 @@ const FORMAL = {
     `Puedo ayudarle a:\n${disponibles}\n\n` +
     `Para cualquier otra gestión, comuníquese con ${contacto}.`,
 
+  // «esa cita es en q lugar», «¿a qué hora es?» de quien acaba de recibir su
+  // recordatorio. `contacto`, de contactoClinica.
+  preguntaSobreCita: (
+    servicio: string,
+    fecha: string,
+    clinicaName: string,
+    contacto: string,
+  ) =>
+    `Su cita de *${servicio}* es el *${fecha}*, en *${clinicaName}*. 🏥\n\n` +
+    `Si necesita indicaciones para llegar o tiene otra pregunta sobre su cita, comuníquese con ${contacto}.`,
+
+  // «No puedo asistir» con cancelar APAGADO: el aviso queda para el personal; la
+  // cita NO se cancela (y el mensaje no puede dar a entender que sí).
+  avisoInasistenciaRegistrado: (
+    servicio: string,
+    fecha: string,
+    contacto: string,
+  ) =>
+    `Entendido. Dejé registrado su aviso de que no podrá asistir a su cita de *${servicio}* del *${fecha}*, para que el personal del hospital lo revise. 📝\n\n` +
+    `Por este medio no puedo cancelar la cita, así que por ahora sigue registrada. Si quiere cancelarla de inmediato, comuníquese con ${contacto}.`,
+
+  // «Necesito reagendar» con cambiar fecha APAGADO.
+  avisoCambioRegistrado: (servicio: string, fecha: string, contacto: string) =>
+    `Entendido. Dejé registrada su solicitud de cambiar su cita de *${servicio}* del *${fecha}*, para que el personal del hospital la revise. 📝\n\n` +
+    `Por este medio no puedo cambiar la fecha, así que por ahora su cita sigue igual. Si quiere cambiarla de inmediato, comuníquese con ${contacto}.`,
+
+  // Tras dejar el aviso, si alguna operación sigue encendida. `lineas` sale de
+  // lineaDisponible / lineaDisponibleConsultar.
+  avisoTambienPuede: (lineas: string) =>
+    `Por aquí también puedo ayudarle a:\n${lineas}`,
+
+  // Quien contestó dice que el número no es del paciente.
+  numeroEquivocado: (clinicaName: string) =>
+    `Disculpe la molestia y gracias por avisarnos. 🙏\n\n` +
+    `El mensaje era de *${clinicaName}* para otra persona: no le enviaremos más recordatorios a este número.`,
+
   outOfContext: (botName: string = BOT_NAME) =>
     pick([
       `Disculpe, soy *${botName}* y le acompaño únicamente con el agendamiento de citas médicas. 🏥\n\n¿Me indica qué especialidad necesita o el nombre del médico que está buscando?`,
@@ -1935,6 +1971,34 @@ const INFORMAL = {
     `Disculpa, soy *${botName}* y por aquí solo puedo ayudarte con tus citas. 🏥\n\n` +
     `Puedo ayudarte a:\n${disponibles}\n\n` +
     `Para cualquier otra gestión, comunícate con ${contacto}.`,
+
+  preguntaSobreCita: (
+    servicio: string,
+    fecha: string,
+    clinicaName: string,
+    contacto: string,
+  ) =>
+    `Tu cita de *${servicio}* es el *${fecha}*, en *${clinicaName}*. 🏥\n\n` +
+    `Si necesitas indicaciones para llegar o tienes otra pregunta sobre tu cita, comunícate con ${contacto}.`,
+
+  avisoInasistenciaRegistrado: (
+    servicio: string,
+    fecha: string,
+    contacto: string,
+  ) =>
+    `Entendido. Dejé registrado tu aviso de que no podrás ir a tu cita de *${servicio}* del *${fecha}*, para que el personal del hospital lo revise. 📝\n\n` +
+    `Por aquí no puedo cancelar la cita, así que por ahora sigue registrada. Si quieres cancelarla de una vez, comunícate con ${contacto}.`,
+
+  avisoCambioRegistrado: (servicio: string, fecha: string, contacto: string) =>
+    `Entendido. Dejé registrada tu solicitud de cambiar tu cita de *${servicio}* del *${fecha}*, para que el personal del hospital la revise. 📝\n\n` +
+    `Por aquí no puedo cambiar la fecha, así que por ahora tu cita sigue igual. Si quieres cambiarla de una vez, comunícate con ${contacto}.`,
+
+  avisoTambienPuede: (lineas: string) =>
+    `Por aquí también puedo ayudarte a:\n${lineas}`,
+
+  numeroEquivocado: (clinicaName: string) =>
+    `Disculpa la molestia y gracias por avisarnos. 🙏\n\n` +
+    `El mensaje era de *${clinicaName}* para otra persona: no le enviaremos más recordatorios a este número.`,
 
   outOfContext: (botName: string = BOT_NAME) =>
     pick([

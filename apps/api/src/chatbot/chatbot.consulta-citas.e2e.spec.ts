@@ -19,6 +19,7 @@ import { AudioConfigService } from '../audio-config/audio-config.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
 import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
 import { ConsultaHisBotService } from './consulta-his-bot.service';
+import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
 
 // ════════════════════════════════════════════════════════════════════
 // CONSULTA DE CITAS ("¿qué citas tengo?") — E2E conversacional
@@ -133,8 +134,25 @@ function cumple(fila: any, where: any = {}): boolean {
   });
 }
 
+/** ¿El perfil cumple alguna de las condiciones de canal (teléfono / BSUID / chat)? */
+const esDeAlgunCanal = (canales: any[], pac: any): boolean =>
+  !!pac &&
+  canales.some(
+    (c) =>
+      (c.whatsappId?.in ?? []).includes(pac.whatsappId) ||
+      (typeof c.bsuid === 'string' && c.bsuid === pac.bsuid) ||
+      (c.bsuid?.in ?? []).includes(pac.bsuid) ||
+      (!!c.telegramChatId && c.telegramChatId === pac.telegramChatId),
+  );
+
 function createPrisma(db: Db) {
   const slotDe = (a: any) => db.slots.find((s) => s.id === a.scheduleSlotId);
+  const pacientesDe = (where: any) =>
+    db.patients.filter((p) =>
+      where.OR
+        ? esDeAlgunCanal(where.OR, p)
+        : !where.telegramChatId || where.telegramChatId === p.telegramChatId,
+    );
   const tx = {
     scheduleSlot: {
       findUnique: jest.fn(({ where }: any) =>
@@ -195,18 +213,15 @@ function createPrisma(db: Db) {
         ({ where }: any) =>
           db.patients.find((p) => p.cedula === where.cedula) ?? null,
       ),
-      // La baja de recordatorios («no quiero más recordatorios»).
-      updateMany: jest.fn(() => ({ count: db.patients.length })),
+      // La baja de recordatorios («no quiero más recordatorios», «número equivocado»).
+      updateMany: jest.fn(({ where, data }: any) => {
+        const filas = pacientesDe(where);
+        for (const p of filas) Object.assign(p, data);
+        return { count: filas.length };
+      }),
       // La consulta por canal del remitente (OR de teléfono / BSUID / chat).
       findMany: jest.fn(({ where }: any) =>
-        db.patients.filter((p) =>
-          (where.OR ?? []).some(
-            (c: any) =>
-              (c.whatsappId?.in && c.whatsappId.in.includes(p.whatsappId)) ||
-              (c.bsuid && c.bsuid === p.bsuid) ||
-              (c.telegramChatId && c.telegramChatId === p.telegramChatId),
-          ),
-        ),
+        db.patients.filter((p) => esDeAlgunCanal(where.OR ?? [], p)),
       ),
     },
     doctorProfile: {
@@ -250,19 +265,28 @@ function createPrisma(db: Db) {
       }),
     },
     appointment: {
-      findMany: jest.fn(({ where }: any) => {
+      findMany: jest.fn(({ where, take }: any) => {
         const desde: Date | undefined = where.scheduleSlot?.startTime?.gte;
-        return db.appointments
-          .filter(
-            (a) => a.patientId === where.patientId && a.status === where.status,
-          )
+        const despues: Date | undefined = where.scheduleSlot?.startTime?.gt;
+        // Por paciente, o por el canal de quien escribe (el aviso de «no puedo ir»).
+        const delPaciente = (a: any) =>
+          where.patient?.OR
+            ? esDeAlgunCanal(
+                where.patient.OR,
+                db.patients.find((x) => x.id === a.patientId),
+              )
+            : a.patientId === where.patientId;
+        const filas = db.appointments
+          .filter((a) => delPaciente(a) && a.status === where.status)
           .map((a) => ({ ...a, scheduleSlot: slotDe(a) }))
           .filter((a) => !desde || a.scheduleSlot.startTime >= desde)
+          .filter((a) => !despues || a.scheduleSlot.startTime > despues)
           .sort(
             (x, y) =>
               x.scheduleSlot.startTime.getTime() -
               y.scheduleSlot.startTime.getTime(),
           );
+        return take ? filas.slice(0, take) : filas;
       }),
       findUnique: jest.fn(({ where }: any) => {
         const a = db.appointments.find((x) => x.id === where.id);
@@ -272,13 +296,7 @@ function createPrisma(db: Db) {
       findFirst: jest.fn(({ where }: any) => {
         if (!where.reminderSentAt) return null;
         const canales: any[] = where.patient?.OR ?? [];
-        const esDelRemitente = (pac: any) =>
-          canales.some(
-            (c) =>
-              (c.whatsappId?.in ?? []).includes(pac.whatsappId) ||
-              (!!c.bsuid && c.bsuid === pac.bsuid) ||
-              (!!c.telegramChatId && c.telegramChatId === pac.telegramChatId),
-          );
+        const esDelRemitente = (pac: any) => esDeAlgunCanal(canales, pac);
         return (
           db.appointments
             .filter(
@@ -341,6 +359,8 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
    */
   let cancelEnabled: boolean | null;
   let rescheduleEnabled: boolean | null;
+  /** La bandeja del personal: lo que el bot deja ahí (avisos de pacientes). */
+  let avisos: { registrar: jest.Mock };
 
   const sent = (): string[] =>
     sendSpy.mock.calls.map((c: any[]) => c[1] as string);
@@ -411,6 +431,7 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       ],
     });
     redis = createFakeRedis();
+    avisos = { registrar: jest.fn(async () => 'CREADA') };
     bookingEnabled = true;
     cancelEnabled = null;
     rescheduleEnabled = null;
@@ -505,6 +526,7 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
           provide: TtsFactoryService,
           useValue: { synthesize: jest.fn(() => null) },
         },
+        { provide: MirrorExceptionsService, useValue: avisos },
       ],
     }).compile();
 
@@ -1189,7 +1211,10 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
 
     it('«cancelar cita» recibe el aviso y no pide la cédula', async () => {
       seedPaciente();
+      // Dos citas y ningún recordatorio: no hay UNA cita a la que atar el aviso
+      // para el personal (eso lo prueba «💬 respuestas al bot»).
       seedCita('apt-1', MANANA);
+      seedCita('apt-2', new Date('2026-10-10T14:00:00.000Z'), SVC_ODONTO);
       await say('cancelar cita');
       expect(lastSent()).toContain(AVISO);
       expect(state()).toBe(ChatState.IDLE);
@@ -1292,7 +1317,9 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
     it('cancelar apagado: «cancelar cita» recibe su aviso y dice qué sí se puede', async () => {
       cancelEnabled = false;
       seedPaciente();
+      // Dos citas sin recordatorio: no se adivina de cuál avisa (ver abajo con una).
       seedCita('apt-1', MANANA);
+      seedCita('apt-2', new Date('2026-10-10T14:00:00.000Z'), SVC_ODONTO);
       await say('cancelar cita');
       const r = lastSent();
       expect(r).toContain('no es posible *cancelar citas*');
@@ -1314,12 +1341,35 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       rescheduleEnabled = false;
       seedPaciente();
       seedCita('apt-1', MANANA);
+      seedCita('apt-2', new Date('2026-10-10T14:00:00.000Z'), SVC_ODONTO);
       await say('cambiar cita');
       const r = lastSent();
       expect(r).toContain('no es posible *cambiar la fecha de una cita*');
       expect(r).toContain('Cancelar una cita: escríbame *"cancelar cita"*');
       expect(r).not.toContain('Cambiar la fecha de una cita:');
       expect(state()).toBe(ChatState.IDLE);
+    });
+
+    it('📝 cancelar apagado con UNA cita: «cancelar cita» deja el aviso al personal y ofrece lo que sí se puede', async () => {
+      cancelEnabled = false;
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('cancelar cita');
+      const r = lastSent();
+      expect(r).toContain('Dejé registrado su aviso de que no podrá asistir');
+      expect(r).toContain('Por aquí también puedo ayudarle a:');
+      expect(r).toContain(
+        'Cambiar la fecha de una cita: escríbame *"cambiar cita"*',
+      );
+      expect(r).not.toContain('Cancelar una cita:');
+      expect(avisos.registrar).toHaveBeenCalledTimes(1);
+      expect(avisos.registrar.mock.calls[0][1]).toMatchObject({
+        kind: 'AVISO_INASISTENCIA',
+        appointmentId: 'apt-1',
+        meta: { pide: 'CANCELAR' },
+      });
+      expect(state()).not.toBe(ChatState.AWAITING_LOOKUP_CEDULA);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
     });
 
     it('agendar apagado: «Hola» no abre el menú y dice que cancelar y cambiar sí se pueden', async () => {
@@ -1545,6 +1595,151 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       );
       expect(r).toContain('*"consultar"*');
       expect(r).not.toContain('por su cita');
+    });
+
+    // ── 2026-10-15: lo que escribieron los pacientes los dos primeros días ──
+
+    it.each([
+      '👍',
+      'Dios lebendiga',
+      'Claro que sí, si Dios quiere, sí, claro, cuente con la asistencia de mi mamá a la cita del jueves, muchas gracias por avisarnos',
+    ])(
+      '«%s» tras el recordatorio también es una confirmación',
+      async (texto) => {
+        conRecordatorio();
+        await say(texto);
+        expect(lastSent()).toContain('¡Gracias por confirmar!');
+      },
+    );
+
+    it('«esa cita es en q lugar» (sin «?») → cuándo y dónde es su cita, no «gracias por confirmar»', async () => {
+      conRecordatorio();
+      await say('Buenas tardes,esa cita es en q lugar Muchas gracias');
+      const r = lastSent();
+      expect(r).not.toContain('Gracias por confirmar');
+      expect(r).toContain('Su cita de *Medicina General* es el *');
+      expect(r).toContain('en *Hospital San Vicente*');
+      expect(r).toContain(`el hospital al *${SOPORTE}*`);
+      expect(paso('PREGUNTA_SOBRE_CITA')?.metadata).toMatchObject({
+        appointmentId: 'apt-1',
+      });
+    });
+
+    it('📝 «no puedo asistir» con cancelar apagado → el aviso queda en la bandeja del personal y la cita NO se toca', async () => {
+      conRecordatorio();
+      await say('Buen día ,no puedo asistir');
+      const r = lastSent();
+      expect(r).toContain('Dejé registrado su aviso de que no podrá asistir');
+      expect(r).toContain('*Medicina General*');
+      expect(r).toContain('por ahora sigue registrada');
+      expect(r).toContain(`el hospital al *${SOPORTE}*`);
+      expect(r).not.toContain('Gracias por confirmar');
+
+      expect(avisos.registrar).toHaveBeenCalledTimes(1);
+      const [org, entrada] = avisos.registrar.mock.calls[0] as any[];
+      expect(org).toBe(ORG_ID);
+      expect(entrada).toMatchObject({
+        kind: 'AVISO_INASISTENCIA',
+        dedupeKey: 'inasistencia:apt-1',
+        appointmentId: 'apt-1',
+        patientId: 'pat-1',
+        doctorId: 'doc-Dr apt-1',
+        appointmentStartAt: MANANA,
+        meta: { pide: 'CANCELAR', mensaje: 'Buen día ,no puedo asistir' },
+      });
+      // El título va sin datos personales.
+      expect(entrada.title).not.toContain('Juan');
+      // AgenIA no cancela nada: la cita sigue igual.
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+      expect(paso('AVISO_INASISTENCIA_REGISTRADO')?.metadata).toMatchObject({
+        appointmentId: 'apt-1',
+      });
+    });
+
+    it('📝 «necesito reagendar» sin recordatorio, con UNA cita próxima → solicitud de cambio en la bandeja', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA); // sin reminderSentAt
+      await say('necesito reagendar una cita');
+      expect(lastSent()).toContain('Dejé registrada su solicitud de cambiar');
+      expect(avisos.registrar).toHaveBeenCalledTimes(1);
+      expect(avisos.registrar.mock.calls[0][1]).toMatchObject({
+        kind: 'AVISO_INASISTENCIA',
+        appointmentId: 'apt-1',
+        meta: { pide: 'MODIFICAR' },
+      });
+    });
+
+    it('🛡️ con dos citas próximas y sin recordatorio no adivina cuál: no registra nada', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      seedCita('apt-2', new Date('2026-10-10T14:00:00.000Z'), SVC_ODONTO);
+      await say('Buen día ,no puedo asistir');
+      expect(avisos.registrar).not.toHaveBeenCalled();
+      expect(lastSent()).not.toContain('Dejé registrado');
+    });
+
+    it('🛡️ con cancelar ENCENDIDO el bot no deja el aviso: la cancelación la hace él', async () => {
+      cancelEnabled = true;
+      conRecordatorio();
+      await say('Buen día ,no puedo asistir');
+      expect(avisos.registrar).not.toHaveBeenCalled();
+      expect(lastSent()).not.toContain('Dejé registrado');
+    });
+
+    it('☎️ «está equivocado de número» con espejo → caso en la bandeja (que frena los recordatorios), sin marcar al paciente', async () => {
+      db.mirror = { enabled: true, pushEnabled: true };
+      conRecordatorio();
+      await say('Vicentico está equivocado de número');
+      const r = lastSent();
+      expect(r).toContain('Disculpe la molestia');
+      expect(r).toContain('no le enviaremos más recordatorios a este número');
+      expect(avisos.registrar).toHaveBeenCalledTimes(1);
+      const entrada = avisos.registrar.mock.calls[0][1];
+      expect(entrada).toMatchObject({
+        kind: 'TELEFONO_EQUIVOCADO',
+        dedupeKey: 'telefono:pat-1',
+        patientId: 'pat-1',
+        appointmentId: 'apt-1',
+        doctorId: 'doc-Dr apt-1',
+        meta: { mensaje: 'Vicentico está equivocado de número' },
+      });
+      // Sin hora de cita: el número sigue mal aunque la cita pase.
+      expect(entrada.appointmentStartAt).toBeUndefined();
+      // El caso abierto es lo que frena el recordatorio: el paciente no queda
+      // marcado (cerrar el caso los devuelve) y AgenIA no le borra el número.
+      expect(db.patients[0].remindersOptOut).toBeUndefined();
+      expect(db.patients[0].whatsappId).toBe(SENDER);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+      expect(paso('NUMERO_EQUIVOCADO')?.metadata).toMatchObject({
+        perfilesAfectados: 1,
+        casosEnBandeja: 1,
+        bajasDeRecordatorios: 0,
+      });
+    });
+
+    it('☎️ sin espejo (no hay bandeja) → se apagan sus recordatorios como en la baja', async () => {
+      conRecordatorio();
+      await say('Vicentico está equivocado de número');
+      expect(lastSent()).toContain(
+        'no le enviaremos más recordatorios a este número',
+      );
+      expect(avisos.registrar).not.toHaveBeenCalled();
+      expect(db.patients[0].remindersOptOut).toBe(true);
+    });
+
+    it('☎️ si el caso ya lo había cerrado una persona (IGNORADA), cae a la baja: la promesa se cumple igual', async () => {
+      db.mirror = { enabled: true, pushEnabled: true };
+      avisos.registrar.mockResolvedValueOnce('IGNORADA');
+      conRecordatorio();
+      await say('Número equivocado');
+      expect(db.patients[0].remindersOptOut).toBe(true);
+    });
+
+    it('🛡️ «número equivocado» desde un número que ningún paciente tiene no toca a nadie', async () => {
+      conRecordatorio();
+      await say('Número equivocado', '573009998877');
+      expect(avisos.registrar).not.toHaveBeenCalled();
+      expect(db.patients[0].remindersOptOut).toBeUndefined();
     });
   });
 

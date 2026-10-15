@@ -181,6 +181,29 @@ describe('resumenPublico — una frase neutra desde meta, nunca desde el detalle
     expect(r('DERIVA_EN_HIS', { clave: 'doc|2026-09-22T15:00' })).not.toContain('doc|');
   });
 
+  it('aviso de inasistencia: qué pidió, por dónde, lo que escribió y que el bot no tocó la cita', () => {
+    const cancelar = r('AVISO_INASISTENCIA', { pide: 'CANCELAR', canal: 'WHATSAPP', mensaje: 'Buen día ,no puedo asistir' });
+    expect(cancelar).toContain('avisó por WhatsApp que no podrá asistir');
+    expect(cancelar).toContain('«Buen día ,no puedo asistir»');
+    expect(cancelar).toContain('El bot no canceló la cita');
+    const cambiar = r('AVISO_INASISTENCIA', { pide: 'MODIFICAR', canal: 'TELEGRAM', mensaje: 'necesito\nreagendar' });
+    expect(cambiar).toContain('pidió por Telegram cambiar la fecha');
+    expect(cambiar).toContain('«necesito reagendar»');
+    // Un mensaje larguísimo se recorta.
+    expect(r('AVISO_INASISTENCIA', { mensaje: 'x'.repeat(500) }).length).toBeLessThan(450);
+    // Sin mensaje no deja comillas vacías.
+    expect(r('AVISO_INASISTENCIA', {})).not.toContain('«');
+  });
+
+  it('teléfono equivocado: no se le escribe mientras esté abierto y dónde corregirlo', () => {
+    const t = r('TELEFONO_EQUIVOCADO', { mensaje: 'Soy Paco', perfilesConElNumero: 2 });
+    expect(t).toContain('ese número no es del paciente');
+    expect(t).toContain('«Soy Paco»');
+    expect(t).toContain('lo tienen 2 pacientes');
+    expect(t).toMatch(/no se le envían recordatorios.*corrija el teléfono/);
+    expect(r('TELEFONO_EQUIVOCADO', { perfilesConElNumero: 1 })).not.toContain('pacientes en AgenIA');
+  });
+
   it('un tipo desconocido cae al título', () => {
     expect(r('TIPO_NUEVO', {})).toBe('Título');
   });

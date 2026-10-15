@@ -273,6 +273,8 @@ describe('claveExcepcion — identifica el PROBLEMA, no la fila', () => {
   it('evento rendido y deriva', () => {
     expect(claveExcepcion.eventoRendido(BigInt(42))).toBe('evento:42');
     expect(claveExcepcion.derivaEnHis('apt-1')).toBe('deriva:apt-1');
+    expect(claveExcepcion.avisoInasistencia('apt-1')).toBe('inasistencia:apt-1');
+    expect(claveExcepcion.telefonoEquivocado('pac-1')).toBe('telefono:pac-1');
   });
 
   it('auditoría: el mismo problema repetido cae en la MISMA clave (no una excepción por fila)', () => {

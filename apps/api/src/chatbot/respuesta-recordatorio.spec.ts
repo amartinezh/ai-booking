@@ -1,8 +1,8 @@
 import { clasificarRespuestaAlBot } from './respuesta-recordatorio';
 
 /**
- * Las frases son las que escribieron los pacientes la noche del primer lote de
- * recordatorios (2026-10-13), tal cual, con su ortografía.
+ * Las frases son las que escribieron los pacientes tras los primeros lotes de
+ * recordatorios (2026-10-13 a 2026-10-15), tal cual, con su ortografía.
  */
 describe('clasificarRespuestaAlBot', () => {
   it.each([
@@ -16,6 +16,13 @@ describe('clasificarRespuestaAlBot', () => {
     'Listo, allá estaré',
     'Confirmo',
     'Está bien gracias',
+    // 2026-10-15
+    '👍',
+    '👍🏻',
+    '🙏🙏',
+    'Dios le bendiga',
+    'Dios lebendiga',
+    'Claro que sí, si Dios quiere, sí, claro, cuente con la asistencia de mi mamá a la cita del jueves, muchas gracias por avisarnos',
   ])('«%s» → CONFIRMA', (texto) => {
     expect(clasificarRespuestaAlBot(texto)).toBe('CONFIRMA');
   });
@@ -31,23 +38,85 @@ describe('clasificarRespuestaAlBot', () => {
   });
 
   it.each([
+    'Buenas tardes,esa cita es en q lugar Muchas gracias',
+    'Gracias, a qué hora es',
+    'Sí voy, ¿dónde queda?',
+    'con quién es la cita',
+    'Ok, en qué consultorio',
+    '¿A qué hora es la consulta? ¿en el laboratorio?',
+  ])('«%s» → PREGUNTA_CITA (aunque no lleve «?»)', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe('PREGUNTA_CITA');
+  });
+
+  it.each([
+    'Vicentico está equivocado de número',
+    'Número equivocado',
+    'No conozco a esa persona',
+    'Este número no es de ella',
+  ])('«%s» → NUMERO_EQUIVOCADO', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe('NUMERO_EQUIVOCADO');
+  });
+
+  it.each([
+    'Buen día ,no puedo asistir',
+    'Perdón cancelar cita',
     'Esque no voy a poder ir ala cita mañana',
     'Como hago para canselarla',
     'Necesito cancelar esa cita',
     'Y yo no puedo ir mañana',
-    'No es que mañana tengo una cita de control',
     'Gracias, pero no puedo asistir',
+    'No alcanzo a llegar, estoy trabajando',
+  ])('«%s» → NO_ASISTIRA', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe('NO_ASISTIRA');
+  });
+
+  it.each([
+    'necesito reagendar una cita',
     'Sí, pero quiero cambiar la hora',
     'Ok, ¿la puedo mover para otro día?',
-  ])('🛡️ «%s» NUNCA es una confirmación', (texto) => {
-    expect(clasificarRespuestaAlBot(texto)).toBeNull();
+    'No puedo ir el jueves, ¿me la pasan para otro día?',
+  ])('«%s» → CAMBIAR', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe('CAMBIAR');
   });
+
+  it.each([
+    'No es que mañana tengo una cita de control',
+    'No contestan',
+    'Soy Paco',
+    'Sí voy, ¿tengo que llevar la orden?',
+    'Gracias, que debo llevar',
+    'No voy a faltar',
+    '¿Por qué me cancelaron la cita?',
+    'Ya cambié de EPS',
+    'Están equivocados, mi cita es el jueves',
+    'Gracias, a qué hora abre la farmacia',
+  ])('🛡️ «%s» NUNCA es una confirmación', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).not.toBe('CONFIRMA');
+  });
+
+  it.each([
+    '¿Por qué me cancelaron la cita?',
+    'Ya cambié de EPS',
+    'No voy a faltar',
+    'Están equivocados, mi cita es el jueves',
+    'No sé si pueda ir',
+  ])(
+    '🛡️ «%s» no se toma por aviso de inasistencia, cambio ni número equivocado',
+    (texto) => {
+      expect(['NO_ASISTIRA', 'CAMBIAR', 'NUMERO_EQUIVOCADO']).not.toContain(
+        clasificarRespuestaAlBot(texto),
+      );
+    },
+  );
 
   it.each([
     'Hola',
     'Buenas noches',
     'Sí voy, ¿tengo que llevar la orden?',
     'consultar',
+    '¿a qué hora abre la farmacia?',
+    'dónde queda el laboratorio',
+    '😀',
     '',
     null,
   ])('«%s» no se clasifica: sigue el camino de siempre', (texto) => {
@@ -58,6 +127,11 @@ describe('clasificarRespuestaAlBot', () => {
     expect(
       clasificarRespuestaAlBot(
         'Buenas noches muchas gracias quería saber si la doctora atiende también por la tarde porque trabajo hasta las cinco',
+      ),
+    ).toBeNull();
+    expect(
+      clasificarRespuestaAlBot(
+        'Buenas noches muchas gracias ayer estuve hablando con mi hija sobre los exámenes y ella dice que mejor esperamos los resultados',
       ),
     ).toBeNull();
   });

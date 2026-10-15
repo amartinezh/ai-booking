@@ -137,7 +137,11 @@ export class AppointmentReminderCronService
       `Tick — ventana de recordatorios: (${now.toISOString()}, ${targetThreshold.toISOString()}]`,
     );
 
-    const eligible = await this.findEligibleAppointments(now, targetThreshold);
+    const eligible = await this.findEligibleAppointments(
+      now,
+      targetThreshold,
+      await this.pacientesConTelefonoEquivocado(),
+    );
     if (eligible.length === 0) {
       this.logger.debug('Sin citas elegibles en esta ventana.');
       return { sent: 0, failed: 0, skipped: 0 };
@@ -212,7 +216,11 @@ export class AppointmentReminderCronService
    * un recordatorio para una cita que ya pasó (puede ocurrir si el cron
    * estuvo abajo varias horas y se "atrasó").
    */
-  private async findEligibleAppointments(now: Date, threshold: Date) {
+  private async findEligibleAppointments(
+    now: Date,
+    threshold: Date,
+    telefonoEquivocado: string[] = [],
+  ) {
     return this.prisma.appointment.findMany({
       where: {
         status: 'SCHEDULED',
@@ -220,6 +228,12 @@ export class AppointmentReminderCronService
         scheduleSlot: {
           startTime: { gt: now, lte: threshold },
         },
+        // ☎️ Ni a quien, según la persona que contestó, tiene el número de otro
+        // (ver `pacientesConTelefonoEquivocado`). En la consulta, por lo mismo que
+        // el opt-out: no se marca, y si el caso se cierra a tiempo, sale.
+        ...(telefonoEquivocado.length > 0
+          ? { patientId: { notIn: telefonoEquivocado } }
+          : {}),
         // 🔔 A quien pidió no recibir recordatorios no se le escribe, venga la cita
         // de WhatsApp o del hospital (docs/PLAN_ALTA_EN_CALIENTE.md, D2). Se filtra
         // en la consulta y no al enviar: así tampoco se le marca `reminderSentAt`,
@@ -299,6 +313,28 @@ export class AppointmentReminderCronService
       // en un solo tick. La siguiente ejecución del cron recogerá el resto.
       take: 200,
     });
+  }
+
+  /**
+   * ☎️ Pacientes con un caso `TELEFONO_EQUIVOCADO` abierto en la bandeja: quien
+   * contestó dijo que ese número es de otra persona (2026-10-15). No se les escribe
+   * hasta que el personal corrija el teléfono y cierre el caso, o lo descarte si no
+   * era cierto: cerrarlo devuelve los recordatorios sin tocar nada del paciente.
+   */
+  private async pacientesConTelefonoEquivocado(): Promise<string[]> {
+    const filas = await this.prisma.syncException.findMany({
+      where: {
+        kind: 'TELEFONO_EQUIVOCADO',
+        status: { in: ['ABIERTA', 'EN_REVISION'] },
+        patientId: { not: null },
+      },
+      select: { patientId: true },
+    });
+    return [
+      ...new Set(
+        filas.map((f) => f.patientId).filter((id): id is string => id !== null),
+      ),
+    ];
   }
 
   /**

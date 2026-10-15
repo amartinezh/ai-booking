@@ -903,6 +903,67 @@ describe('MirrorWatchdogService', () => {
     });
   });
   // ═══════════════════════════════════════════════════════════════════════
+  describe('avisos de pacientes: «no puedo ir» se cierra solo cuando ya se atendió', () => {
+    const aviso = (over: Record<string, unknown> = {}) => ({
+      id: 'ex-aviso',
+      kind: 'AVISO_INASISTENCIA',
+      appointmentId: 'apt-1',
+      appointmentStartAt: enHoras(72),
+      ...over,
+    });
+
+    it.each([
+      ['se canceló', { status: 'CANCELLED' }, 'La cita ya está cancelada.'],
+      [
+        'ya se atendió',
+        { status: 'COMPLETED' },
+        'La cita ya no está pendiente.',
+      ],
+      [
+        'cambió de hora',
+        { scheduleSlot: { startTime: enHoras(96), doctorId: 'doc-1' } },
+        'La cita ya tiene otra fecha u hora.',
+      ],
+    ])('la cita %s → AUTO_RESUELTA', async (_caso, cambio, nota) => {
+      const { service, exceptions } = build({
+        activas: [aviso()],
+        citas: [cita(cambio)],
+      });
+      const r = await service.vigilarOrganizacion(ORG, AHORA);
+      expect(cerradas(exceptions)).toEqual([['ex-aviso', nota]]);
+      expect(r.autoResueltas).toBe(1);
+    });
+
+    it('la cita ya no existe en AgenIA → se da por cancelada', async () => {
+      const { service, exceptions } = build({ activas: [aviso()], citas: [] });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(cerradas(exceptions)).toEqual([
+        ['ex-aviso', 'La cita ya está cancelada.'],
+      ]);
+    });
+
+    it('la cita sigue igual → el aviso sigue abierto para el personal', async () => {
+      const { service, exceptions } = build({
+        activas: [aviso()],
+        citas: [cita()],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.autoResolver).not.toHaveBeenCalled();
+    });
+
+    it('corre igual con el envío al hospital PAUSADO: solo mira la cita en AgenIA', async () => {
+      const { service, exceptions, prisma } = build({
+        config: { enabled: true, pushEnabled: false },
+        activas: [aviso()],
+        citas: [cita({ status: 'CANCELLED' })],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.autoResolver).toHaveBeenCalledTimes(1);
+      expect(prisma.syncOutbox.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   describe('vencimiento (§12 #15): la cita pasó hace días y nadie la cerró', () => {
     const DIA = 24 * HORA;
     const haceDias = (d: number) => new Date(AHORA.getTime() - d * DIA);

@@ -171,6 +171,10 @@ export class MirrorWatchdogService {
       ));
     }
     await this.vigilarAuditoria(organizationId, ahora, resumen);
+    resumen.autoResueltas += await this.cerrarAvisosAtendidos(
+      organizationId,
+      ahora,
+    );
     resumen.vencidas = await this.vencerLasOlvidadas(organizationId, ahora);
 
     try {
@@ -559,6 +563,62 @@ export class MirrorWatchdogService {
         resumen.autoResueltas++;
       }
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Avisos de pacientes (2026-10-15)
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Un `AVISO_INASISTENCIA` («no puedo ir», «quiero otra fecha») se cierra solo
+   * cuando ya se atendió: la cita se canceló —en el hospital, por el espejo, o
+   * aquí— o cambió de hora. Solo se mira la cita en AgenIA; no se escribe nada
+   * en el hospital. No depende del outbox: corre igual con el envío pausado.
+   */
+  private async cerrarAvisosAtendidos(
+    organizationId: string,
+    ahora: Date,
+  ): Promise<number> {
+    const activos = await this.prisma.syncException.findMany({
+      where: {
+        organizationId,
+        status: { in: ['ABIERTA', 'EN_REVISION'] },
+        kind: 'AVISO_INASISTENCIA',
+        appointmentId: { not: null },
+      },
+      select: { id: true, appointmentId: true, appointmentStartAt: true },
+      take: MAX_DERIVA,
+    });
+    if (activos.length === 0) return 0;
+    const citas = await this.cargarCitas(
+      organizationId,
+      activos
+        .map((a) => a.appointmentId)
+        .filter((id): id is string => id !== null),
+    );
+
+    let cerrados = 0;
+    for (const a of activos) {
+      const cita = a.appointmentId ? citas.get(a.appointmentId) : undefined;
+      let nota: string | null = null;
+      if (!cita || cita.status === 'CANCELLED') {
+        nota = 'La cita ya está cancelada.';
+      } else if (cita.status !== 'SCHEDULED') {
+        nota = 'La cita ya no está pendiente.';
+      } else if (
+        a.appointmentStartAt &&
+        cita.startTime.getTime() !== a.appointmentStartAt.getTime()
+      ) {
+        nota = 'La cita ya tiene otra fecha u hora.';
+      }
+      if (
+        nota &&
+        (await this.exceptions.autoResolver(organizationId, a.id, nota, ahora))
+      ) {
+        cerrados++;
+      }
+    }
+    return cerrados;
   }
 
   // ─────────────────────────────────────────────────────────────

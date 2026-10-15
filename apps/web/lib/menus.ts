@@ -192,7 +192,7 @@ const BANDEJA: MenuItem = {
     label: 'Bandeja de sincronización',
     href: '/dashboard/bandeja',
     icon: '🚨',
-    description: 'Citas que no llegaron al hospital y cambios sin aplicar',
+    description: 'Citas que no llegaron al hospital, cambios sin aplicar y avisos de pacientes',
     accent: 'orange',
 };
 

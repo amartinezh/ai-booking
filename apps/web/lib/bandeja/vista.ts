@@ -151,6 +151,17 @@ const MOTIVOS: readonly MotivoRetencion[] = ['EN_COLA', 'REINTENTANDO', 'RENDIDA
 const numero = (v: unknown): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : 0;
 
+/** Lo que escribió el paciente, entre comillas y sin saltos; vacío si no hay. */
+function citaDelMensaje(v: unknown): string {
+  if (typeof v !== 'string') return '';
+  const t = v.replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  return ` Escribió: «${t.length > 200 ? `${t.slice(0, 200)}…` : t}».`;
+}
+
+const nombreCanal = (v: unknown): string =>
+  v === 'TELEGRAM' ? 'Telegram' : 'WhatsApp';
+
 function leerMeta(meta: unknown): Record<string, unknown> {
   return meta && typeof meta === 'object' && !Array.isArray(meta)
     ? (meta as Record<string, unknown>)
@@ -190,6 +201,21 @@ export function resumenPublico(
       return 'La comparación con el hospital no encontró esta cita. Puede haberse cancelado allá, agendado en otro cupo o no haberse registrado nunca.';
     case 'IDENTIDAD_AMBIGUA':
       return `El hospital agendó una cita y hay ${numero(meta.candidatos) || 'más de un'} paciente(s) en AgenIA con ese mismo documento escrito distinto (ceros a la izquierda). No se creó la cita: hay que corregir el documento en el sistema donde esté mal escrito${veces}.`;
+    // Lo que el paciente le dijo al bot. El bot no tocó la cita ni escribió en el
+    // hospital: lo hace una persona, y al cancelarse o moverse la cita se cierra sola.
+    case 'AVISO_INASISTENCIA': {
+      const canal = nombreCanal(meta.canal);
+      const mensaje = citaDelMensaje(meta.mensaje);
+      return meta.pide === 'MODIFICAR'
+        ? `El paciente pidió por ${canal} cambiar la fecha de su cita${veces}.${mensaje} El bot no la cambió: si corresponde, muévala en el hospital y avísele al paciente.`
+        : `El paciente avisó por ${canal} que no podrá asistir${veces}.${mensaje} El bot no canceló la cita: si corresponde, cancélela en el hospital para liberar el cupo.`;
+    }
+    case 'TELEFONO_EQUIVOCADO': {
+      const varios = numero(meta.perfilesConElNumero);
+      const otros =
+        varios > 1 ? ` Ese número lo tienen ${varios} pacientes en AgenIA.` : '';
+      return `Quien respondió por WhatsApp dice que ese número no es del paciente${veces}.${citaDelMensaje(meta.mensaje)}${otros} Mientras este caso esté abierto no se le envían recordatorios: corrija el teléfono en el hospital y en Pacientes de AgenIA, y ciérrelo (o descártelo si no era cierto).`;
+    }
     default:
       return fila.title;
   }

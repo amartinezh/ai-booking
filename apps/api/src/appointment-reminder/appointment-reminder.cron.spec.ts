@@ -227,6 +227,8 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
     withinWindow?: boolean;
     envio?: { success: boolean; error?: string };
     estilo?: 'FORMAL' | 'INFORMAL';
+    /** Casos `TELEFONO_EQUIVOCADO` abiertos en la bandeja. */
+    telefonoEquivocado?: { patientId: string | null }[];
   }) => {
     const chatbot = {
       isWithinServiceWindow: jest.fn(async () => opts?.withinWindow ?? true),
@@ -246,6 +248,11 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
           reminderSentAt: new Date('2026-08-31T14:00:00.000Z'),
         })),
         update: jest.fn(async () => ({})),
+      },
+      syncException: {
+        findMany: jest.fn(
+          async (..._a: unknown[]) => opts?.telefonoEquivocado ?? [],
+        ),
       },
       // Perfiles: el servicio los lee para acotar a un agente o a un médico (§12 #10b).
       agentProfile: { findUnique: jest.fn(async () => null as unknown) },
@@ -326,6 +333,46 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       // En la CONSULTA, no al enviar: si se filtrara después, la cita quedaría
       // con `reminderSentAt` puesto — «ya se le avisó» de algo que nunca salió.
       expect(where.patient).toEqual({ remindersOptOut: false });
+    });
+
+    it('☎️ excluye a los pacientes con un caso de «teléfono equivocado» abierto, en la consulta', async () => {
+      const { service, prisma } = build({
+        telefonoEquivocado: [
+          { patientId: 'pat-9' },
+          { patientId: 'pat-9' },
+          { patientId: null },
+        ],
+      });
+      await service.runOnce();
+
+      // Solo lo ABIERTO: cerrarlo (corregido o descartado) devuelve los recordatorios.
+      expect(prisma.syncException.findMany.mock.calls[0][0]).toEqual({
+        where: {
+          kind: 'TELEFONO_EQUIVOCADO',
+          status: { in: ['ABIERTA', 'EN_REVISION'] },
+          patientId: { not: null },
+        },
+        select: { patientId: true },
+      });
+      const where = (
+        prisma.appointment.findMany.mock.calls[0] as unknown as [
+          { where: Record<string, any> },
+        ]
+      )[0].where;
+      expect(where.patientId).toEqual({ notIn: ['pat-9'] });
+      // Se suma a los demás filtros, no los reemplaza.
+      expect(where.patient).toEqual({ remindersOptOut: false });
+    });
+
+    it('☎️ sin casos abiertos la consulta no lleva filtro por paciente', async () => {
+      const { service, prisma } = build();
+      await service.runOnce();
+      const where = (
+        prisma.appointment.findMany.mock.calls[0] as unknown as [
+          { where: Record<string, any> },
+        ]
+      )[0].where;
+      expect(where).not.toHaveProperty('patientId');
     });
 
     it('🔕 excluye a las clínicas que apagaron los recordatorios, en la consulta de cada vuelta', async () => {
@@ -947,6 +994,9 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
 
       cuerpo(); // primer tick: se queda esperando a la base
       cuerpo(); // segundo tick: debe salirse por el lock
+      // El primero lee antes los casos de «teléfono equivocado»: se le deja
+      // llegar a la consulta de citas, donde se queda esperando.
+      await new Promise((r) => setImmediate(r));
 
       expect(prisma.appointment.findMany).toHaveBeenCalledTimes(1);
       expect((service as any).logger.warn).toHaveBeenCalledWith(

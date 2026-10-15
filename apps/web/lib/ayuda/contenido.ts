@@ -1460,7 +1460,7 @@ export const TEMAS: TemaAyuda[] = [
         titulo: 'Bandeja de sincronización',
         icono: '🚨',
         categoria: 'hospital',
-        resumen: 'Las citas que no llegaron al hospital (AgenIA las confirmó y el hospital todavía no las tiene) y los cambios que no se pudieron aplicar, para resolverlos a tiempo.',
+        resumen: 'Las citas que no llegaron al hospital (AgenIA las confirmó y el hospital todavía no las tiene), los cambios que no se pudieron aplicar y los avisos de pacientes al bot («no puedo ir», «número equivocado»), para resolverlos a tiempo.',
         paraQueSirve:
             'Un vigilante revisa cada 2 minutos si algo se atascó entre AgenIA y el hospital. Cada problema es una «excepción» con su gravedad: crítica si la cita es en menos de 4 horas. Aquí alguien la toma, la resuelve (por ejemplo, agendándola a mano en el HIS) y deja constancia. El número rojo del menú es lo que te espera.',
         disponibilidad: `${CON_ESPEJO} La ven el Administrador y los Agentes de Reservas.`,
@@ -1474,6 +1474,26 @@ export const TEMAS: TemaAyuda[] = [
                     'Pulsa «Resolver» y cuenta qué hiciste (mínimo 5 caracteres).',
                 ],
                 nota: 'Si no hace falta actuar (era una cita de prueba), usa «Descartar» y explica por qué. Si no puedes seguir con ella, «Soltar» la devuelve a «Sin dueño».',
+            },
+            {
+                titulo: 'Atender el aviso de un paciente que no irá o pide otra fecha',
+                pasos: [
+                    'Filtra por el tipo «Un paciente avisó que no irá o pide otra fecha». La tarjeta dice qué pidió, por dónde y lo que escribió.',
+                    'Pulsa «Tomar».',
+                    'Si no irá, cancela la cita en el HIS para liberar el cupo. Si pide otra fecha, muévela en el HIS y avísale al paciente.',
+                    'No hace falta cerrarla: cuando la cita se cancela o cambia de hora, se cierra sola. Si decides dejar la cita como está, pulsa «Resolver» y cuenta por qué.',
+                ],
+                nota: 'Aparecen cuando cancelar o cambiar la fecha están apagados en el bot. El bot no toca la cita ni escribe en el hospital: le dice al paciente que su aviso quedó registrado y que la cita sigue en pie hasta que el hospital la gestione.',
+            },
+            {
+                titulo: 'Corregir el teléfono de un paciente que es de otra persona',
+                pasos: [
+                    'Filtra por el tipo «El teléfono de un paciente es de otra persona».',
+                    'Consigue el número correcto (por ejemplo, llamando al paciente o con su historia).',
+                    'Corrígelo en el HIS y también en Pacientes de AgenIA: el hospital no reemplaza un teléfono que AgenIA ya tiene.',
+                    'Pulsa «Resolver» contando qué hiciste. Si el aviso no era cierto, usa «Descartar».',
+                ],
+                nota: 'Mientras el caso esté abierto, AgenIA no le envía recordatorios a ese paciente. Al cerrarlo (resuelto o descartado), vuelven solos.',
             },
             {
                 titulo: 'Configurar los avisos por WhatsApp al agendador',
@@ -1500,7 +1520,7 @@ export const TEMAS: TemaAyuda[] = [
             {
                 nombre: 'Tipos de excepción',
                 explicacion:
-                    'Cita que el hospital aún no tiene · Un cambio se rindió sin llegar al hospital · Conflicto entre AgenIA y el hospital · Error al aplicar un cambio · El hospital no tiene una cita que AgenIA da por hecha · Cita del hospital con un documento ambiguo.',
+                    'Cita que el hospital aún no tiene · Un cambio se rindió sin llegar al hospital · Conflicto entre AgenIA y el hospital · Error al aplicar un cambio · El hospital no tiene una cita que AgenIA da por hecha · Cita del hospital con un documento ambiguo · Un paciente avisó que no irá o pide otra fecha · El teléfono de un paciente es de otra persona.',
             },
             {
                 nombre: 'Estados de cierre',
@@ -1511,6 +1531,14 @@ export const TEMAS: TemaAyuda[] = [
             {
                 pregunta: '¿Por qué una excepción se cerró sola?',
                 respuesta: 'Porque dejó de cumplirse la condición: por ejemplo, la cita ya llegó al hospital o se canceló.',
+            },
+            {
+                pregunta: '¿El aviso de un paciente que no irá cancela su cita?',
+                respuesta: 'No. Ni el bot ni la bandeja escriben nada en el hospital: la cita sigue igual hasta que alguien la cancele o la mueva en el HIS. Cuando eso pasa, el aviso se cierra solo.',
+            },
+            {
+                pregunta: '¿Se le avisa al agendador por WhatsApp de estos avisos de pacientes?',
+                respuesta: 'No: solo quedan en la bandeja, con su cifra en el menú. Los avisos por WhatsApp son para las citas que no llegaron al hospital.',
             },
             {
                 pregunta: '¿Qué es «Cita del hospital con un documento ambiguo»?',
