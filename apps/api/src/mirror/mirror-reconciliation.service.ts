@@ -83,6 +83,12 @@ export interface ReconciliationReport {
    * servicio hay que crear y homologar a esos médicos (homologar.ts).
    */
   activeServiceUnmapped: Record<string, number>;
+  /**
+   * 🩺 El otro lado del radar: citas de servicios activos con médicos que SÍ
+   * están homologados pero tienen WhatsApp OFF. AgenIA las tiene y no trabaja con
+   * ellas; para cubrir el 100 % del servicio hay que encenderlos en Médicos.
+   */
+  activeServiceWhatsappOff: Record<string, number>;
   /** true si los dos sistemas coinciden exactamente. */
   inSync: boolean;
 }
@@ -247,15 +253,19 @@ export class MirrorReconciliationService {
       );
     }
 
-    const { serviceFixed, toImport, activeServiceUnmapped } =
-      await this.serviciosYCitasATraer(
-        organizationId,
-        hisSnapshot,
-        window,
-        claveHis,
-        enAgenIA,
-        cupoPorClave,
-      );
+    const {
+      serviceFixed,
+      toImport,
+      activeServiceUnmapped,
+      activeServiceWhatsappOff,
+    } = await this.serviciosYCitasATraer(
+      organizationId,
+      hisSnapshot,
+      window,
+      claveHis,
+      enAgenIA,
+      cupoPorClave,
+    );
 
     const report: ReconciliationReport = {
       organizationId,
@@ -271,6 +281,7 @@ export class MirrorReconciliationService {
       serviceFixed,
       toImport,
       activeServiceUnmapped,
+      activeServiceWhatsappOff,
       inSync: missingInHis.length === 0 && missingInAgenIA.length === 0,
     };
 
@@ -333,13 +344,19 @@ export class MirrorReconciliationService {
     serviceFixed: number;
     toImport: { doctorExternalKey: string; startTimeIso: string }[];
     activeServiceUnmapped: Record<string, number>;
+    activeServiceWhatsappOff: Record<string, number>;
   }> {
     const conServicio = hisSnapshot.filter((c) => !!c.serviceExternalKey);
     if (conServicio.length === 0) {
-      return { serviceFixed: 0, toImport: [], activeServiceUnmapped: {} };
+      return {
+        serviceFixed: 0,
+        toImport: [],
+        activeServiceUnmapped: {},
+        activeServiceWhatsappOff: {},
+      };
     }
 
-    const [mapasServicio, activos, canceladas] = await Promise.all([
+    const [mapasServicio, activos, canceladas, apagados] = await Promise.all([
       this.prisma.mirrorEntityMap.findMany({
         where: { organizationId, entityType: 'SERVICE' },
         select: { agenIAId: true, externalKey: true },
@@ -359,6 +376,14 @@ export class MirrorReconciliationService {
           patient: { select: { cedula: true } },
         },
       }),
+      this.prisma.doctorProfile.findMany({
+        where: {
+          organizationId,
+          id: { in: [...claveHis.keys()] },
+          whatsappBookingEnabled: false,
+        },
+        select: { id: true },
+      }),
     ]);
     const servicioDe = new Map(
       mapasServicio.map((m) => [m.externalKey, m.agenIAId]),
@@ -374,14 +399,26 @@ export class MirrorReconciliationService {
       }),
     );
     const homologados = new Set(claveHis.values());
+    const enOff = new Set(
+      apagados.flatMap((d) => {
+        const clave = claveHis.get(d.id);
+        return clave ? [clave] : [];
+      }),
+    );
 
     const aCorregir = new Map<string, string[]>();
     const aTraer: { doctorExternalKey: string; startTimeIso: string }[] = [];
     const sinHomologar: Record<string, number> = {};
+    const conWhatsappOff: Record<string, number> = {};
     for (const c of conServicio) {
       const startTimeIso = new Date(c.startTimeIso).toISOString();
       const clave = `${c.doctorExternalKey}|${startTimeIso}`;
       const servicio = servicioDe.get(c.serviceExternalKey as string);
+
+      if (enOff.has(c.doctorExternalKey) && servicio && activo.has(servicio)) {
+        conWhatsappOff[c.doctorExternalKey] =
+          (conWhatsappOff[c.doctorExternalKey] ?? 0) + 1;
+      }
 
       const cupo = cupoPorClave.get(clave);
       if (cupo) {
@@ -446,11 +483,23 @@ export class MirrorReconciliationService {
       );
     }
 
+    if (Object.keys(conWhatsappOff).length > 0) {
+      this.logger.warn(
+        `Reconciliación (org ${organizationId}): citas de servicios activos con ` +
+          `médicos en WhatsApp OFF (AgenIA no trabaja con ellas): ` +
+          Object.entries(conWhatsappOff)
+            .map(([m, n]) => `${m}=${n}`)
+            .join(', ') +
+          '.',
+      );
+    }
+
     aTraer.sort((a, b) => a.startTimeIso.localeCompare(b.startTimeIso));
     return {
       serviceFixed,
       toImport: aTraer.slice(0, MAX_CITAS_A_TRAER),
       activeServiceUnmapped: sinHomologar,
+      activeServiceWhatsappOff: conWhatsappOff,
     };
   }
 
@@ -496,6 +545,7 @@ export class MirrorReconciliationService {
           serviceFixed: report.serviceFixed,
           toImport: report.toImport.length,
           activeServiceUnmapped: report.activeServiceUnmapped,
+          activeServiceWhatsappOff: report.activeServiceWhatsappOff,
           missingInHis: report.missingInHis,
           missingInAgenIA: report.missingInAgenIA,
           repaired: report.repaired,

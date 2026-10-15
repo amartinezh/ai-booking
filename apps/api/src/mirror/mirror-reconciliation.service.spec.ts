@@ -460,6 +460,7 @@ describe('MirrorReconciliationService', () => {
       prisma.medicalService = {
         findMany: jest.fn(async () => [{ id: MG }]),
       };
+      prisma.doctorProfile = { findMany: jest.fn(async () => []) };
       prisma.appointment.findMany.mockImplementation(async ({ where }: any) =>
         where.status === 'CANCELLED' ? canceladas : [],
       );
@@ -579,6 +580,28 @@ describe('MirrorReconciliationService', () => {
       expect(r.toImport).toEqual([]);
     });
 
+    it('📡 y el otro lado: citas de servicios activos con médicos homologados en WhatsApp OFF', async () => {
+      prisma.doctorProfile.findMany.mockResolvedValue([{ id: 'doc-1' }]);
+
+      const r = await service.reconcile(
+        'org1',
+        [
+          his(),
+          his({ startTimeIso: H2 }),
+          // Servicio inactivo: no cuenta.
+          his({ serviceExternalKey: 'S39141-1' }),
+        ],
+        VENTANA,
+      );
+
+      expect(r.activeServiceWhatsappOff).toEqual({ '76': 2 });
+      expect(prisma.doctorProfile.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ whatsappBookingEnabled: false }),
+        }),
+      );
+    });
+
     it('las más cercanas primero', async () => {
       const r = await service.reconcile(
         'org1',
@@ -607,7 +630,12 @@ describe('MirrorReconciliationService', () => {
       const detalle = JSON.parse(
         prisma.syncAudit.create.mock.calls[0][0].data.detail,
       );
-      expect(detalle).toMatchObject({ serviceFixed: 0, toImport: 1 });
+      expect(detalle).toMatchObject({
+        serviceFixed: 0,
+        toImport: 1,
+        activeServiceUnmapped: {},
+        activeServiceWhatsappOff: {},
+      });
     });
   });
 });
