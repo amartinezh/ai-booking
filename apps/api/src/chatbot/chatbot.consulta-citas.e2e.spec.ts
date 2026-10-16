@@ -1987,6 +1987,30 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(lastSent()).toContain('ya pasó');
     });
 
+    it('🪪 dio su cédula en un mensaje y luego «cancelar cita»: no se la vuelve a pedir', async () => {
+      // Caso real 2026-10-16: «cancelar cita pero me dan otra, mi cc 1058…» y,
+      // un minuto después, «cancelar sita» → «¿me indica el número de cédula?».
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ cedula: CEDULA }),
+      );
+      await say(`buenos días, mi número de cc ${CEDULA}`);
+      provider.extractSchedulingIntent.mockReturnValue(extraction());
+      await say('cancelar cita');
+      const r = lastSent();
+      expect(r).toContain('Medicina General');
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('🪪 sin una cédula reciente, «cancelar cita» la pide como siempre', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('cancelar cita');
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+    });
+
     it('sin recordatorio, con una sola cita próxima: se la ofrece igual', async () => {
       seedPaciente();
       seedCita('apt-1', MANANA);
@@ -2258,28 +2282,94 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(r).not.toContain('Odontología');
     });
 
-    it('«no puedo asistir» con solo una cita de odontología: no ofrece cancelarla ni deja aviso', async () => {
+    it('📋 «no puedo asistir» con solo una cita de odontología: no la cancela, pero el aviso le llega al personal', async () => {
+      // 2026-10-16: antes se le decía «se maneja con el hospital» y nadie se
+      // enteraba (casos reales de odontología e hipertensos el mismo día).
       seedPaciente();
       seedCita('apt-od', MANANA, SVC_ODONTO);
       fueraDelBot('apt-od');
       db.appointments[0].reminderSentAt = HACE_2H;
       await say('Buen día ,no puedo asistir');
-      expect(lastSent()).not.toContain('¿Desea que la *cancele*?');
-      expect(avisos.registrar).not.toHaveBeenCalled();
+      const r = lastSent();
+      expect(r).not.toContain('¿Desea que la *cancele*?');
+      expect(r).toContain('Dejé su aviso para el personal del hospital');
+      expect(r).toContain('*Odontología*');
+      expect(r).toContain('todavía no está cancelada');
+      expect(r).toContain(`el hospital al *${SOPORTE}*`);
+      expect(avisos.registrar).toHaveBeenCalledTimes(1);
+      expect(avisos.registrar.mock.calls[0][1]).toMatchObject({
+        kind: 'AVISO_INASISTENCIA',
+        appointmentId: 'apt-od',
+        meta: { pide: 'CANCELAR', fueraDelAlcance: true },
+      });
       expect(db.appointments[0].status).toBe('SCHEDULED');
     });
 
-    it('«cancelar cita» + cédula con solo citas de odontología: dice que se gestionan con el hospital y no toca nada', async () => {
+    it('📋 «cancelar cita» con solo citas de odontología: no pide la cédula; deja el aviso y no toca nada', async () => {
       seedPaciente();
       seedCita('apt-od', MANANA, SVC_ODONTO);
       fueraDelBot('apt-od');
       await say('cancelar cita');
-      await say(CEDULA);
       const r = lastSent();
-      expect(r).toContain('no se pueden gestionar por este medio');
+      expect(r).toContain('Dejé su aviso para el personal del hospital');
       expect(r).toContain(`el hospital al *${SOPORTE}*`);
-      expect(r).not.toContain('Odontología');
+      expect(avisos.registrar.mock.calls[0][1].meta).toMatchObject({
+        pide: 'CANCELAR',
+        fueraDelAlcance: true,
+      });
       expect(db.appointments[0].status).toBe('SCHEDULED');
+      expect([null, ChatState.IDLE]).toContain(state());
+    });
+
+    it('📋 por la IA (sin el atajo) y con cédula: el mismo aviso al llegar a la cita de odontología', async () => {
+      seedPaciente();
+      seedCita('apt-od', MANANA, SVC_ODONTO);
+      fueraDelBot('apt-od');
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ isCancellation: true }),
+      );
+      await say('necesito ayuda con lo del viernes');
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CEDULA);
+      provider.extractSchedulingIntent.mockReturnValue(extraction());
+      await say(CEDULA);
+      expect(lastSent()).toContain(
+        'Dejé su aviso para el personal del hospital',
+      );
+      expect(avisos.registrar).toHaveBeenCalledTimes(1);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('📋 pide cambiar la fecha (por la IA, con cambiar apagado) de su cita de odontología: aviso de cambio', async () => {
+      // Caso real 2026-10-16 08:50: «me encuentro enferma… ¿me la pueden poner
+      // para más tarde?».
+      seedPaciente();
+      seedCita('apt-od', MANANA, SVC_ODONTO);
+      fueraDelBot('apt-od');
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ isModification: true }),
+      );
+      await say(
+        'lo q pasa es q me encuentro enferma y está lloviendo, aver si me la pueden poner para más tarde',
+      );
+      const r = lastSent();
+      expect(r).toContain('desea cambiar la fecha de su cita de *Odontología*');
+      expect(r).toContain('sigue igual por ahora');
+      expect(avisos.registrar.mock.calls[0][1].meta).toMatchObject({
+        pide: 'MODIFICAR',
+        fueraDelAlcance: true,
+      });
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('con una cita del bot Y otra de odontología, «no puedo asistir» sigue el camino del bot (sin aviso de la otra)', async () => {
+      seedPaciente();
+      seedCita('apt-mg', MANANA);
+      seedCita('apt-od', new Date(MANANA.getTime() + 60 * 60_000), SVC_ODONTO);
+      fueraDelBot('apt-od');
+      await say('Buen día ,no puedo asistir');
+      expect(lastSent()).toContain('¿Desea que la *cancele*?');
+      expect(lastSent()).toContain('Medicina General');
+      expect(avisos.registrar).not.toHaveBeenCalled();
     });
 
     it('🛡️ aunque la sesión guarde una cita de odontología, el SÍ no la cancela', async () => {
@@ -2327,12 +2417,17 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(lastSent()).not.toContain('Gracias por confirmar');
     });
 
-    it('«cancelar cita» + cédula con solo una cita de hipertensos: se gestiona con el hospital', async () => {
+    it('📋 «cancelar cita» con solo una cita de hipertensos: aviso para el personal, la cita no se toca', async () => {
       seedPaciente();
       seedCita('apt-hta', MANANA, SVC_HTA);
       await say('cancelar cita');
-      await say(CEDULA);
-      expect(lastSent()).toContain('no se pueden gestionar por este medio');
+      expect(lastSent()).toContain(
+        'Dejé su aviso para el personal del hospital',
+      );
+      expect(lastSent()).toContain('hipertensos');
+      expect(avisos.registrar.mock.calls[0][1].meta).toMatchObject({
+        fueraDelAlcance: true,
+      });
       expect(db.appointments[0].status).toBe('SCHEDULED');
     });
 

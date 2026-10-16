@@ -1483,7 +1483,7 @@ export const TEMAS: TemaAyuda[] = [
                     'Si no irá, cancela la cita en el HIS para liberar el cupo. Si pide otra fecha, muévela en el HIS y avísale al paciente.',
                     'No hace falta cerrarla: cuando la cita se cancela o cambia de hora, se cierra sola. Si decides dejar la cita como está, pulsa «Resolver» y cuenta por qué.',
                 ],
-                nota: 'Aparecen cuando cancelar o cambiar la fecha están apagados en el bot. El bot no toca la cita ni escribe en el hospital: le dice al paciente que su aviso quedó registrado y que la cita sigue en pie hasta que el hospital la gestione.',
+                nota: 'Aparecen cuando cancelar o cambiar la fecha están apagados en el bot, y también cuando la cita es de un servicio o médico con el que AgenIA no trabaja (por ejemplo odontología o hipertensos): la tarjeta lo dice. El bot no toca la cita ni escribe en el hospital: le dice al paciente que su aviso quedó registrado y que la cita sigue en pie hasta que el hospital la gestione.',
             },
             {
                 titulo: 'Corregir el teléfono de un paciente que es de otra persona',

@@ -222,6 +222,13 @@ describe('resumenPublico — una frase neutra desde meta, nunca desde el detalle
     expect(r('AVISO_INASISTENCIA', { pide: 'CANCELAR' })).not.toContain('citas recordadas');
   });
 
+  it('🩺 aviso de una cita con la que AgenIA no trabaja: lo dice, y que se le pidió llamar', () => {
+    const t = r('AVISO_INASISTENCIA', { pide: 'CANCELAR', fueraDelAlcance: true });
+    expect(t).toContain('AgenIA no trabaja');
+    expect(t).toContain('cancélela en el hospital');
+    expect(r('AVISO_INASISTENCIA', { pide: 'CANCELAR' })).not.toContain('no trabaja');
+  });
+
   it('cancelación no aplicada: dice que no se borró nada en el hospital y qué hacer', () => {
     const t = r('CANCELACION_NO_APLICADA', {});
     expect(t).toContain('no se borró nada');

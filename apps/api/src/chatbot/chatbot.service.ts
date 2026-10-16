@@ -69,6 +69,7 @@ import {
   normalizeDocumento,
   reconocerEps,
   documentoSinCerosIniciales,
+  esDocumentoValido,
   variantesDeTelefono,
   estadoConexionHis,
   remitenteEsDelPaciente,
@@ -257,6 +258,15 @@ const canalDe = (senderId: string): CanalDelBot =>
  * normal; el resto se gestiona con el hospital.
  */
 const MAX_CITAS_EN_RESPUESTA = 8;
+
+/**
+ * 🪪 Cuánto se recuerda la cédula que el paciente escribió en un mensaje
+ * (2026-10-16): «cancelar cita pero me dan otra, mi cc 1058…» y, un minuto
+ * después, «cancelar cita» → antes se le volvía a pedir. Se usa solo para
+ * arrancar cancelar o cambiar fecha, y la cédula igual tiene que ser de un
+ * perfil de quien escribe.
+ */
+const CEDULA_RECIENTE_TTL = 15 * 60;
 
 /**
  * 🩺 Con qué citas trabaja AgenIA frente al paciente (2026-10-15): las de los
@@ -3964,19 +3974,19 @@ export class ChatbotService implements OnModuleInit {
       SESSION_TTL,
     );
 
+    // La de este mensaje o, si no trae, la que escribió hace unos minutos.
+    const cedula =
+      aiData.cedula ||
+      (await this.redis.get(`cedula_reciente:${organizationId}:${senderId}`));
     let reply: string;
-    if (aiData.cedula) {
+    if (cedula) {
       await this.redis.set(
         `temp_cancel_cedula:${organizationId}:${senderId}`,
-        aiData.cedula,
+        cedula,
         'EX',
         SESSION_TTL,
       );
-      await this.handleCancelCedulaStep(
-        organizationId,
-        senderId,
-        aiData.cedula,
-      );
+      await this.handleCancelCedulaStep(organizationId, senderId, cedula);
       reply = (await this.getLastSent(senderId)) || '[cancelación iniciada]';
     } else {
       reply = MSGS.cancelarPedirCedula();
@@ -4020,19 +4030,19 @@ export class ChatbotService implements OnModuleInit {
       SESSION_TTL,
     );
 
+    // La de este mensaje o, si no trae, la que escribió hace unos minutos.
+    const cedula =
+      aiData.cedula ||
+      (await this.redis.get(`cedula_reciente:${organizationId}:${senderId}`));
     let reply: string;
-    if (aiData.cedula) {
+    if (cedula) {
       await this.redis.set(
         `temp_modify_cedula:${organizationId}:${senderId}`,
-        aiData.cedula,
+        cedula,
         'EX',
         SESSION_TTL,
       );
-      await this.handleModifyCedulaStep(
-        organizationId,
-        senderId,
-        aiData.cedula,
-      );
+      await this.handleModifyCedulaStep(organizationId, senderId, cedula);
       reply = (await this.getLastSent(senderId)) || '[modificación iniciada]';
     } else {
       reply = MSGS.modificarPedirCedula();
@@ -4440,13 +4450,16 @@ export class ChatbotService implements OnModuleInit {
       return this.atenderNumeroEquivocado(p, { automatica: true });
     }
     if (tipo === 'NUMERO_EQUIVOCADO') return this.atenderNumeroEquivocado(p);
-    if (tipo === 'NO_ASISTIRA' && p.operaciones.cancelar) {
-      return this.ofrecerCancelar(p);
-    }
     if (tipo === 'NO_ASISTIRA' || tipo === 'CAMBIAR') {
-      return this.atenderAvisoDelPaciente(
-        p,
-        tipo === 'NO_ASISTIRA' ? 'CANCELAR' : 'MODIFICAR',
+      const pide = tipo === 'NO_ASISTIRA' ? 'CANCELAR' : 'MODIFICAR';
+      const atendido =
+        tipo === 'NO_ASISTIRA' && p.operaciones.cancelar
+          ? await this.ofrecerCancelar(p)
+          : await this.atenderAvisoDelPaciente(p, pide);
+      // 🩺 Sus citas son todas de otro servicio o de un médico sin «WhatsApp ON»:
+      // no se tocan, pero el aviso le llega al personal.
+      return (
+        atendido || this.avisarSiSoloTieneCitasFueraDelAlcance({ ...p, pide })
       );
     }
 
@@ -4510,6 +4523,167 @@ export class ChatbotService implements OnModuleInit {
               ? 'PREGUNTA_SOBRE_CITA'
               : 'QUIEN_ESCRIBE',
         appointmentId: cita?.id ?? null,
+        ...(citas.length > 1 ? { appointmentIds: citas.map((c) => c.id) } : {}),
+      },
+    });
+    return true;
+  }
+
+  /**
+   * 🩺 Las citas próximas de quien escribe con las que AgenIA NO trabaja: de un
+   * médico sin «WhatsApp ON» o de un servicio inactivo (odontología, hipertensos…).
+   */
+  private async citasFueraDelAlcanceDelRemitente(
+    organizationId: string,
+    identity: SenderIdentity,
+  ) {
+    const deQuien = this.perfilesDelRemitente(identity);
+    if (deQuien.length === 0) return [];
+    return this.citasFueraDelAlcance(organizationId, {
+      patient: { OR: deQuien },
+    });
+  }
+
+  private async citasFueraDelAlcance(
+    organizationId: string,
+    dequien: Prisma.AppointmentWhereInput,
+  ) {
+    return this.prisma.appointment.findMany({
+      where: {
+        organizationId,
+        status: 'SCHEDULED',
+        scheduleSlot: {
+          startTime: { gt: new Date() },
+          OR: [
+            { doctor: { whatsappBookingEnabled: false } },
+            { service: { isActive: false } },
+          ],
+        },
+        ...dequien,
+      },
+      include: {
+        scheduleSlot: { include: { service: true, doctor: true } },
+        patient: { select: { fullName: true } },
+      },
+      orderBy: { scheduleSlot: { startTime: 'asc' } },
+      take: MAX_CITAS_EN_RESPUESTA,
+    });
+  }
+
+  /**
+   * 🩺 «No puedo ir» o «cámbienmela» de quien SOLO tiene citas con las que AgenIA
+   * no trabaja (2026-10-16): no se toca la cita ni se escribe nada en el hospital,
+   * pero el aviso queda en la Bandeja para el personal. Antes se le decía «se
+   * manejan con el hospital» y nadie se enteraba: casos reales de odontología e
+   * hipertensos el mismo día de la cita.
+   *
+   * Si tiene alguna cita con la que AgenIA sí trabaja, false: la atiende el
+   * camino de siempre. Sin bandeja (clínica sin espejo), false.
+   */
+  private async avisarSiSoloTieneCitasFueraDelAlcance(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    org: Organization | null;
+    pide: 'CANCELAR' | 'MODIFICAR';
+  }): Promise<boolean> {
+    if (!this.avisosPaciente) return false;
+    const enAlcance = await this.citasProximasDelRemitente(
+      p.organizationId,
+      p.identity,
+    );
+    if (enAlcance.length > 0) return false;
+    const fuera = await this.citasFueraDelAlcanceDelRemitente(
+      p.organizationId,
+      p.identity,
+    );
+    return this.avisarCitasFueraDelAlcance(p, fuera);
+  }
+
+  /**
+   * Deja en la Bandeja un aviso por cada cita (fuera del alcance del bot) y se lo
+   * dice al paciente, sin prometerle que la cita quedó cancelada o cambiada.
+   * Solo nombra las citas cuyo aviso quedó registrado.
+   */
+  private async avisarCitasFueraDelAlcance(
+    p: {
+      organizationId: string;
+      senderId: string;
+      text: string;
+      MSGS: ReturnType<typeof buildMessages>;
+      org: Organization | null;
+      pide: 'CANCELAR' | 'MODIFICAR';
+    },
+    todas: Awaited<ReturnType<ChatbotService['citasFueraDelAlcance']>>,
+  ): Promise<boolean> {
+    if (!this.avisosPaciente || todas.length === 0) return false;
+    const ahora = new Date();
+    const citas: typeof todas = [];
+    for (const cita of todas) {
+      const inicio = cita.scheduleSlot.startTime;
+      try {
+        await this.avisosPaciente.registrar(
+          p.organizationId,
+          {
+            kind: 'AVISO_INASISTENCIA',
+            dedupeKey: claveExcepcion.avisoInasistencia(cita.id),
+            severity: severidadPorCercania(
+              'MEDIA',
+              (inicio.getTime() - ahora.getTime()) / 60_000,
+            ),
+            title: TITULO_EXCEPCION.AVISO_INASISTENCIA,
+            appointmentId: cita.id,
+            patientId: cita.patientId,
+            epsId: cita.epsId,
+            doctorId: cita.scheduleSlot.doctorId,
+            appointmentStartAt: inicio,
+            meta: {
+              pide: p.pide,
+              mensaje: p.text.slice(0, 300),
+              canal: canalDe(p.senderId),
+              fueraDelAlcance: true,
+              ...(todas.length > 1 ? { citasDelAviso: todas.length } : {}),
+            },
+          },
+          ahora,
+        );
+        citas.push(cita);
+      } catch (error: unknown) {
+        this.logger.error(
+          `No se pudo registrar el aviso de una cita fuera del alcance (cita ${cita.id}): ${getErrorMessage(error)}`,
+        );
+      }
+    }
+    if (citas.length === 0) return false;
+
+    const timeZone = p.org?.timezone || undefined;
+    const contacto = this.contactoDe(p.MSGS, p.org);
+    const cita = citas[0];
+    const servicio = cita.scheduleSlot.service?.name ?? '';
+    const fecha = formatAppointmentLong(cita.scheduleSlot.startTime, {
+      timeZone,
+    });
+    const lineas =
+      citas.length > 1 ? this.lineasDeCitas(p.MSGS, citas, timeZone) : '';
+    const reply =
+      p.pide === 'CANCELAR'
+        ? lineas
+          ? p.MSGS.avisoFueraDelAlcanceCancelarVarias(lineas, contacto)
+          : p.MSGS.avisoFueraDelAlcanceCancelar(servicio, fecha, contacto)
+        : lineas
+          ? p.MSGS.avisoFueraDelAlcanceCambiarVarias(lineas, contacto)
+          : p.MSGS.avisoFueraDelAlcanceCambiar(servicio, fecha, contacto);
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.cleanUpSession(p.organizationId, p.senderId);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text,
+      botReply: reply,
+      metadata: {
+        step: 'AVISO_FUERA_DEL_ALCANCE_REGISTRADO',
+        pide: p.pide,
+        appointmentId: cita.id,
         ...(citas.length > 1 ? { appointmentIds: citas.map((c) => c.id) } : {}),
       },
     });
@@ -5600,6 +5774,17 @@ export class ChatbotService implements OnModuleInit {
 
     this.logger.log(`🧠 LLM extrajo: ${JSON.stringify(aiData)}`);
 
+    // 🪪 La cédula que escribió en este mensaje se recuerda unos minutos: si
+    // enseguida pide cancelar o cambiar la fecha, no se le vuelve a pedir.
+    if (aiData.cedula && esDocumentoValido(normalizeDocumento(aiData.cedula))) {
+      await this.redis.set(
+        `cedula_reciente:${organizationId}:${senderId}`,
+        normalizeDocumento(aiData.cedula),
+        'EX',
+        CEDULA_RECIENTE_TTL,
+      );
+    }
+
     // 🚑 GUARDRAIL POST-LLM: EMERGENCIA EN AUDIO O PARÁFRASIS ──────────
     // Defensa en profundidad sobre el guardrail regex pre-LLM (que solo ve
     // TEXTO): (a) el flag isEmergency de la Tarea D captura paráfrasis que
@@ -5816,6 +6001,34 @@ export class ChatbotService implements OnModuleInit {
     if (pideCancelar || pideModificar) {
       const motivo: OperacionBot = pideCancelar ? 'CANCELAR' : 'MODIFICAR';
       if (!operaciones[CLAVE_OPERACION[motivo]]) {
+        // 📋 Antes del «no es posible por aquí»: si tiene una cita, el aviso le
+        // queda al personal (la suya, o la de otro servicio que AgenIA no toca).
+        // Caso real 2026-10-16: «me encuentro enferma… ¿me la pueden poner para
+        // más tarde?» recibía solo el teléfono y nadie en el hospital se enteraba.
+        const pide = motivo === 'CANCELAR' ? 'CANCELAR' : 'MODIFICAR';
+        const delAviso = {
+          organizationId,
+          senderId,
+          identity,
+          text: text || '[audio]',
+          MSGS,
+          org,
+          operaciones,
+          pide,
+        } as const;
+        const avisado =
+          currentState === ChatState.IDLE &&
+          (await (async () =>
+            (await this.atenderAvisoDelPaciente(delAviso, pide)) ||
+            (await this.avisarSiSoloTieneCitasFueraDelAlcance(
+              delAviso,
+            )))().catch((error: unknown) => {
+            this.logger.error(
+              `Aviso del paciente falló (org ${organizationId}): ${getErrorMessage(error)}`,
+            );
+            return false;
+          }));
+        if (avisado) return;
         await this.responderOperacionNoDisponible({
           organizationId,
           senderId,
@@ -11809,6 +12022,7 @@ export class ChatbotService implements OnModuleInit {
         MSGS,
         userMessage: cedula,
         flow: 'CANCELAR',
+        patientId: patient.id,
       });
       return;
     }
@@ -12000,7 +12214,33 @@ export class ChatbotService implements OnModuleInit {
     MSGS: ReturnType<typeof buildMessages>;
     userMessage: string;
     flow: 'CANCELAR' | 'MODIFICAR';
+    /**
+     * El paciente (ya comprobado de quien escribe): con él, sus citas fuera del
+     * alcance dejan aviso en la Bandeja (`avisarCitasFueraDelAlcance`).
+     */
+    patientId?: string;
   }): Promise<void> {
+    if (p.patientId) {
+      const avisado = await this.avisarCitasFueraDelAlcance(
+        {
+          organizationId: p.organizationId,
+          senderId: p.senderId,
+          text: p.userMessage,
+          MSGS: p.MSGS,
+          org: await this.organizacionDe(p.organizationId),
+          pide: p.flow,
+        },
+        await this.citasFueraDelAlcance(p.organizationId, {
+          patientId: p.patientId,
+        }),
+      ).catch((error: unknown) => {
+        this.logger.error(
+          `Aviso de cita fuera del alcance falló (org ${p.organizationId}): ${getErrorMessage(error)}`,
+        );
+        return false;
+      });
+      if (avisado) return;
+    }
     const reply = p.MSGS.citasFueraDelAlcance(
       this.contactoDe(p.MSGS, await this.organizacionDe(p.organizationId)),
     );
@@ -12111,6 +12351,7 @@ export class ChatbotService implements OnModuleInit {
         MSGS,
         userMessage: cedula,
         flow: 'MODIFICAR',
+        patientId: patient.id,
       });
       return;
     }

@@ -950,6 +950,32 @@ const FORMAL = {
     `La hora de su cita ya pasó, así que no puedo cancelarla por este medio. 🕐\n\n` +
     `Si necesita algo sobre esa cita, comuníquese con ${contacto}.`,
 
+  // 🩺 Citas con las que AgenIA no trabaja (otro servicio o médico sin WhatsApp
+  // ON): no se tocan, pero el aviso queda en la Bandeja para el personal.
+  avisoFueraDelAlcanceCancelar: (
+    servicio: string,
+    fecha: string,
+    contacto: string,
+  ) =>
+    `Dejé su aviso para el personal del hospital: no podrá asistir a su cita de *${servicio}* del *${fecha}*. 📋\n\n` +
+    `Esa cita no se gestiona por este medio, así que *todavía no está cancelada*: para cancelarla, comuníquese con ${contacto}.`,
+
+  avisoFueraDelAlcanceCancelarVarias: (lineas: string, contacto: string) =>
+    `Dejé su aviso para el personal del hospital: no podrá asistir a estas citas:\n\n${lineas}\n\n` +
+    `Esas citas no se gestionan por este medio, así que *todavía no están canceladas*: para cancelarlas, comuníquese con ${contacto}.`,
+
+  avisoFueraDelAlcanceCambiar: (
+    servicio: string,
+    fecha: string,
+    contacto: string,
+  ) =>
+    `Dejé su aviso para el personal del hospital: desea cambiar la fecha de su cita de *${servicio}* del *${fecha}*. 📋\n\n` +
+    `Esa cita no se gestiona por este medio, así que *sigue igual por ahora*: para cambiarla, comuníquese con ${contacto}.`,
+
+  avisoFueraDelAlcanceCambiarVarias: (lineas: string, contacto: string) =>
+    `Dejé su aviso para el personal del hospital: desea cambiar la fecha de estas citas:\n\n${lineas}\n\n` +
+    `Esas citas no se gestionan por este medio, así que *siguen igual por ahora*: para cambiarlas, comuníquese con ${contacto}.`,
+
   // Tras cancelar una, si le quedan otras del recordatorio.
   cancelarOtraCita: () =>
     `Si también desea cancelar otra de sus citas, escríbame *"cancelar cita"*.`,
@@ -2070,6 +2096,30 @@ const INFORMAL = {
   citaYaPaso: (contacto: string) =>
     `La hora de tu cita ya pasó, así que no puedo cancelarla por aquí. 🕐\n\n` +
     `Si necesitas algo sobre esa cita, comunícate con ${contacto}.`,
+
+  avisoFueraDelAlcanceCancelar: (
+    servicio: string,
+    fecha: string,
+    contacto: string,
+  ) =>
+    `Dejé tu aviso para el personal del hospital: no podrás asistir a tu cita de *${servicio}* del *${fecha}*. 📋\n\n` +
+    `Esa cita no se gestiona por aquí, así que *todavía no está cancelada*: para cancelarla, comunícate con ${contacto}.`,
+
+  avisoFueraDelAlcanceCancelarVarias: (lineas: string, contacto: string) =>
+    `Dejé tu aviso para el personal del hospital: no podrás asistir a estas citas:\n\n${lineas}\n\n` +
+    `Esas citas no se gestionan por aquí, así que *todavía no están canceladas*: para cancelarlas, comunícate con ${contacto}.`,
+
+  avisoFueraDelAlcanceCambiar: (
+    servicio: string,
+    fecha: string,
+    contacto: string,
+  ) =>
+    `Dejé tu aviso para el personal del hospital: quieres cambiar la fecha de tu cita de *${servicio}* del *${fecha}*. 📋\n\n` +
+    `Esa cita no se gestiona por aquí, así que *sigue igual por ahora*: para cambiarla, comunícate con ${contacto}.`,
+
+  avisoFueraDelAlcanceCambiarVarias: (lineas: string, contacto: string) =>
+    `Dejé tu aviso para el personal del hospital: quieres cambiar la fecha de estas citas:\n\n${lineas}\n\n` +
+    `Esas citas no se gestionan por aquí, así que *siguen igual por ahora*: para cambiarlas, comunícate con ${contacto}.`,
 
   recordatorioConfirmado: (fecha: string, servicio: string) =>
     `¡Gracias por confirmar! 🙌 Te esperamos el *${fecha}* para tu cita de *${servicio}*.`,
