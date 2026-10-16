@@ -218,6 +218,11 @@ CREATE INDEX IF NOT EXISTS "idx_patient_fullname_trgm"
 --     de exámenes. Crear, cancelar o mover cualquier otra cita (odontología,
 --     hipertensos…) se frena aunque la operación esté encendida: esas citas se
 --     gestionan en el sistema del hospital.
+--   · CITA_PASADA (2026-10-16): cancelar o mover desde AgenIA una cita cuya hora
+--     ya llegó se frena: en el hospital sería borrar una cita ya cumplida o
+--     perdida (el bot ofreció cancelar a las 7:25 una cita de las 7:30 y el SÍ
+--     podía llegar después). Las fechas se guardan en UTC y la base corre en hora
+--     de Bogotá: se compara contra `now() AT TIME ZONE 'UTC'`.
 --
 -- El error lleva `AGENIA_OPERACION_APAGADA:<operación>`: la API y el panel lo
 -- reconocen (`operacionFrenadaDelError` en @agenia/shared) y lo traducen a un
@@ -289,6 +294,16 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'AGENIA_OPERACION_APAGADA:FUERA_DE_ALCANCE'
       USING HINT = 'La cita es de un médico sin WhatsApp ON o de un servicio inactivo: se gestiona directamente en el sistema del hospital.';
+  END IF;
+
+  -- Una cita cuya hora ya llegó no se cancela ni se mueve desde AgenIA.
+  IF TG_OP = 'UPDATE' AND v_op IN ('CANCELAR', 'MODIFICAR') AND EXISTS (
+    SELECT 1 FROM "ScheduleSlot" ss
+     WHERE ss.id = OLD."scheduleSlotId"
+       AND ss."startTime" <= (now() AT TIME ZONE 'UTC')
+  ) THEN
+    RAISE EXCEPTION 'AGENIA_OPERACION_APAGADA:CITA_PASADA'
+      USING HINT = 'La hora de la cita ya llegó: se gestiona directamente en el sistema del hospital.';
   END IF;
 
   RETURN NEW;

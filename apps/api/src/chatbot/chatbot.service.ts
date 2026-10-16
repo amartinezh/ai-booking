@@ -4559,12 +4559,32 @@ export class ChatbotService implements OnModuleInit {
       organizationId,
       p.identity,
     );
-    const citas =
+    const candidatas =
       recordadas.length > 0
         ? recordadas
         : esElAtajo
           ? []
           : await this.citasProximasDelRemitente(organizationId, p.identity);
+    // 🕐 Una cita cuya hora ya pasó (las recordadas incluyen la última hora) no
+    // se ofrece cancelar: en el hospital sería borrar una cita ya cumplida o
+    // perdida (caso real 2026-10-16: «no podré asistir a las 7:30» a las 7:25 y
+    // el SÍ podía llegar después).
+    const ahora = Date.now();
+    const citas = candidatas.filter(
+      (c) => c.scheduleSlot.startTime.getTime() > ahora,
+    );
+    if (candidatas.length > 0 && citas.length === 0) {
+      const reply = MSGS.citaYaPaso(
+        this.contactoDe(MSGS, await this.organizacionDe(organizationId)),
+      );
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: p.text,
+        botReply: reply,
+        metadata: { step: 'CITA_YA_PASO' },
+      });
+      return true;
+    }
     if (citas.length === 0) return false;
 
     if (citas.length === 1) {
@@ -5602,6 +5622,35 @@ export class ChatbotService implements OnModuleInit {
           ? 'EMERGENCY_LLM'
           : 'EMERGENCY_TRANSCRIPT_REGEX',
       });
+      return;
+    }
+
+    // 💬 Respuesta al recordatorio POR VOZ (2026-10-16): «confirmo mi asistencia»,
+    // «no puedo ir», «¿dónde es?» dichos en una nota de voz. El atajo de arriba
+    // solo ve TEXTO; aquí ya está adoptada la transcripción. Sin esto, un paciente
+    // que confirmó por audio recibió «en este momento no es posible agendar citas».
+    if (
+      isAudio &&
+      !!text &&
+      currentState === ChatState.IDLE &&
+      (await this.atenderRespuestaAlBot({
+        organizationId,
+        senderId,
+        identity,
+        text,
+        MSGS,
+        botName,
+        orgName,
+        org,
+        operaciones,
+        timeZone: org?.timezone || undefined,
+      }).catch((error: unknown) => {
+        this.logger.error(
+          `Respuesta al bot por voz falló (org ${organizationId}): ${getErrorMessage(error)}`,
+        );
+        return false;
+      }))
+    ) {
       return;
     }
 
@@ -8942,6 +8991,7 @@ export class ChatbotService implements OnModuleInit {
       select: {
         scheduleSlot: {
           select: {
+            startTime: true,
             doctor: { select: { whatsappBookingEnabled: true } },
             service: { select: { isActive: true } },
           },
@@ -8958,6 +9008,24 @@ export class ChatbotService implements OnModuleInit {
         MSGS,
         userMessage: text || '[audio]',
         flow: 'CANCELAR',
+      });
+      await p.limpiar();
+      return;
+    }
+
+    // 🕐 Entre la oferta y el SÍ pueden pasar minutos u horas: si la hora de la
+    // cita ya llegó, no se cancela (en el hospital sería borrar una cita ya
+    // cumplida o perdida). Con espejo, la base también lo frena (CITA_PASADA).
+    const inicio = cita?.scheduleSlot?.startTime;
+    if (inicio && inicio.getTime() <= Date.now()) {
+      const reply = MSGS.citaYaPaso(
+        this.contactoDe(MSGS, await this.organizacionDe(organizationId)),
+      );
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { step: 'CITA_YA_PASO', appointmentId: aptId },
       });
       await p.limpiar();
       return;

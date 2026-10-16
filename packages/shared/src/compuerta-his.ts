@@ -117,16 +117,18 @@ export const eventoPuedeSalir = (
 
 /**
  * Lo que la base frena: una operación con su interruptor apagado, REACTIVAR
- * (siempre, con espejo) y FUERA_DE_ALCANCE (la cita es de un médico sin
+ * (siempre, con espejo), FUERA_DE_ALCANCE (la cita es de un médico sin
  * «WhatsApp ON» o de un servicio inactivo en Servicios: AgenIA no trabaja con
- * ella).
+ * ella) y CITA_PASADA (cancelar o mover una cita cuya hora ya llegó: en el
+ * hospital sería borrar una cita ya cumplida o perdida).
  */
 export type OperacionFrenada =
   | 'AGENDAR'
   | 'CANCELAR'
   | 'MODIFICAR'
   | 'REACTIVAR'
-  | 'FUERA_DE_ALCANCE';
+  | 'FUERA_DE_ALCANCE'
+  | 'CITA_PASADA';
 
 /**
  * Si el error es el freno de la base (`fn_interruptores_del_hospital`: «el
@@ -142,7 +144,7 @@ export function operacionFrenadaDelError(
       : typeof error === 'string'
         ? error
         : '';
-  const m = /AGENIA_OPERACION_APAGADA:(AGENDAR|CANCELAR|MODIFICAR|REACTIVAR|FUERA_DE_ALCANCE)/.exec(
+  const m = /AGENIA_OPERACION_APAGADA:(AGENDAR|CANCELAR|MODIFICAR|REACTIVAR|FUERA_DE_ALCANCE|CITA_PASADA)/.exec(
     texto,
   );
   return m ? (m[1] as OperacionFrenada) : null;
@@ -160,4 +162,6 @@ export const MENSAJE_OPERACION_APAGADA: Record<OperacionFrenada, string> = {
     'Una cita cancelada no se puede reactivar: con la clínica conectada al sistema del hospital, agéndela de nuevo.',
   FUERA_DE_ALCANCE:
     'AgenIA solo gestiona las citas de los médicos con «WhatsApp ON» (Médicos) y de los servicios activos (Servicios), y esta no lo es. Hágalo directamente en el sistema del hospital.',
+  CITA_PASADA:
+    'La hora de esta cita ya llegó: con la clínica conectada al sistema del hospital, una cita que ya pasó no se cancela ni se mueve desde AgenIA. Hágalo directamente en el sistema del hospital.',
 };

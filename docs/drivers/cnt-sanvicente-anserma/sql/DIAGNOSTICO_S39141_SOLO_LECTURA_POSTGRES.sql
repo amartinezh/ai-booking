@@ -86,9 +86,18 @@ SELECT ms.name servicio, ms."isActive" activo, count(*),
  GROUP BY 1, 2 ORDER BY 3 DESC;
 
 \echo '== 8. Escrituras en el HIS de las últimas 24 h y cola pendiente =='
-SELECT op, outcome, count(*) FROM "SyncAudit"
+\echo '   OK = el agente confirmó que lo escribió (constancia desde 2026-10-16); SKIPPED = no se envía; CONFLICT = el HIS lo rechazó'
+SELECT op, outcome, left(detail, 70) detalle, count(*) FROM "SyncAudit"
  WHERE direction = 'AGENIA_TO_HIS' AND "createdAt" > (now() AT TIME ZONE 'UTC') - interval '24 hours'
- GROUP BY 1, 2;
+ GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+\echo '   Citas cambiadas en AgenIA y entregadas al agente (24 h): sirve aunque falte la constancia'
+SELECT o.op, o.payload->>'status' estado,
+       to_char((o."deliveredAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Bogota', 'MM-DD HH24:MI') entregado
+  FROM "SyncOutbox" o
+ WHERE o."entityType" = 'APPOINTMENT' AND o.origin <> 'MIRROR' AND o."deliveredAt" IS NOT NULL
+   AND o."createdAt" > (now() AT TIME ZONE 'UTC') - interval '24 hours'
+   AND NOT EXISTS (SELECT 1 FROM "SyncAudit" a WHERE a."eventId" = o."eventId" AND a.outcome = 'SKIPPED')
+ ORDER BY o.seq;
 SELECT count(*) FILTER (WHERE "deliveredAt" IS NULL AND NOT "deadLettered") pendientes,
        count(*) FILTER (WHERE "deadLettered") muertos
   FROM "SyncOutbox";

@@ -945,6 +945,11 @@ const FORMAL = {
     `Las citas que tiene registradas no se pueden gestionar por este medio: se manejan directamente con el hospital. 🏥\n\n` +
     `Por favor comuníquese con ${contacto}.`,
 
+  // La hora de la cita ya pasó (o está en curso): no se cancela por aquí.
+  citaYaPaso: (contacto: string) =>
+    `La hora de su cita ya pasó, así que no puedo cancelarla por este medio. 🕐\n\n` +
+    `Si necesita algo sobre esa cita, comuníquese con ${contacto}.`,
+
   // Tras cancelar una, si le quedan otras del recordatorio.
   cancelarOtraCita: () =>
     `Si también desea cancelar otra de sus citas, escríbame *"cancelar cita"*.`,
@@ -2061,6 +2066,10 @@ const INFORMAL = {
   citasFueraDelAlcance: (contacto: string) =>
     `Las citas que tienes registradas no se pueden gestionar por aquí: se manejan directamente con el hospital. 🏥\n\n` +
     `Por favor comunícate con ${contacto}.`,
+
+  citaYaPaso: (contacto: string) =>
+    `La hora de tu cita ya pasó, así que no puedo cancelarla por aquí. 🕐\n\n` +
+    `Si necesitas algo sobre esa cita, comunícate con ${contacto}.`,
 
   recordatorioConfirmado: (fecha: string, servicio: string) =>
     `¡Gracias por confirmar! 🙌 Te esperamos el *${fecha}* para tu cita de *${servicio}*.`,

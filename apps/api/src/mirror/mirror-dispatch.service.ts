@@ -554,6 +554,21 @@ export class MirrorDispatchService {
 
   async ack(organizationId: string, input: AckInput): Promise<AckResult> {
     const seqs = input.seqs.map((s) => BigInt(s));
+    // 🧾 Lo que el agente escribió en el hospital, ANTES de marcarlo: solo los
+    // que aún no estaban entregados (un ack repetido no duplica la constancia).
+    const escritos =
+      seqs.length > 0
+        ? await this.prisma.syncOutbox.findMany({
+            where: { organizationId, seq: { in: seqs }, deliveredAt: null },
+            select: {
+              eventId: true,
+              entityType: true,
+              entityId: true,
+              op: true,
+              payload: true,
+            },
+          })
+        : [];
     const result = await this.prisma.syncOutbox.updateMany({
       where: { organizationId, seq: { in: seqs } },
       // `nextAttemptAt: null` limpia el backoff de un evento que había fallado
@@ -562,6 +577,30 @@ export class MirrorDispatchService {
       // del último fallo: un evento entregado no tiene "error vigente".
       data: { deliveredAt: new Date(), nextAttemptAt: null, lastError: null },
     });
+    // 🧾 Constancia de cada escritura en el hospital (2026-10-16). Hasta hoy solo
+    // quedaban los fallos, los rechazos y lo que se cerraba sin enviar: la
+    // primera cancelación real en el HIS no dejó rastro en la auditoría, y
+    // «escrituras en el HIS = 0» no se distinguía de «nada se escribió».
+    if (escritos.length > 0) {
+      const QUE = {
+        AGENDAR: 'alta de la cita',
+        CANCELAR: 'cancelación de la cita',
+        MODIFICAR: 'cambio de fecha de la cita',
+        OTRO: 'cambio',
+      } as const;
+      await this.prisma.syncAudit.createMany({
+        data: escritos.map((e) => ({
+          organizationId,
+          direction: SYNC_AUDIT_DIRECTION.AGENIA_TO_HIS,
+          entityType: e.entityType,
+          entityId: e.entityId,
+          op: e.op,
+          outcome: 'OK',
+          eventId: e.eventId,
+          detail: `Escrito en el sistema del hospital: ${QUE[operacionHisDelEvento(e)]}.`,
+        })),
+      });
+    }
 
     // Los que el agente reporta como fallidos NO se marcan delivered — quedan
     // pendientes para el próximo pull hasta agotar reintentos (ver plan §6,

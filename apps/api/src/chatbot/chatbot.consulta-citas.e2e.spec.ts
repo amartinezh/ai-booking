@@ -1597,6 +1597,37 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       },
     );
 
+    it('🎙️ la confirmación por NOTA DE VOZ también se entiende (no «no es posible agendar»)', async () => {
+      // Caso real 2026-10-15 18:10: «Confirmo mi asistencia a la cita de mañana»
+      // dicho en un audio recibía el aviso de que agendar está apagado.
+      conRecordatorio();
+      jest
+        .spyOn(service as any, 'resolveCredentialsForOrg')
+        .mockResolvedValue({ accessToken: 't', phoneNumberId: PHONE_ID });
+      jest
+        .spyOn(service as any, 'downloadWhatsAppAudio')
+        .mockResolvedValue(Buffer.from('ogg'));
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({
+          transcript:
+            'Buenos días, muchas gracias por el recordatorio. Confirmo mi asistencia a la cita de mañana. Allí estaré, muchas gracias',
+          intent: 'agendar_cita',
+        }),
+      );
+      await service.processIncomingMessage({
+        from: SENDER,
+        type: 'audio',
+        audio: { id: 'media-1' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+      const r = lastSent();
+      expect(r).toContain('¡Gracias por confirmar!');
+      expect(r).not.toContain('no es posible');
+      expect(paso('RECORDATORIO_CONFIRMADO')?.metadata).toMatchObject({
+        appointmentId: 'apt-1',
+      });
+    });
+
     it('«muchas gracias» SIN recordatorio reciente sigue siendo una despedida', async () => {
       seedPaciente();
       seedCita('apt-1', MANANA); // sin reminderSentAt
@@ -1929,6 +1960,32 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
         expect(lastSent()).toMatch(/sigue/);
       },
     );
+
+    it('🕐 su cita ya empezó: no se le ofrece cancelarla (se le dice que la hora ya pasó)', async () => {
+      // Caso real 2026-10-16: «no podré asistir a las 7 30» escrito a las 7:25.
+      seedPaciente();
+      seedCita('apt-1', new Date(AHORA.getTime() - 5 * 60_000));
+      db.appointments[0].reminderSentAt = HACE_2H;
+      await say('Creo que no podré asistir a las 7 30');
+      const r = lastSent();
+      expect(r).toContain('ya pasó');
+      expect(r).not.toContain('¿Desea que la *cancele*?');
+      expect(state()).not.toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('🕐 se le ofreció a tiempo pero el SÍ llegó cuando la hora ya pasó: NO la cancela', async () => {
+      seedPaciente();
+      seedCita('apt-1', new Date(AHORA.getTime() + 5 * 60_000));
+      db.appointments[0].reminderSentAt = HACE_2H;
+      await say('Creo que no podré asistir');
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+      // Pasa el tiempo: la hora de la cita llega antes del SÍ.
+      cupo()!.startTime = new Date(AHORA.getTime() - 60_000);
+      await say('Sí');
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+      expect(lastSent()).toContain('ya pasó');
+    });
 
     it('sin recordatorio, con una sola cita próxima: se la ofrece igual', async () => {
       seedPaciente();

@@ -369,6 +369,61 @@ describe('MirrorDispatchService', () => {
       });
     });
 
+    describe('🧾 constancia de lo que se escribió en el hospital', () => {
+      const cancelacion = {
+        eventId: 'e-cancel',
+        entityType: 'APPOINTMENT',
+        entityId: 'apt-1',
+        op: 'UPDATE',
+        payload: { status: 'CANCELLED' },
+      };
+
+      it('cada seq exitoso deja una fila AGENIA_TO_HIS OK con la operación', async () => {
+        prisma.syncOutbox.findMany.mockResolvedValueOnce([cancelacion]);
+
+        await service.ack('org1', { seqs: ['5'] });
+
+        expect(prisma.syncOutbox.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              organizationId: 'org1',
+              seq: { in: [BigInt(5)] },
+              deliveredAt: null,
+            },
+          }),
+        );
+        expect(prisma.syncAudit.createMany).toHaveBeenCalledWith({
+          data: [
+            {
+              organizationId: 'org1',
+              direction: 'AGENIA_TO_HIS',
+              entityType: 'APPOINTMENT',
+              entityId: 'apt-1',
+              op: 'UPDATE',
+              outcome: 'OK',
+              eventId: 'e-cancel',
+              detail:
+                'Escrito en el sistema del hospital: cancelación de la cita.',
+            },
+          ],
+        });
+      });
+
+      it('un ack repetido (ya entregado) no duplica la constancia', async () => {
+        prisma.syncOutbox.findMany.mockResolvedValueOnce([]);
+
+        await service.ack('org1', { seqs: ['5'] });
+
+        expect(prisma.syncAudit.createMany).not.toHaveBeenCalled();
+      });
+
+      it('sin seqs exitosos no consulta nada', async () => {
+        await service.ack('org1', { seqs: [], failedSeqs: [] });
+
+        expect(prisma.syncOutbox.findMany).not.toHaveBeenCalled();
+      });
+    });
+
     // ══════════════════════════════════════════════════════════════════════
     // Cada reserva de cita genera además un evento SLOT (el cupo pasa a
     // ocupado) que este driver no espeja. Tratarlo como fallo lo mandaba a
