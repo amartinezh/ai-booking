@@ -203,6 +203,25 @@ describe('AppointmentReminderCronService — plantilla vs texto libre', () => {
 describe('AppointmentReminderCronService — el lote y el disparo manual', () => {
   const ORG = 'org-1';
 
+  // Las citas de los ejemplos son del 1-sep a las 14:00 UTC: el reloj se fija
+  // 4 h antes para que estén en plazo y lejos de la anticipación mínima (60
+  // min por defecto). Solo el reloj: los temporizadores siguen siendo reales.
+  beforeEach(() => {
+    jest.useFakeTimers({
+      now: new Date('2026-09-01T10:00:00.000Z'),
+      doNotFake: [
+        'nextTick',
+        'setImmediate',
+        'clearImmediate',
+        'setInterval',
+        'clearInterval',
+        'setTimeout',
+        'clearTimeout',
+      ],
+    });
+  });
+  afterEach(() => jest.useRealTimers());
+
   const cita = (over: Record<string, any> = {}) => ({
     id: 'apt-1',
     status: 'SCHEDULED',
@@ -295,6 +314,85 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
   };
 
   describe('runOnce', () => {
+    describe('⏱️ anticipación mínima (caso real 2026-10-17: recordatorio a 4 min de la cita)', () => {
+      // Reloj en 2026-09-01T10:00Z.
+      const enMinutos = (min: number) =>
+        cita({
+          id: `apt-${min}`,
+          scheduleSlot: {
+            ...cita().scheduleSlot,
+            startTime: new Date(
+              Date.parse('2026-09-01T10:00:00.000Z') + min * 60_000,
+            ),
+          },
+        });
+      const conMinimo = (apt: any, minutos: number | undefined) => ({
+        ...apt,
+        organization: {
+          ...apt.organization,
+          settings:
+            minutos === undefined ? null : { reminderMinLeadMinutes: minutos },
+        },
+      });
+
+      it('sin ajuste (60 min por defecto): la de 4 min no sale ni se marca; la de 3 h sí', async () => {
+        const { service, chatbot, prisma } = build({
+          eligibles: [
+            conMinimo(enMinutos(4), undefined),
+            conMinimo(enMinutos(180), undefined),
+          ],
+        });
+
+        const r = await service.runOnce();
+
+        expect(r).toEqual({ sent: 1, failed: 0, skipped: 0, tooClose: 1 });
+        expect(chatbot.sendOutboundForOrg).toHaveBeenCalledTimes(1);
+        const marcadas = prisma.appointment.update.mock.calls.map(
+          (c: any[]) => c[0].where.id,
+        );
+        expect(marcadas).toEqual(['apt-180']);
+      });
+
+      it('la clínica lo configura: con 30 min, la de 45 min sí sale', async () => {
+        const { service } = build({
+          eligibles: [conMinimo(enMinutos(45), 30)],
+        });
+        await expect(service.runOnce()).resolves.toMatchObject({
+          sent: 1,
+          tooClose: 0,
+        });
+      });
+
+      it('con 0 (sin mínimo) sale aunque falten 4 minutos, como antes', async () => {
+        const { service } = build({ eligibles: [conMinimo(enMinutos(4), 0)] });
+        await expect(service.runOnce()).resolves.toMatchObject({
+          sent: 1,
+          tooClose: 0,
+        });
+      });
+
+      it('solo citas demasiado cerca: no envía nada pero el lote lo deja dicho', async () => {
+        const { service, systemLog, chatbot } = build({
+          eligibles: [conMinimo(enMinutos(10), 60)],
+        });
+
+        await expect(service.runOnce()).resolves.toEqual({
+          sent: 0,
+          failed: 0,
+          skipped: 0,
+          tooClose: 1,
+        });
+        expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+        expect(systemLog.event).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: expect.stringContaining(
+              '1 sin enviar por empezar antes de la anticipación mínima',
+            ),
+          }),
+        );
+      });
+    });
+
     it('sin citas elegibles no escribe ni un log de lote', async () => {
       const { service, systemLog } = build({ eligibles: [] });
 
@@ -302,6 +400,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         sent: 0,
         failed: 0,
         skipped: 0,
+        tooClose: 0,
       });
       expect(systemLog.event).not.toHaveBeenCalled();
     });
@@ -476,6 +575,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         sent: 1,
         failed: 0,
         skipped: 0,
+        tooClose: 0,
       });
       expect(prisma.appointment.update).toHaveBeenCalledWith({
         where: { id: 'apt-1' },
@@ -496,6 +596,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         sent: 0,
         failed: 1,
         skipped: 0,
+        tooClose: 0,
       });
       expect(prisma.appointment.update).not.toHaveBeenCalled();
       expect(interactionLog.logReminderSent).toHaveBeenCalledWith(
@@ -517,7 +618,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
 
       const r = await service.runOnce();
 
-      expect(r).toEqual({ sent: 2, failed: 1, skipped: 0 });
+      expect(r).toEqual({ sent: 2, failed: 1, skipped: 0, tooClose: 0 });
       expect(prisma.appointment.update).toHaveBeenCalledTimes(2);
     });
 
@@ -545,6 +646,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         sent: 0,
         failed: 0,
         skipped: 1,
+        tooClose: 0,
       });
       expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
     });
@@ -738,7 +840,17 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
     ])('a las %s (%s) saluda «%s»', async (ahoraIso, _local, saludo) => {
       jest.useFakeTimers().setSystemTime(new Date(ahoraIso));
       try {
-        const { service, chatbot } = build({ eligibles: [cita()] });
+        // La cita, un día después de «ahora»: lejos de la anticipación mínima.
+        const { service, chatbot } = build({
+          eligibles: [
+            cita({
+              scheduleSlot: {
+                ...cita().scheduleSlot,
+                startTime: new Date(Date.parse(ahoraIso) + 86_400_000),
+              },
+            }),
+          ],
+        });
         await service.runOnce();
         expect(textoEnviado(chatbot).startsWith(saludo)).toBe(true);
       } finally {

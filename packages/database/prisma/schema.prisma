@@ -150,6 +150,14 @@ model OrganizationSettings {
   // defecto (el comportamiento de siempre).
   remindersOnlySelfBooked Boolean @default(false)
 
+  // Anticipación mínima del recordatorio AUTOMÁTICO, en minutos: si a la cita le
+  // faltan menos, el cron no la recuerda (ni la marca). Caso real 2026-10-17:
+  // citas que el hospital agenda el mismo día minutos antes recibían el
+  // recordatorio a 4 minutos de la cita. 0 = sin mínimo. Lo edita el ORG_ADMIN
+  // en /dashboard/configuracion (ver @agenia/shared recordatorio-anticipacion.ts).
+  // El botón de recordatorio manual no se afecta.
+  reminderMinLeadMinutes Int @default(60)
+
   // Interruptores de lo que el PACIENTE puede hacer por el bot (WhatsApp y
   // Telegram), uno por operación. Se leen en cada mensaje, así que surten
   // efecto sin reiniciar. El personal sigue operando desde el panel. Con los

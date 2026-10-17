@@ -1123,6 +1123,15 @@ export const TEMAS: TemaAyuda[] = [
                 nota: 'Solo funciona con los recordatorios automáticos encendidos. No cambia nada más: las citas se agendan, cancelan y atienden igual, y el botón de recordatorio manual de Visión General sigue sirviendo para cualquier cita.',
             },
             {
+                titulo: 'No enviar el recordatorio a citas que están por empezar',
+                pasos: [
+                    'En «Asistente Virtual», elige la «Anticipación mínima del recordatorio» (por defecto, 1 hora).',
+                    'Si a la cita le falta menos de ese tiempo, el recordatorio automático no sale. Sirve para las citas que el hospital agenda el mismo día, minutos antes, con el paciente ya ahí.',
+                    'Aplica de inmediato. «Sin mínimo» vuelve a enviar el recordatorio aunque la cita esté por empezar.',
+                ],
+                nota: 'La cita no se marca como recordada: si la mueven a una hora más lejana, el recordatorio puede salir. El botón de recordatorio manual de Visión General no se afecta.',
+            },
+            {
                 titulo: 'Cambiar el nombre, el tono y las horas que ofrece el asistente',
                 pasos: [
                     'En «Asistente Virtual», escribe el «Nombre del asistente virtual» (hasta 40 caracteres).',

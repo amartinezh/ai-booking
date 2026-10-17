@@ -13,8 +13,10 @@ import { InteractionLogService } from '../interaction-log/interaction-log.servic
 import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
 import {
+  citaDemasiadoCercaParaRecordar,
   compuertasHis,
   destinoDeContacto,
+  normalizarAnticipacionRecordatorio,
   saludoPorHora,
 } from '@agenia/shared';
 import {
@@ -132,7 +134,12 @@ export class AppointmentReminderCronService
    * Expuesto público porque facilita testeo manual desde un script o un
    * endpoint admin futuro.
    */
-  async runOnce(): Promise<{ sent: number; failed: number; skipped: number }> {
+  async runOnce(): Promise<{
+    sent: number;
+    failed: number;
+    skipped: number;
+    tooClose: number;
+  }> {
     const start = Date.now();
     const now = new Date();
     const targetThreshold = addBusinessHours(now, this.cfg.businessHoursBefore);
@@ -148,16 +155,51 @@ export class AppointmentReminderCronService
     );
     if (eligible.length === 0) {
       this.logger.debug('Sin citas elegibles en esta ventana.');
-      return { sent: 0, failed: 0, skipped: 0 };
+      return { sent: 0, failed: 0, skipped: 0, tooClose: 0 };
     }
 
-    this.logger.log(`Procesando ${eligible.length} recordatorios pendientes.`);
+    // ⏱️ Anticipación mínima de la clínica (/dashboard/configuracion, default 60
+    // min): a una cita que empieza enseguida —casi siempre agendada en el
+    // hospital minutos antes, con el paciente ya ahí— no se le manda el
+    // recordatorio. No se marca: si la mueven a una hora más lejana, vuelve a
+    // poder salir. Se filtra aquí y no en la consulta porque el mínimo es de
+    // cada clínica; son pocas y salen de la ventana en minutos.
+    const aEnviar = eligible.filter(
+      (apt) =>
+        !citaDemasiadoCercaParaRecordar(
+          apt.scheduleSlot.startTime,
+          now,
+          normalizarAnticipacionRecordatorio(
+            apt.organization?.settings?.reminderMinLeadMinutes,
+          ),
+        ),
+    );
+    const tooClose = eligible.length - aEnviar.length;
+    if (aEnviar.length === 0) {
+      this.logger.debug(
+        `Sin recordatorios para enviar: ${tooClose} cita(s) empiezan antes de la anticipación mínima.`,
+      );
+      if (tooClose > 0) {
+        await this.registrarLote(
+          now,
+          targetThreshold,
+          start,
+          0,
+          0,
+          0,
+          tooClose,
+        );
+      }
+      return { sent: 0, failed: 0, skipped: 0, tooClose };
+    }
+
+    this.logger.log(`Procesando ${aEnviar.length} recordatorios pendientes.`);
 
     let sent = 0;
     let failed = 0;
     let skipped = 0;
 
-    for (const apt of eligible) {
+    for (const apt of aEnviar) {
       try {
         const outcome = await this.processOne(apt);
         if (outcome === 'sent') sent += 1;
@@ -185,26 +227,52 @@ export class AppointmentReminderCronService
       }
     }
 
+    await this.registrarLote(
+      now,
+      targetThreshold,
+      start,
+      sent,
+      failed,
+      skipped,
+      tooClose,
+    );
+
+    return { sent, failed, skipped, tooClose };
+  }
+
+  /** Resumen del lote en el log y en SystemLog. */
+  private async registrarLote(
+    now: Date,
+    targetThreshold: Date,
+    start: number,
+    sent: number,
+    failed: number,
+    skipped: number,
+    tooClose: number,
+  ): Promise<void> {
     const durationMs = Date.now() - start;
+    const cerca =
+      tooClose > 0
+        ? `, ${tooClose} sin enviar por empezar antes de la anticipación mínima`
+        : '';
     this.logger.log(
-      `Resumen lote — enviados=${sent}, fallidos=${failed}, omitidos=${skipped} (${durationMs}ms).`,
+      `Resumen lote — enviados=${sent}, fallidos=${failed}, omitidos=${skipped}, muy cerca=${tooClose} (${durationMs}ms).`,
     );
 
     await this.systemLog.event({
       action: 'REMINDER_CRON_RUN',
-      message: `Recordatorios procesados: ${sent} enviados, ${failed} fallidos, ${skipped} omitidos.`,
+      message: `Recordatorios procesados: ${sent} enviados, ${failed} fallidos, ${skipped} omitidos${cerca}.`,
       metadata: {
         sent,
         failed,
         skipped,
+        tooClose,
         durationMs,
         businessHoursBefore: this.cfg.businessHoursBefore,
         windowFrom: now.toISOString(),
         windowTo: targetThreshold.toISOString(),
       },
     });
-
-    return { sent, failed, skipped };
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -310,7 +378,12 @@ export class AppointmentReminderCronService
             timezone: true,
             supportPhone: true,
             settings: {
-              select: { cancelEnabled: true, rescheduleEnabled: true },
+              select: {
+                cancelEnabled: true,
+                rescheduleEnabled: true,
+                // ⏱️ Anticipación mínima del recordatorio automático.
+                reminderMinLeadMinutes: true,
+              },
             },
             // 🏥 Con espejo, cancelar y cambiar fecha sin su interruptor no se
             // pueden hacer en AgenIA: el recordatorio no puede ofrecerlos.

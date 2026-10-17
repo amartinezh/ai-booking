@@ -7,6 +7,7 @@ import { CommunicationStyle } from '@agenia/database';
 import { getErrorMessage } from '@/lib/error';
 import {
     SYNC_AUDIT_DIRECTION,
+    normalizarAnticipacionRecordatorio,
     normalizarCuposOfrecidos,
     operacionHisDelEvento,
 } from '@agenia/shared';
@@ -27,6 +28,7 @@ export async function getMyOrgSettings() {
             slotsOfferedCount: true,
             remindersEnabled: true,
             remindersOnlySelfBooked: true,
+            reminderMinLeadMinutes: true,
             bookingEnabled: true,
             cancelEnabled: true,
             rescheduleEnabled: true,
@@ -41,6 +43,8 @@ export async function getMyOrgSettings() {
         remindersEnabled: s?.remindersEnabled ?? true,
         // Sin fila = apagada (el default de la columna): recordatorio a todas.
         remindersOnlySelfBooked: s?.remindersOnlySelfBooked ?? false,
+        // Sin fila = 60 minutos (el default de la columna y del cron).
+        reminderMinLeadMinutes: normalizarAnticipacionRecordatorio(s?.reminderMinLeadMinutes),
         // Igual: sin fila = el bot agenda, cancela y cambia (default de las columnas).
         bookingEnabled: s?.bookingEnabled ?? true,
         cancelEnabled: s?.cancelEnabled ?? true,
@@ -95,6 +99,31 @@ export async function setMyRemindersOnlySelfBooked(enabled: boolean) {
         });
         revalidatePath('/dashboard/configuracion');
         return { success: true, remindersOnlySelfBooked };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * ⏱️ Anticipación mínima del recordatorio automático, en minutos: si a la cita
+ * le faltan menos, el cron no la recuerda (2026-10-17: recordatorios que llegaban
+ * a 4 minutos de una cita agendada en el hospital minutos antes). 0 = sin mínimo.
+ * Guarda al instante; el cron lo lee en su siguiente vuelta.
+ */
+export async function setMyReminderMinLead(minutos: number) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
+
+    // Un valor fuera de rango o inválido cae al default (60), nunca a «sin mínimo».
+    const reminderMinLeadMinutes = normalizarAnticipacionRecordatorio(minutos);
+    try {
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, reminderMinLeadMinutes },
+            update: { reminderMinLeadMinutes },
+        });
+        revalidatePath('/dashboard/configuracion');
+        return { success: true, reminderMinLeadMinutes };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
     }

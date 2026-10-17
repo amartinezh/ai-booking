@@ -307,6 +307,12 @@ export {
   seleccionarCuposManianaTarde,
 } from './src/cupos-ofrecidos';
 export type { SeleccionCuposOptions } from './src/cupos-ofrecidos';
+export {
+  ANTICIPACION_RECORDATORIO,
+  normalizarAnticipacionRecordatorio,
+  citaDemasiadoCercaParaRecordar,
+  textoAnticipacion,
+} from './src/recordatorio-anticipacion';
 
 export {
   resolverRangoEstadisticas,

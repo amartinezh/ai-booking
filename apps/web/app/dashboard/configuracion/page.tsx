@@ -9,6 +9,7 @@ import { getMyAudioConfig } from '@/app/actions/audio-config';
 import SettingsForm from './SettingsForm';
 import RemindersToggle from './RemindersToggle';
 import SelfBookedRemindersToggle from './SelfBookedRemindersToggle';
+import ReminderLeadTimeSetting from './ReminderLeadTimeSetting';
 import BookingToggle from './BookingToggle';
 import CancelToggle from './CancelToggle';
 import RescheduleToggle from './RescheduleToggle';
@@ -163,6 +164,8 @@ export default async function ConfiguracionPage({
                         {settings && (
                             <SelfBookedRemindersToggle initialEnabled={settings.remindersOnlySelfBooked} />
                         )}
+                        {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
+                        {settings && <ReminderLeadTimeSetting initialMinutes={settings.reminderMinLeadMinutes} />}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && <SettingsForm initial={settings} />}
                         <div className="border-t border-zinc-200 dark:border-zinc-800" />

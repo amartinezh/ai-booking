@@ -11,6 +11,7 @@ import {
     setMyBookingEnabled,
     setMyRemindersEnabled,
     setMyRemindersOnlySelfBooked,
+    setMyReminderMinLead,
 } from './settings';
 
 const mockGetSession = getSession as jest.Mock;
@@ -126,5 +127,39 @@ describe('settings — recordatorios solo a pacientes que agendaron ellos mismos
         const s = await getMyOrgSettings();
         expect(s.remindersOnlySelfBooked).toBe(false);
         expect(s.remindersEnabled).toBe(true);
+        // ⏱️ Y la anticipación mínima, en su default: 1 hora.
+        expect(s.reminderMinLeadMinutes).toBe(60);
+    });
+});
+
+describe('settings — anticipación mínima del recordatorio', () => {
+    beforeEach(() => jest.clearAllMocks());
+
+    it('solo el ORG_ADMIN la cambia', async () => {
+        mockGetSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1' });
+        const res = await setMyReminderMinLead(30);
+        expect(res).toEqual({ success: false, error: 'Acceso denegado' });
+        expect(mockUpsert).not.toHaveBeenCalled();
+    });
+
+    it('guarda en la clínica de la sesión, y nada más que este ajuste', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
+        mockUpsert.mockResolvedValue({});
+        const res = await setMyReminderMinLead(30);
+        expect(res).toEqual({ success: true, reminderMinLeadMinutes: 30 });
+        expect(mockUpsert).toHaveBeenCalledWith({
+            where: { organizationId: 'org-1' },
+            create: { organizationId: 'org-1', reminderMinLeadMinutes: 30 },
+            update: { reminderMinLeadMinutes: 30 },
+        });
+    });
+
+    it('0 es «sin mínimo»; un valor inválido cae a 60, nunca a «sin mínimo»', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
+        mockUpsert.mockResolvedValue({});
+        expect(await setMyReminderMinLead(0)).toEqual({ success: true, reminderMinLeadMinutes: 0 });
+        expect(await setMyReminderMinLead(Number.NaN)).toEqual({ success: true, reminderMinLeadMinutes: 60 });
+        expect(await setMyReminderMinLead(-10)).toEqual({ success: true, reminderMinLeadMinutes: 60 });
+        expect(await setMyReminderMinLead(100_000)).toEqual({ success: true, reminderMinLeadMinutes: 720 });
     });
 });
