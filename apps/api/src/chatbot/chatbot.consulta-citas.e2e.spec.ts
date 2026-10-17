@@ -2507,6 +2507,46 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(r).toContain('recepción del hospital');
       expect(r).toContain(`el hospital al *${SOPORTE}*`);
     });
+
+    // 📍 «Acá estamos esperando» (caso real 2026-10-17 10:06, tras confirmar su
+    // cita de las 11:35): antes recibía «por aquí solo puedo ayudarle con sus citas».
+    describe('📍 avisa que ya llegó', () => {
+      // AHORA = 2026-10-02 10:00 en Bogotá; la cita de hoy, a las 11:35.
+      const HOY_1135 = new Date('2026-10-02T16:35:00.000Z');
+
+      it('con su cita de hoy: gracias, su cita y que el turno se lo dan en la recepción', async () => {
+        seedPaciente();
+        seedCita('apt-1', HOY_1135);
+        db.appointments[0].reminderSentAt = new Date(
+          AHORA.getTime() - 3_600_000,
+        );
+        await say('Acá estamos esperando');
+        const r = lastSent();
+        expect(r).toContain('¡Gracias por avisar!');
+        expect(r).toContain('Medicina General');
+        expect(r).toMatch(/11:35/);
+        expect(r).toContain('recepción del hospital');
+        expect(r).not.toContain('solo puedo ayudarle');
+        expect(db.appointments[0].status).toBe('SCHEDULED');
+      });
+
+      it('si su cita es otro día, se lo dice: puede haber venido el día que no era', async () => {
+        seedPaciente();
+        seedCita('apt-1', MANANA);
+        await say('Ya llegué');
+        const r = lastSent();
+        expect(r).toContain('no para hoy');
+        expect(r).toContain('Medicina General');
+        expect(r).toContain(`el hospital al *${SOPORTE}*`);
+      });
+
+      it('sin ninguna cita: gracias y dónde preguntar', async () => {
+        await say('ya estoy aquí');
+        const r = lastSent();
+        expect(r).toContain('¡Gracias por avisar!');
+        expect(r).toContain('recepción del hospital');
+      });
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────

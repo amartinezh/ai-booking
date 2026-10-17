@@ -1035,6 +1035,20 @@ const FORMAL = {
     `El número de turno y el consultorio no los tengo por este medio: se los indican en la *recepción del hospital*. 🏥\n\n` +
     `Si no encuentra a quién preguntar, comuníquese con ${contacto}.`,
 
+  // 📍 Avisa que ya está en el hospital (2026-10-17: «Acá estamos esperando»).
+  yaLlego: (servicio: string, fecha: string, medico: string) =>
+    `¡Gracias por avisar! 🙌 Su cita de *${servicio}* es el *${fecha}* con *${medico}*. 🏥\n\n` +
+    `El número de turno y el consultorio se los indican en la *recepción del hospital*: acérquese y diga su nombre.`,
+
+  yaLlegoSinCita: (contacto: string) =>
+    `¡Gracias por avisar! 🙌 El número de turno y el consultorio se los indican en la *recepción del hospital*. 🏥\n\n` +
+    `Si no encuentra a quién preguntar, comuníquese con ${contacto}.`,
+
+  // …pero su cita es otro día: puede haber venido el día que no era.
+  yaLlegoOtroDia: (servicio: string, fecha: string, contacto: string) =>
+    `Gracias por avisar. 📅 Le cuento que su cita de *${servicio}* está registrada para el *${fecha}*, no para hoy.\n\n` +
+    `Si cree que hay un error, pregunte en la recepción del hospital o comuníquese con ${contacto}.`,
+
   // «No puedo asistir» con cancelar APAGADO: el aviso queda para el personal; la
   // cita NO se cancela (y el mensaje no puede dar a entender que sí).
   avisoInasistenciaRegistrado: (
@@ -2192,6 +2206,18 @@ const INFORMAL = {
   preguntaTurnoSinCita: (contacto: string) =>
     `El número de turno y el consultorio no los tengo por aquí: te los indican en la *recepción del hospital*. 🏥\n\n` +
     `Si no encuentras a quién preguntar, comunícate con ${contacto}.`,
+
+  yaLlego: (servicio: string, fecha: string, medico: string) =>
+    `¡Gracias por avisar! 🙌 Tu cita de *${servicio}* es el *${fecha}* con *${medico}*. 🏥\n\n` +
+    `El número de turno y el consultorio te los indican en la *recepción del hospital*: acércate y di tu nombre.`,
+
+  yaLlegoSinCita: (contacto: string) =>
+    `¡Gracias por avisar! 🙌 El número de turno y el consultorio te los indican en la *recepción del hospital*. 🏥\n\n` +
+    `Si no encuentras a quién preguntar, comunícate con ${contacto}.`,
+
+  yaLlegoOtroDia: (servicio: string, fecha: string, contacto: string) =>
+    `Gracias por avisar. 📅 Te cuento que tu cita de *${servicio}* está registrada para el *${fecha}*, no para hoy.\n\n` +
+    `Si crees que hay un error, pregunta en la recepción del hospital o comunícate con ${contacto}.`,
 
   avisoInasistenciaRegistrado: (
     servicio: string,

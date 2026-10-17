@@ -4468,7 +4468,9 @@ export class ChatbotService implements OnModuleInit {
       return this.atenderNumeroEquivocado(p, { automatica: true });
     }
     if (tipo === 'NUMERO_EQUIVOCADO') return this.atenderNumeroEquivocado(p);
-    if (tipo === 'PREGUNTA_TURNO') return this.responderPreguntaTurno(p);
+    if (tipo === 'PREGUNTA_TURNO' || tipo === 'YA_LLEGO') {
+      return this.responderEnElHospital(p, tipo);
+    }
     if (tipo === 'NO_ASISTIRA' || tipo === 'CAMBIAR') {
       const pide = tipo === 'NO_ASISTIRA' ? 'CANCELAR' : 'MODIFICAR';
       const atendido =
@@ -4710,20 +4712,29 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
-   * 🎫 «¿Qué número me toca con el doctor, para yo esperar acá?» (2026-10-16, ya
-   * en el hospital): AgenIA no sabe el turno ni el consultorio; se le recuerda su
-   * cita —la del recordatorio o la próxima— y que se los dan en la recepción.
-   * Antes se le contestaba «Le escribe Vicente…», que no le servía de nada.
+   * 🏥 Quien escribe ya está en el hospital, o a punto:
+   *
+   *   · PREGUNTA_TURNO (2026-10-16) — «¿qué número me toca con el doctor, para yo
+   *     esperar acá?». Antes se le contestaba «Le escribe Vicente…».
+   *   · YA_LLEGO (2026-10-17) — «Acá estamos esperando», «ya llegué». Antes recibía
+   *     «por aquí solo puedo ayudarle con sus citas».
+   *
+   * AgenIA no sabe el turno ni el consultorio: se le recuerda su cita —la del
+   * recordatorio o la próxima— y que se los dan en la recepción. Si avisa que llegó
+   * y su cita es OTRO día, se le dice: puede haber venido el día que no era.
    */
-  private async responderPreguntaTurno(p: {
-    organizationId: string;
-    senderId: string;
-    identity: SenderIdentity;
-    text: string;
-    MSGS: ReturnType<typeof buildMessages>;
-    org: Organization | null;
-    timeZone: string | undefined;
-  }): Promise<boolean> {
+  private async responderEnElHospital(
+    p: {
+      organizationId: string;
+      senderId: string;
+      identity: SenderIdentity;
+      text: string;
+      MSGS: ReturnType<typeof buildMessages>;
+      org: Organization | null;
+      timeZone: string | undefined;
+    },
+    tipo: 'PREGUNTA_TURNO' | 'YA_LLEGO',
+  ): Promise<boolean> {
     const recordadas = await this.citasRecordadasDelRemitente(
       p.organizationId,
       p.identity,
@@ -4732,21 +4743,44 @@ export class ChatbotService implements OnModuleInit {
       recordadas[0] ??
       (await this.citasProximasDelRemitente(p.organizationId, p.identity))[0];
     const contacto = this.contactoDe(p.MSGS, p.org);
-    const reply = cita
-      ? p.MSGS.preguntaTurno(
-          cita.scheduleSlot.service?.name ?? '',
-          formatAppointmentLong(cita.scheduleSlot.startTime, {
-            timeZone: p.timeZone,
-          }),
-          doctorLabel(cita.scheduleSlot.doctor),
-          contacto,
-        )
-      : p.MSGS.preguntaTurnoSinCita(contacto);
+    const servicio = cita?.scheduleSlot.service?.name ?? '';
+    const fecha = cita
+      ? formatAppointmentLong(cita.scheduleSlot.startTime, {
+          timeZone: p.timeZone,
+        })
+      : '';
+    const otroDia =
+      tipo === 'YA_LLEGO' &&
+      !!cita &&
+      diaLocal(cita.scheduleSlot.startTime, p.timeZone) !==
+        diaLocal(new Date(), p.timeZone);
+    const reply = !cita
+      ? tipo === 'YA_LLEGO'
+        ? p.MSGS.yaLlegoSinCita(contacto)
+        : p.MSGS.preguntaTurnoSinCita(contacto)
+      : otroDia
+        ? p.MSGS.yaLlegoOtroDia(servicio, fecha, contacto)
+        : tipo === 'YA_LLEGO'
+          ? p.MSGS.yaLlego(
+              servicio,
+              fecha,
+              doctorLabel(cita.scheduleSlot.doctor),
+            )
+          : p.MSGS.preguntaTurno(
+              servicio,
+              fecha,
+              doctorLabel(cita.scheduleSlot.doctor),
+              contacto,
+            );
     await this.smartReply(p.organizationId, p.senderId, reply);
     await this.auditSuccess(p.senderId, p.organizationId, {
       userMessage: p.text,
       botReply: reply,
-      metadata: { step: 'PREGUNTA_TURNO', appointmentId: cita?.id ?? null },
+      metadata: {
+        step: tipo,
+        appointmentId: cita?.id ?? null,
+        ...(otroDia ? { citaEsOtroDia: true } : {}),
+      },
     });
     return true;
   }

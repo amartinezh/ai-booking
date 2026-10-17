@@ -68,6 +68,31 @@ describe('clasificarRespuestaAlBot', () => {
     expect(clasificarRespuestaAlBot(texto)).toBe('PREGUNTA_TURNO');
   });
 
+  it.each([
+    // Caso real 2026-10-17 10:06, tras confirmar su cita de las 11:35.
+    'Acá estamos esperando',
+    'Ya llegué',
+    'ya estoy aquí',
+    'Gracias, ya estamos en el hospital',
+    'aquí estoy esperando turno',
+    'estamos llegando',
+  ])('«%s» → YA_LLEGO (avisa que está en el hospital)', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe('YA_LLEGO');
+  });
+
+  it('«No llegué a la cita» (no fue) no es un aviso de llegada', () => {
+    expect(clasificarRespuestaAlBot('No llegué a la cita')).not.toBe(
+      'YA_LLEGO',
+    );
+  });
+
+  it.each([
+    ['Allá estaré', 'CONFIRMA'],
+    ['ya llegué, ¿qué número me toca?', 'PREGUNTA_TURNO'],
+  ])('«%s» → %s (no es un aviso de llegada)', (texto, tipo) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe(tipo);
+  });
+
   it.each(['¿Qué número es este?', '¿De qué número me escriben?'])(
     '«%s» sigue siendo QUIEN_ESCRIBE (pregunta por el teléfono, no por su turno)',
     (texto) => {

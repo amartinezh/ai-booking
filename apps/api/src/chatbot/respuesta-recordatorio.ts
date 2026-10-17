@@ -15,6 +15,9 @@ import { textoParaCoincidencia } from './texto-para-coincidencia.util';
  *                        esperar acá?», «¿en qué consultorio?»: ya está en el
  *                        hospital y pregunta su turno o dónde esperar. Antes «qué
  *                        número es» se tomaba por «¿de qué número me escriben?».
+ *   YA_LLEGO           → (2026-10-17) «Acá estamos esperando», «ya llegué», «ya estoy
+ *                        en el hospital»: avisa que está allá. Antes recibía «por
+ *                        aquí solo puedo ayudarle con sus citas».
  *   NUMERO_EQUIVOCADO  → «Vicentico está equivocado de número», «no conozco a esa
  *                        persona»: el teléfono que el hospital tiene del paciente es
  *                        de otra persona.
@@ -33,6 +36,7 @@ export type RespuestaAlBot =
   | 'QUIEN_ESCRIBE'
   | 'PREGUNTA_CITA'
   | 'PREGUNTA_TURNO'
+  | 'YA_LLEGO'
   | 'NUMERO_EQUIVOCADO'
   | 'NO_ASISTIRA'
   | 'CAMBIAR'
@@ -77,6 +81,11 @@ const QUIEN_ESCRIBE = new RegExp(
 // «¿qué número es este?» (el teléfono) NO: el «es» solo cuenta seguido de «para».
 const PREGUNTA_TURNO =
   /\b((que|q|cual) (numero|turno|ficha|consultorio) (me |nos |le |te )?(toca|tengo|tenemos|tiene|dan|corresponde)|(numero|turno|ficha) (es )?para (yo |uno |nosotros )?(esperar|ser atendid\w*|entrar|pasar)|(en )?(que|q|cual) consultorio|donde (espero|me siento|hago la fila|hay que esperar|debo esperar|tengo que esperar)|a quien (le )?pregunt\w*)\b/;
+
+// Ya está en el hospital: «acá estamos esperando», «ya llegué», «ya estoy en la
+// clínica». «No llegué» (no fue) NO; «allá estaré» (futuro) es una confirmación.
+const YA_LLEGO =
+  /((?<!no )\b(ya )?(llegue|llegamos|estoy llegando|estamos llegando)\b|\b(ya )?(estoy|estamos|me encuentro|nos encontramos) (aca|aqui|en el hospital|en la clinica|en el centro de salud|en (la )?sala de espera|en (la )?recepcion|en la fila)\b|\b(aca|aqui) (estoy|estamos|me encuentro|nos encontramos)\b|\b(aca|aqui) (esperando|en espera)\b|\b(estoy|estamos) (aca |aqui )?esperando (turno|el turno|que me llamen|a que me llamen|al (doctor|medico|la doctora)|la atencion|que me atiendan)\b)/;
 
 // «¿la puedo mover para otro día?». «cambi…» solo con la cita, la fecha o la hora
 // de por medio: «cambié de EPS» no es pedir otra fecha.
@@ -168,6 +177,9 @@ export function clasificarRespuestaAlBot(
   if ((NO_IRA.test(t) || CANCELA.test(t)) && !NO_CANCELA.test(t)) {
     return 'NO_ASISTIRA';
   }
+  // Después de «no puedo ir» (lo que diga de no ir manda) y antes de la pregunta
+  // por la cita y de la confirmación: «gracias, ya llegué» avisa que está allá.
+  if (YA_LLEGO.test(t)) return 'YA_LLEGO';
   if (LUGAR_U_HORA.test(t)) {
     return MENCIONA_CITA.test(t) || !OTRO_TEMA.test(t) ? 'PREGUNTA_CITA' : null;
   }
