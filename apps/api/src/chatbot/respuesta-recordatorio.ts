@@ -234,3 +234,42 @@ export function esAgradecimiento(texto: string | null | undefined): boolean {
       CORTESIA.has(p) || /^(agrade[cz]|bendic|bendig|bendecid)\w*$/.test(p),
   );
 }
+
+/**
+ * Quien escribe dice de quién es familia o de parte de quién habla: «no soy Darío,
+ * soy la hija». Ese número sí es del paciente (lo comparte la familia).
+ */
+const PARENTESCO =
+  /\b((soy|habla|le escribe) (su|la|el) (hij[oa]|espos[oa]|mama|papa|madre|padre|herman[oa]|niet[oa]|sobrin[oa]|ti[oa]|prim[oa]|familiar|acudiente|cuidador[a]?|novi[oa]|companer[oa]|vecin[oa]|amig[oa]|nuera|yerno|suegr[oa])|de parte de)\b/;
+
+/** Palabras que pueden seguir a «no soy» sin ser un nombre: «no soy de aquí». */
+const NO_ES_NOMBRE = new Set(
+  (
+    'de del el la los las un una yo ese esa este esta quien capaz paciente persona ' +
+    'yo tan muy nada ninguno ninguna ella el usted familiar familia dueno duena ' +
+    'cliente de aqui aca de alla'
+  ).split(' '),
+);
+
+/**
+ * ☎️ «hola yo no soy dario» (2026-10-17): el nombre que niega, normalizado (sin
+ * tildes, en minúscula), o null. Solo devuelve el nombre; decidir si es el del
+ * paciente al que se le escribió es de quien llama (con la cita del recordatorio).
+ * Si en el mismo mensaje dice su parentesco («…soy la hija»), null: el número es
+ * de la familia, no está equivocado.
+ */
+export function nombreQueNiega(
+  texto: string | null | undefined,
+): string | null {
+  if (!texto) return null;
+  const t = sinTildes(textoParaCoincidencia(texto));
+  if (PARENTESCO.test(t)) return null;
+  const m =
+    /\bno soy (el |la )?(senor |senora |senorita |don |dona )?([a-z]+)\b/.exec(
+      t,
+    );
+  if (!m) return null;
+  const nombre = m[3];
+  if (nombre.length < 3 || NO_ES_NOMBRE.has(nombre)) return null;
+  return nombre;
+}

@@ -304,7 +304,12 @@ function createPrisma(db: Db) {
               !recordadaDesde ||
               (!!a.reminderSentAt && a.reminderSentAt >= recordadaDesde),
           )
-          .map((a) => ({ ...a, scheduleSlot: slotDe(a) }))
+          // Como Prisma con `include: { patient }`: el paciente de la cita.
+          .map((a) => ({
+            ...a,
+            scheduleSlot: slotDe(a),
+            patient: db.patients.find((x) => x.id === a.patientId),
+          }))
           .filter((a) => !desde || a.scheduleSlot.startTime >= desde)
           .filter((a) => !despues || a.scheduleSlot.startTime > despues)
           .sort(
@@ -1893,6 +1898,37 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
         casosEnBandeja: 1,
         bajasDeRecordatorios: 0,
       });
+    });
+
+    it('☎️ «hola yo no soy juan» tras el recordatorio a Juan → número equivocado (caso en la bandeja)', async () => {
+      // Caso real 2026-10-17 16:06: «hola yo no soy dario» recibió «por aquí solo
+      // puedo ayudarle con sus citas».
+      db.mirror = { enabled: true, pushEnabled: true };
+      conRecordatorio();
+      await say('hola yo no soy juan');
+      expect(lastSent()).toContain('Disculpe la molestia');
+      expect(avisos.registrar.mock.calls[0][1]).toMatchObject({
+        kind: 'TELEFONO_EQUIVOCADO',
+        patientId: 'pat-1',
+        meta: { mensaje: 'hola yo no soy juan' },
+      });
+      expect(paso('NUMERO_EQUIVOCADO')).toBeDefined();
+    });
+
+    it('☎️ «no soy Pedro» cuando el recordatorio fue a Juan → no se toca nada (el nombre no es el del paciente)', async () => {
+      db.mirror = { enabled: true, pushEnabled: true };
+      conRecordatorio();
+      await say('no soy Pedro');
+      expect(avisos.registrar).not.toHaveBeenCalled();
+      expect(lastSent()).not.toContain('Disculpe la molestia');
+    });
+
+    it('☎️ «no soy Juan, soy la hija» → es la familia: no es número equivocado', async () => {
+      db.mirror = { enabled: true, pushEnabled: true };
+      conRecordatorio();
+      await say('no soy Juan, soy la hija');
+      expect(avisos.registrar).not.toHaveBeenCalled();
+      expect(lastSent()).not.toContain('Disculpe la molestia');
     });
 
     it('☎️ sin espejo (no hay bandeja) → se apagan sus recordatorios como en la baja', async () => {

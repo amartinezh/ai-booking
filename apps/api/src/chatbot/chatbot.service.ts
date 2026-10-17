@@ -27,6 +27,7 @@ import { textoParaCoincidencia } from './texto-para-coincidencia.util';
 import {
   clasificarRespuestaAlBot,
   esAgradecimiento,
+  nombreQueNiega,
 } from './respuesta-recordatorio';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import {
@@ -4466,6 +4467,16 @@ export class ChatbotService implements OnModuleInit {
     timeZone: string | undefined;
   }): Promise<boolean> {
     const tipo = clasificarRespuestaAlBot(p.text);
+    // ☎️ «hola yo no soy dario» (2026-10-17) tras el recordatorio a Darío: el número
+    // es de otra persona. Solo si el nombre que niega es el del paciente al que se
+    // le escribió, y si el mensaje no pide otra cosa (no ir, cambiarla, preguntar),
+    // que entonces es de alguien que sí conoce al paciente.
+    if (!tipo || tipo === 'CONFIRMA' || tipo === 'QUIEN_ESCRIBE') {
+      const negado = nombreQueNiega(p.text);
+      if (negado && (await this.esNombreDeUnRecordado(p, negado))) {
+        return this.atenderNumeroEquivocado(p);
+      }
+    }
     if (!tipo) return false;
     if (tipo === 'RESPUESTA_AUTOMATICA') {
       return this.atenderNumeroEquivocado(p, { automatica: true });
@@ -4551,6 +4562,27 @@ export class ChatbotService implements OnModuleInit {
       },
     });
     return true;
+  }
+
+  /**
+   * ¿`nombre` (normalizado, de `nombreQueNiega`) es uno de los nombres de un
+   * paciente al que se le envió el recordatorio a este número?
+   */
+  private async esNombreDeUnRecordado(
+    p: { organizationId: string; identity: SenderIdentity },
+    nombre: string,
+  ): Promise<boolean> {
+    const citas = await this.citasRecordadasDelRemitente(
+      p.organizationId,
+      p.identity,
+    );
+    return citas.some((c) =>
+      textoParaCoincidencia(c.patient?.fullName ?? '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .split(' ')
+        .includes(nombre),
+    );
   }
 
   /**

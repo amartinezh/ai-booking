@@ -13,9 +13,10 @@
 #    3. `agenia migrate`        — aplica migraciones Prisma pendientes
 #                                  (no-op seguro si no hay ninguna).
 #    4. `agenia verify`         — batería de comprobaciones post-arranque.
-#    5. `docker builder prune`  — borra la caché de construcción de más de
-#                                  72 h. Solo esa caché: nunca contenedores,
-#                                  imágenes en uso ni volúmenes (la base).
+#    5. `docker builder prune`  — deja la caché de construcción en un tope
+#                                  de tamaño (PRUNE_MAX_CACHE, 10 GB). Solo esa
+#                                  caché: nunca contenedores, imágenes en uso
+#                                  ni volúmenes (la base).
 #
 #  NO reemplaza `agenia update`: ese comando ya hace lo mismo pero corre EN
 #  el servidor y necesita `git pull`, así que solo sirve si el VPS tiene un
@@ -143,18 +144,24 @@ fi
 
 # ── 5. Limpiar caché de construcción ────────────────────────────────────────
 # Cada `agenia build` deja capas de caché que nadie borra: el 2026-09-25 eran
-# 65 GB de un disco de 96 GB. Se conserva lo de las últimas 72 h para que el
-# próximo build siga siendo rápido. La salida se reduce a la línea del total:
-# la lista completa de capas borradas tardó tanto en imprimirse por SSH que
-# cortó la sesión. Si falla, el despliegue ya está hecho: solo se avisa.
+# 65 GB de un disco de 96 GB. Hasta el 2026-10-17 se conservaba lo de las
+# últimas 72 h, pero con varios despliegues al día eso volvió a ser 51 GB (el
+# disco pasó del 51 % al 62 % en un día). Ahora el tope es de TAMAÑO: se borra
+# lo más viejo hasta que la caché quede en $PRUNE_MAX_CACHE (10 GB por defecto),
+# lo que alcanza para que el próximo build siga siendo rápido. Si el Docker del
+# servidor no conoce `--max-used-space` (anterior a la 27), se cae a las 72 h.
+# La salida se reduce a la línea del total: la lista completa de capas borradas
+# tardó tanto en imprimirse por SSH que cortó la sesión. Si falla, el despliegue
+# ya está hecho: solo se avisa.
+PRUNE_MAX_CACHE="${PRUNE_MAX_CACHE:-10gb}"
 if [[ $SKIP_PRUNE -eq 1 ]]; then
   warn "Limpieza: --skip-prune, se omite."
 else
-  head1 "Limpiando caché de construcción (> 72 h)"
-  if liberado=$(ssh_remote "docker builder prune -f --filter until=72h 2>&1 | tail -n 1"); then
+  head1 "Limpiando caché de construcción (tope $PRUNE_MAX_CACHE)"
+  if liberado=$(ssh_remote "if docker builder prune --help 2>/dev/null | grep -q -- --max-used-space; then docker builder prune -f --max-used-space $PRUNE_MAX_CACHE 2>&1 | tail -n 1; else docker builder prune -f --filter until=72h 2>&1 | tail -n 1; fi"); then
     ok "${liberado:-Sin caché vieja que borrar}"
   else
-    warn "No se pudo limpiar la caché (el despliegue sí quedó hecho). Manual: docker builder prune -f --filter until=72h"
+    warn "No se pudo limpiar la caché (el despliegue sí quedó hecho). Manual: docker builder prune -f --max-used-space $PRUNE_MAX_CACHE"
   fi
 fi
 

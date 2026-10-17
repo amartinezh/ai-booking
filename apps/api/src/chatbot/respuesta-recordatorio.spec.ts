@@ -1,6 +1,7 @@
 import {
   clasificarRespuestaAlBot,
   esAgradecimiento,
+  nombreQueNiega,
 } from './respuesta-recordatorio';
 
 /**
@@ -268,5 +269,31 @@ describe('esAgradecimiento', () => {
     'hola',
   ])('«%s» → no (pide, pregunta o no agradece)', (texto) => {
     expect(esAgradecimiento(texto)).toBe(false);
+  });
+});
+
+describe('nombreQueNiega', () => {
+  it.each([
+    // Caso real 2026-10-17 16:06, tras el recordatorio a DARIO.
+    ['hola yo no soy dario', 'dario'],
+    ['No soy Darío', 'dario'],
+    ['no soy la señora María', 'maria'],
+    ['Disculpe, no soy don Jesús', 'jesus'],
+  ])('«%s» → «%s»', (texto, nombre) => {
+    expect(nombreQueNiega(texto)).toBe(nombre);
+  });
+
+  it.each([
+    // Familia que comparte el teléfono: el número sí es del paciente.
+    'no soy Darío, soy la hija',
+    'No soy Dario, le escribe su esposa',
+    'no soy ella, de parte de su mamá',
+    // No es un nombre.
+    'no soy de aquí',
+    'yo no soy capaz de ir',
+    'no soy el paciente',
+    'Muchas gracias',
+  ])('«%s» → null', (texto) => {
+    expect(nombreQueNiega(texto)).toBeNull();
   });
 });
