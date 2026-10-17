@@ -54,8 +54,13 @@ const NUMERO_EQUIVOCADO =
 // restaurante Donde jacky. ¿Cómo podemos ayudarte?🥰»). Frases que un paciente no
 // le escribe a su hospital: hablan de «nosotros» y tratan al otro como cliente.
 // «Gracias por comunicarse» a secas NO: un paciente educado lo dice.
+// 2026-10-17: «Hola! Soy Theo Tattoo, gracias por tu mensaje. Te daré respuesta tan
+// pronto como sea posible. Gracias por tu paciencia.»: «te daré respuesta», «te
+// responderé en breve / tan pronto…» y «gracias por TU paciencia» son del negocio.
+// «Le contesto mañana» a secas NO: lo puede escribir un paciente, y tomarlo por
+// contestadora lo dejaría sin respuesta y con el teléfono marcado.
 const RESPUESTA_AUTOMATICA =
-  /\b(mensaje automatico|respuesta automatica|(como|en que) (te |le |les )?(podemos|puedo) (ayudar|servir|colaborar)\w*|bienvenid[oa]s? a\b|gracias por (contactarnos|escribirnos|preferirnos|elegirnos|comunicarte (con|a|al))|nuestro horario( de atencion)? es|(te|le|les) (responderemos|contestaremos|atenderemos|escribiremos)\b|en (este|estos) momentos? no (podemos|estamos|nos encontramos)|estamos fuera (de|del) horario)/;
+  /\b((te|le|les) (dare|daremos) (una )?respuesta|(te|le|les) (respondere|contestare|atendere|escribire|responderemos|contestaremos|escribiremos) (tan pronto|en breve|lo antes posible|lo mas pronto|en cuanto)|gracias por tu paciencia|mensaje automatico|respuesta automatica|(como|en que) (te |le |les )?(podemos|puedo) (ayudar|servir|colaborar)\w*|bienvenid[oa]s? a\b|gracias por (contactarnos|escribirnos|preferirnos|elegirnos|comunicarte (con|a|al))|nuestro horario( de atencion)? es|(te|le|les) (responderemos|contestaremos|atenderemos|escribiremos)\b|en (este|estos) momentos? no (podemos|estamos|nos encontramos)|estamos fuera (de|del) horario)/;
 
 // Con faltas de ortografía reales: «de donde me ablan».
 // «¿Con quién es la cita?» pregunta por el médico, no por quién escribe.
@@ -193,4 +198,39 @@ export function clasificarRespuestaAlBot(
     : MAX_PALABRAS_CONFIRMACION;
   if (palabras > limite) return null;
   return CONFIRMA.test(t) || BENDICE.test(t) ? 'CONFIRMA' : null;
+}
+
+/**
+ * 🙏 Lo que puede acompañar a un «gracias» sin pedir nada: «Muchas gracias por su
+ * ayuda, buen día 🙏», «gracias señorita, Dios le bendiga». (Los emojis y signos ya
+ * los quita `textoParaCoincidencia`.)
+ */
+const CORTESIA = new Set(
+  (
+    'muchas muchisimas mil gracias por su sus tu la el los las ayuda atencion ' +
+    'colaboracion informacion info todo todos amable muy mucho muchisimo buen buenos ' +
+    'buena buenas dia dias tarde tardes noche noches feliz que tenga tengan tengas un ' +
+    'una excelente hola ok okey listo perfecto dios le les lo te bendiga bendiciones ' +
+    'saludos y igualmente senorita senor senora doctor doctora a usted ustedes de ' +
+    'quedo atento atenta se amigo amiga gran igual nuevamente servicio'
+  ).split(' '),
+);
+
+/**
+ * ¿Es solo un agradecimiento (con cortesías), sin pedir ni preguntar nada?
+ * (2026-10-17: «Muchas gracias por su ayuda buen día 🙏» después de cancelar recibió
+ * «no es posible agendar citas»: el «buen día» lo hacía pasar por un saludo, y la
+ * despedida solo reconocía frases exactas.) Conservador: una sola palabra que no sea
+ * de cortesía, o un «?», y no lo es.
+ */
+export function esAgradecimiento(texto: string | null | undefined): boolean {
+  if (!texto || texto.includes('?')) return false;
+  const t = sinTildes(textoParaCoincidencia(texto));
+  if (!/\b(gracias|agrade[cz]\w*)\b/.test(t)) return false;
+  const palabras = t.split(' ').filter(Boolean);
+  if (palabras.length > 20) return false;
+  return palabras.every(
+    (p) =>
+      CORTESIA.has(p) || /^(agrade[cz]|bendic|bendig|bendecid)\w*$/.test(p),
+  );
 }

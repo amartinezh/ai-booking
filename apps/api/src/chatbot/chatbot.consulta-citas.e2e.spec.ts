@@ -1808,6 +1808,20 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(paso('RESPUESTA_AUTOMATICA')).toBeDefined();
     });
 
+    it('🤖 «Soy Theo Tattoo… te daré respuesta tan pronto como sea posible»: sin respuesta y caso del teléfono', async () => {
+      // Caso real 2026-10-17: el bot le contestó «solo puedo ayudarle con sus citas».
+      db.mirror = { enabled: true, pushEnabled: true };
+      conRecordatorio();
+      await say(
+        'Hola! Soy Theo Tattoo, gracias por tu mensaje. Te daré respuesta tan pronto como sea posible. Gracias por tu paciencia.',
+      );
+      expect(sent()).toHaveLength(0);
+      expect(avisos.registrar.mock.calls[0][1]).toMatchObject({
+        kind: 'TELEFONO_EQUIVOCADO',
+        meta: { motivo: 'RESPUESTA_AUTOMATICA' },
+      });
+    });
+
     it('🤖 una contestadora de un número sin paciente tampoco recibe respuesta, y no toca a nadie', async () => {
       conRecordatorio();
       await say(
@@ -1950,6 +1964,19 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
         expect(sent().join('\n')).toMatch(/cancel/i);
       },
     );
+
+    it('🙏 tras cancelar, «Muchas gracias por su ayuda buen día 🙏» recibe una despedida, no el aviso de agendar', async () => {
+      // Caso real 2026-10-17 12:09: el «buen día» lo hacía pasar por un saludo.
+      conRecordatorio();
+      await say('Ya no la necesito');
+      await say('Sí');
+      expect(db.appointments[0].status).toBe('CANCELLED');
+      await say('Muchas gracias por su ayuda buen día 🙏');
+      const r = lastSent();
+      expect(r).not.toContain('no es posible');
+      expect(r).toMatch(/gusto|hasta luego|Con gusto/i);
+      expect([null, ChatState.IDLE]).toContain(state());
+    });
 
     it.each(['No', 'no, mejor la mantengo', 'no la cancele'])(
       '«%s» → la cita sigue intacta',

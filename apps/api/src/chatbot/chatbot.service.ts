@@ -24,7 +24,10 @@ import {
   type OpcionConsulta,
 } from './chatbot.constants';
 import { textoParaCoincidencia } from './texto-para-coincidencia.util';
-import { clasificarRespuestaAlBot } from './respuesta-recordatorio';
+import {
+  clasificarRespuestaAlBot,
+  esAgradecimiento,
+} from './respuesta-recordatorio';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import {
   OrganizationSettingsService,
@@ -5759,12 +5762,15 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    // EARLY RETURN: despedida en IDLE — no reabrir el flujo de agendamiento
+    // EARLY RETURN: despedida en IDLE — no reabrir el flujo de agendamiento.
+    // También un agradecimiento con cortesías (2026-10-17: «Muchas gracias por su
+    // ayuda buen día 🙏» recibía «no es posible agendar citas» por el «buen día»).
     if (
       messageType === 'text' &&
       !!text &&
       currentState === ChatState.IDLE &&
-      this.farewellRegex.test(textoParaCoincidencia(text))
+      (this.farewellRegex.test(textoParaCoincidencia(text)) ||
+        esAgradecimiento(text))
     ) {
       const reply = MSGS.despedidaCorta();
       await this.smartReply(organizationId, senderId, reply);
@@ -5942,6 +5948,23 @@ export class ChatbotService implements OnModuleInit {
         return false;
       }))
     ) {
+      return;
+    }
+
+    // 🙏 Un agradecimiento por VOZ en reposo: la misma despedida que por texto.
+    if (
+      isAudio &&
+      !!text &&
+      currentState === ChatState.IDLE &&
+      esAgradecimiento(text)
+    ) {
+      const reply = MSGS.despedidaCorta();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text,
+        botReply: reply,
+        metadata: { step: 'FAREWELL', via: 'AUDIO' },
+      });
       return;
     }
 

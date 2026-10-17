@@ -1,4 +1,7 @@
-import { clasificarRespuestaAlBot } from './respuesta-recordatorio';
+import {
+  clasificarRespuestaAlBot,
+  esAgradecimiento,
+} from './respuesta-recordatorio';
 
 /**
  * Las frases son las que escribieron los pacientes tras los primeros lotes de
@@ -195,6 +198,9 @@ describe('clasificarRespuestaAlBot', () => {
     'En este momento no podemos atenderte. Nuestro horario de atención es de 8 a 6.',
     'Este es un mensaje automático',
     '¿En qué te podemos ayudar?',
+    // Caso real 2026-10-17, contestadora de un estudio de tatuajes.
+    'Hola! Soy Theo Tattoo, gracias por tu mensaje. Te daré respuesta tan pronto como sea posible. Gracias por tu paciencia.',
+    'Te responderé en breve',
   ])('«%s» → RESPUESTA_AUTOMATICA (no se le contesta)', (texto) => {
     expect(clasificarRespuestaAlBot(texto)).toBe('RESPUESTA_AUTOMATICA');
   });
@@ -204,6 +210,11 @@ describe('clasificarRespuestaAlBot', () => {
     'Muchas gracias por el recordatorio',
     'Gracias por avisar, no puedo asistir',
     '¿Cuál es el horario de atención?',
+    // Un paciente sí puede escribirlo: tomarlo por contestadora lo dejaría sin
+    // respuesta y con el teléfono marcado.
+    'le contesto mañana',
+    'le contestaré mañana',
+    'Gracias por su paciencia, allá estaré',
   ])('🛡️ «%s» es de una persona, no de una contestadora', (texto) => {
     expect(clasificarRespuestaAlBot(texto)).not.toBe('RESPUESTA_AUTOMATICA');
   });
@@ -233,5 +244,29 @@ describe('clasificarRespuestaAlBot', () => {
         'Buenas noches muchas gracias ayer estuve hablando con mi hija sobre los exámenes y ella dice que mejor esperamos los resultados',
       ),
     ).toBeNull();
+  });
+});
+
+describe('esAgradecimiento', () => {
+  it.each([
+    // Caso real 2026-10-17, después de cancelar: el «buen día» lo hacía pasar por un saludo.
+    'Muchas gracias por su ayuda buen día 🙏',
+    'Muchas gracias',
+    'gracias señorita Dios le bendiga',
+    'Les agradezco mucho, feliz tarde',
+    'mil gracias por la atención, bendiciones',
+  ])('«%s» → es solo un agradecimiento', (texto) => {
+    expect(esAgradecimiento(texto)).toBe(true);
+  });
+
+  it.each([
+    'gracias, ya llegué',
+    'Gracias, pero quiero cancelar',
+    'gracias?',
+    'gracias doctora nos vemos el lunes',
+    'buen día',
+    'hola',
+  ])('«%s» → no (pide, pregunta o no agradece)', (texto) => {
+    expect(esAgradecimiento(texto)).toBe(false);
   });
 });
