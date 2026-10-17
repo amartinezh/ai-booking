@@ -11,6 +11,10 @@ import { textoParaCoincidencia } from './texto-para-coincidencia.util';
  *   QUIEN_ESCRIBE      → «¿De dónde me hablan?», «¿Quién es?», «¿Quién me escribe?».
  *   PREGUNTA_CITA      → «esa cita es en q lugar», «¿a qué hora es?», «¿dónde queda?»:
  *                        pregunta por la cita, aunque no lleve «?».
+ *   PREGUNTA_TURNO     → (2026-10-16) «¿qué número me toca con el doctor, para yo
+ *                        esperar acá?», «¿en qué consultorio?»: ya está en el
+ *                        hospital y pregunta su turno o dónde esperar. Antes «qué
+ *                        número es» se tomaba por «¿de qué número me escriben?».
  *   NUMERO_EQUIVOCADO  → «Vicentico está equivocado de número», «no conozco a esa
  *                        persona»: el teléfono que el hospital tiene del paciente es
  *                        de otra persona.
@@ -28,6 +32,7 @@ export type RespuestaAlBot =
   | 'CONFIRMA'
   | 'QUIEN_ESCRIBE'
   | 'PREGUNTA_CITA'
+  | 'PREGUNTA_TURNO'
   | 'NUMERO_EQUIVOCADO'
   | 'NO_ASISTIRA'
   | 'CAMBIAR'
@@ -56,6 +61,8 @@ const QUIEN_ESCRIBE = new RegExp(
   [
     '\\b(?<!con )(de donde|quien|quienes)\\s+(me |nos |le )?(h?abl\\w*|escrib\\w*|llam\\w*|mand\\w*|envi\\w*|es|son|eres)\\b',
     '\\bque (entidad|empresa|hospital|numero) es\\b',
+    // «¿de qué número me escriben?»
+    '\\bde (que|q|cual) numero (me |nos |le )?(h?abl\\w*|escrib\\w*|llam\\w*|mand\\w*|envi\\w*)',
     '\\bpara quien\\b',
     '\\b(este|ese|el|su) (mensaje|whatsapp|recordatorio)( que me (mandaron|enviaron|llego|escribieron))? (es )?(para|de) (que|quien)\\b',
     '\\b(este|ese|el) mensaje que me (mandaron|enviaron|llego|escribieron)\\b',
@@ -64,6 +71,12 @@ const QUIEN_ESCRIBE = new RegExp(
     '\\bpor que me (escrib|mand|envi|llam)\\w*',
   ].join('|'),
 );
+
+// Su turno, su consultorio o dónde esperar, ya en el hospital: «¿qué número me toca
+// con el doctor?», «¿qué número es para yo esperar acá?», «¿en qué consultorio?».
+// «¿qué número es este?» (el teléfono) NO: el «es» solo cuenta seguido de «para».
+const PREGUNTA_TURNO =
+  /\b((que|q|cual) (numero|turno|ficha|consultorio) (me |nos |le |te )?(toca|tengo|tenemos|tiene|dan|corresponde)|(numero|turno|ficha) (es )?para (yo |uno |nosotros )?(esperar|ser atendid\w*|entrar|pasar)|(en )?(que|q|cual) consultorio|donde (espero|me siento|hago la fila|hay que esperar|debo esperar|tengo que esperar)|a quien (le )?pregunt\w*)\b/;
 
 // «¿la puedo mover para otro día?». «cambi…» solo con la cita, la fecha o la hora
 // de por medio: «cambié de EPS» no es pedir otra fecha.
@@ -146,6 +159,8 @@ export function clasificarRespuestaAlBot(
   // no es una pregunta por el lugar de la cita).
   if (RESPUESTA_AUTOMATICA.test(t)) return 'RESPUESTA_AUTOMATICA';
   if (NUMERO_EQUIVOCADO.test(t)) return 'NUMERO_EQUIVOCADO';
+  // Antes que «quién escribe»: «qué número es para yo esperar» pregunta su turno.
+  if (PREGUNTA_TURNO.test(t)) return 'PREGUNTA_TURNO';
   if (QUIEN_ESCRIBE.test(t)) return 'QUIEN_ESCRIBE';
   // Pedir otra fecha gana a «no puedo ir»: «no puedo el martes, ¿me la pasan para
   // otro día?» quiere la cita, solo que otro día.

@@ -269,6 +269,14 @@ const MAX_CITAS_EN_RESPUESTA = 8;
 const CEDULA_RECIENTE_TTL = 15 * 60;
 
 /**
+ * 🔁 Si en este lapso vuelve a pedir lo mismo que no se puede por aquí (agendar,
+ * cancelar o cambiar la fecha), se le responde la versión corta (2026-10-17: un
+ * paciente preguntó cuatro veces seguidas si podía agendar para el martes y
+ * recibió cuatro veces el mismo aviso largo).
+ */
+const NO_DISPONIBLE_REPETIDO_TTL = 30 * 60;
+
+/**
  * 🩺 Con qué citas trabaja AgenIA frente al paciente (2026-10-15): las de los
  * médicos con «WhatsApp ON» en Médicos Y de un servicio activo en Servicios (en
  * Anserma, solo medicina general). El hospital trae TODAS sus citas (para la
@@ -4213,16 +4221,26 @@ export class ChatbotService implements OnModuleInit {
       : MSGS.contactoClinicaSinTelefono();
     const key = this.presentadoKey(organizationId, senderId);
     const yaSePresento = !!(await this.redis.get(key));
+    // 🔁 Ya se le dijo hace poco (cualquiera de las tres): la versión corta.
+    const repetidoKey = `no_disponible_dicho:${organizationId}:${senderId}:SOLO_CONSULTAS`;
+    const repetido = !!(await this.redis.get(repetidoKey));
     await this.cleanUpSession(organizationId, senderId);
     await this.redis.set(key, '1', 'EX', PRESENTACION_TTL);
-    const reply = yaSePresento
-      ? MSGS.soloConsultas(contacto)
-      : MSGS.soloConsultasBienvenida(p.orgName, contacto, p.botName);
+    await this.redis.set(repetidoKey, '1', 'EX', NO_DISPONIBLE_REPETIDO_TTL);
+    const reply = repetido
+      ? MSGS.soloConsultasCorto(contacto)
+      : yaSePresento
+        ? MSGS.soloConsultas(contacto)
+        : MSGS.soloConsultasBienvenida(p.orgName, contacto, p.botName);
     await this.smartReply(organizationId, senderId, reply);
     await this.auditSuccess(senderId, organizationId, {
       userMessage: p.text || '[audio]',
       botReply: reply,
-      metadata: { step: 'SOLO_CONSULTAS', motivo: p.motivo },
+      metadata: {
+        step: 'SOLO_CONSULTAS',
+        motivo: p.motivo,
+        ...(repetido ? { repetido: true } : {}),
+      },
     });
   }
 
@@ -4450,6 +4468,7 @@ export class ChatbotService implements OnModuleInit {
       return this.atenderNumeroEquivocado(p, { automatica: true });
     }
     if (tipo === 'NUMERO_EQUIVOCADO') return this.atenderNumeroEquivocado(p);
+    if (tipo === 'PREGUNTA_TURNO') return this.responderPreguntaTurno(p);
     if (tipo === 'NO_ASISTIRA' || tipo === 'CAMBIAR') {
       const pide = tipo === 'NO_ASISTIRA' ? 'CANCELAR' : 'MODIFICAR';
       const atendido =
@@ -4686,6 +4705,48 @@ export class ChatbotService implements OnModuleInit {
         appointmentId: cita.id,
         ...(citas.length > 1 ? { appointmentIds: citas.map((c) => c.id) } : {}),
       },
+    });
+    return true;
+  }
+
+  /**
+   * 🎫 «¿Qué número me toca con el doctor, para yo esperar acá?» (2026-10-16, ya
+   * en el hospital): AgenIA no sabe el turno ni el consultorio; se le recuerda su
+   * cita —la del recordatorio o la próxima— y que se los dan en la recepción.
+   * Antes se le contestaba «Le escribe Vicente…», que no le servía de nada.
+   */
+  private async responderPreguntaTurno(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    org: Organization | null;
+    timeZone: string | undefined;
+  }): Promise<boolean> {
+    const recordadas = await this.citasRecordadasDelRemitente(
+      p.organizationId,
+      p.identity,
+    );
+    const cita =
+      recordadas[0] ??
+      (await this.citasProximasDelRemitente(p.organizationId, p.identity))[0];
+    const contacto = this.contactoDe(p.MSGS, p.org);
+    const reply = cita
+      ? p.MSGS.preguntaTurno(
+          cita.scheduleSlot.service?.name ?? '',
+          formatAppointmentLong(cita.scheduleSlot.startTime, {
+            timeZone: p.timeZone,
+          }),
+          doctorLabel(cita.scheduleSlot.doctor),
+          contacto,
+        )
+      : p.MSGS.preguntaTurnoSinCita(contacto);
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text,
+      botReply: reply,
+      metadata: { step: 'PREGUNTA_TURNO', appointmentId: cita?.id ?? null },
     });
     return true;
   }
@@ -5131,23 +5192,34 @@ export class ChatbotService implements OnModuleInit {
     const { nombre, hacerla } = TEXTO_OPERACION[motivo];
     const key = this.presentadoKey(organizationId, senderId);
     const yaSePresento = !!(await this.redis.get(key));
+    // 🔁 Ya se le dijo hace poco: la versión corta, sin repetir la lista.
+    const repetidoKey = `no_disponible_dicho:${organizationId}:${senderId}:${motivo}`;
+    const repetido = !!(await this.redis.get(repetidoKey));
     await this.cleanUpSession(organizationId, senderId);
     await this.redis.set(key, '1', 'EX', PRESENTACION_TTL);
-    const reply = yaSePresento
-      ? MSGS.operacionNoDisponible(nombre, hacerla, contacto, lineas)
-      : MSGS.operacionNoDisponibleBienvenida(
-          p.orgName,
-          nombre,
-          hacerla,
-          contacto,
-          lineas,
-          p.botName,
-        );
+    await this.redis.set(repetidoKey, '1', 'EX', NO_DISPONIBLE_REPETIDO_TTL);
+    const reply = repetido
+      ? MSGS.operacionNoDisponibleCorto(hacerla, contacto)
+      : yaSePresento
+        ? MSGS.operacionNoDisponible(nombre, hacerla, contacto, lineas)
+        : MSGS.operacionNoDisponibleBienvenida(
+            p.orgName,
+            nombre,
+            hacerla,
+            contacto,
+            lineas,
+            p.botName,
+          );
     await this.smartReply(organizationId, senderId, reply);
     await this.auditSuccess(senderId, organizationId, {
       userMessage: p.text || '[audio]',
       botReply: reply,
-      metadata: { step: 'OPERACION_NO_DISPONIBLE', motivo, disponibles },
+      metadata: {
+        step: 'OPERACION_NO_DISPONIBLE',
+        motivo,
+        disponibles,
+        ...(repetido ? { repetido: true } : {}),
+      },
     });
   }
 

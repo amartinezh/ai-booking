@@ -1019,6 +1019,22 @@ const FORMAL = {
     `Su cita de *${servicio}* es el *${fecha}*, en *${clinicaName}*. 🏥\n\n` +
     `Si necesita indicaciones para llegar o tiene otra pregunta sobre su cita, comuníquese con ${contacto}.`,
 
+  // 🎫 Ya está en el hospital y pregunta su turno, su consultorio o dónde esperar
+  // (2026-10-16): AgenIA no sabe el turno; se lo dan en la recepción.
+  preguntaTurno: (
+    servicio: string,
+    fecha: string,
+    medico: string,
+    contacto: string,
+  ) =>
+    `Su cita de *${servicio}* es el *${fecha}* con *${medico}*. 🏥\n\n` +
+    `El número de turno y el consultorio no los tengo por este medio: se los indican en la *recepción del hospital*. Acérquese, diga su nombre y que tiene cita a esa hora.\n\n` +
+    `Si no encuentra a quién preguntar, comuníquese con ${contacto}.`,
+
+  preguntaTurnoSinCita: (contacto: string) =>
+    `El número de turno y el consultorio no los tengo por este medio: se los indican en la *recepción del hospital*. 🏥\n\n` +
+    `Si no encuentra a quién preguntar, comuníquese con ${contacto}.`,
+
   // «No puedo asistir» con cancelar APAGADO: el aviso queda para el personal; la
   // cita NO se cancela (y el mensaje no puede dar a entender que sí).
   avisoInasistenciaRegistrado: (
@@ -1296,6 +1312,10 @@ const FORMAL = {
   // ── SOLO CONSULTAS (ver SOLO_CONSULTAS_FORMAL) ───────────────
   soloConsultas: (contacto: string) => SOLO_CONSULTAS_FORMAL(contacto),
 
+  // 🔁 Lo pide otra vez: la versión corta.
+  soloConsultasCorto: (contacto: string) =>
+    `Como le comenté, por este medio por ahora solo puedo mostrarle sus citas (escríbame *"consultar"*). 🙏 Para agendar o hacer cambios, comuníquese con ${contacto}.`,
+
   // El mismo aviso, presentándose: primer mensaje de la conversación.
   soloConsultasBienvenida: (
     clinicaName: string,
@@ -1327,6 +1347,11 @@ const FORMAL = {
     `En este momento no es posible *${operacion}* por este medio. 🙏\n\n` +
     `Para ${hacerla}, por favor comuníquese con ${contacto}.\n\n` +
     `Por aquí sí puedo ayudarle a:\n${disponibles}`,
+
+  // 🔁 Lo pregunta otra vez (2026-10-17: cuatro veces seguidas «¿se puede para
+  // el martes?»): el mismo aviso largo no le dice nada nuevo.
+  operacionNoDisponibleCorto: (hacerla: string, contacto: string) =>
+    `Como le comenté, por este medio no es posible ${hacerla}. 🙏 Para eso, por favor comuníquese con ${contacto}.`,
 
   // El mismo aviso, presentándose: primer mensaje de la conversación.
   operacionNoDisponibleBienvenida: (
@@ -2154,6 +2179,20 @@ const INFORMAL = {
     `Tu cita de *${servicio}* es el *${fecha}*, en *${clinicaName}*. 🏥\n\n` +
     `Si necesitas indicaciones para llegar o tienes otra pregunta sobre tu cita, comunícate con ${contacto}.`,
 
+  preguntaTurno: (
+    servicio: string,
+    fecha: string,
+    medico: string,
+    contacto: string,
+  ) =>
+    `Tu cita de *${servicio}* es el *${fecha}* con *${medico}*. 🏥\n\n` +
+    `El número de turno y el consultorio no los tengo por aquí: te los indican en la *recepción del hospital*. Acércate, di tu nombre y que tienes cita a esa hora.\n\n` +
+    `Si no encuentras a quién preguntar, comunícate con ${contacto}.`,
+
+  preguntaTurnoSinCita: (contacto: string) =>
+    `El número de turno y el consultorio no los tengo por aquí: te los indican en la *recepción del hospital*. 🏥\n\n` +
+    `Si no encuentras a quién preguntar, comunícate con ${contacto}.`,
+
   avisoInasistenciaRegistrado: (
     servicio: string,
     fecha: string,
@@ -2393,6 +2432,9 @@ const INFORMAL = {
 
   soloConsultas: (contacto: string) => SOLO_CONSULTAS_INFORMAL(contacto),
 
+  soloConsultasCorto: (contacto: string) =>
+    `Como te conté, por aquí por ahora solo puedo mostrarte tus citas (escríbeme *"consultar"*). 🙏 Para agendar o hacer cambios, comunícate con ${contacto}.`,
+
   soloConsultasBienvenida: (
     clinicaName: string,
     contacto: string,
@@ -2419,6 +2461,9 @@ const INFORMAL = {
     `Por ahora no puedo *${operacion}* por aquí. 🙏\n\n` +
     `Para ${hacerla}, comunícate con ${contacto}.\n\n` +
     `Lo que sí puedo hacer por ti:\n${disponibles}`,
+
+  operacionNoDisponibleCorto: (hacerla: string, contacto: string) =>
+    `Como te conté, por aquí no se puede ${hacerla}. 🙏 Para eso, comunícate con ${contacto}.`,
 
   operacionNoDisponibleBienvenida: (
     clinicaName: string,

@@ -51,11 +51,29 @@ describe('clasificarRespuestaAlBot', () => {
     'Gracias, a qué hora es',
     'Sí voy, ¿dónde queda?',
     'con quién es la cita',
-    'Ok, en qué consultorio',
     '¿A qué hora es la consulta? ¿en el laboratorio?',
   ])('«%s» → PREGUNTA_CITA (aunque no lleve «?»)', (texto) => {
     expect(clasificarRespuestaAlBot(texto)).toBe('PREGUNTA_CITA');
   });
+
+  it.each([
+    // Caso real 2026-10-16 17:16, ya en el hospital (nota de voz transcrita).
+    'Hola, buenas tardes. Eh, señorita, era preguntar a mí qué, qué número me toca, no pues con el doctor, qué qué número es para yo esperar acá, porque es que yo no veo a quién preguntar.',
+    'Ok, en qué consultorio',
+    'qué turno me toca',
+    'cuál es el número para pasar',
+    'ya estoy aquí, dónde espero',
+    'a quién le pregunto por la cita',
+  ])('«%s» → PREGUNTA_TURNO (su turno o dónde esperar)', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe('PREGUNTA_TURNO');
+  });
+
+  it.each(['¿Qué número es este?', '¿De qué número me escriben?'])(
+    '«%s» sigue siendo QUIEN_ESCRIBE (pregunta por el teléfono, no por su turno)',
+    (texto) => {
+      expect(clasificarRespuestaAlBot(texto)).toBe('QUIEN_ESCRIBE');
+    },
+  );
 
   it.each([
     'Vicentico está equivocado de número',

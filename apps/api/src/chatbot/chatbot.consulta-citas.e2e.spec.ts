@@ -1244,10 +1244,11 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(state()).toBe(ChatState.IDLE);
     });
 
-    it('el segundo aviso de la conversación ya no se presenta', async () => {
+    it('el segundo aviso de la conversación ya no se presenta (y va la versión corta)', async () => {
       await say('Hola');
       await say('Hola');
-      expect(lastSent()).toContain(AVISO);
+      expect(lastSent()).toContain('Como le comenté');
+      expect(lastSent()).toContain('consultar');
       expect(lastSent()).not.toContain('Le saluda');
     });
 
@@ -2461,6 +2462,100 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       await say('Sí');
       expect(db.appointments[0].status).toBe('SCHEDULED');
       expect(lastSent()).toContain('no se pueden gestionar por este medio');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 🎫 Ya en el hospital: «¿qué número me toca?» (2026-10-16)
+  // ──────────────────────────────────────────────────────────────────
+  describe('🎫 pregunta por su turno o consultorio', () => {
+    const PREGUNTA =
+      'Hola, buenas tardes. Eh, señorita, era preguntar qué número me toca con el doctor, qué número es para yo esperar acá, porque yo no veo a quién preguntar.';
+
+    beforeEach(() => {
+      bookingEnabled = false;
+    });
+
+    it('con su cita recordada: le recuerda la cita y que el turno se lo dan en la recepción', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      db.appointments[0].reminderSentAt = new Date(
+        AHORA.getTime() - 5 * 3_600_000,
+      );
+      await say(PREGUNTA);
+      const r = lastSent();
+      expect(r).toContain('Medicina General');
+      expect(r).toContain('Dr apt-1');
+      expect(r).toContain('recepción del hospital');
+      expect(r).toContain(`el hospital al *${SOPORTE}*`);
+      expect(r).not.toContain('Le escribe');
+      expect([null, ChatState.IDLE]).toContain(state());
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('sin recordatorio, con una cita próxima: la nombra igual', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      await say('en qué consultorio me toca');
+      expect(lastSent()).toContain('Medicina General');
+      expect(lastSent()).toContain('recepción del hospital');
+    });
+
+    it('sin ninguna cita: igual le dice dónde preguntar', async () => {
+      await say(PREGUNTA);
+      const r = lastSent();
+      expect(r).toContain('recepción del hospital');
+      expect(r).toContain(`el hospital al *${SOPORTE}*`);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 🔁 Lo que no se puede por aquí, preguntado otra vez (2026-10-17)
+  // ──────────────────────────────────────────────────────────────────
+  describe('🔁 aviso repetido de lo que no se puede por aquí', () => {
+    beforeEach(() => {
+      // Como en producción: agendar y cambiar apagados, cancelar encendido.
+      bookingEnabled = false;
+      cancelEnabled = true;
+      rescheduleEnabled = false;
+    });
+
+    it('la segunda y la tercera vez: la versión corta, sin repetir la lista', async () => {
+      await say('Uno puede pedir una cita por aquí para el día martes');
+      const primero = lastSent();
+      expect(primero).toContain('agendar citas');
+      expect(primero).toMatch(/consultar/i);
+
+      await say('El lunes se puede? Para el día martes?');
+      const segundo = lastSent();
+      expect(segundo).toContain('Como le comenté');
+      expect(segundo).toContain('agendar una cita');
+      expect(segundo).toContain(`el hospital al *${SOPORTE}*`);
+      expect(segundo).not.toMatch(/consultar/i);
+      expect(segundo.length).toBeLessThan(primero.length);
+
+      await say('Uno puede ir hoy a apartarla o el lunes');
+      expect(lastSent()).toContain('Como le comenté');
+    });
+
+    it('otra operación no disponible tiene su propio aviso completo la primera vez', async () => {
+      await say('Uno puede pedir una cita por aquí para el día martes');
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ isModification: true }),
+      );
+      await say('quiero mover la cita para otro día');
+      const r = lastSent();
+      expect(r).not.toContain('Como le comenté');
+      expect(r).toContain('cambiar la fecha');
+    });
+
+    it('con las tres apagadas («solo consultas») también se acorta al repetir', async () => {
+      cancelEnabled = false;
+      await say('Uno puede pedir una cita por aquí para el día martes');
+      expect(lastSent()).toContain('solo está activa');
+      await say('El lunes se puede? Para el día martes?');
+      expect(lastSent()).toContain('Como le comenté');
+      expect(lastSent()).toContain('consultar');
     });
   });
 
