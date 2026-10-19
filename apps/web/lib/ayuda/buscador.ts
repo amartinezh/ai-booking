@@ -1,4 +1,4 @@
-import type { TemaAyuda, TerminoGlosario } from './contenido';
+import type { TemaAyuda, TerminoGlosario } from './tipos';
 
 // ─────────────────────────────────────────────────────────────
 // BUSCADOR DEL CENTRO DE AYUDA — sin IA, todo en el navegador.

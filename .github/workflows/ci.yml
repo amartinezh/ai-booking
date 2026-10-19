@@ -10,6 +10,9 @@
 #   · typecheck de los cinco workspaces
 #   · las tres suites de jest + los umbrales de cobertura (trinquete)
 #   · la regla de fechas de CLAUDE.md — cero violaciones hoy, y que siga así
+#   · el conocimiento del sistema (docs/conocimiento/AGENIA.md): bien formado,
+#     cubriendo el menú, y actualizado por cada commit que toca el producto
+#   · las pruebas del centro de ayuda de web (se arma con ese archivo)
 #
 # Qué NO bloquea todavía: el lint completo. `apps/api` arrastra 1.199 errores
 # y `apps/web` 238, casi todos de la familia no-unsafe-* de typescript-eslint.
@@ -41,6 +44,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Historia completa: la regla del conocimiento revisa cada commit del
+          # push o del pull request, no solo el último.
+          fetch-depth: 0
 
       # Sin `with: version`: la versión ya está fijada en el "packageManager"
       # de package.json ("pnpm@9.0.0"), que este action lee solo. Tenerla en
@@ -84,11 +91,38 @@ jobs:
       - name: Regla de fechas (America/Bogota)
         run: node scripts/check-date-rule.mjs
 
+      # docs/conocimiento/AGENIA.md es la base de conocimiento del sistema y la
+      # fuente única del Centro de ayuda. Bloquea si el archivo está mal formado
+      # o no cubre el menú del administrador, y si algún commit del push / PR
+      # toca código del producto sin actualizarlo (ni eximirse con
+      # «Conocimiento: no aplica»). Mismo script que el gancho commit-msg.
+      # Reglas: docs/conocimiento/README.md.
+      - name: Conocimiento del sistema (docs/conocimiento/AGENIA.md)
+        env:
+          EVENTO: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_ANTES: ${{ github.event.before }}
+          PUSH_DESPUES: ${{ github.sha }}
+        run: |
+          if [ "$EVENTO" = "pull_request" ]; then
+            node scripts/check-conocimiento.mjs --range "$PR_BASE..$PR_HEAD"
+          elif [ -n "$PUSH_ANTES" ]; then
+            node scripts/check-conocimiento.mjs --range "$PUSH_ANTES..$PUSH_DESPUES"
+          else
+            node scripts/check-conocimiento.mjs
+          fi
+
       - name: Pruebas y cobertura
         run: |
           pnpm --filter api test -- --coverage --ci
           pnpm --filter @agenia/mirror-agent test -- --coverage --ci
           pnpm --filter @agenia/shared test -- --coverage --ci
+
+      # Solo las del centro de ayuda (no toda la suite de web): que el .md se
+      # lea, cubra el menú y que la página se arme con él.
+      - name: Pruebas del centro de ayuda (web)
+        run: pnpm --filter web test -- --ci lib/ayuda app/dashboard/soporte/ayuda
 
       # Informe, no barrera — todavía. Ver el comentario de la cabecera.
       - name: Lint (informe, no bloquea)

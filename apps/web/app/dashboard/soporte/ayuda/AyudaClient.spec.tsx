@@ -1,14 +1,17 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AyudaClient from './AyudaClient';
-import { TEMAS } from '@/lib/ayuda/contenido';
+import { cargarConocimiento } from '@/lib/ayuda/cargar-conocimiento';
+import { parsearConocimiento } from '@/lib/ayuda/conocimiento';
+import { MD_MINIMO } from '@/lib/ayuda/conocimiento.fixture';
 import { getMenusForRole } from '@/lib/menus';
 
+const CONTENIDO = cargarConocimiento();
 const TODAS = getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true }).map((m) => m.href);
 const SIN_ESPEJO = getMenusForRole('ORG_ADMIN').map((m) => m.href);
 
 function abrir(props: Partial<Parameters<typeof AyudaClient>[0]> = {}) {
-    return render(<AyudaClient temaInicial={null} consultaInicial="" rutasDisponibles={TODAS} {...props} />);
+    return render(<AyudaClient contenido={CONTENIDO} temaInicial={null} consultaInicial="" rutasDisponibles={TODAS} {...props} />);
 }
 
 type Usuario = ReturnType<typeof userEvent.setup>;
@@ -28,7 +31,7 @@ async function buscarTexto(user: Usuario, texto: string) {
 describe('AyudaClient', () => {
     it('el inicio tiene una tarjeta por cada opción del menú', () => {
         abrir();
-        for (const t of TEMAS.filter((tema) => tema.href)) {
+        for (const t of CONTENIDO.temas.filter((tema) => tema.href)) {
             expect(screen.getAllByText(t.titulo).some((el) => el.closest('button'))).toBe(true);
         }
     });
@@ -122,6 +125,27 @@ describe('AyudaClient', () => {
         await user.click(screen.getByRole('button', { name: /Qué significa cada término/ }));
         expect(screen.getByRole('heading', { level: 2, name: /Glosario/ })).toBeInTheDocument();
         expect(screen.getByText('BSUID')).toBeInTheDocument();
+    });
+
+    it('no tiene texto propio: con otro archivo de conocimiento muestra solo lo de ese archivo', async () => {
+        const user = userEvent.setup();
+        render(<AyudaClient contenido={parsearConocimiento(MD_MINIMO)} temaInicial={null} consultaInicial="" rutasDisponibles={['/dashboard/agenda']} />);
+
+        expect(screen.getByText('Ayuda de prueba para la clínica.')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Ver turnos' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Agenda y catálogos' })).toBeInTheDocument();
+        expect(screen.getByText('Turno y 1 término más.')).toBeInTheDocument();
+        expect(screen.getByText(/Por dónde empezar a usar la clínica de prueba/)).toBeInTheDocument();
+        // Nada del archivo real.
+        expect(screen.queryByText('Visión General')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Abrir cupos' })).not.toBeInTheDocument();
+
+        await buscarTexto(user, 'abrir turnos');
+        const opciones = await screen.findAllByRole('option');
+        expect(opciones[0]).toHaveTextContent('Abrir turnos');
+        await user.click(opciones[0]);
+        expect(screen.getByRole('heading', { level: 2, name: 'Agenda' })).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: /Abrir Agenda/ })).toHaveAttribute('href', '/dashboard/agenda');
     });
 
     it('«/» lleva al buscador', async () => {

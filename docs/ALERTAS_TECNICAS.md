@@ -4,12 +4,158 @@ Cuando algo falla, el sistema le escribe al instante a un **grupo de Telegram de
 
 Los mensajes **nunca llevan datos de pacientes** (ni nombres, ni documentos, ni teléfonos): el detalle queda detrás del inicio de sesión. Tampoco gastan IA: los textos los arma el código.
 
-## 1. Ponerlo en marcha (una vez)
+## 1. Paso a producción (una vez)
 
-1. **El bot.** En Telegram, abra [@BotFather](https://t.me/BotFather) → `/newbot` → nombre «AgenIA Técnico», usuario terminado en `bot`. Pegue el token en `/super-admin/alertas` → «Conectar bot». Tiene que ser un bot **propio para las alertas**: el de una clínica se rechaza (en ese escriben pacientes).
-2. **El grupo.** Cree un grupo **privado** del equipo y agregue el bot. En el panel, «Generar código de vinculación», escriba en el grupo el comando que muestra el panel (`/vincular@AgeniaTecnicoBot ABC123`, vence en 15 min) y pulse «Buscar el grupo». El grupo recibe la bienvenida y las alertas quedan encendidas.
-3. **Probar.** «Enviar mensaje de prueba» en el panel, y en el servidor `agenia vigia prueba` (el vigía avisa por el mismo bot aunque la API esté caída).
-4. **Producción:** `MONITOR_BG_INTERVAL_MINUTES=5` en `/opt/agenia/.env.production` (el valor escrito gana sobre el de por defecto) y `agenia restart api`.
+Servidor de referencia: `89.117.61.28` (hsvpanserma), llave `~/.ssh/agenia_89_117_61_28_ed25519`. Abreviatura usada abajo:
+
+```bash
+vps() { ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 "$@"; }
+```
+
+(Una función y no una variable: en zsh, la terminal por defecto de macOS, `vps '…'` con `VPS='ssh …'` no funciona.)
+
+Estado del servidor antes de empezar (revisado el 2026-10-19, solo lectura): bash 5, `flock`, `curl`, cron activo, zona `America/Bogota` instalada, disco al 26 %, salida a `api.telegram.org` OK, `/api/tech-alerts` cae en el `respond 404` del Caddy (no es pública: el panel la alcanza por la red interna). No hay nada de las alertas desplegado todavía.
+
+El orden importa: **primero el servidor (pasos 1 a 4), después Telegram (5 a 8)**. La página `/super-admin/alertas` no existe hasta desplegar.
+
+### Paso 1 · Respaldo antes de tocar nada
+
+```bash
+vps 'agenia backup'
+```
+
+Debe terminar en `✔ Backup: /var/backups/agenia/agenia-AAAAMMDD-HHMMSS.sql.gz (… M)`. La migración solo AGREGA dos tablas, un valor de enum y un índice; el respaldo es por costumbre, no porque se espere un problema.
+
+### Paso 2 · El monitor cada 5 minutos (antes de desplegar)
+
+`.env.production` tiene `MONITOR_BG_INTERVAL_MINUTES=15` escrito, y lo escrito gana sobre el nuevo valor por defecto (5). Se cambia ANTES de desplegar porque el despliegue recrea la API y así toma el valor nuevo de una vez. (`agenia restart api` NO sirve: `docker compose restart` no vuelve a leer el `.env`; fuera de un despliegue se usa `agenia up --force-recreate api`.)
+
+```bash
+vps 'cp -a /opt/agenia/.env.production /var/backups/agenia/env.production.$(date +%Y%m%d-%H%M%S) \
+  && sed -i "s/^MONITOR_BG_INTERVAL_MINUTES=.*/MONITOR_BG_INTERVAL_MINUTES=5/" /opt/agenia/.env.production \
+  && grep ^MONITOR_BG_INTERVAL_MINUTES /opt/agenia/.env.production'
+```
+
+Debe imprimir `MONITOR_BG_INTERVAL_MINUTES=5`. La copia queda en `/var/backups/agenia` (nunca en `/opt/agenia`: el despliegue hace `rsync --delete` ahí). El `rsync` del despliegue no toca `.env.production`.
+
+### Paso 3 · Desplegar
+
+Desde la raíz del repo, en tu computador:
+
+```bash
+./update.sh
+```
+
+Lo que debe verse, en orden:
+
+| Salida | Qué es |
+|---|---|
+| `Versión: d47d918@2026-…` | El commit que irá en el aviso de arranque (con `+cambios` si hay algo sin commit) |
+| `✔ Código sincronizado` | rsync |
+| `Mantenimiento por 20 min…` | El vigía no mirará contenedores mientras se recrean |
+| `Reconstruido: api web` | Build e imagen nueva |
+| Migraciones con `20261019100000_alertas_tecnicas` y `verificado: … 4 indice(s)` | Las tablas y el índice único parcial `uq_tech_alert_abierta` |
+| `agenia verify` en verde | Lo de siempre |
+| `Vigía instalado: cada minuto…` y `! Todavía no hay configuración…` | Lo segundo es lo esperado: el bot se conecta en el paso 7 |
+| `Fin del mantenimiento…` | Ventana cerrada |
+
+Si el despliegue se corta a medias, la ventana de mantenimiento vence sola a los 20 min; se puede volver a correr `./update.sh` sin riesgo.
+
+### Paso 4 · Verificar el despliegue (solo lectura)
+
+```bash
+vps 'docker exec agenia_api printenv AGENIA_VERSION
+  agenia logs api 2>/dev/null | grep -E "Monitor de fondo registrado" | tail -1
+  docker exec agenia_db psql -U agenia -d antigravity -Atc "SELECT to_regclass('"'"'public.\"TechAlert\"'"'"'), to_regclass('"'"'public.\"TechAlertConfig\"'"'"'), (SELECT count(*) FROM pg_indexes WHERE indexname = '"'"'uq_tech_alert_abierta'"'"')"
+  cat /etc/cron.d/agenia-vigia; date +%s; cat /var/lib/agenia/alertas/vigia.latido'
+```
+
+| Debe salir | Si no |
+|---|---|
+| La versión del paso 3 | Se construyó sin `AGENIA_VERSION`: el aviso de arranque dirá «sin registrar» (no bloquea) |
+| `… cada 5 min (cron: */5 * * * *)` | Repetir el paso 2 y `agenia up --force-recreate api` |
+| `"TechAlert"|"TechAlertConfig"|1` | `agenia migrate` y revisar su salida |
+| El cron del vigía, y un latido de hace menos de 1 min | `agenia vigia instalar` |
+
+En el panel, `https://app.hsvpanserma.agenia.co/super-admin/alertas` debe abrir con «Sin configurar» arriba y, en el paso 3, «Vigía del servidor activo».
+
+### Paso 5 · Crear el bot (Telegram, 2 minutos)
+
+1. En Telegram, busque **@BotFather**: es el que tiene la **marca azul de verificado**. Ábralo y toque **Iniciar**.
+2. Envíele `/newbot`.
+3. Le pide el **nombre** que verá el grupo: `AgenIA Técnico`.
+4. Le pide el **usuario**: debe terminar en `bot`, ser único y tener solo letras, números o `_` (ej. `AgeniaTecnicoBot`, `agenia_alertas_bot`). Si está tomado, pruebe otro.
+5. BotFather responde con el **token** (`123456789:AA…`, después de «Use this token to access the HTTP API»). Cópielo.
+
+Cuidados:
+- El token **es una contraseña**: no lo pegue en chats ni lo deje en capturas. Si se filtra: `/revoke` en BotFather → token nuevo → «Renovar token» en el panel.
+- No cambie la privacidad del bot (`/setprivacy`) ni le ponga webhook: como viene, funciona.
+- `/setjoingroups` debe seguir en **Enable** (así viene): si no, no se puede agregar a un grupo.
+
+### Paso 6 · Crear el grupo del equipo (Telegram)
+
+Agregue **el bot y a las personas del equipo técnico** al crearlo (Telegram pide al menos un miembro; el bot sirve como el primero).
+
+- **Android:** toque el **lápiz ✏️** (abajo a la derecha) → **Nuevo grupo** → busque y marque a los miembros: escriba el usuario del bot (`AgeniaTecnicoBot`) y a cada persona → toque la **flecha →** → escriba el nombre `AgenIA · Técnico` → toque **✓**.
+- **iPhone:** pestaña **Chats** → ícono de **redactar** (arriba a la derecha) → **Nuevo grupo** → marque al bot y a las personas → **Siguiente** → nombre `AgenIA · Técnico` → **Crear**.
+- **Computador** (Telegram Desktop o web.telegram.org): menú **☰** (arriba a la izquierda) → **Nuevo grupo** → nombre → **Siguiente** → marque al bot y a las personas → **Crear**.
+
+Si olvidó el bot: abra el grupo → toque el **nombre del grupo** → **Añadir miembros** → busque el usuario del bot.
+
+Ajustes del grupo:
+- **Privado** (así viene): no le ponga enlace público ni usuario. Quien esté en el grupo ve nombres de clínicas e información técnica. Si comparte un enlace de invitación, revóquelo después (nombre del grupo → Enlaces de invitación).
+- Que **todos puedan enviar mensajes** (así viene). Si un administrador lo restringe, haga **administrador** al bot: necesita poder escribir.
+- Cada persona deja las **notificaciones del grupo activadas** (las advertencias de noche ya llegan sin sonido; las críticas deben sonar). Conviene fijar el grupo arriba.
+- Si el grupo pasa a supergrupo (más de 200 personas, o al cambiar ciertos ajustes), Telegram le cambia el id: la API lo sigue sola.
+
+### Paso 7 · Conectar el bot y vincular el grupo (panel)
+
+En `https://app.hsvpanserma.agenia.co/super-admin/alertas`, con un usuario SUPER_ADMIN:
+
+1. **Paso 1 de la página — El bot:** pegue el token → **Conectar bot**. Debe aparecer `✔ @AgeniaTecnicoBot · token •••xxxx`.
+2. **Paso 2 — El grupo:** **Generar código de vinculación**. La página muestra el comando exacto, por ejemplo `/vincular@AgeniaTecnicoBot 4F7K2Q`, y la hora en que vence (15 min).
+3. Toque **Copiar**, péguelo **en el grupo** (no en el chat privado con el bot) y envíelo.
+4. Vuelva a la página → **Buscar el grupo**. El grupo recibe «✅ Este grupo recibirá las alertas técnicas de AgenIA» y la franja de arriba pasa a verde: «Activas en «AgenIA · Técnico»».
+
+Si dice «Todavía no llega el código»: confirme que lo escribió en el grupo, completo y con `@AgeniaTecnicoBot`, y vuelva a buscar. «Llegó por un chat privado»: escríbalo en el grupo. Si venció, genere otro.
+
+Al vincular puede llegar enseguida un aviso de algo que **ya estaba fallando**: es real, no un error de la conexión. El primer resumen diario llega al día siguiente a las 07:00.
+
+### Paso 8 · Probar los dos caminos
+
+1. En la página, paso 3: **Enviar mensaje de prueba** → llega «✅ Mensaje de prueba de AgenIA» (con sonido).
+2. En el servidor, el vigía (el camino que avisa con la API caída):
+
+   ```bash
+   vps 'ls -l /var/lib/agenia/alertas/telegram.env; agenia vigia prueba; agenia vigia estado'
+   ```
+
+   Debe mostrar `-rw------- … root … telegram.env` (lo escribió la API al vincular), `Mensaje de prueba enviado.` (y en el grupo «✅ Prueba del vigía del servidor») y `Sin problemas abiertos.`
+
+### Paso 9 · Ajustes
+
+Los valores de por defecto son los aprobados (A6/A7/A13) y sirven tal cual: todas las categorías encendidas; recordar cada 60 min, máximo 3; de 22:00 a 06:00 las advertencias sin sonido; resumen diario a las 07:00; URL del panel vacía (usa `https://app.hsvpanserma.agenia.co`). Cada cambio queda en la auditoría global.
+
+### Paso 10 · Chequeo externo (A9)
+
+Para el caso «se cayó el servidor entero»: §5 de esta guía (UptimeRobot, gratis, sin código, al mismo grupo).
+
+### Paso 11 · La primera semana (Fase 4)
+
+- Lea cada aviso: ¿era real?, ¿llegó a tiempo?, ¿sobró? Anótelo en el §13 del plan.
+- Cada mañana debe llegar el resumen de las 07:00. **El día que no llegue, el canal está roto** (franja roja en el panel con el motivo).
+- Revise la **Bitácora** del panel: «Sin enviar» es lo que no salió por silencio o categoría apagada; «Falló: …» es un problema del canal.
+- Si algo hace ruido, el ajuste va en el código (umbrales de `UMBRALES_ALERTAS` en `@agenia/shared`), no apagando la categoría entera.
+
+### Si hay que apagarlo o volver atrás
+
+| Qué | Cómo |
+|---|---|
+| Que no salga nada (API y vigía) | Panel → **Apagar alertas**. Todo se sigue registrando |
+| Un rato (mantenimiento) | Panel → **Silenciar**; o `vps 'agenia mantenimiento 30'` (solo el vigía, contenedores y panel) |
+| Solo el vigía | Panel → desmarcar la categoría **Servidor**. (Borrar `/etc/cron.d/agenia-vigia` dura hasta el próximo despliegue, que lo reinstala) |
+| Desconectar el bot | Panel → **Desconectar** (se despide del grupo y borra el token, también del archivo del vigía) |
+| Volver al código anterior | Desplegar `45caa5f`. Las tablas nuevas quedan y no estorban: la migración solo agregó |
 
 Quien esté en el grupo ve los nombres de las clínicas y la información técnica: manténgalo privado, sin enlace de invitación público.
 

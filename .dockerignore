@@ -26,7 +26,14 @@ refactor_chatbot*.py
 
 # Artefactos del despliegue: no deben viajar dentro de la imagen.
 deploy/secrets
-docs
+
+# La documentación no viaja, salvo docs/conocimiento: el Centro de ayuda del
+# panel lee docs/conocimiento/AGENIA.md en tiempo de ejecución
+# (apps/web/lib/ayuda/cargar-conocimiento.ts). Sin esta excepción, la ayuda
+# de producción dice «no está disponible».
+docs/*
+!docs/conocimiento
+!docs/conocimiento/**
 
 # Secretos de runtime: los inyecta docker compose vía `env_file`, no deben
 # quedar horneados en la imagen. Los .env por app SÍ entran porque

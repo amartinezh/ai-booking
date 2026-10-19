@@ -1,0 +1,13 @@
+#!/bin/sh
+# Gancho commit-msg: todo cambio del producto actualiza la base de conocimiento
+# del sistema (docs/conocimiento/AGENIA.md) en el mismo commit, o lo exime
+# explícitamente con la línea «Conocimiento: no aplica — <por qué>».
+# Reglas: docs/conocimiento/README.md. Se activa con:
+#     git config core.hooksPath .githooks
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "⚠ commit-msg: no encuentro node; no se verificó docs/conocimiento/AGENIA.md (el CI lo hará)." >&2
+  exit 0
+fi
+
+exec node "$(git rev-parse --show-toplevel)/scripts/check-conocimiento.mjs" --staged --msg-file "$1"

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { createContext, useContext, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, BookOpen, ChevronRight, ExternalLink, Lightbulb, Search, X } from 'lucide-react';
-import { CATEGORIAS, GLOSARIO, TEMAS, type TemaAyuda } from '@/lib/ayuda/contenido';
+import type { CategoriaAyuda, ContenidoAyuda, TemaAyuda } from '@/lib/ayuda/tipos';
 import {
     GLOSARIO_ID,
     anclaDe,
@@ -19,6 +19,9 @@ import {
 // ─────────────────────────────────────────────────────────────
 // CENTRO DE AYUDA — inicio, guía de cada opción, glosario y buscador.
 //
+// El texto no vive aquí: llega en `contenido`, que la página lee de
+// docs/conocimiento/AGENIA.md en el servidor. Este componente solo lo muestra.
+//
 // Todo corre en el navegador: el índice se arma una vez al abrir la página
 // (unos milisegundos) y cada búsqueda es local, sin red ni IA. El tema abierto
 // y la búsqueda quedan en la dirección (?tema=…&q=…) para poder compartirla.
@@ -33,27 +36,41 @@ const ETIQUETA_TIPO: Record<TipoFragmento, string> = {
     glosario: 'Glosario',
 };
 
-const BUSQUEDAS_FRECUENTES = [
-    'Abrir cupos',
-    'Cargar el padrón',
-    'Cambiar contraseña',
-    'El bot no responde',
-    'Cita que no llegó al hospital',
-    'Paciente dice que agendó',
-    'Plantillas de WhatsApp',
-    'Recordatorios',
-];
-
-const TEMA_POR_ID = new Map(TEMAS.map((t) => [t.id, t]));
-const CATEGORIA_POR_ID = new Map(CATEGORIAS.map((c) => [c.id, c]));
-/** Orden de lectura para «anterior / siguiente»: el de las categorías. */
-const TEMAS_EN_ORDEN = CATEGORIAS.flatMap((c) => TEMAS.filter((t) => t.categoria === c.id));
+/** La categoría y el tema que el inicio destaca arriba, en vez de en la cuadrícula. */
+const CATEGORIA_DE_INICIO = 'inicio';
+const TEMA_DE_BIENVENIDA = 'primeros-pasos';
 
 const TARJETA = 'rounded-2xl bg-white dark:bg-zinc-900 ring-1 ring-zinc-200 dark:ring-zinc-800';
 const DESTELLO = 'ring-2 ring-blue-400 dark:ring-blue-500';
 
-function temaValido(id: string | null): string | null {
-    return id && (id === GLOSARIO_ID || TEMA_POR_ID.has(id)) ? id : null;
+// ── El contenido, con sus índices, para todos los componentes ──
+
+interface Biblioteca extends ContenidoAyuda {
+    temaPorId: Map<string, TemaAyuda>;
+    categoriaPorId: Map<string, CategoriaAyuda>;
+    /** Orden de lectura para «anterior / siguiente»: el de las categorías. */
+    temasEnOrden: TemaAyuda[];
+}
+
+function armarBiblioteca(contenido: ContenidoAyuda): Biblioteca {
+    return {
+        ...contenido,
+        temaPorId: new Map(contenido.temas.map((t) => [t.id, t])),
+        categoriaPorId: new Map(contenido.categorias.map((c) => [c.id, c])),
+        temasEnOrden: contenido.categorias.flatMap((c) => contenido.temas.filter((t) => t.categoria === c.id)),
+    };
+}
+
+const BibliotecaContext = createContext<Biblioteca | null>(null);
+
+function useBiblioteca(): Biblioteca {
+    const biblioteca = useContext(BibliotecaContext);
+    if (!biblioteca) throw new Error('useBiblioteca fuera de AyudaClient');
+    return biblioteca;
+}
+
+function temaValido(id: string | null, temaPorId: Map<string, TemaAyuda>): string | null {
+    return id && (id === GLOSARIO_ID || temaPorId.has(id)) ? id : null;
 }
 
 // ── Resaltado de las palabras buscadas dentro de un tema ──
@@ -86,6 +103,23 @@ function T({ children }: { children: string }) {
 // ── Componente principal ──
 
 export default function AyudaClient({
+    contenido,
+    ...props
+}: {
+    contenido: ContenidoAyuda;
+    temaInicial: string | null;
+    consultaInicial: string;
+    rutasDisponibles: string[];
+}) {
+    const biblioteca = useMemo(() => armarBiblioteca(contenido), [contenido]);
+    return (
+        <BibliotecaContext.Provider value={biblioteca}>
+            <CentroDeAyuda {...props} />
+        </BibliotecaContext.Provider>
+    );
+}
+
+function CentroDeAyuda({
     temaInicial,
     consultaInicial,
     rutasDisponibles,
@@ -94,9 +128,11 @@ export default function AyudaClient({
     consultaInicial: string;
     rutasDisponibles: string[];
 }) {
-    const indice = useMemo(() => crearIndice(TEMAS, GLOSARIO), []);
+    const biblioteca = useBiblioteca();
+    const { portada } = biblioteca;
+    const indice = useMemo(() => crearIndice(biblioteca.temas, biblioteca.glosario), [biblioteca]);
     const [consulta, setConsulta] = useState(consultaInicial);
-    const [temaId, setTemaId] = useState<string | null>(temaValido(temaInicial));
+    const [temaId, setTemaId] = useState<string | null>(temaValido(temaInicial, biblioteca.temaPorId));
     const [ancla, setAncla] = useState<string | null>(null);
     /** Cuenta cada salto: pulsar dos veces la misma sección también debe desplazar. */
     const [salto, setSalto] = useState(0);
@@ -187,7 +223,7 @@ export default function AyudaClient({
         }
     };
 
-    const tema = temaId && temaId !== GLOSARIO_ID ? TEMA_POR_ID.get(temaId) : undefined;
+    const tema = temaId && temaId !== GLOSARIO_ID ? biblioteca.temaPorId.get(temaId) : undefined;
     const activoSeguro = Math.min(activo, Math.max(respuesta.resultados.length - 1, 0));
 
     return (
@@ -205,10 +241,7 @@ export default function AyudaClient({
                     </span>
                     <div>
                         <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">Centro de ayuda</h1>
-                        <p className="mt-1 max-w-3xl text-sm text-zinc-500 dark:text-zinc-400">
-                            Cada opción del menú explicada paso a paso. Escribe lo que necesitas hacer o lo que está pasando: el
-                            buscador entiende palabras sin tilde, errores de tipeo y sinónimos (turno, cupo, slot…).
-                        </p>
+                        <p className="mt-1 max-w-3xl text-sm text-zinc-500 dark:text-zinc-400">{portada.presentacion}</p>
                     </div>
                 </div>
             </header>
@@ -263,7 +296,7 @@ export default function AyudaClient({
                 {!buscando && (
                     <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Búsquedas frecuentes:</span>
-                        {BUSQUEDAS_FRECUENTES.map((b) => (
+                        {portada.busquedasFrecuentes.map((b) => (
                             <button
                                 key={b}
                                 type="button"
@@ -343,6 +376,7 @@ function Resultados({
     onAbrir: (r: ResultadoBusqueda) => void;
     onSugerencia: (s: string) => void;
 }) {
+    const { temaPorId } = useBiblioteca();
     if (resultados.length === 0) {
         return (
             <section aria-label="Resultados de la búsqueda" className={`${TARJETA} p-8 text-center`}>
@@ -385,7 +419,7 @@ function Resultados({
             </p>
             <ul id="ayuda-resultados" role="listbox" aria-label="Resultados" className="space-y-2">
                 {resultados.map((r, i) => {
-                    const tema = TEMA_POR_ID.get(r.fragmento.temaId);
+                    const tema = temaPorId.get(r.fragmento.temaId);
                     const seleccionado = i === activo;
                     return (
                         <li
@@ -423,10 +457,12 @@ function Resultados({
 // ── Inicio ──
 
 function Inicio({ disponibles, onAbrirTema }: { disponibles: Set<string>; onAbrirTema: (id: string) => void }) {
-    const opciones = TEMAS.filter((t) => t.href);
-    const guias = TEMAS.reduce((n, t) => n + t.guias.length, 0);
-    const preguntas = TEMAS.reduce((n, t) => n + t.preguntas.length + t.problemas.length, 0);
-    const primeros = TEMA_POR_ID.get('primeros-pasos');
+    const { temas, categorias, glosario, portada, temaPorId } = useBiblioteca();
+    const opciones = temas.filter((t) => t.href);
+    const guias = temas.reduce((n, t) => n + t.guias.length, 0);
+    const preguntas = temas.reduce((n, t) => n + t.preguntas.length + t.problemas.length, 0);
+    const primeros = temaPorId.get(TEMA_DE_BIENVENIDA);
+    const masTerminos = glosario.length - portada.glosarioDestacado.length;
 
     return (
         <div className="space-y-8">
@@ -454,7 +490,7 @@ function Inicio({ disponibles, onAbrirTema }: { disponibles: Set<string>; onAbri
                     { n: opciones.length, t: 'opciones del menú explicadas' },
                     { n: guias, t: 'guías paso a paso' },
                     { n: preguntas, t: 'preguntas y soluciones' },
-                    { n: GLOSARIO.length, t: 'términos en el glosario' },
+                    { n: glosario.length, t: 'términos en el glosario' },
                 ].map((c) => (
                     <div key={c.t} className={`${TARJETA} p-4`}>
                         <dd className="text-2xl font-bold text-zinc-900 dark:text-white">{c.n}</dd>
@@ -463,7 +499,7 @@ function Inicio({ disponibles, onAbrirTema }: { disponibles: Set<string>; onAbri
                 ))}
             </dl>
 
-            {CATEGORIAS.filter((c) => c.id !== 'inicio').map((c) => (
+            {categorias.filter((c) => c.id !== CATEGORIA_DE_INICIO).map((c) => (
                 <section key={c.id} aria-labelledby={`categoria-${c.id}`} className="space-y-3">
                     <div>
                         <h2 id={`categoria-${c.id}`} className="text-lg font-semibold text-zinc-900 dark:text-white">
@@ -472,7 +508,7 @@ function Inicio({ disponibles, onAbrirTema }: { disponibles: Set<string>; onAbri
                         <p className="text-sm text-zinc-500 dark:text-zinc-400">{c.descripcion}</p>
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        {TEMAS.filter((t) => t.categoria === c.id).map((t) => (
+                        {temas.filter((t) => t.categoria === c.id).map((t) => (
                             <button
                                 key={t.id}
                                 type="button"
@@ -507,7 +543,8 @@ function Inicio({ disponibles, onAbrirTema }: { disponibles: Set<string>; onAbri
                     <span>
                         <span className="font-semibold text-zinc-900 dark:text-white">📖 Qué significa cada término</span>
                         <span className="mt-0.5 block text-sm text-zinc-500 dark:text-zinc-400">
-                            HIS, espejo, cupo, padrón, régimen, plantilla, BSUID y {GLOSARIO.length - 7} términos más.
+                            {portada.glosarioDestacado.join(', ')}
+                            {masTerminos > 0 ? ` y ${masTerminos} término${masTerminos === 1 ? '' : 's'} más.` : '.'}
                         </span>
                     </span>
                     <ChevronRight className="h-5 w-5 shrink-0 text-zinc-400" />
@@ -553,10 +590,13 @@ function TemaVista({
     onAbrirTema: (id: string, seccion?: string | null) => void;
     onIrA: (seccion: string) => void;
 }) {
-    const categoria = CATEGORIA_POR_ID.get(tema.categoria);
-    const posicion = TEMAS_EN_ORDEN.findIndex((t) => t.id === tema.id);
-    const anterior = posicion > 0 ? TEMAS_EN_ORDEN[posicion - 1] : undefined;
-    const siguiente = posicion < TEMAS_EN_ORDEN.length - 1 ? TEMAS_EN_ORDEN[posicion + 1] : undefined;
+    const { categoriaPorId, temaPorId, temasEnOrden } = useBiblioteca();
+    const categoria = categoriaPorId.get(tema.categoria);
+    const posicion = temasEnOrden.findIndex((t) => t.id === tema.id);
+    const anterior = posicion > 0 ? temasEnOrden[posicion - 1] : undefined;
+    const siguiente = posicion < temasEnOrden.length - 1 ? temasEnOrden[posicion + 1] : undefined;
+    // Un enlace a un tema que no existe se omite (lo señalan las pruebas del .md).
+    const relacionados = tema.relacionados.filter((id) => id === GLOSARIO_ID || temaPorId.has(id));
     const destello = (id: string) => (ancla === id ? DESTELLO : '');
 
     const indice = [
@@ -723,12 +763,12 @@ function TemaVista({
                         </Seccion>
                     )}
 
-                    {tema.relacionados.length > 0 && (
+                    {relacionados.length > 0 && (
                         <section aria-label="Temas relacionados" className="space-y-2">
                             <h3 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400">Temas relacionados</h3>
                             <div className="flex flex-wrap gap-2">
-                                {tema.relacionados.map((id) => {
-                                    const r = TEMA_POR_ID.get(id);
+                                {relacionados.map((id) => {
+                                    const r = temaPorId.get(id);
                                     return (
                                         <button
                                             key={id}
@@ -824,8 +864,9 @@ function GlosarioVista({
     onInicio: () => void;
     onAbrirTema: (id: string, seccion?: string | null) => void;
 }) {
+    const { glosario, temaPorId } = useBiblioteca();
     // El ancla usa la posición original del término: se ordena solo para mostrar.
-    const terminos = GLOSARIO.map((g, i) => ({ ...g, id: anclaDe(GLOSARIO_ID, 'glosario', i) })).sort((a, b) =>
+    const terminos = glosario.map((g, i) => ({ ...g, id: anclaDe(GLOSARIO_ID, 'glosario', i) })).sort((a, b) =>
         a.termino.localeCompare(b.termino, 'es'),
     );
 
@@ -846,7 +887,7 @@ function GlosarioVista({
             </header>
             <dl className={`${TARJETA} divide-y divide-zinc-100 dark:divide-zinc-800`}>
                 {terminos.map((g) => {
-                    const tema = g.temaId ? TEMA_POR_ID.get(g.temaId) : undefined;
+                    const tema = g.temaId ? temaPorId.get(g.temaId) : undefined;
                     return (
                         <div key={g.id} id={g.id} className={`scroll-mt-6 p-4 ${ancla === g.id ? DESTELLO : ''}`}>
                             <dt className="font-semibold text-zinc-900 dark:text-white">

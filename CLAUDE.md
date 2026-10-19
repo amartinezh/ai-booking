@@ -2,6 +2,14 @@
 
 Convenciones del repo. Lee esto antes de tocar código.
 
+## Conocimiento del sistema (obligatorio)
+
+**Regla:** todo ajuste o mejora actualiza `docs/conocimiento/AGENIA.md` **en el mismo commit**: la sección que describe lo que cambió (Parte 1 = lo que muestra el Centro de ayuda, opción por opción del menú; Parte 2 = cómo funciona el sistema por dentro), una línea en la bitácora (Parte 3) y la fecha de «Última actualización». Si de verdad no cambia nada para quien usa o mantiene el sistema (refactor interno, pruebas, herramientas), el mensaje del commit lleva la línea `Conocimiento: no aplica — <por qué>`.
+
+**Por qué:** es la base de conocimiento de todo el sistema y la fuente única del Centro de ayuda: `/dashboard/soporte/ayuda` no tiene texto propio, lee la Parte 1 del archivo (`apps/web/lib/ayuda/cargar-conocimiento.ts`). Antes de cambiar algo, léelo para saber qué hace hoy el sistema.
+
+**Cómo se vigila:** el gancho `.githooks/commit-msg` (se activa con `git config core.hooksPath .githooks`) y el paso «Conocimiento del sistema» del CI, los dos con `node scripts/check-conocimiento.mjs`; más las pruebas `pnpm --filter web test -- lib/ayuda app/dashboard/soporte/ayuda`. Una opción nueva en `apps/web/lib/menus.ts` exige su tema en la Parte 1 con el mismo título. Formato de la Parte 1 y reglas: `docs/conocimiento/README.md`.
+
 ## Fechas y zona horaria
 
 **Regla:** nunca llamar `.toLocaleString` / `.toLocaleDateString` / `.toLocaleTimeString` directamente sobre `Date` para presentación al usuario. Usar siempre los helpers canónicos:

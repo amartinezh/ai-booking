@@ -402,6 +402,12 @@ Todos los servicios reciben `TechAlertService` con `@Optional()`: las pruebas ex
 ### Pendiente para producción
 
 1. Crear el bot en @BotFather, conectarlo y vincular el grupo (§10).
-2. `MONITOR_BG_INTERVAL_MINUTES=5` en `/opt/agenia/.env.production` y `agenia restart api` (§11).
+2. `MONITOR_BG_INTERVAL_MINUTES=5` en `/opt/agenia/.env.production` ANTES de desplegar (el despliegue recrea la API y lo toma; `agenia restart api` no relee el `.env`) (§11).
 3. Desplegar con `./update.sh`: migra, instala el vigía y deja la versión. Después, `agenia vigia prueba` en el servidor.
 4. UptimeRobot (A9).
+
+El paso a paso completo, con la creación del bot y del grupo de Telegram: [ALERTAS_TECNICAS.md §1](ALERTAS_TECNICAS.md).
+
+## 13. Fase 4: la primera semana en producción
+
+_(Por llenar: fecha de encendido y, por cada aviso, si era real, si llegó a tiempo y si sobró.)_

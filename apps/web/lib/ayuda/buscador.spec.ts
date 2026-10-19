@@ -1,6 +1,7 @@
-import { GLOSARIO, TEMAS } from './contenido';
+import { cargarConocimiento } from './cargar-conocimiento';
 import { buscar, crearIndice, distancia, extracto, normalizar, raiz, resaltar, sugerir } from './buscador';
 
+const { temas: TEMAS, glosario: GLOSARIO } = cargarConocimiento();
 const indice = crearIndice(TEMAS, GLOSARIO);
 const primero = (consulta: string) => buscar(indice, consulta).resultados[0]?.fragmento;
 
