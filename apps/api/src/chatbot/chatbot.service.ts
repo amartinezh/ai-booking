@@ -27,6 +27,7 @@ import { textoParaCoincidencia } from './texto-para-coincidencia.util';
 import {
   clasificarRespuestaAlBot,
   esAgradecimiento,
+  esMensajeAjeno,
   nombreQueNiega,
 } from './respuesta-recordatorio';
 import { KnowledgeBaseService } from './knowledge-base.service';
@@ -4474,6 +4475,16 @@ export class ChatbotService implements OnModuleInit {
     if (!tipo || tipo === 'CONFIRMA' || tipo === 'QUIEN_ESCRIBE') {
       const negado = nombreQueNiega(p.text);
       if (negado && (await this.esNombreDeUnRecordado(p, negado))) {
+        return this.atenderNumeroEquivocado(p);
+      }
+      // 📭 «Que pena está equivocada», «Este mensaje no era para mí» (2026-10-19):
+      // solo tras un recordatorio a este número; sin él, «está equivocada» puede
+      // ser de otra conversación y no se le apagan los recordatorios a nadie.
+      if (
+        esMensajeAjeno(p.text) &&
+        (await this.citasRecordadasDelRemitente(p.organizationId, p.identity))
+          .length > 0
+      ) {
         return this.atenderNumeroEquivocado(p);
       }
     }

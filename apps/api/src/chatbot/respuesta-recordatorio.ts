@@ -235,12 +235,21 @@ export function esAgradecimiento(texto: string | null | undefined): boolean {
   );
 }
 
+/** Quien puede compartir el teléfono del paciente. */
+const FAMILIAR =
+  '(hij[oa]s?|espos[oa]|mama|papa|madre|padre|herman[oa]|niet[oa]|sobrin[oa]|ti[oa]|prim[oa]|abuel[oa]|familiar|acudiente|cuidador[a]?|novi[oa]|companer[oa]|vecin[oa]|amig[oa]|nuera|yerno|suegr[oa])';
+
 /**
  * Quien escribe dice de quién es familia o de parte de quién habla: «no soy Darío,
  * soy la hija». Ese número sí es del paciente (lo comparte la familia).
  */
-const PARENTESCO =
-  /\b((soy|habla|le escribe) (su|la|el) (hij[oa]|espos[oa]|mama|papa|madre|padre|herman[oa]|niet[oa]|sobrin[oa]|ti[oa]|prim[oa]|familiar|acudiente|cuidador[a]?|novi[oa]|companer[oa]|vecin[oa]|amig[oa]|nuera|yerno|suegr[oa])|de parte de)\b/;
+const PARENTESCO = new RegExp(
+  `\\b((soy|habla|le escribe) (su|la|el) ${FAMILIAR}|de parte de)\\b`,
+);
+/** «…es para mi mamá», «…es de mi abuela»: el mensaje es de alguien de la casa. */
+const PARA_LA_FAMILIA = new RegExp(
+  `\\b(para|de) (mi|mis|su|sus|la|el|nuestra|nuestro) ${FAMILIAR}\\b`,
+);
 
 /** Palabras que pueden seguir a «no soy» sin ser un nombre: «no soy de aquí». */
 const NO_ES_NOMBRE = new Set(
@@ -272,4 +281,60 @@ export function nombreQueNiega(
   const nombre = m[3];
   if (nombre.length < 3 || NO_ES_NOMBRE.has(nombre)) return null;
   return nombre;
+}
+
+// «Este mensaje no era para mí», «esto no es conmigo», «me llegó por error».
+const NO_ERA_PARA_MI =
+  /\bno (es|era|iba|va) (para|dirigido a) mi\b|\b(esto|eso|este mensaje|ese mensaje) no (es|era) conmigo\b|\b(me|nos) (llego|llegaron|escribieron|mandaron|enviaron) por (error|equivocacion)\b/;
+
+// «Está equivocada», «se equivocaron»: solo a secas (ver `esMensajeAjeno`).
+const SE_EQUIVOCARON =
+  /\b((esta|estan|estas) (usted |ustedes )?equivocad[oa]s?|se (equivoco|equivocaron)|equivocad[oa]s?)\b/;
+const SALUDO =
+  /\b(buen dia|buenos dias|buenas tardes|buenas noches|buenas|buen)\b/g;
+/** Lo que puede rodear a «está equivocada» sin decir nada más. */
+const RELLENO = new Set(
+  (
+    'hola que q pena qpena disculpe disculpa disculpen perdon perdone perdona pero ' +
+    'creo me parece al pienso usted ustedes ud uds senor senora senorita joven lo ' +
+    'siento mucho con todo respeto ok okey gracias muchas mil y ya eh ah oh mire vea ' +
+    'amigo amiga'
+  ).split(' '),
+);
+
+// Habla de su propia cita o de un dato de ella: «…mi cita es el jueves», «ese
+// horario no es para mí». Entonces el número es del paciente.
+const HABLA_DE_SU_CITA =
+  /\b(mi|mis|nuestra) (cita|citas|consulta|control)\b|\btengo (una |la |mi )?(cita|consulta|control)\b|\b(fecha|hora|horario|jornada|lunes|martes|miercoles|jueves|viernes|sabado|domingo|manana|semana|medic[oa]|doctor\w*)\b|\bya (me atendieron|fui|asisti)\b|\d/;
+
+/**
+ * 📭 «Que pena está equivocada», «Este mensaje no era para mí» (2026-10-19: el
+ * recordatorio de una paciente le llegó a otra persona, que contestó eso dos veces y
+ * recibió las respuestas de siempre). Dice que el mensaje no es suyo, pero sin
+ * «número» ni «persona» de por medio: por eso no es NUMERO_EQUIVOCADO, y quien llama
+ * solo lo toma así si a ese número se le acaba de enviar un recordatorio. Además:
+ *  - «está equivocada» cuenta solo a secas, con saludos y disculpas alrededor: con
+ *    algo más («…ya me atendieron», «la hora está equivocada») habla de la cita;
+ *  - si dice para quién de la familia es («…es para mi mamá») o habla de su propia
+ *    cita, el número es de la familia o del paciente: no.
+ */
+export function esMensajeAjeno(texto: string | null | undefined): boolean {
+  if (!texto) return false;
+  const t = sinTildes(textoParaCoincidencia(texto));
+  if (!NO_ERA_PARA_MI.test(t) && !soloDiceQueSeEquivocaron(t)) return false;
+  return !(
+    PARENTESCO.test(t) ||
+    PARA_LA_FAMILIA.test(t) ||
+    HABLA_DE_SU_CITA.test(t)
+  );
+}
+
+function soloDiceQueSeEquivocaron(t: string): boolean {
+  if (!SE_EQUIVOCARON.test(t)) return false;
+  return t
+    .replace(new RegExp(SE_EQUIVOCARON.source, 'g'), ' ')
+    .replace(SALUDO, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .every((p) => RELLENO.has(p));
 }

@@ -1,6 +1,7 @@
 import {
   clasificarRespuestaAlBot,
   esAgradecimiento,
+  esMensajeAjeno,
   nombreQueNiega,
 } from './respuesta-recordatorio';
 
@@ -295,5 +296,47 @@ describe('nombreQueNiega', () => {
     'Muchas gracias',
   ])('«%s» → null', (texto) => {
     expect(nombreQueNiega(texto)).toBeNull();
+  });
+});
+
+describe('esMensajeAjeno', () => {
+  it.each([
+    // Caso real 2026-10-19, tras el recordatorio a otra paciente: dos mensajes.
+    'Que pena esta equivocada',
+    'Este mensaje no era para mi',
+    'Buenas tardes, creo que se equivocaron',
+    'Disculpe señora, está usted equivocada',
+    'Equivocado',
+    'Ese mensaje no es para mí, es para otra persona',
+    'Esto no es conmigo',
+    'Me llegó por error',
+  ])('«%s» → sí', (texto) => {
+    expect(esMensajeAjeno(texto)).toBe(true);
+  });
+
+  it.each([
+    // Familia que comparte el teléfono.
+    'Este mensaje no es para mí, es para mi mamá',
+    'No es para mí, es de mi abuela',
+    'no era para mí, soy la hija',
+    // Habla de su cita o de un dato de ella.
+    'Están equivocados, mi cita es el jueves',
+    'Está equivocada la hora',
+    'El día está equivocado',
+    'Está equivocado, ya me atendieron',
+    'Ese horario no es para mí',
+    'Este mensaje no es para mí, tengo cita el 20',
+    // Lo contrario, o el error es suyo.
+    'No, no está equivocada',
+    'Ah perdón, estaba equivocada',
+    'Estoy equivocada',
+    'Muchas gracias',
+  ])('«%s» → no', (texto) => {
+    expect(esMensajeAjeno(texto)).toBe(false);
+  });
+
+  it('el clasificador solo no lo toma por número equivocado: falta el recordatorio', () => {
+    expect(clasificarRespuestaAlBot('Que pena esta equivocada')).toBeNull();
+    expect(clasificarRespuestaAlBot('Este mensaje no era para mi')).toBeNull();
   });
 });

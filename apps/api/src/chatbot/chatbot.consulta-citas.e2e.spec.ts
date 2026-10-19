@@ -1931,6 +1931,43 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(lastSent()).not.toContain('Disculpe la molestia');
     });
 
+    it.each(['Que pena esta equivocada', 'Este mensaje no era para mi'])(
+      '📭 «%s» tras el recordatorio → número equivocado (caso en la bandeja)',
+      async (texto) => {
+        // Caso real 2026-10-19: el recordatorio de una paciente le llegó a otra
+        // persona, que contestó estas dos frases y recibió las respuestas de siempre.
+        db.mirror = { enabled: true, pushEnabled: true };
+        conRecordatorio();
+        await say(texto);
+        expect(lastSent()).toContain('Disculpe la molestia');
+        expect(avisos.registrar.mock.calls[0][1]).toMatchObject({
+          kind: 'TELEFONO_EQUIVOCADO',
+          patientId: 'pat-1',
+          appointmentId: 'apt-1',
+          meta: { mensaje: texto },
+        });
+        expect(paso('NUMERO_EQUIVOCADO')).toBeDefined();
+      },
+    );
+
+    it('📭 sin recordatorio reciente, «Que pena esta equivocada» no toca nada (puede ser de otra conversación)', async () => {
+      db.mirror = { enabled: true, pushEnabled: true };
+      seedPaciente();
+      seedCita('apt-1', MANANA); // sin reminderSentAt
+      await say('Que pena esta equivocada');
+      expect(avisos.registrar).not.toHaveBeenCalled();
+      expect(lastSent()).not.toContain('Disculpe la molestia');
+      expect(db.patients[0].remindersOptOut).toBeUndefined();
+    });
+
+    it('📭 «Este mensaje no es para mí, es para mi mamá» → es la familia: no es número equivocado', async () => {
+      db.mirror = { enabled: true, pushEnabled: true };
+      conRecordatorio();
+      await say('Este mensaje no es para mí, es para mi mamá');
+      expect(avisos.registrar).not.toHaveBeenCalled();
+      expect(lastSent()).not.toContain('Disculpe la molestia');
+    });
+
     it('☎️ sin espejo (no hay bandeja) → se apagan sus recordatorios como en la baja', async () => {
       conRecordatorio();
       await say('Vicentico está equivocado de número');
