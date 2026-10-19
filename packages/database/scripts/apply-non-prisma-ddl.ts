@@ -134,10 +134,14 @@ const OBJETOS_ESPERADOS = {
   // `idx_patient_fullname_trgm` (búsqueda de pacientes por nombre) no es parcial
   // sino un GIN sobre una expresión; comparte el mismo riesgo de silencio: si
   // falta, la búsqueda por nombre degrada a un scan sin que nada avise.
+  //
+  // `uq_tech_alert_abierta`: sin él, dos réplicas que ven la misma caída abren
+  // dos problemas y el grupo técnico recibe el aviso dos veces.
   indices: [
     'idx_outbox_pending',
     'uq_appointment_cupo_vigente',
     'idx_patient_fullname_trgm',
+    'uq_tech_alert_abierta',
   ],
 };
 

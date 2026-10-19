@@ -4,6 +4,7 @@ import type {
   TelegramBotInfo,
   TelegramResult,
   TelegramSentMessage,
+  TelegramUpdate,
   TelegramWebhookInfo,
 } from './telegram.types';
 
@@ -30,7 +31,7 @@ interface BotApiEnvelope<T> {
   result?: T;
   error_code?: number;
   description?: string;
-  parameters?: { retry_after?: number };
+  parameters?: { retry_after?: number; migrate_to_chat_id?: number };
 }
 
 /**
@@ -85,23 +86,48 @@ export class TelegramApiClient {
   }
 
   /**
+   * Lee los mensajes pendientes del bot SIN webhook (sondeo corto: `timeout` 0,
+   * no se queda esperando). Lo usa el bot de alertas técnicas para encontrar el
+   * código de vinculación del grupo (docs/PLAN_ALERTAS_TECNICAS.md §3.1). Con un
+   * webhook puesto, Telegram responde 409: los bots de las clínicas no lo usan.
+   *
+   * `offset` = último `update_id` visto + 1 confirma lo anterior y Telegram lo
+   * olvida.
+   */
+  getUpdates(
+    token: string,
+    params: { offset?: number; limit?: number; allowedUpdates?: string[] } = {},
+  ): Promise<TelegramResult<TelegramUpdate[]>> {
+    return this.call<TelegramUpdate[]>(token, 'getUpdates', {
+      timeout: 0,
+      limit: params.limit ?? 100,
+      ...(params.offset !== undefined ? { offset: params.offset } : {}),
+      ...(params.allowedUpdates
+        ? { allowed_updates: params.allowedUpdates }
+        : {}),
+    });
+  }
+
+  /**
    * Envía texto. Por defecto PLANO (sin `parse_mode`); con `html: true`, en
    * el modo HTML de Telegram, que es al que se traduce el formato de WhatsApp
    * (ver telegram-format.ts). Nunca Markdown: un asterisco sin pareja rompe el
    * envío con 400. Quien llame debe partir antes los textos de más de 4 096
-   * caracteres (ver `splitTelegramText`).
+   * caracteres (ver `splitTelegramText`). Con `silent`, el mensaje llega sin
+   * sonido (`disable_notification`).
    */
   sendMessage(
     token: string,
     chatId: string,
     text: string,
-    opts: { html?: boolean } = {},
+    opts: { html?: boolean; silent?: boolean } = {},
   ): Promise<TelegramResult<TelegramSentMessage>> {
     return this.call<TelegramSentMessage>(token, 'sendMessage', {
       chat_id: chatId,
       text,
       link_preview_options: { is_disabled: true },
       ...(opts.html ? { parse_mode: 'HTML' } : {}),
+      ...(opts.silent ? { disable_notification: true } : {}),
     });
   }
 
@@ -247,11 +273,15 @@ export class TelegramApiClient {
       errorCode === 429 && typeof envelope?.parameters?.retry_after === 'number'
         ? envelope.parameters.retry_after
         : null;
+    const migrateTo = envelope?.parameters?.migrate_to_chat_id;
     return {
       result: {
         ok: false,
         errorCode,
         description: envelope?.description ?? `HTTP ${res.status}`,
+        ...(typeof migrateTo === 'number'
+          ? { migrateToChatId: String(migrateTo) }
+          : {}),
       },
       retryAfter,
     };

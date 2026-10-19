@@ -366,3 +366,82 @@ describe('GlobalExceptionFilter', () => {
     resolver();
   });
 });
+
+/**
+ * 🚨 Alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md, A10): cada firma NUEVA de
+ * 5xx le llega al grupo técnico, sin el mensaje ni el cuerpo (pueden traer datos
+ * del paciente); una ráfaga, aparte y crítica.
+ */
+describe('GlobalExceptionFilter — alertas técnicas', () => {
+  const ORG_UUID = '97f18182-d0d9-4a3b-9eb6-4fbc031b917c';
+  let alertas: { avisar: jest.Mock };
+  let filter: GlobalExceptionFilter;
+
+  const host = (request: Record<string, unknown> = {}): ArgumentsHost =>
+    ({
+      switchToHttp: () => ({
+        getResponse: () => ({ status: () => ({ json: jest.fn() }) }),
+        getRequest: () => ({
+          method: 'get',
+          originalUrl: `/appointments/${ORG_UUID}?cedula=1088123456`,
+          headers: {},
+          query: {},
+          ...request,
+        }),
+      }),
+    }) as unknown as ArgumentsHost;
+
+  beforeEach(() => {
+    delete process.env.SYSTEMLOG_PERSIST_MIN_STATUS;
+    alertas = { avisar: jest.fn(async () => undefined) };
+    filter = new GlobalExceptionFilter(
+      {
+        error: jest.fn().mockResolvedValue(undefined),
+      } as unknown as SystemLogService,
+      alertas as never,
+    );
+    for (const nivel of ['error', 'warn', 'verbose'] as const) {
+      jest.spyOn(filter['logger'], nivel).mockImplementation(() => undefined);
+    }
+  });
+
+  it('un 5xx avisa con código, método, ruta sin ids y la clase; NUNCA el mensaje', () => {
+    filter.catch(
+      new TypeError('falló con la cédula 1088123456 de Ana Pérez'),
+      host(),
+    );
+    expect(alertas.avisar).toHaveBeenCalledTimes(1);
+    const aviso = alertas.avisar.mock.calls[0][0];
+    expect(aviso).toMatchObject({
+      kind: 'ERROR_5XX',
+      dedupeKey: '5xx:500:GET:/appointments/:id:TypeError',
+      title: '500 GET /appointments/:id',
+    });
+    expect(JSON.stringify(aviso)).not.toMatch(/1088123456|Ana Pérez|falló con/);
+  });
+
+  it('un 4xx no es una avería del servidor: no avisa', () => {
+    filter.catch(new NotFoundException(), host());
+    filter.catch(new BadRequestException('cédula inválida'), host());
+    expect(alertas.avisar).not.toHaveBeenCalled();
+  });
+
+  it('la misma firma en el mismo minuto avisa una vez (como SystemLog)', () => {
+    for (let i = 0; i < 5; i++) filter.catch(new TypeError('x'), host());
+    expect(alertas.avisar).toHaveBeenCalledTimes(1);
+  });
+
+  it('20 errores 5xx en 5 minutos son una ráfaga: un aviso crítico aparte, una vez por minuto', () => {
+    for (let i = 0; i < 30; i++) {
+      filter.catch(new Error('x'), host({ originalUrl: `/ruta-${i}` }));
+    }
+    const rafagas = alertas.avisar.mock.calls.filter(
+      (c) => c[0].dedupeKey === '5xx:rafaga',
+    );
+    expect(rafagas).toHaveLength(1);
+    expect(rafagas[0][0]).toMatchObject({
+      severity: 'CRITICA',
+      detail: expect.stringContaining('20 errores 5xx'),
+    });
+  });
+});

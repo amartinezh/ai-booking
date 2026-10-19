@@ -1465,6 +1465,7 @@ enum GlobalAuditAction {
   ORGANIZATION_PURGED
   ORGANIZATION_CREATED
   ORGANIZATION_SUSPENDED
+  TECH_ALERTS_CONFIG_CHANGED // Alertas técnicas por Telegram: conectar, vincular, ajustes
 }
 
 // -----------------------------------------------------------------------------
@@ -1819,6 +1820,154 @@ model ServiceIncident {
   @@index([serviceKey, startedAt])
   @@index([resolvedAt, startedAt])
   @@index([startedAt])
+}
+
+// -----------------------------------------------------------------------------
+// 🚨 ALERTAS TÉCNICAS POR TELEGRAM (docs/PLAN_ALERTAS_TECNICAS.md)
+// -----------------------------------------------------------------------------
+// Un canal con el EQUIPO TÉCNICO, solo del SUPER_ADMIN: ante un fallo, el sistema
+// le escribe a un grupo de Telegram qué pasó. No es de ninguna clínica (por eso no
+// cuelga de `Organization`) y nada de esto lo ve ni lo configura el ORG_ADMIN.
+//
+// Los mensajes NO llevan datos de pacientes: dicen qué pasa, en qué clínica, desde
+// cuándo y el enlace al panel. Las reglas viven en @agenia/shared
+// (`alertas-tecnicas.ts`), no aquí.
+// -----------------------------------------------------------------------------
+
+/// La configuración del canal: UNA sola fila, `id = 'global'`.
+///
+/// Nace APAGADA (`enabled = false`): no hay a quién escribirle hasta que el super
+/// admin conecte el bot y vincule el grupo desde /super-admin/alertas.
+model TechAlertConfig {
+  id      String  @id @default("global")
+  enabled Boolean @default(false)
+
+  /// Bot PROPIO de la plataforma, creado en @BotFather. Nunca el de una clínica: esos
+  /// tienen webhook (con webhook, `getUpdates` no funciona) y en ellos escriben
+  /// pacientes. Que no coincida con ningún `TelegramBotConfig.botId` lo valida la API
+  /// en las dos direcciones.
+  /// Token cifrado (AES-256-GCM, el mismo CryptoService que el de las clínicas).
+  encryptedBotToken String? @db.Text
+  botId             String?
+  botUsername       String?
+
+  /// El grupo del equipo. Los ids de grupo de Telegram son enteros de 64 bits
+  /// negativos: se guardan como texto. Cambia solo si el grupo pasa a supergrupo
+  /// (`migrate_to_chat_id`).
+  chatId    String?
+  chatTitle String?
+
+  /// Código de un solo uso para vincular el grupo (`/vincular <código>`), con su
+  /// vencimiento. Se borra al vincular.
+  linkCode          String?
+  linkCodeExpiresAt DateTime?
+
+  /// Silencio planeado (mantenimiento, despliegue): hasta esta hora no se envía, pero
+  /// los problemas se siguen registrando.
+  mutedUntil DateTime?
+
+  /// Qué categorías avisan: `{ "SERVICIOS": true, "ERRORES": false, … }`. Una categoría
+  /// que no aparece está ENCENDIDA (A6): agregar una nueva no la apaga en silencio.
+  categories Json?
+
+  /// Si un problema sigue abierto, se recuerda cada `reminderMinutes`, hasta
+  /// `maxReminders` veces (A7).
+  reminderMinutes Int @default(60)
+  maxReminders    Int @default(3)
+
+  /// Horario nocturno (hora de Colombia): las ADVERTENCIAS llegan sin sonido; las
+  /// CRÍTICAS suenan siempre (A7).
+  quietHoursEnabled Boolean @default(true)
+  quietFromHour     Int     @default(22)
+  quietToHour       Int     @default(6)
+
+  /// Resumen diario de las 07:00: la única forma de saber que el silencio significa
+  /// «todo bien» y no «el bot dejó de enviar» (A13).
+  dailySummaryEnabled Boolean   @default(true)
+  lastDailySummaryAt  DateTime?
+
+  /// Base de los enlaces del mensaje. null = la URL pública de la API sin `/api`.
+  panelBaseUrl String?
+
+  /// Salud del propio canal, para el panel: el último envío aceptado y el último
+  /// error de Telegram (bot expulsado del grupo, token revocado…).
+  lastOkAt    DateTime?
+  lastError   String?
+  lastErrorAt DateTime?
+
+  updatedByUserId String?
+  updatedByEmail  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+/// Un PROBLEMA técnico (o un evento suelto) y el estado de su aviso al grupo.
+///
+/// Una fila por problema, no por chequeo: `dedupeKey` lo identifica
+/// (`claveAlerta`) y, mientras siga ABIERTO, otro fallo igual solo suma
+/// `occurrences`. Un índice único PARCIAL (non-prisma-ddl.sql) garantiza un solo
+/// problema abierto por clave aunque corran dos réplicas de la API.
+///
+/// Sin FK a la organización a propósito: es bitácora técnica y debe sobrevivir al
+/// borrado de una clínica (mismo criterio que `GlobalAuditLog`).
+model TechAlert {
+  id String @id @default(uuid())
+
+  /// TIPOS_ALERTA: SERVICIO_CAIDO | SERVICIO_DEGRADADO | CRON_FALLO | ERROR_5XX | …
+  kind      String
+  /// CATEGORIAS_ALERTA: SERVICIOS | ESPEJO | CRONES | ERRORES | ARRANQUES | SERVIDOR
+  category  String
+  /// INFO | ADVERTENCIA | CRITICA. Puede SUBIR con el problema abierto, y entonces se
+  /// vuelve a avisar.
+  severity  String
+  /// ABIERTA | RESUELTA | EVENTO. EVENTO = suelto, sin «resuelto» (un 5xx, un arranque).
+  status    String @default("ABIERTA")
+  dedupeKey String
+
+  /// Ya SANITIZADOS (`sanitizarTextoAlerta`): sin documentos, teléfonos ni correos.
+  title  String
+  detail String? @db.Text
+
+  /// De qué clínica, si aplica. El nombre se copia para mostrarlo sin joins y para
+  /// que sobreviva a la clínica.
+  organizationId   String?
+  organizationName String?
+  /// El incidente del monitor que lo abrió, si vino de ahí.
+  serviceIncidentId String?
+  /// Lo estructurado que no merece columna.
+  meta Json?
+
+  occurrences Int       @default(1)
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  /// Aviso al grupo: cuándo lo aceptó Telegram y con qué gravedad. null = pendiente
+  /// (lo reintenta el despachador).
+  notifiedAt           DateTime?
+  notifiedSeverity     String?
+  /// El «✅ resuelto»: null con `resolvedAt` puesto = pendiente de enviar.
+  resolutionNotifiedAt DateTime?
+  /// Recordatorios enviados desde el último aviso de esta gravedad.
+  reminderCount        Int       @default(0)
+  lastReminderAt       DateTime?
+
+  /// Intentos de envío y el último error de Telegram o de la red.
+  sendAttempts      Int       @default(0)
+  lastSendAttemptAt DateTime?
+  lastSendError     String?
+  /// Reclamación para enviar (compare-and-set entre réplicas).
+  claimedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// La bitácora del panel y el resumen diario.
+  @@index([firstSeenAt])
+  /// Lo pendiente de enviar y lo abierto por recordar.
+  @@index([status, notifiedAt])
+  /// Intermitencia y antirrepetición de eventos: las últimas filas de una clave.
+  @@index([dedupeKey, firstSeenAt])
 }
 
 // =============================================================================

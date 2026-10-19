@@ -5,9 +5,17 @@ import {
   HttpException,
   HttpStatus,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import {
+  UMBRALES_ALERTAS,
+  claveAlerta,
+  gravedadDeRafaga5xx,
+  normalizarRuta,
+} from '@agenia/shared';
 import { SystemLogService } from './system-log.service';
+import { TechAlertService } from '../tech-alerts/tech-alert.service';
 
 /**
  * Este filtro atrapa CUALQUIER excepción, incluidas las que ocurren antes de
@@ -55,14 +63,28 @@ interface RequestWithAuth extends Request {
 const DEFAULT_PERSIST_MIN_STATUS = 500;
 const DEDUP_WINDOW_MS = 60_000;
 const DEDUP_MAX_KEYS = 500;
+/** Una ráfaga se avisa como mucho una vez por minuto (el servicio la cuenta por hora). */
+const RAFAGA_AVISO_MS = 60_000;
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
 
   /** Última vez que se persistió cada firma de error (para no repetir). */
   private readonly lastPersisted = new Map<string, number>();
+  /** Instantes de los 5xx recientes, para reconocer una ráfaga. */
+  private recientes5xx: number[] = [];
+  private ultimaRafagaAvisada = 0;
 
-  constructor(private readonly logs: SystemLogService) {}
+  /**
+   * 🚨 `alertas` (docs/PLAN_ALERTAS_TECNICAS.md, A10): cada firma NUEVA de 5xx —la
+   * misma que se guarda en SystemLog— se le avisa al grupo técnico con el código,
+   * el método, la ruta sin ids y la clase de la excepción. NUNCA el mensaje ni el
+   * cuerpo: pueden traer datos del paciente. El detalle queda en Auditoría y Logs.
+   */
+  constructor(
+    private readonly logs: SystemLogService,
+    @Optional() private readonly alertas?: TechAlertService,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -126,7 +148,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     // Persistir solo lo que de verdad es una avería, y solo una vez por
     // ventana. fire-and-forget — si falla no rompe la respuesta.
+    if (status >= 500) this.vigilarRafaga();
     if (this.shouldPersist(status, request, messageStr)) {
+      this.avisarError(status, request, exceptionName);
       // El `.catch` no es decorativo: `void` sobre una promesa rechazada es
       // una unhandled rejection, y Node 15+ mata el proceso por eso. Hoy
       // SystemLogService se traga sus propios fallos, así que nunca pasa —
@@ -171,6 +195,52 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   }
 
   // ── helpers ────────────────────────────────────────────────
+
+  /** El aviso de una firma nueva de 5xx (el servicio la cuenta una vez por hora). */
+  private avisarError(
+    status: number,
+    request: Request | undefined,
+    exceptionName: string,
+  ): void {
+    if (!this.alertas || status < 500) return;
+    const metodo = (request?.method ?? '?').toUpperCase();
+    const ruta = normalizarRuta(request?.originalUrl || request?.url || '/');
+    void this.alertas.avisar({
+      kind: 'ERROR_5XX',
+      dedupeKey: claveAlerta.error5xx(status, metodo, ruta, exceptionName),
+      title: `${status} ${metodo} ${ruta}`,
+      detail: `Excepción: ${exceptionName}. El detalle (stack y petición) está en Auditoría y Logs.`,
+      fuente: 'filtro de errores de la API',
+    });
+  }
+
+  /**
+   * Muchos 5xx en poco tiempo son una caída (la base, una dependencia), no errores
+   * sueltos: se avisa aparte y como crítico (`gravedadDeRafaga5xx`).
+   */
+  private vigilarRafaga(): void {
+    const ahora = Date.now();
+    const ventana = UMBRALES_ALERTAS.rafaga5xx.ventanaMin * 60_000;
+    this.recientes5xx = this.recientes5xx.filter((t) => ahora - t < ventana);
+    this.recientes5xx.push(ahora);
+    const n = this.recientes5xx.length;
+    if (
+      !this.alertas ||
+      gravedadDeRafaga5xx(n) !== 'CRITICA' ||
+      ahora - this.ultimaRafagaAvisada < RAFAGA_AVISO_MS
+    ) {
+      return;
+    }
+    this.ultimaRafagaAvisada = ahora;
+    void this.alertas.avisar({
+      kind: 'ERROR_5XX',
+      dedupeKey: '5xx:rafaga',
+      title: 'Ráfaga de errores 5xx',
+      detail: `${n} errores 5xx en los últimos ${UMBRALES_ALERTAS.rafaga5xx.ventanaMin} min: probablemente una dependencia caída (la base, Redis). Revise Auditoría y Logs.`,
+      severity: 'CRITICA',
+      fuente: 'filtro de errores de la API',
+    });
+  }
 
   /**
    * Decide si el error merece una fila en SystemLog.

@@ -1234,3 +1234,75 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
     });
   });
 });
+
+/**
+ * 🚨 Alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md, Fase 2): el grupo técnico
+ * se entera si los recordatorios no están saliendo o si el cron revienta; un
+ * número sin WhatsApp no es una caída.
+ */
+describe('AppointmentReminderCronService — alertas técnicas', () => {
+  const montar = () => {
+    const alertas = {
+      avisar: jest.fn(async () => undefined),
+      resolver: jest.fn(async () => undefined),
+      cronFallo: jest.fn(async () => undefined),
+      cronBien: jest.fn(async () => undefined),
+    };
+    const service = new AppointmentReminderCronService(
+      { get: jest.fn(() => undefined) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { log: jest.fn() } as any,
+      {} as any,
+      { addInterval: jest.fn(), deleteInterval: jest.fn() } as any,
+      alertas as any,
+    );
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+    const lote = (sent: number, failed: number) =>
+      jest
+        .spyOn(service, 'runOnce')
+        .mockResolvedValue({ sent, failed, skipped: 0, tooClose: 0 });
+    return { service, alertas, lote };
+  };
+
+  it('ninguno salió y fallaron varios → «los recordatorios no están saliendo»', async () => {
+    const { service, alertas, lote } = montar();
+    lote(0, 4);
+    await service.ejecutarLote();
+    expect(alertas.cronBien).toHaveBeenCalledWith('recordatorios');
+    expect(alertas.avisar).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'RECORDATORIOS_FALLIDOS',
+        dedupeKey: 'cron:recordatorios:lote',
+        detail: expect.stringContaining('fallaron 4 y no salió ninguno'),
+      }),
+    );
+  });
+
+  it('un fallo suelto no es una caída; un lote con envíos resuelve', async () => {
+    const { service, alertas, lote } = montar();
+    lote(0, 1);
+    await service.ejecutarLote();
+    expect(alertas.avisar).not.toHaveBeenCalled();
+    expect(alertas.resolver).not.toHaveBeenCalled();
+    lote(5, 1);
+    await service.ejecutarLote();
+    expect(alertas.resolver).toHaveBeenCalledWith('cron:recordatorios:lote');
+  });
+
+  it('si el cron revienta, se avisa y no se propaga', async () => {
+    const { service, alertas } = montar();
+    jest
+      .spyOn(service, 'runOnce')
+      .mockRejectedValue(new Error('timeout de Prisma'));
+    await expect(service.ejecutarLote()).resolves.toBeUndefined();
+    expect(alertas.cronFallo).toHaveBeenCalledWith(
+      'recordatorios',
+      'Recordatorios de citas',
+      expect.any(Error),
+    );
+    expect(alertas.cronBien).not.toHaveBeenCalled();
+  });
+});

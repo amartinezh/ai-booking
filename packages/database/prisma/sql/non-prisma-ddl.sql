@@ -318,3 +318,21 @@ CREATE TRIGGER trg_interruptores_del_hospital
   BEFORE INSERT OR UPDATE OF status, "scheduleSlotId"
   ON "Appointment"
   FOR EACH ROW EXECUTE FUNCTION fn_interruptores_del_hospital();
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Alertas técnicas: como mucho UN problema ABIERTO por clave
+-- (docs/PLAN_ALERTAS_TECNICAS.md §3.5).
+--
+-- Cada fallo se identifica por su clave (`claveAlerta` en @agenia/shared): el
+-- servicio caído, el cron que revienta. Mientras el problema siga abierto, otro
+-- fallo igual suma `occurrences` en la MISMA fila y no manda otro mensaje. Con dos
+-- réplicas de la API detectando lo mismo a la vez, sin este índice las dos
+-- abrirían su fila y el grupo recibiría el aviso dos veces; con él, la segunda
+-- choca y actualiza la de la primera.
+--
+-- Parcial a propósito: un problema resuelto conserva su fila (es la bitácora) y
+-- la misma clave puede volver a abrirse mañana.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_tech_alert_abierta"
+  ON "TechAlert" ("dedupeKey")
+  WHERE status = 'ABIERTA';

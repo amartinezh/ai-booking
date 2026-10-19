@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
   SYNC_AUDIT_DIRECTION,
   TITULO_EXCEPCION,
   UMBRALES_VIGILANTE,
   algunaCompuertaAbierta,
+  claveAlerta,
   claveExcepcion,
   compuertasHis,
   debeVencer,
@@ -22,6 +23,23 @@ import {
   type ResultadoAviso,
 } from './mirror-alert.service';
 import { MirrorExceptionsService } from './mirror-exceptions.service';
+import { TechAlertService } from '../tech-alerts/tech-alert.service';
+import { getErrorMessage } from '../common/error-message.util';
+
+/**
+ * Por qué el aviso al agendador no salió, dicho para el equipo técnico. Solo los
+ * motivos que son una FALLA: «nada que avisar», «apagado a propósito» y «otra
+ * réplica lo tomó» no lo son (docs/PLAN_ALERTAS_TECNICAS.md, A12).
+ */
+const AVISO_QUE_NO_SALE: Partial<
+  Record<Extract<ResultadoAviso, { enviado: false }>['motivo'], string>
+> = {
+  SIN_PLANTILLA:
+    'La plantilla de WhatsApp del aviso (SYNC_EXCEPTION_ALERT) no está aprobada en Meta: el agendador no se entera de las citas que no llegan al hospital.',
+  SIN_DESTINO:
+    'La clínica tiene los avisos encendidos pero ningún número de agendador: nadie se entera de las citas que no llegan al hospital.',
+  ENVIO_FALLIDO: 'Meta rechazó el envío del aviso al agendador',
+};
 
 /**
  * El vigilante de la sincronización (docs/PLAN_RASTREO_PACIENTE.md §10 #2 y #3,
@@ -110,6 +128,8 @@ export class MirrorWatchdogService {
     private readonly prisma: PrismaService,
     private readonly exceptions: MirrorExceptionsService,
     private readonly alert: MirrorAlertService,
+    // 🚨 Alertas técnicas. Opcional: sin él (tests), vigila igual, solo no avisa.
+    @Optional() private readonly alertas?: TechAlertService,
   ) {}
 
   /** Cada dos minutos: detecta una cita retenida a los ~10-12 min, sin martillar la base. */
@@ -125,19 +145,31 @@ export class MirrorWatchdogService {
       for (const { organizationId } of clinicas) {
         try {
           await this.vigilarOrganizacion(organizationId);
+          await this.alertas?.cronBien(`vigilante-espejo:${organizationId}`);
         } catch (error: unknown) {
           this.logger.error(
             `El vigilante falló con la org ${organizationId}: ${
               error instanceof Error ? error.message : String(error)
             }`,
           );
+          await this.alertas?.cronFallo(
+            `vigilante-espejo:${organizationId}`,
+            `Vigilante del espejo (org ${organizationId})`,
+            error,
+          );
         }
       }
+      await this.alertas?.cronBien('vigilante-espejo');
     } catch (error: unknown) {
       this.logger.error(
         `El vigilante no pudo listar las clínicas: ${
           error instanceof Error ? error.message : String(error)
         }`,
+      );
+      await this.alertas?.cronFallo(
+        'vigilante-espejo',
+        'Vigilante del espejo',
+        error,
       );
     } finally {
       this.enCurso = false;
@@ -194,17 +226,65 @@ export class MirrorWatchdogService {
     );
     resumen.vencidas = await this.vencerLasOlvidadas(organizationId, ahora);
 
+    let falloDelAviso: unknown = null;
     try {
       resumen.aviso = await this.alert.avisar(organizationId, ahora);
     } catch (error: unknown) {
       // Que el aviso falle no debe deshacer nada: las excepciones ya están abiertas.
+      falloDelAviso = error;
       this.logger.error(
         `El aviso al agendador falló (org ${organizationId}): ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
     }
+    await this.revisarAvisoAlAgendador(
+      organizationId,
+      resumen.aviso,
+      falloDelAviso,
+    );
     return resumen;
+  }
+
+  /**
+   * 🚨 Que el aviso al agendador no salga es una falla TÉCNICA: las citas que no
+   * llegan al hospital quedan solo en la bandeja y nadie se entera. Se avisa al
+   * grupo técnico; cuando vuelve a salir (o ya no hay nada que avisar, o la
+   * clínica apagó los avisos a propósito) se resuelve. Nunca lanza.
+   */
+  private async revisarAvisoAlAgendador(
+    organizationId: string,
+    aviso: ResultadoAviso | null,
+    fallo: unknown,
+  ): Promise<void> {
+    if (!this.alertas) return;
+    const clave = claveAlerta.avisoAgendador(organizationId);
+    let detalle: string | null = null;
+    if (fallo) {
+      detalle = `El aviso reventó: ${getErrorMessage(fallo)}`;
+    } else if (aviso && !aviso.enviado) {
+      if (aviso.motivo === 'YA_RECLAMADO') return; // otra réplica se ocupa
+      const motivo = AVISO_QUE_NO_SALE[aviso.motivo];
+      if (motivo) {
+        detalle = aviso.detalle ? `${motivo}: ${aviso.detalle}` : `${motivo}.`;
+      }
+    }
+    if (!detalle) {
+      if (aviso) await this.alertas.resolver(clave);
+      return;
+    }
+    const org = await this.prisma.organization
+      .findUnique({ where: { id: organizationId }, select: { name: true } })
+      .catch(() => null);
+    await this.alertas.avisar({
+      kind: 'AVISO_AGENDADOR_NO_SALE',
+      dedupeKey: clave,
+      title: 'Aviso al agendador',
+      detail: detalle,
+      organizationId,
+      organizationName: org?.name ?? null,
+      fuente: 'vigilante del espejo',
+    });
   }
 
   // ─────────────────────────────────────────────────────────────

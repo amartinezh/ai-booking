@@ -570,7 +570,8 @@ LLM_MAX_RETRIES=5
 
 # ── Monitor de servicios externos ────────────────────────────────────────────
 MONITOR_ENABLED=true
-MONITOR_BG_INTERVAL_MINUTES=15
+# 5 min: las alertas técnicas por Telegram salen de este chequeo (docs/PLAN_ALERTAS_TECNICAS.md, A4).
+MONITOR_BG_INTERVAL_MINUTES=5
 MONITOR_LIVE_INTERVAL_SECONDS=5
 MONITOR_DEFAULT_TIMEOUT_MS=5000
 MONITOR_DEGRADED_THRESHOLD_MS=3000

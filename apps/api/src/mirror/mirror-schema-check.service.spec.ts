@@ -132,3 +132,54 @@ describe('MirrorSchemaCheckService', () => {
     expect(avisos[0]).toContain('No se pudo verificar');
   });
 });
+
+/** 🚨 Alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md, Fase 2). */
+describe('MirrorSchemaCheckService — alertas técnicas', () => {
+  it('si falta el DDL con el espejo encendido, se le avisa al grupo técnico', async () => {
+    const alertas = { avisar: jest.fn(async () => undefined) };
+    const prisma = {
+      hospitalMirrorConfig: { count: jest.fn(async () => 1) },
+      $queryRaw: jest
+        .fn()
+        .mockResolvedValueOnce([{ n: BigInt(1) }])
+        .mockResolvedValueOnce([{ tgname: 'trg_sync_outbox_schedule_slot' }]),
+    };
+    const service = new MirrorSchemaCheckService(
+      prisma as never,
+      alertas as never,
+    );
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+    await expect(service.verify()).resolves.toMatchObject({ ok: false });
+    expect(alertas.avisar).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'ESQUEMA_ESPEJO',
+        dedupeKey: 'espejo:esquema',
+        detail: expect.stringContaining('trigger trg_sync_outbox_appointment'),
+      }),
+    );
+  });
+
+  it('con el DDL completo, no avisa', async () => {
+    const alertas = { avisar: jest.fn(async () => undefined) };
+    const prisma = {
+      hospitalMirrorConfig: { count: jest.fn(async () => 1) },
+      $queryRaw: jest
+        .fn()
+        .mockResolvedValueOnce([{ n: BigInt(1) }])
+        .mockResolvedValueOnce(
+          [
+            'trg_sync_outbox_schedule_slot',
+            'trg_sync_outbox_doctor_profile',
+            'trg_sync_outbox_appointment',
+          ].map((tgname) => ({ tgname })),
+        ),
+    };
+    const service = new MirrorSchemaCheckService(
+      prisma as never,
+      alertas as never,
+    );
+    jest.spyOn((service as any).logger, 'log').mockImplementation(() => {});
+    await service.verify();
+    expect(alertas.avisar).not.toHaveBeenCalled();
+  });
+});

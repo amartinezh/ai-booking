@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { RETENCION_DATOS, diasDeRetencion } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { SystemLogService } from '../system-log/system-log.service';
 import { getErrorMessage } from '../common/error-message.util';
+import { TechAlertService } from '../tech-alerts/tech-alert.service';
 
 /**
  * 🧹 La purga nocturna de registros con datos personales que no tenían plazo
@@ -52,6 +53,8 @@ export class RetentionService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly systemLog: SystemLogService,
+    // 🚨 Alertas técnicas. Opcional: sin él (tests), purga igual, solo no avisa.
+    @Optional() private readonly alertas?: TechAlertService,
   ) {}
 
   @Cron('0 30 3 * * *', { timeZone: 'America/Bogota' })
@@ -60,9 +63,15 @@ export class RetentionService {
     this.enCurso = true;
     try {
       await this.purgar();
+      await this.alertas?.cronBien('retencion');
     } catch (error: unknown) {
       this.logger.error(
         `La purga de retención falló: ${getErrorMessage(error)}`,
+      );
+      await this.alertas?.cronFallo(
+        'retencion',
+        'Retención de datos personales',
+        error,
       );
     } finally {
       this.enCurso = false;

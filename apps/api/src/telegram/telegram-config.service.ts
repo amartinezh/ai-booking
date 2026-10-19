@@ -17,7 +17,7 @@ import type {
 } from './telegram.types';
 
 /** Formato del token de BotFather: `<id del bot>:<secreto>`. */
-const BOT_TOKEN_RE = /^(\d{5,20}):[A-Za-z0-9_-]{30,}$/;
+export const BOT_TOKEN_RE = /^(\d{5,20}):[A-Za-z0-9_-]{30,}$/;
 
 /** Columnas de `TelegramBotConfig` que este servicio lee. */
 interface TelegramBotConfigRow {
@@ -108,6 +108,18 @@ export class TelegramConfigService {
     if (owner && owner.organizationId !== organizationId) {
       throw new BadRequestException(
         'Este bot ya está conectado a otra clínica en AgenIA. Cree un bot propio en @BotFather.',
+      );
+    }
+
+    // El bot de las alertas técnicas no atiende pacientes: sin webhook, y en su
+    // grupo están los avisos del equipo (docs/PLAN_ALERTAS_TECNICAS.md, A1).
+    const alertas = await this.prisma.techAlertConfig.findUnique({
+      where: { id: 'global' },
+      select: { botId: true },
+    });
+    if (alertas?.botId === botId) {
+      throw new BadRequestException(
+        'Este bot es el de las alertas técnicas de AgenIA. Cree un bot propio para la clínica en @BotFather.',
       );
     }
 

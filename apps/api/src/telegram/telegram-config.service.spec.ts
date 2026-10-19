@@ -29,6 +29,7 @@ describe('TelegramConfigService', () => {
       upsert: jest.Mock;
       update: jest.Mock;
     };
+    techAlertConfig: { findUnique: jest.Mock };
   };
   let api: {
     getMe: jest.Mock;
@@ -75,6 +76,7 @@ describe('TelegramConfigService', () => {
           return row;
         }),
       },
+      techAlertConfig: { findUnique: jest.fn(async () => null) },
     };
     api = {
       getMe: jest.fn(async () => ({
@@ -184,6 +186,17 @@ describe('TelegramConfigService', () => {
       );
       await expect(service.connect(ORG, TOKEN)).rejects.toThrow(/otra clínica/);
       expect(prisma.telegramBotConfig.upsert).not.toHaveBeenCalled();
+    });
+
+    it('🚨 el bot de las alertas técnicas no se puede conectar a una clínica', async () => {
+      prisma.techAlertConfig.findUnique.mockResolvedValue({
+        botId: '123456789',
+      });
+      await expect(service.connect(ORG, TOKEN)).rejects.toThrow(
+        /alertas técnicas/,
+      );
+      expect(prisma.telegramBotConfig.upsert).not.toHaveBeenCalled();
+      expect(api.setWebhook).not.toHaveBeenCalled();
     });
 
     it('setWebhook falla → canal apagado con el motivo, y error al panel', async () => {

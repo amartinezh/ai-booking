@@ -345,3 +345,110 @@ describe('splitTelegramText', () => {
     expect(joined.replace(/\s+/g, ' ')).toBe(text.replace(/\s+/g, ' '));
   });
 });
+
+/**
+ * Lo que agregó el bot de alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md §3.1):
+ * leer el código de vinculación sin webhook, avisar sin sonido de noche y
+ * seguir al grupo cuando pasa a supergrupo.
+ */
+describe('TelegramApiClient — alertas técnicas', () => {
+  const TOKEN = '123456789:AAHsecretoSecretoSecretoSecreto12345';
+  let client: TelegramApiClient;
+  let fetchMock: jest.Mock;
+  const realFetch = global.fetch;
+  const json = (status: number, body: unknown) =>
+    ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+    }) as unknown as Response;
+  const body = (i = 0) =>
+    JSON.parse(fetchMock.mock.calls[i][1].body as string) as Record<
+      string,
+      unknown
+    >;
+
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+    client = new TelegramApiClient();
+    for (const level of ['log', 'warn', 'error', 'debug'] as const) {
+      jest.spyOn(Logger.prototype, level).mockImplementation();
+    }
+  });
+
+  afterEach(() => {
+    global.fetch = realFetch;
+    jest.restoreAllMocks();
+  });
+
+  it('getUpdates es un sondeo corto: no se queda esperando', async () => {
+    fetchMock.mockResolvedValue(json(200, { ok: true, result: [] }));
+    await expect(client.getUpdates(TOKEN)).resolves.toEqual({
+      ok: true,
+      result: [],
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `https://api.telegram.org/bot${TOKEN}/getUpdates`,
+    );
+    expect(body()).toEqual({ timeout: 0, limit: 100 });
+  });
+
+  it('getUpdates pasa el offset (confirma lo leído) y los tipos pedidos', async () => {
+    fetchMock.mockResolvedValue(json(200, { ok: true, result: [] }));
+    await client.getUpdates(TOKEN, {
+      offset: 42,
+      limit: 10,
+      allowedUpdates: ['message'],
+    });
+    expect(body()).toEqual({
+      timeout: 0,
+      limit: 10,
+      offset: 42,
+      allowed_updates: ['message'],
+    });
+  });
+
+  it('con webhook puesto, getUpdates es un 409 y no lanza', async () => {
+    fetchMock.mockResolvedValue(
+      json(409, {
+        ok: false,
+        error_code: 409,
+        description:
+          "Conflict: can't use getUpdates method while webhook is active",
+      }),
+    );
+    await expect(client.getUpdates(TOKEN)).resolves.toMatchObject({
+      ok: false,
+      errorCode: 409,
+    });
+  });
+
+  it('sendMessage sin sonido usa disable_notification', async () => {
+    fetchMock.mockResolvedValue(
+      json(200, { ok: true, result: { message_id: 1 } }),
+    );
+    await client.sendMessage(TOKEN, '-100', 'hola', { silent: true });
+    expect(body().disable_notification).toBe(true);
+    await client.sendMessage(TOKEN, '-100', 'hola');
+    expect(body(1)).not.toHaveProperty('disable_notification');
+  });
+
+  it('un grupo que pasó a supergrupo devuelve su id nuevo', async () => {
+    fetchMock.mockResolvedValue(
+      json(400, {
+        ok: false,
+        error_code: 400,
+        description:
+          'Bad Request: group chat was upgraded to a supergroup chat',
+        parameters: { migrate_to_chat_id: -1001234567890 },
+      }),
+    );
+    await expect(client.sendMessage(TOKEN, '-123', 'x')).resolves.toEqual({
+      ok: false,
+      errorCode: 400,
+      description: 'Bad Request: group chat was upgraded to a supergroup chat',
+      migrateToChatId: '-1001234567890',
+    });
+  });
+});

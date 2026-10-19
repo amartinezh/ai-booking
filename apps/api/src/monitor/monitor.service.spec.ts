@@ -278,7 +278,8 @@ describe('MonitorService', () => {
     it('con los valores por defecto', () => {
       const m = service.meta();
       expect(m.bgEnabled).toBe(true);
-      expect(m.bgIntervalMinutes).toBe(15);
+      // 5 min desde las alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md, A4).
+      expect(m.bgIntervalMinutes).toBe(5);
       expect(m.liveIntervalSeconds).toBe(15);
       expect(m.services.length).toBeGreaterThan(0);
       expect(m.services[0]).toEqual(

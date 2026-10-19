@@ -106,6 +106,9 @@ export class MonitorCheckers {
    *   1. Eventos en dead-letter → algo se rindió tras 10 intentos y nadie lo vio.
    *   2. Eventos pendientes viejos → la cola no avanza.
    *   3. Heartbeat ausente → el agente no está corriendo, o perdió la red.
+   *   4. El agente late pero NO alcanza la base del hospital (`lastHisReachable`,
+   *      que él mismo reporta en cada latido) → ninguna cita llega al HIS. Antes
+   *      solo se notaba a los 10 min de cola quieta, y solo si hubo movimiento.
    */
   private async checkMirror(): Promise<CheckResult> {
     const inicio = Date.now();
@@ -115,6 +118,8 @@ export class MonitorCheckers {
       select: {
         organizationId: true,
         lastHeartbeatAt: true,
+        lastHisReachable: true,
+        lastHisDetail: true,
       },
     });
 
@@ -201,6 +206,15 @@ export class MonitorCheckers {
             ? `Sin heartbeat del agente hace ${Math.round((ahora - heartbeat) / 60_000)} min ` +
                 `(org ${cfg.organizationId}).`
             : `El agente de la org ${cfg.organizationId} nunca ha hecho handshake.`,
+        );
+      } else if (cfg.lastHisReachable === false) {
+        // Solo con el latido al día: si el agente no late, lo que reportó la última
+        // vez ya no dice nada (y el problema de arriba lo cubre).
+        peor = 'DOWN';
+        problemas.push(
+          `El agente de la org ${cfg.organizationId} late, pero no alcanza la base del hospital` +
+            (cfg.lastHisDetail ? ` (${cfg.lastHisDetail})` : '') +
+            ': ninguna cita llega al HIS.',
         );
       }
     }

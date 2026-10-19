@@ -169,7 +169,7 @@ export class MonitorService {
     return {
       bgEnabled: this.config.get<string>('MONITOR_ENABLED', 'true') === 'true',
       bgIntervalMinutes: Number(
-        this.config.get('MONITOR_BG_INTERVAL_MINUTES') ?? 15,
+        this.config.get('MONITOR_BG_INTERVAL_MINUTES') ?? 5,
       ),
       liveIntervalSeconds: Number(
         this.config.get('MONITOR_LIVE_INTERVAL_SECONDS') ?? 15,

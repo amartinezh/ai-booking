@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { RedisService } from '../redis/redis.service';
+import { TechAlertService } from '../tech-alerts/tech-alert.service';
 import {
   ChatState,
   SESSION_TTL,
@@ -392,6 +393,9 @@ export class ChatbotService implements OnModuleInit {
     // AgenIA, nunca en el hospital. Opcional: sin él (tests), esos mensajes
     // siguen el camino de siempre.
     @Optional() private readonly avisosPaciente?: MirrorExceptionsService,
+    // 🚨 Alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md): solo los barridos del
+    // HIS de cada pocos segundos. Opcional: sin él (tests), nada cambia.
+    @Optional() private readonly alertasTecnicas?: TechAlertService,
   ) {}
 
   async onModuleInit() {
@@ -11634,9 +11638,15 @@ export class ChatbotService implements OnModuleInit {
           );
         }
       }
+      await this.alertasTecnicas?.cronBien('confirmaciones-his');
     } catch (error: unknown) {
       this.logger.error(
         `Barrido de confirmaciones pendientes del HIS falló: ${getErrorMessage(error)}`,
+      );
+      await this.alertasTecnicas?.cronFallo(
+        'confirmaciones-his',
+        'Confirmaciones del HIS al paciente',
+        error,
       );
     }
   }
@@ -11849,9 +11859,15 @@ export class ChatbotService implements OnModuleInit {
           );
         }
       }
+      await this.alertasTecnicas?.cronBien('seguimientos-his');
     } catch (error: unknown) {
       this.logger.error(
         `Barrido de consultas al HIS del bot falló: ${getErrorMessage(error)}`,
+      );
+      await this.alertasTecnicas?.cronFallo(
+        'seguimientos-his',
+        'Consultas del bot al HIS',
+        error,
       );
     }
   }

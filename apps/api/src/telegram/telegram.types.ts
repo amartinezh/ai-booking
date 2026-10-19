@@ -20,6 +20,8 @@ export interface TelegramChat {
   id?: number;
   /** 'private' | 'group' | 'supergroup' | 'channel' */
   type?: string;
+  /** Nombre del grupo (no viene en los chats privados). */
+  title?: string;
 }
 
 export interface TelegramMessage {
@@ -81,7 +83,16 @@ export interface TelegramSentMessage {
  */
 export type TelegramResult<T> =
   | { ok: true; result: T }
-  | { ok: false; errorCode: number | null; description: string };
+  | {
+      ok: false;
+      errorCode: number | null;
+      description: string;
+      /**
+       * El grupo pasó a supergrupo y cambió de id: Telegram responde 400 con
+       * el id nuevo. Quien envía guarda este y reintenta.
+       */
+      migrateToChatId?: string;
+    };
 
 // ── Configuración por clínica ──────────────────────────────────────────────
 

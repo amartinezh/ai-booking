@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,6 +12,7 @@ import { InteractionLogService } from '../interaction-log/interaction-log.servic
 import { SystemLogService } from '../system-log/system-log.service';
 import { formatForPatient } from '../common/business-hours';
 import { getErrorMessage } from '../common/error-message.util';
+import { TechAlertService } from '../tech-alerts/tech-alert.service';
 
 /**
  * MassNoticeService — el envío de un lote de avisos masivos.
@@ -82,6 +84,8 @@ export class MassNoticeService {
     private readonly templates: WhatsappTemplateService,
     private readonly interactionLog: InteractionLogService,
     private readonly systemLog: SystemLogService,
+    // 🚨 Alertas técnicas. Opcional: sin él (tests), purga igual, solo no avisa.
+    @Optional() private readonly alertas?: TechAlertService,
   ) {}
 
   /**
@@ -451,9 +455,15 @@ export class MassNoticeService {
           `Retención (§9.3): ${result.purgedBatches} lote(s) purgado(s).`,
         );
       }
+      await this.alertas?.cronBien('purga-avisos-masivos');
     } catch (error: unknown) {
       this.logger.error(
         `Purga de retención de avisos masivos falló: ${getErrorMessage(error)}`,
+      );
+      await this.alertas?.cronFallo(
+        'purga-avisos-masivos',
+        'Purga de avisos masivos',
+        error,
       );
     }
   }

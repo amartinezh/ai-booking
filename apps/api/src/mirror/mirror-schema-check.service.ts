@@ -1,5 +1,12 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  Optional,
+} from '@nestjs/common';
+import { claveAlerta } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { TechAlertService } from '../tech-alerts/tech-alert.service';
 
 /**
  * Verifica al arrancar que el DDL del espejo existe de verdad en la base.
@@ -33,7 +40,11 @@ export class MirrorSchemaCheckService implements OnApplicationBootstrap {
     'trg_sync_outbox_appointment',
   ];
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // 🚨 Alertas técnicas. Opcional: sin él (tests), verifica igual, solo no avisa.
+    @Optional() private readonly alertas?: TechAlertService,
+  ) {}
 
   async onApplicationBootstrap(): Promise<void> {
     try {
@@ -75,6 +86,16 @@ export class MirrorSchemaCheckService implements OnApplicationBootstrap {
         `no recibira nada y el hospital NO vera las citas de WhatsApp. ` +
         `Se arregla con: pnpm --filter @agenia/database db:apply-sql`,
     );
+    await this.alertas?.avisar({
+      kind: 'ESQUEMA_ESPEJO',
+      dedupeKey: claveAlerta.esquemaEspejo(),
+      title: 'Captura hacia SyncOutbox',
+      detail:
+        `${orgsConEspejo} clínica(s) con el espejo encendido, pero falta en la base: ` +
+        `${missing.join(', ')}. Ninguna cita se está capturando para el hospital. ` +
+        'Se arregla con: pnpm --filter @agenia/database db:apply-sql',
+      fuente: 'arranque de la API',
+    });
     return { ok: false, missing };
   }
 

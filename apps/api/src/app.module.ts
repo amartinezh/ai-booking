@@ -27,6 +27,7 @@ import { MirrorModule } from './mirror/mirror.module';
 import { MassNoticeModule } from './mass-notice/mass-notice.module';
 import { RetentionModule } from './retention/retention.module';
 import { TelegramModule, telegramEnabled } from './telegram/telegram.module';
+import { TechAlertsModule } from './tech-alerts/tech-alerts.module';
 
 @Module({
   imports: [
@@ -71,6 +72,9 @@ import { TelegramModule, telegramEnabled } from './telegram/telegram.module';
     SurveyModule,
     // 📡 Monitor de servicios externos (Google/Meta) — centinela + live (SUPER_ADMIN).
     MonitorModule,
+    // 🚨 Alertas técnicas a un Telegram del equipo (SUPER_ADMIN, Global). Ver
+    // docs/PLAN_ALERTAS_TECNICAS.md. No depende de TELEGRAM_ENABLED.
+    TechAlertsModule,
     // 🪞 Espejo de citas con HIS externos (patrón de drivers) — Fase 1.
     // Ver docs/PLAN_ESPEJO_HOSPITAL.md.
     MirrorModule,

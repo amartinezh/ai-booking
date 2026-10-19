@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, OnModuleInit, Logger, Optional } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { CronJob } from 'cron';
@@ -6,11 +6,19 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MonitorCheckers } from './monitor.checkers';
 import { ACTIVE_SERVICES, CheckResult } from './services.config';
 import { getErrorMessage, getErrorStack } from '../common/error-message.util';
+import {
+  alertaDeIncidente,
+  claveAlerta,
+  incidenteDebeAvisar,
+} from '@agenia/shared';
+import { TechAlertService } from '../tech-alerts/tech-alert.service';
 
 /** Estado en memoria del último resultado conocido de cada servicio. */
 interface KnownState {
   status: string; // 'UP' | 'DOWN' | 'DEGRADED'
   incidentId?: string; // incidente abierto asociado (si status != UP)
+  /** Chequeos seguidos sin estar UP: confirma la latencia alta (A5). */
+  seguidos?: number;
 }
 
 /**
@@ -23,6 +31,12 @@ interface KnownState {
  *
  * NO comparte estado con el MODO B (endpoint /monitor/live-check), que es
  * 100% efímero. NO toca `ChatbotCron`.
+ *
+ * 🚨 Alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md): cada chequeo caído le
+ * avisa al grupo técnico (el mismo problema abierto solo suma ocurrencias, no
+ * manda otro mensaje), y la recuperación lo resuelve. Una latencia alta se
+ * avisa solo si se repite en dos chequeos seguidos: el 2026-10-12 Gemini y Meta
+ * «degradaron» en el mismo segundo por un parpadeo de red del VPS (A5).
  */
 @Injectable()
 export class MonitorCron implements OnModuleInit {
@@ -36,6 +50,8 @@ export class MonitorCron implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly checkers: MonitorCheckers,
+    // Opcional: sin él (tests), el monitor funciona igual, solo no avisa.
+    @Optional() private readonly alertas?: TechAlertService,
   ) {}
 
   async onModuleInit() {
@@ -49,7 +65,7 @@ export class MonitorCron implements OnModuleInit {
     }
 
     const intervalMinutes = Number(
-      this.config.get('MONITOR_BG_INTERVAL_MINUTES') ?? 15,
+      this.config.get('MONITOR_BG_INTERVAL_MINUTES') ?? 5,
     );
 
     // 1️⃣ Reconstruir estado desde incidentes abiertos en BD (resolvedAt = null).
@@ -129,28 +145,57 @@ export class MonitorCron implements OnModuleInit {
         const newStatus = result.status;
         const prev = this.lastKnownStatus.get(svc.key);
 
-        if (!prev) {
-          // Primera observación del servicio.
-          if (newStatus !== 'UP') {
-            await this.openIncident(svc.key, result);
-          } else {
-            this.lastKnownStatus.set(svc.key, { status: 'UP' });
+        if (newStatus === 'UP') {
+          if (prev && prev.status !== 'UP') {
+            // Recuperación: cerrar incidente.
+            if (prev.incidentId) await this.closeIncident(prev.incidentId);
+            await this.alertas?.resolver(claveAlerta.servicio(svc.key));
           }
-        } else if (prev.status === 'UP' && newStatus !== 'UP') {
-          // UP → DOWN/DEGRADED: abrir incidente.
-          await this.openIncident(svc.key, result);
-        } else if (prev.status !== 'UP' && newStatus === 'UP') {
-          // Recuperación: cerrar incidente.
-          if (prev.incidentId) await this.closeIncident(prev.incidentId);
           this.lastKnownStatus.set(svc.key, { status: 'UP' });
+          continue;
         }
-        // UP→UP o caído→caído (incluso si cambia DOWN↔DEGRADED): no escribir.
+
+        // Caído: abre incidente si viene de UP (o es la primera observación). Si
+        // ya estaba caído no escribe en ServiceIncident, aunque cambie
+        // DOWN↔DEGRADED: es el mismo incidente.
+        const seguidos =
+          prev && prev.status !== 'UP' ? (prev.seguidos ?? 1) + 1 : 1;
+        if (!prev || prev.status === 'UP') {
+          await this.openIncident(svc.key, result);
+        }
+        const estado = this.lastKnownStatus.get(svc.key);
+        this.lastKnownStatus.set(svc.key, {
+          ...estado,
+          status: newStatus,
+          seguidos,
+        });
+
+        if (this.alertas && incidenteDebeAvisar(result, seguidos)) {
+          await this.alertas.avisar({
+            ...alertaDeIncidente({
+              serviceKey: svc.key,
+              displayName: svc.displayName,
+              status: newStatus,
+              errorMessage: result.errorMessage,
+            }),
+            serviceIncidentId: estado?.incidentId ?? null,
+            fuente: 'centinela del monitor',
+          });
+        }
       }
+      await this.alertas?.cronBien('centinela');
     } catch (error: unknown) {
       // Nunca re-lanzar: el cron debe sobrevivir al próximo tick.
       this.logger.error(
         `runHealthChecks crasheó: ${getErrorMessage(error)}`,
         getErrorStack(error),
+      );
+      // Con la base caída es justo aquí donde revienta (abrir el incidente): el
+      // aviso sale igual, por el camino sin base.
+      await this.alertas?.cronFallo(
+        'centinela',
+        'Centinela del monitor',
+        error,
       );
     }
   }
@@ -193,11 +238,23 @@ export class MonitorCron implements OnModuleInit {
       this.config.get('MONITOR_RETENTION_DAYS') ?? 365,
     );
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-    const result = await this.prisma.serviceIncident.deleteMany({
-      where: { resolvedAt: { not: null, lt: cutoff } },
-    });
-    this.logger.log(
-      `🧹 Limpieza: ${result.count} incidente(s) antiguo(s) eliminado(s)`,
-    );
+    try {
+      const result = await this.prisma.serviceIncident.deleteMany({
+        where: { resolvedAt: { not: null, lt: cutoff } },
+      });
+      this.logger.log(
+        `🧹 Limpieza: ${result.count} incidente(s) antiguo(s) eliminado(s)`,
+      );
+      await this.alertas?.cronBien('limpieza-monitor');
+    } catch (error: unknown) {
+      this.logger.error(
+        `La limpieza de incidentes falló: ${getErrorMessage(error)}`,
+      );
+      await this.alertas?.cronFallo(
+        'limpieza-monitor',
+        'Limpieza del monitor',
+        error,
+      );
+    }
   }
 }

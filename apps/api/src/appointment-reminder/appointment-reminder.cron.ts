@@ -3,6 +3,7 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
@@ -14,7 +15,9 @@ import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
 import {
   citaDemasiadoCercaParaRecordar,
+  claveAlerta,
   compuertasHis,
+  loteDeRecordatoriosCaido,
   destinoDeContacto,
   normalizarAnticipacionRecordatorio,
   saludoPorHora,
@@ -29,6 +32,7 @@ import {
   readReminderConfig,
   ReminderConfig,
 } from './appointment-reminder.config';
+import { TechAlertService } from '../tech-alerts/tech-alert.service';
 
 /**
  * ⏰ AppointmentReminderCronService
@@ -77,6 +81,9 @@ export class AppointmentReminderCronService
     private readonly systemLog: SystemLogService,
     private readonly templates: WhatsappTemplateService,
     private readonly scheduler: SchedulerRegistry,
+    // 🚨 Alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md). Opcional: sin él
+    // (tests), el cron funciona igual, solo no avisa.
+    @Optional() private readonly alertas?: TechAlertService,
   ) {
     // Validación temprana — si el .env está mal, el módulo no arranca.
     this.cfg = readReminderConfig(this.config);
@@ -97,16 +104,9 @@ export class AppointmentReminderCronService
         return;
       }
       this.inFlight = true;
-      this.runOnce()
-        .catch((err: unknown) => {
-          this.logger.error(
-            `Cron falló (no propagado): ${getErrorMessage(err)}`,
-            getErrorStack(err),
-          );
-        })
-        .finally(() => {
-          this.inFlight = false;
-        });
+      void this.ejecutarLote().finally(() => {
+        this.inFlight = false;
+      });
     }, ms);
     this.scheduler.addInterval(INTERVAL_NAME, handle);
 
@@ -114,6 +114,42 @@ export class AppointmentReminderCronService
       `Cron de recordatorios iniciado: cada ${this.cfg.cronMinutes} min, ` +
         `${this.cfg.businessHoursBefore}h hábiles de anticipación.`,
     );
+  }
+
+  /**
+   * Una vuelta del cron. Nunca lanza. Le avisa al grupo técnico si el cron
+   * revienta, o si en el lote no salió ningún recordatorio y fallaron varios
+   * (`loteDeRecordatoriosCaido`: un fallo suelto es un número sin WhatsApp, no
+   * el canal); el primer lote con envíos lo resuelve.
+   */
+  async ejecutarLote(): Promise<void> {
+    try {
+      const lote = await this.runOnce();
+      await this.alertas?.cronBien('recordatorios');
+      if (loteDeRecordatoriosCaido(lote)) {
+        await this.alertas?.avisar({
+          kind: 'RECORDATORIOS_FALLIDOS',
+          dedupeKey: claveAlerta.recordatorios(),
+          title: 'Recordatorios de citas',
+          detail:
+            `En el último lote fallaron ${lote.failed} y no salió ninguno. ` +
+            'Revise la plantilla de Meta y el token de WhatsApp de la clínica.',
+          fuente: 'cron de recordatorios',
+        });
+      } else if (lote.sent > 0) {
+        await this.alertas?.resolver(claveAlerta.recordatorios());
+      }
+    } catch (err: unknown) {
+      this.logger.error(
+        `Cron falló (no propagado): ${getErrorMessage(err)}`,
+        getErrorStack(err),
+      );
+      await this.alertas?.cronFallo(
+        'recordatorios',
+        'Recordatorios de citas',
+        err,
+      );
+    }
   }
 
   onModuleDestroy() {

@@ -1117,3 +1117,135 @@ describe('MirrorWatchdogService', () => {
     });
   });
 });
+
+/**
+ * 🚨 Alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md, Fase 2): que el vigilante
+ * reviente, o que el aviso al agendador no salga, se le avisa al grupo técnico.
+ * Las excepciones de la bandeja NO (son de la clínica, A12).
+ */
+describe('MirrorWatchdogService — alertas técnicas', () => {
+  const ORG = 'org-1';
+  const montar = () => {
+    const alertas = {
+      avisar: jest.fn(async () => undefined),
+      resolver: jest.fn(async () => undefined),
+      cronFallo: jest.fn(async () => undefined),
+      cronBien: jest.fn(async () => undefined),
+    };
+    const prisma = {
+      hospitalMirrorConfig: {
+        findMany: jest.fn(async () => [{ organizationId: ORG }]),
+      },
+      organization: {
+        findUnique: jest.fn(async () => ({ name: 'E.S.E. San Vicente' })),
+      },
+    };
+    const service = new MirrorWatchdogService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      alertas as never,
+    );
+    jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+    const revisar = (aviso: unknown, fallo: unknown = null) =>
+      (service as any).revisarAvisoAlAgendador(
+        ORG,
+        aviso,
+        fallo,
+      ) as Promise<void>;
+    return { service, alertas, prisma, revisar };
+  };
+
+  it('si el vigilante revienta con una clínica, se avisa por clínica y las demás siguen', async () => {
+    const { service, alertas } = montar();
+    jest
+      .spyOn(service, 'vigilarOrganizacion')
+      .mockRejectedValue(new Error('timeout de Prisma'));
+    await service.vigilarTodas();
+    expect(alertas.cronFallo).toHaveBeenCalledWith(
+      `vigilante-espejo:${ORG}`,
+      `Vigilante del espejo (org ${ORG})`,
+      expect.any(Error),
+    );
+    expect(alertas.cronBien).toHaveBeenCalledWith('vigilante-espejo');
+  });
+
+  it('una vuelta sana resuelve, por clínica y en general', async () => {
+    const { service, alertas } = montar();
+    jest.spyOn(service, 'vigilarOrganizacion').mockResolvedValue({} as never);
+    await service.vigilarTodas();
+    expect(alertas.cronBien.mock.calls).toEqual([
+      [`vigilante-espejo:${ORG}`],
+      ['vigilante-espejo'],
+    ]);
+  });
+
+  it('si ni siquiera puede listar las clínicas, eso se avisa', async () => {
+    const { service, alertas, prisma } = montar();
+    prisma.hospitalMirrorConfig.findMany.mockRejectedValue(
+      new Error('base caída'),
+    );
+    await service.vigilarTodas();
+    expect(alertas.cronFallo).toHaveBeenCalledWith(
+      'vigilante-espejo',
+      'Vigilante del espejo',
+      expect.any(Error),
+    );
+  });
+
+  it.each([
+    ['SIN_PLANTILLA', undefined, /plantilla de WhatsApp del aviso/],
+    ['SIN_DESTINO', undefined, /ningún número de agendador/],
+    [
+      'ENVIO_FALLIDO',
+      '(#131026) Message undeliverable',
+      /Meta rechazó el envío del aviso al agendador: \(#131026\)/,
+    ],
+  ])(
+    'aviso que no sale (%s) → alerta técnica con la clínica',
+    async (motivo, detalle, esperado) => {
+      const { alertas, revisar } = montar();
+      await revisar({ enviado: false, motivo, detalle });
+      expect(alertas.avisar).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'AVISO_AGENDADOR_NO_SALE',
+          dedupeKey: `espejo:aviso-agendador:${ORG}`,
+          organizationId: ORG,
+          organizationName: 'E.S.E. San Vicente',
+          detail: expect.stringMatching(esperado),
+        }),
+      );
+    },
+  );
+
+  it('si el aviso revienta, también', async () => {
+    const { alertas, revisar } = montar();
+    await revisar(null, new Error('Graph API 500'));
+    expect(alertas.avisar).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: 'El aviso reventó: Graph API 500' }),
+    );
+  });
+
+  it.each([
+    [{ enviado: true, citas: 2, recordatorios: 0 }],
+    [{ enviado: false, motivo: 'NADA_QUE_AVISAR' }],
+    [{ enviado: false, motivo: 'APAGADO' }],
+  ])(
+    'salió, no había nada o la clínica lo apagó → se resuelve (%o)',
+    async (aviso) => {
+      const { alertas, revisar } = montar();
+      await revisar(aviso);
+      expect(alertas.resolver).toHaveBeenCalledWith(
+        `espejo:aviso-agendador:${ORG}`,
+      );
+      expect(alertas.avisar).not.toHaveBeenCalled();
+    },
+  );
+
+  it('otra réplica lo tomó → ni avisa ni resuelve', async () => {
+    const { alertas, revisar } = montar();
+    await revisar({ enviado: false, motivo: 'YA_RECLAMADO' });
+    expect(alertas.avisar).not.toHaveBeenCalled();
+    expect(alertas.resolver).not.toHaveBeenCalled();
+  });
+});

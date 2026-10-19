@@ -125,6 +125,58 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     expect(r.errorMessage).toContain('el hospital NO los tiene');
   });
 
+  // 🚨 docs/PLAN_ALERTAS_TECNICAS.md A11: late puntual y no escribe una sola cita.
+  it('el agente late pero no alcanza la base del hospital → DOWN, con su motivo', async () => {
+    conEstado({
+      configs: [
+        {
+          organizationId: 'org1',
+          lastHeartbeatAt: haceMinutos(1),
+          lastHisReachable: false,
+          lastHisDetail: 'ConnectionError: Failed to connect to 10.0.0.5:1433',
+        },
+      ],
+    });
+
+    const r = await checkers.checkService(svc);
+
+    expect(r.status).toBe('DOWN');
+    expect(r.errorMessage).toContain('no alcanza la base del hospital');
+    expect(r.errorMessage).toContain('Failed to connect');
+  });
+
+  it('sin saber si alcanza el HIS (null), o alcanzándolo, no es un problema', async () => {
+    for (const lastHisReachable of [null, true]) {
+      conEstado({
+        configs: [
+          {
+            organizationId: 'org1',
+            lastHeartbeatAt: haceMinutos(1),
+            lastHisReachable,
+          },
+        ],
+      });
+      expect((await checkers.checkService(svc)).status).toBe('UP');
+    }
+  });
+
+  it('sin latido, lo que el agente reportó del HIS ya no cuenta: se dice que no late', async () => {
+    conEstado({
+      configs: [
+        {
+          organizationId: 'org1',
+          lastHeartbeatAt: haceMinutos(30),
+          lastHisReachable: false,
+        },
+      ],
+    });
+
+    const r = await checkers.checkService(svc);
+
+    expect(r.errorMessage).toContain('Sin heartbeat');
+    expect(r.errorMessage).not.toContain('no alcanza');
+  });
+
   it('la cola no avanza → DEGRADED', async () => {
     conEstado({ pendienteDesde: haceMinutos(30) });
 

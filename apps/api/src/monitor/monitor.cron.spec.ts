@@ -297,4 +297,183 @@ describe('MonitorCron', () => {
       expect(dias).toBeCloseTo(365, 1);
     });
   });
+
+  /**
+   * 🚨 Alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md, Fase 2): el centinela le
+   * avisa al grupo técnico. `avisar` es idempotente por problema abierto, así que
+   * se llama en cada chequeo caído; lo que NO puede pasar es avisar un parpadeo
+   * de latencia (A5) o dejar de resolver al recuperarse.
+   */
+  describe('alertas técnicas', () => {
+    let alertas: {
+      avisar: jest.Mock;
+      resolver: jest.Mock;
+      cronFallo: jest.Mock;
+      cronBien: jest.Mock;
+    };
+    let conAlertas: MonitorCron;
+    const tickA = () => (conAlertas as any).runHealthChecks();
+    const solo = (key: string, r: unknown) =>
+      checkers.checkService.mockImplementation(async (svc: { key: string }) =>
+        svc.key === key ? r : UP,
+      );
+    const avisosDe = (key: string) =>
+      alertas.avisar.mock.calls.filter(
+        (c) => c[0].dedupeKey === `servicio:${key}`,
+      );
+
+    beforeEach(() => {
+      alertas = {
+        avisar: jest.fn(async () => undefined),
+        resolver: jest.fn(async () => undefined),
+        cronFallo: jest.fn(async () => undefined),
+        cronBien: jest.fn(async () => undefined),
+      };
+      conAlertas = new MonitorCron(
+        scheduler as any,
+        config as any,
+        prisma as any,
+        checkers as any,
+        alertas as any,
+      );
+      for (const nivel of ['log', 'warn', 'error'] as const) {
+        jest
+          .spyOn((conAlertas as any).logger, nivel)
+          .mockImplementation(() => {});
+      }
+    });
+
+    it('una caída avisa al primer chequeo, con el incidente y la fuente', async () => {
+      solo('mirror', {
+        ...DOWN,
+        errorMessage: 'Sin heartbeat del agente hace 7 min.',
+      });
+      await tickA();
+      expect(avisosDe('mirror')).toHaveLength(1);
+      expect(avisosDe('mirror')[0][0]).toEqual({
+        kind: 'SERVICIO_CAIDO',
+        category: 'ESPEJO',
+        severity: 'CRITICA',
+        dedupeKey: 'servicio:mirror',
+        title: 'Espejo con el HIS',
+        detail: 'Sin heartbeat del agente hace 7 min.',
+        serviceIncidentId: 'inc-1',
+        fuente: 'centinela del monitor',
+      });
+      expect(alertas.cronBien).toHaveBeenCalledWith('centinela');
+    });
+
+    it('sigue caído: avisa en cada chequeo (el grupo recibe UN mensaje: el problema ya está abierto)', async () => {
+      solo('mirror', DOWN);
+      await tickA();
+      await tickA();
+      expect(avisosDe('mirror')).toHaveLength(2);
+      expect(prisma.serviceIncident.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('latencia alta: el primer chequeo no avisa, el segundo seguido sí (A5)', async () => {
+      const lento = {
+        status: 'DEGRADED',
+        latencyMs: 4096,
+        errorCode: 'HIGH_LATENCY',
+        errorMessage: 'Latencia 4096ms supera el umbral de 3000ms.',
+      };
+      solo('gemini', lento);
+      await tickA();
+      expect(avisosDe('gemini')).toHaveLength(0);
+      expect(prisma.serviceIncident.create).toHaveBeenCalledTimes(1);
+      await tickA();
+      expect(avisosDe('gemini')).toHaveLength(1);
+      expect(avisosDe('gemini')[0][0]).toMatchObject({
+        kind: 'SERVICIO_DEGRADADO',
+        severity: 'ADVERTENCIA',
+      });
+    });
+
+    it('el parpadeo del 12-oct: latencia un chequeo y de vuelta UP → nada al grupo', async () => {
+      solo('meta', { ...DOWN, status: 'DEGRADED', errorCode: 'HIGH_LATENCY' });
+      await tickA();
+      solo('meta', UP);
+      await tickA();
+      expect(avisosDe('meta')).toHaveLength(0);
+      // Resolver igual es inocuo: no hay problema abierto que cerrar.
+      expect(alertas.resolver).toHaveBeenCalledWith('servicio:meta');
+    });
+
+    it('degradado que se cae: el aviso pasa a «caído» (el despachador lo manda como «empeoró»)', async () => {
+      solo('mirror', {
+        ...DOWN,
+        status: 'DEGRADED',
+        errorCode: 'MIRROR_UNHEALTHY',
+      });
+      await tickA();
+      solo('mirror', DOWN);
+      await tickA();
+      expect(avisosDe('mirror').map((c) => c[0].kind)).toEqual([
+        'SERVICIO_DEGRADADO',
+        'SERVICIO_CAIDO',
+      ]);
+    });
+
+    it('al recuperarse resuelve el problema; estando UP no toca nada', async () => {
+      solo('mirror', DOWN);
+      await tickA();
+      solo('mirror', UP);
+      await tickA();
+      await tickA();
+      expect(alertas.resolver.mock.calls).toEqual([['servicio:mirror']]);
+    });
+
+    it('tras un reinicio con el incidente abierto, la caída ya está confirmada y se resuelve al volver', async () => {
+      prisma.serviceIncident.findMany.mockResolvedValue([
+        { id: 'inc-viejo', serviceKey: 'gemini', status: 'DEGRADED' },
+      ]);
+      solo('gemini', {
+        ...DOWN,
+        status: 'DEGRADED',
+        errorCode: 'HIGH_LATENCY',
+      });
+      await conAlertas.onModuleInit();
+      await tickA();
+      expect(avisosDe('gemini').length).toBeGreaterThan(0);
+      solo('gemini', UP);
+      await tickA();
+      expect(alertas.resolver).toHaveBeenCalledWith('servicio:gemini');
+    });
+
+    it('🗄️ si el centinela revienta (la base caída al abrir el incidente), eso también se avisa', async () => {
+      checkers.checkService.mockResolvedValue(DOWN);
+      prisma.serviceIncident.create.mockRejectedValue(
+        new Error("Can't reach database server at db:5432"),
+      );
+      await expect(tickA()).resolves.toBeUndefined();
+      expect(alertas.cronFallo).toHaveBeenCalledWith(
+        'centinela',
+        'Centinela del monitor',
+        expect.any(Error),
+      );
+      expect(alertas.cronBien).not.toHaveBeenCalled();
+    });
+
+    it('la limpieza diaria: su fallo se avisa (antes ni siquiera tenía catch) y su éxito resuelve', async () => {
+      await (conAlertas as any).cleanOldIncidents();
+      expect(alertas.cronBien).toHaveBeenCalledWith('limpieza-monitor');
+      prisma.serviceIncident.deleteMany.mockRejectedValue(new Error('timeout'));
+      await expect(
+        (conAlertas as any).cleanOldIncidents(),
+      ).resolves.toBeUndefined();
+      expect(alertas.cronFallo).toHaveBeenCalledWith(
+        'limpieza-monitor',
+        'Limpieza del monitor',
+        expect.any(Error),
+      );
+    });
+
+    it('por defecto chequea cada 5 minutos (A4)', async () => {
+      await conAlertas.onModuleInit();
+      expect((conAlertas as any).logger.log).toHaveBeenCalledWith(
+        expect.stringContaining('*/5 * * * *'),
+      );
+    });
+  });
 });

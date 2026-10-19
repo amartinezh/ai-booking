@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Prisma } from '@agenia/database';
 import {
@@ -12,6 +17,7 @@ import type {
   HisLookupResultOutput,
 } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
+import { TechAlertService } from '../tech-alerts/tech-alert.service';
 
 /**
  * Consulta en vivo al HIS (rastreo de paciente, Fase 2) — el lado del agente.
@@ -43,7 +49,11 @@ const MAX_ERROR = 300;
 export class MirrorLookupService {
   private readonly logger = new Logger(MirrorLookupService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // 🚨 Alertas técnicas. Opcional: sin él (tests), funciona igual.
+    @Optional() private readonly alertas?: TechAlertService,
+  ) {}
 
   /**
    * GET /mirror/lookup-requests — lo que el agente pregunta en su lazo.
@@ -230,6 +240,7 @@ export class MirrorLookupService {
           `Consultas en vivo: ${expiradas.count} expirada(s), ${purgadas.count} purgada(s).`,
         );
       }
+      await this.alertas?.cronBien('consultas-his');
     } catch (error: unknown) {
       // Un fallo del mantenimiento no debe tumbar el proceso; el siguiente
       // minuto reintenta.
@@ -237,6 +248,11 @@ export class MirrorLookupService {
         `Mantenimiento de consultas en vivo falló: ${
           error instanceof Error ? error.message : String(error)
         }`,
+      );
+      await this.alertas?.cronFallo(
+        'consultas-his',
+        'Mantenimiento de consultas al HIS',
+        error,
       );
     }
   }

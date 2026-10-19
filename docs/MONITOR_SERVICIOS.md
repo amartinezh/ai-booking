@@ -27,7 +27,7 @@ Hay dos modos independientes que **nunca comparten estado**:
 
 | | MODO A — Centinela | MODO B — Live |
 |--|---|---|
-| Frecuencia | `MONITOR_BG_INTERVAL_MINUTES` (def. 15 min) | `MONITOR_LIVE_INTERVAL_SECONDS` (def. 5 s) |
+| Frecuencia | `MONITOR_BG_INTERVAL_MINUTES` (def. 5 min) | `MONITOR_LIVE_INTERVAL_SECONDS` (def. 5 s) |
 | Dónde corre | Cron del backend | Polling del navegador |
 | Persistencia | Solo transiciones (fallo / recuperación) | Nunca toca la BD; todo en memoria del browser |
 | Vida útil | Siempre (si `MONITOR_ENABLED=true`) | Solo mientras el técnico mantiene la ventana y presiona "Iniciar" |
@@ -38,6 +38,19 @@ Hay dos modos independientes que **nunca comparten estado**:
 - **MODO B** es un diagnóstico en vivo: ejecuta los mismos checks cada pocos
   segundos pero solo en memoria. El buffer del gráfico es de 300 puntos (FIFO)
   y el polling se pausa al ocultar la pestaña.
+
+## Alertas técnicas por Telegram
+
+El MODO A le avisa al grupo técnico (`/super-admin/alertas`,
+[PLAN_ALERTAS_TECNICAS.md](PLAN_ALERTAS_TECNICAS.md)): cada chequeo caído llama
+`TechAlertService.avisar` —el mismo problema abierto solo suma ocurrencias, no
+manda otro mensaje— y la recuperación lo resuelve. Una **latencia alta** solo
+se avisa si se repite en **dos chequeos seguidos** (un parpadeo de red no
+despierta a nadie); una caída, al primero.
+
+El check del espejo también da `DOWN` cuando el agente late pero reporta que
+**no alcanza la base del hospital** (`lastHisReachable = false`): ninguna cita
+llega al HIS aunque el agente esté vivo.
 
 ## Credenciales (importante)
 
@@ -56,7 +69,7 @@ ninguna variable de entorno para esto.
 
 ```
 MONITOR_ENABLED=true               # ON/OFF del centinela de fondo (MODO A)
-MONITOR_BG_INTERVAL_MINUTES=15     # intervalo del cron
+MONITOR_BG_INTERVAL_MINUTES=5      # intervalo del cron (de aquí salen las alertas)
 MONITOR_LIVE_INTERVAL_SECONDS=5    # intervalo del live (lo usa el frontend)
 MONITOR_DEFAULT_TIMEOUT_MS=5000    # timeout por check
 MONITOR_DEGRADED_THRESHOLD_MS=3000 # latencia → DEGRADED
