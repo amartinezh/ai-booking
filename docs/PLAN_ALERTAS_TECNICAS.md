@@ -1,10 +1,11 @@
 # Alertas técnicas por Telegram
 
-**Estado: FASES 0, 1 Y 2 HECHAS (2026-10-19), sin commit.** El usuario aprobó A1 … A13 (§7) tal como estaban recomendadas al pedir la Fase 0. Falta la prueba con un bot real (crear el bot en @BotFather, vincular el grupo y que «Enviar mensaje de prueba» llegue, §10) y, en producción, bajar `MONITOR_BG_INTERVAL_MINUTES` de 15 a 5 en `.env.production` (§11). Sigue la Fase 3 (vigía del servidor).
+**Estado: FASES 0 A 3 HECHAS (2026-10-19), sin commit.** El usuario aprobó A1 … A13 (§7) tal como estaban recomendadas al pedir la Fase 0. Falta para producción (§12): crear el bot en @BotFather y vincular el grupo, bajar `MONITOR_BG_INTERVAL_MINUTES` a 5 en `.env.production`, desplegar (el vigía se instala solo con `update-vps.sh`) y crear el chequeo externo en UptimeRobot (A9). Sigue la Fase 4 (encender en producción y una semana mirando el ruido). Operación: [ALERTAS_TECNICAS.md](ALERTAS_TECNICAS.md).
 
 - **Fase 0**: migración `20261019100000_alertas_tecnicas` (`TechAlertConfig`, `TechAlert`, `TECH_ALERTS_CONFIG_CHANGED`), índice único parcial `uq_tech_alert_abierta` en `non-prisma-ddl.sql` (verificado por `db:apply-sql`), y la lógica pura en [`packages/shared/src/alertas-tecnicas.ts`](../packages/shared/src/alertas-tecnicas.ts).
 - **Fase 1**: módulo [`apps/api/src/tech-alerts/`](../apps/api/src/tech-alerts/) (configuración, `avisar`/`resolver`, despachador, controlador `SUPER_ADMIN`), `getUpdates`/`silent`/`migrate_to_chat_id` en el cliente de Telegram, la regla del bot en las dos direcciones, y la página [`/super-admin/alertas`](../apps/web/app/super-admin/alertas/). Nadie llama a `avisar` todavía: los enganches son la Fase 2.
 - **Fase 2**: los chequeos ya avisan y resuelven (§11): centinela del monitor (caída al primer chequeo, latencia alta solo si se repite, recuperación, su propio fallo y su limpieza), `lastHisReachable` en el chequeo del espejo, recordatorios (cron y lote caído), retención, purga de avisos masivos, consultas al HIS, los dos barridos del HIS del bot, vigilante del espejo (por clínica y aviso al agendador que no sale), esquema del espejo, 5xx con firma nueva y ráfagas, excepciones del proceso, Redis, arranque y reinicios en bucle; limpieza de la bitácora a 180 días; centinela a 5 min por defecto.
+- **Fase 3**: el vigía del servidor [`deploy/vigia.sh`](../deploy/vigia.sh) (contenedores, reinicios, panel, disco, respaldo; cron cada minuto vía `agenia vigia instalar`, que dejan el instalador y `update-vps.sh`), la configuración que la API le escribe en `/var/lib/agenia/alertas/telegram.env`, su latido en el panel, la ventana de mantenimiento de los despliegues, la versión desplegada en el aviso de arranque, y la guía de operación con el chequeo externo (A9).
 
 ## 1. Qué se pide
 
@@ -283,7 +284,7 @@ En los crones del bot que corren cada 5 y 10 s solo se engancha el `catch` gener
 | **0** ✅ | Migración + funciones puras (textos, sanitizador, antirruido) con pruebas | Pruebas verdes. **Hecha el 2026-10-19**: 99 pruebas nuevas; migración con cero deriva contra Postgres 15 real; el índice parcial rechaza una segunda alerta abierta con la misma clave |
 | **1** ✅ (falta el bot real) | Núcleo de la API (config, conexión, vinculación, prueba, envío, tabla, despachador) + página `/super-admin/alertas` | «Enviar prueba» llega al grupo. **Hecha el 2026-10-19** salvo ese paso (§10): 58 + 14 pruebas de la API, 15 de la web; contra Postgres real (7 escenarios, réplicas incluidas); API y web arrancadas de verdad |
 | **2** ✅ | Enganches: centinela (abrir, cerrar, empeorar, latencia confirmada, `lastHisReachable`), crones, 5xx, arranque, proceso, esquema del espejo, aviso al agendador, Redis; centinela a 5 min | Un fallo forzado en local llega en segundos y su recuperación también. **Hecha el 2026-10-19** (§11): verificada con la API real contra Postgres, Redis apagado y encendido, 5xx reales y el espejo sin latido |
-| **3** | Vigía del servidor + archivo de configuración + instalación en install/update + chequeo externo (A9) | `vigia.sh --prueba` llega; un contenedor detenido en local avisa |
+| **3** ✅ | Vigía del servidor + archivo de configuración + instalación en install/update + chequeo externo (A9) | `vigia.sh --prueba` llega; un contenedor detenido en local avisa. **Hecha el 2026-10-19** (§12): 61 pruebas del vigía (y 3 mutaciones detectadas), y una vuelta real con Docker y curl de verdad contra un Telegram falso local |
 | **4** | Encender en producción: crear el bot, el grupo, vincular; una semana mirando el ruido y ajustando umbrales | Una semana sin avisos falsos |
 
 ## 9. Riesgos
@@ -367,3 +368,40 @@ Todos los servicios reciben `TechAlertService` con `@Optional()`: las pruebas ex
 
 - **`MONITOR_BG_INTERVAL_MINUTES=15` está escrito en `/opt/agenia/.env.production`** y gana sobre el nuevo valor por defecto: hay que cambiarlo a 5 (`agenia env` o editar el archivo) y recrear el contenedor `api`. El instalador ya escribe 5 en servidores nuevos.
 - Al desplegar, la migración y el índice entran con `db:deploy`. Sin el bot conectado, los problemas se registran en la bitácora y no se envía nada.
+
+## 12. Bitácora de la Fase 3 (2026-10-19)
+
+### Qué quedó
+
+| Pieza | Dónde |
+|---|---|
+| El vigía | [`deploy/vigia.sh`](../deploy/vigia.sh): contenedores (detenido, no existe, `unhealthy`, reinicio por Docker), el panel por su dirección a través del proxy (`curl --resolve` a 127.0.0.1), disco (80 / 90 %, se resuelve bajo 75 %), respaldo de hoy desde las 04:30. Un archivo de estado por problema en `vigia.d/`; mismo antirruido que la API (confirmación en dos vueltas para contenedores y panel, «empeoró», recordatorios de lo crítico, «resuelto» con la duración, sin sonido de noche, silencio, categoría «Servidor») |
+| Sus pruebas | [`deploy/vigia.test.sh`](../deploy/vigia.test.sh): 61 casos con `docker`/`curl`/`df` falsos y el reloj controlado; compatibles con bash 3.2 (macOS) y bash 5 |
+| La configuración del vigía | La API la escribe en `TECH_ALERTS_VIGIA_FILE` (`/app/alertas/telegram.env` → host `/var/lib/agenia/alertas/`) al arrancar y en cada cambio, a un temporal que se renombra (atómico), 600; [`tech-alert-vigia.ts`](../apps/api/src/tech-alerts/tech-alert-vigia.ts) valida cada valor. El vigía la LEE con `sed`, nunca la ejecuta |
+| ¿Corre el vigía? | Deja su latido en `vigia.latido`; la API lo lee y el panel dice «activo» o «no corre desde…» (paso 3) |
+| Instalación | `agenia vigia instalar` (cron `/etc/cron.d/agenia-vigia`, logrotate, carpeta 700): lo llaman `install-vps.sh` y cada `update-vps.sh`. `agenia vigia prueba|estado`. El desinstalador lo borra todo, token incluido |
+| Despliegues | `update-vps.sh` abre `agenia mantenimiento 20` antes del build y lo cierra al final (vence solo si algo falla a medias) |
+| Versión | `update-vps.sh` calcula `<commit>[+cambios]@<fecha>` en tu computador (el servidor no tiene `.git`) y la pasa como argumento de build: queda EN la imagen (`AGENIA_VERSION`) y la dice el aviso de arranque. Con git en el servidor, `agenia build` usa su commit |
+| Chequeo externo (A9) | Sin código: UptimeRobot sobre `/login` con su integración de Telegram al mismo grupo ([ALERTAS_TECNICAS.md §5](ALERTAS_TECNICAS.md)) |
+
+### Decisiones de detalle
+
+- **El token no va en la línea de comandos de `curl`** (`ps` la muestra a cualquier usuario del host): va por la entrada estándar (`curl -K -`). Hay una prueba que lo verifica.
+- **El chequeo del panel se hace en el propio servidor** (`--resolve` a 127.0.0.1): prueba proxy → web sin depender del DNS ni de la red de afuera; lo de afuera lo cubre el chequeo externo.
+- **Lo que una vuelta no mira no se da por resuelto**: en mantenimiento (contenedores y panel) y antes de las 04:30 (el respaldo de ayer).
+- **Un contenedor recreado por un despliegue** vuelve a `RestartCount` 0: no cuenta como reinicio.
+- **Carpeta montada, no archivo**: la API renombra un temporal; un bind-mount de archivo suelto dejaría al host con el inodo viejo (la lección del Caddyfile).
+
+### Cómo se verificó
+
+- `deploy/vigia.test.sh`: 61 pruebas en verde **en macOS (bash 3.2, date de BSD) y en `ubuntu:24.04` (bash 5, date de GNU, flock)**. En Ubuntu fallaron 5 al principio: la imagen mínima no trae `tzdata` y `TZ=America/Bogota` caía en silencio a UTC (horas corridas 5 h, el respaldo mirado a deshora). Ahora, sin la zona instalada, el vigía usa el desfase fijo de Colombia (`<-05>5`, sin horario de verano). El servidor real sí tiene `tzdata`, pero el vigía ya no depende de eso.
+- Tres defectos introducidos a propósito (avisar sin confirmar, umbral de baja del disco, resolver lo no mirado en mantenimiento) los detectan las pruebas; el archivo quedó restaurado idéntico.
+- **Vuelta real** en local con `docker` y `curl` de verdad: un contenedor `redis` real detenido a mitad y un Telegram y un panel falsos en 127.0.0.1. El 502 del panel y el contenedor detenido se avisaron en la segunda vuelta; Telegram recibió `POST /bot<token>/sendMessage` con chat, texto, `disable_notification` y `link_preview_options` como espera la Bot API.
+- API 3277 pruebas (las del archivo del vigía y el latido, con escritura real a disco y permisos 600), web 1187; lint y tipos limpios; `docker compose config` con y sin versión.
+
+### Pendiente para producción
+
+1. Crear el bot en @BotFather, conectarlo y vincular el grupo (§10).
+2. `MONITOR_BG_INTERVAL_MINUTES=5` en `/opt/agenia/.env.production` y `agenia restart api` (§11).
+3. Desplegar con `./update.sh`: migra, instala el vigía y deja la versión. Después, `agenia vigia prueba` en el servidor.
+4. UptimeRobot (A9).

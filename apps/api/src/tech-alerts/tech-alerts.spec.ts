@@ -7,6 +7,10 @@ import { ALFABETO_CODIGO_VINCULACION, DATO_OCULTO } from '@agenia/shared';
 import { TechAlertConfigService } from './tech-alert-config.service';
 import { TechAlertDispatcher } from './tech-alert.dispatcher';
 import { TechAlertService } from './tech-alert.service';
+import { contenidoArchivoVigia } from './tech-alert-vigia';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import type { TechAlertActor } from './tech-alerts.types';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { CryptoService } from '../common/crypto/crypto.service';
@@ -1535,5 +1539,149 @@ describe('retención de la bitácora', () => {
     base.caida = true;
     await expect(dispatcher.limpiar()).resolves.toBe(0);
     await expect(dispatcher.limpiezaDiaria()).resolves.toBeUndefined();
+  });
+});
+
+// ── Fase 3: el archivo que lee el vigía del servidor ────────────────────────
+
+describe('el archivo del vigía (deploy/vigia.sh)', () => {
+  const leer = (texto: string) =>
+    Object.fromEntries(
+      texto
+        .split('\n')
+        .filter((l) => l && !l.startsWith('#'))
+        .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]),
+    );
+  const fila = (extra: Fila = {}) =>
+    ({
+      ...CONFIG_POR_DEFECTO,
+      enabled: true,
+      chatId: GRUPO,
+      ...extra,
+    }) as never;
+
+  it('lleva lo que el vigía necesita, con los mismos ajustes del panel', () => {
+    const v = leer(
+      contenidoArchivoVigia(
+        fila({
+          mutedUntil: new Date('2026-10-20T12:00:00Z'),
+          categories: { SERVIDOR: false },
+          quietFromHour: 23,
+        }),
+        TOKEN,
+        'https://app.hsvpanserma.agenia.co',
+      ),
+    );
+    expect(v).toEqual({
+      ENABLED: 'true',
+      TOKEN,
+      CHAT_ID: GRUPO,
+      SERVIDOR: 'false',
+      MUTED_UNTIL: String(Date.parse('2026-10-20T12:00:00Z') / 1000),
+      QUIET_ENABLED: 'true',
+      QUIET_FROM: '23',
+      QUIET_TO: '6',
+      REMINDER_MINUTES: '60',
+      MAX_REMINDERS: '3',
+      PANEL_URL: 'https://app.hsvpanserma.agenia.co',
+    });
+  });
+
+  it('apagado, sin bot o sin grupo: ENABLED=false (el vigía no envía)', () => {
+    expect(
+      leer(contenidoArchivoVigia(fila({ enabled: false }), TOKEN, null))
+        .ENABLED,
+    ).toBe('false');
+    expect(leer(contenidoArchivoVigia(fila(), null, null))).toMatchObject({
+      ENABLED: 'false',
+      TOKEN: '',
+    });
+    expect(
+      leer(contenidoArchivoVigia(fila({ chatId: null }), TOKEN, null)).ENABLED,
+    ).toBe('false');
+    expect(leer(contenidoArchivoVigia(null, null, null))).toMatchObject({
+      ENABLED: 'false',
+      SERVIDOR: 'true',
+      MUTED_UNTIL: '0',
+    });
+  });
+
+  it('cada valor se valida: nada raro llega a una línea del archivo', () => {
+    const v = leer(
+      contenidoArchivoVigia(
+        fila({ chatId: '-100; rm -rf /' }),
+        'no-es-un-token\nENABLED=true',
+        'https://x.co/$(reboot)',
+      ),
+    );
+    expect(v).toMatchObject({
+      ENABLED: 'false',
+      TOKEN: '',
+      CHAT_ID: '',
+      PANEL_URL: '',
+    });
+  });
+
+  it('el servicio lo escribe al cambiar algo: atómico, 600 y al día', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigia-'));
+    const ruta = path.join(dir, 'telegram.env');
+    process.env.TECH_ALERTS_VIGIA_FILE = ruta;
+    try {
+      const { config } = montar();
+      await config.connect(TOKEN, ACTOR);
+      await config.exportarParaVigia();
+      let v = leer(fs.readFileSync(ruta, 'utf8'));
+      expect(v).toMatchObject({ ENABLED: 'false', TOKEN }); // sin grupo todavía
+      expect(fs.statSync(ruta).mode & 0o777).toBe(0o600);
+
+      await config.mute('UNA_HORA', ACTOR);
+      await config.exportarParaVigia();
+      v = leer(fs.readFileSync(ruta, 'utf8'));
+      expect(Number(v.MUTED_UNTIL)).toBe(Math.floor((T0 + 60 * MIN) / 1000));
+
+      await config.disconnect(ACTOR);
+      await config.exportarParaVigia();
+      v = leer(fs.readFileSync(ruta, 'utf8'));
+      expect(v).toMatchObject({ ENABLED: 'false', TOKEN: '' });
+      // No quedan temporales a medias.
+      expect(fs.readdirSync(dir)).toEqual(['telegram.env']);
+    } finally {
+      delete process.env.TECH_ALERTS_VIGIA_FILE;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('si no puede escribir (carpeta inexistente), no revienta', async () => {
+    process.env.TECH_ALERTS_VIGIA_FILE = '/no/existe/telegram.env';
+    try {
+      const { config } = montar();
+      await expect(config.exportarParaVigia()).resolves.toBeUndefined();
+    } finally {
+      delete process.env.TECH_ALERTS_VIGIA_FILE;
+    }
+  });
+
+  it('el panel ve el latido del vigía (o que nunca ha corrido)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigia-'));
+    process.env.TECH_ALERTS_VIGIA_FILE = path.join(dir, 'telegram.env');
+    try {
+      const { config } = montar();
+      expect((await config.getPublic()).vigia).toEqual({
+        ultimaVueltaAt: null,
+      });
+      fs.writeFileSync(path.join(dir, 'vigia.latido'), '1792422000\n');
+      expect((await config.getPublic()).vigia).toEqual({
+        ultimaVueltaAt: new Date(1792422000 * 1000),
+      });
+    } finally {
+      delete process.env.TECH_ALERTS_VIGIA_FILE;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('sin la variable (desarrollo) no escribe nada', async () => {
+    const { config } = montar();
+    await expect(config.exportarParaVigia()).resolves.toBeUndefined();
+    expect((await config.getPublic()).vigia).toBeNull();
   });
 });

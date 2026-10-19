@@ -43,6 +43,11 @@ export interface PublicTechAlertConfig {
   lastErrorAt: Date | null;
   updatedAt: Date | null;
   updatedByEmail: string | null;
+  /**
+   * El vigía del servidor (deploy/vigia.sh): la hora de su última vuelta. `null`
+   * = no aplica (desarrollo); `ultimaVueltaAt: null` = nunca ha corrido.
+   */
+  vigia: { ultimaVueltaAt: Date | null } | null;
 }
 
 export interface TechAlertSettingsInput {

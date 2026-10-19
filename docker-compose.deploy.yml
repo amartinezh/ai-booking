@@ -73,6 +73,11 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile.api
+      args:
+        # La versión que dice el aviso de arranque de las alertas técnicas
+        # (docs/PLAN_ALERTAS_TECNICAS.md): la deja update-vps.sh (commit local)
+        # o agenia.sh (commit del servidor, si tiene git). Queda EN la imagen.
+        AGENIA_VERSION: ${AGENIA_VERSION:-}
     restart: unless-stopped
     logging: *default-logging
     env_file: .env.production
@@ -84,10 +89,17 @@ services:
       # Fija la zona horaria del proceso. Red de seguridad para cualquier
       # `new Date()` o `toLocale*` sin timeZone explícito (ver CLAUDE.md).
       - TZ=${TZ:-America/Bogota}
+      # 🚨 Alertas técnicas: la API deja aquí la configuración del panel para el
+      # vigía del servidor (deploy/vigia.sh), que avisa cuando la API no puede.
+      - TECH_ALERTS_VIGIA_FILE=/app/alertas/telegram.env
     volumes:
       # Credenciales de Google Cloud TTS (opcional). Si no existen, el
       # instalador deja un archivo vacío y el TTS de Google queda inactivo.
       - ./deploy/secrets:/app/secrets:ro
+      # Una CARPETA, no un archivo suelto: la API escribe un temporal y lo
+      # renombra (un bind-mount de archivo dejaría al host con el inodo viejo).
+      # Fuera de /opt/agenia, que el despliegue reemplaza con rsync --delete.
+      - /var/lib/agenia/alertas:/app/alertas
     depends_on:
       postgres:
         condition: service_healthy

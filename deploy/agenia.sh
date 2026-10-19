@@ -20,6 +20,8 @@
 #   agenia psql | redis    consola de base de datos / Redis
 #   agenia shell <svc>     shell dentro de un contenedor
 #   agenia env             variables efectivas (secretos enmascarados)
+#   agenia vigia [instalar|prueba|estado]   vigía del servidor (alertas técnicas)
+#   agenia mantenimiento <min>|fin          el vigía no mira contenedores un rato
 # =============================================================================
 set -Eeuo pipefail
 
@@ -70,7 +72,65 @@ cmd_up()      { dc up -d "$@"; ok "Stack levantado"; }
 cmd_down()    { dc down "$@"; ok "Stack detenido"; }
 cmd_restart() { dc restart "$@"; ok "Reiniciado: ${*:-todo}"; }
 cmd_ps()      { dc ps; }
-cmd_build()   { dc build "$@" && dc up -d "$@"; ok "Reconstruido: ${*:-todo}"; }
+cmd_build()   { exportar_version; dc build "$@" && dc up -d "$@"; ok "Reconstruido: ${*:-todo}"; }
+
+# La versión que dice el aviso de arranque de la API (alertas técnicas): la que
+# pase quien despliega (update-vps.sh la calcula en su computador, donde está el
+# git) o, si este servidor tiene repositorio, su commit. Sin ninguna, «sin
+# registrar»: no es un error.
+exportar_version() {
+  if [[ -z "${AGENIA_VERSION:-}" ]] && git -C "$ROOT" rev-parse --short HEAD >/dev/null 2>&1; then
+    AGENIA_VERSION="$(git -C "$ROOT" rev-parse --short HEAD)@servidor"
+  fi
+  export AGENIA_VERSION="${AGENIA_VERSION:-}"
+}
+
+# ── Vigía del servidor (docs/PLAN_ALERTAS_TECNICAS.md §3.6) ─────────────────
+# Corre cada minuto desde cron, en el host: avisa al grupo técnico de lo que la
+# API no puede ver de sí misma (contenedores caídos, disco, respaldo). Lee la
+# configuración que la API deja en $VIGIA_DIR al guardar /super-admin/alertas.
+VIGIA_DIR=/var/lib/agenia/alertas
+
+cmd_vigia() {
+  case "${1:-estado}" in
+    instalar)
+      mkdir -p "$VIGIA_DIR" && chmod 700 "$VIGIA_DIR"
+      chmod +x "$ROOT/deploy/vigia.sh"
+      printf '%s\n' \
+        '# Vigía del servidor de AgenIA (alertas técnicas por Telegram). Ver deploy/vigia.sh.' \
+        'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
+        "* * * * * root $ROOT/deploy/vigia.sh >> /var/log/agenia-vigia.log 2>&1" \
+        > /etc/cron.d/agenia-vigia
+      chmod 644 /etc/cron.d/agenia-vigia
+      printf '%s\n' '/var/log/agenia-vigia.log {' '  weekly' '  rotate 8' '  compress' \
+        '  missingok' '  notifempty' '}' > /etc/logrotate.d/agenia-vigia
+      systemctl enable --now cron >/dev/null 2>&1 || true
+      ok "Vigía instalado: cada minuto (/etc/cron.d/agenia-vigia, log en /var/log/agenia-vigia.log)"
+      [[ -f "$VIGIA_DIR/telegram.env" ]] ||
+        warn "Todavía no hay configuración: conecte el bot y vincule el grupo en /super-admin/alertas."
+      ;;
+    prueba) bash "$ROOT/deploy/vigia.sh" --prueba ;;
+    estado) bash "$ROOT/deploy/vigia.sh" --estado ;;
+    *) err "uso: agenia vigia [instalar|prueba|estado]"; exit 1 ;;
+  esac
+}
+
+# Durante un despliegue los contenedores se recrean: el vigía no los mira hasta
+# la hora que se deja aquí (o hasta `fin`). Un despliegue que falla a medias no
+# deja el vigía ciego para siempre: la marca vence sola.
+cmd_mantenimiento() {
+  local arg="${1:?uso: agenia mantenimiento <minutos>|fin}"
+  mkdir -p "$VIGIA_DIR"
+  if [[ "$arg" == fin ]]; then
+    rm -f "$VIGIA_DIR/mantenimiento"
+    ok "Fin del mantenimiento: el vigía vuelve a mirar los contenedores."
+  elif [[ "$arg" =~ ^[0-9]+$ ]] && (( arg > 0 && arg <= 240 )); then
+    echo $(( $(date +%s) + arg * 60 )) > "$VIGIA_DIR/mantenimiento"
+    ok "Mantenimiento por $arg min: el vigía no mira contenedores ni el panel."
+  else
+    err "Minutos entre 1 y 240, o «fin»."; exit 1
+  fi
+}
 cmd_shell()   { local s="${1:?uso: agenia shell <servicio>}"; dc exec "$s" sh; }
 cmd_psql()    { dc exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"; }
 cmd_redis()   { dc exec redis redis-cli "$@"; }
@@ -182,6 +242,7 @@ cmd_update() {
   fi
   git -C "$ROOT" pull --ff-only
   head1 "Reconstruyendo imágenes"
+  exportar_version
   dc build
   head1 "Migraciones"
   cmd_migrate
@@ -328,5 +389,7 @@ case "${1:-status}" in
   redis)          shift; cmd_redis "$@" ;;
   shell|sh)       shift; cmd_shell "$@" ;;
   env)            shift; cmd_env ;;
+  vigia)          shift; cmd_vigia "$@" ;;
+  mantenimiento)  shift; cmd_mantenimiento "$@" ;;
   *) err "Comando desconocido: $1"; echo; usage; exit 1 ;;
 esac

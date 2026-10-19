@@ -13,7 +13,7 @@ jest.mock('@/app/actions/tech-alerts', () => ({
     updateTechAlertSettings: jest.fn(),
 }));
 
-import AlertasClient, { envioDeFila } from './AlertasClient';
+import AlertasClient, { envioDeFila, estadoDelVigia } from './AlertasClient';
 import {
     connectTechAlertBot,
     findTechAlertLink,
@@ -52,6 +52,7 @@ const sinNada: PublicTechAlertConfig = {
     lastErrorAt: null,
     updatedAt: null,
     updatedByEmail: null,
+    vigia: null,
 };
 const conBot: PublicTechAlertConfig = {
     ...sinNada,
@@ -182,6 +183,37 @@ describe('AlertasClient', () => {
             ),
         );
         expect(await screen.findByRole('status')).toHaveTextContent('Ajustes guardados.');
+    });
+
+    describe('el vigía del servidor', () => {
+        const AHORA = new Date('2026-10-19T15:38:00.000Z');
+
+        it('en desarrollo no aplica', () => {
+            expect(estadoDelVigia(null, AHORA)).toBeNull();
+        });
+
+        it('nunca corrió: lo dice y cómo instalarlo', () => {
+            expect(estadoDelVigia({ ultimaVueltaAt: null }, AHORA)).toEqual({
+                ok: false,
+                texto: expect.stringContaining('agenia vigia instalar'),
+            });
+        });
+
+        it('corriendo (última vuelta hace 1 min)', () => {
+            const e = estadoDelVigia({ ultimaVueltaAt: '2026-10-19T15:37:00.000Z' }, AHORA);
+            expect(e?.ok).toBe(true);
+            expect(e?.texto).toMatch(/Vigía del servidor activo/);
+        });
+
+        it('sin vuelta en más de 3 min: su cron se rompió', () => {
+            const e = estadoDelVigia({ ultimaVueltaAt: '2026-10-19T15:30:00.000Z' }, AHORA);
+            expect(e).toEqual({ ok: false, texto: expect.stringMatching(/no corre desde/) });
+        });
+
+        it('se ve en la página', () => {
+            montar({ ...activo, vigia: { ultimaVueltaAt: null } });
+            expect(screen.getByTestId('estado-vigia')).toHaveTextContent(/nunca ha corrido/);
+        });
     });
 
     describe('la bitácora dice qué pasó con cada aviso', () => {

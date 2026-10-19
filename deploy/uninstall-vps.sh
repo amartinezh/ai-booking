@@ -125,7 +125,8 @@ else
 fi
 echo "  ${R}✗${N} Imágenes agenia-api y agenia-web"
 echo "  ${R}✗${N} .env.production, deploy/Caddyfile, deploy/install.conf, deploy/secrets"
-echo "  ${R}✗${N} /usr/local/bin/agenia, /etc/cron.d/agenia-backup, logs de instalación"
+echo "  ${R}✗${N} /usr/local/bin/agenia, /etc/cron.d/agenia-backup y agenia-vigia, logs de instalación"
+echo "  ${R}✗${N} /var/lib/agenia/alertas (configuración del vigía, con el token del bot de alertas)"
 [[ $PURGE_BACKUPS -eq 1 ]] && echo "  ${R}✗${N} Respaldos en $BACKUP_DIR" || echo "  ${G}✓${N} Respaldos en $BACKUP_DIR se conservan"
 [[ $PURGE_CODE -eq 1 ]]    && echo "  ${R}✗${N} Código fuente en $ROOT" || echo "  ${G}✓${N} Código fuente se conserva"
 [[ $PURGE_DOCKER -eq 1 ]]  && echo "  ${R}✗${N} Docker Engine (desinstalación de paquetes)"
@@ -232,7 +233,10 @@ rm -f "$ROOT/apps/web/.env" "$ROOT/packages/database/.env" 2>/dev/null || true
 ok "Configuración y secretos generados eliminados"
 
 rm -f /usr/local/bin/agenia /etc/cron.d/agenia-backup 2>/dev/null || true
-rm -f /var/log/agenia-install.log /var/log/agenia-backup.log 2>/dev/null || true
+rm -f /etc/cron.d/agenia-vigia /etc/logrotate.d/agenia-vigia 2>/dev/null || true
+rm -f /var/log/agenia-install.log /var/log/agenia-backup.log /var/log/agenia-vigia.log 2>/dev/null || true
+# La configuración del vigía lleva el token del bot de alertas en claro.
+rm -rf /var/lib/agenia/alertas 2>/dev/null || true
 ok "Comando, cron y logs eliminados"
 
 if [[ $PURGE_BACKUPS -eq 1 ]]; then

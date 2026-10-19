@@ -13,7 +13,9 @@
 #    3. `agenia migrate`        — aplica migraciones Prisma pendientes
 #                                  (no-op seguro si no hay ninguna).
 #    4. `agenia verify`         — batería de comprobaciones post-arranque.
-#    5. `docker builder prune`  — deja la caché de construcción en un tope
+#    5. `agenia vigia instalar` — deja al día el cron del vigía del servidor
+#                                  (alertas técnicas; idempotente).
+#    6. `docker builder prune`  — deja la caché de construcción en un tope
 #                                  de tamaño (PRUNE_MAX_CACHE, 10 GB). Solo esa
 #                                  caché: nunca contenedores, imágenes en uso
 #                                  ni volúmenes (la base).
@@ -88,9 +90,17 @@ done
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 
+# La versión que dirá el aviso de arranque de la API (alertas técnicas). Se calcula
+# AQUÍ porque el servidor no tiene .git (el rsync lo excluye a propósito). Con
+# cambios sin commit lo dice: es justo el despliegue que más conviene identificar.
+VERSION_DESPLIEGUE="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo sin-git)"
+[[ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]] && VERSION_DESPLIEGUE+="+cambios"
+VERSION_DESPLIEGUE+="@$(TZ=America/Bogota date '+%Y-%m-%dT%H:%M')"
+
 printf '%s%s AgenIA — actualización de %s %s\n' "$B" "$BOLD" "$VPS_IP" "$N"
 info "Llave SSH: $SSH_KEY"
 info "Directorio remoto: $REMOTE_DIR"
+info "Versión: $VERSION_DESPLIEGUE"
 [[ $DRY_RUN -eq 1 ]] && warn "--dry-run: no se ejecuta nada remoto, solo se simula el rsync."
 
 ssh_remote() {
@@ -120,9 +130,14 @@ if [[ $DRY_RUN -eq 1 ]]; then
   exit 0
 fi
 
+# Ventana de mantenimiento: mientras se recrean los contenedores, el vigía del
+# servidor no los mira (si no, avisaría «agenia_api detenido» en cada despliegue).
+# Vence sola en 20 min si algo falla a medias; al final se cierra.
+ssh_remote "agenia mantenimiento 20" >/dev/null || warn "No se pudo abrir la ventana de mantenimiento del vigía."
+
 # ── 2. Reconstruir web + api ────────────────────────────────────────────────
 head1 "2/4 · Reconstruyendo api y web"
-ssh_remote "agenia build api web"
+ssh_remote "AGENIA_VERSION='$VERSION_DESPLIEGUE' agenia build api web"
 ok "Contenedores reconstruidos"
 
 # ── 3. Migrar base de datos ─────────────────────────────────────────────────
@@ -140,6 +155,14 @@ if [[ $SKIP_VERIFY -eq 1 ]]; then
 else
   head1 "4/4 · Verificando"
   ssh_remote "agenia verify"
+fi
+
+# ── 5. Vigía del servidor ───────────────────────────────────────────────────
+head1 "Vigía del servidor"
+if ssh_remote "agenia vigia instalar && agenia mantenimiento fin"; then
+  ok "Vigía al día y ventana de mantenimiento cerrada"
+else
+  warn "No se pudo instalar el vigía (el despliegue sí quedó hecho). Manual: agenia vigia instalar"
 fi
 
 # ── 5. Limpiar caché de construcción ────────────────────────────────────────

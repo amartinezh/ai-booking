@@ -27,6 +27,8 @@ export interface PublicTechAlertConfig {
     lastErrorAt: string | null;
     updatedAt: string | null;
     updatedByEmail: string | null;
+    /** El vigía del servidor: `null` = no aplica (desarrollo). */
+    vigia: { ultimaVueltaAt: string | null } | null;
 }
 
 export interface TechAlertSettings {

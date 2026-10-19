@@ -67,6 +67,34 @@ const ESTADO_FILA: Record<string, string> = {
     EVENTO: 'Evento',
 };
 
+/**
+ * ¿El vigía del servidor está corriendo? Corre cada minuto: sin vuelta en 3 min,
+ * su cron se rompió y nadie avisaría si la API se cae. `null` = no aplica.
+ */
+export function estadoDelVigia(
+    vigia: PublicTechAlertConfig['vigia'],
+    ahora: Date = new Date(),
+): { ok: boolean; texto: string } | null {
+    if (!vigia) return null;
+    if (!vigia.ultimaVueltaAt) {
+        return {
+            ok: false,
+            texto: 'El vigía del servidor nunca ha corrido. En el servidor: agenia vigia instalar',
+        };
+    }
+    const ultima = new Date(vigia.ultimaVueltaAt);
+    if (ahora.getTime() - ultima.getTime() > 3 * 60_000) {
+        return {
+            ok: false,
+            texto: `El vigía del servidor no corre desde ${fecha(vigia.ultimaVueltaAt)}: revise su cron (agenia vigia instalar).`,
+        };
+    }
+    return {
+        ok: true,
+        texto: `Vigía del servidor activo (última vuelta: ${formatTimeOnly(ultima)}). Avisa aunque la API esté caída: contenedores, disco y respaldo. Prueba desde el servidor: agenia vigia prueba`,
+    };
+}
+
 /** Qué pasó con el aviso de una fila de la bitácora. */
 export function envioDeFila(f: TechAlertRow): string {
     const suprimida = (f.meta as { suprimida?: string } | null)?.suprimida;
@@ -315,6 +343,7 @@ export default function AlertasClient({ initialConfig, loadError, initialAlerts 
                         <Power className="w-4 h-4" /> {config.enabled ? 'Apagar alertas' : 'Encender alertas'}
                     </button>
                 </div>
+                <LineaVigia config={config} />
                 {config.chatLinked && (
                     <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
                         <span className="text-sm text-zinc-600 dark:text-zinc-400 flex items-center gap-1.5">
@@ -400,6 +429,24 @@ function Titulo({ paso, icono, titulo, children }: { paso?: string; icono: React
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 max-w-2xl leading-relaxed">{children}</p>
             </div>
         </div>
+    );
+}
+
+function LineaVigia({ config }: { config: PublicTechAlertConfig }) {
+    const estado = estadoDelVigia(config.vigia);
+    if (!estado) return null;
+    return (
+        <p
+            data-testid="estado-vigia"
+            className={`text-sm flex items-start gap-2 ${estado.ok ? 'text-zinc-600 dark:text-zinc-400' : 'text-amber-700 dark:text-amber-400'}`}
+        >
+            {estado.ok ? (
+                <CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" />
+            ) : (
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            )}
+            <span>{estado.texto}</span>
+        </p>
     );
 }
 

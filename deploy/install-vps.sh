@@ -804,6 +804,10 @@ ok "Definición de compose validada"
 # ── 10. Construcción de imágenes ────────────────────────────────────────────
 step "Construcción de imágenes (pnpm install + prisma generate + builds)"
 log "  ${D}Es el paso largo: entre 5 y 15 minutos la primera vez.${N}"
+# Versión para el aviso de arranque de la API (alertas técnicas): el commit, si
+# este servidor tiene git; si el código llegó por rsync, la deja update-vps.sh.
+AGENIA_VERSION="${AGENIA_VERSION:-$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || true)}"
+export AGENIA_VERSION
 "${DC[@]}" build --pull || die "Falló la construcción de imágenes. Revisa el log: $LOG_FILE"
 ok "Imágenes api y web construidas"
 
@@ -995,6 +999,10 @@ else
   systemctl enable --now cron >/dev/null 2>&1 || true
   ok "Backup diario de PostgreSQL a las 03:30 en /var/backups/agenia"
 fi
+
+# Vigía del servidor (alertas técnicas por Telegram): no hace nada hasta que se
+# conecte el bot en /super-admin/alertas, así que se instala siempre.
+"$APP_DIR/deploy/agenia.sh" vigia instalar || warn "No se pudo instalar el vigía: agenia vigia instalar"
 
 # ── 14. Verificación final ──────────────────────────────────────────────────
 step "Verificación end-to-end"

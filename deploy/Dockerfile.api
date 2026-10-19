@@ -35,6 +35,12 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV TZ=America/Bogota
 
+# La versión desplegada, para el aviso de arranque de las alertas técnicas. Va
+# DESPUÉS de los builds a propósito: cambia en cada despliegue y no debe
+# invalidar la caché de las capas pesadas.
+ARG AGENIA_VERSION=
+ENV AGENIA_VERSION=${AGENIA_VERSION}
+
 EXPOSE 3000
 
 # Healthcheck por conexión TCP, no por HTTP.

@@ -6,6 +6,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { promises as fs } from 'fs';
+import { basename, dirname, join } from 'path';
 import type { Prisma, TechAlertConfig } from '@agenia/database';
 import {
   OPCIONES_SILENCIO,
@@ -26,6 +28,7 @@ import { CryptoService } from '../common/crypto/crypto.service';
 import { getErrorMessage } from '../common/error-message.util';
 import { TelegramApiClient } from '../telegram/telegram-api.client';
 import { BOT_TOKEN_RE } from '../telegram/telegram-config.service';
+import { contenidoArchivoVigia } from './tech-alert-vigia';
 import type {
   PublicTechAlertConfig,
   TechAlertActor,
@@ -59,6 +62,8 @@ const MS_MIN = 60_000;
 export class TechAlertConfigService implements OnModuleInit {
   private readonly logger = new Logger(TechAlertConfigService.name);
   private cache: { at: number; canal: TechAlertChannel | null } | null = null;
+  /** Las escrituras del archivo del vigía, en fila: la última siempre gana. */
+  private exportacion: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -69,12 +74,41 @@ export class TechAlertConfigService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     // Tener la copia en memoria desde el arranque: si la base cae después, se avisa igual.
     await this.canal({ fresco: true });
+    // Y el archivo del vigía al día, aunque nadie toque el panel tras desplegar.
+    await this.exportarParaVigia();
   }
 
   // ── Panel ───────────────────────────────────────────────────────────────
 
   async getPublic(): Promise<PublicTechAlertConfig> {
-    return this.toPublic(await this.findRow());
+    const [row, vigia] = await Promise.all([
+      this.findRow(),
+      this.estadoVigia(),
+    ]);
+    return { ...this.toPublic(row), vigia };
+  }
+
+  /**
+   * El latido del vigía del servidor (`deploy/vigia.sh` deja la hora de su
+   * última vuelta junto al archivo de configuración). `null` = no aplica (sin
+   * `TECH_ALERTS_VIGIA_FILE`, en desarrollo). Nunca lanza.
+   */
+  private async estadoVigia(): Promise<PublicTechAlertConfig['vigia']> {
+    const ruta = process.env.TECH_ALERTS_VIGIA_FILE?.trim();
+    if (!ruta) return null;
+    try {
+      const segundos = Number(
+        (await fs.readFile(join(dirname(ruta), 'vigia.latido'), 'utf8')).trim(),
+      );
+      return {
+        ultimaVueltaAt:
+          Number.isFinite(segundos) && segundos > 0
+            ? new Date(segundos * 1000)
+            : null,
+      };
+    } catch {
+      return { ultimaVueltaAt: null };
+    }
   }
 
   /**
@@ -172,7 +206,7 @@ export class TechAlertConfigService implements OnModuleInit {
    */
   async disconnect(actor: TechAlertActor): Promise<PublicTechAlertConfig> {
     const row = await this.findRow();
-    if (!row?.encryptedBotToken) return this.toPublic(row);
+    if (!row?.encryptedBotToken) return this.getPublic();
 
     const token = this.safeDecrypt(row.encryptedBotToken);
     if (token && row.chatId) {
@@ -561,8 +595,43 @@ export class TechAlertConfigService implements OnModuleInit {
 
   // ── internos ────────────────────────────────────────────────────────────
 
+  /** Algo cambió: se relee la base en el próximo envío y se reescribe el archivo del vigía. */
   invalidar(): void {
     this.cache = null;
+    void this.exportarParaVigia();
+  }
+
+  /**
+   * Deja la configuración en el archivo que lee el vigía del servidor
+   * (`TECH_ALERTS_VIGIA_FILE`; sin la variable, en desarrollo, no hace nada). Se
+   * escribe a un temporal en la MISMA carpeta y se renombra: el vigía nunca lee
+   * un archivo a medias. Nunca lanza.
+   */
+  exportarParaVigia(): Promise<void> {
+    const ruta = process.env.TECH_ALERTS_VIGIA_FILE?.trim();
+    if (!ruta) return this.exportacion;
+    this.exportacion = this.exportacion.then(async () => {
+      const tmp = join(dirname(ruta), `.${basename(ruta)}.${process.pid}.tmp`);
+      try {
+        const row = await this.findRow();
+        const token = row?.encryptedBotToken
+          ? this.safeDecrypt(row.encryptedBotToken)
+          : null;
+        const contenido = contenidoArchivoVigia(
+          row,
+          token,
+          baseDelPanel(row?.panelBaseUrl, process.env.PUBLIC_API_URL),
+        );
+        await fs.writeFile(tmp, contenido, { mode: 0o600 });
+        await fs.rename(tmp, ruta);
+      } catch (error: unknown) {
+        this.logger.warn(
+          `No se pudo escribir el archivo del vigía (${ruta}): ${getErrorMessage(error)}`,
+        );
+        await fs.rm(tmp, { force: true }).catch(() => undefined);
+      }
+    });
+    return this.exportacion;
   }
 
   private motivoLegible(errorCode: number | null, description: string): string {
@@ -634,7 +703,9 @@ export class TechAlertConfigService implements OnModuleInit {
     };
   }
 
-  private toPublic(row: TechAlertConfig | null): PublicTechAlertConfig {
+  private toPublic(
+    row: TechAlertConfig | null,
+  ): Omit<PublicTechAlertConfig, 'vigia'> {
     const token = row?.encryptedBotToken
       ? this.safeDecrypt(row.encryptedBotToken)
       : null;
