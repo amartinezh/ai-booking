@@ -50,7 +50,14 @@ describe('INSTRUCCIONES_DEL_ASISTENTE (§4)', () => {
     ['el código ofrece los casos, no la IA', /No ofrezcas tú abrir casos/],
     ['JSON', /Responde SOLO con un objeto JSON/],
     ['arma el caso y pregunta solo lo que falta', /máximo 2 cosas/],
-    ['lo que el manual explica no es una falla', /es una "respuesta", no una "falla"/],
+    [
+      'lo que el manual explica (también una limitación conocida) no es una falla',
+      /es una "respuesta" que cita ese tema, no una "falla"[\s\S]*limitación conocida/,
+    ],
+    [
+      'no repite el nombre de otra clínica ni confirma si usa AgenIA (examen del 2026-10-20)',
+      /no repitas su nombre ni digas si usa AgenIA/,
+    ],
     ['no dice que abrió un caso', /no digas que ya abriste uno/],
     ['ampliar un caso suyo', /ampliarCaso/],
     ['problemas conocidos', /Problemas técnicos que el equipo ya conoce/],

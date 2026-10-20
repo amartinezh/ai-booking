@@ -11,6 +11,7 @@ import { CheckResult, ServiceConfig } from './services.config';
 import { getErrorMessage } from '../common/error-message.util';
 import { isGoogleTtsEnabled } from '../audio-config/tts/google-tts.service';
 import { compuertasHis, eventoPuedeSalir } from '@agenia/shared';
+import { Prisma } from '@agenia/database';
 
 /**
  * Cuántos pendientes (los más viejos) se miran para hallar el más viejo que SÍ
@@ -317,10 +318,27 @@ export class MonitorCheckers {
       return noAplica;
     }
     if (!this.telegramApi || !this.cipher) return noAplica;
-    const row = await this.prisma.supportBotConfig.findUnique({
-      where: { id: 'global' },
-      select: { enabled: true, encryptedBotToken: true, routeKey: true },
-    });
+    let row: {
+      enabled: boolean;
+      encryptedBotToken: string | null;
+      routeKey: string | null;
+    } | null;
+    try {
+      row = await this.prisma.supportBotConfig.findUnique({
+        where: { id: 'global' },
+        select: { enabled: true, encryptedBotToken: true, routeKey: true },
+      });
+    } catch (e: unknown) {
+      // Sin su tabla (la API nueva arrancó y las migraciones van detrás, en
+      // pleno despliegue) no hay asistente que vigilar todavía.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2021'
+      ) {
+        return noAplica;
+      }
+      throw e;
+    }
     if (!row?.enabled || !row.encryptedBotToken || !row.routeKey) {
       return noAplica;
     }

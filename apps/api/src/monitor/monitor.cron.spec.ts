@@ -244,6 +244,24 @@ describe('MonitorCron', () => {
       expect(prisma.serviceIncident.create).not.toHaveBeenCalled();
     });
 
+    it('un servicio con incidente abierto que pasa a `skip` lo cierra (ya no hay recuperación que lo cierre)', async () => {
+      checkers.checkService.mockResolvedValue(DOWN);
+      await tick();
+      checkers.checkService.mockResolvedValue({
+        status: 'UP',
+        latencyMs: null,
+        skip: true,
+      });
+      await tick();
+      expect(prisma.serviceIncident.update).toHaveBeenCalledTimes(
+        ACTIVE_SERVICES.length,
+      );
+      prisma.serviceIncident.update.mockClear();
+      // Ya cerrado: el siguiente `skip` no vuelve a tocar nada.
+      await tick();
+      expect(prisma.serviceIncident.update).not.toHaveBeenCalled();
+    });
+
     it('un checker que revienta cuenta como DOWN, con el motivo real', async () => {
       checkers.checkService.mockRejectedValue(new Error('socket hang up'));
 
@@ -439,6 +457,21 @@ describe('MonitorCron', () => {
       solo('gemini', UP);
       await tickA();
       expect(alertas.resolver).toHaveBeenCalledWith('servicio:gemini');
+    });
+
+    it('el caso del 2026-10-20: abierto tras un reinicio, si el servicio deja de aplicar se resuelve', async () => {
+      prisma.serviceIncident.findMany.mockResolvedValue([
+        { id: 'inc-soporte', serviceKey: 'soporte', status: 'DOWN' },
+      ]);
+      solo('soporte', { status: 'UP', latencyMs: null, skip: true });
+      await conAlertas.onModuleInit();
+      await tickA();
+      expect(prisma.serviceIncident.update).toHaveBeenCalledWith({
+        where: { id: 'inc-soporte' },
+        data: { resolvedAt: expect.any(Date) },
+      });
+      expect(alertas.resolver).toHaveBeenCalledWith('servicio:soporte');
+      expect(avisosDe('soporte')).toHaveLength(0);
     });
 
     it('🗄️ si el centinela revienta (la base caída al abrir el incidente), eso también se avisa', async () => {

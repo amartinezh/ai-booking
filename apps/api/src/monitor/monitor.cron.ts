@@ -139,8 +139,19 @@ export class MonitorCron implements OnModuleInit {
               };
 
         // Servicio "no aplica" en este ciclo (ej. Gemini/Meta sin organización):
-        // no se monitorea, no abre ni cierra incidentes.
-        if (result.skip) continue;
+        // no se monitorea y no abre incidentes. Si tenía uno abierto, se cierra:
+        // ya no hay recuperación que lo cierre. Pasó el 2026-10-20: el primer
+        // chequeo tras desplegar corrió antes de las migraciones, el asistente de
+        // soporte «se cayó» y, sin el bot conectado, quedaba abierto para siempre.
+        if (result.skip) {
+          const antes = this.lastKnownStatus.get(svc.key);
+          if (antes && antes.status !== 'UP') {
+            if (antes.incidentId) await this.closeIncident(antes.incidentId);
+            await this.alertas?.resolver(claveAlerta.servicio(svc.key));
+          }
+          this.lastKnownStatus.delete(svc.key);
+          continue;
+        }
 
         const newStatus = result.status;
         const prev = this.lastKnownStatus.get(svc.key);

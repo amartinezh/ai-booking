@@ -7,6 +7,7 @@ import { SERVICES_CONFIG } from './services.config';
 import { TelegramConfigService } from '../telegram/telegram-config.service';
 import { TelegramApiClient } from '../telegram/telegram-api.client';
 import { CryptoService } from '../common/crypto/crypto.service';
+import { Prisma } from '@agenia/database';
 
 // ══════════════════════════════════════════════════════════════════════════
 // El checker del espejo nace de un fallo real: el 2026-08-31 el agente
@@ -819,6 +820,19 @@ describe('MonitorCheckers — asistente de soporte', () => {
       description: 'ECONNRESET',
     });
     expect((await checkers.checkService(svc)).errorCode).toBe('TELEGRAM');
+  });
+
+  it('el caso del 2026-10-20: sin su tabla (la API arrancó antes de las migraciones) no aplica, no se cae', async () => {
+    prisma.supportBotConfig.findUnique.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError(
+        'The table `public.SupportBotConfig` does not exist in the current database.',
+        { code: 'P2021', clientVersion: 'x' },
+      ),
+    );
+    expect((await checkers.checkService(svc)).skip).toBe(true);
+    // Otro error de la base sí es una falla.
+    prisma.supportBotConfig.findUnique.mockRejectedValue(new Error('timeout'));
+    expect((await checkers.checkService(svc)).status).toBe('DOWN');
   });
 
   it('un token que no se puede descifrar → DOWN, sin llamar a Telegram', async () => {
