@@ -58,16 +58,27 @@ SELECT m."externalKey" cod, left(d."fullName", 30) medico,
 \echo '== 5. Última reconciliación: servicios corregidos, citas traídas y radar =='
 \echo '   activeServiceUnmapped = médicos SIN crear con citas de servicios activos'
 \echo '   activeServiceWhatsappOff = médicos creados en WhatsApp OFF con citas de servicios activos'
+\echo '   faltan_activas = citas de servicios activos que AgenIA no tiene (debe ser 0); otros = de otros servicios, sin cupo en AgenIA (no es deriva)'
 -- El detalle se recorta a 4000 caracteres (no siempre es JSON válido): se
 -- leen los campos cortos, que van al principio, con expresiones regulares.
-SELECT to_char(("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Bogota', 'MM-DD HH24:MI') hora,
+-- El desglose de lo que falta existe desde el 2026-10-20 (antes sale vacío).
+SELECT to_char(("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Bogota', 'MM-DD HH24:MI') hora, outcome,
        substring(detail FROM '"serviceFixed":([0-9]+)') servicios_corregidos,
        substring(detail FROM '"toImport":([0-9]+)') citas_pedidas,
        substring(detail FROM '"activeServiceUnmapped":(\{[^}]*\})') sin_crear,
-       substring(detail FROM '"activeServiceWhatsappOff":(\{[^}]*\})') en_off
+       substring(detail FROM '"activeServiceWhatsappOff":(\{[^}]*\})') en_off,
+       substring(detail FROM '"missingInAgenIABreakdown":\{"activeService":([0-9]+)') faltan_activas,
+       substring(detail FROM '"slotForSale":([0-9]+)') cupo_a_la_venta,
+       substring(detail FROM '"otherService":([0-9]+)') otros
   FROM "SyncAudit"
  WHERE direction = 'RECONCILE' AND op = 'COMPARE'
  ORDER BY "createdAt" DESC LIMIT 3;
+\echo '   Otros servicios por médico y servicios activos que faltan (con su motivo), de la última'
+SELECT substring(detail FROM '"otherServiceByDoctor":(\{[^}]*\})') otros_por_medico,
+       substring(detail FROM '"activeServiceMissing":(\[[^\]]*\])') activas_que_faltan
+  FROM "SyncAudit"
+ WHERE direction = 'RECONCILE' AND op = 'COMPARE'
+ ORDER BY "createdAt" DESC LIMIT 1;
 
 \echo '== 6. Citas traídas por la reconciliación (cnt:IMPORT), por día =='
 SELECT to_char(("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Bogota', 'MM-DD') dia, outcome, count(*)

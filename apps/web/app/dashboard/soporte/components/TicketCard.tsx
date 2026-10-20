@@ -34,7 +34,11 @@ export default function TicketCard({ ticket }: { ticket: CasoConNotas }) {
                         Reportado el {fmt(ticket.createdAt)}
                     </p>
                     <div className="mt-1.5">
-                        <EtiquetasDelCaso channel={ticket.channel} priority={ticket.priority} />
+                        <EtiquetasDelCaso
+                            channel={ticket.channel}
+                            priority={ticket.priority}
+                            reabierto={ticket.reopenedCount}
+                        />
                     </div>
                 </div>
                 <div className="shrink-0">

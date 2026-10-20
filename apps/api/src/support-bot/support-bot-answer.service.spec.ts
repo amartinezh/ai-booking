@@ -7,6 +7,7 @@ import type { Interlocutor } from './support-bot-session.service';
 import type { SupportBotRuntime } from './support-bot.types';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { RedisService } from '../redis/redis.service';
+import type { SupportBotWatchService } from './support-bot-watch.service';
 import type { LlmFactoryService } from '../llm/llm-factory.service';
 import type {
   LLMProvider,
@@ -65,6 +66,7 @@ describe('SupportBotAnswerService', () => {
   let llm: { forOrgOrNull: jest.Mock; forOrgByProvider: jest.Mock };
   let svc: SupportBotAnswerService;
   let casosSvc: { casosDe: jest.Mock; incidentesPara: jest.Mock };
+  let vigilancia: Record<string, jest.Mock>;
 
   const proveedor = (
     name: 'GEMINI' | 'CHATGPT' | 'CLAUDE',
@@ -172,12 +174,18 @@ describe('SupportBotAnswerService', () => {
         },
       ]),
     };
+    vigilancia = {
+      iaFallo: jest.fn(async () => undefined),
+      iaRespondio: jest.fn(async () => undefined),
+      topeAlcanzado: jest.fn(async () => undefined),
+    };
     svc = new SupportBotAnswerService(
       prisma as unknown as PrismaService,
       redis as unknown as RedisService,
       llm as unknown as LlmFactoryService,
       new SupportBotKnowledgeService(),
       casosSvc as unknown as SupportBotCasesService,
+      vigilancia as unknown as SupportBotWatchService,
     );
   });
 
@@ -391,6 +399,25 @@ describe('SupportBotAnswerService', () => {
         motivoSinIA: 'FALLO',
       });
       expect(llm.forOrgByProvider).not.toHaveBeenCalled();
+      // La vigilancia lo cuenta (3 en 15 min abren la alerta de la clínica).
+      expect(vigilancia.iaFallo).toHaveBeenCalledWith(
+        { id: 'org-1', nombre: 'Hospital de Prueba' },
+        'la IA falló o tardó',
+      );
+      expect(vigilancia.iaRespondio).not.toHaveBeenCalled();
+    });
+
+    it('🩺 una respuesta con IA le avisa a la vigilancia (resuelve la alerta si había)', async () => {
+      await svc.responder(ANA, RT, AHORA);
+      expect(vigilancia.iaRespondio).toHaveBeenCalledWith('org-1');
+      expect(vigilancia.iaFallo).not.toHaveBeenCalled();
+    });
+
+    it('🩺 sin IA configurada no es una falla: la vigilancia no se entera', async () => {
+      llm.forOrgOrNull.mockResolvedValue(null);
+      await svc.responder(ANA, RT, AHORA);
+      expect(vigilancia.iaFallo).not.toHaveBeenCalled();
+      expect(vigilancia.iaRespondio).not.toHaveBeenCalled();
     });
 
     it('con LLM_FAILOVER_ENABLED, responde otro proveedor de la clínica', async () => {
@@ -433,6 +460,10 @@ describe('SupportBotAnswerService', () => {
       await expect(svc.responder(ANA, RT, AHORA)).resolves.toMatchObject({
         motivoSinIA: 'NO_SE_PUDO_LEER',
       });
+      expect(vigilancia.iaFallo).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'org-1' }),
+        'la IA respondió algo ilegible',
+      );
     });
 
     it('sin nada parecido en el manual, lo dice', async () => {
@@ -462,6 +493,14 @@ describe('SupportBotAnswerService', () => {
         motivoSinIA: 'TOPE_DIARIO',
       });
       expect(principal.conversar).toHaveBeenCalledTimes(1);
+      // La primera vez que se pasa, el equipo técnico se entera; las siguientes, no.
+      expect(vigilancia.topeAlcanzado).toHaveBeenCalledWith(
+        { id: 'org-1', nombre: 'Hospital de Prueba' },
+        1,
+        AHORA,
+      );
+      await svc.responder(ANA, rt, AHORA);
+      expect(vigilancia.topeAlcanzado).toHaveBeenCalledTimes(1);
     });
 
     it('tope 0: la clínica se atiende siempre sin IA', async () => {

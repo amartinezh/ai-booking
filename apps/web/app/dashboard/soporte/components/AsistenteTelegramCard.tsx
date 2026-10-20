@@ -3,7 +3,11 @@
 import { useEffect, useState, useTransition } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { formatTimeOnly } from '@/lib/date';
-import { cerrarConversacionAsistente, generarCodigoAsistente } from '@/app/actions/support-bot';
+import {
+    cambiarAvisosAsistente,
+    cerrarConversacionAsistente,
+    generarCodigoAsistente,
+} from '@/app/actions/support-bot';
 import type { CodigoAsistente, EstadoAsistente } from '@/app/actions/support-bot.types';
 
 /** «482913» → «482 913»: así se lee y se escribe sin equivocarse. */
@@ -27,8 +31,8 @@ function mmss(segundos: number): string {
  * pide en CADA conversación. Se genera aquí, al pedirlo (no queda siempre en
  * pantalla), sirve una vez y vence a los 10 minutos.
  *
- * El interruptor de los avisos de los casos (`cambiarAvisosAsistente`) se muestra
- * cuando esos avisos existan (Fase 4): antes sería un botón que no hace nada.
+ * Abajo, a dónde llegan los avisos de sus casos (§3.6: cuando los toman y cuando
+ * quedan resueltos), con el botón para apagarlos o volver a encenderlos.
  */
 export default function AsistenteTelegramCard({ estadoInicial }: { estadoInicial: EstadoAsistente }) {
     const [estado, setEstado] = useState(estadoInicial);
@@ -57,6 +61,14 @@ export default function AsistenteTelegramCard({ estadoInicial }: { estadoInicial
         startTransition(async () => {
             setError(null);
             const r = await cerrarConversacionAsistente();
+            if (r.ok) setEstado(r.data);
+            else setError(r.error);
+        });
+
+    const avisos = (activos: boolean) =>
+        startTransition(async () => {
+            setError(null);
+            const r = await cambiarAvisosAsistente(activos);
             if (r.ok) setEstado(r.data);
             else setError(r.error);
         });
@@ -160,6 +172,24 @@ export default function AsistenteTelegramCard({ estadoInicial }: { estadoInicial
                     </button>
                 </div>
             )}
+
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t border-zinc-100 pt-3">
+                <p className="text-sm text-zinc-600">
+                    {!estado.avisos.activos
+                        ? 'No recibes avisos de tus casos por Telegram.'
+                        : estado.avisos.destino
+                          ? `Cuando tomen o resuelvan uno de tus casos, te aviso por Telegram a ${estado.avisos.destino}.`
+                          : 'Cuando converses con el asistente, te avisará por Telegram cuando tomen o resuelvan uno de tus casos.'}
+                </p>
+                <button
+                    type="button"
+                    onClick={() => avisos(!estado.avisos.activos)}
+                    disabled={pendiente}
+                    className="text-sm font-semibold text-sky-700 hover:underline disabled:opacity-50 shrink-0"
+                >
+                    {estado.avisos.activos ? 'Dejar de recibir avisos' : 'Recibir avisos'}
+                </button>
+            </div>
         </section>
     );
 }

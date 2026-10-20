@@ -1,6 +1,6 @@
 # Asistente de soporte por Telegram para el personal
 
-**Estado: APROBADO (2026-10-19); FASES 0 Y 1 EN COMMIT (`43fb304`), FASE 2 EN COMMIT (`da95449`); FASE 3 HECHA (2026-10-19), sin commit** (bitácoras en §11 a §14). Falta correr el examen con un modelo real (§13). Sigue la Fase 4. El usuario aprobó todas las recomendaciones de §8 con tres cambios suyos: **S3**, el código del panel se pide en cada conversación (§3.1); **S5**, la IA es la de cada clínica, no una de la plataforma; y **S14**, el horario del equipo es de lunes a viernes de 8:00 a 17:00.
+**Estado: APROBADO (2026-10-19); FASES 0 Y 1 EN COMMIT (`43fb304`), FASE 2 (`da95449`) Y FASE 3 (`856245d`) EN COMMIT; FASES 4 Y 5 HECHAS (2026-10-20), sin commit** (bitácoras en §11 a §16). Falta correr el examen con un modelo real (§13). Sigue la Fase 6 (producción y piloto). El usuario aprobó todas las recomendaciones de §8 con tres cambios suyos: **S3**, el código del panel se pide en cada conversación (§3.1); **S5**, la IA es la de cada clínica, no una de la plataforma; y **S14**, el horario del equipo es de lunes a viernes de 8:00 a 17:00.
 
 ## 1. Qué se pide
 
@@ -581,3 +581,106 @@ Repetirlo con cada modelo que usen las clínicas en producción. Para aprobar: a
 
 - El examen con un modelo real (§13) y, ahora, sus preguntas de casos: que la IA arme bien el borrador, use `ampliarCaso` y no diga que abrió un caso.
 - La Fase 4: el aviso al grupo de cada caso (el campo `groupNotice` ya está y los casos nuevos nacen `PENDING`), el seguimiento al empleado, reabrir y el caso sin tomar.
+
+## 15. Bitácora de la Fase 4 (2026-10-20)
+
+### Qué quedó
+
+- **El aviso al grupo** (`SupportTicketGroupNotifier`, en el módulo de alertas técnicas, cada minuto y al instante cuando el asistente abre o reabre un caso):
+  - Cada caso nuevo, del panel o del asistente, sale por el bot y el grupo de las alertas técnicas con el texto fijo de `soporte-caso.ts`: número, prioridad, clínica, rol y correo, canal, título saneado y enlace. Nunca la descripción.
+  - El reabierto sale como «🔁 Caso reabierto» y, una sola vez, «⏰ lleva 2 h sin que nadie lo tome», contando el horario del equipo desde que el grupo se enteró.
+  - Categoría nueva `CASOS_SOPORTE` en las alertas técnicas: se apaga en `/super-admin/alertas` y respeta el encendido, el silencio y el horario nocturno (la prioridad alta suena siempre).
+  - Si no puede avisar, el caso queda `PENDING` con el motivo en `groupNoticeError` (grupo sin conectar, alertas apagadas, categoría apagada, silencio o el error de Telegram). Reintenta con espera creciente (1 a 15 min) y lo deja (`SKIPPED`, con motivo) si lo tomaron antes, si pasan 24 h quieto o tras 20 intentos.
+  - Vive en el módulo de alertas y no en el del asistente: los casos del panel se avisan aunque el asistente esté apagado.
+- **El seguimiento a quien reportó** (`SupportBotNoticesService`, cada minuto, solo con el asistente encendido):
+  - «👀 lo tomaron» y «✅ quedó resuelto, ¿quedó bien?» a la cuenta de su última conversación, también para los casos del panel. `reporterNotifiedStatus` guarda el último estado avisado.
+  - Sin su conversación abierta, el «resuelto» va sin la respuesta y con «Ver la respuesta»; con ella abierta, va completo y queda registrado en la conversación.
+  - No sale (y se da por avisado) si apagó los avisos, nunca conversó, ya no tiene acceso o el cambio tiene más de 24 h. Si Telegram falla por algo pasajero (sin respuesta, 429 o 5xx), se devuelve y se reintenta; si lo bloqueó, no.
+- **Los botones del aviso** (en `SupportBotService`): «Sí, gracias» responde el toque y quita los botones sin pedir código. «Ver la respuesta» y «No, sigue pasando», sin conversación, se guardan 10 min en Redis (`soporte:accion:<cuenta>`) y se hacen apenas valide el código. Solo sirven para un caso de quien conversa.
+- **Reabrir** (`SupportBotCasesService.reabrir`, en una transacción): un caso suyo, resuelto hace menos de 7 días, vuelve a `OPEN` con la nota `REAPERTURA`, suma `reopenedCount` y su aviso al grupo vuelve a `PENDING`. Lo siguiente que escriba se ofrece como nota del caso (`FlujoConversacion.notaPara`), sin IA y con su «Sí».
+- **«Caso abierto»** ahora dice «Te escribo por aquí cuando lo tomen y cuando quede resuelto» si le llegan los avisos.
+- **Web**: la tarjeta del asistente muestra a dónde llegan los avisos y el botón «Dejar de recibir avisos» / «Recibir avisos». La Mesa de Ayuda muestra si el grupo se enteró (con la hora y si se le recordó), el motivo si no, «Reabierto» y la respuesta anterior mientras no se vuelva a solucionar. «Mis solicitudes» también marca «Reabierto».
+- **Base de datos**: sin migración; usa las columnas que dejó la Fase 0.
+- **De paso**: los títulos que arma el asistente sin IA ya no terminan en punto («…mañana».» se veía raro en los avisos). Y `soporte-bot.ts`, `soporte-bot-casos.ts` y sus pruebas vuelven a las comillas simples del resto de `shared`: en la Fase 3 se formatearon por error sin la configuración de Prettier.
+
+### Decisiones de detalle tomadas al construir
+
+- **«Sí, gracias» no pide el código**, aunque §3.6 dice que cualquier botón lo pide: no muestra ni cambia nada.
+- **Un caso que ya tomaron no se anuncia** (el grupo ya lo sabe); queda «Sin aviso al grupo: lo tomaron antes de que saliera el aviso».
+- **La ventana de 24 h** (aviso al grupo y al empleado) evita una avalancha de avisos viejos cuando se conecte el grupo o se encienda el asistente en producción.
+- **Reabrir tiene 7 días**; después, el asistente sugiere abrir uno nuevo con /nuevo.
+- **Queda para después**: «Avísame cuando se resuelva» para una falla general que el equipo ya atiende (§3.4 paso 2 y §3.6), porque necesita que la IA diga qué incidente explica la falla (cambio del contrato del §4 y del examen) y una tabla para guardar quién espera el aviso; y «Ver conversación» desde la Mesa de Ayuda, que va con el panel de conversaciones de la Fase 5.
+
+### Cómo se verificó
+
+- **API**: 3.594 pruebas en verde, con el umbral de cobertura cumplido; los dos despachadores y lo nuevo del asistente cubren el 100 % de sus funciones. `nest build` sin errores y `eslint` limpio.
+- **`shared`**: 1.509 pruebas en verde. El umbral global de funciones sigue sin cumplirse por `limite-citas.ts`, `patient-trace.ts`, `sync-state.ts` y `sync-watch.ts`, como antes de esta fase.
+- **Web**: 1.157 pruebas en verde, `tsc` sin errores y `next build` completo. Al correr las cuatro suites a la vez, dos pruebas de la web y la de tiempo del buscador se pasaron de su tiempo; solas pasan.
+- **Postgres 15 real**: la integración (39 pruebas) cubre reabrir en su transacción, el aviso al grupo y su recordatorio con dos réplicas a la vez (un solo mensaje cada uno) y el seguimiento con dos réplicas («tomado» y «resuelto» una vez, con la respuesta porque la conversación estaba abierta).
+- **De punta a punta con la API real** (Postgres y Redis desechables, el Telegram falso con el bot del asistente y el de alertas con su grupo vinculado): 31 comprobaciones en verde.
+  - El caso del asistente llega al grupo al instante, sin la descripción ni la cédula.
+  - El del panel llega con el despachador de cada minuto.
+  - «Tomado» le llega a la persona y queda en su conversación.
+  - Sin conversación, el «resuelto» va sin la respuesta y con sus tres botones. «Ver la respuesta» pide el código y, al darlo, la muestra y quita los botones del aviso.
+  - «No, sigue pasando» reabre el caso, el grupo recibe «Caso reabierto» y lo que cuenta queda como nota.
+  - «Sí, gracias» solo responde el toque. Con los avisos apagados, el despachador lo pasa sin escribirle.
+
+### Pendiente
+
+- El examen con un modelo real (§13).
+- La Fase 5: cifras, preguntas que el manual no cubrió, conversaciones (y «Ver conversación» en la Mesa), monitor y alertas del propio bot.
+- Antes de producción (Fase 6): las alertas técnicas ya en producción ([ALERTAS_TECNICAS.md](ALERTAS_TECNICAS.md) §1), porque el aviso al grupo sale por su canal.
+
+## 16. Bitácora de la Fase 5 (2026-10-20)
+
+### Qué quedó
+
+- **Las cifras** (`SupportBotStatsService.cifras`, `GET /support-bot/admin/stats?dias=7|30`, solo super admin):
+  - Conversaciones, personas y clínicas; respuestas con IA y sin IA; las que el manual no cubrió; el tiempo de respuesta con IA (promedio y percentil 90).
+  - Cuántas conversaciones con respuesta terminaron sin caso; casos abiertos por el asistente; «Me sirvió» / «No, abrir un caso».
+  - Por clínica: conversaciones, personas, respuestas con y sin IA, tokens de entrada y salida y casos.
+  - Sin las conversaciones de prueba del super admin. Todo con la base y Redis, sin IA.
+- **El código, contado en Redis por día** (`SupportBotWatchService.contar`, `soporte:cifras:<día>`, 40 días). Los códigos se borran un día después de vencer, así que «cuántos se quedan en el código» no sale de la base. Se cuentan los códigos pedidos, los equivocados, las cuentas bloqueadas y los mensajes sin código. «Nadie los escribió» = pedidos − conversaciones abiertas.
+- **Lo que el manual no cubrió** (`GET /support-bot/admin/uncovered`): las últimas 100 respuestas marcadas «no cubierta», con lo que la persona escribió antes (sin comandos) y con cédulas, teléfonos y correos ocultos (`preguntasSinCubrir` en `shared`).
+- **Las conversaciones** (`GET /support-bot/admin/conversations` y `/:id`): lista con filtros (periodo, clínica, terminaron en caso, el manual no cubrió algo, «No, abrir un caso»), de a 50 con cursor. El detalle trae los mensajes tal cual, con fuente, tipo, temas, proveedor, tiempo y tokens, y sus casos. Abrir una deja `SUPPORT_BOT_CONVERSATION_VIEWED` en la bitácora del sistema, con quién y cuál.
+- **Web**:
+  - En `/super-admin/soporte-bot`, debajo de la configuración, «Cómo va» (7 o 30 días por la URL) y «Lo que el manual no cubrió».
+  - Páginas nuevas `/super-admin/soporte-bot/conversaciones` y `/[id]`, solo lectura.
+  - La Mesa de Ayuda enlaza «Ver la conversación con el asistente» en los casos abiertos por Telegram.
+- **La vigilancia**:
+  - El monitor de servicios suma `soporte`: el webhook del bot (`getWebhookInfo`); DOWN si Telegram no apunta a él y DEGRADED si retiene mensajes del personal. Solo con `SUPPORT_BOT_ENABLED=true` y el asistente encendido.
+  - Alertas técnicas nuevas, en la categoría `ASISTENTE_SOPORTE` (también la del monitor), todas advertencias porque el personal sigue recibiendo respuesta:
+    - `SOPORTE_SIN_IA`: la IA de una clínica falla o responde algo ilegible 3 veces en 15 minutos; se resuelve con la primera respuesta con IA.
+    - `SOPORTE_TOPE_IA`: evento, una vez por clínica y día.
+    - `SOPORTE_CODIGOS_FALLIDOS`: evento, 20 códigos equivocados en 10 minutos desde cualquier cuenta.
+  - Lo que no es una falla (la clínica sin IA configurada, el tope) no cuenta como falla de la IA.
+- **En `AGENIA.md`**: una pregunta nueva en Soporte («¿Quién ve lo que le escribo al asistente?»), las secciones 8, 9, 13 y 15 y la bitácora. También `docs/MONITOR_SERVICIOS.md`.
+- **Base de datos**: sin migración.
+
+### Decisiones de detalle tomadas al construir
+
+- **Las cifras y las conversaciones pasan por la API**, como la configuración, porque los contadores del código están en Redis. Con `SUPPORT_BOT_ENABLED` apagado, la página no las pide.
+- **El incidente del monitor va en la categoría del asistente**, no en «Servicios externos»: se apaga junto con sus otras alertas y no se le cuenta al personal (sus frases fijas no lo conocen).
+- **«Sin IA» necesita 3 fallos en 15 minutos**: una sola respuesta lenta no es un problema, y una alerta por cada una sería ruido.
+- **Abrir una conversación queda en la bitácora del sistema** y no en la auditoría global: no hace falta migración para un valor nuevo del enum, y la bitácora ya es solo del super admin.
+- **El periodo es de 7 o 30 días**: las conversaciones se guardan 180, pero los contadores de Redis viven 40.
+
+### Cómo se verificó
+
+- **API**: 3.630 pruebas en verde, con el umbral de cobertura cumplido (funciones 94,2 %). `nest build` sin errores y `eslint` limpio.
+- **`shared`**: 1.520 pruebas en verde (la de tiempo del buscador se pasó de su tiempo con todo corriendo a la vez y pasa sola). El umbral global de funciones sigue igual que antes por los mismos cuatro archivos ajenos.
+- **Web**: 1.176 pruebas en verde, `tsc` sin errores y `next build` completo con las tres páginas.
+- **Postgres 15 real**: la integración (40 pruebas) corre las consultas de las cifras: el `groupBy` de respuestas con filtro por la conversación, los conteos, las preguntas sin cubrir, la lista con filtros y cursor y el detalle.
+- **De punta a punta con la API real** (Postgres y Redis desechables y el Telegram falso): 23 comprobaciones en verde.
+  - 20 códigos equivocados de 5 cuentas abren la alerta, en la categoría del asistente.
+  - Las cifras cuentan la conversación, la respuesta sin IA, el código pedido, los 21 equivocados, el bloqueo y el mensaje sin código.
+  - Una agente recibe 403 en las cifras.
+  - La lista y el detalle de la conversación funcionan, y abrirla queda en la bitácora. Un id inválido da 400 y uno inexistente, 404.
+  - El monitor ve el bot del asistente UP y, cuando Telegram deja de apuntarle, DOWN con su motivo. Su vuelta automática abrió el incidente en la categoría del asistente.
+- **`next start` real** contra esa API y esa base, con la sesión del super admin: las tres páginas responden 200 con los datos de la prueba.
+
+### Pendiente
+
+- El examen con un modelo real (§13).
+- «Avísame cuando se resuelva» para una falla general que el equipo ya atiende (§15).
+- La Fase 6: las alertas técnicas en producción, la ruta del webhook en el Caddy, `SUPPORT_BOT_ENABLED=true`, el bot en @BotFather y el piloto con 3 a 5 personas del hospital.

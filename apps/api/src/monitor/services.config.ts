@@ -90,6 +90,16 @@ export const SERVICES_CONFIG: ServiceConfig[] = [
     enabled: true,
     timeoutMs: DEFAULT_TIMEOUT_MS,
   },
+  {
+    // 🛟 El bot del asistente de soporte del personal (docs/PLAN_BOT_SOPORTE.md,
+    // Fase 5): si Telegram deja de entregarle al webhook, el personal escribe y
+    // nadie le responde. Mismo `getWebhookInfo` que el de las clínicas.
+    key: 'soporte',
+    displayName: 'Asistente de soporte (Telegram)',
+    group: 'telegram',
+    enabled: true,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+  },
 ];
 
 /** Solo los servicios activos — lo que realmente recorren los dos modos. */

@@ -1,8 +1,16 @@
 # 📡 Monitor de Servicios externos (Google / Meta)
 
 Monitorea la salud de las integraciones externas del sistema (Gemini AI,
-Google Cloud TTS, Meta WhatsApp Cloud API). Sección global del **SUPER_ADMIN**
-en `/super-admin/monitor`.
+Google Cloud TTS, Meta WhatsApp Cloud API, el espejo con el HIS, el bot de
+Telegram de cada clínica y el bot del asistente de soporte del personal).
+Sección global del **SUPER_ADMIN** en `/super-admin/monitor`.
+
+> **Asistente de soporte** (`soporte`, docs/PLAN_BOT_SOPORTE.md §16): solo con
+> `SUPPORT_BOT_ENABLED=true` y el asistente encendido. `getWebhookInfo` dice si
+> Telegram sigue apuntando a `/support-bot/webhook/<ruta>` (si no: DOWN) y
+> cuántos mensajes del personal retiene (más de `MONITOR_TELEGRAM_PENDING_MAX`,
+> o alguno con error: DEGRADED). Su alerta técnica va en la categoría «Asistente
+> de soporte» y no se le cuenta al personal.
 
 ## Arquitectura dual
 

@@ -140,7 +140,7 @@ export default function EspejoClient({ data }: { data: Estado }) {
 
     const reconciliacion = data.ultimaReconciliacion
         ? data.ultimaReconciliacion.outcome === 'OK'
-            ? { estado: 'ok' as const, detalle: `Sin diferencias entre los dos sistemas (${formatDateShort(data.ultimaReconciliacion.createdAt)}).` }
+            ? { estado: 'ok' as const, detalle: `Sin diferencias en las citas que maneja AgenIA (${formatDateShort(data.ultimaReconciliacion.createdAt)}).` }
             : { estado: 'mal' as const, detalle: `Los dos sistemas no coinciden (${formatDateShort(data.ultimaReconciliacion.createdAt)}). Revise los conflictos.` }
         : { estado: 'atencion' as const, detalle: 'Todavía no ha corrido ninguna comparación completa.' };
 

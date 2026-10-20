@@ -18,6 +18,10 @@ import { textoParaCoincidencia } from './texto-para-coincidencia.util';
  *   YA_LLEGO           → (2026-10-17) «Acá estamos esperando», «ya llegué», «ya estoy
  *                        en el hospital»: avisa que está allá. Antes recibía «por
  *                        aquí solo puedo ayudarle con sus citas».
+ *   OTRA_HORA          → (2026-10-20) «en ventanilla me dijeron que a las 5:50», «me
+ *                        dieron la cita para el jueves»: le dieron otra hora o día.
+ *                        Antes la IA lo tomaba por querer agendar y recibía «no es
+ *                        posible agendar».
  *   NUMERO_EQUIVOCADO  → «Vicentico está equivocado de número», «no conozco a esa
  *                        persona»: el teléfono que el hospital tiene del paciente es
  *                        de otra persona.
@@ -37,6 +41,7 @@ export type RespuestaAlBot =
   | 'PREGUNTA_CITA'
   | 'PREGUNTA_TURNO'
   | 'YA_LLEGO'
+  | 'OTRA_HORA'
   | 'NUMERO_EQUIVOCADO'
   | 'NO_ASISTIRA'
   | 'CAMBIAR'
@@ -91,6 +96,18 @@ const PREGUNTA_TURNO =
 // clínica». «No llegué» (no fue) NO; «allá estaré» (futuro) es una confirmación.
 const YA_LLEGO =
   /((?<!no )\b(ya )?(llegue|llegamos|estoy llegando|estamos llegando)\b|\b(ya )?(estoy|estamos|me encuentro|nos encontramos) (aca|aqui|en el hospital|en la clinica|en el centro de salud|en (la )?sala de espera|en (la )?recepcion|en la fila)\b|\b(aca|aqui) (estoy|estamos|me encuentro|nos encontramos)\b|\b(aca|aqui) (esperando|en espera)\b|\b(estoy|estamos) (aca |aqui )?esperando (turno|el turno|que me llamen|a que me llamen|al (doctor|medico|la doctora)|la atencion|que me atiendan)\b)/;
+
+// Le dieron otra hora o día: «en ventanilla me dijeron que a las 5:50», «me la
+// dieron para el jueves», «tengo entendido que era por la tarde». Las dos cosas a
+// la vez: quién se lo dijo («me dijeron», «tengo entendido»…) y una hora o un día;
+// «me dijeron que llamara» no es esto. «Otro día» u «otra hora» NO cuentan: eso es
+// pedir un cambio (CAMBIAR, que va antes).
+const LE_DIJERON =
+  /\b((me|nos|le) (la |lo )?(dijeron|dijo|informaron|informo|indicaron|indico|dieron|dio|asignaron|asigno|programaron|programo|agendaron|agendo|anotaron|anoto)|(tengo|tenia) entendido|(pense|crei|creia) que (era|es|seria)|no (era|es) (a|para) las)\b/;
+// Dónde se lo dijeron no es otro tema: «en ventanilla / en caja me dijeron…».
+const DONDE_SE_LO_DIJERON = /\b(ventanilla|caja|facturacion)\b/g;
+const UNA_HORA_O_DIA =
+  /\b((a|para) las \d|\d{1,2} \d{2}\b|\d{1,2} ?(am|pm|a m|p m)\b|(el|para el|este|el proximo) (lunes|martes|miercoles|jueves|viernes|sabado|domingo)|pasado manana|(por|en) la (manana|tarde|noche)|manana)/;
 
 // «¿la puedo mover para otro día?». «cambi…» solo con la cita, la fecha o la hora
 // de por medio: «cambié de EPS» no es pedir otra fecha.
@@ -185,6 +202,15 @@ export function clasificarRespuestaAlBot(
   // Después de «no puedo ir» (lo que diga de no ir manda) y antes de la pregunta
   // por la cita y de la confirmación: «gracias, ya llegué» avisa que está allá.
   if (YA_LLEGO.test(t)) return 'YA_LLEGO';
+  // «me dijeron que la farmacia abre a las 7» es de otro tema.
+  if (
+    LE_DIJERON.test(t) &&
+    UNA_HORA_O_DIA.test(t) &&
+    (MENCIONA_CITA.test(t) ||
+      !OTRO_TEMA.test(t.replace(DONDE_SE_LO_DIJERON, ' ')))
+  ) {
+    return 'OTRA_HORA';
+  }
   if (LUGAR_U_HORA.test(t)) {
     return MENCIONA_CITA.test(t) || !OTRO_TEMA.test(t) ? 'PREGUNTA_CITA' : null;
   }

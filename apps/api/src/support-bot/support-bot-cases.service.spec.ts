@@ -3,6 +3,7 @@ import { FLUJO_VACIO, type BorradorCaso } from '@agenia/shared';
 import { SupportBotCasesService } from './support-bot-cases.service';
 import type { Interlocutor } from './support-bot-session.service';
 import type { PrismaService } from '../prisma/prisma.service';
+import type { SupportTicketGroupNotifier } from '../tech-alerts/support-ticket-group.notifier';
 
 /**
  * Los casos desde el asistente. Lo que no puede fallar:
@@ -39,8 +40,11 @@ describe('SupportBotCasesService', () => {
     supportTicketNote: { create: jest.Mock };
     supportBotMessage: { findMany: jest.Mock };
     supportBotConversation: { findUnique: jest.Mock; updateMany: jest.Mock };
+    supportBotPreference: { findUnique: jest.Mock };
     techAlert: { findMany: jest.Mock };
+    $transaction: jest.Mock;
   };
+  let pronto: jest.Mock;
   let svc: SupportBotCasesService;
 
   beforeEach(() => {
@@ -49,6 +53,7 @@ describe('SupportBotCasesService', () => {
         findMany: jest.fn(async () => []),
         findFirst: jest.fn(async () => ({ id: 't-58' })),
         create: jest.fn(async () => ({ number: 59 })),
+        updateMany: jest.fn(async () => ({ count: 1 })),
       },
       supportTicketNote: { create: jest.fn(async () => ({})) },
       supportBotMessage: { findMany: jest.fn(async () => []) },
@@ -56,9 +61,17 @@ describe('SupportBotCasesService', () => {
         findUnique: jest.fn(async () => null),
         updateMany: jest.fn(async () => ({ count: 1 })),
       },
+      supportBotPreference: { findUnique: jest.fn(async () => null) },
       techAlert: { findMany: jest.fn(async () => []) },
+      $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     };
-    svc = new SupportBotCasesService(prisma as unknown as PrismaService);
+    pronto = jest.fn();
+    svc = new SupportBotCasesService(
+      prisma as unknown as PrismaService,
+      {
+        pronto,
+      } as unknown as SupportTicketGroupNotifier,
+    );
   });
 
   it('sus casos: de ella y de su clínica, abiertos o solucionados en el último mes', async () => {
@@ -157,6 +170,15 @@ describe('SupportBotCasesService', () => {
     });
   });
 
+  it('al abrirlo, el aviso al grupo no espera al minuto', async () => {
+    await svc.abrirCaso(ANA, BORRADOR);
+    expect(pronto).toHaveBeenCalledTimes(1);
+    // Sin el despachador (pruebas, o la API sin alertas), abre igual.
+    await new SupportBotCasesService(
+      prisma as unknown as PrismaService,
+    ).abrirCaso(ANA, BORRADOR);
+  });
+
   it('abrir sin título (no debería pasar) no lanza', async () => {
     await svc.abrirCaso(ANA, { ...BORRADOR, titulo: null });
     expect(prisma.supportTicket.create).toHaveBeenCalledWith(
@@ -218,5 +240,105 @@ describe('SupportBotCasesService', () => {
       where: { id: 'conv-1' },
       data: { flowState: expect.objectContaining({ modoCaso: true }) },
     });
+  });
+
+  // ── Fase 4: el aviso de sus casos ─────────────────────────────────────────
+
+  it('🔒 el caso de un aviso: solo si es suyo y de su clínica', async () => {
+    prisma.supportTicket.findFirst.mockResolvedValue({
+      number: 58,
+      title: 'No salen',
+      status: 'RESOLVED',
+      resolutionNote: 'Se reinició.',
+    });
+    await expect(svc.casoDelAviso(ANA, 58)).resolves.toEqual({
+      numero: 58,
+      titulo: 'No salen',
+      estado: 'RESOLVED',
+      respuesta: 'Se reinició.',
+    });
+    expect(prisma.supportTicket.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { number: 58, reporterId: 'u-1', organizationId: 'org-1' },
+      }),
+    );
+    prisma.supportTicket.findFirst.mockResolvedValue(null);
+    await expect(svc.casoDelAviso(ANA, 99)).resolves.toBeNull();
+  });
+
+  describe('🔒 reabrir («No, sigue pasando»)', () => {
+    it('solo un caso suyo, solucionado hace menos de 7 días: vuelve a abierto, con su nota, y el grupo se entera', async () => {
+      await expect(svc.reabrir(ANA, 58, AHORA)).resolves.toBe(true);
+      expect(prisma.supportTicket.findFirst).toHaveBeenCalledWith({
+        where: {
+          number: 58,
+          reporterId: 'u-1',
+          organizationId: 'org-1',
+          status: 'RESOLVED',
+          resolvedAt: { gte: new Date('2026-10-12T15:00:00Z') },
+        },
+        select: { id: true },
+      });
+      expect(prisma.supportTicket.updateMany).toHaveBeenCalledWith({
+        where: { id: 't-58', status: 'RESOLVED' },
+        data: {
+          status: 'OPEN',
+          startedAt: null,
+          resolvedAt: null,
+          reopenedCount: { increment: 1 },
+          groupNotice: 'PENDING',
+          groupNoticeAttempts: 0,
+          groupNoticeError: null,
+          groupNotifiedAt: null,
+          unattendedRemindedAt: null,
+          reporterNotifiedStatus: 'OPEN',
+          reporterNotifiedAt: AHORA,
+        },
+      });
+      expect(prisma.supportTicketNote.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          ticketId: 't-58',
+          authorId: 'u-1',
+          channel: 'TELEGRAM',
+          kind: 'REAPERTURA',
+        }),
+      });
+      expect(pronto).toHaveBeenCalledTimes(1);
+    });
+
+    it('si no es suyo, ya no está solucionado o pasaron 7 días: no hace nada', async () => {
+      prisma.supportTicket.findFirst.mockResolvedValue(null);
+      await expect(svc.reabrir(ANA, 58, AHORA)).resolves.toBe(false);
+      expect(prisma.supportTicket.updateMany).not.toHaveBeenCalled();
+      expect(pronto).not.toHaveBeenCalled();
+    });
+
+    it('🏁 si otro lo reabrió en el mismo instante, no deja una segunda nota', async () => {
+      prisma.supportTicket.updateMany.mockResolvedValue({ count: 0 });
+      await expect(svc.reabrir(ANA, 58)).resolves.toBe(false);
+      expect(prisma.supportTicketNote.create).not.toHaveBeenCalled();
+    });
+  });
+
+  it('lo que escribió sin respuesta todavía (sin comandos)', async () => {
+    prisma.supportBotMessage.findMany.mockResolvedValue([
+      { direction: 'ENTRADA', text: 'sigue igual' },
+      { direction: 'ENTRADA', text: '/nuevo' },
+      { direction: 'SALIDA', text: 'Listo, reabrí el caso #58.' },
+      { direction: 'ENTRADA', text: 'hola' },
+    ]);
+    await expect(svc.textosSinResponder('conv-1')).resolves.toEqual([
+      'sigue igual',
+    ]);
+    prisma.supportBotMessage.findMany.mockResolvedValue([]);
+    await expect(svc.textosSinResponder('conv-1')).resolves.toEqual([]);
+  });
+
+  it('los avisos de sus casos: encendidos salvo que los apague', async () => {
+    await expect(svc.recibeAvisos('u-1')).resolves.toBe(true);
+    prisma.supportBotPreference.findUnique.mockResolvedValue({
+      ticketNotices: false,
+    });
+    await expect(svc.recibeAvisos('u-1')).resolves.toBe(false);
   });
 });

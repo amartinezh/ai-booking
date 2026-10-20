@@ -106,6 +106,31 @@ describe('clasificarRespuestaAlBot', () => {
   );
 
   it.each([
+    // Caso real 2026-10-20 07:19, con la cita a las 6:10 p. m.
+    'Hola, es que en ventanilla me dijeron que a las 5:50 pl',
+    'Me dieron la cita para las 3 de la tarde',
+    'Tengo entendido que era el jueves',
+    'pero me dijeron que era por la mañana',
+    'Señorita, no era a las 7?',
+    'me la dieron para el viernes a las 8 am',
+  ])('«%s» → OTRA_HORA', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe('OTRA_HORA');
+  });
+
+  it.each([
+    ['me dijeron que llamara', null],
+    // Lo que diga de no ir, de cambiarla o de que ya llegó manda.
+    ['me dijeron que a las 5 pero no puedo ir', 'NO_ASISTIRA'],
+    ['me dijeron que la puedo pasar para otro día', 'CAMBIAR'],
+    ['ya llegué, me dijeron que a las 5:50', 'YA_LLEGO'],
+    // De otro tema.
+    ['me dijeron que la farmacia abre a las 7', null],
+    ['Sí voy a las 6:10', 'CONFIRMA'],
+  ])('«%s» → %s (no OTRA_HORA)', (texto, tipo) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe(tipo);
+  });
+
+  it.each([
     'Vicentico está equivocado de número',
     'Número equivocado',
     'No conozco a esa persona',

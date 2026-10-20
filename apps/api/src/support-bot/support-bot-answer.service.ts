@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import {
   banderasDelEspejo,
   baseDelPanel,
@@ -32,6 +32,7 @@ import type {
 import { SupportBotCasesService } from './support-bot-cases.service';
 import { SupportBotKnowledgeService } from './support-bot-knowledge.service';
 import type { Interlocutor } from './support-bot-session.service';
+import { SupportBotWatchService } from './support-bot-watch.service';
 import type { SupportBotRuntime } from './support-bot.types';
 
 const NOMBRE_PROVEEDOR: Record<string, string | null> = {
@@ -118,6 +119,7 @@ export class SupportBotAnswerService {
     private readonly llm: LlmFactoryService,
     private readonly conocimiento: SupportBotKnowledgeService,
     private readonly casos: SupportBotCasesService,
+    @Optional() private readonly vigilancia?: SupportBotWatchService,
   ) {}
 
   /** La respuesta a lo pendiente, o null si no hay nada que responder. */
@@ -162,7 +164,7 @@ export class SupportBotAnswerService {
     );
     if (!manual) return this.sinIA(escrito, 'SIN_MANUAL', []);
 
-    if (!(await this.dentroDelTope(yo.organizationId, rt, ahora))) {
+    if (!(await this.dentroDelTope(yo, rt, ahora))) {
       return this.sinIA(escrito, 'TOPE_DIARIO', manual.temasDeOtroRol);
     }
 
@@ -194,15 +196,24 @@ export class SupportBotAnswerService {
         timeoutMs: LIMITES_SOPORTE.esperaIaSegundos * 1000,
       }),
     );
-    if (!r) return this.sinIA(escrito, 'FALLO', manual.temasDeOtroRol);
+    const clinicaDeYo = { id: yo.organizationId, nombre: yo.organizationName };
+    if (!r) {
+      void this.vigilancia?.iaFallo(clinicaDeYo, 'la IA falló o tardó');
+      return this.sinIA(escrito, 'FALLO', manual.temasDeOtroRol);
+    }
 
     const leida = leerRespuestaIA(r.respuesta.texto, manual.temasValidos);
     if (!leida) {
       this.logger.warn(
         `La IA (${r.proveedor}) devolvió algo que no se pudo leer como respuesta del asistente.`,
       );
+      void this.vigilancia?.iaFallo(
+        clinicaDeYo,
+        'la IA respondió algo ilegible',
+      );
       return this.sinIA(escrito, 'NO_SE_PUDO_LEER', manual.temasDeOtroRol);
     }
+    void this.vigilancia?.iaRespondio(yo.organizationId);
 
     const armada = respuestaConIA({
       ia: leida.respuesta,
@@ -323,15 +334,23 @@ export class SupportBotAnswerService {
    * hay tope (mejor responder que callar).
    */
   private async dentroDelTope(
-    organizationId: string,
+    yo: Interlocutor,
     rt: SupportBotRuntime,
     ahora: Date,
   ): Promise<boolean> {
     if (rt.maxAiTurnsPerOrgPerDay <= 0) return false;
     try {
-      const clave = `soporte:ia:${organizationId}:${diaLocal(ahora)}`;
+      const clave = `soporte:ia:${yo.organizationId}:${diaLocal(ahora)}`;
       const n = await this.redis.incr(clave);
       if (n === 1) await this.redis.expire(clave, 2 * 24 * 3600);
+      // La primera vez que se pasa en el día, el equipo técnico se entera.
+      if (n === rt.maxAiTurnsPerOrgPerDay + 1) {
+        void this.vigilancia?.topeAlcanzado(
+          { id: yo.organizationId, nombre: yo.organizationName },
+          rt.maxAiTurnsPerOrgPerDay,
+          ahora,
+        );
+      }
       return n <= rt.maxAiTurnsPerOrgPerDay;
     } catch (e: unknown) {
       this.logger.warn(`Sin tope diario de IA (Redis): ${getErrorMessage(e)}`);

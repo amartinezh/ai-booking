@@ -5,6 +5,8 @@ import { IntegrationsService } from '../integrations/integrations.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SERVICES_CONFIG } from './services.config';
 import { TelegramConfigService } from '../telegram/telegram-config.service';
+import { TelegramApiClient } from '../telegram/telegram-api.client';
+import { CryptoService } from '../common/crypto/crypto.service';
 
 // ══════════════════════════════════════════════════════════════════════════
 // El checker del espejo nace de un fallo real: el 2026-08-31 el agente
@@ -693,5 +695,159 @@ describe('MonitorCheckers — Telegram', () => {
     expect(r.status).toBe('DOWN');
     expect(r.errorMessage).toContain('Uno');
     expect(r.errorMessage).toContain('Dos');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// El bot del asistente de soporte del personal (docs/PLAN_BOT_SOPORTE.md,
+// Fase 5): si Telegram deja de entregarle, el personal escribe y nadie responde.
+// ══════════════════════════════════════════════════════════════════════════
+describe('MonitorCheckers — asistente de soporte', () => {
+  let checkers: MonitorCheckers;
+  let prisma: any;
+  let api: { getWebhookInfo: jest.Mock };
+  let cipher: { decrypt: jest.Mock };
+  let env: Record<string, string | undefined>;
+  const svc = SERVICES_CONFIG.find((s) => s.key === 'soporte')!;
+  const URL = 'https://api.prueba.co/support-bot/webhook/ruta';
+  const info = (over: Record<string, unknown> = {}) => ({
+    ok: true,
+    result: { url: URL, pending_update_count: 0, ...over },
+  });
+
+  beforeEach(async () => {
+    env = { SUPPORT_BOT_ENABLED: 'true' };
+    process.env.PUBLIC_API_URL = 'https://api.prueba.co';
+    prisma = {
+      supportBotConfig: {
+        findUnique: jest.fn(async () => ({
+          enabled: true,
+          encryptedBotToken: 'cifrado',
+          routeKey: 'ruta',
+        })),
+      },
+    };
+    api = { getWebhookInfo: jest.fn(async () => info()) };
+    cipher = { decrypt: jest.fn(() => '123:token') };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MonitorCheckers,
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn((k: string) => env[k]) },
+        },
+        { provide: IntegrationsService, useValue: {} },
+        { provide: PrismaService, useValue: prisma },
+        { provide: TelegramConfigService, useValue: {} },
+        { provide: TelegramApiClient, useValue: api },
+        { provide: CryptoService, useValue: cipher },
+      ],
+    }).compile();
+    checkers = module.get(MonitorCheckers);
+  });
+
+  afterEach(() => {
+    delete process.env.PUBLIC_API_URL;
+  });
+
+  it('está registrado, activo y en el grupo de Telegram', () => {
+    expect(svc).toMatchObject({ enabled: true, group: 'telegram' });
+  });
+
+  it.each([
+    ['sin SUPPORT_BOT_ENABLED', () => (env.SUPPORT_BOT_ENABLED = undefined)],
+    [
+      'con el asistente apagado',
+      () =>
+        prisma.supportBotConfig.findUnique.mockResolvedValue({
+          enabled: false,
+          encryptedBotToken: 'x',
+          routeKey: 'ruta',
+        }),
+    ],
+    [
+      'sin bot conectado',
+      () => prisma.supportBotConfig.findUnique.mockResolvedValue(null),
+    ],
+  ])('%s no aplica y no llama a Telegram', async (_, preparar) => {
+    preparar();
+    expect((await checkers.checkService(svc)).skip).toBe(true);
+    expect(api.getWebhookInfo).not.toHaveBeenCalled();
+  });
+
+  it('webhook sano → UP, con el token descifrado', async () => {
+    const r = await checkers.checkService(svc);
+    expect(r).toMatchObject({ status: 'UP', errorMessage: null });
+    expect(api.getWebhookInfo).toHaveBeenCalledWith('123:token');
+  });
+
+  it('Telegram ya no apunta al webhook del asistente → DOWN', async () => {
+    api.getWebhookInfo.mockResolvedValue(info({ url: '' }));
+    const r = await checkers.checkService(svc);
+    expect(r.status).toBe('DOWN');
+    expect(r.errorMessage).toContain('nadie le responde');
+  });
+
+  it('mensajes del personal retenidos con error → DEGRADED; pocos sin error, no', async () => {
+    api.getWebhookInfo.mockResolvedValue(
+      info({ pending_update_count: 3, last_error_message: '502 Bad Gateway' }),
+    );
+    const r = await checkers.checkService(svc);
+    expect(r.status).toBe('DEGRADED');
+    expect(r.errorMessage).toBe(
+      '3 mensaje(s) del personal retenidos en Telegram — 502 Bad Gateway.',
+    );
+    api.getWebhookInfo.mockResolvedValue(info({ pending_update_count: 2 }));
+    expect((await checkers.checkService(svc)).status).toBe('UP');
+    api.getWebhookInfo.mockResolvedValue(info({ pending_update_count: 11 }));
+    expect((await checkers.checkService(svc)).status).toBe('DEGRADED');
+  });
+
+  it('Telegram no responde o rechaza el token → DOWN', async () => {
+    api.getWebhookInfo.mockResolvedValue({
+      ok: false,
+      errorCode: 401,
+      description: 'Unauthorized',
+    });
+    expect(await checkers.checkService(svc)).toMatchObject({
+      status: 'DOWN',
+      errorCode: 'AUTH',
+    });
+    api.getWebhookInfo.mockResolvedValue({
+      ok: false,
+      errorCode: null,
+      description: 'ECONNRESET',
+    });
+    expect((await checkers.checkService(svc)).errorCode).toBe('TELEGRAM');
+  });
+
+  it('un token que no se puede descifrar → DOWN, sin llamar a Telegram', async () => {
+    cipher.decrypt.mockImplementation(() => {
+      throw new Error('llave');
+    });
+    const r = await checkers.checkService(svc);
+    expect(r).toMatchObject({ status: 'DOWN', errorCode: 'AUTH' });
+    expect(api.getWebhookInfo).not.toHaveBeenCalled();
+  });
+});
+
+describe('MonitorCheckers — asistente de soporte sin el cliente de Telegram', () => {
+  it('no aplica', async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MonitorCheckers,
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn(() => 'true') },
+        },
+        { provide: IntegrationsService, useValue: {} },
+        { provide: PrismaService, useValue: {} },
+        { provide: TelegramConfigService, useValue: {} },
+      ],
+    }).compile();
+    const r = await module
+      .get(MonitorCheckers)
+      .checkService(SERVICES_CONFIG.find((s) => s.key === 'soporte')!);
+    expect(r.skip).toBe(true);
   });
 });

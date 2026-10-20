@@ -522,19 +522,60 @@ export {
 } from './src/soporte-bot-conocimiento';
 export type { ManualDelAsistente, SeccionParte2 } from './src/soporte-bot-conocimiento';
 export {
+  CONTADORES_SOPORTE,
+  TEXTO_MOTIVO_CIERRE,
+  VIGILANCIA_SOPORTE,
+  claveCifrasDelDia,
+  diasDelPeriodo,
+  filtroDeConversaciones,
+  inicioDelPeriodo,
+  percentil,
+  periodoDeCifras,
+  porcentaje,
+  preguntasSinCubrir,
+  promedio,
+  sumarContadores,
+  ventanaDe,
+} from './src/soporte-bot-cifras';
+export type {
+  CifrasAsistente,
+  ContadorSoporte,
+  DetalleConversacion,
+  FilaConversacion,
+  FiltroConversaciones,
+  MensajeDeLaConversacion,
+  PeriodoCifras,
+  PreguntaSinCubrir,
+} from './src/soporte-bot-cifras';
+export {
+  AVISO_CASO_AL_GRUPO,
   CANALES_CASO,
   LIMITES_CASO,
   MAX_TITULO_EN_AVISO,
   PRIORIDADES_CASO,
   ROL_LEGIBLE,
+  TEXTO_SIN_AVISO_CASO,
   TIPOS_NOTA_CASO,
+  estadoDelAvisoAlGrupo,
   gravedadDelAvisoDeCaso,
+  motivoEsperaAvisoCaso,
   numeroDeCaso,
+  pasoDelAvisoAlGrupo,
   textoAvisoCasoNuevo,
   textoCasoReabierto,
   textoCasoSinTomar,
+  tocaRecordarSinTomar,
 } from './src/soporte-caso';
-export type { CanalCaso, DatosAvisoCaso, PrioridadCaso, TipoNotaCaso } from './src/soporte-caso';
+export type {
+  CanalCaso,
+  DatosAvisoCaso,
+  EstadoAvisoAlGrupo,
+  MotivoEsperaAvisoCaso,
+  MotivoOmitirAvisoCaso,
+  PasoAvisoCaso,
+  PrioridadCaso,
+  TipoNotaCaso,
+} from './src/soporte-caso';
 export {
   HORARIO_EQUIPO_POR_DEFECTO,
   enHorarioDelEquipo,

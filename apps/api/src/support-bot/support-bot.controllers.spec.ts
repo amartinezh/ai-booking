@@ -14,6 +14,7 @@ import { supportBotEnabled } from './support-bot.module';
 import type { SupportBotConfigService } from './support-bot-config.service';
 import type { SupportBotSessionService } from './support-bot-session.service';
 import type { SupportBotService } from './support-bot.service';
+import type { SupportBotStatsService } from './support-bot-stats.service';
 import type { InboundQueueService } from '../chatbot/inbound-queue.service';
 import type { Request } from 'express';
 
@@ -204,6 +205,7 @@ describe('SupportBotPanelController y SupportBotAdminController', () => {
     const ctrl = new SupportBotAdminController(
       config as unknown as SupportBotConfigService,
       sesiones as unknown as SupportBotSessionService,
+      {} as SupportBotStatsService,
     );
     await ctrl.getConfig();
     await ctrl.connect({ botToken: 'x' }, SA, req);
@@ -229,6 +231,52 @@ describe('SupportBotPanelController y SupportBotAdminController', () => {
     await ctrl.codigoDePrueba({ organizationId: 'org-9' }, SA);
     expect(sesiones.generarCodigo).toHaveBeenCalledWith('sa', {
       testOrganizationId: 'org-9',
+    });
+  });
+
+  it('cifras, preguntas sin cubrir y conversaciones: lo de la URL se limpia; quien abre una sale del token', async () => {
+    const cifras = {
+      cifras: jest.fn(async () => ({})),
+      preguntasSinCubrir: jest.fn(async () => []),
+      conversaciones: jest.fn(async () => ({ filas: [], siguiente: null })),
+      conversacion: jest.fn(async () => ({})),
+    };
+    const ctrl = new SupportBotAdminController(
+      config as unknown as SupportBotConfigService,
+      sesiones as unknown as SupportBotSessionService,
+      cifras as unknown as SupportBotStatsService,
+    );
+    await ctrl.stats('30');
+    await ctrl.stats('365');
+    expect(cifras.cifras.mock.calls).toEqual([[30], [7]]);
+    await ctrl.uncovered(undefined);
+    expect(cifras.preguntasSinCubrir).toHaveBeenCalledWith(7);
+    await ctrl.conversations('30', 'org-1', 'NO_UTIL', 'c9');
+    expect(cifras.conversaciones).toHaveBeenCalledWith({
+      dias: 30,
+      organizationId: 'org-1',
+      tipo: 'NO_UTIL',
+      cursor: 'c9',
+    });
+    await ctrl.conversations(undefined, '', 'cualquier cosa', '');
+    expect(cifras.conversaciones).toHaveBeenLastCalledWith({
+      dias: 7,
+      organizationId: null,
+      tipo: 'TODAS',
+      cursor: null,
+    });
+    await ctrl.conversation('c1', SA);
+    expect(cifras.conversacion).toHaveBeenCalledWith('c1', {
+      userId: 'sa',
+      email: 'sa@agenia.co',
+    });
+    await ctrl.conversation('c1', {
+      userId: 'sa',
+      role: 'SUPER_ADMIN',
+    } as never);
+    expect(cifras.conversacion).toHaveBeenLastCalledWith('c1', {
+      userId: 'sa',
+      email: 'super admin',
     });
   });
 });

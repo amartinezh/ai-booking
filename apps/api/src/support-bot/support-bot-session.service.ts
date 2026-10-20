@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { createHmac, randomBytes, randomInt } from 'crypto';
@@ -25,6 +26,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { getErrorMessage } from '../common/error-message.util';
 import { SupportBotConfigService } from './support-bot-config.service';
+import { SupportBotWatchService } from './support-bot-watch.service';
 import type {
   CodigoGenerado,
   EstadoAsistenteParaUsuario,
@@ -64,6 +66,12 @@ export type EstadoConversacion =
   | { tipo: 'REVOCADA'; chatId: string }
   | { tipo: 'VIGENTE'; interlocutor: Interlocutor };
 
+/** Un botón de un aviso que espera el código: sus datos y el mensaje donde estaba. */
+export interface AccionEnEspera {
+  datos: string;
+  messageId: number | null;
+}
+
 /**
  * Códigos y conversaciones del asistente de soporte (docs/PLAN_BOT_SOPORTE.md
  * §3.1, S3): el código del panel se pide EN CADA CONVERSACIÓN.
@@ -85,6 +93,7 @@ export class SupportBotSessionService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly config: SupportBotConfigService,
+    @Optional() private readonly vigilancia?: SupportBotWatchService,
   ) {
     this.clave =
       process.env.SUPPORT_BOT_CODE_KEY?.trim() ||
@@ -182,6 +191,7 @@ export class SupportBotSessionService {
             expiresAt,
           },
         });
+        void this.vigilancia?.contar('codigos');
         return {
           codigo,
           enlace: `https://t.me/${rt.botUsername}?start=${enlace}`,
@@ -591,6 +601,56 @@ export class SupportBotSessionService {
     }
   }
 
+  // ── Lo que tocó en un aviso sin conversación (Redis, 10 min) ──────────
+
+  /**
+   * «No, sigue pasando» o «Ver la respuesta» en un aviso, sin conversación abierta:
+   * se guarda y se hace apenas valide el código (§3.6). Una sola por cuenta: la
+   * última gana.
+   */
+  async guardarAccionEnEspera(
+    telegramUserId: string,
+    accion: AccionEnEspera,
+  ): Promise<boolean> {
+    try {
+      await this.redis.set(
+        claveAccion(telegramUserId),
+        JSON.stringify(accion),
+        'EX',
+        LIMITES_SOPORTE.accionEnEsperaMinutos * 60,
+      );
+      return true;
+    } catch (e: unknown) {
+      this.logger.warn(
+        `No se pudo guardar la acción en espera: ${getErrorMessage(e)}`,
+      );
+      return false;
+    }
+  }
+
+  async tomarAccionEnEspera(
+    telegramUserId: string,
+  ): Promise<AccionEnEspera | null> {
+    try {
+      const clave = claveAccion(telegramUserId);
+      const json = await this.redis.get(clave);
+      if (json === null) return null;
+      await this.redis.del(clave);
+      const a = JSON.parse(json) as Partial<AccionEnEspera>;
+      return typeof a.datos === 'string'
+        ? {
+            datos: a.datos,
+            messageId: typeof a.messageId === 'number' ? a.messageId : null,
+          }
+        : null;
+    } catch (e: unknown) {
+      this.logger.warn(
+        `No se pudo leer la acción en espera: ${getErrorMessage(e)}`,
+      );
+      return null;
+    }
+  }
+
   // ── Intentos (Redis) ───────────────────────────────────────────────────
 
   /** Minutos de bloqueo que le quedan a la cuenta, o 0 si puede intentar. */
@@ -622,6 +682,9 @@ export class SupportBotSessionService {
       this.logger.warn(`Sin conteo de intentos (Redis): ${getErrorMessage(e)}`);
     }
     const restantes = intentosRestantes(fallos);
+    // Para las cifras del panel y la alerta de muchos códigos equivocados.
+    void this.vigilancia?.codigoFallido();
+    if (restantes === 0) void this.vigilancia?.contar('bloqueos');
     return restantes === 0
       ? { tipo: 'BLOQUEADO', minutos: LIMITES_SOPORTE.bloqueoMinutos }
       : { tipo: 'INVALIDO', restantes };
@@ -644,6 +707,8 @@ export class SupportBotSessionService {
 
 const claveFallos = (telegramUserId: string) =>
   `soporte:fallos:${telegramUserId}`;
+const claveAccion = (telegramUserId: string) =>
+  `soporte:accion:${telegramUserId}`;
 const claveEspera = (telegramUserId: string) =>
   `soporte:espera:${telegramUserId}`;
 

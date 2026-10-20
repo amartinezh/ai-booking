@@ -637,5 +637,138 @@ describe('MirrorReconciliationService', () => {
         activeServiceWhatsappOff: {},
       });
     });
+
+    // ──────────────────────────────────────────────────────────────────
+    // 🩺 Por qué falta cada cita (2026-10-20): la reconciliación decía «296 que
+    // AgenIA desconoce» todos los días y eran de otros servicios.
+    // ──────────────────────────────────────────────────────────────────
+    describe('por qué falta cada cita del hospital', () => {
+      it('de otro servicio y sin cupo en AgenIA → no es deriva: OK, y se dice de qué médicos', async () => {
+        const logs: string[] = [];
+        jest
+          .spyOn((service as any).logger, 'log')
+          .mockImplementation((m: unknown) => logs.push(String(m)));
+
+        const r = await service.reconcile(
+          'org1',
+          [
+            // Médico que AgenIA no tiene, servicio no homologado.
+            his({ doctorExternalKey: 'ES01', serviceExternalKey: 'SCITOD' }),
+            his({
+              doctorExternalKey: 'ES01',
+              serviceExternalKey: 'SCITOD',
+              startTimeIso: H2,
+            }),
+            // Médico de AgenIA, servicio inactivo (hipertensos).
+            his({ serviceExternalKey: 'S39141-1' }),
+          ],
+          VENTANA,
+        );
+
+        expect(r.missingInAgenIA).toHaveLength(3);
+        expect(r.missingInAgenIABreakdown).toEqual({
+          activeService: 0,
+          slotForSale: 0,
+          noService: 0,
+          otherService: 3,
+        });
+        expect(r.otherServiceByDoctor).toEqual({ ES01: 2, '76': 1 });
+        expect(r.inSync).toBe(true);
+        expect(errores).toEqual([]);
+        expect(logs.join('\n')).toContain(
+          '3 cita(s) del hospital son de otros servicios',
+        );
+        expect(prisma.syncAudit.create.mock.calls[0][0].data.outcome).toBe(
+          'OK',
+        );
+      });
+
+      it.each([
+        ['se pide traer', his(), 'POR_TRAER'],
+        ['sin documento', his({ patientDocument: undefined }), 'SIN_DOCUMENTO'],
+        [
+          'su médico no está creado',
+          his({ doctorExternalKey: 'MD09' }),
+          'MEDICO_SIN_CREAR',
+        ],
+      ])(
+        'de medicina general que AgenIA no tiene (%s) → deriva, con su motivo',
+        async (_caso, cita, motivo) => {
+          const r = await service.reconcile('org1', [cita], VENTANA);
+
+          expect(r.missingInAgenIABreakdown.activeService).toBe(1);
+          expect(r.activeServiceMissing).toEqual([
+            { key: `${cita.doctorExternalKey}|${H}`, reason: motivo },
+          ]);
+          expect(r.inSync).toBe(false);
+          expect(errores[0]).toContain('1 de servicios activos');
+        },
+      );
+
+      it('de medicina general que AgenIA canceló para ese paciente → deriva (CANCELADA_EN_AGENIA)', async () => {
+        canceladas = [
+          {
+            scheduleSlot: { startTime: new Date(H), doctorId: 'doc-1' },
+            patient: { cedula: '9696544' },
+          },
+        ];
+
+        const r = await service.reconcile('org1', [his()], VENTANA);
+
+        expect(r.activeServiceMissing).toEqual([
+          { key: `76|${H}`, reason: 'CANCELADA_EN_AGENIA' },
+        ]);
+        expect(r.inSync).toBe(false);
+      });
+
+      it('de otro servicio pero con el cupo de AgenIA a la venta → deriva (y el cupo se cierra)', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupo('doc-1', H, true),
+        ]);
+
+        const r = await service.reconcile(
+          'org1',
+          [his({ serviceExternalKey: 'S39141-1' })],
+          VENTANA,
+        );
+
+        expect(r.missingInAgenIABreakdown).toMatchObject({
+          slotForSale: 1,
+          otherService: 0,
+        });
+        expect(r.repaired).toEqual([`76|${H}`]);
+        expect(r.inSync).toBe(false);
+      });
+
+      it('sin servicio (agente anterior) → no se sabe: sigue contando como deriva', async () => {
+        const r = await service.reconcile(
+          'org1',
+          [his({ serviceExternalKey: undefined })],
+          VENTANA,
+        );
+
+        expect(r.missingInAgenIABreakdown.noService).toBe(1);
+        expect(r.inSync).toBe(false);
+      });
+
+      it('el desglose va en la auditoría antes de las listas largas (se recorta a 4000)', async () => {
+        await service.reconcile(
+          'org1',
+          [his({ doctorExternalKey: 'ES01', serviceExternalKey: 'SCITOD' })],
+          VENTANA,
+        );
+
+        const detalle: string =
+          prisma.syncAudit.create.mock.calls[0][0].data.detail;
+        expect(detalle.indexOf('missingInAgenIABreakdown')).toBeLessThan(
+          detalle.indexOf('"missingInAgenIA"'),
+        );
+        expect(JSON.parse(detalle)).toMatchObject({
+          missingInAgenIABreakdown: { otherService: 1 },
+          otherServiceByDoctor: { ES01: 1 },
+          activeServiceMissing: [],
+        });
+      });
+    });
   });
 });

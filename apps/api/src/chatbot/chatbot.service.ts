@@ -4500,6 +4500,7 @@ export class ChatbotService implements OnModuleInit {
     if (tipo === 'PREGUNTA_TURNO' || tipo === 'YA_LLEGO') {
       return this.responderEnElHospital(p, tipo);
     }
+    if (tipo === 'OTRA_HORA') return this.responderOtraHora(p);
     if (tipo === 'NO_ASISTIRA' || tipo === 'CAMBIAR') {
       const pide = tipo === 'NO_ASISTIRA' ? 'CANCELAR' : 'MODIFICAR';
       const atendido =
@@ -4831,6 +4832,50 @@ export class ChatbotService implements OnModuleInit {
         appointmentId: cita?.id ?? null,
         ...(otroDia ? { citaEsOtroDia: true } : {}),
       },
+    });
+    return true;
+  }
+
+  /**
+   * 🕐 «En ventanilla me dijeron que a las 5:50» (2026-10-20, con la cita a las
+   * 6:10): le dieron otra hora o día. Se le dice la que está registrada en el
+   * hospital —la del recordatorio o, si no hay, la próxima— y que tenga en cuenta
+   * lo que le dijeron o lo confirme: AgenIA no sabe qué le dijeron en ventanilla
+   * (a menudo es llegar antes para la admisión). Antes la IA lo tomaba por querer
+   * agendar y recibía «no es posible agendar».
+   */
+  private async responderOtraHora(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    org: Organization | null;
+    timeZone: string | undefined;
+  }): Promise<boolean> {
+    const recordadas = await this.citasRecordadasDelRemitente(
+      p.organizationId,
+      p.identity,
+    );
+    const cita =
+      recordadas[0] ??
+      (await this.citasProximasDelRemitente(p.organizationId, p.identity))[0];
+    const contacto = this.contactoDe(p.MSGS, p.org);
+    const reply = cita
+      ? p.MSGS.otraHora(
+          cita.scheduleSlot.service?.name ?? '',
+          formatAppointmentLong(cita.scheduleSlot.startTime, {
+            timeZone: p.timeZone,
+          }),
+          doctorLabel(cita.scheduleSlot.doctor),
+          contacto,
+        )
+      : p.MSGS.otraHoraSinCita(contacto);
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text,
+      botReply: reply,
+      metadata: { step: 'OTRA_HORA', appointmentId: cita?.id ?? null },
     });
     return true;
   }

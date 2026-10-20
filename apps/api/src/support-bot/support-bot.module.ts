@@ -4,6 +4,9 @@ import { LlmModule } from '../llm/llm.module';
 import { TelegramCoreModule } from '../telegram/telegram-core.module';
 import { SupportBotAnswerService } from './support-bot-answer.service';
 import { SupportBotCasesService } from './support-bot-cases.service';
+import { SupportBotNoticesService } from './support-bot-notices.service';
+import { SupportBotStatsService } from './support-bot-stats.service';
+import { SupportBotWatchService } from './support-bot-watch.service';
 import { SupportBotKnowledgeService } from './support-bot-knowledge.service';
 import { SupportBotConfigService } from './support-bot-config.service';
 import { SupportBotSessionService } from './support-bot-session.service';
@@ -42,6 +45,9 @@ import {
     SupportBotKnowledgeService,
     SupportBotAnswerService,
     SupportBotCasesService,
+    SupportBotNoticesService,
+    SupportBotStatsService,
+    SupportBotWatchService,
     InboundQueueService,
   ],
 })

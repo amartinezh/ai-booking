@@ -4,11 +4,15 @@ import {
   Controller,
   Delete,
   Get,
+  Param,
+  ParseUUIDPipe,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { filtroDeConversaciones, periodoDeCifras } from '@agenia/shared';
 import type { Request } from 'express';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
@@ -19,6 +23,7 @@ import {
 import { SupportBotConfigService } from './support-bot-config.service';
 import { SupportBotSessionService } from './support-bot-session.service';
 import { SupportBotService } from './support-bot.service';
+import { SupportBotStatsService } from './support-bot-stats.service';
 import type {
   SupportBotActor,
   SupportBotSettingsInput,
@@ -71,7 +76,8 @@ export class SupportBotPanelController {
 }
 
 /**
- * La configuración del asistente (§3.7). TODO el controlador es SUPER_ADMIN; la
+ * La configuración del asistente y lo que se ve de él (§3.7): cifras, lo que el
+ * manual no cubrió y las conversaciones. TODO el controlador es SUPER_ADMIN; la
  * ruta no está en la lista blanca del proxy: solo la alcanza el panel por la red
  * interna. El actor de la auditoría sale SIEMPRE del token.
  */
@@ -82,6 +88,7 @@ export class SupportBotAdminController {
   constructor(
     private readonly config: SupportBotConfigService,
     private readonly sesiones: SupportBotSessionService,
+    private readonly cifras: SupportBotStatsService,
   ) {}
 
   @Get('config')
@@ -125,6 +132,45 @@ export class SupportBotAdminController {
     }
     return this.sesiones.generarCodigo(user.userId, {
       testOrganizationId: body.organizationId,
+    });
+  }
+
+  /** Cómo va el asistente: `?dias=7` (por defecto) o `30`. */
+  @Get('stats')
+  stats(@Query('dias') dias?: string) {
+    return this.cifras.cifras(periodoDeCifras(dias));
+  }
+
+  /** Lo que el manual no cubrió, con los datos ocultos. */
+  @Get('uncovered')
+  uncovered(@Query('dias') dias?: string) {
+    return this.cifras.preguntasSinCubrir(periodoDeCifras(dias));
+  }
+
+  @Get('conversations')
+  conversations(
+    @Query('dias') dias?: string,
+    @Query('clinica') clinica?: string,
+    @Query('filtro') filtro?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.cifras.conversaciones({
+      dias: periodoDeCifras(dias),
+      organizationId: clinica || null,
+      tipo: filtroDeConversaciones(filtro),
+      cursor: cursor || null,
+    });
+  }
+
+  /** Una conversación completa (queda en la bitácora del sistema quién la abrió). */
+  @Get('conversations/:id')
+  conversation(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: JwtUserPayload,
+  ) {
+    return this.cifras.conversacion(id, {
+      userId: user.userId,
+      email: user.email ?? 'super admin',
     });
   }
 }

@@ -61,7 +61,9 @@ export const TEXTO_GRAVEDAD_ALERTA: Record<GravedadAlerta, string> = {
 /**
  * Las categorías que el super admin enciende o apaga en el panel. `SERVIDOR` no tiene
  * tipos aquí: la usa el vigía del servidor (`deploy/vigia.sh`, Fase 3), que lee la
- * misma configuración.
+ * misma configuración. `CASOS_SOPORTE` tampoco: son los avisos de los casos de
+ * Soporte (soporte-caso.ts, docs/PLAN_BOT_SOPORTE.md §3.5), que salen por el mismo
+ * grupo pero no son alertas.
  */
 export const CATEGORIAS_ALERTA = [
   'SERVICIOS',
@@ -70,6 +72,8 @@ export const CATEGORIAS_ALERTA = [
   'ERRORES',
   'ARRANQUES',
   'SERVIDOR',
+  'CASOS_SOPORTE',
+  'ASISTENTE_SOPORTE',
 ] as const;
 export type CategoriaAlerta = (typeof CATEGORIAS_ALERTA)[number];
 
@@ -105,6 +109,16 @@ export const TEXTO_CATEGORIA_ALERTA: Record<
     descripcion:
       'Contenedores caídos o reiniciándose, disco y respaldo diario.',
   },
+  ASISTENTE_SOPORTE: {
+    titulo: 'Asistente de soporte',
+    descripcion:
+      'El bot del personal: su webhook caído, sin la IA de una clínica, una clínica en su tope diario de IA y muchos códigos equivocados seguidos.',
+  },
+  CASOS_SOPORTE: {
+    titulo: 'Casos de soporte',
+    descripcion:
+      'Cada caso nuevo de Soporte (del panel o del asistente de Telegram), el que se reabre y el que lleva 2 h del horario del equipo sin que nadie lo tome.',
+  },
 };
 
 /**
@@ -136,6 +150,9 @@ export const TIPOS_ALERTA = [
   'API_ARRANCO',
   'REINICIOS_EN_BUCLE',
   'ESQUEMA_ESPEJO',
+  'SOPORTE_SIN_IA',
+  'SOPORTE_TOPE_IA',
+  'SOPORTE_CODIGOS_FALLIDOS',
 ] as const;
 export type TipoAlerta = (typeof TIPOS_ALERTA)[number];
 
@@ -215,6 +232,26 @@ export const CATALOGO_ALERTAS: Record<TipoAlerta, DefinicionAlerta> = {
     evento: true,
     titulo: 'Falta el DDL del espejo en la base',
   },
+  // El asistente de soporte del personal (docs/PLAN_BOT_SOPORTE.md, Fase 5). El
+  // personal sigue recibiendo respuesta sin IA: por eso son advertencias.
+  SOPORTE_SIN_IA: {
+    categoria: 'ASISTENTE_SOPORTE',
+    gravedad: 'ADVERTENCIA',
+    evento: false,
+    titulo: 'El asistente de soporte responde sin IA',
+  },
+  SOPORTE_TOPE_IA: {
+    categoria: 'ASISTENTE_SOPORTE',
+    gravedad: 'ADVERTENCIA',
+    evento: true,
+    titulo: 'Una clínica llegó al tope diario de IA del asistente',
+  },
+  SOPORTE_CODIGOS_FALLIDOS: {
+    categoria: 'ASISTENTE_SOPORTE',
+    gravedad: 'ADVERTENCIA',
+    evento: true,
+    titulo: 'Muchos códigos equivocados en el asistente de soporte',
+  },
 };
 
 /** ABIERTA | RESUELTA | EVENTO (suelto: nunca se abre ni se cierra). */
@@ -292,6 +329,15 @@ export const claveAlerta = {
   arranque: (): string => 'api:arranque',
   reiniciosEnBucle: (): string => 'api:reinicios',
   esquemaEspejo: (): string => 'espejo:esquema',
+  /** El asistente de soporte sin la IA de una clínica (se resuelve con la primera que responda). */
+  soporteSinIa: (organizationId: string): string =>
+    `soporte:sin-ia:${organizationId}`,
+  /** Una vez por clínica y día. */
+  soporteTopeIa: (organizationId: string, dia: string): string =>
+    `soporte:tope-ia:${organizationId}:${dia}`,
+  /** Una vez por ventana de 10 minutos. */
+  soporteCodigosFallidos: (ventana: number): string =>
+    `soporte:codigos-fallidos:${ventana}`,
 };
 
 const RE_UUID =
@@ -419,7 +465,9 @@ function recortar(texto: string, max: number): string {
 
 /** El espejo tiene categoría propia; todo lo demás del monitor es un servicio externo. */
 export function categoriaDeServicio(serviceKey: string): CategoriaAlerta {
-  return serviceKey === 'mirror' ? 'ESPEJO' : 'SERVICIOS';
+  if (serviceKey === 'mirror') return 'ESPEJO';
+  if (serviceKey === 'soporte') return 'ASISTENTE_SOPORTE';
+  return 'SERVICIOS';
 }
 
 /**

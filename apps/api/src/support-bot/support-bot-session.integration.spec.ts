@@ -4,14 +4,27 @@ import type { RedisService } from '../redis/redis.service';
 import type { SupportBotConfigService } from './support-bot-config.service';
 import { SupportBotSessionService } from './support-bot-session.service';
 import { SupportBotCasesService } from './support-bot-cases.service';
-import { FLUJO_VACIO, type BorradorCaso } from '@agenia/shared';
+import { SupportBotNoticesService } from './support-bot-notices.service';
+import { SupportBotStatsService } from './support-bot-stats.service';
+import type { SupportBotService } from './support-bot.service';
+import { SupportTicketGroupNotifier } from '../tech-alerts/support-ticket-group.notifier';
+import type { TechAlertConfigService } from '../tech-alerts/tech-alert-config.service';
+import {
+  FLUJO_VACIO,
+  claveCifrasDelDia,
+  diaLocal,
+  leerCategorias,
+  type BorradorCaso,
+} from '@agenia/shared';
 
 /**
  * Códigos y conversaciones del asistente de soporte contra un Postgres REAL: la
  * transacción que abre la conversación, los índices parciales «una abierta por
- * usuario y por cuenta de Telegram» y el HMAC del código; y (Fase 3) el caso a
+ * usuario y por cuenta de Telegram» y el HMAC del código; (Fase 3) el caso a
  * medio abrir que pasa a la conversación siguiente y los casos que abre el
- * asistente. Redis va en memoria.
+ * asistente; (Fase 4) reabrir, el aviso al grupo y el seguimiento a quien
+ * reportó, con sus compare-and-set; y (Fase 5) las consultas de las cifras y de
+ * las conversaciones del panel. Redis va en memoria.
  *
  * Solo corre con una base desechable cuyo nombre termina en `_verif`:
  *
@@ -62,6 +75,10 @@ class RedisFalso {
     const d = this.vivo(k);
     if (!d) return -2;
     return d.vence === null ? -1 : Math.ceil((d.vence - Date.now()) / 1000);
+  }
+  async hgetall(k: string) {
+    const d = this.vivo(k);
+    return d ? (JSON.parse(d.valor) as Record<string, string>) : {};
   }
 }
 
@@ -825,6 +842,337 @@ class RedisFalso {
         await prisma.techAlert.deleteMany({
           where: { dedupeKey: { startsWith: `prueba-${SUF}` } },
         });
+      });
+    });
+
+    describe('📣 los avisos de los casos (Fase 4)', () => {
+      const ticket = (data: Record<string, unknown> = {}) =>
+        prisma.supportTicket.create({
+          data: {
+            title: 'No salen los recordatorios',
+            description: 'DETALLE CON DATOS',
+            reporterId: ANA,
+            organizationId: ORG,
+            ...data,
+          },
+        });
+      const yoDe = async (telegramUserId = '777') => {
+        const r = await validar(
+          (await svc.generarCodigo(ANA)).codigo,
+          telegramUserId,
+        );
+        if (r.tipo !== 'ABIERTA') throw new Error(r.tipo);
+        return r.interlocutor;
+      };
+
+      it('🔒 reabrir: solo un caso suyo solucionado hace menos de 7 días, una vez, con su nota', async () => {
+        const yo = await yoDe();
+        const reciente = await ticket({
+          status: 'RESOLVED',
+          startedAt: new Date(Date.now() - 3 * 86_400_000),
+          resolvedAt: new Date(Date.now() - 2 * 86_400_000),
+          resolutionNote: 'Se reinició.',
+          groupNotice: 'SENT',
+          groupNotifiedAt: new Date(Date.now() - 3 * 86_400_000),
+          reporterNotifiedStatus: 'RESOLVED',
+        });
+        const viejo = await ticket({
+          status: 'RESOLVED',
+          resolvedAt: new Date(Date.now() - 8 * 86_400_000),
+        });
+        const deBeto = await ticket({
+          reporterId: BETO,
+          status: 'RESOLVED',
+          resolvedAt: new Date(),
+        });
+
+        expect(await casos.reabrir(yo, reciente.number)).toBe(true);
+        expect(await casos.reabrir(yo, reciente.number)).toBe(false);
+        expect(await casos.reabrir(yo, viejo.number)).toBe(false);
+        expect(await casos.reabrir(yo, deBeto.number)).toBe(false);
+
+        expect(
+          await prisma.supportTicket.findUnique({ where: { id: reciente.id } }),
+        ).toMatchObject({
+          status: 'OPEN',
+          startedAt: null,
+          resolvedAt: null,
+          resolutionNote: 'Se reinició.',
+          reopenedCount: 1,
+          groupNotice: 'PENDING',
+          groupNotifiedAt: null,
+          reporterNotifiedStatus: 'OPEN',
+        });
+        expect(
+          await prisma.supportTicketNote.findMany({
+            where: { ticket: { organizationId: ORG } },
+            select: { ticketId: true, kind: true, authorId: true },
+          }),
+        ).toEqual([
+          { ticketId: reciente.id, kind: 'REAPERTURA', authorId: ANA },
+        ]);
+        expect(await casos.casoDelAviso(yo, deBeto.number)).toBeNull();
+      });
+
+      it('🏁 el aviso al grupo: uno por caso aunque corran dos réplicas, y el recordatorio una vez', async () => {
+        const enviados: string[] = [];
+        const canal = {
+          token: 'T',
+          chatId: '-100',
+          enabled: true,
+          mutedUntilIso: null,
+          antirruido: {
+            reminderMinutes: 30,
+            maxReminders: 3,
+            quietHoursEnabled: false,
+            quietFromHour: 22,
+            quietToHour: 6,
+            categories: leerCategorias(null),
+          },
+          dailySummaryEnabled: false,
+          lastDailySummaryIso: null,
+          panelBase: 'https://panel.prueba.co',
+        };
+        const config = {
+          canal: async () => canal,
+          enviar: async (texto: string) => {
+            enviados.push(texto);
+            return { ok: true };
+          },
+        } as unknown as TechAlertConfigService;
+        const otraConexion = new PrismaService();
+        const a = new SupportTicketGroupNotifier(prisma, config);
+        const b = new SupportTicketGroupNotifier(otraConexion, config);
+        const caso = await ticket({ priority: 'HIGH', channel: 'TELEGRAM' });
+        const ahora = new Date();
+        await Promise.all([a.vuelta(ahora), b.vuelta(ahora)]);
+        const misAvisos = () =>
+          enviados.filter((t) => t.includes(`#${caso.number}`));
+        expect(misAvisos()).toHaveLength(1);
+        expect(misAvisos()[0]).not.toContain('DETALLE');
+        expect(
+          await prisma.supportTicket.findUnique({ where: { id: caso.id } }),
+        ).toMatchObject({
+          groupNotice: 'SENT',
+          groupNoticeAttempts: 1,
+          groupNoticeError: null,
+        });
+
+        // Dos horas del horario del equipo después (lunes 9:00 → 11:00 en Colombia).
+        await prisma.supportTicket.update({
+          where: { id: caso.id },
+          data: { groupNotifiedAt: new Date('2026-10-19T14:00:00Z') },
+        });
+        const lunes11 = new Date('2026-10-19T16:00:00Z');
+        await Promise.all([a.vuelta(lunes11), b.vuelta(lunes11)]);
+        await otraConexion.$disconnect();
+        expect(misAvisos().filter((t) => t.startsWith('⏰'))).toHaveLength(1);
+      });
+
+      it('🏁 el seguimiento: «tomado» y «resuelto» una vez, a su cuenta, con la respuesta si conversa', async () => {
+        await yoDe('777');
+        const avisos: Array<{
+          chatId: string;
+          yo: unknown;
+          texto: string;
+          resuelto: unknown;
+        }> = [];
+        const bot = {
+          enviarAviso: async (
+            _rt: unknown,
+            destino: { chatId: string; yo: unknown },
+            texto: string,
+            resuelto: unknown,
+          ) => {
+            avisos.push({ ...destino, texto, resuelto });
+            return { ok: true, messageId: '1' };
+          },
+        } as unknown as SupportBotService;
+        const rt = { runtime: async () => ({ enabled: true, token: 'T' }) };
+        const otraConexion = new PrismaService();
+        const a = new SupportBotNoticesService(
+          prisma,
+          rt as unknown as SupportBotConfigService,
+          svc,
+          bot,
+        );
+        const b = new SupportBotNoticesService(
+          otraConexion,
+          rt as unknown as SupportBotConfigService,
+          svc,
+          bot,
+        );
+        const caso = await ticket({
+          status: 'IN_PROGRESS',
+          startedAt: new Date(),
+        });
+        await Promise.all([a.vuelta(), b.vuelta()]);
+        const mios = () =>
+          avisos.filter((x) => x.texto.includes(`#${caso.number}`));
+        expect(mios()).toEqual([
+          expect.objectContaining({ chatId: '777', resuelto: null }),
+        ]);
+        expect(mios()[0].texto.startsWith('👀')).toBe(true);
+
+        await prisma.supportTicket.update({
+          where: { id: caso.id },
+          data: {
+            status: 'RESOLVED',
+            resolvedAt: new Date(),
+            resolutionNote: 'Se reinició el envío.',
+          },
+        });
+        await Promise.all([a.vuelta(), b.vuelta()]);
+        await otraConexion.$disconnect();
+        expect(mios()).toHaveLength(2);
+        expect(mios()[1]).toMatchObject({
+          chatId: '777',
+          yo: expect.objectContaining({ userId: ANA }),
+          resuelto: { caso: caso.number, conVer: false },
+        });
+        expect(mios()[1].texto).toContain('Se reinició el envío.');
+        expect(
+          await prisma.supportTicket.findUnique({ where: { id: caso.id } }),
+        ).toMatchObject({ reporterNotifiedStatus: 'RESOLVED' });
+      });
+    });
+
+    describe('📊 lo que ve el super admin (Fase 5)', () => {
+      it('las cifras, lo que el manual no cubrió y las conversaciones, con consultas de verdad', async () => {
+        const conv = async (telegramUserId: string, userId = ANA) => {
+          const r = await validar(
+            (await svc.generarCodigo(userId)).codigo,
+            telegramUserId,
+          );
+          if (r.tipo !== 'ABIERTA') throw new Error(r.tipo);
+          return r.interlocutor.conversationId;
+        };
+        const c1 = await conv('901');
+        const c2 = await conv('902', BETO);
+        const msg = (conversationId: string, data: Record<string, unknown>) =>
+          prisma.supportBotMessage.create({
+            data: {
+              conversationId,
+              direction: 'SALIDA',
+              text: 'x',
+              ...data,
+            } as never,
+          });
+        await prisma.supportBotMessage.create({
+          data: {
+            conversationId: c1,
+            direction: 'ENTRADA',
+            text: '¿exporto a Excel lo de la paciente 1053789456?',
+          },
+        });
+        await msg(c1, {
+          source: 'IA',
+          uncovered: true,
+          inputTokens: 30_000,
+          outputTokens: 80,
+          latencyMs: 1500,
+        });
+        await msg(c1, {
+          source: 'IA',
+          inputTokens: 1000,
+          outputTokens: 20,
+          latencyMs: 2500,
+        });
+        await msg(c2, { source: 'SIN_IA' });
+        await msg(c2, { source: 'FIJO' });
+        await prisma.supportBotConversation.update({
+          where: { id: c1 },
+          data: { feedback: 'UTIL', hadUncoveredQuestion: true },
+        });
+        await prisma.supportTicket.create({
+          data: {
+            title: 'Caso',
+            description: 'x',
+            reporterId: BETO,
+            organizationId: ORG,
+            channel: 'TELEGRAM',
+            conversationId: c2,
+          },
+        });
+        redis.datos.set(claveCifrasDelDia(diaLocal(new Date())), {
+          valor: JSON.stringify({ codigos: '5', fallidos: '2' }),
+          vence: null,
+        });
+
+        const stats = new SupportBotStatsService(
+          prisma,
+          redis as unknown as RedisService,
+        );
+        const r = await stats.cifras(7);
+        // Puede haber datos de otras pruebas en la base: se mira lo de esta clínica.
+        const mia = r.porClinica.find((f) => f.organizationId === ORG);
+        expect(mia).toMatchObject({
+          conversaciones: 2,
+          personas: 2,
+          respuestasIA: 2,
+          respuestasSinIA: 1,
+          tokensEntrada: 31_000,
+          tokensSalida: 100,
+          casos: 1,
+        });
+        expect(r.respuestas.tiempoMedioMs).toBeGreaterThan(0);
+        expect(r.codigo).toMatchObject({ pedidos: 5, fallidos: 2 });
+
+        const preguntas = await stats.preguntasSinCubrir(7);
+        expect(preguntas).toEqual([
+          expect.objectContaining({
+            conversationId: c1,
+            clinica: CLINICA,
+            pregunta: '¿exporto a Excel lo de la paciente [dato oculto]?',
+          }),
+        ]);
+
+        const lista = await stats.conversaciones({
+          dias: 7,
+          organizationId: ORG,
+          tipo: 'TODAS',
+        });
+        expect(lista.filas.map((f) => f.id).sort()).toEqual([c1, c2].sort());
+        expect(
+          (
+            await stats.conversaciones({
+              dias: 7,
+              organizationId: ORG,
+              tipo: 'CON_CASO',
+            })
+          ).filas.map((f) => f.id),
+        ).toEqual([c2]);
+        expect(
+          (
+            await stats.conversaciones({
+              dias: 7,
+              organizationId: ORG,
+              tipo: 'SIN_CUBRIR',
+            })
+          ).filas.map((f) => f.id),
+        ).toEqual([c1]);
+        // El cursor: la página siguiente empieza después del último.
+        const primera = lista.filas[0].id;
+        const resto = await stats.conversaciones({
+          dias: 7,
+          organizationId: ORG,
+          tipo: 'TODAS',
+          cursor: primera,
+        });
+        expect(resto.filas.map((f) => f.id)).toEqual(
+          lista.filas.slice(1).map((f) => f.id),
+        );
+
+        const detalle = await stats.conversacion(c1, {
+          userId: SA,
+          email: 'sa@agenia.co',
+        });
+        expect(detalle.mensajesDetalle.map((m) => m.direccion)).toEqual([
+          'ENTRADA',
+          'SALIDA',
+          'SALIDA',
+        ]);
+        expect(detalle.mensajesDetalle[0].texto).toContain('1053789456');
       });
     });
 

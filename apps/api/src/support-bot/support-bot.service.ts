@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@agenia/database';
 import {
   ETIQUETAS_BOTON,
@@ -35,6 +35,7 @@ import {
 import { SupportBotConfigService } from './support-bot-config.service';
 import {
   SupportBotSessionService,
+  type AccionEnEspera,
   type Interlocutor,
 } from './support-bot-session.service';
 import {
@@ -42,6 +43,7 @@ import {
   type RespuestaArmada,
 } from './support-bot-answer.service';
 import { SupportBotCasesService } from './support-bot-cases.service';
+import { SupportBotWatchService } from './support-bot-watch.service';
 import type { EntradaDelAsistente } from './support-bot-inbound';
 import type { SupportBotRuntime } from './support-bot.types';
 
@@ -88,6 +90,20 @@ const TECLADOS = {
     ],
   ],
 } satisfies Record<string, Teclado>;
+/** El aviso de «resuelto»: «Ver la respuesta» solo si el aviso salió sin ella. */
+const tecladoResuelto = (caso: number, conVer: boolean): Teclado => [
+  [
+    boton({ accion: 'AVISO_BIEN', caso }, ETIQUETAS_BOTON.AVISO_BIEN),
+    boton({ accion: 'AVISO_SIGUE', caso }, ETIQUETAS_BOTON.AVISO_SIGUE),
+  ],
+  ...(conVer
+    ? [[boton({ accion: 'AVISO_VER', caso }, ETIQUETAS_BOTON.AVISO_VER)]]
+    : []),
+];
+/** Lo que pasó al enviar: si falló por algo pasajero, vale la pena reintentar. */
+type ResultadoEnvio =
+  | { ok: true; messageId: string | null }
+  | { ok: false; reintentar: boolean };
 const CASO_VACIO: CasoPropuesto = {
   titulo: null,
   descripcion: null,
@@ -107,6 +123,10 @@ const CASO_VACIO: CasoPropuesto = {
  *     muestra y NUNCA lo abre sin el «Sí» (S9), con botón o por escrito. Sin IA,
  *     el borrador se arma con lo que escribió. Un caso suyo abierto se amplía con
  *     una nota, también con su «Sí». Un borrador a medio abrir se retoma (24 h).
+ *   · Los avisos de sus casos (§3.6): «tomado» y «resuelto» los arma el despachador
+ *     (`SupportBotNoticesService`) y salen por aquí; sus botones («Sí, gracias»,
+ *     «No, sigue pasando», «Ver la respuesta») se atienden aquí. Sin conversación
+ *     abierta, lo que muestra la respuesta o cambia el caso espera el código.
  *
  * Cada mensaje de una conversación verificada queda en `SupportBotMessage`; el
  * `update_id` es único, así que un reintento de Telegram no se atiende dos veces.
@@ -125,6 +145,7 @@ export class SupportBotService {
     private readonly sesiones: SupportBotSessionService,
     private readonly respuestas: SupportBotAnswerService,
     private readonly casos: SupportBotCasesService,
+    @Optional() private readonly vigilancia?: SupportBotWatchService,
   ) {}
 
   /**
@@ -191,6 +212,7 @@ export class SupportBotService {
 
     if (e.texto === null) {
       if (!yo) {
+        void this.vigilancia?.contar('sinCodigo');
         await this.enviar(rt, e.chatId, TEXTOS_SOPORTE.pedirCodigo);
         return;
       }
@@ -239,6 +261,7 @@ export class SupportBotService {
       return;
     }
     if (comando) {
+      void this.vigilancia?.contar('sinCodigo');
       await this.enviar(rt, e.chatId, TEXTOS_SOPORTE.pedirCodigo);
       return;
     }
@@ -248,6 +271,7 @@ export class SupportBotService {
       return;
     }
     // Una pregunta antes del código: se guarda (sin IA) y se responde al validarlo.
+    void this.vigilancia?.contar('sinCodigo');
     const guardada =
       !esSoloSaludo(texto) &&
       (await this.sesiones.guardarPreguntaEnEspera(e.telegramUserId, texto));
@@ -309,6 +333,7 @@ export class SupportBotService {
         await this.casos.guardarFlujo(yo.conversationId, {
           ...flujo,
           notaPendiente: null,
+          notaPara: null,
           modoCaso: true,
         });
         // «/nuevo no carga la agenda»: ya contó algo, se arma el caso con eso.
@@ -333,6 +358,26 @@ export class SupportBotService {
     // Si detrás de este viene otro mensaje, ese los responde a los dos.
     await this.esperar(Math.max(0, this.agruparMs - (Date.now() - recibidoEn)));
     if (!(await this.soyElUltimo(e))) return;
+
+    // Reabrió un caso y se le pidió contar qué sigue pasando: se ofrece como nota.
+    const luego = await this.casos.leerFlujo(yo.conversationId);
+    if (luego.notaPara) {
+      const textos = await this.casos.textosSinResponder(yo.conversationId);
+      if (textos.length > 0) {
+        await this.casos.guardarFlujo(yo.conversationId, {
+          ...luego,
+          notaPara: null,
+          notaPendiente: { caso: luego.notaPara, texto: textos.join('\n') },
+        });
+        await this.responder(
+          rt,
+          yo,
+          TEXTOS_SOPORTE.confirmarNota(luego.notaPara),
+          TECLADOS.NOTA,
+        );
+        return;
+      }
+    }
     await this.responderConIA(rt, yo, ahora);
   }
 
@@ -384,6 +429,10 @@ export class SupportBotService {
         prueba: yo.isTest,
       }),
     );
+
+    // Lo que tocó en un aviso antes de dar el código (§3.6): se hace ahora.
+    const accion = await this.sesiones.tomarAccionEnEspera(e.telegramUserId);
+    if (accion) await this.accionPendiente(rt, yo, accion, ahora);
 
     // Un caso que quedó a medio abrir en la conversación anterior (§3.4 paso 7).
     const b = r.borradorRetomado;
@@ -626,11 +675,19 @@ export class SupportBotService {
     this.logger.log(
       `El asistente abrió el caso #${numero} (prioridad ${borrador.prioridad}).`,
     );
-    const cuando = textoCuandoLoVeElEquipo(ahora, await this.config.horario());
+    const [horario, seguimiento] = await Promise.all([
+      this.config.horario(),
+      this.casos.recibeAvisos(yo.userId),
+    ]);
     await this.responder(
       rt,
       yo,
-      TEXTOS_SOPORTE.casoAbierto({ numero, titulo, cuando }),
+      TEXTOS_SOPORTE.casoAbierto({
+        numero,
+        titulo,
+        cuando: textoCuandoLoVeElEquipo(ahora, horario),
+        seguimiento,
+      }),
     );
   }
 
@@ -651,13 +708,40 @@ export class SupportBotService {
       'CASO_NUEVO',
       'NOTA_SI',
       'NOTA_NO',
+      'AVISO_BIEN',
+      'AVISO_SIGUE',
+      'AVISO_VER',
     ];
     if (!b || !propios.includes(b.accion)) {
-      // Botones de la Fase 4 (avisos) o viejos: solo se responden.
+      // Botones de otra versión o que no existen todavía: solo se responden.
       await this.api.answerCallbackQuery(rt.token, e.callbackId);
       return;
     }
+    if (b.accion === 'AVISO_BIEN') {
+      // «Sí, gracias» no muestra ni cambia nada: no hace falta el código.
+      await this.api.answerCallbackQuery(
+        rt.token,
+        e.callbackId,
+        TEXTOS_SOPORTE.avisoBien,
+      );
+      if (e.messageId !== null)
+        await this.api.quitarBotones(rt.token, e.chatId, e.messageId);
+      return;
+    }
     const estado = await this.sesiones.conversacionDe(e.telegramUserId, ahora);
+    if (
+      estado.tipo !== 'VIGENTE' &&
+      (b.accion === 'AVISO_SIGUE' || b.accion === 'AVISO_VER')
+    ) {
+      // La respuesta puede nombrar datos y reabrir cambia el caso: primero el código.
+      await this.api.answerCallbackQuery(rt.token, e.callbackId);
+      await this.sesiones.guardarAccionEnEspera(e.telegramUserId, {
+        datos: e.datos,
+        messageId: e.messageId,
+      });
+      await this.enviar(rt, e.chatId, TEXTOS_SOPORTE.accionEnEspera);
+      return;
+    }
     if (estado.tipo !== 'VIGENTE') {
       await this.api.answerCallbackQuery(
         rt.token,
@@ -681,6 +765,10 @@ export class SupportBotService {
       case 'UTIL_SI':
         await this.feedback(yo, 'UTIL');
         return;
+      case 'AVISO_SIGUE':
+      case 'AVISO_VER':
+        await this.botonDelAviso(rt, yo, b.accion, b.caso, ahora);
+        return;
       case 'UTIL_NO':
       case 'CASO_NUEVO': {
         if (b.accion === 'UTIL_NO') await this.feedback(yo, 'NO_UTIL');
@@ -689,6 +777,7 @@ export class SupportBotService {
         await this.casos.guardarFlujo(yo.conversationId, {
           ...flujo,
           notaPendiente: null,
+          notaPara: null,
           modoCaso: true,
         });
         if (
@@ -714,6 +803,66 @@ export class SupportBotService {
         await this.decidir(rt, yo, flujo, respuesta, ahora);
       }
     }
+  }
+
+  /** Lo que tocó en un aviso antes de dar el código, ya con la conversación abierta. */
+  private async accionPendiente(
+    rt: SupportBotRuntime,
+    yo: Interlocutor,
+    accion: AccionEnEspera,
+    ahora: Date,
+  ): Promise<void> {
+    const b = leerBoton(accion.datos);
+    if (!b || (b.accion !== 'AVISO_SIGUE' && b.accion !== 'AVISO_VER')) return;
+    if (accion.messageId !== null)
+      await this.api.quitarBotones(rt.token, yo.chatId, accion.messageId);
+    await this.botonDelAviso(rt, yo, b.accion, b.caso, ahora);
+  }
+
+  /**
+   * «Ver la respuesta» y «No, sigue pasando» del aviso de un caso. Solo de un caso
+   * de quien conversa (el celular pudo haber pasado a otra persona).
+   */
+  private async botonDelAviso(
+    rt: SupportBotRuntime,
+    yo: Interlocutor,
+    accion: 'AVISO_SIGUE' | 'AVISO_VER',
+    numero: number,
+    ahora: Date,
+  ): Promise<void> {
+    const caso = await this.casos.casoDelAviso(yo, numero);
+    if (!caso) {
+      await this.responder(rt, yo, TEXTOS_SOPORTE.casoDeOtraPersona);
+      return;
+    }
+    if (accion === 'AVISO_VER') {
+      if (caso.estado === 'RESOLVED' && caso.respuesta) {
+        await this.responder(
+          rt,
+          yo,
+          TEXTOS_SOPORTE.respuestaDelCaso(numero, caso.respuesta),
+          tecladoResuelto(numero, false),
+        );
+      } else {
+        // Ya no está solucionado (se reabrió): lo que hay es su estado.
+        const lista = textoListaDeCasos(await this.casos.casosDe(yo, ahora));
+        await this.responder(rt, yo, lista ?? TEXTOS_SOPORTE.sinCasos);
+      }
+      return;
+    }
+    if (!(await this.casos.reabrir(yo, numero, ahora))) {
+      await this.responder(rt, yo, TEXTOS_SOPORTE.casoNoReabierto(numero));
+      return;
+    }
+    this.logger.log(`El asistente reabrió el caso #${numero}.`);
+    const flujo = await this.casos.leerFlujo(yo.conversationId);
+    await this.casos.guardarFlujo(yo.conversationId, {
+      ...flujo,
+      notaPendiente: null,
+      modoCaso: false,
+      notaPara: numero,
+    });
+    await this.responder(rt, yo, TEXTOS_SOPORTE.casoReabierto(numero));
   }
 
   private async feedback(
@@ -745,6 +894,31 @@ export class SupportBotService {
   }
 
   /**
+   * El aviso de un caso a quien lo reportó (lo arma `SupportBotNoticesService`).
+   * Con su conversación abierta (`yo`), queda registrado en ella como cualquier
+   * respuesta; sin ella, solo se envía. `resuelto`: el caso de los botones del
+   * «¿quedó bien?» y si va «Ver la respuesta» (cuando el aviso salió sin ella).
+   */
+  async enviarAviso(
+    rt: SupportBotRuntime,
+    destino: { chatId: string; yo: Interlocutor | null },
+    texto: string,
+    resuelto: { caso: number; conVer: boolean } | null,
+  ): Promise<ResultadoEnvio> {
+    const botones = resuelto
+      ? tecladoResuelto(resuelto.caso, resuelto.conVer)
+      : undefined;
+    const r = await this.enviarConResultado(rt, destino.chatId, texto, botones);
+    if (r.ok && destino.yo) {
+      await this.registrar(destino.yo.conversationId, 'SALIDA', texto, {
+        source: 'FIJO',
+        telegramMessageId: r.messageId,
+      });
+    }
+    return r;
+  }
+
+  /**
    * Texto plano: un carácter mal escapado no puede hacer que la respuesta se pierda.
    * Devuelve el id del último mensaje enviado (para quitarle los botones), o null.
    */
@@ -754,6 +928,16 @@ export class SupportBotService {
     texto: string,
     botones?: Teclado,
   ): Promise<string | null> {
+    const r = await this.enviarConResultado(rt, chatId, texto, botones);
+    return r.ok ? r.messageId : null;
+  }
+
+  private async enviarConResultado(
+    rt: SupportBotRuntime,
+    chatId: string,
+    texto: string,
+    botones?: Teclado,
+  ): Promise<ResultadoEnvio> {
     const partes = splitTelegramText(texto);
     let ultimo: string | null = null;
     for (const [i, parte] of partes.entries()) {
@@ -766,12 +950,17 @@ export class SupportBotService {
           `El asistente no pudo enviar (${r.errorCode ?? 'red'}): ${r.description}`,
         );
         await this.config.registrarEnvio(false, r.description);
-        return null;
+        // Sin respuesta de Telegram, un 429 o un 5xx pasan solos; un 403 (lo bloqueó), no.
+        const codigo = r.errorCode ?? null;
+        return {
+          ok: false,
+          reintentar: codigo === null || codigo === 429 || codigo >= 500,
+        };
       }
       ultimo = String(r.result.message_id);
     }
     await this.config.registrarEnvio(true);
-    return ultimo;
+    return { ok: true, messageId: ultimo };
   }
 
   /**

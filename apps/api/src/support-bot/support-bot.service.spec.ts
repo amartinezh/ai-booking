@@ -26,6 +26,7 @@ import type {
   SupportBotAnswerService,
 } from './support-bot-answer.service';
 import type { SupportBotCasesService } from './support-bot-cases.service';
+import type { SupportBotWatchService } from './support-bot-watch.service';
 
 /**
  * El turno del asistente. Lo que no puede fallar:
@@ -110,6 +111,7 @@ describe('SupportBotService', () => {
   let estado: EstadoConversacion;
   let resultado: ResultadoCodigo;
   let espera: string | null;
+  let accionEspera: { datos: string; messageId: number | null } | null;
   let contador: number;
   let flujo: FlujoConversacion;
   let sesiones: Record<string, jest.Mock>;
@@ -118,6 +120,7 @@ describe('SupportBotService', () => {
   let respuestas: { responder: jest.Mock };
   let casos: Record<string, jest.Mock>;
   let conversaciones: { updateMany: jest.Mock };
+  let vigilancia: { contar: jest.Mock };
   let ultimo: Map<string, string>;
   let service: SupportBotService;
 
@@ -162,6 +165,7 @@ describe('SupportBotService', () => {
     estado = { tipo: 'NINGUNA' };
     resultado = { tipo: 'INVALIDO', restantes: 4 };
     espera = null;
+    accionEspera = null;
     contador = 0;
     flujo = { ...FLUJO_VACIO };
     sesiones = {
@@ -178,6 +182,17 @@ describe('SupportBotService', () => {
       }),
       cerrar: jest.fn(async () => true),
       tocar: jest.fn(async () => undefined),
+      guardarAccionEnEspera: jest.fn(
+        async (_id: string, a: { datos: string; messageId: number | null }) => {
+          accionEspera = a;
+          return true;
+        },
+      ),
+      tomarAccionEnEspera: jest.fn(async () => {
+        const a = accionEspera;
+        accionEspera = null;
+        return a;
+      }),
     };
     api = {
       sendMessage: jest.fn(
@@ -214,8 +229,18 @@ describe('SupportBotService', () => {
       casosDe: jest.fn(async () => MIS_CASOS),
       abrirCaso: jest.fn(async () => 59),
       agregarNota: jest.fn(async () => true),
+      recibeAvisos: jest.fn(async () => true),
+      casoDelAviso: jest.fn(async () => ({
+        numero: 58,
+        titulo: 'No salen los recordatorios',
+        estado: 'RESOLVED',
+        respuesta: 'Se reinició el envío.',
+      })),
+      reabrir: jest.fn(async () => true),
+      textosSinResponder: jest.fn(async () => []),
     };
     conversaciones = { updateMany: jest.fn(async () => ({ count: 1 })) };
+    vigilancia = { contar: jest.fn(async () => undefined) };
     const prisma = {
       supportBotConversation: conversaciones,
       supportBotMessage: {
@@ -249,6 +274,7 @@ describe('SupportBotService', () => {
       sesiones as unknown as SupportBotSessionService,
       respuestas as unknown as SupportBotAnswerService,
       casos as unknown as SupportBotCasesService,
+      vigilancia as unknown as SupportBotWatchService,
     );
     (service as unknown as { agruparMs: number }).agruparMs = 0;
   });
@@ -399,6 +425,17 @@ describe('SupportBotService', () => {
     it('algo que no es texto: pide el código', async () => {
       await service.procesar(msg(null), RT);
       expect(textos()).toEqual([TEXTOS_SOPORTE.pedirCodigo]);
+    });
+
+    it('🩺 cada mensaje sin código cuenta para las cifras (los códigos y /salir, no)', async () => {
+      await service.procesar(msg('hola'), RT);
+      await service.procesar(msg('/casos'), RT);
+      await service.procesar(msg(null), RT);
+      expect(vigilancia.contar).toHaveBeenCalledTimes(3);
+      expect(vigilancia.contar).toHaveBeenCalledWith('sinCodigo');
+      await service.procesar(msg('482913'), RT);
+      await service.procesar(msg('/salir'), RT);
+      expect(vigilancia.contar).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -765,12 +802,21 @@ describe('SupportBotService', () => {
           }),
         );
         expect(textos()[0]).toMatch(
-          /^Listo, abrí el caso #59: «No salen los recordatorios»\. El equipo técnico /,
+          /^Listo, abrí el caso #59: «No salen los recordatorios»\. El equipo técnico .*Te escribo por aquí cuando lo tomen y cuando quede resuelto\.$/,
         );
         expect(flujo).toEqual(FLUJO_VACIO);
         expect(respuestas.responder).not.toHaveBeenCalled();
       },
     );
+
+    it('con los avisos de sus casos apagados, no promete escribirle', async () => {
+      casos.recibeAvisos.mockResolvedValue(false);
+      flujo = { borrador: borrador(), notaPendiente: null, modoCaso: false };
+      await service.procesar(msg('sí'), RT);
+      expect(textos()[0]).toMatch(
+        /Puedes ver cómo va con \/casos o en el panel › Soporte\.$/,
+      );
+    });
 
     it('el botón «Sí, ábrelo»: abre, responde el toque y quita los botones; un segundo toque no abre otro', async () => {
       flujo = { borrador: borrador(), notaPendiente: null, modoCaso: false };
@@ -923,7 +969,7 @@ describe('SupportBotService', () => {
         });
         await service.procesar(boton('s1:CASO_NUEVO'), RT);
         expect(textos()[0]).toContain(
-          '«La agenda del Dr. Ruiz no deja copiar el lunes.»',
+          '«La agenda del Dr. Ruiz no deja copiar el lunes»',
         );
         expect(textos()[0]).toContain('Sale un error rojo.');
         expect(teclado()).toEqual(CONFIRMAR);
@@ -1105,11 +1151,202 @@ describe('SupportBotService', () => {
       expect(casos.abrirCaso).not.toHaveBeenCalled();
     });
 
-    it('los de los avisos (Fase 4) o los que no son del asistente solo se responden', async () => {
-      await service.procesar(boton('s1:AVISO_BIEN:58'), RT);
+    it('los que no son del asistente (o de otra versión) solo se responden', async () => {
       await service.procesar(boton('otro:cosa'), RT);
+      await service.procesar(boton('s1:INCIDENTE_AVISAR:abc'), RT);
       expect(api.answerCallbackQuery).toHaveBeenCalledTimes(2);
       expect(sesiones.conversacionDe).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Los avisos de sus casos (Fase 4, §3.6) ───────────────────────────────
+
+  describe('📣 los avisos de sus casos', () => {
+    it('«Sí, gracias»: lo agradece y quita los botones, sin pedir el código', async () => {
+      await service.procesar(boton('s1:AVISO_BIEN:58'), RT);
+      expect(api.answerCallbackQuery).toHaveBeenCalledWith(
+        'TOKEN',
+        'cb',
+        TEXTOS_SOPORTE.avisoBien,
+      );
+      expect(api.quitarBotones).toHaveBeenCalledWith('TOKEN', '777', 42);
+      expect(sesiones.conversacionDe).not.toHaveBeenCalled();
+      expect(enviados).toEqual([]);
+    });
+
+    it('🔒 sin conversación, «Ver la respuesta» y «No, sigue pasando» piden el código y esperan', async () => {
+      await service.procesar(boton('s1:AVISO_VER:58'), RT);
+      expect(accionEspera).toEqual({ datos: 's1:AVISO_VER:58', messageId: 42 });
+      expect(textos()).toEqual([TEXTOS_SOPORTE.accionEnEspera]);
+      expect(casos.casoDelAviso).not.toHaveBeenCalled();
+      await service.procesar(boton('s1:AVISO_SIGUE:58'), RT);
+      expect(accionEspera).toEqual({
+        datos: 's1:AVISO_SIGUE:58',
+        messageId: 42,
+      });
+      expect(casos.reabrir).not.toHaveBeenCalled();
+    });
+
+    it('al dar el código, hace lo que esperaba: muestra la respuesta con el «¿quedó bien?»', async () => {
+      accionEspera = { datos: 's1:AVISO_VER:58', messageId: 42 };
+      resultado = {
+        tipo: 'ABIERTA',
+        interlocutor: ANA,
+        chatsCerrados: [],
+        borradorRetomado: null,
+      };
+      await service.procesar(msg('482913'), RT);
+      expect(casos.casoDelAviso).toHaveBeenCalledWith(ANA, 58);
+      expect(api.quitarBotones).toHaveBeenCalledWith('TOKEN', '777', 42);
+      expect(textos()[1]).toBe(
+        TEXTOS_SOPORTE.respuestaDelCaso(58, 'Se reinició el envío.'),
+      );
+      expect(teclado(1)).toEqual(['s1:AVISO_BIEN:58', 's1:AVISO_SIGUE:58']);
+    });
+
+    it('una acción en espera que no es de un aviso no se hace', async () => {
+      accionEspera = { datos: 's1:CASO_SI', messageId: null };
+      resultado = {
+        tipo: 'ABIERTA',
+        interlocutor: ANA,
+        chatsCerrados: [],
+        borradorRetomado: null,
+      };
+      await service.procesar(msg('482913'), RT);
+      expect(casos.casoDelAviso).not.toHaveBeenCalled();
+      expect(casos.abrirCaso).not.toHaveBeenCalled();
+      expect(textos()).toHaveLength(1);
+    });
+
+    describe('con conversación', () => {
+      beforeEach(() => {
+        estado = { tipo: 'VIGENTE', interlocutor: ANA };
+      });
+
+      it('«Ver la respuesta» de un caso que ya no está solucionado: cómo van sus casos', async () => {
+        casos.casoDelAviso.mockResolvedValue({
+          numero: 58,
+          titulo: 'x',
+          estado: 'OPEN',
+          respuesta: 'vieja',
+        });
+        await service.procesar(boton('s1:AVISO_VER:58'), RT);
+        expect(textos()[0]).toMatch(/^Tus casos más recientes:/);
+      });
+
+      it('🔒 el aviso de un caso de otra persona (el celular cambió de manos): no hace nada', async () => {
+        casos.casoDelAviso.mockResolvedValue(null);
+        await service.procesar(boton('s1:AVISO_SIGUE:58'), RT);
+        expect(textos()).toEqual([TEXTOS_SOPORTE.casoDeOtraPersona]);
+        expect(casos.reabrir).not.toHaveBeenCalled();
+      });
+
+      it('«No, sigue pasando»: reabre, pide contar qué pasa y lo ofrece como nota (sin IA)', async () => {
+        await service.procesar(boton('s1:AVISO_SIGUE:58'), RT);
+        expect(casos.reabrir).toHaveBeenCalledWith(ANA, 58, expect.any(Date));
+        expect(textos()).toEqual([TEXTOS_SOPORTE.casoReabierto(58)]);
+        expect(flujo.notaPara).toBe(58);
+
+        casos.textosSinResponder.mockResolvedValue([
+          'sigue sin salir el de las 7',
+        ]);
+        await service.procesar(msg('sigue sin salir el de las 7'), RT);
+        expect(respuestas.responder).not.toHaveBeenCalled();
+        expect(textos()[1]).toBe(TEXTOS_SOPORTE.confirmarNota(58));
+        expect(teclado(1)).toEqual(['s1:NOTA_SI', 's1:NOTA_NO']);
+        expect(flujo).toMatchObject({
+          notaPara: null,
+          notaPendiente: { caso: 58, texto: 'sigue sin salir el de las 7' },
+        });
+
+        await service.procesar(boton('s1:NOTA_SI'), RT);
+        expect(casos.agregarNota).toHaveBeenCalledWith(
+          ANA,
+          58,
+          'sigue sin salir el de las 7',
+        );
+      });
+
+      it('si ya no se puede reabrir (más de 7 días, o no estaba solucionado), lo dice', async () => {
+        casos.reabrir.mockResolvedValue(false);
+        await service.procesar(boton('s1:AVISO_SIGUE:58'), RT);
+        expect(textos()).toEqual([TEXTOS_SOPORTE.casoNoReabierto(58)]);
+        expect(flujo.notaPara).toBeUndefined();
+      });
+
+      it('esperando la nota, sin texto pendiente (solo comandos), va a la IA', async () => {
+        flujo = { ...FLUJO_VACIO, notaPara: 58 };
+        await service.procesar(msg('hola'), RT);
+        expect(respuestas.responder).toHaveBeenCalled();
+      });
+
+      it('/nuevo deja de esperar la nota', async () => {
+        flujo = { ...FLUJO_VACIO, notaPara: 58 };
+        await service.procesar(msg('/nuevo'), RT);
+        expect(flujo).toMatchObject({ notaPara: null, modoCaso: true });
+      });
+    });
+
+    describe('enviarAviso (lo usa el despachador del seguimiento)', () => {
+      it('con su conversación abierta: queda registrado en ella, con los botones', async () => {
+        const r = await service.enviarAviso(
+          RT,
+          { chatId: '777', yo: ANA },
+          'Aviso',
+          { caso: 58, conVer: false },
+        );
+        expect(r).toEqual({ ok: true, messageId: '1' });
+        expect(teclado()).toEqual(['s1:AVISO_BIEN:58', 's1:AVISO_SIGUE:58']);
+        expect(registrados).toEqual([
+          expect.objectContaining({
+            conversationId: 'conv-1',
+            direction: 'SALIDA',
+            text: 'Aviso',
+            source: 'FIJO',
+            telegramMessageId: '1',
+          }),
+        ]);
+      });
+
+      it('sin conversación: solo se envía; «Ver la respuesta» si salió sin ella', async () => {
+        await service.enviarAviso(RT, { chatId: '777', yo: null }, 'Aviso', {
+          caso: 58,
+          conVer: true,
+        });
+        await service.enviarAviso(
+          RT,
+          { chatId: '777', yo: null },
+          'Tomado',
+          null,
+        );
+        expect(teclado(0)).toEqual([
+          's1:AVISO_BIEN:58',
+          's1:AVISO_SIGUE:58',
+          's1:AVISO_VER:58',
+        ]);
+        expect(teclado(1)).toBeUndefined();
+        expect(registrados).toEqual([]);
+      });
+
+      it.each([
+        [null, true],
+        [429, true],
+        [502, true],
+        [403, false],
+        [400, false],
+      ])(
+        'si Telegram falla (%s), dice si vale la pena reintentar (%s)',
+        async (codigo, reintentar) => {
+          api.sendMessage.mockResolvedValue({
+            ok: false,
+            errorCode: codigo,
+            description: 'x',
+          });
+          await expect(
+            service.enviarAviso(RT, { chatId: '777', yo: null }, 'Aviso', null),
+          ).resolves.toEqual({ ok: false, reintentar });
+        },
+      );
     });
   });
 

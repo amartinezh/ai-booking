@@ -1035,6 +1035,20 @@ const FORMAL = {
     `El número de turno y el consultorio no los tengo por este medio: se los indican en la *recepción del hospital*. 🏥\n\n` +
     `Si no encuentra a quién preguntar, comuníquese con ${contacto}.`,
 
+  // 🕐 Le dieron otra hora (2026-10-20: «en ventanilla me dijeron que a las 5:50»,
+  // con la cita a las 6:10): la que está registrada, y que confirme la otra.
+  otraHora: (
+    servicio: string,
+    fecha: string,
+    medico: string,
+    contacto: string,
+  ) =>
+    `En el sistema del hospital, su cita de *${servicio}* está registrada para el *${fecha}* con *${medico}*. 🏥\n\n` +
+    `Si en ventanilla le indicaron otra hora —por ejemplo, llegar un poco antes para la admisión—, tenga en cuenta esa indicación o confírmela con ${contacto}.`,
+
+  otraHoraSinCita: (contacto: string) =>
+    `Por este medio no puedo confirmarle esa hora. 🏥 Para confirmarla, comuníquese con ${contacto}.`,
+
   // 📍 Avisa que ya está en el hospital (2026-10-17: «Acá estamos esperando»).
   yaLlego: (servicio: string, fecha: string, medico: string) =>
     `¡Gracias por avisar! 🙌 Su cita de *${servicio}* es el *${fecha}* con *${medico}*. 🏥\n\n` +
@@ -2206,6 +2220,18 @@ const INFORMAL = {
   preguntaTurnoSinCita: (contacto: string) =>
     `El número de turno y el consultorio no los tengo por aquí: te los indican en la *recepción del hospital*. 🏥\n\n` +
     `Si no encuentras a quién preguntar, comunícate con ${contacto}.`,
+
+  otraHora: (
+    servicio: string,
+    fecha: string,
+    medico: string,
+    contacto: string,
+  ) =>
+    `En el sistema del hospital, tu cita de *${servicio}* está registrada para el *${fecha}* con *${medico}*. 🏥\n\n` +
+    `Si en ventanilla te indicaron otra hora —por ejemplo, llegar un poco antes para la admisión—, ten en cuenta esa indicación o confírmala con ${contacto}.`,
+
+  otraHoraSinCita: (contacto: string) =>
+    `Por aquí no puedo confirmarte esa hora. 🏥 Para confirmarla, comunícate con ${contacto}.`,
 
   yaLlego: (servicio: string, fecha: string, medico: string) =>
     `¡Gracias por avisar! 🙌 Tu cita de *${servicio}* es el *${fecha}* con *${medico}*. 🏥\n\n` +

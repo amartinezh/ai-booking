@@ -9,6 +9,7 @@ import { SupportBotSessionService } from './support-bot-session.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { RedisService } from '../redis/redis.service';
 import type { SupportBotConfigService } from './support-bot-config.service';
+import type { SupportBotWatchService } from './support-bot-watch.service';
 
 /**
  * Códigos y conversaciones, con una base EN MEMORIA (corre en el CI). La prueba
@@ -263,11 +264,13 @@ describe('SupportBotSessionService (base en memoria)', () => {
         : null,
   };
 
+  let vigilancia: { contar: jest.Mock; codigoFallido: jest.Mock };
   const crear = () =>
     new SupportBotSessionService(
       base.prisma as unknown as PrismaService,
       redis as unknown as RedisService,
       config as unknown as SupportBotConfigService,
+      vigilancia as unknown as SupportBotWatchService,
     );
   const validar = (
     codigo: string,
@@ -310,6 +313,10 @@ describe('SupportBotSessionService (base en memoria)', () => {
     );
     redis = new RedisFalso();
     disponible = true;
+    vigilancia = {
+      contar: jest.fn(async () => undefined),
+      codigoFallido: jest.fn(async () => undefined),
+    };
     svc = crear();
   });
 
@@ -323,6 +330,9 @@ describe('SupportBotSessionService (base en memoria)', () => {
       base.chocarCortos = 2;
       const c = await svc.generarCodigo('ana');
       expect(c.codigo).toMatch(/^\d{6}$/);
+      // 🩺 Se cuenta una vez (6 dígitos y QR son el mismo pedido).
+      expect(vigilancia.contar).toHaveBeenCalledWith('codigos');
+      expect(vigilancia.contar).toHaveBeenCalledTimes(1);
       expect(c.enlace).toMatch(/^https:\/\/t\.me\/AgeniaSoporteBot\?start=/);
       expect(base.codigos.map((x) => x.kind).sort()).toEqual([
         'CORTO',
@@ -427,6 +437,10 @@ describe('SupportBotSessionService (base en memoria)', () => {
         tipo: 'BLOQUEADO',
         minutos: 60,
       });
+      // 🩺 Para las cifras y la alerta de muchos códigos equivocados.
+      expect(vigilancia.codigoFallido).toHaveBeenCalledTimes(5);
+      expect(vigilancia.contar).toHaveBeenCalledWith('bloqueos');
+      expect(vigilancia.contar).toHaveBeenCalledTimes(1);
       redis.ttls.set('soporte:fallos:777', 125);
       await expect(validar('000000')).resolves.toEqual({
         tipo: 'BLOQUEADO',
@@ -703,6 +717,43 @@ describe('SupportBotSessionService (base en memoria)', () => {
         false,
       );
       await expect(svc.tomarPreguntaEnEspera('777')).resolves.toBeNull();
+    });
+  });
+
+  describe('lo que tocó en un aviso sin conversación (Fase 4)', () => {
+    it('se guarda 10 min por cuenta y se toma una vez', async () => {
+      const accion = { datos: 's1:AVISO_SIGUE:58', messageId: 42 };
+      await expect(svc.guardarAccionEnEspera('777', accion)).resolves.toBe(
+        true,
+      );
+      expect(redis.datos.get('soporte:accion:777')).toBe(
+        JSON.stringify(accion),
+      );
+      await expect(svc.tomarAccionEnEspera('777')).resolves.toEqual(accion);
+      await expect(svc.tomarAccionEnEspera('777')).resolves.toBeNull();
+    });
+
+    it('algo que no tiene la forma esperada no se toma', async () => {
+      redis.datos.set('soporte:accion:777', JSON.stringify({ messageId: 1 }));
+      await expect(svc.tomarAccionEnEspera('777')).resolves.toBeNull();
+      redis.datos.set('soporte:accion:777', '{roto');
+      await expect(svc.tomarAccionEnEspera('777')).resolves.toBeNull();
+      redis.datos.set(
+        'soporte:accion:777',
+        JSON.stringify({ datos: 's1:AVISO_VER:58', messageId: 'x' }),
+      );
+      await expect(svc.tomarAccionEnEspera('777')).resolves.toEqual({
+        datos: 's1:AVISO_VER:58',
+        messageId: null,
+      });
+    });
+
+    it('sin Redis: no se guarda y no se toma (sin lanzar)', async () => {
+      redis.caido = true;
+      await expect(
+        svc.guardarAccionEnEspera('777', { datos: 'x', messageId: null }),
+      ).resolves.toBe(false);
+      await expect(svc.tomarAccionEnEspera('777')).resolves.toBeNull();
     });
   });
 });

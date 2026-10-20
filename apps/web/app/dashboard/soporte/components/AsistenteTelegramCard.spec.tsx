@@ -4,16 +4,22 @@ import userEvent from '@testing-library/user-event';
 jest.mock('@/app/actions/support-bot', () => ({
     generarCodigoAsistente: jest.fn(),
     cerrarConversacionAsistente: jest.fn(),
+    cambiarAvisosAsistente: jest.fn(),
 }));
 jest.mock('@/app/actions/support', () => ({ createTicket: jest.fn() }));
 
 import AsistenteTelegramCard, { codigoLegible, segundosRestantes } from './AsistenteTelegramCard';
 import SupportClient from './SupportClient';
-import { cerrarConversacionAsistente, generarCodigoAsistente } from '@/app/actions/support-bot';
+import {
+    cambiarAvisosAsistente,
+    cerrarConversacionAsistente,
+    generarCodigoAsistente,
+} from '@/app/actions/support-bot';
 import type { EstadoAsistente } from '@/app/actions/support-bot.types';
 
 const mockGenerar = generarCodigoAsistente as jest.Mock;
 const mockCerrar = cerrarConversacionAsistente as jest.Mock;
+const mockAvisos = cambiarAvisosAsistente as jest.Mock;
 
 const base: EstadoAsistente = {
     disponible: true,
@@ -132,5 +138,29 @@ describe('SupportClient con el asistente', () => {
         expect(screen.queryByRole('heading', { name: /Asistente de soporte en Telegram/ })).not.toBeInTheDocument();
         rerender(<SupportClient tickets={[]} />);
         expect(screen.queryByRole('heading', { name: /Asistente de soporte en Telegram/ })).not.toBeInTheDocument();
+    });
+
+    describe('los avisos de sus casos (Fase 4)', () => {
+        it('dice a qué cuenta llegan y los apaga', async () => {
+            mockAvisos.mockResolvedValue({ ok: true, data: { ...base, avisos: { activos: false, destino: 'Ana' } } });
+            render(<AsistenteTelegramCard estadoInicial={{ ...base, avisos: { activos: true, destino: 'Ana' } }} />);
+            expect(screen.getByText(/te aviso por Telegram a Ana\./)).toBeInTheDocument();
+            await userEvent.click(screen.getByRole('button', { name: 'Dejar de recibir avisos' }));
+            expect(mockAvisos).toHaveBeenCalledWith(false);
+            expect(await screen.findByText('No recibes avisos de tus casos por Telegram.')).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: 'Recibir avisos' })).toBeInTheDocument();
+        });
+
+        it('sin conversaciones todavía, explica cuándo empiezan', () => {
+            render(<AsistenteTelegramCard estadoInicial={base} />);
+            expect(screen.getByText(/Cuando converses con el asistente, te avisará/)).toBeInTheDocument();
+        });
+
+        it('si no se puede cambiar, lo dice', async () => {
+            mockAvisos.mockResolvedValue({ ok: false, error: 'No se pudo guardar' });
+            render(<AsistenteTelegramCard estadoInicial={base} />);
+            await userEvent.click(screen.getByRole('button', { name: 'Dejar de recibir avisos' }));
+            expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo guardar');
+        });
     });
 });

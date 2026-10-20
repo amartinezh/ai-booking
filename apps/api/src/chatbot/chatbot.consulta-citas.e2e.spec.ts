@@ -1931,6 +1931,43 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       expect(lastSent()).not.toContain('Disculpe la molestia');
     });
 
+    it('🕐 «en ventanilla me dijeron que a las 5:50» tras el recordatorio → la hora registrada, no «no es posible agendar»', async () => {
+      // Caso real 2026-10-20 07:19: la IA lo tomó por querer agendar.
+      conRecordatorio();
+      await say('Hola, es que en ventanilla me dijeron que a las 5:50 pl');
+      const r = lastSent();
+      expect(r).toContain('En el sistema del hospital, su cita de');
+      expect(r).toContain('está registrada para el');
+      expect(r).toContain('confírmela con');
+      expect(r).not.toContain('no es posible');
+      expect(paso('OTRA_HORA')?.metadata).toMatchObject({
+        appointmentId: 'apt-1',
+      });
+      // No abre ninguna conversación: queda en reposo.
+      expect(state()).toBeNull();
+    });
+
+    it('🕐 sin recordatorio, con una cita próxima → la de esa cita', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA); // sin reminderSentAt
+      await say('Me dieron la cita para las 3 de la tarde');
+      expect(lastSent()).toContain('está registrada para el');
+      expect(paso('OTRA_HORA')?.metadata).toMatchObject({
+        appointmentId: 'apt-1',
+      });
+    });
+
+    it('🕐 sin citas → que la confirme con el hospital (no se inventa nada)', async () => {
+      seedPaciente();
+      await say('Me dieron la cita para las 3 de la tarde');
+      expect(lastSent()).toContain(
+        'Por este medio no puedo confirmarle esa hora',
+      );
+      expect(paso('OTRA_HORA')?.metadata).toMatchObject({
+        appointmentId: null,
+      });
+    });
+
     it.each(['Que pena esta equivocada', 'Este mensaje no era para mi'])(
       '📭 «%s» tras el recordatorio → número equivocado (caso en la bandeja)',
       async (texto) => {

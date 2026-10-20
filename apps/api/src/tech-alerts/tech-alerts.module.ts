@@ -4,6 +4,7 @@ import { TechAlertConfigService } from './tech-alert-config.service';
 import { TechAlertDispatcher } from './tech-alert.dispatcher';
 import { TechAlertService } from './tech-alert.service';
 import { TechAlertsController } from './tech-alerts.controller';
+import { SupportTicketGroupNotifier } from './support-ticket-group.notifier';
 
 /**
  * 🚨 Alertas técnicas por Telegram (docs/PLAN_ALERTAS_TECNICAS.md): el canal del
@@ -17,12 +18,21 @@ import { TechAlertsController } from './tech-alerts.controller';
  * vigila app.module.imports.spec.ts). Prisma y Crypto son globales.
  *
  * NO depende de `TELEGRAM_ENABLED`, que es el interruptor del canal de pacientes.
+ *
+ * También avisa al mismo grupo los casos de Soporte (`SupportTicketGroupNotifier`,
+ * docs/PLAN_BOT_SOPORTE.md §3.5), aunque el asistente de soporte esté apagado: los
+ * del panel se avisan igual. El asistente lo usa para no esperar al minuto.
  */
 @Global()
 @Module({
   imports: [TelegramCoreModule],
   controllers: [TechAlertsController],
-  providers: [TechAlertConfigService, TechAlertDispatcher, TechAlertService],
-  exports: [TechAlertService],
+  providers: [
+    TechAlertConfigService,
+    TechAlertDispatcher,
+    TechAlertService,
+    SupportTicketGroupNotifier,
+  ],
+  exports: [TechAlertService, SupportTicketGroupNotifier],
 })
 export class TechAlertsModule {}

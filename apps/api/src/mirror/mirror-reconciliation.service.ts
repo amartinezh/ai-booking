@@ -89,9 +89,46 @@ export interface ReconciliationReport {
    * ellas; para cubrir el 100 % del servicio hay que encenderlos en Médicos.
    */
   activeServiceWhatsappOff: Record<string, number>;
-  /** true si los dos sistemas coinciden exactamente. */
+  /**
+   * 🩺 Por qué falta cada una de `missingInAgenIA` (2026-10-20: «296 citas que
+   * AgenIA desconoce» todos los días, y eran de otros servicios). Solo las tres
+   * primeras son deriva; `otherService` es lo que AgenIA no maneja.
+   */
+  missingInAgenIABreakdown: {
+    /** De un servicio activo: AgenIA debería tenerla (ver `activeServiceMissing`). */
+    activeService: number;
+    /** De otro servicio, pero AgenIA tenía a la venta ese cupo (se cerró solo). */
+    slotForSale: number;
+    /** El agente no dijo su servicio: no se sabe si AgenIA la debería tener. */
+    noService: number;
+    /** De otro servicio y sin cupo en AgenIA a esa hora: nada que revender. */
+    otherService: number;
+  };
+  /** Las de servicios activos que faltan, con el motivo. Deberían ser 0. */
+  activeServiceMissing: { key: string; reason: MotivoFaltaActiva }[];
+  /** `otherService`, por código de médico del HIS. */
+  otherServiceByDoctor: Record<string, number>;
+  /**
+   * true si no falta nada de lo que AgenIA maneja: ni citas que el hospital no
+   * tiene, ni de servicios activos, ni cupos a la venta. Las de otros servicios
+   * sin cupo en AgenIA no cuentan.
+   */
   inSync: boolean;
 }
+
+/**
+ * Por qué AgenIA no tiene una cita de un servicio activo:
+ *   · MEDICO_SIN_CREAR — su médico no está homologado (el radar lo cuenta);
+ *   · POR_TRAER        — se le pidió al agente en esta misma reconciliación;
+ *   · SIN_DOCUMENTO    — el hospital no tiene el documento del paciente;
+ *   · CANCELADA_EN_AGENIA — AgenIA la canceló para ese paciente y el hospital
+ *                        aún la tiene (traerla deshacería la cancelación).
+ */
+export type MotivoFaltaActiva =
+  | 'MEDICO_SIN_CREAR'
+  | 'POR_TRAER'
+  | 'SIN_DOCUMENTO'
+  | 'CANCELADA_EN_AGENIA';
 
 @Injectable()
 export class MirrorReconciliationService {
@@ -258,6 +295,8 @@ export class MirrorReconciliationService {
       toImport,
       activeServiceUnmapped,
       activeServiceWhatsappOff,
+      servicioPorClave,
+      motivoFaltaActiva,
     } = await this.serviciosYCitasATraer(
       organizationId,
       hisSnapshot,
@@ -266,6 +305,34 @@ export class MirrorReconciliationService {
       enAgenIA,
       cupoPorClave,
     );
+
+    const missingInAgenIABreakdown = {
+      activeService: 0,
+      slotForSale: 0,
+      noService: 0,
+      otherService: 0,
+    };
+    const activeServiceMissing: ReconciliationReport['activeServiceMissing'] =
+      [];
+    const otherServiceByDoctor: Record<string, number> = {};
+    for (const clave of missingInAgenIA) {
+      const servicio = servicioPorClave.get(clave);
+      if (servicio === 'ACTIVO') {
+        missingInAgenIABreakdown.activeService++;
+        activeServiceMissing.push({
+          key: clave,
+          reason: motivoFaltaActiva.get(clave) ?? 'POR_TRAER',
+        });
+      } else if (ocupacion.get(clave)?.isAvailable) {
+        missingInAgenIABreakdown.slotForSale++;
+      } else if (servicio === 'OTRO') {
+        missingInAgenIABreakdown.otherService++;
+        const medico = clave.slice(0, clave.lastIndexOf('|'));
+        otherServiceByDoctor[medico] = (otherServiceByDoctor[medico] ?? 0) + 1;
+      } else {
+        missingInAgenIABreakdown.noService++;
+      }
+    }
 
     const report: ReconciliationReport = {
       organizationId,
@@ -282,7 +349,14 @@ export class MirrorReconciliationService {
       toImport,
       activeServiceUnmapped,
       activeServiceWhatsappOff,
-      inSync: missingInHis.length === 0 && missingInAgenIA.length === 0,
+      missingInAgenIABreakdown,
+      activeServiceMissing,
+      otherServiceByDoctor,
+      inSync:
+        missingInHis.length === 0 &&
+        missingInAgenIABreakdown.activeService === 0 &&
+        missingInAgenIABreakdown.slotForSale === 0 &&
+        missingInAgenIABreakdown.noService === 0,
     };
 
     await this.registrar(organizationId, report);
@@ -345,7 +419,13 @@ export class MirrorReconciliationService {
     toImport: { doctorExternalKey: string; startTimeIso: string }[];
     activeServiceUnmapped: Record<string, number>;
     activeServiceWhatsappOff: Record<string, number>;
+    /** El servicio de cada cita del HIS: activo en AgenIA u otro. */
+    servicioPorClave: Map<string, 'ACTIVO' | 'OTRO'>;
+    /** Por qué AgenIA no tiene cada cita de servicio activo que le falta. */
+    motivoFaltaActiva: Map<string, MotivoFaltaActiva>;
   }> {
+    const servicioPorClave = new Map<string, 'ACTIVO' | 'OTRO'>();
+    const motivoFaltaActiva = new Map<string, MotivoFaltaActiva>();
     const conServicio = hisSnapshot.filter((c) => !!c.serviceExternalKey);
     if (conServicio.length === 0) {
       return {
@@ -353,6 +433,8 @@ export class MirrorReconciliationService {
         toImport: [],
         activeServiceUnmapped: {},
         activeServiceWhatsappOff: {},
+        servicioPorClave,
+        motivoFaltaActiva,
       };
     }
 
@@ -414,6 +496,11 @@ export class MirrorReconciliationService {
       const startTimeIso = new Date(c.startTimeIso).toISOString();
       const clave = `${c.doctorExternalKey}|${startTimeIso}`;
       const servicio = servicioDe.get(c.serviceExternalKey as string);
+      const esActivo = !!servicio && activo.has(servicio);
+      // Dos citas a la misma hora (sobrecupo): basta una de servicio activo.
+      if (esActivo || !servicioPorClave.has(clave)) {
+        servicioPorClave.set(clave, esActivo ? 'ACTIVO' : 'OTRO');
+      }
 
       if (enOff.has(c.doctorExternalKey) && servicio && activo.has(servicio)) {
         conWhatsappOff[c.doctorExternalKey] =
@@ -431,25 +518,27 @@ export class MirrorReconciliationService {
         continue;
       }
 
-      if (
-        !homologados.has(c.doctorExternalKey) &&
-        servicio &&
-        activo.has(servicio)
-      ) {
+      if (!homologados.has(c.doctorExternalKey) && esActivo) {
         sinHomologar[c.doctorExternalKey] =
           (sinHomologar[c.doctorExternalKey] ?? 0) + 1;
+        motivoFaltaActiva.set(clave, 'MEDICO_SIN_CREAR');
         continue;
       }
 
       if (
         homologados.has(c.doctorExternalKey) &&
         !enAgenIA.has(clave) &&
-        servicio &&
-        activo.has(servicio) &&
-        documento(c.patientDocument) &&
-        !canceladaPara.has(`${clave}|${documento(c.patientDocument)}`)
+        esActivo
       ) {
-        aTraer.push({ doctorExternalKey: c.doctorExternalKey, startTimeIso });
+        const doc = documento(c.patientDocument);
+        if (!doc) {
+          motivoFaltaActiva.set(clave, 'SIN_DOCUMENTO');
+        } else if (canceladaPara.has(`${clave}|${doc}`)) {
+          motivoFaltaActiva.set(clave, 'CANCELADA_EN_AGENIA');
+        } else {
+          motivoFaltaActiva.set(clave, 'POR_TRAER');
+          aTraer.push({ doctorExternalKey: c.doctorExternalKey, startTimeIso });
+        }
       }
     }
 
@@ -500,6 +589,8 @@ export class MirrorReconciliationService {
       toImport: aTraer.slice(0, MAX_CITAS_A_TRAER),
       activeServiceUnmapped: sinHomologar,
       activeServiceWhatsappOff: conWhatsappOff,
+      servicioPorClave,
+      motivoFaltaActiva,
     };
   }
 
@@ -513,20 +604,43 @@ export class MirrorReconciliationService {
     organizationId: string,
     report: ReconciliationReport,
   ): Promise<void> {
+    const b = report.missingInAgenIABreakdown;
+    // 🩺 Lo del hospital que AgenIA no maneja (otros servicios, sin cupo en
+    // AgenIA) no es deriva, pero se dice cuánto es y de qué médicos: «296 citas
+    // que AgenIA desconoce» sin más obligaba a adivinar (2026-10-20).
+    const fuera =
+      b.otherService > 0
+        ? ` ${b.otherService} cita(s) del hospital son de otros servicios y no ` +
+          `tienen cupo en AgenIA (no las maneja): ` +
+          Object.entries(report.otherServiceByDoctor)
+            .sort((x, y) => y[1] - x[1])
+            .slice(0, 10)
+            .map(([m, n]) => `${m}=${n}`)
+            .join(', ') +
+          '.'
+        : '';
     if (report.inSync) {
       this.logger.log(
-        `Reconciliación OK (org ${organizationId}): ${report.inAgenIA} cita(s), sin diferencias.`,
+        `Reconciliación OK (org ${organizationId}): ${report.inAgenIA} cita(s), ` +
+          `sin diferencias en lo que maneja AgenIA.${fuera}`,
       );
     } else {
       // Las dos direcciones de la deriva duelen distinto y conviene decirlo:
       // una deja al paciente sin cita, la otra revende un cupo.
+      const faltan = b.activeService + b.slotForSale + b.noService;
       this.logger.error(
         `🚨 DERIVA entre AgenIA y el HIS (org ${organizationId}): ` +
           `${report.missingInHis.length} cita(s) que el hospital NO tiene ` +
-          `(el paciente cree que sí) y ${report.missingInAgenIA.length} que AgenIA ` +
-          `desconoce (podría revender ese cupo). ` +
+          `(el paciente cree que sí) y ${faltan} que AgenIA desconoce (podría ` +
+          `revender ese cupo): ${b.activeService} de servicios activos, ` +
+          `${b.slotForSale} con el cupo a la venta y ${b.noService} sin servicio. ` +
           `Faltan en el HIS: ${report.missingInHis.slice(0, 5).join(', ') || '—'}. ` +
-          `Faltan en AgenIA: ${report.missingInAgenIA.slice(0, 5).join(', ') || '—'}.`,
+          `De servicios activos: ${
+            report.activeServiceMissing
+              .slice(0, 5)
+              .map((f) => `${f.key} (${f.reason})`)
+              .join(', ') || '—'
+          }.${fuera}`,
       );
     }
 
@@ -546,6 +660,9 @@ export class MirrorReconciliationService {
           toImport: report.toImport.length,
           activeServiceUnmapped: report.activeServiceUnmapped,
           activeServiceWhatsappOff: report.activeServiceWhatsappOff,
+          missingInAgenIABreakdown: report.missingInAgenIABreakdown,
+          otherServiceByDoctor: report.otherServiceByDoctor,
+          activeServiceMissing: report.activeServiceMissing,
           missingInHis: report.missingInHis,
           missingInAgenIA: report.missingInAgenIA,
           repaired: report.repaired,

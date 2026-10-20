@@ -121,6 +121,8 @@ describe('vocabulario y catálogo', () => {
         'ESQUEMA_ESPEJO',
         'PROCESO_EXCEPCION',
         'REINICIOS_EN_BUCLE',
+        'SOPORTE_CODIGOS_FALLIDOS',
+        'SOPORTE_TOPE_IA',
       ].sort(),
     );
   });
@@ -286,6 +288,13 @@ describe('normalizarRuta y claveAlerta — una firma por problema, no por cita',
     expect(claveAlerta.arranque()).toBe('api:arranque');
     expect(claveAlerta.reiniciosEnBucle()).toBe('api:reinicios');
     expect(claveAlerta.esquemaEspejo()).toBe('espejo:esquema');
+    expect(claveAlerta.soporteSinIa('org-1')).toBe('soporte:sin-ia:org-1');
+    expect(claveAlerta.soporteTopeIa('org-1', '2026-10-20')).toBe(
+      'soporte:tope-ia:org-1:2026-10-20',
+    );
+    expect(claveAlerta.soporteCodigosFallidos(2_934_000)).toBe(
+      'soporte:codigos-fallidos:2934000',
+    );
   });
 
   it('dos citas distintas con el mismo error dan la MISMA firma', () => {
@@ -310,6 +319,7 @@ describe('del monitor a una alerta', () => {
     expect(categoriaDeServicio('mirror')).toBe('ESPEJO');
     expect(categoriaDeServicio('gemini')).toBe('SERVICIOS');
     expect(categoriaDeServicio('telegram')).toBe('SERVICIOS');
+    expect(categoriaDeServicio('soporte')).toBe('ASISTENTE_SOPORTE');
   });
 
   it('una caída avisa al primer chequeo; la latencia alta, solo si se repite (12-oct)', () => {

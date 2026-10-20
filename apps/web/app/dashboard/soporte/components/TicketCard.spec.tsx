@@ -89,11 +89,16 @@ describe('el caso en el panel', () => {
                     author: { email: 'ana.perez@clinica.co' },
                 },
             ],
+            reopenedCount: 0,
+            groupNotice: 'SENT',
+            groupNotifiedAt: '2026-10-19T15:01:00Z',
+            groupNoticeError: null,
+            unattendedRemindedAt: null,
             ...cambios,
         });
         const TICKETS = [
             fila({}),
-            fila({ id: 'id2', number: 7, title: 'Otra cosa', channel: 'PANEL', priority: 'NORMAL', notes: [] }),
+            fila({ id: 'id2', number: 7, title: 'Otra cosa', channel: 'PANEL', priority: 'NORMAL', notes: [] })
         ];
 
         it('cada caso con su número, etiquetas y lo que agregó quien lo reportó', () => {
@@ -116,5 +121,74 @@ describe('el caso en el panel', () => {
             fireEvent.change(buscar, { target: { value: 'otra' } });
             expect(screen.getByText('Otra cosa')).toBeInTheDocument();
         });
+
+        it('el aviso al grupo: avisado (y si se recordó), pendiente con su motivo, o nada en los casos viejos', () => {
+            render(
+                <SupportAdminClient
+                    showAll
+                    tickets={[
+                        fila({ unattendedRemindedAt: '2026-10-19T17:01:00Z' }),
+                        fila({
+                            id: 'b',
+                            number: 59,
+                            groupNotice: 'PENDING',
+                            groupNotifiedAt: null,
+                            groupNoticeError: 'El grupo de alertas técnicas no está conectado.',
+                        }),
+                        fila({
+                            id: 'c',
+                            number: 60,
+                            groupNotice: 'SKIPPED',
+                            groupNotifiedAt: null,
+                        }),
+                    ]}
+                />,
+            );
+            // La hora, en Colombia.
+            expect(
+                screen.getByText(/^Avisado al grupo · .*10:01.* · se recordó sin tomar · .*12:01/),
+            ).toBeInTheDocument();
+            expect(
+                screen.getByText('Aviso al grupo pendiente: El grupo de alertas técnicas no está conectado.'),
+            ).toBeInTheDocument();
+            expect(screen.getAllByText(/al grupo/)).toHaveLength(2);
+        });
+
+        it('el caso del asistente enlaza a su conversación; el del panel, no', () => {
+            render(
+                <SupportAdminClient
+                    showAll
+                    tickets={[fila({ conversationId: 'conv-1' }), fila({ id: 'b', number: 59, conversationId: null })]}
+                />,
+            );
+            expect(screen.getAllByRole('link', { name: 'Ver la conversación con el asistente' })).toHaveLength(1);
+            expect(screen.getByRole('link', { name: 'Ver la conversación con el asistente' })).toHaveAttribute(
+                'href',
+                '/super-admin/soporte-bot/conversaciones/conv-1',
+            );
+        });
+
+        it('reabierto: la marca y la respuesta anterior mientras no se vuelva a solucionar', () => {
+            render(
+                <SupportAdminClient
+                    showAll
+                    tickets={[
+                        fila({
+                            reopenedCount: 2,
+                            status: 'OPEN',
+                            resolutionNote: 'Se reinició el envío.',
+                        }),
+                    ]}
+                />,
+            );
+            expect(screen.getByText('Reabierto 2 veces')).toBeInTheDocument();
+            expect(screen.getByText(/Respuesta anterior/)).toBeInTheDocument();
+            expect(screen.getByText('Se reinició el envío.')).toBeInTheDocument();
+        });
+    });
+
+    it('Mis solicitudes también marca el caso reabierto', () => {
+        render(<TicketCard ticket={{ ...CASO, reopenedCount: 1 }} />);
+        expect(screen.getByText('Reabierto')).toBeInTheDocument();
     });
 });

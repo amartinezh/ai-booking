@@ -1,9 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import textToSpeech from '@google-cloud/text-to-speech';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TelegramConfigService } from '../telegram/telegram-config.service';
+import { TelegramApiClient } from '../telegram/telegram-api.client';
+import { CryptoService } from '../common/crypto/crypto.service';
+import { urlDelWebhook } from '../support-bot/support-bot-config.service';
 import { CheckResult, ServiceConfig } from './services.config';
 import { getErrorMessage } from '../common/error-message.util';
 import { isGoogleTtsEnabled } from '../audio-config/tts/google-tts.service';
@@ -43,6 +46,8 @@ export class MonitorCheckers {
     private readonly integrations: IntegrationsService,
     private readonly prisma: PrismaService,
     private readonly telegramConfig: TelegramConfigService,
+    @Optional() private readonly telegramApi?: TelegramApiClient,
+    @Optional() private readonly cipher?: CryptoService,
   ) {
     this.degradedThresholdMs =
       Number(this.config.get('MONITOR_DEGRADED_THRESHOLD_MS')) || 3000;
@@ -82,6 +87,8 @@ export class MonitorCheckers {
         return this.checkMirror();
       case 'telegram':
         return this.checkTelegram();
+      case 'soporte':
+        return this.checkSoporte();
       default:
         return Promise.resolve({
           status: 'DOWN',
@@ -293,6 +300,78 @@ export class MonitorCheckers {
       errorCode: peor === 'UP' ? null : 'TELEGRAM_UNHEALTHY',
       errorMessage: problemas.length > 0 ? problemas.join(' | ') : null,
     };
+  }
+
+  // ── Asistente de soporte del personal ──────────────────────────────────────
+
+  /**
+   * El bot del asistente de soporte (docs/PLAN_BOT_SOPORTE.md, Fase 5): que
+   * Telegram siga apuntando a su webhook y no retenga los mensajes del personal.
+   * No aplica sin `SUPPORT_BOT_ENABLED=true` o con el asistente apagado o sin bot.
+   * Sus incidentes no se le cuentan al personal (son internos).
+   */
+  private async checkSoporte(): Promise<CheckResult> {
+    const inicio = Date.now();
+    const noAplica: CheckResult = { status: 'UP', latencyMs: null, skip: true };
+    if (this.config.get<string>('SUPPORT_BOT_ENABLED')?.trim() !== 'true') {
+      return noAplica;
+    }
+    if (!this.telegramApi || !this.cipher) return noAplica;
+    const row = await this.prisma.supportBotConfig.findUnique({
+      where: { id: 'global' },
+      select: { enabled: true, encryptedBotToken: true, routeKey: true },
+    });
+    if (!row?.enabled || !row.encryptedBotToken || !row.routeKey) {
+      return noAplica;
+    }
+
+    let token: string;
+    try {
+      token = this.cipher.decrypt(row.encryptedBotToken);
+    } catch {
+      return {
+        status: 'DOWN',
+        latencyMs: null,
+        errorCode: 'AUTH',
+        errorMessage:
+          'No se pudo descifrar el token del bot del asistente (¿cambió ENCRYPTION_KEY?). Vuelva a conectarlo en «Asistente de soporte».',
+      };
+    }
+    const info = await this.telegramApi.getWebhookInfo(token);
+    if (!info.ok) {
+      return {
+        status: 'DOWN',
+        latencyMs: Date.now() - inicio,
+        errorCode: info.errorCode === 401 ? 'AUTH' : 'TELEGRAM',
+        errorMessage: `Telegram no respondió por el bot del asistente: ${info.description}`,
+      };
+    }
+    const latencyMs = Date.now() - inicio;
+    const retenidos = info.result.pending_update_count ?? 0;
+    const error = info.result.last_error_message ?? null;
+    if (info.result.url !== urlDelWebhook(row.routeKey)) {
+      return {
+        status: 'DOWN',
+        latencyMs,
+        errorCode: 'TELEGRAM_UNHEALTHY',
+        errorMessage:
+          'Telegram no apunta al webhook del asistente: el personal escribe y nadie le responde. Vuelva a conectar el bot en «Asistente de soporte».',
+      };
+    }
+    const umbral =
+      Number(this.config.get('MONITOR_TELEGRAM_PENDING_MAX')) || 10;
+    if (retenidos > umbral || (retenidos > 0 && error)) {
+      return {
+        status: 'DEGRADED',
+        latencyMs,
+        errorCode: 'TELEGRAM_UNHEALTHY',
+        errorMessage:
+          `${retenidos} mensaje(s) del personal retenidos en Telegram` +
+          (error ? ` — ${error}` : '') +
+          '.',
+      };
+    }
+    return { status: 'UP', latencyMs, errorCode: null, errorMessage: null };
   }
 
   // ── Gemini ─────────────────────────────────────────────────────────────────

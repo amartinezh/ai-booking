@@ -10,6 +10,14 @@ import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
 import { getErrorMessage } from '@/lib/error';
 import type {
+    CifrasAsistente,
+    DetalleConversacion,
+    FilaConversacion,
+    FiltroConversaciones,
+    PeriodoCifras,
+    PreguntaSinCubrir,
+} from '@agenia/shared';
+import type {
     AjustesAsistente,
     CodigoAsistente,
     ConfigAsistente,
@@ -175,4 +183,47 @@ export async function codigoDePruebaAsistente(
     if (!(await esSuperAdmin())) return { ok: false, error: 'Acceso denegado' };
     const res = await callBackend('POST', '/support-bot/admin/test-code', { organizationId });
     return res.ok ? { ok: true, data: res.body as CodigoAsistente } : { ok: false, error: res.message };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Lo que se ve del asistente (super admin, Fase 5): cifras, lo que el manual no
+// cubrió y las conversaciones. Sin IA: cifras de la base y de Redis.
+// ───────────────────────────────────────────────────────────────────────────
+
+export async function getCifrasAsistente(dias: PeriodoCifras): Promise<ResultadoAsistente<CifrasAsistente>> {
+    if (!(await esSuperAdmin())) return { ok: false, error: 'Acceso denegado' };
+    const res = await callBackend('GET', `/support-bot/admin/stats?dias=${dias}`);
+    return res.ok ? { ok: true, data: res.body as CifrasAsistente } : { ok: false, error: res.message };
+}
+
+export async function getPreguntasSinCubrir(
+    dias: PeriodoCifras,
+): Promise<ResultadoAsistente<PreguntaSinCubrir[]>> {
+    if (!(await esSuperAdmin())) return { ok: false, error: 'Acceso denegado' };
+    const res = await callBackend('GET', `/support-bot/admin/uncovered?dias=${dias}`);
+    return res.ok ? { ok: true, data: res.body as PreguntaSinCubrir[] } : { ok: false, error: res.message };
+}
+
+export async function getConversacionesAsistente(filtro: {
+    dias: PeriodoCifras;
+    clinica?: string | null;
+    filtro?: FiltroConversaciones;
+    cursor?: string | null;
+}): Promise<ResultadoAsistente<{ filas: FilaConversacion[]; siguiente: string | null }>> {
+    if (!(await esSuperAdmin())) return { ok: false, error: 'Acceso denegado' };
+    const q = new URLSearchParams({ dias: String(filtro.dias), filtro: filtro.filtro ?? 'TODAS' });
+    if (filtro.clinica) q.set('clinica', filtro.clinica);
+    if (filtro.cursor) q.set('cursor', filtro.cursor);
+    const res = await callBackend('GET', `/support-bot/admin/conversations?${q.toString()}`);
+    return res.ok
+        ? { ok: true, data: res.body as { filas: FilaConversacion[]; siguiente: string | null } }
+        : { ok: false, error: res.message };
+}
+
+/** Una conversación completa. Abrirla queda en la bitácora del sistema (la API lo anota). */
+export async function getConversacionAsistente(id: string): Promise<ResultadoAsistente<DetalleConversacion>> {
+    if (!(await esSuperAdmin())) return { ok: false, error: 'Acceso denegado' };
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: 'La conversación no existe o ya se borró.' };
+    const res = await callBackend('GET', `/support-bot/admin/conversations/${id}`);
+    return res.ok ? { ok: true, data: res.body as DetalleConversacion } : { ok: false, error: res.message };
 }

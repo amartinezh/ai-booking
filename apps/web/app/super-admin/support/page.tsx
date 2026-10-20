@@ -42,6 +42,12 @@ export default async function SuperAdminSupportPage({
         reporter: t.reporter,
         organization: t.organization,
         notes: t.notes.map((n) => ({ ...n, createdAt: n.createdAt.toISOString() })),
+        reopenedCount: t.reopenedCount,
+        conversationId: t.conversationId,
+        groupNotice: t.groupNotice,
+        groupNotifiedAt: t.groupNotifiedAt ? t.groupNotifiedAt.toISOString() : null,
+        groupNoticeError: t.groupNoticeError,
+        unattendedRemindedAt: t.unattendedRemindedAt ? t.unattendedRemindedAt.toISOString() : null,
     }));
 
     return (

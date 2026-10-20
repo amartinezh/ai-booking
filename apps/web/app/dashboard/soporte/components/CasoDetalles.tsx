@@ -1,5 +1,5 @@
 import type { SupportTicketChannel, SupportTicketPriority } from '@agenia/database';
-import { numeroDeCaso } from '@agenia/shared';
+import { estadoDelAvisoAlGrupo, numeroDeCaso } from '@agenia/shared';
 import { formatAppointmentShort } from '@/lib/date';
 
 const fmt = (d: Date | string) => formatAppointmentShort(d);
@@ -19,15 +19,18 @@ export function NumeroDelCaso({ numero }: { numero: number }) {
     return <span className="text-[11px] font-mono font-semibold text-zinc-500">{numeroDeCaso(numero)}</span>;
 }
 
-/** Prioridad alta (frena la atención de pacientes) y si se abrió por Telegram. */
+/** Prioridad alta (frena la atención de pacientes), si se abrió por Telegram y si se reabrió. */
 export function EtiquetasDelCaso({
     channel,
     priority,
+    reabierto = 0,
 }: {
     channel: SupportTicketChannel;
     priority: SupportTicketPriority;
+    /** Veces que quien lo reportó dijo «sigue pasando» después de resuelto. */
+    reabierto?: number;
 }) {
-    if (channel !== 'TELEGRAM' && priority !== 'HIGH') return null;
+    if (channel !== 'TELEGRAM' && priority !== 'HIGH' && reabierto === 0) return null;
     return (
         <span className="inline-flex flex-wrap items-center gap-1.5">
             {priority === 'HIGH' && (
@@ -43,6 +46,42 @@ export function EtiquetasDelCaso({
                     Por Telegram
                 </span>
             )}
+            {reabierto > 0 && (
+                <span
+                    title="Quien lo reportó dijo que sigue pasando después de resuelto"
+                    className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200"
+                >
+                    {reabierto === 1 ? 'Reabierto' : `Reabierto ${reabierto} veces`}
+                </span>
+            )}
+        </span>
+    );
+}
+
+/** Si el grupo del equipo técnico se enteró del caso (§3.5), y si no, por qué. */
+export function AvisoAlGrupo(caso: {
+    groupNotice: string;
+    groupNotifiedAt: Date | string | null;
+    groupNoticeError: string | null;
+    unattendedRemindedAt: Date | string | null;
+}) {
+    const estado = estadoDelAvisoAlGrupo(caso);
+    if (!estado) return <span />;
+    if (estado.tipo === 'ENVIADO') {
+        return (
+            <span className="text-[11px] text-zinc-500">
+                Avisado al grupo · {fmt(estado.cuando)}
+                {estado.recordado && ` · se recordó sin tomar · ${fmt(estado.recordado)}`}
+            </span>
+        );
+    }
+    return (
+        <span
+            className={`text-[11px] ${estado.motivo ? 'text-amber-700' : 'text-zinc-500'}`}
+            title={estado.motivo ?? undefined}
+        >
+            {estado.tipo === 'PENDIENTE' ? 'Aviso al grupo pendiente' : 'Sin aviso al grupo'}
+            {estado.motivo && `: ${estado.motivo}`}
         </span>
     );
 }

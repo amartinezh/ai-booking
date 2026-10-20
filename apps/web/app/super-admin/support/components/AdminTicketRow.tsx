@@ -1,6 +1,7 @@
  
 'use client';
 
+import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import StatusBadge from '../../../dashboard/soporte/components/StatusBadge';
 import { startTicketAttention } from '@/app/actions/support';
@@ -9,7 +10,12 @@ import BrandLogo from '@/app/components/BrandLogo';
 import { formatAppointmentShort } from '@/lib/date';
 import type { SupportTicketChannel, SupportTicketPriority } from '@agenia/database';
 import { numeroDeCaso } from '@agenia/shared';
-import { EtiquetasDelCaso, NotasDelCaso, type NotaDelCaso } from '../../../dashboard/soporte/components/CasoDetalles';
+import {
+    AvisoAlGrupo,
+    EtiquetasDelCaso,
+    NotasDelCaso,
+    type NotaDelCaso,
+} from '../../../dashboard/soporte/components/CasoDetalles';
 
 const fmt = (d: Date | string) => formatAppointmentShort(d);
 
@@ -28,6 +34,13 @@ export type AdminTicket = {
     reporter: { email: string; role: string };
     organization: { id: string; name: string; logoUrl: string | null };
     notes: NotaDelCaso[];
+    reopenedCount: number;
+    /** La conversación del asistente que lo abrió (se borra a los 180 días). */
+    conversationId?: string | null;
+    groupNotice: string;
+    groupNotifiedAt: Date | string | null;
+    groupNoticeError: string | null;
+    unattendedRemindedAt: Date | string | null;
 };
 
 export default function AdminTicketRow({ ticket }: { ticket: AdminTicket }) {
@@ -67,7 +80,11 @@ export default function AdminTicketRow({ ticket }: { ticket: AdminTicket }) {
                             {ticket.title}
                         </h3>
                         <div className="mt-1">
-                            <EtiquetasDelCaso channel={ticket.channel} priority={ticket.priority} />
+                            <EtiquetasDelCaso
+                                channel={ticket.channel}
+                                priority={ticket.priority}
+                                reabierto={ticket.reopenedCount}
+                            />
                         </div>
                         <p className="text-xs text-zinc-500 mt-0.5">Creado el {fmt(ticket.createdAt)}</p>
                     </div>
@@ -89,6 +106,24 @@ export default function AdminTicketRow({ ticket }: { ticket: AdminTicket }) {
 
                 <NotasDelCaso notas={ticket.notes} titulo="Lo que agregó después" />
 
+                {ticket.conversationId && (
+                    <Link
+                        href={`/super-admin/soporte-bot/conversaciones/${ticket.conversationId}`}
+                        className="mt-3 inline-flex text-xs font-semibold text-sky-700 hover:underline"
+                    >
+                        Ver la conversación con el asistente
+                    </Link>
+                )}
+
+                {ticket.reopenedCount > 0 && ticket.status !== 'RESOLVED' && ticket.resolutionNote && (
+                    <div className="mt-4 p-4 rounded-xl bg-amber-50/60 ring-1 ring-amber-100">
+                        <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide mb-1.5">
+                            Respuesta anterior (dijo que sigue pasando)
+                        </p>
+                        <p className="text-sm text-zinc-700 whitespace-pre-line">{ticket.resolutionNote}</p>
+                    </div>
+                )}
+
                 {ticket.status === 'RESOLVED' && ticket.resolutionNote && (
                     <div className="mt-4 p-4 rounded-xl bg-green-50 ring-1 ring-green-200">
                         <div className="flex items-center justify-between mb-1.5">
@@ -101,8 +136,12 @@ export default function AdminTicketRow({ ticket }: { ticket: AdminTicket }) {
                 )}
 
                 <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-zinc-100">
-                    {/* El número va junto al título. */}
-                    <span />
+                    <AvisoAlGrupo
+                        groupNotice={ticket.groupNotice}
+                        groupNotifiedAt={ticket.groupNotifiedAt}
+                        groupNoticeError={ticket.groupNoticeError}
+                        unattendedRemindedAt={ticket.unattendedRemindedAt}
+                    />
 
                     <div className="flex flex-wrap gap-2">
                         {ticket.status === 'OPEN' && (

@@ -154,6 +154,7 @@ Para el caso «se cayó el servidor entero»: §5 de esta guía (UptimeRobot, gr
 | Que no salga nada (API y vigía) | Panel → **Apagar alertas**. Todo se sigue registrando |
 | Un rato (mantenimiento) | Panel → **Silenciar**; o `vps 'agenia mantenimiento 30'` (solo el vigía, contenedores y panel) |
 | Solo el vigía | Panel → desmarcar la categoría **Servidor**. (Borrar `/etc/cron.d/agenia-vigia` dura hasta el próximo despliegue, que lo reinstala) |
+| Los avisos de los casos de Soporte | Panel → desmarcar la categoría **Casos de soporte**. Los casos se abren igual y la Mesa de Ayuda dice que no se avisaron (docs/PLAN_BOT_SOPORTE.md §15) |
 | Desconectar el bot | Panel → **Desconectar** (se despide del grupo y borra el token, también del archivo del vigía) |
 | Volver al código anterior | Desplegar `45caa5f`. Las tablas nuevas quedan y no estorban: la migración solo agregó |
 
