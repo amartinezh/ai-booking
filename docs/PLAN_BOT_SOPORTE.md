@@ -1,6 +1,6 @@
 # Asistente de soporte por Telegram para el personal
 
-**Estado: APROBADO (2026-10-19); FASES 0 Y 1 EN COMMIT (`43fb304`), FASE 2 (`da95449`) Y FASE 3 (`856245d`) EN COMMIT; FASES 4 Y 5 HECHAS (2026-10-20), sin commit** (bitácoras en §11 a §16). Falta correr el examen con un modelo real (§13). Sigue la Fase 6 (producción y piloto). El usuario aprobó todas las recomendaciones de §8 con tres cambios suyos: **S3**, el código del panel se pide en cada conversación (§3.1); **S5**, la IA es la de cada clínica, no una de la plataforma; y **S14**, el horario del equipo es de lunes a viernes de 8:00 a 17:00.
+**Estado: APROBADO (2026-10-19); FASES 0 A 5 EN COMMIT (`43fb304`, `da95449`, `856245d`, `104638e`); FASE 6 PREPARADA EN EL REPO (2026-10-20), sin commit** (bitácoras en §11 a §17): el piloto y el manual de paso a producción (`docs/ASISTENTE_SOPORTE.md`). Falta ejecutarlo en el servidor (con confirmación del usuario), correr el examen con la IA del hospital y hacer la semana de piloto. El usuario aprobó todas las recomendaciones de §8 con tres cambios suyos: **S3**, el código del panel se pide en cada conversación (§3.1); **S5**, la IA es la de cada clínica, no una de la plataforma; y **S14**, el horario del equipo es de lunes a viernes de 8:00 a 17:00.
 
 ## 1. Qué se pide
 
@@ -684,3 +684,61 @@ Repetirlo con cada modelo que usen las clínicas en producción. Para aprobar: a
 - El examen con un modelo real (§13).
 - «Avísame cuando se resuelva» para una falla general que el equipo ya atiende (§15).
 - La Fase 6: las alertas técnicas en producción, la ruta del webhook en el Caddy, `SUPPORT_BOT_ENABLED=true`, el bot en @BotFather y el piloto con 3 a 5 personas del hospital.
+
+## 17. Bitácora de la Fase 6 (2026-10-20)
+
+### El servidor antes de empezar (solo lectura, 2026-10-20)
+
+- Versión desplegada: `d47d918`, seis commits atrás del asistente. Pendientes en la base: las migraciones `20261019200000`, `20261019210000` y la nueva `20261020100000`.
+- Las alertas técnicas están **en producción**: bot conectado, grupo vinculado y encendidas. El aviso al grupo de los casos (Fase 4) tiene canal.
+- No hay `SUPPORT_BOT_ENABLED` y el Caddy real no tiene la ruta del webhook: sus `/api/*` públicos son `chatbot/webhook`, `telegram/webhook`, `mirror` y `padron`.
+- La IA del hospital es Gemini. El personal: 1 administrador, 1 agente de reservas y 30 médicos. Ningún caso abierto en Soporte.
+- La imagen de la API copia `docs/conocimiento` (el asistente tiene su manual) y trae el examen compilado. `agenia migrate` aplica las migraciones y los índices parciales del asistente.
+
+### Qué quedó
+
+- **El piloto**: `SupportBotConfig.pilotOnly` (nace `true`) y `pilotUserIds`, en la migración `20261020100000_asistente_soporte_piloto`.
+  - Fuera del piloto: sin tarjeta en Soporte, sin código («El asistente de soporte está en piloto…»), un código ya pedido no abre nada y la conversación abierta se cierra con el siguiente mensaje (`ACCESO_REVOCADO`).
+  - Los avisos de los casos tampoco le llegan a quien salió del piloto.
+  - El super admin prueba siempre.
+  - La regla vive en `shared` (`enElPiloto`, `correosDelPiloto`, `MAX_PERSONAS_PILOTO` = 20).
+- **El panel**: la sección «Piloto» de `/super-admin/soporte-bot`.
+  - Muestra quiénes están (rol y clínica) y edita la lista por correo. La API solo acepta personal de una clínica activa y dice qué correos no lo son.
+  - «Abrir a todo el personal» pide confirmación; «Volver al piloto», no. Todo queda en la auditoría global.
+- **El examen con la IA de una clínica**: `EXAMEN_CLINICA=<id>` en `examen.cli.ts`. Dentro del contenedor de la API, la descifra con su `ENCRYPTION_KEY` y examina exactamente la IA que usará el asistente; nadie copia la clave.
+- **`docs/ASISTENTE_SOPORTE.md`**: el manual de operación.
+  - El paso a producción en 10 pasos: respaldo, variable, despliegue, verificación, Caddy, examen, @BotFather, panel, prueba de punta a punta y el aviso al piloto.
+  - La semana de piloto con su revisión diaria y los criterios para abrirlo a todos.
+  - La operación diaria, cómo apagarlo o volver atrás y qué hacer si algo falla.
+- **`AGENIA.md`**: dos entradas en Soporte (la tarjeta durante el piloto y el aviso «está en piloto»), las secciones 13, 14 y 15 (también se corrige la 13: las alertas técnicas ya están en producción) y la bitácora.
+
+### Decisiones de detalle tomadas al construir
+
+- **El piloto nace encendido y vacío**, también si la fila ya existía: encender el asistente no lo abre a los 32 de golpe. Abrirlo es una decisión explícita.
+- **La lista se arma por correo, no con un buscador**: son de 3 a 5 personas, y así se pega desde el mensaje con que se las elige.
+- **El examen dentro del servidor y no con una clave copiada**: la clave del hospital no sale de su base, y se examina el mismo modelo que responderá.
+- **Los pasos en el servidor y en Telegram no los ejecuta el asistente de desarrollo**: tocan producción y son del usuario (el token del bot, a quién se le da el piloto, el gasto del examen). El manual los deja listos para copiar.
+
+### Cómo se verificó
+
+- **API**: 3.671 pruebas en verde, con el umbral de cobertura cumplido (funciones 94,2 %). `nest build` sin errores y `eslint` limpio.
+- **`shared`**: 1.524 pruebas en verde. El umbral global de funciones sigue igual que antes por los mismos cuatro archivos ajenos.
+- **Web**: 1.180 pruebas en verde, `tsc` sin errores y `next build` completo.
+- **La migración**: generada como diferencia entre el esquema de `HEAD` y el nuevo, y aplicada sobre una base con el esquema anterior: cero deriva con `prisma migrate diff`.
+- **Postgres 15 real**: la integración (41 pruebas) suma el piloto armado por correo sin importar mayúsculas y que solo acepta personal.
+- **El examen con la IA de una clínica**, contra la base desechable:
+  - Con una clave falsa de Gemini guardada cifrada, descifró la configuración y llamó a Gemini, que rechazó la clave. Eso prueba el camino completo sin gastar nada.
+  - Con una clínica sin IA, lo dice y no corre.
+- **De punta a punta con la API real**: 14 comprobaciones en verde.
+  - El asistente nace en piloto y vacío.
+  - Fuera del piloto, sin tarjeta y con 403 al pedir el código.
+  - Un paciente no entra a la lista; Ana entra (con mayúsculas en el correo) y el cambio queda en la auditoría global.
+  - Dentro del piloto conversa. Al sacarla, su siguiente mensaje recibe «Tu usuario ya no tiene acceso…» y la conversación queda cerrada por `ACCESO_REVOCADO`.
+  - Abierto a todo el personal, vuelve a ver la tarjeta.
+  - Una agente recibe 403 al intentar cambiar el piloto.
+
+### Pendiente
+
+- Ejecutar `docs/ASISTENTE_SOPORTE.md` §1 en el servidor del hospital (necesita la confirmación del usuario, el token del bot que él cree en @BotFather y las personas del piloto).
+- El examen con la IA del hospital (§1 paso 6) y la semana de piloto (§2). Anotar aquí lo que se vea.
+- «Avísame cuando se resuelva» para una falla general que el equipo ya atiende (§15).

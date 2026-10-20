@@ -18,6 +18,7 @@ import {
   type BorradorCaso,
   accesoAlAsistente,
   conversacionVigente,
+  enElPiloto,
   intentosRestantes,
   type MotivoCierre,
   type UserRole,
@@ -153,6 +154,10 @@ export class SupportBotSessionService {
       throw new ForbiddenException(
         'Tu usuario no tiene acceso al asistente de soporte.',
       );
+    } else if (!enElPiloto(rt.piloto, userId, user.role as UserRole)) {
+      throw new ForbiddenException(
+        'El asistente de soporte está en piloto con algunas personas. Pronto estará para todo el personal.',
+      );
     }
 
     const ahora = new Date();
@@ -263,7 +268,11 @@ export class SupportBotSessionService {
             select: { id: true, name: true, isActive: true },
           })
         : fila.user.organization;
-    if (acceso === 'NINGUNO' || !orgId || !org?.isActive) {
+    const rt = await this.config.runtime();
+    // Fuera del piloto (la lista cambió después de pedir el código) no se abre.
+    const fueraDelPiloto =
+      !!rt && !enElPiloto(rt.piloto, fila.user.id, fila.user.role as UserRole);
+    if (acceso === 'NINGUNO' || !orgId || !org?.isActive || fueraDelPiloto) {
       await this.prisma.supportBotCode.updateMany({
         where: { id: fila.id, usedAt: null },
         data: { usedAt: ahora },
@@ -414,8 +423,8 @@ export class SupportBotSessionService {
     });
     if (!c) return { tipo: 'NINGUNA' };
 
-    const minutos = (await this.config.runtime())?.conversationIdleMinutes;
-    if (!conversacionVigente(c, ahora, minutos)) {
+    const rt = await this.config.runtime();
+    if (!conversacionVigente(c, ahora, rt?.conversationIdleMinutes)) {
       await this.cerrar(c.id, 'INACTIVIDAD', ahora);
       return { tipo: 'NINGUNA' };
     }
@@ -425,7 +434,8 @@ export class SupportBotSessionService {
       c.organization.isActive &&
       ((acceso === 'PERSONAL' &&
         !c.isTest &&
-        c.user.organizationId === c.organizationId) ||
+        c.user.organizationId === c.organizationId &&
+        (!rt || enElPiloto(rt.piloto, c.user.id, c.user.role as UserRole))) ||
         (acceso === 'PRUEBA' && c.isTest));
     if (!vale) {
       await this.cerrar(c.id, 'ACCESO_REVOCADO', ahora);
@@ -485,7 +495,11 @@ export class SupportBotSessionService {
     ahora: Date = new Date(),
   ): Promise<EstadoAsistenteParaUsuario> {
     const rt = await this.config.runtime();
-    const disponible = !!rt?.enabled && !!rt.botUsername;
+    // Durante el piloto, la tarjeta solo aparece a quienes están en él.
+    const disponible =
+      !!rt?.enabled &&
+      !!rt.botUsername &&
+      (!rt.piloto.activo || rt.piloto.usuarios.includes(userId));
     const [abierta, ultima, pref] = await Promise.all([
       this.prisma.supportBotConversation.findFirst({
         where: { userId, closedAt: null },

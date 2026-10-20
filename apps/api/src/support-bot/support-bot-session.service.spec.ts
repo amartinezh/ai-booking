@@ -253,6 +253,7 @@ describe('SupportBotSessionService (base en memoria)', () => {
   let redis: RedisFalso;
   let disponible: boolean;
   let svc: SupportBotSessionService;
+  let piloto: { activo: boolean; usuarios: string[] };
   const config = {
     runtime: async () =>
       disponible
@@ -260,6 +261,7 @@ describe('SupportBotSessionService (base en memoria)', () => {
             enabled: true,
             botUsername: 'AgeniaSoporteBot',
             conversationIdleMinutes: 30,
+            piloto,
           }
         : null,
   };
@@ -313,6 +315,7 @@ describe('SupportBotSessionService (base en memoria)', () => {
     );
     redis = new RedisFalso();
     disponible = true;
+    piloto = { activo: false, usuarios: [] };
     vigilancia = {
       contar: jest.fn(async () => undefined),
       codigoFallido: jest.fn(async () => undefined),
@@ -658,6 +661,58 @@ describe('SupportBotSessionService (base en memoria)', () => {
       base.conversaciones[0].closedAt = new Date(Date.now() - 25 * 60 * MIN);
       const r = await validar((await svc.generarCodigo('ana')).codigo, '888');
       expect(r).toMatchObject({ tipo: 'ABIERTA', borradorRetomado: null });
+    });
+  });
+
+  describe('🧪 el piloto (Fase 6)', () => {
+    it('fuera del piloto: sin tarjeta y sin código; dentro, como siempre', async () => {
+      piloto = { activo: true, usuarios: [] };
+      await expect(svc.estadoPara('ana')).resolves.toMatchObject({
+        disponible: false,
+      });
+      await expect(svc.generarCodigo('ana')).rejects.toThrow(/piloto/);
+      expect(base.codigos).toEqual([]);
+      piloto = { activo: true, usuarios: ['ana'] };
+      await expect(svc.estadoPara('ana')).resolves.toMatchObject({
+        disponible: true,
+      });
+      await expect(svc.generarCodigo('ana')).resolves.toMatchObject({
+        codigo: expect.stringMatching(/^\d{6}$/),
+      });
+    });
+
+    it('el super admin prueba aunque no esté en el piloto', async () => {
+      piloto = { activo: true, usuarios: [] };
+      await expect(
+        svc.generarCodigo('sa', { testOrganizationId: 'org-1' }),
+      ).resolves.toMatchObject({ codigo: expect.any(String) });
+    });
+
+    it('🔒 si lo sacan del piloto después de pedir el código, el código se gasta y no abre nada', async () => {
+      piloto = { activo: true, usuarios: ['ana'] };
+      const c = await svc.generarCodigo('ana');
+      piloto = { activo: true, usuarios: [] };
+      await expect(validar(c.codigo)).resolves.toEqual({ tipo: 'SIN_ACCESO' });
+      expect(base.conversaciones).toEqual([]);
+      expect(base.codigos.find((x) => x.kind === 'CORTO')?.usedAt).toBeTruthy();
+    });
+
+    it('🔒 si lo sacan del piloto con la conversación abierta, el siguiente mensaje la cierra', async () => {
+      piloto = { activo: true, usuarios: ['ana'] };
+      await validar((await svc.generarCodigo('ana')).codigo, '777');
+      piloto = { activo: true, usuarios: [] };
+      await expect(svc.conversacionDe('777')).resolves.toEqual({
+        tipo: 'REVOCADA',
+        chatId: '777',
+      });
+      expect(base.conversaciones[0].closeReason).toBe('ACCESO_REVOCADO');
+    });
+
+    it('abierto a todo el personal, cualquiera del personal', async () => {
+      piloto = { activo: false, usuarios: [] };
+      await expect(svc.estadoPara('ana')).resolves.toMatchObject({
+        disponible: true,
+      });
     });
   });
 

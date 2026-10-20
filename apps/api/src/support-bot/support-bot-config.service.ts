@@ -9,8 +9,12 @@ import type { Prisma, SupportBotConfig } from '@agenia/database';
 import {
   AJUSTES_SOPORTE_POR_DEFECTO,
   COMANDOS_SOPORTE,
+  MAX_PERSONAS_PILOTO,
+  ROLES_DEL_ASISTENTE,
+  correosDelPiloto,
   horarioEquipoDe,
   type HorarioEquipo,
+  type UserRole,
 } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../common/crypto/crypto.service';
@@ -149,6 +153,18 @@ export class SupportBotConfigService {
         : { ok: false, pendientes: null, ultimoError: info.description };
     }
     const horario = horarioEquipoDe(row);
+    const piloto = row?.pilotUserIds?.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: row.pilotUserIds } },
+          orderBy: { email: 'asc' },
+          select: {
+            id: true,
+            email: true,
+            role: true,
+            organization: { select: { name: true } },
+          },
+        })
+      : [];
     return {
       conectado: !!token,
       botUsername: row?.botUsername ?? null,
@@ -167,6 +183,16 @@ export class SupportBotConfigService {
         turnosIaPorClinicaAlDia:
           row?.maxAiTurnsPerOrgPerDay ??
           AJUSTES_SOPORTE_POR_DEFECTO.maxAiTurnsPerOrgPerDay,
+      },
+      piloto: {
+        // Sin fila todavía, el asistente nace en piloto (como la columna).
+        activo: row?.pilotOnly ?? true,
+        personas: piloto.map((u) => ({
+          id: u.id,
+          email: u.email,
+          rol: u.role,
+          clinica: u.organization?.name ?? null,
+        })),
       },
       ultimoError: row?.lastError ?? null,
       ultimoErrorEn: row?.lastErrorAt?.toISOString() ?? null,
@@ -417,6 +443,60 @@ export class SupportBotConfigService {
       cambios.push(`cambió ${campo} a ${valor as number}`);
     }
 
+    if (input.pilotOnly !== undefined) {
+      if (typeof input.pilotOnly !== 'boolean') {
+        throw new BadRequestException(
+          '«pilotOnly» debe ser verdadero o falso.',
+        );
+      }
+      data.pilotOnly = input.pilotOnly;
+      cambios.push(
+        input.pilotOnly
+          ? 'dejó el asistente solo para el piloto'
+          : 'abrió el asistente a todo el personal',
+      );
+    }
+
+    if (input.pilotEmails !== undefined) {
+      const correos = correosDelPiloto(input.pilotEmails);
+      if (!correos) {
+        throw new BadRequestException(
+          `El piloto es una lista de hasta ${MAX_PERSONAS_PILOTO} correos.`,
+        );
+      }
+      const usuarios = correos.length
+        ? await this.prisma.user.findMany({
+            where: { email: { in: correos, mode: 'insensitive' } },
+            select: {
+              id: true,
+              email: true,
+              role: true,
+              organization: { select: { isActive: true } },
+            },
+          })
+        : [];
+      // Solo personal de una clínica activa (S2): ni pacientes ni el super admin.
+      const validos = usuarios.filter(
+        (u) =>
+          ROLES_DEL_ASISTENTE.includes(u.role as UserRole) &&
+          u.organization?.isActive,
+      );
+      const faltan = correos.filter(
+        (c) => !validos.some((u) => u.email.toLowerCase() === c),
+      );
+      if (faltan.length > 0) {
+        throw new BadRequestException(
+          `Estos correos no son del personal de una clínica activa: ${faltan.join(', ')}.`,
+        );
+      }
+      data.pilotUserIds = validos.map((u) => u.id);
+      cambios.push(
+        `dejó el piloto con ${validos.length} persona(s)${
+          correos.length ? `: ${correos.join(', ')}` : ''
+        }`,
+      );
+    }
+
     if (cambios.length === 0) return this.getPublic();
     data.updatedByUserId = actor.userId;
     data.updatedByEmail = actor.email;
@@ -468,6 +548,7 @@ export class SupportBotConfigService {
       maxMessagesPerHour: row.maxMessagesPerHour,
       maxMessageChars: row.maxMessageChars,
       maxAiTurnsPerOrgPerDay: row.maxAiTurnsPerOrgPerDay,
+      piloto: { activo: row.pilotOnly, usuarios: row.pilotUserIds },
     };
   }
 

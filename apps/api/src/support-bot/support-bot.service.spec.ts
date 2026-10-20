@@ -47,6 +47,7 @@ describe('SupportBotService', () => {
     maxMessagesPerHour: 40,
     maxMessageChars: 2000,
     maxAiTurnsPerOrgPerDay: 300,
+    piloto: { activo: false, usuarios: [] },
   };
   const ANA: Interlocutor = {
     conversationId: 'conv-1',

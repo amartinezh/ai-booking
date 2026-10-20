@@ -113,7 +113,11 @@ describe('SupportBotNoticesService', () => {
       user: { findUnique: jest.fn(async () => usuario) },
     };
     enviarAviso = jest.fn(async () => ({ ok: true, messageId: '9' }));
-    runtime = jest.fn(async () => ({ enabled: true, token: 'T' }));
+    runtime = jest.fn(async () => ({
+      enabled: true,
+      token: 'T',
+      piloto: { activo: false, usuarios: [] as string[] },
+    }));
     svc = new SupportBotNoticesService(
       prisma as unknown as PrismaService,
       { runtime } as unknown as SupportBotConfigService,
@@ -252,6 +256,25 @@ describe('SupportBotNoticesService', () => {
     await expect(svc.vuelta(AHORA)).resolves.toMatchObject({ sinAviso: 1 });
     expect(enviarAviso).not.toHaveBeenCalled();
     expect(casos[0].reporterNotifiedStatus).toBe('IN_PROGRESS');
+  });
+
+  it('🧪 durante el piloto, a quien no está en él no le llega nada', async () => {
+    runtime.mockResolvedValue({
+      enabled: true,
+      token: 'T',
+      piloto: { activo: true, usuarios: ['otra'] },
+    });
+    casos = [caso()];
+    await expect(svc.vuelta(AHORA)).resolves.toMatchObject({ sinAviso: 1 });
+    expect(enviarAviso).not.toHaveBeenCalled();
+    runtime.mockResolvedValue({
+      enabled: true,
+      token: 'T',
+      piloto: { activo: true, usuarios: ['u-ana'] },
+    });
+    casos = [caso({ id: 'c-2' })];
+    await svc.vuelta(AHORA);
+    expect(enviarAviso).toHaveBeenCalledTimes(1);
   });
 
   it('un cambio de hace más de 24 h no se avisa (el asistente estuvo apagado)', async () => {

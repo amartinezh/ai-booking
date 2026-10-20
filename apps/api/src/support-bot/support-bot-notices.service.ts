@@ -4,6 +4,7 @@ import {
   LIMITES_SOPORTE,
   ROLES_DEL_ASISTENTE,
   TEXTOS_SOPORTE,
+  enElPiloto,
   type UserRole,
 } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -141,7 +142,7 @@ export class SupportBotNoticesService {
         !!cambio &&
         ahora.getTime() - cambio.getTime() <=
           LIMITES_SOPORTE.avisoRecienteHoras * MS_HORA;
-      const destino = reciente ? await this.destino(caso.reporterId) : null;
+      const destino = reciente ? await this.destino(caso.reporterId, rt) : null;
       if (!destino) {
         resumen.sinAviso++;
         continue;
@@ -173,6 +174,7 @@ export class SupportBotNoticesService {
    */
   private async destino(
     userId: string,
+    rt: SupportBotRuntime,
   ): Promise<{ chatId: string; telegramUserId: string } | null> {
     const [pref, ultima, usuario] = await Promise.all([
       this.prisma.supportBotPreference.findUnique({
@@ -191,6 +193,8 @@ export class SupportBotNoticesService {
     ]);
     if (pref?.ticketNotices === false || !ultima || !usuario) return null;
     if (!ROLES_DEL_ASISTENTE.includes(usuario.role as UserRole)) return null;
+    // Durante el piloto, a quien ya no está en él tampoco le llegan avisos.
+    if (!enElPiloto(rt.piloto, userId, usuario.role as UserRole)) return null;
     if (usuario.organization?.isActive === false) return null;
     return ultima;
   }

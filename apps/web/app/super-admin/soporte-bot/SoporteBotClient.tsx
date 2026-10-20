@@ -15,6 +15,7 @@ import type {
     ResultadoConfigAsistente,
 } from '@/app/actions/support-bot.types';
 import { codigoLegible, segundosRestantes } from '@/app/dashboard/soporte/components/AsistenteTelegramCard';
+import { MAX_PERSONAS_PILOTO, ROL_LEGIBLE, type UserRole } from '@agenia/shared';
 
 const INPUT =
     'w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all dark:text-white';
@@ -36,7 +37,9 @@ const DIAS = [
 const HORAS = Array.from({ length: 25 }, (_, h) => h);
 
 /** Los ajustes del formulario, tal como los guarda la API. */
-export function ajustesDe(c: ConfigAsistente): Required<Omit<AjustesAsistente, 'enabled'>> {
+export function ajustesDe(
+    c: ConfigAsistente,
+): Required<Omit<AjustesAsistente, 'enabled' | 'pilotOnly' | 'pilotEmails'>> {
     return {
         teamDays: c.horario.dias,
         teamFromHour: c.horario.desdeHora,
@@ -48,9 +51,15 @@ export function ajustesDe(c: ConfigAsistente): Required<Omit<AjustesAsistente, '
     };
 }
 
+/** Los correos del piloto, uno por línea, para editarlos. */
+function correosDe(c: ConfigAsistente | null): string {
+    return c?.piloto.personas.map((p) => p.email).join('\n') ?? '';
+}
+
 /**
  * 🛟 Configuración del asistente de soporte por Telegram (docs/PLAN_BOT_SOPORTE.md
- * §3.7). La IA no se configura aquí: el asistente usa la de cada clínica (S5).
+ * §3.7). La IA no se configura aquí: el asistente usa la de cada clínica (S5). El
+ * piloto (Fase 6, §17) decide quiénes lo usan mientras no se abra a todos.
  */
 export default function SoporteBotClient({
     inicial,
@@ -67,6 +76,7 @@ export default function SoporteBotClient({
     const [prueba, setPrueba] = useState<CodigoAsistente | null>(null);
     const [restantes, setRestantes] = useState(0);
     const [aviso, setAviso] = useState<string | null>(null);
+    const [correosPiloto, setCorreosPiloto] = useState(correosDe(config));
     const [pendiente, startTransition] = useTransition();
 
     useEffect(() => {
@@ -91,6 +101,7 @@ export default function SoporteBotClient({
         if (r.ok) {
             setConfig(r.config);
             setAjustes(ajustesDe(r.config));
+            setCorreosPiloto(correosDe(r.config));
             setError(null);
             setAviso(mensaje);
         } else {
@@ -117,6 +128,26 @@ export default function SoporteBotClient({
     const guardar = () => {
         if (!ajustes) return;
         startTransition(async () => aplicar(await guardarAjustesAsistente(ajustes), 'Ajustes guardados.'));
+    };
+    const guardarPiloto = () =>
+        startTransition(async () =>
+            aplicar(
+                await guardarAjustesAsistente({ pilotEmails: correosPiloto.split(/[\s,;]+/).filter(Boolean) }),
+                'Piloto guardado.',
+            ),
+        );
+    const cambiarPiloto = (pilotOnly: boolean) => {
+        if (
+            !pilotOnly &&
+            !confirm('¿Abrir el asistente a todo el personal? La tarjeta aparecerá en Soporte para todos en todas las clínicas.')
+        )
+            return;
+        startTransition(async () =>
+            aplicar(
+                await guardarAjustesAsistente({ pilotOnly }),
+                pilotOnly ? 'El asistente quedó solo para el piloto.' : 'El asistente quedó abierto a todo el personal.',
+            ),
+        );
     };
     const generarPrueba = () =>
         startTransition(async () => {
@@ -216,6 +247,63 @@ export default function SoporteBotClient({
                                 {config.enabled ? 'Apagar' : 'Encender'}
                             </button>
                         </div>
+                    </section>
+
+                    <section className={CARD} aria-labelledby="piloto">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                            <div>
+                                <h2 id="piloto" className="text-lg font-bold text-zinc-900 dark:text-white">
+                                    {config.piloto.activo ? 'Piloto: solo estas personas' : 'Abierto a todo el personal'}
+                                </h2>
+                                <p className="text-sm text-zinc-500 max-w-2xl">
+                                    {config.piloto.activo
+                                        ? 'Solo las personas del piloto ven la tarjeta en Soporte y pueden conversar con el asistente. Los demás no notan nada.'
+                                        : 'Todo el personal de todas las clínicas ve la tarjeta en Soporte.'}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => cambiarPiloto(!config.piloto.activo)}
+                                disabled={pendiente}
+                                className={SECONDARY_BTN}
+                            >
+                                {config.piloto.activo ? 'Abrir a todo el personal' : 'Volver al piloto'}
+                            </button>
+                        </div>
+                        {config.piloto.activo && (
+                            <>
+                                {config.piloto.personas.length > 0 ? (
+                                    <ul className="text-sm text-zinc-700 dark:text-zinc-300 space-y-1" aria-label="Personas del piloto">
+                                        {config.piloto.personas.map((p) => (
+                                            <li key={p.id}>
+                                                <span className="font-medium">{p.email}</span>
+                                                <span className="text-zinc-500">
+                                                    {' '}
+                                                    · {ROL_LEGIBLE[p.rol as UserRole] ?? p.rol}
+                                                    {p.clinica && ` · ${p.clinica}`}
+                                                </span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p className="text-sm text-amber-700">
+                                        Nadie está en el piloto todavía: el asistente no le aparece a nadie.
+                                    </p>
+                                )}
+                                <label className="block text-sm text-zinc-700 dark:text-zinc-300">
+                                    Correos del piloto (uno por línea, hasta {MAX_PERSONAS_PILOTO})
+                                    <textarea
+                                        value={correosPiloto}
+                                        onChange={(e) => setCorreosPiloto(e.target.value)}
+                                        rows={4}
+                                        className={`${INPUT} mt-1 font-mono`}
+                                    />
+                                </label>
+                                <button type="button" onClick={guardarPiloto} disabled={pendiente} className={PRIMARY_BTN}>
+                                    Guardar el piloto
+                                </button>
+                            </>
+                        )}
                     </section>
 
                     <section className={CARD}>

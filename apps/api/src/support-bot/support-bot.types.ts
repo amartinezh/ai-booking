@@ -1,6 +1,7 @@
 /**
  * Tipos del asistente de soporte por Telegram (docs/PLAN_BOT_SOPORTE.md).
  */
+import type { PilotoDelAsistente } from '@agenia/shared';
 
 /** Quien cambia la configuración: sale SIEMPRE del token, nunca del body. */
 export interface SupportBotActor {
@@ -33,6 +34,16 @@ export interface PublicSupportBotConfig {
     caracteresPorMensaje: number;
     turnosIaPorClinicaAlDia: number;
   };
+  /** El piloto (Fase 6): encendido, solo estas personas usan el asistente. */
+  piloto: {
+    activo: boolean;
+    personas: Array<{
+      id: string;
+      email: string;
+      rol: string;
+      clinica: string | null;
+    }>;
+  };
   ultimoError: string | null;
   ultimoErrorEn: string | null;
   actualizadoPor: string | null;
@@ -49,6 +60,10 @@ export interface SupportBotSettingsInput {
   maxMessagesPerHour?: unknown;
   maxMessageChars?: unknown;
   maxAiTurnsPerOrgPerDay?: unknown;
+  /** Solo el piloto (`true`) o todo el personal (`false`). */
+  pilotOnly?: unknown;
+  /** Los correos de las personas del piloto (reemplaza la lista). */
+  pilotEmails?: unknown;
 }
 
 /** Lo que la configuración le entrega al resto del módulo (con el token en claro). */
@@ -63,6 +78,8 @@ export interface SupportBotRuntime {
   maxMessageChars: number;
   /** Tope de respuestas con IA por clínica al día; pasado, modo sin IA (S15). */
   maxAiTurnsPerOrgPerDay: number;
+  /** El piloto (Fase 6): encendido, solo `usuarios` usan el asistente. */
+  piloto: PilotoDelAsistente;
 }
 
 /** El código recién generado, para mostrarlo en el panel. */

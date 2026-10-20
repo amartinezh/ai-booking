@@ -1512,6 +1512,13 @@ model SupportBotConfig {
   maxMessageChars         Int @default(2000)
   maxAiTurnsPerOrgPerDay  Int @default(300)
 
+  /// Piloto (docs/PLAN_BOT_SOPORTE.md §17, Fase 6): encendido, solo las personas de
+  /// `pilotUserIds` ven la tarjeta de Soporte, piden el código y conversan. Nace
+  /// ENCENDIDO y vacío: abrir el asistente a todo el personal es una decisión del
+  /// super admin, no un efecto de encenderlo.
+  pilotOnly    Boolean  @default(true)
+  pilotUserIds String[] @default([])
+
   /// Salud del bot para el panel: último envío bueno y último error.
   lastOkAt    DateTime?
   lastError   String?

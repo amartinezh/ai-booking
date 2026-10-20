@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RedisService } from '../redis/redis.service';
-import type { SupportBotConfigService } from './support-bot-config.service';
+import { SupportBotConfigService } from './support-bot-config.service';
 import { SupportBotSessionService } from './support-bot-session.service';
 import { SupportBotCasesService } from './support-bot-cases.service';
 import { SupportBotNoticesService } from './support-bot-notices.service';
@@ -109,6 +109,7 @@ class RedisFalso {
               enabled: true,
               botUsername: 'AgeniaSoporteBot',
               conversationIdleMinutes: 30,
+              piloto: { activo: false, usuarios: [] },
             }
           : null,
     };
@@ -988,7 +989,13 @@ class RedisFalso {
             return { ok: true, messageId: '1' };
           },
         } as unknown as SupportBotService;
-        const rt = { runtime: async () => ({ enabled: true, token: 'T' }) };
+        const rt = {
+          runtime: async () => ({
+            enabled: true,
+            token: 'T',
+            piloto: { activo: false, usuarios: [] },
+          }),
+        };
         const otraConexion = new PrismaService();
         const a = new SupportBotNoticesService(
           prisma,
@@ -1174,6 +1181,43 @@ class RedisFalso {
         ]);
         expect(detalle.mensajesDetalle[0].texto).toContain('1053789456');
       });
+    });
+
+    it('🧪 el piloto (Fase 6) se arma con los correos, sin importar mayúsculas, y solo con personal', async () => {
+      const cfg = new SupportBotConfigService(
+        prisma,
+        { encrypt: (x: string) => x, decrypt: (x: string) => x } as never,
+        {
+          getWebhookInfo: async () => ({ ok: false, description: 'x' }),
+        } as never,
+      );
+      const actor = { userId: SA, email: 'sa@agenia.co', ip: null };
+      await prisma.supportBotConfig.deleteMany();
+      const pub = await cfg.updateSettings(
+        { pilotEmails: [`ANA.PEREZ.${SUF}@CLINICA.CO`] },
+        actor,
+      );
+      expect(pub.piloto).toEqual({
+        activo: true,
+        personas: [
+          expect.objectContaining({
+            id: ANA,
+            rol: 'BOOKING_AGENT',
+            clinica: CLINICA,
+          }),
+        ],
+      });
+      await expect(
+        cfg.updateSettings(
+          { pilotEmails: [`paciente.${SUF}@correo.co`] },
+          actor,
+        ),
+      ).rejects.toThrow(/no son del personal/);
+      const fila = await prisma.supportBotConfig.findUnique({
+        where: { id: 'global' },
+      });
+      expect(fila).toMatchObject({ pilotOnly: true, pilotUserIds: [ANA] });
+      await prisma.supportBotConfig.deleteMany();
     });
 
     it('la pregunta en espera se toma una sola vez', async () => {

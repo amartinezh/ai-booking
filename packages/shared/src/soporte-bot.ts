@@ -41,6 +41,45 @@ export function accesoAlAsistente(rol: UserRole): AccesoAlAsistente {
   return ROLES_DEL_ASISTENTE.includes(rol) ? 'PERSONAL' : 'NINGUNO';
 }
 
+/**
+ * El piloto (Fase 6, §17): mientras esté encendido, solo las personas de la lista
+ * usan el asistente. Nace encendido y vacío. El super admin prueba siempre.
+ */
+export interface PilotoDelAsistente {
+  activo: boolean;
+  usuarios: readonly string[];
+}
+
+/** Hasta cuántas personas caben en el piloto (el plan pide de 3 a 5). */
+export const MAX_PERSONAS_PILOTO = 20;
+
+export function enElPiloto(
+  piloto: PilotoDelAsistente,
+  userId: string,
+  rol: UserRole,
+): boolean {
+  if (rol === 'SUPER_ADMIN') return true;
+  return !piloto.activo || piloto.usuarios.includes(userId);
+}
+
+/**
+ * Los correos que escribió el super admin: en minúscula, sin repetir ni vacíos.
+ * `null` si son más de los que caben o alguno no parece un correo.
+ */
+export function correosDelPiloto(entrada: unknown): string[] | null {
+  if (!Array.isArray(entrada)) return null;
+  const correos = [
+    ...new Set(
+      entrada
+        .map((c) => (typeof c === 'string' ? c.trim().toLowerCase() : ''))
+        .filter(Boolean),
+    ),
+  ];
+  if (correos.length > MAX_PERSONAS_PILOTO) return null;
+  if (correos.some((c) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c))) return null;
+  return correos;
+}
+
 /** Reglas fijas (§3.1, §3.3, §3.4). */
 export const LIMITES_SOPORTE = {
   digitosCodigo: 6,

@@ -2,15 +2,27 @@
  * Corre el examen del asistente de soporte contra un modelo de verdad
  * (docs/PLAN_BOT_SOPORTE.md §7). GASTA TOKENS del proveedor que se le dé.
  *
+ * Con una clave en la mano (en el equipo de desarrollo):
+ *
  *   EXAMEN_PROVEEDOR=GEMINI|CHATGPT|CLAUDE \
  *   EXAMEN_API_KEY=… EXAMEN_MODELO=gemini-2.5-flash \
  *   [EXAMEN_CASOS=como-abrir-cupos,falla-recordatorios] [EXAMEN_SALIDA=reporte.json] \
  *   pnpm --filter api examen:soporte
  *
+ * Con la IA que ya tiene configurada una clínica (en el servidor, dentro del
+ * contenedor de la API: nadie copia ni ve la clave; la descifra la API con su
+ * ENCRYPTION_KEY y es exactamente la que usará el asistente). Gasta tokens de
+ * esa clínica (docs/ASISTENTE_SOPORTE.md §1):
+ *
+ *   EXAMEN_CLINICA=<organizationId> node apps/api/dist/support-bot/examen/examen.cli.js
+ *
  * Imprime cada caso y el resumen, deja el reporte en JSON y sale con código 1 si
- * no aprueba. La clave se lee del entorno y nunca se imprime.
+ * no aprueba. La clave nunca se imprime.
  */
 import { writeFileSync } from 'fs';
+import { CryptoService } from '../../common/crypto/crypto.service';
+import { LlmFactoryService } from '../../llm/llm-factory.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { ChatGptProvider } from '../../llm/providers/chatgpt.provider';
 import { ClaudeProvider } from '../../llm/providers/claude.provider';
 import { GeminiProvider } from '../../llm/providers/gemini.provider';
@@ -18,6 +30,28 @@ import type { LLMProvider } from '../../llm/interfaces/llm-provider.interface';
 import { SupportBotKnowledgeService } from '../support-bot-knowledge.service';
 import { correrExamen, UMBRAL_TEMAS } from './examen';
 import { CASOS_DEL_EXAMEN } from './preguntas';
+
+/** La IA configurada de una clínica, como la usaría el asistente. */
+async function proveedorDeLaClinica(
+  organizationId: string,
+): Promise<LLMProvider> {
+  const prisma = new PrismaService();
+  const cipher = new CryptoService();
+  cipher.onModuleInit();
+  try {
+    const p = await new LlmFactoryService(prisma, cipher).forOrgOrNull(
+      organizationId,
+    );
+    if (!p) {
+      throw new Error(
+        'Esa clínica no tiene IA configurada (Configuración › Integración de IA).',
+      );
+    }
+    return p;
+  } finally {
+    await prisma.$disconnect();
+  }
+}
 
 function proveedor(): LLMProvider {
   const nombre = (process.env.EXAMEN_PROVEEDOR ?? '').trim().toUpperCase();
@@ -31,7 +65,8 @@ function proveedor(): LLMProvider {
 }
 
 async function main(): Promise<void> {
-  const p = proveedor();
+  const clinica = process.env.EXAMEN_CLINICA?.trim();
+  const p = clinica ? await proveedorDeLaClinica(clinica) : proveedor();
   const solo = (process.env.EXAMEN_CASOS ?? '')
     .split(',')
     .map((s) => s.trim())
@@ -40,7 +75,11 @@ async function main(): Promise<void> {
     ? CASOS_DEL_EXAMEN.filter((c) => solo.includes(c.id))
     : CASOS_DEL_EXAMEN;
   console.log(
-    `Examen del asistente de soporte: ${casos.length} casos con ${p.name} (${process.env.EXAMEN_MODELO ?? 'modelo por defecto'}).\n`,
+    `Examen del asistente de soporte: ${casos.length} casos con ${p.name} (${
+      clinica
+        ? `la IA configurada de la clínica ${clinica}`
+        : (process.env.EXAMEN_MODELO ?? 'modelo por defecto')
+    }).\n`,
   );
 
   const { resultados, resumen } = await correrExamen({
@@ -80,7 +119,8 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         proveedor: p.name,
-        modelo: process.env.EXAMEN_MODELO ?? null,
+        modelo: clinica ? null : (process.env.EXAMEN_MODELO ?? null),
+        clinica: clinica ?? null,
         resumen,
         resultados,
       },

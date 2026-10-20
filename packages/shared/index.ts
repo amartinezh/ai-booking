@@ -474,7 +474,10 @@ export {
   ROLES_DEL_ASISTENTE,
   TEXTOS_SOPORTE,
   TIPOS_RESPUESTA_IA,
+  MAX_PERSONAS_PILOTO,
   accesoAlAsistente,
+  correosDelPiloto,
+  enElPiloto,
   conversacionVigente,
   datosDeBoton,
   enmascararCorreo,
@@ -499,6 +502,7 @@ export {
 } from './src/soporte-bot';
 export type {
   AccesoAlAsistente,
+  PilotoDelAsistente,
   AccionBorrador,
   BorradorCaso,
   BotonSoporte,

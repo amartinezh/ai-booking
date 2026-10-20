@@ -38,6 +38,11 @@ export interface ConfigAsistente {
         caracteresPorMensaje: number;
         turnosIaPorClinicaAlDia: number;
     };
+    /** El piloto (Fase 6): encendido, solo estas personas usan el asistente. */
+    piloto: {
+        activo: boolean;
+        personas: Array<{ id: string; email: string; rol: string; clinica: string | null }>;
+    };
     ultimoError: string | null;
     ultimoErrorEn: string | null;
     actualizadoPor: string | null;
@@ -53,6 +58,10 @@ export interface AjustesAsistente {
     maxMessagesPerHour?: number;
     maxMessageChars?: number;
     maxAiTurnsPerOrgPerDay?: number;
+    /** Solo el piloto (`true`) o todo el personal (`false`). */
+    pilotOnly?: boolean;
+    /** Los correos de las personas del piloto (reemplaza la lista). */
+    pilotEmails?: string[];
 }
 
 export type ResultadoAsistente<T> = { ok: true; data: T } | { ok: false; error: string };

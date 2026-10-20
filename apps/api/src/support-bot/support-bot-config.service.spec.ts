@@ -29,6 +29,12 @@ describe('SupportBotConfigService', () => {
 
   let row: Record<string, unknown> | null;
   let auditorias: Array<Record<string, unknown>>;
+  let usuarios: Array<{
+    id: string;
+    email: string;
+    role: string;
+    organization: { name: string; isActive: boolean };
+  }>;
   let alertasBotId: string | null;
   let botsDeClinica: string[];
   let prisma: Record<string, Record<string, jest.Mock>> & {
@@ -56,6 +62,32 @@ describe('SupportBotConfigService', () => {
     }
     row = null;
     auditorias = [];
+    usuarios = [
+      {
+        id: 'u-ana',
+        email: 'Ana@Clinica.co',
+        role: 'BOOKING_AGENT',
+        organization: { name: 'Hospital Uno', isActive: true },
+      },
+      {
+        id: 'u-dr',
+        email: 'dr@clinica.co',
+        role: 'DOCTOR',
+        organization: { name: 'Hospital Uno', isActive: true },
+      },
+      {
+        id: 'u-pac',
+        email: 'pac@correo.co',
+        role: 'PATIENT',
+        organization: { name: 'Hospital Uno', isActive: true },
+      },
+      {
+        id: 'u-susp',
+        email: 'otra@clinica.co',
+        role: 'DOCTOR',
+        organization: { name: 'Suspendida', isActive: false },
+      },
+    ];
     alertasBotId = null;
     botsDeClinica = [];
     prisma = {
@@ -85,6 +117,15 @@ describe('SupportBotConfigService', () => {
           botsDeClinica.includes(where.botId)
             ? { organizationId: 'org-x' }
             : null,
+        ),
+      },
+      user: {
+        findMany: jest.fn(async ({ where }) =>
+          where.id
+            ? usuarios.filter((u) => where.id.in.includes(u.id))
+            : usuarios.filter((u) =>
+                where.email.in.includes(u.email.toLowerCase()),
+              ),
         ),
       },
       globalAuditLog: {
@@ -331,11 +372,14 @@ describe('SupportBotConfigService', () => {
     });
 
     it('entrega token y secreto en claro, con caché', async () => {
+      row.pilotOnly = true;
+      row.pilotUserIds = ['u-ana'];
       await expect(service.runtime()).resolves.toMatchObject({
         token: TOKEN,
         webhookSecret: 'secreto',
         routeKey: 'ruta',
         enabled: true,
+        piloto: { activo: true, usuarios: ['u-ana'] },
       });
       await service.runtime();
       expect(prisma.supportBotConfig.findUnique).toHaveBeenCalledTimes(1);
@@ -382,6 +426,32 @@ describe('SupportBotConfigService', () => {
           mensajesPorHora: 40,
           caracteresPorMensaje: 2000,
           turnosIaPorClinicaAlDia: 300,
+        },
+        // 🔒 Sin fila, nace en piloto y vacío (como la columna).
+        piloto: { activo: true, personas: [] },
+      });
+      expect(prisma.user.findMany).not.toHaveBeenCalled();
+    });
+
+    it('el piloto: quiénes están, con su rol y su clínica', async () => {
+      row = { id: 'global', pilotOnly: true, pilotUserIds: ['u-ana', 'u-dr'] };
+      await expect(service.getPublic()).resolves.toMatchObject({
+        piloto: {
+          activo: true,
+          personas: [
+            {
+              id: 'u-ana',
+              email: 'Ana@Clinica.co',
+              rol: 'BOOKING_AGENT',
+              clinica: 'Hospital Uno',
+            },
+            {
+              id: 'u-dr',
+              email: 'dr@clinica.co',
+              rol: 'DOCTOR',
+              clinica: 'Hospital Uno',
+            },
+          ],
         },
       });
     });
@@ -532,6 +602,67 @@ describe('SupportBotConfigService', () => {
         mensaje,
       );
       expect(auditorias).toEqual([]);
+    });
+
+    describe('🧪 el piloto', () => {
+      it('la lista se arma con los correos (sin importar mayúsculas) y queda en la auditoría', async () => {
+        await service.updateSettings(
+          { pilotEmails: ['ana@clinica.co', ' DR@clinica.co '] },
+          ACTOR,
+        );
+        expect(row.pilotUserIds).toEqual(['u-ana', 'u-dr']);
+        expect(auditorias[0].message).toContain(
+          'dejó el piloto con 2 persona(s): ana@clinica.co, dr@clinica.co',
+        );
+      });
+
+      it('una lista vacía deja el piloto sin nadie, sin buscar usuarios', async () => {
+        prisma.user.findMany.mockClear();
+        await service.updateSettings({ pilotEmails: [] }, ACTOR);
+        expect(row.pilotUserIds).toEqual([]);
+        expect(prisma.user.findMany).not.toHaveBeenCalled();
+      });
+
+      it('🔒 solo personal de una clínica activa: dice cuáles no', async () => {
+        await expect(
+          service.updateSettings(
+            {
+              pilotEmails: [
+                'ana@clinica.co',
+                'pac@correo.co',
+                'otra@clinica.co',
+                'nadie@x.co',
+              ],
+            },
+            ACTOR,
+          ),
+        ).rejects.toThrow(
+          'Estos correos no son del personal de una clínica activa: pac@correo.co, otra@clinica.co, nadie@x.co.',
+        );
+        expect(auditorias).toEqual([]);
+      });
+
+      it.each([
+        [{ pilotEmails: 'ana@clinica.co' }, /lista de hasta 20 correos/],
+        [{ pilotEmails: ['no es un correo'] }, /lista de hasta 20 correos/],
+        [{ pilotOnly: 'sí' }, /«pilotOnly» debe ser verdadero o falso/],
+      ])('rechaza %p', async (input, mensaje) => {
+        await expect(service.updateSettings(input, ACTOR)).rejects.toThrow(
+          mensaje,
+        );
+      });
+
+      it('abrirlo a todo el personal (y volver al piloto) queda en la auditoría', async () => {
+        await service.updateSettings({ pilotOnly: false }, ACTOR);
+        expect(row.pilotOnly).toBe(false);
+        expect(auditorias[0].message).toContain(
+          'abrió el asistente a todo el personal',
+        );
+        await service.updateSettings({ pilotOnly: true }, ACTOR);
+        expect(auditorias[1].message).toContain(
+          'dejó el asistente solo para el piloto',
+        );
+      });
     });
 
     it('sin fila todavía, la crea con lo que se cambió', async () => {

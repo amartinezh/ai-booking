@@ -25,6 +25,7 @@ const sinBot: ConfigAsistente = {
     horario: { dias: [1, 2, 3, 4, 5], desdeHora: 8, hastaHora: 17, zona: 'America/Bogota' },
     conversacionMinutos: 30,
     limites: { mensajesPorHora: 40, caracteresPorMensaje: 2000, turnosIaPorClinicaAlDia: 300 },
+    piloto: { activo: true, personas: [] },
     ultimoError: null,
     ultimoErrorEn: null,
     actualizadoPor: null,
@@ -152,6 +153,68 @@ describe('SoporteBotClient', () => {
         expect(codigoDePruebaAsistente).toHaveBeenCalledWith('org-2');
         expect(await screen.findByText('111 222')).toBeInTheDocument();
         expect(screen.getByRole('link', { name: 'ábralo en Telegram' })).toHaveAttribute('href', 'https://t.me/AgeniaSoporteBot?start=z');
+    });
+
+    describe('🧪 el piloto', () => {
+        const conPiloto: ConfigAsistente = {
+            ...conBot,
+            piloto: {
+                activo: true,
+                personas: [{ id: 'u-ana', email: 'ana@clinica.co', rol: 'BOOKING_AGENT', clinica: 'Hospital de Prueba' }],
+            },
+        };
+
+        it('muestra quiénes están, con su rol y su clínica, y guarda la lista de correos', async () => {
+            (guardarAjustesAsistente as jest.Mock).mockResolvedValue({ ok: true, config: conPiloto });
+            render(<SoporteBotClient inicial={{ ok: true, config: conPiloto }} clinicas={CLINICAS} />);
+            expect(screen.getByRole('heading', { name: 'Piloto: solo estas personas' })).toBeInTheDocument();
+            expect(screen.getByRole('list', { name: 'Personas del piloto' })).toHaveTextContent(
+                'ana@clinica.co · Agente de Reservas · Hospital de Prueba',
+            );
+            const correos = screen.getByLabelText(/Correos del piloto/);
+            expect(correos).toHaveValue('ana@clinica.co');
+            await userEvent.type(correos, '\ndr@clinica.co, admin@clinica.co');
+            await userEvent.click(screen.getByRole('button', { name: 'Guardar el piloto' }));
+            expect(guardarAjustesAsistente).toHaveBeenCalledWith({
+                pilotEmails: ['ana@clinica.co', 'dr@clinica.co', 'admin@clinica.co'],
+            });
+            expect(await screen.findByRole('status')).toHaveTextContent('Piloto guardado');
+        });
+
+        it('sin nadie todavía, avisa que no le aparece a nadie', () => {
+            render(<SoporteBotClient inicial={{ ok: true, config: conBot }} clinicas={CLINICAS} />);
+            expect(screen.getByText(/Nadie está en el piloto todavía/)).toBeInTheDocument();
+        });
+
+        it('abrirlo a todo el personal pide confirmación; volver al piloto, no', async () => {
+            const confirmar = jest.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+            const abierto = { ...conPiloto, piloto: { ...conPiloto.piloto, activo: false } };
+            (guardarAjustesAsistente as jest.Mock)
+                .mockResolvedValueOnce({ ok: true, config: abierto })
+                .mockResolvedValueOnce({ ok: true, config: conPiloto });
+            render(<SoporteBotClient inicial={{ ok: true, config: conPiloto }} clinicas={CLINICAS} />);
+            await userEvent.click(screen.getByRole('button', { name: 'Abrir a todo el personal' }));
+            expect(guardarAjustesAsistente).not.toHaveBeenCalled();
+            await userEvent.click(screen.getByRole('button', { name: 'Abrir a todo el personal' }));
+            expect(guardarAjustesAsistente).toHaveBeenCalledWith({ pilotOnly: false });
+            expect(await screen.findByRole('heading', { name: 'Abierto a todo el personal' })).toBeInTheDocument();
+            expect(screen.queryByLabelText(/Correos del piloto/)).not.toBeInTheDocument();
+            await userEvent.click(screen.getByRole('button', { name: 'Volver al piloto' }));
+            expect(guardarAjustesAsistente).toHaveBeenLastCalledWith({ pilotOnly: true });
+            expect(confirmar).toHaveBeenCalledTimes(2);
+            confirmar.mockRestore();
+        });
+
+        it('un correo que no es del personal: el error de la API se muestra', async () => {
+            (guardarAjustesAsistente as jest.Mock).mockResolvedValue({
+                ok: false,
+                apagado: false,
+                error: 'Estos correos no son del personal de una clínica activa: pac@correo.co.',
+            });
+            render(<SoporteBotClient inicial={{ ok: true, config: conPiloto }} clinicas={CLINICAS} />);
+            await userEvent.click(screen.getByRole('button', { name: 'Guardar el piloto' }));
+            expect(await screen.findByRole('alert')).toHaveTextContent('pac@correo.co');
+        });
     });
 
     it('un error del código de prueba se muestra', async () => {

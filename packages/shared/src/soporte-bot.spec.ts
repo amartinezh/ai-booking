@@ -3,7 +3,10 @@ import {
   AJUSTES_SOPORTE_POR_DEFECTO,
   COMANDOS_SOPORTE,
   LIMITES_SOPORTE,
+  MAX_PERSONAS_PILOTO,
   TEXTOS_SOPORTE,
+  correosDelPiloto,
+  enElPiloto,
   accesoAlAsistente,
   conversacionVigente,
   datosDeBoton,
@@ -964,5 +967,39 @@ describe('textos fijos', () => {
       /^Listo, reabrí el caso #58/,
     );
     expect(TEXTOS_SOPORTE.casoNoReabierto(58)).toContain('/nuevo');
+  });
+});
+
+describe('el piloto (Fase 6)', () => {
+  const piloto = { activo: true, usuarios: ['ana', 'beto'] };
+
+  it('encendido: solo las personas de la lista; el super admin siempre', () => {
+    expect(enElPiloto(piloto, 'ana', 'BOOKING_AGENT')).toBe(true);
+    expect(enElPiloto(piloto, 'carla', 'DOCTOR')).toBe(false);
+    expect(enElPiloto({ activo: true, usuarios: [] }, 'ana', 'ORG_ADMIN')).toBe(
+      false,
+    );
+    expect(enElPiloto(piloto, 'sa', 'SUPER_ADMIN')).toBe(true);
+  });
+
+  it('apagado: todo el personal', () => {
+    expect(enElPiloto({ activo: false, usuarios: [] }, 'carla', 'DOCTOR')).toBe(
+      true,
+    );
+  });
+
+  it('los correos: en minúscula, sin repetir ni vacíos; nada raro y no más de 20', () => {
+    expect(
+      correosDelPiloto([' Ana@Clinica.co ', 'ana@clinica.co', '', 'beto@x.co']),
+    ).toEqual(['ana@clinica.co', 'beto@x.co']);
+    expect(correosDelPiloto([])).toEqual([]);
+    expect(correosDelPiloto('ana@x.co')).toBeNull();
+    expect(correosDelPiloto(['no es un correo'])).toBeNull();
+    expect(correosDelPiloto([1, 'ana@x.co'])).toEqual(['ana@x.co']);
+    expect(
+      correosDelPiloto(
+        Array.from({ length: MAX_PERSONAS_PILOTO + 1 }, (_, i) => `p${i}@x.co`),
+      ),
+    ).toBeNull();
   });
 });
