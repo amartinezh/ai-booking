@@ -110,6 +110,8 @@ type Db = {
   /** MirrorEntityMap */
   maps: any[];
   doctors: any[];
+  /** SyncException: los casos de la Bandeja (los que abre el bot quedan aquí). */
+  casos: any[];
 };
 
 /**
@@ -211,6 +213,16 @@ function createPrisma(db: Db) {
     },
     hospitalMirrorConfig: {
       findUnique: jest.fn(() => db.mirror),
+    },
+    syncException: {
+      findMany: jest.fn(({ where }: any) =>
+        db.casos.filter(
+          (c) =>
+            c.kind === where.kind &&
+            where.status.in.includes(c.status) &&
+            where.patientId.in.includes(c.patientId),
+        ),
+      ),
     },
     medicalService: {
       findMany: jest.fn(({ where }: any = {}) =>
@@ -488,7 +500,19 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       ],
     });
     redis = createFakeRedis();
-    avisos = { registrar: jest.fn(async () => 'CREADA') };
+    // Como la Bandeja de verdad: el caso de teléfono equivocado queda abierto.
+    avisos = {
+      registrar: jest.fn(async (_org: string, entrada: any) => {
+        if (entrada?.kind === 'TELEFONO_EQUIVOCADO') {
+          db.casos.push({
+            kind: entrada.kind,
+            status: 'ABIERTA',
+            patientId: entrada.patientId,
+          });
+        }
+        return 'CREADA';
+      }),
+    };
     bookingEnabled = true;
     cancelEnabled = null;
     rescheduleEnabled = null;
@@ -500,6 +524,7 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       requests: [],
       maps: [],
       doctors: [],
+      casos: [],
     };
     provider = {
       name: 'GEMINI',
@@ -1986,6 +2011,323 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
         expect(paso('NUMERO_EQUIVOCADO')).toBeDefined();
       },
     );
+
+    it('📭 la conversación real de …2705, tal cual: «Hola buenos dias», «Que pena esta equivocada», «Este mensaje no era para mi»', async () => {
+      // 2026-10-18 10:44, 22 h después del recordatorio, con agendar apagado y
+      // cancelar y cambiar encendidos (como hoy en producción). Ese día el saludo
+      // recibió «no es posible agendar» y las otras dos «comencemos de nuevo».
+      db.mirror = { enabled: true, pushEnabled: false };
+      cancelEnabled = true;
+      rescheduleEnabled = true;
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      db.appointments[0].reminderSentAt = new Date(
+        AHORA.getTime() - 22 * 3_600_000,
+      );
+
+      await say('Hola buenos dias');
+      // De qué cita le escribimos y de quién, y que avise si no es suyo.
+      const saludo = lastSent();
+      expect(saludo).toContain(
+        'Le escribimos para recordarle la cita de *Juan*',
+      );
+      expect(saludo).toContain('Si este número no es de *Juan*');
+      expect(saludo).toContain('cambiar cita');
+      expect(saludo).not.toContain('no es posible');
+      expect(paso('SALUDO_TRAS_RECORDATORIO')?.metadata).toMatchObject({
+        appointmentId: 'apt-1',
+      });
+      await say('Que pena esta equivocada');
+      expect(lastSent()).toContain('Disculpe la molestia');
+      expect(avisos.registrar).toHaveBeenCalledTimes(1);
+      expect(avisos.registrar.mock.calls[0][1]).toMatchObject({
+        kind: 'TELEFONO_EQUIVOCADO',
+        patientId: 'pat-1',
+        appointmentId: 'apt-1',
+      });
+
+      await say('Este mensaje no era para mi');
+      expect(lastSent()).toContain('Disculpe la molestia');
+      expect(sent().join('\n')).not.toContain('comencemos de nuevo');
+    });
+
+    it('👋 un saludo SIN recordatorio reciente sigue el camino de siempre', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA); // sin reminderSentAt
+      await say('Hola buenos dias');
+      expect(paso('SALUDO_TRAS_RECORDATORIO')).toBeUndefined();
+      expect(lastSent()).not.toContain('Le escribimos para recordarle');
+    });
+
+    // ──────────────────────────────────────────────────────────────────
+    // 👋 Con agendar ENCENDIDO (2026-10-22, primer día): el saludo tras el
+    // recordatorio abría el menú de servicios y lo que seguía —«No es para mí»
+    // (…4433), «la cita ya la tengo para mañana» (…7954)— recibía «esa opción no
+    // se logró identificar».
+    // ──────────────────────────────────────────────────────────────────
+    describe('con agendar ENCENDIDO', () => {
+      const pasos = (step: string) =>
+        interactionLog.logSuccess.mock.calls
+          .map((c: any[]) => c[0])
+          .filter((e: any) => e?.metadata?.step === step);
+      const enElMenu = (estado: ChatState) =>
+        redis.store.set(`chat_state:${ORG_ID}:${SENDER}`, estado);
+
+      beforeEach(() => {
+        bookingEnabled = true;
+      });
+
+      it('👋 el primer saludo dice de qué cita le escribimos y ofrece agendar con «agendar»; el segundo abre lo de siempre', async () => {
+        conRecordatorio();
+        await say('Hola buenos dias');
+        const saludo = lastSent();
+        expect(saludo).toContain(
+          'Le escribimos para recordarle la cita de *Juan*',
+        );
+        expect(saludo).toContain('Agendar una cita: escríbame *"agendar"*');
+        expect(saludo).toContain('Si este número no es de *Juan*');
+        expect(pasos('SALUDO_TRAS_RECORDATORIO')).toHaveLength(1);
+
+        await say('Hola');
+        // Ya sabe de su cita: no se le repite.
+        expect(pasos('SALUDO_TRAS_RECORDATORIO')).toHaveLength(1);
+      });
+
+      it('👋 sin recordatorio reciente, el saludo sigue el camino de siempre', async () => {
+        seedPaciente();
+        seedCita('apt-1', MANANA);
+        await say('Hola buenos dias');
+        expect(pasos('SALUDO_TRAS_RECORDATORIO')).toHaveLength(0);
+      });
+
+      it.each([
+        ChatState.AWAITING_SPECIALTY,
+        ChatState.AWAITING_EPS,
+        ChatState.AWAITING_DATE,
+      ])(
+        '📭 «No es para mi» en %s tras el recordatorio → número equivocado y el menú se cierra (…4433)',
+        async (estado) => {
+          // Con espejo, como en el hospital: el caso queda en la Bandeja.
+          db.mirror = { enabled: true, pushEnabled: true };
+          conRecordatorio();
+          enElMenu(estado);
+          await say('No es para mi');
+          expect(lastSent()).toContain('Disculpe la molestia');
+          expect(avisos.registrar.mock.calls[0][1]).toMatchObject({
+            kind: 'TELEFONO_EQUIVOCADO',
+            patientId: 'pat-1',
+            appointmentId: 'apt-1',
+          });
+          expect([null, ChatState.IDLE]).toContain(state());
+        },
+      );
+
+      it.each([
+        'la sita ya latengo para mañana',
+        'una sita pero ya meladoeron',
+        'grasias',
+      ])(
+        '🙏 «%s» en el menú de servicios tras el recordatorio → «¡Gracias por confirmar!» y el menú se cierra (…7954)',
+        async (texto) => {
+          conRecordatorio();
+          enElMenu(ChatState.AWAITING_SPECIALTY);
+          await say(texto);
+          expect(lastSent()).toContain('¡Gracias por confirmar!');
+          expect(lastSent()).toContain('Le esperamos el *');
+          expect([null, ChatState.IDLE]).toContain(state());
+          expect(
+            redis.store.get(`temp_especialidad:${ORG_ID}:${SENDER}`),
+          ).toBeUndefined();
+        },
+      );
+
+      it('🙏 «grasias» en reposo tras el recordatorio → «¡Gracias por confirmar!» (no el menú)', async () => {
+        conRecordatorio();
+        await say('grasias');
+        expect(lastSent()).toContain('¡Gracias por confirmar!');
+        expect(pasos('RECORDATORIO_CONFIRMADO')).toHaveLength(1);
+      });
+
+      it('en EPS u horario, solo «no es para mí» se toma del recordatorio: lo demás es su respuesta al paso', async () => {
+        conRecordatorio();
+        enElMenu(ChatState.AWAITING_EPS);
+        await say('la sita ya latengo para mañana');
+        expect(lastSent()).not.toContain('¡Gracias por confirmar!');
+        expect(pasos('RECORDATORIO_CONFIRMADO')).toHaveLength(0);
+      });
+
+      it('sin recordatorio reciente, «No es para mi» en el menú no apaga los recordatorios de nadie', async () => {
+        db.mirror = { enabled: true, pushEnabled: true };
+        seedPaciente();
+        seedCita('apt-1', MANANA); // sin reminderSentAt
+        enElMenu(ChatState.AWAITING_SPECIALTY);
+        await say('No es para mi');
+        expect(avisos.registrar).not.toHaveBeenCalled();
+        expect(sent().join('\n')).not.toContain('Disculpe la molestia');
+      });
+    });
+
+    it('🙏 «con la ayuda de Dios… estoy atenta» tras el recordatorio → «¡Gracias por confirmar!», no «no es posible agendar»', async () => {
+      // Caso real 2026-10-20 09:36.
+      conRecordatorio();
+      await say(
+        'con la ayuda de Dios, muchísimas gracias por avisarme, yo estoy atenta, estoy atenta a eso, con la ayuda de Dios.',
+      );
+      expect(lastSent()).toContain('¡Gracias por confirmar!');
+      expect(lastSent()).not.toContain('no es posible');
+    });
+
+    // ──────────────────────────────────────────────────────────────────
+    // ☎️ Número marcado como de otra persona (2026-10-21, …0792): tras «Yo no soy
+    // Deysi está equivocada» (la paciente es DEICY), su «Ok» recibió «¡Gracias por
+    // confirmar!» con la cita de ella, y nada le impedía cancelársela.
+    // ──────────────────────────────────────────────────────────────────
+    describe('☎️ número marcado como de otra persona', () => {
+      const casoAbierto = (patientId = 'pat-1') =>
+        db.casos.push({
+          kind: 'TELEFONO_EQUIVOCADO',
+          status: 'ABIERTA',
+          patientId,
+        });
+
+      beforeEach(() => {
+        db.mirror = { enabled: true, pushEnabled: false };
+        cancelEnabled = true;
+        rescheduleEnabled = true;
+      });
+
+      it('la conversación real: «Yo no soy Deysi está equivocada», «Ok», «Cancelar cita»', async () => {
+        conRecordatorio();
+        db.patients[0].fullName = 'DEICY JHOANA TORO GUEVARA';
+
+        await say('Yo no soy Deysi está equivocada');
+        expect(lastSent()).toContain('Disculpe la molestia');
+        expect(avisos.registrar.mock.calls[0][1]).toMatchObject({
+          kind: 'TELEFONO_EQUIVOCADO',
+          patientId: 'pat-1',
+        });
+
+        await say('Ok');
+        expect(lastSent()).toContain(
+          'Ya quedó registrado que este número no es del paciente',
+        );
+        expect(sent().join('\n')).not.toContain('¡Gracias por confirmar!');
+
+        await say('Cancelar cita');
+        expect(lastSent()).toContain(
+          'Ya quedó registrado que este número no es del paciente',
+        );
+        expect(paso('CANCELAR_OFRECIDO')).toBeUndefined();
+        expect(db.appointments[0].status).toBe('SCHEDULED');
+      });
+
+      it('«hola yo no soy Deysi» con la paciente DEICY → número equivocado (el nombre suena igual)', async () => {
+        conRecordatorio();
+        db.patients[0].fullName = 'DEICY JHOANA TORO GUEVARA';
+        await say('hola yo no soy Deysi');
+        expect(lastSent()).toContain('Disculpe la molestia');
+        expect(paso('NUMERO_EQUIVOCADO')).toBeDefined();
+      });
+
+      it('con el caso abierto, un saludo no recibe los datos de la cita', async () => {
+        conRecordatorio();
+        casoAbierto();
+        await say('Buenas tardes');
+        expect(lastSent()).toContain('Ya quedó registrado');
+        expect(lastSent()).not.toContain('Le escribimos para recordarle');
+        expect(paso('NUMERO_YA_MARCADO')).toBeDefined();
+      });
+
+      it('con el caso abierto, la cédula para cancelar no sirve desde ese número', async () => {
+        seedPaciente();
+        seedCita('apt-1', MANANA);
+        casoAbierto();
+        redis.store.set(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          ChatState.AWAITING_CANCEL_CEDULA,
+        );
+        await say(CEDULA);
+        expect(lastSent()).toContain('Ya quedó registrado');
+        expect(state()).not.toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+        expect(db.appointments[0].status).toBe('SCHEDULED');
+      });
+
+      it('con el caso abierto, la cédula para cambiar la fecha tampoco sirve', async () => {
+        seedPaciente();
+        seedCita('apt-1', MANANA);
+        casoAbierto();
+        redis.store.set(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          ChatState.AWAITING_MODIFY_CEDULA,
+        );
+        await say(CEDULA);
+        expect(lastSent()).toContain('Ya quedó registrado');
+        expect(db.appointments[0].scheduleSlotId).toBe('slot-apt-1');
+      });
+
+      it('si el caso se abre entre la oferta y el «Sí», no se cancela', async () => {
+        conRecordatorio();
+        await say('Buen día ,no puedo asistir');
+        expect(state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+        casoAbierto();
+        await say('Sí');
+        expect(lastSent()).toContain('Ya quedó registrado');
+        expect(db.appointments[0].status).toBe('SCHEDULED');
+      });
+
+      it('la consulta de citas no le muestra el detalle', async () => {
+        seedPaciente();
+        seedCita('apt-1', MANANA);
+        casoAbierto();
+        await say('consultar');
+        await say(CEDULA);
+        expect(pasos().pop()?.metadata?.step).toBe('LOOKUP_MINIMAL');
+        expect(lastSent()).not.toContain('Medicina General');
+      });
+
+      it('si el número es de la familia y solo una ficha quedó marcada, la otra se atiende como siempre (y solo la suya)', async () => {
+        conRecordatorio(); // Juan, apt-1, recordada
+        seedPaciente({
+          id: 'pat-2',
+          cedula: '22222222',
+          fullName: 'Ana Pérez',
+        });
+        seedCita('apt-2', MANANA, SVC_MEDICINA, 'pat-2');
+        db.appointments[1].reminderSentAt = new Date(
+          AHORA.getTime() - 2 * 3_600_000,
+        );
+        casoAbierto('pat-1');
+        await say('Ok');
+        expect(lastSent()).toContain('¡Gracias por confirmar!');
+        const confirmado = paso('RECORDATORIO_CONFIRMADO')?.metadata;
+        expect(confirmado).toMatchObject({ appointmentId: 'apt-2' });
+        // La cita de Juan (número marcado) no se confirma ni se nombra.
+        expect(confirmado?.appointmentIds).toBeUndefined();
+      });
+
+      it('si el caso se abre antes del «Sí» del cambio de fecha, no se mueve', async () => {
+        seedPaciente();
+        seedCita('apt-1', MANANA);
+        db.slots.push({
+          ...slotRow('slot-nuevo', MANANA, 'Dr nuevo', SVC_MEDICINA),
+          isAvailable: true,
+        });
+        const k = (n: string) => `${n}:${ORG_ID}:${SENDER}`;
+        redis.store.set(k('temp_selected_modify_apt'), 'apt-1');
+        redis.store.set(k('temp_selected_modify_slot'), 'slot-apt-1');
+        redis.store.set(k('temp_selected_modify_newslot'), 'slot-nuevo');
+        redis.store.set(k('temp_selected_modify_newslot_fecha'), '2026-10-03');
+        redis.store.set(k('chat_state'), ChatState.AWAITING_MODIFY_CONFIRM);
+        casoAbierto();
+        await say('Sí');
+        expect(lastSent()).toContain('Ya quedó registrado');
+        expect(paso('NUMERO_YA_MARCADO')?.metadata).toMatchObject({
+          flow: 'MODIFICAR',
+          appointmentId: 'apt-1',
+        });
+        expect(db.appointments[0].scheduleSlotId).toBe('slot-apt-1');
+      });
+    });
 
     it('📭 sin recordatorio reciente, «Que pena esta equivocada» no toca nada (puede ser de otra conversación)', async () => {
       db.mirror = { enabled: true, pushEnabled: true };

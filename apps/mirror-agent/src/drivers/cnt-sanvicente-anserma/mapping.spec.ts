@@ -8,7 +8,9 @@ import {
   fechaHoraLiteralSql,
   diaSiguienteLiteralSql,
   desenlaceDeAtencion,
+  esFichaSinHora,
   feHoraCitAIso,
+  feHoraCitAIsoOrNull,
   formatFeHoraCit,
   mapSexo,
   resolveConvenio,
@@ -307,6 +309,50 @@ describe('feHoraCitAIso — de la hora del hospital a UTC', () => {
       MappingIncompletoError,
     );
     expect(() => feHoraCitAIso('31', BOGOTA)).toThrow(MappingIncompletoError);
+  });
+});
+
+describe('🕐 FE_HORA_CIT escrita distinto (2026-10-22)', () => {
+  const BOGOTA = 'America/Bogota';
+  const base = feHoraCitAIso('2026/10/22 07:10', BOGOTA);
+
+  it.each([
+    '2026/10/22 7:10',
+    '2026/10/22 07:10:00',
+    '2026/10/22 07:10:00.000',
+    '2026/10/22  07:10',
+    ' 2026/10/22 7:10 ',
+  ])('«%s» es la misma hora que «2026/10/22 07:10»', (texto) => {
+    expect(feHoraCitAIso(texto, BOGOTA)).toBe(base);
+  });
+
+  it('mes y día sin cero también', () => {
+    expect(feHoraCitAIso('2026/1/5 7:05', BOGOTA)).toBe(
+      feHoraCitAIso('2026/01/05 07:05', BOGOTA),
+    );
+  });
+
+  it.each(['2026/10/22 1', '2026/10/22 10', '2026/10/23 14'])(
+    '«%s» es una ficha por orden de llegada: NO es la hora %s',
+    (texto) => {
+      expect(esFichaSinHora(texto)).toBe(true);
+      expect(feHoraCitAIsoOrNull(texto, BOGOTA)).toBeNull();
+      expect(() => feHoraCitAIso(texto, BOGOTA)).toThrow(/ficha/);
+    },
+  );
+
+  it.each([
+    '2026-10-22 07:10', // guiones: la aplicación del hospital no la encuentra
+    '2026/10/22T07:10',
+    '2026/10/22 25:10',
+    '2026/10/22 07:10:75',
+    '2026/10/22 7',
+  ])('«%s» no se lee', (texto) => {
+    expect(feHoraCitAIsoOrNull(texto, BOGOTA)).toBeNull();
+  });
+
+  it('una hora normal no es una ficha', () => {
+    expect(esFichaSinHora('2026/10/22 07:10')).toBe(false);
   });
 });
 

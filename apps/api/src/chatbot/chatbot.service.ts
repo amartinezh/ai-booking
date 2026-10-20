@@ -9,6 +9,7 @@ import {
   ChatState,
   SESSION_TTL,
   PRESENTACION_TTL,
+  SALUDO_TRAS_RECORDATORIO_TTL,
   SERVICE_WINDOW_TTL,
   WAITLIST_CONFIRM_TTL,
   buildMessages,
@@ -29,8 +30,12 @@ import {
   clasificarRespuestaAlBot,
   esAgradecimiento,
   esMensajeAjeno,
+  esSoloSaludo,
+  mismoNombre,
   nombreQueNiega,
+  RESPUESTAS_AL_RECORDATORIO_EN_MENU,
 } from './respuesta-recordatorio';
+import { separarNombresYApellidos } from './nombre-paciente-nuevo';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import {
   OrganizationSettingsService,
@@ -81,6 +86,8 @@ import {
   remitenteEsDelPaciente,
   diaLocal,
   inicioDelDiaLocal,
+  ESTADOS_ACTIVOS,
+  cumpleAnticipacionAlReservar,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import {
@@ -3000,31 +3007,74 @@ export class ChatbotService implements OnModuleInit {
    * (`reconocerEps`) y las EPS que la clínica tiene desactivadas (por su nombre
    * exacto, para las que no estén en el catálogo).
    */
+  /**
+   * ¿Nombró una EPS con la que el bot no puede agendar? null si no (o si no es una
+   * EPS). `atendida` (2026-10-21): la clínica la tiene registrada pero INACTIVA en
+   * EPS, es decir, la atiende pero no por el asistente (Nueva EPS en el hospital,
+   * sin padrón cargado). A esa no se le ofrece la cita particular: se agenda por
+   * teléfono con su EPS. Una EPS que la clínica no tiene registrada sí la recibe.
+   */
   private async epsNoDisponible(
     organizationId: string,
     text: string | null,
     geminiEps: string | null,
-  ): Promise<string | null> {
+  ): Promise<{ nombre: string; atendida: boolean } | null> {
     const epsList = await this.prisma.eps.findMany({
       where: { organizationId },
       select: { name: true, isActive: true },
     });
+    const norm = (t: string | null) => textoParaCoincidencia(t) ?? '';
     const nombrada = reconocerEps(text) ?? reconocerEps(geminiEps);
     if (nombrada) {
       // Si la clínica la tiene ACTIVA, no está «no disponible»: no se ofrece nada.
       const activa = epsList.some(
         (e) => e.isActive && reconocerEps(e.name) === nombrada,
       );
-      return activa ? null : nombrada;
+      if (activa) return null;
+      const inactiva = epsList.find(
+        (e) =>
+          !e.isActive &&
+          (reconocerEps(e.name) === nombrada ||
+            norm(e.name) === norm(nombrada)),
+      );
+      return inactiva
+        ? { nombre: inactiva.name, atendida: true }
+        : { nombre: nombrada, atendida: false };
     }
-    const norm = (t: string | null) => textoParaCoincidencia(t) ?? '';
     const escrita = norm(text) || norm(geminiEps);
     if (!escrita) return null;
     const inactiva = epsList.find(
       (e) =>
         !e.isActive && !isParticularEps(e.name) && norm(e.name) === escrita,
     );
-    return inactiva?.name ?? null;
+    return inactiva ? { nombre: inactiva.name, atendida: true } : null;
+  }
+
+  /**
+   * 🏥 Su EPS la atiende la clínica, pero no por el asistente (ver
+   * `epsNoDisponible`): se le dice que la agende por teléfono con su EPS y se
+   * cierra el agendamiento. No se le ofrece la cita particular (2026-10-21): un
+   * paciente de Nueva EPS podía aceptarla y quedar facturado como pago directo.
+   */
+  private async responderEpsSoloPorTelefono(
+    organizationId: string,
+    senderId: string,
+    nombreEps: string,
+    MSGS: ReturnType<typeof buildMessages>,
+    userMessage: string | undefined,
+  ): Promise<void> {
+    const reply = MSGS.epsSoloPorTelefono(
+      nombreEps,
+      this.contactoDe(MSGS, await this.organizacionDe(organizationId)),
+    );
+    await this.smartReply(organizationId, senderId, reply);
+    await this.cleanUpSession(organizationId, senderId);
+    await this.auditFailure(senderId, organizationId, {
+      reason: FailureReason.EPS_NOT_FOUND,
+      userMessage: userMessage || '[audio]',
+      botReply: reply,
+      metadata: { stage: 'EPS_SOLO_POR_TELEFONO', eps: nombreEps },
+    });
   }
 
   /**
@@ -4299,16 +4349,76 @@ export class ChatbotService implements OnModuleInit {
   private lineasDeLoDisponible(
     MSGS: ReturnType<typeof buildMessages>,
     operaciones: OperacionesBot,
+    opts: { atajoAgendar?: string } = {},
   ): string {
     return [
       MSGS.lineaDisponibleConsultar(),
       ...operacionesPermitidas(operaciones).map((op) =>
         MSGS.lineaDisponible(
           TEXTO_OPERACION[op].etiqueta,
-          TEXTO_OPERACION[op].atajo,
+          op === 'AGENDAR' && opts.atajoAgendar
+            ? opts.atajoAgendar
+            : TEXTO_OPERACION[op].atajo,
         ),
       ),
     ].join('\n');
+  }
+
+  /** Ya recibió el saludo tras su recordatorio (ver `saludarTrasRecordatorio`). */
+  private saludoTrasRecordatorioKey(
+    organizationId: string,
+    senderId: string,
+  ): string {
+    return `saludo_tras_recordatorio:${organizationId}:${senderId}`;
+  }
+
+  /**
+   * 💬 Respuesta al recordatorio desde un MENÚ del agendamiento (2026-10-22, primer
+   * día con agendar encendido: …4433 saludó, recibió el menú de servicios y su «No
+   * es para mí» recibió dos veces «esa opción no se logró identificar»; …7954, igual
+   * con «la cita ya la tengo para mañana»).
+   *
+   * Solo si a este número se le envió un recordatorio hace poco. En el menú de
+   * servicios se atiende lo que se le contesta a un recordatorio (confirmarla, ya
+   * llegué, ¿de dónde me escriben?, ¿dónde es?, me dieron otra hora) porque ninguna
+   * de esas es una opción del menú. En los de EPS y horario, solo «este número no es
+   * de esa persona»: lo demás puede ser su respuesta al paso.
+   *
+   * Si se atendió y la respuesta no abrió otro paso, el menú se cierra: el tema
+   * ya no es agendar.
+   */
+  private async atenderRespuestaAlRecordatorioEnMenu(
+    p: Parameters<ChatbotService['atenderRespuestaAlBot']>[0] & {
+      currentState: ChatState;
+    },
+  ): Promise<boolean> {
+    const tipo = clasificarRespuestaAlBot(p.text);
+    const ajeno =
+      tipo === 'NUMERO_EQUIVOCADO' ||
+      tipo === 'RESPUESTA_AUTOMATICA' ||
+      esMensajeAjeno(p.text) ||
+      !!nombreQueNiega(p.text);
+    const respondeAlRecordatorio =
+      p.currentState === ChatState.AWAITING_SPECIALTY &&
+      !!tipo &&
+      RESPUESTAS_AL_RECORDATORIO_EN_MENU.has(tipo);
+    if (!ajeno && !respondeAlRecordatorio) return false;
+
+    const recordadas = await this.citasRecordadasDelRemitente(
+      p.organizationId,
+      p.identity,
+      { incluirTelefonoEquivocado: true },
+    );
+    if (recordadas.length === 0) return false;
+
+    const { currentState, ...resto } = p;
+    if (!(await this.atenderRespuestaAlBot(resto))) return false;
+    if (
+      (await this.getUserState(p.organizationId, p.senderId)) === currentState
+    ) {
+      await this.cleanUpSession(p.organizationId, p.senderId);
+    }
+    return true;
   }
 
   /**
@@ -4323,12 +4433,13 @@ export class ChatbotService implements OnModuleInit {
   private async citasRecordadasDelRemitente(
     organizationId: string,
     identity: SenderIdentity,
+    opts: { incluirTelefonoEquivocado?: boolean } = {},
   ) {
     const ahora = Date.now();
     const deQuien = this.perfilesDelRemitente(identity);
     if (deQuien.length === 0) return [];
 
-    return this.prisma.appointment.findMany({
+    const citas = await this.prisma.appointment.findMany({
       where: {
         organizationId,
         status: 'SCHEDULED',
@@ -4346,6 +4457,10 @@ export class ChatbotService implements OnModuleInit {
       orderBy: { scheduleSlot: { startTime: 'asc' } },
       take: MAX_CITAS_EN_RESPUESTA,
     });
+    // Lo del número equivocado sí las necesita: es lo que vuelve a dejar el caso.
+    return opts.incluirTelefonoEquivocado
+      ? citas
+      : this.sinTelefonoEquivocado(organizationId, identity, citas);
   }
 
   /** Las citas próximas (sin pasar) de quien escribe, recordadas o no. */
@@ -4355,7 +4470,7 @@ export class ChatbotService implements OnModuleInit {
   ) {
     const deQuien = this.perfilesDelRemitente(identity);
     if (deQuien.length === 0) return [];
-    return this.prisma.appointment.findMany({
+    const citas = await this.prisma.appointment.findMany({
       where: {
         organizationId,
         status: 'SCHEDULED',
@@ -4369,6 +4484,7 @@ export class ChatbotService implements OnModuleInit {
       orderBy: { scheduleSlot: { startTime: 'asc' } },
       take: MAX_CITAS_EN_RESPUESTA,
     });
+    return this.sinTelefonoEquivocado(organizationId, identity, citas);
   }
 
   /**
@@ -4418,6 +4534,86 @@ export class ChatbotService implements OnModuleInit {
     if (telefonos.length > 0) deQuien.push({ whatsappId: { in: telefonos } });
     if (identity.bsuid) deQuien.push({ bsuid: identity.bsuid });
     return deQuien;
+  }
+
+  /**
+   * ☎️ De estos pacientes, los que tienen abierto en la Bandeja un caso de teléfono
+   * equivocado: quien contestó desde ese número dijo que no es suyo (2026-10-21).
+   * Mientras el caso esté abierto, desde WhatsApp el bot no confirma, no muestra, no
+   * cancela ni cambia sus citas: antes un «Ok» del dueño del número le confirmó la
+   * cita a la paciente, y nada le impedía cancelársela en el hospital. Por Telegram
+   * no aplica: ese chat lo vinculó el propio paciente.
+   *
+   * Si la consulta falla, no frena nada (como antes de esto) y queda en el log: sin
+   * base tampoco se podría cancelar ni cambiar.
+   */
+  private async pacientesConTelefonoEquivocado(
+    organizationId: string,
+    esTelegram: boolean,
+    patientIds: string[],
+  ): Promise<Set<string>> {
+    if (esTelegram || patientIds.length === 0) return new Set();
+    try {
+      const filas = await this.prisma.syncException.findMany({
+        where: {
+          organizationId,
+          kind: 'TELEFONO_EQUIVOCADO',
+          status: { in: [...ESTADOS_ACTIVOS] },
+          patientId: { in: patientIds },
+        },
+        select: { patientId: true },
+      });
+      return new Set(filas.flatMap((f) => (f.patientId ? [f.patientId] : [])));
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo revisar los teléfonos equivocados (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+      return new Set();
+    }
+  }
+
+  /** Las citas, sin las de pacientes con el teléfono marcado como equivocado. */
+  private async sinTelefonoEquivocado<T extends { patientId: string | null }>(
+    organizationId: string,
+    identity: SenderIdentity,
+    citas: T[],
+  ): Promise<T[]> {
+    const ids = [
+      ...new Set(citas.flatMap((c) => (c.patientId ? [c.patientId] : []))),
+    ];
+    const marcados = await this.pacientesConTelefonoEquivocado(
+      organizationId,
+      !!identity.telegramChatId,
+      ids,
+    );
+    return marcados.size === 0
+      ? citas
+      : citas.filter((c) => !c.patientId || !marcados.has(c.patientId));
+  }
+
+  /**
+   * ☎️ ¿Todas las fichas de este número tienen el teléfono marcado como equivocado?
+   * Si alguna no (la familia comparte el celular), se atiende esa como siempre.
+   */
+  private async numeroMarcadoComoAjeno(
+    organizationId: string,
+    identity: SenderIdentity,
+  ): Promise<boolean> {
+    if (identity.telegramChatId) return false;
+    const deQuien = this.perfilesDelRemitente(identity);
+    if (deQuien.length === 0) return false;
+    const perfiles = await this.prisma.patientProfile.findMany({
+      where: { organizationId, OR: deQuien },
+      select: { id: true },
+      take: 10,
+    });
+    if (perfiles.length === 0) return false;
+    const marcados = await this.pacientesConTelefonoEquivocado(
+      organizationId,
+      false,
+      perfiles.map((f) => f.id),
+    );
+    return marcados.size === perfiles.length;
   }
 
   /**
@@ -4486,17 +4682,48 @@ export class ChatbotService implements OnModuleInit {
       // ser de otra conversación y no se le apagan los recordatorios a nadie.
       if (
         esMensajeAjeno(p.text) &&
-        (await this.citasRecordadasDelRemitente(p.organizationId, p.identity))
-          .length > 0
+        (
+          await this.citasRecordadasDelRemitente(p.organizationId, p.identity, {
+            incluirTelefonoEquivocado: true,
+          })
+        ).length > 0
       ) {
         return this.atenderNumeroEquivocado(p);
       }
     }
-    if (!tipo) return false;
     if (tipo === 'RESPUESTA_AUTOMATICA') {
       return this.atenderNumeroEquivocado(p, { automatica: true });
     }
     if (tipo === 'NUMERO_EQUIVOCADO') return this.atenderNumeroEquivocado(p);
+    const saludo = !tipo && esSoloSaludo(p.text);
+    // ☎️ Este número ya quedó como de otra persona (2026-10-21: tras «Yo no soy
+    // Deysi», su «Ok» recibió «¡Gracias por confirmar!» con la cita de la paciente):
+    // nada de su cita, ni confirmarla ni cancelarla; solo que ya se sabe.
+    if (
+      (tipo || saludo) &&
+      (await this.numeroMarcadoComoAjeno(p.organizationId, p.identity))
+    ) {
+      return this.responderNumeroYaMarcado(p);
+    }
+    // 👋 Un saludo a secas tras el recordatorio (2026-10-20, …2705): antes recibía
+    // «no es posible agendar», que a quien no es el paciente no le explica nada.
+    // Ahora: de qué cita le escribimos y de quién, qué puede hacer por aquí, y que
+    // avise si el número no es de esa persona.
+    // Con agendar ENCENDIDO (2026-10-22, primer día): el saludo abría el menú de
+    // servicios y quien contestaba al recordatorio —«No es para mí», «la cita ya la
+    // tengo»— quedaba atrapado en él. Ahora recibe lo mismo, con «agendar» entre lo
+    // que puede hacer; solo la PRIMERA vez: si vuelve a saludar, ya sabe de su cita
+    // y busca otra cosa (el menú de siempre).
+    if (
+      saludo &&
+      (!p.operaciones.agendar ||
+        !(await this.redis.get(
+          this.saludoTrasRecordatorioKey(p.organizationId, p.senderId),
+        )))
+    ) {
+      return this.saludarTrasRecordatorio(p);
+    }
+    if (!tipo) return false;
     if (tipo === 'PREGUNTA_TURNO' || tipo === 'YA_LLEGO') {
       return this.responderEnElHospital(p, tipo);
     }
@@ -4591,14 +4818,36 @@ export class ChatbotService implements OnModuleInit {
     const citas = await this.citasRecordadasDelRemitente(
       p.organizationId,
       p.identity,
+      { incluirTelefonoEquivocado: true },
     );
+    // Por cómo suena (2026-10-21: «no soy Deysi» con la paciente DEICY).
     return citas.some((c) =>
       textoParaCoincidencia(c.patient?.fullName ?? '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
         .split(' ')
-        .includes(nombre),
+        .some((parte) => mismoNombre(parte, nombre)),
     );
+  }
+
+  /**
+   * ☎️ A quien escribe desde un número ya marcado como de otra persona (ver
+   * `pacientesConTelefonoEquivocado`): que ya se sabe, y con quién hablar si tiene
+   * una cita propia. Nada de la cita del paciente.
+   */
+  private async responderNumeroYaMarcado(p: {
+    organizationId: string;
+    senderId: string;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    org: Organization | null;
+  }): Promise<boolean> {
+    const reply = p.MSGS.numeroYaMarcado(this.contactoDe(p.MSGS, p.org));
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text,
+      botReply: reply,
+      metadata: { step: 'NUMERO_YA_MARCADO' },
+    });
+    return true;
   }
 
   /**
@@ -4611,9 +4860,10 @@ export class ChatbotService implements OnModuleInit {
   ) {
     const deQuien = this.perfilesDelRemitente(identity);
     if (deQuien.length === 0) return [];
-    return this.citasFueraDelAlcance(organizationId, {
+    const citas = await this.citasFueraDelAlcance(organizationId, {
       patient: { OR: deQuien },
     });
+    return this.sinTelefonoEquivocado(organizationId, identity, citas);
   }
 
   private async citasFueraDelAlcance(
@@ -4876,6 +5126,78 @@ export class ChatbotService implements OnModuleInit {
       userMessage: p.text,
       botReply: reply,
       metadata: { step: 'OTRA_HORA', appointmentId: cita?.id ?? null },
+    });
+    return true;
+  }
+
+  /**
+   * 👋 Saludo a secas de quien acaba de recibir un recordatorio (ver
+   * `atenderRespuestaAlBot`). Sin recordatorio en las últimas 48 h, false: el
+   * saludo sigue el camino de siempre.
+   */
+  private async saludarTrasRecordatorio(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    botName: string;
+    orgName: string;
+    operaciones: OperacionesBot;
+    timeZone: string | undefined;
+  }): Promise<boolean> {
+    const citas = await this.citasRecordadasDelRemitente(
+      p.organizationId,
+      p.identity,
+    );
+    const cita = citas[0];
+    if (!cita) return false;
+    // «Hola» es el atajo de agendar en los demás avisos; aquí no: otro «Hola» ya
+    // no es este saludo sino el menú, pero «agendar» lo dice sin dudas.
+    const opciones = this.lineasDeLoDisponible(p.MSGS, p.operaciones, {
+      atajoAgendar: '"agendar"',
+    });
+    const reply =
+      citas.length > 1
+        ? p.MSGS.saludoTrasRecordatorioVarias(
+            p.botName,
+            p.orgName,
+            this.lineasDeCitas(p.MSGS, citas, p.timeZone),
+            opciones,
+          )
+        : p.MSGS.saludoTrasRecordatorio(
+            p.botName,
+            p.orgName,
+            (cita.patient?.fullName ?? '').trim().split(/\s+/)[0],
+            cita.scheduleSlot.service?.name ?? '',
+            formatAppointmentLong(cita.scheduleSlot.startTime, {
+              timeZone: p.timeZone,
+            }),
+            opciones,
+          );
+    // Ya se presentó: lo que siga no repite la bienvenida.
+    await this.redis.set(
+      this.presentadoKey(p.organizationId, p.senderId),
+      '1',
+      'EX',
+      PRESENTACION_TTL,
+    );
+    // Y ya sabe de su cita: con agendar encendido, el próximo saludo es el menú.
+    await this.redis.set(
+      this.saludoTrasRecordatorioKey(p.organizationId, p.senderId),
+      '1',
+      'EX',
+      SALUDO_TRAS_RECORDATORIO_TTL,
+    );
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text,
+      botReply: reply,
+      metadata: {
+        step: 'SALUDO_TRAS_RECORDATORIO',
+        appointmentId: cita.id,
+        ...(citas.length > 1 ? { appointmentIds: citas.map((c) => c.id) } : {}),
+      },
     });
     return true;
   }
@@ -5224,6 +5546,7 @@ export class ChatbotService implements OnModuleInit {
       const citas = await this.citasRecordadasDelRemitente(
         p.organizationId,
         p.identity,
+        { incluirTelefonoEquivocado: true },
       );
       const ahora = new Date();
       for (const perfil of perfiles) {
@@ -5847,6 +6170,36 @@ export class ChatbotService implements OnModuleInit {
         // Un atajo que falla no se lleva el mensaje: sigue el camino de siempre.
         this.logger.error(
           `Respuesta al bot sin IA falló (org ${organizationId}): ${getErrorMessage(error)}`,
+        );
+        return false;
+      }))
+    ) {
+      return;
+    }
+
+    // 💬 …y la misma respuesta al recordatorio desde un menú del agendamiento
+    // (2026-10-22): un saludo abrió el menú y lo que siguió era para el recordatorio.
+    if (
+      messageType === 'text' &&
+      !!text &&
+      (currentState === ChatState.AWAITING_SPECIALTY ||
+        currentState === ChatState.AWAITING_EPS ||
+        currentState === ChatState.AWAITING_DATE) &&
+      (await this.atenderRespuestaAlRecordatorioEnMenu({
+        organizationId,
+        senderId,
+        identity,
+        text,
+        MSGS,
+        botName,
+        orgName,
+        org,
+        operaciones,
+        timeZone: org?.timezone || undefined,
+        currentState,
+      }).catch((error: unknown) => {
+        this.logger.error(
+          `Respuesta al recordatorio desde el menú falló (org ${organizationId}): ${getErrorMessage(error)}`,
         );
         return false;
       }))
@@ -7099,11 +7452,21 @@ export class ChatbotService implements OnModuleInit {
             text,
             finalEps,
           );
+          if (noDisponible?.atendida) {
+            await this.responderEpsSoloPorTelefono(
+              organizationId,
+              senderId,
+              noDisponible.nombre,
+              MSGS,
+              text,
+            );
+            return;
+          }
           if (noDisponible) {
             await this.ofrecerParticular(
               organizationId,
               senderId,
-              noDisponible,
+              noDisponible.nombre,
               MSGS,
               text,
             );
@@ -7177,11 +7540,21 @@ export class ChatbotService implements OnModuleInit {
             null,
             finalEps,
           );
+          if (noDisponible?.atendida) {
+            await this.responderEpsSoloPorTelefono(
+              organizationId,
+              senderId,
+              noDisponible.nombre,
+              MSGS,
+              text,
+            );
+            return;
+          }
           if (noDisponible) {
             await this.ofrecerParticular(
               organizationId,
               senderId,
-              noDisponible,
+              noDisponible.nombre,
               MSGS,
               text,
             );
@@ -8305,19 +8678,40 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    const nombres =
+    const nombresDados =
       (await this.redis.get(`temp_nombres:${organizationId}:${senderId}`)) ??
       '';
+    // 🪪 Si repitió el nombre en los dos pasos (2026-10-22: «Juan camilo hurtado
+    // ramos» + «Hurtado ramos»), se separa lo que no tiene otra lectura; si
+    // escribió exactamente lo mismo, se le vuelven a pedir los apellidos.
+    const separado = separarNombresYApellidos(nombresDados, apellidos);
+    if (separado.repetido) {
+      await this.responderAlta(
+        ctx,
+        MSGS.apellidosRepetidos(separado.nombres),
+        'ALTA_APELLIDOS_REPETIDOS',
+      );
+      return;
+    }
+    const { nombres } = separado;
 
+    if (nombres !== nombresDados.trim()) {
+      await this.redis.set(
+        `temp_nombres:${organizationId}:${senderId}`,
+        nombres,
+        'EX',
+        SESSION_TTL,
+      );
+    }
     await this.redis.set(
       `temp_apellidos:${organizationId}:${senderId}`,
-      apellidos,
+      separado.apellidos,
       'EX',
       SESSION_TTL,
     );
     await this.redis.set(
       `temp_nombre:${organizationId}:${senderId}`,
-      `${nombres} ${apellidos}`.trim(),
+      `${nombres} ${separado.apellidos}`.trim(),
       'EX',
       SESSION_TTL,
     );
@@ -9423,6 +9817,7 @@ export class ChatbotService implements OnModuleInit {
     const cita = await this.prisma.appointment.findFirst({
       where: { id: aptId, organizationId },
       select: {
+        patientId: true,
         scheduleSlot: {
           select: {
             startTime: true,
@@ -9442,6 +9837,35 @@ export class ChatbotService implements OnModuleInit {
         MSGS,
         userMessage: text || '[audio]',
         flow: 'CANCELAR',
+      });
+      await p.limpiar();
+      return;
+    }
+
+    // ☎️ Entre la oferta y el SÍ pudo quedar marcado el número como de otra
+    // persona: entonces no se cancela (se escribiría en el hospital).
+    if (
+      cita?.patientId &&
+      (
+        await this.pacientesConTelefonoEquivocado(
+          organizationId,
+          isTelegramSender(senderId),
+          [cita.patientId],
+        )
+      ).size > 0
+    ) {
+      const reply = MSGS.numeroYaMarcado(
+        this.contactoDe(MSGS, await this.organizacionDe(organizationId)),
+      );
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: {
+          step: 'NUMERO_YA_MARCADO',
+          flow: 'CANCELAR',
+          appointmentId: aptId,
+        },
       });
       await p.limpiar();
       return;
@@ -10181,6 +10605,38 @@ export class ChatbotService implements OnModuleInit {
       // reservado: si el HIS lo rechaza, la cita vuelve a él
       // (`MirrorDispatchService.markRejectedByHis`) sin que nadie se lo haya
       // llevado entre tanto. Sin espejo, se libera en el acto, como siempre.
+      // ☎️ Entre la elección y el SÍ pudo quedar marcado el número como de otra
+      // persona: entonces no se mueve (se escribiría en el hospital).
+      const deQuienEs = await this.prisma.appointment.findFirst({
+        where: { id: aptId, organizationId },
+        select: { patientId: true },
+      });
+      if (
+        deQuienEs?.patientId &&
+        (
+          await this.pacientesConTelefonoEquivocado(
+            organizationId,
+            isTelegramSender(senderId),
+            [deQuienEs.patientId],
+          )
+        ).size > 0
+      ) {
+        const reply = MSGS.numeroYaMarcado(
+          this.contactoDe(MSGS, await this.organizacionDe(organizationId)),
+        );
+        await this.smartReply(organizationId, senderId, reply);
+        await this.cleanUpModifySession(organizationId, senderId);
+        await this.auditSuccess(senderId, organizationId, {
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            step: 'NUMERO_YA_MARCADO',
+            flow: 'MODIFICAR',
+            appointmentId: aptId,
+          },
+        });
+        return;
+      }
       // 🚦 El cambio de fecha hace su propia transacción y NO pasa por
       // `bookAppointment`: el límite de citas se revisa otra vez aquí, porque
       // pudo entrarle otra cita desde que eligió el cupo.
@@ -10238,6 +10694,11 @@ export class ChatbotService implements OnModuleInit {
             newSlot.service?.isActive === false
           ) {
             throw new Error('NEW_SLOT_DOCTOR_NOT_BOOKABLE');
+          }
+          // ⏱️ Anticipación mínima, también al confirmar el cambio: si ya empieza
+          // muy pronto, es un cupo que ya no está y se le ofrecen otros.
+          if (!cumpleAnticipacionAlReservar(newSlot.startTime, new Date())) {
+            throw new Error('NEW_SLOT_TAKEN');
           }
           await tx.appointment.update({
             where: { id: aptId },
@@ -11222,7 +11683,16 @@ export class ChatbotService implements OnModuleInit {
       where: { organizationId, OR: or },
       take: 5,
     });
-    return candidatos.filter((c) => remitenteEsDelPaciente(c, identity));
+    const propios = candidatos.filter((c) =>
+      remitenteEsDelPaciente(c, identity),
+    );
+    // ☎️ Una ficha con el teléfono marcado como de otra persona no es «propia».
+    const marcados = await this.pacientesConTelefonoEquivocado(
+      organizationId,
+      !!identity.telegramChatId,
+      propios.map((c) => c.id),
+    );
+    return propios.filter((c) => !marcados.has(c.id));
   }
 
   /** Busca y responde. Deja la sesión en AWAITING_LOOKUP_CHOICE o cerrada. */
@@ -11306,8 +11776,17 @@ export class ChatbotService implements OnModuleInit {
       ? citas.filter((c) => deHoy.includes(c) || futuras.includes(c))
       : futuras;
 
+    // ☎️ Con el teléfono marcado como de otra persona, como si escribiera otro.
     const esDelRemitente =
-      !!patient && remitenteEsDelPaciente(patient, identity);
+      !!patient &&
+      remitenteEsDelPaciente(patient, identity) &&
+      (
+        await this.pacientesConTelefonoEquivocado(
+          organizationId,
+          !!identity.telegramChatId,
+          [patient.id],
+        )
+      ).size === 0;
     const metadata: Record<string, unknown> = {
       via: p.via,
       conexionHis: conexion.estado,
@@ -12232,6 +12711,27 @@ export class ChatbotService implements OnModuleInit {
       });
       return;
     }
+    // ☎️ Es su número, pero quedó marcado como de otra persona: no se toca.
+    if (
+      (
+        await this.pacientesConTelefonoEquivocado(
+          organizationId,
+          isTelegramSender(senderId),
+          [patient.id],
+        )
+      ).size > 0
+    ) {
+      await this.rechazarCitaDeOtroCanal({
+        organizationId,
+        senderId,
+        MSGS,
+        operacion: 'CANCELAR',
+        cedula,
+        patientId: patient.id,
+        telefonoEquivocado: true,
+      });
+      return;
+    }
 
     const activeAppointments = await this.prisma.appointment.findMany({
       where: {
@@ -12495,11 +12995,16 @@ export class ChatbotService implements OnModuleInit {
     operacion: 'CANCELAR' | 'MODIFICAR';
     cedula: string;
     patientId: string;
+    /** El número es el de la ficha, pero tiene abierto un caso de teléfono equivocado. */
+    telefonoEquivocado?: boolean;
   }): Promise<void> {
-    const reply = p.MSGS.citaDeOtroCanal(
-      TEXTO_OPERACION[p.operacion].hacerla,
-      this.contactoDe(p.MSGS, await this.organizacionDe(p.organizationId)),
+    const contacto = this.contactoDe(
+      p.MSGS,
+      await this.organizacionDe(p.organizationId),
     );
+    const reply = p.telefonoEquivocado
+      ? p.MSGS.numeroYaMarcado(contacto)
+      : p.MSGS.citaDeOtroCanal(TEXTO_OPERACION[p.operacion].hacerla, contacto);
     await this.smartReply(p.organizationId, p.senderId, reply);
     await this.cleanUpSession(p.organizationId, p.senderId);
     await this.auditFailure(p.senderId, p.organizationId, {
@@ -12509,6 +13014,7 @@ export class ChatbotService implements OnModuleInit {
       metadata: {
         flow: p.operacion,
         patientId: p.patientId,
+        ...(p.telefonoEquivocado ? { telefonoEquivocado: true } : {}),
       },
     });
   }
@@ -12558,6 +13064,27 @@ export class ChatbotService implements OnModuleInit {
         operacion: 'MODIFICAR',
         cedula,
         patientId: patient.id,
+      });
+      return;
+    }
+    // ☎️ Es su número, pero quedó marcado como de otra persona: no se toca.
+    if (
+      (
+        await this.pacientesConTelefonoEquivocado(
+          organizationId,
+          isTelegramSender(senderId),
+          [patient.id],
+        )
+      ).size > 0
+    ) {
+      await this.rechazarCitaDeOtroCanal({
+        organizationId,
+        senderId,
+        MSGS,
+        operacion: 'MODIFICAR',
+        cedula,
+        patientId: patient.id,
+        telefonoEquivocado: true,
       });
       return;
     }

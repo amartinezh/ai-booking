@@ -5,7 +5,7 @@ import { SOLICITUD_CITAS, TEXTO_TIPO_LIMITE, etiquetaMotivoSolicitudCitas, etiqu
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { formatAppointmentCompact } from '@/lib/date';
-import { puedeGestionarLimiteCitas } from '@/lib/limite-citas/acceso';
+import { puedeConfigurarLimiteCitas, puedeGestionarLimiteCitas } from '@/lib/limite-citas/acceso';
 import RevisarSolicitud from './RevisarSolicitud';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/app/components/ui/table';
 
@@ -113,9 +113,13 @@ export default async function SolicitudesCitasPage({
                 </h1>
                 <p className="text-zinc-500 dark:text-zinc-400 text-lg leading-relaxed max-w-3xl">
                     Pacientes a los que el asistente no les agendó porque ya tenían el máximo de citas del día o del mes (
-                    <Link href="/dashboard/limites-citas" className="text-teal-600 hover:underline font-medium">
-                        Límite de citas
-                    </Link>
+                    {puedeConfigurarLimiteCitas(session) ? (
+                        <Link href="/dashboard/limites-citas" className="text-teal-600 hover:underline font-medium">
+                            Límite de citas
+                        </Link>
+                    ) : (
+                        'Límite de citas'
+                    )}
                     ) y que explican por qué necesitan más. Al <strong>aprobar</strong>, el asistente les permite agendar las
                     citas adicionales que conceda, solo para ese día o ese mes.
                 </p>

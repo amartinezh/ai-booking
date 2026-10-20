@@ -326,17 +326,23 @@ describe('Límite de citas y solicitudes de más citas (2026-10-14)', () => {
   const tiene = (menus: { href: string }[], href: string) =>
     menus.some((m) => m.href === href);
 
-  it.each(['ORG_ADMIN', 'BOOKING_AGENT'] as const)(
-    '%s ve las dos opciones, sin depender del espejo',
-    (rol) => {
-      for (const opts of [{}, { conEspejo: true }]) {
-        const menus = getMenusForRole(rol, opts);
-        expect(tiene(menus, LIMITE)).toBe(true);
-        expect(tiene(menus, SOLICITUDES)).toBe(true);
-        expect(menus[menus.length - 1].href).toBe('/dashboard/soporte');
-      }
-    },
-  );
+  it('ORG_ADMIN ve las dos opciones, sin depender del espejo', () => {
+    for (const opts of [{}, { conEspejo: true }]) {
+      const menus = getMenusForRole('ORG_ADMIN', opts);
+      expect(tiene(menus, LIMITE)).toBe(true);
+      expect(tiene(menus, SOLICITUDES)).toBe(true);
+      expect(menus[menus.length - 1].href).toBe('/dashboard/soporte');
+    }
+  });
+
+  it('BOOKING_AGENT ve las solicitudes, pero NO el límite (2026-10-22: lo fija el administrador)', () => {
+    for (const opts of [{}, { conEspejo: true }]) {
+      const menus = getMenusForRole('BOOKING_AGENT', opts);
+      expect(tiene(menus, LIMITE)).toBe(false);
+      expect(tiene(menus, SOLICITUDES)).toBe(true);
+      expect(menus[menus.length - 1].href).toBe('/dashboard/soporte');
+    }
+  });
 
   it.each(['DOCTOR', 'PATIENT', 'GENERAL_OBSERVER', 'SUPER_ADMIN'] as const)(
     '%s no las ve',

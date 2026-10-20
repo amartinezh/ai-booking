@@ -72,6 +72,11 @@ export const SESSION_TTL = 3600;
 // el cierre por inactividad la borran antes: una conversación nueva sí saluda.
 export const PRESENTACION_TTL = 30 * 60;
 
+// Cuánto recuerda el bot que ya le dijo a alguien de qué cita le escribimos tras
+// su recordatorio (2026-10-22). Con agendar encendido, el siguiente saludo dentro
+// de esta ventana abre el menú de siempre: ya sabe de su cita y busca otra cosa.
+export const SALUDO_TRAS_RECORDATORIO_TTL = 6 * 60 * 60;
+
 /**
  * Ventana de atención de Meta: 24 h desde el último mensaje del paciente.
  * Dentro se puede responder con texto libre; fuera hay que usar una plantilla
@@ -561,11 +566,13 @@ const FORMAL = {
   pedirCedula: (especialidad: string) =>
     `Anotado, busca cita para *${especialidad}*. 🩺\n\n¿Me comparte su *número de cédula*? Solo el número, sin puntos ni guiones.`,
 
+  // 🪪 El nombre va en DOS pasos y se dice sin rodeos (2026-10-22: con «sus nombres
+  // (solo los nombres…)» un paciente escribió el nombre completo y quedó con los
+  // apellidos repetidos). Ver nombre-paciente-nuevo.ts.
   primeraVez: () =>
     pick([
-      `Es un gusto recibirle por primera vez.\n\nPara registrarle en el sistema, ¿me indica sus *nombres*, por favor? (solo los nombres — los apellidos se los pido enseguida)`,
-      `Bienvenido(a). Es un gusto atenderle por primera vez.\n\nIndíqueme sus *nombres* para abrir su historia (los apellidos van en la siguiente pregunta).`,
-      `Es la primera vez que le atendemos por aquí.\n\n¿Me indica sus *nombres*? Enseguida le pido los apellidos.`,
+      `Es un gusto recibirle por primera vez. Para registrarle le pido su nombre en *dos pasos*.\n\n*Paso 1 de 2:* escriba *solo sus NOMBRES*, sin apellidos.\nPor ejemplo: *María Fernanda*\n\n_Los apellidos se los pido en el siguiente mensaje._`,
+      `Bienvenido(a). Para abrir su historia le pido su nombre en *dos pasos*.\n\n*Paso 1 de 2:* escriba *solo sus NOMBRES*, sin apellidos.\nPor ejemplo: *Juan Carlos*\n\n_Los apellidos van en la siguiente pregunta._`,
     ]),
 
   // ACK del Primer Turno (Fase 2): confirma al paciente las entidades que el
@@ -759,9 +766,15 @@ const FORMAL = {
   // El paciente nombró una EPS real que esta clínica no atiende. En vez de repetirle
   // el menú hasta agotar los reintentos, se le dice y se le ofrece la salida que sí
   // existe: la cita particular. SÍ → sigue como Particular; NO → se despide.
+  // 🏥 La clínica atiende su EPS, pero no por el asistente (2026-10-21): por
+  // teléfono, con su EPS. Sin ofrecerle la cita particular.
+  epsSoloPorTelefono: (nombreEps: string, contacto: string) =>
+    `Por este medio todavía no puedo agendar citas con *${nombreEps}*. 🙏\n\n` +
+    `Para agendar su cita con su EPS, comuníquese con ${contacto}.`,
+
   epsNoDisponibleOfrecerParticular: (nombreEps: string) =>
     pick([
-      `La EPS *${nombreEps}* no se encuentra disponible en este momento para agendamiento.\n\nTiene la opción de solicitar una cita *particular*. ¿Desea agendarla? Responda *SÍ* o *NO*.`,
+      `La EPS *${nombreEps}* no se encuentra disponible en este momento para agendamiento.\n\nTiene la opción de solicitar una cita *particular* (pago directo). ¿Desea agendarla? Responda *SÍ* o *NO*.`,
       `Por ahora no es posible agendar con la EPS *${nombreEps}*.\n\nSi lo desea, puede solicitar su cita como *particular* (pago directo). ¿Desea agendarla? Responda *SÍ* o *NO*.`,
     ]),
 
@@ -811,14 +824,17 @@ const FORMAL = {
     ]),
   pedirApellidos: (nombres: string) =>
     pick([
-      `Gracias, ${nombres}. Ahora sus *apellidos*, por favor.`,
-      `Anotado: ${nombres}. ¿Me indica sus *apellidos*?`,
+      `Gracias. Nombres: *${nombres}*\n\n*Paso 2 de 2:* ahora escriba *solo sus APELLIDOS*.\nPor ejemplo: *Gómez Restrepo*`,
+      `Anotado. Nombres: *${nombres}*\n\n*Paso 2 de 2:* escriba *solo sus APELLIDOS*.\nPor ejemplo: *Pérez Gil*`,
     ]),
   apellidosNoEntendidos: () =>
     pick([
-      `No alcancé a leer los apellidos. ¿Me los escribe de nuevo, por favor?`,
-      `Disculpe, ¿me repite sus *apellidos*?`,
+      `No alcancé a leer los apellidos. ¿Me los escribe de nuevo, por favor? *Solo sus APELLIDOS*.`,
+      `Disculpe, ¿me repite sus *APELLIDOS*? Solo los apellidos, por favor.`,
     ]),
+  // Escribió lo mismo en los dos pasos: no se sabe dónde termina el nombre.
+  apellidosRepetidos: (nombres: string) =>
+    `Escribió lo mismo que en el paso anterior. 🙏\n\nSus nombres ya los tengo: *${nombres}*\n\n*Paso 2 de 2:* escriba *solo sus APELLIDOS*, por favor.`,
   pedirSexo: () =>
     pick([
       `¿Cuál es su *sexo*?\n\n*A)* Masculino\n*B)* Femenino`,
@@ -1049,6 +1065,33 @@ const FORMAL = {
   otraHoraSinCita: (contacto: string) =>
     `Por este medio no puedo confirmarle esa hora. 🏥 Para confirmarla, comuníquese con ${contacto}.`,
 
+  // 👋 Un saludo a secas tras el recordatorio, con agendar apagado (2026-10-20: a
+  // quien tenía el teléfono de otra paciente, «Hola buenos días» le contestó «no es
+  // posible agendar»): de qué cita le escribimos, de quién, y que avise si no es suyo.
+  saludoTrasRecordatorio: (
+    botName: string,
+    clinicaName: string,
+    nombre: string,
+    servicio: string,
+    fecha: string,
+    opciones: string,
+  ) =>
+    `¡Hola! Le saluda *${botName}*, asistente virtual de *${clinicaName}*. 👋\n\n` +
+    `Le escribimos para recordarle la cita${nombre ? ` de *${nombre}*` : ''} de *${servicio}* el *${fecha}*.\n\n` +
+    `Por aquí puedo ayudarle a:\n${opciones}\n\n` +
+    `Si este número no es ${nombre ? `de *${nombre}*` : 'del paciente'}, por favor avísenos y no le enviaremos más recordatorios.`,
+
+  saludoTrasRecordatorioVarias: (
+    botName: string,
+    clinicaName: string,
+    citas: string,
+    opciones: string,
+  ) =>
+    `¡Hola! Le saluda *${botName}*, asistente virtual de *${clinicaName}*. 👋\n\n` +
+    `Le escribimos para recordarle estas citas:\n${citas}\n\n` +
+    `Por aquí puedo ayudarle a:\n${opciones}\n\n` +
+    `Si este número no es del paciente, por favor avísenos y no le enviaremos más recordatorios.`,
+
   // 📍 Avisa que ya está en el hospital (2026-10-17: «Acá estamos esperando»).
   yaLlego: (servicio: string, fecha: string, medico: string) =>
     `¡Gracias por avisar! 🙌 Su cita de *${servicio}* es el *${fecha}* con *${medico}*. 🏥\n\n` +
@@ -1084,6 +1127,11 @@ const FORMAL = {
     `Por aquí también puedo ayudarle a:\n${lineas}`,
 
   // Quien contestó dice que el número no es del paciente.
+  // ☎️ Escribe otra vez desde un número ya marcado como de otra persona (2026-10-21).
+  numeroYaMarcado: (contacto: string) =>
+    `Ya quedó registrado que este número no es del paciente: el hospital lo va a corregir y no le enviaremos más recordatorios. 🙏\n\n` +
+    `Si usted tiene una cita propia, comuníquese con ${contacto}.`,
+
   numeroEquivocado: (clinicaName: string) =>
     `Disculpe la molestia y gracias por avisarnos. 🙏\n\n` +
     `El mensaje era de *${clinicaName}* para otra persona: no le enviaremos más recordatorios a este número.`,
@@ -1808,9 +1856,8 @@ const INFORMAL = {
 
   primeraVez: () =>
     pick([
-      `¡Qué bueno tenerte por aquí por primera vez! 🤝 Para registrarte, ¿me pasas tus *nombres*? (los apellidos te los pido enseguida)`,
-      `¡Bienvenido(a)! Es un gusto atenderte por primera vez. 🌟 Cuéntame tus *nombres* para abrirte tu historia — los apellidos van después.`,
-      `¡Mucho gusto! 😊 No te tengo registrado aún — ¿me dices tus *nombres*? Enseguida te pido los apellidos.`,
+      `¡Qué bueno tenerte por aquí por primera vez! 🤝 Para registrarte te pido tu nombre en *dos pasos*.\n\n*Paso 1 de 2:* escribe *solo tus NOMBRES*, sin apellidos.\nPor ejemplo: *María Fernanda*\n\n_Los apellidos te los pido en el siguiente mensaje._`,
+      `¡Bienvenido(a)! 🌟 Para abrirte tu historia te pido tu nombre en *dos pasos*.\n\n*Paso 1 de 2:* escribe *solo tus NOMBRES*, sin apellidos.\nPor ejemplo: *Juan Carlos*\n\n_Los apellidos van en la siguiente pregunta._`,
     ]),
 
   // ACK del Primer Turno (Fase 2): confirma lo que el Agente entendió del
@@ -1978,9 +2025,13 @@ const INFORMAL = {
       `No puedo agendarte esta cita por este medio: tu EPS no tiene convenio para tu régimen en este momento.\n\nMejor comunícate directo con el hospital.`,
     ]),
 
+  epsSoloPorTelefono: (nombreEps: string, contacto: string) =>
+    `Por aquí todavía no puedo agendar citas con *${nombreEps}*. 🙏\n\n` +
+    `Para agendar tu cita con tu EPS, comunícate con ${contacto}.`,
+
   epsNoDisponibleOfrecerParticular: (nombreEps: string) =>
     pick([
-      `La EPS *${nombreEps}* no está disponible en este momento para agendar por acá. 🙏\n\nPuedes pedir tu cita como *particular*. ¿Quieres agendarla? Responde *SÍ* o *NO*.`,
+      `La EPS *${nombreEps}* no está disponible en este momento para agendar por acá. 🙏\n\nPuedes pedir tu cita como *particular* (pago directo). ¿Quieres agendarla? Responde *SÍ* o *NO*.`,
       `Por ahora no puedo agendarte con *${nombreEps}*.\n\nSi quieres, la sacamos como *particular* (pago directo). ¿Te la agendo? Responde *SÍ* o *NO*.`,
     ]),
 
@@ -2022,14 +2073,16 @@ const INFORMAL = {
     ]),
   pedirApellidos: (nombres: string) =>
     pick([
-      `¡Gracias, ${nombres}! Ahora tus *apellidos*. 😊`,
-      `Listo, ${nombres}. ¿Me pasas tus *apellidos*?`,
+      `¡Gracias! Nombres: *${nombres}* 😊\n\n*Paso 2 de 2:* ahora escribe *solo tus APELLIDOS*.\nPor ejemplo: *Gómez Restrepo*`,
+      `Listo. Nombres: *${nombres}*\n\n*Paso 2 de 2:* escribe *solo tus APELLIDOS*.\nPor ejemplo: *Pérez Gil*`,
     ]),
   apellidosNoEntendidos: () =>
     pick([
-      `No te entendí los apellidos. ¿Me los escribes otra vez?`,
-      `Perdona, ¿me repites tus *apellidos*?`,
+      `No te entendí los apellidos. ¿Me los escribes otra vez? *Solo tus APELLIDOS*.`,
+      `Perdona, ¿me repites tus *APELLIDOS*? Solo los apellidos.`,
     ]),
+  apellidosRepetidos: (nombres: string) =>
+    `Escribiste lo mismo que en el paso anterior. 🙏\n\nTus nombres ya los tengo: *${nombres}*\n\n*Paso 2 de 2:* escribe *solo tus APELLIDOS*, por favor.`,
   pedirSexo: () =>
     pick([
       `¿Cuál es tu *sexo*?\n\n*A)* Masculino\n*B)* Femenino`,
@@ -2233,6 +2286,30 @@ const INFORMAL = {
   otraHoraSinCita: (contacto: string) =>
     `Por aquí no puedo confirmarte esa hora. 🏥 Para confirmarla, comunícate con ${contacto}.`,
 
+  saludoTrasRecordatorio: (
+    botName: string,
+    clinicaName: string,
+    nombre: string,
+    servicio: string,
+    fecha: string,
+    opciones: string,
+  ) =>
+    `¡Hola! Te saluda *${botName}*, asistente virtual de *${clinicaName}*. 👋\n\n` +
+    `Te escribimos para recordarte la cita${nombre ? ` de *${nombre}*` : ''} de *${servicio}* el *${fecha}*.\n\n` +
+    `Por aquí puedo ayudarte a:\n${opciones}\n\n` +
+    `Si este número no es ${nombre ? `de *${nombre}*` : 'del paciente'}, por favor avísanos y no te enviaremos más recordatorios.`,
+
+  saludoTrasRecordatorioVarias: (
+    botName: string,
+    clinicaName: string,
+    citas: string,
+    opciones: string,
+  ) =>
+    `¡Hola! Te saluda *${botName}*, asistente virtual de *${clinicaName}*. 👋\n\n` +
+    `Te escribimos para recordarte estas citas:\n${citas}\n\n` +
+    `Por aquí puedo ayudarte a:\n${opciones}\n\n` +
+    `Si este número no es del paciente, por favor avísanos y no te enviaremos más recordatorios.`,
+
   yaLlego: (servicio: string, fecha: string, medico: string) =>
     `¡Gracias por avisar! 🙌 Tu cita de *${servicio}* es el *${fecha}* con *${medico}*. 🏥\n\n` +
     `El número de turno y el consultorio te los indican en la *recepción del hospital*: acércate y di tu nombre.`,
@@ -2259,6 +2336,10 @@ const INFORMAL = {
 
   avisoTambienPuede: (lineas: string) =>
     `Por aquí también puedo ayudarte a:\n${lineas}`,
+
+  numeroYaMarcado: (contacto: string) =>
+    `Ya quedó registrado que este número no es del paciente: el hospital lo va a corregir y no te enviaremos más recordatorios. 🙏\n\n` +
+    `Si tienes una cita propia, comunícate con ${contacto}.`,
 
   numeroEquivocado: (clinicaName: string) =>
     `Disculpa la molestia y gracias por avisarnos. 🙏\n\n` +

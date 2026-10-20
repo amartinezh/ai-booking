@@ -1,6 +1,7 @@
 import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { inicioMinimoParaOfrecer } from '@agenia/shared';
 import { ConfigService } from '@nestjs/config';
 import { ChatbotService } from '../chatbot/chatbot.service';
 
@@ -116,6 +117,15 @@ export class WaitlistService {
     if (settings?.bookingEnabled === false) {
       this.logger.log(
         `Operaciones del bot apagadas en ${organizationId}: no se ofrece el cupo ${slotId} a la lista de espera`,
+      );
+      return;
+    }
+
+    // ⏱️ Un cupo que empieza antes de la anticipación mínima no se ofrece: el
+    // paciente no alcanzaría a llegar, y al reservar se rechazaría igual.
+    if (slotDate < inicioMinimoParaOfrecer(new Date())) {
+      this.logger.log(
+        `El cupo ${slotId} empieza antes de la anticipación mínima: no se ofrece a la lista de espera`,
       );
       return;
     }

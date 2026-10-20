@@ -40,7 +40,11 @@ function fakePool(
     /** Simula el permiso EXECUTE sobre PA_Ins_AUDITOR aún no concedido. */
     auditError?: any;
     /** Citas del médico ese día que ve la revisión de cruces (H11). */
-    citasDelDia?: { hora: string; dura: number | null }[];
+    citasDelDia?: {
+      hora: string;
+      dura?: number | null;
+      hist?: string | null;
+    }[];
     /**
      * La cita viva del médico a esa hora que lee la cancelación antes de borrar:
      * `null` = no hay. Por defecto, la del paciente de `evento()`.
@@ -752,6 +756,57 @@ describe('cancelAppointment', () => {
     const borra = sqlDe(requests, /DELETE FROM dbo\.CITAS_MEDICAS/)!;
     expect(copia.sql).toMatch(/NU_ESTA_CIT\s*=\s*0/);
     expect(borra.sql).toMatch(/NU_ESTA_CIT\s*=\s*0/);
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // 🕐 La misma hora escrita distinto (2026-10-22): «07:10» o «7:10». Antes, si el
+  // hospital la tenía sin el cero, la búsqueda exacta no la encontraba: «no
+  // estaba», la cancelación salía como hecha y el hospital conservaba la cita.
+  // ──────────────────────────────────────────────────────────────────
+  it('🕐 la hora guardada sin el cero («7:00») se encuentra igual, y se copia y borra TAL CUAL está guardada', async () => {
+    const { driver, requests } = conDriver({
+      citaViva: null, // la búsqueda exacta de «07:00» no la encuentra
+      citasDelDia: [{ hora: '2026/09/03 7:00', hist: '1122334455' }],
+    });
+
+    const r = await driver.cancelAppointment(eventoCancel());
+
+    expect(r.success).toBe(true);
+    const copia = sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/) as any;
+    const borra = sqlDe(requests, /DELETE FROM dbo\.CITAS_MEDICAS/) as any;
+    expect(copia.params.hora).toBe('2026/09/03 7:00');
+    expect(borra.params.hora).toBe('2026/09/03 7:00');
+    expect(borra.params.hist).toBe('1122334455');
+  });
+
+  it('🕐 con la misma hora pero de OTRO paciente, no se toca nada', async () => {
+    const { driver, requests } = conDriver({
+      citaViva: null,
+      citasDelDia: [{ hora: '2026/09/03 7:00', hist: '999999' }],
+    });
+
+    const r = await driver.cancelAppointment(eventoCancel());
+
+    expect(r.success).toBe(false);
+    expect(sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)).toBeUndefined();
+    expect(sqlDe(requests, /DELETE FROM dbo\.CITAS_MEDICAS/)).toBeUndefined();
+  });
+
+  it('🕐 una ficha sin hora o de otra hora ese día no se toma por la cita', async () => {
+    const { driver, requests } = conDriver({
+      citaViva: null,
+      citasDelDia: [
+        { hora: '2026/09/03 1', hist: '1122334455' },
+        { hora: '2026/09/03 7:20', hist: '1122334455' },
+      ],
+    });
+
+    const r = await driver.cancelAppointment(eventoCancel());
+
+    // Nada con la misma hora: «no estaba», como siempre (éxito sin escribir).
+    expect(r.success).toBe(true);
+    expect(sqlDe(requests, /INSERT INTO dbo\.CITAS_ANULADAS/)).toBeUndefined();
+    expect(sqlDe(requests, /DELETE FROM dbo\.CITAS_MEDICAS/)).toBeUndefined();
   });
 
   it('si la cita ya no está, es éxito: reintentar no cambiaría nada', async () => {

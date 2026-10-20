@@ -1,5 +1,5 @@
 import { esIdDeSolicitud, validarDecision, validarLimites, validarRadicacion } from './validacion';
-import { puedeGestionarLimiteCitas, solicitudesCitasPendientes } from './acceso';
+import { puedeConfigurarLimiteCitas, puedeGestionarLimiteCitas, solicitudesCitasPendientes } from './acceso';
 import type { SessionPayload } from '../session';
 
 const sesion = (role: SessionPayload['role'], organizationId: string | null = 'org-1'): SessionPayload => ({
@@ -9,7 +9,22 @@ const sesion = (role: SessionPayload['role'], organizationId: string | null = 'o
     organizationId,
 });
 
-describe('puedeGestionarLimiteCitas', () => {
+describe('puedeConfigurarLimiteCitas (2026-10-22: solo el administrador)', () => {
+    it('ORG_ADMIN con clínica, sí', () => {
+        expect(puedeConfigurarLimiteCitas(sesion('ORG_ADMIN'))).toBe(true);
+    });
+
+    it.each(['BOOKING_AGENT', 'DOCTOR', 'PATIENT', 'GENERAL_OBSERVER', 'SUPER_ADMIN'] as const)('%s, no', (rol) => {
+        expect(puedeConfigurarLimiteCitas(sesion(rol))).toBe(false);
+    });
+
+    it('sin clínica en el token, nadie', () => {
+        expect(puedeConfigurarLimiteCitas(sesion('ORG_ADMIN', null))).toBe(false);
+        expect(puedeConfigurarLimiteCitas(null)).toBe(false);
+    });
+});
+
+describe('puedeGestionarLimiteCitas (las solicitudes de más citas)', () => {
     it.each(['ORG_ADMIN', 'BOOKING_AGENT'] as const)('%s con clínica, sí', (rol) => {
         expect(puedeGestionarLimiteCitas(sesion(rol))).toBe(true);
     });

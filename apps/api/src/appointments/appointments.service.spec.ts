@@ -264,6 +264,7 @@ describe('AppointmentsService', () => {
           id: 's1',
           isAvailable: true,
           organizationId: 'org1',
+          startTime: new Date(Date.now() + 86_400_000),
         });
 
         await svc.bookAppointment('p1', 's1', null, origin, 'org1');
@@ -374,11 +375,26 @@ describe('AppointmentsService', () => {
   describe('getAvailableSlots — filtro de fecha', () => {
     const whereOf = () => findMany.mock.calls[0][0].where;
 
-    it('sin dateWindow → startTime { gt: now } (regresión: conducta histórica)', async () => {
+    it('⏱️ sin dateWindow → solo cupos desde 60 minutos después de ahora', async () => {
+      const antes = Date.now();
       await service.getAvailableSlots('Medicina', null, 'org1');
       const startTime = whereOf().startTime;
-      expect(startTime).toHaveProperty('gt');
+      expect(startTime.gte.getTime()).toBeGreaterThanOrEqual(
+        antes + 60 * 60_000,
+      );
+      expect(startTime.gte.getTime()).toBeLessThan(antes + 61 * 60_000);
       expect(startTime).not.toHaveProperty('lte');
+    });
+
+    it('⏱️ con ventana que empieza ya («hoy») → desde 60 minutos después, no desde ahora', async () => {
+      const antes = Date.now();
+      await service.getAvailableSlots('Medicina', null, 'org1', {
+        desde: new Date(antes - 3_600_000),
+        hasta: new Date(antes + 12 * 3_600_000),
+      });
+      expect(whereOf().startTime.gte.getTime()).toBeGreaterThanOrEqual(
+        antes + 60 * 60_000,
+      );
     });
 
     it('con dateWindow futuro → gte: desde, lte: hasta', async () => {
@@ -560,6 +576,7 @@ describe('AppointmentsService — el médico se apaga mientras el paciente decid
     id: 's1',
     isAvailable: true,
     organizationId: 'org1',
+    startTime: new Date(Date.now() + 86_400_000),
     doctor: { whatsappBookingEnabled },
   });
 
@@ -589,6 +606,42 @@ describe('AppointmentsService — el médico se apaga mientras el paciente decid
 
     expect(r.success).toBe(true);
     expect(tx.appointment.create).toHaveBeenCalled();
+  });
+
+  describe('⏱️ anticipación mínima al reservar (2026-10-21)', () => {
+    const cupoEn = (minutos: number) => ({
+      ...cupoLibre(true),
+      startTime: new Date(Date.now() + minutos * 60_000),
+    });
+
+    it.each(['WHATSAPP', 'TELEGRAM'] as const)(
+      'por el bot (%s), un cupo que empieza en 20 minutos ya no se reserva: se le ofrecen otros',
+      async (origin) => {
+        const { svc, tx } = await conCupo(cupoEn(20));
+
+        const r = await svc.bookAppointment('p1', 's1', null, origin, 'org1');
+
+        expect(r.success).toBe(false);
+        expect(r.reason).toBe('SLOT_TAKEN');
+        expect(tx.appointment.create).not.toHaveBeenCalled();
+        expect(tx.scheduleSlot.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it('por el bot, un cupo a 45 minutos todavía se reserva (el rato de la conversación)', async () => {
+      const { svc } = await conCupo(cupoEn(45));
+      const r = await svc.bookAppointment('p1', 's1', null, 'WHATSAPP', 'org1');
+      expect(r.success).toBe(true);
+    });
+
+    it.each(['MANUAL', 'MIRROR'] as const)(
+      '%s (el personal o el hospital) agenda a cualquier hora',
+      async (origin) => {
+        const { svc } = await conCupo(cupoEn(10));
+        const r = await svc.bookAppointment('p1', 's1', null, origin, 'org1');
+        expect(r.success).toBe(true);
+      },
+    );
   });
 
   it('una cita que viene del HIS se salta el interruptor', async () => {
@@ -632,6 +685,7 @@ describe('AppointmentsService — EPS+régimen sin convenio en el HIS', () => {
     id: 's1',
     isAvailable: true,
     organizationId: 'org1',
+    startTime: new Date(Date.now() + 86_400_000),
     doctor: { whatsappBookingEnabled: true },
   });
 
@@ -1121,7 +1175,7 @@ describe('bookAppointment — límite de citas por paciente', () => {
     },
     paciente: { id: 'p1', cedula: '1088123456', fullName: 'Ana Ruiz' },
   };
-  const INICIO = new Date('2026-10-20T14:37:00.000Z');
+  const INICIO = new Date('2030-10-20T14:37:00.000Z');
 
   const conLimite = async (respuesta: typeof superado | null) => {
     const tx = {

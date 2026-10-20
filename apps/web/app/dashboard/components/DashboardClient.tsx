@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { Bell, Loader2 } from 'lucide-react';
-import { Prisma } from '@agenia/database';
 import {
     cancelAppointmentAndFreeSlot,
     updateAttendance,
@@ -13,15 +12,10 @@ import {
 import ClinicalRecordDrawer from './ClinicalRecordDrawer';
 import { formatDateShort, formatTimeOnly, formatAppointmentShort } from '@/lib/date';
 import { canalDelRecordatorio } from '@/lib/canal-recordatorio';
+import type { CitaInicio } from '@/lib/dashboard/citas-inicio';
 
-type DashboardAppointment = Prisma.AppointmentGetPayload<{
-    include: {
-        patient: { include: { user: true } };
-        scheduleSlot: { include: { doctor: true; service: true } };
-        eps: true;
-        clinicalRecord: { select: { id: true; status: true } };
-    };
-}>;
+/** Solo los campos que usa esta pantalla (lib/dashboard/citas-inicio.ts). */
+type DashboardAppointment = CitaInicio;
 
 /**
  * Estado principal de la cita. Una cita vigente que ya tiene desenlace de
@@ -54,12 +48,20 @@ export default function DashboardClient({
     appointments,
     epsList,
     doctorsList,
-    role
+    role,
+    desdeHoy = false,
+    hayMas = false,
+    tope,
 }: {
     appointments: DashboardAppointment[],
     epsList: { id: string; name: string }[],
     doctorsList: { id: string; fullName: string }[],
-    role: string
+    role: string,
+    /** Sin fecha inicial elegida: la tabla arranca hoy. */
+    desdeHoy?: boolean,
+    /** Quedaron citas por fuera del tope de filas. */
+    hayMas?: boolean,
+    tope?: number,
 }) {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -178,6 +180,19 @@ export default function DashboardClient({
                     </select>
                 )}
             </div>
+
+            {(desdeHoy || hayMas) && (
+                <div className="mb-4 space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
+                    {desdeHoy && (
+                        <p>📅 Se muestran las citas desde hoy. Para ver las anteriores, elija una fecha inicial.</p>
+                    )}
+                    {hayMas && (
+                        <p role="status" className="font-semibold text-amber-700 dark:text-amber-400">
+                            Se muestran las primeras {tope} citas. Para ver las demás, acote con las fechas, el médico o la EPS.
+                        </p>
+                    )}
+                </div>
+            )}
 
             <div className="bg-white dark:bg-zinc-900 shadow-xl shadow-zinc-200/50 dark:shadow-black/20 rounded-2xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
                 <div className="overflow-x-auto">

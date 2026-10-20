@@ -4,8 +4,8 @@
  * ══════════════════════════════════════════════════════════════════════════
  *
  * La clínica fija cuántas citas puede tener un paciente el MISMO DÍA y en el
- * MISMO MES calendario (/dashboard/limites-citas; lo editan el administrador y
- * el agendador). El bot no agenda, no asigna un cupo de la lista de espera ni
+ * MISMO MES calendario (/dashboard/limites-citas; desde 2026-10-22 lo edita
+ * solo el administrador). El bot no agenda, no asigna un cupo de la lista de espera ni
  * cambia una cita de fecha si con eso el paciente pasaría del límite: se
  * disculpa, lo remite al teléfono del hospital y le deja un enlace para pedir
  * una revisión (`AppointmentLimitRequest`). Una revisión APROBADA le concede

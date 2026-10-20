@@ -47,6 +47,23 @@ export type RespuestaAlBot =
   | 'CAMBIAR'
   | 'RESPUESTA_AUTOMATICA';
 
+/**
+ * Lo que, dicho en el MENÚ DE SERVICIOS por quien acaba de recibir un recordatorio,
+ * es su respuesta al recordatorio y no una opción del menú (2026-10-22: un saludo
+ * abrió el menú y «la cita ya la tengo para mañana» recibió «esa opción no se logró
+ * identificar»). No están «no puedo ir» ni «cambiarla»: en el menú ya tienen su
+ * camino (se le pregunta si deja el agendamiento para cancelar o cambiar).
+ */
+export const RESPUESTAS_AL_RECORDATORIO_EN_MENU: ReadonlySet<RespuestaAlBot> =
+  new Set<RespuestaAlBot>([
+    'CONFIRMA',
+    'QUIEN_ESCRIBE',
+    'PREGUNTA_CITA',
+    'PREGUNTA_TURNO',
+    'YA_LLEGO',
+    'OTRA_HORA',
+  ]);
+
 const sinTildes = (texto: string): string =>
   texto.normalize('NFD').replace(/[̀-ͯ]/g, '');
 
@@ -163,8 +180,9 @@ const PREGUNTA =
 const NO_CONFIRMA =
   /\b(no|nunca|tampoco|cancel\w*|cansel\w*|anul\w*|cambi\w*|reprogram\w*|reagend\w*|mover|mueva|aplaz\w*|posterg\w*|otro dia|otra (fecha|hora|cita))\b/;
 
+// «grasias», «gracia»: con la ortografía de verdad (2026-10-22, …7954).
 const CONFIRMA =
-  /\b(si+|claro|listo|ok|okey|okay|oki|vale|bueno|perfecto|de acuerdo|esta bien|confirm\w*|gracias|agradezco|voy|vamos|asistire|ire|alla estare|ahi estare|alli estare|cuenten conmigo|cuente con|dios quiere|amen|entendido|recibido|enterad\w*)\b/;
+  /\b(si+|claro|listo|ok|okey|okay|oki|vale|bueno|perfecto|de acuerdo|esta bien|confirm\w*|gra[cs]ias?|agradezco|voy|vamos|asistire|ire|alla estare|ahi estare|alli estare|cuenten conmigo|cuente con|dios quiere|amen|entendido|recibido|enterad\w*)\b/;
 // «Dios le bendiga», «Dios lebendiga» (pegado), «bendiciones».
 const BENDICE = /bendi[gc]/;
 
@@ -176,8 +194,19 @@ const EMOJI_CONFIRMA =
 const MAX_PALABRAS_CONFIRMACION = 14;
 /** …salvo que lo diga sin dudas: «Claro que sí, si Dios quiere, sí, claro, cuente con…». */
 const MAX_PALABRAS_CONFIRMACION_FIRME = 30;
+// 2026-10-20: «con la ayuda de Dios, muchísimas gracias por avisarme, yo estoy
+// atenta, estoy atenta a eso, con la ayuda de Dios» (19 palabras) recibió «no es
+// posible agendar»: «con la ayuda de Dios», «estoy atenta» y «gracias por
+// avisarme» también lo dicen sin dudas.
+// Ya tiene la cita: «la cita ya la tengo para mañana», «una cita pero ya me la
+// dieron» (2026-10-22, …7954, tal cual: «la sita ya latengo», «ya meladoeron»).
+// Contestado al recordatorio, es confirmarla; con «no» u «otra cita» de por medio,
+// no (NO_CONFIRMA va antes).
+const YA_LA_TIENE =
+  /\bya (la ?|lo ?)?tengo\b|\bya (la |lo )?tenemos\b|\bya tengo (la |mi |una |esa )?(cita|sita|consulta)\b|\bya (me|nos) ?(la|lo) ?d[io]\w*ron\b|\bya (me|nos) ?(la|lo) ?(asignaron|agendaron|programaron)\b/;
+
 const CONFIRMA_FIRME =
-  /\b(asistire|asistiremos|ire|iremos|alli estare|alla estare|ahi estare|alli estaremos|alla estaremos|ahi estaremos|cuente con|cuenten con|si dios quiere|dios mediante|claro que si|confirmo|confirmada|con gusto)\b/;
+  /\b(asistire|asistiremos|ire|iremos|alli estare|alla estare|ahi estare|alli estaremos|alla estaremos|ahi estaremos|cuente con|cuenten con|si dios quiere|dios mediante|primero dios|con (la ayuda|el favor) de dios|(estoy|estare|quedo|estamos|quedamos) (atent[oa]s?|pendientes?)|gracias por (avisar\w*|recordar\w*|el recordatorio|el aviso)|claro que si|confirmo|confirmada|con gusto)\b/;
 
 export function clasificarRespuestaAlBot(
   texto: string | null | undefined,
@@ -219,6 +248,9 @@ export function clasificarRespuestaAlBot(
   if (texto.includes('?') || PREGUNTA.test(t)) return null;
   if (NO_CONFIRMA.test(t)) return null;
   const palabras = t.split(' ').length;
+  if (YA_LA_TIENE.test(t) && palabras <= MAX_PALABRAS_CONFIRMACION_FIRME) {
+    return 'CONFIRMA';
+  }
   const limite = CONFIRMA_FIRME.test(t)
     ? MAX_PALABRAS_CONFIRMACION_FIRME
     : MAX_PALABRAS_CONFIRMACION;
@@ -252,18 +284,45 @@ const CORTESIA = new Set(
 export function esAgradecimiento(texto: string | null | undefined): boolean {
   if (!texto || texto.includes('?')) return false;
   const t = sinTildes(textoParaCoincidencia(texto));
-  if (!/\b(gracias|agrade[cz]\w*)\b/.test(t)) return false;
+  if (!/\b(gra[cs]ias?|agrade[cz]\w*)\b/.test(t)) return false;
   const palabras = t.split(' ').filter(Boolean);
   if (palabras.length > 20) return false;
   return palabras.every(
     (p) =>
-      CORTESIA.has(p) || /^(agrade[cz]|bendic|bendig|bendecid)\w*$/.test(p),
+      CORTESIA.has(p) ||
+      /^(agrade[cz]|bendic|bendig|bendecid|gra[cs]ia)\w*$/.test(p),
   );
 }
 
 /** Quien puede compartir el teléfono del paciente. */
 const FAMILIAR =
   '(hij[oa]s?|espos[oa]|mama|papa|madre|padre|herman[oa]|niet[oa]|sobrin[oa]|ti[oa]|prim[oa]|abuel[oa]|familiar|acudiente|cuidador[a]?|novi[oa]|companer[oa]|vecin[oa]|amig[oa]|nuera|yerno|suegr[oa])';
+
+/** Lo que cabe en un saludo: «Hola buenos días», «buenas tardes señorita, ¿cómo está?». */
+const SALUDO_PALABRAS = new Set(
+  (
+    'hola ola holi holis buenas buenos buen buena dia dias tarde tardes noche noches ' +
+    'que q tal mas como esta estas usted saludos saludo alo hey hello hi quiubo y ' +
+    'senorita senor senora don dona doctor doctora joven muy feliz dios lo la le ' +
+    'bendiga bendecido bendecida'
+  ).split(' '),
+);
+const SALUDO_NUCLEO =
+  /\b(hola|ola|holi|holis|buenas|buenos|buen|saludos|alo|hey|hello|hi|quiubo)\b/;
+
+/**
+ * 👋 ¿Es solo un saludo? (2026-10-20: «Hola buenos dias» tras el recordatorio a otra
+ * persona recibió «no es posible agendar»: el diccionario de saludos del bot es de
+ * frases exactas y esa no estaba.) Conservador: con una sola palabra que no sea de
+ * saludo, no lo es.
+ */
+export function esSoloSaludo(texto: string | null | undefined): boolean {
+  if (!texto) return false;
+  const t = sinTildes(textoParaCoincidencia(texto));
+  if (!SALUDO_NUCLEO.test(t)) return false;
+  const palabras = t.split(' ').filter(Boolean);
+  return palabras.length <= 10 && palabras.every((p) => SALUDO_PALABRAS.has(p));
+}
 
 /**
  * Quien escribe dice de quién es familia o de parte de quién habla: «no soy Darío,
@@ -309,6 +368,34 @@ export function nombreQueNiega(
   return nombre;
 }
 
+/**
+ * Un nombre escrito como suena (2026-10-21: escribieron «Deysi» y la paciente es
+ * DEICY): sin tildes ni h muda, y con las letras que en español suenan igual
+ * juntas (y/i, ll/y, c/s/z, qu/c/k, v/b). Dos nombres distintos casi nunca quedan
+ * iguales: «Darío» y «Mario» siguen siendo distintos.
+ */
+function nombreFonetico(nombre: string): string {
+  return sinTildes(nombre.toLowerCase())
+    .replace(/[^a-zñ]/g, '')
+    .replace(/ch/g, '§')
+    .replace(/h/g, '')
+    .replace(/ll/g, 'y')
+    .replace(/y/g, 'i')
+    .replace(/qu/g, 'k')
+    .replace(/c(?=[ei])/g, 's')
+    .replace(/c/g, 'k')
+    .replace(/z/g, 's')
+    .replace(/v/g, 'b')
+    .replace(/(.)\1+/g, '$1')
+    .replace(/§/g, 'ch');
+}
+
+/** ¿Es el mismo nombre, aunque esté escrito distinto? («Deysi» y «Deicy»: sí.) */
+export function mismoNombre(a: string, b: string): boolean {
+  const x = nombreFonetico(a);
+  return x.length >= 3 && x === nombreFonetico(b);
+}
+
 // «Este mensaje no era para mí», «esto no es conmigo», «me llegó por error».
 const NO_ERA_PARA_MI =
   /\bno (es|era|iba|va) (para|dirigido a) mi\b|\b(esto|eso|este mensaje|ese mensaje) no (es|era) conmigo\b|\b(me|nos) (llego|llegaron|escribieron|mandaron|enviaron) por (error|equivocacion)\b/;
@@ -322,7 +409,7 @@ const SALUDO =
 const RELLENO = new Set(
   (
     'hola que q pena qpena disculpe disculpa disculpen perdon perdone perdona pero ' +
-    'creo me parece al pienso usted ustedes ud uds senor senora senorita joven lo ' +
+    'creo me parece al pienso usted ustedes ud uds senor senora senorita joven lo yo ' +
     'siento mucho con todo respeto ok okey gracias muchas mil y ya eh ah oh mire vea ' +
     'amigo amiga'
   ).split(' '),
@@ -357,7 +444,18 @@ export function esMensajeAjeno(texto: string | null | undefined): boolean {
 
 function soloDiceQueSeEquivocaron(t: string): boolean {
   if (!SE_EQUIVOCARON.test(t)) return false;
-  return t
+  // «Yo no soy Deysi, está equivocada» (2026-10-21): decir qué nombre no es
+  // también es decir que no es suyo. Solo un nombre: «no soy de aquí» no se quita.
+  const negado = nombreQueNiega(t);
+  const sinElNombre = negado
+    ? t.replace(
+        new RegExp(
+          `\\bno soy (el |la )?(senor |senora |senorita |don |dona )?${negado}\\b`,
+        ),
+        ' ',
+      )
+    : t;
+  return sinElNombre
     .replace(new RegExp(SE_EQUIVOCARON.source, 'g'), ' ')
     .replace(SALUDO, ' ')
     .split(' ')

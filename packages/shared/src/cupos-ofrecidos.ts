@@ -34,6 +34,31 @@ export const CUPOS_OFRECIDOS = {
   POOL: 100,
 } as const;
 
+/**
+ * ⏱️ Anticipación mínima para agendar por el asistente (2026-10-21, al encender el
+ * agendamiento en el hospital): no se ofrece un cupo que empieza en menos de esto.
+ * Antes se ofrecían los más próximos, y a las 06:00 salía el de las 06:30. Aplica a
+ * agendar, a cambiar la fecha y a la lista de espera; el personal no tiene mínimo.
+ */
+export const ANTICIPACION_MINIMA_AGENDAR_MIN = 60;
+
+/** Lo más pronto que puede empezar un cupo que se ofrece ahora. */
+export function inicioMinimoParaOfrecer(ahora: Date): Date {
+  return new Date(ahora.getTime() + ANTICIPACION_MINIMA_AGENDAR_MIN * 60_000);
+}
+
+/**
+ * ¿Se puede reservar todavía este cupo? Entre la oferta y el «sí» pasa el rato de
+ * la conversación, así que al reservar se tolera la mitad de la anticipación: un
+ * cupo ofrecido a 60 minutos se puede confirmar hasta 30 minutos antes.
+ */
+export function cumpleAnticipacionAlReservar(inicio: Date, ahora: Date): boolean {
+  return (
+    inicio.getTime() - ahora.getTime() >=
+    (ANTICIPACION_MINIMA_AGENDAR_MIN / 2) * 60_000
+  );
+}
+
 /** La tarde empieza a las 12 en punto, igual que el saludo (saludo.ts). */
 const HORA_INICIO_TARDE = 12;
 

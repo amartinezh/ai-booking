@@ -588,14 +588,45 @@ export function feHoraCitAIsoOrNull(
   }
 }
 
+/**
+ * 🕐 Las formas de `FE_HORA_CIT` que se aceptan al LEER (2026-10-22, pedido del
+ * usuario: «"07:10" o "7:10", debe ser flexible y esperar ese tipo de
+ * situaciones»). La del hospital es 'YYYY/MM/DD HH:MM'; se toleran los ceros a la
+ * izquierda que falten ('7:10', '2026/10/2 7:10'), los segundos y fracciones
+ * ('07:10:00.000') y varios espacios en medio. Es la misma cita escrita distinto.
+ *
+ * Los GUIONES no ('2026-10-22 07:10'): la aplicación del hospital no encuentra
+ * esas filas (quedó una así de la prueba de inserción de Fase 0). Leerlas
+ * traería a AgenIA citas que el hospital no ve.
+ *
+ * NO es una hora 'YYYY/MM/DD N' (un número sin «:»): son las fichas por orden de
+ * llegada de odontología, psicología o los programas, sin hora (93 de 5.305 en la
+ * ventana del 2026-10-21). Leer '1' como la una de la madrugada pondría una cita
+ * donde no la hay: se rechaza, como antes (ver `esFichaSinHora`).
+ */
+const FE_HORA_CIT_LECTURA =
+  /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d{1,7})?)?$/;
+
+/** ¿Es una ficha por orden de llegada ('YYYY/MM/DD N'), sin hora? */
+export function esFichaSinHora(feHora: string | null | undefined): boolean {
+  return /^\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,3}$/.test((feHora ?? '').trim());
+}
+
 export function feHoraCitAIso(feHora: string, timeZone: string): string {
-  const m = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/.exec(feHora.trim());
+  const m = FE_HORA_CIT_LECTURA.exec(feHora.trim());
   if (!m) {
     throw new MappingIncompletoError(
-      `FE_HORA_CIT con formato inesperado: "${feHora}". Se esperaba 'YYYY/MM/DD HH:MM'.`,
+      esFichaSinHora(feHora)
+        ? `FE_HORA_CIT sin hora: "${feHora}" es una ficha por orden de llegada.`
+        : `FE_HORA_CIT con formato inesperado: "${feHora}". Se esperaba 'YYYY/MM/DD HH:MM'.`,
     );
   }
-  const [, y, mo, d, h, mi] = m;
+  const [, y, mo, d, h, mi, seg] = m;
+  if (seg !== undefined && +seg > 59) {
+    throw new MappingIncompletoError(
+      `FE_HORA_CIT con una hora que no existe: "${feHora}" (segundos fuera de rango).`,
+    );
+  }
 
   // Se parte de interpretar los componentes como si fueran UTC y se corrige
   // con el desfase que esa zona tenía en ese instante.

@@ -214,8 +214,17 @@ describe('WaitlistService', () => {
       epsId: 'eps-1',
       organizationId: ORG,
       doctorName: 'Dra. Ruiz',
-      slotDate: new Date('2026-06-01T14:00:00Z'),
+      slotDate: new Date('2030-06-01T14:00:00Z'),
     };
+
+    it('⏱️ un cupo que empieza en menos de 60 minutos no se ofrece a la lista de espera', async () => {
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+      await service.notifyWaitlist({
+        ...params,
+        slotDate: new Date(Date.now() + 30 * 60_000),
+      });
+      expect(prisma.waitlistEntry.findFirst).not.toHaveBeenCalled();
+    });
 
     it('elige al primero de la cola (FIFO) compatible con la EPS del cupo', async () => {
       prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
@@ -245,7 +254,7 @@ describe('WaitlistService', () => {
       expect(data.metadata).toEqual({
         pendingSlotId: 'slot-1',
         doctorName: 'Dra. Ruiz',
-        slotDate: '2026-06-01T14:00:00.000Z',
+        slotDate: '2030-06-01T14:00:00.000Z',
       });
       const minutos = (data.expiresAt.getTime() - antes) / 60000;
       expect(minutos).toBeGreaterThan(29);
@@ -317,7 +326,7 @@ describe('WaitlistService', () => {
         metadata: {
           pendingSlotId: 'slot-7',
           doctorName: 'Dra. Ruiz',
-          slotDate: '2026-06-01T14:00:00.000Z',
+          slotDate: '2030-06-01T14:00:00.000Z',
         },
       });
       const segundo = entrada({ id: 'w2', patientId: 'p2' });
@@ -377,7 +386,7 @@ describe('WaitlistService', () => {
       metadata: {
         pendingSlotId: 'slot-7',
         doctorName: 'Dra. Ruiz',
-        slotDate: '2026-06-01T14:00:00.000Z',
+        slotDate: '2030-06-01T14:00:00.000Z',
       },
     });
 

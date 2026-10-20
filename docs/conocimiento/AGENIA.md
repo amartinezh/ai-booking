@@ -4,7 +4,7 @@
 >
 > **Regla obligatoria.** Todo ajuste o mejora del sistema actualiza este archivo **en el mismo commit**: lo que cambió en la pantalla o en el comportamiento, y una línea en la [bitácora](#parte-3--bitácora-de-cambios). Lo vigilan el gancho `commit-msg` del repositorio y el CI. Cómo editarlo y el formato de la Parte 1: [README.md](README.md) de esta carpeta.
 
-**Última actualización:** 2026-10-20
+**Última actualización:** 2026-10-21
 
 ## Contenido
 
@@ -86,22 +86,22 @@ Las citas del día, los pacientes que no lograron agendar y las investigaciones.
 ### 📋 Visión General {#vision-general}
 
 - **Ruta:** `/dashboard`
-- **Resumen:** El tablero central con todas las citas de la clínica: filtrarlas, marcar asistencia, enviar recordatorios y anular.
+- **Resumen:** El tablero central con las citas de la clínica desde hoy (las anteriores, eligiendo fechas): filtrarlas, marcar asistencia, enviar recordatorios y anular.
 - **Relacionados:** [Agendas (Slots)](#agenda), [Configuración](#configuracion), [Rastreo de paciente](#rastreo), [Canales en vivo](#canales)
-- **Palabras clave:** inicio, tablero, dashboard, panel principal, citas del día, lista de citas, asistencia, inasistencia, no show, filtrar citas
+- **Palabras clave:** inicio, tablero, dashboard, panel principal, citas del día, lista de citas, asistencia, inasistencia, no show, filtrar citas, citas anteriores, citas pasadas, página lenta
 
 #### Para qué sirve
 
-Es la primera pantalla al entrar. Arriba tienes accesos rápidos a cada opción del menú y, debajo, la tabla con las citas de la clínica, ordenadas por fecha y hora. En cada fila ves el horario, el servicio y la EPS, el paciente, el médico, el estado y lo que puedes hacer con esa cita.
+Es la primera pantalla al entrar. Arriba tienes accesos rápidos a cada opción del menú y, debajo, la tabla con las citas de la clínica desde hoy, ordenadas por fecha y hora. Muestra hasta 500 citas; si hay más, lo avisa. En cada fila ves el horario, el servicio y la EPS, el paciente, el médico, el estado y lo que puedes hacer con esa cita.
 
 #### Paso a paso
 
 ##### Encontrar las citas de un día, un médico o una EPS
 
-1. En «Filtros Activos», elige la fecha inicial y la final (puedes usar solo una de las dos).
+1. Sin fechas, la tabla muestra las citas desde hoy. Para ver citas anteriores, en «Filtros Activos» elige una fecha inicial; puedes elegir también la final. Solo con una fecha final: si ya pasó, ves las citas hasta ese día; si no, de hoy hasta ese día.
 2. Si quieres, elige un médico en «Todos los Médicos» y una EPS en «Todas las EPS (Convenios)».
 3. La tabla se actualiza sola al cambiar cada filtro.
-4. Para quitar un filtro, vuelve a «Todos…» o borra la fecha.
+4. Para quitar un filtro, vuelve a «Todos…» o borra la fecha. Sin fecha inicial, la tabla vuelve a arrancar hoy.
 
 > 💡 Los filtros quedan en la dirección de la página: puedes guardarla en favoritos o compartirla con otro administrador.
 
@@ -145,6 +145,10 @@ Es la primera pantalla al entrar. Arriba tienes accesos rápidos a cada opción 
 
 Porque son citas del hospital (insignia «🏥 Hospital»). La asistencia de esas citas la registra el hospital en su sistema y AgenIA la refleja tal cual.
 
+##### ¿Por qué no veo las citas de días anteriores?
+
+Porque, para que cargue rápido, la tabla arranca hoy. Elige una fecha inicial en «Filtros Activos» y verás desde ese día.
+
 ##### ¿Se puede deshacer una anulación?
 
 No. Si fue un error, el cupo ya quedó libre: pídele al paciente que vuelva a agendar con el asistente, o que un Agente de Reservas lo agende desde su panel.
@@ -158,6 +162,10 @@ Los automáticos salen solos antes de cada cita si están encendidos en Configur
 ##### Sale «No se encontraron citas bajo esos filtros».
 
 Revisa que la fecha final no sea anterior a la inicial y vuelve a «Todos los Médicos» y «Todas las EPS». Si sigue vacío, no hay citas en ese periodo.
+
+##### Sale «Se muestran las primeras 500 citas».
+
+Hay más citas que las que caben en la tabla. Acota con las fechas, el médico o la EPS. Para buscar a un paciente en particular, usa Rastreo de paciente.
 
 ##### El recordatorio falla con «no tiene número de WhatsApp registrado».
 
@@ -666,7 +674,7 @@ Créalo primero en Servicios de Salud.
 
 #### Para qué sirve
 
-Cuando un paciente agenda, el asistente le pregunta su EPS y la busca en esta lista. Una EPS activa permite agendar por ella (si la persona está en su padrón). Una EPS suspendida hace que el asistente no agende por ella. Aquí también ves cuántos pacientes y citas tiene cada una.
+Cuando un paciente agenda, el asistente le pregunta su EPS y la busca en esta lista. Una EPS activa permite agendar por ella (si la persona está en su padrón). Una EPS suspendida es una que la clínica atiende, pero no por el asistente: al paciente se le pide agendar por teléfono con su EPS, sin ofrecerle la cita particular. Una EPS que no está en la lista la clínica no la atiende: el asistente le ofrece la cita particular (pago directo). Aquí también ves cuántos pacientes y citas tiene cada una.
 
 #### Paso a paso
 
@@ -682,7 +690,14 @@ Cuando un paciente agenda, el asistente le pregunta su EPS y la busca en esta li
 1. Busca la EPS por nombre o NIT.
 2. Apaga el interruptor de «Estado Operativo». Queda «Suspendida».
 
-> 💡 El asistente no agenda por una EPS suspendida y la Caja Negra lo registra como «EPS inactiva».
+> 💡 El asistente no agenda por una EPS suspendida: le dice al paciente que la agende por teléfono con su EPS y no le ofrece la cita particular.
+
+##### Registrar una EPS que la clínica atiende pero no por el asistente
+
+1. Pulsa «Nuevo Convenio».
+2. Escribe el nombre como lo dicen los pacientes (por ejemplo «Nueva EPS») y su NIT.
+3. Desmarca «Convenio Activo Inmediatamente».
+4. Guarda. Queda «Suspendida»: a sus pacientes el asistente les pide agendar por teléfono, en vez de ofrecerles la cita particular.
 
 #### Qué ves en la pantalla
 
@@ -983,6 +998,7 @@ El asistente virtual, sus canales, las cuentas del personal y el soporte técnic
 
 - **Ruta:** `/dashboard/limites-citas`
 - **Resumen:** Cuántas citas puede tener un mismo paciente por el asistente: un máximo por día y otro por mes.
+- **Disponibilidad:** Solo la ve y la cambia el Administrador. El Agente de Reservas no la ve; sí ve Solicitudes de más citas.
 - **Relacionados:** [Solicitudes de más citas](#solicitudes-citas), [Configuración](#configuracion), [Rastreo de paciente](#rastreo)
 - **Palabras clave:** tope de citas, máximo de citas, una cita al día, tres citas al mes, restricción, acaparar cupos, cuota, límite diario, límite mensual
 
@@ -1241,7 +1257,11 @@ Cada persona que entra al panel tiene un usuario con un rol que decide qué ve. 
 
 ##### ¿Qué ve cada rol?
 
-Administrador: todas las opciones. Agente de Reservas: Visión General, Agendamiento, Caja Negra, Rastreo, Solicitudes de más citas, Límite de citas y Soporte (más la Bandeja de sincronización y los Avisos masivos si la clínica los tiene). Médico: su agenda, Rastreo y Soporte. Paciente: sus citas y Soporte. Observador general: Analíticas de Negocio, Canales en vivo y Soporte (este rol no se asigna desde Usuarios).
+Administrador: todas las opciones. Agente de Reservas: Visión General, Agendamiento, Caja Negra, Rastreo, Solicitudes de más citas y Soporte (más la Bandeja de sincronización y los Avisos masivos si la clínica los tiene); el Límite de citas lo fija solo el Administrador. Médico: su agenda, Rastreo y Soporte. Paciente: sus citas y Soporte. Observador general: Analíticas de Negocio, Canales en vivo y Soporte (este rol no se asigna desde Usuarios).
+
+##### ¿Cómo cambia cada usuario su propia clave?
+
+En «🔑 Cambiar mi clave», al pie del menú (en el celular, el ícono 🔑 de arriba): escribe la clave actual, la nueva y la confirma. La nueva debe tener al menos 10 caracteres, letras y números, ser distinta de la actual y no contener su usuario. Tras 5 intentos con la clave actual equivocada hay que esperar 15 minutos. Si alguien olvidó la suya, ponle una nueva aquí (✏️) y pídele que la cambie al entrar.
 
 ##### ¿Para qué limitar a un agente por EPS o por médico?
 
@@ -1749,13 +1769,13 @@ La zona horaria de referencia es `America/Bogota` (cada clínica puede tener la 
 | Rol | Quién es | Qué ve en el panel |
 |---|---|---|
 | `ORG_ADMIN` · Administrador del Hospital | Administra la clínica | Todo el menú de la Parte 1. Con espejo: también Espejo con el HIS y Bandeja de sincronización; con el driver de avisos: Avisos masivos. Es el único que ve el Centro de ayuda. |
-| `BOOKING_AGENT` · Agente de Reservas | Agenda en ventanilla o por teléfono | Visión General, Agendamiento, Caja Negra, Rastreo de paciente, Solicitudes de más citas, Límite de citas y Soporte; con espejo, la Bandeja; con el driver de avisos, Avisos masivos. Puede estar acotado a una EPS o a un médico (`AgentProfile`). |
+| `BOOKING_AGENT` · Agente de Reservas | Agenda en ventanilla o por teléfono | Visión General, Agendamiento, Caja Negra, Rastreo de paciente, Solicitudes de más citas y Soporte (el Límite de citas es solo del administrador); con espejo, la Bandeja; con el driver de avisos, Avisos masivos. Puede estar acotado a una EPS o a un médico (`AgentProfile`). |
 | `DOCTOR` · Médico | Atiende | Mi Agenda (sus citas), Rastreo de paciente (solo pacientes con cita suya) y Soporte. |
 | `PATIENT` · Paciente | Persona con cuenta en el panel | Mis Citas Programadas y Soporte. |
 | `GENERAL_OBSERVER` · Observador general | Gerencia o control | Analíticas de Negocio, Canales en vivo y Soporte. Hoy ninguna pantalla asigna este rol (Usuarios no lo ofrece). |
 | `SUPER_ADMIN` · Equipo de AgenIA | Opera la plataforma | `/super-admin`: Organizaciones (y sus administradores), Estadísticas Globales, Canales en vivo, Encuestas (CSAT), Facturación Global, Mesa de Ayuda, Asistente de soporte, Monitor de Servicios, Alertas técnicas, Auditoría y Logs, Rastreo de paciente. |
 
-El menú de cada rol sale de `packages/shared/src/menus.ts` (la web lo reexporta en `apps/web/lib/menus.ts`); el permiso real lo aplica cada página y cada acción del servidor.
+El menú de cada rol sale de `packages/shared/src/menus.ts` (la web lo reexporta en `apps/web/lib/menus.ts`); el permiso real lo aplica cada página y cada acción del servidor. Todos los usuarios del panel cambian su propia clave en «Cambiar mi clave», al pie del menú (`/dashboard/cuenta`); no es una opción del menú.
 
 ## 3. El asistente virtual
 
@@ -1781,9 +1801,9 @@ Con una operación apagada, el asistente dice cuál no está disponible, con qui
 
 ### 3.3 Agendar
 
-El asistente pide la especialidad (solo servicios activos), la EPS o si es particular, ofrece horarios libres (por defecto 6, entre 2 y 12, repartidos entre mañana y tarde) e identifica al paciente por su cédula. A un paciente nuevo —o a uno existente al que le falte algo en la ficha— le pide nombre, apellidos, fecha de nacimiento, sexo y régimen. Antes de confirmar comprueba:
+El asistente pide la especialidad (solo servicios activos), la EPS o si es particular, ofrece horarios libres (por defecto 6, entre 2 y 12, repartidos entre mañana y tarde) que empiecen al menos 60 minutos después (`ANTICIPACION_MINIMA_AGENDAR_MIN`, en `packages/shared/src/cupos-ofrecidos.ts`) e identifica al paciente por su cédula. Al confirmar, al cupo todavía le deben faltar al menos 30 minutos; si no, ofrece otros. La misma regla aplica al cambiar la fecha y a la lista de espera; el personal y el hospital no tienen mínimo. A un paciente nuevo —o a uno existente al que le falte algo en la ficha— le pide nombre, apellidos, fecha de nacimiento, sexo y régimen. El nombre va en dos pasos marcados «Paso 1 de 2: solo sus NOMBRES» y «Paso 2 de 2: solo sus APELLIDOS», porque el HIS los guarda en columnas aparte. Si en los nombres escribió también los apellidos («Juan Camilo Hurtado Ramos» y luego «Hurtado Ramos»), los separa cuando lo repetido son dos palabras o más; si escribe lo mismo en los dos pasos, le vuelve a pedir solo los apellidos (`apps/api/src/chatbot/nombre-paciente-nuevo.ts`). Antes de confirmar comprueba:
 
-- que la EPS exista en la clínica y esté activa; si el paciente nombra una EPS que la clínica no atiende, le ofrece agendar como particular;
+- que la EPS exista en la clínica y esté activa; si el paciente nombra una EPS que la clínica no tiene registrada, le ofrece agendar como particular (pago directo); si la tiene registrada pero inactiva (la atiende, pero no por el asistente, como Nueva EPS en el hospital), le pide agendarla por teléfono con su EPS, sin ofrecerle la particular;
 - que el paciente esté activo en el padrón de esa EPS (si no, lo remite al formulario público de Solicitudes de Alta);
 - que la combinación EPS + régimen tenga convenio con el hospital (lista `blockedEpsRegimeCombos` del espejo) y que el paciente tenga régimen cuando el hospital lo exige; si el padrón conoce el régimen con certeza, lo toma de ahí;
 - el límite de citas por paciente (§3.6);
@@ -1813,16 +1833,21 @@ Antes de llamar a la IA, el asistente reconoce con reglas fijas (`apps/api/src/c
 
 | Respuesta | Ejemplo | Qué hace el asistente |
 |---|---|---|
-| Confirma | «Sí voy», «👍», «Dios le bendiga» | Agradece (solo cuenta si acaba de recibir un recordatorio). |
+| Confirma | «Sí voy», «👍», «Dios le bendiga», «con la ayuda de Dios… estoy atenta», «grasias», «la cita ya la tengo para mañana», «ya me la dieron» | Agradece (solo cuenta si acaba de recibir un recordatorio). Un mensaje largo cuenta si lo dice sin dudas («si Dios quiere», «con la ayuda de Dios», «estoy atenta», «gracias por avisarme»). «Ya la tengo» no cuenta si pide otra cita o dice «no». |
+| Saludo tras el recordatorio | «Hola buenos días», «buenas tardes señorita» | Con un recordatorio a ese número en las últimas 48 h: dice de qué cita le escribe y de quién, qué puede hacer por aquí y que avise si el número no es de esa persona. Con «Agendar» encendido, entre las opciones está agendar otra cita escribiendo *agendar*, y solo la primera vez en 6 horas: si vuelve a saludar, recibe el menú de siempre. Sin recordatorio, el saludo de siempre. |
 | Quién escribe | «¿De dónde me hablan?» | Explica quién es y de qué cita se trata. |
 | Pregunta por la cita | «¿A qué hora es?», «¿dónde queda?» | Le da los datos de su cita. |
 | Pregunta su turno / ya llegó | «¿Qué número me toca?», «ya llegué» | Le indica pedir el turno en la recepción; si su cita es otro día, se lo dice. |
-| Número equivocado | «Está equivocado de número», «hola, yo no soy Darío» | Se disculpa, deja el caso en la Bandeja («El teléfono de un paciente es de otra persona») y no vuelve a recordarle hasta que se resuelva. |
+| Le dieron otra hora | «En ventanilla me dijeron que a las 5:50», «me dieron la cita para el jueves» | Le dice la hora con la que su cita está registrada en el hospital y que tenga en cuenta lo que le indicaron o lo confirme con la clínica. |
+| Número equivocado | «Está equivocado de número», «hola, yo no soy Darío», «Yo no soy Deysi, está equivocada», «Este mensaje no era para mí» | Se disculpa, deja el caso en la Bandeja («El teléfono de un paciente es de otra persona») y no vuelve a recordarle hasta que se resuelva. Las frases sin «número» ni «persona» («está equivocada», «no era para mí», «no soy Darío») solo cuentan tras un recordatorio a ese número, y no si dice que es de la familia («es para mi mamá») o habla de su propia cita. El nombre que niega se compara por cómo suena: «Deysi» es DEICY y «Jhoana» es Johana. |
+| Número ya marcado | Cualquier respuesta desde un número con el caso de teléfono equivocado abierto («Ok», «cancelar cita», un saludo) | Le dice que ya quedó registrado que el número no es del paciente y con quién hablar si tiene una cita propia. No confirma, no muestra, no cancela ni cambia las citas de ese paciente desde WhatsApp hasta que el personal cierre el caso. Si el número lo comparte la familia, las fichas sin caso se atienden como siempre. |
 | No asistirá / cambiar | «No puedo asistir», «¿la puedo mover?» | Abre cancelar o cambiar (o deja aviso si no se puede). |
 | Contestadora de un negocio | «Gracias por comunicarte con… te responderemos…» | No responde y deja el caso del teléfono en la Bandeja. |
 | Agradecimiento | «Muchas gracias, buen día 🙏» | Se despide. |
 
 Ante la duda no clasifica y el mensaje sigue el camino normal (con IA).
+
+Esto se revisa con la conversación en reposo y también dentro del agendamiento, por si un saludo ya abrió el menú: en el menú de servicios, quien recibió un recordatorio en las últimas 48 h y contesta algo de esta tabla (confirma, quién escribe, pregunta por su cita o su turno, ya llegó, le dieron otra hora, número equivocado) recibe esa respuesta y el menú se cierra. En los pasos de EPS y de horario solo se atiende el número equivocado; lo demás se toma como respuesta al paso. «No puedo ir» y «cambiarla» siguen su camino en el menú (se le pregunta si deja el agendamiento).
 
 ### 3.8 Barandas
 
@@ -1866,11 +1891,13 @@ Detalle de la arquitectura: `docs/PLAN_ESPEJO_HOSPITAL.md`. Detalle de cada hosp
 
 Cada cambio de una cita en AgenIA deja un evento en una cola transaccional (`SyncOutbox`, escrita por un disparador de la base). El agente la recoge, la aplica en el HIS y confirma; si falla, se reintenta hasta 10 veces y luego queda «rendido» (se puede devolver a la cola desde el Espejo). Solo viajan **altas, cancelaciones y cambios de cupo**; asistencia, EPS, cupos y médicos nunca se escriben en el hospital. Lo que nace en el hospital no se le devuelve (anti-eco).
 
+**La hora de una cita en el hospital** (`FE_HORA_CIT`): el agente la escribe siempre como `AAAA/MM/DD HH:MM`, pero la lee con tolerancia: sin los ceros a la izquierda (`7:10` es `07:10`) o con segundos. Las fichas por orden de llegada (`2026/10/22 3`, en odontología, psicología o los programas) no tienen hora y no se leen como tal; tampoco las fechas con guiones, que la aplicación del hospital no encuentra. Al cancelar o cambiar la fecha, si la hora exacta no aparece, busca entre las citas vivas de ese médico ese día la que tiene la misma hora escrita distinto y la toma tal como está guardada (siempre del mismo paciente).
+
 ### 5.3 Del hospital a AgenIA
 
 - **Citas**: una cita agendada en el hospital crea la cita en AgenIA y, si hace falta, el paciente (uno a uno, nunca se precarga el padrón del hospital), con EPS y régimen tomados del padrón cuando son seguros. Un documento que podría ser de dos pacientes no se crea: queda como excepción en la Bandeja. Si el teléfono ya es de otro paciente, no se asigna.
 - **Agenda**: con el modo de agenda en ON, los cupos de los médicos homologados los crea el hospital (OFF: los crea la clínica; SHADOW: se comparan sin cambiar nada). El driver puede armar los cupos por turnos o por huecos libres del HIS.
-- **Reconciliación diaria**: compara la foto completa de los dos sistemas, corrige servicios de cupos con cita y trae citas que falten.
+- **Reconciliación diaria**: compara la foto completa de los dos sistemas, corrige servicios de cupos con cita y trae citas que falten. Las citas del hospital de otros servicios que no tienen cupo en AgenIA no cuentan como diferencia (AgenIA no las maneja): el informe las cuenta aparte, por médico. Solo es diferencia lo que el hospital no tiene, una cita de un servicio activo que falte (con su motivo: médico sin crear, por traer, sin documento o cancelada en AgenIA), un cupo de AgenIA a la venta a la hora de una cita del hospital (se cierra solo) o una cita sin servicio. El Espejo dice «Sin diferencias en las citas que maneja AgenIA» cuando no hay ninguna.
 - **Médicos**: cada médico del HIS se homologa a mano con su perfil en AgenIA; sin homologar, no recibe cupos ni citas.
 
 ### 5.4 Interruptores y candado de la base
@@ -1933,7 +1960,8 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 - **Aislamiento por clínica**: todo dato pertenece a una organización; los identificadores externos (cédula, BSUID, chat de Telegram, códigos del HIS) se indexan por clínica; no hay búsquedas entre clínicas. Ley 1581 de 2012 (Habeas Data).
 - **Credenciales**: las claves de IA, el token de Meta y el de Telegram se guardan cifradas y nunca se vuelven a mostrar (solo sus últimos 4 caracteres). El token del agente del hospital se guarda como hash.
 - **Rastreo de paciente**: cada búsqueda exige motivo y queda registrada (quién, cuándo, por qué); los datos se muestran enmascarados y descubrirlos deja registro.
-- **Mensajes del asistente**: el detalle de una cita solo se da al remitente que corresponde al paciente; cancelar o cambiar exige que la ficha sea del remitente.
+- **Claves**: se guardan cifradas con bcrypt. Cada usuario cambia la suya en `/dashboard/cuenta` («Cambiar mi clave», al pie del menú): se exige la actual, la nueva debe tener al menos 10 caracteres (máximo 72 bytes, lo que lee bcrypt), letras y números, ser distinta de la actual y no contener el usuario. El cambio queda en la bitácora del sistema (`PASSWORD_CHANGED`) sin ningún dato de la clave; cada intento con la actual equivocada también (`PASSWORD_CHANGE_FAILED`, aviso) y tras 5 en 15 minutos se frena el cambio por 15 minutos, para que quien encuentre una sesión abierta ajena no pueda adivinarla. El ingreso (`/login`) todavía no tiene ese tope. Cambiarla no cierra las sesiones ya abiertas (duran 8 horas). El administrador puede ponerle una clave nueva a cualquiera en Usuarios.
+- **Mensajes del asistente**: el detalle de una cita solo se da al remitente que corresponde al paciente; cancelar o cambiar exige que la ficha sea del remitente. Con el caso «El teléfono de un paciente es de otra persona» abierto en la Bandeja, ese número deja de contar como del paciente para todo eso (confirmar, consultar, cancelar y cambiar), y se vuelve a revisar justo antes de cancelar o mover la cita en el hospital. Por Telegram no aplica: ese chat lo vincula el propio paciente.
 - **Avisos y alertas**: los avisos al agendador y las alertas técnicas no llevan datos de pacientes.
 - **Conversaciones del asistente de soporte**: solo el super administrador las lee, completas, en `/super-admin/soporte-bot/conversaciones`; abrir una deja un registro en la bitácora del sistema (`SUPPORT_BOT_CONVERSATION_VIEWED`, con quién y cuál). La lista de lo que el manual no cubrió va con cédulas, teléfonos y correos ocultos.
 - **Retención**: conversaciones 180 días (también las del asistente de soporte con el personal), bitácora del rastreo 365 días, actividad de canales 400 días (seudonimizada), incidentes del monitor 365 días; los códigos del asistente de soporte se borran un día después de vencer.
@@ -2032,6 +2060,14 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-22** — Asistente virtual, primer día con «Agendar» encendido: quien responde a su recordatorio con un saludo recibe de qué cita le escribimos y que puede agendar otra escribiendo *agendar* (antes, el menú de agendar); «no es para mí», «la cita ya la tengo», «grasias» o «¿de dónde me escriben?» se entienden aunque ya esté en el menú (antes: «esa opción no se logró identificar»). Y al paciente nuevo se le pide el nombre en «Paso 1 de 2: solo sus NOMBRES» y «Paso 2 de 2: solo sus APELLIDOS»; si repite los apellidos en los nombres, no quedan duplicados.
+- **2026-10-22** — Visión General: la tabla arranca hoy (las citas anteriores se ven eligiendo una fecha inicial), muestra hasta 500 citas con un aviso si hay más y solo trae los datos que pinta. Antes traía todas las citas de la clínica desde la más vieja: 2.639 citas, 12,5 MB y unos 15 s en cargar la página a la que llega el personal al ingresar.
+- **2026-10-22** — Panel: el Límite de citas es solo del administrador (el Agente de Reservas lo veía y lo podía cambiar; sigue viendo Solicitudes de más citas). Y todo usuario puede cambiar su propia clave en «🔑 Cambiar mi clave», al pie del menú, con la clave actual (tras 5 intentos equivocados, 15 minutos de espera); antes solo un administrador podía cambiarla. Pensado para los agendadores del hospital, que recibieron su clave por correo.
+- **2026-10-22** — Agente del hospital: lee la hora de las citas aunque esté escrita sin los ceros a la izquierda o con segundos (`7:10` es `07:10`), y al cancelar o cambiar la fecha encuentra la cita aunque el hospital la tenga escrita así; antes no la encontraba, la daba por «ya no estaba» y el hospital la conservaba. Las fichas por orden de llegada (`2026/10/22 3`) siguen sin leerse como hora. Requiere instalar el agente nuevo en la VM del hospital.
+- **2026-10-21** — Antes de encender el agendamiento en el hospital: el asistente solo ofrece horarios que empiecen al menos 60 minutos después (antes, los más próximos: a las 06:00 ofrecía las 06:30), y al confirmar el cupo debe faltar al menos media hora; igual al cambiar la fecha y en la lista de espera. A un paciente de una EPS que la clínica tiene registrada pero inactiva (la atiende, pero no por el asistente, como Nueva EPS) se le pide agendar por teléfono y ya no se le ofrece la cita particular; a las EPS que la clínica no atiende se les sigue ofreciendo, ahora diciendo siempre «pago directo». Y en la configuración del espejo del hospital, el centro de costos de las citas que crea AgenIA pasó de 007 a 001, el que el hospital usa en todas sus citas de medicina general.
+- **2026-10-21** — Asistente virtual: un número con el caso de teléfono equivocado abierto ya no puede confirmar, consultar, cancelar ni cambiar las citas de ese paciente por WhatsApp (antes, tras «Yo no soy Deysi», su «Ok» recibió «¡Gracias por confirmar!» con la cita de la paciente, y nada le impedía cancelarla en el hospital); recibe que ya quedó registrado y con quién hablar. Y el nombre que niega se compara por cómo suena («Deysi» es DEICY), y «no soy <nombre>» junto a «está equivocada» cuenta como número equivocado.
+- **2026-10-20** — Asistente virtual: un saludo a secas tras el recordatorio («Hola buenos días») recibe de qué cita le escribe y de quién, qué puede hacer por aquí y que avise si el número no es de esa persona (con «Agendar» apagado; antes, «no es posible agendar», también a quien tenía el teléfono de otra paciente). Y «con la ayuda de Dios», «primero Dios», «estoy atenta» y «gracias por avisarme» cuentan como confirmación aunque el mensaje sea largo.
+- **2026-10-20** — Asistente virtual: si el paciente cuenta que le dieron otra hora o día («en ventanilla me dijeron que a las 5:50»), le dice la hora con la que su cita está registrada en el hospital y que la confirme (antes la IA lo tomaba por querer agendar). Espejo: la reconciliación diaria ya no cuenta como diferencia las citas del hospital de otros servicios sin cupo en AgenIA (eran las «296 que AgenIA desconoce» de cada día y dejaban el Espejo en rojo); las cuenta aparte, por médico. (682dffc)
 - **2026-10-20** — Asistente de soporte en el hospital: desplegado, con la ruta de su webhook publicada, y aprobó el examen con la IA del hospital (59 de 62, temas 98 %, sin violaciones). Falta conectar su bot de Telegram y abrir el piloto.
 - **2026-10-20** — Asistente de soporte: sus respuestas ya no muestran los asteriscos ni los «#» del formato Markdown (Telegram los mostraba tal cual), y si la respuesta dice que el manual no trae lo que se pregunta, se trata como no cubierta: dice que no lo tiene y ofrece reportarlo, en vez de citar un tema que no corresponde. En el examen del asistente, repetir el nombre de la clínica que trae la pregunta ya no cuenta como violación, porque no revela nada; nombrar una que la persona no dijo, dar cifras o decir si usa AgenIA, sí. Sale del segundo examen con la IA del hospital.
 - **2026-10-20** — Asistente de soporte: si le preguntan por otra clínica u hospital, se le indica que no repita su nombre ni diga si usa AgenIA (solo responde por la clínica de quien pregunta), y lo que el manual ya explica —también una limitación conocida— lo responde citando el tema en vez de empezar a armar un caso. Sale del primer examen con la IA del hospital.
@@ -2041,6 +2077,7 @@ Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió par
 
 - **2026-10-20** — Asistente de soporte por Telegram, fase 5 (panel y vigilancia): «Asistente de soporte» muestra cómo va en los últimos 7 o 30 días (conversaciones, respuestas con y sin IA, cuántas se resolvieron sin caso, casos abiertos, «Me sirvió», tiempo de respuesta, tokens por clínica y cuántos se quedan en el código) y lo que el manual no cubrió, con los datos ocultos. Las conversaciones se leen en una página nueva, con filtros, y abrir una queda registrado; la Mesa de Ayuda enlaza la conversación de cada caso abierto por Telegram. El monitor de servicios vigila el bot del asistente y hay alertas técnicas nuevas (categoría «Asistente de soporte»): webhook caído, una clínica sin IA, el tope diario de IA y muchos códigos equivocados seguidos. En Soporte, una pregunta nueva explica quién ve lo que se le escribe al asistente.
 - **2026-10-20** — Asistente de soporte por Telegram, fase 4 (avisos): cada caso nuevo de Soporte, del panel o del asistente, llega al grupo de alertas técnicas (categoría «Casos de soporte», que se puede apagar) con número, prioridad, clínica, quien reporta, canal, título saneado y enlace, nunca la descripción; también el reabierto y el que lleva 2 horas del horario del equipo sin tomar. Quien reportó recibe por Telegram «lo tomaron» y «quedó resuelto, ¿quedó bien?», con «Sí, gracias», «No, sigue pasando» (reabre el caso hasta 7 días después y le agrega lo que cuente) y «Ver la respuesta»; sin conversación abierta, la respuesta y la reapertura piden el código. La tarjeta del asistente dice a dónde llegan los avisos y permite apagarlos. En la Mesa de Ayuda, si el grupo se enteró o por qué no, «Reabierto» y la respuesta anterior. Los títulos que arma el asistente sin IA ya no terminan en punto.
+- **2026-10-19** — Asistente virtual: «Que pena, está equivocada» y «Este mensaje no era para mí» tras un recordatorio se toman como número equivocado (disculpa y caso del teléfono en la Bandeja), salvo que diga que es de la familia o hable de su propia cita. (45caa5f)
 - **2026-10-19** — Asistente de soporte por Telegram, fase 3: abre casos de Soporte desde la conversación. Arma el caso con lo que cuenta el empleado, pregunta lo que falta, se lo muestra y solo lo abre con su «sí» (botón o escrito); dice el número y cuándo lo verá el equipo, y un caso sin confirmar se ofrece de nuevo durante 24 horas. `/casos` muestra los casos de la persona, el asistente responde «¿cómo va mi caso?», agrega lo que le cuenten a un caso abierto (preguntando antes) y avisa si el equipo ya atiende una falla general. Sin IA también arma el caso con lo que escribió. En Soporte y en la Mesa de Ayuda los casos muestran su número, «Por Telegram», «Prioridad alta» y lo agregado después; la Mesa pone primero los de prioridad alta y busca por número. Todavía no avisa al grupo del equipo técnico (fase 4).
 - **2026-10-19** — Asistente de soporte por Telegram, fase 2: responde las preguntas del personal con este manual, la ficha de configuración de su clínica y la IA de esa clínica (con respaldo entre proveedores); explica lo de su rol y dice quién hace lo de otro; ofrece reportar en el panel lo que el manual no cubre; agrega el enlace al Centro de ayuda para el administrador y los botones «Me sirvió» / «No me sirvió». Sin IA, o si la IA falla o se pasa del tope diario, responde con lo más parecido del manual. Junta los mensajes seguidos y nunca le pasa a la IA cédulas, teléfonos ni correos.
 - **2026-10-19** — Asistente de soporte por Telegram, fase 1 (`docs/PLAN_BOT_SOPORTE.md`): el super administrador conecta y enciende su bot en «Asistente de soporte»; el personal ve en Soporte la tarjeta «Asistente de soporte en Telegram» para generar el código de cada conversación (6 dígitos o QR), ver la conversación abierta y cerrarla. El bot pide el código, guarda la pregunta escrita antes y, verificado, saluda con el usuario y la clínica; todavía no responde preguntas ni abre casos. Sus conversaciones se purgan a los 180 días, y en producción sigue apagado.

@@ -2,6 +2,8 @@ import {
   clasificarRespuestaAlBot,
   esAgradecimiento,
   esMensajeAjeno,
+  esSoloSaludo,
+  mismoNombre,
   nombreQueNiega,
 } from './respuesta-recordatorio';
 
@@ -104,6 +106,23 @@ describe('clasificarRespuestaAlBot', () => {
       expect(clasificarRespuestaAlBot(texto)).toBe('QUIEN_ESCRIBE');
     },
   );
+
+  it.each([
+    // Caso real 2026-10-20 09:36, tras su recordatorio (19 palabras).
+    'con la ayuda de Dios, muchísimas gracias por avisarme, yo estoy atenta, estoy atenta a eso, con la ayuda de Dios.',
+    'Primero Dios allá estaré, gracias',
+    'Muchas gracias por el recordatorio, quedo pendiente de la cita del miércoles y llego temprano señorita',
+  ])('«%s» → CONFIRMA (sin dudas, aunque sea largo)', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe('CONFIRMA');
+  });
+
+  it.each([
+    ['Gracias por avisarme pero no puedo ir', 'NO_ASISTIRA'],
+    ['Estoy atenta, ¿a qué hora es?', 'PREGUNTA_CITA'],
+    ['Gracias por recordarme, no sabía', null],
+  ])('«%s» → %s (lo demás manda)', (texto, tipo) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe(tipo);
+  });
 
   it.each([
     // Caso real 2026-10-20 07:19, con la cita a las 6:10 p. m.
@@ -274,6 +293,28 @@ describe('clasificarRespuestaAlBot', () => {
   });
 });
 
+describe('clasificarRespuestaAlBot — 2026-10-22, primer día con agendar encendido', () => {
+  it.each([
+    'grasias', // …7954, tal cual
+    'Grasias señorita',
+    'la sita ya latengo para mañana', // …7954
+    'una sita pero ya meladoeron', // …7954 («ya me la dieron»)
+    'Ya tengo la cita',
+    'ya me la dieron',
+    'ya la tenemos',
+  ])('«%s» → CONFIRMA', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBe('CONFIRMA');
+  });
+
+  it.each([
+    'ya la tengo pero necesito otra cita', // pide otra: no es confirmar
+    'ya no la tengo',
+    '¿ya la tengo?',
+  ])('«%s» → no es una confirmación', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).not.toBe('CONFIRMA');
+  });
+});
+
 describe('esAgradecimiento', () => {
   it.each([
     // Caso real 2026-10-17, después de cancelar: el «buen día» lo hacía pasar por un saludo.
@@ -335,6 +376,8 @@ describe('esMensajeAjeno', () => {
     'Ese mensaje no es para mí, es para otra persona',
     'Esto no es conmigo',
     'Me llegó por error',
+    // Caso real 2026-10-21 (la paciente es DEICY).
+    'Yo no soy Deysi está equivocada',
   ])('«%s» → sí', (texto) => {
     expect(esMensajeAjeno(texto)).toBe(true);
   });
@@ -344,6 +387,8 @@ describe('esMensajeAjeno', () => {
     'Este mensaje no es para mí, es para mi mamá',
     'No es para mí, es de mi abuela',
     'no era para mí, soy la hija',
+    'No soy Deicy, soy la hija, está equivocada',
+    'no soy de aquí, está equivocada',
     // Habla de su cita o de un dato de ella.
     'Están equivocados, mi cita es el jueves',
     'Está equivocada la hora',
@@ -360,8 +405,58 @@ describe('esMensajeAjeno', () => {
     expect(esMensajeAjeno(texto)).toBe(false);
   });
 
+  it('«grasias» (mal escrito) también es un agradecimiento', () => {
+    expect(esAgradecimiento('grasias')).toBe(true);
+    expect(esAgradecimiento('muchas grasias señorita')).toBe(true);
+  });
+
   it('el clasificador solo no lo toma por número equivocado: falta el recordatorio', () => {
     expect(clasificarRespuestaAlBot('Que pena esta equivocada')).toBeNull();
     expect(clasificarRespuestaAlBot('Este mensaje no era para mi')).toBeNull();
+  });
+});
+
+describe('esSoloSaludo', () => {
+  it.each([
+    // Caso real 2026-10-18, de quien tenía el teléfono de otra paciente.
+    'Hola buenos dias',
+    'Buenas tardes señorita, ¿cómo está?',
+    'hola',
+    'Buen día',
+    'Holi, feliz día',
+  ])('«%s» → sí', (texto) => {
+    expect(esSoloSaludo(texto)).toBe(true);
+  });
+
+  it.each([
+    'Hola, es que en ventanilla me dijeron que a las 5:50',
+    'Hola feliz y bendecido 20 de octubre te apetece deleitar la carne en salsa criolla',
+    'Hola buenos días, no puedo asistir',
+    'Que pena esta equivocada',
+    'Muchas gracias',
+    'Señorita',
+  ])('«%s» → no', (texto) => {
+    expect(esSoloSaludo(texto)).toBe(false);
+  });
+});
+
+describe('mismoNombre', () => {
+  it.each([
+    ['Deysi', 'DEICY'],
+    ['Jhoana', 'Johana'],
+    ['Darío', 'dario'],
+    ['Valentina', 'Balentina'],
+    ['Yuliana', 'Lluliana'],
+  ])('«%s» y «%s» → sí', (a, b) => {
+    expect(mismoNombre(a, b)).toBe(true);
+  });
+
+  it.each([
+    ['Dario', 'Mario'],
+    ['Ana', 'Ena'],
+    ['Juan', 'Juana'],
+    ['Al', 'Al'],
+  ])('«%s» y «%s» → no', (a, b) => {
+    expect(mismoNombre(a, b)).toBe(false);
   });
 });

@@ -4,7 +4,7 @@ import { limitesDeLaClinica } from '@agenia/shared';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { formatAppointmentCompact } from '@/lib/date';
-import { puedeGestionarLimiteCitas } from '@/lib/limite-citas/acceso';
+import { puedeConfigurarLimiteCitas } from '@/lib/limite-citas/acceso';
 import LimitesCitasForm from './LimitesCitasForm';
 
 export const dynamic = 'force-dynamic';
@@ -19,14 +19,14 @@ function inicioDelResumen(): Date {
 // ─────────────────────────────────────────────────────────────
 // LÍMITE DE CITAS POR PACIENTE — cuántas citas puede tener un paciente el
 // mismo día y en el mismo mes por el asistente (WhatsApp y Telegram). Lo
-// configuran ORG_ADMIN y BOOKING_AGENT. Pasado el límite, el asistente se
+// configura solo ORG_ADMIN (2026-10-22). Pasado el límite, el asistente se
 // disculpa, remite al teléfono del hospital y ofrece pedir una revisión
 // (/dashboard/solicitudes-citas). La regla: @agenia/shared limite-citas.ts.
 // ─────────────────────────────────────────────────────────────
 export default async function LimitesCitasPage() {
     const session = await getSession();
     if (!session) redirect('/login');
-    if (!puedeGestionarLimiteCitas(session)) redirect('/dashboard');
+    if (!puedeConfigurarLimiteCitas(session)) redirect('/dashboard');
 
     const organizationId = session.organizationId;
     const desde = inicioDelResumen();

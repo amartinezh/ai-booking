@@ -1945,8 +1945,20 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         SELECT NU_HIST_PAC_CIT hist
           FROM dbo.CITAS_MEDICAS WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
          WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0`);
-    const fila = (viva.recordset as { hist: string | null }[])[0];
-    if (!fila) return 'NO_ESTABA';
+    let fila = (viva.recordset as { hist: string | null }[])[0];
+    // La hora TAL CUAL está guardada: la copia y el borrado la repiten.
+    let horaGuardada = datos.feHora;
+    if (!fila) {
+      // 🕐 La misma hora escrita de otra forma (2026-10-22): el hospital podría
+      // tenerla como '7:10' y AgenIA la busca como '07:10'. Sin esto, la cita
+      // «no estaba», la cancelación salía como hecha y el hospital la conservaba.
+      // Se buscan las citas vivas de ese médico ese día —con el mismo bloqueo— y
+      // se toma la que tiene la misma hora al leerla; la del paciente, si hay dos.
+      const otraForma = await this.citaVivaConLaMismaHora(tx, datos);
+      if (!otraForma) return 'NO_ESTABA';
+      fila = { hist: otraForma.hist };
+      horaGuardada = otraForma.hora;
+    }
     if (!mismoDocumento(fila.hist, datos.documento)) return 'OTRO_PACIENTE';
     // El valor TAL CUAL está guardado (con sus espacios o ceros): el borrado lo
     // repite y así solo alcanza a la fila que se comprobó.
@@ -1971,7 +1983,7 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     const copia = await tx
       .request()
       .input('med', sql.VarChar(4), datos.medico)
-      .input('hora', sql.VarChar(18), datos.feHora)
+      .input('hora', sql.VarChar(18), horaGuardada)
       .input('hist', sql.VarChar(20), histGuardada)
       .input('moti', sql.VarChar(2), datos.motivo)
       .input('obse', sql.VarChar(255), datos.observacion).query(`
@@ -2020,13 +2032,47 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     await tx
       .request()
       .input('med', sql.VarChar(4), datos.medico)
-      .input('hora', sql.VarChar(18), datos.feHora)
+      .input('hora', sql.VarChar(18), horaGuardada)
       .input('hist', sql.VarChar(20), histGuardada)
       .query(
         'DELETE FROM dbo.CITAS_MEDICAS WHERE CD_CODI_MED_CIT = @med AND FE_HORA_CIT = @hora AND NU_ESTA_CIT = 0 AND NU_HIST_PAC_CIT = @hist',
       );
 
     return 'ANULADA';
+  }
+
+  /**
+   * 🕐 La cita viva de ese médico, ese día, cuya hora —leída con tolerancia— es la
+   * misma que `datos.feHora` aunque esté escrita distinto ('7:10' y '07:10').
+   * Bloquea las citas vivas del médico ese día hasta el final de la transacción,
+   * igual que la revisión de cruce al crear. Si hay más de una, la del paciente.
+   */
+  private async citaVivaConLaMismaHora(
+    tx: sql.Transaction,
+    datos: { medico: string; feHora: string; documento: string },
+  ): Promise<{ hora: string; hist: string | null } | null> {
+    const objetivo = feHoraCitAIsoOrNull(datos.feHora, this.timeZone);
+    if (!objetivo) return null;
+    const dia = fechaCitaLocal(objetivo, this.timeZone);
+    const delDia = await tx
+      .request()
+      .input('med', sql.VarChar(4), datos.medico)
+      .input('desde', sql.VarChar(8), fechaLiteralSql(dia))
+      .input('hasta', sql.VarChar(8), diaSiguienteLiteralSql(dia)).query(`
+        SELECT FE_HORA_CIT hora, NU_HIST_PAC_CIT hist
+          FROM dbo.CITAS_MEDICAS WITH (UPDLOCK, HOLDLOCK)
+         WHERE CD_CODI_MED_CIT = @med
+           AND FE_FECH_CIT >= @desde AND FE_FECH_CIT < @hasta
+           AND NU_ESTA_CIT = 0`);
+    const misma = (
+      (delDia.recordset ?? []) as { hora: string; hist: string | null }[]
+    ).filter(
+      (f) => feHoraCitAIsoOrNull(String(f.hora), this.timeZone) === objetivo,
+    );
+    if (misma.length === 0) return null;
+    return (
+      misma.find((f) => mismoDocumento(f.hist, datos.documento)) ?? misma[0]
+    );
   }
 
   async updateAttendance(_evt: CanonicalChangeEvent): Promise<DriverResult> {

@@ -1440,6 +1440,28 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   // 3. REPROGRAMACIÓN (MODIFY)
   // ──────────────────────────────────────────────────────────────────
   describe('3. Reprogramación', () => {
+    // ⏱️ El cambio de fecha revisa la anticipación mínima al confirmar
+    // (2026-10-21): con el reloj real, los cupos de ejemplo (septiembre de 2026)
+    // ya pasaron. Solo se congela la fecha; los temporizadores siguen siendo reales.
+    beforeEach(() => {
+      jest.useFakeTimers({
+        now: new Date('2026-09-01T12:00:00.000Z'),
+        doNotFake: [
+          'nextTick',
+          'setImmediate',
+          'clearImmediate',
+          'setInterval',
+          'clearInterval',
+          'setTimeout',
+          'clearTimeout',
+          'queueMicrotask',
+          'hrtime',
+          'performance',
+        ],
+      });
+    });
+    afterEach(() => jest.useRealTimers());
+
     const CEDULA = '1088123456';
 
     beforeEach(() => {
@@ -2382,6 +2404,67 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(pedro?.fullName).not.toContain('Pérez');
     });
 
+    // ═══════════════════════════════════════════════════════════════════
+    // 🪪 EL NOMBRE EN DOS PASOS, SIN REPETIR (2026-10-22)
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // Caso real del primer día con agendar encendido: a «sus nombres (solo los
+    // nombres…)» el paciente respondió su nombre COMPLETO, luego sus apellidos, y
+    // quedó «Juan camilo hurtado ramos Hurtado ramos».
+    describe('8.11 nombres y apellidos', () => {
+      const hastaLaCedula = async () => {
+        await say('Hola');
+        await say('A');
+        await say('A');
+        await say('A');
+        await say('1088123456');
+      };
+
+      it('pide los nombres como «Paso 1 de 2», solo nombres, y los apellidos como «Paso 2 de 2»', async () => {
+        await hastaLaCedula();
+        expect(lastSent()).toContain('*Paso 1 de 2:*');
+        expect(lastSent()).toContain('*solo sus NOMBRES*, sin apellidos');
+        expect(lastSent()).toContain('siguiente');
+
+        await say('Juan Camilo');
+        expect(lastSent()).toContain('Nombres: *Juan Camilo*');
+        expect(lastSent()).toContain('*Paso 2 de 2:*');
+        expect(lastSent()).toContain('*solo sus APELLIDOS*');
+      });
+
+      it('🧾 nombre completo en el paso de los nombres → no se repiten los apellidos', async () => {
+        await hastaLaCedula();
+        await say('Juan camilo hurtado ramos');
+        await say('Hurtado ramos');
+        expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+
+        await responderAlta(say);
+        // El resumen ya lo muestra bien.
+        expect(lastSent()).toContain('Juan camilo Hurtado ramos');
+        expect(lastSent()).not.toContain('ramos Hurtado');
+        await say('Sí');
+
+        const p = db.patients.find((x) => x.cedula === '1088123456');
+        expect(p?.fullName).toBe('Juan camilo Hurtado ramos');
+        expect(p?.nombres).toBe('Juan camilo');
+        expect(p?.apellidos).toBe('Hurtado ramos');
+      });
+
+      it('lo mismo en los dos pasos → vuelve a pedir SOLO los apellidos', async () => {
+        await hastaLaCedula();
+        await say('Juan Camilo Hurtado');
+        await say('juan camilo hurtado');
+        expect(await state()).toBe(ChatState.AWAITING_APELLIDOS);
+        expect(lastSent()).toContain(
+          'Escribió lo mismo que en el paso anterior',
+        );
+        expect(lastSent()).toContain('*solo sus APELLIDOS*');
+
+        await say('Ramos');
+        expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+      });
+    });
+
     it('8.8 a un paciente que YA existe con su ficha completa no se le pregunta nada de esto', async () => {
       db.patients.push({
         id: 'pat-viejo',
@@ -2624,6 +2707,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         /La EPS \*Coomeva\* no se encuentra disponible|no es posible agendar con la EPS \*Coomeva\*/i,
       );
       expect(lastSent()).toMatch(/particular/i);
+      // Sabe lo que acepta: es pago directo (2026-10-21).
+      expect(lastSent()).toMatch(/pago directo/i);
       expect(await state()).toBe(ChatState.AWAITING_EPS);
       // No se cuenta como un error del paciente: no gasta reintentos.
       expect(
@@ -2691,7 +2776,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await hastaElMenuDeEps();
       await say('asdfgh');
 
-      expect(lastSent()).not.toMatch(/particular\*\. ¿Desea/i);
+      expect(lastSent()).not.toMatch(/pago directo/i);
       expect(lastSent()).not.toMatch(/no se encuentra disponible/i);
       expect(await state()).toBe(ChatState.AWAITING_EPS);
     });
@@ -2710,13 +2795,45 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       ).toBeUndefined();
     });
 
-    it('9.8 una EPS que la clínica tiene DESACTIVADA también se ofrece como particular', async () => {
-      db.epsList.push({ id: 'eps-coomeva', name: 'Coomeva', isActive: false });
+    // 🏥 2026-10-21: una EPS que la clínica tiene registrada pero INACTIVA la
+    // atiende, solo que no por el asistente (Nueva EPS en el hospital). A esa no
+    // se le ofrece la particular: podía aceptarla y quedar como pago directo.
+    it('9.8 una EPS que la clínica tiene DESACTIVADA (la atiende, no por aquí) → por teléfono, sin ofrecer particular', async () => {
+      db.epsList.push({ id: 'eps-nueva', name: 'Nueva EPS', isActive: false });
       await hastaElMenuDeEps();
-      await say('coomeva');
+      await say('nueva eps');
 
-      expect(lastSent()).toMatch(/Coomeva/);
+      expect(lastSent()).toContain(
+        'Por este medio todavía no puedo agendar citas con *Nueva EPS*',
+      );
+      expect(lastSent()).toContain('comuníquese con');
+      expect(lastSent()).not.toMatch(/particular/i);
+      expect(
+        redis.store.has(`temp_eps_oferta_particular:${ORG_ID}:${SENDER}`),
+      ).toBe(false);
+      // Se cierra el agendamiento: no queda esperando un SÍ.
+      expect([null, ChatState.IDLE]).toContain(await state());
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
+    });
+
+    it('9.8b la misma EPS dicha en el primer mensaje también va por teléfono', async () => {
+      db.epsList.push({ id: 'eps-nueva', name: 'Nueva EPS', isActive: false });
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ eps: 'Nueva EPS' }),
+      );
+      await say('Hola, necesito una cita, tengo Nueva EPS');
+      await say('A'); // servicio
+
+      expect(lastSent()).toContain('todavía no puedo agendar citas con');
+      expect(lastSent()).not.toMatch(/particular/i);
+    });
+
+    it('9.8c una EPS que la clínica NO tiene registrada sigue recibiendo la particular', async () => {
+      await hastaElMenuDeEps();
+      await say('Coosalud');
+
       expect(lastSent()).toMatch(/particular/i);
+      expect(lastSent()).toMatch(/pago directo/i);
     });
 
     it('9.9 la EPS dicha en el primer mensaje se contesta sin pasar por el menú', async () => {
@@ -3133,6 +3250,28 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     });
 
     describe('cambio de fecha', () => {
+      // ⏱️ El cambio de fecha revisa la anticipación mínima al confirmar
+      // (2026-10-21): con el reloj real, los cupos de ejemplo (septiembre de 2026)
+      // ya pasaron. Solo se congela la fecha; los temporizadores siguen siendo reales.
+      beforeEach(() => {
+        jest.useFakeTimers({
+          now: new Date('2026-09-01T12:00:00.000Z'),
+          doNotFake: [
+            'nextTick',
+            'setImmediate',
+            'clearImmediate',
+            'setInterval',
+            'clearInterval',
+            'setTimeout',
+            'clearTimeout',
+            'queueMicrotask',
+            'hrtime',
+            'performance',
+          ],
+        });
+      });
+      afterEach(() => jest.useRealTimers());
+
       beforeEach(() => {
         const ocupado = slotRow('slot-old', FECHA_C, 'Ana Pérez', SVC_MEDICINA);
         ocupado.isAvailable = false;

@@ -9,6 +9,7 @@ import { Suspense } from 'react';
 import DashboardClient from './components/DashboardClient';
 import PageSkeleton from './components/PageSkeleton';
 import QuickAccessGrid from './components/QuickAccessGrid';
+import { SELECT_CITA_INICIO, TOPE_CITAS_INICIO, ventanaDeCitas } from '@/lib/dashboard/citas-inicio';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,15 +53,11 @@ export default async function DashboardPage({
         if (doctorFilter) slotWhere.doctorId = doctorFilter;
     }
 
-    if (startDateFilter || endDateFilter) {
-        const timeConditions: { gte?: Date, lte?: Date } = {};
-        if (startDateFilter) {
-            timeConditions.gte = new Date(`${startDateFilter}T05:00:00.000Z`);
-        }
-        if (endDateFilter) {
-            timeConditions.lte = new Date(new Date(`${endDateFilter}T05:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000 - 1);
-        }
-        slotWhere.startTime = timeConditions;
+    // Sin fecha inicial, desde hoy; y nunca más de TOPE_CITAS_INICIO filas
+    // (lib/dashboard/citas-inicio.ts: antes traía todas, 12,5 MB).
+    const ventana = ventanaDeCitas({ startDate: startDateFilter, endDate: endDateFilter });
+    if (ventana.gte || ventana.lte) {
+        slotWhere.startTime = { ...(ventana.gte && { gte: ventana.gte }), ...(ventana.lte && { lte: ventana.lte }) };
     }
 
     if (Object.keys(slotWhere).length > 0) {
@@ -72,20 +69,15 @@ export default async function DashboardPage({
     const pendientesBandeja = await pendientesParaMenu(prisma, session, conEspejo);
     const pendientesSolicitudesCitas = await solicitudesCitasPendientes(prisma, session);
 
-    const appointments = await prisma.appointment.findMany({
+    // Se pide una de más para saber si quedaron citas por fuera del tope.
+    const encontradas = await prisma.appointment.findMany({
         where: whereClause,
-        include: {
-            patient: { include: { user: true } },
-            scheduleSlot: { include: { doctor: true, service: true } },
-            eps: true,
-            clinicalRecord: { select: { id: true, status: true } }
-        },
-        orderBy: { scheduleSlot: { startTime: 'asc' } }
+        select: SELECT_CITA_INICIO,
+        orderBy: [{ scheduleSlot: { startTime: 'asc' } }, { id: 'asc' }],
+        take: TOPE_CITAS_INICIO + 1,
     });
-    // `reminderSentAt` ya viene en el findMany por defecto (Prisma incluye todos
-    // los campos del modelo). Si más adelante se cambia a `select`, hay que
-    // exponerlo explícitamente para que el botón "Recordar por WhatsApp" sepa
-    // si la cita ya tiene un recordatorio enviado.
+    const hayMas = encontradas.length > TOPE_CITAS_INICIO;
+    const appointments = hayMas ? encontradas.slice(0, TOPE_CITAS_INICIO) : encontradas;
 
     // Catálogos para Filtros
     let epsList: { id: string, name: string }[] = [];
@@ -126,6 +118,9 @@ export default async function DashboardPage({
                     epsList={epsList}
                     doctorsList={doctorsList}
                     role={session.role}
+                    desdeHoy={ventana.desdeHoy}
+                    hayMas={hayMas}
+                    tope={TOPE_CITAS_INICIO}
                 />
             </Suspense>
         </div>

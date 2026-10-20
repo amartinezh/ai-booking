@@ -2958,6 +2958,8 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
           id: 'slot-new',
           isAvailable: true,
           organizationId: ORG_ID,
+          // Mañana: el cambio también revisa la anticipación mínima.
+          startTime: new Date(Date.now() + 86_400_000),
           // El reagendamiento revalida el interruptor del médico antes de
           // mover la cita (bloque E), así que la consulta real lo incluye.
           doctor: { whatsappBookingEnabled: true },
@@ -2992,6 +2994,42 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         }),
       );
       expect(redis.store.get(stateKey)).toBe(ChatState.IDLE);
+    });
+
+    it('⏱️ si el cupo nuevo ya empieza en menos de 30 minutos, no se mueve (anticipación mínima)', async () => {
+      redis.store.set(stateKey, ChatState.AWAITING_MODIFY_CONFIRM);
+      redis.store.set(`temp_selected_modify_apt:${ORG_ID}:${SENDER}`, 'apt-1');
+      redis.store.set(
+        `temp_selected_modify_slot:${ORG_ID}:${SENDER}`,
+        'slot-old',
+      );
+      redis.store.set(
+        `temp_selected_modify_newslot:${ORG_ID}:${SENDER}`,
+        'slot-new',
+      );
+      redis.store.set(
+        `temp_selected_modify_newslot_fecha:${ORG_ID}:${SENDER}`,
+        '2026-06-05T15:00:00.000Z',
+      );
+      prisma.scheduleSlot.findUnique.mockResolvedValueOnce({
+        id: 'slot-new',
+        isAvailable: true,
+        organizationId: ORG_ID,
+        startTime: new Date(Date.now() + 20 * 60_000),
+        doctor: { whatsappBookingEnabled: true },
+      });
+
+      await service.processIncomingMessage(makeTextEvent('sí'));
+
+      expect(prisma.appointment.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { scheduleSlotId: 'slot-new' } }),
+      );
+      expect(prisma.scheduleSlot.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'slot-new' },
+          data: { isAvailable: false },
+        }),
+      );
     });
 
     it('confirmación NO → deja la cita en su fecha original, sin escribir en BD', async () => {

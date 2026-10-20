@@ -1,4 +1,7 @@
 import {
+  ANTICIPACION_MINIMA_AGENDAR_MIN,
+  cumpleAnticipacionAlReservar,
+  inicioMinimoParaOfrecer,
   CUPOS_OFRECIDOS,
   normalizarCuposOfrecidos,
   seleccionarCuposManianaTarde,
@@ -134,5 +137,25 @@ describe('normalizarCuposOfrecidos', () => {
     [99, CUPOS_OFRECIDOS.MAX],
   ])('%p → %p', (entrada, esperado) => {
     expect(normalizarCuposOfrecidos(entrada)).toBe(esperado);
+  });
+});
+
+describe('⏱️ anticipación mínima para agendar', () => {
+  const AHORA = new Date('2026-10-22T11:00:00.000Z'); // 06:00 en Bogotá
+  const en = (min: number) => new Date(AHORA.getTime() + min * 60_000);
+
+  it('se ofrece desde 60 minutos después', () => {
+    expect(ANTICIPACION_MINIMA_AGENDAR_MIN).toBe(60);
+    expect(inicioMinimoParaOfrecer(AHORA)).toEqual(en(60));
+  });
+
+  it.each([
+    [60, true],
+    [30, true],
+    [29, false],
+    [5, false],
+    [-10, false],
+  ])('al reservar, un cupo que empieza en %i min → %s', (min, ok) => {
+    expect(cumpleAnticipacionAlReservar(en(min), AHORA)).toBe(ok);
   });
 });

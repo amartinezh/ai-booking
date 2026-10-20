@@ -101,6 +101,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
                             {roleMap[role]}
                         </span>
                     </div>
+                    <Link
+                        href="/dashboard/cuenta"
+                        className="mb-3 w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-zinc-700 bg-white hover:bg-zinc-100 dark:text-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 rounded-xl border border-zinc-200 dark:border-zinc-700 transition-colors"
+                    >
+                        <span>🔑</span> Cambiar mi clave
+                    </Link>
                     <LogoutButton variant="sidebar" />
                 </div>
             </aside>
@@ -119,6 +125,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     <span className="text-xs font-semibold px-3 py-1 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 rounded-lg">
                         {roleMap[role]}
                     </span>
+                    <Link
+                        href="/dashboard/cuenta"
+                        title="Cambiar mi clave"
+                        aria-label="Cambiar mi clave"
+                        className="p-2 flex items-center justify-center text-zinc-700 bg-zinc-100 rounded-lg dark:text-zinc-300 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+                    >
+                        🔑
+                    </Link>
                     <LogoutButton variant="mobile" />
                 </div>
             </header>

@@ -1,17 +1,26 @@
 /**
  * LÍMITE DE CITAS POR PACIENTE — quién gestiona y la cifra del menú.
  *
- * La configuración del límite (/dashboard/limites-citas) y la bandeja de
- * solicitudes de más citas (/dashboard/solicitudes-citas) son de ORG_ADMIN y
- * BOOKING_AGENT: quien agenda es quien atiende a esos pacientes. Las páginas y
- * sus acciones de servidor lo vuelven a comprobar con esta misma función; el
- * menú solo decide si aparece el enlace.
+ * La configuración del límite (/dashboard/limites-citas) es solo de ORG_ADMIN,
+ * que es quien fija la regla (2026-10-22: el agendador la veía y la podía
+ * cambiar). La bandeja de solicitudes de más citas (/dashboard/solicitudes-citas)
+ * es de ORG_ADMIN y BOOKING_AGENT: quien agenda es quien atiende a esos
+ * pacientes. Las páginas y sus acciones de servidor lo vuelven a comprobar con
+ * estas mismas funciones; el menú solo decide si aparece el enlace.
  */
 import type { PrismaClient } from '@agenia/database';
 import type { SessionPayload } from '../session';
 
 export type SesionGestora = SessionPayload & { organizationId: string };
 
+/** ¿Puede ver y cambiar el límite de citas? Solo el administrador de la clínica. */
+export function puedeConfigurarLimiteCitas(
+    sesion: SessionPayload | null | undefined,
+): sesion is SesionGestora {
+    return !!sesion?.organizationId && sesion.role === 'ORG_ADMIN';
+}
+
+/** ¿Puede revisar las solicitudes de más citas? El administrador y el agendador. */
 export function puedeGestionarLimiteCitas(
     sesion: SessionPayload | null | undefined,
 ): sesion is SesionGestora {

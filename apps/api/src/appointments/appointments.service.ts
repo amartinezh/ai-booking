@@ -8,7 +8,9 @@ import {
 import { Prisma, AttendanceStatus } from '@agenia/database';
 import {
   CUPOS_OFRECIDOS,
+  cumpleAnticipacionAlReservar,
   documentoSinCerosIniciales,
+  inicioMinimoParaOfrecer,
   faltaRegimenParaElEspejo,
   regimenSeguroDelPadron,
   type Regimen,
@@ -69,16 +71,16 @@ export class AppointmentsService {
     // las 3"): esa hora puede no estar entre los ofrecidos y aun así existir.
     opts: { todos?: boolean } = {},
   ): Promise<AvailableSlot[]> {
-    const now = new Date();
-
-    // Con ventana, acotamos a [max(desde, ahora) .. hasta] para no ofrecer
-    // horas pasadas si el paciente pidió "hoy". Sin ventana, conducta de siempre.
+    // ⏱️ Nada que empiece antes de la anticipación mínima (60 min, 2026-10-21):
+    // antes se ofrecían los más próximos, y a las 06:00 salía el de las 06:30.
+    // Con ventana ("hoy", "mañana"), acotamos a [max(desde, mínimo) .. hasta].
+    const minimo = inicioMinimoParaOfrecer(new Date());
     const startTimeFilter = dateWindow
       ? {
-          gte: dateWindow.desde > now ? dateWindow.desde : now,
+          gte: dateWindow.desde > minimo ? dateWindow.desde : minimo,
           lte: dateWindow.hasta,
         }
-      : { gt: now };
+      : { gte: minimo };
 
     // 🚦 ACTIVACIÓN POR MÉDICO. `whatsappBookingEnabled` existía en el schema
     // desde la Fase 1 del espejo pero NO SE LEÍA EN NINGÚN SITIO: era una
@@ -287,6 +289,16 @@ export class AppointmentsService {
         // es exactamente lo que el espejo existe para evitar.
         if (origin !== 'MIRROR' && !slot.doctor.whatsappBookingEnabled) {
           throw new Error('DOCTOR_NOT_BOOKABLE');
+        }
+        // ⏱️ Anticipación mínima, también al reservar: entre la oferta y el «sí»
+        // pudo pasar el tiempo. Solo el bot: el personal y el hospital agendan a
+        // cualquier hora. Para el paciente es un cupo que ya no está: se le
+        // ofrecen otros.
+        if (
+          (origin === 'WHATSAPP' || origin === 'TELEGRAM') &&
+          !cumpleAnticipacionAlReservar(slot.startTime, new Date())
+        ) {
+          throw new Error('SLOT_TAKEN_OR_INVALID');
         }
 
         // 🚦 LÍMITE DE CITAS POR PACIENTE: el bot no le asigna a un paciente

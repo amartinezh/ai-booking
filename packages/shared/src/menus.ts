@@ -93,10 +93,11 @@ const AUDITORIA: MenuItem = {
 
 /**
  * Límite de citas por paciente (cuántas puede tener el mismo día y en el mismo
- * mes por el asistente) y la bandeja de quienes piden más. Los dos son de
- * ORG_ADMIN y BOOKING_AGENT: quien agenda es quien atiende a esos pacientes.
- * El permiso real lo aplican las páginas y sus acciones
- * (`apps/web/lib/limite-citas/acceso.ts`).
+ * mes por el asistente): solo ORG_ADMIN, que es quien fija la regla
+ * (2026-10-22: el agendador la veía y la podía cambiar). La bandeja de quienes
+ * piden más (Solicitudes) es de ORG_ADMIN y BOOKING_AGENT: quien agenda es quien
+ * atiende a esos pacientes. El permiso real lo aplican las páginas y sus
+ * acciones (`apps/web/lib/limite-citas/acceso.ts`).
  */
 const LIMITE_CITAS: MenuItem = {
   label: 'Límite de citas',
@@ -235,7 +236,6 @@ const AGENT_MENUS: MenuItem[] = [
   AUDITORIA,
   RASTREO,
   SOLICITUDES_CITAS,
-  LIMITE_CITAS,
   SUPPORT,
 ];
 

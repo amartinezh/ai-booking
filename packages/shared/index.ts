@@ -302,7 +302,10 @@ export type {
 } from './src/alta-en-caliente';
 
 export {
+  ANTICIPACION_MINIMA_AGENDAR_MIN,
   CUPOS_OFRECIDOS,
+  cumpleAnticipacionAlReservar,
+  inicioMinimoParaOfrecer,
   normalizarCuposOfrecidos,
   seleccionarCuposManianaTarde,
 } from './src/cupos-ofrecidos';
