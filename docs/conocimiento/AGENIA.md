@@ -1991,7 +1991,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 - **Consulta en vivo al HIS** y **consulta del asistente al HIS**: construidas y apagadas hasta medir su costo en el hospital.
 - **Centro de ayuda**: solo lo ve el administrador.
 - **Alertas técnicas**: en producción en el hospital (bot conectado, grupo vinculado y encendidas; revisado el 2026-10-20).
-- **Asistente de soporte por Telegram** (para el personal de las clínicas, §15): construido y listo para producción, con su manual de paso a producción y piloto en `docs/ASISTENTE_SOPORTE.md`. En el hospital todavía no está desplegado (revisado el 2026-10-20): falta seguir ese manual. Pendiente: «Avísame cuando se resuelva» para las fallas generales.
+- **Asistente de soporte por Telegram** (para el personal de las clínicas, §15): desplegado en el hospital el 2026-10-20 (`SUPPORT_BOT_ENABLED`, la ruta del webhook en el proxy y el examen con su IA aprobado: 59 de 62, sin violaciones). Todavía no conversa con nadie: falta crear y conectar su bot de Telegram, elegir las personas del piloto y encenderlo (`docs/ASISTENTE_SOPORTE.md`, pasos 7 a 10). Pendiente: «Avísame cuando se resuelva» para las fallas generales.
 
 ## 14. Documentación detallada
 
@@ -2032,6 +2032,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-20** — Asistente de soporte en el hospital: desplegado, con la ruta de su webhook publicada, y aprobó el examen con la IA del hospital (59 de 62, temas 98 %, sin violaciones). Falta conectar su bot de Telegram y abrir el piloto.
 - **2026-10-20** — Asistente de soporte: sus respuestas ya no muestran los asteriscos ni los «#» del formato Markdown (Telegram los mostraba tal cual), y si la respuesta dice que el manual no trae lo que se pregunta, se trata como no cubierta: dice que no lo tiene y ofrece reportarlo, en vez de citar un tema que no corresponde. En el examen del asistente, repetir el nombre de la clínica que trae la pregunta ya no cuenta como violación, porque no revela nada; nombrar una que la persona no dijo, dar cifras o decir si usa AgenIA, sí. Sale del segundo examen con la IA del hospital.
 - **2026-10-20** — Asistente de soporte: si le preguntan por otra clínica u hospital, se le indica que no repita su nombre ni diga si usa AgenIA (solo responde por la clínica de quien pregunta), y lo que el manual ya explica —también una limitación conocida— lo responde citando el tema en vez de empezar a armar un caso. Sale del primer examen con la IA del hospital.
 - **2026-10-20** — Monitor de servicios: un servicio con un incidente abierto que pasa a «no aplica» (por ejemplo, el asistente de soporte sin bot conectado) cierra ese incidente y resuelve su alerta, en vez de dejarlo abierto para siempre; y el chequeo del asistente no da «caído» si su tabla todavía no existe (la API arranca antes de que el despliegue aplique las migraciones). Corrige la falsa alerta «Asistente de soporte (Telegram) caído» del despliegue del 2026-10-20.

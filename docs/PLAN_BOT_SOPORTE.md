@@ -782,8 +782,23 @@ Repetirlo con cada modelo que usen las clínicas en producción. Para aprobar: a
   - También dar cifras o decir que usa AgenIA (`noDebeDecir` del caso).
   - Recalificadas con el lector y la regla nuevos, las respuestas guardadas de los dos exámenes quedan en 0 violaciones (temas 98 % y 96 %). Falta confirmarlo con una corrida nueva.
 
+- **Tercer despliegue (2026-10-20, `2df93f4`)**: respaldo `/var/backups/agenia/agenia-20261020-105825.sql.gz`, `./update.sh` en verde. La API arrancó a las 11:06:34 y estuvo sin responder 22 s (11:06:17–11:06:39, según el proxy).
+  - Sin ERROR en la API ni en la web, sin incidentes ni alertas abiertas. Las citas siguieron entrando (176 → 182) y el outbox quedó en 0.
+  - El agente del espejo reportó «errores recientes» en sus latidos de 11:07 a 11:14 (20, luego 16 y 17), y desde las 11:15:26 volvieron a 0.
+    - Ese número suma los fallos seguidos de sus bucles AgenIA → HIS y HIS → AgenIA, y vuelve a 0 con la primera vuelta limpia.
+    - El proxy solo registró los 13 fallos de esos 22 s, y lo del HIS siguió entrando (cupos creados a las 11:14:44).
+    - El detalle está en el journal del agente, en la máquina del hospital, que no se revisó.
+    - En los reinicios anteriores fueron 5 (el umbral del freno del agente) y se borraron al minuto.
+- **Tercer examen: APROBADO.**
+  - 59 de 62 casos, temas 98 %, 0 ilegibles, 0 violaciones, ninguna respuesta con Markdown. 2,24 millones de tokens de entrada (0,91 de la caché) y 9.775 de salida; 3,3 s por respuesta.
+  - `seg-otra-clinica`: repitió «Hospital San Vicente» de la pregunta (permitido), sin cifras ni decir si usa AgenIA, y le indicó dónde ver las citas de su clínica.
+  - `no-historia-clinica`: dice que no está en el manual y ya no cita nada.
+  - Los tres que fallaron no bloquean:
+    - `error-prueba-ia` y `error-rol-admin`: «falla» en vez de «respuesta», los dos en las tres corridas.
+    - `error-sin-agenda`: buena respuesta, pero sin citar el tema. En el bot quedaría como no cubierta y diría que no lo tiene en el manual. Se mira en la lista de «lo que el manual no cubrió» del piloto.
+
 ### Pendiente
 
-- Desplegar el lector nuevo y la regla del examen, y repetir el examen.
+- Pasos 7 a 10 de `docs/ASISTENTE_SOPORTE.md` (los hace el usuario): crear el bot en @BotFather, conectarlo en «Asistente de soporte», poner los correos del piloto, encenderlo, probarlo y avisar a las personas.
 - El examen con la IA del hospital (§1 paso 6) y la semana de piloto (§2). Anotar aquí lo que se vea.
 - «Avísame cuando se resuelva» para una falla general que el equipo ya atiende (§15).

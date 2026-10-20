@@ -26,6 +26,8 @@ vps() { ssh -i ~/.ssh/agenia_89_117_61_28_ed25519 root@89.117.61.28 "$@"; }
 - La IA del hospital es Gemini.
 - El personal: 1 administrador, 1 agente de reservas y 30 médicos.
 
+**Hecho el 2026-10-20:** los pasos 1 a 6. Va desplegado `2df93f4` y el examen aprobó al tercer intento. Falta lo del paso 7 en adelante. El detalle está en la bitácora de la Fase 6, en [PLAN_BOT_SOPORTE.md](PLAN_BOT_SOPORTE.md).
+
 **Qué cambia al desplegar, aunque el asistente siga apagado:**
 
 - El Centro de ayuda se arma con `AGENIA.md` (se ve igual).
