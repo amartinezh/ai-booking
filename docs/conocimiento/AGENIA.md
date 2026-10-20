@@ -1113,7 +1113,7 @@ Tiene tres pestañas. «Asistente Virtual»: qué puede hacer el paciente por Wh
 3. Pega la clave de API y elige el modelo.
 4. Pulsa «Guardar integración» y luego «Probar Servicio» en «Salud de la Conexión».
 
-> 💡 La clave se guarda cifrada y nunca se vuelve a mostrar: solo sus últimos 4 caracteres. Para Gemini hay una guía paso a paso en /guia/google-ai-studio.
+> 💡 La clave se guarda cifrada y nunca se vuelve a mostrar: solo sus últimos 4 caracteres. Para Gemini hay una guía paso a paso en /guia/google-ai-studio. Esta misma IA la usa el asistente de soporte de Telegram para responderle al personal de tu clínica.
 
 ##### Conectar WhatsApp (Meta)
 
@@ -1295,7 +1295,9 @@ Cuando algo no funciona como esperas o necesitas un cambio que no puedes hacer d
 1. En la tarjeta «Asistente de soporte en Telegram», pulsa «Generar código».
 2. En Telegram, escríbele al bot que indica la tarjeta los 6 dígitos del código, o escanea el QR con el celular.
 3. El asistente confirma con qué usuario quedó la conversación. Si no fuiste tú, escribe /salir.
-4. Para terminar, escribe /salir o pulsa «Cerrar» en la tarjeta. Si pasan 30 minutos sin mensajes, la conversación se cierra sola.
+4. Escríbele tu pregunta como se la harías a una persona. Si mandas varios mensajes seguidos, te los responde juntos.
+5. Si la respuesta te sirvió, pulsa «Me sirvió»; si no, «No me sirvió» y cuéntale con otras palabras qué necesitas.
+6. Para terminar, escribe /salir o pulsa «Cerrar» en la tarjeta. Si pasan 30 minutos sin mensajes, la conversación se cierra sola.
 
 > 💡 Cada conversación necesita un código nuevo. El código sirve una sola vez, vence a los 10 minutos y, si generas otro, el anterior deja de servir.
 
@@ -1323,7 +1325,7 @@ Para que solo el personal de la clínica converse con él, y para que un celular
 
 ##### ¿Qué puede hacer el asistente de Telegram?
 
-Por ahora confirma con qué usuario conversas, te explica sus comandos (/ayuda) y cierra la conversación cuando se lo pides (/salir). Responder tus preguntas con este manual y abrir casos llegan en sus próximas versiones. Mientras tanto, reporta las fallas con «Reportar Falla / Nueva Solicitud».
+Responde tus dudas sobre AgenIA con este manual y con la configuración de tu clínica, usando la inteligencia artificial de tu clínica. Si tu clínica no tiene IA o falla, te muestra lo más parecido del manual. Te explica lo que puedes hacer con tu rol; lo de otro rol te dice quién lo hace. Todavía no abre casos ni muestra los tuyos: repórtalos con «Reportar Falla / Nueva Solicitud».
 
 #### Si algo no sale bien
 
@@ -1893,7 +1895,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 | Anticipación mínima del recordatorio | Configuración › Asistente Virtual | 1 hora (0 = sin mínimo, máximo 12 horas) |
 | Reintentos por paso | Base de datos (sin pantalla) | 3 |
 | Límite de citas por día / por mes | Límite de citas | 1 / 3, encendidos |
-| Proveedor de IA y modelo | Configuración › Integraciones | — |
+| Proveedor de IA y modelo (también lo usa el asistente de soporte del personal) | Configuración › Integraciones | — |
 | WhatsApp, plantillas y Telegram | Configuración › Integraciones | — |
 | Voz | Configuración › Asistente Virtual › Voz | Google Cloud TTS |
 | Base de conocimiento de la clínica | Configuración › Base de Conocimiento | Vacía |
@@ -1937,7 +1939,8 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 - **El código en cada conversación**: cualquiera le puede escribir, pero sin una conversación verificada el bot solo pide el código, sin usar IA y sin dar información. El código se genera en Soporte («Generar código»): son 6 dígitos para escribir o un QR que abre el bot con un código largo. Sirve una sola vez, vence a los 10 minutos y generar otro anula el anterior. En la base solo queda su HMAC. Después de 5 intentos fallidos desde una cuenta de Telegram, esa cuenta espera una hora.
 - **La conversación**: queda atada al usuario de AgenIA y a la cuenta de Telegram que dio el código. A lo sumo hay una abierta por usuario y por cuenta (índices parciales en la base). Se cierra a los 30 minutos sin mensajes (ajustable), con /salir, desde el panel o al abrir otra. Cada mensaje revalida usuario, rol y clínica. Si alguien escribe una pregunta antes del código, el bot la guarda 10 minutos y la responde apenas recibe el código.
-- **Qué hace hoy (fase 1)**: confirma con qué usuario se conversa, atiende /ayuda y /salir y avisa que todavía está aprendiendo. Las respuestas con este manual y con la IA de la clínica de quien pregunta (fase 2), los casos (fase 3) y los avisos al grupo y al empleado (fase 4) están en `docs/PLAN_BOT_SOPORTE.md`.
+- **Cómo responde (fase 2)**: con la IA de la clínica de quien pregunta (si falla y `LLM_FAILOVER_ENABLED=true`, otra que la clínica tenga configurada). Le da a la IA este archivo —la Parte 1 y las secciones de la Parte 2 que permite `PARTE2_PARA_EL_ASISTENTE`—, el rol y el menú de quien pregunta, la ficha de configuración de su clínica (canales, IA, interruptores, recordatorios, límites, teléfono de soporte, espejo; nunca datos de pacientes) y los últimos turnos, con cédulas, teléfonos y correos ocultos. La IA responde en JSON y el código decide lo demás: descarta los temas que no existen, ofrece reportar en el panel lo que el manual no cubre o lo que es una falla, pone el enlace al Centro de ayuda solo para el administrador y los botones «Me sirvió» / «No me sirvió». Los mensajes que llegan con menos de 2 s de diferencia se responden juntos. Si la clínica no tiene IA, falla, tarda más de 25 s, responde algo ilegible o pasa el tope diario de respuestas con IA, contesta lo más parecido del manual con el buscador del Centro de ayuda. Cada respuesta guarda su tipo, los temas, los tokens y si quedó sin cubrir.
+- **Qué falta**: los casos (fase 3), los avisos al grupo y al empleado (fase 4) y el panel de cifras (fase 5), en `docs/PLAN_BOT_SOPORTE.md`. El examen del asistente (`pnpm --filter api examen:soporte`, 60 preguntas por rol) se corre con una clave real y gasta tokens.
 - **Configuración** (`/super-admin/soporte-bot`, solo super administrador): token del bot y su webhook (`/api/support-bot/webhook/<ruta>`, con `secret_token`), encendido, horario del equipo (por defecto de lunes a viernes de 8:00 a 17:00), minutos de la conversación, límites (40 mensajes por hora, 2.000 caracteres por mensaje, tope diario de respuestas con IA por clínica) y un código de prueba. Cada cambio queda en la auditoría global. Sin `SUPPORT_BOT_ENABLED=true` en la API no existe ninguna de sus rutas y la tarjeta de Soporte no aparece.
 - **Datos**: los mensajes de las conversaciones verificadas se guardan 180 días (`SupportBotMessage`); lo que se escribe antes del código no se guarda en la base.
 | `docs/MONITOR_SERVICIOS.md` | Monitor de servicios externos. |
@@ -1952,6 +1955,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-19** — Asistente de soporte por Telegram, fase 2: responde las preguntas del personal con este manual, la ficha de configuración de su clínica y la IA de esa clínica (con respaldo entre proveedores); explica lo de su rol y dice quién hace lo de otro; ofrece reportar en el panel lo que el manual no cubre; agrega el enlace al Centro de ayuda para el administrador y los botones «Me sirvió» / «No me sirvió». Sin IA, o si la IA falla o se pasa del tope diario, responde con lo más parecido del manual. Junta los mensajes seguidos y nunca le pasa a la IA cédulas, teléfonos ni correos.
 - **2026-10-19** — Asistente de soporte por Telegram, fase 1 (`docs/PLAN_BOT_SOPORTE.md`): el super administrador conecta y enciende su bot en «Asistente de soporte»; el personal ve en Soporte la tarjeta «Asistente de soporte en Telegram» para generar el código de cada conversación (6 dígitos o QR), ver la conversación abierta y cerrarla. El bot pide el código, guarda la pregunta escrita antes y, verificado, saluda con el usuario y la clínica; todavía no responde preguntas ni abre casos. Sus conversaciones se purgan a los 180 días, y en producción sigue apagado.
 - **2026-10-19** — Primer paso del asistente de soporte por Telegram para el personal (`docs/PLAN_BOT_SOPORTE.md`, Fase 0), sin cambios visibles en el panel. Para quien mantiene el sistema: el lector y el buscador de este archivo y el menú por rol pasan a `packages/shared` (la web los reexporta; el Centro de ayuda se ve igual), porque el asistente también los usa; la base suma las tablas del asistente y, en los casos de Soporte, número corto, canal, prioridad y el estado de sus avisos (los casos que ya existían se numeran por fecha y no se anunciarán); y cada sección nueva de la Parte 2 obliga a decidir si la lee el asistente.
 - **2026-10-19** — Se crea este archivo de conocimiento. El Centro de ayuda deja de tener su texto en el código (`apps/web/lib/ayuda/contenido.ts`) y pasa a leer la Parte 1 de este archivo en cada petición; se ve igual que antes. Si el archivo no se puede leer, la ayuda muestra un aviso y el resto del panel sigue funcionando. Mantenerlo al día es obligatorio: lo exigen el gancho `commit-msg` y el CI (`scripts/check-conocimiento.mjs`). Corrección al texto de la ayuda: qué ve cada rol (el Agente de Reservas también ve Caja Negra, Solicitudes de más citas y Límite de citas; se agrega el Observador general).

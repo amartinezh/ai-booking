@@ -131,7 +131,12 @@ export class TelegramApiClient {
     token: string,
     chatId: string,
     text: string,
-    opts: { html?: boolean; silent?: boolean } = {},
+    opts: {
+      html?: boolean;
+      silent?: boolean;
+      /** Botones bajo el mensaje (teclado en línea): filas de [texto, callback_data]. */
+      botones?: ReadonlyArray<ReadonlyArray<{ texto: string; datos: string }>>;
+    } = {},
   ): Promise<TelegramResult<TelegramSentMessage>> {
     return this.call<TelegramSentMessage>(token, 'sendMessage', {
       chat_id: chatId,
@@ -139,6 +144,32 @@ export class TelegramApiClient {
       link_preview_options: { is_disabled: true },
       ...(opts.html ? { parse_mode: 'HTML' } : {}),
       ...(opts.silent ? { disable_notification: true } : {}),
+      ...(opts.botones ? { reply_markup: tecladoEnLinea(opts.botones) } : {}),
+    });
+  }
+
+  /** Quita los botones de un mensaje (un botón usado no se puede volver a tocar). */
+  quitarBotones(
+    token: string,
+    chatId: string,
+    messageId: number,
+  ): Promise<TelegramResult<unknown>> {
+    return this.call<unknown>(token, 'editMessageReplyMarkup', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [] },
+    });
+  }
+
+  /** «escribiendo…» en el chat mientras se piensa la respuesta (dura unos 5 s). */
+  sendChatAction(
+    token: string,
+    chatId: string,
+    action: 'typing' = 'typing',
+  ): Promise<TelegramResult<boolean>> {
+    return this.call<boolean>(token, 'sendChatAction', {
+      chat_id: chatId,
+      action,
     });
   }
 
@@ -320,6 +351,16 @@ export class TelegramApiClient {
       retryAfter,
     };
   }
+}
+
+function tecladoEnLinea(
+  filas: ReadonlyArray<ReadonlyArray<{ texto: string; datos: string }>>,
+) {
+  return {
+    inline_keyboard: filas.map((fila) =>
+      fila.map((b) => ({ text: b.texto, callback_data: b.datos })),
+    ),
+  };
 }
 
 /**

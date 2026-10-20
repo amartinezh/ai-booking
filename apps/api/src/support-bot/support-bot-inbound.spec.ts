@@ -48,7 +48,7 @@ describe('leerUpdate (asistente de soporte)', () => {
           id: 'cb1',
           from: ana,
           data: 's1:CASO_SI',
-          message: { chat: privado },
+          message: { message_id: 55, chat: privado },
         },
       }),
     ).toEqual({
@@ -59,6 +59,7 @@ describe('leerUpdate (asistente de soporte)', () => {
       nombre: 'Ana',
       callbackId: 'cb1',
       datos: 's1:CASO_SI',
+      messageId: 55,
     });
   });
 
@@ -67,7 +68,8 @@ describe('leerUpdate (asistente de soporte)', () => {
       update_id: 14,
       callback_query: { id: 'cb', from: ana, message: { chat: privado } },
     });
-    expect(r).toMatchObject({ accion: 'boton', datos: '' });
+    // Sin el mensaje del botón no se le pueden quitar los botones después.
+    expect(r).toMatchObject({ accion: 'boton', datos: '', messageId: null });
   });
 
   it.each([

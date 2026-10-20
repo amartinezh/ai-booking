@@ -10,6 +10,8 @@ import {
   VocabularyHints,
   normalizeIntent,
   asNullableString,
+  PeticionConversacion,
+  RespuestaConversacion,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
@@ -20,6 +22,8 @@ import {
 } from '../prompts/shared-prompts';
 
 const CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
+/** Tiempo máximo de `conversar` si quien llama no da otro. */
+const DEFAULT_TIMEOUT_MS = 30_000;
 // Ficha del modelo: gratis, no consume tokens (sonda de salud).
 const MODELS_URL = 'https://api.openai.com/v1/models';
 const AUDIO_TRANSCRIPTIONS_URL =
@@ -140,6 +144,59 @@ export class ChatGptProvider implements LLMProvider {
         { role: 'user', content: `Pregunta: "${question}"` },
       ],
     });
+  }
+
+  async conversar(p: PeticionConversacion): Promise<RespuestaConversacion> {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+      'Content-Type': 'application/json',
+    };
+    if (this.orgHeader) headers['OpenAI-Organization'] = this.orgHeader;
+    // OpenAI cachea solo un prefijo repetido de más de 1 024 tokens: el sistema
+    // empieza por la parte fija (instrucciones y manual).
+    const res = await fetch(CHAT_COMPLETIONS_URL, {
+      method: 'POST',
+      headers,
+      signal: AbortSignal.timeout(p.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: this.model,
+        messages: [
+          {
+            role: 'system',
+            content: `${p.sistema.fijo}\n\n${p.sistema.variable}`,
+          },
+          ...p.turnos.map((t) => ({
+            role: t.rol === 'usuario' ? 'user' : 'assistant',
+            content: t.texto,
+          })),
+        ],
+        ...(p.json ? { response_format: { type: 'json_object' } } : {}),
+        ...(p.maxTokens ? { max_tokens: p.maxTokens } : {}),
+      }),
+    });
+    if (!res.ok) {
+      const err = new Error(
+        `OpenAI ${res.status}: ${await res.text()}`,
+      ) as Error & { status: number };
+      err.status = res.status;
+      throw err;
+    }
+    const json = (await res.json()) as {
+      model?: string;
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+      };
+    };
+    return {
+      texto: json.choices?.[0]?.message?.content ?? '',
+      modelo: json.model ?? this.model,
+      tokensEntrada: json.usage?.prompt_tokens ?? null,
+      tokensSalida: json.usage?.completion_tokens ?? null,
+      tokensCache: json.usage?.prompt_tokens_details?.cached_tokens ?? null,
+    };
   }
 
   async mapEntityToCatalog(input: {

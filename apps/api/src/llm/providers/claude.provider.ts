@@ -6,6 +6,8 @@ import {
   LLMProvider,
   SchedulingExtraction,
   RawSchedulingExtraction,
+  PeticionConversacion,
+  RespuestaConversacion,
   CatalogOption,
   VocabularyHints,
   normalizeIntent,
@@ -22,6 +24,8 @@ const MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 // Ficha del modelo: gratis, no consume tokens (sonda de salud).
 const MODELS_URL = 'https://api.anthropic.com/v1/models';
 const ANTHROPIC_VERSION = '2023-06-01';
+/** Tiempo máximo de `conversar` si quien llama no da otro. */
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export class ClaudeProvider implements LLMProvider {
   readonly name = 'CLAUDE' as const;
@@ -112,6 +116,68 @@ export class ClaudeProvider implements LLMProvider {
       max_tokens: 1024,
     });
     return text.trim();
+  }
+
+  async conversar(p: PeticionConversacion): Promise<RespuestaConversacion> {
+    const res = await fetch(MESSAGES_URL, {
+      method: 'POST',
+      headers: {
+        'x-api-key': this.apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(p.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: p.maxTokens ?? 1024,
+        // El manual (fijo) se marca para la caché de prompt: se lee de ella en cada
+        // pregunta siguiente en vez de pagarse completo.
+        system: [
+          {
+            type: 'text',
+            text: p.sistema.fijo,
+            cache_control: { type: 'ephemeral' },
+          },
+          { type: 'text', text: p.sistema.variable },
+        ],
+        messages: p.turnos.map((t) => ({
+          role: t.rol === 'usuario' ? 'user' : 'assistant',
+          content: t.texto,
+        })),
+      }),
+    });
+    if (!res.ok) {
+      const err = new Error(
+        `Anthropic ${res.status}: ${await res.text()}`,
+      ) as Error & { status: number };
+      err.status = res.status;
+      throw err;
+    }
+    const json = (await res.json()) as {
+      model?: string;
+      content?: Array<{ type: string; text?: string }>;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      };
+    };
+    const u = json.usage;
+    return {
+      texto: (Array.isArray(json.content) ? json.content : [])
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text ?? '')
+        .join(''),
+      modelo: json.model ?? this.model,
+      tokensEntrada: u
+        ? (u.input_tokens ?? 0) +
+          (u.cache_creation_input_tokens ?? 0) +
+          (u.cache_read_input_tokens ?? 0)
+        : null,
+      tokensSalida: u?.output_tokens ?? null,
+      tokensCache: u?.cache_read_input_tokens ?? null,
+    };
   }
 
   async mapEntityToCatalog(input: {

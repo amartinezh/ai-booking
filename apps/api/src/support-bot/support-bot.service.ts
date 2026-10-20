@@ -1,11 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@agenia/database';
 import {
+  ETIQUETAS_BOTON,
+  LIMITES_SOPORTE,
   ROL_LEGIBLE,
   TEXTOS_SOPORTE,
+  datosDeBoton,
   esCodigoDeEnlace,
   esSoloSaludo,
   extraerCodigoCorto,
+  leerBoton,
   leerComando,
   type ComandoSoporte,
 } from '@agenia/shared';
@@ -21,28 +25,56 @@ import {
   SupportBotSessionService,
   type Interlocutor,
 } from './support-bot-session.service';
+import {
+  SupportBotAnswerService,
+  type RespuestaArmada,
+} from './support-bot-answer.service';
 import type { EntradaDelAsistente } from './support-bot-inbound';
 import type { SupportBotRuntime } from './support-bot.types';
 
 type Mensaje = Extract<EntradaDelAsistente, { accion: 'mensaje' }>;
 type Boton = Extract<EntradaDelAsistente, { accion: 'boton' }>;
 type Comando = { comando: ComandoSoporte; argumento: string | null } | null;
+type Registro = Omit<Partial<RespuestaArmada['registro']>, 'source'> & {
+  source?: 'IA' | 'SIN_IA' | 'FIJO';
+  updateId?: string | null;
+  telegramMessageId?: string | null;
+};
+
+/** «escribiendo…» dura unos 5 s en Telegram: se renueva mientras piensa la IA. */
+const RENOVAR_ESCRIBIENDO_MS = 4_500;
+const BOTONES_UTIL = [
+  [
+    {
+      texto: ETIQUETAS_BOTON.UTIL_SI,
+      datos: datosDeBoton({ accion: 'UTIL_SI' }),
+    },
+    {
+      texto: ETIQUETAS_BOTON.UTIL_NO,
+      datos: datosDeBoton({ accion: 'UTIL_NO' }),
+    },
+  ],
+];
 
 /**
  * El turno del asistente de soporte (docs/PLAN_BOT_SOPORTE.md §3.1 y §3.3).
  *
- * Fase 1: cualquiera le escribe, pero sin conversación verificada solo pide el
- * código (y guarda la pregunta para responderla apenas se valide). Con
- * conversación: /salir, /ayuda y, mientras llegan las respuestas con el manual
- * (Fase 2) y los casos (Fase 3), un texto fijo.
+ *   · Sin conversación verificada solo pide el código (y guarda la pregunta para
+ *     responderla apenas se valide). Sin IA.
+ *   · Con conversación: /salir, /ayuda y, a todo lo demás, la respuesta con el
+ *     manual y la IA de la clínica (SupportBotAnswerService). Los mensajes
+ *     seguidos (menos de 2 s entre uno y otro) se responden juntos.
+ *   · Los botones «Me sirvió» / «No me sirvió» quedan en la conversación.
+ *   · Los casos (/casos, /nuevo y abrirlos desde aquí) son la Fase 3.
  *
- * Nada de esto usa IA. Cada mensaje de una conversación verificada queda en
- * `SupportBotMessage`; el `update_id` es único, así que un reintento de Telegram
- * no se atiende dos veces.
+ * Cada mensaje de una conversación verificada queda en `SupportBotMessage`; el
+ * `update_id` es único, así que un reintento de Telegram no se atiende dos veces.
  */
 @Injectable()
 export class SupportBotService {
   private readonly logger = new Logger(SupportBotService.name);
+  /** Cuánto se espera a que lleguen mensajes seguidos. Las pruebas lo bajan a 0. */
+  protected agruparMs: number = LIMITES_SOPORTE.agruparMensajesMs;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -50,17 +82,40 @@ export class SupportBotService {
     private readonly api: TelegramApiClient,
     private readonly config: SupportBotConfigService,
     private readonly sesiones: SupportBotSessionService,
+    private readonly respuestas: SupportBotAnswerService,
   ) {}
+
+  /**
+   * Al llegar un mensaje, ANTES de la cola por persona: marca cuál es el último.
+   * Así el turno de un mensaje sabe si detrás venía otro y deja que ese responda
+   * los dos juntos. Solo cuenta el texto libre (no comandos ni códigos).
+   */
+  async alLlegar(entrada: EntradaDelAsistente): Promise<void> {
+    if (entrada.accion !== 'mensaje' || !entrada.texto) return;
+    const texto = entrada.texto.trim();
+    if (!texto || leerComando(texto) || extraerCodigoCorto(texto)) return;
+    try {
+      await this.redis.set(
+        claveUltimo(entrada.telegramUserId),
+        entrada.updateId,
+        'EX',
+        60,
+      );
+    } catch {
+      // Sin Redis, cada mensaje se responde por separado.
+    }
+  }
 
   /** Atiende un update ya autenticado. Nunca lanza: un fallo queda en el log. */
   async procesar(
     entrada: Mensaje | Boton,
     rt: SupportBotRuntime,
     ahora: Date = new Date(),
+    recibidoEn: number = Date.now(),
   ): Promise<void> {
     try {
-      if (entrada.accion === 'boton') await this.boton(entrada, rt);
-      else await this.mensaje(entrada, rt, ahora);
+      if (entrada.accion === 'boton') await this.boton(entrada, rt, ahora);
+      else await this.mensaje(entrada, rt, ahora, recibidoEn);
     } catch (e: unknown) {
       this.logger.error(
         `El asistente falló atendiendo el update ${entrada.updateId}: ${getErrorMessage(e)}`,
@@ -81,6 +136,7 @@ export class SupportBotService {
     e: Mensaje,
     rt: SupportBotRuntime,
     ahora: Date,
+    recibidoEn: number,
   ): Promise<void> {
     if (!(await this.dentroDelLimite(e, rt))) return;
 
@@ -101,7 +157,7 @@ export class SupportBotService {
           yo.conversationId,
           'ENTRADA',
           '(mensaje que no es texto)',
-          e.updateId,
+          { updateId: e.updateId },
         )
       ) {
         await this.responder(rt, yo, TEXTOS_SOPORTE.soloTexto);
@@ -120,7 +176,8 @@ export class SupportBotService {
       return;
     }
     const comando = leerComando(texto);
-    if (yo) await this.enConversacion(e, yo, texto, comando, rt, ahora);
+    if (yo)
+      await this.enConversacion(e, yo, texto, comando, rt, ahora, recibidoEn);
     else await this.sinConversacion(e, texto, comando, rt, ahora);
   }
 
@@ -168,6 +225,7 @@ export class SupportBotService {
     comando: Comando,
     rt: SupportBotRuntime,
     ahora: Date,
+    recibidoEn: number,
   ): Promise<void> {
     // Un código nuevo (escrito o del QR) abre otra conversación y cierra esta.
     if (comando?.comando === 'start' && esCodigoDeEnlace(comando.argumento)) {
@@ -181,7 +239,9 @@ export class SupportBotService {
     }
 
     if (
-      !(await this.registrar(yo.conversationId, 'ENTRADA', texto, e.updateId))
+      !(await this.registrar(yo.conversationId, 'ENTRADA', texto, {
+        updateId: e.updateId,
+      }))
     )
       return;
     await this.sesiones.tocar(yo.conversationId, ahora);
@@ -197,9 +257,18 @@ export class SupportBotService {
       case 'ayuda':
         await this.responder(rt, yo, TEXTOS_SOPORTE.ayuda);
         return;
-      default:
-        // Fase 1: aún sin respuestas con el manual (Fase 2) ni casos (Fase 3).
+      case 'casos':
+      case 'nuevo':
+        // Fase 3: ver y abrir casos desde aquí.
         await this.responder(rt, yo, TEXTOS_SOPORTE.enConstruccion);
+        return;
+      default:
+        // Si detrás de este viene otro mensaje, ese los responde a los dos.
+        await this.esperar(
+          Math.max(0, this.agruparMs - (Date.now() - recibidoEn)),
+        );
+        if (!(await this.soyElUltimo(e))) return;
+        await this.responderConIA(rt, yo, ahora);
     }
   }
 
@@ -257,19 +326,89 @@ export class SupportBotService {
     );
     if (
       pendiente &&
-      (await this.registrar(yo.conversationId, 'ENTRADA', pendiente, null))
+      (await this.registrar(yo.conversationId, 'ENTRADA', pendiente, {}))
     ) {
-      // Fase 1: aún sin respuestas con el manual (Fase 2).
-      await this.responder(rt, yo, TEXTOS_SOPORTE.enConstruccion);
+      await this.responderConIA(rt, yo, ahora);
+    }
+  }
+
+  /**
+   * La respuesta con el manual (y la IA de la clínica, si hay). Mientras piensa, el
+   * chat muestra «escribiendo…».
+   */
+  private async responderConIA(
+    rt: SupportBotRuntime,
+    yo: Interlocutor,
+    ahora: Date,
+  ): Promise<void> {
+    const escribiendo = () => void this.api.sendChatAction(rt.token, yo.chatId);
+    escribiendo();
+    const intervalo = setInterval(escribiendo, RENOVAR_ESCRIBIENDO_MS);
+    let armada: RespuestaArmada | null;
+    try {
+      armada = await this.respuestas.responder(yo, rt, ahora);
+    } finally {
+      clearInterval(intervalo);
+    }
+    if (!armada) return;
+    if (armada.motivoSinIA) {
+      this.logger.log(
+        `Respuesta del asistente sin IA (${armada.motivoSinIA}).`,
+      );
+    }
+    await this.responder(
+      rt,
+      yo,
+      armada.texto,
+      armada.botonesUtil ? BOTONES_UTIL : undefined,
+      armada.registro,
+    );
+    if (armada.registro.uncovered) {
+      await this.prisma.supportBotConversation.updateMany({
+        where: { id: yo.conversationId },
+        data: { hadUncoveredQuestion: true },
+      });
     }
   }
 
   // ── Botones ────────────────────────────────────────────────────────────
 
-  private async boton(e: Boton, rt: SupportBotRuntime): Promise<void> {
-    // Sin respuesta, Telegram deja el botón «cargando». La Fase 1 todavía no pone
-    // botones: cualquier toque es de un mensaje viejo y no hace nada.
-    await this.api.answerCallbackQuery(rt.token, e.callbackId);
+  private async boton(
+    e: Boton,
+    rt: SupportBotRuntime,
+    ahora: Date,
+  ): Promise<void> {
+    const boton = leerBoton(e.datos);
+    if (!boton || (boton.accion !== 'UTIL_SI' && boton.accion !== 'UTIL_NO')) {
+      // Botones de fases siguientes (casos, avisos) o viejos: solo se responden.
+      await this.api.answerCallbackQuery(rt.token, e.callbackId);
+      return;
+    }
+    const estado = await this.sesiones.conversacionDe(e.telegramUserId, ahora);
+    if (estado.tipo !== 'VIGENTE') {
+      await this.api.answerCallbackQuery(
+        rt.token,
+        e.callbackId,
+        TEXTOS_SOPORTE.escribeElCodigo,
+      );
+      return;
+    }
+    const yo = estado.interlocutor;
+    const util = boton.accion === 'UTIL_SI';
+    await this.api.answerCallbackQuery(
+      rt.token,
+      e.callbackId,
+      util ? TEXTOS_SOPORTE.meSirvio : undefined,
+    );
+    // Un botón usado no se vuelve a tocar: se quita del mensaje.
+    if (e.messageId !== null)
+      await this.api.quitarBotones(rt.token, e.chatId, e.messageId);
+    await this.prisma.supportBotConversation.updateMany({
+      where: { id: yo.conversationId },
+      data: { feedback: util ? 'UTIL' : 'NO_UTIL' },
+    });
+    await this.sesiones.tocar(yo.conversationId, ahora);
+    if (!util) await this.responder(rt, yo, TEXTOS_SOPORTE.noMeSirvio);
   }
 
   // ── Envío y registro ───────────────────────────────────────────────────
@@ -279,29 +418,45 @@ export class SupportBotService {
     rt: SupportBotRuntime,
     yo: Interlocutor,
     texto: string,
+    botones?: typeof BOTONES_UTIL,
+    registro: Registro = {},
   ): Promise<void> {
-    await this.enviar(rt, yo.chatId, texto);
-    await this.registrar(yo.conversationId, 'SALIDA', texto, null);
+    const enviado = await this.enviar(rt, yo.chatId, texto, botones);
+    await this.registrar(yo.conversationId, 'SALIDA', texto, {
+      source: 'FIJO',
+      ...registro,
+      telegramMessageId: enviado ?? null,
+    });
   }
 
-  /** Texto plano: un carácter mal escapado no puede hacer que la respuesta se pierda. */
+  /**
+   * Texto plano: un carácter mal escapado no puede hacer que la respuesta se pierda.
+   * Devuelve el id del último mensaje enviado (para quitarle los botones), o null.
+   */
   private async enviar(
     rt: SupportBotRuntime,
     chatId: string,
     texto: string,
-  ): Promise<boolean> {
-    for (const parte of splitTelegramText(texto)) {
-      const r = await this.api.sendMessage(rt.token, chatId, parte);
+    botones?: typeof BOTONES_UTIL,
+  ): Promise<string | null> {
+    const partes = splitTelegramText(texto);
+    let ultimo: string | null = null;
+    for (const [i, parte] of partes.entries()) {
+      // Los botones van en el último pedazo.
+      const r = await this.api.sendMessage(rt.token, chatId, parte, {
+        ...(botones && i === partes.length - 1 ? { botones } : {}),
+      });
       if (!r.ok) {
         this.logger.warn(
           `El asistente no pudo enviar (${r.errorCode ?? 'red'}): ${r.description}`,
         );
         await this.config.registrarEnvio(false, r.description);
-        return false;
+        return null;
       }
+      ultimo = String(r.result.message_id);
     }
     await this.config.registrarEnvio(true);
-    return true;
+    return ultimo;
   }
 
   /**
@@ -312,7 +467,7 @@ export class SupportBotService {
     conversationId: string,
     direction: 'ENTRADA' | 'SALIDA',
     text: string,
-    updateId: string | null,
+    r: Registro,
   ): Promise<boolean> {
     try {
       await this.prisma.supportBotMessage.create({
@@ -320,8 +475,16 @@ export class SupportBotService {
           conversationId,
           direction,
           text,
-          source: direction === 'SALIDA' ? 'FIJO' : null,
-          telegramUpdateId: updateId,
+          source: direction === 'SALIDA' ? (r.source ?? 'FIJO') : null,
+          aiKind: r.aiKind ?? null,
+          uncovered: r.uncovered ?? false,
+          topics: r.topics ?? [],
+          aiProvider: r.aiProvider ?? null,
+          inputTokens: r.inputTokens ?? null,
+          outputTokens: r.outputTokens ?? null,
+          latencyMs: r.latencyMs ?? null,
+          telegramUpdateId: r.updateId ?? null,
+          telegramMessageId: r.telegramMessageId ?? null,
         },
       });
       return true;
@@ -334,6 +497,21 @@ export class SupportBotService {
       }
       throw e;
     }
+  }
+
+  /** ¿Sigue siendo este el último mensaje que llegó de esa cuenta? Sin Redis, sí. */
+  private async soyElUltimo(e: Mensaje): Promise<boolean> {
+    try {
+      const ultimo = await this.redis.get(claveUltimo(e.telegramUserId));
+      return ultimo === null || ultimo === e.updateId;
+    } catch {
+      return true;
+    }
+  }
+
+  /** Se sobrescribe en las pruebas para no esperar de verdad. */
+  protected esperar(ms: number): Promise<void> {
+    return ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
   }
 
   /**
@@ -359,3 +537,6 @@ export class SupportBotService {
     }
   }
 }
+
+const claveUltimo = (telegramUserId: string) =>
+  `soporte:ultimo:${telegramUserId}`;

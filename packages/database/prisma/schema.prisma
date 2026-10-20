@@ -1611,6 +1611,10 @@ model SupportBotMessage {
   topics    String[] @default([])
   /// Cómo se armó la respuesta: 'IA' | 'SIN_IA' | 'FIJO'
   source    String?
+  /// Qué tipo de respuesta dio la IA (`TIPOS_RESPUESTA_IA`: respuesta, aclarar, falla…).
+  aiKind    String?
+  /// La IA «respondió» sin apoyarse en el manual: un hueco que hay que llenar (§3.7).
+  uncovered Boolean  @default(false)
 
   aiProvider   String?
   inputTokens  Int?

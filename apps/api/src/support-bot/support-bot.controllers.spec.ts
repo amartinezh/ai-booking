@@ -20,7 +20,7 @@ import type { Request } from 'express';
 describe('SupportBotWebhookController', () => {
   const RT = { enabled: true, token: 't', routeKey: 'r', webhookSecret: 's' };
   let config: { destinoDelWebhook: jest.Mock };
-  let bot: { procesar: jest.Mock };
+  let bot: { procesar: jest.Mock; alLlegar: jest.Mock };
   let cola: {
     admit: jest.Mock;
     enqueue: jest.Mock;
@@ -40,7 +40,10 @@ describe('SupportBotWebhookController', () => {
     jest.spyOn(Logger.prototype, 'warn').mockImplementation();
     jest.spyOn(Logger.prototype, 'debug').mockImplementation();
     config = { destinoDelWebhook: jest.fn(async () => RT) };
-    bot = { procesar: jest.fn(async () => undefined) };
+    bot = {
+      procesar: jest.fn(async () => undefined),
+      alLlegar: jest.fn(async () => undefined),
+    };
     cola = {
       admit: jest.fn(async () => true),
       enqueue: jest.fn((_k: string, tarea: () => Promise<void>) => {
@@ -89,13 +92,21 @@ describe('SupportBotWebhookController', () => {
     expect(cola.admit).not.toHaveBeenCalled();
   });
 
-  it('deduplica por update_id y encola por cuenta de Telegram', async () => {
+  it('deduplica por update_id, marca el último mensaje ANTES de la cola y encola por cuenta de Telegram', async () => {
     await ctrl.recibir('r', update, 's');
     expect(cola.admit).toHaveBeenCalledWith('soporte:5');
+    expect(bot.alLlegar).toHaveBeenCalledWith(
+      expect.objectContaining({ accion: 'mensaje', updateId: '5' }),
+    );
+    expect(bot.alLlegar.mock.invocationCallOrder[0]).toBeLessThan(
+      cola.enqueue.mock.invocationCallOrder[0],
+    );
     expect(cola.enqueue.mock.calls[0][0]).toBe('soporte:7');
     expect(bot.procesar).toHaveBeenCalledWith(
       expect.objectContaining({ accion: 'mensaje', texto: 'hola' }),
       RT,
+      expect.any(Date),
+      expect.any(Number),
     );
   });
 

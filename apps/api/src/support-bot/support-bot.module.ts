@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { InboundQueueService } from '../chatbot/inbound-queue.service';
+import { LlmModule } from '../llm/llm.module';
 import { TelegramCoreModule } from '../telegram/telegram-core.module';
+import { SupportBotAnswerService } from './support-bot-answer.service';
+import { SupportBotKnowledgeService } from './support-bot-knowledge.service';
 import { SupportBotConfigService } from './support-bot-config.service';
 import { SupportBotSessionService } from './support-bot-session.service';
 import { SupportBotService } from './support-bot.service';
@@ -18,14 +21,14 @@ import {
  * interruptor apagado no existe ninguna de sus rutas y la tarjeta de Soporte no
  * aparece (la web lee el 404).
  *
- * Importa solo el cliente de Telegram, que no importa nada: nada del bot de los
- * pacientes (lección del ciclo de imports de la Fase 2 de Telegram; lo vigila
- * app.module.imports.spec.ts). Prisma, Redis y Crypto son globales. La cola de
- * entrada es una instancia PROPIA: los turnos del asistente no le quitan cupo a los
- * de los pacientes.
+ * Importa solo el cliente de Telegram y la fábrica de IA, que no importan nada:
+ * nada del bot de los pacientes (lección del ciclo de imports de la Fase 2 de
+ * Telegram; lo vigila app.module.imports.spec.ts). Prisma, Redis y Crypto son
+ * globales. La cola de entrada es una instancia PROPIA: los turnos del asistente
+ * no le quitan cupo a los de los pacientes.
  */
 @Module({
-  imports: [TelegramCoreModule],
+  imports: [TelegramCoreModule, LlmModule],
   controllers: [
     SupportBotWebhookController,
     SupportBotPanelController,
@@ -35,6 +38,8 @@ import {
     SupportBotConfigService,
     SupportBotSessionService,
     SupportBotService,
+    SupportBotKnowledgeService,
+    SupportBotAnswerService,
     InboundQueueService,
   ],
 })

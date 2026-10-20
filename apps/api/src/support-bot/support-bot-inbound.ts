@@ -50,6 +50,8 @@ export type EntradaDelAsistente =
       nombre: string | null;
       callbackId: string;
       datos: string;
+      /** El mensaje que tenía el botón (para quitárselo después de tocarlo). */
+      messageId: number | null;
     };
 
 const nombreDe = (u?: UsuarioTelegram) =>
@@ -83,6 +85,10 @@ export function leerUpdate(
       nombre: nombreDe(cb.from),
       callbackId: cb.id,
       datos: typeof cb.data === 'string' ? cb.data : '',
+      messageId:
+        typeof cb.message?.message_id === 'number'
+          ? cb.message.message_id
+          : null,
     };
   }
 

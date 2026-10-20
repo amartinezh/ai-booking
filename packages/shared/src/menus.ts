@@ -367,3 +367,37 @@ export function getMenusForRole(
 
   return menus;
 }
+
+/** Las banderas del menú que dependen del espejo de una clínica (ver `getMenusForRole`). */
+export interface BanderasDelEspejo {
+  /** Hay espejo configurado (aunque esté apagado: el administrador lo ve para reactivarlo). */
+  conEspejo: boolean;
+  /** Espejo encendido con el driver de avisos masivos, estén o no encendidos. */
+  conAvisosDriver: boolean;
+  /** Además, los avisos masivos encendidos. */
+  conAvisos: boolean;
+}
+
+/**
+ * Calcula las banderas a partir de la fila `HospitalMirrorConfig` de la clínica
+ * (`null` si no tiene). La usan la web (el menú) y el asistente de soporte (para
+ * saber qué opciones tiene quien pregunta): las dos tienen que dar lo mismo.
+ */
+export function banderasDelEspejo(
+  config: {
+    enabled: boolean;
+    driverKey: string;
+    avisosMasivos: unknown;
+  } | null,
+): BanderasDelEspejo {
+  if (!config)
+    return { conEspejo: false, conAvisosDriver: false, conAvisos: false };
+  const avisos = config.avisosMasivos as { enabled?: boolean } | null;
+  const conAvisosDriver =
+    config.enabled && config.driverKey === 'cnt-sanvicente-anserma';
+  return {
+    conEspejo: true,
+    conAvisosDriver,
+    conAvisos: conAvisosDriver && !!avisos?.enabled,
+  };
+}

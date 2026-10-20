@@ -1,6 +1,6 @@
 # Asistente de soporte por Telegram para el personal
 
-**Estado: APROBADO (2026-10-19); FASES 0 Y 1 HECHAS (2026-10-19), sin commit** (bitácoras en §11 y §12). Sigue la Fase 2. El usuario aprobó todas las recomendaciones de §8 con tres cambios suyos: **S3**, el código del panel se pide en cada conversación (§3.1); **S5**, la IA es la de cada clínica, no una de la plataforma; y **S14**, el horario del equipo es de lunes a viernes de 8:00 a 17:00.
+**Estado: APROBADO (2026-10-19); FASES 0 Y 1 EN COMMIT (`43fb304`); FASE 2 HECHA (2026-10-19), sin commit** (bitácoras en §11, §12 y §13). Falta correr el examen con un modelo real (§13). Sigue la Fase 3. El usuario aprobó todas las recomendaciones de §8 con tres cambios suyos: **S3**, el código del panel se pide en cada conversación (§3.1); **S5**, la IA es la de cada clínica, no una de la plataforma; y **S14**, el horario del equipo es de lunes a viernes de 8:00 a 17:00.
 
 ## 1. Qué se pide
 
@@ -473,4 +473,65 @@ Cada regla tiene cómo se garantiza: unas en el prompt, otras en el código, que
 - El bloque `handle /api/support-bot/webhook/*` en el Caddyfile REAL del servidor, con el procedimiento de siempre.
 - `SUPPORT_BOT_ENABLED=true` en `.env.production`.
 - Crear el bot en @BotFather y conectarlo desde `/super-admin/soporte-bot`.
+
+## 13. Bitácora de la Fase 2 (2026-10-19)
+
+### Qué quedó
+
+- **La IA, `conversar()`**: conversación de varios turnos en los tres proveedores, con JSON, tiempo máximo y tokens (también los de la caché).
+  - Claude marca la parte fija del sistema (instrucciones y manual) con `cache_control`.
+  - OpenAI y Gemini cachean solos el prefijo repetido, así que la parte fija va primero.
+  - Gemini no recibe tope de salida, porque en los modelos 2.5 el razonamiento cuenta contra él y la respuesta podría salir vacía.
+  - El código existente de los proveedores no cambió: solo se agregó.
+- **`packages/shared`**:
+  - `soporte-bot-prompt.ts`: las instrucciones (el contrato del §4), la ficha de la clínica, el prompt en dos piezas, el historial para la IA (enmascarado, sin turnos seguidos del mismo lado, empezando por el empleado) y cómo se arma la respuesta final, con IA y sin IA.
+  - Las secciones de la Parte 2 llevan un id citable (`parte2-N`).
+  - `banderasDelEspejo` sale de la web para que la API arme el mismo menú.
+- **API**:
+  - `SupportBotKnowledgeService`: lee `AGENIA.md` subiendo desde el directorio de trabajo o desde `AGENIA_CONOCIMIENTO_PATH`, con caché por fecha de modificación; arma el manual de cada rol una vez por versión y conserva el último bueno si el archivo se rompe.
+  - `SupportBotAnswerService`: los mensajes pendientes, el contexto, la IA de la clínica con su respaldo (`LLM_FAILOVER_ENABLED`) y el tope diario por clínica en Redis, con el modo sin IA ante cualquier falla.
+  - En `SupportBotService`: los mensajes seguidos se juntan (el webhook marca en Redis el último mensaje al llegar, antes de la cola), el «escribiendo…» y los botones «Me sirvió» / «No me sirvió», que se quitan del mensaje al tocarlos y guardan `feedback`.
+- **Base de datos**: migración `20261019210000_asistente_soporte_respuestas`, con `SupportBotMessage.aiKind` y `uncovered` para la lista «preguntas que el manual no cubrió» de la Fase 5.
+- **Telegram**: botones en `sendMessage`, `quitarBotones` (`editMessageReplyMarkup`) y `sendChatAction`.
+- **Examen** (`apps/api/src/support-bot/examen/`):
+  - 60 preguntas por rol y categoría (cómo hacer algo, mensajes de error, cosas de otro rol, fallas, lo que el manual no cubre, temas ajenos, seguridad, saludos y la ficha de la clínica).
+  - Un evaluador con reglas fijas y `pnpm --filter api examen:soporte`, que corre el banco contra un modelo real con el prompt de producción.
+  - Su prueba de CI verifica el banco (que los temas existan) y el evaluador, sin gastar tokens.
+- **`AGENIA.md`**: la guía y las preguntas del tema Soporte, la nota en «Conectar la inteligencia artificial», la tabla de configuración, la sección 15 y la bitácora.
+
+### Decisiones de detalle tomadas al construir
+
+- **Una migración nueva en vez de editar la de la Fase 0**: esa ya estaba en un commit (`43fb304`) y pudo haberse aplicado en alguna base.
+- **El super admin en modo prueba pregunta como el administrador** de la clínica elegida (su manual y su menú), pero sin el enlace al Centro de ayuda.
+- **Mientras no haya casos (Fase 3)**, lo que el manual no cubre y las fallas se ofrecen por el panel («Reportar Falla / Nueva Solicitud»). `/casos` y `/nuevo` siguen diciendo «muy pronto».
+- **La respuesta sin IA marca lo que no está en el menú** de quien pregunta y cierra con «Si con esto no basta, repórtalo en el panel…». Salió de leer el texto real en la prueba de punta a punta.
+- **Los mensajes seguidos esperan 2 s desde que llegaron**, no desde que empezó su turno. Sin Redis, cada mensaje se responde por separado.
+- **El tope diario de IA** cuenta por día de Colombia. Con tope 0 la clínica se atiende siempre sin IA, y sin Redis no hay tope.
+- **No hay alerta técnica** cuando el asistente se queda sin IA (Fase 5); por ahora queda en el log con su motivo.
+
+### Cómo se verificó
+
+- **API**: 3.487 pruebas en verde, con el umbral de cobertura cumplido. Las funciones bajaron de 94,2 % a 93,9 % (mínimo 93 %), en parte por el script del examen, que no se prueba porque gasta tokens. `nest build` sin errores y `eslint` limpio en lo tocado.
+- **`shared`**: 1.458 pruebas en verde; lo del asistente cubre el 100 % de sus funciones.
+- **Web**: 1.147 pruebas en verde; `tsc` sin errores y `next build` completo.
+- **Postgres 15 real**: la migración nueva sobre el esquema de la Fase 1 da cero diferencias, y la integración de sesiones (28 pruebas) sigue en verde.
+- **De punta a punta con la API real** (Postgres y Redis desechables y el Telegram falso): 14 comprobaciones en verde.
+  - La pregunta escrita antes del código se responde al validarlo.
+  - Sin IA en la clínica, el buscador trae lo de «Agendas (Slots)», marca que no está en el menú de la agente y dice cómo reportarlo, sin botones.
+  - Se muestra «escribiendo…».
+  - Dos mensajes seguidos dan una sola respuesta, que tiene en cuenta el segundo.
+  - `/ayuda` responde al instante y `/casos` sigue diciendo «muy pronto».
+  - Un botón viejo se responde sin hacer nada.
+  - Lección: la prueba repetida reusó los mismos `update_id` y la API los descartó como reintentos de Telegram, que es lo correcto; el guion ahora usa números y cuentas nuevos en cada corrida.
+
+### Pendiente para cerrar la Fase 2: el examen con un modelo real
+
+En este equipo no hay ninguna clave de IA (las de cada clínica están cifradas en su base). Para correrlo:
+
+```sh
+EXAMEN_PROVEEDOR=GEMINI EXAMEN_API_KEY=… EXAMEN_MODELO=gemini-2.5-flash \
+  pnpm --filter api examen:soporte
+```
+
+Repetirlo con cada modelo que usen las clínicas en producción. Para aprobar: al menos 90 % de temas correctos, cero respuestas ilegibles y cero violaciones. Cada corrida son 60 llamadas con unos 30.000 tokens de entrada cada una, casi todos de la caché a partir de la segunda. El reporte queda en `examen-soporte-<proveedor>.json`.
 

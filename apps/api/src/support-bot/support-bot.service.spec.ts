@@ -13,6 +13,10 @@ import type { TelegramApiClient } from '../telegram/telegram-api.client';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { RedisService } from '../redis/redis.service';
 import type { SupportBotRuntime } from './support-bot.types';
+import type {
+  RespuestaArmada,
+  SupportBotAnswerService,
+} from './support-bot-answer.service';
 
 /**
  * El turno del asistente (Fase 1). Lo que no puede fallar:
@@ -59,6 +63,24 @@ describe('SupportBotService', () => {
   let api: Record<string, jest.Mock>;
   let redis: Record<string, jest.Mock>;
   let service: SupportBotService;
+  let respuestas: { responder: jest.Mock };
+  let conversaciones: { updateMany: jest.Mock };
+  let ultimo: Map<string, string>;
+  const ARMADA: RespuestaArmada = {
+    texto: 'Pulsa «Clonar Día».',
+    botonesUtil: true,
+    registro: {
+      source: 'IA',
+      aiKind: 'respuesta',
+      uncovered: false,
+      topics: ['agenda'],
+      aiProvider: 'GEMINI',
+      inputTokens: 30_000,
+      outputTokens: 80,
+      latencyMs: 1200,
+    },
+    motivoSinIA: null,
+  };
 
   const msg = (texto: string | null, updateId = '100') => ({
     accion: 'mensaje' as const,
@@ -101,12 +123,23 @@ describe('SupportBotService', () => {
         return { ok: true, result: { message_id: 1 } };
       }),
       answerCallbackQuery: jest.fn(async () => ({ ok: true, result: true })),
+      sendChatAction: jest.fn(async () => ({ ok: true, result: true })),
+      quitarBotones: jest.fn(async () => ({ ok: true, result: true })),
     };
+    ultimo = new Map();
     redis = {
       incr: jest.fn(async () => ++contador),
       expire: jest.fn(async () => 1),
+      set: jest.fn(async (k: string, v: string) => {
+        ultimo.set(k, v);
+        return 'OK';
+      }),
+      get: jest.fn(async (k: string) => ultimo.get(k) ?? null),
     };
+    respuestas = { responder: jest.fn(async () => ARMADA) };
+    conversaciones = { updateMany: jest.fn(async () => ({ count: 1 })) };
     const prisma = {
+      supportBotConversation: conversaciones,
       supportBotMessage: {
         create: jest.fn(async ({ data }) => {
           if (
@@ -135,7 +168,9 @@ describe('SupportBotService', () => {
       api as unknown as TelegramApiClient,
       config as unknown as SupportBotConfigService,
       sesiones as unknown as SupportBotSessionService,
+      respuestas as unknown as SupportBotAnswerService,
     );
+    (service as unknown as { agruparMs: number }).agruparMs = 0;
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -195,13 +230,13 @@ describe('SupportBotService', () => {
       await service.procesar(msg('482913'), RT);
       expect(textos()).toEqual([
         'Listo, Ana. Hablas como Agente de Reservas de Hospital de Prueba (a***@clinica.co). Si no fuiste tú, escribe /salir.',
-        TEXTOS_SOPORTE.enConstruccion,
+        'Pulsa «Clonar Día».',
       ]);
-      // El código no queda registrado; la pregunta guardada, sí.
+      // El código no queda registrado; la pregunta guardada, sí, y se responde con el manual.
       expect(registrados.map((r) => [r.direction, r.text])).toEqual([
         ['SALIDA', expect.stringContaining('Listo, Ana')],
         ['ENTRADA', '¿cómo copio la agenda?'],
-        ['SALIDA', TEXTOS_SOPORTE.enConstruccion],
+        ['SALIDA', 'Pulsa «Clonar Día».'],
       ]);
     });
 
@@ -250,27 +285,165 @@ describe('SupportBotService', () => {
       estado = { tipo: 'VIGENTE', interlocutor: ANA };
     });
 
-    it('una pregunta: queda registrada, mantiene viva la conversación y responde (Fase 1: texto fijo)', async () => {
+    it('una pregunta: queda registrada, mantiene viva la conversación y responde con el manual', async () => {
       await service.procesar(msg('¿cómo copio la agenda?', '200'), RT);
+      expect(respuestas.responder).toHaveBeenCalledWith(
+        ANA,
+        RT,
+        expect.any(Date),
+      );
       expect(registrados).toEqual([
         expect.objectContaining({
           direction: 'ENTRADA',
           text: '¿cómo copio la agenda?',
           telegramUpdateId: '200',
+          source: null,
         }),
         expect.objectContaining({
           direction: 'SALIDA',
-          text: TEXTOS_SOPORTE.enConstruccion,
+          text: 'Pulsa «Clonar Día».',
           telegramUpdateId: null,
+          // Lo que respondió la IA queda para las cifras: tipo, temas, tokens.
+          source: 'IA',
+          aiKind: 'respuesta',
+          topics: ['agenda'],
+          aiProvider: 'GEMINI',
+          inputTokens: 30_000,
+          outputTokens: 80,
+          latencyMs: 1200,
+          uncovered: false,
+          telegramMessageId: '1',
         }),
       ]);
       expect(sesiones.tocar).toHaveBeenCalledWith('conv-1', expect.any(Date));
     });
 
+    it('la respuesta lleva los botones «Me sirvió» / «No me sirvió» y muestra «escribiendo…»', async () => {
+      await service.procesar(msg('¿cómo copio la agenda?'), RT);
+      expect(api.sendChatAction).toHaveBeenCalledWith('TOKEN', '777');
+      expect(api.sendMessage.mock.calls[0][3]).toEqual({
+        botones: [
+          [
+            { texto: '✅ Me sirvió', datos: 's1:UTIL_SI' },
+            { texto: '🙋 No me sirvió', datos: 's1:UTIL_NO' },
+          ],
+        ],
+      });
+    });
+
+    it('sin botones cuando la respuesta no los lleva', async () => {
+      respuestas.responder.mockResolvedValue({ ...ARMADA, botonesUtil: false });
+      await service.procesar(msg('hola'), RT);
+      expect(api.sendMessage.mock.calls[0][3]).toEqual({});
+    });
+
+    it('una pregunta que el manual no cubre marca la conversación', async () => {
+      respuestas.responder.mockResolvedValue({
+        ...ARMADA,
+        botonesUtil: false,
+        registro: { ...ARMADA.registro, uncovered: true, topics: [] },
+      });
+      await service.procesar(msg('¿puedo exportar a Excel?'), RT);
+      expect(conversaciones.updateMany).toHaveBeenCalledWith({
+        where: { id: 'conv-1' },
+        data: { hadUncoveredQuestion: true },
+      });
+      expect(registrados[1]).toMatchObject({ uncovered: true });
+    });
+
+    it('sin IA, igual responde (y lo deja en el log)', async () => {
+      respuestas.responder.mockResolvedValue({
+        ...ARMADA,
+        texto: 'Lo más cercano del manual…',
+        botonesUtil: false,
+        registro: { ...ARMADA.registro, source: 'SIN_IA', aiProvider: null },
+        motivoSinIA: 'SIN_IA_CONFIGURADA',
+      });
+      await service.procesar(msg('¿cómo copio la agenda?'), RT);
+      expect(textos()).toEqual(['Lo más cercano del manual…']);
+      expect(registrados[1]).toMatchObject({ source: 'SIN_IA' });
+    });
+
+    it('si no hay nada pendiente, no responde', async () => {
+      respuestas.responder.mockResolvedValue(null);
+      await service.procesar(msg('hola'), RT);
+      expect(enviados).toEqual([]);
+    });
+
+    it('🧩 mensajes seguidos: el primero no responde si detrás llegó otro; el último responde los dos', async () => {
+      await service.alLlegar(msg('hola', '501'));
+      await service.alLlegar(msg('no me deja clonar la agenda', '502'));
+      await service.procesar(msg('hola', '501'), RT);
+      expect(respuestas.responder).not.toHaveBeenCalled();
+      await service.procesar(msg('no me deja clonar la agenda', '502'), RT);
+      expect(respuestas.responder).toHaveBeenCalledTimes(1);
+      // Los dos quedaron registrados; una sola respuesta.
+      expect(registrados.filter((r) => r.direction === 'ENTRADA')).toHaveLength(
+        2,
+      );
+      expect(textos()).toEqual(['Pulsa «Clonar Día».']);
+    });
+
+    it('alLlegar solo marca el texto libre (no comandos, códigos, botones ni lo que no es texto)', async () => {
+      for (const t of ['/salir', '482 913', null])
+        await service.alLlegar(msg(t, '9'));
+      await service.alLlegar({
+        accion: 'boton',
+        updateId: '9',
+        telegramUserId: '777',
+        chatId: '777',
+        nombre: null,
+        callbackId: 'c',
+        datos: 's1:UTIL_SI',
+        messageId: 1,
+      });
+      expect(redis.set).not.toHaveBeenCalled();
+      await service.alLlegar(msg('una pregunta', '10'));
+      expect(redis.set).toHaveBeenCalledWith(
+        'soporte:ultimo:777',
+        '10',
+        'EX',
+        60,
+      );
+    });
+
+    it('sin Redis, cada mensaje se responde por separado', async () => {
+      redis.set.mockRejectedValue(new Error('caído'));
+      redis.get.mockRejectedValue(new Error('caído'));
+      await service.alLlegar(msg('hola', '601'));
+      await service.procesar(msg('hola', '601'), RT);
+      expect(respuestas.responder).toHaveBeenCalledTimes(1);
+    });
+
+    it('espera a que lleguen mensajes seguidos, contando desde que llegó', async () => {
+      const esperas: number[] = [];
+      (service as unknown as { agruparMs: number }).agruparMs = 2000;
+      (
+        service as unknown as { esperar: (ms: number) => Promise<void> }
+      ).esperar = async (ms) => {
+        esperas.push(ms);
+      };
+      await service.procesar(
+        msg('hola', '701'),
+        RT,
+        new Date(),
+        Date.now() - 500,
+      );
+      expect(esperas[0]).toBeGreaterThan(1400);
+      expect(esperas[0]).toBeLessThanOrEqual(1500);
+      await service.procesar(
+        msg('hola', '702'),
+        RT,
+        new Date(),
+        Date.now() - 5000,
+      );
+      expect(esperas[1]).toBe(0);
+    });
+
     it('🔁 el mismo update_id dos veces se atiende una sola', async () => {
       await service.procesar(msg('hola', '300'), RT);
       await service.procesar(msg('hola', '300'), RT);
-      expect(textos()).toEqual([TEXTOS_SOPORTE.enConstruccion]);
+      expect(respuestas.responder).toHaveBeenCalledTimes(1);
     });
 
     it('/salir cierra la conversación', async () => {
@@ -371,6 +544,63 @@ describe('SupportBotService', () => {
     });
   });
 
+  describe('botones «Me sirvió» / «No me sirvió»', () => {
+    const boton = (datos: string, messageId: number | null = 42) => ({
+      accion: 'boton' as const,
+      updateId: '900',
+      telegramUserId: '777',
+      chatId: '777',
+      nombre: 'Ana',
+      callbackId: 'cb',
+      datos,
+      messageId,
+    });
+
+    beforeEach(() => {
+      estado = { tipo: 'VIGENTE', interlocutor: ANA };
+    });
+
+    it('«Me sirvió»: lo agradece, quita los botones y lo anota', async () => {
+      await service.procesar(boton('s1:UTIL_SI'), RT);
+      expect(api.answerCallbackQuery).toHaveBeenCalledWith(
+        'TOKEN',
+        'cb',
+        TEXTOS_SOPORTE.meSirvio,
+      );
+      expect(api.quitarBotones).toHaveBeenCalledWith('TOKEN', '777', 42);
+      expect(conversaciones.updateMany).toHaveBeenCalledWith({
+        where: { id: 'conv-1' },
+        data: { feedback: 'UTIL' },
+      });
+      expect(enviados).toEqual([]);
+    });
+
+    it('«No me sirvió»: lo anota y ofrece seguir o reportarlo', async () => {
+      await service.procesar(boton('s1:UTIL_NO'), RT);
+      expect(conversaciones.updateMany).toHaveBeenCalledWith({
+        where: { id: 'conv-1' },
+        data: { feedback: 'NO_UTIL' },
+      });
+      expect(textos()).toEqual([TEXTOS_SOPORTE.noMeSirvio]);
+    });
+
+    it('sin el mensaje del botón, no intenta quitarlo', async () => {
+      await service.procesar(boton('s1:UTIL_SI', null), RT);
+      expect(api.quitarBotones).not.toHaveBeenCalled();
+    });
+
+    it('sin conversación abierta, pide el código', async () => {
+      estado = { tipo: 'NINGUNA' };
+      await service.procesar(boton('s1:UTIL_SI'), RT);
+      expect(api.answerCallbackQuery).toHaveBeenCalledWith(
+        'TOKEN',
+        'cb',
+        TEXTOS_SOPORTE.escribeElCodigo,
+      );
+      expect(conversaciones.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
   it('un botón se responde para que Telegram no lo deje cargando', async () => {
     await service.procesar(
       {
@@ -381,6 +611,7 @@ describe('SupportBotService', () => {
         nombre: 'Ana',
         callbackId: 'cb',
         datos: 's1:CASO_SI',
+        messageId: 7,
       },
       RT,
     );

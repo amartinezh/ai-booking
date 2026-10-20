@@ -54,6 +54,14 @@ export interface SeccionParte2 {
   texto: string;
 }
 
+/**
+ * Id citable de una sección de la Parte 2 («parte2-4» = «4. Recordatorios»): la IA
+ * también puede apoyarse en ella, y una respuesta así no es «no cubierta».
+ */
+export function idDeSeccionParte2(numero: number): string {
+  return `parte2-${numero}`;
+}
+
 const RE_PARTE = /^# Parte (\d+)\b/;
 const RE_SECCION = /^## (\d+)\.\s+(.+?)\s*$/;
 
@@ -139,7 +147,7 @@ export interface ManualDelAsistente {
   temasDeOtroRol: string[];
   /** Opciones de su menú que el manual no explica (p. ej. «Mi Agenda» del médico). */
   opcionesSinTema: string[];
-  /** Todo lo que la IA puede citar: los ids de los temas y el glosario. */
+  /** Todo lo que la IA puede citar: los temas, el glosario y las secciones permitidas de la Parte 2. */
   temasValidos: Set<string>;
 }
 
@@ -167,9 +175,13 @@ export function armarManualDelAsistente(p: {
     )
     .map((m) => m.label);
 
-  const parte2 = seccionesDeLaParte2(p.markdown)
-    .filter((s) => PARTE2_PARA_EL_ASISTENTE[s.titulo] === true)
-    .map((s) => s.texto);
+  const permitidas = seccionesDeLaParte2(p.markdown).filter(
+    (s) => PARTE2_PARA_EL_ASISTENTE[s.titulo] === true,
+  );
+  // El encabezado lleva su id, como los temas de la Parte 1: así la IA lo puede citar.
+  const parte2 = permitidas.map((s) =>
+    s.texto.replace(/^(## .+?)\s*$/m, `$1 {#${idDeSeccionParte2(s.numero)}}`),
+  );
 
   const comun = [
     '# Manual de AgenIA',
@@ -200,6 +212,10 @@ export function armarManualDelAsistente(p: {
     temasDelUsuario,
     temasDeOtroRol,
     opcionesSinTema,
-    temasValidos: new Set([...contenido.temas.map((t) => t.id), GLOSARIO_ID]),
+    temasValidos: new Set([
+      ...contenido.temas.map((t) => t.id),
+      GLOSARIO_ID,
+      ...permitidas.map((s) => idDeSeccionParte2(s.numero)),
+    ]),
   };
 }

@@ -461,12 +461,13 @@ export type {
   TipoFragmento,
 } from './src/conocimiento-buscador';
 // Menú del panel por rol.
-export { getMenusForRole } from './src/menus';
-export type { MenuAccent, MenuItem, UserRole } from './src/menus';
+export { banderasDelEspejo, getMenusForRole } from './src/menus';
+export type { BanderasDelEspejo, MenuAccent, MenuItem, UserRole } from './src/menus';
 // Asistente de soporte por Telegram (docs/PLAN_BOT_SOPORTE.md).
 export {
   AJUSTES_SOPORTE_POR_DEFECTO,
   COMANDOS_SOPORTE,
+  ETIQUETAS_BOTON,
   LIMITES_SOPORTE,
   MOTIVOS_CIERRE,
   RE_CODIGO_ENLACE,
@@ -508,6 +509,7 @@ export type {
 export {
   PARTE2_PARA_EL_ASISTENTE,
   armarManualDelAsistente,
+  idDeSeccionParte2,
   esCitaValida,
   parte1EnBruto,
   seccionesDeLaParte2,
@@ -537,3 +539,20 @@ export {
   textoCuandoLoVeElEquipo,
 } from './src/soporte-horario';
 export type { HorarioEquipo } from './src/soporte-horario';
+export {
+  INSTRUCCIONES_DEL_ASISTENTE,
+  enlaceDeAyuda,
+  haceCuanto,
+  promptDelAsistente,
+  respuestaConIA,
+  respuestaSinIA,
+  textoFichaDeLaClinica,
+  turnosParaLaIA,
+} from './src/soporte-bot-prompt';
+export type {
+  FichaClinica,
+  PromptDelAsistente,
+  RespuestaAlEmpleado,
+  ResultadoDelManual,
+  TurnoParaLaIA,
+} from './src/soporte-bot-prompt';

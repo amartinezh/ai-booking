@@ -1,4 +1,4 @@
-import { getMenusForRole } from './menus';
+import { banderasDelEspejo, getMenusForRole } from './menus';
 
 describe('getMenusForRole', () => {
   it('devuelve el menú de paciente para PATIENT', () => {
@@ -374,5 +374,52 @@ describe('Límite de citas y solicitudes de más citas (2026-10-14)', () => {
     });
     expect(menus.find((m) => m.href === '/dashboard/bandeja')?.badge).toBe(3);
     expect(menus.find((m) => m.href === SOLICITUDES)?.badge).toBe(1);
+  });
+});
+
+describe('banderasDelEspejo', () => {
+  it('sin espejo, nada', () => {
+    expect(banderasDelEspejo(null)).toEqual({
+      conEspejo: false,
+      conAvisosDriver: false,
+      conAvisos: false,
+    });
+  });
+
+  it('con espejo apagado, solo conEspejo (el administrador lo ve para reactivarlo)', () => {
+    expect(
+      banderasDelEspejo({
+        enabled: false,
+        driverKey: 'cnt-sanvicente-anserma',
+        avisosMasivos: { enabled: true },
+      }),
+    ).toEqual({ conEspejo: true, conAvisosDriver: false, conAvisos: false });
+  });
+
+  it('con el driver de avisos: avisos según su interruptor', () => {
+    const base = { enabled: true, driverKey: 'cnt-sanvicente-anserma' };
+    expect(banderasDelEspejo({ ...base, avisosMasivos: null })).toEqual({
+      conEspejo: true,
+      conAvisosDriver: true,
+      conAvisos: false,
+    });
+    expect(
+      banderasDelEspejo({ ...base, avisosMasivos: { enabled: true } })
+        .conAvisos,
+    ).toBe(true);
+  });
+
+  it('otro driver no tiene avisos', () => {
+    expect(
+      banderasDelEspejo({
+        enabled: true,
+        driverKey: 'otro',
+        avisosMasivos: { enabled: true },
+      }),
+    ).toEqual({
+      conEspejo: true,
+      conAvisosDriver: false,
+      conAvisos: false,
+    });
   });
 });

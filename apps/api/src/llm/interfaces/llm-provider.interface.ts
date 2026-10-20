@@ -196,6 +196,40 @@ export interface ClinicalRecordDraft {
   }>;
 }
 
+/** Un turno de una conversación (asistente de soporte, docs/PLAN_BOT_SOPORTE.md). */
+export interface TurnoConversacion {
+  rol: 'usuario' | 'asistente';
+  texto: string;
+}
+
+export interface PeticionConversacion {
+  /**
+   * Las instrucciones del sistema en dos piezas: `fijo` es igual para todos (va
+   * primero, y Claude lo marca para la caché de prompt; Gemini y OpenAI cachean
+   * solos un prefijo repetido) y `variable` cambia en cada turno.
+   */
+  sistema: { fijo: string; variable: string };
+  /** Empieza por el usuario y termina en el usuario. */
+  turnos: TurnoConversacion[];
+  /** Pedir la respuesta en JSON (el llamador la valida igual). */
+  json: boolean;
+  /** Tope de tokens de salida (Gemini lo ignora: en 2.5 el razonamiento cuenta y vaciaría la respuesta). */
+  maxTokens?: number;
+  /** Tiempo máximo de la llamada. */
+  timeoutMs?: number;
+}
+
+export interface RespuestaConversacion {
+  texto: string;
+  /** El modelo que respondió (con el respaldo de Gemini puede no ser el configurado). */
+  modelo: string;
+  /** Tokens de entrada, contando los que salieron de la caché. */
+  tokensEntrada: number | null;
+  tokensSalida: number | null;
+  /** Tokens de entrada que salieron de la caché del proveedor. */
+  tokensCache: number | null;
+}
+
 export interface LLMProvider {
   /** Identifica al proveedor — útil para logs y telemetría. */
   readonly name: 'GEMINI' | 'CHATGPT' | 'CLAUDE';
@@ -225,6 +259,12 @@ export interface LLMProvider {
    * El llamador arma el prompt; el provider solo lo ejecuta.
    */
   answerFAQ(systemPrompt: string, question: string): Promise<string>;
+
+  /**
+   * Una conversación de varios turnos (el asistente de soporte del personal). Lanza
+   * si el proveedor falla: quien llama decide el respaldo.
+   */
+  conversar(p: PeticionConversacion): Promise<RespuestaConversacion>;
 
   /**
    * Mapeo semántico: dada la frase del paciente y el catálogo real de la

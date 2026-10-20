@@ -455,6 +455,43 @@ describe('TelegramApiClient — alertas técnicas', () => {
     expect(body(1)).toEqual({ callback_query_id: 'cb2', text: 'Listo' });
   });
 
+  it('sendMessage con botones arma el teclado en línea', async () => {
+    fetchMock.mockResolvedValue(
+      json(200, { ok: true, result: { message_id: 9 } }),
+    );
+    await client.sendMessage(TOKEN, '7', 'hola', {
+      botones: [
+        [
+          { texto: '✅ Me sirvió', datos: 's1:UTIL_SI' },
+          { texto: '🙋 No me sirvió', datos: 's1:UTIL_NO' },
+        ],
+      ],
+    });
+    expect(body().reply_markup).toEqual({
+      inline_keyboard: [
+        [
+          { text: '✅ Me sirvió', callback_data: 's1:UTIL_SI' },
+          { text: '🙋 No me sirvió', callback_data: 's1:UTIL_NO' },
+        ],
+      ],
+    });
+  });
+
+  it('quitarBotones deja el mensaje sin teclado; sendChatAction pone «escribiendo…»', async () => {
+    fetchMock.mockResolvedValue(json(200, { ok: true, result: true }));
+    await client.quitarBotones(TOKEN, '7', 9);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `https://api.telegram.org/bot${TOKEN}/editMessageReplyMarkup`,
+    );
+    expect(body()).toEqual({
+      chat_id: '7',
+      message_id: 9,
+      reply_markup: { inline_keyboard: [] },
+    });
+    await client.sendChatAction(TOKEN, '7');
+    expect(body(1)).toEqual({ chat_id: '7', action: 'typing' });
+  });
+
   it('setMyCommands publica el menú del bot', async () => {
     fetchMock.mockResolvedValue(json(200, { ok: true, result: true }));
     await client.setMyCommands(TOKEN, [

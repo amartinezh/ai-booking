@@ -61,6 +61,8 @@ export interface SupportBotRuntime {
   conversationIdleMinutes: number;
   maxMessagesPerHour: number;
   maxMessageChars: number;
+  /** Tope de respuestas con IA por clínica al día; pasado, modo sin IA (S15). */
+  maxAiTurnsPerOrgPerDay: number;
 }
 
 /** El código recién generado, para mostrarlo en el panel. */

@@ -64,9 +64,12 @@ export class SupportBotWebhookController {
 
     const clave = `soporte:${entrada.updateId}`;
     if (!(await this.cola.admit(clave))) return { ok: true };
+    // Antes de la cola: así el turno de un mensaje sabe si detrás venía otro.
+    const recibidoEn = Date.now();
+    await this.bot.alLlegar(entrada);
     const aceptada = this.cola.enqueue(
       `soporte:${entrada.telegramUserId}`,
-      () => this.bot.procesar(entrada, rt),
+      () => this.bot.procesar(entrada, rt, new Date(), recibidoEn),
     );
     if (!aceptada) {
       await this.cola.releaseAdmission(clave);

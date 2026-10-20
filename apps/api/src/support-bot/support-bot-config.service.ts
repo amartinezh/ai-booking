@@ -467,6 +467,7 @@ export class SupportBotConfigService {
       conversationIdleMinutes: row.conversationIdleMinutes,
       maxMessagesPerHour: row.maxMessagesPerHour,
       maxMessageChars: row.maxMessageChars,
+      maxAiTurnsPerOrgPerDay: row.maxAiTurnsPerOrgPerDay,
     };
   }
 

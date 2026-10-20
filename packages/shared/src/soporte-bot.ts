@@ -639,6 +639,12 @@ export function leerBoton(datos: string): BotonSoporte | null {
 // Textos fijos (sin IA). Tuteo, como el Centro de ayuda.
 // ─────────────────────────────────────────────────────────────
 
+/** Lo que dicen los botones del teclado en línea. */
+export const ETIQUETAS_BOTON = {
+  UTIL_SI: '✅ Me sirvió',
+  UTIL_NO: '🙋 No me sirvió',
+} as const;
+
 const plural = (n: number, uno: string, varios: string) =>
   n === 1 ? uno : varios;
 
@@ -669,9 +675,22 @@ export const TEXTOS_SOPORTE = {
   yaConversando: 'Ya estamos conversando. Cuéntame qué necesitas.',
   ayuda:
     'Puedo ayudarte con dudas sobre AgenIA: cómo se hace algo en el panel o qué significa un aviso o un error. Si algo falla, abro un caso para el equipo técnico y te aviso por aquí cómo va. Comandos: /casos para ver tus casos, /nuevo para reportar una falla y /salir para cerrar la conversación.',
-  /** Mientras se construyen las respuestas con el manual (Fase 2) y los casos (Fase 3). */
+  /** Mientras se construyen los casos (Fase 3): /casos y /nuevo. */
   enConstruccion:
-    'Todavía estoy aprendiendo: muy pronto podré responder tus preguntas y abrir casos desde aquí. Mientras tanto, usa el panel › Soporte.',
+    'Muy pronto podré mostrarte tus casos y abrirlos desde aquí. Mientras tanto, los ves y los reportas en el panel › Soporte.',
+  /** Mientras el bot no abre casos (Fase 3): cuando el manual no lo cubre o es una falla. */
+  casoPorElPanel:
+    'Para que el equipo técnico lo revise, repórtalo en el panel › Soporte con «Reportar Falla / Nueva Solicitud». Muy pronto podré abrir el caso desde aquí.',
+  /** El cierre de la respuesta sin IA. */
+  sinIACierre:
+    'Si con esto no basta, repórtalo en el panel › Soporte con «Reportar Falla / Nueva Solicitud» y el equipo técnico lo revisa.',
+  sinIASinResultados:
+    'Ahora mismo no puedo pensar la respuesta con calma, y no encontré nada parecido en el manual.',
+  meSirvio: '¡Qué bien! Aquí estoy si necesitas algo más.',
+  noMeSirvio:
+    'Lamento que no te sirviera. Cuéntame con otras palabras qué necesitas, o repórtalo en el panel › Soporte con «Reportar Falla / Nueva Solicitud» para que el equipo técnico lo revise.',
+  escribeElCodigo:
+    'Para continuar, escribe un código nuevo del panel › Soporte.',
   cerradaPorOtra:
     'Tu conversación se cerró porque se abrió otra con tu usuario. Si no fuiste tú, cambia tu contraseña y avísale al equipo desde el panel › Soporte.',
   accesoRevocado:

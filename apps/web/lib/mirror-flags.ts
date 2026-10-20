@@ -1,3 +1,4 @@
+import { banderasDelEspejo } from '@agenia/shared';
 import { prisma } from './prisma';
 
 /**
@@ -35,14 +36,6 @@ export async function getTenantMirrorFlags(
         where: { organizationId },
         select: { enabled: true, driverKey: true, avisosMasivos: true },
     });
-    if (!config) return empty;
-
-    const avisosMasivos = config.avisosMasivos as { enabled?: boolean } | null;
-    const conAvisosDriver = config.enabled && config.driverKey === 'cnt-sanvicente-anserma';
-
-    return {
-        conEspejo: true,
-        conAvisosDriver,
-        conAvisos: conAvisosDriver && !!avisosMasivos?.enabled,
-    };
+    // La regla vive en @agenia/shared: el asistente de soporte la usa igual.
+    return banderasDelEspejo(config);
 }

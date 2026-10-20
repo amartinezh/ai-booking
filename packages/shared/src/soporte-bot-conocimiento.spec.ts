@@ -212,10 +212,21 @@ describe('armarManualDelAsistente con el archivo real', () => {
     );
   });
 
-  it('se puede citar cualquier tema y el glosario', () => {
+  it('se puede citar cualquier tema, el glosario y las secciones permitidas de la Parte 2', () => {
     expect(agente.temasValidos.has('agenda')).toBe(true);
     expect(agente.temasValidos.has('glosario')).toBe(true);
-    expect(agente.temasValidos.size).toBe(CONTENIDO.temas.length + 1);
+    expect(agente.temasValidos.has('parte2-4')).toBe(true);
+    // Las que el asistente no lee, tampoco se citan.
+    expect(agente.temasValidos.has('parte2-10')).toBe(false);
+    expect(agente.temasValidos.has('parte2-12')).toBe(false);
+    expect(agente.temasValidos.size).toBe(CONTENIDO.temas.length + 1 + 12);
+  });
+
+  it('cada sección de la Parte 2 lleva su id citable en el encabezado', () => {
+    expect(agente.comun).toContain('## 4. Recordatorios {#parte2-4}');
+    expect(agente.comun).toContain(
+      '## 13. Limitaciones conocidas y pendientes {#parte2-13}',
+    );
   });
 
   it('un rol sin menú dice «ninguna»', () => {

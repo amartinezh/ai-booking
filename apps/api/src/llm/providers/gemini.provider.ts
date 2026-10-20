@@ -12,6 +12,8 @@ import {
   VocabularyHints,
   normalizeIntent,
   asNullableString,
+  PeticionConversacion,
+  RespuestaConversacion,
 } from '../interfaces/llm-provider.interface';
 import {
   CLINICAL_RECORD_PROMPT,
@@ -164,6 +166,40 @@ export class GeminiProvider implements LLMProvider {
       return model.generateContent([systemPrompt, `Pregunta: "${question}"`]);
     });
     return result.response.text().trim();
+  }
+
+  async conversar(p: PeticionConversacion): Promise<RespuestaConversacion> {
+    let modelo = this.model;
+    const result = await this.withModelFallback((modelName) => {
+      modelo = modelName;
+      // Sin `maxOutputTokens`: en los modelos 2.5 el razonamiento cuenta contra ese
+      // tope y una respuesta podría salir vacía. Gemini cachea solo el prefijo
+      // repetido de las instrucciones (la parte fija va primero).
+      const model = this.client.getGenerativeModel(
+        {
+          model: modelName,
+          systemInstruction: `${p.sistema.fijo}\n\n${p.sistema.variable}`,
+          ...(p.json
+            ? { generationConfig: { responseMimeType: 'application/json' } }
+            : {}),
+        },
+        { timeout: p.timeoutMs ?? 30_000 },
+      );
+      return model.generateContent({
+        contents: p.turnos.map((t) => ({
+          role: t.rol === 'usuario' ? 'user' : 'model',
+          parts: [{ text: t.texto }],
+        })),
+      });
+    });
+    const u = result.response.usageMetadata;
+    return {
+      texto: result.response.text(),
+      modelo,
+      tokensEntrada: u?.promptTokenCount ?? null,
+      tokensSalida: u?.candidatesTokenCount ?? null,
+      tokensCache: u?.cachedContentTokenCount ?? null,
+    };
   }
 
   async ping(): Promise<string> {
