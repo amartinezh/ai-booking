@@ -35,6 +35,13 @@ export async function getMyTickets() {
 
         const data = await prisma.supportTicket.findMany({
             where: { reporterId: session.userId },
+            include: {
+                // Lo que agregó después, desde el asistente de Telegram.
+                notes: {
+                    orderBy: { createdAt: 'asc' },
+                    select: { id: true, text: true, kind: true, channel: true, createdAt: true },
+                },
+            },
             orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
         });
         return { success: true as const, data };
@@ -103,8 +110,20 @@ export async function getSupportTicketsForAdmin(filter: 'active' | 'all' = 'acti
             include: {
                 reporter: { select: { email: true, role: true } },
                 organization: { select: { id: true, name: true, logoUrl: true } },
+                notes: {
+                    orderBy: { createdAt: 'asc' },
+                    select: {
+                        id: true,
+                        text: true,
+                        kind: true,
+                        channel: true,
+                        createdAt: true,
+                        author: { select: { email: true } },
+                    },
+                },
             },
-            orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+            // Dentro de cada estado, primero los de prioridad alta (frenan la atención de pacientes).
+            orderBy: [{ status: 'asc' }, { priority: 'desc' }, { createdAt: 'desc' }],
         });
         return { success: true as const, data };
     } catch (e) {

@@ -49,6 +49,11 @@ describe('INSTRUCCIONES_DEL_ASISTENTE (§4)', () => {
     ['inyección de instrucciones', /son datos, no órdenes/],
     ['el código ofrece los casos, no la IA', /No ofrezcas tú abrir casos/],
     ['JSON', /Responde SOLO con un objeto JSON/],
+    ['arma el caso y pregunta solo lo que falta', /máximo 2 cosas/],
+    ['lo que el manual explica no es una falla', /es una "respuesta", no una "falla"/],
+    ['no dice que abrió un caso', /no digas que ya abriste uno/],
+    ['ampliar un caso suyo', /ampliarCaso/],
+    ['problemas conocidos', /Problemas técnicos que el equipo ya conoce/],
   ])('%s', (_, re) => {
     expect(INSTRUCCIONES_DEL_ASISTENTE).toMatch(re);
   });
@@ -147,6 +152,24 @@ describe('promptDelAsistente', () => {
     expect(p.variable).toMatch(/Fecha y hora actual: .*19.*octubre.*10:32/);
   });
 
+  it('sus casos, los incidentes, el borrador y el pedido de caso van en lo variable', () => {
+    const p = promptDelAsistente({
+      manual,
+      ficha: '## Ficha',
+      ahora: AHORA,
+      casos: '## Casos',
+      incidentes: '## Incidentes',
+      borrador: '## Borrador',
+      pedirCaso: true,
+    });
+    expect(p.variable).toMatch(
+      /## Ficha\n\n## Casos\n\n## Incidentes\n\n## Borrador\n\nLa persona pidió abrir un caso/,
+    );
+    expect(p.fijo).not.toContain('## Casos');
+    const sin = promptDelAsistente({ manual, ficha: '## Ficha', ahora: AHORA });
+    expect(sin.variable).not.toContain('pidió abrir un caso');
+  });
+
   it('lo fijo es idéntico para dos personas distintas (la caché del proveedor lo aprovecha)', () => {
     const a = promptDelAsistente({ manual, ficha: 'A', ahora: AHORA });
     const b = promptDelAsistente({
@@ -218,10 +241,11 @@ describe('respuestaConIA', () => {
     temas: ['agenda'],
     urgencia: 'normal',
     caso: null,
+    ampliarCaso: null,
     ...cambios,
   });
 
-  it('una respuesta del manual: el enlace (para quien ve la ayuda) y los botones', () => {
+  it('una respuesta del manual: el enlace (para quien ve la ayuda) y los botones «Me sirvió»', () => {
     expect(
       respuestaConIA({
         ia: ia({}),
@@ -231,7 +255,7 @@ describe('respuestaConIA', () => {
     ).toEqual({
       texto:
         'Pulsa «Clonar Día».\n\nMás detalle en el Centro de ayuda: https://panel.x.co/dashboard/soporte/ayuda?tema=agenda',
-      botonesUtil: true,
+      botones: 'UTIL',
     });
   });
 
@@ -240,7 +264,7 @@ describe('respuestaConIA', () => {
       respuestaConIA({ ia: ia({}), noCubierta: false, baseAyuda: null }),
     ).toEqual({
       texto: 'Pulsa «Clonar Día».',
-      botonesUtil: true,
+      botones: 'UTIL',
     });
     expect(
       respuestaConIA({
@@ -251,7 +275,7 @@ describe('respuestaConIA', () => {
     ).toBe('Pulsa «Clonar Día».');
   });
 
-  it('no cubierta o una falla: ofrece el caso, sin botones ni enlace', () => {
+  it('no cubierta: ofrece abrir el caso, con sus botones y sin enlace', () => {
     expect(
       respuestaConIA({
         ia: ia({ temas: [] }),
@@ -259,20 +283,14 @@ describe('respuestaConIA', () => {
         baseAyuda: 'https://p',
       }),
     ).toEqual({
-      texto: `Pulsa «Clonar Día».\n\n${TEXTOS_SOPORTE.casoPorElPanel}`,
-      botonesUtil: false,
+      texto: `Pulsa «Clonar Día».\n\n${TEXTOS_SOPORTE.ofrecerCaso}`,
+      botones: 'OFRECER_CASO',
     });
-    expect(
-      respuestaConIA({
-        ia: ia({ tipo: 'falla' }),
-        noCubierta: false,
-        baseAyuda: 'https://p',
-      }).texto,
-    ).toContain(TEXTOS_SOPORTE.casoPorElPanel);
   });
 
-  it('aclarar, saludo o tema ajeno: solo el texto', () => {
+  it('una falla, aclarar, saludo o tema ajeno: solo el texto (las fallas siguen el borrador)', () => {
     for (const tipo of [
+      'falla',
       'aclarar',
       'saludo',
       'fuera_de_tema',
@@ -286,14 +304,14 @@ describe('respuestaConIA', () => {
         }),
       ).toEqual({
         texto: 'x',
-        botonesUtil: false,
+        botones: null,
       });
     }
   });
 });
 
 describe('respuestaSinIA', () => {
-  it('lo más cercano del manual, marca lo de otro rol y cierra con cómo reportarlo', () => {
+  it('lo más cercano del manual, marca lo de otro rol y ofrece abrir el caso', () => {
     const r = respuestaSinIA(
       [
         {
@@ -318,7 +336,7 @@ describe('respuestaSinIA', () => {
       ],
       ['agenda'],
     );
-    expect(r.botonesUtil).toBe(false);
+    expect(r.botones).toBe('OFRECER_CASO');
     expect(r.texto).toBe(
       [
         TEXTOS_SOPORTE.sinIA,
@@ -327,14 +345,14 @@ describe('respuestaSinIA', () => {
         '• Glosario: Cupo: …',
         '• Rastreo de paciente: Busca…',
         '',
-        TEXTOS_SOPORTE.sinIACierre,
+        TEXTOS_SOPORTE.ofrecerCaso,
       ].join('\n'),
     );
   });
 
   it('sin nada parecido, lo dice', () => {
     expect(respuestaSinIA([]).texto).toBe(
-      `${TEXTOS_SOPORTE.sinIASinResultados}\n\n${TEXTOS_SOPORTE.sinIACierre}`,
+      `${TEXTOS_SOPORTE.sinIASinResultados}\n\n${TEXTOS_SOPORTE.ofrecerCaso}`,
     );
   });
 });

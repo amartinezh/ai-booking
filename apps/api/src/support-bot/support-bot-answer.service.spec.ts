@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { DATO_OCULTO, TEXTOS_SOPORTE } from '@agenia/shared';
 import { SupportBotAnswerService } from './support-bot-answer.service';
 import { SupportBotKnowledgeService } from './support-bot-knowledge.service';
+import type { SupportBotCasesService } from './support-bot-cases.service';
 import type { Interlocutor } from './support-bot-session.service';
 import type { SupportBotRuntime } from './support-bot.types';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -63,6 +64,7 @@ describe('SupportBotAnswerService', () => {
   let otros: Record<string, (LLMProvider & { conversar: jest.Mock }) | null>;
   let llm: { forOrgOrNull: jest.Mock; forOrgByProvider: jest.Mock };
   let svc: SupportBotAnswerService;
+  let casosSvc: { casosDe: jest.Mock; incidentesPara: jest.Mock };
 
   const proveedor = (
     name: 'GEMINI' | 'CHATGPT' | 'CLAUDE',
@@ -151,11 +153,31 @@ describe('SupportBotAnswerService', () => {
       }),
       expire: jest.fn(async () => 1),
     };
+    casosSvc = {
+      casosDe: jest.fn(async () => [
+        {
+          numero: 58,
+          titulo: 'No salen los recordatorios',
+          estado: 'IN_PROGRESS',
+          creadoEn: new Date(AHORA.getTime() - 3_600_000),
+          tomadoEn: new Date(AHORA.getTime() - 1_800_000),
+          resueltoEn: null,
+          respuesta: null,
+        },
+      ]),
+      incidentesPara: jest.fn(async () => [
+        {
+          frase: 'WhatsApp (Meta) tiene fallas',
+          desde: new Date(AHORA.getTime() - 600_000),
+        },
+      ]),
+    };
     svc = new SupportBotAnswerService(
       prisma as unknown as PrismaService,
       redis as unknown as RedisService,
       llm as unknown as LlmFactoryService,
       new SupportBotKnowledgeService(),
+      casosSvc as unknown as SupportBotCasesService,
     );
   });
 
@@ -174,13 +196,30 @@ describe('SupportBotAnswerService', () => {
     expect(principal.conversar).not.toHaveBeenCalled();
   });
 
+  it('«Abrir un caso» sin nada escrito: trae lo que contó en el turno anterior', async () => {
+    llm.forOrgOrNull.mockResolvedValue(null);
+    mensajes = [
+      { direction: 'SALIDA', text: 'Listo, Ana.' },
+      { direction: 'ENTRADA', text: 'la agenda del Dr. Ruiz sale en blanco' },
+      { direction: 'ENTRADA', text: 'desde las 8' },
+      { direction: 'SALIDA', text: 'Lo más cercano del manual…' },
+      { direction: 'ENTRADA', text: '/nuevo' },
+    ];
+    const r = await svc.responder(ANA, RT, AHORA, { pedirCaso: true });
+    expect(r?.pendientes).toEqual(['/nuevo']);
+    expect(r?.turnoAnterior).toEqual([
+      'la agenda del Dr. Ruiz sale en blanco',
+      'desde las 8',
+    ]);
+  });
+
   describe('con la IA de la clínica', () => {
     it('responde con lo que dijo la IA, descarta los temas inventados y deja todo para las cifras', async () => {
       const r = await svc.responder(ANA, RT, AHORA);
       expect(r).toEqual({
         texto:
           'Eso lo hace el administrador desde Agendas (Slots) › «Clonar Día».',
-        botonesUtil: true,
+        botones: 'UTIL',
         registro: {
           source: 'IA',
           aiKind: 'respuesta',
@@ -192,7 +231,43 @@ describe('SupportBotAnswerService', () => {
           latencyMs: expect.any(Number),
         },
         motivoSinIA: null,
+        ia: expect.objectContaining({
+          tipo: 'respuesta',
+          temas: ['agenda'],
+          ampliarCaso: null,
+        }),
+        pendientes: ['hola', '¿cómo copio la agenda del lunes al martes?'],
+        turnoAnterior: [],
       });
+    });
+
+    it('le da a la IA sus casos, lo que el equipo ya sabe que falla, el borrador y el pedido de caso', async () => {
+      await svc.responder(ANA, RT, AHORA, {
+        pedirCaso: true,
+        borrador: {
+          fase: 'RECOPILANDO',
+          titulo: 'No carga la agenda',
+          descripcion: null,
+          pantalla: null,
+          falta: ['desde cuándo'],
+          prioridad: 'NORMAL',
+          creadoEn: AHORA.toISOString(),
+          venceEn: null,
+        },
+      });
+      const v = peticion().sistema.variable;
+      expect(v).toContain('#58 «No salen los recordatorios»');
+      expect(v).toContain('WhatsApp (Meta) tiene fallas');
+      expect(v).toContain('- Título: No carga la agenda');
+      expect(v).toContain('La persona pidió abrir un caso');
+      // Los incidentes, con la IA de la ficha (Gemini).
+      expect(casosSvc.incidentesPara).toHaveBeenCalledWith('org-1', 'Gemini');
+    });
+
+    it('si quien llama ya trae sus casos, no los vuelve a buscar', async () => {
+      await svc.responder(ANA, RT, AHORA, { casos: [] });
+      expect(casosSvc.casosDe).not.toHaveBeenCalled();
+      expect(peticion().sistema.variable).toContain('- No tiene casos.');
     });
 
     it('el prompt: manual con la Parte 1 en lo fijo; su rol, su menú y la ficha en lo variable; JSON y tiempo máximo', async () => {
@@ -266,9 +341,9 @@ describe('SupportBotAnswerService', () => {
       llm.forOrgOrNull.mockResolvedValue(principal);
       const r = await svc.responder(ANA, RT, AHORA);
       expect(r?.texto).toBe(
-        `Creo que sí se puede.\n\n${TEXTOS_SOPORTE.casoPorElPanel}`,
+        `Creo que sí se puede.\n\n${TEXTOS_SOPORTE.ofrecerCaso}`,
       );
-      expect(r?.botonesUtil).toBe(false);
+      expect(r?.botones).toBe('OFRECER_CASO');
       expect(r?.registro).toMatchObject({ uncovered: true, topics: [] });
     });
 
@@ -288,7 +363,14 @@ describe('SupportBotAnswerService', () => {
       expect(r?.motivoSinIA).toBe('SIN_IA_CONFIGURADA');
       expect(r?.texto.startsWith(TEXTOS_SOPORTE.sinIA)).toBe(true);
       expect(r?.texto).toContain('Agendas (Slots)');
-      expect(r?.texto.endsWith(TEXTOS_SOPORTE.sinIACierre)).toBe(true);
+      expect(r?.texto.endsWith(TEXTOS_SOPORTE.ofrecerCaso)).toBe(true);
+      expect(r?.botones).toBe('OFRECER_CASO');
+      expect(r?.ia).toBeNull();
+      expect(r?.pendientes).toEqual([
+        'hola',
+        '¿cómo copio la agenda del lunes al martes?',
+      ]);
+      expect(r?.turnoAnterior).toEqual([]);
       // La agente no tiene «Agendas (Slots)» en su menú: se lo marca.
       expect(r?.texto).toContain('Agendas (Slots) (no está en tu menú)');
       expect(r?.registro).toMatchObject({ source: 'SIN_IA', aiProvider: null });
@@ -358,7 +440,7 @@ describe('SupportBotAnswerService', () => {
       mensajes = [{ direction: 'ENTRADA', text: 'zzqx wvyk' }];
       const r = await svc.responder(ANA, RT, AHORA);
       expect(r?.texto).toBe(
-        `${TEXTOS_SOPORTE.sinIASinResultados}\n\n${TEXTOS_SOPORTE.sinIACierre}`,
+        `${TEXTOS_SOPORTE.sinIASinResultados}\n\n${TEXTOS_SOPORTE.ofrecerCaso}`,
       );
     });
 

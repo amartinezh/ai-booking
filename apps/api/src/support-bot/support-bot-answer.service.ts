@@ -8,10 +8,17 @@ import {
   promptDelAsistente,
   respuestaConIA,
   respuestaSinIA,
+  textoBorradorParaLaIA,
+  textoCasosParaLaIA,
   textoFichaDeLaClinica,
+  textoIncidentesParaLaIA,
   turnosParaLaIA,
   LIMITES_SOPORTE,
+  type BorradorCaso,
+  type CasoDeLaPersona,
   type FichaClinica,
+  type RespuestaAlEmpleado,
+  type RespuestaIA,
   type UserRole,
 } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,6 +29,7 @@ import type {
   LLMProvider,
   RespuestaConversacion,
 } from '../llm/interfaces/llm-provider.interface';
+import { SupportBotCasesService } from './support-bot-cases.service';
 import { SupportBotKnowledgeService } from './support-bot-knowledge.service';
 import type { Interlocutor } from './support-bot-session.service';
 import type { SupportBotRuntime } from './support-bot.types';
@@ -46,7 +54,7 @@ export type MotivoSinIA =
 
 export interface RespuestaArmada {
   texto: string;
-  botonesUtil: boolean;
+  botones: RespuestaAlEmpleado['botones'];
   registro: {
     source: 'IA' | 'SIN_IA';
     aiKind: string | null;
@@ -58,22 +66,47 @@ export interface RespuestaArmada {
     latencyMs: number | null;
   };
   motivoSinIA: MotivoSinIA | null;
+  /** Lo que devolvió la IA (null sin IA): el turno decide con esto el borrador y las notas. */
+  ia: RespuestaIA | null;
+  /** Lo que la persona escribió y se está respondiendo, tal cual (sin enmascarar). */
+  pendientes: string[];
+  /**
+   * Lo que escribió en el turno anterior (ya respondido). Sin IA, «Abrir un caso»
+   * arma el borrador con esto: es lo que ya contó antes de tocar el botón.
+   */
+  turnoAnterior: string[];
+}
+
+/** Lo que escribió la persona, como lo usa cada camino de la respuesta. */
+type Escrito = Pick<RespuestaArmada, 'pendientes' | 'turnoAnterior'> & {
+  consulta: string;
+};
+
+export interface OpcionesDeRespuesta {
+  /** La persona pidió abrir un caso: este turno tiene que armarlo. */
+  pedirCaso?: boolean;
+  /** El borrador de caso en curso, para que la IA lo complete. */
+  borrador?: BorradorCaso | null;
+  /** Sus casos (si quien llama ya los tiene); si no, se buscan. */
+  casos?: CasoDeLaPersona[];
 }
 
 /**
  * La respuesta del asistente a lo que el empleado escribió (docs/PLAN_BOT_SOPORTE.md
- * §3.2 y §3.3, Fase 2).
+ * §3.2 y §3.3).
  *
  *   · Responde TODOS los mensajes que esperan respuesta (los seguidos se juntan).
  *   · El contexto: el manual armado para su rol y su menú, la ficha de su clínica
- *     (solo configuración) y los últimos turnos, con los datos de pacientes
+ *     (solo configuración), sus casos, lo que el equipo técnico ya sabe que falla,
+ *     el borrador en curso y los últimos turnos, con los datos de pacientes
  *     enmascarados (S8).
  *   · La IA es la de la clínica (S5), con su respaldo entre proveedores si
  *     `LLM_FAILOVER_ENABLED=true`, y un tope diario por clínica (S15).
  *   · Si no hay IA, falla, tarda o devuelve algo ilegible: el buscador del Centro
  *     de ayuda. El empleado SIEMPRE recibe respuesta.
  *   · El código decide lo que importa (leerRespuestaIA, respuestaConIA): temas
- *     validados, «no cubierta», el caso y los botones.
+ *     validados, «no cubierta» y los botones. El borrador y las notas los decide
+ *     el turno (SupportBotService) con `ia`.
  */
 @Injectable()
 export class SupportBotAnswerService {
@@ -84,6 +117,7 @@ export class SupportBotAnswerService {
     private readonly redis: RedisService,
     private readonly llm: LlmFactoryService,
     private readonly conocimiento: SupportBotKnowledgeService,
+    private readonly casos: SupportBotCasesService,
   ) {}
 
   /** La respuesta a lo pendiente, o null si no hay nada que responder. */
@@ -91,6 +125,7 @@ export class SupportBotAnswerService {
     yo: Interlocutor,
     rt: SupportBotRuntime,
     ahora: Date = new Date(),
+    opciones: OpcionesDeRespuesta = {},
   ): Promise<RespuestaArmada | null> {
     const mensajes = (
       await this.prisma.supportBotMessage.findMany({
@@ -103,9 +138,20 @@ export class SupportBotAnswerService {
     const ultimaSalida = mensajes.map((m) => m.direction).lastIndexOf('SALIDA');
     const pendientes = mensajes
       .slice(ultimaSalida + 1)
-      .filter((m) => m.direction === 'ENTRADA');
+      .filter((m) => m.direction === 'ENTRADA')
+      .map((m) => m.text);
     if (pendientes.length === 0) return null;
-    const consulta = pendientes.map((m) => m.text).join('\n');
+    const previos = mensajes.slice(0, Math.max(0, ultimaSalida));
+    const turnoAnterior = previos
+      .slice(previos.map((m) => m.direction).lastIndexOf('SALIDA') + 1)
+      .filter((m) => m.direction === 'ENTRADA')
+      .map((m) => m.text);
+    const escrito: Escrito = {
+      // Para el buscador, sin los comandos («/nuevo»).
+      consulta: pendientes.filter((t) => !t.startsWith('/')).join('\n'),
+      pendientes,
+      turnoAnterior,
+    };
 
     const clinica = await this.clinica(yo.organizationId);
     // El super admin en modo prueba pregunta como el administrador de esa clínica.
@@ -114,20 +160,28 @@ export class SupportBotAnswerService {
       rol,
       getMenusForRole(rol, clinica?.banderas ?? {}),
     );
-    if (!manual) return this.sinIA(consulta, 'SIN_MANUAL', []);
+    if (!manual) return this.sinIA(escrito, 'SIN_MANUAL', []);
 
     if (!(await this.dentroDelTope(yo.organizationId, rt, ahora))) {
-      return this.sinIA(consulta, 'TOPE_DIARIO', manual.temasDeOtroRol);
+      return this.sinIA(escrito, 'TOPE_DIARIO', manual.temasDeOtroRol);
     }
 
     const principal = await this.proveedor(yo.organizationId);
     if (!principal)
-      return this.sinIA(consulta, 'SIN_IA_CONFIGURADA', manual.temasDeOtroRol);
+      return this.sinIA(escrito, 'SIN_IA_CONFIGURADA', manual.temasDeOtroRol);
 
+    const [casos, incidentes] = await Promise.all([
+      opciones.casos ?? this.casos.casosDe(yo, ahora),
+      this.casos.incidentesPara(yo.organizationId, clinica?.ficha.ia ?? null),
+    ]);
     const prompt = promptDelAsistente({
       manual,
       ficha: clinica ? textoFichaDeLaClinica(clinica.ficha, ahora) : '',
       ahora,
+      casos: textoCasosParaLaIA(casos),
+      incidentes: textoIncidentesParaLaIA(incidentes, ahora),
+      borrador: textoBorradorParaLaIA(opciones.borrador ?? null),
+      pedirCaso: opciones.pedirCaso,
     });
     const turnos = turnosParaLaIA(mensajes);
     const inicio = Date.now();
@@ -140,14 +194,14 @@ export class SupportBotAnswerService {
         timeoutMs: LIMITES_SOPORTE.esperaIaSegundos * 1000,
       }),
     );
-    if (!r) return this.sinIA(consulta, 'FALLO', manual.temasDeOtroRol);
+    if (!r) return this.sinIA(escrito, 'FALLO', manual.temasDeOtroRol);
 
     const leida = leerRespuestaIA(r.respuesta.texto, manual.temasValidos);
     if (!leida) {
       this.logger.warn(
         `La IA (${r.proveedor}) devolvió algo que no se pudo leer como respuesta del asistente.`,
       );
-      return this.sinIA(consulta, 'NO_SE_PUDO_LEER', manual.temasDeOtroRol);
+      return this.sinIA(escrito, 'NO_SE_PUDO_LEER', manual.temasDeOtroRol);
     }
 
     const armada = respuestaConIA({
@@ -161,7 +215,7 @@ export class SupportBotAnswerService {
     });
     return {
       texto: armada.texto,
-      botonesUtil: armada.botonesUtil,
+      botones: armada.botones,
       registro: {
         source: 'IA',
         aiKind: leida.respuesta.tipo,
@@ -173,23 +227,26 @@ export class SupportBotAnswerService {
         latencyMs: Date.now() - inicio,
       },
       motivoSinIA: null,
+      ia: leida.respuesta,
+      pendientes,
+      turnoAnterior,
     };
   }
 
   // ── Internos ───────────────────────────────────────────────────────────
 
   private sinIA(
-    consulta: string,
+    escrito: Escrito,
     motivo: MotivoSinIA,
     temasDeOtroRol: readonly string[],
   ): RespuestaArmada {
     const armada = respuestaSinIA(
-      this.conocimiento.buscar(consulta),
+      this.conocimiento.buscar(escrito.consulta),
       temasDeOtroRol,
     );
     return {
       texto: armada.texto,
-      botonesUtil: false,
+      botones: armada.botones,
       registro: {
         source: 'SIN_IA',
         aiKind: null,
@@ -201,6 +258,9 @@ export class SupportBotAnswerService {
         latencyMs: null,
       },
       motivoSinIA: motivo,
+      ia: null,
+      pendientes: escrito.pendientes,
+      turnoAnterior: escrito.turnoAnterior,
     };
   }
 

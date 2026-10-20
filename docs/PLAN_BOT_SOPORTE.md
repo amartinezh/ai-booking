@@ -1,6 +1,6 @@
 # Asistente de soporte por Telegram para el personal
 
-**Estado: APROBADO (2026-10-19); FASES 0 Y 1 EN COMMIT (`43fb304`); FASE 2 HECHA (2026-10-19), sin commit** (bitácoras en §11, §12 y §13). Falta correr el examen con un modelo real (§13). Sigue la Fase 3. El usuario aprobó todas las recomendaciones de §8 con tres cambios suyos: **S3**, el código del panel se pide en cada conversación (§3.1); **S5**, la IA es la de cada clínica, no una de la plataforma; y **S14**, el horario del equipo es de lunes a viernes de 8:00 a 17:00.
+**Estado: APROBADO (2026-10-19); FASES 0 Y 1 EN COMMIT (`43fb304`), FASE 2 EN COMMIT (`da95449`); FASE 3 HECHA (2026-10-19), sin commit** (bitácoras en §11 a §14). Falta correr el examen con un modelo real (§13). Sigue la Fase 4. El usuario aprobó todas las recomendaciones de §8 con tres cambios suyos: **S3**, el código del panel se pide en cada conversación (§3.1); **S5**, la IA es la de cada clínica, no una de la plataforma; y **S14**, el horario del equipo es de lunes a viernes de 8:00 a 17:00.
 
 ## 1. Qué se pide
 
@@ -535,3 +535,49 @@ EXAMEN_PROVEEDOR=GEMINI EXAMEN_API_KEY=… EXAMEN_MODELO=gemini-2.5-flash \
 
 Repetirlo con cada modelo que usen las clínicas en producción. Para aprobar: al menos 90 % de temas correctos, cero respuestas ilegibles y cero violaciones. Cada corrida son 60 llamadas con unos 30.000 tokens de entrada cada una, casi todos de la caché a partir de la segunda. El reporte queda en `examen-soporte-<proveedor>.json`.
 
+## 14. Bitácora de la Fase 3 (2026-10-19)
+
+### Qué quedó
+
+- **`packages/shared`**:
+  - `soporte-bot.ts`: el flujo de la conversación (`FlujoConversacion`: el borrador, la nota pendiente y el «modo caso»), cómo se guarda, qué queda al cerrar (el borrador, 24 h) y cómo se retoma; los botones nuevos («Abrir un caso», «Sí, agrégalo» / «No») y sus etiquetas; los textos fijos de los casos; `ampliarCaso` en la respuesta de la IA; y `prioridadDelCaso` con la prioridad anterior.
+  - `soporte-bot-casos.ts` (nuevo): sus casos para la IA y para `/casos`, qué caso se puede ampliar, las alertas técnicas abiertas traducidas a frases fijas, el borrador para la IA y para el empleado, la descripción que queda en el caso y el borrador sin IA.
+  - `soporte-bot-prompt.ts`: las reglas 9 a 12 (casos, incidentes, cuándo es falla, `ampliarCaso`, «no digas que ya abriste uno») y el contexto variable con casos, incidentes, borrador y el pedido de caso.
+- **API**:
+  - `SupportBotCasesService` (nuevo): sus casos, los incidentes de la clínica, abrir el caso (`TELEGRAM`, prioridad, conversación, autor y clínica de la sesión), la nota a un caso suyo sin solucionar y el flujo en `SupportBotConversation.flowState`.
+  - `SupportBotService`: la falla → borrador → confirmación, el «sí» / «no» / «corregir» por botón o escrito (sin pasar por la IA), la nota con su «Sí», `/casos`, `/nuevo` (con o sin texto), «No, abrir un caso» / «Abrir un caso», el borrador retomado al abrir la conversación y el modo prueba (todo simulado).
+  - `SupportBotSessionService`: al cerrar una conversación (por `/salir`, por inactividad o al abrir otra) el borrador queda 24 h; la conversación nueva lo toma en la misma transacción y lo borra de la vieja.
+  - `SupportBotAnswerService`: pasa a la IA casos, incidentes, borrador y pedido de caso, y devuelve lo que escribió la persona en el turno anterior (para el borrador sin IA).
+- **Web**: en Soporte y en la Mesa de Ayuda, el número del caso (en vez del id), «Por Telegram», «Prioridad alta» y las notas; la Mesa pone primero los de prioridad alta dentro de cada estado y busca por número («#58» o «58»).
+- **Base de datos**: sin migración nueva; usa lo que dejaron las fases 0 y 2.
+- **`AGENIA.md`**: dos guías nuevas en Soporte (reportar por Telegram; ver y ampliar los casos), las preguntas actualizadas, la sección 15, el pendiente de la 13 y la bitácora. De paso se corrigió la tabla de la sección 14, que había quedado partida por la 15.
+
+### Decisiones de detalle tomadas al construir
+
+- **El «sí» escrito no pasa por la IA**: solo frases completas («sí», «dale», «ábrelo», «👍»); «no puedo agendar» va a la IA. Y solo cuenta si hay un borrador ya mostrado o una nota pendiente.
+- **Un segundo toque de «Sí, ábrelo»** (o un «sí» repetido) no abre otro caso: el borrador ya no está y lo dice.
+- **«No, abrir un caso» reemplaza a «No me sirvió»**: marca la respuesta como no útil y arma el caso con lo que ya contó. «Abrir un caso» (lo que el manual no cubre) hace lo mismo sin marcarla.
+- **Sin IA**, «Abrir un caso» arma el borrador con lo que escribió en el turno anterior, y el título es su primera frase, sin cortar en «Dr.» o «Sra.». Salió de la prueba de punta a punta.
+- **La prioridad alta no baja sola**: una corrección («también pasa con el Dr. Ruiz») no repite la señal fija; solo baja si la IA dice que es normal. También salió de la prueba de punta a punta.
+- **Al retomar** se ofrece el borrador sin la nota pendiente ni el «modo caso»; si estaba a medio armar, pide lo que falta, sin botones. El de otra persona en la misma cuenta de Telegram no se ofrece.
+- **Las notas** solo van a casos de la misma persona y clínica que no estén solucionados; si se solucionó mientras tanto, lo dice. Reabrir un caso solucionado («sigue pasando») queda para la Fase 4.
+- **Los incidentes** no llevan nada del detalle técnico de la alerta: solo frases fijas, de su clínica o globales; la de Gemini solo si la clínica usa Gemini.
+
+### Cómo se verificó
+
+- **API**: 3.531 pruebas en verde, con el umbral de cobertura cumplido (funciones 94,0 %); lo del asistente cubre el 100 % de sus funciones. `nest build` sin errores y `eslint` limpio. `tsc -p tsconfig.json` sigue cayéndose por el error de TypeScript 5.9.2 que ya existía; `tsconfig.build.json` tipa sin errores.
+- **`shared`**: 1.494 pruebas en verde; lo del asistente cubre el 100 % de sus funciones. El umbral global de funciones (100 %) no se cumple por `limite-citas.ts`, `patient-trace.ts`, `sync-state.ts` y `sync-watch.ts`, que esta fase no tocó.
+- **Web**: 1.151 pruebas en verde, `tsc` sin errores y `next build` completo.
+- **Postgres 15 real**: la integración (36 pruebas) cubre el flujo guardado como JSON o NULL, el borrador que pasa a la conversación siguiente al cerrar con `/salir` o al abrir desde otra cuenta, el vencido a las 24 h, el de otra persona en la misma cuenta, abrir el caso, las notas solo a casos propios sin solucionar y los incidentes de la clínica. La consulta de la Mesa de Ayuda (notas y orden por prioridad) también se corrió contra esa base.
+- **De punta a punta con la API real** (Postgres y Redis desechables, el Telegram falso y una clínica sin IA): 28 comprobaciones en verde.
+  - `/casos` sin casos, `/nuevo`, el borrador con prioridad alta y sus tres botones, y ningún caso sin el «sí».
+  - «Corregir algo» quita los botones, pide el cambio y suma lo nuevo sin bajar la prioridad.
+  - El «sí» escrito abre el caso con su número y cuándo lo ve el equipo; en la base queda `TELEGRAM`, `HIGH`, la conversación, la clínica y el autor, con lo que escribió tal cual y sin los comandos. Otro «sí» no abre un segundo caso.
+  - `/casos` lo lista con su estado.
+  - El borrador sin confirmar vuelve en la conversación siguiente con sus botones, y «No, gracias» lo descarta.
+  - Una pregunta sin IA ofrece abrir un caso; «No, gracias» solo quita los botones, y «Abrir un caso» arma el borrador con lo que ya contó.
+
+### Pendiente
+
+- El examen con un modelo real (§13) y, ahora, sus preguntas de casos: que la IA arme bien el borrador, use `ampliarCaso` y no diga que abrió un caso.
+- La Fase 4: el aviso al grupo de cada caso (el campo `groupNotice` ya está y los casos nuevos nacen `PENDING`), el seguimiento al empleado, reabrir y el caso sin tomar.

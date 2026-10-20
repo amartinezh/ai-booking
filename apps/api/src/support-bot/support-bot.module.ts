@@ -3,6 +3,7 @@ import { InboundQueueService } from '../chatbot/inbound-queue.service';
 import { LlmModule } from '../llm/llm.module';
 import { TelegramCoreModule } from '../telegram/telegram-core.module';
 import { SupportBotAnswerService } from './support-bot-answer.service';
+import { SupportBotCasesService } from './support-bot-cases.service';
 import { SupportBotKnowledgeService } from './support-bot-knowledge.service';
 import { SupportBotConfigService } from './support-bot-config.service';
 import { SupportBotSessionService } from './support-bot-session.service';
@@ -40,6 +41,7 @@ import {
     SupportBotService,
     SupportBotKnowledgeService,
     SupportBotAnswerService,
+    SupportBotCasesService,
     InboundQueueService,
   ],
 })

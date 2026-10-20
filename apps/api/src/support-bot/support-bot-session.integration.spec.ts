@@ -3,11 +3,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { RedisService } from '../redis/redis.service';
 import type { SupportBotConfigService } from './support-bot-config.service';
 import { SupportBotSessionService } from './support-bot-session.service';
+import { SupportBotCasesService } from './support-bot-cases.service';
+import { FLUJO_VACIO, type BorradorCaso } from '@agenia/shared';
 
 /**
  * Códigos y conversaciones del asistente de soporte contra un Postgres REAL: la
  * transacción que abre la conversación, los índices parciales «una abierta por
- * usuario y por cuenta de Telegram» y el HMAC del código. Redis va en memoria.
+ * usuario y por cuenta de Telegram» y el HMAC del código; y (Fase 3) el caso a
+ * medio abrir que pasa a la conversación siguiente y los casos que abre el
+ * asistente. Redis va en memoria.
  *
  * Solo corre con una base desechable cuyo nombre termina en `_verif`:
  *
@@ -68,6 +72,7 @@ class RedisFalso {
     let redis: RedisFalso;
     let disponible: boolean;
     let svc: SupportBotSessionService;
+    let casos: SupportBotCasesService;
     let ORG: string;
     let OTRA_ORG: string;
     let ANA: string;
@@ -133,6 +138,10 @@ class RedisFalso {
         redis as unknown as RedisService,
         config as unknown as SupportBotConfigService,
       );
+      casos = new SupportBotCasesService(prisma);
+      await prisma.supportTicket.deleteMany({
+        where: { organizationId: { in: [ORG, OTRA_ORG] } },
+      });
       await prisma.supportBotMessage.deleteMany();
       await prisma.supportBotConversation.deleteMany();
       await prisma.supportBotCode.deleteMany();
@@ -563,6 +572,258 @@ class RedisFalso {
         await svc.cambiarAvisos(ANA, true);
         await expect(svc.estadoPara(ANA)).resolves.toMatchObject({
           avisos: { activos: true },
+        });
+      });
+    });
+
+    describe('🧩 el caso a medio abrir (Fase 3)', () => {
+      const BORRADOR: BorradorCaso = {
+        fase: 'CONFIRMANDO',
+        titulo: 'No salen los recordatorios',
+        descripcion: 'Desde las 7 no sale ningún recordatorio.',
+        pantalla: null,
+        falta: [],
+        prioridad: 'HIGH',
+        creadoEn: new Date().toISOString(),
+        venceEn: null,
+      };
+      const flujoDe = async (id: string) =>
+        (
+          await prisma.supportBotConversation.findUnique({
+            where: { id },
+            select: { flowState: true },
+          })
+        )?.flowState ?? null;
+      const abrirConBorrador = async (telegramUserId = '777') => {
+        const r = await validar(
+          (await svc.generarCodigo(ANA)).codigo,
+          telegramUserId,
+        );
+        if (r.tipo !== 'ABIERTA') throw new Error(r.tipo);
+        await casos.guardarFlujo(r.interlocutor.conversationId, {
+          ...FLUJO_VACIO,
+          borrador: BORRADOR,
+          notaPendiente: { caso: 58, texto: 'x' },
+          modoCaso: true,
+        });
+        return r.interlocutor.conversationId;
+      };
+
+      it('el flujo vacío queda NULL en la base; con algo, se lee igual', async () => {
+        const id = await abrirConBorrador();
+        expect(await casos.leerFlujo(id)).toMatchObject({
+          borrador: { titulo: 'No salen los recordatorios' },
+          modoCaso: true,
+        });
+        await casos.guardarFlujo(id, { ...FLUJO_VACIO });
+        expect(await flujoDe(id)).toBeNull();
+        expect(await casos.leerFlujo(id)).toEqual(FLUJO_VACIO);
+      });
+
+      it('al cerrar con /salir queda 24 h y la conversación siguiente lo ofrece (sin la nota ni el modo caso)', async () => {
+        const vieja = await abrirConBorrador();
+        await svc.cerrar(vieja, 'SALIR');
+        expect(await flujoDe(vieja)).toMatchObject({
+          borrador: { venceEn: expect.any(String) },
+          notaPendiente: null,
+        });
+        const r = await validar((await svc.generarCodigo(ANA)).codigo, '777');
+        expect(r).toMatchObject({
+          tipo: 'ABIERTA',
+          borradorRetomado: {
+            titulo: 'No salen los recordatorios',
+            venceEn: null,
+          },
+        });
+        if (r.tipo !== 'ABIERTA') return;
+        // Pasa a la nueva y deja de estar en la vieja: no se ofrece dos veces.
+        expect(await flujoDe(vieja)).toBeNull();
+        expect(
+          await casos.leerFlujo(r.interlocutor.conversationId),
+        ).toMatchObject({
+          borrador: { fase: 'CONFIRMANDO' },
+          notaPendiente: null,
+          modoCaso: false,
+        });
+      });
+
+      it('también si la cerró un código nuevo desde otra cuenta (la misma transacción)', async () => {
+        const vieja = await abrirConBorrador('777');
+        const r = await validar((await svc.generarCodigo(ANA)).codigo, '888');
+        expect(r).toMatchObject({
+          chatsCerrados: ['777'],
+          borradorRetomado: { titulo: 'No salen los recordatorios' },
+        });
+        expect(await flujoDe(vieja)).toBeNull();
+      });
+
+      it('vencidas las 24 h, no se ofrece', async () => {
+        const vieja = await abrirConBorrador();
+        await svc.cerrar(vieja, 'SALIR', new Date(Date.now() - 25 * 60 * MIN));
+        const r = await validar((await svc.generarCodigo(ANA)).codigo, '777');
+        expect(r).toMatchObject({ tipo: 'ABIERTA', borradorRetomado: null });
+      });
+
+      it('🔒 el borrador de una persona no le llega a otra en la misma cuenta de Telegram', async () => {
+        await abrirConBorrador('777');
+        const r = await validar((await svc.generarCodigo(BETO)).codigo, '777');
+        expect(r).toMatchObject({ tipo: 'ABIERTA', borradorRetomado: null });
+      });
+    });
+
+    describe('los casos del asistente (Fase 3)', () => {
+      const interlocutor = async (userId = ANA, telegramUserId = '777') => {
+        const r = await validar(
+          (await svc.generarCodigo(userId)).codigo,
+          telegramUserId,
+        );
+        if (r.tipo !== 'ABIERTA') throw new Error(r.tipo);
+        return r.interlocutor;
+      };
+
+      it('abrir: número, canal Telegram, prioridad, conversación y lo que escribió tal cual', async () => {
+        const yo = await interlocutor();
+        for (const text of [
+          '/nuevo',
+          'no salen, la de la cédula 1053789456 llamó',
+        ]) {
+          await prisma.supportBotMessage.create({
+            data: {
+              conversationId: yo.conversationId,
+              direction: 'ENTRADA',
+              text,
+            },
+          });
+        }
+        const numero = await casos.abrirCaso(yo, {
+          fase: 'CONFIRMANDO',
+          titulo: 'No salen los recordatorios',
+          descripcion: 'Desde las 7 no sale ningún recordatorio.',
+          pantalla: null,
+          falta: [],
+          prioridad: 'HIGH',
+          creadoEn: new Date().toISOString(),
+          venceEn: null,
+        });
+        const caso = await prisma.supportTicket.findUnique({
+          where: { number: numero },
+        });
+        expect(caso).toMatchObject({
+          title: 'No salen los recordatorios',
+          reporterId: ANA,
+          organizationId: ORG,
+          channel: 'TELEGRAM',
+          priority: 'HIGH',
+          status: 'OPEN',
+          conversationId: yo.conversationId,
+          groupNotice: 'PENDING',
+        });
+        expect(caso?.description).toContain(
+          '«no salen, la de la cédula 1053789456 llamó»',
+        );
+        expect(caso?.description).not.toContain('/nuevo');
+        // Y aparece en sus casos.
+        expect((await casos.casosDe(yo)).map((c) => c.numero)).toEqual([
+          numero,
+        ]);
+      });
+
+      it('🔒 la nota: solo a SU caso y sin solucionar', async () => {
+        const ana = await interlocutor(ANA, '777');
+        const suyo = await prisma.supportTicket.create({
+          data: {
+            title: 'Suyo',
+            description: 'x',
+            reporterId: ANA,
+            organizationId: ORG,
+          },
+        });
+        const deBeto = await prisma.supportTicket.create({
+          data: {
+            title: 'De Beto',
+            description: 'x',
+            reporterId: BETO,
+            organizationId: ORG,
+          },
+        });
+        const resuelto = await prisma.supportTicket.create({
+          data: {
+            title: 'Resuelto',
+            description: 'x',
+            reporterId: ANA,
+            organizationId: ORG,
+            status: 'RESOLVED',
+            resolvedAt: new Date(),
+            resolutionNote: 'Listo',
+          },
+        });
+        expect(
+          await casos.agregarNota(ana, suyo.number, 'también el Dr. Ruiz'),
+        ).toBe(true);
+        expect(await casos.agregarNota(ana, deBeto.number, 'x')).toBe(false);
+        expect(await casos.agregarNota(ana, resuelto.number, 'x')).toBe(false);
+        expect(
+          await prisma.supportTicketNote.findMany({
+            select: {
+              ticketId: true,
+              authorId: true,
+              channel: true,
+              kind: true,
+              text: true,
+            },
+            where: { ticket: { organizationId: ORG } },
+          }),
+        ).toEqual([
+          {
+            ticketId: suyo.id,
+            authorId: ANA,
+            channel: 'TELEGRAM',
+            kind: 'AMPLIACION',
+            text: 'también el Dr. Ruiz',
+          },
+        ]);
+        // Sus casos: los dos suyos (el resuelto con la respuesta), no el de Beto.
+        expect(
+          (await casos.casosDe(ana)).map((c) => [c.titulo, c.respuesta]),
+        ).toEqual([
+          ['Resuelto', 'Listo'],
+          ['Suyo', null],
+        ]);
+      });
+
+      it('lo que el equipo ya sabe que falla: de su clínica o global, solo lo abierto', async () => {
+        const alerta = (
+          kind: string,
+          dedupeKey: string,
+          extra: Record<string, unknown> = {},
+        ) =>
+          prisma.techAlert.create({
+            data: {
+              kind,
+              category: 'SERVICIOS',
+              severity: 'CRITICA',
+              dedupeKey,
+              title: 't',
+              ...extra,
+            },
+          });
+        await prisma.techAlert.deleteMany({
+          where: { dedupeKey: { startsWith: `prueba-${SUF}` } },
+        });
+        await alerta('RECORDATORIOS_FALLIDOS', `prueba-${SUF}-1`);
+        await alerta('AVISO_AGENDADOR_NO_SALE', `prueba-${SUF}-2`, {
+          organizationId: OTRA_ORG,
+        });
+        await alerta('RECORDATORIOS_FALLIDOS', `prueba-${SUF}-3`, {
+          status: 'RESUELTA',
+        });
+        await alerta('ERROR_5XX', `prueba-${SUF}-4`);
+        const r = await casos.incidentesPara(ORG, null);
+        expect(r.map((i) => i.frase)).toEqual([
+          'Los recordatorios automáticos no están saliendo',
+        ]);
+        await prisma.techAlert.deleteMany({
+          where: { dedupeKey: { startsWith: `prueba-${SUF}` } },
         });
       });
     });

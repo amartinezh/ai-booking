@@ -5,13 +5,25 @@ import {
   LIMITES_SOPORTE,
   ROL_LEGIBLE,
   TEXTOS_SOPORTE,
+  borradorSinIA,
+  casoAmpliable,
   datosDeBoton,
   esCodigoDeEnlace,
   esSoloSaludo,
   extraerCodigoCorto,
+  interpretarRespuestaCorta,
   leerBoton,
   leerComando,
+  prioridadDelCaso,
+  siguienteBorrador,
+  textoCuandoLoVeElEquipo,
+  textoDelBorrador,
+  textoListaDeCasos,
+  type BorradorCaso,
+  type BotonSoporte,
+  type CasoPropuesto,
   type ComandoSoporte,
+  type FlujoConversacion,
 } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
@@ -29,6 +41,7 @@ import {
   SupportBotAnswerService,
   type RespuestaArmada,
 } from './support-bot-answer.service';
+import { SupportBotCasesService } from './support-bot-cases.service';
 import type { EntradaDelAsistente } from './support-bot-inbound';
 import type { SupportBotRuntime } from './support-bot.types';
 
@@ -40,32 +53,60 @@ type Registro = Omit<Partial<RespuestaArmada['registro']>, 'source'> & {
   updateId?: string | null;
   telegramMessageId?: string | null;
 };
+type Teclado = ReadonlyArray<ReadonlyArray<{ texto: string; datos: string }>>;
 
 /** «escribiendo…» dura unos 5 s en Telegram: se renueva mientras piensa la IA. */
 const RENOVAR_ESCRIBIENDO_MS = 4_500;
-const BOTONES_UTIL = [
-  [
-    {
-      texto: ETIQUETAS_BOTON.UTIL_SI,
-      datos: datosDeBoton({ accion: 'UTIL_SI' }),
-    },
-    {
-      texto: ETIQUETAS_BOTON.UTIL_NO,
-      datos: datosDeBoton({ accion: 'UTIL_NO' }),
-    },
+const boton = (b: BotonSoporte, texto: string) => ({
+  texto,
+  datos: datosDeBoton(b),
+});
+const TECLADOS = {
+  UTIL: [
+    [
+      boton({ accion: 'UTIL_SI' }, ETIQUETAS_BOTON.UTIL_SI),
+      boton({ accion: 'UTIL_NO' }, ETIQUETAS_BOTON.UTIL_NO),
+    ],
   ],
-];
+  OFRECER_CASO: [
+    [
+      boton({ accion: 'CASO_NUEVO' }, ETIQUETAS_BOTON.CASO_NUEVO),
+      boton({ accion: 'CASO_NO' }, ETIQUETAS_BOTON.CASO_NO),
+    ],
+  ],
+  CONFIRMAR: [
+    [boton({ accion: 'CASO_SI' }, ETIQUETAS_BOTON.CASO_SI)],
+    [
+      boton({ accion: 'CASO_CORREGIR' }, ETIQUETAS_BOTON.CASO_CORREGIR),
+      boton({ accion: 'CASO_NO' }, ETIQUETAS_BOTON.CASO_NO),
+    ],
+  ],
+  NOTA: [
+    [
+      boton({ accion: 'NOTA_SI' }, ETIQUETAS_BOTON.NOTA_SI),
+      boton({ accion: 'NOTA_NO' }, ETIQUETAS_BOTON.NOTA_NO),
+    ],
+  ],
+} satisfies Record<string, Teclado>;
+const CASO_VACIO: CasoPropuesto = {
+  titulo: null,
+  descripcion: null,
+  pantalla: null,
+  falta: [],
+};
 
 /**
- * El turno del asistente de soporte (docs/PLAN_BOT_SOPORTE.md §3.1 y §3.3).
+ * El turno del asistente de soporte (docs/PLAN_BOT_SOPORTE.md §3.1, §3.3 y §3.4).
  *
  *   · Sin conversación verificada solo pide el código (y guarda la pregunta para
  *     responderla apenas se valide). Sin IA.
- *   · Con conversación: /salir, /ayuda y, a todo lo demás, la respuesta con el
- *     manual y la IA de la clínica (SupportBotAnswerService). Los mensajes
- *     seguidos (menos de 2 s entre uno y otro) se responden juntos.
- *   · Los botones «Me sirvió» / «No me sirvió» quedan en la conversación.
- *   · Los casos (/casos, /nuevo y abrirlos desde aquí) son la Fase 3.
+ *   · Con conversación: /salir, /ayuda, /casos, /nuevo y, a todo lo demás, la
+ *     respuesta con el manual y la IA de la clínica. Los mensajes seguidos (menos
+ *     de 2 s entre uno y otro) se responden juntos.
+ *   · Los casos: la IA propone el borrador y pregunta lo que falta; el código lo
+ *     muestra y NUNCA lo abre sin el «Sí» (S9), con botón o por escrito. Sin IA,
+ *     el borrador se arma con lo que escribió. Un caso suyo abierto se amplía con
+ *     una nota, también con su «Sí». Un borrador a medio abrir se retoma (24 h).
  *
  * Cada mensaje de una conversación verificada queda en `SupportBotMessage`; el
  * `update_id` es único, así que un reintento de Telegram no se atiende dos veces.
@@ -83,6 +124,7 @@ export class SupportBotService {
     private readonly config: SupportBotConfigService,
     private readonly sesiones: SupportBotSessionService,
     private readonly respuestas: SupportBotAnswerService,
+    private readonly casos: SupportBotCasesService,
   ) {}
 
   /**
@@ -257,22 +299,44 @@ export class SupportBotService {
       case 'ayuda':
         await this.responder(rt, yo, TEXTOS_SOPORTE.ayuda);
         return;
-      case 'casos':
-      case 'nuevo':
-        // Fase 3: ver y abrir casos desde aquí.
-        await this.responder(rt, yo, TEXTOS_SOPORTE.enConstruccion);
+      case 'casos': {
+        const lista = textoListaDeCasos(await this.casos.casosDe(yo, ahora));
+        await this.responder(rt, yo, lista ?? TEXTOS_SOPORTE.sinCasos);
         return;
-      default:
-        // Si detrás de este viene otro mensaje, ese los responde a los dos.
-        await this.esperar(
-          Math.max(0, this.agruparMs - (Date.now() - recibidoEn)),
-        );
-        if (!(await this.soyElUltimo(e))) return;
-        await this.responderConIA(rt, yo, ahora);
+      }
+      case 'nuevo': {
+        const flujo = await this.casos.leerFlujo(yo.conversationId);
+        await this.casos.guardarFlujo(yo.conversationId, {
+          ...flujo,
+          notaPendiente: null,
+          modoCaso: true,
+        });
+        // «/nuevo no carga la agenda»: ya contó algo, se arma el caso con eso.
+        if (comando.argumento)
+          await this.responderConIA(rt, yo, ahora, { pedirCaso: true });
+        else await this.responder(rt, yo, TEXTOS_SOPORTE.contarFalla);
+        return;
+      }
     }
+
+    // ¿Responde «sí», «no» o «corregir» a un caso o a una nota que esperan? Sin IA.
+    const flujo = await this.casos.leerFlujo(yo.conversationId);
+    const corta = interpretarRespuestaCorta(texto);
+    if (
+      corta &&
+      (flujo.borrador?.fase === 'CONFIRMANDO' || flujo.notaPendiente)
+    ) {
+      await this.decidir(rt, yo, flujo, corta, ahora);
+      return;
+    }
+
+    // Si detrás de este viene otro mensaje, ese los responde a los dos.
+    await this.esperar(Math.max(0, this.agruparMs - (Date.now() - recibidoEn)));
+    if (!(await this.soyElUltimo(e))) return;
+    await this.responderConIA(rt, yo, ahora);
   }
 
-  /** Valida el código y, si sirve, saluda y responde la pregunta que quedó en espera. */
+  /** Valida el código y, si sirve, saluda, ofrece lo que quedó a medias y responde lo que esperaba. */
   private async abrir(
     e: Mensaje,
     codigo: string,
@@ -321,6 +385,20 @@ export class SupportBotService {
       }),
     );
 
+    // Un caso que quedó a medio abrir en la conversación anterior (§3.4 paso 7).
+    const b = r.borradorRetomado;
+    if (b) {
+      const confirmar = b.fase === 'CONFIRMANDO';
+      await this.responder(
+        rt,
+        yo,
+        confirmar
+          ? `${TEXTOS_SOPORTE.retomarBorrador(b.titulo, true)}\n\n${textoDelBorrador(b)}`
+          : TEXTOS_SOPORTE.retomarBorrador(b.titulo, false),
+        confirmar ? TECLADOS.CONFIRMAR : undefined,
+      );
+    }
+
     const pendiente = await this.sesiones.tomarPreguntaEnEspera(
       e.telegramUserId,
     );
@@ -333,20 +411,30 @@ export class SupportBotService {
   }
 
   /**
-   * La respuesta con el manual (y la IA de la clínica, si hay). Mientras piensa, el
-   * chat muestra «escribiendo…».
+   * La respuesta con el manual (y la IA de la clínica, si hay), y lo que el código
+   * decide con ella: el borrador del caso, la nota a uno de sus casos o los botones.
+   * Mientras piensa, el chat muestra «escribiendo…».
    */
   private async responderConIA(
     rt: SupportBotRuntime,
     yo: Interlocutor,
     ahora: Date,
+    opciones: { pedirCaso?: boolean } = {},
   ): Promise<void> {
+    const flujo = await this.casos.leerFlujo(yo.conversationId);
+    const pedirCaso = opciones.pedirCaso || flujo.modoCaso;
+    const casos = await this.casos.casosDe(yo, ahora);
+
     const escribiendo = () => void this.api.sendChatAction(rt.token, yo.chatId);
     escribiendo();
     const intervalo = setInterval(escribiendo, RENOVAR_ESCRIBIENDO_MS);
     let armada: RespuestaArmada | null;
     try {
-      armada = await this.respuestas.responder(yo, rt, ahora);
+      armada = await this.respuestas.responder(yo, rt, ahora, {
+        pedirCaso,
+        borrador: flujo.borrador,
+        casos,
+      });
     } finally {
       clearInterval(intervalo);
     }
@@ -356,19 +444,194 @@ export class SupportBotService {
         `Respuesta del asistente sin IA (${armada.motivoSinIA}).`,
       );
     }
-    await this.responder(
-      rt,
-      yo,
-      armada.texto,
-      armada.botonesUtil ? BOTONES_UTIL : undefined,
-      armada.registro,
-    );
+
+    let texto = armada.texto;
+    let teclado: Teclado | undefined = armada.botones
+      ? TECLADOS[armada.botones]
+      : undefined;
+    let nuevo: FlujoConversacion = {
+      ...flujo,
+      notaPendiente: null,
+      modoCaso: false,
+    };
+    const ia = armada.ia;
+
+    if (ia && (ia.tipo === 'falla' || (pedirCaso && ia.caso))) {
+      // La IA armó (o completó) el caso: el código decide si falta algo o se muestra.
+      const prioridad = prioridadDelCaso({
+        urgenciaIA: ia.urgencia,
+        textos: armada.pendientes,
+        anterior: flujo.borrador?.prioridad,
+      });
+      const r = siguienteBorrador(flujo.borrador, {
+        tipo: 'PROPUESTA',
+        caso: ia.caso ?? CASO_VACIO,
+        prioridad,
+        ahora,
+      });
+      nuevo = {
+        borrador: r.borrador,
+        notaPendiente: null,
+        modoCaso: r.accion === 'PEDIR_DATOS',
+      };
+      if (r.accion === 'PEDIR_CONFIRMACION' && r.borrador) {
+        texto = `${ia.respuesta}\n\n${textoDelBorrador(r.borrador)}`;
+        teclado = TECLADOS.CONFIRMAR;
+      } else {
+        texto = ia.respuesta;
+        teclado = undefined;
+      }
+    } else if (ia && casoAmpliable(casos, ia.ampliarCaso)) {
+      // Más información para uno de SUS casos abiertos: se agrega con su «Sí».
+      nuevo = {
+        ...nuevo,
+        notaPendiente: {
+          caso: ia.ampliarCaso as number,
+          texto: armada.pendientes.filter((t) => !t.startsWith('/')).join('\n'),
+        },
+      };
+      texto = `${ia.respuesta}\n\n${TEXTOS_SOPORTE.confirmarNota(ia.ampliarCaso as number)}`;
+      teclado = TECLADOS.NOTA;
+    } else if (!ia && pedirCaso) {
+      // Sin IA, el caso se arma con lo que escribió. Si solo tocó «Abrir un caso»
+      // (nada nuevo escrito), con lo que contó en el turno anterior.
+      const soloComandos = armada.pendientes.every((t) => t.startsWith('/'));
+      const textos =
+        soloComandos && !flujo.borrador
+          ? [...armada.turnoAnterior, ...armada.pendientes]
+          : armada.pendientes;
+      const propuesto = borradorSinIA(
+        flujo.borrador?.descripcion
+          ? [flujo.borrador.descripcion, ...textos]
+          : textos,
+      );
+      const r = siguienteBorrador(flujo.borrador, {
+        tipo: 'PROPUESTA',
+        caso: propuesto,
+        prioridad: prioridadDelCaso({
+          urgenciaIA: null,
+          textos,
+          anterior: flujo.borrador?.prioridad,
+        }),
+        ahora,
+      });
+      nuevo = {
+        borrador: r.borrador,
+        notaPendiente: null,
+        modoCaso: r.accion === 'PEDIR_DATOS',
+      };
+      if (r.accion === 'PEDIR_CONFIRMACION' && r.borrador) {
+        texto = textoDelBorrador(r.borrador);
+        teclado = TECLADOS.CONFIRMAR;
+      } else {
+        texto = TEXTOS_SOPORTE.contarFalla;
+        teclado = undefined;
+      }
+    }
+
+    await this.casos.guardarFlujo(yo.conversationId, nuevo);
+    await this.responder(rt, yo, texto, teclado, armada.registro);
     if (armada.registro.uncovered) {
       await this.prisma.supportBotConversation.updateMany({
         where: { id: yo.conversationId },
         data: { hadUncoveredQuestion: true },
       });
     }
+  }
+
+  /**
+   * «Sí», «no» o «corregir» (con botón o por escrito) a un borrador mostrado o a una
+   * nota pendiente. Es lo ÚNICO que abre un caso o agrega una nota.
+   */
+  private async decidir(
+    rt: SupportBotRuntime,
+    yo: Interlocutor,
+    flujo: FlujoConversacion,
+    respuesta: 'SI' | 'NO' | 'CORREGIR',
+    ahora: Date,
+  ): Promise<void> {
+    if (flujo.notaPendiente) {
+      const { caso, texto } = flujo.notaPendiente;
+      await this.casos.guardarFlujo(yo.conversationId, {
+        ...flujo,
+        notaPendiente: null,
+      });
+      if (respuesta !== 'SI') {
+        await this.responder(rt, yo, TEXTOS_SOPORTE.notaDescartada);
+        return;
+      }
+      const agregada = yo.isTest
+        ? true
+        : await this.casos.agregarNota(yo, caso, texto);
+      await this.responder(
+        rt,
+        yo,
+        agregada
+          ? TEXTOS_SOPORTE.notaAgregada(caso)
+          : TEXTOS_SOPORTE.borradorVencido,
+      );
+      return;
+    }
+
+    const r = siguienteBorrador(flujo.borrador, { tipo: respuesta, ahora });
+    switch (r.accion) {
+      case 'ABRIR_CASO':
+        await this.casos.guardarFlujo(yo.conversationId, {
+          borrador: null,
+          notaPendiente: null,
+          modoCaso: false,
+        });
+        await this.abrirCaso(rt, yo, flujo.borrador as BorradorCaso, ahora);
+        return;
+      case 'DESCARTAR':
+        await this.casos.guardarFlujo(yo.conversationId, {
+          borrador: null,
+          notaPendiente: null,
+          modoCaso: false,
+        });
+        await this.responder(rt, yo, TEXTOS_SOPORTE.casoDescartado);
+        return;
+      case 'PEDIR_CORRECCION':
+      case 'PEDIR_DATOS':
+        await this.casos.guardarFlujo(yo.conversationId, {
+          borrador: r.borrador,
+          notaPendiente: null,
+          modoCaso: true,
+        });
+        await this.responder(
+          rt,
+          yo,
+          r.accion === 'PEDIR_CORRECCION'
+            ? TEXTOS_SOPORTE.pedirCorreccion
+            : TEXTOS_SOPORTE.contarFalla,
+        );
+        return;
+      default:
+        await this.responder(rt, yo, TEXTOS_SOPORTE.borradorVencido);
+    }
+  }
+
+  private async abrirCaso(
+    rt: SupportBotRuntime,
+    yo: Interlocutor,
+    borrador: BorradorCaso,
+    ahora: Date,
+  ): Promise<void> {
+    const titulo = borrador.titulo ?? '';
+    if (yo.isTest) {
+      await this.responder(rt, yo, TEXTOS_SOPORTE.casoSimulado(titulo));
+      return;
+    }
+    const numero = await this.casos.abrirCaso(yo, borrador);
+    this.logger.log(
+      `El asistente abrió el caso #${numero} (prioridad ${borrador.prioridad}).`,
+    );
+    const cuando = textoCuandoLoVeElEquipo(ahora, await this.config.horario());
+    await this.responder(
+      rt,
+      yo,
+      TEXTOS_SOPORTE.casoAbierto({ numero, titulo, cuando }),
+    );
   }
 
   // ── Botones ────────────────────────────────────────────────────────────
@@ -378,9 +641,19 @@ export class SupportBotService {
     rt: SupportBotRuntime,
     ahora: Date,
   ): Promise<void> {
-    const boton = leerBoton(e.datos);
-    if (!boton || (boton.accion !== 'UTIL_SI' && boton.accion !== 'UTIL_NO')) {
-      // Botones de fases siguientes (casos, avisos) o viejos: solo se responden.
+    const b = leerBoton(e.datos);
+    const propios = [
+      'UTIL_SI',
+      'UTIL_NO',
+      'CASO_SI',
+      'CASO_NO',
+      'CASO_CORREGIR',
+      'CASO_NUEVO',
+      'NOTA_SI',
+      'NOTA_NO',
+    ];
+    if (!b || !propios.includes(b.accion)) {
+      // Botones de la Fase 4 (avisos) o viejos: solo se responden.
       await this.api.answerCallbackQuery(rt.token, e.callbackId);
       return;
     }
@@ -394,21 +667,63 @@ export class SupportBotService {
       return;
     }
     const yo = estado.interlocutor;
-    const util = boton.accion === 'UTIL_SI';
     await this.api.answerCallbackQuery(
       rt.token,
       e.callbackId,
-      util ? TEXTOS_SOPORTE.meSirvio : undefined,
+      b.accion === 'UTIL_SI' ? TEXTOS_SOPORTE.meSirvio : undefined,
     );
     // Un botón usado no se vuelve a tocar: se quita del mensaje.
     if (e.messageId !== null)
       await this.api.quitarBotones(rt.token, e.chatId, e.messageId);
+    await this.sesiones.tocar(yo.conversationId, ahora);
+
+    switch (b.accion) {
+      case 'UTIL_SI':
+        await this.feedback(yo, 'UTIL');
+        return;
+      case 'UTIL_NO':
+      case 'CASO_NUEVO': {
+        if (b.accion === 'UTIL_NO') await this.feedback(yo, 'NO_UTIL');
+        // El caso se arma con lo que ya contó en la conversación.
+        const flujo = await this.casos.leerFlujo(yo.conversationId);
+        await this.casos.guardarFlujo(yo.conversationId, {
+          ...flujo,
+          notaPendiente: null,
+          modoCaso: true,
+        });
+        if (
+          await this.registrar(yo.conversationId, 'ENTRADA', '/nuevo', {
+            updateId: e.updateId,
+          })
+        ) {
+          await this.responderConIA(rt, yo, ahora, { pedirCaso: true });
+        }
+        return;
+      }
+      default: {
+        const flujo = await this.casos.leerFlujo(yo.conversationId);
+        const respuesta =
+          b.accion === 'CASO_SI' || b.accion === 'NOTA_SI'
+            ? 'SI'
+            : b.accion === 'CASO_CORREGIR'
+              ? 'CORREGIR'
+              : 'NO';
+        // Un «No, gracias» al ofrecimiento (sin borrador ni nota) no hace nada más.
+        if (!flujo.borrador && !flujo.notaPendiente && respuesta === 'NO')
+          return;
+        await this.decidir(rt, yo, flujo, respuesta, ahora);
+      }
+    }
+  }
+
+  private async feedback(
+    yo: Interlocutor,
+    valor: 'UTIL' | 'NO_UTIL',
+  ): Promise<void> {
     await this.prisma.supportBotConversation.updateMany({
       where: { id: yo.conversationId },
-      data: { feedback: util ? 'UTIL' : 'NO_UTIL' },
+      data: { feedback: valor },
     });
-    await this.sesiones.tocar(yo.conversationId, ahora);
-    if (!util) await this.responder(rt, yo, TEXTOS_SOPORTE.noMeSirvio);
   }
 
   // ── Envío y registro ───────────────────────────────────────────────────
@@ -418,7 +733,7 @@ export class SupportBotService {
     rt: SupportBotRuntime,
     yo: Interlocutor,
     texto: string,
-    botones?: typeof BOTONES_UTIL,
+    botones?: Teclado,
     registro: Registro = {},
   ): Promise<void> {
     const enviado = await this.enviar(rt, yo.chatId, texto, botones);
@@ -437,7 +752,7 @@ export class SupportBotService {
     rt: SupportBotRuntime,
     chatId: string,
     texto: string,
-    botones?: typeof BOTONES_UTIL,
+    botones?: Teclado,
   ): Promise<string | null> {
     const partes = splitTelegramText(texto);
     let ultimo: string | null = null;

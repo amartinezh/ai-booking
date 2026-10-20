@@ -1,6 +1,14 @@
 import { Logger } from '@nestjs/common';
 import { Prisma } from '@agenia/database';
-import { TEXTOS_SOPORTE } from '@agenia/shared';
+import {
+  FLUJO_VACIO,
+  HORARIO_EQUIPO_POR_DEFECTO,
+  TEXTOS_SOPORTE,
+  type BorradorCaso,
+  type CasoDeLaPersona,
+  type FlujoConversacion,
+  type RespuestaIA,
+} from '@agenia/shared';
 import { SupportBotService } from './support-bot.service';
 import type {
   EstadoConversacion,
@@ -17,13 +25,15 @@ import type {
   RespuestaArmada,
   SupportBotAnswerService,
 } from './support-bot-answer.service';
+import type { SupportBotCasesService } from './support-bot-cases.service';
 
 /**
- * El turno del asistente (Fase 1). Lo que no puede fallar:
+ * El turno del asistente. Lo que no puede fallar:
  *  1. Sin conversación verificada no hay respuesta con contenido: solo se pide el código.
  *  2. La pregunta escrita antes del código se responde apenas se valida.
  *  3. Un reintento de Telegram (mismo update_id) no se atiende dos veces.
- *  4. Lo que pasa en la conversación queda registrado; lo de antes, no.
+ *  4. 🔒 Un caso NUNCA se abre sin el «Sí» (S9), y una nota solo va a un caso suyo
+ *     con su «Sí». La clínica y el autor salen de la conversación, no de la IA.
  */
 describe('SupportBotService', () => {
   const RT: SupportBotRuntime = {
@@ -35,6 +45,7 @@ describe('SupportBotService', () => {
     conversationIdleMinutes: 30,
     maxMessagesPerHour: 40,
     maxMessageChars: 2000,
+    maxAiTurnsPerOrgPerDay: 300,
   };
   const ANA: Interlocutor = {
     conversationId: 'conv-1',
@@ -47,28 +58,18 @@ describe('SupportBotService', () => {
     chatId: '777',
     telegramName: 'Ana',
   };
-
-  let enviados: Array<{ chat: string; texto: string }>;
-  let registrados: Array<{
-    conversationId: string;
-    direction: string;
-    text: string;
-    telegramUpdateId: string | null;
-  }>;
-  let estado: EstadoConversacion;
-  let resultado: ResultadoCodigo;
-  let espera: string | null;
-  let contador: number;
-  let sesiones: Record<string, jest.Mock>;
-  let api: Record<string, jest.Mock>;
-  let redis: Record<string, jest.Mock>;
-  let service: SupportBotService;
-  let respuestas: { responder: jest.Mock };
-  let conversaciones: { updateMany: jest.Mock };
-  let ultimo: Map<string, string>;
+  const ia = (cambios: Partial<RespuestaIA> = {}): RespuestaIA => ({
+    tipo: 'respuesta',
+    respuesta: 'Pulsa «Clonar Día».',
+    temas: ['agenda'],
+    urgencia: 'normal',
+    caso: null,
+    ampliarCaso: null,
+    ...cambios,
+  });
   const ARMADA: RespuestaArmada = {
     texto: 'Pulsa «Clonar Día».',
-    botonesUtil: true,
+    botones: 'UTIL',
     registro: {
       source: 'IA',
       aiKind: 'respuesta',
@@ -80,9 +81,47 @@ describe('SupportBotService', () => {
       latencyMs: 1200,
     },
     motivoSinIA: null,
+    ia: ia(),
+    pendientes: ['¿cómo copio la agenda?'],
+    turnoAnterior: [],
   };
+  const CASO_COMPLETO = {
+    titulo: 'No salen los recordatorios',
+    descripcion:
+      'Desde las 7 de la mañana no sale ningún recordatorio automático.',
+    pantalla: '/dashboard/configuracion',
+    falta: [],
+  };
+  const MIS_CASOS: CasoDeLaPersona[] = [
+    {
+      numero: 58,
+      titulo: 'No salen los recordatorios',
+      estado: 'IN_PROGRESS',
+      creadoEn: new Date('2026-10-19T14:00:00Z'),
+      tomadoEn: new Date('2026-10-19T14:30:00Z'),
+      resueltoEn: null,
+      respuesta: null,
+    },
+  ];
+  const CONFIRMAR = ['s1:CASO_SI', 's1:CASO_CORREGIR', 's1:CASO_NO'];
 
-  const msg = (texto: string | null, updateId = '100') => ({
+  let enviados: Array<{ chat: string; texto: string; botones?: unknown }>;
+  let registrados: Array<Record<string, unknown>>;
+  let estado: EstadoConversacion;
+  let resultado: ResultadoCodigo;
+  let espera: string | null;
+  let contador: number;
+  let flujo: FlujoConversacion;
+  let sesiones: Record<string, jest.Mock>;
+  let api: Record<string, jest.Mock>;
+  let redis: Record<string, jest.Mock>;
+  let respuestas: { responder: jest.Mock };
+  let casos: Record<string, jest.Mock>;
+  let conversaciones: { updateMany: jest.Mock };
+  let ultimo: Map<string, string>;
+  let service: SupportBotService;
+
+  const msg = (texto: string | null, updateId = String(Math.random())) => ({
     accion: 'mensaje' as const,
     updateId,
     telegramUserId: '777',
@@ -90,7 +129,29 @@ describe('SupportBotService', () => {
     nombre: 'Ana',
     texto,
   });
+  const boton = (datos: string, messageId: number | null = 42) => ({
+    accion: 'boton' as const,
+    updateId: String(Math.random()),
+    telegramUserId: '777',
+    chatId: '777',
+    nombre: 'Ana',
+    callbackId: 'cb',
+    datos,
+    messageId,
+  });
   const textos = () => enviados.map((e) => e.texto);
+  const teclado = (i = enviados.length - 1) =>
+    (enviados[i]?.botones as Array<Array<{ datos: string }>> | undefined)
+      ?.flat()
+      .map((b) => b.datos);
+  const borrador = (cambios: Partial<BorradorCaso> = {}): BorradorCaso => ({
+    fase: 'CONFIRMANDO',
+    ...CASO_COMPLETO,
+    prioridad: 'HIGH',
+    creadoEn: new Date().toISOString(),
+    venceEn: null,
+    ...cambios,
+  });
 
   beforeEach(() => {
     for (const nivel of ['log', 'warn', 'error'] as const) {
@@ -102,6 +163,7 @@ describe('SupportBotService', () => {
     resultado = { tipo: 'INVALIDO', restantes: 4 };
     espera = null;
     contador = 0;
+    flujo = { ...FLUJO_VACIO };
     sesiones = {
       conversacionDe: jest.fn(async () => estado),
       validarCodigo: jest.fn(async () => resultado),
@@ -118,10 +180,17 @@ describe('SupportBotService', () => {
       tocar: jest.fn(async () => undefined),
     };
     api = {
-      sendMessage: jest.fn(async (_t: string, chat: string, texto: string) => {
-        enviados.push({ chat, texto });
-        return { ok: true, result: { message_id: 1 } };
-      }),
+      sendMessage: jest.fn(
+        async (
+          _t: string,
+          chat: string,
+          texto: string,
+          opts?: { botones?: unknown },
+        ) => {
+          enviados.push({ chat, texto, botones: opts?.botones });
+          return { ok: true, result: { message_id: enviados.length } };
+        },
+      ),
       answerCallbackQuery: jest.fn(async () => ({ ok: true, result: true })),
       sendChatAction: jest.fn(async () => ({ ok: true, result: true })),
       quitarBotones: jest.fn(async () => ({ ok: true, result: true })),
@@ -137,6 +206,15 @@ describe('SupportBotService', () => {
       get: jest.fn(async (k: string) => ultimo.get(k) ?? null),
     };
     respuestas = { responder: jest.fn(async () => ARMADA) };
+    casos = {
+      leerFlujo: jest.fn(async () => flujo),
+      guardarFlujo: jest.fn(async (_id: string, f: FlujoConversacion) => {
+        flujo = f;
+      }),
+      casosDe: jest.fn(async () => MIS_CASOS),
+      abrirCaso: jest.fn(async () => 59),
+      agregarNota: jest.fn(async () => true),
+    };
     conversaciones = { updateMany: jest.fn(async () => ({ count: 1 })) };
     const prisma = {
       supportBotConversation: conversaciones,
@@ -161,6 +239,7 @@ describe('SupportBotService', () => {
     const config = {
       registrarEnvio: jest.fn(async () => undefined),
       runtime: jest.fn(async () => RT),
+      horario: jest.fn(async () => HORARIO_EQUIPO_POR_DEFECTO),
     };
     service = new SupportBotService(
       prisma as unknown as PrismaService,
@@ -169,11 +248,14 @@ describe('SupportBotService', () => {
       config as unknown as SupportBotConfigService,
       sesiones as unknown as SupportBotSessionService,
       respuestas as unknown as SupportBotAnswerService,
+      casos as unknown as SupportBotCasesService,
     );
     (service as unknown as { agruparMs: number }).agruparMs = 0;
   });
 
   afterEach(() => jest.restoreAllMocks());
+
+  // ── Sin conversación ─────────────────────────────────────────────────────
 
   describe('sin conversación', () => {
     it('un saludo: pide el código y no guarda nada', async () => {
@@ -190,6 +272,7 @@ describe('SupportBotService', () => {
       ]);
       expect(espera).toBe('¿cómo copio la agenda del lunes?');
       expect(registrados).toEqual([]);
+      expect(respuestas.responder).not.toHaveBeenCalled();
     });
 
     it('si Redis no guarda la pregunta, no promete responderla', async () => {
@@ -198,7 +281,7 @@ describe('SupportBotService', () => {
       expect(textos()).toEqual([TEXTOS_SOPORTE.pedirCodigo]);
     });
 
-    it('un código equivocado: cuenta el intento', async () => {
+    it('un código equivocado, bloqueado o sin acceso: lo dice', async () => {
       await service.procesar(msg('482 913'), RT);
       expect(sesiones.validarCodigo).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -209,30 +292,30 @@ describe('SupportBotService', () => {
           telegramName: 'Ana',
         }),
       );
-      expect(textos()).toEqual([TEXTOS_SOPORTE.codigoIncorrecto(4)]);
-    });
-
-    it('bloqueado: lo dice con los minutos', async () => {
       resultado = { tipo: 'BLOQUEADO', minutos: 37 };
       await service.procesar(msg('482913'), RT);
-      expect(textos()).toEqual([TEXTOS_SOPORTE.bloqueado(37)]);
-    });
-
-    it('sin acceso: lo dice', async () => {
       resultado = { tipo: 'SIN_ACCESO' };
       await service.procesar(msg('482913'), RT);
-      expect(textos()).toEqual([TEXTOS_SOPORTE.sinAcceso]);
+      expect(textos()).toEqual([
+        TEXTOS_SOPORTE.codigoIncorrecto(4),
+        TEXTOS_SOPORTE.bloqueado(37),
+        TEXTOS_SOPORTE.sinAcceso,
+      ]);
     });
 
     it('el código correcto: saluda con su rol y clínica, y responde la pregunta guardada', async () => {
       espera = '¿cómo copio la agenda?';
-      resultado = { tipo: 'ABIERTA', interlocutor: ANA, chatsCerrados: [] };
+      resultado = {
+        tipo: 'ABIERTA',
+        interlocutor: ANA,
+        chatsCerrados: [],
+        borradorRetomado: null,
+      };
       await service.procesar(msg('482913'), RT);
       expect(textos()).toEqual([
         'Listo, Ana. Hablas como Agente de Reservas de Hospital de Prueba (a***@clinica.co). Si no fuiste tú, escribe /salir.',
         'Pulsa «Clonar Día».',
       ]);
-      // El código no queda registrado; la pregunta guardada, sí, y se responde con el manual.
       expect(registrados.map((r) => [r.direction, r.text])).toEqual([
         ['SALIDA', expect.stringContaining('Listo, Ana')],
         ['ENTRADA', '¿cómo copio la agenda?'],
@@ -241,7 +324,12 @@ describe('SupportBotService', () => {
     });
 
     it('el QR (/start con el código largo) abre la conversación', async () => {
-      resultado = { tipo: 'ABIERTA', interlocutor: ANA, chatsCerrados: [] };
+      resultado = {
+        tipo: 'ABIERTA',
+        interlocutor: ANA,
+        chatsCerrados: [],
+        borradorRetomado: null,
+      };
       const codigo = 'A'.repeat(32);
       await service.procesar(msg(`/start ${codigo}`), RT);
       expect(sesiones.validarCodigo).toHaveBeenCalledWith(
@@ -255,18 +343,52 @@ describe('SupportBotService', () => {
         tipo: 'ABIERTA',
         interlocutor: ANA,
         chatsCerrados: ['555'],
+        borradorRetomado: null,
       };
       await service.procesar(msg('482913'), RT);
-      expect(enviados[0]).toEqual({
+      expect(enviados[0]).toMatchObject({
         chat: '555',
         texto: TEXTOS_SOPORTE.cerradaPorOtra,
       });
+    });
+
+    it('al abrir, ofrece el caso que quedó listo para confirmar, con sus botones', async () => {
+      resultado = {
+        tipo: 'ABIERTA',
+        interlocutor: ANA,
+        chatsCerrados: [],
+        borradorRetomado: borrador(),
+      };
+      await service.procesar(msg('482913'), RT);
+      expect(textos()[1]).toContain(
+        TEXTOS_SOPORTE.retomarBorrador('No salen los recordatorios', true),
+      );
+      expect(textos()[1]).toContain('Este es el caso que abriría:');
+      expect(teclado(1)).toEqual(CONFIRMAR);
+    });
+
+    it('al abrir, uno a medio armar: pide lo que falta, sin botones', async () => {
+      resultado = {
+        tipo: 'ABIERTA',
+        interlocutor: ANA,
+        chatsCerrados: [],
+        borradorRetomado: borrador({
+          fase: 'RECOPILANDO',
+          falta: ['desde cuándo'],
+        }),
+      };
+      await service.procesar(msg('482913'), RT);
+      expect(textos()[1]).toBe(
+        TEXTOS_SOPORTE.retomarBorrador('No salen los recordatorios', false),
+      );
+      expect(teclado(1)).toBeUndefined();
     });
 
     it.each([
       ['/start', TEXTOS_SOPORTE.pedirCodigo],
       ['/start corto', TEXTOS_SOPORTE.pedirCodigo],
       ['/casos', TEXTOS_SOPORTE.pedirCodigo],
+      ['/nuevo', TEXTOS_SOPORTE.pedirCodigo],
       ['/salir', TEXTOS_SOPORTE.sinConversacion],
     ])('«%s» sin conversación', async (texto, respuesta) => {
       await service.procesar(msg(texto), RT);
@@ -280,6 +402,8 @@ describe('SupportBotService', () => {
     });
   });
 
+  // ── Con conversación ─────────────────────────────────────────────────────
+
   describe('con conversación', () => {
     beforeEach(() => {
       estado = { tipo: 'VIGENTE', interlocutor: ANA };
@@ -291,6 +415,7 @@ describe('SupportBotService', () => {
         ANA,
         RT,
         expect.any(Date),
+        { pedirCaso: false, borrador: null, casos: MIS_CASOS },
       );
       expect(registrados).toEqual([
         expect.objectContaining({
@@ -303,7 +428,6 @@ describe('SupportBotService', () => {
           direction: 'SALIDA',
           text: 'Pulsa «Clonar Día».',
           telegramUpdateId: null,
-          // Lo que respondió la IA queda para las cifras: tipo, temas, tokens.
           source: 'IA',
           aiKind: 'respuesta',
           topics: ['agenda'],
@@ -316,31 +440,26 @@ describe('SupportBotService', () => {
         }),
       ]);
       expect(sesiones.tocar).toHaveBeenCalledWith('conv-1', expect.any(Date));
-    });
-
-    it('la respuesta lleva los botones «Me sirvió» / «No me sirvió» y muestra «escribiendo…»', async () => {
-      await service.procesar(msg('¿cómo copio la agenda?'), RT);
       expect(api.sendChatAction).toHaveBeenCalledWith('TOKEN', '777');
-      expect(api.sendMessage.mock.calls[0][3]).toEqual({
-        botones: [
-          [
-            { texto: '✅ Me sirvió', datos: 's1:UTIL_SI' },
-            { texto: '🙋 No me sirvió', datos: 's1:UTIL_NO' },
-          ],
-        ],
-      });
     });
 
-    it('sin botones cuando la respuesta no los lleva', async () => {
-      respuestas.responder.mockResolvedValue({ ...ARMADA, botonesUtil: false });
-      await service.procesar(msg('hola'), RT);
-      expect(api.sendMessage.mock.calls[0][3]).toEqual({});
+    it('los botones de cada respuesta: «Me sirvió», ofrecer el caso, o ninguno', async () => {
+      await service.procesar(msg('a'), RT);
+      expect(teclado()).toEqual(['s1:UTIL_SI', 's1:UTIL_NO']);
+      respuestas.responder.mockResolvedValue({
+        ...ARMADA,
+        botones: 'OFRECER_CASO',
+      });
+      await service.procesar(msg('b'), RT);
+      expect(teclado()).toEqual(['s1:CASO_NUEVO', 's1:CASO_NO']);
+      respuestas.responder.mockResolvedValue({ ...ARMADA, botones: null });
+      await service.procesar(msg('c'), RT);
+      expect(teclado()).toBeUndefined();
     });
 
     it('una pregunta que el manual no cubre marca la conversación', async () => {
       respuestas.responder.mockResolvedValue({
         ...ARMADA,
-        botonesUtil: false,
         registro: { ...ARMADA.registro, uncovered: true, topics: [] },
       });
       await service.procesar(msg('¿puedo exportar a Excel?'), RT);
@@ -348,26 +467,26 @@ describe('SupportBotService', () => {
         where: { id: 'conv-1' },
         data: { hadUncoveredQuestion: true },
       });
-      expect(registrados[1]).toMatchObject({ uncovered: true });
     });
 
-    it('sin IA, igual responde (y lo deja en el log)', async () => {
+    it('sin IA, igual responde (y lo deja en el log); si no hay nada pendiente, no responde', async () => {
       respuestas.responder.mockResolvedValue({
         ...ARMADA,
         texto: 'Lo más cercano del manual…',
-        botonesUtil: false,
+        botones: 'OFRECER_CASO',
+        ia: null,
         registro: { ...ARMADA.registro, source: 'SIN_IA', aiProvider: null },
         motivoSinIA: 'SIN_IA_CONFIGURADA',
       });
       await service.procesar(msg('¿cómo copio la agenda?'), RT);
       expect(textos()).toEqual(['Lo más cercano del manual…']);
       expect(registrados[1]).toMatchObject({ source: 'SIN_IA' });
-    });
-
-    it('si no hay nada pendiente, no responde', async () => {
+      expect(Logger.prototype.log).toHaveBeenCalledWith(
+        'Respuesta del asistente sin IA (SIN_IA_CONFIGURADA).',
+      );
       respuestas.responder.mockResolvedValue(null);
       await service.procesar(msg('hola'), RT);
-      expect(enviados).toEqual([]);
+      expect(textos()).toHaveLength(1);
     });
 
     it('🧩 mensajes seguidos: el primero no responde si detrás llegó otro; el último responde los dos', async () => {
@@ -377,26 +496,15 @@ describe('SupportBotService', () => {
       expect(respuestas.responder).not.toHaveBeenCalled();
       await service.procesar(msg('no me deja clonar la agenda', '502'), RT);
       expect(respuestas.responder).toHaveBeenCalledTimes(1);
-      // Los dos quedaron registrados; una sola respuesta.
       expect(registrados.filter((r) => r.direction === 'ENTRADA')).toHaveLength(
         2,
       );
-      expect(textos()).toEqual(['Pulsa «Clonar Día».']);
     });
 
     it('alLlegar solo marca el texto libre (no comandos, códigos, botones ni lo que no es texto)', async () => {
       for (const t of ['/salir', '482 913', null])
         await service.alLlegar(msg(t, '9'));
-      await service.alLlegar({
-        accion: 'boton',
-        updateId: '9',
-        telegramUserId: '777',
-        chatId: '777',
-        nombre: null,
-        callbackId: 'c',
-        datos: 's1:UTIL_SI',
-        messageId: 1,
-      });
+      await service.alLlegar(boton('s1:UTIL_SI'));
       expect(redis.set).not.toHaveBeenCalled();
       await service.alLlegar(msg('una pregunta', '10'));
       expect(redis.set).toHaveBeenCalledWith(
@@ -440,55 +548,84 @@ describe('SupportBotService', () => {
       expect(esperas[1]).toBe(0);
     });
 
+    it('la espera de verdad (sin sobrescribir) también termina', async () => {
+      (service as unknown as { agruparMs: number }).agruparMs = 20;
+      await service.procesar(msg('hola', '703'), RT, new Date(), Date.now());
+      expect(respuestas.responder).toHaveBeenCalledTimes(1);
+    });
+
     it('🔁 el mismo update_id dos veces se atiende una sola', async () => {
       await service.procesar(msg('hola', '300'), RT);
       await service.procesar(msg('hola', '300'), RT);
       expect(respuestas.responder).toHaveBeenCalledTimes(1);
     });
 
-    it('/salir cierra la conversación', async () => {
+    it('/salir cierra; /start y /ayuda responden fijo', async () => {
       await service.procesar(msg('/salir'), RT);
       expect(sesiones.cerrar).toHaveBeenCalledWith(
         'conv-1',
         'SALIR',
         expect.any(Date),
       );
-      expect(textos()).toEqual([TEXTOS_SOPORTE.conversacionCerrada]);
+      await service.procesar(msg('/start'), RT);
+      await service.procesar(msg('/ayuda'), RT);
+      expect(textos()).toEqual([
+        TEXTOS_SOPORTE.conversacionCerrada,
+        TEXTOS_SOPORTE.yaConversando,
+        TEXTOS_SOPORTE.ayuda,
+      ]);
     });
 
-    it.each([
-      ['/start', TEXTOS_SOPORTE.yaConversando],
-      ['/ayuda', TEXTOS_SOPORTE.ayuda],
-      ['/casos', TEXTOS_SOPORTE.enConstruccion],
-      ['/nuevo', TEXTOS_SOPORTE.enConstruccion],
-    ])('«%s»', async (texto, respuesta) => {
-      await service.procesar(msg(texto), RT);
-      expect(textos()).toEqual([respuesta]);
+    it('/casos: su lista (sin IA), o que no tiene', async () => {
+      await service.procesar(msg('/casos'), RT);
+      expect(textos()[0]).toContain(
+        '• #58 «No salen los recordatorios»: en atención desde',
+      );
+      casos.casosDe.mockResolvedValue([]);
+      await service.procesar(msg('/casos'), RT);
+      expect(textos()[1]).toBe(TEXTOS_SOPORTE.sinCasos);
+      expect(respuestas.responder).not.toHaveBeenCalled();
     });
 
-    it('un código nuevo abre otra conversación', async () => {
+    it('/nuevo: pide que cuente y deja la conversación esperando el caso', async () => {
+      flujo = {
+        ...FLUJO_VACIO,
+        notaPendiente: { caso: 58, texto: 'x' },
+      };
+      await service.procesar(msg('/nuevo'), RT);
+      expect(textos()).toEqual([TEXTOS_SOPORTE.contarFalla]);
+      expect(flujo).toMatchObject({ modoCaso: true, notaPendiente: null });
+      expect(respuestas.responder).not.toHaveBeenCalled();
+    });
+
+    it('/nuevo con algo contado: arma el caso de una vez', async () => {
+      await service.procesar(msg('/nuevo no carga la agenda'), RT);
+      expect(respuestas.responder).toHaveBeenCalledWith(
+        ANA,
+        RT,
+        expect.any(Date),
+        expect.objectContaining({ pedirCaso: true }),
+      );
+    });
+
+    it('un código nuevo o el QR abre otra conversación', async () => {
       resultado = {
         tipo: 'ABIERTA',
         interlocutor: { ...ANA, conversationId: 'conv-2' },
         chatsCerrados: [],
+        borradorRetomado: null,
       };
       await service.procesar(msg('482913'), RT);
-      expect(sesiones.validarCodigo).toHaveBeenCalled();
+      await service.procesar(msg(`/start ${'B'.repeat(30)}`), RT);
+      expect(sesiones.validarCodigo).toHaveBeenCalledTimes(2);
       expect(registrados[0]).toMatchObject({
         conversationId: 'conv-2',
         direction: 'SALIDA',
       });
     });
 
-    it('el QR con conversación abierta también abre otra', async () => {
-      resultado = { tipo: 'ABIERTA', interlocutor: ANA, chatsCerrados: [] };
-      await service.procesar(msg(`/start ${'B'.repeat(30)}`), RT);
-      expect(sesiones.validarCodigo).toHaveBeenCalledWith(
-        expect.objectContaining({ tipo: 'ENLACE' }),
-      );
-    });
-
-    it('algo que no es texto: lo dice y queda registrado', async () => {
+    it('algo que no es texto: lo dice una vez y queda registrado', async () => {
+      await service.procesar(msg(null, '400'), RT);
       await service.procesar(msg(null, '400'), RT);
       expect(textos()).toEqual([TEXTOS_SOPORTE.soloTexto]);
       expect(registrados[0]).toMatchObject({
@@ -498,15 +635,481 @@ describe('SupportBotService', () => {
       });
     });
 
-    it('algo que no es texto, repetido, no se contesta dos veces', async () => {
-      await service.procesar(msg(null, '401'), RT);
-      await service.procesar(msg(null, '401'), RT);
-      expect(textos()).toEqual([TEXTOS_SOPORTE.soloTexto]);
-    });
-
     it('un mensaje vacío no hace nada', async () => {
       await service.procesar(msg('   '), RT);
       expect(enviados).toEqual([]);
+    });
+  });
+
+  // ── El caso (§3.4) ───────────────────────────────────────────────────────
+
+  describe('🔒 el caso: la IA lo arma, el código lo muestra y solo el «Sí» lo abre', () => {
+    beforeEach(() => {
+      estado = { tipo: 'VIGENTE', interlocutor: ANA };
+    });
+
+    const falla = (
+      caso: RespuestaIA['caso'],
+      pendientes = ['nadie puede agendar, no salen los recordatorios'],
+    ) =>
+      respuestas.responder.mockResolvedValue({
+        ...ARMADA,
+        botones: null,
+        ia: ia({
+          tipo: 'falla',
+          respuesta: 'Entiendo, con pacientes esperando es urgente.',
+          temas: [],
+          urgencia: 'alta',
+          caso,
+        }),
+        pendientes,
+      });
+
+    it('una falla completa: la respuesta, el borrador con prioridad alta y los botones; nada se abre', async () => {
+      falla(CASO_COMPLETO);
+      await service.procesar(
+        msg('nadie puede agendar, no salen los recordatorios'),
+        RT,
+      );
+      expect(textos()[0]).toBe(
+        [
+          'Entiendo, con pacientes esperando es urgente.',
+          '',
+          'Este es el caso que abriría:',
+          '',
+          '«No salen los recordatorios»',
+          'Prioridad: alta (frena la atención de pacientes)',
+          'Pantalla: /dashboard/configuracion',
+          'Detalle: Desde las 7 de la mañana no sale ningún recordatorio automático.',
+          '',
+          '¿Lo abro?',
+        ].join('\n'),
+      );
+      expect(teclado()).toEqual(CONFIRMAR);
+      expect(flujo.borrador).toMatchObject({
+        fase: 'CONFIRMANDO',
+        prioridad: 'HIGH',
+      });
+      expect(casos.abrirCaso).not.toHaveBeenCalled();
+    });
+
+    it('una falla a la que le falta algo: pregunta (la IA) y queda esperando, sin botones', async () => {
+      falla({ ...CASO_COMPLETO, falta: ['desde cuándo pasa'] });
+      await service.procesar(msg('no salen'), RT);
+      expect(textos()).toEqual([
+        'Entiendo, con pacientes esperando es urgente.',
+      ]);
+      expect(teclado()).toBeUndefined();
+      expect(flujo).toMatchObject({
+        modoCaso: true,
+        borrador: { fase: 'RECOPILANDO' },
+      });
+    });
+
+    it('la IA recibe el borrador en curso y el pedido de caso en el turno siguiente', async () => {
+      flujo = {
+        borrador: borrador({ fase: 'RECOPILANDO', falta: ['desde cuándo'] }),
+        notaPendiente: null,
+        modoCaso: true,
+      };
+      await service.procesar(msg('desde las 7'), RT);
+      expect(respuestas.responder).toHaveBeenCalledWith(
+        ANA,
+        RT,
+        expect.any(Date),
+        expect.objectContaining({
+          pedirCaso: true,
+          borrador: expect.objectContaining({ fase: 'RECOPILANDO' }),
+        }),
+      );
+    });
+
+    it('en modo caso, una respuesta que no es falla pero trae el caso también lo arma', async () => {
+      flujo = { ...FLUJO_VACIO, modoCaso: true };
+      respuestas.responder.mockResolvedValue({
+        ...ARMADA,
+        ia: ia({ caso: CASO_COMPLETO }),
+      });
+      await service.procesar(msg('no salen los recordatorios'), RT);
+      expect(teclado()).toEqual(CONFIRMAR);
+    });
+
+    it('🔺 con IA, la alta ya confirmada se mantiene mientras la IA siga diciendo «alta»', async () => {
+      flujo = {
+        borrador: borrador({ fase: 'RECOPILANDO', prioridad: 'HIGH' }),
+        notaPendiente: null,
+        modoCaso: true,
+      };
+      falla(CASO_COMPLETO, ['también pasa con el Dr. Ruiz']);
+      await service.procesar(msg('también pasa con el Dr. Ruiz'), RT);
+      expect(flujo.borrador?.prioridad).toBe('HIGH');
+    });
+
+    it('la urgencia de la IA sin una señal fija en lo que escribió queda normal', async () => {
+      falla(CASO_COMPLETO, ['el botón de guardar está gris']);
+      await service.procesar(msg('el botón de guardar está gris'), RT);
+      expect(flujo.borrador?.prioridad).toBe('NORMAL');
+      expect(textos()[0]).toContain('Prioridad: normal');
+    });
+
+    it.each(['sí', 'Sí, ábrelo', '👍'])(
+      '«%s» escrito: abre el caso con su número y cuándo lo ve el equipo, sin pasar por la IA',
+      async (si) => {
+        flujo = { borrador: borrador(), notaPendiente: null, modoCaso: false };
+        await service.procesar(msg(si), RT);
+        expect(casos.abrirCaso).toHaveBeenCalledWith(
+          ANA,
+          expect.objectContaining({
+            titulo: 'No salen los recordatorios',
+            prioridad: 'HIGH',
+          }),
+        );
+        expect(textos()[0]).toMatch(
+          /^Listo, abrí el caso #59: «No salen los recordatorios»\. El equipo técnico /,
+        );
+        expect(flujo).toEqual(FLUJO_VACIO);
+        expect(respuestas.responder).not.toHaveBeenCalled();
+      },
+    );
+
+    it('el botón «Sí, ábrelo»: abre, responde el toque y quita los botones; un segundo toque no abre otro', async () => {
+      flujo = { borrador: borrador(), notaPendiente: null, modoCaso: false };
+      await service.procesar(boton('s1:CASO_SI'), RT);
+      expect(api.answerCallbackQuery).toHaveBeenCalledWith(
+        'TOKEN',
+        'cb',
+        undefined,
+      );
+      expect(api.quitarBotones).toHaveBeenCalledWith('TOKEN', '777', 42);
+      expect(casos.abrirCaso).toHaveBeenCalledTimes(1);
+      await service.procesar(boton('s1:CASO_SI'), RT);
+      expect(casos.abrirCaso).toHaveBeenCalledTimes(1);
+      expect(textos()[1]).toBe(TEXTOS_SOPORTE.borradorVencido);
+    });
+
+    it('«no, gracias»: lo descarta', async () => {
+      flujo = { borrador: borrador(), notaPendiente: null, modoCaso: false };
+      await service.procesar(msg('no, gracias'), RT);
+      expect(textos()).toEqual([TEXTOS_SOPORTE.casoDescartado]);
+      expect(flujo.borrador).toBeNull();
+      expect(casos.abrirCaso).not.toHaveBeenCalled();
+    });
+
+    it('«Corregir algo»: pide qué cambia y vuelve a armarlo', async () => {
+      flujo = { borrador: borrador(), notaPendiente: null, modoCaso: false };
+      await service.procesar(boton('s1:CASO_CORREGIR'), RT);
+      expect(textos()).toEqual([TEXTOS_SOPORTE.pedirCorreccion]);
+      expect(flujo).toMatchObject({
+        modoCaso: true,
+        borrador: { fase: 'RECOPILANDO' },
+      });
+    });
+
+    it('un «sí» a un borrador incompleto pide lo que falta', async () => {
+      flujo = {
+        borrador: borrador({ descripcion: 'corto' }),
+        notaPendiente: null,
+        modoCaso: false,
+      };
+      await service.procesar(msg('sí'), RT);
+      expect(textos()).toEqual([TEXTOS_SOPORTE.contarFalla]);
+      expect(flujo.modoCaso).toBe(true);
+      expect(casos.abrirCaso).not.toHaveBeenCalled();
+    });
+
+    it('«no puedo agendar» no es un «no»: va a la IA', async () => {
+      flujo = { borrador: borrador(), notaPendiente: null, modoCaso: false };
+      await service.procesar(msg('no puedo agendar'), RT);
+      expect(respuestas.responder).toHaveBeenCalled();
+      expect(casos.abrirCaso).not.toHaveBeenCalled();
+    });
+
+    it('un «sí» sin nada pendiente va a la IA como cualquier mensaje', async () => {
+      await service.procesar(msg('sí'), RT);
+      expect(respuestas.responder).toHaveBeenCalled();
+      expect(casos.abrirCaso).not.toHaveBeenCalled();
+    });
+
+    it('un «sí» a un borrador que todavía no se mostró (a medio armar) va a la IA', async () => {
+      flujo = {
+        borrador: borrador({ fase: 'RECOPILANDO' }),
+        notaPendiente: null,
+        modoCaso: true,
+      };
+      await service.procesar(msg('sí'), RT);
+      expect(respuestas.responder).toHaveBeenCalled();
+      expect(casos.abrirCaso).not.toHaveBeenCalled();
+    });
+
+    it('en modo prueba el caso se simula', async () => {
+      estado = { tipo: 'VIGENTE', interlocutor: { ...ANA, isTest: true } };
+      flujo = { borrador: borrador(), notaPendiente: null, modoCaso: false };
+      await service.procesar(msg('sí'), RT);
+      expect(casos.abrirCaso).not.toHaveBeenCalled();
+      expect(textos()).toEqual([
+        TEXTOS_SOPORTE.casoSimulado('No salen los recordatorios'),
+      ]);
+    });
+
+    it('«No, abrir un caso» y «Abrir un caso»: el caso se arma con lo que ya contó', async () => {
+      await service.procesar(boton('s1:UTIL_NO'), RT);
+      expect(conversaciones.updateMany).toHaveBeenCalledWith({
+        where: { id: 'conv-1' },
+        data: { feedback: 'NO_UTIL' },
+      });
+      expect(registrados[0]).toMatchObject({
+        direction: 'ENTRADA',
+        text: '/nuevo',
+      });
+      expect(respuestas.responder).toHaveBeenCalledWith(
+        ANA,
+        RT,
+        expect.any(Date),
+        expect.objectContaining({ pedirCaso: true }),
+      );
+      await service.procesar(boton('s1:CASO_NUEVO'), RT);
+      expect(respuestas.responder).toHaveBeenCalledTimes(2);
+      // «Abrir un caso» no cuenta como «no me sirvió».
+      expect(conversaciones.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('«No, gracias» al ofrecimiento (sin borrador): solo quita los botones', async () => {
+      await service.procesar(boton('s1:CASO_NO'), RT);
+      expect(api.quitarBotones).toHaveBeenCalled();
+      expect(enviados).toEqual([]);
+    });
+
+    describe('sin IA', () => {
+      const sinIA = (pendientes: string[]) =>
+        respuestas.responder.mockResolvedValue({
+          ...ARMADA,
+          texto: 'Lo más cercano del manual…',
+          botones: 'OFRECER_CASO',
+          ia: null,
+          motivoSinIA: 'FALLO',
+          pendientes,
+        });
+
+      it('el caso se arma con lo que escribió y se muestra para confirmar', async () => {
+        flujo = { ...FLUJO_VACIO, modoCaso: true };
+        sinIA(['nadie puede agendar desde las 8 de la mañana']);
+        await service.procesar(
+          msg('nadie puede agendar desde las 8 de la mañana'),
+          RT,
+        );
+        expect(textos()[0]).toMatch(/^Este es el caso que abriría:/);
+        expect(textos()[0]).toContain('Prioridad: alta');
+        expect(teclado()).toEqual(CONFIRMAR);
+      });
+
+      it('si escribió muy poco, pide que cuente más', async () => {
+        flujo = { ...FLUJO_VACIO, modoCaso: true };
+        sinIA(['/nuevo', 'x']);
+        await service.procesar(msg('x'), RT);
+        expect(textos()).toEqual([TEXTOS_SOPORTE.contarFalla]);
+        expect(flujo.modoCaso).toBe(true);
+      });
+
+      it('«Abrir un caso» sin escribir nada: el borrador sale de lo que contó antes', async () => {
+        respuestas.responder.mockResolvedValue({
+          ...ARMADA,
+          ia: null,
+          motivoSinIA: 'SIN_IA_CONFIGURADA',
+          pendientes: ['/nuevo'],
+          turnoAnterior: [
+            'La agenda del Dr. Ruiz no deja copiar el lunes.',
+            'Sale un error rojo.',
+          ],
+        });
+        await service.procesar(boton('s1:CASO_NUEVO'), RT);
+        expect(textos()[0]).toContain(
+          '«La agenda del Dr. Ruiz no deja copiar el lunes.»',
+        );
+        expect(textos()[0]).toContain('Sale un error rojo.');
+        expect(teclado()).toEqual(CONFIRMAR);
+      });
+
+      it('lo del turno anterior no se mezcla con un borrador en curso ni con lo recién escrito', async () => {
+        respuestas.responder.mockResolvedValue({
+          ...ARMADA,
+          ia: null,
+          motivoSinIA: 'FALLO',
+          pendientes: ['El botón de imprimir no hace nada.'],
+          turnoAnterior: ['¿cómo copio la agenda?'],
+        });
+        flujo = { ...FLUJO_VACIO, modoCaso: true };
+        await service.procesar(msg('El botón de imprimir no hace nada.'), RT);
+        expect(textos()[0]).not.toContain('copio la agenda');
+      });
+
+      it('🔺 una corrección no le baja la prioridad alta', async () => {
+        flujo = {
+          borrador: borrador({ fase: 'RECOPILANDO', prioridad: 'HIGH' }),
+          notaPendiente: null,
+          modoCaso: true,
+        };
+        sinIA(['también pasa con la agenda del Dr. Ruiz']);
+        await service.procesar(
+          msg('también pasa con la agenda del Dr. Ruiz'),
+          RT,
+        );
+        expect(flujo.borrador?.prioridad).toBe('HIGH');
+        expect(textos()[0]).toContain('Prioridad: alta');
+      });
+
+      it('una corrección se suma a lo que ya tenía el borrador', async () => {
+        flujo = {
+          borrador: borrador({
+            fase: 'RECOPILANDO',
+            titulo: 'No carga la agenda',
+            descripcion: 'No carga la agenda del Dr. Ruiz.',
+          }),
+          notaPendiente: null,
+          modoCaso: true,
+        };
+        sinIA(['desde las 8 de la mañana']);
+        await service.procesar(msg('desde las 8 de la mañana'), RT);
+        expect(flujo.borrador?.descripcion).toBe(
+          'No carga la agenda del Dr. Ruiz. desde las 8 de la mañana',
+        );
+      });
+
+      it('fuera del modo caso, responde lo del manual con su ofrecimiento', async () => {
+        sinIA(['¿cómo copio la agenda?']);
+        await service.procesar(msg('¿cómo copio la agenda?'), RT);
+        expect(textos()).toEqual(['Lo más cercano del manual…']);
+        expect(teclado()).toEqual(['s1:CASO_NUEVO', 's1:CASO_NO']);
+        expect(flujo.borrador).toBeNull();
+      });
+    });
+  });
+
+  // ── Ampliar un caso suyo ─────────────────────────────────────────────────
+
+  describe('🔒 ampliar uno de SUS casos: solo con su «Sí»', () => {
+    beforeEach(() => {
+      estado = { tipo: 'VIGENTE', interlocutor: ANA };
+    });
+
+    it('la IA lo reconoce: se le pregunta antes de agregarlo', async () => {
+      respuestas.responder.mockResolvedValue({
+        ...ARMADA,
+        ia: ia({
+          tipo: 'seguimiento_caso',
+          respuesta: 'Entendido.',
+          ampliarCaso: 58,
+        }),
+        pendientes: ['/nuevo', 'agrégale que también pasa con el Dr. Ruiz'],
+      });
+      await service.procesar(
+        msg('agrégale que también pasa con el Dr. Ruiz'),
+        RT,
+      );
+      expect(textos()).toEqual([
+        `Entendido.\n\n${TEXTOS_SOPORTE.confirmarNota(58)}`,
+      ]);
+      expect(teclado()).toEqual(['s1:NOTA_SI', 's1:NOTA_NO']);
+      expect(flujo.notaPendiente).toEqual({
+        caso: 58,
+        texto: 'agrégale que también pasa con el Dr. Ruiz',
+      });
+      expect(casos.agregarNota).not.toHaveBeenCalled();
+    });
+
+    it('un caso que no es suyo (o ya solucionado) no se ofrece', async () => {
+      respuestas.responder.mockResolvedValue({
+        ...ARMADA,
+        ia: ia({ ampliarCaso: 99 }),
+      });
+      await service.procesar(msg('agrégale esto al 99'), RT);
+      expect(flujo.notaPendiente).toBeNull();
+      expect(teclado()).toEqual(['s1:UTIL_SI', 's1:UTIL_NO']);
+    });
+
+    it('«Sí, agrégalo»: la nota va al caso', async () => {
+      flujo = {
+        ...FLUJO_VACIO,
+        notaPendiente: { caso: 58, texto: 'también pasa con el Dr. Ruiz' },
+      };
+      await service.procesar(boton('s1:NOTA_SI'), RT);
+      expect(casos.agregarNota).toHaveBeenCalledWith(
+        ANA,
+        58,
+        'también pasa con el Dr. Ruiz',
+      );
+      expect(textos()).toEqual([TEXTOS_SOPORTE.notaAgregada(58)]);
+      expect(flujo.notaPendiente).toBeNull();
+    });
+
+    it('si el caso se solucionó mientras tanto, lo dice', async () => {
+      casos.agregarNota.mockResolvedValue(false);
+      flujo = { ...FLUJO_VACIO, notaPendiente: { caso: 58, texto: 'x' } };
+      await service.procesar(msg('sí'), RT);
+      expect(textos()).toEqual([TEXTOS_SOPORTE.borradorVencido]);
+    });
+
+    it('«No» (o «corregir»): no agrega nada', async () => {
+      flujo = { ...FLUJO_VACIO, notaPendiente: { caso: 58, texto: 'x' } };
+      await service.procesar(boton('s1:NOTA_NO'), RT);
+      flujo = { ...FLUJO_VACIO, notaPendiente: { caso: 58, texto: 'x' } };
+      await service.procesar(msg('corregir'), RT);
+      expect(casos.agregarNota).not.toHaveBeenCalled();
+      expect(textos()).toEqual([
+        TEXTOS_SOPORTE.notaDescartada,
+        TEXTOS_SOPORTE.notaDescartada,
+      ]);
+    });
+
+    it('en modo prueba la nota se simula', async () => {
+      estado = { tipo: 'VIGENTE', interlocutor: { ...ANA, isTest: true } };
+      flujo = { ...FLUJO_VACIO, notaPendiente: { caso: 58, texto: 'x' } };
+      await service.procesar(msg('sí'), RT);
+      expect(casos.agregarNota).not.toHaveBeenCalled();
+      expect(textos()).toEqual([TEXTOS_SOPORTE.notaAgregada(58)]);
+    });
+  });
+
+  // ── Otros ────────────────────────────────────────────────────────────────
+
+  describe('botones', () => {
+    it('«Me sirvió»: lo agradece, quita los botones y lo anota', async () => {
+      estado = { tipo: 'VIGENTE', interlocutor: ANA };
+      await service.procesar(boton('s1:UTIL_SI'), RT);
+      expect(api.answerCallbackQuery).toHaveBeenCalledWith(
+        'TOKEN',
+        'cb',
+        TEXTOS_SOPORTE.meSirvio,
+      );
+      expect(api.quitarBotones).toHaveBeenCalledWith('TOKEN', '777', 42);
+      expect(conversaciones.updateMany).toHaveBeenCalledWith({
+        where: { id: 'conv-1' },
+        data: { feedback: 'UTIL' },
+      });
+      expect(enviados).toEqual([]);
+    });
+
+    it('sin el mensaje del botón, no intenta quitarlo', async () => {
+      estado = { tipo: 'VIGENTE', interlocutor: ANA };
+      await service.procesar(boton('s1:UTIL_SI', null), RT);
+      expect(api.quitarBotones).not.toHaveBeenCalled();
+    });
+
+    it('sin conversación abierta, pide el código y no abre nada', async () => {
+      flujo = { borrador: borrador(), notaPendiente: null, modoCaso: false };
+      await service.procesar(boton('s1:CASO_SI'), RT);
+      expect(api.answerCallbackQuery).toHaveBeenCalledWith(
+        'TOKEN',
+        'cb',
+        TEXTOS_SOPORTE.escribeElCodigo,
+      );
+      expect(casos.abrirCaso).not.toHaveBeenCalled();
+    });
+
+    it('los de los avisos (Fase 4) o los que no son del asistente solo se responden', async () => {
+      await service.procesar(boton('s1:AVISO_BIEN:58'), RT);
+      await service.procesar(boton('otro:cosa'), RT);
+      expect(api.answerCallbackQuery).toHaveBeenCalledTimes(2);
+      expect(sesiones.conversacionDe).not.toHaveBeenCalled();
     });
   });
 
@@ -544,80 +1147,6 @@ describe('SupportBotService', () => {
     });
   });
 
-  describe('botones «Me sirvió» / «No me sirvió»', () => {
-    const boton = (datos: string, messageId: number | null = 42) => ({
-      accion: 'boton' as const,
-      updateId: '900',
-      telegramUserId: '777',
-      chatId: '777',
-      nombre: 'Ana',
-      callbackId: 'cb',
-      datos,
-      messageId,
-    });
-
-    beforeEach(() => {
-      estado = { tipo: 'VIGENTE', interlocutor: ANA };
-    });
-
-    it('«Me sirvió»: lo agradece, quita los botones y lo anota', async () => {
-      await service.procesar(boton('s1:UTIL_SI'), RT);
-      expect(api.answerCallbackQuery).toHaveBeenCalledWith(
-        'TOKEN',
-        'cb',
-        TEXTOS_SOPORTE.meSirvio,
-      );
-      expect(api.quitarBotones).toHaveBeenCalledWith('TOKEN', '777', 42);
-      expect(conversaciones.updateMany).toHaveBeenCalledWith({
-        where: { id: 'conv-1' },
-        data: { feedback: 'UTIL' },
-      });
-      expect(enviados).toEqual([]);
-    });
-
-    it('«No me sirvió»: lo anota y ofrece seguir o reportarlo', async () => {
-      await service.procesar(boton('s1:UTIL_NO'), RT);
-      expect(conversaciones.updateMany).toHaveBeenCalledWith({
-        where: { id: 'conv-1' },
-        data: { feedback: 'NO_UTIL' },
-      });
-      expect(textos()).toEqual([TEXTOS_SOPORTE.noMeSirvio]);
-    });
-
-    it('sin el mensaje del botón, no intenta quitarlo', async () => {
-      await service.procesar(boton('s1:UTIL_SI', null), RT);
-      expect(api.quitarBotones).not.toHaveBeenCalled();
-    });
-
-    it('sin conversación abierta, pide el código', async () => {
-      estado = { tipo: 'NINGUNA' };
-      await service.procesar(boton('s1:UTIL_SI'), RT);
-      expect(api.answerCallbackQuery).toHaveBeenCalledWith(
-        'TOKEN',
-        'cb',
-        TEXTOS_SOPORTE.escribeElCodigo,
-      );
-      expect(conversaciones.updateMany).not.toHaveBeenCalled();
-    });
-  });
-
-  it('un botón se responde para que Telegram no lo deje cargando', async () => {
-    await service.procesar(
-      {
-        accion: 'boton',
-        updateId: '9',
-        telegramUserId: '777',
-        chatId: '777',
-        nombre: 'Ana',
-        callbackId: 'cb',
-        datos: 's1:CASO_SI',
-        messageId: 7,
-      },
-      RT,
-    );
-    expect(api.answerCallbackQuery).toHaveBeenCalledWith('TOKEN', 'cb');
-  });
-
   it('si Telegram no acepta el envío, lo anota y no lanza', async () => {
     api.sendMessage.mockResolvedValue({
       ok: false,
@@ -625,6 +1154,18 @@ describe('SupportBotService', () => {
       description: 'Forbidden: bot was blocked by the user',
     });
     await expect(service.procesar(msg('hola'), RT)).resolves.toBeUndefined();
+  });
+
+  it('un texto larguísimo se parte, y los botones van en el último pedazo', async () => {
+    estado = { tipo: 'VIGENTE', interlocutor: ANA };
+    respuestas.responder.mockResolvedValue({
+      ...ARMADA,
+      texto: `${'a'.repeat(4000)}\n${'b'.repeat(500)}`,
+    });
+    await service.procesar(msg('hola'), RT);
+    expect(enviados).toHaveLength(2);
+    expect(enviados[0].botones).toBeUndefined();
+    expect(teclado(1)).toEqual(['s1:UTIL_SI', 's1:UTIL_NO']);
   });
 
   it('nunca lanza: un error inesperado queda en el log', async () => {
@@ -636,7 +1177,11 @@ describe('SupportBotService', () => {
   it('avisar el cierre desde el panel', async () => {
     await service.avisarCierreDesdePanel('777');
     expect(enviados).toEqual([
-      { chat: '777', texto: TEXTOS_SOPORTE.cerradaDesdePanel },
+      {
+        chat: '777',
+        texto: TEXTOS_SOPORTE.cerradaDesdePanel,
+        botones: undefined,
+      },
     ]);
   });
 });

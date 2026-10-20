@@ -29,6 +29,9 @@ export default async function SuperAdminSupportPage({
     // Serializamos las fechas para los Client Components
     const tickets = (res.data ?? []).map((t) => ({
         id: t.id,
+        number: t.number,
+        channel: t.channel,
+        priority: t.priority,
         title: t.title,
         description: t.description,
         status: t.status as 'OPEN' | 'IN_PROGRESS' | 'RESOLVED',
@@ -38,6 +41,7 @@ export default async function SuperAdminSupportPage({
         createdAt: t.createdAt.toISOString(),
         reporter: t.reporter,
         organization: t.organization,
+        notes: t.notes.map((n) => ({ ...n, createdAt: n.createdAt.toISOString() })),
     }));
 
     return (

@@ -482,7 +482,11 @@ export {
   esCodigoDeEnlace,
   esSoloSaludo,
   extraerCodigoCorto,
-  flowStateDe,
+  FLUJO_VACIO,
+  flujoAlCerrar,
+  flujoAlRetomar,
+  guardarFlujo,
+  leerFlujo,
   haySenalDeUrgencia,
   intentosRestantes,
   interpretarRespuestaCorta,
@@ -501,6 +505,7 @@ export type {
   CasoPropuesto,
   ComandoSoporte,
   EventoBorrador,
+  FlujoConversacion,
   MotivoCierre,
   RespuestaCorta,
   RespuestaIA,
@@ -556,3 +561,21 @@ export type {
   ResultadoDelManual,
   TurnoParaLaIA,
 } from './src/soporte-bot-prompt';
+export {
+  ESTADO_DEL_CASO,
+  borradorSinIA,
+  casoAmpliable,
+  descripcionDelCaso,
+  incidentesParaElPersonal,
+  textoBorradorParaLaIA,
+  textoCasosParaLaIA,
+  textoDelBorrador,
+  textoIncidentesParaLaIA,
+  textoListaDeCasos,
+} from './src/soporte-bot-casos';
+export type {
+  AlertaAbierta,
+  CasoDeLaPersona,
+  EstadoCaso,
+  IncidenteParaElPersonal,
+} from './src/soporte-bot-casos';

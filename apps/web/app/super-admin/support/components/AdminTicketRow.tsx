@@ -7,11 +7,17 @@ import { startTicketAttention } from '@/app/actions/support';
 import ResolveTicketModal from './ResolveTicketModal';
 import BrandLogo from '@/app/components/BrandLogo';
 import { formatAppointmentShort } from '@/lib/date';
+import type { SupportTicketChannel, SupportTicketPriority } from '@agenia/database';
+import { numeroDeCaso } from '@agenia/shared';
+import { EtiquetasDelCaso, NotasDelCaso, type NotaDelCaso } from '../../../dashboard/soporte/components/CasoDetalles';
 
 const fmt = (d: Date | string) => formatAppointmentShort(d);
 
 export type AdminTicket = {
     id: string;
+    number: number;
+    channel: SupportTicketChannel;
+    priority: SupportTicketPriority;
     title: string;
     description: string;
     status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED';
@@ -21,6 +27,7 @@ export type AdminTicket = {
     createdAt: Date | string;
     reporter: { email: string; role: string };
     organization: { id: string; name: string; logoUrl: string | null };
+    notes: NotaDelCaso[];
 };
 
 export default function AdminTicketRow({ ticket }: { ticket: AdminTicket }) {
@@ -55,7 +62,13 @@ export default function AdminTicketRow({ ticket }: { ticket: AdminTicket }) {
                             </span>
                             <span className="text-xs text-zinc-400">({ticket.reporter.role})</span>
                         </div>
-                        <h3 className="text-base font-semibold text-zinc-900">{ticket.title}</h3>
+                        <h3 className="text-base font-semibold text-zinc-900">
+                            <span className="text-zinc-400 font-mono font-semibold mr-1.5">{numeroDeCaso(ticket.number)}</span>
+                            {ticket.title}
+                        </h3>
+                        <div className="mt-1">
+                            <EtiquetasDelCaso channel={ticket.channel} priority={ticket.priority} />
+                        </div>
                         <p className="text-xs text-zinc-500 mt-0.5">Creado el {fmt(ticket.createdAt)}</p>
                     </div>
                     <div className="shrink-0">
@@ -74,6 +87,8 @@ export default function AdminTicketRow({ ticket }: { ticket: AdminTicket }) {
                     {expanded ? 'Ver menos' : 'Ver detalles completos'}
                 </button>
 
+                <NotasDelCaso notas={ticket.notes} titulo="Lo que agregó después" />
+
                 {ticket.status === 'RESOLVED' && ticket.resolutionNote && (
                     <div className="mt-4 p-4 rounded-xl bg-green-50 ring-1 ring-green-200">
                         <div className="flex items-center justify-between mb-1.5">
@@ -86,7 +101,8 @@ export default function AdminTicketRow({ ticket }: { ticket: AdminTicket }) {
                 )}
 
                 <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-zinc-100">
-                    <span className="text-[11px] font-mono text-zinc-400">#{ticket.id.slice(0, 8)}</span>
+                    {/* El número va junto al título. */}
+                    <span />
 
                     <div className="flex flex-wrap gap-2">
                         {ticket.status === 'OPEN' && (

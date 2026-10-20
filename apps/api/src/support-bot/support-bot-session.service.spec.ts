@@ -17,6 +17,9 @@ import type { SupportBotConfigService } from './support-bot-config.service';
  */
 
 type Fila = Record<string, unknown>;
+/** `{ not: null }` y parecidos: un filtro que no es un valor suelto. */
+const esObjetoFalso = (v: unknown) =>
+  !!v && typeof v === 'object' && !(v instanceof Date);
 const repetido = () =>
   new Prisma.PrismaClientKnownRequestError('repetido', {
     code: 'P2002',
@@ -48,7 +51,16 @@ class BaseFalsa {
   private abiertasDe = (where: Fila) =>
     this.conversaciones.filter(
       (c) =>
-        (where.closedAt === null ? c.closedAt === null : true) &&
+        (where.closedAt === null
+          ? c.closedAt === null
+          : esObjetoFalso(where.closedAt)
+            ? c.closedAt !== null
+            : true) &&
+        // NOT: { flowState: DbNull } = con algo en el flujo
+        (where.NOT === undefined ||
+          (c.flowState !== null && c.flowState !== undefined)) &&
+        (where.id === undefined ||
+          c.id !== (where.id as { not?: string }).not) &&
         (where.userId === undefined || c.userId === where.userId) &&
         (where.telegramUserId === undefined ||
           c.telegramUserId === where.telegramUserId) &&
@@ -120,9 +132,10 @@ class BaseFalsa {
         include?: Fila;
       }) => {
         let filas = this.abiertasDe(where);
-        if (orderBy)
+        const campo = orderBy ? Object.keys(orderBy)[0] : null;
+        if (campo)
           filas = [...filas].sort(
-            (a, b) => +(b.startedAt as Date) - +(a.startedAt as Date),
+            (a, b) => +(b[campo] as Date) - +(a[campo] as Date),
           );
         const c = filas[0];
         if (!c) return null;
@@ -137,16 +150,30 @@ class BaseFalsa {
             (where.closedAt === undefined || c.closedAt === null)
           ) {
             Object.assign(c, data);
+            if (
+              typeof c.flowState === 'object' &&
+              c.flowState !== null &&
+              !('borrador' in c.flowState)
+            )
+              c.flowState = null;
             count++;
           }
         }
         return { count };
+      },
+      findUnique: async ({ where }: { where: Fila }) =>
+        this.conversaciones.find((c) => c.id === where.id) ?? null,
+      update: async ({ where, data }: { where: Fila; data: Fila }) => {
+        const c = this.conversaciones.find((x) => x.id === where.id) as Fila;
+        Object.assign(c, data);
+        return c;
       },
       create: async ({ data }: { data: Fila }) => {
         const fila = {
           id: `conv-${++this.n}`,
           closedAt: null,
           closeReason: null,
+          flowState: null,
           ...data,
         };
         this.conversaciones.push(fila);
@@ -532,6 +559,91 @@ describe('SupportBotSessionService (base en memoria)', () => {
       ).resolves.toMatchObject({ tipo: 'VIGENTE' });
       await expect(svc.cerrar(id, 'SALIR')).resolves.toBe(true);
       await expect(svc.cerrar(id, 'SALIR')).resolves.toBe(false);
+    });
+  });
+
+  describe('el borrador de un caso a medio abrir (§3.4 paso 7)', () => {
+    const borrador = (fase: 'CONFIRMANDO' | 'RECOPILANDO') => ({
+      borrador: {
+        fase,
+        titulo: 'No salen los recordatorios',
+        descripcion: 'Desde las 7 no sale ningún recordatorio automático.',
+        pantalla: null,
+        falta: fase === 'RECOPILANDO' ? ['desde cuándo'] : [],
+        prioridad: 'NORMAL',
+        creadoEn: new Date().toISOString(),
+        venceEn: null,
+      },
+      notaPendiente: { caso: 58, texto: 'x' },
+      modoCaso: true,
+    });
+
+    it('al cerrar la conversación, el borrador queda 24 h (y lo demás se va)', async () => {
+      await validar((await svc.generarCodigo('ana')).codigo, '777');
+      const c = base.conversaciones[0];
+      c.flowState = borrador('CONFIRMANDO');
+      await svc.cerrar(c.id as string, 'SALIR');
+      const f = c.flowState as {
+        borrador: { venceEn: string };
+        notaPendiente: unknown;
+        modoCaso: boolean;
+      };
+      expect(Date.parse(f.borrador.venceEn) - Date.now()).toBeGreaterThan(
+        23 * 60 * MIN,
+      );
+      expect(f.notaPendiente).toBeNull();
+      expect(f.modoCaso).toBe(false);
+    });
+
+    it('cerrar sin nada en curso deja el flujo vacío', async () => {
+      await validar((await svc.generarCodigo('ana')).codigo, '777');
+      await svc.cerrar(base.conversaciones[0].id as string, 'SALIR');
+      expect(
+        (base.conversaciones[0].flowState as { borrador?: unknown } | null)
+          ?.borrador,
+      ).toBeUndefined();
+    });
+
+    it('el siguiente código lo retoma en la conversación nueva (aunque sea en otra cuenta)', async () => {
+      await validar((await svc.generarCodigo('ana')).codigo, '777');
+      base.conversaciones[0].flowState = borrador('CONFIRMANDO');
+      const r = await validar((await svc.generarCodigo('ana')).codigo, '888');
+      expect(r).toMatchObject({
+        tipo: 'ABIERTA',
+        borradorRetomado: {
+          titulo: 'No salen los recordatorios',
+          fase: 'CONFIRMANDO',
+          venceEn: null,
+        },
+      });
+      const nueva = base.conversaciones[1];
+      expect(nueva.flowState).toMatchObject({
+        borrador: { fase: 'CONFIRMANDO' },
+        modoCaso: false,
+      });
+      // La vieja ya no lo tiene: no se retoma dos veces.
+      expect(base.conversaciones[0].flowState).not.toHaveProperty('borrador');
+    });
+
+    it('a medio armar: la conversación nueva queda esperando lo que falta', async () => {
+      await validar((await svc.generarCodigo('ana')).codigo, '777');
+      base.conversaciones[0].flowState = borrador('RECOPILANDO');
+      await svc.cerrar(base.conversaciones[0].id as string, 'INACTIVIDAD');
+      const r = await validar((await svc.generarCodigo('ana')).codigo, '777');
+      expect(r).toMatchObject({ borradorRetomado: { fase: 'RECOPILANDO' } });
+      expect(base.conversaciones[1].flowState).toMatchObject({
+        modoCaso: true,
+      });
+    });
+
+    it('vencido (más de 24 h), no se retoma', async () => {
+      await validar((await svc.generarCodigo('ana')).codigo, '777');
+      const viejo = borrador('CONFIRMANDO');
+      viejo.borrador.venceEn = new Date(Date.now() - MIN).toISOString();
+      base.conversaciones[0].flowState = viejo;
+      base.conversaciones[0].closedAt = new Date(Date.now() - 25 * 60 * MIN);
+      const r = await validar((await svc.generarCodigo('ana')).codigo, '888');
+      expect(r).toMatchObject({ tipo: 'ABIERTA', borradorRetomado: null });
     });
   });
 

@@ -20,6 +20,9 @@ export default function SupportAdminClient({
         return tickets.filter((t) => {
             if (filter !== 'ALL' && t.status !== filter) return false;
             if (!q) return true;
+            // «#58» o «58»: el número con el que el asistente y el grupo nombran el caso.
+            const numero = q.replace(/^#/, '');
+            if (/^\d+$/.test(numero)) return String(t.number) === numero;
             return (
                 t.title.toLowerCase().includes(q) ||
                 t.description.toLowerCase().includes(q) ||
@@ -100,7 +103,7 @@ export default function SupportAdminClient({
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Buscar por título, clínica, usuario o contenido..."
+                    placeholder="Buscar por número (#58), título, clínica, usuario o contenido..."
                     className="block w-full p-2.5 pl-10 text-sm text-zinc-900 border border-zinc-300 rounded-lg bg-white focus:ring-indigo-500 focus:border-indigo-500"
                 />
             </div>

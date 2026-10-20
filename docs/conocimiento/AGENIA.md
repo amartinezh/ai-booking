@@ -1264,9 +1264,9 @@ Si al guardar aparece un error con ese rol, repórtalo en Soporte para que el eq
 ### 🛟 Soporte {#soporte}
 
 - **Ruta:** `/dashboard/soporte`
-- **Resumen:** Reporta una falla o haz una solicitud al equipo técnico de AgenIA y sigue su estado.
+- **Resumen:** Reporta una falla o haz una solicitud al equipo técnico de AgenIA, desde el panel o por Telegram, y sigue su estado.
 - **Relacionados:** [Primeros pasos](#primeros-pasos), [Glosario](#glosario)
-- **Palabras clave:** ticket, ayuda, reportar, falla, error, bug, incidente, mesa de ayuda, contactar soporte, equipo técnico, chat, celular, bot
+- **Palabras clave:** ticket, caso, número de caso, ayuda, reportar, falla, error, bug, incidente, mesa de ayuda, contactar soporte, equipo técnico, chat, celular, bot, prioridad, urgente
 
 #### Para qué sirve
 
@@ -1286,9 +1286,10 @@ Cuando algo no funciona como esperas o necesitas un cambio que no puedes hacer d
 ##### Seguir una solicitud
 
 1. Mira las cifras de arriba: Abiertas, En atención y Solucionadas.
-2. Cada tarjeta muestra su estado y cuándo la reportaste.
-3. Cuando está solucionada, aparece la «Respuesta del equipo de soporte».
-4. Pulsa «Ver detalles completos» para leer todo lo que escribiste.
+2. Cada tarjeta muestra su número (por ejemplo #58), su estado y cuándo la reportaste.
+3. Si la abriste por Telegram o es de prioridad alta, lo dice en la tarjeta, junto con lo que le agregaste después.
+4. Cuando está solucionada, aparece la «Respuesta del equipo de soporte».
+5. Pulsa «Ver detalles completos» para leer todo lo que escribiste.
 
 ##### Hablar con el asistente por Telegram
 
@@ -1296,16 +1297,36 @@ Cuando algo no funciona como esperas o necesitas un cambio que no puedes hacer d
 2. En Telegram, escríbele al bot que indica la tarjeta los 6 dígitos del código, o escanea el QR con el celular.
 3. El asistente confirma con qué usuario quedó la conversación. Si no fuiste tú, escribe /salir.
 4. Escríbele tu pregunta como se la harías a una persona. Si mandas varios mensajes seguidos, te los responde juntos.
-5. Si la respuesta te sirvió, pulsa «Me sirvió»; si no, «No me sirvió» y cuéntale con otras palabras qué necesitas.
+5. Si la respuesta te sirvió, pulsa «Me sirvió»; si no, pulsa «No, abrir un caso» y el asistente arma el caso con lo que le contaste.
 6. Para terminar, escribe /salir o pulsa «Cerrar» en la tarjeta. Si pasan 30 minutos sin mensajes, la conversación se cierra sola.
 
 > 💡 Cada conversación necesita un código nuevo. El código sirve una sola vez, vence a los 10 minutos y, si generas otro, el anterior deja de servir.
+
+##### Reportar una falla por Telegram
+
+1. Cuéntale al asistente qué pasa, o escribe /nuevo y luego cuéntaselo.
+2. Si le falta algo para entenderlo (en qué pantalla, desde cuándo, a quién afecta), te lo pregunta: como mucho dos cosas a la vez.
+3. Te muestra el caso que abriría: título, prioridad, pantalla y detalle.
+4. Pulsa «Sí, ábrelo» o escribe «sí» para abrirlo. Con «Corregir algo» le dices qué cambia, y con «No, gracias» no abre nada.
+5. Te dice el número del caso (por ejemplo #58) y cuándo lo verá el equipo técnico. El caso aparece aquí en Soporte con la etiqueta «Por Telegram».
+
+> 💡 El asistente nunca abre un caso sin tu «sí». Si la conversación se cierra con un caso sin confirmar, te lo ofrece de nuevo la próxima vez que entres, durante 24 horas.
+
+##### Ver cómo van tus casos y agregarles algo por Telegram
+
+1. Escribe /casos para ver tus casos abiertos y los solucionados del último mes, o pregúntale «¿cómo va mi caso?».
+2. Para agregarle algo a un caso, cuéntaselo y dile cuál, por ejemplo «agrégale al #58 que también pasa con el Dr. Ruiz».
+3. El asistente te pregunta si lo agrega. Pulsa «Sí, agrégalo» y el equipo técnico lo ve en el caso.
 
 #### Qué ves en la pantalla
 
 - **Abierto:** Nadie la ha tomado todavía.
 - **En atención:** Alguien del equipo técnico la está trabajando (con la hora en que empezó).
 - **Solucionada:** Resuelta, con la respuesta del equipo.
+- **#58:** El número del caso. El asistente de Telegram y el equipo técnico lo nombran así.
+- **Prioridad alta:** El caso frena la atención de pacientes. Solo la tienen los casos abiertos por Telegram, y la ves antes de confirmar.
+- **Por Telegram:** El caso se abrió con el asistente de Telegram.
+- **Lo que agregaste después:** Lo que le sumaste al caso desde el asistente, con su fecha.
 - **Ayuda:** Abre este centro de ayuda.
 - **Asistente de soporte en Telegram:** Genera el código para conversar con el asistente y muestra si tienes una conversación abierta. Aparece solo cuando el equipo de AgenIA activó el asistente.
 
@@ -1317,7 +1338,7 @@ Tú y el equipo técnico de AgenIA.
 
 ##### ¿Puedo agregar algo a una solicitud ya enviada?
 
-Todavía no. Si se te olvidó algo importante, abre otra solicitud y menciona la anterior en el título.
+Sí, con el asistente de Telegram: cuéntale lo que falta y dile a qué caso, por ejemplo «agrégale al #58 que también pasa con el Dr. Ruiz». Te pregunta antes de agregarlo, y en la tarjeta aparece como «Lo que agregaste después». Solo se puede con tus casos que no estén solucionados. Desde el panel todavía no se puede: abre otra solicitud y menciona el número de la anterior en el título.
 
 ##### ¿Por qué el asistente de Telegram me pide un código cada vez?
 
@@ -1325,7 +1346,11 @@ Para que solo el personal de la clínica converse con él, y para que un celular
 
 ##### ¿Qué puede hacer el asistente de Telegram?
 
-Responde tus dudas sobre AgenIA con este manual y con la configuración de tu clínica, usando la inteligencia artificial de tu clínica. Si tu clínica no tiene IA o falla, te muestra lo más parecido del manual. Te explica lo que puedes hacer con tu rol; lo de otro rol te dice quién lo hace. Todavía no abre casos ni muestra los tuyos: repórtalos con «Reportar Falla / Nueva Solicitud».
+Responde tus dudas sobre AgenIA con este manual y con la configuración de tu clínica, usando la inteligencia artificial de tu clínica. Si tu clínica no tiene IA o falla, te muestra lo más parecido del manual. Te explica lo que puedes hacer con tu rol; lo de otro rol te dice quién lo hace. Además abre casos (siempre con tu «sí»), te muestra los tuyos con /casos, les agrega lo que le cuentes y te avisa si el equipo técnico ya está atendiendo una falla general, como WhatsApp caído o recordatorios que no salen. Escribe /ayuda para ver sus comandos.
+
+##### ¿Cuándo un caso es de prioridad alta?
+
+Cuando frena la atención de pacientes: nadie puede agendar, el asistente de los pacientes no responde, no salen los recordatorios, las citas no llegan al hospital o el sistema no carga. El asistente la propone según lo que le cuentas y la ves en el caso antes de confirmar. Los casos de prioridad alta salen primero en la lista del equipo técnico.
 
 #### Si algo no sale bien
 
@@ -1344,6 +1369,10 @@ Genera uno nuevo con «Generar código»: cada código sirve una sola vez y venc
 ##### No aparece la tarjeta «Asistente de soporte en Telegram».
 
 Aparece solo cuando el equipo de AgenIA activó el asistente, y no para el rol Paciente. Si deberías verla, repórtalo en Soporte.
+
+##### El asistente dice «Ese caso ya no está pendiente».
+
+Tocaste un botón de un caso que ya se abrió o se descartó, o el caso al que querías agregarle algo ya está solucionado. Escribe /casos para ver cómo están tus casos, o /nuevo para reportar algo nuevo.
 
 ## Categoría: Conexión con el hospital {#hospital}
 
@@ -1918,7 +1947,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 - **Consulta en vivo al HIS** y **consulta del asistente al HIS**: construidas y apagadas hasta medir su costo en el hospital.
 - **Centro de ayuda**: solo lo ve el administrador.
 - **Alertas técnicas**: construidas; falta ejecutar el paso a producción (`docs/ALERTAS_TECNICAS.md` §1).
-- **Asistente de soporte por Telegram** (para el personal de las clínicas): en construcción (`docs/PLAN_BOT_SOPORTE.md`, §15). Hoy conecta el bot, verifica con el código y conversa, pero todavía no responde preguntas ni abre casos (fases 2 y 3). En producción está apagado: falta `SUPPORT_BOT_ENABLED=true`, la ruta del webhook en el Caddy y conectar el bot.
+- **Asistente de soporte por Telegram** (para el personal de las clínicas): en construcción (`docs/PLAN_BOT_SOPORTE.md`, §15). Ya responde preguntas y abre casos (fases 1 a 3), pero todavía no avisa al grupo del equipo técnico ni al empleado cuando su caso cambia (fase 4). En producción está apagado: falta `SUPPORT_BOT_ENABLED=true`, la ruta del webhook en el Caddy y conectar el bot.
 
 ## 14. Documentación detallada
 
@@ -1932,6 +1961,11 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 | `docs/PLAN_AGENDA_HUECOS.md` | Agenda armada con los huecos del HIS. |
 | `docs/PLAN_ALERTAS_TECNICAS.md` · `docs/ALERTAS_TECNICAS.md` | Alertas técnicas por Telegram y vigía del servidor. |
 | `docs/PLAN_BOT_SOPORTE.md` | Asistente de soporte por Telegram para el personal de las clínicas. |
+| `docs/MONITOR_SERVICIOS.md` | Monitor de servicios externos. |
+| `docs/GUARDRAIL_EMERGENCIAS.md` | Barandas de emergencias médicas. |
+| `docs/PLAN_PRUEBAS_CITAS.md` | Plan de pruebas del ciclo de vida de una cita. |
+| `docs/INSTALACION_VPS.md` | Instalación en un servidor. |
+| `docs/drivers/cnt-sanvicente-anserma/` | Todo lo del primer hospital: mapeo del HIS, estado, runbook, conectividad, avisos masivos, SQL. |
 
 ## 15. Asistente de soporte para el personal
 
@@ -1939,15 +1973,11 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 - **El código en cada conversación**: cualquiera le puede escribir, pero sin una conversación verificada el bot solo pide el código, sin usar IA y sin dar información. El código se genera en Soporte («Generar código»): son 6 dígitos para escribir o un QR que abre el bot con un código largo. Sirve una sola vez, vence a los 10 minutos y generar otro anula el anterior. En la base solo queda su HMAC. Después de 5 intentos fallidos desde una cuenta de Telegram, esa cuenta espera una hora.
 - **La conversación**: queda atada al usuario de AgenIA y a la cuenta de Telegram que dio el código. A lo sumo hay una abierta por usuario y por cuenta (índices parciales en la base). Se cierra a los 30 minutos sin mensajes (ajustable), con /salir, desde el panel o al abrir otra. Cada mensaje revalida usuario, rol y clínica. Si alguien escribe una pregunta antes del código, el bot la guarda 10 minutos y la responde apenas recibe el código.
-- **Cómo responde (fase 2)**: con la IA de la clínica de quien pregunta (si falla y `LLM_FAILOVER_ENABLED=true`, otra que la clínica tenga configurada). Le da a la IA este archivo —la Parte 1 y las secciones de la Parte 2 que permite `PARTE2_PARA_EL_ASISTENTE`—, el rol y el menú de quien pregunta, la ficha de configuración de su clínica (canales, IA, interruptores, recordatorios, límites, teléfono de soporte, espejo; nunca datos de pacientes) y los últimos turnos, con cédulas, teléfonos y correos ocultos. La IA responde en JSON y el código decide lo demás: descarta los temas que no existen, ofrece reportar en el panel lo que el manual no cubre o lo que es una falla, pone el enlace al Centro de ayuda solo para el administrador y los botones «Me sirvió» / «No me sirvió». Los mensajes que llegan con menos de 2 s de diferencia se responden juntos. Si la clínica no tiene IA, falla, tarda más de 25 s, responde algo ilegible o pasa el tope diario de respuestas con IA, contesta lo más parecido del manual con el buscador del Centro de ayuda. Cada respuesta guarda su tipo, los temas, los tokens y si quedó sin cubrir.
-- **Qué falta**: los casos (fase 3), los avisos al grupo y al empleado (fase 4) y el panel de cifras (fase 5), en `docs/PLAN_BOT_SOPORTE.md`. El examen del asistente (`pnpm --filter api examen:soporte`, 60 preguntas por rol) se corre con una clave real y gasta tokens.
+- **Cómo responde (fase 2)**: con la IA de la clínica de quien pregunta (si falla y `LLM_FAILOVER_ENABLED=true`, otra que la clínica tenga configurada). Le da a la IA este archivo —la Parte 1 y las secciones de la Parte 2 que permite `PARTE2_PARA_EL_ASISTENTE`—, el rol y el menú de quien pregunta, la ficha de configuración de su clínica (canales, IA, interruptores, recordatorios, límites, teléfono de soporte, espejo; nunca datos de pacientes) y los últimos turnos, con cédulas, teléfonos y correos ocultos. La IA responde en JSON y el código decide lo demás: descarta los temas que no existen, ofrece abrir un caso con lo que el manual no cubre, pone el enlace al Centro de ayuda solo para el administrador y los botones «Me sirvió» / «No, abrir un caso». Los mensajes que llegan con menos de 2 s de diferencia se responden juntos. Si la clínica no tiene IA, falla, tarda más de 25 s, responde algo ilegible o pasa el tope diario de respuestas con IA, contesta lo más parecido del manual con el buscador del Centro de ayuda. Cada respuesta guarda su tipo, los temas, los tokens y si quedó sin cubrir.
+- **Los casos (fase 3)**: la IA reconoce una falla y propone el borrador (título, detalle, pantalla y lo que falta, como mucho dos preguntas); el código lo guarda en la conversación (`SupportBotConversation.flowState`), se lo muestra al empleado con los botones «Sí, ábrelo» / «Corregir algo» / «No, gracias» y solo lo abre con un «sí», por botón o escrito («sí», «dale», «👍»; «no puedo agendar» no cuenta como «no»). La prioridad alta la propone la IA y la confirma una señal fija en lo que escribió el empleado (nadie puede agendar, el bot no responde, no salen los recordatorios, las citas no llegan al hospital, el sistema no carga); una corrección no la baja. El caso queda con número (#58), canal `TELEGRAM`, prioridad, la conversación de origen, y la clínica y el autor de la sesión verificada, nunca de la IA. Su descripción lleva el resumen y lo que la persona escribió tal cual (la IA lo vio con los datos ocultos; el equipo los necesita). Sin IA, el borrador se arma con lo que escribió (el título es la primera frase). Un borrador sin confirmar al cerrar la conversación se ofrece en la siguiente durante 24 h. `/casos` lista sus casos sin IA (abiertos y los solucionados de los últimos 30 días); la IA los recibe para «¿cómo va mi caso?» y, si le cuentan algo de uno abierto, el código pregunta antes de agregarlo como nota (`SupportTicketNote`, tipo `AMPLIACION`), solo a casos de esa persona. La IA también recibe las alertas técnicas abiertas que afectan a la clínica, traducidas a frases fijas (WhatsApp, Telegram, la voz, el espejo, el servidor de sesiones, Gemini si es su IA, recordatorios y aviso al agendador), para decir que el equipo ya lo está atendiendo. En modo prueba los casos y las notas se simulan. En la Mesa de Ayuda los casos muestran número, «Por Telegram», «Prioridad alta» (primero en la lista) y las notas, y se buscan por número.
+- **Qué falta**: los avisos al grupo y al empleado (fase 4) y el panel de cifras (fase 5), en `docs/PLAN_BOT_SOPORTE.md`. El examen del asistente (`pnpm --filter api examen:soporte`, 60 preguntas por rol) se corre con una clave real y gasta tokens.
 - **Configuración** (`/super-admin/soporte-bot`, solo super administrador): token del bot y su webhook (`/api/support-bot/webhook/<ruta>`, con `secret_token`), encendido, horario del equipo (por defecto de lunes a viernes de 8:00 a 17:00), minutos de la conversación, límites (40 mensajes por hora, 2.000 caracteres por mensaje, tope diario de respuestas con IA por clínica) y un código de prueba. Cada cambio queda en la auditoría global. Sin `SUPPORT_BOT_ENABLED=true` en la API no existe ninguna de sus rutas y la tarjeta de Soporte no aparece.
-- **Datos**: los mensajes de las conversaciones verificadas se guardan 180 días (`SupportBotMessage`); lo que se escribe antes del código no se guarda en la base.
-| `docs/MONITOR_SERVICIOS.md` | Monitor de servicios externos. |
-| `docs/GUARDRAIL_EMERGENCIAS.md` | Barandas de emergencias médicas. |
-| `docs/PLAN_PRUEBAS_CITAS.md` | Plan de pruebas del ciclo de vida de una cita. |
-| `docs/INSTALACION_VPS.md` | Instalación en un servidor. |
-| `docs/drivers/cnt-sanvicente-anserma/` | Todo lo del primer hospital: mapeo del HIS, estado, runbook, conectividad, avisos masivos, SQL. |
+- **Datos**: los mensajes de las conversaciones verificadas se guardan 180 días (`SupportBotMessage`); lo que se escribe antes del código no se guarda en la base. Los casos y sus notas no se borran con la conversación: quedan en Soporte.
 
 ---
 
@@ -1955,6 +1985,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-19** — Asistente de soporte por Telegram, fase 3: abre casos de Soporte desde la conversación. Arma el caso con lo que cuenta el empleado, pregunta lo que falta, se lo muestra y solo lo abre con su «sí» (botón o escrito); dice el número y cuándo lo verá el equipo, y un caso sin confirmar se ofrece de nuevo durante 24 horas. `/casos` muestra los casos de la persona, el asistente responde «¿cómo va mi caso?», agrega lo que le cuenten a un caso abierto (preguntando antes) y avisa si el equipo ya atiende una falla general. Sin IA también arma el caso con lo que escribió. En Soporte y en la Mesa de Ayuda los casos muestran su número, «Por Telegram», «Prioridad alta» y lo agregado después; la Mesa pone primero los de prioridad alta y busca por número. Todavía no avisa al grupo del equipo técnico (fase 4).
 - **2026-10-19** — Asistente de soporte por Telegram, fase 2: responde las preguntas del personal con este manual, la ficha de configuración de su clínica y la IA de esa clínica (con respaldo entre proveedores); explica lo de su rol y dice quién hace lo de otro; ofrece reportar en el panel lo que el manual no cubre; agrega el enlace al Centro de ayuda para el administrador y los botones «Me sirvió» / «No me sirvió». Sin IA, o si la IA falla o se pasa del tope diario, responde con lo más parecido del manual. Junta los mensajes seguidos y nunca le pasa a la IA cédulas, teléfonos ni correos.
 - **2026-10-19** — Asistente de soporte por Telegram, fase 1 (`docs/PLAN_BOT_SOPORTE.md`): el super administrador conecta y enciende su bot en «Asistente de soporte»; el personal ve en Soporte la tarjeta «Asistente de soporte en Telegram» para generar el código de cada conversación (6 dígitos o QR), ver la conversación abierta y cerrarla. El bot pide el código, guarda la pregunta escrita antes y, verificado, saluda con el usuario y la clínica; todavía no responde preguntas ni abre casos. Sus conversaciones se purgan a los 180 días, y en producción sigue apagado.
 - **2026-10-19** — Primer paso del asistente de soporte por Telegram para el personal (`docs/PLAN_BOT_SOPORTE.md`, Fase 0), sin cambios visibles en el panel. Para quien mantiene el sistema: el lector y el buscador de este archivo y el menú por rol pasan a `packages/shared` (la web los reexporta; el Centro de ayuda se ve igual), porque el asistente también los usa; la base suma las tablas del asistente y, en los casos de Soporte, número corto, canal, prioridad y el estado de sus avisos (los casos que ya existían se numeran por fecha y no se anunciarán); y cada sección nueva de la Parte 2 obliga a decidir si la lee el asistente.

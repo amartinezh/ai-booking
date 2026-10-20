@@ -4,10 +4,14 @@ import { useState } from 'react';
 import type { SupportTicket } from '@agenia/database';
 import StatusBadge from './StatusBadge';
 import { formatAppointmentShort } from '@/lib/date';
+import { EtiquetasDelCaso, NotasDelCaso, NumeroDelCaso, type NotaDelCaso } from './CasoDetalles';
 
 const fmt = (d: Date | string) => formatAppointmentShort(d);
 
-export default function TicketCard({ ticket }: { ticket: SupportTicket }) {
+/** El caso con lo que se le agregó después (desde el asistente de Telegram). */
+export type CasoConNotas = SupportTicket & { notes?: NotaDelCaso[] };
+
+export default function TicketCard({ ticket }: { ticket: CasoConNotas }) {
     const [expanded, setExpanded] = useState(ticket.status === 'RESOLVED' ? false : false);
 
     const ringByStatus =
@@ -29,6 +33,9 @@ export default function TicketCard({ ticket }: { ticket: SupportTicket }) {
                     <p className="text-xs text-zinc-500 mt-0.5">
                         Reportado el {fmt(ticket.createdAt)}
                     </p>
+                    <div className="mt-1.5">
+                        <EtiquetasDelCaso channel={ticket.channel} priority={ticket.priority} />
+                    </div>
                 </div>
                 <div className="shrink-0">
                     <StatusBadge status={ticket.status} startedAt={ticket.startedAt} />
@@ -38,6 +45,8 @@ export default function TicketCard({ ticket }: { ticket: SupportTicket }) {
             <p className={`mt-3 text-sm text-zinc-700 whitespace-pre-line ${expanded ? '' : 'line-clamp-3'}`}>
                 {ticket.description}
             </p>
+
+            <NotasDelCaso notas={ticket.notes ?? []} titulo="Lo que agregaste después" />
 
             {ticket.status === 'RESOLVED' && ticket.resolutionNote && (
                 <div className="mt-4 p-4 rounded-xl bg-green-50 ring-1 ring-green-200">
@@ -68,9 +77,7 @@ export default function TicketCard({ ticket }: { ticket: SupportTicket }) {
                 >
                     {expanded ? 'Ver menos' : 'Ver detalles completos'}
                 </button>
-                <span className="text-[11px] font-mono text-zinc-400">
-                    #{ticket.id.slice(0, 8)}
-                </span>
+                <NumeroDelCaso numero={ticket.number} />
             </footer>
         </article>
     );

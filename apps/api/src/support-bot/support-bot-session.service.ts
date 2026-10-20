@@ -11,6 +11,10 @@ import { Prisma } from '@agenia/database';
 import {
   AJUSTES_SOPORTE_POR_DEFECTO,
   LIMITES_SOPORTE,
+  flujoAlCerrar,
+  flujoAlRetomar,
+  guardarFlujo,
+  type BorradorCaso,
   accesoAlAsistente,
   conversacionVigente,
   intentosRestantes,
@@ -51,6 +55,8 @@ export type ResultadoCodigo =
       interlocutor: Interlocutor;
       /** Chats de conversaciones vigentes que esta cerró (para avisarles). */
       chatsCerrados: string[];
+      /** Un caso que quedó a medio abrir en su conversación anterior (< 24 h). */
+      borradorRetomado: BorradorCaso | null;
     };
 
 export type EstadoConversacion =
@@ -269,7 +275,12 @@ export class SupportBotSessionService {
             closedAt: null,
             OR: [{ userId: fila.userId }, { telegramUserId: p.telegramUserId }],
           },
-          select: { id: true, chatId: true, lastMessageAt: true },
+          select: {
+            id: true,
+            chatId: true,
+            lastMessageAt: true,
+            flowState: true,
+          },
         });
         const vigentes = abiertas.filter((c) =>
           conversacionVigente(
@@ -278,22 +289,16 @@ export class SupportBotSessionService {
             minutos,
           ),
         );
-        const vencidas = abiertas.filter((c) => !vigentes.includes(c));
-        if (vigentes.length > 0) {
-          await tx.supportBotConversation.updateMany({
-            where: { id: { in: vigentes.map((c) => c.id) } },
+        // Cada una se cierra con su motivo, y su borrador queda 24 h para retomarlo.
+        for (const c of abiertas) {
+          await tx.supportBotConversation.update({
+            where: { id: c.id },
             data: {
               closedAt: ahora,
-              closeReason: 'OTRA_CONVERSACION' satisfies MotivoCierre,
-            },
-          });
-        }
-        if (vencidas.length > 0) {
-          await tx.supportBotConversation.updateMany({
-            where: { id: { in: vencidas.map((c) => c.id) } },
-            data: {
-              closedAt: ahora,
-              closeReason: 'INACTIVIDAD' satisfies MotivoCierre,
+              closeReason: (vigentes.includes(c)
+                ? 'OTRA_CONVERSACION'
+                : 'INACTIVIDAD') satisfies MotivoCierre,
+              flowState: jsonOVacio(flujoAlCerrar(c.flowState, ahora)),
             },
           });
         }
@@ -312,8 +317,33 @@ export class SupportBotSessionService {
           },
           select: { id: true },
         });
+
+        // Un caso que quedó a medio abrir en su última conversación se retoma aquí.
+        const anterior = await tx.supportBotConversation.findFirst({
+          where: {
+            userId: fila.userId,
+            closedAt: { not: null },
+            NOT: { flowState: { equals: Prisma.DbNull } },
+          },
+          orderBy: { closedAt: 'desc' },
+          select: { id: true, flowState: true },
+        });
+        const retomado = anterior
+          ? flujoAlRetomar(anterior.flowState, ahora)
+          : null;
+        if (anterior && retomado) {
+          await tx.supportBotConversation.update({
+            where: { id: conversacion.id },
+            data: { flowState: jsonOVacio(guardarFlujo(retomado.flujo)) },
+          });
+          await tx.supportBotConversation.update({
+            where: { id: anterior.id },
+            data: { flowState: Prisma.DbNull },
+          });
+        }
         return {
           conversationId: conversacion.id,
+          borradorRetomado: retomado?.borrador ?? null,
           chatsCerrados: [
             ...new Set(
               vigentes.map((c) => c.chatId).filter((c) => c !== p.chatId),
@@ -337,6 +367,7 @@ export class SupportBotSessionService {
     return {
       tipo: 'ABIERTA',
       chatsCerrados: resultado.chatsCerrados,
+      borradorRetomado: resultado.borradorRetomado,
       interlocutor: {
         conversationId: resultado.conversationId,
         userId: fila.user.id,
@@ -413,9 +444,18 @@ export class SupportBotSessionService {
     motivo: MotivoCierre,
     ahora: Date = new Date(),
   ): Promise<boolean> {
+    const c = await this.prisma.supportBotConversation.findUnique({
+      where: { id: conversationId },
+      select: { flowState: true },
+    });
+    // El borrador de un caso a medio abrir queda 24 h para retomarlo.
     const r = await this.prisma.supportBotConversation.updateMany({
       where: { id: conversationId, closedAt: null },
-      data: { closedAt: ahora, closeReason: motivo },
+      data: {
+        closedAt: ahora,
+        closeReason: motivo,
+        flowState: jsonOVacio(flujoAlCerrar(c?.flowState ?? null, ahora)),
+      },
     });
     return r.count > 0;
   }
@@ -606,6 +646,13 @@ const claveFallos = (telegramUserId: string) =>
   `soporte:fallos:${telegramUserId}`;
 const claveEspera = (telegramUserId: string) =>
   `soporte:espera:${telegramUserId}`;
+
+/** Un flujo para la columna JSON: el objeto, o NULL de la base si no hay nada. */
+function jsonOVacio(
+  v: object | null,
+): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  return v ? (v as Prisma.InputJsonValue) : Prisma.DbNull;
+}
 
 function esUnicoRepetido(e: unknown): boolean {
   return (

@@ -3,10 +3,9 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { BookOpen } from 'lucide-react';
-import type { SupportTicket } from '@agenia/database';
 import type { EstadoAsistente } from '@/app/actions/support-bot.types';
 import NewTicketModal from './NewTicketModal';
-import TicketCard from './TicketCard';
+import TicketCard, { type CasoConNotas } from './TicketCard';
 import AsistenteTelegramCard from './AsistenteTelegramCard';
 
 export default function SupportClient({
@@ -14,7 +13,7 @@ export default function SupportClient({
     mostrarAyuda = false,
     asistente = null,
 }: {
-    tickets: SupportTicket[];
+    tickets: CasoConNotas[];
     /** Botón al centro de ayuda. Por ahora solo para el administrador de la clínica. */
     mostrarAyuda?: boolean;
     /** El asistente de soporte por Telegram; sin él (o apagado) no hay tarjeta. */
