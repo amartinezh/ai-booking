@@ -434,6 +434,54 @@ describe('TelegramApiClient — alertas técnicas', () => {
     expect(body(1)).not.toHaveProperty('disable_notification');
   });
 
+  it('setWebhook del asistente de soporte pide también los toques de botones', async () => {
+    fetchMock.mockResolvedValue(json(200, { ok: true, result: true }));
+    await client.setWebhook(TOKEN, {
+      url: 'https://x/y',
+      secretToken: 's',
+      allowedUpdates: ['message', 'callback_query'],
+    });
+    expect(body().allowed_updates).toEqual(['message', 'callback_query']);
+  });
+
+  it('answerCallbackQuery responde el toque, con o sin aviso', async () => {
+    fetchMock.mockResolvedValue(json(200, { ok: true, result: true }));
+    await client.answerCallbackQuery(TOKEN, 'cb1');
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `https://api.telegram.org/bot${TOKEN}/answerCallbackQuery`,
+    );
+    expect(body()).toEqual({ callback_query_id: 'cb1' });
+    await client.answerCallbackQuery(TOKEN, 'cb2', 'Listo');
+    expect(body(1)).toEqual({ callback_query_id: 'cb2', text: 'Listo' });
+  });
+
+  it('setMyCommands publica el menú del bot', async () => {
+    fetchMock.mockResolvedValue(json(200, { ok: true, result: true }));
+    await client.setMyCommands(TOKEN, [
+      { command: 'salir', description: 'Cerrar' },
+    ]);
+    expect(body()).toEqual({
+      commands: [{ command: 'salir', description: 'Cerrar' }],
+    });
+  });
+
+  it('TELEGRAM_API_BASE apunta a otro servidor (solo pruebas de punta a punta)', async () => {
+    const antes = process.env.TELEGRAM_API_BASE;
+    process.env.TELEGRAM_API_BASE = 'http://127.0.0.1:9999/';
+    try {
+      fetchMock.mockResolvedValue(
+        json(200, { ok: true, result: { id: 1, is_bot: true } }),
+      );
+      await client.getMe(TOKEN);
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        `http://127.0.0.1:9999/bot${TOKEN}/getMe`,
+      );
+    } finally {
+      if (antes === undefined) delete process.env.TELEGRAM_API_BASE;
+      else process.env.TELEGRAM_API_BASE = antes;
+    }
+  });
+
   it('un grupo que pasó a supergrupo devuelve su id nuevo', async () => {
     fetchMock.mockResolvedValue(
       json(400, {

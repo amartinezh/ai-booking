@@ -3,6 +3,10 @@ import { render, screen } from '@testing-library/react';
 jest.mock('@/app/actions/support', () => ({
     createTicket: jest.fn(),
 }));
+jest.mock('@/app/actions/support-bot', () => ({
+    generarCodigoAsistente: jest.fn(),
+    cerrarConversacionAsistente: jest.fn(),
+}));
 
 import SupportClient from './SupportClient';
 

@@ -418,3 +418,122 @@ export type {
   ResumenDiario,
   TipoAlerta,
 } from './src/alertas-tecnicas';
+// Base de conocimiento (docs/conocimiento/AGENIA.md): el lector y el buscador
+// del Centro de ayuda, que también usa el asistente de soporte de la API.
+export {
+  ErrorDeConocimiento,
+  MARCA_FIN,
+  MARCA_INICIO,
+  parsearConocimiento,
+  temaDeRuta,
+  validarConocimiento,
+} from './src/conocimiento';
+export type {
+  CategoriaAyuda,
+  ContenidoAyuda,
+  ElementoPantalla,
+  GuiaAyuda,
+  PortadaAyuda,
+  PreguntaAyuda,
+  ProblemaAyuda,
+  TemaAyuda,
+  TerminoGlosario,
+} from './src/conocimiento-tipos';
+export {
+  GLOSARIO_ID,
+  anclaDe,
+  buscar,
+  crearIndice,
+  distancia,
+  extracto,
+  fragmentosDe,
+  normalizar,
+  raiz,
+  resaltar,
+  sugerir,
+} from './src/conocimiento-buscador';
+export type {
+  Fragmento,
+  IndiceAyuda,
+  RespuestaBusqueda,
+  ResultadoBusqueda,
+  Segmento,
+  TipoFragmento,
+} from './src/conocimiento-buscador';
+// Menú del panel por rol.
+export { getMenusForRole } from './src/menus';
+export type { MenuAccent, MenuItem, UserRole } from './src/menus';
+// Asistente de soporte por Telegram (docs/PLAN_BOT_SOPORTE.md).
+export {
+  AJUSTES_SOPORTE_POR_DEFECTO,
+  COMANDOS_SOPORTE,
+  LIMITES_SOPORTE,
+  MOTIVOS_CIERRE,
+  RE_CODIGO_ENLACE,
+  ROLES_DEL_ASISTENTE,
+  TEXTOS_SOPORTE,
+  TIPOS_RESPUESTA_IA,
+  accesoAlAsistente,
+  conversacionVigente,
+  datosDeBoton,
+  enmascararCorreo,
+  enmascararParaIA,
+  esCodigoDeEnlace,
+  esSoloSaludo,
+  extraerCodigoCorto,
+  flowStateDe,
+  haySenalDeUrgencia,
+  intentosRestantes,
+  interpretarRespuestaCorta,
+  leerBorrador,
+  leerBoton,
+  leerComando,
+  leerRespuestaIA,
+  prioridadDelCaso,
+  siguienteBorrador,
+} from './src/soporte-bot';
+export type {
+  AccesoAlAsistente,
+  AccionBorrador,
+  BorradorCaso,
+  BotonSoporte,
+  CasoPropuesto,
+  ComandoSoporte,
+  EventoBorrador,
+  MotivoCierre,
+  RespuestaCorta,
+  RespuestaIA,
+  TipoRespuestaIA,
+} from './src/soporte-bot';
+export {
+  PARTE2_PARA_EL_ASISTENTE,
+  armarManualDelAsistente,
+  esCitaValida,
+  parte1EnBruto,
+  seccionesDeLaParte2,
+  seccionesSinClasificar,
+} from './src/soporte-bot-conocimiento';
+export type { ManualDelAsistente, SeccionParte2 } from './src/soporte-bot-conocimiento';
+export {
+  CANALES_CASO,
+  LIMITES_CASO,
+  MAX_TITULO_EN_AVISO,
+  PRIORIDADES_CASO,
+  ROL_LEGIBLE,
+  TIPOS_NOTA_CASO,
+  gravedadDelAvisoDeCaso,
+  numeroDeCaso,
+  textoAvisoCasoNuevo,
+  textoCasoReabierto,
+  textoCasoSinTomar,
+} from './src/soporte-caso';
+export type { CanalCaso, DatosAvisoCaso, PrioridadCaso, TipoNotaCaso } from './src/soporte-caso';
+export {
+  HORARIO_EQUIPO_POR_DEFECTO,
+  enHorarioDelEquipo,
+  horarioEquipoDe,
+  minutosHabilesEntre,
+  proximaAperturaDelEquipo,
+  textoCuandoLoVeElEquipo,
+} from './src/soporte-horario';
+export type { HorarioEquipo } from './src/soporte-horario';

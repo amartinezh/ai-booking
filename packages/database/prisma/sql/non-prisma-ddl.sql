@@ -336,3 +336,24 @@ CREATE TRIGGER trg_interruptores_del_hospital
 CREATE UNIQUE INDEX IF NOT EXISTS "uq_tech_alert_abierta"
   ON "TechAlert" ("dedupeKey")
   WHERE status = 'ABIERTA';
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Asistente de soporte: a lo sumo UNA conversación abierta por usuario y UNA por
+-- cuenta de Telegram (docs/PLAN_BOT_SOPORTE.md §3.1).
+--
+-- El código del panel abre una conversación atada a un usuario de AgenIA y a la
+-- cuenta de Telegram que lo escribió. Abrir otra cierra la anterior en la misma
+-- transacción; sin estos índices, dos códigos validados a la vez (dos mensajes
+-- seguidos, dos réplicas) dejarían dos conversaciones abiertas, y los avisos y el
+-- estado del caso irían a la que no es.
+--
+-- Parciales a propósito: las conversaciones cerradas se conservan (180 días) y el
+-- mismo usuario abre una nueva cada vez.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_support_bot_abierta_usuario"
+  ON "SupportBotConversation" ("userId")
+  WHERE "closedAt" IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_support_bot_abierta_telegram"
+  ON "SupportBotConversation" ("telegramUserId")
+  WHERE "closedAt" IS NULL;

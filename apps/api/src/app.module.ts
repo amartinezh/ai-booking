@@ -28,6 +28,10 @@ import { MassNoticeModule } from './mass-notice/mass-notice.module';
 import { RetentionModule } from './retention/retention.module';
 import { TelegramModule, telegramEnabled } from './telegram/telegram.module';
 import { TechAlertsModule } from './tech-alerts/tech-alerts.module';
+import {
+  SupportBotModule,
+  supportBotEnabled,
+} from './support-bot/support-bot.module';
 
 @Module({
   imports: [
@@ -88,6 +92,9 @@ import { TechAlertsModule } from './tech-alerts/tech-alerts.module';
     // apagado no se registra ninguna ruta. Se evalúa DESPUÉS de
     // ConfigModule.forRoot, que ya cargó el .env en process.env.
     ...(telegramEnabled() ? [TelegramModule] : []),
+    // Asistente de soporte por Telegram para el personal (docs/PLAN_BOT_SOPORTE.md):
+    // con SUPPORT_BOT_ENABLED distinto de `true` no existe ninguna de sus rutas.
+    ...(supportBotEnabled() ? [SupportBotModule] : []),
   ],
 })
 export class AppModule {}

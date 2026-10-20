@@ -1266,7 +1266,7 @@ Si al guardar aparece un error con ese rol, repórtalo en Soporte para que el eq
 - **Ruta:** `/dashboard/soporte`
 - **Resumen:** Reporta una falla o haz una solicitud al equipo técnico de AgenIA y sigue su estado.
 - **Relacionados:** [Primeros pasos](#primeros-pasos), [Glosario](#glosario)
-- **Palabras clave:** ticket, ayuda, reportar, falla, error, bug, incidente, mesa de ayuda, contactar soporte, equipo técnico
+- **Palabras clave:** ticket, ayuda, reportar, falla, error, bug, incidente, mesa de ayuda, contactar soporte, equipo técnico, chat, celular, bot
 
 #### Para qué sirve
 
@@ -1290,12 +1290,22 @@ Cuando algo no funciona como esperas o necesitas un cambio que no puedes hacer d
 3. Cuando está solucionada, aparece la «Respuesta del equipo de soporte».
 4. Pulsa «Ver detalles completos» para leer todo lo que escribiste.
 
+##### Hablar con el asistente por Telegram
+
+1. En la tarjeta «Asistente de soporte en Telegram», pulsa «Generar código».
+2. En Telegram, escríbele al bot que indica la tarjeta los 6 dígitos del código, o escanea el QR con el celular.
+3. El asistente confirma con qué usuario quedó la conversación. Si no fuiste tú, escribe /salir.
+4. Para terminar, escribe /salir o pulsa «Cerrar» en la tarjeta. Si pasan 30 minutos sin mensajes, la conversación se cierra sola.
+
+> 💡 Cada conversación necesita un código nuevo. El código sirve una sola vez, vence a los 10 minutos y, si generas otro, el anterior deja de servir.
+
 #### Qué ves en la pantalla
 
 - **Abierto:** Nadie la ha tomado todavía.
 - **En atención:** Alguien del equipo técnico la está trabajando (con la hora en que empezó).
 - **Solucionada:** Resuelta, con la respuesta del equipo.
 - **Ayuda:** Abre este centro de ayuda.
+- **Asistente de soporte en Telegram:** Genera el código para conversar con el asistente y muestra si tienes una conversación abierta. Aparece solo cuando el equipo de AgenIA activó el asistente.
 
 #### Preguntas frecuentes
 
@@ -1307,6 +1317,14 @@ Tú y el equipo técnico de AgenIA.
 
 Todavía no. Si se te olvidó algo importante, abre otra solicitud y menciona la anterior en el título.
 
+##### ¿Por qué el asistente de Telegram me pide un código cada vez?
+
+Para que solo el personal de la clínica converse con él, y para que un celular perdido o una cuenta de Telegram ajena no conserven el acceso. El código solo lo ves tú en el panel: nunca lo compartas, nadie de AgenIA te lo va a pedir.
+
+##### ¿Qué puede hacer el asistente de Telegram?
+
+Por ahora confirma con qué usuario conversas, te explica sus comandos (/ayuda) y cierra la conversación cuando se lo pides (/salir). Responder tus preguntas con este manual y abrir casos llegan en sus próximas versiones. Mientras tanto, reporta las fallas con «Reportar Falla / Nueva Solicitud».
+
 #### Si algo no sale bien
 
 ##### Sale «Revisa el formulario».
@@ -1316,6 +1334,14 @@ El título necesita al menos 5 caracteres y los detalles al menos 15.
 ##### Sale «No se pudieron cargar tus solicitudes».
 
 Recarga la página en un momento.
+
+##### El asistente dice «Ese código no es válido o ya venció».
+
+Genera uno nuevo con «Generar código»: cada código sirve una sola vez y vence a los 10 minutos, y al generar otro el anterior deja de servir. Después de 5 intentos fallidos, el asistente espera una hora antes de aceptar otro código desde esa cuenta de Telegram.
+
+##### No aparece la tarjeta «Asistente de soporte en Telegram».
+
+Aparece solo cuando el equipo de AgenIA activó el asistente, y no para el rol Paciente. Si deberías verla, repórtalo en Soporte.
 
 ## Categoría: Conexión con el hospital {#hospital}
 
@@ -1657,9 +1683,9 @@ La zona horaria de referencia es `America/Bogota` (cada clínica puede tener la 
 | `DOCTOR` · Médico | Atiende | Mi Agenda (sus citas), Rastreo de paciente (solo pacientes con cita suya) y Soporte. |
 | `PATIENT` · Paciente | Persona con cuenta en el panel | Mis Citas Programadas y Soporte. |
 | `GENERAL_OBSERVER` · Observador general | Gerencia o control | Analíticas de Negocio, Canales en vivo y Soporte. Hoy ninguna pantalla asigna este rol (Usuarios no lo ofrece). |
-| `SUPER_ADMIN` · Equipo de AgenIA | Opera la plataforma | `/super-admin`: Organizaciones (y sus administradores), Estadísticas Globales, Canales en vivo, Encuestas (CSAT), Facturación Global, Mesa de Ayuda, Monitor de Servicios, Alertas técnicas, Auditoría y Logs, Rastreo de paciente. |
+| `SUPER_ADMIN` · Equipo de AgenIA | Opera la plataforma | `/super-admin`: Organizaciones (y sus administradores), Estadísticas Globales, Canales en vivo, Encuestas (CSAT), Facturación Global, Mesa de Ayuda, Asistente de soporte, Monitor de Servicios, Alertas técnicas, Auditoría y Logs, Rastreo de paciente. |
 
-El menú de cada rol sale de `apps/web/lib/menus.ts`; el permiso real lo aplica cada página y cada acción del servidor.
+El menú de cada rol sale de `packages/shared/src/menus.ts` (la web lo reexporta en `apps/web/lib/menus.ts`); el permiso real lo aplica cada página y cada acción del servidor.
 
 ## 3. El asistente virtual
 
@@ -1835,7 +1861,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 - **Rastreo de paciente**: cada búsqueda exige motivo y queda registrada (quién, cuándo, por qué); los datos se muestran enmascarados y descubrirlos deja registro.
 - **Mensajes del asistente**: el detalle de una cita solo se da al remitente que corresponde al paciente; cancelar o cambiar exige que la ficha sea del remitente.
 - **Avisos y alertas**: los avisos al agendador y las alertas técnicas no llevan datos de pacientes.
-- **Retención**: conversaciones 180 días, bitácora del rastreo 365 días, actividad de canales 400 días (seudonimizada), incidentes del monitor 365 días.
+- **Retención**: conversaciones 180 días (también las del asistente de soporte con el personal), bitácora del rastreo 365 días, actividad de canales 400 días (seudonimizada), incidentes del monitor 365 días; los códigos del asistente de soporte se borran un día después de vencer.
 - **Webhooks**: Meta con firma (`META_REQUIRE_SIGNATURE`) y Telegram con `secret_token`.
 
 ## 10. Arquitectura técnica
@@ -1890,6 +1916,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 - **Consulta en vivo al HIS** y **consulta del asistente al HIS**: construidas y apagadas hasta medir su costo en el hospital.
 - **Centro de ayuda**: solo lo ve el administrador.
 - **Alertas técnicas**: construidas; falta ejecutar el paso a producción (`docs/ALERTAS_TECNICAS.md` §1).
+- **Asistente de soporte por Telegram** (para el personal de las clínicas): en construcción (`docs/PLAN_BOT_SOPORTE.md`, §15). Hoy conecta el bot, verifica con el código y conversa, pero todavía no responde preguntas ni abre casos (fases 2 y 3). En producción está apagado: falta `SUPPORT_BOT_ENABLED=true`, la ruta del webhook en el Caddy y conectar el bot.
 
 ## 14. Documentación detallada
 
@@ -1902,6 +1929,17 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 | `docs/PLAN_TELEGRAM.md` · `docs/ENCENDIDO_TELEGRAM.md` | Canal de Telegram. |
 | `docs/PLAN_AGENDA_HUECOS.md` | Agenda armada con los huecos del HIS. |
 | `docs/PLAN_ALERTAS_TECNICAS.md` · `docs/ALERTAS_TECNICAS.md` | Alertas técnicas por Telegram y vigía del servidor. |
+| `docs/PLAN_BOT_SOPORTE.md` | Asistente de soporte por Telegram para el personal de las clínicas. |
+
+## 15. Asistente de soporte para el personal
+
+Un bot de Telegram propio de la plataforma —distinto del de las alertas técnicas y de los de las clínicas; la API lo valida en las tres direcciones— que atiende al personal de las clínicas: administrador, agente de reservas, médico y observador general. El paciente no lo usa. El super administrador lo usa en modo prueba, como una clínica que elige, y sus casos se simulan.
+
+- **El código en cada conversación**: cualquiera le puede escribir, pero sin una conversación verificada el bot solo pide el código, sin usar IA y sin dar información. El código se genera en Soporte («Generar código»): son 6 dígitos para escribir o un QR que abre el bot con un código largo. Sirve una sola vez, vence a los 10 minutos y generar otro anula el anterior. En la base solo queda su HMAC. Después de 5 intentos fallidos desde una cuenta de Telegram, esa cuenta espera una hora.
+- **La conversación**: queda atada al usuario de AgenIA y a la cuenta de Telegram que dio el código. A lo sumo hay una abierta por usuario y por cuenta (índices parciales en la base). Se cierra a los 30 minutos sin mensajes (ajustable), con /salir, desde el panel o al abrir otra. Cada mensaje revalida usuario, rol y clínica. Si alguien escribe una pregunta antes del código, el bot la guarda 10 minutos y la responde apenas recibe el código.
+- **Qué hace hoy (fase 1)**: confirma con qué usuario se conversa, atiende /ayuda y /salir y avisa que todavía está aprendiendo. Las respuestas con este manual y con la IA de la clínica de quien pregunta (fase 2), los casos (fase 3) y los avisos al grupo y al empleado (fase 4) están en `docs/PLAN_BOT_SOPORTE.md`.
+- **Configuración** (`/super-admin/soporte-bot`, solo super administrador): token del bot y su webhook (`/api/support-bot/webhook/<ruta>`, con `secret_token`), encendido, horario del equipo (por defecto de lunes a viernes de 8:00 a 17:00), minutos de la conversación, límites (40 mensajes por hora, 2.000 caracteres por mensaje, tope diario de respuestas con IA por clínica) y un código de prueba. Cada cambio queda en la auditoría global. Sin `SUPPORT_BOT_ENABLED=true` en la API no existe ninguna de sus rutas y la tarjeta de Soporte no aparece.
+- **Datos**: los mensajes de las conversaciones verificadas se guardan 180 días (`SupportBotMessage`); lo que se escribe antes del código no se guarda en la base.
 | `docs/MONITOR_SERVICIOS.md` | Monitor de servicios externos. |
 | `docs/GUARDRAIL_EMERGENCIAS.md` | Barandas de emergencias médicas. |
 | `docs/PLAN_PRUEBAS_CITAS.md` | Plan de pruebas del ciclo de vida de una cita. |
@@ -1914,4 +1952,6 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-19** — Asistente de soporte por Telegram, fase 1 (`docs/PLAN_BOT_SOPORTE.md`): el super administrador conecta y enciende su bot en «Asistente de soporte»; el personal ve en Soporte la tarjeta «Asistente de soporte en Telegram» para generar el código de cada conversación (6 dígitos o QR), ver la conversación abierta y cerrarla. El bot pide el código, guarda la pregunta escrita antes y, verificado, saluda con el usuario y la clínica; todavía no responde preguntas ni abre casos. Sus conversaciones se purgan a los 180 días, y en producción sigue apagado.
+- **2026-10-19** — Primer paso del asistente de soporte por Telegram para el personal (`docs/PLAN_BOT_SOPORTE.md`, Fase 0), sin cambios visibles en el panel. Para quien mantiene el sistema: el lector y el buscador de este archivo y el menú por rol pasan a `packages/shared` (la web los reexporta; el Centro de ayuda se ve igual), porque el asistente también los usa; la base suma las tablas del asistente y, en los casos de Soporte, número corto, canal, prioridad y el estado de sus avisos (los casos que ya existían se numeran por fecha y no se anunciarán); y cada sección nueva de la Parte 2 obliga a decidir si la lee el asistente.
 - **2026-10-19** — Se crea este archivo de conocimiento. El Centro de ayuda deja de tener su texto en el código (`apps/web/lib/ayuda/contenido.ts`) y pasa a leer la Parte 1 de este archivo en cada petición; se ve igual que antes. Si el archivo no se puede leer, la ayuda muestra un aviso y el resto del panel sigue funcionando. Mantenerlo al día es obligatorio: lo exigen el gancho `commit-msg` y el CI (`scripts/check-conocimiento.mjs`). Corrección al texto de la ayuda: qué ve cada rol (el Agente de Reservas también ve Caja Negra, Solicitudes de más citas y Límite de citas; se agrega el Observador general).

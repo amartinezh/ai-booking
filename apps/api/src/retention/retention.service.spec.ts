@@ -19,6 +19,7 @@ describe('RetentionService', () => {
       conversaciones?: number[];
       consultas?: number[];
       actividad?: number[];
+      asistente?: number[];
     } = {},
   ) => {
     const lotes = (tamanos: number[]) => {
@@ -45,6 +46,17 @@ describe('RetentionService', () => {
             count: arg.where.id.in.length,
           }),
         ),
+      },
+      supportBotConversation: {
+        findMany: lotes(opts.asistente ?? []),
+        deleteMany: jest.fn(
+          async (arg: { where: { id: { in: string[] } } }) => ({
+            count: arg.where.id.in.length,
+          }),
+        ),
+      },
+      supportBotCode: {
+        deleteMany: jest.fn(async (..._a: unknown[]) => ({ count: 4 })),
       },
       patientLookupLog: {
         findMany: lotes(opts.consultas ?? []),
@@ -80,6 +92,8 @@ describe('RetentionService', () => {
       conversaciones: { dias: 180, borradas: 3, completa: true },
       consultasRastreo: { dias: 365, borradas: 2, completa: true },
       actividadCanales: { dias: 400, borradas: 0, completa: true },
+      asistenteSoporte: { dias: 180, borradas: 0, completa: true },
+      codigosAsistente: 4,
     });
     // Borra exactamente las filas que encontró, por id.
     expect(prisma.interactionLog.deleteMany.mock.calls[0][0]).toEqual({
@@ -169,5 +183,32 @@ describe('RetentionService', () => {
       borradas: 4,
       completa: true,
     });
+  });
+
+  it('asistente de soporte: sus conversaciones con el plazo de las conversaciones, y los códigos un día después de vencer', async () => {
+    const { service, prisma, systemLog } = build({
+      env: { RETENCION_CONVERSACIONES_DIAS: '90' },
+      asistente: [2],
+    });
+
+    const r = await service.purgar(AHORA);
+
+    expect(
+      (
+        prisma.supportBotConversation.findMany.mock.calls[0][0] as {
+          where: { lastMessageAt: { lt: Date } };
+        }
+      ).where.lastMessageAt.lt,
+    ).toEqual(haceDias(90));
+    expect(r.asistenteSoporte).toEqual({
+      dias: 90,
+      borradas: 2,
+      completa: true,
+    });
+    expect(prisma.supportBotCode.deleteMany).toHaveBeenCalledWith({
+      where: { expiresAt: { lt: haceDias(1) } },
+    });
+    // Borrar conversaciones del asistente también deja constancia.
+    expect(systemLog.event).toHaveBeenCalledTimes(1);
   });
 });

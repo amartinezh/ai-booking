@@ -8,7 +8,7 @@ Convenciones del repo. Lee esto antes de tocar código.
 
 **Por qué:** es la base de conocimiento de todo el sistema y la fuente única del Centro de ayuda: `/dashboard/soporte/ayuda` no tiene texto propio, lee la Parte 1 del archivo (`apps/web/lib/ayuda/cargar-conocimiento.ts`). Antes de cambiar algo, léelo para saber qué hace hoy el sistema.
 
-**Cómo se vigila:** el gancho `.githooks/commit-msg` (se activa con `git config core.hooksPath .githooks`) y el paso «Conocimiento del sistema» del CI, los dos con `node scripts/check-conocimiento.mjs`; más las pruebas `pnpm --filter web test -- lib/ayuda app/dashboard/soporte/ayuda`. Una opción nueva en `apps/web/lib/menus.ts` exige su tema en la Parte 1 con el mismo título. Formato de la Parte 1 y reglas: `docs/conocimiento/README.md`.
+**Cómo se vigila:** el gancho `.githooks/commit-msg` (se activa con `git config core.hooksPath .githooks`) y el paso «Conocimiento del sistema» del CI, los dos con `node scripts/check-conocimiento.mjs`; más las pruebas `pnpm --filter web test -- lib/ayuda app/dashboard/soporte/ayuda` y `pnpm --filter @agenia/shared test -- conocimiento menus soporte-bot-conocimiento`. Una opción nueva en el menú (`packages/shared/src/menus.ts`, que la web reexporta en `apps/web/lib/menus.ts`) exige su tema en la Parte 1 con el mismo título. Una sección nueva en la Parte 2 exige decidir si la lee el asistente de soporte (`PARTE2_PARA_EL_ASISTENTE` en `packages/shared/src/soporte-bot-conocimiento.ts`). Formato de la Parte 1 y reglas: `docs/conocimiento/README.md`.
 
 ## Fechas y zona horaria
 

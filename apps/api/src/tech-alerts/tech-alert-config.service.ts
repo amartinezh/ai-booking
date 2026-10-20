@@ -151,6 +151,16 @@ export class TechAlertConfigService implements OnModuleInit {
         'Este bot ya atiende pacientes de una clínica. Cree en @BotFather un bot solo para las alertas técnicas.',
       );
     }
+    // Ni el del asistente de soporte: ese tiene webhook y en él escribe el personal.
+    const deSoporte = await this.prisma.supportBotConfig.findUnique({
+      where: { id: 'global' },
+      select: { botId: true },
+    });
+    if (deSoporte?.botId === botId) {
+      throw new BadRequestException(
+        'Este bot es el del asistente de soporte. Cree en @BotFather un bot solo para las alertas técnicas.',
+      );
+    }
 
     // Sin webhook: con uno puesto, `getUpdates` no funciona. Si falla no bloquea:
     // «Buscar el grupo» lo vuelve a intentar.

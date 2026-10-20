@@ -42,6 +42,10 @@ export interface ResultadoPurga {
   conversaciones: { dias: number; borradas: number; completa: boolean };
   consultasRastreo: { dias: number; borradas: number; completa: boolean };
   actividadCanales: { dias: number; borradas: number; completa: boolean };
+  /** Conversaciones del asistente de soporte (con sus mensajes), mismo plazo que las del bot. */
+  asistenteSoporte: { dias: number; borradas: number; completa: boolean };
+  /** Códigos del panel para el asistente, un día después de vencer. */
+  codigosAsistente: number;
 }
 
 @Injectable()
@@ -130,23 +134,50 @@ export class RetentionService {
         }),
     );
 
+    // Asistente de soporte (docs/PLAN_BOT_SOPORTE.md): sus conversaciones con el
+    // personal tienen el mismo plazo que las del bot de los pacientes (los mensajes
+    // se van con ellas, en cascada), y los códigos del panel, un día después de vencer.
+    const r4 = await this.borrarEnLotes(
+      new Date(ahora.getTime() - conversaciones * MS_DIA),
+      (antesDe) =>
+        this.prisma.supportBotConversation.findMany({
+          where: { lastMessageAt: { lt: antesDe } },
+          select: { id: true },
+          take: LOTE,
+        }),
+      (ids) =>
+        this.prisma.supportBotConversation.deleteMany({
+          where: { id: { in: ids } },
+        }),
+    );
+    const codigos = await this.prisma.supportBotCode.deleteMany({
+      where: { expiresAt: { lt: new Date(ahora.getTime() - MS_DIA) } },
+    });
+
     const resultado: ResultadoPurga = {
       conversaciones: { dias: conversaciones, ...r1 },
       consultasRastreo: { dias: consultas, ...r2 },
       actividadCanales: { dias: actividad, ...r3 },
+      asistenteSoporte: { dias: conversaciones, ...r4 },
+      codigosAsistente: codigos.count,
     };
 
-    const pendiente = !r1.completa || !r2.completa || !r3.completa;
-    if (r1.borradas + r2.borradas + r3.borradas > 0 || pendiente) {
+    const pendiente =
+      !r1.completa || !r2.completa || !r3.completa || !r4.completa;
+    if (
+      r1.borradas + r2.borradas + r3.borradas + r4.borradas > 0 ||
+      pendiente
+    ) {
       this.logger.log(
         `Retención: ${r1.borradas} conversación(es) de más de ${conversaciones} días, ` +
-          `${r2.borradas} consulta(s) del rastreo de más de ${consultas} días y ` +
-          `${r3.borradas} registro(s) de actividad de canales de más de ${actividad} días borrados` +
+          `${r2.borradas} consulta(s) del rastreo de más de ${consultas} días, ` +
+          `${r3.borradas} registro(s) de actividad de canales de más de ${actividad} días y ` +
+          `${r4.borradas} conversación(es) del asistente de soporte de más de ${conversaciones} días borrados` +
           (pendiente ? '; quedan más, siguen la próxima noche.' : '.'),
       );
       await this.systemLog.event({
         action: 'DATA_RETENTION_PURGE',
-        message: `Purga de retención: ${r1.borradas} conversaciones, ${r2.borradas} consultas del rastreo y ${r3.borradas} registros de actividad de canales.`,
+        message: `Purga de retención: ${r1.borradas} conversaciones, ${r2.borradas} consultas del rastreo, ${r3.borradas} registros de actividad de canales y ${r4.borradas} conversaciones del asistente de soporte.`,
         metadata: resultado as unknown as Record<string, unknown>,
       });
     }

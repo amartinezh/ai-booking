@@ -137,11 +137,17 @@ const OBJETOS_ESPERADOS = {
   //
   // `uq_tech_alert_abierta`: sin él, dos réplicas que ven la misma caída abren
   // dos problemas y el grupo técnico recibe el aviso dos veces.
+  //
+  // `uq_support_bot_abierta_*`: sin ellos, un empleado (o una cuenta de
+  // Telegram) podría quedar con dos conversaciones abiertas con el asistente de
+  // soporte, y los avisos de sus casos irían a la que no es.
   indices: [
     'idx_outbox_pending',
     'uq_appointment_cupo_vigente',
     'idx_patient_fullname_trgm',
     'uq_tech_alert_abierta',
+    'uq_support_bot_abierta_usuario',
+    'uq_support_bot_abierta_telegram',
   ],
 };
 

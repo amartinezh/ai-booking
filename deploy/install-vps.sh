@@ -656,6 +656,15 @@ ${SINGLE_DOMAIN} {
 		reverse_proxy api:3000
 	}
 
+	# ── Webhook del asistente de soporte (docs/PLAN_BOT_SOPORTE.md) ────────
+	# Telegram llama aquí con cada mensaje del personal al bot de soporte. Solo
+	# el webhook: /support-bot/me y /support-bot/admin los usa el panel por la
+	# red interna y NO se publican. Lo protege su secret_token (401 sin él).
+	handle /api/support-bot/webhook/* {
+		uri strip_prefix /api
+		reverse_proxy api:3000
+	}
+
 	# ── Agente espejo del hospital (mirror-agent) ───────────────────────────
 	# El agente corre DENTRO de la LAN del hospital y solo abre conexiones
 	# salientes: esta es la única vía por la que entra y sale el espejo del
@@ -698,6 +707,15 @@ elif [[ "$DOMAIN_MODE" == "http" ]]; then
 	# no el proxy. Sin este bloque Telegram recibe 404 y los mensajes se
 	# quedan retenidos sin ningún error en los logs de la API.
 	handle /api/telegram/webhook/* {
+		uri strip_prefix /api
+		reverse_proxy api:3000
+	}
+
+	# ── Webhook del asistente de soporte (docs/PLAN_BOT_SOPORTE.md) ────────
+	# Telegram llama aquí con cada mensaje del personal al bot de soporte. Solo
+	# el webhook: /support-bot/me y /support-bot/admin los usa el panel por la
+	# red interna y NO se publican. Lo protege su secret_token (401 sin él).
+	handle /api/support-bot/webhook/* {
 		uri strip_prefix /api
 		reverse_proxy api:3000
 	}
@@ -763,6 +781,12 @@ ${DOMAIN_API} {
 	# ── Webhook de Telegram (docs/PLAN_TELEGRAM.md) ─────────────────────────
 	# Solo el webhook; /telegram-config es interno. Ver el modo de un dominio.
 	handle /telegram/webhook/* {
+		reverse_proxy api:3000
+	}
+
+	# ── Webhook del asistente de soporte (docs/PLAN_BOT_SOPORTE.md) ────────
+	# Solo el webhook; /support-bot/me y /support-bot/admin son internos.
+	handle /support-bot/webhook/* {
 		reverse_proxy api:3000
 	}
 

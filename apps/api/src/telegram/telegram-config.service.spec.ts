@@ -30,6 +30,7 @@ describe('TelegramConfigService', () => {
       update: jest.Mock;
     };
     techAlertConfig: { findUnique: jest.Mock };
+    supportBotConfig: { findUnique: jest.Mock };
   };
   let api: {
     getMe: jest.Mock;
@@ -77,6 +78,7 @@ describe('TelegramConfigService', () => {
         }),
       },
       techAlertConfig: { findUnique: jest.fn(async () => null) },
+      supportBotConfig: { findUnique: jest.fn(async () => null) },
     };
     api = {
       getMe: jest.fn(async () => ({
@@ -194,6 +196,17 @@ describe('TelegramConfigService', () => {
       });
       await expect(service.connect(ORG, TOKEN)).rejects.toThrow(
         /alertas técnicas/,
+      );
+      expect(prisma.telegramBotConfig.upsert).not.toHaveBeenCalled();
+      expect(api.setWebhook).not.toHaveBeenCalled();
+    });
+
+    it('🛟 el bot del asistente de soporte no se puede conectar a una clínica', async () => {
+      prisma.supportBotConfig.findUnique.mockResolvedValue({
+        botId: '123456789',
+      });
+      await expect(service.connect(ORG, TOKEN)).rejects.toThrow(
+        /asistente de soporte/,
       );
       expect(prisma.telegramBotConfig.upsert).not.toHaveBeenCalled();
       expect(api.setWebhook).not.toHaveBeenCalled();

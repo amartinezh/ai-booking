@@ -5,10 +5,17 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getSession } from '@/lib/session';
 import { SupportTicketStatus } from '@agenia/database';
+import { LIMITES_CASO } from '@agenia/shared';
 
+// Las mismas longitudes que usa el asistente de soporte por Telegram al abrir un caso.
 const createSchema = z.object({
-    title: z.string().min(5, 'El título debe tener al menos 5 caracteres').max(140, 'Máximo 140 caracteres'),
-    description: z.string().min(15, 'Cuéntanos con un poco más de detalle (mín. 15 caracteres)'),
+    title: z
+        .string()
+        .min(LIMITES_CASO.tituloMin, `El título debe tener al menos ${LIMITES_CASO.tituloMin} caracteres`)
+        .max(LIMITES_CASO.tituloMax, `Máximo ${LIMITES_CASO.tituloMax} caracteres`),
+    description: z
+        .string()
+        .min(LIMITES_CASO.detalleMin, `Cuéntanos con un poco más de detalle (mín. ${LIMITES_CASO.detalleMin} caracteres)`),
 });
 
 const resolutionSchema = z.object({

@@ -4,16 +4,21 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { BookOpen } from 'lucide-react';
 import type { SupportTicket } from '@agenia/database';
+import type { EstadoAsistente } from '@/app/actions/support-bot.types';
 import NewTicketModal from './NewTicketModal';
 import TicketCard from './TicketCard';
+import AsistenteTelegramCard from './AsistenteTelegramCard';
 
 export default function SupportClient({
     tickets,
     mostrarAyuda = false,
+    asistente = null,
 }: {
     tickets: SupportTicket[];
     /** Botón al centro de ayuda. Por ahora solo para el administrador de la clínica. */
     mostrarAyuda?: boolean;
+    /** El asistente de soporte por Telegram; sin él (o apagado) no hay tarjeta. */
+    asistente?: EstadoAsistente | null;
 }) {
     const [isOpen, setIsOpen] = useState(false);
 
@@ -65,6 +70,8 @@ export default function SupportClient({
                     </button>
                 </div>
             </header>
+
+            {asistente?.disponible && <AsistenteTelegramCard estadoInicial={asistente} />}
 
             <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="bg-white rounded-xl ring-1 ring-zinc-200 p-4">

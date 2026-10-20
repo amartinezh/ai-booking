@@ -119,6 +119,8 @@ class BaseFalsa {
   config: Fila | null = null;
   auditorias: Fila[] = [];
   botsDeClinica: Fila[] = [];
+  /** El bot del asistente de soporte (docs/PLAN_BOT_SOPORTE.md), si hay. */
+  botDeSoporte: string | null = null;
   /** La base no responde. */
   caida = false;
   private seq = 0;
@@ -281,6 +283,10 @@ class BaseFalsa {
       findUnique: async ({ where }: { where: { botId: string } }) =>
         this.botsDeClinica.find((b) => b.botId === where.botId) ?? null,
     },
+    supportBotConfig: {
+      findUnique: async () =>
+        this.botDeSoporte ? { botId: this.botDeSoporte } : null,
+    },
     globalAuditLog: {
       create: async ({ data }: { data: Fila }) => {
         this.auditorias.push(data);
@@ -434,6 +440,15 @@ describe('TechAlertConfigService — conectar el bot', () => {
     base.botsDeClinica.push({ botId: '555000111', organizationId: ORG });
     await expect(config.connect(TOKEN, ACTOR)).rejects.toThrow(
       /atiende pacientes/,
+    );
+    expect(base.config).toBeNull();
+  });
+
+  it('🛟 el bot del asistente de soporte tampoco sirve para las alertas', async () => {
+    const { config, base } = montar();
+    base.botDeSoporte = '555000111';
+    await expect(config.connect(TOKEN, ACTOR)).rejects.toThrow(
+      /asistente de soporte/,
     );
     expect(base.config).toBeNull();
   });

@@ -19,6 +19,7 @@ export default async function SuperAdminLayout({ children }: { children: React.R
         { label: 'Encuestas (CSAT)', href: '/super-admin/surveys', icon: '⭐' },
         { label: 'Facturación Global', href: '/super-admin/billing', icon: '💳' },
         { label: 'Mesa de Ayuda', href: '/super-admin/support', icon: '🛟' },
+        { label: 'Asistente de soporte', href: '/super-admin/soporte-bot', icon: '🤖' },
         { label: 'Monitor de Servicios', href: '/super-admin/monitor', icon: '📡' },
         { label: 'Alertas técnicas', href: '/super-admin/alertas', icon: '🚨' },
         { label: 'Auditoría y Logs', href: '/super-admin/logs', icon: '🩻' },

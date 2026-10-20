@@ -122,6 +122,16 @@ export class TelegramConfigService {
         'Este bot es el de las alertas técnicas de AgenIA. Cree un bot propio para la clínica en @BotFather.',
       );
     }
+    // Ni el del asistente de soporte del personal (docs/PLAN_BOT_SOPORTE.md, S1).
+    const soporte = await this.prisma.supportBotConfig.findUnique({
+      where: { id: 'global' },
+      select: { botId: true },
+    });
+    if (soporte?.botId === botId) {
+      throw new BadRequestException(
+        'Este bot es el del asistente de soporte de AgenIA. Cree un bot propio para la clínica en @BotFather.',
+      );
+    }
 
     const existing = await this.findRow(organizationId);
     const switchingBot = !!existing?.botId && existing.botId !== botId;

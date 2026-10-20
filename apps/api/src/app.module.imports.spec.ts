@@ -6,6 +6,7 @@ import { MODULE_METADATA } from '@nestjs/common/constants';
 // TELEGRAM_ENABLED=true (docs/PLAN_TELEGRAM.md, bitácora).
 import { AppModule } from './app.module';
 import { TelegramModule } from './telegram/telegram.module';
+import { SupportBotModule } from './support-bot/support-bot.module';
 
 type AnyModule = { name?: string } & object;
 
@@ -57,5 +58,9 @@ describe('Grafo de módulos de la API', () => {
 
   it('ningún import de TelegramModule quedó undefined (se registra con TELEGRAM_ENABLED=true)', () => {
     expect(undefinedImports(TelegramModule)).toEqual([]);
+  });
+
+  it('ningún import de SupportBotModule quedó undefined (se registra con SUPPORT_BOT_ENABLED=true)', () => {
+    expect(undefinedImports(SupportBotModule)).toEqual([]);
   });
 });

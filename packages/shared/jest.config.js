@@ -6,7 +6,7 @@ module.exports = {
   testRegex: '.*\\.spec\\.ts$',
   moduleFileExtensions: ['ts', 'js', 'json'],
   // `index.ts` es solo un barril de re-exportaciones: cubrirlo no dice nada.
-  collectCoverageFrom: ['**/*.ts', '!**/*.spec.ts', '!index.ts'],
+  collectCoverageFrom: ['**/*.ts', '!**/*.spec.ts', '!**/*.fixture.ts', '!index.ts'],
   // Trinquete: estos helpers son los que CLAUDE.md declara obligatorios para
   // toda fecha que ve un paciente. Bajar de aquí es una regresión, no un
   // "todavía no lo probamos".

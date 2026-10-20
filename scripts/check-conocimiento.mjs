@@ -5,10 +5,10 @@
  *
  * Dos cosas:
  *
- *   1. Que el archivo esté bien: la Parte 1 se lee con el MISMO lector que usa
- *      la página (apps/web/lib/ayuda/conocimiento.ts), los enlaces apuntan a
- *      temas que existen y cada opción del menú del administrador
- *      (apps/web/lib/menus.ts) tiene su tema con el mismo título.
+ *   1. Que el archivo esté bien: la Parte 1 se lee con el MISMO lector que usan
+ *      la página y el asistente de soporte (packages/shared/src/conocimiento.ts),
+ *      los enlaces apuntan a temas que existen y cada opción del menú del
+ *      administrador (packages/shared/src/menus.ts) tiene su tema con el mismo título.
  *
  *   2. Que se mantenga al día: un commit que toca código del producto debe
  *      tocar también AGENIA.md, salvo que su mensaje diga explícitamente
@@ -60,8 +60,8 @@ const verde = (s) => (process.stdout.isTTY ? `\x1b[32m${s}\x1b[0m` : s);
 // ── 1. El archivo está bien ─────────────────────────────────
 
 async function validarArchivo(markdown, origen) {
-  const lector = await import(pathToFileURL(path.join(REPO, 'apps/web/lib/ayuda/conocimiento.ts')).href);
-  const { getMenusForRole } = await import(pathToFileURL(path.join(REPO, 'apps/web/lib/menus.ts')).href);
+  const lector = await import(pathToFileURL(path.join(REPO, 'packages/shared/src/conocimiento.ts')).href);
+  const { getMenusForRole } = await import(pathToFileURL(path.join(REPO, 'packages/shared/src/menus.ts')).href);
 
   let contenido;
   try {

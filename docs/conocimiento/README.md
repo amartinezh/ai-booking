@@ -20,7 +20,7 @@ Lo vigilan tres cosas:
 |---|---|
 | Gancho `commit-msg` (`.githooks/commit-msg`) | Rechaza un commit que toca código del producto sin tocar `AGENIA.md`, y uno que deja la Parte 1 con errores de formato. |
 | CI (`.github/workflows/ci.yml`) | Lo mismo para cada commit del push o del pull request, más las pruebas del centro de ayuda. Sin CI en verde no hay despliegue. |
-| Pruebas (`apps/web/lib/ayuda/*.spec.ts`) | Que cada opción del menú del administrador tenga su tema con el mismo título, que los enlaces apunten a temas que existen y que la página se arme. |
+| Pruebas (`apps/web/lib/ayuda/*.spec.ts` y, en `packages/shared/src`, las del lector, el buscador y el asistente de soporte) | Que cada opción del menú del administrador tenga su tema con el mismo título, que los enlaces apunten a temas que existen, que la página se arme y que cada sección de la Parte 2 esté clasificada para el asistente de soporte. |
 
 **Cuando de verdad no hay nada que contar** (una refactorización interna, una prueba, un cambio de herramientas), se dice explícitamente con esta línea al final del mensaje del commit:
 
@@ -43,13 +43,14 @@ node scripts/check-conocimiento.mjs                   # formato y coherencia de 
 node scripts/check-conocimiento.mjs --staged          # además, lo que está preparado para commit
 node scripts/check-conocimiento.mjs --range A..B      # cada commit de un rango (lo usa el CI)
 pnpm --filter web test -- lib/ayuda app/dashboard/soporte/ayuda
+pnpm --filter @agenia/shared test -- conocimiento menus soporte-bot-conocimiento
 ```
 
 En desarrollo (`pnpm --filter web dev`), editar `AGENIA.md` y recargar la ayuda ya muestra el cambio.
 
 ## Formato de la Parte 1
 
-Es Markdown corriente con piezas fijas. El lector (`apps/web/lib/ayuda/conocimiento.ts`) se detiene con un error que dice la línea exacta si algo no encaja, así que una edición mal hecha no llega a producción a medias.
+Es Markdown corriente con piezas fijas. El lector (`packages/shared/src/conocimiento.ts`, el mismo para el Centro de ayuda y el asistente de soporte) se detiene con un error que dice la línea exacta si algo no encaja, así que una edición mal hecha no llega a producción a medias.
 
 ```markdown
 ## Portada
@@ -108,7 +109,7 @@ Qué hacer, en texto corrido.
 
 Reglas:
 
-- **Un tema por opción del menú del administrador**, con el título **exacto** de `apps/web/lib/menus.ts` y su `Ruta`. Una opción nueva en el menú sin su tema hace fallar las pruebas. Un tema sin ruta es un tema general (como «Primeros pasos»).
+- **Un tema por opción del menú del administrador**, con el título **exacto** de `packages/shared/src/menus.ts` (la web lo reexporta en `apps/web/lib/menus.ts`) y su `Ruta`. Una opción nueva en el menú sin su tema hace fallar las pruebas. Un tema sin ruta es un tema general (como «Primeros pasos»).
 - **Ids** (`{#id}`): minúsculas, números y guiones; únicos. `inicio` (la categoría) y `primeros-pasos` (el tema) son los que el inicio de la ayuda destaca arriba. `glosario` está reservado.
 - **Obligatorios** en cada tema: `Resumen`, «Para qué sirve», al menos una guía en «Paso a paso» y al menos una pregunta frecuente. Las demás secciones son opcionales y van en este orden.
 - **Listas** (`Búsquedas frecuentes`, `Palabras clave`, `También se dice`): separadas por comas; un elemento no puede llevar coma.

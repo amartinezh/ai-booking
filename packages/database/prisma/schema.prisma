@@ -73,6 +73,7 @@ model Organization {
   agents                AgentProfile[]
   waitlistEntries       WaitlistEntry[]
   supportTickets        SupportTicket[]
+  supportBotChats       SupportBotConversation[]
   chatSurveys           ChatSurvey[]
   epsEnrolledPatients   EpsEnrolledPatient[]
   epsEnrollmentRequests EpsEnrollmentRequest[]
@@ -648,6 +649,12 @@ model User {
 
   // Tickets de soporte que reportó este usuario
   supportTickets SupportTicket[]
+
+  // Asistente de soporte por Telegram (docs/PLAN_BOT_SOPORTE.md)
+  supportBotCodes      SupportBotCode[]
+  supportBotChats      SupportBotConversation[]
+  supportBotPreference SupportBotPreference?
+  supportTicketNotes   SupportTicketNote[]
 
   // Cortes del padrón que este usuario cargó
   padronImports PadronImport[]
@@ -1379,17 +1386,257 @@ model SupportTicket {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  /// Número corto para nombrar el caso («caso #58») en el chat, el grupo y el panel.
+  /// Los casos que ya existían se numeraron por fecha de creación (migración
+  /// 20261019200000_asistente_soporte).
+  number Int @unique @default(autoincrement())
+
+  /// Por dónde se abrió: el formulario del panel o el asistente de Telegram.
+  channel  SupportTicketChannel  @default(PANEL)
+  /// HIGH: lo que frena la atención de pacientes ahora (docs/PLAN_BOT_SOPORTE.md
+  /// §3.4); su aviso al grupo suena siempre, también de noche.
+  priority SupportTicketPriority @default(NORMAL)
+
+  /// Conversación del asistente que lo abrió (solo canal TELEGRAM).
+  conversationId String?
+  conversation   SupportBotConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  /// Aviso al grupo del equipo técnico (§3.5), de los casos del panel y de los del
+  /// asistente. SKIPPED: los casos de antes del asistente, que no se anuncian.
+  groupNotice          SupportTicketNoticeState @default(PENDING)
+  groupNotifiedAt      DateTime?
+  groupNoticeAttempts  Int                      @default(0)
+  groupNoticeError     String?
+  /// Recordatorio al grupo de un caso que nadie toma en 2 h del horario del equipo:
+  /// sale una sola vez y solo si el aviso del caso salió (§3.5).
+  unattendedRemindedAt DateTime?
+
+  /// Último estado que se le avisó por Telegram a quien lo reportó (§3.6). Los casos
+  /// de antes del asistente quedan con su estado actual: no reciben avisos viejos.
+  reporterNotifiedStatus SupportTicketStatus?
+  reporterNotifiedAt     DateTime?
+  /// Veces que quien lo reportó dijo «sigue pasando» después de resuelto.
+  reopenedCount          Int                  @default(0)
+
+  notes SupportTicketNote[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([organizationId, status])
   @@index([reporterId, status])
+  @@index([groupNotice, createdAt])
 }
 
 enum SupportTicketStatus {
   OPEN
   IN_PROGRESS
   RESOLVED
+}
+
+enum SupportTicketChannel {
+  PANEL
+  TELEGRAM
+}
+
+enum SupportTicketPriority {
+  NORMAL
+  HIGH
+}
+
+enum SupportTicketNoticeState {
+  PENDING
+  SENT
+  SKIPPED
+}
+
+/// Lo que se le agrega a un caso después de abierto: una ampliación de quien lo
+/// reportó («también pasa con el Dr. Pérez») o el motivo de una reapertura.
+model SupportTicketNote {
+  id       String        @id @default(uuid())
+  ticketId String
+  ticket   SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  authorId String?
+  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  /// Por dónde llegó.
+  channel SupportTicketChannel
+  /// 'AMPLIACION' | 'REAPERTURA' (vocabulario en @agenia/shared, soporte-bot.ts)
+  kind    String
+  text    String               @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// 🤖 ASISTENTE DE SOPORTE POR TELEGRAM (docs/PLAN_BOT_SOPORTE.md)
+//
+// Un bot propio de la plataforma que atiende al PERSONAL de las clínicas (nunca a
+// pacientes). Cualquiera le puede escribir, pero solo conversa con quien da el
+// código que le muestra el panel en Soporte, y lo pide EN CADA CONVERSACIÓN (S3).
+// La IA es la de la clínica del empleado (S5): aquí no se guarda ninguna clave de IA.
+// -----------------------------------------------------------------------------
+
+/// Configuración del asistente: UNA fila (id = 'global'), solo del SUPER_ADMIN.
+/// Nace APAGADA.
+model SupportBotConfig {
+  id      String  @id @default("global")
+  enabled Boolean @default(false)
+
+  /// Bot PROPIO, creado en @BotFather: distinto del de alertas técnicas y de los de
+  /// las clínicas (la API lo valida en las tres direcciones). Token cifrado
+  /// (AES-256-GCM, el mismo CryptoService).
+  encryptedBotToken String? @db.Text
+  botId             String?
+  botUsername       String?
+
+  /// Ruta del webhook (/api/support-bot/webhook/:routeKey) y su `secret_token`, cifrado.
+  routeKey               String? @unique
+  encryptedWebhookSecret String? @db.Text
+
+  /// Horario del equipo humano (S14), para decir cuándo se verá un caso y contar las
+  /// 2 h de un caso sin tomar. Días ISO (1 = lunes … 7 = domingo); horas de reloj en
+  /// `teamTimeZone`, de `teamFromHour` (incluida) a `teamToHour` (excluida).
+  teamDays     Int[]  @default([1, 2, 3, 4, 5])
+  teamFromHour Int    @default(8)
+  teamToHour   Int    @default(17)
+  teamTimeZone String @default("America/Bogota")
+
+  /// Minutos sin mensajes que cierran una conversación (después, código nuevo).
+  conversationIdleMinutes Int @default(30)
+  /// Límites (S15). Pasado el tope de IA, la clínica sigue atendida en modo sin IA.
+  maxMessagesPerHour      Int @default(40)
+  maxMessageChars         Int @default(2000)
+  maxAiTurnsPerOrgPerDay  Int @default(300)
+
+  /// Salud del bot para el panel: último envío bueno y último error.
+  lastOkAt    DateTime?
+  lastError   String?
+  lastErrorAt DateTime?
+
+  updatedByUserId String?
+  updatedByEmail  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+/// Código de un solo uso que abre UNA conversación (§3.1): lo genera el empleado en
+/// Soporte y lo escribe en Telegram (o lo trae el QR). Vence a los 10 minutos.
+model SupportBotCode {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// HMAC-SHA256 del código con una clave del servidor, nunca el código: un hash
+  /// simple de 6 dígitos se rompe probando el millón de combinaciones. Único: dos
+  /// códigos iguales no pueden convivir (la API genera otro).
+  codeHmac String @unique
+  /// 'CORTO' (6 dígitos, se escribe) | 'ENLACE' (largo, va en el QR y en t.me/<bot>?start=)
+  kind     String
+
+  /// Solo SUPER_ADMIN en modo prueba: la clínica como la que prueba (usa su IA y los
+  /// casos se simulan).
+  testOrganizationId String?
+
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Una conversación VERIFICADA: empieza cuando la cuenta de Telegram da un código
+/// válido y termina por inactividad, con /salir, desde el panel o al abrir otra.
+/// A lo sumo una abierta por usuario y una por cuenta de Telegram (índices parciales
+/// en prisma/sql/non-prisma-ddl.sql). La más reciente de cada usuario dice a qué
+/// chat van los avisos de sus casos.
+model SupportBotConversation {
+  id String @id @default(uuid())
+
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// La clínica del empleado al abrirla; en modo prueba, la elegida por el super admin.
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// La cuenta de Telegram que dio el código (`from.id`) y su chat privado. Los ids
+  /// de Telegram son enteros de 64 bits: se guardan como texto.
+  telegramUserId String
+  chatId         String
+  telegramName   String?
+  /// 'CODIGO' | 'ENLACE'
+  verifiedBy     String
+  /// SUPER_ADMIN en modo prueba: conversa igual, pero los casos se simulan.
+  isTest         Boolean @default(false)
+
+  startedAt     DateTime  @default(now())
+  lastMessageAt DateTime  @default(now())
+  closedAt      DateTime?
+  /// 'INACTIVIDAD' | 'SALIR' | 'PANEL' | 'OTRA_CONVERSACION' | 'ACCESO_REVOCADO'
+  closeReason   String?
+
+  /// Estado del flujo del caso (el borrador y su vencimiento); lo interpreta la
+  /// lógica pura de @agenia/shared (soporte-bot.ts). Un borrador sin confirmar
+  /// sobrevive 24 h al cierre y se retoma con el siguiente código.
+  flowState Json?
+
+  /// 👍/👎 de la última respuesta: 'UTIL' | 'NO_UTIL'
+  feedback             String?
+  /// Hubo al menos una pregunta que el manual no cubrió (§3.7).
+  hadUncoveredQuestion Boolean @default(false)
+
+  messages SupportBotMessage[]
+  tickets  SupportTicket[]
+
+  @@index([userId, startedAt])
+  @@index([telegramUserId, startedAt])
+  @@index([organizationId, startedAt])
+}
+
+/// Cada mensaje de una conversación verificada, de entrada y de salida. Los que
+/// llegan sin conversación abierta (antes del código) NO se guardan aquí. 180 días.
+model SupportBotMessage {
+  id             String                 @id @default(uuid())
+  conversationId String
+  conversation   SupportBotConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  /// 'ENTRADA' (del empleado) | 'SALIDA' (del asistente)
+  direction String
+  text      String   @db.Text
+  /// Temas del manual que citó la respuesta (ids de la Parte 1 de AGENIA.md).
+  topics    String[] @default([])
+  /// Cómo se armó la respuesta: 'IA' | 'SIN_IA' | 'FIJO'
+  source    String?
+
+  aiProvider   String?
+  inputTokens  Int?
+  outputTokens Int?
+  latencyMs    Int?
+
+  /// `update_id` de Telegram del mensaje que entró: Telegram reintenta las
+  /// entregas, y el mismo update no se procesa dos veces.
+  telegramUpdateId  String? @unique
+  telegramMessageId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([createdAt])
+}
+
+/// Preferencias del empleado con el asistente.
+model SupportBotPreference {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Avisos de sus casos por Telegram (§3.6). Se apagan desde la tarjeta de Soporte.
+  ticketNotices Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
 }
 
 // -----------------------------------------------------------------------------
@@ -1466,6 +1713,7 @@ enum GlobalAuditAction {
   ORGANIZATION_CREATED
   ORGANIZATION_SUSPENDED
   TECH_ALERTS_CONFIG_CHANGED // Alertas técnicas por Telegram: conectar, vincular, ajustes
+  SUPPORT_BOT_CONFIG_CHANGED // Asistente de soporte por Telegram: conectar el bot, ajustes
 }
 
 // -----------------------------------------------------------------------------

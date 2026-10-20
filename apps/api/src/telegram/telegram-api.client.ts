@@ -8,7 +8,17 @@ import type {
   TelegramWebhookInfo,
 } from './telegram.types';
 
-const API_BASE = 'https://api.telegram.org';
+/**
+ * La Bot API. `TELEGRAM_API_BASE` la cambia SOLO para pruebas de punta a punta
+ * contra un Telegram falso (o un servidor local de la Bot API); en producción no se
+ * define.
+ */
+function apiBase(): string {
+  return (
+    process.env.TELEGRAM_API_BASE?.trim().replace(/\/+$/, '') ||
+    'https://api.telegram.org'
+  );
+}
 
 /** Tope de la Bot API para `sendMessage`. */
 export const TELEGRAM_MAX_TEXT = 4096;
@@ -61,14 +71,15 @@ export class TelegramApiClient {
 
   setWebhook(
     token: string,
-    params: { url: string; secretToken: string },
+    params: { url: string; secretToken: string; allowedUpdates?: string[] },
   ): Promise<TelegramResult<boolean>> {
     return this.call<boolean>(token, 'setWebhook', {
       url: params.url,
       secret_token: params.secretToken,
-      // Solo mensajes: ediciones, canales y botones se ignoran (T8), así que
-      // ni siquiera se piden.
-      allowed_updates: ['message'],
+      // Por defecto solo mensajes: en el canal de pacientes las ediciones, los
+      // canales y los botones se ignoran (T8), así que ni siquiera se piden. El
+      // asistente de soporte pide además los toques de sus botones.
+      allowed_updates: params.allowedUpdates ?? ['message'],
       // Lo que se acumuló con un webhook anterior (o sin webhook) no se
       // procesa: serían turnos viejos fuera de contexto.
       drop_pending_updates: true,
@@ -131,6 +142,29 @@ export class TelegramApiClient {
     });
   }
 
+  /**
+   * Responde el toque de un botón del teclado en línea. Sin esto, Telegram deja
+   * el botón «cargando» unos segundos. `text` sale como aviso corto arriba del chat.
+   */
+  answerCallbackQuery(
+    token: string,
+    callbackQueryId: string,
+    text?: string,
+  ): Promise<TelegramResult<boolean>> {
+    return this.call<boolean>(token, 'answerCallbackQuery', {
+      callback_query_id: callbackQueryId,
+      ...(text ? { text } : {}),
+    });
+  }
+
+  /** Publica el menú de comandos del bot (el botón «Menú» del chat). */
+  setMyCommands(
+    token: string,
+    commands: ReadonlyArray<{ command: string; description: string }>,
+  ): Promise<TelegramResult<boolean>> {
+    return this.call<boolean>(token, 'setMyCommands', { commands });
+  }
+
   /** Nota de voz. Telegram la muestra como tal solo si es OGG/Opus. */
   sendVoice(
     token: string,
@@ -170,7 +204,7 @@ export class TelegramApiClient {
       return null;
     }
     try {
-      const res = await fetch(`${API_BASE}/file/bot${token}/${filePath}`, {
+      const res = await fetch(`${apiBase()}/file/bot${token}/${filePath}`, {
         signal: AbortSignal.timeout(FILE_TIMEOUT_MS),
       });
       if (!res.ok) {
@@ -195,7 +229,7 @@ export class TelegramApiClient {
     body: Record<string, unknown>,
   ): Promise<TelegramResult<T>> {
     return this.withRetry<T>(method, () =>
-      fetch(`${API_BASE}/bot${token}/${method}`, {
+      fetch(`${apiBase()}/bot${token}/${method}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -212,7 +246,7 @@ export class TelegramApiClient {
     // El FormData se arma de nuevo en cada intento: un cuerpo ya enviado no
     // se puede reutilizar.
     return this.withRetry<T>(method, () =>
-      fetch(`${API_BASE}/bot${token}/${method}`, {
+      fetch(`${apiBase()}/bot${token}/${method}`, {
         method: 'POST',
         body: build(),
         signal: AbortSignal.timeout(FILE_TIMEOUT_MS),
