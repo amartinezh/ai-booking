@@ -325,6 +325,61 @@ describe('leerRespuestaIA', () => {
     expect(r?.respuesta.temas).toEqual([]);
   });
 
+  it('quita el Markdown: Telegram recibe texto plano (examen del 2026-10-20)', () => {
+    const r = leerRespuestaIA(
+      JSON.stringify({
+        tipo: 'respuesta',
+        respuesta:
+          '## Recordatorios\n1.  **Automáticos**: cada 15 min.\n*   __Manuales__: desde Visión General.\n- Con 2 * 3 no pasa nada.',
+        temas: ['agenda'],
+      }),
+      temas,
+    );
+    expect(r?.respuesta.respuesta).toBe(
+      'Recordatorios\n1. Automáticos: cada 15 min.\n• Manuales: desde Visión General.\n- Con 2 * 3 no pasa nada.',
+    );
+  });
+
+  it('sin nada más que Markdown no hay respuesta', () => {
+    expect(
+      leerRespuestaIA('{"tipo":"respuesta","respuesta":"****"}', temas),
+    ).toBeNull();
+  });
+
+  it('si dice que el manual no lo trae, su cita no se cree y queda como no cubierta', () => {
+    for (const frase of [
+      'Eso no lo encuentro en el manual de AgenIA.',
+      'No está en el manual: se maneja desde el HIS.',
+      'No tengo eso en nuestro manual.',
+      'El manual de AgenIA no lo cubre.',
+    ]) {
+      const r = leerRespuestaIA(
+        JSON.stringify({
+          tipo: 'respuesta',
+          respuesta: frase,
+          temas: ['glosario'],
+        }),
+        temas,
+      );
+      expect(r?.respuesta.temas).toEqual([]);
+      expect(r?.noCubierta).toBe(true);
+    }
+  });
+
+  it('«no» cerca de «manual» sin decir que no lo trae sí cita', () => {
+    const r = leerRespuestaIA(
+      JSON.stringify({
+        tipo: 'respuesta',
+        respuesta:
+          'Si no aparece en la agenda, el manual explica cómo crearla.',
+        temas: ['agenda'],
+      }),
+      temas,
+    );
+    expect(r?.respuesta.temas).toEqual(['agenda']);
+    expect(r?.noCubierta).toBe(false);
+  });
+
   it('un saludo o un tema ajeno sin citas no es «no cubierta»', () => {
     expect(
       leerRespuestaIA('{"tipo":"saludo","respuesta":"¡Hola!"}', temas)

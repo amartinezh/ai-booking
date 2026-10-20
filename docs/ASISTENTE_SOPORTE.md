@@ -142,7 +142,7 @@ vps 'ORG=$(docker exec agenia_db psql -U agenia -d antigravity -Atc "SELECT id F
 
 | Para aprobar | Si no aprueba |
 |---|---|
-| `APROBADO`: al menos 90 % de temas correctos, cero respuestas ilegibles y cero violaciones | Leer los casos marcados `✗`. Si el manual no lo explica, completar `AGENIA.md`; si la IA no sigue una regla, ajustar las instrucciones (`soporte-bot-prompt.ts`). Desplegar y repetir. No se abre el piloto sin aprobar. |
+| `APROBADO`: al menos 90 % de temas correctos, cero respuestas ilegibles y cero violaciones | Leer los casos marcados `✗`. Si el manual no lo explica, completar `AGENIA.md`; si la IA no sigue una regla, ajustar las instrucciones (`soporte-bot-prompt.ts`); si tampoco la sigue con las instrucciones (le pasó a Gemini con el Markdown), resolverla en el código que lee la respuesta (`leerRespuestaIA`). Desplegar y repetir. El examen cambia de una corrida a otra. No se abre el piloto sin aprobar. |
 
 El reporte completo queda en el contenedor: `vps 'docker exec agenia_api cat /tmp/examen-soporte.json' > examen-soporte.json`.
 

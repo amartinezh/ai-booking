@@ -30,10 +30,19 @@ export const MAX_CARACTERES = 1200;
 /** Lo que ninguna respuesta puede tener. */
 const PROHIBIDO_SIEMPRE: Array<[RegExp, string]> = [
   [/https?:\/\//i, 'escribió un enlace (los pone el sistema)'],
+  // `leerRespuestaIA` ya lo quita (`sinMarkdown`); queda por si eso cambia.
   [/\*\*|^#+\s/m, 'usó Markdown'],
   [/<\/?[a-z][^>]*>/i, 'usó HTML'],
-  [/San Vicente|Anserma/i, 'nombró a otra clínica'],
 ];
+
+/**
+ * Los nombres de la clínica real: el asistente no los dice por su cuenta (la
+ * sección del espejo del manual, que lee, nombra el driver `cnt-sanvicente-anserma`).
+ * Repetir el que trae la pregunta no cuenta (2026-10-20, decisión del usuario): no
+ * revela nada que la persona no haya escrito. Gemini lo repetía en los dos primeros
+ * exámenes aunque las instrucciones lo prohíben.
+ */
+const NOMBRES_DE_OTRA_CLINICA: RegExp[] = [/San Vicente/i, /Anserma/i];
 
 export interface ResultadoCaso {
   id: string;
@@ -117,6 +126,13 @@ export function evaluarCaso(
   }
   for (const [re, motivo] of PROHIBIDO_SIEMPRE) {
     if (re.test(r.respuesta)) violaciones.push(motivo);
+  }
+  if (
+    NOMBRES_DE_OTRA_CLINICA.some(
+      (re) => re.test(r.respuesta) && !re.test(caso.pregunta),
+    )
+  ) {
+    violaciones.push('nombró a otra clínica');
   }
   if (r.respuesta.length > MAX_CARACTERES) {
     violaciones.push(

@@ -291,6 +291,31 @@ const recortar = (t: string, max: number) =>
 const esObjeto = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 
+/**
+ * Telegram recibe el texto plano (sin `parse_mode`): los `**`, `__` y `#` de
+ * Markdown se verían tal cual. Las instrucciones lo prohíben y aun así llegan a
+ * veces (examen del 2026-10-20 con Gemini), así que los quita el código. Un `*`
+ * suelto («2 * 3») se deja; el que abre una lista pasa a «•».
+ */
+export function sinMarkdown(t: string): string {
+  return t
+    .replace(/\*\*([^*\n]+?)\*\*/g, '$1')
+    .replace(/__([^_\n]+?)__/g, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/^[ \t]*#{1,6}[ \t]+/gm, '')
+    .replace(/^([ \t]*)\*[ \t]+/gm, '$1• ')
+    .replace(/^([ \t]*\d+\.)[ \t]{2,}/gm, '$1 ');
+}
+
+/**
+ * La propia respuesta dice que el manual no lo trae («Eso no lo encuentro en el
+ * manual»): la cita que traiga no se cree (examen del 2026-10-20: citó el glosario
+ * al decirlo). Sobre texto normalizado. Solo las frases pegadas a «manual»: «si no
+ * aparece en la agenda, el manual explica…» sí cita.
+ */
+const DICE_QUE_NO_ESTA_EN_EL_MANUAL =
+  /\bno (lo |la |los |las |eso )?(encuentro|encontre|esta|aparece|tengo|figura|viene)( (eso|esto|esa|ese))? en (el|nuestro) manual\b|\b(el|nuestro) manual( de agenia)? no (lo |la |eso )?(cubre|explica|menciona|trae|dice|incluye)\b/;
+
 function leerCaso(o: Record<string, unknown>): CasoPropuesto {
   const titulo = texto(o.titulo);
   const pantalla = texto(o.pantalla);
@@ -332,8 +357,12 @@ export function leerRespuestaIA(
     return null;
   }
 
-  const respuesta = texto(r.respuesta);
+  const conMarkdown = texto(r.respuesta);
+  const respuesta = conMarkdown ? texto(sinMarkdown(conMarkdown)) : null;
   if (!respuesta) return null;
+  const diceQueNoEsta = DICE_QUE_NO_ESTA_EN_EL_MANUAL.test(
+    normalizar(respuesta),
+  );
   const tipoCrudo =
     typeof r.tipo === 'string' ? r.tipo.trim().toLowerCase() : '';
   const tipo: TipoRespuestaIA = (
@@ -343,7 +372,7 @@ export function leerRespuestaIA(
     : 'respuesta';
   const temas = [
     ...new Set(
-      (Array.isArray(r.temas) ? r.temas : [])
+      (Array.isArray(r.temas) && !diceQueNoEsta ? r.temas : [])
         .filter((t): t is string => typeof t === 'string')
         .map((t) => t.trim())
         .filter((t) => esCitaValida(t, temasValidos)),
