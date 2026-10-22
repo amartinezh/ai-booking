@@ -53,6 +53,16 @@ import { derivarSync, type FilaOutbox } from './sync-state';
  *    hora del médico tiene la cita de OTRO paciente: el agente no borró nada (borrar
  *    habría dejado sin cita a otra persona). Alguien tiene que mirar dónde quedó la
  *    cita de este paciente en el hospital.
+ *
+ * Y dos de lo que hace el hospital con una cita del asistente (2026-10-22: el
+ * hospital anuló una cita que una paciente agendó por WhatsApp y nadie le avisó).
+ * AgenIA le avisa al paciente (si WhatsApp lo permite) y deja el caso para que una
+ * persona confirme que quedó enterado:
+ *
+ *  · `CITA_CANCELADA_POR_HOSPITAL` — el hospital canceló en su sistema una cita
+ *    futura que el paciente agendó con el asistente.
+ *  · `CITA_MOVIDA_POR_HOSPITAL`    — el hospital la cambió de hora: canceló esa y
+ *    le dio otra al mismo paciente.
  */
 export const TIPOS_EXCEPCION = [
   'CITA_NO_ENTREGADA',
@@ -64,6 +74,8 @@ export const TIPOS_EXCEPCION = [
   'AVISO_INASISTENCIA',
   'TELEFONO_EQUIVOCADO',
   'CANCELACION_NO_APLICADA',
+  'CITA_CANCELADA_POR_HOSPITAL',
+  'CITA_MOVIDA_POR_HOSPITAL',
 ] as const;
 export type TipoExcepcion = (typeof TIPOS_EXCEPCION)[number];
 
@@ -87,6 +99,8 @@ export const TITULO_EXCEPCION: Record<TipoExcepcion, string> = {
   AVISO_INASISTENCIA: 'Un paciente avisó que no irá o pide otra fecha',
   TELEFONO_EQUIVOCADO: 'El teléfono de un paciente es de otra persona',
   CANCELACION_NO_APLICADA: 'Cancelación que el hospital no aplicó',
+  CITA_CANCELADA_POR_HOSPITAL: 'El hospital canceló una cita agendada por el asistente',
+  CITA_MOVIDA_POR_HOSPITAL: 'El hospital cambió la hora de una cita agendada por el asistente',
 };
 
 export const SEVERIDADES_EXCEPCION = ['BAJA', 'MEDIA', 'ALTA', 'CRITICA'] as const;

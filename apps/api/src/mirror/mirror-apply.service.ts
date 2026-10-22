@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AvisoCambioHospitalService } from './aviso-cambio-hospital.service';
 import {
   MirrorPatientService,
   type ResultadoAlta,
@@ -134,6 +135,9 @@ export class MirrorApplyService {
     private readonly waitlistService: WaitlistService,
     private readonly patients: MirrorPatientService,
     private readonly exceptions: MirrorExceptionsService,
+    // 🏥 Aviso al paciente y caso en la Bandeja cuando el hospital cancela una
+    // cita del asistente (2026-10-22). Opcional: sin él (pruebas), no se avisa.
+    @Optional() private readonly avisoCambio?: AvisoCambioHospitalService,
   ) {}
 
   async applyBatch(
@@ -860,6 +864,8 @@ export class MirrorApplyService {
   ): Promise<'APPLIED' | 'SKIPPED'> {
     const { cancelReason, cancelObservations } = event.payload;
     let { agenIAAppointmentId } = event.payload;
+    // Sin el id de AgenIA en el evento, la cancelación la hizo el hospital.
+    const delHospital = !agenIAAppointmentId;
 
     // 🏥 Cancelación hecha en el HIS: llega identificada por médico y hora.
     // Se resuelve al cupo y de ahí a la cita, si es que AgenIA tenía una.
@@ -996,6 +1002,16 @@ export class MirrorApplyService {
     });
 
     await this.avisarListaDeEspera(organizationId, cupoLiberadoId);
+
+    // 🏥 Si el paciente la había agendado con el asistente, se le avisa y queda el
+    // caso en la Bandeja. Después de aplicar, como la lista de espera: no puede
+    // deshacer la cancelación (y el servicio nunca lanza).
+    if (delHospital && agenIAAppointmentId) {
+      await this.avisoCambio?.alCancelarElHospital(
+        organizationId,
+        agenIAAppointmentId,
+      );
+    }
 
     return 'APPLIED';
   }

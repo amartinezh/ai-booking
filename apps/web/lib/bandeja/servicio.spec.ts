@@ -150,6 +150,7 @@ function mockDb() {
     whatsappTemplate: new Tabla(),
     syncAudit: new Tabla(),
     agentProfile: new Tabla(),
+    whatsappMessageLog: new Tabla(),
   };
   const db: any = {
     ...t,
@@ -1157,5 +1158,63 @@ describe('guardarAvisos', () => {
     expect(r).toEqual({ success: false, error: MSG_NO_GUARDADA });
     expect(cfg(db)).toMatchObject({ agendadorWhatsapp: null, conflictAlertsEnabled: false });
     consola.mockRestore();
+  });
+});
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🏥 El aviso al paciente cuando el hospital cancela una cita del asistente
+// (2026-10-22): la bandeja muestra cómo va ESE mensaje, no otro de la misma cita.
+// ══════════════════════════════════════════════════════════════════════════
+describe('🏥 aviso al paciente — estado de entrega en la bandeja', () => {
+  const sembrarAviso = (db: any, meta: Record<string, unknown> = {}) =>
+    sembrar(db, {
+      kind: 'CITA_CANCELADA_POR_HOSPITAL',
+      title: 'El hospital canceló una cita agendada por el asistente',
+      dedupeKey: 'CAMBIO_HOSPITAL:cita-x',
+      appointmentId: 'cita-x',
+      meta: {
+        canalDeLaCita: 'WHATSAPP',
+        aviso: 'ENVIADO',
+        canal: 'WHATSAPP',
+        via: 'TEXTO',
+        enviadoIso: haceMin(10).toISOString(),
+        ...meta,
+      },
+    });
+
+  it('muestra el estado del aviso, no el de la confirmación vieja de la misma cita', async () => {
+    const db = mockDb();
+    sembrarCatalogo(db);
+    sembrarAviso(db);
+    db.whatsappMessageLog.filas.push(
+      { id: 'm-viejo', organizationId: ORG, appointmentId: 'cita-x', kind: 'BOOKING_CONFIRMATION', status: 'READ', createdAt: haceMin(300) },
+      { id: 'm-aviso', organizationId: ORG, appointmentId: 'cita-x', kind: 'SYSTEM_NOTICE', status: 'DELIVERED', createdAt: haceMin(10) },
+    );
+
+    const r: any = await listarExcepciones(db, admin(), {}, AHORA);
+    expect(r.data.filas[0].resumen).toContain('Se le avisó por WhatsApp.');
+    expect(r.data.filas[0].resumen.endsWith('Mensaje al paciente: entregado.')).toBe(true);
+  });
+
+  it('el libro de mensajes se lee solo de SU clínica', async () => {
+    const db = mockDb();
+    sembrarCatalogo(db);
+    sembrarAviso(db);
+    db.whatsappMessageLog.filas.push(
+      { id: 'm-ajeno', organizationId: OTRA_ORG, appointmentId: 'cita-x', kind: 'SYSTEM_NOTICE', status: 'READ', createdAt: haceMin(9) },
+    );
+    const r: any = await listarExcepciones(db, admin(), {}, AHORA);
+    expect(r.data.filas[0].resumen).not.toContain('Mensaje al paciente');
+  });
+
+  it('sin aviso enviado no se consulta el libro de mensajes', async () => {
+    const db = mockDb();
+    sembrarCatalogo(db);
+    sembrarAviso(db, { aviso: 'NO_ENVIADO', motivo: 'FUERA_DE_VENTANA', enviadoIso: undefined });
+    const spy = jest.spyOn(db.whatsappMessageLog, 'findMany');
+    const r: any = await listarExcepciones(db, admin(), {}, AHORA);
+    expect(spy).not.toHaveBeenCalled();
+    expect(r.data.filas[0].resumen).toContain('No se le pudo avisar por WhatsApp');
   });
 });

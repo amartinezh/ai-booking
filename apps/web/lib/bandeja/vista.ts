@@ -19,6 +19,7 @@ import {
   TITULO_EXCEPCION,
   enmascararDocumento,
   enmascararNombre,
+  formatAppointmentCompact,
   resumenRetencion,
   transicionExcepcion,
   type AccionExcepcion,
@@ -74,6 +75,11 @@ export interface ContextoVista {
   pacientes: Map<string, { fullName: string | null; cedula: string | null }>;
   citas: Map<string, { servicio: string | null }>;
   usuarios: Map<string, { email: string; role: string }>;
+  /**
+   * 🏥 Estado de entrega (según Meta) del aviso de WhatsApp al paciente, por id de
+   * excepción: solo de las de «el hospital canceló / cambió una cita del asistente».
+   */
+  entregas?: Map<string, string>;
 }
 
 const MIN_MS = 60_000;
@@ -162,6 +168,25 @@ function citaDelMensaje(v: unknown): string {
 const nombreCanal = (v: unknown): string =>
   v === 'TELEGRAM' ? 'Telegram' : 'WhatsApp';
 
+/** Por qué no salió el aviso al paciente, en palabras (aviso-cambio-hospital.service.ts). */
+const MOTIVO_SIN_AVISO: Record<string, string> = {
+  SIN_CONTACTO: 'no tiene WhatsApp ni Telegram registrado',
+  TELEFONO_EQUIVOCADO: 'su teléfono está marcado como de otra persona',
+  FUERA_DE_VENTANA:
+    'pasaron más de 24 horas desde su último mensaje y WhatsApp no permite escribirle sin una plantilla',
+  SIN_PLANTILLA: 'falta registrar la plantilla de confirmación de cita del hospital',
+  FALLO: 'el envío falló',
+};
+
+/** El estado de entrega de Meta, en palabras. */
+const ESTADO_ENTREGA: Record<string, string> = {
+  ACCEPTED: 'enviado',
+  SENT: 'enviado',
+  DELIVERED: 'entregado',
+  READ: 'leído',
+  FAILED: 'no se entregó',
+};
+
 function leerMeta(meta: unknown): Record<string, unknown> {
   return meta && typeof meta === 'object' && !Array.isArray(meta)
     ? (meta as Record<string, unknown>)
@@ -224,6 +249,28 @@ export function resumenPublico(
     }
     case 'CANCELACION_NO_APLICADA':
       return 'AgenIA canceló esta cita, pero en el sistema del hospital esa hora del médico tiene la cita de OTRA persona: no se borró nada allá. La cita sigue cancelada en AgenIA. Busque en el hospital dónde quedó la cita de este paciente y cancélela allá si corresponde.';
+    // 🏥 Lo que hizo el hospital con una cita del asistente (2026-10-22): AgenIA le
+    // avisó al paciente (o dice por qué no) y una persona confirma que quedó enterado.
+    case 'CITA_CANCELADA_POR_HOSPITAL':
+    case 'CITA_MOVIDA_POR_HOSPITAL': {
+      const agendo = nombreCanal(meta.canalDeLaCita);
+      const canal = nombreCanal(meta.canal ?? meta.canalDeLaCita);
+      const nueva =
+        typeof meta.nuevaIso === 'string' && !Number.isNaN(Date.parse(meta.nuevaIso))
+          ? formatAppointmentCompact(new Date(meta.nuevaIso))
+          : null;
+      const que =
+        fila.kind === 'CITA_MOVIDA_POR_HOSPITAL'
+          ? `El hospital cambió de hora en su sistema esta cita, que el paciente había agendado por ${agendo}${nueva ? `: ahora es el ${nueva}` : ''}.`
+          : `El hospital canceló en su sistema esta cita, que el paciente había agendado por ${agendo}.`;
+      const aviso =
+        meta.aviso === 'ENVIADO'
+          ? `Se le avisó por ${canal}${meta.via === 'PLANTILLA' ? ' con la plantilla de confirmación de cita' : ''}.`
+          : meta.aviso === 'PENDIENTE'
+            ? 'El aviso al paciente se estaba enviando.'
+            : `No se le pudo avisar por ${canal}: ${MOTIVO_SIN_AVISO[String(meta.motivo)] ?? 'el envío falló'}. Comuníquese con el paciente.`;
+      return `${que} ${aviso} Confirme que el paciente quedó enterado y cierre el caso.`;
+    }
     case 'TELEFONO_EQUIVOCADO': {
       const varios = numero(meta.perfilesConElNumero);
       const otros =
@@ -266,6 +313,12 @@ export function etiquetaPersona(
 // La fila
 // ─────────────────────────────────────────────────────────────
 
+/** Le suma al resumen cómo va el mensaje al paciente («entregado», «leído»…). */
+function conEntrega(resumen: string, estado: string | undefined): string {
+  const texto = estado ? ESTADO_ENTREGA[estado] : undefined;
+  return texto ? `${resumen} Mensaje al paciente: ${texto}.` : resumen;
+}
+
 export function mapearExcepcion(
   f: FilaExcepcion,
   ctx: ContextoVista,
@@ -287,7 +340,7 @@ export function mapearExcepcion(
     titulo: TITULO_EXCEPCION[f.kind as TipoExcepcion] ?? f.title,
     gravedad: f.severity as SeveridadExcepcion,
     estado: f.status as EstadoExcepcion,
-    resumen: resumenPublico(f, referenciaMs),
+    resumen: conEntrega(resumenPublico(f, referenciaMs), ctx.entregas?.get(f.id)),
     detalleTecnico: ctx.actor.permisos.verInternos ? f.detail : null,
     cita: tieneCita
       ? {

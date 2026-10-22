@@ -35,6 +35,15 @@ const arg = (i: number) =>
     fecha: 'lunes 10 de junio, 10:00 a. m.',
     botName: BOT_NAME,
     clinicaName: 'Clínica Demo',
+    // 🏥 Los avisos de cita cancelada / cambiada por el hospital (2026-10-22).
+    clinica: 'Clínica Demo',
+    servicio: 'Medicina General',
+    medico: 'Dr(a). Ruiz',
+    contacto: 'el hospital al *606 000 0000*',
+    puedeAgendar: true,
+    fechaAntes: 'lunes 10 de junio, 10:00 a. m.',
+    fechaNueva: 'martes 11 de junio, 9:00 a. m.',
+    medicoNuevo: 'Dr(a). Gómez',
   });
 
 /**

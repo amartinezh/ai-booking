@@ -244,6 +244,80 @@ describe('detectChanges — anti-eco con las marcas de cada canal', () => {
     },
   );
 
+  // 🔁 2026-10-22: el hospital cambió de hora una cita que agendó el asistente.
+  // La nueva conserva la elaboración y la marca: antes se tomaba por eco y AgenIA
+  // solo veía la cancelación.
+  it('🔁 una cita NUESTRA que el hospital cambió de hora: alta en la hora nueva y cancelación de la vieja', async () => {
+    const nuestra = {
+      descripcion: 'ASIGNADA POR WHATSAPP',
+      elaborada: '2026-10-01 10:04:45.257',
+      hist: '1054928310',
+    };
+    const base = await conDriver([
+      filaCita({ ...nuestra, hora: '2026/10/10 15:20' }),
+    ]).detectChanges(null);
+    const ronda = await conDriver([
+      filaCita({ ...nuestra, hora: '2026/10/11 09:00', fecha: '2026-10-11' }),
+    ]).detectChanges(base.nextCursor);
+
+    const ops = ronda.events.map((e) => [e.op, e.payload.startTimeIso]);
+    expect(ops).toEqual(
+      expect.arrayContaining([
+        ['INSERT', '2026-10-11T14:00:00.000Z'],
+        ['CANCEL', '2026-10-10T20:20:00.000Z'],
+      ]),
+    );
+    // El alta va primero: al llegar la cancelación, AgenIA ya tiene la nueva.
+    expect(ronda.events[0].op).toBe('INSERT');
+  });
+
+  it('una cita nuestra RECIÉN escrita sigue sin devolverse (su elaboración no estaba en otra hora)', async () => {
+    const base = await conDriver([
+      filaCita({
+        hora: '2026/10/10 08:00',
+        elaborada: '2026-09-18 06:00:00.000',
+      }),
+    ]).detectChanges(null);
+    const ronda = await conDriver([
+      filaCita({
+        hora: '2026/10/10 08:00',
+        elaborada: '2026-09-18 06:00:00.000',
+      }),
+      filaCita({
+        hora: '2026/10/10 09:00',
+        descripcion: 'ASIGNADA POR WHATSAPP',
+        elaborada: '2026-10-01 11:00:00.123',
+      }),
+    ]).detectChanges(base.nextCursor);
+    expect(ronda.events).toHaveLength(0);
+  });
+
+  it('la misma elaboración de OTRO paciente no cuenta como cambio de hora', async () => {
+    const base = await conDriver([
+      filaCita({
+        hora: '2026/10/10 15:20',
+        elaborada: '2026-10-01 10:00:00.000',
+        hist: '111',
+        descripcion: 'ASIGNADA POR WHATSAPP',
+      }),
+    ]).detectChanges(null);
+    const ronda = await conDriver([
+      filaCita({
+        hora: '2026/10/10 15:20',
+        elaborada: '2026-10-01 10:00:00.000',
+        hist: '111',
+        descripcion: 'ASIGNADA POR WHATSAPP',
+      }),
+      filaCita({
+        hora: '2026/10/10 16:00',
+        elaborada: '2026-10-01 10:00:00.000',
+        hist: '222',
+        descripcion: 'ASIGNADA POR WHATSAPP',
+      }),
+    ]).detectChanges(base.nextCursor);
+    expect(ronda.events).toHaveLength(0);
+  });
+
   it('una cita del hospital (sin marca) sí se reporta como alta', async () => {
     const base = await conDriver([]).detectChanges(null);
     const ronda = await conDriver([

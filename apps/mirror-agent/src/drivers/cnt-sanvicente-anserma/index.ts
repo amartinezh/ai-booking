@@ -708,6 +708,29 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       else horasIlegibles++;
     };
 
+    // 🔁 Citas NUESTRAS que el hospital cambió de hora (2026-10-22). El hospital
+    // no mueve una cita: la cancela y crea otra, y la nueva conserva su
+    // `FE_ELAB_CIT` y su marca de origen. Sin esto, la nueva se tomaba por el eco
+    // de una cita que acabábamos de escribir y no se reportaba: AgenIA solo veía
+    // la cancelación y el paciente no se enteraba de su hora nueva. Una cita que
+    // ACABAMOS de escribir no tiene esa elaboración en ninguna otra hora de la
+    // foto anterior; una movida, sí (y del mismo paciente).
+    const elaboradasAntes = new Map<
+      string,
+      { clave: string; h: string | null }[]
+    >();
+    for (const [clave, previo] of Object.entries(anterior.filas)) {
+      if (!previo.el) continue;
+      const lista = elaboradasAntes.get(previo.el);
+      if (lista) lista.push({ clave, h: previo.h });
+      else elaboradasAntes.set(previo.el, [{ clave, h: previo.h }]);
+    }
+    const esNuestraMovida = (clave: string, fila: SnapshotRow): boolean =>
+      !!fila.el &&
+      (elaboradasAntes.get(fila.el) ?? []).some(
+        (antes) => antes.clave !== clave && antes.h === fila.h,
+      );
+
     for (const [clave, fila] of Object.entries(actual.filas)) {
       const previo = anterior.filas[clave];
       if (!previo) {
@@ -716,8 +739,9 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         // un evento; que su cupo quede ocupado lo resuelve `fetchAvailability`,
         // que sí barre esas fechas y viaja con el `occupied`.
         if (!dentro(fila)) continue;
-        // Alta nueva. Si la escribimos nosotros, no se devuelve al servidor.
-        if (fila.propia) continue;
+        // Alta nueva. Si la escribimos nosotros, no se devuelve al servidor…
+        // salvo que sea una nuestra que el hospital cambió de hora (arriba).
+        if (fila.propia && !esNuestraMovida(clave, fila)) continue;
         empujar(this.eventoDeCita('INSERT', clave, fila, ahora));
       } else if (previo.e !== fila.e && dentro(fila)) {
         // Solo se reporta el desenlace que sabemos traducir al vocabulario de

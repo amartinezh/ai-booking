@@ -15,6 +15,7 @@ import { MirrorLookupService } from './mirror-lookup.service';
 import { MirrorExceptionsService } from './mirror-exceptions.service';
 import { MirrorAlertService } from './mirror-alert.service';
 import { MirrorWatchdogService } from './mirror-watchdog.service';
+import { AvisoCambioHospitalService } from './aviso-cambio-hospital.service';
 import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module';
 
 /**
@@ -56,6 +57,9 @@ import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module'
     MirrorExceptionsService,
     MirrorAlertService,
     MirrorWatchdogService,
+    // 🏥 El hospital cancela o cambia una cita del asistente: aviso al paciente y
+    // caso en la Bandeja (2026-10-22).
+    AvisoCambioHospitalService,
   ],
   exports: [
     MirrorApplyService,

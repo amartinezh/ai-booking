@@ -448,3 +448,80 @@ describe('esEstadoActivo', () => {
     for (const e of ['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA', 'VENCIDA', 'X']) expect(esEstadoActivo(e)).toBe(false);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🏥 El hospital canceló o cambió una cita del asistente (2026-10-22): el caso dice
+// si al paciente se le avisó, por dónde, o por qué no; y cómo va el mensaje.
+// ══════════════════════════════════════════════════════════════════════════
+describe('🏥 citas del asistente que el hospital canceló o cambió', () => {
+  const cancelada = (meta: Record<string, unknown>) =>
+    fila({
+      kind: 'CITA_CANCELADA_POR_HOSPITAL',
+      title: 'El hospital canceló una cita agendada por el asistente',
+      meta: { canalDeLaCita: 'WHATSAPP', ...meta },
+    });
+
+  it('avisado por WhatsApp: lo dice y pide confirmar', () => {
+    const r = resumenPublico(cancelada({ aviso: 'ENVIADO', canal: 'WHATSAPP', via: 'TEXTO' }), AHORA.getTime());
+    expect(r).toBe(
+      'El hospital canceló en su sistema esta cita, que el paciente había agendado por WhatsApp. Se le avisó por WhatsApp. Confirme que el paciente quedó enterado y cierre el caso.',
+    );
+  });
+
+  it.each([
+    ['FUERA_DE_VENTANA', 'pasaron más de 24 horas'],
+    ['TELEFONO_EQUIVOCADO', 'marcado como de otra persona'],
+    ['SIN_CONTACTO', 'no tiene WhatsApp ni Telegram'],
+    ['SIN_PLANTILLA', 'falta registrar la plantilla'],
+    ['FALLO', 'el envío falló'],
+  ])('sin aviso (%s): dice por qué y que se comuniquen con el paciente', (motivo, texto) => {
+    const r = resumenPublico(cancelada({ aviso: 'NO_ENVIADO', canal: 'WHATSAPP', motivo }), AHORA.getTime());
+    expect(r).toContain('No se le pudo avisar por WhatsApp');
+    expect(r).toContain(texto);
+    expect(r).toContain('Comuníquese con el paciente.');
+  });
+
+  it('cambio de hora: dice la hora nueva (en Colombia) y por dónde agendó', () => {
+    const r = resumenPublico(
+      fila({
+        kind: 'CITA_MOVIDA_POR_HOSPITAL',
+        meta: {
+          canalDeLaCita: 'TELEGRAM',
+          canal: 'TELEGRAM',
+          aviso: 'ENVIADO',
+          via: 'TEXTO',
+          nuevaIso: '2026-10-23T14:00:00.000Z',
+        },
+      }),
+      AHORA.getTime(),
+    );
+    expect(r).toContain('El hospital cambió de hora en su sistema esta cita, que el paciente había agendado por Telegram: ahora es el');
+    expect(r).toMatch(/23.*oct/);
+    expect(r).toContain('Se le avisó por Telegram.');
+  });
+
+  it('con la plantilla (fuera de las 24 h) lo aclara', () => {
+    const r = resumenPublico(
+      fila({ kind: 'CITA_MOVIDA_POR_HOSPITAL', meta: { canalDeLaCita: 'WHATSAPP', canal: 'WHATSAPP', aviso: 'ENVIADO', via: 'PLANTILLA' } }),
+      AHORA.getTime(),
+    );
+    expect(r).toContain('con la plantilla de confirmación de cita');
+  });
+
+  it.each([
+    ['READ', 'Mensaje al paciente: leído.'],
+    ['DELIVERED', 'Mensaje al paciente: entregado.'],
+    ['FAILED', 'Mensaje al paciente: no se entregó.'],
+  ])('la vista le suma cómo va el mensaje (%s)', (estado, texto) => {
+    const v = mapearExcepcion(
+      cancelada({ aviso: 'ENVIADO', canal: 'WHATSAPP', via: 'TEXTO' }),
+      ctx({ entregas: new Map([['ex-1', estado]]) }),
+    );
+    expect(v.resumen.endsWith(texto)).toBe(true);
+  });
+
+  it('sin dato de entrega, no inventa nada', () => {
+    const v = mapearExcepcion(cancelada({ aviso: 'ENVIADO', canal: 'WHATSAPP' }), ctx());
+    expect(v.resumen).not.toContain('Mensaje al paciente');
+  });
+});

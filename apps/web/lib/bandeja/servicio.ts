@@ -184,7 +184,22 @@ async function cargarContexto(
     ...idsUsuarioExtra,
   ]);
 
-  const [medicos, pacientes, citas, usuarios] = await Promise.all([
+  // 🏥 El aviso al paciente de «el hospital canceló / cambió una cita del asistente»:
+  // su estado de entrega en el libro de mensajes de WhatsApp (por la cita, desde
+  // que se envió). Solo esas excepciones, y solo las que salieron por WhatsApp.
+  const conAviso = filas.flatMap((f) => {
+    const m = (f.meta && typeof f.meta === 'object' ? f.meta : {}) as Record<string, unknown>;
+    const desde = typeof m.enviadoIso === 'string' ? Date.parse(m.enviadoIso) : NaN;
+    return (f.kind === 'CITA_CANCELADA_POR_HOSPITAL' || f.kind === 'CITA_MOVIDA_POR_HOSPITAL') &&
+      m.aviso === 'ENVIADO' &&
+      m.canal === 'WHATSAPP' &&
+      f.appointmentId &&
+      !Number.isNaN(desde)
+      ? [{ id: f.id, appointmentId: f.appointmentId, desde: new Date(desde - 5_000) }]
+      : [];
+  });
+
+  const [medicos, pacientes, citas, usuarios, mensajes] = await Promise.all([
     medicoIds.length
       ? db.doctorProfile.findMany({
           where: { id: { in: medicoIds }, organizationId: org },
@@ -204,7 +219,25 @@ async function cargarContexto(
         })
       : [],
     cargarUsuarios(db, actor, usuarioIds),
+    conAviso.length
+      ? db.whatsappMessageLog.findMany({
+          where: {
+            organizationId: org,
+            appointmentId: { in: conAviso.map((a) => a.appointmentId) },
+            kind: { in: ['SYSTEM_NOTICE', 'BOOKING_CONFIRMATION'] },
+            createdAt: { gte: new Date(Math.min(...conAviso.map((a) => a.desde.getTime()))) },
+          },
+          select: { appointmentId: true, status: true, createdAt: true },
+          orderBy: { createdAt: 'desc' },
+        })
+      : [],
   ]);
+
+  const entregas = new Map<string, string>();
+  for (const a of conAviso) {
+    const m = mensajes.find((x) => x.appointmentId === a.appointmentId && x.createdAt >= a.desde);
+    if (m) entregas.set(a.id, m.status);
+  }
 
   return {
     actor: { userId: actor.userId, permisos: actor.permisos },
@@ -222,6 +255,7 @@ async function cargarContexto(
       citas.map((c) => [c.id, { servicio: c.scheduleSlot?.service?.name ?? null }]),
     ),
     usuarios,
+    entregas,
   };
 }
 

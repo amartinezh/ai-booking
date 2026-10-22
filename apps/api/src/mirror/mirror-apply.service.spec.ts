@@ -5,6 +5,7 @@ import { AppointmentsService } from '../appointments/appointments.service';
 import { WaitlistService } from '../waitlist/waitlist.service';
 import { MirrorPatientService } from './mirror-patient.service';
 import { MirrorExceptionsService } from './mirror-exceptions.service';
+import { AvisoCambioHospitalService } from './aviso-cambio-hospital.service';
 import { CanonicalChangeEvent } from './dto/mirror.types';
 import { NOTA_SIN_APPOINTMENT } from '@agenia/shared';
 
@@ -320,6 +321,8 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
   /** El alta en caliente: por defecto NO consigue paciente (el caso de antes). */
   let pacientes: { resolverOCrear: jest.Mock };
   let excepciones: { registrar: jest.Mock };
+  /** 🏥 El aviso al paciente cuando el hospital cancela una cita del asistente. */
+  let avisoCambio: { alCancelarElHospital: jest.Mock };
   const sinPaciente = (motivo = 'SIN_NOMBRE', candidatos: string[] = []) => ({
     pacienteId: null,
     motivo,
@@ -413,6 +416,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
     waitlist = { notifyWaitlist: jest.fn(async () => undefined) };
     pacientes = { resolverOCrear: jest.fn(async () => sinPaciente()) };
     excepciones = { registrar: jest.fn(async () => 'CREADA') };
+    avisoCambio = { alCancelarElHospital: jest.fn(async () => undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -422,6 +426,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         { provide: WaitlistService, useValue: waitlist },
         { provide: MirrorPatientService, useValue: pacientes },
         { provide: MirrorExceptionsService, useValue: excepciones },
+        { provide: AvisoCambioHospitalService, useValue: avisoCambio },
       ],
     }).compile();
     service = module.get(MirrorApplyService);
@@ -1031,6 +1036,70 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
   // rama del espejo liberaba el cupo en silencio — y es la rama por la que
   // entra la mayoría de las cancelaciones reales.
   // ═══════════════════════════════════════════════════════════════════════
+  describe('🏥 cancelación del HIS → aviso al paciente y caso en la Bandeja (2026-10-22)', () => {
+    const cancelacion = (payload: Record<string, unknown> = {}) =>
+      evento({
+        eventId: 'evt-cancel-aviso',
+        op: 'CANCEL',
+        payload: {
+          doctorExternalKey: '76',
+          startTimeIso: '2026-09-10T12:00:00.000Z',
+          ...payload,
+        },
+      });
+    const citaViva = { id: 'apt-1', scheduleSlotId: 'slot-1' };
+
+    it('el hospital canceló una cita que AgenIA tenía: se pide el aviso con esa cita', async () => {
+      prisma.appointment.findFirst.mockResolvedValue(citaViva);
+      tx.appointment.findFirst.mockResolvedValue(citaViva);
+
+      const r = await aplicar(cancelacion());
+
+      expect(r.applied).toBe(1);
+      expect(avisoCambio.alCancelarElHospital).toHaveBeenCalledWith(
+        ORG,
+        'apt-1',
+      );
+    });
+
+    it('si AgenIA nunca tuvo la cita, no hay a quién avisar', async () => {
+      prisma.appointment.findFirst.mockResolvedValue(null);
+      prisma.scheduleSlot.findFirst
+        .mockResolvedValueOnce({ ...CUPO, isAvailable: false })
+        .mockResolvedValueOnce(CUPO);
+
+      await aplicar(cancelacion());
+
+      expect(avisoCambio.alCancelarElHospital).not.toHaveBeenCalled();
+    });
+
+    it('una cancelación que trae el id de AgenIA (no la hizo el hospital) no avisa', async () => {
+      tx.appointment.findFirst.mockResolvedValue({
+        id: 'apt-7',
+        scheduleSlotId: 'slot-7',
+      });
+
+      await aplicar(cancelacion({ agenIAAppointmentId: 'apt-7' }));
+
+      expect(avisoCambio.alCancelarElHospital).not.toHaveBeenCalled();
+    });
+
+    it('va después de la cancelación y de la lista de espera', async () => {
+      prisma.appointment.findFirst.mockResolvedValue(citaViva);
+      tx.appointment.findFirst.mockResolvedValue(citaViva);
+
+      await aplicar(cancelacion());
+
+      const orden = (m: jest.Mock) => m.mock.invocationCallOrder[0];
+      expect(orden(avisoCambio.alCancelarElHospital)).toBeGreaterThan(
+        orden(tx.appointment.update),
+      );
+      expect(orden(avisoCambio.alCancelarElHospital)).toBeGreaterThan(
+        orden(waitlist.notifyWaitlist),
+      );
+    });
+  });
+
   describe('cancelación del HIS → aviso a la lista de espera', () => {
     const cancelacion = (payload: Record<string, unknown> = {}) =>
       evento({

@@ -245,6 +245,28 @@ const pick = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 // emocionales y con emojis limitados a función estructural.
 // Estructura clara con viñetas A) B) C) en líneas separadas.
 // ═════════════════════════════════════════════════════════════
+/** Datos del aviso de una cita que el hospital canceló (ver `citaCanceladaPorElHospital`). */
+export interface AvisoCitaCancelada {
+  nombre: string;
+  clinica: string;
+  servicio: string;
+  fecha: string;
+  medico: string;
+  contacto: string;
+  puedeAgendar: boolean;
+}
+
+/** Datos del aviso de una cita que el hospital cambió de hora. */
+export interface AvisoCitaMovida {
+  nombre: string;
+  clinica: string;
+  servicio: string;
+  fechaAntes: string;
+  fechaNueva: string;
+  medicoNuevo: string;
+  contacto: string;
+}
+
 const FORMAL = {
   bienvenida: (
     clinicaName: string,
@@ -1064,6 +1086,24 @@ const FORMAL = {
 
   otraHoraSinCita: (contacto: string) =>
     `Por este medio no puedo confirmarle esa hora. 🏥 Para confirmarla, comuníquese con ${contacto}.`,
+
+  // 🏥 El hospital canceló o cambió de hora, EN SU SISTEMA, una cita que el paciente
+  // agendó con el asistente (2026-10-22: a una paciente le anularon la cita y nadie
+  // le avisó). Lo envía mirror/aviso-cambio-hospital.service.ts.
+  citaCanceladaPorElHospital: (p: AvisoCitaCancelada) =>
+    `Hola${p.nombre ? `, ${p.nombre}` : ''}. Le escribimos de *${p.clinica}*. 🏥\n\n` +
+    `Le informamos que su cita de *${p.servicio}* del *${p.fecha}* con *${p.medico}* fue *cancelada* en el hospital. Lamentamos el inconveniente.\n\n` +
+    `Para más información o para una nueva cita, comuníquese con ${p.contacto}.` +
+    (p.puedeAgendar
+      ? ` También puede escribirme *agendar* para buscar otro horario.`
+      : ''),
+
+  citaMovidaPorElHospital: (p: AvisoCitaMovida) =>
+    `Hola${p.nombre ? `, ${p.nombre}` : ''}. Le escribimos de *${p.clinica}*. 🏥\n\n` +
+    `Le informamos que el hospital cambió su cita de *${p.servicio}*:\n\n` +
+    `❌ Antes: ${p.fechaAntes}\n` +
+    `✅ Ahora: *${p.fechaNueva}* con *${p.medicoNuevo}*\n\n` +
+    `Si tiene alguna duda, comuníquese con ${p.contacto}.`,
 
   // 👋 Un saludo a secas tras el recordatorio, con agendar apagado (2026-10-20: a
   // quien tenía el teléfono de otra paciente, «Hola buenos días» le contestó «no es
@@ -2285,6 +2325,21 @@ const INFORMAL = {
 
   otraHoraSinCita: (contacto: string) =>
     `Por aquí no puedo confirmarte esa hora. 🏥 Para confirmarla, comunícate con ${contacto}.`,
+
+  citaCanceladaPorElHospital: (p: AvisoCitaCancelada) =>
+    `Hola${p.nombre ? `, ${p.nombre}` : ''}. Te escribimos de *${p.clinica}*. 🏥\n\n` +
+    `Te contamos que tu cita de *${p.servicio}* del *${p.fecha}* con *${p.medico}* fue *cancelada* en el hospital. Lo sentimos mucho.\n\n` +
+    `Para más información o para una nueva cita, comunícate con ${p.contacto}.` +
+    (p.puedeAgendar
+      ? ` También puedes escribirme *agendar* para buscar otro horario.`
+      : ''),
+
+  citaMovidaPorElHospital: (p: AvisoCitaMovida) =>
+    `Hola${p.nombre ? `, ${p.nombre}` : ''}. Te escribimos de *${p.clinica}*. 🏥\n\n` +
+    `Te contamos que el hospital cambió tu cita de *${p.servicio}*:\n\n` +
+    `❌ Antes: ${p.fechaAntes}\n` +
+    `✅ Ahora: *${p.fechaNueva}* con *${p.medicoNuevo}*\n\n` +
+    `Si tienes alguna duda, comunícate con ${p.contacto}.`,
 
   saludoTrasRecordatorio: (
     botName: string,
