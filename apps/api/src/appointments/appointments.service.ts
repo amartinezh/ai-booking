@@ -8,7 +8,9 @@ import {
 import { Prisma, AttendanceStatus } from '@agenia/database';
 import {
   CUPOS_OFRECIDOS,
+  cupoBloqueado,
   cumpleAnticipacionAlReservar,
+  intervalosBloqueados,
   documentoSinCerosIniciales,
   inicioMinimoParaOfrecer,
   faltaRegimenParaElEspejo,
@@ -17,6 +19,16 @@ import {
   normalizarCuposOfrecidos,
   seleccionarCuposManianaTarde,
 } from '@agenia/shared';
+import {
+  bloqueosDeLaClinica,
+  cupoBloqueadoParaElAsistente,
+} from './bloqueos-agenda';
+
+/**
+ * Hasta cuándo se convierten los días sin citas en tramos para la consulta
+ * cuando no hay ventana de fecha. Más allá, el filtro de después los cubre.
+ */
+const HORIZONTE_BLOQUEOS_MS = 180 * 24 * 60 * 60 * 1000;
 
 /** Forma reducida de un cupo que `getAvailableSlots` le entrega al chatbot. */
 export interface AvailableSlot {
@@ -90,6 +102,19 @@ export class AppointmentsService {
     // siendo `true`, así que para una clínica sin espejo esto no cambia nada.
     const doctorFilter = await this.buildDoctorFilter(organizationId);
 
+    // 📅 Días y horas sin citas (Configuración › Días sin citas, 2026-10-22): el
+    // asistente no ofrece citas que empiecen en ellos. Se quitan en la consulta
+    // misma —si no, un sábado lleno se comería la bolsa de cupos— y otra vez
+    // abajo, por si alguno queda fuera del horizonte.
+    const bloqueos = await bloqueosDeLaClinica(this.prisma, organizationId);
+    const tramos = intervalosBloqueados(
+      bloqueos.reglas,
+      startTimeFilter.gte,
+      startTimeFilter.lte ??
+        new Date(startTimeFilter.gte.getTime() + HORIZONTE_BLOQUEOS_MS),
+      bloqueos.timeZone,
+    );
+
     const [rawSlots, org] = await Promise.all([
       this.prisma.scheduleSlot.findMany({
         where: {
@@ -102,6 +127,13 @@ export class AppointmentsService {
           doctor: doctorFilter,
           // Filtro clave: El slot debe ser universal (null) o ser exclusivo para la EPS del paciente
           OR: [{ allowedEpsId: null }, { allowedEpsId: epsId }],
+          ...(tramos.length > 0
+            ? {
+                NOT: tramos.map((t) => ({
+                  startTime: { gte: t.gte, lt: t.lt },
+                })),
+              }
+            : {}),
         },
         include: { doctor: true, service: true },
         orderBy: { startTime: 'asc' },
@@ -120,14 +152,19 @@ export class AppointmentsService {
     ]);
 
     // Mapeamos para que Gemini lo pueda entender fácil
-    const slots = rawSlots.map((slot) => ({
-      slotId: slot.id,
-      fecha: slot.startTime,
-      // Ya formateado para el paciente: el honorífico depende de si el
-      // perfil es una persona o una agenda funcional del hospital.
-      doctor: doctorLabel(slot.doctor),
-      servicio: slot.service.name,
-    }));
+    const slots = rawSlots
+      .filter(
+        (slot) =>
+          !cupoBloqueado(slot.startTime, bloqueos.reglas, bloqueos.timeZone),
+      )
+      .map((slot) => ({
+        slotId: slot.id,
+        fecha: slot.startTime,
+        // Ya formateado para el paciente: el honorífico depende de si el
+        // perfil es una persona o una agenda funcional del hospital.
+        doctor: doctorLabel(slot.doctor),
+        servicio: slot.service.name,
+      }));
     if (opts.todos) return slots;
 
     // Cuántos ofrece lo decide la clínica (OrganizationSettings), repartidos
@@ -297,6 +334,19 @@ export class AppointmentsService {
         if (
           (origin === 'WHATSAPP' || origin === 'TELEGRAM') &&
           !cumpleAnticipacionAlReservar(slot.startTime, new Date())
+        ) {
+          throw new Error('SLOT_TAKEN_OR_INVALID');
+        }
+        // 📅 Día u hora sin citas por el asistente: entre la oferta y el «sí»
+        // el administrador pudo bloquearlo. Para el paciente es un cupo que ya
+        // no está: se le ofrecen otros. Solo el bot.
+        if (
+          (origin === 'WHATSAPP' || origin === 'TELEGRAM') &&
+          (await cupoBloqueadoParaElAsistente(
+            tx,
+            organizationId,
+            slot.startTime,
+          ))
         ) {
           throw new Error('SLOT_TAKEN_OR_INVALID');
         }

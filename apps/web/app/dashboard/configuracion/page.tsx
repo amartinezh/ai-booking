@@ -21,12 +21,15 @@ import TelegramChannelForm from './TelegramChannelForm';
 import { getMyTelegramConfig } from '@/app/actions/telegram-config';
 import AudioConfigForm from './AudioConfigForm';
 import ConnectionHealthPanel from './ConnectionHealthPanel';
+import BloqueosAgenda from './BloqueosAgenda';
+import { obtenerBloqueosAgenda } from '@/app/actions/bloqueos-agenda';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
 const TABS = [
     { key: 'chatbot', label: 'Asistente Virtual', icon: '🤖' },
+    { key: 'dias', label: 'Días sin citas', icon: '📅' },
     { key: 'integrations', label: 'Integraciones (IA y Canales)', icon: '🧠' },
     { key: 'kb', label: 'Base de Conocimiento', icon: '📚' },
 ];
@@ -46,6 +49,8 @@ export default async function ConfiguracionPage({
     const activeTab = TABS.find(t => t.key === normalizedTab)?.key ?? 'chatbot';
 
     const kbContent = activeTab === 'kb' ? await getMyKnowledgeBase() : null;
+    // 📅 Días y horas sin citas por el asistente (2026-10-22).
+    const bloqueos = activeTab === 'dias' ? await obtenerBloqueosAgenda() : null;
 
     // Tab "Asistente Virtual": identidad/tono + configuración de voz (TTS). Se
     // cargan en paralelo PERO aislados: si la config de voz falla (backend,
@@ -229,6 +234,15 @@ export default async function ConfiguracionPage({
                         )}
                     </div>
                 )}
+                {activeTab === 'dias' &&
+                    (bloqueos?.success ? (
+                        <BloqueosAgenda inicial={{ hoy: bloqueos.hoy, bloqueos: bloqueos.bloqueos }} />
+                    ) : (
+                        <SectionLoadError
+                            title="No pudimos cargar los días sin citas"
+                            detail={bloqueos && !bloqueos.success ? bloqueos.error : null}
+                        />
+                    ))}
                 {activeTab === 'kb' && (
                     <KnowledgeBaseEditor initialContent={kbContent ?? ''} />
                 )}

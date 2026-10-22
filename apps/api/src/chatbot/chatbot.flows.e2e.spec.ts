@@ -1536,6 +1536,33 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(await state()).toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
     });
 
+    it('3.2b 📅 el administrador bloquea el día del nuevo cupo antes del SÍ → no se mueve y reofrece', async () => {
+      await say('reprogramar mi cita');
+      await say(CEDULA);
+      await say('A'); // slot-new, 16 de septiembre
+
+      // Configuración › Días sin citas: ese día ya no se ofrece por el asistente.
+      (prisma._tx as any).bookingBlock = {
+        findMany: jest.fn(() => [
+          {
+            date: '2026-09-16',
+            repeatWeekly: false,
+            startMinute: null,
+            endMinute: null,
+          },
+        ]),
+      };
+      (prisma._tx as any).organization = {
+        findUnique: jest.fn(() => ({ timezone: 'America/Bogota' })),
+      };
+      db.slots.push(slotRow('slot-alt', FECHA_C, 'Otra Dra', SVC_MEDICINA));
+
+      await say('Sí');
+      expect(db.appointments[0].scheduleSlotId).toBe('slot-old'); // sin cambios
+      expect(db.slots.find((s) => s.id === 'slot-new')!.isAvailable).toBe(true);
+      expect(await state()).toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
+    });
+
     it('3.3 sin cupos alternativos → ofrece cancelar; NO conserva la cita', async () => {
       db.slots.find((s) => s.id === 'slot-new')!.isAvailable = false;
 

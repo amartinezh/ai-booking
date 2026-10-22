@@ -2,6 +2,7 @@ import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { inicioMinimoParaOfrecer } from '@agenia/shared';
+import { cupoBloqueadoParaElAsistente } from '../appointments/bloqueos-agenda';
 import { ConfigService } from '@nestjs/config';
 import { ChatbotService } from '../chatbot/chatbot.service';
 
@@ -126,6 +127,16 @@ export class WaitlistService {
     if (slotDate < inicioMinimoParaOfrecer(new Date())) {
       this.logger.log(
         `El cupo ${slotId} empieza antes de la anticipación mínima: no se ofrece a la lista de espera`,
+      );
+      return;
+    }
+
+    // 📅 Un cupo de un día u hora sin citas por el asistente no se ofrece.
+    if (
+      await cupoBloqueadoParaElAsistente(this.prisma, organizationId, slotDate)
+    ) {
+      this.logger.log(
+        `El cupo ${slotId} cae en un día u hora sin citas por el asistente: no se ofrece a la lista de espera`,
       );
       return;
     }

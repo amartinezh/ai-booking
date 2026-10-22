@@ -1067,11 +1067,11 @@ No hay cambios por guardar: modifica un valor o un interruptor primero.
 - **Ruta:** `/dashboard/configuracion`
 - **Resumen:** El asistente virtual (nombre, tono, voz y qué puede hacer el paciente), sus canales y la información que comparte.
 - **Relacionados:** [Canales en vivo](#canales), [Encuestas (CSAT)](#encuestas), [Visión General](#vision-general), [Espejo con el HIS](#espejo)
-- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios
+- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios, días sin citas, bloquear sábados, festivos, apagar agenda, horario sin citas, calendario
 
 #### Para qué sirve
 
-Tiene tres pestañas. «Asistente Virtual»: qué puede hacer el paciente por WhatsApp o Telegram, los recordatorios, el nombre, el tono, cuántas horas ofrece y la voz. «Integraciones (IA y Canales)»: el proveedor de inteligencia artificial, WhatsApp, sus plantillas y Telegram. «Base de Conocimiento»: lo que el asistente responde sobre la clínica.
+Tiene cuatro pestañas. «Asistente Virtual»: qué puede hacer el paciente por WhatsApp o Telegram, los recordatorios, el nombre, el tono, cuántas horas ofrece y la voz. «Días sin citas»: un calendario para elegir los días, o las horas de un día, para los que el asistente no ofrece citas (por ejemplo, todos los sábados). «Integraciones (IA y Canales)»: el proveedor de inteligencia artificial, WhatsApp, sus plantillas y Telegram. «Base de Conocimiento»: lo que el asistente responde sobre la clínica.
 
 #### Paso a paso
 
@@ -1112,6 +1112,17 @@ Tiene tres pestañas. «Asistente Virtual»: qué puede hacer el paciente por Wh
 2. Elige el tono: «Formal» (trato de usted, opciones A/B/C) o «Informal» (trato de tú, conversacional). La vista previa muestra cómo se verá.
 3. En «Horarios que ofrece el asistente», elige cuántas opciones de cita muestra (entre 2 y 12; se recomiendan 6). Se reparten entre mañana y tarde.
 4. Pulsa «Guardar configuración».
+
+##### Bloquear días u horas sin citas por el asistente
+
+1. Abre la pestaña «Días sin citas».
+2. En el calendario, pulsa el día (los que ya pasaron no se pueden elegir).
+3. En «¿Qué quiere bloquear?», elige «Todo el día» o «Unas horas». Con «Unas horas», escribe «Desde» y «Hasta»: no se ofrecen las citas que empiecen desde la hora inicial y antes de la final (de 8:00 a 10:00 quita la de las 9:40, no la de las 10:00).
+4. Si se repite, marca «Repetir todos los …» (por ejemplo, «Repetir todos los sábados»): vale ese día y el mismo día de cada semana en adelante.
+5. Si quieres, escribe el motivo. Revisa la frase de resumen («El asistente no ofrecerá citas todos los sábados, todo el día…») y pulsa «Bloquear».
+6. Para deshacerlo, en «Bloqueos activos» pulsa «Quitar» y confirma.
+
+> 💡 Aplica solo al asistente (WhatsApp y Telegram) y cuenta la hora de la cita, no la del mensaje: un paciente que escribe un sábado sí puede agendar para el lunes. Las citas ya agendadas no cambian, y los agendadores siguen agendando esos días desde el panel y en el sistema del hospital. En el calendario, rojo es todo el día sin citas y ámbar, algunas horas.
 
 ##### Configurar la voz del asistente
 
@@ -1190,6 +1201,14 @@ No. Solo cambia el lenguaje y la forma de los mensajes; las reglas de agendamien
 ##### ¿WhatsApp y Telegram son pacientes distintos?
 
 No. Es el mismo asistente en los dos canales y la ficha del paciente es una sola.
+
+##### ¿Qué pasa con un paciente que pide cita para un día bloqueado?
+
+El asistente no le ofrece horarios de ese día: le muestra los de otros días. Si alguien ya tenía la oferta en pantalla cuando bloqueaste el día, al responder se le dice que ese horario ya no está y se le ofrecen otros. Lo mismo al cambiar la fecha de una cita y en la lista de espera.
+
+##### ¿«Días sin citas» es lo mismo que apagar «Agendar citas por el asistente»?
+
+No. Apagar «Agendar» detiene todas las citas nuevas por el asistente, de cualquier día. «Días sin citas» solo quita los días u horas elegidos; el resto se sigue ofreciendo.
 
 #### Si algo no sale bien
 
@@ -1801,7 +1820,7 @@ Con una operación apagada, el asistente dice cuál no está disponible, con qui
 
 ### 3.3 Agendar
 
-El asistente pide la especialidad (solo servicios activos), la EPS o si es particular, ofrece horarios libres (por defecto 6, entre 2 y 12, repartidos entre mañana y tarde) que empiecen al menos 60 minutos después (`ANTICIPACION_MINIMA_AGENDAR_MIN`, en `packages/shared/src/cupos-ofrecidos.ts`) e identifica al paciente por su cédula. Al confirmar, al cupo todavía le deben faltar al menos 30 minutos; si no, ofrece otros. La misma regla aplica al cambiar la fecha y a la lista de espera; el personal y el hospital no tienen mínimo. A un paciente nuevo —o a uno existente al que le falte algo en la ficha— le pide nombre, apellidos, fecha de nacimiento, sexo y régimen. El nombre va en dos pasos marcados «Paso 1 de 2: solo sus NOMBRES» y «Paso 2 de 2: solo sus APELLIDOS», porque el HIS los guarda en columnas aparte. Si en los nombres escribió también los apellidos («Juan Camilo Hurtado Ramos» y luego «Hurtado Ramos»), los separa cuando lo repetido son dos palabras o más; si escribe lo mismo en los dos pasos, le vuelve a pedir solo los apellidos (`apps/api/src/chatbot/nombre-paciente-nuevo.ts`). Antes de confirmar comprueba:
+El asistente pide la especialidad (solo servicios activos), la EPS o si es particular, ofrece horarios libres —menos los de los días u horas que la clínica bloqueó en Configuración › Días sin citas (tabla `BookingBlock`, regla en `packages/shared/src/bloqueos-agenda.ts`: cuenta la hora de inicio de la cita en la zona de la clínica; se quitan en la consulta misma y se revisan otra vez al reservar, al cambiar la fecha y en la lista de espera; el panel y el HIS no tienen bloqueos)— (por defecto 6, entre 2 y 12, repartidos entre mañana y tarde) que empiecen al menos 60 minutos después (`ANTICIPACION_MINIMA_AGENDAR_MIN`, en `packages/shared/src/cupos-ofrecidos.ts`) e identifica al paciente por su cédula. Al confirmar, al cupo todavía le deben faltar al menos 30 minutos; si no, ofrece otros. La misma regla aplica al cambiar la fecha y a la lista de espera; el personal y el hospital no tienen mínimo. A un paciente nuevo —o a uno existente al que le falte algo en la ficha— le pide nombre, apellidos, fecha de nacimiento, sexo y régimen. El nombre va en dos pasos marcados «Paso 1 de 2: solo sus NOMBRES» y «Paso 2 de 2: solo sus APELLIDOS», porque el HIS los guarda en columnas aparte. Si en los nombres escribió también los apellidos («Juan Camilo Hurtado Ramos» y luego «Hurtado Ramos»), los separa cuando lo repetido son dos palabras o más; si escribe lo mismo en los dos pasos, le vuelve a pedir solo los apellidos (`apps/api/src/chatbot/nombre-paciente-nuevo.ts`). Antes de confirmar comprueba:
 
 - que la EPS exista en la clínica y esté activa; si el paciente nombra una EPS que la clínica no tiene registrada, le ofrece agendar como particular (pago directo); si la tiene registrada pero inactiva (la atiende, pero no por el asistente, como Nueva EPS en el hospital), le pide agendarla por teléfono con su EPS, sin ofrecerle la particular;
 - que el paciente esté activo en el padrón de esa EPS (si no, lo remite al formulario público de Solicitudes de Alta);
@@ -2060,6 +2079,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-22** — Configuración › Días sin citas: el administrador elige en un calendario los días, o las horas de un día, para los que el asistente no ofrece citas (por ejemplo, todos los sábados, o el viernes de 8 a 10 a. m.), una vez o cada semana, y los quita cuando quiera. Cuenta la hora de la cita, solo aplica al asistente y no cambia las citas ya agendadas.
 - **2026-10-22** — Asistente virtual, primer día con «Agendar» encendido: quien responde a su recordatorio con un saludo recibe de qué cita le escribimos y que puede agendar otra escribiendo *agendar* (antes, el menú de agendar); «no es para mí», «la cita ya la tengo», «grasias» o «¿de dónde me escriben?» se entienden aunque ya esté en el menú (antes: «esa opción no se logró identificar»). Y al paciente nuevo se le pide el nombre en «Paso 1 de 2: solo sus NOMBRES» y «Paso 2 de 2: solo sus APELLIDOS»; si repite los apellidos en los nombres, no quedan duplicados.
 - **2026-10-22** — Visión General: la tabla arranca hoy (las citas anteriores se ven eligiendo una fecha inicial), muestra hasta 500 citas con un aviso si hay más y solo trae los datos que pinta. Antes traía todas las citas de la clínica desde la más vieja: 2.639 citas, 12,5 MB y unos 15 s en cargar la página a la que llega el personal al ingresar.
 - **2026-10-22** — Panel: el Límite de citas es solo del administrador (el Agente de Reservas lo veía y lo podía cambiar; sigue viendo Solicitudes de más citas). Y todo usuario puede cambiar su propia clave en «🔑 Cambiar mi clave», al pie del menú, con la clave actual (tras 5 intentos equivocados, 15 minutos de espera); antes solo un administrador podía cambiarla. Pensado para los agendadores del hospital, que recibieron su clave por correo.

@@ -289,6 +289,50 @@ describe('WaitlistService', () => {
       expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
     });
 
+    it('📅 un cupo de un día sin citas por el asistente no se ofrece y la cola queda intacta', async () => {
+      // 2030-06-01T14:00Z son las 9:00 del 1 de junio en Bogotá: día bloqueado.
+      (prisma as any).bookingBlock = {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            date: '2030-06-01',
+            repeatWeekly: false,
+            startMinute: null,
+            endMinute: null,
+          },
+        ]),
+      };
+      (prisma as any).organization = {
+        findUnique: jest.fn().mockResolvedValue({ timezone: 'America/Bogota' }),
+      };
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+
+      await service.notifyWaitlist(params);
+
+      expect(prisma.waitlistEntry.findFirst).not.toHaveBeenCalled();
+      expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+    });
+
+    it('📅 con un bloqueo de OTRO día, el cupo se ofrece como siempre', async () => {
+      (prisma as any).bookingBlock = {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            date: '2030-06-02',
+            repeatWeekly: false,
+            startMinute: null,
+            endMinute: null,
+          },
+        ]),
+      };
+      (prisma as any).organization = {
+        findUnique: jest.fn().mockResolvedValue({ timezone: 'America/Bogota' }),
+      };
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+
+      await service.notifyWaitlist(params);
+
+      expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalled();
+    });
+
     it('sin nadie esperando no escribe ni notifica a nadie', async () => {
       prisma.waitlistEntry.findFirst.mockResolvedValue(null);
 

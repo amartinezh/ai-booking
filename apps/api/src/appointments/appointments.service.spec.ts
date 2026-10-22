@@ -1260,3 +1260,177 @@ describe('bookAppointment — límite de citas por paciente', () => {
     },
   );
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 📅 Días y horas sin citas por el asistente (2026-10-22). El hospital pidió
+// apagar los sábados: el asistente no ofrece ni reserva citas que empiecen en
+// un día u hora bloqueados. El personal (MANUAL) y el hospital (MIRROR) sí.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('AppointmentsService — días y horas sin citas por el asistente', () => {
+  // El próximo sábado que esté al menos a dos días (zona de Bogotá).
+  const { diaLocal, sumarDiasAFecha, diaDeLaSemana } =
+    jest.requireActual('@agenia/shared');
+  let sabado: string = sumarDiasAFecha(diaLocal(new Date()), 2);
+  while (diaDeLaSemana(sabado) !== 6) sabado = sumarDiasAFecha(sabado, 1);
+  const viernes: string = sumarDiasAFecha(sabado, -1);
+  const a = (fecha: string, hhmm: string) =>
+    new Date(`${fecha}T${hhmm}:00-05:00`);
+  const SABADOS = {
+    date: sabado,
+    repeatWeekly: true,
+    startMinute: null,
+    endMinute: null,
+  };
+  const slotRow = (id: string, inicio: Date) => ({
+    id,
+    startTime: inicio,
+    isAvailable: true,
+    organizationId: 'org1',
+    doctor: { fullName: 'Ana Ruiz', whatsappBookingEnabled: true },
+    service: { name: 'Medicina General' },
+  });
+
+  describe('getAvailableSlots', () => {
+    const conReglas = async (reglas: any[], filas: any[]) => {
+      const findMany = jest.fn(() => filas);
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          {
+            provide: PrismaService,
+            useValue: {
+              scheduleSlot: { findMany },
+              hospitalMirrorConfig: { findUnique: jest.fn(() => null) },
+              mirrorEntityMap: { findMany: jest.fn(() => []) },
+              bookingBlock: { findMany: jest.fn(() => reglas) },
+              organization: {
+                findUnique: jest.fn(() => ({
+                  timezone: 'America/Bogota',
+                  settings: null,
+                })),
+              },
+            },
+          },
+        ],
+      }).compile();
+      return {
+        svc: module.get<AppointmentsService>(AppointmentsService),
+        findMany,
+      };
+    };
+
+    it('el sábado bloqueado sale de la consulta misma y del resultado', async () => {
+      const { svc, findMany } = await conReglas(
+        [SABADOS],
+        [
+          slotRow('vie', a(viernes, '09:00')),
+          slotRow('sab', a(sabado, '09:00')),
+        ],
+      );
+      const r = await svc.getAvailableSlots('Medicina', null, 'org1');
+
+      expect(r.map((s) => s.slotId)).toEqual(['vie']);
+      const not = (findMany.mock.calls[0] as any)[0].where.NOT;
+      expect(not).toContainEqual({
+        startTime: {
+          gte: a(sabado, '00:00'),
+          lt: a(sumarDiasAFecha(sabado, 1), '00:00'),
+        },
+      });
+    });
+
+    it('un rango de horas: la de las 8:00 no, la de las 10:00 sí', async () => {
+      const { svc } = await conReglas(
+        [
+          {
+            date: viernes,
+            repeatWeekly: false,
+            startMinute: 480,
+            endMinute: 600,
+          },
+        ],
+        [
+          slotRow('8', a(viernes, '08:00')),
+          slotRow('940', a(viernes, '09:40')),
+          slotRow('10', a(viernes, '10:00')),
+        ],
+      );
+      const r = await svc.getAvailableSlots('Medicina', null, 'org1', {
+        desde: a(viernes, '00:00'),
+        hasta: a(viernes, '23:59'),
+      });
+      expect(r.map((s) => s.slotId)).toEqual(['10']);
+    });
+
+    it('sin bloqueos, la consulta es la de siempre (sin NOT)', async () => {
+      const { svc, findMany } = await conReglas(
+        [],
+        [slotRow('sab', a(sabado, '09:00'))],
+      );
+      const r = await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(r.map((s) => s.slotId)).toEqual(['sab']);
+      expect((findMany.mock.calls[0] as any)[0].where).not.toHaveProperty(
+        'NOT',
+      );
+    });
+  });
+
+  describe('bookAppointment — revalida al reservar', () => {
+    const reservar = async (inicio: Date, origin: any) => {
+      const tx = {
+        scheduleSlot: {
+          findUnique: jest.fn(() => ({
+            id: 's1',
+            isAvailable: true,
+            organizationId: 'org1',
+            startTime: inicio,
+            doctor: { whatsappBookingEnabled: true },
+          })),
+          update: jest.fn(),
+        },
+        appointment: { create: jest.fn(() => ({ id: 'apt1' })) },
+        bookingBlock: { findMany: jest.fn(() => [SABADOS]) },
+        organization: {
+          findUnique: jest.fn(() => ({ timezone: 'America/Bogota' })),
+        },
+        $executeRawUnsafe: jest.fn(),
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          {
+            provide: PrismaService,
+            useValue: { $transaction: jest.fn((cb: any) => cb(tx)) },
+          },
+        ],
+      }).compile();
+      const r = await module
+        .get<AppointmentsService>(AppointmentsService)
+        .bookAppointment('p1', 's1', null, origin, 'org1');
+      return { r, tx };
+    };
+
+    it.each(['WHATSAPP', 'TELEGRAM'] as const)(
+      'por el bot (%s), una cita de sábado ya no se reserva: es un cupo que ya no está',
+      async (origin) => {
+        const { r, tx } = await reservar(a(sabado, '09:00'), origin);
+        expect(r.success).toBe(false);
+        expect(r.reason).toBe('SLOT_TAKEN');
+        expect(tx.appointment.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it('por el bot, el viernes sí', async () => {
+      const { r } = await reservar(a(viernes, '09:00'), 'WHATSAPP');
+      expect(r.success).toBe(true);
+    });
+
+    it.each(['MANUAL', 'MIRROR'] as const)(
+      '%s (el personal o el hospital) agenda el sábado como siempre',
+      async (origin) => {
+        const { r } = await reservar(a(sabado, '09:00'), origin);
+        expect(r.success).toBe(true);
+      },
+    );
+  });
+});

@@ -627,3 +627,32 @@ export type {
   EstadoCaso,
   IncidenteParaElPersonal,
 } from './src/soporte-bot-casos';
+
+// 📅 Días y horas sin citas por el asistente (Configuración › Días sin citas).
+export {
+  BLOQUEO_AGENDA,
+  DIAS_SEMANA,
+  MESES,
+  bloqueoAplicaElDia,
+  bloqueoVigente,
+  bloqueosDelDia,
+  cupoBloqueado,
+  describirBloqueoAgenda,
+  diaDeLaSemana,
+  esTodoElDia,
+  fechaDe,
+  fechaEnPalabras,
+  horaEnPalabras,
+  intervalosBloqueados,
+  minutoLocal,
+  minutosDelBloqueo,
+  mismaRegla,
+  partesDeFecha,
+  proximasFechasDelBloqueo,
+  sumarDiasAFecha,
+  validarBloqueoAgenda,
+} from './src/bloqueos-agenda';
+export type {
+  ReglaBloqueoAgenda,
+  ValidacionBloqueo,
+} from './src/bloqueos-agenda';

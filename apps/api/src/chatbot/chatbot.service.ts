@@ -36,6 +36,7 @@ import {
   RESPUESTAS_AL_RECORDATORIO_EN_MENU,
 } from './respuesta-recordatorio';
 import { separarNombresYApellidos } from './nombre-paciente-nuevo';
+import { cupoBloqueadoParaElAsistente } from 'src/appointments/bloqueos-agenda';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import {
   OrganizationSettingsService,
@@ -10698,6 +10699,16 @@ export class ChatbotService implements OnModuleInit {
           // ⏱️ Anticipación mínima, también al confirmar el cambio: si ya empieza
           // muy pronto, es un cupo que ya no está y se le ofrecen otros.
           if (!cumpleAnticipacionAlReservar(newSlot.startTime, new Date())) {
+            throw new Error('NEW_SLOT_TAKEN');
+          }
+          // 📅 Ni hacia un día u hora sin citas por el asistente.
+          if (
+            await cupoBloqueadoParaElAsistente(
+              tx,
+              organizationId,
+              newSlot.startTime,
+            )
+          ) {
             throw new Error('NEW_SLOT_TAKEN');
           }
           await tx.appointment.update({

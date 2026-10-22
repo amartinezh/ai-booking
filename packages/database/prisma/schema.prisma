@@ -104,6 +104,9 @@ model Organization {
   // 🚨 Bandeja de excepciones de sincronización (Fase 3 del rastreo).
   syncExceptions SyncException[]
 
+  // 📅 Días y horas sin citas por el asistente (Configuración › Días sin citas).
+  bookingBlocks BookingBlock[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1982,6 +1985,39 @@ enum EnrollmentRequestStatus {
 //
 // Reglas de uso en @agenia/shared (limite-citas.ts) y en LimiteCitasService.
 // -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// 📅 DÍAS Y HORAS SIN CITAS POR EL ASISTENTE (2026-10-22)
+//
+// La clínica elige días completos o rangos de horas para los que el asistente
+// (WhatsApp y Telegram) NO ofrece citas: «todos los sábados», «el viernes de 8 a
+// 10 a. m.». Cuenta la hora de la CITA (no la del mensaje), en la zona de la
+// clínica. Solo el asistente: el panel y el HIS agendan como siempre, y las citas
+// ya agendadas no cambian. La regla: packages/shared/src/bloqueos-agenda.ts.
+// -----------------------------------------------------------------------------
+model BookingBlock {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Día de calendario en que empieza, en la zona de la clínica: 'YYYY-MM-DD'.
+  date         String  @db.VarChar(10)
+  // Ese mismo día de la semana, desde `date` en adelante («todos los sábados»).
+  repeatWeekly Boolean @default(false)
+  // Minutos del día [startMinute, endMinute): las citas que EMPIEZAN en ese
+  // rango. Los dos null = todo el día.
+  startMinute  Int?
+  endMinute    Int?
+  // Para qué es («Sábados sin agendamiento»): lo ve el administrador.
+  note         String? @db.VarChar(120)
+
+  // Quién lo creó, como escalares (sin FK), igual que en las demás bitácoras.
+  createdById    String?
+  createdByEmail String?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+}
+
 model AppointmentLimitRequest {
   // UUID v4: es también el token público del enlace.
   id String @id @default(uuid())
@@ -2189,12 +2225,12 @@ model TechAlert {
 
   /// De qué clínica, si aplica. El nombre se copia para mostrarlo sin joins y para
   /// que sobreviva a la clínica.
-  organizationId   String?
-  organizationName String?
+  organizationId    String?
+  organizationName  String?
   /// El incidente del monitor que lo abrió, si vino de ahí.
   serviceIncidentId String?
   /// Lo estructurado que no merece columna.
-  meta Json?
+  meta              Json?
 
   occurrences Int       @default(1)
   firstSeenAt DateTime  @default(now())
