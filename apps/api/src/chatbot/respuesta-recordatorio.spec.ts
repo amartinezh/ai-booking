@@ -12,6 +12,16 @@ import {
  * recordatorios (2026-10-13 a 2026-10-15), tal cual, con su ortografía.
  */
 describe('clasificarRespuestaAlBot', () => {
+  // 2026-10-23: tras agendar, «Me indicas por favor si si es para las
+  // ecografías» recibió «¡Gracias por confirmar!» porque decía «si».
+  it.each([
+    'Me indicas por favor si si es para las ecografías',
+    'me indica si es con el mismo doctor',
+    'esto si es para las ecografias',
+  ])('«%s» pregunta: no es una confirmación', (texto) => {
+    expect(clasificarRespuestaAlBot(texto)).toBeNull();
+  });
+
   it.each([
     'Si dios quiere mañana boy ala cita',
     'Si yo voy a asistir mañana',

@@ -173,8 +173,10 @@ const OTRO_TEMA =
 const MENCIONA_CITA = /\b(cita|consulta|control)\b/;
 
 // Cualquier otra pregunta, aunque no lleve «?»: «Gracias, que debo llevar».
+// «Me indicas por favor si sí es para las ecografías» (2026-10-23) también:
+// recibió «¡Gracias por confirmar!» porque decía «si».
 const PREGUNTA =
-  /\b(q(ue)? (debo|tengo que|necesito|hay que|llevo)|como (hago|es|se)|cual|cuanto|cuanta|quisiera saber|queria saber|necesito saber|me (podria|puede|pueden|podrian) (decir|informar|indicar|confirmar))\b/;
+  /\b(q(ue)? (debo|tengo que|necesito|hay que|llevo)|como (hago|es|se)|cual|cuanto|cuanta|quisiera saber|queria saber|necesito saber|me (podria|puede|pueden|podrian) (decir|informar|indicar|confirmar)|me (indica|indicas|indique|dice|dices|aclara|aclaras|explica|explicas) (si|por favor|porfa|porfavor|que|cual|como|donde|a que)|(esto|eso) (si |no )?es para)\b/;
 
 // Lo que queda de «no» tras descartar lo de arriba sigue sin ser una confirmación.
 const NO_CONFIRMA =

@@ -36,6 +36,8 @@ import {
   RESPUESTAS_AL_RECORDATORIO_EN_MENU,
 } from './respuesta-recordatorio';
 import { separarNombresYApellidos } from './nombre-paciente-nuevo';
+import { esPreguntaEnVezDeRespuesta } from './pregunta-al-confirmar';
+import { servicioQueNoSeAgenda } from './servicio-no-agendable';
 import { cupoBloqueadoParaElAsistente } from 'src/appointments/bloqueos-agenda';
 import { fueraDelPlazoParaElAsistente } from 'src/appointments/plazo-agendar';
 import { KnowledgeBaseService } from './knowledge-base.service';
@@ -2627,7 +2629,7 @@ export class ChatbotService implements OnModuleInit {
   private async buildServiceMenu(
     organizationId: string,
     senderId: string,
-  ): Promise<{ lineas: string; count: number }> {
+  ): Promise<{ lineas: string; count: number; nombres: string[] }> {
     const services = await this.prisma.medicalService.findMany({
       where: { isActive: true, organizationId },
       select: { id: true, name: true },
@@ -2667,7 +2669,11 @@ export class ChatbotService implements OnModuleInit {
         SESSION_TTL,
       );
     }
-    return { lineas, count: services.length };
+    return {
+      lineas,
+      count: services.length,
+      nombres: services.map((s) => s.name),
+    };
   }
 
   private async buildEpsMenu(
@@ -6886,6 +6892,14 @@ export class ChatbotService implements OnModuleInit {
         'EX',
         SESSION_TTL,
       );
+    // 🪪 Acaba de escribir sus NOMBRES (paso 1 de 2): los apellidos se le vuelven
+    // a pedir. Unos apellidos de un intento anterior de la misma cédula se
+    // saltaban el paso 2 y la ficha quedaba con nombres de un intento y
+    // apellidos del otro (2026-10-23: «Diana María» en AgenIA, y al hospital los
+    // nombres y apellidos que la paciente había rechazado).
+    if (currentState === ChatState.AWAITING_NAME && aiData.nombre) {
+      await this.redis.del(`temp_apellidos:${organizationId}:${senderId}`);
+    }
     if (finalDoctor)
       await this.redis.set(
         `temp_doctor:${organizationId}:${senderId}`,
@@ -7249,6 +7263,30 @@ export class ChatbotService implements OnModuleInit {
           ) {
             await this.answerFAQ(text, organizationId, senderId, org, botName);
             return;
+          }
+          // 🦷 ¿Pidió un servicio que no se agenda por el asistente
+          // («Odontología», «Ecografía Doppler…», 2026-10-23)? No es un error
+          // suyo: se le dice con quién comunicarse y se le deja el menú, SIN
+          // penalizar reintentos (antes: tres «no logré interpretar» y
+          // «demasiados intentos»).
+          {
+            const menu = await this.buildServiceMenu(organizationId, senderId);
+            const pedido =
+              menu.count > 0 ? servicioQueNoSeAgenda(text, menu.nombres) : null;
+            if (pedido) {
+              const reply = MSGS.servicioNoSeAgendaPorAqui(
+                pedido,
+                this.contactoDe(MSGS, org),
+                menu.lineas,
+              );
+              await this.smartReply(organizationId, senderId, reply);
+              await this.auditSuccess(senderId, organizationId, {
+                userMessage: text || '[audio]',
+                botReply: reply,
+                metadata: { step: 'SERVICIO_NO_AGENDABLE', pedido },
+              });
+              return;
+            }
           }
           // ¿El paciente confirma que quiere agendar (ej: "sí quiero agendar
           // una cita")? No es una opción del menú, pero tampoco un error: le
@@ -8994,7 +9032,11 @@ export class ChatbotService implements OnModuleInit {
     // o "Confirmo" debe contar como SÍ (mismo patrón que la cola de espera).
     // El whitelist literal anterior ('SI'/'SÍ') sólo matcheaba el texto exacto
     // y fallaba con casi cualquier transcripción de audio.
-    const decision = this.interpretYesNo(text);
+    // ❓ Pero una PREGUNTA no es un SÍ (2026-10-23: «¿Esto si es para las
+    // ecografías?» agendó una cita de medicina general que no pidió): se le
+    // aclara qué cita es y se le vuelve a pedir SÍ o NO. Un «no» sigue siendo no.
+    const pregunta = esPreguntaEnVezDeRespuesta(text);
+    const decision = this.decisionSiNoSinPreguntas(text);
     const respuesta = text?.toUpperCase().trim() || '';
 
     if (decision === 'SI') {
@@ -9319,6 +9361,17 @@ export class ChatbotService implements OnModuleInit {
       const reply = MSGS.citaNoConfirmada();
       await this.smartReply(organizationId, senderId, reply);
       await this.cleanUpSession(organizationId, senderId);
+      // 🪪 Dijo NO al resumen: algo de lo que dio para su ficha pudo estar mal
+      // (2026-10-23: rechazó «Diana Castañeda Castañeda Ortiz»). El próximo
+      // intento lo vuelve a preguntar todo, en vez de reusarlo en silencio.
+      await this.redis.del(
+        `temp_nombres:${organizationId}:${senderId}`,
+        `temp_apellidos:${organizationId}:${senderId}`,
+        this.altaKey(organizationId, senderId, 'nacimiento'),
+        this.altaKey(organizationId, senderId, 'sexo'),
+        this.altaKey(organizationId, senderId, 'regimen'),
+        this.altaCedulaKey(organizationId, senderId),
+      );
 
       // 📝 Auditoría: usuario rechazó la confirmación
       await this.auditLog(senderId, organizationId, {
@@ -9326,6 +9379,49 @@ export class ChatbotService implements OnModuleInit {
         userMessage: text,
         botReply: reply,
         metadata: { stage: 'CONFIRMATION_REJECTED' },
+      });
+    } else if (pregunta) {
+      // ❓ Preguntó: qué cita se le va a agendar, y si nombra otro servicio que
+      // no se agenda por aquí («¿esto es para las ecografías?»), con quién.
+      await this.redis.set(
+        retriesKey,
+        (retriesCount + 1).toString(),
+        'EX',
+        SESSION_TTL,
+      );
+      const [servicio, fecha] = await Promise.all([
+        this.redis.get(`temp_especialidad:${organizationId}:${senderId}`),
+        this.redis.get(`temp_selected_date_view:${organizationId}:${senderId}`),
+      ]);
+      const otroServicio = servicio
+        ? servicioQueNoSeAgenda(text, [servicio])
+        : null;
+      const reply =
+        servicio && fecha
+          ? otroServicio
+            ? MSGS.aclararCitaOtroServicio(
+                servicio,
+                formatAppointmentLong(fecha),
+                otroServicio,
+                this.contactoDe(
+                  MSGS,
+                  await this.organizacionDe(organizationId),
+                ),
+              )
+            : MSGS.aclararCitaAntesDeConfirmar(
+                servicio,
+                formatAppointmentLong(fecha),
+              )
+          : MSGS.respuestaInvalidaSiNo();
+      await this.smartReply(organizationId, senderId, reply);
+
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text,
+        botReply: reply,
+        metadata: {
+          step: 'CONFIRMACION_CON_PREGUNTA',
+          ...(otroServicio ? { pedido: otroServicio } : {}),
+        },
       });
     } else {
       await this.redis.set(
@@ -9724,8 +9820,12 @@ export class ChatbotService implements OnModuleInit {
     // respuestas naturales ("Sí, confirmo", "claro") justo en el paso más caro
     // de fallar: el paciente ya identificó su cita y quiere cancelarla.
     // Aquí «cancelar» es SÍ (es lo que se le preguntó): ver
-    // `interpretarConfirmarCancelacion`.
-    const decision = this.interpretarConfirmarCancelacion(text);
+    // `interpretarConfirmarCancelacion`. ❓ Una pregunta no es un SÍ.
+    const decisionCancelar = this.interpretarConfirmarCancelacion(text);
+    const decision =
+      decisionCancelar === 'SI' && esPreguntaEnVezDeRespuesta(text)
+        ? null
+        : decisionCancelar;
 
     if (decision === 'SI') {
       const aptId = await this.redis.get(
@@ -10572,7 +10672,7 @@ export class ChatbotService implements OnModuleInit {
   ): Promise<void> {
     const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
       ctx;
-    const decision = this.interpretYesNo(text);
+    const decision = this.decisionSiNoSinPreguntas(text);
 
     if (decision === 'SI') {
       const aptId = await this.redis.get(
@@ -10931,7 +11031,7 @@ export class ChatbotService implements OnModuleInit {
     const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
       ctx;
     // No había cupos para reprogramar. SÍ → cancelamos la cita; NO → no tocamos nada.
-    const decision = this.interpretYesNo(text);
+    const decision = this.decisionSiNoSinPreguntas(text);
 
     if (decision === 'SI') {
       const aptId = await this.redis.get(
@@ -11099,6 +11199,21 @@ export class ChatbotService implements OnModuleInit {
 
     // (7) Cualquier otra letra/símbolo fuera: quedan solo dígitos en orden.
     return s.replace(/\D/g, '');
+  }
+
+  /**
+   * ❓ SÍ/NO de un paso que agenda, mueve o cancela una cita: como
+   * `interpretYesNo`, pero una pregunta no cuenta como SÍ («¿Esto si es para las
+   * ecografías?», 2026-10-23). Un «no» sigue siendo no; la pregunta cae al
+   * «responda SÍ o NO» de cada paso.
+   */
+  private decisionSiNoSinPreguntas(
+    text: string | undefined | null,
+  ): 'SI' | 'NO' | null {
+    const decision = this.interpretYesNo(text);
+    return decision === 'SI' && esPreguntaEnVezDeRespuesta(text)
+      ? null
+      : decision;
   }
 
   private interpretYesNo(text: string | undefined | null): 'SI' | 'NO' | null {
@@ -11498,7 +11613,8 @@ export class ChatbotService implements OnModuleInit {
     );
     const respuesta = text?.toUpperCase().trim() || '';
     // Acepta SÍ/NO por texto y por voz (transcripción), de forma tolerante.
-    const decision = this.interpretYesNo(text);
+    // ❓ Una pregunta no es un SÍ: reserva el cupo.
+    const decision = this.decisionSiNoSinPreguntas(text);
 
     if (decision === 'SI') {
       const { slotId, patientId, epsId } =

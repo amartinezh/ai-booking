@@ -335,6 +335,34 @@ const FORMAL = {
         `Puede elegir una letra _(A, B, C...)_ o escribir el nombre del servicio.\n\n${lineas}`,
     ]),
 
+  // 🦷 Pidió un servicio que no se agenda por el asistente (odontología,
+  // ecografías…): con quién comunicarse, y el menú por si necesita otro.
+  // `contacto`, de contactoClinica.
+  servicioNoSeAgendaPorAqui: (
+    servicio: string,
+    contacto: string,
+    lineas: string,
+  ) =>
+    `Por este medio, por ahora, no se agendan citas de *${servicio}*. Para eso, por favor comuníquese con ${contacto}.\n\n` +
+    `Si necesita alguno de estos servicios, responda con la letra:\n\n${lineas}`,
+
+  // ❓ En el resumen preguntó en vez de responder SÍ o NO: se le aclara qué cita
+  // se le va a agendar antes de que la confirme.
+  aclararCitaAntesDeConfirmar: (servicio: string, fecha: string) =>
+    `Con gusto le aclaro: la cita que estoy por agendarle es de *${servicio}*, el *${fecha}*.\n\n` +
+    `Si es la cita que necesita, responda *SÍ* y se la agendo. Si no, responda *NO* y no se agenda nada.`,
+
+  // …y la pregunta nombra otro servicio que no se agenda por aquí («¿esto es
+  // para las ecografías?»). `contacto`, de contactoClinica.
+  aclararCitaOtroServicio: (
+    servicio: string,
+    fecha: string,
+    otroServicio: string,
+    contacto: string,
+  ) =>
+    `Con gusto le aclaro: la cita que estoy por agendarle es de *${servicio}*, el *${fecha}*. No es para *${otroServicio}*: esas citas no se agendan por este medio; para eso comuníquese con ${contacto}.\n\n` +
+    `Si de todos modos necesita la cita de ${servicio}, responda *SÍ*. Si no, responda *NO* y no se agenda nada.`,
+
   menuEps: (servicio: string, lineas: string) =>
     pick([
       `Perfecto, *${servicio}*. 🩺\n\n` +
@@ -1686,6 +1714,27 @@ const INFORMAL = {
       `Esa opción no la pude identificar. Volvamos a intentarlo — me dices la letra o me escribes el nombre:\n\n${lineas}`,
       `No me quedó claro, dame otra oportunidad para entenderte. Mándame una letra (A, B, C...) o escríbeme el nombre del servicio:\n\n${lineas}`,
     ]),
+
+  servicioNoSeAgendaPorAqui: (
+    servicio: string,
+    contacto: string,
+    lineas: string,
+  ) =>
+    `Por aquí todavía no agendamos citas de *${servicio}* 🙏. Para eso comunícate con ${contacto}.\n\n` +
+    `Si necesitas alguno de estos servicios, mándame la letra:\n\n${lineas}`,
+
+  aclararCitaAntesDeConfirmar: (servicio: string, fecha: string) =>
+    `¡Claro! Te cuento: la cita que te voy a agendar es de *${servicio}*, el *${fecha}*. 😊\n\n` +
+    `Si es la que necesitas, respóndeme *SÍ* y te la agendo. Si no, dime *NO* y no se agenda nada.`,
+
+  aclararCitaOtroServicio: (
+    servicio: string,
+    fecha: string,
+    otroServicio: string,
+    contacto: string,
+  ) =>
+    `¡Claro! Te cuento: la cita que te voy a agendar es de *${servicio}*, el *${fecha}*. No es para *${otroServicio}*: esas citas no se agendan por aquí; para eso comunícate con ${contacto}. 🙏\n\n` +
+    `Si igual necesitas la cita de ${servicio}, respóndeme *SÍ*. Si no, dime *NO* y no se agenda nada.`,
 
   menuEps: (servicio: string, lineas: string) =>
     pick([

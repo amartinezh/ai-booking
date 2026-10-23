@@ -1163,6 +1163,19 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(db.slots[0].isAvailable).toBe(false);
     });
 
+    it('2.2b ❓ una pregunta en la confirmación no cancela; «¿me la cancela?» sí', async () => {
+      seedPatientWithAppointments(1);
+
+      await say('cancelar cita');
+      await say(CEDULA);
+      await say('¿Si la cancelo me pueden dar otra para la otra semana?');
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+      expect(await state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+
+      await say('¿Me la cancela por favor?');
+      expect(db.appointments[0].status).toBe('CANCELLED');
+    });
+
     it('2.3 responder NO en la confirmación conserva la cita intacta', async () => {
       seedPatientWithAppointments(1);
 
@@ -3397,6 +3410,177 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   // nuevo. ¿En qué le ayudo?», el siguiente menú volvía a decir «Soy Vicente,
   // su asistente virtual…» como si fuera otra conversación.
   // ──────────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════
+  // 12. Lo que pasó el primer día de agendar abierto (2026-10-23)
+  // ══════════════════════════════════════════════════════════════════════
+  describe('12. Preguntas en el resumen, nombres al reintentar y servicios que no se agendan', () => {
+    beforeEach(() => {
+      db.slots = [slotRow('slot-a', FECHA_A, 'Ana Pérez', SVC_MEDICINA)];
+      appointments.getAvailableSlots.mockImplementation(() =>
+        db.slots.map((s) => ({
+          slotId: s.id,
+          fecha: s.startTime,
+          doctor: s.doctor.fullName,
+          servicio: s.service.name,
+        })),
+      );
+    });
+
+    const pacienteCompleto = () =>
+      db.patients.push({
+        id: 'pat-laura',
+        cedula: '1002593442',
+        fullName: 'LAURA CAMILA RUIZ SUAREZ',
+        organizationId: ORG_ID,
+        epsId: null,
+        dateOfBirth: new Date('2001-09-16'),
+        gender: 'F',
+      });
+    const hastaElResumen = async () => {
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say('1002593442');
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+    };
+
+    it('12.1 ❓ «¿Esto si es para las ecografías?» no agenda: aclara qué cita es y con quién pedir las ecografías', async () => {
+      pacienteCompleto();
+      prisma.organization.findUnique.mockImplementation(() => ({
+        id: ORG_ID,
+        name: ORG_NAME,
+        supportPhone: '6068538838',
+      }));
+      await hastaElResumen();
+
+      await say('Esto si es para las ecografías ?');
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      expect(lastSent()).toContain('es de *Medicina General*');
+      // La fecha como la ve el paciente, no la del sistema.
+      expect(lastSent()).not.toContain('T14:00:00');
+      expect(lastSent()).toContain('No es para *ecografías*');
+      expect(lastSent()).toContain('6068538838');
+
+      // Ya sabe de qué es: su SÍ ahora sí agenda.
+      await say('Sí');
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+    });
+
+    it('12.2 una pregunta que no nombra otro servicio aclara la cita sin hablar de otro', async () => {
+      pacienteCompleto();
+      await hastaElResumen();
+
+      await say('¿Es con la doctora Ana?');
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
+      expect(lastSent()).toContain('es de *Medicina General*');
+      expect(lastSent()).not.toContain('No es para');
+    });
+
+    it.each(['Sí, ¿a qué hora debo llegar?', 'Claro. ¿Qué debo llevar?'])(
+      '12.3 «%s» responde primero: agenda como siempre',
+      async (texto) => {
+        pacienteCompleto();
+        await hastaElResumen();
+        await say(texto);
+        expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('12.4 🪪 dijo NO al resumen y reintenta: sus nombres nuevos llevan apellidos nuevos (no los del intento anterior)', async () => {
+      const llegarAlNombre = async () => {
+        await say('Hola');
+        await say('A');
+        await say('A');
+        await say('A');
+        if ((await state()) === ChatState.AWAITING_CEDULA) {
+          await say('1054925390');
+        }
+        expect(await state()).toBe(ChatState.AWAITING_NAME);
+      };
+
+      // Primer intento: puso un apellido en los nombres y rechazó el resumen.
+      await llegarAlNombre();
+      await say('Diana Castañeda');
+      await say('Castañeda Ortiz');
+      await responderAlta(say);
+      expect(lastSent()).toContain('Diana Castañeda Castañeda Ortiz');
+      await say('No');
+      expect(appointments.bookAppointment).not.toHaveBeenCalled();
+
+      // Segundo intento: ahora sí solo sus nombres.
+      await llegarAlNombre();
+      await say('Diana María');
+      expect(await state()).toBe(ChatState.AWAITING_APELLIDOS);
+      expect(lastSent()).toContain('*Paso 2 de 2:*');
+      await say('Castañeda Ortiz');
+      // Lo del alta se le vuelve a preguntar: dijo NO a lo anterior.
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+      await responderAlta(say);
+      expect(lastSent()).toContain('Diana María Castañeda Ortiz');
+      await say('Sí');
+
+      const p = db.patients.find((x) => x.cedula === '1054925390');
+      expect(p?.fullName).toBe('Diana María Castañeda Ortiz');
+      expect(p?.nombres).toBe('Diana María');
+      expect(p?.apellidos).toBe('Castañeda Ortiz');
+    });
+
+    it('12.4b 🪪 empezó de nuevo con «Hola» a mitad del alta: sus nombres nuevos también llevan apellidos nuevos', async () => {
+      const llegarAlNombre = async () => {
+        if ((await state()) !== ChatState.AWAITING_SPECIALTY) await say('Hola');
+        await say('A');
+        await say('A');
+        await say('A');
+        if ((await state()) === ChatState.AWAITING_CEDULA) {
+          await say('1054925390');
+        }
+        expect(await state()).toBe(ChatState.AWAITING_NAME);
+      };
+
+      await say('Hola');
+      await llegarAlNombre();
+      await say('Diana Castañeda');
+      await say('Castañeda Ortiz');
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+      await say('Hola'); // vuelve a empezar, sin decir NO
+
+      await llegarAlNombre();
+      await say('Diana María');
+      expect(await state()).toBe(ChatState.AWAITING_APELLIDOS);
+      await say('Castañeda Ortiz');
+      await responderAlta(say);
+      expect(lastSent()).toContain('Diana María Castañeda Ortiz');
+    });
+
+    it('12.5 🦷 pidió un servicio que no se agenda por aquí: con quién comunicarse y el menú, sin gastar intentos', async () => {
+      await say('Hola');
+      expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+
+      for (let i = 0; i < 4; i++) {
+        await say(
+          'Ecografía Doppler de vasos arteriales de miembros inferiores',
+        );
+        expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+      }
+      expect(lastSent()).toContain('no se agendan citas de *ecografías*');
+      expect(lastSent()).toContain('6068538838');
+      expect(lastSent()).toContain('Medicina General');
+
+      // Y si necesita medicina general, sigue como siempre.
+      await say('A');
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+    });
+
+    it('12.6 un servicio del menú de la clínica («Odontología» aquí sí se ofrece) sigue el camino de siempre', async () => {
+      await say('Hola');
+      await say('Odontología');
+      expect(await state()).toBe(ChatState.AWAITING_EPS);
+      expect(lastSent()).not.toContain('no se agendan citas');
+    });
+  });
+
   describe('presentación del bot', () => {
     const SE_PRESENTA = /Le saluda \*|Le habla \*|Soy \*/;
 
