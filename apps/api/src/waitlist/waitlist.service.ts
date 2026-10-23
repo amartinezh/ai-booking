@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { inicioMinimoParaOfrecer } from '@agenia/shared';
 import { cupoBloqueadoParaElAsistente } from '../appointments/bloqueos-agenda';
+import { fueraDelPlazoParaElAsistente } from '../appointments/plazo-agendar';
 import { ConfigService } from '@nestjs/config';
 import { ChatbotService } from '../chatbot/chatbot.service';
 
@@ -137,6 +138,17 @@ export class WaitlistService {
     ) {
       this.logger.log(
         `El cupo ${slotId} cae en un día u hora sin citas por el asistente: no se ofrece a la lista de espera`,
+      );
+      return;
+    }
+
+    // 🗓️ Ni un cupo más allá del plazo máximo para agendar: la cola espera a
+    // que se libere uno dentro del plazo.
+    if (
+      await fueraDelPlazoParaElAsistente(this.prisma, organizationId, slotDate)
+    ) {
+      this.logger.log(
+        `El cupo ${slotId} queda más allá del plazo máximo para agendar: no se ofrece a la lista de espera`,
       );
       return;
     }

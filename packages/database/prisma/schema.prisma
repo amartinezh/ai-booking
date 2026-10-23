@@ -178,6 +178,15 @@ model OrganizationSettings {
   // Cambiar la fecha de una cita existente (reprogramar).
   rescheduleEnabled Boolean @default(true)
 
+  // 🗓️ PLAZO MÁXIMO PARA AGENDAR (2026-10-23): hasta cuántos días adelante,
+  // CONTANDO HOY, ofrece citas el asistente. Con 3: hoy, mañana y pasado
+  // mañana. Cuenta la fecha de la cita en la zona de la clínica. Aplica al
+  // agendar, al cambiar la fecha y a la lista de espera; el personal (panel) y
+  // el hospital (MIRROR) agendan a cualquier fecha. null = sin límite (lo de
+  // siempre). Lo edita el ORG_ADMIN en /dashboard/configuracion; la regla vive
+  // en @agenia/shared (plazo-agendar.ts). Rango 1-365 (CHECK en la migración).
+  bookingMaxDaysAhead Int?
+
   // 🚦 LÍMITE DE CITAS POR PACIENTE (por el bot) — /dashboard/limites-citas,
   // lo editan ORG_ADMIN y BOOKING_AGENT. Cuántas citas vigentes puede tener un
   // paciente el MISMO DÍA y en el MISMO MES calendario (por la fecha de la

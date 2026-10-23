@@ -333,6 +333,41 @@ describe('WaitlistService', () => {
       expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalled();
     });
 
+    it('🗓️ un cupo más allá del plazo máximo para agendar no se ofrece y la cola queda intacta', async () => {
+      // El cupo de ejemplo es de 2030: con 30 días queda fuera.
+      prisma.organizationSettings.findUnique.mockResolvedValue({
+        bookingEnabled: true,
+        bookingMaxDaysAhead: 30,
+      });
+      (prisma as any).organization = {
+        findUnique: jest.fn().mockResolvedValue({ timezone: 'America/Bogota' }),
+      };
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+
+      await service.notifyWaitlist(params);
+
+      expect(prisma.waitlistEntry.findFirst).not.toHaveBeenCalled();
+      expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+    });
+
+    it('🗓️ un cupo dentro del plazo se ofrece como siempre', async () => {
+      prisma.organizationSettings.findUnique.mockResolvedValue({
+        bookingEnabled: true,
+        bookingMaxDaysAhead: 30,
+      });
+      (prisma as any).organization = {
+        findUnique: jest.fn().mockResolvedValue({ timezone: 'America/Bogota' }),
+      };
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+
+      await service.notifyWaitlist({
+        ...params,
+        slotDate: new Date(Date.now() + 2 * 24 * 60 * 60_000),
+      });
+
+      expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalled();
+    });
+
     it('sin nadie esperando no escribe ni notifica a nadie', async () => {
       prisma.waitlistEntry.findFirst.mockResolvedValue(null);
 

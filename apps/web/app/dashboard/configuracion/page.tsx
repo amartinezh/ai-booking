@@ -13,6 +13,7 @@ import ReminderLeadTimeSetting from './ReminderLeadTimeSetting';
 import BookingToggle from './BookingToggle';
 import CancelToggle from './CancelToggle';
 import RescheduleToggle from './RescheduleToggle';
+import PlazoAgendarSetting from './PlazoAgendarSetting';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
 import WhatsappChannelForm from './WhatsappChannelForm';
@@ -163,6 +164,13 @@ export default async function ConfiguracionPage({
                         {settings && <CancelToggle initialEnabled={settings.cancelEnabled} />}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && <RescheduleToggle initialEnabled={settings.rescheduleEnabled} />}
+                        {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
+                        {settings && (
+                            <PlazoAgendarSetting
+                                initialDias={settings.bookingMaxDaysAhead}
+                                hoy={settings.hoyEnLaClinica}
+                            />
+                        )}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && <RemindersToggle initialEnabled={settings.remindersEnabled} />}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}

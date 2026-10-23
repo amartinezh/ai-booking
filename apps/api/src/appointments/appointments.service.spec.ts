@@ -1434,3 +1434,149 @@ describe('AppointmentsService — días y horas sin citas por el asistente', () 
     );
   });
 });
+
+describe('AppointmentsService — plazo máximo para agendar por el asistente', () => {
+  // Con 3 días: hoy, mañana y pasado mañana (zona de Bogotá).
+  const { diaLocal, sumarDiasAFecha } = jest.requireActual('@agenia/shared');
+  const hoy: string = diaLocal(new Date());
+  const pasadoManiana: string = sumarDiasAFecha(hoy, 2);
+  const tercerDia: string = sumarDiasAFecha(hoy, 3);
+  const a = (fecha: string, hhmm: string) =>
+    new Date(`${fecha}T${hhmm}:00-05:00`);
+  const slotRow = (id: string, inicio: Date) => ({
+    id,
+    startTime: inicio,
+    isAvailable: true,
+    organizationId: 'org1',
+    doctor: { fullName: 'Ana Ruiz', whatsappBookingEnabled: true },
+    service: { name: 'Medicina General' },
+  });
+
+  describe('getAvailableSlots', () => {
+    const conPlazo = async (dias: number | null) => {
+      const findMany = jest.fn(() => [
+        slotRow('s1', a(pasadoManiana, '09:00')),
+      ]);
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          {
+            provide: PrismaService,
+            useValue: {
+              scheduleSlot: { findMany },
+              hospitalMirrorConfig: { findUnique: jest.fn(() => null) },
+              mirrorEntityMap: { findMany: jest.fn(() => []) },
+              bookingBlock: { findMany: jest.fn(() => []) },
+              organizationSettings: {
+                findUnique: jest.fn(() => ({ bookingMaxDaysAhead: dias })),
+              },
+              organization: {
+                findUnique: jest.fn(() => ({
+                  timezone: 'America/Bogota',
+                  settings: null,
+                })),
+              },
+            },
+          },
+        ],
+      }).compile();
+      return {
+        svc: module.get<AppointmentsService>(AppointmentsService),
+        findMany,
+      };
+    };
+    const filtroDeHora = (findMany: jest.Mock) =>
+      findMany.mock.calls[0][0].where.startTime;
+
+    it('con 3 días, la consulta no trae nada desde la medianoche del tercer día', async () => {
+      const { svc, findMany } = await conPlazo(3);
+      const r = await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(r.map((s) => s.slotId)).toEqual(['s1']);
+      expect(filtroDeHora(findMany).lt).toEqual(a(tercerDia, '00:00'));
+    });
+
+    it('con una fecha pedida, se respetan las dos: la fecha y el plazo', async () => {
+      const { svc, findMany } = await conPlazo(3);
+      const desde = a(sumarDiasAFecha(hoy, 10), '00:00');
+      const hasta = a(sumarDiasAFecha(hoy, 10), '23:59');
+      await svc.getAvailableSlots('Medicina', null, 'org1', { desde, hasta });
+      // Una fecha más allá del plazo: gte > lt, la consulta no trae cupos.
+      expect(filtroDeHora(findMany)).toEqual({
+        gte: desde,
+        lte: hasta,
+        lt: a(tercerDia, '00:00'),
+      });
+    });
+
+    it('sin límite (lo de siempre), la consulta no cambia', async () => {
+      const { svc, findMany } = await conPlazo(null);
+      await svc.getAvailableSlots('Medicina', null, 'org1');
+      expect(filtroDeHora(findMany)).not.toHaveProperty('lt');
+      expect(filtroDeHora(findMany)).not.toHaveProperty('lte');
+    });
+  });
+
+  describe('bookAppointment — revalida al reservar', () => {
+    const reservar = async (inicio: Date, origin: any) => {
+      const tx = {
+        scheduleSlot: {
+          findUnique: jest.fn(() => ({
+            id: 's1',
+            isAvailable: true,
+            organizationId: 'org1',
+            startTime: inicio,
+            doctor: { whatsappBookingEnabled: true },
+          })),
+          update: jest.fn(),
+        },
+        appointment: { create: jest.fn(() => ({ id: 'apt1' })) },
+        organizationSettings: {
+          findUnique: jest.fn(() => ({ bookingMaxDaysAhead: 3 })),
+        },
+        organization: {
+          findUnique: jest.fn(() => ({ timezone: 'America/Bogota' })),
+        },
+        $executeRawUnsafe: jest.fn(),
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AppointmentsService,
+          {
+            provide: PrismaService,
+            useValue: { $transaction: jest.fn((cb: any) => cb(tx)) },
+          },
+        ],
+      }).compile();
+      const r = await module
+        .get<AppointmentsService>(AppointmentsService)
+        .bookAppointment('p1', 's1', null, origin, 'org1');
+      return { r, tx };
+    };
+
+    it.each(['WHATSAPP', 'TELEGRAM'] as const)(
+      'por el bot (%s), una cita del tercer día ya no se reserva: es un cupo que ya no está',
+      async (origin) => {
+        const { r, tx } = await reservar(a(tercerDia, '09:00'), origin);
+        expect(r.success).toBe(false);
+        expect(r.reason).toBe('SLOT_TAKEN');
+        expect(tx.appointment.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it('por el bot, pasado mañana sí', async () => {
+      const { r } = await reservar(a(pasadoManiana, '09:00'), 'WHATSAPP');
+      expect(r.success).toBe(true);
+    });
+
+    it.each(['MANUAL', 'MIRROR'] as const)(
+      '%s (el personal o el hospital) agenda a cualquier fecha, como siempre',
+      async (origin) => {
+        const { r } = await reservar(
+          a(sumarDiasAFecha(hoy, 40), '09:00'),
+          origin,
+        );
+        expect(r.success).toBe(true);
+      },
+    );
+  });
+});

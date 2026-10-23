@@ -37,6 +37,7 @@ import {
 } from './respuesta-recordatorio';
 import { separarNombresYApellidos } from './nombre-paciente-nuevo';
 import { cupoBloqueadoParaElAsistente } from 'src/appointments/bloqueos-agenda';
+import { fueraDelPlazoParaElAsistente } from 'src/appointments/plazo-agendar';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import {
   OrganizationSettingsService,
@@ -10704,6 +10705,16 @@ export class ChatbotService implements OnModuleInit {
           // 📅 Ni hacia un día u hora sin citas por el asistente.
           if (
             await cupoBloqueadoParaElAsistente(
+              tx,
+              organizationId,
+              newSlot.startTime,
+            )
+          ) {
+            throw new Error('NEW_SLOT_TAKEN');
+          }
+          // 🗓️ Ni más allá del plazo máximo para agendar.
+          if (
+            await fueraDelPlazoParaElAsistente(
               tx,
               organizationId,
               newSlot.startTime,

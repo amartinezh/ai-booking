@@ -4,7 +4,7 @@
 >
 > **Regla obligatoria.** Todo ajuste o mejora del sistema actualiza este archivo **en el mismo commit**: lo que cambió en la pantalla o en el comportamiento, y una línea en la [bitácora](#parte-3--bitácora-de-cambios). Lo vigilan el gancho `commit-msg` del repositorio y el CI. Cómo editarlo y el formato de la Parte 1: [README.md](README.md) de esta carpeta.
 
-**Última actualización:** 2026-10-21
+**Última actualización:** 2026-10-23
 
 ## Contenido
 
@@ -1075,11 +1075,11 @@ No hay cambios por guardar: modifica un valor o un interruptor primero.
 - **Ruta:** `/dashboard/configuracion`
 - **Resumen:** El asistente virtual (nombre, tono, voz y qué puede hacer el paciente), sus canales y la información que comparte.
 - **Relacionados:** [Canales en vivo](#canales), [Encuestas (CSAT)](#encuestas), [Visión General](#vision-general), [Espejo con el HIS](#espejo)
-- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios, días sin citas, bloquear sábados, festivos, apagar agenda, horario sin citas, calendario
+- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios, días sin citas, bloquear sábados, festivos, apagar agenda, horario sin citas, calendario, plazo para agendar, días adelante, fecha lejana, limitar fechas, máximo de días
 
 #### Para qué sirve
 
-Tiene cuatro pestañas. «Asistente Virtual»: qué puede hacer el paciente por WhatsApp o Telegram, los recordatorios, el nombre, el tono, cuántas horas ofrece y la voz. «Días sin citas»: un calendario para elegir los días, o las horas de un día, para los que el asistente no ofrece citas (por ejemplo, todos los sábados). «Integraciones (IA y Canales)»: el proveedor de inteligencia artificial, WhatsApp, sus plantillas y Telegram. «Base de Conocimiento»: lo que el asistente responde sobre la clínica.
+Tiene cuatro pestañas. «Asistente Virtual»: qué puede hacer el paciente por WhatsApp o Telegram, hasta cuántos días adelante le ofrece citas, los recordatorios, el nombre, el tono, cuántas horas ofrece y la voz. «Días sin citas»: un calendario para elegir los días, o las horas de un día, para los que el asistente no ofrece citas (por ejemplo, todos los sábados). «Integraciones (IA y Canales)»: el proveedor de inteligencia artificial, WhatsApp, sus plantillas y Telegram. «Base de Conocimiento»: lo que el asistente responde sobre la clínica.
 
 #### Paso a paso
 
@@ -1090,6 +1090,15 @@ Tiene cuatro pestañas. «Asistente Virtual»: qué puede hacer el paciente por 
 3. Cada interruptor se guarda al instante y aplica desde el siguiente mensaje del paciente.
 
 > 💡 Con una operación apagada, el asistente le dice al paciente que se comunique con el hospital y qué sí puede hacer por ahí. Con las tres apagadas, solo consulta citas. Si la clínica está conectada al hospital, cada interruptor manda en todo: encendido, la operación se hace por el asistente y desde el panel y llega al sistema del hospital (el asistente solo le confirma al paciente cuando el hospital lo registró); apagado, no se puede hacer en AgenIA —ni por el asistente ni desde el panel— y se hace directamente en el sistema del hospital. Cada cambio queda en la auditoría del espejo. Sin conexión al hospital, el personal sigue haciendo todo desde el panel.
+
+##### Limitar hasta qué día ofrece citas el asistente
+
+1. En «Asistente Virtual», elige el «Plazo máximo para agendar» (por defecto, «Sin límite»).
+2. Los días se cuentan desde hoy, incluido: con 3 días, el asistente ofrece citas para hoy, mañana y pasado mañana. Debajo verás las fechas reales, por ejemplo «se ofrecen citas hasta el domingo 25 de octubre; desde el lunes 26 de octubre, no».
+3. Se guarda al instante y aplica al agendar, al cambiar la fecha de una cita y a la lista de espera. Cada día que pasa se abre un día nuevo.
+4. Para quitar el límite, elige «Sin límite».
+
+> 💡 Cuenta la fecha de la cita, no la del mensaje, y solo aplica al asistente (WhatsApp y Telegram): el personal agenda desde el panel y el hospital en su sistema para cualquier fecha, y las citas ya agendadas no cambian.
 
 ##### Encender o apagar los recordatorios automáticos
 
@@ -1213,6 +1222,10 @@ No. Es el mismo asistente en los dos canales y la ficha del paciente es una sola
 ##### ¿Qué pasa con un paciente que pide cita para un día bloqueado?
 
 El asistente no le ofrece horarios de ese día: le muestra los de otros días. Si alguien ya tenía la oferta en pantalla cuando bloqueaste el día, al responder se le dice que ese horario ya no está y se le ofrecen otros. Lo mismo al cambiar la fecha de una cita y en la lista de espera.
+
+##### ¿Qué pasa si un paciente pide una cita más allá del plazo máximo para agendar?
+
+El asistente le dice que para esa fecha no encontró cupos y le muestra los más próximos dentro del plazo. Si dentro del plazo no queda ningún cupo, le ofrece la lista de espera. Si alguien ya tenía la oferta en pantalla cuando acortaste el plazo, al responder se le dice que ese horario ya no está y se le ofrecen otros.
 
 ##### ¿«Días sin citas» es lo mismo que apagar «Agendar citas por el asistente»?
 
@@ -1832,7 +1845,7 @@ Con una operación apagada, el asistente dice cuál no está disponible, con qui
 
 ### 3.3 Agendar
 
-El asistente pide la especialidad (solo servicios activos), la EPS o si es particular, ofrece horarios libres —menos los de los días u horas que la clínica bloqueó en Configuración › Días sin citas (tabla `BookingBlock`, regla en `packages/shared/src/bloqueos-agenda.ts`: cuenta la hora de inicio de la cita en la zona de la clínica; se quitan en la consulta misma y se revisan otra vez al reservar, al cambiar la fecha y en la lista de espera; el panel y el HIS no tienen bloqueos)— (por defecto 6, entre 2 y 12, repartidos entre mañana y tarde) que empiecen al menos 60 minutos después (`ANTICIPACION_MINIMA_AGENDAR_MIN`, en `packages/shared/src/cupos-ofrecidos.ts`) e identifica al paciente por su cédula. Al confirmar, al cupo todavía le deben faltar al menos 30 minutos; si no, ofrece otros. La misma regla aplica al cambiar la fecha y a la lista de espera; el personal y el hospital no tienen mínimo. A un paciente nuevo —o a uno existente al que le falte algo en la ficha— le pide nombre, apellidos, fecha de nacimiento, sexo y régimen. El nombre va en dos pasos marcados «Paso 1 de 2: solo sus NOMBRES» y «Paso 2 de 2: solo sus APELLIDOS», porque el HIS los guarda en columnas aparte. Si en los nombres escribió también los apellidos («Juan Camilo Hurtado Ramos» y luego «Hurtado Ramos»), los separa cuando lo repetido son dos palabras o más; si escribe lo mismo en los dos pasos, le vuelve a pedir solo los apellidos (`apps/api/src/chatbot/nombre-paciente-nuevo.ts`). Antes de confirmar comprueba:
+El asistente pide la especialidad (solo servicios activos), la EPS o si es particular, ofrece horarios libres —menos los de los días u horas que la clínica bloqueó en Configuración › Días sin citas (tabla `BookingBlock`, regla en `packages/shared/src/bloqueos-agenda.ts`: cuenta la hora de inicio de la cita en la zona de la clínica; se quitan en la consulta misma y se revisan otra vez al reservar, al cambiar la fecha y en la lista de espera; el panel y el HIS no tienen bloqueos)— (por defecto 6, entre 2 y 12, repartidos entre mañana y tarde) que empiecen al menos 60 minutos después (`ANTICIPACION_MINIMA_AGENDAR_MIN`, en `packages/shared/src/cupos-ofrecidos.ts`) e identifica al paciente por su cédula. Al confirmar, al cupo todavía le deben faltar al menos 30 minutos; si no, ofrece otros. La misma regla aplica al cambiar la fecha y a la lista de espera; el personal y el hospital no tienen mínimo. Si la clínica fijó un plazo máximo para agendar (Configuración › Asistente Virtual, `OrganizationSettings.bookingMaxDaysAhead`, regla en `packages/shared/src/plazo-agendar.ts`), solo ofrece citas hasta el último día del plazo, contando hoy como el primero en la zona de la clínica (con 3: hoy, mañana y pasado mañana); el tope va en la consulta misma y se revisa otra vez al reservar, al cambiar la fecha y en la lista de espera. Sin valor (lo de fábrica) no hay límite, y el panel y el HIS no lo tienen. A un paciente nuevo —o a uno existente al que le falte algo en la ficha— le pide nombre, apellidos, fecha de nacimiento, sexo y régimen. El nombre va en dos pasos marcados «Paso 1 de 2: solo sus NOMBRES» y «Paso 2 de 2: solo sus APELLIDOS», porque el HIS los guarda en columnas aparte. Si en los nombres escribió también los apellidos («Juan Camilo Hurtado Ramos» y luego «Hurtado Ramos»), los separa cuando lo repetido son dos palabras o más; si escribe lo mismo en los dos pasos, le vuelve a pedir solo los apellidos (`apps/api/src/chatbot/nombre-paciente-nuevo.ts`). Antes de confirmar comprueba:
 
 - que la EPS exista en la clínica y esté activa; si el paciente nombra una EPS que la clínica no tiene registrada, le ofrece agendar como particular (pago directo); si la tiene registrada pero inactiva (la atiende, pero no por el asistente, como Nueva EPS en el hospital), le pide agendarla por teléfono con su EPS, sin ofrecerle la particular;
 - que el paciente esté activo en el padrón de esa EPS (si no, lo remite al formulario público de Solicitudes de Alta);
@@ -2023,6 +2036,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 | Tono | Configuración › Asistente Virtual | Formal (usted) |
 | Horarios que ofrece | Configuración › Asistente Virtual | 6 (de 2 a 12) |
 | Agendar / Cancelar / Cambiar fecha por el asistente | Configuración › Asistente Virtual | Encendidos |
+| Plazo máximo para agendar (días adelante, contando hoy) | Configuración › Asistente Virtual | Sin límite (de 1 a 365 días) |
 | Recordatorios automáticos | Configuración › Asistente Virtual | Encendidos |
 | Solo a quien agendó por el chat | Configuración › Asistente Virtual | Apagado |
 | Anticipación mínima del recordatorio | Configuración › Asistente Virtual | 1 hora (0 = sin mínimo, máximo 12 horas) |
@@ -2092,6 +2106,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-23** — Configuración › Asistente Virtual: «Plazo máximo para agendar». El administrador elige hasta cuántos días adelante, contando hoy, ofrece citas el asistente (con 3: hoy, mañana y pasado mañana), para que nadie agende para una fecha muy lejana; el panel lo muestra con las fechas reales. Aplica al agendar, al cambiar la fecha y a la lista de espera, y se revisa otra vez al confirmar. Solo el asistente: el panel y el sistema del hospital agendan para cualquier fecha y las citas ya agendadas no cambian. Nace en «Sin límite»: nada cambia hasta configurarlo.
 - **2026-10-23** — Médicos: buscador para encontrar un médico por lo que sea (nombre, cédula, servicio, tarjeta profesional, teléfono, correo o su código en el hospital, sin importar tildes), con botones para WhatsApp ON/OFF y activos/inactivos; cada tarjeta muestra el código del médico en el hospital. La página ya no envía al navegador el registro completo del usuario de cada médico (llevaba su clave cifrada): solo el correo.
 - **2026-10-22** — WhatsApp: plantilla nueva «Cita cancelada por el hospital». Cuando el hospital cancela una cita del asistente y el paciente no ha escrito en 24 horas, el aviso sale con ella (antes no salía y había que llamarlo). Hay que aprobarla en Meta y registrarla en Configuración › Integraciones › Plantillas de WhatsApp; mientras no esté, el caso de la Bandeja lo dice.
 - **2026-10-22** — Espejo y Bandeja: cuando el hospital cancela en su sistema una cita que el paciente agendó con el asistente, AgenIA le avisa al paciente por WhatsApp o Telegram (si el hospital le dio otra cita, le dice la hora nueva) y abre un caso en la Bandeja para confirmar que quedó enterado, con el estado del mensaje (entregado, leído) o el motivo si no se pudo enviar. Antes solo liberaba el cupo: una paciente no se enteró de que le anularon la cita. El agente del hospital ahora reporta la hora nueva cuando el hospital mueve una cita del asistente (requiere instalar el agente nuevo).

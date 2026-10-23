@@ -23,6 +23,10 @@ import {
   bloqueosDeLaClinica,
   cupoBloqueadoParaElAsistente,
 } from './bloqueos-agenda';
+import {
+  finDelPlazoDelAsistente,
+  fueraDelPlazoParaElAsistente,
+} from './plazo-agendar';
 
 /**
  * Hasta cuándo se convierten los días sin citas en tramos para la consulta
@@ -86,13 +90,25 @@ export class AppointmentsService {
     // ⏱️ Nada que empiece antes de la anticipación mínima (60 min, 2026-10-21):
     // antes se ofrecían los más próximos, y a las 06:00 salía el de las 06:30.
     // Con ventana ("hoy", "mañana"), acotamos a [max(desde, mínimo) .. hasta].
-    const minimo = inicioMinimoParaOfrecer(new Date());
-    const startTimeFilter = dateWindow
+    const ahora = new Date();
+    const minimo = inicioMinimoParaOfrecer(ahora);
+    const startTimeFilter: { gte: Date; lte?: Date; lt?: Date } = dateWindow
       ? {
           gte: dateWindow.desde > minimo ? dateWindow.desde : minimo,
           lte: dateWindow.hasta,
         }
       : { gte: minimo };
+
+    // 🗓️ Plazo máximo para agendar (Configuración › Asistente Virtual,
+    // 2026-10-23): con 3 días, solo citas de hoy, mañana y pasado mañana. Sin
+    // límite (lo de siempre), la consulta no cambia. Una fecha pedida más allá
+    // del plazo no trae cupos y el chatbot ofrece los más próximos.
+    const finDelPlazo = await finDelPlazoDelAsistente(
+      this.prisma,
+      organizationId,
+      ahora,
+    );
+    if (finDelPlazo) startTimeFilter.lt = finDelPlazo;
 
     // 🚦 ACTIVACIÓN POR MÉDICO. `whatsappBookingEnabled` existía en el schema
     // desde la Fase 1 del espejo pero NO SE LEÍA EN NINGÚN SITIO: era una
@@ -111,6 +127,7 @@ export class AppointmentsService {
       bloqueos.reglas,
       startTimeFilter.gte,
       startTimeFilter.lte ??
+        finDelPlazo ??
         new Date(startTimeFilter.gte.getTime() + HORIZONTE_BLOQUEOS_MS),
       bloqueos.timeZone,
     );
@@ -343,6 +360,18 @@ export class AppointmentsService {
         if (
           (origin === 'WHATSAPP' || origin === 'TELEGRAM') &&
           (await cupoBloqueadoParaElAsistente(
+            tx,
+            organizationId,
+            slot.startTime,
+          ))
+        ) {
+          throw new Error('SLOT_TAKEN_OR_INVALID');
+        }
+        // 🗓️ Ni más allá del plazo máximo para agendar: el administrador pudo
+        // acortarlo entre la oferta y el «sí». Solo el bot.
+        if (
+          (origin === 'WHATSAPP' || origin === 'TELEGRAM') &&
+          (await fueraDelPlazoParaElAsistente(
             tx,
             organizationId,
             slot.startTime,

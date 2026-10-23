@@ -656,3 +656,14 @@ export type {
   ReglaBloqueoAgenda,
   ValidacionBloqueo,
 } from './src/bloqueos-agenda';
+
+// 🗓️ Plazo máximo para agendar por el asistente (Configuración › Asistente Virtual).
+export {
+  PLAZO_AGENDAR,
+  dentroDelPlazoParaAgendar,
+  finDelPlazoParaAgendar,
+  normalizarPlazoAgendar,
+  textoPlazoAgendar,
+  ultimoDiaParaAgendar,
+  validarPlazoAgendar,
+} from './src/plazo-agendar';

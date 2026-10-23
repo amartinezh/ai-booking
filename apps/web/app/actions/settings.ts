@@ -7,9 +7,12 @@ import { CommunicationStyle } from '@agenia/database';
 import { getErrorMessage } from '@/lib/error';
 import {
     SYNC_AUDIT_DIRECTION,
+    diaLocal,
     normalizarAnticipacionRecordatorio,
     normalizarCuposOfrecidos,
+    normalizarPlazoAgendar,
     operacionHisDelEvento,
+    validarPlazoAgendar,
 } from '@agenia/shared';
 
 const DEFAULT_BOT_NAME = 'AgenIA';
@@ -32,6 +35,8 @@ export async function getMyOrgSettings() {
             bookingEnabled: true,
             cancelEnabled: true,
             rescheduleEnabled: true,
+            bookingMaxDaysAhead: true,
+            organization: { select: { timezone: true } },
         },
     });
     return {
@@ -49,6 +54,11 @@ export async function getMyOrgSettings() {
         bookingEnabled: s?.bookingEnabled ?? true,
         cancelEnabled: s?.cancelEnabled ?? true,
         rescheduleEnabled: s?.rescheduleEnabled ?? true,
+        // Sin fila (o sin valor) = sin límite, lo de siempre.
+        bookingMaxDaysAhead: normalizarPlazoAgendar(s?.bookingMaxDaysAhead),
+        // «Hoy» en la zona de la clínica: el panel muestra con fechas reales
+        // hasta qué día ofrece citas el asistente.
+        hoyEnLaClinica: diaLocal(new Date(), s?.organization?.timezone || undefined),
     };
 }
 
@@ -124,6 +134,34 @@ export async function setMyReminderMinLead(minutos: number) {
         });
         revalidatePath('/dashboard/configuracion');
         return { success: true, reminderMinLeadMinutes };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * 🗓️ Plazo máximo para agendar por el asistente: hasta cuántos días adelante,
+ * contando hoy, ofrece citas (con 3: hoy, mañana y pasado mañana). null = sin
+ * límite. Guarda al instante; el bot lo lee cada vez que busca o confirma un
+ * cupo. El personal y el hospital agendan a cualquier fecha.
+ */
+export async function setMyBookingMaxDaysAhead(dias: number | null) {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
+
+    // Un valor inválido es un error, no «sin límite»: quien quiso poner 3 días
+    // no debe quedar sin límite por un dato mal enviado.
+    const v = validarPlazoAgendar(dias);
+    if (!v.ok) return { success: false, error: v.error };
+    const bookingMaxDaysAhead = v.dias;
+    try {
+        await prisma.organizationSettings.upsert({
+            where: { organizationId: session.organizationId! },
+            create: { organizationId: session.organizationId!, bookingMaxDaysAhead },
+            update: { bookingMaxDaysAhead },
+        });
+        revalidatePath('/dashboard/configuracion');
+        return { success: true, bookingMaxDaysAhead };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
     }
