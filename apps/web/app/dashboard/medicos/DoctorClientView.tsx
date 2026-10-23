@@ -1,17 +1,75 @@
 'use client'
 
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import DoctorModal from './DoctorModal';
 import { deleteDoctorAction } from './actions';
-import { Prisma } from '@agenia/database';
 import type { MedicalService } from '@agenia/database';
+import {
+    SIN_FILTROS,
+    cumpleFiltros,
+    filtrarMedicos,
+    hayFiltros,
+    type FiltroEstado,
+    type FiltroWhatsapp,
+    type FiltrosMedicos,
+    type MedicoVista,
+} from '@/lib/medicos/buscar';
 
-type DoctorWithRelations = Prisma.DoctorProfileGetPayload<{ include: { user: true, service: true } }>;
+type DoctorWithRelations = MedicoVista;
 
-export default function DoctorClientView({ doctors, services }: { doctors: DoctorWithRelations[], services: MedicalService[] }) {
+/** Un grupo de botones de filtro («Todos · ON · OFF»), con cuántos hay en cada uno. */
+function GrupoFiltro<T extends string>({
+    etiqueta,
+    valor,
+    opciones,
+    onCambio,
+}: {
+    etiqueta: string;
+    valor: T;
+    opciones: { valor: T; texto: string; cuantos: number }[];
+    onCambio: (v: T) => void;
+}) {
+    return (
+        <div role="group" aria-label={etiqueta} className="flex items-center gap-1.5">
+            <span className="text-xs font-bold uppercase tracking-wide text-zinc-400 mr-1">{etiqueta}</span>
+            {opciones.map((o) => (
+                <button
+                    key={o.valor}
+                    type="button"
+                    onClick={() => onCambio(o.valor)}
+                    aria-pressed={valor === o.valor}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                        valor === o.valor
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:border-blue-300'
+                    }`}
+                >
+                    {o.texto} <span className={valor === o.valor ? 'text-blue-100' : 'text-zinc-400'}>({o.cuantos})</span>
+                </button>
+            ))}
+        </div>
+    );
+}
+
+export default function DoctorClientView({
+    doctors,
+    services,
+    codigosHis = {},
+}: {
+    doctors: DoctorWithRelations[];
+    services: MedicalService[];
+    /** Código de cada médico en el sistema del hospital, por id (solo con la clínica conectada). */
+    codigosHis?: Record<string, string>;
+}) {
     const [editingDoctor, setEditingDoctor] = useState<DoctorWithRelations | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [isPending, startTransition] = useTransition();
+    const [filtros, setFiltros] = useState<FiltrosMedicos>(SIN_FILTROS);
+
+    const visibles = useMemo(() => filtrarMedicos(doctors, filtros, codigosHis), [doctors, filtros, codigosHis]);
+    // Cuántos quedarían con cada botón, respetando lo demás que ya está filtrado.
+    const cuantos = (cambio: Partial<FiltrosMedicos>) =>
+        doctors.filter((d) => cumpleFiltros(d, { ...filtros, ...cambio }, codigosHis[d.id])).length;
 
     const handleDelete = (id: string) => {
         if (!confirm('¿Estás seguro de eliminar este médico? Se borrará su acceso (User) y su agenda futura.')) return;
@@ -48,8 +106,59 @@ export default function DoctorClientView({ doctors, services }: { doctors: Docto
                 />
             )}
 
+            {/* 🔎 Buscar por lo que sea */}
+            {doctors.length > 0 && (
+                <section aria-label="Buscar médicos" className="space-y-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+                    <div className="relative">
+                        <span aria-hidden className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400">🔎</span>
+                        <input
+                            type="search"
+                            value={filtros.texto}
+                            onChange={(e) => setFiltros((f) => ({ ...f, texto: e.target.value }))}
+                            placeholder="Buscar por nombre, cédula, servicio, código del hospital, teléfono o correo…"
+                            aria-label="Buscar médicos"
+                            className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 py-3 pl-11 pr-4 text-sm dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                        <GrupoFiltro<FiltroWhatsapp>
+                            etiqueta="WhatsApp"
+                            valor={filtros.whatsapp}
+                            onCambio={(whatsapp) => setFiltros((f) => ({ ...f, whatsapp }))}
+                            opciones={[
+                                { valor: 'todos', texto: 'Todos', cuantos: cuantos({ whatsapp: 'todos' }) },
+                                { valor: 'on', texto: 'ON', cuantos: cuantos({ whatsapp: 'on' }) },
+                                { valor: 'off', texto: 'OFF', cuantos: cuantos({ whatsapp: 'off' }) },
+                            ]}
+                        />
+                        <GrupoFiltro<FiltroEstado>
+                            etiqueta="Estado"
+                            valor={filtros.estado}
+                            onCambio={(estado) => setFiltros((f) => ({ ...f, estado }))}
+                            opciones={[
+                                { valor: 'todos', texto: 'Todos', cuantos: cuantos({ estado: 'todos' }) },
+                                { valor: 'activos', texto: 'Activos', cuantos: cuantos({ estado: 'activos' }) },
+                                { valor: 'inactivos', texto: 'Inactivos', cuantos: cuantos({ estado: 'inactivos' }) },
+                            ]}
+                        />
+                        <p role="status" className="ml-auto text-sm text-zinc-500 dark:text-zinc-400">
+                            Mostrando <strong className="text-zinc-900 dark:text-white">{visibles.length}</strong> de {doctors.length} médicos
+                            {hayFiltros(filtros) && (
+                                <button
+                                    type="button"
+                                    onClick={() => setFiltros(SIN_FILTROS)}
+                                    className="ml-3 font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                                >
+                                    Limpiar
+                                </button>
+                            )}
+                        </p>
+                    </div>
+                </section>
+            )}
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {doctors.map(doctor => (
+                {visibles.map(doctor => (
                     <div key={doctor.id} className="group bg-white dark:bg-zinc-900 rounded-3xl p-6 shadow-xl shadow-zinc-200/50 dark:shadow-none border border-zinc-100 dark:border-zinc-800 hover:border-blue-500/50 transition-all flex flex-col justify-between">
                         <div>
                             <div className="flex justify-between items-start mb-4">
@@ -88,6 +197,12 @@ export default function DoctorClientView({ doctors, services }: { doctors: Docto
                                     <span className="text-zinc-500 dark:text-zinc-400">Contacto</span>
                                     <span className="font-medium text-zinc-900 dark:text-white">{doctor.phone || 'Sin número'}</span>
                                 </div>
+                                {codigosHis[doctor.id] && (
+                                    <div className="flex justify-between border-t border-zinc-100 dark:border-zinc-800/30 pt-2">
+                                        <span className="text-zinc-500 dark:text-zinc-400">Código en el hospital</span>
+                                        <span className="font-mono font-medium text-zinc-900 dark:text-white">{codigosHis[doctor.id]}</span>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -109,6 +224,21 @@ export default function DoctorClientView({ doctors, services }: { doctors: Docto
                         </div>
                     </div>
                 ))}
+
+                {doctors.length > 0 && visibles.length === 0 && (
+                    <div className="col-span-1 lg:col-span-3 text-center py-16 border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-3xl">
+                        <span className="text-4xl mb-4 block">🔎</span>
+                        <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-1">Ningún médico coincide con la búsqueda</h3>
+                        <p className="text-zinc-500 dark:text-zinc-400 mb-4">Pruebe con otra palabra o quite los filtros.</p>
+                        <button
+                            type="button"
+                            onClick={() => setFiltros(SIN_FILTROS)}
+                            className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700"
+                        >
+                            Limpiar filtros
+                        </button>
+                    </div>
+                )}
 
                 {doctors.length === 0 && (
                     <div className="col-span-1 lg:col-span-3 text-center py-20 border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-3xl">

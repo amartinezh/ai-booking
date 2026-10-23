@@ -604,13 +604,20 @@ Inactívalo con el interruptor. Así deja de ofrecerse sin perder la historia.
 - **Ruta:** `/dashboard/medicos`
 - **Resumen:** Los perfiles de los médicos: su servicio, sus datos, su acceso al sistema y si se puede agendar con ellos por WhatsApp.
 - **Relacionados:** [Servicios de Salud](#servicios), [Agendas (Slots)](#agenda), [Usuarios](#usuarios), [Espejo con el HIS](#espejo)
-- **Palabras clave:** doctores, especialistas, profesionales, plantilla médica, staff, agregar doctor, tarjeta profesional
+- **Palabras clave:** doctores, especialistas, profesionales, plantilla médica, staff, agregar doctor, tarjeta profesional, buscar médico, filtrar médicos, código del hospital
 
 #### Para qué sirve
 
 Cada médico tiene una tarjeta con su servicio, tarjeta profesional, cédula y teléfono. Crear un médico también le crea una cuenta para entrar a AgenIA con su correo y contraseña, donde verá su propia agenda. Desde aquí decides si está activo y si el asistente puede agendar citas con él.
 
 #### Paso a paso
+
+##### Buscar un médico
+
+1. Escribe en el buscador («🔎 Buscar por nombre, cédula, servicio…») lo que sepas de él: nombre o parte del nombre, cédula, servicio, tarjeta profesional, teléfono, correo o su código en el sistema del hospital (por ejemplo «RU69»). No importan mayúsculas ni tildes, y la cédula o el teléfono sirven sin puntos ni guiones.
+2. Con varias palabras, aparecen los que tienen todas («yulieth general»).
+3. Si quieres, acota con los botones «WhatsApp: Todos · ON · OFF» y «Estado: Todos · Activos · Inactivos»; cada uno dice cuántos hay.
+4. «Mostrando X de Y médicos» dice cuántos quedaron. «Limpiar» quita la búsqueda y los botones.
 
 ##### Agregar un médico
 
@@ -639,6 +646,7 @@ Cada médico tiene una tarjeta con su servicio, tarjeta profesional, cédula y t
 - **Activo / Inactivo:** Si el médico está disponible para agendamiento.
 - **📱 WhatsApp ON / OFF:** Si AgenIA trabaja con las citas de este médico: el asistente le agenda, recuerda sus citas, responde a sus pacientes y, si están encendidos, cancela o cambia la fecha — solo las de servicios activos en Servicios (un mismo médico puede atender medicina general y también hipertensos o lectura de exámenes). OFF: sus citas se ven en AgenIA (las trae el hospital), pero no reciben recordatorios ni se gestionan por el asistente ni por el panel; se manejan directamente en el sistema del hospital.
 - **T.P (Licencia):** Su tarjeta profesional.
+- **Código en el hospital:** Con la clínica conectada al hospital, el código del médico en el sistema del hospital (por ejemplo «RU69»). Sirve para buscarlo.
 - **🗑️ Dar de baja:** Elimina al médico y su acceso. No se puede deshacer.
 
 #### Preguntas frecuentes
@@ -2084,6 +2092,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-23** — Médicos: buscador para encontrar un médico por lo que sea (nombre, cédula, servicio, tarjeta profesional, teléfono, correo o su código en el hospital, sin importar tildes), con botones para WhatsApp ON/OFF y activos/inactivos; cada tarjeta muestra el código del médico en el hospital. La página ya no envía al navegador el registro completo del usuario de cada médico (llevaba su clave cifrada): solo el correo.
 - **2026-10-22** — WhatsApp: plantilla nueva «Cita cancelada por el hospital». Cuando el hospital cancela una cita del asistente y el paciente no ha escrito en 24 horas, el aviso sale con ella (antes no salía y había que llamarlo). Hay que aprobarla en Meta y registrarla en Configuración › Integraciones › Plantillas de WhatsApp; mientras no esté, el caso de la Bandeja lo dice.
 - **2026-10-22** — Espejo y Bandeja: cuando el hospital cancela en su sistema una cita que el paciente agendó con el asistente, AgenIA le avisa al paciente por WhatsApp o Telegram (si el hospital le dio otra cita, le dice la hora nueva) y abre un caso en la Bandeja para confirmar que quedó enterado, con el estado del mensaje (entregado, leído) o el motivo si no se pudo enviar. Antes solo liberaba el cupo: una paciente no se enteró de que le anularon la cita. El agente del hospital ahora reporta la hora nueva cuando el hospital mueve una cita del asistente (requiere instalar el agente nuevo).
 - **2026-10-22** — Configuración › Días sin citas: el administrador elige en un calendario los días, o las horas de un día, para los que el asistente no ofrece citas (por ejemplo, todos los sábados, o el viernes de 8 a 10 a. m.), una vez o cada semana, y los quita cuando quiera. Cuenta la hora de la cita, solo aplica al asistente y no cambia las citas ya agendadas.

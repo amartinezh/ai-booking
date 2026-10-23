@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import { saveDoctorAction } from './actions';
-import { Prisma } from '@agenia/database';
+import type { MedicoVista } from '@/lib/medicos/buscar';
 import type { MedicalService } from '@agenia/database';
 
-type DoctorWithRelations = Prisma.DoctorProfileGetPayload<{ include: { user: true, service: true } }>;
+type DoctorWithRelations = MedicoVista;
 
 export default function DoctorModal({ doctor, services, onClose }: { doctor?: DoctorWithRelations | null, services: MedicalService[], onClose: () => void }) {
     const [loading, setLoading] = useState(false);
