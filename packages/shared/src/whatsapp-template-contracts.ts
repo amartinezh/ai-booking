@@ -33,7 +33,8 @@ export type TemplateKind =
   | 'APPOINTMENT_CANCELLED_MASS'
   | 'APPOINTMENT_REMINDER_MASS'
   | 'SYNC_EXCEPTION_ALERT'
-  | 'HIS_APPOINTMENT_CONFIRMATION';
+  | 'HIS_APPOINTMENT_CONFIRMATION'
+  | 'HIS_APPOINTMENT_CANCELLED';
 
 export interface ContratoPlantilla {
   label: string;
@@ -94,6 +95,20 @@ export const TEMPLATE_CONTRACTS: Record<TemplateKind, ContratoPlantilla> = {
     description:
       'Se envía desde el Rastreo de paciente («Lo agendaron en el HIS») con el botón «Enviar confirmación por WhatsApp», cuando el hospital agendó una cita que el bot no le muestra al paciente. Solo se usa si el paciente no le ha escrito a la clínica en las últimas 24 h: dentro de ese plazo sale como texto normal. El cuerpo debe decir que la cita la asignó el hospital y que para cancelarla o cambiarla hay que comunicarse con el hospital (el bot no la conoce).',
     variables: ['Nombre del paciente', 'Servicio', 'Médico', 'Fecha y hora'],
+  },
+  // 🏥 2026-10-22: el hospital canceló una cita del asistente y el paciente no ha
+  // escrito en 24 h (ver apps/api/src/mirror/aviso-cambio-hospital.service.ts).
+  HIS_APPOINTMENT_CANCELLED: {
+    label: 'Cita cancelada por el hospital',
+    description:
+      'Se envía sola cuando el hospital cancela en su sistema una cita que el paciente agendó con el asistente y el paciente no le ha escrito a la clínica en las últimas 24 h (dentro de ese plazo sale como texto normal). Sin esta plantilla, a ese paciente no le llega el aviso y el caso queda en la Bandeja para llamarlo. El cuerpo debe decir que la cita fue cancelada y con quién comunicarse; la quinta variable trae «el hospital al <teléfono de soporte>».',
+    variables: [
+      'Nombre del paciente',
+      'Servicio',
+      'Médico',
+      'Fecha y hora',
+      'Con quién comunicarse',
+    ],
   },
 };
 

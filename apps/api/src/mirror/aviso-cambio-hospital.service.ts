@@ -71,6 +71,8 @@ export interface ResultadoAviso {
   aviso: 'ENVIADO' | 'NO_ENVIADO';
   canal?: 'WHATSAPP' | 'TELEGRAM';
   via?: 'TEXTO' | 'PLANTILLA';
+  /** La plantilla usada (o que faltó), si fue por plantilla. */
+  plantilla?: 'HIS_APPOINTMENT_CONFIRMATION' | 'HIS_APPOINTMENT_CANCELLED';
   motivo?: MotivoSinAviso;
   enviadoIso?: string;
 }
@@ -299,6 +301,7 @@ export class AvisoCambioHospitalService {
     }
 
     let via: 'TEXTO' | 'PLANTILLA';
+    let plantilla: ResultadoAviso['plantilla'];
     let texto: string;
     let resultado: { success: boolean; error?: string };
     if (dentro) {
@@ -350,6 +353,7 @@ export class AvisoCambioHospitalService {
       const medico = doctorLabel(nueva.scheduleSlot.doctor) || 'su médico';
       const fecha = formatForPatient(nueva.scheduleSlot.startTime);
       via = 'PLANTILLA';
+      plantilla = 'HIS_APPOINTMENT_CONFIRMATION';
       texto = `[Plantilla HIS_APPOINTMENT_CONFIRMATION] ${nombre} · ${servicio} · ${medico} · ${fecha}`;
       resultado = await this.templates.sendTemplate({
         organizationId,
@@ -359,7 +363,25 @@ export class AvisoCambioHospitalService {
         appointmentId: cita.id,
       });
     } else {
-      return { aviso: 'NO_ENVIADO', canal, motivo: 'FUERA_DE_VENTANA' };
+      // Fuera de la ventana y sin cita nueva: la plantilla aprobada «Cita cancelada
+      // por el hospital». La quinta variable va sin formato (asteriscos dentro de
+      // una variable de plantilla no se garantizan).
+      const servicio = cita.scheduleSlot.service?.name || 'su consulta';
+      const medico = doctorLabel(cita.scheduleSlot.doctor) || 'su médico';
+      const fecha = formatForPatient(cita.scheduleSlot.startTime);
+      const conQuien = org?.supportPhone
+        ? `el hospital al ${org.supportPhone}`
+        : 'el hospital';
+      via = 'PLANTILLA';
+      plantilla = 'HIS_APPOINTMENT_CANCELLED';
+      texto = `[Plantilla HIS_APPOINTMENT_CANCELLED] ${nombre} · ${servicio} · ${medico} · ${fecha} · ${conQuien}`;
+      resultado = await this.templates.sendTemplate({
+        organizationId,
+        recipientId: contacto.destinatario,
+        kind: 'HIS_APPOINTMENT_CANCELLED',
+        bodyParams: [nombre || 'Paciente', servicio, medico, fecha, conQuien],
+        appointmentId: cita.id,
+      });
     }
 
     if (!resultado.success) {
@@ -370,6 +392,7 @@ export class AvisoCambioHospitalService {
         aviso: 'NO_ENVIADO',
         canal,
         via,
+        ...(plantilla ? { plantilla } : {}),
         motivo:
           resultado.error === 'template-not-configured'
             ? 'SIN_PLANTILLA'
@@ -401,7 +424,13 @@ export class AvisoCambioHospitalService {
         ),
       );
 
-    return { aviso: 'ENVIADO', canal, via, enviadoIso: ahora.toISOString() };
+    return {
+      aviso: 'ENVIADO',
+      canal,
+      via,
+      ...(plantilla ? { plantilla } : {}),
+      enviadoIso: ahora.toISOString(),
+    };
   }
 }
 

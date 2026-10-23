@@ -429,6 +429,11 @@ enum WhatsappTemplateKind {
   // de 24 h (dentro, sale como texto libre). Cuatro variables, las mismas del
   // recordatorio: nombre, servicio, médico, fecha y hora.
   HIS_APPOINTMENT_CONFIRMATION
+  // 🏥 El hospital canceló en su sistema una cita que el paciente agendó con el
+  // asistente (2026-10-22). Fuera de la ventana de 24 h (dentro, sale como texto
+  // libre). Cinco variables: nombre, servicio, médico, fecha y hora, y con quién
+  // comunicarse. Ver mirror/aviso-cambio-hospital.service.ts.
+  HIS_APPOINTMENT_CANCELLED
 }
 
 model WhatsappTemplate {

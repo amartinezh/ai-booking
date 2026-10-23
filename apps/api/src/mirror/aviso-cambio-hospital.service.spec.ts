@@ -211,26 +211,71 @@ describe('AvisoCambioHospitalService — el hospital canceló una cita del asist
     expect(t.texto()).not.toContain('agendar*');
   });
 
-  it('fuera de las 24 h no hay plantilla para una cancelación: no se envía y el caso sube a ALTA', async () => {
-    const t = armar({
-      dentroDeVentana: false,
-      cita: cita({
+  describe('⏳ fuera de las 24 h: la plantilla «Cita cancelada por el hospital»', () => {
+    const lejana = () =>
+      cita({
         scheduleSlot: {
           ...cita().scheduleSlot,
-          startTime: new Date('2026-10-26T14:00:00Z'),
+          startTime: new Date('2026-10-26T14:00:00Z'), // lunes 26, 9:00 en Bogotá
         },
-      }),
+      });
+
+    it('sale con sus cinco variables, en el orden del contrato', async () => {
+      const t = armar({ dentroDeVentana: false, cita: lejana() });
+      await t.correr();
+      expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+      expect(t.templates.sendTemplate).toHaveBeenCalledWith({
+        organizationId: ORG,
+        recipientId: '573001112233',
+        kind: 'HIS_APPOINTMENT_CANCELLED',
+        bodyParams: [
+          'Victoria',
+          'Consulta ambulatoria de medicina general',
+          'Dr(a). YULIETH ANDREA RIOS AGUIRRE',
+          expect.stringMatching(/lunes.*26 de octubre/),
+          'el hospital al 606 853 8860',
+        ],
+        appointmentId: 'apt-bot',
+      });
+      // Se avisó y la cita es en días: MEDIA.
+      expect(t.final()).toMatchObject({
+        severity: 'MEDIA',
+        meta: {
+          aviso: 'ENVIADO',
+          via: 'PLANTILLA',
+          plantilla: 'HIS_APPOINTMENT_CANCELLED',
+        },
+      });
     });
-    await t.correr();
-    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
-    expect(t.templates.sendTemplate).not.toHaveBeenCalled();
-    expect(t.final()).toMatchObject({
-      severity: 'ALTA',
-      meta: {
-        aviso: 'NO_ENVIADO',
-        motivo: 'FUERA_DE_VENTANA',
-        canal: 'WHATSAPP',
-      },
+
+    it('sin la plantilla registrada no sale, y el caso lo dice (ALTA: hay que llamarlo)', async () => {
+      const t = armar({
+        dentroDeVentana: false,
+        cita: lejana(),
+        plantilla: { success: false, error: 'template-not-configured' },
+      });
+      await t.correr();
+      expect(t.final()).toMatchObject({
+        severity: 'ALTA',
+        meta: {
+          aviso: 'NO_ENVIADO',
+          motivo: 'SIN_PLANTILLA',
+          plantilla: 'HIS_APPOINTMENT_CANCELLED',
+        },
+      });
+    });
+
+    it('sin teléfono de soporte, «con quién comunicarse» es el hospital', async () => {
+      const t = armar({ dentroDeVentana: false, cita: lejana() });
+      t.prisma.organization.findUnique.mockResolvedValue({
+        name: 'Hospital San Vicente de Paúl',
+        supportPhone: null,
+        timezone: 'America/Bogota',
+      });
+      await t.correr();
+      expect(t.templates.sendTemplate.mock.calls[0][0].bodyParams[4]).toBe(
+        'el hospital',
+      );
     });
   });
 
@@ -360,7 +405,11 @@ describe('AvisoCambioHospitalService — el hospital canceló una cita del asist
         }),
       );
       expect(t.final()).toMatchObject({
-        meta: { aviso: 'ENVIADO', via: 'PLANTILLA' },
+        meta: {
+          aviso: 'ENVIADO',
+          via: 'PLANTILLA',
+          plantilla: 'HIS_APPOINTMENT_CONFIRMATION',
+        },
       });
     });
 

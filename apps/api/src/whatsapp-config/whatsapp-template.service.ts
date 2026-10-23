@@ -31,6 +31,8 @@ const TIPO_DE_MENSAJE: Record<WhatsappTemplateKind, WhatsappMessageKind> = {
   SYNC_EXCEPTION_ALERT: 'SYSTEM_NOTICE',
   // Confirmación al paciente de una cita que agendó el hospital (rastreo, §12 #7).
   HIS_APPOINTMENT_CONFIRMATION: 'BOOKING_CONFIRMATION',
+  // 🏥 Aviso al paciente de que el hospital canceló su cita (2026-10-22).
+  HIS_APPOINTMENT_CANCELLED: 'SYSTEM_NOTICE',
 };
 
 /**

@@ -21,11 +21,13 @@ import {
   enmascararNombre,
   formatAppointmentCompact,
   resumenRetencion,
+  TEMPLATE_CONTRACTS,
   transicionExcepcion,
   type AccionExcepcion,
   type EstadoExcepcion,
   type MotivoRetencion,
   type SeveridadExcepcion,
+  type TemplateKind,
   type TipoExcepcion,
 } from '@agenia/shared';
 import { etiquetaActorPersonal, etiquetaMedico } from '../rastreo/evidencia';
@@ -174,7 +176,7 @@ const MOTIVO_SIN_AVISO: Record<string, string> = {
   TELEFONO_EQUIVOCADO: 'su teléfono está marcado como de otra persona',
   FUERA_DE_VENTANA:
     'pasaron más de 24 horas desde su último mensaje y WhatsApp no permite escribirle sin una plantilla',
-  SIN_PLANTILLA: 'falta registrar la plantilla de confirmación de cita del hospital',
+  SIN_PLANTILLA: 'falta registrar en Configuración la plantilla de WhatsApp aprobada en Meta',
   FALLO: 'el envío falló',
 };
 
@@ -263,12 +265,21 @@ export function resumenPublico(
         fila.kind === 'CITA_MOVIDA_POR_HOSPITAL'
           ? `El hospital cambió de hora en su sistema esta cita, que el paciente había agendado por ${agendo}${nueva ? `: ahora es el ${nueva}` : ''}.`
           : `El hospital canceló en su sistema esta cita, que el paciente había agendado por ${agendo}.`;
+      // La plantilla que se usó (o que faltó), por su nombre en Configuración.
+      const plantilla =
+        typeof meta.plantilla === 'string' && meta.plantilla in TEMPLATE_CONTRACTS
+          ? TEMPLATE_CONTRACTS[meta.plantilla as TemplateKind].label
+          : null;
+      const motivo =
+        meta.motivo === 'SIN_PLANTILLA' && plantilla
+          ? `falta registrar en Configuración la plantilla «${plantilla}», aprobada en Meta`
+          : (MOTIVO_SIN_AVISO[String(meta.motivo)] ?? 'el envío falló');
       const aviso =
         meta.aviso === 'ENVIADO'
-          ? `Se le avisó por ${canal}${meta.via === 'PLANTILLA' ? ' con la plantilla de confirmación de cita' : ''}.`
+          ? `Se le avisó por ${canal}${meta.via === 'PLANTILLA' ? ` con la plantilla «${plantilla ?? 'de WhatsApp'}»` : ''}.`
           : meta.aviso === 'PENDIENTE'
             ? 'El aviso al paciente se estaba enviando.'
-            : `No se le pudo avisar por ${canal}: ${MOTIVO_SIN_AVISO[String(meta.motivo)] ?? 'el envío falló'}. Comuníquese con el paciente.`;
+            : `No se le pudo avisar por ${canal}: ${motivo}. Comuníquese con el paciente.`;
       return `${que} ${aviso} Confirme que el paciente quedó enterado y cierre el caso.`;
     }
     case 'TELEFONO_EQUIVOCADO': {

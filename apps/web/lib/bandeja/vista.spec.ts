@@ -472,7 +472,7 @@ describe('🏥 citas del asistente que el hospital canceló o cambió', () => {
     ['FUERA_DE_VENTANA', 'pasaron más de 24 horas'],
     ['TELEFONO_EQUIVOCADO', 'marcado como de otra persona'],
     ['SIN_CONTACTO', 'no tiene WhatsApp ni Telegram'],
-    ['SIN_PLANTILLA', 'falta registrar la plantilla'],
+    ['SIN_PLANTILLA', 'falta registrar en Configuración la plantilla'],
     ['FALLO', 'el envío falló'],
   ])('sin aviso (%s): dice por qué y que se comuniquen con el paciente', (motivo, texto) => {
     const r = resumenPublico(cancelada({ aviso: 'NO_ENVIADO', canal: 'WHATSAPP', motivo }), AHORA.getTime());
@@ -500,12 +500,33 @@ describe('🏥 citas del asistente que el hospital canceló o cambió', () => {
     expect(r).toContain('Se le avisó por Telegram.');
   });
 
-  it('con la plantilla (fuera de las 24 h) lo aclara', () => {
+  it('⏳ cancelada fuera de las 24 h: se avisó con la plantilla «Cita cancelada por el hospital»', () => {
     const r = resumenPublico(
-      fila({ kind: 'CITA_MOVIDA_POR_HOSPITAL', meta: { canalDeLaCita: 'WHATSAPP', canal: 'WHATSAPP', aviso: 'ENVIADO', via: 'PLANTILLA' } }),
+      cancelada({ aviso: 'ENVIADO', canal: 'WHATSAPP', via: 'PLANTILLA', plantilla: 'HIS_APPOINTMENT_CANCELLED' }),
       AHORA.getTime(),
     );
-    expect(r).toContain('con la plantilla de confirmación de cita');
+    expect(r).toContain('Se le avisó por WhatsApp con la plantilla «Cita cancelada por el hospital».');
+  });
+
+  it('⏳ sin esa plantilla registrada, dice cuál falta', () => {
+    const r = resumenPublico(
+      cancelada({ aviso: 'NO_ENVIADO', canal: 'WHATSAPP', via: 'PLANTILLA', plantilla: 'HIS_APPOINTMENT_CANCELLED', motivo: 'SIN_PLANTILLA' }),
+      AHORA.getTime(),
+    );
+    expect(r).toContain(
+      'No se le pudo avisar por WhatsApp: falta registrar en Configuración la plantilla «Cita cancelada por el hospital», aprobada en Meta. Comuníquese con el paciente.',
+    );
+  });
+
+  it('cambio de hora fuera de las 24 h: se avisó con la plantilla «Confirmación de una cita del hospital»', () => {
+    const r = resumenPublico(
+      fila({
+        kind: 'CITA_MOVIDA_POR_HOSPITAL',
+        meta: { canalDeLaCita: 'WHATSAPP', canal: 'WHATSAPP', aviso: 'ENVIADO', via: 'PLANTILLA', plantilla: 'HIS_APPOINTMENT_CONFIRMATION' },
+      }),
+      AHORA.getTime(),
+    );
+    expect(r).toContain('con la plantilla «Confirmación de una cita del hospital»');
   });
 
   it.each([

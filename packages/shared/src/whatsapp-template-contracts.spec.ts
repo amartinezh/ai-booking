@@ -13,9 +13,11 @@ describe('variablesEsperadas', () => {
   //   4 → his-confirmation.service.ts (cita agendada en el hospital)
   //   5 → mass-notice.service.ts (los dos masivos)
   //   3 → mirror-alert.service.ts (aviso al agendador)
+  //   5 → aviso-cambio-hospital.service.ts (cita cancelada por el hospital)
   it.each<[TemplateKind, number]>([
     ['APPOINTMENT_REMINDER', 4],
     ['HIS_APPOINTMENT_CONFIRMATION', 4],
+    ['HIS_APPOINTMENT_CANCELLED', 5],
     ['APPOINTMENT_CANCELLED_MASS', 5],
     ['APPOINTMENT_REMINDER_MASS', 5],
     ['SYNC_EXCEPTION_ALERT', 3],
@@ -59,6 +61,7 @@ describe('choqueDeNombre', () => {
     ['APPOINTMENT_CANCELLED_MASS', 5],
     ['APPOINTMENT_REMINDER_MASS', 5],
     ['SYNC_EXCEPTION_ALERT', 3],
+    ['HIS_APPOINTMENT_CANCELLED', 5],
   ])('%s choca con el recordatorio (manda %i, no 4)', (kind) => {
     const choque = choqueDeNombre(kind, 'recordatorio_cita', [
       { kind: 'APPOINTMENT_REMINDER', name: 'recordatorio_cita' },
