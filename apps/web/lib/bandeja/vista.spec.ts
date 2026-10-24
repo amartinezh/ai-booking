@@ -271,6 +271,51 @@ describe('resumenPublico — una frase neutra desde meta, nunca desde el detalle
   });
 });
 
+describe('🩺 médicos del hospital que AgenIA aún no tiene', () => {
+  const META = {
+    externalKey: 'RU68', nombre: 'MICHILLE TATIANA ZAPATA PARRADO', cargo: 'MEDICO RURAL', cedulaFinal: '4638',
+    servicio: 'Consulta ambulatoria de medicina general', citas: 3, primeraIso: '2026-10-27T18:15:00.000Z',
+    bloqueos: [], advertencias: [],
+  };
+  const caso = (over: Record<string, unknown> = {}, filaOver: Record<string, unknown> = {}) =>
+    fila({ kind: 'MEDICO_SIN_HOMOLOGAR', appointmentId: null, patientId: null, doctorId: null, appointmentStartAt: null, meta: { ...META, ...over }, ...filaOver });
+
+  it('el resumen dice quién es, cuántas citas tiene, qué pierden sus pacientes y qué hacer', () => {
+    const r = resumenPublico({ kind: 'MEDICO_SIN_HOMOLOGAR', title: '', meta: META, occurrences: 1 }, AHORA.getTime());
+    expect(r).toContain('MICHILLE TATIANA ZAPATA PARRADO (código RU68 en el hospital) tiene 3 citas de Consulta ambulatoria de medicina general');
+    expect(r).toContain('no reciben recordatorios');
+    expect(r).toContain('con el botón de este caso');
+    const bloqueado = resumenPublico({ kind: 'MEDICO_SIN_HOMOLOGAR', title: '', meta: { ...META, bloqueos: ['x'] }, occurrences: 1 }, AHORA.getTime());
+    expect(bloqueado).toContain('Espejo › Homologación');
+  });
+
+  it('el informativo del automático dice con qué WhatsApp entró', () => {
+    const r = (on: boolean) => resumenPublico({ kind: 'MEDICO_AGREGADO_AUTO', title: '', meta: { ...META, whatsappOn: on }, occurrences: 1 }, AHORA.getTime());
+    expect(r(false)).toContain('AgenIA creó y homologó sola a MICHILLE TATIANA ZAPATA PARRADO');
+    expect(r(false)).toContain('WhatsApp OFF');
+    expect(r(true)).toContain('WhatsApp ON');
+  });
+
+  it('el administrador puede crearlo desde un caso activo sin bloqueos', () => {
+    expect(mapearExcepcion(caso(), ctx()).medicoNuevo).toEqual({
+      codigo: 'RU68', nombre: 'MICHILLE TATIANA ZAPATA PARRADO', cargo: 'MEDICO RURAL', cedulaFinal: '4638',
+      servicio: 'Consulta ambulatoria de medicina general', citas: 3, primeraIso: '2026-10-27T18:15:00.000Z',
+      bloqueos: [], advertencias: [], puedeCrear: true,
+    });
+  });
+
+  it('no: un agendador, un caso cerrado o uno con bloqueos', () => {
+    const agendador = ctx({ actor: { userId: 'u-yo', permisos: agente } as never });
+    expect(mapearExcepcion(caso(), agendador).medicoNuevo?.puedeCrear).toBe(false);
+    expect(mapearExcepcion(caso({}, { status: 'AUTO_RESUELTA' }), ctx()).medicoNuevo?.puedeCrear).toBe(false);
+    expect(mapearExcepcion(caso({ bloqueos: ['Su cédula la tienen 3 médicos.'] }), ctx()).medicoNuevo?.puedeCrear).toBe(false);
+  });
+
+  it('los demás tipos no traen médico nuevo', () => {
+    expect(mapearExcepcion(fila(), ctx()).medicoNuevo).toBeNull();
+  });
+});
+
 describe('mapearExcepcion', () => {
   it('🔒 el paciente sale ENMASCARADO: nunca el nombre ni la cédula completos', () => {
     const v = mapearExcepcion(fila(), ctx());

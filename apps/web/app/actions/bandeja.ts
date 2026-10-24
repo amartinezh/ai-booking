@@ -1,10 +1,12 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { cookies } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { resolverActorBandeja, type ResultadoActorBandeja } from '@/lib/bandeja/acceso';
 import { aplicarAccion, detalleExcepcion, guardarAvisos } from '@/lib/bandeja/servicio';
+import { crearYHomologarMedico, type RespuestaAlta } from '@/lib/bandeja/medico-nuevo';
 import type { ExcepcionDetalle, Resultado } from '@/lib/bandeja/tipos';
 import type { EstadoExcepcion } from '@agenia/shared';
 
@@ -30,6 +32,8 @@ async function actor(): Promise<ResultadoActorBandeja> {
 const error = (mensaje: string): { success: false; error: string } => ({ success: false, error: mensaje });
 
 const RUTA = '/dashboard/bandeja';
+
+const INTERNAL_API_URL = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 export async function detalleExcepcionAction(id: string): Promise<Resultado<ExcepcionDetalle>> {
     const a = await actor();
@@ -62,5 +66,41 @@ export async function guardarAvisosAction(entrada: {
     if (!a.ok) return error(a.error);
     const r = await guardarAvisos(prisma, a.actor, entrada ?? { numero: '', activos: false });
     if (r.success) revalidatePath(RUTA);
+    return r;
+}
+
+/**
+ * 🩺 «Crear y homologar» un médico del hospital desde su caso (2026-10-24). Solo el
+ * administrador. El alta la hace la API, con la sesión de quien pulsa.
+ */
+export async function crearYHomologarMedicoAction(entrada: {
+    id: string;
+    whatsappOn: boolean;
+}): Promise<Resultado<{ nombre: string; accion: 'CREAR' | 'ENLAZAR' }>> {
+    const a = await actor();
+    if (!a.ok) return error(a.error);
+    const r = await crearYHomologarMedico(prisma, a.actor, entrada ?? {}, async (cuerpo): Promise<RespuestaAlta> => {
+        const token = (await cookies()).get('auth_token')?.value;
+        const res = await fetch(`${INTERNAL_API_URL}/his-doctors/onboard`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Cookie: `auth_token=${token}` } : {}),
+            },
+            body: JSON.stringify(cuerpo),
+            cache: 'no-store',
+        });
+        if (!res.ok) {
+            return {
+                success: false,
+                error: res.status === 403 ? 'Sin permisos.' : `El servidor respondió ${res.status}. Intenta de nuevo.`,
+            };
+        }
+        return (await res.json()) as RespuestaAlta;
+    });
+    if (r.success) {
+        revalidatePath(RUTA);
+        revalidatePath('/dashboard', 'layout');
+    }
     return r;
 }

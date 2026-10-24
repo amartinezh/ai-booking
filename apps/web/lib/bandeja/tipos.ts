@@ -49,6 +49,26 @@ export interface ExcepcionVista {
   cierre: { atIso: string; por: string; nota: string | null } | null;
   /** Lo que ESTE usuario puede hacer ahora con ella (ya filtrado por el estado y el permiso). */
   acciones: AccionExcepcion[];
+  /** 🩺 Solo en «Médico del hospital con citas que aún no está en AgenIA». */
+  medicoNuevo?: MedicoNuevoVista | null;
+}
+
+/** El médico del hospital que se puede crear y homologar desde la Bandeja (2026-10-24). */
+export interface MedicoNuevoVista {
+  codigo: string;
+  nombre: string | null;
+  cargo: string | null;
+  /** Los últimos 4 dígitos de su cédula. */
+  cedulaFinal: string | null;
+  servicio: string | null;
+  citas: number;
+  primeraIso: string | null;
+  /** Lo que impide crearlo desde aquí: se homologa a mano en Espejo › Homologación. */
+  bloqueos: string[];
+  /** Lo que conviene revisar antes de crearlo. */
+  advertencias: string[];
+  /** ESTE usuario puede crearlo ahora: administrador, caso activo y sin bloqueos. */
+  puedeCrear: boolean;
 }
 
 export interface EntradaHistorial {

@@ -18,7 +18,9 @@ jest.mock('next/link', () => ({
 const aplicar = jest.fn();
 const detalle = jest.fn();
 const guardar = jest.fn();
+const crearMedico = jest.fn();
 jest.mock('@/app/actions/bandeja', () => ({
+    crearYHomologarMedicoAction: (...a: unknown[]) => crearMedico(...a),
     aplicarAccionExcepcionAction: (...a: unknown[]) => aplicar(...a),
     detalleExcepcionAction: (...a: unknown[]) => detalle(...a),
     guardarAvisosAction: (...a: unknown[]) => guardar(...a),
@@ -592,5 +594,72 @@ describe('BandejaClient — avisos al agendador', () => {
         pintar([fila()], { puedeConfigurarAvisos: true });
         await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
         expect(screen.getByText(/teléfono personal.*sin datos de ningún paciente/)).toBeInTheDocument();
+    });
+});
+
+describe('BandejaClient — 🩺 médico del hospital sin homologar', () => {
+    const medicoNuevo = (over: Partial<NonNullable<ExcepcionVista['medicoNuevo']>> = {}) => ({
+        codigo: 'RU68',
+        nombre: 'MICHILLE TATIANA ZAPATA PARRADO',
+        cargo: 'MEDICO RURAL',
+        cedulaFinal: '4638',
+        servicio: 'Consulta ambulatoria de medicina general',
+        citas: 3,
+        primeraIso: '2026-10-27T18:15:00.000Z',
+        bloqueos: [] as string[],
+        advertencias: [] as string[],
+        puedeCrear: true,
+        ...over,
+    });
+    const caso = (over = {}) =>
+        fila({ id: 'ex-68', tipo: 'MEDICO_SIN_HOMOLOGAR', titulo: 'Médico del hospital con citas que aún no está en AgenIA', cita: null, medicoNuevo: medicoNuevo(over) });
+
+    it('muestra sus datos y crea con WhatsApp OFF si no se marca la casilla', async () => {
+        crearMedico.mockResolvedValue({ success: true, data: { nombre: 'MICHILLE TATIANA ZAPATA PARRADO', accion: 'CREAR' } });
+        pintar([caso()]);
+        expect(screen.getByText('RU68')).toBeInTheDocument();
+        expect(screen.getByText('…4638')).toBeInTheDocument();
+        expect(screen.getByRole('checkbox', { name: /Encender su WhatsApp/ })).not.toBeChecked();
+
+        await userEvent.click(screen.getByRole('button', { name: 'Crear y homologar' }));
+
+        expect(crearMedico).toHaveBeenCalledWith({ id: 'ex-68', whatsappOn: false });
+        expect(await screen.findByRole('status')).toHaveTextContent('quedó creado y homologado, con WhatsApp OFF');
+        expect(refresh).toHaveBeenCalled();
+    });
+
+    it('con la casilla marcada lo crea con WhatsApp ON', async () => {
+        crearMedico.mockResolvedValue({ success: true, data: { nombre: 'MICHILLE', accion: 'CREAR' } });
+        pintar([caso()]);
+        await userEvent.click(screen.getByRole('checkbox', { name: /Encender su WhatsApp/ }));
+        await userEvent.click(screen.getByRole('button', { name: 'Crear y homologar' }));
+        expect(crearMedico).toHaveBeenCalledWith({ id: 'ex-68', whatsappOn: true });
+    });
+
+    it('si falla, lo dice y no refresca', async () => {
+        crearMedico.mockResolvedValue({ success: false, error: 'Otra persona lo homologó mientras tanto.' });
+        pintar([caso()]);
+        await userEvent.click(screen.getByRole('button', { name: 'Crear y homologar' }));
+        expect(await screen.findByRole('alert')).toHaveTextContent('Otra persona lo homologó');
+        expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it('con bloqueos no hay botón: dice por qué y lleva a Homologación', () => {
+        pintar([caso({ bloqueos: ['Su cédula la tienen 3 médicos del hospital.'], puedeCrear: false })]);
+        expect(screen.queryByRole('button', { name: 'Crear y homologar' })).toBeNull();
+        expect(screen.getByText('Su cédula la tienen 3 médicos del hospital.')).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: 'Espejo › Homologación' })).toHaveAttribute('href', '/dashboard/espejo/homologacion');
+    });
+
+    it('las advertencias se muestran antes del botón', () => {
+        pintar([caso({ advertencias: ['Su cargo en el hospital es «AUX. DE ENFERMERIA», no de médico.'] })]);
+        expect(screen.getByText(/no de médico/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Crear y homologar' })).toBeInTheDocument();
+    });
+
+    it('un agendador ve el caso pero no el botón', () => {
+        pintar([caso({ puedeCrear: false })]);
+        expect(screen.getByText('RU68')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Crear y homologar' })).toBeNull();
     });
 });

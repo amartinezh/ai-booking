@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   SYNC_AUDIT_DIRECTION,
@@ -9,6 +9,7 @@ import {
   MirrorWatchdogService,
   type DerivaItem,
 } from './mirror-watchdog.service';
+import { MedicosNuevosService } from './medicos-nuevos.service';
 
 /**
  * Reconciliación entre AgenIA y el HIS — la capa 5 de las seis defensas del
@@ -137,6 +138,9 @@ export class MirrorReconciliationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly watchdog: MirrorWatchdogService,
+    // 🩺 Médicos del hospital que AgenIA aún no tiene. Opcional: las pruebas que
+    // arman la reconciliación a mano no lo necesitan.
+    @Optional() private readonly medicosNuevos?: MedicosNuevosService,
   ) {}
 
   /**
@@ -152,6 +156,22 @@ export class MirrorReconciliationService {
     hisSnapshot: HisAppointmentSnapshot[],
     window: { from: Date; to: Date },
   ): Promise<ReconciliationReport> {
+    // 🩺 Antes que nada, los médicos del hospital con citas que AgenIA maneja y que
+    // aún no están homologados (2026-10-24): caso en la Bandeja o, si la clínica lo
+    // pidió, alta automática. Va primero para que un médico recién homologado traiga
+    // sus citas en esta misma reconciliación. Nunca la detiene.
+    if (this.medicosNuevos) {
+      try {
+        await this.medicosNuevos.revisar(organizationId, hisSnapshot);
+      } catch (error: unknown) {
+        this.logger.error(
+          `No se pudieron revisar los médicos nuevos del hospital (org ${organizationId}): ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
     const citas = await this.prisma.appointment.findMany({
       where: {
         organizationId,

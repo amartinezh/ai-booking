@@ -17,6 +17,8 @@ import { MirrorAlertService } from './mirror-alert.service';
 import { MirrorWatchdogService } from './mirror-watchdog.service';
 import { AvisoCambioHospitalService } from './aviso-cambio-hospital.service';
 import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module';
+import { MedicosNuevosService } from './medicos-nuevos.service';
+import { MedicosNuevosController } from './medicos-nuevos.controller';
 
 /**
  * Motor genérico de espejo de citas con HIS externos (patrón de drivers).
@@ -33,7 +35,7 @@ import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module'
   // WhatsappConfigModule: el aviso al agendador sale por una plantilla aprobada
   // (`WhatsappTemplateService`). No crea ciclo: no conoce este módulo.
   imports: [AppointmentsModule, WaitlistModule, WhatsappConfigModule],
-  controllers: [MirrorController],
+  controllers: [MirrorController, MedicosNuevosController],
   providers: [
     MirrorAgentGuard,
     MirrorDispatchService,
@@ -60,6 +62,9 @@ import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module'
     // 🏥 El hospital cancela o cambia una cita del asistente: aviso al paciente y
     // caso en la Bandeja (2026-10-22).
     AvisoCambioHospitalService,
+    // 🩺 Médicos del hospital con citas que AgenIA aún no tiene: caso en la Bandeja,
+    // botón «Crear y homologar» y homologación automática (2026-10-24).
+    MedicosNuevosService,
   ],
   exports: [
     MirrorApplyService,

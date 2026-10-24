@@ -72,6 +72,15 @@ import { derivarSync, type FilaOutbox } from './sync-state';
  *  · `REVISAR_CITA_ASISTENTE` — poco después de agendar, el paciente preguntó si la
  *    cita era para otro servicio, dijo que no era la que necesitaba, o la confirmó
  *    después de preguntar por otro servicio.
+ *
+ * Y dos de los médicos del hospital (2026-10-24: la médica RU68 volvió a tener
+ * turnos sin estar en AgenIA y sus pacientes no recibían recordatorio):
+ *
+ *  · `MEDICO_SIN_HOMOLOGAR`   — un médico del hospital con citas de un servicio que
+ *    AgenIA maneja no está homologado. El administrador lo crea y homologa con un
+ *    botón. Se cierra sola cuando queda homologado o ya no tiene esas citas.
+ *  · `MEDICO_AGREGADO_AUTO`   — AgenIA lo creó y homologó solo (Configuración, apagado
+ *    de fábrica): para que una persona lo revise y decida su WhatsApp.
  */
 export const TIPOS_EXCEPCION = [
   'CITA_NO_ENTREGADA',
@@ -86,6 +95,8 @@ export const TIPOS_EXCEPCION = [
   'CITA_CANCELADA_POR_HOSPITAL',
   'CITA_MOVIDA_POR_HOSPITAL',
   'REVISAR_CITA_ASISTENTE',
+  'MEDICO_SIN_HOMOLOGAR',
+  'MEDICO_AGREGADO_AUTO',
 ] as const;
 export type TipoExcepcion = (typeof TIPOS_EXCEPCION)[number];
 
@@ -112,6 +123,8 @@ export const TITULO_EXCEPCION: Record<TipoExcepcion, string> = {
   CITA_CANCELADA_POR_HOSPITAL: 'El hospital canceló una cita agendada por el asistente',
   CITA_MOVIDA_POR_HOSPITAL: 'El hospital cambió la hora de una cita agendada por el asistente',
   REVISAR_CITA_ASISTENTE: 'Revisar una cita agendada por el asistente',
+  MEDICO_SIN_HOMOLOGAR: 'Médico del hospital con citas que aún no está en AgenIA',
+  MEDICO_AGREGADO_AUTO: 'Médico del hospital agregado automáticamente',
 };
 
 export const SEVERIDADES_EXCEPCION = ['BAJA', 'MEDIA', 'ALTA', 'CRITICA'] as const;
@@ -347,6 +360,11 @@ export const claveExcepcion = {
   /** Una por cita: la segunda duda del paciente sobre la misma cita suma una ocurrencia. */
   revisarCitaAsistente: (appointmentId: string) =>
     `revisar-cita:${appointmentId}`,
+  /** Una por código de médico del hospital. */
+  medicoSinHomologar: (externalKey: string) =>
+    `medico-sin-homologar:${externalKey}`,
+  medicoAgregadoAuto: (externalKey: string) =>
+    `medico-agregado:${externalKey}`,
   auditoria: (a: {
     direction: string;
     entityType: string;

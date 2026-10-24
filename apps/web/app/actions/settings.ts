@@ -459,3 +459,72 @@ export async function updateOrgSettingsForOrg(
         return { success: false, error: getErrorMessage(e) };
     }
 }
+
+/**
+ * 🩺 Médicos nuevos del hospital (2026-10-24): si AgenIA los crea y homologa sola
+ * cuando cumplen todas las reglas, y con qué WhatsApp entran. Solo con espejo.
+ */
+export async function getMyHomologacionAutomatica() {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { espejo: false, auto: false, whatsappOn: false };
+    const c = await prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId: session.organizationId! },
+        select: { enabled: true, autoHomologateDoctors: true, autoHomologateWhatsappOn: true },
+    });
+    return {
+        espejo: c?.enabled === true,
+        auto: c?.autoHomologateDoctors === true,
+        whatsappOn: c?.autoHomologateWhatsappOn === true,
+    };
+}
+
+export async function setMyAutoHomologacion(enabled: boolean) {
+    return guardarHomologacionAutomatica('autoHomologateDoctors', enabled === true);
+}
+
+export async function setMyAutoHomologacionWhatsapp(enabled: boolean) {
+    return guardarHomologacionAutomatica('autoHomologateWhatsappOn', enabled === true);
+}
+
+async function guardarHomologacionAutomatica(
+    campo: 'autoHomologateDoctors' | 'autoHomologateWhatsappOn',
+    valor: boolean,
+): Promise<{ success: boolean; error?: string }> {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false, error: 'Acceso denegado' };
+    try {
+        const antes = await prisma.hospitalMirrorConfig.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { autoHomologateDoctors: true, autoHomologateWhatsappOn: true },
+        });
+        if (!antes) return { success: false, error: 'Esta clínica no está conectada al sistema de un hospital.' };
+        await prisma.hospitalMirrorConfig.update({
+            where: { organizationId: session.organizationId! },
+            data: { [campo]: valor },
+        });
+        if (antes[campo] !== valor) {
+            const actor = session.email ?? session.userId ?? 'desconocido';
+            await prisma.syncAudit
+                .create({
+                    data: {
+                        organizationId: session.organizationId!,
+                        direction: SYNC_AUDIT_DIRECTION.CONFIG,
+                        entityType: 'HospitalMirrorConfig',
+                        op: campo === 'autoHomologateDoctors' ? 'AUTO_HOMOLOGATE_CHANGE' : 'AUTO_HOMOLOGATE_WHATSAPP_CHANGE',
+                        outcome: 'OK',
+                        detail:
+                            campo === 'autoHomologateDoctors'
+                                ? `«Homologar automáticamente médicos nuevos del hospital» ${valor ? 'ENCENDIDO' : 'APAGADO'} desde Configuración por ${actor}.`
+                                : `Los médicos que AgenIA agrega sola entran con WhatsApp ${valor ? 'ON' : 'OFF'} (cambiado desde Configuración por ${actor}).`,
+                    },
+                })
+                .catch((e: unknown) =>
+                    console.error('[configuración] no se pudo anotar el cambio en la auditoría', { error: getErrorMessage(e) }),
+                );
+        }
+        revalidatePath('/dashboard/configuracion');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) };
+    }
+}

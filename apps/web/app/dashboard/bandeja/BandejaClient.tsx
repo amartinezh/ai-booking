@@ -14,6 +14,7 @@ import {
 } from '@agenia/shared';
 import {
     aplicarAccionExcepcionAction,
+    crearYHomologarMedicoAction,
     detalleExcepcionAction,
     guardarAvisosAction,
 } from '@/app/actions/bandeja';
@@ -324,6 +325,142 @@ function Acciones({ f }: { f: ExcepcionVista }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 🩺 El médico del hospital que AgenIA aún no tiene (2026-10-24)
+// ─────────────────────────────────────────────────────────────
+
+function MedicoNuevo({ f }: { f: ExcepcionVista }) {
+    const router = useRouter();
+    const idWhatsapp = useId();
+    const [whatsappOn, setWhatsappOn] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [hecho, setHecho] = useState<string | null>(null);
+    const [pendiente, iniciar] = useTransition();
+    const m = f.medicoNuevo;
+    if (!m) return null;
+
+    function crear() {
+        setError(null);
+        iniciar(async () => {
+            const r = await crearYHomologarMedicoAction({ id: f.id, whatsappOn });
+            if (!r.success) {
+                setError(r.error);
+                return;
+            }
+            setHecho(
+                `${r.data.nombre} quedó ${r.data.accion === 'ENLAZAR' ? 'enlazado al médico que ya tenía su cédula' : 'creado'} y homologado` +
+                    (whatsappOn ? ', con WhatsApp ON.' : ', con WhatsApp OFF.') +
+                    ' Sus citas entran a AgenIA con la próxima comparación con el hospital (cada noche).',
+            );
+            router.refresh();
+        });
+    }
+
+    return (
+        <div className="mt-3 space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
+            <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+                <div className="flex gap-2">
+                    <dt className="text-zinc-500 dark:text-zinc-400">Médico</dt>
+                    <dd className="font-medium text-zinc-900 dark:text-white">{m.nombre ?? 'Sin nombre en el catálogo'}</dd>
+                </div>
+                <div className="flex gap-2">
+                    <dt className="text-zinc-500 dark:text-zinc-400">Código en el hospital</dt>
+                    <dd className="text-zinc-900 dark:text-white">{m.codigo}</dd>
+                </div>
+                {m.cargo && (
+                    <div className="flex gap-2">
+                        <dt className="text-zinc-500 dark:text-zinc-400">Cargo</dt>
+                        <dd className="text-zinc-900 dark:text-white">{m.cargo}</dd>
+                    </div>
+                )}
+                {m.cedulaFinal && (
+                    <div className="flex gap-2">
+                        <dt className="text-zinc-500 dark:text-zinc-400">Cédula</dt>
+                        <dd className="text-zinc-900 dark:text-white">…{m.cedulaFinal}</dd>
+                    </div>
+                )}
+                {m.servicio && (
+                    <div className="flex gap-2">
+                        <dt className="text-zinc-500 dark:text-zinc-400">Servicio principal</dt>
+                        <dd className="text-zinc-900 dark:text-white">{m.servicio}</dd>
+                    </div>
+                )}
+                <div className="flex gap-2">
+                    <dt className="text-zinc-500 dark:text-zinc-400">Citas por venir</dt>
+                    <dd className="text-zinc-900 dark:text-white">
+                        {m.citas}
+                        {m.primeraIso ? ` · la primera, ${formatAppointmentCompact(m.primeraIso)}` : ''}
+                    </dd>
+                </div>
+            </dl>
+
+            {m.bloqueos.length > 0 && (
+                <div className="text-sm text-red-700 dark:text-red-300">
+                    <p className="font-medium">No se puede crear desde aquí:</p>
+                    <ul className="ml-5 list-disc">
+                        {m.bloqueos.map((b) => (
+                            <li key={b}>{b}</li>
+                        ))}
+                    </ul>
+                    <p className="mt-1">
+                        Homológuelo a mano en{' '}
+                        <Link href="/dashboard/espejo/homologacion" className="underline">
+                            Espejo › Homologación
+                        </Link>
+                        .
+                    </p>
+                </div>
+            )}
+            {m.advertencias.length > 0 && (
+                <div className="text-sm text-amber-800 dark:text-amber-300">
+                    <p className="font-medium">Revise antes de crearlo:</p>
+                    <ul className="ml-5 list-disc">
+                        {m.advertencias.map((a) => (
+                            <li key={a}>{a}</li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+            {m.puedeCrear && !hecho && (
+                <div className="space-y-2">
+                    <label htmlFor={idWhatsapp} className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                        <input
+                            id={idWhatsapp}
+                            type="checkbox"
+                            className="mt-1"
+                            checked={whatsappOn}
+                            onChange={(e) => setWhatsappOn(e.target.checked)}
+                        />
+                        <span>
+                            Encender su WhatsApp: sus pacientes reciben recordatorios y el asistente ofrece sus cupos. Sin
+                            marcar, sus citas entran a AgenIA pero no le sale nada al paciente hasta que lo encienda en
+                            Médicos.
+                        </span>
+                    </label>
+                    <button type="button" className={BOTON_PRIMARIO} disabled={pendiente} onClick={crear}>
+                        {pendiente ? 'Creando…' : 'Crear y homologar'}
+                    </button>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                        Se crea con sus datos del hospital y una cuenta con la que nadie puede entrar. No se escribe nada en
+                        el sistema del hospital.
+                    </p>
+                </div>
+            )}
+            {hecho && (
+                <p role="status" className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                    {hecho}
+                </p>
+            )}
+            {error && (
+                <p role="alert" className="text-sm font-medium text-red-700 dark:text-red-300">
+                    {error}
+                </p>
+            )}
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Una excepción
 // ─────────────────────────────────────────────────────────────
 
@@ -376,6 +513,8 @@ function Tarjeta({ f }: { f: ExcepcionVista }) {
 
             <h3 className="mt-2 text-sm font-semibold text-zinc-900 dark:text-white">{f.titulo}</h3>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">{f.resumen}</p>
+
+            <MedicoNuevo f={f} />
 
             {cita && (
                 <dl className="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">

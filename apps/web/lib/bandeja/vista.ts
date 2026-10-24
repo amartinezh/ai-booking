@@ -35,6 +35,7 @@ import type { PermisosBandeja } from './acceso';
 import type {
   EntradaHistorial,
   ExcepcionVista,
+  MedicoNuevoVista,
 } from './tipos';
 
 /** Lo que `servicio.ts` lee de `SyncException`. */
@@ -299,6 +300,35 @@ export function resumenPublico(
             : `Poco después de agendar esta cita por ${canal}, el paciente preguntó si era para ${otro}${veces}.${mensaje} La cita es de otro servicio.`;
       return `${que} El bot no la cambió: comuníquese con el paciente para confirmar si la necesita; si no, cancélela para liberar el cupo y oriéntelo. Se cierra sola si la cita se cancela o cambia de hora.`;
     }
+    // 🩺 Los médicos del hospital que AgenIA aún no tiene (2026-10-24).
+    case 'MEDICO_SIN_HOMOLOGAR':
+    case 'MEDICO_AGREGADO_AUTO': {
+      const nombre = typeof meta.nombre === 'string' && meta.nombre.trim() ? meta.nombre.trim() : 'sin nombre en el catálogo';
+      const codigo = typeof meta.externalKey === 'string' ? meta.externalKey : '?';
+      const citas = numero(meta.citas);
+      const servicio = typeof meta.servicio === 'string' && meta.servicio ? meta.servicio : 'un servicio que AgenIA maneja';
+      const desde =
+        typeof meta.primeraIso === 'string' && !Number.isNaN(Date.parse(meta.primeraIso))
+          ? `, desde el ${formatAppointmentCompact(new Date(meta.primeraIso))}`
+          : '';
+      const lasCitas = `${citas} cita${citas === 1 ? '' : 's'} de ${servicio}${desde}`;
+      if (fila.kind === 'MEDICO_AGREGADO_AUTO') {
+        return (
+          `AgenIA creó y homologó sola a ${nombre} (código ${codigo} en el hospital), que tenía ${lasCitas}: sus citas ya entran a AgenIA. ` +
+          (meta.whatsappOn === true
+            ? 'Entró con WhatsApp ON: sus pacientes reciben recordatorios y el asistente ofrece sus cupos.'
+            : 'Entró con WhatsApp OFF: sus pacientes no reciben recordatorios hasta que lo encienda en Médicos.') +
+          ' Revise que sea correcto; si no, deshomológuelo en Espejo › Homologación.'
+        );
+      }
+      const bloqueos = Array.isArray(meta.bloqueos) ? meta.bloqueos.filter((b): b is string => typeof b === 'string') : [];
+      return (
+        `${nombre} (código ${codigo} en el hospital) tiene ${lasCitas} y no está en AgenIA: sus pacientes no reciben recordatorios ni pueden gestionar esas citas por chat.` +
+        (bloqueos.length > 0
+          ? ' No se puede crear desde aquí; homológuelo a mano en Espejo › Homologación.'
+          : ' El administrador lo crea y homologa con el botón de este caso.')
+      );
+    }
     case 'TELEFONO_EQUIVOCADO': {
       const varios = numero(meta.perfilesConElNumero);
       const otros =
@@ -407,6 +437,28 @@ export function mapearExcepcion(
       hayDuenio: !!f.assignedToUserId,
       permisos: ctx.actor.permisos,
     }),
+    medicoNuevo:
+      f.kind === 'MEDICO_SIN_HOMOLOGAR' ? medicoNuevoDe(leerMeta(f.meta), activa, ctx.actor.permisos.administrar) : null,
+  };
+}
+
+/** 🩺 El médico del caso, para el botón «Crear y homologar». */
+function medicoNuevoDe(meta: Record<string, unknown>, activa: boolean, esAdmin: boolean): MedicoNuevoVista | null {
+  if (typeof meta.externalKey !== 'string' || !meta.externalKey) return null;
+  const textos = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  const texto = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const bloqueos = textos(meta.bloqueos);
+  return {
+    codigo: meta.externalKey,
+    nombre: texto(meta.nombre),
+    cargo: texto(meta.cargo),
+    cedulaFinal: texto(meta.cedulaFinal),
+    servicio: texto(meta.servicio),
+    citas: numero(meta.citas),
+    primeraIso: texto(meta.primeraIso),
+    bloqueos,
+    advertencias: textos(meta.advertencias),
+    puedeCrear: activa && esAdmin && bloqueos.length === 0,
   };
 }
 

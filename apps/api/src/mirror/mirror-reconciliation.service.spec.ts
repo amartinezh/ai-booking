@@ -772,3 +772,38 @@ describe('MirrorReconciliationService', () => {
     });
   });
 });
+
+describe('MirrorReconciliationService — médicos nuevos del hospital', () => {
+  const VENTANA_N = { from: new Date('2026-09-01T00:00:00.000Z'), to: new Date('2026-12-01T00:00:00.000Z') };
+  const armar = async (revisar: jest.Mock) => {
+    const orden: string[] = [];
+    const prisma: any = {
+      appointment: { findMany: jest.fn(async () => { orden.push('citas'); return []; }) },
+      mirrorEntityMap: { findMany: jest.fn(async () => []) },
+      scheduleSlot: { findMany: jest.fn(async () => []), update: jest.fn() },
+      medicalService: { findMany: jest.fn(async () => []) },
+      doctorProfile: { findMany: jest.fn(async () => []) },
+      syncAudit: { create: jest.fn(async () => ({})) },
+    };
+    prisma.$transaction = jest.fn((fn: any) => fn(prisma));
+    const medicos = { revisar: jest.fn(async (...a: unknown[]) => { orden.push('medicos'); return revisar(...a); }) };
+    const svc = new MirrorReconciliationService(prisma, { registrarDeriva: jest.fn(async () => undefined) } as any, medicos as any);
+    jest.spyOn((svc as any).logger, 'error').mockImplementation(() => undefined);
+    jest.spyOn((svc as any).logger, 'log').mockImplementation(() => undefined);
+    return { svc, medicos, orden };
+  };
+  const foto = [{ doctorExternalKey: 'RU68', startTimeIso: '2026-10-27T18:15:00.000Z', serviceExternalKey: 'S39141' }];
+
+  it('revisa los médicos nuevos ANTES de comparar: uno recién homologado trae sus citas en la misma vuelta', async () => {
+    const { svc, medicos, orden } = await armar(jest.fn(async () => ({ pendientes: [], agregados: [] })));
+    await svc.reconcile('org1', foto, VENTANA_N);
+    expect(medicos.revisar).toHaveBeenCalledWith('org1', foto);
+    expect(orden[0]).toBe('medicos');
+    expect(orden.slice(1).every((o) => o === 'citas')).toBe(true);
+  });
+
+  it('si falla, la reconciliación sigue igual', async () => {
+    const { svc } = await armar(jest.fn(async () => { throw new Error('caída'); }));
+    await expect(svc.reconcile('org1', foto, VENTANA_N)).resolves.toMatchObject({ organizationId: 'org1' });
+  });
+});

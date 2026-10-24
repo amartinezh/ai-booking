@@ -4,7 +4,7 @@
 >
 > **Regla obligatoria.** Todo ajuste o mejora del sistema actualiza este archivo **en el mismo commit**: lo que cambió en la pantalla o en el comportamiento, y una línea en la [bitácora](#parte-3--bitácora-de-cambios). Lo vigilan el gancho `commit-msg` del repositorio y el CI. Cómo editarlo y el formato de la Parte 1: [README.md](README.md) de esta carpeta.
 
-**Última actualización:** 2026-10-23
+**Última actualización:** 2026-10-24
 
 ## Contenido
 
@@ -1098,7 +1098,7 @@ No hay cambios por guardar: modifica un valor o un interruptor primero.
 - **Ruta:** `/dashboard/configuracion`
 - **Resumen:** El asistente virtual (nombre, tono, voz y qué puede hacer el paciente), sus canales y la información que comparte.
 - **Relacionados:** [Canales en vivo](#canales), [Encuestas (CSAT)](#encuestas), [Visión General](#vision-general), [Espejo con el HIS](#espejo)
-- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios, días sin citas, bloquear sábados, festivos, apagar agenda, horario sin citas, calendario, plazo para agendar, días adelante, fecha lejana, limitar fechas, máximo de días
+- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios, días sin citas, bloquear sábados, festivos, apagar agenda, horario sin citas, calendario, plazo para agendar, días adelante, fecha lejana, limitar fechas, máximo de días, médicos nuevos, homologar automáticamente, agregar médicos
 
 #### Para qué sirve
 
@@ -1165,6 +1165,15 @@ Tiene cuatro pestañas. «Asistente Virtual»: qué puede hacer el paciente por 
 6. Para deshacerlo, en «Bloqueos activos» pulsa «Quitar» y confirma.
 
 > 💡 Aplica solo al asistente (WhatsApp y Telegram) y cuenta la hora de la cita, no la del mensaje: un paciente que escribe un sábado sí puede agendar para el lunes. Las citas ya agendadas no cambian, y los agendadores siguen agendando esos días desde el panel y en el sistema del hospital. En el calendario, rojo es todo el día sin citas y ámbar, algunas horas.
+
+##### Agregar solos los médicos nuevos del hospital
+
+1. En «Asistente Virtual», busca «Agregar solos los médicos nuevos del hospital». Solo aparece si la clínica está conectada al sistema de un hospital.
+2. Apagado (como viene), cada médico del hospital que tenga citas de un servicio que AgenIA maneja y todavía no esté en AgenIA queda como caso en la Bandeja, con el botón «Crear y homologar».
+3. Encendido, AgenIA lo crea y homologa sola cuando cumple todas las reglas: cédula única en el hospital, cargo de médico, su servicio principal es uno que AgenIA maneja y está activo en el hospital. Deja un caso en la Bandeja para que alguien lo revise. Si no cumple alguna regla, queda en la Bandeja como siempre.
+4. Con «Los médicos agregados solos entran con WhatsApp encendido» eliges con qué entran. Apagado (recomendado), sus citas entran a AgenIA pero no le sale nada al paciente hasta que alguien lo encienda en Médicos; encendido, sus pacientes reciben recordatorios y el asistente ofrece sus cupos desde el primer día.
+
+> 💡 Se revisa una vez al día, cuando el agente del hospital manda su comparación de citas (de noche). Nada se escribe en el sistema del hospital, y cada cambio de estos interruptores queda en la auditoría del espejo.
 
 ##### Configurar la voz del asistente
 
@@ -1657,7 +1666,7 @@ Un vigilante revisa cada 2 minutos si algo se atascó entre AgenIA y el hospital
 
 - **Activas / Sin dueño / Mías / Críticas:** Las cifras de arriba. Críticas: la cita es en menos de 4 horas.
 - **Gravedad:** Baja, Media, Alta (cita en menos de 24 horas) o Crítica (menos de 4 horas).
-- **Tipos de excepción:** Cita que el hospital aún no tiene · Un cambio se rindió sin llegar al hospital · Conflicto entre AgenIA y el hospital · Error al aplicar un cambio · El hospital no tiene una cita que AgenIA da por hecha · Cita del hospital con un documento ambiguo · Un paciente avisó que no irá o pide otra fecha · El teléfono de un paciente es de otra persona · Cancelación que el hospital no aplicó · El hospital canceló una cita agendada por el asistente · El hospital cambió la hora de una cita agendada por el asistente · Revisar una cita agendada por el asistente.
+- **Tipos de excepción:** Cita que el hospital aún no tiene · Un cambio se rindió sin llegar al hospital · Conflicto entre AgenIA y el hospital · Error al aplicar un cambio · El hospital no tiene una cita que AgenIA da por hecha · Cita del hospital con un documento ambiguo · Un paciente avisó que no irá o pide otra fecha · El teléfono de un paciente es de otra persona · Cancelación que el hospital no aplicó · El hospital canceló una cita agendada por el asistente · El hospital cambió la hora de una cita agendada por el asistente · Revisar una cita agendada por el asistente · Médico del hospital con citas que aún no está en AgenIA · Médico del hospital agregado automáticamente.
 - **Estados de cierre:** Resuelta o Descartada (con nota de una persona), Se cerró sola (el problema desapareció) o Venció sin resolución (la cita pasó hace más de 7 días y nadie la cerró).
 
 #### Preguntas frecuentes
@@ -1681,6 +1690,14 @@ AgenIA canceló una cita, pero en el sistema del hospital esa hora del médico t
 ##### ¿Qué es «El hospital canceló (o cambió la hora de) una cita agendada por el asistente»?
 
 En el sistema del hospital cancelaron una cita futura que el paciente había agendado por WhatsApp o Telegram. AgenIA ya le escribió al paciente por donde agendó: «su cita… fue cancelada en el hospital» con el teléfono de la clínica o, si el hospital le dio otra cita en los últimos 10 minutos, «el hospital cambió su cita: antes… ahora…». Si el paciente no ha escrito en las últimas 24 horas, el aviso sale con una plantilla aprobada: «Cita cancelada por el hospital» o, si le dieron otra cita, «Confirmación de una cita del hospital». El caso dice si el aviso salió, cómo va (enviado, entregado, leído) o por qué no salió: falta registrar esa plantilla en Configuración, un teléfono marcado como de otra persona, o un fallo. Confirma que el paciente quedó enterado —llámalo si el aviso no salió— y pulsa «Resolver».
+
+##### ¿Qué es «Médico del hospital con citas que aún no está en AgenIA»?
+
+Un médico del hospital tiene citas de un servicio que AgenIA maneja (por ejemplo, medicina general) y no está en AgenIA, así que sus pacientes no reciben recordatorios ni pueden gestionar esas citas por chat. El caso muestra su nombre, su código en el hospital, su cargo, el final de su cédula, cuántas citas tiene y cuándo es la primera. El administrador lo crea y homologa con «Crear y homologar»: marca la casilla si quiere encender su WhatsApp de una vez. Si el caso dice que no se puede crear desde ahí (por ejemplo, su cédula la comparten varias agendas del hospital), se homologa a mano en Espejo › Homologación. El caso se cierra solo cuando el médico queda homologado o ya no tiene esas citas.
+
+##### ¿Qué es «Médico del hospital agregado automáticamente»?
+
+Con «Agregar solos los médicos nuevos del hospital» encendido en Configuración, AgenIA creó y homologó a ese médico porque cumplía todas las reglas. Revisa que sea correcto y decide su WhatsApp en Médicos; si no corresponde, deshomológalo en Espejo › Homologación.
 
 ##### ¿Qué es «Revisar una cita agendada por el asistente»?
 
@@ -1995,6 +2012,8 @@ Con espejo, «Agendar», «Cancelar» y «Cambiar fecha» (Configuración) manda
 
 Cada 2 minutos un vigilante busca citas confirmadas por AgenIA que no llegaron al hospital (más de 10 minutos en cola, o rendidas) y otros problemas, y los deja como excepciones en la Bandeja con gravedad según la cercanía de la cita (crítica a menos de 4 horas). Puede avisar al agendador por WhatsApp con la plantilla «Aviso al agendador» (sin datos del paciente), con hasta 2 recordatorios si nadie toma la excepción en 30 minutos. Las excepciones se cierran solas cuando el problema desaparece (un aviso de inasistencia o una cita para revisar, cuando la cita se cancela o cambia de hora); las de citas pasadas hace más de 7 días vencen.
 
+**Médicos nuevos del hospital** (`apps/api/src/mirror/medicos-nuevos.service.ts`, reglas en `packages/shared/src/medico-nuevo-his.ts`): antes de comparar, la reconciliación busca en la foto del agente los médicos sin homologar con citas próximas de un servicio activo. Cada uno abre `MEDICO_SIN_HOMOLOGAR` (clave `medico-sin-homologar:<código>`), con el botón «Crear y homologar» para el administrador (`POST /his-doctors/onboard`, fuera de `/mirror` para que el proxy no lo publique). Con `HospitalMirrorConfig.autoHomologateDoctors` (apagado de fábrica), los que cumplen todas las reglas los crea y homologa sola, con `autoHomologateWhatsappOn` para su WhatsApp, y deja `MEDICO_AGREGADO_AUTO`. Las reglas: sin bloqueos (cédula presente y única en el catálogo, sin otro médico de AgenIA con esa cédula ya homologado con otro código) para el botón; además sin advertencias (cargo de médico, servicio principal activo, activo en el hospital) para hacerlo sola. El alta es la de `homologar.ts`: correo de marcador, contraseña aleatoria que nadie conoce, servicio principal, `SET LOCAL agenia.sync_origin = 'MIRROR'` (el evento nace entregado y no vuelve al hospital) y `SyncAudit CONFIG DOCTOR_HOMOLOGATED`. Como va antes de la comparación, un médico agregado solo trae sus citas en esa misma vuelta; uno creado con el botón, en la siguiente.
+
 ### 5.6 Consultas en vivo al HIS
 
 - **Desde el Rastreo** («Consultar el HIS ahora»): pregunta al hospital por un paciente o un cupo y recalcula el veredicto. Se enciende por clínica (`lookupEnabled`, sin pantalla) después de medir su costo en el hospital.
@@ -2092,6 +2111,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 | Zona horaria | Base de datos (sin pantalla) | `America/Bogota` |
 | Espejo: modo de agenda | Espejo con el HIS | OFF |
 | Espejo: avisos al agendador | Bandeja › Configurar avisos | Encendidos (requieren celular y plantilla) |
+| Agregar solos los médicos nuevos del hospital / con WhatsApp ON | Configuración › Asistente Virtual (solo con espejo) | Apagados |
 | Espejo: consulta en vivo / desde el asistente | Base de datos (sin pantalla) | Apagadas |
 
 ## 12. Clínicas en producción
@@ -2149,6 +2169,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
 - **2026-10-23** — Padrón EPS: el archivo se sube tal como lo manda la EPS. El sistema encuentra solo la columna de la cédula del afiliado aunque cambie de nombre (el corte de Sura del 08-10-2026 se rechazaba entero por «falta la columna cedula» porque ahora la llama Numero_Identificacion), sin confundirla con la del cotizante, y dice qué columnas usó. Las filas corridas por un nombre o una dirección con un separador de más se reacomodan solas cuando no hay duda. Las filas que no se pueden leer ya no bloquean el archivo: quien carga puede aceptar ignorarlas e importar el resto, y quedan como RECHAZADO en el historial. Y el teléfono: antes se tomaba la primera columna de teléfono, y de Salud Total no entró ni un celular (entraban 2000000 y fijos de 7 dígitos); ahora se toma el primer celular de cualquier columna de teléfono, y el relleno que ya estaba guardado se borra al cargar el corte.
+- **2026-10-24** — Médicos nuevos del hospital: cuando un médico del hospital tiene citas de un servicio que AgenIA maneja y no está en AgenIA (pasó con la médica RU68: sus pacientes no recibían recordatorio y nadie se enteraba), queda un caso en la Bandeja con su nombre, código, cargo y citas, y el administrador lo crea y homologa con el botón «Crear y homologar», eligiendo si enciende su WhatsApp. En Configuración, apagado de fábrica, «Agregar solos los médicos nuevos del hospital»: AgenIA lo hace sola cuando cumple todas las reglas (cédula única, cargo de médico, servicio principal que AgenIA maneja, activo en el hospital) y deja un caso para revisarlo, con WhatsApp OFF salvo que se elija lo contrario. Nada se escribe en el sistema del hospital.
 - **2026-10-23** — Plazo máximo para agendar y Bandeja: cuando el plazo deja sin cupos pero hay más adelante, el asistente ya no dice «la agenda está completa»: dice hasta qué día se agenda y desde cuál escribir (y al cambiar la fecha no ofrece cancelar). El panel muestra cuántos cupos puede ofrecer hoy el asistente con el plazo, avisa si no queda ninguno y con qué plazo sí, y quién lo cambió por última vez (cada cambio queda en la auditoría). Y en la Bandeja, caso nuevo «Revisar una cita agendada por el asistente»: cuando poco después de agendar el paciente pregunta si la cita era para otro servicio o dice que no era la que necesitaba, para que una persona lo confirme con él.
 - **2026-10-23** — Asistente virtual, tras el primer día con «Agendar» encendido: una pregunta ya no cuenta como «sí» al confirmar. «¿Esto sí es para las ecografías?» agendó una cita de medicina general que la paciente no pidió; ahora el asistente aclara qué cita es y vuelve a pedir SÍ o NO. Lo mismo al cambiar la fecha, cancelar y aceptar un cupo de la lista de espera, y tras agendar ya no responde «gracias por confirmar» a una pregunta. Si el paciente responde NO al resumen o empieza de nuevo, sus nombres nuevos llevan apellidos nuevos (antes podía quedar con los nombres de un intento y los apellidos de otro, y así iban al hospital). Y quien pide un servicio que no se agenda por el asistente (odontología, ecografías…) recibe con quién comunicarse en vez de tres «no logré interpretar».
 - **2026-10-23** — Configuración › Asistente Virtual: «Plazo máximo para agendar». El administrador elige hasta cuántos días adelante, contando hoy, ofrece citas el asistente (con 3: hoy, mañana y pasado mañana), para que nadie agende para una fecha muy lejana; el panel lo muestra con las fechas reales. Aplica al agendar, al cambiar la fecha y a la lista de espera, y se revisa otra vez al confirmar. Solo el asistente: el panel y el sistema del hospital agendan para cualquier fecha y las citas ya agendadas no cambian. Nace en «Sin límite»: nada cambia hasta configurarlo.

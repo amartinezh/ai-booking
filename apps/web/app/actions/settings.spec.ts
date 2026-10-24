@@ -2,6 +2,7 @@ jest.mock('@/lib/prisma', () => ({
     prisma: {
         organizationSettings: { upsert: jest.fn(), findUnique: jest.fn() },
         syncAudit: { create: jest.fn() },
+        hospitalMirrorConfig: { findUnique: jest.fn(), update: jest.fn() },
     },
 }));
 jest.mock('@/lib/plazo-agendar/resumen', () => ({
@@ -21,6 +22,9 @@ import {
     setMyReminderMinLead,
     setMyBookingMaxDaysAhead,
     getMyPlazoAgendarResumen,
+    getMyHomologacionAutomatica,
+    setMyAutoHomologacion,
+    setMyAutoHomologacionWhatsapp,
 } from './settings';
 
 const mockGetSession = getSession as jest.Mock;
@@ -279,5 +283,58 @@ describe('settings — quién cambia el plazo y cuándo', () => {
         expect(await getMyPlazoAgendarResumen()).toEqual({ success: false, error: 'Acceso denegado' });
         mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
         expect(await getMyPlazoAgendarResumen()).toEqual({ success: true, resumen: { enElPlazo: 0, total: 0 } });
+    });
+});
+
+describe('settings — 🩺 médicos nuevos del hospital', () => {
+    beforeEach(() => jest.clearAllMocks());
+    const mirror = prisma.hospitalMirrorConfig as unknown as { findUnique: jest.Mock; update: jest.Mock };
+    const audit = prisma.syncAudit.create as jest.Mock;
+    const admin = { role: 'ORG_ADMIN', organizationId: 'org-1', email: 'admin@hsvp.gov.co' };
+
+    it('solo el ORG_ADMIN', async () => {
+        mockGetSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1' });
+        expect(await setMyAutoHomologacion(true)).toEqual({ success: false, error: 'Acceso denegado' });
+        expect(mirror.update).not.toHaveBeenCalled();
+    });
+
+    it('sin conexión al hospital no hay qué encender', async () => {
+        mockGetSession.mockResolvedValue(admin);
+        mirror.findUnique.mockResolvedValue(null);
+        expect(await setMyAutoHomologacion(true)).toMatchObject({ success: false, error: expect.stringContaining('no está conectada') });
+    });
+
+    it('enciende la homologación automática en SU clínica y lo anota con quién', async () => {
+        mockGetSession.mockResolvedValue(admin);
+        mirror.findUnique.mockResolvedValue({ autoHomologateDoctors: false, autoHomologateWhatsappOn: false });
+        audit.mockResolvedValue({});
+        expect(await setMyAutoHomologacion(true)).toEqual({ success: true });
+        expect(mirror.update).toHaveBeenCalledWith({ where: { organizationId: 'org-1' }, data: { autoHomologateDoctors: true } });
+        expect(audit.mock.calls[0][0].data).toMatchObject({ op: 'AUTO_HOMOLOGATE_CHANGE', direction: 'CONFIG' });
+        expect(audit.mock.calls[0][0].data.detail).toContain('ENCENDIDO desde Configuración por admin@hsvp.gov.co');
+    });
+
+    it('el WhatsApp de los agregados solos es otro campo; lo que no sea true apaga', async () => {
+        mockGetSession.mockResolvedValue(admin);
+        mirror.findUnique.mockResolvedValue({ autoHomologateDoctors: true, autoHomologateWhatsappOn: true });
+        audit.mockResolvedValue({});
+        await setMyAutoHomologacionWhatsapp('si' as unknown as boolean);
+        expect(mirror.update).toHaveBeenCalledWith({ where: { organizationId: 'org-1' }, data: { autoHomologateWhatsappOn: false } });
+        expect(audit.mock.calls[0][0].data.op).toBe('AUTO_HOMOLOGATE_WHATSAPP_CHANGE');
+    });
+
+    it('guardar lo mismo no deja anotación', async () => {
+        mockGetSession.mockResolvedValue(admin);
+        mirror.findUnique.mockResolvedValue({ autoHomologateDoctors: true, autoHomologateWhatsappOn: false });
+        await setMyAutoHomologacion(true);
+        expect(audit).not.toHaveBeenCalled();
+    });
+
+    it('get: lo que hay, y nada si no es administrador', async () => {
+        mockGetSession.mockResolvedValue(admin);
+        mirror.findUnique.mockResolvedValue({ enabled: true, autoHomologateDoctors: true, autoHomologateWhatsappOn: false });
+        expect(await getMyHomologacionAutomatica()).toEqual({ espejo: true, auto: true, whatsappOn: false });
+        mockGetSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1' });
+        expect(await getMyHomologacionAutomatica()).toEqual({ espejo: false, auto: false, whatsappOn: false });
     });
 });

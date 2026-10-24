@@ -671,3 +671,18 @@ export {
   validarPlazoAgendar,
 } from './src/plazo-agendar';
 export type { ResumenCuposDelPlazo } from './src/plazo-agendar';
+
+// 🩺 Médicos del hospital que AgenIA todavía no conoce (Bandeja y homologación automática).
+export {
+  cedulaNormalizada,
+  esCargoDeMedico,
+  evaluarMedicoNuevo,
+  puedeHomologarseConBoton,
+  puedeHomologarseSolo,
+} from './src/medico-nuevo-his';
+export type {
+  ContextoMedicoNuevo,
+  EvaluacionMedicoNuevo,
+  MedicoDelCatalogo,
+  ServicioDeAgenIA,
+} from './src/medico-nuevo-his';

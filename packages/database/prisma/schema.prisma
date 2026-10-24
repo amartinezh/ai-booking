@@ -2376,6 +2376,18 @@ model HospitalMirrorConfig {
   // rastreo es el interruptor de TODOS los avisos del vigilante de excepciones
   // (`SyncException`). Con él apagado la bandeja se llena igual: solo no se avisa.
   conflictAlertsEnabled     Boolean @default(true)
+
+  // 🩺 MÉDICOS NUEVOS DEL HOSPITAL (2026-10-24). Un médico con citas de un servicio
+  // que AgenIA maneja y sin homologar siempre abre un caso en la Bandeja, con un
+  // botón para crearlo y homologarlo. Con esto encendido, AgenIA lo hace sola cuando
+  // cumple TODAS las reglas (@agenia/shared medico-nuevo-his.ts: cédula única, cargo
+  // de médico, servicio principal activo, activo en el hospital) y deja un caso
+  // informativo. Apagado de fábrica. Se edita en /dashboard/configuracion.
+  autoHomologateDoctors     Boolean @default(false)
+  // Con qué entra el médico que AgenIA agrega sola: WhatsApp ON (recordatorios y
+  // citas por el asistente de inmediato) u OFF (sus citas entran a AgenIA, pero
+  // nada le sale al paciente hasta que alguien lo encienda en Médicos).
+  autoHomologateWhatsappOn  Boolean @default(false)
   // Número E.164 del agendador responsable: destino del aviso por WhatsApp
   // (plantilla `SYNC_EXCEPTION_ALERT`).
   agendadorWhatsapp         String?

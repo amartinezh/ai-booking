@@ -1,6 +1,6 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
-import { getMyOrgSettings, getMyPlazoAgendarResumen } from '@/app/actions/settings';
+import { getMyHomologacionAutomatica, getMyOrgSettings, getMyPlazoAgendarResumen } from '@/app/actions/settings';
 import { getMyKnowledgeBase } from '@/app/actions/knowledge-base';
 import { getMyAiConfig } from '@/app/actions/ai-config';
 import { getMyWhatsappConfig } from '@/app/actions/whatsapp-config';
@@ -14,6 +14,7 @@ import BookingToggle from './BookingToggle';
 import CancelToggle from './CancelToggle';
 import RescheduleToggle from './RescheduleToggle';
 import PlazoAgendarSetting from './PlazoAgendarSetting';
+import HomologacionAutomatica from './HomologacionAutomatica';
 import KnowledgeBaseEditor from '../conocimiento/KnowledgeBaseEditor';
 import AiIntegrationForm from './AiIntegrationForm';
 import WhatsappChannelForm from './WhatsappChannelForm';
@@ -62,13 +63,17 @@ export default async function ConfiguracionPage({
     // 🗓️ Lo que el plazo deja ofrecer hoy. Aislado: si falla, el resto se muestra igual.
     let plazoResumen: Extract<Awaited<ReturnType<typeof getMyPlazoAgendarResumen>>, { success: true }>['resumen'] | null =
         null;
+    // 🩺 Médicos nuevos del hospital: solo con espejo. Aislado como los demás.
+    let homologacion: Awaited<ReturnType<typeof getMyHomologacionAutomatica>> | null = null;
 
     if (activeTab === 'chatbot') {
-        const [setRes, audRes, plazoRes] = await Promise.allSettled([
+        const [setRes, audRes, plazoRes, homRes] = await Promise.allSettled([
             getMyOrgSettings(),
             getMyAudioConfig(),
             getMyPlazoAgendarResumen(),
+            getMyHomologacionAutomatica(),
         ]);
+        if (homRes.status === 'fulfilled') homologacion = homRes.value;
         if (setRes.status === 'fulfilled') settings = setRes.value;
         if (plazoRes.status === 'fulfilled' && plazoRes.value.success) plazoResumen = plazoRes.value.resumen;
         if (audRes.status === 'fulfilled') {
@@ -178,6 +183,10 @@ export default async function ConfiguracionPage({
                             />
                         )}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
+                        {homologacion?.espejo && (
+                            <HomologacionAutomatica auto={homologacion.auto} whatsappOn={homologacion.whatsappOn} />
+                        )}
+                        {homologacion?.espejo && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && <RemindersToggle initialEnabled={settings.remindersEnabled} />}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}
                         {settings && (
