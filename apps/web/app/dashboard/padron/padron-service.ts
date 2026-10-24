@@ -41,6 +41,13 @@
 //   2) runImportPadronCsv   → RE-valida (regla de oro: nunca confiar en el
 //      paso anterior) y aplica el corte: reemplazo idempotente por EPS.
 //
+// Un error de FILA (régimen ilegible, fila corrida que no se pudo
+// reacomodar) ya no obliga a editar el archivo de la EPS: si quien carga lo
+// acepta en pantalla (`acceptRowErrors`), esas filas no entran y quedan en el
+// log como RECHAZADO. Un error del ARCHIVO (no se encontró la cédula, no es
+// un CSV, supera el máximo de filas) sigue bloqueando: no hay nada que
+// importar, o importar una parte desactivaría al resto.
+//
 // La EPS del archivo se elige en la pantalla, no se lee de una columna: así
 // es imposible mezclar afiliados de dos EPS por un valor de columna mal
 // escrito, y el CSV se reduce al mínimo (cedula obligatoria; regimen y
@@ -66,7 +73,13 @@ import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { revalidatePath } from 'next/cache';
 import { Prisma } from '@agenia/database';
-import { validatePadronCsv, type PadronCsvError, type PadronCsvRow } from '@agenia/shared';
+import {
+    validatePadronCsv,
+    type PadronCsvColumns,
+    type PadronCsvError,
+    type PadronCsvReport,
+    type PadronCsvRow,
+} from '@agenia/shared';
 
 // Límites defensivos: el CSV viaja como texto en el body de la petición.
 // Medido contra los padrones reales del Hospital San Vicente de Paúl (Anserma):
@@ -103,6 +116,13 @@ export interface EpsOption {
 
 export interface PadronValidationSummary {
     ok: boolean;
+    /** El problema es del archivo entero: no hay nada que importar aunque se acepten los errores. */
+    fileError: boolean;
+    /**
+     * Hay errores, pero solo de filas sueltas y quedan afiliados válidos: se
+     * puede importar si quien carga acepta que esas filas se ignoren.
+     */
+    rowErrorsCanBeIgnored: boolean;
     totalDataRows: number;
     validCount: number;
     errorCount: number;
@@ -122,6 +142,12 @@ export interface PadronValidationSummary {
     needsDeactivationConfirmation: boolean;
     /** Líneas de "basura" antes del encabezado real que el analizador ignoró. */
     ignoredPreambleLines: number;
+    /** Qué columna del archivo se usó para la cédula, el régimen y el teléfono. */
+    columns: PadronCsvColumns;
+    /** Filas que venían corridas y se reacomodaron solas (sí se importan). */
+    repairedCount: number;
+    /** Muestra de esas filas (máx. MAX_ERRORS_RETURNED), con qué se hizo en cada una. */
+    repairs: Array<{ line: number; message: string }>;
 }
 
 export interface PadronImportResult {
@@ -129,6 +155,8 @@ export interface PadronImportResult {
     error?: string;
     /** Presente solo si `needsDeactivationConfirmation` causó el rechazo. */
     needsDeactivationConfirmation?: boolean;
+    /** Presente solo si el rechazo fue por errores de fila que nadie aceptó ignorar. */
+    needsRowErrorAcceptance?: boolean;
     importId?: string;
     created?: number;
     updated?: number;
@@ -136,6 +164,10 @@ export interface PadronImportResult {
     deactivated?: number;
     /** Filas ignoradas por cédula duplicada o inválida (no bloquearon el archivo, pero no se importaron). */
     warningsIgnored?: number;
+    /** Filas con error que quien cargó aceptó ignorar (no se importaron). */
+    errorsIgnored?: number;
+    /** Filas corridas que se reacomodaron y sí se importaron. */
+    repaired?: number;
 }
 
 /** 'ALL' = todo el padrón de la EPS; 'ACTIVE'/'INACTIVE' filtran por `isActive`. */
@@ -203,6 +235,11 @@ async function measureDeactivationImpact(
     return { activeForEps, wouldDeactivate: Math.max(0, activeForEps - stillActive) };
 }
 
+/** Hay errores, pero solo de filas sueltas, y quedan afiliados que importar. */
+function rowErrorsCanBeIgnored(report: PadronCsvReport): boolean {
+    return !report.ok && !report.fileError && report.validRows.length > 0;
+}
+
 /** Paso 1 — valida el archivo y mide el impacto contra la EPS elegida. */
 export async function runValidatePadronCsv(
     csvText: string,
@@ -232,10 +269,16 @@ export async function runValidatePadronCsv(
             report.validRows.map((row) => row.cedula),
         );
 
+        const repairs = report.validRows
+            .filter((row) => row.repair)
+            .map((row) => ({ line: row.line, message: row.repair! }));
+
         return {
             success: true,
             report: {
                 ok: report.ok,
+                fileError: report.fileError,
+                rowErrorsCanBeIgnored: rowErrorsCanBeIgnored(report),
                 totalDataRows: report.totalDataRows,
                 validCount: report.validRows.length,
                 errorCount: report.errors.length,
@@ -249,6 +292,9 @@ export async function runValidatePadronCsv(
                 needsDeactivationConfirmation:
                     activeForEps > 0 && wouldDeactivate / activeForEps > DEACTIVATION_CONFIRM_THRESHOLD,
                 ignoredPreambleLines: report.ignoredPreambleLines,
+                columns: report.columns,
+                repairedCount: repairs.length,
+                repairs: repairs.slice(0, MAX_ERRORS_RETURNED),
             },
         };
     } catch (e: unknown) {
@@ -291,6 +337,11 @@ export async function runGetPadronFullErrorReport(
                     ',',
                 ),
             );
+        }
+        for (const row of report.validRows) {
+            if (row.repair) {
+                lines.push(['REACOMODADA', String(row.line), escapeCsvCell(''), escapeCsvCell(row.repair)].join(','));
+            }
         }
 
         return { success: true, csv: lines.join('\n') };
@@ -428,7 +479,11 @@ async function findEstadoPrevio(
  * `phone`/`regime` usan COALESCE: un valor nuevo no-nulo del archivo
  * reemplaza al anterior, pero una celda vacía en ESTE corte NUNCA borra un
  * valor bueno que ya existía (p. ej. un teléfono cargado en un corte previo
- * y ausente en este). `fullName`/`email`/`dateOfBirth`/`gender`/`address`
+ * y ausente en este). Un teléfono viejo que NO es bueno sí se borra: hasta
+ * el 2026-10-23 el analizador guardaba cualquier número de 7 a 15 dígitos de
+ * la primera columna de teléfono, y de Salud Total entraron «2000000» y
+ * fijos de 7 dígitos en vez del celular. Solo sobrevive un celular o un fijo
+ * de 10 dígitos (con o sin 57), el mismo criterio del analizador. `fullName`/`email`/`dateOfBirth`/`gender`/`address`
  * quedan intactas: el formato mínimo del padrón no las toca, y solo se
  * inicializan a NULL en el INSERT de una fila nueva.
  *
@@ -464,7 +519,11 @@ async function upsertPadronChunk(
         )
         VALUES ${Prisma.join(values)}
         ON CONFLICT ("organizationId", "epsId", "cedula") DO UPDATE SET
-            "phone"     = COALESCE(EXCLUDED."phone", "EpsEnrolledPatient"."phone"),
+            "phone"     = COALESCE(
+                EXCLUDED."phone",
+                CASE WHEN "EpsEnrolledPatient"."phone" ~ '^(57)?(3[0-9]{9}|60[0-9]{8})$'
+                     THEN "EpsEnrolledPatient"."phone" END
+            ),
             "regime"    = COALESCE(EXCLUDED."regime", "EpsEnrolledPatient"."regime"),
             "isActive"  = true,
             "importId"  = EXCLUDED."importId",
@@ -500,8 +559,8 @@ async function deactivateAbsent(
 }
 
 /**
- * Filas ACEPTADAS del log del corte — solo cédula y resultado. NUNCA la fila
- * cruda: el padrón original del hospital piloto traía columnas con datos
+ * Filas ACEPTADAS del log del corte — solo cédula, resultado y, si la fila
+ * venía corrida, qué se reacomodó. NUNCA la fila cruda: el padrón original del hospital piloto traía columnas con datos
  * sensibles (oncología, salud mental, IVE, violencia) que se decidió no
  * custodiar, y ese criterio se sostiene aquí aunque el formato actual ya no
  * las traiga.
@@ -522,6 +581,7 @@ async function writeAcceptedRows(
             cedulaCruda: row.cedula,
             cedulaNormalizada: row.cedula,
             resultado,
+            errorMessage: row.repair ?? null,
         };
     });
     for (let i = 0; i < data.length; i += UPSERT_CHUNK_ROWS) {
@@ -532,8 +592,8 @@ async function writeAcceptedRows(
 /**
  * Filas que NO entraron a `EpsEnrolledPatient`, con su motivo — cédula cruda
  * (cuando el parser la alcanzó a leer) + el mensaje. Sirve tanto para
- * `RECHAZADO` (error real, bloqueaba el archivo) como para `DUPLICADO`
- * (warning: la fila se ignoró pero el archivo se importó igual).
+ * `RECHAZADO` (error de la fila, que quien cargó aceptó ignorar) como para
+ * `DUPLICADO` (warning: la fila se ignoró pero el archivo se importó igual).
  */
 async function writeSkippedRows(
     tx: Prisma.TransactionClient,
@@ -559,12 +619,17 @@ async function writeSkippedRows(
     }
 }
 
-/** Paso 2 — re-valida, mide de nuevo el impacto, y aplica el reemplazo por EPS. */
+/**
+ * Paso 2 — re-valida, mide de nuevo el impacto, y aplica el reemplazo por EPS.
+ * `acceptRowErrors`: quien carga vio los errores de fila y aceptó que esas
+ * filas se ignoren; sin eso, un archivo con errores no se importa.
+ */
 export async function runImportPadronCsv(
     csvText: string,
     epsId: string,
     fileName: string,
     confirmDeactivation: boolean,
+    acceptRowErrors: boolean,
 ): Promise<PadronImportResult> {
     const auth = await requireOrgAdmin();
     if (!auth) return { success: false, error: 'Acceso denegado' };
@@ -584,10 +649,19 @@ export async function runImportPadronCsv(
 
     try {
         const report = validatePadronCsv(csvText);
-        if (!report.ok) {
+        if (!report.ok && !rowErrorsCanBeIgnored(report)) {
             return {
                 success: false,
-                error: 'El archivo tiene errores de validación. Vuelva a ejecutar "Validar" y corríjalos antes de importar.',
+                error: 'El archivo no se puede importar: vuelva a ejecutar "Validar" para ver por qué.',
+            };
+        }
+        if (!report.ok && !acceptRowErrors) {
+            return {
+                success: false,
+                needsRowErrorAcceptance: true,
+                error:
+                    `${report.errors.length} fila(s) del archivo tienen errores. Para importar el resto, ` +
+                    'acepte que esas filas se ignoren, o corrija el archivo y vuelva a validar.',
             };
         }
 
@@ -707,6 +781,8 @@ export async function runImportPadronCsv(
             reactivated,
             deactivated,
             warningsIgnored: report.warnings.length,
+            errorsIgnored: report.errors.length,
+            repaired: report.validRows.filter((row) => row.repair).length,
         };
     } catch (e: unknown) {
         console.error('[padron] runImportPadronCsv:', e);

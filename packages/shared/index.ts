@@ -36,6 +36,7 @@ export type {
   PadronCsvRow,
   PadronCsvError,
   PadronCsvReport,
+  PadronCsvColumns,
   PadronRegime,
 } from './src/padron-csv';
 export { detectPadronEps } from './src/padron-eps-detect';

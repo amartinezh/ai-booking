@@ -27,7 +27,7 @@ const fakeRequest = (jsonBody: unknown | (() => Promise<unknown>)): NextRequest 
 describe('POST /api/padron/import', () => {
     beforeEach(() => jest.clearAllMocks());
 
-    it('delega con los cuatro campos del body, tal como llegan', async () => {
+    it('delega con los cinco campos del body, tal como llegan', async () => {
         (runImportPadronCsv as jest.Mock).mockResolvedValue({ success: true, created: 1 });
 
         await POST(
@@ -36,10 +36,11 @@ describe('POST /api/padron/import', () => {
                 epsId: 'eps-1',
                 fileName: 'padron.csv',
                 confirmDeactivation: true,
+                acceptRowErrors: true,
             }),
         );
 
-        expect(runImportPadronCsv).toHaveBeenCalledWith('cedula\n123', 'eps-1', 'padron.csv', true);
+        expect(runImportPadronCsv).toHaveBeenCalledWith('cedula\n123', 'eps-1', 'padron.csv', true, true);
     });
 
     it('confirmDeactivation solo es true si el body manda literalmente `true`', async () => {
@@ -49,7 +50,17 @@ describe('POST /api/padron/import', () => {
 
         // "true" (string) no es `true` (booleano): que alguien mande texto no
         // debe colar una confirmación de la guarda de desactivación masiva.
-        expect(runImportPadronCsv).toHaveBeenCalledWith('x', 'e', 'padron.csv', false);
+        expect(runImportPadronCsv).toHaveBeenCalledWith('x', 'e', 'padron.csv', false, false);
+    });
+
+    it('acceptRowErrors solo es true si el body manda literalmente `true`', async () => {
+        (runImportPadronCsv as jest.Mock).mockResolvedValue({ success: true });
+
+        await POST(fakeRequest({ csvText: 'x', epsId: 'e', acceptRowErrors: 'true' }));
+
+        // Igual que la guarda de desactivación: aceptar ignorar filas con
+        // error es una decisión explícita de quien carga, no un texto suelto.
+        expect(runImportPadronCsv).toHaveBeenCalledWith('x', 'e', 'padron.csv', false, false);
     });
 
     it('fileName ausente cae al nombre por defecto', async () => {
@@ -57,7 +68,7 @@ describe('POST /api/padron/import', () => {
 
         await POST(fakeRequest({ csvText: 'x', epsId: 'e' }));
 
-        expect(runImportPadronCsv).toHaveBeenCalledWith('x', 'e', 'padron.csv', false);
+        expect(runImportPadronCsv).toHaveBeenCalledWith('x', 'e', 'padron.csv', false, false);
     });
 
     it('JSON inválido responde 400 sin invocar la lógica de negocio', async () => {

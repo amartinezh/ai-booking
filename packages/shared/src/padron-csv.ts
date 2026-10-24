@@ -40,6 +40,28 @@
 // (oncología, salud mental, IVE, violencia — ~14% de las filas reales del
 // hospital piloto) NO tienen columna aquí y nunca la tendrán: no se custodia
 // lo que no se necesita.
+//
+// LECTURA RESILIENTE (2026-10-23) — el archivo se carga tal como lo manda la
+// EPS, sin editarlo a mano. Con los cortes de octubre del hospital piloto:
+//
+//   - Sura cambió su export: la cédula pasó de «NUMERO DE IDENTIFICACION» a
+//     «Numero_Identificacion», y el archivo entero se rechazaba por «falta la
+//     columna cedula». Los encabezados se leen ahora por PALABRAS (sin tildes,
+//     `_`, «de»/«número»…, y CamelCase partido), se descartan los que son de
+//     otra persona o de otra cosa (cotizante, tipo de documento, código del
+//     cliente) y el CONTENIDO decide entre candidatos.
+//   - El teléfono se tomaba de la PRIMERA columna con nombre de teléfono. En
+//     Salud Total esa es `Telefono` («2000000» o un fijo viejo de 7 dígitos)
+//     y el celular real estaba en `telefonomovil`: de 9.201 afiliados no
+//     entró ni un celular. Ahora se revisan TODAS las columnas de teléfono y
+//     se toma el primer celular; si no hay, un fijo de 10 dígitos.
+//   - Una fila con un `;` de más dentro de un nombre o una dirección corre
+//     las columnas siguientes. Si sus datos se pueden leer sin duda (la
+//     cédula en un solo lugar, el régimen en la columna vecina), se
+//     reacomoda y se anota; si no, es un error DE ESA FILA.
+//   - Los errores de fila ya no tumban el archivo: `fileError` distingue el
+//     archivo ilegible (no hay nada que importar) de las filas sueltas que
+//     quien carga puede aceptar ignorar.
 // ─────────────────────────────────────────────────────────────
 
 import { esDocumentoValido, normalizeDocumento } from './documento';
@@ -53,8 +75,16 @@ export interface PadronCsvRow {
   cedula: string;
   /** null si el archivo no la trae o la celda viene vacía (columna opcional). */
   regime: PadronRegime | null;
-  /** null si el archivo no la trae o la celda viene vacía (columna opcional). */
+  /**
+   * Celular (3XXXXXXXXX) o fijo (60XXXXXXXX) en 10 dígitos, sin el 57. null
+   * si el archivo no trae ninguno utilizable (columna opcional).
+   */
   phone: string | null;
+  /**
+   * Solo si la fila venía corrida y alguno de sus datos se leyó de una
+   * columna vecina: qué se hizo, para mostrarlo y dejarlo en el log del corte.
+   */
+  repair?: string;
 }
 
 export interface PadronCsvError {
@@ -80,9 +110,25 @@ export interface PadronCsvError {
   kind?: 'DUPLICADA' | 'INVALIDA';
 }
 
+/** Qué columna del archivo se usó para cada dato, con su nombre tal como viene en el encabezado. */
+export interface PadronCsvColumns {
+  cedula: string | null;
+  regimen: string | null;
+  /** En el orden en que se buscan: primero las del afiliado, celulares antes que fijos. */
+  telefono: string[];
+}
+
 export interface PadronCsvReport {
   /** true sólo si el archivo tiene al menos una fila y CERO errores (los warnings NO cuentan). */
   ok: boolean;
+  /**
+   * true si el problema es del archivo entero: no es un CSV de texto, está
+   * vacío, no se encontró la columna de la cédula, no trae filas o supera el
+   * máximo. No hay nada que importar. false con errores es que fallaron
+   * filas sueltas: el resto se puede importar si quien carga acepta
+   * ignorarlas.
+   */
+  fileError: boolean;
   totalDataRows: number;
   validRows: PadronCsvRow[];
   errors: PadronCsvError[];
@@ -99,31 +145,64 @@ export interface PadronCsvReport {
    * líneas en blanco, etc.). 0 en el caso normal (encabezado en la línea 1).
    */
   ignoredPreambleLines: number;
+  columns: PadronCsvColumns;
 }
 
 /** Columnas del formato oficial (encabezado de la plantilla descargable). */
 export const PADRON_CSV_HEADERS = ['cedula', 'regimen', 'telefono'] as const;
 
-type CanonicalHeader = (typeof PADRON_CSV_HEADERS)[number];
+// ── Reconocimiento de encabezados por palabras ──
+// Cada encabezado se parte en palabras sin tildes ni mayúsculas
+// («Numero_Identificacion» → «identificacion», «TipoDocumento» → «tipo
+// documento»), sin las de relleno.
+const HEADER_STOPWORDS = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'y', 'n', 'no', 'nro', 'num', 'numero']);
 
-// Aliases tolerados por columna (comparados sin tildes ni mayúsculas).
-const HEADER_ALIASES: Record<CanonicalHeader, string[]> = {
-  cedula: [
-    'cedula',
-    'documento',
-    'dni',
-    'identificacion',
-    'numero de documento',
-    'numero de identificacion',
-  ],
-  regimen: ['regimen', 'tipo de afiliacion', 'tipo afiliacion', 'tipoafiliacion'],
-  telefono: ['telefono', 'celular', 'whatsapp', 'movil', 'telefonomovil'],
-};
+const CEDULA_WORDS = new Set(['cedula', 'documento', 'identificacion', 'dni', 'cc', 'nuip', 'numide', 'doc']);
+// Palabras que acompañan al documento del propio afiliado sin cambiarle el sentido.
+const CEDULA_NEUTRAL_WORDS = new Set(['afiliado', 'usuario', 'paciente', 'beneficiario', 'identidad', 'ciudadania', 'persona']);
+// Documento de OTRA persona o de otra cosa: el del cotizante (Sura y Salud
+// Total lo traen al lado del afiliado), el tipo de documento, el código
+// interno del cliente, la fecha o el lugar de expedición…
+const CEDULA_EXCLUDED_WORDS = new Set([
+  'tipo',
+  'tipide',
+  'cotizante',
+  'cot',
+  'titular',
+  'contacto',
+  'cliente',
+  'codigo',
+  'cod',
+  'fecha',
+  'expedicion',
+  'lugar',
+  'acudiente',
+  'responsable',
+  'madre',
+  'padre',
+  'ips',
+  'eps',
+  'medico',
+]);
 
-const REQUIRED_HEADERS: CanonicalHeader[] = ['cedula'];
+const MOBILE_WORDS = new Set(['celular', 'cel', 'movil', 'whatsapp', 'telefonomovil']);
+const PHONE_WORDS = new Set(['telefono', 'telefonos', 'tel', ...MOBILE_WORDS]);
+// El teléfono de otra persona (contacto, acudiente): sirve, pero después del propio.
+const PHONE_SECONDARY_WORDS = new Set(['contacto', 'acudiente', 'responsable', 'familiar', 'emergencia']);
+const PHONE_EXCLUDED_WORDS = new Set(['tipo', 'indicativo', 'extension', 'ext']);
 
 /** Tope defensivo de filas de datos por archivo (protege memoria/tiempo de respuesta). */
 const MAX_DATA_ROWS = 20_000;
+
+/** Filas de datos que se miran para decidir, por su contenido, qué columna es cuál. */
+const CONTENT_SAMPLE_ROWS = 200;
+
+/**
+ * Desplazamientos que se prueban cuando el régimen de una fila no está en
+ * su columna: un dato partido en dos celdas corre todo una posición, rara
+ * vez dos.
+ */
+const ROW_SHIFT_SEARCH = [1, -1, 2, -2];
 
 /**
  * Líneas iniciales que se escanean buscando el encabezado real. Los padrones
@@ -230,30 +309,145 @@ export function splitCsvLine(line: string, delimiter: ',' | ';'): string[] {
   return cells.map((c) => c.trim());
 }
 
-/** Mapea el encabezado del archivo a las columnas canónicas. */
-function mapHeader(
-  cells: string[],
-): { indexOf: Partial<Record<CanonicalHeader, number>>; missing: CanonicalHeader[] } {
-  const indexOf: Partial<Record<CanonicalHeader, number>> = {};
-  cells.forEach((cell, idx) => {
-    const normalized = normalizeForMatch(cell);
-    for (const canonical of PADRON_CSV_HEADERS) {
-      if (indexOf[canonical] === undefined && HEADER_ALIASES[canonical].includes(normalized)) {
-        indexOf[canonical] = idx;
-        break;
-      }
-    }
-  });
-  const missing = REQUIRED_HEADERS.filter((h) => indexOf[h] === undefined);
-  return { indexOf, missing };
+/** Palabras de un encabezado: «Numero_Identificacion» → ['identificacion']. */
+function headerWords(cell: string): string[] {
+  return normalizeForMatch(cell.replace(/([a-z])([A-Z])/g, '$1 $2'))
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word && !HEADER_STOPWORDS.has(word));
 }
 
-function normalizeRegime(raw: string): PadronRegime | null {
-  const value = normalizeForMatch(raw);
-  if (['subsidiado', 'sub', 's'].includes(value)) return 'SUBSIDIADO';
-  if (['contributivo', 'contrib', 'c'].includes(value)) return 'CONTRIBUTIVO';
+/** 0 = no es la cédula del afiliado; 2 = solo dice eso («Documento»); 1 = lo dice con algo más. */
+function cedulaHeaderScore(words: string[]): number {
+  if (!words.some((w) => CEDULA_WORDS.has(w)) || words.some((w) => CEDULA_EXCLUDED_WORDS.has(w))) return 0;
+  return words.every((w) => CEDULA_WORDS.has(w) || CEDULA_NEUTRAL_WORDS.has(w)) ? 2 : 1;
+}
+
+function regimenHeaderScore(words: string[]): number {
+  const joined = words.join(' ');
+  if (joined === 'regimen' || joined === 'tipo afiliacion' || joined === 'tipoafiliacion') return 2;
+  return words.includes('regimen') ? 1 : 0;
+}
+
+/** null = no es columna de teléfono; menor = se mira antes. */
+function telefonoHeaderRank(words: string[]): number | null {
+  if (!words.some((w) => PHONE_WORDS.has(w)) || words.some((w) => PHONE_EXCLUDED_WORDS.has(w))) return null;
+  const secondary = words.some((w) => PHONE_SECONDARY_WORDS.has(w)) ? 2 : 0;
+  return secondary + (words.some((w) => MOBILE_WORDS.has(w)) ? 0 : 1);
+}
+
+/** SUBSIDIADO o CONTRIBUTIVO escritos completos («Régimen subsidiado» también). */
+function regimeWord(raw: string): PadronRegime | null {
+  const value = normalizeForMatch(raw).replace(/^regimen /, '');
+  if (value === 'subsidiado') return 'SUBSIDIADO';
+  if (value === 'contributivo') return 'CONTRIBUTIVO';
   return null;
 }
+
+/** Además de la palabra completa, las abreviaturas — solo en la columna del régimen de una fila derecha. */
+function normalizeRegime(raw: string): PadronRegime | null {
+  const word = regimeWord(raw);
+  if (word) return word;
+  const value = normalizeForMatch(raw);
+  if (['sub', 's'].includes(value)) return 'SUBSIDIADO';
+  if (['contrib', 'c'].includes(value)) return 'CONTRIBUTIVO';
+  return null;
+}
+
+/**
+ * Celular o fijo colombiano en 10 dígitos, sin el 57. Un número de 7
+ * dígitos ya no se puede marcar en Colombia (desde 2021 los fijos llevan
+ * 60 + indicativo) y en los padrones reales es relleno: «2000000» en el 57%
+ * de las filas de Salud Total. Un celular de un solo dígito repetido
+ * (3000000000) también.
+ */
+function normalizePadronPhone(raw: string): { phone: string; mobile: boolean } | null {
+  let digits = raw.replace(/[\s\-().]/g, '').replace(/^\+/, '');
+  if (digits.length === 12 && digits.startsWith('57')) digits = digits.slice(2);
+  if (/^3\d{9}$/.test(digits) && !/^3(\d)\1{8}$/.test(digits)) return { phone: digits, mobile: true };
+  if (/^60\d{8}$/.test(digits)) return { phone: digits, mobile: false };
+  return null;
+}
+
+/** Proporción de celdas NO vacías de la columna que cumplen `test` (0 si están todas vacías). */
+function contentRatio(sample: string[][], idx: number, test: (raw: string) => boolean): number {
+  let filled = 0;
+  let passing = 0;
+  for (const cells of sample) {
+    const raw = cells[idx] ?? '';
+    if (!raw) continue;
+    filled++;
+    if (test(raw)) passing++;
+  }
+  return filled === 0 ? 0 : passing / filled;
+}
+
+function filledCount(sample: string[][], idx: number): number {
+  return sample.reduce((n, cells) => n + (cells[idx] ? 1 : 0), 0);
+}
+
+interface ColumnIndexes {
+  cedula: number;
+  regimen: number | null;
+  telefono: number[];
+}
+
+/**
+ * Elige qué columna es cuál. El nombre propone y el contenido decide: entre
+ * dos columnas que se llaman como la cédula gana la que de verdad trae
+ * documentos, y una columna «Régimen» que no trae SUBSIDIADO/CONTRIBUTIVO no
+ * se usa (se busca otra que sí, por contenido). La cédula NUNCA se elige solo
+ * por contenido: el código interno del cliente o el documento del cotizante
+ * también parecen cédulas.
+ */
+function chooseColumns(headerCells: string[], sample: string[][]): ColumnIndexes | null {
+  const words = headerCells.map(headerWords);
+
+  const cedulaCandidates = words
+    .map((w, idx) => ({
+      idx,
+      score: cedulaHeaderScore(w),
+      ratio: contentRatio(sample, idx, (raw) => esDocumentoValido(normalizeDocumento(raw))),
+    }))
+    .filter((c) => c.score > 0)
+    .sort(
+      (a, b) =>
+        Number(b.ratio >= 0.5) - Number(a.ratio >= 0.5) || b.score - a.score || b.ratio - a.ratio || a.idx - b.idx,
+    );
+  if (cedulaCandidates.length === 0) return null;
+  const cedula = cedulaCandidates[0].idx;
+
+  const byName = words
+    .map((w, idx) => ({ idx, score: regimenHeaderScore(w), ratio: contentRatio(sample, idx, (raw) => !!normalizeRegime(raw)) }))
+    .filter((c) => c.score > 0 && c.idx !== cedula && c.ratio >= 0.5)
+    .sort((a, b) => b.score - a.score || b.ratio - a.ratio || a.idx - b.idx);
+  let regimen: number | null = byName[0]?.idx ?? null;
+  if (regimen === null) {
+    // Sin encabezado reconocible: una columna en la que casi todo es
+    // SUBSIDIADO/CONTRIBUTIVO escrito completo no puede ser otra cosa. Las
+    // abreviaturas no cuentan aquí: «C» es también «cédula» en el tipo de
+    // documento.
+    const minFilled = Math.max(1, Math.ceil(sample.length / 2));
+    const byContent = headerCells
+      .map((_, idx) => ({ idx, ratio: contentRatio(sample, idx, (raw) => !!regimeWord(raw)) }))
+      .filter((c) => c.idx !== cedula && c.ratio >= 0.9 && filledCount(sample, c.idx) >= minFilled)
+      .sort((a, b) => b.ratio - a.ratio || a.idx - b.idx);
+    regimen = byContent[0]?.idx ?? null;
+  }
+
+  const telefono = words
+    .map((w, idx) => ({ idx, rank: telefonoHeaderRank(w) }))
+    .filter((c): c is { idx: number; rank: number } => c.rank !== null && c.idx !== cedula && c.idx !== regimen)
+    .sort((a, b) => a.rank - b.rank || a.idx - b.idx)
+    .map((c) => c.idx);
+
+  return { cedula, regimen, telefono };
+}
+
+function joinWithY(items: string[]): string {
+  return items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
+}
+
+const EMPTY_COLUMNS: PadronCsvColumns = { cedula: null, regimen: null, telefono: [] };
 
 /**
  * Valida a fondo el CSV del padrón. Nunca lanza: todos los problemas se
@@ -275,6 +469,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
   if (binaryLabel) {
     return {
       ok: false,
+      fileError: true,
       totalDataRows: 0,
       validRows: [],
       errors: [
@@ -286,6 +481,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
       delimiter: ',',
       ignoredPreambleLines: 0,
       warnings: [],
+      columns: EMPTY_COLUMNS,
     };
   }
 
@@ -296,12 +492,14 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
   if (!lines.some((l) => l.trim())) {
     return {
       ok: false,
+      fileError: true,
       totalDataRows: 0,
       validRows: [],
       errors: [{ line: 1, message: 'El archivo está vacío o no tiene encabezado.' }],
       delimiter: ',',
       ignoredPreambleLines: 0,
       warnings: [],
+      columns: EMPTY_COLUMNS,
     };
   }
 
@@ -309,16 +507,13 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
   // Los padrones reales a veces traen basura antes del encabezado real
   // (título del reporte, fecha de corte, líneas en blanco de un export de
   // Excel). Se escanean las primeras HEADER_SEARCH_MAX_LINES buscando la
-  // primera que ya traiga la columna obligatoria (cedula); esa se usa como
+  // primera que ya traiga una columna con nombre de cédula; esa se usa como
   // encabezado y todo lo anterior se ignora sin penalizar el archivo. Si
-  // ninguna línea del rango calza, se cae al comportamiento de siempre
-  // (primera línea no vacía = encabezado) para dar el mensaje de columnas
-  // faltantes de siempre.
+  // ninguna calza, el mensaje cita las columnas de la primera línea no vacía.
+  let firstLineIndex = -1;
   let headerLineIndex = -1;
   let delimiter: ',' | ';' = ',';
   let headerCells: string[] = [];
-  let indexOf: Partial<Record<CanonicalHeader, number>> = {};
-  let missing: CanonicalHeader[] = REQUIRED_HEADERS;
 
   const scanLimit = Math.min(lines.length, HEADER_SEARCH_MAX_LINES);
   for (let h = 0; h < scanLimit; h++) {
@@ -327,29 +522,28 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
 
     const candidateDelimiter = detectDelimiter(candidateLine);
     const candidateCells = splitCsvLine(candidateLine, candidateDelimiter);
-    const candidateMap = mapHeader(candidateCells);
-
-    if (headerLineIndex === -1) {
-      // Primera línea no vacía: candidato por defecto si ninguna calza mejor
-      // (preserva el mensaje histórico de "faltan columnas").
-      headerLineIndex = h;
+    if (firstLineIndex === -1) {
+      firstLineIndex = h;
       delimiter = candidateDelimiter;
       headerCells = candidateCells;
-      indexOf = candidateMap.indexOf;
-      missing = candidateMap.missing;
     }
-
-    if (candidateMap.missing.length === 0) {
+    if (candidateCells.some((cell) => cedulaHeaderScore(headerWords(cell)) > 0)) {
       headerLineIndex = h;
       delimiter = candidateDelimiter;
       headerCells = candidateCells;
-      indexOf = candidateMap.indexOf;
-      missing = candidateMap.missing;
       break;
     }
   }
 
-  if (missing.length > 0) {
+  const sample: string[][] = [];
+  if (headerLineIndex !== -1) {
+    for (let i = headerLineIndex + 1; i < lines.length && sample.length < CONTENT_SAMPLE_ROWS; i++) {
+      if (lines[i].trim()) sample.push(splitCsvLine(lines[i], delimiter));
+    }
+  }
+  const cols = headerLineIndex === -1 ? null : chooseColumns(headerCells, sample);
+
+  if (!cols) {
     // Un archivo con muchos caracteres de reemplazo casi nunca es un CSV de
     // texto real (más probable: binario que no coincidió con ninguna firma
     // conocida, o guardado en una codificación completamente distinta).
@@ -359,25 +553,38 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
       replacementCharDensity(csvText) > 0.2
         ? ' El archivo contiene numerosos caracteres no reconocibles: verifique que se haya guardado como texto CSV en codificación UTF-8 y no como un formato binario u otra codificación.'
         : '';
+    const named = headerCells.filter(Boolean);
+    const columnList =
+      named.length > 0
+        ? ` Columnas del archivo: ${named.slice(0, 15).join(', ')}${named.length > 15 ? '…' : ''}.`
+        : '';
     return {
       ok: false,
+      fileError: true,
       totalDataRows: 0,
       validRows: [],
       errors: [
         {
-          line: headerLineIndex + 1,
-          message: `Faltan columnas obligatorias en el encabezado: ${missing.join(', ')}. Encabezado esperado: ${PADRON_CSV_HEADERS.join(delimiter)}${encodingHint}`,
+          line: firstLineIndex + 1,
+          message: `No se encontró la columna con la cédula del afiliado: un encabezado como «cedula», «documento» o «numero de identificacion» (no sirven el del cotizante ni el tipo de documento).${columnList} Cambie el nombre de esa columna a «cedula» y valide de nuevo.${encodingHint}`,
         },
       ],
       delimiter,
       ignoredPreambleLines: 0,
       warnings: [],
+      columns: EMPTY_COLUMNS,
     };
   }
 
+  const columns: PadronCsvColumns = {
+    cedula: headerCells[cols.cedula],
+    regimen: cols.regimen === null ? null : headerCells[cols.regimen],
+    telefono: cols.telefono.map((idx) => headerCells[idx]),
+  };
   const ignoredPreambleLines = headerLineIndex;
   const seenCedulas = new Map<string, number>(); // cédula → línea donde apareció
   let totalDataRows = 0;
+  let tooManyRows = false;
   const expectedColumnCount = headerCells.length;
 
   for (let i = headerLineIndex + 1; i < lines.length; i++) {
@@ -388,6 +595,7 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
     totalDataRows++;
 
     if (totalDataRows > MAX_DATA_ROWS) {
+      tooManyRows = true;
       errors.push({
         line,
         message: `El archivo supera el máximo de ${MAX_DATA_ROWS} filas de datos por importación. Divídalo en archivos más pequeños y vuelva a intentarlo.`,
@@ -396,25 +604,71 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
     }
 
     const cells = splitCsvLine(rawLine, delimiter);
+    const at = (idx: number, offset: number): string => cells[idx + offset] ?? '';
 
-    // ── Conteo de columnas ──
-    // Una fila con más o menos columnas que el encabezado casi siempre
-    // delata una coma/punto y coma suelto sin comillas, o una comilla sin
-    // cerrar más arriba en el archivo: seguir validando campo por campo
-    // sobre datos desalineados solo produciría errores confusos y engañosos.
-    // Se reporta un único error claro por fila y se pasa a la siguiente.
-    if (cells.length !== expectedColumnCount) {
-      errors.push({
-        line,
-        message: `La fila tiene ${cells.length} columna(s) pero el encabezado define ${expectedColumnCount}. Revise si falta o sobra una coma/punto y coma, o si hay una comilla sin cerrar en esta fila o en una anterior.`,
-      });
-      continue;
+    // ── Fila corrida ──
+    // Un `;` de más dentro de un nombre o una dirección (o uno de menos)
+    // corre todas las columnas siguientes. Con un número distinto de celdas
+    // que el encabezado, cada dato puede estar en su sitio (el corrimiento
+    // fue después) o desplazado (fue antes): se leen los dos y se acepta solo
+    // si dan UNA respuesta. Con las mismas celdas también pasa —un dato
+    // partido y otra celda vacía de menos al final, como «HIJO DE
+    // ANGIE;VERONICA» en Salud Total—, y lo delata el régimen fuera de su
+    // columna.
+    const shift = cells.length - expectedColumnCount;
+    const offsets = shift === 0 ? [0] : [0, shift];
+    const sizeNote = `La fila trae ${cells.length} columna(s) y el encabezado define ${expectedColumnCount}`;
+
+    // ── régimen (opcional) — va primero: es el que delata la fila corrida ──
+    let regime: PadronRegime | null = null;
+    let regimeOffset = 0;
+    let regimeError: string | null = null;
+    if (cols.regimen !== null) {
+      const ri = cols.regimen;
+      const raw0 = at(ri, 0);
+      // En una fila corrida solo cuenta la palabra completa: «SUB» puede ser
+      // el pedazo de un dato partido.
+      const read = (offset: number) => (shift !== 0 ? regimeWord(at(ri, offset)) : normalizeRegime(at(ri, offset)));
+      let readings = offsets
+        .map((offset) => ({ offset, regime: read(offset) }))
+        .filter((r): r is { offset: number; regime: PadronRegime } => r.regime !== null);
+      // Aunque su celda venga vacía: si el corrimiento le puso ahí una celda
+      // vacía (un teléfono sin dato), el régimen quedó al lado.
+      if (readings.length === 0) {
+        for (const offset of ROW_SHIFT_SEARCH) {
+          if (offsets.includes(offset)) continue;
+          const found = regimeWord(at(ri, offset));
+          if (found) {
+            offsets.push(offset);
+            readings = [{ offset, regime: found }];
+            break;
+          }
+        }
+      }
+      const distinct = [...new Set(readings.map((r) => r.regime))];
+      if (distinct.length === 1) {
+        regime = distinct[0];
+        regimeOffset = readings[0].offset;
+      } else if (distinct.length > 1) {
+        regimeError = `${sizeNote}, y trae SUBSIDIADO y CONTRIBUTIVO en celdas distintas: no se puede saber cuál es su régimen.`;
+      } else if (offsets.some((offset) => at(ri, offset))) {
+        regimeError =
+          shift === 0
+            ? `Régimen no reconocido "${raw0}": use SUBSIDIADO o CONTRIBUTIVO.`
+            : `${sizeNote}, y el régimen (SUBSIDIADO o CONTRIBUTIVO) no está ni en su columna ni en las vecinas.`;
+      }
     }
 
-    const cell = (h: CanonicalHeader): string =>
-      indexOf[h] !== undefined ? (cells[indexOf[h]!] ?? '') : '';
+    // ── cédula (obligatoria) ──
+    // Leída de una columna vecina, la celda tiene que ser un documento y nada
+    // más: «CR 5 N536» o un celular también tienen dígitos.
+    const ci = cols.cedula;
+    const cedulaReadings = offsets
+      .map((offset) => ({ offset, raw: at(ci, offset), cedula: normalizeDocumento(at(ci, offset)) }))
+      .filter((r) => esDocumentoValido(r.cedula) && (r.offset === 0 || /^[\d.\s-]+$/.test(r.raw)));
+    const distinctCedulas = [...new Set(cedulaReadings.map((r) => r.cedula))];
+    const rawCedula = at(ci, 0);
 
-    const rowErrors: PadronCsvError[] = [];
     // Ni cédula inválida ni duplicada bloquean el archivo entero: son
     // información, no un error que obligue a editar el CSV a mano. Los
     // padrones reales de la EPS traen basura real — filas de pie de página
@@ -424,74 +678,86 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
     // dos líneas de relleno al final del archivo. La fila se ignora igual
     // (no entra a `validRows`, no hay cédula válida con la que importarla),
     // pero el usuario decide si el resto del archivo se importa tal cual.
-    let seOmite = false;
-
-    // ── cédula (obligatoria) ──
-    const cedula = normalizeDocumento(cell('cedula'));
-    if (!esDocumentoValido(cedula)) {
-      seOmite = true;
+    if (distinctCedulas.length === 0) {
       warnings.push({
         line,
         column: 'cedula',
-        message: `Cédula inválida "${cell('cedula')}": debe tener entre 4 y 15 dígitos y no ser solo ceros; esta línea se ignora.`,
-        rawCedula: cell('cedula') || undefined,
+        message: `Cédula inválida "${rawCedula}": debe tener entre 4 y 15 dígitos y no ser solo ceros; esta línea se ignora.`,
+        rawCedula: rawCedula || undefined,
         kind: 'INVALIDA',
       });
-    } else {
-      const firstLine = seenCedulas.get(cedula);
-      if (firstLine !== undefined) {
-        seOmite = true;
-        warnings.push({
-          line,
-          column: 'cedula',
-          message: `Cédula ${cedula} duplicada en el archivo (ya aparece en la línea ${firstLine}); esta línea se ignora.`,
-          // A diferencia de los errores (donde rawCedula es el texto crudo de
-          // la celda, sin normalizar), acá SÍ es la cédula normalizada: ya
-          // pasó esDocumentoValido, y así el log de importación puede
-          // mostrarla como cédula real en vez de "sin forma válida".
-          rawCedula: cedula,
-          kind: 'DUPLICADA',
-        });
-      } else {
-        seenCedulas.set(cedula, line);
-      }
+      continue;
+    }
+    if (distinctCedulas.length > 1) {
+      errors.push({
+        line,
+        column: 'cedula',
+        message: `${sizeNote}, y la cédula puede ser "${distinctCedulas[0]}" o "${distinctCedulas[1]}": no se puede saber cuál. Revise si un dato de esa fila trae un «${delimiter}» de más o de menos.`,
+        rawCedula: rawCedula || undefined,
+      });
+      continue;
+    }
+    const cedula = distinctCedulas[0];
+    const cedulaOffset = cedulaReadings[0].offset;
+
+    if (regimeError) {
+      errors.push({ line, column: 'regimen', message: regimeError, ...(rawCedula ? { rawCedula } : {}) });
+      continue;
     }
 
-    // ── régimen (opcional) ──
-    let regime: PadronRegime | null = null;
-    const regimeRaw = cell('regimen');
-    if (regimeRaw) {
-      regime = normalizeRegime(regimeRaw);
-      if (!regime) {
-        rowErrors.push({
-          line,
-          column: 'regimen',
-          message: `Régimen no reconocido "${regimeRaw}": use SUBSIDIADO o CONTRIBUTIVO.`,
-        });
-      }
+    const firstLine = seenCedulas.get(cedula);
+    if (firstLine !== undefined) {
+      warnings.push({
+        line,
+        column: 'cedula',
+        message: `Cédula ${cedula} duplicada en el archivo (ya aparece en la línea ${firstLine}); esta línea se ignora.`,
+        // A diferencia de los errores (donde rawCedula es el texto crudo de
+        // la celda, sin normalizar), acá SÍ es la cédula normalizada: ya
+        // pasó esDocumentoValido, y así el log de importación puede
+        // mostrarla como cédula real en vez de "sin forma válida".
+        rawCedula: cedula,
+        kind: 'DUPLICADA',
+      });
+      continue;
     }
+    seenCedulas.set(cedula, line);
 
     // ── teléfono (opcional, y con mucha basura real en los padrones de EPS:
-    // "0", relleno, fijos truncados). Es dato de valor cuando viene bien,
-    // pero nunca motivo para rechazar la fila entera — la cédula ya la
-    // identifica. Si no parece un teléfono real, se descarta en silencio en
-    // vez de reportarse como error: rechazar la fila perdía también la
-    // cédula/régimen, que sí eran buenos.
-    let phone: string | null = null;
-    const phoneRaw = cell('telefono');
-    if (phoneRaw) {
-      const digits = phoneRaw.replace(/[\s\-().]/g, '').replace(/^\+/, '');
-      if (/^\d{7,15}$/.test(digits)) {
-        phone = digits;
+    // "0", "2000000", fijos viejos de 7 dígitos). Se revisan todas las
+    // columnas de teléfono en orden y gana el primer celular; si no hay, el
+    // primer fijo. Nunca es motivo para rechazar la fila — la cédula ya la
+    // identifica. En una fila corrida, si las lecturas no coinciden, queda
+    // sin teléfono (no se borra el que ya tenía: ver el COALESCE del
+    // importador).
+    const phoneAt = (offset: number): string | null => {
+      let fixed: string | null = null;
+      for (const idx of cols.telefono) {
+        const found = normalizePadronPhone(at(idx, offset));
+        if (found?.mobile) return found.phone;
+        if (found && !fixed) fixed = found.phone;
       }
-    }
+      return fixed;
+    };
+    const phoneReadings = offsets
+      .map((offset) => ({ offset, phone: phoneAt(offset) }))
+      .filter((r): r is { offset: number; phone: string } => r.phone !== null);
+    const distinctPhones = [...new Set(phoneReadings.map((r) => r.phone))];
+    const phone = distinctPhones.length === 1 ? distinctPhones[0] : null;
+    const phoneOffset = phone === null ? 0 : phoneReadings[0].offset;
 
-    if (rowErrors.length > 0) {
-      const rawCedula = cell('cedula');
-      errors.push(...rowErrors.map((e) => (rawCedula ? { ...e, rawCedula } : e)));
-    } else if (!seOmite) {
-      validRows.push({ line, cedula, regime, phone });
+    const moved = [
+      cedulaOffset !== 0 && 'la cédula',
+      regimeOffset !== 0 && 'el régimen',
+      phoneOffset !== 0 && 'el teléfono',
+    ].filter((item): item is string => !!item);
+    const row: PadronCsvRow = { line, cedula, regime, phone };
+    if (moved.length > 0) {
+      row.repair =
+        shift === 0
+          ? `La fila viene corrida (un dato partido en dos celdas): se tomó ${joinWithY(moved)} de la columna vecina.`
+          : `${sizeNote}: se tomó ${joinWithY(moved)} de donde quedó corrido.`;
     }
+    validRows.push(row);
   }
 
   if (totalDataRows === 0) {
@@ -503,11 +769,13 @@ export function validatePadronCsv(csvText: string): PadronCsvReport {
 
   return {
     ok: errors.length === 0 && totalDataRows > 0,
+    fileError: totalDataRows === 0 || tooManyRows,
     totalDataRows,
     validRows,
     errors,
     warnings,
     delimiter,
     ignoredPreambleLines,
+    columns,
   };
 }

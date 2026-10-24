@@ -742,7 +742,7 @@ La combinación EPS y régimen no se puede facturar en esta clínica. Si deberí
 - **Ruta:** `/dashboard/padron`
 - **Resumen:** El listado de afiliados de cada EPS habilitados para agendar por su EPS. Se carga por archivo CSV o Excel.
 - **Relacionados:** [Aseguradoras (EPS)](#eps), [Solicitudes de Alta](#solicitudes-alta), [Caja Negra (Auditoría)](#auditoria)
-- **Palabras clave:** afiliados, altas, listado, base de datos, cargar archivo, csv, excel, importar, corte, censo, habilitar pacientes
+- **Palabras clave:** afiliados, altas, listado, base de datos, cargar archivo, csv, excel, importar, corte, censo, habilitar pacientes, aceptar errores, ignorar filas, encabezado, columna de cédula
 
 #### Para qué sirve
 
@@ -753,14 +753,23 @@ Solo quien está en el padrón de su EPS puede agendar por esa EPS con el asiste
 ##### Cargar (subir) o actualizar el padrón de una EPS
 
 1. Si es la primera vez, descarga la «Plantilla CSV» para ver el formato.
-2. Haz clic en el recuadro y elige el archivo .csv o .xlsx (máximo 6 MB). Solo es obligatoria la columna de cédula; régimen y teléfono son opcionales. Puede tener columnas de más o filas de título: se ignoran.
+2. Haz clic en el recuadro y elige el archivo .csv o .xlsx (máximo 6 MB), tal como lo manda la EPS. El sistema encuentra solo la columna con la cédula del afiliado (no la del cotizante), la del régimen y las de teléfono; las demás columnas y las filas de título se ignoran.
 3. Elige la «EPS de este archivo». Si el archivo la menciona, se preselecciona sola: verifica que sea la correcta.
 4. Pulsa «1. Validar archivo». No se toca nada todavía: solo ves el reporte.
-5. Lee el reporte: afiliados listos, errores, advertencias y cuántos quedarían desactivados.
-6. Si hay errores, corrige el archivo (o descarga el «reporte completo») y valida de nuevo.
-7. Si todo está bien, pulsa «2. Importar corte».
+5. Lee el reporte: afiliados listos, qué columnas usó, filas reacomodadas, errores, advertencias y cuántos quedarían desactivados.
+6. Si algunas filas tienen error, corrige el archivo y valida de nuevo, o sigue sin ellas (ver «Importar aunque algunas filas tengan error»).
+7. Pulsa «2. Importar corte».
 
 > 💡 Un archivo es una EPS. Cambiar el archivo o la EPS obliga a validar otra vez. Puedes cargar el mismo archivo las veces que necesites.
+
+##### Importar aunque algunas filas tengan error
+
+1. Valida el archivo. Si solo fallaron algunas filas, el reporte sale en amarillo y dice cuántos afiliados sí se pueden importar.
+2. Revisa la lista de errores (o descarga el «reporte completo»).
+3. Marca «Acepto importar el resto e ignorar las … fila(s) con error».
+4. Pulsa «2. Importar corte». Las filas con error no entran y quedan en el Historial de cargas como RECHAZADO.
+
+> 💡 Si alguna de esas personas estaba activa en el padrón, queda inactiva hasta un corte que la traiga bien. Si el error es del archivo entero (no se encontró la columna de la cédula, no es un CSV, supera el máximo de filas), no hay nada que aceptar: hay que corregirlo.
 
 ##### Confirmar una baja masiva
 
@@ -792,8 +801,10 @@ Solo quien está en el padrón de su EPS puede agendar por esa EPS con el asiste
 
 - **Pacientes en padrón / Dados de alta (activos):** Total de registros y cuántos pueden agendar hoy.
 - **De alta / Inactivo:** Activo: puede agendar por su EPS. Inactivo: no vino en el último corte.
+- **Columnas usadas:** Qué columna del archivo tomó el sistema para la cédula, el régimen y el teléfono. Si no es la que esperabas, cámbiale el nombre en el archivo.
+- **Filas reacomodadas:** Filas que venían corridas porque un nombre o una dirección traía un separador de más o de menos. El sistema las acomodó solo y sí se importan; la nota queda en el Historial de cargas.
 - **Advertencias:** Líneas con cédula duplicada o inválida. No bloquean la importación: esas líneas se ignoran.
-- **Errores:** Problemas que impiden importar. Hay que corregir el archivo.
+- **Errores:** Filas que no se pudieron leer, por ejemplo un régimen que no es SUBSIDIADO ni CONTRIBUTIVO. Puedes aceptar ignorarlas e importar el resto. En rojo, un error del archivo entero: hay que corregirlo.
 - **(nombre en el HIS):** La persona está en el padrón pero su nombre lo tiene el sistema del hospital.
 
 #### Preguntas frecuentes
@@ -809,6 +820,14 @@ Solo aparecen las EPS activas. Créala o actívala primero en Aseguradoras (EPS)
 ##### ¿Mi archivo de Excel sirve tal cual?
 
 Sí, si es .xlsx. Si está en otro formato, ábrelo y usa Archivo › Guardar como › CSV UTF-8 o Excel (.xlsx). No puede estar protegido con contraseña.
+
+##### ¿Tengo que arreglar el archivo que manda la EPS?
+
+No. Súbelo como llega: el sistema reconoce los encabezados aunque cambien de nombre entre un corte y otro (por ejemplo, Numero_Identificacion o Documento) y no confunde la cédula del afiliado con la del cotizante. Solo si sale «No se encontró la columna con la cédula del afiliado» hay que cambiarle el nombre a esa columna.
+
+##### ¿Qué teléfono se guarda?
+
+El primer celular que traiga la fila, buscando en todas las columnas de teléfono: primero las del afiliado y después las de su contacto. Si no hay celular, un fijo de 10 dígitos. Los números de 7 dígitos y el relleno como 2000000 no se guardan, y si una persona ya tenía uno así, se borra al cargar el corte.
 
 #### Si algo no sale bien
 
@@ -826,7 +845,11 @@ Quita columnas que no se usan (solo hace falta la cédula) o divide el archivo.
 
 ##### El botón «2. Importar corte» no se activa.
 
-Primero valida sin errores. Si hay aviso de baja masiva, marca la confirmación.
+Primero valida el archivo. Si hay filas con error, marca «Acepto importar el resto e ignorar…». Si hay aviso de baja masiva, marca la confirmación. Si el reporte sale en rojo, el archivo no se puede importar: corrige lo que dice.
+
+##### Sale «No se encontró la columna con la cédula del afiliado».
+
+El sistema no reconoció ningún encabezado como el documento del afiliado. El mensaje lista las columnas del archivo: cámbiale el nombre a la que tiene el documento por «cedula» y valida de nuevo.
 
 ## Categoría: Indicadores {#indicadores}
 
@@ -2125,6 +2148,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-23** — Padrón EPS: el archivo se sube tal como lo manda la EPS. El sistema encuentra solo la columna de la cédula del afiliado aunque cambie de nombre (el corte de Sura del 08-10-2026 se rechazaba entero por «falta la columna cedula» porque ahora la llama Numero_Identificacion), sin confundirla con la del cotizante, y dice qué columnas usó. Las filas corridas por un nombre o una dirección con un separador de más se reacomodan solas cuando no hay duda. Las filas que no se pueden leer ya no bloquean el archivo: quien carga puede aceptar ignorarlas e importar el resto, y quedan como RECHAZADO en el historial. Y el teléfono: antes se tomaba la primera columna de teléfono, y de Salud Total no entró ni un celular (entraban 2000000 y fijos de 7 dígitos); ahora se toma el primer celular de cualquier columna de teléfono, y el relleno que ya estaba guardado se borra al cargar el corte.
 - **2026-10-23** — Plazo máximo para agendar y Bandeja: cuando el plazo deja sin cupos pero hay más adelante, el asistente ya no dice «la agenda está completa»: dice hasta qué día se agenda y desde cuál escribir (y al cambiar la fecha no ofrece cancelar). El panel muestra cuántos cupos puede ofrecer hoy el asistente con el plazo, avisa si no queda ninguno y con qué plazo sí, y quién lo cambió por última vez (cada cambio queda en la auditoría). Y en la Bandeja, caso nuevo «Revisar una cita agendada por el asistente»: cuando poco después de agendar el paciente pregunta si la cita era para otro servicio o dice que no era la que necesitaba, para que una persona lo confirme con él.
 - **2026-10-23** — Asistente virtual, tras el primer día con «Agendar» encendido: una pregunta ya no cuenta como «sí» al confirmar. «¿Esto sí es para las ecografías?» agendó una cita de medicina general que la paciente no pidió; ahora el asistente aclara qué cita es y vuelve a pedir SÍ o NO. Lo mismo al cambiar la fecha, cancelar y aceptar un cupo de la lista de espera, y tras agendar ya no responde «gracias por confirmar» a una pregunta. Si el paciente responde NO al resumen o empieza de nuevo, sus nombres nuevos llevan apellidos nuevos (antes podía quedar con los nombres de un intento y los apellidos de otro, y así iban al hospital). Y quien pide un servicio que no se agenda por el asistente (odontología, ecografías…) recibe con quién comunicarse en vez de tres «no logré interpretar».
 - **2026-10-23** — Configuración › Asistente Virtual: «Plazo máximo para agendar». El administrador elige hasta cuántos días adelante, contando hoy, ofrece citas el asistente (con 3: hoy, mañana y pasado mañana), para que nadie agende para una fecha muy lejana; el panel lo muestra con las fechas reales. Aplica al agendar, al cambiar la fecha y a la lista de espera, y se revisa otra vez al confirmar. Solo el asistente: el panel y el sistema del hospital agendan para cualquier fecha y las citas ya agendadas no cambian. Nace en «Sin límite»: nada cambia hasta configurarlo.

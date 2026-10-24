@@ -146,7 +146,7 @@ export default async function PadronHistorialPage({
                                             row.resultado === 'DUPLICADO' ||
                                             row.resultado === 'INVALIDA'
                                                 ? `${row.errorColumn ? `${row.errorColumn}: ` : ''}${row.errorMessage ?? ''}`
-                                                : '—'}
+                                                : (row.errorMessage ?? '—')}
                                         </TableCell>
                                     </TableRow>
                                 ))}

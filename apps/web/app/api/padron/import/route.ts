@@ -13,17 +13,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         );
     }
 
-    const { csvText, epsId, fileName, confirmDeactivation } = (body ?? {}) as {
+    const { csvText, epsId, fileName, confirmDeactivation, acceptRowErrors } = (body ?? {}) as {
         csvText?: unknown;
         epsId?: unknown;
         fileName?: unknown;
         confirmDeactivation?: unknown;
+        acceptRowErrors?: unknown;
     };
     const result = await runImportPadronCsv(
         typeof csvText === 'string' ? csvText : '',
         typeof epsId === 'string' ? epsId : '',
         typeof fileName === 'string' ? fileName : 'padron.csv',
         confirmDeactivation === true,
+        acceptRowErrors === true,
     );
     return NextResponse.json(result);
 }

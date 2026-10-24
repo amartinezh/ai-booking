@@ -14,7 +14,7 @@ describe('validatePadronCsv', () => {
     expect(report.validRows[0]).toMatchObject({
       cedula: '1088123456', // sin puntos
       regime: 'SUBSIDIADO',
-      phone: '573001234567',
+      phone: '3001234567', // 10 dígitos, sin el 57
     });
   });
 
@@ -63,18 +63,22 @@ describe('validatePadronCsv', () => {
     expect(report.validRows[0].cedula).toBe('98765432');
   });
 
-  it('rechaza el archivo sin la columna obligatoria (cedula)', () => {
+  it('rechaza el archivo sin la columna obligatoria (cedula) y cita las columnas que sí trae', () => {
     const report = validatePadronCsv('regimen,telefono\nSUBSIDIADO,123');
 
     expect(report.ok).toBe(false);
+    expect(report.fileError).toBe(true);
     expect(report.errors[0].message).toContain('cedula');
+    expect(report.errors[0].message).toContain('Columnas del archivo: regimen, telefono');
   });
 
   it('rechaza archivo vacío y archivo con solo encabezado', () => {
     expect(validatePadronCsv('').ok).toBe(false);
+    expect(validatePadronCsv('').fileError).toBe(true);
 
     const soloHeader = validatePadronCsv(HEADER);
     expect(soloHeader.ok).toBe(false);
+    expect(soloHeader.fileError).toBe(true);
     expect(soloHeader.errors[0].message).toContain('solo encabezado');
   });
 
@@ -137,11 +141,14 @@ describe('validatePadronCsv', () => {
   });
 
   it('valida régimen cuando viene con datos corruptos (telefono corrupto se tolera aparte)', () => {
-    const csv = [HEADER, '55556666,RARO,12'].join('\n');
+    const csv = [HEADER, '11112222,SUBSIDIADO,', '55556666,RARO,12'].join('\n');
 
     const report = validatePadronCsv(csv);
 
     expect(report.ok).toBe(false);
+    // Es un error DE ESA FILA: el resto del archivo se puede importar si
+    // quien carga acepta ignorarla.
+    expect(report.fileError).toBe(false);
     const columns = report.errors.map((e) => e.column);
     expect(columns).toEqual(['regimen']);
   });
@@ -174,32 +181,85 @@ describe('validatePadronCsv', () => {
     expect(report.errors[0].message).toContain('PDF');
   });
 
-  it('reporta con detalle una fila con más columnas de las que define el encabezado (coma suelta)', () => {
+  it('una fila corrida que no se puede reacomodar es un error de esa fila, con el conteo de columnas', () => {
     const csv = [
       HEADER,
-      // Un valor con coma sin comillas corre todas las columnas siguientes.
+      // Un valor con coma sin comillas corre todas las columnas siguientes, y
+      // en una fila corrida «SUB» no cuenta como régimen: puede ser un pedazo.
       '11223344,SUB,SID,IADO',
+      '55667788,SUBSIDIADO,',
     ].join('\n');
 
     const report = validatePadronCsv(csv);
 
     expect(report.ok).toBe(false);
+    expect(report.fileError).toBe(false);
     expect(report.errors).toHaveLength(1);
-    expect(report.errors[0].line).toBe(2);
+    expect(report.errors[0]).toMatchObject({ line: 2, column: 'regimen', rawCedula: '11223344' });
     expect(report.errors[0].message).toContain('4 columna(s)');
-    expect(report.errors[0].message).toContain('3');
-    // No debe intentar validar campo por campo sobre datos desalineados.
-    expect(report.errors[0].column).toBeUndefined();
+    expect(report.errors[0].message).toContain('define 3');
+    expect(report.validRows.map((r) => r.cedula)).toEqual(['55667788']);
   });
 
-  it('reporta con detalle una fila con menos columnas de las que define el encabezado', () => {
+  it('una fila con celdas de menos al final (Excel no escribe las vacías) se lee normal', () => {
     const csv = [HEADER, '11223344,SUBSIDIADO'].join('\n');
 
     const report = validatePadronCsv(csv);
 
+    expect(report.ok).toBe(true);
+    expect(report.validRows[0]).toMatchObject({ cedula: '11223344', regime: 'SUBSIDIADO', phone: null });
+    expect(report.validRows[0].repair).toBeUndefined();
+  });
+
+  it('reacomoda una fila con una celda de más ANTES de la cédula y lo anota', () => {
+    const csv = [
+      'tipo;cedula;regimen;celular',
+      'CC;87654321;CONTRIBUTIVO;3007654321',
+      'CC;1;12345678;SUBSIDIADO;3001234567',
+    ].join('\n');
+
+    const report = validatePadronCsv(csv);
+
+    expect(report.ok).toBe(true);
+    expect(report.validRows[1]).toMatchObject({ cedula: '12345678', regime: 'SUBSIDIADO', phone: '3001234567' });
+    expect(report.validRows[1].repair).toContain('5 columna(s)');
+    expect(report.validRows[1].repair).toContain('la cédula, el régimen y el teléfono');
+    expect(report.validRows[0].repair).toBeUndefined();
+  });
+
+  it('reacomoda la fila corrida que trae las mismas columnas (Salud Total, línea 8788 del corte del 19-10-2026)', () => {
+    // «HIJO DE ANGIE;VERONICA;CAÑAS;ARENAS»: el nombre trae una celda de más
+    // y a la fila le falta la última (vacía), así que el conteo cuadra pero
+    // en la columna del régimen cae el celular.
+    const csv = [
+      'Documento;Nombre;Apellido1;Apellido2;telefonomovil;Regimen;Ciudad;Email',
+      '10000702;FEDERMAN;MARULANDA;OSSA;3206961849;SUBSIDIADO;Anserma;',
+      '26098810324418;HIJO DE ANGIE;VERONICA;CAÑAS;ARENAS;3137722068;SUBSIDIADO;Aguadas',
+    ].join('\n');
+
+    const report = validatePadronCsv(csv);
+
+    expect(report.ok).toBe(true);
+    expect(report.validRows[1]).toMatchObject({
+      cedula: '26098810324418',
+      regime: 'SUBSIDIADO',
+      phone: '3137722068',
+    });
+    expect(report.validRows[1].repair).toContain('el régimen y el teléfono');
+  });
+
+  it('no adivina la cédula de una fila corrida si dos celdas podrían serlo: error de esa fila', () => {
+    const csv = ['codigo_interno;cedula;regimen', '54;87654321;CONTRIBUTIVO', '55;443322;12345678;SUBSIDIADO'].join(
+      '\n',
+    );
+
+    const report = validatePadronCsv(csv);
+
     expect(report.ok).toBe(false);
-    expect(report.errors[0].message).toContain('2 columna(s)');
-    expect(report.errors[0].message).toContain('3');
+    expect(report.fileError).toBe(false);
+    expect(report.validRows.map((r) => r.cedula)).toEqual(['87654321']);
+    expect(report.errors[0].column).toBe('cedula');
+    expect(report.errors[0].message).toContain('"443322" o "12345678"');
   });
 
   it('rechaza un archivo que supera el máximo de filas permitidas', () => {
@@ -209,11 +269,13 @@ describe('validatePadronCsv', () => {
     const report = validatePadronCsv(csv);
 
     expect(report.ok).toBe(false);
+    // Bloquea todo: importar solo las primeras 20.000 desactivaría al resto.
+    expect(report.fileError).toBe(true);
     expect(report.errors.some((e) => e.message.includes('20000 filas'))).toBe(true);
   });
 
   it('adjunta la cédula cruda a los errores de una fila, para poder trazarla sin guardar toda la fila', () => {
-    const csv = [HEADER, '55556666,RARO,12'].join('\n'); // regimen inválido (telefono "12" se tolera)
+    const csv = [HEADER, '11112222,SUBSIDIADO,', '55556666,RARO,12'].join('\n'); // regimen inválido (telefono "12" se tolera)
     const report = validatePadronCsv(csv);
 
     expect(report.errors.every((e) => e.rawCedula === '55556666')).toBe(true);
@@ -259,7 +321,7 @@ describe('validatePadronCsv', () => {
     expect(report.validRows[0]).toMatchObject({
       cedula: '2455707906',
       regime: null, // no hay columna "regimen": queda null, no es error
-      phone: '573442461083',
+      phone: '3442461083',
     });
   });
 
@@ -273,5 +335,73 @@ describe('validatePadronCsv', () => {
 
     expect(report.ok).toBe(true);
     expect(report.validRows[0].cedula).toBe('0012345');
+  });
+
+  describe('encuentra las columnas solo, sin editar el archivo de la EPS', () => {
+    it('Sura (corte del 08-10-2026): la cédula es «Numero_Identificacion», no el documento del cotizante ni el código del cliente', () => {
+      const csv = [
+        'Cliente_Id;TIPIDE_COTIZANTE;NUMIDE_COTIZANTE;Codigo_Tipo_Identificacion_Op;Numero_Identificacion;Primer_Nombre;TELEFONO;CELULAR;Numero_Celular_Contacto;REGIMEN',
+        '27871994;C;4346600;C;24388463;DORA;3166783;3122275379;;CONTRIBUTIVO',
+        '19409846;C;24392363;C;24392363;MARIA;;;3001112233;SUBSIDIADO',
+      ].join('\n');
+
+      const report = validatePadronCsv(csv);
+
+      expect(report.ok).toBe(true);
+      expect(report.columns).toEqual({
+        cedula: 'Numero_Identificacion',
+        regimen: 'REGIMEN',
+        telefono: ['CELULAR', 'TELEFONO', 'Numero_Celular_Contacto'],
+      });
+      expect(report.validRows[0]).toMatchObject({ cedula: '24388463', regime: 'CONTRIBUTIVO', phone: '3122275379' });
+      // Sin celular propio, sirve el del contacto.
+      expect(report.validRows[1]).toMatchObject({ cedula: '24392363', phone: '3001112233' });
+    });
+
+    it('Salud Total: el celular está en «telefonomovil», no en «Telefono» (relleno «2000000» o fijo de 7 dígitos)', () => {
+      const csv = [
+        'nit;TipoDocumento;Documento;DOC_Cotizante;Telefono;telefonomovil;Regimen;',
+        '800191101;CEDULA DE CIUDADANIA   ;10000702;10000702;2000000;3206961849;SUBSIDIADO;',
+        '800191101;CEDULA DE CIUDADANIA   ;10002511;10002511;3145666;;SUBSIDIADO;',
+        '800191101;CEDULA DE CIUDADANIA   ;10004619;10004619;6068532500;;CONTRIBUTIVO;',
+      ].join('\n');
+
+      const report = validatePadronCsv(csv);
+
+      expect(report.ok).toBe(true);
+      expect(report.columns.cedula).toBe('Documento');
+      expect(report.columns.telefono).toEqual(['telefonomovil', 'Telefono']);
+      expect(report.validRows.map((r) => r.phone)).toEqual(['3206961849', null, '6068532500']);
+    });
+
+    it('entre dos columnas con nombre de cédula, decide el contenido', () => {
+      const csv = ['documento;identificacion', 'CEDULA;12345678', 'CEDULA;87654321'].join('\n');
+
+      const report = validatePadronCsv(csv);
+
+      expect(report.columns.cedula).toBe('identificacion');
+      expect(report.validRows.map((r) => r.cedula)).toEqual(['12345678', '87654321']);
+    });
+
+    it('sin encabezado de régimen, lo encuentra por contenido — pero «C» de cédula no cuenta como CONTRIBUTIVO', () => {
+      const csv = ['cedula;tipo_doc;Plan de beneficios', '12345678;C;Régimen Subsidiado', '87654321;C;CONTRIBUTIVO'].join(
+        '\n',
+      );
+
+      const report = validatePadronCsv(csv);
+
+      expect(report.columns.regimen).toBe('Plan de beneficios');
+      expect(report.validRows.map((r) => r.regime)).toEqual(['SUBSIDIADO', 'CONTRIBUTIVO']);
+    });
+
+    it('una columna «Régimen» sin SUBSIDIADO/CONTRIBUTIVO no se usa: no tumba las filas', () => {
+      const csv = ['cedula;regimen', '12345678;1', '87654321;2'].join('\n');
+
+      const report = validatePadronCsv(csv);
+
+      expect(report.ok).toBe(true);
+      expect(report.columns.regimen).toBeNull();
+      expect(report.validRows.map((r) => r.regime)).toEqual([null, null]);
+    });
   });
 });

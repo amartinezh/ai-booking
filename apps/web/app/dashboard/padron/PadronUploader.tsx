@@ -64,7 +64,8 @@ async function postPadronJson<T>(path: string, body: unknown): Promise<T> {
 // pantalla (no se lee de una columna del archivo — un archivo = una EPS).
 //   1) VALIDAR  → reporte detallado (sin tocar la base de datos), incluido
 //      cuánta gente de esa EPS quedaría desactivada si se aplica tal cual.
-//   2) IMPORTAR → solo se habilita si la validación fue exitosa; cualquier
+//   2) IMPORTAR → se habilita si la validación fue exitosa, o si solo
+//      fallaron filas sueltas y la persona acepta ignorarlas; cualquier
 //      cambio de archivo o de EPS invalida el reporte y obliga a validar de
 //      nuevo. Si la baja supera el 10% del padrón activo de la EPS, pide una
 //      confirmación explícita antes de aplicar el corte.
@@ -83,6 +84,7 @@ export default function PadronUploader() {
     const [epsDetection, setEpsDetection] = useState<PadronEpsDetection | null>(null);
     const [report, setReport] = useState<PadronValidationSummary | null>(null);
     const [confirmDeactivation, setConfirmDeactivation] = useState(false);
+    const [acceptRowErrors, setAcceptRowErrors] = useState(false);
     const [importResult, setImportResult] = useState<PadronImportResult | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [isValidating, startValidating] = useTransition();
@@ -134,8 +136,11 @@ export default function PadronUploader() {
 
     const busy = isValidating || isImporting || isReadingFile;
     const canValidate = !!csvText && !!selectedEpsId && !busy;
+    const importable = !!report && (report.ok || report.rowErrorsCanBeIgnored);
     const canImport =
-        !!report?.ok &&
+        !!report &&
+        importable &&
+        (report.ok || acceptRowErrors) &&
         !!csvText &&
         !busy &&
         !importResult &&
@@ -145,6 +150,7 @@ export default function PadronUploader() {
         setReport(null);
         setImportResult(null);
         setConfirmDeactivation(false);
+        setAcceptRowErrors(false);
         setError(null);
     }
 
@@ -304,7 +310,7 @@ export default function PadronUploader() {
     }
 
     function handleImport() {
-        if (!csvText || !report?.ok || !selectedEpsId) return;
+        if (!csvText || !importable || !selectedEpsId) return;
         setError(null);
         startImporting(async () => {
             startSimulatedProgress('Importando corte…');
@@ -314,6 +320,7 @@ export default function PadronUploader() {
                     epsId: selectedEpsId,
                     fileName: fileName ?? 'padron.csv',
                     confirmDeactivation,
+                    acceptRowErrors,
                 });
                 if (result.success) {
                     setImportResult(result);
@@ -324,6 +331,9 @@ export default function PadronUploader() {
                     setError(result.error ?? null);
                     setConfirmDeactivation(false);
                     setReport((prev) => (prev ? { ...prev, needsDeactivationConfirmation: true } : prev));
+                } else if (result.needsRowErrorAcceptance) {
+                    setError(result.error ?? null);
+                    setAcceptRowErrors(false);
                 } else {
                     setError(result.error ?? 'Error al importar el padrón');
                 }
@@ -354,10 +364,10 @@ export default function PadronUploader() {
                         Importar corte del padrón desde CSV o Excel
                     </h2>
                     <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-                        El analizador identifica solo, entre las columnas que traiga el archivo, la que use para{' '}
-                        <strong>cedula</strong> (obligatoria) y, si vienen, <strong>regimen</strong> y{' '}
-                        <strong>telefono</strong>. Puede tener más columnas o filas de título antes del encabezado:
-                        se ignoran. La EPS se elige aquí abajo, no en el archivo.
+                        Suba el archivo tal como lo manda la EPS: el analizador identifica solo, entre sus
+                        columnas, la <strong>cédula</strong> del afiliado (obligatoria) y, si vienen, el{' '}
+                        <strong>régimen</strong> y el <strong>celular</strong>. Las demás columnas y las filas de
+                        título se ignoran. La EPS se elige aquí abajo, no en el archivo.
                     </p>
                     <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
                         Cada archivo reemplaza por completo el padrón activo de la EPS elegida: quien no venga en
@@ -485,7 +495,13 @@ export default function PadronUploader() {
                     type="button"
                     onClick={handleImport}
                     disabled={!canImport}
-                    title={!report?.ok ? 'Primero valide el archivo sin errores' : undefined}
+                    title={
+                        !report
+                            ? 'Primero valide el archivo'
+                            : report.rowErrorsCanBeIgnored && !acceptRowErrors
+                              ? 'Acepte ignorar las filas con error, o corrija el archivo'
+                              : undefined
+                    }
                     className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -518,6 +534,18 @@ export default function PadronUploader() {
                                 duplicada o inválida (vea el detalle en el log de esta carga).
                             </p>
                         )}
+                        {!!importResult.errorsIgnored && (
+                            <p className="text-xs opacity-80">
+                                <strong>{importResult.errorsIgnored}</strong> fila(s) con error se ignoraron, como
+                                aceptó: quedan en el log de esta carga como RECHAZADO.
+                            </p>
+                        )}
+                        {!!importResult.repaired && (
+                            <p className="text-xs opacity-80">
+                                <strong>{importResult.repaired}</strong> fila(s) venían corridas y se importaron
+                                reacomodadas.
+                            </p>
+                        )}
                         {importResult.importId && (
                             <Link
                                 href={`/dashboard/padron/historial/${importResult.importId}`}
@@ -536,7 +564,9 @@ export default function PadronUploader() {
                     className={`rounded-xl px-4 py-4 text-sm space-y-3 ${
                         report.ok
                             ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-300'
-                            : 'bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300'
+                            : report.rowErrorsCanBeIgnored
+                              ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300'
+                              : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
                     }`}
                 >
                     <p className="font-semibold flex items-center gap-2">
@@ -548,15 +578,41 @@ export default function PadronUploader() {
                                     ? ` (${report.warningCount} línea(s) con advertencia se van a ignorar, vea abajo).`
                                     : '.'}
                             </>
+                        ) : report.rowErrorsCanBeIgnored ? (
+                            <>
+                                <AlertTriangle className="h-4 w-4 shrink-0" /> {report.errorCount} fila(s) con error de{' '}
+                                {report.totalDataRows}; los otros {report.validCount} afiliado(s) se pueden importar
+                                para {report.epsName}.
+                            </>
+                        ) : report.fileError ? (
+                            <>
+                                <XCircle className="h-4 w-4 shrink-0" /> No se puede importar este archivo:
+                            </>
                         ) : (
                             <>
-                                <XCircle className="h-4 w-4" /> El archivo tiene {report.errorCount} error(es) en{' '}
-                                {report.totalDataRows} fila(s). Corríjalo y vuelva a validar.
+                                <XCircle className="h-4 w-4 shrink-0" /> Ninguna fila del archivo se pudo leer.
+                                Corríjalo y vuelva a validar.
                             </>
                         )}
                     </p>
 
-                    {report.ok && (
+                    {!report.fileError && report.columns.cedula && (
+                        <p className="flex items-start gap-1.5 text-xs opacity-80">
+                            <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                            <span>
+                                Columnas usadas: cédula «{report.columns.cedula}» · régimen{' '}
+                                {report.columns.regimen ? `«${report.columns.regimen}»` : 'no viene en el archivo'} ·
+                                teléfono{' '}
+                                {report.columns.telefono.length > 0
+                                    ? report.columns.telefono.map((c) => `«${c}»`).join(', ') +
+                                      ' (el primer celular que traiga cada fila)'
+                                    : 'no viene en el archivo'}
+                                .
+                            </span>
+                        </p>
+                    )}
+
+                    {importable && (
                         <p className="text-xs opacity-80">
                             {report.activeForEps} afiliado(s) de {report.epsName} están activos hoy; este corte
                             desactivaría {report.wouldDeactivate} por no venir en el archivo.
@@ -571,7 +627,25 @@ export default function PadronUploader() {
                         </p>
                     )}
 
-                    {report.ok && report.needsDeactivationConfirmation && (
+                    {report.rowErrorsCanBeIgnored && (
+                        <div className="rounded-lg bg-white/70 dark:bg-zinc-900/40 p-3 space-y-2">
+                            <p className="text-xs">
+                                Esas filas no se importan. Si alguna de esas personas estaba activa en el padrón de{' '}
+                                {report.epsName}, queda inactiva hasta un corte que la traiga bien. Puede corregir el
+                                archivo y volver a validar, o seguir sin ellas.
+                            </p>
+                            <label className="flex items-center gap-2 text-xs font-medium">
+                                <input
+                                    type="checkbox"
+                                    checked={acceptRowErrors}
+                                    onChange={(e) => setAcceptRowErrors(e.target.checked)}
+                                />
+                                Acepto importar el resto e ignorar las {report.errorCount} fila(s) con error.
+                            </label>
+                        </div>
+                    )}
+
+                    {importable && report.needsDeactivationConfirmation && (
                         <div className="rounded-lg bg-white/70 dark:bg-zinc-900/40 p-3 space-y-2">
                             <p className="flex items-start gap-2 font-medium">
                                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
@@ -629,7 +703,29 @@ export default function PadronUploader() {
                         </div>
                     )}
 
-                    {(report.errorCount > 0 || report.warningCount > 0) && (
+                    {report.repairedCount > 0 && (
+                        <div className="rounded-lg bg-white/70 dark:bg-zinc-900/40 p-3 space-y-2">
+                            <p className="flex items-start gap-2 text-xs font-medium">
+                                <Sparkles className="h-4 w-4 mt-0.5 shrink-0" />
+                                {report.repairedCount} fila(s) venían corridas (un dato con un separador de más o de
+                                menos) y se reacomodaron solas: sí se importan.
+                            </p>
+                            <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg bg-white/60 dark:bg-zinc-900/40 p-3 text-xs">
+                                {report.repairs.map((rep) => (
+                                    <li key={rep.line}>
+                                        <strong>Línea {rep.line}</strong>: {rep.message}
+                                    </li>
+                                ))}
+                                {report.repairedCount > report.repairs.length && (
+                                    <li className="italic">
+                                        … y {report.repairedCount - report.repairs.length} más.
+                                    </li>
+                                )}
+                            </ul>
+                        </div>
+                    )}
+
+                    {(report.errorCount > 0 || report.warningCount > 0 || report.repairedCount > 0) && (
                         <button
                             type="button"
                             onClick={handleDownloadErrorReport}
@@ -642,7 +738,8 @@ export default function PadronUploader() {
                                 <Download className="h-3.5 w-3.5" />
                             )}
                             Descargar reporte completo ({report.errorCount} error(es), {report.warningCount}{' '}
-                            advertencia(s))
+                            advertencia(s)
+                            {report.repairedCount > 0 ? `, ${report.repairedCount} reacomodada(s)` : ''})
                         </button>
                     )}
                 </div>

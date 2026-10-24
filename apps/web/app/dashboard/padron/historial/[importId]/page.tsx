@@ -174,12 +174,16 @@ export default async function PadronImportDetailPage({
                                     row.resultado === 'INVALIDA'
                                         ? `${row.errorColumn ? `${row.errorColumn}: ` : ''}${row.errorMessage ?? ''}`
                                         : row.cedulaNormalizada && (
-                                              <Link
-                                                  href={`/dashboard/padron/historial?doc=${row.cedulaNormalizada}`}
-                                                  className="text-teal-600 hover:underline"
-                                              >
-                                                  Ver historial completo →
-                                              </Link>
+                                              <>
+                                                  {/* Fila importada que venía corrida: qué se reacomodó. */}
+                                                  {row.errorMessage && <span className="block">{row.errorMessage}</span>}
+                                                  <Link
+                                                      href={`/dashboard/padron/historial?doc=${row.cedulaNormalizada}`}
+                                                      className="text-teal-600 hover:underline"
+                                                  >
+                                                      Ver historial completo →
+                                                  </Link>
+                                              </>
                                           )}
                                 </TableCell>
                             </TableRow>
