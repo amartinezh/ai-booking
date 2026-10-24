@@ -1580,3 +1580,87 @@ describe('AppointmentsService — plazo máximo para agendar por el asistente', 
     );
   });
 });
+
+describe('AppointmentsService — cupoMasAllaDelPlazo (no es agenda llena, es el plazo)', () => {
+  const { diaLocal, sumarDiasAFecha } = jest.requireActual('@agenia/shared');
+  const hoy: string = diaLocal(new Date());
+  const a = (fecha: string, hhmm: string) =>
+    new Date(`${fecha}T${hhmm}:00-05:00`);
+  const slotRow = (id: string, inicio: Date) => ({
+    id,
+    startTime: inicio,
+    isAvailable: true,
+    organizationId: 'org1',
+    doctor: { fullName: 'Ana Ruiz', whatsappBookingEnabled: true },
+    service: { name: 'Medicina General' },
+  });
+
+  const conPlazo = async (dias: number | null, filas: any[]) => {
+    const findMany = jest.fn(() => filas);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AppointmentsService,
+        {
+          provide: PrismaService,
+          useValue: {
+            scheduleSlot: { findMany },
+            hospitalMirrorConfig: { findUnique: jest.fn(() => null) },
+            mirrorEntityMap: { findMany: jest.fn(() => []) },
+            bookingBlock: { findMany: jest.fn(() => []) },
+            organizationSettings: {
+              findUnique: jest.fn(() => ({ bookingMaxDaysAhead: dias })),
+            },
+            organization: {
+              findUnique: jest.fn(() => ({
+                timezone: 'America/Bogota',
+                settings: null,
+              })),
+            },
+          },
+        },
+      ],
+    }).compile();
+    return {
+      svc: module.get<AppointmentsService>(AppointmentsService),
+      findMany,
+    };
+  };
+
+  it('con 2 días y el primer cupo en 4 días: hasta mañana, el cupo, y desde el día anterior', async () => {
+    const enCuatro = sumarDiasAFecha(hoy, 3);
+    const { svc, findMany } = await conPlazo(2, [
+      slotRow('s1', a(enCuatro, '08:20')),
+    ]);
+    expect(
+      await svc.cupoMasAllaDelPlazo('Medicina', null, 'org1'),
+    ).toEqual({
+      ultimoDia: sumarDiasAFecha(hoy, 1),
+      primerDia: enCuatro,
+      desde: sumarDiasAFecha(hoy, 2),
+    });
+    // Mira SIN el plazo: si no, nunca vería el cupo de más adelante.
+    expect((findMany.mock.calls[0] as any)[0].where.startTime).not.toHaveProperty(
+      'lt',
+    );
+  });
+
+  it('sin plazo: null (la agenda sí está llena)', async () => {
+    const { svc, findMany } = await conPlazo(null, [
+      slotRow('s1', a(sumarDiasAFecha(hoy, 3), '08:20')),
+    ]);
+    expect(await svc.cupoMasAllaDelPlazo('Medicina', null, 'org1')).toBeNull();
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it('sin cupos ni más adelante: null', async () => {
+    const { svc } = await conPlazo(2, []);
+    expect(await svc.cupoMasAllaDelPlazo('Medicina', null, 'org1')).toBeNull();
+  });
+
+  it('un cupo dentro del plazo no es «más allá»: null', async () => {
+    const { svc } = await conPlazo(3, [
+      slotRow('s1', a(sumarDiasAFecha(hoy, 1), '10:17')),
+    ]);
+    expect(await svc.cupoMasAllaDelPlazo('Medicina', null, 'org1')).toBeNull();
+  });
+});

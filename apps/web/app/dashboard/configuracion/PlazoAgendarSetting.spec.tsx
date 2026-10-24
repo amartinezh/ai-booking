@@ -3,12 +3,30 @@ import userEvent from '@testing-library/user-event';
 
 jest.mock('@/app/actions/settings', () => ({
     setMyBookingMaxDaysAhead: jest.fn(),
+    getMyPlazoAgendarResumen: jest.fn(),
 }));
 
 import PlazoAgendarSetting from './PlazoAgendarSetting';
-import { setMyBookingMaxDaysAhead } from '@/app/actions/settings';
+import { getMyPlazoAgendarResumen, setMyBookingMaxDaysAhead } from '@/app/actions/settings';
 
 const mockSet = setMyBookingMaxDaysAhead as jest.Mock;
+const mockResumen = getMyPlazoAgendarResumen as jest.Mock;
+
+/** El 23-oct a las 3:27 p. m.: 2 días, viernes; el primer cupo es el lunes. */
+const SIN_CUPOS_HOY = {
+    enElPlazo: 0,
+    total: 50,
+    primerDia: '2026-10-26',
+    ultimoDia: '2026-10-24',
+    desde: '2026-10-25',
+    plazoMinimo: 4,
+    hoy: '2026-10-23',
+    dias: 2,
+    ultimoCambio: {
+        detalle: '«Plazo máximo para agendar» cambió de «Sin límite» a «2 días (hoy y mañana)» desde Configuración por admin@hsvpanserma.gov.co.',
+        en: '2026-10-23T20:27:50.000Z',
+    },
+};
 // Viernes 23 de octubre de 2026.
 const HOY = '2026-10-23';
 
@@ -79,5 +97,68 @@ describe('PlazoAgendarSetting', () => {
     it('un valor guardado fuera de la lista se muestra igual', () => {
         render(<PlazoAgendarSetting initialDias={8} hoy={HOY} />);
         expect(screen.getByRole('combobox')).toHaveValue('8');
+    });
+
+    describe('🗓️ lo que el plazo deja ofrecer hoy', () => {
+        const aviso = () => screen.getByRole('note');
+
+        it('sin cupos dentro del plazo: lo avisa, dice desde cuándo y el plazo mínimo', () => {
+            render(<PlazoAgendarSetting initialDias={2} hoy={HOY} resumenInicial={SIN_CUPOS_HOY} />);
+            expect(aviso()).toHaveTextContent('Con este plazo, hoy el asistente no tiene cupos que ofrecer');
+            expect(aviso()).toHaveTextContent('El primer cupo libre es el lunes 26 de octubre');
+            expect(aviso()).toHaveTextContent('desde el domingo 25 de octubre');
+            expect(aviso()).toHaveTextContent('se agenda hasta el sábado 24 de octubre');
+            expect(aviso()).toHaveTextContent('al menos 4 días');
+        });
+
+        it('con cupos: cuántos puede ofrecer hoy', () => {
+            render(
+                <PlazoAgendarSetting
+                    initialDias={4}
+                    hoy={HOY}
+                    resumenInicial={{ ...SIN_CUPOS_HOY, dias: 4, enElPlazo: 19, desde: null }}
+                />,
+            );
+            expect(aviso()).toHaveTextContent('Hoy el asistente puede ofrecer 19 cupos libres dentro del plazo (de 50 que hay)');
+        });
+
+        it('sin cupos ni con plazo ni sin él: lo dice sin culpar al plazo', () => {
+            render(
+                <PlazoAgendarSetting
+                    initialDias={4}
+                    hoy={HOY}
+                    resumenInicial={{ ...SIN_CUPOS_HOY, total: 0, primerDia: null, desde: null, plazoMinimo: null }}
+                />,
+            );
+            expect(aviso()).toHaveTextContent('no tiene cupos libres que ofrecer, con o sin plazo');
+        });
+
+        it('muestra quién lo cambió por última vez y cuándo', () => {
+            render(<PlazoAgendarSetting initialDias={2} hoy={HOY} resumenInicial={SIN_CUPOS_HOY} />);
+            expect(screen.getByText(/Último cambio:/)).toHaveTextContent('por admin@hsvpanserma.gov.co');
+        });
+
+        it('al guardar otro plazo, el aviso se actualiza', async () => {
+            mockSet.mockResolvedValue({ success: true, bookingMaxDaysAhead: 4 });
+            mockResumen.mockResolvedValue({
+                success: true,
+                resumen: { ...SIN_CUPOS_HOY, dias: 4, enElPlazo: 19, desde: null },
+            });
+            render(<PlazoAgendarSetting initialDias={2} hoy={HOY} resumenInicial={SIN_CUPOS_HOY} />);
+
+            await userEvent.selectOptions(screen.getByRole('combobox'), '4');
+
+            await waitFor(() => expect(aviso()).toHaveTextContent('puede ofrecer 19 cupos libres'));
+        });
+
+        it('si no se puede leer el resumen nuevo, quita el aviso viejo (no muestra algo que ya no vale)', async () => {
+            mockSet.mockResolvedValue({ success: true, bookingMaxDaysAhead: 4 });
+            mockResumen.mockRejectedValue(new Error('caída'));
+            render(<PlazoAgendarSetting initialDias={2} hoy={HOY} resumenInicial={SIN_CUPOS_HOY} />);
+
+            await userEvent.selectOptions(screen.getByRole('combobox'), '4');
+
+            await waitFor(() => expect(screen.queryByRole('note')).toBeNull());
+        });
     });
 });

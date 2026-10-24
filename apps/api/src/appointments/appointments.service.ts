@@ -9,6 +9,9 @@ import { Prisma, AttendanceStatus } from '@agenia/database';
 import {
   CUPOS_OFRECIDOS,
   cupoBloqueado,
+  diaLocal,
+  primerDiaParaVerElCupo,
+  ultimoDiaParaAgendar,
   cumpleAnticipacionAlReservar,
   intervalosBloqueados,
   documentoSinCerosIniciales,
@@ -26,6 +29,7 @@ import {
 import {
   finDelPlazoDelAsistente,
   fueraDelPlazoParaElAsistente,
+  plazoDeLaClinica,
 } from './plazo-agendar';
 
 /**
@@ -85,7 +89,10 @@ export class AppointmentsService {
     // `todos`: devuelve la bolsa completa de próximos cupos, sin recortar a
     // los que se ofrecen. Solo para casar una hora dicha por voz ("mañana a
     // las 3"): esa hora puede no estar entre los ofrecidos y aun así existir.
-    opts: { todos?: boolean } = {},
+    // `ignorarPlazo`: sin el plazo máximo para agendar. Solo para decirle al
+    // paciente desde cuándo verá un cupo (`cupoMasAllaDelPlazo`); nunca para
+    // ofrecerlo.
+    opts: { todos?: boolean; ignorarPlazo?: boolean } = {},
   ): Promise<AvailableSlot[]> {
     // ⏱️ Nada que empiece antes de la anticipación mínima (60 min, 2026-10-21):
     // antes se ofrecían los más próximos, y a las 06:00 salía el de las 06:30.
@@ -103,11 +110,9 @@ export class AppointmentsService {
     // 2026-10-23): con 3 días, solo citas de hoy, mañana y pasado mañana. Sin
     // límite (lo de siempre), la consulta no cambia. Una fecha pedida más allá
     // del plazo no trae cupos y el chatbot ofrece los más próximos.
-    const finDelPlazo = await finDelPlazoDelAsistente(
-      this.prisma,
-      organizationId,
-      ahora,
-    );
+    const finDelPlazo = opts.ignorarPlazo
+      ? null
+      : await finDelPlazoDelAsistente(this.prisma, organizationId, ahora);
     if (finDelPlazo) startTimeFilter.lt = finDelPlazo;
 
     // 🚦 ACTIVACIÓN POR MÉDICO. `whatsappBookingEnabled` existía en el schema
@@ -191,6 +196,41 @@ export class AppointmentsService {
       normalizarCuposOfrecidos(org?.settings?.slotsOfferedCount),
       { timeZone: org?.timezone ?? undefined },
     );
+  }
+
+  /**
+   * 🗓️ No hay cupos dentro del plazo máximo para agendar, pero sí más adelante
+   * (2026-10-23: con 2 días un viernes, el asistente le decía «la agenda está
+   * completa por estos días» a quien tenía 19 cupos el lunes). Hasta qué día se
+   * agenda, el día del primer cupo libre y desde qué día lo verá el paciente
+   * ('YYYY-MM-DD', en la zona de la clínica). null sin plazo, o si tampoco hay
+   * cupos más adelante: entonces la agenda sí está llena.
+   */
+  async cupoMasAllaDelPlazo(
+    serviceName: string,
+    epsId: string | null,
+    organizationId: string,
+  ): Promise<{ ultimoDia: string; primerDia: string; desde: string } | null> {
+    const plazo = await plazoDeLaClinica(this.prisma, organizationId);
+    if (!plazo) return null;
+    const [primero] = await this.getAvailableSlots(
+      serviceName,
+      epsId,
+      organizationId,
+      null,
+      { todos: true, ignorarPlazo: true },
+    );
+    if (!primero) return null;
+    const ahora = new Date();
+    const hoy = diaLocal(ahora, plazo.timeZone);
+    const ultimoDia = ultimoDiaParaAgendar(hoy, plazo.dias);
+    const primerDia = diaLocal(primero.fecha, plazo.timeZone);
+    if (!ultimoDia || primerDia <= ultimoDia) return null;
+    return {
+      ultimoDia,
+      primerDia,
+      desde: primerDiaParaVerElCupo(primerDia, plazo.dias),
+    };
   }
 
   /**

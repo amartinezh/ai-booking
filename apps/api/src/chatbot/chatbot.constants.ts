@@ -1533,6 +1533,25 @@ const FORMAL = {
     `Revisé la agenda de *${servicio}* y por el momento no hay *otros horarios disponibles* para reprogramar su cita, así que la conservo tal como está.\n\n` +
     `Si necesita cancelarla, por favor comuníquese con ${contacto}.`,
 
+  // 🗓️ No hay otro horario dentro del plazo máximo para agendar, pero sí más
+  // adelante: no se le ofrece cancelar, se le dice desde cuándo escribir.
+  // `hasta` y `desde`: «domingo 25 de octubre».
+  modificarSinCuposEnElPlazo: (servicio: string, hasta: string, desde: string) =>
+    `Por ahora agendamos citas hasta el *${hasta}*, y hasta esa fecha no hay otro horario de *${servicio}* para mover su cita. Su cita actual sigue en pie, tal como está.\n\n` +
+    `Escríbanos desde el *${desde}* y con gusto le muestro los horarios siguientes.`,
+
+  // 🗓️ Lo mismo al agendar: en vez de «la agenda está completa», hasta cuándo se
+  // agenda y desde cuándo escribir. Ofrece la lista de espera como siempre.
+  sinCuposEnElPlazo: (
+    servicio: string,
+    eps: string,
+    hasta: string,
+    desde: string,
+  ) =>
+    `Por ahora agendamos citas hasta el *${hasta}*, y hasta esa fecha ya no quedan cupos de *${servicio}* con *${eps}*.\n\n` +
+    `Escríbanos desde el *${desde}* y con gusto le muestro los horarios siguientes.\n\n` +
+    `Si lo desea, también le anoto en la *lista de espera* y le aviso por este medio si se libera un cupo antes. ¿Le anoto? Responda *SÍ* o *NO*.`,
+
   respuestaInvalidaSiNo: () =>
     pick([
       `No logré interpretar su respuesta. ¿Me ayuda respondiendo *SÍ* para confirmar o *NO* para cancelar?`,
@@ -2730,6 +2749,20 @@ const INFORMAL = {
   modificarSinCuposSinCancelar: (servicio: string, contacto: string) =>
     `Revisé la agenda de *${servicio}* y por ahora no hay *otros horarios* para mover tu cita, así que la dejo tal cual. 🙏\n\n` +
     `Si necesitas cancelarla, comunícate con ${contacto}.`,
+
+  modificarSinCuposEnElPlazo: (servicio: string, hasta: string, desde: string) =>
+    `Por ahora agendamos citas hasta el *${hasta}*, y hasta esa fecha no hay otro horario de *${servicio}* para mover tu cita. Tu cita sigue tal cual. 🙏\n\n` +
+    `Escríbeme desde el *${desde}* y te muestro los horarios siguientes. 😊`,
+
+  sinCuposEnElPlazo: (
+    servicio: string,
+    eps: string,
+    hasta: string,
+    desde: string,
+  ) =>
+    `Por ahora agendamos citas hasta el *${hasta}*, y hasta esa fecha ya no quedan cupos de *${servicio}* con *${eps}*. 🙏\n\n` +
+    `Escríbeme desde el *${desde}* y te muestro los horarios siguientes. 😊\n\n` +
+    `Si quieres, también te anoto en la *lista de espera* y te aviso por acá si se libera un cupo antes. ¿Te anoto? Responde *SÍ* o *NO*.`,
 
   respuestaInvalidaSiNo: () =>
     pick([

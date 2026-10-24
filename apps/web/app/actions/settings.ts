@@ -12,8 +12,10 @@ import {
     normalizarCuposOfrecidos,
     normalizarPlazoAgendar,
     operacionHisDelEvento,
+    textoPlazoAgendar,
     validarPlazoAgendar,
 } from '@agenia/shared';
+import { OP_CAMBIO_PLAZO, cargarResumenDelPlazo } from '@/lib/plazo-agendar/resumen';
 
 const DEFAULT_BOT_NAME = 'AgenIA';
 
@@ -155,15 +157,71 @@ export async function setMyBookingMaxDaysAhead(dias: number | null) {
     if (!v.ok) return { success: false, error: v.error };
     const bookingMaxDaysAhead = v.dias;
     try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { bookingMaxDaysAhead: true },
+        });
         await prisma.organizationSettings.upsert({
             where: { organizationId: session.organizationId! },
             create: { organizationId: session.organizationId!, bookingMaxDaysAhead },
             update: { bookingMaxDaysAhead },
         });
+        // Quién lo cambió y cuándo, como los interruptores (2026-10-23: el plazo
+        // pasó a 2 días y no había forma de saber quién).
+        const anterior = normalizarPlazoAgendar(antes?.bookingMaxDaysAhead);
+        if (anterior !== bookingMaxDaysAhead) {
+            await auditarCambioDePlazo({
+                organizationId: session.organizationId!,
+                actor: session.email ?? session.userId ?? 'desconocido',
+                anterior,
+                nuevo: bookingMaxDaysAhead,
+            });
+        }
         revalidatePath('/dashboard/configuracion');
         return { success: true, bookingMaxDaysAhead };
     } catch (e) {
         return { success: false, error: getErrorMessage(e) };
+    }
+}
+
+/**
+ * 🗓️ Lo que el plazo guardado le deja ofrecer HOY al asistente, y quién lo cambió
+ * por última vez: el panel avisa cuando lo deja sin cupos. Solo lectura.
+ */
+export async function getMyPlazoAgendarResumen() {
+    const session = await getSession();
+    if (!session || session.role !== 'ORG_ADMIN') return { success: false as const, error: 'Acceso denegado' };
+    try {
+        return { success: true as const, resumen: await cargarResumenDelPlazo(session.organizationId!) };
+    } catch (e) {
+        return { success: false as const, error: getErrorMessage(e) };
+    }
+}
+
+/** El cambio del plazo, en la auditoría. Si falla, no deshace el cambio: solo lo registra en el log. */
+async function auditarCambioDePlazo(p: {
+    organizationId: string;
+    actor: string;
+    anterior: number | null;
+    nuevo: number | null;
+}): Promise<void> {
+    try {
+        await prisma.syncAudit.create({
+            data: {
+                organizationId: p.organizationId,
+                direction: SYNC_AUDIT_DIRECTION.CONFIG,
+                entityType: 'OrganizationSettings',
+                op: OP_CAMBIO_PLAZO,
+                outcome: 'OK',
+                detail:
+                    `«Plazo máximo para agendar» cambió de «${textoPlazoAgendar(p.anterior)}» a ` +
+                    `«${textoPlazoAgendar(p.nuevo)}» desde Configuración por ${p.actor}.`,
+            },
+        });
+    } catch (e) {
+        console.error('[configuración] no se pudo anotar el cambio del plazo en la auditoría', {
+            error: getErrorMessage(e),
+        });
     }
 }
 

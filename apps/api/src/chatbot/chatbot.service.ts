@@ -38,6 +38,7 @@ import {
 import { separarNombresYApellidos } from './nombre-paciente-nuevo';
 import { esPreguntaEnVezDeRespuesta } from './pregunta-al-confirmar';
 import { servicioQueNoSeAgenda } from './servicio-no-agendable';
+import { dudaSobreLaCita } from './duda-cita-agendada';
 import { cupoBloqueadoParaElAsistente } from 'src/appointments/bloqueos-agenda';
 import { fueraDelPlazoParaElAsistente } from 'src/appointments/plazo-agendar';
 import { KnowledgeBaseService } from './knowledge-base.service';
@@ -92,6 +93,7 @@ import {
   inicioDelDiaLocal,
   ESTADOS_ACTIVOS,
   cumpleAnticipacionAlReservar,
+  fechaEnPalabras,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import {
@@ -2508,6 +2510,7 @@ export class ChatbotService implements OnModuleInit {
       `temp_lookup_cedula:${organizationId}:${senderId}`,
       `temp_lookup_hoy:${organizationId}:${senderId}`,
       `temp_lookup_opciones:${organizationId}:${senderId}`,
+      `temp_pregunta_otro_servicio:${organizationId}:${senderId}`,
       `error_count:${organizationId}:${senderId}`,
       `is_ai_flow:${organizationId}:${senderId}`,
     ];
@@ -5211,6 +5214,38 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /** «el hospital al *606 853 8860*», o «el hospital» si no tiene teléfono. */
+  /**
+   * 🗓️ Si no hay cupos dentro del plazo máximo para agendar pero sí más adelante:
+   * hasta qué día se agenda y desde cuál escribir, en palabras («domingo 25 de
+   * octubre»). null si no es el plazo (no hay plazo, o tampoco hay cupos después):
+   * entonces se responde como siempre. Si la consulta falla, también null.
+   */
+  private async cupoMasAllaDelPlazo(
+    serviceName: string,
+    epsId: string | null,
+    organizationId: string,
+  ): Promise<{ hasta: string; desde: string; desdeIso: string } | null> {
+    try {
+      const r = await this.appointmentsService.cupoMasAllaDelPlazo(
+        serviceName,
+        epsId,
+        organizationId,
+      );
+      return r
+        ? {
+            hasta: fechaEnPalabras(r.ultimoDia, { conAnio: false }),
+            desde: fechaEnPalabras(r.desde, { conAnio: false }),
+            desdeIso: r.desde,
+          }
+        : null;
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo revisar el plazo para agendar (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+      return null;
+    }
+  }
+
   private contactoDe(
     MSGS: ReturnType<typeof buildMessages>,
     org: Organization | null,
@@ -5365,6 +5400,143 @@ export class ChatbotService implements OnModuleInit {
       },
     });
     return true;
+  }
+
+  /** 🔎 Cuánto tiempo después de agendar una duda del paciente abre el caso. */
+  private static readonly VENTANA_REVISAR_CITA_MS = 24 * 60 * 60 * 1000;
+
+  private preguntaOtroServicioKey(organizationId: string, senderId: string) {
+    return `temp_pregunta_otro_servicio:${organizationId}:${senderId}`;
+  }
+
+  /**
+   * 🔎 «Revisar una cita agendada por el asistente» (2026-10-23): poco después de
+   * agendar, el paciente pregunta si la cita era para otro servicio o dice que no
+   * era la que necesitaba (`dudaSobreLaCita`). Deja el caso en la Bandeja con la
+   * cita y lo que escribió. No responde nada ni toca la cita: eso lo decide una
+   * persona con el paciente.
+   */
+  private async revisarCitaRecienAgendada(p: {
+    organizationId: string;
+    senderId: string;
+    identity: SenderIdentity;
+    text: string;
+  }): Promise<void> {
+    // Primero el texto: la base solo se consulta para lo que parece una duda.
+    if (!this.avisosPaciente || !dudaSobreLaCita(p.text, null)) return;
+    const deQuien = this.perfilesDelRemitente(p.identity);
+    if (deQuien.length === 0) return;
+    const ahora = new Date();
+    const cita = await this.prisma.appointment.findFirst({
+      where: {
+        organizationId: p.organizationId,
+        origin: { in: ['WHATSAPP', 'TELEGRAM'] },
+        status: 'SCHEDULED',
+        createdAt: {
+          gte: new Date(
+            ahora.getTime() - ChatbotService.VENTANA_REVISAR_CITA_MS,
+          ),
+        },
+        scheduleSlot: { startTime: { gt: ahora } },
+        patient: { OR: deQuien },
+      },
+      include: { scheduleSlot: { include: { service: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!cita) return;
+    const duda = dudaSobreLaCita(
+      p.text,
+      cita.scheduleSlot.service?.name ?? null,
+    );
+    if (!duda) return;
+    await this.registrarRevisionDeCita(
+      p.organizationId,
+      cita,
+      {
+        motivo: duda.motivo,
+        ...(duda.motivo === 'OTRO_SERVICIO'
+          ? { servicioPedido: duda.servicio }
+          : {}),
+        mensaje: p.text.slice(0, 300),
+        canal: canalDe(p.senderId),
+      },
+      ahora,
+    );
+  }
+
+  /**
+   * 🔎 Confirmó la cita después de preguntar si era para otro servicio que no se
+   * agenda por aquí (`aclararCitaOtroServicio`): se le aclaró y dijo que sí, pero
+   * conviene que una persona lo confirme. Best-effort: la cita ya está agendada.
+   */
+  private async revisarSiConfirmoTrasPreguntar(
+    organizationId: string,
+    senderId: string,
+    appointmentId: string | undefined,
+  ): Promise<void> {
+    try {
+      const key = this.preguntaOtroServicioKey(organizationId, senderId);
+      const guardado = await this.redis.get(key);
+      if (!guardado || !appointmentId || !this.avisosPaciente) return;
+      await this.redis.del(key);
+      const pregunta = JSON.parse(guardado) as {
+        servicio?: string;
+        mensaje?: string;
+      };
+      const cita = await this.prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        include: { scheduleSlot: true },
+      });
+      if (!cita || cita.organizationId !== organizationId) return;
+      await this.registrarRevisionDeCita(
+        organizationId,
+        cita,
+        {
+          motivo: 'CONFIRMO_TRAS_PREGUNTAR',
+          servicioPedido: pregunta.servicio ?? null,
+          mensaje: (pregunta.mensaje ?? '').slice(0, 300),
+          canal: canalDe(senderId),
+        },
+        new Date(),
+      );
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo dejar la cita ${appointmentId ?? '?'} para revisión: ${getErrorMessage(error)}`,
+      );
+    }
+  }
+
+  private async registrarRevisionDeCita(
+    organizationId: string,
+    cita: {
+      id: string;
+      patientId: string;
+      epsId: string | null;
+      scheduleSlot: { startTime: Date; doctorId: string };
+    },
+    meta: Record<string, unknown>,
+    ahora: Date,
+  ): Promise<void> {
+    const inicio = cita.scheduleSlot.startTime;
+    await this.avisosPaciente!.registrar(
+      organizationId,
+      {
+        kind: 'REVISAR_CITA_ASISTENTE',
+        dedupeKey: claveExcepcion.revisarCitaAsistente(cita.id),
+        severity: severidadPorCercania(
+          'MEDIA',
+          (inicio.getTime() - ahora.getTime()) / 60_000,
+        ),
+        title: TITULO_EXCEPCION.REVISAR_CITA_ASISTENTE,
+        appointmentId: cita.id,
+        patientId: cita.patientId,
+        epsId: cita.epsId,
+        doctorId: cita.scheduleSlot.doctorId,
+        appointmentStartAt: inicio,
+        meta,
+      },
+      ahora,
+    );
   }
 
   /**
@@ -6154,6 +6326,27 @@ export class ChatbotService implements OnModuleInit {
         },
       });
       return;
+    }
+
+    // 🔎 ¿Duda de la cita que el asistente le acaba de agendar («¿esto sí es para
+    // las ecografías?», 2026-10-23)? Queda el caso en la Bandeja para el personal.
+    // Solo eso: la conversación sigue exactamente igual, y si falla, también.
+    if (
+      messageType === 'text' &&
+      !!text &&
+      (currentState === ChatState.IDLE ||
+        currentState === ChatState.AWAITING_SPECIALTY)
+    ) {
+      await this.revisarCitaRecienAgendada({
+        organizationId,
+        senderId,
+        identity,
+        text,
+      }).catch((error: unknown) => {
+        this.logger.error(
+          `No se pudo revisar la duda sobre una cita del asistente (org ${organizationId}): ${getErrorMessage(error)}`,
+        );
+      });
     }
 
     // 💬 Respuesta al bot: «sí voy» / «gracias» tras un recordatorio, o «¿de
@@ -7718,10 +7911,25 @@ export class ChatbotService implements OnModuleInit {
             );
           }
 
-          const reply = MSGS.preguntaWaitlist(
+          // 🗓️ ¿Es el plazo máximo para agendar, y no una agenda llena? Entonces
+          // se le dice hasta cuándo se agenda y desde cuándo escribir; la lista
+          // de espera se le ofrece igual (2026-10-23).
+          const masAlla = await this.cupoMasAllaDelPlazo(
             resolvedServiceName as string,
-            resolvedEpsName,
+            epsIdForSlots,
+            organizationId,
           );
+          const reply = masAlla
+            ? MSGS.sinCuposEnElPlazo(
+                resolvedServiceName as string,
+                resolvedEpsName,
+                masAlla.hasta,
+                masAlla.desde,
+              )
+            : MSGS.preguntaWaitlist(
+                resolvedServiceName as string,
+                resolvedEpsName,
+              );
           await this.smartReply(organizationId, senderId, reply);
           await this.setUserState(
             organizationId,
@@ -7736,6 +7944,7 @@ export class ChatbotService implements OnModuleInit {
               step: 'WAITLIST_OPTIN_OFFERED',
               service: resolvedServiceName,
               eps: resolvedEpsName,
+              ...(masAlla ? { porPlazo: true, desde: masAlla.desdeIso } : {}),
             },
           });
           return;
@@ -9181,6 +9390,11 @@ export class ChatbotService implements OnModuleInit {
         if (enElHospital === 'PENDIENTE') {
           // Ya se le dijo que se le escribe al quedar registrada (el barrido
           // de confirmaciones pendientes lo hace). No se confirma nada aquí.
+          await this.revisarSiConfirmoTrasPreguntar(
+            organizationId,
+            senderId,
+            bookingResult.appointmentId,
+          );
           await this.auditLog(senderId, organizationId, {
             status: InteractionStatus.SUCCESS,
             userMessage: text,
@@ -9205,6 +9419,11 @@ export class ChatbotService implements OnModuleInit {
           reply,
           undefined,
           confirmacion,
+        );
+        await this.revisarSiConfirmoTrasPreguntar(
+          organizationId,
+          senderId,
+          bookingResult.appointmentId,
         );
 
         // 📝 Auditoría: cita agendada (evento de negocio crítico)
@@ -9396,6 +9615,18 @@ export class ChatbotService implements OnModuleInit {
       const otroServicio = servicio
         ? servicioQueNoSeAgenda(text, [servicio])
         : null;
+      // 🔎 Si después confirma igual, la cita queda para revisión en la Bandeja.
+      if (otroServicio) {
+        await this.redis.set(
+          this.preguntaOtroServicioKey(organizationId, senderId),
+          JSON.stringify({
+            servicio: otroServicio,
+            mensaje: (text ?? '').slice(0, 300),
+          }),
+          'EX',
+          SESSION_TTL,
+        );
+      }
       const reply =
         servicio && fecha
           ? otroServicio
@@ -13397,6 +13628,36 @@ export class ChatbotService implements OnModuleInit {
     );
     // Excluimos el cupo que el paciente ya tiene (no tiene sentido "moverla" al mismo).
     const candidateSlots = slots.filter((s) => s.slotId !== apt.scheduleSlotId);
+
+    // 🗓️ Sin otro horario dentro del plazo máximo para agendar, pero sí más
+    // adelante (2026-10-23): no se le ofrece cancelar —sí hay horarios, solo que
+    // todavía no se dan—; la cita queda como está y se le dice desde cuándo
+    // escribir.
+    const masAlla =
+      candidateSlots.length === 0
+        ? await this.cupoMasAllaDelPlazo(serviceName, apt.epsId, organizationId)
+        : null;
+    if (masAlla) {
+      const reply = MSGS.modificarSinCuposEnElPlazo(
+        serviceName,
+        masAlla.hasta,
+        masAlla.desde,
+      );
+      await this.smartReply(organizationId, senderId, reply);
+      await this.cleanUpModifySession(organizationId, senderId);
+      await this.cleanUpSession(organizationId, senderId);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: '[modify]',
+        botReply: reply,
+        metadata: {
+          step: 'MODIFY_NO_SLOTS_POR_PLAZO',
+          appointmentId,
+          service: serviceName,
+          desde: masAlla.desdeIso,
+        },
+      });
+      return;
+    }
 
     // 🔒 Sin cupos y sin poder cancelar por el bot: no se ofrece cancelarla;
     // la cita se queda como está y se dice con quién cancelarla.

@@ -19,7 +19,13 @@
 import { DEFAULT_TIMEZONE } from './date-format';
 import { diaLocal } from './consulta-citas';
 import { horaLocalAUtc } from './rango-estadisticas';
-import { partesDeFecha, sumarDiasAFecha } from './bloqueos-agenda';
+import {
+  cupoBloqueado,
+  partesDeFecha,
+  sumarDiasAFecha,
+  type ReglaBloqueoAgenda,
+} from './bloqueos-agenda';
+import { inicioMinimoParaOfrecer } from './cupos-ofrecidos';
 
 export const PLAZO_AGENDAR = {
   MIN: 1,
@@ -112,4 +118,77 @@ export function textoPlazoAgendar(dias: number | null): string {
   if (plazo === 2) return '2 días (hoy y mañana)';
   if (plazo === 3) return '3 días (hoy, mañana y pasado mañana)';
   return `${plazo} días`;
+}
+
+/** Días de calendario de `desde` a `hasta` ('YYYY-MM-DD'): del viernes al lunes, 3. */
+function diasEntre(desde: string, hasta: string): number {
+  const [a, b] = [partesDeFecha(desde)!, partesDeFecha(hasta)!];
+  return Math.round(
+    (Date.UTC(b[0], b[1] - 1, b[2]) - Date.UTC(a[0], a[1] - 1, a[2])) /
+      86_400_000,
+  );
+}
+
+/**
+ * Desde qué día ve el paciente un cupo del `diaDelCupo` con un plazo de `dias`
+ * (contando ese día): con 2 días, el cupo del lunes lo ve desde el domingo.
+ */
+export function primerDiaParaVerElCupo(diaDelCupo: string, dias: number): string {
+  return sumarDiasAFecha(diaDelCupo, -(Math.max(1, dias) - 1));
+}
+
+/**
+ * 🗓️ Lo que el plazo le deja ofrecer HOY al asistente (2026-10-23: con 2 días un
+ * viernes, el asistente no tenía ningún cupo hasta el domingo y nadie lo sabía).
+ */
+export interface ResumenCuposDelPlazo {
+  /** Cupos libres que el asistente puede ofrecer hoy, dentro del plazo. */
+  enElPlazo: number;
+  /** Los mismos sin contar el plazo. */
+  total: number;
+  /** Día ('YYYY-MM-DD') del primer cupo libre, con o sin plazo; null si no hay. */
+  primerDia: string | null;
+  /** Último día del plazo; null sin límite. */
+  ultimoDia: string | null;
+  /** Si hoy no hay ninguno en el plazo: desde qué día se ve el primero. */
+  desde: string | null;
+  /** Días de plazo que hacen falta para ofrecer hoy el primer cupo. */
+  plazoMinimo: number | null;
+}
+
+/**
+ * Cuenta, con las mismas reglas del asistente, los cupos que puede ofrecer hoy:
+ * la anticipación mínima, los días sin citas y el plazo. `inicios` son los
+ * cupos libres de los médicos y servicios que el asistente ofrece.
+ */
+export function resumenCuposDelPlazo(p: {
+  inicios: readonly Date[];
+  ahora: Date;
+  dias: number | null;
+  reglas: readonly ReglaBloqueoAgenda[];
+  timeZone?: string;
+}): ResumenCuposDelPlazo {
+  const tz = p.timeZone || DEFAULT_TIMEZONE;
+  const minimo = inicioMinimoParaOfrecer(p.ahora);
+  const ofrecibles = p.inicios
+    .filter((i) => i >= minimo && !cupoBloqueado(i, p.reglas, tz))
+    .sort((a, b) => a.getTime() - b.getTime());
+  const fin = finDelPlazoParaAgendar(p.ahora, p.dias, tz);
+  const enElPlazo = fin
+    ? ofrecibles.filter((i) => i < fin).length
+    : ofrecibles.length;
+  const hoy = diaLocal(p.ahora, tz);
+  const plazo = normalizarPlazoAgendar(p.dias);
+  const primerDia = ofrecibles.length > 0 ? diaLocal(ofrecibles[0], tz) : null;
+  return {
+    enElPlazo,
+    total: ofrecibles.length,
+    primerDia,
+    ultimoDia: ultimoDiaParaAgendar(hoy, plazo),
+    desde:
+      enElPlazo === 0 && primerDia && plazo !== null
+        ? primerDiaParaVerElCupo(primerDia, plazo)
+        : null,
+    plazoMinimo: primerDia ? diasEntre(hoy, primerDia) + 1 : null,
+  };
 }

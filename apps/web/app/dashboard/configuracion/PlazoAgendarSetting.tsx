@@ -2,7 +2,9 @@
 
 import { useState, useTransition } from 'react';
 import { CalendarRange } from 'lucide-react';
-import { setMyBookingMaxDaysAhead } from '@/app/actions/settings';
+import { getMyPlazoAgendarResumen, setMyBookingMaxDaysAhead } from '@/app/actions/settings';
+import type { ResumenDelPlazo } from '@/lib/plazo-agendar/resumen';
+import { formatAppointmentCompact } from '@/lib/date';
 import {
     DIAS_SEMANA,
     PLAZO_AGENDAR,
@@ -19,9 +21,21 @@ import {
  * adelante, contando hoy, ofrece citas. Con fechas reales para que no haya duda
  * de qué significa «3 días». Guarda al instante, como los interruptores; si
  * falla, vuelve a lo que de verdad quedó.
+ *
+ * Avisa cuando el plazo deja al asistente sin cupos que ofrecer hoy, y muestra
+ * quién lo cambió por última vez (2026-10-23).
  */
-export default function PlazoAgendarSetting({ initialDias, hoy }: { initialDias: number | null; hoy: string }) {
+export default function PlazoAgendarSetting({
+    initialDias,
+    hoy,
+    resumenInicial = null,
+}: {
+    initialDias: number | null;
+    hoy: string;
+    resumenInicial?: ResumenDelPlazo | null;
+}) {
     const [dias, setDias] = useState<number | null>(initialDias);
+    const [resumen, setResumen] = useState<ResumenDelPlazo | null>(resumenInicial);
     const [error, setError] = useState<string | null>(null);
     const [guardado, setGuardado] = useState(false);
     const [isPending, startTransition] = useTransition();
@@ -44,6 +58,15 @@ export default function PlazoAgendarSetting({ initialDias, hoy }: { initialDias:
                 setDias(res.bookingMaxDaysAhead ?? null);
                 setGuardado(true);
                 setTimeout(() => setGuardado(false), 3000);
+                // Lo que el plazo nuevo deja ofrecer hoy. Si no se puede leer, el
+                // aviso anterior ya no vale: se quita.
+                let r: Awaited<ReturnType<typeof getMyPlazoAgendarResumen>> | null = null;
+                try {
+                    r = await getMyPlazoAgendarResumen();
+                } catch {
+                    r = null;
+                }
+                setResumen(r?.success ? r.resumen : null);
             } else {
                 setDias(antes);
                 setError(res.error ?? 'No se pudo guardar el cambio.');
@@ -99,6 +122,8 @@ export default function PlazoAgendarSetting({ initialDias, hoy }: { initialDias:
 
                 {ultimo !== null && dias !== null && <Ejemplo hoy={hoy} dias={dias} ultimo={ultimo} />}
 
+                {resumen && !isPending && <CuposDeHoy resumen={resumen} />}
+
                 <ul className="text-sm text-zinc-500 dark:text-zinc-400 list-disc pl-5 space-y-1">
                     <li>
                         Con 3 días: hoy, mañana y pasado mañana. Cada día que pasa se abre uno nuevo.
@@ -119,7 +144,52 @@ export default function PlazoAgendarSetting({ initialDias, hoy }: { initialDias:
                     Error al guardar: {error}
                 </p>
             )}
+            {resumen?.ultimoCambio && (
+                <p className="mt-2 text-xs text-zinc-400">
+                    Último cambio: {resumen.ultimoCambio.detalle} ·{' '}
+                    {formatAppointmentCompact(new Date(resumen.ultimoCambio.en))}
+                </p>
+            )}
         </section>
+    );
+}
+
+/** Cuántos cupos puede ofrecer hoy el asistente con el plazo guardado; y si ninguno, por qué y cómo arreglarlo. */
+function CuposDeHoy({ resumen }: { resumen: ResumenDelPlazo }) {
+    const en = (fecha: string | null) => (fecha ? fechaEnPalabras(fecha, { conAnio: false }) : '');
+    if (resumen.total === 0) {
+        return (
+            <p role="note" className="text-sm text-zinc-500 dark:text-zinc-400">
+                Hoy el asistente no tiene cupos libres que ofrecer, con o sin plazo: la agenda está llena o no hay
+                agenda cargada.
+            </p>
+        );
+    }
+    if (resumen.enElPlazo === 0) {
+        return (
+            <div
+                role="note"
+                className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 text-sm text-amber-900 dark:text-amber-200"
+            >
+                <p className="font-semibold">⚠️ Con este plazo, hoy el asistente no tiene cupos que ofrecer.</p>
+                <p className="mt-1">
+                    El primer cupo libre es el {en(resumen.primerDia)}: lo verán quienes escriban desde el{' '}
+                    {en(resumen.desde)}. Mientras tanto, a quien pida cita el asistente le dirá que por ahora se agenda
+                    hasta el {en(resumen.ultimoDia)} y que escriba desde el {en(resumen.desde)}.
+                </p>
+                {resumen.plazoMinimo !== null && (
+                    <p className="mt-1">
+                        Para ofrecerlo desde hoy, el plazo debe ser de al menos {resumen.plazoMinimo} días.
+                    </p>
+                )}
+            </div>
+        );
+    }
+    return (
+        <p role="note" className="text-sm text-zinc-500 dark:text-zinc-400">
+            Hoy el asistente puede ofrecer {resumen.enElPlazo} {resumen.enElPlazo === 1 ? 'cupo libre' : 'cupos libres'}
+            {resumen.enElPlazo < resumen.total ? ` dentro del plazo (de ${resumen.total} que hay)` : ''}.
+        </p>
     );
 }
 

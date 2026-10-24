@@ -3,6 +3,8 @@ import {
   dentroDelPlazoParaAgendar,
   finDelPlazoParaAgendar,
   normalizarPlazoAgendar,
+  primerDiaParaVerElCupo,
+  resumenCuposDelPlazo,
   textoPlazoAgendar,
   ultimoDiaParaAgendar,
   validarPlazoAgendar,
@@ -114,5 +116,78 @@ describe('plazo máximo para agendar por el asistente', () => {
     expect(textoPlazoAgendar(2)).toBe('2 días (hoy y mañana)');
     expect(textoPlazoAgendar(3)).toBe('3 días (hoy, mañana y pasado mañana)');
     expect(textoPlazoAgendar(15)).toBe('15 días');
+  });
+});
+
+describe('lo que el plazo le deja ofrecer hoy al asistente', () => {
+  // Viernes 23 de octubre, 3:27 p. m. en Bogotá: cuando se puso el plazo en 2 días.
+  const VIERNES_TARDE = new Date('2026-10-23T20:27:00Z');
+  const SABADOS = {
+    date: '2026-10-24',
+    repeatWeekly: true,
+    startMinute: null,
+    endMinute: null,
+  };
+  // Un cupo del sábado (bloqueado) y los del lunes y el martes.
+  const CUPOS = [
+    bogota('2026-10-24T08:00:00'),
+    bogota('2026-10-26T08:20:00'),
+    bogota('2026-10-26T12:00:00'),
+    bogota('2026-10-27T07:00:00'),
+  ];
+
+  it('con 2 días un viernes: ningún cupo hoy; el del lunes se ve desde el domingo, y harían falta 4 días', () => {
+    expect(
+      resumenCuposDelPlazo({
+        inicios: CUPOS,
+        ahora: VIERNES_TARDE,
+        dias: 2,
+        reglas: [SABADOS],
+      }),
+    ).toEqual({
+      enElPlazo: 0,
+      total: 3, // el del sábado no cuenta: está bloqueado
+      primerDia: '2026-10-26',
+      ultimoDia: '2026-10-24',
+      desde: '2026-10-25',
+      plazoMinimo: 4,
+    });
+  });
+
+  it('con 4 días: los del lunes sí', () => {
+    const r = resumenCuposDelPlazo({
+      inicios: CUPOS,
+      ahora: VIERNES_TARDE,
+      dias: 4,
+      reglas: [SABADOS],
+    });
+    expect(r.enElPlazo).toBe(2);
+    expect(r.desde).toBeNull();
+  });
+
+  it('sin límite: todos, y nada de «desde»', () => {
+    const r = resumenCuposDelPlazo({
+      inicios: CUPOS,
+      ahora: VIERNES_TARDE,
+      dias: null,
+      reglas: [SABADOS],
+    });
+    expect(r).toMatchObject({ enElPlazo: 3, total: 3, ultimoDia: null, desde: null });
+  });
+
+  it('no cuenta lo que empieza antes de la anticipación mínima (60 min)', () => {
+    const r = resumenCuposDelPlazo({
+      inicios: [new Date(VIERNES_TARDE.getTime() + 30 * 60_000)],
+      ahora: VIERNES_TARDE,
+      dias: 2,
+      reglas: [],
+    });
+    expect(r).toMatchObject({ enElPlazo: 0, total: 0, primerDia: null, desde: null, plazoMinimo: null });
+  });
+
+  it('primerDiaParaVerElCupo: con 2 días el lunes se ve desde el domingo; con 1, ese mismo día', () => {
+    expect(primerDiaParaVerElCupo('2026-10-26', 2)).toBe('2026-10-25');
+    expect(primerDiaParaVerElCupo('2026-10-26', 1)).toBe('2026-10-26');
+    expect(primerDiaParaVerElCupo('2026-11-01', 3)).toBe('2026-10-30');
   });
 });

@@ -663,7 +663,10 @@ export {
   dentroDelPlazoParaAgendar,
   finDelPlazoParaAgendar,
   normalizarPlazoAgendar,
+  primerDiaParaVerElCupo,
+  resumenCuposDelPlazo,
   textoPlazoAgendar,
   ultimoDiaParaAgendar,
   validarPlazoAgendar,
 } from './src/plazo-agendar';
+export type { ResumenCuposDelPlazo } from './src/plazo-agendar';

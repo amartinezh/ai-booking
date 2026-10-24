@@ -363,6 +363,31 @@ function createPrisma(db: Db) {
           );
           return a ? { ...a, scheduleSlot: slotDe(a) } : null;
         }
+        // 🔎 La cita que el asistente le acaba de agendar (revisar una cita).
+        if (where.createdAt?.gte) {
+          return (
+            db.appointments
+              .filter(
+                (a) =>
+                  a.organizationId === where.organizationId &&
+                  a.status === where.status &&
+                  where.origin.in.includes(a.origin) &&
+                  a.createdAt &&
+                  a.createdAt >= where.createdAt.gte,
+              )
+              .map((a) => ({ ...a, scheduleSlot: slotDe(a) }))
+              .filter(
+                (a) =>
+                  a.scheduleSlot.startTime > where.scheduleSlot.startTime.gt &&
+                  esDeAlgunCanal(
+                    where.patient?.OR ?? [],
+                    db.patients.find((x) => x.id === a.patientId),
+                  ),
+              )
+              .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())[0] ??
+            null
+          );
+        }
         if (!where.reminderSentAt) return null;
         const canales: any[] = where.patient?.OR ?? [];
         const esDelRemitente = (pac: any) => esDeAlgunCanal(canales, pac);
@@ -2947,6 +2972,77 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
   // ──────────────────────────────────────────────────────────────────
   // 🎫 Ya en el hospital: «¿qué número me toca?» (2026-10-16)
   // ──────────────────────────────────────────────────────────────────
+  describe('🔎 duda sobre la cita que el asistente le acaba de agendar (2026-10-23)', () => {
+    const HACE_1H = new Date(AHORA.getTime() - 3_600_000);
+    const citaDelAsistente = (over: Record<string, unknown> = {}) => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      Object.assign(db.appointments[0], {
+        origin: 'WHATSAPP',
+        createdAt: HACE_1H,
+        ...over,
+      });
+    };
+    const casos = () =>
+      avisos.registrar.mock.calls.filter(
+        (c: any[]) => c[1]?.kind === 'REVISAR_CITA_ASISTENTE',
+      );
+
+    it('«Me indicas por favor si si es para las ecografías» → caso para el personal, con la cita y lo que escribió', async () => {
+      citaDelAsistente();
+      await say('Me indicas por favor si si es para las ecografías');
+      expect(casos()).toHaveLength(1);
+      const [org, entrada] = casos()[0] as any[];
+      expect(org).toBe(ORG_ID);
+      expect(entrada).toMatchObject({
+        kind: 'REVISAR_CITA_ASISTENTE',
+        dedupeKey: 'revisar-cita:apt-1',
+        appointmentId: 'apt-1',
+        patientId: 'pat-1',
+        meta: {
+          motivo: 'OTRO_SERVICIO',
+          servicioPedido: 'ecografías',
+          mensaje: 'Me indicas por favor si si es para las ecografías',
+          canal: 'WHATSAPP',
+        },
+      });
+    });
+
+    it('«no era la cita que necesitaba» → también', async () => {
+      citaDelAsistente();
+      await say('no era la cita que necesitaba');
+      expect(casos()[0]?.[1]?.meta).toMatchObject({ motivo: 'NO_LA_PIDIO' });
+    });
+
+    it.each([
+      ['la cita la agendó el hospital, no el asistente', { origin: 'MIRROR' }],
+      ['la agendó hace dos días', { createdAt: new Date(AHORA.getTime() - 2 * 86_400_000) }],
+      ['ya está cancelada', { status: 'CANCELLED' }],
+    ])('no hay caso si %s', async (_caso, over) => {
+      citaDelAsistente(over);
+      await say('Me indicas por favor si si es para las ecografías');
+      expect(casos()).toHaveLength(0);
+    });
+
+    it('un mensaje cualquiera no consulta nada ni deja caso', async () => {
+      citaDelAsistente();
+      const findFirst = (service as any).prisma.appointment.findFirst as jest.Mock;
+      findFirst.mockClear();
+      await say('¿A qué hora abre el laboratorio?');
+      expect(casos()).toHaveLength(0);
+      expect(
+        findFirst.mock.calls.some((c: any[]) => c[0]?.where?.createdAt),
+      ).toBe(false);
+    });
+
+    it('si la Bandeja falla, la conversación sigue igual', async () => {
+      citaDelAsistente();
+      avisos.registrar.mockRejectedValueOnce(new Error('caída'));
+      await say('Me indicas por favor si si es para las ecografías');
+      expect(lastSent()).not.toBe('');
+    });
+  });
+
   describe('🎫 pregunta por su turno o consultorio', () => {
     const PREGUNTA =
       'Hola, buenas tardes. Eh, señorita, era preguntar qué número me toca con el doctor, qué número es para yo esperar acá, porque yo no veo a quién preguntar.';

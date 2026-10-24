@@ -235,6 +235,30 @@ describe('resumenPublico — una frase neutra desde meta, nunca desde el detalle
     expect(t).toContain('OTRA persona');
   });
 
+  it('🔎 revisar una cita del asistente: qué dijo el paciente y qué hacer, según el motivo', () => {
+    const otro = r('REVISAR_CITA_ASISTENTE', {
+      motivo: 'OTRO_SERVICIO',
+      servicioPedido: 'ecografías',
+      canal: 'WHATSAPP',
+      mensaje: 'Me indicas por favor si si es para las ecografías',
+    });
+    expect(otro).toContain('preguntó si era para ecografías');
+    expect(otro).toContain('«Me indicas por favor si si es para las ecografías»');
+    expect(otro).toContain('comuníquese con el paciente');
+    expect(otro).toContain('Se cierra sola si la cita se cancela o cambia de hora');
+
+    expect(r('REVISAR_CITA_ASISTENTE', { motivo: 'NO_LA_PIDIO', canal: 'TELEGRAM', mensaje: 'no era para eso' })).toContain(
+      'por Telegram, el paciente escribió que no era la que necesitaba',
+    );
+
+    const confirmo = r('REVISAR_CITA_ASISTENTE', { motivo: 'CONFIRMO_TRAS_PREGUNTAR', servicioPedido: 'ecografías' });
+    expect(confirmo).toContain('Antes de confirmar esta cita por WhatsApp, el paciente preguntó si era para ecografías');
+    expect(confirmo).toContain('la confirmó igual');
+
+    // Sin el servicio pedido, no queda un hueco en la frase.
+    expect(r('REVISAR_CITA_ASISTENTE', { motivo: 'OTRO_SERVICIO' })).toContain('si era para otro servicio');
+  });
+
   it('un tipo desconocido cae al título', () => {
     expect(r('TIPO_NUEVO', {})).toBe('Título');
   });

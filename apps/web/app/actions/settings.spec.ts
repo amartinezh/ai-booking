@@ -1,5 +1,12 @@
 jest.mock('@/lib/prisma', () => ({
-    prisma: { organizationSettings: { upsert: jest.fn(), findUnique: jest.fn() } },
+    prisma: {
+        organizationSettings: { upsert: jest.fn(), findUnique: jest.fn() },
+        syncAudit: { create: jest.fn() },
+    },
+}));
+jest.mock('@/lib/plazo-agendar/resumen', () => ({
+    OP_CAMBIO_PLAZO: 'BOOKING_MAX_DAYS_CHANGE',
+    cargarResumenDelPlazo: jest.fn(async () => ({ enElPlazo: 0, total: 0 })),
 }));
 jest.mock('../../lib/session', () => ({ getSession: jest.fn() }));
 jest.mock('next/cache', () => ({ revalidatePath: jest.fn() }));
@@ -13,6 +20,7 @@ import {
     setMyRemindersOnlySelfBooked,
     setMyReminderMinLead,
     setMyBookingMaxDaysAhead,
+    getMyPlazoAgendarResumen,
 } from './settings';
 
 const mockGetSession = getSession as jest.Mock;
@@ -217,5 +225,59 @@ describe('settings — plazo máximo para agendar', () => {
         mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
         mockFindUnique.mockResolvedValue({ bookingMaxDaysAhead: 3, organization: { timezone: null } });
         expect((await getMyOrgSettings()).bookingMaxDaysAhead).toBe(3);
+    });
+});
+
+describe('settings — quién cambia el plazo y cuándo', () => {
+    beforeEach(() => jest.clearAllMocks());
+    const mockAudit = prisma.syncAudit.create as jest.Mock;
+
+    it('un cambio queda en la auditoría con el valor de antes, el nuevo y quién lo hizo', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1', email: 'admin@hsvp.gov.co' });
+        mockFindUnique.mockResolvedValue({ bookingMaxDaysAhead: 2 });
+        mockUpsert.mockResolvedValue({});
+
+        expect(await setMyBookingMaxDaysAhead(4)).toEqual({ success: true, bookingMaxDaysAhead: 4 });
+        expect(mockAudit).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                organizationId: 'org-1',
+                direction: 'CONFIG',
+                op: 'BOOKING_MAX_DAYS_CHANGE',
+                detail: '«Plazo máximo para agendar» cambió de «2 días (hoy y mañana)» a «4 días» desde Configuración por admin@hsvp.gov.co.',
+            }),
+        });
+    });
+
+    it('de «Sin límite» a un plazo también', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1', email: 'admin@hsvp.gov.co' });
+        mockFindUnique.mockResolvedValue({ bookingMaxDaysAhead: null });
+        mockUpsert.mockResolvedValue({});
+        await setMyBookingMaxDaysAhead(3);
+        expect(mockAudit.mock.calls[0][0].data.detail).toContain('cambió de «Sin límite» a «3 días');
+    });
+
+    it('guardar el mismo valor no deja una entrada', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1', email: 'admin@hsvp.gov.co' });
+        mockFindUnique.mockResolvedValue({ bookingMaxDaysAhead: 4 });
+        mockUpsert.mockResolvedValue({});
+        await setMyBookingMaxDaysAhead(4);
+        expect(mockAudit).not.toHaveBeenCalled();
+    });
+
+    it('si la auditoría falla, el cambio queda guardado igual', async () => {
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1', email: 'admin@hsvp.gov.co' });
+        mockFindUnique.mockResolvedValue({ bookingMaxDaysAhead: 2 });
+        mockUpsert.mockResolvedValue({});
+        mockAudit.mockRejectedValueOnce(new Error('caída'));
+        const err = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+        expect(await setMyBookingMaxDaysAhead(4)).toEqual({ success: true, bookingMaxDaysAhead: 4 });
+        err.mockRestore();
+    });
+
+    it('el resumen del plazo solo lo ve el ORG_ADMIN', async () => {
+        mockGetSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1' });
+        expect(await getMyPlazoAgendarResumen()).toEqual({ success: false, error: 'Acceso denegado' });
+        mockGetSession.mockResolvedValue({ role: 'ORG_ADMIN', organizationId: 'org-1' });
+        expect(await getMyPlazoAgendarResumen()).toEqual({ success: true, resumen: { enElPlazo: 0, total: 0 } });
     });
 });

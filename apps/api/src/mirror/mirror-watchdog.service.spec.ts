@@ -1008,6 +1008,22 @@ describe('MirrorWatchdogService', () => {
       expect(r.autoResueltas).toBe(1);
     });
 
+    it('🔎 «revisar una cita del asistente» también se cierra sola si la cita se canceló o se movió', async () => {
+      const revisar = aviso({ id: 'ex-revisar', kind: 'REVISAR_CITA_ASISTENTE' });
+      const cancelada = build({
+        activas: [revisar],
+        citas: [cita({ status: 'CANCELLED' })],
+      });
+      await cancelada.service.vigilarOrganizacion(ORG, AHORA);
+      expect(cerradas(cancelada.exceptions)).toEqual([
+        ['ex-revisar', 'La cita ya está cancelada.'],
+      ]);
+
+      const igual = build({ activas: [revisar], citas: [cita()] });
+      await igual.service.vigilarOrganizacion(ORG, AHORA);
+      expect(igual.exceptions.autoResolver).not.toHaveBeenCalled();
+    });
+
     it('la cita ya no existe en AgenIA → se da por cancelada', async () => {
       const { service, exceptions } = build({ activas: [aviso()], citas: [] });
       await service.vigilarOrganizacion(ORG, AHORA);

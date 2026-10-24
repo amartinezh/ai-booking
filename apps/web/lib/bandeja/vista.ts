@@ -282,6 +282,23 @@ export function resumenPublico(
             : `No se le pudo avisar por ${canal}: ${motivo}. Comuníquese con el paciente.`;
       return `${que} ${aviso} Confirme que el paciente quedó enterado y cierre el caso.`;
     }
+    // 🔎 Lo que dijo el paciente de una cita que el asistente le acababa de agendar
+    // (2026-10-23). El bot no la tocó: una persona confirma con el paciente.
+    case 'REVISAR_CITA_ASISTENTE': {
+      const canal = nombreCanal(meta.canal);
+      const mensaje = citaDelMensaje(meta.mensaje);
+      const otro =
+        typeof meta.servicioPedido === 'string' && meta.servicioPedido.trim()
+          ? meta.servicioPedido.trim()
+          : 'otro servicio';
+      const que =
+        meta.motivo === 'CONFIRMO_TRAS_PREGUNTAR'
+          ? `Antes de confirmar esta cita por ${canal}, el paciente preguntó si era para ${otro}${veces}.${mensaje} El asistente le aclaró que no y el paciente la confirmó igual.`
+          : meta.motivo === 'NO_LA_PIDIO'
+            ? `Poco después de agendar esta cita por ${canal}, el paciente escribió que no era la que necesitaba${veces}.${mensaje}`
+            : `Poco después de agendar esta cita por ${canal}, el paciente preguntó si era para ${otro}${veces}.${mensaje} La cita es de otro servicio.`;
+      return `${que} El bot no la cambió: comuníquese con el paciente para confirmar si la necesita; si no, cancélela para liberar el cupo y oriéntelo. Se cierra sola si la cita se cancela o cambia de hora.`;
+    }
     case 'TELEFONO_EQUIVOCADO': {
       const varios = numero(meta.perfilesConElNumero);
       const otros =

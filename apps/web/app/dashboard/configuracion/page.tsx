@@ -1,6 +1,6 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
-import { getMyOrgSettings } from '@/app/actions/settings';
+import { getMyOrgSettings, getMyPlazoAgendarResumen } from '@/app/actions/settings';
 import { getMyKnowledgeBase } from '@/app/actions/knowledge-base';
 import { getMyAiConfig } from '@/app/actions/ai-config';
 import { getMyWhatsappConfig } from '@/app/actions/whatsapp-config';
@@ -59,13 +59,18 @@ export default async function ConfiguracionPage({
     let settings: Awaited<ReturnType<typeof getMyOrgSettings>> | null = null;
     let chatbotAudioConfig: Awaited<ReturnType<typeof getMyAudioConfig>> | null = null;
     let chatbotAudioError: string | null = null;
+    // 🗓️ Lo que el plazo deja ofrecer hoy. Aislado: si falla, el resto se muestra igual.
+    let plazoResumen: Extract<Awaited<ReturnType<typeof getMyPlazoAgendarResumen>>, { success: true }>['resumen'] | null =
+        null;
 
     if (activeTab === 'chatbot') {
-        const [setRes, audRes] = await Promise.allSettled([
+        const [setRes, audRes, plazoRes] = await Promise.allSettled([
             getMyOrgSettings(),
             getMyAudioConfig(),
+            getMyPlazoAgendarResumen(),
         ]);
         if (setRes.status === 'fulfilled') settings = setRes.value;
+        if (plazoRes.status === 'fulfilled' && plazoRes.value.success) plazoResumen = plazoRes.value.resumen;
         if (audRes.status === 'fulfilled') {
             chatbotAudioConfig = audRes.value;
         } else {
@@ -169,6 +174,7 @@ export default async function ConfiguracionPage({
                             <PlazoAgendarSetting
                                 initialDias={settings.bookingMaxDaysAhead}
                                 hoy={settings.hoyEnLaClinica}
+                                resumenInicial={plazoResumen}
                             />
                         )}
                         {settings && <div className="border-t border-zinc-200 dark:border-zinc-800" />}

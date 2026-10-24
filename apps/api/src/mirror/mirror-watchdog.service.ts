@@ -689,7 +689,8 @@ export class MirrorWatchdogService {
   /**
    * Un `AVISO_INASISTENCIA` («no puedo ir», «quiero otra fecha») se cierra solo
    * cuando ya se atendió: la cita se canceló —en el hospital, por el espejo, o
-   * aquí— o cambió de hora. Solo se mira la cita en AgenIA; no se escribe nada
+   * aquí— o cambió de hora. Igual un `REVISAR_CITA_ASISTENTE` (2026-10-23): si la
+   * cita ya se canceló o se movió, alguien ya la revisó. Solo se mira la cita en AgenIA; no se escribe nada
    * en el hospital. No depende del outbox: corre igual con el envío pausado.
    */
   private async cerrarAvisosAtendidos(
@@ -700,7 +701,7 @@ export class MirrorWatchdogService {
       where: {
         organizationId,
         status: { in: ['ABIERTA', 'EN_REVISION'] },
-        kind: 'AVISO_INASISTENCIA',
+        kind: { in: ['AVISO_INASISTENCIA', 'REVISAR_CITA_ASISTENTE'] },
         appointmentId: { not: null },
       },
       select: { id: true, appointmentId: true, appointmentStartAt: true },

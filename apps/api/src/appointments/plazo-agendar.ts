@@ -16,15 +16,11 @@ type Db =
   | Pick<PrismaClient, 'organizationSettings' | 'organization'>
   | Pick<Prisma.TransactionClient, 'organizationSettings' | 'organization'>;
 
-/**
- * El primer instante que ya queda fuera del plazo (medianoche, en UTC), o null
- * si la clínica no tiene límite.
- */
-export async function finDelPlazoDelAsistente(
+/** El plazo de la clínica (días, contando hoy) y su zona horaria; null sin límite. */
+export async function plazoDeLaClinica(
   db: Db,
   organizationId: string,
-  ahora: Date,
-): Promise<Date | null> {
+): Promise<{ dias: number; timeZone: string | undefined } | null> {
   // Los dobles de prueba que no traen la tabla: sin ella, sin límite (en
   // producción siempre existe).
   const tabla = (db as { organizationSettings?: { findUnique?: unknown } })
@@ -42,7 +38,22 @@ export async function finDelPlazoDelAsistente(
     where: { id: organizationId },
     select: { timezone: true },
   });
-  return finDelPlazoParaAgendar(ahora, dias, org?.timezone ?? undefined);
+  return { dias, timeZone: org?.timezone ?? undefined };
+}
+
+/**
+ * El primer instante que ya queda fuera del plazo (medianoche, en UTC), o null
+ * si la clínica no tiene límite.
+ */
+export async function finDelPlazoDelAsistente(
+  db: Db,
+  organizationId: string,
+  ahora: Date,
+): Promise<Date | null> {
+  const plazo = await plazoDeLaClinica(db, organizationId);
+  return plazo
+    ? finDelPlazoParaAgendar(ahora, plazo.dias, plazo.timeZone)
+    : null;
 }
 
 /**

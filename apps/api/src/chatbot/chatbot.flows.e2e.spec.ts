@@ -28,6 +28,7 @@ import { SurveyService } from '../survey/survey.service';
 import { AudioConfigService } from '../audio-config/audio-config.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
 import { SchedulingExtraction } from '../llm/interfaces/llm-provider.interface';
+import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
 
 // ════════════════════════════════════════════════════════════════════
 // PRUEBAS END-TO-END DE LOS PROCEDIMIENTOS DE CITAS
@@ -348,7 +349,10 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     getAvailableSlots: jest.Mock;
     bookAppointment: jest.Mock;
     regimenDelPadron: jest.Mock;
+    cupoMasAllaDelPlazo: jest.Mock;
   };
+  // La Bandeja: lo que el bot deja para el personal.
+  let avisos: { registrar: jest.Mock };
   let waitlist: {
     joinWaitlist: jest.Mock;
     notifyWaitlist: jest.Mock;
@@ -405,7 +409,10 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       mapEntityToCatalog: jest.fn(() => ({ id: null })),
     };
 
+    avisos = { registrar: jest.fn(async () => 'CREADA') };
     appointments = {
+      // Sin plazo para agendar, como siempre: «agenda completa» es agenda completa.
+      cupoMasAllaDelPlazo: jest.fn(async () => null),
       getAvailableSlots: jest.fn(() => []),
       bookAppointment: jest.fn(() => ({
         success: true,
@@ -456,6 +463,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         { provide: HttpService, useValue: { post: jest.fn() } },
         { provide: RedisService, useValue: redis },
         { provide: AppointmentsService, useValue: appointments },
+        { provide: MirrorExceptionsService, useValue: avisos },
         { provide: WaitlistService, useValue: waitlist },
         { provide: LimiteCitasService, useValue: limiteCitas },
         { provide: InteractionLogService, useValue: interactionLog },
@@ -1619,6 +1627,26 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(db.appointments[0].status).toBe('CANCELLED');
       expect(db.slots.find((s) => s.id === 'slot-old')!.isAvailable).toBe(true);
       expect(await state()).toBe(ChatState.AWAITING_POST_CANCEL_CHOICE);
+    });
+
+    it('3.4b 🗓️ sin otro horario dentro del plazo pero sí después: no ofrece cancelar, dice desde cuándo escribir', async () => {
+      db.slots.find((s) => s.id === 'slot-new')!.isAvailable = false;
+      appointments.cupoMasAllaDelPlazo.mockResolvedValue({
+        ultimoDia: '2026-10-24',
+        primerDia: '2026-10-26',
+        desde: '2026-10-25',
+      });
+
+      await say('reagendar');
+      await say(CEDULA);
+      expect(lastSent()).toContain(
+        'Por ahora agendamos citas hasta el *sábado 24 de octubre*',
+      );
+      expect(lastSent()).toContain('Escríbanos desde el *domingo 25 de octubre*');
+      expect(lastSent()).toContain('Su cita actual sigue en pie');
+      expect(lastSent()).not.toContain('cancele');
+      expect(await state()).not.toBe(ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
     });
 
     it('3.5 responder NO en la confirmación deja la cita en su fecha original', async () => {
@@ -3571,6 +3599,94 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       // Y si necesita medicina general, sigue como siempre.
       await say('A');
       expect(await state()).toBe(ChatState.AWAITING_EPS);
+    });
+
+    it('12.7 🗓️ sin cupos por el plazo: hasta cuándo se agenda y desde cuándo escribir, y la lista de espera igual', async () => {
+      appointments.getAvailableSlots.mockImplementation(() => []);
+      appointments.cupoMasAllaDelPlazo.mockResolvedValue({
+        ultimoDia: '2026-10-24',
+        primerDia: '2026-10-26',
+        desde: '2026-10-25',
+      });
+      await say('Hola');
+      await say('A');
+      await say('A');
+      expect(lastSent()).toContain(
+        'Por ahora agendamos citas hasta el *sábado 24 de octubre*',
+      );
+      expect(lastSent()).toContain('Escríbanos desde el *domingo 25 de octubre*');
+      expect(lastSent()).not.toContain('completa');
+      expect(lastSent()).toContain('*lista de espera*');
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+    });
+
+    it('12.7b sin plazo (o tampoco hay cupos después): el mensaje de siempre', async () => {
+      appointments.getAvailableSlots.mockImplementation(() => []);
+      await say('Hola');
+      await say('A');
+      await say('A');
+      expect(lastSent()).not.toContain('Por ahora agendamos citas hasta');
+      expect(lastSent()).toContain('lista de espera');
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+    });
+
+    const reservarDeVerdad = () =>
+      appointments.bookAppointment.mockImplementation(() => {
+        db.appointments.push({
+          id: 'apt-new',
+          patientId: 'pat-laura',
+          scheduleSlotId: 'slot-a',
+          status: 'SCHEDULED',
+          epsId: null,
+          organizationId: ORG_ID,
+        });
+        return { success: true, appointmentId: 'apt-new' };
+      });
+    const casosDeRevision = () =>
+      avisos.registrar.mock.calls.filter(
+        (c: any[]) => c[1]?.kind === 'REVISAR_CITA_ASISTENTE',
+      );
+
+    it('12.8 🔎 preguntó si era para las ecografías y confirmó igual: la cita queda para revisión en la Bandeja', async () => {
+      pacienteCompleto();
+      reservarDeVerdad();
+      await hastaElResumen();
+      await say('Esto si es para las ecografías ?');
+      await say('Sí');
+
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      expect(casosDeRevision()).toHaveLength(1);
+      expect(casosDeRevision()[0][1]).toMatchObject({
+        kind: 'REVISAR_CITA_ASISTENTE',
+        dedupeKey: 'revisar-cita:apt-new',
+        appointmentId: 'apt-new',
+        patientId: 'pat-laura',
+        meta: {
+          motivo: 'CONFIRMO_TRAS_PREGUNTAR',
+          servicioPedido: 'ecografías',
+          mensaje: 'Esto si es para las ecografías ?',
+        },
+      });
+    });
+
+    it('12.9 una cita agendada sin dudas no deja nada en la Bandeja', async () => {
+      pacienteCompleto();
+      reservarDeVerdad();
+      await hastaElResumen();
+      await say('Sí');
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      expect(casosDeRevision()).toHaveLength(0);
+    });
+
+    it('12.9b preguntó por las ecografías y dijo NO: no queda nada para la siguiente cita', async () => {
+      pacienteCompleto();
+      reservarDeVerdad();
+      await hastaElResumen();
+      await say('Esto si es para las ecografías ?');
+      await say('No');
+      await hastaElResumen();
+      await say('Sí');
+      expect(casosDeRevision()).toHaveLength(0);
     });
 
     it('12.6 un servicio del menú de la clínica («Odontología» aquí sí se ofrece) sigue el camino de siempre', async () => {

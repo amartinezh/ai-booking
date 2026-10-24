@@ -63,6 +63,15 @@ import { derivarSync, type FilaOutbox } from './sync-state';
  *    futura que el paciente agendó con el asistente.
  *  · `CITA_MOVIDA_POR_HOSPITAL`    — el hospital la cambió de hora: canceló esa y
  *    le dio otra al mismo paciente.
+ *
+ * Y una de lo que el paciente dijo de una cita que el asistente le acaba de agendar
+ * (2026-10-23: una paciente que venía por ecografías quedó con una cita de medicina
+ * general y nadie se enteró). AgenIA no toca la cita: una persona confirma con el
+ * paciente si la necesita. Se cierra sola si la cita se cancela o cambia de hora.
+ *
+ *  · `REVISAR_CITA_ASISTENTE` — poco después de agendar, el paciente preguntó si la
+ *    cita era para otro servicio, dijo que no era la que necesitaba, o la confirmó
+ *    después de preguntar por otro servicio.
  */
 export const TIPOS_EXCEPCION = [
   'CITA_NO_ENTREGADA',
@@ -76,6 +85,7 @@ export const TIPOS_EXCEPCION = [
   'CANCELACION_NO_APLICADA',
   'CITA_CANCELADA_POR_HOSPITAL',
   'CITA_MOVIDA_POR_HOSPITAL',
+  'REVISAR_CITA_ASISTENTE',
 ] as const;
 export type TipoExcepcion = (typeof TIPOS_EXCEPCION)[number];
 
@@ -101,6 +111,7 @@ export const TITULO_EXCEPCION: Record<TipoExcepcion, string> = {
   CANCELACION_NO_APLICADA: 'Cancelación que el hospital no aplicó',
   CITA_CANCELADA_POR_HOSPITAL: 'El hospital canceló una cita agendada por el asistente',
   CITA_MOVIDA_POR_HOSPITAL: 'El hospital cambió la hora de una cita agendada por el asistente',
+  REVISAR_CITA_ASISTENTE: 'Revisar una cita agendada por el asistente',
 };
 
 export const SEVERIDADES_EXCEPCION = ['BAJA', 'MEDIA', 'ALTA', 'CRITICA'] as const;
@@ -333,6 +344,9 @@ export const claveExcepcion = {
   /** Una por cita: su cancelación no se pudo aplicar en el hospital. */
   cancelacionNoAplicada: (appointmentId: string) =>
     `cancelacion:${appointmentId}`,
+  /** Una por cita: la segunda duda del paciente sobre la misma cita suma una ocurrencia. */
+  revisarCitaAsistente: (appointmentId: string) =>
+    `revisar-cita:${appointmentId}`,
   auditoria: (a: {
     direction: string;
     entityType: string;
