@@ -1699,6 +1699,10 @@ model SystemLog {
   @@index([createdAt])
   @@index([level, createdAt])
   @@index([action])
+  // «Actividad de usuarios» del super administrador (2026-10-26): la línea de
+  // tiempo de una clínica y la de una persona, de lo más nuevo a lo más viejo.
+  @@index([organizationId, createdAt])
+  @@index([userId, createdAt])
 }
 
 enum LogLevel {

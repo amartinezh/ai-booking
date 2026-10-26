@@ -18,6 +18,8 @@
 #   agenia backup          volcado comprimido de PostgreSQL
 #   agenia restore <file>  restaurar un volcado (DESTRUCTIVO, pide confirmar)
 #   agenia psql | redis    consola de base de datos / Redis
+#   agenia superadmin <orden>  super administradores: listar | crear <correo> |
+#                          restablecer <correo> | quitar <correo> | revisar-claves
 #   agenia shell <svc>     shell dentro de un contenedor
 #   agenia env             variables efectivas (secretos enmascarados)
 #   agenia vigia [instalar|prueba|estado]   vigía del servidor (alertas técnicas)
@@ -41,7 +43,7 @@ warn() { printf '%s!%s %s\n' "$Y" "$N" "$*"; }
 err()  { printf '%s✘%s %s\n' "$R" "$N" "$*" >&2; }
 head1(){ printf '\n%s── %s %s\n' "$B" "$*" "$N"; }
 
-usage() { sed -n '3,20p' "$SELF" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,26p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # La ayuda debe funcionar aunque el stack no esté instalado todavía.
 case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
@@ -134,6 +136,16 @@ cmd_mantenimiento() {
 cmd_shell()   { local s="${1:?uso: agenia shell <servicio>}"; dc exec "$s" sh; }
 cmd_psql()    { dc exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"; }
 cmd_redis()   { dc exec redis redis-cli "$@"; }
+
+# Super administradores del panel: alta con clave aleatoria, clave nueva, retiro
+# y revisión de claves de fábrica (apps/web/scripts/superadmin.mjs). Corre en el
+# contenedor de la web, que tiene la base y bcrypt. La clave sale solo en esta
+# terminal: -T sin terminal (en un script) para que no la pida.
+cmd_superadmin() {
+  local tty=()
+  [[ -t 0 && -t 1 ]] || tty=(-T)
+  dc exec "${tty[@]}" web node apps/web/scripts/superadmin.mjs "$@"
+}
 
 cmd_logs() {
   local svc=""
@@ -387,6 +399,7 @@ case "${1:-status}" in
   restore)        shift; cmd_restore "$@" ;;
   psql)           shift; cmd_psql "$@" ;;
   redis)          shift; cmd_redis "$@" ;;
+  superadmin)     shift; cmd_superadmin "$@" ;;
   shell|sh)       shift; cmd_shell "$@" ;;
   env)            shift; cmd_env ;;
   vigia)          shift; cmd_vigia "$@" ;;

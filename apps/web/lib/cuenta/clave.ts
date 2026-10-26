@@ -25,6 +25,17 @@ export const CLAVE = {
  */
 export const INTENTOS_CLAVE = { MAX: 5, VENTANA_MIN: 15 } as const;
 
+/**
+ * Claves que estuvieron escritas en el código, la documentación o el historial
+ * como clave por defecto: cualquiera que las lea entra. No se aceptan nunca
+ * (también las revisa `agenia superadmin revisar-claves`, en apps/web/scripts).
+ */
+export const CLAVES_DE_FABRICA = ['admin123', 'temporal123', 'password123', 'agenia123', 'superadmin123'] as const;
+
+function esDeFabrica(clave: string): boolean {
+    return (CLAVES_DE_FABRICA as readonly string[]).includes(clave.toLowerCase());
+}
+
 export interface CambioDeClave {
     actual: string;
     nueva: string;
@@ -59,11 +70,34 @@ export function validarCambioDeClave(d: CambioDeClave): string | null {
     if (!/\p{L}/u.test(nueva) || !/\d/.test(nueva)) {
         return 'La clave nueva debe tener letras y números.';
     }
+    if (esDeFabrica(nueva)) return 'Esa clave es de las que vienen de fábrica y cualquiera la conoce: elija otra.';
     if (nueva === actual) return 'La clave nueva debe ser distinta de la actual.';
     const usuario = (d.email ?? '').split('@')[0].toLowerCase();
     if (usuario.length >= 4 && nueva.toLowerCase().includes(usuario)) {
         return 'La clave nueva no puede contener su usuario.';
     }
     if (nueva !== confirmacion) return 'La confirmación no coincide con la clave nueva.';
+    return null;
+}
+
+/**
+ * La regla de una clave que otra persona le pone a una cuenta (el administrador
+ * al crear o editar un usuario, el super administrador al crear un administrador
+ * de clínica): las mismas exigencias que «Cambiar mi clave», sin la clave actual
+ * ni la confirmación. Antes se aceptaba cualquiera y, vacía, se ponía
+ * `temporal123` o `admin123`, que estaban escritas en el código (2026-10-26).
+ */
+export function validarClaveAsignada(clave: unknown, email: string): string | null {
+    const c = typeof clave === 'string' ? clave : '';
+    if (!c) return 'Escriba una contraseña para la cuenta.';
+    if (c !== c.trim()) return 'La contraseña no puede empezar ni terminar con un espacio.';
+    if (c.length < CLAVE.MIN) return `La contraseña debe tener al menos ${CLAVE.MIN} caracteres.`;
+    if (bytesUtf8(c) > CLAVE.MAX_BYTES) return 'La contraseña es demasiado larga: use una más corta.';
+    if (!/\p{L}/u.test(c) || !/\d/.test(c)) return 'La contraseña debe tener letras y números.';
+    if (esDeFabrica(c)) return 'Esa contraseña es de las que vienen de fábrica y cualquiera la conoce: elija otra.';
+    const usuario = (email ?? '').split('@')[0].toLowerCase();
+    if (usuario.length >= 4 && c.toLowerCase().includes(usuario)) {
+        return 'La contraseña no puede contener el usuario del correo.';
+    }
     return null;
 }

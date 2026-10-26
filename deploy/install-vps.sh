@@ -1062,10 +1062,9 @@ ${G}${BOLD}═══════════════════════
     API .............. ${API_URL_PUB}
     Webhook de Meta .. ${API_URL_PUB}/chatbot/webhook
 
-  ${BOLD}Primer ingreso${N}  ${Y}(el usuario se crea solo en el primer login)${N}
-    Usuario .......... superadmin@sanvicente.com
-    Contraseña ....... admin123
-    ${R}Cámbiala de inmediato desde el panel.${N}
+  ${BOLD}Primer ingreso${N}  ${Y}(crea el super administrador; la clave sale una sola vez)${N}
+    agenia superadmin crear superadmin@agenia.co
+    ${D}Guarda la clave en tu gestor de contraseñas. Ya no hay usuario de fábrica.${N}
 
   ${BOLD}Credenciales generadas${N}  ${D}(guárdalas en tu gestor de contraseñas)${N}
     Contraseña de purga del Super Admin: ${PURGE_PASSWORD}

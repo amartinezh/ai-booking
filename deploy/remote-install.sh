@@ -514,8 +514,8 @@ ${G}${BOLD}═══════════════════════
     agenia backup      sudo bash ${REMOTE_DIR}/deploy/stop-all.sh
                        sudo bash ${REMOTE_DIR}/deploy/start-all.sh
 
-  ${BOLD}Primer ingreso al panel${N}
-    superadmin@sanvicente.com / admin123  ${R}← cámbiala de inmediato${N}
+  ${BOLD}Primer ingreso al panel${N}  ${D}(crea el super administrador; la clave sale una sola vez)${N}
+    ssh -t -i ${SSH_KEY} root@${VPS_IP} 'agenia superadmin crear superadmin@agenia.co'
 EOF
 
 if [[ $INSTALL_RC -ne 0 ]]; then

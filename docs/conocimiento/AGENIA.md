@@ -1337,15 +1337,15 @@ La página está cerrada: el administrador la abre poniendo una clave en Configu
 
 #### Para qué sirve
 
-Cada persona que entra al panel tiene un usuario con un rol que decide qué ve. Aquí creas cuentas, cambias contraseñas y roles, y limitas a los agentes de reservas a una EPS o a un médico.
+Cada persona que entra al panel tiene un usuario con un rol que decide qué ve. Aquí creas cuentas, cambias contraseñas y roles, y limitas a los agentes de reservas a una EPS o a un médico. Solo el administrador puede hacerlo, y cada cuenta creada, cambiada o eliminada queda registrada (quién, cuándo y qué cambió) para el equipo de AgenIA.
 
 #### Paso a paso
 
 ##### Crear un usuario
 
 1. Pulsa «+ Nuevo Usuario».
-2. Escribe el correo y una contraseña segura.
-3. Elige el «Rol de Acceso».
+2. Escribe el correo y una contraseña: al menos 10 caracteres, con letras y números, sin el usuario del correo y que no sea una de las que vienen de fábrica (como `temporal123`). Es obligatoria: ya no se pone una por defecto.
+3. Elige el «Rol de Acceso»: Administrador, Médico Especialista, Paciente, Agente Reservas u Observador general.
 4. Si es «Agente Reservas», escribe su nombre completo y, si quieres, limítalo a una EPS o a un médico.
 5. Pulsa «Guardar Credencial».
 
@@ -1354,7 +1354,7 @@ Cada persona que entra al panel tiene un usuario con un rol que decide qué ve. 
 ##### Cambiar la contraseña de un usuario
 
 1. Pulsa ✏️ en su fila.
-2. Escribe la nueva contraseña (si la dejas en blanco, no cambia).
+2. Escribe la nueva contraseña, con la misma regla que al crear (si la dejas en blanco, no cambia).
 3. Pulsa «Guardar Credencial».
 
 ##### Encontrar un usuario
@@ -1364,15 +1364,15 @@ Cada persona que entra al panel tiene un usuario con un rol que decide qué ve. 
 
 #### Qué ves en la pantalla
 
-- **Rol Asignado:** Administrador, Médico Especialista, Paciente o Agente de Reservas.
+- **Rol Asignado:** Administrador, Médico Especialista, Paciente, Agente de Reservas u Observador general.
 - **Perfiles Vinculados:** 🏥 Paciente, 🩺 Médico o 🎧 Agente. En los agentes se ve su límite (una EPS, un médico) o 🌐 GLOBAL. «Solo Credenciales» = cuenta sin perfil.
-- **🗑️ Eliminar:** Borra la cuenta y sus perfiles. No se puede deshacer.
+- **🗑️ Eliminar:** Borra la cuenta y sus perfiles. No se puede deshacer. No puedes eliminar tu propia cuenta ni cambiar tu propio rol: pídeselo a otro administrador.
 
 #### Preguntas frecuentes
 
 ##### ¿Qué ve cada rol?
 
-Administrador: todas las opciones. Agente de Reservas: Visión General, Agendamiento, Caja Negra, Rastreo, Solicitudes de más citas y Soporte (más la Bandeja de sincronización y los Avisos masivos si la clínica los tiene); el Límite de citas lo fija solo el Administrador. Médico: su agenda, Rastreo y Soporte. Paciente: sus citas y Soporte. Observador general: Analíticas de Negocio, Canales en vivo y Soporte (este rol no se asigna desde Usuarios).
+Administrador: todas las opciones. Agente de Reservas: Visión General, Agendamiento, Caja Negra, Rastreo, Solicitudes de más citas y Soporte (más la Bandeja de sincronización y los Avisos masivos si la clínica los tiene); el Límite de citas lo fija solo el Administrador. Médico: su agenda, Rastreo y Soporte. Paciente: sus citas y Soporte. Observador general: Analíticas de Negocio, Canales en vivo y Soporte.
 
 ##### ¿Cómo cambia cada usuario su propia clave?
 
@@ -1392,9 +1392,13 @@ Búscala aquí por su correo, pulsa ✏️, escríbele una contraseña nueva y g
 
 Ya existe una cuenta con ese correo. Búscala y edítala.
 
-##### No puedo crear o editar un usuario con el rol «Administrador».
+##### Al guardar sale un error sobre la contraseña.
 
-Si al guardar aparece un error con ese rol, repórtalo en Soporte para que el equipo técnico lo cree o lo corrija.
+La contraseña no cumple la regla: al menos 10 caracteres, letras y números, sin el usuario del correo y que no sea una de fábrica (`admin123`, `temporal123`…). Escribe otra.
+
+##### Alguien del personal no puede entrar y dice «Demasiados intentos fallidos».
+
+Tras 5 claves equivocadas en 15 minutos con el mismo correo desde el mismo equipo, el ingreso se frena 15 minutos. Espera ese tiempo; si olvidó la clave, ponle una nueva aquí (✏️).
 
 ### 🛟 Soporte {#soporte}
 
@@ -1907,10 +1911,10 @@ La zona horaria de referencia es `America/Bogota` (cada clínica puede tener la 
 | `BOOKING_AGENT` · Agente de Reservas | Agenda en ventanilla o por teléfono | Visión General, Agendamiento, Caja Negra, Rastreo de paciente, Solicitudes de más citas y Soporte (el Límite de citas es solo del administrador); con espejo, la Bandeja; con el driver de avisos, Avisos masivos. Puede estar acotado a una EPS o a un médico (`AgentProfile`). |
 | `DOCTOR` · Médico | Atiende | Mi Agenda (sus citas), Rastreo de paciente (solo pacientes con cita suya) y Soporte. |
 | `PATIENT` · Paciente | Persona con cuenta en el panel | Mis Citas Programadas y Soporte. |
-| `GENERAL_OBSERVER` · Observador general | Gerencia o control | Analíticas de Negocio, Canales en vivo y Soporte. Hoy ninguna pantalla asigna este rol (Usuarios no lo ofrece). |
-| `SUPER_ADMIN` · Equipo de AgenIA | Opera la plataforma | `/super-admin`: Organizaciones (y sus administradores), Estadísticas Globales, Canales en vivo, Encuestas (CSAT), Facturación Global, Mesa de Ayuda, Asistente de soporte, Monitor de Servicios, Alertas técnicas, Auditoría y Logs, Rastreo de paciente. |
+| `GENERAL_OBSERVER` · Observador general | Gerencia o control | Analíticas de Negocio, Canales en vivo y Soporte. Se asigna en Usuarios. |
+| `SUPER_ADMIN` · Equipo de AgenIA | Opera la plataforma | `/super-admin`: Organizaciones (y sus administradores), Estadísticas Globales, Canales en vivo, Encuestas (CSAT), Facturación Global, Mesa de Ayuda, Asistente de soporte, Monitor de Servicios, Alertas técnicas, Actividad de usuarios, Auditoría y Logs, Rastreo de paciente; «Cambiar mi clave» al pie del menú (`/super-admin/cuenta`). Las cuentas de super administrador se crean en el servidor (`agenia superadmin`, §9). |
 
-El menú de cada rol sale de `packages/shared/src/menus.ts` (la web lo reexporta en `apps/web/lib/menus.ts`); el permiso real lo aplica cada página y cada acción del servidor. Todos los usuarios del panel cambian su propia clave en «Cambiar mi clave», al pie del menú (`/dashboard/cuenta`); no es una opción del menú.
+El menú de cada rol sale de `packages/shared/src/menus.ts` (la web lo reexporta en `apps/web/lib/menus.ts`); el permiso real lo aplica cada página y cada acción del servidor. Todos los usuarios del panel cambian su propia clave en «Cambiar mi clave», al pie del menú (`/dashboard/cuenta`; el super administrador, `/super-admin/cuenta`); no es una opción del menú. Crear, editar y borrar usuarios de una clínica lo puede hacer solo su administrador (la acción lo comprueba: antes cualquier sesión de la clínica podía, incluso crear un `SUPER_ADMIN`), y solo con los roles de una clínica; el super administrador crea los administradores de cada clínica en Organizaciones.
 
 ## 3. El asistente virtual
 
@@ -2115,7 +2119,10 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 - **Aislamiento por clínica**: todo dato pertenece a una organización; los identificadores externos (cédula, BSUID, chat de Telegram, códigos del HIS) se indexan por clínica; no hay búsquedas entre clínicas. Ley 1581 de 2012 (Habeas Data).
 - **Credenciales**: las claves de IA, el token de Meta y el de Telegram se guardan cifradas y nunca se vuelven a mostrar (solo sus últimos 4 caracteres). El token del agente del hospital se guarda como hash.
 - **Rastreo de paciente**: cada búsqueda exige motivo y queda registrada (quién, cuándo, por qué); los datos se muestran enmascarados y descubrirlos deja registro.
-- **Claves**: se guardan cifradas con bcrypt. Cada usuario cambia la suya en `/dashboard/cuenta` («Cambiar mi clave», al pie del menú): se exige la actual, la nueva debe tener al menos 10 caracteres (máximo 72 bytes, lo que lee bcrypt), letras y números, ser distinta de la actual y no contener el usuario. El cambio queda en la bitácora del sistema (`PASSWORD_CHANGED`) sin ningún dato de la clave; cada intento con la actual equivocada también (`PASSWORD_CHANGE_FAILED`, aviso) y tras 5 en 15 minutos se frena el cambio por 15 minutos, para que quien encuentre una sesión abierta ajena no pueda adivinarla. El ingreso (`/login`) todavía no tiene ese tope. Cambiarla no cierra las sesiones ya abiertas (duran 8 horas). El administrador puede ponerle una clave nueva a cualquiera en Usuarios.
+- **Claves**: se guardan cifradas con bcrypt. Cada usuario cambia la suya en `/dashboard/cuenta` («Cambiar mi clave», al pie del menú): se exige la actual, la nueva debe tener al menos 10 caracteres (máximo 72 bytes, lo que lee bcrypt), letras y números, ser distinta de la actual y no contener el usuario. El cambio queda en la bitácora del sistema (`PASSWORD_CHANGED`) sin ningún dato de la clave; cada intento con la actual equivocada también (`PASSWORD_CHANGE_FAILED`, aviso) y tras 5 en 15 minutos se frena el cambio por 15 minutos, para que quien encuentre una sesión abierta ajena no pueda adivinarla. Cambiarla no cierra las sesiones ya abiertas (duran 8 horas). El administrador puede ponerle una clave nueva a cualquiera en Usuarios. Desde el 2026-10-26 ninguna cuenta nace con una clave por defecto: el administrador de la clínica (Usuarios) y el super administrador (administradores de cada clínica) la escriben con la misma regla, y ninguna pantalla acepta las claves de fábrica que estuvieron en el código (`admin123`, `temporal123`, `password123`…; `apps/web/lib/cuenta/clave.ts`).
+- **Ingreso al panel** (`/login`): cada ingreso queda en la bitácora del sistema (`USER_LOGIN`) con el usuario, su clínica, su rol, su correo, la IP (la primera de `x-forwarded-for`, que pone el proxy) y el navegador; cada intento fallido también (`LOGIN_FAILED`, aviso), con el correo intentado y el motivo (el correo no tiene cuenta, clave equivocada o clínica suspendida), nunca con la clave; y cada cierre de sesión (`USER_LOGOUT`). Tras 5 fallidos en 15 minutos con el mismo correo desde la misma IP, el ingreso se frena 15 minutos sin mirar la clave (`LOGIN_BLOCKED`, una sola constancia por ventana para que quien insiste no llene la bitácora); se cuenta por correo e IP para que nadie pueda bloquear a propósito a otra persona. Los ingresos se registraban desde antes (sin IP ni navegador); los fallidos y los cierres, desde el 2026-10-26.
+- **Super administradores**: ya no se crea solo `superadmin@sanvicente.com` con la clave `admin123` cuando no hay ninguno (eso estaba en `apps/web/app/actions/auth.ts` y en la documentación de instalación). Se gestionan en el servidor con `agenia superadmin` (`apps/web/scripts/superadmin.mjs`, corre en el contenedor de la web): `listar` (cuántos hay, su último ingreso y si alguno entra con una clave de fábrica), `crear <correo>` y `restablecer <correo>` (generan una clave aleatoria de 24 caracteres, bcrypt de costo 12, y la muestran una sola vez en la terminal), `quitar <correo>` (nunca el último) y `revisar-claves` (cuentas del personal que entran con una clave de fábrica). Cada alta, clave nueva o retiro queda en la bitácora (`SUPER_ADMIN_CREATED`, `SUPER_ADMIN_PASSWORD_RESET`, `SUPER_ADMIN_REMOVED`), sin la clave.
+- **Actividad de usuarios** (`/super-admin/actividad`, solo super administrador): la línea de tiempo de lo que hace cada persona de cada clínica, de lo más nuevo a lo más viejo, con filtros por clínica (o «Plataforma»: super administradores e intentos sin cuenta), usuario, tipo y fechas (días de Bogotá), y «Cargar más» por cursor (no repite ni salta eventos aunque entren nuevos). Arriba, los ingresos de los últimos 30 días: por clínica (personal, cuántos entraron, ingresos, fallidos, último ingreso) o, con una clínica elegida, por persona (último ingreso —«Nunca» si no hay registro—, ingresos y fallidos). No escribe nada: lee lo que cada módulo ya guarda (`apps/web/lib/actividad/fuentes.ts`): la bitácora del sistema (ingresos, intentos fallidos, cierres, cambios de clave, usuarios creados, modificados —con el antes y el después del rol y el correo, y si se le puso clave nueva— o eliminados, días sin citas, avisos masivos enviados, recordatorios manuales, cambios de las clínicas por el super administrador), el rastreo de paciente (`PatientLookupLog`), la Bandeja (`SyncExceptionLog`, solo acciones de personas), los cambios de configuración con espejo (`SyncAudit` `CONFIG` y el reproceso manual; ahí el autor va dentro del texto), las cargas del padrón, los lotes de avisos masivos, las solicitudes de más citas revisadas, «Marcar como contactado» de la Caja Negra, los tickets de soporte y lo que se les agregó, los documentos excluidos del espejo, las citas anuladas desde la Visión General (`metaLog` de la cita) y la bitácora legal de la plataforma (`GlobalAuditLog`). Documentos y teléfonos salen enmascarados (últimos 4 dígitos). Si una de esas fuentes falla, la página sale con las demás y lo dice. Índices nuevos en `SystemLog` por clínica y por usuario (migración `20261026180000_actividad_de_usuarios`).
 - **Mensajes del asistente**: el detalle de una cita solo se da al remitente que corresponde al paciente; cancelar o cambiar exige que la ficha sea del remitente. Con el caso «El teléfono de un paciente es de otra persona» abierto en la Bandeja, ese número deja de contar como del paciente para todo eso (confirmar, consultar, cancelar y cambiar), y se vuelve a revisar justo antes de cancelar o mover la cita en el hospital. Por Telegram no aplica: ese chat lo vincula el propio paciente.
 - **Avisos y alertas**: los avisos al agendador y las alertas técnicas no llevan datos de pacientes.
 - **Conversaciones del asistente de soporte**: solo el super administrador las lee, completas, en `/super-admin/soporte-bot/conversaciones`; abrir una deja un registro en la bitácora del sistema (`SUPPORT_BOT_CONVERSATION_VIEWED`, con quién y cuál). La lista de lo que el manual no cubrió va con cédulas, teléfonos y correos ocultos.
@@ -2171,10 +2178,9 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 
 ## 13. Limitaciones conocidas y pendientes
 
-- **Usuarios**: la opción «Administrador» envía un rol que no existe (`ADMIN` en vez de `ORG_ADMIN`); crear o editar un administrador desde esa pantalla falla al guardar.
 - **Analíticas**: «Completadas» cuenta citas con estado `COMPLETED`, que el flujo normal no escribe (marcar «Asistió» cambia la asistencia), así que suele quedar en 0.
 - **Agendas (Slots)**: no hay botón para borrar cupos.
-- **Rol Observador general**: existe, pero ninguna pantalla lo asigna.
+- **Actividad de usuarios**: todavía no dejan rastro de quién lo hizo, entre otros: marcar la asistencia, el recordatorio manual (se sabe que salió, no quién lo pidió), agendar y mover citas desde Agendamiento, crear y editar médicos, pacientes, servicios, EPS y cupos, los interruptores sin espejo, la configuración de IA, WhatsApp, Telegram y voz, ni lo que solo se consulta (abrir pantallas, descargar). Las sesiones no se pueden cerrar a la fuerza (el token dura 8 horas).
 - **Consulta en vivo al HIS** y **consulta del asistente al HIS**: construidas y apagadas hasta medir su costo en el hospital.
 - **Centro de ayuda**: solo lo ve el administrador.
 - **Alertas técnicas**: en producción en el hospital (bot conectado, grupo vinculado y encendidas; revisado el 2026-10-20).
@@ -2219,6 +2225,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-26** — Actividad de usuarios y seguridad de las cuentas. **Super administrador:** pantalla nueva «Actividad de usuarios» con lo que hace cada persona de cada clínica en orden (ingresos, intentos fallidos, cuentas, pacientes consultados, Bandeja, padrón, avisos, configuración, citas anuladas…), los ingresos de los últimos 30 días por clínica y por persona, y «Cambiar mi clave» (antes no tenía cómo). **Ingreso:** cada ingreso, intento fallido y cierre de sesión queda con la IP y el navegador, y tras 5 claves equivocadas en 15 minutos se frena el ingreso 15 minutos. **Cuentas:** ya no se crea solo el super administrador `superadmin@sanvicente.com` con `admin123`; se crean en el servidor con `agenia superadmin crear <correo>`, que da una clave aleatoria. En Usuarios solo el administrador crea, edita o borra cuentas (antes cualquier sesión de la clínica podía, hasta crear un super administrador), la contraseña es obligatoria y segura (antes, vacía, era `temporal123`; la de un administrador creado por el super administrador, `admin123`), la opción «Administrador» ya funciona y se puede asignar el Observador general. Cada cambio de cuentas queda registrado.
 - **2026-10-26** — Estadísticas para compartir: la página de cifras que se armaba a mano ahora vive en AgenIA y se actualiza sola cada día a las 6 a. m. con el día anterior completo (recordatorios enviados y leídos, gestiones por chat, citas agendadas y canceladas por chat, cupos que tomó otro paciente, mensajes fuera de horario y asistencia con y sin recordatorio), sin datos de pacientes. El administrador la abre con una clave sencilla en la pestaña nueva Configuración › Estadísticas, copia el enlace, cambia la clave (saca a quien había entrado) o la cierra; cada cambio queda en la auditoría. Nace cerrada. En el Hospital San Vicente también en estadisticas.hsvpanserma.agenia.co.
 - **2026-10-26** — Lista de espera con la plantilla «Oferta de cupo»: cuando se libera un cupo y el primero de la lista no ha escrito en las últimas 24 horas, el asistente se lo ofrece con esa plantilla aprobada en Meta (de 7:00 a 19:00, hora de la clínica), y el paciente responde SÍ o NO como siempre. Hay que aprobarla en Meta y registrarla en Configuración › Integraciones › Plantillas de WhatsApp; mientras no esté, se le ofrece solo a quien escribió hace poco. Si el mensaje no sale, el paciente conserva su turno y el cupo pasa al siguiente (antes lo perdía sin enterarse).
 

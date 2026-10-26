@@ -5,6 +5,7 @@ import { prisma } from '../../lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '../../lib/session';
 import { getErrorMessage } from '../../lib/error';
+import { registrarActividad } from '../../lib/actividad/registrar';
 
 // El backend NestJS expone las acciones críticas (purge / quick-stats).
 // Reutilizamos la misma resolución de URL que el dashboard de Global Stats.
@@ -48,11 +49,18 @@ export async function createOrganization(data: { name: string; logoUrl?: string 
     if (session?.role !== 'SUPER_ADMIN') throw new Error('Acceso denegado');
 
     try {
-        await prisma.organization.create({
+        const creada = await prisma.organization.create({
             data: {
                 name: data.name,
                 logoUrl: data.logoUrl || null,
             }
+        });
+        await registrarActividad({
+            action: 'ORGANIZATION_CREATED',
+            message: `Clínica creada: ${creada.name}`,
+            actor: { userId: session.userId, email: session.email, role: session.role },
+            organizationId: creada.id,
+            metadata: { detalle: creada.name },
         });
         revalidatePath('/super-admin/organizations');
         return { success: true };
@@ -67,12 +75,22 @@ export async function updateOrganization(id: string, data: { name: string; logoU
     if (session?.role !== 'SUPER_ADMIN') throw new Error('Acceso denegado');
 
     try {
+        const antes = await prisma.organization.findUnique({ where: { id }, select: { name: true } });
         await prisma.organization.update({
             where: { id },
             data: {
                 name: data.name,
                 logoUrl: data.logoUrl || null,
             }
+        });
+        await registrarActividad({
+            action: 'ORGANIZATION_UPDATED',
+            message: `Clínica modificada: ${data.name}`,
+            actor: { userId: session.userId, email: session.email, role: session.role },
+            organizationId: id,
+            metadata: {
+                detalle: antes && antes.name !== data.name ? `Nombre «${antes.name}» → «${data.name}»` : data.name,
+            },
         });
         revalidatePath('/super-admin/organizations');
         return { success: true };
@@ -86,9 +104,18 @@ export async function toggleOrganizationStatus(id: string, isActive: boolean) {
     const session = await getSession();
     if (session?.role !== 'SUPER_ADMIN') throw new Error('Acceso denegado');
 
-    await prisma.organization.update({
+    const org = await prisma.organization.update({
         where: { id },
-        data: { isActive }
+        data: { isActive },
+        select: { name: true },
+    });
+    await registrarActividad({
+        action: isActive ? 'ORGANIZATION_REACTIVATED' : 'ORGANIZATION_SUSPENDED',
+        level: isActive ? 'EVENT' : 'WARNING',
+        message: `Clínica ${isActive ? 'reactivada' : 'suspendida'}: ${org.name}`,
+        actor: { userId: session.userId, email: session.email, role: session.role },
+        organizationId: id,
+        metadata: { detalle: org.name },
     });
     revalidatePath('/super-admin/organizations');
     return { success: true };

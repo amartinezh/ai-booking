@@ -1,6 +1,7 @@
 jest.mock('../../../lib/prisma', () => ({
     prisma: {
         user: { findFirst: jest.fn(), delete: jest.fn() },
+        systemLog: { create: jest.fn().mockResolvedValue({}) },
         $transaction: jest.fn(),
     },
 }));
@@ -10,11 +11,16 @@ jest.mock('bcryptjs', () => ({ hash: jest.fn().mockResolvedValue('hashed') }));
 
 import { prisma } from '../../../lib/prisma';
 import { getSession } from '../../../lib/session';
-import { saveUserAction } from './actions';
+import { deleteUserAction, saveUserAction } from './actions';
 
 const mockGetSession = getSession as jest.Mock;
 const mockFindFirst = prisma.user.findFirst as jest.Mock;
 const mockTransaction = prisma.$transaction as jest.Mock;
+const mockDelete = prisma.user.delete as jest.Mock;
+const mockLog = prisma.systemLog.create as jest.Mock;
+
+const ADMIN = { userId: 'admin-1', email: 'admin@clinica.co', role: 'ORG_ADMIN', organizationId: 'org-1' };
+const CLAVE = 'Ventanilla2026';
 
 function formData(fields: Record<string, string>) {
     const fd = new FormData();
@@ -38,8 +44,8 @@ describe('saveUserAction — organizationId en AgentProfile (aislamiento multi-t
     beforeEach(() => jest.clearAllMocks());
 
     it('modo edición: crear un AgentProfile nuevo (upsert.create) para un usuario existente incluye organizationId', async () => {
-        mockGetSession.mockResolvedValue({ organizationId: 'org-1' });
-        mockFindFirst.mockResolvedValue({ id: 'user-1' });
+        mockGetSession.mockResolvedValue(ADMIN);
+        mockFindFirst.mockResolvedValue({ id: 'user-1', email: 'a@b.com', role: 'BOOKING_AGENT' });
         const tx = fakeTx();
         mockTransaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(tx));
 
@@ -56,12 +62,12 @@ describe('saveUserAction — organizationId en AgentProfile (aislamiento multi-t
     });
 
     it('modo creación: el AgentProfile del usuario nuevo incluye organizationId', async () => {
-        mockGetSession.mockResolvedValue({ organizationId: 'org-1' });
+        mockGetSession.mockResolvedValue(ADMIN);
         const tx = fakeTx();
         mockTransaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(tx));
 
         const res = await saveUserAction(
-            formData({ email: 'nuevo@b.com', role: 'BOOKING_AGENT', agentFullName: 'Nuevo Agente' }),
+            formData({ email: 'nuevo@b.com', role: 'BOOKING_AGENT', agentFullName: 'Nuevo Agente', password: CLAVE }),
         );
 
         expect(res.success).toBe(true);
@@ -82,12 +88,96 @@ describe('saveUserAction — organizationId en AgentProfile (aislamiento multi-t
     });
 
     it('modo edición: rechaza si el usuario no existe en el tenant de la sesión', async () => {
-        mockGetSession.mockResolvedValue({ organizationId: 'org-1' });
+        mockGetSession.mockResolvedValue(ADMIN);
         mockFindFirst.mockResolvedValue(null);
 
         const res = await saveUserAction(formData({ id: 'user-ajeno', email: 'a@b.com', role: 'PATIENT' }));
 
         expect(res.success).toBe(false);
         expect(mockTransaction).not.toHaveBeenCalled();
+    });
+});
+
+describe('saveUserAction / deleteUserAction — quién puede y qué rol (2026-10-26)', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockTransaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(fakeTx()));
+    });
+
+    it.each(['DOCTOR', 'BOOKING_AGENT', 'PATIENT', 'GENERAL_OBSERVER'])(
+        'un %s de la clínica no puede crear cuentas',
+        async (role) => {
+            mockGetSession.mockResolvedValue({ ...ADMIN, role });
+            const res = await saveUserAction(formData({ email: 'x@b.com', role: 'ORG_ADMIN', password: CLAVE }));
+            expect(res.success).toBe(false);
+            expect(mockTransaction).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each(['SUPER_ADMIN', 'ADMIN', ''])('nadie asigna el rol «%s» desde la clínica', async (role) => {
+        mockGetSession.mockResolvedValue(ADMIN);
+        const res = await saveUserAction(formData({ email: 'x@b.com', role, password: CLAVE }));
+        expect(res).toEqual({ success: false, error: 'Elija un rol válido.' });
+        expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
+    it('editar tampoco puede subir a nadie a SUPER_ADMIN', async () => {
+        mockGetSession.mockResolvedValue(ADMIN);
+        mockFindFirst.mockResolvedValue({ id: 'user-1', email: 'a@b.com', role: 'DOCTOR' });
+        const res = await saveUserAction(formData({ id: 'user-1', email: 'a@b.com', role: 'SUPER_ADMIN' }));
+        expect(res.success).toBe(false);
+        expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
+    it('crear exige una clave segura (antes, vacía, quedaba temporal123)', async () => {
+        mockGetSession.mockResolvedValue(ADMIN);
+        expect((await saveUserAction(formData({ email: 'x@b.com', role: 'DOCTOR' }))).success).toBe(false);
+        expect((await saveUserAction(formData({ email: 'x@b.com', role: 'DOCTOR', password: 'temporal123' }))).success).toBe(
+            false,
+        );
+        expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
+    it('el administrador crea un Administrador (antes la opción mandaba ADMIN y fallaba) y queda en la bitácora', async () => {
+        mockGetSession.mockResolvedValue(ADMIN);
+        const res = await saveUserAction(formData({ email: 'otro@b.com', role: 'ORG_ADMIN', password: CLAVE }));
+        expect(res.success).toBe(true);
+        const d = mockLog.mock.calls[0][0].data;
+        expect(d).toMatchObject({ action: 'USER_CREATED', userId: 'admin-1', organizationId: 'org-1' });
+        expect(d.metadata.objetivo).toEqual({ userId: 'new-user-1', email: 'otro@b.com', role: 'ORG_ADMIN' });
+        expect(JSON.stringify(d)).not.toContain(CLAVE);
+    });
+
+    it('un cambio de rol o de clave queda como aviso, con el antes y el después', async () => {
+        mockGetSession.mockResolvedValue(ADMIN);
+        mockFindFirst.mockResolvedValue({ id: 'user-1', email: 'a@b.com', role: 'DOCTOR' });
+        const res = await saveUserAction(formData({ id: 'user-1', email: 'a@b.com', role: 'BOOKING_AGENT', password: CLAVE }));
+        expect(res.success).toBe(true);
+        const d = mockLog.mock.calls[0][0].data;
+        expect(d).toMatchObject({ action: 'USER_UPDATED', level: 'WARNING' });
+        expect(d.metadata.detalle).toContain('rol Médico → Agente de reservas');
+        expect(d.metadata.detalle).toContain('clave nueva');
+        expect(JSON.stringify(d)).not.toContain(CLAVE);
+    });
+
+    it('no puede cambiar su propio rol', async () => {
+        mockGetSession.mockResolvedValue(ADMIN);
+        mockFindFirst.mockResolvedValue({ id: 'admin-1', email: 'admin@clinica.co', role: 'ORG_ADMIN' });
+        const res = await saveUserAction(formData({ id: 'admin-1', email: 'admin@clinica.co', role: 'DOCTOR' }));
+        expect(res.success).toBe(false);
+        expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
+    it('borrar: solo el administrador, nunca a sí mismo, y queda en la bitácora', async () => {
+        mockGetSession.mockResolvedValue({ ...ADMIN, role: 'BOOKING_AGENT' });
+        expect((await deleteUserAction('user-1')).success).toBe(false);
+        mockGetSession.mockResolvedValue(ADMIN);
+        expect((await deleteUserAction('admin-1')).success).toBe(false);
+        expect(mockDelete).not.toHaveBeenCalled();
+
+        mockDelete.mockResolvedValue({ id: 'user-1', email: 'a@b.com', role: 'DOCTOR' });
+        expect((await deleteUserAction('user-1')).success).toBe(true);
+        expect(mockDelete.mock.calls[0][0].where).toEqual({ id: 'user-1', organizationId: 'org-1', role: { not: 'SUPER_ADMIN' } });
+        expect(mockLog.mock.calls[0][0].data).toMatchObject({ action: 'USER_DELETED', level: 'WARNING' });
     });
 });

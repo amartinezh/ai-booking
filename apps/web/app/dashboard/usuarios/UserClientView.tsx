@@ -96,6 +96,7 @@ export default function UserClientView({ users, epsList, doctorList }: { users: 
                     <option value="DOCTOR">Médicos</option>
                     <option value="BOOKING_AGENT">Agentes de Salud</option>
                     <option value="ORG_ADMIN">Administradores</option>
+                    <option value="GENERAL_OBSERVER">Observadores</option>
                 </select>
             </div>
 

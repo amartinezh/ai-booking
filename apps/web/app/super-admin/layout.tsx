@@ -22,6 +22,7 @@ export default async function SuperAdminLayout({ children }: { children: React.R
         { label: 'Asistente de soporte', href: '/super-admin/soporte-bot', icon: '🤖' },
         { label: 'Monitor de Servicios', href: '/super-admin/monitor', icon: '📡' },
         { label: 'Alertas técnicas', href: '/super-admin/alertas', icon: '🚨' },
+        { label: 'Actividad de usuarios', href: '/super-admin/actividad', icon: '👣' },
         { label: 'Auditoría y Logs', href: '/super-admin/logs', icon: '🩻' },
         { label: 'Rastreo de paciente', href: '/super-admin/rastreo', icon: '🔎' },
     ];
@@ -55,6 +56,13 @@ export default async function SuperAdminLayout({ children }: { children: React.R
                             Súper Administrador
                         </span>
                     </div>
+                    {/* El super administrador no entra a /dashboard: su «Cambiar mi clave» vive aquí. */}
+                    <Link
+                        href="/super-admin/cuenta"
+                        className="mb-2 w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-zinc-700 bg-white border border-zinc-200 hover:bg-zinc-100 dark:text-zinc-300 dark:bg-zinc-800 dark:border-zinc-700 dark:hover:bg-zinc-700 rounded-xl transition-colors"
+                    >
+                        <span>🔑</span> Cambiar mi clave
+                    </Link>
                     <form action={logoutUser}>
                         <button type="submit" className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 dark:text-red-400 dark:bg-red-900/20 dark:hover:bg-red-900/40 rounded-xl transition-colors">
                             <span>🚪</span> Cerrar Sesión
@@ -73,6 +81,13 @@ export default async function SuperAdminLayout({ children }: { children: React.R
                     <span className="text-xs font-semibold px-3 py-1 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 rounded-lg">
                         Super Admin
                     </span>
+                    <Link
+                        href="/super-admin/cuenta"
+                        aria-label="Cambiar mi clave"
+                        className="p-2 flex items-center justify-center bg-zinc-100 rounded-lg dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+                    >
+                        🔑
+                    </Link>
                     <form action={logoutUser}>
                         <button type="submit" className="p-2 flex items-center justify-center text-red-600 bg-red-50 rounded-lg dark:text-red-400 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">
                             🚪

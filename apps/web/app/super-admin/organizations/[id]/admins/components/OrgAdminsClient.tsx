@@ -31,7 +31,7 @@ export default function OrgAdminsClient({ organizationId, initialAdmins }: { org
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.email) return;
+    if (!formData.email || !formData.password) return;
 
     startTransition(async () => {
       const res = await createOrgAdmin(organizationId, formData.email, formData.password);
@@ -117,12 +117,15 @@ export default function OrgAdminsClient({ organizationId, initialAdmins }: { org
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Clave de Acceso Temporal</label>
+                <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Clave de Acceso Temporal <span className="text-red-500">*</span></label>
                 <input 
-                  type="text" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })}
+                  type="text" required minLength={10} autoComplete="off" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })}
                   className="w-full rounded-xl border border-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 px-4 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white"
-                  placeholder="(Por defecto: admin123)"
+                  placeholder="Al menos 10 caracteres, letras y números"
                 />
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  Entréguela por un medio seguro y pida que la cambie al entrar («Cambiar mi clave»).
+                </p>
               </div>
               <div className="pt-4 flex justify-end gap-3">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2 rounded-xl text-sm font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800">

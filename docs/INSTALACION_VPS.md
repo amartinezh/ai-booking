@@ -584,15 +584,20 @@ agenia logs caddy | tail -40
 
 ## 11. Puesta en marcha en el panel
 
-1. **Primer ingreso.** Abre `https://app.tudominio.com/login`. El primer intento
-   de login crea automáticamente el Super Admin si no existe ninguno:
+1. **Primer ingreso.** Crea el Super Admin en el servidor; el script genera una
+   clave aleatoria y la muestra **una sola vez** en tu terminal:
 
-   | Usuario | Contraseña |
-   |---|---|
-   | `superadmin@sanvicente.com` | `admin123` |
+   ```bash
+   agenia superadmin crear superadmin@agenia.co
+   ```
 
-   > 🔴 **Cambia esa contraseña de inmediato.** Está escrita en el código
-   > (`apps/web/app/actions/auth.ts`) y es pública.
+   Guárdala en tu gestor de contraseñas y entra por `https://app.tudominio.com/login`.
+   Desde el 2026-10-26 ya no existe el usuario de fábrica (`superadmin@sanvicente.com`
+   / `admin123`, que se creaba solo en el primer login). Otras órdenes:
+   `agenia superadmin listar` (cuántos hay, último ingreso y si alguno usa una
+   clave de fábrica), `restablecer <correo>`, `quitar <correo>` y `revisar-claves`
+   (cuentas del personal con claves como `admin123` o `temporal123`). El Super
+   Admin cambia su propia clave en el panel con «🔑 Cambiar mi clave».
 
 2. **Crea la organización** (la clínica) desde *Super Admin → Organizations*, y
    asígnale su administrador.

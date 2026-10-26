@@ -68,9 +68,12 @@ export default function UserModal({ user, epsList, doctorList, onClose }: { user
                             name="password"
                             type="password"
                             required={!user}
+                            minLength={10}
+                            autoComplete="new-password"
                             placeholder={user ? "••••••••" : "Ingresa una contraseña segura"}
                             className="w-full bg-zinc-50 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 rounded-xl px-4 py-3 text-zinc-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                         />
+                        <p className="mt-1 text-xs text-zinc-400">Al menos 10 caracteres, con letras y números, sin el usuario del correo.</p>
                     </div>
 
                     <div>
@@ -81,10 +84,11 @@ export default function UserModal({ user, epsList, doctorList, onClose }: { user
                             onChange={(e) => setSelectedRole(e.target.value as Role)}
                             className="w-full bg-zinc-50 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 rounded-xl px-4 py-3 text-zinc-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                         >
-                            <option value="ADMIN">Administrador</option>
+                            <option value="ORG_ADMIN">Administrador</option>
                             <option value="DOCTOR">Médico Especialista</option>
                             <option value="PATIENT">Paciente</option>
                             <option value="BOOKING_AGENT">Agente Reservas</option>
+                            <option value="GENERAL_OBSERVER">Observador general</option>
                         </select>
                     </div>
 
