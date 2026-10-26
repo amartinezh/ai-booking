@@ -307,6 +307,9 @@ function createPrisma(db: Db) {
             : a.patientId === where.patientId;
         // Las recordadas de quien escribe (respuestas al recordatorio).
         const recordadaDesde: Date | undefined = where.reminderSentAt?.gte;
+        // 📱 Las que el asistente agendó después del recordatorio (celular compartido).
+        const creadaDespues: Date | undefined = where.createdAt?.gt;
+        const origenes: string[] | undefined = where.origin?.in;
         // 🩺 Solo médicos con «WhatsApp ON» y servicios activos, si lo pide.
         const filas = db.appointments
           .filter((a) => delPaciente(a) && a.status === where.status)
@@ -316,6 +319,11 @@ function createPrisma(db: Db) {
               !recordadaDesde ||
               (!!a.reminderSentAt && a.reminderSentAt >= recordadaDesde),
           )
+          .filter(
+            (a) =>
+              !creadaDespues || (!!a.createdAt && a.createdAt > creadaDespues),
+          )
+          .filter((a) => !origenes || origenes.includes(a.origin))
           // Como Prisma con `include: { patient }`: el paciente de la cita.
           .map((a) => ({
             ...a,
@@ -2972,6 +2980,107 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
   // ──────────────────────────────────────────────────────────────────
   // 🎫 Ya en el hospital: «¿qué número me toca?» (2026-10-16)
   // ──────────────────────────────────────────────────────────────────
+  // 📱 Caso real 2026-10-24 (…0244): a ese celular le llegó el recordatorio de la
+  // cita de Marilyn (12:20) y desde él se agendó después la de Jhon (12:40). «¿Dónde
+  // queda el consultorio?» recibió la cita de Marilyn, y «Muchas gracias» contó como
+  // que Marilyn confirmaba.
+  describe('📱 celular compartido: cita agendada después del recordatorio de otra', () => {
+    const HACE_4H = new Date(AHORA.getTime() - 4 * 3_600_000);
+    const HACE_1MIN = new Date(AHORA.getTime() - 60_000);
+    const MANANA_20 = new Date(MANANA.getTime() + 20 * 60_000);
+    const paso = (step: string) =>
+      interactionLog.logSuccess.mock.calls
+        .map((c: any[]) => c[0])
+        .find((e: any) => e?.metadata?.step === step);
+    /** Marilyn con recordatorio y, desde el mismo número, la cita de Jhon. */
+    const conCelularCompartido = (
+      jhon: { createdAt?: Date; origin?: string } = {},
+    ) => {
+      seedPaciente({ fullName: 'Marilyn Grisales' });
+      seedPaciente({
+        id: 'pat-2',
+        cedula: '1023896971',
+        fullName: 'Jhon Parra',
+      });
+      seedCita('apt-1', MANANA);
+      db.appointments[0].reminderSentAt = HACE_4H;
+      seedCita('apt-2', MANANA_20, SVC_MEDICINA, 'pat-2');
+      Object.assign(db.appointments[1], {
+        origin: 'WHATSAPP',
+        createdAt: HACE_1MIN,
+        ...jhon,
+      });
+    };
+
+    beforeEach(() => {
+      bookingEnabled = true;
+    });
+
+    it('«¿dónde queda el consultorio?» responde con las DOS citas, cada una con su paciente', async () => {
+      conCelularCompartido();
+      await say('Me puedes indicar donde queda el consultorio de la doctora');
+      const r = lastSent();
+      expect(r).toContain('Marilyn');
+      expect(r).toContain('Jhon');
+      expect(paso('PREGUNTA_SOBRE_CITA')?.metadata).toMatchObject({
+        appointmentIds: ['apt-1', 'apt-2'],
+      });
+    });
+
+    it('«Muchas gracias» justo después de agendar es una despedida: no confirma la cita de la otra persona', async () => {
+      conCelularCompartido();
+      await say('Muchas gracias');
+      expect(lastSent()).not.toContain('Gracias por confirmar');
+      expect(paso('RECORDATORIO_CONFIRMADO')).toBeUndefined();
+    });
+
+    it('si la cita se agendó ANTES del recordatorio, «Muchas gracias» confirma como siempre', async () => {
+      conCelularCompartido({ createdAt: new Date(HACE_4H.getTime() - 60_000) });
+      await say('Muchas gracias');
+      expect(lastSent()).toContain('¡Gracias por confirmar!');
+      expect(paso('RECORDATORIO_CONFIRMADO')?.metadata).toMatchObject({
+        appointmentId: 'apt-1',
+      });
+    });
+
+    it('una cita que trajo el hospital (no el asistente) no cambia nada: «Muchas gracias» confirma el recordatorio', async () => {
+      conCelularCompartido({ origin: 'MIRROR' });
+      await say('Muchas gracias');
+      expect(lastSent()).toContain('¡Gracias por confirmar!');
+    });
+
+    it('«no puedo ir» deja elegir entre las dos, en vez de ofrecer cancelar la de la otra persona', async () => {
+      conCelularCompartido();
+      await say('No voy a poder ir');
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_SELECTION);
+      const r = lastSent();
+      expect(r).toContain('*A)*');
+      expect(r).toContain('*B)*');
+      expect(r).toContain('Marilyn');
+      expect(r).toContain('Jhon');
+      expect(db.appointments.every((a) => a.status === 'SCHEDULED')).toBe(true);
+    });
+
+    it('con «Cancelar» apagado, «no puedo ir» deja en la Bandeja el aviso de las DOS citas', async () => {
+      cancelEnabled = false;
+      conCelularCompartido();
+      await say('No voy a poder ir');
+      const citas = avisos.registrar.mock.calls.map(
+        (c: any[]) => c[1].appointmentId,
+      );
+      expect(citas.sort()).toEqual(['apt-1', 'apt-2']);
+      expect(db.appointments.every((a) => a.status === 'SCHEDULED')).toBe(true);
+    });
+
+    it('«¿en qué consultorio?» habla de la cita que se acaba de agendar', async () => {
+      conCelularCompartido();
+      await say('¿En qué consultorio me atienden?');
+      expect(paso('PREGUNTA_TURNO')?.metadata).toMatchObject({
+        appointmentId: 'apt-2',
+      });
+    });
+  });
+
   describe('🔎 duda sobre la cita que el asistente le acaba de agendar (2026-10-23)', () => {
     const HACE_1H = new Date(AHORA.getTime() - 3_600_000);
     const citaDelAsistente = (over: Record<string, unknown> = {}) => {

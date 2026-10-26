@@ -275,6 +275,7 @@ describe('claveExcepcion — identifica el PROBLEMA, no la fila', () => {
     expect(claveExcepcion.derivaEnHis('apt-1')).toBe('deriva:apt-1');
     expect(claveExcepcion.avisoInasistencia('apt-1')).toBe('inasistencia:apt-1');
     expect(claveExcepcion.telefonoEquivocado('pac-1')).toBe('telefono:pac-1');
+    expect(claveExcepcion.cancelacionSinConfirmar('apt-1')).toBe('cancelar-sin-confirmar:apt-1');
   });
 
   it('auditoría: el mismo problema repetido cae en la MISMA clave (no una excepción por fila)', () => {
@@ -294,6 +295,8 @@ describe('claveExcepcion — identifica el PROBLEMA, no la fila', () => {
       claveExcepcion.citaNoEntregada('x', 1),
       claveExcepcion.eventoRendido(1),
       claveExcepcion.derivaEnHis('x'),
+      claveExcepcion.avisoInasistencia('x'),
+      claveExcepcion.cancelacionSinConfirmar('x'),
       claveExcepcion.auditoria({ direction: 'a', entityType: 'b', entityId: 'x', cupo: null, outcome: 'c' }),
     ];
     expect(new Set(claves).size).toBe(claves.length);

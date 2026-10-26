@@ -81,6 +81,14 @@ import { derivarSync, type FilaOutbox } from './sync-state';
  *    botón. Se cierra sola cuando queda homologado o ya no tiene esas citas.
  *  · `MEDICO_AGREGADO_AUTO`   — AgenIA lo creó y homologó solo (Configuración, apagado
  *    de fábrica): para que una persona lo revise y decida su WhatsApp.
+ *
+ * Y una de lo que el paciente pidió y no terminó (2026-10-26: una paciente escribió
+ * «Cancelar esta cita por favor», nunca respondió el SÍ y la cita siguió en pie sin
+ * que nadie se enterara). AgenIA no la cancela: una persona confirma con el paciente.
+ *
+ *  · `CANCELACION_SIN_CONFIRMAR` — el paciente pidió cancelar por el chat, el
+ *    asistente le preguntó si la cancelaba y pasó la hora sin un SÍ ni un NO. Lo abre
+ *    el vigilante; se cierra sola si la cita se cancela o cambia de hora.
  */
 export const TIPOS_EXCEPCION = [
   'CITA_NO_ENTREGADA',
@@ -97,6 +105,7 @@ export const TIPOS_EXCEPCION = [
   'REVISAR_CITA_ASISTENTE',
   'MEDICO_SIN_HOMOLOGAR',
   'MEDICO_AGREGADO_AUTO',
+  'CANCELACION_SIN_CONFIRMAR',
 ] as const;
 export type TipoExcepcion = (typeof TIPOS_EXCEPCION)[number];
 
@@ -125,6 +134,7 @@ export const TITULO_EXCEPCION: Record<TipoExcepcion, string> = {
   REVISAR_CITA_ASISTENTE: 'Revisar una cita agendada por el asistente',
   MEDICO_SIN_HOMOLOGAR: 'Médico del hospital con citas que aún no está en AgenIA',
   MEDICO_AGREGADO_AUTO: 'Médico del hospital agregado automáticamente',
+  CANCELACION_SIN_CONFIRMAR: 'Un paciente pidió cancelar y no confirmó',
 };
 
 export const SEVERIDADES_EXCEPCION = ['BAJA', 'MEDIA', 'ALTA', 'CRITICA'] as const;
@@ -365,6 +375,9 @@ export const claveExcepcion = {
     `medico-sin-homologar:${externalKey}`,
   medicoAgregadoAuto: (externalKey: string) =>
     `medico-agregado:${externalKey}`,
+  /** Una por cita: pedirlo otra vez sin confirmar no abre otro caso. */
+  cancelacionSinConfirmar: (appointmentId: string) =>
+    `cancelar-sin-confirmar:${appointmentId}`,
   auditoria: (a: {
     direction: string;
     entityType: string;

@@ -259,6 +259,31 @@ describe('resumenPublico — una frase neutra desde meta, nunca desde el detalle
     expect(r('REVISAR_CITA_ASISTENTE', { motivo: 'OTRO_SERVICIO' })).toContain('si era para otro servicio');
   });
 
+  it('🙋 pidió cancelar y no confirmó: qué pidió, cuándo, lo que escribió después y qué hacer', () => {
+    const t = r('CANCELACION_SIN_CONFIRMAR', {
+      canal: 'WHATSAPP',
+      ofrecidoIso: '2026-10-25T00:38:00.000Z',
+      mensaje: 'Cancelar esta cita por favor',
+      despues: ['Muchas gracias', 'Quiero confirmar'],
+    });
+    expect(t).toContain('pidió por WhatsApp cancelar esta cita');
+    expect(t).toContain('no respondió, así que la cita sigue en pie');
+    expect(t).toContain('«Cancelar esta cita por favor»');
+    expect(t).toContain('Después escribió: «Muchas gracias» · «Quiero confirmar».');
+    expect(t).toContain('cancélela para liberar el cupo');
+    expect(t).toContain('Se cierra sola si la cita se cancela o cambia de hora');
+    // La hora en Bogotá, no en UTC: el sábado 24 a las 7:38 p. m.
+    expect(t).toMatch(/se le preguntó el .*24.*7:38/);
+
+    const varias = r('CANCELACION_SIN_CONFIRMAR', { canal: 'TELEGRAM', citasDelPedido: 2 });
+    expect(varias).toContain('por Telegram');
+    expect(varias).toContain('Tenía 2 citas y no eligió cuál');
+    // Sin mensaje ni fecha, la frase no queda con huecos.
+    expect(varias).not.toContain('Escribió');
+    expect(varias).not.toContain('se le preguntó el');
+    expect(varias).not.toContain('Después escribió');
+  });
+
   it('un tipo desconocido cae al título', () => {
     expect(r('TIPO_NUEVO', {})).toBe('Título');
   });

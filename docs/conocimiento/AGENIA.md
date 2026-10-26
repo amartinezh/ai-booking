@@ -4,7 +4,7 @@
 >
 > **Regla obligatoria.** Todo ajuste o mejora del sistema actualiza este archivo **en el mismo commit**: lo que cambió en la pantalla o en el comportamiento, y una línea en la [bitácora](#parte-3--bitácora-de-cambios). Lo vigilan el gancho `commit-msg` del repositorio y el CI. Cómo editarlo y el formato de la Parte 1: [README.md](README.md) de esta carpeta.
 
-**Última actualización:** 2026-10-24
+**Última actualización:** 2026-10-26
 
 ## Contenido
 
@@ -295,6 +295,8 @@ Cada vez que una conversación con el asistente falla o se abandona, queda aquí
 1. En la tarjeta «En lista de espera», pulsa «Ver detalle».
 2. Busca por nombre o cédula.
 3. Escríbele a cada paciente por WhatsApp para asignarle una cita.
+
+> 💡 Cuando se libera un cupo, el asistente se lo ofrece solo al primero de la lista que haya escrito en las últimas 24 horas (o que use Telegram): WhatsApp no deja escribirle a nadie más sin una plantilla. Quien lleva más tiempo sin escribir conserva su lugar, pero no recibe el aviso: escríbele tú.
 
 #### Qué ves en la pantalla
 
@@ -1666,7 +1668,7 @@ Un vigilante revisa cada 2 minutos si algo se atascó entre AgenIA y el hospital
 
 - **Activas / Sin dueño / Mías / Críticas:** Las cifras de arriba. Críticas: la cita es en menos de 4 horas.
 - **Gravedad:** Baja, Media, Alta (cita en menos de 24 horas) o Crítica (menos de 4 horas).
-- **Tipos de excepción:** Cita que el hospital aún no tiene · Un cambio se rindió sin llegar al hospital · Conflicto entre AgenIA y el hospital · Error al aplicar un cambio · El hospital no tiene una cita que AgenIA da por hecha · Cita del hospital con un documento ambiguo · Un paciente avisó que no irá o pide otra fecha · El teléfono de un paciente es de otra persona · Cancelación que el hospital no aplicó · El hospital canceló una cita agendada por el asistente · El hospital cambió la hora de una cita agendada por el asistente · Revisar una cita agendada por el asistente · Médico del hospital con citas que aún no está en AgenIA · Médico del hospital agregado automáticamente.
+- **Tipos de excepción:** Cita que el hospital aún no tiene · Un cambio se rindió sin llegar al hospital · Conflicto entre AgenIA y el hospital · Error al aplicar un cambio · El hospital no tiene una cita que AgenIA da por hecha · Cita del hospital con un documento ambiguo · Un paciente avisó que no irá o pide otra fecha · El teléfono de un paciente es de otra persona · Cancelación que el hospital no aplicó · El hospital canceló una cita agendada por el asistente · El hospital cambió la hora de una cita agendada por el asistente · Revisar una cita agendada por el asistente · Médico del hospital con citas que aún no está en AgenIA · Médico del hospital agregado automáticamente · Un paciente pidió cancelar y no confirmó.
 - **Estados de cierre:** Resuelta o Descartada (con nota de una persona), Se cerró sola (el problema desapareció) o Venció sin resolución (la cita pasó hace más de 7 días y nadie la cerró).
 
 #### Preguntas frecuentes
@@ -1702,6 +1704,10 @@ Con «Agregar solos los médicos nuevos del hospital» encendido en Configuraci�
 ##### ¿Qué es «Revisar una cita agendada por el asistente»?
 
 Poco después de agendar con el asistente (hasta 24 horas), el paciente preguntó si la cita era para otro servicio que no se agenda por ese medio («¿esto sí es para las ecografías?»), escribió que no era la cita que necesitaba, o la confirmó después de preguntar por otro servicio. El asistente no cambió la cita. Comunícate con el paciente para confirmar si la necesita; si no, cancélala para liberar el cupo y oriéntalo. El caso se cierra solo si la cita se cancela o cambia de hora.
+
+##### ¿Qué es «Un paciente pidió cancelar y no confirmó»?
+
+El paciente pidió por WhatsApp o Telegram cancelar su cita («Cancelar esta cita por favor», «no puedo ir»), el asistente le mostró la cita y le preguntó si la cancelaba, y pasó una hora sin que respondiera SÍ o NO. La cita sigue en pie y su cupo ocupado. El caso muestra lo que escribió al pedirlo, cuándo se le preguntó y lo que escribió después, si escribió algo. Comunícate con el paciente: si no va a asistir, cancela la cita para liberar el cupo; si la mantiene, pulsa «Resolver». Si tenía varias citas y no eligió cuál, queda un caso por cada una. El caso se cierra solo si la cita se cancela o cambia de hora, y no se vuelve a abrir si alguien ya lo cerró.
 
 ##### ¿Qué es «Cita del hospital con un documento ambiguo»?
 
@@ -1921,10 +1927,17 @@ En el resumen, una **pregunta no es un SÍ** (`apps/api/src/chatbot/pregunta-al-
 - Al confirmar la cancelación o el cambio, una pregunta («¿si la cancelo me dan otra?») no cuenta como SÍ: se le vuelve a pedir SÍ o NO (§3.3). «¿Me la cancela?» sí cancela.
 - Si la operación está apagada, o la cita es de un servicio o médico con el que AgenIA no trabaja (§3.11), el aviso del paciente queda en la Bandeja de sincronización para el personal (tipo «Un paciente avisó que no irá o pide otra fecha») y al paciente se le dice que su aviso quedó registrado.
 - Tras cancelar, ofrece reagendar si agendar está encendido; si al cambiar la fecha no hay cupos, ofrece cancelar si cancelar está encendido.
+- Si el paciente pide cancelar, el asistente le pregunta si la cancela y pasa una hora (lo que dura la sesión) sin un SÍ ni un NO, el vigilante deja la cita en la Bandeja («Un paciente pidió cancelar y no confirmó», §5.5). El asistente no la cancela solo.
 
 ### 3.5 Lista de espera
 
 Cuando no hay cupos, el paciente puede quedar en lista de espera para esa especialidad. Al liberarse un cupo se le ofrece al primero; si no confirma a tiempo, la oferta vence (barrido cada 5 min) y pasa al siguiente. La lista se ve desde la Caja Negra.
+
+Quién recibe el cupo (`apps/api/src/waitlist/waitlist.service.ts`, 2026-10-26):
+
+- **EPS:** un cupo para cualquier EPS (`ScheduleSlot.allowedEpsId` vacío, como todos los del hospital) se le ofrece al primero de la cola, tenga la EPS que tenga. Uno de una EPS, a los de esa EPS y a los particulares. Antes, un cupo para cualquier EPS solo cruzaba con quien entró sin EPS, y el asistente siempre anota la EPS: en el hospital la lista nunca le avisó a nadie. Al reofrecer el cupo tras un NO o un vencimiento se usa la EPS del cupo (guardada en la oferta, `metadata.epsDelCupo`), no la del paciente que lo rechazó.
+- **Ventana de 24 horas:** la oferta es texto libre, y WhatsApp solo lo entrega hasta 24 horas después del último mensaje del paciente (la plantilla «Oferta de cupo» todavía no se envía). Se recorre la cola en orden y se le ofrece al primero con la ventana abierta, o que escribe por Telegram; a los de delante sin ventana no se les escribe ni pierden su lugar. Si a nadie se le puede escribir, el cupo queda en la agenda para quien lo pida.
+- **Posición:** la que se le dice al paciente cuenta a todos los del mismo servicio que entraron antes, sin mirar la EPS.
 
 ### 3.6 Límite de citas por paciente
 
@@ -1949,6 +1962,8 @@ Antes de llamar a la IA, el asistente reconoce con reglas fijas (`apps/api/src/c
 | Agradecimiento | «Muchas gracias, buen día 🙏» | Se despide. |
 
 Ante la duda no clasifica y el mensaje sigue el camino normal (con IA).
+
+**Celular compartido** (2026-10-26): si desde un número que recibió el recordatorio de una persona se agenda por el asistente, después, una cita para otra (una familia con un solo celular), lo que se escribe a continuación es sobre la cita que se acaba de agendar. «Muchas gracias» es una despedida, no la confirmación del recordatorio de la otra persona; «¿dónde queda el consultorio?» responde con las dos citas, cada una con el nombre de su paciente; «no puedo ir» deja elegir cuál cancelar; y la pregunta por el turno, «ya llegué» y «me dieron otra hora» hablan de la recién agendada. Cuenta la cita agendada por WhatsApp o Telegram después del último recordatorio a ese número y en las últimas 24 horas (`citasAgendadasTrasElRecordatorio` en `chatbot.service.ts`). Antes, en un caso real del 24-oct, el asistente le dio a Jhon la hora de la cita de Marilyn y contó su «gracias» como que ella confirmaba.
 
 Esto se revisa con la conversación en reposo y también dentro del agendamiento, por si un saludo ya abrió el menú: en el menú de servicios, quien recibió un recordatorio en las últimas 48 h y contesta algo de esta tabla (confirma, quién escribe, pregunta por su cita o su turno, ya llegó, le dieron otra hora, número equivocado) recibe esa respuesta y el menú se cierra. En los pasos de EPS y de horario solo se atiende el número equivocado; lo demás se toma como respuesta al paso. «No puedo ir» y «cambiarla» siguen su camino en el menú (se le pregunta si deja el agendamiento).
 
@@ -2010,7 +2025,9 @@ Con espejo, «Agendar», «Cancelar» y «Cambiar fecha» (Configuración) manda
 
 ### 5.5 Vigilante y Bandeja de sincronización
 
-Cada 2 minutos un vigilante busca citas confirmadas por AgenIA que no llegaron al hospital (más de 10 minutos en cola, o rendidas) y otros problemas, y los deja como excepciones en la Bandeja con gravedad según la cercanía de la cita (crítica a menos de 4 horas). Puede avisar al agendador por WhatsApp con la plantilla «Aviso al agendador» (sin datos del paciente), con hasta 2 recordatorios si nadie toma la excepción en 30 minutos. Las excepciones se cierran solas cuando el problema desaparece (un aviso de inasistencia o una cita para revisar, cuando la cita se cancela o cambia de hora); las de citas pasadas hace más de 7 días vencen.
+Cada 2 minutos un vigilante busca citas confirmadas por AgenIA que no llegaron al hospital (más de 10 minutos en cola, o rendidas) y otros problemas, y los deja como excepciones en la Bandeja con gravedad según la cercanía de la cita (crítica a menos de 4 horas). Puede avisar al agendador por WhatsApp con la plantilla «Aviso al agendador» (sin datos del paciente), con hasta 2 recordatorios si nadie toma la excepción en 30 minutos. Las excepciones se cierran solas cuando el problema desaparece (un aviso de inasistencia, una cita para revisar o un pedido de cancelar sin confirmar, cuando la cita se cancela o cambia de hora); las de citas pasadas hace más de 7 días vencen.
+
+**Pedidos de cancelar sin el SÍ** (2026-10-26; regla en `apps/api/src/mirror/cancelar-sin-confirmar.ts`): en cada vuelta el vigilante lee en la Caja Negra (`InteractionLog`) de los últimos 3 días los números a los que el asistente les preguntó si cancelaba una cita (pasos `CANCELAR_OFRECIDO`, `CANCELAR_ELEGIR_CITA`, `CANCEL_SHOWING_SINGLE` y `CANCEL_APPOINTMENT_SELECTED`). Si el último ofrecimiento tiene más de una hora (`SESSION_TTL`: después el SÍ ya no cancela) y después no hubo un NO, una cancelación (o su espera del hospital), un cambio de fecha ni la confirmación de asistencia a esa cita, abre `CANCELACION_SIN_CONFIRMAR` por cada cita que siga vigente y no haya pasado (clave `cancelar-sin-confirmar:<cita>`, gravedad por la cercanía de la cita, con lo que escribió al pedirlo y hasta tres mensajes de después). No se le avisa al agendador por WhatsApp. Un caso que alguien cerró, o que el sistema cerró porque la cita se canceló o se movió, no se vuelve a abrir; uno abierto se refresca y sube de gravedad. Un fallo de esta lectura no detiene el resto de la vuelta.
 
 **Médicos nuevos del hospital** (`apps/api/src/mirror/medicos-nuevos.service.ts`, reglas en `packages/shared/src/medico-nuevo-his.ts`): antes de comparar, la reconciliación busca en la foto del agente los médicos sin homologar con citas próximas de un servicio activo. Cada uno abre `MEDICO_SIN_HOMOLOGAR` (clave `medico-sin-homologar:<código>`), con el botón «Crear y homologar» para el administrador (`POST /his-doctors/onboard`, fuera de `/mirror` para que el proxy no lo publique). Con `HospitalMirrorConfig.autoHomologateDoctors` (apagado de fábrica), los que cumplen todas las reglas los crea y homologa sola, con `autoHomologateWhatsappOn` para su WhatsApp, y deja `MEDICO_AGREGADO_AUTO`. Las reglas: sin bloqueos (cédula presente y única en el catálogo, sin otro médico de AgenIA con esa cédula ya homologado con otro código) para el botón; además sin advertencias (cargo de médico, servicio principal activo, activo en el hospital) para hacerlo sola. El alta es la de `homologar.ts`: correo de marcador, contraseña aleatoria que nadie conoce, servicio principal, `SET LOCAL agenia.sync_origin = 'MIRROR'` (el evento nace entregado y no vuelve al hospital) y `SyncAudit CONFIG DOCTOR_HOMOLOGATED`. Como va antes de la comparación, un médico agregado solo trae sus citas en esa misma vuelta; uno creado con el botón, en la siguiente.
 
@@ -2167,6 +2184,8 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 # Parte 3 · Bitácora de cambios
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
+
+- **2026-10-26** — Tres arreglos tras el diagnóstico del lunes. **Lista de espera:** en el hospital nunca le avisaba a nadie (los cupos son para cualquier EPS y la lista solo los cruzaba con quien no tenía EPS); ahora el cupo que se libera se le ofrece al primero de la cola que haya escrito en las últimas 24 horas (o use Telegram), sin escribirle a quien WhatsApp no dejaría y sin que pierda su lugar, y al reofrecerlo se usa la EPS del cupo. **Bandeja:** caso nuevo «Un paciente pidió cancelar y no confirmó», cuando el asistente le preguntó si cancelaba y pasó una hora sin respuesta (una paciente pidió cancelar el sábado, no respondió el SÍ y la cita siguió en pie sin que nadie se enterara). **Celular compartido:** si desde el número que recibió el recordatorio de una persona se agenda una cita para otra, el asistente ya no responde con la cita de la primera ni cuenta el «gracias» como su confirmación.
 
 - **2026-10-23** — Padrón EPS: el archivo se sube tal como lo manda la EPS. El sistema encuentra solo la columna de la cédula del afiliado aunque cambie de nombre (el corte de Sura del 08-10-2026 se rechazaba entero por «falta la columna cedula» porque ahora la llama Numero_Identificacion), sin confundirla con la del cotizante, y dice qué columnas usó. Las filas corridas por un nombre o una dirección con un separador de más se reacomodan solas cuando no hay duda. Las filas que no se pueden leer ya no bloquean el archivo: quien carga puede aceptar ignorarlas e importar el resto, y quedan como RECHAZADO en el historial. Y el teléfono: antes se tomaba la primera columna de teléfono, y de Salud Total no entró ni un celular (entraban 2000000 y fijos de 7 dígitos); ahora se toma el primer celular de cualquier columna de teléfono, y el relleno que ya estaba guardado se borra al cargar el corte.
 - **2026-10-24** — Médicos nuevos del hospital: cuando un médico del hospital tiene citas de un servicio que AgenIA maneja y no está en AgenIA (pasó con la médica RU68: sus pacientes no recibían recordatorio y nadie se enteraba), queda un caso en la Bandeja con su nombre, código, cargo y citas, y el administrador lo crea y homologa con el botón «Crear y homologar», eligiendo si enciende su WhatsApp. En Configuración, apagado de fábrica, «Agregar solos los médicos nuevos del hospital»: AgenIA lo hace sola cuando cumple todas las reglas (cédula única, cargo de médico, servicio principal que AgenIA maneja, activo en el hospital) y deja un caso para revisarlo, con WhatsApp OFF salvo que se elija lo contrario. Nada se escribe en el sistema del hospital.

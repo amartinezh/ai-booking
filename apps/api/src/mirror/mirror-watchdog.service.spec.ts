@@ -68,6 +68,15 @@ describe('MirrorWatchdogService', () => {
     olvidadas?: Record<string, unknown>[];
     /** «Agendar», «Cancelar» y «Cambiar fecha». Por defecto solo «Agendar». */
     ajustes?: unknown;
+    /** La caja negra del chat (`InteractionLog`): los pedidos de cancelar. */
+    cajaNegra?: {
+      whatsappId: string;
+      createdAt: Date;
+      userMessage: string | null;
+      metadata: unknown;
+    }[];
+    /** Excepciones que ya existen, por `dedupeKey` (cualquier estado). */
+    casosPrevios?: { dedupeKey: string; status: string }[];
   }
 
   const build = (e: Escenario = {}) => {
@@ -108,6 +117,27 @@ describe('MirrorWatchdogService', () => {
       syncAudit: {
         findMany: jest.fn(async (..._a: unknown[]) => e.auditoria ?? []),
       },
+      interactionLog: {
+        // Primero los números con un pedido (`distinct`), luego su conversación.
+        findMany: jest.fn(
+          async (arg: {
+            distinct?: unknown;
+            where: { whatsappId?: { in: string[] } };
+          }) => {
+            const filas = e.cajaNegra ?? [];
+            if (arg.distinct) {
+              return [...new Set(filas.map((f) => f.whatsappId))].map(
+                (whatsappId) => ({ whatsappId }),
+              );
+            }
+            return filas.filter(
+              (f) =>
+                !arg.where.whatsappId ||
+                arg.where.whatsappId.in.includes(f.whatsappId),
+            );
+          },
+        ),
+      },
       syncException: {
         findMany: jest.fn(
           async (arg: {
@@ -115,8 +145,15 @@ describe('MirrorWatchdogService', () => {
               kind?: unknown;
               lastSeenAt?: unknown;
               updatedAt?: unknown;
+              dedupeKey?: { in: string[] };
             };
           }) => {
+            // Los casos que ya existen, por su clave (pedidos de cancelar).
+            if (arg.where.dedupeKey) {
+              return (e.casosPrevios ?? []).filter((c) =>
+                arg.where.dedupeKey!.in.includes(c.dedupeKey),
+              );
+            }
             const kinds =
               (arg.where.kind as { in?: string[] } | string | undefined) ??
               undefined;
@@ -1055,6 +1092,209 @@ describe('MirrorWatchdogService', () => {
       await service.vigilarOrganizacion(ORG, AHORA);
       expect(exceptions.autoResolver).toHaveBeenCalledTimes(1);
       expect(prisma.syncOutbox.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // 2026-10-26: «Cancelar esta cita por favor», el asistente preguntó si la
+  // cancelaba y la paciente nunca respondió. La cita siguió en pie y nadie se enteró.
+  describe('🙋 pidió cancelar por el chat y no confirmó', () => {
+    const ofrecido = (over: Record<string, unknown> = {}) => ({
+      whatsappId: '573000007882',
+      createdAt: haceMin(2 * 24 * 60),
+      userMessage: 'Cancelar esta cita por favor',
+      metadata: { step: 'CANCELAR_OFRECIDO', appointmentId: 'apt-1' },
+      ...over,
+    });
+
+    it('deja un caso con la cita, su alcance y lo que escribió; AgenIA no toca la cita', async () => {
+      const { service, exceptions } = build({
+        cajaNegra: [ofrecido()],
+        citas: [cita()],
+      });
+
+      const r = await service.vigilarOrganizacion(ORG, AHORA);
+
+      expect(registradas(exceptions)).toEqual([
+        {
+          kind: 'CANCELACION_SIN_CONFIRMAR',
+          dedupeKey: 'cancelar-sin-confirmar:apt-1',
+          severity: 'MEDIA',
+          title: 'Un paciente pidió cancelar y no confirmó',
+          appointmentId: 'apt-1',
+          patientId: 'pac-1',
+          epsId: 'eps-1',
+          doctorId: 'doc-1',
+          appointmentStartAt: enHoras(72),
+          meta: {
+            ofrecidoIso: haceMin(2 * 24 * 60).toISOString(),
+            canal: 'WHATSAPP',
+            mensaje: 'Cancelar esta cita por favor',
+          },
+        },
+      ]);
+      expect(r.abiertas).toBe(1);
+      // El título va sin datos personales.
+      expect(registradas(exceptions)[0].title).not.toContain('Laura');
+    });
+
+    it('si la cita es en pocas horas, el caso es CRÍTICO', async () => {
+      const { service, exceptions } = build({
+        cajaNegra: [ofrecido()],
+        citas: [
+          cita({ scheduleSlot: { startTime: enHoras(3), doctorId: 'doc-1' } }),
+        ],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(registradas(exceptions)[0].severity).toBe('CRITICA');
+    });
+
+    it.each([
+      ['ya se canceló', { status: 'CANCELLED' }],
+      [
+        'ya pasó',
+        { scheduleSlot: { startTime: haceMin(30), doctorId: 'doc-1' } },
+      ],
+    ])('si la cita %s, no hay caso', async (_caso, cambio) => {
+      const { service, exceptions } = build({
+        cajaNegra: [ofrecido()],
+        citas: [cita(cambio)],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.registrar).not.toHaveBeenCalled();
+    });
+
+    it('si después dijo NO, no hay caso', async () => {
+      const { service, exceptions } = build({
+        cajaNegra: [
+          ofrecido(),
+          ofrecido({
+            createdAt: haceMin(2 * 24 * 60 - 1),
+            userMessage: 'No',
+            metadata: { event: 'CANCELLATION_ABORTED' },
+          }),
+        ],
+        citas: [cita()],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.registrar).not.toHaveBeenCalled();
+    });
+
+    it.each(['DESCARTADA', 'RESUELTA', 'VENCIDA', 'AUTO_RESUELTA'])(
+      'un caso que ya quedó %s no se vuelve a abrir',
+      async (status) => {
+        const { service, exceptions } = build({
+          cajaNegra: [ofrecido()],
+          citas: [cita()],
+          casosPrevios: [{ dedupeKey: 'cancelar-sin-confirmar:apt-1', status }],
+        });
+        await service.vigilarOrganizacion(ORG, AHORA);
+        expect(exceptions.registrar).not.toHaveBeenCalled();
+      },
+    );
+
+    it('uno que sigue abierto se refresca (así sube de gravedad al acercarse la cita)', async () => {
+      const { service, exceptions } = build({
+        cajaNegra: [ofrecido()],
+        citas: [cita()],
+        casosPrevios: [
+          { dedupeKey: 'cancelar-sin-confirmar:apt-1', status: 'EN_REVISION' },
+        ],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.registrar).toHaveBeenCalledTimes(1);
+    });
+
+    it('qué se lee: los ofrecimientos de cancelar de esta clínica de hace más de una hora y menos de tres días', async () => {
+      const { service, prisma } = build({
+        cajaNegra: [ofrecido()],
+        citas: [cita()],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      const consulta = prisma.interactionLog.findMany.mock.calls[0][0] as any;
+      expect(consulta.where.organizationId).toBe(ORG);
+      expect(consulta.where.createdAt).toEqual({
+        gte: haceMin(3 * 24 * 60),
+        lte: haceMin(60),
+      });
+      expect(consulta.where.OR).toEqual(
+        expect.arrayContaining([
+          { metadata: { path: ['step'], equals: 'CANCELAR_OFRECIDO' } },
+          { metadata: { path: ['step'], equals: 'CANCEL_SHOWING_SINGLE' } },
+        ]),
+      );
+      const conversacion = prisma.interactionLog.findMany.mock
+        .calls[1][0] as any;
+      expect(conversacion.where).toEqual({
+        organizationId: ORG,
+        whatsappId: { in: ['573000007882'] },
+        createdAt: { gte: haceMin(3 * 24 * 60) },
+      });
+    });
+
+    it('sin pedidos no lee más: ni la conversación ni las citas', async () => {
+      const { service, prisma } = build();
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(prisma.interactionLog.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.appointment.findMany).not.toHaveBeenCalled();
+    });
+
+    it('si la caja negra falla, el resto de la vuelta sigue: cierres, vencimiento y aviso', async () => {
+      const x = build({
+        activas: [
+          {
+            id: 'ex-aviso',
+            kind: 'AVISO_INASISTENCIA',
+            appointmentId: 'apt-1',
+            appointmentStartAt: enHoras(72),
+          },
+        ],
+        citas: [cita({ status: 'CANCELLED' })],
+      });
+      x.prisma.interactionLog.findMany.mockRejectedValue(new Error('timeout'));
+      const errores = jest
+        .spyOn(x.service['logger'], 'error')
+        .mockImplementation(() => undefined);
+
+      const r = await x.service.vigilarOrganizacion(ORG, AHORA);
+
+      expect(r.autoResueltas).toBe(1);
+      expect(x.alert.avisar).toHaveBeenCalled();
+      expect(errores).toHaveBeenCalledWith(
+        expect.stringContaining('pedidos de cancelar sin confirmar'),
+      );
+    });
+
+    it('el caso se cierra solo si la cita se canceló o se movió; si sigue igual, sigue abierto', async () => {
+      const caso = {
+        id: 'ex-cancelar',
+        kind: 'CANCELACION_SIN_CONFIRMAR',
+        appointmentId: 'apt-1',
+        appointmentStartAt: enHoras(72),
+      };
+      const cancelada = build({
+        activas: [caso],
+        citas: [cita({ status: 'CANCELLED' })],
+      });
+      await cancelada.service.vigilarOrganizacion(ORG, AHORA);
+      expect(cerradas(cancelada.exceptions)).toEqual([
+        ['ex-cancelar', 'La cita ya está cancelada.'],
+      ]);
+
+      const movida = build({
+        activas: [caso],
+        citas: [
+          cita({ scheduleSlot: { startTime: enHoras(96), doctorId: 'doc-1' } }),
+        ],
+      });
+      await movida.service.vigilarOrganizacion(ORG, AHORA);
+      expect(cerradas(movida.exceptions)).toEqual([
+        ['ex-cancelar', 'La cita ya tiene otra fecha u hora.'],
+      ]);
+
+      const igual = build({ activas: [caso], citas: [cita()] });
+      await igual.service.vigilarOrganizacion(ORG, AHORA);
+      expect(igual.exceptions.autoResolver).not.toHaveBeenCalled();
     });
   });
 

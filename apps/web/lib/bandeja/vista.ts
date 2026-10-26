@@ -300,6 +300,26 @@ export function resumenPublico(
             : `Poco después de agendar esta cita por ${canal}, el paciente preguntó si era para ${otro}${veces}.${mensaje} La cita es de otro servicio.`;
       return `${que} El bot no la cambió: comuníquese con el paciente para confirmar si la necesita; si no, cancélela para liberar el cupo y oriéntelo. Se cierra sola si la cita se cancela o cambia de hora.`;
     }
+    // 🙋 Pidió cancelar por el chat y nunca respondió el SÍ (2026-10-26): la cita
+    // sigue en pie. Lo abre el vigilante una hora después de preguntarle.
+    case 'CANCELACION_SIN_CONFIRMAR': {
+      const canal = nombreCanal(meta.canal);
+      const mensaje = citaDelMensaje(meta.mensaje);
+      const cuando =
+        typeof meta.ofrecidoIso === 'string' && !Number.isNaN(Date.parse(meta.ofrecidoIso))
+          ? ` (se le preguntó el ${formatAppointmentCompact(new Date(meta.ofrecidoIso))})`
+          : '';
+      const lineas = Array.isArray(meta.despues)
+        ? meta.despues.filter((t): t is string => typeof t === 'string' && t.trim() !== '')
+        : [];
+      const despues = lineas.length > 0 ? ` Después escribió: ${lineas.map((t) => `«${t.trim()}»`).join(' · ')}.` : '';
+      const varias = numero(meta.citasDelPedido);
+      const otras = varias > 1 ? ` Tenía ${varias} citas y no eligió cuál: revise cada una.` : '';
+      return (
+        `El paciente pidió por ${canal} cancelar esta cita${veces}, el asistente le preguntó si la cancelaba${cuando} y no respondió, así que la cita sigue en pie.${mensaje}${despues}${otras}` +
+        ' El bot no la canceló: comuníquese con el paciente; si no va a asistir, cancélela para liberar el cupo, y si la mantiene, cierre el caso. Se cierra sola si la cita se cancela o cambia de hora.'
+      );
+    }
     // 🩺 Los médicos del hospital que AgenIA aún no tiene (2026-10-24).
     case 'MEDICO_SIN_HOMOLOGAR':
     case 'MEDICO_AGREGADO_AUTO': {

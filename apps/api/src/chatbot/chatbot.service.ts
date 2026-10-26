@@ -4474,6 +4474,81 @@ export class ChatbotService implements OnModuleInit {
       : this.sinTelefonoEquivocado(organizationId, identity, citas);
   }
 
+  /** 📱 Cuánto dura la conversación sobre una cita que se acaba de agendar. */
+  private static readonly VENTANA_CITA_RECIEN_AGENDADA_MS = 24 * 60 * 60 * 1000;
+
+  /**
+   * 📱 Celular compartido (2026-10-26): a este número le llegó el recordatorio de la
+   * cita de una persona (Marilyn, 12:20) y desde él se agendó después otra, para
+   * otra persona (Jhon, 12:40). Lo que se escribe a continuación es sobre la que se
+   * acaba de agendar: antes «¿dónde queda el consultorio?» recibió la cita de
+   * Marilyn y «muchas gracias» contó como que Marilyn confirmaba.
+   *
+   * Las citas que el asistente agendó desde este número DESPUÉS del último
+   * recordatorio (y en las últimas 24 h) que no han pasado ni están entre las
+   * recordadas. Sin recordatorio, vacío: no hay con qué confundirlas.
+   */
+  private async citasAgendadasTrasElRecordatorio(
+    organizationId: string,
+    identity: SenderIdentity,
+    recordadas: { id: string; reminderSentAt: Date | null }[],
+  ) {
+    const ultimoRecordatorio = Math.max(
+      0,
+      ...recordadas.map((c) => c.reminderSentAt?.getTime() ?? 0),
+    );
+    if (ultimoRecordatorio === 0) return [];
+    const deQuien = this.perfilesDelRemitente(identity);
+    if (deQuien.length === 0) return [];
+    const ahora = Date.now();
+    const citas = await this.prisma.appointment.findMany({
+      where: {
+        organizationId,
+        status: 'SCHEDULED',
+        origin: { in: ['WHATSAPP', 'TELEGRAM'] },
+        createdAt: {
+          gt: new Date(
+            Math.max(
+              ultimoRecordatorio,
+              ahora - ChatbotService.VENTANA_CITA_RECIEN_AGENDADA_MS,
+            ),
+          ),
+        },
+        scheduleSlot: {
+          startTime: { gt: new Date(ahora) },
+          ...EN_ALCANCE_DEL_BOT,
+        },
+        patient: { OR: deQuien },
+      },
+      include: {
+        scheduleSlot: { include: { service: true, doctor: true } },
+        patient: { select: { fullName: true } },
+      },
+      orderBy: { scheduleSlot: { startTime: 'asc' } },
+      take: MAX_CITAS_EN_RESPUESTA,
+    });
+    const recordadasIds = new Set(recordadas.map((c) => c.id));
+    return this.sinTelefonoEquivocado(
+      organizationId,
+      identity,
+      citas.filter((c) => !recordadasIds.has(c.id)),
+    );
+  }
+
+  /** Las recordadas y las agendadas tras el recordatorio, por hora de la cita. */
+  private juntarPorHora<T extends { scheduleSlot: { startTime: Date } }>(
+    ...listas: T[][]
+  ): T[] {
+    return listas
+      .flat()
+      .sort(
+        (x, y) =>
+          x.scheduleSlot.startTime.getTime() -
+          y.scheduleSlot.startTime.getTime(),
+      )
+      .slice(0, MAX_CITAS_EN_RESPUESTA);
+  }
+
   /** Las citas próximas (sin pasar) de quien escribe, recordadas o no. */
   private async citasProximasDelRemitente(
     organizationId: string,
@@ -4640,7 +4715,17 @@ export class ChatbotService implements OnModuleInit {
       organizationId,
       identity,
     );
-    if (recordadas.length > 0) return recordadas;
+    if (recordadas.length > 0) {
+      // 📱 Con la que se agendó desde este número después del recordatorio.
+      return this.juntarPorHora(
+        recordadas,
+        await this.citasAgendadasTrasElRecordatorio(
+          organizationId,
+          identity,
+          recordadas,
+        ),
+      );
+    }
     const proximas = await this.citasProximasDelRemitente(
       organizationId,
       identity,
@@ -4752,10 +4837,22 @@ export class ChatbotService implements OnModuleInit {
       );
     }
 
-    const citas = await this.citasRecordadasDelRemitente(
+    const recordadas = await this.citasRecordadasDelRemitente(
       p.organizationId,
       p.identity,
     );
+    // 📱 Celular compartido: si desde este número se agendó una cita después del
+    // recordatorio, la conversación es sobre ella. Su «muchas gracias» es por la
+    // cita que acaba de agendar (que ya confirmó con su SÍ), no la confirmación
+    // del recordatorio de otra persona: sigue la despedida. Y lo que pregunta se
+    // responde con las dos citas, cada una con el nombre de su paciente.
+    const recien = await this.citasAgendadasTrasElRecordatorio(
+      p.organizationId,
+      p.identity,
+      recordadas,
+    );
+    if (tipo === 'CONFIRMA' && recien.length > 0) return false;
+    const citas = this.juntarPorHora(recordadas, recien);
     const cita = citas[0];
     if ((tipo === 'CONFIRMA' || tipo === 'PREGUNTA_CITA') && !cita) {
       return false;
@@ -5051,7 +5148,16 @@ export class ChatbotService implements OnModuleInit {
       p.organizationId,
       p.identity,
     );
+    // 📱 La que se agendó desde este número después del recordatorio va primero:
+    // es de la que se viene hablando (celular compartido).
     const cita =
+      (
+        await this.citasAgendadasTrasElRecordatorio(
+          p.organizationId,
+          p.identity,
+          recordadas,
+        )
+      )[0] ??
       recordadas[0] ??
       (await this.citasProximasDelRemitente(p.organizationId, p.identity))[0];
     const contacto = this.contactoDe(p.MSGS, p.org);
@@ -5118,7 +5224,16 @@ export class ChatbotService implements OnModuleInit {
       p.organizationId,
       p.identity,
     );
+    // 📱 La que se agendó desde este número después del recordatorio va primero:
+    // es de la que se viene hablando (celular compartido).
     const cita =
+      (
+        await this.citasAgendadasTrasElRecordatorio(
+          p.organizationId,
+          p.identity,
+          recordadas,
+        )
+      )[0] ??
       recordadas[0] ??
       (await this.citasProximasDelRemitente(p.organizationId, p.identity))[0];
     const contacto = this.contactoDe(p.MSGS, p.org);
@@ -5288,9 +5403,19 @@ export class ChatbotService implements OnModuleInit {
       organizationId,
       p.identity,
     );
+    // 📱 Con la que se agendó desde este número después del recordatorio (celular
+    // compartido): si no, «no puedo ir» tras agendar ofrecía cancelar la cita de
+    // la otra persona. Con dos, elige cuál (cada una con el nombre de su paciente).
     const candidatas =
       recordadas.length > 0
-        ? recordadas
+        ? this.juntarPorHora(
+            recordadas,
+            await this.citasAgendadasTrasElRecordatorio(
+              organizationId,
+              p.identity,
+              recordadas,
+            ),
+          )
         : esElAtajo
           ? []
           : await this.citasProximasDelRemitente(organizationId, p.identity);

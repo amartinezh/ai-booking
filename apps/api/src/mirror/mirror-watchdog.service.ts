@@ -11,6 +11,7 @@ import {
   debeVencer,
   evaluarRetencion,
   eventoPuedeSalir,
+  isTelegramSender,
   severidadPorCercania,
   type CompuertasHis,
   type FilaOutbox,
@@ -23,6 +24,12 @@ import {
   type ResultadoAviso,
 } from './mirror-alert.service';
 import { MirrorExceptionsService } from './mirror-exceptions.service';
+import {
+  ESPERA_SIN_CONFIRMAR_MS,
+  PASOS_QUE_OFRECEN_CANCELAR,
+  VENTANA_PEDIDOS_MS,
+  pedidosDeCancelarSinConfirmar,
+} from './cancelar-sin-confirmar';
 import { TechAlertService } from '../tech-alerts/tech-alert.service';
 import { getErrorMessage } from '../common/error-message.util';
 
@@ -52,6 +59,9 @@ const AVISO_QUE_NO_SALE: Partial<
  *   3. y, cuando termina la reconciliación, la DERIVA (`registrarDeriva`): citas que
  *      AgenIA da por hechas y el hospital no tiene.
  *
+ * Además deja en la bandeja lo que un paciente pidió por el chat y no terminó: un
+ * pedido de cancelar sin el SÍ (`CANCELACION_SIN_CONFIRMAR`, 2026-10-26).
+ *
  * Después cierra solas las que ya no se cumplen, da por VENCIDAS las de citas que
  * pasaron hace días sin que nadie las cerrara (§12 #15) y avisa al agendador.
  *
@@ -79,6 +89,9 @@ const MAX_EVENTOS = 1000;
 const MAX_AUDITORIA = 500;
 /** Tope de excepciones de deriva por reconciliación: una falla sistémica no debe inundar la bandeja. */
 const MAX_DERIVA = 200;
+/** Tope de números con un pedido de cancelar por vuelta, y de filas de su conversación. */
+const MAX_PEDIDOS = 200;
+const MAX_FILAS_PEDIDOS = 3000;
 const CHUNK = 500;
 const MS_DIA = 86_400_000;
 
@@ -220,6 +233,18 @@ export class MirrorWatchdogService {
       ));
     }
     await this.vigilarAuditoria(organizationId, ahora, resumen);
+    // Un fallo aquí no debe dejar sin cierres, vencimientos ni aviso al agendador.
+    try {
+      await this.abrirPedidosDeCancelarSinConfirmar(
+        organizationId,
+        ahora,
+        resumen,
+      );
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudieron revisar los pedidos de cancelar sin confirmar (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+    }
     resumen.autoResueltas += await this.cerrarAvisosAtendidos(
       organizationId,
       ahora,
@@ -689,8 +714,9 @@ export class MirrorWatchdogService {
   /**
    * Un `AVISO_INASISTENCIA` («no puedo ir», «quiero otra fecha») se cierra solo
    * cuando ya se atendió: la cita se canceló —en el hospital, por el espejo, o
-   * aquí— o cambió de hora. Igual un `REVISAR_CITA_ASISTENTE` (2026-10-23): si la
-   * cita ya se canceló o se movió, alguien ya la revisó. Solo se mira la cita en AgenIA; no se escribe nada
+   * aquí— o cambió de hora. Igual un `REVISAR_CITA_ASISTENTE` (2026-10-23) y un
+   * `CANCELACION_SIN_CONFIRMAR` (2026-10-26): si la cita ya se canceló o se movió,
+   * alguien ya lo atendió. Solo se mira la cita en AgenIA; no se escribe nada
    * en el hospital. No depende del outbox: corre igual con el envío pausado.
    */
   private async cerrarAvisosAtendidos(
@@ -701,7 +727,13 @@ export class MirrorWatchdogService {
       where: {
         organizationId,
         status: { in: ['ABIERTA', 'EN_REVISION'] },
-        kind: { in: ['AVISO_INASISTENCIA', 'REVISAR_CITA_ASISTENTE'] },
+        kind: {
+          in: [
+            'AVISO_INASISTENCIA',
+            'REVISAR_CITA_ASISTENTE',
+            'CANCELACION_SIN_CONFIRMAR',
+          ],
+        },
         appointmentId: { not: null },
       },
       select: { id: true, appointmentId: true, appointmentStartAt: true },
@@ -737,6 +769,123 @@ export class MirrorWatchdogService {
       }
     }
     return cerrados;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Pedidos de cancelar sin el SÍ (2026-10-26)
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * 🙋 Un paciente pidió cancelar por el chat, el asistente le preguntó si la
+   * cancelaba y pasó la hora sin respuesta (`pedidosDeCancelarSinConfirmar`): la
+   * cita sigue en pie y nadie se entera. Queda un caso por cita, si sigue vigente y
+   * no ha pasado. AgenIA no la cancela ni escribe nada en el hospital.
+   *
+   * Lo que alguien ya cerró —o el sistema, porque la cita se canceló o se movió—
+   * no se vuelve a abrir: el caso solo se abre y, mientras siga activo, sube de
+   * gravedad al acercarse la cita.
+   */
+  private async abrirPedidosDeCancelarSinConfirmar(
+    organizationId: string,
+    ahora: Date,
+    resumen: ResumenVigilancia,
+  ): Promise<void> {
+    const desde = new Date(ahora.getTime() - VENTANA_PEDIDOS_MS);
+    const conPedido = await this.prisma.interactionLog.findMany({
+      where: {
+        organizationId,
+        createdAt: {
+          gte: desde,
+          lte: new Date(ahora.getTime() - ESPERA_SIN_CONFIRMAR_MS),
+        },
+        OR: PASOS_QUE_OFRECEN_CANCELAR.map((step) => ({
+          metadata: { path: ['step'], equals: step },
+        })),
+      },
+      select: { whatsappId: true },
+      distinct: ['whatsappId'],
+      take: MAX_PEDIDOS,
+    });
+    if (conPedido.length === 0) return;
+
+    const filas = await this.prisma.interactionLog.findMany({
+      where: {
+        organizationId,
+        whatsappId: { in: conPedido.map((f) => f.whatsappId) },
+        createdAt: { gte: desde },
+      },
+      select: {
+        whatsappId: true,
+        createdAt: true,
+        userMessage: true,
+        metadata: true,
+      },
+      orderBy: { createdAt: 'asc' },
+      take: MAX_FILAS_PEDIDOS,
+    });
+    const pedidos = pedidosDeCancelarSinConfirmar(filas, ahora);
+    if (pedidos.length === 0) return;
+
+    const citas = await this.cargarCitas(
+      organizationId,
+      pedidos.flatMap((p) => p.appointmentIds),
+    );
+    const claves = pedidos.flatMap((p) =>
+      p.appointmentIds.map((id) => claveExcepcion.cancelacionSinConfirmar(id)),
+    );
+    const yaAbiertos = await this.prisma.syncException.findMany({
+      where: { organizationId, dedupeKey: { in: claves } },
+      select: { dedupeKey: true, status: true },
+    });
+    const estadoDe = new Map(yaAbiertos.map((e) => [e.dedupeKey, e.status]));
+
+    for (const pedido of pedidos) {
+      for (const id of pedido.appointmentIds) {
+        const cita = citas.get(id);
+        if (
+          !cita ||
+          cita.status !== 'SCHEDULED' ||
+          cita.startTime.getTime() <= ahora.getTime()
+        ) {
+          continue;
+        }
+        const dedupeKey = claveExcepcion.cancelacionSinConfirmar(id);
+        const estado = estadoDe.get(dedupeKey);
+        if (estado && estado !== 'ABIERTA' && estado !== 'EN_REVISION') {
+          continue;
+        }
+        const r = await this.exceptions.registrar(
+          organizationId,
+          {
+            kind: 'CANCELACION_SIN_CONFIRMAR',
+            dedupeKey,
+            severity: severidadPorCercania(
+              'MEDIA',
+              (cita.startTime.getTime() - ahora.getTime()) / 60_000,
+            ),
+            title: TITULO_EXCEPCION.CANCELACION_SIN_CONFIRMAR,
+            appointmentId: id,
+            patientId: cita.patientId,
+            epsId: cita.epsId,
+            doctorId: cita.doctorId,
+            appointmentStartAt: cita.startTime,
+            meta: {
+              ofrecidoIso: pedido.ofrecidoEn.toISOString(),
+              canal: isTelegramSender(pedido.whatsappId)
+                ? 'TELEGRAM'
+                : 'WHATSAPP',
+              ...(pedido.mensaje ? { mensaje: pedido.mensaje } : {}),
+              ...(pedido.despues.length > 0 ? { despues: pedido.despues } : {}),
+              ...(pedido.appointmentIds.length > 1
+                ? { citasDelPedido: pedido.appointmentIds.length }
+                : {}),
+            },
+          },
+          ahora,
+        );
+        this.contar(resumen, r);
+      }
+    }
   }
 
   // ─────────────────────────────────────────────────────────────
