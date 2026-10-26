@@ -69,10 +69,11 @@ export default function DoctorModal({ doctor, services, onClose }: { doctor?: Do
                         <div>
                             <label className="block text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">Contraseña</label>
                             <input
-                                name="password" type="password" required={!doctor}
-                                placeholder={doctor ? "••••••••" : ""}
+                                name="password" type="password" required={!doctor} minLength={10} autoComplete="new-password"
+                                placeholder={doctor ? "Dejar en blanco para no cambiarla" : ""}
                                 className="w-full bg-zinc-50 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 rounded-xl px-4 py-3 text-zinc-900 dark:text-white outline-none"
                             />
+                            <p className="mt-1 text-xs text-zinc-400">Al menos 10 caracteres, con letras y números, sin el usuario del correo.</p>
                         </div>
 
                         <div className="md:col-span-2 mt-2">

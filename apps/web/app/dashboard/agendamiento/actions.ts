@@ -23,6 +23,23 @@ import {
     puedeOperarAgenda,
 } from '../../../lib/alcance-agente';
 import { mensajeDeError, operacionApagada } from '@/lib/interruptores-hospital';
+import { actorDeSesion, registrarActividad, registrarDespues } from '@/lib/actividad/registrar';
+import { describirCita, enmascarar } from '@/lib/actividad/catalogo';
+
+/** Los nombres que hacen falta para decir en la Actividad de usuarios qué cita fue. */
+async function nombresDeLaCita(
+    organizationId: string,
+    ids: { doctorId: string; serviceId?: string | null; epsId?: string | null },
+) {
+    const [medico, servicio, eps] = await Promise.all([
+        prisma.doctorProfile.findFirst({ where: { id: ids.doctorId, organizationId }, select: { fullName: true } }),
+        ids.serviceId
+            ? prisma.medicalService.findFirst({ where: { id: ids.serviceId, organizationId }, select: { name: true } })
+            : null,
+        ids.epsId ? prisma.eps.findFirst({ where: { id: ids.epsId, organizationId }, select: { name: true } }) : null,
+    ]);
+    return { medico: medico?.fullName ?? null, servicio: servicio?.name ?? null, eps: eps?.name ?? null };
+}
 
 /**
  * 🔐 Las tres acciones de este archivo comprobaban SOLO que hubiera sesión con
@@ -46,7 +63,17 @@ export async function sendManualWhatsappAction(appointmentId: string, message: s
 
         const appointment = await prisma.appointment.findFirst({
             where: { id: appointmentId, organizationId: session.organizationId },
-            include: { patient: true, scheduleSlot: { select: { doctorId: true } } }
+            include: {
+                patient: true,
+                scheduleSlot: {
+                    select: {
+                        doctorId: true,
+                        startTime: true,
+                        doctor: { select: { fullName: true } },
+                        service: { select: { name: true } },
+                    },
+                },
+            },
         });
 
         if (!appointment) return { success: false, error: 'Cita no encontrada.' };
@@ -93,6 +120,29 @@ export async function sendManualWhatsappAction(appointmentId: string, message: s
         if (!res.ok) {
             throw new Error('Error enviando mensaje via API');
         }
+
+        // Quién le escribió, por dónde y sobre qué cita. El texto NO se guarda: la
+        // bitácora no se purga y las conversaciones sí (180 días, Habeas Data).
+        await registrarActividad({
+            action: 'PATIENT_MESSAGE_SENT',
+            message: `Mensaje manual al paciente de la cita ${appointment.id} (${destino.canal})`,
+            actor: actorDeSesion(session),
+            organizationId: session.organizationId,
+            metadata: {
+                detalle: [
+                    `Por ${destino.canal === 'TELEGRAM' ? 'Telegram' : 'WhatsApp'}`,
+                    describirCita({
+                        inicio: appointment.scheduleSlot.startTime,
+                        servicio: appointment.scheduleSlot.service?.name,
+                        medico: appointment.scheduleSlot.doctor?.fullName,
+                    }),
+                    `paciente ${enmascarar(appointment.patient.cedula)}`,
+                ].join(' · '),
+                cita: appointment.id,
+                canal: destino.canal,
+                caracteres: message.trim().length,
+            },
+        });
 
         return { success: true, canal: destino.canal };
     } catch (e) {
@@ -206,9 +256,10 @@ export async function createManualAppointmentAction(formData: FormData) {
         }
 
         // 1. Transaction to find/create patient and assign slot
-        await prisma.$transaction(async (tx) => {
+        const creada = await prisma.$transaction(async (tx) => {
             // Find or insert Patient
             let patient = await tx.patientProfile.findFirst({ where: { cedula: patientCedula, organizationId } });
+            const pacienteNuevo = !patient;
 
             if (!patient) {
                 // To create a patient, we need a base user on this architecture
@@ -268,7 +319,7 @@ export async function createManualAppointmentAction(formData: FormData) {
             }
 
             // 3. Create Appointment Origin MANUAL
-            await tx.appointment.create({
+            const cita = await tx.appointment.create({
                 data: {
                     scheduleSlotId: slot.id,
                     patientId: patient.id,
@@ -278,6 +329,30 @@ export async function createManualAppointmentAction(formData: FormData) {
                     organizationId
                 }
             });
+            return { citaId: cita?.id ?? null, inicio: slot.startTime, cupoNuevo: !existingSlot, pacienteNuevo };
+        });
+
+        await registrarDespues(async () => {
+            const nombres = await nombresDeLaCita(organizationId, { doctorId, serviceId, epsId });
+            return {
+                action: 'APPOINTMENT_BOOKED_PANEL',
+                message: `Cita ${creada.citaId} agendada desde el panel`,
+                actor: actorDeSesion(session),
+                organizationId,
+                metadata: {
+                    detalle: [
+                        describirCita({ inicio: creada.inicio, servicio: nombres.servicio, medico: nombres.medico }),
+                        `paciente ${enmascarar(patientCedula)}${creada.pacienteNuevo ? ' (ficha nueva)' : ''}`,
+                        nombres.eps ? `EPS ${nombres.eps}` : null,
+                        creada.cupoNuevo ? 'en un cupo creado en ese momento' : null,
+                    ]
+                        .filter(Boolean)
+                        .join(' · '),
+                    cita: creada.citaId,
+                    pacienteNuevo: creada.pacienteNuevo,
+                    cupoNuevo: creada.cupoNuevo,
+                },
+            };
         });
 
         revalidatePath('/dashboard/agendamiento');
@@ -337,8 +412,16 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
         const actual = await prisma.appointment.findFirst({
             where: { id: appointmentId, organizationId },
             select: {
-                patient: { select: { regime: true, cedula: true } },
-                scheduleSlot: { select: { doctorId: true, startTime: true } },
+                epsId: true,
+                patient: { select: { regime: true, cedula: true, fullName: true } },
+                scheduleSlot: {
+                    select: {
+                        doctorId: true,
+                        startTime: true,
+                        doctor: { select: { fullName: true } },
+                        service: { select: { name: true } },
+                    },
+                },
             },
         });
         if (!actual) return { success: false, error: 'Cita original no encontrada.' };
@@ -429,6 +512,45 @@ export async function updateManualAppointmentAction(appointmentId: string, formD
                     scheduleSlotId: newSlot.id,
                 }
             });
+        });
+
+        await registrarDespues(async () => {
+            const nuevos = await nombresDeLaCita(organizationId, { doctorId, serviceId, epsId });
+            const antes = describirCita({
+                inicio: actual.scheduleSlot.startTime,
+                servicio: actual.scheduleSlot.service?.name,
+                medico: actual.scheduleSlot.doctor?.fullName,
+            });
+            const otrosCambios = [
+                actual.epsId !== epsId ? `EPS: ${nuevos.eps ?? '—'}` : null,
+                actual.patient.fullName !== patientName ? 'nombre del paciente corregido' : null,
+                regimenAGuardar && regimenAGuardar !== actual.patient.regime
+                    ? `régimen: ${regimenAGuardar.toLowerCase()}`
+                    : null,
+            ].filter(Boolean);
+            return {
+                action: mueveLaCita ? 'APPOINTMENT_MOVED_PANEL' : 'APPOINTMENT_EDITED_PANEL',
+                level: mueveLaCita ? 'WARNING' : 'EVENT',
+                message: `Cita ${appointmentId} ${mueveLaCita ? 'movida' : 'corregida'} desde el panel`,
+                actor: actorDeSesion(session),
+                organizationId,
+                metadata: {
+                    detalle: [
+                        mueveLaCita
+                            ? `${antes} → ${describirCita({ inicio: fechaPedida, servicio: nuevos.servicio, medico: nuevos.medico })}`
+                            : antes,
+                        `paciente ${enmascarar(actual.patient.cedula)}`,
+                        ...otrosCambios,
+                    ].join(' · '),
+                    cita: appointmentId,
+                    antes: {
+                        doctorId: actual.scheduleSlot.doctorId,
+                        inicio: actual.scheduleSlot.startTime.toISOString(),
+                        epsId: actual.epsId,
+                    },
+                    despues: { doctorId, inicio: fechaPedida.toISOString(), epsId },
+                },
+            };
         });
 
         revalidatePath('/dashboard/agendamiento');

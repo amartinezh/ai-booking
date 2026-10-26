@@ -106,13 +106,26 @@ async function paginaDeActividad(
     };
 }
 
-/** Pone el correo y el rol de cada actor y el nombre de cada clínica. */
+/**
+ * Pone el correo y el rol de cada actor y el nombre de cada clínica. Las fuentes
+ * que solo guardan el correo de quien lo hizo (la auditoría del espejo, la Caja
+ * Negra) se completan con su usuario: así se puede filtrar por esa persona.
+ */
 async function completarNombres(eventos: EventoDeActividad[]): Promise<EventoDeActividad[]> {
     const ids = [...new Set(eventos.map((e) => e.actor.userId).filter((x): x is string => !!x))];
+    const correos = [
+        ...new Set(eventos.filter((e) => !e.actor.userId && e.actor.email).map((e) => e.actor.email as string)),
+    ];
     const orgIds = [...new Set(eventos.map((e) => e.organizationId).filter((x): x is string => !!x))];
-    const [usuarios, clinicas] = await Promise.all([
+    const [usuarios, porCorreo, clinicas] = await Promise.all([
         ids.length
             ? prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, email: true, role: true } })
+            : [],
+        correos.length
+            ? prisma.user.findMany({
+                  where: { email: { in: correos } },
+                  select: { id: true, email: true, role: true, organizationId: true },
+              })
             : [],
         orgIds.length
             ? prisma.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } })
@@ -121,12 +134,21 @@ async function completarNombres(eventos: EventoDeActividad[]): Promise<EventoDeA
     const porId = new Map(usuarios.map((u) => [u.id, u]));
     const nombreClinica = new Map(clinicas.map((o) => [o.id, o.name]));
     return eventos.map((e) => {
-        const u = e.actor.userId ? porId.get(e.actor.userId) : undefined;
+        // Por correo, solo si la cuenta es de la misma clínica del evento (o de la plataforma).
+        const delCorreo =
+            !e.actor.userId && e.actor.email
+                ? porCorreo.find(
+                      (u) =>
+                          u.email === e.actor.email &&
+                          (u.organizationId === e.organizationId || u.role === 'SUPER_ADMIN'),
+                  )
+                : undefined;
+        const u = e.actor.userId ? porId.get(e.actor.userId) : delCorreo;
         return {
             ...e,
             organizationName: e.organizationName ?? (e.organizationId ? nombreClinica.get(e.organizationId) ?? null : null),
             actor: {
-                userId: e.actor.userId,
+                userId: e.actor.userId ?? delCorreo?.id ?? null,
                 email: e.actor.email ?? u?.email ?? null,
                 role: e.actor.role ?? u?.role ?? null,
             },

@@ -4,6 +4,15 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
 import { Prisma } from '@agenia/database';
+import { actorDeSesion, registrarActividad, registrarDespues } from '@/lib/actividad/registrar';
+import { describirCita } from '@/lib/actividad/catalogo';
+
+/**
+ * 🔐 2026-10-27: abrir, copiar y borrar cupos pedía solo una sesión con clínica,
+ * y la pantalla (Agendas) es del administrador. Ahora solo ORG_ADMIN, y cada
+ * cambio queda en la Actividad de usuarios.
+ */
+const MSG_SIN_PERMISO = 'Solo el administrador de la clínica puede abrir o borrar cupos.';
 
 export async function getAgendaDependencies() {
     try {
@@ -82,9 +91,12 @@ export async function generateBulkSlots(formData: FormData) {
 
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        if (session.role !== 'ORG_ADMIN') return { success: false, error: MSG_SIN_PERMISO };
+        const organizationId = session.organizationId;
 
         const doctor = await prisma.doctorProfile.findFirst({
             where: { id: doctorId, organizationId: session.organizationId },
+            include: { service: { select: { name: true } } },
         });
 
         if (!doctor || !doctor.serviceId) {
@@ -139,6 +151,33 @@ export async function generateBulkSlots(formData: FormData) {
             }
         }
 
+        await registrarDespues(async () => {
+            const epsExclusiva =
+                epsId && epsId !== 'none'
+                    ? await prisma.eps.findFirst({ where: { id: epsId, organizationId }, select: { name: true } })
+                    : null;
+            const yaExistian = slotsToCreate.length - createdCount;
+            return {
+                action: 'SLOTS_GENERATED',
+                message: `Cupos abiertos para ${doctor.fullName} el ${dateStr}: ${createdCount}`,
+                actor: actorDeSesion(session),
+                organizationId,
+                metadata: {
+                    detalle: [
+                        `${doctor.fullName}${doctor.service ? ` (${doctor.service.name})` : ''}`,
+                        `${dateStr} de ${startTimeStr} a ${endTimeStr}, cada ${durationMin} min`,
+                        `${createdCount} cupo(s) abierto(s)${yaExistian > 0 ? `, ${yaExistian} ya existían` : ''}`,
+                        epsExclusiva ? `solo para ${epsExclusiva.name}` : null,
+                    ]
+                        .filter(Boolean)
+                        .join(' · '),
+                    medico: doctorId,
+                    creados: createdCount,
+                    pedidos: slotsToCreate.length,
+                },
+            };
+        });
+
         revalidatePath('/dashboard/agenda');
         return {
             success: true,
@@ -155,6 +194,7 @@ export async function deleteSlot(id: string) {
     try {
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        if (session.role !== 'ORG_ADMIN') return { success: false, error: MSG_SIN_PERMISO };
 
         // Solo las citas VIGENTES impiden borrar el cupo. Una cancelada es
         // historia clínica, no una reserva: antes bloqueaba el borrado igual
@@ -162,12 +202,28 @@ export async function deleteSlot(id: string) {
         // ni borrar ni volver a vender.
         const slot = await prisma.scheduleSlot.findFirst({
             where: { id, organizationId: session.organizationId },
-            include: { appointments: { where: { status: { not: 'CANCELLED' } }, take: 1 } },
+            include: {
+                appointments: { where: { status: { not: 'CANCELLED' } }, take: 1 },
+                doctor: { select: { fullName: true } },
+                service: { select: { name: true } },
+            },
         });
         if (slot?.appointments.length) {
             return { success: false, error: 'Este cupo ya fue reservado por un paciente. Cancele la cita primero.' };
         }
         await prisma.scheduleSlot.delete({ where: { id, organizationId: session.organizationId } });
+        if (slot) {
+            await registrarActividad({
+                action: 'SLOT_DELETED',
+                message: `Cupo borrado (${slot.id})`,
+                actor: actorDeSesion(session),
+                organizationId: session.organizationId,
+                metadata: {
+                    detalle: describirCita({ inicio: slot.startTime, servicio: slot.service?.name, medico: slot.doctor?.fullName }),
+                    cupo: slot.id,
+                },
+            });
+        }
         revalidatePath('/dashboard/agenda');
         return { success: true };
     } catch {
@@ -191,6 +247,7 @@ export async function cloneDaySlots(formData: FormData) {
 
         const session = await getSession();
         if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        if (session.role !== 'ORG_ADMIN') return { success: false, error: MSG_SIN_PERMISO };
         // Capturado tras el guard: TS no propaga el narrowing al callback del map.
         const organizationId = session.organizationId;
 
@@ -239,6 +296,30 @@ export async function cloneDaySlots(formData: FormData) {
                 throw e;
             }
         }
+
+        await registrarDespues(async () => {
+            const medico = await prisma.doctorProfile.findFirst({
+                where: { id: doctorId, organizationId },
+                select: { fullName: true },
+            });
+            return {
+                action: 'SLOTS_CLONED',
+                message: `Agenda copiada de ${sourceDateStr} a ${targetDateStr}: ${createdCount} cupos`,
+                actor: actorDeSesion(session),
+                organizationId,
+                metadata: {
+                    detalle: [
+                        medico?.fullName,
+                        `${sourceDateStr} → ${targetDateStr}`,
+                        `${createdCount} de ${slotsToCreate.length} cupo(s) copiado(s)`,
+                    ]
+                        .filter(Boolean)
+                        .join(' · '),
+                    medico: doctorId,
+                    creados: createdCount,
+                },
+            };
+        });
 
         revalidatePath('/dashboard/agenda');
         return {

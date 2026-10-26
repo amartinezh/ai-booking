@@ -5,6 +5,22 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getSession } from '@/lib/session';
 import { Prisma } from '@agenia/database';
+import { actorDeSesion, registrarActividad, type ActorDeLaActividad } from '@/lib/actividad/registrar';
+import { listarCambios } from '@/lib/actividad/catalogo';
+
+/**
+ * 🔐 2026-10-27: la pantalla de Aseguradoras es del administrador, pero estas
+ * acciones aceptaban cualquier sesión de la clínica. Una EPS inactiva o borrada
+ * cambia a quién puede agendar el asistente, así que ahora solo ORG_ADMIN, y cada
+ * cambio queda en la Actividad de usuarios.
+ */
+async function administrador(): Promise<{ organizationId: string; quien: ActorDeLaActividad } | null> {
+    const session = await getSession();
+    if (session?.role !== 'ORG_ADMIN' || !session.organizationId) return null;
+    return { organizationId: session.organizationId, quien: actorDeSesion(session) };
+}
+
+const MSG_SIN_PERMISO = 'Solo el administrador de la clínica puede gestionar las EPS.';
 
 const formSchema = z.object({
     name: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
@@ -53,15 +69,27 @@ export async function createEps(prevState: unknown, formData: FormData) {
             return { success: false, error: 'Datos inválidos', issues: validatedFields.error.flatten().fieldErrors };
         }
 
-        const session = await getSession();
-        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        const admin = await administrador();
+        if (!admin) return { success: false, error: MSG_SIN_PERMISO };
 
-        await prisma.eps.create({
+        const creada = await prisma.eps.create({
             data: {
                 name: validatedFields.data.name,
                 nit: validatedFields.data.nit || null,
                 isActive: validatedFields.data.isActive,
-                organizationId: session.organizationId
+                organizationId: admin.organizationId
+            },
+        });
+        await registrarActividad({
+            action: 'EPS_CREATED',
+            message: `EPS creada: ${creada.name}`,
+            actor: admin.quien,
+            organizationId: admin.organizationId,
+            metadata: {
+                detalle: [`«${creada.name}»`, creada.nit ? `NIT ${creada.nit}` : 'sin NIT', creada.isActive ? null : 'inactiva']
+                    .filter(Boolean)
+                    .join(' · '),
+                eps: creada.id,
             },
         });
 
@@ -88,16 +116,27 @@ export async function updateEps(id: string, prevState: unknown, formData: FormDa
             return { success: false, error: 'Datos inválidos' };
         }
 
-        const session = await getSession();
-        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        const admin = await administrador();
+        if (!admin) return { success: false, error: MSG_SIN_PERMISO };
 
-        await prisma.eps.update({
-            where: { id, organizationId: session.organizationId },
-            data: {
-                name: validatedFields.data.name,
-                nit: validatedFields.data.nit || null,
-                isActive: validatedFields.data.isActive,
-            },
+        const antes = await prisma.eps.findFirst({
+            where: { id, organizationId: admin.organizationId },
+            select: { name: true, nit: true, isActive: true },
+        });
+        const despues = {
+            name: validatedFields.data.name,
+            nit: validatedFields.data.nit || null,
+            isActive: validatedFields.data.isActive,
+        };
+        await prisma.eps.update({ where: { id, organizationId: admin.organizationId }, data: despues });
+        const cambios = antes ? listarCambios(antes, despues, { name: 'nombre', nit: 'NIT', isActive: 'activa' }) : [];
+        await registrarActividad({
+            action: 'EPS_UPDATED',
+            level: antes && antes.isActive !== despues.isActive ? 'WARNING' : 'EVENT',
+            message: `EPS modificada: ${despues.name}`,
+            actor: admin.quien,
+            organizationId: admin.organizationId,
+            metadata: { detalle: `«${despues.name}»: ${cambios.length ? cambios.join(' · ') : 'sin cambios'}`, eps: id },
         });
 
         revalidatePath('/dashboard/eps');
@@ -113,12 +152,21 @@ export async function updateEps(id: string, prevState: unknown, formData: FormDa
 
 export async function toggleEpsStatus(id: string, currentStatus: boolean) {
     try {
-        const session = await getSession();
-        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        const admin = await administrador();
+        if (!admin) return { success: false, error: MSG_SIN_PERMISO };
 
-        await prisma.eps.update({
-            where: { id, organizationId: session.organizationId },
+        const eps = await prisma.eps.update({
+            where: { id, organizationId: admin.organizationId },
             data: { isActive: !currentStatus },
+            select: { name: true, isActive: true },
+        });
+        await registrarActividad({
+            action: eps.isActive ? 'EPS_ACTIVATED' : 'EPS_DEACTIVATED',
+            level: eps.isActive ? 'EVENT' : 'WARNING',
+            message: `EPS ${eps.isActive ? 'activada' : 'inactivada'}: ${eps.name}`,
+            actor: admin.quien,
+            organizationId: admin.organizationId,
+            metadata: { detalle: `«${eps.name}»`, eps: id },
         });
         revalidatePath('/dashboard/eps');
         return { success: true };
@@ -130,12 +178,12 @@ export async function toggleEpsStatus(id: string, currentStatus: boolean) {
 
 export async function deleteEps(id: string) {
     try {
-        const session = await getSession();
-        if (!session?.organizationId) return { success: false, error: 'Tenant inválido' };
+        const admin = await administrador();
+        if (!admin) return { success: false, error: MSG_SIN_PERMISO };
 
         // Validar si tiene pacientes o citas atadas
         const eps = await prisma.eps.findFirst({
-            where: { id, organizationId: session.organizationId },
+            where: { id, organizationId: admin.organizationId },
             include: {
                 _count: {
                     select: { patients: true, appointments: true },
@@ -153,6 +201,14 @@ export async function deleteEps(id: string) {
         }
 
         await prisma.eps.delete({ where: { id } });
+        await registrarActividad({
+            action: 'EPS_DELETED',
+            level: 'WARNING',
+            message: `EPS eliminada: ${eps.name}`,
+            actor: admin.quien,
+            organizationId: admin.organizationId,
+            metadata: { detalle: `«${eps.name}»${eps.nit ? ` · NIT ${eps.nit}` : ''}`, eps: id },
+        });
         revalidatePath('/dashboard/eps');
         return { success: true };
     } catch (error) {

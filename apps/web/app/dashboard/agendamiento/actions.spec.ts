@@ -15,7 +15,9 @@ jest.mock('../../../lib/prisma', () => {
         scheduleSlot: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
         user: { create: jest.fn() },
         agentProfile: { findUnique: jest.fn() },
-        doctorProfile: { findUnique: jest.fn() },
+        doctorProfile: { findUnique: jest.fn(), findFirst: jest.fn() },
+        medicalService: { findFirst: jest.fn() },
+        systemLog: { create: jest.fn(async () => ({})) },
         hospitalMirrorConfig: { findUnique: jest.fn() },
         // «Agendar», «Cancelar» y «Cambiar fecha»: encendidos salvo donde la prueba diga otra cosa.
         organizationSettings: {
@@ -477,5 +479,113 @@ describe('🚪 interruptores de la clínica conectada al hospital', () => {
         );
         const res = await createManualAppointmentAction(form());
         expect(res).toEqual({ success: false, error: expect.stringMatching(/«Agendar citas» está apagado/) });
+    });
+});
+
+describe('👣 Actividad de usuarios: agendar, mover, corregir y escribirle al paciente (2026-10-27)', () => {
+    const mockLog = prisma.systemLog.create as jest.Mock;
+    const registros = () => mockLog.mock.calls.map((c) => c[0].data);
+    const fetchOriginal = global.fetch;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockGetSession.mockResolvedValue(sesion({ role: 'BOOKING_AGENT', userId: 'u-ag', email: 'agenda@clinica.co' }));
+        mockAgentProfile.mockResolvedValue({ epsId: null, doctorId: null });
+        mockEnrollment.mockResolvedValue(null);
+        // Sin espejo (el panel opera libre) y sin respuestas de un solo uso que hayan
+        // quedado de otras pruebas.
+        (prisma.hospitalMirrorConfig.findUnique as jest.Mock).mockReset().mockResolvedValue(null);
+        (prisma.eps.findFirst as jest.Mock).mockResolvedValue({ name: 'Sura', nit: null });
+        (prisma.doctorProfile.findFirst as jest.Mock).mockResolvedValue({ fullName: 'Dra. Pérez' });
+        (prisma.medicalService.findFirst as jest.Mock).mockResolvedValue({ name: 'Medicina general' });
+        (prisma.scheduleSlot.findFirst as jest.Mock).mockResolvedValue(null);
+        (prisma.scheduleSlot.create as jest.Mock).mockImplementation(async ({ data }) => ({ id: 'slot-n', ...data }));
+        (prisma.appointment.create as jest.Mock).mockReset().mockResolvedValue({ id: 'apt-n' });
+    });
+    afterAll(() => {
+        global.fetch = fetchOriginal;
+    });
+
+    it('agendar: quién, qué cita y el paciente enmascarado', async () => {
+        (prisma.patientProfile.findFirst as jest.Mock).mockResolvedValue(null);
+        (prisma.user.create as jest.Mock).mockResolvedValue({ id: 'u-pac' });
+        (prisma.patientProfile.create as jest.Mock).mockResolvedValue({ id: 'pac-n', regime: null });
+
+        const res = await createManualAppointmentAction(form());
+        expect(res).toEqual({ success: true });
+        const [d] = registros();
+        expect(d).toMatchObject({ action: 'APPOINTMENT_BOOKED_PANEL', userId: 'u-ag', organizationId: 'org-1' });
+        expect(d.metadata.detalle).toMatch(/^Medicina general · Dra\. Pérez · 01\/10\/2026 10:00/);
+        expect(d.metadata.detalle).toContain('paciente ••••3456 (ficha nueva)');
+        expect(d.metadata.detalle).toContain('EPS Sura');
+        expect(JSON.stringify(d)).not.toContain('1053123456');
+    });
+
+    it('si armar la huella falla, la cita agendada no se da por fallida', async () => {
+        (prisma.patientProfile.findFirst as jest.Mock).mockResolvedValue({ id: 'pac-1', regime: null });
+        (prisma.doctorProfile.findFirst as jest.Mock).mockRejectedValue(new Error('base lenta'));
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        const res = await createManualAppointmentAction(form());
+        expect(res.success).toBe(true);
+        expect(prisma.appointment.create).toHaveBeenCalled();
+    });
+
+    it('mover: aviso con el antes y el después', async () => {
+        mockFindFirst.mockResolvedValue({
+            ...CITA,
+            patient: { regime: 'SUBSIDIADO', cedula: '1053123456', fullName: 'María López' },
+            scheduleSlot: {
+                doctorId: 'doc-1',
+                startTime: new Date('2026-09-30T15:00:00.000Z'),
+                doctor: { fullName: 'Dra. Pérez' },
+                service: { name: 'Medicina general' },
+            },
+        });
+        (prisma.scheduleSlot.findFirst as jest.Mock).mockResolvedValue(null);
+        const res = await updateManualAppointmentAction('apt-1', form());
+        expect(res.success).toBe(true);
+        const [d] = registros();
+        expect(d).toMatchObject({ action: 'APPOINTMENT_MOVED_PANEL', level: 'WARNING' });
+        expect(d.metadata.detalle).toMatch(/30\/09\/2026 10:00 .* → .*01\/10\/2026 10:00/);
+    });
+
+    it('corregir sin mover: dice qué cambió (EPS)', async () => {
+        mockFindFirst.mockResolvedValue({
+            ...CITA,
+            patient: { regime: 'SUBSIDIADO', cedula: '1053123456', fullName: 'María López' },
+            scheduleSlot: {
+                doctorId: 'doc-1',
+                startTime: new Date('2026-10-01T15:00:00.000Z'),
+                doctor: { fullName: 'Dra. Pérez' },
+                service: { name: 'Medicina general' },
+            },
+        });
+        const res = await updateManualAppointmentAction('apt-1', form({ epsId: 'eps-2' }));
+        expect(res.success).toBe(true);
+        const [d] = registros();
+        expect(d).toMatchObject({ action: 'APPOINTMENT_EDITED_PANEL', level: 'EVENT' });
+        expect(d.metadata.detalle).toContain('EPS: Sura');
+    });
+
+    it('mensaje manual: por dónde y sobre qué cita, sin guardar el texto', async () => {
+        mockFindFirst.mockResolvedValue({
+            ...CITA,
+            origin: 'WHATSAPP',
+            patient: { bsuid: 'CO.123', whatsappId: '573001234567', cedula: '1053123456' },
+            scheduleSlot: {
+                doctorId: 'doc-1',
+                startTime: new Date('2026-10-01T15:00:00.000Z'),
+                doctor: { fullName: 'Dra. Pérez' },
+                service: { name: 'Medicina general' },
+            },
+        });
+        global.fetch = jest.fn(async () => ({ ok: true })) as unknown as typeof fetch;
+        const res = await sendManualWhatsappAction('apt-1', 'Hola María, su cita sigue en pie');
+        expect(res.success).toBe(true);
+        const [d] = registros();
+        expect(d).toMatchObject({ action: 'PATIENT_MESSAGE_SENT', userId: 'u-ag' });
+        expect(d.metadata.detalle).toMatch(/^Por WhatsApp · Medicina general/);
+        expect(d.metadata.caracteres).toBe(32);
+        expect(JSON.stringify(d)).not.toContain('su cita sigue');
     });
 });

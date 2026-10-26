@@ -89,8 +89,6 @@ function obj(v: unknown): Record<string, unknown> | null {
     return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
-const actorDesconocido = { userId: null, email: null, role: null };
-
 // ─────────────────────────────────────────────────────────────
 // 1. Bitácora del sistema: ingresos, claves, cuentas, días sin citas…
 // ─────────────────────────────────────────────────────────────
@@ -99,7 +97,18 @@ const ACCIONES_CONOCIDAS = Object.keys(ACCIONES_DE_LA_BITACORA);
 
 export const fuenteBitacora: Fuente = {
     clave: 'log',
-    categorias: ['INGRESOS', 'SEGURIDAD', 'CUENTAS', 'CONFIGURACION', 'AVISOS', 'PLATAFORMA', 'OTROS'],
+    categorias: [
+        'INGRESOS',
+        'SEGURIDAD',
+        'CUENTAS',
+        'CITAS',
+        'PACIENTES',
+        'CATALOGOS',
+        'CONFIGURACION',
+        'AVISOS',
+        'PLATAFORMA',
+        'OTROS',
+    ],
     tienePlataforma: true,
     async buscar(db, c) {
         const where: Prisma.SystemLogWhereInput = {
@@ -304,6 +313,15 @@ export const fuenteBandeja: Fuente = {
  * tiene columna de usuario: quién lo hizo va escrito en el texto («… por
  * ana@clinica.com»), y por eso el filtro de usuario busca su correo ahí.
  */
+/**
+ * El autor que la auditoría del espejo escribe dentro del texto («… por
+ * ana@clinica.co: …»). Sin correo (algunas solo dicen el rol) devuelve null.
+ */
+export function autorEnElTexto(detalle: string | null | undefined): string | null {
+    const m = /\bpor ([^\s:,;()«»]+@[^\s:,;()«»]+?)[.:,;]?(?:\s|$)/.exec(detalle ?? '');
+    return m ? m[1] : null;
+}
+
 export const fuenteConfiguracion: Fuente = {
     clave: 'config',
     categorias: ['CONFIGURACION'],
@@ -334,7 +352,7 @@ export const fuenteConfiguracion: Fuente = {
             detalle: recortar(f.detail, 400) || null,
             aviso: false,
             organizationId: f.organizationId,
-            actor: actorDesconocido,
+            actor: { userId: null, email: autorEnElTexto(f.detail), role: null },
             ip: null,
             navegador: null,
             extra: { entidad: f.entityType, operacion: f.op },

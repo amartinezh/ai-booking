@@ -4,7 +4,7 @@
 >
 > **Regla obligatoria.** Todo ajuste o mejora del sistema actualiza este archivo **en el mismo commit**: lo que cambió en la pantalla o en el comportamiento, y una línea en la [bitácora](#parte-3--bitácora-de-cambios). Lo vigilan el gancho `commit-msg` del repositorio y el CI. Cómo editarlo y el formato de la Parte 1: [README.md](README.md) de esta carpeta.
 
-**Última actualización:** 2026-10-26
+**Última actualización:** 2026-10-27
 
 ## Contenido
 
@@ -109,7 +109,7 @@ Es la primera pantalla al entrar. Arriba tienes accesos rápidos a cada opción 
 
 1. Busca la cita (debe estar vigente).
 2. En la columna «Estado y Asistencia», cambia «En Espera» por «✅ Asistió» o «❌ Ausente».
-3. Se guarda al instante y la etiqueta de la cita pasa a «ATENDIDA» o «NO ASISTIÓ».
+3. Se guarda al instante y la etiqueta de la cita pasa a «ATENDIDA» o «NO ASISTIÓ». Queda constancia de quién la marcó y cuándo.
 
 > 💡 Las citas con la insignia «🏥 Hospital» no se marcan aquí: su asistencia la registra el hospital en su sistema y AgenIA solo la muestra.
 
@@ -119,7 +119,7 @@ Es la primera pantalla al entrar. Arriba tienes accesos rápidos a cada opción 
 2. Espera el aviso verde «Recordatorio manual enviado con éxito».
 3. Si ya se había enviado, el botón dice «Reenviar recordatorio». Pasa el cursor por encima para ver cuándo salió el anterior.
 
-> 💡 El botón manual funciona aunque los recordatorios automáticos estén apagados en Configuración.
+> 💡 El botón manual funciona aunque los recordatorios automáticos estén apagados en Configuración. Queda constancia de quién lo pidió y de si salió o no.
 
 ##### Anular (cancelar) una cita y liberar el cupo
 
@@ -468,7 +468,7 @@ Lo que el asistente necesita para ofrecer citas: servicios, médicos, EPS, padr�
 
 #### Para qué sirve
 
-Un cupo (slot) es un espacio de tiempo de un médico en el que se puede agendar una cita. El asistente solo ofrece horas que existen aquí como cupos libres. En esta pantalla los creas en bloque para una jornada, copias la agenda de un día a otro y ves en colores cuáles están libres, cuáles son exclusivos de una EPS y cuáles ya tienen cita.
+Un cupo (slot) es un espacio de tiempo de un médico en el que se puede agendar una cita. El asistente solo ofrece horas que existen aquí como cupos libres. En esta pantalla los creas en bloque para una jornada, copias la agenda de un día a otro y ves en colores cuáles están libres, cuáles son exclusivos de una EPS y cuáles ya tienen cita. Solo el administrador abre, copia o borra cupos, y cada vez queda constancia de quién lo hizo.
 
 #### Paso a paso
 
@@ -550,7 +550,7 @@ Esos cupos ya existían. Mira el calendario en vista Día para confirmarlo.
 
 #### Para qué sirve
 
-Cada médico pertenece a un servicio (Medicina General, Odontología, Pediatría…) y cada cupo hereda el servicio de su médico. Los servicios activos son el menú que el asistente le muestra al paciente cuando pide una cita, y con ellos se agrupan las Analíticas. Con la clínica conectada al hospital, cada cita trae el servicio que le dio el hospital, y AgenIA solo trabaja con las citas de servicios activos (y de médicos con WhatsApp ON): recordatorios, respuestas del asistente, cancelar y cambiar la fecha.
+Cada médico pertenece a un servicio (Medicina General, Odontología, Pediatría…) y cada cupo hereda el servicio de su médico. Los servicios activos son el menú que el asistente le muestra al paciente cuando pide una cita, y con ellos se agrupan las Analíticas. Con la clínica conectada al hospital, cada cita trae el servicio que le dio el hospital, y AgenIA solo trabaja con las citas de servicios activos (y de médicos con WhatsApp ON): recordatorios, respuestas del asistente, cancelar y cambiar la fecha. Crear, activar, inactivar o eliminar un servicio queda registrado con quién lo hizo.
 
 #### Paso a paso
 
@@ -610,7 +610,7 @@ Inactívalo con el interruptor. Así deja de ofrecerse sin perder la historia.
 
 #### Para qué sirve
 
-Cada médico tiene una tarjeta con su servicio, tarjeta profesional, cédula y teléfono. Crear un médico también le crea una cuenta para entrar a AgenIA con su correo y contraseña, donde verá su propia agenda. Desde aquí decides si está activo y si el asistente puede agendar citas con él.
+Cada médico tiene una tarjeta con su servicio, tarjeta profesional, cédula y teléfono. Crear un médico también le crea una cuenta para entrar a AgenIA con su correo y contraseña, donde verá su propia agenda. Desde aquí decides si está activo y si el asistente puede agendar citas con él. Solo el administrador crea, cambia o da de baja médicos, y cada cambio queda registrado con quién lo hizo y qué cambió (por ejemplo, encender o apagar su WhatsApp).
 
 #### Paso a paso
 
@@ -624,7 +624,7 @@ Cada médico tiene una tarjeta con su servicio, tarjeta profesional, cédula y t
 ##### Agregar un médico
 
 1. Pulsa «🩺 Agregar Médico».
-2. En «Credenciales (Login)», escribe su correo y una contraseña.
+2. En «Credenciales (Login)», escribe su correo y una contraseña: al menos 10 caracteres, con letras y números, sin el usuario del correo y que no sea una de fábrica (como `temporal123`).
 3. En «Datos Profesionales», escribe el nombre completo y la cédula, elige el «Servicio Adscrito» y, si los tienes, la tarjeta profesional y el teléfono.
 4. Deja marcados «Estado Activo» y «Reservas por WhatsApp» si ya puede recibir citas.
 5. Pulsa «Guardar Médico».
@@ -638,7 +638,7 @@ Cada médico tiene una tarjeta con su servicio, tarjeta profesional, cédula y t
 ##### Cambiar la contraseña de un médico
 
 1. Pulsa «Modificar Perfil».
-2. Escribe la nueva contraseña.
+2. Escribe la nueva contraseña, con la misma regla que al crearlo.
 3. Guarda.
 
 > 💡 Al editar, si dejas la contraseña vacía, no cambia.
@@ -675,6 +675,10 @@ Ya hay una cuenta con ese correo (búscala en Usuarios) o un médico con esa cé
 
 Créalo primero en Servicios de Salud.
 
+##### Al guardar sale un error sobre la contraseña.
+
+No cumple la regla: al menos 10 caracteres, letras y números, sin el usuario del correo y que no sea una de fábrica (`admin123`, `temporal123`…). Escribe otra.
+
 ### 🏦 Aseguradoras (EPS) {#eps}
 
 - **Ruta:** `/dashboard/eps`
@@ -684,7 +688,7 @@ Créalo primero en Servicios de Salud.
 
 #### Para qué sirve
 
-Cuando un paciente agenda, el asistente le pregunta su EPS y la busca en esta lista. Una EPS activa permite agendar por ella (si la persona está en su padrón). Una EPS suspendida es una que la clínica atiende, pero no por el asistente: al paciente se le pide agendar por teléfono con su EPS, sin ofrecerle la cita particular. Una EPS que no está en la lista la clínica no la atiende: el asistente le ofrece la cita particular (pago directo). Aquí también ves cuántos pacientes y citas tiene cada una.
+Cuando un paciente agenda, el asistente le pregunta su EPS y la busca en esta lista. Una EPS activa permite agendar por ella (si la persona está en su padrón). Una EPS suspendida es una que la clínica atiende, pero no por el asistente: al paciente se le pide agendar por teléfono con su EPS, sin ofrecerle la cita particular. Una EPS que no está en la lista la clínica no la atiende: el asistente le ofrece la cita particular (pago directo). Aquí también ves cuántos pacientes y citas tiene cada una. Solo el administrador crea, cambia, activa, inactiva o elimina EPS, y cada cambio queda registrado con quién lo hizo.
 
 #### Paso a paso
 
@@ -2077,8 +2081,8 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 
 ## 6. Otras pantallas y páginas públicas
 
-- **Agendamiento** (`/dashboard/agendamiento`, Agente de Reservas): agendar a mano para un paciente, con las mismas barreras de EPS y régimen que el asistente pero sin límite de citas. Respeta el alcance del agente (EPS o médico asignado).
-- **Pacientes** (`/dashboard/pacientes`, solo administrador): listado de pacientes de la clínica; no está en el menú, pero existe (la Bandeja remite a ella para corregir teléfonos).
+- **Agendamiento** (`/dashboard/agendamiento`, Agente de Reservas): agendar a mano para un paciente, con las mismas barreras de EPS y régimen que el asistente pero sin límite de citas. Respeta el alcance del agente (EPS o médico asignado). Agendar, cambiar la fecha o el médico (aviso), corregir la EPS o el nombre y escribirle al paciente desde aquí queda en la Actividad de usuarios con quién lo hizo y qué cita fue (del mensaje solo el canal y su largo, no el texto: la bitácora no se purga y las conversaciones sí).
+- **Pacientes** (`/dashboard/pacientes`, solo administrador): listado de pacientes de la clínica; no está en el menú, pero existe (la Bandeja remite a ella para corregir teléfonos). Crear, editar o borrar una ficha lo puede hacer solo el administrador (desde el 2026-10-27 la acción también lo exige, como en Médicos, EPS y Agendas), con la regla de contraseña de Usuarios, y queda en la Actividad de usuarios qué campos cambiaron, sin copiar sus valores.
 - **Mi Agenda / Mis Citas** (`/dashboard` para médico y paciente).
 - **Páginas públicas** (sin sesión): `/solicitud-alta/<clínica>` (formulario de Solicitudes de Alta), `/solicitud-citas/<solicitud>` (pedir más citas que el límite), `/encuesta/<token>` (CSAT), `/estadisticas/<clínica>` (estadísticas para compartir, con clave), `/guia/whatsapp` y `/guia/google-ai-studio` (guías de conexión) y `/login`.
 - **Estadísticas para compartir** (`/estadisticas/<id de la clínica>`, `apps/web/lib/estadisticas`): solo conteos, sin datos de pacientes. Se recalculan a las 6 a. m. de la clínica con el día anterior completo (antes de esa hora sigue el corte de ayer) y se guardan en memoria de la web hasta el corte siguiente; si la consulta falla, se reintenta en la próxima visita. Las cifras: recordatorios del `WhatsappMessageLog` (enviados, entregados o leídos, leídos), confirmaciones (`RECORDATORIO_CONFIRMADO`, cada cita una vez), consultas (`LOOKUP_*`), cancelaciones y cambios de fecha del asistente (con el cupo «retomado» si después del cancelado hay otra cita vigente en el mismo cupo, y la mediana de horas de anticipación), citas con origen WhatsApp o Telegram (fuera de horario, pacientes registrados al agendar, y con espejo, cuántas llegaron al hospital y en cuántos segundos), avisos de inasistencia de la Bandeja, mensajes entrantes de `ChannelActivityLog` (por hora y fuera de horario: antes de las 7 a. m., desde las 5 p. m., sábado y domingo) y asistencia de citas ya pasadas desde el día siguiente al primer recordatorio, de médicos con WhatsApp ON y servicios activos, con y sin recordatorio entregado. Las gráficas por día muestran los últimos 30 días. Sin clave guardada (o con la clínica suspendida) la página responde 404. Una clínica puede tenerla además en un subdominio propio: un bloque del Caddy del servidor que lleva la raíz a su página y solo deja pasar esa ruta y los archivos de `/_next/static`.
@@ -2122,7 +2126,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 - **Claves**: se guardan cifradas con bcrypt. Cada usuario cambia la suya en `/dashboard/cuenta` («Cambiar mi clave», al pie del menú): se exige la actual, la nueva debe tener al menos 10 caracteres (máximo 72 bytes, lo que lee bcrypt), letras y números, ser distinta de la actual y no contener el usuario. El cambio queda en la bitácora del sistema (`PASSWORD_CHANGED`) sin ningún dato de la clave; cada intento con la actual equivocada también (`PASSWORD_CHANGE_FAILED`, aviso) y tras 5 en 15 minutos se frena el cambio por 15 minutos, para que quien encuentre una sesión abierta ajena no pueda adivinarla. Cambiarla no cierra las sesiones ya abiertas (duran 8 horas). El administrador puede ponerle una clave nueva a cualquiera en Usuarios. Desde el 2026-10-26 ninguna cuenta nace con una clave por defecto: el administrador de la clínica (Usuarios) y el super administrador (administradores de cada clínica) la escriben con la misma regla, y ninguna pantalla acepta las claves de fábrica que estuvieron en el código (`admin123`, `temporal123`, `password123`…; `apps/web/lib/cuenta/clave.ts`).
 - **Ingreso al panel** (`/login`): cada ingreso queda en la bitácora del sistema (`USER_LOGIN`) con el usuario, su clínica, su rol, su correo, la IP (la primera de `x-forwarded-for`, que pone el proxy) y el navegador; cada intento fallido también (`LOGIN_FAILED`, aviso), con el correo intentado y el motivo (el correo no tiene cuenta, clave equivocada o clínica suspendida), nunca con la clave; y cada cierre de sesión (`USER_LOGOUT`). Tras 5 fallidos en 15 minutos con el mismo correo desde la misma IP, el ingreso se frena 15 minutos sin mirar la clave (`LOGIN_BLOCKED`, una sola constancia por ventana para que quien insiste no llene la bitácora); se cuenta por correo e IP para que nadie pueda bloquear a propósito a otra persona. Los ingresos se registraban desde antes (sin IP ni navegador); los fallidos y los cierres, desde el 2026-10-26.
 - **Super administradores**: ya no se crea solo `superadmin@sanvicente.com` con la clave `admin123` cuando no hay ninguno (eso estaba en `apps/web/app/actions/auth.ts` y en la documentación de instalación). Se gestionan en el servidor con `agenia superadmin` (`apps/web/scripts/superadmin.mjs`, corre en el contenedor de la web): `listar` (cuántos hay, su último ingreso y si alguno entra con una clave de fábrica), `crear <correo>` y `restablecer <correo>` (generan una clave aleatoria de 24 caracteres, bcrypt de costo 12, y la muestran una sola vez en la terminal), `quitar <correo>` (nunca el último) y `revisar-claves` (cuentas del personal que entran con una clave de fábrica). Cada alta, clave nueva o retiro queda en la bitácora (`SUPER_ADMIN_CREATED`, `SUPER_ADMIN_PASSWORD_RESET`, `SUPER_ADMIN_REMOVED`), sin la clave.
-- **Actividad de usuarios** (`/super-admin/actividad`, solo super administrador): la línea de tiempo de lo que hace cada persona de cada clínica, de lo más nuevo a lo más viejo, con filtros por clínica (o «Plataforma»: super administradores e intentos sin cuenta), usuario, tipo y fechas (días de Bogotá), y «Cargar más» por cursor (no repite ni salta eventos aunque entren nuevos). Arriba, los ingresos de los últimos 30 días: por clínica (personal, cuántos entraron, ingresos, fallidos, último ingreso) o, con una clínica elegida, por persona (último ingreso —«Nunca» si no hay registro—, ingresos y fallidos). No escribe nada: lee lo que cada módulo ya guarda (`apps/web/lib/actividad/fuentes.ts`): la bitácora del sistema (ingresos, intentos fallidos, cierres, cambios de clave, usuarios creados, modificados —con el antes y el después del rol y el correo, y si se le puso clave nueva— o eliminados, días sin citas, avisos masivos enviados, recordatorios manuales, cambios de las clínicas por el super administrador), el rastreo de paciente (`PatientLookupLog`), la Bandeja (`SyncExceptionLog`, solo acciones de personas), los cambios de configuración con espejo (`SyncAudit` `CONFIG` y el reproceso manual; ahí el autor va dentro del texto), las cargas del padrón, los lotes de avisos masivos, las solicitudes de más citas revisadas, «Marcar como contactado» de la Caja Negra, los tickets de soporte y lo que se les agregó, los documentos excluidos del espejo, las citas anuladas desde la Visión General (`metaLog` de la cita) y la bitácora legal de la plataforma (`GlobalAuditLog`). Documentos y teléfonos salen enmascarados (últimos 4 dígitos). Si una de esas fuentes falla, la página sale con las demás y lo dice. Índices nuevos en `SystemLog` por clínica y por usuario (migración `20261026180000_actividad_de_usuarios`).
+- **Actividad de usuarios** (`/super-admin/actividad`, solo super administrador): la línea de tiempo de lo que hace cada persona de cada clínica, de lo más nuevo a lo más viejo, con filtros por clínica (o «Plataforma»: super administradores e intentos sin cuenta), usuario, tipo y fechas (días de Bogotá), y «Cargar más» por cursor (no repite ni salta eventos aunque entren nuevos). Arriba, los ingresos de los últimos 30 días: por clínica (personal, cuántos entraron, ingresos, fallidos, último ingreso) o, con una clínica elegida, por persona (último ingreso —«Nunca» si no hay registro—, ingresos y fallidos). No escribe nada: lee lo que cada módulo ya guarda (`apps/web/lib/actividad/fuentes.ts`): la bitácora del sistema (ingresos, intentos fallidos, cierres, cambios de clave, usuarios creados, modificados —con el antes y el después del rol y el correo, y si se le puso clave nueva— o eliminados, días sin citas, avisos masivos enviados, cambios de las clínicas por el super administrador y, desde el 2026-10-27, la asistencia marcada —antes y después—, quién pidió un recordatorio manual y si salió, las citas agendadas, movidas o corregidas desde Agendamiento y los mensajes manuales al paciente, los cupos abiertos, copiados o borrados, y los médicos, fichas de pacientes, servicios y EPS creados, cambiados —qué cambió; de los datos personales solo que cambiaron—, activados, inactivados o eliminados), el rastreo de paciente (`PatientLookupLog`), la Bandeja (`SyncExceptionLog`, solo acciones de personas), los cambios de configuración con espejo (`SyncAudit` `CONFIG` y el reproceso manual; ahí el autor va dentro del texto y la pantalla lo reconoce por su correo si la cuenta es de esa clínica; activar o inactivar un servicio con espejo queda solo ahí, sin espejo en la bitácora del sistema), las cargas del padrón, los lotes de avisos masivos, las solicitudes de más citas revisadas, «Marcar como contactado» de la Caja Negra, los tickets de soporte y lo que se les agregó, los documentos excluidos del espejo, las citas anuladas desde la Visión General (`metaLog` de la cita) y la bitácora legal de la plataforma (`GlobalAuditLog`). Documentos y teléfonos salen enmascarados (últimos 4 dígitos); las citas se nombran por servicio, médico y hora. Las anotaciones que necesitan consultas para describirse (nombres del médico o del servicio) se arman después de la acción y, si fallan, la acción no se da por fallida (`registrarDespues`). Si una de esas fuentes falla, la página sale con las demás y lo dice. El registro del recordatorio manual que deja la API (`REMINDER_MANUAL_SENT`, sin persona) sigue en Auditoría y Logs, pero ya no en esta línea de tiempo: allí sale el de la web, con quién lo pidió. Índices nuevos en `SystemLog` por clínica y por usuario (migración `20261026180000_actividad_de_usuarios`).
 - **Mensajes del asistente**: el detalle de una cita solo se da al remitente que corresponde al paciente; cancelar o cambiar exige que la ficha sea del remitente. Con el caso «El teléfono de un paciente es de otra persona» abierto en la Bandeja, ese número deja de contar como del paciente para todo eso (confirmar, consultar, cancelar y cambiar), y se vuelve a revisar justo antes de cancelar o mover la cita en el hospital. Por Telegram no aplica: ese chat lo vincula el propio paciente.
 - **Avisos y alertas**: los avisos al agendador y las alertas técnicas no llevan datos de pacientes.
 - **Conversaciones del asistente de soporte**: solo el super administrador las lee, completas, en `/super-admin/soporte-bot/conversaciones`; abrir una deja un registro en la bitácora del sistema (`SUPPORT_BOT_CONVERSATION_VIEWED`, con quién y cuál). La lista de lo que el manual no cubrió va con cédulas, teléfonos y correos ocultos.
@@ -2180,7 +2184,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 
 - **Analíticas**: «Completadas» cuenta citas con estado `COMPLETED`, que el flujo normal no escribe (marcar «Asistió» cambia la asistencia), así que suele quedar en 0.
 - **Agendas (Slots)**: no hay botón para borrar cupos.
-- **Actividad de usuarios**: todavía no dejan rastro de quién lo hizo, entre otros: marcar la asistencia, el recordatorio manual (se sabe que salió, no quién lo pidió), agendar y mover citas desde Agendamiento, crear y editar médicos, pacientes, servicios, EPS y cupos, los interruptores sin espejo, la configuración de IA, WhatsApp, Telegram y voz, ni lo que solo se consulta (abrir pantallas, descargar). Las sesiones no se pueden cerrar a la fuerza (el token dura 8 horas).
+- **Actividad de usuarios**: todavía no dejan rastro de quién lo hizo, entre otros: los interruptores y ajustes cuando la clínica no está conectada al hospital, la configuración de IA, WhatsApp, Telegram y voz, la homologación de médicos y lo que solo se consulta (abrir pantallas, descargar). Las sesiones no se pueden cerrar a la fuerza (el token dura 8 horas).
 - **Consulta en vivo al HIS** y **consulta del asistente al HIS**: construidas y apagadas hasta medir su costo en el hospital.
 - **Centro de ayuda**: solo lo ve el administrador.
 - **Alertas técnicas**: en producción en el hospital (bot conectado, grupo vinculado y encendidas; revisado el 2026-10-20).
@@ -2225,6 +2229,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-27** — Actividad de usuarios, más huellas: ahora queda quién marcó la asistencia de una cita (antes y después), quién pidió un recordatorio manual y si salió, quién agendó, movió o corrigió una cita desde Agendamiento o le escribió al paciente (sin guardar el texto), quién abrió, copió o borró cupos, y quién creó, cambió o eliminó médicos (incluido encender o apagar su WhatsApp), fichas de pacientes (qué campo cambió, sin copiar el dato), servicios y EPS. Los cambios de configuración del espejo ya muestran a la persona que los hizo. Y Médicos, Pacientes, EPS y Agendas ya solo los puede cambiar el administrador, como dicen sus pantallas (antes cualquier usuario de la clínica podía, por ejemplo cambiarle la clave a un médico y entrar como él), con contraseña segura al crear médicos y pacientes (antes, vacía, quedaba `temporal123`).
 - **2026-10-26** — Actividad de usuarios y seguridad de las cuentas. **Super administrador:** pantalla nueva «Actividad de usuarios» con lo que hace cada persona de cada clínica en orden (ingresos, intentos fallidos, cuentas, pacientes consultados, Bandeja, padrón, avisos, configuración, citas anuladas…), los ingresos de los últimos 30 días por clínica y por persona, y «Cambiar mi clave» (antes no tenía cómo). **Ingreso:** cada ingreso, intento fallido y cierre de sesión queda con la IP y el navegador, y tras 5 claves equivocadas en 15 minutos se frena el ingreso 15 minutos. **Cuentas:** ya no se crea solo el super administrador `superadmin@sanvicente.com` con `admin123`; se crean en el servidor con `agenia superadmin crear <correo>`, que da una clave aleatoria. En Usuarios solo el administrador crea, edita o borra cuentas (antes cualquier sesión de la clínica podía, hasta crear un super administrador), la contraseña es obligatoria y segura (antes, vacía, era `temporal123`; la de un administrador creado por el super administrador, `admin123`), la opción «Administrador» ya funciona y se puede asignar el Observador general. Cada cambio de cuentas queda registrado.
 - **2026-10-26** — Estadísticas para compartir: la página de cifras que se armaba a mano ahora vive en AgenIA y se actualiza sola cada día a las 6 a. m. con el día anterior completo (recordatorios enviados y leídos, gestiones por chat, citas agendadas y canceladas por chat, cupos que tomó otro paciente, mensajes fuera de horario y asistencia con y sin recordatorio), sin datos de pacientes. El administrador la abre con una clave sencilla en la pestaña nueva Configuración › Estadísticas, copia el enlace, cambia la clave (saca a quien había entrado) o la cierra; cada cambio queda en la auditoría. Nace cerrada. En el Hospital San Vicente también en estadisticas.hsvpanserma.agenia.co.
 - **2026-10-26** — Lista de espera con la plantilla «Oferta de cupo»: cuando se libera un cupo y el primero de la lista no ha escrito en las últimas 24 horas, el asistente se lo ofrece con esa plantilla aprobada en Meta (de 7:00 a 19:00, hora de la clínica), y el paciente responde SÍ o NO como siempre. Hay que aprobarla en Meta y registrarla en Configuración › Integraciones › Plantillas de WhatsApp; mientras no esté, se le ofrece solo a quien escribió hace poco. Si el mensaje no sale, el paciente conserva su turno y el cupo pasa al siguiente (antes lo perdía sin enterarse).

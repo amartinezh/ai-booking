@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { getSession } from '@/lib/session';
 import { Prisma } from '@agenia/database';
 import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
+import { actorDeSesion, registrarActividad, type ActorDeLaActividad } from '@/lib/actividad/registrar';
 
 /**
  * 🩺 Crear, activar/inactivar y borrar servicios: solo ORG_ADMIN (la misma
@@ -14,10 +15,10 @@ import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
  * fecha), así que una acción de servidor abierta a cualquier sesión de la clínica
  * no podía seguir así.
  */
-async function tenantAdmin(): Promise<{ organizationId: string; actor: string } | null> {
+async function tenantAdmin(): Promise<{ organizationId: string; actor: string; quien: ActorDeLaActividad } | null> {
     const session = await getSession();
     if (session?.role !== 'ORG_ADMIN' || !session.organizationId) return null;
-    return { organizationId: session.organizationId, actor: session.email ?? session.userId };
+    return { organizationId: session.organizationId, actor: session.email ?? session.userId, quien: actorDeSesion(session) };
 }
 
 const formSchema = z.object({
@@ -65,12 +66,19 @@ export async function createMedicalService(prevState: unknown, formData: FormDat
         const admin = await tenantAdmin();
         if (!admin) return { success: false, error: 'Sin permisos.' };
 
-        await prisma.medicalService.create({
+        const creado = await prisma.medicalService.create({
             data: {
                 name: validatedFields.data.name,
                 isActive: validatedFields.data.isActive,
                 organizationId: admin.organizationId
             },
+        });
+        await registrarActividad({
+            action: 'SERVICE_CREATED',
+            message: `Servicio creado: ${creado.name}`,
+            actor: admin.quien,
+            organizationId: admin.organizationId,
+            metadata: { detalle: `«${creado.name}»${creado.isActive ? '' : ' (inactivo)'}`, servicio: creado.id },
         });
 
         revalidatePath('/dashboard/servicios');
@@ -99,7 +107,19 @@ export async function toggleMedicalServiceStatus(id: string, currentStatus: bool
             where: { organizationId: admin.organizationId },
             select: { enabled: true },
         });
-        if (espejo?.enabled) {
+        if (!espejo?.enabled) {
+            // Sin espejo, a la bitácora del sistema. Con espejo queda en la auditoría
+            // del espejo (el bloque de abajo, con quién lo hizo) y la Actividad de
+            // usuarios lo lee de allá: anotarlo en las dos lo mostraría dos veces.
+            await registrarActividad({
+                action: servicio.isActive ? 'SERVICE_ACTIVATED' : 'SERVICE_DEACTIVATED',
+                level: servicio.isActive ? 'EVENT' : 'WARNING',
+                message: `Servicio ${servicio.isActive ? 'activado' : 'inactivado'}: ${servicio.name}`,
+                actor: admin.quien,
+                organizationId: admin.organizationId,
+                metadata: { detalle: `«${servicio.name}»`, servicio: id },
+            });
+        } else {
             await prisma.syncAudit.create({
                 data: {
                     organizationId: admin.organizationId,
@@ -147,6 +167,14 @@ export async function deleteMedicalService(id: string) {
         }
 
         await prisma.medicalService.delete({ where: { id } });
+        await registrarActividad({
+            action: 'SERVICE_DELETED',
+            level: 'WARNING',
+            message: `Servicio eliminado: ${service.name}`,
+            actor: admin.quien,
+            organizationId: admin.organizationId,
+            metadata: { detalle: `«${service.name}»`, servicio: id },
+        });
         revalidatePath('/dashboard/servicios');
         return { success: true };
     } catch (error) {

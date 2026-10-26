@@ -2,6 +2,7 @@
 import type { PrismaClient } from '@agenia/database';
 import {
     FUENTES,
+    autorEnElTexto,
     fuenteBitacora,
     fuenteCajaNegra,
     fuenteConfiguracion,
@@ -32,7 +33,7 @@ describe('fuentesParaConsulta', () => {
 
     it('por categoría, solo las que la producen', () => {
         const claves = fuentesParaConsulta(consulta({ categoria: 'PACIENTES' })).map((f) => f.clave);
-        expect(claves).toEqual(['rastreo']);
+        expect(claves).toEqual(['log', 'rastreo']);
     });
 
     it('en «Plataforma», solo las que tienen filas sin clínica', () => {
@@ -179,5 +180,20 @@ describe('fuentes de clínica', () => {
         expect(e.detalle).toContain('••••4567');
         expect(e.detalle).not.toContain('573001234567');
         expect(e.actor.email).toBe('agenda@clinica.co');
+    });
+});
+
+describe('autorEnElTexto (auditoría del espejo)', () => {
+    it('saca el correo de quien hizo el cambio', () => {
+        expect(autorEnElTexto('«Agendar citas» APAGADO desde Configuración por ana@clinica.co: las citas…')).toBe(
+            'ana@clinica.co',
+        );
+        expect(autorEnElTexto('«Plazo» cambió de «3» a «5» desde Configuración por ana@clinica.co.')).toBe('ana@clinica.co');
+        expect(autorEnElTexto('«Odontología» INACTIVADO por jefe.citas@hsv.gov.co: AgenIA…')).toBe('jefe.citas@hsv.gov.co');
+    });
+
+    it('sin correo, no inventa', () => {
+        expect(autorEnElTexto('Avisos al agendador: activos (cambiado desde el panel por ORG_ADMIN).')).toBeNull();
+        expect(autorEnElTexto(null)).toBeNull();
     });
 });

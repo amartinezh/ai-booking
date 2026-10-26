@@ -9,6 +9,7 @@ jest.mock('@/lib/prisma', () => {
         organizationSettings: {
             findUnique: jest.fn(async () => ({ bookingEnabled: true, cancelEnabled: true, rescheduleEnabled: true })),
         },
+        systemLog: { create: jest.fn(async () => ({})) },
         $transaction: jest.fn(),
     };
     // Transacción interactiva: el callback recibe el mismo doble como `tx`.
@@ -17,12 +18,15 @@ jest.mock('@/lib/prisma', () => {
 });
 jest.mock('@/lib/session', () => ({ getSession: jest.fn() }));
 jest.mock('next/cache', () => ({ revalidatePath: jest.fn() }));
-jest.mock('next/headers', () => ({ cookies: jest.fn() }));
+jest.mock('next/headers', () => ({
+    cookies: jest.fn(async () => ({ get: () => ({ value: 'token' }) })),
+    headers: jest.fn(async () => ({ get: (k: string) => (k === 'x-forwarded-for' ? '190.1.2.3' : null) })),
+}));
 
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { revalidatePath } from 'next/cache';
-import { cancelAppointmentAndFreeSlot, updateAttendance } from './dashboard';
+import { cancelAppointmentAndFreeSlot, sendManualReminder, updateAttendance } from './dashboard';
 
 const mockGetSession = getSession as jest.Mock;
 const mockUpdate = prisma.appointment.update as jest.Mock;
@@ -487,5 +491,83 @@ describe('cancelAppointmentAndFreeSlot', () => {
 
         expect(res.success).toBe(false);
         espia.mockRestore();
+    });
+});
+
+describe('Actividad de usuarios — asistencia y recordatorio manual (2026-10-27)', () => {
+    const mockLog = prisma.systemLog.create as jest.Mock;
+    const CITA = {
+        id: 'apt-1',
+        epsId: 'eps-1',
+        origin: 'WHATSAPP',
+        attendanceStatus: 'PENDING',
+        organizationId: 'org-1',
+        scheduleSlot: {
+            doctorId: 'doc-1',
+            startTime: new Date('2026-10-28T13:20:00Z'),
+            doctor: { fullName: 'Dra. Pérez' },
+            service: { name: 'Medicina general' },
+        },
+    };
+    const AGENTE = { userId: 'u-ag', email: 'agenda@clinica.co', role: 'BOOKING_AGENT', organizationId: 'org-1' };
+    const fetchOriginal = global.fetch;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockFindFirst.mockResolvedValue(CITA);
+        mockUpdate.mockResolvedValue({});
+        mockAgentProfile.mockResolvedValue({ epsId: null, doctorId: null });
+    });
+    afterAll(() => {
+        global.fetch = fetchOriginal;
+    });
+
+    it('marcar la asistencia deja quién, el antes y el después y qué cita fue', async () => {
+        mockGetSession.mockResolvedValue(AGENTE);
+        const r = await updateAttendance('apt-1', 'NO_SHOW');
+        expect(r.success).toBe(true);
+        const d = mockLog.mock.calls[0][0].data;
+        expect(d).toMatchObject({ action: 'APPOINTMENT_ATTENDANCE_MARKED', userId: 'u-ag', organizationId: 'org-1' });
+        expect(d.metadata.detalle).toMatch(/^Pendiente → No asistió · Medicina general · Dra\. Pérez · 28\/10\/2026 08:20/);
+        expect(d.metadata.ip).toBe('190.1.2.3');
+    });
+
+    it('un estado de asistencia inventado no se escribe', async () => {
+        mockGetSession.mockResolvedValue(AGENTE);
+        const r = await updateAttendance('apt-1', 'BORRADA');
+        expect(r.success).toBe(false);
+        expect(mockUpdate).not.toHaveBeenCalled();
+        expect(mockLog).not.toHaveBeenCalled();
+    });
+
+    it('el recordatorio manual queda con quién lo pidió, enviado o no', async () => {
+        mockGetSession.mockResolvedValue(AGENTE);
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            json: async () => ({ success: true, appointment: { reminderSentAt: '2026-10-27T15:00:00Z' } }),
+        })) as unknown as typeof fetch;
+        expect((await sendManualReminder('apt-1')).success).toBe(true);
+
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            json: async () => ({ success: false, error: 'El paciente no tiene número de WhatsApp registrado.' }),
+        })) as unknown as typeof fetch;
+        expect((await sendManualReminder('apt-1')).success).toBe(false);
+
+        const [enviado, fallido] = mockLog.mock.calls.map((c) => c[0].data);
+        expect(enviado).toMatchObject({ action: 'REMINDER_MANUAL_REQUESTED', level: 'EVENT', userId: 'u-ag' });
+        expect(enviado.metadata.detalle).toMatch(/^Enviado · Medicina general/);
+        expect(fallido).toMatchObject({ action: 'REMINDER_MANUAL_REQUESTED', level: 'WARNING' });
+        expect(fallido.metadata.detalle).toMatch(/^No salió \(El paciente no tiene número/);
+    });
+
+    it('un recordatorio de una cita fuera de su alcance no sale ni se anota', async () => {
+        mockGetSession.mockResolvedValue(AGENTE);
+        mockAgentProfile.mockResolvedValue({ epsId: 'otra-eps', doctorId: null });
+        global.fetch = jest.fn() as unknown as typeof fetch;
+        const r = await sendManualReminder('apt-1');
+        expect(r.success).toBe(false);
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(mockLog).not.toHaveBeenCalled();
     });
 });

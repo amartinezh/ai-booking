@@ -14,6 +14,8 @@ import {
 } from '@/lib/alcance-agente';
 import { mensajeDeError, operacionApagada } from '@/lib/interruptores-hospital';
 import { operacionFrenadaDelError } from '@agenia/shared';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
+import { ETIQUETA_ASISTENCIA, describirCita } from '@/lib/actividad/catalogo';
 
 const INTERNAL_API_URL =
     process.env.INTERNAL_API_URL ||
@@ -24,12 +26,40 @@ const REMINDER_ALLOWED_ROLES = ['BOOKING_AGENT', 'DOCTOR', 'ORG_ADMIN', 'SUPER_A
 
 const ATTENDANCE_ALLOWED_ROLES = ['BOOKING_AGENT', 'DOCTOR', 'ORG_ADMIN', 'SUPER_ADMIN'];
 
+const ESTADOS_ASISTENCIA: readonly string[] = ['PENDING', 'ATTENDED', 'NO_SHOW'];
+
+/** Lo que la Actividad de usuarios necesita saber de una cita: cuál fue, sin datos del paciente. */
+const CITA_PARA_LA_BITACORA = {
+    organizationId: true,
+    scheduleSlot: {
+        select: {
+            doctorId: true,
+            startTime: true,
+            doctor: { select: { fullName: true } },
+            service: { select: { name: true } },
+        },
+    },
+} as const;
+
+function textoDeLaCita(c: {
+    scheduleSlot: { startTime: Date; doctor: { fullName: string } | null; service: { name: string } | null };
+}): string {
+    return describirCita({
+        inicio: c.scheduleSlot.startTime,
+        servicio: c.scheduleSlot.service?.name,
+        medico: c.scheduleSlot.doctor?.fullName,
+    });
+}
+
 export async function updateAttendance(appointmentId: string, status: string) {
     try {
         const session = await getSession();
 
         if (!session || !ATTENDANCE_ALLOWED_ROLES.includes(session.role)) {
             return { success: false, error: 'No tiene permisos para actualizar la asistencia' };
+        }
+        if (!ESTADOS_ASISTENCIA.includes(status)) {
+            return { success: false, error: 'Estado de asistencia inválido.' };
         }
 
         const whereClause: { id: string; organizationId?: string } = { id: appointmentId };
@@ -43,7 +73,7 @@ export async function updateAttendance(appointmentId: string, status: string) {
         // la EPS es de la cita y el médico, de su cupo.
         const cita = await prisma.appointment.findFirst({
             where: whereClause,
-            select: { id: true, epsId: true, origin: true, scheduleSlot: { select: { doctorId: true } } },
+            select: { id: true, epsId: true, origin: true, attendanceStatus: true, ...CITA_PARA_LA_BITACORA },
         });
         if (!cita) {
             return { success: false, error: 'Cita no encontrada en su organización.' };
@@ -65,6 +95,21 @@ export async function updateAttendance(appointmentId: string, status: string) {
         await prisma.appointment.update({
             where: whereClause,
             data: { attendanceStatus: status as AttendanceStatus },
+        });
+
+        await registrarActividad({
+            action: 'APPOINTMENT_ATTENDANCE_MARKED',
+            message: `Asistencia de la cita ${cita.id}: ${cita.attendanceStatus} → ${status}`,
+            actor: actorDeSesion(session),
+            organizationId: cita.organizationId,
+            metadata: {
+                detalle: `${ETIQUETA_ASISTENCIA[cita.attendanceStatus] ?? cita.attendanceStatus} → ${
+                    ETIQUETA_ASISTENCIA[status] ?? status
+                } · ${textoDeLaCita(cita)}`,
+                cita: cita.id,
+                antes: cita.attendanceStatus,
+                despues: status,
+            },
         });
 
         revalidatePath('/dashboard');
@@ -101,21 +146,35 @@ export async function sendManualReminder(appointmentId: string): Promise<{
         // compartida `citaFueraDeAlcance`: la de aquí ahorra el viaje y da un mensaje
         // claro; la de allá es la frontera de verdad, porque el endpoint se puede
         // llamar directo con un token.
-        const alcanceRecordatorio = await alcanceDeLaSesion(prisma, session);
-        if (alcanceRecordatorio) {
-            const whereCita: { id: string; organizationId?: string } = { id: appointmentId };
-            if (session.organizationId) whereCita.organizationId = session.organizationId;
-            const cita = await prisma.appointment.findFirst({
-                where: whereCita,
-                select: { epsId: true, scheduleSlot: { select: { doctorId: true } } },
-            });
-            if (!cita) {
-                return { success: false, error: 'Cita no encontrada en su organización.' };
-            }
-            if (citaFueraDeAlcance(alcanceRecordatorio, { epsId: cita.epsId, doctorId: cita.scheduleSlot.doctorId })) {
-                return { success: false, error: MSG_FUERA_DE_ALCANCE };
-            }
+        // La cita se lee siempre: también dice cuál fue en la Actividad de usuarios.
+        const whereCita: { id: string; organizationId?: string } = { id: appointmentId };
+        if (session.organizationId) whereCita.organizationId = session.organizationId;
+        const cita = await prisma.appointment.findFirst({
+            where: whereCita,
+            select: { epsId: true, ...CITA_PARA_LA_BITACORA },
+        });
+        if (!cita) {
+            return { success: false, error: 'Cita no encontrada en su organización.' };
         }
+        const alcanceRecordatorio = await alcanceDeLaSesion(prisma, session);
+        if (citaFueraDeAlcance(alcanceRecordatorio, { epsId: cita.epsId, doctorId: cita.scheduleSlot.doctorId })) {
+            return { success: false, error: MSG_FUERA_DE_ALCANCE };
+        }
+
+        /** Quién lo pidió y si salió (la API anota el envío, pero no sabe quién lo pidió). */
+        const anotar = (error: string | null) =>
+            registrarActividad({
+                action: 'REMINDER_MANUAL_REQUESTED',
+                level: error ? 'WARNING' : 'EVENT',
+                message: `Recordatorio manual de la cita ${appointmentId}: ${error ? 'no salió' : 'enviado'}`,
+                actor: actorDeSesion(session),
+                organizationId: cita.organizationId,
+                metadata: {
+                    detalle: `${error ? `No salió (${error.slice(0, 160)})` : 'Enviado'} · ${textoDeLaCita(cita)}`,
+                    cita: appointmentId,
+                    enviado: !error,
+                },
+            });
 
         const cookieStore = await cookies();
         const token = cookieStore.get('auth_token')?.value;
@@ -134,14 +193,18 @@ export async function sendManualReminder(appointmentId: string): Promise<{
 
         if (!res.ok) {
             const errText = await res.text();
+            await anotar(`la API respondió ${res.status}`);
             return { success: false, error: `Backend ${res.status}: ${errText}` };
         }
 
         const data = await res.json();
         if (!data?.success) {
-            return { success: false, error: data?.error ?? 'No se pudo enviar el recordatorio.' };
+            const motivo = data?.error ?? 'No se pudo enviar el recordatorio.';
+            await anotar(motivo);
+            return { success: false, error: motivo };
         }
 
+        await anotar(null);
         revalidatePath('/dashboard');
         return {
             success: true,

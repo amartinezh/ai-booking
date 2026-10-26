@@ -81,3 +81,22 @@ export async function registrarActividad(a: Actividad): Promise<void> {
         console.error(`No se pudo registrar ${a.action}:`, getErrorMessage(e));
     }
 }
+
+/** Quién hace la acción, a partir de la sesión. */
+export function actorDeSesion(s: { userId: string; email?: string | null; role: string }): ActorDeLaActividad {
+    return { userId: s.userId, email: s.email ?? null, role: s.role };
+}
+
+/**
+ * Arma la actividad (con las consultas que necesite para describirla) y la
+ * registra, DESPUÉS de que la acción ya se hizo. Si algo falla al armarla, la
+ * acción no se da por fallida: la cita ya se agendó, el cupo ya se abrió. Solo
+ * queda el error en la consola.
+ */
+export async function registrarDespues(armar: () => Promise<Actividad>): Promise<void> {
+    try {
+        await registrarActividad(await armar());
+    } catch (e: unknown) {
+        console.error('No se pudo armar la actividad para la bitácora:', getErrorMessage(e));
+    }
+}

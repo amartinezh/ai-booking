@@ -8,6 +8,7 @@
  * fuente guarda su rastro a su manera (`fuentes.ts` las lee); aquí vive, sin base
  * ni sesión para poder probarlo, cómo se nombra y se agrupa cada cosa.
  */
+import { formatDateShort, formatTimeOnly } from '../date';
 
 export const CATEGORIAS = [
     'INGRESOS',
@@ -15,6 +16,7 @@ export const CATEGORIAS = [
     'CUENTAS',
     'CITAS',
     'PACIENTES',
+    'CATALOGOS',
     'BANDEJA',
     'CONFIGURACION',
     'PADRON',
@@ -30,8 +32,9 @@ export const ETIQUETA_CATEGORIA: Record<Categoria, { etiqueta: string; icono: st
     INGRESOS: { etiqueta: 'Ingresos y salidas', icono: '🔐' },
     SEGURIDAD: { etiqueta: 'Intentos fallidos y claves', icono: '🛡️' },
     CUENTAS: { etiqueta: 'Usuarios y cuentas', icono: '👥' },
-    CITAS: { etiqueta: 'Citas', icono: '📅' },
-    PACIENTES: { etiqueta: 'Consultas de pacientes', icono: '🔎' },
+    CITAS: { etiqueta: 'Citas y agenda', icono: '📅' },
+    PACIENTES: { etiqueta: 'Pacientes', icono: '🔎' },
+    CATALOGOS: { etiqueta: 'Médicos, servicios y EPS', icono: '🗂️' },
     BANDEJA: { etiqueta: 'Bandeja y Caja Negra', icono: '🚨' },
     CONFIGURACION: { etiqueta: 'Configuración', icono: '⚙️' },
     PADRON: { etiqueta: 'Padrón y solicitudes', icono: '🪪' },
@@ -76,7 +79,40 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     BOOKING_BLOCK_CREATED: { categoria: 'CONFIGURACION', titulo: 'Bloqueó días u horas para el asistente' },
     BOOKING_BLOCK_DELETED: { categoria: 'CONFIGURACION', titulo: 'Quitó un bloqueo de días u horas' },
     MASS_NOTICE_SENT: { categoria: 'AVISOS', titulo: 'Salió un lote de avisos masivos', mensaje: true },
+    // La API lo anota sin saber quién lo pidió; desde el 2026-10-27 la web anota
+    // REMINDER_MANUAL_REQUESTED con la persona. Este ya no sale en la línea de tiempo
+    // (no está en ACCIONES_SIN_USUARIO), pero se lee si alguna vez trae usuario.
     REMINDER_MANUAL_SENT: { categoria: 'AVISOS', titulo: 'Se envió un recordatorio manual', mensaje: true },
+
+    // ── Visión General y Agendamiento (2026-10-27) ──
+    APPOINTMENT_ATTENDANCE_MARKED: { categoria: 'CITAS', titulo: 'Marcó la asistencia de una cita' },
+    REMINDER_MANUAL_REQUESTED: { categoria: 'AVISOS', titulo: 'Pidió un recordatorio manual' },
+    APPOINTMENT_BOOKED_PANEL: { categoria: 'CITAS', titulo: 'Agendó una cita desde el panel' },
+    APPOINTMENT_MOVED_PANEL: { categoria: 'CITAS', titulo: 'Cambió la fecha o el médico de una cita', aviso: true },
+    APPOINTMENT_EDITED_PANEL: { categoria: 'CITAS', titulo: 'Corrigió la EPS o el nombre del paciente de una cita' },
+    PATIENT_MESSAGE_SENT: { categoria: 'AVISOS', titulo: 'Le escribió a un paciente desde el panel' },
+
+    // ── Agendas (cupos) ──
+    SLOTS_GENERATED: { categoria: 'CITAS', titulo: 'Abrió cupos en la agenda' },
+    SLOTS_CLONED: { categoria: 'CITAS', titulo: 'Copió la agenda de un día a otro' },
+    SLOT_DELETED: { categoria: 'CITAS', titulo: 'Borró un cupo de la agenda' },
+
+    // ── Médicos, pacientes, servicios y EPS ──
+    DOCTOR_CREATED: { categoria: 'CATALOGOS', titulo: 'Creó un médico' },
+    DOCTOR_UPDATED: { categoria: 'CATALOGOS', titulo: 'Modificó un médico' },
+    DOCTOR_DELETED: { categoria: 'CATALOGOS', titulo: 'Eliminó un médico', aviso: true },
+    PATIENT_CREATED: { categoria: 'PACIENTES', titulo: 'Creó la ficha de un paciente' },
+    PATIENT_UPDATED: { categoria: 'PACIENTES', titulo: 'Modificó la ficha de un paciente' },
+    PATIENT_DELETED: { categoria: 'PACIENTES', titulo: 'Eliminó la ficha de un paciente', aviso: true },
+    SERVICE_CREATED: { categoria: 'CATALOGOS', titulo: 'Creó un servicio' },
+    SERVICE_ACTIVATED: { categoria: 'CATALOGOS', titulo: 'Activó un servicio' },
+    SERVICE_DEACTIVATED: { categoria: 'CATALOGOS', titulo: 'Inactivó un servicio', aviso: true },
+    SERVICE_DELETED: { categoria: 'CATALOGOS', titulo: 'Eliminó un servicio', aviso: true },
+    EPS_CREATED: { categoria: 'CATALOGOS', titulo: 'Creó una EPS' },
+    EPS_UPDATED: { categoria: 'CATALOGOS', titulo: 'Modificó una EPS' },
+    EPS_ACTIVATED: { categoria: 'CATALOGOS', titulo: 'Activó una EPS' },
+    EPS_DEACTIVATED: { categoria: 'CATALOGOS', titulo: 'Inactivó una EPS', aviso: true },
+    EPS_DELETED: { categoria: 'CATALOGOS', titulo: 'Eliminó una EPS', aviso: true },
     ORGANIZATION_CREATED: { categoria: 'PLATAFORMA', titulo: 'Creó la clínica' },
     ORGANIZATION_UPDATED: { categoria: 'PLATAFORMA', titulo: 'Cambió el nombre o el logo de la clínica' },
     ORGANIZATION_SUSPENDED: { categoria: 'PLATAFORMA', titulo: 'Suspendió la clínica', aviso: true },
@@ -97,13 +133,13 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
 
 /**
  * Las acciones que cuentan como actividad aunque no tengan usuario: el intento
- * de ingreso con un correo que no existe no tiene a quién atribuirse, y el
- * recordatorio manual lo registra la API sin saber quién lo pidió.
+ * de ingreso con un correo que no existe no tiene a quién atribuirse, el lote de
+ * avisos masivos lo anota la API al enviarlo (quién lo armó sale del lote) y las
+ * cuentas de super administrador se tocan desde la consola del servidor.
  */
 export const ACCIONES_SIN_USUARIO = [
     'LOGIN_FAILED',
     'LOGIN_BLOCKED',
-    'REMINDER_MANUAL_SENT',
     'MASS_NOTICE_SENT',
     'SUPER_ADMIN_CREATED',
     'SUPER_ADMIN_PASSWORD_RESET',
@@ -225,4 +261,48 @@ export function describirNavegador(ua: string | null | undefined): string {
                   ? 'Linux'
                   : '';
     return sistema ? `${navegador} en ${sistema}` : navegador;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Textos de las huellas nuevas (2026-10-27)
+// ─────────────────────────────────────────────────────────────
+
+/** «Medicina general · Dra. Pérez · 27/10/2026 08:20 a m»: qué cita fue, sin datos del paciente. */
+export function describirCita(c: {
+    inicio: Date | string | null | undefined;
+    servicio?: string | null;
+    medico?: string | null;
+}): string {
+    const cuando = c.inicio ? `${formatDateShort(c.inicio)} ${formatTimeOnly(c.inicio)}` : null;
+    return [c.servicio, c.medico, cuando].filter(Boolean).join(' · ');
+}
+
+export const ETIQUETA_ASISTENCIA: Record<string, string> = {
+    ATTENDED: 'Asistió',
+    NO_SHOW: 'No asistió',
+    PENDING: 'Pendiente',
+};
+
+/**
+ * Lo que cambió entre dos versiones de una ficha, en palabras. Los campos de
+ * `sinValor` dicen solo que cambiaron (un teléfono, una dirección, una clave):
+ * la línea de tiempo dice qué hizo la persona, no copia datos personales.
+ */
+export function listarCambios(
+    antes: Record<string, unknown>,
+    despues: Record<string, unknown>,
+    etiquetas: Record<string, string>,
+    sinValor: readonly string[] = [],
+): string[] {
+    const texto = (v: unknown) =>
+        v === null || v === undefined || v === '' ? '—' : typeof v === 'boolean' ? (v ? 'sí' : 'no') : String(v);
+    const iguales = (a: unknown, b: unknown) =>
+        a instanceof Date || b instanceof Date
+            ? new Date(a as string).getTime() === new Date(b as string).getTime()
+            : (a ?? '') === (b ?? '');
+    return Object.keys(etiquetas)
+        .filter((k) => k in despues && !iguales(antes[k], despues[k]))
+        .map((k) =>
+            sinValor.includes(k) ? `${etiquetas[k]} cambió` : `${etiquetas[k]}: ${texto(antes[k])} → ${texto(despues[k])}`,
+        );
 }

@@ -4,11 +4,13 @@ import {
     CATEGORIAS,
     ETIQUETA_CATEGORIA,
     accionesDeCategorias,
+    describirCita,
     describirNavegador,
     enmascarar,
     esCategoria,
     etiquetaRol,
     leerAccionDeLaBitacora,
+    listarCambios,
     recortar,
 } from './catalogo';
 
@@ -84,5 +86,42 @@ describe('catálogo de actividad', () => {
         expect(etiquetaRol('BOOKING_AGENT')).toBe('Agente de reservas');
         expect(etiquetaRol('RARO')).toBe('RARO');
         expect(etiquetaRol(null)).toBe('');
+    });
+});
+
+describe('textos de las huellas (2026-10-27)', () => {
+    it('describe una cita en hora de Bogotá y sin datos del paciente', () => {
+        expect(
+            describirCita({ inicio: new Date('2026-10-28T13:20:00Z'), servicio: 'Medicina general', medico: 'Dra. Pérez' }),
+        ).toMatch(/^Medicina general · Dra\. Pérez · 28\/10\/2026 08:20/);
+        expect(describirCita({ inicio: null, servicio: null, medico: 'Dra. Pérez' })).toBe('Dra. Pérez');
+    });
+
+    it('lista lo que cambió; los campos sensibles solo dicen que cambiaron', () => {
+        const etiquetas = { nombre: 'nombre', telefono: 'teléfono', activo: 'activo', nacimiento: 'nacimiento' };
+        expect(
+            listarCambios(
+                { nombre: 'Ana', telefono: '300', activo: true, nacimiento: new Date('1990-01-01') },
+                { nombre: 'Ana María', telefono: '310', activo: false, nacimiento: new Date('1990-01-01') },
+                etiquetas,
+                ['telefono'],
+            ),
+        ).toEqual(['nombre: Ana → Ana María', 'teléfono cambió', 'activo: sí → no']);
+    });
+
+    it('vacío y null cuentan igual; un campo que no viene no cuenta', () => {
+        expect(listarCambios({ a: null, b: 'x' }, { a: '' }, { a: 'A', b: 'B' })).toEqual([]);
+        expect(listarCambios({ a: null }, { a: 'nuevo' }, { a: 'A' })).toEqual(['A: — → nuevo']);
+    });
+
+    it('las categorías nuevas existen y cada acción nueva tiene la suya', () => {
+        expect(esCategoria('CATALOGOS')).toBe(true);
+        for (const a of ['DOCTOR_UPDATED', 'SERVICE_DEACTIVATED', 'EPS_DELETED']) {
+            expect(ACCIONES_DE_LA_BITACORA[a].categoria).toBe('CATALOGOS');
+        }
+        expect(ACCIONES_DE_LA_BITACORA.PATIENT_UPDATED.categoria).toBe('PACIENTES');
+        expect(ACCIONES_DE_LA_BITACORA.SLOTS_GENERATED.categoria).toBe('CITAS');
+        // El recordatorio de la API ya no sale sin usuario: lo reemplaza el que dice quién lo pidió.
+        expect(ACCIONES_SIN_USUARIO as readonly string[]).not.toContain('REMINDER_MANUAL_SENT');
     });
 });

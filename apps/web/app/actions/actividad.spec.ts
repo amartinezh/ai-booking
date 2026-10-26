@@ -99,6 +99,34 @@ describe("cargarActividad", () => {
   });
 });
 
+describe("cargarActividad — autor por correo (auditoría del espejo)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("completa el usuario de un cambio de configuración a partir del correo del texto", async () => {
+    mockSession.mockResolvedValue({ role: "SUPER_ADMIN", userId: "sa" });
+    (prisma.systemLog.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.syncAudit.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: "a1",
+        organizationId: ORG,
+        entityType: "OrganizationSettings",
+        op: "BOOKING_ENABLED_CHANGE",
+        detail: "«Agendar citas» APAGADO desde Configuración por jefe@clinica.co: …",
+        createdAt: new Date("2026-10-26T15:00:00Z"),
+      },
+    ]);
+    (prisma.user.findMany as jest.Mock).mockResolvedValue([
+      // Una cuenta con ese correo en OTRA clínica no se le atribuye.
+      { id: "u-otra", email: "jefe@clinica.co", role: "ORG_ADMIN", organizationId: "otra" },
+      { id: "u-jefe", email: "jefe@clinica.co", role: "ORG_ADMIN", organizationId: ORG },
+    ]);
+    (prisma.organization.findMany as jest.Mock).mockResolvedValue([{ id: ORG, name: "Hospital" }]);
+
+    const r = await cargarActividad({});
+    expect(r.eventos[0].actor).toEqual({ userId: "u-jefe", email: "jefe@clinica.co", role: "ORG_ADMIN" });
+  });
+});
+
 describe("resumenDeIngresos", () => {
   beforeEach(() => jest.clearAllMocks());
 
