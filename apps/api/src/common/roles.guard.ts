@@ -4,10 +4,13 @@ import {
   ExecutionContext,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Role } from '@agenia/database';
+import { motivoSesionInvalida } from '@agenia/shared';
 import { ROLES_KEY } from './roles.decorator';
+import { PrismaService } from '../prisma/prisma.service';
 import * as jwt from 'jsonwebtoken';
 import type { JwtUserPayload } from './current-user.decorator';
 import { getErrorMessage } from './error-message.util';
@@ -32,9 +35,24 @@ interface GuardedRequest {
 export class RolesGuard implements CanActivate {
   private readonly logger = new Logger(RolesGuard.name);
 
-  constructor(private reflector: Reflector) {}
+  /**
+   * `prisma` lo inyecta Nest siempre en la API (PrismaModule es global y todos
+   * los servicios lo usan). Es `@Optional` solo para las pruebas que arman un
+   * módulo con el controlador y sin base; si alguna vez faltara de verdad, queda
+   * un error en el registro al crear el guard.
+   */
+  constructor(
+    private reflector: Reflector,
+    @Optional() private readonly prisma?: PrismaService,
+  ) {
+    if (!prisma && process.env.NODE_ENV === 'production') {
+      this.logger.error(
+        'RolesGuard sin PrismaService: no se están comprobando las sesiones cerradas.',
+      );
+    }
+  }
 
-  canActivate(context: ExecutionContext): boolean {
+  canActivate(context: ExecutionContext): boolean | Promise<boolean> {
     const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -104,6 +122,54 @@ export class RolesGuard implements CanActivate {
       );
     }
 
+    if (!this.prisma) return true;
+    return this.sesionVigente(user);
+  }
+
+  /**
+   * 🔐 2026-10-27: la firma sola no basta. La cuenta tiene que seguir existiendo,
+   * con el mismo rol y la misma clínica, la clínica activa y sin un «cerrar
+   * sesiones» posterior al ingreso (misma regla que la web: @agenia/shared,
+   * `motivoSesionInvalida`). Si la base no responde, se rechaza.
+   */
+  private async sesionVigente(user: JwtUserPayload): Promise<boolean> {
+    let motivo: string | null;
+    try {
+      const u = user.userId
+        ? await this.prisma!.user.findUnique({
+            where: { id: user.userId },
+            select: {
+              role: true,
+              organizationId: true,
+              sessionsRevokedAt: true,
+              organization: { select: { isActive: true } },
+            },
+          })
+        : null;
+      motivo = motivoSesionInvalida(
+        user,
+        u
+          ? {
+              role: u.role,
+              organizationId: u.organizationId,
+              sessionsRevokedAt: u.sessionsRevokedAt,
+              clinicaActiva: u.organization ? u.organization.isActive : null,
+            }
+          : null,
+      );
+    } catch (e: unknown) {
+      this.logger.error(
+        `No se pudo comprobar la sesión en la base: ${getErrorMessage(e)}.`,
+      );
+      motivo = 'BASE_NO_RESPONDE';
+    }
+    if (motivo) {
+      // El motivo, nunca la identidad (ver arriba).
+      this.logger.warn(`Sesión rechazada: ${motivo}.`);
+      throw new ForbiddenException(
+        'La sesión ya no es válida. Vuelva a ingresar.',
+      );
+    }
     return true;
   }
 }

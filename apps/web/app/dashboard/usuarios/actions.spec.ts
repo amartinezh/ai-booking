@@ -8,6 +8,7 @@ jest.mock('../../../lib/prisma', () => ({
 jest.mock('../../../lib/session', () => ({ getSession: jest.fn() }));
 jest.mock('next/cache', () => ({ revalidatePath: jest.fn() }));
 jest.mock('bcryptjs', () => ({ hash: jest.fn().mockResolvedValue('hashed') }));
+jest.mock('../../../lib/sesion-token', () => ({ abrirSesion: jest.fn() }));
 
 import { prisma } from '../../../lib/prisma';
 import { getSession } from '../../../lib/session';
@@ -156,8 +157,24 @@ describe('saveUserAction / deleteUserAction — quién puede y qué rol (2026-10
         const d = mockLog.mock.calls[0][0].data;
         expect(d).toMatchObject({ action: 'USER_UPDATED', level: 'WARNING' });
         expect(d.metadata.detalle).toContain('rol Médico → Agente de reservas');
-        expect(d.metadata.detalle).toContain('clave nueva');
+        expect(d.metadata.detalle).toContain('clave nueva y se cerraron sus sesiones');
         expect(JSON.stringify(d)).not.toContain(CLAVE);
+    });
+
+    it('la clave nueva cierra las sesiones de esa cuenta; si es la propia, le da un token nuevo', async () => {
+        const { abrirSesion } = jest.requireMock('../../../lib/sesion-token') as { abrirSesion: jest.Mock };
+        const tx = fakeTx();
+        mockTransaction.mockImplementation((fn: (t: unknown) => unknown) => fn(tx));
+        mockGetSession.mockResolvedValue(ADMIN);
+
+        mockFindFirst.mockResolvedValue({ id: 'user-1', email: 'a@b.com', role: 'DOCTOR' });
+        await saveUserAction(formData({ id: 'user-1', email: 'a@b.com', role: 'DOCTOR', password: CLAVE }));
+        expect(tx.user.update.mock.calls[0][0].data.sessionsRevokedAt).toBeInstanceOf(Date);
+        expect(abrirSesion).not.toHaveBeenCalled();
+
+        mockFindFirst.mockResolvedValue({ id: 'admin-1', email: 'admin@clinica.co', role: 'ORG_ADMIN' });
+        await saveUserAction(formData({ id: 'admin-1', email: 'admin@clinica.co', role: 'ORG_ADMIN', password: CLAVE }));
+        expect(abrirSesion).toHaveBeenCalledWith(expect.objectContaining({ id: 'admin-1', role: 'ORG_ADMIN' }));
     });
 
     it('no puede cambiar su propio rol', async () => {

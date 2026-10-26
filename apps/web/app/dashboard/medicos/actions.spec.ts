@@ -98,7 +98,10 @@ describe('Médicos — solo el administrador, clave segura y huella (2026-10-27)
         expect(r.success).toBe(true);
         const d = mockLog.mock.calls[0][0].data;
         expect(d).toMatchObject({ action: 'DOCTOR_UPDATED', level: 'WARNING' });
-        expect(d.metadata.detalle).toBe('Dra. Pérez: teléfono cambió · WhatsApp: no → sí · le puso una clave nueva');
+        expect(d.metadata.detalle).toBe(
+            'Dra. Pérez: teléfono cambió · WhatsApp: no → sí · le puso una clave nueva y se cerraron sus sesiones',
+        );
+        expect((prisma.user.update as jest.Mock).mock.calls[0][0].data.sessionsRevokedAt).toBeInstanceOf(Date);
         expect(JSON.stringify(d)).not.toContain('3109999999');
     });
 

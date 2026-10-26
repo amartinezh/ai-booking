@@ -6,6 +6,7 @@ import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
 import { getErrorMessage } from '@/lib/error';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
 import type {
     PublicWhatsappConfig,
     SaveWhatsappConfigInput,
@@ -65,6 +66,26 @@ export async function updateMyWhatsappConfig(
     }
     try {
         const data = await callBackend('POST', '/whatsapp-config', input);
+        // El número y lo que se cambió; los tokens y el secreto, nunca.
+        await registrarActividad({
+            action: 'WHATSAPP_CONFIG_CHANGED',
+            message: 'Configuración de WhatsApp actualizada',
+            actor: actorDeSesion(session),
+            organizationId: session.organizationId,
+            metadata: {
+                detalle: [
+                    input.displayPhoneNumber ? `Número ${input.displayPhoneNumber}` : null,
+                    input.phoneNumberId ? 'identificador del número cambiado' : null,
+                    input.accessToken ? 'token de acceso nuevo' : null,
+                    input.appSecret ? 'secreto de la app nuevo' : null,
+                    input.verifyToken ? 'token de verificación nuevo' : null,
+                    input.isActive === undefined ? null : `canal ${input.isActive ? 'ACTIVO' : 'APAGADO'}`,
+                ]
+                    .filter(Boolean)
+                    .join(' · ') || 'Sin cambios visibles',
+                activo: input.isActive ?? null,
+            },
+        });
         revalidatePath('/dashboard/configuracion');
         return { success: true, data };
     } catch (e) {

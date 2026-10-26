@@ -823,7 +823,7 @@ export async function guardarAvisos(
             numero ? enmascararIdentificadorWhatsapp(numero) : 'sin número'
           }, respaldo ${
             respaldo ? enmascararIdentificadorWhatsapp(respaldo) : 'sin número'
-          } (cambiado desde el panel por ${actor.role}).`,
+          } (cambiado desde el panel por ${actor.email ?? actor.role}).`,
         },
       });
       return {

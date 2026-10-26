@@ -5,12 +5,15 @@ jest.mock('../../lib/prisma', () => ({
     },
 }));
 jest.mock('../../lib/session', () => ({ getSession: jest.fn() }));
+// El token nuevo de quien cambia su clave (jose es ESM puro: aquí, un doble).
+jest.mock('../../lib/sesion-token', () => ({ abrirSesion: jest.fn() }));
 
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../lib/prisma';
 import { getSession } from '../../lib/session';
 import { cambiarMiClave } from './cuenta';
 import { INTENTOS_CLAVE } from '../../lib/cuenta/clave';
+import { abrirSesion } from '../../lib/sesion-token';
 
 const mockSession = getSession as jest.Mock;
 const findUnique = prisma.user.findUnique as jest.Mock;
@@ -128,5 +131,31 @@ describe('cambiarMiClave', () => {
 
         expect(r).toEqual({ success: true });
         expect(update).toHaveBeenCalled();
+    });
+});
+
+describe('cambiarMiClave — cierra las otras sesiones (2026-10-27)', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockSession.mockResolvedValue({ userId: 'u-1', email: 'agendadora.prueba@ejemplo.com', role: 'BOOKING_AGENT', organizationId: 'org-1' });
+        findUnique.mockResolvedValue({ id: 'u-1', password: bcrypt.hashSync(ACTUAL, 4), role: 'BOOKING_AGENT', organizationId: 'org-1' });
+        update.mockResolvedValue({ id: 'u-1', email: 'agendadora.prueba@ejemplo.com', role: 'BOOKING_AGENT', organizationId: 'org-1' });
+        logCreate.mockResolvedValue({});
+        logCount.mockResolvedValue(0);
+    });
+
+    it('marca el cierre de sesiones y le da a quien la cambió un token nuevo', async () => {
+        const antes = Date.now();
+        expect(await cambiarMiClave({ actual: ACTUAL, nueva: NUEVA, confirmacion: NUEVA })).toEqual({ success: true });
+        const { data } = update.mock.calls[0][0];
+        expect(data.sessionsRevokedAt).toBeInstanceOf(Date);
+        expect(data.sessionsRevokedAt.getTime()).toBeGreaterThanOrEqual(antes);
+        expect(abrirSesion).toHaveBeenCalledWith(expect.objectContaining({ id: 'u-1', role: 'BOOKING_AGENT' }));
+    });
+
+    it('con la clave actual equivocada no cierra nada', async () => {
+        await cambiarMiClave({ actual: 'otra-clave-123', nueva: NUEVA, confirmacion: NUEVA });
+        expect(update).not.toHaveBeenCalled();
+        expect(abrirSesion).not.toHaveBeenCalled();
     });
 });

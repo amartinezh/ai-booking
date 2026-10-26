@@ -82,7 +82,11 @@ export async function saveDoctorAction(formData: FormData) {
 
             // Actualizar User
             const userData: Prisma.UserUpdateInput = { email };
-            if (password) userData.password = await bcrypt.hash(password, 10);
+            if (password) {
+                userData.password = await bcrypt.hash(password, 10);
+                // Quien tenga la clave vieja y una sesión abierta queda por fuera.
+                userData.sessionsRevokedAt = new Date();
+            }
             await prisma.user.update({ where: { id: doctor.userId }, data: userData });
 
             // Actualizar DoctorProfile
@@ -102,7 +106,7 @@ export async function saveDoctorAction(formData: FormData) {
                     CAMPOS_MEDICO,
                     ['cedula', 'phone'],
                 );
-                if (password) cambios.push('le puso una clave nueva');
+                if (password) cambios.push('le puso una clave nueva y se cerraron sus sesiones');
                 // Encender o apagar su WhatsApp decide si el asistente agenda con él.
                 const sensible =
                     !!password ||

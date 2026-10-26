@@ -18,6 +18,8 @@ export interface FiltrosActividad {
     clinica: AlcanceClinica;
     usuarioId: string | null;
     categoria: Categoria | null;
+    /** Incluir las pantallas abiertas (son muchas: por defecto no se muestran). */
+    vistas: boolean;
     /** Día de inicio (`YYYY-MM-DD`, Bogotá) tal como se escribió, para devolverlo al formulario. */
     desde: string | null;
     hasta: string | null;
@@ -32,6 +34,7 @@ export interface FiltrosEnTexto {
     cat?: string;
     desde?: string;
     hasta?: string;
+    vistas?: string;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -64,6 +67,7 @@ export function leerFiltros(t: FiltrosEnTexto): FiltrosActividad {
         clinica,
         usuarioId,
         categoria,
+        vistas: t.vistas === '1',
         desde: desdeUtc ? (t.desde as string) : null,
         hasta: hastaUtc && !alReves ? (t.hasta as string) : null,
         desdeUtc,
@@ -82,6 +86,7 @@ export function filtrosATexto(f: FiltrosActividad): FiltrosEnTexto {
     if (f.clinica.tipo === 'CLINICA') t.org = f.clinica.id;
     if (f.usuarioId) t.usuario = f.usuarioId;
     if (f.categoria) t.cat = f.categoria;
+    if (f.vistas) t.vistas = '1';
     if (f.desde) t.desde = f.desde;
     if (f.hasta) t.hasta = f.hasta;
     return t;

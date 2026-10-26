@@ -1,4 +1,9 @@
-jest.mock('@/lib/prisma', () => ({ prisma: { organizationSettings: { upsert: jest.fn() } } }));
+jest.mock('@/lib/prisma', () => ({
+    prisma: {
+        organizationSettings: { upsert: jest.fn(), findUnique: jest.fn(async () => null) },
+        systemLog: { create: jest.fn(async () => ({})) },
+    },
+}));
 jest.mock('@/lib/session', () => ({ getSession: jest.fn() }));
 jest.mock('next/cache', () => ({ revalidatePath: jest.fn() }));
 

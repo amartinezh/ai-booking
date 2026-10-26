@@ -8,7 +8,8 @@ export const revalidate = 0;
 
 export default async function SuperAdminSurveysPage() {
   const session = await getSession();
-  if (!session || session.role !== 'SUPER_ADMIN') {
+  if (!session) redirect('/sesion-cerrada');
+  if (session.role !== 'SUPER_ADMIN') {
     redirect('/dashboard');
   }
 

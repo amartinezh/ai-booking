@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { registrarDescarga } from '@/app/actions/pantallas';
 import Link from 'next/link';
 import {
     AlertTriangle,
@@ -281,6 +282,8 @@ export default function PadronUploader() {
                 link.download = 'errores_padron_eps.csv';
                 link.click();
                 URL.revokeObjectURL(url);
+                const filas = Math.max(0, result.csv.split('\n').filter((l) => l.trim()).length - 1);
+                registrarDescarga('PADRON_ERRORES', { filas }).catch(() => undefined);
             } catch (err) {
                 setError(err instanceof Error ? err.message : 'Error al generar el reporte de errores.');
             }

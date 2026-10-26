@@ -17,12 +17,15 @@ export const CATEGORIAS = [
     'CITAS',
     'PACIENTES',
     'CATALOGOS',
+    'HISTORIA',
     'BANDEJA',
     'CONFIGURACION',
     'PADRON',
     'AVISOS',
     'SOPORTE',
     'PLATAFORMA',
+    'DESCARGAS',
+    'PANTALLAS',
     'OTROS',
 ] as const;
 
@@ -35,12 +38,15 @@ export const ETIQUETA_CATEGORIA: Record<Categoria, { etiqueta: string; icono: st
     CITAS: { etiqueta: 'Citas y agenda', icono: '📅' },
     PACIENTES: { etiqueta: 'Pacientes', icono: '🔎' },
     CATALOGOS: { etiqueta: 'Médicos, servicios y EPS', icono: '🗂️' },
+    HISTORIA: { etiqueta: 'Historia clínica', icono: '🩺' },
     BANDEJA: { etiqueta: 'Bandeja y Caja Negra', icono: '🚨' },
     CONFIGURACION: { etiqueta: 'Configuración', icono: '⚙️' },
     PADRON: { etiqueta: 'Padrón y solicitudes', icono: '🪪' },
     AVISOS: { etiqueta: 'Avisos y recordatorios', icono: '📣' },
     SOPORTE: { etiqueta: 'Soporte', icono: '🛟' },
     PLATAFORMA: { etiqueta: 'Plataforma (equipo AgenIA)', icono: '🌎' },
+    DESCARGAS: { etiqueta: 'Descargas', icono: '📥' },
+    PANTALLAS: { etiqueta: 'Pantallas abiertas', icono: '👁️' },
     OTROS: { etiqueta: 'Otras acciones', icono: '•' },
 };
 
@@ -113,6 +119,46 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     EPS_ACTIVATED: { categoria: 'CATALOGOS', titulo: 'Activó una EPS' },
     EPS_DEACTIVATED: { categoria: 'CATALOGOS', titulo: 'Inactivó una EPS', aviso: true },
     EPS_DELETED: { categoria: 'CATALOGOS', titulo: 'Eliminó una EPS', aviso: true },
+    DOCTOR_HOMOLOGATED: { categoria: 'CATALOGOS', titulo: 'Emparejó un médico con el del hospital' },
+    DOCTOR_UNHOMOLOGATED: { categoria: 'CATALOGOS', titulo: 'Deshizo el emparejamiento de un médico con el hospital', aviso: true },
+
+    // ── Configuración y canales (2026-10-27) ──
+    REMINDERS_ENABLED_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió los recordatorios automáticos' },
+    REMINDERS_SELF_BOOKED_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió a quién le salen los recordatorios' },
+    REMINDER_MIN_LEAD_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la anticipación mínima del recordatorio' },
+    BOT_OPERATION_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió lo que puede hacer el asistente' },
+    BOT_SETTINGS_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió el nombre, el estilo o los cupos del asistente' },
+    KNOWLEDGE_BASE_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Editó la base de conocimiento del asistente' },
+    APPOINTMENT_LIMITS_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió el límite de citas por paciente' },
+    AI_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la inteligencia artificial del asistente', aviso: true },
+    WHATSAPP_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la conexión con WhatsApp', aviso: true },
+    AUDIO_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la voz del asistente' },
+    TELEGRAM_CONNECTED: { categoria: 'CONFIGURACION', titulo: 'Conectó el bot de Telegram', aviso: true },
+    TELEGRAM_DISCONNECTED: { categoria: 'CONFIGURACION', titulo: 'Desconectó el bot de Telegram', aviso: true },
+    WHATSAPP_TEMPLATE_SAVED: { categoria: 'CONFIGURACION', titulo: 'Registró o cambió una plantilla de WhatsApp' },
+    WHATSAPP_TEMPLATE_DELETED: { categoria: 'CONFIGURACION', titulo: 'Quitó una plantilla de WhatsApp', aviso: true },
+    MASS_NOTICE_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la configuración de los avisos masivos' },
+    BILLING_UPDATED: { categoria: 'PLATAFORMA', titulo: 'Cambió la facturación de la clínica' },
+
+    // ── Padrón, solicitudes, avisos y soporte ──
+    PADRON_CLEARED: { categoria: 'PADRON', titulo: 'Vació el padrón de una EPS', aviso: true },
+    ENROLLMENT_REQUEST_REVIEWED: { categoria: 'PADRON', titulo: 'Marcó como revisada una solicitud de alta' },
+    MASS_NOTICE_SEND_REQUESTED: { categoria: 'AVISOS', titulo: 'Mandó a enviar un lote de avisos masivos' },
+    NOTICE_ROSTER_REQUESTED: { categoria: 'AVISOS', titulo: 'Le pidió al hospital la lista de citas de un médico' },
+    SUPPORT_TICKET_UPDATED: { categoria: 'SOPORTE', titulo: 'Atendió un ticket de soporte' },
+    MONITOR_INCIDENTS_CLEARED: { categoria: 'PLATAFORMA', titulo: 'Borró incidentes viejos del monitor' },
+
+    // ── Historia clínica ──
+    CLINICAL_RECORD_VIEWED: { categoria: 'HISTORIA', titulo: 'Abrió la historia clínica de una cita' },
+    CLINICAL_RECORD_CREATED: { categoria: 'HISTORIA', titulo: 'Escribió la historia clínica de una cita' },
+    CLINICAL_RECORD_UPDATED: { categoria: 'HISTORIA', titulo: 'Corrigió una historia clínica' },
+    CLINICAL_RECORD_SIGNED: { categoria: 'HISTORIA', titulo: 'Firmó una historia clínica', aviso: true },
+    CLINICAL_RECORD_ADDENDUM: { categoria: 'HISTORIA', titulo: 'Agregó una nota aclaratoria a una historia clínica' },
+
+    // ── Sesiones, pantallas y descargas ──
+    SESSIONS_REVOKED: { categoria: 'SEGURIDAD', titulo: 'Cerró sesiones a la fuerza', aviso: true },
+    SCREEN_VIEWED: { categoria: 'PANTALLAS', titulo: 'Abrió una pantalla' },
+    DATA_EXPORTED: { categoria: 'DESCARGAS', titulo: 'Descargó un archivo', aviso: true },
     ORGANIZATION_CREATED: { categoria: 'PLATAFORMA', titulo: 'Creó la clínica' },
     ORGANIZATION_UPDATED: { categoria: 'PLATAFORMA', titulo: 'Cambió el nombre o el logo de la clínica' },
     ORGANIZATION_SUSPENDED: { categoria: 'PLATAFORMA', titulo: 'Suspendió la clínica', aviso: true },

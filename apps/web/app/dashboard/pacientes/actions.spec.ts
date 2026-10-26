@@ -80,7 +80,9 @@ describe('Pacientes — solo el administrador y huella sin datos personales (202
         await savePatientAction(form({ id: 'pac-1', password: CLAVE }));
         const d = mockLog.mock.calls[0][0].data;
         expect(d.level).toBe('WARNING');
-        expect(d.metadata.detalle).toBe('Paciente ••••3456: le puso una clave nueva');
+        expect(d.metadata.detalle).toBe('Paciente ••••3456: le puso una clave nueva y se cerraron sus sesiones');
+        // La clave nueva saca a quien tuviera la vieja con una sesión abierta.
+        expect((prisma.user.update as jest.Mock).mock.calls[0][0].data.sessionsRevokedAt).toBeInstanceOf(Date);
     });
 
     it('crear y borrar quedan registrados con la cédula enmascarada', async () => {

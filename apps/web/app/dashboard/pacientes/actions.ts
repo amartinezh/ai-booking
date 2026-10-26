@@ -54,7 +54,10 @@ export async function savePatientAction(formData: FormData) {
             if (!patient) throw new Error("Paciente no encontrado en esta Organización");
 
             const userData: Prisma.UserUpdateInput = { email };
-            if (password) userData.password = await bcrypt.hash(password, 10);
+            if (password) {
+                userData.password = await bcrypt.hash(password, 10);
+                userData.sessionsRevokedAt = new Date();
+            }
             await prisma.user.update({ where: { id: patient.userId }, data: userData });
 
             const despues = {
@@ -70,7 +73,7 @@ export async function savePatientAction(formData: FormData) {
                 CAMPOS_PACIENTE,
                 TODOS_SIN_VALOR,
             );
-            if (password) cambios.push('le puso una clave nueva');
+            if (password) cambios.push('le puso una clave nueva y se cerraron sus sesiones');
             await registrarActividad({
                 action: 'PATIENT_UPDATED',
                 level: password || patient.user.email !== email ? 'WARNING' : 'EVENT',

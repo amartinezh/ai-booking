@@ -11,7 +11,7 @@ export default async function SuperAdminSupportPage({
     searchParams: Promise<{ view?: string }>;
 }) {
     const session = await getSession();
-    if (!session) redirect('/login');
+    if (!session) redirect('/sesion-cerrada');
     if (session.role !== 'SUPER_ADMIN') redirect('/dashboard');
 
     const params = await searchParams;

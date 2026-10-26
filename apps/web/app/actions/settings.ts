@@ -16,6 +16,30 @@ import {
     validarPlazoAgendar,
 } from '@agenia/shared';
 import { OP_CAMBIO_PLAZO, cargarResumenDelPlazo } from '@/lib/plazo-agendar/resumen';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
+import { listarCambios } from '@/lib/actividad/catalogo';
+import type { SessionPayload } from '@/lib/session';
+
+const encendido = (v: boolean) => (v ? 'ENCENDIDO' : 'APAGADO');
+
+/**
+ * Un ajuste de Configuración que cambió, en la Actividad de usuarios (2026-10-27).
+ * Solo si de verdad cambió: guardar lo mismo no es un cambio.
+ */
+async function anotarAjuste(
+    session: SessionPayload,
+    action: string,
+    detalle: string,
+    metadata: Record<string, unknown> = {},
+): Promise<void> {
+    await registrarActividad({
+        action,
+        message: detalle,
+        actor: actorDeSesion(session),
+        organizationId: session.organizationId,
+        metadata: { detalle, ...metadata },
+    });
+}
 
 const DEFAULT_BOT_NAME = 'AgenIA';
 
@@ -77,11 +101,20 @@ export async function setMyRemindersEnabled(enabled: boolean) {
     // no sea exactamente `true` apaga (falla hacia no escribirle a nadie).
     const remindersEnabled = enabled === true;
     try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { remindersEnabled: true },
+        });
         await prisma.organizationSettings.upsert({
             where: { organizationId: session.organizationId! },
             create: { organizationId: session.organizationId!, remindersEnabled },
             update: { remindersEnabled },
         });
+        if (antes?.remindersEnabled !== remindersEnabled) {
+            await anotarAjuste(session, 'REMINDERS_ENABLED_CHANGED', `Recordatorios automáticos ${encendido(remindersEnabled)}`, {
+                despues: remindersEnabled,
+            });
+        }
         revalidatePath('/dashboard/configuracion');
         return { success: true, remindersEnabled };
     } catch (e) {
@@ -104,11 +137,25 @@ export async function setMyRemindersOnlySelfBooked(enabled: boolean) {
     // comportamiento de siempre (recordatorio a todas las citas).
     const remindersOnlySelfBooked = enabled === true;
     try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { remindersOnlySelfBooked: true },
+        });
         await prisma.organizationSettings.upsert({
             where: { organizationId: session.organizationId! },
             create: { organizationId: session.organizationId!, remindersOnlySelfBooked },
             update: { remindersOnlySelfBooked },
         });
+        if ((antes?.remindersOnlySelfBooked ?? false) !== remindersOnlySelfBooked) {
+            await anotarAjuste(
+                session,
+                'REMINDERS_SELF_BOOKED_CHANGED',
+                remindersOnlySelfBooked
+                    ? 'Recordatorios solo para las citas que el paciente agendó por el chat'
+                    : 'Recordatorios para todas las citas',
+                { despues: remindersOnlySelfBooked },
+            );
+        }
         revalidatePath('/dashboard/configuracion');
         return { success: true, remindersOnlySelfBooked };
     } catch (e) {
@@ -129,11 +176,23 @@ export async function setMyReminderMinLead(minutos: number) {
     // Un valor fuera de rango o inválido cae al default (60), nunca a «sin mínimo».
     const reminderMinLeadMinutes = normalizarAnticipacionRecordatorio(minutos);
     try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { reminderMinLeadMinutes: true },
+        });
         await prisma.organizationSettings.upsert({
             where: { organizationId: session.organizationId! },
             create: { organizationId: session.organizationId!, reminderMinLeadMinutes },
             update: { reminderMinLeadMinutes },
         });
+        if (antes?.reminderMinLeadMinutes !== reminderMinLeadMinutes) {
+            await anotarAjuste(
+                session,
+                'REMINDER_MIN_LEAD_CHANGED',
+                `Anticipación mínima del recordatorio: ${antes ? `${antes.reminderMinLeadMinutes} → ` : ''}${reminderMinLeadMinutes} min`,
+                { antes: antes?.reminderMinLeadMinutes ?? null, despues: reminderMinLeadMinutes },
+            );
+        }
         revalidatePath('/dashboard/configuracion');
         return { success: true, reminderMinLeadMinutes };
     } catch (e) {
@@ -250,6 +309,7 @@ export async function setMyBookingEnabled(enabled: boolean) {
         });
         if (antes?.bookingEnabled !== bookingEnabled) {
             await auditarCompuertaHis({
+                session,
                 organizationId: session.organizationId!,
                 actor: session.email ?? session.userId ?? 'desconocido',
                 operacion: 'AGENDAR',
@@ -286,6 +346,7 @@ export async function setMyCancelEnabled(enabled: boolean) {
         });
         if (antes?.cancelEnabled !== cancelEnabled) {
             await auditarCompuertaHis({
+                session,
                 organizationId: session.organizationId!,
                 actor: session.email ?? session.userId ?? 'desconocido',
                 operacion: 'CANCELAR',
@@ -310,6 +371,7 @@ export async function setMyCancelEnabled(enabled: boolean) {
  * del interruptor.
  */
 async function auditarCompuertaHis(p: {
+    session: SessionPayload;
     organizationId: string;
     actor: string;
     operacion: 'AGENDAR' | 'CANCELAR' | 'MODIFICAR';
@@ -320,7 +382,18 @@ async function auditarCompuertaHis(p: {
             where: { organizationId: p.organizationId },
             select: { enabled: true },
         });
-        if (!espejo?.enabled) return;
+        if (!espejo?.enabled) {
+            // Sin espejo no hay hospital ni auditoría del espejo: el cambio va a la
+            // bitácora del sistema (Actividad de usuarios, 2026-10-27).
+            const nombre = { AGENDAR: 'Agendar citas', CANCELAR: 'Cancelar citas', MODIFICAR: 'Cambiar la fecha de una cita' }[
+                p.operacion
+            ];
+            await anotarAjuste(p.session, 'BOT_OPERATION_CHANGED', `«${nombre}» por el asistente ${encendido(p.encendido)}`, {
+                operacion: p.operacion,
+                despues: p.encendido,
+            });
+            return;
+        }
         const pendientes = await prisma.syncOutbox.findMany({
             where: {
                 organizationId: p.organizationId,
@@ -385,6 +458,7 @@ export async function setMyRescheduleEnabled(enabled: boolean) {
         });
         if (antes?.rescheduleEnabled !== rescheduleEnabled) {
             await auditarCompuertaHis({
+                session,
                 organizationId: session.organizationId!,
                 actor: session.email ?? session.userId ?? 'desconocido',
                 operacion: 'MODIFICAR',
@@ -412,11 +486,21 @@ export async function updateMyOrgSettings(data: {
     // llamar con cualquier número. El bot vuelve a acotar al leerlo.
     const slotsOfferedCount = normalizarCuposOfrecidos(data.slotsOfferedCount);
     try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId: session.organizationId! },
+            select: { botName: true, communicationStyle: true, slotsOfferedCount: true },
+        });
         await prisma.organizationSettings.upsert({
             where: { organizationId: session.organizationId! },
             create: { organizationId: session.organizationId!, botName, communicationStyle, slotsOfferedCount },
             update: { botName, communicationStyle, slotsOfferedCount },
         });
+        const cambios = listarCambios(
+            antes ?? {},
+            { botName, communicationStyle, slotsOfferedCount },
+            { botName: 'nombre', communicationStyle: 'estilo', slotsOfferedCount: 'cupos que ofrece' },
+        );
+        if (cambios.length) await anotarAjuste(session, 'BOT_SETTINGS_CHANGED', `Asistente: ${cambios.join(' · ')}`);
         revalidatePath('/dashboard/configuracion');
         return { success: true };
     } catch (e) {
@@ -448,11 +532,20 @@ export async function updateOrgSettingsForOrg(
     const botName = data.botName.trim() || DEFAULT_BOT_NAME;
     const communicationStyle: CommunicationStyle = data.communicationStyle === 'INFORMAL' ? 'INFORMAL' : 'FORMAL';
     try {
+        const antes = await prisma.organizationSettings.findUnique({
+            where: { organizationId },
+            select: { botName: true, communicationStyle: true },
+        });
         await prisma.organizationSettings.upsert({
             where: { organizationId },
             create: { organizationId, botName, communicationStyle },
             update: { botName, communicationStyle },
         });
+        const cambios = listarCambios(antes ?? {}, { botName, communicationStyle }, { botName: 'nombre', communicationStyle: 'estilo' });
+        if (cambios.length) {
+            // El super administrador cambiando el asistente de una clínica: queda en esa clínica.
+            await anotarAjuste({ ...session, organizationId }, 'BOT_SETTINGS_CHANGED', `Asistente: ${cambios.join(' · ')}`);
+        }
         revalidatePath('/super-admin/organizations');
         return { success: true };
     } catch (e) {

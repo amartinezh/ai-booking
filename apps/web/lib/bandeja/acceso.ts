@@ -65,6 +65,8 @@ export function permisosBandeja(rol: RolBandeja | null | undefined): PermisosBan
 
 export interface ActorBandeja {
   userId: string;
+  /** Su correo: dice quién cambió los avisos en la auditoría del espejo. */
+  email?: string | null;
   role: RolBandeja;
   organizationId: string;
   permisos: PermisosBandeja;
@@ -108,6 +110,7 @@ export async function resolverActorBandeja(
     ok: true,
     actor: {
       userId: sesion.userId,
+      email: sesion.email ?? null,
       role: sesion.role,
       organizationId: sesion.organizationId,
       permisos,

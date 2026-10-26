@@ -9,7 +9,8 @@ import CambiarClaveForm from '@/app/dashboard/cuenta/CambiarClaveForm';
 // ─────────────────────────────────────────────────────────────
 export default async function CuentaSuperAdminPage() {
     const session = await getSession();
-    if (!session || session.role !== 'SUPER_ADMIN') redirect('/dashboard');
+    if (!session) redirect('/sesion-cerrada');
+    if (session.role !== 'SUPER_ADMIN') redirect('/dashboard');
 
     return (
         <div className="max-w-xl mx-auto animate-fade-in space-y-6">

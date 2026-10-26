@@ -7,6 +7,7 @@ import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
 import { getErrorMessage } from '@/lib/error';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
 import type {
     PublicTelegramConfig,
     TelegramActionResult,
@@ -83,6 +84,20 @@ function backendMessage(parsed: unknown, status: number): string {
     return `El servidor respondió ${status}.`;
 }
 
+/** Conectar o desconectar el bot, en la Actividad de usuarios (el token del bot, nunca). */
+async function anotarTelegram(action: 'TELEGRAM_CONNECTED' | 'TELEGRAM_DISCONNECTED', c: PublicTelegramConfig | null) {
+    const session = await getSession();
+    if (!session) return;
+    const bot = c?.botUsername;
+    await registrarActividad({
+        action,
+        message: action === 'TELEGRAM_CONNECTED' ? 'Bot de Telegram conectado' : 'Bot de Telegram desconectado',
+        actor: actorDeSesion(session),
+        organizationId: session.organizationId,
+        metadata: { detalle: bot ? `@${bot}` : null },
+    });
+}
+
 async function esAdmin(): Promise<boolean> {
     const session = await getSession();
     return !!session && session.role === 'ORG_ADMIN';
@@ -105,6 +120,7 @@ export async function connectMyTelegram(
     if (!token) return { success: false, error: 'Pegue el token que le dio @BotFather.' };
     const res = await callBackend('POST', '/telegram-config', { botToken: token });
     if (!res.ok) return { success: false, error: res.message };
+    await anotarTelegram('TELEGRAM_CONNECTED', res.body as PublicTelegramConfig);
     revalidatePath('/dashboard/configuracion');
     return { success: true, data: res.body as PublicTelegramConfig };
 }
@@ -121,6 +137,7 @@ export async function disconnectMyTelegram(): Promise<TelegramActionResult<Publi
     if (!(await esAdmin())) return { success: false, error: 'Acceso denegado' };
     const res = await callBackend('DELETE', '/telegram-config');
     if (!res.ok) return { success: false, error: res.message };
+    await anotarTelegram('TELEGRAM_DISCONNECTED', null);
     revalidatePath('/dashboard/configuracion');
     return { success: true, data: res.body as PublicTelegramConfig };
 }

@@ -13,7 +13,8 @@ export default async function SuperAdminConsultasPage({
     searchParams: Promise<{ org?: string; pagina?: string }>;
 }) {
     const session = await getSession();
-    if (session?.role !== 'SUPER_ADMIN') redirect('/dashboard');
+    if (!session) redirect('/sesion-cerrada');
+    if (session.role !== 'SUPER_ADMIN') redirect('/dashboard');
 
     const { org, pagina } = await searchParams;
 

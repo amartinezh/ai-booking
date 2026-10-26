@@ -181,13 +181,17 @@ async function restablecer(prisma, correo) {
         return 1;
     }
     const clave = generarClave();
-    await prisma.user.update({ where: { id: u.id }, data: { password: await bcrypt.hash(clave, COSTO_BCRYPT) } });
+    // La clave nueva cierra las sesiones abiertas de esa cuenta (2026-10-27).
+    await prisma.user.update({
+        where: { id: u.id },
+        data: { password: await bcrypt.hash(clave, COSTO_BCRYPT), sessionsRevokedAt: new Date() },
+    });
     await bitacora(prisma, 'SUPER_ADMIN_PASSWORD_RESET', `Clave nueva para el super administrador ${correo}`, {
         email: correo,
         detalle: `Cuenta ${correo}`,
         objetivo: { userId: u.id, email: correo, role: 'SUPER_ADMIN' },
     });
-    console.log(`\n✔ Clave nueva para ${correo}. Las sesiones ya abiertas siguen hasta vencer (8 horas).`);
+    console.log(`\n✔ Clave nueva para ${correo}. Sus sesiones abiertas se cerraron.`);
     mostrarClave(correo, clave);
     return 0;
 }

@@ -19,6 +19,9 @@ jest.mock('jose', () => ({
         setProtectedHeader() {
             return this;
         }
+        setIssuedAt() {
+            return this;
+        }
         setExpirationTime() {
             return this;
         }

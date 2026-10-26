@@ -6,6 +6,23 @@ import { z } from 'zod';
 import { getSession } from '@/lib/session';
 import { SupportTicketStatus } from '@agenia/database';
 import { LIMITES_CASO } from '@agenia/shared';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
+import type { SessionPayload } from '@/lib/session';
+
+/** Lo que el equipo de AgenIA hizo con un ticket, en la Actividad de usuarios de su clínica. */
+async function anotarTicket(
+    session: SessionPayload,
+    ticket: { id: string; number: number; organizationId: string },
+    detalle: string,
+): Promise<void> {
+    await registrarActividad({
+        action: 'SUPPORT_TICKET_UPDATED',
+        message: `Ticket #${ticket.number}: ${detalle}`,
+        actor: actorDeSesion(session),
+        organizationId: ticket.organizationId,
+        metadata: { detalle: `#${ticket.number} · ${detalle}`, ticket: ticket.id },
+    });
+}
 
 // Las mismas longitudes que usa el asistente de soporte por Telegram al abrir un caso.
 const createSchema = z.object({
@@ -152,6 +169,7 @@ export async function startTicketAttention(id: string) {
                 startedAt: new Date(),
             },
         });
+        await anotarTicket(session, ticket, 'empezó a atenderlo');
 
         revalidatePath('/super-admin/support');
         revalidatePath('/dashboard/soporte');
@@ -193,6 +211,7 @@ export async function resolveTicket(id: string, _prev: unknown, formData: FormDa
                 startedAt: ticket.startedAt ?? new Date(),
             },
         });
+        await anotarTicket(session, ticket, 'lo marcó como solucionado');
 
         revalidatePath('/super-admin/support');
         revalidatePath('/dashboard/soporte');
@@ -231,6 +250,7 @@ export async function updateResolutionNote(id: string, _prev: unknown, formData:
             where: { id },
             data: { resolutionNote: parsed.data.resolutionNote },
         });
+        await anotarTicket(session, ticket, 'corrigió la respuesta');
 
         revalidatePath('/super-admin/support');
         revalidatePath('/dashboard/soporte');

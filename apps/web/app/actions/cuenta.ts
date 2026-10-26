@@ -5,6 +5,7 @@ import { prisma } from '../../lib/prisma';
 import { getSession } from '../../lib/session';
 import { getErrorMessage } from '../../lib/error';
 import { INTENTOS_CLAVE, validarCambioDeClave } from '../../lib/cuenta/clave';
+import { abrirSesion } from '../../lib/sesion-token';
 
 export type ResultadoCambioDeClave = { success: true } | { success: false; error: string };
 
@@ -67,7 +68,14 @@ export async function cambiarMiClave(datos: {
         }
 
         const hash = await bcrypt.hash(datos.nueva, 10);
-        await prisma.user.update({ where: { id: user.id }, data: { password: hash } });
+        // Cambiar la clave cierra las OTRAS sesiones de la cuenta (2026-10-27: antes
+        // seguían abiertas hasta 8 horas); a quien la cambió se le da un token nuevo.
+        const cuenta = await prisma.user.update({
+            where: { id: user.id },
+            data: { password: hash, sessionsRevokedAt: new Date() },
+            select: { id: true, email: true, role: true, organizationId: true },
+        });
+        await abrirSesion(cuenta);
 
         await prisma.systemLog
             .create({
@@ -77,7 +85,7 @@ export async function cambiarMiClave(datos: {
                     message: `Cambio de clave (${user.role})`,
                     userId: user.id,
                     organizationId: user.organizationId,
-                    metadata: { role: user.role },
+                    metadata: { role: user.role, detalle: 'Se cerraron sus otras sesiones abiertas' },
                 },
             })
             .catch((e: unknown) => console.error('No se pudo registrar PASSWORD_CHANGED:', getErrorMessage(e)));

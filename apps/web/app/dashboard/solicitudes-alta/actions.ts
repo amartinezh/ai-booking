@@ -9,6 +9,8 @@
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { revalidatePath } from 'next/cache';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
+import { enmascarar } from '@/lib/actividad/catalogo';
 
 export async function markEnrollmentRequestReviewed(
     id: string,
@@ -22,7 +24,7 @@ export async function markEnrollmentRequestReviewed(
         // Scoping multi-tenant: la solicitud debe pertenecer a la clínica del token.
         const request = await prisma.epsEnrollmentRequest.findFirst({
             where: { id, organizationId: session.organizationId },
-            select: { id: true, status: true },
+            select: { id: true, status: true, cedula: true, epsName: true },
         });
         if (!request) return { success: false, error: 'Solicitud no encontrada' };
         if (request.status === 'REVIEWED') return { success: true };
@@ -30,6 +32,16 @@ export async function markEnrollmentRequestReviewed(
         await prisma.epsEnrollmentRequest.update({
             where: { id: request.id },
             data: { status: 'REVIEWED', reviewedAt: new Date() },
+        });
+        await registrarActividad({
+            action: 'ENROLLMENT_REQUEST_REVIEWED',
+            message: `Solicitud de alta ${request.id} revisada`,
+            actor: actorDeSesion(session),
+            organizationId: session.organizationId,
+            metadata: {
+                detalle: `Ciudadano ${enmascarar(request.cedula)}${request.epsName ? ` · EPS ${request.epsName}` : ''}`,
+                solicitud: request.id,
+            },
         });
 
         revalidatePath('/dashboard/solicitudes-alta');

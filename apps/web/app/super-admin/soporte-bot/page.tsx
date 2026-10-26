@@ -17,7 +17,8 @@ export const revalidate = 0;
  */
 export default async function SoporteBotPage({ searchParams }: { searchParams: Promise<{ dias?: string }> }) {
     const session = await getSession();
-    if (!session || session.role !== 'SUPER_ADMIN') redirect('/dashboard');
+    if (!session) redirect('/sesion-cerrada');
+    if (session.role !== 'SUPER_ADMIN') redirect('/dashboard');
 
     const dias = periodoDeCifras((await searchParams).dias);
     const [config, clinicas] = await Promise.all([

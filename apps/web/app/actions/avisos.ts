@@ -22,6 +22,8 @@ import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
 import { getSession, type SessionPayload } from '@/lib/session';
 import { getErrorMessage } from '@/lib/error';
+import { registrarActividad } from '@/lib/actividad/registrar';
+import { formatDateShort } from '@/lib/date';
 import { validateAvisosCsv, type AvisosCsvError } from '@agenia/shared';
 
 const INTERNAL_API_URL =
@@ -89,7 +91,7 @@ async function requireAvisosAccess(opts?: {
 }
 
 /** Para el panel de configuración: SOLO ORG_ADMIN (§1.3) — y no exige que la Llave 3 ya esté encendida, o nunca se podría prender por primera vez. */
-async function requireAvisosAdmin(): Promise<{ organizationId: string } | null> {
+async function requireAvisosAdmin(): Promise<{ organizationId: string; userId: string; role: string } | null> {
     const session = await getSession();
     if (!session || session.role !== 'ORG_ADMIN' || !session.organizationId) return null;
 
@@ -100,7 +102,7 @@ async function requireAvisosAdmin(): Promise<{ organizationId: string } | null> 
     if (!mirrorConfig || !mirrorConfig.enabled || mirrorConfig.driverKey !== 'cnt-sanvicente-anserma') {
         return null;
     }
-    return { organizationId: session.organizationId };
+    return { organizationId: session.organizationId, userId: session.userId, role: session.role };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -156,6 +158,21 @@ export async function updateAvisosConfigAction(
         where: { organizationId: auth.organizationId },
         data: { avisosMasivos: merged as object },
     });
+
+    // Qué ajustes cambiaron (nombres y valores de la configuración, sin datos de pacientes).
+    const antes = (current?.avisosMasivos as Record<string, unknown> | null) ?? {};
+    const cambios = Object.keys(partial ?? {})
+        .filter((k) => JSON.stringify(antes[k]) !== JSON.stringify((merged as Record<string, unknown>)[k]))
+        .map((k) => `${k}: ${JSON.stringify(antes[k] ?? null)} → ${JSON.stringify((merged as Record<string, unknown>)[k])}`);
+    if (cambios.length) {
+        await registrarActividad({
+            action: 'MASS_NOTICE_CONFIG_CHANGED',
+            message: 'Configuración de avisos masivos actualizada',
+            actor: { userId: auth.userId, role: auth.role },
+            organizationId: auth.organizationId,
+            metadata: { detalle: cambios.join(' · ').slice(0, 400) },
+        });
+    }
 
     revalidatePath('/dashboard/espejo/avisos');
     revalidatePath('/dashboard');
@@ -643,6 +660,31 @@ export async function sendBatchAction(batchId: string): Promise<EnviarAvisosResu
         const data = await res.json();
         revalidatePath('/dashboard/espejo/avisos');
 
+        // Quién lo mandó a enviar (la API anota el envío, pero no sabe quién lo pidió).
+        const lote = await prisma.massNoticeBatch.findFirst({
+            where: { id: batchId, organizationId: auth.organizationId },
+            select: { doctorLabel: true, kind: true },
+        });
+        await registrarActividad({
+            action: 'MASS_NOTICE_SEND_REQUESTED',
+            level: data?.error ? 'WARNING' : 'EVENT',
+            message: `Envío del lote de avisos ${batchId}`,
+            actor: { userId: auth.userId, role: auth.role },
+            organizationId: auth.organizationId,
+            metadata: {
+                detalle: [
+                    lote?.doctorLabel,
+                    lote?.kind?.toLowerCase(),
+                    data?.error
+                        ? `no salió: ${String(data.error).slice(0, 160)}`
+                        : `${data.sent ?? 0} enviados, ${data.failed ?? 0} fallidos, ${data.skipped ?? 0} omitidos`,
+                ]
+                    .filter(Boolean)
+                    .join(' · '),
+                lote: batchId,
+            },
+        });
+
         if (data?.error) {
             return { success: false, error: data.error, status: data.status };
         }
@@ -788,6 +830,18 @@ export async function requestNoticeRosterAction(input: {
         }
 
         const data = await res.json();
+        await registrarActividad({
+            action: 'NOTICE_ROSTER_REQUESTED',
+            message: `Lista de citas pedida al hospital para el lote ${batchId}`,
+            actor: { userId: auth.userId, role: auth.role },
+            organizationId: auth.organizationId,
+            metadata: {
+                detalle: `${input.doctorLabel}${input.serviceLabel ? ` (${input.serviceLabel})` : ''} · del ${formatDateShort(
+                    input.fromIso,
+                )} al ${formatDateShort(input.toIso)}`,
+                lote: batchId,
+            },
+        });
         revalidatePath('/dashboard/espejo/avisos');
         return { success: true, batchId, requestId: data.requestId };
     } catch (e) {

@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 
+jest.mock('@/app/actions/pantallas', () => ({ registrarDescarga: jest.fn(async () => undefined) }));
 jest.mock('@/app/actions/avisos', () => ({
     getBatchAction: jest.fn(),
     getNoticeRequestStatusAction: jest.fn(),

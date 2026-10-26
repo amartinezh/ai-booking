@@ -13,7 +13,8 @@ export const revalidate = 0;
  */
 export default async function AlertasTecnicasPage() {
     const session = await getSession();
-    if (!session || session.role !== 'SUPER_ADMIN') redirect('/dashboard');
+    if (!session) redirect('/sesion-cerrada');
+    if (session.role !== 'SUPER_ADMIN') redirect('/dashboard');
 
     const [config, alerts] = await Promise.all([getTechAlertConfig(), listTechAlerts()]);
 

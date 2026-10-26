@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic';
 
 export default async function CanalesSuperAdminPage() {
     const session = await getSession();
-    if (!session || session.role !== 'SUPER_ADMIN') redirect('/dashboard');
+    if (!session) redirect('/sesion-cerrada');
+    if (session.role !== 'SUPER_ADMIN') redirect('/dashboard');
 
     const organizations = await listStatsOrganizations();
 

@@ -5,6 +5,26 @@ import { revalidatePath } from 'next/cache';
 import { Prisma } from '@agenia/database';
 import { getErrorMessage } from '@/lib/error';
 import { tenantAdmin } from './espejo';
+import { getSession } from '@/lib/session';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
+
+/** Emparejar o desemparejar un médico con el del hospital, en la Actividad de usuarios. */
+async function anotarHomologacion(
+    action: 'DOCTOR_HOMOLOGATED' | 'DOCTOR_UNHOMOLOGATED',
+    organizationId: string,
+    detalle: string,
+): Promise<void> {
+    const session = await getSession();
+    if (!session) return;
+    await registrarActividad({
+        action,
+        level: action === 'DOCTOR_UNHOMOLOGATED' ? 'WARNING' : 'EVENT',
+        message: detalle,
+        actor: actorDeSesion(session),
+        organizationId,
+        metadata: { detalle },
+    });
+}
 
 /**
  * Homologación manual de médicos: emparejar un código del HIS
@@ -125,6 +145,11 @@ export async function homologarMedico(externalKey: string, doctorId: string) {
         return { success: false, error: getErrorMessage(e) || 'No se pudo homologar.' };
     }
 
+    await anotarHomologacion(
+        'DOCTOR_HOMOLOGATED',
+        organizationId,
+        `${doctor.fullName} ↔ ${entrada.label ?? externalKey} (código ${externalKey} en el hospital)`,
+    );
     revalidatePath('/dashboard/espejo/homologacion');
     return { success: true };
 }
@@ -140,11 +165,26 @@ export async function deshomologarMedico(mapId: string) {
     if (!organizationId) return { success: false, error: 'Sin permisos.' };
     if (!mapId) return { success: false, error: 'Falta el emparejamiento a deshacer.' };
 
+    const mapa = await prisma.mirrorEntityMap.findFirst({
+        where: { id: mapId, organizationId, entityType: 'DOCTOR' },
+        select: { externalKey: true, externalLabel: true, agenIAId: true },
+    });
     const { count } = await prisma.mirrorEntityMap.deleteMany({
         where: { id: mapId, organizationId, entityType: 'DOCTOR' },
     });
     if (count === 0) {
         return { success: false, error: 'Ese emparejamiento ya no existe.' };
+    }
+    if (mapa) {
+        const medico = await prisma.doctorProfile.findFirst({
+            where: { id: mapa.agenIAId, organizationId },
+            select: { fullName: true },
+        });
+        await anotarHomologacion(
+            'DOCTOR_UNHOMOLOGATED',
+            organizationId,
+            `${medico?.fullName ?? 'Médico'} ↔ ${mapa.externalLabel ?? mapa.externalKey} (código ${mapa.externalKey} en el hospital)`,
+        );
     }
 
     revalidatePath('/dashboard/espejo/homologacion');

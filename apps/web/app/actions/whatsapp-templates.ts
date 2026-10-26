@@ -5,6 +5,7 @@
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
 import type {
     WhatsappTemplateDto,
     WhatsappTemplateKind,
@@ -66,6 +67,17 @@ export async function saveMyWhatsappTemplate(
     }
     try {
         const data = await callBackend('POST', '/whatsapp-config/templates', input);
+        await registrarActividad({
+            action: 'WHATSAPP_TEMPLATE_SAVED',
+            message: `Plantilla de WhatsApp ${input.kind}: ${input.name}`,
+            actor: actorDeSesion(session),
+            organizationId: session.organizationId,
+            metadata: {
+                detalle: `${input.kind} → «${input.name}»${input.language ? ` (${input.language})` : ''}${
+                    input.isActive === false ? ' · inactiva' : ''
+                }`,
+            },
+        });
         revalidatePath('/dashboard/configuracion');
         return { success: true, data };
     } catch (e) {
@@ -82,6 +94,14 @@ export async function deleteMyWhatsappTemplate(
     }
     try {
         await callBackend('DELETE', `/whatsapp-config/templates/${kind}`);
+        await registrarActividad({
+            action: 'WHATSAPP_TEMPLATE_DELETED',
+            level: 'WARNING',
+            message: `Plantilla de WhatsApp ${kind} quitada`,
+            actor: actorDeSesion(session),
+            organizationId: session.organizationId,
+            metadata: { detalle: String(kind) },
+        });
         revalidatePath('/dashboard/configuracion');
         return { success: true };
     } catch (e) {

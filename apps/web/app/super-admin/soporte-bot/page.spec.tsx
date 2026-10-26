@@ -58,8 +58,13 @@ describe('/super-admin/soporte-bot', () => {
         expect(screen.queryByText('preguntas')).not.toBeInTheDocument();
     });
 
-    it('🔒 sin ser super admin, fuera', async () => {
+    it('🔒 sin sesión válida, a /sesion-cerrada (borra la cookie y lleva al ingreso)', async () => {
         mockSession.mockResolvedValue(null);
+        await expect(SoporteBotPage({ searchParams: Promise.resolve({}) })).rejects.toThrow('redirect:/sesion-cerrada');
+    });
+
+    it('🔒 sin ser super admin, fuera', async () => {
+        mockSession.mockResolvedValue({ role: 'ORG_ADMIN', userId: 'u1', email: 'a@b.co', organizationId: 'org-1' });
         await expect(SoporteBotPage({ searchParams: Promise.resolve({}) })).rejects.toThrow('redirect:/dashboard');
     });
 });

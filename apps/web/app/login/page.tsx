@@ -1,14 +1,16 @@
 'use client'
 
-import { useState } from 'react';
+import { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { loginUser } from '../actions/auth';
 import BrandLogo from '@/app/components/BrandLogo';
 
-export default function LoginPage() {
+export default function LoginPage({ searchParams }: { searchParams: Promise<{ sesion?: string }> }) {
     const router = useRouter();
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
+    // Llega aquí desde /sesion-cerrada cuando su sesión dejó de valer.
+    const aviso = use(searchParams)?.sesion === 'cerrada' ? 'Su sesión se cerró. Vuelva a ingresar.' : null;
 
     async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -35,6 +37,12 @@ export default function LoginPage() {
                     <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Portal de Acceso</h1>
                     <p className="text-sm text-zinc-500 mt-2">Hospital San Vicente AI</p>
                 </div>
+
+                {aviso && !error && (
+                    <div className="mb-6 p-4 rounded-xl bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-sm font-medium text-center">
+                        {aviso}
+                    </div>
+                )}
 
                 {error && (
                     <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm font-medium text-center">

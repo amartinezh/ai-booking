@@ -9,6 +9,7 @@ import { getErrorMessage } from '../../../lib/error';
 import { validarClaveAsignada } from '../../../lib/cuenta/clave';
 import { registrarActividad } from '../../../lib/actividad/registrar';
 import { etiquetaRol } from '../../../lib/actividad/catalogo';
+import { abrirSesion } from '../../../lib/sesion-token';
 
 /**
  * 🔐 2026-10-26: estas dos acciones solo pedían una sesión con clínica. Una acción
@@ -60,6 +61,8 @@ export async function saveUserAction(formData: FormData) {
                 const problema = validarClaveAsignada(password, email);
                 if (problema) return { success: false, error: problema };
                 data.password = await bcrypt.hash(password, 10);
+                // Quien tenga la clave vieja y una sesión abierta queda por fuera.
+                data.sessionsRevokedAt = new Date();
             }
 
             await prisma.$transaction(async (tx) => {
@@ -87,10 +90,15 @@ export async function saveUserAction(formData: FormData) {
                 }
             });
 
+            // Si el administrador se cambió su propia clave aquí, sigue adentro con un token nuevo.
+            if (password && existingUser.id === session.userId) {
+                await abrirSesion({ id, email, role, organizationId });
+            }
+
             const cambios = [
                 existingUser.email !== email ? `correo ${existingUser.email} → ${email}` : null,
                 existingUser.role !== role ? `rol ${etiquetaRol(existingUser.role)} → ${etiquetaRol(role)}` : null,
-                password ? 'le puso una clave nueva' : null,
+                password ? 'le puso una clave nueva y se cerraron sus sesiones' : null,
             ].filter(Boolean);
             await registrarActividad({
                 action: 'USER_UPDATED',

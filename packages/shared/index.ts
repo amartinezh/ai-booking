@@ -686,3 +686,7 @@ export type {
   MedicoDelCatalogo,
   ServicioDeAgenIA,
 } from './src/medico-nuevo-his';
+
+// 🔐 Sesión vigente: la regla que aplican la web (getSession) y la API (RolesGuard).
+export { DURACION_SESION_SEG, emisionDelToken, motivoSesionInvalida } from './src/sesion';
+export type { CuentaDeLaSesion, MotivoSesionInvalida, TokenDeSesion } from './src/sesion';

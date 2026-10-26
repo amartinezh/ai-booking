@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { getSession } from '../../lib/session';
+import RegistroDePantallas from '../components/RegistroDePantallas';
 import { redirect } from 'next/navigation';
 import { prisma } from '../../lib/prisma';
 import LogoutButton from './components/LogoutButton';
@@ -13,7 +14,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
     const session = await getSession();
 
     if (!session) {
-        redirect('/login');
+        // Con cookie pero sin sesión válida (cerrada, cuenta borrada, rol cambiado):
+        // /sesion-cerrada borra la cookie y lleva al ingreso con el aviso.
+        redirect('/sesion-cerrada');
     }
 
     const { role, email } = session;
@@ -148,6 +151,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                         </Link>
                     ))}
                 </div>
+                <RegistroDePantallas />
                 {children}
             </main>
         </div>

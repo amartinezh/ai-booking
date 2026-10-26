@@ -10,8 +10,8 @@ jest.mock("../../lib/prisma", () => {
         findFirst: jest.fn(),
         groupBy: jest.fn(),
       },
-      user: { findMany: jest.fn(), findUnique: jest.fn(), groupBy: jest.fn() },
-      organization: { findMany: jest.fn() },
+      user: { findMany: jest.fn(), findUnique: jest.fn(), groupBy: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+      organization: { findMany: jest.fn(), findUnique: jest.fn() },
       patientLookupLog: vacio(),
       syncExceptionLog: vacio(),
       syncAudit: vacio(),
@@ -28,10 +28,17 @@ jest.mock("../../lib/prisma", () => {
   };
 });
 jest.mock("../../lib/session", () => ({ getSession: jest.fn() }));
+jest.mock("next/cache", () => ({ revalidatePath: jest.fn() }));
+jest.mock("next/headers", () => ({ headers: jest.fn(async () => ({ get: () => null })) }));
 
 import { prisma } from "../../lib/prisma";
 import { getSession } from "../../lib/session";
-import { cargarActividad, resumenDeIngresos } from "./actividad";
+import {
+  cargarActividad,
+  cerrarSesionesDeClinica,
+  cerrarSesionesDeUsuario,
+  resumenDeIngresos,
+} from "./actividad";
 
 const mockSession = getSession as jest.Mock;
 const ORG = "3f1c2b9a-1111-4a2b-9c3d-123456789abc";
@@ -196,5 +203,74 @@ describe("resumenDeIngresos", () => {
         in: ["ORG_ADMIN", "BOOKING_AGENT", "DOCTOR", "GENERAL_OBSERVER"],
       },
     });
+  });
+});
+
+describe("cerrar sesiones (2026-10-27)", () => {
+  const SA = { role: "SUPER_ADMIN", userId: "sa", email: "superadmin@agenia.co" };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.systemLog as unknown as { create: jest.Mock }).create = jest.fn(async () => ({}));
+  });
+
+  it("solo el super administrador, y nunca a sí mismo", async () => {
+    mockSession.mockResolvedValue({ role: "ORG_ADMIN", userId: "a" });
+    expect((await cerrarSesionesDeUsuario("u1")).success).toBe(false);
+    mockSession.mockResolvedValue(SA);
+    expect((await cerrarSesionesDeUsuario("sa")).success).toBe(false);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("de una persona: marca el cierre y queda en su clínica", async () => {
+    mockSession.mockResolvedValue(SA);
+    (prisma.user.update as jest.Mock).mockResolvedValue({
+      id: "u1",
+      email: "agenda@clinica.co",
+      role: "BOOKING_AGENT",
+      organizationId: ORG,
+    });
+    expect((await cerrarSesionesDeUsuario("u1")).success).toBe(true);
+    const { where, data } = (prisma.user.update as jest.Mock).mock.calls[0][0];
+    expect(where).toEqual({ id: "u1" });
+    expect(data.sessionsRevokedAt).toBeInstanceOf(Date);
+    const log = (prisma.systemLog as unknown as { create: jest.Mock }).create.mock.calls[0][0].data;
+    expect(log).toMatchObject({ action: "SESSIONS_REVOKED", level: "WARNING", userId: "sa", organizationId: ORG });
+    expect(log.metadata.detalle).toBe("De agenda@clinica.co (Agente de reservas)");
+  });
+
+  it("de toda una clínica: todas sus cuentas", async () => {
+    mockSession.mockResolvedValue(SA);
+    (prisma.organization.findUnique as jest.Mock).mockResolvedValue({ name: "Hospital" });
+    (prisma.user.updateMany as jest.Mock).mockResolvedValue({ count: 7 });
+    expect(await cerrarSesionesDeClinica(ORG)).toEqual({ success: true, cuentas: 7 });
+    expect((prisma.user.updateMany as jest.Mock).mock.calls[0][0].where).toEqual({ organizationId: ORG });
+  });
+});
+
+describe("pantallas abiertas: ocultas salvo que se pidan", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockSession.mockResolvedValue({ role: "SUPER_ADMIN", userId: "sa" });
+    (prisma.systemLog.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.user.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.organization.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  const filtroDeAccion = () =>
+    JSON.stringify((prisma.systemLog.findMany as jest.Mock).mock.calls[0][0].where);
+
+  it("por defecto no salen", async () => {
+    await cargarActividad({});
+    expect(filtroDeAccion()).toContain('"not":"SCREEN_VIEWED"');
+  });
+
+  it("con la casilla, sí", async () => {
+    await cargarActividad({ vistas: "1" });
+    expect(filtroDeAccion()).not.toContain("SCREEN_VIEWED");
+  });
+
+  it("con su categoría, solo ellas", async () => {
+    await cargarActividad({ cat: "PANTALLAS" });
+    expect(filtroDeAccion()).toContain('"in":["SCREEN_VIEWED"]');
   });
 });

@@ -25,7 +25,8 @@ const numero = new Intl.NumberFormat('es-CO');
  */
 export default async function ConversacionPage({ params }: { params: Promise<{ id: string }> }) {
     const session = await getSession();
-    if (!session || session.role !== 'SUPER_ADMIN') redirect('/dashboard');
+    if (!session) redirect('/sesion-cerrada');
+    if (session.role !== 'SUPER_ADMIN') redirect('/dashboard');
 
     const res = await getConversacionAsistente((await params).id);
     const volver = (

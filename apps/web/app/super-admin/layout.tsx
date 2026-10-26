@@ -2,30 +2,22 @@ import Link from 'next/link';
 import { getSession } from '../../lib/session';
 import { redirect } from 'next/navigation';
 import { logoutUser } from '../actions/auth';
+import { SUPER_ADMIN_MENUS } from '../../lib/super-admin-menus';
+import RegistroDePantallas from '../components/RegistroDePantallas';
 
 export default async function SuperAdminLayout({ children }: { children: React.ReactNode }) {
     const session = await getSession();
 
-    if (!session || session.role !== 'SUPER_ADMIN') {
+    // Sin sesión válida → /sesion-cerrada (borra la cookie). Mandarlo a /dashboard lo
+    // dejaba rebotando: el filtro de rutas devuelve a /super-admin a quien trae un
+    // token de super administrador, aunque su sesión ya esté cerrada.
+    if (!session) redirect('/sesion-cerrada');
+    if (session.role !== 'SUPER_ADMIN') {
         redirect('/dashboard');
     }
 
     const { email } = session;
 
-    const SUPER_ADMIN_MENUS = [
-        { label: 'Organizaciones', href: '/super-admin/organizations', icon: '🏢' },
-        { label: 'Estadísticas Globales', href: '/super-admin/stats', icon: '📊' },
-        { label: 'Canales en vivo', href: '/super-admin/canales', icon: '📈' },
-        { label: 'Encuestas (CSAT)', href: '/super-admin/surveys', icon: '⭐' },
-        { label: 'Facturación Global', href: '/super-admin/billing', icon: '💳' },
-        { label: 'Mesa de Ayuda', href: '/super-admin/support', icon: '🛟' },
-        { label: 'Asistente de soporte', href: '/super-admin/soporte-bot', icon: '🤖' },
-        { label: 'Monitor de Servicios', href: '/super-admin/monitor', icon: '📡' },
-        { label: 'Alertas técnicas', href: '/super-admin/alertas', icon: '🚨' },
-        { label: 'Actividad de usuarios', href: '/super-admin/actividad', icon: '👣' },
-        { label: 'Auditoría y Logs', href: '/super-admin/logs', icon: '🩻' },
-        { label: 'Rastreo de paciente', href: '/super-admin/rastreo', icon: '🔎' },
-    ];
 
     return (
         <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row font-sans">
@@ -105,6 +97,7 @@ export default async function SuperAdminLayout({ children }: { children: React.R
                         </Link>
                     ))}
                 </div>
+                <RegistroDePantallas />
                 {children}
             </main>
         </div>

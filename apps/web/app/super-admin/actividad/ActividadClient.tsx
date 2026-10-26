@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { PaginaDeActividad, ResumenDeIngresos } from '@/app/actions/actividad';
-import { cargarActividad } from '@/app/actions/actividad';
+import { cargarActividad, cerrarSesionesDeClinica, cerrarSesionesDeUsuario } from '@/app/actions/actividad';
 import type { FiltrosEnTexto } from '@/lib/actividad/filtros';
 import type { EventoDeActividad } from '@/lib/actividad/linea-de-tiempo';
 import { CATEGORIAS, ETIQUETA_CATEGORIA, etiquetaRol, type Categoria } from '@/lib/actividad/catalogo';
@@ -182,7 +182,17 @@ export default function ActividadClient({ filtros, clinicas, usuarios, pagina, r
                     ))}
                 </div>
 
-                {(filtros.org || filtros.usuario || filtros.cat || filtros.desde || filtros.hasta) && (
+                <label className="inline-flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300 cursor-pointer select-none">
+                    <input
+                        type="checkbox"
+                        className="rounded border-zinc-300 dark:border-zinc-600"
+                        checked={filtros.vistas === '1'}
+                        onChange={(e) => ir({ vistas: e.target.checked ? '1' : undefined })}
+                    />
+                    Incluir las pantallas que abrió cada persona (una vez cada 30 minutos por pantalla)
+                </label>
+
+                {(filtros.org || filtros.usuario || filtros.cat || filtros.desde || filtros.hasta || filtros.vistas) && (
                     <button
                         type="button"
                         onClick={() => startTransition(() => router.push('/super-admin/actividad'))}
@@ -224,6 +234,22 @@ export default function ActividadClient({ filtros, clinicas, usuarios, pagina, r
                             titulo={clinicaElegida ? 'Personal de la clínica' : 'Super administradores'}
                             elegido={filtros.usuario ?? null}
                             onElegir={(id) => ir({ usuario: id === filtros.usuario ? undefined : id })}
+                            onCerrarSesiones={async (u) => {
+                                if (!confirm(`¿Cerrar todas las sesiones abiertas de ${u.email}? Tendrá que volver a ingresar con su clave.`)) return;
+                                const r = await cerrarSesionesDeUsuario(u.id);
+                                if (!r.success) alert(r.error ?? 'No se pudieron cerrar las sesiones.');
+                                else startTransition(() => router.refresh());
+                            }}
+                            onCerrarTodas={
+                                clinicaElegida
+                                    ? async () => {
+                                          if (!confirm('¿Cerrar las sesiones de TODAS las cuentas de esta clínica? Todos tendrán que volver a ingresar.')) return;
+                                          const r = await cerrarSesionesDeClinica(clinicaElegida);
+                                          if (!r.success) alert(r.error ?? 'No se pudieron cerrar las sesiones.');
+                                          else startTransition(() => router.refresh());
+                                      }
+                                    : null
+                            }
                         />
                     )}
                 </section>
@@ -404,17 +430,32 @@ function TablaUsuarios({
     titulo,
     elegido,
     onElegir,
+    onCerrarSesiones,
+    onCerrarTodas,
 }: {
     usuarios: ResumenDeIngresos['usuarios'];
     titulo: string;
     elegido: string | null;
     onElegir: (id: string) => void;
+    onCerrarSesiones: (u: ResumenDeIngresos['usuarios'][number]) => void;
+    onCerrarTodas: (() => void) | null;
 }) {
     return (
         <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
-            <h2 className="px-5 py-3 text-sm font-bold text-zinc-900 dark:text-white border-b border-zinc-200 dark:border-zinc-800">
-                {titulo} · último ingreso y últimos 30 días
-            </h2>
+            <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-bold text-zinc-900 dark:text-white">
+                    {titulo} · último ingreso y últimos 30 días
+                </h2>
+                {onCerrarTodas && (
+                    <button
+                        type="button"
+                        onClick={onCerrarTodas}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 dark:text-red-300 dark:bg-red-900/20 dark:hover:bg-red-900/40"
+                    >
+                        Cerrar las sesiones de toda la clínica
+                    </button>
+                )}
+            </div>
             <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                     <thead className="bg-zinc-50 dark:bg-zinc-900/60 text-left text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
@@ -424,7 +465,8 @@ function TablaUsuarios({
                             <th className="px-3 py-2 font-semibold">Último ingreso</th>
                             <th className="px-3 py-2 font-semibold text-right">Ingresos</th>
                             <th className="px-3 py-2 font-semibold text-right">Fallidos</th>
-                            <th className="px-5 py-2 font-semibold">Cuenta creada</th>
+                            <th className="px-3 py-2 font-semibold">Cuenta creada</th>
+                            <th className="px-5 py-2 font-semibold">Sesiones</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -463,8 +505,22 @@ function TablaUsuarios({
                                 >
                                     {u.fallidos30}
                                 </td>
-                                <td className="px-5 py-2.5 text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
+                                <td className="px-3 py-2.5 text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
                                     {formatDateShort(u.creado)}
+                                </td>
+                                <td className="px-5 py-2.5 text-xs whitespace-nowrap">
+                                    {u.sesionesCerradas && (
+                                        <span className="block text-zinc-500 dark:text-zinc-400" title="La última vez que se cerraron sus sesiones">
+                                            cerradas {fechaHora(u.sesionesCerradas)}
+                                        </span>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => onCerrarSesiones(u)}
+                                        className="font-semibold text-red-600 dark:text-red-400 hover:underline"
+                                    >
+                                        Cerrar sesiones
+                                    </button>
                                 </td>
                             </tr>
                         ))}

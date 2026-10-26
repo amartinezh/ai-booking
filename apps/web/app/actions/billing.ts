@@ -5,6 +5,7 @@ import { getSession } from '../../lib/session';
 import { revalidatePath } from 'next/cache';
 import { Prisma } from '@agenia/database';
 import { getErrorMessage } from '../../lib/error';
+import { actorDeSesion, registrarActividad } from '../../lib/actividad/registrar';
 
 export async function updateOrganizationBilling(
     orgId: string, 
@@ -27,6 +28,21 @@ export async function updateOrganizationBilling(
         await prisma.organization.update({
             where: { id: orgId },
             data: updateData
+        });
+        await registrarActividad({
+            action: 'BILLING_UPDATED',
+            message: 'Facturación de la clínica actualizada',
+            actor: actorDeSesion(session),
+            organizationId: orgId,
+            metadata: {
+                detalle: [
+                    data.monthlyFee !== undefined ? `cuota mensual ${data.monthlyFee || '—'}` : null,
+                    data.lastPaymentDate !== undefined ? `último pago ${data.lastPaymentDate || '—'}` : null,
+                    data.autoSuspend !== undefined ? `suspensión automática ${data.autoSuspend ? 'sí' : 'no'}` : null,
+                ]
+                    .filter(Boolean)
+                    .join(' · '),
+            },
         });
 
         revalidatePath('/super-admin/billing');

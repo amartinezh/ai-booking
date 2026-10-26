@@ -25,7 +25,8 @@ export default async function GlobalStatsPage({
     searchParams: Promise<SP>;
 }) {
     const session = await getSession();
-    if (!session || session.role !== 'SUPER_ADMIN') redirect('/dashboard');
+    if (!session) redirect('/sesion-cerrada');
+    if (session.role !== 'SUPER_ADMIN') redirect('/dashboard');
 
     const sp = await searchParams;
     const range: StatsTimeRange =

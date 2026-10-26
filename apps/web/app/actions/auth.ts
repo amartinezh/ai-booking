@@ -1,11 +1,10 @@
 'use server'
 
 import { cookies } from 'next/headers';
-import { SignJWT } from 'jose';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../lib/prisma';
-import { getJwtSecretKey } from '../../lib/jwt-secret';
 import { getSession } from '../../lib/session';
+import { abrirSesion } from '../../lib/sesion-token';
 import { origenDeLaPeticion, registrarActividad, type OrigenDeLaPeticion } from '../../lib/actividad/registrar';
 import { INTENTOS_INGRESO, claveDeIntento, ipDeIntento } from '../../lib/actividad/ingreso';
 import type { MotivoIngresoFallido } from '../../lib/actividad/catalogo';
@@ -90,26 +89,8 @@ export async function loginUser(formData: FormData) {
             return { error: 'Por el momento su organización no se encuentra activa. Contacte al administrador del sistema.' };
         }
 
-        // 4. Crear el token JWT con organizationId
-        const token = await new SignJWT({
-            userId: user.id,
-            email: user.email,
-            role: user.role,
-            organizationId: user.organizationId
-        })
-            .setProtectedHeader({ alg: 'HS256' })
-            .setExpirationTime('8h')
-            .sign(getJwtSecretKey());
-
-        // 5. Guardar la Cookie (ahora asíncrona)
-        const cookieStore = await cookies();
-        cookieStore.set('auth_token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            path: '/',
-            maxAge: 60 * 60 * 8,
-        });
+        // 4 y 5. El token (con su hora de emisión, que «cerrar sesiones» compara) y la cookie.
+        await abrirSesion(user);
 
         // 6. Dejar constancia del ingreso, con IP y navegador. También alimenta
         //    «Logueos por rol» de Estadísticas Globales (lee `metadata.role`).

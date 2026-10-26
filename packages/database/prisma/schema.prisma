@@ -693,6 +693,12 @@ model User {
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
+  // 🔐 «Cerrar sesiones» (2026-10-27): todo token de sesión emitido antes de este
+  // instante deja de valer en la web y en la API (packages/shared/src/sesion.ts).
+  // Lo ponen el super administrador, una clave nueva puesta por otra persona y el
+  // propio usuario al cambiar su clave (sus otras sesiones). NULL = nunca.
+  sessionsRevokedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

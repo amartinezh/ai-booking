@@ -9,6 +9,9 @@ export interface JwtUserPayload {
   email: string;
   role: string;
   organizationId?: string | null;
+  /** Cuándo se emitió y cuándo vence (segundos). Los compara «cerrar sesiones». */
+  iat?: number;
+  exp?: number;
 }
 
 /**

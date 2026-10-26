@@ -10,7 +10,8 @@ import RastreoClient from '@/app/dashboard/rastreo/RastreoClient';
  */
 export default async function SuperAdminRastreoPage() {
     const session = await getSession();
-    if (session?.role !== 'SUPER_ADMIN') redirect('/dashboard');
+    if (!session) redirect('/sesion-cerrada');
+    if (session.role !== 'SUPER_ADMIN') redirect('/dashboard');
 
     const [organizaciones, espejos] = await Promise.all([
         prisma.organization.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),

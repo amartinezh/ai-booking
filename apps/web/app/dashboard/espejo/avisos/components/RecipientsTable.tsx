@@ -3,6 +3,7 @@
 import { formatAppointmentCompact, formatDateShort } from '@/lib/date';
 import { buildSinCelularCsv, sinCelularFileName } from '@/lib/avisos-export';
 import type { AvisosRecipientView } from '@/app/actions/avisos';
+import { registrarDescarga } from '@/app/actions/pantallas';
 
 /**
  * Paso 2 — tabla de destinatarios. Puramente de presentación: el estado
@@ -37,6 +38,8 @@ export default function RecipientsTable({
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+        // Lleva datos de pacientes: queda en la Actividad de usuarios (no frena la descarga).
+        registrarDescarga('AVISOS_SIN_CELULAR', { filas: sinCelular.length, lote: batchId }).catch(() => undefined);
     }
 
     return (

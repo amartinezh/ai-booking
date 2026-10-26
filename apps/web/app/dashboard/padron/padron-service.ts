@@ -71,6 +71,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
+import { registrarActividad } from '@/lib/actividad/registrar';
 import { revalidatePath } from 'next/cache';
 import { Prisma } from '@agenia/database';
 import {
@@ -440,6 +441,20 @@ export async function runClearPadronEps(
             `[padron] runClearPadronEps: usuario ${auth.userId} eliminó ${result.count} registro(s) de ` +
                 `"${eps.name}" (org ${auth.organizationId}, filtro ${estado}).`,
         );
+        // Borrado definitivo: queda en la Actividad de usuarios (antes solo en la consola).
+        await registrarActividad({
+            action: 'PADRON_CLEARED',
+            level: 'WARNING',
+            message: `Padrón de ${eps.name} vaciado: ${result.count} registro(s)`,
+            actor: { userId: auth.userId, role: 'ORG_ADMIN' },
+            organizationId: auth.organizationId,
+            metadata: {
+                detalle: `${eps.name} · ${result.count} registro(s) borrados · filtro: ${estado.toLowerCase()}`,
+                eps: eps.id,
+                borrados: result.count,
+                filtro: estado,
+            },
+        });
 
         revalidatePath('/dashboard/padron');
         return { success: true, deletedCount: result.count };

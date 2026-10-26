@@ -39,7 +39,8 @@ export default async function ConversacionesPage({
     searchParams: Promise<{ dias?: string; clinica?: string; filtro?: string; cursor?: string }>;
 }) {
     const session = await getSession();
-    if (!session || session.role !== 'SUPER_ADMIN') redirect('/dashboard');
+    if (!session) redirect('/sesion-cerrada');
+    if (session.role !== 'SUPER_ADMIN') redirect('/dashboard');
 
     const q = await searchParams;
     const dias = periodoDeCifras(q.dias);

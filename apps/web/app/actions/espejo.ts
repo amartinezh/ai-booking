@@ -28,6 +28,12 @@ export async function tenantAdmin(): Promise<string | null> {
     return session.organizationId;
 }
 
+/** Quién hace el cambio, para la auditoría del espejo (la Actividad de usuarios lo reconoce por el correo). */
+async function quienEs(): Promise<string> {
+    const session = await getSession();
+    return session?.email ?? session?.userId ?? 'desconocido';
+}
+
 /** ¿Esta clínica tiene espejo? Decide si el menú muestra la sección. */
 export async function tieneEspejo(): Promise<boolean> {
     const organizationId = await tenantAdmin();
@@ -175,7 +181,7 @@ export async function reprocesarEvento(seq: string) {
             entityType: 'OUTBOX',
             op: 'REPROCESS',
             outcome: 'OK',
-            detail: `Evento seq ${seq} devuelto a la cola desde el panel.`,
+            detail: `Evento seq ${seq} devuelto a la cola desde el panel por ${await quienEs()}.`,
         },
     });
 
@@ -226,7 +232,7 @@ export async function cambiarModoAgenda(modo: string) {
             entityType: 'HospitalMirrorConfig',
             op: 'AVAILABILITY_MODE_CHANGE',
             outcome: 'OK',
-            detail: `availabilityMode: ${config.availabilityMode} → ${modo} (cambiado desde el panel).`,
+            detail: `availabilityMode: ${config.availabilityMode} → ${modo} (cambiado desde el panel por ${await quienEs()}).`,
         },
     });
 

@@ -7,6 +7,7 @@ import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
 import { getErrorMessage } from '@/lib/error';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
 import type {
     AudioDiagnosisResult,
     PublicAudioConfig,
@@ -83,6 +84,25 @@ export async function updateMyAudioConfig(
             `/organizations/${orgId}/audio-config`,
             input,
         );
+        const session = await getSession();
+        if (session) {
+            await registrarActividad({
+                action: 'AUDIO_CONFIG_CHANGED',
+                message: 'Voz del asistente actualizada',
+                actor: actorDeSesion(session),
+                organizationId: orgId,
+                metadata: {
+                    detalle: [
+                        input.activeProvider ? `Proveedor ${input.activeProvider}` : null,
+                        input.gender ? `voz ${input.gender.toLowerCase()}` : null,
+                        input.googleVoiceId ?? input.elevenLabsVoiceId ?? null,
+                        input.elevenLabsApiKey ? 'llave de ElevenLabs nueva' : null,
+                    ]
+                        .filter(Boolean)
+                        .join(' · ') || 'Ajustes de la voz',
+                },
+            });
+        }
         revalidatePath('/dashboard/configuracion');
         return { success: true, data };
     } catch (e) {

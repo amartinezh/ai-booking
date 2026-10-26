@@ -3,6 +3,7 @@ jest.mock('@/lib/prisma', () => ({
         organizationSettings: { upsert: jest.fn(), findUnique: jest.fn() },
         syncAudit: { create: jest.fn() },
         hospitalMirrorConfig: { findUnique: jest.fn(), update: jest.fn() },
+        systemLog: { create: jest.fn(async () => ({})) },
     },
 }));
 jest.mock('@/lib/plazo-agendar/resumen', () => ({
@@ -25,6 +26,8 @@ import {
     getMyHomologacionAutomatica,
     setMyAutoHomologacion,
     setMyAutoHomologacionWhatsapp,
+    setMyCancelEnabled,
+    updateMyOrgSettings,
 } from './settings';
 
 const mockGetSession = getSession as jest.Mock;
@@ -336,5 +339,65 @@ describe('settings — 🩺 médicos nuevos del hospital', () => {
         expect(await getMyHomologacionAutomatica()).toEqual({ espejo: true, auto: true, whatsappOn: false });
         mockGetSession.mockResolvedValue({ role: 'BOOKING_AGENT', organizationId: 'org-1' });
         expect(await getMyHomologacionAutomatica()).toEqual({ espejo: false, auto: false, whatsappOn: false });
+    });
+});
+
+describe('settings — Actividad de usuarios (2026-10-27)', () => {
+    const mockLog = prisma.systemLog.create as jest.Mock;
+    const mockAudit = prisma.syncAudit.create as jest.Mock;
+    const mockEspejo = prisma.hospitalMirrorConfig.findUnique as jest.Mock;
+    const ADMIN = { role: 'ORG_ADMIN', organizationId: 'org-1', userId: 'admin-1', email: 'admin@clinica.co' };
+    const registros = () => mockLog.mock.calls.map((c) => c[0].data);
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockGetSession.mockResolvedValue(ADMIN);
+        mockUpsert.mockResolvedValue({});
+    });
+
+    it('apagar los recordatorios queda con quién lo hizo', async () => {
+        mockFindUnique.mockResolvedValue({ remindersEnabled: true });
+        await setMyRemindersEnabled(false);
+        expect(registros()[0]).toMatchObject({ action: 'REMINDERS_ENABLED_CHANGED', userId: 'admin-1', organizationId: 'org-1' });
+        expect(registros()[0].metadata.detalle).toBe('Recordatorios automáticos APAGADO');
+    });
+
+    it('guardar lo mismo no es un cambio', async () => {
+        mockFindUnique.mockResolvedValue({ remindersEnabled: true, reminderMinLeadMinutes: 60 });
+        await setMyRemindersEnabled(true);
+        await setMyReminderMinLead(60);
+        expect(mockLog).not.toHaveBeenCalled();
+    });
+
+    it('la anticipación mínima dice antes y después', async () => {
+        mockFindUnique.mockResolvedValue({ reminderMinLeadMinutes: 60 });
+        await setMyReminderMinLead(120);
+        expect(registros()[0].metadata.detalle).toBe('Anticipación mínima del recordatorio: 60 → 120 min');
+    });
+
+    it('sin espejo, apagar «Cancelar» va a la bitácora del sistema; con espejo, solo a la del espejo', async () => {
+        mockFindUnique.mockResolvedValue({ cancelEnabled: true });
+        mockEspejo.mockResolvedValue(null);
+        await setMyCancelEnabled(false);
+        expect(registros()[0]).toMatchObject({ action: 'BOT_OPERATION_CHANGED' });
+        expect(registros()[0].metadata.detalle).toBe('«Cancelar citas» por el asistente APAGADO');
+        expect(mockAudit).not.toHaveBeenCalled();
+
+        jest.clearAllMocks();
+        mockGetSession.mockResolvedValue(ADMIN);
+        mockUpsert.mockResolvedValue({});
+        mockFindUnique.mockResolvedValue({ cancelEnabled: true });
+        mockEspejo.mockResolvedValue({ enabled: true });
+        (prisma as unknown as { syncOutbox?: unknown }).syncOutbox = { findMany: jest.fn(async () => []) };
+        await setMyCancelEnabled(false);
+        expect(mockLog).not.toHaveBeenCalled();
+        expect(mockAudit).toHaveBeenCalledTimes(1);
+    });
+
+    it('nombre, estilo y cupos del asistente: dice qué cambió', async () => {
+        mockFindUnique.mockResolvedValue({ botName: 'AgenIA', communicationStyle: 'FORMAL', slotsOfferedCount: 6 });
+        await updateMyOrgSettings({ botName: 'Vicente', communicationStyle: 'FORMAL', slotsOfferedCount: 4 });
+        expect(registros()[0]).toMatchObject({ action: 'BOT_SETTINGS_CHANGED' });
+        expect(registros()[0].metadata.detalle).toBe('Asistente: nombre: AgenIA → Vicente · cupos que ofrece: 6 → 4');
     });
 });

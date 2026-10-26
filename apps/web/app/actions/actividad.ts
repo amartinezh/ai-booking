@@ -9,7 +9,10 @@
  * donde cada módulo dejó su rastro (`lib/actividad/fuentes.ts`).
  */
 import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/session';
+import { getSession, type SessionPayload } from '@/lib/session';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
+import { etiquetaRol } from '@/lib/actividad/catalogo';
+import { revalidatePath } from 'next/cache';
 import { getErrorMessage } from '@/lib/error';
 import { fuentesParaConsulta, type ConsultaDeFuente } from '@/lib/actividad/fuentes';
 import { leerFiltros, type FiltrosActividad, type FiltrosEnTexto } from '@/lib/actividad/filtros';
@@ -28,8 +31,78 @@ const DIAS_RESUMEN = 30;
 const ROLES_DEL_PERSONAL = ['ORG_ADMIN', 'BOOKING_AGENT', 'DOCTOR', 'GENERAL_OBSERVER'] as const;
 
 async function esSuperAdmin(): Promise<boolean> {
+    return !!(await superAdmin());
+}
+
+async function superAdmin(): Promise<SessionPayload | null> {
     const s = await getSession();
-    return s?.role === 'SUPER_ADMIN';
+    return s?.role === 'SUPER_ADMIN' ? s : null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Cerrar sesiones (2026-10-27)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Cierra todas las sesiones abiertas de una persona: su token deja de valer en la
+ * web y en la API en la siguiente petición (packages/shared/src/sesion.ts). No
+ * cambia su clave: puede volver a entrar con ella. Para sacarla del todo, también
+ * hay que cambiarle la clave o borrar la cuenta.
+ */
+export async function cerrarSesionesDeUsuario(userId: string): Promise<{ success: boolean; error?: string }> {
+    const sa = await superAdmin();
+    if (!sa) return { success: false, error: 'Acceso denegado' };
+    if (userId === sa.userId) return { success: false, error: 'Para cerrar su propia sesión use «Cerrar sesión».' };
+    try {
+        const u = await prisma.user.update({
+            where: { id: userId },
+            data: { sessionsRevokedAt: new Date() },
+            select: { id: true, email: true, role: true, organizationId: true },
+        });
+        await registrarActividad({
+            action: 'SESSIONS_REVOKED',
+            level: 'WARNING',
+            message: `Sesiones cerradas a la fuerza: ${u.email}`,
+            actor: actorDeSesion(sa),
+            organizationId: u.organizationId,
+            metadata: {
+                detalle: `De ${u.email} (${etiquetaRol(u.role)})`,
+                objetivo: { userId: u.id, email: u.email, role: u.role },
+            },
+        });
+        revalidatePath('/super-admin/actividad');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) || 'No se pudieron cerrar las sesiones.' };
+    }
+}
+
+/** Cierra las sesiones de todo el personal (y pacientes) de una clínica. */
+export async function cerrarSesionesDeClinica(
+    organizationId: string,
+): Promise<{ success: boolean; error?: string; cuentas?: number }> {
+    const sa = await superAdmin();
+    if (!sa) return { success: false, error: 'Acceso denegado' };
+    try {
+        const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true } });
+        if (!org) return { success: false, error: 'Clínica no encontrada.' };
+        const { count } = await prisma.user.updateMany({
+            where: { organizationId },
+            data: { sessionsRevokedAt: new Date() },
+        });
+        await registrarActividad({
+            action: 'SESSIONS_REVOKED',
+            level: 'WARNING',
+            message: `Sesiones cerradas a la fuerza: toda la clínica ${org.name}`,
+            actor: actorDeSesion(sa),
+            organizationId,
+            metadata: { detalle: `Todas las cuentas de ${org.name} (${count})`, cuentas: count },
+        });
+        revalidatePath('/super-admin/actividad');
+        return { success: true, cuentas: count };
+    } catch (e) {
+        return { success: false, error: getErrorMessage(e) || 'No se pudieron cerrar las sesiones.' };
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -80,6 +153,7 @@ async function paginaDeActividad(
         clinica: f.clinica,
         usuario,
         categoria: f.categoria,
+        vistas: f.vistas,
         desdeUtc: f.desdeUtc,
         hastaUtc: f.hastaUtc,
         cursor: decodificarCursor(cursorTexto),
@@ -165,6 +239,8 @@ export interface UsuarioConIngresos {
     email: string;
     role: string;
     creado: string;
+    /** La última vez que se le cerraron las sesiones (a la fuerza o por clave nueva). */
+    sesionesCerradas: string | null;
     ultimoIngreso: string | null;
     ingresos30: number;
     fallidos30: number;
@@ -236,7 +312,7 @@ export async function resumenDeIngresos(filtrosTexto: FiltrosEnTexto): Promise<R
             f.clinica.tipo === 'CLINICA'
                 ? { organizationId: f.clinica.id, role: { in: [...ROLES_DEL_PERSONAL] } }
                 : { role: 'SUPER_ADMIN' },
-        select: { id: true, email: true, role: true, createdAt: true },
+        select: { id: true, email: true, role: true, createdAt: true, sessionsRevokedAt: true },
         orderBy: [{ role: 'asc' }, { email: 'asc' }],
         take: 500,
     });
@@ -244,7 +320,7 @@ export async function resumenDeIngresos(filtrosTexto: FiltrosEnTexto): Promise<R
 }
 
 async function conIngresos(
-    usuarios: { id: string; email: string; role: string; createdAt: Date }[],
+    usuarios: { id: string; email: string; role: string; createdAt: Date; sessionsRevokedAt: Date | null }[],
     desde: Date,
 ): Promise<UsuarioConIngresos[]> {
     if (usuarios.length === 0) return [];
@@ -271,6 +347,7 @@ async function conIngresos(
         email: u.email,
         role: u.role,
         creado: u.createdAt.toISOString(),
+        sesionesCerradas: u.sessionsRevokedAt?.toISOString() ?? null,
         ultimoIngreso: ultimo.get(u.id)?.toISOString() ?? null,
         ingresos30: cuenta(u.id, ['USER_LOGIN']),
         fallidos30: cuenta(u.id, FALLIDOS),

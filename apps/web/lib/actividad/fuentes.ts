@@ -41,6 +41,8 @@ export interface ConsultaDeFuente {
     /** El usuario filtrado, con su correo (algunas fuentes solo guardan el correo). */
     usuario: { id: string; email: string } | null;
     categoria: Categoria | null;
+    /** Incluir las pantallas abiertas aunque no se haya elegido esa categoría. */
+    vistas?: boolean;
     desdeUtc: Date | null;
     hastaUtc: Date | null;
     cursor: Cursor | null;
@@ -107,6 +109,11 @@ export const fuenteBitacora: Fuente = {
         'CONFIGURACION',
         'AVISOS',
         'PLATAFORMA',
+        'HISTORIA',
+        'PADRON',
+        'SOPORTE',
+        'DESCARGAS',
+        'PANTALLAS',
         'OTROS',
     ],
     tienePlataforma: true,
@@ -124,6 +131,8 @@ export const fuenteBitacora: Fuente = {
         if (c.usuario) y.push({ userId: c.usuario.id });
         if (c.categoria === 'OTROS') y.push({ action: { notIn: ACCIONES_CONOCIDAS } });
         else if (c.categoria) y.push({ action: { in: accionesDeCategorias(new Set([c.categoria])) } });
+        // Las pantallas abiertas son muchas: solo con la casilla o con su categoría.
+        if (!c.vistas && c.categoria !== 'PANTALLAS') y.push({ action: { not: 'SCREEN_VIEWED' } });
         if (y.length) where.AND = y;
 
         const filas = await db.systemLog.findMany({

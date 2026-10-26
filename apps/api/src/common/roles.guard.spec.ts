@@ -81,7 +81,7 @@ describe('RolesGuard', () => {
         cookies: { auth_token: bueno },
         headers: { authorization: `Bearer ${malo}` },
       };
-      guard.canActivate(contexto(req));
+      void guard.canActivate(contexto(req));
       expect(req.user.organizationId).toBe('org-1');
     });
 
@@ -183,7 +183,7 @@ describe('RolesGuard', () => {
       organizationId: 'org-1',
       id: 'u-9',
     });
-    guard.canActivate(contexto(req));
+    void guard.canActivate(contexto(req));
     expect(req.user).toMatchObject({
       role: 'ADMIN',
       organizationId: 'org-1',
@@ -264,6 +264,84 @@ describe('RolesGuard', () => {
       );
       expect(texto()).toMatch(/rol ADMIN sin organización/);
       expect(texto()).not.toContain(EMAIL);
+    });
+  });
+
+  describe('🔐 sesión vigente en la base (2026-10-27)', () => {
+    const findUnique = jest.fn();
+    const conBase = () =>
+      new RolesGuard(
+        reflector as unknown as Reflector,
+        {
+          user: { findUnique },
+        } as never,
+      );
+    const cuenta = (c: Record<string, unknown> = {}) => ({
+      role: 'ADMIN',
+      organizationId: 'org-1',
+      sessionsRevokedAt: null,
+      organization: { isActive: true },
+      ...c,
+    });
+    const ahora = Math.floor(Date.now() / 1000);
+    const req = () =>
+      peticionConToken({
+        userId: 'u1',
+        role: 'ADMIN',
+        organizationId: 'org-1',
+        iat: ahora,
+      });
+
+    beforeEach(() => {
+      findUnique.mockReset();
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    });
+
+    it('la cuenta igual y activa pasa (y se buscó por el userId del token)', async () => {
+      findUnique.mockResolvedValue(cuenta());
+      await expect(conBase().canActivate(contexto(req()))).resolves.toBe(true);
+      expect(findUnique.mock.calls[0][0].where).toEqual({ id: 'u1' });
+    });
+
+    it.each([
+      ['la cuenta ya no existe', null],
+      ['le cambiaron el rol', cuenta({ role: 'DOCTOR' })],
+      [
+        'su clínica está suspendida',
+        cuenta({ organization: { isActive: false } }),
+      ],
+      [
+        'le cerraron las sesiones después del ingreso',
+        cuenta({ sessionsRevokedAt: new Date((ahora + 60) * 1000) }),
+      ],
+    ])('%s → 403', async (_caso, c) => {
+      findUnique.mockResolvedValue(c);
+      await expect(conBase().canActivate(contexto(req()))).rejects.toThrow(
+        /ya no es válida/,
+      );
+    });
+
+    it('un cierre ANTERIOR al ingreso no lo saca', async () => {
+      findUnique.mockResolvedValue(
+        cuenta({ sessionsRevokedAt: new Date((ahora - 3600) * 1000) }),
+      );
+      await expect(conBase().canActivate(contexto(req()))).resolves.toBe(true);
+    });
+
+    it('si la base no responde, se rechaza', async () => {
+      findUnique.mockRejectedValue(new Error('conexión caída'));
+      await expect(conBase().canActivate(contexto(req()))).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('un token sin userId no pasa', async () => {
+      const r = peticionConToken({ role: 'ADMIN', organizationId: 'org-1' });
+      await expect(conBase().canActivate(contexto(r))).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(findUnique).not.toHaveBeenCalled();
     });
   });
 });

@@ -7,6 +7,7 @@
 import { cookies } from 'next/headers';
 import { getSession } from '@/lib/session';
 import { getErrorMessage } from '@/lib/error';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
 
 const INTERNAL_API_URL =
   process.env.INTERNAL_API_URL ||
@@ -165,10 +166,21 @@ export async function clearIncidents(
 ): Promise<{ deleted: number } | { error: string }> {
   if (!(await requireSuperAdmin())) return { error: 'Acceso denegado.' };
   try {
-    return await callBackend<{ deleted: number }>(
+    const r = await callBackend<{ deleted: number }>(
       `/monitor/incidents?before=${encodeURIComponent(beforeISO)}`,
       { method: 'DELETE' },
     );
+    const session = await getSession();
+    if (session) {
+      await registrarActividad({
+        action: 'MONITOR_INCIDENTS_CLEARED',
+        message: `Incidentes del monitor borrados: ${r.deleted}`,
+        actor: actorDeSesion(session),
+        organizationId: null,
+        metadata: { detalle: `${r.deleted} incidente(s) resueltos anteriores a ${beforeISO.slice(0, 10)}` },
+      });
+    }
+    return r;
   } catch (e) {
     return { error: getErrorMessage(e) };
   }

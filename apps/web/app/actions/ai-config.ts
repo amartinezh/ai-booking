@@ -7,6 +7,7 @@ import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
 import { getErrorMessage } from '@/lib/error';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
 import type {
     PublicAiConfig,
     SaveAiConfigInput,
@@ -70,6 +71,25 @@ export async function updateMyAiConfig(
     }
     try {
         const data = await callBackend('POST', '/ai-config', input);
+        // Qué proveedor y modelo quedó, y si se cambió la llave; nunca la llave.
+        await registrarActividad({
+            action: 'AI_CONFIG_CHANGED',
+            message: `Configuración de IA: ${input.activeProvider}`,
+            actor: actorDeSesion(session),
+            organizationId: session.organizationId,
+            metadata: {
+                detalle: [
+                    `Proveedor ${input.activeProvider}`,
+                    input.model ? `modelo ${input.model}` : null,
+                    input.apiKey ? 'llave nueva' : null,
+                ]
+                    .filter(Boolean)
+                    .join(' · '),
+                proveedor: input.activeProvider,
+                modelo: input.model ?? null,
+                llaveNueva: !!input.apiKey,
+            },
+        });
         revalidatePath('/dashboard/configuracion');
         return { success: true, data };
     } catch (e) {
