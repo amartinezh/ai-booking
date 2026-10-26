@@ -1631,17 +1631,15 @@ describe('AppointmentsService — cupoMasAllaDelPlazo (no es agenda llena, es el
     const { svc, findMany } = await conPlazo(2, [
       slotRow('s1', a(enCuatro, '08:20')),
     ]);
-    expect(
-      await svc.cupoMasAllaDelPlazo('Medicina', null, 'org1'),
-    ).toEqual({
+    expect(await svc.cupoMasAllaDelPlazo('Medicina', null, 'org1')).toEqual({
       ultimoDia: sumarDiasAFecha(hoy, 1),
       primerDia: enCuatro,
       desde: sumarDiasAFecha(hoy, 2),
     });
     // Mira SIN el plazo: si no, nunca vería el cupo de más adelante.
-    expect((findMany.mock.calls[0] as any)[0].where.startTime).not.toHaveProperty(
-      'lt',
-    );
+    expect(
+      (findMany.mock.calls[0] as any)[0].where.startTime,
+    ).not.toHaveProperty('lt');
   });
 
   it('sin plazo: null (la agenda sí está llena)', async () => {

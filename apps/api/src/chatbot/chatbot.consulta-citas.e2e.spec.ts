@@ -392,8 +392,9 @@ function createPrisma(db: Db) {
                     db.patients.find((x) => x.id === a.patientId),
                   ),
               )
-              .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())[0] ??
-            null
+              .sort(
+                (x, y) => y.createdAt.getTime() - x.createdAt.getTime(),
+              )[0] ?? null
           );
         }
         if (!where.reminderSentAt) return null;
@@ -3125,7 +3126,10 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
 
     it.each([
       ['la cita la agendó el hospital, no el asistente', { origin: 'MIRROR' }],
-      ['la agendó hace dos días', { createdAt: new Date(AHORA.getTime() - 2 * 86_400_000) }],
+      [
+        'la agendó hace dos días',
+        { createdAt: new Date(AHORA.getTime() - 2 * 86_400_000) },
+      ],
       ['ya está cancelada', { status: 'CANCELLED' }],
     ])('no hay caso si %s', async (_caso, over) => {
       citaDelAsistente(over);
@@ -3135,7 +3139,8 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
 
     it('un mensaje cualquiera no consulta nada ni deja caso', async () => {
       citaDelAsistente();
-      const findFirst = (service as any).prisma.appointment.findFirst as jest.Mock;
+      const findFirst = (service as any).prisma.appointment
+        .findFirst as jest.Mock;
       findFirst.mockClear();
       await say('¿A qué hora abre el laboratorio?');
       expect(casos()).toHaveLength(0);

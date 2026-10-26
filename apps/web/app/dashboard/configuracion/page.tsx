@@ -25,6 +25,8 @@ import AudioConfigForm from './AudioConfigForm';
 import ConnectionHealthPanel from './ConnectionHealthPanel';
 import BloqueosAgenda from './BloqueosAgenda';
 import { obtenerBloqueosAgenda } from '@/app/actions/bloqueos-agenda';
+import EstadisticasParaCompartir from './EstadisticasParaCompartir';
+import { getMyEstadisticasParaCompartir } from '@/app/actions/estadisticas';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -34,6 +36,7 @@ const TABS = [
     { key: 'dias', label: 'Días sin citas', icon: '📅' },
     { key: 'integrations', label: 'Integraciones (IA y Canales)', icon: '🧠' },
     { key: 'kb', label: 'Base de Conocimiento', icon: '📚' },
+    { key: 'estadisticas', label: 'Estadísticas', icon: '📊' },
 ];
 
 export default async function ConfiguracionPage({
@@ -53,6 +56,17 @@ export default async function ConfiguracionPage({
     const kbContent = activeTab === 'kb' ? await getMyKnowledgeBase() : null;
     // 📅 Días y horas sin citas por el asistente (2026-10-22).
     const bloqueos = activeTab === 'dias' ? await obtenerBloqueosAgenda() : null;
+    // 📊 La página pública de estadísticas y su clave (2026-10-26).
+    let estadisticas: Awaited<ReturnType<typeof getMyEstadisticasParaCompartir>> | null = null;
+    let estadisticasError: string | null = null;
+    if (activeTab === 'estadisticas') {
+        try {
+            estadisticas = await getMyEstadisticasParaCompartir();
+        } catch (e) {
+            console.error('[configuracion] Estadísticas para compartir load failed:', e);
+            estadisticasError = e instanceof Error ? e.message : 'Error desconocido.';
+        }
+    }
 
     // Tab "Asistente Virtual": identidad/tono + configuración de voz (TTS). Se
     // cargan en paralelo PERO aislados: si la config de voz falla (backend,
@@ -269,6 +283,12 @@ export default async function ConfiguracionPage({
                 {activeTab === 'kb' && (
                     <KnowledgeBaseEditor initialContent={kbContent ?? ''} />
                 )}
+                {activeTab === 'estadisticas' &&
+                    (estadisticas ? (
+                        <EstadisticasParaCompartir inicial={estadisticas} />
+                    ) : (
+                        <SectionLoadError title="No pudimos cargar las estadísticas para compartir" detail={estadisticasError} />
+                    ))}
             </div>
         </div>
     );

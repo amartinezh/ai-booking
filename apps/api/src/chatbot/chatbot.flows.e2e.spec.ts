@@ -24,6 +24,7 @@ import { OrganizationSettingsService } from './organization-settings.service';
 import { LlmFactoryService } from '../llm/llm-factory.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { WhatsappMessageLogService } from '../whatsapp-config/whatsapp-message-log.service';
+import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
 import { SurveyService } from '../survey/survey.service';
 import { AudioConfigService } from '../audio-config/audio-config.service';
 import { TtsFactoryService } from '../audio-config/tts/tts-factory.service';
@@ -358,6 +359,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     notifyWaitlist: jest.Mock;
     confirmFromWaitlist: jest.Mock;
   };
+  // 📨 Plantillas de WhatsApp: por defecto la clínica no tiene ninguna.
+  let plantillas: { findTemplate: jest.Mock; sendTemplate: jest.Mock };
   // 🚦 Límite de citas por paciente: por defecto nadie lo alcanza, así que
   // los flujos de siempre no cambian; la sección 11 lo enciende.
   let limiteCitas: { evaluar: jest.Mock; prepararSolicitud: jest.Mock };
@@ -430,6 +433,10 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
           ),
       ),
     };
+    plantillas = {
+      findTemplate: jest.fn(async () => null),
+      sendTemplate: jest.fn(async () => ({ success: true })),
+    };
     waitlist = {
       joinWaitlist: jest.fn(() => ({ id: 'wl-1', position: 2 })),
       notifyWaitlist: jest.fn(() => undefined),
@@ -465,6 +472,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         { provide: AppointmentsService, useValue: appointments },
         { provide: MirrorExceptionsService, useValue: avisos },
         { provide: WaitlistService, useValue: waitlist },
+        { provide: WhatsappTemplateService, useValue: plantillas },
         { provide: LimiteCitasService, useValue: limiteCitas },
         { provide: InteractionLogService, useValue: interactionLog },
         { provide: ChannelActivityService, useValue: channelActivity },
@@ -1642,7 +1650,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(lastSent()).toContain(
         'Por ahora agendamos citas hasta el *sábado 24 de octubre*',
       );
-      expect(lastSent()).toContain('Escríbanos desde el *domingo 25 de octubre*');
+      expect(lastSent()).toContain(
+        'Escríbanos desde el *domingo 25 de octubre*',
+      );
       expect(lastSent()).toContain('Su cita actual sigue en pie');
       expect(lastSent()).not.toContain('cancele');
       expect(await state()).not.toBe(ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
@@ -1957,6 +1967,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         epsId: null,
       });
 
+      // La oferta sale: Meta la acepta.
+      sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
       await service.notifyWaitlistCandidate({
         whatsappId: SENDER,
         organizationId: ORG_ID,
@@ -1982,6 +1994,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     });
 
     it('4.4 rechazar el cupo ofrecido lo devuelve a la cola sin reservar', async () => {
+      // La oferta sale: Meta la acepta.
+      sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
       await service.notifyWaitlistCandidate({
         whatsappId: SENDER,
         organizationId: ORG_ID,
@@ -1996,6 +2010,121 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         expect.objectContaining({ confirmed: false }),
       );
       expect(appointments.bookAppointment).not.toHaveBeenCalled();
+    });
+
+    // 📨 2026-10-26: a quien no escribió en 24 h, WhatsApp solo le entrega una
+    // plantilla aprobada. La lista de espera decide la vía; el bot la envía.
+    describe('4.5 oferta con la plantilla «Oferta de cupo»', () => {
+      const ofrecer = (via?: 'TEXTO' | 'PLANTILLA') =>
+        service.notifyWaitlistCandidate({
+          whatsappId: SENDER,
+          organizationId: ORG_ID,
+          nombre: 'HENRY ANTONIO OSPINA MARIN',
+          especialidad: 'Medicina General',
+          doctor: 'Ana Pérez',
+          slotDate: FECHA_C,
+          slotId: 'slot-free',
+          via,
+        });
+
+      it('sale la plantilla con primer nombre, servicio y fecha (sin el punto de «a. m.»), y su SÍ reserva el cupo', async () => {
+        db.slots.push(slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA));
+        db.patients.push({
+          id: 'pat-wl',
+          cedula: '9695539',
+          fullName: 'HENRY ANTONIO OSPINA MARIN',
+          organizationId: ORG_ID,
+          epsId: null,
+          eps: null,
+        });
+        waitlist.confirmFromWaitlist.mockResolvedValue({
+          slotId: 'slot-free',
+          patientId: 'pat-wl',
+          epsId: null,
+        });
+
+        expect(await ofrecer('PLANTILLA')).toBe(true);
+
+        expect(plantillas.sendTemplate).toHaveBeenCalledTimes(1);
+        const envio = plantillas.sendTemplate.mock.calls[0][0];
+        expect(envio).toMatchObject({
+          organizationId: ORG_ID,
+          recipientId: SENDER,
+          kind: 'WAITLIST_SLOT_OFFER',
+        });
+        expect(envio.bodyParams).toHaveLength(3);
+        expect(envio.bodyParams[0]).toBe('HENRY');
+        expect(envio.bodyParams[1]).toBe('Medicina General');
+        expect(envio.bodyParams[2]).not.toMatch(/\.$/);
+        // Por plantilla, no por texto libre.
+        expect(sendSpy).not.toHaveBeenCalled();
+        expect(await state()).toBe(ChatState.AWAITING_WAITLIST_CONFIRM);
+        expect(interactionLog.logWaitlistNotification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            slotId: 'slot-free',
+            botReply: expect.stringContaining(
+              '[Plantilla WAITLIST_SLOT_OFFER]',
+            ),
+          }),
+        );
+
+        await say('Sí');
+        expect(appointments.bookAppointment).toHaveBeenCalledWith(
+          'pat-wl',
+          'slot-free',
+          null,
+          'WHATSAPP',
+          ORG_ID,
+        );
+      });
+
+      it('si Meta rechaza la plantilla: devuelve false y la conversación queda como estaba', async () => {
+        redis.store.set(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          ChatState.AWAITING_SPECIALTY,
+        );
+        plantillas.sendTemplate.mockResolvedValueOnce({
+          success: false,
+          error: 'template-not-configured',
+        });
+
+        expect(await ofrecer('PLANTILLA')).toBe(false);
+
+        expect(await state()).toBe(ChatState.AWAITING_SPECIALTY);
+        expect(interactionLog.logWaitlistNotification).not.toHaveBeenCalled();
+      });
+
+      it('si el texto no sale: devuelve false y, sin paso previo, la conversación queda en reposo', async () => {
+        sendSpy.mockResolvedValueOnce(null);
+
+        expect(await ofrecer('TEXTO')).toBe(false);
+
+        expect(
+          redis.store.get(`chat_state:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+        expect(plantillas.sendTemplate).not.toHaveBeenCalled();
+      });
+
+      it('sin decir la vía, como antes: texto libre', async () => {
+        sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
+        expect(await ofrecer()).toBe(true);
+        expect(plantillas.sendTemplate).not.toHaveBeenCalled();
+        expect(lastSent()).toContain('Ana Pérez');
+      });
+
+      it('ofertaDeCupoConPlantilla: solo con la plantilla activa de la clínica', async () => {
+        expect(await service.ofertaDeCupoConPlantilla(ORG_ID)).toBe(false);
+        plantillas.findTemplate.mockResolvedValueOnce({
+          name: 'oferta_cupo_lista_espera',
+        });
+        expect(await service.ofertaDeCupoConPlantilla(ORG_ID)).toBe(true);
+        expect(plantillas.findTemplate).toHaveBeenLastCalledWith(
+          ORG_ID,
+          'WAITLIST_SLOT_OFFER',
+        );
+        plantillas.findTemplate.mockRejectedValueOnce(new Error('BD caída'));
+        expect(await service.ofertaDeCupoConPlantilla(ORG_ID)).toBe(false);
+      });
     });
   });
 
@@ -3052,6 +3181,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
           patientId: 'pat-sura',
           epsId: epsIdDeLaEntrada,
         });
+        // La oferta sale: Meta la acepta.
+        sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
         await service.notifyWaitlistCandidate({
           whatsappId: SENDER,
           organizationId: ORG_ID,
@@ -3316,6 +3447,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         limite: superado('MONTHLY', FECHA_C),
       });
 
+      // La oferta sale: Meta la acepta.
+      sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
       await service.notifyWaitlistCandidate({
         whatsappId: SENDER,
         organizationId: ORG_ID,
@@ -3614,7 +3747,9 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(lastSent()).toContain(
         'Por ahora agendamos citas hasta el *sábado 24 de octubre*',
       );
-      expect(lastSent()).toContain('Escríbanos desde el *domingo 25 de octubre*');
+      expect(lastSent()).toContain(
+        'Escríbanos desde el *domingo 25 de octubre*',
+      );
       expect(lastSent()).not.toContain('completa');
       expect(lastSent()).toContain('*lista de espera*');
       expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);

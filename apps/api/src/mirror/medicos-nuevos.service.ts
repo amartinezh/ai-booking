@@ -420,7 +420,11 @@ export class MedicosNuevosService {
     for (const m of mapas) {
       const s = porId.get(m.agenIAId);
       if (s)
-        out.set(m.externalKey, { id: s.id, nombre: s.name, activo: s.isActive });
+        out.set(m.externalKey, {
+          id: s.id,
+          nombre: s.name,
+          activo: s.isActive,
+        });
     }
     return out;
   }

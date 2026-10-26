@@ -863,3 +863,45 @@ quedará sin HTTPS. El instalador lo comprueba y avisa antes de tocar nada.
 Cambiaría la recomendación si se abre el API FHIR (`fhir/v4`) a terceros: ahí
 un hostname dedicado desde el día uno evita migrar URLs de las que dependan
 integraciones externas.
+
+### Subdominio de las estadísticas para compartir
+
+`https://estadisticas.hsvpanserma.agenia.co` (2026-10-26) muestra la página
+pública `/estadisticas/<id de la clínica>` que abre el administrador en
+Configuración › Estadísticas. Necesita dos cosas fuera del código:
+
+1. Registro DNS tipo A `estadisticas.hsvpanserma` → `89.117.61.28` (Hostinger,
+   donde vive `agenia.co`).
+2. Un bloque propio al final de `/opt/agenia/deploy/Caddyfile`. Como el resto
+   del archivo, es una lista blanca: la raíz lleva a la página de la clínica y
+   solo pasan esa ruta y los archivos estáticos de Next; todo lo demás (el
+   panel, `/login`, `/api`) responde 404 en este dominio.
+
+```caddyfile
+# ── Estadísticas para compartir (Configuración › Estadísticas) ─────────────
+estadisticas.hsvpanserma.agenia.co {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+	redir / /estadisticas/97f18182-d0d9-4a3b-9eb6-4fbc031b917c 302
+	@pagina path /estadisticas/97f18182-d0d9-4a3b-9eb6-4fbc031b917c /_next/static/* /favicon.ico /icon.svg
+	handle @pagina {
+		reverse_proxy web:3000
+	}
+	handle {
+		respond "Not Found" 404
+	}
+}
+```
+
+Se edita con el mismo procedimiento de siempre (subir y comprobar el archivo,
+respaldo, `cat nuevo > Caddyfile` para no cambiar el inodo, `caddy validate` y
+solo entonces `caddy reload`). Caddy pide el certificado de Let's Encrypt solo
+la primera vez que alguien entra. El enlace largo,
+`https://app.hsvpanserma.agenia.co/estadisticas/<id>`, funciona igual sin este
+bloque: el subdominio es solo un nombre más corto para compartir.

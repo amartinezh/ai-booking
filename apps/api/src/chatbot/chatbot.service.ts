@@ -96,6 +96,8 @@ import {
   fechaEnPalabras,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
+import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
+import { formatForPatientInSentence } from '../common/business-hours';
 import {
   WhatsappMessageLogService,
   type OutboundMessageContext,
@@ -409,6 +411,9 @@ export class ChatbotService implements OnModuleInit {
     // 🚨 Alertas técnicas (docs/PLAN_ALERTAS_TECNICAS.md): solo los barridos del
     // HIS de cada pocos segundos. Opcional: sin él (tests), nada cambia.
     @Optional() private readonly alertasTecnicas?: TechAlertService,
+    // 📨 Plantillas de WhatsApp: la «Oferta de cupo» de la lista de espera a quien
+    // no escribió en 24 h. Opcional: sin él (tests), solo se ofrece con texto.
+    @Optional() private readonly plantillas?: WhatsappTemplateService,
   ) {}
 
   async onModuleInit() {
@@ -14012,6 +14017,37 @@ export class ChatbotService implements OnModuleInit {
   // ══════════════════════════════════════════════════════════════
   // NOTIFICACIÓN PÚBLICA DE CUPO DISPONIBLE
   // ══════════════════════════════════════════════════════════════
+
+  /**
+   * ¿La clínica tiene registrada y activa la plantilla «Oferta de cupo»
+   * (`WAITLIST_SLOT_OFFER`)? Con ella se le ofrece el cupo a quien no escribió en
+   * las últimas 24 h. Ante la duda, no.
+   */
+  async ofertaDeCupoConPlantilla(organizationId: string): Promise<boolean> {
+    if (!this.plantillas) return false;
+    try {
+      return !!(await this.plantillas.findTemplate(
+        organizationId,
+        'WAITLIST_SLOT_OFFER',
+      ));
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo leer la plantilla de oferta de cupo (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Le ofrece al paciente el cupo que se liberó y deja la conversación esperando
+   * su SÍ o NO. `via` (lo decide la lista de espera): TEXTO dentro de las 24 h de
+   * WhatsApp o por Telegram; PLANTILLA («Oferta de cupo»: nombre, servicio, fecha
+   * y hora) a quien no escribió en ese tiempo.
+   *
+   * Devuelve si el mensaje salió. Si no, la conversación vuelve al paso en que
+   * estaba: su próximo mensaje no se toma como respuesta a una oferta que nunca
+   * le llegó.
+   */
   async notifyWaitlistCandidate(params: {
     whatsappId: string;
     organizationId: string;
@@ -14021,27 +14057,33 @@ export class ChatbotService implements OnModuleInit {
     slotDate: Date;
     slotId?: string;
     patientCedula?: string;
-  }) {
+    via?: 'TEXTO' | 'PLANTILLA';
+  }): Promise<boolean> {
+    const {
+      whatsappId,
+      organizationId,
+      nombre,
+      especialidad,
+      doctor,
+      slotDate,
+    } = params;
+    const claveEstado = `chat_state:${organizationId}:${whatsappId}`;
+    let estadoAnterior: string | null = null;
+    let estadoCambiado = false;
     try {
-      const {
-        whatsappId,
-        organizationId,
-        nombre,
-        especialidad,
-        doctor,
-        slotDate,
-      } = params;
       // Sombra del pool de mensajes según el estilo activo de la org.
       const MSGS = buildMessages(
         await this.organizationSettings.getCommunicationStyle(organizationId),
         canalDe(whatsappId),
       );
       const fechaFormateada = formatAppointmentLong(slotDate);
+      estadoAnterior = await this.redis.get(claveEstado);
       await this.setUserState(
         organizationId,
         whatsappId,
         ChatState.AWAITING_WAITLIST_CONFIRM,
       );
+      estadoCambiado = true;
       await this.redis.set(
         `is_ai_flow:${organizationId}:${whatsappId}`,
         'false',
@@ -14057,15 +14099,45 @@ export class ChatbotService implements OnModuleInit {
         'EX',
         SESSION_TTL,
       );
-      const reply = MSGS.waitlistCupoDisponible(
-        nombre,
-        especialidad,
-        fechaFormateada,
-        doctor,
-      );
-      await this.sendWhatsAppMessage(whatsappId, reply, {
-        kind: 'WAITLIST_OFFER',
-      });
+
+      let reply: string;
+      let enviado: boolean;
+      if (params.via === 'PLANTILLA') {
+        // {{1}} primer nombre · {{2}} servicio · {{3}} fecha y hora. La plantilla
+        // dice «para el {{3}}.»: sin el punto de «a. m.» (no «a. m..»).
+        const primerNombre = nombre.trim().split(/\s+/)[0] || 'Paciente';
+        const fecha = formatForPatientInSentence(slotDate);
+        reply = `[Plantilla WAITLIST_SLOT_OFFER] ${primerNombre} · ${especialidad} · ${fecha}`;
+        const resultado = this.plantillas
+          ? await this.plantillas.sendTemplate({
+              organizationId,
+              recipientId: whatsappId,
+              kind: 'WAITLIST_SLOT_OFFER',
+              bodyParams: [primerNombre, especialidad, fecha],
+            })
+          : { success: false, error: 'sin-servicio-de-plantillas' };
+        enviado = resultado.success;
+        if (!enviado) {
+          this.logger.warn(
+            `La plantilla de oferta de cupo no salió a ${whatsappId} (org ${organizationId}): ${resultado.error ?? 'sin detalle'}`,
+          );
+        }
+      } else {
+        reply = MSGS.waitlistCupoDisponible(
+          nombre,
+          especialidad,
+          fechaFormateada,
+          doctor,
+        );
+        enviado = !!(await this.sendWhatsAppMessage(whatsappId, reply, {
+          kind: 'WAITLIST_OFFER',
+        }));
+      }
+
+      if (!enviado) {
+        await this.restaurarEstado(claveEstado, estadoAnterior);
+        return false;
+      }
 
       // 📝 Auditoría: notificación de waitlist enviada
       await this.interactionLog.logWaitlistNotification({
@@ -14077,10 +14149,29 @@ export class ChatbotService implements OnModuleInit {
         slotDate,
         botReply: reply,
       });
+      return true;
     } catch (error: unknown) {
       this.logger.error(
         `Error en notifyWaitlistCandidate: ${getErrorMessage(error)}`,
       );
+      if (estadoCambiado) {
+        await this.restaurarEstado(claveEstado, estadoAnterior).catch(
+          () => undefined,
+        );
+      }
+      return false;
+    }
+  }
+
+  /** Deja el paso de la conversación como estaba antes de una oferta que no salió. */
+  private async restaurarEstado(
+    claveEstado: string,
+    anterior: string | null,
+  ): Promise<void> {
+    if (anterior) {
+      await this.redis.set(claveEstado, anterior, 'EX', SESSION_TTL);
+    } else {
+      await this.redis.del(claveEstado);
     }
   }
 }

@@ -53,7 +53,7 @@ export const TEMPLATE_CONTRACTS: Record<TemplateKind, ContratoPlantilla> = {
   WAITLIST_SLOT_OFFER: {
     label: 'Oferta de cupo (lista de espera)',
     description:
-      'Avisa a un paciente en lista de espera que se liberó un cupo. ⚠️ Hoy NINGÚN código la envía todavía: configurarla no hace daño, pero tampoco hace nada.',
+      'Avisa a un paciente de la lista de espera que se liberó un cupo cuando no ha escrito en las últimas 24 h (a quien escribió hace poco se le avisa con texto). Sale de 7:00 a 19:00, hora de la clínica, y el paciente responde escribiendo SÍ o NO: la plantilla no lleva botones. Sin ella, el cupo solo se le ofrece a quien escribió hace poco.',
     variables: ['Nombre del paciente', 'Servicio', 'Fecha y hora'],
   },
   APPOINTMENT_CANCELLED_MASS: {

@@ -296,7 +296,7 @@ Cada vez que una conversación con el asistente falla o se abandona, queda aquí
 2. Busca por nombre o cédula.
 3. Escríbele a cada paciente por WhatsApp para asignarle una cita.
 
-> 💡 Cuando se libera un cupo, el asistente se lo ofrece solo al primero de la lista que haya escrito en las últimas 24 horas (o que use Telegram): WhatsApp no deja escribirle a nadie más sin una plantilla. Quien lleva más tiempo sin escribir conserva su lugar, pero no recibe el aviso: escríbele tú.
+> 💡 Cuando se libera un cupo, el asistente se lo ofrece al primero de la lista: con un mensaje si escribió en las últimas 24 horas (o usa Telegram) y, si no, con la plantilla «Oferta de cupo», de 7:00 a 19:00. Sin esa plantilla registrada en Configuración, o de noche, a quien lleva más de 24 horas sin escribir no le llega el aviso, pero conserva su lugar: escríbele tú.
 
 #### Qué ves en la pantalla
 
@@ -1098,13 +1098,13 @@ No hay cambios por guardar: modifica un valor o un interruptor primero.
 ### ⚙️ Configuración {#configuracion}
 
 - **Ruta:** `/dashboard/configuracion`
-- **Resumen:** El asistente virtual (nombre, tono, voz y qué puede hacer el paciente), sus canales y la información que comparte.
-- **Relacionados:** [Canales en vivo](#canales), [Encuestas (CSAT)](#encuestas), [Visión General](#vision-general), [Espejo con el HIS](#espejo)
-- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios, días sin citas, bloquear sábados, festivos, apagar agenda, horario sin citas, calendario, plazo para agendar, días adelante, fecha lejana, limitar fechas, máximo de días, médicos nuevos, homologar automáticamente, agregar médicos
+- **Resumen:** El asistente virtual (nombre, tono, voz y qué puede hacer el paciente), sus canales, la información que comparte y la página de estadísticas para compartir.
+- **Relacionados:** [Canales en vivo](#canales), [Encuestas (CSAT)](#encuestas), [Visión General](#vision-general), [Espejo con el HIS](#espejo), [Analíticas de Negocio](#analiticas)
+- **Palabras clave:** ajustes, chatbot, bot, asistente, whatsapp, telegram, meta, token, gemini, openai, claude, voz, audio, plantillas, base de conocimiento, preguntas frecuentes, faq, tono, recordatorios, días sin citas, bloquear sábados, festivos, apagar agenda, horario sin citas, calendario, plazo para agendar, días adelante, fecha lejana, limitar fechas, máximo de días, médicos nuevos, homologar automáticamente, agregar médicos, estadísticas, cifras, informe, gerencia, compartir resultados, enlace público, subdominio
 
 #### Para qué sirve
 
-Tiene cuatro pestañas. «Asistente Virtual»: qué puede hacer el paciente por WhatsApp o Telegram, hasta cuántos días adelante le ofrece citas, los recordatorios, el nombre, el tono, cuántas horas ofrece y la voz. «Días sin citas»: un calendario para elegir los días, o las horas de un día, para los que el asistente no ofrece citas (por ejemplo, todos los sábados). «Integraciones (IA y Canales)»: el proveedor de inteligencia artificial, WhatsApp, sus plantillas y Telegram. «Base de Conocimiento»: lo que el asistente responde sobre la clínica.
+Tiene cinco pestañas. «Asistente Virtual»: qué puede hacer el paciente por WhatsApp o Telegram, hasta cuántos días adelante le ofrece citas, los recordatorios, el nombre, el tono, cuántas horas ofrece y la voz. «Días sin citas»: un calendario para elegir los días, o las horas de un día, para los que el asistente no ofrece citas (por ejemplo, todos los sábados). «Integraciones (IA y Canales)»: el proveedor de inteligencia artificial, WhatsApp, sus plantillas y Telegram. «Base de Conocimiento»: lo que el asistente responde sobre la clínica. «Estadísticas»: abre, con una clave sencilla, una página con las cifras de AgenIA para compartir con la gerencia o con quien decidas.
 
 #### Paso a paso
 
@@ -1177,6 +1177,17 @@ Tiene cuatro pestañas. «Asistente Virtual»: qué puede hacer el paciente por 
 
 > 💡 Se revisa una vez al día, cuando el agente del hospital manda su comparación de citas (de noche). Nada se escribe en el sistema del hospital, y cada cambio de estos interruptores queda en la auditoría del espejo.
 
+##### Compartir las estadísticas con una clave
+
+1. Abre la pestaña «Estadísticas». Viene cerrada: nadie la puede ver.
+2. Escribe una clave de al menos 6 caracteres en «Clave para abrir la página» y pulsa «Abrir la página».
+3. Copia el enlace con «Copiar» y compártelo junto con la clave solo con quien deba ver las cifras. Con «Abrir» la ves tú.
+4. Quien abre el enlace escribe la clave una vez: queda dentro 30 días en ese navegador, y con «Salir» se olvida.
+5. Para cambiar la clave, escribe la nueva en «Clave nueva» y pulsa «Cambiar la clave»: quien ya había entrado debe escribir la nueva.
+6. Para cerrarla, pulsa «Cerrar la página» y confirma con «Sí, cerrar».
+
+> 💡 La página muestra recordatorios enviados y leídos, gestiones por chat (confirmar, consultar, agendar, cancelar, cambiar fecha y avisar inasistencia), citas agendadas por chat, cupos devueltos, mensajes fuera de horario y asistencia con y sin recordatorio, sin datos de ningún paciente. Se recalcula cada día a las 6 a. m. con el día anterior completo: el día en curso no sale. Las gráficas por día muestran los últimos 30 días y las cifras cuentan desde el primer recordatorio. Si el equipo de AgenIA le dio a tu clínica una dirección corta para las estadísticas, esa también sirve con la misma clave.
+
 ##### Configurar la voz del asistente
 
 1. En «Asistente Virtual», baja a «Voz del asistente».
@@ -1212,7 +1223,7 @@ Tiene cuatro pestañas. «Asistente Virtual»: qué puede hacer el paciente por 
 3. Respeta el orden de las variables que indica cada tipo: Meta lo valida al enviar.
 4. Guarda.
 
-> 💡 Tipos: Recordatorio de cita, Oferta de cupo (lista de espera; hoy ningún proceso la usa), Aviso de cancelación y Recordatorio masivo (avisos masivos), Aviso al agendador (Bandeja de sincronización), Confirmación de una cita del hospital (Rastreo, y el aviso de un cambio de hora del hospital) y Cita cancelada por el hospital (el aviso al paciente cuando el hospital cancela una cita que agendó con el asistente y no ha escrito en 24 horas; cinco variables: nombre, servicio, médico, fecha y hora, y con quién comunicarse).
+> 💡 Tipos: Recordatorio de cita, Oferta de cupo (lista de espera: el cupo que se liberó, a quien no ha escrito en 24 horas; de 7:00 a 19:00; tres variables: nombre, servicio, y fecha y hora; sin botones, el paciente responde SÍ o NO escribiendo), Aviso de cancelación y Recordatorio masivo (avisos masivos), Aviso al agendador (Bandeja de sincronización), Confirmación de una cita del hospital (Rastreo, y el aviso de un cambio de hora del hospital) y Cita cancelada por el hospital (el aviso al paciente cuando el hospital cancela una cita que agendó con el asistente y no ha escrito en 24 horas; cinco variables: nombre, servicio, médico, fecha y hora, y con quién comunicarse).
 
 ##### Conectar Telegram
 
@@ -1271,6 +1282,18 @@ Si dentro del plazo no hay otro horario pero sí más adelante, el asistente le 
 
 Al pie de «Plazo máximo para agendar» aparece el último cambio, con quién lo hizo y cuándo. Cada cambio queda además en la auditoría del espejo.
 
+##### ¿La página de estadísticas muestra datos de pacientes?
+
+No. Solo cuenta: cuántos recordatorios, mensajes, citas y gestiones hubo, sin nombres, teléfonos ni cédulas. Aun así va con clave porque son cifras de la operación del hospital, y no aparece en buscadores como Google.
+
+##### ¿Por qué la página de estadísticas no tiene las cifras de hoy?
+
+Porque se recalcula una vez al día, a las 6 a. m., con el día anterior completo. Un día a medias se vería como una caída (a media mañana van pocos recordatorios). Antes de las 6 a. m. todavía muestra el corte del día anterior.
+
+##### Olvidé la clave de las estadísticas. ¿Cómo la veo?
+
+No se puede ver: se guarda cifrada. Pon una nueva en la pestaña «Estadísticas» y compártela; quien había entrado con la anterior tendrá que escribir la nueva.
+
 ##### ¿«Días sin citas» es lo mismo que apagar «Agendar citas por el asistente»?
 
 No. Apagar «Agendar» detiene todas las citas nuevas por el asistente, de cualquier día. «Días sin citas» solo quita los días u horas elegidos; el resto se sigue ofreciendo.
@@ -1296,6 +1319,14 @@ Las demás secciones siguen funcionando. Recarga la página; si persiste, repór
 ##### Telegram dice que no logra entregar los mensajes al servidor.
 
 Pulsa «Verificar conexión». Si sigue, avisa al equipo técnico desde Soporte.
+
+##### La página de estadísticas dice «Demasiados intentos con una clave equivocada».
+
+Tras 5 claves equivocadas desde la misma conexión en 15 minutos (o 30 en total para la clínica) la página deja de comprobar por 15 minutos, para que nadie la adivine probando. Espera y escribe la clave correcta; si no la sabes, pídela al administrador.
+
+##### El enlace de las estadísticas muestra «404» o «página no encontrada».
+
+La página está cerrada: el administrador la abre poniendo una clave en Configuración › Estadísticas. También pasa si el enlace quedó incompleto al copiarlo.
 
 ### 👥 Usuarios {#usuarios}
 
@@ -1936,7 +1967,7 @@ Cuando no hay cupos, el paciente puede quedar en lista de espera para esa especi
 Quién recibe el cupo (`apps/api/src/waitlist/waitlist.service.ts`, 2026-10-26):
 
 - **EPS:** un cupo para cualquier EPS (`ScheduleSlot.allowedEpsId` vacío, como todos los del hospital) se le ofrece al primero de la cola, tenga la EPS que tenga. Uno de una EPS, a los de esa EPS y a los particulares. Antes, un cupo para cualquier EPS solo cruzaba con quien entró sin EPS, y el asistente siempre anota la EPS: en el hospital la lista nunca le avisó a nadie. Al reofrecer el cupo tras un NO o un vencimiento se usa la EPS del cupo (guardada en la oferta, `metadata.epsDelCupo`), no la del paciente que lo rechazó.
-- **Ventana de 24 horas:** la oferta es texto libre, y WhatsApp solo lo entrega hasta 24 horas después del último mensaje del paciente (la plantilla «Oferta de cupo» todavía no se envía). Se recorre la cola en orden y se le ofrece al primero con la ventana abierta, o que escribe por Telegram; a los de delante sin ventana no se les escribe ni pierden su lugar. Si a nadie se le puede escribir, el cupo queda en la agenda para quien lo pida.
+- **Por dónde se le escribe:** WhatsApp solo entrega texto libre hasta 24 horas después del último mensaje del paciente. Se recorre la cola en orden: a quien escribió en ese tiempo, o usa Telegram, la oferta va con texto; a quien no, con la plantilla «Oferta de cupo» (`WAITLIST_SLOT_OFFER`, tres variables: primer nombre, servicio, y fecha y hora sin el punto final de «a. m.»; la decide `WaitlistService` y la envía `ChatbotService.notifyWaitlistCandidate`), si la clínica la tiene registrada y activa y es de 7:00 a 19:00 en la zona de la clínica (`HORARIO_OFERTA_CON_PLANTILLA`: de noche no alcanzaría a responder en los 30 minutos y el cupo saltaría al siguiente, también de noche). A quien no se le puede escribir de ninguna forma no se le escribe ni pierde su lugar. Si el mensaje no sale (Meta lo rechaza), vuelve a esperar con su turno y el cupo pasa al siguiente, y la conversación vuelve al paso en que estaba. Si a nadie se le puede escribir, el cupo queda en la agenda para quien lo pida. El aviso de «el tiempo para confirmar expiró» solo sale si le llega como texto.
 - **Posición:** la que se le dice al paciente cuenta a todos los del mismo servicio que entraron antes, sin mirar la EPS.
 
 ### 3.6 Límite de citas por paciente
@@ -2045,7 +2076,8 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 - **Agendamiento** (`/dashboard/agendamiento`, Agente de Reservas): agendar a mano para un paciente, con las mismas barreras de EPS y régimen que el asistente pero sin límite de citas. Respeta el alcance del agente (EPS o médico asignado).
 - **Pacientes** (`/dashboard/pacientes`, solo administrador): listado de pacientes de la clínica; no está en el menú, pero existe (la Bandeja remite a ella para corregir teléfonos).
 - **Mi Agenda / Mis Citas** (`/dashboard` para médico y paciente).
-- **Páginas públicas** (sin sesión): `/solicitud-alta/<clínica>` (formulario de Solicitudes de Alta), `/solicitud-citas/<solicitud>` (pedir más citas que el límite), `/encuesta/<token>` (CSAT), `/guia/whatsapp` y `/guia/google-ai-studio` (guías de conexión) y `/login`.
+- **Páginas públicas** (sin sesión): `/solicitud-alta/<clínica>` (formulario de Solicitudes de Alta), `/solicitud-citas/<solicitud>` (pedir más citas que el límite), `/encuesta/<token>` (CSAT), `/estadisticas/<clínica>` (estadísticas para compartir, con clave), `/guia/whatsapp` y `/guia/google-ai-studio` (guías de conexión) y `/login`.
+- **Estadísticas para compartir** (`/estadisticas/<id de la clínica>`, `apps/web/lib/estadisticas`): solo conteos, sin datos de pacientes. Se recalculan a las 6 a. m. de la clínica con el día anterior completo (antes de esa hora sigue el corte de ayer) y se guardan en memoria de la web hasta el corte siguiente; si la consulta falla, se reintenta en la próxima visita. Las cifras: recordatorios del `WhatsappMessageLog` (enviados, entregados o leídos, leídos), confirmaciones (`RECORDATORIO_CONFIRMADO`, cada cita una vez), consultas (`LOOKUP_*`), cancelaciones y cambios de fecha del asistente (con el cupo «retomado» si después del cancelado hay otra cita vigente en el mismo cupo, y la mediana de horas de anticipación), citas con origen WhatsApp o Telegram (fuera de horario, pacientes registrados al agendar, y con espejo, cuántas llegaron al hospital y en cuántos segundos), avisos de inasistencia de la Bandeja, mensajes entrantes de `ChannelActivityLog` (por hora y fuera de horario: antes de las 7 a. m., desde las 5 p. m., sábado y domingo) y asistencia de citas ya pasadas desde el día siguiente al primer recordatorio, de médicos con WhatsApp ON y servicios activos, con y sin recordatorio entregado. Las gráficas por día muestran los últimos 30 días. Sin clave guardada (o con la clínica suspendida) la página responde 404. Una clínica puede tenerla además en un subdominio propio: un bloque del Caddy del servidor que lleva la raíz a su página y solo deja pasar esa ruta y los archivos de `/_next/static`.
 - **Módulos de la API sin pantalla en el panel**: historia clínica (`clinical-records`), IA clínica para médicos (`clinical-ai`) y exportación HL7 FHIR (`fhir/v4`).
 
 ## 7. Procesos automáticos
@@ -2089,6 +2121,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 - **Conversaciones del asistente de soporte**: solo el super administrador las lee, completas, en `/super-admin/soporte-bot/conversaciones`; abrir una deja un registro en la bitácora del sistema (`SUPPORT_BOT_CONVERSATION_VIEWED`, con quién y cuál). La lista de lo que el manual no cubrió va con cédulas, teléfonos y correos ocultos.
 - **Retención**: conversaciones 180 días (también las del asistente de soporte con el personal), bitácora del rastreo 365 días, actividad de canales 400 días (seudonimizada), incidentes del monitor 365 días; los códigos del asistente de soporte se borran un día después de vencer.
 - **Webhooks**: Meta con firma (`META_REQUIRE_SIGNATURE`) y Telegram con `secret_token`.
+- **Estadísticas para compartir**: la clave se guarda con bcrypt (`OrganizationSettings.publicStatsKeyHash`) y nunca se vuelve a mostrar; ponerla, cambiarla o quitarla queda en la auditoría del espejo (`PUBLIC_STATS_KEY_CHANGE`, sin la clave). Quien la escribe bien recibe una cookie `estadisticas_acceso` de 30 días, solo para la ruta de esa clínica, firmada con una llave derivada de `JWT_SECRET` (no es un JWT: no sirve como sesión del panel) y atada al hash de la clave: cambiarla o cerrar la página saca a todos. Cada clave equivocada queda en la bitácora del sistema (`PUBLIC_STATS_LOGIN_FAILED`, con la IP) y tras 5 en 15 minutos desde una IP, o 30 para la clínica, se deja de comprobar por 15 minutos. La página lleva `noindex`.
 
 ## 10. Arquitectura técnica
 
@@ -2130,10 +2163,11 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 | Espejo: avisos al agendador | Bandeja › Configurar avisos | Encendidos (requieren celular y plantilla) |
 | Agregar solos los médicos nuevos del hospital / con WhatsApp ON | Configuración › Asistente Virtual (solo con espejo) | Apagados |
 | Espejo: consulta en vivo / desde el asistente | Base de datos (sin pantalla) | Apagadas |
+| Estadísticas para compartir (clave de la página pública) | Configuración › Estadísticas | Cerrada (sin clave) |
 
 ## 12. Clínicas en producción
 
-- **Hospital San Vicente de Paúl de Anserma** (driver `cnt-sanvicente-anserma`, HIS de CNT sobre SQL Server, base de producción `ESEHSVP`). AgenIA trabaja solo con medicina general (servicio `S39141`) y con los médicos de ese servicio en WhatsApp ON. Estado, pendientes y bitácora del hospital: `docs/drivers/cnt-sanvicente-anserma/ESTADO.md` y `RUNBOOK.md`.
+- **Hospital San Vicente de Paúl de Anserma** (driver `cnt-sanvicente-anserma`, HIS de CNT sobre SQL Server, base de producción `ESEHSVP`). AgenIA trabaja solo con medicina general (servicio `S39141`) y con los médicos de ese servicio en WhatsApp ON. Estado, pendientes y bitácora del hospital: `docs/drivers/cnt-sanvicente-anserma/ESTADO.md` y `RUNBOOK.md`. Sus estadísticas para compartir también se abren en `estadisticas.hsvpanserma.agenia.co` (bloque del Caddy en `docs/INSTALACION_VPS.md` §16).
 
 ## 13. Limitaciones conocidas y pendientes
 
@@ -2184,6 +2218,9 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 # Parte 3 · Bitácora de cambios
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
+
+- **2026-10-26** — Estadísticas para compartir: la página de cifras que se armaba a mano ahora vive en AgenIA y se actualiza sola cada día a las 6 a. m. con el día anterior completo (recordatorios enviados y leídos, gestiones por chat, citas agendadas y canceladas por chat, cupos que tomó otro paciente, mensajes fuera de horario y asistencia con y sin recordatorio), sin datos de pacientes. El administrador la abre con una clave sencilla en la pestaña nueva Configuración › Estadísticas, copia el enlace, cambia la clave (saca a quien había entrado) o la cierra; cada cambio queda en la auditoría. Nace cerrada. En el Hospital San Vicente también en estadisticas.hsvpanserma.agenia.co.
+- **2026-10-26** — Lista de espera con la plantilla «Oferta de cupo»: cuando se libera un cupo y el primero de la lista no ha escrito en las últimas 24 horas, el asistente se lo ofrece con esa plantilla aprobada en Meta (de 7:00 a 19:00, hora de la clínica), y el paciente responde SÍ o NO como siempre. Hay que aprobarla en Meta y registrarla en Configuración › Integraciones › Plantillas de WhatsApp; mientras no esté, se le ofrece solo a quien escribió hace poco. Si el mensaje no sale, el paciente conserva su turno y el cupo pasa al siguiente (antes lo perdía sin enterarse).
 
 - **2026-10-26** — Tres arreglos tras el diagnóstico del lunes. **Lista de espera:** en el hospital nunca le avisaba a nadie (los cupos son para cualquier EPS y la lista solo los cruzaba con quien no tenía EPS); ahora el cupo que se libera se le ofrece al primero de la cola que haya escrito en las últimas 24 horas (o use Telegram), sin escribirle a quien WhatsApp no dejaría y sin que pierda su lugar, y al reofrecerlo se usa la EPS del cupo. **Bandeja:** caso nuevo «Un paciente pidió cancelar y no confirmó», cuando el asistente le preguntó si cancelaba y pasó una hora sin respuesta (una paciente pidió cancelar el sábado, no respondió el SÍ y la cita siguió en pie sin que nadie se enterara). **Celular compartido:** si desde el número que recibió el recordatorio de una persona se agenda una cita para otra, el asistente ya no responde con la cita de la primera ni cuenta el «gracias» como su confirmación.
 

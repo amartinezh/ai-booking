@@ -1046,7 +1046,10 @@ describe('MirrorWatchdogService', () => {
     });
 
     it('🔎 «revisar una cita del asistente» también se cierra sola si la cita se canceló o se movió', async () => {
-      const revisar = aviso({ id: 'ex-revisar', kind: 'REVISAR_CITA_ASISTENTE' });
+      const revisar = aviso({
+        id: 'ex-revisar',
+        kind: 'REVISAR_CITA_ASISTENTE',
+      });
       const cancelada = build({
         activas: [revisar],
         citas: [cita({ status: 'CANCELLED' })],

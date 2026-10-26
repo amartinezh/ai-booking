@@ -204,6 +204,16 @@ model OrganizationSettings {
   appointmentLimitsUpdatedAt     DateTime?
   appointmentLimitsUpdatedBy     String?
 
+  // 📊 ESTADÍSTICAS PARA COMPARTIR (2026-10-26): la página pública
+  // /estadisticas/<organizationId> (sin datos de pacientes, se recalcula cada
+  // día a las 6 a. m.) pide esta clave. Se guarda con bcrypt y nunca se vuelve
+  // a mostrar. null = la página está cerrada (lo de siempre). Cambiarla cierra
+  // las sesiones abiertas con la anterior. La pone el ORG_ADMIN en
+  // Configuración › Estadísticas (apps/web/lib/estadisticas).
+  publicStatsKeyHash      String?
+  publicStatsKeyUpdatedAt DateTime?
+  publicStatsKeyUpdatedBy String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { WaitlistService } from './waitlist.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatbotService } from '../chatbot/chatbot.service';
+import { Prisma } from '@agenia/database';
 
 /**
  * Lista de espera: lo que pasa con un paciente al que NO se le pudo dar cupo.
@@ -24,11 +25,13 @@ describe('WaitlistService', () => {
       count: jest.Mock;
     };
     organizationSettings: { findUnique: jest.Mock };
+    organization: { findUnique: jest.Mock };
   };
   let chatbot: {
     notifyWaitlistCandidate: jest.Mock;
     sendOutboundMessage: jest.Mock;
     isWithinServiceWindow: jest.Mock;
+    ofertaDeCupoConPlantilla: jest.Mock;
   };
 
   const ORG = 'org-1';
@@ -60,12 +63,17 @@ describe('WaitlistService', () => {
       },
       // Sin fila de settings = operaciones prendidas (el default).
       organizationSettings: { findUnique: jest.fn().mockResolvedValue(null) },
+      // Sin zona propia: la de Colombia.
+      organization: { findUnique: jest.fn().mockResolvedValue(null) },
     };
     chatbot = {
-      notifyWaitlistCandidate: jest.fn().mockResolvedValue(undefined),
+      // El mensaje sale.
+      notifyWaitlistCandidate: jest.fn().mockResolvedValue(true),
       sendOutboundMessage: jest.fn().mockResolvedValue({ success: true }),
       // Por defecto todos escribieron hace poco (ventana de 24 h abierta).
       isWithinServiceWindow: jest.fn().mockResolvedValue(true),
+      // Por defecto la clínica no tiene la plantilla «Oferta de cupo».
+      ofertaDeCupoConPlantilla: jest.fn().mockResolvedValue(false),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -276,6 +284,8 @@ describe('WaitlistService', () => {
         especialidad: 'Medicina General',
         doctor: 'Dra. Ruiz',
         slotDate: params.slotDate,
+        slotId: 'slot-1',
+        via: 'TEXTO',
       });
     });
 
@@ -444,6 +454,158 @@ describe('WaitlistService', () => {
       expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
         expect.objectContaining({ whatsappId: 'tg:3001234567' }),
       );
+    });
+
+    // 📨 2026-10-26: a quien no escribió en 24 h se le ofrece con la plantilla
+    // «Oferta de cupo», si la clínica la tiene y es de día en la clínica.
+    describe('📨 con la plantilla «Oferta de cupo»', () => {
+      // 10:00 en Bogotá (15:00 UTC); el cupo es al día siguiente.
+      const DE_DIA = new Date('2030-05-31T15:00:00.000Z');
+      // 21:00 en Bogotá.
+      const DE_NOCHE = new Date('2030-06-01T02:00:00.000Z');
+      const cupo = { ...params, slotDate: new Date('2030-06-02T14:00:00Z') };
+      const sinVentana = () =>
+        chatbot.isWithinServiceWindow.mockResolvedValue(false);
+
+      afterEach(() => jest.useRealTimers());
+
+      it('de día, al primero de la cola (aunque no haya escrito) le llega la plantilla: el orden se respeta', async () => {
+        jest.useFakeTimers({
+          now: DE_DIA,
+          doNotFake: ['nextTick', 'setImmediate'],
+        });
+        sinVentana();
+        chatbot.ofertaDeCupoConPlantilla.mockResolvedValue(true);
+        prisma.waitlistEntry.findFirst.mockResolvedValue(
+          entrada({ epsId: 'sura' }),
+        );
+
+        await service.notifyWaitlist({ ...cupo, epsId: null });
+
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            whatsappId: '573001112233',
+            via: 'PLANTILLA',
+          }),
+        );
+        expect(prisma.waitlistEntry.update.mock.calls[0][0].data.status).toBe(
+          'NOTIFIED',
+        );
+      });
+
+      it('de noche no sale la plantilla: el cupo va al primero que escribió hace poco y el otro conserva su lugar', async () => {
+        jest.useFakeTimers({
+          now: DE_NOCHE,
+          doNotFake: ['nextTick', 'setImmediate'],
+        });
+        chatbot.ofertaDeCupoConPlantilla.mockResolvedValue(true);
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(
+            entrada({ id: 'w1', whatsappId: '573000000001' }),
+          )
+          .mockResolvedValueOnce(
+            entrada({ id: 'w2', whatsappId: '573000000002' }),
+          );
+        chatbot.isWithinServiceWindow.mockImplementation(
+          async (_o: string, id: string) => id === '573000000002',
+        );
+
+        await service.notifyWaitlist(cupo);
+
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledTimes(1);
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+          expect.objectContaining({ whatsappId: '573000000002', via: 'TEXTO' }),
+        );
+        // De noche ni se pregunta por la plantilla.
+        expect(chatbot.ofertaDeCupoConPlantilla).not.toHaveBeenCalled();
+      });
+
+      it('el horario es el de la clínica: las 10:00 de Bogotá son las 00:00 en Tokio', async () => {
+        jest.useFakeTimers({
+          now: DE_DIA,
+          doNotFake: ['nextTick', 'setImmediate'],
+        });
+        sinVentana();
+        chatbot.ofertaDeCupoConPlantilla.mockResolvedValue(true);
+        prisma.organization.findUnique.mockResolvedValue({
+          timezone: 'Asia/Tokyo',
+        });
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(entrada())
+          .mockResolvedValueOnce(null);
+
+        await service.notifyWaitlist(cupo);
+
+        expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+        expect(prisma.organization.findUnique).toHaveBeenCalledWith({
+          where: { id: ORG },
+          select: { timezone: true },
+        });
+      });
+
+      it('la plantilla se mira una sola vez por cupo, aunque varios de la cola no hayan escrito', async () => {
+        jest.useFakeTimers({
+          now: DE_DIA,
+          doNotFake: ['nextTick', 'setImmediate'],
+        });
+        sinVentana();
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(entrada({ id: 'w1' }))
+          .mockResolvedValueOnce(entrada({ id: 'w2' }))
+          .mockResolvedValueOnce(entrada({ id: 'w3' }))
+          .mockResolvedValueOnce(null);
+
+        await service.notifyWaitlist(cupo);
+
+        expect(chatbot.ofertaDeCupoConPlantilla).toHaveBeenCalledTimes(1);
+        expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+        expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
+      });
+
+      it('si el mensaje no sale, vuelve a esperar con su turno (sin rastro de la oferta) y el cupo pasa al siguiente', async () => {
+        jest.useFakeTimers({
+          now: DE_DIA,
+          doNotFake: ['nextTick', 'setImmediate'],
+        });
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(
+            entrada({ id: 'w1', whatsappId: '573000000001' }),
+          )
+          .mockResolvedValueOnce(
+            entrada({ id: 'w2', whatsappId: '573000000002' }),
+          );
+        chatbot.notifyWaitlistCandidate
+          .mockResolvedValueOnce(false)
+          .mockResolvedValueOnce(true);
+
+        await service.notifyWaitlist(cupo);
+
+        const updates = prisma.waitlistEntry.update.mock.calls.map(
+          (c: any[]) => c[0],
+        );
+        expect(updates[0]).toMatchObject({
+          where: { id: 'w1' },
+          data: { status: 'NOTIFIED' },
+        });
+        expect(updates[1]).toEqual({
+          where: { id: 'w1' },
+          data: {
+            status: 'WAITING',
+            notifiedAt: null,
+            expiresAt: null,
+            metadata: Prisma.DbNull,
+          },
+        });
+        expect(updates[2]).toMatchObject({
+          where: { id: 'w2' },
+          data: { status: 'NOTIFIED' },
+        });
+        expect(
+          prisma.waitlistEntry.findFirst.mock.calls[1][0].where.id,
+        ).toEqual({
+          notIn: ['w1'],
+        });
+      });
     });
 
     it('sin nadie esperando no escribe ni notifica a nadie', async () => {
@@ -681,6 +843,21 @@ describe('WaitlistService', () => {
 
       expect(prisma.waitlistEntry.update).toHaveBeenCalledTimes(3);
       expect(chatbot.sendOutboundMessage).toHaveBeenCalledTimes(3);
+    });
+
+    it('a quien no escribió en las últimas 24 h (se le ofreció con la plantilla) no se le manda el «expiró»: WhatsApp lo rechazaría', async () => {
+      prisma.waitlistEntry.findMany.mockResolvedValue([
+        entrada({ status: 'NOTIFIED', metadata: {} }),
+      ]);
+      chatbot.isWithinServiceWindow.mockResolvedValue(false);
+
+      await service.expireStaleNotifications();
+
+      expect(prisma.waitlistEntry.update).toHaveBeenCalledWith({
+        where: { id: 'w1' },
+        data: { status: 'EXPIRED' },
+      });
+      expect(chatbot.sendOutboundMessage).not.toHaveBeenCalled();
     });
 
     it('solo recoge las NOTIFIED cuyo plazo ya venció', async () => {

@@ -1,4 +1,11 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';
@@ -34,7 +41,10 @@ export class MedicosNuevosController {
     const externalKey =
       typeof body?.externalKey === 'string' ? body.externalKey.trim() : '';
     if (!externalKey || externalKey.length > 40) {
-      return { success: false, error: 'Falta el código del médico en el hospital.' };
+      return {
+        success: false,
+        error: 'Falta el código del médico en el hospital.',
+      };
     }
     const r = await this.medicosNuevos.homologar(organizationId, externalKey, {
       // Lo que no sea exactamente `true` entra apagado: nada le sale al paciente.

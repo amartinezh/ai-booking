@@ -1536,7 +1536,11 @@ const FORMAL = {
   // 🗓️ No hay otro horario dentro del plazo máximo para agendar, pero sí más
   // adelante: no se le ofrece cancelar, se le dice desde cuándo escribir.
   // `hasta` y `desde`: «domingo 25 de octubre».
-  modificarSinCuposEnElPlazo: (servicio: string, hasta: string, desde: string) =>
+  modificarSinCuposEnElPlazo: (
+    servicio: string,
+    hasta: string,
+    desde: string,
+  ) =>
     `Por ahora agendamos citas hasta el *${hasta}*, y hasta esa fecha no hay otro horario de *${servicio}* para mover su cita. Su cita actual sigue en pie, tal como está.\n\n` +
     `Escríbanos desde el *${desde}* y con gusto le muestro los horarios siguientes.`,
 
@@ -2750,7 +2754,11 @@ const INFORMAL = {
     `Revisé la agenda de *${servicio}* y por ahora no hay *otros horarios* para mover tu cita, así que la dejo tal cual. 🙏\n\n` +
     `Si necesitas cancelarla, comunícate con ${contacto}.`,
 
-  modificarSinCuposEnElPlazo: (servicio: string, hasta: string, desde: string) =>
+  modificarSinCuposEnElPlazo: (
+    servicio: string,
+    hasta: string,
+    desde: string,
+  ) =>
     `Por ahora agendamos citas hasta el *${hasta}*, y hasta esa fecha no hay otro horario de *${servicio}* para mover tu cita. Tu cita sigue tal cual. 🙏\n\n` +
     `Escríbeme desde el *${desde}* y te muestro los horarios siguientes. 😊`,
 

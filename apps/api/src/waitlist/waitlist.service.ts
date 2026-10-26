@@ -1,8 +1,12 @@
 import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
-import { inicioMinimoParaOfrecer, isTelegramSender } from '@agenia/shared';
-import type { Prisma } from '@agenia/database';
+import {
+  inicioMinimoParaOfrecer,
+  isTelegramSender,
+  minutoLocal,
+} from '@agenia/shared';
+import { Prisma } from '@agenia/database';
 import { cupoBloqueadoParaElAsistente } from '../appointments/bloqueos-agenda';
 import { fueraDelPlazoParaElAsistente } from '../appointments/plazo-agendar';
 import { ConfigService } from '@nestjs/config';
@@ -49,6 +53,24 @@ function quienesPuedenTomarElCupo(
 
 /** Cuántos de la lista se miran por cupo antes de dejarlo en la agenda. */
 const MAX_CANDIDATOS = 20;
+
+/**
+ * Por dónde se le ofrece el cupo: TEXTO a quien escribió en las últimas 24 h (o
+ * usa Telegram); PLANTILLA («Oferta de cupo», aprobada en Meta) a quien no.
+ */
+export type ViaOfertaCupo = 'TEXTO' | 'PLANTILLA';
+
+/**
+ * La plantilla solo de 7:00 a 19:00, hora de la clínica (2026-10-26). Quien no ha
+ * escrito en 24 h recibe la oferta sin esperarla y tiene 30 minutos para responder:
+ * de noche no alcanzaría, perdería el turno y el cupo saltaría al siguiente, también
+ * de noche. Fuera de ese horario el cupo se le ofrece solo a quien escribió hace
+ * poco; los demás conservan su lugar.
+ */
+export const HORARIO_OFERTA_CON_PLANTILLA = {
+  desdeHora: 7,
+  hastaHora: 19,
+} as const;
 
 /** La EPS del cupo guardada al ofrecerlo; las ofertas de antes no la tienen. */
 const epsDelCupoGuardada = (
@@ -134,8 +156,7 @@ export class WaitlistService {
     doctorName: string;
     slotDate: Date;
   }): Promise<void> {
-    const { slotId, serviceId, epsId, organizationId, doctorName, slotDate } =
-      params;
+    const { slotId, serviceId, epsId, organizationId, slotDate } = params;
 
     // 🔒 Con las operaciones del bot apagadas (/dashboard/configuracion) no se
     // ofrece el cupo: el «SÍ» del paciente sería una cita agendada por el bot.
@@ -182,24 +203,72 @@ export class WaitlistService {
     }
 
     // El primero de la cola (FIFO) que puede tomar el cupo y a quien se le puede
-    // escribir ahora. Al que no se le puede escribir (WhatsApp solo deja texto
-    // libre hasta 24 h después de su último mensaje) no se le gasta el turno:
-    // sigue esperando y se le ofrece el siguiente cupo si vuelve a escribir.
-    const { candidate, saltados } = await this.primeroAQuienEscribirle(
-      organizationId,
-      serviceId,
-      epsId,
-    );
+    // escribir ahora: con texto si escribió en las últimas 24 h (o usa Telegram),
+    // con la plantilla «Oferta de cupo» si no. Al que no se le puede escribir no
+    // se le gasta el turno: sigue esperando. Si el mensaje no sale, tampoco.
+    const saltados: string[] = [];
+    // La plantilla se mira una sola vez por cupo, y solo si hace falta.
+    let plantilla: boolean | null = null;
+    for (let i = 0; i < MAX_CANDIDATOS; i++) {
+      const candidate = await this.prisma.waitlistEntry.findFirst({
+        where: {
+          serviceId,
+          organizationId,
+          status: 'WAITING',
+          ...quienesPuedenTomarElCupo(epsId),
+          ...(saltados.length > 0 ? { id: { notIn: saltados } } : {}),
+        },
+        include: { patient: true, service: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (!candidate) break;
 
-    if (!candidate) {
-      this.logger.log(
-        saltados.length > 0
-          ? `Ninguno de los ${saltados.length} en la lista de espera de ${serviceId} escribió en las últimas 24 h: el cupo ${slotId} queda en la agenda`
-          : `No hay candidatos en waitlist para servicio ${serviceId}`,
-      );
-      return;
+      let via: ViaOfertaCupo | null = null;
+      if (
+        await this.puedeEscribirleTexto(organizationId, candidate.whatsappId)
+      ) {
+        via = 'TEXTO';
+      } else {
+        if (plantilla === null) {
+          plantilla = await this.plantillaDisponible(
+            organizationId,
+            new Date(),
+          );
+        }
+        if (plantilla) via = 'PLANTILLA';
+      }
+      if (via && (await this.ofrecerCupo(candidate, via, params))) return;
+      saltados.push(candidate.id);
     }
 
+    this.logger.log(
+      saltados.length > 0
+        ? `A ninguno de los ${saltados.length} en la lista de espera de ${serviceId} se le pudo escribir: el cupo ${slotId} queda en la agenda`
+        : `No hay candidatos en waitlist para servicio ${serviceId}`,
+    );
+  }
+
+  /**
+   * Le ofrece el cupo: lo marca NOTIFIED (antes de escribirle, para que un SÍ
+   * rápido lo encuentre) y le escribe. Si el mensaje no sale, vuelve a WAITING
+   * con su turno: false, y el cupo pasa al siguiente.
+   */
+  private async ofrecerCupo(
+    candidate: {
+      id: string;
+      whatsappId: string;
+      patient: { fullName: string };
+      service: { name: string };
+    },
+    via: ViaOfertaCupo,
+    cupo: {
+      slotId: string;
+      epsId: string | null;
+      organizationId: string;
+      doctorName: string;
+      slotDate: Date;
+    },
+  ): Promise<boolean> {
     const expiresAt = new Date(
       Date.now() + this.CONFIRMATION_TTL_MINUTES * 60 * 1000,
     );
@@ -211,25 +280,46 @@ export class WaitlistService {
         notifiedAt: new Date(),
         expiresAt,
         metadata: {
-          pendingSlotId: slotId,
-          doctorName,
-          slotDate: slotDate.toISOString(),
-          epsDelCupo: epsId,
+          pendingSlotId: cupo.slotId,
+          doctorName: cupo.doctorName,
+          slotDate: cupo.slotDate.toISOString(),
+          epsDelCupo: cupo.epsId,
         },
       },
     });
 
     // Delegar el envío del mensaje al ChatbotService (mantiene consistencia de tono)
-    await this.chatbotService.notifyWaitlistCandidate({
+    const enviado = await this.chatbotService.notifyWaitlistCandidate({
       whatsappId: candidate.whatsappId,
-      organizationId,
+      organizationId: cupo.organizationId,
       nombre: candidate.patient.fullName,
       especialidad: candidate.service.name,
-      doctor: doctorName,
-      slotDate,
+      doctor: cupo.doctorName,
+      slotDate: cupo.slotDate,
+      slotId: cupo.slotId,
+      via,
     });
 
-    this.logger.log(`Notificación enviada a ${candidate.patient.fullName}`);
+    if (!enviado) {
+      await this.prisma.waitlistEntry.update({
+        where: { id: candidate.id },
+        data: {
+          status: 'WAITING',
+          notifiedAt: null,
+          expiresAt: null,
+          metadata: Prisma.DbNull,
+        },
+      });
+      this.logger.warn(
+        `La oferta del cupo ${cupo.slotId} no le salió a ${candidate.patient.fullName} (${via}): sigue esperando con su turno`,
+      );
+      return false;
+    }
+
+    this.logger.log(
+      `Notificación enviada a ${candidate.patient.fullName} (${via})`,
+    );
+    return true;
   }
 
   // ════════════════════════════════════════════════════════════
@@ -313,15 +403,25 @@ export class WaitlistService {
 
       // Avisar al paciente que perdió el cupo — por la línea de SU clínica
       // (antes dependía del caché origin_org, que podía apuntar a otra org).
-      try {
-        await this.chatbotService.sendOutboundMessage(
-          entry.whatsappId,
-          `Lo sentimos, el tiempo para confirmar el cupo expiró. ⏰\n\nSi aún desea una cita, escríbame "Hola" y lo agregaremos nuevamente. 😊`,
-          entry.organizationId,
-        );
-      } catch {
-        this.logger.warn(
-          `No se pudo notificar expiración a ${entry.whatsappId}`,
+      // Solo si el texto le llega: a quien se le ofreció con la plantilla y no
+      // respondió, WhatsApp no deja escribirle (sería un envío rechazado).
+      if (
+        await this.puedeEscribirleTexto(entry.organizationId, entry.whatsappId)
+      ) {
+        try {
+          await this.chatbotService.sendOutboundMessage(
+            entry.whatsappId,
+            `Lo sentimos, el tiempo para confirmar el cupo expiró. ⏰\n\nSi aún desea una cita, escríbame "Hola" y lo agregaremos nuevamente. 😊`,
+            entry.organizationId,
+          );
+        } catch {
+          this.logger.warn(
+            `No se pudo notificar expiración a ${entry.whatsappId}`,
+          );
+        }
+      } else {
+        this.logger.log(
+          `No se le avisa a ${entry.whatsappId} que el cupo expiró: no ha escrito en las últimas 24 h`,
         );
       }
 
@@ -346,43 +446,10 @@ export class WaitlistService {
   // ════════════════════════════════════════════════════════════
 
   /**
-   * El primero de la cola que puede tomar un cupo de esa EPS y a quien se le
-   * puede escribir ahora; `saltados`, los de delante a quienes no.
+   * ¿Le llega un texto libre? Telegram no tiene ventana; WhatsApp solo acepta
+   * texto libre hasta 24 h después del último mensaje del paciente.
    */
-  private async primeroAQuienEscribirle(
-    organizationId: string,
-    serviceId: string,
-    epsDelCupo: string | null,
-  ) {
-    const saltados: string[] = [];
-    for (let i = 0; i < MAX_CANDIDATOS; i++) {
-      const siguiente = await this.prisma.waitlistEntry.findFirst({
-        where: {
-          serviceId,
-          organizationId,
-          status: 'WAITING',
-          ...quienesPuedenTomarElCupo(epsDelCupo),
-          ...(saltados.length > 0 ? { id: { notIn: saltados } } : {}),
-        },
-        include: { patient: true, service: true },
-        orderBy: { createdAt: 'asc' },
-      });
-      if (!siguiente) break;
-      if (await this.puedeEscribirle(organizationId, siguiente.whatsappId)) {
-        return { candidate: siguiente, saltados };
-      }
-      saltados.push(siguiente.id);
-    }
-    return { candidate: null, saltados };
-  }
-
-  /**
-   * ¿El mensaje con el cupo le llega? Telegram no tiene ventana; WhatsApp solo
-   * acepta texto libre hasta 24 h después del último mensaje del paciente (y la
-   * plantilla de oferta de cupo todavía no se envía). Ante la duda, no: un envío
-   * que Meta rechaza le haría perder el turno sin enterarse.
-   */
-  private async puedeEscribirle(
+  private async puedeEscribirleTexto(
     organizationId: string,
     whatsappId: string,
   ): Promise<boolean> {
@@ -391,6 +458,29 @@ export class WaitlistService {
       organizationId,
       whatsappId,
     );
+  }
+
+  /**
+   * ¿Se puede ofrecer el cupo con la plantilla «Oferta de cupo»? Si la clínica la
+   * tiene registrada y activa, y es de día en la clínica
+   * (`HORARIO_OFERTA_CON_PLANTILLA`).
+   */
+  private async plantillaDisponible(
+    organizationId: string,
+    ahora: Date,
+  ): Promise<boolean> {
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const minuto = minutoLocal(ahora, org?.timezone || undefined);
+    if (
+      minuto < HORARIO_OFERTA_CON_PLANTILLA.desdeHora * 60 ||
+      minuto >= HORARIO_OFERTA_CON_PLANTILLA.hastaHora * 60
+    ) {
+      return false;
+    }
+    return this.chatbotService.ofertaDeCupoConPlantilla(organizationId);
   }
 
   /**
