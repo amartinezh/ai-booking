@@ -58,6 +58,11 @@ export enum FailureReason {
   // ya lo pide; si aparece, algún camino llegó a la reserva sin preguntarlo.
   PATIENT_REGIME_MISSING = 'PATIENT_REGIME_MISSING',
   SESSION_EXPIRED = 'SESSION_EXPIRED',
+  // En el menú de horarios (agendar o cambiar la fecha) escribió algo que no es
+  // una letra, ni la hora de un cupo, ni un día u hora que se entienda. Antes se
+  // registraba como SESSION_EXPIRED y la Caja Negra lo mostraba como «sesión
+  // vencida» (2026-10-27: 10 en dos días, casi todos pidiendo otro día).
+  SLOT_NOT_UNDERSTOOD = 'SLOT_NOT_UNDERSTOOD',
   MAX_RETRIES = 'MAX_RETRIES',
   PATIENT_NOT_FOUND = 'PATIENT_NOT_FOUND',
   NO_APPOINTMENTS_TO_CANCEL = 'NO_APPOINTMENTS_TO_CANCEL',

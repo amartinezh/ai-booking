@@ -4,9 +4,11 @@ import {
   AGENTE_SIN_SENAL_MIN,
   DEFAULT_TIMEZONE,
   TIPOS_CON_AVISO,
+  TIPOS_CON_AVISO_PACIENTE,
   UMBRALES_VIGILANTE,
   enmascararIdentificadorWhatsapp,
   parametrosPlantillaAviso,
+  parametrosPlantillaAvisoPaciente,
   requiereAviso,
   requiereRecordatorio,
   type EstadoExcepcion,
@@ -57,7 +59,49 @@ import { MirrorExceptionsService } from './mirror-exceptions.service';
  *
  * El correo (`agendadorEmail`) NO se usa, por decisión (§12 #13): el aviso es solo por
  * WhatsApp.
+ *
+ * ═══ Dos avisos, dos plantillas (2026-10-27) ═══
+ * Lo de la sincronización (`TIPOS_CON_AVISO`) va con `SYNC_EXCEPTION_ALERT`, apenas
+ * aparece. Lo que pidió un paciente y nadie atendió (`TIPOS_CON_AVISO_PACIENTE`:
+ * pidió cancelar y no confirmó, avisó que no irá) va con `PATIENT_REQUEST_ALERT` y
+ * solo con la cita a 24 h o menos: el texto aprobado de la primera dice que las citas
+ * no llegaron al hospital, y estas sí llegaron. Mismo número, mismas reglas.
  */
+
+/** Qué se avisa con cada plantilla y cómo se arman sus variables. */
+interface GrupoDeAviso {
+  plantilla: 'SYNC_EXCEPTION_ALERT' | 'PATIENT_REQUEST_ALERT';
+  tipos: readonly TipoExcepcion[];
+  parametros: (
+    items: ItemAviso[],
+    ctx: {
+      agenteSinSenal: boolean;
+      hisAlcanzable: boolean | null;
+      timeZone: string;
+      recordatorio?: number;
+    },
+  ) => string[];
+  /** Para el registro: «aviso al agendador» o «aviso de pedidos de pacientes». */
+  nombre: string;
+}
+
+const SINCRONIZACION: GrupoDeAviso = {
+  plantilla: 'SYNC_EXCEPTION_ALERT',
+  tipos: TIPOS_CON_AVISO,
+  parametros: parametrosPlantillaAviso,
+  nombre: 'Aviso al agendador',
+};
+
+const PEDIDOS_DE_PACIENTES: GrupoDeAviso = {
+  plantilla: 'PATIENT_REQUEST_ALERT',
+  tipos: TIPOS_CON_AVISO_PACIENTE,
+  parametros: (items, ctx) =>
+    parametrosPlantillaAvisoPaciente(items, {
+      timeZone: ctx.timeZone,
+      recordatorio: ctx.recordatorio,
+    }),
+  nombre: 'Aviso de pedidos de pacientes',
+};
 
 export type ResultadoAviso =
   | { enviado: true; citas: number; recordatorios: number }
@@ -100,15 +144,32 @@ export class MirrorAlertService {
     private readonly templates: WhatsappTemplateService,
   ) {}
 
+  /** Lo de la sincronización: `SYNC_EXCEPTION_ALERT`. */
   async avisar(
     organizationId: string,
     ahora: Date = new Date(),
+  ): Promise<ResultadoAviso> {
+    return this.avisarGrupo(organizationId, ahora, SINCRONIZACION);
+  }
+
+  /** 🙋 Lo que pidió un paciente con la cita cerca: `PATIENT_REQUEST_ALERT` (2026-10-27). */
+  async avisarPedidosDePacientes(
+    organizationId: string,
+    ahora: Date = new Date(),
+  ): Promise<ResultadoAviso> {
+    return this.avisarGrupo(organizationId, ahora, PEDIDOS_DE_PACIENTES);
+  }
+
+  private async avisarGrupo(
+    organizationId: string,
+    ahora: Date,
+    grupo: GrupoDeAviso,
   ): Promise<ResultadoAviso> {
     const candidatas = await this.prisma.syncException.findMany({
       where: {
         organizationId,
         status: 'ABIERTA',
-        kind: { in: [...TIPOS_CON_AVISO] },
+        kind: { in: [...grupo.tipos] },
       },
       orderBy: { appointmentStartAt: 'asc' },
       take: MAX_CANDIDATAS,
@@ -151,7 +212,7 @@ export class MirrorAlertService {
       return { enviado: false, motivo: 'SIN_DESTINO' };
     const plantilla = await this.templates.findTemplate(
       organizationId,
-      'SYNC_EXCEPTION_ALERT',
+      grupo.plantilla,
     );
     if (!plantilla) return { enviado: false, motivo: 'SIN_PLANTILLA' };
 
@@ -162,7 +223,14 @@ export class MirrorAlertService {
       lastHisReachable: config.lastHisReachable,
     };
     const avisos = nuevas.length
-      ? await this.enviarLote(organizationId, nuevas, 'AVISO', destino, ahora)
+      ? await this.enviarLote(
+          organizationId,
+          nuevas,
+          'AVISO',
+          destino,
+          ahora,
+          grupo,
+        )
       : null;
     const recordatorios = recordar.length
       ? await this.enviarLote(
@@ -171,6 +239,7 @@ export class MirrorAlertService {
           'RECORDATORIO',
           destino,
           ahora,
+          grupo,
         )
       : null;
 
@@ -208,6 +277,7 @@ export class MirrorAlertService {
     clase: Clase,
     destino: ConfigAviso,
     ahora: Date,
+    grupo: GrupoDeAviso,
   ): Promise<ResultadoLote> {
     // Reclamar: solo lo que esta réplica ganó se envía.
     const reclamadas: SyncException[] = [];
@@ -268,7 +338,7 @@ export class MirrorAlertService {
       clase === 'RECORDATORIO'
         ? Math.max(...reclamadas.map((e) => e.reminderCount + 1))
         : undefined;
-    const bodyParams = parametrosPlantillaAviso(items, {
+    const bodyParams = grupo.parametros(items, {
       agenteSinSenal: sinSenal,
       hisAlcanzable: destino.lastHisReachable,
       timeZone: org?.timezone || DEFAULT_TIMEZONE,
@@ -278,7 +348,7 @@ export class MirrorAlertService {
     const resultado = await this.templates.sendTemplate({
       organizationId,
       recipientId: destino.agendadorWhatsapp,
-      kind: 'SYNC_EXCEPTION_ALERT',
+      kind: grupo.plantilla,
       bodyParams,
     });
 
@@ -296,7 +366,7 @@ export class MirrorAlertService {
         );
       }
       this.logger.warn(
-        `${clase === 'AVISO' ? 'Aviso' : 'Recordatorio'} al agendador NO enviado (org ${organizationId}): ${resultado.error ?? 'sin detalle'}.`,
+        `${grupo.nombre}: ${clase === 'AVISO' ? 'aviso' : 'recordatorio'} NO enviado (org ${organizationId}): ${resultado.error ?? 'sin detalle'}.`,
       );
       return { estado: 'FALLIDO', detalle: resultado.error };
     }
@@ -312,7 +382,7 @@ export class MirrorAlertService {
       const r = await this.templates.sendTemplate({
         organizationId,
         recipientId: numeroRespaldo,
-        kind: 'SYNC_EXCEPTION_ALERT',
+        kind: grupo.plantilla,
         bodyParams,
       });
       respaldo = r.success ? 'ENVIADO' : 'FALLIDO';
@@ -349,7 +419,7 @@ export class MirrorAlertService {
       }
     }
     this.logger.log(
-      `${clase === 'AVISO' ? 'Aviso' : 'Recordatorio'} al agendador enviado (org ${organizationId}): ${reclamadas.length} excepción(es).`,
+      `${grupo.nombre}: ${clase === 'AVISO' ? 'aviso' : 'recordatorio'} enviado (org ${organizationId}): ${reclamadas.length} excepción(es).`,
     );
     return { estado: 'ENVIADO', cuantas: reclamadas.length };
   }

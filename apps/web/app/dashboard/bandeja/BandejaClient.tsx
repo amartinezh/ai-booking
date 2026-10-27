@@ -149,6 +149,11 @@ function PanelAvisos({
                             ? `Si una cita confirmada no llega al hospital, se le avisa al agendador antes de la hora de la cita. Si en ${UMBRALES_VIGILANTE.recordatorioMin} min nadie la toma aquí, se le recuerda (hasta ${UMBRALES_VIGILANTE.maxRecordatorios} veces)${avisos.tieneRespaldo ? ', también al número de respaldo' : ''}.`
                             : `${avisos.razon ?? ''} Mientras tanto las excepciones solo aparecen en esta bandeja: hay que abrirla para enterarse.`}
                     </p>
+                    <p className="mt-1 text-sm leading-snug opacity-90">
+                        {avisos.razonPacientes === null
+                            ? `🙋 Si un paciente pidió cancelar y no confirmó, o avisó que no irá, se le avisa al agendador cuando a la cita le faltan ${UMBRALES_VIGILANTE.urgenciaAltaHoras} horas o menos, y otra vez a ${UMBRALES_VIGILANTE.urgenciaCriticaHoras} horas.`
+                            : `🙋 Pedidos de pacientes (pidió cancelar y no confirmó, avisó que no irá): no se avisan por WhatsApp. ${avisos.razonPacientes}`}
+                    </p>
                 </div>
                 {puedeConfigurar && (
                     <button

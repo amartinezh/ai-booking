@@ -34,7 +34,8 @@ export type TemplateKind =
   | 'APPOINTMENT_REMINDER_MASS'
   | 'SYNC_EXCEPTION_ALERT'
   | 'HIS_APPOINTMENT_CONFIRMATION'
-  | 'HIS_APPOINTMENT_CANCELLED';
+  | 'HIS_APPOINTMENT_CANCELLED'
+  | 'PATIENT_REQUEST_ALERT';
 
 export interface ContratoPlantilla {
   label: string;
@@ -108,6 +109,18 @@ export const TEMPLATE_CONTRACTS: Record<TemplateKind, ContratoPlantilla> = {
       'Médico',
       'Fecha y hora',
       'Con quién comunicarse',
+    ],
+  },
+  // 🙋 2026-10-27: un paciente pidió cancelar y no confirmó, o avisó que no irá, y
+  // su cita es en 24 h o menos (ver apps/api/src/mirror/mirror-alert.service.ts).
+  PATIENT_REQUEST_ALERT: {
+    label: 'Aviso al agendador (pedidos de pacientes)',
+    description:
+      'Va al teléfono del agendador configurado en la Bandeja de sincronización, no a un paciente. Avisa que un paciente pidió cancelar por el chat y no confirmó, o avisó que no irá, y su cita es en 24 horas o menos, sin que nadie lo haya tomado en la Bandeja. Lleva solo el resumen, SIN datos del paciente. Debe ser una plantilla propia: la del «Aviso al agendador» dice que las citas no llegaron al hospital, y aquí sí llegaron. Sin esta plantilla esos casos quedan solo en la Bandeja.',
+    variables: [
+      'Cantidad de casos (por ejemplo «1 caso»)',
+      'La cita más próxima (médico y hora)',
+      'Qué pidió el paciente (en un recordatorio empieza por «RECORDATORIO 1 de 2: nadie lo ha tomado en la bandeja»)',
     ],
   },
 };

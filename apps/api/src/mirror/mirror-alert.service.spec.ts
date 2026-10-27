@@ -627,3 +627,150 @@ describe('MirrorAlertService', () => {
     });
   });
 });
+
+/**
+ * 🙋 El aviso de pedidos de pacientes (2026-10-27): un paciente pidió cancelar y no
+ * confirmó, o avisó que no irá, y su cita es en 24 h o menos. Va con su propia
+ * plantilla, al mismo número del agendador y con las mismas reglas.
+ */
+describe('MirrorAlertService — pedidos de pacientes', () => {
+  const ORG = 'org-1';
+  const AHORA = new Date('2026-10-26T15:24:00.000Z'); // lun 10:24 en Bogotá
+  const inicio = (horas: number) =>
+    new Date(AHORA.getTime() + horas * 3_600_000);
+
+  const pedido = (over: Record<string, unknown> = {}) => ({
+    id: 'ex-p',
+    organizationId: ORG,
+    kind: 'CANCELACION_SIN_CONFIRMAR',
+    severity: 'CRITICA',
+    status: 'ABIERTA',
+    notifiedSeverity: null as string | null,
+    notifiedAt: null as Date | null,
+    reminderCount: 0,
+    appointmentStartAt: inicio(1.6), // la cita de las 12:00
+    doctorId: 'doc-1',
+    ...over,
+  });
+
+  const build = (
+    opts: { excepciones?: unknown[]; plantilla?: unknown } = {},
+  ) => {
+    const prisma = {
+      syncException: {
+        findMany: jest.fn(async (arg: { where: { kind: { in: string[] } } }) =>
+          ((opts.excepciones ?? [pedido()]) as { kind: string }[]).filter((e) =>
+            arg.where.kind.in.includes(e.kind),
+          ),
+        ),
+      },
+      hospitalMirrorConfig: {
+        findUnique: jest.fn(async () => ({
+          enabled: true,
+          conflictAlertsEnabled: true,
+          agendadorWhatsapp: '573001113575',
+          agendadorRespaldoWhatsapp: null,
+          lastHeartbeatAt: AHORA,
+          lastHisReachable: true,
+        })),
+      },
+      doctorProfile: {
+        findMany: jest.fn(async () => [
+          { id: 'doc-1', fullName: 'Ana Ruiz', isFunctionalAgenda: false },
+        ]),
+      },
+      organization: { findUnique: jest.fn(async () => ({ timezone: null })) },
+    };
+    const exceptions = {
+      reclamarAviso: jest.fn(async () => true),
+      devolverAviso: jest.fn(async () => undefined),
+      anotar: jest.fn(async () => undefined),
+    };
+    const templates = {
+      findTemplate: jest.fn(async (_org: string, kind: string) =>
+        'plantilla' in opts
+          ? opts.plantilla
+          : {
+              name:
+                kind === 'PATIENT_REQUEST_ALERT'
+                  ? 'aviso_pacientes'
+                  : 'aviso_sync',
+            },
+      ),
+      sendTemplate: jest.fn(async () => ({ success: true })),
+    };
+    const service = new MirrorAlertService(
+      prisma as never,
+      exceptions as never,
+      templates as never,
+    );
+    return { service, prisma, exceptions, templates };
+  };
+
+  it('la cita en 1 h y media: sale con PATIENT_REQUEST_ALERT, al agendador y sin datos del paciente', async () => {
+    const { service, templates, exceptions } = build();
+
+    await expect(service.avisarPedidosDePacientes(ORG, AHORA)).resolves.toEqual(
+      { enviado: true, citas: 1, recordatorios: 0 },
+    );
+    expect(exceptions.reclamarAviso).toHaveBeenCalledTimes(1);
+    const envio = (templates.sendTemplate.mock.calls as unknown[][])[0][0] as {
+      kind: string;
+      recipientId: string;
+      bodyParams: string[];
+    };
+    expect(envio.kind).toBe('PATIENT_REQUEST_ALERT');
+    expect(envio.recipientId).toBe('573001113575');
+    expect(envio.bodyParams).toHaveLength(3);
+    expect(envio.bodyParams[0]).toBe('1 caso');
+    expect(envio.bodyParams[1]).toMatch(/Ana Ruiz/);
+    expect(envio.bodyParams[2]).toMatch(/pidió cancelar/);
+  });
+
+  it('la cita en 3 días: todavía no, solo la bandeja', async () => {
+    const { service, templates } = build({
+      excepciones: [
+        pedido({ severity: 'MEDIA', appointmentStartAt: inicio(72) }),
+      ],
+    });
+    await expect(
+      service.avisarPedidosDePacientes(ORG, AHORA),
+    ).resolves.toMatchObject({ enviado: false, motivo: 'NADA_QUE_AVISAR' });
+    expect(templates.sendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('sin la plantilla registrada no sale y lo dice (no usa la del otro aviso)', async () => {
+    const { service, templates } = build({ plantilla: null });
+    await expect(
+      service.avisarPedidosDePacientes(ORG, AHORA),
+    ).resolves.toMatchObject({ enviado: false, motivo: 'SIN_PLANTILLA' });
+    expect(templates.findTemplate).toHaveBeenCalledWith(
+      ORG,
+      'PATIENT_REQUEST_ALERT',
+    );
+    expect(templates.sendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('el aviso de la sincronización no los toma, ni este toma los de la sincronización', async () => {
+    const sync = {
+      ...pedido(),
+      id: 'ex-sync',
+      kind: 'CITA_NO_ENTREGADA',
+    };
+    const { service, templates } = build({ excepciones: [pedido(), sync] });
+
+    await service.avisar(ORG, AHORA);
+    await service.avisarPedidosDePacientes(ORG, AHORA);
+
+    const kinds = (templates.sendTemplate.mock.calls as unknown[][]).map(
+      (c) => (c[0] as { kind: string; bodyParams: string[] }).kind,
+    );
+    expect(kinds).toEqual(['SYNC_EXCEPTION_ALERT', 'PATIENT_REQUEST_ALERT']);
+    const pacientes = (
+      templates.sendTemplate.mock.calls as unknown[][]
+    )[1][0] as {
+      bodyParams: string[];
+    };
+    expect(pacientes.bodyParams[0]).toBe('1 caso');
+  });
+});

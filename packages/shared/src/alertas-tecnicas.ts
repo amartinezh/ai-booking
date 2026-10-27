@@ -313,6 +313,9 @@ export const claveAlerta = {
   recordatorios: (): string => 'cron:recordatorios:lote',
   avisoAgendador: (organizationId: string): string =>
     `espejo:aviso-agendador:${organizationId}`,
+  /** El aviso de pedidos de pacientes (2026-10-27): otra plantilla, otra falla. */
+  avisoPedidosPacientes: (organizationId: string): string =>
+    `espejo:aviso-pedidos-pacientes:${organizationId}`,
   redis: (): string => 'servicio:redis',
   /** Por firma: código, método, ruta sin ids y clase de la excepción. Nunca el mensaje. */
   error5xx: (

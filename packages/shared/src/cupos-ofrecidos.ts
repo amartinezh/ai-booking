@@ -121,6 +121,17 @@ export function seleccionarCuposManianaTarde<T extends { fecha: Date }>(
   );
 }
 
+/** Mañana o tarde, con el mismo corte que el reparto de arriba (las 12 en punto). */
+export type FranjaDelDia = 'MANANA' | 'TARDE';
+
+/** La franja de un cupo en la hora de la clínica, no en la del contenedor (UTC). */
+export function franjaDelCupo(
+  fecha: Date,
+  timeZone: string = 'America/Bogota',
+): FranjaDelDia {
+  return horaLocal(fecha, timeZone) < HORA_INICIO_TARDE ? 'MANANA' : 'TARDE';
+}
+
 /** Hora (0-23) de esa fecha en esa zona. Mismo cálculo que saludo.ts. */
 function horaLocal(fecha: Date, timeZone: string): number {
   const partes = new Intl.DateTimeFormat('es-CO', {

@@ -3,12 +3,15 @@ import {
   NOTA_VENCIDA,
   ORDEN_SEVERIDAD_EXCEPCION,
   TIPOS_CON_AVISO,
+  TIPOS_CON_AVISO_PACIENTE,
   UMBRALES_VIGILANTE,
   claveExcepcion,
   debeVencer,
   eventoCulpable,
   evaluarRetencion,
+  esAvisoDePaciente,
   parametrosPlantillaAviso,
+  parametrosPlantillaAvisoPaciente,
   requiereAviso,
   requiereRecordatorio,
   resumenRetencion,
@@ -350,6 +353,44 @@ describe('requiereAviso — ¿corresponde avisarle al agendador?', () => {
   it('una excepción sin hora de cita (no aplica el "antes") no queda bloqueada por ello', () => {
     expect(avisar({ appointmentStartIso: null, kind: 'DERIVA_EN_HIS' })).toBe(true);
   });
+
+  describe('🙋 pedidos de pacientes (2026-10-27): solo con la cita cerca', () => {
+    it.each(['CANCELACION_SIN_CONFIRMAR', 'AVISO_INASISTENCIA'])('%s se avisa con su propia plantilla', (kind) => {
+      expect(TIPOS_CON_AVISO_PACIENTE).toContain(kind);
+      expect(TIPOS_CON_AVISO).not.toContain(kind);
+      expect(esAvisoDePaciente(kind as never)).toBe(true);
+    });
+
+    it('la cita a 24 h o menos: sí', () => {
+      expect(UMBRALES_VIGILANTE.urgenciaAltaHoras).toBe(24);
+      expect(avisar({ kind: 'CANCELACION_SIN_CONFIRMAR', appointmentStartIso: desdeAhora(90 * MIN) })).toBe(true);
+      expect(avisar({ kind: 'AVISO_INASISTENCIA', appointmentStartIso: desdeAhora(24 * HORA) })).toBe(true);
+    });
+
+    it('la cita a más de 24 h: todavía no, basta la bandeja', () => {
+      expect(avisar({ kind: 'CANCELACION_SIN_CONFIRMAR', appointmentStartIso: desdeAhora(24 * HORA + MIN) })).toBe(false);
+      expect(avisar({ kind: 'AVISO_INASISTENCIA', appointmentStartIso: desdeAhora(3 * 24 * HORA) })).toBe(false);
+    });
+
+    it('sin hora de cita no se sabe si está cerca: no se avisa', () => {
+      expect(avisar({ kind: 'AVISO_INASISTENCIA', appointmentStartIso: null })).toBe(false);
+    });
+
+    it('la cita ya empezó, o alguien lo tomó: no', () => {
+      expect(avisar({ kind: 'CANCELACION_SIN_CONFIRMAR', appointmentStartIso: desdeAhora(-MIN) })).toBe(false);
+      expect(avisar({ kind: 'CANCELACION_SIN_CONFIRMAR', appointmentStartIso: desdeAhora(HORA), status: 'EN_REVISION' })).toBe(false);
+    });
+
+    it('vuelve a avisar cuando la gravedad sube a CRÍTICA', () => {
+      const cerca = { kind: 'AVISO_INASISTENCIA', appointmentStartIso: desdeAhora(3 * HORA) };
+      expect(avisar({ ...cerca, severity: 'ALTA', notifiedSeverity: 'ALTA' })).toBe(false);
+      expect(avisar({ ...cerca, severity: 'CRITICA', notifiedSeverity: 'ALTA' })).toBe(true);
+    });
+
+    it('el teléfono equivocado sigue solo en la bandeja', () => {
+      expect(avisar({ kind: 'TELEFONO_EQUIVOCADO', appointmentStartIso: desdeAhora(HORA) })).toBe(false);
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -412,6 +453,11 @@ describe('requiereRecordatorio — §12 #14: nadie tomó la excepción tras el a
 
   it('una fecha de aviso ilegible no lanza ni recuerda', () => {
     expect(recordar({ notifiedAtIso: 'no-es-fecha' })).toBe(false);
+  });
+
+  it('🙋 un pedido de paciente se recuerda igual, mientras su cita siga cerca', () => {
+    expect(recordar({ kind: 'CANCELACION_SIN_CONFIRMAR', appointmentStartIso: desdeAhora(2 * HORA) })).toBe(true);
+    expect(recordar({ kind: 'CANCELACION_SIN_CONFIRMAR', appointmentStartIso: desdeAhora(2 * 24 * HORA) })).toBe(false);
   });
 });
 
@@ -674,5 +720,57 @@ describe('parametrosPlantillaAviso — el texto que va a la plantilla de WhatsAp
 
   it('el primer aviso no lleva la marca', () => {
     expect(parametrosPlantillaAviso([item()], ctx)[2]).not.toMatch(/RECORDATORIO/);
+  });
+});
+
+describe('parametrosPlantillaAvisoPaciente — la plantilla de pedidos de pacientes (2026-10-27)', () => {
+  const item = (over: Record<string, unknown> = {}) => ({
+    doctor: 'Dr(a). Ana Ruiz',
+    inicioIso: '2026-10-26T17:00:00.000Z',
+    kind: 'CANCELACION_SIN_CONFIRMAR' as const,
+    severity: 'CRITICA' as const,
+    ...over,
+  });
+  const ctx = { timeZone: 'America/Bogota' };
+
+  it('tres variables: cuántos casos, la cita más próxima y qué pidió', () => {
+    const p = parametrosPlantillaAvisoPaciente([item()], ctx);
+    expect(p).toHaveLength(3);
+    expect(p[0]).toBe('1 caso');
+    expect(p[1]).toMatch(/Ana Ruiz/);
+    expect(p[1]).toMatch(/12:00/); // 17:00 UTC = 12:00 en Bogotá
+    expect(p[2]).toMatch(/pidió cancelar/);
+  });
+
+  it('varios casos de los dos tipos: plural, la más próxima y los dos pedidos', () => {
+    const p = parametrosPlantillaAvisoPaciente(
+      [
+        item({ doctor: 'Lejana', inicioIso: '2026-10-26T21:00:00.000Z' }),
+        item({ doctor: 'Cercana', kind: 'AVISO_INASISTENCIA', inicioIso: '2026-10-26T14:00:00.000Z' }),
+        item({ doctor: 'Otra' }),
+      ],
+      ctx,
+    );
+    expect(p[0]).toBe('3 casos');
+    expect(p[1]).toMatch(/Cercana/);
+    expect(p[2]).toMatch(/pidió cancelar/);
+    expect(p[2]).toMatch(/no irá o pide otra fecha/);
+    // El mismo pedido no se repite.
+    expect(p[2].match(/pidió cancelar/g)).toHaveLength(1);
+  });
+
+  it('🔒 sin datos del paciente', () => {
+    const todo = parametrosPlantillaAvisoPaciente([item(), item({ kind: 'AVISO_INASISTENCIA' })], ctx).join(' ');
+    expect(todo).not.toMatch(/\d{6,}/);
+  });
+
+  it('🔁 el recordatorio lo dice al principio, sin perder el pedido', () => {
+    const p = parametrosPlantillaAvisoPaciente([item()], { ...ctx, recordatorio: 2 });
+    expect(p[2]).toMatch(/^RECORDATORIO 2 de 2: nadie lo ha tomado en la bandeja; pidió cancelar/);
+    expect(p[2].length).toBeLessThanOrEqual(200);
+  });
+
+  it('sin elementos: nada que enviar', () => {
+    expect(parametrosPlantillaAvisoPaciente([], ctx)).toEqual([]);
   });
 });

@@ -63,6 +63,39 @@ export const ORIGENES_AGENDADOS_POR_EL_PACIENTE = [
   'TELEGRAM',
 ] as const;
 
+/**
+ * 💬 ¿El paciente se la agendó por el chat cuando ya estaba dentro de la ventana
+ * del recordatorio? Entonces la confirmación del chat ya hizo de recordatorio
+ * (2026-10-27: las 17 citas del chat del 26 y 27 de octubre recibieron el
+ * recordatorio entre 2 y 26 minutos después de la confirmación, con lo mismo; era
+ * una plantilla pagada y cada «gracias» del paciente se contestaba con otro
+ * «¡Gracias por confirmar!»). La que se agendó con más anticipación sí lo recibe.
+ *
+ * Solo las del chat: las del panel y las del hospital no le confirmaron nada al
+ * paciente por este medio.
+ */
+export function confirmadaPorElChatDentroDeLaVentana(
+  apt: {
+    origin?: string | null;
+    createdAt?: Date | null;
+    scheduleSlot: { startTime: Date };
+  },
+  businessHoursBefore: number,
+): boolean {
+  if (
+    !apt.createdAt ||
+    !(ORIGENES_AGENDADOS_POR_EL_PACIENTE as readonly string[]).includes(
+      apt.origin ?? '',
+    )
+  ) {
+    return false;
+  }
+  return (
+    apt.scheduleSlot.startTime.getTime() <=
+    addBusinessHours(apt.createdAt, businessHoursBefore).getTime()
+  );
+}
+
 @Injectable()
 export class AppointmentReminderCronService
   implements OnModuleInit, OnModuleDestroy
@@ -175,6 +208,8 @@ export class AppointmentReminderCronService
     failed: number;
     skipped: number;
     tooClose: number;
+    /** Agendadas por el chat ya dentro de la ventana: la confirmación hizo de recordatorio. */
+    yaConfirmadas: number;
   }> {
     const start = Date.now();
     const now = new Date();
@@ -191,7 +226,7 @@ export class AppointmentReminderCronService
     );
     if (eligible.length === 0) {
       this.logger.debug('Sin citas elegibles en esta ventana.');
-      return { sent: 0, failed: 0, skipped: 0, tooClose: 0 };
+      return { sent: 0, failed: 0, skipped: 0, tooClose: 0, yaConfirmadas: 0 };
     }
 
     // ⏱️ Anticipación mínima de la clínica (/dashboard/configuracion, default 60
@@ -200,7 +235,7 @@ export class AppointmentReminderCronService
     // recordatorio. No se marca: si la mueven a una hora más lejana, vuelve a
     // poder salir. Se filtra aquí y no en la consulta porque el mínimo es de
     // cada clínica; son pocas y salen de la ventana en minutos.
-    const aEnviar = eligible.filter(
+    const conAnticipacion = eligible.filter(
       (apt) =>
         !citaDemasiadoCercaParaRecordar(
           apt.scheduleSlot.startTime,
@@ -210,12 +245,23 @@ export class AppointmentReminderCronService
           ),
         ),
     );
-    const tooClose = eligible.length - aEnviar.length;
+    const tooClose = eligible.length - conAnticipacion.length;
+    // 💬 La que el paciente se agendó por el chat ya dentro de la ventana: la
+    // confirmación le acaba de decir lo mismo. Tampoco se marca, como las de
+    // arriba: si la mueven a una fecha más lejana, el recordatorio vuelve a salir.
+    const aEnviar = conAnticipacion.filter(
+      (apt) =>
+        !confirmadaPorElChatDentroDeLaVentana(
+          apt,
+          this.cfg.businessHoursBefore,
+        ),
+    );
+    const yaConfirmadas = conAnticipacion.length - aEnviar.length;
     if (aEnviar.length === 0) {
       this.logger.debug(
-        `Sin recordatorios para enviar: ${tooClose} cita(s) empiezan antes de la anticipación mínima.`,
+        `Sin recordatorios para enviar: ${tooClose} cita(s) empiezan antes de la anticipación mínima y ${yaConfirmadas} se agendaron por el chat ya dentro de la ventana.`,
       );
-      if (tooClose > 0) {
+      if (tooClose > 0 || yaConfirmadas > 0) {
         await this.registrarLote(
           now,
           targetThreshold,
@@ -224,9 +270,10 @@ export class AppointmentReminderCronService
           0,
           0,
           tooClose,
+          yaConfirmadas,
         );
       }
-      return { sent: 0, failed: 0, skipped: 0, tooClose };
+      return { sent: 0, failed: 0, skipped: 0, tooClose, yaConfirmadas };
     }
 
     this.logger.log(`Procesando ${aEnviar.length} recordatorios pendientes.`);
@@ -271,9 +318,10 @@ export class AppointmentReminderCronService
       failed,
       skipped,
       tooClose,
+      yaConfirmadas,
     );
 
-    return { sent, failed, skipped, tooClose };
+    return { sent, failed, skipped, tooClose, yaConfirmadas };
   }
 
   /** Resumen del lote en el log y en SystemLog. */
@@ -285,24 +333,30 @@ export class AppointmentReminderCronService
     failed: number,
     skipped: number,
     tooClose: number,
+    yaConfirmadas = 0,
   ): Promise<void> {
     const durationMs = Date.now() - start;
     const cerca =
       tooClose > 0
         ? `, ${tooClose} sin enviar por empezar antes de la anticipación mínima`
         : '';
+    const confirmadas =
+      yaConfirmadas > 0
+        ? `, ${yaConfirmadas} sin enviar porque se agendaron por el chat ya dentro de la ventana`
+        : '';
     this.logger.log(
-      `Resumen lote — enviados=${sent}, fallidos=${failed}, omitidos=${skipped}, muy cerca=${tooClose} (${durationMs}ms).`,
+      `Resumen lote — enviados=${sent}, fallidos=${failed}, omitidos=${skipped}, muy cerca=${tooClose}, ya confirmadas=${yaConfirmadas} (${durationMs}ms).`,
     );
 
     await this.systemLog.event({
       action: 'REMINDER_CRON_RUN',
-      message: `Recordatorios procesados: ${sent} enviados, ${failed} fallidos, ${skipped} omitidos${cerca}.`,
+      message: `Recordatorios procesados: ${sent} enviados, ${failed} fallidos, ${skipped} omitidos${cerca}${confirmadas}.`,
       metadata: {
         sent,
         failed,
         skipped,
         tooClose,
+        yaConfirmadas,
         durationMs,
         businessHoursBefore: this.cfg.businessHoursBefore,
         windowFrom: now.toISOString(),

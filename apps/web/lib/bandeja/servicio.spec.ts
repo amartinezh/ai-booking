@@ -945,8 +945,42 @@ describe('estadoAvisos — ¿salen los avisos? Si no, por qué', () => {
         tieneRespaldo: false,
         numero: '573001234567',
         respaldo: null,
+        // 🙋 Sin la plantilla de pedidos de pacientes, ese aviso no sale y lo dice.
+        plantillaPacientes: false,
+        razonPacientes: expect.stringMatching(/pedidos de pacientes/),
       },
     });
+  });
+
+  it('🙋 con las dos plantillas salen los dos avisos; sin la de pacientes, el otro sale igual', async () => {
+    const db = mockDb();
+    config(db);
+    plantilla(db);
+    plantilla(db, { id: 't2', kind: 'PATIENT_REQUEST_ALERT' });
+    expect(((await estadoAvisos(db, admin())) as any).data).toMatchObject({
+      salen: true,
+      plantillaPacientes: true,
+      razonPacientes: null,
+    });
+
+    const soloPacientes = mockDb();
+    config(soloPacientes);
+    plantilla(soloPacientes, { kind: 'PATIENT_REQUEST_ALERT' });
+    expect(((await estadoAvisos(soloPacientes, admin())) as any).data).toMatchObject({
+      salen: false,
+      razon: expect.stringMatching(/plantilla/i),
+      razonPacientes: null,
+    });
+  });
+
+  it('🙋 sin número, ninguno de los dos sale, y los dos dicen por qué', async () => {
+    const db = mockDb();
+    config(db, { agendadorWhatsapp: null });
+    plantilla(db);
+    plantilla(db, { id: 't2', kind: 'PATIENT_REQUEST_ALERT' });
+    const d = ((await estadoAvisos(db, admin())) as any).data;
+    expect(d.razon).toMatch(/número/);
+    expect(d.razonPacientes).toMatch(/número/);
   });
 
   it('sin fila de configuración, o con el espejo apagado: dice que el espejo está apagado', async () => {

@@ -408,6 +408,7 @@ const MOTIVO_FALLO: Record<string, string> = {
   MAX_RETRIES: 'se agotaron los reintentos de la conversación',
   ABANDONED: 'la conversación se abandonó',
   SESSION_EXPIRED: 'la sesión expiró antes de confirmar',
+  SLOT_NOT_UNDERSTOOD: 'el asistente no entendió el horario que pidió',
   NO_AGENDA: 'no había agenda disponible',
   PATIENT_NOT_FOUND: 'no se encontró al paciente por la cédula dada',
   DOCTOR_NOT_FOUND: 'no se encontró al médico pedido',

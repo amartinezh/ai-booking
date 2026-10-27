@@ -1,7 +1,10 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
+  ESTADOS_ACTIVOS,
+  ORDEN_SEVERIDAD_EXCEPCION,
   SYNC_AUDIT_DIRECTION,
+  TIPOS_CON_AVISO_PACIENTE,
   TITULO_EXCEPCION,
   UMBRALES_VIGILANTE,
   algunaCompuertaAbierta,
@@ -46,6 +49,15 @@ const AVISO_QUE_NO_SALE: Partial<
   SIN_DESTINO:
     'La clínica tiene los avisos encendidos pero ningún número de agendador: nadie se entera de las citas que no llegan al hospital.',
   ENVIO_FALLIDO: 'Meta rechazó el envío del aviso al agendador',
+};
+
+/** Lo mismo para el aviso de pedidos de pacientes (2026-10-27). */
+const AVISO_PACIENTES_QUE_NO_SALE: typeof AVISO_QUE_NO_SALE = {
+  SIN_PLANTILLA:
+    'La plantilla de WhatsApp «Aviso al agendador (pedidos de pacientes)» (PATIENT_REQUEST_ALERT) no está registrada: el agendador no se entera de un paciente que pidió cancelar o avisó que no irá, con la cita cerca.',
+  SIN_DESTINO: AVISO_QUE_NO_SALE.SIN_DESTINO,
+  ENVIO_FALLIDO:
+    'Meta rechazó el envío del aviso de pedidos de pacientes al agendador',
 };
 
 /**
@@ -99,6 +111,8 @@ const MS_DIA = 86_400_000;
 interface CitaVigilada {
   id: string;
   status: string;
+  /** PENDING · ATTENDED · NO_SHOW: lo reporta el hospital o el personal. */
+  attendanceStatus: string;
   origin: string;
   patientId: string | null;
   epsId: string | null;
@@ -124,6 +138,8 @@ export interface ResumenVigilancia {
   autoResueltas: number;
   vencidas: number;
   aviso: ResultadoAviso | null;
+  /** 🙋 El aviso de pedidos de pacientes con la cita cerca (2026-10-27). */
+  avisoPacientes: ResultadoAviso | null;
   /** El escaneo del outbox no se hizo o quedó incompleto: por eso no se cerró nada solo. */
   outboxIncompleto: boolean;
 }
@@ -201,6 +217,7 @@ export class MirrorWatchdogService {
       autoResueltas: 0,
       vencidas: 0,
       aviso: null,
+      avisoPacientes: null,
       outboxIncompleto: true,
     };
 
@@ -249,6 +266,16 @@ export class MirrorWatchdogService {
       organizationId,
       ahora,
     );
+    try {
+      resumen.actualizadas += await this.subirGravedadDePedidos(
+        organizationId,
+        ahora,
+      );
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo subir la gravedad de los pedidos de pacientes (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+    }
     resumen.vencidas = await this.vencerLasOlvidadas(organizationId, ahora);
 
     let falloDelAviso: unknown = null;
@@ -268,6 +295,30 @@ export class MirrorWatchdogService {
       resumen.aviso,
       falloDelAviso,
     );
+
+    // 🙋 Los pedidos de pacientes con la cita cerca, con su propia plantilla.
+    let falloDelAvisoPacientes: unknown = null;
+    try {
+      resumen.avisoPacientes = await this.alert.avisarPedidosDePacientes(
+        organizationId,
+        ahora,
+      );
+    } catch (error: unknown) {
+      falloDelAvisoPacientes = error;
+      this.logger.error(
+        `El aviso de pedidos de pacientes falló (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+    }
+    await this.revisarAvisoAlAgendador(
+      organizationId,
+      resumen.avisoPacientes,
+      falloDelAvisoPacientes,
+      {
+        clave: claveAlerta.avisoPedidosPacientes(organizationId),
+        motivos: AVISO_PACIENTES_QUE_NO_SALE,
+        titulo: 'Aviso de pedidos de pacientes',
+      },
+    );
     return resumen;
   }
 
@@ -281,15 +332,24 @@ export class MirrorWatchdogService {
     organizationId: string,
     aviso: ResultadoAviso | null,
     fallo: unknown,
+    cual: {
+      clave: string;
+      motivos: typeof AVISO_QUE_NO_SALE;
+      titulo: string;
+    } = {
+      clave: claveAlerta.avisoAgendador(organizationId),
+      motivos: AVISO_QUE_NO_SALE,
+      titulo: 'Aviso al agendador',
+    },
   ): Promise<void> {
     if (!this.alertas) return;
-    const clave = claveAlerta.avisoAgendador(organizationId);
+    const clave = cual.clave;
     let detalle: string | null = null;
     if (fallo) {
       detalle = `El aviso reventó: ${getErrorMessage(fallo)}`;
     } else if (aviso && !aviso.enviado) {
       if (aviso.motivo === 'YA_RECLAMADO') return; // otra réplica se ocupa
-      const motivo = AVISO_QUE_NO_SALE[aviso.motivo];
+      const motivo = cual.motivos[aviso.motivo];
       if (motivo) {
         detalle = aviso.detalle ? `${motivo}: ${aviso.detalle}` : `${motivo}.`;
       }
@@ -304,7 +364,7 @@ export class MirrorWatchdogService {
     await this.alertas.avisar({
       kind: 'AVISO_AGENDADOR_NO_SALE',
       dedupeKey: clave,
-      title: 'Aviso al agendador',
+      title: cual.titulo,
       detail: detalle,
       organizationId,
       organizationName: org?.name ?? null,
@@ -718,6 +778,10 @@ export class MirrorWatchdogService {
    * `CANCELACION_SIN_CONFIRMAR` (2026-10-26): si la cita ya se canceló o se movió,
    * alguien ya lo atendió. Solo se mira la cita en AgenIA; no se escribe nada
    * en el hospital. No depende del outbox: corre igual con el envío pausado.
+   *
+   * Y el aviso de que no irá y el pedido de cancelar sin el SÍ se cierran también
+   * si el paciente ASISTIÓ (2026-10-27): el 26-oct una paciente pidió cancelar,
+   * luego escribió «Si necesito la cita por favor», fue, y el caso siguió abierto.
    */
   private async cerrarAvisosAtendidos(
     organizationId: string,
@@ -736,7 +800,12 @@ export class MirrorWatchdogService {
         },
         appointmentId: { not: null },
       },
-      select: { id: true, appointmentId: true, appointmentStartAt: true },
+      select: {
+        id: true,
+        kind: true,
+        appointmentId: true,
+        appointmentStartAt: true,
+      },
       take: MAX_DERIVA,
     });
     if (activos.length === 0) return 0;
@@ -760,6 +829,11 @@ export class MirrorWatchdogService {
         cita.startTime.getTime() !== a.appointmentStartAt.getTime()
       ) {
         nota = 'La cita ya tiene otra fecha u hora.';
+      } else if (
+        cita.attendanceStatus === 'ATTENDED' &&
+        TIPOS_CON_AVISO_PACIENTE.includes(a.kind as TipoExcepcion)
+      ) {
+        nota = 'El paciente asistió a la cita.';
       }
       if (
         nota &&
@@ -769,6 +843,50 @@ export class MirrorWatchdogService {
       }
     }
     return cerrados;
+  }
+
+  /**
+   * 🙋 Los pedidos de pacientes suben de gravedad al acercarse su cita (2026-10-27),
+   * igual que las del envío: el aviso al agendador sale con la cita a 24 h o menos y
+   * vuelve a salir a 4 h (`requiereAviso`, una vez por gravedad). Un
+   * `AVISO_INASISTENCIA` se abría con la gravedad del momento y se quedaba ahí.
+   * Devuelve cuántas subieron.
+   */
+  private async subirGravedadDePedidos(
+    organizationId: string,
+    ahora: Date,
+  ): Promise<number> {
+    const activos = await this.prisma.syncException.findMany({
+      where: {
+        organizationId,
+        status: { in: [...ESTADOS_ACTIVOS] },
+        kind: { in: [...TIPOS_CON_AVISO_PACIENTE] },
+        appointmentStartAt: {
+          gt: ahora,
+          lte: new Date(
+            ahora.getTime() + UMBRALES_VIGILANTE.urgenciaAltaHoras * 3_600_000,
+          ),
+        },
+      },
+      select: { id: true, severity: true, appointmentStartAt: true },
+      take: MAX_DERIVA,
+    });
+    let subieron = 0;
+    for (const a of activos) {
+      if (!a.appointmentStartAt || !a.severity) continue;
+      const actual = a.severity as SeveridadExcepcion;
+      const nueva = severidadPorCercania(
+        actual,
+        (a.appointmentStartAt.getTime() - ahora.getTime()) / 60_000,
+      );
+      if (
+        ORDEN_SEVERIDAD_EXCEPCION[nueva] > ORDEN_SEVERIDAD_EXCEPCION[actual] &&
+        (await this.exceptions.escalar(organizationId, a, nueva))
+      ) {
+        subieron++;
+      }
+    }
+    return subieron;
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -1069,6 +1187,7 @@ export class MirrorWatchdogService {
         select: {
           id: true,
           status: true,
+          attendanceStatus: true,
           origin: true,
           patientId: true,
           epsId: true,
@@ -1079,6 +1198,7 @@ export class MirrorWatchdogService {
         salida.set(f.id, {
           id: f.id,
           status: f.status,
+          attendanceStatus: f.attendanceStatus,
           origin: f.origin,
           patientId: f.patientId,
           epsId: f.epsId,

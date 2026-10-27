@@ -453,6 +453,11 @@ enum WhatsappTemplateKind {
   // libre). Cinco variables: nombre, servicio, médico, fecha y hora, y con quién
   // comunicarse. Ver mirror/aviso-cambio-hospital.service.ts.
   HIS_APPOINTMENT_CANCELLED
+  // 🙋 Aviso al AGENDADOR de lo que pidió un paciente y nadie atendió, con la cita en
+  // 24 h o menos (2026-10-27): pidió cancelar y no confirmó, o avisó que no irá. Va a
+  // un teléfono del personal. Tres variables: cuántos casos, la cita más próxima y qué
+  // pidió — sin datos del paciente. Ver mirror/mirror-alert.service.ts.
+  PATIENT_REQUEST_ALERT
 }
 
 model WhatsappTemplate {

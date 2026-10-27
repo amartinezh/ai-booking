@@ -110,14 +110,33 @@ export const TIPOS_EXCEPCION = [
 export type TipoExcepcion = (typeof TIPOS_EXCEPCION)[number];
 
 /**
- * De cuáles se le avisa al agendador por WhatsApp. Las demás van solo a la bandeja:
- * las técnicas son para quien administra, y los avisos de pacientes se atienden desde
- * el panel, no desde un teléfono.
+ * De cuáles se le avisa al agendador por WhatsApp, con la plantilla «Aviso al
+ * agendador» (`SYNC_EXCEPTION_ALERT`), apenas aparecen. Las técnicas van solo a la
+ * bandeja: son para quien administra.
  */
 export const TIPOS_CON_AVISO: readonly TipoExcepcion[] = [
   'CITA_NO_ENTREGADA',
   'DERIVA_EN_HIS',
 ];
+
+/**
+ * Lo que pidió un paciente y nadie atendió, con su cita cerca (2026-10-27): se le
+ * avisa al agendador con su propia plantilla (`PATIENT_REQUEST_ALERT`), porque el
+ * texto fijo de la otra habla de citas que no llegaron al hospital. Solo cuando a
+ * la cita le faltan `urgenciaAltaHoras` o menos: antes, la bandeja basta.
+ *
+ * El 26-oct una paciente pidió cancelar, no confirmó, el caso se abrió hora y media
+ * antes de su cita, nadie lo vio y el cupo se perdió.
+ */
+export const TIPOS_CON_AVISO_PACIENTE: readonly TipoExcepcion[] = [
+  'CANCELACION_SIN_CONFIRMAR',
+  'AVISO_INASISTENCIA',
+];
+
+/** ¿Va con la plantilla de pedidos de pacientes y no con la de la sincronización? */
+export function esAvisoDePaciente(kind: TipoExcepcion): boolean {
+  return TIPOS_CON_AVISO_PACIENTE.includes(kind);
+}
 
 export const TITULO_EXCEPCION: Record<TipoExcepcion, string> = {
   CITA_NO_ENTREGADA: 'Cita que el hospital aún no tiene',
@@ -394,9 +413,36 @@ export const claveExcepcion = {
 // ─────────────────────────────────────────────────────────────
 
 /**
+ * ¿Es de las que se avisan, sigue sin dueño y su cita no ha pasado? Los pedidos de
+ * pacientes, además, solo con la cita a `urgenciaAltaHoras` o menos (y con hora).
+ */
+function seAvisa(
+  e: {
+    kind: TipoExcepcion;
+    status: EstadoExcepcion;
+    appointmentStartIso: string | null;
+  },
+  ahoraIso: string,
+): boolean {
+  if (e.status !== 'ABIERTA') return false;
+  const ahora = Date.parse(ahoraIso);
+  const inicio = e.appointmentStartIso
+    ? Date.parse(e.appointmentStartIso)
+    : Number.NaN;
+  if (!Number.isNaN(inicio) && inicio <= ahora) return false;
+  if (TIPOS_CON_AVISO.includes(e.kind)) return true;
+  return (
+    esAvisoDePaciente(e.kind) &&
+    !Number.isNaN(inicio) &&
+    inicio - ahora <= UMBRALES_VIGILANTE.urgenciaAltaHoras * 60 * MS_MIN
+  );
+}
+
+/**
  * ¿Hay que avisarle al agendador de esta excepción AHORA?
  *
- *  · solo de los tipos que le importan a él (`TIPOS_CON_AVISO`);
+ *  · solo de los tipos que le importan a él (`TIPOS_CON_AVISO`, y los pedidos de
+ *    pacientes de `TIPOS_CON_AVISO_PACIENTE` cuando su cita está cerca);
  *  · solo si nadie la ha tomado (si alguien ya se ocupa, avisar es ruido);
  *  · solo ANTES de la hora de la cita: después, el aviso ya no sirve;
  *  · una vez por gravedad: vuelve a avisar únicamente si SUBE (la cita se acercó).
@@ -411,12 +457,7 @@ export function requiereAviso(
   },
   ahoraIso: string,
 ): boolean {
-  if (!TIPOS_CON_AVISO.includes(e.kind)) return false;
-  if (e.status !== 'ABIERTA') return false;
-  if (e.appointmentStartIso) {
-    const inicio = Date.parse(e.appointmentStartIso);
-    if (!Number.isNaN(inicio) && inicio <= Date.parse(ahoraIso)) return false;
-  }
+  if (!seAvisa(e, ahoraIso)) return false;
   if (!e.notifiedSeverity) return true;
   const previa = ORDEN_SEVERIDAD_EXCEPCION[e.notifiedSeverity as SeveridadExcepcion] ?? -1;
   return ORDEN_SEVERIDAD_EXCEPCION[e.severity] > previa;
@@ -442,16 +483,11 @@ export function requiereRecordatorio(
   },
   ahoraIso: string,
 ): boolean {
-  if (!TIPOS_CON_AVISO.includes(e.kind)) return false;
-  if (e.status !== 'ABIERTA') return false;
+  if (!seAvisa(e, ahoraIso)) return false;
   if (!e.notifiedSeverity || !e.notifiedAtIso) return false;
   if (requiereAviso(e, ahoraIso)) return false;
   if (e.reminderCount >= UMBRALES_VIGILANTE.maxRecordatorios) return false;
   const ahora = Date.parse(ahoraIso);
-  if (e.appointmentStartIso) {
-    const inicio = Date.parse(e.appointmentStartIso);
-    if (!Number.isNaN(inicio) && inicio <= ahora) return false;
-  }
   const avisada = Date.parse(e.notifiedAtIso);
   if (Number.isNaN(avisada)) return false;
   return ahora - avisada >= UMBRALES_VIGILANTE.recordatorioMin * MS_MIN;
@@ -664,5 +700,61 @@ export function parametrosPlantillaAviso(
       200,
     ),
     paraPlantilla(causas.join('; '), 200),
+  ];
+}
+
+/** Qué pidió el paciente, en una frase para la variable {{3}}. */
+const PEDIDO_DEL_PACIENTE: Partial<Record<TipoExcepcion, string>> = {
+  CANCELACION_SIN_CONFIRMAR:
+    'pidió cancelar por el chat y no confirmó; la cita sigue en pie',
+  AVISO_INASISTENCIA: 'avisó por el chat que no irá o pide otra fecha',
+};
+
+/**
+ * Las TRES variables de la plantilla del aviso de pedidos de pacientes
+ * (`PATIENT_REQUEST_ALERT`, 2026-10-27), en orden:
+ *   {{1}} cuántos casos, {{2}} la cita más próxima (médico y hora), {{3}} qué pidió.
+ *
+ * 🔒 Sin datos del paciente, igual que `parametrosPlantillaAviso`: el nombre, el
+ * documento y lo que escribió se ven en la bandeja, tras la sesión. El recordatorio
+ * usa la misma plantilla y lo dice al principio de {{3}}.
+ *
+ * Devuelve `[]` si no hay nada que avisar: quien llama no debe enviar.
+ */
+export function parametrosPlantillaAvisoPaciente(
+  items: ItemAviso[],
+  ctx: {
+    timeZone: string;
+    /** El número del recordatorio (1, 2…), o nada si es el primer aviso. */
+    recordatorio?: number;
+  },
+): string[] {
+  if (items.length === 0) return [];
+
+  const proxima = [...items].sort(
+    (a, b) => Date.parse(a.inicioIso) - Date.parse(b.inicioIso),
+  )[0];
+
+  const pedidos = [
+    ...new Set(
+      items
+        .map((i) => PEDIDO_DEL_PACIENTE[i.kind])
+        .filter((p): p is string => !!p),
+    ),
+  ];
+  if (ctx.recordatorio) {
+    pedidos.unshift(
+      `RECORDATORIO ${ctx.recordatorio} de ${UMBRALES_VIGILANTE.maxRecordatorios}: nadie lo ha tomado en la bandeja`,
+    );
+  }
+
+  const n = items.length;
+  return [
+    `${n} ${n === 1 ? 'caso' : 'casos'}`,
+    `${paraPlantilla(proxima.doctor, 120)}, ${formatAppointmentCompact(proxima.inicioIso, { timeZone: ctx.timeZone })}`.slice(
+      0,
+      200,
+    ),
+    paraPlantilla(pedidos.join('; '), 200),
   ];
 }

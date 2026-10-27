@@ -82,6 +82,7 @@ const MOTIVOS: Record<string, string> = {
     OUT_OF_CONTEXT: 'Fuera de contexto',
     SLOT_TAKEN: 'Cupo tomado por otro',
     SESSION_EXPIRED: 'Sesión vencida',
+    SLOT_NOT_UNDERSTOOD: 'No se entendió el horario',
     MAX_RETRIES: 'Superó los reintentos',
     ABANDONED: 'Abandonó tras los reintentos',
     GEMINI_DOWN: 'IA no disponible',

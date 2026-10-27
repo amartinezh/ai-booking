@@ -247,18 +247,8 @@ export function parseFechaPreferida(
     return rangeWindow(today, to, label, tz);
   }
 
-  // ── Día de la semana ("el lunes", "el próximo viernes") ──────
-  for (const [name, target] of Object.entries(WEEKDAYS)) {
-    if (new RegExp(`\\b${name}\\b`).test(stripped)) {
-      const dow = weekdayOf(today);
-      // Próxima ocurrencia FUTURA; si hoy es ese día, la semana entrante.
-      let delta = (target - dow + 7) % 7;
-      if (delta === 0) delta = 7;
-      return dayWindow(addDays(today, delta), label, tz);
-    }
-  }
-
-  // ── Día de mes con nombre de mes ("25 de junio", "3 de mayo") ─
+  // ── Día de mes con nombre de mes ("25 de junio", "miércoles 28 de octubre") ─
+  // Antes que el día de la semana: la fecha dicha manda sobre el nombre del día.
   const conMes = stripped.match(/\b(\d{1,2})\s+de\s+([a-z]+)\b/);
   if (conMes) {
     const day = Number(conMes[1]);
@@ -272,25 +262,54 @@ export function parseFechaPreferida(
     }
   }
 
+  // ── Día de la semana con número ("el miércoles 28") ────────────
+  // El número manda: un miércoles, «el miércoles 28» es hoy si hoy es 28, no
+  // el miércoles de la semana entrante (2026-10-27, menú de cupos).
+  const semanaConNumero = stripped.match(
+    /\b(?:domingo|lunes|martes|miercoles|jueves|viernes|sabado)\s+(\d{1,2})\b/,
+  );
+  if (semanaConNumero) {
+    const day = Number(semanaConNumero[1]);
+    if (day >= 1 && day <= 31) return diaDelMes(day, today, label, tz);
+  }
+
+  // ── Día de la semana ("el lunes", "el próximo viernes") ──────
+  for (const [name, target] of Object.entries(WEEKDAYS)) {
+    if (new RegExp(`\\b${name}\\b`).test(stripped)) {
+      const dow = weekdayOf(today);
+      // Próxima ocurrencia FUTURA; si hoy es ese día, la semana entrante.
+      let delta = (target - dow + 7) % 7;
+      if (delta === 0) delta = 7;
+      return dayWindow(addDays(today, delta), label, tz);
+    }
+  }
+
   // ── Día de mes suelto ("el 25", "el día 3") ──────────────────
   const soloDia = stripped.match(/\bel\s+(?:dia\s+)?(\d{1,2})\b/);
   if (soloDia) {
     const day = Number(soloDia[1]);
-    if (day >= 1 && day <= 31) {
-      let { y, mo } = today;
-      // Si el día ya pasó este mes, saltamos al mes siguiente.
-      if (day < today.d) {
-        mo += 1;
-        if (mo > 12) {
-          mo = 1;
-          y += 1;
-        }
-      }
-      return dayWindow({ y, mo, d: day }, label, tz);
-    }
+    if (day >= 1 && day <= 31) return diaDelMes(day, today, label, tz);
   }
 
   return null;
+}
+
+/** El día `day` de este mes o, si ya pasó, del siguiente. */
+function diaDelMes(
+  day: number,
+  today: WallDate,
+  label: string,
+  tz: string,
+): FechaPreferida {
+  let { y, mo } = today;
+  if (day < today.d) {
+    mo += 1;
+    if (mo > 12) {
+      mo = 1;
+      y += 1;
+    }
+  }
+  return dayWindow({ y, mo, d: day }, label, tz);
 }
 
 /** ¿La fecha de pared `a` es estrictamente anterior a `b`? */

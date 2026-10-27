@@ -33,6 +33,8 @@ const TIPO_DE_MENSAJE: Record<WhatsappTemplateKind, WhatsappMessageKind> = {
   HIS_APPOINTMENT_CONFIRMATION: 'BOOKING_CONFIRMATION',
   // 🏥 Aviso al paciente de que el hospital canceló su cita (2026-10-22).
   HIS_APPOINTMENT_CANCELLED: 'SYSTEM_NOTICE',
+  // 🙋 Aviso al personal de lo que pidió un paciente con su cita cerca (2026-10-27).
+  PATIENT_REQUEST_ALERT: 'SYSTEM_NOTICE',
 };
 
 /**

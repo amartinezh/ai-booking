@@ -35,12 +35,18 @@ import {
   nombreQueNiega,
   RESPUESTAS_AL_RECORDATORIO_EN_MENU,
 } from './respuesta-recordatorio';
-import { separarNombresYApellidos } from './nombre-paciente-nuevo';
+import {
+  noEsUnNombre,
+  separarNombresYApellidos,
+} from './nombre-paciente-nuevo';
 import { esPreguntaEnVezDeRespuesta } from './pregunta-al-confirmar';
 import { servicioQueNoSeAgenda } from './servicio-no-agendable';
 import { dudaSobreLaCita } from './duda-cita-agendada';
 import { cupoBloqueadoParaElAsistente } from 'src/appointments/bloqueos-agenda';
-import { fueraDelPlazoParaElAsistente } from 'src/appointments/plazo-agendar';
+import {
+  fueraDelPlazoParaElAsistente,
+  plazoDeLaClinica,
+} from 'src/appointments/plazo-agendar';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import {
   OrganizationSettingsService,
@@ -94,6 +100,15 @@ import {
   ESTADOS_ACTIVOS,
   cumpleAnticipacionAlReservar,
   fechaEnPalabras,
+  diaComunDeLosCupos,
+  etiquetaOtroHorario,
+  finDelPlazoParaAgendar,
+  inicioDelDiaSiguiente,
+  interpretarOtroHorario,
+  primerDiaParaVerElCupo,
+  ultimoDiaParaAgendar,
+  ventanaOtroHorario,
+  type PedidoOtroHorario,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
@@ -1263,22 +1278,37 @@ export class ChatbotService implements OnModuleInit {
     senderId: string,
     text: string | undefined,
   ): Promise<{ slotId: string; fecha: Date } | null> {
+    const matches = await this.offeredSlotsMatching(
+      organizationId,
+      senderId,
+      text,
+    );
+    return matches?.length === 1
+      ? { slotId: matches[0].slotId, fecha: matches[0].fecha }
+      : null;
+  }
+
+  /**
+   * Los cupos ofrecidos que caen en el día y/o la hora que menciona el texto;
+   * null si no menciona ni día ni hora.
+   */
+  private async offeredSlotsMatching(
+    organizationId: string,
+    senderId: string,
+    text: string | undefined,
+  ): Promise<Array<{ letra: string; slotId: string; fecha: Date }> | null> {
     const ventana = parseFechaPreferida(text ?? null);
     const hora = parseHoraPreferida(text ?? null);
     if (!ventana && !hora) return null;
 
     const offered = await this.loadOfferedSlots(organizationId, senderId);
-    const matches = offered.filter((s) => {
+    return offered.filter((s) => {
       const inDay = ventana
         ? s.fecha >= ventana.desde && s.fecha <= ventana.hasta
         : true;
       const inHour = hora ? matchesHora(s.fecha, hora) : true;
       return inDay && inHour;
     });
-
-    return matches.length === 1
-      ? { slotId: matches[0].slotId, fecha: matches[0].fecha }
-      : null;
   }
 
   /** Switch maestro del failover entre proveedores. Default false. */
@@ -7166,6 +7196,32 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // 🪪 «Otro horario» no es un nombre (2026-10-26: así quedaron los nombres de
+    // una paciente nueva; en este paso el texto se toma tal cual). Se le vuelve a
+    // pedir, sin guardar nada.
+    if (
+      currentState === ChatState.AWAITING_NAME &&
+      aiData.nombre &&
+      noEsUnNombre(aiData.nombre)
+    ) {
+      const paraLista =
+        (await this.redis.get(
+          `temp_waitlist_pending:${organizationId}:${senderId}`,
+        )) === '1';
+      const reply = paraLista
+        ? MSGS.nombreNoValidoLista(aiData.nombre)
+        : MSGS.nombreNoValido(aiData.nombre);
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditarAlta(
+        organizationId,
+        senderId,
+        text,
+        reply,
+        'ALTA_NOMBRE_NO_VALIDO',
+      );
+      return;
+    }
+
     // ══════════════════════════════════════════════════════════
     // MEMORIA A CORTO PLAZO (cascada de contexto)
     // ══════════════════════════════════════════════════════════
@@ -8124,79 +8180,29 @@ export class ChatbotService implements OnModuleInit {
         }
 
         // Hay slots: mostrar menú con letras y pedir selección.
-        let lineasFechas = '';
-        const slotsMetadata: {
-          letter: string;
-          slotId: string;
-          doctor: string;
-          fecha: string;
-        }[] = [];
-        for (let i = 0; i < slots.length; i++) {
-          const letra = String.fromCharCode(65 + i);
-          await this.redis.set(
-            this.slotKey(organizationId, senderId, letra),
-            slots[i].slotId,
-            'EX',
-            SESSION_TTL,
-          );
-          await this.redis.set(
-            this.slotDateKey(organizationId, senderId, letra),
-            slots[i].fecha.toISOString(),
-            'EX',
-            SESSION_TTL,
-          );
-          lineasFechas +=
-            `*${letra})* ${formatAppointmentLong(slots[i].fecha)} ` +
-            `· ${slots[i].doctor}\n`;
-          slotsMetadata.push({
-            letter: letra,
-            slotId: slots[i].slotId,
-            doctor: slots[i].doctor,
-            fecha: slots[i].fecha.toISOString(),
-          });
-        }
-
         const fechaLabel = ventana?.label ?? '';
-        let reply: string;
-        if (slotsMode === 'fecha') {
-          reply = MSGS.cuposParaFecha(
-            resolvedEpsName,
-            fechaLabel,
-            lineasFechas,
-          );
-        } else if (slotsMode === 'fallback') {
-          reply = MSGS.sinCuposEsaFechaProximos(
-            fechaLabel,
-            resolvedEpsName,
-            lineasFechas,
-          );
-        } else {
-          reply = MSGS.cuposDisponibles('', resolvedEpsName, lineasFechas);
-        }
-        // En voz: el audio LEE las próximas N opciones (env
-        // VOICE_SLOTS_SPOKEN_COUNT) en lenguaje natural ("opción A, mañana a
-        // las 3 de la tarde..."); el listado completo con todas las letras
-        // siempre viaja por texto para que el paciente pueda revisarlo.
-        const audioText = isVoiceTurn
-          ? MSGS.cuposDisponiblesAudioHablado(
-              resolvedEpsName,
-              this.buildSpokenSlotLines(slots),
-            )
-          : MSGS.cuposDisponiblesAudio(resolvedEpsName);
-        await this.smartReply(organizationId, senderId, reply, audioText);
-        await this.setUserState(
+        await this.mostrarMenuCupos({
           organizationId,
           senderId,
-          ChatState.AWAITING_DATE,
-        );
-
-        await this.auditSuccess(senderId, organizationId, {
+          slots,
+          MSGS,
+          isVoiceTurn,
+          epsName: resolvedEpsName,
+          serviceName: resolvedServiceName as string,
+          epsIdForSlots,
+          armarRespuesta: (lineas) =>
+            slotsMode === 'fecha'
+              ? MSGS.cuposParaFecha(resolvedEpsName, fechaLabel, lineas)
+              : slotsMode === 'fallback'
+                ? MSGS.sinCuposEsaFechaProximos(
+                    fechaLabel,
+                    resolvedEpsName,
+                    lineas,
+                  )
+                : MSGS.cuposDisponibles('', resolvedEpsName, lineas),
           userMessage: text || '[audio]',
-          botReply: reply,
+          step: 'SLOTS_OFFERED',
           metadata: {
-            step: 'SLOTS_OFFERED',
-            slotsCount: slots.length,
-            slots: slotsMetadata,
             eps: resolvedEpsName,
             specialty: resolvedServiceName,
             fechaPref: fechaLabel || undefined,
@@ -8593,11 +8599,24 @@ export class ChatbotService implements OnModuleInit {
       this.slotDateKey(organizationId, senderId, letraElegida),
     );
 
-    // Sin letra válida: el paciente (típicamente por voz) puede referirse al
-    // cupo por su día/hora ("la de mañana a las 3") en vez de la letra.
-    // Intentamos casar UN único cupo de los ofrecidos; si resulta ambiguo o no
-    // se reconoce, caemos al reintento (disculpa + volver a preguntar).
     if (!slotId || !slotFechaStr) {
+      // 🗓️ La letra de «Otro día», la que sigue a la del último cupo (2026-10-27).
+      const letraOtroDia = await this.redis.get(
+        this.otroDiaKey(organizationId, senderId),
+      );
+      if (letraElegida && letraElegida === letraOtroDia) {
+        await this.ofrecerOtroHorario(ctx, {
+          fecha: null,
+          franja: null,
+          otroDia: true,
+        });
+        return;
+      }
+
+      // Sin letra válida: el paciente (típicamente por voz) puede referirse al
+      // cupo por su día/hora ("la de mañana a las 3") en vez de la letra.
+      // Intentamos casar UN único cupo de los ofrecidos; si resulta ambiguo o no
+      // se reconoce, sigue abajo.
       const matched = await this.matchOfferedSlotByVoice(
         organizationId,
         senderId,
@@ -8616,20 +8635,44 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
+      // «La de las diez» con dos cupos a las diez, «mañana» con los tres de
+      // mañana: señala cupos que ya ve. No se adivina: se le pide la letra.
+      const casan = await this.offeredSlotsMatching(
+        organizationId,
+        senderId,
+        text,
+      );
+      // 🗓️ «¿Para mañana no hay?», «el miércoles 28», «en la tarde», «otro
+      // horario», que no son ninguno de los que ve: se le buscan cupos de eso
+      // (2026-10-27). Antes recibía «Esa letra no aparece entre las opciones» y
+      // se iba.
+      const pedido =
+        casan && casan.length > 1
+          ? null
+          : interpretarOtroHorario(text, {
+              timeZone: (await this.zonaHorariaDe(organizationId)) ?? undefined,
+            });
+      if (pedido && (await this.ofrecerOtroHorario(ctx, pedido))) return;
+
       await this.redis.set(
         retriesKey,
         (retriesCount + 1).toString(),
         'EX',
         SESSION_TTL,
       );
-      const reply = MSGS.errorSlotInvalido();
+      const ambiguo = !!casan && casan.length > 1;
+      const reply = ambiguo ? MSGS.cupoAmbiguo() : MSGS.errorSlotInvalido();
       await this.smartReply(organizationId, senderId, reply);
 
       await this.auditFailure(senderId, organizationId, {
-        reason: FailureReason.SESSION_EXPIRED,
+        reason: FailureReason.SLOT_NOT_UNDERSTOOD,
         userMessage: text,
         botReply: reply,
-        metadata: { invalidLetter: letraElegida, state: currentState },
+        metadata: {
+          invalidLetter: letraElegida,
+          state: currentState,
+          ...(ambiguo ? { cuposQueCasan: casan.length } : {}),
+        },
       });
       return;
     }
@@ -8644,6 +8687,375 @@ export class ChatbotService implements OnModuleInit {
       selectedLetter: letraElegida,
       via: 'letter',
     });
+  }
+
+  // ── Claves del menú de cupos (2026-10-27) ──────────────────────────
+  // Con el prefijo `temp_slot_` para que `cleanUpSession` y el cierre por
+  // inactividad las borren junto con las letras, y en minúscula para que no se
+  // lean como una letra (`loadOfferedSlots` y `loadActiveSlotLetters` solo leen
+  // `temp_slot_<A-Z>:`).
+  /** La letra de la opción «Otro día» del menú que se le mostró. */
+  private otroDiaKey(organizationId: string, senderId: string): string {
+    return `temp_slot_otro_dia:${organizationId}:${senderId}`;
+  }
+  /** Los cupos que ya vio en esta conversación, separados por coma. */
+  private cuposVistosKey(organizationId: string, senderId: string): string {
+    return `temp_slot_vistos:${organizationId}:${senderId}`;
+  }
+
+  private async cuposVistos(
+    organizationId: string,
+    senderId: string,
+  ): Promise<string[]> {
+    const vistos = await this.redis.get(
+      this.cuposVistosKey(organizationId, senderId),
+    );
+    return vistos ? vistos.split(',').filter(Boolean) : [];
+  }
+
+  /**
+   * 🗓️ Muestra el menú de cupos y espera la letra (AWAITING_DATE). Lo usan la
+   * cascada del agendamiento y el menú mismo cuando el paciente pide otro día u
+   * otra hora (2026-10-27).
+   *
+   *  · Borra las letras de un menú anterior antes de escribir las nuevas: si el
+   *    nuevo trae menos cupos, una «C» vieja no puede seguir apuntando a un cupo
+   *    que ya no se le muestra.
+   *  · Si después del último día que se le ofrece hay más cupos, agrega la opción
+   *    «Otro día» con la letra siguiente.
+   *  · Anota los cupos que vio: «otro horario» no se los repite.
+   */
+  private async mostrarMenuCupos(p: {
+    organizationId: string;
+    senderId: string;
+    slots: AvailableSlot[];
+    MSGS: ReturnType<typeof buildMessages>;
+    isVoiceTurn: boolean;
+    epsName: string;
+    serviceName: string;
+    epsIdForSlots: string | null;
+    armarRespuesta: (lineas: string) => string;
+    userMessage: string;
+    step: 'SLOTS_OFFERED' | 'SLOTS_REOFFERED';
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    const { organizationId, senderId, slots, MSGS } = p;
+
+    const vistosKey = this.cuposVistosKey(organizationId, senderId);
+    const anteriores = (
+      await this.redis.keys(`temp_slot_*:${organizationId}:${senderId}`)
+    ).filter((k) => k !== vistosKey);
+    if (anteriores.length > 0) await this.redis.del(...anteriores);
+
+    let lineasFechas = '';
+    const slotsMetadata: {
+      letter: string;
+      slotId: string;
+      doctor: string;
+      fecha: string;
+    }[] = [];
+    for (let i = 0; i < slots.length; i++) {
+      const letra = String.fromCharCode(65 + i);
+      await this.redis.set(
+        this.slotKey(organizationId, senderId, letra),
+        slots[i].slotId,
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        this.slotDateKey(organizationId, senderId, letra),
+        slots[i].fecha.toISOString(),
+        'EX',
+        SESSION_TTL,
+      );
+      lineasFechas +=
+        `*${letra})* ${formatAppointmentLong(slots[i].fecha)} ` +
+        `· ${slots[i].doctor}\n`;
+      slotsMetadata.push({
+        letter: letra,
+        slotId: slots[i].slotId,
+        doctor: slots[i].doctor,
+        fecha: slots[i].fecha.toISOString(),
+      });
+    }
+
+    // «Otro día»: solo si después del último día ofrecido hay algo que mostrar.
+    const hayOtroDia = await this.hayCuposOtroDia(
+      organizationId,
+      p.serviceName,
+      p.epsIdForSlots,
+      slots,
+    );
+    const letraOtroDia = hayOtroDia
+      ? String.fromCharCode(65 + slots.length)
+      : null;
+    if (letraOtroDia) {
+      await this.redis.set(
+        this.otroDiaKey(organizationId, senderId),
+        letraOtroDia,
+        'EX',
+        SESSION_TTL,
+      );
+      lineasFechas += MSGS.opcionOtroDia(letraOtroDia);
+    }
+
+    const vistos = new Set(await this.cuposVistos(organizationId, senderId));
+    for (const c of slots) vistos.add(c.slotId);
+    await this.redis.set(vistosKey, [...vistos].join(','), 'EX', SESSION_TTL);
+
+    const reply = p.armarRespuesta(lineasFechas);
+    // En voz: el audio LEE las próximas N opciones (env
+    // VOICE_SLOTS_SPOKEN_COUNT) en lenguaje natural ("opción A, mañana a
+    // las 3 de la tarde..."); el listado completo con todas las letras
+    // siempre viaja por texto para que el paciente pueda revisarlo.
+    const audioText = p.isVoiceTurn
+      ? MSGS.cuposDisponiblesAudioHablado(
+          p.epsName,
+          this.buildSpokenSlotLines(slots),
+        )
+      : MSGS.cuposDisponiblesAudio(p.epsName);
+    await this.smartReply(organizationId, senderId, reply, audioText);
+    await this.setUserState(organizationId, senderId, ChatState.AWAITING_DATE);
+
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: p.userMessage,
+      botReply: reply,
+      metadata: {
+        step: p.step,
+        slotsCount: slots.length,
+        slots: slotsMetadata,
+        ...(letraOtroDia ? { otroDia: letraOtroDia } : {}),
+        ...p.metadata,
+      },
+    });
+  }
+
+  /**
+   * ¿Hay cupos después del último día de estos? Falla blanda: si la consulta
+   * falla, el menú sale igual, sin la opción «Otro día» (el paciente puede
+   * escribir el día que quiere).
+   */
+  private async hayCuposOtroDia(
+    organizationId: string,
+    serviceName: string,
+    epsIdForSlots: string | null,
+    slots: AvailableSlot[],
+  ): Promise<boolean> {
+    try {
+      const timeZone = (await this.zonaHorariaDe(organizationId)) ?? undefined;
+      return await this.appointmentsService.hayCuposDesde(
+        serviceName,
+        epsIdForSlots,
+        organizationId,
+        inicioDelDiaSiguiente(
+          slots.map((c) => c.fecha),
+          { timeZone },
+        ),
+      );
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo revisar si hay cupos otro día (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * 🗓️ Ninguno de los cupos que vio le sirve y pidió otra cosa: «mañana», «el
+   * miércoles 28», «en la tarde», «otro horario», «otro día» o la letra de «Otro
+   * día» (2026-10-27). Se le buscan con las reglas de siempre (anticipación,
+   * plazo, días sin citas, médicos encendidos) y se le muestra el menú otra vez.
+   * Es un avance, no un error: no cuenta como reintento.
+   *
+   *  · Primero sin los cupos que ya vio. Si pidió un día y así no queda ninguno,
+   *    con ellos: esos son los que hay ese día.
+   *  · Un día más allá del plazo para agendar: se le dice desde cuándo escribir.
+   *  · Nada en lo que pidió: los más próximos (desde ese día, o sin la franja), y
+   *    si tampoco hay, los que ya vio siguen en pie.
+   */
+  private async ofrecerOtroHorario(
+    ctx: ChatTurnContext,
+    pedido: PedidoOtroHorario,
+  ): Promise<boolean> {
+    const { organizationId, senderId, text, MSGS } = ctx;
+    const [serviceName, epsName, epsId] = await Promise.all([
+      this.redis.get(`temp_especialidad:${organizationId}:${senderId}`),
+      this.redis.get(`temp_eps_query:${organizationId}:${senderId}`),
+      this.redis.get(`temp_eps_id:${organizationId}:${senderId}`),
+    ]);
+    const userMessage = text || '[audio]';
+    const pedidoAuditado = {
+      fecha: pedido.fecha
+        ? diaLocal(pedido.fecha.desde) +
+          (pedido.fecha.precision === 'rango' ? '+semana' : '')
+        : null,
+      franja: pedido.franja,
+      otroDia: pedido.otroDia,
+    };
+
+    // Sin servicio ni EPS en memoria no hay qué buscar: que se le pida la letra.
+    if (!serviceName || !epsName) {
+      this.logger.warn(
+        `[Tenant: ${organizationId}] Pidió otro horario sin servicio o EPS en la sesión de ${senderId}`,
+      );
+      return false;
+    }
+    await this.redis.del(ctx.retriesKey);
+
+    const timeZone = (await this.zonaHorariaDe(organizationId)) ?? undefined;
+    const etiqueta = etiquetaOtroHorario(pedido, { timeZone });
+
+    // Un día más allá del plazo: no hay cupos que mostrar todavía.
+    if (pedido.fecha) {
+      const plazo = await this.fechaMasAllaDelPlazo(
+        organizationId,
+        pedido.fecha.desde,
+      );
+      if (plazo) {
+        const reply = MSGS.fechaFueraDelPlazo(
+          fechaEnPalabras(diaLocal(pedido.fecha.desde, timeZone), {
+            conAnio: false,
+          }),
+          plazo.hasta,
+          plazo.desde,
+        );
+        await this.smartReply(organizationId, senderId, reply);
+        await this.auditSuccess(senderId, organizationId, {
+          userMessage,
+          botReply: reply,
+          metadata: {
+            step: 'OTRO_HORARIO_FUERA_DEL_PLAZO',
+            pedido: pedidoAuditado,
+          },
+        });
+        return true;
+      }
+    }
+
+    const epsIdForSlots =
+      epsName.toLowerCase() === PARTICULAR_EPS_NAME.toLowerCase()
+        ? null
+        : epsId || null;
+    const ofrecidos = await this.loadOfferedSlots(organizationId, senderId);
+    const vistos = await this.cuposVistos(organizationId, senderId);
+    const ventana = ventanaOtroHorario(
+      pedido,
+      ofrecidos.map((o) => o.fecha),
+      { timeZone },
+    );
+    const buscar = (
+      v: { desde: Date; hasta?: Date | null } | null,
+      franja: PedidoOtroHorario['franja'],
+      excluir: string[],
+    ) =>
+      this.appointmentsService.getAvailableSlots(
+        serviceName,
+        epsIdForSlots,
+        organizationId,
+        v,
+        { franja, excluir },
+      );
+
+    let slots = await buscar(ventana, pedido.franja, vistos);
+    if (slots.length === 0 && pedido.fecha && vistos.length > 0) {
+      slots = await buscar(ventana, pedido.franja, []);
+    }
+    const exacto = slots.length > 0;
+    if (!exacto) {
+      const alternativas: Array<
+        [
+          { desde: Date; hasta?: Date | null } | null,
+          PedidoOtroHorario['franja'],
+        ]
+      > = [];
+      if (pedido.fecha)
+        alternativas.push([{ desde: ventana.desde }, pedido.franja]);
+      if (pedido.franja) alternativas.push([ventana, null]);
+      alternativas.push([null, null]);
+      for (const [v, franja] of alternativas) {
+        slots = await buscar(v, franja, vistos);
+        if (slots.length > 0) break;
+      }
+    }
+
+    if (slots.length === 0) {
+      // Nada distinto de lo que ya vio: sus letras siguen valiendo.
+      const reply = MSGS.sinOtrosCupos();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage,
+        botReply: reply,
+        metadata: { step: 'OTRO_HORARIO_SIN_CUPOS', pedido: pedidoAuditado },
+      });
+      return true;
+    }
+
+    const diaDeTodos = diaComunDeLosCupos(
+      slots.map((c) => c.fecha),
+      { timeZone },
+    );
+    const armarRespuesta = (lineas: string): string => {
+      if (exacto) {
+        const nombre = etiqueta ?? diaDeTodos;
+        return nombre
+          ? MSGS.cuposParaFecha(epsName, nombre, lineas)
+          : MSGS.otrosCuposDisponibles(epsName, lineas);
+      }
+      return etiqueta
+        ? MSGS.sinCuposEsaFechaProximos(etiqueta, epsName, lineas)
+        : MSGS.otrosCuposDisponibles(epsName, lineas);
+    };
+
+    await this.mostrarMenuCupos({
+      organizationId,
+      senderId,
+      slots,
+      MSGS,
+      isVoiceTurn:
+        (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
+        'true',
+      epsName,
+      serviceName,
+      epsIdForSlots,
+      armarRespuesta,
+      userMessage,
+      step: 'SLOTS_REOFFERED',
+      metadata: {
+        eps: epsName,
+        specialty: serviceName,
+        pedido: pedidoAuditado,
+        exacto,
+      },
+    });
+    return true;
+  }
+
+  /**
+   * 🗓️ El día pedido queda más allá del plazo para agendar por el asistente:
+   * hasta qué día se agenda y desde cuándo puede escribir para ese día, en
+   * palabras. null sin plazo o dentro de él.
+   */
+  private async fechaMasAllaDelPlazo(
+    organizationId: string,
+    inicio: Date,
+  ): Promise<{ hasta: string; desde: string } | null> {
+    const plazo = await plazoDeLaClinica(this.prisma, organizationId);
+    if (!plazo) return null;
+    const ahora = new Date();
+    const fin = finDelPlazoParaAgendar(ahora, plazo.dias, plazo.timeZone);
+    if (!fin || inicio < fin) return null;
+    const ultimo = ultimoDiaParaAgendar(
+      diaLocal(ahora, plazo.timeZone),
+      plazo.dias,
+    );
+    if (!ultimo) return null;
+    return {
+      hasta: fechaEnPalabras(ultimo, { conAnio: false }),
+      desde: fechaEnPalabras(
+        primerDiaParaVerElCupo(diaLocal(inicio, plazo.timeZone), plazo.dias),
+        { conAnio: false },
+      ),
+    };
   }
 
   /**
@@ -9053,6 +9465,14 @@ export class ChatbotService implements OnModuleInit {
         ctx,
         MSGS.apellidosNoEntendidos(),
         'ALTA_APELLIDOS_NO_ENTENDIDOS',
+      );
+      return;
+    }
+    if (noEsUnNombre(apellidos)) {
+      await this.responderAlta(
+        ctx,
+        MSGS.apellidosNoValidos(apellidos),
+        'ALTA_APELLIDOS_NO_VALIDOS',
       );
       return;
     }
@@ -10935,7 +11355,7 @@ export class ChatbotService implements OnModuleInit {
       await this.smartReply(organizationId, senderId, reply);
 
       await this.auditFailure(senderId, organizationId, {
-        reason: FailureReason.SESSION_EXPIRED,
+        reason: FailureReason.SLOT_NOT_UNDERSTOOD,
         userMessage: text,
         botReply: reply,
         metadata: { invalidLetter: letraElegida, stage: 'MODIFY_NEW_SLOT' },

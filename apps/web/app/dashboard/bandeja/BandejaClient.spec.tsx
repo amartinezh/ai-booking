@@ -80,6 +80,8 @@ const avisosOk = (over: Partial<EstadoAvisos> = {}): EstadoAvisos => ({
     tieneRespaldo: false,
     numero: null,
     respaldo: null,
+    plantillaPacientes: true,
+    razonPacientes: null,
     ...over,
 });
 

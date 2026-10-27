@@ -705,7 +705,12 @@ export async function estadoAvisos(
   actor: ActorBandeja,
 ): Promise<Resultado<EstadoAvisos>> {
   if (!actor.permisos.ver) return { success: false, error: SIN_PERMISOS };
-  const [config, plantilla] = await Promise.all([
+  const plantillaActiva = (kind: 'SYNC_EXCEPTION_ALERT' | 'PATIENT_REQUEST_ALERT') =>
+    db.whatsappTemplate.findFirst({
+      where: { organizationId: actor.organizationId, kind, isActive: true },
+      select: { id: true },
+    });
+  const [config, plantilla, plantillaPacientes] = await Promise.all([
     db.hospitalMirrorConfig.findUnique({
       where: { organizationId: actor.organizationId },
       select: {
@@ -715,31 +720,33 @@ export async function estadoAvisos(
         agendadorRespaldoWhatsapp: true,
       },
     }),
-    db.whatsappTemplate.findFirst({
-      where: {
-        organizationId: actor.organizationId,
-        kind: 'SYNC_EXCEPTION_ALERT',
-        isActive: true,
-      },
-      select: { id: true },
-    }),
+    plantillaActiva('SYNC_EXCEPTION_ALERT'),
+    plantillaActiva('PATIENT_REQUEST_ALERT'),
   ]);
 
   const alertasActivas = !!config?.conflictAlertsEnabled;
   const tieneNumero = !!config?.agendadorWhatsapp;
   const tienePlantilla = !!plantilla;
 
-  let razon: string | null = null;
+  // Lo que comparten los dos avisos: el espejo, el interruptor y el número.
+  let razonComun: string | null = null;
   if (!config?.enabled) {
-    razon = 'El espejo con el hospital está apagado para esta clínica.';
+    razonComun = 'El espejo con el hospital está apagado para esta clínica.';
   } else if (!alertasActivas) {
-    razon = 'Los avisos por WhatsApp están apagados.';
+    razonComun = 'Los avisos por WhatsApp están apagados.';
   } else if (!tieneNumero) {
-    razon = 'Falta el número de WhatsApp del agendador.';
-  } else if (!tienePlantilla) {
-    razon =
-      'Falta la plantilla «Aviso al agendador» aprobada en Meta: sin ella el mensaje no sale.';
+    razonComun = 'Falta el número de WhatsApp del agendador.';
   }
+  const razon =
+    razonComun ??
+    (tienePlantilla
+      ? null
+      : 'Falta la plantilla «Aviso al agendador» aprobada en Meta: sin ella el mensaje no sale.');
+  const razonPacientes =
+    razonComun ??
+    (plantillaPacientes
+      ? null
+      : 'Falta la plantilla «Aviso al agendador (pedidos de pacientes)» aprobada en Meta y registrada en Configuración.');
 
   return {
     success: true,
@@ -757,6 +764,8 @@ export async function estadoAvisos(
       respaldo: actor.permisos.configurarAvisos
         ? (config?.agendadorRespaldoWhatsapp ?? null)
         : null,
+      plantillaPacientes: !!plantillaPacientes,
+      razonPacientes,
     },
   };
 }

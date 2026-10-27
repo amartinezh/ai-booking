@@ -146,4 +146,11 @@ export interface EstadoAvisos {
   numero: string | null;
   /** El respaldo, solo para quien lo configura (ORG_ADMIN). */
   respaldo: string | null;
+  /**
+   * 🙋 El aviso de pedidos de pacientes (2026-10-27): pidió cancelar y no confirmó,
+   * o avisó que no irá, con la cita a 24 h o menos. Usa el mismo número y su propia
+   * plantilla. `razonPacientes` dice por qué no sale; null si sale.
+   */
+  plantillaPacientes: boolean;
+  razonPacientes: string | null;
 }

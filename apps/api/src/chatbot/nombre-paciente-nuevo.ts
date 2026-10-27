@@ -81,3 +81,70 @@ export function separarNombresYApellidos(
 
   return tal();
 }
+
+/**
+ * 🪪 ¿Esto no puede ser un nombre ni un apellido? (2026-10-27: una paciente nueva
+ * escribió «Otro horario» en el paso de los nombres —quería otro horario— y el
+ * asistente lo aceptó: en ese paso el texto se toma tal cual, sin IA.)
+ *
+ * Solo se rechaza lo que no tiene otra lectura: dígitos, una pregunta, o una
+ * palabra que ningún nombre lleva («horario», «cita», «mañana», «gracias»…).
+ * Los nombres que son palabras comunes —Luz, Dolores, Rosario, Domingo,
+ * Esperanza, Cruz, Gracia— no están en la lista y pasan.
+ */
+const PALABRAS_QUE_NO_SON_NOMBRE = new Set([
+  'horario',
+  'horarios',
+  'hora',
+  'horas',
+  'cita',
+  'citas',
+  'fecha',
+  'dia',
+  'dias',
+  'otro',
+  'otra',
+  'cupo',
+  'cupos',
+  'turno',
+  'agendar',
+  'cancelar',
+  'cambiar',
+  'quiero',
+  'necesito',
+  'puedo',
+  'favor',
+  'gracias',
+  'hola',
+  'buenos',
+  'buenas',
+  'manana',
+  'tarde',
+  'temprano',
+  'semana',
+  'lunes',
+  'martes',
+  'miercoles',
+  'jueves',
+  'viernes',
+  'sabado',
+  'doctor',
+  'doctora',
+  'medico',
+  'medica',
+  'consulta',
+  'eps',
+  'ninguno',
+  'ninguna',
+  'no',
+  'si',
+]);
+
+export function noEsUnNombre(texto: string): boolean {
+  const t = (texto ?? '').trim();
+  if (!t) return true;
+  if (/[\d?¿@]/.test(t)) return true;
+  return palabras(t.replace(/[^\p{L}\s'-]/gu, ' ')).some((p) =>
+    PALABRAS_QUE_NO_SON_NOMBRE.has(clave(p)),
+  );
+}

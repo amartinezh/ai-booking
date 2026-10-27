@@ -173,6 +173,14 @@ const FAILURE_META: Record<
         actionable: false,
         description: 'El paciente tardó demasiado en responder.',
     },
+    SLOT_NOT_UNDERSTOOD: {
+        label: 'No se entendió el horario',
+        icon: '🗓️',
+        severity: 'warning',
+        actionable: true,
+        description:
+            'En el menú de horarios escribió algo que el asistente no entendió (ni una letra ni un día u hora). Si no agendó, conviene escribirle.',
+    },
     CANCEL_ERROR: {
         label: 'Error al cancelar',
         icon: '❌',

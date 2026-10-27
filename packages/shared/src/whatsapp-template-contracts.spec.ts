@@ -14,6 +14,7 @@ describe('variablesEsperadas', () => {
   //   5 → mass-notice.service.ts (los dos masivos)
   //   3 → mirror-alert.service.ts (aviso al agendador)
   //   5 → aviso-cambio-hospital.service.ts (cita cancelada por el hospital)
+  //   3 → mirror-alert.service.ts (aviso de pedidos de pacientes)
   it.each<[TemplateKind, number]>([
     ['APPOINTMENT_REMINDER', 4],
     ['HIS_APPOINTMENT_CONFIRMATION', 4],
@@ -21,6 +22,7 @@ describe('variablesEsperadas', () => {
     ['APPOINTMENT_CANCELLED_MASS', 5],
     ['APPOINTMENT_REMINDER_MASS', 5],
     ['SYNC_EXCEPTION_ALERT', 3],
+    ['PATIENT_REQUEST_ALERT', 3],
     ['WAITLIST_SLOT_OFFER', 3],
   ])('%s manda %i variables', (kind, cuantas) => {
     expect(variablesEsperadas(kind)).toBe(cuantas);

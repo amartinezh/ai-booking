@@ -21,6 +21,8 @@ import {
   type Regimen,
   normalizarCuposOfrecidos,
   seleccionarCuposManianaTarde,
+  franjaDelCupo,
+  type FranjaDelDia,
 } from '@agenia/shared';
 import {
   bloqueosDeLaClinica,
@@ -85,14 +87,23 @@ export class AppointmentsService {
     organizationId: string,
     // Ventana de fecha preferida por el paciente ("mañana", "el lunes"...).
     // Opcional: sin ella, la consulta es idéntica a la histórica (próximos cupos).
-    dateWindow?: { desde: Date; hasta: Date } | null,
+    // Sin `hasta`, desde ese momento en adelante («otro día», 2026-10-27).
+    dateWindow?: { desde: Date; hasta?: Date | null } | null,
     // `todos`: devuelve la bolsa completa de próximos cupos, sin recortar a
     // los que se ofrecen. Solo para casar una hora dicha por voz ("mañana a
     // las 3"): esa hora puede no estar entre los ofrecidos y aun así existir.
     // `ignorarPlazo`: sin el plazo máximo para agendar. Solo para decirle al
     // paciente desde cuándo verá un cupo (`cupoMasAllaDelPlazo`); nunca para
     // ofrecerlo.
-    opts: { todos?: boolean; ignorarPlazo?: boolean } = {},
+    // `franja`: solo los de la mañana o solo los de la tarde, en la hora de la
+    // clínica; `excluir`: cupos que el paciente ya vio en el menú. Los dos, para
+    // cuando pide otro horario (2026-10-27).
+    opts: {
+      todos?: boolean;
+      ignorarPlazo?: boolean;
+      franja?: FranjaDelDia | null;
+      excluir?: readonly string[];
+    } = {},
   ): Promise<AvailableSlot[]> {
     // ⏱️ Nada que empiece antes de la anticipación mínima (60 min, 2026-10-21):
     // antes se ofrecían los más próximos, y a las 06:00 salía el de las 06:30.
@@ -102,7 +113,7 @@ export class AppointmentsService {
     const startTimeFilter: { gte: Date; lte?: Date; lt?: Date } = dateWindow
       ? {
           gte: dateWindow.desde > minimo ? dateWindow.desde : minimo,
-          lte: dateWindow.hasta,
+          ...(dateWindow.hasta ? { lte: dateWindow.hasta } : {}),
         }
       : { gte: minimo };
 
@@ -149,6 +160,7 @@ export class AppointmentsService {
           doctor: doctorFilter,
           // Filtro clave: El slot debe ser universal (null) o ser exclusivo para la EPS del paciente
           OR: [{ allowedEpsId: null }, { allowedEpsId: epsId }],
+          ...(opts.excluir?.length ? { id: { notIn: [...opts.excluir] } } : {}),
           ...(tramos.length > 0
             ? {
                 NOT: tramos.map((t) => ({
@@ -179,6 +191,12 @@ export class AppointmentsService {
         (slot) =>
           !cupoBloqueado(slot.startTime, bloqueos.reglas, bloqueos.timeZone),
       )
+      .filter(
+        (slot) =>
+          !opts.franja ||
+          franjaDelCupo(slot.startTime, org?.timezone ?? undefined) ===
+            opts.franja,
+      )
       .map((slot) => ({
         slotId: slot.id,
         fecha: slot.startTime,
@@ -196,6 +214,27 @@ export class AppointmentsService {
       normalizarCuposOfrecidos(org?.settings?.slotsOfferedCount),
       { timeZone: org?.timezone ?? undefined },
     );
+  }
+
+  /**
+   * 🗓️ ¿Hay algún cupo que el asistente pueda ofrecer desde `desde`? Con las
+   * mismas reglas de `getAvailableSlots`. Para la opción «Otro día» del menú de
+   * cupos (2026-10-27): solo se muestra si después del último día ofrecido hay algo.
+   */
+  async hayCuposDesde(
+    serviceName: string,
+    epsId: string | null,
+    organizationId: string,
+    desde: Date,
+  ): Promise<boolean> {
+    const cupos = await this.getAvailableSlots(
+      serviceName,
+      epsId,
+      organizationId,
+      { desde },
+      { todos: true },
+    );
+    return cupos.length > 0;
   }
 
   /**

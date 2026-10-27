@@ -240,6 +240,8 @@ export {
   ORDEN_SEVERIDAD_EXCEPCION,
   SEVERIDADES_EXCEPCION,
   TIPOS_CON_AVISO,
+  TIPOS_CON_AVISO_PACIENTE,
+  esAvisoDePaciente,
   TIPOS_EXCEPCION,
   TITULO_EXCEPCION,
   UMBRALES_VIGILANTE,
@@ -248,6 +250,7 @@ export {
   evaluarRetencion,
   eventoCulpable,
   parametrosPlantillaAviso,
+  parametrosPlantillaAvisoPaciente,
   requiereAviso,
   requiereRecordatorio,
   resumenRetencion,
@@ -306,11 +309,26 @@ export {
   ANTICIPACION_MINIMA_AGENDAR_MIN,
   CUPOS_OFRECIDOS,
   cumpleAnticipacionAlReservar,
+  franjaDelCupo,
   inicioMinimoParaOfrecer,
   normalizarCuposOfrecidos,
   seleccionarCuposManianaTarde,
 } from './src/cupos-ofrecidos';
-export type { SeleccionCuposOptions } from './src/cupos-ofrecidos';
+export type {
+  FranjaDelDia,
+  SeleccionCuposOptions,
+} from './src/cupos-ofrecidos';
+export {
+  diaComunDeLosCupos,
+  etiquetaOtroHorario,
+  inicioDelDiaSiguiente,
+  interpretarOtroHorario,
+  ventanaOtroHorario,
+} from './src/otro-horario';
+export type {
+  OtroHorarioOptions,
+  PedidoOtroHorario,
+} from './src/otro-horario';
 export {
   ANTICIPACION_RECORDATORIO,
   normalizarAnticipacionRecordatorio,

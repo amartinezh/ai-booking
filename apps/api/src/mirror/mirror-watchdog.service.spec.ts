@@ -176,9 +176,14 @@ describe('MirrorWatchdogService', () => {
       registrar: jest.fn(async (..._a: unknown[]) => 'CREADA'),
       autoResolver: jest.fn(async (..._a: unknown[]) => true),
       vencer: jest.fn(async (..._a: unknown[]) => true),
+      escalar: jest.fn(async (..._a: unknown[]) => true),
     };
     const alert = {
       avisar: jest.fn(async (..._a: unknown[]) => ({
+        enviado: false,
+        motivo: 'NADA_QUE_AVISAR',
+      })),
+      avisarPedidosDePacientes: jest.fn(async (..._a: unknown[]) => ({
         enviado: false,
         motivo: 'NADA_QUE_AVISAR',
       })),
@@ -1064,6 +1069,42 @@ describe('MirrorWatchdogService', () => {
       expect(igual.exceptions.autoResolver).not.toHaveBeenCalled();
     });
 
+    // 2026-10-26: pidió cancelar, después escribió «Si necesito la cita por
+    // favor», fue a la cita, y el caso siguió abierto en la Bandeja.
+    it.each(['AVISO_INASISTENCIA', 'CANCELACION_SIN_CONFIRMAR'])(
+      '🙋 %s se cierra solo si el paciente asistió',
+      async (kind) => {
+        const { service, exceptions } = build({
+          activas: [aviso({ kind })],
+          citas: [cita({ attendanceStatus: 'ATTENDED' })],
+        });
+        await service.vigilarOrganizacion(ORG, AHORA);
+        expect(cerradas(exceptions)).toEqual([
+          ['ex-aviso', 'El paciente asistió a la cita.'],
+        ]);
+      },
+    );
+
+    it('🙋 si no asistió (o aún no se sabe), el caso sigue abierto', async () => {
+      for (const attendanceStatus of ['NO_SHOW', 'PENDING']) {
+        const { service, exceptions } = build({
+          activas: [aviso({ kind: 'CANCELACION_SIN_CONFIRMAR' })],
+          citas: [cita({ attendanceStatus })],
+        });
+        await service.vigilarOrganizacion(ORG, AHORA);
+        expect(exceptions.autoResolver).not.toHaveBeenCalled();
+      }
+    });
+
+    it('🔎 «revisar una cita del asistente» no se cierra por la asistencia', async () => {
+      const { service, exceptions } = build({
+        activas: [aviso({ kind: 'REVISAR_CITA_ASISTENTE' })],
+        citas: [cita({ attendanceStatus: 'ATTENDED' })],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.autoResolver).not.toHaveBeenCalled();
+    });
+
     it('la cita ya no existe en AgenIA → se da por cancelada', async () => {
       const { service, exceptions } = build({ activas: [aviso()], citas: [] });
       await service.vigilarOrganizacion(ORG, AHORA);
@@ -1373,6 +1414,68 @@ describe('MirrorWatchdogService', () => {
       });
       await service.vigilarOrganizacion(ORG, AHORA);
       expect(exceptions.vencer).toHaveBeenCalledTimes(1);
+    });
+  });
+  // ═══════════════════════════════════════════════════════════════════════
+  describe('🙋 pedidos de pacientes con la cita cerca (2026-10-27)', () => {
+    const pedido = (over: Record<string, unknown> = {}) => ({
+      id: 'ex-p',
+      kind: 'AVISO_INASISTENCIA',
+      severity: 'MEDIA',
+      appointmentId: 'apt-1',
+      appointmentStartAt: enHoras(3),
+      ...over,
+    });
+
+    it('sube la gravedad al acercarse la cita: a 3 h es CRÍTICA', async () => {
+      const { service, exceptions } = build({
+        activas: [pedido()],
+        citas: [
+          cita({ scheduleSlot: { startTime: enHoras(3), doctorId: 'doc-1' } }),
+        ],
+      });
+      const r = await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.escalar).toHaveBeenCalledWith(
+        ORG,
+        expect.objectContaining({ id: 'ex-p', severity: 'MEDIA' }),
+        'CRITICA',
+      );
+      expect(r.actualizadas).toBe(1);
+    });
+
+    it('ya en su gravedad: no la toca', async () => {
+      const { service, exceptions } = build({
+        activas: [pedido({ severity: 'CRITICA' })],
+        citas: [
+          cita({ scheduleSlot: { startTime: enHoras(3), doctorId: 'doc-1' } }),
+        ],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.escalar).not.toHaveBeenCalled();
+    });
+
+    it('le pide al aviso que avise los pedidos de pacientes en cada vuelta', async () => {
+      const { service, alert } = build();
+      const r = await service.vigilarOrganizacion(ORG, AHORA);
+      expect(alert.avisarPedidosDePacientes).toHaveBeenCalledWith(ORG, AHORA);
+      expect(r.avisoPacientes).toEqual({
+        enviado: false,
+        motivo: 'NADA_QUE_AVISAR',
+      });
+    });
+
+    it('si ese aviso revienta, la vuelta termina igual', async () => {
+      const { service, alert } = build();
+      alert.avisarPedidosDePacientes.mockRejectedValueOnce(new Error('Meta'));
+      jest
+        .spyOn(
+          (service as unknown as { logger: { error: () => void } }).logger,
+          'error',
+        )
+        .mockImplementation(() => undefined);
+      await expect(
+        service.vigilarOrganizacion(ORG, AHORA),
+      ).resolves.toMatchObject({ avisoPacientes: null });
     });
   });
 });

@@ -1,4 +1,7 @@
-import { separarNombresYApellidos } from './nombre-paciente-nuevo';
+import {
+  noEsUnNombre,
+  separarNombresYApellidos,
+} from './nombre-paciente-nuevo';
 
 describe('separarNombresYApellidos — el paciente nuevo repite su nombre', () => {
   it('🧾 el caso real (2026-10-22): nombre completo en «nombres» y luego los apellidos', () => {
@@ -73,5 +76,48 @@ describe('separarNombresYApellidos — el paciente nuevo repite su nombre', () =
         ' Hurtado  Ramos ',
       ),
     ).toMatchObject({ nombres: 'Juan Camilo', apellidos: 'Hurtado Ramos' });
+  });
+});
+
+describe('noEsUnNombre — lo que se escribió en el paso del nombre y no es un nombre', () => {
+  it.each([
+    'Otro horario', // 2026-10-26, la paciente quería otro horario
+    'otro día',
+    'Para mañana',
+    'en la tarde',
+    'Quiero cambiar la cita',
+    'Muchas gracias',
+    'Buenos días',
+    'No',
+    'Si',
+    '1054927777',
+    '¿Para qué?',
+    'ninguno',
+    'el doctor',
+  ])('«%s» no es un nombre', (texto) => {
+    expect(noEsUnNombre(texto)).toBe(true);
+  });
+
+  it.each([
+    'Agustín',
+    'María Fernanda',
+    'Juan Camilo Hurtado Ramos',
+    'Luz Dary',
+    'María de los Dolores',
+    'Rosario',
+    'Domingo',
+    'María de la Cruz',
+    'Esperanza',
+    'Gracia',
+    "D'Alessandro",
+    'José-Luis',
+    'Ñuflo',
+    'González Giraldo',
+  ])('«%s» sí puede ser un nombre', (texto) => {
+    expect(noEsUnNombre(texto)).toBe(false);
+  });
+
+  it('vacío no es un nombre', () => {
+    expect(noEsUnNombre('   ')).toBe(true);
   });
 });

@@ -555,6 +555,35 @@ const FORMAL = {
         `_Responda con la letra del que prefiera, por favor._`,
     ]),
 
+  // 🗓️ Menú de cupos (2026-10-27): la opción para ver otro día, con la pista de
+  // que también puede escribir el día o la hora. Va como una línea más del menú.
+  opcionOtroDia: (letra: string) =>
+    `*${letra})* Otro día _(o escríbame qué día u hora le sirve)_\n`,
+
+  // Pidió «otro horario» u «otro día» y los cupos no caen en un solo día.
+  otrosCuposDisponibles: (epsName: string, lineas: string) =>
+    pick([
+      `Claro. Estos son otros horarios disponibles con *${epsName}*:\n\n${lineas}\n` +
+        `_Responda con la letra del que prefiera, por favor._`,
+      `Con gusto. Le comparto otras opciones con *${epsName}*:\n\n${lineas}\n` +
+        `_Indíqueme con la letra cuál le sirve._`,
+    ]),
+
+  // Nombró un día o una hora que casa con varios de los cupos que ve.
+  cupoAmbiguo: () =>
+    `Hay más de un horario que coincide con lo que me indica. ¿Me confirma la *letra* del que prefiere, por favor?`,
+
+  // Pidió otro horario y no hay ninguno más: los que vio siguen en pie.
+  sinOtrosCupos: () =>
+    `Por ahora no tengo otros horarios disponibles por este medio. 🙏\n\n` +
+    `Los que le mostré siguen disponibles: responda con la letra, o escriba *"Salir"* si prefiere terminar.`,
+
+  // Pidió un día más allá del plazo para agendar por el asistente.
+  fechaFueraDelPlazo: (fechaLabel: string, hasta: string, desde: string) =>
+    `Por este medio agendo citas hasta el *${hasta}*, así que para el *${fechaLabel}* todavía no puedo darle una. ` +
+    `Puede escribirme desde el *${desde}*. 🙏\n\n` +
+    `Los horarios que le mostré siguen disponibles: responda con la letra, o dígame otro día u hora.`,
+
   preguntaWaitlist: (servicio: string, eps: string) =>
     pick([
       `Revisé la agenda para *${servicio}* con *${eps}* y por el momento no hay cupos disponibles.\n\n` +
@@ -877,6 +906,18 @@ const FORMAL = {
       `Gracias. Nombres: *${nombres}*\n\n*Paso 2 de 2:* ahora escriba *solo sus APELLIDOS*.\nPor ejemplo: *Gómez Restrepo*`,
       `Anotado. Nombres: *${nombres}*\n\n*Paso 2 de 2:* escriba *solo sus APELLIDOS*.\nPor ejemplo: *Pérez Gil*`,
     ]),
+  // 🪪 Escribió algo que no es un nombre («Otro horario», 2026-10-26).
+  nombreNoValido: (texto: string) =>
+    `«${texto.trim().slice(0, 40)}» no parece un nombre. 🙏\n\n` +
+    `*Paso 1 de 2:* escriba *solo sus NOMBRES*, sin apellidos.\nPor ejemplo: *María Fernanda*\n\n` +
+    `_Si lo que quiere es otro horario, escriba *Cancelar* y empezamos de nuevo._`,
+  // El mismo caso con el nombre que se pide para la lista de espera (un solo paso).
+  nombreNoValidoLista: (texto: string) =>
+    `«${texto.trim().slice(0, 40)}» no parece un nombre. 🙏\n\n¿Me escribe su *nombre completo*, por favor?`,
+  apellidosNoValidos: (texto: string) =>
+    `«${texto.trim().slice(0, 40)}» no parecen unos apellidos. 🙏\n\n` +
+    `*Paso 2 de 2:* escriba *solo sus APELLIDOS*.\nPor ejemplo: *Gómez Restrepo*\n\n` +
+    `_Si lo que quiere es otro horario, escriba *Cancelar* y empezamos de nuevo._`,
   apellidosNoEntendidos: () =>
     pick([
       `No alcancé a leer los apellidos. ¿Me los escribe de nuevo, por favor? *Solo sus APELLIDOS*.`,
@@ -911,8 +952,8 @@ const FORMAL = {
 
   errorSlotInvalido: () =>
     pick([
-      `Esa letra no aparece entre las opciones que le envié.\n\n¿Me la confirma, por favor? Recuerde que puede responder con la letra _(A, B, C...)_ o escribir *"Salir"* si prefiere cancelar.`,
-      `Disculpe, no fue posible ubicar esa opción.\n\nResponda con una de las letras disponibles _(A, B, C...)_ o escriba *"Salir"* si desea terminar el proceso.`,
+      `No logré ubicar esa opción entre las que le envié.\n\nResponda con la letra _(A, B, C...)_, dígame qué día u hora le sirve _(por ejemplo: «mañana en la tarde»)_ o escriba *"Salir"* si prefiere terminar.`,
+      `Disculpe, no fue posible ubicar esa opción.\n\nPuede responder con una de las letras _(A, B, C...)_, escribirme el día u hora que prefiere _(por ejemplo: «el jueves»)_ o escribir *"Salir"* para terminar.`,
     ]),
 
   waitlistCupoDisponible: (
@@ -1924,6 +1965,30 @@ const INFORMAL = {
         `_Dime con la letra cuál prefieres._ 😊`,
     ]),
 
+  // 🗓️ Menú de cupos (2026-10-27): la opción para ver otro día (tuteo).
+  opcionOtroDia: (letra: string) =>
+    `*${letra})* Otro día _(o escríbeme qué día u hora te sirve)_\n`,
+
+  otrosCuposDisponibles: (epsName: string, lineas: string) =>
+    pick([
+      `¡Claro! Mira estos otros horarios con *${epsName}*:\n\n${lineas}\n` +
+        `_Mándame la letra del que prefieras._ ✍️`,
+      `Listo, te tengo otras opciones con *${epsName}*:\n\n${lineas}\n` +
+        `_Dime con la letra cuál te sirve._ 😊`,
+    ]),
+
+  cupoAmbiguo: () =>
+    `Tengo más de un horario que coincide con eso. 🙏 ¿Me confirmas la *letra* del que quieres?`,
+
+  sinOtrosCupos: () =>
+    `Por ahora no tengo más horarios disponibles por aquí. 🙏\n\n` +
+    `Los que te mostré siguen disponibles: mándame la letra, o escribe *"Salir"* si prefieres terminar.`,
+
+  fechaFueraDelPlazo: (fechaLabel: string, hasta: string, desde: string) =>
+    `Por aquí agendo citas hasta el *${hasta}*, así que para el *${fechaLabel}* todavía no puedo darte una. ` +
+    `Escríbeme desde el *${desde}*. 🙏\n\n` +
+    `Los horarios que te mostré siguen disponibles: mándame la letra, o dime otro día u hora.`,
+
   preguntaWaitlist: (servicio: string, eps: string) =>
     pick([
       `Mira, revisé bien la agenda de *${servicio}* con *${eps}* y por ahora no veo espacios. 😔 Pero no te preocupes — si quieres te anoto en la *lista de espera* y te aviso por acá apenas se libere un espacio. ✨\n\n¿Te animas? Responde *SÍ* para anotarte o *NO* si prefieres intentar después.`,
@@ -2188,6 +2253,16 @@ const INFORMAL = {
       `¡Gracias! Nombres: *${nombres}* 😊\n\n*Paso 2 de 2:* ahora escribe *solo tus APELLIDOS*.\nPor ejemplo: *Gómez Restrepo*`,
       `Listo. Nombres: *${nombres}*\n\n*Paso 2 de 2:* escribe *solo tus APELLIDOS*.\nPor ejemplo: *Pérez Gil*`,
     ]),
+  nombreNoValido: (texto: string) =>
+    `«${texto.trim().slice(0, 40)}» no parece un nombre. 🙏\n\n` +
+    `*Paso 1 de 2:* escribe *solo tus NOMBRES*, sin apellidos.\nPor ejemplo: *María Fernanda*\n\n` +
+    `_Si lo que quieres es otro horario, escribe *Cancelar* y empezamos de nuevo._`,
+  nombreNoValidoLista: (texto: string) =>
+    `«${texto.trim().slice(0, 40)}» no parece un nombre. 🙏\n\n¿Me escribes tu *nombre completo*?`,
+  apellidosNoValidos: (texto: string) =>
+    `«${texto.trim().slice(0, 40)}» no parecen unos apellidos. 🙏\n\n` +
+    `*Paso 2 de 2:* escribe *solo tus APELLIDOS*.\nPor ejemplo: *Gómez Restrepo*\n\n` +
+    `_Si lo que quieres es otro horario, escribe *Cancelar* y empezamos de nuevo._`,
   apellidosNoEntendidos: () =>
     pick([
       `No te entendí los apellidos. ¿Me los escribes otra vez? *Solo tus APELLIDOS*.`,
@@ -2221,8 +2296,8 @@ const INFORMAL = {
 
   errorSlotInvalido: () =>
     pick([
-      `Mmm, esa letra no la veo entre las opciones que te mandé. 🙏 ¿Me la confirmas? Puedes responderme con la letra (A, B, C...) o escribirme *"Salir"* si quieres terminar.`,
-      `No encontré esa opción. 😊 Respóndeme con una de las letras (A, B, C...) o escribe *"Salir"* para cancelar.`,
+      `Mmm, esa opción no la veo entre las que te mandé. 🙏 Respóndeme con la letra (A, B, C...), dime qué día u hora te sirve (por ejemplo: «mañana en la tarde») o escribe *"Salir"* si quieres terminar.`,
+      `No encontré esa opción. 😊 Mándame una de las letras (A, B, C...), o escríbeme el día u hora que prefieres (por ejemplo: «el jueves»), o *"Salir"* para terminar.`,
     ]),
 
   waitlistCupoDisponible: (

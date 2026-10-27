@@ -15,9 +15,14 @@ import { InteractionLogService } from '../interaction-log/interaction-log.servic
 import { ChannelActivityService } from '../interaction-log/channel-activity.service';
 const channelActivity = { record: jest.fn(async () => undefined) };
 import {
+  diaLocal,
   etiquetaPeriodo,
+  fechaEnPalabras,
+  franjaDelCupo,
+  horaLocalAUtc,
   periodoDelLimite,
   regimenSeguroDelPadron,
+  sumarDiasAFecha,
 } from '@agenia/shared';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { OrganizationSettingsService } from './organization-settings.service';
@@ -351,6 +356,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     bookAppointment: jest.Mock;
     regimenDelPadron: jest.Mock;
     cupoMasAllaDelPlazo: jest.Mock;
+    hayCuposDesde: jest.Mock;
   };
   // La Bandeja: lo que el bot deja para el personal.
   let avisos: { registrar: jest.Mock };
@@ -417,6 +423,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       // Sin plazo para agendar, como siempre: «agenda completa» es agenda completa.
       cupoMasAllaDelPlazo: jest.fn(async () => null),
       getAvailableSlots: jest.fn(() => []),
+      // Sin otro día que ofrecer: el menú de siempre, sin la opción «Otro día».
+      hayCuposDesde: jest.fn(async () => false),
       bookAppointment: jest.fn(() => ({
         success: true,
         appointmentId: 'apt-new',
@@ -875,6 +883,229 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
   // 🏥 H10 (docs/PLAN_AGENDA_HUECOS.md): el bot NO confirma la cita hasta que
   // el hospital la registra. Mientras, pide unos segundos.
   // ──────────────────────────────────────────────────────────────────
+  // ──────────────────────────────────────────────────────────────────
+  // 1B. Otro día u otra hora en el menú de cupos (2026-10-27)
+  //
+  // El 26 y 27 de octubre, de 34 personas que vieron cupos, 17 agendaron. Al
+  // menos 5 pidieron otro día («para mañana no hay», «Podría ser para el
+  // miércoles 28») y recibieron «Esa letra no aparece entre las opciones».
+  // ──────────────────────────────────────────────────────────────────
+  describe('1B. Otro día u otra hora en el menú de cupos', () => {
+    // Fechas relativas a HOY en Bogotá: «mañana» y «pasado mañana» se resuelven
+    // con el reloj real, así que los cupos también.
+    const hoy = diaLocal(new Date());
+    const enDia = (n: number, hora: number, min = 0): Date => {
+      const [y, m, d] = sumarDiasAFecha(hoy, n).split('-').map(Number);
+      return new Date(horaLocalAUtc(y, m, d, hora).getTime() + min * 60_000);
+    };
+    const enPalabras = (n: number) =>
+      fechaEnPalabras(sumarDiasAFecha(hoy, n), { conAnio: false });
+    const elegido = () =>
+      redis.store.get(`temp_selected_slot_id:${ORG_ID}:${SENDER}`);
+    const letra = (l: string) =>
+      redis.store.get(`temp_slot_${l}:${ORG_ID}:${SENDER}`);
+
+    // Lo que hace la búsqueda real con la ventana, la franja y los ya vistos;
+    // ofrece los 3 primeros, como la clínica.
+    const libres = () =>
+      db.slots
+        .filter((c) => c.isAvailable)
+        .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+    beforeEach(() => {
+      db.slots = [
+        slotRow('m-0800', enDia(1, 8), 'Ana Pérez', SVC_MEDICINA),
+        slotRow('m-0820', enDia(1, 8, 20), 'Ana Pérez', SVC_MEDICINA),
+        slotRow('m-1400', enDia(1, 14), 'Luis Gómez', SVC_MEDICINA),
+        slotRow('p-0800', enDia(2, 8), 'Ana Pérez', SVC_MEDICINA),
+        slotRow('p-1500', enDia(2, 15), 'Luis Gómez', SVC_MEDICINA),
+      ];
+      appointments.getAvailableSlots.mockImplementation(
+        (
+          _svc: string,
+          _eps: string | null,
+          _org: string,
+          ventana?: { desde: Date; hasta?: Date | null } | null,
+          opts: { todos?: boolean; franja?: string; excluir?: string[] } = {},
+        ) => {
+          const cupos = libres()
+            .filter(
+              (c) =>
+                !ventana ||
+                (c.startTime >= ventana.desde &&
+                  (!ventana.hasta || c.startTime <= ventana.hasta)),
+            )
+            .filter(
+              (c) => !opts.franja || franjaDelCupo(c.startTime) === opts.franja,
+            )
+            .filter((c) => !opts.excluir?.includes(c.id))
+            .map((c) => ({
+              slotId: c.id,
+              fecha: c.startTime,
+              doctor: c.doctor.fullName,
+              servicio: c.service.name,
+            }));
+          return opts.todos ? cupos : cupos.slice(0, 3);
+        },
+      );
+      appointments.hayCuposDesde.mockImplementation(
+        async (_s: string, _e: string | null, _o: string, desde: Date) =>
+          libres().some((c) => c.startTime >= desde),
+      );
+    });
+
+    const hastaLosCupos = async () => {
+      await say('Hola');
+      await say('A'); // Medicina General
+      await say('A'); // Particular
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+    };
+
+    it('1B.1 el menú trae «D) Otro día» cuando hay cupos después del último día ofrecido', async () => {
+      await hastaLosCupos();
+      expect(lastSent()).toMatch(/\*D\)\* Otro día/);
+      expect(letra('A')).toBe('m-0800');
+      expect(letra('C')).toBe('m-1400');
+    });
+
+    it('1B.2 sin cupos otro día, el menú es el de siempre', async () => {
+      db.slots = db.slots.filter((c) => c.id.startsWith('m-'));
+      await hastaLosCupos();
+      expect(lastSent()).not.toMatch(/Otro día/);
+    });
+
+    it('1B.3 «D» muestra el día siguiente, y su «A» es el cupo de ese día', async () => {
+      await hastaLosCupos();
+      await say('D');
+
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      expect(lastSent()).toContain(enPalabras(2));
+      expect(letra('A')).toBe('p-0800');
+      expect(letra('B')).toBe('p-1500');
+      // La «C» del menú anterior ya no existe: no puede apuntar a un cupo que no ve.
+      expect(letra('C')).toBeUndefined();
+
+      await say('A');
+      expect(elegido()).toBe('p-0800');
+      expect(await state()).toBe(ChatState.AWAITING_CEDULA);
+    });
+
+    it('1B.4 «Podría ser para el <día> por favor» (caso 1782) busca ese día', async () => {
+      await hastaLosCupos();
+      const [, mes, dia] = sumarDiasAFecha(hoy, 2).split('-').map(Number);
+      const meses = [
+        'enero',
+        'febrero',
+        'marzo',
+        'abril',
+        'mayo',
+        'junio',
+        'julio',
+        'agosto',
+        'septiembre',
+        'octubre',
+        'noviembre',
+        'diciembre',
+      ];
+      await say(`Podría ser para el ${dia} de ${meses[mes - 1]} por favor`);
+
+      expect(lastSent()).toMatch(
+        new RegExp(`para \\*${enPalabras(2)}\\*`, 'i'),
+      );
+      expect(letra('A')).toBe('p-0800');
+      expect(interactionLog.logFailure).not.toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'SLOT_NOT_UNDERSTOOD' }),
+      );
+    });
+
+    it('1B.5 «pasado mañana» también', async () => {
+      await hastaLosCupos();
+      await say('¿Y para pasado mañana no hay?');
+      expect(letra('A')).toBe('p-0800');
+    });
+
+    it('1B.6 «en la tarde» trae los de la tarde que no ha visto', async () => {
+      await hastaLosCupos();
+      await say('en la tarde');
+      // El de las 2 p. m. de mañana ya lo vio; el de la tarde que sigue, no.
+      expect(letra('A')).toBe('p-1500');
+      expect(letra('B')).toBeUndefined();
+      expect(lastSent()).toContain('la tarde');
+    });
+
+    it('1B.7 «Otro horario» trae los que siguen, sin repetir', async () => {
+      await hastaLosCupos();
+      await say('Otro horario');
+      expect(letra('A')).toBe('p-0800');
+      expect(letra('B')).toBe('p-1500');
+    });
+
+    it('1B.8 «No» (caso 8872) pasa al día siguiente', async () => {
+      await hastaLosCupos();
+      await say('No');
+      expect(letra('A')).toBe('p-0800');
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+    });
+
+    it('1B.9 «mañana» con los tres cupos de mañana a la vista: le pide la letra, no adivina', async () => {
+      await hastaLosCupos();
+      await say('Puede ser para mañana');
+      expect(lastSent()).toMatch(/letra/);
+      expect(elegido()).toBeUndefined();
+      expect(letra('A')).toBe('m-0800');
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+    });
+
+    it('1B.10 lo que no se entiende queda como «no se entendió el horario», no como sesión vencida', async () => {
+      await hastaLosCupos();
+      await say('Muchas gracias');
+      expect(lastSent()).toMatch(/día u hora/);
+      expect(interactionLog.logFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'SLOT_NOT_UNDERSTOOD' }),
+      );
+      expect(interactionLog.logFailure).not.toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'SESSION_EXPIRED' }),
+      );
+    });
+
+    it('1B.11 sin nada distinto que ofrecer: lo dice y sus letras siguen valiendo', async () => {
+      db.slots = db.slots.filter((c) => c.id.startsWith('m-'));
+      await hastaLosCupos();
+      await say('Otro horario');
+      expect(lastSent()).toMatch(/no tengo otros horarios/i);
+      expect(letra('A')).toBe('m-0800');
+
+      await say('B');
+      expect(elegido()).toBe('m-0820');
+    });
+
+    it('1B.12 un día más allá del plazo para agendar: le dice hasta cuándo y desde cuándo escribir', async () => {
+      // Plazo de 2 días: hoy y mañana.
+      (prisma as any).organizationSettings = {
+        findUnique: jest.fn(async () => ({ bookingMaxDaysAhead: 2 })),
+      };
+      await hastaLosCupos();
+      await say('pasado mañana');
+      expect(lastSent()).toContain(`hasta el *${enPalabras(1)}*`);
+      expect(lastSent()).toContain(`desde el *${enPalabras(1)}*`);
+      // No se le cambió el menú.
+      expect(letra('A')).toBe('m-0800');
+      delete (prisma as any).organizationSettings;
+    });
+
+    it('1B.13 tras pedir otro día, agendar sigue igual hasta la cita', async () => {
+      await hastaLosCupos();
+      await say('otro día');
+      await say('B'); // p-1500
+      await say('1088123456');
+      await decirNombre(say);
+      await responderAlta(say);
+      expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+      await say('Sí');
+      expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
+      expect(appointments.bookAppointment.mock.calls[0][1]).toBe('p-1500');
+    });
+  });
+
   describe('1H. Confirmación con el hospital (H10)', () => {
     let confirmacion: {
       requiereConfirmacion: jest.Mock;
@@ -2469,6 +2700,47 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('1088123456');
       await decirNombre(say);
     };
+
+    // 🪪 2026-10-26: una paciente nueva escribió «Otro horario» en el paso de
+    // los nombres (quería otro horario) y el asistente lo aceptó como nombre.
+    describe('8.N frases que no son un nombre', () => {
+      const hastaPedirNombre = async () => {
+        await say('Hola');
+        await say('A');
+        await say('A');
+        await say('A');
+        await say('1088123456');
+        expect(await state()).toBe(ChatState.AWAITING_NAME);
+      };
+
+      it('«Otro horario» en los nombres: se le vuelve a pedir, sin guardarlo', async () => {
+        await hastaPedirNombre();
+        await say('Otro horario');
+
+        expect(lastSent()).toMatch(/no parece un nombre/);
+        expect(lastSent()).toMatch(/Cancelar/);
+        expect(await state()).toBe(ChatState.AWAITING_NAME);
+        expect(
+          redis.store.get(`temp_nombre:${ORG_ID}:${SENDER}`),
+        ).toBeUndefined();
+
+        await say('Agustín');
+        expect(await state()).toBe(ChatState.AWAITING_APELLIDOS);
+        expect(lastSent()).toContain('Agustín');
+      });
+
+      it('«en la tarde» en los apellidos: se le vuelven a pedir', async () => {
+        await hastaPedirNombre();
+        await say('Agustín');
+        await say('en la tarde');
+
+        expect(lastSent()).toMatch(/no parecen unos apellidos/);
+        expect(await state()).toBe(ChatState.AWAITING_APELLIDOS);
+
+        await say('González Giraldo');
+        expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+      });
+    });
 
     // ═══════════════════════════════════════════════════════════════════
     // 🔒 NADA SE GUARDA ANTES DE QUE EL PACIENTE AUTORICE (Ley 1581)

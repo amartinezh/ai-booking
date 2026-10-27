@@ -125,6 +125,26 @@ describe('parseFechaPreferida', () => {
         '2026-07-01T05:00:00.000Z',
       );
     });
+
+    // 2026-10-27: el número manda sobre el nombre del día. Un jueves 4, «el
+    // jueves» es el 11, pero «el jueves 4» es hoy.
+    it('"el jueves 4" (hoy es jueves 4) → hoy, no la semana entrante', () => {
+      expect(parse('el jueves 4')!.desde.toISOString()).toBe(
+        '2026-06-04T05:00:00.000Z',
+      );
+    });
+
+    it('"el jueves 4 de junio" → la fecha dicha', () => {
+      expect(parse('el jueves 4 de junio')!.desde.toISOString()).toBe(
+        '2026-06-04T05:00:00.000Z',
+      );
+    });
+
+    it('"el viernes 5" → 5 de este mes', () => {
+      expect(parse('el viernes 5')!.desde.toISOString()).toBe(
+        '2026-06-05T05:00:00.000Z',
+      );
+    });
   });
 
   describe('robustez de zona horaria cerca de medianoche', () => {

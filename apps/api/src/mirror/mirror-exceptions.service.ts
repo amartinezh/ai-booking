@@ -227,6 +227,38 @@ export class MirrorExceptionsService {
   }
 
   /**
+   * Sube la gravedad de una excepción activa porque su cita se acercó (los pedidos
+   * de pacientes, 2026-10-27: no se re-encuentran en cada vuelta como las del
+   * envío). Compare-and-set sobre la gravedad leída: si otra réplica ya la subió,
+   * esta no repite la constancia. La gravedad nunca baja.
+   */
+  async escalar(
+    organizationId: string,
+    exception: { id: string; severity: string },
+    nueva: SeveridadExcepcion,
+  ): Promise<boolean> {
+    const { count } = await this.prisma.syncException.updateMany({
+      where: {
+        id: exception.id,
+        organizationId,
+        status: { in: ['ABIERTA', 'EN_REVISION'] },
+        severity: exception.severity,
+      },
+      data: { severity: nueva },
+    });
+    if (count === 1) {
+      await this.anotar(
+        exception.id,
+        'ESCALADA',
+        null,
+        null,
+        `${exception.severity} → ${nueva}`,
+      );
+    }
+    return count === 1;
+  }
+
+  /**
    * Reclama el derecho a AVISAR (o a RECORDAR) de esta excepción. Solo una llamada
    * gana: es lo que impide que dos réplicas manden el mismo mensaje, y que se avise
    * dos veces de lo mismo. Devuelve `true` si esta llamada la reclamó.

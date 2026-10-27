@@ -399,6 +399,41 @@ describe('MirrorExceptionsService', () => {
     });
   });
 
+  describe('escalar (pedidos de pacientes, 2026-10-27)', () => {
+    it('sube la gravedad con compare-and-set sobre la que se leyó y deja constancia', async () => {
+      const { service, prisma } = build();
+      await expect(
+        service.escalar(ORG, { id: 'ex-1', severity: 'MEDIA' }, 'CRITICA'),
+      ).resolves.toBe(true);
+      expect(prisma.syncException.updateMany.mock.calls[0][0]).toEqual({
+        where: {
+          id: 'ex-1',
+          organizationId: ORG,
+          status: { in: ['ABIERTA', 'EN_REVISION'] },
+          severity: 'MEDIA',
+        },
+        data: { severity: 'CRITICA' },
+      });
+      expect(prisma.syncExceptionLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: 'ESCALADA',
+            note: 'MEDIA → CRITICA',
+          }),
+        }),
+      );
+    });
+
+    it('otra réplica ya la subió: no repite la constancia', async () => {
+      const { service, prisma } = build();
+      prisma.syncException.updateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(
+        service.escalar(ORG, { id: 'ex-1', severity: 'MEDIA' }, 'ALTA'),
+      ).resolves.toBe(false);
+      expect(prisma.syncExceptionLog.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('reclamar el aviso (compare-and-set)', () => {
     it('la primera vez (nunca avisada) solo gana si SIGUE abierta y sin aviso previo', async () => {
       const { service, prisma } = build();
