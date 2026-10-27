@@ -26,7 +26,11 @@ los textos y las fotos de AgenIA. Ningún logo, texto ni foto es de otra empresa
 Los dos se cambian en `config.js`.
 
 > ⚠️ Los anillos de resultados son cifras reales del primer hospital conectado,
-> medidas en AgenIA del 13 al 25 de octubre de 2026. Publicarlas requiere la
+> medidas en AgenIA del 13 al 25 de octubre de 2026 (100 % de las citas por chat
+> en el HIS, 91 % de asistencia con recordatorio, 89 % de citas por chat de
+> pacientes que registró el asistente, 85 % de recordatorios leídos). Se
+> presentan como medidas, así que solo llevan cifras que salen de los datos,
+> redondeadas al entero más cercano: nada inventado. Publicarlas requiere la
 > autorización del hospital; si no la da, se cambian o se quitan en `config.js`
 > (sin anillos, la sección queda solo con el título).
 
@@ -62,14 +66,26 @@ escriben a mano, para el público y sin nombres de clínicas ni de pacientes.
 
 ## Publicarla
 
-El DNS de `agenia.co` y `www.agenia.co` apunta a `173.249.12.226`.
+Vive en el mismo VPS de `./update.sh` (89.117.61.28) y la sirve el mismo Caddy
+(`agenia_proxy`) desde `/data/landing`: la subcarpeta `landing/` de su volumen
+de datos (`agenia_caddy_data`). No hay contenedor, red ni proceso nuevo, y
+`update.sh` no la toca (su rsync va a `/opt/agenia`).
 
-1. Subir los archivos, actualizar el pulso e instalar el cron:
-   `bash landing/deploy/desplegar.sh` (o `--host usuario@ip` para otro servidor,
-   `--dry-run` para ver qué subiría).
-2. La primera vez, agregar al Caddy de ese servidor el bloque de
-   `deploy/Caddyfile.ejemplo`, con respaldo, `caddy validate` y solo entonces
-   `caddy reload`. Si Caddy corre en Docker, montar `/srv/agenia-landing`.
+- **Actualizarla**: `bash landing/deploy/desplegar.sh` (`--dry-run` para ver
+  qué subiría). Sube los archivos (nunca fuera de `.../_data/landing`: en la
+  raíz del volumen están los certificados), actualiza el pulso y deja
+  `/etc/cron.d/agenia-landing-pulso` a las 6:00 a. m. (registro en
+  `/var/log/agenia-landing-pulso.log`). El pulso corre con la imagen
+  `node:22-alpine`, porque el servidor no tiene Node.
+- **Caddy**: el bloque de `deploy/Caddyfile.ejemplo` ya está al final de
+  `/opt/agenia/deploy/Caddyfile` (2026-10-26; respaldo en `/var/backups/agenia`).
+  Solo se vuelve a tocar para cambiar el sitio, con el procedimiento de
+  `docs/INSTALACION_VPS.md` §16.
+- **DNS**: registros A `agenia.co` y `www.agenia.co` → `89.117.61.28` en
+  Hostinger. Caddy pide el certificado solo en cuanto el DNS apunta al VPS.
+- **Quitarla**: borrar el bloque del Caddyfile (y recargar), la carpeta
+  `.../_data/landing` y `/etc/cron.d/agenia-landing-pulso`. Nada más depende de
+  ella.
 
 Al cambiar CSS o JS, subir el `?v=` de `index.html` para que los navegadores no
 usen la versión vieja.

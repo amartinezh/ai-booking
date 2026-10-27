@@ -910,3 +910,17 @@ solo entonces `caddy reload`). Caddy pide el certificado de Let's Encrypt solo
 la primera vez que alguien entra. El enlace largo,
 `https://app.hsvpanserma.agenia.co/estadisticas/<id>`, funciona igual sin este
 bloque: el subdominio es solo un nombre más corto para compartir.
+
+### Landing pública agenia.co
+
+`https://agenia.co` (2026-10-26) es la landing de la carpeta `landing/` del
+repo. La sirve este mismo Caddy desde `/data/landing`, la subcarpeta `landing/`
+del volumen `agenia_caddy_data`: sin contenedor, red ni proceso nuevo. Se
+publica con `bash landing/deploy/desplegar.sh` (no con `update.sh`), que
+además deja `/etc/cron.d/agenia-landing-pulso` para refrescar a las 6 a. m.
+el pulso de la salud (Docker con `node:22-alpine`). El bloque de Caddy está en
+`landing/deploy/Caddyfile.ejemplo` y ya va al final del Caddyfile (respaldo
+`/var/backups/agenia/Caddyfile.bak-20261026-194740-antes-landing`). Necesita los
+registros A `agenia.co` y `www.agenia.co` → `89.117.61.28` en Hostinger. Su HSTS
+no lleva `includeSubDomains`: en el dominio raíz obligaría HTTPS en todos los
+subdominios de agenia.co, también en los de otros servidores.
