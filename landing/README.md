@@ -92,6 +92,15 @@ de datos (`agenia_caddy_data`). No hay contenedor, red ni proceso nuevo, y
 Al cambiar CSS o JS, subir el `?v=` de `index.html` para que los navegadores no
 usen la versión vieja.
 
+## Colores
+
+Dos temas en `styles.css`: el azul de la marca (cian a azul, como el logo) y el
+verde original. Todos los colores salen de sus variables; solo quedan escritos
+a mano los del chat de WhatsApp y Telegram, los puntos de cada etapa y el punto
+rojo de «en vivo». Cuál ven todos lo decide `TEMA` en `index.html` (con
+`theme-color`: `#0b1d3a` azul, `#0f2d2a` verde); `?tema=azul` o `?tema=verde`
+lo cambia solo en ese navegador, para comparar. Los dos pasan el contraste AA.
+
 ## Fotos
 
 De Unsplash, con licencia gratuita (ver `assets/img/CREDITOS.md`).

@@ -186,7 +186,11 @@
     $('#demo-repetir').addEventListener('click', reproducir);
 
     // ── Anillos de resultados ────────────────────────────────
-    var COLORES = [['#6fd3a1', '#2c8a6e'], ['#c9dcff', '#6f9bff'], ['#7fc3b3', '#2d7f68'], ['#5fc0dc', '#2a6fa0']];
+    // Los degradados de los anillos salen del tema (--anillos en styles.css): «claro oscuro, claro oscuro, …».
+    var COLORES = getComputedStyle(document.documentElement).getPropertyValue('--anillos').split(',')
+        .map(function (par) { return par.trim().split(/\s+/); })
+        .filter(function (par) { return par.length === 2; });
+    if (COLORES.length === 0) COLORES = [['#7dd3fc', '#2563eb']];
     var R = 46;
     var CIRC = 2 * Math.PI * R;
     var res = CONFIG.resultados || { anillos: [] };

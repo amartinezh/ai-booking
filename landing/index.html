@@ -8,7 +8,16 @@
             name="description"
             content="AgenIA es el ecosistema de atención al paciente de hospitales e IPS de Colombia: agenda, recuerda, retiene con lista de espera y cambia o cancela citas en segundos por WhatsApp y Telegram, con el sistema del hospital al día. Con el pulso de la salud en Colombia en vivo."
         />
-        <meta name="theme-color" content="#0f2d2a" />
+        <meta name="theme-color" content="#0b1d3a" />
+        <!-- Tema de colores: TEMA es el que ven todos; ?tema=azul o ?tema=verde lo
+             cambia solo en ese navegador, para comparar (styles.css, :root). -->
+        <script>
+            (function () {
+                var TEMA = 'azul';
+                var pedido = /[?&]tema=(azul|verde)\b/.exec(location.search);
+                if ((pedido ? pedido[1] : TEMA) === 'verde') document.documentElement.dataset.tema = 'verde';
+            })();
+        </script>
         <meta property="og:title" content="AgenIA — Citas médicas por WhatsApp para toda la familia" />
         <meta
             property="og:description"
@@ -24,9 +33,9 @@
             href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@300;400;500;600&display=swap"
         />
         <!-- ?v= rompe la caché del navegador: súbelo al cambiar CSS o JS. -->
-        <link rel="stylesheet" href="styles.css?v=2" />
-        <script src="config.js?v=2" defer></script>
-        <script src="app.js?v=2" defer></script>
+        <link rel="stylesheet" href="styles.css?v=4" />
+        <script src="config.js?v=4" defer></script>
+        <script src="app.js?v=4" defer></script>
     </head>
     <body>
         <a class="saltar" href="#contenido">Saltar al contenido</a>
@@ -94,7 +103,7 @@
                     <path class="onda onda-1" d="M0 190 C 240 80, 420 250, 720 150 S 1180 40, 1440 120" />
                     <path class="onda onda-2" d="M0 220 C 300 140, 520 260, 820 190 S 1240 110, 1440 170" />
                     <path class="onda onda-3" d="M0 160 C 200 230, 520 120, 760 200 S 1200 230, 1440 90" />
-                    <circle class="onda-punto" r="5" fill="#7fe6bf"><animateMotion dur="14s" repeatCount="indefinite" path="M0 190 C 240 80, 420 250, 720 150 S 1180 40, 1440 120" /></circle>
+                    <circle class="onda-punto onda-punto-1" r="5"><animateMotion dur="14s" repeatCount="indefinite" path="M0 190 C 240 80, 420 250, 720 150 S 1180 40, 1440 120" /></circle>
                     <circle class="onda-punto" r="4" fill="#ffd36e"><animateMotion dur="18s" repeatCount="indefinite" path="M0 220 C 300 140, 520 260, 820 190 S 1240 110, 1440 170" /></circle>
                     <circle class="onda-punto" r="4" fill="#8fb4ff"><animateMotion dur="22s" repeatCount="indefinite" path="M0 160 C 200 230, 520 120, 760 200 S 1200 230, 1440 90" /></circle>
                 </svg>
@@ -194,8 +203,8 @@
                             <title id="hub-titulo">El paciente en el centro: lo escucha, le recuerda, lo guarda en lista de espera, cambia o cancela en segundos, le avisa, le responde con voz, le pregunta cómo lo atendieron y acompaña al equipo</title>
                             <defs>
                                 <radialGradient id="hub-centro" cx="50%" cy="40%" r="70%">
-                                    <stop offset="0" stop-color="#2fb8a0" />
-                                    <stop offset="1" stop-color="#1d6f62" />
+                                    <stop offset="0" style="stop-color: var(--hub-1)" />
+                                    <stop offset="1" style="stop-color: var(--hub-2)" />
                                 </radialGradient>
                             </defs>
                             <ellipse class="hub-orbita" cx="450" cy="280" rx="230" ry="205" />
