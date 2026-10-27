@@ -3,10 +3,10 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-        <title>AgenIA — Citas médicas por WhatsApp para hospitales e IPS de Colombia</title>
+        <title>AgenIA — Ecosistema de atención al paciente por WhatsApp para hospitales e IPS</title>
         <meta
             name="description"
-            content="AgenIA agenda, recuerda, confirma y cancela citas médicas por WhatsApp y Telegram, a cualquier hora, conectado en tiempo real con el sistema del hospital. Con el pulso de la salud en Colombia en vivo."
+            content="AgenIA es el ecosistema de atención al paciente de hospitales e IPS de Colombia: agenda, recuerda, retiene con lista de espera y cambia o cancela citas en segundos por WhatsApp y Telegram, con el sistema del hospital al día. Con el pulso de la salud en Colombia en vivo."
         />
         <meta name="theme-color" content="#0f2d2a" />
         <meta property="og:title" content="AgenIA — Citas médicas por WhatsApp para toda la familia" />
@@ -24,9 +24,9 @@
             href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@300;400;500;600&display=swap"
         />
         <!-- ?v= rompe la caché del navegador: súbelo al cambiar CSS o JS. -->
-        <link rel="stylesheet" href="styles.css?v=1" />
-        <script src="config.js?v=1" defer></script>
-        <script src="app.js?v=1" defer></script>
+        <link rel="stylesheet" href="styles.css?v=2" />
+        <script src="config.js?v=2" defer></script>
+        <script src="app.js?v=2" defer></script>
     </head>
     <body>
         <a class="saltar" href="#contenido">Saltar al contenido</a>
@@ -65,6 +65,7 @@
                         Por qué AgenIA <span class="flecha" aria-hidden="true"></span>
                     </button>
                     <div class="nav-desplegable" id="menu-por-que">
+                        <a href="#ecosistema"><strong>Ecosistema de atención</strong><span>El paciente en el centro, antes y después de la cita</span></a>
                         <a href="#resultados"><strong>Resultados</strong><span>Asistencia, lectura y cupos recuperados</span></a>
                         <a href="#plataforma"><strong>La plataforma</strong><span>Asistente, panel y conexión con el HIS</span></a>
                         <a href="#seguridad"><strong>Seguridad y Habeas Data</strong><span>Cada hospital, aislado</span></a>
@@ -99,7 +100,7 @@
                 </svg>
                 <div class="portada-texto">
                     <h1>Citas médicas por WhatsApp para toda la <em>familia</em></h1>
-                    <p>Agendar, confirmar, cancelar y cambiar una cita a cualquier hora, con el sistema del hospital al día en todo momento.</p>
+                    <p>El ecosistema de atención que acompaña al paciente antes, durante y después de su cita: agenda, recuerda, retiene y resuelve a cualquier hora, con el sistema del hospital al día.</p>
                     <div class="portada-botones">
                         <a class="boton boton-menta" href="#plataforma">Conocer la plataforma</a>
                         <a class="boton boton-claro" href="#demo">Ver una conversación</a>
@@ -117,7 +118,7 @@
                         <div class="etapa-texto">
                             <h3>Agendar <br />por chat</h3>
                             <p class="etapa-sub">WhatsApp y Telegram · las 24 horas</p>
-                            <p class="etapa-detalle">El paciente escribe como le escribe a su familia. El asistente le pide la especialidad y su EPS, le ofrece los horarios libres y la cita queda en el sistema del hospital en cuanto responde SÍ.</p>
+                            <p class="etapa-detalle">El paciente escribe como le escribe a su familia. El asistente le pide la especialidad y su EPS, le ofrece los horarios libres y la cita queda en el sistema del hospital en cuanto responde SÍ. Si no hay cupo, lo guarda en la lista de espera.</p>
                             <a class="boton boton-menta etapa-boton" href="#demo">Ver cómo se agenda</a>
                         </div>
                     </article>
@@ -137,7 +138,7 @@
                         <div class="etapa-texto">
                             <h3>Cancelar y <br />liberar cupos</h3>
                             <p class="etapa-sub">El cupo vuelve a la agenda al instante</p>
-                            <p class="etapa-detalle">Cancelar o cambiar la fecha toma un mensaje. El cupo que se libera se le ofrece al primero de la lista de espera, para que otro paciente lo aproveche.</p>
+                            <p class="etapa-detalle">Cancelar o cambiar la fecha toma un mensaje y en segundos queda en el sistema del hospital. El cupo que se libera se le ofrece automáticamente al primero de la lista de espera.</p>
                             <a class="boton boton-menta etapa-boton" href="#resultados">Ver cupos recuperados</a>
                         </div>
                     </article>
@@ -177,6 +178,88 @@
                         </div>
                     </div>
                     <div class="telefono-chat" id="demo-chat" aria-live="polite"></div>
+                </div>
+            </section>
+
+            <!-- ECOSISTEMA DE ATENCIÓN: el paciente en el centro -->
+            <section class="oscuro ecosistema" id="ecosistema">
+                <div class="ecosistema-cabeza">
+                    <p class="antetitulo">Ecosistema de atención al usuario</p>
+                    <h2>No es solo agendar: es hacer sentir <em>importante</em> a cada paciente</h2>
+                    <p>AgenIA acompaña al paciente antes, durante y después de su cita, y al equipo del hospital todos los días.</p>
+                </div>
+                <div class="ecosistema-cuerpo">
+                    <figure class="hub" aria-label="El paciente en el centro de la atención de AgenIA">
+                        <svg viewBox="0 0 900 560" role="img" aria-labelledby="hub-titulo">
+                            <title id="hub-titulo">El paciente en el centro: lo escucha, le recuerda, lo guarda en lista de espera, cambia o cancela en segundos, le avisa, le responde con voz, le pregunta cómo lo atendieron y acompaña al equipo</title>
+                            <defs>
+                                <radialGradient id="hub-centro" cx="50%" cy="40%" r="70%">
+                                    <stop offset="0" stop-color="#2fb8a0" />
+                                    <stop offset="1" stop-color="#1d6f62" />
+                                </radialGradient>
+                            </defs>
+                            <ellipse class="hub-orbita" cx="450" cy="280" rx="230" ry="205" />
+                            <g class="hub-lineas">
+                                <line x1="450" y1="280" x2="450" y2="75" /><line x1="450" y1="280" x2="613" y2="135" />
+                                <line x1="450" y1="280" x2="680" y2="280" /><line x1="450" y1="280" x2="613" y2="425" />
+                                <line x1="450" y1="280" x2="450" y2="485" /><line x1="450" y1="280" x2="287" y2="425" />
+                                <line x1="450" y1="280" x2="220" y2="280" /><line x1="450" y1="280" x2="287" y2="135" />
+                            </g>
+                            <circle class="hub-halo" cx="450" cy="280" r="118" />
+                            <circle cx="450" cy="280" r="96" fill="url(#hub-centro)" />
+                            <text class="hub-centro-1" x="450" y="276" text-anchor="middle">El paciente</text>
+                            <text class="hub-centro-2" x="450" y="306" text-anchor="middle">en el centro</text>
+                            <g class="hub-nodos">
+                                <circle cx="450" cy="75" r="11" /><circle cx="613" cy="135" r="11" />
+                                <circle class="clave" cx="680" cy="280" r="13" /><circle class="clave" cx="613" cy="425" r="13" />
+                                <circle cx="450" cy="485" r="11" /><circle cx="287" cy="425" r="11" />
+                                <circle cx="220" cy="280" r="11" /><circle class="clave" cx="287" cy="135" r="13" />
+                            </g>
+                            <g class="hub-textos">
+                                <text x="450" y="28" text-anchor="middle"><tspan x="450">Lo escucha</tspan><tspan x="450" dy="20">las 24 horas</tspan></text>
+                                <text x="631" y="122"><tspan x="631">Le recuerda</tspan><tspan x="631" dy="20">su cita</tspan></text>
+                                <text class="clave" x="700" y="270"><tspan x="700">Lo guarda en la</tspan><tspan x="700" dy="20">lista de espera</tspan></text>
+                                <text class="clave" x="631" y="428"><tspan x="631">Cambia o cancela</tspan><tspan x="631" dy="20">en segundos</tspan></text>
+                                <text x="450" y="520" text-anchor="middle"><tspan x="450">Le avisa si el hospital</tspan><tspan x="450" dy="20">cambia algo</tspan></text>
+                                <text x="269" y="428" text-anchor="end"><tspan x="269">Le responde</tspan><tspan x="269" dy="20">con voz</tspan></text>
+                                <text x="200" y="270" text-anchor="end"><tspan x="200">Le pregunta cómo</tspan><tspan x="200" dy="20">lo atendimos</tspan></text>
+                                <text class="clave" x="269" y="122" text-anchor="end"><tspan x="269">Acompaña al equipo</tspan><tspan x="269" dy="20">del hospital</tspan></text>
+                            </g>
+                        </svg>
+                        <ul class="hub-lista">
+                            <li>Lo escucha las 24 horas</li>
+                            <li>Le recuerda su cita</li>
+                            <li class="clave">Lo guarda en la lista de espera</li>
+                            <li class="clave">Cambia o cancela en segundos</li>
+                            <li>Le avisa si el hospital cambia algo</li>
+                            <li>Le responde con voz</li>
+                            <li>Le pregunta cómo lo atendimos</li>
+                            <li class="clave">Acompaña al equipo del hospital</li>
+                        </ul>
+                    </figure>
+                    <div class="destacados">
+                        <article class="destacado">
+                            <span class="etiqueta">Retención</span>
+                            <h3>Si no hay cupo, nadie se queda por fuera</h3>
+                            <p>Cuando el sistema del hospital no tiene cupos, el asistente le ofrece al paciente la lista de espera. Apenas se libera uno, se lo ofrece automáticamente al primero de la cola por WhatsApp o Telegram; si no responde a tiempo, pasa al siguiente.</p>
+                        </article>
+                        <article class="destacado destacado-cifra">
+                            <span class="etiqueta">Sincronizado con el HIS</span>
+                            <h3>Cambiar o cancelar, en segundos</h3>
+                            <p class="cifra-grande"><span>1,3</span> segundos</p>
+                            <p>En promedio, desde que el paciente confirma por chat hasta que el cambio queda en el sistema de información del hospital. El cupo cancelado vuelve a la agenda para otro paciente.</p>
+                            <p class="destacado-nota">17 cancelaciones y 2 cambios de fecha por chat en un hospital público de Colombia, octubre de 2026.</p>
+                        </article>
+                        <article class="destacado destacado-soporte">
+                            <span class="etiqueta">Para el personal</span>
+                            <h3>Soporte que acompaña a la institución</h3>
+                            <p>Un asistente de soporte por Telegram atiende al personal a cualquier hora: explica paso a paso cómo hacer cada cosa en el panel, abre el caso si algo falla y avisa cuando quedó resuelto.</p>
+                            <div class="mini-chat" aria-hidden="true">
+                                <span class="mini-burbuja mini-personal">¿Cómo abro cupos para el médico del lunes?</span>
+                                <span class="mini-burbuja mini-soporte">En Agendas (Slots), haga clic en un espacio libre del lunes, elija al especialista y la duración por paciente, y pulse «Generar Slots H.I.S». ¿Le muestro cómo copiar esa agenda a otro día con «Clonar Día»?</span>
+                            </div>
+                        </article>
+                    </div>
                 </div>
             </section>
 
@@ -307,10 +390,17 @@
             </section>
 
             <!-- LLAMADO FINAL -->
-            <section class="llamado">
+            <section class="llamado" id="llamado">
                 <div class="llamado-caja">
-                    <h2>¿Su hospital quiere atender <em>por WhatsApp</em>?</h2>
-                    <p>Le mostramos AgenIA con su propia agenda, sus EPS y su sistema de información.</p>
+                    <p class="antetitulo">Ecosistema de atención al usuario</p>
+                    <h2>Que cada paciente se sienta <em>importante</em>, desde el primer mensaje</h2>
+                    <p>No es solo agendar. AgenIA escucha a cualquier hora, recuerda, retiene con la lista de espera, resuelve cambios y cancelaciones en segundos y acompaña a su equipo. Se lo mostramos con su propia agenda, sus EPS y su sistema de información.</p>
+                    <ul class="llamado-pilares">
+                        <li><strong>24/7</strong><span>atención por WhatsApp y Telegram</span></li>
+                        <li><strong>1,3 s</strong><span>para que un cambio llegue al hospital</span></li>
+                        <li><strong>Lista de espera</strong><span>que avisa sola cuando hay cupo</span></li>
+                        <li><strong>Soporte</strong><span>para el personal, a cualquier hora</span></li>
+                    </ul>
                     <div class="portada-botones">
                         <a class="boton boton-menta" data-demo href="#">Agendar una demostración</a>
                         <a class="boton boton-claro" data-ingresar href="#">Ingresar al panel</a>
@@ -330,6 +420,7 @@
                 </div>
                 <div>
                     <h4>Plataforma</h4>
+                    <a href="#ecosistema">Ecosistema de atención</a>
                     <a href="#plataforma">Asistente virtual</a>
                     <a href="#equipo">Panel del hospital</a>
                     <a href="#etapas">Conexión con el HIS</a>

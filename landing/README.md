@@ -17,10 +17,12 @@ los textos y las fotos de AgenIA. Ningún logo, texto ni foto es de otra empresa
 | Portada | Mensaje principal, «Conocer la plataforma», «Ver una conversación» | `index.html` |
 | Etapas de la cita | Agendar, recordatorios, cancelar y liberar cupos, conexión con el HIS | `index.html` |
 | Así se agenda | Conversación animada con las fechas de los próximos días hábiles | `app.js` (`GUION`) |
+| Ecosistema de atención | «No es solo agendar»: el paciente en el centro (diagrama) y tres destacados: lista de espera automática, cambiar o cancelar en segundos (1,3 s medidos hasta el HIS) y el asistente de soporte del personal | `index.html` |
 | Para el equipo | Estadísticas para compartir, Rastreo de paciente, Bandeja | `index.html` |
 | La plataforma | Canales, herramientas del panel, seguridad, voz, validaciones, analíticas | `index.html` |
 | Resultados | Cuatro anillos con cifras reales del primer hospital | `config.js` (`resultados`) |
 | Pulso de la salud | Titulares de la semana por tema, indicadores del Banco Mundial y novedades | `data/pulso.json`, `data/novedades.json` |
+| Llamado final | «Que cada paciente se sienta importante»: cuatro pilares (24/7, 1,3 s, lista de espera, soporte) y los botones de demo e ingreso | `index.html` |
 
 «Ingresar» lleva al login del panel y «Agendar una demo» al correo de contacto.
 Los dos se cambian en `config.js`.

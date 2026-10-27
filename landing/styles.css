@@ -775,6 +775,213 @@ p {
     }
 }
 
+/* Ecosistema de atención: el paciente en el centro */
+.ecosistema-cabeza {
+    text-align: center;
+    max-width: 900px;
+    margin: 0 auto clamp(36px, 5vw, 64px);
+}
+.ecosistema-cabeza h2 {
+    font-size: clamp(36px, 4.6vw, 64px);
+    line-height: 1.04;
+    margin-bottom: 18px;
+}
+.ecosistema-cabeza > p:last-child {
+    font-size: 20px;
+    font-weight: 300;
+    color: #d7e8e2;
+}
+.ecosistema-cuerpo {
+    display: grid;
+    gap: clamp(28px, 4vw, 48px);
+}
+.hub {
+    margin: 0 auto;
+    width: min(100%, 940px);
+}
+.hub svg {
+    width: 100%;
+    height: auto;
+    display: block;
+    overflow: visible;
+}
+.hub-orbita {
+    fill: none;
+    stroke: rgb(127 230 191 / 0.18);
+    stroke-width: 1.5;
+}
+.hub-lineas line {
+    stroke: rgb(127 230 191 / 0.45);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 7;
+    animation: flujo 2.6s linear infinite;
+}
+.hub-halo {
+    fill: rgb(47 184 160 / 0.14);
+    animation: halo 3.2s ease-in-out infinite;
+    transform-origin: 450px 280px;
+}
+@keyframes halo {
+    50% {
+        transform: scale(1.08);
+        opacity: 0.6;
+    }
+}
+.hub-centro-1 {
+    fill: var(--blanco);
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 34px;
+}
+.hub-centro-2 {
+    fill: #d9f6ec;
+    font-family: var(--letra);
+    font-size: 16px;
+}
+.hub-nodos circle {
+    fill: var(--blanco);
+    stroke: var(--noche);
+    stroke-width: 3;
+}
+.hub-nodos circle.clave {
+    fill: var(--menta);
+    filter: drop-shadow(0 0 10px rgb(127 230 191 / 0.7));
+}
+.hub-textos text {
+    fill: #e6f2ee;
+    font-family: var(--letra);
+    font-size: 19px;
+}
+.hub-textos text.clave {
+    fill: var(--menta);
+    font-weight: 600;
+}
+.hub-lista {
+    display: none;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.hub-lista li {
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: var(--noche-2);
+    font-size: 15px;
+}
+.hub-lista li.clave {
+    background: rgb(127 230 191 / 0.16);
+    color: var(--menta);
+    font-weight: 600;
+}
+.destacados {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    align-items: start;
+}
+.destacado {
+    padding: 24px 26px;
+    border-radius: 16px;
+    background: var(--noche-2);
+    border: 1px solid rgb(127 230 191 / 0.14);
+}
+.etiqueta {
+    display: inline-block;
+    padding: 5px 11px;
+    border-radius: 999px;
+    background: rgb(127 230 191 / 0.15);
+    color: var(--menta);
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.destacado h3 {
+    margin: 12px 0 8px;
+    font-size: clamp(22px, 2vw, 28px);
+    font-weight: 400;
+    line-height: 1.15;
+}
+.destacado p {
+    color: #cfe2dc;
+    font-size: 16px;
+}
+.cifra-grande {
+    margin: 4px 0 8px;
+    color: var(--blanco) !important;
+    font-size: 20px !important;
+}
+.cifra-grande span {
+    font-family: var(--serif);
+    font-size: clamp(56px, 6vw, 80px);
+    line-height: 1;
+    color: var(--menta);
+    margin-right: 6px;
+}
+.destacado-nota {
+    margin-top: 10px;
+    font-size: 13px !important;
+    color: #9fc7bd !important;
+}
+.mini-chat {
+    display: grid;
+    gap: 8px;
+    margin-top: 16px;
+}
+.mini-burbuja {
+    max-width: 88%;
+    padding: 9px 12px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.38;
+}
+.mini-personal {
+    justify-self: end;
+    background: #2b5278;
+    color: var(--blanco);
+    border-bottom-right-radius: 3px;
+}
+.mini-soporte {
+    justify-self: start;
+    background: #f3f7f6;
+    color: var(--tinta);
+    border-bottom-left-radius: 3px;
+}
+
+/* Llamado final: pilares del ecosistema */
+.llamado-caja .antetitulo {
+    margin-bottom: 18px;
+}
+.llamado-pilares {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 36px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+}
+.llamado-pilares li {
+    display: grid;
+    gap: 4px;
+    padding: 18px 20px;
+    border-radius: 14px;
+    background: rgb(255 255 255 / 0.06);
+    border: 1px solid rgb(255 255 255 / 0.1);
+}
+.llamado-pilares strong {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(28px, 2.6vw, 38px);
+    line-height: 1.05;
+    color: var(--menta);
+}
+.llamado-pilares span {
+    color: #d7e8e2;
+    font-size: 15px;
+}
+
 /* Equipo: tres tarjetas con foto */
 .equipo-fila {
     display: grid;
@@ -1339,13 +1546,14 @@ p {
 .llamado h2 {
     font-size: clamp(36px, 4.8vw, 70px);
     line-height: 1.04;
-    max-width: 900px;
+    max-width: 1000px;
     margin-bottom: 18px;
 }
-.llamado p {
+.llamado-caja > p:not(.antetitulo) {
     font-size: 21px;
     font-weight: 300;
     color: #d7e8e2;
+    max-width: 860px;
     margin-bottom: 32px;
 }
 .pie {
@@ -1548,6 +1756,12 @@ p {
     .demo {
         grid-template-columns: minmax(0, 1fr);
     }
+    .destacados {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .llamado-pilares {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
     .equipo-fila {
         grid-template-columns: minmax(0, 1fr);
     }
@@ -1628,6 +1842,15 @@ p {
     }
     .titulares {
         grid-template-columns: minmax(0, 1fr);
+    }
+    .hub svg {
+        display: none;
+    }
+    .hub-lista {
+        display: grid;
+    }
+    .llamado-pilares li {
+        padding: 14px;
     }
     .telefono {
         height: 620px;
