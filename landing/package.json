@@ -1,0 +1,14 @@
+{
+  "name": "agenia-landing",
+  "private": true,
+  "description": "Landing pública de AgenIA (agenia.co): HTML, CSS y JS estáticos, sin compilación ni dependencias.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "node scripts/servir.mjs",
+    "pulso": "node scripts/actualizar-pulso.mjs",
+    "test": "node --test scripts/*.test.mjs"
+  }
+}

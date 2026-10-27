@@ -1,0 +1,37 @@
+[
+    {
+        "fecha": "2026-10-26",
+        "titulo": "Estadísticas para compartir",
+        "texto": "El hospital abre con una clave una página con sus cifras: recordatorios leídos, gestiones por chat, citas, cupos devueltos y asistencia. Se actualiza sola cada mañana."
+    },
+    {
+        "fecha": "2026-10-26",
+        "titulo": "Lista de espera que sí avisa",
+        "texto": "El cupo que se libera se le ofrece al primero de la cola, sin que pierda su lugar si no alcanza a responder."
+    },
+    {
+        "fecha": "2026-10-24",
+        "titulo": "Médicos nuevos del hospital",
+        "texto": "Cuando el hospital agrega un médico, AgenIA lo detecta y lo deja listo para homologar con un botón."
+    },
+    {
+        "fecha": "2026-10-23",
+        "titulo": "Plazo máximo para agendar",
+        "texto": "El hospital decide hasta cuántos días adelante ofrece citas el asistente, con las fechas reales a la vista."
+    },
+    {
+        "fecha": "2026-10-23",
+        "titulo": "Padrón de la EPS tal como llega",
+        "texto": "El archivo de la EPS se carga sin retocarlo: AgenIA encuentra sola la cédula, el celular y el régimen."
+    },
+    {
+        "fecha": "2026-10-22",
+        "titulo": "Días sin citas",
+        "texto": "Un calendario para elegir los días u horas en que el asistente no agenda, una vez o cada semana."
+    },
+    {
+        "fecha": "2026-10-22",
+        "titulo": "Aviso cuando el hospital cancela",
+        "texto": "Si el hospital anula una cita agendada por chat, el paciente se entera por WhatsApp o Telegram."
+    }
+]

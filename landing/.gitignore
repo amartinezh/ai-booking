@@ -1,0 +1,3 @@
+# Lo genera scripts/actualizar-pulso.mjs (cron de las 6 a. m. en el servidor).
+data/pulso.json
+data/*.tmp

@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="es-CO">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <title>AgenIA — Citas médicas por WhatsApp para hospitales e IPS de Colombia</title>
+        <meta
+            name="description"
+            content="AgenIA agenda, recuerda, confirma y cancela citas médicas por WhatsApp y Telegram, a cualquier hora, conectado en tiempo real con el sistema del hospital. Con el pulso de la salud en Colombia en vivo."
+        />
+        <meta name="theme-color" content="#0f2d2a" />
+        <meta property="og:title" content="AgenIA — Citas médicas por WhatsApp para toda la familia" />
+        <meta
+            property="og:description"
+            content="Agendamiento de citas por chat, recordatorios y conexión con el HIS para hospitales e IPS de Colombia."
+        />
+        <meta property="og:type" content="website" />
+        <meta property="og:image" content="assets/img/madre-hija.jpg" />
+        <link rel="icon" href="assets/logo.svg" type="image/svg+xml" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            rel="stylesheet"
+            href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@300;400;500;600&display=swap"
+        />
+        <!-- ?v= rompe la caché del navegador: súbelo al cambiar CSS o JS. -->
+        <link rel="stylesheet" href="styles.css?v=1" />
+        <script src="config.js?v=1" defer></script>
+        <script src="app.js?v=1" defer></script>
+    </head>
+    <body>
+        <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+        <!-- CINTA EN VIVO: indicadores de salud de Colombia y últimos titulares (data/pulso.json). -->
+        <div class="cinta" aria-label="Pulso de la salud en Colombia, en vivo">
+            <span class="cinta-insignia"><span class="punto" aria-hidden="true"></span> En vivo</span>
+            <div class="cinta-ventana">
+                <div class="cinta-pista" id="cinta-pista">
+                    <span class="cinta-item">Cargando el pulso de la salud en Colombia…</span>
+                </div>
+            </div>
+            <span class="cinta-reloj" id="reloj" aria-label="Hora de Colombia">--:--</span>
+        </div>
+
+        <!-- NAVEGACIÓN FLOTANTE -->
+        <header class="nav" id="nav">
+            <a class="marca" href="#inicio" aria-label="AgenIA, inicio">
+                <img src="assets/logo.svg" alt="" width="34" height="34" />
+                <span class="marca-nombre">AGENIA</span>
+            </a>
+            <nav class="nav-menu" id="nav-menu" aria-label="Principal">
+                <div class="nav-grupo">
+                    <button class="nav-enlace" type="button" aria-expanded="false" aria-controls="menu-pacientes">
+                        Para pacientes <span class="flecha" aria-hidden="true"></span>
+                    </button>
+                    <div class="nav-desplegable" id="menu-pacientes">
+                        <a href="#etapas"><strong>Agendar por chat</strong><span>WhatsApp y Telegram, las 24 horas</span></a>
+                        <a href="#etapas"><strong>Recordatorios</strong><span>Confirme su cita con un «sí, voy»</span></a>
+                        <a href="#etapas"><strong>Cancelar o cambiar</strong><span>Un mensaje y el cupo vuelve a la agenda</span></a>
+                        <a href="#demo"><strong>Ver una conversación</strong><span>Así se agenda una cita</span></a>
+                    </div>
+                </div>
+                <div class="nav-grupo">
+                    <button class="nav-enlace" type="button" aria-expanded="false" aria-controls="menu-por-que">
+                        Por qué AgenIA <span class="flecha" aria-hidden="true"></span>
+                    </button>
+                    <div class="nav-desplegable" id="menu-por-que">
+                        <a href="#resultados"><strong>Resultados</strong><span>Asistencia, lectura y cupos recuperados</span></a>
+                        <a href="#plataforma"><strong>La plataforma</strong><span>Asistente, panel y conexión con el HIS</span></a>
+                        <a href="#seguridad"><strong>Seguridad y Habeas Data</strong><span>Cada hospital, aislado</span></a>
+                    </div>
+                </div>
+                <a class="nav-enlace" href="#equipo">Hospitales e IPS</a>
+                <a class="nav-enlace" href="#pulso">Pulso de la salud</a>
+                <a class="nav-enlace" href="#novedades">Novedades</a>
+            </nav>
+            <div class="nav-acciones">
+                <a class="boton boton-contorno" data-ingresar href="#">Ingresar</a>
+                <a class="boton boton-lleno" data-demo href="#">Agendar una demo</a>
+                <button class="nav-hamburguesa" id="nav-hamburguesa" type="button" aria-label="Abrir el menú" aria-expanded="false" aria-controls="nav-menu">
+                    <span></span><span></span><span></span>
+                </button>
+            </div>
+        </header>
+
+        <main id="contenido">
+            <!-- PORTADA -->
+            <section class="portada" id="inicio">
+                <div class="portada-foto">
+                    <img src="assets/img/madre-hija.jpg" alt="Una madre y su hija se abrazan sonriendo en casa" fetchpriority="high" />
+                </div>
+                <svg class="portada-ondas" viewBox="0 0 1440 260" preserveAspectRatio="none" aria-hidden="true">
+                    <path class="onda onda-1" d="M0 190 C 240 80, 420 250, 720 150 S 1180 40, 1440 120" />
+                    <path class="onda onda-2" d="M0 220 C 300 140, 520 260, 820 190 S 1240 110, 1440 170" />
+                    <path class="onda onda-3" d="M0 160 C 200 230, 520 120, 760 200 S 1200 230, 1440 90" />
+                    <circle class="onda-punto" r="5" fill="#7fe6bf"><animateMotion dur="14s" repeatCount="indefinite" path="M0 190 C 240 80, 420 250, 720 150 S 1180 40, 1440 120" /></circle>
+                    <circle class="onda-punto" r="4" fill="#ffd36e"><animateMotion dur="18s" repeatCount="indefinite" path="M0 220 C 300 140, 520 260, 820 190 S 1240 110, 1440 170" /></circle>
+                    <circle class="onda-punto" r="4" fill="#8fb4ff"><animateMotion dur="22s" repeatCount="indefinite" path="M0 160 C 200 230, 520 120, 760 200 S 1200 230, 1440 90" /></circle>
+                </svg>
+                <div class="portada-texto">
+                    <h1>Citas médicas por WhatsApp para toda la <em>familia</em></h1>
+                    <p>Agendar, confirmar, cancelar y cambiar una cita a cualquier hora, con el sistema del hospital al día en todo momento.</p>
+                    <div class="portada-botones">
+                        <a class="boton boton-menta" href="#plataforma">Conocer la plataforma</a>
+                        <a class="boton boton-claro" href="#demo">Ver una conversación</a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ETAPAS DE LA CITA: tarjetas que se abren -->
+            <section class="oscuro etapas" id="etapas">
+                <h2 class="titulo-centro">Acompaña al paciente en cada paso de su cita</h2>
+                <div class="etapas-fila" id="etapas-fila">
+                    <article class="etapa" tabindex="0" data-color="cian">
+                        <img src="assets/img/familia-sofa.jpg" alt="Una familia sonríe sentada en el sofá de su casa" loading="lazy" />
+                        <span class="etapa-punto" aria-hidden="true"></span>
+                        <div class="etapa-texto">
+                            <h3>Agendar <br />por chat</h3>
+                            <p class="etapa-sub">WhatsApp y Telegram · las 24 horas</p>
+                            <p class="etapa-detalle">El paciente escribe como le escribe a su familia. El asistente le pide la especialidad y su EPS, le ofrece los horarios libres y la cita queda en el sistema del hospital en cuanto responde SÍ.</p>
+                            <a class="boton boton-menta etapa-boton" href="#demo">Ver cómo se agenda</a>
+                        </div>
+                    </article>
+                    <article class="etapa" tabindex="0" data-color="verde">
+                        <img src="assets/img/abuela-celular.jpg" alt="Una mujer mayor sonríe mirando su celular" loading="lazy" />
+                        <span class="etapa-punto" aria-hidden="true"></span>
+                        <div class="etapa-texto">
+                            <h3>Recordatorios <br />y confirmación</h3>
+                            <p class="etapa-sub">Un día antes, por WhatsApp</p>
+                            <p class="etapa-detalle">Cada paciente recibe el recordatorio de su cita y confirma con un «sí, voy». Quien no puede ir lo avisa en el mismo chat y el personal se entera.</p>
+                            <a class="boton boton-menta etapa-boton" href="#resultados">Ver resultados</a>
+                        </div>
+                    </article>
+                    <article class="etapa" tabindex="0" data-color="violeta">
+                        <img src="assets/img/abuelo-nieto.jpg" alt="Un abuelo y su nieto se toman una foto con el celular" loading="lazy" />
+                        <span class="etapa-punto" aria-hidden="true"></span>
+                        <div class="etapa-texto">
+                            <h3>Cancelar y <br />liberar cupos</h3>
+                            <p class="etapa-sub">El cupo vuelve a la agenda al instante</p>
+                            <p class="etapa-detalle">Cancelar o cambiar la fecha toma un mensaje. El cupo que se libera se le ofrece al primero de la lista de espera, para que otro paciente lo aproveche.</p>
+                            <a class="boton boton-menta etapa-boton" href="#resultados">Ver cupos recuperados</a>
+                        </div>
+                    </article>
+                    <article class="etapa" tabindex="0" data-color="amarillo">
+                        <img src="assets/img/medico-paciente.jpg" alt="Un médico conversa con una paciente en el consultorio" loading="lazy" />
+                        <span class="etapa-punto" aria-hidden="true"></span>
+                        <div class="etapa-texto">
+                            <h3>Conectado <br />al hospital</h3>
+                            <p class="etapa-sub">Sincronizado con su HIS</p>
+                            <p class="etapa-detalle">Un agente instalado en el servidor del hospital mantiene las citas iguales en los dos sistemas, en las dos direcciones. El asistente solo confirma cuando el hospital ya registró la cita.</p>
+                            <a class="boton boton-menta etapa-boton" href="#plataforma">Conocer la conexión</a>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <!-- DEMO: conversación animada -->
+            <section class="oscuro demo" id="demo">
+                <div class="demo-texto">
+                    <p class="antetitulo">Así se agenda</p>
+                    <h2>Una cita, <em>una conversación</em></h2>
+                    <p>Sin aplicaciones nuevas, sin filas y sin esperar al teléfono. El asistente habla como el hospital, en español sencillo, y también entiende notas de voz.</p>
+                    <ol class="demo-pasos" id="demo-pasos">
+                        <li data-paso="0"><strong>El paciente escribe</strong><span>Por WhatsApp o Telegram, a la hora que quiera.</span></li>
+                        <li data-paso="1"><strong>Elige servicio y EPS</strong><span>AgenIA revisa su afiliación en el padrón de la EPS.</span></li>
+                        <li data-paso="2"><strong>Escoge un horario libre</strong><span>Solo se ofrecen los cupos que de verdad están disponibles.</span></li>
+                        <li data-paso="3"><strong>Confirma con un SÍ</strong><span>La cita queda en el sistema del hospital y llega el recordatorio.</span></li>
+                    </ol>
+                    <button class="boton boton-contorno-claro" type="button" id="demo-repetir">Ver de nuevo</button>
+                </div>
+                <div class="telefono" aria-label="Ejemplo de conversación con el asistente de AgenIA">
+                    <div class="telefono-cabeza">
+                        <img src="assets/logo.svg" alt="" width="34" height="34" />
+                        <div>
+                            <strong>Hospital · Asistente AgenIA</strong>
+                            <span id="demo-estado">en línea</span>
+                        </div>
+                    </div>
+                    <div class="telefono-chat" id="demo-chat" aria-live="polite"></div>
+                </div>
+            </section>
+
+            <!-- PARA EL EQUIPO DEL HOSPITAL -->
+            <section class="oscuro equipo" id="equipo">
+                <h2 class="titulo-centro">Y para el equipo del hospital, todo en un solo panel</h2>
+                <div class="equipo-fila">
+                    <article class="tarjeta-foto">
+                        <img src="assets/img/videollamada.jpg" alt="Un médico revisa información en su computador" loading="lazy" />
+                        <span class="insignia-nuevo"><span class="punto" aria-hidden="true"></span> Nuevo</span>
+                        <div class="tarjeta-foto-texto">
+                            <h3>Estadísticas para compartir</h3>
+                            <p>Las cifras del hospital, con clave, cada mañana</p>
+                        </div>
+                    </article>
+                    <article class="tarjeta-foto">
+                        <img src="assets/img/personal-diadema.jpg" alt="Una agente de atención sonríe con su diadema frente al computador" loading="lazy" />
+                        <span class="insignia-nuevo"><span class="punto" aria-hidden="true"></span> Nuevo</span>
+                        <div class="tarjeta-foto-texto">
+                            <h3>Rastreo de paciente</h3>
+                            <p>«Dice que agendó»: qué pasó con cada cita</p>
+                        </div>
+                    </article>
+                    <article class="tarjeta-foto">
+                        <img src="assets/img/enfermera.jpg" alt="Una enfermera sostiene un estetoscopio en forma de corazón" loading="lazy" />
+                        <span class="insignia-nuevo"><span class="punto" aria-hidden="true"></span> Nuevo</span>
+                        <div class="tarjeta-foto-texto">
+                            <h3>Bandeja de casos</h3>
+                            <p>Lo que necesita a una persona, a tiempo</p>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <!-- LA PLATAFORMA -->
+            <section class="crema plataforma" id="plataforma">
+                <div class="plataforma-cabeza">
+                    <h2>Agenda las 24 horas, recordatorios que se leen y el sistema del hospital<em>—todo en un solo lugar</em></h2>
+                    <p>La plataforma de agendamiento de citas hecha para hospitales, clínicas e IPS de Colombia: un asistente con inteligencia artificial para los pacientes, un panel para el personal y la conexión con el HIS.</p>
+                </div>
+                <div class="bento">
+                    <article class="bento-foto">
+                        <img src="assets/img/familia-sofa.jpg" alt="" loading="lazy" />
+                        <p>Atiende a pacientes y familias por los canales que ya usan: WhatsApp y Telegram, con el mismo asistente y una sola ficha por paciente.</p>
+                    </article>
+                    <article class="bento-verde">
+                        <h3>Un panel con todo lo que el personal necesita</h3>
+                        <ul class="pila" id="pila">
+                            <li><span aria-hidden="true">📅</span> Agendas y días sin citas</li>
+                            <li><span aria-hidden="true">🪪</span> Padrón de la EPS</li>
+                            <li><span aria-hidden="true">⏳</span> Lista de espera</li>
+                            <li><span aria-hidden="true">🚦</span> Límite de citas por paciente</li>
+                            <li><span aria-hidden="true">📨</span> Avisos masivos</li>
+                            <li><span aria-hidden="true">⭐</span> Encuestas de satisfacción</li>
+                        </ul>
+                    </article>
+                    <article class="bento-cian" id="seguridad">
+                        <h3>Seguro y aislado por hospital</h3>
+                        <svg class="red" viewBox="0 0 320 220" aria-hidden="true">
+                            <g class="red-lineas">
+                                <line x1="160" y1="110" x2="62" y2="52" /><line x1="160" y1="110" x2="262" y2="48" />
+                                <line x1="160" y1="110" x2="58" y2="176" /><line x1="160" y1="110" x2="266" y2="172" />
+                                <line x1="160" y1="110" x2="160" y2="20" />
+                            </g>
+                            <polygon class="red-centro" points="160,78 188,94 188,126 160,142 132,126 132,94" />
+                            <path d="M154 100h12v8h8v12h-8v8h-12v-8h-8v-12h8z" fill="#fff" />
+                            <g class="red-nodos">
+                                <circle cx="62" cy="52" r="9" /><circle cx="262" cy="48" r="9" /><circle cx="58" cy="176" r="9" />
+                                <circle cx="266" cy="172" r="9" /><circle cx="160" cy="20" r="9" />
+                            </g>
+                        </svg>
+                        <ul class="sellos">
+                            <li>Habeas Data · Ley 1581</li>
+                            <li>Claves y tokens cifrados</li>
+                            <li>Cada hospital, aislado</li>
+                        </ul>
+                    </article>
+                    <article class="bento-claro">
+                        <span class="bento-icono" aria-hidden="true">🔊</span>
+                        <h3>También responde con voz</h3>
+                        <p>Notas de voz con una voz natural, para quien prefiere escuchar a leer.</p>
+                    </article>
+                    <article class="bento-claro">
+                        <span class="bento-icono" aria-hidden="true">🛡️</span>
+                        <h3>Revisa antes de agendar</h3>
+                        <p>Afiliación activa en la EPS, régimen, convenio con el hospital y límite de citas por paciente.</p>
+                    </article>
+                    <article class="bento-claro">
+                        <span class="bento-icono" aria-hidden="true">📈</span>
+                        <h3>Analíticas y canales en vivo</h3>
+                        <p>Volumen de citas, mensajes por canal y satisfacción de los pacientes, para la gerencia.</p>
+                    </article>
+                </div>
+            </section>
+
+            <!-- RESULTADOS: anillos -->
+            <section class="crema resultados" id="resultados">
+                <h2 class="titulo-centro titulo-tinta">Más asistencia, <em>menos filas</em></h2>
+                <p class="resultados-sub">Con recordatorios que se leen y citas que se agendan y cancelan por chat, los cupos se aprovechan mejor.</p>
+                <div class="anillos" id="anillos"></div>
+                <p class="resultados-nota" id="resultados-nota"></p>
+            </section>
+
+            <!-- PULSO DE LA SALUD (en vivo) -->
+            <section class="pulso" id="pulso">
+                <div class="pulso-cabeza">
+                    <div>
+                        <p class="antetitulo antetitulo-tinta"><span class="punto punto-vivo" aria-hidden="true"></span> En vivo</p>
+                        <h2>Pulso de la salud <em>en Colombia</em></h2>
+                    </div>
+                    <p class="pulso-estado" id="pulso-estado">Cargando titulares e indicadores…</p>
+                </div>
+                <div class="pulso-temas" id="pulso-temas" role="tablist" aria-label="Filtrar por tema"></div>
+                <div class="pulso-cuerpo">
+                    <div class="titulares" id="titulares" aria-live="polite"></div>
+                    <aside class="pulso-lado">
+                        <div class="indicadores">
+                            <h3>Indicadores de salud de Colombia</h3>
+                            <div id="indicadores" class="indicadores-lista"></div>
+                            <p class="pulso-fuente">Último dato publicado por el Banco Mundial para cada indicador.</p>
+                        </div>
+                        <div class="novedades" id="novedades">
+                            <h3>Novedades de AgenIA</h3>
+                            <ol id="novedades-lista" class="novedades-lista"></ol>
+                        </div>
+                    </aside>
+                </div>
+            </section>
+
+            <!-- LLAMADO FINAL -->
+            <section class="llamado">
+                <div class="llamado-caja">
+                    <h2>¿Su hospital quiere atender <em>por WhatsApp</em>?</h2>
+                    <p>Le mostramos AgenIA con su propia agenda, sus EPS y su sistema de información.</p>
+                    <div class="portada-botones">
+                        <a class="boton boton-menta" data-demo href="#">Agendar una demostración</a>
+                        <a class="boton boton-claro" data-ingresar href="#">Ingresar al panel</a>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="pie">
+            <div class="pie-columnas">
+                <div>
+                    <h4>Para pacientes</h4>
+                    <a href="#etapas">Agendar por chat</a>
+                    <a href="#etapas">Recordatorios</a>
+                    <a href="#etapas">Cancelar o cambiar</a>
+                    <a href="#demo">Ver una conversación</a>
+                </div>
+                <div>
+                    <h4>Plataforma</h4>
+                    <a href="#plataforma">Asistente virtual</a>
+                    <a href="#equipo">Panel del hospital</a>
+                    <a href="#etapas">Conexión con el HIS</a>
+                    <a href="#seguridad">Seguridad</a>
+                </div>
+                <div>
+                    <h4>AgenIA</h4>
+                    <a href="#resultados">Resultados</a>
+                    <a href="#novedades">Novedades</a>
+                    <a data-demo href="#">Agendar una demo</a>
+                    <a data-ingresar href="#">Ingresar</a>
+                </div>
+                <div>
+                    <h4>Recursos</h4>
+                    <a href="#pulso">Pulso de la salud</a>
+                    <a href="#pulso">Indicadores de Colombia</a>
+                </div>
+                <div class="pie-contacto">
+                    <h4>Hablemos</h4>
+                    <p>¿Quiere ver AgenIA con la agenda de su hospital?</p>
+                    <a class="boton boton-menta" data-demo href="#">Escríbanos</a>
+                </div>
+            </div>
+            <div class="pie-marca">
+                <img src="assets/logo.svg" alt="" width="96" height="96" />
+                <span>AGENIA</span>
+            </div>
+            <div class="pie-legal">
+                <span>Tratamiento de datos personales según la Ley 1581 de 2012 (Habeas Data).</span>
+                <span>Fotos: Unsplash.</span>
+                <span>© <span id="anio">2026</span> AgenIA. Todos los derechos reservados.</span>
+            </div>
+        </footer>
+
+        <a class="flotante" href="#demo" aria-label="Ver una conversación con el asistente">
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L3 21l1.6-5.2A8.5 8.5 0 1 1 21 12z" />
+                <path d="M8.5 11h.01M12 11h.01M15.5 11h.01" />
+            </svg>
+        </a>
+    </body>
+</html>

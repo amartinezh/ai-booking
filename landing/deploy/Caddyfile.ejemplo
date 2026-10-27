@@ -1,0 +1,34 @@
+# Bloque de Caddy para servir la landing en agenia.co (el DNS de agenia.co y de
+# www.agenia.co apunta a 173.249.12.226). Se agrega al Caddyfile de ese servidor,
+# con su procedimiento de siempre: respaldo, `caddy validate` y solo entonces
+# `caddy reload`. Caddy pide el certificado de Let's Encrypt solo.
+#
+# /srv/agenia-landing es donde deploy/desplegar.sh deja los archivos. Si Caddy
+# corre en Docker, esa carpeta tiene que estar montada en el contenedor (por
+# ejemplo `- /srv/agenia-landing:/srv/agenia-landing:ro`).
+
+www.agenia.co {
+	redir https://agenia.co{uri} permanent
+}
+
+agenia.co {
+	root * /srv/agenia-landing
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	# El pulso cambia cada mañana; las fotos y estilos, casi nunca.
+	@pulso path /data/*
+	header @pulso Cache-Control "public, max-age=300"
+	@estaticos path /assets/*
+	header @estaticos Cache-Control "public, max-age=604800"
+	# Nada de los scripts, la documentación ni el despliegue sale a internet.
+	@interno path /scripts/* /deploy/* /README.md /package.json /.gitignore
+	respond @interno 404
+	# El login de siempre, por si alguien escribe agenia.co/login.
+	redir /login https://app.hsvpanserma.agenia.co/login
+	file_server
+}
