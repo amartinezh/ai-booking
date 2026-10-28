@@ -834,6 +834,16 @@ export class MirrorWatchdogService {
         TIPOS_CON_AVISO_PACIENTE.includes(a.kind as TipoExcepcion)
       ) {
         nota = 'El paciente asistió a la cita.';
+      } else if (
+        cita.attendanceStatus === 'NO_SHOW' &&
+        TIPOS_CON_AVISO_PACIENTE.includes(a.kind as TipoExcepcion)
+      ) {
+        // 🙋 La cita pasó y no fue (2026-10-28): ya no hay nada que hacer con el
+        // pedido. Dos casos del 23 y el 26 de octubre seguían abiertos días después.
+        nota =
+          a.kind === 'AVISO_INASISTENCIA'
+            ? 'El paciente no asistió, como había avisado.'
+            : 'El paciente no asistió; la cita ya pasó.';
       }
       if (
         nota &&

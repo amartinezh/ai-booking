@@ -1348,13 +1348,34 @@ export class ChatbotService implements OnModuleInit {
     fecha: Date;
     medico: string;
   }> | null> {
+    if (!this.nombraDiaOHora(text)) return null;
+    return this.cuposQueCasan(
+      text,
+      await this.loadOfferedSlots(organizationId, senderId),
+    );
+  }
+
+  /** ¿El texto nombra un día o una hora? (Sin eso no se casa con ningún cupo.) */
+  private nombraDiaOHora(text: string | undefined): boolean {
+    return (
+      !!parseFechaPreferida(text ?? null, { incluirHoy: true }) ||
+      !!parseHoraPreferida(text ?? null)
+    );
+  }
+
+  /**
+   * De los cupos que ve, los que caen en el día y/o la hora que nombra. Sirve al
+   * menú de agendar y al de cambiar la fecha (2026-10-28).
+   */
+  private cuposQueCasan<T extends { fecha: Date }>(
+    text: string | undefined,
+    ofrecidos: T[],
+  ): T[] | null {
     // En el menú, el día de la semana que es hoy es hoy (2026-10-28).
     const ventana = parseFechaPreferida(text ?? null, { incluirHoy: true });
     const hora = parseHoraPreferida(text ?? null);
     if (!ventana && !hora) return null;
-
-    const offered = await this.loadOfferedSlots(organizationId, senderId);
-    return offered.filter((s) => {
+    return ofrecidos.filter((s) => {
       const inDay = ventana
         ? s.fecha >= ventana.desde && s.fecha <= ventana.hasta
         : true;
@@ -11895,37 +11916,111 @@ export class ChatbotService implements OnModuleInit {
   private async handleAwaitingModifyNewSlot(
     ctx: ChatTurnContext,
   ): Promise<void> {
-    const { organizationId, senderId, text, MSGS, retriesKey, retriesCount } =
-      ctx;
-    const letraElegida = this.extractOptionLetter(text);
-    const newSlotId = await this.redis.get(
+    const {
+      organizationId,
+      senderId,
+      text,
+      MSGS,
+      retriesKey,
+      retriesCount,
+      currentState,
+    } = ctx;
+    // «Perdón es B»: la letra dentro de una frase (2026-10-28).
+    const letraElegida = this.extractOptionLetter(text) || letraEnLaFrase(text);
+    let newSlotId = await this.redis.get(
       `temp_modify_newslot_${letraElegida}:${organizationId}:${senderId}`,
     );
-    const newSlotFecha = await this.redis.get(
+    let newSlotFecha = await this.redis.get(
       `temp_modify_newslot_${letraElegida}_fecha:${organizationId}:${senderId}`,
     );
 
     if (!newSlotId || !newSlotFecha) {
-      await this.redis.set(
-        retriesKey,
-        (retriesCount + 1).toString(),
-        'EX',
-        SESSION_TTL,
+      // 🗓️ La letra de «Otro día» (2026-10-28).
+      const letraOtroDia = await this.redis.get(
+        this.modifyOtroDiaKey(organizationId, senderId),
       );
-      const maxLetra =
-        (await this.redis.get(
-          `temp_modify_newslot_max_letra:${organizationId}:${senderId}`,
-        )) || 'A';
-      const reply = `No reconozco esa opción. Por favor, responda con una de las letras disponibles (A${maxLetra !== 'A' ? `–${maxLetra}` : ''}).`;
-      await this.smartReply(organizationId, senderId, reply);
+      if (letraElegida && letraElegida === letraOtroDia) {
+        await this.ofrecerOtroHorarioParaCambiar(ctx, {
+          fecha: null,
+          franja: null,
+          otroDia: true,
+        });
+        return;
+      }
 
-      await this.auditFailure(senderId, organizationId, {
-        reason: FailureReason.SLOT_NOT_UNDERSTOOD,
-        userMessage: text,
-        botReply: reply,
-        metadata: { invalidLetter: letraElegida, stage: 'MODIFY_NEW_SLOT' },
-      });
-      return;
+      // El día o la hora de uno que ve; con varios, el médico que nombra.
+      const casan = this.nombraDiaOHora(text)
+        ? this.cuposQueCasan(
+            text,
+            await this.cuposOfrecidosParaCambiar(organizationId, senderId),
+          )
+        : null;
+      const delMedico =
+        casan && casan.length > 1 ? cuposDelMedicoNombrado(text, casan) : [];
+      const unico =
+        casan?.length === 1
+          ? casan[0]
+          : delMedico.length === 1
+            ? delMedico[0]
+            : null;
+
+      if (unico) {
+        newSlotId = unico.slotId;
+        newSlotFecha = unico.fecha.toISOString();
+      } else {
+        // «Ninguna», «otro día», «el viernes», «en la tarde», «a las 3»…
+        const pedido =
+          casan && casan.length > 1
+            ? null
+            : interpretarOtroHorario(text, {
+                timeZone:
+                  (await this.zonaHorariaDe(organizationId)) ?? undefined,
+              });
+        if (pedido && (await this.ofrecerOtroHorarioParaCambiar(ctx, pedido))) {
+          return;
+        }
+        if (!pedido && esAgradecimiento(text)) {
+          await this.cleanUpModifySession(organizationId, senderId);
+          await this.handleGoodbye({
+            organizationId,
+            senderId,
+            text,
+            currentState,
+            MSGS,
+          });
+          return;
+        }
+
+        await this.redis.set(
+          retriesKey,
+          (retriesCount + 1).toString(),
+          'EX',
+          SESSION_TTL,
+        );
+        const maxLetra =
+          (await this.redis.get(
+            `temp_modify_newslot_max_letra:${organizationId}:${senderId}`,
+          )) || 'A';
+        const ambiguo = !!casan && casan.length > 1;
+        const reply = ambiguo
+          ? MSGS.cupoAmbiguo()
+          : MSGS.modificarOpcionNoValida(
+              `A${maxLetra !== 'A' ? `–${maxLetra}` : ''}`,
+            );
+        await this.smartReply(organizationId, senderId, reply);
+
+        await this.auditFailure(senderId, organizationId, {
+          reason: FailureReason.SLOT_NOT_UNDERSTOOD,
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            invalidLetter: letraElegida,
+            stage: 'MODIFY_NEW_SLOT',
+            ...(ambiguo ? { cuposQueCasan: casan.length } : {}),
+          },
+        });
+        return;
+      }
     }
 
     await this.redis.set(
@@ -14828,20 +14923,122 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    await this.mostrarMenuCambio({
+      organizationId,
+      senderId,
+      MSGS,
+      slots: candidateSlots,
+      serviceName,
+      epsId: apt.epsId,
+      armarRespuesta: (lineas) =>
+        MSGS.modificarMostrarCupos(serviceName, fechaActual, lineas),
+      userMessage: '[modify]',
+      step: 'MODIFY_SLOTS_OFFERED',
+      metadata: { appointmentId, service: serviceName },
+    });
+  }
+
+  // ── Menú de cambiar la fecha (2026-10-28) ──────────────────────────
+  // Entiende lo mismo que el de agendar: «Ninguna», «otro día», un día o una
+  // hora, la letra dentro de una frase y el médico que nombra. Antes solo la
+  // letra: a «Ninguna, es que mañana debo viajar a Pereira» contestaba «No
+  // reconozco esa opción» y la paciente se fue con su cita en pie.
+  /** La letra de «Otro día» del menú de cambiar la fecha. */
+  private modifyOtroDiaKey(organizationId: string, senderId: string): string {
+    return `temp_modify_otro_dia:${organizationId}:${senderId}`;
+  }
+  /** Los cupos que ya vio al cambiar la fecha, separados por coma. */
+  private modifyVistosKey(organizationId: string, senderId: string): string {
+    return `temp_modify_vistos:${organizationId}:${senderId}`;
+  }
+
+  /** Los cupos del menú de cambiar la fecha que tiene a la vista. */
+  private async cuposOfrecidosParaCambiar(
+    organizationId: string,
+    senderId: string,
+  ): Promise<
+    Array<{ letra: string; slotId: string; fecha: Date; medico: string }>
+  > {
+    const letras = [
+      ...new Set(
+        (
+          await this.redis.keys(
+            `temp_modify_newslot_*:${organizationId}:${senderId}`,
+          )
+        )
+          .map((k) => k.match(/^temp_modify_newslot_([A-Z]):/)?.[1])
+          .filter((l): l is string => !!l),
+      ),
+    ].sort();
+    const out: Array<{
+      letra: string;
+      slotId: string;
+      fecha: Date;
+      medico: string;
+    }> = [];
+    for (const letra of letras) {
+      const base = `temp_modify_newslot_${letra}`;
+      const slotId = await this.redis.get(
+        `${base}:${organizationId}:${senderId}`,
+      );
+      const fecha = await this.redis.get(
+        `${base}_fecha:${organizationId}:${senderId}`,
+      );
+      if (!slotId || !fecha) continue;
+      const medico =
+        (await this.redis.get(
+          `${base}_medico:${organizationId}:${senderId}`,
+        )) ?? '';
+      out.push({ letra, slotId, fecha: new Date(fecha), medico });
+    }
+    return out;
+  }
+
+  /**
+   * Muestra el menú de cambiar la fecha y espera la letra. Borra las letras del
+   * menú anterior, agrega «Otro día» si hay cupos después del último día que se
+   * le ofrece y anota los que vio.
+   */
+  private async mostrarMenuCambio(p: {
+    organizationId: string;
+    senderId: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    slots: AvailableSlot[];
+    serviceName: string;
+    epsId: string | null;
+    armarRespuesta: (lineas: string) => string;
+    userMessage: string;
+    step: 'MODIFY_SLOTS_OFFERED' | 'MODIFY_SLOTS_REOFFERED';
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    const { organizationId, senderId, MSGS, slots } = p;
+    const anteriores = await this.redis.keys(
+      `temp_modify_newslot_*:${organizationId}:${senderId}`,
+    );
+    if (anteriores.length > 0) await this.redis.del(...anteriores);
+    await this.redis.del(this.modifyOtroDiaKey(organizationId, senderId));
+
     let lineas = '';
     const slotsMetadata: { letter: string; slotId: string; fecha: string }[] =
       [];
-    for (let i = 0; i < candidateSlots.length; i++) {
+    for (let i = 0; i < slots.length; i++) {
       const letra = String.fromCharCode(65 + i);
+      const base = `temp_modify_newslot_${letra}`;
       await this.redis.set(
-        `temp_modify_newslot_${letra}:${organizationId}:${senderId}`,
-        candidateSlots[i].slotId,
+        `${base}:${organizationId}:${senderId}`,
+        slots[i].slotId,
         'EX',
         SESSION_TTL,
       );
       await this.redis.set(
-        `temp_modify_newslot_${letra}_fecha:${organizationId}:${senderId}`,
-        candidateSlots[i].fecha.toISOString(),
+        `${base}_fecha:${organizationId}:${senderId}`,
+        slots[i].fecha.toISOString(),
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        `${base}_medico:${organizationId}:${senderId}`,
+        slots[i].doctor,
         'EX',
         SESSION_TTL,
       );
@@ -14852,38 +15049,326 @@ export class ChatbotService implements OnModuleInit {
         SESSION_TTL,
       );
       lineas +=
-        `*${letra})* ${formatAppointmentLong(candidateSlots[i].fecha)} ` +
-        `· ${candidateSlots[i].doctor}\n`;
+        `*${letra})* ${formatAppointmentLong(slots[i].fecha)} ` +
+        `· ${slots[i].doctor}\n`;
       slotsMetadata.push({
         letter: letra,
-        slotId: candidateSlots[i].slotId,
-        fecha: candidateSlots[i].fecha.toISOString(),
+        slotId: slots[i].slotId,
+        fecha: slots[i].fecha.toISOString(),
       });
     }
 
-    const reply = MSGS.modificarMostrarCupos(serviceName, fechaActual, lineas);
+    const letraOtroDia = (await this.hayCuposOtroDia(
+      organizationId,
+      p.serviceName,
+      p.epsId,
+      slots,
+    ))
+      ? String.fromCharCode(65 + slots.length)
+      : null;
+    if (letraOtroDia) {
+      await this.redis.set(
+        this.modifyOtroDiaKey(organizationId, senderId),
+        letraOtroDia,
+        'EX',
+        SESSION_TTL,
+      );
+      lineas += MSGS.opcionOtroDia(letraOtroDia);
+    }
+
+    const vistosKey = this.modifyVistosKey(organizationId, senderId);
+    const vistos = new Set(
+      ((await this.redis.get(vistosKey)) ?? '').split(',').filter(Boolean),
+    );
+    for (const c of slots) vistos.add(c.slotId);
+    await this.redis.set(vistosKey, [...vistos].join(','), 'EX', SESSION_TTL);
+
+    const reply = p.armarRespuesta(lineas);
     // En voz: el audio solo anuncia; los nuevos horarios van por texto.
     await this.smartReply(
       organizationId,
       senderId,
       reply,
-      MSGS.modificarMostrarCuposAudio(serviceName),
+      MSGS.modificarMostrarCuposAudio(p.serviceName),
     );
     await this.setUserState(
       organizationId,
       senderId,
       ChatState.AWAITING_MODIFY_NEW_SLOT,
     );
-
     await this.auditSuccess(senderId, organizationId, {
-      userMessage: '[modify]',
+      userMessage: p.userMessage,
       botReply: reply,
       metadata: {
-        step: 'MODIFY_SLOTS_OFFERED',
-        appointmentId,
-        service: serviceName,
-        slotsCount: candidateSlots.length,
+        step: p.step,
+        ...p.metadata,
+        slotsCount: slots.length,
         slots: slotsMetadata,
+        ...(letraOtroDia ? { otroDia: letraOtroDia } : {}),
+      },
+    });
+  }
+
+  /**
+   * 🗓️ Pidió otro día u otra hora en el menú de cambiar la fecha: como
+   * `ofrecerOtroHorario`, sin ofrecerle el cupo de la cita que ya tiene. Si no
+   * hay nada más, le ofrece cancelarla (con cancelar encendido) o deja su pedido
+   * en la Bandeja. false si no hay cita en la sesión (se le pide la letra).
+   */
+  private async ofrecerOtroHorarioParaCambiar(
+    ctx: ChatTurnContext,
+    pedido: PedidoOtroHorario,
+  ): Promise<boolean> {
+    const { organizationId, senderId, text, MSGS } = ctx;
+    const aptId = await this.redis.get(
+      `temp_selected_modify_apt:${organizationId}:${senderId}`,
+    );
+    const apt = aptId
+      ? await this.prisma.appointment.findUnique({
+          where: { id: aptId },
+          include: {
+            scheduleSlot: { include: { doctor: true, service: true } },
+          },
+        })
+      : null;
+    if (!apt) return false;
+    await this.redis.del(ctx.retriesKey);
+
+    const userMessage = text || '[audio]';
+    const serviceName = apt.scheduleSlot.service.name;
+    const timeZone = (await this.zonaHorariaDe(organizationId)) ?? undefined;
+    const etiqueta = etiquetaOtroHorario(pedido, { timeZone });
+    const pedidoAuditado = {
+      fecha: pedido.fecha ? diaLocal(pedido.fecha.desde, timeZone) : null,
+      franja: pedido.franja,
+      otroDia: pedido.otroDia,
+    };
+
+    if (pedido.fecha) {
+      const plazo = await this.fechaMasAllaDelPlazo(
+        organizationId,
+        pedido.fecha.desde,
+      );
+      if (plazo) {
+        const reply = MSGS.fechaFueraDelPlazo(
+          fechaEnPalabras(diaLocal(pedido.fecha.desde, timeZone), {
+            conAnio: false,
+          }),
+          plazo.hasta,
+          plazo.desde,
+        );
+        await this.smartReply(organizationId, senderId, reply);
+        await this.auditSuccess(senderId, organizationId, {
+          userMessage,
+          botReply: reply,
+          metadata: {
+            step: 'MODIFY_OTRO_HORARIO_FUERA_DEL_PLAZO',
+            pedido: pedidoAuditado,
+          },
+        });
+        return true;
+      }
+    }
+
+    const ofrecidos = await this.cuposOfrecidosParaCambiar(
+      organizationId,
+      senderId,
+    );
+    const vistos = (
+      (await this.redis.get(this.modifyVistosKey(organizationId, senderId))) ??
+      ''
+    )
+      .split(',')
+      .filter(Boolean);
+    const ventana = ventanaOtroHorario(
+      pedido,
+      ofrecidos.map((o) => o.fecha),
+      { timeZone },
+    );
+    const noRepetir = pedido.hora ? [] : vistos;
+    const buscar = async (
+      v: { desde: Date; hasta?: Date | null } | null,
+      franja: PedidoOtroHorario['franja'],
+      excluir: string[],
+    ) =>
+      (
+        await this.cuposParaElMenu(
+          organizationId,
+          senderId,
+          serviceName,
+          apt.epsId,
+          v,
+          {
+            franja,
+            excluir: [apt.scheduleSlotId, ...excluir],
+            ...(pedido.hora ? { hora: pedido.hora } : {}),
+          },
+        )
+      ).filter((c) => c.slotId !== apt.scheduleSlotId);
+
+    let slots = await buscar(ventana, pedido.franja, noRepetir);
+    if (slots.length === 0 && pedido.fecha && noRepetir.length > 0) {
+      slots = await buscar(ventana, pedido.franja, []);
+    }
+    const exacto = slots.length > 0;
+    if (!exacto) {
+      const alternativas: Array<
+        [
+          { desde: Date; hasta?: Date | null } | null,
+          PedidoOtroHorario['franja'],
+        ]
+      > = [];
+      if (pedido.fecha)
+        alternativas.push([{ desde: ventana.desde }, pedido.franja]);
+      if (pedido.franja) alternativas.push([ventana, null]);
+      if (!pedido.otroDia) alternativas.push([null, null]);
+      for (const [v, franja] of alternativas) {
+        slots = await buscar(v, franja, noRepetir);
+        if (slots.length > 0) break;
+      }
+    }
+
+    if (slots.length === 0) {
+      await this.sinOtrosHorariosParaCambiar(ctx, apt, pedidoAuditado);
+      return true;
+    }
+
+    const diaDeTodos = diaComunDeLosCupos(
+      slots.map((c) => c.fecha),
+      { timeZone },
+    );
+    await this.mostrarMenuCambio({
+      organizationId,
+      senderId,
+      MSGS,
+      slots,
+      serviceName,
+      epsId: apt.epsId,
+      armarRespuesta: (lineas) => {
+        if (exacto) {
+          const nombre = etiqueta ?? diaDeTodos;
+          return nombre
+            ? MSGS.modificarCuposPara(nombre, lineas)
+            : MSGS.modificarOtrosCupos(lineas);
+        }
+        return etiqueta
+          ? MSGS.modificarSinCuposEsaFecha(etiqueta, lineas)
+          : MSGS.modificarOtrosCupos(lineas);
+      },
+      userMessage,
+      step: 'MODIFY_SLOTS_REOFFERED',
+      metadata: {
+        appointmentId: apt.id,
+        service: serviceName,
+        pedido: pedidoAuditado,
+        exacto,
+      },
+    });
+    return true;
+  }
+
+  /**
+   * Ninguno le sirve y no hay más horarios: con cancelar encendido se le ofrece
+   * cancelarla (el paso de siempre, SÍ cancela y NO la conserva); apagado, su
+   * pedido queda en la Bandeja para el personal y la cita sigue como está.
+   */
+  private async sinOtrosHorariosParaCambiar(
+    ctx: ChatTurnContext,
+    apt: {
+      id: string;
+      patientId: string;
+      epsId: string | null;
+      scheduleSlotId: string;
+      scheduleSlot: {
+        startTime: Date;
+        doctorId: string;
+        service: { name: string };
+      };
+    },
+    pedidoAuditado: Record<string, unknown>,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS } = ctx;
+    const servicio = apt.scheduleSlot.service.name;
+    if ((await this.operacionesDisponibles(organizationId)).cancelar) {
+      await this.redis.set(
+        `temp_selected_modify_slot:${organizationId}:${senderId}`,
+        apt.scheduleSlotId,
+        'EX',
+        SESSION_TTL,
+      );
+      const reply = MSGS.modificarSinOtrosCupos(servicio);
+      await this.smartReply(organizationId, senderId, reply);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL,
+      );
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: {
+          step: 'MODIFY_SIN_OTROS_HORARIOS',
+          appointmentId: apt.id,
+          pedido: pedidoAuditado,
+        },
+      });
+      return;
+    }
+
+    let registrado = false;
+    if (this.avisosPaciente) {
+      const ahora = new Date();
+      const inicio = apt.scheduleSlot.startTime;
+      try {
+        await this.avisosPaciente.registrar(
+          organizationId,
+          {
+            kind: 'AVISO_INASISTENCIA',
+            dedupeKey: claveExcepcion.avisoInasistencia(apt.id),
+            severity: severidadPorCercania(
+              'MEDIA',
+              (inicio.getTime() - ahora.getTime()) / 60_000,
+            ),
+            title: TITULO_EXCEPCION.AVISO_INASISTENCIA,
+            appointmentId: apt.id,
+            patientId: apt.patientId,
+            epsId: apt.epsId,
+            doctorId: apt.scheduleSlot.doctorId,
+            appointmentStartAt: inicio,
+            meta: {
+              pide: 'MODIFICAR',
+              mensaje: (text ?? '').slice(0, 300),
+              canal: canalDe(senderId),
+              sinOtrosHorarios: true,
+            },
+          },
+          ahora,
+        );
+        registrado = true;
+      } catch (error: unknown) {
+        this.logger.error(
+          `No se pudo registrar el pedido de cambio (cita ${apt.id}): ${getErrorMessage(error)}`,
+        );
+      }
+    }
+    const contacto = this.contactoDe(
+      MSGS,
+      await this.organizacionDe(organizationId),
+    );
+    const reply = registrado
+      ? MSGS.modificarSinOtrosCuposAviso(servicio, contacto)
+      : MSGS.modificarSinCuposSinCancelar(servicio, contacto);
+    await this.smartReply(organizationId, senderId, reply);
+    await this.cleanUpModifySession(organizationId, senderId);
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: text || '[audio]',
+      botReply: reply,
+      metadata: {
+        step: registrado
+          ? 'AVISO_CAMBIO_REGISTRADO'
+          : 'MODIFY_SIN_OTROS_HORARIOS_SIN_CANCELAR',
+        appointmentId: apt.id,
+        pedido: pedidoAuditado,
       },
     });
   }

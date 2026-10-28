@@ -1,6 +1,7 @@
 import {
   AppointmentReminderCronService,
   confirmadaPorElChatDentroDeLaVentana,
+  HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO,
 } from './appointment-reminder.cron';
 
 /**
@@ -441,7 +442,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         expect(systemLog.event).toHaveBeenCalledWith(
           expect.objectContaining({
             message: expect.stringContaining(
-              '1 sin enviar porque se agendaron por el chat ya dentro de la ventana',
+              '1 sin enviar porque se agendaron por el chat poco antes (la confirmación hizo de recordatorio)',
             ),
           }),
         );
@@ -1441,6 +1442,35 @@ describe('confirmadaPorElChatDentroDeLaVentana', () => {
   it('sin fecha de creación → no', () => {
     expect(
       confirmadaPorElChatDentroDeLaVentana(apt('WHATSAPP', null), 24),
+    ).toBe(false);
+  });
+
+  // 2026-10-28: agendadas con 24 a 26 horas, el recordatorio llegaba entre 12
+  // minutos y 2 horas después de la confirmación.
+  it('agendada 26 horas antes → sí: el recordatorio llegaría 2 horas después de la confirmación', () => {
+    expect(
+      confirmadaPorElChatDentroDeLaVentana(
+        apt('WHATSAPP', '2026-10-26T15:00:00.000Z'), // lunes 10:00
+        24,
+      ),
+    ).toBe(true);
+  });
+
+  it(`agendada justo ${24 + HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO} horas hábiles antes → sí (el borde)`, () => {
+    expect(
+      confirmadaPorElChatDentroDeLaVentana(
+        apt('WHATSAPP', '2026-10-26T05:00:00.000Z'), // lunes 00:00
+        24,
+      ),
+    ).toBe(true);
+  });
+
+  it('agendada el viernes a las 6 p. m. para el martes al mediodía → no: el recordatorio sale el lunes', () => {
+    expect(
+      confirmadaPorElChatDentroDeLaVentana(
+        apt('WHATSAPP', '2026-10-23T23:00:00.000Z'),
+        24,
+      ),
     ).toBe(false);
   });
 });

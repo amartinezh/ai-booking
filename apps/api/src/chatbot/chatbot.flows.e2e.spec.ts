@@ -1938,6 +1938,125 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       ]).toContain(await state());
     });
 
+    // ── 2026-10-28: el menú de cambiar la fecha solo entendía la letra. A
+    // «Ninguna, es que mañana debo viajar a Pereira» contestaba «No reconozco
+    // esa opción» y la paciente se fue con su cita en pie.
+    describe('3.M el menú de cambiar la fecha entiende más que la letra', () => {
+      const letraCambio = (l: string) =>
+        redis.store.get(`temp_modify_newslot_${l}:${ORG_ID}:${SENDER}`);
+      // La búsqueda real: con la ventana y sin los que se excluyen.
+      beforeEach(() => {
+        appointments.getAvailableSlots.mockImplementation(
+          (
+            _svc: string,
+            _eps: string | null,
+            _org: string,
+            ventana?: { desde: Date; hasta?: Date | null } | null,
+            opts: { excluir?: string[] } = {},
+          ) =>
+            db.slots
+              .filter((c) => c.isAvailable)
+              .filter(
+                (c) =>
+                  !ventana ||
+                  (c.startTime >= ventana.desde &&
+                    (!ventana.hasta || c.startTime <= ventana.hasta)),
+              )
+              .filter((c) => !opts.excluir?.includes(c.id))
+              .map((c) => ({
+                slotId: c.id,
+                fecha: c.startTime,
+                doctor: c.doctor.fullName,
+                servicio: c.service.name,
+              })),
+        );
+      });
+      const hastaElMenu = async () => {
+        await say('reprogramar mi cita');
+        await say(CEDULA);
+        expect(await state()).toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
+        expect(letraCambio('A')).toBe('slot-new');
+      };
+
+      it('3.M1 «Ninguna» con horarios otro día: le ofrece esos', async () => {
+        await hastaElMenu();
+        // Un horario de otro día que no estaba entre los que se le mostraron.
+        db.slots.push(slotRow('slot-later', FECHA_C, 'Otra Dra', SVC_MEDICINA));
+        await say('Ninguna esque mañana devo viajar a Pereira');
+        expect(await state()).toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
+        expect(letraCambio('A')).toBe('slot-later');
+        expect(db.appointments[0].scheduleSlotId).toBe('slot-old');
+      });
+
+      it('3.M2 «Ninguna» sin más horarios: le ofrece cancelarla, y el SÍ la cancela', async () => {
+        await hastaElMenu();
+        await say('Ninguna');
+        expect(await state()).toBe(ChatState.AWAITING_MODIFY_NO_SLOTS_CANCEL);
+        expect(lastSent()).toMatch(/cancele/);
+        await say('Sí');
+        expect(db.appointments[0].status).toBe('CANCELLED');
+      });
+
+      it('3.M3 «Ninguna» sin más horarios y con cancelar apagado: el pedido queda en la Bandeja', async () => {
+        (service as any).organizationSettings.operacionesDelBot.mockReturnValue(
+          {
+            agendar: true,
+            cancelar: false,
+            modificar: true,
+          },
+        );
+        await hastaElMenu();
+        await say('Ninguna');
+        expect(avisos.registrar).toHaveBeenCalledWith(
+          ORG_ID,
+          expect.objectContaining({
+            kind: 'AVISO_INASISTENCIA',
+            appointmentId: 'apt-0',
+            meta: expect.objectContaining({ pide: 'MODIFICAR' }),
+          }),
+          expect.any(Date),
+        );
+        expect(lastSent()).toMatch(/Dejé su solicitud/);
+        expect(await state()).toBe(ChatState.IDLE);
+        expect(db.appointments[0].status).toBe('SCHEDULED');
+      });
+
+      it('3.M4 «Perdón es la A»: la letra dentro de la frase', async () => {
+        await hastaElMenu();
+        await say('Perdón es la A');
+        expect(await state()).toBe(ChatState.AWAITING_MODIFY_CONFIRM);
+      });
+
+      it('3.M5 «Muchas gracias»: se despide y la cita no se toca', async () => {
+        await hastaElMenu();
+        await say('Muchas gracias');
+        expect(await state()).toBe(ChatState.IDLE);
+        expect(letraCambio('A')).toBeUndefined();
+        expect(db.appointments[0].scheduleSlotId).toBe('slot-old');
+      });
+
+      it('3.M6 lo que no entiende: le dice que puede escribir el día, la hora o «Ninguna»', async () => {
+        await hastaElMenu();
+        await say('xyz');
+        expect(lastSent()).toMatch(/No reconozco esa opción/);
+        expect(lastSent()).toMatch(/Ninguna/);
+        expect(await state()).toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
+      });
+
+      it('3.M7 trae «Otro día» cuando hay horarios después, y elegirla los muestra', async () => {
+        appointments.hayCuposDesde.mockResolvedValue(true);
+        await hastaElMenu();
+        expect(lastSent()).toMatch(/\*B\)\* Otro día/);
+        expect(
+          redis.store.get(`temp_modify_otro_dia:${ORG_ID}:${SENDER}`),
+        ).toBe('B');
+        db.slots.push(slotRow('slot-later', FECHA_C, 'Otra Dra', SVC_MEDICINA));
+        await say('B');
+        expect(await state()).toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
+        expect(letraCambio('A')).toBe('slot-later');
+      });
+    });
+
     it('3.2 el nuevo cupo se lo llevan justo antes de confirmar → reofrece cupos frescos', async () => {
       await say('reprogramar mi cita');
       await say(CEDULA);

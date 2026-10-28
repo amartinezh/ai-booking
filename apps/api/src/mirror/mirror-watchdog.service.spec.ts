@@ -1085,15 +1085,36 @@ describe('MirrorWatchdogService', () => {
       },
     );
 
-    it('🙋 si no asistió (o aún no se sabe), el caso sigue abierto', async () => {
-      for (const attendanceStatus of ['NO_SHOW', 'PENDING']) {
-        const { service, exceptions } = build({
-          activas: [aviso({ kind: 'CANCELACION_SIN_CONFIRMAR' })],
-          citas: [cita({ attendanceStatus })],
-        });
-        await service.vigilarOrganizacion(ORG, AHORA);
-        expect(exceptions.autoResolver).not.toHaveBeenCalled();
-      }
+    // 2026-10-28: dos casos del 23 y el 26 de octubre seguían abiertos días
+    // después de que el paciente no fue.
+    it.each([
+      ['AVISO_INASISTENCIA', 'El paciente no asistió, como había avisado.'],
+      ['CANCELACION_SIN_CONFIRMAR', 'El paciente no asistió; la cita ya pasó.'],
+    ])('🙋 %s se cierra solo si el paciente no asistió', async (kind, nota) => {
+      const { service, exceptions } = build({
+        activas: [aviso({ kind })],
+        citas: [cita({ attendanceStatus: 'NO_SHOW' })],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(cerradas(exceptions)).toEqual([['ex-aviso', nota]]);
+    });
+
+    it('🙋 si aún no se sabe si asistió, el caso sigue abierto', async () => {
+      const { service, exceptions } = build({
+        activas: [aviso({ kind: 'CANCELACION_SIN_CONFIRMAR' })],
+        citas: [cita({ attendanceStatus: 'PENDING' })],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.autoResolver).not.toHaveBeenCalled();
+    });
+
+    it('🔎 «revisar una cita del asistente» no se cierra porque no asistió', async () => {
+      const { service, exceptions } = build({
+        activas: [aviso({ kind: 'REVISAR_CITA_ASISTENTE' })],
+        citas: [cita({ attendanceStatus: 'NO_SHOW' })],
+      });
+      await service.vigilarOrganizacion(ORG, AHORA);
+      expect(exceptions.autoResolver).not.toHaveBeenCalled();
     });
 
     it('🔎 «revisar una cita del asistente» no se cierra por la asistencia', async () => {

@@ -1734,6 +1734,32 @@ const FORMAL = {
         `_Elija el nuevo horario respondiendo con la letra._`,
     ]),
 
+  // 🗓️ Cambiar la fecha: pidió otro día u otra hora en el menú (2026-10-28).
+  modificarCuposPara: (etiqueta: string, lineas: string) =>
+    `Para *${etiqueta}* tengo estos horarios para mover su cita:\n\n${lineas}\n` +
+    `_Responda con la letra del horario al que desea moverla._`,
+
+  modificarOtrosCupos: (lineas: string) =>
+    `Le busqué otros horarios para mover su cita:\n\n${lineas}\n` +
+    `_Responda con la letra del horario al que desea moverla._`,
+
+  modificarSinCuposEsaFecha: (etiqueta: string, lineas: string) =>
+    `Para *${etiqueta}* no encontré horarios; estos son los más cercanos para mover su cita:\n\n${lineas}\n` +
+    `_Responda con la letra del horario al que desea moverla._`,
+
+  // Ninguno le sirve y no hay más: se le ofrece cancelar (con cancelar encendido).
+  modificarSinOtrosCupos: (servicio: string) =>
+    `Por ahora no tengo otros horarios de *${servicio}* para mover su cita por este medio. 🙏\n\n` +
+    `¿Desea que la *cancele* para que el cupo quede libre? Responda *SÍ* para cancelarla o *NO* para conservarla tal como está.`,
+
+  // Lo mismo con cancelar apagado: su pedido queda para el personal.
+  modificarSinOtrosCuposAviso: (servicio: string, contacto: string) =>
+    `Por ahora no tengo otros horarios de *${servicio}* para mover su cita por este medio. 🙏\n\n` +
+    `Dejé su solicitud para que el personal del hospital la revise; por ahora su cita sigue como está. Si necesita cancelarla de inmediato, comuníquese con ${contacto}.`,
+
+  modificarOpcionNoValida: (letras: string) =>
+    `No reconozco esa opción. Responda con una de las letras disponibles (${letras}), escríbame qué día u hora le sirve _(por ejemplo: «el jueves en la tarde»)_ o *"Ninguna"* si ninguno le sirve.`,
+
   // Frase corta para AUDIO: los nuevos horarios van por texto.
   modificarMostrarCuposAudio: (servicio: string) =>
     pick([
@@ -3029,6 +3055,29 @@ const INFORMAL = {
         `Mira, te puedo reprogramar a estos espacios:\n\n${lineas}\n` +
         `_Elige el nuevo horario con la letra._`,
     ]),
+
+  modificarCuposPara: (etiqueta: string, lineas: string) =>
+    `Para *${etiqueta}* tengo estos horarios para mover tu cita:\n\n${lineas}\n` +
+    `_Mándame la letra del horario al que quieres moverla._`,
+
+  modificarOtrosCupos: (lineas: string) =>
+    `Te busqué otros horarios para mover tu cita:\n\n${lineas}\n` +
+    `_Mándame la letra del horario al que quieres moverla._`,
+
+  modificarSinCuposEsaFecha: (etiqueta: string, lineas: string) =>
+    `Para *${etiqueta}* no encontré horarios; estos son los más cercanos para mover tu cita:\n\n${lineas}\n` +
+    `_Mándame la letra del horario al que quieres moverla._`,
+
+  modificarSinOtrosCupos: (servicio: string) =>
+    `Por ahora no tengo otros horarios de *${servicio}* para mover tu cita por aquí. 🙏\n\n` +
+    `¿Quieres que la *cancele* para que el cupo quede libre? Responde *SÍ* para cancelarla o *NO* para dejarla tal cual.`,
+
+  modificarSinOtrosCuposAviso: (servicio: string, contacto: string) =>
+    `Por ahora no tengo otros horarios de *${servicio}* para mover tu cita por aquí. 🙏\n\n` +
+    `Dejé tu solicitud para que el personal del hospital la revise; por ahora tu cita sigue igual. Si necesitas cancelarla ya, comunícate con ${contacto}.`,
+
+  modificarOpcionNoValida: (letras: string) =>
+    `No reconozco esa opción. Mándame una de las letras (${letras}), escríbeme qué día u hora te sirve _(por ejemplo: «el jueves en la tarde»)_ o *"Ninguna"* si ninguno te sirve.`,
 
   // Frase corta para AUDIO: los nuevos horarios van por texto (tuteo).
   modificarMostrarCuposAudio: (servicio: string) =>
