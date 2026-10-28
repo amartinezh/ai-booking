@@ -1,6 +1,39 @@
 import { parseHoraPreferida, matchesHora } from './parse-hora-preferida';
 
 describe('parseHoraPreferida', () => {
+  // 2026-10-28: frases reales del menú de cupos que no se leían, y por eso el
+  // asistente respondía «hay más de un horario que coincide».
+  describe('como lo teclean los pacientes', () => {
+    it.each([
+      ['Miercoles 28 alas 9am con el doctor Santiago', 9, null, true],
+      ['28 de octubre 3:00pm', 15, 0, true],
+      ['A las 11;20 am, está bien', 11, 20, true],
+      ['A las dos y cuarenta con el doctor Cardenas', 2, 40, false],
+      ['a las dos y cuarenta y cinco', 2, 45, false],
+      ['Jueves 7 50 Dr Germán García', 7, 50, false],
+      ['Jueves 29 750 Dr Germán García', 7, 50, false],
+      ['a las 930', 9, 30, false],
+      ['a las 7 50 de la mañana', 7, 50, true],
+    ])('"%s" → %s:%s', (frase, hour24, minute, meridiemKnown) => {
+      expect(parseHoraPreferida(frase)).toEqual({ hour24, minute, meridiemKnown });
+    });
+
+    it.each(['el 28 de octubre', '24391096', 'la cédula es 1054918312', 'jueves 29'])(
+      '"%s" no es una hora',
+      (frase) => {
+        expect(parseHoraPreferida(frase)).toBeNull();
+      },
+    );
+
+    it('"a las 10" sigue siendo las 10, no 1:0', () => {
+      expect(parseHoraPreferida('a las 10')).toEqual({
+        hour24: 10,
+        minute: null,
+        meridiemKnown: false,
+      });
+    });
+  });
+
   describe('no reconocido → null', () => {
     it.each([null, undefined, '', '   ', 'para mí', 'cuanto antes', 'mañana'])(
       '%s → null',

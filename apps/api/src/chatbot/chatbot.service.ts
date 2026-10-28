@@ -10,6 +10,8 @@ import {
   SESSION_TTL,
   PRESENTACION_TTL,
   SALUDO_TRAS_RECORDATORIO_TTL,
+  CUPO_APARTADO_TTL,
+  AVISO_LIMITE_TTL,
   SERVICE_WINDOW_TTL,
   WAITLIST_CONFIRM_TTL,
   buildMessages,
@@ -42,6 +44,7 @@ import {
 import { esPreguntaEnVezDeRespuesta } from './pregunta-al-confirmar';
 import { servicioQueNoSeAgenda } from './servicio-no-agendable';
 import { dudaSobreLaCita } from './duda-cita-agendada';
+import { esCancelarASecas, pideCitaNueva } from './cita-nueva-o-cambio';
 import { cupoBloqueadoParaElAsistente } from 'src/appointments/bloqueos-agenda';
 import {
   fueraDelPlazoParaElAsistente,
@@ -85,6 +88,9 @@ import {
   matchesHora,
   formatFechaNacimiento,
   parseFechaNacimiento,
+  parseDiaDeNacimiento,
+  parseMesDeNacimiento,
+  parseAnioDeNacimiento,
   parseSexo,
   parseRegimen,
   isParticularEps,
@@ -108,6 +114,8 @@ import {
   primerDiaParaVerElCupo,
   ultimoDiaParaAgendar,
   ventanaOtroHorario,
+  cuposDelMedicoNombrado,
+  letraEnLaFrase,
   type PedidoOtroHorario,
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
@@ -330,6 +338,25 @@ const EN_ALCANCE_DEL_BOT = {
 /** Quita tildes. Solo para comparar, igual que `textoParaCoincidencia`. */
 const sinTildes = (texto: string): string =>
   texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+/** Lo que ya dio de su fecha de nacimiento cuando se le pide por partes. */
+interface NacimientoPorPartes {
+  dia?: number;
+  mes?: number;
+}
+
+/** Intentos sin entenderle la fecha antes de pedírsela por partes (2026-10-28). */
+const NACIMIENTO_FALLAS_PARA_PARTES = 3;
+
+/**
+ * ¿Confirma la fecha que se le devolvió? «Sí», «correcto», y también «Está
+ * correcto» o «sí, así es» (2026-10-28: «Esta correcto» se leía como una fecha
+ * nueva que no se entendía).
+ */
+const esConfirmacionDeFecha = (texto: string | undefined): boolean =>
+  /^(si+|s|correcto|ok|okay|exacto|asi es|esa es|eso es|esta bien|esta correcto|es correcto|si correcto|si es correcto|si esta bien|si senor|si senora|si asi es|claro|confirmo|de acuerdo|listo)$/.test(
+    sinTildes(textoParaCoincidencia(texto ?? '')),
+  );
 
 /**
  * Estados desde los que «¿qué citas tengo?» abre la consulta. Fuera de ellos el
@@ -1217,7 +1244,9 @@ export class ChatbotService implements OnModuleInit {
   private async loadOfferedSlots(
     organizationId: string,
     senderId: string,
-  ): Promise<Array<{ letra: string; slotId: string; fecha: Date }>> {
+  ): Promise<
+    Array<{ letra: string; slotId: string; fecha: Date; medico: string }>
+  > {
     const keys = await this.redis.keys(
       `temp_slot_*:${organizationId}:${senderId}`,
     );
@@ -1229,7 +1258,12 @@ export class ChatbotService implements OnModuleInit {
       ),
     ].sort();
 
-    const out: Array<{ letra: string; slotId: string; fecha: Date }> = [];
+    const out: Array<{
+      letra: string;
+      slotId: string;
+      fecha: Date;
+      medico: string;
+    }> = [];
     for (const letra of letras) {
       const slotId = await this.redis.get(
         this.slotKey(organizationId, senderId, letra),
@@ -1238,7 +1272,11 @@ export class ChatbotService implements OnModuleInit {
         this.slotDateKey(organizationId, senderId, letra),
       );
       if (slotId && fechaStr) {
-        out.push({ letra, slotId, fecha: new Date(fechaStr) });
+        const medico =
+          (await this.redis.get(
+            this.slotMedicoKey(organizationId, senderId, letra),
+          )) ?? '';
+        out.push({ letra, slotId, fecha: new Date(fechaStr), medico });
       }
     }
     return out;
@@ -1264,6 +1302,14 @@ export class ChatbotService implements OnModuleInit {
     letra: string,
   ): string {
     return `temp_slot_${letra}_fecha:${organizationId}:${senderId}`;
+  }
+  /** El médico de esa letra, para «a las 9 con el doctor Santiago» (2026-10-28). */
+  private slotMedicoKey(
+    organizationId: string,
+    senderId: string,
+    letra: string,
+  ): string {
+    return `temp_slot_${letra}_medico:${organizationId}:${senderId}`;
   }
 
   /**
@@ -1296,8 +1342,14 @@ export class ChatbotService implements OnModuleInit {
     organizationId: string,
     senderId: string,
     text: string | undefined,
-  ): Promise<Array<{ letra: string; slotId: string; fecha: Date }> | null> {
-    const ventana = parseFechaPreferida(text ?? null);
+  ): Promise<Array<{
+    letra: string;
+    slotId: string;
+    fecha: Date;
+    medico: string;
+  }> | null> {
+    // En el menú, el día de la semana que es hoy es hoy (2026-10-28).
+    const ventana = parseFechaPreferida(text ?? null, { incluirHoy: true });
     const hora = parseHoraPreferida(text ?? null);
     if (!ventana && !hora) return null;
 
@@ -2305,24 +2357,39 @@ export class ChatbotService implements OnModuleInit {
       limite.periodo.clave,
       org?.timezone ?? undefined,
     );
-    const aviso =
-      operacion === 'RESCHEDULE'
-        ? limite.tipo === 'DAILY'
-          ? MSGS.limiteCitasCambioDia
-          : MSGS.limiteCitasCambioMes
-        : limite.tipo === 'DAILY'
-          ? MSGS.limiteCitasDia
-          : MSGS.limiteCitasMes;
-    const reply = aviso(
+    const comunes = [
       unaOVariasCitas(limite.limite),
       unaOVariasCitas(limite.citas),
       periodo,
       contacto,
       revision,
-    );
+    ] as const;
+    // Al agendar se dice de quién es la cédula: con un celular de la familia,
+    // «usted ya tiene una cita» confundía a quien agendaba para otra persona
+    // (2026-10-28).
+    const reply =
+      operacion === 'RESCHEDULE'
+        ? (limite.tipo === 'DAILY'
+            ? MSGS.limiteCitasCambioDia
+            : MSGS.limiteCitasCambioMes)(...comunes)
+        : (limite.tipo === 'DAILY' ? MSGS.limiteCitasDia : MSGS.limiteCitasMes)(
+            limite.paciente.fullName.trim() || 'el paciente',
+            limite.paciente.cedula.slice(-4),
+            ...comunes,
+          );
     // Texto directo (no smartReply): lleva un enlace que no debe sintetizarse
     // a voz — mismo criterio que el del padrón EPS y el de la encuesta.
     await this.sendWhatsAppMessage(senderId, reply);
+    // 🚦 Un «Cancelar» a secas en los minutos siguientes deja esta solicitud,
+    // no anula la cita que ya tiene (ver `avisoLimiteKey`).
+    if (operacion === 'BOOKING') {
+      await this.redis.set(
+        this.avisoLimiteKey(organizationId, senderId),
+        '1',
+        'EX',
+        AVISO_LIMITE_TTL,
+      );
+    }
 
     await this.auditFailure(senderId, organizationId, {
       reason: FailureReason.APPOINTMENT_LIMIT_REACHED,
@@ -2344,6 +2411,16 @@ export class ChatbotService implements OnModuleInit {
         solicitudId,
       },
     });
+  }
+
+  /**
+   * 🚦 Marca de «se le acaba de avisar el límite de citas» (2026-10-28). Con ella,
+   * un «Cancelar» a secas deja la solicitud en vez de ofrecer anular la cita que
+   * ya tiene: así se anularon las citas de dos niños, cuya madre escribía
+   * «Cancelar» para salir del aviso y confirmaba «Sí».
+   */
+  private avisoLimiteKey(organizationId: string, senderId: string): string {
+    return `aviso_limite:${organizationId}:${senderId}`;
   }
 
   /**
@@ -2523,6 +2600,14 @@ export class ChatbotService implements OnModuleInit {
   // HELPER 6: LIMPIEZA DE SESIÓN
   // ══════════════════════════════════════════════════════════════
   private async cleanUpSession(organizationId: string, senderId: string) {
+    // 🎯 El cupo que tenía apartado queda para los demás (2026-10-28).
+    await this.soltarCupoApartado(
+      organizationId,
+      senderId,
+      await this.redis.get(
+        `temp_selected_slot_id:${organizationId}:${senderId}`,
+      ),
+    );
     const keysToDelete = [
       `temp_cedula:${organizationId}:${senderId}`,
       `temp_nombre:${organizationId}:${senderId}`,
@@ -5494,6 +5579,7 @@ export class ChatbotService implements OnModuleInit {
         cita.scheduleSlot.service?.name ?? '',
         doctorLabel(cita.scheduleSlot.doctor),
         formatAppointmentLong(cita.scheduleSlot.startTime, { timeZone }),
+        cita.patient?.fullName?.trim() || 'el paciente',
       );
       await this.smartReply(organizationId, senderId, reply);
       await this.setUserState(
@@ -6926,6 +7012,34 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
+    // 🚦 «Cancelar» a secas justo después del aviso de límite (2026-10-28): quiere
+    // dejar esa solicitud, no anular la cita que ya tiene. Se le dice que nada
+    // cambió y cómo anular una cita si eso es lo que quiere.
+    if (
+      currentState === ChatState.IDLE &&
+      esCancelarASecas(text) &&
+      (await this.redis.get(this.avisoLimiteKey(organizationId, senderId)))
+    ) {
+      await this.redis.del(this.avisoLimiteKey(organizationId, senderId));
+      const reply = MSGS.cancelarTrasLimite();
+      await this.smartReply(organizationId, senderId, reply);
+      await this.auditSuccess(senderId, organizationId, {
+        userMessage: text || '[audio]',
+        botReply: reply,
+        metadata: { step: 'CANCELAR_TRAS_LIMITE' },
+      });
+      return;
+    }
+
+    // 🆕 «Necesito otra cita para lectura de exámenes» es una cita NUEVA: el
+    // extractor la tomaba como cambiar la fecha, y el asistente movió en el
+    // hospital la cita que la paciente acababa de agendarle a otra persona
+    // (2026-10-28). Con «cambiar», «mover» o «no puedo ir» sí es un cambio.
+    if (aiData.isModification && !isQuickModify && pideCitaNueva(text)) {
+      aiData.isModification = false;
+      aiData.intent = 'agendar_cita';
+    }
+
     // 🔒 Cancelar o cambiar una cita con su interruptor apagado: no se abre el
     // flujo; el aviso dice con quién comunicarse y qué sí se puede por aquí. Va
     // después de la baja de recordatorios, que no es una operación sobre la
@@ -8036,29 +8150,33 @@ export class ChatbotService implements OnModuleInit {
 
         let slots: AvailableSlot[];
         let slotsMode: 'normal' | 'fecha' | 'fallback' = 'normal';
+        // Sin los que otro paciente del chat tiene apartados (2026-10-28).
         if (ventana) {
-          slots = await this.appointmentsService.getAvailableSlots(
+          slots = await this.cuposParaElMenu(
+            organizationId,
+            senderId,
             resolvedServiceName as string,
             epsIdForSlots,
-            organizationId,
             { desde: ventana.desde, hasta: ventana.hasta },
           );
           if (slots.length > 0) {
             slotsMode = 'fecha';
           } else {
             // Sin cupos en la fecha pedida: ofrecemos los más próximos.
-            slots = await this.appointmentsService.getAvailableSlots(
+            slots = await this.cuposParaElMenu(
+              organizationId,
+              senderId,
               resolvedServiceName as string,
               epsIdForSlots,
-              organizationId,
             );
             if (slots.length > 0) slotsMode = 'fallback';
           }
         } else {
-          slots = await this.appointmentsService.getAvailableSlots(
+          slots = await this.cuposParaElMenu(
+            organizationId,
+            senderId,
             resolvedServiceName as string,
             epsIdForSlots,
-            organizationId,
           );
         }
 
@@ -8358,6 +8476,10 @@ export class ChatbotService implements OnModuleInit {
             ),
             this.redis.del(this.altaKey(organizationId, senderId, 'sexo')),
             this.redis.del(this.altaKey(organizationId, senderId, 'regimen')),
+            this.redis.del(
+              this.nacimientoKey(organizationId, senderId),
+              this.nacimientoFallasKey(organizationId, senderId),
+            ),
           ]);
           await this.redis.set(
             this.altaCedulaKey(organizationId, senderId),
@@ -8389,6 +8511,10 @@ export class ChatbotService implements OnModuleInit {
             ),
             this.redis.del(this.altaKey(organizationId, senderId, 'sexo')),
             this.redis.del(this.altaKey(organizationId, senderId, 'regimen')),
+            this.redis.del(
+              this.nacimientoKey(organizationId, senderId),
+              this.nacimientoFallasKey(organizationId, senderId),
+            ),
           ]);
         }
         await this.redis.set(
@@ -8591,7 +8717,8 @@ export class ChatbotService implements OnModuleInit {
       retriesKey,
       retriesCount,
     } = ctx;
-    const letraElegida = this.extractOptionLetter(text);
+    // «Perdón es B», «Laletra B»: la letra dentro de una frase (2026-10-28).
+    const letraElegida = this.extractOptionLetter(text) || letraEnLaFrase(text);
     const slotId = await this.redis.get(
       this.slotKey(organizationId, senderId, letraElegida),
     );
@@ -8642,6 +8769,23 @@ export class ChatbotService implements OnModuleInit {
         senderId,
         text,
       );
+      // 👨‍⚕️ Varios a esa hora, pero nombró al médico: «Miércoles 28 alas 9am con
+      // el doctor Santiago» (2026-10-28). Con uno solo de ese médico, es ese.
+      const delMedico =
+        casan && casan.length > 1 ? cuposDelMedicoNombrado(text, casan) : [];
+      if (delMedico.length === 1) {
+        await this.advanceAfterSlotSelected({
+          organizationId,
+          senderId,
+          slotId: delMedico[0].slotId,
+          slotFechaStr: delMedico[0].fecha.toISOString(),
+          MSGS,
+          userMessage: text,
+          selectedLetter: delMedico[0].letra,
+          via: 'datetime_doctor',
+        });
+        return;
+      }
       // 🗓️ «¿Para mañana no hay?», «el miércoles 28», «en la tarde», «otro
       // horario», que no son ninguno de los que ve: se le buscan cupos de eso
       // (2026-10-27). Antes recibía «Esa letra no aparece entre las opciones» y
@@ -8653,6 +8797,19 @@ export class ChatbotService implements OnModuleInit {
               timeZone: (await this.zonaHorariaDe(organizationId)) ?? undefined,
             });
       if (pedido && (await this.ofrecerOtroHorario(ctx, pedido))) return;
+
+      // 🙏 «Muchas gracias» en el menú: se despide, no le pide la letra
+      // (2026-10-28).
+      if (!pedido && esAgradecimiento(text)) {
+        await this.handleGoodbye({
+          organizationId,
+          senderId,
+          text,
+          currentState,
+          MSGS,
+        });
+        return;
+      }
 
       await this.redis.set(
         retriesKey,
@@ -8713,6 +8870,216 @@ export class ChatbotService implements OnModuleInit {
     return vistos ? vistos.split(',').filter(Boolean) : [];
   }
 
+  // ── Cupo apartado mientras el paciente termina (2026-10-28) ────────
+  // «Le aparté ese horario» no apartaba nada: con pocos cupos, otro paciente del
+  // chat lo tomaba mientras el primero escribía nombres, apellidos y fecha de
+  // nacimiento (7 de los 10 «ya lo tomaron» del 27 y 28 de octubre). Ahora el
+  // cupo elegido queda apartado `CUPO_APARTADO_TTL` SOLO dentro de AgenIA: no se
+  // le ofrece ni se le reserva a otro paciente del chat. El hospital no se toca
+  // (su mostrador puede tomarlo igual). La clave es por cupo y no empieza por
+  // `temp_`: limpiar la sesión de un paciente no suelta lo apartado por otro.
+  private cupoApartadoKey(organizationId: string, slotId: string): string {
+    return `cupo_apartado:${organizationId}:${slotId}`;
+  }
+
+  /** Aparta el cupo para este paciente; false si lo tiene apartado otro. */
+  private async apartarCupo(
+    organizationId: string,
+    senderId: string,
+    slotId: string,
+  ): Promise<boolean> {
+    const key = this.cupoApartadoKey(organizationId, slotId);
+    const duenio = await this.redis.get(key);
+    if (duenio && duenio !== senderId) return false;
+    // Eligió otro: se suelta el que tenía.
+    const anterior = await this.redis.get(
+      `temp_selected_slot_id:${organizationId}:${senderId}`,
+    );
+    if (anterior && anterior !== slotId) {
+      await this.soltarCupoApartado(organizationId, senderId, anterior);
+    }
+    await this.redis.set(key, senderId, 'EX', CUPO_APARTADO_TTL);
+    return true;
+  }
+
+  /** Suelta el cupo si lo tiene apartado este paciente. */
+  private async soltarCupoApartado(
+    organizationId: string,
+    senderId: string,
+    slotId: string | null,
+  ): Promise<void> {
+    if (!slotId) return;
+    const key = this.cupoApartadoKey(organizationId, slotId);
+    if ((await this.redis.get(key)) === senderId) await this.redis.del(key);
+  }
+
+  /** Mientras responde el registro, lo apartado no vence. */
+  private async renovarCupoApartado(
+    organizationId: string,
+    senderId: string,
+  ): Promise<void> {
+    const slotId = await this.redis.get(
+      `temp_selected_slot_id:${organizationId}:${senderId}`,
+    );
+    if (!slotId) return;
+    const key = this.cupoApartadoKey(organizationId, slotId);
+    if ((await this.redis.get(key)) === senderId) {
+      await this.redis.expire(key, CUPO_APARTADO_TTL);
+    }
+  }
+
+  /** Los cupos que otros pacientes del chat tienen apartados ahora mismo. */
+  private async cuposApartadosPorOtros(
+    organizationId: string,
+    senderId: string,
+  ): Promise<string[]> {
+    const prefijo = `cupo_apartado:${organizationId}:`;
+    const otros: string[] = [];
+    for (const key of await this.redis.keys(`${prefijo}*`)) {
+      if ((await this.redis.get(key)) !== senderId) {
+        otros.push(key.slice(prefijo.length));
+      }
+    }
+    return otros;
+  }
+
+  /**
+   * Los cupos para el menú, sin los que otro paciente del chat tiene apartados.
+   * Sin apartados ni opciones, la consulta es idéntica a la de siempre.
+   */
+  private async cuposParaElMenu(
+    organizationId: string,
+    senderId: string,
+    serviceName: string,
+    epsId: string | null,
+    ventana?: { desde: Date; hasta?: Date | null } | null,
+    opts?: Parameters<AppointmentsService['getAvailableSlots']>[4],
+  ): Promise<AvailableSlot[]> {
+    const apartados = await this.cuposApartadosPorOtros(
+      organizationId,
+      senderId,
+    );
+    const conApartados =
+      apartados.length > 0
+        ? { ...(opts ?? {}), excluir: [...(opts?.excluir ?? []), ...apartados] }
+        : opts;
+    if (conApartados) {
+      return this.appointmentsService.getAvailableSlots(
+        serviceName,
+        epsId,
+        organizationId,
+        ventana ?? null,
+        conApartados,
+      );
+    }
+    return ventana
+      ? this.appointmentsService.getAvailableSlots(
+          serviceName,
+          epsId,
+          organizationId,
+          ventana,
+        )
+      : this.appointmentsService.getAvailableSlots(
+          serviceName,
+          epsId,
+          organizationId,
+        );
+  }
+
+  /**
+   * 🎯 El cupo que eligió ya no está (otro paciente, el hospital, o el médico
+   * dejó de recibir por WhatsApp): se le arma un menú nuevo con lo que queda
+   * (2026-10-28). Antes se le pedía «la letra nuevamente» del menú viejo y
+   * elegía otras letras ya tomadas: una paciente lo intentó tres veces y se fue
+   * sin cita. Devuelve lo que se le dijo, para la auditoría.
+   */
+  private async reofrecerTrasCupoTomado(p: {
+    organizationId: string;
+    senderId: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    userMessage: string | undefined;
+    slotIdTomado: string;
+    medicoNoDisponible?: boolean;
+  }): Promise<string> {
+    const { organizationId, senderId, MSGS } = p;
+    await this.soltarCupoApartado(organizationId, senderId, p.slotIdTomado);
+    await this.redis.del(
+      `temp_selected_slot_id:${organizationId}:${senderId}`,
+      `temp_selected_date_view:${organizationId}:${senderId}`,
+    );
+    const [serviceName, epsName, epsId] = await Promise.all([
+      this.redis.get(`temp_especialidad:${organizationId}:${senderId}`),
+      this.redis.get(`temp_eps_query:${organizationId}:${senderId}`),
+      this.redis.get(`temp_eps_id:${organizationId}:${senderId}`),
+    ]);
+    if (!serviceName || !epsName) {
+      // Sin la búsqueda en la sesión: como antes, con las letras que ve.
+      const aviso = p.medicoNoDisponible
+        ? MSGS.medicoNoDisponiblePorWhatsapp()
+        : MSGS.slotTomado();
+      await this.smartReply(organizationId, senderId, aviso);
+      await this.setUserState(
+        organizationId,
+        senderId,
+        ChatState.AWAITING_DATE,
+      );
+      return aviso;
+    }
+    const epsIdForSlots =
+      epsName.toLowerCase() === PARTICULAR_EPS_NAME.toLowerCase()
+        ? null
+        : epsId || null;
+    let slots: AvailableSlot[] = [];
+    try {
+      slots = await this.cuposParaElMenu(
+        organizationId,
+        senderId,
+        serviceName,
+        epsIdForSlots,
+        null,
+        { excluir: [p.slotIdTomado] },
+      );
+    } catch (e: unknown) {
+      this.logger.error(
+        `[Tenant: ${organizationId}] No se pudo armar el menú tras el cupo tomado de ${senderId}: ${getErrorMessage(e)}`,
+      );
+    }
+    if (slots.length === 0) {
+      const reply = MSGS.cupoTomadoSinOtros(
+        this.contactoDe(MSGS, await this.organizacionDe(organizationId)),
+      );
+      await this.smartReply(organizationId, senderId, reply);
+      await this.cleanUpSession(organizationId, senderId);
+      return reply;
+    }
+    await this.mostrarMenuCupos({
+      organizationId,
+      senderId,
+      slots,
+      MSGS,
+      isVoiceTurn:
+        (await this.redis.get(`is_ai_flow:${organizationId}:${senderId}`)) ===
+        'true',
+      epsName,
+      serviceName,
+      epsIdForSlots,
+      armarRespuesta: (lineas) =>
+        p.medicoNoDisponible
+          ? MSGS.medicoNoDisponibleOtrasOpciones(epsName, lineas)
+          : MSGS.cupoTomadoOtrasOpciones(epsName, lineas),
+      userMessage: p.userMessage || '[audio]',
+      step: 'SLOTS_REOFFERED',
+      metadata: {
+        eps: epsName,
+        specialty: serviceName,
+        motivo: p.medicoNoDisponible ? 'MEDICO_NO_DISPONIBLE' : 'CUPO_TOMADO',
+      },
+    });
+    return (
+      (await this.getLastSent(senderId)) || '[menú nuevo tras cupo tomado]'
+    );
+  }
+
   /**
    * 🗓️ Muestra el menú de cupos y espera la letra (AWAITING_DATE). Lo usan la
    * cascada del agendamiento y el menú mismo cuando el paciente pide otro día u
@@ -8765,6 +9132,12 @@ export class ChatbotService implements OnModuleInit {
       await this.redis.set(
         this.slotDateKey(organizationId, senderId, letra),
         slots[i].fecha.toISOString(),
+        'EX',
+        SESSION_TTL,
+      );
+      await this.redis.set(
+        this.slotMedicoKey(organizationId, senderId, letra),
+        slots[i].doctor,
         'EX',
         SESSION_TTL,
       );
@@ -8891,6 +9264,11 @@ export class ChatbotService implements OnModuleInit {
         : null,
       franja: pedido.franja,
       otroDia: pedido.otroDia,
+      ...(pedido.hora
+        ? {
+            hora: `${pedido.hora.hour24}:${String(pedido.hora.minute ?? 0).padStart(2, '0')}`,
+          }
+        : {}),
     };
 
     // Sin servicio ni EPS en memoria no hay qué buscar: que se le pida la letra.
@@ -8943,21 +9321,25 @@ export class ChatbotService implements OnModuleInit {
       ofrecidos.map((o) => o.fecha),
       { timeZone },
     );
+    // 🎯 Con una hora pedida («para las 3:30»), los más cercanos a ella aunque
+    // ya los haya visto: puede no haberse fijado en el que pedía (2026-10-28).
+    const noRepetir = pedido.hora ? [] : vistos;
     const buscar = (
       v: { desde: Date; hasta?: Date | null } | null,
       franja: PedidoOtroHorario['franja'],
       excluir: string[],
     ) =>
-      this.appointmentsService.getAvailableSlots(
+      this.cuposParaElMenu(
+        organizationId,
+        senderId,
         serviceName,
         epsIdForSlots,
-        organizationId,
         v,
-        { franja, excluir },
+        { franja, excluir, ...(pedido.hora ? { hora: pedido.hora } : {}) },
       );
 
-    let slots = await buscar(ventana, pedido.franja, vistos);
-    if (slots.length === 0 && pedido.fecha && vistos.length > 0) {
+    let slots = await buscar(ventana, pedido.franja, noRepetir);
+    if (slots.length === 0 && pedido.fecha && noRepetir.length > 0) {
       slots = await buscar(ventana, pedido.franja, []);
     }
     const exacto = slots.length > 0;
@@ -8973,7 +9355,7 @@ export class ChatbotService implements OnModuleInit {
       if (pedido.franja) alternativas.push([ventana, null]);
       alternativas.push([null, null]);
       for (const [v, franja] of alternativas) {
-        slots = await buscar(v, franja, vistos);
+        slots = await buscar(v, franja, noRepetir);
         if (slots.length > 0) break;
       }
     }
@@ -9072,7 +9454,7 @@ export class ChatbotService implements OnModuleInit {
     MSGS: ReturnType<typeof buildMessages>;
     userMessage: string | undefined;
     selectedLetter?: string;
-    via: 'letter' | 'voice_datetime';
+    via: 'letter' | 'voice_datetime' | 'datetime_doctor';
   }): Promise<void> {
     const {
       organizationId,
@@ -9084,6 +9466,24 @@ export class ChatbotService implements OnModuleInit {
       selectedLetter,
       via,
     } = p;
+
+    // 🎯 Lo apartó otro paciente del chat después de que se le mostró el menú.
+    if (!(await this.apartarCupo(organizationId, senderId, slotId))) {
+      const reply = await this.reofrecerTrasCupoTomado({
+        organizationId,
+        senderId,
+        MSGS,
+        userMessage,
+        slotIdTomado: slotId,
+      });
+      await this.auditFailure(senderId, organizationId, {
+        reason: FailureReason.SLOT_TAKEN,
+        userMessage: userMessage || '[audio]',
+        botReply: reply,
+        metadata: { stage: 'APARTADO_POR_OTRO', slotId },
+      });
+      return;
+    }
 
     await this.redis.set(
       `temp_selected_slot_id:${organizationId}:${senderId}`,
@@ -9388,6 +9788,7 @@ export class ChatbotService implements OnModuleInit {
     reply: string,
     step: string,
   ): Promise<void> {
+    await this.renovarCupoApartado(ctx.organizationId, ctx.senderId);
     await this.smartReply(ctx.organizationId, ctx.senderId, reply);
     await this.auditarAlta(
       ctx.organizationId,
@@ -9520,14 +9921,15 @@ export class ChatbotService implements OnModuleInit {
 
   private async handleAwaitingBirthdate(ctx: ChatTurnContext): Promise<void> {
     const { organizationId, senderId, text, MSGS } = ctx;
+    const pendienteKey = `temp_alta_nacimiento_pendiente:${organizationId}:${senderId}`;
 
-    // El paciente confirma la fecha que se le devolvió en el turno anterior.
-    const pendiente = await this.redis.get(
-      `temp_alta_nacimiento_pendiente:${organizationId}:${senderId}`,
-    );
+    // El paciente confirma la fecha que se le devolvió en el turno anterior:
+    // con un sí («Está correcto», 2026-10-28) o escribiéndola igual otra vez.
+    const pendiente = await this.redis.get(pendienteKey);
+    const fecha = parseFechaNacimiento(text);
     if (
       pendiente &&
-      /^(s[ií]|si|correcto|ok|exacto|as[ií] es)$/i.test((text ?? '').trim())
+      (esConfirmacionDeFecha(text) || fecha?.iso === pendiente)
     ) {
       await this.redis.set(
         this.altaKey(organizationId, senderId, 'nacimiento'),
@@ -9536,14 +9938,39 @@ export class ChatbotService implements OnModuleInit {
         SESSION_TTL,
       );
       await this.redis.del(
-        `temp_alta_nacimiento_pendiente:${organizationId}:${senderId}`,
+        pendienteKey,
+        this.nacimientoKey(organizationId, senderId),
       );
       await this.continuarAlta(ctx);
       return;
     }
 
-    const fecha = parseFechaNacimiento(text);
+    // 🧩 Por partes (día, mes, año) tras tres intentos fallidos.
+    const partes = await this.redis.get(
+      this.nacimientoKey(organizationId, senderId),
+    );
+    if (partes && !fecha) {
+      await this.nacimientoPorPartes(
+        ctx,
+        JSON.parse(partes) as NacimientoPorPartes,
+      );
+      return;
+    }
+
     if (!fecha) {
+      const fallasKey = this.nacimientoFallasKey(organizationId, senderId);
+      const fallas = Number((await this.redis.get(fallasKey)) ?? 0) + 1;
+      await this.redis.set(fallasKey, String(fallas), 'EX', SESSION_TTL);
+      if (fallas >= NACIMIENTO_FALLAS_PARA_PARTES) {
+        await this.redis.del(pendienteKey);
+        await this.guardarNacimientoPorPartes(organizationId, senderId, {});
+        await this.responderAlta(
+          ctx,
+          MSGS.nacimientoPedirDia(),
+          'ALTA_NACIMIENTO_POR_PARTES',
+        );
+        return;
+      }
       await this.responderAlta(
         ctx,
         MSGS.nacimientoNoEntendido(),
@@ -9552,9 +9979,23 @@ export class ChatbotService implements OnModuleInit {
       return;
     }
 
-    // ⭐ Se le devuelve lo entendido ANTES de darlo por bueno. Una fecha mal
-    // leída no da error: se propaga en silencio hasta la historia clínica del
-    // paciente, y de ella depende el rango de edad que el HIS valida.
+    await this.devolverNacimientoEntendido(ctx, fecha);
+  }
+
+  /**
+   * ⭐ Se le devuelve lo entendido ANTES de darlo por bueno. Una fecha mal
+   * leída no da error: se propaga en silencio hasta la historia clínica del
+   * paciente, y de ella depende el rango de edad que el HIS valida.
+   */
+  private async devolverNacimientoEntendido(
+    ctx: ChatTurnContext,
+    fecha: { iso: string; date: Date },
+  ): Promise<void> {
+    const { organizationId, senderId, MSGS } = ctx;
+    await this.redis.del(
+      this.nacimientoKey(organizationId, senderId),
+      this.nacimientoFallasKey(organizationId, senderId),
+    );
     await this.redis.set(
       `temp_alta_nacimiento_pendiente:${organizationId}:${senderId}`,
       fecha.iso,
@@ -9566,6 +10007,100 @@ export class ChatbotService implements OnModuleInit {
       MSGS.confirmarNacimiento(formatFechaNacimiento(fecha.date)),
       'ALTA_CONFIRMAR_NACIMIENTO',
     );
+  }
+
+  // ── Fecha de nacimiento por partes (2026-10-28) ────────────────────
+  // Una paciente de 65 años escribió su fecha diez veces en 16 minutos y se fue
+  // sin cita. Tras tres intentos se le pide el día, luego el mes y luego el año;
+  // con los tres, se le devuelve la fecha completa para que la confirme, como
+  // siempre. Las claves empiezan por `temp_alta_` y caducan con la sesión.
+  private nacimientoKey(organizationId: string, senderId: string): string {
+    return `temp_alta_nacimiento_partes:${organizationId}:${senderId}`;
+  }
+  private nacimientoFallasKey(
+    organizationId: string,
+    senderId: string,
+  ): string {
+    return `temp_alta_nacimiento_fallas:${organizationId}:${senderId}`;
+  }
+  private async guardarNacimientoPorPartes(
+    organizationId: string,
+    senderId: string,
+    partes: NacimientoPorPartes,
+  ): Promise<void> {
+    await this.redis.set(
+      this.nacimientoKey(organizationId, senderId),
+      JSON.stringify(partes),
+      'EX',
+      SESSION_TTL,
+    );
+  }
+
+  private async nacimientoPorPartes(
+    ctx: ChatTurnContext,
+    partes: NacimientoPorPartes,
+  ): Promise<void> {
+    const { organizationId, senderId, text, MSGS } = ctx;
+    if (partes.dia === undefined) {
+      const dia = parseDiaDeNacimiento(text);
+      if (dia === null) {
+        await this.responderAlta(
+          ctx,
+          MSGS.nacimientoParteNoEntendida(MSGS.nacimientoPedirDia()),
+          'ALTA_NACIMIENTO_PARTE_NO_ENTENDIDA',
+        );
+        return;
+      }
+      await this.guardarNacimientoPorPartes(organizationId, senderId, { dia });
+      await this.responderAlta(
+        ctx,
+        MSGS.nacimientoPedirMes(),
+        'ALTA_NACIMIENTO_MES',
+      );
+      return;
+    }
+    if (partes.mes === undefined) {
+      const mes = parseMesDeNacimiento(text);
+      if (mes === null) {
+        await this.responderAlta(
+          ctx,
+          MSGS.nacimientoParteNoEntendida(MSGS.nacimientoPedirMes()),
+          'ALTA_NACIMIENTO_PARTE_NO_ENTENDIDA',
+        );
+        return;
+      }
+      await this.guardarNacimientoPorPartes(organizationId, senderId, {
+        ...partes,
+        mes,
+      });
+      await this.responderAlta(
+        ctx,
+        MSGS.nacimientoPedirAnio(),
+        'ALTA_NACIMIENTO_ANIO',
+      );
+      return;
+    }
+    const anio = parseAnioDeNacimiento(text);
+    if (anio === null) {
+      await this.responderAlta(
+        ctx,
+        MSGS.nacimientoParteNoEntendida(MSGS.nacimientoPedirAnio()),
+        'ALTA_NACIMIENTO_PARTE_NO_ENTENDIDA',
+      );
+      return;
+    }
+    // El mismo lector de siempre valida la fecha (31 de febrero, futura…).
+    const fecha = parseFechaNacimiento(`${partes.dia}/${partes.mes}/${anio}`);
+    if (!fecha) {
+      await this.guardarNacimientoPorPartes(organizationId, senderId, {});
+      await this.responderAlta(
+        ctx,
+        MSGS.nacimientoFechaNoExiste(),
+        'ALTA_NACIMIENTO_NO_EXISTE',
+      );
+      return;
+    }
+    await this.devolverNacimientoEntendido(ctx, fecha);
   }
 
   private async handleAwaitingGender(ctx: ChatTurnContext): Promise<void> {
@@ -9891,6 +10426,31 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
+      // 🎯 Se le venció lo apartado y lo apartó otro paciente del chat.
+      const duenioDelCupo = await this.redis.get(
+        this.cupoApartadoKey(organizationId, slotIdFinal),
+      );
+      if (duenioDelCupo && duenioDelCupo !== senderId) {
+        const reply = await this.reofrecerTrasCupoTomado({
+          organizationId,
+          senderId,
+          MSGS,
+          userMessage: text,
+          slotIdTomado: slotIdFinal,
+        });
+        await this.auditFailure(senderId, organizationId, {
+          reason: FailureReason.SLOT_TAKEN,
+          userMessage: text,
+          botReply: reply,
+          metadata: {
+            stage: 'APARTADO_POR_OTRO',
+            slotId: slotIdFinal,
+            cedula: cedulaFinal,
+          },
+        });
+        return;
+      }
+
       // La EPS de la CITA es la de esta sesión de agendamiento, no la que el
       // perfil traiga de reservas anteriores (un paciente puede venir hoy como
       // Particular y la próxima vez por su EPS).
@@ -9916,14 +10476,14 @@ export class ChatbotService implements OnModuleInit {
         if (enElHospital === 'RECHAZADA') {
           // El hospital ya tenía ocupado ese horario (o se cruza con otra
           // cita): la API anuló la cita en AgenIA. Se le ofrece elegir otro,
-          // igual que cuando otro paciente toma el cupo.
-          const reply = MSGS.slotTomado();
-          await this.smartReply(organizationId, senderId, reply);
-          await this.setUserState(
+          // igual que cuando otro paciente toma el cupo: con un menú nuevo.
+          const reply = await this.reofrecerTrasCupoTomado({
             organizationId,
             senderId,
-            ChatState.AWAITING_DATE,
-          );
+            MSGS,
+            userMessage: text,
+            slotIdTomado: slotIdFinal,
+          });
           await this.auditFailure(senderId, organizationId, {
             reason: FailureReason.SLOT_TAKEN,
             userMessage: text,
@@ -10102,16 +10662,15 @@ export class ChatbotService implements OnModuleInit {
         // El servicio distingue "se lo llevó otro paciente" de "el médico dejó
         // de aceptar WhatsApp". Antes ambos casos usaban el mismo texto, y el
         // segundo le mentía al paciente: el horario seguía libre.
-        const reply =
-          bookingResult.reason === 'DOCTOR_NOT_BOOKABLE'
-            ? MSGS.medicoNoDisponiblePorWhatsapp()
-            : MSGS.slotTomado();
-        await this.smartReply(organizationId, senderId, reply);
-        await this.setUserState(
+        // Con un menú nuevo de lo que queda (2026-10-28).
+        const reply = await this.reofrecerTrasCupoTomado({
           organizationId,
           senderId,
-          ChatState.AWAITING_DATE,
-        );
+          MSGS,
+          userMessage: text,
+          slotIdTomado: slotIdFinal,
+          medicoNoDisponible: bookingResult.reason === 'DOCTOR_NOT_BOOKABLE',
+        });
 
         await this.auditFailure(senderId, organizationId, {
           reason: FailureReason.SLOT_TAKEN,
@@ -10139,6 +10698,8 @@ export class ChatbotService implements OnModuleInit {
         this.altaKey(organizationId, senderId, 'nacimiento'),
         this.altaKey(organizationId, senderId, 'sexo'),
         this.altaKey(organizationId, senderId, 'regimen'),
+        this.nacimientoKey(organizationId, senderId),
+        this.nacimientoFallasKey(organizationId, senderId),
         this.altaCedulaKey(organizationId, senderId),
       );
 
@@ -10559,7 +11120,10 @@ export class ChatbotService implements OnModuleInit {
 
     const apt = await this.prisma.appointment.findUnique({
       where: { id: aptId },
-      include: { scheduleSlot: { include: { doctor: true, service: true } } },
+      include: {
+        scheduleSlot: { include: { doctor: true, service: true } },
+        patient: { select: { fullName: true } },
+      },
     });
 
     let reply = '';
@@ -10569,6 +11133,7 @@ export class ChatbotService implements OnModuleInit {
         apt.scheduleSlot.service.name,
         doctorLabel(apt.scheduleSlot.doctor),
         fechaFormateada,
+        apt.patient?.fullName?.trim() || 'el paciente',
       );
       await this.smartReply(organizationId, senderId, reply);
     }
@@ -13724,6 +14289,7 @@ export class ChatbotService implements OnModuleInit {
         apt.scheduleSlot.service.name,
         doctorLabel(apt.scheduleSlot.doctor),
         fechaFormateada,
+        patient.fullName?.trim() || 'el paciente',
       );
       await this.smartReply(organizationId, senderId, reply);
       await this.setUserState(
@@ -14171,10 +14737,12 @@ export class ChatbotService implements OnModuleInit {
     const serviceName = apt.scheduleSlot.service.name;
     const fechaActual = formatAppointmentLong(apt.scheduleSlot.startTime);
 
-    const slots = await this.appointmentsService.getAvailableSlots(
+    // Sin los que otro paciente del chat tiene apartados (2026-10-28).
+    const slots = await this.cuposParaElMenu(
+      organizationId,
+      senderId,
       serviceName,
       apt.epsId,
-      organizationId,
     );
     // Excluimos el cupo que el paciente ya tiene (no tiene sentido "moverla" al mismo).
     const candidateSlots = slots.filter((s) => s.slotId !== apt.scheduleSlotId);

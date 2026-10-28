@@ -71,12 +71,39 @@ const NUM_WORDS: Record<string, number> = {
   veintitres: 23,
 };
 
-/** Minúsculas, sin acentos, espacios colapsados. */
+/**
+ * Minutos en palabras, para «dos y cuarenta» (2026-10-28). «Cuarenta y cinco»
+ * llega aquí como «cuarentaycinco» (ver `normalize`).
+ */
+const MINUTE_WORDS: Record<string, number> = {
+  cinco: 5,
+  diez: 10,
+  quince: 15,
+  veinte: 20,
+  veinticinco: 25,
+  treinta: 30,
+  treintaycinco: 35,
+  cuarenta: 40,
+  cuarentaycinco: 45,
+  cincuenta: 50,
+  cincuentaycinco: 55,
+};
+
+/**
+ * Minúsculas, sin acentos, espacios colapsados. Y lo que el paciente teclea de
+ * afán (2026-10-28, frases reales del menú de cupos): «9am» y «3:00pm» con la
+ * franja pegada, «alas 9» por «a las 9», «11;20» con punto y coma.
+ */
 function normalize(s: string): string {
   return s
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
+    .replace(/(\d)([a-z])/g, '$1 $2')
+    .replace(/([a-z])(\d)/g, '$1 $2')
+    .replace(/\b(\d{1,2})[;,](\d{2})\b/g, '$1:$2')
+    .replace(/\balas\b/g, 'a las')
+    .replace(/\b(treinta|cuarenta|cincuenta)\s+y\s+cinco\b/g, '$1ycinco')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -87,6 +114,12 @@ function toNumber(token: string | undefined): number | null {
   if (/^\d{1,2}$/.test(token)) return Number(token);
   if (token in NUM_WORDS) return NUM_WORDS[token];
   return null;
+}
+
+/** Los minutos de «y cuarenta», «y 20»: número o palabra. */
+function toMinute(token: string | undefined): number | null {
+  if (token && token in MINUTE_WORDS) return MINUTE_WORDS[token];
+  return toNumber(token);
 }
 
 /**
@@ -158,11 +191,30 @@ export function parseHoraPreferida(
       let mi: number | null = null;
       if (conFraccion[2] === 'media') mi = 30;
       else if (conFraccion[2] === 'cuarto') mi = 15;
-      else mi = toNumber(conFraccion[2]);
+      else mi = toMinute(conFraccion[2]);
       if (mi != null && mi <= 59) {
         return finalize(h, mi, meridiem);
       }
     }
+  }
+
+  // ── "a las 7 50", "jueves 7 50": hora y minutos separados por un espacio ──
+  // Solo detrás de «a las» o de un día: «7 50» suelto puede ser cualquier cosa.
+  const conEspacio = norm.match(
+    /\b(?:a\s+las?|las|lunes|martes|miercoles|jueves|viernes|sabado|domingo|hoy|manana)\s+(\d{1,2})\s+([0-5]\d)\b/,
+  );
+  if (conEspacio) {
+    const h = Number(conEspacio[1]);
+    if (h <= 23) return finalize(h, Number(conEspacio[2]), meridiem);
+  }
+
+  // ── "a las 930", "jueves 29 750": la hora sin separador ──────
+  const compacta = norm.match(
+    /\b(?:a\s+las?|las|(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)\s+\d{1,2})\s+(\d{1,2})([0-5]\d)\b/,
+  );
+  if (compacta) {
+    const h = Number(compacta[1]);
+    if (h <= 23) return finalize(h, Number(compacta[2]), meridiem);
   }
 
   // ── "a la(s) HH" / "las HH" ──────────────────────────────────

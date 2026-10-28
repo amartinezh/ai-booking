@@ -1057,7 +1057,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
     it('1B.10 lo que no se entiende queda como «no se entendió el horario», no como sesión vencida', async () => {
       await hastaLosCupos();
-      await say('Muchas gracias');
+      await say('Q pena');
       expect(lastSent()).toMatch(/día u hora/);
       expect(interactionLog.logFailure).toHaveBeenCalledWith(
         expect.objectContaining({ reason: 'SLOT_NOT_UNDERSTOOD' }),
@@ -1103,6 +1103,137 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say('Sí');
       expect(appointments.bookAppointment).toHaveBeenCalledTimes(1);
       expect(appointments.bookAppointment.mock.calls[0][1]).toBe('p-1500');
+    });
+
+    // ── Diagnóstico del 2026-10-28: frases reales que no se entendían ──
+    it('1B.14 «Muchas gracias» en el menú: se despide en vez de pedir la letra', async () => {
+      await hastaLosCupos();
+      await say('Muchas gracias');
+      expect(await state()).toBe(ChatState.IDLE);
+      expect(lastSent()).not.toMatch(/letra/);
+      expect(interactionLog.logFailure).not.toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'SLOT_NOT_UNDERSTOOD' }),
+      );
+    });
+
+    it.each([
+      ['Perdón es B', 'm-0820'],
+      ['Laletra C', 'm-1400'],
+      ['mejor la A', 'm-0800'],
+    ])('1B.15 «%s»: la letra dentro de la frase', async (frase, cupo) => {
+      await hastaLosCupos();
+      await say(frase);
+      expect(elegido()).toBe(cupo);
+    });
+
+    it('1B.16 dos cupos a la misma hora y nombra al médico: elige el de ese médico', async () => {
+      db.slots = [
+        slotRow('m-0800', enDia(1, 8), 'Ana Pérez', SVC_MEDICINA),
+        slotRow('x-0800', enDia(1, 8), 'Luis Gómez', SVC_MEDICINA),
+        slotRow('m-1400', enDia(1, 14), 'Luis Gómez', SVC_MEDICINA),
+      ];
+      await hastaLosCupos();
+      await say('Mañana alas 8am con el doctor Luis');
+      expect(elegido()).toBe('x-0800');
+    });
+
+    it('1B.17 «Para las 3:30»: busca los más cercanos a esa hora, aunque ya los haya visto', async () => {
+      await hastaLosCupos();
+      appointments.getAvailableSlots.mockClear();
+      await say('Para las 3:30');
+      const opciones = appointments.getAvailableSlots.mock.calls.at(-1)?.[4];
+      expect(opciones).toEqual(
+        expect.objectContaining({
+          franja: 'TARDE',
+          excluir: [],
+          hora: { hour24: 3, minute: 30, meridiemKnown: false },
+        }),
+      );
+    });
+
+    it('1B.18 «Otra» a secas trae los que siguen', async () => {
+      await hastaLosCupos();
+      await say('Otra');
+      expect(letra('A')).toBe('p-0800');
+    });
+
+    it('1B.19 «Tarde» a secas trae la tarde que no ha visto', async () => {
+      await hastaLosCupos();
+      await say('Tarde');
+      expect(letra('A')).toBe('p-1500');
+    });
+
+    // ── El cupo elegido queda apartado mientras termina (2026-10-28) ──
+    const apartado = (cupo: string) =>
+      redis.store.get(`cupo_apartado:${ORG_ID}:${cupo}`);
+    const OTRO = '573009998877';
+
+    it('1B.20 al elegir, el cupo queda apartado para él', async () => {
+      await hastaLosCupos();
+      await say('A');
+      expect(apartado('m-0800')).toBe(SENDER);
+    });
+
+    it('1B.21 a otro paciente no se le ofrece un cupo apartado', async () => {
+      redis.store.set(`cupo_apartado:${ORG_ID}:m-0800`, OTRO);
+      await hastaLosCupos();
+      expect(letra('A')).toBe('m-0820');
+    });
+
+    it('1B.22 lo apartó otro después de verlo en el menú: menú nuevo sin ese cupo', async () => {
+      await hastaLosCupos();
+      redis.store.set(`cupo_apartado:${ORG_ID}:m-0800`, OTRO);
+      await say('A');
+      expect(lastSent()).toMatch(/acaba de tomar otro paciente/);
+      expect(lastSent()).toMatch(/quedan/);
+      expect(letra('A')).toBe('m-0820');
+      expect(elegido()).toBeUndefined();
+      expect(apartado('m-0800')).toBe(OTRO);
+      expect(interactionLog.logFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'SLOT_TAKEN' }),
+      );
+    });
+
+    it('1B.23 elegir otra letra suelta el anterior, y salir suelta el que tenía', async () => {
+      await hastaLosCupos();
+      await say('A');
+      await say('Salir');
+      expect(apartado('m-0800')).toBeUndefined();
+    });
+
+    it('1B.24 ya lo tomaron al confirmar: menú nuevo con lo que queda, sin pedir «la letra nuevamente»', async () => {
+      await hastaLosCupos();
+      await say('A');
+      await say('1088123456');
+      await decirNombre(say);
+      await responderAlta(say);
+      db.slots.find((c) => c.id === 'm-0800')!.isAvailable = false;
+      appointments.bookAppointment.mockResolvedValueOnce({
+        success: false,
+        reason: 'SLOT_TAKEN',
+      });
+      await say('Sí');
+      expect(lastSent()).toMatch(/Estos son los que quedan/);
+      expect(letra('A')).toBe('m-0820');
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+      expect(apartado('m-0800')).toBeUndefined();
+    });
+
+    it('1B.25 ya lo tomaron y no queda nada: lo dice y cierra', async () => {
+      db.slots = [slotRow('m-0800', enDia(1, 8), 'Ana Pérez', SVC_MEDICINA)];
+      await hastaLosCupos();
+      await say('A');
+      await say('1088123456');
+      await decirNombre(say);
+      await responderAlta(say);
+      db.slots[0].isAvailable = false;
+      appointments.bookAppointment.mockResolvedValueOnce({
+        success: false,
+        reason: 'SLOT_TAKEN',
+      });
+      await say('Sí');
+      expect(lastSent()).toMatch(/no quedan más horarios/);
+      expect(await state()).toBe(ChatState.IDLE);
     });
   });
 
@@ -1371,6 +1502,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       await say(CEDULA);
       expect(await state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
       expect(lastSent()).toContain('Medicina General');
+      // Con un celular de la familia, de quién es la cita (2026-10-28).
+      expect(lastSent()).toContain('👤 *Juan Pérez*');
 
       await say('SI');
       expect(db.appointments[0].status).toBe('CANCELLED');
@@ -1780,6 +1913,29 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         expect.objectContaining({ slotId: 'slot-old' }),
       );
       expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    // 2026-10-28: «Nesesito otra cita para lectura de examenes», justo después
+    // de agendar, movió la cita recién agendada.
+    it('3.1b «Necesito otra cita para…» es una cita NUEVA aunque el extractor diga cambio', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ isModification: true }),
+      );
+      await say('Nesesito otra cita para lectura de examenes');
+      expect(await state()).not.toBe(ChatState.AWAITING_MODIFY_CEDULA);
+      expect(await state()).not.toBe(ChatState.AWAITING_MODIFY_NEW_SLOT);
+      expect(db.appointments[0].scheduleSlotId).toBe('slot-old');
+    });
+
+    it('3.1c «otra cita porque no puedo ir» sí es un cambio', async () => {
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ isModification: true }),
+      );
+      await say('Necesito otra cita porque no puedo ir');
+      expect([
+        ChatState.AWAITING_MODIFY_CEDULA,
+        ChatState.AWAITING_MODIFY_NEW_SLOT,
+      ]).toContain(await state());
     });
 
     it('3.2 el nuevo cupo se lo llevan justo antes de confirmar → reofrece cupos frescos', async () => {
@@ -2827,6 +2983,56 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(await state()).toBe(ChatState.AWAITING_GENDER);
     });
 
+    // 2026-10-28: una paciente de 65 años la escribió diez veces y se fue.
+    it.each([
+      ['19 01 1961', '1961'],
+      ['1961 19 de enero', '1961'],
+      ['Día 19 año 1961 mes Enero', '1961'],
+      ['26 de diciembre Del año 1971', '1971'],
+    ])('8.4b «%s» se entiende', async (frase, anio) => {
+      await hastaElNombre();
+      await say(frase);
+      expect(lastSent()).toContain(anio);
+      expect(lastSent()).toMatch(/correcto|está bien/i);
+    });
+
+    it('8.4c «Está correcto» confirma la fecha', async () => {
+      await hastaElNombre();
+      await say('4/5 /1966');
+      await say('Esta correcto');
+      expect(await state()).toBe(ChatState.AWAITING_GENDER);
+    });
+
+    it('8.4d tras tres intentos, se la pide por partes: día, mes y año', async () => {
+      await hastaElNombre();
+      await say('no sé');
+      await say('Quincecero tres');
+      await say('mi fecha');
+      expect(lastSent()).toMatch(/día del mes/);
+
+      await say('19');
+      expect(lastSent()).toMatch(/mes/);
+      await say('enero');
+      expect(lastSent()).toMatch(/año/);
+      await say('1961');
+      expect(lastSent()).toMatch(/19 de enero de 1961/);
+
+      await say('Sí');
+      expect(await state()).toBe(ChatState.AWAITING_GENDER);
+    });
+
+    it('8.4e por partes, una fecha que no existe vuelve a empezar', async () => {
+      await hastaElNombre();
+      for (const t of ['x', 'y', 'z']) await say(t);
+      await say('31');
+      await say('febrero');
+      await say('1980');
+      expect(lastSent()).toMatch(/no existe/);
+      expect(await state()).toBe(ChatState.AWAITING_BIRTHDATE);
+      await say('28');
+      expect(lastSent()).toMatch(/mes/);
+    });
+
     it('8.5 el sexo acepta la letra del menú y la palabra', async () => {
       await hastaElNombre();
       await say('15/03/1980');
@@ -3657,6 +3863,47 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(lastSent()).toContain(TELEFONO_HOSPITAL);
       expect(appointments.bookAppointment).not.toHaveBeenCalled();
       expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    // 2026-10-28: una madre daba su cédula al agendarles a sus hijos, leía
+    // «usted ya tiene una cita», escribía «Cancelar» y confirmaba «Sí»: así se
+    // anularon las citas de dos niños.
+    it('11.9 el aviso dice de quién es la cédula y cómo agendar para otra persona', async () => {
+      limiteCitas.evaluar.mockResolvedValue(superado('DAILY', FECHA_A));
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say(CEDULA);
+      expect(lastSent()).toContain('*María Ruiz* (cédula terminada en 9888)');
+      expect(lastSent()).toMatch(/para otra persona/);
+    });
+
+    it('11.10 «Cancelar» justo después del aviso deja la solicitud: no ofrece anular ninguna cita', async () => {
+      limiteCitas.evaluar.mockResolvedValue(superado('DAILY', FECHA_A));
+      provider.extractSchedulingIntent.mockResolvedValue(
+        extraction({ isCancellation: true }),
+      );
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say(CEDULA);
+      await say('Cancelar');
+      expect(lastSent()).toMatch(/no agendé nada más/);
+      expect(lastSent()).toMatch(/Cancelar mi cita/);
+      expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    it('11.11 «Cancelar mi cita» después del aviso sí abre la cancelación', async () => {
+      limiteCitas.evaluar.mockResolvedValue(superado('DAILY', FECHA_A));
+      await say('Hola');
+      await say('A');
+      await say('A');
+      await say('A');
+      await say(CEDULA);
+      await say('Cancelar mi cita');
+      expect(lastSent()).not.toMatch(/no agendé nada más/);
     });
 
     it('11.5 sin límite alcanzado sigue al resumen como siempre', async () => {

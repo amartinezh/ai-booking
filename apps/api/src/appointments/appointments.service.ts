@@ -21,8 +21,10 @@ import {
   type Regimen,
   normalizarCuposOfrecidos,
   seleccionarCuposManianaTarde,
+  cuposMasCercanosALaHora,
   franjaDelCupo,
   type FranjaDelDia,
+  type HoraPreferida,
 } from '@agenia/shared';
 import {
   bloqueosDeLaClinica,
@@ -98,11 +100,14 @@ export class AppointmentsService {
     // `franja`: solo los de la mañana o solo los de la tarde, en la hora de la
     // clínica; `excluir`: cupos que el paciente ya vio en el menú. Los dos, para
     // cuando pide otro horario (2026-10-27).
+    // `hora`: pidió una hora («para las 3:30», 2026-10-28): se ofrecen los
+    // cupos más cercanos a ella en vez de mitad mañana y mitad tarde.
     opts: {
       todos?: boolean;
       ignorarPlazo?: boolean;
       franja?: FranjaDelDia | null;
       excluir?: readonly string[];
+      hora?: HoraPreferida | null;
     } = {},
   ): Promise<AvailableSlot[]> {
     // ⏱️ Nada que empiece antes de la anticipación mínima (60 min, 2026-10-21):
@@ -208,12 +213,14 @@ export class AppointmentsService {
     if (opts.todos) return slots;
 
     // Cuántos ofrece lo decide la clínica (OrganizationSettings), repartidos
-    // mitad mañana y mitad tarde en SU zona horaria.
-    return seleccionarCuposManianaTarde(
-      slots,
-      normalizarCuposOfrecidos(org?.settings?.slotsOfferedCount),
-      { timeZone: org?.timezone ?? undefined },
-    );
+    // mitad mañana y mitad tarde en SU zona horaria; con una hora pedida, los
+    // más cercanos a ella.
+    const cuantos = normalizarCuposOfrecidos(org?.settings?.slotsOfferedCount);
+    const timeZone = org?.timezone ?? undefined;
+    if (opts.hora) {
+      return cuposMasCercanosALaHora(slots, opts.hora, cuantos, { timeZone });
+    }
+    return seleccionarCuposManianaTarde(slots, cuantos, { timeZone });
   }
 
   /**

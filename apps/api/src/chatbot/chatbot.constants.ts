@@ -77,6 +77,16 @@ export const PRESENTACION_TTL = 30 * 60;
 // de esta ventana abre el menú de siempre: ya sabe de su cita y busca otra cosa.
 export const SALUDO_TRAS_RECORDATORIO_TTL = 6 * 60 * 60;
 
+// 🎯 Cuánto queda apartado, solo dentro de AgenIA, el cupo que el paciente eligió
+// mientras termina el registro (2026-10-28): otro paciente del chat no lo ve ni
+// lo toma. El hospital sí puede tomarlo: AgenIA no escribe en su agenda. Se
+// renueva con cada respuesta del registro.
+export const CUPO_APARTADO_TTL = 10 * 60;
+
+// 🚦 Cuánto vale un «Cancelar» a secas como «dejar esta solicitud» después del
+// aviso de límite de citas (2026-10-28).
+export const AVISO_LIMITE_TTL = 10 * 60;
+
 /**
  * Ventana de atención de Meta: 24 h desde el último mensaje del paciente.
  * Dentro se puede responder con texto libre; fuera hay que usar una plantilla
@@ -444,7 +454,12 @@ const FORMAL = {
   // `maximo` y `citas` salen de `unaOVariasCitas`; `dia`/`mes`, de
   // `etiquetaPeriodo`; `contacto`, de contactoClinica; `revision`, de
   // limiteCitasRevisionEnlace / limiteCitasRevisionEnCurso (o vacío).
+  // `paciente` y `finCedula`: de quién es la cédula que dio (2026-10-28: una
+  // madre daba su cédula al agendarle a sus hijos y leía «usted ya tiene una
+  // cita»). Y cómo agendar para otra persona.
   limiteCitasDia: (
+    paciente: string,
+    finCedula: string,
     maximo: string,
     citas: string,
     dia: string,
@@ -453,11 +468,13 @@ const FORMAL = {
   ) =>
     `Lamentamos no poder agendarle esta cita por este medio. 🙏\n\n` +
     `Por disposición de la institución, cada paciente puede tener máximo *${maximo}* el mismo día, ` +
-    `y usted ya tiene *${citas}* para el *${dia}*.\n\n` +
+    `y *${paciente}* (cédula terminada en ${finCedula}) ya tiene *${citas}* para el *${dia}*.\n\n` +
     `Si necesita atención adicional, por favor comuníquese con ${contacto}.${revision}\n\n` +
-    `_Si lo prefiere, escríbame *"Hola"* y elija otro día._ 💙`,
+    `_Si lo prefiere, escríbame *"Hola"* y elija otro día. Si la cita es para otra persona, escríbame *"Hola"* y deme la cédula de esa persona._ 💙`,
 
   limiteCitasMes: (
+    paciente: string,
+    finCedula: string,
     maximo: string,
     citas: string,
     mes: string,
@@ -466,9 +483,16 @@ const FORMAL = {
   ) =>
     `Lamentamos no poder agendarle esta cita por este medio. 🙏\n\n` +
     `Por disposición de la institución, cada paciente puede tener máximo *${maximo}* en un mismo mes, ` +
-    `y usted ya tiene *${citas}* en *${mes}*.\n\n` +
+    `y *${paciente}* (cédula terminada en ${finCedula}) ya tiene *${citas}* en *${mes}*.\n\n` +
     `Si necesita atención adicional, por favor comuníquese con ${contacto}.${revision}\n\n` +
-    `_Si lo prefiere, escríbame *"Hola"* y elija una fecha de otro mes._ 💙`,
+    `_Si lo prefiere, escríbame *"Hola"* y elija una fecha de otro mes. Si la cita es para otra persona, escríbame *"Hola"* y deme la cédula de esa persona._ 💙`,
+
+  // «Cancelar» justo después del aviso de límite: quería dejar la solicitud, no
+  // anular una cita (2026-10-28: así se anularon las citas de dos niños).
+  cancelarTrasLimite: () =>
+    `Listo, no agendé nada más. Las citas que ya están agendadas siguen en pie. ✅\n\n` +
+    `Si lo que quiere es *anular* una cita, escríbame *"Cancelar mi cita"*. ` +
+    `Para agendarle a otra persona, escríbame *"Hola"* y deme la cédula de esa persona.`,
 
   limiteCitasCambioDia: (
     maximo: string,
@@ -632,11 +656,11 @@ const FORMAL = {
   pedirCedulaPostSlot: (fechaFormateada: string) =>
     pick([
       `Excelente elección. Le aparté ese horario:\n📅 *${fechaFormateada}*\n\n` +
-        `Para terminar de agendarle, ¿me indica su *número de cédula*, por favor?`,
+        `Para terminar de agendarle, ¿me indica la *cédula del paciente* (la persona que va a la cita), por favor?`,
       `Perfecto, ya casi terminamos. Le reservé tentativamente:\n📅 *${fechaFormateada}*\n\n` +
-        `Solo me falta confirmar un dato: ¿me comparte su *cédula*?`,
+        `Solo me falta confirmar un dato: ¿me comparte la *cédula de quien va a la cita*?`,
       `Listo. Tengo ese espacio reservado para usted:\n📅 *${fechaFormateada}*\n\n` +
-        `Para finalizar, ¿me indica su *número de cédula*? Solo el número, sin puntos.`,
+        `Para finalizar, ¿me indica la *cédula del paciente*? Solo el número, sin puntos.`,
     ]),
 
   especialidadConfirmada: (especialidad: string) =>
@@ -823,6 +847,20 @@ const FORMAL = {
       `Disculpe, ese espacio acaba de reservarse.\n\n¿Vemos otra opción? Indíqueme con qué letra prefiere quedarse.`,
     ]),
 
+  // 🎯 Se lo tomó otro paciente: el menú se vuelve a armar con lo que queda
+  // (2026-10-28). Con el menú viejo, el paciente elegía otras letras ya tomadas.
+  cupoTomadoOtrasOpciones: (epsName: string, lineas: string) =>
+    `Lo lamento, ese horario lo acaba de tomar otro paciente. 🙏 Estos son los que quedan con *${epsName}*:\n\n${lineas}\n` +
+    `_Responda con la letra del que prefiera._`,
+
+  medicoNoDisponibleOtrasOpciones: (epsName: string, lineas: string) =>
+    `Le pido disculpas: ese horario dejó de estar disponible por este medio. Estos son los que quedan con *${epsName}*:\n\n${lineas}\n` +
+    `_Responda con la letra del que prefiera._`,
+
+  cupoTomadoSinOtros: (contacto: string) =>
+    `Lo lamento, ese horario lo acaba de tomar otro paciente y por ahora no quedan más horarios por este medio. 🙏\n\n` +
+    `Puede escribirme *"Hola"* más tarde o comunicarse con ${contacto}.`,
+
   // El médico dejó de aceptar reservas por WhatsApp mientras el paciente
   // decidía. NO es una colisión de cupo: el horario sigue libre, solo que no
   // por este canal — decirle que "otro paciente lo tomó" sería mentira, y el
@@ -891,6 +929,23 @@ const FORMAL = {
       `No logré entender esa fecha. ¿Me la escribe como *15/03/1980*, por favor?`,
       `Disculpe, no interpreté bien la fecha. Escríbala así: *día/mes/año*, por ejemplo *15/03/1980*.`,
     ]),
+
+  // 🧩 Tras tres intentos, la fecha por partes (2026-10-28: una paciente la
+  // escribió diez veces y se fue sin cita).
+  nacimientoPedirDia: () =>
+    `Hagámoslo por partes para no equivocarnos. 🙏\n\n¿Qué *día del mes* nació? Escriba solo el número, por ejemplo *19*.`,
+
+  nacimientoPedirMes: () =>
+    `Gracias. ¿En qué *mes*? Puede escribir el nombre o el número, por ejemplo *enero* o *1*.`,
+
+  nacimientoPedirAnio: () =>
+    `¿Y en qué *año*? Escríbalo con los cuatro números, por ejemplo *1961*.`,
+
+  nacimientoParteNoEntendida: (pregunta: string) =>
+    `No logré entenderlo. ${pregunta}`,
+
+  nacimientoFechaNoExiste: () =>
+    `Esa fecha no existe en el calendario. Empecemos de nuevo: ¿qué *día del mes* nació? Solo el número, por ejemplo *19*.`,
 
   /**
    * La lista de espera NO alimenta al HIS: no necesita la frontera entre
@@ -1347,8 +1402,14 @@ const FORMAL = {
       `A continuación le presento sus citas en el mensaje de texto. Respóndame con la letra de la que desea cancelar, por favor.`,
     ]),
 
-  cancelarConfirmar: (servicio: string, doctor: string, fecha: string) =>
-    `Esta es la cita que vamos a cancelar:\n\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n` +
+  // `paciente`: con un celular compartido, de quién es la cita (2026-10-28).
+  cancelarConfirmar: (
+    servicio: string,
+    doctor: string,
+    fecha: string,
+    paciente: string,
+  ) =>
+    `Esta es la cita que vamos a cancelar:\n\n👤 *${paciente}*\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n` +
     `⚠️ ¿Está completamente seguro(a)? Responda *SÍ* para cancelarla o *NO* si prefiere mantenerla.`,
 
   cancelarExitosa: () =>
@@ -1388,8 +1449,13 @@ const FORMAL = {
     `Lo lamento, el sistema presentó un inconveniente al intentar cancelar la cita.\n\nPara no dejar el proceso a medias, por favor comuníquese con nuestro Call Center y allí le ayudan enseguida.`,
 
   // «No puedo asistir» con cancelar ENCENDIDO: se le ofrece cancelar ESA cita.
-  cancelarOfrecer: (servicio: string, doctor: string, fecha: string) =>
-    `Entiendo que no podrá asistir a esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n` +
+  cancelarOfrecer: (
+    servicio: string,
+    doctor: string,
+    fecha: string,
+    paciente: string,
+  ) =>
+    `Entiendo que no podrá asistir a esta cita:\n\n👤 *${paciente}*\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n` +
     `¿Desea que la *cancele*? Así el cupo queda libre para otro paciente. Responda *SÍ* para cancelarla o *NO* para mantenerla.`,
 
   // 🏥 H10 de la cancelación: mientras el hospital la registra.
@@ -1857,6 +1923,8 @@ const INFORMAL = {
 
   // ── LÍMITE DE CITAS POR PACIENTE (ver el pool formal) ─────────────────
   limiteCitasDia: (
+    paciente: string,
+    finCedula: string,
     maximo: string,
     citas: string,
     dia: string,
@@ -1865,11 +1933,13 @@ const INFORMAL = {
   ) =>
     `Qué pena contigo, no puedo agendarte esta cita por aquí. 🙏\n\n` +
     `En el hospital cada paciente puede tener máximo *${maximo}* el mismo día, ` +
-    `y ya tienes *${citas}* para el *${dia}*.\n\n` +
+    `y *${paciente}* (cédula terminada en ${finCedula}) ya tiene *${citas}* para el *${dia}*.\n\n` +
     `Si necesitas atención adicional, comunícate con ${contacto}.${revision}\n\n` +
-    `_Si prefieres, escríbeme *"Hola"* y elige otro día._ 💙`,
+    `_Si prefieres, escríbeme *"Hola"* y elige otro día. Si la cita es para otra persona, escríbeme *"Hola"* y dame la cédula de esa persona._ 💙`,
 
   limiteCitasMes: (
+    paciente: string,
+    finCedula: string,
     maximo: string,
     citas: string,
     mes: string,
@@ -1878,9 +1948,14 @@ const INFORMAL = {
   ) =>
     `Qué pena contigo, no puedo agendarte esta cita por aquí. 🙏\n\n` +
     `En el hospital cada paciente puede tener máximo *${maximo}* en un mismo mes, ` +
-    `y ya tienes *${citas}* en *${mes}*.\n\n` +
+    `y *${paciente}* (cédula terminada en ${finCedula}) ya tiene *${citas}* en *${mes}*.\n\n` +
     `Si necesitas atención adicional, comunícate con ${contacto}.${revision}\n\n` +
-    `_Si prefieres, escríbeme *"Hola"* y elige una fecha de otro mes._ 💙`,
+    `_Si prefieres, escríbeme *"Hola"* y elige una fecha de otro mes. Si la cita es para otra persona, escríbeme *"Hola"* y dame la cédula de esa persona._ 💙`,
+
+  cancelarTrasLimite: () =>
+    `Listo, no agendé nada más. Las citas que ya están agendadas siguen igual. ✅\n\n` +
+    `Si lo que quieres es *anular* una cita, escríbeme *"Cancelar mi cita"*. ` +
+    `Para agendarle a otra persona, escríbeme *"Hola"* y dame la cédula de esa persona.`,
 
   limiteCitasCambioDia: (
     maximo: string,
@@ -2020,9 +2095,9 @@ const INFORMAL = {
 
   pedirCedulaPostSlot: (fechaFormateada: string) =>
     pick([
-      `¡Genial! 🌟 Te aparté ese horario:\n📅 *${fechaFormateada}*\n\nPara terminar de agendarte, ¿me regalas tu *número de cédula*?`,
-      `¡Perfecto, ya casi! 😊 Te reservé tentativamente:\n📅 *${fechaFormateada}*\n\nMe falta solo un dato: ¿me compartes tu *cédula*?`,
-      `¡Listo! 🎯 Tengo ese espacio apartado para ti:\n📅 *${fechaFormateada}*\n\nPara cerrar, ¿me mandas tu *número de cédula*? Solo el número, sin puntos.`,
+      `¡Genial! 🌟 Te aparté ese horario:\n📅 *${fechaFormateada}*\n\nPara terminar de agendar, ¿me regalas la *cédula del paciente* (quien va a la cita)?`,
+      `¡Perfecto, ya casi! 😊 Te reservé tentativamente:\n📅 *${fechaFormateada}*\n\nMe falta solo un dato: ¿me compartes la *cédula de quien va a la cita*?`,
+      `¡Listo! 🎯 Tengo ese espacio apartado para ti:\n📅 *${fechaFormateada}*\n\nPara cerrar, ¿me mandas la *cédula del paciente*? Solo el número, sin puntos.`,
     ]),
 
   especialidadConfirmada: (especialidad: string) =>
@@ -2186,6 +2261,18 @@ const INFORMAL = {
       `Ese espacio acaba de reservarse. 🙏 ¿Cuál otro te sirve? Dime la letra.`,
     ]),
 
+  cupoTomadoOtrasOpciones: (epsName: string, lineas: string) =>
+    `Qué pena, justo ese horario lo acaba de tomar otro paciente. 😬 Estos son los que quedan con *${epsName}*:\n\n${lineas}\n` +
+    `_Mándame la letra del que prefieras._`,
+
+  medicoNoDisponibleOtrasOpciones: (epsName: string, lineas: string) =>
+    `Uy, ese horario ya no se puede agendar por acá. 🙏 Estos son los que quedan con *${epsName}*:\n\n${lineas}\n` +
+    `_Mándame la letra del que prefieras._`,
+
+  cupoTomadoSinOtros: (contacto: string) =>
+    `Qué pena, justo ese horario lo acaba de tomar otro paciente y por ahora no quedan más horarios por aquí. 🙏\n\n` +
+    `Escríbeme *"Hola"* más tarde o comunícate con ${contacto}.`,
+
   // Ver la nota de la versión formal: el cupo NO está tomado, solo cerrado
   // para este canal.
   medicoNoDisponiblePorWhatsapp: () =>
@@ -2242,6 +2329,21 @@ const INFORMAL = {
       `No entendí esa fecha. 🙏 ¿Me la escribes como *15/03/1980*?`,
       `Uy, no capté la fecha. Escríbela así: *día/mes/año*, por ejemplo *15/03/1980*.`,
     ]),
+
+  nacimientoPedirDia: () =>
+    `Hagámoslo por partes para no equivocarnos. 🙏\n\n¿Qué *día del mes* naciste? Escribe solo el número, por ejemplo *19*.`,
+
+  nacimientoPedirMes: () =>
+    `Gracias. ¿En qué *mes*? Puedes escribir el nombre o el número, por ejemplo *enero* o *1*.`,
+
+  nacimientoPedirAnio: () =>
+    `¿Y en qué *año*? Escríbelo con los cuatro números, por ejemplo *1961*.`,
+
+  nacimientoParteNoEntendida: (pregunta: string) =>
+    `No lo entendí. ${pregunta}`,
+
+  nacimientoFechaNoExiste: () =>
+    `Esa fecha no existe en el calendario. Empecemos de nuevo: ¿qué *día del mes* naciste? Solo el número, por ejemplo *19*.`,
 
   nombreParaLista: () =>
     pick([
@@ -2639,8 +2741,13 @@ const INFORMAL = {
       `A continuación te presento tus citas en el mensaje de texto. Respóndeme con la letra de la que quieres cancelar. 😊`,
     ]),
 
-  cancelarConfirmar: (servicio: string, doctor: string, fecha: string) =>
-    `Para confirmarte, esta es la cita que vamos a cancelar:\n\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n⚠️ ¿Seguro(a)? Responde *SÍ* para cancelarla o *NO* si prefieres dejarla.`,
+  cancelarConfirmar: (
+    servicio: string,
+    doctor: string,
+    fecha: string,
+    paciente: string,
+  ) =>
+    `Para confirmarte, esta es la cita que vamos a cancelar:\n\n👤 *${paciente}*\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n⚠️ ¿Seguro(a)? Responde *SÍ* para cancelarla o *NO* si prefieres dejarla.`,
 
   cancelarExitosa: () =>
     pick([
@@ -2678,8 +2785,13 @@ const INFORMAL = {
   cancelarError: () =>
     `Qué pena, tuve un inconveniente cancelando la cita. 😔 Para no dejarte a medias, llama al Call Center y ahí te ayudan enseguida. 🙏`,
 
-  cancelarOfrecer: (servicio: string, doctor: string, fecha: string) =>
-    `Entiendo que no vas a poder ir a esta cita:\n\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n` +
+  cancelarOfrecer: (
+    servicio: string,
+    doctor: string,
+    fecha: string,
+    paciente: string,
+  ) =>
+    `Entiendo que no vas a poder ir a esta cita:\n\n👤 *${paciente}*\n🏥 *${servicio}*\n👨‍⚕️ ${doctor}\n📅 ${fecha}\n\n` +
     `¿Quieres que la *cancele*? Así el cupo queda libre para otra persona. Responde *SÍ* para cancelarla o *NO* para dejarla.`,
 
   confirmandoCancelacion: () =>

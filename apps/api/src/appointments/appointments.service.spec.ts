@@ -370,6 +370,23 @@ describe('AppointmentsService', () => {
       );
       expect(slots).toHaveLength(12);
     });
+
+    // 2026-10-28: con «para las 3:30» se mostraba la tarde desde el principio.
+    it('con una hora pedida ofrece los más cercanos a ella, en orden de hora', async () => {
+      findMany.mockResolvedValueOnce(agendaLlena());
+      const slots = await service.getAvailableSlots(
+        'Medicina',
+        null,
+        'org1',
+        null,
+        { hora: { hour24: 2, minute: 30, meridiemKnown: false } },
+      );
+      // «2:30» sin franja es las 14:30: los cuatro de la tarde y, de la
+      // mañana, los dos más tardíos (los más cercanos a la tarde).
+      expect(
+        slots.map((s) => `${hora(s.fecha)}:${s.fecha.getUTCMinutes()}`),
+      ).toEqual(['8:30', '8:45', '14:0', '14:15', '14:30', '14:45']);
+    });
   });
 
   describe('getAvailableSlots — filtro de fecha', () => {

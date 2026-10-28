@@ -1,5 +1,8 @@
 import {
   parseFechaNacimiento,
+  parseDiaDeNacimiento,
+  parseMesDeNacimiento,
+  parseAnioDeNacimiento,
   parseSexo,
   parseRegimen,
   formatFechaNacimiento,
@@ -189,6 +192,64 @@ describe('parseRegimen', () => {
     expect(parseRegimen('excepcion')).toBeNull();
     expect(parseRegimen('magisterio')).toBeNull();
     expect(parseRegimen('ninguno de los dos')).toBeNull();
+  });
+});
+
+// 2026-10-28: una paciente de 65 años escribió su fecha diez veces en 16
+// minutos y se fue sin cita. Estas son sus frases y las de otros pacientes.
+describe('parseFechaNacimiento — como la escriben los pacientes', () => {
+  it.each([
+    ['19 01 1961', '1961-01-19'],
+    ['1961 19 de enero', '1961-01-19'],
+    ['Día 19 año 1961 mes Enero', '1961-01-19'],
+    ['Día 19 mes uno. Año ,1961', '1961-01-19'],
+    ['DiecinuevedeEnero de1961', '1961-01-19'],
+    ['diecinueve de enero de 1961', '1961-01-19'],
+    ['26 / 12/1971.', '1971-12-26'],
+    ['Día 26/mes 12 /año 1971/', '1971-12-26'],
+    ['26 de diciembre Del año 1971', '1971-12-26'],
+    ['Esta correcto 4 de mayo de1966', '1966-05-04'],
+    ['1961 01 19', '1961-01-19'],
+  ])('"%s" → %s', (frase, iso) => {
+    expect(parse(frase)?.iso.slice(0, 10)).toBe(iso);
+  });
+
+  it.each([
+    ',19Eneo mes 1', // sin año
+    '19 o1',
+    'Quincecero tres 1980',
+    'Está es mi fecha denacimento',
+    '19 de enero de 1961, tengo 65 años', // cuatro números: no se adivina
+    '24391096', // una cédula
+  ])('"%s" sigue sin entenderse (se repregunta)', (frase) => {
+    expect(parse(frase)).toBeNull();
+  });
+});
+
+describe('fecha de nacimiento por partes', () => {
+  it('el día: número o palabras, 1 a 31', () => {
+    expect(parseDiaDeNacimiento('19')).toBe(19);
+    expect(parseDiaDeNacimiento('el 19')).toBe(19);
+    expect(parseDiaDeNacimiento('diecinueve')).toBe(19);
+    expect(parseDiaDeNacimiento('32')).toBeNull();
+    expect(parseDiaDeNacimiento('19 de enero')).toBeNull();
+  });
+
+  it('el mes: nombre, abreviatura o número, 1 a 12', () => {
+    expect(parseMesDeNacimiento('Enero')).toBe(1);
+    expect(parseMesDeNacimiento('ene')).toBe(1);
+    expect(parseMesDeNacimiento('mes 1')).toBe(1);
+    expect(parseMesDeNacimiento('uno')).toBe(1);
+    expect(parseMesDeNacimiento('13')).toBeNull();
+  });
+
+  it('el año: cuatro dígitos o dos, nunca futuro ni de hace más de 120 años', () => {
+    expect(parseAnioDeNacimiento('1961', { hoy: HOY })).toBe(1961);
+    expect(parseAnioDeNacimiento('año 1961', { hoy: HOY })).toBe(1961);
+    expect(parseAnioDeNacimiento('61', { hoy: HOY })).toBe(1961);
+    expect(parseAnioDeNacimiento('2027', { hoy: HOY })).toBeNull();
+    expect(parseAnioDeNacimiento('1850', { hoy: HOY })).toBeNull();
+    expect(parseAnioDeNacimiento('19 01 1961', { hoy: HOY })).toBeNull();
   });
 });
 

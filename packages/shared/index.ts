@@ -19,6 +19,9 @@ export type {
 export { parseHoraPreferida, matchesHora } from './src/parse-hora-preferida';
 export {
   parseFechaNacimiento,
+  parseDiaDeNacimiento,
+  parseMesDeNacimiento,
+  parseAnioDeNacimiento,
   parseSexo,
   parseRegimen,
   formatFechaNacimiento,
@@ -329,6 +332,11 @@ export type {
   OtroHorarioOptions,
   PedidoOtroHorario,
 } from './src/otro-horario';
+export {
+  cuposDelMedicoNombrado,
+  cuposMasCercanosALaHora,
+  letraEnLaFrase,
+} from './src/eleccion-de-cupo';
 export {
   ANTICIPACION_RECORDATORIO,
   normalizarAnticipacionRecordatorio,

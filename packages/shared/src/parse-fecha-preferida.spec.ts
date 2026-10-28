@@ -108,9 +108,16 @@ describe('parseFechaPreferida', () => {
       );
     });
 
-    it('"3 de mayo" (ya pasó este año) → mayo del año siguiente', () => {
-      expect(parse('3 de mayo')!.desde.toISOString()).toBe(
-        '2027-05-03T05:00:00.000Z',
+    // 2026-10-28: «12 de octubre» un 28 de octubre se leía 12 de octubre de
+    // 2027 y el asistente contestaba «escríbame desde el 9 de octubre». Una
+    // fecha que pasó hace poco es un error, no el año que viene.
+    it('"3 de mayo" (pasó hace un mes) → null: es un error, no mayo del año que viene', () => {
+      expect(parse('3 de mayo')).toBeNull();
+    });
+
+    it('"3 de febrero" (pasó hace cuatro meses) → febrero del año siguiente', () => {
+      expect(parse('3 de febrero')!.desde.toISOString()).toBe(
+        '2027-02-03T05:00:00.000Z',
       );
     });
 
@@ -145,6 +152,77 @@ describe('parseFechaPreferida', () => {
         '2026-06-05T05:00:00.000Z',
       );
     });
+  });
+
+  // 2026-10-28, frases reales del menú de cupos: el número después del día de
+  // la semana era la hora y se leía como el día del mes.
+  describe('día de la semana con una hora (no es el día del mes)', () => {
+    it.each([
+      'el viernes 7 50',
+      'Viernes 3:30 pm',
+      'viernes 3pm',
+      'el viernes 4 de la tarde',
+      'viernes 11;20',
+      'el viernes 9 horas',
+    ])('"%s" → el viernes 5, no otro día del mes', (frase) => {
+      expect(parse(frase)!.desde.toISOString()).toBe('2026-06-05T05:00:00.000Z');
+    });
+
+    it('"el viernes 5 750" → el 5 es el día y 750 la hora', () => {
+      expect(parse('el viernes 5 750')!.desde.toISOString()).toBe(
+        '2026-06-05T05:00:00.000Z',
+      );
+    });
+  });
+
+  describe('si el número no cae en ese día de la semana, manda el día de la semana', () => {
+    it('"el jueves 12 de junio" (el 12 es viernes) → el jueves 11', () => {
+      expect(parse('el jueves 12 de junio')!.desde.toISOString()).toBe(
+        '2026-06-11T05:00:00.000Z',
+      );
+    });
+
+    it('"el jueves 12 de mayo" (pasado y en martes) → el jueves 11, nunca 2027', () => {
+      expect(parse('Puede ser el jueves 12 de mayo ?')!.desde.toISOString()).toBe(
+        '2026-06-11T05:00:00.000Z',
+      );
+    });
+
+    it('"el lunes 12" (el 12 es viernes) → el lunes 8', () => {
+      expect(parse('el lunes 12')!.desde.toISOString()).toBe(
+        '2026-06-08T05:00:00.000Z',
+      );
+    });
+
+    it('"el viernes 12 de junio" (sí es viernes) → esa fecha', () => {
+      expect(parse('el viernes 12 de junio')!.desde.toISOString()).toBe(
+        '2026-06-12T05:00:00.000Z',
+      );
+    });
+  });
+
+  describe('incluirHoy (menú de cupos)', () => {
+    it('"el jueves" un jueves → hoy', () => {
+      expect(
+        parseFechaPreferida('el jueves', { now: NOW, incluirHoy: true })!.desde.toISOString(),
+      ).toBe('2026-06-04T05:00:00.000Z');
+    });
+
+    it('"el próximo jueves" sigue siendo la semana entrante', () => {
+      expect(
+        parseFechaPreferida('el próximo jueves', { now: NOW, incluirHoy: true })!.desde.toISOString(),
+      ).toBe('2026-06-11T05:00:00.000Z');
+    });
+
+    it('sin la opción, "el jueves" un jueves sigue siendo +7', () => {
+      expect(parse('el jueves')!.desde.toISOString()).toBe('2026-06-11T05:00:00.000Z');
+    });
+  });
+
+  it('"El28 de junio": número y letras pegados', () => {
+    expect(parse('El28 de junio')!.desde.toISOString()).toBe(
+      '2026-06-28T05:00:00.000Z',
+    );
   });
 
   describe('robustez de zona horaria cerca de medianoche', () => {

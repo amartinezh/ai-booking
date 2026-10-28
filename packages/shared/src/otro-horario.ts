@@ -24,7 +24,10 @@ import {
   parseFechaPreferida,
   type FechaPreferida,
 } from './parse-fecha-preferida';
-import { parseHoraPreferida } from './parse-hora-preferida';
+import {
+  parseHoraPreferida,
+  type HoraPreferida,
+} from './parse-hora-preferida';
 import { diaLocal } from './consulta-citas';
 import {
   fechaEnPalabras,
@@ -47,6 +50,13 @@ export interface PedidoOtroHorario {
    * que siguen, sin repetir los que ya vio.
    */
   otroDia: boolean;
+  /**
+   * La hora que dijo («a las 3:30», «Jueves 7 50»): se le ofrecen primero los
+   * cupos más cercanos a ella (2026-10-28: con «para las 3:30» se le mostraba
+   * la tarde desde el principio y preguntaba seis veces). Opcional: quien arma
+   * un pedido sin hora (la letra de «Otro día») no la pone.
+   */
+  hora?: HoraPreferida | null;
 }
 
 export interface OtroHorarioOptions {
@@ -62,7 +72,12 @@ function normalizar(texto: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
+    // «11;20» es una hora antes de que el punto y coma se vuelva espacio.
+    .replace(/\b(\d{1,2})[;,](\d{2})\b/g, '$1:$2')
     .replace(/[^a-z0-9:.\s]/g, ' ')
+    // «El28 de octubre», «3:00pm»: número y letras pegados (2026-10-28).
+    .replace(/([a-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-z])/g, '$1 $2')
     // El punto solo cuenta en una hora («12.10»): «No.» es «no».
     .replace(/\.(?!\d)/g, ' ')
     .replace(/\s+/g, ' ')
@@ -77,9 +92,12 @@ const RECHAZO =
 const OTRO_DIA =
   /\botr[oa]s?\s+(dia|dias|fecha|fechas)\b|\b(dia|fecha)\s+(diferente|distint[oa])\b/;
 
-/** «Otro horario», «otra hora», «más opciones», «cambiar el horario». */
+/**
+ * «Otro horario», «otra hora», «más opciones», «cambiar el horario». Y «Otra»
+ * a secas (2026-10-28): en el menú de cupos es otra opción.
+ */
 const SIGUIENTES =
-  /\botr[oa]s?\s+(horario|horarios|hora|horas|opcion|opciones|cupo|cupos|turno|turnos)\b|\bmas\s+(opciones|horarios|cupos|turnos)\b|\b(horario|hora)\s+(diferente|distint[oa])\b|\bcambiar\s+(el\s+|de\s+)?horario\b/;
+  /\botr[oa]s?\s+(horario|horarios|hora|horas|opcion|opciones|cupo|cupos|turno|turnos)\b|\bmas\s+(opciones|horarios|cupos|turnos)\b|\b(horario|hora)\s+(diferente|distint[oa])\b|\bcambiar\s+(el\s+|de\s+)?horario\b|^(una\s+|la\s+)?otr[oa]s?$/;
 
 const OTRA_FRANJA: Record<FranjaDelDia, FranjaDelDia> = {
   MANANA: 'TARDE',
@@ -99,6 +117,8 @@ function franjaPedida(norm: string, rechaza: boolean): FranjaDelDia | null {
 }
 
 function franjaNombrada(norm: string): FranjaDelDia | null {
+  // «Tarde» a secas en el menú de cupos (2026-10-28).
+  if (/^((en|por|de|para)\s+)?(la|las)?\s*tardes?$/.test(norm)) return 'TARDE';
   if (/\b(en|por|de|para)\s+la\s+(tarde|tardecita)\b/.test(norm)) return 'TARDE';
   if (/\b(en|por|de|para)\s+la\s+(manana|mananita)\b/.test(norm)) return 'MANANA';
   if (/\b(mas|bien)\s+tarde\b|\btardecita\b/.test(norm)) return 'TARDE';
@@ -132,13 +152,21 @@ export function interpretarOtroHorario(
     .replace(/\bla\s+otra\s+semana\b/g, 'la proxima semana');
 
   const rechaza = RECHAZO.test(norm);
-  // El día que nombra junto con un rechazo («no puedo mañana») es el que NO quiere.
-  const fecha = rechaza ? null : parseFechaPreferida(paraElDia, opts);
+  // El día que nombra junto con un rechazo («no puedo mañana») es el que NO
+  // quiere. En el menú, el día de la semana que es hoy es hoy: «Miércoles 3:30
+  // pm» un miércoles a las 6 a. m. pide esta tarde (2026-10-28).
+  const fecha = rechaza
+    ? null
+    : parseFechaPreferida(paraElDia, { ...opts, incluirHoy: true });
   const franja = franjaPedida(norm, rechaza);
+  // La hora que pide; con un rechazo («no puedo a las 7»), la que no quiere.
+  const hora = rechaza ? null : parseHoraPreferida(norm);
   // «No puedo en la mañana» pide la tarde de los mismos días, no otro día.
   const otroDia = !fecha && ((rechaza && !franja) || OTRO_DIA.test(norm));
 
-  if (fecha || franja || otroDia) return { fecha, franja, otroDia };
+  if (fecha || franja || otroDia) {
+    return { fecha, franja, otroDia, ...(hora ? { hora } : {}) };
+  }
   if (SIGUIENTES.test(norm)) return { fecha: null, franja: null, otroDia: false };
   return null;
 }

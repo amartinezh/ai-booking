@@ -36,6 +36,19 @@ const MESES: Record<string, number> = {
   diciembre: 12, dic: 12,
 };
 
+/** Números en palabras, para el día y el mes: «diecinueve de enero», «mes uno». */
+const NUMEROS: Record<string, number> = {
+  uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8,
+  nueve: 9, diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
+  dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19, veinte: 20,
+  veintiuno: 21, veintidos: 22, veintitres: 23, veinticuatro: 24,
+  veinticinco: 25, veintiseis: 26, veintisiete: 27, veintiocho: 28,
+  veintinueve: 29, treinta: 30, treintayuno: 31,
+};
+
+/** Los nombres completos de los meses, para separar «diecinuevedeEnero». */
+const MESES_COMPLETOS = Object.keys(MESES).filter((m) => m.length > 4);
+
 export interface FechaNacimiento {
   /** Medianoche UTC del dia de nacimiento. */
   date: Date;
@@ -150,6 +163,14 @@ export function parseFechaNacimiento(
     }
   }
 
+  // 4. Como la escriben de verdad (2026-10-28, una paciente lo intentó diez
+  //    veces): «19 01 1961», «1961 19 de enero», «Día 19 año 1961 mes Enero»,
+  //    «26 / 12/1971.», «26 de diciembre del año 1971», «4 de mayo de1966».
+  if (!dia) {
+    const piezas = porPiezas(texto);
+    if (piezas) ({ dia, mes, anio } = piezas);
+  }
+
   if (dia === null || mes === null || anio === null) return null;
 
   anio = expandirAnio(anio, hoy);
@@ -163,6 +184,115 @@ export function parseFechaNacimiento(
   if (edad > EDAD_MAXIMA) return null;
 
   return { date, iso: date.toISOString(), edad };
+}
+
+/**
+ * Texto en palabras sueltas: sin signos, con número y letras separados y con
+ * «de» suelto entre el día y el mes («diecinuevedeenero» → «diecinueve de enero»).
+ */
+function enPiezas(texto: string): string[] {
+  return texto
+    .replace(/\btreinta\s+y\s+uno\b/g, 'treintayuno')
+    .replace(new RegExp(`([a-z])de(${MESES_COMPLETOS.join('|')})\\b`, 'g'), '$1 de $2')
+    .replace(/([a-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-z])/g, '$1 $2')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+}
+
+/** «19», «diecinueve» → 19; null si no es un número. */
+function numeroDe(pieza: string | undefined): number | null {
+  if (!pieza) return null;
+  if (/^\d+$/.test(pieza)) return Number(pieza);
+  return NUMEROS[pieza] ?? null;
+}
+
+/**
+ * Día, mes y año sacados de las piezas de la frase, con o sin etiquetas. Solo
+ * si hay exactamente tres: con más o con menos no se adivina.
+ */
+function porPiezas(
+  texto: string,
+): { dia: number; mes: number; anio: number } | null {
+  const piezas = enPiezas(texto);
+
+  // Con etiquetas, en cualquier orden: «día 19 mes enero año 1961».
+  const tras = (etiqueta: string) => piezas[piezas.indexOf(etiqueta) + 1];
+  if (['dia', 'mes', 'ano'].every((e) => piezas.includes(e))) {
+    const dia = numeroDe(tras('dia'));
+    const mesPieza = tras('mes');
+    const mes = mesPieza ? (MESES[mesPieza] ?? numeroDe(mesPieza)) : null;
+    const anio = /^\d{2,4}$/.test(tras('ano') ?? '') ? Number(tras('ano')) : null;
+    if (dia !== null && mes !== null && anio !== null) return { dia, mes, anio };
+  }
+
+  // Sin etiquetas: los números y el mes, en el orden en que llegan.
+  type Componente = { mes?: number; numero?: number; digitos?: number };
+  const componentes: Componente[] = [];
+  for (const p of piezas) {
+    if (MESES[p]) componentes.push({ mes: MESES[p] });
+    else if (/^\d+$/.test(p)) componentes.push({ numero: Number(p), digitos: p.length });
+    // «uno» suelto no cuenta: «es uno de esos días» no tiene un 1.
+    else if (NUMEROS[p] && p !== 'uno') componentes.push({ numero: NUMEROS[p], digitos: 2 });
+  }
+  if (componentes.length !== 3) return null;
+
+  const meses = componentes.filter((c) => c.mes !== undefined);
+  const numeros = componentes.filter((c) => c.numero !== undefined);
+  if (meses.length === 1 && numeros.length === 2) {
+    // El año es el de cuatro dígitos; si ninguno, el último.
+    const iAnio = numeros.findIndex((n) => (n.digitos ?? 0) >= 3);
+    const anio = iAnio >= 0 ? numeros[iAnio] : numeros[1];
+    const dia = numeros.find((n) => n !== anio)!;
+    return { dia: dia.numero!, mes: meses[0].mes!, anio: anio.numero! };
+  }
+  if (numeros.length === 3) {
+    const [a, b, c] = numeros;
+    // Año delante (1961 01 19) o al final, como se usa aquí (19 01 1961).
+    if ((a.digitos ?? 0) === 4) return { dia: c.numero!, mes: b.numero!, anio: a.numero! };
+    if ((c.digitos ?? 0) === 2 || (c.digitos ?? 0) === 4) {
+      return { dia: a.numero!, mes: b.numero!, anio: c.numero! };
+    }
+  }
+  return null;
+}
+
+/**
+ * Para pedir la fecha por partes cuando no se entiende de corrido (2026-10-28):
+ * el día del mes (1-31), en número o en palabras.
+ */
+export function parseDiaDeNacimiento(entrada: string | null | undefined): number | null {
+  if (!entrada) return null;
+  const piezas = enPiezas(normalizar(entrada)).filter((p) => p !== 'dia' && p !== 'el');
+  if (piezas.length !== 1) return null;
+  const n = numeroDe(piezas[0]);
+  return n !== null && n >= 1 && n <= 31 ? n : null;
+}
+
+/** El mes (1-12): «enero», «ene», «1», «uno». */
+export function parseMesDeNacimiento(entrada: string | null | undefined): number | null {
+  if (!entrada) return null;
+  const piezas = enPiezas(normalizar(entrada)).filter((p) => p !== 'mes' && p !== 'de');
+  if (piezas.length !== 1) return null;
+  const n = MESES[piezas[0]] ?? numeroDe(piezas[0]);
+  return n !== null && n >= 1 && n <= 12 ? n : null;
+}
+
+/** El año, con cuatro dígitos («1961») o dos («61», resuelto hacia atrás). */
+export function parseAnioDeNacimiento(
+  entrada: string | null | undefined,
+  opts: ParseNacimientoOptions = {},
+): number | null {
+  if (!entrada) return null;
+  const piezas = enPiezas(normalizar(entrada)).filter((p) => p !== 'ano' && p !== 'del' && p !== 'de');
+  if (piezas.length !== 1 || !/^(\d{2}|\d{4})$/.test(piezas[0])) return null;
+  const hoy = opts.hoy ?? new Date();
+  const anio = expandirAnio(Number(piezas[0]), hoy);
+  return anio <= hoy.getUTCFullYear() && hoy.getUTCFullYear() - anio <= EDAD_MAXIMA
+    ? anio
+    : null;
 }
 
 /**

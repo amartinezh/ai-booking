@@ -53,7 +53,8 @@ describe('interpretarOtroHorario — lo que escribieron en el menú de cupos (26
     ['no me sirve en la tarde', 'MANANA'],
   ])('«%s» pide la franja %s, sin día', (texto, franja) => {
     const p = interpretarOtroHorario(texto, opts);
-    expect(p).toEqual({ fecha: null, franja, otroDia: false });
+    // La hora, si la dijo, viaja aparte (ver «la hora que pide» abajo).
+    expect(p).toMatchObject({ fecha: null, franja, otroDia: false });
   });
 
   it('«mañana en la tarde» pide el día y la franja', () => {
@@ -195,6 +196,68 @@ describe('etiquetaOtroHorario', () => {
   it('otro día u «otro horario»: sin etiqueta', () => {
     expect(etiquetaOtroHorario(interpretarOtroHorario('otro día', opts)!)).toBeNull();
     expect(etiquetaOtroHorario(interpretarOtroHorario('otro horario', opts)!)).toBeNull();
+  });
+});
+
+// 2026-10-28, el miércoles: lo que escribieron con la versión del 27 y no se
+// entendía o se entendía mal.
+describe('interpretarOtroHorario — lo que escribieron el 27 y 28 de octubre', () => {
+  // Miércoles 28 de octubre, 06:25 en Bogotá (11:25 UTC).
+  const miercoles = { now: new Date('2026-10-28T11:25:00Z') };
+
+  it('«Miercoles 3:30 pm» un miércoles a las 6 a. m. → esta tarde, no el 3 de noviembre', () => {
+    const p = interpretarOtroHorario('Miercoles 3:30 pm', miercoles)!;
+    expect(dia(p)).toBe('2026-10-28T05:00:00.000Z');
+    expect(p.franja).toBe('TARDE');
+    expect(p.hora).toEqual({ hour24: 15, minute: 30, meridiemKnown: true });
+  });
+
+  it('«Jueves 7 50 Dr Germán García» → el jueves 29 a las 7:50, no el 7 de noviembre', () => {
+    const p = interpretarOtroHorario('Jueves 7 50 Dr Germán García', miercoles)!;
+    expect(dia(p)).toBe('2026-10-29T05:00:00.000Z');
+    expect(p.hora).toEqual({ hour24: 7, minute: 50, meridiemKnown: false });
+  });
+
+  it('«Puede ser el jueves 12 de octubre ?» → el jueves 29, no octubre de 2027', () => {
+    const p = interpretarOtroHorario('Puede ser el jueves 12 de octubre ?', opts)!;
+    expect(dia(p)).toBe('2026-10-29T05:00:00.000Z');
+  });
+
+  it.each(['Otra', 'otro', 'Otras', 'la otra'])('«%s» a secas pide los cupos que siguen', (texto) => {
+    expect(interpretarOtroHorario(texto, opts)).toEqual({
+      fecha: null,
+      franja: null,
+      otroDia: false,
+    });
+  });
+
+  it.each(['Tarde', 'tarde', 'la tarde', 'en las tardes'])('«%s» a secas pide la tarde', (texto) => {
+    expect(interpretarOtroHorario(texto, opts)).toMatchObject({
+      fecha: null,
+      franja: 'TARDE',
+      otroDia: false,
+    });
+  });
+
+  it('«El28 de octubre» → el miércoles 28', () => {
+    expect(dia(interpretarOtroHorario('El28 de octubre', opts))).toBe(
+      '2026-10-28T05:00:00.000Z',
+    );
+  });
+
+  it('la hora que pide viaja en el pedido: «Para las 3:30 el jueves»', () => {
+    const p = interpretarOtroHorario('Para las 3:30 el jueves', opts)!;
+    expect(dia(p)).toBe('2026-10-29T05:00:00.000Z');
+    expect(p.hora).toEqual({ hour24: 3, minute: 30, meridiemKnown: false });
+  });
+
+  it('con un rechazo no hay hora pedida: «no puedo a las 7»', () => {
+    expect(interpretarOtroHorario('no puedo a las 7', opts)?.hora).toBeUndefined();
+  });
+
+  it('«Muchas gracias» y «Perdón es B» no son pedidos de otro horario', () => {
+    expect(interpretarOtroHorario('Muchas gracias', opts)).toBeNull();
+    expect(interpretarOtroHorario('Perdón es B', opts)).toBeNull();
   });
 });
 

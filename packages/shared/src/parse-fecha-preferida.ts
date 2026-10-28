@@ -36,6 +36,13 @@ export interface ParseOptions {
   timeZone?: string;
   /** "Ahora" inyectable para tests deterministas. Default = `new Date()`. */
   now?: Date;
+  /**
+   * El día de la semana que es hoy cuenta como hoy: «miércoles 3:30 pm» un
+   * miércoles, en el menú de cupos, es esta tarde (2026-10-28). Sin esto, la
+   * semana entrante, que con un plazo de pocos días nunca tiene cupos.
+   * «El próximo miércoles» sigue siendo la semana entrante.
+   */
+  incluirHoy?: boolean;
 }
 
 /** Componentes de una fecha de pared (sin zona). */
@@ -73,14 +80,39 @@ const MONTHS: Record<string, number> = {
   diciembre: 12,
 };
 
-/** Minúsculas, sin acentos, espacios colapsados. */
+/**
+ * Minúsculas, sin acentos, espacios colapsados. Separa número y letras
+ * pegados: «El28 de octubre» es «el 28 de octubre», y «3:00pm», «3:00 pm».
+ */
 function normalize(s: string): string {
   return s
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
+    .replace(/([a-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-z])/g, '$1 $2')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * «Jueves 7 50», «miércoles 3:30 pm», «el viernes 4 de la tarde»: el número
+ * después del día de la semana es una HORA, no el día del mes. Cuenta como hora
+ * si lleva minutos («:30», «.30», «;30», « 50»), «am»/«pm», «de la tarde» u
+ * «horas». (2026-10-28: «Jueves 7 50» se leía sábado 7 de noviembre.)
+ */
+const DIA_DE_SEMANA_CON_NUMERO =
+  /\b(domingo|lunes|martes|miercoles|jueves|viernes|sabado)\s+(?:el\s+)?(\d{1,2})\b(?!\s*[:.;,]\s*\d)(?!\s*[ap]\s?\.?\s?m\b)(?!\s+[0-5]\d\b)(?!\s+(?:de|por|en)\s+la\s+(?:manana|tarde|noche)\b)(?!\s*(?:h|hr|hrs|hora|horas)\b)/;
+
+/** Hasta cuántos días atrás una fecha sin año es un error y no el año entrante. */
+const DIAS_ATRAS_SIN_ANIO_SIGUIENTE = 92;
+
+/** El día de la semana (0=domingo…6=sábado) que nombra la frase, o null. */
+function diaDeLaSemanaNombrado(texto: string): number | null {
+  for (const [name, target] of Object.entries(WEEKDAYS)) {
+    if (new RegExp(`\\b${name}\\b`).test(texto)) return target;
+  }
+  return null;
 }
 
 /**
@@ -247,39 +279,68 @@ export function parseFechaPreferida(
     return rangeWindow(today, to, label, tz);
   }
 
+  // El día de la semana que nombra, si nombra uno: cuando no coincide con el
+  // número, manda el día de la semana (2026-10-28: «el jueves 12 de octubre» se
+  // leía martes 12 de octubre de 2027). Es el que el paciente tiene en la cabeza;
+  // el número suele ser un error de dedo.
+  const diaNombrado = diaDeLaSemanaNombrado(stripped);
+
   // ── Día de mes con nombre de mes ("25 de junio", "miércoles 28 de octubre") ─
   // Antes que el día de la semana: la fecha dicha manda sobre el nombre del día.
   const conMes = stripped.match(/\b(\d{1,2})\s+de\s+([a-z]+)\b/);
+  // Con el mes dicho y descartado, el número tampoco vale para otro mes:
+  // «jueves 12 de octubre» no es el jueves 12 de noviembre.
+  let fechaConMesDescartada = false;
   if (conMes) {
     const day = Number(conMes[1]);
     const mo = MONTHS[conMes[2]];
     if (mo && day >= 1 && day <= 31) {
-      let year = today.y;
-      // Si la fecha ya pasó este año, asumimos el año entrante.
-      const candidate: WallDate = { y: year, mo, d: day };
-      if (isBefore(candidate, today)) year += 1;
-      return dayWindow({ y: year, mo, d: day }, label, tz);
+      const candidate: WallDate = { y: today.y, mo, d: day };
+      // Si la fecha ya pasó este año, el año entrante («3 de enero» en
+      // diciembre)… salvo que haya pasado hace poco: «12 de octubre» un 28 de
+      // octubre es un error, no octubre del año que viene.
+      const fecha: WallDate | null = !isBefore(candidate, today)
+        ? candidate
+        : diasEntre(candidate, today) <= DIAS_ATRAS_SIN_ANIO_SIGUIENTE
+          ? null
+          : { y: today.y + 1, mo, d: day };
+      if (fecha && (diaNombrado === null || weekdayOf(fecha) === diaNombrado)) {
+        return dayWindow(fecha, label, tz);
+      }
+      if (diaNombrado === null) return null;
+      fechaConMesDescartada = true;
     }
   }
 
   // ── Día de la semana con número ("el miércoles 28") ────────────
   // El número manda: un miércoles, «el miércoles 28» es hoy si hoy es 28, no
-  // el miércoles de la semana entrante (2026-10-27, menú de cupos).
-  const semanaConNumero = stripped.match(
-    /\b(?:domingo|lunes|martes|miercoles|jueves|viernes|sabado)\s+(\d{1,2})\b/,
-  );
+  // el miércoles de la semana entrante (2026-10-27, menú de cupos). Si el
+  // número es una hora («jueves 7 50») o no cae en ese día de la semana, se
+  // queda solo el día de la semana.
+  const semanaConNumero = fechaConMesDescartada
+    ? null
+    : norm.match(DIA_DE_SEMANA_CON_NUMERO);
   if (semanaConNumero) {
-    const day = Number(semanaConNumero[1]);
-    if (day >= 1 && day <= 31) return diaDelMes(day, today, label, tz);
+    const day = Number(semanaConNumero[2]);
+    if (day >= 1 && day <= 31) {
+      const fecha = diaDelMes(day, today);
+      if (weekdayOf(fecha) === WEEKDAYS[semanaConNumero[1]]) {
+        return dayWindow(fecha, label, tz);
+      }
+    }
   }
 
   // ── Día de la semana ("el lunes", "el próximo viernes") ──────
   for (const [name, target] of Object.entries(WEEKDAYS)) {
     if (new RegExp(`\\b${name}\\b`).test(stripped)) {
       const dow = weekdayOf(today);
-      // Próxima ocurrencia FUTURA; si hoy es ese día, la semana entrante.
+      // Próxima ocurrencia FUTURA; si hoy es ese día, la semana entrante,
+      // salvo en el menú de cupos (`incluirHoy`) y sin «próximo».
       let delta = (target - dow + 7) % 7;
-      if (delta === 0) delta = 7;
+      const proximo = new RegExp(
+        `\\b(proximo|siguiente)\\s+${name}\\b|\\b${name}\\s+(de\\s+la\\s+)?(proxima|siguiente)\\b`,
+      ).test(stripped);
+      if (delta === 0 && (!opts.incluirHoy || proximo)) delta = 7;
       return dayWindow(addDays(today, delta), label, tz);
     }
   }
@@ -288,19 +349,16 @@ export function parseFechaPreferida(
   const soloDia = stripped.match(/\bel\s+(?:dia\s+)?(\d{1,2})\b/);
   if (soloDia) {
     const day = Number(soloDia[1]);
-    if (day >= 1 && day <= 31) return diaDelMes(day, today, label, tz);
+    if (day >= 1 && day <= 31) {
+      return dayWindow(diaDelMes(day, today), label, tz);
+    }
   }
 
   return null;
 }
 
 /** El día `day` de este mes o, si ya pasó, del siguiente. */
-function diaDelMes(
-  day: number,
-  today: WallDate,
-  label: string,
-  tz: string,
-): FechaPreferida {
+function diaDelMes(day: number, today: WallDate): WallDate {
   let { y, mo } = today;
   if (day < today.d) {
     mo += 1;
@@ -309,7 +367,14 @@ function diaDelMes(
       y += 1;
     }
   }
-  return dayWindow({ y, mo, d: day }, label, tz);
+  return { y, mo, d: day };
+}
+
+/** Días calendario de `a` a `b` (positivo si `a` es anterior). */
+function diasEntre(a: WallDate, b: WallDate): number {
+  const ms =
+    Date.UTC(b.y, b.mo - 1, b.d) - Date.UTC(a.y, a.mo - 1, a.d);
+  return Math.round(ms / 86_400_000);
 }
 
 /** ¿La fecha de pared `a` es estrictamente anterior a `b`? */
