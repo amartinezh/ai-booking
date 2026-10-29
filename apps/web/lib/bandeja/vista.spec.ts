@@ -352,7 +352,9 @@ describe('🗓️ cita en un horario que el hospital quitó', () => {
     const r = resumenPublico(caso({ motivo: 'HORA_QUITADA', origen: 'WHATSAPP' }), AHORA.getTime());
     expect(r).toContain('El hospital quitó de la agenda del médico la hora de esta cita que el paciente agendó por WhatsApp');
     expect(r).toContain('anúlela o muévala en el sistema del hospital y AgenIA le avisará al paciente');
-    expect(r).toContain('no se le envía recordatorio');
+    expect(r).toContain('borra el turno de un día ya lleno solo para cerrar la agenda');
+    // 2026-10-29: el recordatorio ya no se frena por este caso.
+    expect(r).not.toContain('no se le envía recordatorio');
   });
 
   it('día sin turno, cita del hospital', () => {

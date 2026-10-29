@@ -827,8 +827,97 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     }
 
     await this.enriquecerAltasConPaciente(pool, events);
+    await this.marcarAltasSegunElTurno(pool, events);
 
     return { events, nextCursor: actual };
+  }
+
+  /**
+   * 🗓️ ¿Cada ALTA nueva cae dentro de un turno disponible de su médico?
+   * (2026-10-29). El hospital crea citas «temporales» —a nombre de personas al
+   * azar, fuera de los turnos— para guardar cupos que maneja a mano (Nueva EPS);
+   * AgenIA no debe enviarles recordatorio. Se mira AHORA, unos segundos después
+   * de que la cita nació: más tarde no sirve, porque el hospital también borra el
+   * turno de un día ya lleno para cerrar la agenda, y sus citas reales quedarían
+   * «fuera».
+   *
+   * Solo las altas de esta vuelta, en una consulta, por médico y fecha. Si falla,
+   * las altas salen sin la marca y AgenIA las trata como siempre.
+   */
+  private async marcarAltasSegunElTurno(
+    pool: sql.ConnectionPool,
+    events: CanonicalChangeEvent[],
+  ): Promise<void> {
+    const altas: {
+      e: CanonicalChangeEvent;
+      med: string;
+      fecha: string;
+      hora: string;
+    }[] = [];
+    for (const e of events) {
+      if (e.op !== 'INSERT') continue;
+      const med = e.payload.doctorExternalKey;
+      const inicio = e.payload.startTimeIso;
+      if (!med || !inicio) continue;
+      const feHora = formatFeHoraCit(inicio, this.timeZone); // 'YYYY/MM/DD HH:MM'
+      altas.push({
+        e,
+        med,
+        fecha: feHora.slice(0, 10).replace(/\//g, '-'),
+        hora: feHora.slice(11, 16),
+      });
+    }
+    if (altas.length === 0) return;
+
+    const fechas = altas.map((a) => a.fecha).sort();
+    const medicos = [...new Set(altas.map((a) => a.med))];
+    try {
+      const req = pool
+        .request()
+        .input('desde', sql.VarChar(8), fechaLiteralSql(fechas[0]))
+        .input(
+          'hasta',
+          sql.VarChar(8),
+          diaSiguienteLiteralSql(fechas[fechas.length - 1]),
+        );
+      const marcadores = medicos.map((m, n) => {
+        req.input(`m${n}`, sql.VarChar(4), m);
+        return `@m${n}`;
+      });
+      const r = await req.query<{
+        med: string;
+        fecha: string;
+        ini: string;
+        fin: string;
+      }>(`
+        SELECT CD_MED_TUME med,
+               CONVERT(varchar(10), FE_FECH_TUME, 23) fecha,
+               CONVERT(varchar(5), FE_HOIN_TUME, 108) ini,
+               CONVERT(varchar(5), FE_HOFI_TUME, 108) fin
+          FROM dbo.TURNOS_MEDICOS
+         WHERE FE_FECH_TUME >= @desde AND FE_FECH_TUME < @hasta
+           AND ID_DISP_TUME = '1'
+           AND CD_MED_TUME IN (${marcadores.join(', ')})`);
+      const bloques = new Map<string, { ini: string; fin: string }[]>();
+      for (const t of r.recordset) {
+        if (typeof t.ini !== 'string' || typeof t.fin !== 'string') continue;
+        const clave = `${String(t.med).trim()}|${t.fecha}`;
+        const lista = bloques.get(clave) ?? [];
+        lista.push({ ini: t.ini, fin: t.fin });
+        bloques.set(clave, lista);
+      }
+      for (const a of altas) {
+        a.e.payload.dentroDelTurno = (
+          bloques.get(`${a.med}|${a.fecha}`) ?? []
+        ).some((b) => b.ini <= a.hora && a.hora < b.fin);
+      }
+    } catch (error: unknown) {
+      console.warn(
+        `[driver cnt-sanvicente-anserma] no se pudo revisar el turno de ` +
+          `${altas.length} cita(s) nuevas: ` +
+          `${error instanceof Error ? error.message : String(error)}. Salen sin la marca.`,
+      );
+    }
   }
 
   /**

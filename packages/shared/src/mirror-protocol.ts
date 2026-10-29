@@ -252,6 +252,15 @@ export interface CanonicalChangeEvent {
     previousDoctorExternalKey?: string;
     cancelReason?: string;
     cancelObservations?: string;
+    /**
+     * 🗓️ Solo en las ALTAS que vienen del hospital (2026-10-29): ¿la hora caía
+     * dentro de un turno disponible del médico cuando el agente vio aparecer la
+     * cita? `false` = nació fuera de la agenda del médico: el hospital crea así
+     * citas «temporales» para guardar cupos que maneja a mano (Nueva EPS). AgenIA
+     * no les envía recordatorio. Ausente —agente anterior, o no se pudo leer— =
+     * como siempre.
+     */
+    dentroDelTurno?: boolean;
   };
 }
 

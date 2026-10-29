@@ -9,6 +9,20 @@ import {
  * de 24 h se responde con texto libre; FUERA hay que usar plantilla aprobada,
  * porque Meta rechaza el texto libre. Antes se mandaba texto libre siempre.
  */
+
+/**
+ * La llamada de la consulta de citas ELEGIBLES (la que no busca la marca
+ * `fueraDeTurno`). Desde el 2026-10-29 antes va otra consulta de citas: la de las
+ * del hospital que nacieron fuera del turno.
+ */
+const llamadaElegibles = (prisma: {
+  appointment: { findMany: { mock: { calls: unknown[][] } } };
+}) =>
+  prisma.appointment.findMany.mock.calls.find(
+    (c) =>
+      !(c[0] as { where?: { metaLog?: unknown } } | undefined)?.where?.metaLog,
+  ) as unknown[];
+
 describe('AppointmentReminderCronService — plantilla vs texto libre', () => {
   const ORG = 'org-1';
   const PHONE = '573001112233';
@@ -256,6 +270,8 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
     casosSinCitaEnElHospital?: { appointmentId: string | null }[];
     /** Altas de citas que no han llegado al hospital. */
     altasSinEntregar?: { entityId: string }[];
+    /** Citas del hospital que nacieron fuera del turno (2026-10-29). */
+    fueraDeTurno?: { id: string }[];
   }) => {
     const chatbot = {
       isWithinServiceWindow: jest.fn(async () => opts?.withinWindow ?? true),
@@ -266,7 +282,12 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
     };
     const prisma = {
       appointment: {
-        findMany: jest.fn(async () => opts?.eligibles ?? []),
+        findMany: jest.fn(async (...a: unknown[]) => {
+          // 🗓️ La consulta de las citas del hospital que nacieron fuera del turno.
+          const where = (a[0] as { where?: { metaLog?: unknown } })?.where;
+          if (where?.metaLog) return opts?.fueraDeTurno ?? [];
+          return opts?.eligibles ?? [];
+        }),
         findFirst: jest.fn(
           async (): Promise<Record<string, unknown> | null> => null,
         ),
@@ -499,9 +520,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       await service.runOnce();
 
       const where = (
-        prisma.appointment.findMany.mock.calls[0] as unknown as [
-          { where: Record<string, any> },
-        ]
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
       expect(where.status).toBe('SCHEDULED');
       expect(where.reminderSentAt).toBeNull();
@@ -514,9 +533,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       await service.runOnce();
 
       const where = (
-        prisma.appointment.findMany.mock.calls[0] as unknown as [
-          { where: Record<string, any> },
-        ]
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
       // En la CONSULTA, no al enviar: si se filtrara después, la cita quedaría
       // con `reminderSentAt` puesto — «ya se le avisó» de algo que nunca salió.
@@ -543,9 +560,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         select: { patientId: true },
       });
       const where = (
-        prisma.appointment.findMany.mock.calls[0] as unknown as [
-          { where: Record<string, any> },
-        ]
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
       expect(where.patientId).toEqual({ notIn: ['pat-9'] });
       // Se suma a los demás filtros, no los reemplaza.
@@ -572,9 +587,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         (c) => (c as unknown as [{ where: Record<string, unknown> }])[0].where,
       );
       expect(consultas).toContainEqual({
-        kind: {
-          in: ['CITA_NO_ENTREGADA', 'DERIVA_EN_HIS', 'CITA_EN_AGENDA_QUITADA'],
-        },
+        kind: { in: ['CITA_NO_ENTREGADA', 'DERIVA_EN_HIS'] },
         status: { in: ['ABIERTA', 'EN_REVISION'] },
         appointmentId: { not: null },
       });
@@ -588,9 +601,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         select: { entityId: true },
       });
       const where = (
-        prisma.appointment.findMany.mock.calls[0] as unknown as [
-          { where: Record<string, any> },
-        ]
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
       expect(where.id).toEqual({ notIn: ['apt-deriva', 'apt-rendida'] });
       // Se suma a los demás filtros, no los reemplaza.
@@ -602,9 +613,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       const { service, prisma } = build();
       await service.runOnce();
       const where = (
-        prisma.appointment.findMany.mock.calls[0] as unknown as [
-          { where: Record<string, any> },
-        ]
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
       expect(where.id).toBeUndefined();
     });
@@ -618,20 +627,59 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       await service.runOnce();
       expect(prisma.appointment.findMany).toHaveBeenCalled();
       const where = (
-        prisma.appointment.findMany.mock.calls[0] as unknown as [
-          { where: Record<string, any> },
-        ]
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
       expect(where.id).toBeUndefined();
+    });
+
+    // 🗓️ 2026-10-29: el hospital crea citas «temporales» fuera de los turnos para
+    // guardar cupos de Nueva EPS que maneja a mano, a nombre de personas al azar.
+    it('🗓️ excluye las citas del hospital que nacieron fuera del turno (marca del espejo)', async () => {
+      const { service, prisma } = build({
+        fueraDeTurno: [{ id: 'apt-reserva' }],
+      });
+      await service.runOnce();
+
+      const consulta = prisma.appointment.findMany.mock.calls
+        .map(
+          (c) =>
+            (c as unknown as [{ where: Record<string, unknown> }])[0].where,
+        )
+        .find((w) => w.metaLog);
+      expect(consulta).toEqual({
+        status: 'SCHEDULED',
+        origin: 'MIRROR',
+        reminderSentAt: null,
+        metaLog: { path: ['fueraDeTurno'], equals: true },
+      });
+      const elegibles = prisma.appointment.findMany.mock.calls
+        .map((c) => (c as unknown as [{ where: Record<string, any> }])[0].where)
+        .find((w) => !w.metaLog)!;
+      expect(elegibles.id).toEqual({ notIn: ['apt-reserva'] });
+    });
+
+    // 🗓️ Una cita en un día u hora que el hospital quitó DESPUÉS sí recibe el
+    // recordatorio: el hospital borra el turno de un día lleno para cerrar la
+    // agenda, y sus citas son reales (2026-10-29, la Dra. Osorio).
+    it('🗓️ un caso «agenda quitada» abierto ya NO frena el recordatorio', async () => {
+      const { service, prisma } = build();
+      await service.runOnce();
+      const kinds = prisma.syncException.findMany.mock.calls
+        .map(
+          (c) =>
+            (c as unknown as [{ where: { kind?: { in?: string[] } } }])[0].where
+              .kind?.in,
+        )
+        .filter(Boolean)
+        .flat();
+      expect(kinds).not.toContain('CITA_EN_AGENDA_QUITADA');
     });
 
     it('🩺 solo citas de médicos con «WhatsApp ON»: lo demás que trae el hospital no se recuerda (y no se marca)', async () => {
       const { service, prisma } = build();
       await service.runOnce();
       const where = (
-        prisma.appointment.findMany.mock.calls[0] as unknown as [
-          { where: Record<string, any> },
-        ]
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
       // En la CONSULTA: una cita de odontología ni se envía ni queda marcada.
       expect(where.scheduleSlot.doctor).toEqual({
@@ -644,9 +692,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       const { service, prisma } = build();
       await service.runOnce();
       const where = (
-        prisma.appointment.findMany.mock.calls[0] as unknown as [
-          { where: Record<string, any> },
-        ]
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
       expect(where.scheduleSlot.service).toEqual({ isActive: true });
     });
@@ -655,9 +701,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       const { service, prisma } = build();
       await service.runOnce();
       const where = (
-        prisma.appointment.findMany.mock.calls[0] as unknown as [
-          { where: Record<string, any> },
-        ]
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
       expect(where).not.toHaveProperty('patientId');
     });
@@ -667,11 +711,15 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       await service.runOnce();
       await service.runOnce();
 
-      // Se lee en CADA vuelta: prender o apagar surte efecto sin reiniciar.
-      expect(prisma.appointment.findMany).toHaveBeenCalledTimes(2);
-      for (const call of prisma.appointment.findMany.mock.calls as unknown as [
-        { where: Record<string, any> },
-      ][]) {
+      // Se lee en CADA vuelta: prender o apagar surte efecto sin reiniciar. (Sin
+      // contar la consulta de las citas del hospital fuera del turno.)
+      const elegibles = (
+        prisma.appointment.findMany.mock.calls as unknown as [
+          { where: Record<string, any> },
+        ][]
+      ).filter((c) => !c[0].where.metaLog);
+      expect(elegibles).toHaveLength(2);
+      for (const call of elegibles) {
         // Sin fila de settings cuenta como prendido (el default de la columna).
         expect(call[0].where.organization).toEqual({
           OR: [
@@ -687,9 +735,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       await service.runOnce();
 
       const where = (
-        prisma.appointment.findMany.mock.calls[0] as unknown as [
-          { where: Record<string, any> },
-        ]
+        llamadaElegibles(prisma) as unknown as [{ where: Record<string, any> }]
       )[0].where;
       // También en la CONSULTA: las que excluye no quedan marcadas como
       // recordadas, y apagar la opción las devuelve al recordatorio.

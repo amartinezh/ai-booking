@@ -480,3 +480,130 @@ describe('detectChanges — la cita viaja con su duración real', () => {
     expect((await altaCon(0)).payload.endTimeIso).toBeUndefined();
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🗓️ ¿La cita nueva del hospital nació dentro del turno de su médico?
+// (2026-10-29). El hospital crea citas «temporales» fuera de los turnos para
+// guardar cupos de Nueva EPS que maneja a mano; AgenIA no debe enviarles
+// recordatorio. Se mira al detectarlas: más tarde el hospital puede borrar el
+// turno de un día ya lleno y sus citas reales quedarían «fuera».
+// ══════════════════════════════════════════════════════════════════════════
+describe('detectChanges — ¿el alta nació dentro del turno?', () => {
+  function conTurnos(
+    citas: unknown[],
+    turnos: unknown[],
+    opts: { fallaTurnos?: boolean } = {},
+  ) {
+    const consultas: { sql: string; params: Record<string, unknown> }[] = [];
+    const makeReq = () => {
+      const params: Record<string, unknown> = {};
+      const req: any = {
+        input(nombre: string, _t: unknown, valor: unknown) {
+          params[nombre] = valor;
+          return req;
+        },
+        async query(sqlText: string) {
+          consultas.push({ sql: sqlText, params });
+          if (/FROM dbo\.TURNOS_MEDICOS/.test(sqlText)) {
+            if (opts.fallaTurnos) throw new Error('timeout');
+            return { recordset: turnos };
+          }
+          if (/FROM dbo\.PACIENTES/.test(sqlText)) return { recordset: [] };
+          return { recordset: citas };
+        },
+      };
+      return req;
+    };
+    const driver = new CntSanVicenteAnsermaDriver();
+    driver.useConnection({ request: makeReq } as never, MAPPING);
+    return { driver, consultas };
+  }
+  const turno = (
+    ini: string,
+    fin: string,
+    med = 'MDD2',
+    fecha = '2026-10-10',
+  ) => ({
+    med,
+    fecha,
+    ini,
+    fin,
+  });
+
+  async function alta(hora: string, turnos: unknown[], opts = {}) {
+    const base = await conTurnos([], turnos, opts).driver.detectChanges(null);
+    const t = conTurnos([filaCita({ hora })], turnos, opts);
+    const r = await t.driver.detectChanges(base.nextCursor);
+    return { evento: r.events[0], consultas: t.consultas };
+  }
+
+  it('dentro de un turno disponible: `dentroDelTurno` = true', async () => {
+    const { evento } = await alta('2026/10/10 08:20', [
+      turno('07:00', '12:00'),
+    ]);
+    expect(evento.op).toBe('INSERT');
+    expect(evento.payload.dentroDelTurno).toBe(true);
+  });
+
+  it('a una hora fuera de los turnos del día (la reserva de las 5:40 p. m.): false', async () => {
+    const { evento } = await alta('2026/10/10 17:40', [
+      turno('07:00', '12:00'),
+      turno('14:00', '17:00'),
+    ]);
+    expect(evento.payload.dentroDelTurno).toBe(false);
+  });
+
+  it('el fin del turno queda fuera; el inicio, dentro', async () => {
+    expect(
+      (await alta('2026/10/10 12:00', [turno('07:00', '12:00')])).evento.payload
+        .dentroDelTurno,
+    ).toBe(false);
+    expect(
+      (await alta('2026/10/10 07:00', [turno('07:00', '12:00')])).evento.payload
+        .dentroDelTurno,
+    ).toBe(true);
+  });
+
+  it('el médico sin turno ese día: false (un turno de OTRO médico u otro día no cuenta)', async () => {
+    const { evento } = await alta('2026/10/10 08:20', [
+      turno('07:00', '12:00', 'RU70'),
+      turno('07:00', '12:00', 'MDD2', '2026-10-11'),
+    ]);
+    expect(evento.payload.dentroDelTurno).toBe(false);
+  });
+
+  it('pregunta una sola vez, por los médicos y fechas de las altas, solo turnos disponibles', async () => {
+    const { consultas } = await alta('2026/10/10 08:20', [
+      turno('07:00', '12:00'),
+    ]);
+    const q = consultas.filter((c) => /TURNOS_MEDICOS/.test(c.sql));
+    expect(q).toHaveLength(1);
+    expect(q[0].sql).toMatch(/ID_DISP_TUME = '1'/);
+    expect(q[0].params).toEqual({
+      desde: '20261010',
+      hasta: '20261011',
+      m0: 'MDD2',
+    });
+  });
+
+  it('si la consulta de turnos falla, el alta sale igual, sin la marca', async () => {
+    const espia = jest
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
+    const { evento } = await alta('2026/10/10 08:20', [], {
+      fallaTurnos: true,
+    });
+    expect(evento.op).toBe('INSERT');
+    expect(evento.payload.dentroDelTurno).toBeUndefined();
+    espia.mockRestore();
+  });
+
+  it('sin altas no consulta los turnos (una cancelación no lleva la marca)', async () => {
+    const base = await conTurnos([filaCita()], []).driver.detectChanges(null);
+    const t = conTurnos([], []);
+    const r = await t.driver.detectChanges(base.nextCursor);
+    expect(r.events.map((e) => e.op)).toEqual(['CANCEL']);
+    expect(r.events[0].payload.dentroDelTurno).toBeUndefined();
+    expect(t.consultas.some((c) => /TURNOS_MEDICOS/.test(c.sql))).toBe(false);
+  });
+});

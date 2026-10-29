@@ -393,7 +393,7 @@ export function resumenPublico(
         meta.motivo === 'DIA_SIN_TURNO'
           ? `El médico ya no tiene turno ese día en el hospital, y esta cita ${deDonde} sigue vigente${veces}.`
           : `El hospital quitó de la agenda del médico la hora de esta cita ${deDonde}, y la cita sigue vigente${veces}.`;
-      return `${que} Confirme con el hospital si el paciente será atendido: si no, anúlela o muévala en el sistema del hospital y AgenIA le avisará al paciente. Mientras tanto no se le envía recordatorio, y si se anula, su cupo no se vuelve a ofrecer. El caso se cierra solo si la hora vuelve a la agenda.`;
+      return `${que} Confirme con el hospital si el paciente será atendido: a veces el hospital borra el turno de un día ya lleno solo para cerrar la agenda, y entonces no hay nada que hacer. Si no lo atenderán, anúlela o muévala en el sistema del hospital y AgenIA le avisará al paciente; si se anula, su cupo no se vuelve a ofrecer. El caso se cierra solo si la hora vuelve a la agenda.`;
     }
     default:
       return fila.title;

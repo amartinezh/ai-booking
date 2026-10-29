@@ -518,12 +518,19 @@ export class AppointmentReminderCronService
    * era cierto: cerrarlo devuelve los recordatorios sin tocar nada del paciente.
    */
   /**
-   * 🏥 Citas que el hospital NO tiene (2026-10-29): su alta no ha llegado al
-   * hospital —en cola o rendida— o hay un caso abierto de «Cita que el hospital
-   * aún no tiene», «El hospital no tiene una cita que AgenIA da por hecha» o
-   * «Cita en un horario que el hospital quitó de su agenda». A esas no se les
-   * manda el «le esperamos»: el paciente iría al hospital para nada. Las ve el
-   * personal en la Bandeja.
+   * 🏥 Citas a las que no se les manda el «le esperamos» (2026-10-29):
+   *   · las que el hospital NO tiene: su alta no ha llegado al hospital —en cola o
+   *     rendida— o hay un caso abierto de «Cita que el hospital aún no tiene» o
+   *     «El hospital no tiene una cita que AgenIA da por hecha». El paciente iría
+   *     al hospital para nada; las ve el personal en la Bandeja.
+   *   · las del hospital que nacieron FUERA del turno de su médico
+   *     (`metaLog.fueraDeTurno`, la marca el espejo con lo que ve el agente): citas
+   *     «temporales» con las que el hospital guarda cupos que maneja a mano. Se le
+   *     escribiría a una persona al azar.
+   *
+   * Una cita en un día u hora que el hospital quitó DESPUÉS (`CITA_EN_AGENDA_QUITADA`)
+   * sí lo recibe: el hospital también borra el turno de un día ya lleno para cerrar
+   * la agenda, y esas citas son reales (2026-10-29, la Dra. Osorio).
    *
    * Solo el ALTA cuenta: un cambio pendiente de otra cosa (asistencia, EPS) no
    * dice que la cita no exista allá, y uno de fecha retenido ya abre su caso.
@@ -533,13 +540,7 @@ export class AppointmentReminderCronService
     try {
       const casos = await this.prisma.syncException.findMany({
         where: {
-          kind: {
-            in: [
-              'CITA_NO_ENTREGADA',
-              'DERIVA_EN_HIS',
-              'CITA_EN_AGENDA_QUITADA',
-            ],
-          },
+          kind: { in: ['CITA_NO_ENTREGADA', 'DERIVA_EN_HIS'] },
           status: { in: ['ABIERTA', 'EN_REVISION'] },
           appointmentId: { not: null },
         },
@@ -554,11 +555,21 @@ export class AppointmentReminderCronService
         },
         select: { entityId: true },
       });
+      const fueraDeTurno = await this.prisma.appointment.findMany({
+        where: {
+          status: 'SCHEDULED',
+          origin: 'MIRROR',
+          reminderSentAt: null,
+          metaLog: { path: ['fueraDeTurno'], equals: true },
+        },
+        select: { id: true },
+      });
       return [
         ...new Set(
           [
             ...casos.map((c) => c.appointmentId),
             ...altas.map((a) => a.entityId),
+            ...fueraDeTurno.map((c) => c.id),
           ].filter((id): id is string => typeof id === 'string' && !!id),
         ),
       ];

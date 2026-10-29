@@ -540,6 +540,64 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
   // hospital se crea de verdad — y desde ahí el bot la muestra y el cron le manda
   // el recordatorio. Sin paciente, se hace lo de antes: ocupar el cupo.
   // ══════════════════════════════════════════════════════════════════════
+  // 🗓️ 2026-10-29: el hospital crea citas «temporales» fuera de los turnos (a
+  // nombre de personas al azar) para guardar cupos de Nueva EPS que maneja a mano.
+  // El agente dice si el alta nació dentro del turno; si no, AgenIA la marca y el
+  // recordatorio no le escribe a esa persona.
+  describe('🗓️ cita del hospital que nació fuera del turno', () => {
+    const conPaciente = () =>
+      pacientes.resolverOCrear.mockResolvedValueOnce({
+        pacienteId: 'pac-1',
+        creado: false,
+        nota: 'paciente ya conocido',
+      });
+
+    it('`dentroDelTurno: false` → la cita se crea y queda marcada, con origen MIRROR', async () => {
+      conPaciente();
+      tx.appointment.findFirst.mockResolvedValueOnce({ metaLog: { otra: 1 } });
+
+      const r = await aplicar(
+        evento({
+          payload: { ...evento().payload, dentroDelTurno: false },
+        }),
+      );
+
+      expect(r.applied).toBe(1);
+      expect(appointments.bookAppointment).toHaveBeenCalled();
+      expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+        `SET LOCAL agenia.sync_origin = 'MIRROR'`,
+      );
+      expect(tx.appointment.update).toHaveBeenCalledWith({
+        where: { id: 'apt-1' },
+        data: { metaLog: { otra: 1, fueraDeTurno: true } },
+      });
+      expect(prisma.syncAudit.create.mock.calls[0][0].data.detail).toContain(
+        'nació fuera del turno del médico: sin recordatorio',
+      );
+    });
+
+    it.each([
+      ['dentro del turno', true],
+      ['sin la marca (agente anterior)', undefined],
+    ])('%s → no se marca', async (_c, dentro) => {
+      conPaciente();
+      await aplicar(
+        evento({ payload: { ...evento().payload, dentroDelTurno: dentro } }),
+      );
+      expect(appointments.bookAppointment).toHaveBeenCalled();
+      expect(tx.appointment.update).not.toHaveBeenCalled();
+    });
+
+    it('si marcarla falla, la cita igual queda creada', async () => {
+      conPaciente();
+      tx.appointment.findFirst.mockRejectedValueOnce(new Error('base caída'));
+      const r = await aplicar(
+        evento({ payload: { ...evento().payload, dentroDelTurno: false } }),
+      );
+      expect(r.applied).toBe(1);
+    });
+  });
+
   describe('alta en caliente del paciente del hospital', () => {
     it('✅ el alta consigue paciente → se AGENDA de verdad, con origen MIRROR', async () => {
       pacientes.resolverOCrear.mockResolvedValueOnce({

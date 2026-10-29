@@ -682,7 +682,10 @@ describe('MirrorAvailabilityService', () => {
       });
     });
 
-    it('una cita DEL HOSPITAL en un día sin turno, de un médico del asistente: también', async () => {
+    // 2026-10-29 (segunda decisión del día): el hospital borra el turno de un día
+    // lleno para cerrar la agenda y guarda cupos con citas «temporales»; las citas
+    // que agenda el hospital las maneja él. AgenIA solo abre casos por las suyas.
+    it('una cita DEL HOSPITAL en un día sin turno: SIN caso (la maneja el hospital)', async () => {
       prisma.scheduleSlot.findMany.mockResolvedValue([
         cupoConCita('2030-01-08T15:00:00.000Z', 'MIRROR'),
       ]);
@@ -690,9 +693,28 @@ describe('MirrorAvailabilityService', () => {
       const r = await aplicarFut([]);
 
       expect(r.conflicts).toEqual([]);
-      expect(casos()[0]).toMatchObject({
-        meta: { motivo: 'DIA_SIN_TURNO', origen: 'MIRROR' },
-      });
+      expect(exceptions.registrar).not.toHaveBeenCalled();
+    });
+
+    it('un caso abierto de una cita del hospital (de antes del cambio) se cierra solo, con su motivo', async () => {
+      prisma.syncException.findMany.mockResolvedValue([
+        {
+          id: 'caso-hospital',
+          dedupeKey: 'agenda-quitada:apt-h',
+          meta: { motivo: 'DIA_SIN_TURNO', origen: 'MIRROR' },
+        },
+      ]);
+
+      await aplicarFut([]);
+
+      expect(exceptions.autoResolver).toHaveBeenCalledWith(
+        'org1',
+        'caso-hospital',
+        expect.stringContaining(
+          'Cita agendada en el hospital: AgenIA ya no abre casos',
+        ),
+        expect.any(Date),
+      );
     });
 
     it('una cita del hospital fuera de la rejilla en un día CON turno: sin caso (cupo a la medida)', async () => {
@@ -766,7 +788,7 @@ describe('MirrorAvailabilityService', () => {
             lt: new Date(FUT.toIso),
           },
         },
-        select: { id: true, dedupeKey: true },
+        select: { id: true, dedupeKey: true, meta: true },
       });
       expect(exceptions.autoResolver).toHaveBeenCalledTimes(1);
       expect(exceptions.autoResolver).toHaveBeenCalledWith(

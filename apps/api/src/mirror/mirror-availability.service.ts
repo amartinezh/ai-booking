@@ -98,15 +98,8 @@ export class MirrorAvailabilityService {
     });
     const doctores = await this.prisma.doctorProfile.findMany({
       where: { id: { in: mapas.map((m) => m.agenIAId) } },
-      select: { id: true, serviceId: true, whatsappBookingEnabled: true },
+      select: { id: true, serviceId: true },
     });
-    // Los médicos con los que trabaja el asistente (WhatsApp ON): a sus pacientes
-    // les llega el recordatorio, también a los que agendaron en el hospital.
-    const conWhatsapp = new Set(
-      doctores
-        .filter((d) => d.whatsappBookingEnabled === true)
-        .map((d) => d.id),
-    );
     const servicioDe = new Map(doctores.map((d) => [d.id, d.serviceId]));
     const agenIAIdDe = new Map(mapas.map((m) => [m.externalKey, m.agenIAId]));
 
@@ -296,16 +289,13 @@ export class MirrorAvailabilityService {
       const vivas = actual.appointments.filter((a) => a.status !== 'CANCELLED');
       const sinTurno = !medicosConTurno.has(actual.doctorId);
 
-      // 🏥 Cupo a la medida de una cita DEL HOSPITAL (fuera de la rejilla de
-      // turnos): no es un sobrante ni un conflicto — el hospital tiene esa cita,
-      // y si la cancela llega como cancelación. Se deja tal cual… salvo que el
-      // médico no tenga NINGÚN turno ese día (2026-10-29): entonces sus citas
-      // quedaron sin médico, y si es uno del asistente, el recordatorio le dirá al
-      // paciente que vaya.
+      // 🏥 Cupo de una cita DEL HOSPITAL fuera de la rejilla de turnos: no es un
+      // sobrante ni un conflicto — el hospital tiene esa cita y la maneja él (si la
+      // cancela, llega como cancelación). Se deja tal cual y sin caso, aunque el
+      // médico no tenga turno ese día (2026-10-29): el hospital borra el turno de un
+      // día ya lleno para cerrar la agenda, y guarda cupos con citas «temporales»
+      // fuera de los turnos. AgenIA responde por las citas que ella agendó.
       if (vivas.length > 0 && vivas.every((a) => a.origin === 'MIRROR')) {
-        if (sinTurno && conWhatsapp.has(actual.doctorId)) {
-          anotar(actual, vivas, 'DIA_SIN_TURNO');
-        }
         continue;
       }
 
@@ -484,14 +474,20 @@ export class MirrorAvailabilityService {
           status: { in: ESTADOS_ACTIVOS_CASO },
           appointmentStartAt: { gte: from, lt: to },
         },
-        select: { id: true, dedupeKey: true },
+        select: { id: true, dedupeKey: true, meta: true },
       });
       for (const c of activas) {
         if (vigentes.has(c.dedupeKey)) continue;
+        const delHospital =
+          !!c.meta &&
+          typeof c.meta === 'object' &&
+          (c.meta as Record<string, unknown>).origen === 'MIRROR';
         await this.exceptions.autoResolver(
           organizationId,
           c.id,
-          'La hora volvió a la agenda del hospital, o la cita ya no está vigente.',
+          delHospital
+            ? 'Cita agendada en el hospital: AgenIA ya no abre casos por los cambios de agenda en las citas del hospital (las maneja el hospital).'
+            : 'La hora volvió a la agenda del hospital, o la cita ya no está vigente.',
           ahora,
         );
       }

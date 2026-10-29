@@ -854,7 +854,55 @@ export class MirrorApplyService {
       return 'CONFLICT';
     }
 
+    // 🗓️ Nació fuera del turno de su médico (2026-10-29): una cita «temporal» que
+    // el hospital usa para guardar un cupo que maneja a mano (Nueva EPS). Se marca
+    // para que el recordatorio no le escriba a esa persona. Solo con la marca del
+    // agente; sin ella (agente anterior), como siempre.
+    if (event.payload.dentroDelTurno === false && result.appointmentId) {
+      await this.marcarFueraDeTurno(organizationId, result.appointmentId);
+      traza.nota = [
+        traza.nota,
+        'nació fuera del turno del médico: sin recordatorio',
+      ]
+        .filter(Boolean)
+        .join('; ');
+    }
+
     return 'APPLIED';
+  }
+
+  /**
+   * Deja en la cita la marca `fueraDeTurno`. Con origen MIRROR: nada de esto
+   * vuelve al hospital. Si falla, la cita ya existe y queda como cualquier otra.
+   */
+  private async marcarFueraDeTurno(
+    organizationId: string,
+    appointmentId: string,
+  ): Promise<void> {
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL agenia.sync_origin = 'MIRROR'`);
+        const cita = await tx.appointment.findFirst({
+          where: { id: appointmentId, organizationId },
+          select: { metaLog: true },
+        });
+        if (!cita) return;
+        const previo =
+          cita.metaLog &&
+          typeof cita.metaLog === 'object' &&
+          !Array.isArray(cita.metaLog)
+            ? (cita.metaLog as Record<string, unknown>)
+            : {};
+        await tx.appointment.update({
+          where: { id: appointmentId },
+          data: { metaLog: { ...previo, fueraDeTurno: true } },
+        });
+      });
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo marcar fuera de turno la cita ${appointmentId}: ${getErrorMessage(error)}`,
+      );
+    }
   }
 
   private async applyAppointmentCancel(
