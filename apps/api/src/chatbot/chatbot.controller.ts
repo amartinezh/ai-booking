@@ -8,6 +8,8 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
+  NotFoundException,
+  Param,
   Post,
   Query,
   Req,
@@ -27,6 +29,11 @@ import {
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { CurrentTenant } from '../common/current-tenant.decorator';
+import {
+  MensajeAlPacienteService,
+  type EnvioMensajeAlPaciente,
+  type RevisionMensajeAlPaciente,
+} from './mensaje-al-paciente.service';
 
 /** Un mensaje entregado con estado (enviado/entregado/leído/fallido). */
 type WhatsappStatusUpdate = MetaStatusUpdate;
@@ -60,6 +67,7 @@ export class ChatbotController {
     private readonly whatsappCredentials: WhatsappCredentialsService,
     private readonly inboundQueue: InboundQueueService,
     private readonly messageLog: WhatsappMessageLogService,
+    private readonly mensajeAlPaciente: MensajeAlPacienteService,
   ) {}
 
   // 1. Verificación del Webhook (Facebook te llama aquí primero).
@@ -194,6 +202,49 @@ export class ChatbotController {
       { kind: 'MANUAL' },
     );
     return { success: true };
+  }
+
+  /**
+   * ✉️ Mensaje del personal al paciente de una cita, desde la Bandeja
+   * (2026-10-29). El panel pregunta primero si hoy se le puede escribir y por
+   * dónde (`GET`), y luego envía (`POST`). La cita se busca en la clínica del
+   * token; quién puede verla lo comprueba además el panel (alcance del agente).
+   * Solo por la red interna: el proxy del servidor no publica estas rutas.
+   */
+  @Get('outbound/cita/:appointmentId')
+  @UseGuards(RolesGuard)
+  @Roles('ORG_ADMIN', 'BOOKING_AGENT')
+  async revisarMensajeAlPaciente(
+    @Param('appointmentId') appointmentId: string,
+    @CurrentTenant() organizationId: string,
+  ): Promise<RevisionMensajeAlPaciente> {
+    const r = await this.mensajeAlPaciente.revisar(
+      organizationId,
+      appointmentId,
+    );
+    if (!r.ok && r.motivo === 'NO_ENCONTRADA') {
+      throw new NotFoundException('Cita no encontrada');
+    }
+    return r;
+  }
+
+  @Post('outbound/cita')
+  @UseGuards(RolesGuard)
+  @Roles('ORG_ADMIN', 'BOOKING_AGENT')
+  @HttpCode(HttpStatus.OK)
+  async enviarMensajeAlPaciente(
+    @Body() body: { appointmentId?: string; message?: string },
+    @CurrentTenant() organizationId: string,
+  ): Promise<EnvioMensajeAlPaciente> {
+    const r = await this.mensajeAlPaciente.enviar(
+      organizationId,
+      body?.appointmentId ?? '',
+      body?.message,
+    );
+    if (!r.ok && r.motivo === 'NO_ENCONTRADA') {
+      throw new NotFoundException('Cita no encontrada');
+    }
+    return r;
   }
 
   // ── helpers ────────────────────────────────────────────────────────────

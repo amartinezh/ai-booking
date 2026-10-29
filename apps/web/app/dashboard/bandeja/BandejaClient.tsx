@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useId, useState, useTransition } from 'react';
+import { useEffect, useId, useState, useTransition, type ReactNode } from 'react';
+import { MessageCircle } from 'lucide-react';
 import {
     SEVERIDADES_EXCEPCION,
     TIPOS_EXCEPCION,
@@ -16,7 +17,9 @@ import {
     aplicarAccionExcepcionAction,
     crearYHomologarMedicoAction,
     detalleExcepcionAction,
+    enviarMensajeAlPacienteAction,
     guardarAvisosAction,
+    prepararMensajeAlPacienteAction,
 } from '@/app/actions/bandeja';
 import { formatAppointmentCompact } from '@/lib/date';
 import { FILTROS_ESTADO, ORDENES_BANDEJA, hrefBandeja } from '@/lib/bandeja/filtros';
@@ -28,7 +31,9 @@ import type {
     ListaExcepciones,
     MedicoFiltro,
     OrdenBandeja,
+    PreparacionMensaje,
 } from '@/lib/bandeja/tipos';
+import { MAX_MENSAJE } from '@/lib/bandeja/constantes-mensaje';
 
 /**
  * Bandeja de excepciones de sincronización (docs/PLAN_RASTREO_PACIENTE.md §10 #3).
@@ -239,7 +244,7 @@ function PanelAvisos({
 // Acciones de una excepción
 // ─────────────────────────────────────────────────────────────
 
-function Acciones({ f }: { f: ExcepcionVista }) {
+function Acciones({ f, extra }: { f: ExcepcionVista; extra?: ReactNode }) {
     const router = useRouter();
     const idNota = useId();
     const [pidiendo, setPidiendo] = useState<'RESOLVER' | 'DESCARTAR' | null>(null);
@@ -247,7 +252,7 @@ function Acciones({ f }: { f: ExcepcionVista }) {
     const [error, setError] = useState<string | null>(null);
     const [pendiente, iniciar] = useTransition();
 
-    if (f.acciones.length === 0) return null;
+    if (f.acciones.length === 0 && !extra) return null;
 
     function ejecutar(accion: AccionExcepcion, texto?: string) {
         setError(null);
@@ -284,6 +289,7 @@ function Acciones({ f }: { f: ExcepcionVista }) {
                         </button>
                     );
                 })}
+                {extra}
             </div>
 
             {pidiendo && (
@@ -469,14 +475,174 @@ function MedicoNuevo({ f }: { f: ExcepcionVista }) {
 // Una excepción
 // ─────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────
+// ✉️ Escribirle al paciente de la cita (2026-10-29)
+// ─────────────────────────────────────────────────────────────
+
+type Sugerencia = PreparacionMensaje['sugerida'];
+
+const ETIQUETA_SUGERENCIA: Record<Sugerencia, string> = {
+    cancelada: 'Cita cancelada (con disculpas)',
+    confirmada: 'La cita sigue en pie',
+    saludo: 'Otro mensaje',
+};
+
+function MensajeAlPaciente({
+    f,
+    onCerrar,
+    onEnviado,
+}: {
+    f: ExcepcionVista;
+    onCerrar: () => void;
+    onEnviado: (aviso: string) => void;
+}) {
+    const router = useRouter();
+    const idTexto = useId();
+    const [prep, setPrep] = useState<PreparacionMensaje | null>(null);
+    const [elegida, setElegida] = useState<Sugerencia>('saludo');
+    const [texto, setTexto] = useState('');
+    const [error, setError] = useState<string | null>(null);
+    const [cargando, iniciarCarga] = useTransition();
+    const [enviando, iniciarEnvio] = useTransition();
+
+    // Al abrir: por dónde se le puede escribir hoy y el texto sugerido.
+    useEffect(() => {
+        iniciarCarga(async () => {
+            const r = await prepararMensajeAlPacienteAction(f.id);
+            if (!r.success) {
+                setError(r.error);
+                return;
+            }
+            setPrep(r.data);
+            setElegida(r.data.sugerida);
+            setTexto(r.data.sugerencias[r.data.sugerida]);
+        });
+    }, [f.id]);
+
+    function usar(s: Sugerencia) {
+        if (!prep) return;
+        setElegida(s);
+        setTexto(prep.sugerencias[s]);
+    }
+
+    function enviar() {
+        setError(null);
+        iniciarEnvio(async () => {
+            const r = await enviarMensajeAlPacienteAction({ id: f.id, texto });
+            if (!r.success) {
+                setError(r.error);
+                return;
+            }
+            const canal = r.data.canal === 'TELEGRAM' ? 'Telegram' : 'WhatsApp';
+            onEnviado(`Mensaje enviado por ${canal}${r.data.destino ? ` al ${r.data.destino}` : ''}.`);
+            router.refresh();
+        });
+    }
+
+    const canal = prep?.canal === 'TELEGRAM' ? 'Telegram' : 'WhatsApp';
+    const largo = texto.trim().length;
+
+    return (
+        <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 dark:border-emerald-900 dark:bg-emerald-950/20">
+            <p className="text-sm font-semibold text-zinc-900 dark:text-white">Escribirle al paciente</p>
+
+            {cargando && !prep && !error && (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">Revisando por dónde se le puede escribir…</p>
+            )}
+
+            {prep && !prep.puedeEscribir && (
+                <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                    El paciente no ha escrito en las últimas 24 horas y WhatsApp no deja enviarle un mensaje escrito por el personal. Llámalo: su teléfono está en Pacientes.
+                </p>
+            )}
+
+            {prep?.puedeEscribir && (
+                <>
+                    <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                        {prep.canal === 'TELEGRAM' ? (
+                            <>Se envía por Telegram.</>
+                        ) : (
+                            <>
+                                Se envía por WhatsApp al <span className="font-medium">{prep.destino}</span>
+                                {prep.otroNumero ? ', el número desde el que se agendó o se respondió por esta cita' : ''}.
+                                {prep.hastaIso && <> Puedes escribirle hasta el {formatAppointmentCompact(prep.hastaIso)}.</>}
+                            </>
+                        )}
+                    </p>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                        {prep.citaVigente
+                            ? 'En AgenIA esta cita sigue vigente: el mensaje no la cancela ni la cambia.'
+                            : 'En AgenIA esta cita ya no está vigente.'}
+                    </p>
+
+                    <div className="flex flex-wrap gap-2" role="group" aria-label="Texto sugerido">
+                        {(Object.keys(ETIQUETA_SUGERENCIA) as Sugerencia[]).map((s) => (
+                            <button
+                                key={s}
+                                type="button"
+                                aria-pressed={elegida === s}
+                                className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                                    elegida === s
+                                        ? 'border-emerald-600 bg-emerald-600 text-white dark:border-emerald-500 dark:bg-emerald-500'
+                                        : 'border-zinc-300 text-zinc-700 hover:bg-white dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800'
+                                }`}
+                                onClick={() => usar(s)}
+                            >
+                                {ETIQUETA_SUGERENCIA[s]}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div>
+                        <label htmlFor={idTexto} className="block text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                            Mensaje (puedes editarlo)
+                        </label>
+                        <textarea
+                            id={idTexto}
+                            className={`${CAMPO} mt-1`}
+                            rows={7}
+                            maxLength={MAX_MENSAJE}
+                            value={texto}
+                            onChange={(e) => setTexto(e.target.value)}
+                        />
+                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                            {largo}/{MAX_MENSAJE} · Queda en la conversación del paciente (Rastreo) y en el historial de este caso.
+                        </p>
+                    </div>
+                </>
+            )}
+
+            {error && (
+                <p role="alert" className="text-sm font-medium text-red-700 dark:text-red-300">
+                    {error}
+                </p>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+                {prep?.puedeEscribir && (
+                    <button type="button" className={BOTON_PRIMARIO} disabled={enviando || largo === 0} onClick={enviar}>
+                        {enviando ? 'Enviando…' : `Enviar por ${canal}`}
+                    </button>
+                )}
+                <button type="button" className={BOTON_SECUNDARIO} onClick={onCerrar} disabled={enviando}>
+                    {prep?.puedeEscribir ? 'Cancelar' : 'Cerrar'}
+                </button>
+            </div>
+        </div>
+    );
+}
+
 function Tarjeta({ f }: { f: ExcepcionVista }) {
     const [abierta, setAbierta] = useState(false);
     const [detalle, setDetalle] = useState<ExcepcionDetalle | null>(null);
     const [errorDetalle, setErrorDetalle] = useState<string | null>(null);
     const [, iniciar] = useTransition();
+    const [escribiendo, setEscribiendo] = useState(false);
+    const [mensajeEnviado, setMensajeEnviado] = useState<string | null>(null);
 
-    // El detalle se pide al abrir, y otra vez si la excepción cambió mientras estaba abierta.
-    const huella = `${f.estado}|${f.dueno?.etiqueta ?? ''}|${f.cierre?.atIso ?? ''}|${f.ultimaVezIso}`;
+    // El detalle se pide al abrir, y otra vez si la excepción cambió mientras estaba
+    // abierta (también si se le acaba de escribir al paciente: va al historial).
+    const huella = `${f.estado}|${f.dueno?.etiqueta ?? ''}|${f.cierre?.atIso ?? ''}|${f.ultimaVezIso}|${mensajeEnviado ?? ''}`;
     useEffect(() => {
         if (!abierta) return;
         iniciar(async () => {
@@ -560,7 +726,40 @@ function Tarjeta({ f }: { f: ExcepcionVista }) {
             )}
 
             <div className="mt-3 space-y-3">
-                <Acciones f={f} />
+                <Acciones
+                    f={f}
+                    extra={
+                        f.escribirAlPaciente ? (
+                            <button
+                                type="button"
+                                className={`${BOTON_SECUNDARIO} inline-flex items-center gap-1.5 border-emerald-300 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-200 dark:hover:bg-emerald-950/40`}
+                                aria-expanded={escribiendo}
+                                onClick={() => {
+                                    setMensajeEnviado(null);
+                                    setEscribiendo((v) => !v);
+                                }}
+                            >
+                                <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                                Escribir al paciente
+                            </button>
+                        ) : null
+                    }
+                />
+                {escribiendo && (
+                    <MensajeAlPaciente
+                        f={f}
+                        onCerrar={() => setEscribiendo(false)}
+                        onEnviado={(aviso) => {
+                            setEscribiendo(false);
+                            setMensajeEnviado(aviso);
+                        }}
+                    />
+                )}
+                {mensajeEnviado && (
+                    <p role="status" className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                        {mensajeEnviado}
+                    </p>
+                )}
                 <button
                     type="button"
                     className="text-sm font-medium text-indigo-700 underline-offset-2 hover:underline dark:text-indigo-300"

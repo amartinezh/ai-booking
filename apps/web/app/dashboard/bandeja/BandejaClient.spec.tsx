@@ -19,7 +19,11 @@ const aplicar = jest.fn();
 const detalle = jest.fn();
 const guardar = jest.fn();
 const crearMedico = jest.fn();
+const prepararMensaje = jest.fn();
+const enviarMensaje = jest.fn();
 jest.mock('@/app/actions/bandeja', () => ({
+    prepararMensajeAlPacienteAction: (...a: unknown[]) => prepararMensaje(...a),
+    enviarMensajeAlPacienteAction: (...a: unknown[]) => enviarMensaje(...a),
     crearYHomologarMedicoAction: (...a: unknown[]) => crearMedico(...a),
     aplicarAccionExcepcionAction: (...a: unknown[]) => aplicar(...a),
     detalleExcepcionAction: (...a: unknown[]) => detalle(...a),
@@ -663,5 +667,92 @@ describe('BandejaClient — 🩺 médico del hospital sin homologar', () => {
         pintar([caso({ puedeCrear: false })]);
         expect(screen.getByText('RU68')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Crear y homologar' })).toBeNull();
+    });
+});
+
+describe('BandejaClient — ✉️ escribirle al paciente (2026-10-29)', () => {
+    const preparacion = (over = {}) => ({
+        canal: 'WHATSAPP',
+        puedeEscribir: true,
+        hastaIso: '2026-10-30T13:37:00.000Z',
+        destino: '•••9051',
+        otroNumero: true,
+        citaVigente: true,
+        sugerencias: {
+            cancelada: 'Hola, Maria. Lamentamos informarle que su cita fue cancelada. Le pedimos disculpas.',
+            confirmada: 'Hola, Maria. Le confirmamos que su cita quedó registrada.',
+            saludo: 'Hola, Maria. Le escribimos del hospital.\n\n',
+        },
+        sugerida: 'cancelada',
+        ...over,
+    });
+
+    it('sin permiso o sin cita con paciente no hay botón', () => {
+        pintar([fila({ escribirAlPaciente: false })]);
+        expect(screen.queryByRole('button', { name: /Escribir al paciente/ })).toBeNull();
+    });
+
+    it('abre con el texto sugerido, dice a qué número va y hasta cuándo, y envía lo editado', async () => {
+        prepararMensaje.mockResolvedValue({ success: true, data: preparacion() });
+        enviarMensaje.mockResolvedValue({ success: true, data: { canal: 'WHATSAPP', destino: '•••9051' } });
+        pintar([fila({ escribirAlPaciente: true })]);
+
+        await userEvent.click(screen.getByRole('button', { name: /Escribir al paciente/ }));
+        expect(prepararMensaje).toHaveBeenCalledWith('ex-1');
+        const caja = await screen.findByRole('textbox', { name: /Mensaje/ });
+        expect(caja).toHaveValue(preparacion().sugerencias.cancelada);
+        expect(screen.getByText('•••9051')).toBeInTheDocument();
+        expect(screen.getByText(/el número desde el que se agendó/)).toBeInTheDocument();
+        expect(screen.getByText(/Puedes escribirle hasta/)).toBeInTheDocument();
+        expect(screen.getByText(/sigue vigente: el mensaje no la cancela/)).toBeInTheDocument();
+
+        await userEvent.click(screen.getByRole('button', { name: 'La cita sigue en pie' }));
+        expect(caja).toHaveValue(preparacion().sugerencias.confirmada);
+        fireEvent.change(caja, { target: { value: 'Hola, Maria. Texto final.' } });
+
+        await userEvent.click(screen.getByRole('button', { name: 'Enviar por WhatsApp' }));
+        expect(enviarMensaje).toHaveBeenCalledWith({ id: 'ex-1', texto: 'Hola, Maria. Texto final.' });
+        expect(await screen.findByRole('status')).toHaveTextContent('Mensaje enviado por WhatsApp al •••9051.');
+        expect(screen.queryByRole('textbox', { name: /Mensaje/ })).toBeNull();
+        expect(refresh).toHaveBeenCalled();
+    });
+
+    it('fuera de las 24 horas no deja escribir: pide llamar', async () => {
+        prepararMensaje.mockResolvedValue({
+            success: true,
+            data: preparacion({ puedeEscribir: false, hastaIso: null, otroNumero: false, destino: '•••5355' }),
+        });
+        pintar([fila({ escribirAlPaciente: true })]);
+        await userEvent.click(screen.getByRole('button', { name: /Escribir al paciente/ }));
+        expect(await screen.findByRole('alert')).toHaveTextContent(/últimas 24 horas.*Llámalo/);
+        expect(screen.queryByRole('textbox', { name: /Mensaje/ })).toBeNull();
+        expect(screen.queryByRole('button', { name: /Enviar por/ })).toBeNull();
+        await userEvent.click(screen.getByRole('button', { name: 'Cerrar' }));
+        expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('si el envío falla lo dice y deja el texto para reintentar', async () => {
+        prepararMensaje.mockResolvedValue({ success: true, data: preparacion() });
+        enviarMensaje.mockResolvedValue({ success: false, error: 'WhatsApp no aceptó el mensaje.' });
+        pintar([fila({ escribirAlPaciente: true })]);
+        await userEvent.click(screen.getByRole('button', { name: /Escribir al paciente/ }));
+        await screen.findByRole('textbox', { name: /Mensaje/ });
+        await userEvent.click(screen.getByRole('button', { name: 'Enviar por WhatsApp' }));
+        expect(await screen.findByRole('alert')).toHaveTextContent('WhatsApp no aceptó el mensaje.');
+        expect(screen.getByRole('textbox', { name: /Mensaje/ })).toHaveValue(preparacion().sugerencias.cancelada);
+        expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it('si no se puede preparar (teléfono de otra persona…) lo dice', async () => {
+        prepararMensaje.mockResolvedValue({ success: false, error: 'El teléfono de este paciente está marcado como de otra persona.' });
+        pintar([fila({ escribirAlPaciente: true })]);
+        await userEvent.click(screen.getByRole('button', { name: /Escribir al paciente/ }));
+        expect(await screen.findByRole('alert')).toHaveTextContent('de otra persona');
+        expect(screen.queryByRole('textbox', { name: /Mensaje/ })).toBeNull();
+    });
+
+    it('un caso cerrado y sin acciones igual deja escribirle', () => {
+        pintar([fila({ escribirAlPaciente: true, acciones: [], estado: 'RESUELTA' })]);
+        expect(screen.getByRole('button', { name: /Escribir al paciente/ })).toBeInTheDocument();
     });
 });

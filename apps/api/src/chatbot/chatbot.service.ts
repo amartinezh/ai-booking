@@ -862,6 +862,33 @@ export class ChatbotService implements OnModuleInit {
     }
   }
 
+  /**
+   * Hasta cuándo sigue abierta la ventana de 24 h de este remitente, o `null`
+   * si está cerrada (o no se pudo leer: se asume cerrada, como arriba). Lo usa
+   * el mensaje del personal desde la Bandeja para decir hasta cuándo se le
+   * puede escribir al paciente (2026-10-29).
+   */
+  async serviceWindowEndsAt(
+    organizationId: string,
+    senderId: string,
+  ): Promise<Date | null> {
+    try {
+      const ms = await this.redis.pttl(
+        this.serviceWindowKey(organizationId, senderId),
+      );
+      // -1: la marca existe pero sin vencimiento (no debería pasar): abierta.
+      if (ms === -1) return new Date(Date.now() + SERVICE_WINDOW_TTL * 1000);
+      return ms > 0 ? new Date(Date.now() + ms) : null;
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo leer la ventana de atención de ${senderId} (se asume fuera): ${
+          (error as Error).message
+        }`,
+      );
+      return null;
+    }
+  }
+
   private async resolveCredentialsForOrg(
     organizationId: string,
   ): Promise<ResolvedWhatsappCredentials | null> {

@@ -1,11 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { ChatbotController } from './chatbot.controller';
 import { ChatbotService } from './chatbot.service';
 import { InboundQueueService } from './inbound-queue.service';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { WhatsappMessageLogService } from '../whatsapp-config/whatsapp-message-log.service';
+import { MensajeAlPacienteService } from './mensaje-al-paciente.service';
 
 describe('ChatbotController', () => {
   let controller: ChatbotController;
@@ -20,6 +21,7 @@ describe('ChatbotController', () => {
   // Cola de entrada fake: `admit` deduplica en memoria y `enqueue` ejecuta la
   // tarea de inmediato (síncrono) para poder afirmar que se procesó el mensaje.
   let messageLog: { applyStatus: jest.Mock };
+  let mensajeAlPaciente: { revisar: jest.Mock; enviar: jest.Mock };
   let inboundQueue: {
     admit: jest.Mock;
     releaseAdmission: jest.Mock;
@@ -86,6 +88,8 @@ describe('ChatbotController', () => {
       }),
     };
 
+    mensajeAlPaciente = { revisar: jest.fn(), enviar: jest.fn() };
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ChatbotController],
       providers: [
@@ -93,6 +97,7 @@ describe('ChatbotController', () => {
         { provide: WhatsappCredentialsService, useValue: credentials },
         { provide: InboundQueueService, useValue: inboundQueue },
         { provide: WhatsappMessageLogService, useValue: messageLog },
+        { provide: MensajeAlPacienteService, useValue: mensajeAlPaciente },
       ],
     }).compile();
 
@@ -101,6 +106,64 @@ describe('ChatbotController', () => {
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // ✉️ Mensaje del personal al paciente desde la Bandeja (2026-10-29)
+  // ══════════════════════════════════════════════════════════════
+  describe('mensaje al paciente de una cita', () => {
+    it('revisa con la clínica del token', async () => {
+      mensajeAlPaciente.revisar.mockResolvedValue({
+        ok: false,
+        motivo: 'FUERA_DE_VENTANA',
+      });
+      await expect(
+        controller.revisarMensajeAlPaciente('cita-1', 'org-1'),
+      ).resolves.toEqual({
+        ok: false,
+        motivo: 'FUERA_DE_VENTANA',
+      });
+      expect(mensajeAlPaciente.revisar).toHaveBeenCalledWith('org-1', 'cita-1');
+    });
+
+    it('una cita de otra clínica o que no existe es 404', async () => {
+      mensajeAlPaciente.revisar.mockResolvedValue({
+        ok: false,
+        motivo: 'NO_ENCONTRADA',
+      });
+      await expect(
+        controller.revisarMensajeAlPaciente('x', 'org-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      mensajeAlPaciente.enviar.mockResolvedValue({
+        ok: false,
+        motivo: 'NO_ENCONTRADA',
+      });
+      await expect(
+        controller.enviarMensajeAlPaciente(
+          { appointmentId: 'x', message: 'Hola' },
+          'org-1',
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('envía con la clínica del token, la cita y el texto', async () => {
+      mensajeAlPaciente.enviar.mockResolvedValue({
+        ok: true,
+        canal: 'WHATSAPP',
+        destino: '•••9051',
+      });
+      await expect(
+        controller.enviarMensajeAlPaciente(
+          { appointmentId: 'cita-1', message: 'Hola' },
+          'org-1',
+        ),
+      ).resolves.toEqual({ ok: true, canal: 'WHATSAPP', destino: '•••9051' });
+      expect(mensajeAlPaciente.enviar).toHaveBeenCalledWith(
+        'org-1',
+        'cita-1',
+        'Hola',
+      );
+    });
   });
 
   // ══════════════════════════════════════════════════════════════

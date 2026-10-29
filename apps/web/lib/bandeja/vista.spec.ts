@@ -341,6 +341,30 @@ describe('🩺 médicos del hospital que AgenIA aún no tiene', () => {
   });
 });
 
+describe('✉️ escribirle al paciente (2026-10-29)', () => {
+  it('quien trabaja la Bandeja puede, si el caso tiene cita y paciente (también cerrado)', () => {
+    expect(mapearExcepcion(fila(), ctx()).escribirAlPaciente).toBe(true);
+    const agendador = ctx({ actor: { userId: 'u-yo', permisos: agente } as never });
+    expect(mapearExcepcion(fila(), agendador).escribirAlPaciente).toBe(true);
+    expect(mapearExcepcion(fila({ status: 'RESUELTA' }), ctx()).escribirAlPaciente).toBe(true);
+  });
+
+  it('sin cita o sin paciente, o sin permiso para trabajar, no', () => {
+    expect(mapearExcepcion(fila({ appointmentId: null }), ctx()).escribirAlPaciente).toBe(false);
+    expect(mapearExcepcion(fila({ patientId: null }), ctx()).escribirAlPaciente).toBe(false);
+    const sinTrabajar = ctx({ actor: { userId: 'u-yo', permisos: { ...admin, trabajar: false } } as never });
+    expect(mapearExcepcion(fila(), sinTrabajar).escribirAlPaciente).toBe(false);
+  });
+
+  it('el historial lo nombra', () => {
+    const [h] = mapearHistorial(
+      [{ id: 'l1', exceptionId: 'ex-1', action: 'MENSAJE_AL_PACIENTE', actorUserId: 'u-yo', actorRole: 'ORG_ADMIN', note: 'Por WhatsApp al •••9051', createdAt: AHORA }] as never,
+      ctx(),
+    );
+    expect(h).toMatchObject({ accion: 'Le escribió al paciente', por: 'Tú', nota: 'Por WhatsApp al •••9051' });
+  });
+});
+
 describe('mapearExcepcion', () => {
   it('🔒 el paciente sale ENMASCARADO: nunca el nombre ni la cédula completos', () => {
     const v = mapearExcepcion(fila(), ctx());

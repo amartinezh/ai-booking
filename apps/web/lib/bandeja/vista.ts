@@ -459,6 +459,7 @@ export function mapearExcepcion(
     }),
     medicoNuevo:
       f.kind === 'MEDICO_SIN_HOMOLOGAR' ? medicoNuevoDe(leerMeta(f.meta), activa, ctx.actor.permisos.administrar) : null,
+    escribirAlPaciente: ctx.actor.permisos.trabajar && !!f.appointmentId && !!f.patientId,
   };
 }
 
@@ -500,6 +501,7 @@ const ETIQUETA_ACCION: Record<string, string> = {
   REABIERTA: 'La reabrió',
   AUTO_RESUELTA: 'Se cerró sola',
   VENCIDA: 'Venció sin resolución',
+  MENSAJE_AL_PACIENTE: 'Le escribió al paciente',
 };
 
 export function mapearHistorial(

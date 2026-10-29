@@ -7,7 +7,16 @@ import { getSession } from '@/lib/session';
 import { resolverActorBandeja, type ResultadoActorBandeja } from '@/lib/bandeja/acceso';
 import { aplicarAccion, detalleExcepcion, guardarAvisos } from '@/lib/bandeja/servicio';
 import { crearYHomologarMedico, type RespuestaAlta } from '@/lib/bandeja/medico-nuevo';
-import type { ExcepcionDetalle, Resultado } from '@/lib/bandeja/tipos';
+import {
+    enviarMensaje,
+    prepararMensaje,
+    type ClienteMensajes,
+    type RespuestaEnvio,
+    type RespuestaRevision,
+} from '@/lib/bandeja/mensaje-paciente';
+import type { ExcepcionDetalle, PreparacionMensaje, Resultado } from '@/lib/bandeja/tipos';
+import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
+import { describirCita } from '@/lib/actividad/catalogo';
 import type { EstadoExcepcion } from '@agenia/shared';
 
 /**
@@ -103,4 +112,80 @@ export async function crearYHomologarMedicoAction(entrada: {
         revalidatePath('/dashboard', 'layout');
     }
     return r;
+}
+
+/**
+ * ✉️ El cable con la API para escribirle al paciente (2026-10-29), con la sesión de
+ * quien pulsa. Por la red interna: el proxy del servidor no publica estas rutas.
+ */
+async function clienteMensajes(): Promise<ClienteMensajes> {
+    const token = (await cookies()).get('auth_token')?.value;
+    const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { Cookie: `auth_token=${token}` } : {}),
+    };
+    const leer = async <T,>(res: Response): Promise<T | null> => (res.ok ? ((await res.json()) as T) : null);
+    return {
+        revisar: async (appointmentId) => {
+            try {
+                const res = await fetch(`${INTERNAL_API_URL}/chatbot/outbound/cita/${encodeURIComponent(appointmentId)}`, {
+                    headers,
+                    cache: 'no-store',
+                });
+                return await leer<RespuestaRevision>(res);
+            } catch {
+                return null;
+            }
+        },
+        enviar: async (appointmentId, texto) => {
+            try {
+                const res = await fetch(`${INTERNAL_API_URL}/chatbot/outbound/cita`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ appointmentId, message: texto }),
+                    cache: 'no-store',
+                });
+                return await leer<RespuestaEnvio>(res);
+            } catch {
+                return null;
+            }
+        },
+    };
+}
+
+/** ¿Se le puede escribir al paciente del caso, por dónde y con qué texto sugerido? */
+export async function prepararMensajeAlPacienteAction(id: string): Promise<Resultado<PreparacionMensaje>> {
+    const a = await actor();
+    if (!a.ok) return error(a.error);
+    return prepararMensaje(prisma, a.actor, id, await clienteMensajes());
+}
+
+/** Le escribe al paciente del caso y lo deja en el historial y en la Actividad de usuarios. */
+export async function enviarMensajeAlPacienteAction(entrada: {
+    id: string;
+    texto: string;
+}): Promise<Resultado<{ canal: 'WHATSAPP' | 'TELEGRAM'; destino: string | null }>> {
+    const a = await actor();
+    if (!a.ok) return error(a.error);
+    const r = await enviarMensaje(prisma, a.actor, entrada ?? { id: '', texto: '' }, await clienteMensajes());
+    if (!r.success) return r;
+
+    // Quién le escribió, por dónde y sobre qué cita; el texto NO (como en Agendamiento).
+    const canal = r.data.canal === 'TELEGRAM' ? 'Telegram' : 'WhatsApp';
+    await registrarActividad({
+        action: 'PATIENT_MESSAGE_SENT',
+        message: `Mensaje manual al paciente de la cita ${r.data.appointmentId} desde la Bandeja (${r.data.canal})`,
+        actor: actorDeSesion(a.actor),
+        organizationId: a.actor.organizationId,
+        metadata: {
+            detalle: [`Por ${canal}`, 'desde la Bandeja', describirCita({ inicio: r.data.inicio })]
+                .filter(Boolean)
+                .join(' · '),
+            cita: r.data.appointmentId,
+            canal: r.data.canal,
+            caracteres: String(entrada.texto ?? '').trim().length,
+        },
+    });
+    revalidatePath(RUTA);
+    return { success: true, data: { canal: r.data.canal, destino: r.data.destino } };
 }

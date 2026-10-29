@@ -51,6 +51,29 @@ export interface ExcepcionVista {
   acciones: AccionExcepcion[];
   /** 🩺 Solo en «Médico del hospital con citas que aún no está en AgenIA». */
   medicoNuevo?: MedicoNuevoVista | null;
+  /**
+   * ✉️ ESTE usuario puede escribirle al paciente de la cita desde el caso
+   * (2026-10-29): puede trabajar la Bandeja y el caso tiene cita y paciente.
+   */
+  escribirAlPaciente?: boolean;
+}
+
+/** ✉️ Lo que el panel muestra antes de escribirle al paciente (2026-10-29). */
+export interface PreparacionMensaje {
+  canal: 'WHATSAPP' | 'TELEGRAM';
+  /** Se le puede escribir texto libre ahora (WhatsApp: escribió en las últimas 24 horas). */
+  puedeEscribir: boolean;
+  /** Hasta cuándo se le puede escribir; null por Telegram o fuera de la ventana. */
+  hastaIso: string | null;
+  /** A dónde va, enmascarado («•••9051»); null por Telegram. */
+  destino: string | null;
+  /** Va a un número que no es el de la ficha (quien agendó o respondió por la cita). */
+  otroNumero: boolean;
+  /** La cita sigue vigente en AgenIA. */
+  citaVigente: boolean;
+  sugerencias: { cancelada: string; confirmada: string; saludo: string };
+  /** La sugerencia con que abre el cuadro, según el tipo de caso. */
+  sugerida: 'cancelada' | 'confirmada' | 'saludo';
 }
 
 /** El médico del hospital que se puede crear y homologar desde la Bandeja (2026-10-24). */

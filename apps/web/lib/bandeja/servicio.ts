@@ -534,7 +534,7 @@ export async function listarExcepciones(
  * la consulta Y se vuelve a comprobar con `citaFueraDeAlcance`: la regla del agente es
  * una sola y no debe depender de que la consulta la haya aplicado bien.
  */
-async function cargarAlcanzable(db: Db, actor: ActorBandeja, id: unknown) {
+export async function cargarAlcanzable(db: Db, actor: ActorBandeja, id: unknown) {
   if (typeof id !== 'string' || id.length === 0 || id.length > 64) return null;
   const fila = await db.syncException.findFirst({
     where: { id, ...alcanceDeExcepciones(actor) },
