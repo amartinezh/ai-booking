@@ -1326,6 +1326,21 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
       );
     });
 
+    it('🏷️ con versión, el handshake dice con qué archivo corre; sin ella, no manda el campo', async () => {
+      const version = {
+        sha256: 'b1142c02c319',
+        commit: 'eed01b9',
+        dirty: true,
+        builtAtIso: '2026-10-29T16:05:00.000Z',
+      };
+      const conVersion = new MirrorEngine(api, driver, state, '1.2.3', version);
+      await conVersion.handshake();
+      expect(api.handshake.mock.calls[0][0].agentVersion).toEqual(version);
+
+      await engine.handshake();
+      expect('agentVersion' in api.handshake.mock.calls[1][0]).toBe(false);
+    });
+
     it('si el servidor no responde, el error sube: no se arranca a ciegas', async () => {
       api.handshake.mockRejectedValue(new Error('503'));
 
@@ -1470,6 +1485,20 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
         hisDetail: 'ECONNREFUSED',
         lookupCapable: false,
       });
+    });
+
+    it('🏷️ cada latido lleva la versión (si el servidor reinició, igual la sabe)', async () => {
+      driver.healthCheck.mockResolvedValue({ ok: true });
+      const version = { sha256: 'b1142c02c319', commit: null };
+      const conVersion = new MirrorEngine(api, driver, state, '1.2.3', version);
+
+      await conVersion.sendHeartbeat(0);
+      expect(api.heartbeat).toHaveBeenCalledWith(
+        expect.objectContaining({ agentVersion: version }),
+      );
+
+      await engine.sendHeartbeat(0);
+      expect('agentVersion' in api.heartbeat.mock.calls[1][0]).toBe(false);
     });
 
     it('un fallo que no es un Error tampoco impide el latido', async () => {

@@ -1,4 +1,5 @@
 import type {
+  AgentVersionInfo,
   CanonicalChangeEvent,
   HandshakeInput,
   OutboxEventDto,
@@ -58,6 +59,8 @@ export class MirrorEngine {
     private readonly driver: HisDriver,
     private readonly state: AgentStateStore,
     private readonly driverVersion: string,
+    // 🏷️ Con qué archivo corre (version-agente.ts). Opcional: sin él no se reporta.
+    private readonly agentVersion?: AgentVersionInfo,
   ) {}
 
   /**
@@ -292,6 +295,7 @@ export class MirrorEngine {
     const input: HandshakeInput = {
       driverVersion: this.driverVersion,
       agentClockIso: new Date().toISOString(),
+      ...(this.agentVersion ? { agentVersion: this.agentVersion } : {}),
     };
     const result = await this.api.handshake(input);
     await this.driver.connect(
@@ -565,6 +569,8 @@ export class MirrorEngine {
       // Sin esto el servidor no distingue "el agente está ocupado" de "este
       // agente nunca va a contestar una consulta en vivo".
       lookupCapable: isPatientLookupCapable(this.driver),
+      // En cada latido, no solo al arrancar: si el servidor reinicia, igual la sabe.
+      ...(this.agentVersion ? { agentVersion: this.agentVersion } : {}),
     });
   }
 }

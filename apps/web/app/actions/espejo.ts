@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/session';
 import { MirrorAvailabilityMode } from '@agenia/database';
-import { SYNC_AUDIT_DIRECTION } from '@agenia/shared';
+import { OP_VERSION_AGENTE, SYNC_AUDIT_DIRECTION, leerVersionAgente } from '@agenia/shared';
 
 /**
  * Panel del espejo con el HIS del hospital.
@@ -80,7 +80,7 @@ export async function getEstadoEspejo() {
         cambiar: ajustes?.rescheduleEnabled === true,
     };
 
-    const [pendientes, deadLetters, masAntiguo, ultimaReconciliacion, ultimaAgenda, conflictos, cupos] =
+    const [pendientes, deadLetters, masAntiguo, ultimaReconciliacion, ultimaAgenda, conflictos, cupos, versiones] =
         await Promise.all([
             prisma.syncOutbox.count({
                 where: { organizationId, deliveredAt: null, deadLettered: false },
@@ -121,7 +121,20 @@ export async function getEstadoEspejo() {
             prisma.scheduleSlot.count({
                 where: { organizationId, startTime: { gte: new Date() } },
             }),
+            // 🏷️ Con qué versión corre el agente y desde cuándo: un renglón por
+            // cambio (lo anota la API al recibir el latido). La primera es la actual.
+            prisma.syncAudit.findMany({
+                where: { organizationId, direction: SYNC_AUDIT_DIRECTION.AGENT, op: OP_VERSION_AGENTE },
+                orderBy: { createdAt: 'desc' },
+                take: 4,
+                select: { createdAt: true, detail: true },
+            }),
         ]);
+
+    const versionesAgente = versiones.flatMap((r) => {
+        const v = leerVersionAgente(r.detail);
+        return v ? [{ ...v, desde: r.createdAt }] : [];
+    });
 
     const edadLatidoMin = config.lastHeartbeatAt
         ? Math.round((Date.now() - config.lastHeartbeatAt.getTime()) / MINUTO)
@@ -140,6 +153,7 @@ export async function getEstadoEspejo() {
             ultimaAgenda,
             conflictos,
             cuposFuturos: cupos,
+            versionesAgente,
         },
     };
 }

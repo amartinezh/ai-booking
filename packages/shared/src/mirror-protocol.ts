@@ -26,6 +26,28 @@ export interface HandshakeInput {
   driverVersion: string;
   /** Reloj del agente al momento del handshake, ISO-8601 UTC. */
   agentClockIso: string;
+  /** Qué archivo corre el agente (ver `AgentVersionInfo`). Un agente anterior al 2026-10-29 no lo manda. */
+  agentVersion?: AgentVersionInfo;
+}
+
+/**
+ * 🏷️ Con qué versión corre el agente (2026-10-29). El agente se actualiza a mano en
+ * el servidor del hospital y el servidor no tenía cómo saber cuándo quedó instalada
+ * una actualización: solo veía la hora del último latido.
+ */
+export interface AgentVersionInfo {
+  /**
+   * Huella del archivo que corre: sha256 en hexadecimal, la misma que se publica al
+   * compilarlo (el agente manda los primeros 12 caracteres). Identifica el archivo
+   * exacto, aunque se haya compilado con cambios sin commit.
+   */
+  sha256: string;
+  /** Commit corto con que se compiló, si se compiló dentro del repositorio. */
+  commit?: string | null;
+  /** Había cambios sin commit al compilar: el commit es solo el punto de partida. */
+  dirty?: boolean;
+  /** Cuándo se compiló, ISO-8601 UTC. */
+  builtAtIso?: string | null;
 }
 
 export interface HandshakeResult {
@@ -317,6 +339,8 @@ export interface HeartbeatInput {
    * recibir un error genérico. Con esto, la pantalla lo dice antes de encolar.
    */
   lookupCapable?: boolean;
+  /** La versión que corre (también va en el handshake); el servidor anota cuando cambia. */
+  agentVersion?: AgentVersionInfo;
 }
 
 // ── POST /mirror/reconcile ──────────────────────────────────────────────────

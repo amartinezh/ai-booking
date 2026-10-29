@@ -13,6 +13,7 @@ describe('SYNC_AUDIT_DIRECTION', () => {
       HIS_TO_AGENIA: 'HIS_TO_AGENIA',
       RECONCILE: 'RECONCILE',
       CONFIG: 'CONFIG',
+      AGENT: 'AGENT',
     });
   });
 

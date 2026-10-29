@@ -21,6 +21,8 @@ export const SYNC_AUDIT_DIRECTION = {
   RECONCILE: 'RECONCILE',
   /** Cambios de configuración del espejo hechos desde el panel. */
   CONFIG: 'CONFIG',
+  /** El agente del hospital: la versión que corre, cuando cambia (version-agente.ts). */
+  AGENT: 'AGENT',
 } as const;
 
 export type SyncAuditDirection =

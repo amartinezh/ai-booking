@@ -1,9 +1,14 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  ENTIDAD_AGENTE,
+  OP_VERSION_AGENTE,
   SYNC_AUDIT_DIRECTION,
   TITULO_EXCEPCION,
   claveExcepcion,
+  detalleVersionAgente,
+  leerVersionAgente,
+  normalizarVersionAgente,
   compuertasHis,
   eventoPuedeSalir,
   operacionHisDelEvento,
@@ -21,6 +26,7 @@ import {
   OutboxEventContext,
 } from './dto/mirror.types';
 import { esRechazoPorAgendaDelHis } from './rechazo-del-his';
+import { getErrorMessage } from '../common/error-message.util';
 
 const DEFAULT_LONG_POLL_MS = 25_000;
 const DEFAULT_LONG_POLL_INTERVAL_MS = 1_000;
@@ -65,6 +71,12 @@ const CLOCK_SKEW_ALERT_MS = 30_000;
 @Injectable()
 export class MirrorDispatchService {
   private readonly logger = new Logger(MirrorDispatchService.name);
+  /**
+   * 🏷️ La última huella del agente que este proceso ya comparó con la bitácora,
+   * por clínica: así cada latido no consulta la base (solo el primero tras
+   * arrancar la API, y cuando la huella cambia).
+   */
+  private readonly versionVista = new Map<string, string>();
 
   // Propiedades (no constructor-injectadas: Nest no puede resolver un
   // `number` por tipo) para que los tests puedan reescribirlas y usar
@@ -103,6 +115,7 @@ export class MirrorDispatchService {
       where: { organizationId },
       data: { lastHeartbeatAt: serverTime },
     });
+    await this.anotarVersionDelAgente(organizationId, input.agentVersion);
 
     return {
       ok: true,
@@ -1173,6 +1186,7 @@ export class MirrorDispatchService {
         lastLookupCapable: input.lookupCapable ?? null,
       },
     });
+    await this.anotarVersionDelAgente(organizationId, input.agentVersion);
 
     if (input.recentErrors && input.recentErrors > 0) {
       this.logger.warn(
@@ -1186,6 +1200,57 @@ export class MirrorDispatchService {
       this.logger.error(
         `🚨 El agente de la org ${organizationId} está vivo pero NO alcanza su HIS: ` +
           `${input.hisDetail ?? 'sin detalle'}. Ninguna cita se está espejando.`,
+      );
+    }
+  }
+
+  /**
+   * 🏷️ Anota en la bitácora del espejo la versión con que corre el agente, SOLO
+   * cuando cambia (2026-10-29). El Espejo la muestra: así se sabe cuándo quedó
+   * instalada una actualización. Un agente anterior no la manda y no pasa nada.
+   * Nunca lanza: anotar la versión no puede tumbar el latido.
+   */
+  private async anotarVersionDelAgente(
+    organizationId: string,
+    bruta: unknown,
+  ): Promise<void> {
+    const version = normalizarVersionAgente(bruta);
+    if (!version) return;
+    if (this.versionVista.get(organizationId) === version.sha256) return;
+    try {
+      const ultima = await this.prisma.syncAudit.findFirst({
+        where: {
+          organizationId,
+          direction: SYNC_AUDIT_DIRECTION.AGENT,
+          op: OP_VERSION_AGENTE,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { detail: true },
+      });
+      const anterior = leerVersionAgente(ultima?.detail)?.sha256 ?? null;
+      if (anterior !== version.sha256) {
+        await this.prisma.syncAudit.create({
+          data: {
+            organizationId,
+            direction: SYNC_AUDIT_DIRECTION.AGENT,
+            entityType: ENTIDAD_AGENTE,
+            op: OP_VERSION_AGENTE,
+            outcome: 'OK',
+            detail: detalleVersionAgente(version, anterior),
+          },
+        });
+        this.logger.log(
+          `🏷️ El agente de la org ${organizationId} corre ahora la versión ${version.sha256}` +
+            (version.commit
+              ? ` (${version.commit}${version.dirty ? ' con cambios' : ''})`
+              : '') +
+            `; antes: ${anterior ?? 'sin dato'}.`,
+        );
+      }
+      this.versionVista.set(organizationId, version.sha256);
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo anotar la versión del agente (org ${organizationId}): ${getErrorMessage(error)}`,
       );
     }
   }

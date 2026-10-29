@@ -1623,6 +1623,15 @@ El espejo mantiene sincronizadas las citas entre AgenIA y el sistema del hospita
 
 > 💡 Sin este paso el médico no recibe cupos ni citas del hospital; es intencional, lo decide una persona. Al desvincular, los cupos ya creados no se borran solos.
 
+##### Confirmar que una actualización del agente quedó instalada
+
+1. Cuando te entreguen una actualización del agente, anota su huella (los primeros 12 caracteres del código que viene con el archivo).
+2. Instala el archivo en el servidor del hospital y reinicia el servicio del agente.
+3. Abre el Espejo y mira el recuadro «Versión del agente»: en uno o dos minutos debe decir «Corre la versión …» con esa huella y la hora en que arrancó con ella.
+4. Si sigue la anterior, el servicio no se reinició con el archivo nuevo: revisa el paso 2.
+
+> 💡 Un agente instalado antes del 29 de octubre de 2026 no informa su versión: el recuadro lo dice así hasta que se instale la primera actualización.
+
 ##### Consultar la auditoría detallada
 
 1. Pulsa «Ver auditoría detallada →».
@@ -1633,6 +1642,7 @@ El espejo mantiene sincronizadas las citas entre AgenIA y el sistema del hospita
 #### Qué ves en la pantalla
 
 - **Agente en la VM del hospital:** Programa instalado en un servidor del hospital que lleva y trae la información. Debe latir cada pocos minutos y alcanzar el HIS.
+- **Versión del agente:** Con qué versión corre el agente (la huella de su archivo), desde cuándo y cuándo se compiló; debajo, las versiones anteriores con su fecha. Sirve para confirmar que una actualización quedó instalada.
 - **Citas en camino al hospital:** Eventos en cola o rendidos. Verde si todo lo de WhatsApp llegó.
 - **Agenda:** El modo actual (OFF, SHADOW u ON) y los cupos futuros.
 - **Los dos sistemas coinciden:** Resultado de la última comparación completa entre AgenIA y el hospital.
@@ -2103,6 +2113,7 @@ Detalle de la arquitectura: `docs/PLAN_ESPEJO_HOSPITAL.md`. Detalle de cada hosp
 
 - **Motor genérico** en la API (`apps/api/src/mirror`): no conoce ningún HIS; solo eventos canónicos.
 - **Agente del hospital** (`apps/mirror-agent`): programa Node instalado en un servidor del hospital, que se conecta hacia afuera a la API (el hospital no abre puertos), late cada pocos minutos, reporta si alcanza el HIS, lleva y trae eventos y recorre la agenda.
+- **Versión del agente** (2026-10-29): el agente se actualiza a mano en el servidor del hospital, y antes el servidor solo sabía la hora de su último latido. Ahora, al arrancar, calcula la huella (sha256) del archivo que corre (`process.argv[1]`, el bundle; `apps/mirror-agent/src/core/version-agente.ts`) y la manda, con el commit y la fecha de compilación, en el handshake y en cada latido (`agentVersion`, `AgentVersionInfo` en `mirror-protocol.ts`). El commit y la fecha los deja adentro el compilador (`pnpm --filter @agenia/mirror-agent bundle`, que corre `apps/mirror-agent/scripts/bundle.mjs` e imprime la huella completa). La API (`MirrorDispatchService.anotarVersionDelAgente`) anota un renglón en `SyncAudit` (dirección `AGENT`, operación `VERSION`, con la huella anterior en el detalle; `@agenia/shared` `version-agente.ts`) solo cuando la huella cambia, sin columnas nuevas; recuerda la última huella por clínica para no consultar la base en cada latido, y si la bitácora falla el latido se guarda igual. El Espejo muestra la versión actual (la primera vez que se vio = cuándo arrancó con ella) y hasta tres anteriores. Un agente anterior no la manda y una API anterior la ignora: se pueden actualizar en cualquier orden.
 - **Driver**: el conocimiento de un HIS concreto (tablas, reglas, códigos), en `apps/mirror-agent/src/drivers/<driverKey>/`. Primer driver: `cnt-sanvicente-anserma` (SQL Server).
 - **Configuración por clínica**: `HospitalMirrorConfig` (encendido, driver, token del agente guardado como hash, mapeo, modo de agenda, avisos).
 
@@ -2306,6 +2317,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-10-29** — Espejo: recuadro «Versión del agente». El agente del hospital informa con qué versión corre (la huella de su archivo, la misma que se entrega con cada actualización) y el Espejo muestra cuál corre, desde cuándo, cuándo se compiló y las anteriores; así se confirma que una actualización quedó instalada. Un agente instalado antes de hoy no la informa hasta la próxima actualización. Al compilar el agente se imprime la huella.
 - **2026-10-29** — AgenIA responde por las citas que ella agenda; las que el hospital maneja a mano no generan alarmas ni recordatorios dudosos. **Bandeja:** el caso «Cita en un horario que el hospital quitó de su agenda» se abre solo para las citas que agendó AgenIA (chat o panel); las del hospital ya no lo abren y las que estaban abiertas se cerraron solas. **Recordatorios:** vuelven para las citas con ese caso (el hospital borra el turno de un día ya lleno para cerrar la agenda, y sus pacientes sí son atendidos), y dejan de salir para las citas que el hospital crea fuera de los turnos de sus médicos —las «temporales» con que guarda cupos de Nueva EPS, a nombre de personas al azar—, que el agente del hospital reconoce al verlas aparecer (requiere el agente nuevo).
 - **2026-10-29** — Que nadie vaya al hospital por una cita que el hospital no tiene. **Cita que el hospital no registró:** si el hospital no registra una cita agendada por el chat (el envío se rinde, o el agente del hospital no la toma en 30 minutos y la cita es en menos de 24 horas), AgenIA la anula y le dice al paciente que no quedó registrada y que puede elegir otro horario; antes se quedaba con «está en proceso» sin más mensajes. El caso queda abierto en la Bandeja por si el personal prefiere registrarla a mano. **Recordatorios:** no se envían a citas que el hospital no tiene (alta sin llegar o rendida, o con caso abierto de que no está allá o de que su hora se quitó). **Agenda del hospital:** cada cita en una hora o un día que el hospital quitó de su agenda abre su propio caso en la Bandeja, con el paciente y la hora («Cita en un horario que el hospital quitó de su agenda»), también las del hospital en días en que el médico quedó sin turno; antes había un solo caso general sin nombres. Mientras ese caso esté abierto, si la cita se anula su cupo no se vuelve a ofrecer ni a la lista de espera. **Al escribir la cita:** el agente del hospital revisa también que la hora esté dentro del turno del médico, no solo que tenga turno ese día (requiere el agente nuevo).
 - **2026-10-29** — Cuando el hospital cambia una cita del asistente, el paciente ya no recibe un «su cita fue cancelada» equivocado. **Traslados:** si el hospital pasa la cita a otro médico u otra hora (lo hace cambiando la cita en su sistema, no anulándola), AgenIA ahora lo reconoce, trae la cita nueva y le avisa al paciente el médico y la hora nuevos; antes solo veía la anulación (el 28 de octubre cuatro pacientes del Dr. Cárdenas, pasados a la Dra. Ríos a la misma hora, recibieron «cancelada»). Requiere el agente nuevo en el hospital. **Anulada y vuelta a crear:** el aviso de una cancelación espera unos 10 minutos (si la cita es en más de una hora); si en ese tiempo el hospital le vuelve a crear la misma cita, no se le escribe nada y el caso se cierra solo, y si le da otra, se le avisa la nueva (a una paciente le avisamos «cancelada» a las 9:18 y el hospital se la volvió a crear igual a las 9:22). La Bandeja dice a qué hora saldrá el aviso, y si el personal le escribe antes con «Escribir al paciente», el automático no sale.

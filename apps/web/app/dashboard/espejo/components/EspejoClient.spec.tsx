@@ -38,6 +38,7 @@ const base = (config: Partial<Parameters<typeof EspejoClient>[0]['data']['config
     ultimaAgenda: null,
     conflictos: [],
     cuposFuturos: 0,
+    versionesAgente: [] as Parameters<typeof EspejoClient>[0]['data']['versionesAgente'],
 });
 
 describe('EspejoClient — consulta en vivo del rastreo', () => {
@@ -89,5 +90,48 @@ describe('EspejoClient — qué escribe AgenIA en el hospital', () => {
     it('con eventos en camino, el semáforo los cuenta', () => {
         render(<EspejoClient data={{ ...base(), pendientes: 2 }} />);
         expect(screen.getByText(/2 evento\(s\) en camino/)).toBeInTheDocument();
+    });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🏷️ La versión del agente (2026-10-29): el agente se actualiza a mano en el
+// servidor del hospital; aquí se confirma que la actualización quedó corriendo.
+// ══════════════════════════════════════════════════════════════════════════
+describe('EspejoClient — versión del agente', () => {
+    it('muestra la versión actual, desde cuándo y con qué se compiló; y las anteriores', () => {
+        render(
+            <EspejoClient
+                data={{
+                    ...base(),
+                    versionesAgente: [
+                        {
+                            sha256: '80286425153a',
+                            commit: '1344b1d',
+                            dirty: true,
+                            builtAtIso: '2026-10-29T19:10:58.817Z',
+                            desde: new Date('2026-10-29T21:30:00.000Z'),
+                        },
+                        {
+                            sha256: 'b1142c02c319',
+                            commit: null,
+                            dirty: false,
+                            builtAtIso: null,
+                            desde: new Date('2026-10-20T14:00:00.000Z'),
+                        },
+                    ],
+                }}
+            />,
+        );
+        expect(screen.getByText('Versión del agente')).toBeInTheDocument();
+        const actual = screen.getByText('80286425153a').closest('p');
+        expect(actual).toHaveTextContent(/Corre la versión 80286425153a desde el .*29.*oct/);
+        expect(actual).toHaveTextContent(/desde 1344b1d con cambios sin commit/);
+        expect(screen.getByText('b1142c02c319').closest('li')).toHaveTextContent(/Antes: b1142c02c319, desde el .*20.*oct/);
+    });
+
+    it('un agente que no la informa: lo dice, sin inventar una versión', () => {
+        render(<EspejoClient data={base()} />);
+        expect(screen.getByText(/todavía no informa su versión/)).toBeInTheDocument();
+        expect(screen.queryByText(/Corre la versión/)).not.toBeInTheDocument();
     });
 });

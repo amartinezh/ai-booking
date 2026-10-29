@@ -22,7 +22,11 @@ describe('MirrorDispatchService', () => {
     patientProfile: { findMany: jest.Mock };
     eps: { findMany: jest.Mock };
     mirrorEntityMap: { findMany: jest.Mock };
-    syncAudit: { create: jest.Mock; createMany: jest.Mock };
+    syncAudit: {
+      create: jest.Mock;
+      createMany: jest.Mock;
+      findFirst: jest.Mock;
+    };
   };
 
   beforeEach(async () => {
@@ -63,6 +67,7 @@ describe('MirrorDispatchService', () => {
       syncAudit: {
         create: jest.fn(() => Promise.resolve({})),
         createMany: jest.fn(() => Promise.resolve({ count: 0 })),
+        findFirst: jest.fn(() => Promise.resolve(null)),
       },
     };
 
@@ -352,6 +357,126 @@ describe('MirrorDispatchService', () => {
       });
 
       expect(datosDelUpdate().lastHisDetail).toHaveLength(500);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 🏷️ Versión del agente (2026-10-29). El agente se actualiza a mano en el
+  // servidor del hospital y no había cómo saber cuándo quedó instalada una
+  // actualización. Se anota en la bitácora del espejo SOLO cuando cambia.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('versión del agente', () => {
+    const NUEVA = {
+      sha256:
+        '80286425153a757c944b78d78c8419231bfef33c68fa7c5c1275e94a14ce09bd',
+      commit: '1344b1d',
+      dirty: true,
+      builtAtIso: '2026-10-29T19:10:58.817Z',
+    };
+    const renglon = (sha256: string) => ({
+      detail: JSON.stringify({
+        sha256,
+        commit: null,
+        dirty: false,
+        builtAtIso: null,
+        anterior: null,
+      }),
+    });
+
+    it('una versión nueva deja un renglón con la anterior', async () => {
+      prisma.syncAudit.findFirst.mockResolvedValue(renglon('b1142c02c319'));
+
+      await service.heartbeat('org1', 'driver-x', { agentVersion: NUEVA });
+
+      expect(prisma.syncAudit.findFirst).toHaveBeenCalledWith({
+        where: { organizationId: 'org1', direction: 'AGENT', op: 'VERSION' },
+        orderBy: { createdAt: 'desc' },
+        select: { detail: true },
+      });
+      expect(prisma.syncAudit.create).toHaveBeenCalledTimes(1);
+      const data = prisma.syncAudit.create.mock.calls[0][0].data;
+      expect(data).toMatchObject({
+        organizationId: 'org1',
+        direction: 'AGENT',
+        entityType: 'AGENT',
+        op: 'VERSION',
+        outcome: 'OK',
+      });
+      expect(JSON.parse(data.detail)).toEqual({
+        sha256: '80286425153a',
+        commit: '1344b1d',
+        dirty: true,
+        builtAtIso: '2026-10-29T19:10:58.817Z',
+        anterior: 'b1142c02c319',
+      });
+    });
+
+    it('la misma versión no repite el renglón, y los latidos siguientes no consultan la base', async () => {
+      prisma.syncAudit.findFirst.mockResolvedValue(renglon('80286425153a'));
+
+      await service.heartbeat('org1', 'driver-x', { agentVersion: NUEVA });
+      await service.heartbeat('org1', 'driver-x', { agentVersion: NUEVA });
+      await service.heartbeat('org1', 'driver-x', { agentVersion: NUEVA });
+
+      expect(prisma.syncAudit.create).not.toHaveBeenCalled();
+      expect(prisma.syncAudit.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it('el handshake también la anota (es lo primero que hace el agente al arrancar)', async () => {
+      await service.handshake('org1', 'driver-x', null, {
+        driverVersion: '0.1.0-fase1',
+        agentClockIso: new Date().toISOString(),
+        agentVersion: NUEVA,
+      });
+
+      expect(prisma.syncAudit.create).toHaveBeenCalledTimes(1);
+      expect(
+        JSON.parse(prisma.syncAudit.create.mock.calls[0][0].data.detail)
+          .anterior,
+      ).toBeNull();
+    });
+
+    it('volver a una versión anterior también queda anotado', async () => {
+      prisma.syncAudit.findFirst.mockResolvedValue(renglon('b1142c02c319'));
+      await service.heartbeat('org1', 'driver-x', { agentVersion: NUEVA });
+      prisma.syncAudit.findFirst.mockResolvedValue(renglon('80286425153a'));
+      await service.heartbeat('org1', 'driver-x', {
+        agentVersion: { sha256: 'b1142c02c319' },
+      });
+
+      expect(prisma.syncAudit.create).toHaveBeenCalledTimes(2);
+      expect(
+        JSON.parse(prisma.syncAudit.create.mock.calls[1][0].data.detail),
+      ).toMatchObject({ sha256: 'b1142c02c319', anterior: '80286425153a' });
+    });
+
+    it('un agente anterior (sin versión) o una huella inválida: nada que anotar', async () => {
+      await service.heartbeat('org1', 'driver-x', {});
+      await service.heartbeat('org1', 'driver-x', {
+        agentVersion: { sha256: 'no-es-hex' },
+      });
+
+      expect(prisma.syncAudit.findFirst).not.toHaveBeenCalled();
+      expect(prisma.syncAudit.create).not.toHaveBeenCalled();
+    });
+
+    it('si la bitácora falla, el latido se guarda igual y se reintenta en el siguiente', async () => {
+      prisma.syncAudit.findFirst.mockRejectedValueOnce(new Error('base caída'));
+      const warn = jest
+        .spyOn(
+          (service as unknown as { logger: { warn: () => void } }).logger,
+          'warn',
+        )
+        .mockImplementation(() => undefined);
+
+      await expect(
+        service.heartbeat('org1', 'driver-x', { agentVersion: NUEVA }),
+      ).resolves.toBeUndefined();
+      expect(prisma.hospitalMirrorConfig.update).toHaveBeenCalled();
+      expect(warn).toHaveBeenCalled();
+
+      await service.heartbeat('org1', 'driver-x', { agentVersion: NUEVA });
+      expect(prisma.syncAudit.create).toHaveBeenCalledTimes(1);
     });
   });
 

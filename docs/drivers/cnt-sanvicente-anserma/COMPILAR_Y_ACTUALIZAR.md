@@ -306,9 +306,14 @@ empieza de cero ni pierde de vista lo ocurrido durante la actualización.
 
 ```bash
 pnpm --filter @agenia/shared build
-pnpm --filter @agenia/mirror-agent bundle
+pnpm --filter @agenia/mirror-agent bundle    # al final imprime la huella (sha256)
 ls -lh apps/mirror-agent/dist/agent.bundle.js
 ```
+
+El bundle lleva adentro el commit y la fecha de compilación
+(`apps/mirror-agent/scripts/bundle.mjs`), y la compilación imprime su huella
+(sha256) y lo que mostrará el Espejo, por ejemplo
+`El Espejo mostrará: 80286425153a · 1344b1d con cambios sin commit`.
 
 ### 4.2 Copiar el bundle al VPS del hospital
 
@@ -369,12 +374,19 @@ systemctl status agenia-mirror-agent
 journalctl -u agenia-mirror-agent -n 50 --no-pager
 ```
 
-Debe verse, en los primeros segundos:
+Debe verse, en los primeros segundos (desde el 2026-10-29 la primera línea
+dice con qué versión arrancó: la huella son los primeros 12 caracteres del
+sha256 que imprimió la compilación):
 
 ```
-[mirror-agent] arrancando con driver "cnt-sanvicente-anserma"...
+[mirror-agent] arrancando con driver "cnt-sanvicente-anserma" (huella 80286425153a · 1344b1d con cambios · compilado 2026-10-29T19:10:58.817Z)...
 [mirror-agent] handshake OK, entrando al loop de sync.
 ```
+
+Sin entrar al VPS: en el panel, **Espejo → «Versión del agente»** debe decir
+«Corre la versión <huella> desde …» con la misma huella, uno o dos minutos
+después del reinicio. Si sigue la anterior, el servicio no arrancó con el
+archivo nuevo. Un agente compilado antes del 2026-10-29 no informa su versión.
 
 Y a los ~2 minutos, la reconciliación (`reconciliación OK: N cita(s), sin
 diferencias.`). Si algo no cuadra, la tabla de síntomas de

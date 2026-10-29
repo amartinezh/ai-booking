@@ -45,6 +45,7 @@ const DIRECCION_LABEL: Record<string, string> = {
     HIS_TO_AGENIA: 'Hospital → AgenIA (disponibilidad)',
     RECONCILE: 'Reconciliación',
     CONFIG: 'Configuración',
+    AGENT: 'Agente del hospital (versión)',
 };
 
 const OUTCOME_ESTILO: Record<string, string> = {

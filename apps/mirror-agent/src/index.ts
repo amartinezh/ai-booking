@@ -25,6 +25,10 @@ import { loadConfig } from './config';
 import { HttpMirrorApiClient } from './core/mirror-api-client';
 import { FileAgentStateStore } from './core/file-agent-state-store';
 import { MirrorEngine } from './core/engine';
+import {
+  describirVersionDelAgente,
+  versionDelAgente,
+} from './core/version-agente';
 import { FailureReporter } from './core/failure-reporter';
 import { runOutboundConFreno, runInbound } from './core/sync-cycle';
 import { recorrerAgenda } from './core/agenda-sweep';
@@ -82,14 +86,20 @@ async function main() {
   );
   await state.cargar();
 
+  // 🏷️ La huella del archivo que corre: el Espejo la muestra para confirmar que
+  // una actualización quedó instalada.
+  const version = versionDelAgente();
   const engine = new MirrorEngine(
     apiClient,
     driver,
     state,
     config.driverVersion,
+    version,
   );
 
-  console.log(`[mirror-agent] arrancando con driver "${driverKey}"...`);
+  console.log(
+    `[mirror-agent] arrancando con driver "${driverKey}" (${describirVersionDelAgente(version)})...`,
+  );
   await engine.handshake();
   console.log('[mirror-agent] handshake OK, entrando al loop de sync.');
 

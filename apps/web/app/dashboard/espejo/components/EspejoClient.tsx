@@ -3,7 +3,8 @@
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { reprocesarEvento, cambiarModoAgenda } from '@/app/actions/espejo';
-import { formatDateShort } from '@/lib/date';
+import { formatAppointmentCompact, formatDateShort } from '@/lib/date';
+import { describirCompilacion } from '@agenia/shared';
 
 const MODOS_AGENDA = ['OFF', 'SHADOW', 'ON'] as const;
 
@@ -45,7 +46,71 @@ type Estado = {
     ultimaAgenda: { createdAt: Date; outcome: string; detail: string | null } | null;
     conflictos: { createdAt: Date; entityType: string; op: string; detail: string | null }[];
     cuposFuturos: number;
+    /** Con qué versión corre el agente: la primera es la actual; las demás, las anteriores. */
+    versionesAgente: VersionAgente[];
 };
+
+type VersionAgente = {
+    sha256: string;
+    commit: string | null;
+    dirty: boolean;
+    builtAtIso: string | null;
+    desde: Date;
+};
+
+/**
+ * 🏷️ La versión del agente (2026-10-29). El agente se actualiza a mano en el servidor
+ * del hospital; aquí se confirma que la actualización quedó instalada y corriendo.
+ */
+function VersionDelAgente({ versiones }: { versiones: VersionAgente[] }) {
+    const [actual, ...anteriores] = versiones;
+    const compilada = (v: VersionAgente) => {
+        const desde = describirCompilacion(v);
+        const cuando = v.builtAtIso ? `el ${formatAppointmentCompact(v.builtAtIso)}` : null;
+        if (!desde && !cuando) return null;
+        return ['compilada', cuando, desde && `desde ${desde}`].filter(Boolean).join(' ');
+    };
+    return (
+        <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Versión del agente</h2>
+            {actual ? (
+                <>
+                    <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
+                        Corre la versión{' '}
+                        <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono font-semibold text-zinc-900 dark:bg-zinc-800 dark:text-white">
+                            {actual.sha256}
+                        </code>{' '}
+                        desde el {formatAppointmentCompact(actual.desde)}
+                        {compilada(actual) ? ` (${compilada(actual)})` : ''}.
+                    </p>
+                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        La versión es la huella del archivo del agente: los primeros caracteres del código que se
+                        entrega con cada actualización. «Desde» es cuando el agente se conectó por primera vez con
+                        ella. Si después de instalar una actualización aquí sigue la anterior, el servicio del agente
+                        no se reinició con el archivo nuevo.
+                    </p>
+                    {anteriores.length > 0 && (
+                        <ul className="mt-3 space-y-1 text-xs text-zinc-500 dark:text-zinc-400">
+                            {anteriores.map((v) => (
+                                <li key={`${v.sha256}-${new Date(v.desde).getTime()}`}>
+                                    Antes:{' '}
+                                    <code className="font-mono">{v.sha256}</code>, desde el{' '}
+                                    {formatAppointmentCompact(v.desde)}
+                                    {compilada(v) ? ` (${compilada(v)})` : ''}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </>
+            ) : (
+                <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    El agente instalado todavía no informa su versión: es anterior al 29 de octubre de 2026. Se verá
+                    aquí desde que se instale la próxima actualización.
+                </p>
+            )}
+        </section>
+    );
+}
 
 /** Semáforo: el color dice qué hacer, el texto dice por qué. */
 function Semaforo({
@@ -195,6 +260,8 @@ export default function EspejoClient({ data }: { data: Estado }) {
                 <Semaforo titulo="Los dos sistemas coinciden" {...reconciliacion} />
                 {consultaEnVivo && <Semaforo titulo="Consulta en vivo al HIS (rastreo)" {...consultaEnVivo} />}
             </section>
+
+            <VersionDelAgente versiones={data.versionesAgente} />
 
             <section className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Qué escribe AgenIA en el sistema del hospital</h2>

@@ -214,7 +214,20 @@ export type {
   HisLookupAppointment,
   HisLookupResultInput,
   HisLookupResultOutput,
+  AgentVersionInfo,
 } from './src/mirror-protocol';
+
+// 🏷️ Versión del agente del hospital: la reporta en cada latido y el Espejo la muestra.
+export {
+  ENTIDAD_AGENTE,
+  LARGO_HUELLA,
+  OP_VERSION_AGENTE,
+  describirCompilacion,
+  detalleVersionAgente,
+  leerVersionAgente,
+  normalizarVersionAgente,
+} from './src/version-agente';
+export type { RenglonVersionAgente } from './src/version-agente';
 
 export { citaFueraDeAlcance } from './src/alcance-agente';
 export type { AlcanceAgente } from './src/alcance-agente';

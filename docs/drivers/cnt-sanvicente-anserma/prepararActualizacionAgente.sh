@@ -149,4 +149,6 @@ ${BOLD}Por último, verifica desde los dos lados:${N}
   ./checkHealthAgente.sh   ${D}# 🏥 EN el VPS del hospital (ya está instalado allá)${N}
   ./checkHealth.sh         ${D}# 💻 en tu portátil, desde la RAÍZ del repo${N}
                            ${D}#    (o docs/drivers/<driver>/checkHealth.sh)${N}
+  ${D}Y en el panel: Espejo → «Versión del agente» debe decir${N} ${BOLD}${SHA:0:12}${N}
+  ${D}(si sigue la anterior, el servicio no arrancó con el archivo nuevo).${N}
 EOF
