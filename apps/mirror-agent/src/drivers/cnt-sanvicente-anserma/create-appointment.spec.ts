@@ -34,6 +34,8 @@ function fakePool(
   opts: {
     pacienteExiste?: boolean;
     turno?: any;
+    /** La hora de la cita no cae en ningún turno del día (el hospital la quitó). */
+    horaFueraDelTurno?: boolean;
     error?: any;
     /** Filas que afecta la copia a CITAS_ANULADAS: 0 = la cita no existía. */
     filasAnuladas?: number;
@@ -97,6 +99,10 @@ function fakePool(
         }
         if (/FROM dbo\.PACIENTES/.test(sqlText)) {
           return { recordset: opts.pacienteExiste === false ? [] : [{ x: 1 }] };
+        }
+        // La revisión de la HORA dentro del turno (2026-10-29).
+        if (/FROM dbo\.TURNOS_MEDICOS[\s\S]*FE_HOIN_TUME/.test(sqlText)) {
+          return { recordset: opts.horaFueraDelTurno ? [] : [{ x: 1 }] };
         }
         if (/FROM dbo\.TURNOS_MEDICOS/.test(sqlText)) {
           return {
@@ -351,6 +357,52 @@ describe('createAppointment — se niega antes que escribir a medias', () => {
     const r = await driver.createAppointment(evento());
 
     expect(r.rechazoDelHis).toBe(true);
+  });
+
+  // 2026-10-29: la Dra. Osorio dejó de atender de 12:00 a 13:30 el 30-oct y el
+  // turno del día siguió existiendo: el HIS aceptaba igual una cita a las 12:10.
+  describe('🕒 la hora tiene que caer dentro de un turno del día', () => {
+    it('fuera del turno: rechazo DEFINITIVO, sin escribir la cita', async () => {
+      const { driver, requests } = conDriver({ horaFueraDelTurno: true });
+
+      const r = await driver.createAppointment(evento());
+
+      expect(r.success).toBe(false);
+      expect(r.rechazoDelHis).toBe(true);
+      expect(r.message).toBe(
+        'El médico 91-1 no atiende a las 07:00 el 2026-09-03: esa hora no está en su turno.',
+      );
+      expect(insertDeCita(requests)).toBeUndefined();
+    });
+
+    it('pregunta por ese médico, ese día y esa hora (local), en turnos disponibles', async () => {
+      const { driver, requests } = conDriver();
+
+      await driver.createAppointment(evento());
+
+      const q = requests.find((r) => /FE_HOIN_TUME/.test(r.sql))!;
+      expect(q.params).toEqual({
+        med: '91-1',
+        fecha: '20260903',
+        hora: '07:00',
+      });
+      expect(q.sql).toMatch(/ID_DISP_TUME = '1'/);
+      expect(q.sql).toMatch(
+        /CONVERT\(varchar\(5\), FE_HOIN_TUME, 108\) <= @hora/,
+      );
+      expect(q.sql).toMatch(
+        /@hora < CONVERT\(varchar\(5\), FE_HOFI_TUME, 108\)/,
+      );
+    });
+
+    it('dentro del turno: la cita se escribe como siempre', async () => {
+      const { driver, requests } = conDriver();
+
+      const r = await driver.createAppointment(evento());
+
+      expect(r.success).toBe(true);
+      expect(insertDeCita(requests)).toBeDefined();
+    });
   });
 
   it('con EPS pero sin régimen se niega: no adivina el convenio', async () => {
@@ -1036,6 +1088,16 @@ describe('rescheduleAppointment', () => {
 
     expect(r.success).toBe(false);
     expect(r.rechazoDelHis).toBe(true);
+  });
+
+  it('hora nueva fuera del turno: rechazo definitivo, la cita vuelve a su hora anterior', async () => {
+    const { driver, requests } = conDriver({ horaFueraDelTurno: true });
+
+    const r = await driver.rescheduleAppointment(eventoResched());
+
+    expect(r.success).toBe(false);
+    expect(r.rechazoDelHis).toBe(true);
+    expect(insertDeCita(requests)).toBeUndefined();
   });
 
   it('anulación y alta viajan en la MISMA transacción, y se confirma una sola vez', async () => {

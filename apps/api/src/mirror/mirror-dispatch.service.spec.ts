@@ -1791,6 +1791,44 @@ describe('MirrorDispatchService — rechazo definitivo del HIS', () => {
       ],
     });
 
+  // 🏥 2026-10-29 (`AltasNoRegistradasService`): el alta no llegó al hospital.
+  it('con la marca «no llegó»: la guarda en la cita, y el cierre y la auditoría lo dicen así', async () => {
+    await service.markRejectedByHis(ORG, '7', 'no llegó tras 10 intentos', {
+      noLlego: true,
+      yaSeLeEscribio: true,
+    });
+
+    const upd = tx.appointment.update.mock.calls[0][0];
+    expect(upd.data.status).toBe('CANCELLED');
+    expect(upd.data.metaLog.rechazoDelHis).toMatchObject({
+      motivo: 'no llegó tras 10 intentos',
+      noLlego: true,
+      yaSeLeEscribio: true,
+    });
+    expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+      where: { id: 'slot-1' },
+      data: { isAvailable: false },
+    });
+    const cierre = tx.syncOutbox.updateMany.mock.calls[0][0].data;
+    expect(cierre.lastError).toBe(
+      'No llegó al hospital: no llegó tras 10 intentos',
+    );
+    expect(cierre.deliveredAt).toBeInstanceOf(Date);
+    expect(tx.syncAudit.create.mock.calls[0][0].data.detail).toMatch(
+      /no llegó al hospital.*le avisa al paciente que no quedó registrada/,
+    );
+  });
+
+  it('sin marcas, la cita no las lleva (el rechazo de siempre)', async () => {
+    await ackConRechazo();
+    const r = tx.appointment.update.mock.calls[0][0].data.metaLog.rechazoDelHis;
+    expect(r.noLlego).toBeUndefined();
+    expect(r.yaSeLeEscribio).toBeUndefined();
+    expect(tx.syncOutbox.updateMany.mock.calls[0][0].data.lastError).toMatch(
+      /^Rechazada por el HIS: /,
+    );
+  });
+
   it('anula la cita en AgenIA con origen MIRROR, guarda el motivo y CIERRA el cupo', async () => {
     await ackConRechazo();
 

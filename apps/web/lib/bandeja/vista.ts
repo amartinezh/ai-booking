@@ -213,6 +213,11 @@ export function resumenPublico(
 
   switch (fila.kind) {
     case 'CITA_NO_ENTREGADA': {
+      // 🏥 2026-10-29: el hospital no la registró y AgenIA ya la anuló y le avisó
+      // al paciente (`AltasNoRegistradasService`). El caso queda para el personal.
+      if (meta.noRegistrada === true) {
+        return 'El hospital no registró esta cita del asistente. AgenIA la anuló y le avisó al paciente por el chat que no quedó registrada. Si prefiere, regístrela a mano en el sistema del hospital y avísele; si no, cierre el caso.';
+      }
       const motivo = MOTIVOS.find((m) => m === meta.motivo) ?? 'EN_COLA';
       const desde =
         typeof meta.desdeIso === 'string' ? Date.parse(meta.desdeIso) : NaN;
@@ -375,6 +380,21 @@ export function resumenPublico(
       }
       return `Quien respondió por WhatsApp dice que ese número no es del paciente${veces}.${citaDelMensaje(meta.mensaje)}${otros}${pausa}`;
     }
+    // 🗓️ Una cita vigente en una hora o un día que el hospital quitó de su agenda
+    // (2026-10-29). AgenIA no la toca: una persona decide con el hospital.
+    case 'CITA_EN_AGENDA_QUITADA': {
+      const deDonde =
+        meta.origen === 'MIRROR'
+          ? 'agendada en el hospital'
+          : meta.origen === 'MANUAL'
+            ? 'agendada en el panel de AgenIA'
+            : `que el paciente agendó por ${nombreCanal(meta.origen)}`;
+      const que =
+        meta.motivo === 'DIA_SIN_TURNO'
+          ? `El médico ya no tiene turno ese día en el hospital, y esta cita ${deDonde} sigue vigente${veces}.`
+          : `El hospital quitó de la agenda del médico la hora de esta cita ${deDonde}, y la cita sigue vigente${veces}.`;
+      return `${que} Confirme con el hospital si el paciente será atendido: si no, anúlela o muévala en el sistema del hospital y AgenIA le avisará al paciente. Mientras tanto no se le envía recordatorio, y si se anula, su cupo no se vuelve a ofrecer. El caso se cierra solo si la hora vuelve a la agenda.`;
+    }
     default:
       return fila.title;
   }
@@ -517,6 +537,7 @@ const ETIQUETA_ACCION: Record<string, string> = {
   AUTO_RESUELTA: 'Se cerró sola',
   VENCIDA: 'Venció sin resolución',
   MENSAJE_AL_PACIENTE: 'Le escribió al paciente',
+  NO_REGISTRADA: 'El hospital no la registró: AgenIA la anuló y le avisó al paciente',
 };
 
 export function mapearHistorial(

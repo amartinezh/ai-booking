@@ -670,6 +670,14 @@ export class MirrorDispatchService {
     organizationId: string,
     seq: string,
     motivo?: string,
+    /**
+     * 🏥 2026-10-29 (`AltasNoRegistradasService`): el alta no llegó al hospital
+     * (se rindió, o el agente no la tomó con la cita cerca). `noLlego` hace que el
+     * bot le diga al paciente que su cita no quedó registrada —no que el horario
+     * se ocupó—, y `yaSeLeEscribio` que no le escriba si el personal ya lo hizo
+     * desde la Bandeja. Sin ellas, todo queda como siempre.
+     */
+    opts: { noLlego?: boolean; yaSeLeEscribio?: boolean } = {},
   ): Promise<boolean> {
     const evento = await this.prisma.syncOutbox.findFirst({
       where: { seq: BigInt(seq), organizationId },
@@ -716,7 +724,12 @@ export class MirrorDispatchService {
             status: 'CANCELLED',
             metaLog: {
               ...previo,
-              rechazoDelHis: { motivo: texto, en: new Date().toISOString() },
+              rechazoDelHis: {
+                motivo: texto,
+                en: new Date().toISOString(),
+                ...(opts.noLlego ? { noLlego: true } : {}),
+                ...(opts.yaSeLeEscribio ? { yaSeLeEscribio: true } : {}),
+              },
             },
           },
         });
@@ -731,7 +744,10 @@ export class MirrorDispatchService {
           deliveredAt: new Date(),
           nextAttemptAt: null,
           attempts: { increment: 1 },
-          lastError: `Rechazada por el HIS: ${texto}`.slice(0, 500),
+          lastError: (opts.noLlego
+            ? `No llegó al hospital: ${texto}`
+            : `Rechazada por el HIS: ${texto}`
+          ).slice(0, 500),
         },
       });
       await tx.syncAudit.create({
@@ -743,9 +759,11 @@ export class MirrorDispatchService {
           op: 'INSERT',
           outcome: 'CONFLICT',
           eventId: evento.eventId,
-          detail:
-            `El HIS rechazó la cita (${texto}). Se anuló en AgenIA y el cupo ` +
-            `quedó cerrado; el bot le ofrece otra hora al paciente.`,
+          detail: opts.noLlego
+            ? `La cita no llegó al hospital (${texto}). Se anuló en AgenIA y el ` +
+              `cupo quedó cerrado; el bot le avisa al paciente que no quedó registrada.`
+            : `El HIS rechazó la cita (${texto}). Se anuló en AgenIA y el cupo ` +
+              `quedó cerrado; el bot le ofrece otra hora al paciente.`,
         },
       });
     });

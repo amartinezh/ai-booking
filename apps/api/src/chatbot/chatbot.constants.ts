@@ -812,6 +812,12 @@ const FORMAL = {
     `Lo lamento: el hospital no pudo registrar su cita del _${fecha}_ porque ese horario ya no estaba disponible.\n\n` +
     `Escríbame *"Hola"* para elegir otro horario, o comuníquese con ${contacto}.`,
 
+  // 🏥 2026-10-29: la cita NO LLEGÓ al sistema del hospital (no es que el horario
+  // se ocupara). Antes el paciente se quedaba con «en proceso» y nadie le decía nada.
+  citaNoQuedoRegistrada: (fecha: string, contacto: string) =>
+    `Lo lamento: su cita del _${fecha}_ no quedó registrada en el sistema del hospital, así que *no está vigente*. Le pedimos disculpas. 🙏\n\n` +
+    `Escríbame *"Hola"* para elegir otro horario, o comuníquese con ${contacto}.`,
+
   // ── H10 para el CAMBIO de fecha: el cambio se confirma solo cuando el HIS
   //    lo registra. Mientras, la cita conserva también su hora de antes.
   confirmandoCambio: () =>
@@ -2266,6 +2272,10 @@ const INFORMAL = {
 
   citaNoRegistradaEnHospital: (fecha: string, contacto: string) =>
     `Qué pena 😔: el hospital no pudo registrar tu cita del _${fecha}_ porque ese horario ya no estaba disponible.\n\n` +
+    `Escríbeme *"Hola"* para elegir otro horario, o comunícate con ${contacto}.`,
+
+  citaNoQuedoRegistrada: (fecha: string, contacto: string) =>
+    `Qué pena 😔: tu cita del _${fecha}_ no quedó registrada en el sistema del hospital, así que *no está vigente*. Te pedimos disculpas. 🙏\n\n` +
     `Escríbeme *"Hola"* para elegir otro horario, o comunícate con ${contacto}.`,
 
   confirmandoCambio: () =>

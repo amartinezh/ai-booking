@@ -14,8 +14,13 @@
  * dentro de un cambio de fecha («no se reagendó, la cita anterior sigue en pie: …»).
  */
 const SIN_TURNO = /no tiene turno el \d{4}-\d{2}-\d{2}/i;
+/** 2026-10-29: el turno del día sigue, pero esa hora ya no está en él. */
+const FUERA_DEL_TURNO = /no atiende a las \d{1,2}:\d{2} el \d{4}-\d{2}-\d{2}/i;
 
-/** ¿El hospital no tiene a ese médico ese día? (rechazo definitivo) */
+/** ¿El hospital no tiene a ese médico ese día, o a esa hora? (rechazo definitivo) */
 export function esRechazoPorAgendaDelHis(motivo: unknown): boolean {
-  return typeof motivo === 'string' && SIN_TURNO.test(motivo);
+  return (
+    typeof motivo === 'string' &&
+    (SIN_TURNO.test(motivo) || FUERA_DEL_TURNO.test(motivo))
+  );
 }

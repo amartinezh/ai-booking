@@ -9038,6 +9038,31 @@ export class ChatbotService implements OnModuleInit {
    * ¿El hospital rechazó la cita porque ya no tiene a ese médico ese día? Lo
    * dice el motivo que la API guardó al anularla (`metaLog.rechazoDelHis`).
    */
+  /**
+   * Las marcas que dejó el rechazo en la cita (`metaLog.rechazoDelHis`): si no
+   * llegó al hospital y si el personal ya le escribió (2026-10-29). Ante la duda,
+   * ninguna: se le dice lo de siempre.
+   */
+  private async rechazoDelHisDe(
+    appointmentId: string,
+  ): Promise<{ noLlego: boolean; yaSeLeEscribio: boolean }> {
+    try {
+      const cita = await this.prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        select: { metaLog: true },
+      });
+      const r = (
+        cita?.metaLog as { rechazoDelHis?: Record<string, unknown> } | null
+      )?.rechazoDelHis;
+      return {
+        noLlego: r?.noLlego === true,
+        yaSeLeEscribio: r?.yaSeLeEscribio === true,
+      };
+    } catch {
+      return { noLlego: false, yaSeLeEscribio: false };
+    }
+  }
+
   private async rechazadaPorAgendaDelHis(
     appointmentId: string | undefined,
   ): Promise<boolean> {
@@ -13694,7 +13719,10 @@ export class ChatbotService implements OnModuleInit {
       where: { id: slotId },
       include: { doctor: true },
     });
-    if (!cupo) return;
+    // Se relee, como al cancelar desde el hospital: si el cupo sigue cerrado (lo
+    // tomó otro, o es de una hora que el hospital quitó de su agenda —2026-10-29,
+    // `fn_cupo_en_agenda_quitada`—), ofrecerlo sería ofrecer una hora que no hay.
+    if (!cupo || !cupo.isAvailable) return;
     try {
       await this.waitlistService.notifyWaitlist({
         slotId: cupo.id,
@@ -13850,11 +13878,20 @@ export class ChatbotService implements OnModuleInit {
         appointmentId: p.appointmentId,
       });
     } else if (estado === 'RECHAZADA') {
-      const contacto = org?.supportPhone
-        ? MSGS.contactoClinica(org.supportPhone)
-        : MSGS.contactoClinicaSinTelefono();
-      reply = MSGS.citaNoRegistradaEnHospital(p.fechaTexto, contacto);
-      await this.smartReply(organizationId, senderId, reply);
+      // 🏥 2026-10-29: si la cita no LLEGÓ al hospital (el envío se rindió, o el
+      // agente no la tomó con la cita cerca), no es que el horario se ocupara: se
+      // le dice que no quedó registrada. Y si el personal ya le escribió desde la
+      // Bandeja, no se le repite.
+      const rechazo = await this.rechazoDelHisDe(p.appointmentId);
+      if (!rechazo.yaSeLeEscribio) {
+        const contacto = org?.supportPhone
+          ? MSGS.contactoClinica(org.supportPhone)
+          : MSGS.contactoClinicaSinTelefono();
+        reply = rechazo.noLlego
+          ? MSGS.citaNoQuedoRegistrada(p.fechaTexto, contacto)
+          : MSGS.citaNoRegistradaEnHospital(p.fechaTexto, contacto);
+        await this.smartReply(organizationId, senderId, reply);
+      }
     }
 
     await this.auditLog(senderId, organizationId, {
@@ -13863,7 +13900,11 @@ export class ChatbotService implements OnModuleInit {
           ? InteractionStatus.SUCCESS
           : InteractionStatus.FAILED,
       userMessage: '[confirmación del hospital]',
-      botReply: reply ?? '[sin mensaje: confirmación abandonada tras 24 h]',
+      botReply:
+        reply ??
+        (estado === 'RECHAZADA'
+          ? '[sin mensaje: el personal ya le escribió desde la Bandeja]'
+          : '[sin mensaje: confirmación abandonada tras 24 h]'),
       metadata: {
         stage: 'HIS_CONFIRMATION_FOLLOWUP',
         appointmentId: p.appointmentId,

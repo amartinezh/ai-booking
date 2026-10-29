@@ -535,6 +535,21 @@ describe('MirrorWatchdogService', () => {
       ]);
     });
 
+    // 🏥 2026-10-29: el hospital no la registró y AgenIA la anuló y le avisó al
+    // paciente; el caso se queda abierto por si el personal la registra a mano.
+    it('🏥 la que el hospital no registró (marcada `noRegistrada`) NO se cierra sola', async () => {
+      const { service, exceptions } = build({
+        activas: [activa({ meta: { motivo: 'RENDIDA', noRegistrada: true } })],
+        eventosPorSeq: [
+          { seq: BigInt(7), deliveredAt: haceMin(1), deadLettered: true },
+        ],
+        citas: [cita({ status: 'CANCELLED' })],
+      });
+      const r = await service.vigilarOrganizacion(ORG, AHORA);
+      expect(cerradas(exceptions)).toEqual([]);
+      expect(r.autoResueltas).toBe(0);
+    });
+
     it('la cita se canceló → se cierra', async () => {
       const { service, exceptions } = build({
         activas: [activa()],

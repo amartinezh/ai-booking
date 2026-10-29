@@ -252,6 +252,10 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
     estilo?: 'FORMAL' | 'INFORMAL';
     /** Casos `TELEFONO_EQUIVOCADO` abiertos en la bandeja. */
     telefonoEquivocado?: { patientId: string | null }[];
+    /** Casos abiertos de citas que el hospital no tiene (2026-10-29). */
+    casosSinCitaEnElHospital?: { appointmentId: string | null }[];
+    /** Altas de citas que no han llegado al hospital. */
+    altasSinEntregar?: { entityId: string }[];
   }) => {
     const chatbot = {
       isWithinServiceWindow: jest.fn(async () => opts?.withinWindow ?? true),
@@ -273,9 +277,17 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         update: jest.fn(async () => ({})),
       },
       syncException: {
-        findMany: jest.fn(
-          async (..._a: unknown[]) => opts?.telefonoEquivocado ?? [],
-        ),
+        findMany: jest.fn(async (...a: unknown[]) => {
+          const where = (a[0] as { where?: { kind?: unknown } })?.where;
+          // 🏥 La consulta de las citas que el hospital no tiene (2026-10-29).
+          if (where && typeof where.kind === 'object') {
+            return opts?.casosSinCitaEnElHospital ?? [];
+          }
+          return opts?.telefonoEquivocado ?? [];
+        }),
+      },
+      syncOutbox: {
+        findMany: jest.fn(async () => opts?.altasSinEntregar ?? []),
       },
       // Perfiles: el servicio los lee para acotar a un agente o a un médico (§12 #10b).
       agentProfile: { findUnique: jest.fn(async () => null as unknown) },
@@ -538,6 +550,79 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
       expect(where.patientId).toEqual({ notIn: ['pat-9'] });
       // Se suma a los demás filtros, no los reemplaza.
       expect(where.patient).toEqual({ remindersOptOut: false });
+    });
+
+    // 🏥 2026-10-29: a una paciente el hospital no le registró la cita (el médico se
+    // quedó sin turno) y AgenIA la seguía teniendo vigente: el recordatorio le
+    // habría dicho «le esperamos» y habría ido al hospital para nada.
+    it('🏥 excluye las citas que el hospital no tiene: alta sin entregar o caso abierto, en la consulta', async () => {
+      const { service, prisma } = build({
+        casosSinCitaEnElHospital: [
+          { appointmentId: 'apt-deriva' },
+          { appointmentId: null },
+        ],
+        altasSinEntregar: [
+          { entityId: 'apt-rendida' },
+          { entityId: 'apt-deriva' },
+        ],
+      });
+      await service.runOnce();
+
+      const consultas = prisma.syncException.findMany.mock.calls.map(
+        (c) => (c as unknown as [{ where: Record<string, unknown> }])[0].where,
+      );
+      expect(consultas).toContainEqual({
+        kind: {
+          in: ['CITA_NO_ENTREGADA', 'DERIVA_EN_HIS', 'CITA_EN_AGENDA_QUITADA'],
+        },
+        status: { in: ['ABIERTA', 'EN_REVISION'] },
+        appointmentId: { not: null },
+      });
+      expect(prisma.syncOutbox.findMany).toHaveBeenCalledWith({
+        where: {
+          entityType: 'APPOINTMENT',
+          op: 'INSERT',
+          origin: { not: 'MIRROR' },
+          deliveredAt: null,
+        },
+        select: { entityId: true },
+      });
+      const where = (
+        prisma.appointment.findMany.mock.calls[0] as unknown as [
+          { where: Record<string, any> },
+        ]
+      )[0].where;
+      expect(where.id).toEqual({ notIn: ['apt-deriva', 'apt-rendida'] });
+      // Se suma a los demás filtros, no los reemplaza.
+      expect(where.status).toBe('SCHEDULED');
+      expect(where.patient).toEqual({ remindersOptOut: false });
+    });
+
+    it('🏥 sin citas que falten en el hospital, la consulta queda como antes', async () => {
+      const { service, prisma } = build();
+      await service.runOnce();
+      const where = (
+        prisma.appointment.findMany.mock.calls[0] as unknown as [
+          { where: Record<string, any> },
+        ]
+      )[0].where;
+      expect(where.id).toBeUndefined();
+    });
+
+    it('🏥 si esa consulta falla, los recordatorios siguen (no se frena ninguno)', async () => {
+      const { service, prisma } = build();
+      prisma.syncOutbox.findMany.mockRejectedValueOnce(new Error('base caída'));
+      jest
+        .spyOn((service as any).logger, 'warn')
+        .mockImplementation(() => undefined);
+      await service.runOnce();
+      expect(prisma.appointment.findMany).toHaveBeenCalled();
+      const where = (
+        prisma.appointment.findMany.mock.calls[0] as unknown as [
+          { where: Record<string, any> },
+        ]
+      )[0].where;
+      expect(where.id).toBeUndefined();
     });
 
     it('🩺 solo citas de médicos con «WhatsApp ON»: lo demás que trae el hospital no se recuerda (y no se marca)', async () => {

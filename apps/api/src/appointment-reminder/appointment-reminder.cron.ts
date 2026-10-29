@@ -235,6 +235,7 @@ export class AppointmentReminderCronService
       now,
       targetThreshold,
       await this.pacientesConTelefonoEquivocado(),
+      await this.citasQueElHospitalNoTiene(),
     );
     if (eligible.length === 0) {
       this.logger.debug('Sin citas elegibles en esta ventana.');
@@ -394,11 +395,18 @@ export class AppointmentReminderCronService
     now: Date,
     threshold: Date,
     telefonoEquivocado: string[] = [],
+    sinCitaEnElHospital: string[] = [],
   ) {
     return this.prisma.appointment.findMany({
       where: {
         status: 'SCHEDULED',
         reminderSentAt: null,
+        // 🏥 Ni las que el hospital no tiene (ver `citasQueElHospitalNoTiene`). En
+        // la consulta, como el opt-out: no se marcan, y si la cita llega al
+        // hospital a tiempo, el recordatorio sale en la vuelta siguiente.
+        ...(sinCitaEnElHospital.length > 0
+          ? { id: { notIn: sinCitaEnElHospital } }
+          : {}),
         scheduleSlot: {
           startTime: { gt: now, lte: threshold },
           // 🩺 Solo las citas de médicos con «WhatsApp ON» (Médicos) y de un
@@ -509,6 +517,61 @@ export class AppointmentReminderCronService
    * hasta que el personal corrija el teléfono y cierre el caso, o lo descarte si no
    * era cierto: cerrarlo devuelve los recordatorios sin tocar nada del paciente.
    */
+  /**
+   * 🏥 Citas que el hospital NO tiene (2026-10-29): su alta no ha llegado al
+   * hospital —en cola o rendida— o hay un caso abierto de «Cita que el hospital
+   * aún no tiene», «El hospital no tiene una cita que AgenIA da por hecha» o
+   * «Cita en un horario que el hospital quitó de su agenda». A esas no se les
+   * manda el «le esperamos»: el paciente iría al hospital para nada. Las ve el
+   * personal en la Bandeja.
+   *
+   * Solo el ALTA cuenta: un cambio pendiente de otra cosa (asistencia, EPS) no
+   * dice que la cita no exista allá, y uno de fecha retenido ya abre su caso.
+   * Si la consulta falla, no se frena ningún recordatorio: queda en el log.
+   */
+  private async citasQueElHospitalNoTiene(): Promise<string[]> {
+    try {
+      const casos = await this.prisma.syncException.findMany({
+        where: {
+          kind: {
+            in: [
+              'CITA_NO_ENTREGADA',
+              'DERIVA_EN_HIS',
+              'CITA_EN_AGENDA_QUITADA',
+            ],
+          },
+          status: { in: ['ABIERTA', 'EN_REVISION'] },
+          appointmentId: { not: null },
+        },
+        select: { appointmentId: true },
+      });
+      const altas = await this.prisma.syncOutbox.findMany({
+        where: {
+          entityType: 'APPOINTMENT',
+          op: 'INSERT',
+          origin: { not: 'MIRROR' },
+          deliveredAt: null,
+        },
+        select: { entityId: true },
+      });
+      return [
+        ...new Set(
+          [
+            ...casos.map((c) => c.appointmentId),
+            ...altas.map((a) => a.entityId),
+          ].filter((id): id is string => typeof id === 'string' && !!id),
+        ),
+      ];
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo leer qué citas no tiene el hospital; los recordatorios siguen igual: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return [];
+    }
+  }
+
   private async pacientesConTelefonoEquivocado(): Promise<string[]> {
     const filas = await this.prisma.syncException.findMany({
       where: {

@@ -1498,6 +1498,32 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         };
       }
 
+      // 🕒 La HORA también tiene que caer dentro de un turno de ese día
+      // (2026-10-29). El hospital a veces quita horas y deja el turno del día (la
+      // Dra. Osorio dejó de atender de 12:00 a 13:30 el 30-oct): entre una lectura
+      // de la agenda y la siguiente, AgenIA podía ofrecer una de esas horas y el
+      // HIS la aceptaba igual. Solo se mira el INICIO de la cita: la duración del
+      // cupo de AgenIA y la del hospital pueden diferir en unos minutos, y un
+      // rechazo por eso le quitaría la cita a un paciente que sí cabe.
+      const horaLocal = feHora.slice(11, 16);
+      if (
+        !(await this.horaEnElTurno(
+          ej,
+          p.doctorExternalKey!,
+          feFecha,
+          horaLocal,
+        ))
+      ) {
+        return {
+          success: false,
+          // Definitivo, como el de arriba: reintentar no le devuelve la hora.
+          rechazoDelHis: true,
+          message:
+            `El médico ${p.doctorExternalKey} no atiende a las ${horaLocal} ` +
+            `el ${feFecha}: esa hora no está en su turno.`,
+        };
+      }
+
       const duracion =
         p.startTimeIso && p.endTimeIso
           ? Math.round(
@@ -1804,6 +1830,32 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
            AND CAST(FE_FECH_TUME AS date) = CAST(@fecha AS date)
            AND ID_DISP_TUME = '1'`);
     return r.recordset[0] ?? null;
+  }
+
+  /**
+   * ¿La hora (`HH:MM`, local) cae dentro de un turno disponible del médico ese
+   * día? `FE_HOIN_TUME`/`FE_HOFI_TUME` son horas sobre la fecha base 1900-01-01:
+   * se comparan como texto `HH:MM` (estilo 108), con el fin excluido.
+   */
+  private async horaEnElTurno(
+    ej: Ejecutor,
+    medico: string,
+    fechaIso: string,
+    hora: string,
+  ): Promise<boolean> {
+    const r = await ej
+      .request()
+      .input('med', sql.VarChar(4), medico)
+      .input('fecha', sql.VarChar(8), fechaLiteralSql(fechaIso))
+      .input('hora', sql.VarChar(5), hora).query(`
+        SELECT TOP 1 1 AS x
+          FROM dbo.TURNOS_MEDICOS
+         WHERE CD_MED_TUME = @med
+           AND CAST(FE_FECH_TUME AS date) = CAST(@fecha AS date)
+           AND ID_DISP_TUME = '1'
+           AND CONVERT(varchar(5), FE_HOIN_TUME, 108) <= @hora
+           AND @hora < CONVERT(varchar(5), FE_HOFI_TUME, 108)`);
+    return r.recordset.length > 0;
   }
 
   private requirePool(): sql.ConnectionPool {

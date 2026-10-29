@@ -119,12 +119,20 @@ function stripComments(stmt: string): boolean {
 const OBJETOS_ESPERADOS = {
   // fn_interruptores_del_hospital: sin ella, apagar agendar/cancelar/cambiar no
   // frenaría nada en la base y lo hecho desde el panel quedaría en la cola.
-  funciones: ['fn_sync_outbox', 'fn_norm_texto', 'fn_interruptores_del_hospital'],
+  // fn_cupo_en_agenda_quitada (2026-10-29): sin ella, el cupo de una cita en una
+  // hora que el hospital quitó se volvería a ofrecer al anularse la cita.
+  funciones: [
+    'fn_sync_outbox',
+    'fn_norm_texto',
+    'fn_interruptores_del_hospital',
+    'fn_cupo_en_agenda_quitada',
+  ],
   triggers: [
     'trg_sync_outbox_schedule_slot',
     'trg_sync_outbox_doctor_profile',
     'trg_sync_outbox_appointment',
     'trg_interruptores_del_hospital',
+    'trg_cupo_en_agenda_quitada',
   ],
   // `uq_appointment_cupo_vigente` es único parcial y sustituye a la llave
   // única global que llevaba `Appointment.scheduleSlotId`. Si alguien corre

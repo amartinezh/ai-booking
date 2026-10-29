@@ -575,12 +575,17 @@ export class MirrorWatchdogService {
         dedupeKey: true,
         outboxSeq: true,
         appointmentId: true,
+        meta: true,
       },
     });
     const candidatas = activas.filter(
       (a) =>
         !vigentes.has(a.dedupeKey) &&
-        !(a.outboxSeq !== null && pausados.has(String(a.outboxSeq))),
+        !(a.outboxSeq !== null && pausados.has(String(a.outboxSeq))) &&
+        // 🏥 2026-10-29: el hospital no la registró y AgenIA la anuló y le avisó
+        // al paciente (`AltasNoRegistradasService`). El caso se queda abierto por
+        // si el personal prefiere registrarla a mano: lo cierra una persona.
+        !esNoRegistrada(a.meta),
     );
     if (candidatas.length === 0) return 0;
 
@@ -657,6 +662,10 @@ export class MirrorWatchdogService {
             SYNC_AUDIT_DIRECTION.HIS_TO_AGENIA,
           ],
         },
+        // La lectura de la agenda tampoco (2026-10-29): sus conflictos —citas en
+        // horas que el hospital quitó— se abren uno por cita, con el paciente
+        // (`CITA_EN_AGENDA_QUITADA`, mirror-availability.service.ts).
+        op: { not: 'AVAILABILITY' },
         createdAt: { gte: desde },
       },
       orderBy: { createdAt: 'desc' },
@@ -1219,4 +1228,13 @@ export class MirrorWatchdogService {
     }
     return salida;
   }
+}
+
+/** ¿El caso es de una cita que el hospital no registró y AgenIA ya anuló? */
+function esNoRegistrada(meta: unknown): boolean {
+  return (
+    !!meta &&
+    typeof meta === 'object' &&
+    (meta as Record<string, unknown>).noRegistrada === true
+  );
 }

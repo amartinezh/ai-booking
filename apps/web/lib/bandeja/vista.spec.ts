@@ -341,6 +341,65 @@ describe('🩺 médicos del hospital que AgenIA aún no tiene', () => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// 🗓️ / 🏥 La agenda del hospital y las citas que no registró (2026-10-29)
+// ══════════════════════════════════════════════════════════════════════════
+describe('🗓️ cita en un horario que el hospital quitó', () => {
+  const caso = (meta: Record<string, unknown>, over: Record<string, unknown> = {}) =>
+    fila({ kind: 'CITA_EN_AGENDA_QUITADA', meta, ...over });
+
+  it('hora quitada, cita del chat: lo dice y qué hacer', () => {
+    const r = resumenPublico(caso({ motivo: 'HORA_QUITADA', origen: 'WHATSAPP' }), AHORA.getTime());
+    expect(r).toContain('El hospital quitó de la agenda del médico la hora de esta cita que el paciente agendó por WhatsApp');
+    expect(r).toContain('anúlela o muévala en el sistema del hospital y AgenIA le avisará al paciente');
+    expect(r).toContain('no se le envía recordatorio');
+  });
+
+  it('día sin turno, cita del hospital', () => {
+    const r = resumenPublico(caso({ motivo: 'DIA_SIN_TURNO', origen: 'MIRROR' }), AHORA.getTime());
+    expect(r).toContain('El médico ya no tiene turno ese día en el hospital, y esta cita agendada en el hospital sigue vigente');
+  });
+
+  it('una del panel y una de Telegram se nombran bien', () => {
+    expect(resumenPublico(caso({ motivo: 'HORA_QUITADA', origen: 'MANUAL' }), AHORA.getTime())).toContain(
+      'agendada en el panel de AgenIA',
+    );
+    expect(resumenPublico(caso({ motivo: 'HORA_QUITADA', origen: 'TELEGRAM' }), AHORA.getTime())).toContain(
+      'agendó por Telegram',
+    );
+  });
+
+  it('tiene título propio', () => {
+    expect(mapearExcepcion(caso({ motivo: 'HORA_QUITADA' }), ctx()).titulo).toBe(
+      'Cita en un horario que el hospital quitó de su agenda',
+    );
+  });
+});
+
+describe('🏥 cita del asistente que el hospital no registró', () => {
+  it('con `noRegistrada`: dice que se anuló, que se le avisó y qué puede hacer el personal', () => {
+    const r = resumenPublico(
+      fila({ meta: { motivo: 'RENDIDA', intentos: 10, noRegistrada: true } }),
+      AHORA.getTime(),
+    );
+    expect(r).toContain('El hospital no registró esta cita del asistente. AgenIA la anuló y le avisó al paciente');
+    expect(r).toContain('regístrela a mano');
+  });
+
+  it('sin la marca, el resumen de siempre', () => {
+    const r = resumenPublico(fila({ meta: { motivo: 'RENDIDA', intentos: 10 } }), AHORA.getTime());
+    expect(r).not.toContain('AgenIA la anuló');
+  });
+
+  it('el historial nombra lo que pasó', () => {
+    const [h] = mapearHistorial(
+      [{ id: 'l1', exceptionId: 'ex-1', action: 'NO_REGISTRADA', actorUserId: null, actorRole: null, note: 'x', createdAt: AHORA }] as never,
+      ctx(),
+    );
+    expect(h).toMatchObject({ accion: 'El hospital no la registró: AgenIA la anuló y le avisó al paciente', por: 'El sistema' });
+  });
+});
+
 describe('✉️ escribirle al paciente (2026-10-29)', () => {
   it('quien trabaja la Bandeja puede, si el caso tiene cita y paciente (también cerrado)', () => {
     expect(mapearExcepcion(fila(), ctx()).escribirAlPaciente).toBe(true);

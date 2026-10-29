@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { MirrorAvailabilityService } from './mirror-availability.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { MirrorExceptionsService } from './mirror-exceptions.service';
 
 // ══════════════════════════════════════════════════════════════════════════
 // Fase 2: la agenda de AgenIA pasa a ser la del hospital.
@@ -590,6 +591,213 @@ describe('MirrorAvailabilityService', () => {
     it('igual deja rastro: sin él no se sabe si corrió', async () => {
       await aplicar([cupoHis('2026-09-03T12:00:00.000Z')]);
 
+      expect(prisma.syncAudit.create).toHaveBeenCalled();
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🗓️ Un caso por cita fuera de la agenda del hospital (2026-10-29). El 30-oct
+  // el hospital borró el turno de dos médicos con 20 citas vivas y quitó horas
+  // con pacientes del chat; AgenIA solo dejaba un caso general sin nombres.
+  // ══════════════════════════════════════════════════════════════════════════
+  describe('🗓️ citas fuera de la agenda del hospital: un caso por cita', () => {
+    // Una ventana FUTURA: las citas que ya pasaron no abren caso.
+    const FUT = {
+      fromIso: '2030-01-08T00:00:00.000Z',
+      toIso: '2030-01-09T00:00:00.000Z',
+    };
+    let exceptions: { registrar: jest.Mock; autoResolver: jest.Mock };
+    let conCasos: MirrorAvailabilityService;
+
+    const cita = (origin: string, id = 'apt-1') => ({
+      id,
+      status: 'SCHEDULED',
+      origin,
+      patientId: 'pac-1',
+      epsId: 'eps-1',
+    });
+    const cupoConCita = (startIso: string, origin: string) => ({
+      ...cupoAgenIA(startIso, { isAvailable: false }),
+      appointments: [cita(origin)],
+    });
+
+    beforeEach(async () => {
+      exceptions = {
+        registrar: jest.fn().mockResolvedValue('CREADA'),
+        autoResolver: jest.fn().mockResolvedValue(true),
+      };
+      prisma.syncException = { findMany: jest.fn().mockResolvedValue([]) };
+      prisma.doctorProfile.findMany = jest.fn(() => [
+        { id: 'doc-1', serviceId: 'srv-1', whatsappBookingEnabled: true },
+      ]);
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          MirrorAvailabilityService,
+          { provide: PrismaService, useValue: prisma },
+          { provide: MirrorExceptionsService, useValue: exceptions },
+        ],
+      }).compile();
+      conCasos = module.get(MirrorAvailabilityService);
+      jest
+        .spyOn((conCasos as any).logger, 'error')
+        .mockImplementation(() => {});
+      jest.spyOn((conCasos as any).logger, 'warn').mockImplementation(() => {});
+    });
+
+    const aplicarFut = (slots: any[]) =>
+      conCasos.apply('org1', { ...FUT, slots });
+    const casos = () => exceptions.registrar.mock.calls.map((c) => c[1]);
+
+    it('cita del chat en una hora que el hospital quitó (el médico sigue atendiendo ese día): HORA_QUITADA', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoConCita('2030-01-08T17:10:00.000Z', 'WHATSAPP'),
+      ]);
+
+      const r = await aplicarFut([cupoHis('2030-01-08T13:00:00.000Z')]);
+
+      expect(r.conflicts).toEqual(['doc-1|2030-01-08T17:10:00.000Z']);
+      expect(casos()).toEqual([
+        expect.objectContaining({
+          kind: 'CITA_EN_AGENDA_QUITADA',
+          dedupeKey: 'agenda-quitada:apt-1',
+          appointmentId: 'apt-1',
+          patientId: 'pac-1',
+          epsId: 'eps-1',
+          doctorId: 'doc-1',
+          appointmentStartAt: new Date('2030-01-08T17:10:00.000Z'),
+          meta: { motivo: 'HORA_QUITADA', origen: 'WHATSAPP' },
+        }),
+      ]);
+    });
+
+    it('el médico sin ningún turno en el día: DIA_SIN_TURNO', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoConCita('2030-01-08T17:00:00.000Z', 'WHATSAPP'),
+      ]);
+
+      await aplicarFut([]);
+
+      expect(casos()[0]).toMatchObject({
+        meta: { motivo: 'DIA_SIN_TURNO', origen: 'WHATSAPP' },
+      });
+    });
+
+    it('una cita DEL HOSPITAL en un día sin turno, de un médico del asistente: también', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoConCita('2030-01-08T15:00:00.000Z', 'MIRROR'),
+      ]);
+
+      const r = await aplicarFut([]);
+
+      expect(r.conflicts).toEqual([]);
+      expect(casos()[0]).toMatchObject({
+        meta: { motivo: 'DIA_SIN_TURNO', origen: 'MIRROR' },
+      });
+    });
+
+    it('una cita del hospital fuera de la rejilla en un día CON turno: sin caso (cupo a la medida)', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoConCita('2030-01-08T15:05:00.000Z', 'MIRROR'),
+      ]);
+
+      await aplicarFut([cupoHis('2030-01-08T13:00:00.000Z')]);
+
+      expect(exceptions.registrar).not.toHaveBeenCalled();
+    });
+
+    it('una cita del hospital de un médico SIN WhatsApp en un día sin turno: sin caso', async () => {
+      prisma.doctorProfile.findMany = jest.fn(() => [
+        { id: 'doc-1', serviceId: 'srv-1', whatsappBookingEnabled: false },
+      ]);
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoConCita('2030-01-08T15:00:00.000Z', 'MIRROR'),
+      ]);
+
+      await aplicarFut([]);
+
+      expect(exceptions.registrar).not.toHaveBeenCalled();
+    });
+
+    it('una cita que ya pasó no abre caso', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        { ...cupoConCita('2026-09-03T15:00:00.000Z', 'WHATSAPP') },
+      ]);
+
+      await service.apply('org1', { ...VENTANA, slots: [] });
+      await conCasos.apply('org1', { ...VENTANA, slots: [] });
+
+      expect(exceptions.registrar).not.toHaveBeenCalled();
+    });
+
+    it('la gravedad sube con la cercanía de la cita', async () => {
+      const pronto = new Date(Date.now() + 2 * 3_600_000);
+      pronto.setUTCSeconds(0, 0);
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoConCita(pronto.toISOString(), 'WHATSAPP'),
+      ]);
+
+      await conCasos.apply('org1', {
+        fromIso: new Date(pronto.getTime() - 3_600_000).toISOString(),
+        toIso: new Date(pronto.getTime() + 3_600_000).toISOString(),
+        slots: [],
+      });
+
+      expect(casos()[0].severity).toBe('CRITICA');
+    });
+
+    it('los casos de la ventana que ya no aparecen se cierran solos; los vigentes no', async () => {
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoConCita('2030-01-08T17:10:00.000Z', 'WHATSAPP'),
+      ]);
+      prisma.syncException.findMany.mockResolvedValue([
+        { id: 'caso-vigente', dedupeKey: 'agenda-quitada:apt-1' },
+        { id: 'caso-viejo', dedupeKey: 'agenda-quitada:apt-otra' },
+      ]);
+
+      await aplicarFut([cupoHis('2030-01-08T13:00:00.000Z')]);
+
+      expect(prisma.syncException.findMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: 'org1',
+          kind: 'CITA_EN_AGENDA_QUITADA',
+          status: { in: ['ABIERTA', 'EN_REVISION'] },
+          appointmentStartAt: {
+            gte: new Date(FUT.fromIso),
+            lt: new Date(FUT.toIso),
+          },
+        },
+        select: { id: true, dedupeKey: true },
+      });
+      expect(exceptions.autoResolver).toHaveBeenCalledTimes(1);
+      expect(exceptions.autoResolver).toHaveBeenCalledWith(
+        'org1',
+        'caso-viejo',
+        expect.stringContaining('volvió a la agenda'),
+        expect.any(Date),
+      );
+    });
+
+    it('en SHADOW no abre casos (no cambia nada)', async () => {
+      conModo('SHADOW');
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoConCita('2030-01-08T17:10:00.000Z', 'WHATSAPP'),
+      ]);
+
+      await aplicarFut([cupoHis('2030-01-08T13:00:00.000Z')]);
+
+      expect(exceptions.registrar).not.toHaveBeenCalled();
+    });
+
+    it('si abrir el caso falla, la agenda igual queda aplicada', async () => {
+      exceptions.registrar.mockRejectedValue(new Error('base caída'));
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        cupoConCita('2030-01-08T17:10:00.000Z', 'WHATSAPP'),
+      ]);
+
+      const r = await aplicarFut([cupoHis('2030-01-08T13:00:00.000Z')]);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(r.conflicts).toHaveLength(1);
       expect(prisma.syncAudit.create).toHaveBeenCalled();
     });
   });

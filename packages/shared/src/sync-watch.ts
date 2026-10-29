@@ -89,6 +89,16 @@ import { derivarSync, type FilaOutbox } from './sync-state';
  *  · `CANCELACION_SIN_CONFIRMAR` — el paciente pidió cancelar por el chat, el
  *    asistente le preguntó si la cancelaba y pasó la hora sin un SÍ ni un NO. Lo abre
  *    el vigilante; se cierra sola si la cita se cancela o cambia de hora.
+ *
+ * Y una de la agenda del hospital (2026-10-29: el hospital borró el turno del viernes
+ * de dos médicos con 20 citas vivas, y quitó horas en las que pacientes del chat ya
+ * tenían cita; AgenIA solo dejaba un caso general sin nombres):
+ *
+ *  · `CITA_EN_AGENDA_QUITADA` — una cita vigente cae en una hora que el hospital ya
+ *    no tiene en la agenda del médico, o en un día en que el médico ya no tiene turno.
+ *    Uno por cita. Lo abre la lectura de la agenda y se cierra solo cuando la hora
+ *    vuelve a la agenda o la cita deja de estar vigente. Mientras está abierto, el
+ *    cupo de esa cita no se vuelve a ofrecer aunque la cita se anule.
  */
 export const TIPOS_EXCEPCION = [
   'CITA_NO_ENTREGADA',
@@ -106,6 +116,7 @@ export const TIPOS_EXCEPCION = [
   'MEDICO_SIN_HOMOLOGAR',
   'MEDICO_AGREGADO_AUTO',
   'CANCELACION_SIN_CONFIRMAR',
+  'CITA_EN_AGENDA_QUITADA',
 ] as const;
 export type TipoExcepcion = (typeof TIPOS_EXCEPCION)[number];
 
@@ -154,6 +165,7 @@ export const TITULO_EXCEPCION: Record<TipoExcepcion, string> = {
   MEDICO_SIN_HOMOLOGAR: 'Médico del hospital con citas que aún no está en AgenIA',
   MEDICO_AGREGADO_AUTO: 'Médico del hospital agregado automáticamente',
   CANCELACION_SIN_CONFIRMAR: 'Un paciente pidió cancelar y no confirmó',
+  CITA_EN_AGENDA_QUITADA: 'Cita en un horario que el hospital quitó de su agenda',
 };
 
 export const SEVERIDADES_EXCEPCION = ['BAJA', 'MEDIA', 'ALTA', 'CRITICA'] as const;
@@ -397,6 +409,8 @@ export const claveExcepcion = {
   /** Una por cita: pedirlo otra vez sin confirmar no abre otro caso. */
   cancelacionSinConfirmar: (appointmentId: string) =>
     `cancelar-sin-confirmar:${appointmentId}`,
+  /** Una por cita: cada lectura de la agenda la vuelve a encontrar mientras siga así. */
+  agendaQuitada: (appointmentId: string) => `agenda-quitada:${appointmentId}`,
   auditoria: (a: {
     direction: string;
     entityType: string;

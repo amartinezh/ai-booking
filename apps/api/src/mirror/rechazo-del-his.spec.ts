@@ -4,6 +4,9 @@ describe('esRechazoPorAgendaDelHis', () => {
   it.each([
     'El médico RU70 no tiene turno el 2026-10-30: la agenda de AgenIA y la del HIS no coinciden.',
     'no se reagendó, la cita anterior sigue en pie: El médico RU70 no tiene turno el 2026-10-30: la agenda de AgenIA y la del HIS no coinciden.',
+    // 2026-10-29: el turno sigue, pero esa hora ya no está en él.
+    'El médico RU66 no atiende a las 12:10 el 2026-10-30: esa hora no está en su turno.',
+    'no se reagendó, la cita anterior sigue en pie: El médico RU66 no atiende a las 12:10 el 2026-10-30: esa hora no está en su turno.',
   ])('«%s» → sí', (motivo) => {
     expect(esRechazoPorAgendaDelHis(motivo)).toBe(true);
   });

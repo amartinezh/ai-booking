@@ -357,3 +357,42 @@ CREATE UNIQUE INDEX IF NOT EXISTS "uq_support_bot_abierta_usuario"
 CREATE UNIQUE INDEX IF NOT EXISTS "uq_support_bot_abierta_telegram"
   ON "SupportBotConversation" ("telegramUserId")
   WHERE "closedAt" IS NULL;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Cupo de una cita en un horario que el hospital quitó de su agenda (2026-10-29).
+--
+-- La lectura de la agenda abre un caso CITA_EN_AGENDA_QUITADA por cada cita viva
+-- en una hora (o un día) que el hospital ya no tiene. Mientras ese caso esté
+-- abierto, el cupo de la cita NO se vuelve a abrir aunque la cita se anule —por el
+-- hospital, el panel o el chat—: abrirlo ofrecería por el chat, y a la lista de
+-- espera, una hora en la que el médico ya no atiende. Antes pasaba hasta la
+-- siguiente lectura de la agenda (unos 5 minutos).
+--
+-- Una sola regla para todos los caminos que liberan un cupo, en vez de repetirla
+-- en cada uno. Solo despierta cuando un cupo pasa de cerrado a abierto; si no hay
+-- caso abierto, no cambia nada. Cuando la hora vuelve a la agenda, la lectura
+-- cierra el caso y el cupo se puede abrir en la vuelta siguiente.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION fn_cupo_en_agenda_quitada() RETURNS trigger AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM "SyncException" e
+      JOIN "Appointment" a ON a.id = e."appointmentId"
+     WHERE e."organizationId" = NEW."organizationId"
+       AND e.kind = 'CITA_EN_AGENDA_QUITADA'
+       AND e.status IN ('ABIERTA', 'EN_REVISION')
+       AND a."scheduleSlotId" = NEW.id
+  ) THEN
+    NEW."isAvailable" := false;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_cupo_en_agenda_quitada ON "ScheduleSlot";
+CREATE TRIGGER trg_cupo_en_agenda_quitada
+  BEFORE UPDATE OF "isAvailable" ON "ScheduleSlot"
+  FOR EACH ROW
+  WHEN (NEW."isAvailable" AND NOT OLD."isAvailable")
+  EXECUTE FUNCTION fn_cupo_en_agenda_quitada();

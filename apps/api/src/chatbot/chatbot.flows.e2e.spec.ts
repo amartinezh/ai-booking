@@ -1464,6 +1464,56 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         expect(lastSent()).toContain('6068538838');
       });
 
+      // 🏥 2026-10-29: el alta no LLEGÓ al hospital (se rindió). No es que el
+      // horario se ocupara: se le dice que no quedó registrada y que no está vigente.
+      it('si no llegó al hospital, le dice que su cita no quedó registrada (no que el horario se ocupó)', async () => {
+        db.appointments.push({
+          id: 'apt-new',
+          patientId: 'pat-x',
+          status: 'CANCELLED',
+          scheduleSlotId: 'slot-a',
+          metaLog: {
+            rechazoDelHis: {
+              motivo: 'no llegó al sistema del hospital tras 10 intentos',
+              noLlego: true,
+            },
+          },
+        } as any);
+        confirmacion.pendientes.mockResolvedValue([pendiente()]);
+        confirmacion.estado.mockResolvedValue('RECHAZADA');
+
+        await service.atenderConfirmacionesHisPendientes();
+
+        expect(lastSent()).toMatch(
+          /no quedó registrada en el sistema del hospital/,
+        );
+        expect(lastSent()).toMatch(/no está vigente/);
+        expect(lastSent()).not.toMatch(/ya no estaba disponible/);
+      });
+
+      it('si el personal ya le escribió desde la Bandeja, el bot no se lo repite', async () => {
+        db.appointments.push({
+          id: 'apt-new',
+          patientId: 'pat-x',
+          status: 'CANCELLED',
+          scheduleSlotId: 'slot-a',
+          metaLog: {
+            rechazoDelHis: {
+              motivo: 'no llegó',
+              noLlego: true,
+              yaSeLeEscribio: true,
+            },
+          },
+        } as any);
+        confirmacion.pendientes.mockResolvedValue([pendiente()]);
+        confirmacion.estado.mockResolvedValue('RECHAZADA');
+
+        await service.atenderConfirmacionesHisPendientes();
+
+        expect(confirmacion.reclamar).toHaveBeenCalled();
+        expect(sendSpy).not.toHaveBeenCalled();
+      });
+
       it('si sigue pendiente, no se le escribe ni se reclama', async () => {
         confirmacion.pendientes.mockResolvedValue([pendiente()]);
         confirmacion.estado.mockResolvedValue('PENDIENTE');
