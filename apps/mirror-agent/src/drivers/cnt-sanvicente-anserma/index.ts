@@ -731,6 +731,34 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         (antes) => antes.clave !== clave && antes.h === fila.h,
       );
 
+    // 🔀 Citas NUESTRAS que el hospital TRASLADÓ a otro médico u otra hora
+    // (2026-10-29). La aplicación del hospital no siempre cancela y crea: su
+    // «traslado» es un UPDATE en sitio que cambia médico y hora, conserva la
+    // marca de origen y REESCRIBE `FE_ELAB_CIT` con la hora del cambio. Con la
+    // elaboración nueva, la regla de arriba no la reconocía: la cita trasladada
+    // se tomaba por el eco de una nuestra, AgenIA solo veía la cancelación y le
+    // decía al paciente que su cita se había cancelado (28-oct: cuatro citas del
+    // Dr. Cárdenas pasaron a la Dra. Ríos a la misma hora). La firma del
+    // traslado: en esta misma vuelta desapareció de OTRA clave una cita nuestra
+    // del MISMO paciente.
+    //
+    // Un reagendamiento hecho por AgenIA deja la misma firma (cancela la vieja y
+    // crea la nueva). Reportarlo no hace daño: el servidor encuentra el cupo con
+    // su cita vigente y no crea nada («el cupo ya estaba ocupado»).
+    const nuestrasQueSeFueron = new Map<string, string[]>();
+    if (anterior.ventana) {
+      for (const [clave, previo] of Object.entries(anterior.filas)) {
+        if (!previo.propia || !previo.h || actual.filas[clave]) continue;
+        if (!dentro(previo)) continue;
+        const lista = nuestrasQueSeFueron.get(previo.h);
+        if (lista) lista.push(clave);
+        else nuestrasQueSeFueron.set(previo.h, [clave]);
+      }
+    }
+    const esNuestraTrasladada = (clave: string, fila: SnapshotRow): boolean =>
+      !!fila.h &&
+      (nuestrasQueSeFueron.get(fila.h) ?? []).some((antes) => antes !== clave);
+
     for (const [clave, fila] of Object.entries(actual.filas)) {
       const previo = anterior.filas[clave];
       if (!previo) {
@@ -740,8 +768,15 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
         // que sí barre esas fechas y viaja con el `occupied`.
         if (!dentro(fila)) continue;
         // Alta nueva. Si la escribimos nosotros, no se devuelve al servidor…
-        // salvo que sea una nuestra que el hospital cambió de hora (arriba).
-        if (fila.propia && !esNuestraMovida(clave, fila)) continue;
+        // salvo que sea una nuestra que el hospital cambió de hora o trasladó
+        // a otro médico (arriba).
+        if (
+          fila.propia &&
+          !esNuestraMovida(clave, fila) &&
+          !esNuestraTrasladada(clave, fila)
+        ) {
+          continue;
+        }
         empujar(this.eventoDeCita('INSERT', clave, fila, ahora));
       } else if (previo.e !== fila.e && dentro(fila)) {
         // Solo se reporta el desenlace que sabemos traducir al vocabulario de

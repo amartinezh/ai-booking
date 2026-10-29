@@ -586,12 +586,41 @@ describe('🏥 citas del asistente que el hospital canceló o cambió', () => {
     );
   });
 
+  // ⏳ 2026-10-29: el aviso de una cancelación espera unos minutos.
+  it('⏳ en espera: dice a qué hora (de Colombia) se le avisará y por qué espera', () => {
+    const r = resumenPublico(
+      cancelada({ aviso: 'EN_ESPERA', avisarDesdeIso: '2026-10-28T14:28:00.000Z' }),
+      AHORA.getTime(),
+    );
+    expect(r).toContain('Se le avisará por WhatsApp hacia las');
+    expect(r).toMatch(/9:28/);
+    expect(r).toContain('si en ese tiempo el hospital no le da otra cita');
+    expect(r).toContain('«Escribir al paciente»');
+  });
+
+  it('⏳ el hospital la volvió a crear igual: no hizo falta escribirle', () => {
+    const r = resumenPublico(cancelada({ aviso: 'NO_HIZO_FALTA', motivo: 'MISMA_CITA' }), AHORA.getTime());
+    expect(r).toContain('le volvió a crear la misma (mismo médico y hora)');
+    expect(r).toContain('No hizo falta escribirle al paciente.');
+    expect(r).not.toContain('Comuníquese');
+  });
+
+  it('⏳ el personal ya le había escrito: el aviso automático no salió', () => {
+    const r = resumenPublico(
+      cancelada({ aviso: 'NO_HIZO_FALTA', motivo: 'LE_ESCRIBIO_EL_PERSONAL' }),
+      AHORA.getTime(),
+    );
+    expect(r).toContain('el personal ya le escribió desde la Bandeja');
+    expect(r).toContain('Confirme que el paciente quedó enterado');
+  });
+
   it.each([
     ['FUERA_DE_VENTANA', 'pasaron más de 24 horas'],
     ['TELEFONO_EQUIVOCADO', 'marcado como de otra persona'],
     ['SIN_CONTACTO', 'no tiene WhatsApp ni Telegram'],
     ['SIN_PLANTILLA', 'falta registrar en Configuración la plantilla'],
     ['FALLO', 'el envío falló'],
+    ['YA_PASO', 'la hora de la cita ya había pasado'],
   ])('sin aviso (%s): dice por qué y que se comuniquen con el paciente', (motivo, texto) => {
     const r = resumenPublico(cancelada({ aviso: 'NO_ENVIADO', canal: 'WHATSAPP', motivo }), AHORA.getTime());
     expect(r).toContain('No se le pudo avisar por WhatsApp');

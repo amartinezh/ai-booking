@@ -318,6 +318,129 @@ describe('detectChanges — anti-eco con las marcas de cada canal', () => {
     expect(ronda.events).toHaveLength(0);
   });
 
+  // 🔀 2026-10-29: el «traslado» del hospital es un UPDATE en sitio que cambia
+  // médico y hora y REESCRIBE FE_ELAB_CIT. El 28-oct cuatro citas del asistente
+  // pasaron del Dr. Cárdenas (RU70) a la Dra. Ríos (RU69) a la misma hora; AgenIA
+  // solo vio la cancelación y les dijo a los pacientes que se había cancelado.
+  describe('🔀 una cita NUESTRA que el hospital trasladó (elaboración nueva)', () => {
+    const nuestra = {
+      descripcion: 'ASIGNADA POR WHATSAPP',
+      hist: '24387319',
+    };
+
+    it('a otro médico, a la misma hora: alta con el médico nuevo y cancelación de la vieja', async () => {
+      const base = await conDriver([
+        filaCita({
+          ...nuestra,
+          med: 'RU70',
+          hora: '2026/10/10 13:00',
+          elaborada: '2026-10-01 00:32:28.210',
+        }),
+      ]).detectChanges(null);
+      const ronda = await conDriver([
+        filaCita({
+          ...nuestra,
+          med: 'RU69',
+          hora: '2026/10/10 13:00',
+          elaborada: '2026-10-01 11:27:00.000',
+        }),
+      ]).detectChanges(base.nextCursor);
+
+      const ops = ronda.events.map((e) => [
+        e.op,
+        e.payload.doctorExternalKey,
+        e.payload.startTimeIso,
+      ]);
+      expect(ops).toEqual([
+        ['INSERT', 'RU69', '2026-10-10T18:00:00.000Z'],
+        ['CANCEL', 'RU70', '2026-10-10T18:00:00.000Z'],
+      ]);
+    });
+
+    it('a otra hora del mismo día: alta en la hora nueva y cancelación de la vieja', async () => {
+      const base = await conDriver([
+        filaCita({
+          ...nuestra,
+          med: 'RU70',
+          hora: '2026/10/10 14:40',
+          elaborada: '2026-10-01 05:57:18.083',
+        }),
+      ]).detectChanges(null);
+      const ronda = await conDriver([
+        filaCita({
+          ...nuestra,
+          med: 'RU69',
+          hora: '2026/10/10 14:50',
+          elaborada: '2026-10-01 11:28:00.000',
+        }),
+      ]).detectChanges(base.nextCursor);
+
+      expect(ronda.events.map((e) => e.op)).toEqual(['INSERT', 'CANCEL']);
+      expect(ronda.events[0].payload.startTimeIso).toBe(
+        '2026-10-10T19:50:00.000Z',
+      );
+    });
+
+    it('una nuestra nueva de OTRO paciente mientras otra nuestra desaparece: sigue siendo eco', async () => {
+      const base = await conDriver([
+        filaCita({
+          ...nuestra,
+          hora: '2026/10/10 13:00',
+          elaborada: '2026-10-01 00:32:28.210',
+        }),
+      ]).detectChanges(null);
+      const ronda = await conDriver([
+        filaCita({
+          descripcion: 'ASIGNADA POR WHATSAPP',
+          hist: '99999999',
+          hora: '2026/10/10 13:20',
+          elaborada: '2026-10-01 11:30:00.000',
+        }),
+      ]).detectChanges(base.nextCursor);
+
+      expect(ronda.events.map((e) => e.op)).toEqual(['CANCEL']);
+    });
+
+    it('una segunda cita nuestra del mismo paciente, con la primera todavía viva: sigue siendo eco', async () => {
+      const primera = filaCita({
+        ...nuestra,
+        hora: '2026/10/10 13:00',
+        elaborada: '2026-10-01 00:32:28.210',
+      });
+      const base = await conDriver([primera]).detectChanges(null);
+      const ronda = await conDriver([
+        primera,
+        filaCita({
+          ...nuestra,
+          hora: '2026/10/12 08:00',
+          fecha: '2026-10-12',
+          elaborada: '2026-10-01 11:30:00.000',
+        }),
+      ]).detectChanges(base.nextCursor);
+
+      expect(ronda.events).toHaveLength(0);
+    });
+
+    it('la vieja que se borró era del hospital (sin marca): la nuestra nueva sigue siendo eco', async () => {
+      const base = await conDriver([
+        filaCita({
+          descripcion: 'ASIGNADA EN VENTANILLA',
+          hist: nuestra.hist,
+          hora: '2026/10/10 13:00',
+        }),
+      ]).detectChanges(null);
+      const ronda = await conDriver([
+        filaCita({
+          ...nuestra,
+          hora: '2026/10/10 15:00',
+          elaborada: '2026-10-01 11:30:00.000',
+        }),
+      ]).detectChanges(base.nextCursor);
+
+      expect(ronda.events.map((e) => e.op)).toEqual(['CANCEL']);
+    });
+  });
+
   it('una cita del hospital (sin marca) sí se reporta como alta', async () => {
     const base = await conDriver([]).detectChanges(null);
     const ronda = await conDriver([

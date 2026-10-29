@@ -20,6 +20,7 @@ import {
   enmascararDocumento,
   enmascararNombre,
   formatAppointmentCompact,
+  formatTimeOnly,
   resumenRetencion,
   TEMPLATE_CONTRACTS,
   transicionExcepcion,
@@ -179,6 +180,7 @@ const MOTIVO_SIN_AVISO: Record<string, string> = {
     'pasaron más de 24 horas desde su último mensaje y WhatsApp no permite escribirle sin una plantilla',
   SIN_PLANTILLA: 'falta registrar en Configuración la plantilla de WhatsApp aprobada en Meta',
   FALLO: 'el envío falló',
+  YA_PASO: 'la hora de la cita ya había pasado',
 };
 
 /** El estado de entrega de Meta, en palabras. */
@@ -275,12 +277,25 @@ export function resumenPublico(
         meta.motivo === 'SIN_PLANTILLA' && plantilla
           ? `falta registrar en Configuración la plantilla «${plantilla}», aprobada en Meta`
           : (MOTIVO_SIN_AVISO[String(meta.motivo)] ?? 'el envío falló');
+      // ⏳ 2026-10-29: el aviso de una cancelación espera unos minutos por si el
+      // hospital vuelve a crear la cita.
+      if (meta.aviso === 'NO_HIZO_FALTA') {
+        return meta.motivo === 'MISMA_CITA'
+          ? `El hospital anuló en su sistema esta cita, que el paciente había agendado por ${agendo}, y minutos después le volvió a crear la misma (mismo médico y hora). No hizo falta escribirle al paciente.`
+          : `${que} No se le envió el aviso automático porque el personal ya le escribió desde la Bandeja. Confirme que el paciente quedó enterado y cierre el caso.`;
+      }
+      const hora =
+        typeof meta.avisarDesdeIso === 'string' && !Number.isNaN(Date.parse(meta.avisarDesdeIso))
+          ? formatTimeOnly(new Date(meta.avisarDesdeIso))
+          : null;
       const aviso =
         meta.aviso === 'ENVIADO'
           ? `Se le avisó por ${canal}${meta.via === 'PLANTILLA' ? ` con la plantilla «${plantilla ?? 'de WhatsApp'}»` : ''}.`
-          : meta.aviso === 'PENDIENTE'
-            ? 'El aviso al paciente se estaba enviando.'
-            : `No se le pudo avisar por ${canal}: ${motivo}. Comuníquese con el paciente.`;
+          : meta.aviso === 'EN_ESPERA'
+            ? `Se le avisará por ${canal}${hora ? ` hacia las ${hora}` : ' en unos minutos'}, si en ese tiempo el hospital no le da otra cita (a veces la anula y la vuelve a crear). Si se lo dice usted antes desde «Escribir al paciente», el aviso automático no sale.`
+            : meta.aviso === 'PENDIENTE'
+              ? 'El aviso al paciente se estaba enviando.'
+              : `No se le pudo avisar por ${canal}: ${motivo}. Comuníquese con el paciente.`;
       return `${que} ${aviso} Confirme que el paciente quedó enterado y cierre el caso.`;
     }
     // 🔎 Lo que dijo el paciente de una cita que el asistente le acababa de agendar

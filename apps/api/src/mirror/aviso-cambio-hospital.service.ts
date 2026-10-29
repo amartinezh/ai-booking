@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
+import { Cron } from '@nestjs/schedule';
 import {
   destinoDeContacto,
   formatAppointmentLong,
@@ -60,12 +61,51 @@ const ORIGENES_DEL_ASISTENTE: readonly string[] = ['WHATSAPP', 'TELEGRAM'];
 /** Cuánto antes de la cancelación pudo nacer la cita nueva para contar como cambio de hora. */
 export const VENTANA_CAMBIO_DE_HORA_MS = 10 * 60_000;
 
+/**
+ * ⏳ Cuánto se espera para avisar una CANCELACIÓN (2026-10-29). El hospital a veces
+ * anula una cita y la vuelve a crear minutos después (a Yully le avisamos «su cita
+ * fue cancelada» a las 9:18 y el hospital se la volvió a crear igual a las 9:22).
+ * Si en este tiempo aparece otra cita del mismo paciente, el aviso es el del cambio
+ * —o ninguno, si es la misma cita—; si no, el de la cancelación.
+ */
+export const ESPERA_AVISO_CANCELACION_MS = 10 * 60_000;
+
+/** Con la cita a menos de esto, no se espera: el paciente tiene que saberlo ya. */
+export const MARGEN_SIN_ESPERA_MS = 60 * 60_000;
+
+/** Lo mínimo que vale la pena esperar; menos que eso, se avisa ya. */
+const ESPERA_MINIMA_MS = 60_000;
+
+/** Casos en espera que revisa cada vuelta del barrido, como mucho. */
+const LOTE_EN_ESPERA = 50;
+
+/**
+ * Cuándo avisar una cancelación sin cita nueva: `null` = ya. Nunca después de
+ * `MARGEN_SIN_ESPERA_MS` antes de la cita, y si la espera queda en menos de un
+ * minuto, tampoco se espera.
+ */
+export function momentoDelAviso(
+  ahora: Date,
+  inicioDeLaCita: Date,
+  esperaMs: number = ESPERA_AVISO_CANCELACION_MS,
+): Date | null {
+  if (esperaMs <= 0) return null;
+  const objetivo = Math.min(
+    ahora.getTime() + esperaMs,
+    inicioDeLaCita.getTime() - MARGEN_SIN_ESPERA_MS,
+  );
+  return objetivo - ahora.getTime() >= ESPERA_MINIMA_MS
+    ? new Date(objetivo)
+    : null;
+}
+
 export type MotivoSinAviso =
   | 'SIN_CONTACTO'
   | 'TELEFONO_EQUIVOCADO'
   | 'FUERA_DE_VENTANA'
   | 'SIN_PLANTILLA'
-  | 'FALLO';
+  | 'FALLO'
+  | 'YA_PASO';
 
 export interface ResultadoAviso {
   aviso: 'ENVIADO' | 'NO_ENVIADO';
@@ -90,6 +130,7 @@ function primerNombre(nombreCompleto: string | null | undefined): string {
 const SELECT_CITA = {
   id: true,
   origin: true,
+  status: true,
   epsId: true,
   patientId: true,
   patient: {
@@ -139,6 +180,16 @@ export class AvisoCambioHospitalService {
     }
   }
 
+  /**
+   * Cuánto se espera antes de avisar una cancelación. Una propiedad, no la
+   * constante a secas, para que las pruebas del envío puedan pedir el aviso
+   * inmediato (`0`) sin tocar el reloj.
+   */
+  protected esperaAvisoMs = ESPERA_AVISO_CANCELACION_MS;
+
+  /** Evita que dos vueltas del barrido se pisen en la misma réplica. */
+  private barriendo = false;
+
   private async procesar(
     organizationId: string,
     appointmentId: string,
@@ -152,21 +203,21 @@ export class AvisoCambioHospitalService {
     if (cita.scheduleSlot.startTime.getTime() <= ahora.getTime()) return;
 
     // ¿El hospital le dio otra cita? (ver la nota de arriba)
-    const nueva = await this.prisma.appointment.findFirst({
-      where: {
-        organizationId,
-        patientId: cita.patientId,
-        id: { not: cita.id },
-        status: 'SCHEDULED',
-        origin: 'MIRROR',
-        createdAt: {
-          gte: new Date(ahora.getTime() - VENTANA_CAMBIO_DE_HORA_MS),
-        },
-        scheduleSlot: { startTime: { gt: ahora } },
-      },
-      orderBy: { createdAt: 'desc' },
-      select: SELECT_CITA,
-    });
+    const nueva = await this.buscarCitaNueva(
+      organizationId,
+      cita,
+      new Date(ahora.getTime() - VENTANA_CAMBIO_DE_HORA_MS),
+      ahora,
+    );
+
+    // Anulada y vuelta a crear igual (mismo médico y hora): para el paciente no
+    // cambió nada. Ni aviso ni caso.
+    if (nueva && esLaMismaCita(cita, nueva)) {
+      this.logger.log(
+        `Cita ${cita.id}: el hospital la anuló y la volvió a crear igual (${nueva.id}); no se le avisa al paciente.`,
+      );
+      return;
+    }
 
     const kind: TipoExcepcion = nueva
       ? 'CITA_MOVIDA_POR_HOSPITAL'
@@ -179,7 +230,14 @@ export class AvisoCambioHospitalService {
       antesIso: cita.scheduleSlot.startTime.toISOString(),
       nuevaIso: nueva ? nueva.scheduleSlot.startTime.toISOString() : null,
       nuevaCitaId: nueva?.id ?? null,
+      canceladaIso: ahora.toISOString(),
     };
+
+    // ⏳ Una cancelación sin cita nueva espera unos minutos, por si el hospital
+    // la vuelve a crear (lo resuelve `avisarLosPendientes`).
+    const avisarDesde = nueva
+      ? null
+      : momentoDelAviso(ahora, cita.scheduleSlot.startTime, this.esperaAvisoMs);
 
     // La fila es el candado: solo quien la CREA avisa. Una cancelación que llegue
     // otra vez no le escribe dos veces al paciente.
@@ -196,11 +254,17 @@ export class AvisoCambioHospitalService {
         epsId: cita.epsId,
         doctorId: (nueva ?? cita).scheduleSlot.doctorId,
         appointmentStartAt: inicio,
-        meta: { ...metaBase, aviso: 'PENDIENTE' },
+        meta: avisarDesde
+          ? {
+              ...metaBase,
+              aviso: 'EN_ESPERA',
+              avisarDesdeIso: avisarDesde.toISOString(),
+            }
+          : { ...metaBase, aviso: 'PENDIENTE' },
       },
       ahora,
     );
-    if (registro !== 'CREADA') return;
+    if (registro !== 'CREADA' || avisarDesde) return;
 
     const aviso = await this.avisar(organizationId, cita, nueva, kind, ahora);
 
@@ -214,6 +278,207 @@ export class AvisoCambioHospitalService {
         meta: { ...metaBase, ...aviso },
       },
     });
+  }
+
+  /**
+   * La cita que el hospital le dio al mismo paciente: del hospital, vigente,
+   * futura y nacida desde `desde` (unos minutos antes de la cancelación; en el
+   * barrido, también las de después).
+   */
+  private buscarCitaNueva(
+    organizationId: string,
+    cita: CitaParaAviso,
+    desde: Date,
+    ahora: Date,
+  ): Promise<CitaParaAviso | null> {
+    return this.prisma.appointment.findFirst({
+      where: {
+        organizationId,
+        patientId: cita.patientId,
+        id: { not: cita.id },
+        status: 'SCHEDULED',
+        origin: 'MIRROR',
+        createdAt: { gte: desde },
+        scheduleSlot: { startTime: { gt: ahora } },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: SELECT_CITA,
+    });
+  }
+
+  /**
+   * ⏳ Cada minuto: las cancelaciones que esperaban por si el hospital volvía a
+   * crear la cita (2026-10-29). Cada caso se reclama con compare-and-set sobre su
+   * aviso `EN_ESPERA`: con dos réplicas, solo una le escribe al paciente.
+   */
+  @Cron('20 * * * * *')
+  async cadaMinuto(): Promise<void> {
+    // Sin parámetros, como los demás barridos: la librería de cron le pasa al
+    // método sus propios argumentos y pisaría la fecha por defecto.
+    await this.avisarLosPendientes();
+  }
+
+  async avisarLosPendientes(ahora: Date = new Date()): Promise<void> {
+    if (this.barriendo) return;
+    this.barriendo = true;
+    try {
+      const casos = await this.prisma.syncException.findMany({
+        where: {
+          kind: 'CITA_CANCELADA_POR_HOSPITAL',
+          status: { in: ['ABIERTA', 'EN_REVISION'] },
+          meta: { path: ['aviso'], equals: 'EN_ESPERA' },
+        },
+        select: {
+          id: true,
+          organizationId: true,
+          appointmentId: true,
+          meta: true,
+          firstSeenAt: true,
+        },
+        orderBy: { firstSeenAt: 'asc' },
+        take: LOTE_EN_ESPERA,
+      });
+      for (const caso of casos) {
+        const meta = leerMeta(caso.meta);
+        const desde = msDeIso(meta.avisarDesdeIso);
+        if (Number.isFinite(desde) && desde > ahora.getTime()) continue;
+        try {
+          await this.resolverEnEspera(caso, meta, ahora);
+        } catch (error: unknown) {
+          this.logger.error(
+            `Aviso en espera del caso ${caso.id} falló: ${getErrorMessage(error)}`,
+          );
+        }
+      }
+    } catch (error: unknown) {
+      this.logger.error(
+        `Barrido de avisos en espera falló: ${getErrorMessage(error)}`,
+      );
+    } finally {
+      this.barriendo = false;
+    }
+  }
+
+  private async resolverEnEspera(
+    caso: {
+      id: string;
+      organizationId: string;
+      appointmentId: string | null;
+      firstSeenAt: Date;
+    },
+    meta: Record<string, unknown>,
+    ahora: Date,
+  ): Promise<void> {
+    const organizationId = caso.organizationId;
+    // Reclamarlo: si otra réplica ya lo tomó, o una persona lo cerró, se deja.
+    const { count } = await this.prisma.syncException.updateMany({
+      where: {
+        id: caso.id,
+        organizationId,
+        status: { in: ['ABIERTA', 'EN_REVISION'] },
+        meta: { path: ['aviso'], equals: 'EN_ESPERA' },
+      },
+      data: { meta: { ...meta, aviso: 'PENDIENTE' } },
+    });
+    if (count !== 1) return;
+
+    const terminar = (
+      cambios: Record<string, unknown>,
+      severidad?: SeveridadExcepcion,
+    ) =>
+      this.prisma.syncException.updateMany({
+        where: { id: caso.id, organizationId },
+        data: {
+          ...(severidad ? { severity: severidad } : {}),
+          meta: { ...meta, ...cambios } as Prisma.InputJsonValue,
+        },
+      });
+
+    const cita = caso.appointmentId
+      ? await this.prisma.appointment.findFirst({
+          where: { id: caso.appointmentId, organizationId },
+          select: SELECT_CITA,
+        })
+      : null;
+    if (!cita) {
+      await terminar({ aviso: 'NO_ENVIADO', motivo: 'FALLO' }, 'ALTA');
+      return;
+    }
+    if (cita.scheduleSlot.startTime.getTime() <= ahora.getTime()) {
+      await terminar({ aviso: 'NO_ENVIADO', motivo: 'YA_PASO' });
+      return;
+    }
+
+    // Si alguien del personal ya le escribió desde la Bandeja, no se repite.
+    const escrito = await this.prisma.syncExceptionLog.findFirst({
+      where: { exceptionId: caso.id, action: 'MENSAJE_AL_PACIENTE' },
+      select: { id: true },
+    });
+    if (escrito) {
+      await terminar({
+        aviso: 'NO_HIZO_FALTA',
+        motivo: 'LE_ESCRIBIO_EL_PERSONAL',
+      });
+      return;
+    }
+
+    const cancelada = msDeIso(meta.canceladaIso);
+    const desde = new Date(
+      (Number.isFinite(cancelada) ? cancelada : caso.firstSeenAt.getTime()) -
+        VENTANA_CAMBIO_DE_HORA_MS,
+    );
+    const nueva = await this.buscarCitaNueva(
+      organizationId,
+      cita,
+      desde,
+      ahora,
+    );
+
+    if (nueva && esLaMismaCita(cita, nueva)) {
+      await terminar({
+        aviso: 'NO_HIZO_FALTA',
+        motivo: 'MISMA_CITA',
+        nuevaIso: nueva.scheduleSlot.startTime.toISOString(),
+        nuevaCitaId: nueva.id,
+      });
+      await this.exceptions.autoResolver(
+        organizationId,
+        caso.id,
+        'El hospital volvió a crear la misma cita (mismo médico y hora): no hizo falta avisarle al paciente.',
+        ahora,
+      );
+      return;
+    }
+
+    const kind: TipoExcepcion = nueva
+      ? 'CITA_MOVIDA_POR_HOSPITAL'
+      : 'CITA_CANCELADA_POR_HOSPITAL';
+    if (nueva) {
+      // Ya no es una cancelación: el hospital le dio otra cita.
+      await this.prisma.syncException.updateMany({
+        where: { id: caso.id, organizationId },
+        data: {
+          kind,
+          title: TITULO_EXCEPCION[kind],
+          doctorId: nueva.scheduleSlot.doctorId,
+          appointmentStartAt: nueva.scheduleSlot.startTime,
+        },
+      });
+    }
+
+    const aviso = await this.avisar(organizationId, cita, nueva, kind, ahora);
+    const inicio = (nueva ?? cita).scheduleSlot.startTime;
+    const minutosParaLaCita = (inicio.getTime() - ahora.getTime()) / MS_MIN;
+    const base: SeveridadExcepcion =
+      aviso.aviso === 'ENVIADO' ? 'MEDIA' : 'ALTA';
+    await terminar(
+      {
+        nuevaIso: nueva ? nueva.scheduleSlot.startTime.toISOString() : null,
+        nuevaCitaId: nueva?.id ?? null,
+        ...aviso,
+      },
+      severidadPorCercania(base, minutosParaLaCita),
+    );
   }
 
   /** Quién agendó la cita con el asistente: el remitente de su confirmación. */
@@ -437,3 +702,22 @@ export class AvisoCambioHospitalService {
 type CitaParaAviso = Prisma.AppointmentGetPayload<{
   select: typeof SELECT_CITA;
 }>;
+
+/** La misma cita para el paciente: mismo médico y misma hora. */
+function esLaMismaCita(a: CitaParaAviso, b: CitaParaAviso): boolean {
+  return (
+    a.scheduleSlot.doctorId === b.scheduleSlot.doctorId &&
+    a.scheduleSlot.startTime.getTime() === b.scheduleSlot.startTime.getTime()
+  );
+}
+
+/** Milisegundos de una fecha ISO guardada en `meta`; `NaN` si no es una. */
+function msDeIso(valor: unknown): number {
+  return typeof valor === 'string' ? Date.parse(valor) : NaN;
+}
+
+function leerMeta(meta: unknown): Record<string, unknown> {
+  return meta && typeof meta === 'object' && !Array.isArray(meta)
+    ? { ...(meta as Record<string, unknown>) }
+    : {};
+}
