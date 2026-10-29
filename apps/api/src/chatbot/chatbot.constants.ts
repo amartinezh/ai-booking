@@ -861,6 +861,16 @@ const FORMAL = {
     `Lo lamento, ese horario lo acaba de tomar otro paciente y por ahora no quedan más horarios por este medio. 🙏\n\n` +
     `Puede escribirme *"Hola"* más tarde o comunicarse con ${contacto}.`,
 
+  // 🏥 El hospital ajustó su agenda y ya no tiene a ese médico a esa hora
+  // (2026-10-29): no es que otro paciente lo tomara.
+  agendaCambioOtrasOpciones: (epsName: string, lineas: string) =>
+    `Lo lamento: el hospital acaba de ajustar su agenda y ese horario ya no está disponible. 🙏 Estos son los que quedan con *${epsName}*:\n\n${lineas}\n` +
+    `_Responda con la letra del que prefiera._`,
+
+  agendaCambioSinOtros: (contacto: string) =>
+    `Lo lamento: el hospital acaba de ajustar su agenda y ese horario ya no está disponible, y por ahora no quedan más horarios por este medio. 🙏\n\n` +
+    `Puede escribirme *"Hola"* más tarde o comunicarse con ${contacto}.`,
+
   // El médico dejó de aceptar reservas por WhatsApp mientras el paciente
   // decidía. NO es una colisión de cupo: el horario sigue libre, solo que no
   // por este canal — decirle que "otro paciente lo tomó" sería mentira, y el
@@ -2297,6 +2307,14 @@ const INFORMAL = {
 
   cupoTomadoSinOtros: (contacto: string) =>
     `Qué pena, justo ese horario lo acaba de tomar otro paciente y por ahora no quedan más horarios por aquí. 🙏\n\n` +
+    `Escríbeme *"Hola"* más tarde o comunícate con ${contacto}.`,
+
+  agendaCambioOtrasOpciones: (epsName: string, lineas: string) =>
+    `Qué pena: el hospital acaba de ajustar su agenda y ese horario ya no está disponible. 🙏 Estos son los que quedan con *${epsName}*:\n\n${lineas}\n` +
+    `_Mándame la letra del que prefieras._`,
+
+  agendaCambioSinOtros: (contacto: string) =>
+    `Qué pena: el hospital acaba de ajustar su agenda y ese horario ya no está disponible, y por ahora no quedan más horarios por aquí. 🙏\n\n` +
     `Escríbeme *"Hola"* más tarde o comunícate con ${contacto}.`,
 
   // Ver la nota de la versión formal: el cupo NO está tomado, solo cerrado

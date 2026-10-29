@@ -45,6 +45,7 @@ import { esPreguntaEnVezDeRespuesta } from './pregunta-al-confirmar';
 import { servicioQueNoSeAgenda } from './servicio-no-agendable';
 import { dudaSobreLaCita } from './duda-cita-agendada';
 import { esCancelarASecas, pideCitaNueva } from './cita-nueva-o-cambio';
+import { esRechazoPorAgendaDelHis } from '../mirror/rechazo-del-his';
 import { cupoBloqueadoParaElAsistente } from 'src/appointments/bloqueos-agenda';
 import {
   fueraDelPlazoParaElAsistente,
@@ -107,6 +108,7 @@ import {
   cumpleAnticipacionAlReservar,
   fechaEnPalabras,
   diaComunDeLosCupos,
+  esRechazo,
   etiquetaOtroHorario,
   finDelPlazoParaAgendar,
   inicioDelDiaSiguiente,
@@ -8764,12 +8766,12 @@ export class ChatbotService implements OnModuleInit {
       // Sin letra válida: el paciente (típicamente por voz) puede referirse al
       // cupo por su día/hora ("la de mañana a las 3") en vez de la letra.
       // Intentamos casar UN único cupo de los ofrecidos; si resulta ambiguo o no
-      // se reconoce, sigue abajo.
-      const matched = await this.matchOfferedSlotByVoice(
-        organizationId,
-        senderId,
-        text,
-      );
+      // se reconoce, sigue abajo. Con un «no» delante («No quedaría bien para
+      // las 6:30», 2026-10-29) nombra la hora para rechazarla: no se casa nada.
+      const rechaza = esRechazo(text);
+      const matched = rechaza
+        ? null
+        : await this.matchOfferedSlotByVoice(organizationId, senderId, text);
       if (matched) {
         await this.advanceAfterSlotSelected({
           organizationId,
@@ -8785,11 +8787,9 @@ export class ChatbotService implements OnModuleInit {
 
       // «La de las diez» con dos cupos a las diez, «mañana» con los tres de
       // mañana: señala cupos que ya ve. No se adivina: se le pide la letra.
-      const casan = await this.offeredSlotsMatching(
-        organizationId,
-        senderId,
-        text,
-      );
+      const casan = rechaza
+        ? null
+        : await this.offeredSlotsMatching(organizationId, senderId, text);
       // 👨‍⚕️ Varios a esa hora, pero nombró al médico: «Miércoles 28 alas 9am con
       // el doctor Santiago» (2026-10-28). Con uno solo de ese médico, es ese.
       const delMedico =
@@ -9008,6 +9008,28 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
+   * ¿El hospital rechazó la cita porque ya no tiene a ese médico ese día? Lo
+   * dice el motivo que la API guardó al anularla (`metaLog.rechazoDelHis`).
+   */
+  private async rechazadaPorAgendaDelHis(
+    appointmentId: string | undefined,
+  ): Promise<boolean> {
+    if (!appointmentId) return false;
+    try {
+      const cita = await this.prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        select: { metaLog: true },
+      });
+      const meta = cita?.metaLog as {
+        rechazoDelHis?: { motivo?: unknown };
+      } | null;
+      return esRechazoPorAgendaDelHis(meta?.rechazoDelHis?.motivo);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * 🎯 El cupo que eligió ya no está (otro paciente, el hospital, o el médico
    * dejó de recibir por WhatsApp): se le arma un menú nuevo con lo que queda
    * (2026-10-28). Antes se le pedía «la letra nuevamente» del menú viejo y
@@ -9021,6 +9043,8 @@ export class ChatbotService implements OnModuleInit {
     userMessage: string | undefined;
     slotIdTomado: string;
     medicoNoDisponible?: boolean;
+    /** El hospital ajustó su agenda: el médico ya no tiene ese horario (2026-10-29). */
+    agendaDelHospital?: boolean;
   }): Promise<string> {
     const { organizationId, senderId, MSGS } = p;
     await this.soltarCupoApartado(organizationId, senderId, p.slotIdTomado);
@@ -9035,9 +9059,10 @@ export class ChatbotService implements OnModuleInit {
     ]);
     if (!serviceName || !epsName) {
       // Sin la búsqueda en la sesión: como antes, con las letras que ve.
-      const aviso = p.medicoNoDisponible
-        ? MSGS.medicoNoDisponiblePorWhatsapp()
-        : MSGS.slotTomado();
+      const aviso =
+        p.medicoNoDisponible || p.agendaDelHospital
+          ? MSGS.medicoNoDisponiblePorWhatsapp()
+          : MSGS.slotTomado();
       await this.smartReply(organizationId, senderId, aviso);
       await this.setUserState(
         organizationId,
@@ -9066,9 +9091,13 @@ export class ChatbotService implements OnModuleInit {
       );
     }
     if (slots.length === 0) {
-      const reply = MSGS.cupoTomadoSinOtros(
-        this.contactoDe(MSGS, await this.organizacionDe(organizationId)),
+      const contacto = this.contactoDe(
+        MSGS,
+        await this.organizacionDe(organizationId),
       );
+      const reply = p.agendaDelHospital
+        ? MSGS.agendaCambioSinOtros(contacto)
+        : MSGS.cupoTomadoSinOtros(contacto);
       await this.smartReply(organizationId, senderId, reply);
       await this.cleanUpSession(organizationId, senderId);
       return reply;
@@ -9085,15 +9114,21 @@ export class ChatbotService implements OnModuleInit {
       serviceName,
       epsIdForSlots,
       armarRespuesta: (lineas) =>
-        p.medicoNoDisponible
-          ? MSGS.medicoNoDisponibleOtrasOpciones(epsName, lineas)
-          : MSGS.cupoTomadoOtrasOpciones(epsName, lineas),
+        p.agendaDelHospital
+          ? MSGS.agendaCambioOtrasOpciones(epsName, lineas)
+          : p.medicoNoDisponible
+            ? MSGS.medicoNoDisponibleOtrasOpciones(epsName, lineas)
+            : MSGS.cupoTomadoOtrasOpciones(epsName, lineas),
       userMessage: p.userMessage || '[audio]',
       step: 'SLOTS_REOFFERED',
       metadata: {
         eps: epsName,
         specialty: serviceName,
-        motivo: p.medicoNoDisponible ? 'MEDICO_NO_DISPONIBLE' : 'CUPO_TOMADO',
+        motivo: p.agendaDelHospital
+          ? 'AGENDA_DEL_HOSPITAL'
+          : p.medicoNoDisponible
+            ? 'MEDICO_NO_DISPONIBLE'
+            : 'CUPO_TOMADO',
       },
     });
     return (
@@ -10496,14 +10531,18 @@ export class ChatbotService implements OnModuleInit {
         });
         if (enElHospital === 'RECHAZADA') {
           // El hospital ya tenía ocupado ese horario (o se cruza con otra
-          // cita): la API anuló la cita en AgenIA. Se le ofrece elegir otro,
-          // igual que cuando otro paciente toma el cupo: con un menú nuevo.
+          // cita, o ya no tiene a ese médico ese día): la API anuló la cita en
+          // AgenIA. Se le ofrece elegir otro con un menú nuevo, diciéndole por
+          // qué (2026-10-29).
           const reply = await this.reofrecerTrasCupoTomado({
             organizationId,
             senderId,
             MSGS,
             userMessage: text,
             slotIdTomado: slotIdFinal,
+            agendaDelHospital: await this.rechazadaPorAgendaDelHis(
+              bookingResult.appointmentId,
+            ),
           });
           await this.auditFailure(senderId, organizationId, {
             reason: FailureReason.SLOT_TAKEN,
@@ -11948,13 +11987,15 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      // El día o la hora de uno que ve; con varios, el médico que nombra.
-      const casan = this.nombraDiaOHora(text)
-        ? this.cuposQueCasan(
-            text,
-            await this.cuposOfrecidosParaCambiar(organizationId, senderId),
-          )
-        : null;
+      // El día o la hora de uno que ve; con varios, el médico que nombra. Con
+      // un «no» delante, la hora que nombra es la que rechaza (2026-10-29).
+      const casan =
+        !esRechazo(text) && this.nombraDiaOHora(text)
+          ? this.cuposQueCasan(
+              text,
+              await this.cuposOfrecidosParaCambiar(organizationId, senderId),
+            )
+          : null;
       const delMedico =
         casan && casan.length > 1 ? cuposDelMedicoNombrado(text, casan) : [];
       const unico =

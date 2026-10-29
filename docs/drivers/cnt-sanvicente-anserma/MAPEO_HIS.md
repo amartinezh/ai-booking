@@ -569,3 +569,301 @@ fila-a-fila que muestra ese volcado **es engañoso**.
 **La buena noticia:** como `AudDesc` trae los valores, la correlación exacta no
 necesita el tiempo: se empareja por `NU_HIST_PAC_CIT` + `FE_HORA_CIT` extraídos
 del texto. Es más robusto que lo que intenté.
+
+---
+
+## §2.9 · `HISTORIACLINICA` — resumen de la atención al paciente (2026-10-28)
+
+Para [`docs/PLAN_RESUMEN_ATENCION.md`](../../PLAN_RESUMEN_ATENCION.md). Script: `sql/HISTORIA_CLINICA_DESCUBRIMIENTO_SOLO_LECTURA.sql` (ronda 1) y `sql/HISTORIA_CLINICA_ESTADISTICA_SOLO_LECTURA.sql`.
+
+### Ronda 1, corrida 1 — bloque HC-0 en `ESEHSVP` ✅
+
+| Dato | Columna |
+|---|---|
+| Fecha de la historia | `FE_FECH_HICL` |
+| Paciente (= documento, como en todo el HIS) | `NU_HIST_PAC_HICL` |
+| Médico que atendió | `CD_MED_REAL_HICL` |
+| Médico de la agenda (código virtual) | `CD_MED_ASIG_HICL` |
+| Llave primaria, índice agrupado **e identidad** | `NU_NUME_HICL` (una sola columna) |
+| Especialidad | ❌ no existe en la tabla |
+| Servicio | ❌ no existe en la tabla |
+
+**Qué implica:**
+
+- **Una atención tiene un número propio, único y creciente: `NU_NUME_HICL`.** Es la llave natural del resumen (`AttentionSummary.hisKey`) y el **cursor del agente**: «las historias con número mayor que el último leído», una búsqueda por el índice agrupado, sin recorrer la tabla. Falta confirmar en HC-5 qué marca dice que está cerrada (el número nace al abrirla).
+- **Las tablas hijas deberían llamarse `NU_NUME_HICL_xxxx`** (nomenclatura del HIS: columna referida + sufijo propio). HC-3 y E-4 las buscan así.
+- **La especialidad y el servicio salen de la cita** del mismo paciente el mismo día (`CITAS_MEDICAS.CD_CODI_ESP_CIT`/`CD_CODI_SER_CIT`), y el tipo de profesional del cargo del médico que atendió (`MEDICOS.DE_CARG_MED`). Una historia sin cita ese día probablemente no es consulta externa (urgencias, hospitalización, enfermería): HC-6 (d) y (e) lo miden.
+- **Los scripts ya no adivinan:** HC-0 verifica que las cinco columnas existan (si el proveedor las cambia, se detiene) y calcula desde qué `NU_NUME_HICL` leer para cubrir 90 días, caminando hacia atrás por tramos de 20.000. Probado contra un SQL Server 2022 en compatibilidad 140 con un HIS falso: con tramos de 1.000 encontró exactamente las historias de la ventana; el script de estadística da cifras idénticas con frontera y con recorrido completo.
+
+### Ronda 1, corrida 2 — HC-0 a HC-4 en `ESEHSVP` (2026-10-28) ✅
+
+(Los resultados de HC-5 a HC-8 no llegaron: el mensaje se cortó por largo.)
+
+**Volumen (HC-0).** 2.270.507 historias desde el 2009-04-30 (números hasta 2.478.679: hay huecos); la última, 2026-10-28 14:33. **47.927 en 90 días ≈ 16.000 al mes ≈ 530 por día**, el doble de las citas (~250-300 por día hábil): la tabla mezcla consulta externa con urgencias, hospitalización y otras. La frontera de 90 días se halló leyendo 4 tramos (80.000 números).
+
+**`HISTORIACLINICA` es solo la cabecera de la atención (HC-2).** 16 columnas, sin texto: 230 MB de datos para 2,27 millones de filas (~100 bytes por historia) y **3,8 GB de índices** (38 índices, muchos repetidos). Sin disparadores, sin Change Tracking ni CDC.
+
+| Columna | Qué es (✅ visto · ❓ hipótesis) |
+|---|---|
+| `NU_NUME_HICL` | ✅ número de la historia: identidad, llave primaria, índice agrupado |
+| `FE_FECH_HICL` | ✅ fecha (NOT NULL; por defecto `0` = 1900-01-01) — indexada |
+| `NU_HIST_PAC_HICL` | ✅ paciente (FK declarada a `PACIENTES.NU_HIST_PAC`) |
+| `CD_MED_REAL_HICL` / `CD_MED_ASIG_HICL` | ✅ médico que atendió / de la agenda |
+| `TX_TIPO_HICL` varchar(3) NOT NULL | ❓ **tipo de historia** (consulta, evolución, urgencias…): decide qué se envía (D1). R2-2 lo resuelve |
+| `NU_ESTA_HICL` tinyint NOT NULL | ❓ **estado** (¿abierta/cerrada?): decide cuándo se envía (§3.1). R2-2 y R2-3 |
+| `TX_CODSER_HICL` varchar(12) | ✅ **el servicio sí está**, con otro nombre (HC-0 buscaba `CD_CODI_SER%`); indexado con la fecha |
+| `TX_ASISTE_HICL` varchar(2) | ❓ ¿«asistió» o «asistencial»? |
+| `NU_AUTO_DAPL_HICL` | ✅ FK declarada a `DATOS_PLANTILLA`: **el texto que escribe el médico** |
+| `NU_NUME_LABO_HICL` int NOT NULL | ❓ la «atención» o admisión (`LABORATORIO`, 4,6 M filas); de ella cuelgan los diagnósticos (`R_LABO_DIAG`) |
+| `NU_NUME_PADR_HICL` | ❓ historia padre (las evoluciones de una hospitalización) |
+| `NU_NUME_REG_HICL` | ❓ registro de ingreso (`REGISTRO`, 71.040 filas) |
+| `NU_NUME_CONE_HICL` | ✅ FK a `CONEXIONES` (sesión de quien la escribió) |
+| `NU_CLAVEHIST_HICL`, `NU_CLAVEEVOL_HICL` | ❓ claves internas |
+
+**Dónde está el contenido (HC-1, HC-3, HC-4c).** Las tablas hijas tienen **llaves foráneas declaradas** (no solo nomenclatura):
+
+| Qué | Tabla | Enlace | Tamaño |
+|---|---|---|---|
+| Texto del médico (motivo, enfermedad actual, plan…) | `DATOS_PLANTILLA` → `DATOS_PLANTILLA_TEXT`, `DATOS_PLANTILLA_MEMO` | `NU_AUTO_DAPL_HICL` | 2,27 M / **45,8 M** / 21,8 M filas. Modelo de plantillas: `PLANTILLA_HIST` (430), `CONCEPTO_HIST` (3.893), `GRUPO_HIST`, `R_PLAN_CONC` |
+| Órdenes | `HIST_ORDEN` | `NU_NUME_HICL_HORD` (FK) | 1,6 M; `NU_TIPO_HORD`, `TX_TIAP_HORD`, `ME_OBSERV_HORD`, `FE_FECH_HORD`, `TX_VIGE_HORD`, `FE_POSFECHA` |
+| Exámenes y procedimientos ordenados | `HIST_PROC` | `NU_AUTO_HORD_HPRO` → `HIST_ORDEN` (y `NU_NUME_HICL_HPRO`, que admite nulo) | 1,3 M; `CD_CODI_SER_HPRO` (→ `SERVICIOS`), `NU_CANT_HPRO`, `DE_INDI_HPRO` |
+| **Medicamentos** | `HIST_MEDI` (+ `_FREC`, `_JUST`) | ❓ no tiene `NU_NUME_HICL_xxx`; probablemente por `HIST_ORDEN` como `HIST_PROC` | 2,7 M filas, 2 GB. Catálogos: `ARTICULO`, `ARTICULO_IUM`, `MEDICAMENTOS_DCI`, `PRINCIPIOSMED_DCI`, `IN_R_CUM_ARTI` |
+| Indicaciones / recomendaciones | `HIST_INDI` | `NU_NUME_HICL_HIND` (FK) | 450 k; `DE_DESC_HIND` (text) |
+| Incapacidad | `HIST_INCA` | `NU_NUME_HICL_HINC` (FK) | 22 k; días, desde, tipo, origen |
+| Remisión | `HIST_REMI` | `NU_NUME_HICL_HREM` (FK) | 189 k, 984 MB; servicio, prioridad, motivo, CUPS |
+| ❓ Interconsulta u orden a especialidad | `HIST_ORTIAT` | `NU_NUME_HICL_HOTA` (FK) | 110 k; `CD_CODI_ESP_HOTA` |
+| Datos RIPS de la consulta (finalidad, causa externa, tipo de diagnóstico) | `HIST_TEMLABO` | `NU_NUME_HICL_HTLA` (FK) | 1,6 M |
+| Diagnósticos | `R_LABO_DIAG` + `DIAGNOSTICO` (CIE-10) + `TIPODIAGNOSTICO` | ❓ por `NU_NUME_LABO` | 6,3 M |
+| Otros | `HIST_CERT` (certificados), `HIST_IMPRESION(_DETA)` (impresiones), `HIST_AUDIT` (notas de auditoría), `HIST_OBSTETRIC`, `RIE_*` (escalas de riesgo, vacías), `TRIAGEHISTORI` | | |
+
+Vacías o sin uso: `EVOLUCION`, `DIAGNOSTICOS`, `OTROS_DX`, todas las `*_T`, todas las `CX_*` (cirugía), `HIST_CONTRA_REF`, `CONF_INTERO_FHIR`, `TM_INTEROPERABILIDADHC`.
+
+**El HIS ya genera el Resumen Digital de Atención (HC-4a).** `SP_INTEROPERABILIDAD_IHC_V2(@ID_PACIENTE, @ID_ATENCION, @OPERACION, @ID_IPS, @ID_MEDICO, @ID_TIPO_RDA, @LISTAID, @TIPO_AT)` se ejecutó **249 veces entre las 12:36 y las 14:25** del 28-oct: está en uso. Lee diagnósticos, medicamentos (con DCI y CUM), procedimientos, incapacidad, antecedentes, alergias y resultados de laboratorio, pero **no** el texto de la plantilla. El de 2023 (`SP_INTEROPERABILIDAD`, sin uso) **sí** lee `DATOS_PLANTILLA_TEXT/_MEMO`: es la guía para el texto. `SP_INTEROPERABILIDAD_HC_FHIR` nunca se ejecutó. Hay una tabla `INTER_RES1888` (1 fila) que, por el nombre, configura la interoperabilidad de una resolución 1888 (por confirmar).
+
+**Cómo se escribe.** La aplicación crea la historia con `PA_Ins_HISTORIACLINICA` (107 ejecuciones en 2 horas; recibe estado, tipo, servicio y «asiste»). No apareció un procedimiento que actualice el estado: R2-3 busca todo código que toque `NU_ESTA_HICL`.
+
+**Implicaciones para el plan.**
+- La llave del resumen y el cursor del agente siguen siendo `NU_NUME_HICL`; el resumen sale de unir ~8 tablas por llaves con FK e índice probable.
+- El peso de una atención no está en `HISTORIACLINICA` (0,1 KB) sino en las tablas de contenido: E-3 de la estadística engaña sola; E-5/E-6 pesan la atención completa.
+- La lista de permisos para `agenia_sync` deja de ser una tabla: son ~15 tablas y sus catálogos (plan §4.1).
+
+### Ronda 2 — `sql/HISTORIA_CLINICA_RONDA2_SOLO_LECTURA.sql` en `ESEHSVP` (2026-10-28) ✅
+
+(Llegó hasta R2-3; el resto del código y R2-4 se cortaron.) 16.342 historias en 30 días.
+
+**Tipos de historia (`TX_TIPO_HICL`), 30 días:**
+
+| Tipo | Historias | Qué es (por servicio y cargo) | ¿Resumen? |
+|---|---|---|---|
+| `CON` | 6.585 (40 %) | **Consulta.** Medicina general (`S39141` 1.821, control de hipertensos `S39141-1` 1.116), urgencias (`S39145` 1.099, casi todas con registro de ingreso), internista, nutrición, pediatría, psicología, psiquiatría, ginecología, planificación… | **Sí: la ambulatoria (sin registro), ~5.500/mes** |
+| `NEN` | 4.908 (30 %) | Nota de enfermería (auxiliares), sin servicio | No |
+| `EVC` | 2.585 (16 %) | Evolución o nota con historia padre: intrahospitalaria, nota médica, **lectura de exámenes** (`890201-LE`), psicoterapia, odontología | Por decidir (la lectura de exámenes sí formula) |
+| `PRC` | 2.110 (13 %) | Procedimiento: terapia física, odontología, educación | No |
+| `CPN`/`HPN` | 109 | Control prenatal / primera consulta de la gestante | Por decidir |
+| `EVP`, `ITP` | 45 | Evolución de procedimiento, otros | No |
+
+**Qué trae una consulta (`CON`, 30 días):** órdenes 67 %, indicaciones 39 %, remisión 19 %, interconsulta (`HIST_ORTIAT`) 17 %, incapacidad 1,8 %, datos RIPS y plantilla 100 %, diagnóstico en el 99,9 % de las atenciones (1,87 por atención).
+
+**Tipos de orden (`HIST_ORDEN.NU_TIPO_HORD`):** **5 = medicamentos** (únicos que cuelgan en `HIST_MEDI`; en consulta, 23.298 renglones en 3.712 historias), con `TX_TIAP_HORD` = **`AI`** (2.999 historias) o **`AE`** (1.847) — ❓ por confirmar en R3-3: ¿aplicado en el servicio vs. para la casa? —; **1 a 4 = `HIST_PROC`** (exámenes y procedimientos): el 2 es el más común (13.450 renglones, ~4,7 por orden: perfil de laboratorio), el 4 es de un renglón (608), el 1 y el 3 son raros. R3-4 dice qué es cada uno.
+
+**Medicamentos (`HIST_MEDI`), columnas para el resumen:** `NO_NOMB_ARTI_HMED` (nombre), `DE_CTRA_HMED` (concentración), `TX_FOFA_HMED` (forma), `DE_UNME_HMED`, `NU_CANT_HMED` (cantidad), `NU_CTDSIS_HMED`+`TX_UMDSIS_HMED` (dosis), `NU_CTFREC_HMED`+`TX_CDFREC_HMED` (frecuencia), `TX_VIAD_HMED` (vía), `TX_DURA_HMED` (duración), `DE_DOSIS_HMED` (texto) y `TX_INDDOS_HMED` (indicación), `NU_ESTA_HMED`, `NU_NUME_FORM_HMED` (fórmula de farmacia). Catálogo: `ARTICULO` (`NU_MEDCTRL_ARTI` = de control, `NU_CODCUM_ARTI`).
+
+**Exámenes (`HIST_PROC`):** `CD_CODI_SER_HPRO` (→ `SERVICIOS.NO_NOMB_SER`), `NU_CANT_HPRO`, `DE_INDI_HPRO`, `NU_ESTA_HPRO`.
+
+**Diagnósticos (`R_LABO_DIAG`):** por la atención (`NU_NUME_LABO_RLAD` = `NU_NUME_LABO_HICL`): `CD_CODI_DIAG_RLAD` (→ `DIAGNOSTICO.DE_DESC_DIAG`), `ID_TIPO_DIAG_RLAD` (→ `TIPODIAGNOSTICO`: impresión / confirmado), `ID_TIPO_RLAD` (❓ principal/relacionado). Los más frecuentes: I10X hipertensión (1.517), E785, Z012, K029, K050, E119 diabetes, E039…
+
+**Diagnóstico sensible (lista propuesta D7), consultas de 30 días:** salud mental 311 (5,7 %), ITS 7, violencia o abuso 7, VIH 3 → **~6 % de las consultas no se enviarían**; además 121 evoluciones de salud mental.
+
+**El texto del médico — modelo de plantillas (EAV):** `HISTORIACLINICA.NU_AUTO_DAPL_HICL` → `DATOS_PLANTILLA` (`NU_NUME_RPET_DAPL`) → `R_PLAN_ESP_TIAT` (plantilla `NU_NUME_PLHI_RPET`, **especialidad** `CD_CODI_ESP_RPET`, tipo de atención) → `R_PLAN_CONC` (campo: concepto `NU_NUME_COHI_RPC`, grupo `NU_NUME_GRHI_RPC`, índice `NU_INDI_RPC`) ↔ valores en `DATOS_PLANTILLA_TEXT` (≤255, 45,8 M), `_MEMO` (texto largo, 21,8 M, 5,4 GB), `_NUME` (53,8 M), `_DATE`, `_IMG`, `_GRAF`, por `NU_AUTO_DAPL_xxxx` + `NU_INDI_xxxx` → nombres en `CONCEPTO_HIST.CD_CODI_COHI` y `GRUPO_HIST.CD_CODI_GRHI`. ❓ Que el valor casa por `NU_INDI_RPC` es hipótesis: R3-5 (b) la valida.
+
+**Otras tablas:** `LABORATORIO` es la **prestación** (una por atención, con especialidad `CD_CODI_ESP_LABO`, servicio, médico, finalidad, causa externa, valores): no es el laboratorio clínico. `REGISTRO` es el **ingreso** (urgencias u hospitalización: fechas de ingreso y salida, cama, acompañante). `CONEXIONES` dice quién escribió (usuario y equipo).
+
+**Índices:** todos los enlaces que leería el agente están indexados (`HIST_ORDEN` por historia, `HIST_MEDI` y `HIST_PROC` por orden, `HIST_INDI` por historia, `DATOS_PLANTILLA_*` agrupados por plantilla, `R_LABO_DIAG` agrupado por atención): cada salto es una búsqueda por índice.
+
+**Cómo se crea:** `PA_Ins_HISTORIACLINICA` inserta con `FE_FECH_HICL = GETDATE()` (la hora de guardado, no la de la atención) y recibe `NU_ESTA_HICL` de la aplicación. El SP de 2023 clasifica la atención como 1 = consulta externa, 2 = con registro (`NU_NUME_REG_HICL <> 0`), 3 = urgencias con triage.
+
+**❓ `NU_ESTA_HICL`:** en consulta, 64 % en 0 y 36 % en 1, y las dos aparecen en todo el periodo (el 0 no es «aún abierta»). R3-1 lo resuelve.
+
+**🔴 `INTER_RES1888`** es la conexión con la plataforma del Ministerio para el RDA: endpoint, cliente, **secreto y token en texto plano** (`TX_CLIESC_1888`, `TX_TOKEN_1888`). AgenIA **nunca** debe tener permiso sobre ella. Vale avisarle al hospital que esas credenciales están legibles para cualquiera con lectura sobre la tabla.
+
+### Ronda 3 — `sql/HISTORIA_CLINICA_RONDA3_SOLO_LECTURA.sql` en `ESEHSVP` (2026-10-28) ✅
+
+(Llegó todo menos R3-9 y el final de R3-8. R3-3 (e) estaba mal planteada —ver abajo— y llenó el mensaje; ya está corregida.)
+
+**Volumen.** 16.298 consultas «sin registro de ingreso» en 90 días, **5.494 en 30**. Pero ⚠️ **la consulta de urgencias (`S39145`, 1.099 al mes) también va sin registro**: «sin registro» no basta para quedarse con la consulta externa; hay que filtrar por servicio (o por la plantilla 838, «CONSULTA ATENCION DE URGENCIAS»). Sin urgencias: **~4.400 consultas al mes**. Piloto `S39141` + `S39141-1`: **2.937**.
+
+**`NU_ESTA_HICL` no es «abierta/cerrada».**
+- No cambia con la antigüedad: ~40 % en 1 todas las semanas.
+- Depende del médico: el internista, 95 % en 1; un médico general, 0,4 %; odontología, nutrición y psicología, 0 %.
+- En la auditoría del HIS, la historia solo tiene inserciones (operación `1`, versión `20.4.0`); ningún código de la base la actualiza.
+- La aplicación lo fija al guardar, y coincide casi uno a uno con «la consulta tiene exámenes o procedimientos ordenados» (S39141-1: 908 con exámenes, 901 en estado 1; pediatría: 43 y 43; internista: 147 y 143). R4-1 lo confirma.
+- ⇒ **No hay marca de cierre.** El HIS guarda la historia una sola vez, al terminar.
+
+**Cuándo se escribe (R3-2).**
+- La historia se guarda una mediana de **13 minutos después de la hora de la cita** (p10 −33, p90 61): al final de la consulta.
+- Las órdenes se escriben después: mediana 2 min, p90 6, p99 25 y **máximo 116 min**; ninguna después de 2 horas.
+- La auditoría registra inserciones en `HISTORIACLINICA`, `HIST_ORDEN`, `HIST_INDI`, `HIST_REMI`, `HIST_ORTIAT` y `HIST_INCA`; `HIST_MEDI`, `HIST_PROC` y las plantillas no se auditan.
+- ⇒ **Enviar 2 horas después de `FE_FECH_HICL`** cubre todo lo observado.
+- Pico de 7 a 17 h; lo de la noche es urgencias.
+
+**Medicamentos: `AI` y `AE` son los dos fórmula para la casa** (oral, 90 días, cantidad para el periodo), no «aplicado en el servicio» como supuse.
+- `AI`: los crónicos de la farmacia del hospital (losartán, hidroclorotiazida, amlodipino, atorvastatina, levotiroxina, enalapril, metformina…).
+- `AE`: lo que la farmacia del hospital no tiene (rosuvastatina, linagliptina, pregabalina, quetiapina, tamsulosina, tirillas y lancetas).
+- ❓ Hipótesis: `AI` = dispensación **interna**, `AE` = **externa** (gestor de la EPS). Hay que confirmarlo con el hospital: decide qué le dice el resumen al paciente sobre dónde reclamar.
+- `NU_ESTA_HMED`: 1 = formulado, **2 = dispensado** (cuadra exacto con los que tienen número de fórmula de farmacia: 2.071 `AI`, 136 `AE`).
+- En consulta, 13.234 renglones `AI` y 7.436 `AE` en 30 días. Casi todos traen duración, dosis en texto y frecuencia; el 89 % trae indicación.
+- Códigos que hay que traducir: unidad de dosis (`168`), frecuencia (`NU_CTFREC_HMED` 12/24 con `TX_CDFREC_HMED` = `2`, probablemente horas), duración en días (`90`). R4-2 busca sus catálogos.
+
+**Fórmulas posfechadas.**
+- El 56 % de los renglones `AI` y el 39 % de los `AE` tienen `FE_POSFECHA`: el tratamiento de 90 días se entrega por meses.
+- `NU_ORDEN_FECHAPOS` es el **número de la orden que encabeza la serie** (de 2 a 6 órdenes), no un número de meses. R3-3 (e) lo listaba fila por fila: de ahí el mensaje cortado.
+- ⇒ El resumen debe mostrar cada medicamento **una vez**, con las fechas desde las que se reclama cada entrega. Para el paciente es lo más útil del resumen. R4-4 mide la estructura.
+
+**Órdenes de servicio (`HIST_PROC` por `NU_TIPO_HORD`).**
+- **1** = consulta de control o con especialista (ginecología, medicina general, nutrición, dermatología).
+- **2** = **laboratorio** (11.285 renglones: hemoglobina glicosilada, glucosa, perfil lipídico, creatinina, hemograma, parcial de orina, microalbuminuria, TSH).
+- **3** = cirugía (raro).
+- **4** = otros procedimientos y ayudas diagnósticas (monitoreo ambulatorio de presión arterial, terapia física, espirometría, implante, potenciales evocados, electromiografía, curaciones, biopsia).
+- Las imágenes no aparecen entre los más ordenados: se verán en las remisiones.
+
+**El texto del médico (R3-5).** El camino de plantillas quedó **confirmado**: 129.103 de 129.103 valores casan por `NU_INDI_RPC`. Plantillas de la consulta ambulatoria en 7 días:
+- 870 «CONSULTA EXTERNA», medicina general: 447.
+- 844 «CONTROL CRÓNICOS»: 292.
+- 838 «CONSULTA ATENCION DE URGENCIAS»: 283.
+- 858 medicina interna: 66.
+- Odontología, nutrición, ginecología, planificación, primera infancia, psicología.
+
+Campos útiles para el paciente:
+- **870:** motivo («MC:», ~23 bytes), «Dx. Principal» (texto), «CONDUCTA → Anotaciones» (el plan, ~615 bytes, hasta 1.912), signos vitales (TA, FC, FR, peso, talla, IMC, temperatura). «Recomendaciones y Signos de alarma», «Medicamentos», «Laboratorio» y «Remisiones» son casillas numéricas, no texto (R4-5 (b) dice qué guardan).
+- **844:** «Conducta» (~174 bytes), «**Metas de educación para el próximo control**» (~361), «**Próximo control**», riesgo cardiovascular, casillas de educación (dieta hiposódica, hipograsa, hipoglúcida, ejercicio, bajar de peso) y paraclínicos solicitados. «Análisis de los hallazgos» es largo (~1.843 bytes) y técnico.
+- Cada plantilla repite datos del paciente (nombre, teléfono, dirección, EAPB): el resumen **no** los toma de ahí.
+- ⇒ Qué campos van al resumen se configura **por plantilla** (lista de conceptos), no por código.
+
+**Servicios (R3-6, 30 días).** Con contenido para el paciente:
+- `S39141` medicina general (1.821): medicamentos 68 %, exámenes 53 %, remisión 32 %.
+- `S39141-1` control de hipertensos (1.116): medicamentos 99 %, exámenes 81 %.
+- Lectura de exámenes, `EVC` `890201-LE` (330).
+- Medicina interna (261): exámenes e indicaciones ~100 %.
+- Pediatría, nutrición (indicaciones 100 %), dermatología, ginecología y las consultas de PyDT por curso de vida.
+
+Sin contenido o por fuera: urgencias `S39145` (2 % con medicamentos), odontología, psicología, psiquiatría, enfermería de planificación.
+
+**Contacto (R3-7): 10.088 pacientes con consulta ambulatoria en 90 días.**
+- **Celular: 95 %.**
+- **Correo: inútil.** El 97 % tiene el mismo correo de relleno del hospital: `pacienteshospital@gmail.com` (9.812 pacientes), además de `hsvpanserma@hotmail.com` (91) y `pacientesanserma@gmail.com` (24). Solo **~145 pacientes (1,4 %)** tienen un correo propio, y varios con errores de digitación (`gmai.com`, `gamil.com`).
+- Menores: 1.868 (18,5 %). El 90 % tiene el celular del acompañante.
+
+**Permisos (R3-8).** `agenia_sync` tiene permisos sobre `CITAS_*`, catálogos, `PACIENTES` y `PA_Ins_AUDITOR`. **Ninguno sobre `HISTORIACLINICA`**, como se acordó.
+
+### Ronda 4 — `sql/HISTORIA_CLINICA_RONDA4_SOLO_LECTURA.sql` en `ESEHSVP` (2026-10-28) ✅
+
+**`NU_ESTA_HICL` = 1 ⇔ la consulta tiene exámenes o procedimientos ordenados (confirmado).**
+
+| Estado | Con exámenes | Sin exámenes |
+|---|---|---|
+| 1 | 2.208 | 0 |
+| 0 | 160 | 3.126 |
+
+Las 160 en estado 0 con exámenes son, probablemente, órdenes agregadas después de guardar. No es una marca de cierre.
+
+**Series posfechadas (R4-4).** 1.528 series en 30 días, todas de la misma consulta.
+- Cada serie es la orden de hoy (sin `FE_POSFECHA`) más una orden por cada mes siguiente: +30 días (1.528), +60 (1.320), +90 (293), +120 y +150 (53 cada una).
+- Órdenes posfechadas por serie: 1 (208), **2 (1.027)**, 3 (240), 5 (52). Cuadra con las duraciones de 60, 90, 120 y 180 días.
+- El mismo medicamento aparece 3 veces en la consulta en la mayoría de los casos (963).
+- ⇒ El resumen agrupa por medicamento (`CD_CODI_ARTI_HMED`) y lista las fechas: «hoy; desde el 27-nov; desde el 27-dic».
+
+**🔴 La dosis estructurada no es confiable; la indicación escrita por el médico sí (R4-3).**
+- `DE_DOSIS_HMED` lo arma el HIS a partir de los códigos («1 mg cada 24 Horas» para un omeprazol de 20 mg en cápsula).
+- Los campos estructurados a veces contradicen la indicación:
+  - Ivermectina: estructura «1 cada 24 h, 15 días»; médico: «4 TAB VO EN AYUNAS. REPETIR EN 15 DÍAS IGUAL».
+  - Linagliptina: estructura «1 cada 24 h»; médico: «TOMAR 1 TAB Y MEDIA AL ALMUERZO».
+- `TX_INDDOS_HMED` (el texto del médico) viene en el 89 % de los renglones.
+- ⇒ **El resumen muestra la indicación del médico tal cual**, con la cantidad y la duración en días.
+  - Solo si la indicación viene vacía, usa los campos estructurados traducidos con los catálogos.
+  - Nunca muestra `DE_DOSIS_HMED`.
+
+**Códigos de la fórmula (R4-2, R4-6).**
+- **Frecuencia:** `NU_CTFREC_HMED` (24, 12, 8, 6, 1…) más `TX_CDFREC_HMED` (`2` ~ horas, `3` ~ días, `4`, `5`, `6`, `7`). Se traduce con **`PAC_CONFIG_HIS` tipo 37**.
+- **Unidad de dosis:** `TX_UMDSIS_HMED` (`168`, `137`, `214`…). Se traduce con **`INV_CONFIG_MED` tipo 1**.
+- **Vía:** `TX_CDVIAD_HMED` (`048` oral, `058` subcutánea…), con `VIA_ADMINISTRACION`; ya viene en texto en `TX_VIAD_HMED`.
+- **Duración:** `TX_DURA_HMED`, en **días** (el RDA la manda con código `d`).
+- ✅ **R4-7, catálogos:**
+  - **Frecuencia** (`PAC_CONFIG_HIS` tipo 37): `1` minutos, `2` horas, `3` día, `4` semanas, `5` mes, `6` año, `7` según respuesta al tratamiento.
+  - **Unidad de dosis** (`INV_CONFIG_MED` tipo 1): `168` mg, `137` µg, `62` g, `176` ml, `173` mg/ml, `172` mg/l, `65` g/ml, `214` %, `247` U, `72` UI, `77` UI/ml, `9000` dosis. `0` y vacío no están en el catálogo.
+  - 🔴 **Por qué la dosis estructurada engaña:** `168` = **mg** es lo que queda en 11.335 de ~20.700 renglones con `NU_CTDSIS_HMED = 1`. El médico escribe «1» pensando en una tableta y la unidad se queda en mg. Así nace el «1 mg cada 24 Horas» de un omeprazol de 20 mg.
+  - ⇒ La cantidad y la unidad por dosis **no se muestran nunca**. La frecuencia (`NU_CTFREC_HMED` + catálogo) sí tiene sentido, pero también puede contradecir la indicación (ivermectina): solo se usa de respaldo, si lo aprueba el comité (D19).
+
+El RDA del proveedor:
+- usa las órdenes `AI` y `AE`, las dos como medicamentos del paciente;
+- **excluye `NU_ESTA_HMED = 0`** y los renglones sin `NU_AUTO_UNVE_HMED` (unidad de venta).
+- 🔴 **Corrección (M-3, 2026-10-28):** el resumen solo copia el primer filtro (anulados). El de unidad de venta deja fuera casi todos los medicamentos externos `AE` (con él quedan 2 a 132 consultas con `AE` al mes; R3-3 contó ~1.780 en 30 días, ninguna anulada), y el paciente tiene que reclamarlos igual.
+
+**Campos de la plantilla útiles para el paciente (R4-5), por plantilla:**
+
+| Plantilla | Para el resumen | No va (técnico, largo o sensible) |
+|---|---|---|
+| 870 Consulta externa | Motivo («MC:»), plan («CONDUCTA → Anotaciones», ~615 B), «EDUCACION → Acerca de:» (12 %) | Enfermedad actual (~420 B), revisión por sistemas, examen físico, antecedentes, datos del paciente |
+| 844 Control crónicos | Conducta (~174 B), **próximo control**, **metas de educación** (~361 B), casillas de educación (dieta hiposódica, hipograsa, hipoglúcida, ejercicio, bajar de peso, dejar de fumar: 0/1), «HTA/DM controlada» | Análisis (~1.843 B), enfermedad actual (~2.133 B), adherencia |
+| 858 Medicina interna | Motivo, «Análisis y Plan» (~344 B) | Enfermedad actual |
+| 907 Nutrición | Recomendaciones (~557 B), observaciones, próximo control | Análisis (~1.760 B), antecedentes |
+| 899 Ginecología | Motivo, «Análisis y Plan» | Enfermedad actual |
+| 860/843 Primera infancia / infancia | Recomendaciones de alimentación y de estimulación, recomendaciones y observaciones, próximo control | Hallazgos |
+| 849/862 PyDT adultez / vejez | «Recomendaciones/Signos alarma/Plan cuidado» (~1.200 B), plan de intervención (casillas) | Riesgo de Framingham (por decidir) |
+| 908 Odontología programada | — («Recomendaciones del plan» es texto fijo de 421 B, igual para todos) | — |
+| Psicología, planificación familiar, urgencias | Fuera (D1/D7) | — |
+
+- **Diagnósticos:** se toman de `R_LABO_DIAG` + `DIAGNOSTICO`, no del texto «Dx. Principal» de la plantilla.
+- **Casillas `NUME`:** guardan 0/1. En consulta externa, «Recomendaciones y Signos de alarma» está marcada solo en el 9 %: es una casilla, no un texto.
+- **Signos vitales sucios:**
+  - talla en metros y en centímetros mezclada (1,6 y 160);
+  - IMC de 51.840;
+  - temperatura de 360 y de 98;
+  - frecuencia respiratoria de 96.
+
+  ⇒ No van en la primera versión, salvo quizá la presión arterial (decisión del comité).
+
+### Estadística — `sql/HISTORIA_CLINICA_ESTADISTICA_SOLO_LECTURA.sql` en `ESEHSVP` (2026-10-28) ✅
+
+Informe interactivo: `evidencia/ESTADISTICA_HISTORIA_CLINICA_2026-10-28.html`. Promedios de abril a septiembre de 2026.
+
+- **15.051 historias al mes**, de 13.700 (abril) a 16.543 (septiembre): +21 %. Consultas 6.307, notas de enfermería 4.407, evoluciones 2.369, procedimientos 1.791, otros (prenatal) ~170.
+- 5.394 pacientes distintos y ~78 médicos al mes; ~6.800 historias al mes con una cita ese mismo día.
+- Consultas: ambulatorias 5.309; **sin urgencias 4.290**; **piloto `S39141` + `S39141-1`: 2.814**.
+- `HISTORIACLINICA`: 2.270.727 filas, 3,9 GB, casi todo índices (38). La fila pesa 0,05 KB de datos (E-3, exacto).
+- **Atención completa: 3,58 KB por historia** (consulta 6,28 KB; nota de enfermería 1,15 KB; evolución 2,43 KB; control prenatal 9,15 KB). **54 MB al mes**, ~650 MB al año.
+  - Casi la mitad es texto largo de plantilla (`DATOS_PLANTILLA_MEMO`, 1,70 KB por historia).
+  - Las remisiones son pocas (0,11 por historia) pero grandes (~5,4 KB cada una).
+  - Medicamentos 0,27 KB; exámenes 0,04 KB; diagnósticos 0,01 KB.
+
+### Prueba en PRUEBAS — `sql/HISTORIA_CLINICA_PRUEBAS_SOLO_LECTURA.sql` (entregado 2026-10-28, sin correr)
+
+Reemplaza a HC-9 y R2-5. Protocolo E1-E7 para el hospital (consulta externa completa, control de hipertensos, corrección y anulación, entrega en farmacia, tres casos que no deben enviarse, un menor, el papel impreso) y bloques P-0 a P-7: el resumen tal como lo armaría el agente, tiempos y auditoría, huellas antes y después de corregir, «¿se enviaría?» con las reglas del plan, costo de la consulta del agente y el texto de los permisos por columna. Se detiene en cualquier base que no sea `PRUEBAS` y solo lee pacientes cuyo primer apellido contiene «PRUEBA». Probado en un SQL Server de prueba con el esquema real.
+
+### Mensajes por mes — `sql/HISTORIA_CLINICA_MENSAJES_SOLO_LECTURA.sql` en `ESEHSVP` (2026-10-28) ✅
+
+Abril al 28 de octubre; 29.879 consultas externas sin urgencias, 19.613 del piloto. Cifras en el informe (sección «Noviembre»).
+
+- **Días:** los lunes no hay consulta (36 por lunes en el piloto, frente a 120-144 de martes a viernes) y **el sábado se atiende a los campesinos** (107 por sábado; 14-22 % de las consultas del mes). Domingos y festivos, casi nada. Lo confirmó el usuario.
+- **Lo que anota el médico (piloto):** 77 campos llenos por consulta (54 con texto), 4,2 KB de texto; ~0,75 KB irían al informe (0,85 en abril-junio, 0,65 desde julio); 2,1 diagnósticos; recomendaciones en el 25 %.
+- **Fórmulas (piloto, con los dos filtros del RDA):** 64-69 % de las consultas; 2,4 órdenes por fórmula (la mitad posfechadas), 3,1 medicamentos distintos. `kb_indicaciones` = 0 de abril a junio: la indicación del médico (`TX_INDDOS_HMED`) se llena desde julio.
+- 🔴 **El filtro de unidad de venta deja fuera los externos `AE`:** con él, 2-132 consultas con `AE` al mes; la ronda 3 contó ~1.780 en 30 días y ninguna anulada. El resumen solo quita los anulados (corregido en §2.9 R4, en el plan §3.2 y en el script de PRUEBAS).
+- **Exámenes (piloto):** 60-64 % de las consultas, ~4,7 exámenes por consulta con exámenes, 98 % laboratorio; remisión en ~32 %, incapacidad ~1,2 %.
+- **Contacto (piloto, 9.875 pacientes):** 13 % menores; 94,7 % con celular válido (o del acompañante); 3,1 % con correo propio, 89 % con el de relleno; 5,6 % de consultas con diagnóstico sensible.
+
+Segunda parte — `sql/HISTORIA_CLINICA_MENSAJES_2_SOLO_LECTURA.sql` (2026-10-28) ✅:
+
+- **Fórmulas sin el filtro de unidad de venta (M-7, piloto):** 78-81 % de las consultas; 53 % con externos `AE`, 19 % de las fórmulas solo `AE` (~430 al mes); 4,1 medicamentos distintos por fórmula; ~6.700 órdenes al mes (casi la mitad posfechadas). Del 87 al 100 % de los renglones `AE` no tiene unidad de venta (desde septiembre algunos sí). **`NU_ESTA_HMED = 0` casi no existe** (0-1 renglones al mes): el HIS parece borrar el medicamento anulado; E3 en PRUEBAS lo confirma.
+- **Plantillas (M-8):** el piloto solo usa 870 y 844. Lo que va al informe en la 844 bajó de 1,38 KB (abril) a 0,57 KB (octubre); en la 870 se mantuvo en 0,5-0,7 KB. En la consulta externa sin urgencias, unas 5.340 consultas (18 %) usan plantillas sin campos en la lista: 908 y 887 odontología programada, 847 y 861 planificación familiar, 884 odontología de urgencias, 901 dermatología, 905 pediatría, 895 ingreso intrahospitalario, 872 recién nacido, 855 posparto, 856 adolescente, 842 joven, 880 terapia respiratoria, 551 dictamen de embriaguez (más psicología 874/897 y psiquiatría 871, que no se envían).
+- Siguiente: `sql/HISTORIA_CLINICA_PLANTILLA_844_SOLO_LECTURA.sql` (qué campo de la 844 cambió en julio).
+
+⚠️ **Intercalación:** una tabla # creada con `CREATE TABLE` toma la intercalación de tempdb; si difiere de la de la base, cruzarla con columnas del HIS falla (error 468). Las tablas # con texto llevan `COLLATE DATABASE_DEFAULT` (corregido también en el script de PRUEBAS).
+
+### Pendiente
+
+- Correr la prueba en PRUEBAS (arriba) con el hospital.
+- Correr `HISTORIA_CLINICA_PLANTILLA_844_SOLO_LECTURA.sql` en `ESEHSVP` (qué campo de la 844 cambió en julio).
+- Preguntas al hospital:
+  - ¿`AI`/`AE` es farmacia interna/externa?
+  - ¿Dónde reclama el paciente las entregas posfechadas?
+  - ¿Por qué el correo de relleno?
+  - Las credenciales de `INTER_RES1888`.

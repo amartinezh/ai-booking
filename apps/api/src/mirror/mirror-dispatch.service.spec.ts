@@ -1845,6 +1845,41 @@ describe('MirrorDispatchService — rechazo definitivo del HIS', () => {
     expect(tx.syncOutbox.updateMany).toHaveBeenCalled();
   });
 
+  // 2026-10-29: el agente que corre en el hospital todavía no marca «médico sin
+  // turno ese día»; la API lo reconoce por el motivo. Antes se reintentaba diez
+  // veces, quedaba en dead-letter y la paciente esperaba una confirmación.
+  it('«no tiene turno» sin la marca del agente también es rechazo definitivo', async () => {
+    await service.ack(ORG, {
+      seqs: [],
+      failedSeqs: ['7'],
+      failures: [
+        {
+          seq: '7',
+          error:
+            'El médico RU70 no tiene turno el 2026-10-30: la agenda de AgenIA y la del HIS no coinciden.',
+        },
+      ],
+    });
+
+    const upd = tx.appointment.update.mock.calls[0][0];
+    expect(upd.data.status).toBe('CANCELLED');
+    expect(upd.data.metaLog.rechazoDelHis.motivo).toContain('no tiene turno');
+    expect(tx.scheduleSlot.update).toHaveBeenCalledWith({
+      where: { id: 'slot-1' },
+      data: { isAvailable: false },
+    });
+  });
+
+  it('otro fallo sin la marca (p. ej. el HIS no responde) se sigue reintentando', async () => {
+    await service.ack(ORG, {
+      seqs: [],
+      failedSeqs: ['7'],
+      failures: [{ seq: '7', error: 'timeout conectando al HIS' }],
+    });
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it('la marca en un evento que NO es alta de cita se trata como fallo normal (se reintenta)', async () => {
     prisma.syncOutbox.findFirst.mockResolvedValue(
       evento({ entityType: 'SLOT' }),

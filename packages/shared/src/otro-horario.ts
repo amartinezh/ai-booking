@@ -86,7 +86,15 @@ function normalizar(texto: string): string {
 
 /** «No puedo», «no me sirve», «ninguno»: rechaza lo que se le ofreció. */
 const RECHAZO =
-  /^(no|nop|nones)$|\bningun[oa]?\b|\bno\s+(me\s+)?(sirve|sirven|queda|quedan|conviene|convienen|puedo|alcanzo)\b|\bno\s+tengo\s+tiempo\b/;
+  /^(no|nop|nones)$|\bningun[oa]?\b|\bno\s+(me\s+)?(sirve|sirven|serviria|servirian|queda|quedan|quedaria|quedarian|conviene|convienen|convendria|puedo|podria|podre|alcanzo|alcanzaria)\b|\bno\s+(me\s+)?es\s+posible\b|\bno\s+tengo\s+tiempo\b/;
+
+/**
+ * ¿Rechaza lo que se le ofreció? «No quedaría bien para las 6:30» (2026-10-29)
+ * nombra una hora para decir que NO le sirve: el menú no debe elegir ese cupo.
+ */
+export function esRechazo(texto: string | null | undefined): boolean {
+  return !!texto && RECHAZO.test(normalizar(texto));
+}
 
 /** «Otro día», «otra fecha», «un día diferente». */
 const OTRO_DIA =
@@ -112,17 +120,27 @@ const OTRA_FRANJA: Record<FranjaDelDia, FranjaDelDia> = {
 function franjaPedida(norm: string, rechaza: boolean): FranjaDelDia | null {
   if (/\b(muy|demasiado|tan)\s+temprano\b/.test(norm)) return 'TARDE';
   if (/\b(muy|demasiado|tan)\s+tarde\b/.test(norm)) return 'MANANA';
-  const nombrada = franjaNombrada(norm);
+  // Con un rechazo, solo la franja dicha con palabras se invierte («no puedo en
+  // la mañana»): «no me queda bien a las 6:30» rechaza ese cupo, no la mañana
+  // entera (2026-10-29).
+  const nombrada = rechaza ? franjaPorPalabras(norm) : franjaNombrada(norm);
   return nombrada && rechaza ? OTRA_FRANJA[nombrada] : nombrada;
 }
 
-function franjaNombrada(norm: string): FranjaDelDia | null {
+/** La franja dicha con palabras: «en la tarde», «más temprano», «tarde». */
+function franjaPorPalabras(norm: string): FranjaDelDia | null {
   // «Tarde» a secas en el menú de cupos (2026-10-28).
   if (/^((en|por|de|para)\s+)?(la|las)?\s*tardes?$/.test(norm)) return 'TARDE';
   if (/\b(en|por|de|para)\s+la\s+(tarde|tardecita)\b/.test(norm)) return 'TARDE';
   if (/\b(en|por|de|para)\s+la\s+(manana|mananita)\b/.test(norm)) return 'MANANA';
   if (/\b(mas|bien)\s+tarde\b|\btardecita\b/.test(norm)) return 'TARDE';
   if (/\btemprano\b|\bmadrugada\b/.test(norm)) return 'MANANA';
+  return null;
+}
+
+function franjaNombrada(norm: string): FranjaDelDia | null {
+  const porPalabras = franjaPorPalabras(norm);
+  if (porPalabras) return porPalabras;
   // Una hora («a las 3», «10:30 am»): el asistente busca en su franja. Sin
   // «de la tarde», «a las 3» en un hospital es de la tarde; «a las 9», de la mañana.
   const hora = parseHoraPreferida(norm);
@@ -161,6 +179,11 @@ export function interpretarOtroHorario(
   const franja = franjaPedida(norm, rechaza);
   // La hora que pide; con un rechazo («no puedo a las 7»), la que no quiere.
   const hora = rechaza ? null : parseHoraPreferida(norm);
+  // «No me queda bien a las 6:30»: rechaza ese horario; se le muestran los que
+  // siguen, no otro día (2026-10-29: el menú elegía justo las 6:30).
+  if (rechaza && !franja && parseHoraPreferida(norm) && !OTRO_DIA.test(norm)) {
+    return { fecha: null, franja: null, otroDia: false };
+  }
   // «No puedo en la mañana» pide la tarde de los mismos días, no otro día.
   const otroDia = !fecha && ((rechaza && !franja) || OTRO_DIA.test(norm));
 

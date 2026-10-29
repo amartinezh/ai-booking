@@ -343,6 +343,16 @@ describe('createAppointment — se niega antes que escribir a medias', () => {
     expect(insertDeCita(requests)).toBeUndefined();
   });
 
+  // 2026-10-29: el hospital quitó el turno del viernes de un médico después de
+  // que AgenIA ofreció el cupo. Reintentar no lo crea: es un rechazo definitivo.
+  it('sin turno del médico ese día es un RECHAZO DEL HIS (no se reintenta)', async () => {
+    const { driver } = conDriver({ turno: null });
+
+    const r = await driver.createAppointment(evento());
+
+    expect(r.rechazoDelHis).toBe(true);
+  });
+
   it('con EPS pero sin régimen se niega: no adivina el convenio', async () => {
     const { driver, requests } = conDriver();
 
@@ -1017,13 +1027,15 @@ describe('rescheduleAppointment', () => {
     expect(tx.committed).toBe(false);
   });
 
-  it('un fallo que NO es del HIS (médico sin turno ese día) no se marca como rechazo definitivo', async () => {
+  // Hasta el 2026-10-29 «médico sin turno ese día» no contaba como rechazo
+  // definitivo y se reintentaba diez veces; reintentar no crea el turno.
+  it('médico sin turno el día nuevo: rechazo definitivo, la cita vuelve a su hora anterior', async () => {
     const { driver } = conDriver({ turno: null });
 
     const r = await driver.rescheduleAppointment(eventoResched());
 
     expect(r.success).toBe(false);
-    expect(r.rechazoDelHis).toBeUndefined();
+    expect(r.rechazoDelHis).toBe(true);
   });
 
   it('anulación y alta viajan en la MISMA transacción, y se confirma una sola vez', async () => {

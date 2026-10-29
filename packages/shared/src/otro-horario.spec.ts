@@ -1,5 +1,6 @@
 import {
   diaComunDeLosCupos,
+  esRechazo,
   etiquetaOtroHorario,
   inicioDelDiaSiguiente,
   interpretarOtroHorario,
@@ -258,6 +259,45 @@ describe('interpretarOtroHorario — lo que escribieron el 27 y 28 de octubre', 
   it('«Muchas gracias» y «Perdón es B» no son pedidos de otro horario', () => {
     expect(interpretarOtroHorario('Muchas gracias', opts)).toBeNull();
     expect(interpretarOtroHorario('Perdón es B', opts)).toBeNull();
+  });
+});
+
+// 2026-10-29: «No quedaría bien para las 6:30» y el menú le reservó las 6:30.
+describe('interpretarOtroHorario — rechaza una hora que nombra', () => {
+  it.each([
+    'No quedaría bien para las 6:30.',
+    'no me sirve a las 7',
+    'A las 8 no puedo',
+    'no me queda a las 2:40',
+    'no es posible a las 10',
+  ])('«%s» pide los horarios que siguen, no esa hora ni otro día', (texto) => {
+    expect(interpretarOtroHorario(texto, opts)).toEqual({
+      fecha: null,
+      franja: null,
+      otroDia: false,
+    });
+  });
+
+  it('«No quedaría bien en la mañana» sigue pidiendo la tarde', () => {
+    expect(interpretarOtroHorario('No quedaría bien en la mañana', opts)).toMatchObject({
+      franja: 'TARDE',
+    });
+  });
+
+  it('«no puedo a las 7, otro día» pide otro día', () => {
+    expect(interpretarOtroHorario('no puedo a las 7, otro día', opts)?.otroDia).toBe(true);
+  });
+});
+
+describe('esRechazo', () => {
+  it.each(['No quedaría bien para las 6:30', 'no me sirve', 'Ninguna', 'no', 'no podría ese día'])(
+    '«%s» → sí',
+    (t) => {
+      expect(esRechazo(t)).toBe(true);
+    },
+  );
+  it.each(['A las 6:30 por favor', 'B', 'mañana en la tarde', 'Nora', null])('«%s» → no', (t) => {
+    expect(esRechazo(t)).toBe(false);
   });
 });
 

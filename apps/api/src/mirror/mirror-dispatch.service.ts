@@ -20,6 +20,7 @@ import {
   OutboxEventDto,
   OutboxEventContext,
 } from './dto/mirror.types';
+import { esRechazoPorAgendaDelHis } from './rechazo-del-his';
 
 const DEFAULT_LONG_POLL_MS = 25_000;
 const DEFAULT_LONG_POLL_INTERVAL_MS = 1_000;
@@ -619,7 +620,11 @@ export class MirrorDispatchService {
     for (const f of input.failures ?? []) {
       if (f && typeof f.seq === 'string' && SEQ_RE.test(f.seq)) {
         motivos.set(f.seq, typeof f.error === 'string' ? f.error : '');
-        if (f.rechazoDelHis === true) rechazos.add(f.seq);
+        // El agente que aún no marca «médico sin turno ese día» se reconoce por
+        // el motivo (2026-10-29, ver rechazo-del-his.ts).
+        if (f.rechazoDelHis === true || esRechazoPorAgendaDelHis(f.error)) {
+          rechazos.add(f.seq);
+        }
       }
     }
     const fallidos = new Set<string>([

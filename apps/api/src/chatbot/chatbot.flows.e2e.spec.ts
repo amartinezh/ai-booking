@@ -1151,6 +1151,16 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       );
     });
 
+    // 2026-10-29: «No quedaría bien para las 6:30» y el menú le reservó las 6:30.
+    it('1B.17b «No quedaría bien para las 8»: no elige ese cupo, muestra los que siguen', async () => {
+      await hastaLosCupos();
+      await say('No quedaría bien para las 8');
+      expect(elegido()).toBeUndefined();
+      expect(lastSent()).not.toMatch(/reservé|aparté/i);
+      expect(letra('A')).toBe('p-0800');
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
+    });
+
     it('1B.18 «Otra» a secas trae los que siguen', async () => {
       await hastaLosCupos();
       await say('Otra');
@@ -1326,6 +1336,33 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       // Puede elegir otra letra sin reiniciar.
       await say('B');
       expect(await state()).toBe(ChatState.AWAITING_CONFIRMATION);
+    });
+
+    // 2026-10-29: el hospital quitó el turno del viernes de un médico después de
+    // que AgenIA ofreció el cupo; la paciente leyó «estoy confirmando» y nunca
+    // supo más. Ahora es un rechazo, y se le dice por qué.
+    it('RECHAZADA porque el hospital ya no tiene al médico ese día: lo dice y muestra los que quedan', async () => {
+      confirmacion.esperar.mockImplementationOnce(async () => {
+        db.appointments.push({
+          id: 'apt-new',
+          status: 'CANCELLED',
+          metaLog: {
+            rechazoDelHis: {
+              motivo:
+                'El médico RU70 no tiene turno el 2026-10-30: la agenda de AgenIA y la del HIS no coinciden.',
+            },
+          },
+        });
+        db.slots.find((s) => s.id === 'slot-a')!.isAvailable = false;
+        return 'RECHAZADA';
+      });
+
+      await agendarHastaElSi();
+
+      expect(confirmacionesFinales()).toHaveLength(0);
+      expect(lastSent()).toMatch(/ajustar su agenda/);
+      expect(lastSent()).not.toMatch(/otro paciente/);
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
     });
 
     it('sin respuesta a tiempo: NO confirma, avisa que le escribe y deja la cita pendiente', async () => {
@@ -2019,6 +2056,13 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         expect(lastSent()).toMatch(/Dejé su solicitud/);
         expect(await state()).toBe(ChatState.IDLE);
         expect(db.appointments[0].status).toBe('SCHEDULED');
+      });
+
+      it('3.M3b «No me sirve a las 10»: no elige ese horario', async () => {
+        await hastaElMenu();
+        await say('No me sirve a las 10');
+        expect(await state()).not.toBe(ChatState.AWAITING_MODIFY_CONFIRM);
+        expect(db.appointments[0].scheduleSlotId).toBe('slot-old');
       });
 
       it('3.M4 «Perdón es la A»: la letra dentro de la frase', async () => {

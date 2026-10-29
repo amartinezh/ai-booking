@@ -1450,6 +1450,13 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
       if (!turno) {
         return {
           success: false,
+          // 🏥 Rechazo DEFINITIVO (2026-10-29): el hospital no tiene a ese médico
+          // ese día —ajustó su agenda después de que AgenIA ofreció el cupo—, y
+          // reintentarlo no crea el turno. Antes se reintentaba diez veces, el
+          // evento acababa en dead-letter y la paciente quedaba con «estoy
+          // confirmando con el hospital» sin respuesta. Con la marca, la API
+          // anula la cita en AgenIA, cierra el cupo y el bot le ofrece otra hora.
+          rechazoDelHis: true,
           message:
             `El médico ${p.doctorExternalKey} no tiene turno el ${feFecha}: ` +
             `la agenda de AgenIA y la del HIS no coinciden.`,

@@ -1,0 +1,1542 @@
+<title>Historias clínicas de Anserma</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: una columna de lectura (1120px) — respuesta corta, cifras, tres gráficos, calculadora, tablas y método.
+   Tipografía: Public Sans (la del sector público) para todo; IBM Plex Mono para nombres de tablas y columnas del HIS. */
+:root {
+  --bg: #eef1f4;
+  --surface: #fcfcfb;
+  --ink: #0f1a24;
+  --ink-2: #47525e;
+  --ink-3: #6a7581;
+  --line: #dfe4e9;
+  --grid: #e8ecef;
+  --accent: #1c5cab;
+  --accent-soft: #dce9fb;
+  --s-con: #2a78d6;
+  --s-nen: #eb6834;
+  --s-evc: #1baf7a;
+  --s-prc: #eda100;
+  --s-otr: #e87ba4;
+  --o1: #86b6ef;
+  --o2: #2a78d6;
+  --o3: #104281;
+  --s-one: #2a78d6;
+  --d-inf: #2a78d6;
+  --d-for: #008300;
+  --d-exa: #6250d6;
+  --f-sans: "Public Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121314; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #9a9a92;
+    --line: #2e3032; --grid: #262729; --accent: #6da7ec; --accent-soft: #1d2f47;
+    --s-con: #3987e5; --s-nen: #d95926; --s-evc: #199e70; --s-prc: #c98500; --s-otr: #d55181;
+    --o1: #184f95; --o2: #3987e5; --o3: #9ec5f4; --s-one: #3987e5;
+    --d-inf: #3987e5; --d-for: #008300; --d-exa: #9085e9;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121314; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #9a9a92;
+  --line: #2e3032; --grid: #262729; --accent: #6da7ec; --accent-soft: #1d2f47;
+  --s-con: #3987e5; --s-nen: #d95926; --s-evc: #199e70; --s-prc: #c98500; --s-otr: #d55181;
+  --o1: #184f95; --o2: #3987e5; --o3: #9ec5f4; --s-one: #3987e5;
+  --d-inf: #3987e5; --d-for: #008300; --d-exa: #9085e9;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--f-sans); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; line-height: 1.2; }
+h1 { font-size: clamp(1.7rem, 3.2vw, 2.4rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.25rem; font-weight: 650; }
+h3 { font-size: 1rem; font-weight: 650; }
+p { margin: 0; }
+code, .mono { font-family: var(--f-mono); font-size: 0.86em; }
+code, .foot, .method li, .sub, .note, .finding p, .tile .value, .nota .value { overflow-wrap: anywhere; }
+.eyebrow { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); font-weight: 600; }
+.muted { color: var(--ink-3); }
+.sub { color: var(--ink-2); max-width: 70ch; }
+
+header.top { display: grid; gap: 10px; }
+.answer {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 20px 22px; display: grid; gap: 14px;
+}
+.answer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 18px; }
+.answer-item { display: grid; gap: 4px; min-width: 0; }
+.answer-item .big { font-size: 2.1rem; font-weight: 700; line-height: 1.1; }
+.answer-item .big small { font-size: 1rem; font-weight: 600; color: var(--ink-2); margin-left: 4px; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.seg { display: inline-flex; flex-wrap: wrap; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg button {
+  font: inherit; font-size: 0.86rem; color: var(--ink-2); background: transparent; border: 0;
+  padding: 6px 12px; cursor: pointer; border-right: 1px solid var(--line);
+}
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
+.seg button:focus-visible, .linkbtn:focus-visible, th button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.switch { display: inline-flex; gap: 8px; align-items: center; font-size: 0.9rem; color: var(--ink-2); cursor: pointer; }
+.switch input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 2px; min-width: 0; }
+.tile .label { font-size: 0.82rem; color: var(--ink-2); }
+.tile .value { font-size: 1.65rem; font-weight: 650; line-height: 1.2; }
+.tile .note { font-size: 0.78rem; color: var(--ink-3); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 18px 14px; display: grid; gap: 12px; min-width: 0; }
+.card-head { display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: space-between; align-items: flex-start; }
+.card-head > div:first-child { display: grid; gap: 4px; min-width: 0; max-width: 62ch; }
+.chart { position: relative; width: 100%; min-width: 0; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.84rem; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.key-rect { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.key-line { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
+.linkbtn { font: inherit; font-size: 0.84rem; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 2px 0; text-decoration: underline; text-underline-offset: 3px; }
+.foot { font-size: 0.8rem; color: var(--ink-3); }
+
+.tooltip {
+  position: absolute; pointer-events: none; z-index: 5;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(15, 26, 36, 0.12); padding: 8px 10px; font-size: 0.82rem; min-width: 150px;
+}
+.tooltip .tt-title { font-weight: 600; margin-bottom: 4px; }
+.tooltip .tt-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.tooltip .tt-row .k { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); }
+.tooltip .tt-row strong { font-variant-numeric: tabular-nums; }
+
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 18px; }
+
+.findings { display: grid; gap: 10px; counter-reset: none; }
+.finding { display: grid; grid-template-columns: 4px 1fr; gap: 12px; align-items: stretch; }
+.finding::before { content: ""; border-radius: 2px; background: var(--line); }
+.finding.key::before { background: var(--accent); }
+.finding p { color: var(--ink-2); }
+.finding strong { color: var(--ink); }
+
+.calc { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px; }
+.calc-in { display: grid; gap: 14px; }
+.field { display: grid; gap: 6px; }
+.field label { font-size: 0.86rem; color: var(--ink-2); display: flex; justify-content: space-between; gap: 10px; }
+.field label output { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.field input[type="range"] { width: 100%; accent-color: var(--accent); }
+.calc-out { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-content: start; }
+.out { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; }
+.out .label { font-size: 0.8rem; color: var(--ink-2); }
+.out .value { font-size: 1.4rem; font-weight: 650; }
+.out .note { font-size: 0.75rem; color: var(--ink-3); }
+
+details.tbl { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+details.tbl > summary { cursor: pointer; padding: 14px 18px; font-weight: 600; list-style-position: inside; }
+details.tbl > summary .muted { font-weight: 400; margin-left: 6px; font-size: 0.86rem; }
+details.tbl > .tbl-body { padding: 0 18px 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.scroll { overflow-x: auto; min-width: 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--ink-3); font-weight: 600; font-size: 0.78rem; }
+th button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.total td { font-weight: 650; border-top: 2px solid var(--line); }
+tr.partial td { color: var(--ink-2); }
+.inbar { display: inline-block; height: 8px; border-radius: 0 3px 3px 0; background: var(--s-one); vertical-align: middle; margin-left: 8px; }
+.tbl-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.tbl-tools input, .tbl-tools select { max-width: 100%; min-width: 0; }
+.tbl-tools input, .tbl-tools select {
+  font: inherit; font-size: 0.86rem; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+}
+.method { display: grid; gap: 8px; color: var(--ink-2); font-size: 0.88rem; max-width: 80ch; }
+.method li { margin-bottom: 4px; }
+@media (prefers-reduced-motion: no-preference) {
+  .chart svg .mark { transition: opacity 120ms ease; }
+}
+
+/* Noviembre */
+.nov { gap: 18px; }
+.badge { display: inline-block; font-size: 0.74rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); white-space: nowrap; }
+.badge.est { background: transparent; border: 1px dashed var(--ink-3); color: var(--ink-2); }
+.ctl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 12px 18px; }
+.nov .tiles { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.field label output { white-space: nowrap; }
+.ctl { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.ctl > .ctl-l { font-size: 0.8rem; color: var(--ink-2); }
+.sub-h { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; justify-content: space-between; }
+.sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px 20px; }
+.presets { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.notas { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 10px; }
+.nota { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 3px; align-content: start; }
+.nota .label { font-size: 0.8rem; color: var(--ink-2); }
+.nota .value { font-size: 1.35rem; font-weight: 650; }
+.nota .note { font-size: 0.76rem; color: var(--ink-3); }
+tr.proy td { font-weight: 600; background: var(--accent-soft); }
+td.dash { color: var(--ink-3); }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">ESE Hospital San Vicente de Paúl · Anserma · HIS CNT (base ESEHSVP)</div>
+    <h1>Historias clínicas del hospital y los mensajes de noviembre</h1>
+    <p class="sub">Consulta de solo lectura del 28 de octubre de 2026 sobre las historias del 1 de abril al 28 de octubre (ese día, hasta la hora de la consulta). Dimensiona el resumen de la atención que AgenIA enviaría a los pacientes por WhatsApp y correo: el informe de la consulta, la fórmula y las órdenes de exámenes.</p>
+  </header>
+
+  <section class="answer" aria-labelledby="resp">
+    <h2 id="resp">La respuesta corta</h2>
+    <div class="answer-grid">
+      <div class="answer-item">
+        <span class="eyebrow">Historias al mes</span>
+        <span class="big" id="ans-hist">15.051</span>
+        <span class="muted">Promedio de abril a septiembre. Subió 21 % en seis meses (13.700 → 16.543).</span>
+      </div>
+      <div class="answer-item">
+        <span class="eyebrow">Información clínica al mes</span>
+        <span class="big" id="ans-mb">54,0<small>MB</small></span>
+        <span class="muted">Atención completa: cabecera, plantilla, órdenes, medicamentos, diagnósticos, remisiones. Unos 650 MB al año.</span>
+      </div>
+      <div class="answer-item">
+        <span class="eyebrow">Por historia</span>
+        <span class="big">3,6<small>KB</small></span>
+        <span class="muted">Una consulta pesa 6,3 KB; una nota de enfermería, 1,2 KB. La fila de <code>HISTORIACLINICA</code> sola, 0,05 KB.</span>
+      </div>
+      <div class="answer-item">
+        <span class="eyebrow">WhatsApp en noviembre</span>
+        <span class="big" id="ans-wa">—</span>
+        <span class="muted" id="ans-wa-n">—</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="card nov" id="nov" aria-labelledby="nov-t">
+    <div class="card-head">
+      <div>
+        <h2 id="nov-t">Noviembre: cuántos mensajes saldrían</h2>
+        <p class="sub">Cada paciente que pasó por consulta recibe el informe de su consulta, su fórmula si le formularon y sus órdenes si le pidieron exámenes. Las cifras de abril a octubre están <strong>medidas en el HIS</strong>, mes por mes. Noviembre se proyecta con el ritmo medido de cada día de la semana: los lunes no hay consulta y los sábados se atiende a los campesinos. Noviembre trae <strong>16 días de martes a viernes y 4 sábados</strong>; los lunes 2 y 16 son festivos.</p>
+      </div>
+      <span class="badge">Medido en el HIS · 28-oct-2026</span>
+    </div>
+
+    <div class="ctl-grid" role="group" aria-label="Opciones de la proyección">
+      <div class="ctl"><span class="ctl-l">Alcance</span>
+        <div class="seg" role="group" aria-label="Alcance">
+          <button type="button" data-nalc="piloto">Piloto</button>
+          <button type="button" data-nalc="sinUrg">Consulta externa sin urgencias</button>
+        </div>
+      </div>
+      <div class="ctl"><span class="ctl-l">Meses que fijan el ritmo</span>
+        <div class="seg" role="group" aria-label="Meses que fijan el ritmo">
+          <button type="button" data-nbase="abrsep">Abril a septiembre</button>
+          <button type="button" data-nbase="julsep">Julio a septiembre</button>
+          <button type="button" data-nbase="sep">Septiembre</button>
+        </div>
+      </div>
+      <div class="ctl"><span class="ctl-l">Cómo llegan los documentos</span>
+        <div class="seg" role="group" aria-label="Cómo llegan los documentos">
+          <button type="button" data-nmodo="doc">Un mensaje por documento</button>
+          <button type="button" data-nmodo="consulta">Un mensaje por consulta</button>
+        </div>
+      </div>
+      <div class="ctl"><span class="ctl-l">En WhatsApp va</span>
+        <div class="seg" role="group" aria-label="Qué va en WhatsApp">
+          <button type="button" data-nwa="pdf">El PDF</button>
+          <button type="button" data-nwa="enlace">Un enlace (lo que propone el plan)</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="tiles" aria-live="polite" aria-label="Noviembre en cifras">
+      <div class="tile"><span class="label">Consultas proyectadas</span><span class="value" id="n-cons">—</span><span class="note" id="n-cons-n">—</span></div>
+      <div class="tile"><span class="label">Mensajes de WhatsApp</span><span class="value" id="n-wa">—</span><span class="note" id="n-wa-n">—</span></div>
+      <div class="tile"><span class="label">Correos</span><span class="value" id="n-mail">—</span><span class="note" id="n-mail-n">—</span></div>
+      <div class="tile"><span class="label">Informes de la consulta</span><span class="value" id="n-inf">—</span><span class="note" id="n-inf-n">—</span></div>
+      <div class="tile"><span class="label">Fórmulas</span><span class="value" id="n-for">—</span><span class="note" id="n-for-n">—</span></div>
+      <div class="tile"><span class="label">Órdenes de exámenes</span><span class="value" id="n-exa">—</span><span class="note" id="n-exa-n">—</span></div>
+    </div>
+
+    <div class="findings">
+      <div class="finding key"><p><strong>Martes a sábado.</strong> Los lunes no hay consulta y el sábado es el día de los campesinos: <span id="h-sab">—</span> Los informes del sábado saldrían ese mismo sábado por la tarde.</p></div>
+      <div class="finding key"><p><strong>La fórmula incluye los medicamentos externos.</strong> El <span id="h-pf">—</span> de las consultas tiene fórmula; <span id="h-ae">—</span> El filtro de «unidad de venta» del RDA del proveedor los dejaría por fuera (del 87 al 100 % de sus renglones no tiene unidad de venta): el resumen no lo usa. Casi ningún medicamento aparece anulado: el HIS parece borrar en vez de anular, y la prueba en PRUEBAS lo confirmará.</p></div>
+      <div class="finding"><p><strong>Lo que va al informe bajó en control de crónicos.</strong> En la plantilla 844 pasó de 1,3 KB por consulta (abril-junio) a 0,6 KB (agosto-octubre), con el mismo texto total; en consulta externa (870) no cambió y no hay plantilla nueva. Algún campo de la 844 cambió, o el médico escribe en otro. Además, la indicación del médico en cada medicamento aparece desde julio.</p></div>
+      <div class="finding"><p><strong>Fuera del piloto, el 18 % de las consultas usa plantillas sin campos para el informe</strong>: odontología, planificación familiar, dermatología, pediatría y otras. Su informe solo llevaría diagnósticos, fórmula y exámenes hasta que el hospital elija qué campos van.</p></div>
+    </div>
+
+    <div style="display:grid; gap:22px; min-width:0">
+      <div style="display:grid; gap:10px; min-width:0">
+        <div class="sub-h"><h3>Documentos por mes</h3><span class="muted" style="font-size:0.82rem">uno por consulta, fórmula u orden</span></div>
+        <div class="legend" id="c4-legend"></div>
+        <div class="chart" id="c4"></div>
+        <div class="foot">Octubre va hasta el 28 y se ve más claro; noviembre es la proyección (contorno punteado). <button type="button" class="linkbtn" data-open-id="tb-meses">Ver mes por mes</button></div>
+      </div>
+      <div style="display:grid; gap:10px; min-width:0; align-content:start">
+        <div class="sub-h"><h3>Noviembre por canal</h3><span class="muted" style="font-size:0.82rem" id="nov-modo-txt">—</span></div>
+        <div class="scroll"><table id="tb-nov"></table></div>
+        <p class="foot" id="nov-foot">—</p>
+      </div>
+    </div>
+
+    <details class="tbl" id="nov-sup" open>
+      <summary>Supuestos <span class="muted">a quién le llega y cuánto pesa cada documento</span></summary>
+      <div class="tbl-body">
+        <div class="sliders">
+          <div class="field">
+            <label for="k-cel">Pacientes con celular (o el del acompañante) <output id="o-cel">—</output></label>
+            <input type="range" id="k-cel" min="50" max="100" step="0.1" value="94.7">
+          </div>
+          <div class="field">
+            <label for="k-correo">Pacientes con correo propio <output id="o-correo">—</output></label>
+            <input type="range" id="k-correo" min="0" max="100" step="0.1" value="3.1">
+            <div class="presets">
+              <button type="button" class="linkbtn" data-correo="hoy" id="preset-hoy">Hoy en el HIS</button>
+              <button type="button" class="linkbtn" data-correo="30">Si el asistente consigue 30 %</button>
+              <button type="button" class="linkbtn" data-correo="100">Todos</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="k-sens">Consultas excluidas por diagnóstico sensible <output id="o-sens">—</output></label>
+            <input type="range" id="k-sens" min="0" max="20" step="0.1" value="5.6">
+          </div>
+          <div class="field">
+            <label for="k-pdf-inf">PDF del informe <output id="o-pdf-inf">45 KB</output></label>
+            <input type="range" id="k-pdf-inf" min="5" max="300" step="5" value="45">
+          </div>
+          <div class="field">
+            <label for="k-pdf-for">PDF de la fórmula <output id="o-pdf-for">35 KB</output></label>
+            <input type="range" id="k-pdf-for" min="5" max="300" step="5" value="35">
+          </div>
+          <div class="field">
+            <label for="k-pdf-exa">PDF de las órdenes de exámenes <output id="o-pdf-exa">30 KB</output></label>
+            <input type="range" id="k-pdf-exa" min="5" max="300" step="5" value="30">
+          </div>
+          <div class="field">
+            <label for="k-body">Cuerpo de cada correo <output id="o-body">15 KB</output></label>
+            <input type="range" id="k-body" min="2" max="100" step="1" value="15">
+          </div>
+          <div class="field">
+            <label for="k-wa">Mensaje de WhatsApp sin adjunto <output id="o-wa">1 KB</output></label>
+            <input type="range" id="k-wa" min="0.5" max="5" step="0.5" value="1">
+          </div>
+        </div>
+        <p class="foot">Celular, correo y diagnósticos sensibles arrancan en lo medido para el alcance (M-5) y vuelven ahí al cambiarlo. El peso de cada PDF es un supuesto: una página con el logo del hospital pesa 30 a 50 KB; sin logo, unos 10 KB.</p>
+      </div>
+    </details>
+
+    <div style="display:grid; gap:10px; min-width:0">
+      <div class="sub-h"><h3>Mes por mes</h3><span class="muted" style="font-size:0.82rem" id="meses-alc">—</span></div>
+      <div class="seg" role="group" aria-label="Qué mostrar mes por mes">
+        <button type="button" data-ntab="cons">Consultas</button>
+        <button type="button" data-ntab="nota">Lo que anotó el médico</button>
+        <button type="button" data-ntab="for">Fórmulas</button>
+        <button type="button" data-ntab="exa">Exámenes</button>
+      </div>
+      <div class="scroll"><table id="tb-meses"></table></div>
+      <p class="foot" id="meses-foot">—</p>
+    </div>
+
+    <div style="display:grid; gap:10px; min-width:0">
+      <div class="sub-h"><h3>Lo que anota el médico en cada consulta</h3><span class="muted" style="font-size:0.82rem">promedio de abril a octubre</span></div>
+      <div class="notas">
+        <div class="nota"><span class="label">Campos que llena</span><span class="value" id="nt-campos">—</span><span class="note" id="nt-campos-n">—</span></div>
+        <div class="nota"><span class="label">Texto que escribe</span><span class="value" id="nt-texto">—</span><span class="note" id="nt-texto-n">—</span></div>
+        <div class="nota"><span class="label">Lo que iría al informe</span><span class="value" id="nt-inf">—</span><span class="note" id="nt-inf-n">—</span></div>
+        <div class="nota"><span class="label">Diagnósticos y recomendaciones</span><span class="value" id="nt-dx">—</span><span class="note" id="nt-dx-n">—</span></div>
+      </div>
+      <details class="tbl" id="t-plantillas">
+        <summary>Plantillas de la consulta externa <span class="muted">cuánto llevan al informe (abril a octubre)</span></summary>
+        <div class="tbl-body"><div class="scroll"><table id="tb-plantillas"></table></div>
+          <p class="foot">«En la lista»: la plantilla tiene campos elegidos para el informe (MAPEO_HIS.md §2.9). Psicología y psiquiatría no se envían (D1, D7).</p></div>
+      </details>
+    </div>
+
+    <div class="grid-2">
+      <div style="display:grid; gap:10px; min-width:0">
+        <div class="sub-h"><h3>Consultas por día de la semana</h3><span class="muted" style="font-size:0.82rem">1 de abril a 28 de octubre</span></div>
+        <div class="scroll"><table id="tb-dias"></table></div>
+      </div>
+      <div style="display:grid; gap:10px; min-width:0; align-content:start">
+        <div class="sub-h"><h3>A quién le llega</h3><span class="muted" style="font-size:0.82rem">pacientes de abril a octubre</span></div>
+        <div class="notas">
+          <div class="nota"><span class="label">Pacientes distintos</span><span class="value" id="ct-pac">—</span><span class="note" id="ct-pac-n">—</span></div>
+          <div class="nota"><span class="label">Con celular válido</span><span class="value" id="ct-cel">—</span><span class="note">del paciente, o del acompañante si es menor</span></div>
+          <div class="nota"><span class="label">Con correo propio</span><span class="value" id="ct-correo">—</span><span class="note" id="ct-correo-n">—</span></div>
+          <div class="nota"><span class="label">Consultas con diagnóstico sensible</span><span class="value" id="ct-sens">—</span><span class="note">no se envían (D7)</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="controls" role="group" aria-label="Periodo">
+    <span class="eyebrow">Periodo</span>
+    <label class="switch" for="incluir-oct"><input type="checkbox" id="incluir-oct" checked> Incluir octubre (en curso, hasta el 28)</label>
+    <span class="muted" id="periodo-txt">abril a octubre de 2026</span>
+  </div>
+
+  <section class="tiles" aria-label="Cifras del periodo">
+    <div class="tile"><span class="label">Historias en el periodo</span><span class="value" id="t-total">—</span><span class="note" id="t-total-n">—</span></div>
+    <div class="tile"><span class="label">Historias por día con atención</span><span class="value" id="t-dia">—</span><span class="note">promedio del periodo</span></div>
+    <div class="tile"><span class="label">Pacientes distintos al mes</span><span class="value" id="t-pac">—</span><span class="note">promedio mensual</span></div>
+    <div class="tile"><span class="label">Con cita ese mismo día</span><span class="value" id="t-cita">—</span><span class="note">el resto: enfermería, urgencias, evoluciones</span></div>
+    <div class="tile"><span class="label">Consultas del piloto al mes</span><span class="value" id="t-piloto">—</span><span class="note">medicina general + control de hipertensos</span></div>
+  </section>
+
+  <section class="card" aria-labelledby="c1-t">
+    <div class="card-head">
+      <div>
+        <h2 id="c1-t">Historias por mes</h2>
+        <p class="sub" id="c1-sub">Cada columna es un mes, partida por tipo de historia.</p>
+      </div>
+      <div class="seg" role="group" aria-label="Qué mostrar">
+        <button type="button" id="c1-tipo" aria-pressed="true">Por tipo</button>
+        <button type="button" id="c1-pct" aria-pressed="false">Proporción</button>
+        <button type="button" id="c1-pac" aria-pressed="false">Pacientes</button>
+        <button type="button" id="c1-mb" aria-pressed="false">MB</button>
+      </div>
+    </div>
+    <div class="legend" id="c1-legend"></div>
+    <div class="chart" id="c1"></div>
+    <div class="foot">Octubre va hasta el día 28 y se muestra más claro. <button type="button" class="linkbtn" data-open="t-mensual">Ver la tabla</button></div>
+  </section>
+
+  <div class="grid-2">
+    <section class="card" aria-labelledby="c2-t">
+      <div class="card-head">
+        <div>
+          <h2 id="c2-t">Lo que se enviaría</h2>
+          <p class="sub">Consultas (<code>CON</code>) por mes y los dos alcances del plan.</p>
+        </div>
+      </div>
+      <div class="legend" id="c2-legend"></div>
+      <div class="chart" id="c2"></div>
+      <div class="foot">Sin urgencias = sin registro de ingreso y sin el servicio <code>S39145</code>. Piloto = <code>S39141</code> y <code>S39141-1</code>. <button type="button" class="linkbtn" data-open="t-tipos">Ver la tabla</button></div>
+    </section>
+
+    <section class="card" aria-labelledby="c3-t">
+      <div class="card-head">
+        <div>
+          <h2 id="c3-t">Qué pesa una historia</h2>
+          <p class="sub" id="c3-sub">KB por historia, según la parte de la atención. Muestra: 3.999 historias del 21 al 27 de octubre.</p>
+        </div>
+        <div class="seg" role="group" aria-label="Agrupar por">
+          <button type="button" id="c3-comp" aria-pressed="true">Por parte</button>
+          <button type="button" id="c3-tipo" aria-pressed="false">Por tipo</button>
+        </div>
+      </div>
+      <div class="chart" id="c3"></div>
+      <div class="foot"><button type="button" class="linkbtn" data-open="t-peso">Ver la tabla</button></div>
+    </section>
+  </div>
+
+
+  <section class="card" aria-labelledby="hal-t">
+    <h2 id="hal-t">Lo que dicen las cifras</h2>
+    <div class="findings">
+      <div class="finding key"><p><strong>Crece.</strong> De 457 historias por día con atención en abril a 551 en septiembre (+21 %). Octubre va en 549 por día: cerraría cerca de 17.000.</p></div>
+      <div class="finding key"><p><strong><code>HISTORIACLINICA</code> es solo el índice de la atención.</strong> Cada fila pesa 0,05 KB de datos. Sus 38 índices ocupan 3,6 GB, el 94 % del tamaño de la tabla: vale comentárselo a TI.</p></div>
+      <div class="finding key"><p><strong>La mitad del peso es texto de la plantilla.</strong> El texto largo (enfermedad actual, análisis, plan) suma 1,7 de los 3,6 KB por historia. Una remisión pesa unos 5,8 KB porque lleva el resumen del caso.</p></div>
+      <div class="finding"><p><strong>Solo el 45 % de las historias coincide con una cita ese día.</strong> El resto son notas de enfermería (27 % de todas las historias, con el cargo escrito de dos formas en el HIS), urgencias y evoluciones.</p></div>
+      <div class="finding"><p><strong>Lo que se enviaría es una parte pequeña:</strong> unas 2.800 consultas al mes en el piloto y unas 4.300 si se abre a toda la consulta ambulatoria sin urgencias.</p></div>
+      <div class="finding"><p><strong>El HIS arma el Resumen Digital de Atención solo para medicina general:</strong> es la única especialidad con «genera RDA» encendido.</p></div>
+      <div class="finding"><p><strong>Odontología es la segunda especialidad con cita (19 %)</strong>, pero casi no deja medicamentos, exámenes ni indicaciones para un resumen.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="tab-t" style="display:grid; gap:12px">
+    <h2 id="tab-t">Tablas</h2>
+
+    <details class="tbl" id="t-mensual">
+      <summary>Historias por mes <span class="muted">E-2 · E-3 · E-6</span></summary>
+      <div class="tbl-body"><div class="scroll"><table id="tb-mensual"></table></div></div>
+    </details>
+
+    <details class="tbl" id="t-tipos">
+      <summary>Por tipo de historia y mes <span class="muted">E-2d</span></summary>
+      <div class="tbl-body"><div class="scroll"><table id="tb-tipos"></table></div></div>
+    </details>
+
+    <details class="tbl" id="t-peso">
+      <summary>Peso de una atención completa <span class="muted">E-5</span></summary>
+      <div class="tbl-body">
+        <div class="scroll"><table id="tb-peso"></table></div>
+        <div class="scroll"><table id="tb-peso-tipo"></table></div>
+      </div>
+    </details>
+
+    <details class="tbl" id="t-hijas">
+      <summary>Tablas que cuelgan de la historia, por mes <span class="muted">E-4</span></summary>
+      <div class="tbl-body">
+        <div class="tbl-tools"><label for="sel-hija" class="muted">Tabla</label><select id="sel-hija"></select></div>
+        <div class="scroll"><table id="tb-hija"></table></div>
+        <div class="scroll"><table id="tb-hijas-total"></table></div>
+      </div>
+    </details>
+
+    <details class="tbl" id="t-cargo">
+      <summary>Por cargo de quien escribió la historia <span class="muted">E-2b</span></summary>
+      <div class="tbl-body">
+        <div class="tbl-tools"><label for="f-cargo" class="muted">Buscar</label><input id="f-cargo" type="search" placeholder="médico, enfermería…"></div>
+        <div class="scroll"><table id="tb-cargo"></table></div>
+      </div>
+    </details>
+
+    <details class="tbl" id="t-esp">
+      <summary>Por especialidad de la cita del mismo día <span class="muted">E-2c</span></summary>
+      <div class="tbl-body"><div class="scroll"><table id="tb-esp"></table></div></div>
+    </details>
+
+    <details class="tbl" id="t-tabla">
+      <summary>Tamaño de <code>HISTORIACLINICA</code> <span class="muted">E-1</span></summary>
+      <div class="tbl-body"><div class="scroll"><table id="tb-e1"></table></div></div>
+    </details>
+  </section>
+
+  <section class="card method" aria-labelledby="met-t">
+    <h2 id="met-t">Cómo se midió</h2>
+    <ul>
+      <li>Consulta <code>HISTORIA_CLINICA_ESTADISTICA_SOLO_LECTURA.sql</code> en la base viva <code>ESEHSVP</code>, el 28 de octubre de 2026, con lectura sin bloqueos y un solo procesador. Solo conteos y tamaños: ningún dato de pacientes.</li>
+      <li><strong>KB estimados (E-2):</strong> lo que ocupa la tabla en disco dividido por sus filas. <strong>KB exactos (E-3, E-4):</strong> suma byte a byte del contenido, sin el espacio que agrega el motor. 1 KB = 1.024 bytes.</li>
+      <li><strong>Atención completa (E-5, E-6):</strong> se pesaron byte a byte las 3.999 historias del 21 al 27 de octubre con todo lo que cuelga de ellas (plantilla, órdenes, medicamentos, exámenes, diagnósticos, indicaciones, remisiones). Cada mes se estima como sus historias por el peso medio de su tipo. Es una muestra de una semana.</li>
+      <li>«Con cita ese día»: hay una cita del mismo paciente el mismo día en <code>CITAS_MEDICAS</code>. «Ambulatoria»: sin registro de ingreso (<code>NU_NUME_REG_HICL</code>).</li>
+      <li>E-4 cuenta los exámenes por <code>NU_NUME_HICL_HPRO</code>, que el HIS no siempre llena; E-5 los cuenta por la orden, que es lo completo.</li>
+      <li><strong>Noviembre:</strong> <code>HISTORIA_CLINICA_MENSAJES_SOLO_LECTURA.sql</code> (28 de octubre) midió mes por mes las consultas, lo que anotó el médico, las fórmulas, los exámenes, el contacto de los pacientes y las consultas por día de la semana. Noviembre = consultas por cada día de la semana (abril a octubre) × los días de noviembre, ajustado al nivel de los meses elegidos; los porcentajes de fórmulas, exámenes y remisiones son los de esos meses.</li>
+      <li><strong>Fórmulas:</strong> la medición aplicó los dos filtros del RDA del proveedor (sin anulados y con unidad de venta). El segundo deja fuera casi todos los medicamentos externos (<code>AE</code>); <code>HISTORIA_CLINICA_MENSAJES_2_SOLO_LECTURA.sql</code> mide la fórmula solo sin anulados.</li>
+      <li><strong>Tamaño:</strong> el de cada PDF y el del cuerpo del correo son supuestos que se mueven en la sección; los adjuntos de un correo viajan cerca de 37 % más pesados por la codificación (base64).</li>
+      <li>Detalle y decisiones: <code>docs/PLAN_RESUMEN_ATENCION.md</code> y <code>MAPEO_HIS.md</code> §2.9 del repositorio de AgenIA.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Datos (resultado de la consulta del 28-oct-2026) ──────────────────────
+  var MESES = ['abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct'];
+  var MES_LARGO = ['abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre (hasta el 28)'];
+  var EN_CURSO = 6;
+  var D = {
+    historias: [13700, 14473, 14763, 15787, 15039, 16543, 15361],
+    conCita: [6056, 6534, 6673, 7670, 6462, 7671, 6872],
+    pacientes: [5150, 5250, 5399, 5635, 5122, 5809, 5252],
+    medicos: [72, 76, 78, 80, 77, 87, 85],
+    dias: [30, 31, 30, 31, 31, 30, 28],
+    kbCabEst: [1391.9, 1470.5, 1499.9, 1604.0, 1528.0, 1680.8, 1560.7],
+    mbConIndices: [23.77, 25.11, 25.61, 27.39, 26.09, 28.70, 26.65],
+    kbCabExacto: [750.1, 791.7, 809.4, 867.7, 826.3, 909.7, 841.7],
+    mbCompleta: [49.68, 52.07, 53.08, 57.24, 53.43, 58.72, 53.67],
+    tipos: {
+      CON: [5865, 6119, 6192, 6675, 6184, 6807, 6181],
+      NEN: [4071, 4361, 4321, 4431, 4454, 4802, 4636],
+      EVC: [2107, 2234, 2296, 2496, 2471, 2612, 2410],
+      PRC: [1490, 1586, 1769, 1964, 1761, 2173, 1987],
+      OTR: [167, 173, 185, 221, 169, 149, 147]
+    },
+    otrosDetalle: {
+      CPN: [106, 116, 120, 142, 111, 107, 83],
+      EVP: [32, 39, 38, 53, 39, 21, 45],
+      HPN: [29, 18, 27, 26, 19, 21, 18],
+      ITP: [0, 0, 0, 0, 0, 0, 1]
+    },
+    con: {
+      amb: [4911, 5116, 5243, 5691, 5114, 5780, 5159],
+      sinUrg: [3927, 4088, 4281, 4674, 4031, 4742, 4136],
+      piloto: [2688, 2735, 2856, 2793, 2622, 3189, 2730]
+    }
+  };
+  var TIPOS = [
+    { k: 'CON', nombre: 'Consulta', token: '--s-con' },
+    { k: 'NEN', nombre: 'Nota de enfermería', token: '--s-nen' },
+    { k: 'EVC', nombre: 'Evolución', token: '--s-evc' },
+    { k: 'PRC', nombre: 'Procedimiento', token: '--s-prc' },
+    { k: 'OTR', nombre: 'Otros (prenatal y otros)', token: '--s-otr' }
+  ];
+  var PESO_PARTES = [
+    { t: 'DATOS_PLANTILLA_MEMO', n: 'Texto largo de la plantilla', kb: 1.702, filas: 8.64, total: 6805.6 },
+    { t: 'HIST_REMI', n: 'Remisiones', kb: 0.599, filas: 0.11, total: 2397.2 },
+    { t: 'DATOS_PLANTILLA_TEXT', n: 'Texto corto de la plantilla', kb: 0.451, filas: 20.01, total: 1802.0 },
+    { t: 'DATOS_PLANTILLA_NUME', n: 'Números y casillas de la plantilla', kb: 0.310, filas: 18.64, total: 1237.7 },
+    { t: 'HIST_MEDI', n: 'Medicamentos', kb: 0.273, filas: 1.80, total: 1092.8 },
+    { t: 'HIST_INDI', n: 'Recomendaciones', kb: 0.061, filas: 0.24, total: 242.5 },
+    { t: 'HIST_PROC', n: 'Exámenes y procedimientos', kb: 0.035, filas: 0.95, total: 140.9 },
+    { t: 'HIST_ORDEN', n: 'Órdenes', kb: 0.034, filas: 0.99, total: 136.8 },
+    { t: 'HIST_IMPRESION_DETA', n: 'Registro de impresiones', kb: 0.016, filas: 0.92, total: 65.6 },
+    { t: 'HIST_TEMLABO', n: 'Datos RIPS de la consulta', kb: 0.014, filas: 0.69, total: 55.8 },
+    { t: 'DATOS_PLANTILLA', n: 'Encabezado de la plantilla', kb: 0.013, filas: 1.00, total: 50.8 },
+    { t: 'R_LABO_DIAG', n: 'Diagnósticos', kb: 0.010, filas: 0.83, total: 38.7 },
+    { t: 'DATOS_PLANTILLA_DATE', n: 'Fechas de la plantilla', kb: 0.006, filas: 0.36, total: 23.7 },
+    { t: 'HIST_ORTIAT', n: 'Interconsultas', kb: 0.003, filas: 0.08, total: 12.6 },
+    { t: 'HIST_INCA', n: 'Incapacidades', kb: 0.001, filas: 0.02, total: 4.5 },
+    { t: 'HIST_CERT', n: 'Certificados', kb: 0.001, filas: 0.00, total: 2.2 },
+    { t: 'TRIAGEHISTORI', n: 'Triage', kb: 0.000, filas: 0.03, total: 0.9 },
+    { t: 'HIST_AUDIT', n: 'Notas de auditoría', kb: 0.000, filas: 0.00, total: 0.5 },
+    { t: 'R_TRATCLIN_HIST', n: 'Tratamientos clínicos', kb: 0.000, filas: 0.01, total: 0.3 }
+  ];
+  var PESO_CABECERA = 0.05;
+  var PESO_TIPO = [
+    { k: 'CON', n: 'Consulta', hist: 1601, cab: 0.06, cont: 6.22, tot: 6.28, token: '--s-con' },
+    { k: 'NEN', n: 'Nota de enfermería', hist: 1242, cab: 0.05, cont: 1.10, tot: 1.15, token: '--s-nen' },
+    { k: 'EVC', n: 'Evolución', hist: 608, cab: 0.06, cont: 2.37, tot: 2.43, token: '--s-evc' },
+    { k: 'PRC', n: 'Procedimiento', hist: 497, cab: 0.06, cont: 1.93, tot: 1.99, token: '--s-prc' },
+    { k: 'CPN', n: 'Control prenatal', hist: 38, cab: 0.05, cont: 9.10, tot: 9.15, token: '--s-otr' },
+    { k: 'EVP', n: 'Evolución de procedimiento', hist: 12, cab: 0.06, cont: 2.38, tot: 2.44, token: '--s-otr' },
+    { k: 'HPN', n: 'Primera consulta prenatal', hist: 1, cab: 0.06, cont: 8.28, tot: 8.33, token: '--s-otr' }
+  ];
+  var HIJAS = {
+    HIST_REMI: { n: 'Remisiones', filas: [1607, 1687, 1759, 1822, 1757, 2232, 1758], hc: [1367, 1399, 1492, 1565, 1427, 1809, 1438], kb: [8250.3, 9559.2, 9846.8, 9763.4, 11466.7, 14409.1, 10052.8] },
+    HIST_INDI: { n: 'Recomendaciones', filas: [3455, 3782, 3610, 3932, 3885, 4021, 3920], hc: [3240, 3493, 3383, 3709, 3595, 3755, 3634], kb: [756.5, 820.2, 839.2, 967.9, 1061.1, 975.1, 991.4] },
+    HIST_ORDEN: { n: 'Órdenes', filas: [14156, 14478, 14372, 15604, 14746, 16474, 14675], hc: [5275, 5420, 5540, 5890, 5557, 6226, 5625], kb: [486.4, 494.4, 486.5, 533.4, 507.9, 566.9, 497.8] },
+    HIST_PROC: { n: 'Exámenes y procedimientos (por historia)', filas: [13189, 13236, 12664, 14349, 13507, 15406, 14164], hc: [2916, 3075, 3048, 3288, 3073, 3534, 3105], kb: [490.1, 487.5, 470.7, 529.5, 494.8, 563.1, 514.8] },
+    HIST_IMPRESION_DETA: { n: 'Registro de impresiones', filas: [14862, 15398, 14356, 15484, 14973, 17093, 14588], hc: [6437, 6627, 6534, 7033, 6899, 7931, 6778], kb: [265.1, 274.6, 256.3, 276.4, 267.3, 305.2, 260.4] },
+    HIST_TEMLABO: { n: 'Datos RIPS de la consulta', filas: [9629, 10112, 10442, 11356, 10585, 11741, 10725], hc: [9629, 10112, 10442, 11356, 10585, 11741, 10725], kb: [195.6, 205.5, 211.5, 229.1, 214.0, 236.0, 215.8] },
+    HIST_ORTIAT: { n: 'Interconsultas', filas: [1134, 1208, 1166, 1214, 1165, 1208, 1215], hc: [1134, 1208, 1166, 1214, 1165, 1208, 1215], kb: [38.0, 51.6, 63.1, 72.9, 56.8, 50.8, 64.9] },
+    HIST_INCA: { n: 'Incapacidades', filas: [165, 170, 169, 179, 161, 205, 219], hc: [163, 169, 165, 179, 159, 203, 218], kb: [21.2, 17.4, 18.5, 18.5, 17.4, 19.9, 15.7] },
+    HIST_CERT: { n: 'Certificados', filas: [13, 21, 9, 6, 7, 8, 11], hc: [13, 21, 9, 6, 7, 8, 10], kb: [6.8, 11.3, 6.9, 3.7, 5.4, 4.1, 4.5] },
+    HIST_AUDIT: { n: 'Notas de auditoría', filas: [13, 41, 27, 11, 15, 9, 7], hc: [12, 40, 26, 11, 15, 9, 7], kb: [1.9, 5.2, 4.2, 1.5, 2.0, 1.3, 1.1] },
+    TRIAGEHISTORI: { n: 'Triage', filas: [246, 282, 221, 328, 200, 251, 324], hc: [246, 282, 221, 328, 200, 251, 324], kb: [1.9, 2.2, 1.7, 2.6, 1.6, 2.0, 2.5] },
+    R_TRATCLIN_HIST: { n: 'Tratamientos clínicos', filas: [135, 134, 147, 168, 130, 128, 102], hc: [135, 134, 147, 168, 130, 128, 102], kb: [1.2, 1.2, 1.3, 1.5, 1.1, 1.1, 0.9] }
+  };
+  var CARGOS = [
+    ['MEDICO GENERAL', 25576, 8435, 17141, 9], ['MEDICO RURAL', 22119, 15147, 6972, 13], ['AUX. DE ENFERMERIA', 21861, 1319, 20542, 34],
+    ['AUXILIAR DE ENFERMERIA', 7195, 482, 6713, 11], ['ODONTOLOGO', 5060, 4717, 343, 2], ['ODONTOLOGA', 4352, 4007, 345, 4],
+    ['ENFERMERA', 3049, 1585, 1464, 3], ['HIGIENISTA ORAL', 2619, 2511, 108, 3], ['ENFERMERA CRECIM Y DESARROLLO', 2556, 1254, 1302, 1],
+    ['MEDICO INTERNISTA', 2110, 2014, 96, 2], ['MEDICO', 1999, 1208, 791, 3], ['PSICOLOGA PIC', 1361, 1203, 158, 1],
+    ['FISIOTERAPEUTA', 871, 242, 629, 2], ['MEDICO SSO', 730, 533, 197, 1], ['AUX. DE ODONTOLOGIA', 717, 701, 16, 1],
+    ['NUTRICIONISTA', 711, 631, 80, 1], ['PSICOLOGA', 697, 625, 72, 1], ['REHABILITADORA CARDIO PULMONAR', 317, 85, 232, 1],
+    ['DERMATOLOGA', 301, 288, 13, 1], ['GINECOLOGA', 271, 260, 11, 1], ['PSIQUIATRA MSC PhDc', 201, 190, 11, 1],
+    ['SIAU', 130, 21, 109, 1], ['ENFERMERA JEFE', 117, 35, 82, 1], ['PEDIATRA', 109, 106, 3, 1], ['GINECOLOGA Y OBSTETRA', 104, 101, 3, 1],
+    ['AUX DE ENFERMERIA', 99, 25, 74, 1], ['PEDIATRIA', 93, 89, 4, 1], ['ESPECIALISTA EN PEDIATRIA', 90, 87, 3, 1],
+    ['ENFERMERO JEFE', 82, 1, 81, 1], ['TERAPIA RESPIRATORIA', 68, 3, 65, 1], ['COORDINADORA SIAU', 43, 6, 37, 1],
+    ['PSIQUIATRA', 26, 25, 1, 1], ['HIGIENISTA ORAL (CAJERA)', 17, 0, 17, 1], ['ENFERMERA SALUD PUBLICA', 12, 0, 12, 1], ['ADMINISTRADOR', 3, 2, 1, 1]
+  ];
+  var ESPECIALIDADES = [
+    ['000', 'MEDICINA GENERAL', 'sí', 23982, 50.0], ['461', 'ODONTOLOGIA', '—', 9184, 19.2], ['328', 'MEDICINA GENERAL PYDT', '—', 5764, 12.0],
+    ['387', 'MEDICINA INTERNA', '—', 2039, 4.3], ['572', 'ODONTOLOGIA PYDT', '—', 1926, 4.0], ['590', 'PSICOLOGIA', '—', 1680, 3.5],
+    ['060', 'ENFERMERIA PYDT', '—', 1112, 2.3], ['451', 'NUTRICION Y DIETETICA', '—', 631, 1.3], ['341', 'GINECOLOGIA Y OBSTETRICIA', '—', 436, 0.9],
+    ['200', 'DERMATOLOGIA', '—', 291, 0.6], ['550', 'PEDIATRIA', '—', 284, 0.6], ['345', 'PSIQUIATRIA', '—', 239, 0.5],
+    ['739', 'FISIOTERAPIA', 'no', 220, 0.5], ['048', 'ENFERMERA', '—', 100, 0.2], ['591', 'PSICOLOGIA PYDT', '—', 28, 0.1],
+    ['571', 'PROMOCION Y PREVENCION', '—', 12, 0.0], ['360', 'IMÁGENES DIAGNOSTICAS', '—', 10, 0.0]
+  ];
+  var E1 = { filas: 2270727, kbDatos: 230792, kbIndices: 3803384, mbTotal: 3939.6, kbFila: 0.10, kbFilaCi: 1.78 };
+
+  // ── Utilidades ─────────────────────────────────────────────────────────────
+  var nf0 = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 });
+  var nf1 = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  var nf2 = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  var nf3 = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  function el(tag, attrs, text) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  function sv(tag, attrs) {
+    var e = document.createElementNS(SVGNS, tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+    return e;
+  }
+  function tok(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function sum(a) { return a.reduce(function (s, v) { return s + v; }, 0); }
+  function niceMax(v) {
+    if (v <= 0) return 1;
+    var p = Math.pow(10, Math.floor(Math.log10(v)));
+    var n = v / p;
+    var m = n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10;
+    return m * p;
+  }
+  function compact(v) {
+    if (Math.abs(v) >= 1000) return nf0.format(v / 1000) + ' mil';
+    return nf0.format(v);
+  }
+  function store(k, v) { try { localStorage.setItem('hc-anserma:' + k, JSON.stringify(v)); } catch (e) { /* sin almacenamiento */ } }
+  function load(k, d) { try { var v = localStorage.getItem('hc-anserma:' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }
+
+  // Barra vertical con extremo redondeado de 4px y base recta
+  function colPath(x, y, w, h, r) {
+    r = Math.min(r, h, w / 2);
+    if (h <= 0) return '';
+    return 'M' + x + ',' + (y + h) + 'V' + (y + r) + 'Q' + x + ',' + y + ' ' + (x + r) + ',' + y +
+      'H' + (x + w - r) + 'Q' + (x + w) + ',' + y + ' ' + (x + w) + ',' + (y + r) + 'V' + (y + h) + 'Z';
+  }
+  // Barra horizontal con extremo derecho redondeado
+  function barPath(x, y, w, h, r) {
+    r = Math.min(r, w, h / 2);
+    if (w <= 0) return '';
+    return 'M' + x + ',' + y + 'H' + (x + w - r) + 'Q' + (x + w) + ',' + y + ' ' + (x + w) + ',' + (y + r) +
+      'V' + (y + h - r) + 'Q' + (x + w) + ',' + (y + h) + ' ' + (x + w - r) + ',' + (y + h) + 'H' + x + 'Z';
+  }
+
+  // ── Tooltip ────────────────────────────────────────────────────────────────
+  function makeTooltip(container) {
+    var t = el('div', { class: 'tooltip', role: 'status' });
+    t.hidden = true;
+    container.appendChild(t);
+    return {
+      show: function (title, rows, px, py) {
+        t.textContent = '';
+        t.appendChild(el('div', { class: 'tt-title' }, title));
+        rows.forEach(function (r) {
+          var row = el('div', { class: 'tt-row' });
+          var k = el('span', { class: 'k' });
+          if (r.color) {
+            var key = el('span', { class: 'key-line' });
+            key.style.background = r.color;
+            k.appendChild(key);
+          }
+          k.appendChild(document.createTextNode(r.label));
+          row.appendChild(k);
+          row.appendChild(el('strong', null, r.value));
+          t.appendChild(row);
+        });
+        t.hidden = false;
+        var cw = container.clientWidth;
+        var tw = t.offsetWidth;
+        var left = px + 14;
+        if (left + tw > cw) left = Math.max(0, px - tw - 14);
+        t.style.left = left + 'px';
+        t.style.top = Math.max(0, py - 10) + 'px';
+      },
+      hide: function () { t.hidden = true; }
+    };
+  }
+
+  // ── Estado ─────────────────────────────────────────────────────────────────
+  var state = {
+    incluirOct: load('incluirOct', true),
+    modo1: load('modo1', 'tipo'),
+    modo3: load('modo3', 'comp'),
+    nAlc: load('nAlc', 'piloto'),
+    nBase: load('nBase', 'abrsep'),
+    nModo: load('nModo', 'doc'),
+    nWa: load('nWa', 'pdf'),
+    nTab: load('nTab', 'cons')
+  };
+  function idxs() { return state.incluirOct ? [0, 1, 2, 3, 4, 5, 6] : [0, 1, 2, 3, 4, 5]; }
+  function pick(arr) { return idxs().map(function (i) { return arr[i]; }); }
+  function promedioCompletos(arr) { return sum(arr.slice(0, 6)) / 6; }
+
+  // ── Cifras ─────────────────────────────────────────────────────────────────
+  function renderTiles() {
+    var ix = idxs();
+    var tot = sum(pick(D.historias));
+    var dias = sum(pick(D.dias));
+    document.getElementById('t-total').textContent = nf0.format(tot);
+    document.getElementById('t-total-n').textContent = state.incluirOct ? 'de abril al 28 de octubre' : 'de abril a septiembre';
+    document.getElementById('t-dia').textContent = nf0.format(tot / dias);
+    document.getElementById('t-pac').textContent = nf0.format(sum(pick(D.pacientes)) / ix.length);
+    document.getElementById('t-cita').textContent = nf0.format(100 * sum(pick(D.conCita)) / tot) + ' %';
+    document.getElementById('t-piloto').textContent = nf0.format(promedioCompletos(D.con.piloto));
+    document.getElementById('periodo-txt').textContent = state.incluirOct ? 'abril a octubre de 2026' : 'abril a septiembre de 2026 (meses completos)';
+  }
+
+  // ── Gráfico 1: historias por mes ───────────────────────────────────────────
+  var c1 = document.getElementById('c1');
+  var tt1 = makeTooltip(c1);
+  function renderLegend1() {
+    var lg = document.getElementById('c1-legend');
+    lg.textContent = '';
+    if (state.modo1 === 'tipo' || state.modo1 === 'pct') {
+      TIPOS.forEach(function (t) {
+        var s = el('span');
+        var k = el('span', { class: 'key-rect' });
+        k.style.background = tok(t.token);
+        s.appendChild(k);
+        s.appendChild(document.createTextNode(t.nombre));
+        lg.appendChild(s);
+      });
+    }
+    var sub = { tipo: 'Cada columna es un mes, partida por tipo de historia.', pct: 'Qué parte de las historias de cada mes es de cada tipo.', pac: 'Pacientes distintos con al menos una historia en el mes.', mb: 'MB de información clínica completa (estimado con la muestra de una semana).' };
+    document.getElementById('c1-sub').textContent = sub[state.modo1];
+  }
+  function renderC1() {
+    renderLegend1();
+    var svgOld = c1.querySelector('svg');
+    if (svgOld) svgOld.remove();
+    var W = Math.max(300, c1.clientWidth), H = 300;
+    var m = { t: 18, r: 12, b: 34, l: 52 };
+    var pw = W - m.l - m.r, ph = H - m.t - m.b;
+    var ix = idxs();
+    var stacked = state.modo1 === 'tipo' || state.modo1 === 'pct';
+    var series = stacked ? TIPOS.map(function (t) { return { k: t.k, nombre: t.nombre, color: tok(t.token), vals: D.tipos[t.k] }; })
+      : state.modo1 === 'pac' ? [{ k: 'pac', nombre: 'Pacientes distintos', color: tok('--s-one'), vals: D.pacientes }]
+      : [{ k: 'mb', nombre: 'MB de información completa', color: tok('--s-one'), vals: D.mbCompleta }];
+    var totals = ix.map(function (i) { return sum(series.map(function (s) { return s.vals[i]; })); });
+    var maxV = state.modo1 === 'pct' ? 100 : niceMax(Math.max.apply(null, totals) * 1.05);
+    var svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Historias por mes' });
+    var surf = tok('--surface');
+    // rejilla y eje
+    var ticks = 5;
+    for (var i = 0; i <= ticks; i++) {
+      var v = maxV * i / ticks, y = m.t + ph - ph * i / ticks;
+      svg.appendChild(sv('line', { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: tok('--grid'), 'stroke-width': 1 }));
+      var lab = sv('text', { x: m.l - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 11 });
+      lab.style.fill = 'var(--ink-3)';
+      lab.textContent = state.modo1 === 'pct' ? nf0.format(v) + ' %' : state.modo1 === 'mb' ? nf0.format(v) : compact(v);
+      svg.appendChild(lab);
+    }
+    var band = pw / ix.length;
+    var bw = Math.min(24, band * 0.55);
+    ix.forEach(function (i, j) {
+      var x = m.l + band * j + (band - bw) / 2;
+      var base = m.t + ph;
+      var acc = 0;
+      var parcial = i === EN_CURSO;
+      var g = sv('g', { tabindex: 0, role: 'button', 'aria-label': MES_LARGO[i] });
+      series.forEach(function (s, si) {
+        var val = state.modo1 === 'pct' ? 100 * s.vals[i] / totals[j] : s.vals[i];
+        var h = ph * val / maxV;
+        var yTop = base - (acc + h);
+        var isTop = si === series.length - 1;
+        var gap = si > 0 ? 2 : 0;
+        var hh = Math.max(0, h - gap);
+        if (hh > 0) {
+          var p = sv('path', { d: isTop ? colPath(x, yTop, bw, hh, 4) : 'M' + x + ',' + yTop + 'h' + bw + 'v' + hh + 'h-' + bw + 'Z', fill: s.color, class: 'mark' });
+          if (parcial) p.setAttribute('opacity', '0.55');
+          g.appendChild(p);
+        }
+        acc += h;
+      });
+      // valor en la tapa (solo totales en modo absoluto)
+      if (state.modo1 !== 'pct') {
+        var tv = sv('text', { x: x + bw / 2, y: base - acc - 6, 'text-anchor': 'middle', 'font-size': 11 });
+        tv.style.fill = 'var(--ink-2)';
+        tv.textContent = state.modo1 === 'mb' ? nf1.format(totals[j]) : (band > 46 ? nf0.format(totals[j]) : compact(totals[j]));
+        g.appendChild(tv);
+      }
+      var hit = sv('rect', { x: m.l + band * j, y: m.t, width: band, height: ph, fill: 'transparent' });
+      g.insertBefore(hit, g.firstChild);
+      function show(evt) {
+        var rect = c1.getBoundingClientRect();
+        var px = evt && evt.clientX != null ? evt.clientX - rect.left : (x / W) * c1.clientWidth;
+        var py = evt && evt.clientY != null ? evt.clientY - rect.top : 40;
+        var rows = series.slice().reverse().map(function (s) {
+          var val = s.vals[i];
+          var txt = state.modo1 === 'mb' ? nf2.format(val) + ' MB' : state.modo1 === 'pct' ? nf1.format(100 * val / totals[j]) + ' %' : nf0.format(val);
+          return { label: s.nombre, value: txt, color: s.color };
+        });
+        if (stacked && state.modo1 === 'tipo') rows.push({ label: 'Total', value: nf0.format(totals[j]) });
+        tt1.show(MES_LARGO[i], rows, px, py);
+        g.querySelectorAll('.mark').forEach(function (mk) { mk.style.opacity = parcial ? '0.7' : '0.85'; });
+      }
+      function hide() { tt1.hide(); g.querySelectorAll('.mark').forEach(function (mk) { mk.style.opacity = ''; }); }
+      g.addEventListener('pointermove', show);
+      g.addEventListener('pointerleave', hide);
+      g.addEventListener('focus', function () { show(null); });
+      g.addEventListener('blur', hide);
+      svg.appendChild(g);
+      var xl = sv('text', { x: x + bw / 2, y: H - 12, 'text-anchor': 'middle', 'font-size': 12 });
+      xl.style.fill = 'var(--ink-2)';
+      xl.textContent = MESES[i] + (parcial ? '*' : '');
+      svg.appendChild(xl);
+    });
+    svg.appendChild(sv('line', { x1: m.l, x2: W - m.r, y1: m.t + ph, y2: m.t + ph, stroke: tok('--line'), 'stroke-width': 1 }));
+    c1.insertBefore(svg, c1.firstChild);
+  }
+
+  // ── Gráfico 2: lo que se enviaría ──────────────────────────────────────────
+  var c2 = document.getElementById('c2');
+  var tt2 = makeTooltip(c2);
+  function renderC2() {
+    var S = [
+      { nombre: 'Todas las consultas', vals: D.tipos.CON, color: tok('--o1') },
+      { nombre: 'Sin urgencias', vals: D.con.sinUrg, color: tok('--o2') },
+      { nombre: 'Piloto', vals: D.con.piloto, color: tok('--o3') }
+    ];
+    var lg = document.getElementById('c2-legend');
+    lg.textContent = '';
+    S.forEach(function (s) {
+      var sp = el('span'), k = el('span', { class: 'key-line' });
+      k.style.background = s.color;
+      sp.appendChild(k); sp.appendChild(document.createTextNode(s.nombre)); lg.appendChild(sp);
+    });
+    var old = c2.querySelector('svg'); if (old) old.remove();
+    var W = Math.max(300, c2.clientWidth), H = 270;
+    var m = { t: 16, r: 64, b: 34, l: 48 };
+    var pw = W - m.l - m.r, ph = H - m.t - m.b;
+    var ix = idxs();
+    var maxV = niceMax(Math.max.apply(null, pick(D.tipos.CON)) * 1.08);
+    var svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Consultas por mes y alcances del envío' });
+    for (var i = 0; i <= 4; i++) {
+      var v = maxV * i / 4, y = m.t + ph - ph * i / 4;
+      svg.appendChild(sv('line', { x1: m.l, x2: m.l + pw, y1: y, y2: y, stroke: tok('--grid'), 'stroke-width': 1 }));
+      var lab = sv('text', { x: m.l - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 11 });
+      lab.style.fill = 'var(--ink-3)'; lab.textContent = compact(v); svg.appendChild(lab);
+    }
+    function xAt(j) { return m.l + (ix.length === 1 ? pw / 2 : pw * j / (ix.length - 1)); }
+    function yAt(v) { return m.t + ph - ph * v / maxV; }
+    var surf = tok('--surface');
+    S.forEach(function (s) {
+      var d = ix.map(function (i, j) { return (j ? 'L' : 'M') + xAt(j) + ',' + yAt(s.vals[i]); }).join('');
+      svg.appendChild(sv('path', { d: d, fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+      var lastJ = ix.length - 1, lastI = ix[lastJ];
+      svg.appendChild(sv('circle', { cx: xAt(lastJ), cy: yAt(s.vals[lastI]), r: 4, fill: s.color, stroke: surf, 'stroke-width': 2 }));
+      var tl = sv('text', { x: xAt(lastJ) + 8, y: yAt(s.vals[lastI]) + 4, 'font-size': 11 });
+      tl.style.fill = 'var(--ink-2)'; tl.textContent = nf0.format(s.vals[lastI]); svg.appendChild(tl);
+    });
+    ix.forEach(function (i, j) {
+      var xl = sv('text', { x: xAt(j), y: H - 12, 'text-anchor': 'middle', 'font-size': 12 });
+      xl.style.fill = 'var(--ink-2)'; xl.textContent = MESES[i] + (i === EN_CURSO ? '*' : ''); svg.appendChild(xl);
+    });
+    var cross = sv('line', { x1: 0, x2: 0, y1: m.t, y2: m.t + ph, stroke: tok('--ink-3'), 'stroke-width': 1, opacity: 0 });
+    svg.appendChild(cross);
+    var hit = sv('rect', { x: m.l - 10, y: m.t, width: pw + 20, height: ph, fill: 'transparent', tabindex: 0, 'aria-label': 'Ver valores por mes' });
+    function nearest(px) {
+      var best = 0, bd = Infinity;
+      ix.forEach(function (i, j) { var dd = Math.abs(xAt(j) - px); if (dd < bd) { bd = dd; best = j; } });
+      return best;
+    }
+    var focusJ = ix.length - 1;
+    function showAt(j, py) {
+      var i = ix[j];
+      cross.setAttribute('x1', xAt(j)); cross.setAttribute('x2', xAt(j)); cross.setAttribute('opacity', 1);
+      var scale = c2.clientWidth / W;
+      tt2.show(MES_LARGO[i], S.map(function (s) { return { label: s.nombre, value: nf0.format(s.vals[i]), color: s.color }; }), xAt(j) * scale, py);
+    }
+    hit.addEventListener('pointermove', function (evt) {
+      var rect = c2.getBoundingClientRect();
+      var px = (evt.clientX - rect.left) * (W / c2.clientWidth);
+      showAt(nearest(px), evt.clientY - rect.top);
+    });
+    hit.addEventListener('pointerleave', function () { tt2.hide(); cross.setAttribute('opacity', 0); });
+    hit.addEventListener('focus', function () { showAt(focusJ, 30); });
+    hit.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowLeft') { focusJ = Math.max(0, focusJ - 1); showAt(focusJ, 30); e.preventDefault(); }
+      if (e.key === 'ArrowRight') { focusJ = Math.min(ix.length - 1, focusJ + 1); showAt(focusJ, 30); e.preventDefault(); }
+    });
+    hit.addEventListener('blur', function () { tt2.hide(); cross.setAttribute('opacity', 0); });
+    svg.appendChild(hit);
+    svg.appendChild(sv('line', { x1: m.l, x2: m.l + pw, y1: m.t + ph, y2: m.t + ph, stroke: tok('--line'), 'stroke-width': 1 }));
+    c2.insertBefore(svg, c2.firstChild);
+  }
+
+  // ── Gráfico 3: qué pesa una historia ───────────────────────────────────────
+  var c3 = document.getElementById('c3');
+  var tt3 = makeTooltip(c3);
+  function renderC3() {
+    var items;
+    if (state.modo3 === 'comp') {
+      var grandes = PESO_PARTES.filter(function (p) { return p.kb >= 0.01; });
+      var chicas = PESO_PARTES.filter(function (p) { return p.kb < 0.01; });
+      items = grandes.map(function (p) { return { n: p.n, v: p.kb, det: p.t + ' · ' + nf2.format(p.filas) + ' filas por historia', color: tok('--s-one') }; });
+      items.push({ n: 'Otras ' + chicas.length + ' tablas', v: sum(chicas.map(function (p) { return p.kb; })), det: chicas.map(function (p) { return p.t; }).join(', '), color: tok('--s-one') });
+      items.push({ n: 'Cabecera (HISTORIACLINICA)', v: PESO_CABECERA, det: 'la fila de la historia', color: tok('--s-one') });
+      document.getElementById('c3-sub').textContent = 'KB por historia, según la parte de la atención. Muestra: 3.999 historias del 21 al 27 de octubre.';
+    } else {
+      items = PESO_TIPO.map(function (p) { return { n: p.n, v: p.tot, det: nf0.format(p.hist) + ' historias en la muestra' + (p.hist < 30 ? ' (muy pocas: valor poco firme)' : ''), color: tok(p.token) }; });
+      document.getElementById('c3-sub').textContent = 'KB de una atención completa, según el tipo de historia. Los colores son los mismos del primer gráfico.';
+    }
+    var old = c3.querySelector('svg'); if (old) old.remove();
+    var W = Math.max(300, c3.clientWidth);
+    var rowH = 28, labW = Math.min(210, W * 0.42), m = { t: 6, r: 56, b: 8 };
+    var H = m.t + m.b + rowH * items.length;
+    var pw = W - labW - m.r;
+    var maxV = Math.max.apply(null, items.map(function (i) { return i.v; }));
+    var svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'KB por historia' });
+    items.forEach(function (it, k) {
+      var y = m.t + rowH * k;
+      var g = sv('g', { tabindex: 0, role: 'button', 'aria-label': it.n + ': ' + nf2.format(it.v) + ' KB' });
+      g.appendChild(sv('rect', { x: 0, y: y, width: W, height: rowH, fill: 'transparent' }));
+      var nl = sv('text', { x: labW - 10, y: y + rowH / 2 + 4, 'text-anchor': 'end', 'font-size': 12 });
+      nl.style.fill = 'var(--ink-2)';
+      var name = it.n.length > 34 ? it.n.slice(0, 33) + '…' : it.n;
+      nl.textContent = name;
+      g.appendChild(nl);
+      var bwid = Math.max(1, pw * it.v / maxV);
+      g.appendChild(sv('path', { d: barPath(labW, y + (rowH - 14) / 2, bwid, 14, 4), fill: it.color, class: 'mark' }));
+      var vl = sv('text', { x: labW + bwid + 6, y: y + rowH / 2 + 4, 'font-size': 11 });
+      vl.style.fill = 'var(--ink-2)'; vl.textContent = nf2.format(it.v);
+      g.appendChild(vl);
+      function show(evt) {
+        var rect = c3.getBoundingClientRect();
+        var px = evt && evt.clientX != null ? evt.clientX - rect.left : 40;
+        var py = evt && evt.clientY != null ? evt.clientY - rect.top : (y / H) * c3.clientHeight;
+        tt3.show(it.n, [{ label: 'KB por historia', value: nf3.format(it.v) }, { label: it.det, value: '' }], px, py);
+      }
+      g.addEventListener('pointermove', show);
+      g.addEventListener('pointerleave', function () { tt3.hide(); });
+      g.addEventListener('focus', function () { show(null); });
+      g.addEventListener('blur', function () { tt3.hide(); });
+      svg.appendChild(g);
+    });
+    svg.appendChild(sv('line', { x1: labW, x2: labW, y1: m.t, y2: H - m.b, stroke: tok('--line'), 'stroke-width': 1 }));
+    c3.insertBefore(svg, c3.firstChild);
+  }
+
+  // ── Noviembre: cuántos mensajes ────────────────────────────────────────────
+  // Datos medidos: HISTORIA_CLINICA_MENSAJES_SOLO_LECTURA.sql en ESEHSVP, 28-oct-2026 (abril a octubre; octubre hasta el 28).
+  var MEDIDO = {
+    piloto: {
+      consultas: [2688, 2735, 2856, 2793, 2622, 3189, 2730],            // M-1
+      pacientes: [2505, 2547, 2660, 2609, 2440, 2951, 2540],
+      sabado: [377, 509, 461, 398, 569, 487, 417],
+      habiles: [20, 19, 19, 22, 19, 22, 19],
+      nota: {                                                              // M-2
+        campos: [77.5, 77.3, 75.7, 78.1, 77.0, 76.7, 76.4], camposTexto: [53.9, 54.0, 53.0, 54.1, 53.8, 53.5, 53.5],
+        kbTexto: [4.10, 4.38, 4.18, 4.07, 4.16, 4.20, 4.10], kbInforme: [0.85, 0.86, 0.87, 0.70, 0.65, 0.67, 0.64],
+        conRecom: [739, 767, 696, 658, 651, 774, 628], kbRecom: [0.13, 0.16, 0.15, 0.09, 0.10, 0.10, 0.11],
+        dx: [2.16, 2.16, 2.06, 2.16, 1.89, 1.99, 2.02], mbTexto: [10.85, 11.83, 11.76, 11.17, 10.71, 13.15, 10.99]
+      },
+      formula: {                                                           // M-7: sin anulados, con los externos (AE)
+        con: [2186, 2193, 2228, 2189, 2093, 2523, 2165], ai: [1845, 1806, 1815, 1801, 1703, 1957, 1668], ae: [1393, 1443, 1430, 1428, 1379, 1798, 1466],
+        soloAE: [341, 387, 413, 388, 390, 566, 497], ordenes: [6580, 6604, 6388, 6708, 6670, 7791, 6447], posf: [3002, 3024, 2840, 3145, 3301, 3682, 2975],
+        renglones: [20340, 20825, 19148, 19747, 19531, 22084, 18636], distintos: [8905, 9032, 8486, 9473, 8852, 10343, 8739],
+        renglonesAE: [5425, 5858, 5225, 5889, 6205, 7798, 6753], aeSinUnidad: [5412, 5853, 5203, 5846, 6166, 7390, 5898],
+        conRDA: [1848, 1808, 1822, 1814, 1708, 2059, 1791]               // M-3, con el filtro de unidad de venta
+      },
+      examen: {                                                            // M-4
+        con: [1675, 1725, 1717, 1684, 1641, 2047, 1755], ordenes: [2053, 2095, 2004, 1969, 1906, 2467, 2143],
+        examenes: [8351, 8308, 7751, 7538, 8195, 9748, 8768], lab: [8256, 8198, 7666, 7455, 8105, 9565, 8548], proc: [95, 110, 85, 83, 87, 174, 215],
+        remision: [869, 888, 940, 887, 796, 1085, 851], incap: [26, 34, 30, 25, 39, 37, 44]
+      },
+      contacto: { pacientes: 9875, menores: 1305, cel: 94.7, correo: 3.1, relleno: 8789, consultas: 19613, sens: 5.6 },   // M-5
+      perfil: [null, [835, 23], [3965, 30], [4459, 31], [3873, 29], [3243, 27], [3218, 30], [12, 30], [8, 11]],         // M-6: [consultas, días]
+      informePorPlantilla: { 870: [0.50, 0.59, 0.64, 0.54, 0.66, 0.70, 0.68], 844: [1.38, 1.26, 1.30, 0.93, 0.62, 0.61, 0.57] }   // M-8 (a), KB
+    },
+    sinUrg: {
+      consultas: [3927, 4088, 4281, 4674, 4031, 4742, 4136],
+      pacientes: [3409, 3500, 3641, 3908, 3414, 4008, 3504],
+      sabado: [520, 713, 638, 635, 775, 667, 600],
+      habiles: [20, 19, 19, 22, 19, 22, 19],
+      nota: {
+        campos: [81.2, 79.9, 76.3, 79.3, 79.1, 79.1, 75.6], camposTexto: [55.6, 54.3, 51.9, 54.0, 54.3, 54.5, 51.9],
+        kbTexto: [3.95, 4.03, 3.81, 3.84, 3.97, 4.05, 3.85], kbInforme: [0.70, 0.69, 0.69, 0.58, 0.57, 0.58, 0.55],
+        conRecom: [1125, 1198, 1191, 1471, 1163, 1401, 1280], kbRecom: [0.14, 0.14, 0.20, 0.24, 0.29, 0.23, 0.26],
+        dx: [2.03, 2.05, 2.02, 2.07, 1.88, 1.93, 2.00], mbTexto: [15.32, 16.25, 16.16, 17.88, 15.96, 19.05, 15.87]
+      },
+      formula: {
+        con: [2496, 2526, 2642, 2749, 2422, 2919, 2520], ai: [1997, 1988, 2020, 2111, 1886, 2197, 1848], ae: [1566, 1616, 1662, 1716, 1543, 1987, 1661],
+        soloAE: [499, 538, 622, 638, 536, 722, 672], ordenes: [7012, 7047, 6962, 7580, 7117, 8342, 6918], posf: [3093, 3093, 2955, 3392, 3386, 3788, 3045],
+        renglones: [21037, 21585, 20071, 21144, 20278, 23001, 19440], distintos: [9485, 9692, 9256, 10526, 9493, 11097, 9450],
+        renglonesAE: [5770, 6189, 5643, 6519, 6507, 8206, 7150], aeSinUnidad: [5739, 6184, 5595, 6462, 6466, 7798, 6291],
+        conRDA: [2005, 1990, 2033, 2131, 1892, 2299, 1974]
+      },
+      examen: {
+        con: [2049, 2117, 2138, 2310, 2055, 2545, 2220], ordenes: [2536, 2618, 2587, 2784, 2495, 3187, 2818],
+        examenes: [10394, 10305, 9510, 10813, 10182, 12117, 11022], lab: [10195, 10079, 9271, 10565, 9874, 11691, 10604], proc: [169, 195, 198, 216, 197, 323, 353],
+        remision: [976, 1009, 1088, 1132, 970, 1362, 1005], incap: [33, 35, 41, 33, 45, 43, 50]
+      },
+      contacto: { pacientes: 12505, menores: 2738, cel: 94.5, correo: 5.6, relleno: 10520, consultas: 29879, sens: 6.0 },
+      perfil: [null, [1380, 23], [5305, 30], [5995, 31], [6837, 29], [5737, 27], [4548, 30], [58, 30], [19, 11]],
+      informePorPlantilla: null
+    }
+  };
+  // M-8 (b): plantillas de la consulta externa sin urgencias, abril a octubre — [código, nombre, en la lista, consultas, del piloto, KB al informe, % sin nada]
+  var PLANTILLAS = [
+    [870, 'CONSULTA EXTERNA', 'sí', 11940, 11924, 0.62, 0.0], [844, 'CONTROL CRÓNICOS', 'sí', 7689, 7689, 0.95, 0.0],
+    [858, 'Plantilla Medicina Interna', 'sí', 1854, 0, 0.42, 0.0], [908, 'CONSULTA ODONTOLOGICA PROGRAMADA', 'NO', 1672, 0, 0, 100],
+    [860, 'VALORACION INTEGRAL DE LA PRIMERA INFANCIA', 'sí', 1310, 0, 0.90, 0.1], [847, 'CONTROL DE PLANIFICACION FAMILIAR', 'NO', 668, 0, 0, 100],
+    [907, 'Nutricion', 'sí', 631, 0, 1.07, 0.0], [874, 'Consulta Psicologia', 'NO', 553, 0, 0, 100],
+    [884, 'CONSULTA ODONTOLOGICA DE URGENCIAS', 'NO', 539, 0, 0, 100], [843, 'VALORACION INTEGRAL DE LA INFANCIA', 'sí', 379, 0, 1.92, 0.0],
+    [899, 'Ginecologia', 'sí', 365, 0, 0.57, 0.0], [901, 'Dermatologia', 'NO', 299, 0, 0, 100], [905, 'Pediatria', 'NO', 288, 0, 0, 100],
+    [895, 'INGRESO INTRAHOSPITALARIO', 'NO', 284, 0, 0, 100], [871, 'Plantilla de Psiquiatría', 'NO', 216, 0, 0, 100],
+    [849, 'CONSULTA ATENCION ADULTEZ Población 29 a 59 años', 'sí', 215, 0, 1.12, 0.0], [887, 'CONSULTA ODONTOLOGICA PROGRAMADA', 'NO', 144, 0, 0, 100],
+    [861, 'CONSULTA DE PLANIFICACION FAMILIAR 1ª VEZ', 'NO', 122, 0, 0, 100], [897, 'Cons valoracion gestantes x Psicologia', 'NO', 113, 0, 0, 100],
+    [862, 'CONSULTA ATENCION VEJEZ Población de 60 y más', 'sí', 112, 0, 1.34, 0.0], [872, 'EVOLUCION DEL RECIEN NACIDO', 'NO', 112, 0, 0, 100],
+    [855, 'CONTROL POST-PARTO', 'NO', 111, 0, 0, 100], [856, 'ATENCION INTEGRAL AL ADOLESCENTE DE 12 A 17 AÑOS', 'NO', 79, 0, 0, 100],
+    [880, 'TERAPIA RESPIRATORIA', 'NO', 54, 0, 0, 100], [842, 'ATENCION INTEGRAL AL JOVEN DE 18 A 28 AÑOS', 'NO', 44, 0, 0, 100],
+    [551, 'DICTAMEN MEDICO LEGAL DE EMBRIAGUEZ', 'NO', 39, 0, 0, 100]
+  ];
+
+  // Festivos de Colombia en 2026 (Ley Emiliani)
+  var FESTIVOS = ['2026-01-01', '2026-01-12', '2026-03-23', '2026-04-02', '2026-04-03', '2026-05-01', '2026-05-18',
+    '2026-06-08', '2026-06-15', '2026-06-29', '2026-07-20', '2026-08-07', '2026-08-17', '2026-10-12', '2026-11-02',
+    '2026-11-16', '2026-12-08', '2026-12-25'];
+  // Días de un mes por tipo: 1 = lunes … 7 = domingo, 8 = festivo
+  function contarDias(y, m, hastaDia) {
+    var c = [0, 0, 0, 0, 0, 0, 0, 0, 0], d = new Date(Date.UTC(y, m - 1, 1));
+    while (d.getUTCMonth() === m - 1 && (!hastaDia || d.getUTCDate() <= hastaDia)) {
+      c[FESTIVOS.indexOf(d.toISOString().slice(0, 10)) >= 0 ? 8 : (d.getUTCDay() + 6) % 7 + 1]++;
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return c;
+  }
+  var CAL = [contarDias(2026, 4), contarDias(2026, 5), contarDias(2026, 6), contarDias(2026, 7), contarDias(2026, 8), contarDias(2026, 9), contarDias(2026, 10, 28)];
+  var CAL_NOV = contarDias(2026, 11);
+  var DIA_N = ['', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo', 'festivo'];
+  var ALC_N = { piloto: 'Piloto', sinUrg: 'Consulta externa sin urgencias' };
+  var ALC_L = { piloto: 'piloto: medicina general (S39141) y control de hipertensos (S39141-1)', sinUrg: 'consulta ambulatoria sin urgencias (todas las especialidades)' };
+  var BASES = { abrsep: [0, 1, 2, 3, 4, 5], julsep: [3, 4, 5], sep: [5] };
+  var BASE_N = { abrsep: 'abril a septiembre', julsep: 'julio a septiembre', sep: 'septiembre' };
+
+  function tasaDia(alc) { return MEDIDO[alc].perfil.map(function (x) { return x ? x[0] / x[1] : 0; }); }
+  function esperado(alc, cal) { var r = tasaDia(alc), s = 0; for (var k = 1; k <= 8; k++) s += r[k] * cal[k]; return s; }
+  function proyeccion(alc, base) {
+    var m = MEDIDO[alc], f = m.formula, x = m.examen, ix = BASES[base], r = tasaDia(alc);
+    function tot(arr) { return sum(ix.map(function (i) { return arr[i]; })); }
+    var escala = tot(m.consultas) / sum(ix.map(function (i) { return esperado(alc, CAL[i]); }));
+    return {
+      m: m, escala: escala, cons: escala * esperado(alc, CAL_NOV),
+      martesViernes: escala * (r[2] + r[3] + r[4] + r[5]) / 4, porSabado: escala * r[6], sabados: escala * r[6] * CAL_NOV[6],
+      pPac: tot(m.pacientes) / tot(m.consultas),
+      pF: tot(f.con) / tot(m.consultas), ordPorF: tot(f.ordenes) / tot(f.con), posfPorF: tot(f.posf) / tot(f.con),
+      medPorF: tot(f.distintos) / tot(f.con), renPorF: tot(f.renglones) / tot(f.con),
+      pX: tot(x.con) / tot(m.consultas), ordPorX: tot(x.ordenes) / tot(x.con), exaPorX: tot(x.examenes) / tot(x.con),
+      labShare: tot(x.lab) / tot(x.examenes), procShare: tot(x.proc) / tot(x.examenes),
+      pR: tot(x.remision) / tot(m.consultas), pI: tot(x.incap) / tot(m.consultas)
+    };
+  }
+  function promedioPonderado(arr, pesos) { return sum(arr.map(function (v, i) { return v * pesos[i]; })) / sum(pesos); }
+
+  var NOV_IN = ['k-cel', 'k-correo', 'k-sens', 'k-pdf-inf', 'k-pdf-for', 'k-pdf-exa', 'k-body', 'k-wa'];
+  function ponerContacto(alc) {
+    var c = MEDIDO[alc].contacto;
+    document.getElementById('k-cel').value = c.cel;
+    document.getElementById('k-correo').value = c.correo;
+    document.getElementById('k-sens').value = c.sens;
+  }
+  NOV_IN.forEach(function (id) { var v = load('n2-' + id, null); if (v != null) document.getElementById(id).value = v; });
+  if (load('n2-k-cel', null) == null) ponerContacto(state.nAlc);
+  function num(id) { return +document.getElementById(id).value; }
+  function fmtTam(kb) {
+    if (kb <= 0) return '0';
+    var mb = kb / 1024;
+    return mb >= 100 ? nf0.format(mb) + ' MB' : kb >= 1000 ? nf1.format(mb) + ' MB' : nf0.format(kb) + ' KB';
+  }
+
+  function calcNov() {
+    var p = proyeccion(state.nAlc, state.nBase);
+    var cel = num('k-cel') / 100, correo = num('k-correo') / 100, sens = num('k-sens') / 100;
+    var kb = { I: num('k-pdf-inf'), F: num('k-pdf-for'), X: num('k-pdf-exa') }, body = num('k-body'), waKb = num('k-wa');
+    var pdf = state.nWa === 'pdf', porDoc = state.nModo === 'doc';
+    var q = { I: p.cons * (1 - sens) };
+    q.F = q.I * p.pF;
+    q.X = q.I * p.pX;
+    var filas = [['I', 'Informe de la consulta'], ['F', 'Fórmula'], ['X', 'Órdenes de exámenes']].map(function (d) {
+      var k = d[0], n = q[k];
+      var propio = porDoc || k === 'I';   // por consulta: la fórmula y las órdenes viajan en el mensaje del informe
+      return {
+        k: k, n: d[1], q: n,
+        wa: propio ? n * cel : null,
+        waKb: n * cel * (pdf ? kb[k] : (propio ? waKb : 0)),
+        mail: propio ? n * correo : null,
+        mailKb: n * correo * (kb[k] + (propio ? body : 0))
+      };
+    });
+    function t(key) { return sum(filas.map(function (f) { return f[key] || 0; })); }
+    return { p: p, q: q, filas: filas, cel: cel, correo: correo, sens: sens, pdf: pdf, porDoc: porDoc,
+             tot: { q: t('q'), wa: t('wa'), waKb: t('waKb'), mail: t('mail'), mailKb: t('mailKb') } };
+  }
+
+  function pressSeg(attr, val) {
+    document.querySelectorAll('[' + attr + ']').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute(attr) === val)); });
+  }
+  function setTxt(id, v) { document.getElementById(id).textContent = v; }
+  function pct(v) { return nf1.format(100 * v) + ' %'; }
+
+  function renderNov() {
+    var r = calcNov(), p = r.p, m = p.m, f = m.formula, x = m.examen, n = m.nota, c = m.contacto, alc = state.nAlc;
+    pressSeg('data-nalc', alc); pressSeg('data-nbase', state.nBase); pressSeg('data-nmodo', state.nModo); pressSeg('data-nwa', state.nWa); pressSeg('data-ntab', state.nTab);
+    setTxt('o-cel', nf1.format(num('k-cel')) + ' %');
+    setTxt('o-correo', nf1.format(num('k-correo')) + ' %');
+    setTxt('o-sens', nf1.format(num('k-sens')) + ' %');
+    setTxt('o-pdf-inf', nf0.format(num('k-pdf-inf')) + ' KB');
+    setTxt('o-pdf-for', nf0.format(num('k-pdf-for')) + ' KB');
+    setTxt('o-pdf-exa', nf0.format(num('k-pdf-exa')) + ' KB');
+    setTxt('o-body', nf0.format(num('k-body')) + ' KB');
+    setTxt('o-wa', nf1.format(num('k-wa')) + ' KB');
+    setTxt('preset-hoy', 'Hoy en el HIS (' + nf1.format(c.correo) + ' %)');
+
+    // cifras de noviembre
+    setTxt('n-cons', nf0.format(p.cons));
+    setTxt('n-cons-n', nf0.format(p.martesViernes) + ' por día de martes a viernes y ' + nf0.format(p.porSabado) + ' cada sábado (ritmo de ' + BASE_N[state.nBase] + ')');
+    setTxt('n-inf', nf0.format(r.q.I));
+    setTxt('n-inf-n', 'uno por consulta, sin el ' + nf1.format(100 * r.sens) + ' % con diagnóstico sensible; unos ' + nf0.format(p.cons * p.pPac) + ' pacientes');
+    setTxt('n-for', nf0.format(r.q.F));
+    setTxt('n-for-n', nf0.format(100 * p.pF) + ' % de las consultas · ' + nf0.format(r.q.F * p.medPorF) + ' medicamentos, con los externos (AE)');
+    setTxt('n-exa', nf0.format(r.q.X));
+    setTxt('n-exa-n', nf0.format(100 * p.pX) + ' % de las consultas · ' + nf0.format(r.q.X * p.exaPorX) + ' exámenes, casi todos de laboratorio');
+    setTxt('n-wa', nf0.format(r.tot.wa));
+    setTxt('n-wa-n', fmtTam(r.tot.waKb) + (r.pdf ? ' con los PDF' : ' (solo texto con enlace)') + ' · ' + nf0.format(r.tot.wa / (CAL_NOV[2] + CAL_NOV[3] + CAL_NOV[4] + CAL_NOV[5] + CAL_NOV[6])) + ' por día de atención');
+    setTxt('n-mail', nf0.format(r.tot.mail));
+    setTxt('n-mail-n', fmtTam(r.tot.mailKb) + ' · con correo propio: ' + nf1.format(100 * r.correo) + ' %');
+
+    // respuesta corta
+    setTxt('ans-wa', nf0.format(r.tot.wa));
+    setTxt('ans-wa-n', ALC_N[alc] + ', ' + (r.porDoc ? 'un mensaje por documento' : 'un mensaje por consulta') + ': ' + fmtTam(r.tot.waKb) +
+      (r.pdf ? ' en PDF' : ' en texto') + '. Correos: ' + nf0.format(r.tot.mail) + ' (' + fmtTam(r.tot.mailKb) + ') con el ' + nf1.format(100 * r.correo) + ' % de pacientes con correo propio.');
+
+    // hallazgos que dependen del alcance
+    var sab = sum(m.sabado), tot7 = sum(m.consultas);
+    setTxt('h-sab', 'el ' + nf0.format(100 * sab / tot7) + ' % de las consultas (' + nf0.format(p.porSabado) + ' cada sábado, frente a ' + nf0.format(p.martesViernes) + ' un día de martes a viernes).');
+    setTxt('h-pf', nf0.format(100 * p.pF) + ' %');
+    setTxt('h-ae', 'el ' + nf0.format(100 * sum(f.ae) / tot7) + ' % lleva medicamentos de dispensador externo (AE) y el ' + nf0.format(100 * sum(f.soloAE) / sum(f.con)) +
+      ' % de las fórmulas son solo de externos (' + nf0.format(sum(f.soloAE) / 7) + ' al mes). Con el filtro del RDA, en cambio, solo el ' + nf0.format(100 * sum(f.conRDA) / tot7) + ' % tendría fórmula.');
+
+    // por canal
+    setTxt('nov-modo-txt', r.porDoc ? 'un mensaje por documento' : 'un mensaje por consulta, con los tres documentos');
+    function cuenta(v) { return v == null ? 'en el mismo mensaje' : nf0.format(v); }
+    buildTable(document.getElementById('tb-nov'), [
+      { h: 'Documento' }, { h: 'Cantidad', num: true, fmt: nf0.format }, { h: 'WhatsApp', num: true }, { h: 'Tamaño WhatsApp', num: true },
+      { h: 'Correos', num: true }, { h: 'Tamaño correo', num: true }
+    ], r.filas.map(function (fl) { return { v: [fl.n, fl.q, cuenta(fl.wa), fmtTam(fl.waKb), cuenta(fl.mail), fmtTam(fl.mailKb)] }; }),
+    { totalRow: { cls: 'total', v: ['Total', r.tot.q, nf0.format(r.tot.wa), fmtTam(r.tot.waKb), nf0.format(r.tot.mail), fmtTam(r.tot.mailKb)] } });
+    setTxt('nov-foot', 'Si todos tuvieran correo serían ' + nf0.format(r.porDoc ? r.tot.q : r.q.I) + ' correos. Los adjuntos del correo viajan ~37 % más pesados (base64). ' +
+      'AgenIA guardaría ~' + nf1.format(r.q.I * 4 / 1024) + ' MB a la vez (4 KB por informe cifrado, 30 días) y leería del HIS ~' + nf1.format(p.cons * 6.28 / 1024) + ' MB (6,3 KB por consulta).');
+
+    renderMeses(p);
+    renderDias();
+    renderPlantillas();
+
+    // lo que anota el médico (promedio ponderado por consultas)
+    var w = m.consultas;
+    setTxt('nt-campos', nf0.format(promedioPonderado(n.campos, w)));
+    setTxt('nt-campos-n', 'con algo escrito o marcado; ' + nf0.format(promedioPonderado(n.camposTexto, w)) + ' de ellos con texto');
+    setTxt('nt-texto', nf1.format(promedioPonderado(n.kbTexto, w)) + ' KB');
+    setTxt('nt-texto-n', 'todo lo que escribe en la plantilla; ' + nf1.format(sum(n.mbTexto) / 7) + ' MB al mes');
+    setTxt('nt-inf', nf2.format(promedioPonderado(n.kbInforme, w)) + ' KB');
+    setTxt('nt-inf-n', 'motivo, plan, educación y próximo control: de ' + nf2.format(Math.max.apply(null, n.kbInforme)) + ' KB en abril-junio a ' + nf2.format(Math.min.apply(null, n.kbInforme)) + ' KB desde julio');
+    setTxt('nt-dx', nf1.format(promedioPonderado(n.dx, w)));
+    setTxt('nt-dx-n', 'diagnósticos por consulta; recomendaciones escritas en el ' + nf0.format(100 * sum(n.conRecom) / sum(w)) + ' % (' + nf2.format(promedioPonderado(n.kbRecom, n.conRecom)) + ' KB)');
+
+    // a quién le llega
+    setTxt('ct-pac', nf0.format(c.pacientes));
+    setTxt('ct-pac-n', nf0.format(100 * c.menores / c.pacientes) + ' % menores de edad: se le escribe al acompañante');
+    setTxt('ct-cel', nf1.format(c.cel) + ' %');
+    setTxt('ct-correo', nf1.format(c.correo) + ' %');
+    setTxt('ct-correo-n', 'el ' + nf0.format(100 * c.relleno / c.pacientes) + ' % tiene el correo de relleno del hospital');
+    setTxt('ct-sens', nf1.format(c.sens) + ' %');
+
+    renderC4(p);
+    NOV_IN.forEach(function (id) { store('n2-' + id, num(id)); });
+  }
+
+  function renderMeses(p) {
+    var m = p.m, f = m.formula, x = m.examen, n = m.nota, t = state.nTab;
+    setTxt('meses-alc', ALC_L[state.nAlc]);
+    var meses = [0, 1, 2, 3, 4, 5, 6];
+    function etq(i) { return MESES[i] + (i === EN_CURSO ? ' (hasta el 28)' : ''); }
+    function cls(i) { return i === EN_CURSO ? 'partial' : ''; }
+    var c = p.cons, cols, filas, nov = null, pie;
+    if (t === 'cons') {
+      cols = [{ h: 'Mes' }, { h: 'Consultas = informes', num: true, fmt: nf0.format }, { h: 'Pacientes distintos', num: true, fmt: nf0.format },
+        { h: 'Consultas por paciente', num: true, fmt: nf2.format }, { h: 'En sábado', num: true, fmt: nf0.format }, { h: '% en sábado', num: true, fmt: nf1.format },
+        { h: 'Días hábiles', num: true, fmt: nf0.format }];
+      filas = meses.map(function (i) { return { cls: cls(i), v: [etq(i), m.consultas[i], m.pacientes[i], m.consultas[i] / m.pacientes[i], m.sabado[i], 100 * m.sabado[i] / m.consultas[i], m.habiles[i]] }; });
+      nov = ['nov (proyección)', c, c * p.pPac, 1 / p.pPac, p.sabados, 100 * p.sabados / c, CAL_NOV[1] + CAL_NOV[2] + CAL_NOV[3] + CAL_NOV[4] + CAL_NOV[5]];
+      pie = 'Cada consulta deja un informe. «Días hábiles» cuenta de lunes a viernes sin festivos (octubre, hasta el 28), aunque los lunes no hay consulta.';
+    } else if (t === 'nota') {
+      cols = [{ h: 'Mes' }, { h: 'Campos llenos', num: true, fmt: nf1.format }, { h: 'Campos con texto', num: true, fmt: nf1.format },
+        { h: 'KB de texto', num: true, fmt: nf2.format }, { h: 'KB al informe', num: true, fmt: nf2.format },
+        { h: 'Con recomendaciones', num: true, fmt: nf0.format }, { h: 'KB recomendaciones', num: true, fmt: nf2.format },
+        { h: 'Diagnósticos', num: true, fmt: nf2.format }, { h: 'MB de texto del mes', num: true, fmt: nf2.format }];
+      var ipp = m.informePorPlantilla;
+      if (ipp) cols.splice(5, 0, { h: 'Al informe: 870', num: true, fmt: nf2.format }, { h: 'Al informe: 844', num: true, fmt: nf2.format });
+      filas = meses.map(function (i) {
+        var v = [etq(i), n.campos[i], n.camposTexto[i], n.kbTexto[i], n.kbInforme[i], n.conRecom[i], n.kbRecom[i], n.dx[i], n.mbTexto[i]];
+        if (ipp) v.splice(5, 0, ipp[870][i], ipp[844][i]);
+        return { cls: cls(i), v: v };
+      });
+      pie = 'Por consulta, salvo «Con recomendaciones» y «MB de texto del mes». «Al informe»: motivo, plan, educación y próximo control (la lista de MAPEO_HIS.md §2.9).' +
+        (ipp ? ' La baja de julio viene de control de crónicos (844); consulta externa (870) no cambió.' : '');
+    } else if (t === 'for') {
+      cols = [{ h: 'Mes' }, { h: 'Con fórmula', num: true, fmt: nf0.format }, { h: '% de las consultas', num: true, fmt: nf1.format },
+        { h: 'Farmacia del hospital (AI)', num: true, fmt: nf0.format }, { h: 'Externos (AE)', num: true, fmt: nf0.format }, { h: 'Solo externos', num: true, fmt: nf0.format },
+        { h: 'Órdenes de fórmula', num: true, fmt: nf0.format }, { h: 'De ellas posfechadas', num: true, fmt: nf0.format },
+        { h: 'Medicamentos', num: true, fmt: nf0.format }, { h: 'Por fórmula', num: true, fmt: nf2.format },
+        { h: 'Renglones', num: true, fmt: nf0.format }, { h: 'Con el filtro del RDA', num: true, fmt: nf0.format }];
+      filas = meses.map(function (i) { return { cls: cls(i), v: [etq(i), f.con[i], 100 * f.con[i] / m.consultas[i], f.ai[i], f.ae[i], f.soloAE[i], f.ordenes[i], f.posf[i], f.distintos[i], f.distintos[i] / f.con[i], f.renglones[i], f.conRDA[i]] }; });
+      var fc = c * p.pF;
+      nov = ['nov (proyección)', fc, 100 * p.pF, '—', '—', '—', fc * p.ordPorF, fc * p.posfPorF, fc * p.medPorF, p.medPorF, fc * p.renPorF, '—'];
+      pie = 'Sin anulados (casi no hay) y con los medicamentos de dispensador externo (AE). «Con el filtro del RDA» es lo que quedaría si se quitaran los renglones sin unidad de venta: casi todos los externos. Cada entrega posfechada es una orden; el paciente recibe una sola fórmula por consulta con todas las fechas. «Medicamentos» cuenta cada uno una vez por consulta.';
+    } else {
+      cols = [{ h: 'Mes' }, { h: 'Con exámenes', num: true, fmt: nf0.format }, { h: '% de las consultas', num: true, fmt: nf1.format },
+        { h: 'Órdenes', num: true, fmt: nf0.format }, { h: 'Exámenes', num: true, fmt: nf0.format }, { h: 'Laboratorio', num: true, fmt: nf0.format },
+        { h: 'Procedimientos', num: true, fmt: nf0.format }, { h: 'Con remisión', num: true, fmt: nf0.format }, { h: 'Con incapacidad', num: true, fmt: nf0.format }];
+      filas = meses.map(function (i) { return { cls: cls(i), v: [etq(i), x.con[i], 100 * x.con[i] / m.consultas[i], x.ordenes[i], x.examenes[i], x.lab[i], x.proc[i], x.remision[i], x.incap[i]] }; });
+      var xc = c * p.pX, xe = xc * p.exaPorX;
+      nov = ['nov (proyección)', xc, 100 * p.pX, xc * p.ordPorX, xe, xe * p.labShare, xe * p.procShare, c * p.pR, c * p.pI];
+      pie = 'Exámenes = renglones de las órdenes 1 a 4; casi todos son de laboratorio. La remisión y la incapacidad irían dentro del informe.';
+    }
+    if (nov) filas.push({ cls: 'proy', v: nov });
+    buildTable(document.getElementById('tb-meses'), cols, filas);
+    setTxt('meses-foot', pie + (nov ? ' La fila de noviembre va antes de excluir los diagnósticos sensibles.' : ''));
+  }
+
+  function renderPlantillas() {
+    buildTable(document.getElementById('tb-plantillas'), [
+      { h: 'Plantilla' }, { h: 'Nombre' }, { h: 'En la lista' }, { h: 'Consultas', num: true, fmt: nf0.format, bar: PLANTILLAS[0][3] },
+      { h: 'Del piloto', num: true, fmt: nf0.format }, { h: 'KB al informe', num: true, fmt: nf2.format }, { h: '% sin nada para el informe', num: true, fmt: nf1.format }
+    ], PLANTILLAS.map(function (x) { return { v: x }; }), { sortable: true });
+  }
+
+  function renderDias() {
+    var pf = MEDIDO[state.nAlc].perfil, filas = [];
+    for (var k = 1; k <= 8; k++) filas.push({ v: [DIA_N[k], pf[k][0], pf[k][1], pf[k][0] / pf[k][1], CAL_NOV[k]] });
+    var maxV = Math.max.apply(null, filas.map(function (r) { return r.v[3]; }));
+    buildTable(document.getElementById('tb-dias'), [
+      { h: 'Día' }, { h: 'Consultas', num: true, fmt: nf0.format }, { h: 'Días', num: true, fmt: nf0.format },
+      { h: 'Por día', num: true, fmt: nf1.format, bar: maxV }, { h: 'En noviembre', num: true, fmt: nf0.format }
+    ], filas);
+  }
+
+  // Gráfico 4: documentos por mes (agrupadas), noviembre proyectado
+  var c4 = document.getElementById('c4');
+  var tt4 = makeTooltip(c4);
+  function renderC4(p) {
+    var m = p.m;
+    var SER = [
+      { nombre: 'Informes (uno por consulta)', color: tok('--d-inf'), vals: m.consultas.concat([p.cons]) },
+      { nombre: 'Fórmulas', color: tok('--d-for'), vals: m.formula.con.concat([p.cons * p.pF]) },
+      { nombre: 'Órdenes de exámenes', color: tok('--d-exa'), vals: m.examen.con.concat([p.cons * p.pX]) }
+    ];
+    var lg = document.getElementById('c4-legend');
+    lg.textContent = '';
+    SER.forEach(function (s) {
+      var sp = el('span'), k = el('span', { class: 'key-rect' });
+      k.style.background = s.color;
+      sp.appendChild(k); sp.appendChild(document.createTextNode(s.nombre)); lg.appendChild(sp);
+    });
+    var old = c4.querySelector('svg'); if (old) old.remove();
+    var etiquetas = MESES.concat(['nov']), n = etiquetas.length, NOV = n - 1;
+    var W = Math.max(300, c4.clientWidth), H = 270;
+    var mg = { t: 14, r: 8, b: 34, l: 46 };
+    var pw = W - mg.l - mg.r, ph = H - mg.t - mg.b;
+    var maxV = niceMax(Math.max.apply(null, SER[0].vals) * 1.08);
+    var svg = sv('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Informes, fórmulas y órdenes de exámenes por mes, con noviembre proyectado' });
+    for (var i = 0; i <= 4; i++) {
+      var v = maxV * i / 4, y = mg.t + ph - ph * i / 4;
+      svg.appendChild(sv('line', { x1: mg.l, x2: W - mg.r, y1: y, y2: y, stroke: tok('--grid'), 'stroke-width': 1 }));
+      var lab = sv('text', { x: mg.l - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 11 });
+      lab.style.fill = 'var(--ink-3)'; lab.textContent = compact(v); svg.appendChild(lab);
+    }
+    var band = pw / n, gap = 2;
+    var bw = Math.max(3, Math.min(16, (band * 0.8 - 2 * gap) / 3));
+    var gw = 3 * bw + 2 * gap, base = mg.t + ph;
+    etiquetas.forEach(function (et, j) {
+      var x0 = mg.l + band * j + (band - gw) / 2;
+      var g = sv('g', { tabindex: 0, role: 'button', 'aria-label': j === NOV ? 'noviembre, proyección' : MES_LARGO[j] });
+      g.appendChild(sv('rect', { x: mg.l + band * j, y: mg.t, width: band, height: ph, fill: 'transparent' }));
+      SER.forEach(function (s, k) {
+        var h = ph * s.vals[j] / maxV;
+        if (h <= 0) return;
+        var path = sv('path', { d: colPath(x0 + k * (bw + gap), base - h, bw, h, 4), fill: s.color, class: 'mark' });
+        if (j === EN_CURSO) path.setAttribute('opacity', '0.55');
+        if (j === NOV) { path.setAttribute('fill-opacity', '0.3'); path.setAttribute('stroke', s.color); path.setAttribute('stroke-width', '1.5'); path.setAttribute('stroke-dasharray', '3 2'); }
+        g.appendChild(path);
+      });
+      function show(evt) {
+        var rect = c4.getBoundingClientRect();
+        var px = evt && evt.clientX != null ? evt.clientX - rect.left : ((x0 + gw) / W) * c4.clientWidth;
+        var py = evt && evt.clientY != null ? evt.clientY - rect.top : 30;
+        var rows = SER.map(function (s) { return { label: s.nombre, value: (j === NOV ? '≈ ' : '') + nf0.format(s.vals[j]), color: s.color }; });
+        tt4.show(j === NOV ? 'noviembre (proyección)' : MES_LARGO[j], rows, px, py);
+      }
+      g.addEventListener('pointermove', show);
+      g.addEventListener('pointerleave', function () { tt4.hide(); });
+      g.addEventListener('focus', function () { show(null); });
+      g.addEventListener('blur', function () { tt4.hide(); });
+      svg.appendChild(g);
+      var xl = sv('text', { x: x0 + gw / 2, y: H - 12, 'text-anchor': 'middle', 'font-size': 12 });
+      xl.style.fill = j === NOV ? 'var(--ink)' : 'var(--ink-2)';
+      if (j === NOV) xl.setAttribute('font-weight', '600');
+      xl.textContent = et + (j === EN_CURSO ? '*' : '');
+      svg.appendChild(xl);
+    });
+    svg.appendChild(sv('line', { x1: mg.l, x2: W - mg.r, y1: base, y2: base, stroke: tok('--line'), 'stroke-width': 1 }));
+    c4.insertBefore(svg, c4.firstChild);
+  }
+
+  // controles de noviembre
+  [['data-nalc', 'nAlc'], ['data-nbase', 'nBase'], ['data-nmodo', 'nModo'], ['data-nwa', 'nWa'], ['data-ntab', 'nTab']].forEach(function (cfg) {
+    document.querySelectorAll('[' + cfg[0] + ']').forEach(function (b) {
+      b.addEventListener('click', function () {
+        state[cfg[1]] = b.getAttribute(cfg[0]); store(cfg[1], state[cfg[1]]);
+        if (cfg[1] === 'nAlc') ponerContacto(state.nAlc);
+        renderNov();
+      });
+    });
+  });
+  NOV_IN.forEach(function (id) { document.getElementById(id).addEventListener('input', renderNov); });
+  document.querySelectorAll('[data-correo]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var v = b.getAttribute('data-correo');
+      document.getElementById('k-correo').value = v === 'hoy' ? MEDIDO[state.nAlc].contacto.correo : v;
+      renderNov();
+    });
+  });
+
+  // ── Tablas ─────────────────────────────────────────────────────────────────
+  function buildTable(table, cols, rows, opts) {
+    opts = opts || {};
+    var sortCol = opts.sortCol != null ? opts.sortCol : -1, dir = 1;
+    function draw() {
+      table.textContent = '';
+      var thead = el('thead'), tr = el('tr');
+      cols.forEach(function (c, ci) {
+        var th = el('th', { class: c.num ? 'num' : '', scope: 'col' });
+        if (opts.sortable) {
+          var b = el('button', { type: 'button' }, c.h + (ci === sortCol ? (dir > 0 ? ' ↑' : ' ↓') : ''));
+          b.addEventListener('click', function () { if (sortCol === ci) dir = -dir; else { sortCol = ci; dir = c.num ? -1 : 1; } draw(); });
+          th.appendChild(b);
+        } else th.textContent = c.h;
+        tr.appendChild(th);
+      });
+      thead.appendChild(tr); table.appendChild(thead);
+      var tb = el('tbody');
+      var list = rows.filter(function (r) { return !opts.filter || opts.filter(r); });
+      if (sortCol >= 0) list = list.slice().sort(function (a, b) { var x = a.v[sortCol], y = b.v[sortCol]; return (x > y ? 1 : x < y ? -1 : 0) * dir; });
+      list.concat(opts.totalRow ? [opts.totalRow] : []).forEach(function (r) {
+        var row = el('tr', { class: r.cls || '' });
+        cols.forEach(function (c, ci) {
+          var td = el('td', { class: c.num ? 'num' : '' });
+          var val = r.v[ci];
+          td.textContent = (c.fmt && typeof val === 'number') ? c.fmt(val) : val;
+          if (c.bar && typeof val === 'number' && !r.cls) {
+            var bar = el('span', { class: 'inbar' });
+            bar.style.width = Math.max(1, 80 * val / c.bar) + 'px';
+            td.appendChild(bar);
+          }
+          row.appendChild(td);
+        });
+        tb.appendChild(row);
+      });
+      table.appendChild(tb);
+    }
+    draw();
+    return { redraw: draw };
+  }
+
+  function renderTables() {
+    var ix = idxs();
+    var mensRows = ix.map(function (i) {
+      return { cls: i === EN_CURSO ? 'partial' : '', v: [MESES[i] + (i === EN_CURSO ? ' (hasta el 28)' : ''), D.historias[i], D.conCita[i], 100 * D.conCita[i] / D.historias[i], D.pacientes[i], D.medicos[i], D.historias[i] / D.dias[i], D.kbCabExacto[i], D.mbConIndices[i], D.mbCompleta[i]] };
+    });
+    var tH = sum(pick(D.historias));
+    buildTable(document.getElementById('tb-mensual'), [
+      { h: 'Mes' }, { h: 'Historias', num: true, fmt: nf0.format }, { h: 'Con cita ese día', num: true, fmt: nf0.format },
+      { h: '% con cita', num: true, fmt: nf1.format }, { h: 'Pacientes distintos', num: true, fmt: nf0.format },
+      { h: 'Profesionales', num: true, fmt: nf0.format }, { h: 'Por día con atención', num: true, fmt: nf1.format },
+      { h: 'KB cabecera (exacto)', num: true, fmt: nf1.format }, { h: 'MB cabecera con índices', num: true, fmt: nf2.format },
+      { h: 'MB atención completa', num: true, fmt: nf2.format }
+    ], mensRows, { totalRow: { cls: 'total', v: ['Total', tH, sum(pick(D.conCita)), 100 * sum(pick(D.conCita)) / tH, state.incluirOct ? 16587 : '—', state.incluirOct ? 110 : '—', tH / sum(pick(D.dias)), sum(pick(D.kbCabExacto)), sum(pick(D.mbConIndices)), sum(pick(D.mbCompleta))] } });
+
+    var tipoRows = [];
+    ix.forEach(function (i) {
+      TIPOS.forEach(function (t) {
+        var isCon = t.k === 'CON';
+        tipoRows.push({ cls: i === EN_CURSO ? 'partial' : '', v: [MESES[i], t.nombre, D.tipos[t.k][i], isCon ? D.con.amb[i] : '—', isCon ? D.con.sinUrg[i] : '—', isCon ? D.con.piloto[i] : '—'] });
+      });
+    });
+    buildTable(document.getElementById('tb-tipos'), [
+      { h: 'Mes' }, { h: 'Tipo' }, { h: 'Historias', num: true, fmt: nf0.format },
+      { h: 'Ambulatorias', num: true, fmt: function (v) { return typeof v === 'number' ? nf0.format(v) : v; } },
+      { h: 'Sin urgencias', num: true, fmt: function (v) { return typeof v === 'number' ? nf0.format(v) : v; } },
+      { h: 'Piloto', num: true, fmt: function (v) { return typeof v === 'number' ? nf0.format(v) : v; } }
+    ], tipoRows);
+
+    var sel = document.getElementById('sel-hija');
+    var tablaHija = sel.value || 'HIST_REMI';
+    var h = HIJAS[tablaHija];
+    var hijaRows = ix.map(function (i) { return { cls: i === EN_CURSO ? 'partial' : '', v: [MESES[i], h.filas[i], h.hc[i], h.filas[i] / h.hc[i], h.kb[i]] }; });
+    buildTable(document.getElementById('tb-hija'), [
+      { h: 'Mes' }, { h: 'Filas', num: true, fmt: nf0.format }, { h: 'Historias con filas', num: true, fmt: nf0.format },
+      { h: 'Filas por historia', num: true, fmt: nf2.format }, { h: 'KB exactos', num: true, fmt: nf1.format }
+    ], hijaRows, { totalRow: { cls: 'total', v: ['Total', sum(pick(h.filas)), sum(pick(h.hc)), sum(pick(h.filas)) / sum(pick(h.hc)), sum(pick(h.kb))] } });
+    var maxKb = Math.max.apply(null, Object.keys(HIJAS).map(function (k) { return sum(pick(HIJAS[k].kb)); }));
+    buildTable(document.getElementById('tb-hijas-total'), [
+      { h: 'Tabla' }, { h: 'Qué es' }, { h: 'Filas en el periodo', num: true, fmt: nf0.format },
+      { h: 'KB exactos', num: true, fmt: nf1.format, bar: maxKb }, { h: 'KB por fila', num: true, fmt: nf2.format }
+    ], Object.keys(HIJAS).map(function (k) { var x = HIJAS[k]; return { v: [k, x.n, sum(pick(x.filas)), sum(pick(x.kb)), sum(pick(x.kb)) / sum(pick(x.filas))] }; }), { sortable: true, sortCol: 3 });
+  }
+
+  // tablas que no dependen del periodo
+  var selH = document.getElementById('sel-hija');
+  Object.keys(HIJAS).forEach(function (k) { selH.appendChild(el('option', { value: k }, k + ' — ' + HIJAS[k].n)); });
+  selH.value = load('hija', 'HIST_REMI');
+  selH.addEventListener('change', function () { store('hija', selH.value); renderTables(); });
+
+  var maxParte = PESO_PARTES[0].kb;
+  buildTable(document.getElementById('tb-peso'), [
+    { h: 'Tabla del HIS' }, { h: 'Qué es' }, { h: 'Filas por historia', num: true, fmt: nf2.format },
+    { h: 'KB por historia', num: true, fmt: nf3.format, bar: maxParte }, { h: 'KB en la muestra', num: true, fmt: nf1.format }
+  ], PESO_PARTES.map(function (p) { return { v: [p.t, p.n, p.filas, p.kb, p.total] }; }).concat([{ v: ['HISTORIACLINICA', 'Cabecera de la historia', 1, PESO_CABECERA, PESO_CABECERA * 3999] }]),
+  { sortable: true, sortCol: 3 });
+  buildTable(document.getElementById('tb-peso-tipo'), [
+    { h: 'Tipo' }, { h: 'Código' }, { h: 'Historias en la muestra', num: true, fmt: nf0.format },
+    { h: 'KB cabecera', num: true, fmt: nf2.format }, { h: 'KB contenido', num: true, fmt: nf2.format }, { h: 'KB total', num: true, fmt: nf2.format }
+  ], PESO_TIPO.map(function (p) { return { v: [p.n, p.k, p.hist, p.cab, p.cont, p.tot] }; }),
+  { totalRow: { cls: 'total', v: ['Todas', '', 3999, 0.05, 3.53, 3.58] } });
+
+  var fCargo = document.getElementById('f-cargo');
+  var maxCargo = CARGOS[0][1];
+  var tCargo = buildTable(document.getElementById('tb-cargo'), [
+    { h: 'Cargo en el HIS' }, { h: 'Historias', num: true, fmt: nf0.format, bar: maxCargo }, { h: 'Con cita', num: true, fmt: nf0.format },
+    { h: 'Sin cita', num: true, fmt: nf0.format }, { h: 'Profesionales', num: true, fmt: nf0.format }
+  ], CARGOS.map(function (c) { return { v: c }; }), {
+    sortable: true, sortCol: 1,
+    filter: function (r) { var q = fCargo.value.trim().toUpperCase(); return !q || String(r.v[0]).toUpperCase().indexOf(q) >= 0; }
+  });
+  fCargo.addEventListener('input', function () { tCargo.redraw(); });
+
+  buildTable(document.getElementById('tb-esp'), [
+    { h: 'Código' }, { h: 'Especialidad' }, { h: 'Genera RDA' }, { h: 'Historias', num: true, fmt: nf0.format, bar: ESPECIALIDADES[0][3] }, { h: '%', num: true, fmt: nf1.format }
+  ], ESPECIALIDADES.map(function (e) { return { v: e }; }), { sortable: true, sortCol: 3 });
+
+  buildTable(document.getElementById('tb-e1'), [
+    { h: 'Historias en total', num: true, fmt: nf0.format }, { h: 'MB de datos', num: true, fmt: nf1.format },
+    { h: 'MB de índices', num: true, fmt: nf1.format }, { h: 'MB en total', num: true, fmt: nf1.format },
+    { h: 'KB por historia', num: true, fmt: nf2.format }, { h: 'KB por historia con índices', num: true, fmt: nf2.format }
+  ], [{ v: [E1.filas, E1.kbDatos / 1024, E1.kbIndices / 1024, E1.mbTotal, E1.kbFila, E1.kbFilaCi] }]);
+
+  // Botones «Ver la tabla»
+  document.querySelectorAll('[data-open-id]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.getElementById(b.getAttribute('data-open-id')).scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+    });
+  });
+  document.querySelectorAll('[data-open]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var d = document.getElementById(b.getAttribute('data-open'));
+      d.open = true;
+      d.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    });
+  });
+
+  // ── Controles ──────────────────────────────────────────────────────────────
+  var chk = document.getElementById('incluir-oct');
+  chk.checked = !!state.incluirOct;
+  chk.addEventListener('change', function () { state.incluirOct = chk.checked; store('incluirOct', state.incluirOct); renderAll(); });
+  ['tipo', 'pct', 'pac', 'mb'].forEach(function (m) {
+    var b = document.getElementById('c1-' + m);
+    b.addEventListener('click', function () {
+      state.modo1 = m; store('modo1', m);
+      ['tipo', 'pct', 'pac', 'mb'].forEach(function (x) { document.getElementById('c1-' + x).setAttribute('aria-pressed', String(x === m)); });
+      renderC1();
+    });
+    b.setAttribute('aria-pressed', String(m === state.modo1));
+  });
+  ['comp', 'tipo'].forEach(function (m) {
+    var b = document.getElementById('c3-' + m);
+    b.addEventListener('click', function () {
+      state.modo3 = m; store('modo3', m);
+      ['comp', 'tipo'].forEach(function (x) { document.getElementById('c3-' + x).setAttribute('aria-pressed', String(x === m)); });
+      renderC3();
+    });
+    b.setAttribute('aria-pressed', String(m === state.modo3));
+  });
+
+  function renderAll() { renderTiles(); renderC1(); renderC2(); renderC3(); renderTables(); renderNov(); }
+  renderAll();
+
+  // Redibujar al cambiar el ancho o el tema
+  var rt;
+  function later() { clearTimeout(rt); rt = setTimeout(function () { renderC1(); renderC2(); renderC3(); renderC4(proyeccion(state.nAlc, state.nBase)); }, 80); }
+  if ('ResizeObserver' in window) { var ro = new ResizeObserver(later); [c1, c2, c3, c4].forEach(function (c) { ro.observe(c); }); }
+  else window.addEventListener('resize', later);
+  try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', later); } catch (e) { /* navegador viejo */ }
+  new MutationObserver(later).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
+})();
+</script>

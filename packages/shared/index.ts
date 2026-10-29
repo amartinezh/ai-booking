@@ -323,6 +323,7 @@ export type {
 } from './src/cupos-ofrecidos';
 export {
   diaComunDeLosCupos,
+  esRechazo,
   etiquetaOtroHorario,
   inicioDelDiaSiguiente,
   interpretarOtroHorario,
