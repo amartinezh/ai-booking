@@ -30,7 +30,9 @@ describe('descarga de encuestas', () => {
     expect(celda('¿Cómo le fue?')).toBe('Regular');
     expect(celda('Estrellas del asistente')).toBe(4);
     expect(celda('Gestión')).toBe('Agendó o cambió cita');
-    expect(celda('Estado')).toBe('Respondida');
+    expect(celda('Estado')).toBe('Completa');
+    // Las estrellas van antes que las preguntas del hospital, como en la encuesta.
+    expect(encabezado.indexOf('Estrellas del asistente')).toBeLessThan(encabezado.indexOf('¿Recomendaría la IPS?'));
     // Fecha con año y en hora de Bogotá (9:14 a. m.), no en UTC.
     expect(celda('Enviada')).toMatch(/30\/10\/2026 09:14 a/);
   });
@@ -71,8 +73,12 @@ describe('descarga de encuestas', () => {
     const stats: SurveyStats = {
       sent: 10,
       answered: 8,
+      complete: 6,
+      starsOnly: 2,
       pending: 1,
       expired: 1,
+      averageRatingWithIps: 4.5,
+      averageRatingStarsOnly: 3.5,
       responseRate: 0.8,
       comments: 3,
       averageRating: 4.25,
@@ -91,6 +97,10 @@ describe('descarga de encuestas', () => {
     const buscar = (titulo: string) => filas.find((f) => f[0] === titulo);
     expect(buscar('Periodo')?.[1]).toBe('Últimos 30 días');
     expect(buscar('Respondidas')).toEqual(['Respondidas', 8, '80 % de las enviadas']);
+    expect(buscar('Completas')?.[1]).toBe(6);
+    expect(buscar('Solo estrellas')?.[1]).toBe(2);
+    expect(buscar('Promedio de quienes completaron')?.[1]).toBe('4,5');
+    expect(buscar('Promedio de quienes solo dieron estrellas')?.[1]).toBe('3,5');
     expect(buscar('Sí')).toEqual(['Sí', 6, '75 %']);
     expect(buscar('Buena')).toEqual(['Buena', 3, '50 %']);
     expect(buscar('No responde')).toEqual(['No responde', 2, '']);

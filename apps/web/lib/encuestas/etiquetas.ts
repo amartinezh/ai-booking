@@ -20,7 +20,8 @@ export const EXPERIENCIA_LABEL: Record<SurveyExperience, string> = {
 export const EXPERIENCIAS: SurveyExperience[] = ['GOOD', 'FAIR', 'BAD', 'NO_ANSWER'];
 
 export const ESTADO_LABEL: Record<SurveyAnswerStatus, string> = {
-  ANSWERED: 'Respondida',
+  ANSWERED: 'Completa',
+  PARTIAL: 'Solo estrellas',
   PENDING: 'Enlace abierto',
   EXPIRED: 'Venció sin respuesta',
 };

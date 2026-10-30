@@ -42,6 +42,55 @@ describe('buildSurveyStats', () => {
     });
   });
 
+  it('⭐ «solo estrellas» cuenta como respondida, pero no en lo de la IPS', () => {
+    const s = buildSurveyStats(
+      [
+        fila({ rating: 5 }), // completa
+        sinResponder({
+          rating: 1,
+          expiresAt: new Date(AHORA.getTime() + 60_000),
+        }), // solo estrellas, abierta
+        sinResponder({
+          rating: 2,
+          expiresAt: new Date(AHORA.getTime() - 60_000),
+        }), // solo estrellas, vencida
+        sinResponder({ expiresAt: new Date(AHORA.getTime() - 60_000) }), // nada
+      ],
+      { comments: 0, now: AHORA },
+    );
+    expect(s).toMatchObject({
+      sent: 4,
+      answered: 3,
+      complete: 1,
+      starsOnly: 2,
+      pending: 0,
+      expired: 1,
+      responseRate: 0.75,
+      averageRating: 2.67,
+      ratingDistribution: [1, 1, 0, 0, 1],
+      recommend: { yes: 1, no: 0 },
+      recommendRate: 1,
+      // Quien solo dio estrellas calificó peor que quien completó: se ve.
+      averageRatingWithIps: 5,
+      averageRatingStarsOnly: 1.5,
+    });
+  });
+
+  it('las completas de antes de las preguntas de la IPS no entran en la comparación', () => {
+    const s = buildSurveyStats(
+      [
+        fila({ rating: 2, wouldRecommend: null, experience: null }),
+        fila({ rating: 4 }),
+      ],
+      { comments: 0, now: AHORA },
+    );
+    expect(s).toMatchObject({
+      complete: 2,
+      averageRatingWithIps: 4,
+      averageRatingStarsOnly: null,
+    });
+  });
+
   it('tasa de respuesta, pendientes (enlace abierto) y vencidas', () => {
     const s = buildSurveyStats(
       [

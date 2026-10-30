@@ -36,13 +36,17 @@ export function moodToRatingWhere(mood: UserMood): Prisma.IntNullableFilter {
 }
 
 // ───────────────────────────────────────────────────────────────
-// Estado del enlace de la encuesta
-//   ANSWERED → el paciente respondió
-//   PENDING  → el enlace sigue abierto (aún no vence)
-//   EXPIRED  → venció sin respuesta
+// Estado de la encuesta
+//   ANSWERED → completa: el paciente envió también las preguntas de la IPS
+//   PARTIAL  → solo estrellas: calificó al asistente (se guarda al tocar la
+//              estrella) y no envió el resto; mientras el enlace siga vigente
+//              puede completarla
+//   PENDING  → el enlace sigue abierto y aún no calificó
+//   EXPIRED  → venció sin ninguna respuesta
 // ───────────────────────────────────────────────────────────────
 export const SURVEY_ANSWER_STATUSES = [
   'ANSWERED',
+  'PARTIAL',
   'PENDING',
   'EXPIRED',
 ] as const;
@@ -52,8 +56,10 @@ export function computeAnswerStatus(
   isUsed: boolean,
   expiresAt: Date,
   now: Date = new Date(),
+  rating: number | null = null,
 ): SurveyAnswerStatus {
   if (isUsed) return 'ANSWERED';
+  if (rating != null) return 'PARTIAL';
   return expiresAt.getTime() > now.getTime() ? 'PENDING' : 'EXPIRED';
 }
 
@@ -171,6 +177,7 @@ export interface SurveyExport<T> {
 /** Indicadores de un grupo de encuestas (todas, una gestión o un tramo de tiempo). */
 export interface SurveyIndicators {
   sent: number;
+  /** Con al menos las estrellas (completas + solo estrellas). */
   answered: number;
   /** Promedio de estrellas del asistente; null sin calificaciones. */
   averageRating: number | null;
@@ -181,10 +188,23 @@ export interface SurveyIndicators {
 }
 
 export interface SurveyStats extends SurveyIndicators {
+  /** Completas: enviaron también las preguntas de la IPS. */
+  complete: number;
+  /** Solo estrellas: calificaron al asistente y no enviaron el resto. */
+  starsOnly: number;
+  /** Sin ninguna respuesta, con el enlace abierto. */
   pending: number;
+  /** Sin ninguna respuesta, vencidas. */
   expired: number;
-  /** Respondidas / enviadas. */
+  /** Respondidas (con estrellas) / enviadas. */
   responseRate: number | null;
+  /**
+   * Promedio de estrellas de quienes respondieron también las preguntas de la
+   * IPS y de quienes solo dieron estrellas: si difieren mucho, los porcentajes
+   * de la IPS no representan a todos los que respondieron.
+   */
+  averageRatingWithIps: number | null;
+  averageRatingStarsOnly: number | null;
   /** Respondidas con comentario. */
   comments: number;
   /** Cantidad por estrellas, de 1 a 5 (índice 0 = 1 estrella). */

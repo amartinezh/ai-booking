@@ -157,6 +157,47 @@ describe('SurveyService — generación, gate y regla de oro (CSAT)', () => {
   // ───────────────────────────────────────────────────────────
   // submitSurvey — REGLA DE ORO
   // ───────────────────────────────────────────────────────────
+  describe('saveRating — paso 1: la estrella se guarda sola', () => {
+    it('guarda la estrella con su hora y NO cierra la encuesta', async () => {
+      prisma.chatSurvey.updateMany.mockResolvedValue({ count: 1 });
+      const before = new Date();
+
+      await expect(service.saveRating(TOKEN, 4)).resolves.toEqual({
+        success: true,
+      });
+
+      const arg = prisma.chatSurvey.updateMany.mock.calls[0][0];
+      expect(arg.where.id).toBe(TOKEN);
+      expect(arg.where.isUsed).toBe(false);
+      expect(arg.where.expiresAt.gt.getTime()).toBeGreaterThanOrEqual(
+        before.getTime(),
+      );
+      expect(arg.data).toEqual({
+        rating: 4,
+        answeredAt: arg.where.expiresAt.gt,
+      });
+      // Sigue abierta para completar lo de la IPS.
+      expect(arg.data.isUsed).toBeUndefined();
+    });
+
+    it.each([0, 6, 2.5, 'cinco', null, undefined])(
+      'rechaza una estrella inválida (%p) sin tocar la BD',
+      async (rating) => {
+        await expect(service.saveRating(TOKEN, rating)).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+        expect(prisma.chatSurvey.updateMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('🔒 una encuesta ya completa o vencida no se reescribe (count = 0 → 404)', async () => {
+      prisma.chatSurvey.updateMany.mockResolvedValue({ count: 0 });
+      await expect(service.saveRating(TOKEN, 1)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
   describe('submitSurvey (regla de oro)', () => {
     it('persiste las respuestas y exige isUsed:false + expiresAt > now en el WHERE', async () => {
       prisma.chatSurvey.updateMany.mockResolvedValue({ count: 1 });
@@ -557,9 +598,14 @@ describe('SurveyService — reportes', () => {
     it.each([
       ['ANSWERED', (w: any) => expect(w).toEqual({ isUsed: true })],
       [
+        'PARTIAL',
+        (w: any) => expect(w).toEqual({ isUsed: false, rating: { not: null } }),
+      ],
+      [
         'PENDING',
         (w: any) => {
           expect(w.isUsed).toBe(false);
+          expect(w.rating).toBeNull();
           expect(w.expiresAt.gt).toBeInstanceOf(Date);
         },
       ],
@@ -567,6 +613,8 @@ describe('SurveyService — reportes', () => {
         'EXPIRED',
         (w: any) => {
           expect(w.isUsed).toBe(false);
+          // Con estrella no es «vencida sin respuesta»: es «solo estrellas».
+          expect(w.rating).toBeNull();
           expect(w.expiresAt.lte).toBeInstanceOf(Date);
         },
       ],
@@ -661,6 +709,30 @@ describe('SurveyService — reportes', () => {
       const r = await service.findDetailedForSuperAdmin(baseQuery);
       expect(r.rows[0]).toMatchObject({ userMood: null, status: 'EXPIRED' });
       expect(r.rows[1]).toMatchObject({ userMood: null, status: 'PENDING' });
+    });
+
+    it('con estrella y sin enviar el resto es «solo estrellas», con el enlace abierto o vencido', async () => {
+      prisma.chatSurvey.findMany.mockReturnValue([
+        encuesta({
+          id: 'abierta',
+          isUsed: false,
+          rating: 2,
+          wouldRecommend: null,
+          experience: null,
+          expiresAt: new Date(Date.now() + 60_000),
+        }),
+        encuesta({
+          id: 'vencida',
+          isUsed: false,
+          rating: 4,
+          wouldRecommend: null,
+          experience: null,
+          expiresAt: new Date(Date.now() - 1000),
+        }),
+      ]);
+      const r = await service.findDetailedForSuperAdmin(baseQuery);
+      expect(r.rows.map((x) => x.status)).toEqual(['PARTIAL', 'PARTIAL']);
+      expect(r.rows[0].userMood).toBe('NEGATIVE');
     });
 
     it('una encuesta anterior a las preguntas de la IPS las trae en null', async () => {

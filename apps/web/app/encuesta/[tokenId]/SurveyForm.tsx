@@ -1,13 +1,21 @@
 'use client';
 
-import { useState } from 'react';
-import { Star, CheckCircle2, ThumbsUp, ThumbsDown } from 'lucide-react';
-import { submitSurvey } from '@/app/actions/survey';
+// Encuesta de satisfacción, en dos pasos:
+//   1. Las estrellas del asistente, lo más fácil de responder. Se guardan solas
+//      al tocarlas: si el paciente se va ahí, su calificación queda.
+//   2. Ya con estrellas, dos preguntas sobre la IPS (recomendaría, cómo le fue)
+//      y el comentario, con «Enviar».
+
+import { useRef, useState } from 'react';
+import { Star, CheckCircle2, ThumbsUp, ThumbsDown, Check } from 'lucide-react';
+import { saveSurveyRating, submitSurvey } from '@/app/actions/survey';
 import type { SurveyExperience } from '@/app/actions/surveys.types';
 
 interface SurveyFormProps {
   tokenId: string;
   clinicName: string;
+  /** Estrellas ya guardadas (si volvió al enlace después de calificar). */
+  initialRating?: number;
 }
 
 // Lo que ve el paciente en cada estrella.
@@ -19,7 +27,8 @@ const EXPERIENCE_OPTIONS: { value: SurveyExperience; label: string; emoji: strin
   { value: 'BAD', label: 'Mala', emoji: '😞' },
 ];
 
-type Pregunta = 'recommend' | 'experience' | 'rating';
+type Pregunta = 'recommend' | 'experience';
+type Guardado = 'nada' | 'guardando' | 'guardado' | 'error';
 
 const optionBase =
   'flex items-center justify-center gap-2 rounded-xl border-2 px-3 py-3 text-base font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400';
@@ -54,16 +63,57 @@ function Bloque({
   );
 }
 
-export default function SurveyForm({ tokenId, clinicName }: SurveyFormProps) {
+export default function SurveyForm({ tokenId, clinicName, initialRating = 0 }: SurveyFormProps) {
+  const [rating, setRating] = useState(initialRating);
+  const [hover, setHover] = useState(0);
+  const [guardado, setGuardado] = useState<Guardado>(initialRating > 0 ? 'guardado' : 'nada');
+  const [errorEstrella, setErrorEstrella] = useState<string | null>(null);
   const [wouldRecommend, setWouldRecommend] = useState<boolean | null>(null);
   const [experience, setExperience] = useState<SurveyExperience | null>(null);
-  const [rating, setRating] = useState(0);
-  const [hover, setHover] = useState(0);
   const [feedback, setFeedback] = useState('');
   const [faltan, setFaltan] = useState<Set<Pregunta>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [enlaceInvalido, setEnlaceInvalido] = useState<string | null>(null);
+
+  // Una estrella a la vez hacia el servidor: si toca otra mientras se guarda
+  // la anterior, se guarda la última al terminar (nunca una vieja encima).
+  const enVuelo = useRef(false);
+  const pendiente = useRef<number | null>(null);
+  const terminado = useRef(false);
+
+  async function guardarEstrella(valor: number) {
+    enVuelo.current = true;
+    setGuardado('guardando');
+    const res = await saveSurveyRating(tokenId, valor);
+    enVuelo.current = false;
+    if (terminado.current) return; // ya envió todo; el envío llevó la estrella
+    const siguiente = pendiente.current;
+    pendiente.current = null;
+    if (siguiente != null && siguiente !== valor) {
+      void guardarEstrella(siguiente);
+      return;
+    }
+    if (res.success) {
+      setGuardado('guardado');
+      setErrorEstrella(null);
+    } else if (res.invalidLink) {
+      setEnlaceInvalido(res.error);
+    } else {
+      setGuardado('error');
+      setErrorEstrella(res.error);
+    }
+  }
+
+  function elegirEstrella(valor: number) {
+    setRating(valor);
+    if (enVuelo.current) {
+      pendiente.current = valor;
+      return;
+    }
+    void guardarEstrella(valor);
+  }
 
   const respondida = (p: Pregunta) =>
     setFaltan((prev) => {
@@ -78,13 +128,12 @@ export default function SurveyForm({ tokenId, clinicName }: SurveyFormProps) {
     const sinResponder = new Set<Pregunta>();
     if (wouldRecommend === null) sinResponder.add('recommend');
     if (experience === null) sinResponder.add('experience');
-    if (rating < 1) sinResponder.add('rating');
     setFaltan(sinResponder);
     if (sinResponder.size > 0) {
       setError(
         sinResponder.size === 1
           ? 'Falta una respuesta: está marcada en rojo.'
-          : `Faltan ${sinResponder.size} respuestas: están marcadas en rojo.`,
+          : 'Faltan las 2 respuestas: están marcadas en rojo.',
       );
       return;
     }
@@ -93,6 +142,7 @@ export default function SurveyForm({ tokenId, clinicName }: SurveyFormProps) {
 
     const result = await submitSurvey(tokenId, { wouldRecommend, experience, rating, feedback });
     if (result.success) {
+      terminado.current = true;
       setDone(true);
     } else {
       setError(result.error);
@@ -101,30 +151,74 @@ export default function SurveyForm({ tokenId, clinicName }: SurveyFormProps) {
   }
 
   const estrellas = hover || rating;
+  const paso2 = rating > 0;
 
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-emerald-50 to-zinc-100 p-4 font-sans">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-zinc-200 sm:p-8">
-        {done ? (
-          // ✅ Agradecimiento: el formulario se oculta tras enviar.
-          <div className="flex flex-col items-center gap-4 py-6 text-center">
-            <CheckCircle2 className="h-16 w-16 text-emerald-500" />
-            <h1 className="text-2xl font-bold text-zinc-800">¡Gracias por su opinión!</h1>
-            <p className="text-zinc-500">
-              Sus respuestas nos ayudan a mejorar la atención en {clinicName}. Ya puede cerrar esta ventana. 💚
-            </p>
+  let contenido: React.ReactNode;
+  if (enlaceInvalido) {
+    contenido = (
+      <div className="flex flex-col items-center gap-3 py-6 text-center" role="alert">
+        <h1 className="text-xl font-bold text-zinc-800">Este enlace ya no está disponible</h1>
+        <p className="text-zinc-500">{enlaceInvalido}</p>
+      </div>
+    );
+  } else if (done) {
+    // ✅ Agradecimiento: el formulario se oculta tras enviar.
+    contenido = (
+      <div className="flex flex-col items-center gap-4 py-6 text-center">
+        <CheckCircle2 className="h-16 w-16 text-emerald-500" />
+        <h1 className="text-2xl font-bold text-zinc-800">¡Gracias por su opinión!</h1>
+        <p className="text-zinc-500">
+          Sus respuestas nos ayudan a mejorar la atención en {clinicName}. Ya puede cerrar esta ventana. 💚
+        </p>
+      </div>
+    );
+  } else {
+    contenido = (
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
+        <header className="text-center">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Encuesta de satisfacción</p>
+          <h1 className="mt-1 text-2xl font-bold text-zinc-800">¿Cómo lo atendió nuestro asistente por chat?</h1>
+          <p className="mt-1 text-sm text-zinc-500">Toque las estrellas para calificarlo.</p>
+        </header>
+
+        <div>
+          <div className="flex justify-center gap-1.5" role="radiogroup" aria-label="Calificación del asistente">
+            {[1, 2, 3, 4, 5].map((value) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-label={`${value} estrella${value > 1 ? 's' : ''}: ${RATING_LABELS[value]}`}
+                aria-checked={rating === value}
+                onClick={() => elegirEstrella(value)}
+                onMouseEnter={() => setHover(value)}
+                onMouseLeave={() => setHover(0)}
+                className="rounded p-0.5 transition-transform hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+              >
+                <Star className={`h-11 w-11 ${estrellas >= value ? 'fill-amber-400 text-amber-400' : 'text-zinc-300'}`} />
+              </button>
+            ))}
           </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
-            <header className="text-center">
-              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-                Encuesta de satisfacción
+          <p className="mt-1 h-5 text-center text-sm font-medium text-zinc-600">{RATING_LABELS[estrellas] ?? ''}</p>
+          <p className="mt-1 h-5 text-center text-xs" aria-live="polite">
+            {guardado === 'guardando' && <span className="text-zinc-400">Guardando…</span>}
+            {guardado === 'guardado' && (
+              <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
+                <Check className="h-3.5 w-3.5" aria-hidden /> Calificación guardada
+              </span>
+            )}
+            {guardado === 'error' && <span className="font-medium text-red-600">{errorEstrella}</span>}
+          </p>
+        </div>
+
+        {paso2 && (
+          <>
+            <div className="border-t border-zinc-200 pt-4 text-center">
+              <p className="text-base font-semibold text-zinc-800">
+                ¡Gracias! ¿Nos ayuda con 2 preguntas más sobre {clinicName}?
               </p>
-              <h1 className="mt-1 text-2xl font-bold text-zinc-800">¿Cómo le fue con nosotros?</h1>
-              <p className="mt-1 text-sm text-zinc-500">
-                Son 3 preguntas cortas sobre {clinicName}.
-              </p>
-            </header>
+              <p className="text-sm text-zinc-500">Toman unos segundos.</p>
+            </div>
 
             <Bloque
               numero={1}
@@ -195,38 +289,6 @@ export default function SurveyForm({ tokenId, clinicName }: SurveyFormProps) {
               </div>
             </Bloque>
 
-            <Bloque
-              numero={3}
-              titulo="¿Cómo lo atendió el asistente virtual por chat?"
-              falta={faltan.has('rating')}
-            >
-              <div className="flex justify-center gap-1.5" role="radiogroup" aria-label="Calificación del asistente">
-                {[1, 2, 3, 4, 5].map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-label={`${value} estrella${value > 1 ? 's' : ''}: ${RATING_LABELS[value]}`}
-                    aria-checked={rating === value}
-                    onClick={() => {
-                      setRating(value);
-                      respondida('rating');
-                    }}
-                    onMouseEnter={() => setHover(value)}
-                    onMouseLeave={() => setHover(0)}
-                    className="rounded p-0.5 transition-transform hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-                  >
-                    <Star
-                      className={`h-10 w-10 ${estrellas >= value ? 'fill-amber-400 text-amber-400' : 'text-zinc-300'}`}
-                    />
-                  </button>
-                ))}
-              </div>
-              <p className="mt-1 h-5 text-center text-sm font-medium text-zinc-600" aria-live="polite">
-                {RATING_LABELS[estrellas] ?? ''}
-              </p>
-            </Bloque>
-
             <label className="flex flex-col gap-1.5">
               <span className="text-sm font-semibold text-zinc-700">
                 ¿Algo más que quiera contarnos? <span className="font-normal text-zinc-400">(opcional)</span>
@@ -254,9 +316,15 @@ export default function SurveyForm({ tokenId, clinicName }: SurveyFormProps) {
             >
               {loading ? 'Enviando…' : 'Enviar respuestas'}
             </button>
-          </form>
+          </>
         )}
-      </div>
+      </form>
+    );
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-emerald-50 to-zinc-100 p-4 font-sans">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-zinc-200 sm:p-8">{contenido}</div>
     </div>
   );
 }

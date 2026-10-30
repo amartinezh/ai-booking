@@ -141,23 +141,42 @@ export class SurveyService {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // ENVÍO DE LA ENCUESTA — REGLA DE ORO
+  // PASO 1 — LA ESTRELLA SE GUARDA SOLA, al tocarla.
+  // Es lo más fácil de responder y va primero: si el paciente se va sin
+  // contestar lo demás, su calificación del asistente queda. NO cierra la
+  // encuesta (isUsed sigue en false): mientras el enlace esté vigente puede
+  // cambiar la estrella o completar el resto. Una encuesta ya enviada
+  // completa no se puede reescribir (mismo WHERE de la regla de oro).
+  // ══════════════════════════════════════════════════════════════
+  async saveRating(id: string, rawRating: unknown): Promise<{ success: true }> {
+    const rating = this.validRating(rawRating);
+    const now = new Date();
+    const result = await this.prisma.chatSurvey.updateMany({
+      where: { id, isUsed: false, expiresAt: { gt: now } },
+      data: { rating, answeredAt: now },
+    });
+    if (result.count === 0) {
+      throw new NotFoundException(
+        'El enlace de la encuesta es inválido, ya se usó o expiró.',
+      );
+    }
+    return { success: true };
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // PASO 2 — ENVÍO COMPLETO — REGLA DE ORO
   // Sólo persiste si isUsed == false && expiresAt > now(). Marca isUsed = true
   // de forma atómica (updateMany con guardas en el WHERE) para que un doble
   // submit concurrente no pueda escribir dos veces.
-  // Las tres preguntas son obligatorias: estrellas del asistente,
-  // «¿Recomendaría la IPS?» y «¿Cómo le fue?» (que tiene «No responde»).
+  // Exige las tres respuestas: estrellas del asistente (las reenvía el
+  // formulario, ya guardadas en el paso 1), «¿Recomendaría la IPS?» y
+  // «¿Cómo le fue?» (que tiene «No responde»).
   // ══════════════════════════════════════════════════════════════
   async submitSurvey(
     id: string,
     input: SubmitSurveyInput,
   ): Promise<{ success: true }> {
-    const rating = Number(input.rating);
-    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-      throw new BadRequestException(
-        'La calificación debe ser un entero entre 1 y 5.',
-      );
-    }
+    const rating = this.validRating(input.rating);
 
     if (typeof input.wouldRecommend !== 'boolean') {
       throw new BadRequestException(
@@ -370,6 +389,17 @@ export class SurveyService {
     });
   }
 
+  /** Estrellas de 1 a 5, o 400. */
+  private validRating(raw: unknown): number {
+    const rating = Number(raw);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      throw new BadRequestException(
+        'La calificación debe ser un entero entre 1 y 5.',
+      );
+    }
+    return rating;
+  }
+
   // ── Construcción de filas ────────────────────────────────────
 
   private toDetailedRow(r: DetailedRecord, now: Date): DetailedSurveyRow {
@@ -377,7 +407,7 @@ export class SurveyService {
       id: r.id,
       createdAt: r.createdAt.toISOString(),
       answeredAt: r.answeredAt?.toISOString() ?? null,
-      status: computeAnswerStatus(r.isUsed, r.expiresAt, now),
+      status: computeAnswerStatus(r.isUsed, r.expiresAt, now, r.rating),
       rating: r.rating,
       userMood: computeUserMood(r.rating),
       wouldRecommend: r.wouldRecommend,
@@ -403,7 +433,7 @@ export class SurveyService {
       id: r.id,
       createdAt: r.createdAt.toISOString(),
       answeredAt: r.answeredAt?.toISOString() ?? null,
-      status: computeAnswerStatus(r.isUsed, r.expiresAt, now),
+      status: computeAnswerStatus(r.isUsed, r.expiresAt, now, r.rating),
       patientName: r.patient?.fullName ?? 'Paciente anónimo',
       whatsappPhone: r.patient?.whatsappId ?? null,
       rating: r.rating,
@@ -448,10 +478,12 @@ export class SurveyService {
     if (f.withComment) and.push({ feedback: { not: null } });
 
     if (f.status === 'ANSWERED') and.push({ isUsed: true });
+    else if (f.status === 'PARTIAL')
+      and.push({ isUsed: false, rating: { not: null } });
     else if (f.status === 'PENDING')
-      and.push({ isUsed: false, expiresAt: { gt: now } });
+      and.push({ isUsed: false, rating: null, expiresAt: { gt: now } });
     else if (f.status === 'EXPIRED')
-      and.push({ isUsed: false, expiresAt: { lte: now } });
+      and.push({ isUsed: false, rating: null, expiresAt: { lte: now } });
 
     const q = f.q?.trim().slice(0, MAX_SEARCH_LENGTH);
     if (q) {

@@ -48,8 +48,10 @@ export default function SurveyDetail({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, onPrev, onNext]);
 
-  const respondida = row.status === 'ANSWERED';
-  const anterior = respondida && row.experience == null && row.wouldRecommend == null;
+  // Con estrellas: completa o solo estrellas.
+  const respondida = row.status === 'ANSWERED' || row.status === 'PARTIAL';
+  const soloEstrellas = row.status === 'PARTIAL';
+  const anterior = row.status === 'ANSWERED' && row.experience == null && row.wouldRecommend == null;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-labelledby="detalle-encuesta">
@@ -108,19 +110,25 @@ export default function SurveyDetail({
             <section>
               <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Respuestas</h3>
               <dl>
-                <Dato titulo="¿Recomendaría la IPS?">
-                  <RecommendBadge value={row.wouldRecommend} />
-                </Dato>
-                <Dato titulo="¿Cómo le fue?">
-                  <ExperienceBadge value={row.experience} />
-                </Dato>
                 <Dato titulo="Asistente virtual">
                   <span className="flex flex-wrap items-center gap-2">
                     <Stars rating={row.rating} size="md" />
                     {row.rating != null && <span className="text-zinc-500">{RATING_LABELS[row.rating]}</span>}
                   </span>
                 </Dato>
+                <Dato titulo="¿Recomendaría la IPS?">
+                  <RecommendBadge value={row.wouldRecommend} />
+                </Dato>
+                <Dato titulo="¿Cómo le fue?">
+                  <ExperienceBadge value={row.experience} />
+                </Dato>
               </dl>
+              {soloEstrellas && (
+                <p className="mt-2 text-xs text-zinc-500">
+                  Calificó al asistente y no envió las preguntas sobre el hospital. Puede completarlas mientras el enlace
+                  esté vigente (24 horas desde el envío).
+                </p>
+              )}
               {anterior && (
                 <p className="mt-2 text-xs text-zinc-500">
                   Respondida antes de que la encuesta tuviera las preguntas sobre la IPS: solo trae las estrellas.

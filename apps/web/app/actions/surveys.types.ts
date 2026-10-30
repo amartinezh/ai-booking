@@ -5,7 +5,8 @@
 export type UserMood = 'NEGATIVE' | 'NEUTRAL' | 'HAPPY';
 export type ResolutionStatus = 'BOOKED' | 'QUEUED' | 'BLOCKED_INSULT' | 'SYSTEM_ERROR' | 'CANCELLED';
 export type SurveyExperience = 'GOOD' | 'FAIR' | 'BAD' | 'NO_ANSWER';
-export type SurveyAnswerStatus = 'ANSWERED' | 'PENDING' | 'EXPIRED';
+/** ANSWERED = completa · PARTIAL = solo estrellas · PENDING = enlace abierto sin respuesta · EXPIRED = venció sin respuesta. */
+export type SurveyAnswerStatus = 'ANSWERED' | 'PARTIAL' | 'PENDING' | 'EXPIRED';
 export type SurveySortField = 'createdAt' | 'answeredAt' | 'rating' | 'patient';
 export type SortDir = 'asc' | 'desc';
 export type Granularidad = 'hour' | 'day' | 'month';
@@ -78,9 +79,13 @@ export interface SurveyIndicators {
 }
 
 export interface SurveyStats extends SurveyIndicators {
+  complete: number;
+  starsOnly: number;
   pending: number;
   expired: number;
   responseRate: number | null;
+  averageRatingWithIps: number | null;
+  averageRatingStarsOnly: number | null;
   comments: number;
   ratingDistribution: number[];
   recommend: { yes: number; no: number };

@@ -213,7 +213,11 @@ export default function SurveyStatsPanel({
             <>
               de {stats.sent} enviadas · <b className="text-zinc-700 dark:text-zinc-200">{porcentaje(stats.responseRate)}</b>
               <br />
-              {stats.pending} con enlace abierto · {stats.expired} vencidas
+              {stats.complete} completas · {stats.starsOnly} solo estrellas
+              <br />
+              <span className="text-xs">
+                Sin responder: {stats.pending} con enlace abierto · {stats.expired} vencidas
+              </span>
             </>
           }
         >
@@ -231,6 +235,12 @@ export default function SurveyStatsPanel({
             {stats.comments} con comentario
           </button>
         </Tile>
+        <Tile
+          titulo="Asistente virtual"
+          valor={decimal(stats.averageRating)}
+          sufijo={<Star className="h-7 w-7 self-center fill-amber-400 text-amber-400" aria-hidden />}
+          detalle={respEstrellas > 0 ? `Promedio de ${respEstrellas} calificaciones (1 a 5)` : 'Aún sin calificaciones'}
+        />
         <Tile
           titulo="Recomendaría la IPS"
           valor={porcentaje(stats.recommendRate)}
@@ -260,19 +270,49 @@ export default function SurveyStatsPanel({
             )
           }
         />
-        <Tile
-          titulo="Asistente virtual"
-          valor={decimal(stats.averageRating)}
-          sufijo={<Star className="h-7 w-7 self-center fill-amber-400 text-amber-400" aria-hidden />}
-          detalle={respEstrellas > 0 ? `Promedio de ${respEstrellas} calificaciones (1 a 5)` : 'Aún sin calificaciones'}
-        />
       </div>
 
       {/* ── Reparto de cada pregunta ── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className={card}>
+          <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Calificación del asistente virtual</h3>
+          <p className="mb-3 text-xs text-zinc-500">Estrellas que le dio el paciente al chat</p>
+          {respEstrellas === 0 ? (
+            <SinDatos />
+          ) : (
+            <div className="space-y-1">
+              {[5, 4, 3, 2, 1].map((n) => (
+                <FilaBarra
+                  key={n}
+                  etiqueta={
+                    <span className="inline-flex items-center gap-1">
+                      {n} <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" aria-hidden />
+                      <span className="sr-only">estrellas</span>
+                    </span>
+                  }
+                  cuenta={stats.ratingDistribution[n - 1] ?? 0}
+                  total={respEstrellas}
+                  maximo={maxEstrellas}
+                  color="bg-amber-400"
+                  activa={active.rating === n}
+                  onClick={() => actions.onRating(n)}
+                />
+              ))}
+            </div>
+          )}
+          {stats.averageRatingWithIps != null && stats.averageRatingStarsOnly != null && (
+            <p className="mt-3 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-800">
+              Promedio de quienes respondieron también lo del hospital:{' '}
+              <b className="text-zinc-700 dark:text-zinc-200">{decimal(stats.averageRatingWithIps)} ★</b>; de quienes solo
+              dieron estrellas: <b className="text-zinc-700 dark:text-zinc-200">{decimal(stats.averageRatingStarsOnly)} ★</b>.
+              {Math.abs(stats.averageRatingWithIps - stats.averageRatingStarsOnly) >= 0.5 &&
+                ' La diferencia es grande: los porcentajes del hospital pueden no representar a todos.'}
+            </p>
+          )}
+        </div>
+        <div className={card}>
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">¿Recomendaría la IPS?</h3>
-          <p className="mb-3 text-xs text-zinc-500">A sus familiares y amigos</p>
+          <p className="mb-3 text-xs text-zinc-500">A sus familiares y amigos · {respRecomienda} respuestas</p>
           {respRecomienda === 0 ? (
             <SinDatos />
           ) : (
@@ -301,7 +341,9 @@ export default function SurveyStatsPanel({
 
         <div className={card}>
           <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">¿Cómo le fue en su experiencia?</h3>
-          <p className="mb-3 text-xs text-zinc-500">Porcentaje sobre todas las respuestas a la pregunta</p>
+          <p className="mb-3 text-xs text-zinc-500">
+            {respExperiencia} respuestas · porcentaje sobre todas, con «No responde»
+          </p>
           {respExperiencia === 0 ? (
             <SinDatos />
           ) : (
@@ -322,33 +364,6 @@ export default function SurveyStatsPanel({
           )}
         </div>
 
-        <div className={card}>
-          <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Calificación del asistente virtual</h3>
-          <p className="mb-3 text-xs text-zinc-500">Estrellas que le dio el paciente al chat</p>
-          {respEstrellas === 0 ? (
-            <SinDatos />
-          ) : (
-            <div className="space-y-1">
-              {[5, 4, 3, 2, 1].map((n) => (
-                <FilaBarra
-                  key={n}
-                  etiqueta={
-                    <span className="inline-flex items-center gap-1">
-                      {n} <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" aria-hidden />
-                      <span className="sr-only">estrellas</span>
-                    </span>
-                  }
-                  cuenta={stats.ratingDistribution[n - 1] ?? 0}
-                  total={respEstrellas}
-                  maximo={maxEstrellas}
-                  color="bg-amber-400"
-                  activa={active.rating === n}
-                  onClick={() => actions.onRating(n)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
       {/* ── En el tiempo (dos gráficas: nunca dos escalas en una) ── */}

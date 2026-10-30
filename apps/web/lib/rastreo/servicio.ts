@@ -607,10 +607,11 @@ export async function armarExpedienteA(
       : Promise.resolve([]),
     paciente && !permisos.soloConRelacionTerapeutica
       ? db.chatSurvey.findMany({
-          where: { organizationId: org, patientId: paciente.id, isUsed: true, rating: { not: null } },
+          // Con estrellas: completas y también las de solo estrellas.
+          where: { organizationId: org, patientId: paciente.id, rating: { not: null } },
           orderBy: { createdAt: 'desc' },
           take: 5,
-          select: { createdAt: true, rating: true, wouldRecommend: true, experience: true, resolutionStatus: true },
+          select: { createdAt: true, rating: true, wouldRecommend: true, experience: true, resolutionStatus: true, isUsed: true },
         })
       : Promise.resolve([]),
     paciente && !permisos.soloConRelacionTerapeutica
@@ -902,6 +903,7 @@ export async function armarExpedienteA(
       calificacion: e.rating as number,
       recomendaria: e.wouldRecommend ?? null,
       experiencia: e.experience ?? null,
+      soloEstrellas: e.isUsed === false,
       resolucion: e.resolutionStatus,
     })),
     avisosMasivos: avisosBD.map((a) => ({

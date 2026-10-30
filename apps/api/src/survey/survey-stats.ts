@@ -45,7 +45,8 @@ class Grupo {
 
   add(r: SurveyStatsRow): void {
     this.sent++;
-    if (r.isUsed) this.answered++;
+    // Respondida = al menos las estrellas (la estrella se guarda sola).
+    if (r.isUsed || r.rating != null) this.answered++;
     if (r.rating != null) {
       this.ratingSum += r.rating;
       this.ratingCount++;
@@ -172,8 +173,13 @@ export function buildSurveyStats(
   const total = new Grupo();
   const porGestion = new Map<ResolutionStatus, Grupo>();
   const ratingDistribution = [0, 0, 0, 0, 0];
+  let complete = 0;
+  let starsOnly = 0;
   let pending = 0;
   let expired = 0;
+  // Promedio de estrellas según si respondieron también lo de la IPS.
+  const conIps = { suma: 0, n: 0 };
+  const soloEstrellas = { suma: 0, n: 0 };
 
   const rango = rangoDeLaGrafica(rows, opts, now, timeZone);
   const clave = claveDeTramo(timeZone);
@@ -184,9 +190,21 @@ export function buildSurveyStats(
   for (const r of rows) {
     total.add(r);
 
-    const estado = computeAnswerStatus(r.isUsed, r.expiresAt, now);
-    if (estado === 'PENDING') pending++;
-    else if (estado === 'EXPIRED') expired++;
+    const estado = computeAnswerStatus(r.isUsed, r.expiresAt, now, r.rating);
+    if (estado === 'ANSWERED') complete++;
+    else if (estado === 'PARTIAL') starsOnly++;
+    else if (estado === 'PENDING') pending++;
+    else expired++;
+
+    if (r.rating != null) {
+      if (estado === 'PARTIAL') {
+        soloEstrellas.suma += r.rating;
+        soloEstrellas.n++;
+      } else if (r.experience != null) {
+        conIps.suma += r.rating;
+        conIps.n++;
+      }
+    }
 
     if (r.rating != null && r.rating >= 1 && r.rating <= 5) {
       ratingDistribution[r.rating - 1]++;
@@ -223,9 +241,17 @@ export function buildSurveyStats(
   const indicadores = total.indicators();
   return {
     ...indicadores,
+    complete,
+    starsOnly,
     pending,
     expired,
     responseRate: proporcion(total.answered, total.sent),
+    averageRatingWithIps: conIps.n
+      ? redondear(conIps.suma / conIps.n, 2)
+      : null,
+    averageRatingStarsOnly: soloEstrellas.n
+      ? redondear(soloEstrellas.suma / soloEstrellas.n, 2)
+      : null,
     comments: opts.comments,
     ratingDistribution,
     recommend: { yes: total.yes, no: total.no },

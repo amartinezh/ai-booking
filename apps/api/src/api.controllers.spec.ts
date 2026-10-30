@@ -673,6 +673,7 @@ describe('SurveyController — endpoints públicos (el paciente no tiene sesión
     const service = {
       getValidSurvey: jest.fn(async () => ({ id: 's1' })),
       submitSurvey: jest.fn(async () => ({ success: true })),
+      saveRating: jest.fn(async () => ({ success: true })),
     };
     return { service, c: new SurveyController(service as never) };
   };
@@ -693,6 +694,14 @@ describe('SurveyController — endpoints públicos (el paciente no tiene sesión
     const { service, c } = build();
     await c.submitSurvey('s1', { rating: 5 } as never);
     expect(service.submitSurvey).toHaveBeenCalledWith('s1', { rating: 5 });
+  });
+
+  it('paso 1: la estrella sola va al servicio, que la valida', async () => {
+    const { service, c } = build();
+    await c.saveRating('s1', { rating: 4 });
+    await c.saveRating('s1', undefined as never);
+    expect(service.saveRating).toHaveBeenNthCalledWith(1, 's1', 4);
+    expect(service.saveRating).toHaveBeenNthCalledWith(2, 's1', undefined);
   });
 });
 

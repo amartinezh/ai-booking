@@ -25,6 +25,45 @@ export interface SurveyAnswers {
   feedback: string;
 }
 
+/**
+ * Paso 1: guarda solo la estrella, al tocarla. No cierra la encuesta: si el
+ * paciente se va sin responder lo demás, su calificación queda.
+ */
+export async function saveSurveyRating(
+  tokenId: string,
+  rating: number,
+): Promise<{ success: true } | { success: false; error: string; invalidLink?: boolean }> {
+  if (!tokenId) return { success: false, error: 'Enlace inválido.', invalidLink: true };
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    return { success: false, error: 'Elija de 1 a 5 estrellas.' };
+  }
+  let res: Response;
+  try {
+    res = await fetch(`${INTERNAL_API_URL}/surveys/${encodeURIComponent(tokenId)}/rating`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rating }),
+      cache: 'no-store',
+    });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'network';
+    console.error(`[survey] POST /surveys/${tokenId}/rating fetch error:`, msg);
+    return { success: false, error: 'No se pudo guardar su calificación. Toque la estrella de nuevo.' };
+  }
+  if (!res.ok) {
+    console.error(`[survey] POST /surveys/${tokenId}/rating -> ${res.status}`);
+    return res.status === 404
+      ? {
+          success: false,
+          invalidLink: true,
+          error: 'Este enlace ya no es válido (puede que ya lo haya usado o que haya vencido).',
+        }
+      : { success: false, error: 'No se pudo guardar su calificación. Toque la estrella de nuevo.' };
+  }
+  return { success: true };
+}
+
+/** Paso 2: el envío completo (las estrellas otra vez, más las preguntas de la IPS). */
 export async function submitSurvey(
   tokenId: string,
   answers: SurveyAnswers,

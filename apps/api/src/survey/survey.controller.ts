@@ -30,7 +30,18 @@ export class SurveyController {
     return survey;
   }
 
-  // POST /surveys/:id → recibe la calificación. Regla de oro dentro del service.
+  // POST /surveys/:id/rating → paso 1: guarda solo la estrella, sin cerrar la
+  // encuesta. Regla de oro dentro del service.
+  @Post(':id/rating')
+  @HttpCode(HttpStatus.OK)
+  async saveRating(
+    @Param('id') id: string,
+    @Body() body: { rating?: unknown },
+  ): Promise<{ success: true }> {
+    return this.surveyService.saveRating(id, body?.rating);
+  }
+
+  // POST /surveys/:id → paso 2: el envío completo. Regla de oro dentro del service.
   @Post(':id')
   @HttpCode(HttpStatus.OK)
   async submitSurvey(

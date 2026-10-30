@@ -453,9 +453,11 @@ function Historial({ data }: { data: ExpedienteA }) {
                         {historial.encuestas.map((e, i) => (
                             <li key={i}>
                                 {formatAppointmentShort(e.creadoIso, { timeZone: tz })}
+                                {` · Asistente ${e.calificacion}/5`}
+                                {e.soloEstrellas && ' (solo estrellas)'}
                                 {e.recomendaria != null && ` · Recomendaría: ${e.recomendaria ? 'sí' : 'no'}`}
                                 {e.experiencia && ` · Experiencia: ${EXPERIENCIA_LABEL[e.experiencia as keyof typeof EXPERIENCIA_LABEL]?.toLowerCase() ?? e.experiencia}`}
-                                {` · Asistente ${e.calificacion}/5 · ${GESTION_LABEL[e.resolucion as keyof typeof GESTION_LABEL] ?? e.resolucion}`}
+                                {` · ${GESTION_LABEL[e.resolucion as keyof typeof GESTION_LABEL] ?? e.resolucion}`}
                             </li>
                         ))}
                     </ul>

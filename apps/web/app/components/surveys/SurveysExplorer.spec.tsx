@@ -39,8 +39,12 @@ const fila = (over: Partial<SurveyRowView> = {}): SurveyRowView => ({
 const STATS: SurveyStats = {
   sent: 4,
   answered: 2,
+  complete: 1,
+  starsOnly: 1,
   pending: 1,
   expired: 1,
+  averageRatingWithIps: 5,
+  averageRatingStarsOnly: 3,
   responseRate: 0.5,
   comments: 1,
   averageRating: 4,
@@ -60,6 +64,16 @@ beforeEach(() => {
   mList.mockReset().mockResolvedValue({
     rows: [
       fila(),
+      fila({
+        id: 's3',
+        patientName: 'Gloria Cárdenas',
+        status: 'PARTIAL',
+        rating: 2,
+        userMood: 'NEGATIVE',
+        wouldRecommend: null,
+        experience: null,
+        message: null,
+      }),
       fila({
         id: 's2',
         patientName: 'Paciente anónimo',
@@ -92,6 +106,19 @@ describe('Consulta de encuestas', () => {
 
     const filaAnonima = screen.getByText('Paciente anónimo').closest('tr')!;
     expect(within(filaAnonima).getByText('Venció sin respuesta')).toBeInTheDocument();
+
+    // Solo estrellas: se ven sus estrellas y la marca, no respuestas del hospital.
+    const filaParcial = screen.getByText('Gloria Cárdenas').closest('tr')!;
+    expect(within(filaParcial).getByText('Solo estrellas')).toBeInTheDocument();
+    expect(within(filaParcial).getByRole('img', { name: '2 de 5 estrellas' })).toBeInTheDocument();
+
+    // Completas y solo estrellas en el recuadro de respuestas, y la comparación.
+    expect(screen.getByText(/1 completas · 1 solo estrellas/)).toBeInTheDocument();
+    expect(screen.getByText(/La diferencia es grande/)).toBeInTheDocument();
+
+    // Las estrellas son la primera respuesta, como en la encuesta.
+    const titulos = screen.getAllByRole('columnheader').map((th) => th.textContent?.trim());
+    expect(titulos.indexOf('Asistente')).toBeLessThan(titulos.indexOf('¿Recomendaría?'));
 
     // La clínica no ve la columna de clínica.
     expect(screen.queryByRole('columnheader', { name: 'Clínica' })).not.toBeInTheDocument();
@@ -126,8 +153,8 @@ describe('Consulta de encuestas', () => {
     await screen.findByText('Luz Mery Arenas');
     mStats.mockClear();
 
-    await userEvent.selectOptions(screen.getByLabelText('Estado'), 'ANSWERED');
-    await waitFor(() => expect(ultimaConsulta().status).toBe('ANSWERED'));
+    await userEvent.selectOptions(screen.getByLabelText('Estado'), 'Solo estrellas');
+    await waitFor(() => expect(ultimaConsulta().status).toBe('PARTIAL'));
     expect(mStats).not.toHaveBeenCalled();
   });
 

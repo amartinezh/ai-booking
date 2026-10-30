@@ -162,6 +162,8 @@ export interface HistorialVista {
     recomendaria: boolean | null;
     /** ¿Cómo le fue? (GOOD, FAIR, BAD, NO_ANSWER). null en las anteriores. */
     experiencia: string | null;
+    /** Calificó al asistente y no envió las preguntas del hospital. */
+    soloEstrellas: boolean;
     resolucion: string;
   }[];
   avisosMasivos: { citaIso: string; resultado: string; enviadoIso: string | null }[];

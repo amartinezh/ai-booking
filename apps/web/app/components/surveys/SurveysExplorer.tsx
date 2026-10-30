@@ -370,8 +370,8 @@ export default function SurveysExplorer({ scope, organizations = [] }: Props) {
             ⭐ {global ? 'Encuestas de satisfacción (todas las clínicas)' : 'Opiniones de tus pacientes'}
           </h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            La encuesta que el asistente envía al cerrar cada gestión: ¿recomendaría la IPS?, ¿cómo le fue? y
-            las estrellas del asistente.
+            La encuesta que el asistente envía al cerrar cada gestión: primero las estrellas del asistente (se
+            guardan al tocarlas) y luego, si sigue, ¿recomendaría la IPS? y ¿cómo le fue?
           </p>
         </div>
         <div className="flex gap-2">
@@ -471,9 +471,24 @@ export default function SurveysExplorer({ scope, organizations = [] }: Props) {
               className={inputCls}
             >
               <option value="">Todas</option>
-              <option value="ANSWERED">Respondidas</option>
+              <option value="ANSWERED">Completas</option>
+              <option value="PARTIAL">Solo estrellas</option>
               <option value="PENDING">Enlace abierto</option>
               <option value="EXPIRED">Vencidas sin respuesta</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-500">
+            Asistente
+            <select
+              value={filtros.estrellas}
+              onChange={(e) => cambiar('estrellas', e.target.value as Estrellas)}
+              className={inputCls}
+            >
+              {ESTRELLAS_OPCIONES.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </select>
           </label>
           <label className="flex flex-col gap-1 text-xs font-medium text-zinc-500">
@@ -499,20 +514,6 @@ export default function SurveysExplorer({ scope, organizations = [] }: Props) {
               {EXPERIENCIAS.map((e) => (
                 <option key={e} value={e}>
                   {EXPERIENCIA_LABEL[e]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-zinc-500">
-            Asistente
-            <select
-              value={filtros.estrellas}
-              onChange={(e) => cambiar('estrellas', e.target.value as Estrellas)}
-              className={inputCls}
-            >
-              {ESTRELLAS_OPCIONES.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
                 </option>
               ))}
             </select>
@@ -623,11 +624,11 @@ export default function SurveysExplorer({ scope, organizations = [] }: Props) {
                   Paciente
                 </Encabezado>
                 {global && <th className={thCls}>Clínica</th>}
-                <th className={thCls}>¿Recomendaría?</th>
-                <th className={thCls}>¿Cómo le fue?</th>
                 <Encabezado campo="rating" {...orden} onSort={onSort}>
                   Asistente
                 </Encabezado>
+                <th className={thCls}>¿Recomendaría?</th>
+                <th className={thCls}>¿Cómo le fue?</th>
                 <th className={thCls}>Comentario</th>
                 <th className={thCls}>Gestión</th>
                 <Encabezado campo="createdAt" {...orden} onSort={onSort}>
@@ -659,7 +660,6 @@ export default function SurveysExplorer({ scope, organizations = [] }: Props) {
                 </tr>
               ) : (
                 rows.map((r) => {
-                  const respondida = r.status === 'ANSWERED';
                   return (
                     <tr
                       key={r.id}
@@ -680,16 +680,25 @@ export default function SurveysExplorer({ scope, organizations = [] }: Props) {
                         <div className="text-xs text-zinc-400">{r.whatsappPhone ?? 'Sin teléfono'}</div>
                       </td>
                       {global && <td className="px-4 py-3 text-sm text-zinc-600 dark:text-zinc-300">{r.organizationName}</td>}
-                      {respondida ? (
+                      {r.status === 'ANSWERED' ? (
                         <>
+                          <td className="px-4 py-3">
+                            <Stars rating={r.rating} />
+                          </td>
                           <td className="px-4 py-3">
                             <RecommendBadge value={r.wouldRecommend} />
                           </td>
                           <td className="px-4 py-3">
                             <ExperienceBadge value={r.experience} />
                           </td>
+                        </>
+                      ) : r.status === 'PARTIAL' ? (
+                        <>
                           <td className="px-4 py-3">
                             <Stars rating={r.rating} />
+                          </td>
+                          <td colSpan={2} className="px-4 py-3">
+                            <StatusBadge status={r.status} />
                           </td>
                         </>
                       ) : (

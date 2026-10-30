@@ -929,9 +929,9 @@ describe('armarExpedienteA', () => {
       const db = mockDb();
       db.patientProfile.findFirst.mockResolvedValue(paciente());
       db.chatSurvey.findMany.mockResolvedValue([
-        { createdAt: new Date(AHORA - DIA), rating: 4, wouldRecommend: false, experience: 'FAIR', resolutionStatus: 'BOOKED' },
-        // Respondida antes de las preguntas de la IPS: solo estrellas.
-        { createdAt: new Date(AHORA - 2 * DIA), rating: 5, wouldRecommend: null, experience: null, resolutionStatus: 'QUEUED' },
+        { createdAt: new Date(AHORA - DIA), rating: 4, wouldRecommend: false, experience: 'FAIR', resolutionStatus: 'BOOKED', isUsed: true },
+        // Calificó al asistente y no envió lo del hospital.
+        { createdAt: new Date(AHORA - 2 * DIA), rating: 5, wouldRecommend: null, experience: null, resolutionStatus: 'QUEUED', isUsed: false },
       ]);
       db.massNoticeRecipient.findMany.mockResolvedValue([{ appointmentAtUtc: new Date(AHORA + DIA), outcome: 'ENVIADO', sentAt: new Date(AHORA - MIN) }]);
 
@@ -939,8 +939,8 @@ describe('armarExpedienteA', () => {
 
       expect(r.success && r.data.historial).toMatchObject({
         encuestas: [
-          { calificacion: 4, recomendaria: false, experiencia: 'FAIR', resolucion: 'BOOKED' },
-          { calificacion: 5, recomendaria: null, experiencia: null, resolucion: 'QUEUED' },
+          { calificacion: 4, recomendaria: false, experiencia: 'FAIR', soloEstrellas: false, resolucion: 'BOOKED' },
+          { calificacion: 5, recomendaria: null, experiencia: null, soloEstrellas: true, resolucion: 'QUEUED' },
         ],
         avisosMasivos: [{ resultado: 'ENVIADO' }],
       });

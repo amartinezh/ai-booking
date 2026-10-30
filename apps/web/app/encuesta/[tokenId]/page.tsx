@@ -31,6 +31,8 @@ export default async function EncuestaPage(props: {
           id: true,
           isUsed: true,
           expiresAt: true,
+          // Si ya tocó una estrella (paso 1) y vuelve al enlace, la ve marcada.
+          rating: true,
           organization: { select: { name: true } },
         },
       })
@@ -46,6 +48,7 @@ export default async function EncuestaPage(props: {
     <SurveyForm
       tokenId={survey!.id}
       clinicName={survey!.organization?.name ?? 'nuestra clínica'}
+      initialRating={survey!.rating ?? 0}
     />
   );
 }
