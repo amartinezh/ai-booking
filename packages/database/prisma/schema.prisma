@@ -1799,8 +1799,14 @@ model ChatSurvey {
   resolutionStatus ResolutionStatus
 
   // ⭐ Llenado por el usuario en la web. null hasta que califica.
-  rating   Int? // 1 a 5
+  rating   Int? // 1 a 5 — la atención del asistente virtual
   feedback String? @db.Text
+
+  // 🏥 Preguntas sobre la IPS (desde 2026-10-30). null en las encuestas
+  // respondidas antes de esa fecha y en las que aún no se responden.
+  wouldRecommend Boolean? // ¿Recomendaría la IPS a familiares y amigos? Sí / No
+  experience     SurveyExperience? // ¿Cómo le fue en su experiencia?
+  answeredAt     DateTime? // Cuándo respondió (las anteriores: su updatedAt)
 
   // 🔐 Seguridad del enlace de un solo uso.
   isUsed    Boolean  @default(false)
@@ -1812,6 +1818,14 @@ model ChatSurvey {
   // El cron/limpieza y la búsqueda del token se apoyan en estos índices.
   @@index([organizationId, createdAt])
   @@index([isUsed, expiresAt])
+}
+
+// Respuesta a «¿Cómo le fue en su experiencia?» de la encuesta.
+enum SurveyExperience {
+  GOOD // Buena
+  FAIR // Regular
+  BAD // Mala
+  NO_ANSWER // No responde (el paciente prefirió no responder)
 }
 
 enum ResolutionStatus {

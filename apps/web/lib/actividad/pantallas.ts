@@ -57,6 +57,7 @@ export function nombreDePantalla(ruta: string, rol: string): string | null {
 export const DESCARGAS = {
     AVISOS_SIN_CELULAR: 'Pacientes sin celular de un lote de avisos masivos',
     PADRON_ERRORES: 'Filas con error del archivo del padrón',
+    ENCUESTAS: 'Encuestas de satisfacción',
 } as const;
 
 export type TipoDescarga = keyof typeof DESCARGAS;

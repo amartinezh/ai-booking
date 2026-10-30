@@ -154,7 +154,16 @@ export interface IdentidadVista {
 }
 
 export interface HistorialVista {
-  encuestas: { creadoIso: string; calificacion: number; resolucion: string }[];
+  encuestas: {
+    creadoIso: string;
+    /** Estrellas del asistente (1 a 5). */
+    calificacion: number;
+    /** ¿Recomendaría la IPS? null en las encuestas anteriores al 30-oct-2026. */
+    recomendaria: boolean | null;
+    /** ¿Cómo le fue? (GOOD, FAIR, BAD, NO_ANSWER). null en las anteriores. */
+    experiencia: string | null;
+    resolucion: string;
+  }[];
   avisosMasivos: { citaIso: string; resultado: string; enviadoIso: string | null }[];
 }
 

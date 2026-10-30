@@ -928,13 +928,20 @@ describe('armarExpedienteA', () => {
     it('historial: encuestas y avisos masivos por el documento (dentro de la clínica)', async () => {
       const db = mockDb();
       db.patientProfile.findFirst.mockResolvedValue(paciente());
-      db.chatSurvey.findMany.mockResolvedValue([{ createdAt: new Date(AHORA - DIA), rating: 4, resolutionStatus: 'BOOKED' }]);
+      db.chatSurvey.findMany.mockResolvedValue([
+        { createdAt: new Date(AHORA - DIA), rating: 4, wouldRecommend: false, experience: 'FAIR', resolutionStatus: 'BOOKED' },
+        // Respondida antes de las preguntas de la IPS: solo estrellas.
+        { createdAt: new Date(AHORA - 2 * DIA), rating: 5, wouldRecommend: null, experience: null, resolutionStatus: 'QUEUED' },
+      ]);
       db.massNoticeRecipient.findMany.mockResolvedValue([{ appointmentAtUtc: new Date(AHORA + DIA), outcome: 'ENVIADO', sentAt: new Date(AHORA - MIN) }]);
 
       const r = await abrir(db, admin());
 
       expect(r.success && r.data.historial).toMatchObject({
-        encuestas: [{ calificacion: 4, resolucion: 'BOOKED' }],
+        encuestas: [
+          { calificacion: 4, recomendaria: false, experiencia: 'FAIR', resolucion: 'BOOKED' },
+          { calificacion: 5, recomendaria: null, experiencia: null, resolucion: 'QUEUED' },
+        ],
         avisosMasivos: [{ resultado: 'ENVIADO' }],
       });
       expect(db.massNoticeRecipient.findMany).toHaveBeenCalledWith(

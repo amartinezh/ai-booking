@@ -610,7 +610,7 @@ export async function armarExpedienteA(
           where: { organizationId: org, patientId: paciente.id, isUsed: true, rating: { not: null } },
           orderBy: { createdAt: 'desc' },
           take: 5,
-          select: { createdAt: true, rating: true, resolutionStatus: true },
+          select: { createdAt: true, rating: true, wouldRecommend: true, experience: true, resolutionStatus: true },
         })
       : Promise.resolve([]),
     paciente && !permisos.soloConRelacionTerapeutica
@@ -900,6 +900,8 @@ export async function armarExpedienteA(
     encuestas: encuestasBD.map((e) => ({
       creadoIso: e.createdAt.toISOString(),
       calificacion: e.rating as number,
+      recomendaria: e.wouldRecommend ?? null,
+      experiencia: e.experience ?? null,
       resolucion: e.resolutionStatus,
     })),
     avisosMasivos: avisosBD.map((a) => ({

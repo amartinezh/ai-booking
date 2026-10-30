@@ -2187,8 +2187,8 @@ export class ChatbotService implements OnModuleInit {
       const url = `${baseUrl}/encuesta/${token}`;
 
       const message =
-        `Antes de irnos, ¿me regala 10 segundos? 🙏\n\n` +
-        `Por favor califique mi atención en este enlace seguro y único:\n${url}`;
+        `Antes de irnos, ¿me regala 30 segundos? 🙏\n\n` +
+        `Cuéntenos cómo le fue: son 3 preguntas cortas en este enlace seguro y único:\n${url}`;
 
       // Enlace como mensaje separado, posterior a la respuesta del flujo.
       await this.sendWhatsAppMessage(senderId, message);

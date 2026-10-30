@@ -1,4 +1,5 @@
-import { Prisma, ResolutionStatus } from '@agenia/database';
+import { Prisma, ResolutionStatus, SurveyExperience } from '@agenia/database';
+import type { Granularidad } from '@agenia/shared';
 
 // ───────────────────────────────────────────────────────────────
 // 😀 CLASIFICACIÓN DE ÁNIMO (userMood) DERIVADA DE LA CALIFICACIÓN
@@ -35,29 +36,69 @@ export function moodToRatingWhere(mood: UserMood): Prisma.IntNullableFilter {
 }
 
 // ───────────────────────────────────────────────────────────────
+// Estado del enlace de la encuesta
+//   ANSWERED → el paciente respondió
+//   PENDING  → el enlace sigue abierto (aún no vence)
+//   EXPIRED  → venció sin respuesta
+// ───────────────────────────────────────────────────────────────
+export const SURVEY_ANSWER_STATUSES = [
+  'ANSWERED',
+  'PENDING',
+  'EXPIRED',
+] as const;
+export type SurveyAnswerStatus = (typeof SURVEY_ANSWER_STATUSES)[number];
+
+export function computeAnswerStatus(
+  isUsed: boolean,
+  expiresAt: Date,
+  now: Date = new Date(),
+): SurveyAnswerStatus {
+  if (isUsed) return 'ANSWERED';
+  return expiresAt.getTime() > now.getTime() ? 'PENDING' : 'EXPIRED';
+}
+
+// ───────────────────────────────────────────────────────────────
 // Parámetros de consulta (parseados desde el query string en el controller)
 // ───────────────────────────────────────────────────────────────
-export type SurveySortField = 'createdAt' | 'rating';
+export const SURVEY_SORT_FIELDS = [
+  'createdAt',
+  'answeredAt',
+  'rating',
+  'patient',
+] as const;
+export type SurveySortField = (typeof SURVEY_SORT_FIELDS)[number];
 export type SortDir = 'asc' | 'desc';
 
-export interface DetailedSurveyQuery {
-  page: number;
-  pageSize: number;
-  sortBy: SurveySortField;
-  sortDir: SortDir;
+/** Filtros comunes a la lista, las estadísticas y la descarga. */
+export interface SurveyFilters {
+  /** Día de envío, `YYYY-MM-DD` en la hora de la clínica (incluido). */
   startDate?: string;
+  /** Día de envío, `YYYY-MM-DD` en la hora de la clínica (incluido completo). */
   endDate?: string;
-  organizationId?: string;
+  /** Busca en nombre, cédula, teléfono y comentario. */
+  q?: string;
+  status?: SurveyAnswerStatus;
+  /** Estrellas exactas (1 a 5). */
+  rating?: number;
   mood?: UserMood;
+  wouldRecommend?: boolean;
+  experience?: SurveyExperience;
+  /** Solo las que dejaron comentario. */
+  withComment?: boolean;
   resolutionStatus?: ResolutionStatus;
+  /** Solo Super Admin: la vista de la clínica la fija el token. */
+  organizationId?: string;
 }
 
-export interface LimitedSurveyQuery {
+export interface SurveyListQuery extends SurveyFilters {
   page: number;
   pageSize: number;
   sortBy: SurveySortField;
   sortDir: SortDir;
 }
+
+export type DetailedSurveyQuery = SurveyListQuery;
+export type LimitedSurveyQuery = Omit<SurveyListQuery, 'organizationId'>;
 
 // ───────────────────────────────────────────────────────────────
 // Filas de salida (DTOs serializables — fechas en ISO string)
@@ -67,8 +108,12 @@ export interface LimitedSurveyQuery {
 export interface DetailedSurveyRow {
   id: string;
   createdAt: string;
+  answeredAt: string | null;
+  status: SurveyAnswerStatus;
   rating: number | null;
   userMood: UserMood | null;
+  wouldRecommend: boolean | null;
+  experience: SurveyExperience | null;
   feedback: string | null;
   chatSummary: string | null;
   resolutionStatus: ResolutionStatus;
@@ -85,15 +130,22 @@ export interface DetailedSurveyRow {
   };
 }
 
-// 🔒 Clinic Admin: payload minimalista. SIN chatSummary, expiresAt, ids internos, etc.
+// 🔒 Clinic Admin: sin chatSummary, cédula, expiresAt ni ids internos.
+// `resolutionStatus` sí viaja: es la gestión que cerró el chat (agendó,
+// canceló, lista de espera…), no un dato del paciente.
 export interface LimitedSurveyRow {
   id: string;
   createdAt: string;
+  answeredAt: string | null;
+  status: SurveyAnswerStatus;
   patientName: string;
   whatsappPhone: string | null;
   rating: number | null;
   userMood: UserMood | null;
+  wouldRecommend: boolean | null;
+  experience: SurveyExperience | null;
   message: string | null;
+  resolutionStatus: ResolutionStatus;
 }
 
 export interface PaginatedSurveys<T> {
@@ -102,4 +154,54 @@ export interface PaginatedSurveys<T> {
   page: number;
   pageSize: number;
   totalPages: number;
+}
+
+/** Descarga: las filas que cumplen los filtros, hasta un tope. */
+export interface SurveyExport<T> {
+  rows: T[];
+  total: number;
+  /** true si había más filas que el tope y se cortó. */
+  truncated: boolean;
+}
+
+// ───────────────────────────────────────────────────────────────
+// Estadísticas
+// ───────────────────────────────────────────────────────────────
+
+/** Indicadores de un grupo de encuestas (todas, una gestión o un tramo de tiempo). */
+export interface SurveyIndicators {
+  sent: number;
+  answered: number;
+  /** Promedio de estrellas del asistente; null sin calificaciones. */
+  averageRating: number | null;
+  /** Sí / (Sí + No); null si nadie respondió la pregunta. */
+  recommendRate: number | null;
+  /** Buena / (Buena + Regular + Mala), sin contar «No responde». */
+  goodRate: number | null;
+}
+
+export interface SurveyStats extends SurveyIndicators {
+  pending: number;
+  expired: number;
+  /** Respondidas / enviadas. */
+  responseRate: number | null;
+  /** Respondidas con comentario. */
+  comments: number;
+  /** Cantidad por estrellas, de 1 a 5 (índice 0 = 1 estrella). */
+  ratingDistribution: number[];
+  recommend: { yes: number; no: number };
+  experience: Record<SurveyExperience, number>;
+  byResolution: (SurveyIndicators & { status: ResolutionStatus })[];
+  trend: {
+    granularity: Granularidad;
+    points: (SurveyIndicators & { bucket: string })[];
+    /**
+     * Por semana (lunes a domingo, `bucket` = el lunes), solo si el rango va
+     * por día y pasa de 14 días: con pocas respuestas al día los porcentajes
+     * diarios saltan de 0 a 100 %.
+     */
+    weekly?: (SurveyIndicators & { bucket: string })[];
+  };
+  /** true si hubo más encuestas que el tope de cálculo. */
+  truncated: boolean;
 }

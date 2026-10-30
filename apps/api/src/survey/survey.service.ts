@@ -4,7 +4,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@agenia/database';
+import { Prisma, SurveyExperience } from '@agenia/database';
+import { horaLocalAUtc } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   GenerateSurveyInput,
@@ -12,6 +13,7 @@ import {
   SurveyPublicView,
 } from './dto/survey.types';
 import {
+  computeAnswerStatus,
   computeUserMood,
   DetailedSurveyQuery,
   DetailedSurveyRow,
@@ -19,12 +21,65 @@ import {
   LimitedSurveyRow,
   moodToRatingWhere,
   PaginatedSurveys,
+  SurveyExport,
+  SurveyFilters,
+  SurveyStats,
 } from './dto/survey-report.types';
+import { buildSurveyStats } from './survey-stats';
 
 // Ventana de validez del enlace de un solo uso.
 const SURVEY_TTL_HOURS = 24;
 // Tope de caracteres del comentario libre, defensa básica anti-abuso.
 const MAX_FEEDBACK_LENGTH = 2000;
+// Tope del texto de búsqueda.
+const MAX_SEARCH_LENGTH = 100;
+// Tope de filas de una descarga.
+export const SURVEY_EXPORT_LIMIT = 5000;
+// Tope de encuestas que entran al cálculo de estadísticas (solo columnas
+// pequeñas; muy por encima de lo que junta una clínica en un año).
+const SURVEY_STATS_LIMIT = 50_000;
+
+const EXPERIENCES = Object.values(SurveyExperience) as string[];
+
+// Columnas de la fila de la clínica: sin chatSummary, cédula ni ids internos.
+const LIMITED_SELECT = {
+  id: true,
+  createdAt: true,
+  answeredAt: true,
+  isUsed: true,
+  expiresAt: true,
+  rating: true,
+  wouldRecommend: true,
+  experience: true,
+  feedback: true,
+  resolutionStatus: true,
+  patient: { select: { fullName: true, whatsappId: true } },
+} satisfies Prisma.ChatSurveySelect;
+
+const DETAILED_SELECT = {
+  id: true,
+  createdAt: true,
+  answeredAt: true,
+  isUsed: true,
+  expiresAt: true,
+  rating: true,
+  wouldRecommend: true,
+  experience: true,
+  feedback: true,
+  chatSummary: true,
+  resolutionStatus: true,
+  patient: {
+    select: { id: true, fullName: true, whatsappId: true, cedula: true },
+  },
+  organization: { select: { id: true, name: true } },
+} satisfies Prisma.ChatSurveySelect;
+
+type LimitedRecord = Prisma.ChatSurveyGetPayload<{
+  select: typeof LIMITED_SELECT;
+}>;
+type DetailedRecord = Prisma.ChatSurveyGetPayload<{
+  select: typeof DETAILED_SELECT;
+}>;
 
 @Injectable()
 export class SurveyService {
@@ -86,10 +141,12 @@ export class SurveyService {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // ENVÍO DE LA CALIFICACIÓN — REGLA DE ORO
+  // ENVÍO DE LA ENCUESTA — REGLA DE ORO
   // Sólo persiste si isUsed == false && expiresAt > now(). Marca isUsed = true
   // de forma atómica (updateMany con guardas en el WHERE) para que un doble
   // submit concurrente no pueda escribir dos veces.
+  // Las tres preguntas son obligatorias: estrellas del asistente,
+  // «¿Recomendaría la IPS?» y «¿Cómo le fue?» (que tiene «No responde»).
   // ══════════════════════════════════════════════════════════════
   async submitSurvey(
     id: string,
@@ -102,21 +159,41 @@ export class SurveyService {
       );
     }
 
+    if (typeof input.wouldRecommend !== 'boolean') {
+      throw new BadRequestException(
+        'Falta la respuesta a «¿Recomendaría la IPS?» (sí o no).',
+      );
+    }
+
+    if (
+      typeof input.experience !== 'string' ||
+      !EXPERIENCES.includes(input.experience)
+    ) {
+      throw new BadRequestException(
+        'Falta la respuesta a «¿Cómo le fue en su experiencia?».',
+      );
+    }
+    const experience = input.experience;
+
     const feedback =
       typeof input.feedback === 'string' && input.feedback.trim().length > 0
         ? input.feedback.trim().slice(0, MAX_FEEDBACK_LENGTH)
         : null;
 
+    const now = new Date();
     // Update atómico condicionado: el WHERE re-verifica la regla de oro.
     const result = await this.prisma.chatSurvey.updateMany({
       where: {
         id,
         isUsed: false,
-        expiresAt: { gt: new Date() },
+        expiresAt: { gt: now },
       },
       data: {
         rating,
+        wouldRecommend: input.wouldRecommend,
+        experience,
         feedback,
+        answeredAt: now,
         isUsed: true,
       },
     });
@@ -128,7 +205,9 @@ export class SurveyService {
       );
     }
 
-    this.logger.log(`Encuesta ${id} calificada con ${rating}/5.`);
+    this.logger.log(
+      `Encuesta ${id} respondida: ${rating}/5, recomendaría=${input.wouldRecommend ? 'sí' : 'no'}, experiencia=${experience}.`,
+    );
     return { success: true };
   }
 
@@ -144,14 +223,7 @@ export class SurveyService {
       query.page,
       query.pageSize,
     );
-
-    const where: Prisma.ChatSurveyWhereInput = {
-      ...this.buildDateRange(query.startDate, query.endDate),
-    };
-    if (query.organizationId) where.organizationId = query.organizationId;
-    if (query.resolutionStatus) where.resolutionStatus = query.resolutionStatus;
-    if (query.mood) where.rating = moodToRatingWhere(query.mood);
-
+    const where = this.buildWhere(query);
     const orderBy = this.buildOrderBy(query.sortBy, query.sortDir);
 
     const [total, rows] = await this.prisma.$transaction([
@@ -161,47 +233,13 @@ export class SurveyService {
         orderBy,
         skip,
         take: pageSize,
-        select: {
-          id: true,
-          createdAt: true,
-          rating: true,
-          feedback: true,
-          chatSummary: true,
-          resolutionStatus: true,
-          isUsed: true,
-          patient: {
-            select: {
-              id: true,
-              fullName: true,
-              whatsappId: true,
-              cedula: true,
-            },
-          },
-          organization: { select: { id: true, name: true } },
-        },
+        select: DETAILED_SELECT,
       }),
     ]);
 
+    const now = new Date();
     return this.paginate(
-      rows.map((r) => ({
-        id: r.id,
-        createdAt: r.createdAt.toISOString(),
-        rating: r.rating,
-        userMood: computeUserMood(r.rating),
-        feedback: r.feedback,
-        chatSummary: r.chatSummary,
-        resolutionStatus: r.resolutionStatus,
-        isUsed: r.isUsed,
-        patient: r.patient
-          ? {
-              id: r.patient.id,
-              fullName: r.patient.fullName,
-              whatsappId: r.patient.whatsappId,
-              cedula: r.patient.cedula,
-            }
-          : null,
-        organization: { id: r.organization.id, name: r.organization.name },
-      })),
+      rows.map((r) => this.toDetailedRow(r, now)),
       total,
       page,
       pageSize,
@@ -209,10 +247,12 @@ export class SurveyService {
   }
 
   // ══════════════════════════════════════════════════════════════
-  // REPORTE CLINIC ADMIN — payload minimalista, SCOPED a una clínica
-  // Sólo nombre, teléfono, calificación, mensaje y ánimo. Oculta campos
-  // internos (chatSummary, expiresAt, ids, etc.). El scoping por orgId lo
-  // garantiza el controller (token === :orgId); aquí lo reforzamos en el WHERE.
+  // REPORTE CLINIC ADMIN — SCOPED a una clínica
+  // Nombre, teléfono, respuestas, comentario y la gestión que cerró el chat.
+  // Oculta chatSummary, cédula, expiresAt e ids internos. La búsqueda sí
+  // encuentra por cédula (quien la escribe ya la tiene), pero no la devuelve.
+  // El scoping por orgId lo garantiza el controller (token === :orgId); aquí
+  // lo reforzamos en el WHERE.
   // ══════════════════════════════════════════════════════════════
   async findLimitedForClinic(
     organizationId: string,
@@ -222,8 +262,7 @@ export class SurveyService {
       query.page,
       query.pageSize,
     );
-
-    const where: Prisma.ChatSurveyWhereInput = { organizationId };
+    const where = this.buildWhere({ ...query, organizationId });
     const orderBy = this.buildOrderBy(query.sortBy, query.sortDir);
 
     const [total, rows] = await this.prisma.$transaction([
@@ -233,33 +272,208 @@ export class SurveyService {
         orderBy,
         skip,
         take: pageSize,
-        select: {
-          id: true,
-          createdAt: true,
-          rating: true,
-          feedback: true,
-          patient: { select: { fullName: true, whatsappId: true } },
-        },
+        select: LIMITED_SELECT,
       }),
     ]);
 
+    const now = new Date();
     return this.paginate(
-      rows.map((r) => ({
-        id: r.id,
-        createdAt: r.createdAt.toISOString(),
-        patientName: r.patient?.fullName ?? 'Paciente anónimo',
-        whatsappPhone: r.patient?.whatsappId ?? null,
-        rating: r.rating,
-        userMood: computeUserMood(r.rating),
-        message: r.feedback,
-      })),
+      rows.map((r) => this.toLimitedRow(r, now)),
       total,
       page,
       pageSize,
     );
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // DESCARGA — las filas filtradas, hasta SURVEY_EXPORT_LIMIT.
+  // ══════════════════════════════════════════════════════════════
+  async exportDetailedForSuperAdmin(
+    query: DetailedSurveyQuery,
+  ): Promise<SurveyExport<DetailedSurveyRow>> {
+    const where = this.buildWhere(query);
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.chatSurvey.count({ where }),
+      this.prisma.chatSurvey.findMany({
+        where,
+        orderBy: this.buildOrderBy(query.sortBy, query.sortDir),
+        take: SURVEY_EXPORT_LIMIT,
+        select: DETAILED_SELECT,
+      }),
+    ]);
+    const now = new Date();
+    return {
+      rows: rows.map((r) => this.toDetailedRow(r, now)),
+      total,
+      truncated: total > rows.length,
+    };
+  }
+
+  async exportLimitedForClinic(
+    organizationId: string,
+    query: LimitedSurveyQuery,
+  ): Promise<SurveyExport<LimitedSurveyRow>> {
+    const where = this.buildWhere({ ...query, organizationId });
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.chatSurvey.count({ where }),
+      this.prisma.chatSurvey.findMany({
+        where,
+        orderBy: this.buildOrderBy(query.sortBy, query.sortDir),
+        take: SURVEY_EXPORT_LIMIT,
+        select: LIMITED_SELECT,
+      }),
+    ]);
+    const now = new Date();
+    return {
+      rows: rows.map((r) => this.toLimitedRow(r, now)),
+      total,
+      truncated: total > rows.length,
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // ESTADÍSTICAS — sobre las mismas encuestas que muestra la lista.
+  // La vista de la clínica pasa SIEMPRE su organizationId.
+  // ══════════════════════════════════════════════════════════════
+  async getStats(
+    filters: SurveyFilters,
+    now: Date = new Date(),
+  ): Promise<SurveyStats> {
+    const where = this.buildWhere(filters, now);
+    const [rows, comments, total] = await this.prisma.$transaction([
+      this.prisma.chatSurvey.findMany({
+        where,
+        take: SURVEY_STATS_LIMIT,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          createdAt: true,
+          isUsed: true,
+          expiresAt: true,
+          rating: true,
+          wouldRecommend: true,
+          experience: true,
+          resolutionStatus: true,
+        },
+      }),
+      this.prisma.chatSurvey.count({
+        where: { AND: [where, { feedback: { not: null } }] },
+      }),
+      this.prisma.chatSurvey.count({ where }),
+    ]);
+
+    return buildSurveyStats(rows, {
+      comments,
+      startDate: this.validDay(filters.startDate),
+      endDate: this.validDay(filters.endDate),
+      now,
+      truncated: total > rows.length,
+    });
+  }
+
+  // ── Construcción de filas ────────────────────────────────────
+
+  private toDetailedRow(r: DetailedRecord, now: Date): DetailedSurveyRow {
+    return {
+      id: r.id,
+      createdAt: r.createdAt.toISOString(),
+      answeredAt: r.answeredAt?.toISOString() ?? null,
+      status: computeAnswerStatus(r.isUsed, r.expiresAt, now),
+      rating: r.rating,
+      userMood: computeUserMood(r.rating),
+      wouldRecommend: r.wouldRecommend,
+      experience: r.experience,
+      feedback: r.feedback,
+      chatSummary: r.chatSummary,
+      resolutionStatus: r.resolutionStatus,
+      isUsed: r.isUsed,
+      patient: r.patient
+        ? {
+            id: r.patient.id,
+            fullName: r.patient.fullName,
+            whatsappId: r.patient.whatsappId,
+            cedula: r.patient.cedula,
+          }
+        : null,
+      organization: { id: r.organization.id, name: r.organization.name },
+    };
+  }
+
+  private toLimitedRow(r: LimitedRecord, now: Date): LimitedSurveyRow {
+    return {
+      id: r.id,
+      createdAt: r.createdAt.toISOString(),
+      answeredAt: r.answeredAt?.toISOString() ?? null,
+      status: computeAnswerStatus(r.isUsed, r.expiresAt, now),
+      patientName: r.patient?.fullName ?? 'Paciente anónimo',
+      whatsappPhone: r.patient?.whatsappId ?? null,
+      rating: r.rating,
+      userMood: computeUserMood(r.rating),
+      wouldRecommend: r.wouldRecommend,
+      experience: r.experience,
+      message: r.feedback,
+      resolutionStatus: r.resolutionStatus,
+    };
+  }
+
   // ── Helpers de consulta compartidos ──────────────────────────
+
+  /**
+   * WHERE de los filtros. Cada condición va en su propio elemento de `AND`
+   * para que dos filtros sobre la misma columna (estrellas exactas y ánimo)
+   * se sumen en lugar de pisarse.
+   */
+  private buildWhere(
+    f: SurveyFilters,
+    now: Date = new Date(),
+  ): Prisma.ChatSurveyWhereInput {
+    const and: Prisma.ChatSurveyWhereInput[] = [];
+
+    if (f.organizationId) and.push({ organizationId: f.organizationId });
+
+    const fechas = this.buildDateRange(f.startDate, f.endDate);
+    if (fechas) and.push({ createdAt: fechas });
+
+    if (f.resolutionStatus) and.push({ resolutionStatus: f.resolutionStatus });
+    if (f.mood) and.push({ rating: moodToRatingWhere(f.mood) });
+    if (
+      f.rating &&
+      Number.isInteger(f.rating) &&
+      f.rating >= 1 &&
+      f.rating <= 5
+    )
+      and.push({ rating: f.rating });
+    if (typeof f.wouldRecommend === 'boolean')
+      and.push({ wouldRecommend: f.wouldRecommend });
+    if (f.experience) and.push({ experience: f.experience });
+    if (f.withComment) and.push({ feedback: { not: null } });
+
+    if (f.status === 'ANSWERED') and.push({ isUsed: true });
+    else if (f.status === 'PENDING')
+      and.push({ isUsed: false, expiresAt: { gt: now } });
+    else if (f.status === 'EXPIRED')
+      and.push({ isUsed: false, expiresAt: { lte: now } });
+
+    const q = f.q?.trim().slice(0, MAX_SEARCH_LENGTH);
+    if (q) {
+      const texto = { contains: q, mode: 'insensitive' as const };
+      const or: Prisma.ChatSurveyWhereInput[] = [
+        { patient: { is: { fullName: texto } } },
+        { feedback: texto },
+      ];
+      const digitos = q.replace(/\D/g, '');
+      if (digitos.length >= 3) {
+        or.push(
+          { patient: { is: { cedula: { contains: digitos } } } },
+          { patient: { is: { whatsappId: { contains: digitos } } } },
+        );
+      }
+      and.push({ OR: or });
+    }
+
+    if (and.length === 0) return {};
+    if (and.length === 1) return and[0];
+    return { AND: and };
+  }
 
   private normalizePagination(page?: number, pageSize?: number) {
     const safePage = Math.max(1, Math.floor(page || 1));
@@ -272,33 +486,69 @@ export class SurveyService {
   }
 
   // Allowlist de campos ordenables → evita inyección de columnas arbitrarias.
+  // Las encuestas sin responder van al final en cualquier sentido, y a igual
+  // valor manda la más reciente.
   private buildOrderBy(
     sortBy: string | undefined,
     sortDir: string | undefined,
-  ): Prisma.ChatSurveyOrderByWithRelationInput {
+  ): Prisma.ChatSurveyOrderByWithRelationInput[] {
     const dir: Prisma.SortOrder = sortDir === 'asc' ? 'asc' : 'desc';
-    const field = sortBy === 'rating' ? 'rating' : 'createdAt';
-    return { [field]: dir };
+    switch (sortBy) {
+      case 'rating':
+        return [
+          { rating: { sort: dir, nulls: 'last' } },
+          { createdAt: 'desc' },
+        ];
+      case 'answeredAt':
+        return [
+          { answeredAt: { sort: dir, nulls: 'last' } },
+          { createdAt: 'desc' },
+        ];
+      case 'patient':
+        return [{ patient: { fullName: dir } }, { createdAt: 'desc' }];
+      default:
+        return [{ createdAt: dir }];
+    }
   }
 
+  /** `YYYY-MM-DD` válido o undefined. */
+  private validDay(day?: string): string | undefined {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day?.trim() ?? '');
+    if (!m) return undefined;
+    const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const t = new Date(Date.UTC(y, mo - 1, d));
+    return t.getUTCMonth() === mo - 1 && t.getUTCDate() === d
+      ? `${m[1]}-${m[2]}-${m[3]}`
+      : undefined;
+  }
+
+  /**
+   * Días de envío en la hora de la clínica: del inicio del primer día al
+   * final del último (los contenedores corren en UTC; CLAUDE.md, fechas).
+   */
   private buildDateRange(
     startDate?: string,
     endDate?: string,
-  ): Prisma.ChatSurveyWhereInput {
+  ): Prisma.DateTimeFilter | null {
     const range: Prisma.DateTimeFilter = {};
-    if (startDate) {
-      const d = new Date(startDate);
-      if (!isNaN(d.getTime())) range.gte = d;
+    const ini = this.validDay(startDate);
+    const fin = this.validDay(endDate);
+    if (ini) {
+      const [y, m, d] = ini.split('-').map(Number);
+      range.gte = horaLocalAUtc(y, m, d, 0);
     }
-    if (endDate) {
-      const d = new Date(endDate);
-      if (!isNaN(d.getTime())) {
-        // Incluye todo el día final.
-        d.setHours(23, 59, 59, 999);
-        range.lte = d;
-      }
+    if (fin) {
+      const [y, m, d] = fin.split('-').map(Number);
+      // Medianoche del día siguiente, excluida: Date.UTC normaliza el día 32.
+      const sig = new Date(Date.UTC(y, m - 1, d + 1));
+      range.lt = horaLocalAUtc(
+        sig.getUTCFullYear(),
+        sig.getUTCMonth() + 1,
+        sig.getUTCDate(),
+        0,
+      );
     }
-    return Object.keys(range).length > 0 ? { createdAt: range } : {};
+    return Object.keys(range).length > 0 ? range : null;
   }
 
   private paginate<T>(

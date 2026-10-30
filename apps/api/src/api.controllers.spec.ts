@@ -700,7 +700,11 @@ describe('SurveyController — endpoints públicos (el paciente no tiene sesión
 describe('Controladores de reportes de encuestas', () => {
   describe('SuperadminSurveyController', () => {
     const build = () => {
-      const service = { findDetailedForSuperAdmin: jest.fn(async () => ({})) };
+      const service = {
+        findDetailedForSuperAdmin: jest.fn(async () => ({})),
+        getStats: jest.fn(async () => ({})),
+        exportDetailedForSuperAdmin: jest.fn(async () => ({})),
+      };
       return { service, c: new SuperadminSurveyController(service as never) };
     };
 
@@ -715,15 +719,26 @@ describe('Controladores de reportes de encuestas', () => {
         sortDir: 'desc',
         startDate: undefined,
         endDate: undefined,
-        organizationId: undefined,
+        q: undefined,
+        status: undefined,
+        rating: undefined,
         mood: undefined,
+        wouldRecommend: undefined,
+        experience: undefined,
+        withComment: undefined,
         resolutionStatus: undefined,
+        organizationId: undefined,
       });
     });
 
     it('acepta orden por calificación ascendente', async () => {
       const { service, c } = build();
-      await c.getDetailed('2', '10', 'rating', 'asc');
+      await c.getDetailed({
+        page: '2',
+        pageSize: '10',
+        sortBy: 'rating',
+        sortDir: 'asc',
+      });
 
       expect(service.findDetailedForSuperAdmin).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -737,70 +752,152 @@ describe('Controladores de reportes de encuestas', () => {
 
     it('un campo de orden desconocido cae a createdAt desc', async () => {
       const { service, c } = build();
-      await c.getDetailed(undefined, undefined, 'cedula', 'diagonal');
+      await c.getDetailed({ sortBy: 'cedula', sortDir: 'diagonal' });
 
       expect(service.findDetailedForSuperAdmin).toHaveBeenCalledWith(
         expect.objectContaining({ sortBy: 'createdAt', sortDir: 'desc' }),
       );
     });
 
-    it('un mood o un estado de resolución inventados se descartan', async () => {
+    it('valores inventados en los filtros se descartan', async () => {
       const { service, c } = build();
-      await c.getDetailed(
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        'EUFORICO',
-        'INVENTADO',
-      );
+      await c.getDetailed({
+        mood: 'EUFORICO',
+        resolutionStatus: 'INVENTADO',
+        experience: 'EXCELENTE',
+        status: 'BORRADA',
+        rating: '7',
+        recommend: 'TALVEZ',
+        withComment: 'si',
+        startDate: '30/10/2026',
+      });
 
       expect(service.findDetailedForSuperAdmin).toHaveBeenCalledWith(
         expect.objectContaining({
           mood: undefined,
           resolutionStatus: undefined,
+          experience: undefined,
+          status: undefined,
+          rating: undefined,
+          wouldRecommend: undefined,
+          withComment: undefined,
+          startDate: undefined,
+        }),
+      );
+    });
+
+    it('los filtros válidos viajan con su tipo', async () => {
+      const { service, c } = build();
+      await c.getDetailed({
+        q: 'ana',
+        status: 'ANSWERED',
+        rating: '2',
+        recommend: 'NO',
+        experience: 'BAD',
+        withComment: 'true',
+        startDate: '2026-10-01',
+        endDate: '2026-10-30',
+        organizationId: 'org-x',
+      });
+
+      expect(service.findDetailedForSuperAdmin).toHaveBeenCalledWith(
+        expect.objectContaining({
+          q: 'ana',
+          status: 'ANSWERED',
+          rating: 2,
+          wouldRecommend: false,
+          experience: 'BAD',
+          withComment: true,
+          startDate: '2026-10-01',
+          endDate: '2026-10-30',
+          organizationId: 'org-x',
         }),
       );
     });
 
     it('una página no numérica cae a 1', async () => {
       const { service, c } = build();
-      await c.getDetailed('abc');
+      await c.getDetailed({ page: 'abc' });
       expect(service.findDetailedForSuperAdmin).toHaveBeenCalledWith(
         expect.objectContaining({ page: 1 }),
+      );
+    });
+
+    it('estadísticas y descarga usan los mismos filtros', async () => {
+      const { service, c } = build();
+      await c.getStats({ experience: 'GOOD', organizationId: 'org-x' });
+      await c.export({ experience: 'GOOD' });
+      expect(service.getStats).toHaveBeenCalledWith(
+        expect.objectContaining({
+          experience: 'GOOD',
+          organizationId: 'org-x',
+        }),
+      );
+      expect(service.exportDetailedForSuperAdmin).toHaveBeenCalledWith(
+        expect.objectContaining({ experience: 'GOOD' }),
       );
     });
   });
 
   describe('ClinicSurveyController', () => {
     const build = () => {
-      const service = { findLimitedForClinic: jest.fn(async () => ({})) };
+      const service = {
+        findLimitedForClinic: jest.fn(async () => ({})),
+        getStats: jest.fn(async () => ({})),
+        exportLimitedForClinic: jest.fn(async () => ({})),
+      };
       return { service, c: new ClinicSurveyController(service as never) };
     };
 
     it('con el :orgId propio, devuelve las encuestas de esa clínica', async () => {
       const { service, c } = build();
       await c.getLimited(ORG, ORG);
-      expect(service.findLimitedForClinic).toHaveBeenCalledWith(ORG, {
-        page: 1,
-        pageSize: 25,
-        sortBy: 'createdAt',
-        sortDir: 'desc',
-      });
+      expect(service.findLimitedForClinic).toHaveBeenCalledWith(
+        ORG,
+        expect.objectContaining({
+          page: 1,
+          pageSize: 25,
+          sortBy: 'createdAt',
+          sortDir: 'desc',
+        }),
+      );
     });
 
     it('🔒 cambiar el :orgId por el de otra clínica → 403', () => {
       const { service, c } = build();
       expect(() => c.getLimited(OTRA_ORG, ORG)).toThrow(ForbiddenException);
+      expect(() => c.getStats(OTRA_ORG, ORG)).toThrow(ForbiddenException);
+      expect(() => c.export(OTRA_ORG, ORG)).toThrow(ForbiddenException);
       expect(service.findLimitedForClinic).not.toHaveBeenCalled();
+      expect(service.getStats).not.toHaveBeenCalled();
+      expect(service.exportLimitedForClinic).not.toHaveBeenCalled();
     });
 
     it('un token sin organización tampoco pasa', () => {
       const { c } = build();
       expect(() => c.getLimited(ORG, '')).toThrow(ForbiddenException);
+    });
+
+    it('🔒 un organizationId en el query NO cambia la clínica de las estadísticas', async () => {
+      const { service, c } = build();
+      await c.getStats(ORG, ORG, { organizationId: OTRA_ORG });
+      expect(service.getStats).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: ORG }),
+      );
+    });
+
+    it('🔒 ni el de la lista ni el de la descarga', async () => {
+      const { service, c } = build();
+      await c.getLimited(ORG, ORG, { organizationId: OTRA_ORG });
+      await c.export(ORG, ORG, { organizationId: OTRA_ORG });
+      expect(service.findLimitedForClinic.mock.calls[0][0]).toBe(ORG);
+      expect(
+        (service.findLimitedForClinic.mock.calls[0] as unknown[])[1],
+      ).not.toHaveProperty('organizationId');
+      expect(service.exportLimitedForClinic.mock.calls[0][0]).toBe(ORG);
+      expect(
+        (service.exportLimitedForClinic.mock.calls[0] as unknown[])[1],
+      ).not.toHaveProperty('organizationId');
     });
   });
 });

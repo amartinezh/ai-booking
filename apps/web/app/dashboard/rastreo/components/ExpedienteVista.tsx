@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import type { Veredicto } from '@agenia/shared';
 import { formatAppointmentCompact, formatAppointmentShort } from '@/lib/date';
+import { EXPERIENCIA_LABEL, GESTION_LABEL } from '@/lib/encuestas/etiquetas';
 import { revelarIdentidadAction } from '@/app/actions/rastreo';
 import { reprocesarEvento } from '@/app/actions/espejo';
 import type { CitaExpediente, ExpedienteA } from '@/lib/rastreo/tipos';
@@ -451,7 +452,10 @@ function Historial({ data }: { data: ExpedienteA }) {
                     <ul className="mt-1 space-y-0.5 text-sm">
                         {historial.encuestas.map((e, i) => (
                             <li key={i}>
-                                {formatAppointmentShort(e.creadoIso, { timeZone: tz })} · {e.calificacion}/5 · {e.resolucion}
+                                {formatAppointmentShort(e.creadoIso, { timeZone: tz })}
+                                {e.recomendaria != null && ` · Recomendaría: ${e.recomendaria ? 'sí' : 'no'}`}
+                                {e.experiencia && ` · Experiencia: ${EXPERIENCIA_LABEL[e.experiencia as keyof typeof EXPERIENCIA_LABEL]?.toLowerCase() ?? e.experiencia}`}
+                                {` · Asistente ${e.calificacion}/5 · ${GESTION_LABEL[e.resolucion as keyof typeof GESTION_LABEL] ?? e.resolucion}`}
                             </li>
                         ))}
                     </ul>

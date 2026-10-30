@@ -1,7 +1,7 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
-import SurveysClient from './SurveysClient';
+import SurveysExplorer from '@/app/components/surveys/SurveysExplorer';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -19,5 +19,5 @@ export default async function SuperAdminSurveysPage() {
     orderBy: { name: 'asc' },
   });
 
-  return <SurveysClient organizations={organizations} />;
+  return <SurveysExplorer scope="global" organizations={organizations} />;
 }

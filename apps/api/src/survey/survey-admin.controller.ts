@@ -9,30 +9,28 @@ import {
 import { Roles } from '../common/roles.decorator';
 import { RolesGuard } from '../common/roles.guard';
 import { CurrentTenant } from '../common/current-tenant.decorator';
-import { ResolutionStatus } from '@agenia/database';
+import { ResolutionStatus, SurveyExperience } from '@agenia/database';
 import { SurveyService } from './survey.service';
 import {
-  DetailedSurveyQuery,
-  LimitedSurveyQuery,
+  SURVEY_ANSWER_STATUSES,
+  SURVEY_SORT_FIELDS,
   SortDir,
+  SurveyFilters,
+  SurveyListQuery,
   SurveySortField,
   UserMood,
 } from './dto/survey-report.types';
 
 // ───────────────────────────────────────────────────────────────
 // Helpers de parseo del query string (no hay ValidationPipe global).
+// Todo lo que no se reconoce se descarta: nunca llega al WHERE.
 // ───────────────────────────────────────────────────────────────
-function parseSort(
-  sortBy?: string,
-  sortDir?: string,
-): {
-  sortBy: SurveySortField;
-  sortDir: SortDir;
-} {
-  return {
-    sortBy: sortBy === 'rating' ? 'rating' : 'createdAt',
-    sortDir: sortDir === 'asc' ? 'asc' : 'desc',
-  };
+type RawQuery = Record<string, string | string[] | undefined>;
+
+function str(raw: RawQuery, key: string): string | undefined {
+  const v = raw?.[key];
+  const s = Array.isArray(v) ? v[0] : v;
+  return typeof s === 'string' && s.length > 0 ? s : undefined;
 }
 
 function parseEnum<T extends string>(
@@ -44,8 +42,50 @@ function parseEnum<T extends string>(
     : undefined;
 }
 
+function parseDay(value: string | undefined): string | undefined {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
+}
+
 const MOODS = Object.values(UserMood);
 const RESOLUTIONS = Object.values(ResolutionStatus);
+const EXPERIENCES = Object.values(SurveyExperience);
+
+/** Filtros comunes. `organizationId` solo lo agrega quien puede usarlo. */
+export function parseSurveyFilters(raw: RawQuery): SurveyFilters {
+  const rating = Number(str(raw, 'rating'));
+  const recommend = str(raw, 'recommend');
+  return {
+    startDate: parseDay(str(raw, 'startDate')),
+    endDate: parseDay(str(raw, 'endDate')),
+    q: str(raw, 'q')?.slice(0, 100),
+    status: parseEnum(str(raw, 'status'), SURVEY_ANSWER_STATUSES),
+    rating:
+      Number.isInteger(rating) && rating >= 1 && rating <= 5
+        ? rating
+        : undefined,
+    mood: parseEnum(str(raw, 'mood'), MOODS),
+    wouldRecommend:
+      recommend === 'YES' ? true : recommend === 'NO' ? false : undefined,
+    experience: parseEnum(str(raw, 'experience'), EXPERIENCES),
+    withComment: str(raw, 'withComment') === 'true' ? true : undefined,
+    resolutionStatus: parseEnum(str(raw, 'resolutionStatus'), RESOLUTIONS),
+  };
+}
+
+export function parseSurveyListQuery(
+  raw: RawQuery,
+): Omit<SurveyListQuery, 'organizationId'> {
+  const sortBy: SurveySortField =
+    parseEnum(str(raw, 'sortBy'), SURVEY_SORT_FIELDS) ?? 'createdAt';
+  const sortDir: SortDir = str(raw, 'sortDir') === 'asc' ? 'asc' : 'desc';
+  return {
+    page: Number(str(raw, 'page')) || 1,
+    pageSize: Number(str(raw, 'pageSize')) || 25,
+    sortBy,
+    sortDir,
+    ...parseSurveyFilters(raw),
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════
 // 🌎 ENDPOINT 1 — DIAGNÓSTICO SUPER ADMIN (acceso global total)
@@ -58,38 +98,52 @@ export class SuperadminSurveyController {
   // GET /superadmin/surveys/detailed
   @Get('detailed')
   @Roles('SUPER_ADMIN')
-  getDetailed(
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-    @Query('sortBy') sortBy?: string,
-    @Query('sortDir') sortDir?: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('organizationId') organizationId?: string,
-    @Query('mood') mood?: string,
-    @Query('resolutionStatus') resolutionStatus?: string,
-  ) {
-    const query: DetailedSurveyQuery = {
-      page: Number(page) || 1,
-      pageSize: Number(pageSize) || 25,
-      ...parseSort(sortBy, sortDir),
-      startDate: startDate || undefined,
-      endDate: endDate || undefined,
-      organizationId: organizationId || undefined,
-      mood: parseEnum(mood, MOODS),
-      resolutionStatus: parseEnum(resolutionStatus, RESOLUTIONS),
-    };
-    return this.surveyService.findDetailedForSuperAdmin(query);
+  getDetailed(@Query() raw: RawQuery = {}) {
+    return this.surveyService.findDetailedForSuperAdmin({
+      ...parseSurveyListQuery(raw),
+      organizationId: str(raw, 'organizationId'),
+    });
+  }
+
+  // GET /superadmin/surveys/stats
+  @Get('stats')
+  @Roles('SUPER_ADMIN')
+  getStats(@Query() raw: RawQuery = {}) {
+    return this.surveyService.getStats({
+      ...parseSurveyFilters(raw),
+      organizationId: str(raw, 'organizationId'),
+    });
+  }
+
+  // GET /superadmin/surveys/export
+  @Get('export')
+  @Roles('SUPER_ADMIN')
+  export(@Query() raw: RawQuery = {}) {
+    return this.surveyService.exportDetailedForSuperAdmin({
+      ...parseSurveyListQuery(raw),
+      organizationId: str(raw, 'organizationId'),
+    });
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 🏥 ENDPOINT 2 — DIAGNÓSTICO CLINIC ADMIN (scoped + minimalista)
+// 🏥 ENDPOINT 2 — DIAGNÓSTICO CLINIC ADMIN (scoped a su clínica)
 // ═══════════════════════════════════════════════════════════════
 @Controller('organizations/:orgId/surveys')
 @UseGuards(RolesGuard)
 export class ClinicSurveyController {
   constructor(private readonly surveyService: SurveyService) {}
+
+  // 🔐 SEGURIDAD MULTI-TENANT ESTRICTA: el orgId del token DEBE coincidir
+  // con el de la URL. Sin esto, un ORG_ADMIN podría leer encuestas de otra
+  // clínica cambiando el :orgId. Prohibido el leak entre tenants.
+  private assertOwnOrg(orgId: string, tenantOrgId: string | null | undefined) {
+    if (!tenantOrgId || tenantOrgId !== orgId) {
+      throw new ForbiddenException(
+        'No tienes acceso a las encuestas de esta organización.',
+      );
+    }
+  }
 
   // GET /organizations/:orgId/surveys/limited
   @Get('limited')
@@ -97,25 +151,43 @@ export class ClinicSurveyController {
   getLimited(
     @Param('orgId') orgId: string,
     @CurrentTenant() tenantOrgId: string,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-    @Query('sortBy') sortBy?: string,
-    @Query('sortDir') sortDir?: string,
+    @Query() raw: RawQuery = {},
   ) {
-    // 🔐 SEGURIDAD MULTI-TENANT ESTRICTA: el orgId del token DEBE coincidir
-    // con el de la URL. Sin esto, un ORG_ADMIN podría leer encuestas de otra
-    // clínica cambiando el :orgId. Prohibido el leak entre tenants.
-    if (!tenantOrgId || tenantOrgId !== orgId) {
-      throw new ForbiddenException(
-        'No tienes acceso a las encuestas de esta organización.',
-      );
-    }
+    this.assertOwnOrg(orgId, tenantOrgId);
+    return this.surveyService.findLimitedForClinic(
+      orgId,
+      parseSurveyListQuery(raw),
+    );
+  }
 
-    const query: LimitedSurveyQuery = {
-      page: Number(page) || 1,
-      pageSize: Number(pageSize) || 25,
-      ...parseSort(sortBy, sortDir),
-    };
-    return this.surveyService.findLimitedForClinic(orgId, query);
+  // GET /organizations/:orgId/surveys/stats
+  @Get('stats')
+  @Roles('ORG_ADMIN')
+  getStats(
+    @Param('orgId') orgId: string,
+    @CurrentTenant() tenantOrgId: string,
+    @Query() raw: RawQuery = {},
+  ) {
+    this.assertOwnOrg(orgId, tenantOrgId);
+    // organizationId SIEMPRE el de la URL ya validada; nunca el del query.
+    return this.surveyService.getStats({
+      ...parseSurveyFilters(raw),
+      organizationId: orgId,
+    });
+  }
+
+  // GET /organizations/:orgId/surveys/export
+  @Get('export')
+  @Roles('ORG_ADMIN')
+  export(
+    @Param('orgId') orgId: string,
+    @CurrentTenant() tenantOrgId: string,
+    @Query() raw: RawQuery = {},
+  ) {
+    this.assertOwnOrg(orgId, tenantOrgId);
+    return this.surveyService.exportLimitedForClinic(
+      orgId,
+      parseSurveyListQuery(raw),
+    );
   }
 }

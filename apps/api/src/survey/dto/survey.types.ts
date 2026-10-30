@@ -1,4 +1,4 @@
-import { ResolutionStatus } from '@agenia/database';
+import { ResolutionStatus, SurveyExperience } from '@agenia/database';
 
 // Datos que el ChatbotService entrega al generar el token de encuesta.
 export interface GenerateSurveyInput {
@@ -12,7 +12,9 @@ export interface GenerateSurveyInput {
 
 // Cuerpo del POST /surveys/:id que envía el frontend.
 export interface SubmitSurveyInput {
-  rating: number; // 1..5
+  rating: number; // 1..5 — la atención del asistente virtual
+  wouldRecommend: boolean; // ¿Recomendaría la IPS? Sí / No
+  experience: SurveyExperience; // ¿Cómo le fue? Buena / Regular / Mala / No responde
   feedback?: string | null;
 }
 
