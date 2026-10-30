@@ -52,6 +52,50 @@ export interface Informe {
     mensajes: { total: number; personas: number; fueraDeHorario: number; porHora: number[] };
     /** Con y sin recordatorio entregado; vacío si aún no hay citas pasadas que contar. */
     asistencia: { grupo: string; citas: number; asistieron: number; destacado: boolean }[];
+    /** ⏱️ Cuánto espera el paciente por su cita; null si no hay citas que medir. */
+    espera: EsperaPorLaCita | null;
+}
+
+export interface CanalDeEspera {
+    canal: 'chat' | 'personal';
+    citas: number;
+    /** Días calendario promedio entre el día en que la pidió y el de la cita. */
+    promedioDias: number;
+    /** Proporción (0 a 1) de citas para dentro de 3 días o menos. */
+    dentroDe3: number;
+    /** Citas para el mismo día, a 1, 2 y 3 días, y a más de 3 (5 posiciones). */
+    reparto: number[];
+}
+
+export interface EsperaPorLaCita {
+    servicios: string[];
+    /** Por chat primero; solo los canales que tienen citas. */
+    canales: CanalDeEspera[];
+    conversacion: { citas: number; medidas: number; medianaMin: number | null; promedioMin: number | null };
+    listaEspera: { asignadas: number; medianaHoras: number | null; promedioHoras: number | null };
+}
+
+/** Días máximos para una cita de medicina general (Res. 408 de 2018; 3 días hábiles en la Res. 2117 de 2025). */
+export const ESTANDAR_DIAS = 3;
+
+function armarEspera(e: DatosDeEstadisticas['espera']): EsperaPorLaCita | null {
+    if (!e) return null;
+    const canales = (['chat', 'personal'] as const)
+        .map((canal) => {
+            const filas = e.oportunidad.filter((f) => f.canal === canal);
+            const citas = filas.reduce((a, f) => a + f.citas, 0);
+            const reparto = [0, 1, 2, 3, 4].map((d) => filas.find((f) => f.dias === d)?.citas ?? 0);
+            return {
+                canal,
+                citas,
+                promedioDias: citas > 0 ? filas.reduce((a, f) => a + f.sumaDias, 0) / citas : 0,
+                dentroDe3: citas > 0 ? (citas - reparto[4]) / citas : 0,
+                reparto,
+            };
+        })
+        .filter((c) => c.citas > 0);
+    if (canales.length === 0 && e.listaEspera.asignadas === 0) return null;
+    return { servicios: e.servicios, canales, conversacion: e.conversacion, listaEspera: e.listaEspera };
 }
 
 export const GESTION = {
@@ -146,5 +190,6 @@ export function armarInforme(
                       { grupo: 'Sin recordatorio entregado', citas: sin.citas, asistieron: sin.asistieron, destacado: false },
                   ]
                 : [],
+        espera: armarEspera(d.espera),
     };
 }

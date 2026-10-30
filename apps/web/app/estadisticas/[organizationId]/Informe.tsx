@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { fechaEnPalabras } from '@agenia/shared';
-import type { Informe as DatosDelInforme } from '@/lib/estadisticas/informe';
+import { ESTANDAR_DIAS, type CanalDeEspera, type Informe as DatosDelInforme } from '@/lib/estadisticas/informe';
 import { ESTADISTICAS, diaCorto, esHoraFueraDeOficina, horaCorta } from '@/lib/estadisticas/periodo';
 import Barras, { type ColumnaDeBarras } from './Barras';
 import BotonSalir from './BotonSalir';
@@ -20,6 +20,19 @@ const dec = (n: number) => nf1.format(n);
 /** «91,0 %»; «—» si no hay de dónde sacar la proporción. */
 const pct = (parte: number, todo: number) => (todo > 0 ? `${nf1.format((100 * parte) / todo)} %` : '—');
 const dia = (fecha: string) => fechaEnPalabras(fecha, { conAnio: false });
+
+// Días hasta la cita: del mismo día (más oscuro) a más de 3 (naranja: pasa el estándar).
+const TRAMOS = [
+    { nombre: 'El mismo día', color: '#1f5fae', claro: false },
+    { nombre: 'Al día siguiente', color: '#2a78d6', claro: false },
+    { nombre: 'A 2 días', color: '#6fa3e3', claro: true },
+    { nombre: 'A 3 días', color: '#a9c8ef', claro: true },
+    { nombre: 'A más de 3 días', color: COLOR.serie2, claro: false },
+] as const;
+const NOMBRE_DEL_CANAL: Record<CanalDeEspera['canal'], string> = {
+    chat: 'Por chat (WhatsApp y Telegram)',
+    personal: 'Por el personal del hospital (ventanilla, teléfono o panel)',
+};
 
 const HORARIO = `antes de las ${horaCorta(ESTADISTICAS.OFICINA_DESDE)}, desde las ${horaCorta(ESTADISTICAS.OFICINA_HASTA)} o en sábado y domingo`;
 
@@ -64,7 +77,10 @@ export default function Informe({
         };
     });
     const gestionMax = Math.max(1, ...d.gestiones.map((g) => g.n));
-    const { citasChat: cc, cancelaciones: can } = d;
+    const { citasChat: cc, cancelaciones: can, espera: esp } = d;
+    const porChat = esp?.canales.find((c) => c.canal === 'chat');
+    const porPersonal = esp?.canales.find((c) => c.canal === 'personal');
+    const medicinaGeneral = esp?.servicios.some((s) => /medicina general/i.test(s)) ?? false;
 
     return (
         <main className="min-h-screen bg-[#f4f6f9] text-[#101a2a] text-base leading-normal">
@@ -113,6 +129,23 @@ export default function Informe({
                             'Todavía ninguna.'
                         )}
                     </Cifra>
+                    {porChat && (
+                        <Cifra nombre="Días hasta la cita por chat" valor={dec(porChat.promedioDias)}>
+                            En promedio, desde que el paciente la pide.
+                            {porPersonal && (
+                                <>
+                                    {' '}
+                                    Por el personal del hospital, <b>{dec(porPersonal.promedioDias)}</b> días.
+                                </>
+                            )}
+                            {medicinaGeneral && (
+                                <>
+                                    {' '}
+                                    El estándar de medicina general es de <b>{ESTANDAR_DIAS} días</b>.
+                                </>
+                            )}
+                        </Cifra>
+                    )}
                     <Cifra nombre="Cupos devueltos por cancelación" valor={ent(can.total)}>
                         <b>{ent(can.retomados)}</b> de esos cupos ya los tomó otro paciente.
                     </Cifra>
@@ -225,6 +258,77 @@ export default function Informe({
                                                 ? [['Horas de anticipación (mediana)', dec(can.horasMediana)] as [string, string]]
                                                 : []),
                                             ['Avisos de inasistencia al personal', ent(d.avisosInasistencia)],
+                                        ]}
+                                    />
+                                </Tarjeta>
+                            )}
+                        </div>
+                    </Seccion>
+                )}
+
+                {esp && (
+                    <Seccion titulo="¿Cuánto espera el paciente por su cita?">
+                        {esp.canales.length > 0 && (
+                            <Tarjeta
+                                titulo="Días desde que pide la cita hasta el día de la cita"
+                                nota={`Es el indicador de oportunidad de la cita (Resolución 256 de 2016): días calendario entre el día en que el paciente la pide y el día para el que se la asignan. ${
+                                    esp.servicios.length === 1 ? `Servicio: ${esp.servicios[0]}.` : `Servicios: ${esp.servicios.join(', ')}.`
+                                }${medicinaGeneral ? ` El estándar para medicina general es de ${ESTANDAR_DIAS} días.` : ''}`}
+                            >
+                                <Leyenda items={TRAMOS.map((t) => [t.color, t.nombre] as [string, string])} />
+                                <div className="grid gap-6">
+                                    {esp.canales.map((c) => (
+                                        <FilaDeEspera key={c.canal} canal={c} />
+                                    ))}
+                                </div>
+                                <p className="m-0 max-w-[75ch] text-[13px] text-[#586378]">
+                                    Por chat, el asistente ofrece los cupos libres más próximos y la cita queda asignada en
+                                    la misma conversación.{' '}
+                                    {cc.enHospital !== null
+                                        ? 'Las del personal son las que el hospital asigna en su sistema, contadas desde que AgenIA las ve allí, que es en el momento.'
+                                        : 'Las del personal son las que se agendan desde el panel de AgenIA.'}{' '}
+                                    Citas pedidas del {dia(d.desde)} al {dia(d.ultimoDia)}.
+                                </p>
+                            </Tarjeta>
+                        )}
+                        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-4">
+                            {esp.conversacion.medidas > 0 && esp.conversacion.medianaMin !== null && (
+                                <Tarjeta
+                                    titulo="Minutos para conseguir la cita por chat"
+                                    nota="Del primer mensaje del paciente a la cita asignada, en la misma conversación. Sin filas ni llamadas en espera."
+                                >
+                                    <p className="m-0 text-[15px]">
+                                        <span className="mr-1.5 font-serif text-[3.2rem] leading-none tabular-nums text-[#2a78d6]">
+                                            {dec(esp.conversacion.medianaMin)}
+                                        </span>
+                                        minutos (la mitad de las citas, en menos)
+                                    </p>
+                                    <Datos
+                                        items={[
+                                            ['Promedio (minutos)', esp.conversacion.promedioMin !== null ? dec(esp.conversacion.promedioMin) : '—'],
+                                            ['Citas medidas', `${ent(esp.conversacion.medidas)} de ${ent(esp.conversacion.citas)}`],
+                                        ]}
+                                    />
+                                    <p className="m-0 text-[12px] text-[#586378]">
+                                        No se miden las que pidió un familiar desde su propio número.
+                                    </p>
+                                </Tarjeta>
+                            )}
+                            {esp.listaEspera.asignadas > 0 && esp.listaEspera.medianaHoras !== null && (
+                                <Tarjeta
+                                    titulo="De la lista de espera a la cita"
+                                    nota="Cuando no hay cupo, el paciente entra a la lista de espera; apenas se libera uno, el asistente se lo ofrece y la cita queda asignada."
+                                >
+                                    <p className="m-0 text-[15px]">
+                                        <span className="mr-1.5 font-serif text-[3.2rem] leading-none tabular-nums text-[#2a78d6]">
+                                            {dec(esp.listaEspera.medianaHoras)}
+                                        </span>
+                                        horas (la mitad, en menos)
+                                    </p>
+                                    <Datos
+                                        items={[
+                                            ['Promedio (horas)', esp.listaEspera.promedioHoras !== null ? dec(esp.listaEspera.promedioHoras) : '—'],
+                                            ['Pacientes que recibieron cupo', ent(esp.listaEspera.asignadas)],
                                         ]}
                                     />
                                 </Tarjeta>
@@ -355,6 +459,39 @@ function Leyenda({ items }: { items: [string, string][] }) {
                 </li>
             ))}
         </ul>
+    );
+}
+
+/** Un canal: el promedio, cuántas dentro del estándar y el reparto por días en una barra. */
+function FilaDeEspera({ canal: c }: { canal: CanalDeEspera }) {
+    const resumen = TRAMOS.map((t, i) => `${t.nombre}: ${pct(c.reparto[i], c.citas)}`).join('; ');
+    return (
+        <div className="grid gap-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                <span className="font-semibold">{NOMBRE_DEL_CANAL[c.canal]}</span>
+                <span className="text-[14px] text-[#586378]">
+                    <b className="font-serif text-[1.7rem] font-normal tabular-nums text-[#101a2a]">{dec(c.promedioDias)}</b> días en
+                    promedio · <b className="tabular-nums text-[#101a2a]">{pct(c.dentroDe3 * c.citas, c.citas)}</b> dentro de{' '}
+                    {ESTANDAR_DIAS} días · {ent(c.citas)} citas
+                </span>
+            </div>
+            <div role="img" aria-label={`${NOMBRE_DEL_CANAL[c.canal]}: ${resumen}`} className="flex h-8 overflow-hidden rounded bg-[#e9edf3]">
+                {c.reparto.map((n, i) =>
+                    n > 0 ? (
+                        <div
+                            key={i}
+                            title={`${TRAMOS[i].nombre}: ${ent(n)} citas (${pct(n, c.citas)})`}
+                            className={`flex items-center justify-center overflow-hidden whitespace-nowrap text-[12px] font-semibold tabular-nums ${
+                                TRAMOS[i].claro ? 'text-[#101a2a]' : 'text-white'
+                            }`}
+                            style={{ width: `${(100 * n) / c.citas}%`, background: TRAMOS[i].color }}
+                        >
+                            {n / c.citas >= 0.1 ? `${Math.round((100 * n) / c.citas)} %` : ''}
+                        </div>
+                    ) : null,
+                )}
+            </div>
+        </div>
     );
 }
 

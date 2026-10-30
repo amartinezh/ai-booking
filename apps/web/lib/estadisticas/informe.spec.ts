@@ -42,6 +42,22 @@ function datosDel24(): DatosDeEstadisticas {
             { recordada: false, citas: 157, asistieron: 141 },
             { recordada: true, citas: 317, asistieron: 289 },
         ],
+        espera: {
+            oportunidad: [
+                { canal: 'chat', dias: 0, citas: 18, sumaDias: 0 },
+                { canal: 'chat', dias: 1, citas: 76, sumaDias: 76 },
+                { canal: 'chat', dias: 2, citas: 12, sumaDias: 24 },
+                { canal: 'chat', dias: 3, citas: 5, sumaDias: 15 },
+                { canal: 'personal', dias: 0, citas: 506, sumaDias: 0 },
+                { canal: 'personal', dias: 1, citas: 431, sumaDias: 431 },
+                { canal: 'personal', dias: 2, citas: 45, sumaDias: 90 },
+                { canal: 'personal', dias: 3, citas: 55, sumaDias: 165 },
+                { canal: 'personal', dias: 4, citas: 196, sumaDias: 1842 },
+            ],
+            servicios: ['Consulta ambulatoria de medicina general'],
+            conversacion: { citas: 116, medidas: 83, medianaMin: 4.6, promedioMin: 6.0 },
+            listaEspera: { asignadas: 7, medianaHoras: 8.5, promedioHoras: 22.7 },
+        },
     };
 }
 
@@ -97,6 +113,31 @@ describe('estadísticas — de las cifras a la página', () => {
         ]);
         const sinUnGrupo = { ...datosDel24(), asistencia: [{ recordada: true, citas: 3, asistieron: 3 }] };
         expect(armarInforme(sinUnGrupo, corte('2026-10-24', '2026-10-25'), { conHospital: true })!.asistencia).toEqual([]);
+    });
+
+    it('la espera por la cita: promedio de días, dentro de 3 días y reparto, por chat primero', () => {
+        const { espera } = armarInforme(datosDel24(), corte('2026-10-24', '2026-10-25'), { conHospital: true })!;
+        expect(espera!.canales.map((c) => c.canal)).toEqual(['chat', 'personal']);
+        const [chat, personal] = espera!.canales;
+        expect(chat).toMatchObject({ citas: 111, reparto: [18, 76, 12, 5, 0], dentroDe3: 1 });
+        expect(chat.promedioDias).toBeCloseTo(115 / 111, 5); // 1,04 días
+        expect(personal).toMatchObject({ citas: 1233, reparto: [506, 431, 45, 55, 196] });
+        // El promedio usa los días reales de las que pasan de 3, no el tope del reparto.
+        expect(personal.promedioDias).toBeCloseTo(2528 / 1233, 5); // 2,05 días
+        expect(personal.dentroDe3).toBeCloseTo(1037 / 1233, 5); // 84 %
+        expect(espera!.conversacion.medianaMin).toBe(4.6);
+        expect(espera!.listaEspera.asignadas).toBe(7);
+    });
+
+    it('sin citas que medir no hay sección de espera; un canal sin citas no aparece', () => {
+        const sinNada = {
+            ...datosDel24(),
+            espera: { oportunidad: [], servicios: [], conversacion: { citas: 0, medidas: 0, medianaMin: null, promedioMin: null }, listaEspera: { asignadas: 0, medianaHoras: null, promedioHoras: null } },
+        };
+        expect(armarInforme(sinNada, corte('2026-10-24', '2026-10-25'), { conHospital: true })!.espera).toBeNull();
+        expect(armarInforme({ ...datosDel24(), espera: null }, corte('2026-10-24', '2026-10-25'), { conHospital: true })!.espera).toBeNull();
+        const soloChat = { ...datosDel24(), espera: { ...datosDel24().espera!, oportunidad: datosDel24().espera!.oportunidad.filter((f) => f.canal === 'chat') } };
+        expect(armarInforme(soloChat, corte('2026-10-24', '2026-10-25'), { conHospital: true })!.espera!.canales.map((c) => c.canal)).toEqual(['chat']);
     });
 
     it('sin conexión con el hospital no habla del sistema del hospital', () => {

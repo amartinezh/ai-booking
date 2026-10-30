@@ -29,6 +29,21 @@ export interface DatosDeEstadisticas {
     mensajes: { total: number; personas: number; fueraDeHorario: number };
     mensajesPorHora: { hora: number; n: number }[];
     asistencia: { recordada: boolean; citas: number; asistieron: number }[];
+    /** ⏱️ Cuánto espera el paciente por su cita; null si aún no hay período (sin recordatorios ni citas por chat). */
+    espera: {
+        /**
+         * Días calendario entre el día en que pidió la cita y el de la cita (el
+         * indicador de oportunidad de la Res. 256 de 2016), por canal y por días
+         * (4 = más de 3). `sumaDias` lleva los días reales, para el promedio.
+         */
+        oportunidad: { canal: 'chat' | 'personal'; dias: number; citas: number; sumaDias: number }[];
+        /** Los servicios que se miden (los activos de la clínica). */
+        servicios: string[];
+        /** Minutos de conversación por chat, del primer mensaje a la cita asignada. */
+        conversacion: { citas: number; medidas: number; medianaMin: number | null; promedioMin: number | null };
+        /** Horas en la lista de espera, de entrar a recibir el cupo. */
+        listaEspera: { asignadas: number; medianaHoras: number | null; promedioHoras: number | null };
+    } | null;
 }
 
 type Db = Pick<PrismaClient, '$queryRaw'>;
@@ -162,6 +177,66 @@ export async function consultarEstadisticas(
             FROM citas GROUP BY recordada`);
     }
 
+    // ⏱️ Cuánto espera el paciente por su cita (2026-10-30), en las citas pedidas
+    // desde el inicio del período de la página. La «solicitud» es el momento en
+    // que la cita nace en AgenIA: por chat, cuando el paciente dice SÍ (la pide en
+    // esa misma conversación); las del hospital, cuando AgenIA la ve en su
+    // sistema, que es en el momento, en horario de ventanilla (medido el 30-oct).
+    const inicio = primerRecordatorio ?? citasChatPorDia[0]?.dia;
+    let espera: DatosDeEstadisticas['espera'] = null;
+    if (inicio) {
+        const [y, m, d] = inicio.split('-').map(Number);
+        const desde = comoColumna(horaLocalAUtc(y, m, d, 0, timeZone));
+        const [oportunidad, servicios, [conversacion], [listaEspera]] = await Promise.all([
+            db.$queryRaw<NonNullable<DatosDeEstadisticas['espera']>['oportunidad']>(Prisma.sql`
+                WITH c AS (
+                    SELECT CASE WHEN a.origin IN ('WHATSAPP', 'TELEGRAM') THEN 'chat' ELSE 'personal' END AS canal,
+                           ${local('s."startTime"')}::date - ${local('a."createdAt"')}::date AS dias
+                    FROM "Appointment" a
+                    JOIN "ScheduleSlot" s ON s.id = a."scheduleSlotId"
+                    JOIN "MedicalService" sv ON sv.id = s."serviceId"
+                    WHERE a."organizationId" = ${org} AND sv."isActive"
+                      AND a."createdAt" >= ${desde} AND a."createdAt" < ${hasta})
+                SELECT canal, least(dias, 4)::int AS dias, count(*)::int AS citas, sum(dias)::int AS "sumaDias"
+                FROM c WHERE dias >= 0
+                GROUP BY 1, 2 ORDER BY 1, 2`),
+            db.$queryRaw<{ nombre: string }[]>(Prisma.sql`
+                SELECT name AS nombre FROM "MedicalService"
+                WHERE "organizationId" = ${org} AND "isActive" ORDER BY name`),
+            // Inicio de la conversación: el último mensaje del mismo chat que llega
+            // tras más de 30 minutos de silencio, en las 2 horas antes de la cita. Solo
+            // se mide cuando el chat es el del paciente (un familiar que agenda desde
+            // su número no se puede emparejar).
+            db.$queryRaw<[NonNullable<DatosDeEstadisticas['espera']>['conversacion']]>(Prisma.sql`
+                WITH citas AS (
+                    SELECT a."createdAt" AS creada, p."whatsappId" AS chat
+                    FROM "Appointment" a JOIN "PatientProfile" p ON p.id = a."patientId"
+                    WHERE a."organizationId" = ${org} AND a.origin IN ('WHATSAPP', 'TELEGRAM')
+                      AND a."createdAt" >= ${desde} AND a."createdAt" < ${hasta}),
+                inicio AS (
+                    SELECT c.creada, (
+                        SELECT max(x.t) FROM (
+                            SELECT i."createdAt" AS t, lag(i."createdAt") OVER (ORDER BY i."createdAt") AS antes
+                            FROM "InteractionLog" i
+                            WHERE i."organizationId" = ${org} AND i."whatsappId" = c.chat
+                              AND i."createdAt" BETWEEN c.creada - interval '2 hours' AND c.creada) x
+                        WHERE x.antes IS NULL OR x.t - x.antes > interval '30 minutes') AS desde
+                    FROM citas c)
+                SELECT count(*)::int AS citas, count(desde)::int AS medidas,
+                       (percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM creada - desde) / 60))::float8 AS "medianaMin",
+                       (avg(extract(epoch FROM creada - desde) / 60))::float8 AS "promedioMin"
+                FROM inicio`),
+            db.$queryRaw<[NonNullable<DatosDeEstadisticas['espera']>['listaEspera']]>(Prisma.sql`
+                SELECT count(*)::int AS asignadas,
+                       (percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM "updatedAt" - "createdAt") / 3600))::float8 AS "medianaHoras",
+                       (avg(extract(epoch FROM "updatedAt" - "createdAt") / 3600))::float8 AS "promedioHoras"
+                FROM "WaitlistEntry"
+                WHERE "organizationId" = ${org} AND status = 'CONFIRMED'
+                  AND "createdAt" >= ${desde} AND "updatedAt" < ${hasta}`),
+        ]);
+        espera = { oportunidad, servicios: servicios.map((s) => s.nombre), conversacion, listaEspera };
+    }
+
     return {
         recordatoriosPorDia,
         confirmacionesPorDia,
@@ -176,6 +251,7 @@ export async function consultarEstadisticas(
         mensajes,
         mensajesPorHora,
         asistencia,
+        espera,
     };
 }
 

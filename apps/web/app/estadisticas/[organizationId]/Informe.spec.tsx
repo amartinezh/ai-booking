@@ -37,6 +37,22 @@ const datos: DatosDeEstadisticas = {
         { recordada: true, citas: 333, asistieron: 303 },
         { recordada: false, citas: 162, asistieron: 145 },
     ],
+    espera: {
+        oportunidad: [
+            { canal: 'chat', dias: 0, citas: 18, sumaDias: 0 },
+            { canal: 'chat', dias: 1, citas: 76, sumaDias: 76 },
+            { canal: 'chat', dias: 2, citas: 12, sumaDias: 24 },
+            { canal: 'chat', dias: 3, citas: 5, sumaDias: 15 },
+            { canal: 'personal', dias: 0, citas: 506, sumaDias: 0 },
+            { canal: 'personal', dias: 1, citas: 431, sumaDias: 431 },
+            { canal: 'personal', dias: 2, citas: 45, sumaDias: 90 },
+            { canal: 'personal', dias: 3, citas: 55, sumaDias: 165 },
+            { canal: 'personal', dias: 4, citas: 196, sumaDias: 1842 },
+        ],
+        servicios: ['Consulta ambulatoria de medicina general'],
+        conversacion: { citas: 116, medidas: 83, medianaMin: 4.6, promedioMin: 6.0 },
+        listaEspera: { asignadas: 7, medianaHoras: 8.5, promedioHoras: 22.7 },
+    },
 };
 
 describe('estadísticas — la página', () => {
@@ -54,6 +70,30 @@ describe('estadísticas — la página', () => {
         expect(cifras.getByText(/quedó escrito en el sistema del hospital/)).toHaveTextContent('El 100,0 % quedó escrito');
         expect(screen.getByText('Con recordatorio entregado')).toBeInTheDocument();
         expect(screen.getByText('91,0 %')).toBeInTheDocument();
+    });
+
+    it('cuánto espera el paciente: por chat y por el personal, con el estándar de 3 días', () => {
+        const informe = armarInforme(datos, corte, { conHospital: true })!;
+        render(<Informe informe={informe} clinica="Hospital San Vicente de Paúl" organizationId={ORG} />);
+        expect(screen.getByRole('heading', { level: 2, name: '¿Cuánto espera el paciente por su cita?' })).toBeInTheDocument();
+        const cifras = within(screen.getByRole('region', { name: 'Cifras principales' }));
+        expect(cifras.getByText('Días hasta la cita por chat').nextSibling).toHaveTextContent('1,0');
+        expect(cifras.getByText(/Por el personal del hospital/)).toHaveTextContent('2,1 días');
+        expect(cifras.getByText(/El estándar de medicina general es de/)).toHaveTextContent('3 días');
+        const chat = screen.getByRole('img', { name: /^Por chat \(WhatsApp y Telegram\): El mismo día: 16,2 %; Al día siguiente: 68,5 %/ });
+        expect(chat).toBeInTheDocument();
+        expect(screen.getByRole('img', { name: /Por el personal del hospital.*A más de 3 días: 15,9 %/ })).toBeInTheDocument();
+        expect(screen.getByText(/84,1 %/)).toBeInTheDocument();
+        expect(screen.getByText('4,6')).toBeInTheDocument();
+        expect(screen.getByText('83 de 116')).toBeInTheDocument();
+        expect(screen.getByText('8,5')).toBeInTheDocument();
+    });
+
+    it('sin datos de espera no muestra la sección ni la cifra', () => {
+        const informe = armarInforme({ ...datos, espera: null }, corte, { conHospital: true })!;
+        render(<Informe informe={informe} clinica="Clínica" organizationId={ORG} />);
+        expect(screen.queryByText('¿Cuánto espera el paciente por su cita?')).not.toBeInTheDocument();
+        expect(screen.queryByText('Días hasta la cita por chat')).not.toBeInTheDocument();
     });
 
     it('sin conexión con el hospital no menciona su sistema', () => {
