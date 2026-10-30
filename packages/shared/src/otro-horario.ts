@@ -84,9 +84,14 @@ function normalizar(texto: string): string {
     .trim();
 }
 
-/** «No puedo», «no me sirve», «ninguno»: rechaza lo que se le ofreció. */
+/**
+ * «No puedo», «no me sirve», «ninguno»: rechaza lo que se le ofreció. Y «No me da
+ * la hora», «no me acomoda», «no me funciona», «no me viene bien» (2026-10-30: con
+ * un solo horario, «No me da la hora» recibió tres «no logré ubicar esa opción» y
+ * la paciente se fue).
+ */
 const RECHAZO =
-  /^(no|nop|nones)$|\bningun[oa]?\b|\bno\s+(me\s+)?(sirve|sirven|serviria|servirian|queda|quedan|quedaria|quedarian|conviene|convienen|convendria|puedo|podria|podre|alcanzo|alcanzaria)\b|\bno\s+(me\s+)?es\s+posible\b|\bno\s+tengo\s+tiempo\b/;
+  /^(no|nop|nones)$|\bningun[oa]?\b|\bno\s+(me\s+)?(sirve|sirven|serviria|servirian|queda|quedan|quedaria|quedarian|conviene|convienen|convendria|puedo|podria|podre|alcanzo|alcanzaria|alcanza|da|dan|daria|darian|acomoda|acomodan|acomodaria|funciona|funcionan|funcionaria|cuadra|cuadran|cuadraria)\b|\bno\s+(me\s+)?(viene|vienen|vendria)\s+bien\b|\bno\s+(me\s+)?es\s+posible\b|\bno\s+tengo\s+tiempo\b/;
 
 /**
  * ¿Rechaza lo que se le ofreció? «No quedaría bien para las 6:30» (2026-10-29)

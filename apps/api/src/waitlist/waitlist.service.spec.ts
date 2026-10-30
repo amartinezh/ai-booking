@@ -23,9 +23,11 @@ describe('WaitlistService', () => {
       create: jest.Mock;
       update: jest.Mock;
       count: jest.Mock;
+      updateMany: jest.Mock;
     };
     organizationSettings: { findUnique: jest.Mock };
     organization: { findUnique: jest.Mock };
+    scheduleSlot: { findFirst: jest.Mock };
   };
   let chatbot: {
     notifyWaitlistCandidate: jest.Mock;
@@ -60,6 +62,13 @@ describe('WaitlistService', () => {
         create: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
         count: jest.fn().mockResolvedValue(0),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      // El médico del cupo agenda por el asistente.
+      scheduleSlot: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ doctor: { whatsappBookingEnabled: true } }),
       },
       // Sin fila de settings = operaciones prendidas (el default).
       organizationSettings: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -226,6 +235,32 @@ describe('WaitlistService', () => {
       doctorName: 'Dra. Ruiz',
       slotDate: new Date('2030-06-01T14:00:00Z'),
     };
+
+    // 2026-10-30: 8 de 14 ofertas en dos semanas fueron cupos del médico comodín
+    // del hospital, con WhatsApp apagado; al «SÍ», la reserva se rechazaba.
+    it('👨‍⚕️ un cupo de un médico que no agenda por el asistente no se ofrece: la cola queda intacta', async () => {
+      prisma.scheduleSlot.findFirst.mockResolvedValue({
+        doctor: { whatsappBookingEnabled: false },
+      });
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+
+      await service.notifyWaitlist(params);
+
+      expect(prisma.scheduleSlot.findFirst).toHaveBeenCalledWith({
+        where: { id: 'slot-1', organizationId: ORG },
+        select: { doctor: { select: { whatsappBookingEnabled: true } } },
+      });
+      expect(prisma.waitlistEntry.findFirst).not.toHaveBeenCalled();
+      expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
+      expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+    });
+
+    it('un cupo que no existe (o de otra clínica) tampoco se ofrece', async () => {
+      prisma.scheduleSlot.findFirst.mockResolvedValue(null);
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+      await service.notifyWaitlist(params);
+      expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+    });
 
     it('⏱️ un cupo que empieza en menos de 60 minutos no se ofrece a la lista de espera', async () => {
       prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
@@ -751,6 +786,48 @@ describe('WaitlistService', () => {
   });
 
   // ────────────────────────────────────────────────────────────────
+  // 2026-10-30: dijo SÍ y el cupo ya no se podía tomar. Quedaba CONFIRMED y, al
+  // anotarse otra vez, pasaba del primer puesto al noveno.
+  describe('volverAEsperar', () => {
+    it('la entrada de ESE cupo vuelve a WAITING, sin tocar su fecha (conserva el puesto)', async () => {
+      await expect(
+        service.volverAEsperar({
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          slotId: 'slot-1',
+        }),
+      ).resolves.toBe(true);
+
+      expect(prisma.waitlistEntry.updateMany).toHaveBeenCalledWith({
+        where: {
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          status: 'CONFIRMED',
+          metadata: { path: ['pendingSlotId'], equals: 'slot-1' },
+        },
+        data: {
+          status: 'WAITING',
+          notifiedAt: null,
+          expiresAt: null,
+          metadata: Prisma.DbNull,
+        },
+      });
+      const data = prisma.waitlistEntry.updateMany.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty('createdAt');
+    });
+
+    it('sin una entrada de ese cupo, no hace nada y lo dice', async () => {
+      prisma.waitlistEntry.updateMany.mockResolvedValue({ count: 0 });
+      await expect(
+        service.volverAEsperar({
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          slotId: 'slot-1',
+        }),
+      ).resolves.toBe(false);
+    });
+  });
+
   describe('expireStaleNotifications (cron)', () => {
     const vencida = entrada({
       status: 'NOTIFIED',

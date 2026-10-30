@@ -266,6 +266,19 @@ export interface AvisoCitaCancelada {
   puedeAgendar: boolean;
 }
 
+/**
+ * Datos de la corrección cuando el hospital vuelve a crear la cita después de que
+ * se le avisó al paciente que la había cancelado (2026-10-30).
+ */
+export interface AvisoCitaSigueEnPie {
+  nombre: string;
+  clinica: string;
+  servicio: string;
+  fecha: string;
+  medico: string;
+  contacto: string;
+}
+
 /** Datos del aviso de una cita que el hospital cambió de hora. */
 export interface AvisoCitaMovida {
   nombre: string;
@@ -601,6 +614,16 @@ const FORMAL = {
   sinOtrosCupos: () =>
     `Por ahora no tengo otros horarios disponibles por este medio. 🙏\n\n` +
     `Los que le mostré siguen disponibles: responda con la letra, o escriba *"Salir"* si prefiere terminar.`,
+
+  // Rechazó los horarios que vio y no hay otro por este medio: la lista de espera
+  // (2026-10-30: «No me da la hora» con un solo cupo terminaba en tres «no entendí»).
+  // Con `hasta` y `desde`, lo que falta es el plazo para agendar, no cupos.
+  sinOtrosCuposListaEspera: (hasta?: string, desde?: string) =>
+    (hasta && desde
+      ? `Entiendo. Por este medio agendamos citas hasta el *${hasta}*, y hasta esa fecha no tengo otro horario. 🙏\n\n` +
+        `Escríbanos desde el *${desde}* y le muestro los siguientes.\n\n`
+      : `Entiendo. Por ahora no tengo otro horario disponible por este medio. 🙏\n\n`) +
+    `Si lo desea, le anoto en la *lista de espera* y le aviso por aquí apenas se libere un cupo. ¿Le anoto? Responda *SÍ* o *NO*.`,
 
   // Pidió un día más allá del plazo para agendar por el asistente.
   fechaFueraDelPlazo: (fechaLabel: string, hasta: string, desde: string) =>
@@ -1042,6 +1065,14 @@ const FORMAL = {
         `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe aparté el cupo por *30 minutos*. ¿Desea tomarlo?\n\nConfírmeme con *SÍ* o, si ya no le sirve, escriba *NO*.`,
     ]),
 
+  // 🔔 Dijo SÍ a un cupo de la lista de espera y ya no se podía tomar (otro lo tomó,
+  // el médico no agenda por aquí o el hospital no lo registró). Vuelve a la lista
+  // en su mismo puesto (2026-10-30: se le pedía «otro de la lista» que no existía y
+  // perdía su turno).
+  cupoDeListaNoDisponible: () =>
+    `Lo siento: ese cupo dejó de estar disponible antes de confirmarlo. 🙏\n\n` +
+    `Usted sigue en la *lista de espera*, en el mismo puesto, y le aviso por aquí apenas se libere otro.`,
+
   waitlistCupoRechazado: () =>
     pick([
       `Sin problema. Libero ese cupo para otro paciente.\n\nUsted sigue en nuestra lista y le aviso apenas haya otra disponibilidad. Que tenga un excelente día.`,
@@ -1243,6 +1274,14 @@ const FORMAL = {
     `Le informamos que el hospital cambió su cita de *${p.servicio}*:\n\n` +
     `❌ Antes: ${p.fechaAntes}\n` +
     `✅ Ahora: *${p.fechaNueva}* con *${p.medicoNuevo}*\n\n` +
+    `Si tiene alguna duda, comuníquese con ${p.contacto}.`,
+
+  // 🙏 Se le avisó que el hospital canceló su cita y el hospital la volvió a crear
+  // igual (2026-10-30: lo hace al recibir al paciente en ventanilla; a un paciente le
+  // llegó «cancelada» 16 minutos antes de su cita y fue atendido).
+  citaSigueEnPie: (p: AvisoCitaSigueEnPie) =>
+    `Hola${p.nombre ? `, ${p.nombre}` : ''}. Le escribimos de *${p.clinica}*. 🏥\n\n` +
+    `Disculpe la confusión: hace un momento le avisamos que su cita de *${p.servicio}* del *${p.fecha}* con *${p.medico}* había sido cancelada, pero el hospital la volvió a registrar. *Su cita sigue en pie.*\n\n` +
     `Si tiene alguna duda, comuníquese con ${p.contacto}.`,
 
   // 👋 Un saludo a secas tras el recordatorio, con agendar apagado (2026-10-20: a
@@ -2101,6 +2140,13 @@ const INFORMAL = {
     `Por ahora no tengo más horarios disponibles por aquí. 🙏\n\n` +
     `Los que te mostré siguen disponibles: mándame la letra, o escribe *"Salir"* si prefieres terminar.`,
 
+  sinOtrosCuposListaEspera: (hasta?: string, desde?: string) =>
+    (hasta && desde
+      ? `Entiendo. Por aquí agendamos citas hasta el *${hasta}*, y hasta esa fecha no tengo otro horario. 🙏\n\n` +
+        `Escríbeme desde el *${desde}* y te muestro los siguientes.\n\n`
+      : `Entiendo. Por ahora no tengo otro horario disponible por aquí. 🙏\n\n`) +
+    `Si quieres, te anoto en la *lista de espera* y te aviso por acá apenas se libere un cupo. ¿Te anoto? Responde *SÍ* o *NO*.`,
+
   fechaFueraDelPlazo: (fechaLabel: string, hasta: string, desde: string) =>
     `Por aquí agendo citas hasta el *${hasta}*, así que para el *${fechaLabel}* todavía no puedo darte una. ` +
     `Escríbeme desde el *${desde}*. 🙏\n\n` +
@@ -2467,6 +2513,10 @@ const INFORMAL = {
       `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eras la primera en espera:\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTienes *30 minutos* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
     ]),
 
+  cupoDeListaNoDisponible: () =>
+    `Qué pena 😔: ese cupo dejó de estar disponible antes de confirmarlo.\n\n` +
+    `Sigues en la *lista de espera*, en el mismo puesto, y te aviso por acá apenas se libere otro. 💚`,
+
   waitlistCupoRechazado: () =>
     pick([
       `¡Sin problema! 😊 Libero el cupo entonces. Tranquilo(a), sigues en la lista y te aviso cuando aparezca otro. ✨ ¡Que estés muy bien! 👋`,
@@ -2642,6 +2692,11 @@ const INFORMAL = {
     `Te contamos que el hospital cambió tu cita de *${p.servicio}*:\n\n` +
     `❌ Antes: ${p.fechaAntes}\n` +
     `✅ Ahora: *${p.fechaNueva}* con *${p.medicoNuevo}*\n\n` +
+    `Si tienes alguna duda, comunícate con ${p.contacto}.`,
+
+  citaSigueEnPie: (p: AvisoCitaSigueEnPie) =>
+    `Hola${p.nombre ? `, ${p.nombre}` : ''}. Te escribimos de *${p.clinica}*. 🏥\n\n` +
+    `Perdón por la confusión: hace un momento te avisamos que tu cita de *${p.servicio}* del *${p.fecha}* con *${p.medico}* se había cancelado, pero el hospital la volvió a registrar. *Tu cita sigue en pie.* 💚\n\n` +
     `Si tienes alguna duda, comunícate con ${p.contacto}.`,
 
   saludoTrasRecordatorio: (

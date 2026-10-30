@@ -364,6 +364,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     joinWaitlist: jest.Mock;
     notifyWaitlist: jest.Mock;
     confirmFromWaitlist: jest.Mock;
+    volverAEsperar: jest.Mock;
   };
   // 📨 Plantillas de WhatsApp: por defecto la clínica no tiene ninguna.
   let plantillas: { findTemplate: jest.Mock; sendTemplate: jest.Mock };
@@ -452,6 +453,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         slotId: null,
         patientId: null,
       })),
+      volverAEsperar: jest.fn(async () => true),
     };
     limiteCitas = {
       evaluar: jest.fn(async () => null),
@@ -1076,6 +1078,41 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
 
       await say('B');
       expect(elegido()).toBe('m-0820');
+    });
+
+    // 2026-10-30: con un solo horario, «No me da la hora» recibió tres «no logré
+    // ubicar esa opción» y la paciente se fue.
+    it('1B.11b «No me da la hora» sin otro horario: le ofrece la lista de espera', async () => {
+      db.slots = db.slots.filter((c) => c.id.startsWith('m-'));
+      await hastaLosCupos();
+      await say('No me da la hora');
+      expect(lastSent()).toMatch(/no tengo otro horario/i);
+      expect(lastSent()).toContain('*lista de espera*');
+      expect(lastSent()).toMatch(/Responda \*SÍ\* o \*NO\*/);
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+      expect(interactionLog.logFailure).not.toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'SLOT_NOT_UNDERSTOOD' }),
+      );
+
+      await say('Sí');
+      expect(lastSent()).toMatch(/cédula/i);
+    });
+
+    it('1B.11c «No» sin otro día: también la lista de espera; «No» otra vez, se despide', async () => {
+      db.slots = db.slots.filter((c) => c.id.startsWith('m-'));
+      await hastaLosCupos();
+      await say('No');
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_OPTIN);
+      await say('No');
+      expect(waitlist.joinWaitlist).not.toHaveBeenCalled();
+      expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    it('1B.11d «No me da la hora» con otro día: le muestra ese día', async () => {
+      await hastaLosCupos();
+      await say('No me da la hora');
+      expect(letra('A')).toBe('p-0800');
+      expect(await state()).toBe(ChatState.AWAITING_DATE);
     });
 
     it('1B.12 un día más allá del plazo para agendar: le dice hasta cuándo y desde cuándo escribir', async () => {
@@ -2591,6 +2628,89 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         ORG_ID,
       );
       expect(await state()).toBe(ChatState.IDLE);
+    });
+
+    // 2026-10-30: el cupo ofrecido era de un médico con WhatsApp apagado; al «SÍ»
+    // se le pedía «otro de la lista» que no existía y perdía su puesto.
+    it.each([['DOCTOR_NOT_BOOKABLE'], ['SLOT_TAKEN']])(
+      '4.3b el cupo ya no se puede tomar (%s): vuelve a la lista en su puesto, sin pedirle «otro de la lista»',
+      async (reason) => {
+        const slot = slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA);
+        db.slots.push(slot);
+        db.patients.push({
+          id: 'pat-wl',
+          cedula: '55555',
+          fullName: 'Rosa Díaz',
+          organizationId: ORG_ID,
+          epsId: null,
+          eps: null,
+        });
+        waitlist.confirmFromWaitlist.mockResolvedValue({
+          slotId: 'slot-free',
+          patientId: 'pat-wl',
+          epsId: null,
+        });
+        appointments.bookAppointment.mockResolvedValueOnce({
+          success: false,
+          reason,
+        });
+        sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
+        await service.notifyWaitlistCandidate({
+          whatsappId: SENDER,
+          organizationId: ORG_ID,
+          nombre: 'Rosa Díaz',
+          especialidad: 'Medicina General',
+          doctor: 'Ana Pérez',
+          slotDate: FECHA_C,
+        });
+
+        await say('Sí');
+        expect(waitlist.volverAEsperar).toHaveBeenCalledWith({
+          whatsappId: SENDER,
+          organizationId: ORG_ID,
+          slotId: 'slot-free',
+        });
+        expect(lastSent()).toContain('sigue en la *lista de espera*');
+        expect(lastSent()).toContain('en el mismo puesto');
+        expect(lastSent()).not.toMatch(/otro de la lista|letra/i);
+        expect(await state()).toBe(ChatState.IDLE);
+      },
+    );
+
+    it('4.3c si su entrada no aparece, no le promete la lista: le dice con quién comunicarse', async () => {
+      const slot = slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA);
+      db.slots.push(slot);
+      db.patients.push({
+        id: 'pat-wl',
+        cedula: '55555',
+        fullName: 'Rosa Díaz',
+        organizationId: ORG_ID,
+        epsId: null,
+        eps: null,
+      });
+      waitlist.confirmFromWaitlist.mockResolvedValue({
+        slotId: 'slot-free',
+        patientId: 'pat-wl',
+        epsId: null,
+      });
+      waitlist.volverAEsperar.mockResolvedValueOnce(false);
+      appointments.bookAppointment.mockResolvedValueOnce({
+        success: false,
+        reason: 'SLOT_TAKEN',
+      });
+      sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
+      await service.notifyWaitlistCandidate({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+        nombre: 'Rosa Díaz',
+        especialidad: 'Medicina General',
+        doctor: 'Ana Pérez',
+        slotDate: FECHA_C,
+      });
+
+      await say('Sí');
+      expect(lastSent()).not.toContain('lista de espera');
+      expect(lastSent()).toMatch(/comunicarse con el hospital/i);
     });
 
     it('4.4 rechazar el cupo ofrecido lo devuelve a la cola sin reservar', async () => {

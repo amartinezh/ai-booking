@@ -301,6 +301,21 @@ export function resumenPublico(
             : meta.aviso === 'PENDIENTE'
               ? 'El aviso al paciente se estaba enviando.'
               : `No se le pudo avisar por ${canal}: ${motivo}. Comuníquese con el paciente.`;
+      // 🙏 2026-10-30: después del aviso, el hospital volvió a crear la misma cita.
+      if (meta.aviso === 'ENVIADO' && typeof meta.correccion === 'string') {
+        const volvio = 'Después, el hospital volvió a crear la misma cita (mismo médico y hora).';
+        if (meta.correccion === 'ENVIADA') {
+          return `${que} ${aviso} ${volvio} Se le escribió que su cita sigue en pie.`;
+        }
+        if (meta.correccion === 'PENDIENTE') {
+          return `${que} ${aviso} ${volvio} Se le estaba escribiendo que su cita sigue en pie.`;
+        }
+        const porQue =
+          meta.correccionMotivo === 'LE_ESCRIBIO_EL_PERSONAL'
+            ? 'el personal ya le había escrito desde la Bandeja'
+            : (MOTIVO_SIN_AVISO[String(meta.correccionMotivo)] ?? 'el envío falló');
+        return `${que} ${aviso} ${volvio} No se le escribió que sigue en pie (${porQue}): comuníquese con el paciente para decirle que su cita sigue en pie, y cierre el caso.`;
+      }
       return `${que} ${aviso} Confirme que el paciente quedó enterado y cierre el caso.`;
     }
     // 🔎 Lo que dijo el paciente de una cita que el asistente le acababa de agendar

@@ -666,6 +666,31 @@ describe('🏥 citas del asistente que el hospital canceló o cambió', () => {
     expect(r).not.toContain('Comuníquese');
   });
 
+  // 🙏 2026-10-30: el hospital volvió a crear la misma cita DESPUÉS del aviso.
+  it('🙏 la cita volvió después del aviso y se le escribió que sigue en pie', () => {
+    const r = resumenPublico(
+      cancelada({ aviso: 'ENVIADO', canal: 'WHATSAPP', via: 'PLANTILLA', plantilla: 'HIS_APPOINTMENT_CANCELLED', correccion: 'ENVIADA' }),
+      AHORA.getTime(),
+    );
+    expect(r).toContain('Se le avisó por WhatsApp con la plantilla «Cita cancelada por el hospital».');
+    expect(r).toContain('Después, el hospital volvió a crear la misma cita (mismo médico y hora). Se le escribió que su cita sigue en pie.');
+    expect(r).not.toContain('Comuníquese');
+  });
+
+  it.each([
+    ['FUERA_DE_VENTANA', 'pasaron más de 24 horas'],
+    ['SIN_PLANTILLA', 'falta registrar en Configuración la plantilla'],
+    ['LE_ESCRIBIO_EL_PERSONAL', 'el personal ya le había escrito desde la Bandeja'],
+  ])('🙏 la cita volvió y no se le pudo escribir (%s): pide decírselo', (motivo, texto) => {
+    const r = resumenPublico(
+      cancelada({ aviso: 'ENVIADO', canal: 'WHATSAPP', via: 'TEXTO', correccion: 'NO_ENVIADA', correccionMotivo: motivo }),
+      AHORA.getTime(),
+    );
+    expect(r).toContain('Después, el hospital volvió a crear la misma cita');
+    expect(r).toContain(texto);
+    expect(r).toContain('comuníquese con el paciente para decirle que su cita sigue en pie');
+  });
+
   it('⏳ el personal ya le había escrito: el aviso automático no salió', () => {
     const r = resumenPublico(
       cancelada({ aviso: 'NO_HIZO_FALTA', motivo: 'LE_ESCRIBIO_EL_PERSONAL' }),

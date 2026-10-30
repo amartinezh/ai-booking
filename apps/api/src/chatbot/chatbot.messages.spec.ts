@@ -208,4 +208,52 @@ describe('pool de mensajes del chatbot', () => {
       expect(formal).not.toBe(informal);
     });
   });
+
+  // 2026-10-30: lo nuevo de la lista de espera y del aviso del hospital.
+  describe('lista de espera y aviso del hospital (2026-10-30)', () => {
+    it.each(['FORMAL', 'INFORMAL'] as const)(
+      '%s: sin otro horario, ofrece la lista; con el plazo, dice hasta cuándo y desde cuándo',
+      (estilo) => {
+        const M = buildMessages(estilo);
+        const sinPlazo = M.sinOtrosCuposListaEspera();
+        expect(sinPlazo).toContain('*lista de espera*');
+        expect(sinPlazo).not.toContain('hasta el');
+        const conPlazo = M.sinOtrosCuposListaEspera(
+          'lunes 2 de noviembre',
+          'martes 3 de noviembre',
+        );
+        expect(conPlazo).toContain('hasta el *lunes 2 de noviembre*');
+        expect(conPlazo).toContain('desde el *martes 3 de noviembre*');
+        expect(conPlazo).toContain('*lista de espera*');
+      },
+    );
+
+    it.each(['FORMAL', 'INFORMAL'] as const)(
+      '%s: el cupo de la lista que ya no está no pide «otra letra» y dice que conserva el puesto',
+      (estilo) => {
+        const t = buildMessages(estilo).cupoDeListaNoDisponible();
+        expect(t).toContain('*lista de espera*');
+        expect(t).toContain('mismo puesto');
+        expect(t).not.toMatch(/letra|otro de la lista/i);
+      },
+    );
+
+    it.each(['FORMAL', 'INFORMAL'] as const)(
+      '%s: la corrección dice que la cita sigue en pie, con su fecha y médico',
+      (estilo) => {
+        const t = buildMessages(estilo).citaSigueEnPie({
+          nombre: 'Luis',
+          clinica: 'Hospital',
+          servicio: 'Consulta ambulatoria de medicina general',
+          fecha: 'jueves, 29 de octubre a las 4:30 p m',
+          medico: 'Dr(a). Adrián',
+          contacto: 'el hospital al *606 853 8860*',
+        });
+        expect(t).toMatch(/sigue en pie/);
+        expect(t).toContain('jueves, 29 de octubre a las 4:30 p m');
+        expect(t).toContain('Dr(a). Adrián');
+        expect(t).toContain('Luis');
+      },
+    );
+  });
 });

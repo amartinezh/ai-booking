@@ -172,6 +172,22 @@ export class WaitlistService {
       return;
     }
 
+    // 👨‍⚕️ Solo cupos que el asistente puede agendar: con el médico del cupo en
+    // WhatsApp apagado, al «SÍ» la reserva se rechaza (DOCTOR_NOT_BOOKABLE). El
+    // 2026-10-30: 8 de 14 ofertas en dos semanas fueron del médico comodín del
+    // hospital, con WhatsApp apagado; ninguna terminó en cita. La regla es la misma
+    // de `AppointmentsService.bookAppointment`.
+    const cupo = await this.prisma.scheduleSlot.findFirst({
+      where: { id: slotId, organizationId },
+      select: { doctor: { select: { whatsappBookingEnabled: true } } },
+    });
+    if (!cupo?.doctor?.whatsappBookingEnabled) {
+      this.logger.log(
+        `El cupo ${slotId} es de un médico que no agenda por el asistente: no se ofrece a la lista de espera`,
+      );
+      return;
+    }
+
     // ⏱️ Un cupo que empieza antes de la anticipación mínima no se ofrece: el
     // paciente no alcanzaría a llegar, y al reservar se rechazaría igual.
     if (slotDate < inicioMinimoParaOfrecer(new Date())) {
@@ -377,6 +393,41 @@ export class WaitlistService {
     }
 
     return { slotId: null, patientId: null, epsId: null };
+  }
+
+  /**
+   * 🔁 Dijo SÍ al cupo ofrecido, pero ya no se pudo tomar (otro lo tomó, el médico
+   * no agenda por el asistente o el hospital no lo registró): vuelve a la lista en
+   * su mismo puesto (2026-10-30: quedaba CONFIRMED y, al anotarse otra vez, pasaba
+   * del primero al noveno). El puesto lo da `createdAt`, que no se toca. Solo la
+   * entrada de ESE cupo. `true` si volvió.
+   */
+  async volverAEsperar(params: {
+    whatsappId: string;
+    organizationId: string;
+    slotId: string;
+  }): Promise<boolean> {
+    const { whatsappId, organizationId, slotId } = params;
+    const { count } = await this.prisma.waitlistEntry.updateMany({
+      where: {
+        whatsappId,
+        organizationId,
+        status: 'CONFIRMED',
+        metadata: { path: ['pendingSlotId'], equals: slotId },
+      },
+      data: {
+        status: 'WAITING',
+        notifiedAt: null,
+        expiresAt: null,
+        metadata: Prisma.DbNull,
+      },
+    });
+    if (count > 0) {
+      this.logger.log(
+        `El cupo ${slotId} de la lista de espera no se pudo tomar: ${whatsappId} vuelve a esperar con su turno`,
+      );
+    }
+    return count > 0;
   }
 
   // ════════════════════════════════════════════════════════════

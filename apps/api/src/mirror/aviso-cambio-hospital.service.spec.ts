@@ -626,7 +626,7 @@ describe('AvisoCambioHospitalService — ⏳ la espera antes de avisar una cance
     expect(t.chatbot.sendOutboundForOrg).toHaveBeenCalledTimes(1);
   });
 
-  it('con la cita a menos de una hora no se espera: se avisa al cancelar', async () => {
+  it('con la cita a menos de una hora también espera, 5 minutos', async () => {
     const pronto = new Date(AHORA.getTime() + 50 * 60_000);
     const t = armar({
       cita: cita({
@@ -634,9 +634,53 @@ describe('AvisoCambioHospitalService — ⏳ la espera antes de avisar una cance
       }),
     });
     await t.svc.alCancelarElHospital(ORG, 'apt-bot', AHORA);
-    expect(t.caso().meta).toMatchObject({ aviso: 'PENDIENTE' });
+    expect(t.caso().meta).toMatchObject({
+      aviso: 'EN_ESPERA',
+      avisarDesdeIso: new Date(AHORA.getTime() + 5 * 60_000).toISOString(),
+    });
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    await t.svc.avisarLosPendientes(new Date(AHORA.getTime() + 5 * 60_000));
     expect(t.chatbot.sendOutboundForOrg).toHaveBeenCalledTimes(1);
     expect(t.final()).toMatchObject({ meta: { aviso: 'ENVIADO' } });
+  });
+
+  it('🧾 Luis (2026-10-29): anulada 17 min antes y creada igual al minuto, al recibirlo en ventanilla → no se le escribe', async () => {
+    const enDiecisiete = new Date(AHORA.getTime() + 17 * 60_000);
+    const suCita = cita({
+      scheduleSlot: { ...cita().scheduleSlot, startTime: enDiecisiete },
+    });
+    const t = armar({ cita: suCita });
+    await t.svc.alCancelarElHospital(ORG, 'apt-bot', AHORA);
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.templates.sendTemplate).not.toHaveBeenCalled();
+    // Al minuto, el hospital la crea igual.
+    t.prisma.appointment.findFirst.mockImplementation(
+      async ({ where }: { where: { id?: unknown } }) =>
+        typeof where.id === 'string'
+          ? suCita
+          : { ...suCita, id: 'apt-otra-vez', origin: 'MIRROR' },
+    );
+    await t.svc.avisarLosPendientes(new Date(AHORA.getTime() + 5 * 60_000));
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.templates.sendTemplate).not.toHaveBeenCalled();
+    expect(t.final()).toMatchObject({
+      meta: { aviso: 'NO_HIZO_FALTA', motivo: 'MISMA_CITA' },
+    });
+  });
+
+  it('si la cita empieza antes de que termine la espera, ya no se le escribe', async () => {
+    const enTres = new Date(AHORA.getTime() + 3 * 60_000);
+    const t = armar({
+      cita: cita({
+        scheduleSlot: { ...cita().scheduleSlot, startTime: enTres },
+      }),
+    });
+    await t.svc.alCancelarElHospital(ORG, 'apt-bot', AHORA);
+    await t.svc.avisarLosPendientes(new Date(AHORA.getTime() + 5 * 60_000));
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.final()).toMatchObject({
+      meta: { aviso: 'NO_ENVIADO', motivo: 'YA_PASO' },
+    });
   });
 
   it('si otra réplica ya lo tomó, esta no le escribe', async () => {
@@ -697,13 +741,182 @@ describe('AvisoCambioHospitalService — ⏳ la espera antes de avisar una cance
     await expect(t.svc.avisarLosPendientes(DESPUES)).resolves.toBeUndefined();
   });
 
-  it('el cron llama al barrido sin pasarle argumentos', async () => {
+  it('el cron llama a los dos barridos sin pasarles argumentos', async () => {
     const t = armar();
-    const espia = jest
+    const avisos = jest
       .spyOn(t.svc, 'avisarLosPendientes')
       .mockResolvedValue(undefined);
+    const correcciones = jest
+      .spyOn(t.svc, 'corregirLosAvisos')
+      .mockResolvedValue(undefined);
     await t.svc.cadaMinuto();
-    expect(espia).toHaveBeenCalledWith();
+    expect(avisos).toHaveBeenCalledWith();
+    expect(correcciones).toHaveBeenCalledWith();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🙏 2026-10-30: el aviso de cancelación ya salió y el hospital volvió a crear la
+// misma cita. Se le escribe al paciente que su cita sigue en pie.
+// ══════════════════════════════════════════════════════════════════════════
+describe('AvisoCambioHospitalService — 🙏 la corrección cuando la cita vuelve', () => {
+  const laMisma = { ...cita({ id: 'apt-otra-vez', origin: 'MIRROR' }) };
+  const ESCRITO = new Date(AHORA.getTime() + 30_000);
+  const casoEnviado = (meta: Record<string, unknown> = {}) => ({
+    id: 'caso-1',
+    organizationId: ORG,
+    appointmentId: 'apt-bot',
+    firstSeenAt: AHORA,
+    updatedAt: ESCRITO,
+    meta: {
+      canalDeLaCita: 'WHATSAPP',
+      canceladaIso: AHORA.toISOString(),
+      aviso: 'ENVIADO',
+      canal: 'WHATSAPP',
+      via: 'TEXTO',
+      ...meta,
+    },
+  });
+  const armarCorreccion = (
+    opts: Parameters<typeof armar>[0] = {},
+    caso = casoEnviado(),
+  ) => {
+    const t = armar({ nueva: laMisma, ...opts });
+    t.prisma.syncException.findMany.mockResolvedValue([caso]);
+    return t;
+  };
+
+  it('dentro de las 24 h: le escribe que su cita sigue en pie y cierra el caso', async () => {
+    const t = armarCorreccion();
+    await t.svc.corregirLosAvisos(DESPUES);
+
+    expect(t.texto()).toContain('Disculpe la confusión');
+    expect(t.texto()).toContain('*Su cita sigue en pie.*');
+    expect(t.texto()).toContain('YULIETH');
+    // Primero se reclama con compare-and-set sobre la última escritura.
+    expect(t.prisma.syncException.updateMany.mock.calls[0][0]).toMatchObject({
+      where: { id: 'caso-1', organizationId: ORG, updatedAt: ESCRITO },
+      data: { meta: { correccion: 'PENDIENTE' } },
+    });
+    expect(t.final()).toMatchObject({
+      meta: {
+        aviso: 'ENVIADO',
+        correccion: 'ENVIADA',
+        correccionVia: 'TEXTO',
+        nuevaCitaId: 'apt-otra-vez',
+      },
+    });
+    expect(t.exceptions.autoResolver).toHaveBeenCalledWith(
+      ORG,
+      'caso-1',
+      expect.stringContaining('sigue en pie'),
+      DESPUES,
+    );
+    expect(t.interactionLog.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ tipo: 'CITA_SIGUE_EN_PIE' }),
+      }),
+    );
+  });
+
+  it('fuera de las 24 h: la plantilla «Confirmación de una cita del hospital» con su hora', async () => {
+    const t = armarCorreccion({ dentroDeVentana: false });
+    await t.svc.corregirLosAvisos(DESPUES);
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.templates.sendTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'HIS_APPOINTMENT_CONFIRMATION',
+        recipientId: '573001112233',
+        appointmentId: 'apt-bot',
+      }),
+    );
+    expect(t.final()).toMatchObject({
+      meta: { correccion: 'ENVIADA', correccionVia: 'PLANTILLA' },
+    });
+  });
+
+  it('si no sale, el caso queda abierto en ALTA y dice por qué', async () => {
+    const t = armarCorreccion({
+      dentroDeVentana: false,
+      plantilla: { success: false, error: 'template-not-configured' },
+    });
+    await t.svc.corregirLosAvisos(DESPUES);
+    expect(t.final()).toMatchObject({
+      severity: expect.stringMatching(/ALTA|CRITICA/),
+      meta: { correccion: 'NO_ENVIADA', correccionMotivo: 'SIN_PLANTILLA' },
+    });
+    expect(t.exceptions.autoResolver).not.toHaveBeenCalled();
+  });
+
+  it('si el personal ya le escribió desde la Bandeja, no se le escribe: el caso lo dice', async () => {
+    const t = armarCorreccion({ escritoPorElPersonal: true });
+    await t.svc.corregirLosAvisos(DESPUES);
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.templates.sendTemplate).not.toHaveBeenCalled();
+    expect(t.final()).toMatchObject({
+      meta: {
+        correccion: 'NO_ENVIADA',
+        correccionMotivo: 'LE_ESCRIBIO_EL_PERSONAL',
+      },
+    });
+    expect(t.exceptions.autoResolver).not.toHaveBeenCalled();
+  });
+
+  it('otra cita distinta (otro médico u hora): no es una corrección, no se toca', async () => {
+    const t = armarCorreccion({ nueva: nuevaCita });
+    await t.svc.corregirLosAvisos(DESPUES);
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.prisma.syncException.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('sin cita nueva todavía: nada, y se vuelve a mirar en la vuelta siguiente', async () => {
+    const t = armarCorreccion({ nueva: null });
+    await t.svc.corregirLosAvisos(DESPUES);
+    expect(t.prisma.syncException.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('con la hora de la cita ya encima, no se le escribe', async () => {
+    const t = armarCorreccion();
+    await t.svc.corregirLosAvisos(new Date(EN_2H.getTime() + 60_000));
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.prisma.syncException.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('una corrección ya hecha (o en curso) no se repite', async () => {
+    const t = armarCorreccion({}, casoEnviado({ correccion: 'ENVIADA' }));
+    await t.svc.corregirLosAvisos(DESPUES);
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.prisma.syncException.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('si otra réplica o una persona tocó el caso entretanto, esta no le escribe', async () => {
+    const t = armarCorreccion();
+    t.prisma.syncException.updateMany.mockResolvedValueOnce({ count: 0 });
+    await t.svc.corregirLosAvisos(DESPUES);
+    expect(t.chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+    expect(t.prisma.syncException.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('solo mira avisos de cancelación enviados, activos y de las últimas 2 horas', async () => {
+    const t = armarCorreccion();
+    await t.svc.corregirLosAvisos(DESPUES);
+    expect(t.prisma.syncException.findMany.mock.calls[0][0].where).toEqual({
+      kind: 'CITA_CANCELADA_POR_HOSPITAL',
+      status: { in: ['ABIERTA', 'EN_REVISION'] },
+      meta: { path: ['aviso'], equals: 'ENVIADO' },
+      firstSeenAt: { gte: new Date(DESPUES.getTime() - 2 * 60 * 60_000) },
+    });
+  });
+
+  it('nunca lanza: un error queda en el log', async () => {
+    const t = armarCorreccion();
+    t.prisma.syncException.findMany.mockRejectedValueOnce(
+      new Error('base caída'),
+    );
+    jest
+      .spyOn((t.svc as any).logger, 'error')
+      .mockImplementation(() => undefined);
+    await expect(t.svc.corregirLosAvisos(DESPUES)).resolves.toBeUndefined();
   });
 });
 
@@ -714,17 +927,17 @@ describe('momentoDelAviso', () => {
   it('espera 10 minutos si la cita está lejos', () => {
     expect(momentoDelAviso(T0, min(24 * 60))).toEqual(min(10));
   });
-  it('nunca después de una hora antes de la cita', () => {
+  it('se acorta para avisar una hora antes de la cita', () => {
+    expect(momentoDelAviso(T0, min(68))).toEqual(min(8));
+  });
+  it('pero nunca espera menos de 5 minutos, aunque la cita esté cerca (2026-10-30)', () => {
     expect(momentoDelAviso(T0, min(65))).toEqual(min(5));
+    expect(momentoDelAviso(T0, min(60))).toEqual(min(5));
+    expect(momentoDelAviso(T0, min(16))).toEqual(min(5));
+    expect(momentoDelAviso(T0, min(3))).toEqual(min(5));
   });
-  it('con la cita a una hora o menos, no espera', () => {
-    expect(momentoDelAviso(T0, min(60))).toBeNull();
-    expect(momentoDelAviso(T0, min(30))).toBeNull();
-  });
-  it('una espera de menos de un minuto no vale la pena', () => {
-    expect(
-      momentoDelAviso(T0, new Date(min(60).getTime() + 30_000)),
-    ).toBeNull();
+  it('con una espera configurada menor que 5 minutos, esa', () => {
+    expect(momentoDelAviso(T0, min(30), 2 * 60_000)).toEqual(min(2));
   });
   it('sin espera configurada, avisa ya', () => {
     expect(momentoDelAviso(T0, min(24 * 60), 0)).toBeNull();

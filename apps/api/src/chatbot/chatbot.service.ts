@@ -9469,6 +9469,21 @@ export class ChatbotService implements OnModuleInit {
     }
 
     if (slots.length === 0) {
+      // 🙅 Rechazó lo que vio («No me da la hora», «ninguno») o pidió otro día, y no
+      // hay nada más por este medio: la lista de espera, como cuando no hay cupos
+      // desde el principio (2026-10-30: con un solo horario, «No me da la hora»
+      // terminaba en tres «no logré ubicar esa opción»).
+      if (
+        (esRechazo(text) || pedido.otroDia) &&
+        (await this.ofrecerListaDeEsperaSinOtrosCupos(ctx, {
+          serviceName,
+          epsIdForSlots,
+          userMessage,
+          pedido: pedidoAuditado,
+        }))
+      ) {
+        return true;
+      }
       // Nada distinto de lo que ya vio: sus letras siguen valiendo.
       const reply = MSGS.sinOtrosCupos();
       await this.smartReply(organizationId, senderId, reply);
@@ -9515,6 +9530,69 @@ export class ChatbotService implements OnModuleInit {
         specialty: serviceName,
         pedido: pedidoAuditado,
         exacto,
+      },
+    });
+    return true;
+  }
+
+  /**
+   * 🔔 El paciente rechazó los horarios que vio y no hay otros: se le ofrece la
+   * lista de espera con el mismo paso que cuando no hay cupos desde el principio
+   * (`AWAITING_WAITLIST_OPTIN`, que lee el servicio y la EPS de la sesión). Si lo
+   * que falta es el plazo para agendar, se le dice hasta cuándo y desde cuándo
+   * escribir. `false` sin el servicio en la sesión: se responde como antes.
+   */
+  private async ofrecerListaDeEsperaSinOtrosCupos(
+    ctx: ChatTurnContext,
+    p: {
+      serviceName: string;
+      epsIdForSlots: string | null;
+      userMessage: string;
+      pedido: Record<string, unknown>;
+    },
+  ): Promise<boolean> {
+    const { organizationId, senderId, MSGS } = ctx;
+    const serviceId = await this.redis.get(
+      `temp_especialidad_id:${organizationId}:${senderId}`,
+    );
+    if (!serviceId) return false;
+    await this.redis.set(
+      `temp_waitlist_service_id:${organizationId}:${senderId}`,
+      serviceId,
+      'EX',
+      SESSION_TTL,
+    );
+    await this.redis.set(
+      `temp_waitlist_eps_id:${organizationId}:${senderId}`,
+      p.epsIdForSlots ?? '',
+      'EX',
+      SESSION_TTL,
+    );
+    // No arrastrar un médico de una solicitud anterior.
+    await this.redis.del(
+      `temp_waitlist_doctor_id:${organizationId}:${senderId}`,
+    );
+
+    const masAlla = await this.cupoMasAllaDelPlazo(
+      p.serviceName,
+      p.epsIdForSlots,
+      organizationId,
+    );
+    const reply = MSGS.sinOtrosCuposListaEspera(masAlla?.hasta, masAlla?.desde);
+    await this.smartReply(organizationId, senderId, reply);
+    await this.setUserState(
+      organizationId,
+      senderId,
+      ChatState.AWAITING_WAITLIST_OPTIN,
+    );
+    await this.auditSuccess(senderId, organizationId, {
+      userMessage: p.userMessage,
+      botReply: reply,
+      metadata: {
+        step: 'WAITLIST_OPTIN_OFFERED',
+        desde: 'OTRO_HORARIO_SIN_CUPOS',
+        pedido: p.pedido,
+        ...(masAlla ? { porPlazo: true, plazoDesde: masAlla.desdeIso } : {}),
       },
     });
     return true;
@@ -12988,7 +13066,14 @@ export class ChatbotService implements OnModuleInit {
         fechaTexto: fechaFormateada,
       });
       if (enElHospital === 'RECHAZADA') {
-        await this.smartReply(organizationId, senderId, MSGS.slotTomado());
+        // El hospital no la registró: vuelve a la lista en su puesto. Aquí no hay
+        // menú del que elegir «otro» (2026-10-30).
+        await this.responderCupoDeListaNoDisponible({
+          organizationId,
+          senderId,
+          MSGS,
+          slotId,
+        });
         await this.cleanUpSession(organizationId, senderId);
         return;
       }
@@ -13117,22 +13202,67 @@ export class ChatbotService implements OnModuleInit {
         },
       });
     } else {
-      // El servicio distingue "se lo llevó otro paciente" de "el médico dejó
-      // de aceptar WhatsApp". Antes ambos casos usaban el mismo texto, y el
-      // segundo le mentía al paciente: el horario seguía libre.
-      const reply =
-        bookingResult.reason === 'DOCTOR_NOT_BOOKABLE'
-          ? MSGS.medicoNoDisponiblePorWhatsapp()
-          : MSGS.slotTomado();
-      await this.smartReply(organizationId, senderId, reply);
+      // Otro lo tomó, el médico no agenda por el asistente o el cupo dejó de
+      // servir. Aquí no hay menú del que elegir «otro»: vuelve a la lista en su
+      // mismo puesto (2026-10-30: se le pedía «otro de la lista» que no existía y
+      // perdía su turno).
+      const reply = await this.responderCupoDeListaNoDisponible({
+        organizationId,
+        senderId,
+        MSGS,
+        slotId,
+      });
 
       await this.auditFailure(senderId, organizationId, {
         reason: FailureReason.SLOT_TAKEN,
         userMessage: text,
         botReply: reply,
-        metadata: { stage: 'WAITLIST_SLOT_TAKEN', slotId, patientId },
+        metadata: {
+          stage: 'WAITLIST_SLOT_TAKEN',
+          slotId,
+          patientId,
+          motivo: bookingResult.reason ?? null,
+        },
       });
     }
+  }
+
+  /**
+   * 🔔 El cupo de la lista de espera ya no se pudo tomar: el paciente vuelve a la
+   * lista con su turno y se le dice así. Si su entrada no aparece (no debería),
+   * se le dice que el cupo ya no está y con quién comunicarse, sin prometerle la
+   * lista. Devuelve lo que se le respondió.
+   */
+  private async responderCupoDeListaNoDisponible(p: {
+    organizationId: string;
+    senderId: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    slotId: string;
+  }): Promise<string> {
+    const devuelto = await this.waitlistService
+      .volverAEsperar({
+        whatsappId: p.senderId,
+        organizationId: p.organizationId,
+        slotId: p.slotId,
+      })
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `No se pudo devolver a ${p.senderId} a la lista de espera: ${getErrorMessage(error)}`,
+        );
+        return false;
+      });
+    const reply = devuelto
+      ? p.MSGS.cupoDeListaNoDisponible()
+      : p.MSGS.cupoTomadoSinOtros(
+          this.contactoDe(
+            p.MSGS,
+            await this.prisma.organization.findUnique({
+              where: { id: p.organizationId },
+            }),
+          ),
+        );
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    return reply;
   }
 
   private async handleWaitlistConfirmStep(

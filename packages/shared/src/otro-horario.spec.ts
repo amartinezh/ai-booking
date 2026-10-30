@@ -299,6 +299,38 @@ describe('esRechazo', () => {
   it.each(['A las 6:30 por favor', 'B', 'mañana en la tarde', 'Nora', null])('«%s» → no', (t) => {
     expect(esRechazo(t)).toBe(false);
   });
+
+  // 2026-10-30: con un solo horario, «No me da la hora» recibió tres «no logré
+  // ubicar esa opción» y la paciente se fue.
+  it.each([
+    'No me da la hora',
+    'no me da tiempo',
+    'no me alcanza',
+    'No me acomoda ese horario',
+    'no me funciona',
+    'no me cuadra',
+    'No me viene bien',
+    'esa hora no me da',
+  ])('«%s» → sí', (t) => {
+    expect(esRechazo(t)).toBe(true);
+  });
+
+  it.each(['me da igual la hora', 'me acomoda la A', 'me viene bien la B', 'Dana'])(
+    '«%s» → no',
+    (t) => {
+      expect(esRechazo(t)).toBe(false);
+    },
+  );
+});
+
+describe('interpretarOtroHorario — «No me da la hora»', () => {
+  it('rechaza lo que vio sin nombrar otra cosa: pide otro día', () => {
+    expect(interpretarOtroHorario('No me da la hora', opts)).toEqual({
+      fecha: null,
+      franja: null,
+      otroDia: true,
+    });
+  });
 });
 
 describe('diaComunDeLosCupos', () => {
