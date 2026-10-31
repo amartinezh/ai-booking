@@ -11,6 +11,7 @@ import {
   PRESENTACION_TTL,
   SALUDO_TRAS_RECORDATORIO_TTL,
   CUPO_APARTADO_TTL,
+  cupoApartadoKey,
   AVISO_LIMITE_TTL,
   SERVICE_WINDOW_TTL,
   WAITLIST_CONFIRM_TTL,
@@ -5558,6 +5559,29 @@ export class ChatbotService implements OnModuleInit {
    *
    * Solo citas de los perfiles de quien escribe: nunca la de otra persona.
    */
+  /**
+   * Pidió cancelar (lo entendió la IA) y tiene citas recordadas hace poco: se le
+   * ofrece cancelar esas. Sin recordatorio reciente, false (sigue el flujo de
+   * siempre, que pide la cédula). Si algo falla, también false.
+   */
+  private async ofrecerCancelarLaRecordada(
+    p: Parameters<ChatbotService['ofrecerCancelar']>[0],
+  ): Promise<boolean> {
+    try {
+      const recordadas = await this.citasRecordadasDelRemitente(
+        p.organizationId,
+        p.identity,
+      );
+      if (recordadas.length === 0) return false;
+      return await this.ofrecerCancelar(p);
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo ofrecer cancelar la cita recordada (org ${p.organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+  }
+
   private async ofrecerCancelar(p: {
     organizationId: string;
     senderId: string;
@@ -7141,6 +7165,26 @@ export class ChatbotService implements OnModuleInit {
         });
         return;
       }
+    }
+
+    // 🔔 La IA entendió «cancelar» en algo que el atajo no reconoce y a este número
+    // le llegó un recordatorio hace poco: se le ofrece cancelar ESA cita, como a
+    // «no puedo asistir», sin pedirle la cédula (2026-10-31, …3242: «Canselada» tras
+    // el recordatorio recibió «¿me indica la cédula?», no contestó y la cita siguió
+    // en pie). Sin recordatorio reciente, el flujo de siempre.
+    if (
+      pideCancelar &&
+      currentState === ChatState.IDLE &&
+      (await this.ofrecerCancelarLaRecordada({
+        organizationId,
+        senderId,
+        identity,
+        text: text || '[audio]',
+        MSGS,
+        org,
+      }))
+    ) {
+      return;
     }
 
     if (aiData.isCancellation || isQuickCancel) {
@@ -8927,7 +8971,7 @@ export class ChatbotService implements OnModuleInit {
   // (su mostrador puede tomarlo igual). La clave es por cupo y no empieza por
   // `temp_`: limpiar la sesión de un paciente no suelta lo apartado por otro.
   private cupoApartadoKey(organizationId: string, slotId: string): string {
-    return `cupo_apartado:${organizationId}:${slotId}`;
+    return cupoApartadoKey(organizationId, slotId);
   }
 
   /** Aparta el cupo para este paciente; false si lo tiene apartado otro. */

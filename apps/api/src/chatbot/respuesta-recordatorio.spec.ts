@@ -199,6 +199,12 @@ describe('clasificarRespuestaAlBot', () => {
     'pueden ceder mi turno a otra persona',
     'no puedo el jueves',
     'no puedo mañana',
+    // 2026-10-31, …3242: «Canselada» como toda la respuesta al recordatorio.
+    'Canselada',
+    'Cancelada',
+    'cancelado.',
+    'Cita cancelada por favor',
+    'la cita cancelada gracias',
   ])('«%s» → NO_ASISTIRA', (texto) => {
     expect(clasificarRespuestaAlBot(texto)).toBe('NO_ASISTIRA');
   });
@@ -238,6 +244,12 @@ describe('clasificarRespuestaAlBot', () => {
     'No va a haber problema',
     '¿La cita está cancelada?',
     '¿Me cancelaron la cita?',
+    // «Cancelada» con algo más pregunta o cuenta algo que hizo otro (2026-10-31).
+    'Cancelada?',
+    '¿Cancelada?',
+    'ya fue cancelada',
+    'Me aparece cancelada',
+    'la cita esta cancelada',
   ])(
     '🛡️ «%s» no se toma por aviso de inasistencia, cambio ni número equivocado',
     (texto) => {

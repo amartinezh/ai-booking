@@ -159,6 +159,14 @@ const CANCELA = new RegExp(
     '\\b(suspend|quit|borr|elimin)\\w* (la |mi |esa |esta |el )?(cita|cupo|turno)\\b|' +
     '\\b(liber|ced)\\w* (el |mi |ese |este )?(cupo|turno|espacio)\\b',
 );
+// «Cancelada», «Canselada», «cita cancelada por favor» como TODA la respuesta
+// (2026-10-31, …3242: «Canselada» a las 9:45 tras su recordatorio recibió «¿me
+// indica la cédula?», no respondió y la cita siguió en pie). El recordatorio dice
+// «si no puede asistir, responda cancelar cita»: dicho a secas, es su respuesta.
+// Con algo más («¿está cancelada?», «me la cancelaron», «ya fue cancelada») pregunta
+// o cuenta algo que hizo otro, y sigue por la IA.
+const CANCELADA_A_SECAS =
+  /^((la|mi|esa) )?(cita )?(cancel|cansel|kancel)ad[ao]s?( (por favor|porfa|porfavor|gracias|muchas gracias))?$/;
 // «no quiero cancelar», «no la cancelen»: lo contrario.
 const NO_CANCELA =
   /\bno (quiero |deseo |voy a |necesito |la |lo |me la )?(cancel|cansel|anul)\w*/;
@@ -230,6 +238,7 @@ export function clasificarRespuestaAlBot(
   if ((NO_IRA.test(t) || CANCELA.test(t)) && !NO_CANCELA.test(t)) {
     return 'NO_ASISTIRA';
   }
+  if (CANCELADA_A_SECAS.test(t) && !texto.includes('?')) return 'NO_ASISTIRA';
   // Después de «no puedo ir» (lo que diga de no ir manda) y antes de la pregunta
   // por la cita y de la confirmación: «gracias, ya llegué» avisa que está allá.
   if (YA_LLEGO.test(t)) return 'YA_LLEGO';

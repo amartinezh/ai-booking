@@ -2418,6 +2418,10 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       db.appointments[0].reminderSentAt = HACE_2H;
     };
     const cupo = () => db.slots.find((x) => x.id === 'slot-apt-1');
+    const paso = (step: string) =>
+      interactionLog.logSuccess.mock.calls
+        .map((c: any[]) => c[0])
+        .find((e: any) => e?.metadata?.step === step);
 
     beforeEach(() => {
       // Como en producción: agendar y cambiar apagados, solo cancelar.
@@ -2436,6 +2440,45 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
         'Responda *SÍ* para cancelarla o *NO* para mantenerla',
       );
       expect(state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('«Canselada» como respuesta al recordatorio → le ofrece cancelar esa cita, sin pedir la cédula', async () => {
+      // Caso real 2026-10-31 09:45 (…3242): recibió «¿me indica la cédula?», no
+      // contestó y la cita siguió en pie.
+      conRecordatorio();
+      await say('Canselada');
+      const r = lastSent();
+      expect(r).toContain('Entiendo que no podrá asistir a esta cita');
+      expect(r).not.toMatch(/c[ée]dula/i);
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+      await say('Sí');
+      expect(db.appointments[0].status).toBe('CANCELLED');
+    });
+
+    it('la IA entiende «cancelar» en algo que el atajo no reconoce, tras el recordatorio → le ofrece cancelar esa cita', async () => {
+      conRecordatorio();
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ isCancellation: true }),
+      );
+      await say('Dele de baja a esa, ya me atendieron en otro lado');
+      const r = lastSent();
+      expect(r).toContain('*Medicina General*');
+      expect(r).not.toMatch(/c[ée]dula/i);
+      expect(state()).toBe(ChatState.AWAITING_CANCEL_CONFIRM);
+      expect(paso('CANCELAR_OFRECIDO')).toBeDefined();
+      expect(db.appointments[0].status).toBe('SCHEDULED');
+    });
+
+    it('🛡️ la IA entiende «cancelar» SIN recordatorio reciente → el flujo de siempre (pide la cédula)', async () => {
+      seedPaciente();
+      seedCita('apt-1', MANANA);
+      provider.extractSchedulingIntent.mockReturnValue(
+        extraction({ isCancellation: true }),
+      );
+      await say('Dele de baja a esa, ya me atendieron en otro lado');
+      expect(lastSent()).toMatch(/c[ée]dula/i);
+      expect(paso('CANCELAR_OFRECIDO')).toBeUndefined();
       expect(db.appointments[0].status).toBe('SCHEDULED');
     });
 

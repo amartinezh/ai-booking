@@ -83,6 +83,14 @@ export const SALUDO_TRAS_RECORDATORIO_TTL = 6 * 60 * 60;
 // renueva con cada respuesta del registro.
 export const CUPO_APARTADO_TTL = 10 * 60;
 
+/**
+ * La clave del cupo apartado (valor: quién lo tiene). La comparten el chat y la
+ * lista de espera (2026-10-31): el cupo ofrecido a alguien de la lista queda
+ * apartado mientras responde, y el menú del chat no lo muestra.
+ */
+export const cupoApartadoKey = (organizationId: string, slotId: string) =>
+  `cupo_apartado:${organizationId}:${slotId}`;
+
 // 🚦 Cuánto vale un «Cancelar» a secas como «dejar esta solicitud» después del
 // aviso de límite de citas (2026-10-28).
 export const AVISO_LIMITE_TTL = 10 * 60;
@@ -1058,10 +1066,10 @@ const FORMAL = {
   ) =>
     pick([
       `🔔 ${nombre}, tengo buenas noticias.\n\n` +
-        `Se acaba de liberar un cupo en *${especialidad}* y usted era la siguiente persona en la lista.\n\n` +
-        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe reservé este cupo por *30 minutos*. ¿Le interesa tomarlo?\n\nResponda *SÍ* para confirmarlo o *NO* si ya no lo necesita.`,
+        `Hay un cupo disponible en *${especialidad}* y usted es la siguiente persona en la lista.\n\n` +
+        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe reservé este cupo por *30 minutos*. ¿Le interesa tomarlo?\n\nResponda *SÍ* para confirmarlo o *NO* si ese horario no le sirve.`,
       `🔔 ${nombre}, le tengo una buena noticia.\n\n` +
-        `Se liberó un espacio para *${especialidad}* y le corresponde a usted, que era la primera persona en espera.\n\n` +
+        `Se abrió un espacio para *${especialidad}* y le corresponde a usted, que es la primera persona en espera.\n\n` +
         `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe aparté el cupo por *30 minutos*. ¿Desea tomarlo?\n\nConfírmeme con *SÍ* o, si ya no le sirve, escriba *NO*.`,
     ]),
 
@@ -2509,8 +2517,8 @@ const INFORMAL = {
     doctor: string,
   ) =>
     pick([
-      `🔔 ¡Hey ${nombre}, tengo súper buenas noticias! Se liberó un cupo para *${especialidad}* y tú eras la siguiente persona en la lista. 🌟\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTe lo aparto por *30 minutos*. ¿Lo tomas? Responde *SÍ* para confirmarte o *NO* si ya no lo necesitas.`,
-      `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eras la primera en espera:\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTienes *30 minutos* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
+      `🔔 ¡Hey ${nombre}, tengo súper buenas noticias! Hay un cupo para *${especialidad}* y tú eres la siguiente persona en la lista. 🌟\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTe lo aparto por *30 minutos*. ¿Lo tomas? Responde *SÍ* para confirmarte o *NO* si ese horario no te sirve.`,
+      `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eres la primera en espera:\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTienes *30 minutos* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
     ]),
 
   cupoDeListaNoDisponible: () =>

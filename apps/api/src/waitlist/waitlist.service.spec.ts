@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { WaitlistService } from './waitlist.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatbotService } from '../chatbot/chatbot.service';
+import { RedisService } from '../redis/redis.service';
 import { Prisma } from '@agenia/database';
 
 /**
@@ -28,6 +29,15 @@ describe('WaitlistService', () => {
     organizationSettings: { findUnique: jest.Mock };
     organization: { findUnique: jest.Mock };
     scheduleSlot: { findFirst: jest.Mock };
+    appointment: { findFirst: jest.Mock };
+  };
+  /** Redis de mentiras: el apartado de cupos (clave → valor). */
+  let redis: {
+    store: Map<string, string>;
+    ttl: Map<string, number>;
+    get: jest.Mock;
+    set: jest.Mock;
+    del: jest.Mock;
   };
   let chatbot: {
     notifyWaitlistCandidate: jest.Mock;
@@ -74,6 +84,21 @@ describe('WaitlistService', () => {
       organizationSettings: { findUnique: jest.fn().mockResolvedValue(null) },
       // Sin zona propia: la de Colombia.
       organization: { findUnique: jest.fn().mockResolvedValue(null) },
+      // Nadie de la lista consiguió cita por otro camino.
+      appointment: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const store = new Map<string, string>();
+    const ttl = new Map<string, number>();
+    redis = {
+      store,
+      ttl,
+      get: jest.fn(async (k: string) => store.get(k) ?? null),
+      set: jest.fn(async (k: string, v: string, _ex?: string, seg?: number) => {
+        store.set(k, v);
+        if (seg) ttl.set(k, seg);
+        return 'OK';
+      }),
+      del: jest.fn(async (k: string) => (store.delete(k) ? 1 : 0)),
     };
     chatbot = {
       // El mensaje sale.
@@ -91,6 +116,7 @@ describe('WaitlistService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: ChatbotService, useValue: chatbot },
+        { provide: RedisService, useValue: redis },
       ],
     }).compile();
 
@@ -493,6 +519,180 @@ describe('WaitlistService', () => {
 
     // 📨 2026-10-26: a quien no escribió en 24 h se le ofrece con la plantilla
     // «Oferta de cupo», si la clínica la tiene y es de día en la clínica.
+    // ──────────────────────────────────────────────────────────────
+    // 2026-10-31: la lista recibe también los cupos libres (agenda nueva, días que
+    // entran al plazo). Que un cupo no se ofrezca dos veces, que se aparte mientras
+    // la persona responde, y que no se le ofrezca a quien ya no lo necesita.
+    // ──────────────────────────────────────────────────────────────
+    describe('🔔 ofertas sin repetir, apartadas y a quien todavía espera', () => {
+      it('dice si se lo ofreció a alguien', async () => {
+        prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+        await expect(service.notifyWaitlist(params)).resolves.toBe(true);
+        prisma.waitlistEntry.findFirst.mockResolvedValue(null);
+        await expect(service.notifyWaitlist(params)).resolves.toBe(false);
+      });
+
+      it('el cupo ofrecido queda apartado para esa persona mientras responde (el chat no lo muestra)', async () => {
+        prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+        await service.notifyWaitlist(params);
+        expect(redis.store.get(`cupo_apartado:${ORG}:slot-1`)).toBe(
+          '573001112233',
+        );
+        // Sus 30 minutos y un margen.
+        expect(redis.ttl.get(`cupo_apartado:${ORG}:slot-1`)).toBeGreaterThan(
+          30 * 60,
+        );
+        expect(
+          redis.ttl.get(`cupo_apartado:${ORG}:slot-1`),
+        ).toBeLessThanOrEqual(32 * 60 + 1);
+      });
+
+      it('si el mensaje no sale, el cupo se suelta', async () => {
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(entrada())
+          .mockResolvedValueOnce(null);
+        chatbot.notifyWaitlistCandidate.mockResolvedValue(false);
+        await expect(service.notifyWaitlist(params)).resolves.toBe(false);
+        expect(redis.store.has(`cupo_apartado:${ORG}:slot-1`)).toBe(false);
+      });
+
+      it.each([
+        ['ya se le ofreció a alguien que no ha respondido', 'NOTIFIED'],
+        ['lo tiene apartado un paciente del chat', 'CHAT'],
+        ['hace poco no se pudo tomar desde la lista', 'FALLIDO'],
+      ])('%s: no se ofrece', async (_d, caso) => {
+        if (caso === 'NOTIFIED')
+          prisma.waitlistEntry.count.mockResolvedValue(1);
+        if (caso === 'CHAT')
+          redis.store.set(`cupo_apartado:${ORG}:slot-1`, '573005550000');
+        if (caso === 'FALLIDO')
+          redis.store.set(`lista_cupo_fallido:${ORG}:slot-1`, '1');
+        prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+
+        await expect(service.notifyWaitlist(params)).resolves.toBe(false);
+        expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+        expect(prisma.waitlistEntry.update).not.toHaveBeenCalled();
+      });
+
+      it('busca la oferta viva de ESE cupo en esa clínica', async () => {
+        prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+        await service.notifyWaitlist(params);
+        expect(prisma.waitlistEntry.count).toHaveBeenCalledWith({
+          where: {
+            organizationId: ORG,
+            status: 'NOTIFIED',
+            metadata: { path: ['pendingSlotId'], equals: 'slot-1' },
+          },
+        });
+      });
+
+      it('🙅 a quien dijo NO a ese cupo no se le vuelve a ofrecer: pasa al siguiente', async () => {
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(
+            entrada({ metadata: { rechazados: ['slot-1'] } }),
+          )
+          .mockResolvedValueOnce(
+            entrada({ id: 'w2', whatsappId: '573009998877' }),
+          );
+        await service.notifyWaitlist(params);
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledTimes(1);
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+          expect.objectContaining({ whatsappId: '573009998877' }),
+        );
+        expect(
+          prisma.waitlistEntry.findFirst.mock.calls[1][0].where.id,
+        ).toEqual({ notIn: ['w1'] });
+      });
+
+      it('🙅 ni otro cupo del día al que dijo NO; uno de otro día sí', async () => {
+        const conDia = entrada({
+          metadata: { diasRechazados: ['2030-06-01'] },
+        });
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(conDia)
+          .mockResolvedValueOnce(null);
+        await expect(
+          service.notifyWaitlist({
+            ...params,
+            slotId: 'slot-9',
+            slotDate: new Date('2030-06-01T20:00:00Z'),
+          }),
+        ).resolves.toBe(false);
+        expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+
+        prisma.waitlistEntry.findFirst.mockResolvedValue(conDia);
+        await expect(
+          service.notifyWaitlist({
+            ...params,
+            slotId: 'slot-9',
+            slotDate: new Date('2030-06-04T14:00:00Z'),
+          }),
+        ).resolves.toBe(true);
+      });
+
+      it('lo que ya rechazó viaja con la oferta (no se pierde al ofrecerle otro)', async () => {
+        prisma.waitlistEntry.findFirst.mockResolvedValue(
+          entrada({
+            metadata: {
+              rechazados: ['slot-0'],
+              diasRechazados: ['2030-05-30'],
+            },
+          }),
+        );
+        await service.notifyWaitlist(params);
+        expect(
+          prisma.waitlistEntry.update.mock.calls[0][0].data.metadata,
+        ).toEqual({
+          rechazados: ['slot-0'],
+          diasRechazados: ['2030-05-30'],
+          pendingSlotId: 'slot-1',
+          doctorName: 'Dra. Ruiz',
+          slotDate: '2030-06-01T14:00:00.000Z',
+          epsDelCupo: 'eps-1',
+        });
+      });
+
+      it('📅 quien ya consiguió cita de ese servicio después de anotarse sale de la lista y el cupo pasa al siguiente', async () => {
+        prisma.waitlistEntry.findFirst
+          .mockResolvedValueOnce(entrada())
+          .mockResolvedValueOnce(
+            entrada({ id: 'w2', patientId: 'p2', whatsappId: '573009998877' }),
+          );
+        prisma.appointment.findFirst
+          .mockResolvedValueOnce({ id: 'apt-9' })
+          .mockResolvedValueOnce(null);
+
+        await service.notifyWaitlist(params);
+
+        expect(prisma.appointment.findFirst.mock.calls[0][0]).toEqual({
+          where: {
+            organizationId: ORG,
+            patientId: 'p1',
+            status: { not: 'CANCELLED' },
+            createdAt: { gt: new Date('2026-05-01T10:00:00Z') },
+            scheduleSlot: { serviceId: 'svc-1' },
+          },
+          select: { id: true },
+        });
+        expect(prisma.waitlistEntry.update).toHaveBeenNthCalledWith(1, {
+          where: { id: 'w1' },
+          data: {
+            status: 'CANCELLED',
+            metadata: { motivo: 'YA_TIENE_CITA', appointmentId: 'apt-9' },
+          },
+        });
+        expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+          expect.objectContaining({ whatsappId: '573009998877' }),
+        );
+      });
+
+      it('si no se puede revisar su cita, sigue en la lista y se le ofrece', async () => {
+        prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+        prisma.appointment.findFirst.mockRejectedValue(new Error('caída'));
+        await expect(service.notifyWaitlist(params)).resolves.toBe(true);
+      });
+    });
+
     describe('📨 con la plantilla «Oferta de cupo»', () => {
       // 10:00 en Bogotá (15:00 UTC); el cupo es al día siguiente.
       const DE_DIA = new Date('2030-05-31T15:00:00.000Z');
@@ -675,7 +875,7 @@ describe('WaitlistService', () => {
       });
     });
 
-    it('NO → se cancela y el cupo pasa al siguiente de la cola, no se pierde', async () => {
+    it('NO → sigue en la lista en su mismo puesto (sin ese cupo ni ese día) y el cupo pasa al siguiente', async () => {
       const primero = entrada({
         metadata: {
           pendingSlotId: 'slot-7',
@@ -695,13 +895,95 @@ describe('WaitlistService', () => {
       });
 
       expect(r).toEqual({ slotId: null, patientId: null, epsId: null });
+      // 2026-10-31: antes salía de la lista (CANCELLED) aunque el mensaje le dijera
+      // «usted sigue en la lista».
       expect(prisma.waitlistEntry.update).toHaveBeenNthCalledWith(1, {
         where: { id: 'w1' },
-        data: { status: 'CANCELLED' },
+        data: {
+          status: 'WAITING',
+          notifiedAt: null,
+          expiresAt: null,
+          metadata: {
+            rechazados: ['slot-7'],
+            // 14:00 UTC = 9:00 en Bogotá, ese mismo día.
+            diasRechazados: ['2030-06-01'],
+          },
+        },
       });
+      const data = prisma.waitlistEntry.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty('createdAt');
       expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
         expect.objectContaining({ whatsappId: segundo.whatsappId }),
       );
+    });
+
+    it('NO: suelta el cupo que tenía apartado, y el siguiente lo recibe apartado', async () => {
+      redis.store.set(`cupo_apartado:${ORG}:slot-7`, '573001112233');
+      prisma.waitlistEntry.findFirst
+        .mockResolvedValueOnce(
+          entrada({
+            metadata: {
+              pendingSlotId: 'slot-7',
+              doctorName: 'Dra. Ruiz',
+              slotDate: '2030-06-01T14:00:00.000Z',
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          entrada({ id: 'w2', whatsappId: '573009998877' }),
+        );
+
+      await service.confirmFromWaitlist({
+        whatsappId: '573001112233',
+        organizationId: ORG,
+        confirmed: false,
+      });
+
+      expect(redis.store.get(`cupo_apartado:${ORG}:slot-7`)).toBe(
+        '573009998877',
+      );
+    });
+
+    it('SÍ: suelta el apartado (la reserva revisa que siga libre)', async () => {
+      redis.store.set(`cupo_apartado:${ORG}:slot-7`, '573001112233');
+      prisma.waitlistEntry.findFirst.mockResolvedValue(
+        entrada({ metadata: { pendingSlotId: 'slot-7' } }),
+      );
+      await service.confirmFromWaitlist({
+        whatsappId: '573001112233',
+        organizationId: ORG,
+        confirmed: true,
+      });
+      expect(redis.store.has(`cupo_apartado:${ORG}:slot-7`)).toBe(false);
+    });
+
+    it('un segundo NO suma el cupo y el día a lo que ya había rechazado', async () => {
+      prisma.waitlistEntry.findFirst
+        .mockResolvedValueOnce(
+          entrada({
+            metadata: {
+              rechazados: ['slot-1'],
+              diasRechazados: ['2030-05-30'],
+              pendingSlotId: 'slot-7',
+              doctorName: 'Dra. Ruiz',
+              slotDate: '2030-06-01T14:00:00.000Z',
+            },
+          }),
+        )
+        .mockResolvedValueOnce(null);
+
+      await service.confirmFromWaitlist({
+        whatsappId: '573001112233',
+        organizationId: ORG,
+        confirmed: false,
+      });
+
+      expect(
+        prisma.waitlistEntry.update.mock.calls[0][0].data.metadata,
+      ).toEqual({
+        rechazados: ['slot-1', 'slot-7'],
+        diasRechazados: ['2030-05-30', '2030-06-01'],
+      });
     });
 
     it('al reofrecer tras un NO se busca con la EPS del CUPO, no con la del que lo rechazó', async () => {
@@ -788,8 +1070,41 @@ describe('WaitlistService', () => {
   // ────────────────────────────────────────────────────────────────
   // 2026-10-30: dijo SÍ y el cupo ya no se podía tomar. Quedaba CONFIRMED y, al
   // anotarse otra vez, pasaba del primer puesto al noveno.
+  describe('cerrarLosQueYaTienenCita', () => {
+    it('saca de la lista a quien ya tiene cita de ese servicio y deja a los demás', async () => {
+      prisma.waitlistEntry.findMany.mockResolvedValue([
+        entrada(),
+        entrada({ id: 'w2', patientId: 'p2' }),
+      ]);
+      prisma.appointment.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'apt-2' });
+
+      await expect(
+        service.cerrarLosQueYaTienenCita(ORG, 'svc-1'),
+      ).resolves.toBe(1);
+      expect(prisma.waitlistEntry.findMany.mock.calls[0][0].where).toEqual({
+        organizationId: ORG,
+        serviceId: 'svc-1',
+        status: 'WAITING',
+      });
+      expect(prisma.waitlistEntry.update).toHaveBeenCalledTimes(1);
+      expect(prisma.waitlistEntry.update).toHaveBeenCalledWith({
+        where: { id: 'w2' },
+        data: {
+          status: 'CANCELLED',
+          metadata: { motivo: 'YA_TIENE_CITA', appointmentId: 'apt-2' },
+        },
+      });
+    });
+  });
+
   describe('volverAEsperar', () => {
     it('la entrada de ESE cupo vuelve a WAITING, sin tocar su fecha (conserva el puesto)', async () => {
+      prisma.waitlistEntry.findFirst.mockResolvedValue({
+        id: 'w1',
+        metadata: { pendingSlotId: 'slot-1', doctorName: 'Dra. Ruiz' },
+      });
       await expect(
         service.volverAEsperar({
           whatsappId: '573001112233',
@@ -798,26 +1113,67 @@ describe('WaitlistService', () => {
         }),
       ).resolves.toBe(true);
 
-      expect(prisma.waitlistEntry.updateMany).toHaveBeenCalledWith({
+      expect(prisma.waitlistEntry.findFirst).toHaveBeenCalledWith({
         where: {
           whatsappId: '573001112233',
           organizationId: ORG,
           status: 'CONFIRMED',
           metadata: { path: ['pendingSlotId'], equals: 'slot-1' },
         },
+        select: { id: true, metadata: true },
+      });
+      expect(prisma.waitlistEntry.update).toHaveBeenCalledWith({
+        where: { id: 'w1' },
         data: {
           status: 'WAITING',
           notifiedAt: null,
           expiresAt: null,
-          metadata: Prisma.DbNull,
+          // Ese cupo no se le vuelve a ofrecer.
+          metadata: { rechazados: ['slot-1'] },
         },
       });
-      const data = prisma.waitlistEntry.updateMany.mock.calls[0][0].data;
+      const data = prisma.waitlistEntry.update.mock.calls[0][0].data;
       expect(data).not.toHaveProperty('createdAt');
     });
 
+    it('conserva lo que ya había rechazado', async () => {
+      prisma.waitlistEntry.findFirst.mockResolvedValue({
+        id: 'w1',
+        metadata: {
+          rechazados: ['slot-0'],
+          diasRechazados: ['2030-05-30'],
+          pendingSlotId: 'slot-1',
+        },
+      });
+      await service.volverAEsperar({
+        whatsappId: '573001112233',
+        organizationId: ORG,
+        slotId: 'slot-1',
+      });
+      expect(
+        prisma.waitlistEntry.update.mock.calls[0][0].data.metadata,
+      ).toEqual({
+        rechazados: ['slot-0', 'slot-1'],
+        diasRechazados: ['2030-05-30'],
+      });
+    });
+
+    it('ese cupo no se le ofrece a nadie más de la lista por 6 horas, y se suelta su apartado', async () => {
+      redis.store.set(`cupo_apartado:${ORG}:slot-1`, '573001112233');
+      await service.volverAEsperar({
+        whatsappId: '573001112233',
+        organizationId: ORG,
+        slotId: 'slot-1',
+      });
+      expect(redis.store.get(`lista_cupo_fallido:${ORG}:slot-1`)).toBe('1');
+      expect(redis.ttl.get(`lista_cupo_fallido:${ORG}:slot-1`)).toBe(
+        6 * 60 * 60,
+      );
+      expect(redis.store.has(`cupo_apartado:${ORG}:slot-1`)).toBe(false);
+    });
+
     it('sin una entrada de ese cupo, no hace nada y lo dice', async () => {
-      prisma.waitlistEntry.updateMany.mockResolvedValue({ count: 0 });
+      prisma.waitlistEntry.findFirst.mockResolvedValue(null);
       await expect(
         service.volverAEsperar({
           whatsappId: '573001112233',
@@ -864,6 +1220,18 @@ describe('WaitlistService', () => {
       );
       expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
         expect.objectContaining({ whatsappId: '573009998877' }),
+      );
+    });
+
+    it('suelta el apartado del que no respondió: el siguiente lo recibe apartado', async () => {
+      redis.store.set(`cupo_apartado:${ORG}:slot-7`, '573001112233');
+      prisma.waitlistEntry.findMany.mockResolvedValue([vencida]);
+      prisma.waitlistEntry.findFirst.mockResolvedValue(
+        entrada({ id: 'w2', whatsappId: '573009998877' }),
+      );
+      await service.expireStaleNotifications();
+      expect(redis.store.get(`cupo_apartado:${ORG}:slot-7`)).toBe(
+        '573009998877',
       );
     });
 
