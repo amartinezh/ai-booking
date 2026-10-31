@@ -1,36 +1,40 @@
 import {
   PLAZO_AGENDAR,
   dentroDelPlazoParaAgendar,
+  diaCuentaParaElPlazo,
   finDelPlazoParaAgendar,
   normalizarPlazoAgendar,
+  porQueNoCuentaParaElPlazo,
   primerDiaParaVerElCupo,
   resumenCuposDelPlazo,
   textoPlazoAgendar,
   ultimoDiaParaAgendar,
   validarPlazoAgendar,
 } from './plazo-agendar';
+import { sumarDiasAFecha } from './bloqueos-agenda';
 
 // Viernes 23 de octubre de 2026, 10:00 a. m. en Bogotá (UTC-5).
 const VIERNES_10AM = new Date('2026-10-23T15:00:00Z');
 const bogota = (iso: string) => new Date(`${iso}-05:00`);
 
 describe('plazo máximo para agendar por el asistente', () => {
-  describe('con 3 días: hoy, mañana y pasado mañana', () => {
-    it('el último día es el domingo 25', () => {
-      expect(ultimoDiaParaAgendar('2026-10-23', 3)).toBe('2026-10-25');
+  describe('con 3 días un viernes: viernes, sábado y lunes (el domingo no cuenta)', () => {
+    it('el último día es el lunes 26', () => {
+      expect(ultimoDiaParaAgendar('2026-10-23', 3)).toBe('2026-10-26');
     });
 
-    it('queda fuera desde la medianoche del lunes 26 en Bogotá', () => {
+    it('queda fuera desde la medianoche del martes 27 en Bogotá', () => {
       expect(finDelPlazoParaAgendar(VIERNES_10AM, 3)).toEqual(
-        bogota('2026-10-26T00:00:00'),
+        bogota('2026-10-27T00:00:00'),
       );
     });
 
     it.each([
       ['2026-10-23T16:00:00', true], // hoy
-      ['2026-10-25T23:59:00', true], // el último minuto del domingo
-      ['2026-10-26T00:00:00', false], // el lunes, ya no
-      ['2026-10-26T07:00:00', false],
+      ['2026-10-25T10:00:00', true], // el domingo queda en medio
+      ['2026-10-26T23:59:00', true], // el último minuto del lunes
+      ['2026-10-27T00:00:00', false], // el martes, ya no
+      ['2026-10-27T07:00:00', false],
       ['2026-11-15T08:00:00', false],
     ])('cita %s → %s', (inicio, esperado) => {
       expect(dentroDelPlazoParaAgendar(bogota(inicio), VIERNES_10AM, 3)).toBe(
@@ -51,13 +55,54 @@ describe('plazo máximo para agendar por el asistente', () => {
     ).toBe(false);
   });
 
-  it('con 1 día, solo hoy', () => {
+  it('con 1 día, solo hoy; un domingo, el lunes', () => {
     expect(ultimoDiaParaAgendar('2026-10-23', 1)).toBe('2026-10-23');
+    expect(ultimoDiaParaAgendar('2026-10-25', 1)).toBe('2026-10-26');
+  });
+
+  // 🗓️ 2026-10-31: los domingos y los festivos no cuentan. El jueves 29 y el
+  // viernes 30 de octubre (lunes 2 de noviembre festivo) el plazo de 4 días
+  // llegaba al domingo o al lunes y el chat no ofrecía el martes, ya abierto.
+  describe('con 4 días, sin contar domingos ni festivos', () => {
+    it.each([
+      ['2026-10-26', '2026-10-29'], // lunes → jueves
+      ['2026-10-23', '2026-10-27'], // viernes de una semana normal → martes
+      ['2026-10-24', '2026-10-28'], // sábado → miércoles
+      ['2026-10-25', '2026-10-29'], // domingo (no cuenta) → jueves
+      ['2026-10-29', '2026-11-03'], // jueves 29, lunes 2 festivo → martes 3
+      ['2026-10-30', '2026-11-04'], // viernes 30 → miércoles 4
+      ['2026-10-31', '2026-11-05'], // sábado 31 → jueves 5
+      ['2026-11-02', '2026-11-06'], // hoy festivo (no cuenta) → viernes 6
+    ])('hoy %s → hasta el %s', (hoy, ultimo) => {
+      expect(ultimoDiaParaAgendar(hoy, 4)).toBe(ultimo);
+    });
+
+    it('el viernes 30 de octubre el chat ya ofrece el martes 3 de noviembre', () => {
+      const viernes30 = bogota('2026-10-30T09:00:00');
+      expect(
+        dentroDelPlazoParaAgendar(bogota('2026-11-03T15:30:00'), viernes30, 4),
+      ).toBe(true);
+    });
+
+    it('Semana Santa: el jueves y el viernes santos no cuentan', () => {
+      // Miércoles 1 de abril de 2026: mié, (jue y vie santos), sáb, (dom), lun, mar.
+      expect(ultimoDiaParaAgendar('2026-04-01', 4)).toBe('2026-04-07');
+    });
+  });
+
+  it('por qué un día no cuenta', () => {
+    expect(porQueNoCuentaParaElPlazo('2026-11-01')).toBe('DOMINGO');
+    expect(porQueNoCuentaParaElPlazo('2026-11-02')).toBe('FESTIVO');
+    expect(porQueNoCuentaParaElPlazo('2026-11-03')).toBeNull();
+    // El sábado cuenta, aunque el hospital no dé citas por el asistente ese día.
+    expect(diaCuentaParaElPlazo('2026-10-31')).toBe(true);
   });
 
   it('pasa de mes y de año', () => {
-    expect(ultimoDiaParaAgendar('2026-10-30', 3)).toBe('2026-11-01');
-    expect(ultimoDiaParaAgendar('2026-12-31', 2)).toBe('2027-01-01');
+    // Viernes 30, sábado 31, (domingo 1, lunes 2 festivo), martes 3.
+    expect(ultimoDiaParaAgendar('2026-10-30', 3)).toBe('2026-11-03');
+    // Jueves 31 de diciembre, (1 de enero festivo), sábado 2.
+    expect(ultimoDiaParaAgendar('2026-12-31', 2)).toBe('2027-01-02');
   });
 
   it('sin límite (null) no recorta nada: lo de siempre', () => {
@@ -112,9 +157,8 @@ describe('plazo máximo para agendar por el asistente', () => {
 
   it('textoPlazoAgendar', () => {
     expect(textoPlazoAgendar(null)).toBe('Sin límite');
-    expect(textoPlazoAgendar(1)).toBe('1 día (solo hoy)');
-    expect(textoPlazoAgendar(2)).toBe('2 días (hoy y mañana)');
-    expect(textoPlazoAgendar(3)).toBe('3 días (hoy, mañana y pasado mañana)');
+    expect(textoPlazoAgendar(1)).toBe('1 día');
+    expect(textoPlazoAgendar(2)).toBe('2 días');
     expect(textoPlazoAgendar(15)).toBe('15 días');
   });
 });
@@ -136,7 +180,7 @@ describe('lo que el plazo le deja ofrecer hoy al asistente', () => {
     bogota('2026-10-27T07:00:00'),
   ];
 
-  it('con 2 días un viernes: ningún cupo hoy; el del lunes se ve desde el domingo, y harían falta 4 días', () => {
+  it('con 2 días un viernes: ningún cupo hoy; el del lunes se ve desde el sábado, y harían falta 3 días', () => {
     expect(
       resumenCuposDelPlazo({
         inicios: CUPOS,
@@ -149,20 +193,28 @@ describe('lo que el plazo le deja ofrecer hoy al asistente', () => {
       total: 3, // el del sábado no cuenta: está bloqueado
       primerDia: '2026-10-26',
       ultimoDia: '2026-10-24',
-      desde: '2026-10-25',
-      plazoMinimo: 4,
+      desde: '2026-10-24',
+      plazoMinimo: 3, // viernes, sábado y lunes: el domingo no cuenta
     });
   });
 
-  it('con 4 días: los del lunes sí', () => {
-    const r = resumenCuposDelPlazo({
+  it('con 3 días: los del lunes sí; con 4, también el del martes', () => {
+    const tres = resumenCuposDelPlazo({
       inicios: CUPOS,
       ahora: VIERNES_TARDE,
-      dias: 4,
+      dias: 3,
       reglas: [SABADOS],
     });
-    expect(r.enElPlazo).toBe(2);
-    expect(r.desde).toBeNull();
+    expect(tres.enElPlazo).toBe(2);
+    expect(tres.desde).toBeNull();
+    expect(
+      resumenCuposDelPlazo({
+        inicios: CUPOS,
+        ahora: VIERNES_TARDE,
+        dias: 4,
+        reglas: [SABADOS],
+      }).enElPlazo,
+    ).toBe(3);
   });
 
   it('sin límite: todos, y nada de «desde»', () => {
@@ -185,9 +237,31 @@ describe('lo que el plazo le deja ofrecer hoy al asistente', () => {
     expect(r).toMatchObject({ enElPlazo: 0, total: 0, primerDia: null, desde: null, plazoMinimo: null });
   });
 
-  it('primerDiaParaVerElCupo: con 2 días el lunes se ve desde el domingo; con 1, ese mismo día', () => {
-    expect(primerDiaParaVerElCupo('2026-10-26', 2)).toBe('2026-10-25');
-    expect(primerDiaParaVerElCupo('2026-10-26', 1)).toBe('2026-10-26');
+  it('primerDiaParaVerElCupo: sin contar domingos ni festivos', () => {
+    // Con 2 días, el lunes se ve desde el sábado (y desde el domingo).
+    expect(primerDiaParaVerElCupo('2026-10-26', 2)).toBe('2026-10-24');
+    // Con 1, desde el domingo anterior: ese día no cuenta, el lunes sí.
+    expect(primerDiaParaVerElCupo('2026-10-26', 1)).toBe('2026-10-25');
+    expect(primerDiaParaVerElCupo('2026-10-27', 1)).toBe('2026-10-27');
+    // El martes 3 de noviembre (lunes 2 festivo), con 4 días: desde el jueves 29.
+    expect(primerDiaParaVerElCupo('2026-11-03', 4)).toBe('2026-10-29');
+    // Un cupo de domingo se ve como uno del siguiente día que cuenta.
     expect(primerDiaParaVerElCupo('2026-11-01', 3)).toBe('2026-10-30');
+  });
+
+  it('primerDiaParaVerElCupo y ultimoDiaParaAgendar dicen lo mismo', () => {
+    // Para cada día y cada plazo: desde el día que dice, el cupo ya se ve; el día
+    // anterior, todavía no.
+    for (let i = 0; i < 120; i++) {
+      const cupo = sumarDiasAFecha('2026-10-01', i);
+      for (let dias = 1; dias <= 7; dias++) {
+        const desde = primerDiaParaVerElCupo(cupo, dias);
+        expect(desde <= cupo).toBe(true);
+        expect(ultimoDiaParaAgendar(desde, dias)! >= cupo).toBe(true);
+        expect(
+          ultimoDiaParaAgendar(sumarDiasAFecha(desde, -1), dias)! < cupo,
+        ).toBe(true);
+      }
+    }
   });
 });

@@ -250,7 +250,7 @@ describe('settings — quién cambia el plazo y cuándo', () => {
                 organizationId: 'org-1',
                 direction: 'CONFIG',
                 op: 'BOOKING_MAX_DAYS_CHANGE',
-                detail: '«Plazo máximo para agendar» cambió de «2 días (hoy y mañana)» a «4 días» desde Configuración por admin@hsvp.gov.co.',
+                detail: '«Plazo máximo para agendar» cambió de «2 días» a «4 días» desde Configuración por admin@hsvp.gov.co.',
             }),
         });
     });

@@ -12,18 +12,18 @@ import { getMyPlazoAgendarResumen, setMyBookingMaxDaysAhead } from '@/app/action
 const mockSet = setMyBookingMaxDaysAhead as jest.Mock;
 const mockResumen = getMyPlazoAgendarResumen as jest.Mock;
 
-/** El 23-oct a las 3:27 p. m.: 2 días, viernes; el primer cupo es el lunes. */
+/** El 23-oct a las 3:27 p. m.: 2 días, viernes (viernes y sábado); el primer cupo es el lunes. */
 const SIN_CUPOS_HOY = {
     enElPlazo: 0,
     total: 50,
     primerDia: '2026-10-26',
     ultimoDia: '2026-10-24',
-    desde: '2026-10-25',
-    plazoMinimo: 4,
+    desde: '2026-10-24',
+    plazoMinimo: 3,
     hoy: '2026-10-23',
     dias: 2,
     ultimoCambio: {
-        detalle: '«Plazo máximo para agendar» cambió de «Sin límite» a «2 días (hoy y mañana)» desde Configuración por admin@hsvpanserma.gov.co.',
+        detalle: '«Plazo máximo para agendar» cambió de «Sin límite» a «2 días» desde Configuración por admin@hsvpanserma.gov.co.',
         en: '2026-10-23T20:27:50.000Z',
     },
 };
@@ -42,16 +42,34 @@ describe('PlazoAgendarSetting', () => {
         expect(screen.getByText(/el personal agenda desde el panel/)).toBeInTheDocument();
     });
 
-    it('con 3 días: hoy, mañana y el domingo 25; desde el lunes 26, no', () => {
+    it('con 3 días un viernes: hoy, mañana y el lunes 26 (el domingo no cuenta); desde el martes 27, no', () => {
         render(<PlazoAgendarSetting initialDias={3} hoy={HOY} />);
-        expect(screen.getByRole('status')).toHaveTextContent('El asistente ofrece citas hasta el domingo 25 de octubre');
+        expect(screen.getByRole('status')).toHaveTextContent('El asistente ofrece citas hasta el lunes 26 de octubre');
         expect(screen.getByText(/^Hoy es/)).toHaveTextContent(
-            'Hoy es viernes 23 de octubre: se ofrecen citas hasta el domingo 25 de octubre; desde el lunes 26 de octubre, no.',
+            'Hoy es viernes 23 de octubre: se ofrecen citas hasta el lunes 26 de octubre; desde el martes 27 de octubre, no.',
         );
         const dias = within(screen.getByRole('list', { name: 'Días en que el asistente ofrece citas' }))
             .getAllByRole('listitem')
             .map((li) => li.textContent);
-        expect(dias).toEqual(['✓ Hoy', '✓ Mañana', '✓ dom 25', 'lun 26']);
+        expect(dias).toEqual(['✓ Hoy', '✓ Mañana', 'dom 25 (no cuenta)', '✓ lun 26', 'mar 27']);
+        expect(screen.getByText(/sin contar domingos ni festivos/)).toBeInTheDocument();
+    });
+
+    it('un festivo tampoco cuenta: con 4 días el viernes 30 de octubre llega al miércoles 4 de noviembre', () => {
+        render(<PlazoAgendarSetting initialDias={4} hoy="2026-10-30" />);
+        expect(screen.getByRole('status')).toHaveTextContent('hasta el miércoles 4 de noviembre');
+        const dias = within(screen.getByRole('list', { name: 'Días en que el asistente ofrece citas' }))
+            .getAllByRole('listitem')
+            .map((li) => li.textContent);
+        expect(dias).toEqual([
+            '✓ Hoy',
+            '✓ Mañana',
+            'dom 1 (no cuenta)',
+            'lun 2 (festivo, no cuenta)',
+            '✓ mar 3',
+            '✓ mié 4',
+            'jue 5',
+        ]);
     });
 
     it('con un plazo largo resume: los dos primeros, «…», el último y el primero fuera', () => {
@@ -59,7 +77,8 @@ describe('PlazoAgendarSetting', () => {
         const items = within(screen.getByRole('list', { name: 'Días en que el asistente ofrece citas' }))
             .getAllByRole('listitem')
             .map((li) => li.textContent);
-        expect(items).toEqual(['✓ Hoy', '✓ Mañana', '✓ vie 6', 'sáb 7']);
+        // 15 días sin domingos ni el festivo del lunes 2: hasta el martes 10 de noviembre.
+        expect(items).toEqual(['✓ Hoy', '✓ Mañana', '✓ mar 10', 'mié 11']);
     });
 
     it('elegir un plazo lo guarda al instante', async () => {
@@ -70,7 +89,7 @@ describe('PlazoAgendarSetting', () => {
 
         expect(mockSet).toHaveBeenCalledWith(7);
         await waitFor(() =>
-            expect(screen.getByRole('status')).toHaveTextContent('hasta el jueves 29 de octubre'),
+            expect(screen.getByRole('status')).toHaveTextContent('hasta el viernes 30 de octubre'),
         );
     });
 
@@ -106,9 +125,9 @@ describe('PlazoAgendarSetting', () => {
             render(<PlazoAgendarSetting initialDias={2} hoy={HOY} resumenInicial={SIN_CUPOS_HOY} />);
             expect(aviso()).toHaveTextContent('Con este plazo, hoy el asistente no tiene cupos que ofrecer');
             expect(aviso()).toHaveTextContent('El primer cupo libre es el lunes 26 de octubre');
-            expect(aviso()).toHaveTextContent('desde el domingo 25 de octubre');
+            expect(aviso()).toHaveTextContent('desde el sábado 24 de octubre');
             expect(aviso()).toHaveTextContent('se agenda hasta el sábado 24 de octubre');
-            expect(aviso()).toHaveTextContent('al menos 4 días');
+            expect(aviso()).toHaveTextContent('al menos 3 días');
         });
 
         it('con cupos: cuántos puede ofrecer hoy', () => {

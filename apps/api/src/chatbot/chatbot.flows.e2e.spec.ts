@@ -1116,17 +1116,38 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     });
 
     it('1B.12 un día más allá del plazo para agendar: le dice hasta cuándo y desde cuándo escribir', async () => {
-      // Plazo de 2 días: hoy y mañana.
-      (prisma as any).organizationSettings = {
-        findUnique: jest.fn(async () => ({ bookingMaxDaysAhead: 2 })),
-      };
-      await hastaLosCupos();
-      await say('pasado mañana');
-      expect(lastSent()).toContain(`hasta el *${enPalabras(1)}*`);
-      expect(lastSent()).toContain(`desde el *${enPalabras(1)}*`);
-      // No se le cambió el menú.
-      expect(letra('A')).toBe('m-0800');
-      delete (prisma as any).organizationSettings;
+      // Un miércoles sin domingos ni festivos cerca (2026-10-31: el plazo no los
+      // cuenta, y con el reloj real «pasado mañana» puede quedar dentro). Solo se
+      // fija la fecha; los temporizadores siguen siendo los de verdad.
+      jest.useFakeTimers({
+        now: new Date('2026-10-28T13:00:00Z'), // miércoles 28, 8:00 en Bogotá
+        doNotFake: [
+          'nextTick',
+          'setImmediate',
+          'clearImmediate',
+          'setTimeout',
+          'clearTimeout',
+          'setInterval',
+          'clearInterval',
+          'queueMicrotask',
+        ],
+      });
+      try {
+        // Plazo de 2 días: el miércoles y el jueves.
+        (prisma as any).organizationSettings = {
+          findUnique: jest.fn(async () => ({ bookingMaxDaysAhead: 2 })),
+        };
+        await hastaLosCupos();
+        await say('pasado mañana');
+        const jueves = fechaEnPalabras('2026-10-29', { conAnio: false });
+        expect(lastSent()).toContain(`hasta el *${jueves}*`);
+        expect(lastSent()).toContain(`desde el *${jueves}*`);
+        // No se le cambió el menú.
+        expect(letra('A')).toBe('m-0800');
+      } finally {
+        jest.useRealTimers();
+        delete (prisma as any).organizationSettings;
+      }
     });
 
     it('1B.13 tras pedir otro día, agendar sigue igual hasta la cita', async () => {

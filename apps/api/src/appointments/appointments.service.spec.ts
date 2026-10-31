@@ -1453,11 +1453,14 @@ describe('AppointmentsService — días y horas sin citas por el asistente', () 
 });
 
 describe('AppointmentsService — plazo máximo para agendar por el asistente', () => {
-  // Con 3 días: hoy, mañana y pasado mañana (zona de Bogotá).
-  const { diaLocal, sumarDiasAFecha } = jest.requireActual('@agenia/shared');
+  // Con 3 días, contando hoy y sin contar domingos ni festivos (zona de Bogotá,
+  // 2026-10-31): `pasadoManiana` es el último día que se ofrece y `tercerDia` el
+  // primero que ya no. Se calculan con la regla: dependen del día en que corre.
+  const { diaLocal, sumarDiasAFecha, ultimoDiaParaAgendar } =
+    jest.requireActual('@agenia/shared');
   const hoy: string = diaLocal(new Date());
-  const pasadoManiana: string = sumarDiasAFecha(hoy, 2);
-  const tercerDia: string = sumarDiasAFecha(hoy, 3);
+  const pasadoManiana: string = ultimoDiaParaAgendar(hoy, 3);
+  const tercerDia: string = sumarDiasAFecha(pasadoManiana, 1);
   const a = (fecha: string, hhmm: string) =>
     new Date(`${fecha}T${hhmm}:00-05:00`);
   const slotRow = (id: string, inicio: Date) => ({
@@ -1599,7 +1602,12 @@ describe('AppointmentsService — plazo máximo para agendar por el asistente', 
 });
 
 describe('AppointmentsService — cupoMasAllaDelPlazo (no es agenda llena, es el plazo)', () => {
-  const { diaLocal, sumarDiasAFecha } = jest.requireActual('@agenia/shared');
+  const {
+    diaLocal,
+    sumarDiasAFecha,
+    ultimoDiaParaAgendar,
+    primerDiaParaVerElCupo,
+  } = jest.requireActual('@agenia/shared');
   const hoy: string = diaLocal(new Date());
   const a = (fecha: string, hhmm: string) =>
     new Date(`${fecha}T${hhmm}:00-05:00`);
@@ -1643,15 +1651,16 @@ describe('AppointmentsService — cupoMasAllaDelPlazo (no es agenda llena, es el
     };
   };
 
-  it('con 2 días y el primer cupo en 4 días: hasta mañana, el cupo, y desde el día anterior', async () => {
-    const enCuatro = sumarDiasAFecha(hoy, 3);
+  it('con 2 días y el primer cupo dos días después del plazo: hasta cuándo, el cupo y desde cuándo escribir', async () => {
+    // Días que cuentan (sin domingos ni festivos): el cuarto desde hoy.
+    const enCuatro: string = ultimoDiaParaAgendar(hoy, 4);
     const { svc, findMany } = await conPlazo(2, [
       slotRow('s1', a(enCuatro, '08:20')),
     ]);
     expect(await svc.cupoMasAllaDelPlazo('Medicina', null, 'org1')).toEqual({
-      ultimoDia: sumarDiasAFecha(hoy, 1),
+      ultimoDia: ultimoDiaParaAgendar(hoy, 2),
       primerDia: enCuatro,
-      desde: sumarDiasAFecha(hoy, 2),
+      desde: primerDiaParaVerElCupo(enCuatro, 2),
     });
     // Mira SIN el plazo: si no, nunca vería el cupo de más adelante.
     expect(

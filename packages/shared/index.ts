@@ -702,8 +702,10 @@ export type {
 export {
   PLAZO_AGENDAR,
   dentroDelPlazoParaAgendar,
+  diaCuentaParaElPlazo,
   finDelPlazoParaAgendar,
   normalizarPlazoAgendar,
+  porQueNoCuentaParaElPlazo,
   primerDiaParaVerElCupo,
   resumenCuposDelPlazo,
   textoPlazoAgendar,
@@ -711,6 +713,12 @@ export {
   validarPlazoAgendar,
 } from './src/plazo-agendar';
 export type { ResumenCuposDelPlazo } from './src/plazo-agendar';
+// 🇨🇴 Festivos de Colombia, calculados (no cuentan para el plazo para agendar).
+export {
+  domingoDePascua,
+  esFestivoColombia,
+  festivosColombia,
+} from './src/festivos-colombia';
 
 // 🩺 Médicos del hospital que AgenIA todavía no conoce (Bandeja y homologación automática).
 export {

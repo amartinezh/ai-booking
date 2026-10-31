@@ -61,15 +61,15 @@ describe('cargarResumenDelPlazo — los cupos que el asistente puede ofrecer hoy
         expect(m.scheduleSlot.findMany.mock.calls[0][0].where.doctor).toEqual({ whatsappBookingEnabled: true });
     });
 
-    it('con 2 días un viernes: ninguno hoy, desde el domingo, y el último cambio', async () => {
+    it('con 2 días un viernes: ninguno hoy, desde el sábado (el domingo no cuenta), y el último cambio', async () => {
         preparar({ dias: 2, espejo: true });
         expect(await cargarResumenDelPlazo('org-1', AHORA)).toEqual({
             enElPlazo: 0,
             total: 2,
             primerDia: '2026-10-26',
             ultimoDia: '2026-10-24',
-            desde: '2026-10-25',
-            plazoMinimo: 4,
+            desde: '2026-10-24',
+            plazoMinimo: 3,
             hoy: '2026-10-23',
             dias: 2,
             ultimoCambio: {

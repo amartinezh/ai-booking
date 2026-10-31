@@ -11,6 +11,7 @@ import {
     diaDeLaSemana,
     fechaEnPalabras,
     partesDeFecha,
+    porQueNoCuentaParaElPlazo,
     sumarDiasAFecha,
     textoPlazoAgendar,
     ultimoDiaParaAgendar,
@@ -24,6 +25,9 @@ import {
  *
  * Avisa cuando el plazo deja al asistente sin cupos que ofrecer hoy, y muestra
  * quién lo cambió por última vez (2026-10-23).
+ *
+ * Los domingos y los festivos de Colombia no cuentan (2026-10-31): el ejemplo los
+ * muestra en la fila como días que no cuentan.
  */
 export default function PlazoAgendarSetting({
     initialDias,
@@ -86,8 +90,8 @@ export default function PlazoAgendarSetting({
                     <h2 className="text-lg font-bold text-zinc-900 dark:text-white">Plazo máximo para agendar</h2>
                     <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
                         Hasta cuántos días adelante ofrece citas el asistente, para que nadie agende para una fecha
-                        muy lejana. Los días se cuentan <strong>desde hoy, incluido</strong>. El cambio aplica de
-                        inmediato.
+                        muy lejana. Los días se cuentan <strong>desde hoy, incluido</strong>, y{' '}
+                        <strong>sin contar domingos ni festivos</strong>. El cambio aplica de inmediato.
                     </p>
                 </div>
             </div>
@@ -120,13 +124,14 @@ export default function PlazoAgendarSetting({
                     </p>
                 </div>
 
-                {ultimo !== null && dias !== null && <Ejemplo hoy={hoy} dias={dias} ultimo={ultimo} />}
+                {ultimo !== null && dias !== null && <Ejemplo hoy={hoy} ultimo={ultimo} />}
 
                 {resumen && !isPending && <CuposDeHoy resumen={resumen} />}
 
                 <ul className="text-sm text-zinc-500 dark:text-zinc-400 list-disc pl-5 space-y-1">
                     <li>
-                        Con 3 días: hoy, mañana y pasado mañana. Cada día que pasa se abre uno nuevo.
+                        Con 4 días, un viernes: viernes, sábado, lunes y martes (el domingo no cuenta); si el lunes es
+                        festivo, hasta el miércoles. Cada día que pasa se abre uno nuevo.
                     </li>
                     <li>
                         Cuenta la fecha de la cita, no la del mensaje. Si el paciente pide una fecha más lejana, el
@@ -193,14 +198,16 @@ function CuposDeHoy({ resumen }: { resumen: ResumenDelPlazo }) {
     );
 }
 
-/** Los días de hoy en adelante, en fila: cuáles se ofrecen y desde cuál ya no. */
-function Ejemplo({ hoy, dias, ultimo }: { hoy: string; dias: number; ultimo: string }) {
+/**
+ * Los días de hoy en adelante, en fila: cuáles se ofrecen, cuáles no cuentan
+ * (domingos y festivos) y desde cuál ya no.
+ */
+function Ejemplo({ hoy, ultimo }: { hoy: string; ultimo: string }) {
     const primeroFuera = sumarDiasAFecha(ultimo, 1);
+    const todos: string[] = [];
+    for (let f = hoy; f <= ultimo; f = sumarDiasAFecha(f, 1)) todos.push(f);
     // Con un plazo largo, los dos primeros días, «…», el último y el primero fuera.
-    const dentro =
-        dias <= 6
-            ? Array.from({ length: dias }, (_, i) => sumarDiasAFecha(hoy, i))
-            : [hoy, sumarDiasAFecha(hoy, 1), null, ultimo];
+    const dentro: (string | null)[] = todos.length <= 9 ? todos : [todos[0], todos[1], null, ultimo];
 
     return (
         <div>
@@ -214,6 +221,14 @@ function Ejemplo({ hoy, dias, ultimo }: { hoy: string; dias: number; ultimo: str
                     fecha === null ? (
                         <li key={`hueco-${i}`} aria-hidden className="px-1 text-zinc-400">
                             …
+                        </li>
+                    ) : porQueNoCuentaParaElPlazo(fecha) ? (
+                        <li
+                            key={fecha}
+                            className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-400"
+                        >
+                            {etiquetaDia(fecha, hoy)}{' '}
+                            {porQueNoCuentaParaElPlazo(fecha) === 'FESTIVO' ? '(festivo, no cuenta)' : '(no cuenta)'}
                         </li>
                     ) : (
                         <li
