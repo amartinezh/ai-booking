@@ -67,6 +67,13 @@ export const LIMITES_RESUMEN_ATENCION = {
   maxCaracteresContenido: 200_000,
   /** La primera vez, desde cuántas horas atrás empieza a leer el agente. */
   horasHaciaAtrasAlEmpezar: 6,
+  /** Vueltas medidas que se guardan (a 5 minutos por vuelta, un día). */
+  medicionesGuardadas: 288,
+  /** Una medición de más de una hora es un dato roto. */
+  medicionMaxMs: 3_600_000,
+  /** Fase 1: el hospital revisa 20 resúmenes contra el HIS antes de pensar en enviar. */
+  revisionesParaCerrar: 20,
+  maxCaracteresNotaRevision: 500,
 } as const;
 
 const apagados = (): Record<CanalResumen, boolean> => ({ WHATSAPP: false, TELEGRAM: false, EMAIL: false });
@@ -403,11 +410,23 @@ export interface EstadoResumenesAgente {
   camposPlantilla: CampoPlantillaResumen[] | null;
 }
 
+/** Lo que tardaron las consultas del agente al HIS en una vuelta (Fase 1: «la consulta pesa poco»). */
+export interface MedicionLecturaResumen {
+  /** La consulta que busca las historias terminadas. */
+  detectarMs: number;
+  /** Las consultas que leen esas historias (0 si no hubo ninguna). */
+  leerMs: number;
+  /** Cuántas historias leyó. */
+  historias: number;
+}
+
 /** POST /mirror/attention-summaries */
 export interface ResumenesAtencionInput {
   resumenes: ResumenAtencionHis[];
   /** Hasta dónde quedó leído; el servidor lo guarda para la vuelta siguiente. */
   nextCursor: string;
+  /** Un agente anterior no la manda. */
+  medicion?: MedicionLecturaResumen;
 }
 
 export interface ResumenesAtencionResult {
@@ -446,4 +465,104 @@ export function validarResumenAtencion(x: unknown): string | null {
   }
   if (JSON.stringify(x).length > LIMITES_RESUMEN_ATENCION.maxCaracteresContenido) return 'resumen demasiado grande';
   return null;
+}
+
+// ─── Medición de la lectura (Fase 1) ────────────────────────────────────────
+
+/** Una vuelta medida, como se guarda en `HospitalMirrorConfig.resumenAtencionMedicion`. */
+export interface VueltaMedidaResumen extends MedicionLecturaResumen {
+  iso: string;
+}
+
+const msValido = (x: unknown): x is number =>
+  typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= LIMITES_RESUMEN_ATENCION.medicionMaxMs;
+
+/** La medición que manda el agente, o `null` si no sirve (no se guarda, pero el lote sí). */
+export function validarMedicion(x: unknown): MedicionLecturaResumen | null {
+  if (!esObjeto(x)) return null;
+  const historias = enteroEntre(x.historias, 0, LIMITES_RESUMEN_ATENCION.maxPorLote);
+  if (!msValido(x.detectarMs) || !msValido(x.leerMs) || historias === null) return null;
+  return { detectarMs: Math.round(x.detectarMs), leerMs: Math.round(x.leerMs), historias };
+}
+
+function leerVueltas(json: unknown): VueltaMedidaResumen[] {
+  const lista = esObjeto(json) && Array.isArray(json.vueltas) ? json.vueltas : [];
+  const r: VueltaMedidaResumen[] = [];
+  for (const v of lista) {
+    const m = validarMedicion(v);
+    if (m && esObjeto(v) && typeof v.iso === 'string' && !Number.isNaN(Date.parse(v.iso))) r.push({ iso: v.iso, ...m });
+  }
+  return r;
+}
+
+/** Suma una vuelta a lo guardado y se queda con las últimas `medicionesGuardadas`. */
+export function agregarMedicion(
+  json: unknown,
+  medicion: MedicionLecturaResumen,
+  ahora: Date,
+): { vueltas: VueltaMedidaResumen[] } {
+  const vueltas = [...leerVueltas(json), { iso: ahora.toISOString(), ...medicion }];
+  return { vueltas: vueltas.slice(-LIMITES_RESUMEN_ATENCION.medicionesGuardadas) };
+}
+
+export interface ResumenMedicionesLectura {
+  /** Vueltas del último día que consultaron el HIS. */
+  vueltas: number;
+  historias: number;
+  detectar: { medianaMs: number; maxMs: number };
+  /** Solo de las vueltas que leyeron alguna historia; `null` si ninguna leyó. */
+  leer: { medianaMs: number; maxMs: number; medianaPorHistoriaMs: number } | null;
+  ultimaIso: string;
+}
+
+function mediana(xs: number[]): number {
+  const o = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(o.length / 2);
+  return o.length % 2 ? o[m] : Math.round((o[m - 1] + o[m]) / 2);
+}
+
+/** Cuánto tardaron las consultas al HIS en las últimas 24 horas; `null` si no hubo ninguna. */
+export function resumirMediciones(json: unknown, ahora: Date): ResumenMedicionesLectura | null {
+  const desde = ahora.getTime() - 86_400_000;
+  const vueltas = leerVueltas(json).filter((v) => Date.parse(v.iso) >= desde);
+  if (vueltas.length === 0) return null;
+  const conLectura = vueltas.filter((v) => v.historias > 0);
+  return {
+    vueltas: vueltas.length,
+    historias: vueltas.reduce((n, v) => n + v.historias, 0),
+    detectar: {
+      medianaMs: mediana(vueltas.map((v) => v.detectarMs)),
+      maxMs: Math.max(...vueltas.map((v) => v.detectarMs)),
+    },
+    leer: conLectura.length
+      ? {
+          medianaMs: mediana(conLectura.map((v) => v.leerMs)),
+          maxMs: Math.max(...conLectura.map((v) => v.leerMs)),
+          medianaPorHistoriaMs: mediana(conLectura.map((v) => Math.round(v.leerMs / v.historias))),
+        }
+      : null,
+    ultimaIso: vueltas[vueltas.length - 1].iso,
+  };
+}
+
+// ─── Revisión del hospital contra el HIS (Fase 1) ───────────────────────────
+
+export type ResultadoRevisionResumen = 'CORRECTO' | 'CON_ERROR';
+
+/**
+ * Lo que marca quien revisa un resumen contra el HIS. «Con error» exige decir
+ * qué está mal: con eso se corrige el driver antes de enviar.
+ */
+export function validarRevision(
+  entrada: unknown,
+): { ok: true; resultado: ResultadoRevisionResumen; nota: string | null } | { ok: false; error: string } {
+  if (!esObjeto(entrada)) return { ok: false, error: 'Falta la revisión.' };
+  const { resultado } = entrada;
+  if (resultado !== 'CORRECTO' && resultado !== 'CON_ERROR') return { ok: false, error: 'Marque «Correcto» o «Con error».' };
+  const nota = typeof entrada.nota === 'string' ? entrada.nota.trim() : '';
+  if (nota.length > LIMITES_RESUMEN_ATENCION.maxCaracteresNotaRevision) {
+    return { ok: false, error: `La nota tiene más de ${LIMITES_RESUMEN_ATENCION.maxCaracteresNotaRevision} caracteres.` };
+  }
+  if (resultado === 'CON_ERROR' && !nota) return { ok: false, error: 'Escriba qué está mal: con eso se corrige la lectura.' };
+  return { ok: true, resultado, nota: nota || null };
 }

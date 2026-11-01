@@ -318,6 +318,8 @@ export class MirrorEngine {
       return { skipped: false, apagado: true, ...vacio };
     }
 
+    // Se mide cada consulta al HIS: cerrar la Fase 1 exige saber cuánto pesa.
+    const t0 = performance.now();
     const { numeros, cursor } = await this.driver.detectFinishedAttentions({
       desde: estado.cursor,
       hasta: new Date(ahora.getTime() - estado.calmaMinutos * 60_000),
@@ -328,9 +330,16 @@ export class MirrorEngine {
       servicios: estado.servicios,
       limite: estado.maxPorLote,
     });
-    // Nada que mirar todavía: el cursor se queda donde está.
-    if (cursor === null) return { skipped: false, apagado: false, ...vacio };
+    const detectarMs = performance.now() - t0;
 
+    // Nada nuevo: el cursor se queda donde está, pero la consulta se midió y
+    // se reporta. La primera vez, sin cursor todavía, no hay qué reportar.
+    const nextCursor = cursor ?? estado.cursor;
+    if (nextCursor === null) {
+      return { skipped: false, apagado: false, ...vacio };
+    }
+
+    const t1 = performance.now();
     const resumenes =
       numeros.length > 0
         ? await this.driver.fetchAttentionSummaries(
@@ -338,11 +347,18 @@ export class MirrorEngine {
             estado.camposPlantilla,
           )
         : [];
+    const leerMs = numeros.length > 0 ? performance.now() - t1 : 0;
+
     // También sin resúmenes se sube: así el cursor pasa las filas que no eran
     // atenciones y la vuelta siguiente no las vuelve a mirar.
     const r = await this.api.pushAttentionSummaries({
       resumenes,
-      nextCursor: cursor,
+      nextCursor,
+      medicion: {
+        detectarMs: Math.round(detectarMs),
+        leerMs: Math.round(leerMs),
+        historias: resumenes.length,
+      },
     });
     return {
       skipped: false,

@@ -176,11 +176,17 @@ export class RetentionService {
         purgedAt: null,
         status: 'RECIBIDO',
       },
-      data: { content: null, purgedAt: ahora, status: 'CADUCADO' },
+      // La nota de la revisión puede nombrar datos clínicos: se va con el contenido.
+      data: {
+        content: null,
+        reviewNote: null,
+        purgedAt: ahora,
+        status: 'CADUCADO',
+      },
     });
     const vencidos = await this.prisma.attentionSummary.updateMany({
       where: { contentExpiresAt: { lt: ahora }, purgedAt: null },
-      data: { content: null, purgedAt: ahora },
+      data: { content: null, reviewNote: null, purgedAt: ahora },
     });
     const r5 = await this.borrarEnLotes(
       new Date(

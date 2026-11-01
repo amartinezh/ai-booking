@@ -1,6 +1,6 @@
 # Resumen de la atención al paciente por WhatsApp y correo
 
-**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01, sin commit ni despliegue (§8.3).** Todo nace apagado.
+**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01 (commit 3584864), y ese mismo día la revisión contra el HIS y la medición de la carga (§8.3), sin desplegar.** Todo nace apagado.
 **Primer hospital:** San Vicente de Paúl de Anserma (driver `cnt-sanvicente-anserma`).
 
 ## 1. Qué se pide
@@ -601,11 +601,18 @@ Como todo nace apagado y casi todo es configuración (§3.11), la mayoría de la
 
 **Pruebas:** shared, API, agente y web en verde, más la integración de la API contra Postgres y la del driver contra SQL Server.
 
-**Orden de despliegue:** migración → API → agente → web. Encender la lectura en producción espera el contrato ampliado y los permisos (P-7), según §8.2.
+**Revisión y medición (2026-11-01, después del commit 3584864):**
 
-**Falta para cerrar la Fase 1:**
-- una pantalla para que el hospital revise los 20 resúmenes contra el HIS (descifrados, con registro de quién los abre);
-- medir cuánto pesa la consulta del agente en el HIS.
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| Base | migración `20261101180000_resumen_atencion_revision` | `AttentionSummary.reviewResult`, `reviewNote`, `reviewedAt`, `reviewedByUserId` y `HospitalMirrorConfig.resumenAtencionMedicion`. Solo columnas que admiten NULL. Sin deriva contra Postgres. |
+| Revisión | `GET /attention-summaries/:id` (`AttentionSummaryReviewController`, fuera de `/mirror`) y `revisarResumenAction` | Solo el Administrador y solo de su clínica. La API descifra y anota `ATTENTION_SUMMARY_VIEWED`. «Correcto» o «Con error» (este con nota obligatoria) solo mientras el contenido existe; deja `ATTENTION_SUMMARY_REVIEWED` sin la nota. La purga borra la nota con el contenido. |
+| Pantalla | «Revisar contra el HIS» en `/dashboard/espejo/resumen-atencion` | Lista de los últimos 40 (solo datos de control), detalle completo al abrir y contador «N de 20 revisados · correctos · con error». |
+| Medición | agente (`medicion` en cada lote, también vacío) → `agregarMedicion`/`resumirMediciones` | Lo que tardan la detección y la lectura en el HIS. Se guarda un día de vueltas, y el panel muestra la mediana y el máximo. |
+
+**Orden de despliegue:** migraciones → API → agente (bundle nuevo en el servidor del hospital) → web. Encender la lectura en producción espera el contrato ampliado y los permisos (P-7), según §8.2.
+
+**La Fase 1 se cierra cuando** el hospital marque 20 resúmenes «Correcto» sin ninguno «Con error» pendiente, y la medición muestre que la consulta pesa poco en el HIS. Las dos cosas se ven en la pantalla, pero exigen encender la lectura en producción (§8.2).
 
 ## 9. Volumen y costo
 

@@ -1567,13 +1567,25 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
       camposPlantilla: null,
     };
     const capacidad = () =>
-      driver as unknown as { detectFinishedAttentions: jest.Mock; fetchAttentionSummaries: jest.Mock };
+      driver as unknown as {
+        detectFinishedAttentions: jest.Mock;
+        fetchAttentionSummaries: jest.Mock;
+      };
 
     beforeEach(() => {
       const d = driver as unknown as Record<string, unknown>;
-      d.detectFinishedAttentions = jest.fn(async () => ({ numeros: [], cursor: null }));
+      d.detectFinishedAttentions = jest.fn(async () => ({
+        numeros: [],
+        cursor: null,
+      }));
       d.fetchAttentionSummaries = jest.fn(async () => []);
-      api.pushAttentionSummaries.mockResolvedValue({ recibidos: 0, nuevos: 0, actualizados: 0, sinCambios: 0, rechazados: [] });
+      api.pushAttentionSummaries.mockResolvedValue({
+        recibidos: 0,
+        nuevos: 0,
+        actualizados: 0,
+        sinCambios: 0,
+        rechazados: [],
+      });
     });
 
     it('un driver SIN la capacidad se salta por completo: ni pregunta a la API', async () => {
@@ -1585,7 +1597,11 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
     });
 
     it('con la lectura apagada (el estado al desplegar) no toca el HIS', async () => {
-      api.getAttentionSummaryState.mockResolvedValue({ ...encendido, leer: false, servicios: [] });
+      api.getAttentionSummaryState.mockResolvedValue({
+        ...encendido,
+        leer: false,
+        servicios: [],
+      });
       const r = await engine.syncAttentionSummaries(AHORA);
       expect(r).toMatchObject({ skipped: false, apagado: true, leidos: 0 });
       expect(capacidad().detectFinishedAttentions).not.toHaveBeenCalled();
@@ -1593,7 +1609,10 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
     });
 
     it('encendida pero sin servicios en la matriz tampoco lee', async () => {
-      api.getAttentionSummaryState.mockResolvedValue({ ...encendido, servicios: [] });
+      api.getAttentionSummaryState.mockResolvedValue({
+        ...encendido,
+        servicios: [],
+      });
       const r = await engine.syncAttentionSummaries(AHORA);
       expect(r.apagado).toBe(true);
       expect(capacidad().detectFinishedAttentions).not.toHaveBeenCalled();
@@ -1611,25 +1630,80 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
       });
     });
 
-    it('sin nada que mirar no sube nada: el cursor se queda donde está', async () => {
+    it('sin nada nuevo: el cursor se queda donde está, pero la consulta se mide y se reporta', async () => {
       api.getAttentionSummaryState.mockResolvedValue(encendido);
       const r = await engine.syncAttentionSummaries(AHORA);
       expect(r).toMatchObject({ apagado: false, leidos: 0 });
+      expect(capacidad().fetchAttentionSummaries).not.toHaveBeenCalled();
+      expect(api.pushAttentionSummaries).toHaveBeenCalledWith({
+        resumenes: [],
+        nextCursor: '2441000',
+        medicion: { detectarMs: expect.any(Number), leerMs: 0, historias: 0 },
+      });
+    });
+
+    it('la primera vez, sin cursor y sin nada nuevo, no sube nada', async () => {
+      api.getAttentionSummaryState.mockResolvedValue({
+        ...encendido,
+        cursor: null,
+      });
+      await engine.syncAttentionSummaries(AHORA);
       expect(api.pushAttentionSummaries).not.toHaveBeenCalled();
     });
 
     it('si miró filas pero ninguna era atención, sube un lote vacío para que el cursor avance', async () => {
       api.getAttentionSummaryState.mockResolvedValue(encendido);
-      capacidad().detectFinishedAttentions.mockResolvedValue({ numeros: [], cursor: '2441090' });
+      capacidad().detectFinishedAttentions.mockResolvedValue({
+        numeros: [],
+        cursor: '2441090',
+      });
       await engine.syncAttentionSummaries(AHORA);
       expect(capacidad().fetchAttentionSummaries).not.toHaveBeenCalled();
-      expect(api.pushAttentionSummaries).toHaveBeenCalledWith({ resumenes: [], nextCursor: '2441090' });
+      expect(api.pushAttentionSummaries).toHaveBeenCalledWith({
+        resumenes: [],
+        nextCursor: '2441090',
+        medicion: { detectarMs: expect.any(Number), leerMs: 0, historias: 0 },
+      });
+    });
+
+    it('mide cuánto tardan la detección y la lectura en el HIS', async () => {
+      let reloj = 1000;
+      const ahoraReal = jest
+        .spyOn(performance, 'now')
+        .mockImplementation(() => reloj);
+      try {
+        api.getAttentionSummaryState.mockResolvedValue(encendido);
+        capacidad().detectFinishedAttentions.mockImplementation(async () => {
+          reloj += 180;
+          return { numeros: ['2441058'], cursor: '2441058' };
+        });
+        capacidad().fetchAttentionSummaries.mockImplementation(async () => {
+          reloj += 420.4;
+          return [{ version: 1 }];
+        });
+        await engine.syncAttentionSummaries(AHORA);
+        expect(api.pushAttentionSummaries.mock.calls[0][0].medicion).toEqual({
+          detectarMs: 180,
+          leerMs: 420,
+          historias: 1,
+        });
+      } finally {
+        ahoraReal.mockRestore();
+      }
     });
 
     it('arma solo lo detectado, con los campos que pidió el servidor, y lo sube con el cursor', async () => {
-      const campos = [{ plantilla: 870, grupo: null, campo: 'MC:', seccion: 'Motivo' }];
-      api.getAttentionSummaryState.mockResolvedValue({ ...encendido, camposPlantilla: campos });
-      capacidad().detectFinishedAttentions.mockResolvedValue({ numeros: ['2441058', '2441061'], cursor: '2441070' });
+      const campos = [
+        { plantilla: 870, grupo: null, campo: 'MC:', seccion: 'Motivo' },
+      ];
+      api.getAttentionSummaryState.mockResolvedValue({
+        ...encendido,
+        camposPlantilla: campos,
+      });
+      capacidad().detectFinishedAttentions.mockResolvedValue({
+        numeros: ['2441058', '2441061'],
+        cursor: '2441070',
+      });
       const resumenes = [{ version: 1 }, { version: 1 }];
       capacidad().fetchAttentionSummaries.mockResolvedValue(resumenes);
       api.pushAttentionSummaries.mockResolvedValue({
@@ -1637,13 +1711,26 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
         nuevos: 1,
         actualizados: 0,
         sinCambios: 0,
-        rechazados: [{ numero: '2441061', motivo: 'servicio fuera de la matriz' }],
+        rechazados: [
+          { numero: '2441061', motivo: 'servicio fuera de la matriz' },
+        ],
       });
 
       const r = await engine.syncAttentionSummaries(AHORA);
 
-      expect(capacidad().fetchAttentionSummaries).toHaveBeenCalledWith(['2441058', '2441061'], campos);
-      expect(api.pushAttentionSummaries).toHaveBeenCalledWith({ resumenes, nextCursor: '2441070' });
+      expect(capacidad().fetchAttentionSummaries).toHaveBeenCalledWith(
+        ['2441058', '2441061'],
+        campos,
+      );
+      expect(api.pushAttentionSummaries).toHaveBeenCalledWith({
+        resumenes,
+        nextCursor: '2441070',
+        medicion: {
+          detectarMs: expect.any(Number),
+          leerMs: expect.any(Number),
+          historias: 2,
+        },
+      });
       expect(r).toEqual({
         skipped: false,
         apagado: false,
@@ -1657,9 +1744,16 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
 
     it('si el HIS falla, lanza y no sube nada (el cursor del servidor no se mueve)', async () => {
       api.getAttentionSummaryState.mockResolvedValue(encendido);
-      capacidad().detectFinishedAttentions.mockResolvedValue({ numeros: ['1'], cursor: '1' });
-      capacidad().fetchAttentionSummaries.mockRejectedValue(new Error('timeout del HIS'));
-      await expect(engine.syncAttentionSummaries(AHORA)).rejects.toThrow('timeout del HIS');
+      capacidad().detectFinishedAttentions.mockResolvedValue({
+        numeros: ['1'],
+        cursor: '1',
+      });
+      capacidad().fetchAttentionSummaries.mockRejectedValue(
+        new Error('timeout del HIS'),
+      );
+      await expect(engine.syncAttentionSummaries(AHORA)).rejects.toThrow(
+        'timeout del HIS',
+      );
       expect(api.pushAttentionSummaries).not.toHaveBeenCalled();
     });
   });

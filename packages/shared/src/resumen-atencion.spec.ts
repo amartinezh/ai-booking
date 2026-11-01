@@ -1,4 +1,5 @@
 import {
+  agregarMedicion,
   aplicarCambioDeLectura,
   configResumenAtencionApagada,
   leerConfigResumenAtencion,
@@ -6,8 +7,11 @@ import {
   normalizarDestino,
   puedeEnviarPorCanal,
   puedeLeerDelHospital,
+  resumirMediciones,
   serviciosALeer,
+  validarMedicion,
   validarResumenAtencion,
+  validarRevision,
   type ResumenAtencionHis,
 } from './resumen-atencion';
 
@@ -258,5 +262,71 @@ describe('aplicarCambioDeLectura (lo que el panel cambia en la Fase 1)', () => {
   it('rechaza listas o códigos inválidos', () => {
     expect(aplicarCambioDeLectura({}, { serviciosALeer: 'S39141' as unknown as string[] }).ok).toBe(false);
     expect(aplicarCambioDeLectura({}, { serviciosALeer: ['X'.repeat(21)] }).ok).toBe(false);
+  });
+});
+
+describe('medición de la lectura', () => {
+  const AHORA = new Date('2026-11-01T15:00:00.000Z');
+  const hace = (min: number) => new Date(AHORA.getTime() - min * 60_000);
+
+  it('valida lo que manda el agente y redondea', () => {
+    expect(validarMedicion({ detectarMs: 120.6, leerMs: 0, historias: 0 })).toEqual({ detectarMs: 121, leerMs: 0, historias: 0 });
+    expect(validarMedicion({ detectarMs: -1, leerMs: 0, historias: 0 })).toBeNull();
+    expect(validarMedicion({ detectarMs: 10, leerMs: Number.NaN, historias: 0 })).toBeNull();
+    expect(validarMedicion({ detectarMs: 10, leerMs: 5, historias: 51 })).toBeNull();
+    expect(validarMedicion({ detectarMs: 3_600_001, leerMs: 5, historias: 1 })).toBeNull();
+    expect(validarMedicion(null)).toBeNull();
+  });
+
+  it('se queda con las últimas vueltas y descarta lo guardado que no se entiende', () => {
+    let json: unknown = { vueltas: [{ iso: 'ayer', detectarMs: 1, leerMs: 1, historias: 1 }, 'basura'] };
+    for (let i = 0; i < LIMITES_RESUMEN_ATENCION.medicionesGuardadas + 5; i++) {
+      json = agregarMedicion(json, { detectarMs: i, leerMs: 0, historias: 0 }, hace(0));
+    }
+    const vueltas = (json as { vueltas: { detectarMs: number }[] }).vueltas;
+    expect(vueltas).toHaveLength(LIMITES_RESUMEN_ATENCION.medicionesGuardadas);
+    expect(vueltas[vueltas.length - 1].detectarMs).toBe(LIMITES_RESUMEN_ATENCION.medicionesGuardadas + 4);
+  });
+
+  it('resume el último día: mediana y máximo; la lectura solo de las vueltas que leyeron', () => {
+    let json: unknown = null;
+    json = agregarMedicion(json, { detectarMs: 5000, leerMs: 9000, historias: 3 }, hace(25 * 60)); // fuera del día
+    json = agregarMedicion(json, { detectarMs: 100, leerMs: 0, historias: 0 }, hace(20));
+    json = agregarMedicion(json, { detectarMs: 300, leerMs: 800, historias: 4 }, hace(15));
+    json = agregarMedicion(json, { detectarMs: 200, leerMs: 300, historias: 1 }, hace(10));
+    expect(resumirMediciones(json, AHORA)).toEqual({
+      vueltas: 3,
+      historias: 5,
+      detectar: { medianaMs: 200, maxMs: 300 },
+      leer: { medianaMs: 550, maxMs: 800, medianaPorHistoriaMs: 250 },
+      ultimaIso: hace(10).toISOString(),
+    });
+  });
+
+  it('sin vueltas en el día no hay resumen; sin lecturas, la lectura va vacía', () => {
+    expect(resumirMediciones(null, AHORA)).toBeNull();
+    const json = agregarMedicion(null, { detectarMs: 80, leerMs: 0, historias: 0 }, hace(5));
+    expect(resumirMediciones(json, AHORA)?.leer).toBeNull();
+  });
+});
+
+describe('validarRevision', () => {
+  it('«Correcto» no exige nota; «Con error» sí', () => {
+    expect(validarRevision({ resultado: 'CORRECTO' })).toEqual({ ok: true, resultado: 'CORRECTO', nota: null });
+    expect(validarRevision({ resultado: 'CON_ERROR', nota: '  ' })).toEqual({
+      ok: false,
+      error: 'Escriba qué está mal: con eso se corrige la lectura.',
+    });
+    expect(validarRevision({ resultado: 'CON_ERROR', nota: ' Falta la amoxicilina ' })).toEqual({
+      ok: true,
+      resultado: 'CON_ERROR',
+      nota: 'Falta la amoxicilina',
+    });
+  });
+
+  it('rechaza un resultado desconocido o una nota desmedida', () => {
+    expect(validarRevision({ resultado: 'TAL_VEZ' }).ok).toBe(false);
+    expect(validarRevision(null).ok).toBe(false);
+    expect(validarRevision({ resultado: 'CORRECTO', nota: 'x'.repeat(501) }).ok).toBe(false);
   });
 });

@@ -3,13 +3,17 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 const refresh = jest.fn();
 jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
 const updateLecturaResumenAction = jest.fn(async (...args: unknown[]) => { void args; return { success: true }; });
+const abrirResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: false, error: 'sin preparar' }; });
+const revisarResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 jest.mock('@/app/actions/resumen-atencion', () => ({
     updateLecturaResumenAction: (...a: unknown[]) => updateLecturaResumenAction(...a),
+    abrirResumenAction: (...a: unknown[]) => abrirResumenAction(...a),
+    revisarResumenAction: (...a: unknown[]) => revisarResumenAction(...a),
 }));
 
 import { configResumenAtencionApagada } from '@agenia/shared';
 import ResumenAtencionClient from './ResumenAtencionClient';
-import type { PanelResumenAtencion } from '@/app/actions/resumen-atencion';
+import type { FilaResumenParaRevisar, PanelResumenAtencion } from '@/app/actions/resumen-atencion';
 
 // La pantalla de los interruptores (plan §3.11). Lo que se fija: nace apagada,
 // solo se puede encender la LECTURA, y «Enviar» y los canales no se pueden tocar
@@ -22,11 +26,93 @@ const panel = (cambios: Partial<PanelResumenAtencion> = {}): PanelResumenAtencio
         { codigo: 'S39145', nombre: 'CONSULTA URGENCIAS', seLee: false },
     ],
     lectura: { cursor: null, recibidos24h: 0, recibidos30d: 0, ultimoRecibidoIso: null, porServicio: [] },
+    medicion: null,
+    revision: { meta: 20, correctos: 0, conError: 0, recientes: [] },
     ...cambios,
 });
 
+const ID = '6f9619ff-8b86-d011-b42d-00cf4fc964ff';
+const fila = (cambios: Partial<FilaResumenParaRevisar> = {}): FilaResumenParaRevisar => ({
+    id: ID,
+    historia: '2441058',
+    servicio: 'S39141',
+    atendidaIso: '2026-11-01T14:00:00.000Z',
+    version: 1,
+    conPaciente: true,
+    contenidoDisponible: true,
+    revision: null,
+    ...cambios,
+});
+
+const resumenDePrueba = {
+    version: 1,
+    historia: {
+        numero: '2441058',
+        guardadaIso: '2026-11-01T14:00:00.000Z',
+        servicio: 'S39141',
+        nombreServicio: 'CONSULTA MEDICINA GENERAL',
+        plantilla: 870,
+        codigoPlantilla: null,
+        nombrePlantilla: 'CONSULTA EXTERNA',
+        especialidad: null,
+        edad: 46,
+    },
+    paciente: {
+        documento: '900000001',
+        tipoDocumento: 'CC',
+        nombre: 'ADULTO PRUEBA',
+        fechaNacimientoIso: '1980-05-17',
+        celular: null,
+        correo: null,
+        celularAcompanante: null,
+        correoAcompanante: null,
+    },
+    medico: { codigo: null, nombre: 'MEDICO DE PRUEBA', documento: null, registro: null },
+    afiliacion: { convenio: null, administradora: null, tipoUsuario: null },
+    diagnosticos: [{ cie10: 'I10X', descripcion: 'HIPERTENSION ESENCIAL', tipo: null, principal: true }],
+    ordenes: [
+        {
+            numero: '77',
+            tipo: 'MEDICAMENTOS',
+            farmacia: 'AI',
+            escritaIso: null,
+            desdeIso: null,
+            serie: null,
+            vigencia: 'Vigente por 72 Horas',
+            medicamentos: [
+                {
+                    codigo: 'M1',
+                    nombre: 'LOSARTAN 50 MG TABLETA',
+                    cum: null,
+                    invima: null,
+                    medida: null,
+                    concentracion: '50 MG',
+                    forma: 'TABLETA',
+                    via: 'ORAL',
+                    cantidad: 30,
+                    duracionDias: 30,
+                    indicacion: 'UNA TABLETA CADA DIA',
+                    frecuencia: null,
+                    entregado: false,
+                },
+            ],
+            examenes: [],
+        },
+    ],
+    remisiones: [],
+    incapacidades: [],
+    interconsultas: [],
+    indicaciones: [],
+    campos: [{ seccion: 'Plan', grupo: null, campo: 'PLAN:', valor: 'CONTROL EN 3 MESES' }],
+};
+
 describe('ResumenAtencionClient', () => {
-    beforeEach(() => updateLecturaResumenAction.mockClear());
+    beforeEach(() => {
+        updateLecturaResumenAction.mockClear();
+        abrirResumenAction.mockClear();
+        revisarResumenAction.mockClear();
+        refresh.mockClear();
+    });
 
     it('recién desplegado se ve apagado y no envía nada', () => {
         render(<ResumenAtencionClient panel={panel()} />);
@@ -90,5 +176,83 @@ describe('ResumenAtencionClient', () => {
         expect(screen.getByTestId('estado-lectura')).toHaveTextContent('Leyendo del hospital');
         expect(screen.getByText(/96 resumen\(es\) en las últimas 24 horas/)).toBeInTheDocument();
         expect(screen.getByText(/Leído hasta la historia 2441058/)).toBeInTheDocument();
+    });
+
+    it('muestra cuánto tardan las consultas al hospital, o que todavía no hay mediciones', () => {
+        const { rerender } = render(<ResumenAtencionClient panel={panel()} />);
+        expect(screen.getByTestId('medicion')).toHaveTextContent('Todavía no hay mediciones');
+        rerender(
+            <ResumenAtencionClient
+                panel={panel({
+                    medicion: {
+                        vueltas: 12,
+                        historias: 30,
+                        detectar: { medianaMs: 180, maxMs: 2400 },
+                        leer: { medianaMs: 900, maxMs: 4100, medianaPorHistoriaMs: 310 },
+                        ultimaIso: '2026-11-01T14:00:00.000Z',
+                    },
+                })}
+            />,
+        );
+        const m = screen.getByTestId('medicion');
+        expect(m).toHaveTextContent('12 vuelta(s), 30 historia(s) leída(s)');
+        expect(m).toHaveTextContent('180 ms de mediana, máximo 2,4 s');
+        expect(m).toHaveTextContent('310 ms por historia, máximo 4,1 s en una vuelta');
+    });
+
+    it('revisión: muestra el avance y la lista sin contenido; lo borrado no se puede abrir', () => {
+        render(
+            <ResumenAtencionClient
+                panel={panel({
+                    revision: {
+                        meta: 20,
+                        correctos: 3,
+                        conError: 1,
+                        recientes: [fila(), fila({ id: 'otro', historia: '2441001', contenidoDisponible: false })],
+                    },
+                })}
+            />,
+        );
+        expect(screen.getByTestId('progreso-revision')).toHaveTextContent('4 de 20 revisados · 3 correcto(s) · 1 con error');
+        expect(screen.getByLabelText('Abrir historia 2441058')).toBeInTheDocument();
+        expect(screen.queryByLabelText('Abrir historia 2441001')).not.toBeInTheDocument();
+        expect(screen.getByText('Borrado (30 días)')).toBeInTheDocument();
+        expect(screen.queryByTestId('detalle-resumen')).not.toBeInTheDocument();
+    });
+
+    it('abre un resumen, lo muestra y guarda la revisión', async () => {
+        abrirResumenAction.mockResolvedValueOnce({
+            success: true,
+            abierto: { resumen: resumenDePrueba, hisKey: '2441058', version: 1, attendedAt: '2026-11-01T14:00:00.000Z' },
+        });
+        render(<ResumenAtencionClient panel={panel({ revision: { meta: 20, correctos: 0, conError: 0, recientes: [fila()] } })} />);
+
+        fireEvent.click(screen.getByLabelText('Abrir historia 2441058'));
+        const detalle = await screen.findByTestId('detalle-resumen');
+        expect(abrirResumenAction).toHaveBeenCalledWith(ID);
+        expect(detalle).toHaveTextContent('LOSARTAN 50 MG TABLETA');
+        expect(detalle).toHaveTextContent('UNA TABLETA CADA DIA');
+        expect(detalle).toHaveTextContent('CONTROL EN 3 MESES');
+        // La fecha de nacimiento sin hora no se corre un día.
+        expect(detalle).toHaveTextContent('17/05/1980');
+
+        const guardar = screen.getByRole('button', { name: 'Guardar revisión' });
+        expect(guardar).toBeDisabled();
+        fireEvent.click(screen.getByLabelText('Con error'));
+        fireEvent.change(screen.getByLabelText('Nota de la revisión'), { target: { value: 'Falta la loratadina' } });
+        fireEvent.click(guardar);
+
+        await waitFor(() =>
+            expect(revisarResumenAction).toHaveBeenCalledWith(ID, { resultado: 'CON_ERROR', nota: 'Falta la loratadina' }),
+        );
+        expect(await screen.findByText('Revisión guardada: historia 2441058.')).toBeInTheDocument();
+        expect(refresh).toHaveBeenCalled();
+    });
+
+    it('si no se puede abrir (por ejemplo, ya se borró), lo dice', async () => {
+        abrirResumenAction.mockResolvedValueOnce({ success: false, error: 'El contenido de este resumen ya se borró (se guarda 30 días).' });
+        render(<ResumenAtencionClient panel={panel({ revision: { meta: 20, correctos: 0, conError: 0, recientes: [fila()] } })} />);
+        fireEvent.click(screen.getByLabelText('Abrir historia 2441058'));
+        expect(await screen.findByText('El contenido de este resumen ya se borró (se guarda 30 días).')).toBeInTheDocument();
     });
 });

@@ -6,12 +6,18 @@ import { useRouter } from 'next/navigation';
 import { LIMITES_RESUMEN_ATENCION } from '@agenia/shared';
 import { formatAppointmentCompact } from '@/lib/date';
 import { updateLecturaResumenAction, type PanelResumenAtencion } from '@/app/actions/resumen-atencion';
+import RevisionResumenes from './RevisionResumenes';
 
 const CANALES = [
     { clave: 'WHATSAPP', nombre: 'WhatsApp' },
     { clave: 'TELEGRAM', nombre: 'Telegram' },
     { clave: 'EMAIL', nombre: 'Correo' },
 ] as const;
+
+/** 850 → «850 ms»; 2400 → «2,4 s». */
+function duracion(ms: number): string {
+    return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1).replace('.', ',')} s`;
+}
 
 /**
  * Los interruptores del resumen de la atención (plan §3.11). En la Fase 1 solo
@@ -214,9 +220,40 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                 )}
                 <p className="text-xs text-zinc-500">
                     Leído hasta la historia {panel.lectura.cursor ?? '— (empieza por las de las últimas horas al encender)'}. El
-                    contenido nunca se muestra aquí: se guarda cifrado y se borra a los {L.retencionContenidoDias} días.
+                    contenido se guarda cifrado y se borra a los {L.retencionContenidoDias} días; solo se ve al abrir un
+                    resumen para revisarlo.
                 </p>
+                <div className="space-y-1 border-t border-zinc-200 pt-2 dark:border-zinc-800" data-testid="medicion">
+                    <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                        Cuánto tardan las consultas al hospital (último día)
+                    </h3>
+                    {panel.medicion ? (
+                        <>
+                            <p className="text-zinc-600 dark:text-zinc-400">
+                                {panel.medicion.vueltas} vuelta(s), {panel.medicion.historias} historia(s) leída(s). Buscar las
+                                terminadas: {duracion(panel.medicion.detectar.medianaMs)} de mediana, máximo{' '}
+                                {duracion(panel.medicion.detectar.maxMs)}.
+                                {panel.medicion.leer && (
+                                    <>
+                                        {' '}
+                                        Leerlas: {duracion(panel.medicion.leer.medianaPorHistoriaMs)} por historia, máximo{' '}
+                                        {duracion(panel.medicion.leer.maxMs)} en una vuelta.
+                                    </>
+                                )}
+                            </p>
+                            <p className="text-xs text-zinc-500">
+                                Última vuelta medida: {formatAppointmentCompact(new Date(panel.medicion.ultimaIso))}.
+                            </p>
+                        </>
+                    ) : (
+                        <p className="text-xs text-zinc-500">
+                            Todavía no hay mediciones: aparecen cuando el agente lee con «Leer del hospital» encendido.
+                        </p>
+                    )}
+                </div>
             </section>
+
+            <RevisionResumenes revision={panel.revision} />
         </div>
     );
 }

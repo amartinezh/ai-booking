@@ -21,6 +21,7 @@ import { AltasNoRegistradasService } from './altas-no-registradas.service';
 import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module';
 import { MedicosNuevosService } from './medicos-nuevos.service';
 import { MedicosNuevosController } from './medicos-nuevos.controller';
+import { AttentionSummaryReviewController } from './attention-summary-review.controller';
 
 /**
  * Motor genérico de espejo de citas con HIS externos (patrón de drivers).
@@ -37,7 +38,11 @@ import { MedicosNuevosController } from './medicos-nuevos.controller';
   // WhatsappConfigModule: el aviso al agendador sale por una plantilla aprobada
   // (`WhatsappTemplateService`). No crea ciclo: no conoce este módulo.
   imports: [AppointmentsModule, WaitlistModule, WhatsappConfigModule],
-  controllers: [MirrorController, MedicosNuevosController],
+  controllers: [
+    MirrorController,
+    MedicosNuevosController,
+    AttentionSummaryReviewController,
+  ],
   providers: [
     MirrorAgentGuard,
     MirrorDispatchService,

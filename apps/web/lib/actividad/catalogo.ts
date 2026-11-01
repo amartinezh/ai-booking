@@ -156,6 +156,9 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     CLINICAL_RECORD_UPDATED: { categoria: 'HISTORIA', titulo: 'Corrigió una historia clínica' },
     CLINICAL_RECORD_SIGNED: { categoria: 'HISTORIA', titulo: 'Firmó una historia clínica', aviso: true },
     CLINICAL_RECORD_ADDENDUM: { categoria: 'HISTORIA', titulo: 'Agregó una nota aclaratoria a una historia clínica' },
+    // Resumen de la atención (Fase 1): abrirlo lo anota la API, que es la que lo descifra.
+    ATTENTION_SUMMARY_VIEWED: { categoria: 'HISTORIA', titulo: 'Abrió un resumen de la atención del hospital', mensaje: true },
+    ATTENTION_SUMMARY_REVIEWED: { categoria: 'HISTORIA', titulo: 'Revisó un resumen de la atención contra el HIS', mensaje: true },
 
     // ── Sesiones, pantallas y descargas ──
     SESSIONS_REVOKED: { categoria: 'SEGURIDAD', titulo: 'Cerró sesiones a la fuerza', aviso: true },

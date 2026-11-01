@@ -249,17 +249,23 @@ describe('RetentionService', () => {
           },
       );
     // Los que nunca salieron pasan a CADUCADO; los enviados conservan su estado.
+    // La nota de la revisión se borra con el contenido.
     expect(caducados).toEqual({
       where: {
         contentExpiresAt: { lt: AHORA },
         purgedAt: null,
         status: 'RECIBIDO',
       },
-      data: { content: null, purgedAt: AHORA, status: 'CADUCADO' },
+      data: {
+        content: null,
+        reviewNote: null,
+        purgedAt: AHORA,
+        status: 'CADUCADO',
+      },
     });
     expect(vencidos).toEqual({
       where: { contentExpiresAt: { lt: AHORA }, purgedAt: null },
-      data: { content: null, purgedAt: AHORA },
+      data: { content: null, reviewNote: null, purgedAt: AHORA },
     });
     expect(
       (

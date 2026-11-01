@@ -1146,6 +1146,14 @@ model AttentionSummary {
   contentExpiresAt DateTime
   purgedAt         DateTime?
 
+  // Revisión del hospital contra el HIS (Fase 1: 20 sin errores antes de enviar).
+  // CORRECTO | CON_ERROR (`ResultadoRevisionResumen` en @agenia/shared).
+  reviewResult     String?
+  // Qué está mal. Puede nombrar datos clínicos: se borra con el contenido.
+  reviewNote       String?   @db.Text
+  reviewedAt       DateTime?
+  reviewedByUserId String?
+
   @@unique([organizationId, hisKey])
   @@index([organizationId, attendedAt])
   @@index([contentExpiresAt])
@@ -2526,12 +2534,16 @@ model HospitalMirrorConfig {
   // calmaMinutos, horario, camposPlantilla }. Todo interruptor que falte se lee
   // APAGADO: al habilitarla nace con todo apagado (decisión del usuario,
   // 2026-11-01). Json por el mismo criterio que `avisosMasivos`.
-  resumenAtencion       Json?
+  resumenAtencion         Json?
   // Hasta qué historia leyó el agente (en Anserma, `NU_NUME_HICL`). Columna
   // propia y no dentro de `resumenAtencion`: ese Json lo edita el panel y esto
   // lo escribe el agente en cada lote; con read-modify-write sobre la misma
   // fila, uno de los dos perdería su cambio.
-  resumenAtencionCursor String?
+  resumenAtencionCursor   String?
+  // Cuánto tardan las consultas del agente al HIS, vuelta por vuelta (las
+  // últimas 288 = un día; `agregarMedicion` en @agenia/shared). La escribe solo
+  // el agente, por lo mismo que el cursor. Sin datos de pacientes.
+  resumenAtencionMedicion Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
