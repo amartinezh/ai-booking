@@ -32,6 +32,7 @@ import {
   ResumenEnlacesService,
   type OrigenDeLaVisita,
 } from './resumen-enlaces.service';
+import { ResumenEnvioService } from './resumen-envio.service';
 
 const DOCUMENTO = /^[a-z0-9-]{1,60}$/;
 
@@ -77,6 +78,7 @@ export class ResumenDocumentosController {
   constructor(
     private readonly documentos: ResumenDocumentosService,
     private readonly enlaces: ResumenEnlacesService,
+    private readonly envio: ResumenEnvioService,
   ) {}
 
   @Get(':id/documents')
@@ -120,6 +122,23 @@ export class ResumenDocumentosController {
   ) {
     if (!organizationId) throw new ForbiddenException('Sin clínica.');
     return this.enlaces.crearEnlaceDePrueba(organizationId, id, {
+      userId: user.userId,
+      email: user.email,
+    });
+  }
+
+  /** «Enviar de prueba»: el aviso de este resumen a un número del modo prueba (Fase 4). */
+  @Post(':id/test-send')
+  @HttpCode(HttpStatus.OK)
+  @Roles('ORG_ADMIN')
+  enviarDePrueba(
+    @CurrentTenant() organizationId: string | null | undefined,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { destino?: unknown },
+  ) {
+    if (!organizationId) throw new ForbiddenException('Sin clínica.');
+    return this.envio.enviarDePrueba(organizationId, id, body?.destino, {
       userId: user.userId,
       email: user.email,
     });

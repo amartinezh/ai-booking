@@ -782,6 +782,75 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
     );
   });
 
+  // ── 🩺 Resumen de la atención (Fase 4): el botón y los textos pasan primero ──
+  describe('resumen de la atención', () => {
+    let resumenChat: { manejarBoton: jest.Mock; manejarTexto: jest.Mock };
+    beforeEach(() => {
+      resumenChat = {
+        manejarBoton: jest.fn(async () => true),
+        manejarTexto: jest.fn(async () => false),
+      };
+      (service as any).resumenChat = resumenChat;
+    });
+
+    it('el toque del botón de la plantilla va al resumen y el asistente no sigue', async () => {
+      await service.processIncomingMessage({
+        from: SENDER,
+        type: 'button',
+        button: { payload: 'resumen:x', text: 'Recibir mis documentos' },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+      expect(resumenChat.manejarBoton).toHaveBeenCalledWith(
+        ORG_ID,
+        SENDER,
+        'resumen:x',
+      );
+      expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+      expect(sentMessages()).toHaveLength(0);
+    });
+
+    it('el botón de un mensaje interactivo también', async () => {
+      await service.processIncomingMessage({
+        from: SENDER,
+        type: 'interactive',
+        interactive: {
+          type: 'button_reply',
+          button_reply: { id: 'resumen:y', title: 'Recibir documentos' },
+        },
+        metadata: { phone_number_id: PHONE_ID },
+      });
+      expect(resumenChat.manejarBoton).toHaveBeenCalledWith(
+        ORG_ID,
+        SENDER,
+        'resumen:y',
+      );
+    });
+
+    it('un texto que el resumen atiende no llega al asistente; uno que no, sigue igual', async () => {
+      resumenChat.manejarTexto.mockResolvedValueOnce(true);
+      await service.processIncomingMessage(makeTextEvent('17/05/1980'));
+      expect(provider.extractSchedulingIntent).not.toHaveBeenCalled();
+
+      provider.extractSchedulingIntent.mockResolvedValueOnce(
+        extraction({ intent: 'otro' }),
+      );
+      await service.processIncomingMessage(
+        makeTextEvent('necesito información'),
+      );
+      expect(resumenChat.manejarTexto).toHaveBeenLastCalledWith(
+        ORG_ID,
+        SENDER,
+        'necesito información',
+      );
+      expect(provider.extractSchedulingIntent).toHaveBeenCalledTimes(1);
+    });
+
+    it('la emergencia va antes que el resumen', async () => {
+      await service.processIncomingMessage(makeTextEvent('me quiero matar'));
+      expect(resumenChat.manejarTexto).not.toHaveBeenCalled();
+    });
+  });
+
   // ── 🚑 GUARDRAIL EMERGENCIA: banderas rojas clínicas → derivación ──
   // Caso de referencia: "necesito una cita urgente porque llevo tres días
   // con dolor en el pecho" NO debe entrar al funnel de agendamiento — se

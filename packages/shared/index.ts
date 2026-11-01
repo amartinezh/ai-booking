@@ -805,3 +805,27 @@ export type {
   SeccionDelResumen,
   TipoDocumentoResumen,
 } from './src/resumen-documentos';
+
+// 📨 Envío del resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md, Fase 4):
+// exclusiones, destinatarios, horario y el modo prueba.
+export {
+  EXCLUSIONES_POR_DEFECTO,
+  LIMITES_ENVIO_RESUMEN,
+  aplicarCambioDeEnvio,
+  candidatosDeDestino,
+  celularParaWhatsapp,
+  dentroDelHorario,
+  enmascararDestino,
+  entregaDelPayload,
+  horaLocal,
+  leerExclusiones,
+  motivoDeExclusion,
+  payloadDeEntrega,
+  pideSusDocumentos,
+} from './src/resumen-envio';
+export type {
+  CambioEnvioResumen,
+  CandidatoDestino,
+  ExclusionesResumen,
+  OrigenDestino,
+} from './src/resumen-envio';

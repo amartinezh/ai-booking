@@ -19,6 +19,8 @@ const crearEnlaceDePruebaAction = jest.fn(async (...args: unknown[]): Promise<un
     return { success: true, url: 'http://localhost/resumen/AAAAAAAAAAAAAAAAAAAAAA', expiraIso: '2026-12-01T14:00:00.000Z' };
 });
 const updateDocumentosResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
+const updateEnvioResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
+const enviarDePruebaAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 const revisarResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 jest.mock('@/app/actions/resumen-atencion', () => ({
     updateLecturaResumenAction: (...a: unknown[]) => updateLecturaResumenAction(...a),
@@ -27,6 +29,8 @@ jest.mock('@/app/actions/resumen-atencion', () => ({
     listarDocumentosAction: (...a: unknown[]) => listarDocumentosAction(...a),
     crearEnlaceDePruebaAction: (...a: unknown[]) => crearEnlaceDePruebaAction(...a),
     updateDocumentosResumenAction: (...a: unknown[]) => updateDocumentosResumenAction(...a),
+    updateEnvioResumenAction: (...a: unknown[]) => updateEnvioResumenAction(...a),
+    enviarDePruebaAction: (...a: unknown[]) => enviarDePruebaAction(...a),
 }));
 
 import { configResumenAtencionApagada, leerConfigDocumentos } from '@agenia/shared';
@@ -48,6 +52,7 @@ const panel = (cambios: Partial<PanelResumenAtencion> = {}): PanelResumenAtencio
     revision: { meta: 20, correctos: 0, conError: 0, recientes: [] },
     documentos: leerConfigDocumentos(null),
     nombreClinica: 'Hospital de prueba',
+    envio: { plantillaConfigurada: false, entregas: [], porEstado: {} },
     ...cambios,
 });
 
@@ -131,6 +136,8 @@ describe('ResumenAtencionClient', () => {
         updateLecturaResumenAction.mockClear();
         abrirResumenAction.mockClear();
         revisarResumenAction.mockClear();
+        updateEnvioResumenAction.mockClear();
+        enviarDePruebaAction.mockClear();
         refresh.mockClear();
     });
 
@@ -138,21 +145,78 @@ describe('ResumenAtencionClient', () => {
         render(<ResumenAtencionClient panel={panel()} />);
         expect(screen.getByTestId('estado-lectura')).toHaveTextContent('Apagado');
         expect(screen.getByLabelText('Leer del hospital')).not.toBeChecked();
-        expect(screen.getByText(/No se le envía nada a ningún paciente/)).toBeInTheDocument();
+        expect(screen.getByTestId('estado-envio')).toHaveTextContent('Envío apagado');
+        expect(screen.getByLabelText('Enviar a pacientes')).not.toBeChecked();
+        expect(screen.getByText(/solo reciben los números del equipo; ningún paciente/)).toBeInTheDocument();
+        expect(screen.getByTestId('falta-plantilla')).toBeInTheDocument();
     });
 
-    it('«Enviar a pacientes» y todos los canales están apagados y no se pueden tocar', () => {
+    it('Telegram y correo no se pueden tocar; WhatsApp solo en los servicios que se leen', () => {
         render(<ResumenAtencionClient panel={panel()} />);
-        const enviar = screen.getByLabelText('Enviar a pacientes');
-        expect(enviar).toBeDisabled();
-        expect(enviar).not.toBeChecked();
-        for (const canal of ['WhatsApp', 'Telegram', 'Correo']) {
-            for (const servicio of ['S39141', 'S39145']) {
-                const c = screen.getByLabelText(`${canal} ${servicio}`);
-                expect(c).toBeDisabled();
-                expect(c).not.toBeChecked();
-            }
+        expect(screen.getByLabelText('Canal Telegram')).toBeDisabled();
+        expect(screen.getByLabelText('Canal Correo')).toBeDisabled();
+        for (const canal of ['Telegram', 'Correo']) {
+            for (const servicio of ['S39141', 'S39145']) expect(screen.getByLabelText(`${canal} ${servicio}`)).toBeDisabled();
         }
+        expect(screen.getByLabelText('WhatsApp S39141')).toBeDisabled();
+        fireEvent.click(screen.getByLabelText('Leer S39141'));
+        expect(screen.getByLabelText('WhatsApp S39141')).toBeEnabled();
+        expect(screen.getByLabelText('WhatsApp S39145')).toBeDisabled();
+    });
+
+    it('enciende el envío en modo prueba: primero la lectura, luego el envío con los números del equipo', async () => {
+        render(<ResumenAtencionClient panel={panel()} />);
+        fireEvent.click(screen.getByLabelText('Leer del hospital'));
+        fireEvent.click(screen.getByLabelText('Leer S39141'));
+        fireEvent.click(screen.getByLabelText('Enviar a pacientes'));
+        fireEvent.click(screen.getByLabelText('Canal WhatsApp'));
+        fireEvent.click(screen.getByLabelText('WhatsApp S39141'));
+        fireEvent.change(screen.getByLabelText('Números del modo prueba'), { target: { value: '3001234567\n3109876543' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+        await waitFor(() =>
+            expect(updateEnvioResumenAction).toHaveBeenCalledWith({
+                enviar: true,
+                whatsapp: true,
+                serviciosWhatsapp: ['S39141'],
+                destinosPrueba: ['3001234567', '3109876543'],
+            }),
+        );
+        expect(updateLecturaResumenAction.mock.invocationCallOrder[0]).toBeLessThan(updateEnvioResumenAction.mock.invocationCallOrder[0]);
+    });
+
+    it('si el envío no se puede encender (sin números del equipo), lo dice', async () => {
+        updateEnvioResumenAction.mockResolvedValueOnce({ success: false, error: 'Mientras no se apruebe el piloto, «Enviar» solo funciona en modo prueba: agregue al menos un número del equipo.' });
+        render(<ResumenAtencionClient panel={panel()} />);
+        fireEvent.click(screen.getByLabelText('Enviar a pacientes'));
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+        expect(await screen.findByText(/solo funciona en modo prueba/)).toBeInTheDocument();
+        expect(updateLecturaResumenAction).not.toHaveBeenCalled();
+    });
+
+    it('enviando en modo prueba lo dice, y el seguimiento muestra los envíos sin números completos', () => {
+        render(
+            <ResumenAtencionClient
+                panel={panel({
+                    config: { ...configResumenAtencionApagada(), enviar: true, modoPrueba: { destinos: ['573001234567'] } },
+                    envio: {
+                        plantillaConfigurada: true,
+                        porEstado: { ENVIADO: 3, EXCLUIDO: 1 },
+                        entregas: [
+                            { id: 'e1', historia: '2441058', canal: 'WHATSAPP', prueba: true, destino: '•••4567', estado: 'DOCUMENTOS_ENVIADOS', motivo: null, avisoIso: '2026-11-01T15:00:00.000Z', documentosIso: '2026-11-01T15:02:00.000Z', verificadoPor: 'FECHA_NACIMIENTO' },
+                            { id: 'e2', historia: '2441059', canal: 'WHATSAPP', prueba: false, destino: '•••9999', estado: 'FALLO', motivo: 'La plantilla «Documentos de la consulta» no está configurada', avisoIso: null, documentosIso: null, verificadoPor: null },
+                        ],
+                    },
+                })}
+            />,
+        );
+        expect(screen.getByTestId('estado-envio')).toHaveTextContent('Enviando en modo prueba a •••4567');
+        expect(screen.queryByTestId('falta-plantilla')).not.toBeInTheDocument();
+        const seguimiento = screen.getByTestId('seguimiento-envios');
+        expect(seguimiento).toHaveTextContent('Avisados 3 · Excluidos (tema sensible o baja) 1');
+        expect(seguimiento).toHaveTextContent('✓ Documentos entregados');
+        expect(seguimiento).toHaveTextContent('fecha de nacimiento');
+        expect(seguimiento).toHaveTextContent('⚠ No salió');
+        expect(seguimiento).not.toHaveTextContent('573001234567');
     });
 
     it('guarda la lectura con los servicios marcados y la calma', async () => {
@@ -315,5 +379,26 @@ describe('ResumenAtencionClient', () => {
             }),
         );
         expect(await screen.findByText(/Guardado. Los documentos/)).toBeInTheDocument();
+    });
+
+    it('al abrir un resumen se puede enviar de prueba a un número del equipo', async () => {
+        abrirResumenAction.mockResolvedValueOnce({
+            success: true,
+            abierto: { resumen: resumenDePrueba, hisKey: '2441058', version: 1, attendedAt: '2026-11-01T14:00:00.000Z' },
+        });
+        render(
+            <ResumenAtencionClient
+                panel={panel({
+                    config: { ...configResumenAtencionApagada(), modoPrueba: { destinos: ['573001234567'] } },
+                    revision: { meta: 20, correctos: 0, conError: 0, recientes: [fila()] },
+                })}
+            />,
+        );
+        fireEvent.click(screen.getByLabelText('Abrir historia 2441058'));
+        const boton = await screen.findByRole('button', { name: 'Enviar de prueba' });
+        expect(screen.getByLabelText('Número de prueba')).toHaveTextContent('•••4567');
+        fireEvent.click(boton);
+        await waitFor(() => expect(enviarDePruebaAction).toHaveBeenCalledWith(ID, '573001234567'));
+        expect(await screen.findByText(/Aviso enviado a •••4567/)).toBeInTheDocument();
     });
 });

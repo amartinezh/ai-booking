@@ -3,9 +3,14 @@
 import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LIMITES_RESUMEN_ATENCION } from '@agenia/shared';
+import { LIMITES_RESUMEN_ATENCION, enmascararDestino } from '@agenia/shared';
 import { formatAppointmentCompact } from '@/lib/date';
-import { updateLecturaResumenAction, type PanelResumenAtencion } from '@/app/actions/resumen-atencion';
+import {
+    updateEnvioResumenAction,
+    updateLecturaResumenAction,
+    type PanelResumenAtencion,
+} from '@/app/actions/resumen-atencion';
+import SeguimientoEnvios from './SeguimientoEnvios';
 import RevisionResumenes from './RevisionResumenes';
 import EncabezadoDocumentos from './EncabezadoDocumentos';
 
@@ -21,9 +26,10 @@ function duracion(ms: number): string {
 }
 
 /**
- * Los interruptores del resumen de la atención (plan §3.11). En la Fase 1 solo
- * se prende la LECTURA en sombra: «Enviar» y los canales se muestran apagados y
- * sin poderse tocar, porque el envío todavía no existe.
+ * Los interruptores del resumen de la atención (plan §3.11): la lectura en
+ * sombra (Fase 1) y el envío por WhatsApp (Fase 4). Mientras no se apruebe el
+ * piloto, «Enviar a pacientes» solo enciende en modo prueba: solo reciben los
+ * números del equipo. Telegram y correo siguen sin poderse tocar.
  */
 export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAtencion }) {
     const router = useRouter();
@@ -37,7 +43,15 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
     );
     const [calma, setCalma] = useState(String(panel.config.calmaMinutos));
 
-    const hayCambios = useMemo(() => {
+    const waAntes = Object.entries(panel.config.servicios)
+        .filter(([, c]) => c.WHATSAPP)
+        .map(([codigo]) => codigo);
+    const [enviar, setEnviar] = useState(panel.config.enviar);
+    const [whatsapp, setWhatsapp] = useState(panel.config.canales.WHATSAPP);
+    const [serviciosWa, setServiciosWa] = useState<Set<string>>(() => new Set(waAntes));
+    const [destinos, setDestinos] = useState(panel.config.modoPrueba.destinos.join('\n'));
+
+    const cambiosLectura = useMemo(() => {
         const antes = panel.servicios.filter((s) => s.seLee).map((s) => s.codigo).sort().join(',');
         return (
             leer !== panel.config.leerDelHospital ||
@@ -45,6 +59,24 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
             calma !== String(panel.config.calmaMinutos)
         );
     }, [leer, seLeen, calma, panel]);
+    const listaDestinos = destinos
+        .split(/[\n,;]+/)
+        .map((d) => d.trim())
+        .filter(Boolean);
+    const cambiosEnvio =
+        enviar !== panel.config.enviar ||
+        whatsapp !== panel.config.canales.WHATSAPP ||
+        [...serviciosWa].sort().join(',') !== [...waAntes].sort().join(',') ||
+        listaDestinos.join(',') !== panel.config.modoPrueba.destinos.join(',');
+    const hayCambios = cambiosLectura || cambiosEnvio;
+
+    const alternarWa = (codigo: string) =>
+        setServiciosWa((prev) => {
+            const s = new Set(prev);
+            if (s.has(codigo)) s.delete(codigo);
+            else s.add(codigo);
+            return s;
+        });
 
     const alternar = (codigo: string) =>
         setSeLeen((prev) => {
@@ -58,16 +90,32 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
         setError(null);
         setAviso(null);
         startGuardando(async () => {
-            const r = await updateLecturaResumenAction({
-                leerDelHospital: leer,
-                serviciosALeer: [...seLeen],
-                calmaMinutos: Number(calma),
-            });
-            if (!r.success) {
-                setError(r.error);
-                return;
+            if (cambiosLectura) {
+                const r = await updateLecturaResumenAction({
+                    leerDelHospital: leer,
+                    serviciosALeer: [...seLeen],
+                    calmaMinutos: Number(calma),
+                });
+                if (!r.success) {
+                    setError(r.error);
+                    return;
+                }
             }
-            setAviso('Guardado. El agente lo toma en su próxima vuelta (cada 5 minutos).');
+            if (cambiosEnvio) {
+                // Después de la lectura: un servicio recién marcado «Se lee» ya está en la matriz.
+                const r = await updateEnvioResumenAction({
+                    enviar,
+                    whatsapp,
+                    serviciosWhatsapp: [...serviciosWa].filter((c) => seLeen.has(c)),
+                    destinosPrueba: listaDestinos,
+                });
+                if (!r.success) {
+                    setError(r.error);
+                    router.refresh();
+                    return;
+                }
+            }
+            setAviso('Guardado. El agente lo toma en su próxima vuelta (cada 5 minutos) y el envío, en 2 minutos.');
             router.refresh();
         });
     };
@@ -85,15 +133,24 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                 <p className="max-w-3xl text-sm text-zinc-600 dark:text-zinc-400">
                     Cuando el médico termina la historia en el sistema del hospital, el paciente recibirá el resumen de su
                     consulta, su fórmula y sus órdenes. Por ahora existen la <strong>lectura en sombra</strong> (AgenIA lee las
-                    historias terminadas y las guarda cifradas 30 días para revisarlas) y los <strong>documentos de prueba</strong>{' '}
-                    en PDF e imagen.{' '}
-                    <strong>No se le envía nada a ningún paciente.</strong>
+                    historias terminadas y las guarda cifradas 30 días para revisarlas), los <strong>documentos</strong> en PDF
+                    e imagen y el <strong>envío por WhatsApp en modo prueba</strong>.{' '}
+                    <strong>Mientras no se apruebe el piloto, solo reciben los números del equipo; ningún paciente.</strong>
                 </p>
                 <p className="text-sm font-medium" data-testid="estado-lectura">
                     {leyendo ? (
                         <span className="text-emerald-700 dark:text-emerald-400">● Leyendo del hospital</span>
                     ) : (
                         <span className="text-zinc-500">○ Apagado: no se lee nada del hospital</span>
+                    )}
+                </p>
+                <p className="text-sm font-medium" data-testid="estado-envio">
+                    {panel.config.enviar ? (
+                        <span className="text-amber-700 dark:text-amber-400">
+                            ● Enviando en modo prueba a {panel.config.modoPrueba.destinos.map(enmascararDestino).join(', ')}
+                        </span>
+                    ) : (
+                        <span className="text-zinc-500">○ Envío apagado: no sale nada</span>
                     )}
                 </p>
             </header>
@@ -116,13 +173,64 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                         </span>
                     </span>
                 </label>
-                <label className="flex items-start gap-3 text-sm text-zinc-400">
-                    <input type="checkbox" checked={false} disabled className="mt-0.5 h-4 w-4 rounded" aria-label="Enviar a pacientes" />
+                <label className="flex items-start gap-3 text-sm text-zinc-800 dark:text-zinc-200">
+                    <input
+                        type="checkbox"
+                        checked={enviar}
+                        onChange={(e) => setEnviar(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-zinc-300"
+                        aria-label="Enviar a pacientes"
+                    />
                     <span>
                         <span className="font-medium">Enviar a pacientes</span>
-                        <span className="block text-xs">
-                            Todavía no existe: se habilita cuando estén listos los documentos y los envíos. Nace apagado.
+                        <span className="block text-xs text-zinc-500">
+                            El freno general. Mientras no se apruebe el piloto, solo funciona en modo prueba: el aviso sale solo
+                            a los números del equipo de abajo. Nace apagado.
                         </span>
+                    </span>
+                </label>
+                <div className="space-y-1 text-sm">
+                    <span className="font-medium text-zinc-800 dark:text-zinc-200">Canales</span>
+                    <div className="flex flex-wrap gap-4">
+                        <label className="flex items-center gap-2 text-zinc-800 dark:text-zinc-200">
+                            <input
+                                type="checkbox"
+                                checked={whatsapp}
+                                onChange={(e) => setWhatsapp(e.target.checked)}
+                                className="h-4 w-4 rounded border-zinc-300"
+                                aria-label="Canal WhatsApp"
+                            />
+                            WhatsApp
+                        </label>
+                        <label className="flex items-center gap-2 text-zinc-400">
+                            <input type="checkbox" checked={false} disabled className="h-4 w-4 rounded" aria-label="Canal Telegram" />
+                            Telegram (próximamente)
+                        </label>
+                        <label className="flex items-center gap-2 text-zinc-400">
+                            <input type="checkbox" checked={false} disabled className="h-4 w-4 rounded" aria-label="Canal Correo" />
+                            Correo (próximamente)
+                        </label>
+                    </div>
+                    {!panel.envio.plantillaConfigurada && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="falta-plantilla">
+                            Falta la plantilla «Documentos de la consulta» en Configuración › Plantillas de WhatsApp: sin ella,
+                            el aviso solo le llega a quien escribió en las últimas 24 horas.
+                        </p>
+                    )}
+                </div>
+                <label className="block text-sm text-zinc-700 dark:text-zinc-300">
+                    Números del equipo (modo prueba)
+                    <textarea
+                        value={destinos}
+                        onChange={(e) => setDestinos(e.target.value)}
+                        rows={2}
+                        placeholder="3001234567"
+                        aria-label="Números del modo prueba"
+                        className="mt-1 block w-full max-w-sm rounded-lg border border-zinc-300 bg-white px-3 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                    />
+                    <span className="mt-1 block text-xs text-zinc-500">
+                        Uno por línea, hasta 10. Solo estos números reciben avisos, y a ellos se envía de prueba desde «Revisar
+                        contra el HIS».
                     </span>
                 </label>
                 <label className="block text-sm text-zinc-700 dark:text-zinc-300">
@@ -147,7 +255,8 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                 <div>
                     <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Servicios del hospital</h2>
                     <p className="text-xs text-zinc-500">
-                        Marque los servicios que se leen. Los canales de envío quedan apagados hasta que exista el envío.
+                        Marque los servicios que se leen y, de esos, los que envían por WhatsApp. Telegram y correo llegan
+                        después.
                     </p>
                 </div>
                 {panel.servicios.length === 0 ? (
@@ -162,7 +271,7 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                                     <th className="py-2 pr-3 font-medium">Servicio</th>
                                     <th className="py-2 pr-3 font-medium">Se lee</th>
                                     {CANALES.map((c) => (
-                                        <th key={c.clave} className="py-2 pr-3 font-medium text-zinc-400">
+                                        <th key={c.clave} className={`py-2 pr-3 font-medium ${c.clave === 'WHATSAPP' ? '' : 'text-zinc-400'}`}>
                                             {c.nombre}
                                         </th>
                                     ))}
@@ -186,7 +295,18 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                                         </td>
                                         {CANALES.map((c) => (
                                             <td key={c.clave} className="py-2 pr-3">
-                                                <input type="checkbox" checked={false} disabled aria-label={`${c.nombre} ${s.codigo}`} className="h-4 w-4 rounded" />
+                                                {c.clave === 'WHATSAPP' ? (
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={seLeen.has(s.codigo) && serviciosWa.has(s.codigo)}
+                                                        disabled={!seLeen.has(s.codigo)}
+                                                        onChange={() => alternarWa(s.codigo)}
+                                                        aria-label={`${c.nombre} ${s.codigo}`}
+                                                        className="h-4 w-4 rounded border-zinc-300 disabled:opacity-40"
+                                                    />
+                                                ) : (
+                                                    <input type="checkbox" checked={false} disabled aria-label={`${c.nombre} ${s.codigo}`} className="h-4 w-4 rounded" />
+                                                )}
                                             </td>
                                         ))}
                                     </tr>
@@ -257,7 +377,9 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
 
             <EncabezadoDocumentos documentos={panel.documentos} nombreClinica={panel.nombreClinica} />
 
-            <RevisionResumenes revision={panel.revision} />
+            <SeguimientoEnvios envio={panel.envio} />
+
+            <RevisionResumenes revision={panel.revision} destinosPrueba={panel.config.modoPrueba.destinos} />
         </div>
     );
 }

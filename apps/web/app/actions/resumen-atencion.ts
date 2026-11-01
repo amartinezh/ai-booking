@@ -27,6 +27,7 @@ import { registrarActividad } from '@/lib/actividad/registrar';
 import {
     LIMITES_RESUMEN_ATENCION,
     aplicarCambioDeDocumentos,
+    aplicarCambioDeEnvio,
     aplicarCambioDeLectura,
     configResumenAtencionApagada,
     leerConfigDocumentos,
@@ -34,6 +35,7 @@ import {
     resumirMediciones,
     validarRevision,
     type CambioDocumentosResumen,
+    type CambioEnvioResumen,
     type CambioLecturaResumen,
     type ConfigDocumentosResumen,
     type ConfigResumenAtencion,
@@ -89,6 +91,28 @@ export interface PanelResumenAtencion {
     documentos: ConfigDocumentosResumen;
     /** Si el encabezado no tiene nombre, el de la clínica. */
     nombreClinica: string;
+    /** Fase 4: el envío por WhatsApp. */
+    envio: {
+        /** La plantilla «Documentos de la consulta» está configurada y activa. */
+        plantillaConfigurada: boolean;
+        /** Últimos envíos, sin contenido. */
+        entregas: EntregaDelPanel[];
+        /** Atenciones de los últimos 30 días por estado (RECIBIDO, ENVIADO, EXCLUIDO, SIN_CONTACTO, CADUCADO). */
+        porEstado: Record<string, number>;
+    };
+}
+
+export interface EntregaDelPanel {
+    id: string;
+    historia: string;
+    canal: string;
+    prueba: boolean;
+    destino: string;
+    estado: string;
+    motivo: string | null;
+    avisoIso: string | null;
+    documentosIso: string | null;
+    verificadoPor: string | null;
 }
 
 export interface DocumentoDelPanel {
@@ -166,6 +190,34 @@ export async function getPanelResumenAtencionAction(): Promise<
     ]);
 
     const org = await prisma.organization.findUnique({ where: { id: auth.organizationId }, select: { name: true } });
+    const [plantilla, entregas, estados] = await Promise.all([
+        prisma.whatsappTemplate.findFirst({
+            where: { organizationId: auth.organizationId, kind: 'ATTENTION_SUMMARY_READY', isActive: true },
+            select: { id: true },
+        }),
+        prisma.attentionSummaryDelivery.findMany({
+            where: { attentionSummary: { organizationId: auth.organizationId } },
+            orderBy: { createdAt: 'desc' },
+            take: 30,
+            select: {
+                id: true,
+                channel: true,
+                purpose: true,
+                destinationMasked: true,
+                status: true,
+                statusReason: true,
+                noticeSentAt: true,
+                documentsSentAt: true,
+                verifiedBy: true,
+                attentionSummary: { select: { hisKey: true } },
+            },
+        }),
+        prisma.attentionSummary.groupBy({
+            by: ['status'],
+            where: { organizationId: auth.organizationId, receivedAt: { gte: desde30 } },
+            _count: { _all: true },
+        }),
+    ]);
     const idsRevisores = [...new Set(recientes.map((r) => r.reviewedByUserId).filter((x): x is string => !!x))];
     const revisores = idsRevisores.length
         ? await prisma.user.findMany({ where: { id: { in: idsRevisores } }, select: { id: true, email: true } })
@@ -202,6 +254,22 @@ export async function getPanelResumenAtencionAction(): Promise<
             medicion: resumirMediciones(fila?.resumenAtencionMedicion, new Date(ahora)),
             documentos: leerConfigDocumentos(fila?.resumenAtencion),
             nombreClinica: org?.name ?? '',
+            envio: {
+                plantillaConfigurada: plantilla !== null,
+                entregas: entregas.map((e) => ({
+                    id: e.id,
+                    historia: e.attentionSummary.hisKey,
+                    canal: e.channel,
+                    prueba: e.purpose === 'PRUEBA',
+                    destino: e.destinationMasked,
+                    estado: e.status,
+                    motivo: e.statusReason,
+                    avisoIso: e.noticeSentAt?.toISOString() ?? null,
+                    documentosIso: e.documentsSentAt?.toISOString() ?? null,
+                    verificadoPor: e.verifiedBy,
+                })),
+                porEstado: Object.fromEntries(estados.map((x) => [x.status, x._count._all])),
+            },
             revision: {
                 meta: LIMITES_RESUMEN_ATENCION.revisionesParaCerrar,
                 correctos: contar('CORRECTO'),
@@ -422,4 +490,71 @@ export async function updateDocumentosResumenAction(
     }
     revalidatePath('/dashboard/espejo/resumen-atencion');
     return { success: true };
+}
+
+// ─── Fase 4: envío por WhatsApp ─────────────────────────────────────────────
+
+/**
+ * «Enviar a pacientes», el canal WhatsApp, los servicios que envían y los
+ * números del modo prueba. Mientras no se apruebe el piloto, «Enviar» solo
+ * enciende con números del equipo (`aplicarCambioDeEnvio`).
+ */
+export async function updateEnvioResumenAction(
+    cambio: CambioEnvioResumen,
+): Promise<{ success: true } | { success: false; error: string }> {
+    const auth = await requireAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+    const fila = await prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId: auth.organizationId },
+        select: { resumenAtencion: true },
+    });
+    const r = aplicarCambioDeEnvio(fila?.resumenAtencion, {
+        enviar: cambio?.enviar,
+        whatsapp: cambio?.whatsapp,
+        serviciosWhatsapp: cambio?.serviciosWhatsapp,
+        destinosPrueba: cambio?.destinosPrueba,
+    });
+    if (!r.ok) return { success: false, error: r.error };
+    await prisma.hospitalMirrorConfig.update({
+        where: { organizationId: auth.organizationId },
+        data: { resumenAtencion: r.config as object },
+    });
+    if (r.cambios.length) {
+        await registrarActividad({
+            action: 'ATTENTION_SUMMARY_CONFIG_CHANGED',
+            message: 'Envío del resumen de la atención actualizado',
+            actor: { userId: auth.userId, role: auth.role },
+            organizationId: auth.organizationId,
+            metadata: { detalle: r.cambios.join(' · ').slice(0, 400) },
+        });
+    }
+    revalidatePath('/dashboard/espejo/resumen-atencion');
+    return { success: true };
+}
+
+/** «Enviar de prueba»: el aviso de este resumen a un número del modo prueba. */
+export async function enviarDePruebaAction(
+    id: string,
+    destino: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+    const auth = await requireAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+    if (typeof id !== 'string' || !UUID.test(id)) return { success: false, error: 'El resumen no existe.' };
+    const token = (await cookies()).get('auth_token')?.value;
+    let res: Response;
+    try {
+        res = await fetch(`${INTERNAL_API_URL}/attention-summaries/${id}/test-send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(token ? { Cookie: `auth_token=${token}` } : {}) },
+            body: JSON.stringify({ destino }),
+            cache: 'no-store',
+        });
+    } catch {
+        return { success: false, error: 'No se pudo contactar al servidor. Intente de nuevo.' };
+    }
+    if (res.status === 400) return { success: false, error: 'Solo se envía de prueba a un número de la lista del modo prueba.' };
+    if (!res.ok) return { success: false, error: errorDeLaApi(res) };
+    const r = (await res.json()) as { ok: boolean; motivo?: string };
+    revalidatePath('/dashboard/espejo/resumen-atencion');
+    return r.ok ? { success: true } : { success: false, error: `El aviso no salió: ${r.motivo ?? 'motivo desconocido'}` };
 }

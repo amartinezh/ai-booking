@@ -15,6 +15,7 @@ describe('variablesEsperadas', () => {
   //   3 → mirror-alert.service.ts (aviso al agendador)
   //   5 → aviso-cambio-hospital.service.ts (cita cancelada por el hospital)
   //   3 → mirror-alert.service.ts (aviso de pedidos de pacientes)
+  //   2 → attention-summary/resumen-envio.service.ts (documentos de la consulta)
   it.each<[TemplateKind, number]>([
     ['APPOINTMENT_REMINDER', 4],
     ['HIS_APPOINTMENT_CONFIRMATION', 4],
@@ -24,6 +25,7 @@ describe('variablesEsperadas', () => {
     ['SYNC_EXCEPTION_ALERT', 3],
     ['PATIENT_REQUEST_ALERT', 3],
     ['WAITLIST_SLOT_OFFER', 3],
+    ['ATTENTION_SUMMARY_READY', 2],
   ])('%s manda %i variables', (kind, cuantas) => {
     expect(variablesEsperadas(kind)).toBe(cuantas);
   });

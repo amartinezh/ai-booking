@@ -18,7 +18,14 @@ import DocumentosDelResumen from './DocumentosDelResumen';
  * marca cada uno «Correcto» o «Con error». La lista solo trae datos de control;
  * el contenido se pide a la API al abrir uno, y abrirlo queda registrado.
  */
-export default function RevisionResumenes({ revision }: { revision: PanelResumenAtencion['revision'] }) {
+export default function RevisionResumenes({
+    revision,
+    destinosPrueba = [],
+}: {
+    revision: PanelResumenAtencion['revision'];
+    /** Números del modo prueba: a ellos se puede enviar de prueba el aviso. */
+    destinosPrueba?: string[];
+}) {
     const router = useRouter();
     const [abriendo, startAbrir] = useTransition();
     const [guardando, startGuardar] = useTransition();
@@ -98,7 +105,7 @@ export default function RevisionResumenes({ revision }: { revision: PanelResumen
                         </button>
                     </div>
                     <DetalleResumen resumen={abierto.datos.resumen} />
-                    <DocumentosDelResumen id={abierto.id} />
+                    <DocumentosDelResumen id={abierto.id} destinosPrueba={destinosPrueba} />
                     <fieldset className="space-y-2 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900">
                         <legend className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                             ¿Coincide con lo que está en el HIS?

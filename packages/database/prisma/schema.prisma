@@ -461,6 +461,10 @@ enum WhatsappTemplateKind {
   // un teléfono del personal. Tres variables: cuántos casos, la cita más próxima y qué
   // pidió — sin datos del paciente. Ver mirror/mirror-alert.service.ts.
   PATIENT_REQUEST_ALERT
+  // 🩺 Resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md §3.3, D23): «tiene
+  // listos los documentos de su consulta», sin datos clínicos, con un botón de
+  // respuesta rápida «Recibir mis documentos». Dos variables: nombre y fecha.
+  ATTENTION_SUMMARY_READY
 }
 
 model WhatsappTemplate {
@@ -1154,8 +1158,9 @@ model AttentionSummary {
   reviewedAt       DateTime?
   reviewedByUserId String?
 
-  links    AttentionSummaryLink[]
-  accesses AttentionSummaryAccess[]
+  links      AttentionSummaryLink[]
+  accesses   AttentionSummaryAccess[]
+  deliveries AttentionSummaryDelivery[]
 
   @@unique([organizationId, hisKey])
   @@index([organizationId, attendedAt])
@@ -1204,6 +1209,41 @@ model AttentionSummaryAccess {
 
   @@index([attentionSummaryId, createdAt])
   @@index([linkId])
+}
+
+// 📨 Un envío del resumen por un canal (plan §4.4, Fase 4). El aviso sale con el
+// botón «Recibir mis documentos»; al tocarlo (y verificar), salen los documentos.
+// Del destino solo quedan su SHA-256 (para reconocer al que toca el botón) y su
+// forma enmascarada. Se borra con el resumen (al año).
+model AttentionSummaryDelivery {
+  id                 String           @id @default(uuid())
+  attentionSummaryId String
+  attentionSummary   AttentionSummary @relation(fields: [attentionSummaryId], references: [id], onDelete: Cascade)
+  // WHATSAPP | TELEGRAM | EMAIL
+  channel            String
+  // PACIENTE (el programador) | PRUEBA (el botón del panel, a un número del equipo)
+  purpose            String
+  destinationHash    String
+  destinationMasked  String
+  // PERFIL | HIS | ACOMPANANTE | PRUEBA
+  destinationOrigin  String?
+  // AVISO_ENVIADO | DOCUMENTOS_ENVIADOS | FALLO
+  status             String
+  statusReason       String?
+  templateName       String?
+  // NUMERO (ya escribió al asistente desde ese número) | FECHA_NACIMIENTO
+  verifiedBy         String?
+  // D4 en el chat: 5 fechas equivocadas bloquean una hora.
+  failedAttempts     Int              @default(0)
+  lockedUntil        DateTime?
+  noticeSentAt       DateTime?
+  documentsSentAt    DateTime?
+  createdByUserId    String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([attentionSummaryId])
+  @@index([destinationHash, createdAt])
 }
 
 enum AppointmentOrigin {
@@ -2818,6 +2858,10 @@ enum WhatsappMessageType {
   TEXT
   AUDIO
   TEMPLATE
+  // Resumen de la atención (Fase 4): los PDF, las imágenes de cada hoja y el aviso con botón.
+  DOCUMENT
+  IMAGE
+  INTERACTIVE
 }
 
 /// Para qué se envió el mensaje. Distinto de `WhatsappTemplateKind`, que solo
@@ -2830,6 +2874,7 @@ enum WhatsappMessageKind {
   MASS_NOTICE
   MANUAL
   SYSTEM_NOTICE
+  ATTENTION_SUMMARY
 }
 
 /// Estado de entrega según Meta. El orden importa: solo se avanza
@@ -2905,6 +2950,8 @@ enum TelegramMessageKind {
   WAITLIST_OFFER
   MANUAL
   SYSTEM_NOTICE
+  // Resumen de la atención (Fase 4): mismo valor que en WhatsApp.
+  ATTENTION_SUMMARY
 }
 
 /// Telegram no reporta entregado/leído: solo sabemos si aceptó el envío.

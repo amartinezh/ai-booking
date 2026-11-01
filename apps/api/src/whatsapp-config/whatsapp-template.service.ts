@@ -35,6 +35,8 @@ const TIPO_DE_MENSAJE: Record<WhatsappTemplateKind, WhatsappMessageKind> = {
   HIS_APPOINTMENT_CANCELLED: 'SYSTEM_NOTICE',
   // 🙋 Aviso al personal de lo que pidió un paciente con su cita cerca (2026-10-27).
   PATIENT_REQUEST_ALERT: 'SYSTEM_NOTICE',
+  // 🩺 «Tiene listos los documentos de su consulta» (resumen de la atención, Fase 4).
+  ATTENTION_SUMMARY_READY: 'ATTENTION_SUMMARY',
 };
 
 /**
@@ -182,8 +184,25 @@ export class WhatsappTemplateService {
     bodyParams?: string[];
     /** Cita a la que se refiere (recordatorios): queda en el libro de mensajes. */
     appointmentId?: string | null;
-  }): Promise<{ success: boolean; error?: string; templateName?: string }> {
-    const { organizationId, recipientId, kind, bodyParams = [] } = params;
+    /**
+     * Lo que devuelve cada botón de respuesta rápida al tocarlo, en el orden de
+     * la plantilla (el resumen de la atención manda el envío). Sin esto, Meta
+     * devuelve el texto del botón.
+     */
+    buttonPayloads?: string[];
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    templateName?: string;
+    wamid?: string | null;
+  }> {
+    const {
+      organizationId,
+      recipientId,
+      kind,
+      bodyParams = [],
+      buttonPayloads = [],
+    } = params;
 
     if (!organizationId || !recipientId) {
       return { success: false, error: 'missing-params' };
@@ -234,18 +253,28 @@ export class WhatsappTemplateService {
       template: {
         name: template.name,
         language: { code: template.language },
-        // `components` se omite cuando la plantilla no lleva variables: Meta
-        // rechaza un arreglo de parámetros que no case con la aprobación.
-        ...(bodyParams.length > 0
+        // `components` se omite cuando la plantilla no lleva variables ni
+        // botones: Meta rechaza un arreglo de parámetros que no case con la aprobación.
+        ...(bodyParams.length > 0 || buttonPayloads.length > 0
           ? {
               components: [
-                {
-                  type: 'body',
-                  parameters: bodyParams.map((text) => ({
-                    type: 'text',
-                    text,
-                  })),
-                },
+                ...(bodyParams.length > 0
+                  ? [
+                      {
+                        type: 'body',
+                        parameters: bodyParams.map((text) => ({
+                          type: 'text',
+                          text,
+                        })),
+                      },
+                    ]
+                  : []),
+                ...buttonPayloads.map((payload, index) => ({
+                  type: 'button',
+                  sub_type: 'quick_reply',
+                  index: String(index),
+                  parameters: [{ type: 'payload', payload }],
+                })),
               ],
             }
           : {}),
@@ -277,7 +306,11 @@ export class WhatsappTemplateService {
           appointmentId: params.appointmentId ?? null,
         },
       });
-      return { success: true, templateName: template.name };
+      return {
+        success: true,
+        templateName: template.name,
+        wamid: extraerWamid(response.data),
+      };
     } catch (error) {
       // El error de Axios llega sin tipar; se extrae el cuerpo de Meta si viene.
       const axiosError = error as {
@@ -295,4 +328,11 @@ export class WhatsappTemplateService {
       return { success: false, error: detail, templateName: template.name };
     }
   }
+}
+
+/** El id del mensaje que devolvió Meta (`messages[0].id`), si vino. */
+function extraerWamid(data: unknown): string | null {
+  const id = (data as { messages?: { id?: unknown }[] } | null)?.messages?.[0]
+    ?.id;
+  return typeof id === 'string' ? id : null;
 }

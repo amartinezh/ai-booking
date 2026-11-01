@@ -123,6 +123,7 @@ import {
 } from '@agenia/shared';
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
+import { ResumenChatService } from '../attention-summary/resumen-chat.service';
 import { formatForPatientInSentence } from '../common/business-hours';
 import {
   WhatsappMessageLogService,
@@ -459,6 +460,10 @@ export class ChatbotService implements OnModuleInit {
     // 📨 Plantillas de WhatsApp: la «Oferta de cupo» de la lista de espera a quien
     // no escribió en 24 h. Opcional: sin él (tests), solo se ofrece con texto.
     @Optional() private readonly plantillas?: WhatsappTemplateService,
+    // 🩺 Resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md, Fase 4): el botón
+    // «Recibir mis documentos», la fecha de nacimiento y «mis documentos».
+    // Opcional: sin él (tests), esos mensajes siguen el camino de siempre.
+    @Optional() private readonly resumenChat?: ResumenChatService,
   ) {}
 
   async onModuleInit() {
@@ -6405,6 +6410,20 @@ export class ChatbotService implements OnModuleInit {
       messageType,
     });
 
+    // 🩺 El toque del botón «Recibir mis documentos» (plantilla o mensaje con
+    // botón). Si no es de un resumen, sigue como cualquier botón: ignorado.
+    if (
+      this.resumenChat &&
+      (messageType === 'button' || messageType === 'interactive')
+    ) {
+      const payload =
+        event.button?.payload ?? event.interactive?.button_reply?.id;
+      if (
+        await this.resumenChat.manejarBoton(organizationId, senderId, payload)
+      )
+        return;
+    }
+
     if (messageType !== 'text' && messageType !== 'audio') return;
 
     const botName = await this.organizationSettings.getBotName(organizationId);
@@ -6465,6 +6484,17 @@ export class ChatbotService implements OnModuleInit {
         currentState,
         via: 'EMERGENCY_REGEX',
       });
+      return;
+    }
+
+    // 🩺 Resumen de la atención: la fecha de nacimiento que se pidió para
+    // entregar los documentos, o «mis documentos». Después de la emergencia, que
+    // siempre va primero; si no es ninguna de las dos, el turno sigue igual.
+    if (
+      messageType === 'text' &&
+      this.resumenChat &&
+      (await this.resumenChat.manejarTexto(organizationId, senderId, text))
+    ) {
       return;
     }
 

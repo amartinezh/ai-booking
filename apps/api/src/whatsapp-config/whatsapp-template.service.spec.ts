@@ -102,7 +102,11 @@ describe('WhatsappTemplateService', () => {
     const ctx = build();
     const res = await send(ctx);
 
-    expect(res).toEqual({ success: true, templateName: 'recordatorio_cita' });
+    expect(res).toEqual({
+      success: true,
+      templateName: 'recordatorio_cita',
+      wamid: 'w1',
+    });
     const body = bodyOf(ctx.post);
     expect(body).toMatchObject({
       messaging_product: 'whatsapp',
@@ -112,6 +116,32 @@ describe('WhatsappTemplateService', () => {
         language: { code: 'es_CO' },
       },
     });
+  });
+
+  it('el botón de respuesta rápida lleva el código que devuelve al tocarlo', async () => {
+    const ctx = build();
+    await ctx.service.sendTemplate({
+      organizationId: ORG,
+      recipientId: PHONE,
+      kind: 'ATTENTION_SUMMARY_READY' as any,
+      bodyParams: ['Ana', 'sábado, 1 de noviembre'],
+      buttonPayloads: ['resumen:abc'],
+    });
+    expect(bodyOf(ctx.post).template.components).toEqual([
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: 'Ana' },
+          { type: 'text', text: 'sábado, 1 de noviembre' },
+        ],
+      },
+      {
+        type: 'button',
+        sub_type: 'quick_reply',
+        index: '0',
+        parameters: [{ type: 'payload', payload: 'resumen:abc' }],
+      },
+    ]);
   });
 
   it('teléfono → `to`; BSUID → `recipient`', async () => {

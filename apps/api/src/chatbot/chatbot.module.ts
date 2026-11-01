@@ -18,6 +18,7 @@ import { AudioConfigModule } from '../audio-config/audio-config.module';
 import { SurveyModule } from '../survey/survey.module';
 import { TelegramCoreModule } from '../telegram/telegram-core.module';
 import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
+import { AttentionSummaryModule } from '../attention-summary/attention-summary.module';
 
 @Module({
   imports: [
@@ -32,6 +33,9 @@ import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
     // Envío por Telegram (sin rutas: el webhook vive en TelegramModule, que
     // solo se registra con TELEGRAM_ENABLED=true).
     TelegramCoreModule,
+    // 🩺 El botón «Recibir mis documentos» y «mis documentos» del resumen de la
+    // atención (docs/PLAN_RESUMEN_ATENCION.md, Fase 4). No importa este módulo.
+    AttentionSummaryModule,
   ],
   controllers: [ChatbotController],
   providers: [

@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
+import { enmascararDestino } from '@agenia/shared';
 import { formatAppointmentShort } from '@/lib/date';
 import {
     crearEnlaceDePruebaAction,
+    enviarDePruebaAction,
     listarDocumentosAction,
     type DocumentoDelPanel,
 } from '@/app/actions/resumen-atencion';
@@ -18,12 +20,25 @@ const enlace = (id: string, doc: string, formato: 'pdf' | 'png', hoja = 1) =>
  * papel que imprime el HIS, y un enlace de prueba a la página del paciente para
  * verla en un celular. Cada archivo que se abre queda en la Actividad de usuarios.
  */
-export default function DocumentosDelResumen({ id }: { id: string }) {
+export default function DocumentosDelResumen({ id, destinosPrueba = [] }: { id: string; destinosPrueba?: string[] }) {
     const [documentos, setDocumentos] = useState<DocumentoDelPanel[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [enlacePrueba, setEnlacePrueba] = useState<{ url: string; expiraIso: string } | null>(null);
     const [copiado, setCopiado] = useState(false);
     const [generando, startGenerar] = useTransition();
+    const [destino, setDestino] = useState(destinosPrueba[0] ?? '');
+    const [enviando, startEnviar] = useTransition();
+    const [avisoPrueba, setAvisoPrueba] = useState<string | null>(null);
+
+    const enviarPrueba = () => {
+        setError(null);
+        setAvisoPrueba(null);
+        startEnviar(async () => {
+            const r = await enviarDePruebaAction(id, destino);
+            if (r.success) setAvisoPrueba(`Aviso enviado a ${enmascararDestino(destino)}. Toque el botón en ese celular.`);
+            else setError(r.error);
+        });
+    };
 
     useEffect(() => {
         let vivo = true;
@@ -113,6 +128,41 @@ export default function DocumentosDelResumen({ id }: { id: string }) {
                     )}
                 </ul>
             )}
+            <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800" data-testid="enviar-de-prueba">
+                {destinosPrueba.length === 0 ? (
+                    <p className="text-xs text-zinc-500">
+                        Para enviar de prueba por WhatsApp, agregue arriba los números del equipo (modo prueba).
+                    </p>
+                ) : (
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <span className="text-zinc-700 dark:text-zinc-300">Enviar de prueba por WhatsApp a</span>
+                        <select
+                            value={destino}
+                            onChange={(e) => setDestino(e.target.value)}
+                            aria-label="Número de prueba"
+                            className="rounded-lg border border-zinc-300 bg-white px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                        >
+                            {destinosPrueba.map((d) => (
+                                <option key={d} value={d}>
+                                    {enmascararDestino(d)}
+                                </option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={enviarPrueba}
+                            disabled={enviando || !destino}
+                            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-800 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                        >
+                            {enviando ? 'Enviando…' : 'Enviar de prueba'}
+                        </button>
+                    </div>
+                )}
+                {avisoPrueba && <p className="text-sm text-emerald-700 dark:text-emerald-400">{avisoPrueba}</p>}
+                <p className="text-xs text-zinc-500">
+                    Llega el aviso con el botón «Recibir mis documentos». Como ese número no es el del paciente, el asistente
+                    pedirá la fecha de nacimiento del paciente antes de mandar los documentos.
+                </p>
+            </div>
             <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
                 <button
                     onClick={generar}

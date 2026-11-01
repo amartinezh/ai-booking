@@ -35,7 +35,8 @@ export type TemplateKind =
   | 'SYNC_EXCEPTION_ALERT'
   | 'HIS_APPOINTMENT_CONFIRMATION'
   | 'HIS_APPOINTMENT_CANCELLED'
-  | 'PATIENT_REQUEST_ALERT';
+  | 'PATIENT_REQUEST_ALERT'
+  | 'ATTENTION_SUMMARY_READY';
 
 export interface ContratoPlantilla {
   label: string;
@@ -122,6 +123,13 @@ export const TEMPLATE_CONTRACTS: Record<TemplateKind, ContratoPlantilla> = {
       'La cita más próxima (médico y hora)',
       'Qué pidió el paciente (en un recordatorio empieza por «RECORDATORIO 1 de 2: nadie lo ha tomado en la bandeja»)',
     ],
+  },
+  // 🩺 2026-11-01: resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md §3.3, D23).
+  ATTENTION_SUMMARY_READY: {
+    label: 'Documentos de la consulta (resumen de la atención)',
+    description:
+      'Avisa al paciente que el hospital tiene listos los documentos de su consulta (resumen, fórmula y órdenes), sin datos clínicos. Categoría Utilidad, con UN botón de respuesta rápida «Recibir mis documentos»: al tocarlo, el asistente le envía los documentos en PDF e imagen (y antes le pide la fecha de nacimiento si el número no está verificado). Solo se usa si el paciente no ha escrito en las últimas 24 h; dentro de ese plazo sale como mensaje con el mismo botón. Ejemplo: «Hola {{1}}, el hospital tiene listos los documentos de su consulta del {{2}}: resumen, fórmula y órdenes. Toque el botón para recibirlos aquí.»',
+    variables: ['Nombre del paciente', 'Fecha de la consulta (por ejemplo «1 de noviembre»)'],
   },
 };
 

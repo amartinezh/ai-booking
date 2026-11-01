@@ -17,7 +17,7 @@ jest.mock('next/headers', () => ({
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
 import { registrarActividad } from '@/lib/actividad/registrar';
-import { abrirResumenAction, revisarResumenAction } from './resumen-atencion';
+import { abrirResumenAction, enviarDePruebaAction, revisarResumenAction, updateEnvioResumenAction } from './resumen-atencion';
 
 /**
  * Revisión del resumen de la atención (cierre de la Fase 1). Lo que se fija:
@@ -123,5 +123,50 @@ describe('acciones de revisión del resumen de la atención', () => {
     it('abrir: un id que no es de un resumen no llega a la API', async () => {
         await expect(abrirResumenAction('../soporte')).resolves.toEqual({ success: false, error: 'El resumen no existe.' });
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    describe('envío (Fase 4)', () => {
+        const mockUpdateConfig = prisma.hospitalMirrorConfig.update as jest.Mock;
+        beforeEach(() => {
+            mockEspejo.mockImplementation(async (args: { select: Record<string, boolean> }) =>
+                args.select.resumenAtencion
+                    ? { resumenAtencion: { leerDelHospital: true, servicios: { S39141: {} } } }
+                    : { driverKey: 'cnt-sanvicente-anserma', enabled: true },
+            );
+        });
+
+        it('«Enviar» sin números del equipo no se guarda', async () => {
+            await expect(updateEnvioResumenAction({ enviar: true })).resolves.toMatchObject({ success: false });
+            expect(mockUpdateConfig).not.toHaveBeenCalled();
+        });
+
+        it('con números del equipo se guarda y queda en la Actividad, sin números completos', async () => {
+            await expect(
+                updateEnvioResumenAction({ enviar: true, whatsapp: true, serviciosWhatsapp: ['S39141'], destinosPrueba: ['3001234567'] }),
+            ).resolves.toEqual({ success: true });
+            expect(mockUpdateConfig.mock.calls[0][0].data.resumenAtencion).toMatchObject({
+                enviar: true,
+                canales: { WHATSAPP: true },
+                modoPrueba: { destinos: ['573001234567'] },
+            });
+            const actividad = mockActividad.mock.calls[0][0];
+            expect(actividad.action).toBe('ATTENTION_SUMMARY_CONFIG_CHANGED');
+            expect(JSON.stringify(actividad)).not.toContain('3001234567');
+        });
+
+        it('enviar de prueba: la API con la sesión; un número fuera de la lista lo dice', async () => {
+            fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ok: true }) });
+            await expect(enviarDePruebaAction(ID, '573001234567')).resolves.toEqual({ success: true });
+            const [url, init] = fetchMock.mock.calls[0];
+            expect(String(url)).toMatch(new RegExp(`/attention-summaries/${ID}/test-send$`));
+            expect(JSON.parse(init.body)).toEqual({ destino: '573001234567' });
+            fetchMock.mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({}) });
+            await expect(enviarDePruebaAction(ID, '3109998877')).resolves.toEqual({
+                success: false,
+                error: 'Solo se envía de prueba a un número de la lista del modo prueba.',
+            });
+            fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ok: false, motivo: 'plantilla' }) });
+            await expect(enviarDePruebaAction(ID, '573001234567')).resolves.toEqual({ success: false, error: 'El aviso no salió: plantilla' });
+        });
     });
 });

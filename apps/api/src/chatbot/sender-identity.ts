@@ -82,6 +82,13 @@ export interface WhatsappInboundEvent {
   /** `mid` solo en formato Messenger legacy; Cloud API usa el `id` de arriba. */
   message?: { text?: string; mid?: string };
   audio?: { id?: string };
+  /** Toque de un botón de respuesta rápida de una PLANTILLA (`type: 'button'`). */
+  button?: { payload?: string; text?: string };
+  /** Toque de un botón de un mensaje interactivo (`type: 'interactive'`). */
+  interactive?: {
+    type?: string;
+    button_reply?: { id?: string; title?: string };
+  };
   metadata?: { phone_number_id?: string };
   /** Solo en eventos de Telegram. Ver TELEGRAM_ORIGIN. */
   [TELEGRAM_ORIGIN]?: TelegramOrigin;

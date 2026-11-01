@@ -108,23 +108,12 @@ export class ResumenEnlacesService {
         'El resumen no existe o su contenido ya se borró.',
       );
 
-    const token = randomBytes(16).toString('base64url');
-    // 30 días, sin pasar del día en que se borra el contenido.
-    const expiresAt = new Date(
-      Math.min(
-        Date.now() + LIMITES_RESUMEN_ATENCION.retencionContenidoDias * MS_DIA,
-        fila.contentExpiresAt.getTime(),
-      ),
+    const { token, expiresAt } = await this.crearEnlace(
+      fila.id,
+      fila.contentExpiresAt,
+      'PRUEBA',
+      quien.userId,
     );
-    await this.prisma.attentionSummaryLink.create({
-      data: {
-        attentionSummaryId: fila.id,
-        tokenHash: hashDelToken(token),
-        purpose: 'PRUEBA',
-        createdByUserId: quien.userId,
-        expiresAt,
-      },
-    });
     await this.bitacora?.event({
       action: 'ATTENTION_SUMMARY_TEST_LINK_CREATED',
       message: `${quien.email} generó un enlace de prueba al resumen de la historia ${fila.hisKey}.`,
@@ -137,6 +126,35 @@ export class ResumenEnlacesService {
       },
     });
     return { token, expiraIso: expiresAt.toISOString() };
+  }
+
+  /**
+   * Un enlace nuevo a la página del resumen: 30 días, sin pasar del día en que
+   * se borra el contenido. El token solo existe aquí; en la base, su huella.
+   */
+  async crearEnlace(
+    attentionSummaryId: string,
+    contentExpiresAt: Date,
+    purpose: 'PRUEBA' | 'PACIENTE',
+    createdByUserId: string | null,
+  ): Promise<{ token: string; expiresAt: Date }> {
+    const token = randomBytes(16).toString('base64url');
+    const expiresAt = new Date(
+      Math.min(
+        Date.now() + LIMITES_RESUMEN_ATENCION.retencionContenidoDias * MS_DIA,
+        contentExpiresAt.getTime(),
+      ),
+    );
+    await this.prisma.attentionSummaryLink.create({
+      data: {
+        attentionSummaryId,
+        tokenHash: hashDelToken(token),
+        purpose,
+        createdByUserId,
+        expiresAt,
+      },
+    });
+    return { token, expiresAt };
   }
 
   // ─── Página pública ─────────────────────────────────────────────────────

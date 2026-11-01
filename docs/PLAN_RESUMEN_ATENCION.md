@@ -1,6 +1,6 @@
 # Resumen de la atención al paciente por WhatsApp y correo
 
-**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01 (commit 3584864), y ese mismo día la revisión contra el HIS y la medición de la carga (§8.3, commit 2c2ffbd). Fase 2 (documentos en PDF e imagen y página del paciente) implementada el mismo día, sin commit (§8.4). Nada desplegado.** Todo nace apagado; no se le envía nada a ningún paciente.
+**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01 (commit 3584864), y ese mismo día la revisión contra el HIS y la medición de la carga (§8.3, commit 2c2ffbd). Fase 2 (documentos en PDF e imagen y página del paciente) el mismo día (§8.4, commit 5dcd5f1). Fase 4, primera parte (WhatsApp en modo prueba) implementada el mismo día, sin commit (§8.5). Nada desplegado.** Todo nace apagado; no se le envía nada a ningún paciente.
 **Primer hospital:** San Vicente de Paúl de Anserma (driver `cnt-sanvicente-anserma`).
 
 ## 1. Qué se pide
@@ -638,6 +638,33 @@ Como todo nace apagado y casi todo es configuración (§3.11), la mayoría de la
 - poner el encabezado real del hospital;
 - D21: QR y quitar la marca de agua, si el hospital lo aprueba;
 - D22: imagen de la firma, si se exige.
+
+### 8.5 Fase 4, primera parte: WhatsApp en modo prueba (2026-11-01)
+
+La Fase 3 (correo) espera D12 (proveedor y remitente) y llegaría a muy pocos pacientes (97 % de correos de relleno), así que se adelantó WhatsApp, el canal principal.
+
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| Reglas compartidas | `packages/shared/src/resumen-envio.ts` | Exclusiones D7 (`EXCLUSIONES_POR_DEFECTO`: la lista de §3.7 y los CUPS de psiquiatría y psicología de la ronda 6, configurable en `resumenAtencion.exclusiones`), destinatarios D5/D6 (`candidatosDeDestino`), horario, el código del botón (`resumen:<envío>`), «mis documentos» y `aplicarCambioDeEnvio`: «Enviar» solo enciende con números del modo prueba. |
+| Base | migración `20261101220000_resumen_atencion_envio` | `AttentionSummaryDelivery` (destino solo como SHA-256 y enmascarado, estado, motivo, verificación, intentos y bloqueo), plantilla `ATTENTION_SUMMARY_READY`, tipos `DOCUMENT`/`IMAGE`/`INTERACTIVE` y `ATTENTION_SUMMARY` en los libros de mensajes. |
+| Programador | `ResumenEnvioService` (cada 2 min) | Atenciones de las últimas 24 h, en horario, con «Enviar» encendido. Exclusión → `EXCLUIDO`; baja → `EXCLUIDO`; sin número → `SIN_CONTACTO`; interruptores que no dejan → espera. El aviso sale con la plantilla y su botón, o como mensaje con botón dentro de la ventana de 24 h. |
+| Chat | `ResumenChatService`, enganchado al asistente | Toque del botón (solo desde el número al que se envió) → si el número está verificado, documentos; si no, la fecha de nacimiento (5 intentos, 1 h de bloqueo). Cada documento en PDF y una imagen por hoja (subidos a Meta), y el enlace a la página. «mis documentos» los vuelve a pedir. |
+| Panel | `/dashboard/espejo/resumen-atencion` | «Enviar a pacientes», canal WhatsApp, columna WhatsApp por servicio, números del equipo, «Enviar de prueba» desde un resumen y «Seguimiento de envíos». |
+
+**Pruebas:** reglas, programador, chat, el gancho del asistente (el botón y el texto pasan primero; la emergencia, antes), acciones y pantalla. También una prueba de punta a punta con Postgres y Redis reales en la que solo Meta era de mentira: aviso con plantilla, exclusión, espera por modo prueba, sin repetir, botón, fecha equivocada y correcta, PDF e imágenes, enlace, libro de mensajes, «mis documentos» y mensaje con botón dentro de la ventana. Sin deriva entre la migración y el esquema.
+
+**Plantilla para Meta** (categoría Utilidad, idioma «es»), sugerida:
+> Hola {{1}}, el Hospital San Vicente de Paúl tiene listos los documentos de su consulta del {{2}}: resumen, fórmula y órdenes. Toque el botón para recibirlos aquí.
+> Botón de respuesta rápida: «Recibir mis documentos».
+
+Se registra en Configuración › Integraciones › Plantillas de WhatsApp como «Documentos de la consulta».
+
+**Despliegue:** migración → API → web. El agente no cambia.
+
+**Falta en la Fase 4:**
+- Telegram: aviso con botón en línea, `sendDocument`/`sendMediaGroup` y caída a WhatsApp (D26);
+- la baja escrita («no quiero resúmenes»), como la de los recordatorios;
+- la prueba con teléfonos reales del equipo y la plantilla aprobada por Meta.
 
 ## 9. Volumen y costo
 
