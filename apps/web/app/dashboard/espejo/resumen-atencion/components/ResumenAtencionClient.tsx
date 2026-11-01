@@ -7,6 +7,7 @@ import { LIMITES_RESUMEN_ATENCION } from '@agenia/shared';
 import { formatAppointmentCompact } from '@/lib/date';
 import { updateLecturaResumenAction, type PanelResumenAtencion } from '@/app/actions/resumen-atencion';
 import RevisionResumenes from './RevisionResumenes';
+import EncabezadoDocumentos from './EncabezadoDocumentos';
 
 const CANALES = [
     { clave: 'WHATSAPP', nombre: 'WhatsApp' },
@@ -83,8 +84,9 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                 <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">Resumen de la atención</h1>
                 <p className="max-w-3xl text-sm text-zinc-600 dark:text-zinc-400">
                     Cuando el médico termina la historia en el sistema del hospital, el paciente recibirá el resumen de su
-                    consulta, su fórmula y sus órdenes. Por ahora solo existe la <strong>lectura en sombra</strong>: AgenIA lee
-                    las historias terminadas y las guarda cifradas 30 días para revisarlas.{' '}
+                    consulta, su fórmula y sus órdenes. Por ahora existen la <strong>lectura en sombra</strong> (AgenIA lee las
+                    historias terminadas y las guarda cifradas 30 días para revisarlas) y los <strong>documentos de prueba</strong>{' '}
+                    en PDF e imagen.{' '}
                     <strong>No se le envía nada a ningún paciente.</strong>
                 </p>
                 <p className="text-sm font-medium" data-testid="estado-lectura">
@@ -252,6 +254,8 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                     )}
                 </div>
             </section>
+
+            <EncabezadoDocumentos documentos={panel.documentos} nombreClinica={panel.nombreClinica} />
 
             <RevisionResumenes revision={panel.revision} />
         </div>

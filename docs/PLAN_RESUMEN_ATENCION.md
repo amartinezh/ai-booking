@@ -1,6 +1,6 @@
 # Resumen de la atención al paciente por WhatsApp y correo
 
-**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01 (commit 3584864), y ese mismo día la revisión contra el HIS y la medición de la carga (§8.3), sin desplegar.** Todo nace apagado.
+**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01 (commit 3584864), y ese mismo día la revisión contra el HIS y la medición de la carga (§8.3, commit 2c2ffbd). Fase 2 (documentos en PDF e imagen y página del paciente) implementada el mismo día, sin commit (§8.4). Nada desplegado.** Todo nace apagado; no se le envía nada a ningún paciente.
 **Primer hospital:** San Vicente de Paúl de Anserma (driver `cnt-sanvicente-anserma`).
 
 ## 1. Qué se pide
@@ -613,6 +613,31 @@ Como todo nace apagado y casi todo es configuración (§3.11), la mayoría de la
 **Orden de despliegue:** migraciones → API → agente (bundle nuevo en el servidor del hospital) → web. Encender la lectura en producción espera el contrato ampliado y los permisos (P-7), según §8.2.
 
 **La Fase 1 se cierra cuando** el hospital marque 20 resúmenes «Correcto» sin ninguno «Con error» pendiente, y la medición muestre que la consulta pesa poco en el HIS. Las dos cosas se ven en la pantalla, pero exigen encender la lectura en producción (§8.2).
+
+### 8.4 Fase 2: lo construido (2026-11-01)
+
+**Motor (decisión de §3.9).** pdfkit 0.20.2 para el PDF y @napi-rs/canvas 1.0.11 para la imagen, las dos con licencia MIT. Chromium se descartó: pesa demasiado para la imagen Debian de la API. Las dos librerías dibujan la **misma** lista de elementos con posición (el «plano» de cada hoja), con la misma letra (Noto Sans, OFL, incluida en el repositorio), así que el PDF y la imagen no pueden decir cosas distintas. La imagen no sale de rasterizar el PDF, como proponía §3.9: sale del mismo plano, que da el mismo resultado sin otra dependencia.
+
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| Reglas compartidas | `packages/shared/src/resumen-documentos.ts` | `documentosDelResumen` (D20: el resumen, una fórmula por orden con las posfechadas aparte (D25), las órdenes de exámenes, las remisiones y las incapacidades), `contenidoDelResumen` (§3.2, cada medicamento una vez con sus entregas), `cantidadEnLetras` en español, `hastaDeIncapacidad`, y `leerConfigDocumentos`/`aplicarCambioDeDocumentos` para el encabezado, el logo y el pie. La marca de agua no se puede quitar desde el panel (D21). |
+| Generador | `apps/api/src/attention-summary/documentos/` | `plano.ts` (renglones y saltos de hoja sin partir un medicamento), `plantillas.ts` (encabezado y «Registro» como el papel, el cuerpo de cada documento y el pie con el médico, «Firmado electrónicamente por…» en texto (D22), «Generado para el paciente» y «Hoja N de M»), `render.ts` (PDF y PNG; PDF con clave AES-256 para el correo) y `generador.ts`. Carta, márgenes de 1,5 cm, letra de 10 puntos o más, en blanco y negro. Medido: PDF de 13-17 KB por documento; PNG de 1.700 × 2.200 de 250-580 KB, ~100 ms por hoja. |
+| Vista previa del personal | `GET /attention-summaries/:id/documents[/:doc]` | Solo el Administrador. Cada archivo deja `ATTENTION_SUMMARY_DOCUMENT_VIEWED`. En el panel aparecen debajo del resumen abierto, con PDF, imagen por hoja y «Todos en un solo PDF». |
+| Encabezado | «Encabezado de los documentos» en el panel | Nombre, NIT, dirección, teléfono, logo (PNG o JPEG de hasta 150 KB) y pie. Se copian una vez de `ENTIDAD`. |
+| Enlaces | `AttentionSummaryLink` (migración `20261101200000_resumen_atencion_enlaces`) | Token de 128 bits; en la base solo queda su SHA-256. Vence a los 30 días, sin pasar del borrado del contenido. Fase 2: solo PRUEBA, del Administrador (`ATTENTION_SUMMARY_TEST_LINK_CREATED`). |
+| Página del paciente | `/resumen/<token>` y `/public/attention-summaries/*` | Fecha de nacimiento en día, mes y año (D4: 5 intentos y luego una hora de bloqueo). Con ella, un acceso firmado de 30 minutos en una cookie limitada al enlace. Muestra el resumen, cada documento (descargar PDF y ver imagen), «Descargar todos» y «Salir». Sin la fecha en el HIS, manda al hospital. |
+| Bitácora | `AttentionSummaryAccess` | Cada apertura, verificación, vista y descarga, con la IP y el navegador, sin contenido. Se borra con el resumen, al año. |
+
+**Pruebas:** reglas, maquetador, generador real (PDF, PNG, clave, marca de agua en cada hoja, nada fuera de la hoja), enlaces (fecha, bloqueo, acceso de otro enlace, acceso vencido o falsificado), acciones y rutas de la web. Además, una prueba de punta a punta con la base Postgres desechable, la API escuchando y la web compilada: enlace, página que pide la fecha, fecha equivocada y correcta, contenido, descargas, bloqueo y bitácora. Sin deriva entre la migración y el esquema.
+
+**Despliegue:** migración → API (instala pdfkit y @napi-rs/canvas; el lockfile ya trae el binario de Linux x64) → web. El agente no cambia. El Caddy tampoco: la página habla con la API por la red interna.
+
+**Falta para cerrar la Fase 2 (§8):**
+- comparar los documentos con los PDF del HIS de E7 en PRUEBAS (`sql/HISTORIA_CLINICA_COMPARAR_PAPEL_PRUEBAS_SOLO_LECTURA.sql`);
+- leerlos en celulares reales e imprimirlos;
+- poner el encabezado real del hospital;
+- D21: QR y quitar la marca de agua, si el hospital lo aprueba;
+- D22: imagen de la firma, si se exige.
 
 ## 9. Volumen y costo
 

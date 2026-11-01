@@ -1154,10 +1154,56 @@ model AttentionSummary {
   reviewedAt       DateTime?
   reviewedByUserId String?
 
+  links    AttentionSummaryLink[]
+  accesses AttentionSummaryAccess[]
+
   @@unique([organizationId, hisKey])
   @@index([organizationId, attendedAt])
   @@index([contentExpiresAt])
   @@index([patientProfileId])
+}
+
+// 🔗 Enlace a la página del resumen (`/resumen/<token>`, plan §3.5). El token
+// (128 bits) solo se muestra una vez; aquí queda su SHA-256. Fase 2: solo
+// enlaces de PRUEBA que genera el administrador; los del PACIENTE llegan con el
+// envío. Se borra con el resumen (al año).
+model AttentionSummaryLink {
+  id                 String           @id @default(uuid())
+  attentionSummaryId String
+  attentionSummary   AttentionSummary @relation(fields: [attentionSummaryId], references: [id], onDelete: Cascade)
+  tokenHash          String           @unique
+  // PRUEBA | PACIENTE
+  purpose            String
+  createdByUserId    String?
+  createdAt          DateTime         @default(now())
+  expiresAt          DateTime
+  // D4: 5 fechas de nacimiento equivocadas bloquean el enlace una hora.
+  failedAttempts     Int              @default(0)
+  lockedUntil        DateTime?
+  revokedAt          DateTime?
+
+  accesses AttentionSummaryAccess[]
+
+  @@index([attentionSummaryId])
+}
+
+// Bitácora de la página del resumen: quién entró, cuándo, si verificó y qué
+// descargó (la ley exige saber quién accedió a una historia). Sin contenido.
+model AttentionSummaryAccess {
+  id                 String                @id @default(uuid())
+  attentionSummaryId String
+  attentionSummary   AttentionSummary      @relation(fields: [attentionSummaryId], references: [id], onDelete: Cascade)
+  linkId             String?
+  link               AttentionSummaryLink? @relation(fields: [linkId], references: [id], onDelete: SetNull)
+  // ABRIR | VERIFICAR_OK | VERIFICAR_FALLO | BLOQUEADO | DOCUMENTO
+  kind               String
+  documentId         String?
+  ip                 String?
+  userAgent          String?
+  createdAt          DateTime              @default(now())
+
+  @@index([attentionSummaryId, createdAt])
+  @@index([linkId])
 }
 
 enum AppointmentOrigin {

@@ -140,6 +140,7 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     MASS_NOTICE_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la configuración de los avisos masivos' },
     // `aviso`: encender la lectura hace que el agente lea historias clínicas del hospital.
     ATTENTION_SUMMARY_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la configuración del resumen de la atención', aviso: true },
+    ATTENTION_SUMMARY_DOCUMENTS_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió el encabezado de los documentos del resumen de la atención' },
     BILLING_UPDATED: { categoria: 'PLATAFORMA', titulo: 'Cambió la facturación de la clínica' },
 
     // ── Padrón, solicitudes, avisos y soporte ──
@@ -159,6 +160,9 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     // Resumen de la atención (Fase 1): abrirlo lo anota la API, que es la que lo descifra.
     ATTENTION_SUMMARY_VIEWED: { categoria: 'HISTORIA', titulo: 'Abrió un resumen de la atención del hospital', mensaje: true },
     ATTENTION_SUMMARY_REVIEWED: { categoria: 'HISTORIA', titulo: 'Revisó un resumen de la atención contra el HIS', mensaje: true },
+    // Fase 2: documentos y página del paciente. La API anota los dos primeros.
+    ATTENTION_SUMMARY_DOCUMENT_VIEWED: { categoria: 'HISTORIA', titulo: 'Abrió un documento de un resumen de la atención', mensaje: true },
+    ATTENTION_SUMMARY_TEST_LINK_CREATED: { categoria: 'HISTORIA', titulo: 'Generó un enlace de prueba a un resumen de la atención', mensaje: true, aviso: true },
 
     // ── Sesiones, pantallas y descargas ──
     SESSIONS_REVOKED: { categoria: 'SEGURIDAD', titulo: 'Cerró sesiones a la fuerza', aviso: true },

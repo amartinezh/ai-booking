@@ -11,6 +11,7 @@ import {
     type ResumenAbierto,
 } from '@/app/actions/resumen-atencion';
 import DetalleResumen from './DetalleResumen';
+import DocumentosDelResumen from './DocumentosDelResumen';
 
 /**
  * Cierre de la Fase 1 (plan §8): el hospital compara resúmenes con el HIS y
@@ -97,6 +98,7 @@ export default function RevisionResumenes({ revision }: { revision: PanelResumen
                         </button>
                     </div>
                     <DetalleResumen resumen={abierto.datos.resumen} />
+                    <DocumentosDelResumen id={abierto.id} />
                     <fieldset className="space-y-2 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900">
                         <legend className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                             ¿Coincide con lo que está en el HIS?

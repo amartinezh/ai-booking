@@ -6,7 +6,8 @@
     "deleteOutDir": true,
     "assets": [
       { "include": "chatbot/*.txt", "watchAssets": true },
-      { "include": "chatbot/*.md", "watchAssets": true }
+      { "include": "chatbot/*.md", "watchAssets": true },
+      { "include": "attention-summary/documentos/fuentes/*", "watchAssets": false }
     ]
   }
 }

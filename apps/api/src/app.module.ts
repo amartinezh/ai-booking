@@ -24,6 +24,7 @@ import { OrganizationsModule } from './organizations/organizations.module';
 import { SurveyModule } from './survey/survey.module';
 import { MonitorModule } from './monitor/monitor.module';
 import { MirrorModule } from './mirror/mirror.module';
+import { AttentionSummaryModule } from './attention-summary/attention-summary.module';
 import { MassNoticeModule } from './mass-notice/mass-notice.module';
 import { RetentionModule } from './retention/retention.module';
 import { TelegramModule, telegramEnabled } from './telegram/telegram.module';
@@ -82,6 +83,9 @@ import {
     // 🪞 Espejo de citas con HIS externos (patrón de drivers) — Fase 1.
     // Ver docs/PLAN_ESPEJO_HOSPITAL.md.
     MirrorModule,
+    // 🩺 Resumen de la atención, Fase 2: documentos en PDF e imagen y la página
+    // del paciente (/resumen/<token>). Nada se envía todavía.
+    AttentionSummaryModule,
     // 📣 Avisos masivos — EXCLUSIVO del driver cnt-sanvicente-anserma. Ver
     // docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md.
     MassNoticeModule,

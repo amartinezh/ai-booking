@@ -19,31 +19,33 @@
 // ─────────────────────────────────────────────────────────────
 
 import { revalidatePath } from 'next/cache';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/session';
+import { adminDelResumen } from '@/lib/resumen/acceso';
+import { INTERNAL_API_URL } from '@/lib/resumen/api';
 import { registrarActividad } from '@/lib/actividad/registrar';
 import {
     LIMITES_RESUMEN_ATENCION,
+    aplicarCambioDeDocumentos,
     aplicarCambioDeLectura,
     configResumenAtencionApagada,
+    leerConfigDocumentos,
     leerConfigResumenAtencion,
     resumirMediciones,
     validarRevision,
+    type CambioDocumentosResumen,
     type CambioLecturaResumen,
+    type ConfigDocumentosResumen,
     type ConfigResumenAtencion,
     type ResultadoRevisionResumen,
     type ResumenAtencionHis,
     type ResumenMedicionesLectura,
 } from '@agenia/shared';
 
-const DRIVER = 'cnt-sanvicente-anserma';
 const MS_DIA = 86_400_000;
 /** Resúmenes que se listan para revisar (los más recientes). */
 const RECIENTES = 40;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const INTERNAL_API_URL =
-    process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 export interface ServicioDelPanel {
     codigo: string;
@@ -83,6 +85,17 @@ export interface PanelResumenAtencion {
     /** Cuánto tardaron las consultas del agente al HIS en el último día. */
     medicion: ResumenMedicionesLectura | null;
     revision: { meta: number; correctos: number; conError: number; recientes: FilaResumenParaRevisar[] };
+    /** Encabezado, logo, pie y marca de agua de los documentos (Fase 2). */
+    documentos: ConfigDocumentosResumen;
+    /** Si el encabezado no tiene nombre, el de la clínica. */
+    nombreClinica: string;
+}
+
+export interface DocumentoDelPanel {
+    id: string;
+    titulo: string;
+    hojas: number;
+    nombreArchivo: string;
 }
 
 export interface ResumenAbierto {
@@ -92,17 +105,7 @@ export interface ResumenAbierto {
     attendedAt: string;
 }
 
-/** ORG_ADMIN de una clínica con el espejo ENCENDIDO y el driver de Anserma. Nunca dice cuál llave falló. */
-async function requireAdmin(): Promise<{ organizationId: string; userId: string; role: string } | null> {
-    const session = await getSession();
-    if (!session || session.role !== 'ORG_ADMIN' || !session.organizationId) return null;
-    const espejo = await prisma.hospitalMirrorConfig.findUnique({
-        where: { organizationId: session.organizationId },
-        select: { driverKey: true, enabled: true },
-    });
-    if (!espejo || !espejo.enabled || espejo.driverKey !== DRIVER) return null;
-    return { organizationId: session.organizationId, userId: session.userId, role: session.role };
-}
+const requireAdmin = adminDelResumen;
 
 export async function getPanelResumenAtencionAction(): Promise<
     { success: true; panel: PanelResumenAtencion } | { success: false; error: string }
@@ -162,6 +165,7 @@ export async function getPanelResumenAtencionAction(): Promise<
         }),
     ]);
 
+    const org = await prisma.organization.findUnique({ where: { id: auth.organizationId }, select: { name: true } });
     const idsRevisores = [...new Set(recientes.map((r) => r.reviewedByUserId).filter((x): x is string => !!x))];
     const revisores = idsRevisores.length
         ? await prisma.user.findMany({ where: { id: { in: idsRevisores } }, select: { id: true, email: true } })
@@ -196,6 +200,8 @@ export async function getPanelResumenAtencionAction(): Promise<
                     .sort((a, b) => b.cantidad - a.cantidad),
             },
             medicion: resumirMediciones(fila?.resumenAtencionMedicion, new Date(ahora)),
+            documentos: leerConfigDocumentos(fila?.resumenAtencion),
+            nombreClinica: org?.name ?? '',
             revision: {
                 meta: LIMITES_RESUMEN_ATENCION.revisionesParaCerrar,
                 correctos: contar('CORRECTO'),
@@ -323,6 +329,97 @@ export async function updateLecturaResumenAction(
         });
     }
 
+    revalidatePath('/dashboard/espejo/resumen-atencion');
+    return { success: true };
+}
+
+// ─── Fase 2: documentos ─────────────────────────────────────────────────────
+
+async function api(metodo: 'GET' | 'POST', ruta: string): Promise<Response | null> {
+    const token = (await cookies()).get('auth_token')?.value;
+    try {
+        return await fetch(`${INTERNAL_API_URL}${ruta}`, {
+            method: metodo,
+            headers: token ? { Cookie: `auth_token=${token}` } : {},
+            cache: 'no-store',
+        });
+    } catch {
+        return null;
+    }
+}
+
+function errorDeLaApi(res: Response | null): string {
+    if (!res) return 'No se pudo contactar al servidor. Intente de nuevo.';
+    if (res.status === 404) return 'El resumen no existe.';
+    if (res.status === 410) return 'El contenido de este resumen ya se borró (se guarda 30 días).';
+    if (res.status === 401 || res.status === 403) return 'Sin permisos.';
+    return `El servidor respondió ${res.status}.`;
+}
+
+/** Los documentos de un resumen (resumen, fórmulas, órdenes, remisiones, incapacidades) con sus hojas. */
+export async function listarDocumentosAction(
+    id: string,
+): Promise<{ success: true; documentos: DocumentoDelPanel[] } | { success: false; error: string }> {
+    const auth = await requireAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+    if (typeof id !== 'string' || !UUID.test(id)) return { success: false, error: 'El resumen no existe.' };
+    const res = await api('GET', `/attention-summaries/${id}/documents`);
+    if (!res?.ok) return { success: false, error: errorDeLaApi(res) };
+    const { documentos } = (await res.json()) as { documentos: DocumentoDelPanel[] };
+    return { success: true, documentos };
+}
+
+/**
+ * Un enlace de prueba a la página del paciente (`/resumen/<token>`), para verla
+ * en un celular. El token solo se muestra esta vez; la API lo deja anotado.
+ */
+export async function crearEnlaceDePruebaAction(
+    id: string,
+): Promise<{ success: true; url: string; expiraIso: string } | { success: false; error: string }> {
+    const auth = await requireAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+    if (typeof id !== 'string' || !UUID.test(id)) return { success: false, error: 'El resumen no existe.' };
+    const res = await api('POST', `/attention-summaries/${id}/test-links`);
+    if (!res?.ok) return { success: false, error: errorDeLaApi(res) };
+    const { token, expiraIso } = (await res.json()) as { token: string; expiraIso: string };
+    const h = await headers();
+    const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000';
+    const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
+    return { success: true, url: `${proto}://${host}/resumen/${token}`, expiraIso };
+}
+
+/** El encabezado de los documentos: nombre, NIT, dirección, teléfono, logo y pie. */
+export async function updateDocumentosResumenAction(
+    cambio: CambioDocumentosResumen,
+): Promise<{ success: true } | { success: false; error: string }> {
+    const auth = await requireAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+    const fila = await prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId: auth.organizationId },
+        select: { resumenAtencion: true },
+    });
+    const r = aplicarCambioDeDocumentos(fila?.resumenAtencion, {
+        nombre: cambio?.nombre,
+        nit: cambio?.nit,
+        direccion: cambio?.direccion,
+        telefono: cambio?.telefono,
+        pie: cambio?.pie,
+        logo: cambio?.logo,
+    });
+    if (!r.ok) return { success: false, error: r.error };
+    await prisma.hospitalMirrorConfig.update({
+        where: { organizationId: auth.organizationId },
+        data: { resumenAtencion: r.config as object },
+    });
+    if (r.cambios.length) {
+        await registrarActividad({
+            action: 'ATTENTION_SUMMARY_DOCUMENTS_CONFIG_CHANGED',
+            message: 'Encabezado de los documentos del resumen de la atención actualizado',
+            actor: { userId: auth.userId, role: auth.role },
+            organizationId: auth.organizationId,
+            metadata: { detalle: r.cambios.join(' · ').slice(0, 400) },
+        });
+    }
     revalidatePath('/dashboard/espejo/resumen-atencion');
     return { success: true };
 }

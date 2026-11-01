@@ -780,3 +780,28 @@ export type {
   TipoOrdenResumen,
   VueltaMedidaResumen,
 } from './src/resumen-atencion';
+
+// 📄 Documentos del resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md §3.9,
+// Fase 2): qué documentos salen, el contenido en palabras y el encabezado.
+export {
+  LIMITES_DOCUMENTOS_RESUMEN,
+  MARCA_DE_AGUA_POR_DEFECTO,
+  PIE_RESUMEN_POR_DEFECTO,
+  SIN_INDICACION,
+  aplicarCambioDeDocumentos,
+  cantidadConLetras,
+  cantidadEnLetras,
+  contenidoDelResumen,
+  documentosDelResumen,
+  fechaHoraDocumento,
+  fuenteDelDocumento,
+  hastaDeIncapacidad,
+  leerConfigDocumentos,
+} from './src/resumen-documentos';
+export type {
+  CambioDocumentosResumen,
+  ConfigDocumentosResumen,
+  DocumentoDelResumen,
+  SeccionDelResumen,
+  TipoDocumentoResumen,
+} from './src/resumen-documentos';

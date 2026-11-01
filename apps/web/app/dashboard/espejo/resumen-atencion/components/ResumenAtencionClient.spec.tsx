@@ -4,14 +4,32 @@ const refresh = jest.fn();
 jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
 const updateLecturaResumenAction = jest.fn(async (...args: unknown[]) => { void args; return { success: true }; });
 const abrirResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: false, error: 'sin preparar' }; });
+const listarDocumentosAction = jest.fn(async (...args: unknown[]): Promise<unknown> => {
+    void args;
+    return {
+        success: true,
+        documentos: [
+            { id: 'resumen', titulo: 'Resumen de la atención', hojas: 1, nombreArchivo: 'Resumen_01-11-2026' },
+            { id: 'formula-77', titulo: 'Fórmula médica N.º 77', hojas: 2, nombreArchivo: 'Formula_01-11-2026_N77' },
+        ],
+    };
+});
+const crearEnlaceDePruebaAction = jest.fn(async (...args: unknown[]): Promise<unknown> => {
+    void args;
+    return { success: true, url: 'http://localhost/resumen/AAAAAAAAAAAAAAAAAAAAAA', expiraIso: '2026-12-01T14:00:00.000Z' };
+});
+const updateDocumentosResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 const revisarResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 jest.mock('@/app/actions/resumen-atencion', () => ({
     updateLecturaResumenAction: (...a: unknown[]) => updateLecturaResumenAction(...a),
     abrirResumenAction: (...a: unknown[]) => abrirResumenAction(...a),
     revisarResumenAction: (...a: unknown[]) => revisarResumenAction(...a),
+    listarDocumentosAction: (...a: unknown[]) => listarDocumentosAction(...a),
+    crearEnlaceDePruebaAction: (...a: unknown[]) => crearEnlaceDePruebaAction(...a),
+    updateDocumentosResumenAction: (...a: unknown[]) => updateDocumentosResumenAction(...a),
 }));
 
-import { configResumenAtencionApagada } from '@agenia/shared';
+import { configResumenAtencionApagada, leerConfigDocumentos } from '@agenia/shared';
 import ResumenAtencionClient from './ResumenAtencionClient';
 import type { FilaResumenParaRevisar, PanelResumenAtencion } from '@/app/actions/resumen-atencion';
 
@@ -28,6 +46,8 @@ const panel = (cambios: Partial<PanelResumenAtencion> = {}): PanelResumenAtencio
     lectura: { cursor: null, recibidos24h: 0, recibidos30d: 0, ultimoRecibidoIso: null, porServicio: [] },
     medicion: null,
     revision: { meta: 20, correctos: 0, conError: 0, recientes: [] },
+    documentos: leerConfigDocumentos(null),
+    nombreClinica: 'Hospital de prueba',
     ...cambios,
 });
 
@@ -254,5 +274,46 @@ describe('ResumenAtencionClient', () => {
         render(<ResumenAtencionClient panel={panel({ revision: { meta: 20, correctos: 0, conError: 0, recientes: [fila()] } })} />);
         fireEvent.click(screen.getByLabelText('Abrir historia 2441058'));
         expect(await screen.findByText('El contenido de este resumen ya se borró (se guarda 30 días).')).toBeInTheDocument();
+    });
+
+    it('al abrir un resumen muestra sus documentos en PDF e imagen y genera el enlace de prueba', async () => {
+        abrirResumenAction.mockResolvedValueOnce({
+            success: true,
+            abierto: { resumen: resumenDePrueba, hisKey: '2441058', version: 1, attendedAt: '2026-11-01T14:00:00.000Z' },
+        });
+        render(<ResumenAtencionClient panel={panel({ revision: { meta: 20, correctos: 0, conError: 0, recientes: [fila()] } })} />);
+        fireEvent.click(screen.getByLabelText('Abrir historia 2441058'));
+
+        const pdf = await screen.findByLabelText('PDF de Fórmula médica N.º 77');
+        expect(listarDocumentosAction).toHaveBeenCalledWith(ID);
+        expect(pdf).toHaveAttribute('href', `/dashboard/espejo/resumen-atencion/documento?id=${ID}&doc=formula-77&formato=pdf&hoja=1`);
+        expect(screen.getByLabelText('Imagen de la hoja 2 de Fórmula médica N.º 77')).toHaveAttribute(
+            'href',
+            `/dashboard/espejo/resumen-atencion/documento?id=${ID}&doc=formula-77&formato=png&hoja=2`,
+        );
+        expect(screen.getByText('Todos en un solo PDF')).toHaveAttribute('href', expect.stringContaining('doc=todo'));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Generar enlace de prueba' }));
+        expect(await screen.findByTestId('enlace-prueba')).toHaveTextContent('http://localhost/resumen/AAAAAAAAAAAAAAAAAAAAAA');
+        expect(crearEnlaceDePruebaAction).toHaveBeenCalledWith(ID);
+    });
+
+    it('guarda el encabezado de los documentos; la marca de agua no se puede quitar', async () => {
+        render(<ResumenAtencionClient panel={panel()} />);
+        expect(screen.getByTestId('encabezado-documentos')).toHaveTextContent('Marca de agua: «Copia para el paciente»');
+        fireEvent.change(screen.getByLabelText('Nombre del hospital'), { target: { value: 'E.S.E. HOSPITAL' } });
+        fireEvent.change(screen.getByLabelText('NIT'), { target: { value: '890.000.000-1' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar encabezado' }));
+        await waitFor(() =>
+            expect(updateDocumentosResumenAction).toHaveBeenCalledWith({
+                nombre: 'E.S.E. HOSPITAL',
+                nit: '890.000.000-1',
+                direccion: '',
+                telefono: '',
+                pie: '',
+                logo: '',
+            }),
+        );
+        expect(await screen.findByText(/Guardado. Los documentos/)).toBeInTheDocument();
     });
 });
