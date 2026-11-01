@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module';
+import { TelegramCoreModule } from '../telegram/telegram-core.module';
 import { ResumenDocumentosService } from './resumen-documentos.service';
 import { ResumenEnlacesService } from './resumen-enlaces.service';
 import { ResumenEnvioService } from './resumen-envio.service';
@@ -23,7 +24,7 @@ import {
  * asistente: no hay ciclo.
  */
 @Module({
-  imports: [HttpModule, WhatsappConfigModule],
+  imports: [HttpModule, WhatsappConfigModule, TelegramCoreModule],
   controllers: [ResumenDocumentosController, ResumenPublicoController],
   providers: [
     ResumenDocumentosService,

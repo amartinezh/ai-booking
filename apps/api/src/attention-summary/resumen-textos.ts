@@ -3,6 +3,8 @@
  * El aviso no lleva datos clínicos: solo que hay documentos y de qué fecha.
  */
 export const BOTON_RECIBIR = 'Recibir documentos';
+/** En Telegram el botón manda este texto como un mensaje: lo entiende `pideSusDocumentos`. */
+export const BOTON_RECIBIR_TELEGRAM = 'Recibir mis documentos';
 
 export const TEXTOS_RESUMEN = {
   avisoEnVentana: (nombre: string, fecha: string) =>
@@ -27,6 +29,8 @@ export const TEXTOS_RESUMEN = {
     `Listo. Puede imprimirlos o mostrarlos en la farmacia o el laboratorio. Son una copia para usted: el hospital conserva el original.${
       enlace ? `\n\nPara volver a descargarlos durante 30 días: ${enlace}` : ''
     }`,
+  baja: 'Listo, no le enviaremos más los documentos de sus consultas por este medio. Su atención en el hospital no cambia. Si cambia de opinión, escriba «activar resúmenes».',
+  alta: 'Listo, volverá a recibir por este medio los documentos de sus próximas consultas.',
   incompleto: (enlace: string | null) =>
     `No pudimos enviarle todos los documentos por aquí.${
       enlace

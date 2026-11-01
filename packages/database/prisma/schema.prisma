@@ -52,7 +52,8 @@ model Organization {
   channelActivityLogs ChannelActivityLog[]
 
   // Resúmenes de la atención leídos del HIS (docs/PLAN_RESUMEN_ATENCION.md).
-  attentionSummaries AttentionSummary[]
+  attentionSummaries      AttentionSummary[]
+  attentionSummaryOptOuts AttentionSummaryOptOut[]
 
   // Configuración de voz/audio (TTS) por clínica (1:1) — pitch, rate, voz, codec
   audioConfig OrganizationAudioConfig?
@@ -1244,6 +1245,22 @@ model AttentionSummaryDelivery {
 
   @@index([attentionSummaryId])
   @@index([destinationHash, createdAt])
+}
+
+// 🚫 Baja de los resúmenes por número (plan §3.6): «no quiero resúmenes» escrito
+// por alguien que AgenIA no tiene en una ficha (un celular que vino del HIS). Con
+// ficha, además se marca `PatientProfile.summariesOptOut`. Del número solo queda
+// su SHA-256 (WhatsApp) o el del chat (Telegram, «tg:<chat>»).
+model AttentionSummaryOptOut {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  destinationHash String
+  // WHATSAPP | TELEGRAM
+  channel         String
+  createdAt       DateTime     @default(now())
+
+  @@unique([organizationId, destinationHash])
 }
 
 enum AppointmentOrigin {
@@ -2939,6 +2956,9 @@ model WhatsappMessageLog {
 enum TelegramMessageType {
   TEXT
   VOICE
+  // Resumen de la atención (Fase 4): los PDF y las imágenes de cada hoja.
+  DOCUMENT
+  PHOTO
 }
 
 /// Para qué se envió. Mismos valores que `WhatsappMessageKind` salvo

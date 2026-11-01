@@ -49,6 +49,67 @@ describe('TelegramApiClient', () => {
     jest.restoreAllMocks();
   });
 
+  it('sendMessage con botón de teclado (se oculta al tocarlo) y para quitarlo', async () => {
+    fetchMock.mockResolvedValue(
+      json(200, { ok: true, result: { message_id: 9 } }),
+    );
+    await client.sendMessage(TOKEN, '777', 'Hola', {
+      teclado: ['Recibir mis documentos'],
+    });
+    expect(
+      JSON.parse(fetchMock.mock.calls[0][1].body as string).reply_markup,
+    ).toEqual({
+      keyboard: [[{ text: 'Recibir mis documentos' }]],
+      resize_keyboard: true,
+      one_time_keyboard: true,
+    });
+    await client.sendMessage(TOKEN, '777', 'Listo', { quitarTeclado: true });
+    expect(
+      JSON.parse(fetchMock.mock.calls[1][1].body as string).reply_markup,
+    ).toEqual({ remove_keyboard: true });
+  });
+
+  it('sendDocument, sendPhoto y el álbum (sendMediaGroup) van como archivos', async () => {
+    fetchMock.mockResolvedValue(
+      json(200, { ok: true, result: { message_id: 9 } }),
+    );
+    await client.sendDocument(
+      TOKEN,
+      '777',
+      Buffer.from('%PDF'),
+      'Formula.pdf',
+      'application/pdf',
+    );
+    let [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(/\/sendDocument$/);
+    expect((init.body as FormData).get('document')).toBeInstanceOf(Blob);
+    expect(((init.body as FormData).get('document') as File).name).toBe(
+      'Formula.pdf',
+    );
+
+    await client.sendFotos(TOKEN, '777', [
+      { datos: Buffer.from('png'), nombre: 'h1.png', pie: 'Resumen' },
+    ]);
+    [url, init] = fetchMock.mock.calls[1];
+    expect(String(url)).toMatch(/\/sendPhoto$/);
+    expect((init.body as FormData).get('caption')).toBe('Resumen');
+
+    fetchMock.mockResolvedValue(
+      json(200, { ok: true, result: [{ message_id: 1 }, { message_id: 2 }] }),
+    );
+    await client.sendFotos(TOKEN, '777', [
+      { datos: Buffer.from('a'), nombre: 'h1.png', pie: 'Fórmula' },
+      { datos: Buffer.from('b'), nombre: 'h2.png' },
+    ]);
+    [url, init] = fetchMock.mock.calls[2];
+    expect(String(url)).toMatch(/\/sendMediaGroup$/);
+    expect(JSON.parse((init.body as FormData).get('media') as string)).toEqual([
+      { type: 'photo', media: 'attach://foto0', caption: 'Fórmula' },
+      { type: 'photo', media: 'attach://foto1' },
+    ]);
+    expect((init.body as FormData).get('foto1')).toBeInstanceOf(Blob);
+  });
+
   it('getMe devuelve el bot', async () => {
     fetchMock.mockResolvedValue(
       json(200, { ok: true, result: { id: 42, is_bot: true, username: 'X' } }),

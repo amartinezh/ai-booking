@@ -106,6 +106,75 @@ export class TelegramSenderService {
     return this.settle(organizationId, chatId, 'VOICE', ctx, res);
   }
 
+  /**
+   * Texto plano con un botón de teclado (o quitando el que había). Lo usa el
+   * resumen de la atención: el botón manda su texto como un mensaje normal.
+   */
+  async sendTextConTeclado(
+    organizationId: string,
+    chatId: string,
+    text: string,
+    teclado: { botones?: string[]; quitar?: boolean },
+    ctx: TelegramOutboundContext = {},
+  ): Promise<TelegramSendOutcome> {
+    const token = await this.activeToken(organizationId, chatId, 'TEXT', ctx);
+    if (!token) return FAILED_NO_CHANNEL;
+    const res = await this.api.sendMessage(token, chatId, text, {
+      ...(teclado.botones?.length ? { teclado: teclado.botones } : {}),
+      ...(teclado.quitar ? { quitarTeclado: true } : {}),
+    });
+    return this.settle(organizationId, chatId, 'TEXT', ctx, res);
+  }
+
+  /** Un PDF como documento. */
+  async sendDocument(
+    organizationId: string,
+    chatId: string,
+    datos: Buffer,
+    nombre: string,
+    tipo: string,
+    ctx: TelegramOutboundContext = {},
+  ): Promise<TelegramSendOutcome> {
+    const token = await this.activeToken(
+      organizationId,
+      chatId,
+      'DOCUMENT',
+      ctx,
+    );
+    if (!token) return FAILED_NO_CHANNEL;
+    const res = await this.api.sendDocument(token, chatId, datos, nombre, tipo);
+    return this.settle(organizationId, chatId, 'DOCUMENT', ctx, res);
+  }
+
+  /** Imágenes (las hojas de un documento): de a 10 por álbum. */
+  async sendFotos(
+    organizationId: string,
+    chatId: string,
+    fotos: ReadonlyArray<{ datos: Buffer; nombre: string; pie?: string }>,
+    ctx: TelegramOutboundContext = {},
+  ): Promise<TelegramSendOutcome> {
+    const token = await this.activeToken(organizationId, chatId, 'PHOTO', ctx);
+    if (!token) return FAILED_NO_CHANNEL;
+    let last: TelegramSendOutcome = FAILED_NO_CHANNEL;
+    for (let i = 0; i < fotos.length; i += 10) {
+      const res = await this.api.sendFotos(
+        token,
+        chatId,
+        fotos.slice(i, i + 10),
+      );
+      // Un álbum devuelve varios mensajes: para el libro basta el primero.
+      const uno: TelegramResult<TelegramSentMessage> = res.ok
+        ? {
+            ok: true,
+            result: Array.isArray(res.result) ? res.result[0] : res.result,
+          }
+        : res;
+      last = await this.settle(organizationId, chatId, 'PHOTO', ctx, uno);
+      if (!last.ok) break;
+    }
+    return last;
+  }
+
   // ── internos ────────────────────────────────────────────────────────────
 
   /** Token del bot si el canal está activo; si no, deja constancia y `null`. */

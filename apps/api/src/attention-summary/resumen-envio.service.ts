@@ -36,10 +36,17 @@ import { CryptoService } from '../common/crypto/crypto.service';
 import { RedisService } from '../redis/redis.service';
 import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
+import { TelegramChannelService } from '../telegram/telegram-channel.service';
 import { ResumenWhatsappService } from './resumen-whatsapp.service';
-import { BOTON_RECIBIR, TEXTOS_RESUMEN, primerNombre } from './resumen-textos';
+import {
+  BOTON_RECIBIR,
+  BOTON_RECIBIR_TELEGRAM,
+  TEXTOS_RESUMEN,
+  primerNombre,
+} from './resumen-textos';
 
 const MS_HORA = 3_600_000;
+const MOTIVO_BAJA = 'El paciente se dio de baja de los resúmenes';
 /** Resúmenes por clínica en cada vuelta: el resto sigue en la siguiente. */
 const POR_VUELTA = 40;
 
@@ -89,6 +96,9 @@ export class ResumenEnvioService {
     private readonly plantillas: WhatsappTemplateService,
     private readonly whatsapp: ResumenWhatsappService,
     @Optional() private readonly bitacora?: SystemLogService,
+    // ✈️ Telegram (D26): primero por ahí si el paciente tiene el chat unido.
+    // Opcional: sin él (tests), solo WhatsApp.
+    @Optional() private readonly telegram?: TelegramChannelService,
   ) {}
 
   @Cron('20 */2 * * * *')
@@ -170,7 +180,7 @@ export class ResumenEnvioService {
             ahora.getTime() - LIMITES_ENVIO_RESUMEN.horasParaAvisar * MS_HORA,
           ),
         },
-        deliveries: { none: { channel: 'WHATSAPP', purpose: 'PACIENTE' } },
+        deliveries: { none: { purpose: 'PACIENTE' } },
       },
       orderBy: { attendedAt: 'asc' },
       take: POR_VUELTA,
@@ -201,26 +211,66 @@ export class ResumenEnvioService {
                 whatsappId: true,
                 bsuid: true,
                 summariesOptOut: true,
+                telegramChatId: true,
+                telegramBlockedAt: true,
               },
             })
           : null;
         if (perfil?.summariesOptOut) {
-          await this.marcar(
-            s.id,
-            'EXCLUIDO',
-            'El paciente se dio de baja de los resúmenes',
-          );
+          await this.marcar(s.id, 'EXCLUIDO', MOTIVO_BAJA);
           r.excluidos++;
           continue;
         }
+        const bajas = await this.bajasDeLaClinica(organizationId);
+
+        // ✈️ D26: si el paciente usa el asistente por Telegram (chat unido y no
+        // bloqueado), va por ahí, que es gratis. Si falla, cae a WhatsApp.
+        let porTelegramFallo = false;
+        if (
+          this.telegram &&
+          perfil?.telegramChatId &&
+          !perfil.telegramBlockedAt
+        ) {
+          const tg = `tg:${perfil.telegramChatId}`;
+          const permisoTg = puedeEnviarPorCanal(config, {
+            canal: 'TELEGRAM',
+            servicio: s.serviceCode,
+            destino: tg,
+          });
+          if (permisoTg.ok && !bajas.has(hashDelDestino(tg))) {
+            const aviso = await this.enviarAvisoTelegram(
+              organizationId,
+              s.id,
+              resumen,
+              tg,
+              'PACIENTE',
+              null,
+              timeZone,
+            );
+            if (aviso.ok) {
+              r.avisados++;
+              continue;
+            }
+            porTelegramFallo = true;
+          }
+        }
+
         const destino = await this.elegirDestino(
           organizationId,
           perfil,
           resumen,
+          bajas,
         );
         if ('motivo' in destino) {
-          await this.marcar(s.id, 'SIN_CONTACTO', destino.motivo);
-          r.sinContacto++;
+          if (porTelegramFallo) {
+            r.fallos++;
+            continue;
+          }
+          const estado =
+            destino.motivo === MOTIVO_BAJA ? 'EXCLUIDO' : 'SIN_CONTACTO';
+          await this.marcar(s.id, estado, destino.motivo);
+          if (estado === 'EXCLUIDO') r.excluidos++;
+          else r.sinContacto++;
           continue;
         }
         // Los interruptores (canal, servicio, modo prueba): si no dejan, se espera.
@@ -229,7 +279,10 @@ export class ResumenEnvioService {
           servicio: s.serviceCode,
           destino: destino.destino,
         });
-        if (!permiso.ok) continue;
+        if (!permiso.ok) {
+          if (porTelegramFallo) r.fallos++;
+          continue;
+        }
 
         const aviso = await this.enviarAviso(
           organizationId,
@@ -277,8 +330,13 @@ export class ResumenEnvioService {
       bsuid: string | null;
     } | null,
     resumen: ResumenAtencionHis,
+    bajas: Set<string> = new Set(),
   ): Promise<CandidatoDestino | { motivo: string }> {
-    let candidatos = candidatosDeDestino(perfil, resumen);
+    const todos = candidatosDeDestino(perfil, resumen);
+    // Quien escribió «no quiero resúmenes» desde un número no recibe a ese número.
+    let candidatos = todos.filter((c) => !bajas.has(hashDelDestino(c.destino)));
+    if (todos.length > 0 && candidatos.length === 0)
+      return { motivo: MOTIVO_BAJA };
     if (perfil) {
       const equivocado = await this.prisma.syncException.findFirst({
         where: {
@@ -413,6 +471,76 @@ export class ResumenEnvioService {
     return ok ? { ok } : { ok, motivo };
   }
 
+  /** Las huellas de los números y chats que pidieron no recibir resúmenes. */
+  private async bajasDeLaClinica(organizationId: string): Promise<Set<string>> {
+    const filas = await this.prisma.attentionSummaryOptOut.findMany({
+      where: { organizationId },
+      select: { destinationHash: true },
+    });
+    return new Set(filas.map((f) => f.destinationHash));
+  }
+
+  /**
+   * El aviso por Telegram (D26): el mismo texto, con un botón de teclado
+   * «Recibir mis documentos» que manda ese texto como un mensaje normal. Si el
+   * paciente bloqueó el bot, el canal lo marca y el programador cae a WhatsApp.
+   */
+  async enviarAvisoTelegram(
+    organizationId: string,
+    attentionSummaryId: string,
+    resumen: ResumenAtencionHis,
+    destino: string,
+    purpose: 'PACIENTE' | 'PRUEBA',
+    createdByUserId: string | null,
+    timeZone: string,
+  ): Promise<{ ok: boolean; motivo?: string }> {
+    if (!this.telegram)
+      return { ok: false, motivo: 'Telegram no está disponible' };
+    const entrega = await this.prisma.attentionSummaryDelivery.create({
+      data: {
+        attentionSummaryId,
+        channel: 'TELEGRAM',
+        purpose,
+        destinationHash: hashDelDestino(destino),
+        destinationMasked: enmascararDestino(destino),
+        destinationOrigin: purpose === 'PRUEBA' ? 'PRUEBA' : 'PERFIL',
+        status: 'FALLO',
+        statusReason: 'En curso',
+        createdByUserId,
+      },
+    });
+    const texto = TEXTOS_RESUMEN.avisoEnVentana(
+      primerNombre(resumen.paciente.nombre),
+      formatDateOnly(resumen.historia.guardadaIso, { timeZone }),
+    );
+    const r = await this.telegram.sendTextConTeclado(
+      organizationId,
+      destino,
+      texto,
+      { botones: [BOTON_RECIBIR_TELEGRAM] },
+      { kind: 'ATTENTION_SUMMARY' },
+    );
+    const motivo = r.ok
+      ? undefined
+      : r.blocked
+        ? 'El paciente bloqueó el bot de Telegram'
+        : `Telegram no aceptó el envío${r.errorCode ? ` (${r.errorCode})` : ''}`;
+    await this.prisma.attentionSummaryDelivery.update({
+      where: { id: entrega.id },
+      data: r.ok
+        ? {
+            status: 'AVISO_ENVIADO',
+            statusReason: null,
+            noticeSentAt: new Date(),
+          }
+        : { status: 'FALLO', statusReason: motivo },
+    });
+    if (purpose === 'PACIENTE' && r.ok) {
+      await this.marcar(attentionSummaryId, 'ENVIADO', null);
+    }
+    return r.ok ? { ok: true } : { ok: false, motivo };
+  }
+
   /**
    * «Enviar de prueba» del panel: el aviso de un resumen a un número del equipo
    * (de la lista del modo prueba). Sirve para probar el botón, la fecha de
@@ -432,10 +560,11 @@ export class ResumenEnvioService {
       },
     });
     const config = leerConfigResumenAtencion(espejo?.resumenAtencion);
-    const destino =
-      typeof destinoCrudo === 'string'
-        ? (celularParaWhatsapp(destinoCrudo) ?? destinoCrudo.replace(/\D/g, ''))
-        : '';
+    const crudo = typeof destinoCrudo === 'string' ? destinoCrudo.trim() : '';
+    const esTelegram = /^tg:-?\d+$/i.test(crudo);
+    const destino = esTelegram
+      ? crudo.toLowerCase()
+      : (celularParaWhatsapp(crudo) ?? crudo.replace(/\D/g, ''));
     if (!config || !destino || !config.modoPrueba.destinos.includes(destino)) {
       throw new BadRequestException(
         'Solo se envía de prueba a un número de la lista del modo prueba.',
@@ -452,15 +581,26 @@ export class ResumenEnvioService {
     const resumen = JSON.parse(
       this.crypto.decrypt(fila.content),
     ) as ResumenAtencionHis;
-    const r = await this.enviarAviso(
-      organizationId,
-      fila.id,
-      resumen,
-      { destino, origen: 'PRUEBA' },
-      'PRUEBA',
-      quien.userId,
-      espejo?.organization.timezone || DEFAULT_TIMEZONE,
-    );
+    const zona = espejo?.organization.timezone || DEFAULT_TIMEZONE;
+    const r = esTelegram
+      ? await this.enviarAvisoTelegram(
+          organizationId,
+          fila.id,
+          resumen,
+          destino,
+          'PRUEBA',
+          quien.userId,
+          zona,
+        )
+      : await this.enviarAviso(
+          organizationId,
+          fila.id,
+          resumen,
+          { destino, origen: 'PRUEBA' },
+          'PRUEBA',
+          quien.userId,
+          zona,
+        );
     await this.bitacora?.event({
       action: 'ATTENTION_SUMMARY_TEST_SEND',
       message: `${quien.email} envió de prueba el aviso del resumen de la historia ${fila.hisKey} a ${enmascararDestino(destino)}${r.ok ? '' : ' (no salió)'}.`,

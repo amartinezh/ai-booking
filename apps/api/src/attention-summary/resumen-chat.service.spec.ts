@@ -47,7 +47,11 @@ const resumen = (fecha: string | null = '1980-05-17'): ResumenAtencionHis => ({
 
 function armar(
   o: {
-    perfil?: { whatsappId: string | null; bsuid: string | null } | null;
+    perfil?: {
+      whatsappId: string | null;
+      bsuid: string | null;
+      telegramChatId?: string | null;
+    } | null;
     escribio?: boolean;
     fecha?: string | null;
     destino?: string;
@@ -91,7 +95,14 @@ function armar(
     attentionSummaryAccess: {
       create: jest.fn(async ({ data }: any) => accesos.push(data)),
     },
-    patientProfile: { findUnique: jest.fn(async () => o.perfil ?? null) },
+    patientProfile: {
+      findUnique: jest.fn(async () => o.perfil ?? null),
+      updateMany: jest.fn(async () => ({ count: 1 })),
+    },
+    attentionSummaryOptOut: {
+      upsert: jest.fn(async () => ({})),
+      deleteMany: jest.fn(async () => ({ count: 1 })),
+    },
     interactionLog: {
       findFirst: jest.fn(async () => (o.escribio ? { id: 'i' } : null)),
     },
@@ -133,6 +144,18 @@ function armar(
     documento: jest.fn(async () => ({ ok: true })),
     imagen: jest.fn(async () => ({ ok: true })),
   };
+  const telegram: any = {
+    sendTextConTeclado: jest.fn(
+      async (_o: string, _d: string, t: string, teclado: unknown) => {
+        textos.push(t);
+        tecladosTg.push(teclado);
+        return { ok: true };
+      },
+    ),
+    sendDocument: jest.fn(async () => ({ ok: true })),
+    sendFotos: jest.fn(async () => ({ ok: true })),
+  };
+  const tecladosTg: unknown[] = [];
   const s = new ResumenChatService(
     prisma,
     { decrypt: (x: string) => x } as any,
@@ -140,8 +163,20 @@ function armar(
     documentos,
     enlaces,
     whatsapp,
+    telegram,
   );
-  return { s, entrega, accesos, textos, whatsapp, enlaces, memoria };
+  return {
+    s,
+    entrega,
+    accesos,
+    textos,
+    whatsapp,
+    enlaces,
+    memoria,
+    telegram,
+    prisma,
+    tecladosTg,
+  };
 }
 
 describe('ResumenChatService', () => {
@@ -257,14 +292,105 @@ describe('ResumenChatService', () => {
     ]);
   });
 
-  it('contenido ya borrado: no disponible; Telegram no pasa por aquí todavía', async () => {
+  it('contenido ya borrado: no disponible', async () => {
     const a = armar({ sinContenido: true });
     await a.s.manejarBoton(ORG, NUMERO, `resumen:${ID}`);
     expect(a.textos).toEqual([
       expect.stringContaining('ya no están disponibles'),
     ]);
-    await expect(
-      a.s.manejarTexto(ORG, 'tg:123', 'mis documentos'),
-    ).resolves.toBe(false);
+  });
+
+  describe('Telegram (D26)', () => {
+    const CHAT = 'tg:555';
+
+    it('«Recibir mis documentos» desde el chat unido: PDF, álbum de imágenes y quita el botón', async () => {
+      const a = armar({
+        destino: CHAT,
+        perfil: { whatsappId: null, bsuid: null, telegramChatId: '555' },
+      });
+      await expect(
+        a.s.manejarTexto(ORG, CHAT, 'Recibir mis documentos'),
+      ).resolves.toBe(true);
+      expect(a.whatsapp.documento).not.toHaveBeenCalled();
+      expect(a.telegram.sendDocument).toHaveBeenCalledTimes(2);
+      const fotos = a.telegram.sendFotos.mock.calls.map((c: any[]) => c[2]);
+      expect(fotos.map((f: any[]) => f.length)).toEqual([1, 2]);
+      expect(fotos[1][0].pie).toBe('Fórmula médica N.º 77');
+      expect(a.tecladosTg.at(-1)).toEqual({ quitar: true });
+      expect(a.entrega).toMatchObject({
+        status: 'DOCUMENTOS_ENVIADOS',
+        verifiedBy: 'NUMERO',
+      });
+    });
+
+    it('un chat que no es el de la ficha pide la fecha de nacimiento por Telegram', async () => {
+      const a = armar({
+        destino: CHAT,
+        perfil: { whatsappId: null, bsuid: null, telegramChatId: '999' },
+      });
+      await a.s.manejarTexto(ORG, CHAT, 'mis documentos');
+      expect(a.textos.at(-1)).toContain('fecha de nacimiento');
+      await a.s.manejarTexto(ORG, CHAT, '17/05/1980');
+      expect(a.telegram.sendDocument).toHaveBeenCalledTimes(2);
+      expect(a.entrega.verifiedBy).toBe('FECHA_NACIMIENTO');
+    });
+  });
+
+  describe('baja escrita', () => {
+    it('«no quiero resúmenes»: baja por número y en sus fichas; «activar resúmenes» la quita', async () => {
+      const a = armar();
+      await expect(
+        a.s.manejarTexto(ORG, NUMERO, 'no quiero resúmenes'),
+      ).resolves.toBe(true);
+      expect(a.prisma.attentionSummaryOptOut.upsert).toHaveBeenCalledWith({
+        where: {
+          organizationId_destinationHash: {
+            organizationId: ORG,
+            destinationHash: hashDelDestino(NUMERO),
+          },
+        },
+        create: {
+          organizationId: ORG,
+          destinationHash: hashDelDestino(NUMERO),
+          channel: 'WHATSAPP',
+        },
+        update: {},
+      });
+      expect(a.prisma.patientProfile.updateMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: ORG,
+          OR: [
+            { whatsappId: { in: [NUMERO, '3001234567'] } },
+            { bsuid: { in: [NUMERO, '3001234567'] } },
+          ],
+        },
+        data: { summariesOptOut: true },
+      });
+      expect(a.textos.at(-1)).toContain('no le enviaremos más');
+
+      await a.s.manejarTexto(ORG, NUMERO, 'activar resúmenes');
+      expect(a.prisma.attentionSummaryOptOut.deleteMany).toHaveBeenCalled();
+      expect(a.prisma.patientProfile.updateMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: { summariesOptOut: false } }),
+      );
+    });
+
+    it('por Telegram, la baja es solo para ese chat', async () => {
+      const a = armar();
+      await a.s.manejarTexto(ORG, 'tg:555', 'no quiero más los documentos');
+      expect(a.prisma.patientProfile.updateMany).toHaveBeenCalledWith({
+        where: { organizationId: ORG, telegramChatId: '555' },
+        data: { summariesOptOut: true },
+      });
+    });
+
+    it('la baja va antes que la fecha pendiente', async () => {
+      const a = armar();
+      await a.s.manejarBoton(ORG, NUMERO, `resumen:${ID}`);
+      await expect(
+        a.s.manejarTexto(ORG, NUMERO, 'no quiero resúmenes'),
+      ).resolves.toBe(true);
+      expect(a.prisma.attentionSummaryOptOut.upsert).toHaveBeenCalled();
+    });
   });
 });

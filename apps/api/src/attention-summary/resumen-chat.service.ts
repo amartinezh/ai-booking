@@ -1,13 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import type { Prisma } from '@agenia/database';
 import {
   DEFAULT_TIMEZONE,
   LIMITES_ENVIO_RESUMEN,
+  chatIdFromTelegramSender,
   entregaDelPayload,
   formatDateOnly,
   formatTimeOnly,
+  intencionDeResumenes,
   isTelegramSender,
   parseFechaNacimiento,
   pideSusDocumentos,
+  variantesDeTelefono,
 } from '@agenia/shared';
 import type { ResumenAtencionHis } from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,6 +20,7 @@ import { RedisService } from '../redis/redis.service';
 import { ResumenDocumentosService } from './resumen-documentos.service';
 import { ResumenEnlacesService } from './resumen-enlaces.service';
 import { ResumenWhatsappService } from './resumen-whatsapp.service';
+import { TelegramChannelService } from '../telegram/telegram-channel.service';
 import { hashDelDestino } from './resumen-envio.service';
 import { TEXTOS_RESUMEN } from './resumen-textos';
 
@@ -71,7 +76,11 @@ type Entrega = {
  * Los documentos salen como PDF y una imagen por hoja, con el enlace a la
  * página para volver a descargarlos. Nada clínico sale sin el toque.
  *
- * Fase 4, primera parte: solo WhatsApp. Telegram llega en la siguiente.
+ * Por Telegram (D26) el botón es de teclado: al tocarlo manda «Recibir mis
+ * documentos» como un mensaje, que entra por aquí como texto. El chat unido a
+ * la ficha cuenta como verificado (D23).
+ *
+ * También la baja escrita: «no quiero resúmenes» (y «activar resúmenes»).
  */
 @Injectable()
 export class ResumenChatService {
@@ -84,7 +93,30 @@ export class ResumenChatService {
     private readonly documentos: ResumenDocumentosService,
     private readonly enlaces: ResumenEnlacesService,
     private readonly whatsapp: ResumenWhatsappService,
+    // Opcional: sin él (tests), los remitentes de Telegram siguen al asistente.
+    @Optional() private readonly telegram?: TelegramChannelService,
   ) {}
+
+  /** Un texto al remitente, por su canal. En Telegram puede quitar el botón de teclado. */
+  private async texto(
+    organizationId: string,
+    remitente: string,
+    cuerpo: string,
+    opciones: { quitarTeclado?: boolean } = {},
+  ): Promise<boolean> {
+    if (isTelegramSender(remitente)) {
+      if (!this.telegram) return false;
+      const r = await this.telegram.sendTextConTeclado(
+        organizationId,
+        remitente,
+        cuerpo,
+        { quitar: opciones.quitarTeclado },
+        { kind: 'ATTENTION_SUMMARY' },
+      );
+      return r.ok;
+    }
+    return (await this.whatsapp.texto(organizationId, remitente, cuerpo)).ok;
+  }
 
   /** El toque de un botón. `true` si era de un resumen (y ya se atendió). */
   async manejarBoton(
@@ -100,11 +132,7 @@ export class ResumenChatService {
     });
     if (!entrega || entrega.destinationHash !== hashDelDestino(remitente)) {
       // Un botón reenviado a otro número no abre nada.
-      await this.whatsapp.texto(
-        organizationId,
-        remitente,
-        TEXTOS_RESUMEN.otroNumero,
-      );
+      await this.texto(organizationId, remitente, TEXTOS_RESUMEN.otroNumero);
       return true;
     }
     await this.iniciar(organizationId, remitente, entrega);
@@ -120,7 +148,16 @@ export class ResumenChatService {
     remitente: string,
     texto: string | undefined,
   ): Promise<boolean> {
-    if (!texto || isTelegramSender(remitente)) return false;
+    if (!texto) return false;
+    if (isTelegramSender(remitente) && !this.telegram) return false;
+
+    // La baja (o el alta) va primero: es una decisión sobre sus datos.
+    const intencion = intencionDeResumenes(texto);
+    if (intencion) {
+      await this.cambiarBaja(organizationId, remitente, intencion === 'BAJA');
+      return true;
+    }
+
     let pendiente: string | null = null;
     try {
       pendiente = await this.redis.get(
@@ -135,7 +172,7 @@ export class ResumenChatService {
     if (!pideSusDocumentos(texto)) return false;
     const entrega = await this.prisma.attentionSummaryDelivery.findFirst({
       where: {
-        channel: 'WHATSAPP',
+        // La huella ya distingue el canal: un chat de Telegram es «tg:<chat>».
         destinationHash: hashDelDestino(remitente),
         createdAt: { gte: new Date(Date.now() - 30 * MS_DIA) },
         attentionSummary: { organizationId },
@@ -144,11 +181,7 @@ export class ResumenChatService {
       select: SELECT_ENTREGA,
     });
     if (!entrega) {
-      await this.whatsapp.texto(
-        organizationId,
-        remitente,
-        TEXTOS_RESUMEN.sinDocumentos,
-      );
+      await this.texto(organizationId, remitente, TEXTOS_RESUMEN.sinDocumentos);
       return true;
     }
     await this.iniciar(organizationId, remitente, entrega);
@@ -174,15 +207,11 @@ export class ResumenChatService {
   ): Promise<void> {
     const resumen = this.resumenDe(e);
     if (!resumen) {
-      await this.whatsapp.texto(
-        organizationId,
-        remitente,
-        TEXTOS_RESUMEN.noDisponible,
-      );
+      await this.texto(organizationId, remitente, TEXTOS_RESUMEN.noDisponible);
       return;
     }
     if (e.lockedUntil && e.lockedUntil.getTime() > Date.now()) {
-      await this.whatsapp.texto(
+      await this.texto(
         organizationId,
         remitente,
         TEXTOS_RESUMEN.bloqueado(
@@ -202,11 +231,7 @@ export class ResumenChatService {
       return;
     }
     if (!fechaDelHis(resumen)) {
-      await this.whatsapp.texto(
-        organizationId,
-        remitente,
-        TEXTOS_RESUMEN.sinFecha,
-      );
+      await this.texto(organizationId, remitente, TEXTOS_RESUMEN.sinFecha);
       return;
     }
     await this.redis.set(
@@ -215,11 +240,7 @@ export class ResumenChatService {
       'EX',
       LIMITES_ENVIO_RESUMEN.esperaFechaMinutos * 60,
     );
-    await this.whatsapp.texto(
-      organizationId,
-      remitente,
-      TEXTOS_RESUMEN.pedirFecha,
-    );
+    await this.texto(organizationId, remitente, TEXTOS_RESUMEN.pedirFecha);
   }
 
   /**
@@ -234,8 +255,13 @@ export class ResumenChatService {
     if (!patientProfileId) return false;
     const perfil = await this.prisma.patientProfile.findUnique({
       where: { id: patientProfileId },
-      select: { whatsappId: true, bsuid: true },
+      select: { whatsappId: true, bsuid: true, telegramChatId: true },
     });
+    // Telegram: el chat quedó unido a la ficha cuando el paciente se identificó.
+    if (isTelegramSender(remitente)) {
+      const chat = chatIdFromTelegramSender(remitente);
+      return !!perfil && !!chat && perfil.telegramChatId === chat;
+    }
     if (
       !perfil ||
       (perfil.whatsappId !== remitente && perfil.bsuid !== remitente)
@@ -271,16 +297,12 @@ export class ResumenChatService {
     const resumen = e ? this.resumenDe(e) : null;
     if (!e || !resumen) {
       await this.redis.del(llavePendiente(organizationId, remitente));
-      await this.whatsapp.texto(
-        organizationId,
-        remitente,
-        TEXTOS_RESUMEN.noDisponible,
-      );
+      await this.texto(organizationId, remitente, TEXTOS_RESUMEN.noDisponible);
       return true;
     }
     if (e.lockedUntil && e.lockedUntil.getTime() > Date.now()) {
       await this.redis.del(llavePendiente(organizationId, remitente));
-      await this.whatsapp.texto(
+      await this.texto(
         organizationId,
         remitente,
         TEXTOS_RESUMEN.bloqueado(
@@ -316,7 +338,7 @@ export class ResumenChatService {
       data: {
         attentionSummaryId: e.attentionSummary.id,
         kind: 'VERIFICAR_FALLO',
-        documentId: 'whatsapp',
+        documentId: isTelegramSender(remitente) ? 'telegram' : 'whatsapp',
       },
     });
     if (tras.failedAttempts >= LIMITES_ENVIO_RESUMEN.intentosFecha) {
@@ -328,7 +350,7 @@ export class ResumenChatService {
         data: { failedAttempts: 0, lockedUntil: hasta },
       });
       await this.redis.del(llavePendiente(organizationId, remitente));
-      await this.whatsapp.texto(
+      await this.texto(
         organizationId,
         remitente,
         TEXTOS_RESUMEN.bloqueado(
@@ -337,7 +359,7 @@ export class ResumenChatService {
       );
       return true;
     }
-    await this.whatsapp.texto(
+    await this.texto(
       organizationId,
       remitente,
       TEXTOS_RESUMEN.fechaIncorrecta(
@@ -356,7 +378,7 @@ export class ResumenChatService {
     verificadoPor: 'NUMERO' | 'FECHA_NACIMIENTO',
   ): Promise<void> {
     const timeZone = this.timeZone(e);
-    await this.whatsapp.texto(
+    await this.texto(
       organizationId,
       remitente,
       TEXTOS_RESUMEN.enviando(
@@ -364,8 +386,47 @@ export class ResumenChatService {
       ),
     );
     const g = await this.documentos.generador(organizationId, resumen);
+    const porTelegram = isTelegramSender(remitente);
     let fallos = 0;
-    for (const doc of g.listar()) {
+    if (porTelegram && this.telegram) {
+      const ctx = { kind: 'ATTENTION_SUMMARY' as const };
+      for (const doc of g.listar()) {
+        const pdf = await g.pdf(doc.id);
+        if (
+          !pdf ||
+          !(
+            await this.telegram.sendDocument(
+              organizationId,
+              remitente,
+              pdf.datos,
+              pdf.nombreArchivo,
+              pdf.tipo,
+              ctx,
+            )
+          ).ok
+        )
+          fallos++;
+        const fotos: { datos: Buffer; nombre: string; pie?: string }[] = [];
+        for (let h = 1; h <= doc.hojas; h++) {
+          const png = await g.png(doc.id, h);
+          if (png)
+            fotos.push({
+              datos: png.datos,
+              nombre: png.nombreArchivo,
+              ...(h === 1 ? { pie: doc.titulo } : {}),
+            });
+          else fallos++;
+        }
+        if (
+          fotos.length &&
+          !(
+            await this.telegram.sendFotos(organizationId, remitente, fotos, ctx)
+          ).ok
+        )
+          fallos++;
+      }
+    }
+    for (const doc of porTelegram ? [] : g.listar()) {
       const pdf = await g.pdf(doc.id);
       const idPdf = pdf
         ? await this.whatsapp.subir(
@@ -423,10 +484,11 @@ export class ResumenChatService {
       );
       enlace = `${base}/resumen/${token}`;
     }
-    await this.whatsapp.texto(
+    await this.texto(
       organizationId,
       remitente,
       fallos ? TEXTOS_RESUMEN.incompleto(enlace) : TEXTOS_RESUMEN.listo(enlace),
+      { quitarTeclado: true },
     );
 
     await this.prisma.attentionSummaryDelivery.update({
@@ -442,20 +504,80 @@ export class ResumenChatService {
       data: {
         attentionSummaryId: e.attentionSummary.id,
         kind: 'VERIFICAR_OK',
-        documentId: `whatsapp:${verificadoPor === 'NUMERO' ? 'numero' : 'fecha'}`,
+        documentId: `${porTelegram ? 'telegram' : 'whatsapp'}:${verificadoPor === 'NUMERO' ? 'numero' : 'fecha'}`,
       },
     });
     await this.prisma.attentionSummaryAccess.create({
       data: {
         attentionSummaryId: e.attentionSummary.id,
         kind: 'DOCUMENTO',
-        documentId: 'whatsapp:todos',
+        documentId: `${porTelegram ? 'telegram' : 'whatsapp'}:todos`,
       },
     });
     if (fallos)
       this.logger.warn(
-        `Resumen ${e.attentionSummary.id}: ${fallos} archivo(s) no salieron por WhatsApp.`,
+        `Resumen ${e.attentionSummary.id}: ${fallos} archivo(s) no salieron por ${porTelegram ? 'Telegram' : 'WhatsApp'}.`,
       );
+  }
+
+  /**
+   * «no quiero resúmenes» / «activar resúmenes» (plan §3.6). Vale para el
+   * número (o el chat) desde el que escribe, tenga ficha o no, y para todas las
+   * fichas de la clínica con ese número: como la baja de recordatorios. Por
+   * Telegram, solo por su chat (quitarle el prefijo a `tg:` daría un número que
+   * puede ser el celular de otro paciente).
+   */
+  private async cambiarBaja(
+    organizationId: string,
+    remitente: string,
+    baja: boolean,
+  ): Promise<void> {
+    const destinationHash = hashDelDestino(remitente);
+    const porTelegram = isTelegramSender(remitente);
+    if (baja) {
+      await this.prisma.attentionSummaryOptOut.upsert({
+        where: {
+          organizationId_destinationHash: { organizationId, destinationHash },
+        },
+        create: {
+          organizationId,
+          destinationHash,
+          channel: porTelegram ? 'TELEGRAM' : 'WHATSAPP',
+        },
+        update: {},
+      });
+    } else {
+      await this.prisma.attentionSummaryOptOut.deleteMany({
+        where: { organizationId, destinationHash },
+      });
+    }
+    let where: Prisma.PatientProfileWhereInput;
+    if (porTelegram) {
+      where = {
+        organizationId,
+        telegramChatId: chatIdFromTelegramSender(remitente) ?? '',
+      };
+    } else {
+      const ids = [
+        ...new Set([
+          remitente,
+          ...variantesDeTelefono(remitente.replace(/\D/g, '')),
+        ]),
+      ];
+      where = {
+        organizationId,
+        OR: [{ whatsappId: { in: ids } }, { bsuid: { in: ids } }],
+      };
+    }
+    await this.prisma.patientProfile.updateMany({
+      where,
+      data: { summariesOptOut: baja },
+    });
+    await this.texto(
+      organizationId,
+      remitente,
+      baja ? TEXTOS_RESUMEN.baja : TEXTOS_RESUMEN.alta,
+    );
   }
 }
 

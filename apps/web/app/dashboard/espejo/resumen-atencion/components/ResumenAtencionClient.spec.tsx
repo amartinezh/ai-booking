@@ -151,17 +151,17 @@ describe('ResumenAtencionClient', () => {
         expect(screen.getByTestId('falta-plantilla')).toBeInTheDocument();
     });
 
-    it('Telegram y correo no se pueden tocar; WhatsApp solo en los servicios que se leen', () => {
+    it('el correo no se puede tocar; WhatsApp y Telegram solo en los servicios que se leen', () => {
         render(<ResumenAtencionClient panel={panel()} />);
-        expect(screen.getByLabelText('Canal Telegram')).toBeDisabled();
         expect(screen.getByLabelText('Canal Correo')).toBeDisabled();
-        for (const canal of ['Telegram', 'Correo']) {
-            for (const servicio of ['S39141', 'S39145']) expect(screen.getByLabelText(`${canal} ${servicio}`)).toBeDisabled();
-        }
+        expect(screen.getByLabelText('Canal Telegram')).toBeEnabled();
+        for (const servicio of ['S39141', 'S39145']) expect(screen.getByLabelText(`Correo ${servicio}`)).toBeDisabled();
         expect(screen.getByLabelText('WhatsApp S39141')).toBeDisabled();
+        expect(screen.getByLabelText('Telegram S39141')).toBeDisabled();
         fireEvent.click(screen.getByLabelText('Leer S39141'));
         expect(screen.getByLabelText('WhatsApp S39141')).toBeEnabled();
-        expect(screen.getByLabelText('WhatsApp S39145')).toBeDisabled();
+        expect(screen.getByLabelText('Telegram S39141')).toBeEnabled();
+        expect(screen.getByLabelText('Telegram S39145')).toBeDisabled();
     });
 
     it('enciende el envío en modo prueba: primero la lectura, luego el envío con los números del equipo', async () => {
@@ -171,14 +171,18 @@ describe('ResumenAtencionClient', () => {
         fireEvent.click(screen.getByLabelText('Enviar a pacientes'));
         fireEvent.click(screen.getByLabelText('Canal WhatsApp'));
         fireEvent.click(screen.getByLabelText('WhatsApp S39141'));
-        fireEvent.change(screen.getByLabelText('Números del modo prueba'), { target: { value: '3001234567\n3109876543' } });
+        fireEvent.click(screen.getByLabelText('Canal Telegram'));
+        fireEvent.click(screen.getByLabelText('Telegram S39141'));
+        fireEvent.change(screen.getByLabelText('Números del modo prueba'), { target: { value: '3001234567\ntg:555' } });
         fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
         await waitFor(() =>
             expect(updateEnvioResumenAction).toHaveBeenCalledWith({
                 enviar: true,
                 whatsapp: true,
+                telegram: true,
                 serviciosWhatsapp: ['S39141'],
-                destinosPrueba: ['3001234567', '3109876543'],
+                serviciosTelegram: ['S39141'],
+                destinosPrueba: ['3001234567', 'tg:555'],
             }),
         );
         expect(updateLecturaResumenAction.mock.invocationCallOrder[0]).toBeLessThan(updateEnvioResumenAction.mock.invocationCallOrder[0]);
@@ -203,7 +207,7 @@ describe('ResumenAtencionClient', () => {
                         porEstado: { ENVIADO: 3, EXCLUIDO: 1 },
                         entregas: [
                             { id: 'e1', historia: '2441058', canal: 'WHATSAPP', prueba: true, destino: '•••4567', estado: 'DOCUMENTOS_ENVIADOS', motivo: null, avisoIso: '2026-11-01T15:00:00.000Z', documentosIso: '2026-11-01T15:02:00.000Z', verificadoPor: 'FECHA_NACIMIENTO' },
-                            { id: 'e2', historia: '2441059', canal: 'WHATSAPP', prueba: false, destino: '•••9999', estado: 'FALLO', motivo: 'La plantilla «Documentos de la consulta» no está configurada', avisoIso: null, documentosIso: null, verificadoPor: null },
+                            { id: 'e2', historia: '2441059', canal: 'TELEGRAM', prueba: false, destino: '•••9999', estado: 'FALLO', motivo: 'La plantilla «Documentos de la consulta» no está configurada', avisoIso: null, documentosIso: null, verificadoPor: null },
                         ],
                     },
                 })}
@@ -216,6 +220,7 @@ describe('ResumenAtencionClient', () => {
         expect(seguimiento).toHaveTextContent('✓ Documentos entregados');
         expect(seguimiento).toHaveTextContent('fecha de nacimiento');
         expect(seguimiento).toHaveTextContent('⚠ No salió');
+        expect(seguimiento).toHaveTextContent('Telegram');
         expect(seguimiento).not.toHaveTextContent('573001234567');
     });
 

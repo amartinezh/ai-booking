@@ -818,6 +818,7 @@ export {
   enmascararDestino,
   entregaDelPayload,
   horaLocal,
+  intencionDeResumenes,
   leerExclusiones,
   motivoDeExclusion,
   payloadDeEntrega,

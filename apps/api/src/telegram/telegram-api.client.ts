@@ -136,6 +136,14 @@ export class TelegramApiClient {
       silent?: boolean;
       /** Botones bajo el mensaje (teclado en línea): filas de [texto, callback_data]. */
       botones?: ReadonlyArray<ReadonlyArray<{ texto: string; datos: string }>>;
+      /**
+       * Botones de teclado: al tocarlos, Telegram manda su texto como un mensaje
+       * normal (llega por el webhook de mensajes, sin `callback_query`). Se
+       * ocultan al tocarlos.
+       */
+      teclado?: ReadonlyArray<string>;
+      /** Quita el teclado que dejó un mensaje anterior. */
+      quitarTeclado?: boolean;
     } = {},
   ): Promise<TelegramResult<TelegramSentMessage>> {
     return this.call<TelegramSentMessage>(token, 'sendMessage', {
@@ -145,7 +153,98 @@ export class TelegramApiClient {
       ...(opts.html ? { parse_mode: 'HTML' } : {}),
       ...(opts.silent ? { disable_notification: true } : {}),
       ...(opts.botones ? { reply_markup: tecladoEnLinea(opts.botones) } : {}),
+      ...(opts.teclado
+        ? {
+            reply_markup: {
+              keyboard: opts.teclado.map((t) => [{ text: t }]),
+              resize_keyboard: true,
+              one_time_keyboard: true,
+            },
+          }
+        : {}),
+      ...(opts.quitarTeclado
+        ? { reply_markup: { remove_keyboard: true } }
+        : {}),
     });
+  }
+
+  /** Un archivo como documento (el PDF del resumen), con su nombre. */
+  sendDocument(
+    token: string,
+    chatId: string,
+    datos: Buffer,
+    nombre: string,
+    tipo: string,
+  ): Promise<TelegramResult<TelegramSentMessage>> {
+    const build = () => {
+      const form = new FormData();
+      form.append('chat_id', chatId);
+      form.append(
+        'document',
+        new Blob([new Uint8Array(datos)], { type: tipo }),
+        nombre,
+      );
+      return form;
+    };
+    return this.callMultipart<TelegramSentMessage>(
+      token,
+      'sendDocument',
+      build,
+    );
+  }
+
+  /**
+   * Imágenes: una sola con `sendPhoto`; de 2 a 10 juntas en un álbum
+   * (`sendMediaGroup`), con el pie en la primera. Telegram no deja más de 10
+   * por álbum: quien llama parte la lista.
+   */
+  sendFotos(
+    token: string,
+    chatId: string,
+    fotos: ReadonlyArray<{ datos: Buffer; nombre: string; pie?: string }>,
+  ): Promise<TelegramResult<TelegramSentMessage | TelegramSentMessage[]>> {
+    if (fotos.length === 1) {
+      const [f] = fotos;
+      const build = () => {
+        const form = new FormData();
+        form.append('chat_id', chatId);
+        if (f.pie) form.append('caption', f.pie);
+        form.append(
+          'photo',
+          new Blob([new Uint8Array(f.datos)], { type: 'image/png' }),
+          f.nombre,
+        );
+        return form;
+      };
+      return this.callMultipart<TelegramSentMessage>(token, 'sendPhoto', build);
+    }
+    const build = () => {
+      const form = new FormData();
+      form.append('chat_id', chatId);
+      form.append(
+        'media',
+        JSON.stringify(
+          fotos.map((f, i) => ({
+            type: 'photo',
+            media: `attach://foto${i}`,
+            ...(f.pie ? { caption: f.pie } : {}),
+          })),
+        ),
+      );
+      fotos.forEach((f, i) =>
+        form.append(
+          `foto${i}`,
+          new Blob([new Uint8Array(f.datos)], { type: 'image/png' }),
+          f.nombre,
+        ),
+      );
+      return form;
+    };
+    return this.callMultipart<TelegramSentMessage[]>(
+      token,
+      'sendMediaGroup',
+      build,
+    );
   }
 
   /** Quita los botones de un mensaje (un botón usado no se puede volver a tocar). */

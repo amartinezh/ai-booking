@@ -77,6 +77,61 @@ export class TelegramChannelService {
     );
   }
 
+  /** Texto con un botón de teclado, o quitando el que había (resumen de la atención). */
+  async sendTextConTeclado(
+    organizationId: string,
+    senderId: string,
+    text: string,
+    teclado: { botones?: string[]; quitar?: boolean },
+    ctx?: BotOutboundContext,
+  ): Promise<TelegramSendOutcome> {
+    const chatId = this.chatIdOrLog(senderId);
+    if (!chatId) return NOT_SENT;
+    return this.sender.sendTextConTeclado(
+      organizationId,
+      chatId,
+      text,
+      teclado,
+      toTelegramCtx(ctx),
+    );
+  }
+
+  async sendDocument(
+    organizationId: string,
+    senderId: string,
+    datos: Buffer,
+    nombre: string,
+    tipo: string,
+    ctx?: BotOutboundContext,
+  ): Promise<TelegramSendOutcome> {
+    const chatId = this.chatIdOrLog(senderId);
+    if (!chatId) return NOT_SENT;
+    return this.sender.sendDocument(
+      organizationId,
+      chatId,
+      datos,
+      nombre,
+      tipo,
+      toTelegramCtx(ctx),
+    );
+  }
+
+  async sendFotos(
+    organizationId: string,
+    senderId: string,
+    fotos: ReadonlyArray<{ datos: Buffer; nombre: string; pie?: string }>,
+    ctx?: BotOutboundContext,
+  ): Promise<TelegramSendOutcome> {
+    const chatId = this.chatIdOrLog(senderId);
+    if (!chatId) return NOT_SENT;
+    return this.sender.sendFotos(
+      organizationId,
+      chatId,
+      fotos,
+      toTelegramCtx(ctx),
+    );
+  }
+
   /** Nota de voz del paciente, por su `file_id`. `null` si no se pudo bajar. */
   async downloadVoice(
     organizationId: string,

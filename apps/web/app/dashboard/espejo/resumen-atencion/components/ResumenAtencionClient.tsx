@@ -29,7 +29,7 @@ function duracion(ms: number): string {
  * Los interruptores del resumen de la atención (plan §3.11): la lectura en
  * sombra (Fase 1) y el envío por WhatsApp (Fase 4). Mientras no se apruebe el
  * piloto, «Enviar a pacientes» solo enciende en modo prueba: solo reciben los
- * números del equipo. Telegram y correo siguen sin poderse tocar.
+ * números (y chats de Telegram) del equipo. El correo sigue sin poderse tocar.
  */
 export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAtencion }) {
     const router = useRouter();
@@ -46,9 +46,14 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
     const waAntes = Object.entries(panel.config.servicios)
         .filter(([, c]) => c.WHATSAPP)
         .map(([codigo]) => codigo);
+    const tgAntes = Object.entries(panel.config.servicios)
+        .filter(([, c]) => c.TELEGRAM)
+        .map(([codigo]) => codigo);
     const [enviar, setEnviar] = useState(panel.config.enviar);
     const [whatsapp, setWhatsapp] = useState(panel.config.canales.WHATSAPP);
+    const [telegram, setTelegram] = useState(panel.config.canales.TELEGRAM);
     const [serviciosWa, setServiciosWa] = useState<Set<string>>(() => new Set(waAntes));
+    const [serviciosTg, setServiciosTg] = useState<Set<string>>(() => new Set(tgAntes));
     const [destinos, setDestinos] = useState(panel.config.modoPrueba.destinos.join('\n'));
 
     const cambiosLectura = useMemo(() => {
@@ -66,12 +71,21 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
     const cambiosEnvio =
         enviar !== panel.config.enviar ||
         whatsapp !== panel.config.canales.WHATSAPP ||
+        telegram !== panel.config.canales.TELEGRAM ||
         [...serviciosWa].sort().join(',') !== [...waAntes].sort().join(',') ||
+        [...serviciosTg].sort().join(',') !== [...tgAntes].sort().join(',') ||
         listaDestinos.join(',') !== panel.config.modoPrueba.destinos.join(',');
     const hayCambios = cambiosLectura || cambiosEnvio;
 
     const alternarWa = (codigo: string) =>
         setServiciosWa((prev) => {
+            const s = new Set(prev);
+            if (s.has(codigo)) s.delete(codigo);
+            else s.add(codigo);
+            return s;
+        });
+    const alternarTg = (codigo: string) =>
+        setServiciosTg((prev) => {
             const s = new Set(prev);
             if (s.has(codigo)) s.delete(codigo);
             else s.add(codigo);
@@ -106,7 +120,9 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                 const r = await updateEnvioResumenAction({
                     enviar,
                     whatsapp,
+                    telegram,
                     serviciosWhatsapp: [...serviciosWa].filter((c) => seLeen.has(c)),
+                    serviciosTelegram: [...serviciosTg].filter((c) => seLeen.has(c)),
                     destinosPrueba: listaDestinos,
                 });
                 if (!r.success) {
@@ -134,7 +150,7 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                     Cuando el médico termina la historia en el sistema del hospital, el paciente recibirá el resumen de su
                     consulta, su fórmula y sus órdenes. Por ahora existen la <strong>lectura en sombra</strong> (AgenIA lee las
                     historias terminadas y las guarda cifradas 30 días para revisarlas), los <strong>documentos</strong> en PDF
-                    e imagen y el <strong>envío por WhatsApp en modo prueba</strong>.{' '}
+                    e imagen y el <strong>envío por WhatsApp y Telegram en modo prueba</strong>.{' '}
                     <strong>Mientras no se apruebe el piloto, solo reciben los números del equipo; ningún paciente.</strong>
                 </p>
                 <p className="text-sm font-medium" data-testid="estado-lectura">
@@ -202,9 +218,15 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                             />
                             WhatsApp
                         </label>
-                        <label className="flex items-center gap-2 text-zinc-400">
-                            <input type="checkbox" checked={false} disabled className="h-4 w-4 rounded" aria-label="Canal Telegram" />
-                            Telegram (próximamente)
+                        <label className="flex items-center gap-2 text-zinc-800 dark:text-zinc-200">
+                            <input
+                                type="checkbox"
+                                checked={telegram}
+                                onChange={(e) => setTelegram(e.target.checked)}
+                                className="h-4 w-4 rounded border-zinc-300"
+                                aria-label="Canal Telegram"
+                            />
+                            Telegram
                         </label>
                         <label className="flex items-center gap-2 text-zinc-400">
                             <input type="checkbox" checked={false} disabled className="h-4 w-4 rounded" aria-label="Canal Correo" />
@@ -229,8 +251,9 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                         className="mt-1 block w-full max-w-sm rounded-lg border border-zinc-300 bg-white px-3 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900"
                     />
                     <span className="mt-1 block text-xs text-zinc-500">
-                        Uno por línea, hasta 10. Solo estos números reciben avisos, y a ellos se envía de prueba desde «Revisar
-                        contra el HIS».
+                        Uno por línea, hasta 10. Un chat de Telegram se escribe «tg:» y su número. Solo estos reciben avisos, y
+                        a ellos se envía de prueba desde «Revisar contra el HIS». Quien usa el asistente por Telegram lo recibe
+                        por ahí; si falla, por WhatsApp.
                     </span>
                 </label>
                 <label className="block text-sm text-zinc-700 dark:text-zinc-300">
@@ -255,8 +278,7 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                 <div>
                     <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Servicios del hospital</h2>
                     <p className="text-xs text-zinc-500">
-                        Marque los servicios que se leen y, de esos, los que envían por WhatsApp. Telegram y correo llegan
-                        después.
+                        Marque los servicios que se leen y, de esos, por qué canal se envían. El correo llega después.
                     </p>
                 </div>
                 {panel.servicios.length === 0 ? (
@@ -271,7 +293,7 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                                     <th className="py-2 pr-3 font-medium">Servicio</th>
                                     <th className="py-2 pr-3 font-medium">Se lee</th>
                                     {CANALES.map((c) => (
-                                        <th key={c.clave} className={`py-2 pr-3 font-medium ${c.clave === 'WHATSAPP' ? '' : 'text-zinc-400'}`}>
+                                        <th key={c.clave} className={`py-2 pr-3 font-medium ${c.clave === 'EMAIL' ? 'text-zinc-400' : ''}`}>
                                             {c.nombre}
                                         </th>
                                     ))}
@@ -295,12 +317,15 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                                         </td>
                                         {CANALES.map((c) => (
                                             <td key={c.clave} className="py-2 pr-3">
-                                                {c.clave === 'WHATSAPP' ? (
+                                                {c.clave !== 'EMAIL' ? (
                                                     <input
                                                         type="checkbox"
-                                                        checked={seLeen.has(s.codigo) && serviciosWa.has(s.codigo)}
+                                                        checked={
+                                                            seLeen.has(s.codigo) &&
+                                                            (c.clave === 'WHATSAPP' ? serviciosWa : serviciosTg).has(s.codigo)
+                                                        }
                                                         disabled={!seLeen.has(s.codigo)}
-                                                        onChange={() => alternarWa(s.codigo)}
+                                                        onChange={() => (c.clave === 'WHATSAPP' ? alternarWa : alternarTg)(s.codigo)}
                                                         aria-label={`${c.nombre} ${s.codigo}`}
                                                         className="h-4 w-4 rounded border-zinc-300 disabled:opacity-40"
                                                     />

@@ -511,7 +511,9 @@ export async function updateEnvioResumenAction(
     const r = aplicarCambioDeEnvio(fila?.resumenAtencion, {
         enviar: cambio?.enviar,
         whatsapp: cambio?.whatsapp,
+        telegram: cambio?.telegram,
         serviciosWhatsapp: cambio?.serviciosWhatsapp,
+        serviciosTelegram: cambio?.serviciosTelegram,
         destinosPrueba: cambio?.destinosPrueba,
     });
     if (!r.ok) return { success: false, error: r.error };

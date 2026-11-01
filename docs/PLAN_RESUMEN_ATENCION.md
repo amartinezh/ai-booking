@@ -1,6 +1,6 @@
 # Resumen de la atención al paciente por WhatsApp y correo
 
-**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01 (commit 3584864), y ese mismo día la revisión contra el HIS y la medición de la carga (§8.3, commit 2c2ffbd). Fase 2 (documentos en PDF e imagen y página del paciente) el mismo día (§8.4, commit 5dcd5f1). Fase 4, primera parte (WhatsApp en modo prueba) implementada el mismo día, sin commit (§8.5). Nada desplegado.** Todo nace apagado; no se le envía nada a ningún paciente.
+**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01 (commit 3584864), y ese mismo día la revisión contra el HIS y la medición de la carga (§8.3, commit 2c2ffbd). Fase 2 (documentos en PDF e imagen y página del paciente) el mismo día (§8.4, commit 5dcd5f1). Fase 4 en modo prueba: WhatsApp (§8.5, commit ea6851f) y, el mismo día, Telegram y la baja escrita (§8.6, sin commit). Nada desplegado.** Todo nace apagado; no se le envía nada a ningún paciente.
 **Primer hospital:** San Vicente de Paúl de Anserma (driver `cnt-sanvicente-anserma`).
 
 ## 1. Qué se pide
@@ -661,10 +661,28 @@ Se registra en Configuración › Integraciones › Plantillas de WhatsApp como 
 
 **Despliegue:** migración → API → web. El agente no cambia.
 
-**Falta en la Fase 4:**
-- Telegram: aviso con botón en línea, `sendDocument`/`sendMediaGroup` y caída a WhatsApp (D26);
-- la baja escrita («no quiero resúmenes»), como la de los recordatorios;
-- la prueba con teléfonos reales del equipo y la plantilla aprobada por Meta.
+**Falta en la Fase 4:** Telegram y la baja escrita (hechos en §8.6) y la prueba con teléfonos reales del equipo y la plantilla aprobada por Meta.
+
+### 8.6 Fase 4, segunda parte: Telegram y la baja escrita (2026-11-01)
+
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| Programador | `ResumenEnvioService` | D26: con `telegramChatId` sin bloquear, y canal y servicio Telegram encendidos (modo prueba: `tg:<chat>` en la lista), el aviso sale por Telegram y no por WhatsApp. Si falla (403: bloqueó el bot), cae a WhatsApp en la misma vuelta. Descarta los números con baja. |
+| Telegram | `telegram-api.client.ts`, `telegram-sender.service.ts`, `telegram-channel.service.ts` | Botón de teclado, `sendDocument`, `sendPhoto` y `sendMediaGroup` (álbumes de 10). Cada envío queda en `TelegramMessageLog` (`DOCUMENT`, `PHOTO`, `kind` `ATTENTION_SUMMARY`). |
+| Chat | `ResumenChatService` | Los remitentes `tg:` pasan por el mismo camino. El chat unido a la ficha cuenta como verificado (D23). Los documentos salen en PDF y en un álbum por documento, y el último mensaje quita el teclado. |
+| Baja | `intencionDeResumenes`, `AttentionSummaryOptOut` (migración `20261101230000_resumen_atencion_telegram_baja`) | «no quiero resúmenes» guarda la baja por la huella del número o chat (también sin ficha) y marca `summariesOptOut` en las fichas con ese número. «activar resúmenes» la deshace. Va antes que la fecha pendiente. |
+| Panel | `/dashboard/espejo/resumen-atencion` | Canal Telegram, su columna por servicio, chats `tg:` en el modo prueba y «Enviar de prueba» a un chat. El seguimiento muestra el canal. |
+
+**Cambio respecto de §3.10:** en Telegram el botón es de teclado, no en línea. El bot de pacientes se registró solo para mensajes (`allowed_updates: ['message']`): un botón en línea exigiría reconectar el bot de cada clínica. Con el de teclado, Telegram manda «Recibir mis documentos» como un mensaje normal y el asistente lo entiende como «mis documentos». Para el paciente es lo mismo: un toque.
+
+**Pruebas:** cliente y envío de Telegram, programador (Telegram primero, caída a WhatsApp, Telegram apagado, chat bloqueado, baja por número), chat (entrega por Telegram, fecha desde un chat ajeno, baja y alta) y pantalla. Además, una prueba de punta a punta con Postgres y Redis reales, en la que solo Meta y Telegram eran de mentira: aviso por Telegram con teclado, caída a WhatsApp por bloqueo, entrega con PDF y álbum, libro de Telegram y baja que excluye el siguiente resumen. Sin deriva entre la migración y el esquema.
+
+**Despliegue:** migración → API → web. El agente no cambia, y los bots de Telegram ya conectados no hay que reconectarlos.
+
+**Lo que sigue:**
+- Fase 3: el correo, cuando se decida D12;
+- prueba con teléfonos reales (plantilla aprobada por Meta);
+- Fase 5: el piloto. Exige quitar la restricción de «solo modo prueba», con el contrato ampliado, el comité y D15.
 
 ## 9. Volumen y costo
 

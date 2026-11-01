@@ -56,6 +56,30 @@ export function pideSusDocumentos(texto: string | null | undefined): boolean {
   return /^((quiero|recibir|enviar|enviame|mandar|mandame|ver) )?(mis |los )?documentos( de mi consulta)?$/.test(t);
 }
 
+const normalizarFrase = (texto: string | null | undefined) =>
+  (texto ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * La baja (o el alta) de los resúmenes, escrita por el paciente (plan §3.6).
+ * Frases fijas y sin IA, como la de los recordatorios: es una decisión sobre
+ * sus datos. «quiero mis documentos» NO es un alta: es pedir los de ahora.
+ */
+export function intencionDeResumenes(texto: string | null | undefined): 'BAJA' | 'ALTA' | null {
+  const t = normalizarFrase(texto);
+  if (!/(resumen|resumenes|documentos)$/.test(t)) return null;
+  if (/^(activar|activen|si quiero|quiero volver a recibir|quiero recibir)( los| mis)? resumenes$/.test(t)) return 'ALTA';
+  const baja =
+    /^(no|ya no) (quiero|deseo|me interesa)( mas| recibir)*( los| mis| sus| estos)? (resumenes|documentos)$/.test(t) ||
+    /^(baja|baja de|quitar|quiten|cancelar|desactivar|desactiven|no envien|no me envien|dejen de enviar|dejen de enviarme)( los| mis| de)? (resumenes|documentos)$/.test(t);
+  return baja ? 'BAJA' : null;
+}
+
 // ─── Lo que nunca se envía (D7) ─────────────────────────────────────────────
 
 export interface ExclusionesResumen {
@@ -186,14 +210,19 @@ export function dentroDelHorario(ahora: Date, horario: { desdeHora: number; hast
 export interface CambioEnvioResumen {
   enviar?: boolean;
   whatsapp?: boolean;
+  telegram?: boolean;
   /** Servicios de la matriz que envían por WhatsApp; reemplaza la lista. */
   serviciosWhatsapp?: string[];
+  /** Servicios de la matriz que envían por Telegram; reemplaza la lista. */
+  serviciosTelegram?: string[];
   /** Números del equipo del modo prueba; reemplaza la lista. */
   destinosPrueba?: string[];
 }
 
-/** Un número del equipo: celular colombiano o, si no, de 10 a 15 dígitos. */
+/** Un número del equipo: celular colombiano, de 10 a 15 dígitos, o un chat de Telegram («tg:123456»). */
 function destinoDePrueba(crudo: string): string | null {
+  const tg = /^tg:\s*(-?\d{4,20})$/i.exec(crudo.trim());
+  if (tg) return `tg:${tg[1]}`;
   const cel = celularParaWhatsapp(crudo);
   if (cel) return cel;
   const digitos = crudo.replace(/\D/g, '');
@@ -203,8 +232,8 @@ function destinoDePrueba(crudo: string): string | null {
 /**
  * Aplica lo que el panel cambia del envío. Mientras no se apruebe el piloto
  * (plan §8, Fase 5), «Enviar a pacientes» solo se enciende con el modo prueba:
- * con al menos un número del equipo, y solo a esos números. Telegram y correo
- * no se encienden aquí: llegan en las partes siguientes.
+ * con al menos un número del equipo, y solo a esos números (o chats de Telegram,
+ * «tg:<chat>»). El correo no se enciende aquí: llega con la Fase 3.
  */
 export function aplicarCambioDeEnvio(
   json: unknown,
@@ -238,26 +267,38 @@ export function aplicarCambioDeEnvio(
   }
 
   const canales = { ...antes.canales };
-  if (cambio.whatsapp !== undefined) {
-    const nuevo = cambio.whatsapp === true;
-    if (nuevo !== canales.WHATSAPP) cambios.push(`Canal WhatsApp: ${enLetras(canales.WHATSAPP)} → ${enLetras(nuevo)}`);
-    canales.WHATSAPP = nuevo;
-    base.canales = { ...(esObjeto(base.canales) ? base.canales : {}), WHATSAPP: nuevo };
+  for (const [clave, canal, nombre] of [
+    ['whatsapp', 'WHATSAPP', 'WhatsApp'],
+    ['telegram', 'TELEGRAM', 'Telegram'],
+  ] as const) {
+    const pedido = cambio[clave];
+    if (pedido === undefined) continue;
+    const nuevo = pedido === true;
+    if (nuevo !== canales[canal]) cambios.push(`Canal ${nombre}: ${enLetras(canales[canal])} → ${enLetras(nuevo)}`);
+    canales[canal] = nuevo;
+    base.canales = { ...(esObjeto(base.canales) ? base.canales : {}), [canal]: nuevo };
   }
 
-  if (cambio.serviciosWhatsapp !== undefined) {
-    if (!Array.isArray(cambio.serviciosWhatsapp)) return { ok: false, error: 'La lista de servicios no es válida.' };
-    const pedidos = new Set(cambio.serviciosWhatsapp.map((s) => String(s).trim()));
-    const guardados = esObjeto(base.servicios) ? base.servicios : {};
-    const servicios: Record<string, unknown> = {};
-    for (const [cod, canalesDelServicio] of Object.entries(antes.servicios)) {
-      const nuevo = pedidos.has(cod);
-      if (nuevo !== canalesDelServicio.WHATSAPP) cambios.push(`WhatsApp en ${cod}: ${enLetras(canalesDelServicio.WHATSAPP)} → ${enLetras(nuevo)}`);
-      const previo = Object.entries(guardados).find(([k]) => k.trim() === cod)?.[1];
-      servicios[cod] = { ...(esObjeto(previo) ? previo : {}), WHATSAPP: nuevo };
-    }
-    const fuera = [...pedidos].filter((s) => s && !(s in antes.servicios));
+  for (const [clave, canal, nombre] of [
+    ['serviciosWhatsapp', 'WHATSAPP', 'WhatsApp'],
+    ['serviciosTelegram', 'TELEGRAM', 'Telegram'],
+  ] as const) {
+    const pedidos = cambio[clave];
+    if (pedidos === undefined) continue;
+    if (!Array.isArray(pedidos)) return { ok: false, error: 'La lista de servicios no es válida.' };
+    const set = new Set(pedidos.map((x) => String(x).trim()));
+    const fuera = [...set].filter((x) => x && !(x in antes.servicios));
     if (fuera.length) return { ok: false, error: `Primero marque «Se lee» en: ${fuera.join(', ')}.` };
+    const guardados = esObjeto(base.servicios) ? base.servicios : {};
+    const servicios: Record<string, unknown> = { ...guardados };
+    for (const [cod, canalesDelServicio] of Object.entries(antes.servicios)) {
+      const nuevo = set.has(cod);
+      if (nuevo !== canalesDelServicio[canal]) cambios.push(`${nombre} en ${cod}: ${enLetras(canalesDelServicio[canal])} → ${enLetras(nuevo)}`);
+      const clavePrevia = Object.keys(guardados).find((k) => k.trim() === cod) ?? cod;
+      const previo = guardados[clavePrevia];
+      if (clavePrevia !== cod) delete servicios[clavePrevia];
+      servicios[cod] = { ...(esObjeto(previo) ? previo : {}), [canal]: nuevo };
+    }
     base.servicios = servicios;
   }
 

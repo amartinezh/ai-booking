@@ -131,11 +131,11 @@ export default function DocumentosDelResumen({ id, destinosPrueba = [] }: { id: 
             <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800" data-testid="enviar-de-prueba">
                 {destinosPrueba.length === 0 ? (
                     <p className="text-xs text-zinc-500">
-                        Para enviar de prueba por WhatsApp, agregue arriba los números del equipo (modo prueba).
+                        Para enviar de prueba, agregue arriba los números (o chats de Telegram) del equipo (modo prueba).
                     </p>
                 ) : (
                     <div className="flex flex-wrap items-center gap-2 text-sm">
-                        <span className="text-zinc-700 dark:text-zinc-300">Enviar de prueba por WhatsApp a</span>
+                        <span className="text-zinc-700 dark:text-zinc-300">Enviar de prueba a</span>
                         <select
                             value={destino}
                             onChange={(e) => setDestino(e.target.value)}

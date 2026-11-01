@@ -18,7 +18,12 @@ describe('TelegramSenderService', () => {
     telegramMessageLog: { create: jest.Mock };
     patientProfile: { updateMany: jest.Mock };
   };
-  let api: { sendMessage: jest.Mock; sendVoice: jest.Mock };
+  let api: {
+    sendMessage: jest.Mock;
+    sendVoice: jest.Mock;
+    sendDocument?: jest.Mock;
+    sendFotos?: jest.Mock;
+  };
   let config: { forOrg: jest.Mock; markTokenRevoked: jest.Mock };
   let sender: TelegramSenderService;
 
@@ -59,6 +64,59 @@ describe('TelegramSenderService', () => {
   });
 
   afterEach(() => jest.restoreAllMocks());
+
+  it('resumen de la atención: documento, álbum de a 10 y texto con teclado, cada uno en el libro', async () => {
+    api.sendDocument = jest.fn(async () => ({
+      ok: true,
+      result: { message_id: 7 },
+    }));
+    api.sendFotos = jest.fn(
+      async (_t: string, _c: string, fotos: unknown[]) => ({
+        ok: true,
+        result: fotos.map((_f, i) => ({ message_id: 200 + i })),
+      }),
+    );
+    const ctx = { kind: 'ATTENTION_SUMMARY' as const };
+    await sender.sendDocument(
+      ORG,
+      CHAT,
+      Buffer.from('%PDF'),
+      'a.pdf',
+      'application/pdf',
+      ctx,
+    );
+    const fotos = Array.from({ length: 12 }, (_x, i) => ({
+      datos: Buffer.from('p'),
+      nombre: `h${i}.png`,
+    }));
+    await expect(
+      sender.sendFotos(ORG, CHAT, fotos, ctx),
+    ).resolves.toMatchObject({ ok: true, messageId: 200 });
+    expect(
+      api.sendFotos.mock.calls.map((c) => (c[2] as unknown[]).length),
+    ).toEqual([10, 2]);
+    await sender.sendTextConTeclado(
+      ORG,
+      CHAT,
+      'Hola',
+      { botones: ['Recibir mis documentos'] },
+      ctx,
+    );
+    expect(api.sendMessage).toHaveBeenLastCalledWith(TOKEN, CHAT, 'Hola', {
+      teclado: ['Recibir mis documentos'],
+    });
+    expect(
+      logged().map((l: { messageType: string; kind: string }) => [
+        l.messageType,
+        l.kind,
+      ]),
+    ).toEqual([
+      ['DOCUMENT', 'ATTENTION_SUMMARY'],
+      ['PHOTO', 'ATTENTION_SUMMARY'],
+      ['PHOTO', 'ATTENTION_SUMMARY'],
+      ['TEXT', 'ATTENTION_SUMMARY'],
+    ]);
+  });
 
   it('envía el texto y lo registra como ACCEPTED', async () => {
     const res = await sender.sendText(ORG, CHAT, 'Hola', {

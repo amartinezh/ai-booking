@@ -6,6 +6,7 @@ import {
   dentroDelHorario,
   enmascararDestino,
   entregaDelPayload,
+  intencionDeResumenes,
   leerExclusiones,
   motivoDeExclusion,
   payloadDeEntrega,
@@ -170,4 +171,31 @@ describe('aplicarCambioDeEnvio', () => {
   it('sin la función habilitada no hay nada que cambiar', () => {
     expect(aplicarCambioDeEnvio(null, { whatsapp: true }).ok).toBe(false);
   });
+});
+
+describe('Telegram y la baja escrita', () => {
+  const leyendo = { leerDelHospital: true, servicios: { S39141: { WHATSAPP: true }, S39145: {} } };
+
+  it('enciende Telegram por canal y por servicio sin tocar WhatsApp; acepta chats «tg:» en el modo prueba', () => {
+    const r = aplicarCambioDeEnvio(leyendo, { telegram: true, serviciosTelegram: ['S39141'], destinosPrueba: ['tg:123456789', '3001234567'] });
+    if (!r.ok) throw new Error(r.error);
+    const c = leerConfigResumenAtencion(r.config)!;
+    expect(c.canales.TELEGRAM).toBe(true);
+    expect(c.servicios.S39141).toEqual({ WHATSAPP: true, TELEGRAM: true, EMAIL: false });
+    expect(c.servicios.S39145).toEqual({ WHATSAPP: false, TELEGRAM: false, EMAIL: false });
+    expect(c.modoPrueba.destinos).toEqual(['tg:123456789', '573001234567']);
+    expect(r.cambios).toContain('Telegram en S39141: apagado → encendido');
+  });
+
+  it.each([
+    ['no quiero resúmenes', 'BAJA'],
+    ['No quiero recibir más los documentos', 'BAJA'],
+    ['baja de resumenes', 'BAJA'],
+    ['dejen de enviarme los documentos', 'BAJA'],
+    ['activar resúmenes', 'ALTA'],
+    ['quiero recibir los resúmenes', 'ALTA'],
+    ['quiero mis documentos', null],
+    ['mis documentos', null],
+    ['no quiero recordatorios', null],
+  ])('«%s» → %s', (t, esperado) => expect(intencionDeResumenes(t)).toBe(esperado));
 });
