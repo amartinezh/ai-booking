@@ -2343,7 +2343,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 | `docs/PLAN_CONSULTA_CITAS.md` | «¿Qué citas tengo?» en el asistente. |
 | `docs/PLAN_TELEGRAM.md` · `docs/ENCENDIDO_TELEGRAM.md` | Canal de Telegram. |
 | `docs/PLAN_AGENDA_HUECOS.md` | Agenda armada con los huecos del HIS. |
-| `docs/PLAN_RESUMEN_ATENCION.md` | Propuesta (sin construir): resumen de la atención al paciente por WhatsApp y correo cuando el médico termina la historia clínica en el HIS; Fase 0 con las consultas de solo lectura del driver. |
+| `docs/PLAN_RESUMEN_ATENCION.md` | Propuesta (sin construir): resumen de la atención y sus documentos (fórmula, órdenes de exámenes, remisión, incapacidad) en PDF e imagen para imprimir, por WhatsApp y correo, cuando el médico termina la historia clínica en el HIS; Fase 0 con las consultas de solo lectura del driver. |
 | `docs/PLAN_ALERTAS_TECNICAS.md` · `docs/ALERTAS_TECNICAS.md` | Alertas técnicas por Telegram y vigía del servidor. |
 | `docs/PLAN_BOT_SOPORTE.md` · `docs/ASISTENTE_SOPORTE.md` | Asistente de soporte por Telegram para el personal de las clínicas: el plan y su operación (paso a producción, piloto, apagarlo). |
 | `docs/MONITOR_SERVICIOS.md` | Monitor de servicios externos. |

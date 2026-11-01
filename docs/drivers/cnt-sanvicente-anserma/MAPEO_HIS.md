@@ -858,12 +858,153 @@ Segunda parte — `sql/HISTORIA_CLINICA_MENSAJES_2_SOLO_LECTURA.sql` (2026-10-28
 
 ⚠️ **Intercalación:** una tabla # creada con `CREATE TABLE` toma la intercalación de tempdb; si difiere de la de la base, cruzarla con columnas del HIS falla (error 468). Las tablas # con texto llevan `COLLATE DATABASE_DEFAULT` (corregido también en el script de PRUEBAS).
 
+### Reportes del HIS — documentación del hospital (2026-10-30)
+
+El hospital documentó con capturas del módulo **Consultas** y los PDF que imprime cómo el HIS muestra la historia y qué papeles salen de ella. Usó una consulta de urgencias de 2011 y una de consulta externa de 2025. ⚠️ Las capturas tienen nombres, documentos, diagnósticos y firmas de pacientes y médicos reales: **no se guardan en el repositorio** y aquí no se copian.
+
+**Lo que confirma.**
+- El diccionario de datos de 2011 trae las mismas 16 columnas de `HISTORIACLINICA` que vio HC-2 (el hospital advierte que pudo cambiar por normatividad).
+- `HISTORIACLINICA` guarda en orden cronológico todo lo que se llena con plantillas: consulta, evolución, nota de enfermería, procedimiento. En el ejemplo, `NU_NUME_LABO_HICL` solo está lleno en la consulta (`CON`); notas y evoluciones llevan 0.
+- **Módulo Consultas:** un árbol por paciente.
+  - Bajo cada consulta cuelgan sus medicamentos, ayudas diagnósticas, remisiones, indicaciones y evoluciones («NOTA MEDICA»).
+  - Doble clic en cada una abre la vista previa de su reporte. El botón de impresora imprime directo en la impresora predeterminada del equipo.
+  - Los binoculares abren la plantilla tal como se grabó, solo lectura: lo único que permite es agregar evoluciones o notas.
+- Pestañas de la plantilla: «Datos Historia», «Plan de Estudio y Manejo», «Condición de salud declarada Res. 1888», «Antecedentes». Opciones de la pantalla: «Resumen HC», «Mostrar datos Epicrisis», «Res. 2284», «Hist. Obstétrica», «Múltiple impresión».
+
+**Los reportes (Crystal Reports) y de dónde sale cada campo** (✅ cuadra con lo mapeado · ❓ hipótesis que confirma E7 en PRUEBAS; varias quedaron resueltas en la ronda 5, abajo):
+
+| Reporte | Qué es | Campos → columna |
+|---|---|---|
+| Encabezado y pie **de todos** | «Registro de Calidad» y datos del médico | Hospital (nombre, NIT, dirección, teléfono, logo: ❓ D-3) · Fecha Historia (`FE_FECH_HICL` ✅) · Lugar y fecha · Documento y nombre (`PACIENTES` + `TIPO_DOCUMENTO` ✅) · Administradora (❓ `R_PAC_EPS` → `EPS` o la del convenio) · Convenio (❓ `HIST_TEMLABO.NU_NUME_CONV_HTLA`) · Tipo de usuario, «COTIZANTE RANGO 1» (❓ `PACIENTES.NU_TIPO_PAC` + `NU_NIVE_PAC`) · No Historia (`NU_HIST_PAC_HICL` ✅) · Orden Nº (❓ `NU_AUTO_HORD` o `NU_CLAVE_HORD`) · Registro de Admisión (`NU_NUME_REG_HICL` ✅) · Pie: firma (❓ imagen, D-2), nombre (`NO_NOMB_MED` ✅), CC (❓ `NU_DOCU_MED`), especialidad (❓ `LABORATORIO` → `ESPECIALIDADES`), registro (`DE_REGI_MED` ✅) · «Usuario: ADMINISTRADOR · Fecha impresión · Página N» |
+| Historia clínica (impresora de la consulta) | La plantilla completa | «Código Plantilla: HIS002» (❓ `PLANTILLA_HIST.TX_CODI_PLHI`) · «Cons. Historia» (`NU_NUME_HICL` ✅) · Atención · cada grupo de la plantilla subrayado, con «campo: valor» a dos columnas (el modelo EAV de R3-5 ✅) · diagnósticos · conducta. Dos o más páginas |
+| `infOrdenMedHC.rpt` | **Orden de medicamentos** (fórmula) | «R/.» y por medicamento: Código (`CD_CODI_ARTI_HMED` ✅) · Medicamento (`NO_NOMB_ARTI_HMED` ✅) · Código CUM (❓ `ARTICULO.NU_CODCUM_ARTI` o `TX_SISPRO_HMED`) · Invima (❓ `ARTICULO.TX_INVIMA_ARTI`) · Medida (`DE_UNME_HMED` ✅) · Concentración (`DE_CTRA_HMED` ✅) · Vía (`TX_VIAD_HMED` ✅) · Cantidad en número y letras (`NU_CANT_HMED` ✅) · Forma farmacéutica (`TX_FOFA_HMED` ✅) · «Cantidad Entregada: ____» (la llena farmacia) · «Dosis y Frecuencia de Administración» (❓ `DE_DOSIS_HMED`) · «Periodo Duración Tratamiento» (❓ `TX_DURA_HMED`) · «Instrucciones de dosificación» (❓ `TX_INDDOS_HMED`) · «Indicaciones a juicio del Prescriptor» (❓ `TX_INDESP_HMED` o `ME_OBSERV_HORD`) · DX principal y tipo (`R_LABO_DIAG` ✅) · «Vigencia de la Orden: Vigente por 72 Horas» (❓ `HIST_ORDEN.TX_VIGE_HORD`) |
+| `infOrdenADh.rpt` | **Orden de ayudas diagnósticas** | Por renglón: «Procedimiento: S19304 - Cuadro hemático…» (`CD_CODI_SER_HPRO` + `SERVICIOS.NO_NOMB_SER` ✅) · Cantidad (`NU_CANT_HPRO` ✅) · Indicaciones (`DE_INDI_HPRO` ✅) · DX principal. «Para consulta externa basta la orden» |
+| `Interpretación.rpt` | **Interpretación médica** | El resultado de un examen leído por un médico («P ORINA NORMAL»), una por examen. En urgencias y hospitalización se hace el mismo día y la firma otro médico. Tabla por ubicar (D-10) |
+| Indicaciones de manejo | Indicaciones del médico | Orden Nº (`NU_NUME_HIND` ✅) · texto (`DE_DESC_HIND` ✅) |
+| `infRemiPac.rpt` | **Remisión de pacientes** | Institución que remite y a dónde, fecha, especialidad, evento, servicio que remite y al que remite, motivo, identificación (nacimiento, edad, sexo, residencia, **responsable con parentesco y teléfono**), afiliación (régimen, ficha del Sisbén, EPS, nivel), servicios solicitados, diagnóstico, observaciones, **prioridad** y la **descripción del caso clínico**, que copia la historia de esa consulta («Página 1 de 4»). Casi todo está guardado en `HIST_REMI` como foto (29 columnas; P-8 las rotula, D-6 mide su llenado) |
+
+**Hallazgos que cambian el plan.**
+1. 🔴 **Las casillas de «CONDUCTA» no dicen qué se ordenó.** En la remisión de ejemplo dicen «Medicamentos: NO · Laboratorio: NO · Remisiones: NO», y el médico sí formuló, pidió ácido úrico y remitió. «Recomendaciones y Signos de alarma: NO», mientras las anotaciones dicen «se dan signos de alarma y recomendaciones». ⇒ Lo que va al paciente sale de las órdenes (`HIST_ORDEN`, `HIST_REMI`, `HIST_INCA`…), nunca de esas casillas.
+2. 🔴 **La fórmula impresa trae, probablemente, el texto de dosis que arma el HIS.** «Dosis y Frecuencia de Administración» sale de `DE_DOSIS_HMED`: `HIST_MEDI` no tiene otra columna de dosis en texto. Es el texto que dice «1 mg cada 24 Horas» para una cápsula de 20 mg (R4-3). Si E7 lo confirma, **el papel que el paciente recibe hoy ya trae ese error**: hay que avisarle al hospital y al proveedor. AgenIA muestra la indicación del médico (D19).
+3. La cantidad en letras sale en inglés («1 (ONE)»). AgenIA la escribe en español: la fórmula pide la cantidad en número y en letras, en español.
+4. **Las indicaciones (`HIST_INDI`) son internas en urgencias y hospitalización**: son las órdenes del médico a enfermería («LEV SSN 1000 CC A MANTENIMIENTO», «CSV-FAC»). En consulta externa falta saber qué son (D-7). El plan las ponía como «Recomendaciones».
+5. **La remisión de ejemplo es interna.** «Remite a: HSVPA» (el mismo hospital), de medicina general a medicina interna. El piloto remite en el 32 % de las consultas: es una puerta para que el asistente ofrezca agendar la cita del especialista (fuera de este plan).
+6. **Las evoluciones cuelgan de la consulta meses después.** Bajo una consulta de junio de 2025 hay 7 «NOTA MEDICA» de otra profesional, hasta octubre de 2026. El resumen de una consulta se arma con sus propias órdenes, no con lo que cuelga después; una evolución no es una corrección (D10).
+7. En urgencias se agregan medicamentos a la consulta casi 2 horas después (08:26, 10:13 y 10:14 en una consulta de las 08:25). Es lo mismo que la ronda 3 vio en consulta externa (máximo 116 min).
+8. **Todos los reportes llevan la firma del médico como imagen**, y `MEDICOS` no tiene columna de firma: D-2 la busca.
+9. Los exámenes se imprimen con el código propio del HIS («S19304»), no con el CUPS. `TX_SISPRO_HPRO` y `SERVICIOS_CUPS` podrían darlo (D-5).
+10. `HIST_IMPRESION(_DETA)` puede ser el registro de impresiones (qué papeles se llevó cada paciente) o la «impresión diagnóstica»: su `TX_TIPO_IMDE` tiene 4 letras, como un CIE-10 («I10X»). D-1 lo resuelve.
+
+**Scripts (probados el 2026-11-01 en un SQL Server de prueba con el esquema real y la intercalación del hospital).**
+- `sql/HISTORIA_CLINICA_DOCUMENTOS_SOLO_LECTURA.sql` (ronda 5, `ESEHSVP`). Solo conteos, catálogos y frases repetidas 10 veces o más. Bloques D-0 a D-11:
+  - D-1 qué es `HIST_IMPRESION`; D-2 dónde está la firma; D-3 los datos del hospital;
+  - D-4 llenado de cada campo de la fórmula, vigencia y medicamentos por orden; D-5 código propio o CUPS;
+  - D-6 la remisión, columna por columna, y cuánto mide el caso clínico; D-7 si las indicaciones son para el paciente;
+  - D-8 incapacidad e interconsulta; D-9 encabezado (convenio, tipo de usuario, EPS); D-10 interpretación; D-11 documentos por consulta.
+  - En la prueba, D-3 no mostró la clave de una tabla falsa de empresa ni nada de `INTER_RES1888`.
+- `sql/HISTORIA_CLINICA_PRUEBAS_SOLO_LECTURA.sql` ganó **P-8**: cada documento con las etiquetas del papel, el valor y la columna de donde sale. E7 ahora imprime cada reporte a PDF para compararlo con P-8, y P-7 suma las columnas de los documentos.
+
+### Ronda 5 — `sql/HISTORIA_CLINICA_DOCUMENTOS_SOLO_LECTURA.sql` en `ESEHSVP` (2026-11-01) ✅
+
+Consultas del 2-oct al 1-nov: piloto 2.949, consulta externa sin urgencias 4.471, urgencias 1.109.
+
+**Lo que quedó resuelto:**
+
+| Pregunta | Respuesta |
+|---|---|
+| Datos del hospital (encabezado) | ✅ **`ENTIDAD`** (una fila): `NO_NOMB_ENTI`, `CD_NIT_ENTI` (800191101), `DE_DIRE_ENTI`, `DE_TELE_ENTI`, `CD_CODI_DPTO_ENTI` + `CD_CODI_MUNI_ENTI` (17-042, Anserma, Caldas). El **logo** está en `ENTIDAD.IM_LOGO_ENTI`. Cuadra con el papel («Dir. CRA 5 CALLE 1 - Tel. 8531105»). |
+| Firma del médico | ✅ **`USUARIOS.IM_FIRMA_USUA`** (imagen): 288 de 650 usuarios la tienen, **~393 KB cada una** (pesada: probablemente BMP). Se une con `MEDICOS` por una columna aún sin ubicar (ronda 6, E-2). |
+| ¿Qué es `HIST_IMPRESION`? | ✅ **El registro de impresiones.** Cabecera: causa (`NU_AUTO_CAIM_HIMP` → `CAUSA_IMPRESION`), sesión (`NU_NUME_CONE_HIMP` → `CONEXIONES`), fecha, observación y a quién se entrega (nombre, tipo y número de documento, teléfono; **vacíos** en las consultas de la ventana). Detalle: historia, número del papel (`NU_NUME_IMDE`) y tipo (`TX_TIPO_IMDE`): `HC`, `REM`, `MED`, `AD`, `IM`, `OP`, `INC`. |
+| Código de plantilla | ✅ `PLANTILLA_HIST.TX_CODI_PLHI`: 870 = «HISOO1» (con letras O), 844 = «P01», 838 = «HIS002» (el del papel de urgencias), 858 = «EspMedInt», 907 = «ConNutri». |
+| CUM e Invima | ✅ `ARTICULO.NU_CODCUM_ARTI` y `ARTICULO.TX_INVIMA_ARTI`. Farmacia del hospital (`AI`): 100 % en el catálogo, CUM 93 %, Invima 80 %. Externos (`AE`): **solo el 12 % está en `ARTICULO`** (CUM 11 %, Invima 10 %). `TX_SISPRO_HMED` viene vacío (0 %). |
+| Dosis, duración, indicación | Medida, concentración, vía, cantidad, duración y el texto que arma el HIS (`DE_DOSIS_HMED`): 100 %. Indicación del médico (`TX_INDDOS_HMED`): 88-90 %. `TX_INDESP_HMED` es un código («10» en el 99,4 %), no texto. La observación de la orden (`ME_OBSERV_HORD`) viene vacía (0-0,3 %): «Indicaciones a juicio del Prescriptor» sale en blanco casi siempre. |
+| Vigencia | ✅ `HIST_ORDEN.TX_VIGE_HORD` = **«Vigente por 72 Horas» en el 100 %** de las órdenes de medicamentos, del día **y posfechadas**. Las de exámenes no tienen vigencia. |
+| Medicamentos por orden | 2,9 en promedio (máximo 15). Con 1: 32 %; 2: 20 %; 3: 17 %; 4: 12 %; 5-6: 13 %; 7 o más: 6 %. ~2,4 órdenes por consulta del piloto. |
+| Código de los exámenes | El código del HIS **ya es el CUPS** en casi todo (903426 hemoglobina glicosilada, 902210 hemograma…), con variantes: sufijo «HD» para el programa de hipertensos y diabéticos («903816HD»), prefijo «I» («I904904») y algunos «S» antiguos (4-12 %). El «S19304» del ejemplo era de 2011. `TX_SISPRO_HPRO` y `SERVICIOS.TX_CODI_SERV_SER` vienen vacíos. `SERVICIOS_CUPS` (10.023 filas: código y descripción) es el catálogo CUPS. |
+| Exámenes por orden | Laboratorio: 4,4 renglones por orden, indicación en el 3-5 %. Procedimientos: 1,1 renglones, indicación en el 34-43 %. Órdenes de consulta (tipo 1) y cirugía (3): casi no hay. |
+| Remisión | Piloto: **31 % de las consultas**, 1,27 remisiones cada una. La foto de `HIST_REMI` viene llena en lo esencial; vacías o casi: nivel del Sisbén (0 %), tipo de traslado (0 %), ficha del Sisbén (0-3 %), servicio que remite en texto (2 %), residencia actual (66-69 %). Códigos: prioridad `TX_PRIO_HREM` 3 (56 %), 1 (32 %), 0 (10 %), 2 (3 %), catálogo por ubicar; motivo `NU_MTVREM_HREM` = 1 casi siempre; evento `TX_MOTATE_HREM` = 38 (enfermedad general en RIPS). |
+| ¿A dónde se remite? | 🎯 **~89 % al mismo hospital.** `DE_REMI_HREM` es texto libre con variantes: «HSVP ANSERMA» 600, «HSVPA» 209, «HSVP» 180, «HSVP - ANSERMA» 157, «HOSPITAL SANVICENTE DE PAUL» 44… La especialidad pedida está estructurada: `TX_CUPSPR_HREM` es el CUPS de la consulta (890266 medicina interna 259, 890206 nutrición 212, 890276 175, 890283 89…) y `TX_CODSER_HREM` parece el código de servicio de habilitación (329 medicina interna, 333 nutrición, 335 oftalmología…). |
+| Caso clínico de la remisión | 6.100 caracteres de promedio; p50 4.670, p90 10.700, máximo 28.098. El 87 % empieza por «Consulta …» (copia la historia). |
+| Indicaciones en consulta externa | ✅ **Son para el paciente.** Piloto: 23 % de las consultas, 102 caracteres; palabras para el paciente en el 64 %, de enfermería en el 1,5 %. Urgencias: 84 % de enfermería. Frases más repetidas: «CONTROL EN 3 MESES CON RESULTADOS», «SE SOLICITA VALORACIÓN POR SALUD ORAL», «SE SOLICITA VACUNACIÓN CONTRA INFLUENZA», «SE SOLICITA AFINAMIENTO DE PRESIÓN ARTERIAL», «SE SOLICITAN 10 TERAPIAS FÍSICAS». |
+| Incapacidad e interconsulta | Incapacidad: 1,7 % del piloto, 5,3 días de promedio (máximo 30), origen enfermedad general casi siempre. Interconsulta: **0,6 %**, casi todas a medicina general: en consulta externa casi no existe. |
+| Encabezado: EPS y tipo de usuario | El convenio está en el 100 % de las consultas (`HIST_TEMLABO.NU_NUME_CONV_HTLA`; 15 convenios en el piloto). **`R_PAC_EPS` no sirve para el encabezado**: cada paciente tiene de 4 a 36 filas, varias «activas». `CONVENIOS` (507 filas, 85 columnas) trae `CD_CODI_CONV` (el «Convenio» del papel), `CD_NIT_EPS_CONV` (la EPS) e `ID_CODI_TIUS_CONV` (el tipo de usuario, catálogo `TIPOUSUARIO`). `PACIENTES.NU_TIPO_PAC` vale 1 o 2 (¿cotizante o beneficiario?) y `NU_NIVE_PAC` siempre 0. `TIPO_DOCUMENTO` empieza en **0 = CC** (1 TI, 2 RC…). |
+| Interpretación de exámenes | ✅ `HIST_PROCINTER` (164.000 filas): `NU_NUME_HPRO_HPIN` → `HIST_PROC`, texto `TX_INTE_HPIN`, médico `CD_CODI_MED_HPIN`, `FE_INTERPRETACION`. `tmp_interpretacion` es la tabla de trabajo del reporte. Los resultados de laboratorio casi no están en el HIS (`RESULTADOS1`: 4.762 filas): viven en otro sistema. |
+
+**🔴 Lo que el paciente se lleva hoy en papel (registro de impresiones, piloto, 30 días):**
+
+| Papel | Consultas en que se imprimió | De cuántas podía |
+|---|---|---|
+| Historia (`HC`) | 2.819 (**96 %**), 1,45 impresiones cada una | 2.949 |
+| Remisión (`REM`) | 911 | 912 con remisión (**~100 %**) |
+| Fórmula (`MED`) | 87 (**3 %**) | ~2.340 con fórmula |
+| Exámenes (`AD`) | 48 (**2 %**) | ~1.900 con exámenes |
+| `IM` (¿indicaciones o interpretación?) | 23 | — |
+
+⇒ La remisión se imprime siempre: el paciente la lleva. La fórmula y las órdenes de laboratorio **casi nunca se imprimen**: la farmacia y el laboratorio del hospital trabajarían con la orden en el sistema. Falta saber para quién es la historia que se imprime en el 96 % (¿archivo para la firma? ¿copia para el paciente?) y cómo reclaman los externos `AE` sin fórmula impresa. La ronda 6 (E-1) mide la causa, quién imprime y cuándo; el resto se le pregunta al hospital.
+
+**Otros hallazgos.**
+- **Por mes, en el piloto, con las tasas medidas (D-11):** 79 % de las consultas con fórmula (1,28 órdenes del día y 1,10 posfechadas), 65 % con exámenes (0,79 órdenes), 31 % con remisión, 1,7 % con incapacidad. Son 3,6 documentos por consulta, sin contar el resumen; en la consulta externa sin urgencias, 2,7. El 3,6 % de las consultas del piloto no deja ningún documento.
+- 🔴 **Seguridad, para avisarle al hospital:** la base guarda trazas del SQL Profiler como tablas (`trace` 108.000 filas, `_01trazarips` 908.000, `trace1`, `_01TRAZACXC`). Una traza guarda las sentencias tal como se ejecutaron, con datos de pacientes, y cualquiera con permiso de lectura sobre la base puede leerlas. `tmp_interpretacion` también deja una fila de un paciente en una tabla permanente.
+- `CMS_InfoObjects5` es una tabla de un repositorio de BusinessObjects: los reportes podrían estar publicados ahí. Hay que preguntarle a TI antes de buscar los `.rpt`.
+
+### Ronda 6 — `sql/HISTORIA_CLINICA_DOCUMENTOS_2_SOLO_LECTURA.sql` en `ESEHSVP` (2026-11-01) ✅
+
+Misma ventana que la ronda 5 (piloto 2.949 consultas; consulta externa sin urgencias 4.471).
+
+**Quién imprime qué y cuándo (piloto):**
+
+| Papel | Misma sesión que escribió la historia (el médico) | Minutos después de guardar (p50 / p90) | Veces que se imprime | Lectura |
+|---|---|---|---|---|
+| Historia (`HC`) | 76 % | 4 / 1.416 | 1 vez 63 %, 2 veces 30 %, 3 o más 7 % | **El médico la imprime al terminar**, en casi todas las consultas, y a veces dos copias. ¿Para el archivo (firma) o para el paciente? Lo dice el hospital |
+| Remisión (`REM`) | 90 % | 3 / 12 | 1 vez 89 % | **El médico la imprime al terminar**: el paciente sale con ella |
+| Fórmula (`MED`) | 5 % | 9.834 / 26.208 (~7 y ~18 días) | casi siempre 1 vez | **Reimpresión días después, por otra persona** (¿ventanilla? ¿farmacia?), en el 3 % de las consultas |
+| Exámenes (`AD`) | 14 % | 5.947 / 20.823 (~4 y ~14 días) | 1 vez | Igual que la fórmula, en el 2 % |
+| `IM` / `INC` / `OP` | 0-15 % | días después | — | Poco usados. `INC` es la incapacidad (60 % casa con `NU_NUME_HINC`) y `IM`, en parte, las indicaciones (35 % casa con `NU_NUME_HIND`). Aparecen también `IOE` y `REF` (una remisión) |
+
+- `CAUSA_IMPRESION` está vacía y la causa nunca se llena. El nombre, documento y teléfono de quien recibe, también vacíos.
+- El número del registro es la historia (`HC`) y la remisión (`REM`) en el 100 %. En `MED` y `AD` casi nunca es el `NU_AUTO_HORD` de esa historia (8 %): el número de orden que imprime el papel lo confirma E7.
+- ⇒ **El paciente sale de la consulta con la remisión y, quizá, con la historia.** La fórmula y las órdenes de exámenes no se le entregan en papel: la farmacia y el laboratorio del hospital las ven en el sistema, y alguien las reimprime días después en unos pocos casos.
+
+**Firma: ✅ resuelta.** Se une por documento: `USUARIOS.NU_DOCU_USUA` = `MEDICOS.NU_DOCU_MED` (35 de 35 médicos de la ventana). 34 la tienen, **los 19 médicos del piloto la tienen**, y cubre el 100 % de las consultas.
+- Están **todas en BMP sin comprimir**: 1.041 KB en promedio y hasta 9,6 MB. Para usarlas habría que reducirlas y pasarlas a PNG, que quedaría en decenas de KB.
+- 🔴 `USUARIOS` tiene una columna de contraseñas (`PS_PASS_USUA`). Un permiso sobre esta tabla, si se llega a pedir, solo puede incluir `NU_DOCU_USUA` e `IM_FIRMA_USUA`.
+
+**Encabezado: ✅ resuelto.** El 100 % de las consultas encuentra su convenio en `CONVENIOS`, con su EPS y su tipo de usuario.
+
+| «Convenio» (`CD_CODI_CONV`) | «Administradora» (`EPS`) | «Tipo de usuario» (`TIPOUSUARIO`) | Consultas del piloto |
+|---|---|---|---|
+| SUBS | EPS Suramericana | Subsidiado | 876 |
+| STOTALSUBS | Salud Total EPS-S | Subsidiado | 816 |
+| NUEVASUBSID | Nueva EPS | Subsidiado | 553 |
+| CONTRIBUTIVO | EPS Suramericana | Contributivo cotizante | 455 |
+| STCONTRIB | Salud Total EPS-S | Contributivo cotizante | 153 |
+| MAGISTERIOFOMAG | Fiduprevisora (magisterio) | Especial o excepción cotizante | 75 |
+| SOAT… | aseguradoras | Tomador / amparado SOAT | 10 |
+
+- ~76 % de las consultas del piloto son del régimen subsidiado: lenguaje sencillo e imágenes importan.
+- `PACIENTES.NU_TIPO_PAC` (1 o 2) no coincide con el tipo de usuario: no se usa.
+
+**Remisión: ✅ casi resuelta.**
+- **Destino: 99 % al mismo hospital** (1.148 de 1.159 en el piloto). La ronda 5 había contado ~89 % porque solo veía las variantes que se repiten 10 veces o más.
+- **Especialidad pedida** (`TX_CUPSPR_HREM` → `SERVICIOS_CUPS`, consulta externa en 30 días): medicina interna 257, nutrición 209, oftalmología 172, pediatría 86, ortopedia 72, dermatología 57, **psiquiatría 51**, ginecología 50, **psicología 50**, urología 46, otorrinolaringología 43, cirugía general 22, neurología 21, **psiquiatría pediátrica 16**, optometría 15, y otras.
+- 🔴 ~8,5 % de las remisiones son a salud mental, aunque el diagnóstico de la consulta no tenga un código F. Para D7, el documento y la línea del resumen revelan el tema.
+- **Motivo:** `MOTIVO_REMISION` «01 = a otro nivel de complejidad» (el `NU_MTVREM_HREM` = 1 de casi todas).
+- **Prioridad** (`TX_PRIO_HREM` 0-3): no hay catálogo en la base, la traduce la aplicación. La confirma E7.
+
 ### Pendiente
 
-- Correr la prueba en PRUEBAS (arriba) con el hospital.
+- Comparar con el papel en PRUEBAS: `sql/HISTORIA_CLINICA_COMPARAR_PAPEL_PRUEBAS_SOLO_LECTURA.sql` (independiente; trae el paso a paso con marcas en cada campo y cuatro remisiones, una por prioridad). Da el número de orden impreso, la prioridad de la remisión, la columna de cada dosis y la incapacidad. **Es lo único que falta por el lado de la base.** El protocolo E1-E7 del script grande sigue sirviendo para las huellas, las reglas de envío y el costo.
+- Pedirle a TI una copia de los `.rpt` (`infOrdenMedHC`, `infOrdenADh`, `infRemiPac`, `Interpretación`, el de la historia y los de incapacidad e interconsulta). No tienen datos de pacientes y dicen de qué columna sale cada campo. Sirven para leerlos, no se guardan en el repositorio (son del proveedor).
 - Correr `HISTORIA_CLINICA_PLANTILLA_844_SOLO_LECTURA.sql` en `ESEHSVP` (qué campo de la 844 cambió en julio).
 - Preguntas al hospital:
   - ¿`AI`/`AE` es farmacia interna/externa?
   - ¿Dónde reclama el paciente las entregas posfechadas?
   - ¿Por qué el correo de relleno?
   - Las credenciales de `INTER_RES1888`.
+  - ¿La farmacia y los dispensadores de las EPS aceptan una fórmula impresa desde un PDF?
+  - ¿Qué reporte imprime la incapacidad y la interconsulta?
+  - El médico imprime la historia al terminar casi todas las consultas, a veces dos copias (ronda 6). ¿Es para el archivo (firma) o se le entrega al paciente?
+  - ¿Cómo reclama hoy el paciente un medicamento externo (`AE`) si la fórmula no se le imprime en la consulta (solo se reimprime días después en el 3 %)? ¿Y los exámenes?
+  - ¿Cómo agenda hoy el paciente la cita de la remisión interna (99 % de las remisiones)? ¿Necesita autorización de la EPS?
+  - Las 72 horas de vigencia de una fórmula posfechada, ¿cuentan desde su fecha?
+  - Avisarle a TI: las trazas del SQL Profiler guardadas como tablas en `ESEHSVP` (`trace`, `_01trazarips`…) dejan sentencias con datos de pacientes a la vista de cualquiera con lectura.
