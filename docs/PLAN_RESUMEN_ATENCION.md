@@ -1,6 +1,6 @@
 # Resumen de la atención al paciente por WhatsApp y correo
 
-**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01 (commit 3584864), y ese mismo día la revisión contra el HIS y la medición de la carga (§8.3, commit 2c2ffbd). Fase 2 (documentos en PDF e imagen y página del paciente) el mismo día (§8.4, commit 5dcd5f1). Fase 4 en modo prueba: WhatsApp (§8.5, commit ea6851f) y, el mismo día, Telegram y la baja escrita (§8.6, sin commit). Nada desplegado.** Todo nace apagado; no se le envía nada a ningún paciente.
+**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01 (commit 3584864), y ese mismo día la revisión contra el HIS y la medición de la carga (§8.3, commit 2c2ffbd). Fase 2 (documentos en PDF e imagen y página del paciente) el mismo día (§8.4, commit 5dcd5f1). Fase 4 en modo prueba: WhatsApp (§8.5, commit ea6851f), Telegram y la baja escrita (§8.6, commit 44391bb). Fase 3 (correo por SMTP, en modo prueba) el mismo día, sin commit (§8.7). Nada desplegado.** Todo nace apagado; no se le envía nada a ningún paciente.
 **Primer hospital:** San Vicente de Paúl de Anserma (driver `cnt-sanvicente-anserma`).
 
 ## 1. Qué se pide
@@ -683,6 +683,28 @@ Se registra en Configuración › Integraciones › Plantillas de WhatsApp como 
 - Fase 3: el correo, cuando se decida D12;
 - prueba con teléfonos reales (plantilla aprobada por Meta);
 - Fase 5: el piloto. Exige quitar la restricción de «solo modo prueba», con el contrato ampliado, el comité y D15.
+
+### 8.7 Fase 3: el correo (2026-11-01)
+
+**D12 sigue abierta, pero ya no frena el código.** El envío es por SMTP (nodemailer 10.1.1, licencia MIT-0), que aceptan Amazon SES, Brevo y Resend. Elegir proveedor es poner sus datos en `.env.production` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`, `MAIL_REPLY_TO`; ver `apps/api/.env.example`) y configurar SPF, DKIM y DMARC del dominio del remitente. Sin `SMTP_HOST` y `MAIL_FROM` no sale nada, y el panel lo avisa.
+
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| Reglas | `packages/shared/src/resumen-envio.ts` | `correoUtilizable` (bien escrito, fuera de la lista de relleno y sin usuarios como «no@», «notiene@» o «paciente@»), `correoDeDestino` (para un menor, primero el del acompañante: D6), `leerCorreosDeRelleno` (por defecto los tres del hospital, configurable) y el canal y la columna de correo en `aplicarCambioDeEnvio`. |
+| Transporte | `ResumenCorreoService` | SMTP por variables de entorno. Nunca lanza. |
+| Programador | `ResumenEnvioService.correo` | Parte aparte de la mensajería (§3.6). Con el canal Correo encendido mira también las atenciones `ENVIADO` y `SIN_CONTACTO` no excluidas. Sin correo utilizable deja un envío `EMAIL` `NO_ENVIADO` y no la vuelve a mirar. Si hay correo, sin datos clínicos, manda el enlace y un solo PDF con todos los documentos, cifrado con el número de documento sin ceros a la izquierda. |
+| Panel | `/dashboard/espejo/resumen-atencion` | Canal y columna Correo, «Correos de relleno», correos en el modo prueba, aviso si falta SMTP y, en el seguimiento, cuántas atenciones no tenían correo utilizable. |
+
+**Sin migración:** el canal y el estado nuevo caben en los campos de texto de `AttentionSummaryDelivery`.
+
+**Pruebas:** reglas, transporte, programador (correo además de WhatsApp, relleno, canal apagado, modo prueba, sin celular, excluido, fallo del servidor, «Enviar de prueba») y pantalla. Además, una prueba de punta a punta con Postgres y Redis reales y un servidor SMTP de prueba (Mailpit): el correo llegó con el asunto y el cuerpo sin datos clínicos, el enlace y el PDF adjunto. Ese PDF abrió solo con el número de documento (con pdf.js, que rechazó otras claves), y el correo de relleno quedó `NO_ENVIADO`.
+
+**Falta del correo:**
+- elegir el proveedor (D12), su dominio y DNS;
+- los rebotes, que llegan por un webhook distinto en cada proveedor, y luego no reusar un correo que rebota;
+- que el asistente pregunte el correo (D17).
+
+**Despliegue:** API (instala nodemailer) → web. Sin migración y sin cambios en el agente.
 
 ## 9. Volumen y costo
 

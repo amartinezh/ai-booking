@@ -52,7 +52,7 @@ const panel = (cambios: Partial<PanelResumenAtencion> = {}): PanelResumenAtencio
     revision: { meta: 20, correctos: 0, conError: 0, recientes: [] },
     documentos: leerConfigDocumentos(null),
     nombreClinica: 'Hospital de prueba',
-    envio: { plantillaConfigurada: false, entregas: [], porEstado: {} },
+    envio: { plantillaConfigurada: false, correoConfigurado: false, correosDeRelleno: ['pacienteshospital@gmail.com'], sinCorreo: 0, entregas: [], porEstado: {} },
     ...cambios,
 });
 
@@ -151,17 +151,19 @@ describe('ResumenAtencionClient', () => {
         expect(screen.getByTestId('falta-plantilla')).toBeInTheDocument();
     });
 
-    it('el correo no se puede tocar; WhatsApp y Telegram solo en los servicios que se leen', () => {
+    it('los tres canales solo en los servicios que se leen; avisa si el servidor no tiene correo', () => {
         render(<ResumenAtencionClient panel={panel()} />);
-        expect(screen.getByLabelText('Canal Correo')).toBeDisabled();
+        expect(screen.getByLabelText('Canal Correo')).toBeEnabled();
         expect(screen.getByLabelText('Canal Telegram')).toBeEnabled();
         for (const servicio of ['S39141', 'S39145']) expect(screen.getByLabelText(`Correo ${servicio}`)).toBeDisabled();
+        expect(screen.getByTestId('falta-correo')).toBeInTheDocument();
         expect(screen.getByLabelText('WhatsApp S39141')).toBeDisabled();
         expect(screen.getByLabelText('Telegram S39141')).toBeDisabled();
         fireEvent.click(screen.getByLabelText('Leer S39141'));
         expect(screen.getByLabelText('WhatsApp S39141')).toBeEnabled();
         expect(screen.getByLabelText('Telegram S39141')).toBeEnabled();
         expect(screen.getByLabelText('Telegram S39145')).toBeDisabled();
+        expect(screen.getByLabelText('Correo S39141')).toBeEnabled();
     });
 
     it('enciende el envío en modo prueba: primero la lectura, luego el envío con los números del equipo', async () => {
@@ -173,6 +175,8 @@ describe('ResumenAtencionClient', () => {
         fireEvent.click(screen.getByLabelText('WhatsApp S39141'));
         fireEvent.click(screen.getByLabelText('Canal Telegram'));
         fireEvent.click(screen.getByLabelText('Telegram S39141'));
+        fireEvent.click(screen.getByLabelText('Canal Correo'));
+        fireEvent.click(screen.getByLabelText('Correo S39141'));
         fireEvent.change(screen.getByLabelText('Números del modo prueba'), { target: { value: '3001234567\ntg:555' } });
         fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
         await waitFor(() =>
@@ -182,6 +186,9 @@ describe('ResumenAtencionClient', () => {
                 telegram: true,
                 serviciosWhatsapp: ['S39141'],
                 serviciosTelegram: ['S39141'],
+                correo: true,
+                serviciosCorreo: ['S39141'],
+                correosDeRelleno: ['pacienteshospital@gmail.com'],
                 destinosPrueba: ['3001234567', 'tg:555'],
             }),
         );
@@ -204,6 +211,9 @@ describe('ResumenAtencionClient', () => {
                     config: { ...configResumenAtencionApagada(), enviar: true, modoPrueba: { destinos: ['573001234567'] } },
                     envio: {
                         plantillaConfigurada: true,
+                        correoConfigurado: true,
+                        correosDeRelleno: [],
+                        sinCorreo: 7,
                         porEstado: { ENVIADO: 3, EXCLUIDO: 1 },
                         entregas: [
                             { id: 'e1', historia: '2441058', canal: 'WHATSAPP', prueba: true, destino: '•••4567', estado: 'DOCUMENTOS_ENVIADOS', motivo: null, avisoIso: '2026-11-01T15:00:00.000Z', documentosIso: '2026-11-01T15:02:00.000Z', verificadoPor: 'FECHA_NACIMIENTO' },
@@ -221,6 +231,7 @@ describe('ResumenAtencionClient', () => {
         expect(seguimiento).toHaveTextContent('fecha de nacimiento');
         expect(seguimiento).toHaveTextContent('⚠ No salió');
         expect(seguimiento).toHaveTextContent('Telegram');
+        expect(seguimiento).toHaveTextContent('7 atención(es) sin correo utilizable');
         expect(seguimiento).not.toHaveTextContent('573001234567');
     });
 

@@ -1,5 +1,9 @@
 import {
+  CORREOS_DE_RELLENO_POR_DEFECTO,
   EXCLUSIONES_POR_DEFECTO,
+  correoDeDestino,
+  correoUtilizable,
+  leerCorreosDeRelleno,
   aplicarCambioDeEnvio,
   candidatosDeDestino,
   celularParaWhatsapp,
@@ -198,4 +202,43 @@ describe('Telegram y la baja escrita', () => {
     ['mis documentos', null],
     ['no quiero recordatorios', null],
   ])('«%s» → %s', (t, esperado) => expect(intencionDeResumenes(t)).toBe(esperado));
+});
+
+describe('correo (§3.4, D17)', () => {
+  const relleno = CORREOS_DE_RELLENO_POR_DEFECTO;
+
+  it.each([
+    ['Paciente.Real@Gmail.com', 'paciente.real@gmail.com'],
+    ['pacienteshospital@gmail.com', null],
+    ['notiene@gmail.com', null],
+    ['no@hotmail.com', null],
+    ['xxx@xxx.com', null],
+    ['sin arroba', null],
+    ['', null],
+  ])('«%s» → %s', (c, esperado) => expect(correoUtilizable(c, relleno)).toBe(esperado));
+
+  it('adulto: el suyo; menor: el del acompañante primero; sin ninguno, null', () => {
+    const base = resumen();
+    const adulto = { ...base, paciente: { ...base.paciente, correo: 'yo@gmail.com', correoAcompanante: 'mama@gmail.com' } };
+    expect(correoDeDestino(adulto, relleno)).toEqual({ destino: 'yo@gmail.com', origen: 'HIS' });
+    const menor = { ...adulto, historia: { ...adulto.historia, edad: 9 } };
+    expect(correoDeDestino(menor, relleno)).toEqual({ destino: 'mama@gmail.com', origen: 'ACOMPANANTE' });
+    const relleno97 = { ...base, paciente: { ...base.paciente, correo: 'pacienteshospital@gmail.com' } };
+    expect(correoDeDestino(relleno97, relleno)).toBeNull();
+  });
+
+  it('el panel enciende el correo, acepta correos en el modo prueba y la lista de relleno', () => {
+    const r = aplicarCambioDeEnvio(
+      { leerDelHospital: true, servicios: { S39141: {} } },
+      { correo: true, serviciosCorreo: ['S39141'], destinosPrueba: ['Equipo@Hospital.co'], correosDeRelleno: ['otro@relleno.com'] },
+    );
+    if (!r.ok) throw new Error(r.error);
+    const c = leerConfigResumenAtencion(r.config)!;
+    expect(c.canales.EMAIL).toBe(true);
+    expect(c.servicios.S39141.EMAIL).toBe(true);
+    expect(c.modoPrueba.destinos).toEqual(['equipo@hospital.co']);
+    expect(leerCorreosDeRelleno(r.config)).toEqual(['otro@relleno.com']);
+    expect(enmascararDestino('equipo@hospital.co')).toBe('e•••@hospital.co');
+    expect(aplicarCambioDeEnvio({}, { correosDeRelleno: ['malo'] }).ok).toBe(false);
+  });
 });

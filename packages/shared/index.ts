@@ -809,16 +809,20 @@ export type {
 // 📨 Envío del resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md, Fase 4):
 // exclusiones, destinatarios, horario y el modo prueba.
 export {
+  CORREOS_DE_RELLENO_POR_DEFECTO,
   EXCLUSIONES_POR_DEFECTO,
   LIMITES_ENVIO_RESUMEN,
   aplicarCambioDeEnvio,
   candidatosDeDestino,
   celularParaWhatsapp,
+  correoDeDestino,
+  correoUtilizable,
   dentroDelHorario,
   enmascararDestino,
   entregaDelPayload,
   horaLocal,
   intencionDeResumenes,
+  leerCorreosDeRelleno,
   leerExclusiones,
   motivoDeExclusion,
   payloadDeEntrega,

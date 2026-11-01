@@ -183,12 +183,61 @@ export function candidatosDeDestino(
   return c;
 }
 
-/** «•••4567» (teléfono) o «CO.•••1918» (BSUID). */
+/** «•••4567» (teléfono), «CO.•••1918» (BSUID) o «p•••@gmail.com» (correo). */
 export function enmascararDestino(destino: string): string {
   const v = destino.trim();
+  if (v.includes('@')) {
+    const [usuario, dominio] = v.split('@');
+    return `${usuario.charAt(0)}•••@${dominio}`;
+  }
   if (/^\d+$/.test(v)) return `•••${v.slice(-4)}`;
   const pais = /^[A-Za-z]{2}\./.test(v) ? v.slice(0, 3) : '';
   return `${pais}•••${v.slice(-4)}`;
+}
+
+// ─── Correo (§3.4, D17) ─────────────────────────────────────────────────────
+
+/**
+ * Los correos que el hospital pone cuando el paciente no tiene (ronda 3: el 97 %
+ * de los pacientes tiene uno de estos). Configurable en el panel.
+ */
+export const CORREOS_DE_RELLENO_POR_DEFECTO = [
+  'pacienteshospital@gmail.com',
+  'hsvpanserma@hotmail.com',
+  'pacientesanserma@gmail.com',
+];
+
+const CORREO = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
+/** Lo que se escribe cuando no hay correo: «no@», «notiene@», «sincorreo@»… */
+const USUARIO_DE_RELLENO = /^(no|notiene|no\.tiene|sincorreo|sin\.correo|ninguno|nn|na|n\.a|x+|correo|email|prueba|paciente)$/;
+
+/** Lee `resumenAtencion.correosDeRelleno`; sin configurar, la lista por defecto. */
+export function leerCorreosDeRelleno(json: unknown): string[] {
+  const lista = esObjeto(json) && Array.isArray(json.correosDeRelleno) ? json.correosDeRelleno : null;
+  if (!lista) return CORREOS_DE_RELLENO_POR_DEFECTO;
+  return lista.filter((c): c is string => typeof c === 'string').map((c) => c.trim().toLowerCase()).filter(Boolean);
+}
+
+/** El correo en minúsculas si sirve para enviar: bien escrito, no de relleno. */
+export function correoUtilizable(crudo: string | null | undefined, relleno: string[]): string | null {
+  const c = (crudo ?? '').trim().toLowerCase();
+  if (!CORREO.test(c)) return null;
+  if (relleno.includes(c)) return null;
+  if (USUARIO_DE_RELLENO.test(c.split('@')[0])) return null;
+  return c;
+}
+
+/**
+ * El correo al que va (plan §3.6): el del paciente; si es menor de edad (D6),
+ * primero el del acompañante. `null` si no hay uno utilizable.
+ */
+export function correoDeDestino(r: ResumenAtencionHis, relleno: string[]): { destino: string; origen: OrigenDestino } | null {
+  const menor = r.historia.edad !== null && r.historia.edad < 18;
+  const acompanante = correoUtilizable(r.paciente.correoAcompanante, relleno);
+  if (menor && acompanante) return { destino: acompanante, origen: 'ACOMPANANTE' };
+  const propio = correoUtilizable(r.paciente.correo, relleno);
+  if (propio) return { destino: propio, origen: 'HIS' };
+  return null;
 }
 
 // ─── Horario (§3.8) ─────────────────────────────────────────────────────────
@@ -211,18 +260,25 @@ export interface CambioEnvioResumen {
   enviar?: boolean;
   whatsapp?: boolean;
   telegram?: boolean;
+  correo?: boolean;
+  /** Correos de relleno del hospital (no se usan); reemplaza la lista. */
+  correosDeRelleno?: string[];
   /** Servicios de la matriz que envían por WhatsApp; reemplaza la lista. */
   serviciosWhatsapp?: string[];
   /** Servicios de la matriz que envían por Telegram; reemplaza la lista. */
   serviciosTelegram?: string[];
+  /** Servicios de la matriz que envían por correo; reemplaza la lista. */
+  serviciosCorreo?: string[];
   /** Números del equipo del modo prueba; reemplaza la lista. */
   destinosPrueba?: string[];
 }
 
-/** Un número del equipo: celular colombiano, de 10 a 15 dígitos, o un chat de Telegram («tg:123456»). */
+/** Un destino del equipo: celular colombiano, de 10 a 15 dígitos, un chat de Telegram («tg:123456») o un correo. */
 function destinoDePrueba(crudo: string): string | null {
   const tg = /^tg:\s*(-?\d{4,20})$/i.exec(crudo.trim());
   if (tg) return `tg:${tg[1]}`;
+  const correo = crudo.trim().toLowerCase();
+  if (correo.includes('@')) return CORREO.test(correo) ? correo : null;
   const cel = celularParaWhatsapp(crudo);
   if (cel) return cel;
   const digitos = crudo.replace(/\D/g, '');
@@ -232,8 +288,8 @@ function destinoDePrueba(crudo: string): string | null {
 /**
  * Aplica lo que el panel cambia del envío. Mientras no se apruebe el piloto
  * (plan §8, Fase 5), «Enviar a pacientes» solo se enciende con el modo prueba:
- * con al menos un número del equipo, y solo a esos números (o chats de Telegram,
- * «tg:<chat>»). El correo no se enciende aquí: llega con la Fase 3.
+ * con al menos un destino del equipo (número, chat de Telegram «tg:<chat>» o
+ * correo), y solo a esos destinos.
  */
 export function aplicarCambioDeEnvio(
   json: unknown,
@@ -270,6 +326,7 @@ export function aplicarCambioDeEnvio(
   for (const [clave, canal, nombre] of [
     ['whatsapp', 'WHATSAPP', 'WhatsApp'],
     ['telegram', 'TELEGRAM', 'Telegram'],
+    ['correo', 'EMAIL', 'Correo'],
   ] as const) {
     const pedido = cambio[clave];
     if (pedido === undefined) continue;
@@ -282,6 +339,7 @@ export function aplicarCambioDeEnvio(
   for (const [clave, canal, nombre] of [
     ['serviciosWhatsapp', 'WHATSAPP', 'WhatsApp'],
     ['serviciosTelegram', 'TELEGRAM', 'Telegram'],
+    ['serviciosCorreo', 'EMAIL', 'Correo'],
   ] as const) {
     const pedidos = cambio[clave];
     if (pedidos === undefined) continue;
@@ -300,6 +358,17 @@ export function aplicarCambioDeEnvio(
       servicios[cod] = { ...(esObjeto(previo) ? previo : {}), [canal]: nuevo };
     }
     base.servicios = servicios;
+  }
+
+  if (cambio.correosDeRelleno !== undefined) {
+    if (!Array.isArray(cambio.correosDeRelleno)) return { ok: false, error: 'La lista de correos de relleno no es válida.' };
+    const lista = [...new Set(cambio.correosDeRelleno.map((c) => String(c).trim().toLowerCase()).filter(Boolean))];
+    const malo = lista.find((c) => !CORREO.test(c));
+    if (malo) return { ok: false, error: `«${malo}» no es un correo válido.` };
+    if (lista.length > 50) return { ok: false, error: 'Máximo 50 correos de relleno.' };
+    const previa = leerCorreosDeRelleno(base);
+    if (lista.join(',') !== previa.join(',')) cambios.push(`Correos de relleno: ${lista.length}`);
+    base.correosDeRelleno = lista;
   }
 
   let enviar = antes.enviar;

@@ -68,6 +68,7 @@ function armar(
     plantilla?: { success: boolean; error?: string };
     bajas?: string[];
     telegram?: { ok: boolean; blocked?: boolean };
+    smtp?: { ok: boolean; error?: string };
   } = {},
 ) {
   const actualizados: any[] = [];
@@ -93,9 +94,15 @@ function armar(
           content: JSON.stringify(r),
           serviceCode: r.historia.servicio,
           patientProfileId: o.perfil ? 'p-1' : null,
+          status: 'RECIBIDO',
+          deliveries: [],
         })),
       ),
       update: jest.fn(async (a: any) => actualizados.push(a)),
+      findUnique: jest.fn(async () => ({
+        contentExpiresAt: new Date(Date.now() + 86_400_000),
+        organization: { name: 'Hospital AgenIA' },
+      })),
       findFirst: jest.fn(async () => ({
         id: 's-0',
         hisKey: '2441058',
@@ -148,6 +155,20 @@ function armar(
       messageId: 1,
     })),
   };
+  const correoSmtp: any = {
+    enviar: jest.fn(async () => o.smtp ?? { ok: true, id: 'm1' }),
+  };
+  const generador = {
+    pdfCompleto: jest.fn(async () => ({
+      nombreArchivo: 'Documentos_01-11-2026.pdf',
+      tipo: 'application/pdf',
+      datos: Buffer.from('%PDF'),
+    })),
+  };
+  const documentos: any = { generador: jest.fn(async () => generador) };
+  const enlaces: any = {
+    crearEnlace: jest.fn(async () => ({ token: 'TOKEN' })),
+  };
   const s = new ResumenEnvioService(
     prisma,
     { decrypt: (x: string) => x } as any,
@@ -156,6 +177,9 @@ function armar(
     whatsapp,
     bitacora,
     telegram,
+    correoSmtp,
+    documentos,
+    enlaces,
   );
   return {
     s,
@@ -166,6 +190,8 @@ function armar(
     entregas,
     bitacora,
     telegram,
+    correoSmtp,
+    generador,
   };
 }
 
@@ -177,6 +203,7 @@ describe('ResumenEnvioService.programar', () => {
       excluidos: 0,
       sinContacto: 0,
       fallos: 0,
+      correos: 0,
     });
     const llamada = a.plantillas.sendTemplate.mock.calls[0][0];
     expect(llamada).toMatchObject({
@@ -235,6 +262,7 @@ describe('ResumenEnvioService.programar', () => {
       excluidos: 0,
       sinContacto: 0,
       fallos: 0,
+      correos: 0,
     });
     expect(a.entregas).toEqual([]);
     expect(a.actualizados).toEqual([]);
@@ -425,6 +453,147 @@ describe('Telegram (D26) y la baja por número', () => {
     expect(a.entregas[0]).toMatchObject({
       channel: 'TELEGRAM',
       purpose: 'PRUEBA',
+    });
+  });
+});
+
+describe('correo (Fase 3)', () => {
+  const CONFIG_CORREO = {
+    ...CONFIG,
+    canales: { WHATSAPP: true, EMAIL: true },
+    servicios: { S39141: { WHATSAPP: true, EMAIL: true } },
+    modoPrueba: { destinos: ['573001234567', 'ana.perez@gmail.com'] },
+  };
+  const conCorreo = (correo: string | null) =>
+    resumen({ paciente: { ...resumen().paciente, correo } });
+
+  beforeEach(() => {
+    process.env.PUBLIC_WEB_URL = 'https://hospital.example';
+  });
+
+  it('además del WhatsApp, un correo sin datos clínicos con el PDF protegido con el documento y el enlace', async () => {
+    const a = armar({
+      config: CONFIG_CORREO,
+      resumenes: [conCorreo('Ana.Perez@Gmail.com')],
+    });
+    await expect(a.s.programar(AHORA)).resolves.toMatchObject({
+      avisados: 1,
+      correos: 1,
+    });
+    expect(a.generador.pdfCompleto).toHaveBeenCalledWith({
+      clave: '900000001',
+    });
+    const correo = a.correoSmtp.enviar.mock.calls[0][0];
+    expect(correo.para).toBe('ana.perez@gmail.com');
+    expect(correo.asunto).toBe(
+      'Documentos de su consulta del domingo, 1 de noviembre',
+    );
+    expect(correo.texto).toContain(
+      'su número de documento, sin puntos ni espacios',
+    );
+    expect(correo.texto).toContain('https://hospital.example/resumen/TOKEN');
+    expect(correo.texto).not.toMatch(/HTA|I10X|900000001/);
+    expect(correo.adjunto).toMatchObject({
+      nombre: 'Documentos_01-11-2026.pdf',
+      tipo: 'application/pdf',
+    });
+    expect(a.entregas.map((e) => [e.channel, e.status])).toEqual([
+      ['WHATSAPP', 'AVISO_ENVIADO'],
+      ['EMAIL', 'DOCUMENTOS_ENVIADOS'],
+    ]);
+  });
+
+  it('el correo de relleno del hospital no se usa: queda NO_ENVIADO y no se vuelve a mirar', async () => {
+    const a = armar({
+      config: CONFIG_CORREO,
+      resumenes: [conCorreo('pacienteshospital@gmail.com')],
+    });
+    await a.s.programar(AHORA);
+    expect(a.correoSmtp.enviar).not.toHaveBeenCalled();
+    expect(a.entregas.at(-1)).toMatchObject({
+      channel: 'EMAIL',
+      status: 'NO_ENVIADO',
+      statusReason: 'Sin correo utilizable (vacío o de relleno)',
+    });
+  });
+
+  it('con el canal de correo apagado, o un correo fuera del modo prueba, no sale ni se anota', async () => {
+    const apagado = armar({ resumenes: [conCorreo('ana.perez@gmail.com')] });
+    await apagado.s.programar(AHORA);
+    expect(apagado.correoSmtp.enviar).not.toHaveBeenCalled();
+    const fuera = armar({
+      config: CONFIG_CORREO,
+      resumenes: [conCorreo('otro@gmail.com')],
+    });
+    await fuera.s.programar(AHORA);
+    expect(fuera.correoSmtp.enviar).not.toHaveBeenCalled();
+    expect(fuera.entregas.filter((e) => e.channel === 'EMAIL')).toEqual([]);
+  });
+
+  it('sin celular (SIN_CONTACTO) el correo sale igual; lo excluido no sale por ningún canal', async () => {
+    const sinCel = armar({
+      config: CONFIG_CORREO,
+      resumenes: [
+        resumen({
+          paciente: {
+            ...resumen().paciente,
+            celular: null,
+            correo: 'ana.perez@gmail.com',
+          },
+        }),
+      ],
+    });
+    await expect(sinCel.s.programar(AHORA)).resolves.toMatchObject({
+      sinContacto: 1,
+      correos: 1,
+    });
+    const excluido = armar({
+      config: CONFIG_CORREO,
+      resumenes: [
+        {
+          ...conCorreo('ana.perez@gmail.com'),
+          diagnosticos: [
+            { cie10: 'F412', descripcion: null, tipo: null, principal: true },
+          ],
+        },
+      ],
+    });
+    await excluido.s.programar(AHORA);
+    expect(excluido.correoSmtp.enviar).not.toHaveBeenCalled();
+  });
+
+  it('si el servidor de correo falla, el envío queda FALLO con el motivo', async () => {
+    const a = armar({
+      config: CONFIG_CORREO,
+      resumenes: [conCorreo('ana.perez@gmail.com')],
+      smtp: {
+        ok: false,
+        error: 'El correo no está configurado en el servidor',
+      },
+    });
+    await a.s.programar(AHORA);
+    expect(a.entregas.at(-1)).toMatchObject({
+      channel: 'EMAIL',
+      status: 'FALLO',
+      statusReason: 'El correo no está configurado en el servidor',
+    });
+  });
+
+  it('«Enviar de prueba» a un correo del modo prueba manda el correo con los documentos', async () => {
+    const a = armar({ config: CONFIG_CORREO });
+    await expect(
+      a.s.enviarDePrueba(ORG, 's-0', 'Ana.Perez@gmail.com', {
+        userId: 'u-1',
+        email: 'a@b.co',
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(a.correoSmtp.enviar.mock.calls[0][0].para).toBe(
+      'ana.perez@gmail.com',
+    );
+    expect(a.entregas[0]).toMatchObject({
+      channel: 'EMAIL',
+      purpose: 'PRUEBA',
+      status: 'DOCUMENTOS_ENVIADOS',
     });
   });
 });

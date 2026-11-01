@@ -32,6 +32,7 @@ import {
     configResumenAtencionApagada,
     leerConfigDocumentos,
     leerConfigResumenAtencion,
+    leerCorreosDeRelleno,
     resumirMediciones,
     validarRevision,
     type CambioDocumentosResumen,
@@ -95,6 +96,12 @@ export interface PanelResumenAtencion {
     envio: {
         /** La plantilla «Documentos de la consulta» está configurada y activa. */
         plantillaConfigurada: boolean;
+        /** El servidor tiene correo (SMTP) configurado; `null` si no se pudo saber. */
+        correoConfigurado: boolean | null;
+        /** Correos de relleno del hospital (no se usan). */
+        correosDeRelleno: string[];
+        /** Atenciones sin correo utilizable (vacío o de relleno), últimos 30 días. */
+        sinCorreo: number;
         /** Últimos envíos, sin contenido. */
         entregas: EntregaDelPanel[];
         /** Atenciones de los últimos 30 días por estado (RECIBIDO, ENVIADO, EXCLUIDO, SIN_CONTACTO, CADUCADO). */
@@ -190,13 +197,14 @@ export async function getPanelResumenAtencionAction(): Promise<
     ]);
 
     const org = await prisma.organization.findUnique({ where: { id: auth.organizationId }, select: { name: true } });
-    const [plantilla, entregas, estados] = await Promise.all([
+    const [plantilla, entregas, estados, sinCorreo, correoConfigurado] = await Promise.all([
         prisma.whatsappTemplate.findFirst({
             where: { organizationId: auth.organizationId, kind: 'ATTENTION_SUMMARY_READY', isActive: true },
             select: { id: true },
         }),
         prisma.attentionSummaryDelivery.findMany({
-            where: { attentionSummary: { organizationId: auth.organizationId } },
+            // Los «sin correo utilizable» no son envíos: van en un contador.
+            where: { attentionSummary: { organizationId: auth.organizationId }, status: { not: 'NO_ENVIADO' } },
             orderBy: { createdAt: 'desc' },
             take: 30,
             select: {
@@ -217,6 +225,15 @@ export async function getPanelResumenAtencionAction(): Promise<
             where: { organizationId: auth.organizationId, receivedAt: { gte: desde30 } },
             _count: { _all: true },
         }),
+        prisma.attentionSummaryDelivery.count({
+            where: {
+                attentionSummary: { organizationId: auth.organizationId },
+                channel: 'EMAIL',
+                status: 'NO_ENVIADO',
+                createdAt: { gte: desde30 },
+            },
+        }),
+        estadoDelCorreo(),
     ]);
     const idsRevisores = [...new Set(recientes.map((r) => r.reviewedByUserId).filter((x): x is string => !!x))];
     const revisores = idsRevisores.length
@@ -256,6 +273,9 @@ export async function getPanelResumenAtencionAction(): Promise<
             nombreClinica: org?.name ?? '',
             envio: {
                 plantillaConfigurada: plantilla !== null,
+                correoConfigurado,
+                correosDeRelleno: leerCorreosDeRelleno(fila?.resumenAtencion),
+                sinCorreo,
                 entregas: entregas.map((e) => ({
                     id: e.id,
                     historia: e.attentionSummary.hisKey,
@@ -403,6 +423,17 @@ export async function updateLecturaResumenAction(
 
 // ─── Fase 2: documentos ─────────────────────────────────────────────────────
 
+/** ¿La API tiene correo (SMTP) configurado? `null` si no responde. */
+async function estadoDelCorreo(): Promise<boolean | null> {
+    const res = await api('GET', '/attention-summaries/settings/mail');
+    if (!res?.ok) return null;
+    try {
+        return ((await res.json()) as { configurado?: boolean }).configurado === true;
+    } catch {
+        return null;
+    }
+}
+
 async function api(metodo: 'GET' | 'POST', ruta: string): Promise<Response | null> {
     const token = (await cookies()).get('auth_token')?.value;
     try {
@@ -512,8 +543,11 @@ export async function updateEnvioResumenAction(
         enviar: cambio?.enviar,
         whatsapp: cambio?.whatsapp,
         telegram: cambio?.telegram,
+        correo: cambio?.correo,
+        correosDeRelleno: cambio?.correosDeRelleno,
         serviciosWhatsapp: cambio?.serviciosWhatsapp,
         serviciosTelegram: cambio?.serviciosTelegram,
+        serviciosCorreo: cambio?.serviciosCorreo,
         destinosPrueba: cambio?.destinosPrueba,
     });
     if (!r.ok) return { success: false, error: r.error };

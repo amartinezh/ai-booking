@@ -13,6 +13,9 @@ import {
   LIMITES_ENVIO_RESUMEN,
   candidatosDeDestino,
   celularParaWhatsapp,
+  correoDeDestino,
+  leerConfigDocumentos,
+  leerCorreosDeRelleno,
   dentroDelHorario,
   enmascararDestino,
   formatDateOnly,
@@ -37,10 +40,14 @@ import { RedisService } from '../redis/redis.service';
 import { SystemLogService } from '../system-log/system-log.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
 import { TelegramChannelService } from '../telegram/telegram-channel.service';
+import { ResumenCorreoService } from './resumen-correo.service';
+import { ResumenDocumentosService } from './resumen-documentos.service';
+import { ResumenEnlacesService } from './resumen-enlaces.service';
 import { ResumenWhatsappService } from './resumen-whatsapp.service';
 import {
   BOTON_RECIBIR,
   BOTON_RECIBIR_TELEGRAM,
+  CORREO_RESUMEN,
   TEXTOS_RESUMEN,
   primerNombre,
 } from './resumen-textos';
@@ -62,6 +69,8 @@ export interface ResultadoProgramador {
   excluidos: number;
   sinContacto: number;
   fallos: number;
+  /** Correos que salieron con los documentos. */
+  correos: number;
 }
 
 /**
@@ -99,6 +108,11 @@ export class ResumenEnvioService {
     // ✈️ Telegram (D26): primero por ahí si el paciente tiene el chat unido.
     // Opcional: sin él (tests), solo WhatsApp.
     @Optional() private readonly telegram?: TelegramChannelService,
+    // ✉️ Correo (Fase 3): el transporte SMTP, los documentos y el enlace.
+    // Opcionales: sin ellos (tests), no hay correo.
+    @Optional() private readonly correoSmtp?: ResumenCorreoService,
+    @Optional() private readonly documentos?: ResumenDocumentosService,
+    @Optional() private readonly enlaces?: ResumenEnlacesService,
   ) {}
 
   @Cron('20 */2 * * * *')
@@ -107,9 +121,9 @@ export class ResumenEnvioService {
     this.enCurso = true;
     try {
       const r = await this.programar();
-      if (r.avisados + r.excluidos + r.sinContacto + r.fallos > 0) {
+      if (r.avisados + r.excluidos + r.sinContacto + r.fallos + r.correos > 0) {
         this.logger.log(
-          `Resumen de la atención: ${r.avisados} aviso(s), ${r.excluidos} excluido(s), ${r.sinContacto} sin contacto, ${r.fallos} fallo(s).`,
+          `Resumen de la atención: ${r.avisados} aviso(s), ${r.correos} correo(s), ${r.excluidos} excluido(s), ${r.sinContacto} sin contacto, ${r.fallos} fallo(s).`,
         );
       }
     } catch (error: unknown) {
@@ -127,6 +141,7 @@ export class ResumenEnvioService {
       excluidos: 0,
       sinContacto: 0,
       fallos: 0,
+      correos: 0,
     };
     const clinicas = await this.prisma.hospitalMirrorConfig.findMany({
       where: { enabled: true, resumenAtencion: { not: Prisma.DbNull } },
@@ -147,8 +162,10 @@ export class ResumenEnvioService {
         leerExclusiones(c.resumenAtencion),
         timeZone,
         ahora,
+        leerCorreosDeRelleno(c.resumenAtencion),
       );
       total.avisados += r.avisados;
+      total.correos += r.correos;
       total.excluidos += r.excluidos;
       total.sinContacto += r.sinContacto;
       total.fallos += r.fallos;
@@ -162,17 +179,22 @@ export class ResumenEnvioService {
     exclusiones: ExclusionesResumen,
     timeZone: string,
     ahora: Date,
+    relleno: string[] = [],
   ): Promise<ResultadoProgramador> {
     const r: ResultadoProgramador = {
       avisados: 0,
       excluidos: 0,
       sinContacto: 0,
       fallos: 0,
+      correos: 0,
     };
+    const CANALES_MENSAJERIA = ['WHATSAPP', 'TELEGRAM'];
+    // Dos partes independientes (plan §3.6): la mensajería (Telegram o
+    // WhatsApp) y el correo. El correo solo se mira con su canal encendido.
     const pendientes = await this.prisma.attentionSummary.findMany({
       where: {
         organizationId,
-        status: 'RECIBIDO',
+        status: { in: ['RECIBIDO', 'ENVIADO', 'SIN_CONTACTO'] },
         purgedAt: null,
         content: { not: null },
         attendedAt: {
@@ -180,29 +202,50 @@ export class ResumenEnvioService {
             ahora.getTime() - LIMITES_ENVIO_RESUMEN.horasParaAvisar * MS_HORA,
           ),
         },
-        deliveries: { none: { purpose: 'PACIENTE' } },
+        OR: [
+          {
+            status: 'RECIBIDO',
+            deliveries: {
+              none: {
+                purpose: 'PACIENTE',
+                channel: { in: CANALES_MENSAJERIA },
+              },
+            },
+          },
+          ...(config.canales.EMAIL
+            ? [
+                {
+                  deliveries: {
+                    none: { purpose: 'PACIENTE', channel: 'EMAIL' },
+                  },
+                },
+              ]
+            : []),
+        ],
       },
       orderBy: { attendedAt: 'asc' },
       take: POR_VUELTA,
       select: {
         id: true,
+        status: true,
         content: true,
         serviceCode: true,
         patientProfileId: true,
+        deliveries: {
+          where: { purpose: 'PACIENTE' },
+          select: { channel: true },
+        },
       },
     });
+    const bajas = pendientes.length
+      ? await this.bajasDeLaClinica(organizationId)
+      : new Set<string>();
 
     for (const s of pendientes) {
       try {
         const resumen = JSON.parse(
           this.crypto.decrypt(s.content!),
         ) as ResumenAtencionHis;
-        const excluida = motivoDeExclusion(resumen, exclusiones);
-        if (excluida) {
-          await this.marcar(s.id, 'EXCLUIDO', excluida);
-          r.excluidos++;
-          continue;
-        }
         const perfil = s.patientProfileId
           ? await this.prisma.patientProfile.findUnique({
               where: { id: s.patientProfileId },
@@ -216,85 +259,48 @@ export class ResumenEnvioService {
               },
             })
           : null;
-        if (perfil?.summariesOptOut) {
-          await this.marcar(s.id, 'EXCLUIDO', MOTIVO_BAJA);
-          r.excluidos++;
-          continue;
-        }
-        const bajas = await this.bajasDeLaClinica(organizationId);
+        const mensajeriaPendiente =
+          s.status === 'RECIBIDO' &&
+          !s.deliveries.some((d) => CANALES_MENSAJERIA.includes(d.channel));
+        const correoPendiente =
+          config.canales.EMAIL &&
+          !s.deliveries.some((d) => d.channel === 'EMAIL');
 
-        // ✈️ D26: si el paciente usa el asistente por Telegram (chat unido y no
-        // bloqueado), va por ahí, que es gratis. Si falla, cae a WhatsApp.
-        let porTelegramFallo = false;
+        if (mensajeriaPendiente) {
+          const m = await this.mensajeria(
+            organizationId,
+            config,
+            exclusiones,
+            timeZone,
+            s,
+            resumen,
+            perfil,
+            bajas,
+          );
+          if (m === 'AVISADO') r.avisados++;
+          else if (m === 'EXCLUIDO') {
+            r.excluidos++;
+            continue; // Lo excluido no sale por ningún canal.
+          } else if (m === 'SIN_CONTACTO') r.sinContacto++;
+          else if (m === 'FALLO') r.fallos++;
+        }
         if (
-          this.telegram &&
-          perfil?.telegramChatId &&
-          !perfil.telegramBlockedAt
+          correoPendiente &&
+          !perfil?.summariesOptOut &&
+          !motivoDeExclusion(resumen, exclusiones)
         ) {
-          const tg = `tg:${perfil.telegramChatId}`;
-          const permisoTg = puedeEnviarPorCanal(config, {
-            canal: 'TELEGRAM',
-            servicio: s.serviceCode,
-            destino: tg,
-          });
-          if (permisoTg.ok && !bajas.has(hashDelDestino(tg))) {
-            const aviso = await this.enviarAvisoTelegram(
-              organizationId,
-              s.id,
-              resumen,
-              tg,
-              'PACIENTE',
-              null,
-              timeZone,
-            );
-            if (aviso.ok) {
-              r.avisados++;
-              continue;
-            }
-            porTelegramFallo = true;
-          }
+          const c = await this.correo(
+            organizationId,
+            config,
+            timeZone,
+            s,
+            resumen,
+            bajas,
+            relleno,
+          );
+          if (c === 'ENVIADO') r.correos++;
+          else if (c === 'FALLO') r.fallos++;
         }
-
-        const destino = await this.elegirDestino(
-          organizationId,
-          perfil,
-          resumen,
-          bajas,
-        );
-        if ('motivo' in destino) {
-          if (porTelegramFallo) {
-            r.fallos++;
-            continue;
-          }
-          const estado =
-            destino.motivo === MOTIVO_BAJA ? 'EXCLUIDO' : 'SIN_CONTACTO';
-          await this.marcar(s.id, estado, destino.motivo);
-          if (estado === 'EXCLUIDO') r.excluidos++;
-          else r.sinContacto++;
-          continue;
-        }
-        // Los interruptores (canal, servicio, modo prueba): si no dejan, se espera.
-        const permiso = puedeEnviarPorCanal(config, {
-          canal: 'WHATSAPP',
-          servicio: s.serviceCode,
-          destino: destino.destino,
-        });
-        if (!permiso.ok) {
-          if (porTelegramFallo) r.fallos++;
-          continue;
-        }
-
-        const aviso = await this.enviarAviso(
-          organizationId,
-          s.id,
-          resumen,
-          destino,
-          'PACIENTE',
-          null,
-          timeZone,
-        );
-        if (aviso.ok) r.avisados++;
-        else r.fallos++;
       } catch (error: unknown) {
         r.fallos++;
         // El motivo, nunca el contenido.
@@ -304,6 +310,232 @@ export class ResumenEnvioService {
       }
     }
     return r;
+  }
+
+  /** Telegram primero (D26), si no WhatsApp. Lo que no sale por un interruptor, espera. */
+  private async mensajeria(
+    organizationId: string,
+    config: ConfigResumenAtencion,
+    exclusiones: ExclusionesResumen,
+    timeZone: string,
+    s: { id: string; serviceCode: string | null },
+    resumen: ResumenAtencionHis,
+    perfil: {
+      id: string;
+      whatsappId: string | null;
+      bsuid: string | null;
+      summariesOptOut: boolean;
+      telegramChatId: string | null;
+      telegramBlockedAt: Date | null;
+    } | null,
+    bajas: Set<string>,
+  ): Promise<'AVISADO' | 'EXCLUIDO' | 'SIN_CONTACTO' | 'FALLO' | 'ESPERA'> {
+    const excluida = motivoDeExclusion(resumen, exclusiones);
+    if (excluida) {
+      await this.marcar(s.id, 'EXCLUIDO', excluida);
+      return 'EXCLUIDO';
+    }
+    if (perfil?.summariesOptOut) {
+      await this.marcar(s.id, 'EXCLUIDO', MOTIVO_BAJA);
+      return 'EXCLUIDO';
+    }
+
+    // ✈️ D26: si el paciente usa el asistente por Telegram (chat unido y no
+    // bloqueado), va por ahí, que es gratis. Si falla, cae a WhatsApp.
+    let porTelegramFallo = false;
+    if (this.telegram && perfil?.telegramChatId && !perfil.telegramBlockedAt) {
+      const tg = `tg:${perfil.telegramChatId}`;
+      const permisoTg = puedeEnviarPorCanal(config, {
+        canal: 'TELEGRAM',
+        servicio: s.serviceCode,
+        destino: tg,
+      });
+      if (permisoTg.ok && !bajas.has(hashDelDestino(tg))) {
+        const aviso = await this.enviarAvisoTelegram(
+          organizationId,
+          s.id,
+          resumen,
+          tg,
+          'PACIENTE',
+          null,
+          timeZone,
+        );
+        if (aviso.ok) return 'AVISADO';
+        porTelegramFallo = true;
+      }
+    }
+
+    const destino = await this.elegirDestino(
+      organizationId,
+      perfil,
+      resumen,
+      bajas,
+    );
+    if ('motivo' in destino) {
+      if (porTelegramFallo) return 'FALLO';
+      const estado =
+        destino.motivo === MOTIVO_BAJA ? 'EXCLUIDO' : 'SIN_CONTACTO';
+      await this.marcar(s.id, estado, destino.motivo);
+      return estado;
+    }
+    // Los interruptores (canal, servicio, modo prueba): si no dejan, se espera.
+    const permiso = puedeEnviarPorCanal(config, {
+      canal: 'WHATSAPP',
+      servicio: s.serviceCode,
+      destino: destino.destino,
+    });
+    if (!permiso.ok) return porTelegramFallo ? 'FALLO' : 'ESPERA';
+    const aviso = await this.enviarAviso(
+      organizationId,
+      s.id,
+      resumen,
+      destino,
+      'PACIENTE',
+      null,
+      timeZone,
+    );
+    return aviso.ok ? 'AVISADO' : 'FALLO';
+  }
+
+  /**
+   * El correo (plan §3.4): sin datos clínicos en el asunto ni en el cuerpo, con
+   * el enlace a la página y un solo PDF con todos los documentos, protegido con
+   * el número de documento del paciente. Sin un correo utilizable (el 97 % es
+   * de relleno: D17) queda anotado como NO_ENVIADO y no se vuelve a mirar.
+   */
+  private async correo(
+    organizationId: string,
+    config: ConfigResumenAtencion,
+    timeZone: string,
+    s: { id: string; serviceCode: string | null },
+    resumen: ResumenAtencionHis,
+    bajas: Set<string>,
+    relleno: string[],
+  ): Promise<'ENVIADO' | 'FALLO' | 'NO_ENVIADO' | 'ESPERA'> {
+    const servicio = s.serviceCode?.trim() ?? '';
+    if (!servicio || !config.servicios[servicio]?.EMAIL) return 'ESPERA';
+    const destino = correoDeDestino(resumen, relleno);
+    if (!destino || bajas.has(hashDelDestino(destino.destino))) {
+      await this.prisma.attentionSummaryDelivery.create({
+        data: {
+          attentionSummaryId: s.id,
+          channel: 'EMAIL',
+          purpose: 'PACIENTE',
+          destinationHash: destino
+            ? hashDelDestino(destino.destino)
+            : 'sin-correo',
+          destinationMasked: destino ? enmascararDestino(destino.destino) : '—',
+          status: 'NO_ENVIADO',
+          statusReason: destino
+            ? MOTIVO_BAJA
+            : 'Sin correo utilizable (vacío o de relleno)',
+        },
+      });
+      return 'NO_ENVIADO';
+    }
+    const permiso = puedeEnviarPorCanal(config, {
+      canal: 'EMAIL',
+      servicio,
+      destino: destino.destino,
+    });
+    if (!permiso.ok) return 'ESPERA';
+    const r = await this.enviarCorreo(
+      organizationId,
+      s.id,
+      resumen,
+      destino,
+      'PACIENTE',
+      null,
+      timeZone,
+    );
+    return r.ok ? 'ENVIADO' : 'FALLO';
+  }
+
+  /** Arma y manda el correo; anota el envío (del destino, solo su huella y la forma enmascarada). */
+  async enviarCorreo(
+    organizationId: string,
+    attentionSummaryId: string,
+    resumen: ResumenAtencionHis,
+    destino: { destino: string; origen: string },
+    purpose: 'PACIENTE' | 'PRUEBA',
+    createdByUserId: string | null,
+    timeZone: string,
+  ): Promise<{ ok: boolean; motivo?: string }> {
+    if (!this.correoSmtp || !this.documentos)
+      return { ok: false, motivo: 'El correo no está disponible' };
+    const entrega = await this.prisma.attentionSummaryDelivery.create({
+      data: {
+        attentionSummaryId,
+        channel: 'EMAIL',
+        purpose,
+        destinationHash: hashDelDestino(destino.destino),
+        destinationMasked: enmascararDestino(destino.destino),
+        destinationOrigin: destino.origen,
+        status: 'FALLO',
+        statusReason: 'En curso',
+        createdByUserId,
+      },
+    });
+    const fila = await this.prisma.attentionSummary.findUnique({
+      where: { id: attentionSummaryId },
+      select: {
+        contentExpiresAt: true,
+        organization: { select: { name: true } },
+      },
+    });
+    const g = await this.documentos.generador(organizationId, resumen);
+    const clave = documentoSinCerosIniciales(
+      normalizeDocumento(resumen.paciente.documento),
+    );
+    const pdf = await g.pdfCompleto({ clave });
+    let enlace: string | null = null;
+    const base = (process.env.PUBLIC_WEB_URL ?? '').replace(/\/+$/, '');
+    if (base && this.enlaces && fila) {
+      const { token } = await this.enlaces.crearEnlace(
+        attentionSummaryId,
+        fila.contentExpiresAt,
+        'PACIENTE',
+        createdByUserId,
+      );
+      enlace = `${base}/resumen/${token}`;
+    }
+    const espejo = await this.prisma.hospitalMirrorConfig.findUnique({
+      where: { organizationId },
+      select: { resumenAtencion: true },
+    });
+    const hospital =
+      leerConfigDocumentos(espejo?.resumenAtencion).encabezado.nombre ??
+      fila?.organization.name ??
+      'El hospital';
+    const datos = {
+      nombre: primerNombre(resumen.paciente.nombre),
+      hospital,
+      fecha: formatDateOnly(resumen.historia.guardadaIso, { timeZone }),
+      enlace,
+    };
+    const r = await this.correoSmtp.enviar({
+      para: destino.destino,
+      asunto: CORREO_RESUMEN.asunto(datos.fecha),
+      texto: CORREO_RESUMEN.texto(datos),
+      html: CORREO_RESUMEN.html(datos),
+      adjunto: { nombre: pdf.nombreArchivo, datos: pdf.datos, tipo: pdf.tipo },
+    });
+    const ahora = new Date();
+    await this.prisma.attentionSummaryDelivery.update({
+      where: { id: entrega.id },
+      data: r.ok
+        ? {
+            status: 'DOCUMENTOS_ENVIADOS',
+            statusReason: null,
+            noticeSentAt: ahora,
+            documentsSentAt: ahora,
+          }
+        : {
+            status: 'FALLO',
+            statusReason: (r.error ?? 'No salió').slice(0, 500),
+          },
+    });
+    return r.ok ? { ok: true } : { ok: false, motivo: r.error };
   }
 
   private marcar(
@@ -562,9 +794,11 @@ export class ResumenEnvioService {
     const config = leerConfigResumenAtencion(espejo?.resumenAtencion);
     const crudo = typeof destinoCrudo === 'string' ? destinoCrudo.trim() : '';
     const esTelegram = /^tg:-?\d+$/i.test(crudo);
-    const destino = esTelegram
-      ? crudo.toLowerCase()
-      : (celularParaWhatsapp(crudo) ?? crudo.replace(/\D/g, ''));
+    const esCorreo = crudo.includes('@');
+    const destino =
+      esTelegram || esCorreo
+        ? crudo.toLowerCase()
+        : (celularParaWhatsapp(crudo) ?? crudo.replace(/\D/g, ''));
     if (!config || !destino || !config.modoPrueba.destinos.includes(destino)) {
       throw new BadRequestException(
         'Solo se envía de prueba a un número de la lista del modo prueba.',
@@ -582,17 +816,8 @@ export class ResumenEnvioService {
       this.crypto.decrypt(fila.content),
     ) as ResumenAtencionHis;
     const zona = espejo?.organization.timezone || DEFAULT_TIMEZONE;
-    const r = esTelegram
-      ? await this.enviarAvisoTelegram(
-          organizationId,
-          fila.id,
-          resumen,
-          destino,
-          'PRUEBA',
-          quien.userId,
-          zona,
-        )
-      : await this.enviarAviso(
+    const r = esCorreo
+      ? await this.enviarCorreo(
           organizationId,
           fila.id,
           resumen,
@@ -600,7 +825,26 @@ export class ResumenEnvioService {
           'PRUEBA',
           quien.userId,
           zona,
-        );
+        )
+      : esTelegram
+        ? await this.enviarAvisoTelegram(
+            organizationId,
+            fila.id,
+            resumen,
+            destino,
+            'PRUEBA',
+            quien.userId,
+            zona,
+          )
+        : await this.enviarAviso(
+            organizationId,
+            fila.id,
+            resumen,
+            { destino, origen: 'PRUEBA' },
+            'PRUEBA',
+            quien.userId,
+            zona,
+          );
     await this.bitacora?.event({
       action: 'ATTENTION_SUMMARY_TEST_SEND',
       message: `${quien.email} envió de prueba el aviso del resumen de la historia ${fila.hisKey} a ${enmascararDestino(destino)}${r.ok ? '' : ' (no salió)'}.`,

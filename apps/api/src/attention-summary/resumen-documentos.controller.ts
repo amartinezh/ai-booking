@@ -33,6 +33,7 @@ import {
   type OrigenDeLaVisita,
 } from './resumen-enlaces.service';
 import { ResumenEnvioService } from './resumen-envio.service';
+import { ResumenCorreoService } from './resumen-correo.service';
 
 const DOCUMENTO = /^[a-z0-9-]{1,60}$/;
 
@@ -79,7 +80,15 @@ export class ResumenDocumentosController {
     private readonly documentos: ResumenDocumentosService,
     private readonly enlaces: ResumenEnlacesService,
     private readonly envio: ResumenEnvioService,
+    private readonly correo: ResumenCorreoService,
   ) {}
+
+  /** ¿Hay servidor de correo (SMTP) configurado? Para avisarlo en el panel. */
+  @Get('settings/mail')
+  @Roles('ORG_ADMIN')
+  estadoCorreo() {
+    return this.correo.estado();
+  }
 
   @Get(':id/documents')
   @Roles('ORG_ADMIN')

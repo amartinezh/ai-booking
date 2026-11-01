@@ -44,3 +44,53 @@ export function primerNombre(nombre: string): string {
   const p = nombre.trim().split(/\s+/)[0] ?? '';
   return p ? p.charAt(0).toUpperCase() + p.slice(1).toLowerCase() : 'paciente';
 }
+
+const html = (t: string) =>
+  t
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+interface DatosCorreo {
+  nombre: string;
+  hospital: string;
+  fecha: string;
+  enlace: string | null;
+}
+
+/**
+ * El correo (plan §3.4): sin datos clínicos en el asunto ni en el cuerpo. Dice
+ * cuál es la clave del PDF sin escribirla.
+ */
+export const CORREO_RESUMEN = {
+  asunto: (fecha: string) => `Documentos de su consulta del ${fecha}`,
+  texto: (d: DatosCorreo) =>
+    [
+      `Hola ${d.nombre}:`,
+      '',
+      `${d.hospital} le envía los documentos de su consulta del ${d.fecha}: resumen, fórmula y órdenes.`,
+      '',
+      'Van en el PDF adjunto, protegido con una clave: su número de documento, sin puntos ni espacios.',
+      ...(d.enlace
+        ? [
+            '',
+            'También puede verlos y descargarlos durante 30 días en este enlace (le pedirá su fecha de nacimiento):',
+            d.enlace,
+          ]
+        : []),
+      '',
+      'Si usted no fue atendido en el hospital, ignore este correo.',
+      'Este correo es automático: por favor no lo responda.',
+    ].join('\n'),
+  html: (d: DatosCorreo) =>
+    `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#1f2937;line-height:1.5;max-width:560px">` +
+    `<p>Hola ${html(d.nombre)}:</p>` +
+    `<p>${html(d.hospital)} le envía los documentos de su consulta del ${html(d.fecha)}: resumen, fórmula y órdenes.</p>` +
+    `<p>Van en el PDF adjunto, protegido con una clave: <strong>su número de documento, sin puntos ni espacios</strong>.</p>` +
+    (d.enlace
+      ? `<p>También puede verlos y descargarlos durante 30 días en este enlace (le pedirá su fecha de nacimiento):<br><a href="${html(d.enlace)}">${html(d.enlace)}</a></p>`
+      : '') +
+    `<p style="color:#6b7280;font-size:13px">Si usted no fue atendido en el hospital, ignore este correo. Este correo es automático: por favor no lo responda.</p>` +
+    `</div>`,
+};

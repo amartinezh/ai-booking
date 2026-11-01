@@ -32,9 +32,14 @@ export default function SeguimientoEnvios({ envio }: { envio: PanelResumenAtenci
             <div>
                 <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Seguimiento de envíos</h2>
                 <p className="text-xs text-zinc-500">
-                    Los últimos avisos por WhatsApp y Telegram, y si el paciente recibió los documentos. Sin contenido ni números completos.
+                    Los últimos avisos por WhatsApp, Telegram y correo, y si el paciente recibió los documentos. Sin contenido ni números completos.
                 </p>
             </div>
+            {envio.sinCorreo > 0 && (
+                <p className="text-xs text-zinc-500">
+                    {envio.sinCorreo} atención(es) sin correo utilizable (vacío o de relleno) en 30 días.
+                </p>
+            )}
             {estados.length > 0 && (
                 <p className="text-sm text-zinc-700 dark:text-zinc-300">
                     Últimos 30 días: {estados.map(([e, n]) => `${ESTADO_RESUMEN[e] ?? e} ${n}`).join(' · ')}
@@ -64,7 +69,7 @@ export default function SeguimientoEnvios({ envio }: { envio: PanelResumenAtenci
                                             {e.prueba && <span className="ml-1 rounded bg-zinc-100 px-1 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">prueba</span>}
                                         </td>
                                         <td className="py-2 pr-3 text-xs text-zinc-600 dark:text-zinc-400">
-                                            {e.canal === 'TELEGRAM' ? 'Telegram' : e.canal === 'WHATSAPP' ? 'WhatsApp' : e.canal}
+                                            {e.canal === 'TELEGRAM' ? 'Telegram' : e.canal === 'WHATSAPP' ? 'WhatsApp' : e.canal === 'EMAIL' ? 'Correo' : e.canal}
                                         </td>
                                         <td className="py-2 pr-3 font-mono text-xs text-zinc-600 dark:text-zinc-400">{e.destino}</td>
                                         <td className="py-2 pr-3 text-zinc-700 dark:text-zinc-300">
