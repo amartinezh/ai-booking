@@ -19,6 +19,9 @@ import type {
   HisLookupRequestDto,
   HisLookupResultInput,
   HisLookupResultOutput,
+  EstadoResumenesAgente,
+  ResumenesAtencionInput,
+  ResumenesAtencionResult,
 } from '@agenia/shared';
 
 /**
@@ -50,6 +53,14 @@ export interface MirrorApiClient {
    */
   getPendingLookupRequests(): Promise<HisLookupRequestDto[]>;
   pushLookupResult(input: HisLookupResultInput): Promise<HisLookupResultOutput>;
+  /**
+   * Resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md). Con «Leer del
+   * hospital» apagado —el estado al desplegar— el estado dice `leer: false`.
+   */
+  getAttentionSummaryState(): Promise<EstadoResumenesAgente>;
+  pushAttentionSummaries(
+    input: ResumenesAtencionInput,
+  ): Promise<ResumenesAtencionResult>;
 }
 
 /**
@@ -242,5 +253,15 @@ export class HttpMirrorApiClient implements MirrorApiClient {
     input: HisLookupResultInput,
   ): Promise<HisLookupResultOutput> {
     return this.request('POST', '/mirror/lookup-result', input);
+  }
+
+  getAttentionSummaryState(): Promise<EstadoResumenesAgente> {
+    return this.request('GET', '/mirror/attention-summaries/state');
+  }
+
+  pushAttentionSummaries(
+    input: ResumenesAtencionInput,
+  ): Promise<ResumenesAtencionResult> {
+    return this.request('POST', '/mirror/attention-summaries', input);
   }
 }

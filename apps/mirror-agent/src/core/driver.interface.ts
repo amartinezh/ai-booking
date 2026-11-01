@@ -1,4 +1,5 @@
 import type {
+  CampoPlantillaResumen,
   CanonicalChangeEvent,
   HisAppointmentKey,
   HisAppointmentSnapshot,
@@ -6,6 +7,7 @@ import type {
   HisLookupAppointment,
   HisLookupRequestDto,
   HisNoticeCandidate,
+  ResumenAtencionHis,
 } from '@agenia/shared';
 
 /**
@@ -258,5 +260,54 @@ export function isAppointmentImportCapable(
   return (
     typeof (driver as Partial<AppointmentImportCapableDriver>)
       .importAppointments === 'function'
+  );
+}
+
+/**
+ * Resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md) — capacidad OPT-IN.
+ *
+ * Cuando el médico termina la historia en el HIS, el paciente recibe el resumen
+ * y sus documentos. El agente detecta las historias terminadas y las arma con lo
+ * que el HIS ya tiene; el SERVIDOR decide qué se guarda y si algo se envía.
+ *
+ * Como las otras capacidades, NO forma parte de `HisDriver`: un driver que no la
+ * tenga simplemente no resume nada, y el motor solo la usa si el servidor dice
+ * que la lectura está encendida (nace apagada).
+ */
+export interface AttentionSummaryCapableDriver {
+  /**
+   * Las historias terminadas: de los servicios pedidos, con número mayor que
+   * `desde` (o desde `inicio` si es `null`) y guardadas antes de `hasta` (ahora
+   * menos la calma). En orden, como mucho `limite`.
+   *
+   * `cursor` es hasta dónde quedó mirado (también las filas que no son
+   * atenciones), o `null` si no había nada que mirar. Lanza si no puede leer.
+   */
+  detectFinishedAttentions(params: {
+    desde: string | null;
+    hasta: Date;
+    inicio: Date;
+    servicios: string[];
+    limite: number;
+  }): Promise<{ numeros: string[]; cursor: string | null }>;
+
+  /**
+   * El resumen de cada historia pedida. `camposPlantilla` = los campos de la
+   * plantilla que van; `null` = los del driver por defecto. Lanza si no puede leer.
+   */
+  fetchAttentionSummaries(
+    numeros: string[],
+    camposPlantilla: CampoPlantillaResumen[] | null,
+  ): Promise<ResumenAtencionHis[]>;
+}
+
+/** Guarda de tipo estructural: ¿el driver activo sabe armar resúmenes de la atención? */
+export function isAttentionSummaryCapable(
+  driver: HisDriver,
+): driver is HisDriver & AttentionSummaryCapableDriver {
+  const d = driver as Partial<AttentionSummaryCapableDriver>;
+  return (
+    typeof d.detectFinishedAttentions === 'function' &&
+    typeof d.fetchAttentionSummaries === 'function'
   );
 }

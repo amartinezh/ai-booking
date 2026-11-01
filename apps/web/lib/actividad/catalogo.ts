@@ -138,6 +138,8 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     WHATSAPP_TEMPLATE_SAVED: { categoria: 'CONFIGURACION', titulo: 'Registró o cambió una plantilla de WhatsApp' },
     WHATSAPP_TEMPLATE_DELETED: { categoria: 'CONFIGURACION', titulo: 'Quitó una plantilla de WhatsApp', aviso: true },
     MASS_NOTICE_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la configuración de los avisos masivos' },
+    // `aviso`: encender la lectura hace que el agente lea historias clínicas del hospital.
+    ATTENTION_SUMMARY_CONFIG_CHANGED: { categoria: 'CONFIGURACION', titulo: 'Cambió la configuración del resumen de la atención', aviso: true },
     BILLING_UPDATED: { categoria: 'PLATAFORMA', titulo: 'Cambió la facturación de la clínica' },
 
     // ── Padrón, solicitudes, avisos y soporte ──

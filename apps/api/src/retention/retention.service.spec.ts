@@ -20,6 +20,9 @@ describe('RetentionService', () => {
       consultas?: number[];
       actividad?: number[];
       asistente?: number[];
+      resumenes?: number[];
+      /** Filas que tocan los dos updateMany del resumen de la atención (caducados, vencidos). */
+      contenidos?: [number, number];
     } = {},
   ) => {
     const lotes = (tamanos: number[]) => {
@@ -58,6 +61,18 @@ describe('RetentionService', () => {
       supportBotCode: {
         deleteMany: jest.fn(async (..._a: unknown[]) => ({ count: 4 })),
       },
+      attentionSummary: {
+        updateMany: jest
+          .fn()
+          .mockResolvedValueOnce({ count: opts.contenidos?.[0] ?? 0 })
+          .mockResolvedValueOnce({ count: opts.contenidos?.[1] ?? 0 }),
+        findMany: lotes(opts.resumenes ?? []),
+        deleteMany: jest.fn(
+          async (arg: { where: { id: { in: string[] } } }) => ({
+            count: arg.where.id.in.length,
+          }),
+        ),
+      },
       patientLookupLog: {
         findMany: lotes(opts.consultas ?? []),
         deleteMany: jest.fn(
@@ -94,6 +109,11 @@ describe('RetentionService', () => {
       actividadCanales: { dias: 400, borradas: 0, completa: true },
       asistenteSoporte: { dias: 180, borradas: 0, completa: true },
       codigosAsistente: 4,
+      resumenesAtencion: {
+        contenidosBorrados: 0,
+        filasBorradas: 0,
+        completa: true,
+      },
     });
     // Borra exactamente las filas que encontró, por id.
     expect(prisma.interactionLog.deleteMany.mock.calls[0][0]).toEqual({
@@ -209,6 +229,50 @@ describe('RetentionService', () => {
       where: { expiresAt: { lt: haceDias(1) } },
     });
     // Borrar conversaciones del asistente también deja constancia.
+    expect(systemLog.event).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumen de la atención (D11): el contenido a los 30 días, la fila al año; nunca vuelve a purgar lo purgado', async () => {
+    const { service, prisma, systemLog } = build({
+      contenidos: [5, 2],
+      resumenes: [3],
+    });
+
+    const r = await service.purgar(AHORA);
+
+    const [caducados, vencidos] =
+      prisma.attentionSummary.updateMany.mock.calls.map(
+        (c: unknown[]) =>
+          c[0] as {
+            where: Record<string, unknown>;
+            data: Record<string, unknown>;
+          },
+      );
+    // Los que nunca salieron pasan a CADUCADO; los enviados conservan su estado.
+    expect(caducados).toEqual({
+      where: {
+        contentExpiresAt: { lt: AHORA },
+        purgedAt: null,
+        status: 'RECIBIDO',
+      },
+      data: { content: null, purgedAt: AHORA, status: 'CADUCADO' },
+    });
+    expect(vencidos).toEqual({
+      where: { contentExpiresAt: { lt: AHORA }, purgedAt: null },
+      data: { content: null, purgedAt: AHORA },
+    });
+    expect(
+      (
+        prisma.attentionSummary.findMany.mock.calls[0][0] as {
+          where: { receivedAt: { lt: Date } };
+        }
+      ).where.receivedAt.lt,
+    ).toEqual(haceDias(365));
+    expect(r.resumenesAtencion).toEqual({
+      contenidosBorrados: 7,
+      filasBorradas: 3,
+      completa: true,
+    });
     expect(systemLog.event).toHaveBeenCalledTimes(1);
   });
 });

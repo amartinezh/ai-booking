@@ -51,6 +51,9 @@ model Organization {
   // gráficas de «Canales en vivo». Sin texto; remitente seudonimizado.
   channelActivityLogs ChannelActivityLog[]
 
+  // Resúmenes de la atención leídos del HIS (docs/PLAN_RESUMEN_ATENCION.md).
+  attentionSummaries AttentionSummary[]
+
   // Configuración de voz/audio (TTS) por clínica (1:1) — pitch, rate, voz, codec
   audioConfig OrganizationAudioConfig?
 
@@ -878,17 +881,22 @@ model PatientProfile {
   /// escriba a mano ni que el bot conteste lo que él pregunte.
   remindersOptOut Boolean @default(false)
 
+  /// ¿Pidió no recibir el resumen de sus atenciones? (docs/PLAN_RESUMEN_ATENCION.md
+  /// §3.6). Aparte de la de recordatorios: puede querer uno y no el otro.
+  summariesOptOut Boolean @default(false)
+
   epsId String?
   eps   Eps?    @relation(fields: [epsId], references: [id])
 
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  appointments     Appointment[]
-  clinicalRecords  ClinicalRecord[]
-  informedConsents InformedConsent[]
-  waitlistEntries  WaitlistEntry[]
-  chatSurveys      ChatSurvey[]
+  appointments       Appointment[]
+  clinicalRecords    ClinicalRecord[]
+  informedConsents   InformedConsent[]
+  waitlistEntries    WaitlistEntry[]
+  chatSurveys        ChatSurvey[]
+  attentionSummaries AttentionSummary[]
 
   // 🏢 TENANT ISOLATION — obligatorio: todo paciente pertenece a una clínica.
   organizationId String
@@ -1087,6 +1095,61 @@ enum MirrorBotLookupMode {
   OFF
   SHADOW
   ON
+}
+
+// Estado de un resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md §4.4).
+enum AttentionSummaryStatus {
+  RECIBIDO // llegó del agente; no se ha enviado
+  EXCLUIDO // cae en las exclusiones (D7): nunca se envía
+  ENVIADO // salió por al menos un canal
+  SIN_CONTACTO // no hay por dónde enviarlo
+  CADUCADO // se borró su contenido (D11)
+}
+
+// 🩺 Un resumen de la atención por historia del HIS (docs/PLAN_RESUMEN_ATENCION.md).
+//
+// El contenido (`ResumenAtencionHis` de @agenia/shared) va CIFRADO y se borra a
+// los 30 días (D11); la fila, sin contenido, se queda un año para responder
+// «¿se le envió?». La llave natural es la historia del HIS (`hisKey`): el agente
+// puede mandar la misma dos veces y no se duplica; si llega distinta, cambia la
+// huella y sube la versión (D10).
+model AttentionSummary {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Número de la historia en el HIS (en Anserma, `NU_NUME_HICL`).
+  hisKey String
+
+  // El paciente de AgenIA con ese documento, si existe. null = no tiene ficha
+  // (nunca escribió al asistente ni vino del HIS como alta).
+  patientProfileId String?
+  patientProfile   PatientProfile? @relation(fields: [patientProfileId], references: [id], onDelete: SetNull)
+
+  // Servicio de la consulta en el HIS: la matriz de interruptores decide por él.
+  serviceCode String?
+  // Cuándo se guardó la historia en el HIS.
+  attendedAt  DateTime
+
+  // `ResumenAtencionHis` cifrado. null después de la purga (D11).
+  content     String? @db.Text
+  // SHA-256 del contenido en claro: dice si una versión nueva trae cambios.
+  contentHash String
+  version     Int     @default(1)
+
+  status       AttentionSummaryStatus @default(RECIBIDO)
+  statusReason String?
+
+  receivedAt       DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  // Cuándo se borra el contenido (D11: 30 días).
+  contentExpiresAt DateTime
+  purgedAt         DateTime?
+
+  @@unique([organizationId, hisKey])
+  @@index([organizationId, attendedAt])
+  @@index([contentExpiresAt])
+  @@index([patientProfileId])
 }
 
 enum AppointmentOrigin {
@@ -2414,7 +2477,7 @@ model HospitalMirrorConfig {
   // planeado (conflictos de doble cupo), que nunca se construyó; desde la Fase 3 del
   // rastreo es el interruptor de TODOS los avisos del vigilante de excepciones
   // (`SyncException`). Con él apagado la bandeja se llena igual: solo no se avisa.
-  conflictAlertsEnabled     Boolean @default(true)
+  conflictAlertsEnabled Boolean @default(true)
 
   // 🩺 MÉDICOS NUEVOS DEL HOSPITAL (2026-10-24). Un médico con citas de un servicio
   // que AgenIA maneja y sin homologar siempre abre un caso en la Bandeja, con un
@@ -2454,6 +2517,21 @@ model HospitalMirrorConfig {
   // medicosHabilitados }. Json y no columnas sueltas: afinar un tope no debe
   // costar un despliegue (mismo criterio que `driverConfig`/`mappingJson`).
   avisosMasivos Json?
+
+  // 🩺 RESUMEN DE LA ATENCIÓN (docs/PLAN_RESUMEN_ATENCION.md §3.11).
+  //
+  // null = la función no existe para este tenant (todos menos el de Anserma).
+  // Forma (`ConfigResumenAtencion` en @agenia/shared): { leerDelHospital,
+  // enviar, canales, servicios (matriz servicio del HIS × canal), modoPrueba,
+  // calmaMinutos, horario, camposPlantilla }. Todo interruptor que falte se lee
+  // APAGADO: al habilitarla nace con todo apagado (decisión del usuario,
+  // 2026-11-01). Json por el mismo criterio que `avisosMasivos`.
+  resumenAtencion       Json?
+  // Hasta qué historia leyó el agente (en Anserma, `NU_NUME_HICL`). Columna
+  // propia y no dentro de `resumenAtencion`: ese Json lo edita el panel y esto
+  // lo escribe el agente en cada lote; con read-modify-write sobre la misma
+  // fila, uno de los dos perdería su cambio.
+  resumenAtencionCursor String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

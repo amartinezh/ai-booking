@@ -18,6 +18,12 @@ import { MirrorAvailabilityService } from './mirror-availability.service';
 import { MirrorCatalogService } from './mirror-catalog.service';
 import { MirrorNoticeService } from './mirror-notice.service';
 import { MirrorLookupService } from './mirror-lookup.service';
+import { MirrorAttentionSummaryService } from './mirror-attention-summary.service';
+import type {
+  EstadoResumenesAgente,
+  ResumenesAtencionInput,
+  ResumenesAtencionResult,
+} from '@agenia/shared';
 import type {
   AckInput,
   AckResult,
@@ -57,6 +63,7 @@ export class MirrorController {
     private readonly catalog: MirrorCatalogService,
     private readonly notice: MirrorNoticeService,
     private readonly lookup: MirrorLookupService,
+    private readonly resumenes: MirrorAttentionSummaryService,
   ) {}
 
   @Post('handshake')
@@ -241,6 +248,33 @@ export class MirrorController {
       throw new BadRequestException('requestId es obligatorio.');
     }
     return this.lookup.applyResult(req.mirrorConfig.organizationId, body);
+  }
+
+  /**
+   * GET /mirror/attention-summaries/state — resumen de la atención
+   * (docs/PLAN_RESUMEN_ATENCION.md §3.11). El agente pregunta en cada vuelta si
+   * debe leer la historia clínica, desde qué historia y de qué servicios. Con
+   * «Leer del hospital» apagado (el estado al desplegar) responde `leer: false`
+   * y el agente no toca el HIS.
+   */
+  @Get('attention-summaries/state')
+  getAttentionSummaryState(
+    @Req() req: AgentRequest,
+  ): Promise<EstadoResumenesAgente> {
+    return this.resumenes.estadoParaElAgente(req.mirrorConfig.organizationId);
+  }
+
+  /**
+   * POST /mirror/attention-summaries — el agente sube los resúmenes que leyó y
+   * hasta dónde llegó. Con la lectura apagada responde 403: nada clínico entra
+   * con el interruptor apagado.
+   */
+  @Post('attention-summaries')
+  receiveAttentionSummaries(
+    @Req() req: AgentRequest,
+    @Body() body: ResumenesAtencionInput,
+  ): Promise<ResumenesAtencionResult> {
+    return this.resumenes.recibirLote(req.mirrorConfig.organizationId, body);
   }
 
   @Post('ack')

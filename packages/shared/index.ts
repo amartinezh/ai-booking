@@ -738,3 +738,37 @@ export type {
 // 🔐 Sesión vigente: la regla que aplican la web (getSession) y la API (RolesGuard).
 export { DURACION_SESION_SEG, emisionDelToken, motivoSesionInvalida } from './src/sesion';
 export type { CuentaDeLaSesion, MotivoSesionInvalida, TokenDeSesion } from './src/sesion';
+
+// 🩺 Resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md): interruptores que
+// nacen apagados, la regla de envío y el resumen que sube el agente del hospital.
+export {
+  CANALES_RESUMEN,
+  LIMITES_RESUMEN_ATENCION,
+  TEXTO_MOTIVO_NO_ENVIO,
+  aplicarCambioDeLectura,
+  configResumenAtencionApagada,
+  leerConfigResumenAtencion,
+  normalizarDestino,
+  puedeEnviarPorCanal,
+  puedeLeerDelHospital,
+  serviciosALeer,
+  validarResumenAtencion,
+} from './src/resumen-atencion';
+export type {
+  CambioLecturaResumen,
+  CampoPlantillaResumen,
+  CanalResumen,
+  ConfigResumenAtencion,
+  DiagnosticoResumen,
+  EstadoResumenesAgente,
+  IncapacidadResumen,
+  MotivoNoEnvio,
+  OrdenResumen,
+  RemisionResumen,
+  RenglonExamenResumen,
+  RenglonMedicamentoResumen,
+  ResumenAtencionHis,
+  ResumenesAtencionInput,
+  ResumenesAtencionResult,
+  TipoOrdenResumen,
+} from './src/resumen-atencion';

@@ -294,6 +294,28 @@ describe('HttpMirrorApiClient — el contrato HTTP', () => {
       expect(init.body).toBeUndefined();
     });
 
+    it('getAttentionSummaryState → GET /mirror/attention-summaries/state, sin cuerpo', async () => {
+      fetchMock.mockResolvedValue(respuesta({ leer: false }));
+
+      await client.getAttentionSummaryState();
+
+      const { url, init } = llamada();
+      expect(url).toBe(`${BASE}/mirror/attention-summaries/state`);
+      expect(init.method).toBe('GET');
+      expect(init.body).toBeUndefined();
+    });
+
+    it('pushAttentionSummaries → POST /mirror/attention-summaries con el lote', async () => {
+      fetchMock.mockResolvedValue(respuesta({ recibidos: 0 }));
+
+      await client.pushAttentionSummaries({ resumenes: [], nextCursor: '7' });
+
+      const { url, init } = llamada();
+      expect(url).toBe(`${BASE}/mirror/attention-summaries`);
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body as string)).toEqual({ resumenes: [], nextCursor: '7' });
+    });
+
     it('getPendingLookupRequests → GET /mirror/lookup-requests, sin cuerpo', async () => {
       fetchMock.mockResolvedValue(respuesta([]));
 

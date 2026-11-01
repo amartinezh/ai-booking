@@ -1,6 +1,6 @@
 # Resumen de la atención al paciente por WhatsApp y correo
 
-**Estado:** propuesta del 2026-10-28. Nada construido. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2).
+**Estado:** propuesta del 2026-10-28. Fase 0 (descubrimiento en el HIS) casi completa. 2026-11-01: el hospital documentó los reportes que imprime el HIS. Los documentos llegan en PDF e imagen, para imprimir (§3.9), y sus decisiones son D20-D25. Ese mismo día se corrieron las rondas 5 y 6 (documentos), y el usuario aprobó D3, D11, D13, D16 y D23. Se puede empezar el desarrollo (§8.2). **Fase 1 (lectura en sombra) implementada el 2026-11-01, sin commit ni despliegue (§8.3).** Todo nace apagado.
 **Primer hospital:** San Vicente de Paúl de Anserma (driver `cnt-sanvicente-anserma`).
 
 ## 1. Qué se pide
@@ -586,6 +586,26 @@ Como todo nace apagado y casi todo es configuración (§3.11), la mayoría de la
 | **Frenan enviarle a un paciente** (Fase 5) | D7 y D2 (comité de historias clínicas), D8 y D21 (jurídica), D15 (quién paga los WhatsApp), plantilla aprobada por Meta | Encender «Enviar» fuera del modo prueba | Hasta entonces, solo el equipo recibe (modo prueba) |
 
 ⇒ Con D3, D11, D13, D16 y D23 aprobadas, se puede empezar ya: Fase 1 (agente, endpoint, guardado e interruptores) contra el HIS falso y PRUEBAS, y Fase 2 (documentos) con los valores por defecto. Lo legal y el comité tienen que llegar antes de encender la lectura en producción y, sobre todo, antes de enviarle a un paciente.
+
+### 8.3 Fase 1: lo construido (2026-11-01)
+
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| Reglas compartidas | `packages/shared/src/resumen-atencion.ts` | Tipos del resumen y de los interruptores. Lo que falta cuenta como apagado (`leerConfigResumenAtencion`, `puedeLeerDelHospital`, `puedeEnviarPorCanal` con su motivo). `validarResumenAtencion` revisa cada resumen. `aplicarCambioDeLectura` es lo único que cambia el panel, y nunca enciende «Enviar» ni un canal. |
+| Base | migración `20261101120000_resumen_atencion` | `HospitalMirrorConfig.resumenAtencion` (JSON, vacío = apagado) y `resumenAtencionCursor` (solo lo escribe el agente). Tabla `AttentionSummary`: contenido cifrado, hash, versión, estado, borrado a los 30 días. `PatientProfile.summariesOptOut` (la baja, para la Fase 4). Probada contra Postgres sin deriva. |
+| API | `apps/api/src/mirror/mirror-attention-summary.service.ts` | `GET /mirror/attention-summaries/state` y `POST /mirror/attention-summaries`. Con la lectura apagada responde 403. Rechaza servicios fuera de la matriz. Guarda cifrado; con el mismo contenido no hace nada y con uno distinto sube la versión. Lo caducado no revive y el cursor solo avanza. Liga al paciente por cédula sin ceros, solo si hay uno. |
+| Retención (D11) | `apps/api/src/retention/retention.service.ts` | Borra el contenido a los 30 días (si no salió, `RECIBIDO` → `CADUCADO`) y la fila al año. |
+| Agente | `core/engine.ts` `syncAttentionSummaries`, bucle propio cada 5 min | Pregunta si debe leer. Si debe, busca las terminadas con la calma cumplida (120 min), lee en lotes de 50 y sube. La primera vez arranca 6 horas atrás. |
+| Driver | `drivers/cnt-sanvicente-anserma/resumen-atencion.ts` | Detecta (CON, ambulatoria, servicio de la matriz, cursor `NU_NUME_HICL`) y lee 10 consultas con etiqueta. Sin `DE_DOSIS_HMED` (D19), sin el texto de `TX_CASO_HREM` (D24) y sin ítems anulados. Los campos de la plantilla se filtran por nombre de concepto. Probado contra un SQL Server de prueba. |
+| Panel | `/dashboard/espejo/resumen-atencion` (botón en el Espejo, solo Administrador y driver de Anserma) | «Leer del hospital», los servicios que se leen y la calma. «Enviar» y los canales se ven deshabilitados. Muestra cuánto se ha leído, nunca el contenido. Cada cambio deja `ATTENTION_SUMMARY_CONFIG_CHANGED` en la Actividad de usuarios. |
+
+**Pruebas:** shared, API, agente y web en verde, más la integración de la API contra Postgres y la del driver contra SQL Server.
+
+**Orden de despliegue:** migración → API → agente → web. Encender la lectura en producción espera el contrato ampliado y los permisos (P-7), según §8.2.
+
+**Falta para cerrar la Fase 1:**
+- una pantalla para que el hospital revise los 20 resúmenes contra el HIS (descifrados, con registro de quién los abre);
+- medir cuánto pesa la consulta del agente en el HIS.
 
 ## 9. Volumen y costo
 

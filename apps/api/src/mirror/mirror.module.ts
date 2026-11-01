@@ -12,6 +12,7 @@ import { MirrorAvailabilityService } from './mirror-availability.service';
 import { MirrorCatalogService } from './mirror-catalog.service';
 import { MirrorNoticeService } from './mirror-notice.service';
 import { MirrorLookupService } from './mirror-lookup.service';
+import { MirrorAttentionSummaryService } from './mirror-attention-summary.service';
 import { MirrorExceptionsService } from './mirror-exceptions.service';
 import { MirrorAlertService } from './mirror-alert.service';
 import { MirrorWatchdogService } from './mirror-watchdog.service';
@@ -68,6 +69,9 @@ import { MedicosNuevosController } from './medicos-nuevos.controller';
     // 🩺 Médicos del hospital con citas que AgenIA aún no tiene: caso en la Bandeja,
     // botón «Crear y homologar» y homologación automática (2026-10-24).
     MedicosNuevosService,
+    // 🩺 Resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md): lo que el agente
+    // lee de la historia clínica, guardado cifrado. Nace apagado.
+    MirrorAttentionSummaryService,
   ],
   exports: [
     MirrorApplyService,

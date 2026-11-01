@@ -1,7 +1,11 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
-import { RETENCION_DATOS, diasDeRetencion } from '@agenia/shared';
+import {
+  LIMITES_RESUMEN_ATENCION,
+  RETENCION_DATOS,
+  diasDeRetencion,
+} from '@agenia/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { SystemLogService } from '../system-log/system-log.service';
 import { getErrorMessage } from '../common/error-message.util';
@@ -15,6 +19,9 @@ import { TechAlertService } from '../tech-alerts/tech-alert.service';
  *   · `InteractionLog`   — el texto de las conversaciones del bot: 180 días.
  *   · `PatientLookupLog` — quién consultó a qué paciente en el rastreo: 365 días.
  *   · `ChannelActivityLog` — cuándo escribió alguien (remitente seudonimizado): 400 días.
+ *   · `AttentionSummary` — el resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md,
+ *     D11): el contenido clínico cifrado se borra a los 30 días (`contentExpiresAt`) y
+ *     la fila, ya sin contenido, al año.
  *
  * Pasado el plazo las filas se BORRAN. Ninguna otra tabla depende de ellas (no
  * tienen FK entrantes) y nada lee tan atrás.
@@ -46,6 +53,12 @@ export interface ResultadoPurga {
   asistenteSoporte: { dias: number; borradas: number; completa: boolean };
   /** Códigos del panel para el asistente, un día después de vencer. */
   codigosAsistente: number;
+  /** Resumen de la atención (D11): contenidos borrados (30 días) y filas borradas (un año). */
+  resumenesAtencion: {
+    contenidosBorrados: number;
+    filasBorradas: number;
+    completa: boolean;
+  };
 }
 
 @Injectable()
@@ -154,30 +167,77 @@ export class RetentionService {
       where: { expiresAt: { lt: new Date(ahora.getTime() - MS_DIA) } },
     });
 
+    // Resumen de la atención (D11). El contenido clínico, a los 30 días: la fila se
+    // queda sin él para responder «¿se le envió?». Uno que nunca salió pasa a
+    // CADUCADO; uno enviado conserva su estado. La fila, al año.
+    const caducados = await this.prisma.attentionSummary.updateMany({
+      where: {
+        contentExpiresAt: { lt: ahora },
+        purgedAt: null,
+        status: 'RECIBIDO',
+      },
+      data: { content: null, purgedAt: ahora, status: 'CADUCADO' },
+    });
+    const vencidos = await this.prisma.attentionSummary.updateMany({
+      where: { contentExpiresAt: { lt: ahora }, purgedAt: null },
+      data: { content: null, purgedAt: ahora },
+    });
+    const r5 = await this.borrarEnLotes(
+      new Date(
+        ahora.getTime() -
+          LIMITES_RESUMEN_ATENCION.retencionMetadatosDias * MS_DIA,
+      ),
+      (antesDe) =>
+        this.prisma.attentionSummary.findMany({
+          where: { receivedAt: { lt: antesDe } },
+          select: { id: true },
+          take: LOTE,
+        }),
+      (ids) =>
+        this.prisma.attentionSummary.deleteMany({ where: { id: { in: ids } } }),
+    );
+    const contenidosBorrados = caducados.count + vencidos.count;
+
     const resultado: ResultadoPurga = {
       conversaciones: { dias: conversaciones, ...r1 },
       consultasRastreo: { dias: consultas, ...r2 },
       actividadCanales: { dias: actividad, ...r3 },
       asistenteSoporte: { dias: conversaciones, ...r4 },
       codigosAsistente: codigos.count,
+      resumenesAtencion: {
+        contenidosBorrados,
+        filasBorradas: r5.borradas,
+        completa: r5.completa,
+      },
     };
 
     const pendiente =
-      !r1.completa || !r2.completa || !r3.completa || !r4.completa;
+      !r1.completa ||
+      !r2.completa ||
+      !r3.completa ||
+      !r4.completa ||
+      !r5.completa;
     if (
-      r1.borradas + r2.borradas + r3.borradas + r4.borradas > 0 ||
+      r1.borradas +
+        r2.borradas +
+        r3.borradas +
+        r4.borradas +
+        contenidosBorrados +
+        r5.borradas >
+        0 ||
       pendiente
     ) {
       this.logger.log(
         `Retención: ${r1.borradas} conversación(es) de más de ${conversaciones} días, ` +
           `${r2.borradas} consulta(s) del rastreo de más de ${consultas} días, ` +
           `${r3.borradas} registro(s) de actividad de canales de más de ${actividad} días y ` +
-          `${r4.borradas} conversación(es) del asistente de soporte de más de ${conversaciones} días borrados` +
+          `${r4.borradas} conversación(es) del asistente de soporte de más de ${conversaciones} días, ` +
+          `${contenidosBorrados} contenido(s) de resúmenes de la atención y ${r5.borradas} resumen(es) de más de un año borrados` +
           (pendiente ? '; quedan más, siguen la próxima noche.' : '.'),
       );
       await this.systemLog.event({
         action: 'DATA_RETENTION_PURGE',
-        message: `Purga de retención: ${r1.borradas} conversaciones, ${r2.borradas} consultas del rastreo, ${r3.borradas} registros de actividad de canales y ${r4.borradas} conversaciones del asistente de soporte.`,
+        message: `Purga de retención: ${r1.borradas} conversaciones, ${r2.borradas} consultas del rastreo, ${r3.borradas} registros de actividad de canales, ${r4.borradas} conversaciones del asistente de soporte, ${contenidosBorrados} contenidos de resúmenes de la atención y ${r5.borradas} resúmenes de más de un año.`,
         metadata: resultado as unknown as Record<string, unknown>,
       });
     }

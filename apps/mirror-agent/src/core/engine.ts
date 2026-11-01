@@ -6,11 +6,12 @@ import type {
   ReconcileResult,
   AvailabilityResult,
 } from '@agenia/shared';
-import { validarConsultaHis } from '@agenia/shared';
+import { LIMITES_RESUMEN_ATENCION, validarConsultaHis } from '@agenia/shared';
 import type { MirrorApiClient } from './mirror-api-client';
 import type { DriverResult, HisDriver } from './driver.interface';
 import {
   isAppointmentImportCapable,
+  isAttentionSummaryCapable,
   isNoticeRosterCapable,
   isPatientLookupCapable,
 } from './driver.interface';
@@ -289,6 +290,71 @@ export class MirrorEngine {
     }
 
     return { skipped: false, processed, errores, primerError };
+  }
+
+  /**
+   * Una vuelta del resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md).
+   *
+   * El servidor decide si se lee (`leer`), desde qué historia y de qué
+   * servicios. Con la lectura apagada —el estado al desplegar— esta vuelta no
+   * toca el HIS: cuesta una pregunta a AgenIA. Si algo falla, lanza y el cursor
+   * del servidor no se mueve, así que la vuelta siguiente reintenta lo mismo.
+   */
+  async syncAttentionSummaries(ahora: Date = new Date()): Promise<{
+    skipped: boolean;
+    apagado: boolean;
+    leidos: number;
+    nuevos: number;
+    actualizados: number;
+    rechazados: number;
+    primerRechazo?: string;
+  }> {
+    const vacio = { leidos: 0, nuevos: 0, actualizados: 0, rechazados: 0 };
+    if (!isAttentionSummaryCapable(this.driver)) {
+      return { skipped: true, apagado: false, ...vacio };
+    }
+    const estado = await this.api.getAttentionSummaryState();
+    if (!estado.leer || estado.servicios.length === 0) {
+      return { skipped: false, apagado: true, ...vacio };
+    }
+
+    const { numeros, cursor } = await this.driver.detectFinishedAttentions({
+      desde: estado.cursor,
+      hasta: new Date(ahora.getTime() - estado.calmaMinutos * 60_000),
+      inicio: new Date(
+        ahora.getTime() -
+          LIMITES_RESUMEN_ATENCION.horasHaciaAtrasAlEmpezar * 3_600_000,
+      ),
+      servicios: estado.servicios,
+      limite: estado.maxPorLote,
+    });
+    // Nada que mirar todavía: el cursor se queda donde está.
+    if (cursor === null) return { skipped: false, apagado: false, ...vacio };
+
+    const resumenes =
+      numeros.length > 0
+        ? await this.driver.fetchAttentionSummaries(
+            numeros,
+            estado.camposPlantilla,
+          )
+        : [];
+    // También sin resúmenes se sube: así el cursor pasa las filas que no eran
+    // atenciones y la vuelta siguiente no las vuelve a mirar.
+    const r = await this.api.pushAttentionSummaries({
+      resumenes,
+      nextCursor: cursor,
+    });
+    return {
+      skipped: false,
+      apagado: false,
+      leidos: resumenes.length,
+      nuevos: r.nuevos,
+      actualizados: r.actualizados,
+      rechazados: r.rechazados.length,
+      primerRechazo: r.rechazados[0]
+        ? `historia ${r.rechazados[0].numero ?? '?'}: ${r.rechazados[0].motivo}`
+        : undefined,
+    };
   }
 
   async handshake(): Promise<void> {

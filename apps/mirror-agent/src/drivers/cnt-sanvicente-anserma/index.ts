@@ -15,6 +15,11 @@ import {
 import { consultarCitasEnVivo } from './lookup';
 import type { ResultadoConsultaEnVivo } from './lookup';
 import {
+  detectarAtencionesTerminadas,
+  leerResumenesDeAtencion,
+} from './resumen-atencion';
+import type { CampoPlantillaResumen, ResumenAtencionHis } from '@agenia/shared';
+import {
   AnsermaMapping,
   feHoraCitAIsoOrNull,
   MappingIncompletoError,
@@ -1383,6 +1388,41 @@ export class CntSanVicenteAnsermaDriver implements HisDriver {
     query: HisLookupRequestDto,
   ): Promise<ResultadoConsultaEnVivo> {
     return consultarCitasEnVivo(this.requirePool(), this.timeZone, query);
+  }
+
+  /**
+   * Resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md): las historias
+   * terminadas desde el cursor. Ver resumen-atencion.ts para qué cuenta como
+   * terminada y por qué el cursor nunca se salta una historia.
+   *
+   * Satisface `AttentionSummaryCapableDriver` de forma ESTRUCTURAL, como las
+   * otras capacidades opt-in.
+   */
+  async detectFinishedAttentions(params: {
+    desde: string | null;
+    hasta: Date;
+    inicio: Date;
+    servicios: string[];
+    limite: number;
+  }): Promise<{ numeros: string[]; cursor: string | null }> {
+    return detectarAtencionesTerminadas(
+      this.requirePool(),
+      this.timeZone,
+      params,
+    );
+  }
+
+  /** El resumen de cada historia, con lo mapeado en MAPEO_HIS.md §2.9 (rondas 1 a 6). */
+  async fetchAttentionSummaries(
+    numeros: string[],
+    camposPlantilla: CampoPlantillaResumen[] | null,
+  ): Promise<ResumenAtencionHis[]> {
+    return leerResumenesDeAtencion(
+      this.requirePool(),
+      this.timeZone,
+      numeros,
+      camposPlantilla,
+    );
   }
 
   /**

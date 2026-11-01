@@ -4,7 +4,7 @@
 >
 > **Regla obligatoria.** Todo ajuste o mejora del sistema actualiza este archivo **en el mismo commit**: lo que cambió en la pantalla o en el comportamiento, y una línea en la [bitácora](#parte-3--bitácora-de-cambios). Lo vigilan el gancho `commit-msg` del repositorio y el CI. Cómo editarlo y el formato de la Parte 1: [README.md](README.md) de esta carpeta.
 
-**Última actualización:** 2026-10-31
+**Última actualización:** 2026-11-01
 
 ## Contenido
 
@@ -1625,7 +1625,7 @@ Solo en las clínicas conectadas al sistema del hospital (HIS).
 - **Resumen:** El estado de la conexión entre AgenIA y el sistema del hospital (HIS): si el agente está vivo, si las citas llegan y si la agenda coincide.
 - **Disponibilidad:** Solo aparece en el menú si la clínica está conectada al sistema del hospital (HIS). Si no la ves, tu clínica no tiene esa conexión.
 - **Relacionados:** [Bandeja de sincronización](#bandeja), [Rastreo de paciente](#rastreo), [Agendas (Slots)](#agenda), [Médicos](#medicos)
-- **Palabras clave:** his, hospital, sincronización, integración, agente, homologación, homologar, auditoría del espejo, cola de salida, outbox, shadow, modo de agenda
+- **Palabras clave:** his, hospital, sincronización, integración, agente, homologación, homologar, auditoría del espejo, cola de salida, outbox, shadow, modo de agenda, resumen de la atención, historia clínica, fórmula, lectura en sombra
 
 #### Para qué sirve
 
@@ -1679,6 +1679,15 @@ El espejo mantiene sincronizadas las citas entre AgenIA y el sistema del hospita
 
 > 💡 Un agente instalado antes del 29 de octubre de 2026 no informa su versión: el recuadro lo dice así hasta que se instale la primera actualización.
 
+##### Encender la lectura del resumen de la atención (lectura en sombra)
+
+1. Pulsa «Resumen de la atención →». Solo aparece para el Administrador, y solo si el hospital es el de Anserma.
+2. Marca los servicios del hospital que se leen (por ejemplo, medicina general y control de hipertensos).
+3. Enciende «Leer del hospital» y pulsa «Guardar». El agente lo toma en su próxima vuelta, que es cada 5 minutos.
+4. Abajo, «Lo que se ha leído» muestra cuántos resúmenes llegaron en las últimas 24 horas y en 30 días, por servicio.
+
+> 💡 Por ahora es solo lectura en sombra: AgenIA lee las historias terminadas, las guarda cifradas 30 días y no le envía nada a ningún paciente. «Enviar a pacientes» y los canales (WhatsApp, Telegram, correo) se ven apagados y no se pueden encender hasta que exista el envío. Todo nace apagado, y cada cambio queda en la Actividad de usuarios.
+
 ##### Consultar la auditoría detallada
 
 1. Pulsa «Ver auditoría detallada →».
@@ -1695,6 +1704,7 @@ El espejo mantiene sincronizadas las citas entre AgenIA y el sistema del hospita
 - **Los dos sistemas coinciden:** Resultado de la última comparación completa entre AgenIA y el hospital.
 - **Conflictos recientes:** Situaciones que el sistema no resuelve solo, a propósito, porque afectan a un paciente concreto.
 - **Resultados de auditoría:** OK, SKIPPED (no aplica, por ejemplo un médico no homologado), CONFLICT, ERROR y DEAD_LETTER (se rindió).
+- **Resumen de la atención:** Los interruptores de la lectura de historias clínicas del hospital (qué servicios se leen, la calma y «Leer del hospital») y cuántos resúmenes han llegado. El contenido nunca se muestra en esta pantalla.
 
 #### Preguntas frecuentes
 
@@ -1713,6 +1723,10 @@ AgenIA no se entera al instante, sino por vueltas. Las citas de ventanilla (nuev
 El asistente nunca confirma una cita que el hospital no registró. Si en esos minutos le ofrece a un paciente un día en que el médico ya no tiene turno, o una hora que ya no está en su turno, el hospital la rechaza y el asistente le dice al paciente que el hospital acaba de ajustar su agenda y le muestra los horarios que quedan.
 
 Las citas que AgenIA agendó (por el chat o el panel) en horas o días que el hospital quitó no se cancelan solas: cada una abre en la Bandeja el caso «Cita en un horario que el hospital quitó de su agenda», con el paciente y la hora; si se anulan, su cupo no se vuelve a ofrecer. Ojo: el hospital también borra el turno de un día ya lleno solo para cerrar la agenda, y entonces el médico sí atiende. Confirma con el hospital; si el paciente no será atendido, anula o mueve la cita en el sistema del hospital y AgenIA le avisa. El caso se cierra solo si la hora vuelve a la agenda. Las citas que agenda el hospital no abren casos: las maneja el hospital. Y las que el hospital crea fuera de los turnos («temporales», para guardar cupos que maneja a mano) no reciben recordatorio.
+
+##### ¿El resumen de la atención ya le llega a los pacientes?
+
+No. Por ahora AgenIA solo lee las historias terminadas de los servicios marcados (lectura en sombra) para revisarlas contra el sistema del hospital. Enviarlas al paciente por WhatsApp, Telegram o correo vendrá después y nacerá apagado.
 
 #### Si algo no sale bien
 
@@ -2220,6 +2234,17 @@ Cada 2 minutos un vigilante busca citas confirmadas por AgenIA que no llegaron a
 
 Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por WhatsApp, paciente por paciente, a quienes tienen cita el día de un especialista (cancelación o recordatorio de antemano). La lista se trae del hospital o de una hoja de cálculo; no cancela nada en el hospital. Detalle: `docs/drivers/cnt-sanvicente-anserma/PLAN_AVISOS_MASIVOS.md`.
 
+### 5.8 Resumen de la atención: lectura en sombra (2026-11-01)
+
+Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las historias clínicas terminadas (diagnósticos, fórmula, órdenes de exámenes, remisiones, incapacidades, interconsultas, indicaciones y los campos de la plantilla que se eligieron) y las guarda. **No le envía nada a ningún paciente**: el envío y los documentos en PDF e imagen son fases siguientes. Solo existe para el driver `cnt-sanvicente-anserma`.
+
+- **Interruptores** (`HospitalMirrorConfig.resumenAtencion`, JSON; reglas en `@agenia/shared` `resumen-atencion.ts`): «Leer del hospital», «Enviar», cada canal (WhatsApp, Telegram, correo) y una matriz servicio × canal. Un servicio que está en la matriz se lee, y sus canales encendidos se envían. Lo que falta o no se entiende cuenta como apagado, y al desplegar todo nace apagado (columna vacía). La pantalla `/dashboard/espejo/resumen-atencion` (solo Administrador; `apps/web/app/actions/resumen-atencion.ts`) solo cambia la lectura: «Leer del hospital», los servicios que se leen y la calma. `aplicarCambioDeLectura` nunca enciende «Enviar» ni un canal, porque el envío no está construido. Cada cambio deja `ATTENTION_SUMMARY_CONFIG_CHANGED` en la Actividad de usuarios.
+- **Agente** (`syncAttentionSummaries` en `apps/mirror-agent/src/core/engine.ts`, su propio bucle cada 5 min, `MIRROR_ATTENTION_SUMMARY_INTERVAL_MS`): primero pregunta a la API si debe leer (`GET /mirror/attention-summaries/state`). Si la respuesta es no, no toca el HIS. Si es sí, busca las historias guardadas hace más de la calma (120 min por defecto, de 30 a 1440), para no leer una historia que el médico todavía corrige, y las lee en lotes de hasta 50 (`POST /mirror/attention-summaries`). Un agente sin esta capacidad la salta (`isAttentionSummaryCapable`).
+- **Qué cuenta como terminada** (driver, `drivers/cnt-sanvicente-anserma/resumen-atencion.ts`): estado CON, ambulatoria (sin ingreso), de un servicio de la matriz y con la calma cumplida. El cursor es el número de la historia (`NU_NUME_HICL`, crece con la fecha) y se guarda en su propia columna (`resumenAtencionCursor`), que solo escribe el agente y que solo avanza. La primera vez arranca 6 horas atrás y no lee nada viejo. No se lee la dosis estructurada (`DE_DOSIS_HMED`, D19), ni el texto de la remisión (`TX_CASO_HREM`, solo si tiene texto, D24), ni los ítems anulados. Las fechas del HIS son hora de Bogotá y se convierten a UTC.
+- **API** (`MirrorAttentionSummaryService`): con la lectura apagada responde 403 y no guarda nada. También rechaza un servicio que no está en la matriz. Guarda el resumen **cifrado** (`AttentionSummary`, llave clínica + historia). Si el contenido es el mismo, no hace nada; si cambió, sube la versión; un resumen ya caducado no revive. Liga al paciente por la cédula sin ceros a la izquierda, solo si hay uno. Los registros nunca llevan el contenido.
+- **Retención (D11)**: la purga nocturna (`RetentionService`) borra el contenido a los 30 días. Si no salió, el estado pasa a `CADUCADO`. La fila, que ya no tiene datos clínicos, se borra al año.
+- **Orden de despliegue**: migración `20261101120000_resumen_atencion` → API → agente → web. En cualquier otro orden no se rompe nada: la API vieja no conoce el endpoint, y el agente lo registra como error y sigue con lo demás.
+
 ## 6. Otras pantallas y páginas públicas
 
 - **Agendamiento** (`/dashboard/agendamiento`, Agente de Reservas): agendar a mano para un paciente, con las mismas barreras de EPS y régimen que el asistente pero sin límite de citas. Respeta el alcance del agente (EPS o médico asignado). Agendar, cambiar la fecha o el médico (aviso), corregir la EPS o el nombre y escribirle al paciente desde aquí queda en la Actividad de usuarios con quién lo hizo y qué cita fue (del mensaje solo el canal y su largo, no el texto: la bitácora no se purga y las conversaciones sí).
@@ -2240,13 +2265,14 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 | Seguimiento de consultas del bot al HIS | API | 5 s | Solo con `botLookupMode` distinto de OFF. |
 | Vigilante del espejo | API | 2 min | §5.5. |
 | Mantenimiento de consultas en vivo | API | 1 min | Vence y borra los datos de las consultas al HIS. |
-| Retención de datos | API | 03:30 | Borra conversaciones de más de 180 días y la bitácora del rastreo de más de 365. |
+| Retención de datos | API | 03:30 | Borra conversaciones de más de 180 días y la bitácora del rastreo de más de 365; del resumen de la atención, el contenido a los 30 días y la fila al año (§5.8). |
 | Purga de avisos masivos | API | diario | Borra los datos personales vencidos de los lotes. |
 | Alertas técnicas | API | 1 min (03:15 limpieza) | §8. |
 | Avisos de los casos de Soporte al grupo | API | 1 min (y al instante desde el asistente) | §8 y §15. |
 | Avisos de sus casos a quien los reportó | API | 1 min (con el asistente encendido) | §15. |
 | Monitor de servicios externos | API | 5 min | §8. |
 | Agente del hospital | Servidor del hospital | cada vuelta (minutos) | Eventos en las dos direcciones, latido, barrido de agenda; reconciliación diaria. |
+| Lectura del resumen de la atención | Servidor del hospital (agente) | 5 min | Solo con «Leer del hospital» encendido: lee las historias terminadas de los servicios marcados (§5.8). |
 | Vigía del servidor | Servidor (cron del sistema) | 1 min | §8. |
 
 ## 8. Monitoreo y alertas técnicas
@@ -2272,7 +2298,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 - **Mensajes del asistente**: el detalle de una cita solo se da al remitente que corresponde al paciente; cancelar o cambiar exige que la ficha sea del remitente. Con el caso «El teléfono de un paciente es de otra persona» abierto en la Bandeja, ese número deja de contar como del paciente para todo eso (confirmar, consultar, cancelar y cambiar), y se vuelve a revisar justo antes de cancelar o mover la cita en el hospital. Por Telegram no aplica: ese chat lo vincula el propio paciente.
 - **Avisos y alertas**: los avisos al agendador y las alertas técnicas no llevan datos de pacientes.
 - **Conversaciones del asistente de soporte**: solo el super administrador las lee, completas, en `/super-admin/soporte-bot/conversaciones`; abrir una deja un registro en la bitácora del sistema (`SUPPORT_BOT_CONVERSATION_VIEWED`, con quién y cuál). La lista de lo que el manual no cubrió va con cédulas, teléfonos y correos ocultos.
-- **Retención**: conversaciones 180 días (también las del asistente de soporte con el personal), bitácora del rastreo 365 días, actividad de canales 400 días (seudonimizada), incidentes del monitor 365 días; los códigos del asistente de soporte se borran un día después de vencer.
+- **Retención**: conversaciones 180 días (también las del asistente de soporte con el personal), bitácora del rastreo 365 días, actividad de canales 400 días (seudonimizada), incidentes del monitor 365 días; los códigos del asistente de soporte se borran un día después de vencer. Resumen de la atención: el contenido clínico se guarda cifrado y se borra a los 30 días, y la fila sin contenido al año (§5.8).
 - **Webhooks**: Meta con firma (`META_REQUIRE_SIGNATURE`) y Telegram con `secret_token`.
 - **Estadísticas para compartir**: la clave se guarda con bcrypt (`OrganizationSettings.publicStatsKeyHash`) y nunca se vuelve a mostrar; ponerla, cambiarla o quitarla queda en la auditoría del espejo (`PUBLIC_STATS_KEY_CHANGE`, sin la clave). Quien la escribe bien recibe una cookie `estadisticas_acceso` de 30 días, solo para la ruta de esa clínica, firmada con una llave derivada de `JWT_SECRET` (no es un JWT: no sirve como sesión del panel) y atada al hash de la clave: cambiarla o cerrar la página saca a todos. Cada clave equivocada queda en la bitácora del sistema (`PUBLIC_STATS_LOGIN_FAILED`, con la IP) y tras 5 en 15 minutos desde una IP, o 30 para la clínica, se deja de comprobar por 15 minutos. La página lleva `noindex`.
 
@@ -2343,7 +2369,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 | `docs/PLAN_CONSULTA_CITAS.md` | «¿Qué citas tengo?» en el asistente. |
 | `docs/PLAN_TELEGRAM.md` · `docs/ENCENDIDO_TELEGRAM.md` | Canal de Telegram. |
 | `docs/PLAN_AGENDA_HUECOS.md` | Agenda armada con los huecos del HIS. |
-| `docs/PLAN_RESUMEN_ATENCION.md` | Propuesta (sin construir): resumen de la atención y sus documentos (fórmula, órdenes de exámenes, remisión, incapacidad) en PDF e imagen para imprimir, por WhatsApp y correo, cuando el médico termina la historia clínica en el HIS; Fase 0 con las consultas de solo lectura del driver. |
+| `docs/PLAN_RESUMEN_ATENCION.md` | Resumen de la atención y sus documentos (fórmula, órdenes de exámenes, remisión, incapacidad) en PDF e imagen para imprimir, por WhatsApp, Telegram y correo, cuando el médico termina la historia clínica en el HIS. Fase 0 con las consultas de solo lectura del driver. Fase 1 (lectura en sombra, §5.8) construida el 2026-11-01; el envío y los documentos aún no. |
 | `docs/PLAN_ALERTAS_TECNICAS.md` · `docs/ALERTAS_TECNICAS.md` | Alertas técnicas por Telegram y vigía del servidor. |
 | `docs/PLAN_BOT_SOPORTE.md` · `docs/ASISTENTE_SOPORTE.md` | Asistente de soporte por Telegram para el personal de las clínicas: el plan y su operación (paso a producción, piloto, apagarlo). |
 | `docs/MONITOR_SERVICIOS.md` | Monitor de servicios externos. |
@@ -2374,6 +2400,7 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-11-01** — Resumen de la atención, primera fase: lectura en sombra. Esta fase solo prepara la lectura: AgenIA no le manda nada a ningún paciente. Cuando el Administrador la encienda, AgenIA leerá las historias clínicas terminadas del hospital: diagnósticos, fórmula, órdenes de exámenes, remisiones, incapacidades e indicaciones. Solo lee los servicios que se marquen, y cada historia 2 horas después de guardada, para no leer una que el médico todavía corrige. El contenido se guarda cifrado y se borra a los 30 días. En el Espejo, el botón «Resumen de la atención →» abre los interruptores. Todo nace apagado: «Leer del hospital» se enciende ahí, y «Enviar a pacientes» y los canales se ven pero no se pueden encender hasta que exista el envío. Cada cambio queda en la Actividad de usuarios. Solo para el hospital de Anserma.
 - **2026-10-31** — Plazo máximo para agendar: los domingos y los festivos ya no cuentan. Con 4 días, un viernes el asistente ofrece hasta el martes (antes, hasta el lunes); si el lunes es festivo, hasta el miércoles. El jueves 29 y el viernes 30 de octubre, con el lunes 2 festivo, el plazo llegaba al domingo o al lunes: 62 personas recibieron «no quedan cupos» mientras la agenda del martes ya estaba abierta en el hospital, y solo 9 agendaron después. Aplica a todo lo que usa el plazo: los cupos que ofrece el asistente, la reserva, el cambio de fecha, la lista de espera y los mensajes «agendamos citas hasta el…» y «escríbanos desde el…». En Configuración, el ejemplo de fechas marca los domingos y festivos como días que no cuentan. Los festivos de Colombia se calculan solos cada año.
 - **2026-10-31** — Arreglos del diagnóstico del sábado. **Lista de espera:** recibe primero los cupos libres, no solo los que alguien cancela: cuando el hospital abre agenda o un día entra al plazo para agendar, el asistente se los ofrece en orden a quienes esperan (cada 2 minutos, de 7:00 a 19:00), y el cupo ofrecido queda apartado los 30 minutos que la persona tiene para responder, así el chat no se lo da a otro. Quien dice NO sigue en la lista en su mismo puesto (antes salía, aunque el mensaje le decía que seguía) y no se le ofrece otro cupo de ese día. Quien consigue cita por otro camino sale solo de la lista. **Recordatorio:** «Cancelada» o «Canselada» como respuesta abre la cancelación de esa cita, y si la IA entiende «cancelar» después de un recordatorio se le ofrece cancelar la cita recordada sin pedirle la cédula (antes una paciente contestó «Canselada», se le pidió la cédula y su cita siguió en pie).
 - **2026-10-30** — Estadísticas para compartir: sección nueva «¿Cuánto espera el paciente por su cita?» y cifra «Días hasta la cita por chat». Mide el indicador de oportunidad de la cita (Resolución 256 de 2016: días desde que el paciente la pide hasta el día de la cita) por chat y por el personal del hospital, con cuántas quedan dentro de 3 días (estándar de medicina general) y el reparto por días; además, los minutos de conversación para conseguir la cita por chat y las horas desde que entra a la lista de espera hasta que recibe el cupo. Con los datos del hospital al 29 de octubre: por chat, 1,0 días en promedio y todas dentro de 3 días; por el personal, 2,0 días y 86 %; por chat, la cita queda asignada en 4,6 minutos de conversación (mediana).

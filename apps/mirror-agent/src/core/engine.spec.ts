@@ -90,6 +90,8 @@ describe('MirrorEngine', () => {
       pushNoticeRoster: jest.fn(),
       getPendingLookupRequests: jest.fn(),
       pushLookupResult: jest.fn(),
+      getAttentionSummaryState: jest.fn(),
+      pushAttentionSummaries: jest.fn(),
     };
     driver = {
       key: 'test-driver',
@@ -1257,6 +1259,8 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
       pushNoticeRoster: jest.fn(),
       getPendingLookupRequests: jest.fn(),
       pushLookupResult: jest.fn(),
+      getAttentionSummaryState: jest.fn(),
+      pushAttentionSummaries: jest.fn(),
     };
     driver = {
       key: 'test-driver',
@@ -1546,6 +1550,120 @@ describe('MirrorEngine — arranque, detección de cambios y latido', () => {
   // HIS, y que un fallo se le AVISA al servidor (si no, la pantalla espera 30 s
   // igual que si el agente estuviera caído).
   // ══════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════
+  // `syncAttentionSummaries` — resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md).
+  // Lo que se fija: nace apagado y apagado no toca el HIS; encendido detecta con
+  // la calma, arma solo lo detectado y sube también los lotes vacíos para que el
+  // cursor avance; si algo falla, lanza y el cursor del servidor no se mueve.
+  // ══════════════════════════════════════════════════════════════════════
+  describe('syncAttentionSummaries', () => {
+    const AHORA = new Date('2026-11-01T17:00:00.000Z');
+    const encendido = {
+      leer: true,
+      cursor: '2441000',
+      calmaMinutos: 120,
+      maxPorLote: 50,
+      servicios: ['S39141', 'S39141-1'],
+      camposPlantilla: null,
+    };
+    const capacidad = () =>
+      driver as unknown as { detectFinishedAttentions: jest.Mock; fetchAttentionSummaries: jest.Mock };
+
+    beforeEach(() => {
+      const d = driver as unknown as Record<string, unknown>;
+      d.detectFinishedAttentions = jest.fn(async () => ({ numeros: [], cursor: null }));
+      d.fetchAttentionSummaries = jest.fn(async () => []);
+      api.pushAttentionSummaries.mockResolvedValue({ recibidos: 0, nuevos: 0, actualizados: 0, sinCambios: 0, rechazados: [] });
+    });
+
+    it('un driver SIN la capacidad se salta por completo: ni pregunta a la API', async () => {
+      const d = driver as unknown as Record<string, unknown>;
+      delete d.detectFinishedAttentions;
+      const r = await engine.syncAttentionSummaries(AHORA);
+      expect(r.skipped).toBe(true);
+      expect(api.getAttentionSummaryState).not.toHaveBeenCalled();
+    });
+
+    it('con la lectura apagada (el estado al desplegar) no toca el HIS', async () => {
+      api.getAttentionSummaryState.mockResolvedValue({ ...encendido, leer: false, servicios: [] });
+      const r = await engine.syncAttentionSummaries(AHORA);
+      expect(r).toMatchObject({ skipped: false, apagado: true, leidos: 0 });
+      expect(capacidad().detectFinishedAttentions).not.toHaveBeenCalled();
+      expect(api.pushAttentionSummaries).not.toHaveBeenCalled();
+    });
+
+    it('encendida pero sin servicios en la matriz tampoco lee', async () => {
+      api.getAttentionSummaryState.mockResolvedValue({ ...encendido, servicios: [] });
+      const r = await engine.syncAttentionSummaries(AHORA);
+      expect(r.apagado).toBe(true);
+      expect(capacidad().detectFinishedAttentions).not.toHaveBeenCalled();
+    });
+
+    it('detecta con la calma, el cursor del servidor y los servicios de la matriz', async () => {
+      api.getAttentionSummaryState.mockResolvedValue(encendido);
+      await engine.syncAttentionSummaries(AHORA);
+      expect(capacidad().detectFinishedAttentions).toHaveBeenCalledWith({
+        desde: '2441000',
+        hasta: new Date('2026-11-01T15:00:00.000Z'),
+        inicio: new Date('2026-11-01T11:00:00.000Z'),
+        servicios: ['S39141', 'S39141-1'],
+        limite: 50,
+      });
+    });
+
+    it('sin nada que mirar no sube nada: el cursor se queda donde está', async () => {
+      api.getAttentionSummaryState.mockResolvedValue(encendido);
+      const r = await engine.syncAttentionSummaries(AHORA);
+      expect(r).toMatchObject({ apagado: false, leidos: 0 });
+      expect(api.pushAttentionSummaries).not.toHaveBeenCalled();
+    });
+
+    it('si miró filas pero ninguna era atención, sube un lote vacío para que el cursor avance', async () => {
+      api.getAttentionSummaryState.mockResolvedValue(encendido);
+      capacidad().detectFinishedAttentions.mockResolvedValue({ numeros: [], cursor: '2441090' });
+      await engine.syncAttentionSummaries(AHORA);
+      expect(capacidad().fetchAttentionSummaries).not.toHaveBeenCalled();
+      expect(api.pushAttentionSummaries).toHaveBeenCalledWith({ resumenes: [], nextCursor: '2441090' });
+    });
+
+    it('arma solo lo detectado, con los campos que pidió el servidor, y lo sube con el cursor', async () => {
+      const campos = [{ plantilla: 870, grupo: null, campo: 'MC:', seccion: 'Motivo' }];
+      api.getAttentionSummaryState.mockResolvedValue({ ...encendido, camposPlantilla: campos });
+      capacidad().detectFinishedAttentions.mockResolvedValue({ numeros: ['2441058', '2441061'], cursor: '2441070' });
+      const resumenes = [{ version: 1 }, { version: 1 }];
+      capacidad().fetchAttentionSummaries.mockResolvedValue(resumenes);
+      api.pushAttentionSummaries.mockResolvedValue({
+        recibidos: 2,
+        nuevos: 1,
+        actualizados: 0,
+        sinCambios: 0,
+        rechazados: [{ numero: '2441061', motivo: 'servicio fuera de la matriz' }],
+      });
+
+      const r = await engine.syncAttentionSummaries(AHORA);
+
+      expect(capacidad().fetchAttentionSummaries).toHaveBeenCalledWith(['2441058', '2441061'], campos);
+      expect(api.pushAttentionSummaries).toHaveBeenCalledWith({ resumenes, nextCursor: '2441070' });
+      expect(r).toEqual({
+        skipped: false,
+        apagado: false,
+        leidos: 2,
+        nuevos: 1,
+        actualizados: 0,
+        rechazados: 1,
+        primerRechazo: 'historia 2441061: servicio fuera de la matriz',
+      });
+    });
+
+    it('si el HIS falla, lanza y no sube nada (el cursor del servidor no se mueve)', async () => {
+      api.getAttentionSummaryState.mockResolvedValue(encendido);
+      capacidad().detectFinishedAttentions.mockResolvedValue({ numeros: ['1'], cursor: '1' });
+      capacidad().fetchAttentionSummaries.mockRejectedValue(new Error('timeout del HIS'));
+      await expect(engine.syncAttentionSummaries(AHORA)).rejects.toThrow('timeout del HIS');
+      expect(api.pushAttentionSummaries).not.toHaveBeenCalled();
+    });
+  });
+
   describe('syncLookupRequests', () => {
     const DESDE = '2026-09-01T05:00:00.000Z';
     const HASTA = '2026-12-01T05:00:00.000Z';

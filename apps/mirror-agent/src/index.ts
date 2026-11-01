@@ -313,6 +313,36 @@ async function main() {
     }
   };
 
+  // Resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md). Nace apagado: con
+  // «Leer del hospital» apagado cada vuelta es una pregunta a AgenIA y no toca el
+  // HIS. `engine.syncAttentionSummaries()` ya decide todo lo que hay que decidir.
+  const bucleResumenes = async () => {
+    for (;;) {
+      try {
+        const r = await engine.syncAttentionSummaries();
+        if (!r.skipped && !r.apagado && (r.leidos > 0 || r.rechazados > 0)) {
+          console.log(
+            `[mirror-agent] resumen de la atención: ${r.leidos} leído(s), ` +
+              `${r.nuevos} nuevo(s), ${r.actualizados} actualizado(s)` +
+              (r.rechazados > 0 ? `, ${r.rechazados} rechazado(s)` : '') +
+              '.',
+          );
+        }
+        if (r.rechazados > 0) {
+          reporter.report(
+            'resumen de la atención',
+            `${r.rechazados} resumen(es) rechazado(s). Primer motivo: ${r.primerRechazo ?? 'sin detalle'}`,
+          );
+        } else {
+          reporter.reset('resumen de la atención');
+        }
+      } catch (error) {
+        reporter.report('resumen de la atención', mensajeDeError(error));
+      }
+      await dormir(config.attentionSummaryIntervalMs);
+    }
+  };
+
   // Capa 5 del plan §6: la única defensa que detecta deriva silenciosa.
   //
   // Estaba a medias: el endpoint del servidor existía y NADIE lo llamaba. Es
@@ -402,6 +432,7 @@ async function main() {
     bucleCatalogo(),
     bucleAvisos(),
     bucleConsultas(),
+    bucleResumenes(),
   ]);
 }
 

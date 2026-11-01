@@ -63,6 +63,12 @@ export interface AgentConfig {
    * cada pregunta cuesta una lectura mínima y vuelve vacía.
    */
   lookupIntervalMs: number;
+  /**
+   * Cada cuánto se mira si hay historias terminadas para resumir
+   * (docs/PLAN_RESUMEN_ATENCION.md). Con la lectura apagada —el estado al
+   * desplegar— cada vuelta es una pregunta a AgenIA y no toca el HIS.
+   */
+  attentionSummaryIntervalMs: number;
 }
 
 const DEFAULTS = {
@@ -102,6 +108,8 @@ const DEFAULTS = {
   // vuelta completa antes de que el agente la vea, y la pantalla se rinde a los
   // 30 s. Con 3 s sobra margen para el HIS y la respuesta.
   lookupIntervalMs: 3_000,
+  // El plan pide «cada 5 minutos»: la calma es de 2 horas, así que no hace falta más.
+  attentionSummaryIntervalMs: 300_000,
   driverVersion: '0.1.0-fase1',
 };
 
@@ -152,5 +160,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
       Number(env.MIRROR_NOTICE_INTERVAL_MS) || DEFAULTS.noticeIntervalMs,
     lookupIntervalMs:
       Number(env.MIRROR_LOOKUP_INTERVAL_MS) || DEFAULTS.lookupIntervalMs,
+    attentionSummaryIntervalMs:
+      Number(env.MIRROR_ATTENTION_SUMMARY_INTERVAL_MS) ||
+      DEFAULTS.attentionSummaryIntervalMs,
   };
 }
