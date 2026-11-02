@@ -303,6 +303,21 @@ const AVISOS: MenuItem = {
 };
 
 /**
+ * 📨 Envíos de documentos del resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md
+ * §4.6, D14): el seguimiento sin contenido clínico y «Reenviar». EXCLUSIVO del
+ * driver cnt-sanvicente-anserma, como `AVISOS`, y solo con la función habilitada
+ * (`resumenAtencion` configurado). La ven ORG_ADMIN y BOOKING_AGENT: quien está
+ * en la ventanilla es quien reenvía.
+ */
+const ENVIOS_RESUMEN: MenuItem = {
+  label: 'Envíos de documentos',
+  href: '/dashboard/espejo/resumen-atencion/envios',
+  icon: '📨',
+  description: 'Si al paciente le llegaron los documentos de su consulta, y reenviarlos',
+  accent: 'teal',
+};
+
+/**
  * Bandeja de excepciones de sincronización (docs/PLAN_RASTREO_PACIENTE.md §10 #3).
  * Solo en las clínicas con espejo —sin HIS no hay nada que sincronizar— y para quien
  * la trabaja: ORG_ADMIN y BOOKING_AGENT. El permiso real y el alcance del agente los
@@ -331,6 +346,8 @@ export function getMenusForRole(
     conAvisos?: boolean;
     /** Espejo encendido con el driver de avisos, estén o no encendidos (ver `AVISOS`). */
     conAvisosDriver?: boolean;
+    /** Además, el resumen de la atención habilitado (ver `ENVIOS_RESUMEN`). */
+    conResumen?: boolean;
     pendientesBandeja?: number;
     /** Solicitudes de más citas radicadas sin revisar (cifra del menú). */
     pendientesSolicitudesCitas?: number;
@@ -364,6 +381,9 @@ export function getMenusForRole(
   if (avisosVisibles) {
     menus = insertBeforeSoporte(menus, AVISOS);
   }
+  if (opts.conResumen && (role === 'ORG_ADMIN' || role === 'BOOKING_AGENT')) {
+    menus = insertBeforeSoporte(menus, ENVIOS_RESUMEN);
+  }
 
   return menus;
 }
@@ -376,6 +396,8 @@ export interface BanderasDelEspejo {
   conAvisosDriver: boolean;
   /** Además, los avisos masivos encendidos. */
   conAvisos: boolean;
+  /** Espejo encendido con el driver de Anserma y el resumen de la atención habilitado. */
+  conResumen: boolean;
 }
 
 /**
@@ -388,16 +410,23 @@ export function banderasDelEspejo(
     enabled: boolean;
     driverKey: string;
     avisosMasivos: unknown;
+    resumenAtencion?: unknown;
   } | null,
 ): BanderasDelEspejo {
   if (!config)
-    return { conEspejo: false, conAvisosDriver: false, conAvisos: false };
+    return { conEspejo: false, conAvisosDriver: false, conAvisos: false, conResumen: false };
   const avisos = config.avisosMasivos as { enabled?: boolean } | null;
   const conAvisosDriver =
     config.enabled && config.driverKey === 'cnt-sanvicente-anserma';
+  const resumen = config.resumenAtencion;
   return {
     conEspejo: true,
     conAvisosDriver,
     conAvisos: conAvisosDriver && !!avisos?.enabled,
+    conResumen:
+      conAvisosDriver &&
+      typeof resumen === 'object' &&
+      resumen !== null &&
+      !Array.isArray(resumen),
   };
 }

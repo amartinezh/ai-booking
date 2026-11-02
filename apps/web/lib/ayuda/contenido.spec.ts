@@ -13,7 +13,7 @@ describe('Contenido del centro de ayuda (docs/conocimiento/AGENIA.md)', () => {
     const contenido = cargarConocimiento();
     const { temas, categorias, glosario, portada } = contenido;
     // Con todas las opciones condicionales encendidas: la ayuda las explica todas.
-    const menuCompleto = getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true });
+    const menuCompleto = getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true, conResumen: true });
 
     it('el archivo es coherente: enlaces que existen, categorías con temas, guías y preguntas en cada tema', () => {
         expect(validarConocimiento(contenido)).toEqual([]);

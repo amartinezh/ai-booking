@@ -162,6 +162,7 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     ATTENTION_SUMMARY_REVIEWED: { categoria: 'HISTORIA', titulo: 'Revisó un resumen de la atención contra el HIS', mensaje: true },
     // Fase 2: documentos y página del paciente. La API anota los dos primeros.
     ATTENTION_SUMMARY_DOCUMENT_VIEWED: { categoria: 'HISTORIA', titulo: 'Abrió un documento de un resumen de la atención', mensaje: true },
+    ATTENTION_SUMMARY_RESENT: { categoria: 'HISTORIA', titulo: 'Reenvió los documentos de una consulta a pedido del paciente', mensaje: true },
     ATTENTION_SUMMARY_TEST_SEND: { categoria: 'HISTORIA', titulo: 'Envió de prueba el aviso de un resumen de la atención', mensaje: true, aviso: true },
     ATTENTION_SUMMARY_TEST_LINK_CREATED: { categoria: 'HISTORIA', titulo: 'Generó un enlace de prueba a un resumen de la atención', mensaje: true, aviso: true },
 

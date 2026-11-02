@@ -10,6 +10,7 @@ import type {
   ResumenAtencionHis,
   TipoOrdenResumen,
 } from '@agenia/shared';
+import { CAMPOS_PLANTILLA_POR_DEFECTO } from '@agenia/shared';
 import {
   feHoraCitAIsoOrNull,
   fechaHoraLiteralSql,
@@ -61,125 +62,11 @@ const FILAS_POR_VUELTA = 2_000;
 const MAX_TEXTO = 4_000;
 
 /**
- * Campos de plantilla que van al resumen si la clínica no configuró otros, con
- * los nombres exactos de ESEHSVP (ronda 4, R4-5). Los aprueba el comité (D2).
+ * Campos de plantilla que van al resumen si la clínica no configuró otros. La
+ * lista vive en @agenia/shared para que el panel la muestre y la edite.
  */
-export const CAMPOS_RESUMEN_POR_DEFECTO: CampoPlantillaResumen[] = [
-  // 870 CONSULTA EXTERNA (medicina general)
-  {
-    plantilla: 870,
-    grupo: 'MOTIVO DE CONSULTA',
-    campo: 'MC:',
-    seccion: 'Motivo',
-  },
-  { plantilla: 870, grupo: 'CONDUCTA', campo: 'Anotaciones', seccion: 'Plan' },
-  {
-    plantilla: 870,
-    grupo: 'EDUCACION.',
-    campo: 'Acerca de:',
-    seccion: 'Educación',
-  },
-  // 844 CONTROL CRÓNICOS (hipertensos y diabéticos)
-  { plantilla: 844, grupo: 'CONDUCTA', campo: 'Conducta', seccion: 'Plan' },
-  {
-    plantilla: 844,
-    grupo: 'CONDUCTA',
-    campo: 'Proximo control*',
-    seccion: 'Próximo control',
-  },
-  {
-    plantilla: 844,
-    grupo: 'EDUCACIÓN',
-    campo: 'Metas de educacion para el proximo control',
-    seccion: 'Metas',
-  },
-  {
-    plantilla: 844,
-    grupo: 'EDUCACIÓN',
-    campo: 'Dieta hiposódica',
-    seccion: 'Educación',
-  },
-  {
-    plantilla: 844,
-    grupo: 'EDUCACIÓN',
-    campo: 'Dieta hipograsa',
-    seccion: 'Educación',
-  },
-  {
-    plantilla: 844,
-    grupo: 'EDUCACIÓN',
-    campo: 'Dieta hipoglucida',
-    seccion: 'Educación',
-  },
-  {
-    plantilla: 844,
-    grupo: 'EDUCACIÓN',
-    campo: 'Aumento del ejercicio',
-    seccion: 'Educación',
-  },
-  {
-    plantilla: 844,
-    grupo: 'EDUCACIÓN',
-    campo: 'Disminución de peso',
-    seccion: 'Educación',
-  },
-  {
-    plantilla: 844,
-    grupo: 'EDUCACIÓN',
-    campo: 'Disminucion del tabaquismo',
-    seccion: 'Educación',
-  },
-  // 858 Medicina interna y 899 Ginecología
-  {
-    plantilla: 858,
-    grupo: 'MOTIVO CONSULTA Y ENFERMEDAD ACTUAL',
-    campo: 'Motivo de la Consulta',
-    seccion: 'Motivo',
-  },
-  {
-    plantilla: 858,
-    grupo: 'EXAMEN FISICO GENERAL',
-    campo: 'Análisis y Plan',
-    seccion: 'Plan',
-  },
-  {
-    plantilla: 899,
-    grupo: 'MOTIVO CONSULTA Y ENFERMEDAD ACTUAL',
-    campo: 'Motivo de la Consulta',
-    seccion: 'Motivo',
-  },
-  {
-    plantilla: 899,
-    grupo: 'EXAMEN FISICO GENERAL',
-    campo: 'Análisis y Plan',
-    seccion: 'Plan',
-  },
-  // 907 Nutrición
-  {
-    plantilla: 907,
-    grupo: 'MOTIVO CONSULTA',
-    campo: 'Motivo de la Consulta',
-    seccion: 'Motivo',
-  },
-  {
-    plantilla: 907,
-    grupo: 'RECOMENDACIONES Y OBSERVACIONES',
-    campo: 'Recomendaciones',
-    seccion: 'Recomendaciones',
-  },
-  {
-    plantilla: 907,
-    grupo: 'RECOMENDACIONES Y OBSERVACIONES',
-    campo: 'Observaciones',
-    seccion: 'Recomendaciones',
-  },
-  {
-    plantilla: 907,
-    grupo: 'RECOMENDACIONES Y OBSERVACIONES',
-    campo: 'Próximo Control:',
-    seccion: 'Próximo control',
-  },
-];
+export const CAMPOS_RESUMEN_POR_DEFECTO: CampoPlantillaResumen[] =
+  CAMPOS_PLANTILLA_POR_DEFECTO;
 
 // ─── Utilidades ─────────────────────────────────────────────────────────────
 

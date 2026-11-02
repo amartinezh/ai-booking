@@ -30,6 +30,7 @@ export default function QuickAccessGrid({
     conEspejo = false,
     conAvisos = false,
     conAvisosDriver = false,
+    conResumen = false,
     pendientesBandeja = 0,
     pendientesSolicitudesCitas = 0,
 }: {
@@ -37,6 +38,7 @@ export default function QuickAccessGrid({
     conEspejo?: boolean;
     conAvisos?: boolean;
     conAvisosDriver?: boolean;
+    conResumen?: boolean;
     pendientesBandeja?: number;
     pendientesSolicitudesCitas?: number;
 }) {
@@ -45,6 +47,7 @@ export default function QuickAccessGrid({
         conEspejo,
         conAvisos,
         conAvisosDriver,
+        conResumen,
         pendientesBandeja,
         pendientesSolicitudesCitas,
     }).filter(

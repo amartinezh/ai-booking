@@ -24,17 +24,19 @@ export interface TenantMirrorFlags {
      * cualquiera, no aparece el menú". Decide el flujo de 3 pasos.
      */
     conAvisos: boolean;
+    /** Resumen de la atención habilitado (driver de Anserma): la opción «Envíos de documentos». */
+    conResumen: boolean;
 }
 
 export async function getTenantMirrorFlags(
     organizationId: string | null | undefined,
 ): Promise<TenantMirrorFlags> {
-    const empty: TenantMirrorFlags = { conEspejo: false, conAvisosDriver: false, conAvisos: false };
+    const empty: TenantMirrorFlags = { conEspejo: false, conAvisosDriver: false, conAvisos: false, conResumen: false };
     if (!organizationId) return empty;
 
     const config = await prisma.hospitalMirrorConfig.findUnique({
         where: { organizationId },
-        select: { enabled: true, driverKey: true, avisosMasivos: true },
+        select: { enabled: true, driverKey: true, avisosMasivos: true, resumenAtencion: true },
     });
     // La regla vive en @agenia/shared: el asistente de soporte la usa igual.
     return banderasDelEspejo(config);

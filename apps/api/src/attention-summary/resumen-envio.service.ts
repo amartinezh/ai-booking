@@ -18,12 +18,15 @@ import {
   leerCorreosDeRelleno,
   dentroDelHorario,
   enmascararDestino,
+  huellaDeInterruptores,
+  tocaIntentar,
   formatDateOnly,
   leerConfigResumenAtencion,
   leerExclusiones,
   motivoDeExclusion,
   payloadDeEntrega,
   puedeEnviarPorCanal,
+  TEXTO_MOTIVO_NO_ENVIO,
   variantesDeTelefono,
   documentoSinCerosIniciales,
   normalizeDocumento,
@@ -189,8 +192,12 @@ export class ResumenEnvioService {
       correos: 0,
     };
     const CANALES_MENSAJERIA = ['WHATSAPP', 'TELEGRAM'];
+    const SALIO_MENSAJERIA = ['AVISO_ENVIADO', 'DOCUMENTOS_ENVIADOS'];
+    const SALIO_CORREO = ['DOCUMENTOS_ENVIADOS', 'NO_ENVIADO'];
     // Dos partes independientes (plan §3.6): la mensajería (Telegram o
     // WhatsApp) y el correo. El correo solo se mira con su canal encendido.
+    // Una parte que falló se reintenta (`tocaIntentar`): por eso solo se
+    // descartan aquí las que ya salieron.
     const pendientes = await this.prisma.attentionSummary.findMany({
       where: {
         organizationId,
@@ -209,6 +216,7 @@ export class ResumenEnvioService {
               none: {
                 purpose: 'PACIENTE',
                 channel: { in: CANALES_MENSAJERIA },
+                status: { in: SALIO_MENSAJERIA },
               },
             },
           },
@@ -216,7 +224,11 @@ export class ResumenEnvioService {
             ? [
                 {
                   deliveries: {
-                    none: { purpose: 'PACIENTE', channel: 'EMAIL' },
+                    none: {
+                      purpose: 'PACIENTE',
+                      channel: 'EMAIL',
+                      status: { in: SALIO_CORREO },
+                    },
                   },
                 },
               ]
@@ -233,16 +245,36 @@ export class ResumenEnvioService {
         patientProfileId: true,
         deliveries: {
           where: { purpose: 'PACIENTE' },
-          select: { channel: true },
+          select: { channel: true, status: true, createdAt: true },
         },
       },
     });
     const bajas = pendientes.length
       ? await this.bajasDeLaClinica(organizationId)
       : new Set<string>();
+    const huella = huellaDeInterruptores(config);
 
     for (const s of pendientes) {
       try {
+        // Lo que toca se decide con los envíos anteriores, sin abrir el contenido.
+        const mensajeriaPendiente =
+          s.status === 'RECIBIDO' &&
+          tocaIntentar(
+            s.deliveries.filter((d) => CANALES_MENSAJERIA.includes(d.channel)),
+            ahora,
+            SALIO_MENSAJERIA,
+          );
+        const correoPendiente =
+          config.canales.EMAIL &&
+          tocaIntentar(
+            s.deliveries.filter((d) => d.channel === 'EMAIL'),
+            ahora,
+            SALIO_CORREO,
+          );
+        if (!mensajeriaPendiente && !correoPendiente) continue;
+        // Esperaba por un interruptor y nada cambió: no se vuelve a abrir.
+        if ((await this.leerEspera(s.id)) === huella) continue;
+
         const resumen = JSON.parse(
           this.crypto.decrypt(s.content!),
         ) as ResumenAtencionHis;
@@ -259,13 +291,8 @@ export class ResumenEnvioService {
               },
             })
           : null;
-        const mensajeriaPendiente =
-          s.status === 'RECIBIDO' &&
-          !s.deliveries.some((d) => CANALES_MENSAJERIA.includes(d.channel));
-        const correoPendiente =
-          config.canales.EMAIL &&
-          !s.deliveries.some((d) => d.channel === 'EMAIL');
 
+        let espera = true;
         if (mensajeriaPendiente) {
           const m = await this.mensajeria(
             organizationId,
@@ -277,6 +304,7 @@ export class ResumenEnvioService {
             perfil,
             bajas,
           );
+          if (m !== 'ESPERA') espera = false;
           if (m === 'AVISADO') r.avisados++;
           else if (m === 'EXCLUIDO') {
             r.excluidos++;
@@ -298,9 +326,11 @@ export class ResumenEnvioService {
             bajas,
             relleno,
           );
+          if (c !== 'ESPERA') espera = false;
           if (c === 'ENVIADO') r.correos++;
           else if (c === 'FALLO') r.fallos++;
         }
+        if (espera) await this.anotarEspera(s.id, huella);
       } catch (error: unknown) {
         r.fallos++;
         // El motivo, nunca el contenido.
@@ -457,7 +487,7 @@ export class ResumenEnvioService {
     attentionSummaryId: string,
     resumen: ResumenAtencionHis,
     destino: { destino: string; origen: string },
-    purpose: 'PACIENTE' | 'PRUEBA',
+    purpose: 'PACIENTE' | 'PRUEBA' | 'REENVIO',
     createdByUserId: string | null,
     timeZone: string,
   ): Promise<{ ok: boolean; motivo?: string }> {
@@ -619,7 +649,7 @@ export class ResumenEnvioService {
     attentionSummaryId: string,
     resumen: ResumenAtencionHis,
     destino: { destino: string; origen: string },
-    purpose: 'PACIENTE' | 'PRUEBA',
+    purpose: 'PACIENTE' | 'PRUEBA' | 'REENVIO',
     createdByUserId: string | null,
     timeZone: string,
   ): Promise<{ ok: boolean; motivo?: string }> {
@@ -703,6 +733,32 @@ export class ResumenEnvioService {
     return ok ? { ok } : { ok, motivo };
   }
 
+  /**
+   * Una atención que espera por un interruptor (canal o servicio apagado, modo
+   * prueba) no se vuelve a descifrar en cada vuelta: queda anotada con la huella
+   * de los interruptores y se mira otra vez cuando cambian, o a los 30 minutos.
+   */
+  private async leerEspera(id: string): Promise<string | null> {
+    try {
+      return await this.redis.get(`resumen_espera:${id}`);
+    } catch {
+      return null;
+    }
+  }
+
+  private async anotarEspera(id: string, huella: string): Promise<void> {
+    try {
+      await this.redis.set(
+        `resumen_espera:${id}`,
+        huella,
+        'EX',
+        LIMITES_ENVIO_RESUMEN.esperaReevaluarMinutos * 60,
+      );
+    } catch {
+      // Sin Redis, se vuelve a mirar en la próxima vuelta: solo cuesta trabajo.
+    }
+  }
+
   /** Las huellas de los números y chats que pidieron no recibir resúmenes. */
   private async bajasDeLaClinica(organizationId: string): Promise<Set<string>> {
     const filas = await this.prisma.attentionSummaryOptOut.findMany({
@@ -722,7 +778,7 @@ export class ResumenEnvioService {
     attentionSummaryId: string,
     resumen: ResumenAtencionHis,
     destino: string,
-    purpose: 'PACIENTE' | 'PRUEBA',
+    purpose: 'PACIENTE' | 'PRUEBA' | 'REENVIO',
     createdByUserId: string | null,
     timeZone: string,
   ): Promise<{ ok: boolean; motivo?: string }> {
@@ -771,6 +827,189 @@ export class ResumenEnvioService {
       await this.marcar(attentionSummaryId, 'ENVIADO', null);
     }
     return r.ok ? { ok: true } : { ok: false, motivo };
+  }
+
+  /**
+   * «Reenviar» (plan §4.6): el personal lo pide en ventanilla, después de
+   * verificar la identidad del paciente. Vuelve a mandar el aviso (Telegram o
+   * WhatsApp, D26) y el correo, con las mismas reglas que el programador: lo
+   * sensible y la baja no salen, y los interruptores (también el modo prueba)
+   * mandan. Sin el límite de las 24 horas ni el «ya se avisó».
+   */
+  async reenviar(
+    organizationId: string,
+    attentionSummaryId: string,
+    quien: { userId: string; email: string },
+  ): Promise<{ enviados: string[]; motivo?: string }> {
+    const fila = await this.prisma.attentionSummary.findFirst({
+      where: { id: attentionSummaryId, organizationId },
+      select: {
+        id: true,
+        hisKey: true,
+        content: true,
+        serviceCode: true,
+        patientProfileId: true,
+      },
+    });
+    if (!fila) throw new NotFoundException('El resumen no existe.');
+    if (!fila.content) {
+      return {
+        enviados: [],
+        motivo:
+          'El contenido de esta atención ya se borró (se guarda 30 días).',
+      };
+    }
+    const espejo = await this.prisma.hospitalMirrorConfig.findUnique({
+      where: { organizationId },
+      select: {
+        resumenAtencion: true,
+        organization: { select: { timezone: true } },
+      },
+    });
+    const config = leerConfigResumenAtencion(espejo?.resumenAtencion);
+    if (!config?.enviar)
+      return { enviados: [], motivo: '«Enviar a pacientes» está apagado.' };
+    const timeZone = espejo?.organization.timezone || DEFAULT_TIMEZONE;
+    const resumen = JSON.parse(
+      this.crypto.decrypt(fila.content),
+    ) as ResumenAtencionHis;
+    const excluida = motivoDeExclusion(
+      resumen,
+      leerExclusiones(espejo?.resumenAtencion),
+    );
+    if (excluida)
+      return {
+        enviados: [],
+        motivo: `Esta atención no se envía: ${excluida.toLowerCase()}.`,
+      };
+    const perfil = fila.patientProfileId
+      ? await this.prisma.patientProfile.findUnique({
+          where: { id: fila.patientProfileId },
+          select: {
+            id: true,
+            whatsappId: true,
+            bsuid: true,
+            summariesOptOut: true,
+            telegramChatId: true,
+            telegramBlockedAt: true,
+          },
+        })
+      : null;
+    if (perfil?.summariesOptOut) {
+      return {
+        enviados: [],
+        motivo:
+          'El paciente se dio de baja de los resúmenes: puede escribir «activar resúmenes» al asistente.',
+      };
+    }
+    const bajas = await this.bajasDeLaClinica(organizationId);
+    const enviados: string[] = [];
+    const motivos: string[] = [];
+
+    // Mensajería: Telegram primero (D26), si no WhatsApp.
+    let porMensajeria = false;
+    if (this.telegram && perfil?.telegramChatId && !perfil.telegramBlockedAt) {
+      const tg = `tg:${perfil.telegramChatId}`;
+      if (
+        puedeEnviarPorCanal(config, {
+          canal: 'TELEGRAM',
+          servicio: fila.serviceCode,
+          destino: tg,
+        }).ok &&
+        !bajas.has(hashDelDestino(tg))
+      ) {
+        const r = await this.enviarAvisoTelegram(
+          organizationId,
+          fila.id,
+          resumen,
+          tg,
+          'REENVIO',
+          quien.userId,
+          timeZone,
+        );
+        if (r.ok) {
+          enviados.push('TELEGRAM');
+          porMensajeria = true;
+        } else if (r.motivo) motivos.push(r.motivo);
+      }
+    }
+    if (!porMensajeria) {
+      const destino = await this.elegirDestino(
+        organizationId,
+        perfil,
+        resumen,
+        bajas,
+      );
+      if ('motivo' in destino) motivos.push(destino.motivo);
+      else {
+        const permiso = puedeEnviarPorCanal(config, {
+          canal: 'WHATSAPP',
+          servicio: fila.serviceCode,
+          destino: destino.destino,
+        });
+        if (!permiso.ok)
+          motivos.push(
+            `WhatsApp: ${TEXTO_MOTIVO_NO_ENVIO[permiso.motivo].toLowerCase()}`,
+          );
+        else {
+          const r = await this.enviarAviso(
+            organizationId,
+            fila.id,
+            resumen,
+            destino,
+            'REENVIO',
+            quien.userId,
+            timeZone,
+          );
+          if (r.ok) enviados.push('WHATSAPP');
+          else motivos.push(`WhatsApp: ${r.motivo ?? 'no salió'}`);
+        }
+      }
+    }
+
+    // Correo, si está encendido.
+    if (config.canales.EMAIL) {
+      const destino = correoDeDestino(
+        resumen,
+        leerCorreosDeRelleno(espejo?.resumenAtencion),
+      );
+      if (destino && !bajas.has(hashDelDestino(destino.destino))) {
+        const permiso = puedeEnviarPorCanal(config, {
+          canal: 'EMAIL',
+          servicio: fila.serviceCode,
+          destino: destino.destino,
+        });
+        if (permiso.ok) {
+          const r = await this.enviarCorreo(
+            organizationId,
+            fila.id,
+            resumen,
+            destino,
+            'REENVIO',
+            quien.userId,
+            timeZone,
+          );
+          if (r.ok) enviados.push('EMAIL');
+          else motivos.push(`Correo: ${r.motivo ?? 'no salió'}`);
+        }
+      }
+    }
+
+    await this.bitacora?.event({
+      action: 'ATTENTION_SUMMARY_RESENT',
+      message: `${quien.email} reenvió el resumen de la historia ${fila.hisKey}${enviados.length ? ` (${enviados.join(', ')})` : ' (no salió)'}.`,
+      userId: quien.userId,
+      organizationId,
+      metadata: { summaryId: fila.id, hisKey: fila.hisKey, enviados },
+    });
+    return enviados.length
+      ? { enviados }
+      : {
+          enviados,
+          motivo:
+            motivos.join(' · ') ||
+            'Con los interruptores actuales no sale por ningún canal.',
+        };
   }
 
   /**

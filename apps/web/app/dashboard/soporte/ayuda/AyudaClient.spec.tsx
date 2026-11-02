@@ -38,8 +38,8 @@ describe('AyudaClient', () => {
 
     it('marca las opciones que no están en el menú de la clínica', () => {
         abrir({ rutasDisponibles: SIN_ESPEJO });
-        // Espejo, Bandeja y Avisos masivos.
-        expect(screen.getAllByText('No está en el menú de tu clínica')).toHaveLength(3);
+        // Espejo, Bandeja, Avisos masivos y Envíos de documentos.
+        expect(screen.getAllByText('No está en el menú de tu clínica')).toHaveLength(4);
     });
 
     it('buscar muestra resultados y abrir uno lleva a su guía paso a paso', async () => {

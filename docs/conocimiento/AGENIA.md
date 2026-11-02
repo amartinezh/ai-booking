@@ -4,7 +4,7 @@
 >
 > **Regla obligatoria.** Todo ajuste o mejora del sistema actualiza este archivo **en el mismo commit**: lo que cambió en la pantalla o en el comportamiento, y una línea en la [bitácora](#parte-3--bitácora-de-cambios). Lo vigilan el gancho `commit-msg` del repositorio y el CI. Cómo editarlo y el formato de la Parte 1: [README.md](README.md) de esta carpeta.
 
-**Última actualización:** 2026-11-01
+**Última actualización:** 2026-11-02
 
 ## Contenido
 
@@ -1730,6 +1730,17 @@ El espejo mantiene sincronizadas las citas entre AgenIA y el sistema del hospita
 1. En «Resumen de la atención», busca «Encabezado de los documentos».
 2. Escribe el nombre del hospital, el NIT, la dirección y el teléfono tal como salen en los documentos que imprime el sistema del hospital. Si quieres, sube el logo (PNG o JPEG, máximo 150 KB).
 3. Pulsa «Guardar encabezado». Los documentos que se generen desde ese momento salen con él.
+4. Si el comité de historias clínicas lo aprueba, marca «Cuando el médico no escribió cómo tomar un medicamento, mostrar la frecuencia del HIS». Apagado (como nace), ese medicamento dice «Tómelo como se lo explicaron en la consulta».
+
+##### Cambiar qué no se envía, el horario o los campos de la historia
+
+1. En «Resumen de la atención», busca «Contenido y horario». Ahí está lo que validó el comité de historias clínicas del hospital.
+2. En «Diagnósticos que no se envían (CIE-10)», «Remisiones que no se envían (CUPS)» y «Servicios o especialidades que no se envían», escribe un código o una palabra por línea. Un código corto excluye todo lo que empieza por él: «F» excluye todos los de salud mental. La lista de diagnósticos no puede quedar vacía.
+3. En «Enviar desde las» y «hasta las», pon el horario de envío (hora de la clínica). Lo que se cierre fuera de ese horario sale cuando abre.
+4. Si el resumen debe llevar otros campos de la historia, elige «Personalizados» y edita la tabla: plantilla, grupo, nombre exacto del campo en el sistema del hospital y cómo se titula en el resumen. «Agregar campo» suma una fila y «Quitar» la borra. Para volver a los del sistema, elige «Campos de la historia: los del sistema».
+5. Pulsa «Guardar contenido y horario». El cambio queda en la Actividad de usuarios con lo que se cambió.
+
+> ⚠️ Un nombre de campo mal escrito no da error: ese campo simplemente no sale en el resumen. Cópialo tal como aparece en el sistema del hospital.
 
 ##### Consultar la auditoría detallada
 
@@ -1747,7 +1758,7 @@ El espejo mantiene sincronizadas las citas entre AgenIA y el sistema del hospita
 - **Los dos sistemas coinciden:** Resultado de la última comparación completa entre AgenIA y el hospital.
 - **Conflictos recientes:** Situaciones que el sistema no resuelve solo, a propósito, porque afectan a un paciente concreto.
 - **Resultados de auditoría:** OK, SKIPPED (no aplica, por ejemplo un médico no homologado), CONFLICT, ERROR y DEAD_LETTER (se rindió).
-- **Resumen de la atención:** Los interruptores de la lectura de historias clínicas del hospital (qué servicios se leen, la calma y «Leer del hospital»), cuántos resúmenes han llegado, cuánto tardan las consultas al hospital, el envío por WhatsApp (encendido solo en modo prueba, con los números del equipo), el «Encabezado de los documentos», el «Seguimiento de envíos» y «Revisar contra el HIS»: la lista de los últimos resúmenes para abrirlos, ver sus documentos en PDF e imagen, enviarlos de prueba, generar un enlace de prueba y marcarlos «Correcto» o «Con error».
+- **Resumen de la atención:** Los interruptores de la lectura de historias clínicas del hospital (qué servicios se leen, la calma y «Leer del hospital»), cuántos resúmenes han llegado, cuánto tardan las consultas al hospital, el envío por WhatsApp (encendido solo en modo prueba, con los números del equipo), «Contenido y horario» (lo que no se envía, el horario y los campos de la historia), el «Encabezado de los documentos», «Cómo va el envío» (los últimos 30 días: avisos enviados por canal, entregados y leídos en WhatsApp, cuántos recibieron los documentos, abrieron la página, se dieron de baja y los errores), el «Seguimiento de envíos» y «Revisar contra el HIS»: la lista de los últimos resúmenes para abrirlos, ver sus documentos en PDF e imagen, enviarlos de prueba, generar un enlace de prueba y marcarlos «Correcto» o «Con error».
 
 #### Preguntas frecuentes
 
@@ -1774,6 +1785,10 @@ No. El envío por WhatsApp, Telegram y correo ya existe, pero mientras no se apr
 ##### ¿Por qué casi ningún paciente recibe el correo?
 
 Porque la mayoría tiene en el sistema del hospital un correo de relleno (como «pacienteshospital@gmail.com»), y a esos no se envía. Si en admisión se deja vacío el correo cuando el paciente no tiene, la lista queda limpia. En «Seguimiento de envíos» se ve cuántas atenciones no tenían un correo utilizable.
+
+##### ¿Qué pasa si un envío falla?
+
+Se vuelve a intentar solo: hasta 3 veces, con media hora entre intentos. Si sigue fallando, queda en «Errores» y en el «Seguimiento de envíos» con el motivo, y desde «Envíos de documentos» se puede reenviar a mano.
 
 ##### ¿Cómo deja un paciente de recibir los documentos de sus consultas?
 
@@ -1933,6 +1948,50 @@ Falta la plantilla «Aviso al agendador (pedidos de pacientes)»: créala en Met
 ##### Solo se muestran 500.
 
 Resuelve o descarta las que ya no importan, o filtra para ver el resto.
+
+### 📨 Envíos de documentos {#envios-documentos}
+
+- **Ruta:** `/dashboard/espejo/resumen-atencion/envios`
+- **Resumen:** Muestra si al paciente le llegaron los documentos de su consulta (resumen, fórmula y órdenes) y deja reenviarlos cuando los pide en ventanilla.
+- **Disponibilidad:** Solo en el hospital conectado con el resumen de la atención habilitado. La ven el Administrador y los Agentes de Reservas.
+- **Relacionados:** [Espejo con el HIS](#espejo), [Rastreo de paciente](#rastreo)
+- **Palabras clave:** resumen de la atención, fórmula, órdenes, documentos, reenviar, no le llegó, ventanilla, WhatsApp, Telegram, correo
+
+#### Para qué sirve
+
+Cuando el médico termina la consulta, AgenIA le avisa al paciente que tiene listos sus documentos. Aquí ves, por cada consulta, por qué canal salió el aviso, si el paciente ya pidió los documentos o por qué no salió. Si el paciente llega a la ventanilla diciendo que no los recibió o que los borró, verificas su identidad y se los reenvías. Nunca ves el contenido clínico.
+
+#### Paso a paso
+
+##### Ver si a un paciente le llegaron sus documentos
+
+1. Entra a «Envíos de documentos».
+2. Escribe el número de historia (lo ves en el sistema del hospital) o la cédula del paciente y pulsa «Buscar». Sin buscar, ves las consultas de los últimos 30 días.
+3. En cada consulta ves los envíos: el canal, a qué número o correo (enmascarado) y si se entregaron los documentos.
+
+##### Reenviar los documentos a pedido del paciente
+
+1. Verifica la identidad del paciente (o de su acompañante) con su documento.
+2. Busca la consulta y pulsa «Reenviar».
+3. Marca «Verifiqué en ventanilla la identidad del paciente» y pulsa «Reenviar ahora».
+4. Le llega otra vez el aviso con el botón «Recibir mis documentos», al mismo número, chat o correo de siempre.
+
+> ⚠️ El reenvío sigue las mismas reglas que el envío automático: las consultas con temas sensibles no se envían, a quien se dio de baja tampoco, y mientras el hospital esté en modo prueba solo sale a los números del equipo. Si no sale, la pantalla dice por qué. Queda registrado quién lo reenvió.
+
+#### Qué ves en la pantalla
+
+- **Estado de la consulta:** Sin enviar todavía, Avisado, No se envía (tema sensible o baja), Sin celular utilizable o Ya se borró (los documentos se guardan 30 días).
+- **Envíos:** Cada aviso con su canal (WhatsApp, Telegram o correo), el destino enmascarado y si se entregaron los documentos. Las marcas «prueba» y «reenvío» distinguen los que no salieron solos.
+
+#### Preguntas frecuentes
+
+##### ¿Por qué dice «Aviso enviado» y el paciente no tiene los documentos?
+
+Porque el aviso solo dice que los documentos están listos: llegan cuando el paciente toca «Recibir mis documentos» (o escribe «mis documentos») y, si hace falta, confirma su fecha de nacimiento. Pídele que revise el chat; si lo borró, reenvíaselos.
+
+##### ¿Por qué no aparece el botón «Reenviar»?
+
+Porque los documentos de esa consulta ya se borraron: se guardan 30 días. Pídelos al hospital por el proceso de siempre.
 
 ### 📣 Avisos masivos {#avisos}
 
@@ -2299,7 +2358,7 @@ Solo para las clínicas con el driver `cnt-sanvicente-anserma`: avisar por Whats
 
 Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las historias clínicas terminadas (diagnósticos, fórmula, órdenes de exámenes, remisiones, incapacidades, interconsultas, indicaciones y los campos de la plantilla que se eligieron) y las guarda. **No le envía nada a ningún paciente**: el envío y los documentos en PDF e imagen son fases siguientes. Solo existe para el driver `cnt-sanvicente-anserma`.
 
-- **Interruptores** (`HospitalMirrorConfig.resumenAtencion`, JSON; reglas en `@agenia/shared` `resumen-atencion.ts`): «Leer del hospital», «Enviar», cada canal (WhatsApp, Telegram, correo) y una matriz servicio × canal. Un servicio que está en la matriz se lee, y sus canales encendidos se envían. Lo que falta o no se entiende cuenta como apagado, y al desplegar todo nace apagado (columna vacía). La pantalla `/dashboard/espejo/resumen-atencion` (solo Administrador; `apps/web/app/actions/resumen-atencion.ts`) solo cambia la lectura: «Leer del hospital», los servicios que se leen y la calma. `aplicarCambioDeLectura` nunca enciende «Enviar» ni un canal, porque el envío no está construido. Cada cambio deja `ATTENTION_SUMMARY_CONFIG_CHANGED` en la Actividad de usuarios.
+- **Interruptores** (`HospitalMirrorConfig.resumenAtencion`, JSON; reglas en `@agenia/shared` `resumen-atencion.ts`): «Leer del hospital», «Enviar», cada canal (WhatsApp, Telegram, correo) y una matriz servicio × canal. Un servicio que está en la matriz se lee, y sus canales encendidos se envían. Lo que falta o no se entiende cuenta como apagado, y al desplegar todo nace apagado (columna vacía). La pantalla `/dashboard/espejo/resumen-atencion` (solo Administrador; `apps/web/app/actions/resumen-atencion.ts`) cambia la lectura (`aplicarCambioDeLectura`: «Leer del hospital», los servicios que se leen y la calma), que nunca toca el envío; el envío, el contenido y el encabezado tienen sus propios cambios (ver «Panel», «Contenido y horario» y «Vista previa del personal»). Cada cambio deja `ATTENTION_SUMMARY_CONFIG_CHANGED` en la Actividad de usuarios.
 - **Agente** (`syncAttentionSummaries` en `apps/mirror-agent/src/core/engine.ts`, su propio bucle cada 5 min, `MIRROR_ATTENTION_SUMMARY_INTERVAL_MS`): primero pregunta a la API si debe leer (`GET /mirror/attention-summaries/state`). Si la respuesta es no, no toca el HIS. Si es sí, busca las historias guardadas hace más de la calma (120 min por defecto, de 30 a 1440), para no leer una historia que el médico todavía corrige, y las lee en lotes de hasta 50 (`POST /mirror/attention-summaries`). Un agente sin esta capacidad la salta (`isAttentionSummaryCapable`).
 - **Qué cuenta como terminada** (driver, `drivers/cnt-sanvicente-anserma/resumen-atencion.ts`): estado CON, ambulatoria (sin ingreso), de un servicio de la matriz y con la calma cumplida. El cursor es el número de la historia (`NU_NUME_HICL`, crece con la fecha) y se guarda en su propia columna (`resumenAtencionCursor`), que solo escribe el agente y que solo avanza. La primera vez arranca 6 horas atrás y no lee nada viejo. No se lee la dosis estructurada (`DE_DOSIS_HMED`, D19), ni el texto de la remisión (`TX_CASO_HREM`, solo si tiene texto, D24), ni los ítems anulados. Las fechas del HIS son hora de Bogotá y se convierten a UTC.
 - **API** (`MirrorAttentionSummaryService`): con la lectura apagada responde 403 y no guarda nada. También rechaza un servicio que no está en la matriz. Guarda el resumen **cifrado** (`AttentionSummary`, llave clínica + historia). Si el contenido es el mismo, no hace nada; si cambió, sube la versión; un resumen ya caducado no revive. Liga al paciente por la cédula sin ceros a la izquierda, solo si hay uno. Los registros nunca llevan el contenido.
@@ -2317,12 +2376,12 @@ Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las his
   - La API pública (`/public/attention-summaries/open|verify|content|document`, `ResumenEnlacesService`) pide la fecha de nacimiento del HIS (D4). Con 5 equivocadas, el enlace se bloquea una hora. Si el HIS no tiene la fecha, la página manda al hospital.
   - Con la fecha correcta da un acceso firmado de 30 minutos: HMAC con una llave derivada de `JWT_SECRET`, que no sirve como sesión del panel. La web lo guarda en la cookie `resumen_acceso`, limitada a ese enlace.
   - Cada apertura, verificación, vista y descarga queda en `AttentionSummaryAccess` con la IP y el navegador que reenvía la web, sin contenido. La migración es `20261101200000_resumen_atencion_enlaces`.
-- **Envío por WhatsApp (Fase 4, 2026-11-01)**: `ResumenEnvioService` (cron cada 2 min, `apps/api/src/attention-summary`). Para cada clínica con «Enviar» encendido y dentro del horario (7 a 20 h, `dentroDelHorario`), toma las atenciones `RECIBIDO` de las últimas 24 horas (`LIMITES_ENVIO_RESUMEN.horasParaAvisar`: encender no despacha lo viejo).
+- **Envío por WhatsApp (Fase 4, 2026-11-01)**: `ResumenEnvioService` (cron cada 2 min, `apps/api/src/attention-summary`). Para cada clínica con «Enviar» encendido y dentro del horario (7 a 20 h por defecto, editable en el panel; `dentroDelHorario`), toma las atenciones `RECIBIDO` de las últimas 24 horas (`LIMITES_ENVIO_RESUMEN.horasParaAvisar`: encender no despacha lo viejo).
   - Lo sensible (D7, `motivoDeExclusion`; lista por defecto `EXCLUSIONES_POR_DEFECTO`, configurable en `resumenAtencion.exclusiones`) y la baja (`PatientProfile.summariesOptOut`) quedan `EXCLUIDO`, con el código que lo excluyó.
   - El número sale de `candidatosDeDestino` (D5, D6): el de la ficha, y luego, para un menor, el del acompañante, y el celular del HIS. Uno del HIS que AgenIA tiene a nombre de otro documento no se usa; con «el teléfono es de otra persona» abierto, tampoco el de la ficha. Sin ninguno, `SIN_CONTACTO`.
   - Los interruptores (`puedeEnviarPorCanal`) se leen en cada vuelta; si no dejan, la atención espera sin marcarse.
-  - El aviso crea un `AttentionSummaryDelivery` (del destino, solo su SHA-256 y la forma enmascarada) y sale con la plantilla `ATTENTION_SUMMARY_READY` (nombre y fecha, y el botón de respuesta rápida con `payload` = `resumen:<id del envío>`). Si el paciente escribió en las últimas 24 horas (`wa_window:<clínica>:<número>`), sale en cambio un mensaje interactivo con el botón «Recibir documentos». Un aviso que falla no se reintenta solo.
-  - Mientras no se apruebe el piloto, `aplicarCambioDeEnvio` solo deja encender «Enviar» con números en `modoPrueba.destinos`. Telegram y correo no se encienden desde el panel.
+  - El aviso crea un `AttentionSummaryDelivery` (del destino, solo su SHA-256 y la forma enmascarada) y sale con la plantilla `ATTENTION_SUMMARY_READY` (nombre y fecha, y el botón de respuesta rápida con `payload` = `resumen:<id del envío>`). Si el paciente escribió en las últimas 24 horas (`wa_window:<clínica>:<número>`), sale en cambio un mensaje interactivo con el botón «Recibir documentos». Un aviso que falla se reintenta (ver «Reintentos y espera»).
+  - Mientras no se apruebe el piloto, `aplicarCambioDeEnvio` solo deja encender «Enviar» con destinos en `modoPrueba.destinos`.
 - **En el chat** (`ResumenChatService`): el asistente (`processIncomingMessageUnsafe`) le pasa primero los mensajes `button` (plantilla) e `interactive` (mensaje con botón), y después de la emergencia, el texto.
   - El botón solo abre algo si lo toca el número al que se envió.
   - Verificado = es el número de la ficha y ya le escribió al asistente desde ahí (D23); si no, pide la fecha de nacimiento (`resumen_fecha:<clínica>:<número>` en Redis, 30 min; 5 equivocadas bloquean el envío una hora).
@@ -2340,6 +2399,14 @@ Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las his
   - «Enviar de prueba» a un correo del modo prueba lo manda completo. El panel avisa si la API no tiene SMTP (`GET /attention-summaries/settings/mail`).
   - Los rebotes dependen del proveedor (webhook): quedan para cuando se elija.
 - **Panel**: «Enviar a pacientes», los canales WhatsApp, Telegram y Correo, sus columnas en la matriz (solo en servicios que se leen), los correos de relleno y los destinos del modo prueba (números, chats `tg:<chat>` y correos) (`updateEnvioResumenAction`, `ATTENTION_SUMMARY_CONFIG_CHANGED`). «Enviar de prueba» (`POST /attention-summaries/:id/test-send`, solo a números del modo prueba, `ATTENTION_SUMMARY_TEST_SEND`). «Seguimiento de envíos»: los últimos 30 envíos y las atenciones por estado, sin contenido ni números completos. La migración es `20261101220000_resumen_atencion_envio`.
+- **Reintentos y espera (2026-11-02)**: la mensajería (aviso por Telegram o WhatsApp) y el correo son dos partes de cada atención, y cada una se decide por sus envíos `PACIENTE` (`tocaIntentar`, `@agenia/shared` `resumen-envio.ts`). Una parte que ya salió (`AVISO_ENVIADO` o `DOCUMENTOS_ENVIADOS`; en correo también `NO_ENVIADO`, sin correo utilizable) no se vuelve a mirar. Una que falló se reintenta hasta 3 veces con 30 minutos entre intentos (`LIMITES_ENVIO_RESUMEN.intentosEnvio`, `esperaEntreIntentosMinutos`), y esto se decide antes de descifrar. Si todas las partes pendientes de una atención esperan (canal o servicio apagado, modo prueba sin su destino), queda en Redis `resumen_espera:<id>` con la huella de los interruptores (`huellaDeInterruptores`) durante 30 minutos (`esperaReevaluarMinutos`), y en ese tiempo no se descifra otra vez. Un cambio en el panel cambia la huella y la atención se vuelve a mirar en la vuelta siguiente.
+- **Reenvío desde ventanilla (2026-11-02)**: opción de menú «Envíos de documentos» (`ENVIOS_RESUMEN` en `packages/shared/src/menus.ts`, `/dashboard/espejo/resumen-atencion/envios`). La ven el Administrador y el Agente de Reservas, solo si el espejo es del driver de Anserma y `resumenAtencion` existe (`banderasDelEspejo(...).conResumen`; en la web `personalDeEnvios`, `apps/web/lib/resumen/acceso.ts`).
+  - `listarEnviosAction` (`apps/web/app/actions/resumen-envios.ts`) lista las atenciones de los últimos 30 días, o las de un número de historia o una cédula (sin puntos ni ceros a la izquierda), hasta 40. Muestra el nombre y el documento enmascarados y los últimos 6 envíos de cada una, sin contenido.
+  - «Reenviar» exige marcar la identidad verificada y llama a `POST /attention-summaries/:id/resend` (Administrador y Agente de Reservas) → `ResumenEnvioService.reenviar`. Aplica las mismas reglas que el envío automático: «Enviar» encendido, exclusiones D7, baja, interruptores y modo prueba (`puedeEnviarPorCanal`). Va por Telegram primero, si no por WhatsApp, y además por correo si está encendido. Los envíos quedan con `purpose` `REENVIO` y la bitácora con `ATTENTION_SUMMARY_RESENT`. Si nada sale, devuelve los motivos.
+- **Contenido y horario (2026-11-02)**: «Contenido y horario» en el panel (`updateContenidoResumenAction` → `aplicarCambioDeContenido`). Edita las exclusiones D7 (CIE-10 como prefijo, `^[A-Z][0-9A-Z]{0,5}$`, que no puede quedar vacía; CUPS de 4 a 8 dígitos; palabras de servicio o especialidad; hasta 100 de cada una), el horario (`horario.desdeHora`/`hastaHora`, de 0 a 24, desde < hasta) y los campos de la plantilla (`camposPlantilla`, hasta 60; `null` vuelve a `CAMPOS_PLANTILLA_POR_DEFECTO`). Esa lista vive ahora en `@agenia/shared` `resumen-atencion.ts`, y el driver la reexporta como `CAMPOS_RESUMEN_POR_DEFECTO`. Cada cambio deja `ATTENTION_SUMMARY_CONFIG_CHANGED` con el antes y el después.
+- **Cómo tomar el medicamento (D19)**: `comoTomarlo` (`resumen-documentos.ts`) usa la indicación tal como la escribió el médico. Si no hay indicación, usa la frecuencia del HIS solo con `resumenAtencion.documentos.frecuenciaDelHis` encendido (nace apagado, casilla en el encabezado de los documentos); si no, dice «Tómelo como se lo explicaron en la consulta». El driver ya manda la frecuencia como «cada 8 horas», y antes las plantillas le anteponían otro «cada».
+- **Medición del piloto (2026-11-02)**: «Cómo va el envío (últimos 30 días)» (`medicionDelPiloto` en `apps/web/app/actions/resumen-atencion.ts`). Cuenta los avisos que salieron por canal (`PACIENTE` y `REENVIO`), los estados que reporta Meta de esos avisos (`WhatsappMessageLog` `kind` `ATTENTION_SUMMARY`, plantilla o interactivo: entregados, leídos, fallidos), los envíos con documentos entregados, las atenciones cuya página se abrió con la fecha correcta (`AttentionSummaryAccess` `VER`), las bajas (`AttentionSummaryOptOut` y fichas con `summariesOptOut`) y los `FALLO`.
+- **HIS falso del repo (2026-11-02)**: `apps/mirror-agent/local-his-mock/historia-clinica.sql` agrega las tablas de la historia con sus tipos reales y seis historias de prueba (E1-E6). `setup.ts` le da a `agenia_sync`, columna por columna, exactamente la lista del bloque P-7 de `sql/HISTORIA_CLINICA_PRUEBAS_SOLO_LECTURA.sql`, que es el texto de los permisos que se le pide a TI. `probar-resumen.ts` corre el lector como `agenia_sync` y revisa qué toma y qué no sube. Así apareció que P-7 no pedía `DATOS_PLANTILLA_DATE`, que el agente lee en cada vuelta: con esos permisos no se habría armado ningún resumen. Ya está en la lista. El setup también crea los placeholders `CITAS_DISPONIBLES`, `AUDITOR` y `PA_Ins_AUDITOR` y una copia `ESEHSVP`, que `AGENIA_SYNC_SETUP.sql` necesita para correr entero.
 - **Retención (D11)**: la purga nocturna (`RetentionService`) borra el contenido a los 30 días, y con él la nota de la revisión, que puede nombrar datos clínicos. Si no salió, el estado pasa a `CADUCADO`. La fila, que ya no tiene datos clínicos, se borra al año.
 - **Orden de despliegue**: migraciones `20261101120000_resumen_atencion` y `20261101180000_resumen_atencion_revision` → API → agente → web. En cualquier otro orden no se rompe nada: la API vieja no conoce el endpoint, y el agente lo registra como error y sigue con lo demás.
 
@@ -2500,6 +2567,8 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-11-02** — Resumen de la atención, más control para el hospital. **Contenido y horario:** el Administrador edita en el panel lo que nunca se envía (diagnósticos, remisiones y especialidades), el horario de envío y los campos de la historia que van al resumen, con lo que valide el comité de historias clínicas. **Reintentos:** un aviso o un correo que no sale se reintenta solo, hasta 3 veces con media hora entre intentos. **Cómo va el envío:** cifras de los últimos 30 días (avisos por canal, entregados y leídos en WhatsApp, cuántos recibieron los documentos, abrieron la página, se dieron de baja y los errores) para medir el piloto. Las atenciones que esperan un interruptor ya no se vuelven a descifrar en cada vuelta. **Permisos para TI:** el HIS falso del repo ahora tiene la historia clínica y prueba el lector con exactamente los permisos que se le pedirán a TI. Así se encontró que a esa lista le faltaba una tabla (`DATOS_PLANTILLA_DATE`), sin la cual no se habría leído ningún resumen; ya se agregó.
+- **2026-11-01** — Resumen de la atención: opción nueva «Envíos de documentos» para el Administrador y los Agentes de Reservas. Muestra por cada consulta si salió el aviso y por qué canal, si el paciente pidió los documentos o por qué no salieron, y busca por número de historia o cédula. Desde ahí, «Reenviar» manda otra vez el aviso cuando el paciente lo pide en ventanilla, después de marcar que se verificó su identidad; queda registrado quién lo hizo. Además se corrigió un error de la fórmula y el resumen: cuando el médico no escribió cómo tomar un medicamento, iban a decir «cada cada 24 horas». Ahora dicen «Tómelo como se lo explicaron en la consulta», y la frecuencia del HIS solo sale si el hospital la aprueba con el interruptor nuevo del encabezado de los documentos (decisión D19).
 - **2026-11-01** — Resumen de la atención por correo (tercera fase), en modo prueba. Con el canal Correo encendido, además de WhatsApp o Telegram, el paciente con un correo propio recibe un correo sin datos clínicos con el enlace a la página y un solo PDF con todos sus documentos. El PDF está protegido con su número de documento, y el correo dice cuál es la clave sin escribirla. A un menor, al correo del acompañante. No se usan los correos de relleno del hospital, que se configuran en el panel, ni direcciones como «no@» o «notiene@». El servidor de correo se configura con los datos SMTP del proveedor que se elija; el panel avisa si falta. En el panel, el canal Correo por servicio, la lista de correos de relleno, correos en el modo prueba y cuántas atenciones no tenían un correo utilizable.
 - **2026-11-01** — Resumen de la atención por Telegram y baja escrita (cuarta fase, segunda parte). Quien usa el asistente por Telegram recibe el aviso por ahí, con el botón «Recibir mis documentos». Al tocarlo le llegan el PDF y las imágenes de cada documento en un álbum, sin pedirle la fecha de nacimiento, porque su chat ya está unido a su ficha. Si bloqueó el bot, el aviso le llega por WhatsApp; nunca por los dos. El paciente puede escribir «no quiero resúmenes» para no recibir más los documentos de sus consultas, y «activar resúmenes» para volver. Vale para su número o chat aunque no tenga ficha en AgenIA. En el panel se enciende Telegram por canal y por servicio, y el modo prueba acepta chats de Telegram («tg:» y el número del chat). Sigue solo en modo prueba.
 - **2026-11-01** — Resumen de la atención, envío por WhatsApp en modo prueba (cuarta fase, primera parte). Con «Enviar a pacientes» encendido, cada 2 minutos y de 7 a 20 h, el asistente avisa de las consultas de las últimas 24 horas con un mensaje sin datos clínicos y el botón «Recibir mis documentos». Usa la plantilla nueva «Documentos de la consulta», o un mensaje con botón si el paciente escribió en las últimas 24 horas. Al tocar el botón pide la fecha de nacimiento si el número no es el que el paciente ya usó con el asistente (5 intentos y luego una hora de bloqueo). Después manda cada documento en PDF y en imagen, con un enlace para volver a descargarlos; «mis documentos» los vuelve a pedir. No se envían las atenciones con temas sensibles (salud mental, VIH, violencia, infecciones de transmisión sexual, interrupción del embarazo, psicología y psiquiatría) ni a quien se dio de baja, ni a un celular del hospital que AgenIA tiene a nombre de otro paciente. Mientras no se apruebe el piloto, «Enviar» solo funciona con los números del equipo. En el panel: interruptores de envío, «Enviar de prueba» y «Seguimiento de envíos». Telegram y correo vienen después.

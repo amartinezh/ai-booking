@@ -18,3 +18,22 @@ export async function adminDelResumen(): Promise<{ organizationId: string; userI
     if (!espejo || !espejo.enabled || espejo.driverKey !== DRIVER) return null;
     return { organizationId: session.organizationId, userId: session.userId, role: session.role };
 }
+
+/**
+ * «Envíos de documentos» (D14): el Administrador y el Agente de Reservas de una
+ * clínica con el espejo de Anserma encendido y el resumen de la atención
+ * habilitado. Nunca ven el contenido clínico, solo el seguimiento.
+ */
+export async function personalDeEnvios(): Promise<{ organizationId: string; userId: string; role: string } | null> {
+    const session = await getSession();
+    if (!session || !session.organizationId) return null;
+    if (session.role !== 'ORG_ADMIN' && session.role !== 'BOOKING_AGENT') return null;
+    const espejo = await prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId: session.organizationId },
+        select: { driverKey: true, enabled: true, resumenAtencion: true },
+    });
+    const r = espejo?.resumenAtencion;
+    if (!espejo || !espejo.enabled || espejo.driverKey !== DRIVER) return null;
+    if (typeof r !== 'object' || r === null || Array.isArray(r)) return null;
+    return { organizationId: session.organizationId, userId: session.userId, role: session.role };
+}

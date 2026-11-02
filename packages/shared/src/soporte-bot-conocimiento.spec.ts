@@ -203,7 +203,7 @@ describe('armarManualDelAsistente con el archivo real', () => {
       markdown: AGENIA_MD,
       contenido: CONTENIDO,
       rol: 'ORG_ADMIN',
-      menus: getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true }),
+      menus: getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true, conResumen: true }),
     });
     expect(admin.opcionesSinTema).toEqual([]);
     expect(admin.temasDeOtroRol).toEqual([]);

@@ -389,6 +389,7 @@ describe('banderasDelEspejo', () => {
       conEspejo: false,
       conAvisosDriver: false,
       conAvisos: false,
+      conResumen: false,
     });
   });
 
@@ -399,7 +400,7 @@ describe('banderasDelEspejo', () => {
         driverKey: 'cnt-sanvicente-anserma',
         avisosMasivos: { enabled: true },
       }),
-    ).toEqual({ conEspejo: true, conAvisosDriver: false, conAvisos: false });
+    ).toEqual({ conEspejo: true, conAvisosDriver: false, conAvisos: false, conResumen: false });
   });
 
   it('con el driver de avisos: avisos según su interruptor', () => {
@@ -408,6 +409,7 @@ describe('banderasDelEspejo', () => {
       conEspejo: true,
       conAvisosDriver: true,
       conAvisos: false,
+      conResumen: false,
     });
     expect(
       banderasDelEspejo({ ...base, avisosMasivos: { enabled: true } })
@@ -426,6 +428,27 @@ describe('banderasDelEspejo', () => {
       conEspejo: true,
       conAvisosDriver: false,
       conAvisos: false,
+      conResumen: false,
     });
+  });
+});
+
+describe('«Envíos de documentos» (resumen de la atención, D14)', () => {
+  const ENVIOS = '/dashboard/espejo/resumen-atencion/envios';
+  const rutas = (m: { href: string }[]) => m.map((x) => x.href);
+
+  it('la ven el administrador y el agendador con el resumen habilitado; nadie más', () => {
+    expect(rutas(getMenusForRole('ORG_ADMIN', { conResumen: true }))).toContain(ENVIOS);
+    expect(rutas(getMenusForRole('BOOKING_AGENT', { conResumen: true }))).toContain(ENVIOS);
+    expect(rutas(getMenusForRole('DOCTOR', { conResumen: true }))).not.toContain(ENVIOS);
+    expect(rutas(getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisosDriver: true }))).not.toContain(ENVIOS);
+  });
+
+  it('conResumen: espejo encendido de Anserma y la función configurada', () => {
+    const base = { enabled: true, driverKey: 'cnt-sanvicente-anserma', avisosMasivos: null };
+    expect(banderasDelEspejo({ ...base, resumenAtencion: { leerDelHospital: false } }).conResumen).toBe(true);
+    expect(banderasDelEspejo({ ...base, resumenAtencion: null }).conResumen).toBe(false);
+    expect(banderasDelEspejo({ ...base, enabled: false, resumenAtencion: {} }).conResumen).toBe(false);
+    expect(banderasDelEspejo({ ...base, driverKey: 'otro', resumenAtencion: {} }).conResumen).toBe(false);
   });
 });

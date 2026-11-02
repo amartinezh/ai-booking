@@ -46,6 +46,7 @@ export function nombreDePantalla(ruta: string, rol: string): string | null {
             conEspejo: true,
             conAvisos: true,
             conAvisosDriver: true,
+            conResumen: true,
         }).find((m) => m.href === r);
         if (item) return item.label;
     }

@@ -69,6 +69,9 @@ function armar(
     bajas?: string[];
     telegram?: { ok: boolean; blocked?: boolean };
     smtp?: { ok: boolean; error?: string };
+    sinContenido?: boolean;
+    previos?: { channel: string; status: string; createdAt: Date }[];
+    redis?: Record<string, string>;
   } = {},
 ) {
   const actualizados: any[] = [];
@@ -95,7 +98,7 @@ function armar(
           serviceCode: r.historia.servicio,
           patientProfileId: o.perfil ? 'p-1' : null,
           status: 'RECIBIDO',
-          deliveries: [],
+          deliveries: o.previos ?? [],
         })),
       ),
       update: jest.fn(async (a: any) => actualizados.push(a)),
@@ -106,7 +109,11 @@ function armar(
       findFirst: jest.fn(async () => ({
         id: 's-0',
         hisKey: '2441058',
-        content: JSON.stringify(resumen()),
+        content: o.sinContenido
+          ? null
+          : JSON.stringify((o.resumenes ?? [resumen()])[0]),
+        serviceCode: 'S39141',
+        patientProfileId: o.perfil ? 'p-1' : null,
       })),
     },
     patientProfile: {
@@ -143,8 +150,16 @@ function armar(
     ),
   };
   const whatsapp: any = { botones: jest.fn(async () => ({ ok: true })) };
+  const memoria = new Map<string, string>(Object.entries(o.redis ?? {}));
   const redis: any = {
-    get: jest.fn(async () => (o.ventana ? String(Date.now()) : null)),
+    get: jest.fn(async (k: string) =>
+      k.startsWith('wa_window:')
+        ? o.ventana
+          ? String(Date.now())
+          : null
+        : (memoria.get(k) ?? null),
+    ),
+    set: jest.fn(async (k: string, v: string) => memoria.set(k, v)),
   };
   const bitacora: any = { event: jest.fn(async () => undefined) };
   const telegram: any = {
@@ -183,6 +198,7 @@ function armar(
   );
   return {
     s,
+    memoria,
     prisma,
     plantillas,
     whatsapp,
@@ -594,6 +610,145 @@ describe('correo (Fase 3)', () => {
       channel: 'EMAIL',
       purpose: 'PRUEBA',
       status: 'DOCUMENTOS_ENVIADOS',
+    });
+  });
+});
+
+describe('«Reenviar» (plan §4.6)', () => {
+  const QUIEN = { userId: 'u-2', email: 'agendador@hospital.co' };
+
+  it('vuelve a avisar por WhatsApp aunque ya se haya avisado, y deja constancia', async () => {
+    const a = armar();
+    await expect(a.s.reenviar(ORG, 's-0', QUIEN)).resolves.toEqual({
+      enviados: ['WHATSAPP'],
+    });
+    expect(a.entregas[0]).toMatchObject({
+      purpose: 'REENVIO',
+      createdByUserId: 'u-2',
+      status: 'AVISO_ENVIADO',
+    });
+    expect(a.bitacora.event).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'ATTENTION_SUMMARY_RESENT',
+        userId: 'u-2',
+      }),
+    );
+  });
+
+  it('lo sensible, la baja, el envío apagado o el contenido borrado no salen, y dice por qué', async () => {
+    const sensible = armar({
+      resumenes: [
+        resumen({
+          diagnosticos: [
+            { cie10: 'F412', descripcion: null, tipo: null, principal: true },
+          ],
+        }),
+      ],
+    });
+    await expect(sensible.s.reenviar(ORG, 's-0', QUIEN)).resolves.toEqual({
+      enviados: [],
+      motivo: 'Esta atención no se envía: diagnóstico excluido (f).',
+    });
+    const baja = armar({
+      perfil: {
+        id: 'p-1',
+        whatsappId: null,
+        bsuid: null,
+        summariesOptOut: true,
+        telegramChatId: null,
+        telegramBlockedAt: null,
+      },
+    });
+    await expect(baja.s.reenviar(ORG, 's-0', QUIEN)).resolves.toMatchObject({
+      enviados: [],
+      motivo: expect.stringContaining('activar resúmenes'),
+    });
+    const apagado = armar({ config: { ...CONFIG, enviar: false } });
+    await expect(apagado.s.reenviar(ORG, 's-0', QUIEN)).resolves.toEqual({
+      enviados: [],
+      motivo: '«Enviar a pacientes» está apagado.',
+    });
+    const borrado = armar({ sinContenido: true });
+    await expect(borrado.s.reenviar(ORG, 's-0', QUIEN)).resolves.toMatchObject({
+      enviados: [],
+      motivo: expect.stringContaining('ya se borró'),
+    });
+    expect(sensible.plantillas.sendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('en modo prueba, a un número que no es del equipo no sale', async () => {
+    const a = armar({
+      resumenes: [
+        resumen({ paciente: { ...resumen().paciente, celular: '3109998877' } }),
+      ],
+    });
+    await expect(a.s.reenviar(ORG, 's-0', QUIEN)).resolves.toEqual({
+      enviados: [],
+      motivo:
+        'WhatsApp: modo prueba: el destino no está en la lista del equipo',
+    });
+  });
+});
+
+describe('reintentos y espera eficiente', () => {
+  const hace = (min: number) => new Date(AHORA.getTime() - min * 60_000);
+
+  it('un aviso que falló hace más de 30 minutos se reintenta; uno reciente espera sin abrir el contenido', async () => {
+    const viejo = armar({
+      previos: [{ channel: 'WHATSAPP', status: 'FALLO', createdAt: hace(45) }],
+    });
+    await expect(viejo.s.programar(AHORA)).resolves.toMatchObject({
+      avisados: 1,
+    });
+
+    const reciente = armar({
+      previos: [{ channel: 'WHATSAPP', status: 'FALLO', createdAt: hace(10) }],
+    });
+    await expect(reciente.s.programar(AHORA)).resolves.toMatchObject({
+      avisados: 0,
+      fallos: 0,
+    });
+    expect(reciente.plantillas.sendTemplate).not.toHaveBeenCalled();
+    expect(reciente.prisma.patientProfile.findMany).not.toHaveBeenCalled();
+  });
+
+  it('después de tres fallos no se insiste más', async () => {
+    const a = armar({
+      previos: [200, 150, 100].map((m) => ({
+        channel: 'WHATSAPP',
+        status: 'FALLO',
+        createdAt: hace(m),
+      })),
+    });
+    await a.s.programar(AHORA);
+    expect(a.plantillas.sendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('lo que espera por un interruptor queda anotado y no se vuelve a abrir hasta que cambien los interruptores', async () => {
+    const fuera = resumen({
+      paciente: { ...resumen().paciente, celular: '3109998877' },
+    });
+    const a = armar({ resumenes: [fuera] });
+    await a.s.programar(AHORA);
+    const huella = a.memoria.get('resumen_espera:s-0');
+    expect(huella).toBeDefined();
+
+    // Misma huella: no se abre el resumen (ni se busca la ficha).
+    const otra = armar({
+      resumenes: [fuera],
+      redis: { 'resumen_espera:s-0': huella! },
+    });
+    await otra.s.programar(AHORA);
+    expect(otra.prisma.patientProfile.findMany).not.toHaveBeenCalled();
+
+    // Cambió el modo prueba: se vuelve a mirar y sale.
+    const cambio = armar({
+      resumenes: [fuera],
+      redis: { 'resumen_espera:s-0': huella! },
+      config: { ...CONFIG, modoPrueba: { destinos: ['573109998877'] } },
+    });
+    await expect(cambio.s.programar(AHORA)).resolves.toMatchObject({
+      avisados: 1,
     });
   });
 });

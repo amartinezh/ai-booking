@@ -357,7 +357,10 @@ export class ResumenEnlacesService {
       fechaConsulta: fechaHoraDocumento(resumen.historia.guardadaIso, timeZone),
       medico: resumen.medico.nombre,
       actualizado: s.version > 1,
-      secciones: contenidoDelResumen(resumen, { timeZone }),
+      secciones: contenidoDelResumen(resumen, {
+        timeZone,
+        frecuenciaDelHis: config.frecuenciaDelHis,
+      }),
       pie: config.pie ?? PIE_RESUMEN_POR_DEFECTO,
       documentos: this.documentos.listar(g),
     };

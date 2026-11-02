@@ -20,6 +20,10 @@ const crearEnlaceDePruebaAction = jest.fn(async (...args: unknown[]): Promise<un
 });
 const updateDocumentosResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 const updateEnvioResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
+const updateContenidoResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => {
+    void args;
+    return { success: true };
+});
 const enviarDePruebaAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 const revisarResumenAction = jest.fn(async (...args: unknown[]): Promise<unknown> => { void args; return { success: true }; });
 jest.mock('@/app/actions/resumen-atencion', () => ({
@@ -30,10 +34,11 @@ jest.mock('@/app/actions/resumen-atencion', () => ({
     crearEnlaceDePruebaAction: (...a: unknown[]) => crearEnlaceDePruebaAction(...a),
     updateDocumentosResumenAction: (...a: unknown[]) => updateDocumentosResumenAction(...a),
     updateEnvioResumenAction: (...a: unknown[]) => updateEnvioResumenAction(...a),
+    updateContenidoResumenAction: (...a: unknown[]) => updateContenidoResumenAction(...a),
     enviarDePruebaAction: (...a: unknown[]) => enviarDePruebaAction(...a),
 }));
 
-import { configResumenAtencionApagada, leerConfigDocumentos } from '@agenia/shared';
+import { EXCLUSIONES_POR_DEFECTO, configResumenAtencionApagada, leerConfigDocumentos } from '@agenia/shared';
 import ResumenAtencionClient from './ResumenAtencionClient';
 import type { FilaResumenParaRevisar, PanelResumenAtencion } from '@/app/actions/resumen-atencion';
 
@@ -51,8 +56,9 @@ const panel = (cambios: Partial<PanelResumenAtencion> = {}): PanelResumenAtencio
     medicion: null,
     revision: { meta: 20, correctos: 0, conError: 0, recientes: [] },
     documentos: leerConfigDocumentos(null),
+    exclusiones: EXCLUSIONES_POR_DEFECTO,
     nombreClinica: 'Hospital de prueba',
-    envio: { plantillaConfigurada: false, correoConfigurado: false, correosDeRelleno: ['pacienteshospital@gmail.com'], sinCorreo: 0, entregas: [], porEstado: {} },
+    envio: { plantillaConfigurada: false, correoConfigurado: false, correosDeRelleno: ['pacienteshospital@gmail.com'], sinCorreo: 0, piloto: { avisos: { WHATSAPP: 0, TELEGRAM: 0, EMAIL: 0 }, documentos: 0, meta: { entregados: 0, leidos: 0, fallidos: 0, total: 0 }, abiertosEnLaPagina: 0, bajas: 0, errores: 0 }, entregas: [], porEstado: {} },
     ...cambios,
 });
 
@@ -214,6 +220,14 @@ describe('ResumenAtencionClient', () => {
                         correoConfigurado: true,
                         correosDeRelleno: [],
                         sinCorreo: 7,
+                        piloto: {
+                            avisos: { WHATSAPP: 30, TELEGRAM: 5, EMAIL: 2 },
+                            documentos: 21,
+                            meta: { entregados: 27, leidos: 20, fallidos: 2, total: 30 },
+                            abiertosEnLaPagina: 4,
+                            bajas: 1,
+                            errores: 3,
+                        },
                         porEstado: { ENVIADO: 3, EXCLUIDO: 1 },
                         entregas: [
                             { id: 'e1', historia: '2441058', canal: 'WHATSAPP', prueba: true, destino: '•••4567', estado: 'DOCUMENTOS_ENVIADOS', motivo: null, avisoIso: '2026-11-01T15:00:00.000Z', documentosIso: '2026-11-01T15:02:00.000Z', verificadoPor: 'FECHA_NACIMIENTO' },
@@ -232,6 +246,10 @@ describe('ResumenAtencionClient', () => {
         expect(seguimiento).toHaveTextContent('⚠ No salió');
         expect(seguimiento).toHaveTextContent('Telegram');
         expect(seguimiento).toHaveTextContent('7 atención(es) sin correo utilizable');
+        const piloto = screen.getByTestId('medicion-piloto');
+        expect(piloto).toHaveTextContent('Avisos enviados37');
+        expect(piloto).toHaveTextContent('27 de 30 (90 %)');
+        expect(piloto).toHaveTextContent('Recibieron los documentos21');
         expect(seguimiento).not.toHaveTextContent('573001234567');
     });
 
@@ -392,6 +410,7 @@ describe('ResumenAtencionClient', () => {
                 telefono: '',
                 pie: '',
                 logo: '',
+                frecuenciaDelHis: false,
             }),
         );
         expect(await screen.findByText(/Guardado. Los documentos/)).toBeInTheDocument();
@@ -416,5 +435,25 @@ describe('ResumenAtencionClient', () => {
         fireEvent.click(boton);
         await waitFor(() => expect(enviarDePruebaAction).toHaveBeenCalledWith(ID, '573001234567'));
         expect(await screen.findByText(/Aviso enviado a •••4567/)).toBeInTheDocument();
+    });
+
+    it('contenido y horario: muestra los campos del sistema y guarda exclusiones, horario y campos propios', async () => {
+        render(<ResumenAtencionClient panel={panel()} />);
+        const seccion = screen.getByTestId('contenido-resumen');
+        expect(seccion).toHaveTextContent('Proximo control*');
+        fireEvent.change(screen.getByLabelText('Diagnósticos excluidos'), { target: { value: 'F, B24\nZ044' } });
+        fireEvent.change(screen.getByLabelText('Desde la hora'), { target: { value: '8' } });
+        fireEvent.click(screen.getByLabelText('Campos personalizados'));
+        fireEvent.click(screen.getByLabelText('Quitar el campo 1'));
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar contenido y horario' }));
+        await waitFor(() => expect(updateContenidoResumenAction).toHaveBeenCalled());
+        const cambio = updateContenidoResumenAction.mock.calls[0][0] as {
+            exclusiones: { cie10: string[] };
+            horario: { desdeHora: number };
+            camposPlantilla: { campo: string }[];
+        };
+        expect(cambio.exclusiones.cie10).toEqual(['F', 'B24', 'Z044']);
+        expect(cambio.horario.desdeHora).toBe(8);
+        expect(cambio.camposPlantilla[0].campo).not.toBe('MC:');
     });
 });

@@ -136,6 +136,25 @@ export class ResumenDocumentosController {
     });
   }
 
+  /**
+   * «Reenviar» a pedido del paciente, tras verificar su identidad en ventanilla
+   * (plan §4.6). El administrador y el agendador (D14).
+   */
+  @Post(':id/resend')
+  @HttpCode(HttpStatus.OK)
+  @Roles('ORG_ADMIN', 'BOOKING_AGENT')
+  reenviar(
+    @CurrentTenant() organizationId: string | null | undefined,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    if (!organizationId) throw new ForbiddenException('Sin clínica.');
+    return this.envio.reenviar(organizationId, id, {
+      userId: user.userId,
+      email: user.email,
+    });
+  }
+
   /** «Enviar de prueba»: el aviso de este resumen a un número del modo prueba (Fase 4). */
   @Post(':id/test-send')
   @HttpCode(HttpStatus.OK)

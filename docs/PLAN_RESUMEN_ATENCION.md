@@ -290,7 +290,7 @@ Si una condición falla, el seguimiento dice cuál.
 
 ### 4.1 En el hospital (lo hace TI del hospital)
 
-- `GRANT SELECT` **por columna** a `agenia_sync`, solo las columnas que usa el resumen (§3.2). Tablas, tras la ronda 2: `HISTORIACLINICA`, `HIST_ORDEN`, `HIST_MEDI`, `HIST_PROC`, `HIST_INDI`, `HIST_INCA`, `HIST_REMI`, `HIST_ORTIAT`, `LABORATORIO` (solo `NU_NUME_LABO`, `CD_CODI_ESP_LABO`), `R_LABO_DIAG`, `DATOS_PLANTILLA`, `DATOS_PLANTILLA_TEXT`, `DATOS_PLANTILLA_MEMO`, `R_PLAN_ESP_TIAT`, `R_PLAN_CONC`, y los catálogos `CONCEPTO_HIST`, `GRUPO_HIST`, `DIAGNOSTICO`, `TIPODIAGNOSTICO`, `ESPECIALIDADES`, `SERVICIOS` (ya lo tiene), `MEDICOS` (nombre y registro), más las columnas de contacto de `PACIENTES`. El texto de la plantilla no se puede limitar por columna a ciertos campos: la consulta del agente filtra por concepto y solo sube los del resumen. **Nunca** `INTER_RES1888` (credenciales del Ministerio) ni `EXECUTE` sobre los procedimientos del proveedor (D16).
+- `GRANT SELECT` **por columna** a `agenia_sync`, solo las columnas que usa el resumen (§3.2). Tablas, tras la ronda 2: `HISTORIACLINICA`, `HIST_ORDEN`, `HIST_MEDI`, `HIST_PROC`, `HIST_INDI`, `HIST_INCA`, `HIST_REMI`, `HIST_ORTIAT`, `LABORATORIO` (solo `NU_NUME_LABO`, `CD_CODI_ESP_LABO`), `R_LABO_DIAG`, `DATOS_PLANTILLA`, `DATOS_PLANTILLA_TEXT`, `DATOS_PLANTILLA_MEMO`, `DATOS_PLANTILLA_NUME`, `DATOS_PLANTILLA_DATE`, `R_PLAN_ESP_TIAT`, `R_PLAN_CONC`, y los catálogos `CONCEPTO_HIST`, `GRUPO_HIST`, `DIAGNOSTICO`, `TIPODIAGNOSTICO`, `ESPECIALIDADES`, `SERVICIOS` (ya lo tiene), `MEDICOS` (nombre y registro), más las columnas de contacto de `PACIENTES`. El texto de la plantilla no se puede limitar por columna a ciertos campos: la consulta del agente filtra por concepto y solo sube los del resumen. **Nunca** `INTER_RES1888` (credenciales del Ministerio) ni `EXECUTE` sobre los procedimientos del proveedor (D16). La lista exacta, columna por columna, es la del bloque P-7 de `sql/HISTORIA_CLINICA_PRUEBAS_SOLO_LECTURA.sql`; el HIS falso del repo (`apps/mirror-agent/local-his-mock`) le da a `agenia_sync` justo esa lista y prueba el lector con ella (`probar-resumen.ts`): así encontró, el 2026-11-02, que faltaba `DATOS_PLANTILLA_DATE`.
 - **Para los documentos (§3.9), además:**
   - `ARTICULO` (código, CUM, Invima), `HIST_TEMLABO` (convenio), `CONVENIOS` (código, EPS, tipo de usuario), `TIPOUSUARIO`, `TIPO_DOCUMENTO`, `EPS` y `ENTIDAD` (nombre, NIT, dirección, teléfono, logo). `R_PAC_EPS` no hace falta: no sirve para el encabezado (ronda 5);
   - más columnas de `HIST_ORDEN` (vigencia, observación), `HIST_MEDI` (medida, concentración), `HIST_PROC` (CUPS), `HIST_INCA`, `HIST_ORTIAT`, `LABORATORIO` (edad), `MEDICOS` (documento), `PLANTILLA_HIST` (código) y `PACIENTES` (nombre y tipo de usuario);
@@ -705,6 +705,26 @@ Se registra en Configuración › Integraciones › Plantillas de WhatsApp como 
 - que el asistente pregunte el correo (D17).
 
 **Despliegue:** API (instala nodemailer) → web. Sin migración y sin cambios en el agente.
+
+### 8.8 Lo que no dependía de nadie (2026-11-02)
+
+Lo que se podía construir sin esperar decisiones, permisos ni plantillas:
+
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| «cada cada 24 horas» | `comoTomarlo` en `resumen-documentos.ts` | El driver ya manda la frecuencia como «cada 24 horas» y las plantillas le anteponían otro «cada». Ahora sale la indicación del médico. Si no hay, la frecuencia del HIS solo sale con la casilla «Frecuencia del HIS» del encabezado (D19, nace apagada); si no, «Tómelo como se lo explicaron en la consulta». |
+| Seguimiento para el agendador (D14) y «Reenviar» | Menú «Envíos de documentos», `/dashboard/espejo/resumen-atencion/envios`; `POST /attention-summaries/:id/resend` | Administrador y Agente de Reservas buscan por historia o cédula y ven cada envío sin contenido. «Reenviar» exige marcar la identidad verificada en ventanilla y sigue las reglas del envío automático, modo prueba incluido. Los envíos quedan con `purpose` `REENVIO`. |
+| Exclusiones D7, horario y campos | «Contenido y horario» en el panel; `aplicarCambioDeContenido` | Lo que el comité de HC valide se pone sin tocar código. `CAMPOS_PLANTILLA_POR_DEFECTO` pasó a `@agenia/shared` para que el panel lo muestre. |
+| Medición del piloto | «Cómo va el envío (últimos 30 días)» | Avisos por canal, entregados y leídos en WhatsApp, documentos recibidos, páginas abiertas, bajas y errores: las cifras para decidir el paso del piloto a más servicios. |
+| Reintentos | `tocaIntentar` | Hasta 3 intentos por parte (mensajería y correo), con 30 minutos entre ellos. |
+| Eficiencia | `resumen_espera:<id>` en Redis | Una atención que solo espera un interruptor no se vuelve a descifrar durante 30 minutos, salvo que cambien los interruptores (`huellaDeInterruptores`). |
+| HIS falso con historia clínica | `apps/mirror-agent/local-his-mock/historia-clinica.sql`, `probar-resumen.ts` | Tablas con sus tipos reales y seis historias de prueba. `agenia_sync` recibe exactamente las columnas de P-7 (§8.1), así que el lector se prueba con los permisos que se le pedirán a TI. **Encontró que a P-7 le faltaba `DATOS_PLANTILLA_DATE`**: el agente la lee en cada vuelta y sin ella no se arma ningún resumen. Ya está en la lista. Si el texto de P-7 ya se le había entregado a TI, hay que pedir esa tabla aparte. |
+
+**Sin migración**: `REENVIO` cabe en el campo de texto `purpose`, y el contenido y el horario en `resumenAtencion`.
+
+**Pruebas:** reglas (reintentos, huella, cambios de contenido, `comoTomarlo`), programador (reenvío, reintentos, espera), acciones y pantallas de la web, menú y Centro de ayuda. Además, el lector del agente contra el HIS falso (SQL Server 2022), como `agenia_sync` y solo con los permisos de P-7: 21 revisiones.
+
+**Despliegue:** API → web. El agente no cambia (`CAMPOS_RESUMEN_POR_DEFECTO` es la misma lista, ahora importada de `@agenia/shared`), así que no hace falta un bundle nuevo para esto.
 
 ## 9. Volumen y costo
 

@@ -14,6 +14,8 @@
 -- R_ESP_SER y MUNICIPIOS son PLACEHOLDERS mínimos (su esquema real aún no se
 -- descubrió — bloque 21, MAPEO_HIS.md §0) — solo alcanzan para que los GRANT
 -- de AGENIA_SYNC_SETUP.sql tengan un objeto real sobre el cual aplicarse.
+-- Igual CITAS_DISPONIBLES, AUDITOR y PA_Ins_AUDITOR (al final).
+-- La historia clínica (resumen de la atención) está en historia-clinica.sql.
 -- =============================================================================
 
 IF DB_ID('PRUEBAS') IS NOT NULL
@@ -473,6 +475,38 @@ GO
 -- Un par de citas vigentes de muestra, coherentes con los turnos de arriba.
 INSERT INTO dbo.CITAS_MEDICAS (CD_CODI_MED_CIT, FE_HORA_CIT, NU_ESTA_CIT, CD_CODI_SER_CIT, NU_HIST_PAC_CIT, NU_DURA_CIT, FE_ELAB_CIT, FE_FECH_CIT, NU_DIA_CIT, NU_NUME_MOVI_CIT, NU_PRIM_CIT, NU_NUME_CONE_CIT, NU_CONE_CALL_CIT, CD_CODI_ESP_CIT, CD_CODI_CONS_CIT, NU_NUME_CONV_CIT, NU_TIPO_CIT, DE_DESC_CIT, FE_SOLI_CIT)
 SELECT '76', FORMAT(DATEADD(day,3,GETDATE()),'yyyy/MM/dd')+' 07:00', 0, 'S39141-1', '9696544', 20, GETDATE(), DATEADD(day,3,CAST(GETDATE() AS date)), 0, 0, 0, 1286024, 0, '000', '51', 283, 0, '', GETDATE();
+GO
+
+-- -----------------------------------------------------------------------------
+-- ⚠️ PLACEHOLDERS que exige AGENIA_SYNC_SETUP.sql (sin ellos el setup fallaba
+-- con «Cannot find the object»): esquema real no volcado.
+-- -----------------------------------------------------------------------------
+-- Huecos libres de cada turno (docs/PLAN_AGENDA_HUECOS.md, H1): solo las
+-- columnas que lee el driver. Vacía: sin filas, la agenda por huecos no ofrece nada.
+CREATE TABLE dbo.CITAS_DISPONIBLES (
+    CD_MED_CIDI  varchar(4) NOT NULL,
+    FE_FECH_CIDI datetime   NOT NULL,
+    FE_HOIN_CIDI datetime   NOT NULL,
+    FE_HOFI_CIDI datetime   NOT NULL
+);
+GO
+-- La bitácora del HIS y el procedimiento con que cada aplicación escribe en
+-- ella (el agente lo llama para el «Asignada por»). El real es del proveedor.
+CREATE TABLE dbo.AUDITOR (
+    AudFech   datetime    NULL,
+    AudUser   varchar(50) NULL,
+    AudTabla  varchar(50) NULL,
+    AudTrans  varchar(5)  NULL,
+    AudDesc   text        NULL,
+    AudVerExe varchar(20) NULL
+);
+GO
+CREATE PROCEDURE dbo.PA_Ins_AUDITOR
+    @AudFech datetime, @AudUser varchar(60), @AudTabla varchar(100),
+    @AudTrans varchar(5), @AudDesc varchar(600), @AudVerExe varchar(50)
+AS
+    INSERT INTO dbo.AUDITOR (AudFech, AudUser, AudTabla, AudTrans, AudDesc, AudVerExe)
+    VALUES (@AudFech, LEFT(@AudUser, 50), LEFT(@AudTabla, 50), @AudTrans, @AudDesc, LEFT(@AudVerExe, 20));
 GO
 
 PRINT 'Esquema + siembra de PRUEBAS (mock local) completos.';

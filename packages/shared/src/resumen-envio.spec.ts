@@ -1,4 +1,5 @@
 import {
+  aplicarCambioDeContenido,
   CORREOS_DE_RELLENO_POR_DEFECTO,
   EXCLUSIONES_POR_DEFECTO,
   correoDeDestino,
@@ -15,6 +16,7 @@ import {
   motivoDeExclusion,
   payloadDeEntrega,
   pideSusDocumentos,
+  tocaIntentar,
 } from './resumen-envio';
 import { leerConfigResumenAtencion, type ResumenAtencionHis } from './resumen-atencion';
 
@@ -240,5 +242,64 @@ describe('correo (§3.4, D17)', () => {
     expect(leerCorreosDeRelleno(r.config)).toEqual(['otro@relleno.com']);
     expect(enmascararDestino('equipo@hospital.co')).toBe('e•••@hospital.co');
     expect(aplicarCambioDeEnvio({}, { correosDeRelleno: ['malo'] }).ok).toBe(false);
+  });
+});
+
+describe('tocaIntentar (reintentos)', () => {
+  const AHORA = new Date('2026-11-01T15:00:00.000Z');
+  const hace = (min: number) => new Date(AHORA.getTime() - min * 60_000);
+  const SALIO = ['AVISO_ENVIADO', 'DOCUMENTOS_ENVIADOS'];
+
+  it('sin envíos: sí; si ya salió: no', () => {
+    expect(tocaIntentar([], AHORA, SALIO)).toBe(true);
+    expect(tocaIntentar([{ status: 'FALLO', createdAt: hace(60) }, { status: 'AVISO_ENVIADO', createdAt: hace(10) }], AHORA, SALIO)).toBe(false);
+  });
+
+  it('un fallo de hace más de 30 minutos: se reintenta; de hace menos: espera', () => {
+    expect(tocaIntentar([{ status: 'FALLO', createdAt: hace(31) }], AHORA, SALIO)).toBe(true);
+    expect(tocaIntentar([{ status: 'FALLO', createdAt: hace(10) }], AHORA, SALIO)).toBe(false);
+  });
+
+  it('tres fallos: no se insiste más', () => {
+    const tres = [hace(200), hace(150), hace(100)].map((createdAt) => ({ status: 'FALLO', createdAt }));
+    expect(tocaIntentar(tres, AHORA, SALIO)).toBe(false);
+  });
+});
+
+describe('aplicarCambioDeContenido', () => {
+  const base = { leerDelHospital: true, servicios: { S39141: {} } };
+
+  it('exclusiones: normaliza, guarda y dice qué cambió; la de diagnósticos no queda vacía', () => {
+    const r = aplicarCambioDeContenido(base, { exclusiones: { cie10: ['f', 'b24', 'Z04.4'], cups: ['890284'] } });
+    if (!r.ok) throw new Error(r.error);
+    expect(leerExclusiones(r.config)).toEqual({ ...EXCLUSIONES_POR_DEFECTO, cie10: ['F', 'B24', 'Z044'], cups: ['890284'] });
+    expect(r.cambios[0]).toBe('Diagnósticos excluidos: F, B24, Z044');
+    expect(aplicarCambioDeContenido(base, { exclusiones: { cie10: [] } })).toEqual({
+      ok: false,
+      error: 'La lista de diagnósticos excluidos no puede quedar vacía.',
+    });
+    expect(aplicarCambioDeContenido(base, { exclusiones: { cups: ['89x'] } }).ok).toBe(false);
+  });
+
+  it('horario: horas válidas y en orden', () => {
+    const r = aplicarCambioDeContenido(base, { horario: { desdeHora: 8, hastaHora: 18 } });
+    if (!r.ok) throw new Error(r.error);
+    expect(leerConfigResumenAtencion(r.config)!.horario).toEqual({ desdeHora: 8, hastaHora: 18 });
+    expect(r.cambios).toEqual(['Horario de envío: 7 a 20 h → 8 a 18 h']);
+    expect(aplicarCambioDeContenido(base, { horario: { desdeHora: 18, hastaHora: 8 } }).ok).toBe(false);
+  });
+
+  it('campos de la plantilla: personalizados o los del sistema', () => {
+    const r = aplicarCambioDeContenido(base, {
+      camposPlantilla: [{ plantilla: 870, grupo: ' CONDUCTA ', campo: 'Anotaciones', seccion: 'Plan' }],
+    });
+    if (!r.ok) throw new Error(r.error);
+    expect(leerConfigResumenAtencion(r.config)!.camposPlantilla).toEqual([
+      { plantilla: 870, grupo: 'CONDUCTA', campo: 'Anotaciones', seccion: 'Plan' },
+    ]);
+    const sistema = aplicarCambioDeContenido(r.config, { camposPlantilla: null });
+    expect(sistema.ok && leerConfigResumenAtencion(sistema.config)!.camposPlantilla).toBeNull();
+    expect(aplicarCambioDeContenido(base, { camposPlantilla: [{ plantilla: 0, grupo: null, campo: 'x', seccion: 'y' }] }).ok).toBe(false);
+    expect(aplicarCambioDeContenido(null, { horario: { desdeHora: 7, hastaHora: 20 } }).ok).toBe(false);
   });
 });

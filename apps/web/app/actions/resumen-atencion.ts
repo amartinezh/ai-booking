@@ -26,6 +26,7 @@ import { INTERNAL_API_URL } from '@/lib/resumen/api';
 import { registrarActividad } from '@/lib/actividad/registrar';
 import {
     LIMITES_RESUMEN_ATENCION,
+    aplicarCambioDeContenido,
     aplicarCambioDeDocumentos,
     aplicarCambioDeEnvio,
     aplicarCambioDeLectura,
@@ -33,9 +34,12 @@ import {
     leerConfigDocumentos,
     leerConfigResumenAtencion,
     leerCorreosDeRelleno,
+    leerExclusiones,
     resumirMediciones,
     validarRevision,
+    type CambioContenidoResumen,
     type CambioDocumentosResumen,
+    type ExclusionesResumen,
     type CambioEnvioResumen,
     type CambioLecturaResumen,
     type ConfigDocumentosResumen,
@@ -92,6 +96,8 @@ export interface PanelResumenAtencion {
     documentos: ConfigDocumentosResumen;
     /** Si el encabezado no tiene nombre, el de la clínica. */
     nombreClinica: string;
+    /** Lo que nunca se envía (D7). El horario y los campos van en `config`. */
+    exclusiones: ExclusionesResumen;
     /** Fase 4: el envío por WhatsApp. */
     envio: {
         /** La plantilla «Documentos de la consulta» está configurada y activa. */
@@ -102,11 +108,28 @@ export interface PanelResumenAtencion {
         correosDeRelleno: string[];
         /** Atenciones sin correo utilizable (vacío o de relleno), últimos 30 días. */
         sinCorreo: number;
+        /** Medición del piloto (plan §8, Fase 5), últimos 30 días, sin envíos de prueba. */
+        piloto: MedicionPiloto;
         /** Últimos envíos, sin contenido. */
         entregas: EntregaDelPanel[];
         /** Atenciones de los últimos 30 días por estado (RECIBIDO, ENVIADO, EXCLUIDO, SIN_CONTACTO, CADUCADO). */
         porEstado: Record<string, number>;
     };
+}
+
+export interface MedicionPiloto {
+    /** Avisos que salieron, por canal (a pacientes y reenvíos). */
+    avisos: { WHATSAPP: number; TELEGRAM: number; EMAIL: number };
+    /** Pacientes que pidieron los documentos por el chat (o les llegaron por correo). */
+    documentos: number;
+    /** Lo que Meta dijo de los avisos por WhatsApp: entregados (o leídos) y fallidos. */
+    meta: { entregados: number; leidos: number; fallidos: number; total: number };
+    /** Resúmenes que alguien abrió en la página (con la fecha de nacimiento). */
+    abiertosEnLaPagina: number;
+    /** «no quiero resúmenes» (por número) y fichas con la baja. */
+    bajas: number;
+    /** Envíos que no salieron. */
+    errores: number;
 }
 
 export interface EntregaDelPanel {
@@ -197,6 +220,7 @@ export async function getPanelResumenAtencionAction(): Promise<
     ]);
 
     const org = await prisma.organization.findUnique({ where: { id: auth.organizationId }, select: { name: true } });
+    const piloto = await medicionDelPiloto(auth.organizationId, desde30);
     const [plantilla, entregas, estados, sinCorreo, correoConfigurado] = await Promise.all([
         prisma.whatsappTemplate.findFirst({
             where: { organizationId: auth.organizationId, kind: 'ATTENTION_SUMMARY_READY', isActive: true },
@@ -270,12 +294,14 @@ export async function getPanelResumenAtencionAction(): Promise<
             },
             medicion: resumirMediciones(fila?.resumenAtencionMedicion, new Date(ahora)),
             documentos: leerConfigDocumentos(fila?.resumenAtencion),
+            exclusiones: leerExclusiones(fila?.resumenAtencion),
             nombreClinica: org?.name ?? '',
             envio: {
                 plantillaConfigurada: plantilla !== null,
                 correoConfigurado,
                 correosDeRelleno: leerCorreosDeRelleno(fila?.resumenAtencion),
                 sinCorreo,
+                piloto,
                 entregas: entregas.map((e) => ({
                     id: e.id,
                     historia: e.attentionSummary.hisKey,
@@ -504,6 +530,7 @@ export async function updateDocumentosResumenAction(
         telefono: cambio?.telefono,
         pie: cambio?.pie,
         logo: cambio?.logo,
+        frecuenciaDelHis: cambio?.frecuenciaDelHis,
     });
     if (!r.ok) return { success: false, error: r.error };
     await prisma.hospitalMirrorConfig.update({
@@ -593,4 +620,79 @@ export async function enviarDePruebaAction(
     const r = (await res.json()) as { ok: boolean; motivo?: string };
     revalidatePath('/dashboard/espejo/resumen-atencion');
     return r.ok ? { success: true } : { success: false, error: `El aviso no salió: ${r.motivo ?? 'motivo desconocido'}` };
+}
+
+/** Exclusiones (D7), horario (§3.8) y campos de la plantilla (D2): los valida el comité. */
+export async function updateContenidoResumenAction(
+    cambio: CambioContenidoResumen,
+): Promise<{ success: true } | { success: false; error: string }> {
+    const auth = await requireAdmin();
+    if (!auth) return { success: false, error: 'Acceso denegado.' };
+    const fila = await prisma.hospitalMirrorConfig.findUnique({
+        where: { organizationId: auth.organizationId },
+        select: { resumenAtencion: true },
+    });
+    const r = aplicarCambioDeContenido(fila?.resumenAtencion, {
+        exclusiones: cambio?.exclusiones,
+        horario: cambio?.horario,
+        camposPlantilla: cambio?.camposPlantilla,
+    });
+    if (!r.ok) return { success: false, error: r.error };
+    await prisma.hospitalMirrorConfig.update({
+        where: { organizationId: auth.organizationId },
+        data: { resumenAtencion: r.config as object },
+    });
+    if (r.cambios.length) {
+        await registrarActividad({
+            action: 'ATTENTION_SUMMARY_CONFIG_CHANGED',
+            message: 'Contenido del resumen de la atención actualizado',
+            actor: { userId: auth.userId, role: auth.role },
+            organizationId: auth.organizationId,
+            metadata: { detalle: r.cambios.join(' · ').slice(0, 400) },
+        });
+    }
+    revalidatePath('/dashboard/espejo/resumen-atencion');
+    return { success: true };
+}
+
+/** La medición del piloto: lo que ya se guarda, sumado. Sin envíos de prueba ni contenido. */
+async function medicionDelPiloto(organizationId: string, desde: Date): Promise<MedicionPiloto> {
+    const deLaClinica = { attentionSummary: { organizationId }, createdAt: { gte: desde } };
+    const [porCanal, documentos, errores, meta, abiertos, bajasNumero, bajasFicha] = await Promise.all([
+        prisma.attentionSummaryDelivery.groupBy({
+            by: ['channel'],
+            where: { ...deLaClinica, purpose: { in: ['PACIENTE', 'REENVIO'] }, status: { in: ['AVISO_ENVIADO', 'DOCUMENTOS_ENVIADOS'] } },
+            _count: { _all: true },
+        }),
+        prisma.attentionSummaryDelivery.count({
+            where: { ...deLaClinica, purpose: { in: ['PACIENTE', 'REENVIO'] }, status: 'DOCUMENTOS_ENVIADOS' },
+        }),
+        prisma.attentionSummaryDelivery.count({ where: { ...deLaClinica, purpose: { in: ['PACIENTE', 'REENVIO'] }, status: 'FALLO' } }),
+        prisma.whatsappMessageLog.groupBy({
+            by: ['status'],
+            where: { organizationId, kind: 'ATTENTION_SUMMARY', messageType: { in: ['TEMPLATE', 'INTERACTIVE'] }, createdAt: { gte: desde } },
+            _count: { _all: true },
+        }),
+        prisma.attentionSummaryAccess.groupBy({
+            by: ['attentionSummaryId'],
+            where: { attentionSummary: { organizationId }, kind: 'VER', createdAt: { gte: desde } },
+        }),
+        prisma.attentionSummaryOptOut.count({ where: { organizationId } }),
+        prisma.patientProfile.count({ where: { organizationId, summariesOptOut: true } }),
+    ]);
+    const canal = (c: string) => porCanal.find((p) => p.channel === c)?._count._all ?? 0;
+    const estado = (e: string) => meta.find((m) => m.status === e)?._count._all ?? 0;
+    return {
+        avisos: { WHATSAPP: canal('WHATSAPP'), TELEGRAM: canal('TELEGRAM'), EMAIL: canal('EMAIL') },
+        documentos,
+        meta: {
+            entregados: estado('DELIVERED') + estado('READ'),
+            leidos: estado('READ'),
+            fallidos: estado('FAILED'),
+            total: meta.reduce((n, m) => n + m._count._all, 0),
+        },
+        abiertosEnLaPagina: abiertos.length,
+        bajas: bajasNumero + bajasFicha,
+        errores,
+    };
 }

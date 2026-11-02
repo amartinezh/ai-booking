@@ -65,7 +65,7 @@ export default async function DashboardPage({
     }
 
     // Las tarjetas de espejo/avisos solo se ofrecen a las clínicas que las tienen.
-    const { conEspejo, conAvisos, conAvisosDriver } = await getTenantMirrorFlags(session.organizationId);
+    const { conEspejo, conAvisos, conAvisosDriver, conResumen } = await getTenantMirrorFlags(session.organizationId);
     const pendientesBandeja = await pendientesParaMenu(prisma, session, conEspejo);
     const pendientesSolicitudesCitas = await solicitudesCitasPendientes(prisma, session);
 
@@ -110,7 +110,7 @@ export default async function DashboardPage({
             </header>
 
             {/* Accesos rápidos: iconos a las opciones del menú, según el rol. */}
-            <QuickAccessGrid role={session.role} conEspejo={conEspejo} conAvisos={conAvisos} conAvisosDriver={conAvisosDriver} pendientesBandeja={pendientesBandeja} pendientesSolicitudesCitas={pendientesSolicitudesCitas} />
+            <QuickAccessGrid role={session.role} conEspejo={conEspejo} conAvisos={conAvisos} conAvisosDriver={conAvisosDriver} conResumen={conResumen} pendientesBandeja={pendientesBandeja} pendientesSolicitudesCitas={pendientesSolicitudesCitas} />
 
             <Suspense fallback={<PageSkeleton />}>
                 <DashboardClient

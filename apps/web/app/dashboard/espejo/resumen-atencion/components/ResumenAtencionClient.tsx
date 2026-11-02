@@ -11,8 +11,10 @@ import {
     type PanelResumenAtencion,
 } from '@/app/actions/resumen-atencion';
 import SeguimientoEnvios from './SeguimientoEnvios';
+import MedicionPiloto from './MedicionPiloto';
 import RevisionResumenes from './RevisionResumenes';
 import EncabezadoDocumentos from './EncabezadoDocumentos';
+import ContenidoResumen from './ContenidoResumen';
 
 const CANALES = [
     { clave: 'WHATSAPP', nombre: 'WhatsApp' },
@@ -448,7 +450,15 @@ export default function ResumenAtencionClient({ panel }: { panel: PanelResumenAt
                 </div>
             </section>
 
+            <ContenidoResumen
+                exclusiones={panel.exclusiones}
+                horario={panel.config.horario}
+                camposPlantilla={panel.config.camposPlantilla}
+            />
+
             <EncabezadoDocumentos documentos={panel.documentos} nombreClinica={panel.nombreClinica} />
+
+            <MedicionPiloto piloto={panel.envio.piloto} />
 
             <SeguimientoEnvios envio={panel.envio} />
 

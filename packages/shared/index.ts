@@ -742,6 +742,7 @@ export type { CuentaDeLaSesion, MotivoSesionInvalida, TokenDeSesion } from './sr
 // 🩺 Resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md): interruptores que
 // nacen apagados, la regla de envío y el resumen que sube el agente del hospital.
 export {
+  CAMPOS_PLANTILLA_POR_DEFECTO,
   CANALES_RESUMEN,
   LIMITES_RESUMEN_ATENCION,
   TEXTO_MOTIVO_NO_ENVIO,
@@ -791,6 +792,7 @@ export {
   aplicarCambioDeDocumentos,
   cantidadConLetras,
   cantidadEnLetras,
+  comoTomarlo,
   contenidoDelResumen,
   documentosDelResumen,
   fechaHoraDocumento,
@@ -809,6 +811,7 @@ export type {
 // 📨 Envío del resumen de la atención (docs/PLAN_RESUMEN_ATENCION.md, Fase 4):
 // exclusiones, destinatarios, horario y el modo prueba.
 export {
+  aplicarCambioDeContenido,
   CORREOS_DE_RELLENO_POR_DEFECTO,
   EXCLUSIONES_POR_DEFECTO,
   LIMITES_ENVIO_RESUMEN,
@@ -821,14 +824,17 @@ export {
   enmascararDestino,
   entregaDelPayload,
   horaLocal,
+  huellaDeInterruptores,
   intencionDeResumenes,
   leerCorreosDeRelleno,
   leerExclusiones,
   motivoDeExclusion,
   payloadDeEntrega,
   pideSusDocumentos,
+  tocaIntentar,
 } from './src/resumen-envio';
 export type {
+  CambioContenidoResumen,
   CambioEnvioResumen,
   CandidatoDestino,
   ExclusionesResumen,

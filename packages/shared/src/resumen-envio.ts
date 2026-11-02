@@ -11,7 +11,11 @@
  * Sin dependencias de Node.
  */
 import { normalizePhoneToE164Co } from './avisos-csv';
-import { leerConfigResumenAtencion, type ResumenAtencionHis } from './resumen-atencion';
+import {
+  leerConfigResumenAtencion,
+  type CampoPlantillaResumen,
+  type ResumenAtencionHis,
+} from './resumen-atencion';
 
 const esObjeto = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -25,6 +29,12 @@ export const LIMITES_ENVIO_RESUMEN = {
   /** Lo que espera el asistente la fecha de nacimiento después de pedirla. */
   esperaFechaMinutos: 30,
   maxDestinosPrueba: 10,
+  /** Intentos de un aviso o de un correo que falla (el primero incluido). */
+  intentosEnvio: 3,
+  /** Espera entre un intento fallido y el siguiente. */
+  esperaEntreIntentosMinutos: 30,
+  /** Una atención que espera por un interruptor se vuelve a mirar a lo sumo cada tanto, o en cuanto cambian los interruptores. */
+  esperaReevaluarMinutos: 30,
 } as const;
 
 // ─── El botón «Recibir mis documentos» ──────────────────────────────────────
@@ -384,5 +394,143 @@ export function aplicarCambioDeEnvio(
       error: 'Mientras no se apruebe el piloto, «Enviar» solo funciona en modo prueba: agregue al menos un número del equipo.',
     };
   }
+  return { ok: true, config: base, cambios };
+}
+
+// ─── Reintentos (Fase 4) ────────────────────────────────────────────────────
+
+/**
+ * ¿Toca intentar (o reintentar) esta parte del envío? Con los envíos anteriores
+ * de la misma parte: si ya salió, no; si falló menos de `intentosEnvio` veces y
+ * el último fallo tiene más de `esperaEntreIntentosMinutos`, sí.
+ */
+export function tocaIntentar(
+  envios: { status: string; createdAt: Date }[],
+  ahora: Date,
+  salioCon: readonly string[],
+): boolean {
+  if (envios.some((e) => salioCon.includes(e.status))) return false;
+  const fallos = envios.filter((e) => e.status === 'FALLO');
+  if (fallos.length >= LIMITES_ENVIO_RESUMEN.intentosEnvio) return false;
+  const ultimo = Math.max(0, ...fallos.map((f) => f.createdAt.getTime()));
+  return !fallos.length || ahora.getTime() - ultimo >= LIMITES_ENVIO_RESUMEN.esperaEntreIntentosMinutos * 60_000;
+}
+
+/** Huella de lo que decide si una atención que espera puede salir: si cambia, se vuelve a mirar. */
+export function huellaDeInterruptores(config: {
+  enviar: boolean;
+  canales: unknown;
+  servicios: unknown;
+  modoPrueba: unknown;
+}): string {
+  return JSON.stringify([config.enviar, config.canales, config.servicios, config.modoPrueba]);
+}
+
+// ─── Lo que el panel cambia del contenido: exclusiones, horario y campos ────
+
+export interface CambioContenidoResumen {
+  exclusiones?: { cie10?: string[]; cups?: string[]; especialidades?: string[] };
+  horario?: { desdeHora: number; hastaHora: number };
+  /** Campos de la plantilla que van al resumen; `null` = los del sistema. */
+  camposPlantilla?: CampoPlantillaResumen[] | null;
+}
+
+const MAX_LISTA_EXCLUSIONES = 100;
+const MAX_CAMPOS_PLANTILLA = 60;
+
+/**
+ * Aplica lo que el panel cambia del contenido: la lista de lo que nunca se
+ * envía (D7), el horario de envío (§3.8) y los campos de la plantilla que van
+ * al resumen (D2). Los tres los valida el comité; aquí se cuida que el dato
+ * sirva. La lista de diagnósticos excluidos no puede quedar vacía.
+ */
+export function aplicarCambioDeContenido(
+  json: unknown,
+  cambio: CambioContenidoResumen,
+): { ok: true; config: Record<string, unknown>; cambios: string[] } | { ok: false; error: string } {
+  if (!esObjeto(json)) return { ok: false, error: 'La función no está habilitada para esta clínica.' };
+  const base: Record<string, unknown> = { ...json };
+  const cambios: string[] = [];
+
+  if (cambio.exclusiones !== undefined) {
+    const antes = leerExclusiones(base);
+    const e = cambio.exclusiones ?? {};
+    const limpiar = (x: unknown, normalizar: (t: string) => string, valido: RegExp, nombre: string) => {
+      if (x === undefined) return null;
+      if (!Array.isArray(x)) throw new Error(`La lista de ${nombre} no es válida.`);
+      const l = [...new Set(x.map((v) => normalizar(String(v))).filter(Boolean))];
+      const malo = l.find((v) => !valido.test(v));
+      if (malo) throw new Error(`«${malo}» no es válido en ${nombre}.`);
+      if (l.length > MAX_LISTA_EXCLUSIONES) throw new Error(`Máximo ${MAX_LISTA_EXCLUSIONES} en ${nombre}.`);
+      return l;
+    };
+    let cie10: string[] | null;
+    let cups: string[] | null;
+    let especialidades: string[] | null;
+    try {
+      cie10 = limpiar(e.cie10, codigo, /^[A-Z][0-9A-Z]{0,5}$/, 'diagnósticos (CIE-10)');
+      cups = limpiar(e.cups, codigo, /^\d{4,8}$/, 'remisiones (CUPS)');
+      especialidades = limpiar(e.especialidades, palabra, /^[A-Z ]{3,40}$/, 'especialidades');
+    } catch (error: unknown) {
+      return { ok: false, error: (error as Error).message };
+    }
+    if (cie10 && cie10.length === 0) {
+      return { ok: false, error: 'La lista de diagnósticos excluidos no puede quedar vacía.' };
+    }
+    const nuevas = {
+      cie10: cie10 ?? antes.cie10,
+      cups: cups ?? antes.cups,
+      especialidades: especialidades ?? antes.especialidades,
+    };
+    for (const [clave, nombre] of [
+      ['cie10', 'Diagnósticos excluidos'],
+      ['cups', 'Remisiones excluidas'],
+      ['especialidades', 'Especialidades excluidas'],
+    ] as const) {
+      if (nuevas[clave].join(',') !== antes[clave].join(',')) cambios.push(`${nombre}: ${nuevas[clave].join(', ')}`);
+    }
+    base.exclusiones = nuevas;
+  }
+
+  if (cambio.horario !== undefined) {
+    const h = cambio.horario;
+    const desde = Number(h?.desdeHora);
+    const hasta = Number(h?.hastaHora);
+    if (!Number.isInteger(desde) || !Number.isInteger(hasta) || desde < 0 || desde > 23 || hasta < 1 || hasta > 24 || desde >= hasta) {
+      return { ok: false, error: 'El horario va de 0 a 24 horas, y la hora de inicio antes que la de fin.' };
+    }
+    const antes = leerConfigResumenAtencion(base)!.horario;
+    if (antes.desdeHora !== desde || antes.hastaHora !== hasta) {
+      cambios.push(`Horario de envío: ${antes.desdeHora} a ${antes.hastaHora} h → ${desde} a ${hasta} h`);
+    }
+    base.horario = { desdeHora: desde, hastaHora: hasta };
+  }
+
+  if (cambio.camposPlantilla !== undefined) {
+    if (cambio.camposPlantilla === null) {
+      if (base.camposPlantilla != null) cambios.push('Campos de la plantilla: los del sistema');
+      base.camposPlantilla = null;
+    } else {
+      if (!Array.isArray(cambio.camposPlantilla)) return { ok: false, error: 'La lista de campos no es válida.' };
+      if (cambio.camposPlantilla.length > MAX_CAMPOS_PLANTILLA) {
+        return { ok: false, error: `Máximo ${MAX_CAMPOS_PLANTILLA} campos.` };
+      }
+      const campos: CampoPlantillaResumen[] = [];
+      for (const c of cambio.camposPlantilla) {
+        const plantilla = Number(c?.plantilla);
+        const campo = typeof c?.campo === 'string' ? c.campo.trim() : '';
+        const seccion = typeof c?.seccion === 'string' ? c.seccion.trim() : '';
+        const grupo = typeof c?.grupo === 'string' && c.grupo.trim() ? c.grupo.trim() : null;
+        if (!Number.isInteger(plantilla) || plantilla < 1 || !campo || !seccion || campo.length > 120 || seccion.length > 60 || (grupo?.length ?? 0) > 120) {
+          return { ok: false, error: 'Cada campo necesita el número de plantilla, el nombre exacto del campo y la sección del resumen.' };
+        }
+        campos.push({ plantilla, grupo, campo, seccion });
+      }
+      if (campos.length === 0) return { ok: false, error: 'Para usar los del sistema, restablézcalos; la lista no puede quedar vacía.' };
+      cambios.push(`Campos de la plantilla: ${campos.length} personalizados`);
+      base.camposPlantilla = campos;
+    }
+  }
+
   return { ok: true, config: base, cambios };
 }

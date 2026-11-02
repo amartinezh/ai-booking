@@ -21,7 +21,9 @@ No es una réplica binaria del HIS. Es una reconstrucción best-effort del
 esquema **confirmado** en `docs/drivers/cnt-sanvicente-anserma/MAPEO_HIS.md`
 (columnas, tipos, PKs — donde Fase 0 ya cerró la pregunta). Tres tablas
 (`CONSULTORIOS`, `R_ESP_SER`, `MUNICIPIOS`) son placeholders mínimos porque
-su esquema real aún no se descubrió (bloque 21, pendiente).
+su esquema real aún no se descubrió (bloque 21, pendiente). También lo son
+`CITAS_DISPONIBLES`, `AUDITOR` y `PA_Ins_AUDITOR`: `AGENIA_SYNC_SETUP.sql`
+les da permisos y, sin ellos, el setup fallaba con «Cannot find the object».
 
 ⚠️ **Cuando el mock es más permisivo que el HIS, no simplifica: miente.**
 `PACIENTES` llegó a tener 13 columnas inventadas a partir de la lista de NOT
@@ -42,8 +44,9 @@ versión no importa aquí).
 # 1) Levantar el contenedor (una vez; el volumen persiste entre reinicios)
 docker compose up -d mirror-his-mock
 
-# 2) Crear/recrear PRUEBAS + correr AGENIA_SYNC_SETUP.sql real sin modificar
-#    (reintentable — recrea todo desde cero cada vez que corre)
+# 2) Crear/recrear PRUEBAS (y ESEHSVP, una copia) + correr AGENIA_SYNC_SETUP.sql
+#    real sin modificar + la historia clínica con los permisos de P-7
+#    (reintentable — recrea todo desde cero cada vez que corre; otro puerto: HIS_MOCK_PORT)
 AGENIA_SYNC_PASSWORD='<misma que uses en provision-mirror-config.ts>' \
   pnpm --filter @agenia/database exec tsx ../../apps/mirror-agent/local-his-mock/setup.ts
 
@@ -72,6 +75,39 @@ pide validar contra la VM real: handshake HTTP + credenciales cifradas
 correctamente descifradas + conexión SQL real.
 
 No olvides volver `enabled=false` al terminar de probar (paso 4, en reversa).
+
+## Historia clínica (resumen de la atención)
+
+`historia-clinica.sql` agrega las tablas de la historia que lee el resumen de
+la atención (`docs/PLAN_RESUMEN_ATENCION.md`): la cabecera
+(`HISTORIACLINICA`), diagnósticos, órdenes, fórmula, exámenes, remisiones,
+incapacidades, interconsultas, indicaciones, los campos de las plantillas 870
+y 844, y sus catálogos. Columnas y tipos son los del HIS real (rondas 1 a 6 de
+`docs/drivers/cnt-sanvicente-anserma/sql/HISTORIA_CLINICA_*`), solo las que
+usa el resumen y algunas vecinas. `esquema-real.tsv` no las cubre (es el
+volcado de las tablas de citas y no se toca), así que
+`scripts/verificar-esquema-mock.mjs` las lista como «sin verificar».
+
+Trae seis historias de hoy, con pacientes «PRUEBA»: el agente debe tomar E1
+(adulto con todo: fórmula, posfechada, exámenes, remisión, incapacidad,
+interconsulta), E2 (menor, con el celular del acudiente) y E3 (control de
+crónicos con un diagnóstico que el envío excluye); nunca E4 (viene de
+urgencias), E5 (evolución) ni E6 (recién guardada, sin la calma).
+
+**Permisos como en el hospital:** `AGENIA_SYNC_SETUP.sql` deja a
+`agenia_sync` sin acceso a la historia, a propósito. `setup.ts` le da después,
+columna por columna, exactamente la lista del bloque P-7 de
+`HISTORIA_CLINICA_PRUEBAS_SOLO_LECTURA.sql`, que es el texto que se le pide a
+TI. Si el agente lee una columna fuera de esa lista, aquí falla igual que en
+el hospital. Así apareció el 2026-11-02 que faltaba `DATOS_PLANTILLA_DATE`.
+
+```bash
+# Después del paso 2: el lector del resumen, conectado como agenia_sync
+AGENIA_SYNC_PASSWORD='<la misma>' \
+  pnpm --filter @agenia/database exec tsx ../../apps/mirror-agent/local-his-mock/probar-resumen.ts
+```
+
+Termina en «Todo bien.» o dice qué revisión falló.
 
 ## Cutover a producción (VM + hospital real)
 

@@ -71,7 +71,7 @@ async function validarArchivo(markdown, origen) {
   }
 
   const problemas = lector.validarConocimiento(contenido).map((p) => `${ARCHIVO}: ${p}`);
-  const menu = getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true });
+  const menu = getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisos: true, conResumen: true });
   for (const m of menu) {
     const tema = lector.temaDeRuta(contenido.temas, m.href);
     if (!tema) problemas.push(`${ARCHIVO}: la opción del menú «${m.label}» (${m.href}) no tiene su tema en la Parte 1.`);

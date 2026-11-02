@@ -37,6 +37,7 @@ export default function EncabezadoDocumentos({
     const [telefono, setTelefono] = useState(e.telefono ?? '');
     const [pie, setPie] = useState(documentos.pie ?? '');
     const [logo, setLogo] = useState<string | null>(documentos.logo);
+    const [frecuenciaDelHis, setFrecuenciaDelHis] = useState(documentos.frecuenciaDelHis);
     const [error, setError] = useState<string | null>(null);
     const [aviso, setAviso] = useState<string | null>(null);
     const [guardando, startGuardar] = useTransition();
@@ -60,7 +61,15 @@ export default function EncabezadoDocumentos({
         setError(null);
         setAviso(null);
         startGuardar(async () => {
-            const r = await updateDocumentosResumenAction({ nombre, nit, direccion, telefono, pie, logo: logo ?? '' });
+            const r = await updateDocumentosResumenAction({
+                nombre,
+                nit,
+                direccion,
+                telefono,
+                pie,
+                logo: logo ?? '',
+                frecuenciaDelHis,
+            });
             if (!r.success) {
                 setError(r.error);
                 return;
@@ -134,6 +143,22 @@ export default function EncabezadoDocumentos({
                     className="mt-1 block w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
                 />
                 <span className="mt-1 block text-xs text-zinc-500">Vacío: el texto de ejemplo. Lo valida el comité de historias clínicas.</span>
+            </label>
+            <label className="flex items-start gap-3 text-sm text-zinc-800 dark:text-zinc-200">
+                <input
+                    type="checkbox"
+                    checked={frecuenciaDelHis}
+                    onChange={(e) => setFrecuenciaDelHis(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-zinc-300"
+                    aria-label="Frecuencia del HIS"
+                />
+                <span>
+                    <span className="font-medium">Cuando el médico no escribió cómo tomar un medicamento, mostrar la frecuencia del HIS</span>
+                    <span className="block text-xs text-zinc-500">
+                        Por ejemplo «cada 24 horas». Apagado, dice «Tómelo como se lo explicaron en la consulta». Encenderlo
+                        requiere la aprobación del comité: esa frecuencia puede contradecir al médico (decisión D19).
+                    </span>
+                </span>
             </label>
             <p className="text-xs text-zinc-500">
                 Marca de agua: «{documentos.marcaDeAgua}». Se quita cuando el hospital apruebe los documentos para reclamar

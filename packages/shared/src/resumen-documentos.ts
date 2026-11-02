@@ -198,6 +198,24 @@ export const PIE_RESUMEN_POR_DEFECTO =
 /** Si el médico no escribió cómo tomarlo (D19). */
 export const SIN_INDICACION = 'Tómelo como se lo explicaron en la consulta.';
 
+/**
+ * Cómo tomar un medicamento (D19): la indicación del médico tal cual. Si no la
+ * escribió (11 % de los renglones), la frecuencia del HIS solo si el hospital
+ * la aprobó (`frecuenciaDelHis`, apagada por defecto: también puede
+ * contradecir al médico); si no, «Tómelo como se lo explicaron en la consulta».
+ * El agente ya manda la frecuencia como «cada 24 horas»: no se le agrega otro «cada».
+ */
+export function comoTomarlo(
+  m: { indicacion: string | null; frecuencia: string | null },
+  frecuenciaDelHis: boolean,
+): string {
+  const indicacion = m.indicacion?.trim();
+  if (indicacion) return indicacion;
+  const f = m.frecuencia?.trim();
+  if (frecuenciaDelHis && f) return /^cada\b/i.test(f) ? f : `cada ${f}`;
+  return SIN_INDICACION;
+}
+
 const fecha = (iso: string | null, timeZone?: string) => (iso ? formatDateShort(iso, { timeZone }) : null);
 const diaLocal = (iso: string, timeZone?: string) => formatDateShort(iso, { timeZone });
 
@@ -206,7 +224,10 @@ const diaLocal = (iso: string, timeZone?: string) => formatDateShort(iso, { time
  * el médico (sin IA, D13). Cada medicamento una sola vez, con las fechas de sus
  * entregas posfechadas. Las secciones vacías no aparecen.
  */
-export function contenidoDelResumen(r: ResumenAtencionHis, opts: { timeZone?: string } = {}): SeccionDelResumen[] {
+export function contenidoDelResumen(
+  r: ResumenAtencionHis,
+  opts: { timeZone?: string; frecuenciaDelHis?: boolean } = {},
+): SeccionDelResumen[] {
   const tz = opts.timeZone;
   const secciones: SeccionDelResumen[] = [];
   const agregar = (titulo: string, renglones: string[]) => {
@@ -237,7 +258,7 @@ export function contenidoDelResumen(r: ResumenAtencionHis, opts: { timeZone?: st
     for (const m of o.medicamentos) {
       const clave = m.codigo || m.nombre;
       if (!meds.has(clave)) {
-        const partes = [m.nombre, m.indicacion?.trim() || (m.frecuencia ? `cada ${m.frecuencia}` : SIN_INDICACION)];
+        const partes = [m.nombre, comoTomarlo(m, opts.frecuenciaDelHis === true)];
         const extra = [
           m.cantidad !== null ? `cantidad ${String(m.cantidad).replace('.', ',')}` : null,
           m.duracionDias ? `${m.duracionDias} día${m.duracionDias === 1 ? '' : 's'}` : null,
@@ -325,6 +346,8 @@ export interface ConfigDocumentosResumen {
   marcaDeAgua: string;
   /** Pie del resumen; `null` = `PIE_RESUMEN_POR_DEFECTO`. */
   pie: string | null;
+  /** D19: mostrar la frecuencia del HIS cuando el médico no escribió la indicación. Apagada por defecto. */
+  frecuenciaDelHis: boolean;
 }
 
 export const LIMITES_DOCUMENTOS_RESUMEN = {
@@ -369,6 +392,7 @@ export function leerConfigDocumentos(json: unknown): ConfigDocumentosResumen {
     logo: logoValido(d.logo),
     marcaDeAgua: textoONull(d.marcaDeAgua, L.marcaDeAgua) ?? MARCA_DE_AGUA_POR_DEFECTO,
     pie: textoONull(d.pie, L.pie),
+    frecuenciaDelHis: d.frecuenciaDelHis === true,
   };
 }
 
@@ -380,9 +404,11 @@ export interface CambioDocumentosResumen {
   pie?: string;
   /** PNG o JPEG en base64; cadena vacía = quitar el logo. */
   logo?: string;
+  /** D19: mostrar la frecuencia del HIS cuando el médico no escribió la indicación. */
+  frecuenciaDelHis?: boolean;
 }
 
-const ETIQUETA_CAMBIO: Record<keyof Omit<CambioDocumentosResumen, 'logo'>, string> = {
+const ETIQUETA_CAMBIO: Record<keyof Omit<CambioDocumentosResumen, 'logo' | 'frecuenciaDelHis'>, string> = {
   nombre: 'Nombre del hospital',
   nit: 'NIT',
   direccion: 'Dirección',
@@ -436,6 +462,14 @@ export function aplicarCambioDeDocumentos(
       if (logo !== antes.logo) cambios.push('Logo cambiado');
       previo.logo = logo;
     }
+  }
+
+  if (cambio.frecuenciaDelHis !== undefined) {
+    const nueva = cambio.frecuenciaDelHis === true;
+    if (nueva !== antes.frecuenciaDelHis) {
+      cambios.push(`Frecuencia del HIS cuando no hay indicación: ${antes.frecuenciaDelHis ? 'sí' : 'no'} → ${nueva ? 'sí' : 'no'}`);
+    }
+    previo.frecuenciaDelHis = nueva;
   }
 
   base.documentos = previo;

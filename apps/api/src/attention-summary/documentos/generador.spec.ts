@@ -219,6 +219,33 @@ describe('GeneradorDocumentos', () => {
   });
 });
 
+describe('la frecuencia del HIS en la fórmula (D19)', () => {
+  it('nunca «cada cada»; sin aprobarla, «como se lo explicaron»', () => {
+    const r = resumen(1);
+    r.ordenes[0].medicamentos[0] = {
+      ...r.ordenes[0].medicamentos[0],
+      indicacion: null,
+      frecuencia: 'cada 24 horas',
+    };
+    const doc = new GeneradorDocumentos(r, ctx).listar()[1];
+    const sinAprobar = armarHojas(crearMedidor(), r, doc, ctx)!
+      .map(textos)
+      .join(' ');
+    expect(sinAprobar).toContain(
+      'Tómelo como se lo explicaron en la consulta.',
+    );
+    const aprobada = {
+      ...ctx,
+      documentos: { ...ctx.documentos, frecuenciaDelHis: true },
+    };
+    const conFrecuencia = armarHojas(crearMedidor(), r, doc, aprobada)!
+      .map(textos)
+      .join(' ');
+    expect(conFrecuencia).toContain('cada 24 horas');
+    expect(conFrecuencia).not.toContain('cada cada');
+  });
+});
+
 describe('dimensionesImagen', () => {
   it('lee PNG y JPEG; otra cosa no', () => {
     const png = Buffer.from(

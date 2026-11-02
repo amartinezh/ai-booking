@@ -1,7 +1,7 @@
 import {
   PIE_RESUMEN_POR_DEFECTO,
-  SIN_INDICACION,
   cantidadConLetras,
+  comoTomarlo,
   contenidoDelResumen,
   fechaHoraDocumento,
   formatDateShort,
@@ -192,7 +192,10 @@ function cuerpoResumen(
   r: ResumenAtencionHis,
   ctx: ContextoDocumentos,
 ): void {
-  const secciones = contenidoDelResumen(r, { timeZone: ctx.timeZone });
+  const secciones = contenidoDelResumen(r, {
+    timeZone: ctx.timeZone,
+    frecuenciaDelHis: ctx.documentos.frecuenciaDelHis,
+  });
   if (secciones.length === 0) {
     m.colocar(
       m
@@ -276,11 +279,7 @@ function cuerpoFormula(
       )
       .parrafo([
         { texto: 'Dosis y frecuencia: ', negrita: true },
-        {
-          texto:
-            x.indicacion?.trim() ||
-            (x.frecuencia ? `cada ${x.frecuencia}` : SIN_INDICACION),
-        },
+        { texto: comoTomarlo(x, ctx.documentos.frecuenciaDelHis) },
       ])
       .parrafo([
         { texto: 'Cantidad entregada: ', negrita: true },

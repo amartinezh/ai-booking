@@ -391,6 +391,7 @@ export class SupportBotAnswerService {
             enabled: true,
             driverKey: true,
             avisosMasivos: true,
+            resumenAtencion: true,
             availabilityMode: true,
             lastHeartbeatAt: true,
             lastHisReachable: true,

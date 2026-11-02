@@ -2,6 +2,7 @@ import {
   aplicarCambioDeDocumentos,
   cantidadConLetras,
   cantidadEnLetras,
+  comoTomarlo,
   contenidoDelResumen,
   documentosDelResumen,
   fuenteDelDocumento,
@@ -210,6 +211,7 @@ describe('configuración de los documentos', () => {
       logo: null,
       marcaDeAgua: MARCA_DE_AGUA_POR_DEFECTO,
       pie: null,
+      frecuenciaDelHis: false,
     });
     // Una marca vacía guardada a mano no la quita.
     expect(leerConfigDocumentos({ documentos: { marcaDeAgua: '  ' } }).marcaDeAgua).toBe(MARCA_DE_AGUA_POR_DEFECTO);
@@ -239,5 +241,39 @@ describe('configuración de los documentos', () => {
     const r = aplicarCambioDeDocumentos({}, { ...({ marcaDeAgua: '' } as object) });
     expect(r.ok && leerConfigDocumentos(r.config).marcaDeAgua).toBe(MARCA_DE_AGUA_POR_DEFECTO);
     expect(aplicarCambioDeDocumentos({}, { nombre: 'x'.repeat(121) }).ok).toBe(false);
+  });
+});
+
+describe('comoTomarlo (D19)', () => {
+  // El agente manda la frecuencia ya armada: «cada 24 horas». Antes salía «cada cada 24 horas».
+  const sinIndicacion = { indicacion: null, frecuencia: 'cada 24 horas' };
+
+  it('la indicación del médico tal cual, siempre primero', () => {
+    expect(comoTomarlo({ indicacion: ' 1 TAB VO EN LA NOCHE ', frecuencia: 'cada 24 horas' }, true)).toBe('1 TAB VO EN LA NOCHE');
+  });
+
+  it('sin indicación y sin aprobar la frecuencia del HIS: «como se lo explicaron»', () => {
+    expect(comoTomarlo(sinIndicacion, false)).toBe(SIN_INDICACION);
+  });
+
+  it('con la frecuencia aprobada: una sola vez «cada»', () => {
+    expect(comoTomarlo(sinIndicacion, true)).toBe('cada 24 horas');
+    expect(comoTomarlo({ indicacion: null, frecuencia: '8 horas' }, true)).toBe('cada 8 horas');
+    expect(comoTomarlo({ indicacion: '', frecuencia: null }, true)).toBe(SIN_INDICACION);
+  });
+
+  it('en el resumen: sin «cada cada», y la frecuencia solo si se aprobó', () => {
+    const r = resumen({ ordenes: [orden({ medicamentos: [med({ indicacion: null, frecuencia: 'cada 24 horas' })] })] });
+    expect(contenidoDelResumen(r)[1].renglones[0]).toBe(`LOSARTAN 50 MG TABLETA: ${SIN_INDICACION} (cantidad 30, 30 días)`);
+    const aprobada = contenidoDelResumen(r, { frecuenciaDelHis: true })[1].renglones[0];
+    expect(aprobada).toBe('LOSARTAN 50 MG TABLETA: cada 24 horas (cantidad 30, 30 días)');
+    expect(aprobada).not.toContain('cada cada');
+  });
+
+  it('el panel enciende y apaga la frecuencia del HIS, y lo dice', () => {
+    const r = aplicarCambioDeDocumentos({}, { frecuenciaDelHis: true });
+    if (!r.ok) throw new Error(r.error);
+    expect(leerConfigDocumentos(r.config).frecuenciaDelHis).toBe(true);
+    expect(r.cambios).toEqual(['Frecuencia del HIS cuando no hay indicación: no → sí']);
   });
 });
