@@ -85,9 +85,9 @@ export const TEMPLATE_CONTRACTS: Record<TemplateKind, ContratoPlantilla> = {
   SYNC_EXCEPTION_ALERT: {
     label: 'Aviso al agendador (excepciones de sincronización)',
     description:
-      'Va a un teléfono del PERSONAL —el número del agendador que se configura en la Bandeja de sincronización—, no a un paciente. Avisa que hay citas confirmadas por WhatsApp que no llegaron al hospital. Lleva solo el resumen, SIN datos del paciente: el detalle se ve en la bandeja, tras iniciar sesión. Sin esta plantilla el aviso no sale (fuera de la ventana de 24 h un mensaje libre no llega) y la excepción queda solo en la bandeja.',
+      'Va a teléfonos del PERSONAL —las personas que se eligen en «Configurar avisos» de la Bandeja de sincronización—, no a un paciente. Avisa que hay citas confirmadas por WhatsApp que no llegaron al hospital. Lleva solo el resumen, SIN datos del paciente: el detalle se ve en la bandeja, tras iniciar sesión. Sin esta plantilla el aviso no sale (fuera de la ventana de 24 h un mensaje libre no llega) y la excepción queda solo en la bandeja. El botón «Probar» de esa pantalla también la usa.',
     variables: [
-      'Cantidad de citas (por ejemplo «3 citas»)',
+      'Cantidad de citas: SOLO el número (por ejemplo «3»; el cuerpo debe decir «{{1}} cita(s)»)',
       'La más próxima (médico y hora)',
       'Causa probable (en un recordatorio empieza por «RECORDATORIO 1 de 2: nadie la ha tomado en la bandeja»)',
     ],
@@ -117,7 +117,7 @@ export const TEMPLATE_CONTRACTS: Record<TemplateKind, ContratoPlantilla> = {
   PATIENT_REQUEST_ALERT: {
     label: 'Aviso al agendador (pedidos de pacientes)',
     description:
-      'Va al teléfono del agendador configurado en la Bandeja de sincronización, no a un paciente. Avisa que un paciente pidió cancelar por el chat y no confirmó, o avisó que no irá, y su cita es en 24 horas o menos, sin que nadie lo haya tomado en la Bandeja. Lleva solo el resumen, SIN datos del paciente. Debe ser una plantilla propia: la del «Aviso al agendador» dice que las citas no llegaron al hospital, y aquí sí llegaron. Sin esta plantilla esos casos quedan solo en la Bandeja.',
+      'Va a los teléfonos del personal elegidos en «Configurar avisos» de la Bandeja de sincronización, no a un paciente. Avisa que un paciente pidió cancelar por el chat y no confirmó, o avisó que no irá, y su cita es en 24 horas o menos, sin que nadie lo haya tomado en la Bandeja. Lleva solo el resumen, SIN datos del paciente. Debe ser una plantilla propia: la del «Aviso al agendador» dice que las citas no llegaron al hospital, y aquí sí llegaron. Sin esta plantilla esos casos quedan solo en la Bandeja.',
     variables: [
       'Cantidad de casos (por ejemplo «1 caso»)',
       'La cita más próxima (médico y hora)',

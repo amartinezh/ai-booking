@@ -8,7 +8,6 @@ import {
     SEVERIDADES_EXCEPCION,
     TIPOS_EXCEPCION,
     TITULO_EXCEPCION,
-    UMBRALES_VIGILANTE,
     type AccionExcepcion,
     type SeveridadExcepcion,
     type TipoExcepcion,
@@ -18,7 +17,6 @@ import {
     crearYHomologarMedicoAction,
     detalleExcepcionAction,
     enviarMensajeAlPacienteAction,
-    guardarAvisosAction,
     prepararMensajeAlPacienteAction,
 } from '@/app/actions/bandeja';
 import { formatAppointmentCompact } from '@/lib/date';
@@ -34,6 +32,8 @@ import type {
     PreparacionMensaje,
 } from '@/lib/bandeja/tipos';
 import { MAX_MENSAJE } from '@/lib/bandeja/constantes-mensaje';
+import { BOTON_PRIMARIO, BOTON_SECUNDARIO, CAMPO } from './estilos';
+import PanelAvisos from './PanelAvisos';
 
 /**
  * Bandeja de excepciones de sincronización (docs/PLAN_RASTREO_PACIENTE.md §10 #3).
@@ -94,151 +94,6 @@ const PIDE_NOTA: Partial<Record<AccionExcepcion, string>> = {
     DESCARTAR: 'Cuenta por qué no hace falta actuar (por ejemplo: «era una cita de prueba»).',
 };
 
-const CAMPO =
-    'w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white';
-const BOTON_PRIMARIO =
-    'rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 dark:bg-indigo-500 dark:hover:bg-indigo-400';
-const BOTON_SECUNDARIO =
-    'rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800';
-
-// ─────────────────────────────────────────────────────────────
-// Avisos al agendador
-// ─────────────────────────────────────────────────────────────
-
-function PanelAvisos({
-    avisos,
-    puedeConfigurar,
-}: {
-    avisos: EstadoAvisos;
-    puedeConfigurar: boolean;
-}) {
-    const router = useRouter();
-    const idNumero = useId();
-    const idRespaldo = useId();
-    const [editando, setEditando] = useState(false);
-    const [numero, setNumero] = useState(avisos.numero ?? '');
-    const [respaldo, setRespaldo] = useState(avisos.respaldo ?? '');
-    const [activos, setActivos] = useState(avisos.alertasActivas);
-    const [mensaje, setMensaje] = useState<{ ok: boolean; texto: string } | null>(null);
-    const [guardando, iniciar] = useTransition();
-
-    function guardar() {
-        setMensaje(null);
-        iniciar(async () => {
-            const r = await guardarAvisosAction({ numero, respaldo, activos });
-            if (!r.success) {
-                setMensaje({ ok: false, texto: r.error });
-                return;
-            }
-            setMensaje({ ok: true, texto: 'Guardado.' });
-            setEditando(false);
-            router.refresh();
-        });
-    }
-
-    const estilos = avisos.salen
-        ? 'bg-emerald-50 border-emerald-200 text-emerald-900 dark:bg-emerald-950/40 dark:border-emerald-900 dark:text-emerald-200'
-        : 'bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-950/40 dark:border-amber-900 dark:text-amber-200';
-
-    return (
-        <section className={`rounded-xl border p-4 ${estilos}`} aria-label="Avisos al agendador">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <h2 className="text-sm font-semibold">
-                        {avisos.salen
-                            ? 'Los avisos por WhatsApp al agendador están activos'
-                            : 'Los avisos por WhatsApp al agendador NO están saliendo'}
-                    </h2>
-                    <p className="mt-1 text-sm leading-snug opacity-90">
-                        {avisos.salen
-                            ? `Si una cita confirmada no llega al hospital, se le avisa al agendador antes de la hora de la cita. Si en ${UMBRALES_VIGILANTE.recordatorioMin} min nadie la toma aquí, se le recuerda (hasta ${UMBRALES_VIGILANTE.maxRecordatorios} veces)${avisos.tieneRespaldo ? ', también al número de respaldo' : ''}.`
-                            : `${avisos.razon ?? ''} Mientras tanto las excepciones solo aparecen en esta bandeja: hay que abrirla para enterarse.`}
-                    </p>
-                    <p className="mt-1 text-sm leading-snug opacity-90">
-                        {avisos.razonPacientes === null
-                            ? `🙋 Si un paciente pidió cancelar y no confirmó, o avisó que no irá, se le avisa al agendador cuando a la cita le faltan ${UMBRALES_VIGILANTE.urgenciaAltaHoras} horas o menos, y otra vez a ${UMBRALES_VIGILANTE.urgenciaCriticaHoras} horas.`
-                            : `🙋 Pedidos de pacientes (pidió cancelar y no confirmó, avisó que no irá): no se avisan por WhatsApp. ${avisos.razonPacientes}`}
-                    </p>
-                </div>
-                {puedeConfigurar && (
-                    <button
-                        type="button"
-                        className={BOTON_SECUNDARIO}
-                        onClick={() => setEditando((v) => !v)}
-                        aria-expanded={editando}
-                    >
-                        {editando ? 'Cerrar' : 'Configurar avisos'}
-                    </button>
-                )}
-            </div>
-
-            {puedeConfigurar && editando && (
-                <div className="mt-4 space-y-3 rounded-lg border border-zinc-200 bg-white p-3 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100">
-                    <div>
-                        <label htmlFor={idNumero} className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                            Celular del agendador (WhatsApp)
-                        </label>
-                        <input
-                            id={idNumero}
-                            className={CAMPO}
-                            inputMode="tel"
-                            placeholder="300 123 4567"
-                            value={numero}
-                            onChange={(e) => setNumero(e.target.value)}
-                        />
-                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                            Es un teléfono personal: el aviso lleva solo un resumen, sin datos de ningún paciente. Déjalo vacío para no avisar a nadie.
-                        </p>
-                    </div>
-                    <div>
-                        <label htmlFor={idRespaldo} className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                            Celular de respaldo (opcional)
-                        </label>
-                        <input
-                            id={idRespaldo}
-                            className={CAMPO}
-                            inputMode="tel"
-                            placeholder="300 765 4321"
-                            value={respaldo}
-                            onChange={(e) => setRespaldo(e.target.value)}
-                        />
-                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                            Otra persona (un coordinador, por ejemplo). No recibe el primer aviso: recibe los recordatorios, cuando pasan {UMBRALES_VIGILANTE.recordatorioMin} min sin que nadie tome la excepción en esta bandeja.
-                        </p>
-                    </div>
-                    <label className="flex items-center gap-2 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={activos}
-                            onChange={(e) => setActivos(e.target.checked)}
-                        />
-                        Avisar por WhatsApp cuando una cita no llegue al hospital
-                    </label>
-                    {!avisos.plantilla && (
-                        <p className="text-xs text-amber-700 dark:text-amber-300">
-                            Falta la plantilla «Aviso al agendador (excepciones de sincronización)»: se registra, con el nombre exacto que aprobó Meta, en{' '}
-                            <Link href="/dashboard/configuracion" className="underline">
-                                Configuración
-                            </Link>
-                            .
-                        </p>
-                    )}
-                    <button type="button" className={BOTON_PRIMARIO} disabled={guardando} onClick={guardar}>
-                        {guardando ? 'Guardando…' : 'Guardar'}
-                    </button>
-                </div>
-            )}
-            {mensaje && (
-                <p
-                    role={mensaje.ok ? 'status' : 'alert'}
-                    className={`mt-2 text-sm ${mensaje.ok ? '' : 'font-medium text-red-700 dark:text-red-300'}`}
-                >
-                    {mensaje.texto}
-                </p>
-            )}
-        </section>
-    );
-}
 
 // ─────────────────────────────────────────────────────────────
 // Acciones de una excepción

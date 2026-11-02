@@ -646,7 +646,8 @@ describe('parametrosPlantillaAviso — el texto que va a la plantilla de WhatsAp
   it('son SIEMPRE tres variables, en orden: cantidad, la más próxima y la causa probable', () => {
     const p = parametrosPlantillaAviso([item()], ctx);
     expect(p).toHaveLength(3);
-    expect(p[0]).toMatch(/1 cita/);
+    // Solo el número: la plantilla aprobada dice «{{1}} cita(s)» (antes salía «1 cita cita(s)»).
+    expect(p[0]).toBe('1');
     expect(p[1]).toMatch(/Ana Ruiz/);
   });
 
@@ -657,12 +658,12 @@ describe('parametrosPlantillaAviso — el texto que va a la plantilla de WhatsAp
     expect(proxima).not.toMatch(/15:00/);
   });
 
-  it('con varias, la cantidad va en plural y se nombra la MÁS PRÓXIMA', () => {
+  it('con varias, la cantidad es el número de citas y se nombra la MÁS PRÓXIMA', () => {
     const p = parametrosPlantillaAviso(
       [item({ doctor: 'Lejana', inicioIso: '2026-09-30T15:00:00.000Z' }), item({ doctor: 'Cercana', inicioIso: '2026-09-23T15:00:00.000Z' }), item({ doctor: 'Media', inicioIso: '2026-09-25T15:00:00.000Z' })],
       ctx,
     );
-    expect(p[0]).toMatch(/3 citas/);
+    expect(p[0]).toBe('3');
     expect(p[1]).toMatch(/Cercana/);
     expect(p[1]).not.toMatch(/Lejana/);
   });

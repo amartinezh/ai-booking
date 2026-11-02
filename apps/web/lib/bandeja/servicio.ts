@@ -25,10 +25,7 @@ import {
   ESTADOS_ACTIVOS,
   ORDEN_SEVERIDAD_EXCEPCION,
   SEVERIDADES_EXCEPCION,
-  SYNC_AUDIT_DIRECTION,
   TIPOS_EXCEPCION,
-  enmascararIdentificadorWhatsapp,
-  normalizePhoneToE164Co,
   type AccionExcepcion,
   type EstadoExcepcion,
   type SeveridadExcepcion,
@@ -36,7 +33,6 @@ import {
 import { citaFueraDeAlcance } from '../alcance-agente';
 import { SIN_PERMISOS, type ActorBandeja } from './acceso';
 import type {
-  EstadoAvisos,
   ExcepcionDetalle,
   FiltrosBandeja,
   FiltroEstado,
@@ -73,14 +69,6 @@ export const MSG_CAMBIO_CONCURRENTE =
   'Alguien acaba de cambiar esta excepción. Actualiza la lista y revisa cómo quedó.';
 export const MSG_NO_GUARDADA = 'No se pudo guardar el cambio. Intenta de nuevo.';
 export const MSG_NOTA_LARGA = `La nota es demasiado larga (máximo ${MAX_NOTA} caracteres).`;
-export const MSG_NUMERO_INVALIDO =
-  'Escribe un celular colombiano válido: 10 dígitos, empieza por 3 (ej. 300 123 4567).';
-export const MSG_SIN_ESPEJO =
-  'El espejo con el hospital no está configurado para esta clínica.';
-export const MSG_RESPALDO_SIN_AGENDADOR =
-  'El respaldo recibe los recordatorios que no atendió el agendador: primero escribe el número del agendador.';
-export const MSG_RESPALDO_IGUAL =
-  'El respaldo debe ser OTRO número: es a quien se escala cuando el agendador no atiende el aviso.';
 
 const ESTADOS_CERRADOS: EstadoExcepcion[] = ['RESUELTA', 'DESCARTADA', 'AUTO_RESUELTA', 'VENCIDA'];
 const ACCIONES: readonly AccionExcepcion[] = [
@@ -685,163 +673,6 @@ export async function aplicarAccion(
     console.error('[bandeja] no se pudo aplicar la acción', {
       accion,
       exceptionId: fila.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return { success: false, error: MSG_NO_GUARDADA };
-  }
-}
-
-// ─────────────────────────────────────────────────────────────
-// Avisos al agendador
-// ─────────────────────────────────────────────────────────────
-
-/**
- * ¿Están saliendo los avisos? Si no, POR QUÉ: un aviso que no sale en silencio es
- * peor que uno que no existe (el agendador cree estar cubierto). El vigilante y la
- * bandeja funcionan igual; lo que falta es el empujón por WhatsApp.
- */
-export async function estadoAvisos(
-  db: Db,
-  actor: ActorBandeja,
-): Promise<Resultado<EstadoAvisos>> {
-  if (!actor.permisos.ver) return { success: false, error: SIN_PERMISOS };
-  const plantillaActiva = (kind: 'SYNC_EXCEPTION_ALERT' | 'PATIENT_REQUEST_ALERT') =>
-    db.whatsappTemplate.findFirst({
-      where: { organizationId: actor.organizationId, kind, isActive: true },
-      select: { id: true },
-    });
-  const [config, plantilla, plantillaPacientes] = await Promise.all([
-    db.hospitalMirrorConfig.findUnique({
-      where: { organizationId: actor.organizationId },
-      select: {
-        enabled: true,
-        conflictAlertsEnabled: true,
-        agendadorWhatsapp: true,
-        agendadorRespaldoWhatsapp: true,
-      },
-    }),
-    plantillaActiva('SYNC_EXCEPTION_ALERT'),
-    plantillaActiva('PATIENT_REQUEST_ALERT'),
-  ]);
-
-  const alertasActivas = !!config?.conflictAlertsEnabled;
-  const tieneNumero = !!config?.agendadorWhatsapp;
-  const tienePlantilla = !!plantilla;
-
-  // Lo que comparten los dos avisos: el espejo, el interruptor y el número.
-  let razonComun: string | null = null;
-  if (!config?.enabled) {
-    razonComun = 'El espejo con el hospital está apagado para esta clínica.';
-  } else if (!alertasActivas) {
-    razonComun = 'Los avisos por WhatsApp están apagados.';
-  } else if (!tieneNumero) {
-    razonComun = 'Falta el número de WhatsApp del agendador.';
-  }
-  const razon =
-    razonComun ??
-    (tienePlantilla
-      ? null
-      : 'Falta la plantilla «Aviso al agendador» aprobada en Meta: sin ella el mensaje no sale.');
-  const razonPacientes =
-    razonComun ??
-    (plantillaPacientes
-      ? null
-      : 'Falta la plantilla «Aviso al agendador (pedidos de pacientes)» aprobada en Meta y registrada en Configuración.');
-
-  return {
-    success: true,
-    data: {
-      salen: razon === null,
-      razon,
-      alertasActivas,
-      plantilla: tienePlantilla,
-      tieneNumero,
-      tieneRespaldo: !!config?.agendadorRespaldoWhatsapp,
-      // Los números completos, solo para quien los configura.
-      numero: actor.permisos.configurarAvisos
-        ? (config?.agendadorWhatsapp ?? null)
-        : null,
-      respaldo: actor.permisos.configurarAvisos
-        ? (config?.agendadorRespaldoWhatsapp ?? null)
-        : null,
-      plantillaPacientes: !!plantillaPacientes,
-      razonPacientes,
-    },
-  };
-}
-
-/** Un celular del formulario → como lo espera el envío (solo dígitos, con el 57); `''` = ninguno. */
-function leerCelular(valor: unknown): { ok: true; numero: string | null } | { ok: false } {
-  const crudo = typeof valor === 'string' ? valor.trim() : '';
-  if (!crudo) return { ok: true, numero: null };
-  const e164 = normalizePhoneToE164Co(crudo);
-  return e164 ? { ok: true, numero: e164.replace(/\D/g, '') } : { ok: false };
-}
-
-/**
- * Configura a quién se le avisa y si se avisa (solo ORG_ADMIN). Deja constancia en la
- * bitácora del espejo, con los números enmascarados: son teléfonos personales.
- *
- *  · `numero`: el agendador. Vacío = sin destinatario (los avisos dejan de salir, la
- *    bandeja sigue).
- *  · `respaldo` (§12 #14): a quién se escala cuando nadie toma la excepción tras el
- *    aviso; recibe los recordatorios junto con el agendador. Opcional, y nunca sin
- *    agendador ni igual a él (sería el mismo teléfono, no un escalamiento).
- */
-export async function guardarAvisos(
-  db: Db,
-  actor: ActorBandeja,
-  entrada: { numero: unknown; activos: unknown; respaldo?: unknown },
-): Promise<
-  Resultado<{ numero: string | null; respaldo: string | null; activos: boolean }>
-> {
-  if (!actor.permisos.configurarAvisos) {
-    return { success: false, error: SIN_PERMISOS };
-  }
-  if (typeof entrada.activos !== 'boolean') {
-    return { success: false, error: 'Indica si los avisos están activos.' };
-  }
-  const principal = leerCelular(entrada.numero);
-  if (!principal.ok) return { success: false, error: MSG_NUMERO_INVALIDO };
-  const segundo = leerCelular(entrada.respaldo);
-  if (!segundo.ok) return { success: false, error: MSG_NUMERO_INVALIDO };
-  const numero = principal.numero;
-  const respaldo = segundo.numero;
-  if (respaldo && !numero) return { success: false, error: MSG_RESPALDO_SIN_AGENDADOR };
-  if (respaldo && respaldo === numero) return { success: false, error: MSG_RESPALDO_IGUAL };
-
-  try {
-    return await db.$transaction(async (tx) => {
-      const { count } = await tx.hospitalMirrorConfig.updateMany({
-        where: { organizationId: actor.organizationId },
-        data: {
-          agendadorWhatsapp: numero,
-          agendadorRespaldoWhatsapp: respaldo,
-          conflictAlertsEnabled: entrada.activos as boolean,
-        },
-      });
-      if (count !== 1) return { success: false as const, error: MSG_SIN_ESPEJO };
-      await tx.syncAudit.create({
-        data: {
-          organizationId: actor.organizationId,
-          direction: SYNC_AUDIT_DIRECTION.CONFIG,
-          entityType: 'HospitalMirrorConfig',
-          op: 'ALERT_SETTINGS_CHANGE',
-          outcome: 'OK',
-          detail: `Avisos al agendador: ${entrada.activos ? 'activos' : 'apagados'}, destino ${
-            numero ? enmascararIdentificadorWhatsapp(numero) : 'sin número'
-          }, respaldo ${
-            respaldo ? enmascararIdentificadorWhatsapp(respaldo) : 'sin número'
-          } (cambiado desde el panel por ${actor.email ?? actor.role}).`,
-        },
-      });
-      return {
-        success: true as const,
-        data: { numero, respaldo, activos: entrada.activos as boolean },
-      };
-    });
-  } catch (error: unknown) {
-    console.error('[bandeja] no se pudo guardar la configuración de avisos', {
       error: error instanceof Error ? error.message : String(error),
     });
     return { success: false, error: MSG_NO_GUARDADA };

@@ -4,8 +4,9 @@ import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/session';
-import { resolverActorBandeja, type ResultadoActorBandeja } from '@/lib/bandeja/acceso';
-import { aplicarAccion, detalleExcepcion, guardarAvisos } from '@/lib/bandeja/servicio';
+import { SIN_PERMISOS, resolverActorBandeja, type ResultadoActorBandeja } from '@/lib/bandeja/acceso';
+import { aplicarAccion, detalleExcepcion } from '@/lib/bandeja/servicio';
+import { guardarAvisos } from '@/lib/bandeja/avisos';
 import { crearYHomologarMedico, type RespuestaAlta } from '@/lib/bandeja/medico-nuevo';
 import {
     enviarMensaje,
@@ -14,7 +15,7 @@ import {
     type RespuestaEnvio,
     type RespuestaRevision,
 } from '@/lib/bandeja/mensaje-paciente';
-import type { ExcepcionDetalle, PreparacionMensaje, Resultado } from '@/lib/bandeja/tipos';
+import type { EntradaDestinatario, ExcepcionDetalle, PreparacionMensaje, Resultado } from '@/lib/bandeja/tipos';
 import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
 import { describirCita } from '@/lib/actividad/catalogo';
 import type { EstadoExcepcion } from '@agenia/shared';
@@ -29,7 +30,7 @@ import type { EstadoExcepcion } from '@agenia/shared';
  * La clínica SALE DEL TOKEN: ninguna acción recibe una organización del cliente.
  *
  * Solo hay acciones para lo que la pantalla hace DESPUÉS de cargar (abrir el historial,
- * trabajar una excepción, guardar los avisos): la lista y el estado de los avisos los lee
+ * trabajar una excepción, guardar o probar los avisos): la lista y el estado de los avisos los lee
  * la página en el servidor. Cada `export` de un archivo `'use server'` es un endpoint
  * público: no se dejan los que nadie llama.
  */
@@ -66,16 +67,47 @@ export async function aplicarAccionExcepcionAction(entrada: {
     return r;
 }
 
+/** 📣 Guarda la lista de quién recibe los avisos (docs/PLAN_AVISOS_AGENDADORES.md). Solo el administrador. */
 export async function guardarAvisosAction(entrada: {
-    numero: string;
-    respaldo?: string;
     activos: boolean;
-}): Promise<Resultado<{ numero: string | null; respaldo: string | null; activos: boolean }>> {
+    destinatarios: EntradaDestinatario[];
+}): Promise<Resultado<{ activos: boolean; personas: number }>> {
     const a = await actor();
     if (!a.ok) return error(a.error);
-    const r = await guardarAvisos(prisma, a.actor, entrada ?? { numero: '', activos: false });
+    const r = await guardarAvisos(prisma, a.actor, entrada ?? { activos: undefined, destinatarios: undefined });
     if (r.success) revalidatePath(RUTA);
     return r;
+}
+
+/**
+ * 📣 «Probar»: le manda a esa persona la plantilla del aviso con el texto de prueba
+ * (N9). Lo envía la API, con la sesión de quien pulsa; la API vuelve a comprobar que
+ * sea administrador y busca a la persona dentro de SU clínica.
+ */
+export async function probarAvisoAction(id: string): Promise<Resultado<null>> {
+    const a = await actor();
+    if (!a.ok) return error(a.error);
+    if (!a.actor.permisos.configurarAvisos) return error(SIN_PERMISOS);
+    if (typeof id !== 'string' || !id || id.length > 64) return error('Falta la persona.');
+    try {
+        const token = (await cookies()).get('auth_token')?.value;
+        const res = await fetch(`${INTERNAL_API_URL}/sync-alerts/recipients/${encodeURIComponent(id)}/test`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Cookie: `auth_token=${token}` } : {}),
+            },
+            cache: 'no-store',
+        });
+        if (!res.ok) {
+            return error(res.status === 403 ? 'Sin permisos.' : `El servidor respondió ${res.status}. Intenta de nuevo.`);
+        }
+        const r = (await res.json()) as { success: true } | { success: false; error: string };
+        revalidatePath(RUTA);
+        return r.success ? { success: true, data: null } : error(r.error);
+    } catch {
+        return error('No se pudo contactar al servidor. Intenta de nuevo.');
+    }
 }
 
 /**

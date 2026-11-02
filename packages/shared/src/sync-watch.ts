@@ -653,6 +653,9 @@ function paraPlantilla(texto: string, max: number): string {
  * Las TRES variables de la plantilla de WhatsApp del aviso, en orden:
  *   {{1}} cuántas citas, {{2}} la más próxima (médico y hora), {{3}} la causa probable.
  *
+ * {{1}} es SOLO el número (2026-11-02): la plantilla aprobada en Anserma dice
+ * «{{1}} cita(s) necesitan revisión», y con «1 cita» el mensaje decía «1 cita cita(s)».
+ *
  * 🔒 Sin datos del paciente: ni nombre, ni documento, ni teléfono. El aviso sale
  * hacia el teléfono personal de quien agenda y por una plantilla que pasa por Meta:
  * dice QUÉ pasa y cuándo, y el detalle se ve en la bandeja, tras la sesión.
@@ -706,9 +709,8 @@ export function parametrosPlantillaAviso(
     );
   }
 
-  const n = items.length;
   return [
-    `${n} ${n === 1 ? 'cita' : 'citas'}`,
+    String(items.length),
     `${paraPlantilla(proxima.doctor, 120)}, ${formatAppointmentCompact(proxima.inicioIso, { timeZone: ctx.timeZone })}`.slice(
       0,
       200,

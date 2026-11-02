@@ -12,6 +12,7 @@ import {
   claveExcepcion,
   compuertasHis,
   debeVencer,
+  enmascararIdentificadorWhatsapp,
   evaluarRetencion,
   eventoPuedeSalir,
   isTelegramSender,
@@ -47,7 +48,7 @@ const AVISO_QUE_NO_SALE: Partial<
   SIN_PLANTILLA:
     'La plantilla de WhatsApp del aviso (SYNC_EXCEPTION_ALERT) no está aprobada en Meta: el agendador no se entera de las citas que no llegan al hospital.',
   SIN_DESTINO:
-    'La clínica tiene los avisos encendidos pero ningún número de agendador: nadie se entera de las citas que no llegan al hospital.',
+    'La clínica tiene los avisos encendidos pero nadie en la lista recibe el primer aviso («Configurar avisos» de la Bandeja): nadie se entera de las citas que no llegan al hospital.',
   ENVIO_FALLIDO: 'Meta rechazó el envío del aviso al agendador',
 };
 
@@ -55,7 +56,8 @@ const AVISO_QUE_NO_SALE: Partial<
 const AVISO_PACIENTES_QUE_NO_SALE: typeof AVISO_QUE_NO_SALE = {
   SIN_PLANTILLA:
     'La plantilla de WhatsApp «Aviso al agendador (pedidos de pacientes)» (PATIENT_REQUEST_ALERT) no está registrada: el agendador no se entera de un paciente que pidió cancelar o avisó que no irá, con la cita cerca.',
-  SIN_DESTINO: AVISO_QUE_NO_SALE.SIN_DESTINO,
+  SIN_DESTINO:
+    'La clínica tiene los avisos encendidos pero nadie en la lista recibe el primer aviso de pedidos de pacientes («Configurar avisos» de la Bandeja).',
   ENVIO_FALLIDO:
     'Meta rechazó el envío del aviso de pedidos de pacientes al agendador',
 };
@@ -295,6 +297,7 @@ export class MirrorWatchdogService {
       resumen.aviso,
       falloDelAviso,
     );
+    await this.revisarDestinatarios(organizationId, resumen.aviso);
 
     // 🙋 Los pedidos de pacientes con la cita cerca, con su propia plantilla.
     let falloDelAvisoPacientes: unknown = null;
@@ -319,7 +322,79 @@ export class MirrorWatchdogService {
         titulo: 'Aviso de pedidos de pacientes',
       },
     );
+    await this.revisarDestinatarios(organizationId, resumen.avisoPacientes);
+    await this.cerrarAlertasDeQuitados(organizationId);
     return resumen;
+  }
+
+  /**
+   * 📣 A UNA persona de la lista no le salió el aviso (2026-11-02,
+   * docs/PLAN_AVISOS_AGENDADORES.md): los demás sí lo recibieron, así que la
+   * excepción no se devuelve, pero esa persona cree estar cubierta. Una alerta
+   * técnica por persona, que se cierra cuando le vuelve a salir. El número va
+   * enmascarado. Nunca lanza.
+   */
+  private async revisarDestinatarios(
+    organizationId: string,
+    aviso: ResultadoAviso | null,
+  ): Promise<void> {
+    if (!this.alertas || !aviso?.destinatarios?.length) return;
+    let nombreClinica: string | null | undefined;
+    for (const d of aviso.destinatarios) {
+      const clave = claveAlerta.avisoDestinatario(organizationId, d.id);
+      if (d.ok) {
+        await this.alertas.resolver(clave);
+        continue;
+      }
+      if (nombreClinica === undefined) {
+        nombreClinica = await this.prisma.organization
+          .findUnique({ where: { id: organizationId }, select: { name: true } })
+          .then((o) => o?.name ?? null)
+          .catch(() => null);
+      }
+      await this.alertas.avisar({
+        kind: 'AVISO_AGENDADOR_NO_SALE',
+        dedupeKey: clave,
+        title: 'El aviso no le llega a una persona de la lista',
+        detail: `A ${d.nombre} (${enmascararIdentificadorWhatsapp(d.phone)}) no le sale el WhatsApp del aviso: ${d.error ?? 'sin motivo'}. Los demás de la lista sí lo reciben. Revisar su número en «Configurar avisos» de la Bandeja.`,
+        organizationId,
+        organizationName: nombreClinica,
+        fuente: 'vigilante del espejo',
+      });
+    }
+  }
+
+  /**
+   * Las alertas de personas que ya no están en la lista (las quitaron o las
+   * pausaron) se cierran: ya no hay nada que arreglar con ellas. Nunca lanza.
+   */
+  private async cerrarAlertasDeQuitados(organizationId: string): Promise<void> {
+    if (!this.alertas) return;
+    try {
+      const prefijo = claveAlerta.avisoDestinatarioPrefijo(organizationId);
+      const abiertas = await this.prisma.techAlert.findMany({
+        where: { status: 'ABIERTA', dedupeKey: { startsWith: prefijo } },
+        select: { dedupeKey: true },
+      });
+      if (abiertas.length === 0) return;
+      const activos = new Set(
+        (
+          await this.prisma.syncAlertRecipient.findMany({
+            where: { organizationId, isActive: true },
+            select: { id: true },
+          })
+        ).map((r) => r.id),
+      );
+      for (const { dedupeKey } of abiertas) {
+        if (!activos.has(dedupeKey.slice(prefijo.length))) {
+          await this.alertas.resolver(dedupeKey);
+        }
+      }
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudieron revisar las alertas de la lista de avisos (org ${organizationId}): ${getErrorMessage(error)}`,
+      );
+    }
   }
 
   /**
@@ -351,7 +426,9 @@ export class MirrorWatchdogService {
       if (aviso.motivo === 'YA_RECLAMADO') return; // otra réplica se ocupa
       const motivo = cual.motivos[aviso.motivo];
       if (motivo) {
-        detalle = aviso.detalle ? `${motivo}: ${aviso.detalle}` : `${motivo}.`;
+        detalle = aviso.detalle
+          ? `${motivo.replace(/\.$/, '')}: ${aviso.detalle}`
+          : `${motivo.replace(/\.$/, '')}.`;
       }
     }
     if (!detalle) {

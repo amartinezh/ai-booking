@@ -22,6 +22,7 @@ import { WhatsappConfigModule } from '../whatsapp-config/whatsapp-config.module'
 import { MedicosNuevosService } from './medicos-nuevos.service';
 import { MedicosNuevosController } from './medicos-nuevos.controller';
 import { AttentionSummaryReviewController } from './attention-summary-review.controller';
+import { SyncAlertsController } from './sync-alerts.controller';
 
 /**
  * Motor genérico de espejo de citas con HIS externos (patrón de drivers).
@@ -42,6 +43,7 @@ import { AttentionSummaryReviewController } from './attention-summary-review.con
     MirrorController,
     MedicosNuevosController,
     AttentionSummaryReviewController,
+    SyncAlertsController,
   ],
   providers: [
     MirrorAgentGuard,

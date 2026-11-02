@@ -133,6 +133,8 @@ export const TEXTO_CATEGORIA_ALERTA: Record<
  *  · `AVISO_AGENDADOR_NO_SALE` — el vigilante del espejo no pudo avisar al agendador
  *    (sin plantilla, sin destino, envío fallido). La excepción en sí es operación de
  *    la clínica y NO viene aquí (A12); que el aviso no salga sí es una falla técnica.
+ *    Desde 2026-11-02 también, con su propia clave por persona
+ *    (`claveAlerta.avisoDestinatario`), que a UNA persona de la lista no le salga.
  *  · `REDIS_ERROR` — el cliente de Redis reporta error; sin Redis el bot pierde las
  *    sesiones.
  *  · Eventos sueltos (sin «resuelto»): `ERROR_5XX`, `PROCESO_EXCEPCION`, `API_ARRANCO`,
@@ -306,6 +308,8 @@ export const UMBRALES_ALERTAS = {
  * Identifican el PROBLEMA, no la fila: el mismo fallo vuelve a dar la misma clave y
  * suma ocurrencias en vez de mandar otro mensaje. Ninguna lleva datos de pacientes.
  */
+const PREFIJO_AVISO_DESTINATARIO = 'espejo:aviso-destinatario:';
+
 export const claveAlerta = {
   /** Una clave por servicio: caído y degradado son el mismo problema que cambia. */
   servicio: (serviceKey: string): string => `servicio:${serviceKey}`,
@@ -316,6 +320,15 @@ export const claveAlerta = {
   /** El aviso de pedidos de pacientes (2026-10-27): otra plantilla, otra falla. */
   avisoPedidosPacientes: (organizationId: string): string =>
     `espejo:aviso-pedidos-pacientes:${organizationId}`,
+  /**
+   * A UNA persona de la lista de avisos no le sale el WhatsApp (2026-11-02,
+   * docs/PLAN_AVISOS_AGENDADORES.md): los demás sí lo reciben. Una por persona.
+   */
+  avisoDestinatario: (organizationId: string, recipientId: string): string =>
+    `${PREFIJO_AVISO_DESTINATARIO}${organizationId}:${recipientId}`,
+  /** El comienzo de las de una clínica, para cerrar las de quien ya no está en la lista. */
+  avisoDestinatarioPrefijo: (organizationId: string): string =>
+    `${PREFIJO_AVISO_DESTINATARIO}${organizationId}:`,
   redis: (): string => 'servicio:redis',
   /** Por firma: código, método, ruta sin ids y clase de la excepción. Nunca el mensaje. */
   error5xx: (

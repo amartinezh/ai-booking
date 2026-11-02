@@ -1537,6 +1537,14 @@ describe('MirrorWatchdogService — alertas técnicas', () => {
       organization: {
         findUnique: jest.fn(async () => ({ name: 'E.S.E. San Vicente' })),
       },
+      techAlert: {
+        findMany: jest.fn(
+          async (..._a: unknown[]) => [] as { dedupeKey: string }[],
+        ),
+      },
+      syncAlertRecipient: {
+        findMany: jest.fn(async (..._a: unknown[]) => [] as { id: string }[]),
+      },
     };
     const service = new MirrorWatchdogService(
       prisma as never,
@@ -1551,7 +1559,18 @@ describe('MirrorWatchdogService — alertas técnicas', () => {
         aviso,
         fallo,
       ) as Promise<void>;
-    return { service, alertas, prisma, revisar };
+    const revisarDestinatarios = (aviso: unknown) =>
+      (service as any).revisarDestinatarios(ORG, aviso) as Promise<void>;
+    const cerrarQuitados = () =>
+      (service as any).cerrarAlertasDeQuitados(ORG) as Promise<void>;
+    return {
+      service,
+      alertas,
+      prisma,
+      revisar,
+      revisarDestinatarios,
+      cerrarQuitados,
+    };
   };
 
   it('si el vigilante revienta con una clínica, se avisa por clínica y las demás siguen', async () => {
@@ -1593,7 +1612,7 @@ describe('MirrorWatchdogService — alertas técnicas', () => {
 
   it.each([
     ['SIN_PLANTILLA', undefined, /plantilla de WhatsApp del aviso/],
-    ['SIN_DESTINO', undefined, /ningún número de agendador/],
+    ['SIN_DESTINO', undefined, /nadie en la lista recibe el primer aviso/],
     [
       'ENVIO_FALLIDO',
       '(#131026) Message undeliverable',
@@ -1645,5 +1664,96 @@ describe('MirrorWatchdogService — alertas técnicas', () => {
     await revisar({ enviado: false, motivo: 'YA_RECLAMADO' });
     expect(alertas.avisar).not.toHaveBeenCalled();
     expect(alertas.resolver).not.toHaveBeenCalled();
+  });
+
+  it('el detalle no termina con dos puntos seguidos', async () => {
+    const { alertas, revisar } = montar();
+    await revisar({ enviado: false, motivo: 'SIN_PLANTILLA' });
+    expect(
+      (alertas.avisar.mock.calls[0] as unknown[])[0] as { detail: string },
+    ).toMatchObject({ detail: expect.not.stringMatching(/\.\.$/) });
+  });
+
+  describe('📣 una persona de la lista a la que no le sale (2026-11-02)', () => {
+    const resultado = (destinatarios: unknown[]) => ({
+      enviado: true,
+      citas: 1,
+      recordatorios: 0,
+      destinatarios,
+    });
+
+    it('a quien le falló: una alerta por persona, con su nombre y el número ENMASCARADO', async () => {
+      const { alertas, revisarDestinatarios } = montar();
+      await revisarDestinatarios(
+        resultado([
+          { id: 'r-1', nombre: 'Karen Muñoz', phone: '573001112233', ok: true },
+          {
+            id: 'r-2',
+            nombre: 'Ana García',
+            phone: '573005550103',
+            ok: false,
+            error: 'Recipient phone number not in allowed list (código 131030)',
+          },
+        ]),
+      );
+      expect(alertas.resolver).toHaveBeenCalledWith(
+        `espejo:aviso-destinatario:${ORG}:r-1`,
+      );
+      expect(alertas.avisar).toHaveBeenCalledTimes(1);
+      const alerta = (alertas.avisar.mock.calls[0] as unknown[])[0] as {
+        kind: string;
+        dedupeKey: string;
+        detail: string;
+        organizationName: string;
+      };
+      expect(alerta).toMatchObject({
+        kind: 'AVISO_AGENDADOR_NO_SALE',
+        dedupeKey: `espejo:aviso-destinatario:${ORG}:r-2`,
+        organizationName: 'E.S.E. San Vicente',
+      });
+      expect(alerta.detail).toMatch(/Ana García \(•••0103\)/);
+      expect(alerta.detail).toMatch(/código 131030/);
+      expect(alerta.detail).not.toMatch(/3005550103/);
+    });
+
+    it('sin resultados por persona (nada que avisar, apagado…): no toca nada', async () => {
+      const { alertas, revisarDestinatarios } = montar();
+      await revisarDestinatarios({ enviado: false, motivo: 'NADA_QUE_AVISAR' });
+      await revisarDestinatarios(null);
+      expect(alertas.avisar).not.toHaveBeenCalled();
+      expect(alertas.resolver).not.toHaveBeenCalled();
+    });
+
+    it('cierra las alertas de quien ya no está en la lista (o está en pausa), y deja las de los demás', async () => {
+      const { alertas, prisma, cerrarQuitados } = montar();
+      prisma.techAlert.findMany.mockResolvedValue([
+        { dedupeKey: `espejo:aviso-destinatario:${ORG}:r-1` },
+        { dedupeKey: `espejo:aviso-destinatario:${ORG}:r-quitada` },
+      ]);
+      prisma.syncAlertRecipient.findMany.mockResolvedValue([{ id: 'r-1' }]);
+
+      await cerrarQuitados();
+
+      expect(prisma.techAlert.findMany.mock.calls[0][0]).toMatchObject({
+        where: {
+          status: 'ABIERTA',
+          dedupeKey: { startsWith: `espejo:aviso-destinatario:${ORG}:` },
+        },
+      });
+      expect(prisma.syncAlertRecipient.findMany.mock.calls[0][0]).toMatchObject(
+        {
+          where: { organizationId: ORG, isActive: true },
+        },
+      );
+      expect(alertas.resolver.mock.calls).toEqual([
+        [`espejo:aviso-destinatario:${ORG}:r-quitada`],
+      ]);
+    });
+
+    it('sin alertas abiertas de la lista, ni siquiera lee la lista', async () => {
+      const { prisma, cerrarQuitados } = montar();
+      await cerrarQuitados();
+      expect(prisma.syncAlertRecipient.findMany).not.toHaveBeenCalled();
+    });
   });
 });

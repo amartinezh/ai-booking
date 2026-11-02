@@ -8,8 +8,11 @@ import { MirrorAlertService } from './mirror-alert.service';
  *    se toca ninguna fila: reclamar y devolver en cada vuelta sería ruido de escritura;
  *  · se reclama ANTES de enviar (dos réplicas no mandan el mismo aviso);
  *  · un solo mensaje por vuelta, hacia el número de ESA clínica, sin datos del paciente;
- *  · si el envío falla, se devuelve la reclamación para que la próxima vuelta reintente;
- *  · §12 #14: si nadie la toma, se RECUERDA al agendador y al respaldo, pocas veces.
+ *  · si el envío no le llega a nadie, se devuelve la reclamación para que la próxima
+ *    vuelta reintente;
+ *  · §12 #14: si nadie la toma, se RECUERDA (también a «Solo recordatorios»), pocas veces;
+ *  · 2026-11-02 (docs/PLAN_AVISOS_AGENDADORES.md): va a una LISTA de personas, cada una
+ *    con su modo, sus avisos y su alcance, y un mensaje por persona.
  */
 describe('MirrorAlertService', () => {
   const ORG = 'org-1';
@@ -34,11 +37,34 @@ describe('MirrorAlertService', () => {
   const CONFIG = {
     enabled: true,
     conflictAlertsEnabled: true,
-    agendadorWhatsapp: '573001112233',
-    agendadorRespaldoWhatsapp: null as string | null,
     lastHeartbeatAt: new Date(AHORA.getTime() - 60_000),
     lastHisReachable: true as boolean | null,
   };
+
+  /** Una fila de `SyncAlertRecipient` como la lee el servicio. */
+  const persona = (over: Record<string, unknown> = {}) => ({
+    id: 'r-1',
+    label: null as string | null,
+    phone: '573001112233',
+    mode: 'AVISOS',
+    syncAlerts: true,
+    patientRequestAlerts: true,
+    isActive: true,
+    createdAt: AHORA,
+    user: {
+      email: 'karen@hsvp.co',
+      role: 'BOOKING_AGENT',
+      agentProfile: { fullName: 'Karen Muñoz', epsId: null, doctorId: null },
+    } as unknown,
+    ...over,
+  });
+  const RESPALDO = persona({
+    id: 'r-2',
+    label: 'Coordinación',
+    phone: '573009998877',
+    mode: 'SOLO_RECORDATORIOS',
+    user: null,
+  });
 
   const build = (
     opts: {
@@ -46,10 +72,13 @@ describe('MirrorAlertService', () => {
       config?: unknown;
       plantilla?: unknown;
       envio?: { success: boolean; error?: string };
-      /** Un resultado por envío, en orden (para distinguir agendador y respaldo). */
-      envios?: { success: boolean; error?: string }[];
+      /** Un resultado por envío, en orden (para distinguir a cada persona). */
+      envios?: { success: boolean; error?: string; wamid?: string }[];
       reclamos?: boolean[];
       timezone?: string | null;
+      destinatarios?: ReturnType<typeof persona>[];
+      /** «Probar»: cuántas filas gana el compare-and-set sobre `lastTestAt`. */
+      pruebaGanada?: number;
     } = {},
   ) => {
     const orden: string[] = [];
@@ -76,6 +105,26 @@ describe('MirrorAlertService', () => {
           timezone: opts.timezone ?? null,
         })),
       },
+      syncAlertRecipient: {
+        findMany: jest.fn(
+          async (arg: {
+            where: { organizationId: string; isActive: boolean };
+          }) =>
+            (opts.destinatarios ?? [persona()]).filter(
+              (d) => d.isActive === arg.where.isActive,
+            ),
+        ),
+        findFirst: jest.fn(
+          async (arg: { where: { id: string } }) =>
+            (opts.destinatarios ?? [persona()]).find(
+              (d) => d.id === arg.where.id,
+            ) ?? null,
+        ),
+        updateMany: jest.fn(async (arg: { data: Record<string, unknown> }) => ({
+          count: 'lastTestAt' in arg.data ? (opts.pruebaGanada ?? 1) : 1,
+        })),
+      },
+      syncAudit: { create: jest.fn(async (..._a: unknown[]) => ({})) },
     };
     const exceptions = {
       reclamarAviso: jest.fn(async (..._a: unknown[]) => {
@@ -97,7 +146,14 @@ describe('MirrorAlertService', () => {
         orden.push('enviar');
         const r = opts.envios?.[envio];
         envio++;
-        return r ?? opts.envio ?? { success: true, templateName: 'aviso_sync' };
+        return (
+          r ??
+          opts.envio ?? {
+            success: true,
+            templateName: 'aviso_sync',
+            wamid: `wamid.${envio}`,
+          }
+        );
       }),
     };
     const service = new MirrorAlertService(
@@ -169,11 +225,6 @@ describe('MirrorAlertService', () => {
         'APAGADO',
       ],
       ['no hay configuración de espejo', null, 'APAGADO'],
-      [
-        'no hay número del agendador',
-        { ...CONFIG, agendadorWhatsapp: null },
-        'SIN_DESTINO',
-      ],
     ])('%s → %s, sin reclamar ni enviar nada', async (_n, config, motivo) => {
       const { service, exceptions, templates } = build({ config });
 
@@ -183,6 +234,36 @@ describe('MirrorAlertService', () => {
       });
       expect(exceptions.reclamarAviso).not.toHaveBeenCalled();
       expect(templates.sendTemplate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['no hay nadie en la lista', []],
+      ['la única persona está en pausa', [persona({ isActive: false })]],
+      [
+        'solo hay «Solo recordatorios» (es un escalamiento, no un sustituto)',
+        [RESPALDO],
+      ],
+      ['nadie marcó este aviso', [persona({ syncAlerts: false })]],
+    ])(
+      '%s → SIN_DESTINO, sin reclamar ni enviar nada',
+      async (_n, destinatarios) => {
+        const { service, exceptions, templates } = build({ destinatarios });
+
+        await expect(service.avisar(ORG, AHORA)).resolves.toEqual({
+          enviado: false,
+          motivo: 'SIN_DESTINO',
+        });
+        expect(exceptions.reclamarAviso).not.toHaveBeenCalled();
+        expect(templates.sendTemplate).not.toHaveBeenCalled();
+      },
+    );
+
+    it('🏢 la lista se lee SOLO de esa clínica, y solo las activas', async () => {
+      const { service, prisma } = build();
+      await service.avisar(ORG, AHORA);
+      expect(prisma.syncAlertRecipient.findMany.mock.calls[0][0]).toMatchObject(
+        { where: { organizationId: ORG, isActive: true } },
+      );
     });
 
     it('sin la plantilla aprobada: SIN_PLANTILLA, y tampoco se toca ninguna fila', async () => {
@@ -210,7 +291,7 @@ describe('MirrorAlertService', () => {
         ],
       });
 
-      await expect(service.avisar(ORG, AHORA)).resolves.toEqual({
+      await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
         enviado: true,
         citas: 3,
         recordatorios: 0,
@@ -220,7 +301,7 @@ describe('MirrorAlertService', () => {
       expect(templates.sendTemplate).toHaveBeenCalledTimes(1);
     });
 
-    it('🔒 sale por la clínica y hacia el número de ESA clínica, con la plantilla del aviso', async () => {
+    it('🔒 sale por la clínica y hacia el número de la persona de la lista, con la plantilla del aviso', async () => {
       const { service, templates } = build();
 
       await service.avisar(ORG, AHORA);
@@ -247,7 +328,8 @@ describe('MirrorAlertService', () => {
         bodyParams: string[];
       };
       expect(bodyParams).toHaveLength(3);
-      expect(bodyParams[0]).toBe('1 cita');
+      // Solo el número: la plantilla aprobada dice «{{1}} cita(s)».
+      expect(bodyParams[0]).toBe('1');
       expect(bodyParams[1]).toMatch(/Dr\(a\)\. Ana Ruiz/);
       // 15:00 UTC = 10:00 en Bogotá (la zona por defecto).
       expect(bodyParams[1]).toMatch(/10:00/);
@@ -360,7 +442,7 @@ describe('MirrorAlertService', () => {
         reclamos: [true, false, true],
       });
 
-      await expect(service.avisar(ORG, AHORA)).resolves.toEqual({
+      await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
         enviado: true,
         citas: 2,
         recordatorios: 0,
@@ -368,12 +450,12 @@ describe('MirrorAlertService', () => {
       expect(
         (templates.sendTemplate.mock.calls[0][0] as { bodyParams: string[] })
           .bodyParams[0],
-      ).toBe('2 citas');
+      ).toBe('2');
     });
   });
 
   describe('resultado del envío', () => {
-    it('✅ salió: deja constancia de que se avisó, en cada excepción', async () => {
+    it('✅ salió: deja constancia de que se avisó, en cada excepción y con el NOMBRE (nunca el número)', async () => {
       const { service, exceptions } = build({
         excepciones: [excepcion({ id: 'a' }), excepcion({ id: 'b' })],
       });
@@ -384,6 +466,30 @@ describe('MirrorAlertService', () => {
         ['a', 'AVISADA'],
         ['b', 'AVISADA'],
       ]);
+      expect(exceptions.anotar.mock.calls[0][4]).toBe(
+        'Aviso por WhatsApp a Karen Muñoz.',
+      );
+      expect(JSON.stringify(exceptions.anotar.mock.calls)).not.toMatch(
+        /3001112233/,
+      );
+    });
+
+    it('🩺 anota en la fila de la persona el último envío (con su wamid, para leer si se entregó)', async () => {
+      const { service, prisma } = build();
+      await service.avisar(ORG, AHORA);
+      expect(prisma.syncAlertRecipient.updateMany).toHaveBeenCalledWith({
+        where: { id: 'r-1' },
+        data: { lastSentAt: AHORA, lastWamid: 'wamid.1' },
+      });
+    });
+
+    it('devuelve cómo le fue a cada persona, para la alerta técnica', async () => {
+      const { service } = build();
+      await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
+        destinatarios: [
+          { id: 'r-1', nombre: 'Karen Muñoz', phone: '573001112233', ok: true },
+        ],
+      });
     });
 
     it('❌ no salió: se DEVUELVE la reclamación (con lo que tenía antes) y no se dice que se avisó', async () => {
@@ -401,10 +507,10 @@ describe('MirrorAlertService', () => {
         envio: { success: false, error: 'template-not-configured' },
       });
 
-      await expect(service.avisar(ORG, AHORA)).resolves.toEqual({
+      await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
         enviado: false,
         motivo: 'ENVIO_FALLIDO',
-        detalle: 'template-not-configured',
+        detalle: 'falta registrar la plantilla en Configuración',
       });
 
       expect(exceptions.devolverAviso.mock.calls).toEqual([
@@ -437,7 +543,7 @@ describe('MirrorAlertService', () => {
         ],
       });
 
-      await expect(service.avisar(ORG, AHORA)).resolves.toEqual({
+      await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
         enviado: true,
         citas: 1,
         recordatorios: 0,
@@ -446,32 +552,34 @@ describe('MirrorAlertService', () => {
     });
   });
   describe('recordatorios: nadie tomó la excepción (§12 #14)', () => {
-    const RESPALDO = '573009998877';
     const olvidada = (over: Record<string, unknown> = {}) =>
       excepcion({
         notifiedSeverity: 'MEDIA',
         notifiedAt: new Date(AHORA.getTime() - 31 * 60_000),
         ...over,
       });
-    const conRespaldo = { ...CONFIG, agendadorRespaldoWhatsapp: RESPALDO };
+    const conRespaldo = [persona(), RESPALDO];
     const destinatarios = (t: ReturnType<typeof build>['templates']) =>
       t.sendTemplate.mock.calls.map(
         (c) => (c[0] as { recipientId: string }).recipientId,
       );
 
-    it('avisada hace 31 min y nadie la tomó: recordatorio al agendador Y al respaldo, con la MISMA plantilla', async () => {
+    it('avisada hace 31 min y nadie la tomó: recordatorio a quien recibe avisos Y a «Solo recordatorios», con la MISMA plantilla', async () => {
       const { service, templates, exceptions } = build({
         excepciones: [olvidada()],
-        config: conRespaldo,
+        destinatarios: conRespaldo,
       });
 
-      await expect(service.avisar(ORG, AHORA)).resolves.toEqual({
+      await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
         enviado: true,
         citas: 0,
         recordatorios: 1,
       });
 
-      expect(destinatarios(templates)).toEqual(['573001112233', RESPALDO]);
+      expect(destinatarios(templates)).toEqual([
+        '573001112233',
+        '573009998877',
+      ]);
       for (const c of templates.sendTemplate.mock.calls) {
         const arg = c[0] as { kind: string; bodyParams: string[] };
         expect(arg.kind).toBe('SYNC_EXCEPTION_ALERT');
@@ -486,13 +594,11 @@ describe('MirrorAlertService', () => {
         'RECORDADA',
         null,
         null,
-        expect.stringMatching(
-          /Recordatorio 1 de 2 .*al agendador y al respaldo/,
-        ),
+        'Recordatorio 1 de 2 por WhatsApp a Karen Muñoz y Coordinación: nadie la había tomado.',
       ]);
     });
 
-    it('sin número de respaldo: el recordatorio va solo al agendador', async () => {
+    it('sin nadie en «Solo recordatorios»: el recordatorio va a quien recibió el aviso', async () => {
       const { service, templates, exceptions } = build({
         excepciones: [olvidada()],
       });
@@ -500,19 +606,7 @@ describe('MirrorAlertService', () => {
       await service.avisar(ORG, AHORA);
 
       expect(destinatarios(templates)).toEqual(['573001112233']);
-      expect(exceptions.anotar.mock.calls[0][4]).toMatch(/al agendador:/);
-    });
-
-    it('un respaldo igual al agendador no duplica el mensaje', async () => {
-      const { service, templates } = build({
-        excepciones: [olvidada()],
-        config: {
-          ...CONFIG,
-          agendadorRespaldoWhatsapp: CONFIG.agendadorWhatsapp,
-        },
-      });
-      await service.avisar(ORG, AHORA);
-      expect(templates.sendTemplate).toHaveBeenCalledTimes(1);
+      expect(exceptions.anotar.mock.calls[0][4]).toMatch(/a Karen Muñoz:/);
     });
 
     it('el segundo recordatorio dice «2 de 2»', async () => {
@@ -529,7 +623,7 @@ describe('MirrorAlertService', () => {
     it('tras el último recordatorio no se insiste: queda la bandeja', async () => {
       const { service, templates } = build({
         excepciones: [olvidada({ reminderCount: 2 })],
-        config: conRespaldo,
+        destinatarios: conRespaldo,
       });
       await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
         motivo: 'NADA_QUE_AVISAR',
@@ -546,37 +640,56 @@ describe('MirrorAlertService', () => {
       });
     });
 
-    it('si falla SOLO el respaldo: el agendador ya lo recibió, no se devuelve nada y se dice en el historial', async () => {
-      const { service, exceptions } = build({
+    it('si falla SOLO una persona: los demás lo recibieron, no se devuelve nada y el historial dice a quién no le salió', async () => {
+      const { service, exceptions, prisma } = build({
         excepciones: [olvidada()],
-        config: conRespaldo,
-        envios: [{ success: true }, { success: false, error: 'meta-400' }],
+        destinatarios: conRespaldo,
+        envios: [
+          { success: true, wamid: 'wamid.k' },
+          {
+            success: false,
+            error: JSON.stringify({
+              error: { message: 'Invalid parameter', code: 100 },
+            }),
+          },
+        ],
       });
 
       await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
         enviado: true,
         recordatorios: 1,
+        destinatarios: [
+          { id: 'r-1', ok: true },
+          { id: 'r-2', ok: false, error: 'Invalid parameter (código 100)' },
+        ],
       });
       expect(exceptions.devolverAviso).not.toHaveBeenCalled();
-      expect(exceptions.anotar.mock.calls[0][4]).toMatch(
-        /al respaldo no salió/,
+      expect(exceptions.anotar.mock.calls[0][4]).toBe(
+        'Recordatorio 1 de 2 por WhatsApp a Karen Muñoz: nadie la había tomado. No le salió a Coordinación.',
       );
+      expect(prisma.syncAlertRecipient.updateMany).toHaveBeenCalledWith({
+        where: { id: 'r-2' },
+        data: {
+          lastError: 'Invalid parameter (código 100)',
+          lastErrorAt: AHORA,
+        },
+      });
     });
 
-    it('si falla el envío al agendador: se devuelve (con su cuenta) y NO se intenta el respaldo', async () => {
+    it('si no le sale a NADIE: se devuelve (con su cuenta) y no se anota como recordada', async () => {
       const previo = new Date(AHORA.getTime() - 31 * 60_000);
       const { service, exceptions, templates } = build({
         excepciones: [olvidada({ notifiedAt: previo, reminderCount: 1 })],
-        config: conRespaldo,
+        destinatarios: conRespaldo,
         envio: { success: false, error: 'whatsapp-inactive' },
       });
 
-      await expect(service.avisar(ORG, AHORA)).resolves.toEqual({
+      await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
         enviado: false,
         motivo: 'ENVIO_FALLIDO',
-        detalle: 'whatsapp-inactive',
+        detalle: 'el WhatsApp de la clínica está apagado',
       });
-      expect(templates.sendTemplate).toHaveBeenCalledTimes(1);
+      expect(templates.sendTemplate).toHaveBeenCalledTimes(2);
       expect(exceptions.devolverAviso.mock.calls[0][0]).toEqual({
         id: 'ex-1',
         notifiedAt: previo,
@@ -586,13 +699,13 @@ describe('MirrorAlertService', () => {
       expect(exceptions.anotar).not.toHaveBeenCalled();
     });
 
-    it('avisos nuevos y recordatorios en la misma vuelta van en mensajes APARTE: el nuevo, solo al agendador y sin la marca', async () => {
+    it('avisos nuevos y recordatorios en la misma vuelta van en mensajes APARTE: el nuevo, solo a «Avisos y recordatorios» y sin la marca', async () => {
       const { service, templates, exceptions } = build({
         excepciones: [excepcion({ id: 'nueva' }), olvidada({ id: 'vieja' })],
-        config: conRespaldo,
+        destinatarios: conRespaldo,
       });
 
-      await expect(service.avisar(ORG, AHORA)).resolves.toEqual({
+      await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
         enviado: true,
         citas: 1,
         recordatorios: 1,
@@ -604,7 +717,7 @@ describe('MirrorAlertService', () => {
       expect(envios.map((e) => e.recipientId)).toEqual([
         '573001112233',
         '573001112233',
-        RESPALDO,
+        '573009998877',
       ]);
       expect(envios[0].bodyParams[2]).not.toMatch(/RECORDATORIO/);
       expect(envios[1].bodyParams[2]).toMatch(/^RECORDATORIO/);
@@ -613,17 +726,231 @@ describe('MirrorAlertService', () => {
         ['vieja', 'RECORDADA'],
       ]);
     });
+  });
 
-    it('el respaldo solo no basta: sin agendador no hay aviso (es un segundo destinatario, no un sustituto)', async () => {
-      const { service, templates } = build({
-        excepciones: [olvidada()],
-        config: { ...conRespaldo, agendadorWhatsapp: null },
+  describe('📣 varias personas (docs/PLAN_AVISOS_AGENDADORES.md)', () => {
+    const karen = persona();
+    const ana = persona({
+      id: 'r-3',
+      phone: '573005550103',
+      user: {
+        email: 'ana@hsvp.co',
+        role: 'BOOKING_AGENT',
+        agentProfile: { fullName: 'Ana García', epsId: null, doctorId: null },
+      },
+    });
+    const sura = persona({
+      id: 'r-4',
+      phone: '573005550104',
+      user: {
+        email: 'sura@hsvp.co',
+        role: 'BOOKING_AGENT',
+        agentProfile: {
+          fullName: 'Jeisson Rojas',
+          epsId: 'eps-sura',
+          doctorId: null,
+        },
+      },
+    });
+    const envios = (t: ReturnType<typeof build>['templates']) =>
+      t.sendTemplate.mock.calls.map(
+        (c) => c[0] as { recipientId: string; bodyParams: string[] },
+      );
+
+    it('cada persona recibe UN mensaje con el resumen, y el historial las nombra a todas', async () => {
+      const { service, templates, exceptions } = build({
+        excepciones: [excepcion({ id: 'a' }), excepcion({ id: 'b' })],
+        destinatarios: [karen, ana],
       });
-      await expect(service.avisar(ORG, AHORA)).resolves.toEqual({
-        enviado: false,
-        motivo: 'SIN_DESTINO',
+
+      await service.avisar(ORG, AHORA);
+
+      expect(
+        envios(templates).map((e) => [e.recipientId, e.bodyParams[0]]),
+      ).toEqual([
+        ['573001112233', '2'],
+        ['573005550103', '2'],
+      ]);
+      expect(exceptions.anotar.mock.calls[0][4]).toBe(
+        'Aviso por WhatsApp a Karen Muñoz y Ana García.',
+      );
+    });
+
+    it('🎯 un agendador acotado a una EPS recibe SOLO lo suyo, y su cuenta es la suya (N3)', async () => {
+      const { service, templates } = build({
+        excepciones: [
+          excepcion({ id: 'a', epsId: 'eps-sura' }),
+          excepcion({ id: 'b', epsId: 'eps-salud' }),
+          excepcion({ id: 'c', epsId: 'eps-salud' }),
+        ],
+        destinatarios: [karen, sura],
+      });
+
+      await service.avisar(ORG, AHORA);
+
+      expect(
+        envios(templates).map((e) => [e.recipientId, e.bodyParams[0]]),
+      ).toEqual([
+        ['573001112233', '3'],
+        ['573005550104', '1'],
+      ]);
+    });
+
+    it('N4: lo que por alcance no le cabe a nadie les llega a todos (mejor un mensaje de más que un caso perdido)', async () => {
+      const { service, templates, exceptions } = build({
+        excepciones: [excepcion({ id: 'a', epsId: null })],
+        destinatarios: [sura],
+      });
+
+      await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
+        enviado: true,
+        citas: 1,
+      });
+      expect(envios(templates).map((e) => e.recipientId)).toEqual([
+        '573005550104',
+      ]);
+      expect(exceptions.anotar.mock.calls[0][4]).toMatch(/Jeisson Rojas/);
+    });
+
+    it('una persona en pausa no recibe nada (la consulta trae solo las activas)', async () => {
+      const { service, templates } = build({
+        destinatarios: [
+          karen,
+          persona({ id: 'r-9', phone: '573000000009', isActive: false }),
+        ],
+      });
+      await service.avisar(ORG, AHORA);
+      expect(envios(templates).map((e) => e.recipientId)).toEqual([
+        '573001112233',
+      ]);
+    });
+
+    it('si a quien le tocaba un caso no le sale, ese caso se devuelve aunque otros sí hayan salido', async () => {
+      const { service, exceptions } = build({
+        excepciones: [
+          excepcion({ id: 'a', epsId: 'eps-sura' }),
+          excepcion({ id: 'b', epsId: 'eps-salud' }),
+        ],
+        // Solo Jeisson (acotado a Sura) recibe el aviso de la sincronización.
+        destinatarios: [
+          sura,
+          persona({ id: 'r-5', phone: '573000000005', syncAlerts: false }),
+        ],
+        envio: { success: false, error: 'meta-400' },
+      });
+
+      await expect(service.avisar(ORG, AHORA)).resolves.toMatchObject({
+        motivo: 'ENVIO_FALLIDO',
+      });
+      expect(
+        exceptions.devolverAviso.mock.calls.map(
+          (c) => (c[0] as { id: string }).id,
+        ),
+      ).toEqual(['a', 'b']);
+    });
+  });
+
+  describe('«Probar» (N9)', () => {
+    it('manda la plantilla del aviso con el texto de PRUEBA, anota la salud y deja constancia con el número enmascarado', async () => {
+      const { service, templates, prisma } = build();
+
+      await expect(
+        service.probar(ORG, 'r-1', 'admin@hsvp.co', AHORA),
+      ).resolves.toEqual({ success: true });
+
+      const envio = templates.sendTemplate.mock.calls[0][0] as {
+        kind: string;
+        recipientId: string;
+        bodyParams: string[];
+      };
+      expect(envio.kind).toBe('SYNC_EXCEPTION_ALERT');
+      expect(envio.recipientId).toBe('573001112233');
+      expect(envio.bodyParams[0]).toBe('0');
+      expect(envio.bodyParams.join(' ')).toMatch(/PRUEBA/);
+      expect(prisma.syncAlertRecipient.updateMany).toHaveBeenCalledWith({
+        where: { id: 'r-1' },
+        data: { lastSentAt: AHORA, lastWamid: 'wamid.1' },
+      });
+      const auditoria = (
+        prisma.syncAudit.create.mock.calls[0][0] as {
+          data: Record<string, string>;
+        }
+      ).data;
+      expect(auditoria).toMatchObject({
+        organizationId: ORG,
+        direction: 'CONFIG',
+        entityType: 'SyncAlertRecipient',
+        op: 'ALERT_TEST',
+        outcome: 'OK',
+      });
+      expect(auditoria.detail).toMatch(/Karen Muñoz \(•••2233\)/);
+      expect(auditoria.detail).toMatch(/admin@hsvp\.co/);
+      expect(auditoria.detail).not.toMatch(/3001112233/);
+    });
+
+    it('🏢 busca a la persona DENTRO de la clínica', async () => {
+      const { service, prisma } = build();
+      await service.probar(ORG, 'r-1', 'x', AHORA);
+      expect(
+        prisma.syncAlertRecipient.findFirst.mock.calls[0][0],
+      ).toMatchObject({
+        where: { id: 'r-1', organizationId: ORG },
+      });
+    });
+
+    it('si ya no está en la lista, lo dice y no envía', async () => {
+      const { service, templates } = build();
+      await expect(service.probar(ORG, 'r-otra', 'x', AHORA)).resolves.toEqual({
+        success: false,
+        error: expect.stringMatching(/ya no está en la lista/),
       });
       expect(templates.sendTemplate).not.toHaveBeenCalled();
+    });
+
+    it('⏱️ una prueba cada 5 minutos por persona: el compare-and-set sobre lastTestAt decide', async () => {
+      const { service, templates, prisma } = build({ pruebaGanada: 0 });
+      await expect(service.probar(ORG, 'r-1', 'x', AHORA)).resolves.toEqual({
+        success: false,
+        error: expect.stringMatching(/espera 5 minutos/),
+      });
+      expect(templates.sendTemplate).not.toHaveBeenCalled();
+      expect(
+        prisma.syncAlertRecipient.updateMany.mock.calls[0][0],
+      ).toMatchObject({
+        where: {
+          id: 'r-1',
+          organizationId: ORG,
+          OR: [
+            { lastTestAt: null },
+            { lastTestAt: { lt: new Date(AHORA.getTime() - 5 * 60_000) } },
+          ],
+        },
+        data: { lastTestAt: AHORA },
+      });
+    });
+
+    it('si Meta la rechaza: dice por qué, lo anota en la fila y la constancia queda como ERROR', async () => {
+      const { service, prisma } = build({
+        envio: { success: false, error: 'template-not-configured' },
+      });
+      await expect(service.probar(ORG, 'r-1', 'x', AHORA)).resolves.toEqual({
+        success: false,
+        error: 'No salió: falta registrar la plantilla en Configuración.',
+      });
+      expect(prisma.syncAlertRecipient.updateMany).toHaveBeenCalledWith({
+        where: { id: 'r-1' },
+        data: {
+          lastError: 'falta registrar la plantilla en Configuración',
+          lastErrorAt: AHORA,
+        },
+      });
+      expect(
+        (
+          prisma.syncAudit.create.mock.calls[0][0] as {
+            data: { outcome: string };
+          }
+        ).data.outcome,
+      ).toBe('ERROR');
     });
   });
 });
@@ -653,8 +980,27 @@ describe('MirrorAlertService — pedidos de pacientes', () => {
     ...over,
   });
 
+  const AGENDADORA = {
+    id: 'r-1',
+    label: null,
+    phone: '573001113575',
+    mode: 'AVISOS',
+    syncAlerts: true,
+    patientRequestAlerts: true,
+    isActive: true,
+    user: {
+      email: 'karen@hsvp.co',
+      role: 'BOOKING_AGENT',
+      agentProfile: { fullName: 'Karen Muñoz', epsId: null, doctorId: null },
+    },
+  };
+
   const build = (
-    opts: { excepciones?: unknown[]; plantilla?: unknown } = {},
+    opts: {
+      excepciones?: unknown[];
+      plantilla?: unknown;
+      destinatarios?: unknown[];
+    } = {},
   ) => {
     const prisma = {
       syncException: {
@@ -668,11 +1014,13 @@ describe('MirrorAlertService — pedidos de pacientes', () => {
         findUnique: jest.fn(async () => ({
           enabled: true,
           conflictAlertsEnabled: true,
-          agendadorWhatsapp: '573001113575',
-          agendadorRespaldoWhatsapp: null,
           lastHeartbeatAt: AHORA,
           lastHisReachable: true,
         })),
+      },
+      syncAlertRecipient: {
+        findMany: jest.fn(async () => opts.destinatarios ?? [AGENDADORA]),
+        updateMany: jest.fn(async () => ({ count: 1 })),
       },
       doctorProfile: {
         findMany: jest.fn(async () => [
@@ -707,12 +1055,12 @@ describe('MirrorAlertService — pedidos de pacientes', () => {
     return { service, prisma, exceptions, templates };
   };
 
-  it('la cita en 1 h y media: sale con PATIENT_REQUEST_ALERT, al agendador y sin datos del paciente', async () => {
+  it('la cita en 1 h y media: sale con PATIENT_REQUEST_ALERT, a la lista y sin datos del paciente', async () => {
     const { service, templates, exceptions } = build();
 
-    await expect(service.avisarPedidosDePacientes(ORG, AHORA)).resolves.toEqual(
-      { enviado: true, citas: 1, recordatorios: 0 },
-    );
+    await expect(
+      service.avisarPedidosDePacientes(ORG, AHORA),
+    ).resolves.toMatchObject({ enviado: true, citas: 1, recordatorios: 0 });
     expect(exceptions.reclamarAviso).toHaveBeenCalledTimes(1);
     const envio = (templates.sendTemplate.mock.calls as unknown[][])[0][0] as {
       kind: string;
@@ -737,6 +1085,26 @@ describe('MirrorAlertService — pedidos de pacientes', () => {
       service.avisarPedidosDePacientes(ORG, AHORA),
     ).resolves.toMatchObject({ enviado: false, motivo: 'NADA_QUE_AVISAR' });
     expect(templates.sendTemplate).not.toHaveBeenCalled();
+  });
+
+  it('quien no marcó «Pedidos de pacientes» no los recibe', async () => {
+    const { service, templates } = build({
+      destinatarios: [
+        { ...AGENDADORA, patientRequestAlerts: false },
+        {
+          ...AGENDADORA,
+          id: 'r-2',
+          phone: '573005550102',
+          syncAlerts: false,
+        },
+      ],
+    });
+    await service.avisarPedidosDePacientes(ORG, AHORA);
+    expect(
+      (templates.sendTemplate.mock.calls as unknown[][]).map(
+        (c) => (c[0] as { recipientId: string }).recipientId,
+      ),
+    ).toEqual(['573005550102']);
   });
 
   it('sin la plantilla registrada no sale y lo dice (no usa la del otro aviso)', async () => {

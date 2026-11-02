@@ -2,11 +2,15 @@
  * Lo que cruza del servidor al cliente en la bandeja de excepciones de
  * sincronización (docs/PLAN_RASTREO_PACIENTE.md §10 #3, Fase 3). Todo es
  * serializable (fechas como ISO, sin bigint) y NADA lleva un dato personal sin
- * enmascarar ni el detalle técnico a quien no puede verlo.
+ * enmascarar ni el detalle técnico a quien no puede verlo. La única excepción son
+ * los celulares de la lista de avisos, completos SOLO para el administrador que la
+ * configura (`EstadoAvisos.destinatarios`).
  */
 import type {
   AccionExcepcion,
+  CoberturaAvisos,
   EstadoExcepcion,
+  ModoDestinatario,
   SeveridadExcepcion,
   TipoExcepcion,
 } from '@agenia/shared';
@@ -156,24 +160,82 @@ export interface ListaExcepciones {
   truncada: boolean;
 }
 
-/** ¿Están saliendo los avisos al agendador? Si no, por qué. */
+/**
+ * 📣 Cómo le fue a una persona con su último aviso (docs/PLAN_AVISOS_AGENDADORES.md
+ * §3.6): lo que Meta dijo del último envío, o el último rechazo.
+ */
+export interface EstadoEnvioDestinatario {
+  tono: 'ok' | 'pendiente' | 'error' | 'nunca';
+  texto: string;
+}
+
+/** Qué recibe una persona en «Configurar avisos». `NO` = no está en la lista. */
+export type RecibeAvisos = 'NO' | ModoDestinatario;
+
+/**
+ * Una fila de «Configurar avisos»: una persona del sistema (agendador o
+ * administrador de la clínica), esté o no en la lista, o un número sin cuenta.
+ */
+export interface DestinatarioVista {
+  /** La fila de la lista; `null` = persona del sistema que hoy no recibe. */
+  id: string | null;
+  /** `null` = número sin cuenta en AgenIA. */
+  userId: string | null;
+  nombre: string;
+  rol: 'ORG_ADMIN' | 'BOOKING_AGENT' | null;
+  /** «Todo», o su EPS y su médico si es un agendador acotado. `null` sin cuenta. */
+  alcance: string | null;
+  /** El nombre de un número sin cuenta. */
+  label: string | null;
+  /** Completo (solo lo ve el administrador). Para quien no recibe, el de su perfil, si lo hay. */
+  phone: string | null;
+  recibe: RecibeAvisos;
+  syncAlerts: boolean;
+  patientRequestAlerts: boolean;
+  /** `false` = en pausa: sigue en la lista pero no recibe. */
+  isActive: boolean;
+  estado: EstadoEnvioDestinatario;
+}
+
+/** Lo que manda la pantalla al guardar: SOLO quienes reciben (los demás salen de la lista). */
+export interface EntradaDestinatario {
+  /** La fila, si ya existía (para un número sin cuenta es la única forma de reconocerlo). */
+  id?: string | null;
+  userId?: string | null;
+  label?: string | null;
+  phone: string;
+  mode: ModoDestinatario;
+  syncAlerts: boolean;
+  patientRequestAlerts: boolean;
+  isActive: boolean;
+}
+
+/** ¿Están saliendo los avisos de la bandeja? Si no, por qué, y a quién le llegan. */
 export interface EstadoAvisos {
+  /** Sale el aviso de las citas que no llegan al hospital. */
   salen: boolean;
   razon: string | null;
   alertasActivas: boolean;
   plantilla: boolean;
-  tieneNumero: boolean;
-  /** Hay un número de respaldo para los recordatorios (§12 #14). */
-  tieneRespaldo: boolean;
-  /** El número, solo para quien lo configura (ORG_ADMIN). */
-  numero: string | null;
-  /** El respaldo, solo para quien lo configura (ORG_ADMIN). */
-  respaldo: string | null;
   /**
    * 🙋 El aviso de pedidos de pacientes (2026-10-27): pidió cancelar y no confirmó,
-   * o avisó que no irá, con la cita a 24 h o menos. Usa el mismo número y su propia
-   * plantilla. `razonPacientes` dice por qué no sale; null si sale.
+   * o avisó que no irá, con la cita a 24 h o menos. Su propia plantilla.
+   * `razonPacientes` dice por qué no sale; null si sale.
    */
   plantillaPacientes: boolean;
   razonPacientes: string | null;
+  /** Cuántas personas reciben, en total y por aviso (lo de arriba de la pantalla). */
+  cobertura: CoberturaAvisos;
+  /** Si quien mira está en la lista, y cómo (el agendador ve solo lo suyo, §3.5). */
+  yo: {
+    recibe: boolean;
+    /** Enmascarado. */
+    numero: string | null;
+    modo: ModoDestinatario | null;
+    syncAlerts: boolean;
+    patientRequestAlerts: boolean;
+    enPausa: boolean;
+  };
+  /** La lista para configurarla: SOLO para el administrador; `null` para los demás. */
+  destinatarios: DestinatarioVista[] | null;
 }

@@ -4,7 +4,8 @@ import { getSession } from '@/lib/session';
 import { getTenantMirrorFlags } from '@/lib/mirror-flags';
 import { resolverActorBandeja } from '@/lib/bandeja/acceso';
 import { leerFiltros } from '@/lib/bandeja/filtros';
-import { estadoAvisos, listarExcepciones } from '@/lib/bandeja/servicio';
+import { listarExcepciones } from '@/lib/bandeja/servicio';
+import { estadoAvisos } from '@/lib/bandeja/avisos';
 import BandejaClient from './BandejaClient';
 
 type SearchParams = Record<string, string | string[] | undefined>;

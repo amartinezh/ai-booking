@@ -231,6 +231,32 @@ export type { RenglonVersionAgente } from './src/version-agente';
 
 export { citaFueraDeAlcance } from './src/alcance-agente';
 export type { AlcanceAgente } from './src/alcance-agente';
+export {
+  GRUPOS_AVISO,
+  MAX_DESTINATARIOS_AVISO,
+  MODOS_DESTINATARIO,
+  NOMBRE_GRUPO_AVISO,
+  PRUEBA_AVISO_CADA_MIN,
+  alcanceDeDestinatario,
+  coberturaAvisos,
+  destinatariosDelLote,
+  explicarFalloDeEnvio,
+  hayQuienRecibaElAviso,
+  nombreDeDestinatario,
+  nombresParaHistorial,
+  parametrosPruebaAviso,
+  problemaDeCobertura,
+  recibeClase,
+  recibeGrupo,
+  repartirLote,
+} from './src/avisos-destinatarios';
+export type {
+  ClaseAviso,
+  CoberturaAvisos,
+  DestinatarioAviso,
+  GrupoAviso,
+  ModoDestinatario,
+} from './src/avisos-destinatarios';
 export { derivarSync } from './src/sync-state';
 export {
   MENSAJE_OPERACION_APAGADA,

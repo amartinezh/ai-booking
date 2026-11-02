@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import BandejaClient from './BandejaClient';
-import type { EstadoAvisos, ExcepcionDetalle, ExcepcionVista, ListaExcepciones, MedicoFiltro } from '@/lib/bandeja/tipos';
+import type { DestinatarioVista, EstadoAvisos, ExcepcionDetalle, ExcepcionVista, ListaExcepciones, MedicoFiltro } from '@/lib/bandeja/tipos';
 
 const refresh = jest.fn();
 const push = jest.fn();
@@ -18,6 +18,7 @@ jest.mock('next/link', () => ({
 const aplicar = jest.fn();
 const detalle = jest.fn();
 const guardar = jest.fn();
+const probarAviso = jest.fn();
 const crearMedico = jest.fn();
 const prepararMensaje = jest.fn();
 const enviarMensaje = jest.fn();
@@ -28,6 +29,7 @@ jest.mock('@/app/actions/bandeja', () => ({
     aplicarAccionExcepcionAction: (...a: unknown[]) => aplicar(...a),
     detalleExcepcionAction: (...a: unknown[]) => detalle(...a),
     guardarAvisosAction: (...a: unknown[]) => guardar(...a),
+    probarAvisoAction: (...a: unknown[]) => probarAviso(...a),
 }));
 
 const fila = (over: Partial<ExcepcionVista> = {}): ExcepcionVista => ({
@@ -75,17 +77,40 @@ const lista = (filas: ExcepcionVista[], over: Partial<ListaExcepciones> = {}): L
 
 const medico = (over: Partial<MedicoFiltro> = {}): MedicoFiltro => ({ id: 'doc-1', nombre: 'Ana Ruiz', ...over });
 
+const cobertura = (personas = 1, recordatorios = personas): EstadoAvisos['cobertura'] => ({
+    personas,
+    porGrupo: {
+        SINCRONIZACION: { avisos: personas, recordatorios, todosAcotados: false },
+        PEDIDOS_PACIENTES: { avisos: personas, recordatorios, todosAcotados: false },
+    },
+});
+
 const avisosOk = (over: Partial<EstadoAvisos> = {}): EstadoAvisos => ({
     salen: true,
     razon: null,
     alertasActivas: true,
     plantilla: true,
-    tieneNumero: true,
-    tieneRespaldo: false,
-    numero: null,
-    respaldo: null,
     plantillaPacientes: true,
     razonPacientes: null,
+    cobertura: cobertura(),
+    yo: { recibe: false, numero: null, modo: null, syncAlerts: false, patientRequestAlerts: false, enPausa: false },
+    destinatarios: null,
+    ...over,
+});
+
+const destinatario = (over: Partial<DestinatarioVista> = {}): DestinatarioVista => ({
+    id: 'r-1',
+    userId: 'u-karen',
+    nombre: 'Karen Muñoz',
+    rol: 'BOOKING_AGENT',
+    alcance: 'Todo',
+    label: null,
+    phone: '573105550101',
+    recibe: 'AVISOS',
+    syncAlerts: true,
+    patientRequestAlerts: true,
+    isActive: true,
+    estado: { tono: 'ok', texto: 'Leído · jue, 29 de oct, 09:59 a. m.' },
     ...over,
 });
 
@@ -504,26 +529,61 @@ describe('BandejaClient — historial y detalle', () => {
     });
 });
 
-describe('BandejaClient — avisos al agendador', () => {
-    it('✅ cuando salen, lo dice', () => {
-        pintar([fila()]);
-        expect(screen.getByText('Los avisos por WhatsApp al agendador están activos')).toBeInTheDocument();
+describe('BandejaClient — avisos a los agendadores (docs/PLAN_AVISOS_AGENDADORES.md)', () => {
+    const LISTA = [
+        destinatario(),
+        destinatario({
+            id: null,
+            userId: 'u-ana',
+            nombre: 'Ana García',
+            alcance: 'EPS Sura',
+            phone: null,
+            recibe: 'NO',
+            estado: { tono: 'nunca', texto: '' },
+        }),
+        destinatario({
+            id: 'r-viejo',
+            userId: null,
+            nombre: 'Configurado antes',
+            rol: null,
+            alcance: null,
+            label: 'Configurado antes',
+            phone: '573128513575',
+            estado: { tono: 'error', texto: 'No le salió (lun, 2 de nov, 08:00 a. m.): no es un número de WhatsApp' },
+        }),
+    ];
+    const abrir = async (over: Partial<EstadoAvisos> = {}) => {
+        pintar([fila()], { puedeConfigurarAvisos: true, avisos: avisosOk({ destinatarios: LISTA, ...over }) });
+        await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
+    };
+
+    it('✅ cuando salen, lo dice y a cuántas personas llegan', () => {
+        pintar([fila()], { avisos: avisosOk({ cobertura: cobertura(3) }) });
+        expect(screen.getByText('Los avisos por WhatsApp a los agendadores están activos')).toBeInTheDocument();
+        expect(screen.getByText(/^Llegan a 3 personas\. Si una cita confirmada no llega al hospital/)).toBeInTheDocument();
     });
 
     it('🚦 el semáforo: verde cuando salen, ámbar cuando no', () => {
         const { unmount } = pintar([fila()]);
         expect(screen.getByRole('region', { name: 'Avisos al agendador' })).toHaveClass('bg-emerald-50');
-        expect(screen.getByRole('region', { name: 'Avisos al agendador' })).not.toHaveClass('bg-amber-50');
         unmount();
-        pintar([fila()], { avisos: avisosOk({ salen: false, razon: 'Falta el número.' }) });
+        pintar([fila()], { avisos: avisosOk({ salen: false, razon: 'Nadie recibe el aviso.' }) });
         expect(screen.getByRole('region', { name: 'Avisos al agendador' })).toHaveClass('bg-amber-50');
         expect(screen.getByRole('region', { name: 'Avisos al agendador' })).not.toHaveClass('bg-emerald-50');
     });
 
     it('🚨 cuando NO salen, dice por qué y que las excepciones solo están en la bandeja', () => {
-        pintar([fila()], { avisos: avisosOk({ salen: false, razon: 'Falta el número de WhatsApp del agendador.', tieneNumero: false }) });
-        expect(screen.getByText('Los avisos por WhatsApp al agendador NO están saliendo')).toBeInTheDocument();
-        expect(screen.getByText(/Falta el número de WhatsApp del agendador\. Mientras tanto las excepciones solo aparecen en esta bandeja/)).toBeInTheDocument();
+        pintar([fila()], { avisos: avisosOk({ salen: false, razon: 'Nadie recibe el aviso: agrega al menos a una persona en «Configurar avisos».' }) });
+        expect(screen.getByText('Los avisos por WhatsApp a los agendadores NO están saliendo')).toBeInTheDocument();
+        expect(screen.getByText(/Nadie recibe el aviso.*Mientras tanto las excepciones solo aparecen en esta bandeja/)).toBeInTheDocument();
+    });
+
+    it('menciona «Solo recordatorios» solo si alguien está en ese modo', () => {
+        const { unmount } = pintar([fila()], { avisos: avisosOk({ cobertura: cobertura(2, 3) }) });
+        expect(screen.getByText(/también a quienes están en «Solo recordatorios»/)).toBeInTheDocument();
+        unmount();
+        pintar([fila()], { avisos: avisosOk({ cobertura: cobertura(2, 2) }) });
+        expect(screen.queryByText(/también a quienes están en «Solo recordatorios»/)).not.toBeInTheDocument();
     });
 
     it('si no se pudo leer el estado de los avisos, la bandeja igual funciona', () => {
@@ -532,74 +592,139 @@ describe('BandejaClient — avisos al agendador', () => {
         expect(screen.getByRole('heading', { name: 'Cita que el hospital aún no tiene' })).toBeInTheDocument();
     });
 
-    it('🔒 quien no configura no ve el botón ni el formulario', () => {
-        pintar([fila()], { puedeConfigurarAvisos: false });
-        expect(screen.queryByRole('button', { name: 'Configurar avisos' })).not.toBeInTheDocument();
+    describe('lo que ve el agendador (§3.5)', () => {
+        it('🔒 no ve el botón de configurar', () => {
+            pintar([fila()], { puedeConfigurarAvisos: false });
+            expect(screen.queryByRole('button', { name: 'Configurar avisos' })).not.toBeInTheDocument();
+        });
+
+        it('si recibe: a qué número (enmascarado) y qué', () => {
+            pintar([fila()], {
+                avisos: avisosOk({ yo: { recibe: true, numero: '•••0101', modo: 'AVISOS', syncAlerts: true, patientRequestAlerts: true, enPausa: false } }),
+            });
+            expect(
+                screen.getByText('📱 Recibes estos avisos en tu WhatsApp (•••0101): citas que no llegan al hospital y pedidos de pacientes.'),
+            ).toBeInTheDocument();
+        });
+
+        it('si está en pausa o solo recibe recordatorios, lo dice', () => {
+            pintar([fila()], {
+                avisos: avisosOk({ yo: { recibe: true, numero: '•••0101', modo: 'SOLO_RECORDATORIOS', syncAlerts: true, patientRequestAlerts: false, enPausa: true } }),
+            });
+            expect(screen.getByText(/Estás en pausa: no recibes estos avisos.*citas que no llegan al hospital, solo los recordatorios\./)).toBeInTheDocument();
+        });
+
+        it('si no recibe: que se lo pida al administrador', () => {
+            pintar([fila()], { puedeConfigurarAvisos: false });
+            expect(screen.getByText(/No recibes estos avisos por WhatsApp\. Si los necesitas, pídeselo al administrador\./)).toBeInTheDocument();
+        });
     });
 
-    it('el administrador abre el formulario con el número actual y guarda', async () => {
-        pintar([fila()], { puedeConfigurarAvisos: true, avisos: avisosOk({ salen: false, razon: 'Los avisos por WhatsApp están apagados.', alertasActivas: false, numero: '573001234567' }) });
-        await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
+    describe('«Configurar avisos» (el administrador)', () => {
+        it('muestra a cada agendador con su celular, qué recibe y cómo le fue con el último aviso', async () => {
+            await abrir();
+            expect(screen.getByText('Agendadores y administradores')).toBeInTheDocument();
+            expect(screen.getByLabelText('Celular de Karen Muñoz')).toHaveValue('310 555 0101');
+            expect(screen.getByLabelText('Qué recibe Karen Muñoz')).toHaveValue('AVISOS');
+            expect(screen.getByText(/Último aviso: Leído · jue, 29 de oct/)).toBeInTheDocument();
+            expect(screen.getByText('Agendador · EPS Sura')).toBeInTheDocument();
+            // Quien no recibe no muestra las casillas.
+            expect(screen.getByLabelText('Qué recibe Ana García')).toHaveValue('NO');
+            expect(screen.queryByLabelText('Pedidos de pacientes (Ana García)')).not.toBeInTheDocument();
+            // El número sin cuenta, con su nombre editable y su error en rojo.
+            expect(screen.getByLabelText('Nombre de el número 1')).toHaveValue('Configurado antes');
+            expect(screen.getByText(/no es un número de WhatsApp/)).toHaveClass('text-red-700');
+        });
 
-        const campo = screen.getByLabelText('Celular del agendador (WhatsApp)');
-        expect(campo).toHaveValue('573001234567');
-        await userEvent.clear(campo);
-        await userEvent.type(campo, '300 111 2233');
-        await userEvent.click(screen.getByRole('checkbox'));
-        await userEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+        it('agrega a una agendadora, quita el número viejo, agrega uno sin cuenta y guarda la lista completa', async () => {
+            guardar.mockResolvedValue({ success: true, data: { activos: true, personas: 3 } });
+            await abrir();
 
-        await waitFor(() => expect(guardar).toHaveBeenCalledWith({ numero: '300 111 2233', respaldo: '', activos: true }));
-        expect(await screen.findByRole('status')).toHaveTextContent('Guardado.');
-        expect(refresh).toHaveBeenCalled();
-    });
+            await userEvent.selectOptions(screen.getByLabelText('Qué recibe Ana García'), 'SOLO_RECORDATORIOS');
+            await userEvent.type(screen.getByLabelText('Celular de Ana García'), '310 555 0103');
+            await userEvent.click(screen.getByLabelText('Pedidos de pacientes (Ana García)'));
+            await userEvent.click(screen.getByRole('button', { name: 'Quitar el número 1' }));
+            await userEvent.click(screen.getByRole('button', { name: '+ Agregar un número' }));
+            await userEvent.type(screen.getByLabelText('Nombre de el número 1'), 'Coordinación');
+            await userEvent.type(screen.getByLabelText('Celular de el número 1'), '320 999 8877');
+            await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
 
-    it('con los avisos ya activos, el formulario los muestra activos y guardar no los apaga', async () => {
-        pintar([fila()], { puedeConfigurarAvisos: true, avisos: avisosOk({ alertasActivas: true, numero: '573001234567' }) });
-        await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
-        expect(screen.getByRole('checkbox')).toBeChecked();
-        await userEvent.click(screen.getByRole('button', { name: 'Guardar' }));
-        await waitFor(() => expect(guardar).toHaveBeenCalledWith({ numero: '573001234567', respaldo: '', activos: true }));
-    });
+            await waitFor(() =>
+                expect(guardar).toHaveBeenCalledWith({
+                    activos: true,
+                    destinatarios: [
+                        { id: 'r-1', userId: 'u-karen', label: null, phone: '310 555 0101', mode: 'AVISOS', syncAlerts: true, patientRequestAlerts: true, isActive: true },
+                        { id: null, userId: 'u-ana', label: null, phone: '310 555 0103', mode: 'SOLO_RECORDATORIOS', syncAlerts: true, patientRequestAlerts: false, isActive: true },
+                        { id: null, userId: null, label: 'Coordinación', phone: '320 999 8877', mode: 'AVISOS', syncAlerts: true, patientRequestAlerts: true, isActive: true },
+                    ],
+                }),
+            );
+            expect(await screen.findByRole('status')).toHaveTextContent('Guardado.');
+            expect(refresh).toHaveBeenCalled();
+        });
 
-    it('§12 #14: el formulario trae el respaldo actual y lo guarda junto con el número', async () => {
-        pintar([fila()], { puedeConfigurarAvisos: true, avisos: avisosOk({ numero: '573001234567', respaldo: '573007654321', tieneRespaldo: true }) });
-        await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
-        const campo = screen.getByLabelText('Celular de respaldo (opcional)');
-        expect(campo).toHaveValue('573007654321');
-        await userEvent.clear(campo);
-        await userEvent.type(campo, '300 222 3344');
-        await userEvent.click(screen.getByRole('button', { name: 'Guardar' }));
-        await waitFor(() => expect(guardar).toHaveBeenCalledWith({ numero: '573001234567', respaldo: '300 222 3344', activos: true }));
-    });
+        it('«No recibe» saca a la persona de lo que se guarda; «En pausa» la deja apagada', async () => {
+            guardar.mockResolvedValue({ success: true, data: { activos: false, personas: 0 } });
+            await abrir();
+            await userEvent.click(screen.getByLabelText('En pausa (Karen Muñoz)'));
+            await userEvent.click(screen.getByRole('button', { name: 'Quitar el número 1' }));
+            await userEvent.click(screen.getByLabelText(/^Avisar por WhatsApp/));
+            await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+            await waitFor(() =>
+                expect(guardar).toHaveBeenCalledWith({
+                    activos: false,
+                    destinatarios: [expect.objectContaining({ userId: 'u-karen', isActive: false })],
+                }),
+            );
+        });
 
-    it('cuando salen, explica los recordatorios y menciona al respaldo solo si lo hay', () => {
-        const { unmount } = pintar([fila()], { avisos: avisosOk({ tieneRespaldo: true }) });
-        expect(screen.getByText(/se le recuerda \(hasta 2 veces\), también al número de respaldo/)).toBeInTheDocument();
-        unmount();
-        pintar([fila()], { avisos: avisosOk({ tieneRespaldo: false }) });
-        expect(screen.getByText(/se le recuerda \(hasta 2 veces\)\./)).toBeInTheDocument();
-    });
+        it('un error del servidor se muestra y no refresca', async () => {
+            guardar.mockResolvedValue({ success: false, error: 'Ana García: Escribe un celular colombiano válido.' });
+            await abrir();
+            await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+            expect(await screen.findByRole('alert')).toHaveTextContent('Ana García: Escribe un celular colombiano válido.');
+            expect(refresh).not.toHaveBeenCalled();
+        });
 
-    it('un número inválido muestra el error del servidor y no refresca', async () => {
-        guardar.mockResolvedValue({ success: false, error: 'Escribe un celular colombiano válido.' });
-        pintar([fila()], { puedeConfigurarAvisos: true });
-        await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
-        await userEvent.type(screen.getByLabelText('Celular del agendador (WhatsApp)'), '123');
-        await userEvent.click(screen.getByRole('button', { name: 'Guardar' }));
-        expect(await screen.findByRole('alert')).toHaveTextContent('Escribe un celular colombiano válido.');
-        expect(refresh).not.toHaveBeenCalled();
-    });
+        it('la cobertura se recalcula mientras se edita, y advierte «Solo recordatorios» sin primer aviso', async () => {
+            await abrir();
+            expect(screen.getByText(/^Llegan a 2 personas/)).toBeInTheDocument();
+            await userEvent.selectOptions(screen.getByLabelText('Qué recibe Karen Muñoz'), 'NO');
+            await userEvent.selectOptions(screen.getByLabelText('Qué recibe el número 1'), 'SOLO_RECORDATORIOS');
+            expect(screen.getByText(/^Llegan a 1 persona ·/)).toBeInTheDocument();
+            expect(screen.getByText(/Nadie recibe el primer aviso de «Citas que no llegan al hospital»/)).toBeInTheDocument();
+        });
 
-    it('si falta la plantilla, el formulario manda a Configuración', async () => {
-        pintar([fila()], { puedeConfigurarAvisos: true, avisos: avisosOk({ salen: false, razon: 'Falta la plantilla', plantilla: false }) });
-        await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
-        expect(screen.getByRole('link', { name: 'Configuración' })).toHaveAttribute('href', '/dashboard/configuracion');
-    });
+        it('«Probar» manda la prueba a ESA persona y dice cómo le fue', async () => {
+            probarAviso.mockResolvedValueOnce({ success: true, data: null }).mockResolvedValueOnce({ success: false, error: 'Ya se le mandó una prueba hace poco: espera 5 minutos.' });
+            await abrir();
+            await userEvent.click(screen.getByRole('button', { name: 'Probar Karen Muñoz' }));
+            expect(probarAviso).toHaveBeenCalledWith('r-1');
+            expect(await screen.findByText('Prueba enviada. Pídele que confirme que le llegó.')).toBeInTheDocument();
+            await userEvent.click(screen.getByRole('button', { name: 'Probar Karen Muñoz' }));
+            expect(await screen.findByText(/espera 5 minutos/)).toHaveAttribute('role', 'alert');
+        });
 
-    it('el aviso deja claro que es un teléfono personal y sin datos de pacientes', async () => {
-        pintar([fila()], { puedeConfigurarAvisos: true });
-        await userEvent.click(screen.getByRole('button', { name: 'Configurar avisos' }));
-        expect(screen.getByText(/teléfono personal.*sin datos de ningún paciente/)).toBeInTheDocument();
+        it('no se puede probar un número que aún no está guardado', async () => {
+            await abrir();
+            const celular = screen.getByLabelText('Celular de Karen Muñoz');
+            await userEvent.clear(celular);
+            await userEvent.type(celular, '300 000 0000');
+            expect(screen.getByRole('button', { name: 'Probar Karen Muñoz' })).toBeDisabled();
+            // Quien no está en la lista no tiene botón.
+            expect(screen.queryByRole('button', { name: 'Probar Ana García' })).not.toBeInTheDocument();
+        });
+
+        it('si falta una plantilla, manda a Configuración', async () => {
+            await abrir({ plantillaPacientes: false });
+            expect(screen.getByText(/Falta la plantilla «Aviso al agendador \(pedidos de pacientes\)»/)).toBeInTheDocument();
+            expect(screen.getByRole('link', { name: 'Configuración' })).toHaveAttribute('href', '/dashboard/configuracion');
+        });
+
+        it('deja claro que son teléfonos personales y sin datos de pacientes', async () => {
+            await abrir();
+            expect(screen.getByText(/teléfono personal.*sin datos de ningún paciente/)).toBeInTheDocument();
+        });
     });
 });
 

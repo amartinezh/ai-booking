@@ -106,7 +106,9 @@ model Organization {
   hisLookupRequests    HisLookupRequest[]
 
   // 🚨 Bandeja de excepciones de sincronización (Fase 3 del rastreo).
-  syncExceptions SyncException[]
+  syncExceptions      SyncException[]
+  // 📣 Quién recibe los avisos de la bandeja (docs/PLAN_AVISOS_AGENDADORES.md).
+  syncAlertRecipients SyncAlertRecipient[]
 
   // 📅 Días y horas sin citas por el asistente (Configuración › Días sin citas).
   bookingBlocks BookingBlock[]
@@ -701,6 +703,9 @@ model User {
 
   // Lotes de avisos masivos que este usuario armó (PLAN_AVISOS_MASIVOS.md)
   massNoticeBatches MassNoticeBatch[]
+
+  // Si recibe por WhatsApp los avisos de la Bandeja (docs/PLAN_AVISOS_AGENDADORES.md)
+  syncAlertRecipients SyncAlertRecipient[]
 
   // 🏢 TENANT ISOLATION
   organizationId String?
@@ -2601,12 +2606,11 @@ model HospitalMirrorConfig {
   // citas por el asistente de inmediato) u OFF (sus citas entran a AgenIA, pero
   // nada le sale al paciente hasta que alguien lo encienda en Médicos).
   autoHomologateWhatsappOn  Boolean @default(false)
-  // Número E.164 del agendador responsable: destino del aviso por WhatsApp
-  // (plantilla `SYNC_EXCEPTION_ALERT`).
+  // ⚠️ SIN USO desde 2026-11-02: los avisos van a la lista `SyncAlertRecipient`
+  // (docs/PLAN_AVISOS_AGENDADORES.md). La migración 20261102120000 copió estos dos
+  // números a esa lista; se conservan hasta borrarlos en una migración posterior (N12).
+  // Antes: el agendador (aviso y recordatorios) y el respaldo (solo recordatorios).
   agendadorWhatsapp         String?
-  // Número E.164 de RESPALDO: si nadie toma la excepción en la bandeja tras el
-  // aviso, los recordatorios salen al agendador Y a este número (plan del rastreo,
-  // §12 #14). Opcional: sin él, el recordatorio va solo al agendador.
   agendadorRespaldoWhatsapp String?
   // Correo del agendador. NO SE USA por decisión (plan del rastreo §12 #13,
   // 2026-09-21): el aviso es solo por WhatsApp y la API no tiene transporte de
@@ -3144,6 +3148,63 @@ model SyncException {
   /// La bandeja y la insignia del menú: activas de una clínica por gravedad.
   @@index([organizationId, status, severity])
   @@index([organizationId, appointmentStartAt])
+}
+
+/// Para qué recibe una persona los avisos de la Bandeja (docs/PLAN_AVISOS_AGENDADORES.md).
+enum SyncAlertRecipientMode {
+  /// El aviso y sus recordatorios.
+  AVISOS
+  /// Solo los recordatorios: se entera si nadie tomó el caso (el «respaldo» de antes).
+  SOLO_RECORDATORIOS
+}
+
+/// 📣 Quién recibe por WhatsApp los avisos de la Bandeja de sincronización
+/// (docs/PLAN_AVISOS_AGENDADORES.md, 2026-11-02). Una fila por persona: un usuario de
+/// la clínica (agendador o administrador) o un número suelto con nombre (un
+/// coordinador sin cuenta). Reemplaza a `HospitalMirrorConfig.agendadorWhatsapp` y
+/// `agendadorRespaldoWhatsapp`; el interruptor general sigue siendo
+/// `HospitalMirrorConfig.conflictAlertsEnabled`.
+model SyncAlertRecipient {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// La persona del sistema. Si se borra su cuenta, deja de recibir sola.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// El nombre de un número sin cuenta («Coordinación de citas»).
+  label  String?
+
+  /// Solo dígitos, con el 57: como lo espera el envío. Es un teléfono personal: se
+  /// enmascara en la bitácora, en el historial y en las alertas técnicas.
+  phone String
+
+  mode                 SyncAlertRecipientMode @default(AVISOS)
+  /// Citas que no llegan al hospital (`SYNC_EXCEPTION_ALERT`).
+  syncAlerts           Boolean                @default(true)
+  /// Pedidos de pacientes (`PATIENT_REQUEST_ALERT`).
+  patientRequestAlerts Boolean                @default(true)
+  /// Pausar sin borrar (vacaciones, incapacidad).
+  isActive             Boolean                @default(true)
+
+  /// La salud por persona: el último envío que Meta aceptó (su estado de entrega sale
+  /// de `WhatsappMessageLog` por el wamid) y el último rechazo, con su hora.
+  lastSentAt  DateTime?
+  lastWamid   String?
+  lastError   String?
+  lastErrorAt DateTime?
+  /// «Probar»: como mucho uno cada `PRUEBA_AVISO_CADA_MIN` por persona.
+  lastTestAt  DateTime?
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  /// Un mismo celular o una misma persona no reciben dos veces.
+  @@unique([organizationId, phone])
+  @@unique([organizationId, userId])
+  @@index([organizationId, isActive])
 }
 
 /// Historial de una excepción: append-only, una fila por cosa que pasó (la abrió el
