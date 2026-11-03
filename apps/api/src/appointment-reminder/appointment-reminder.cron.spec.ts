@@ -1,6 +1,6 @@
 import {
   AppointmentReminderCronService,
-  confirmadaPorElChatDentroDeLaVentana,
+  recordatorioDelChat,
   HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO,
 } from './appointment-reminder.cron';
 
@@ -388,6 +388,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
           skipped: 0,
           tooClose: 1,
           yaConfirmadas: 0,
+          enEspera: 0,
         });
         expect(chatbot.sendOutboundForOrg).toHaveBeenCalledTimes(1);
         const marcadas = prisma.appointment.update.mock.calls.map(
@@ -425,6 +426,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
           skipped: 0,
           tooClose: 1,
           yaConfirmadas: 0,
+          enEspera: 0,
         });
         expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
         expect(systemLog.event).toHaveBeenCalledWith(
@@ -446,6 +448,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         skipped: 0,
         tooClose: 0,
         yaConfirmadas: 0,
+        enEspera: 0,
       });
       expect(systemLog.event).not.toHaveBeenCalled();
     });
@@ -468,6 +471,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
           skipped: 0,
           tooClose: 0,
           yaConfirmadas: 1,
+          enEspera: 0,
         });
         expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
         expect(templates.sendTemplate).not.toHaveBeenCalled();
@@ -488,16 +492,61 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         await expect(service.runOnce()).resolves.toMatchObject({
           sent: 0,
           yaConfirmadas: 1,
+          enEspera: 0,
         });
       });
 
-      it('por el chat pero con más anticipación (el viernes para el martes): sí sale', async () => {
-        const { service } = build({
+      it('por el chat pero con más anticipación (el viernes para el martes): sale, pero no de noche', async () => {
+        // El reloj de estas pruebas está a las 5:00 a. m. en Bogotá: espera.
+        const { service, chatbot, prisma, systemLog } = build({
           eligibles: [agendada('WHATSAPP', '2026-08-28T14:00:00.000Z')],
+        });
+        await expect(service.runOnce()).resolves.toMatchObject({
+          sent: 0,
+          yaConfirmadas: 0,
+          enEspera: 1,
+        });
+        expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
+        expect(prisma.appointment.update).not.toHaveBeenCalled();
+        expect(systemLog.event).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: expect.stringContaining(
+              '1 del chat esperan su hora (12 h después de la confirmación, de 7:00 a 20:00)',
+            ),
+          }),
+        );
+
+        // A las 7:00 a. m. sí sale.
+        jest.setSystemTime(new Date('2026-09-01T12:00:00.000Z'));
+        await expect(service.runOnce()).resolves.toMatchObject({
+          sent: 1,
+          enEspera: 0,
+        });
+      });
+
+      // 2026-11-02: agendadas el sábado 31 de octubre para el martes 3 de noviembre
+      // (lunes festivo). En horas hábiles eran «poco antes» y ninguna recibía
+      // recordatorio; en horas reales, 3 días.
+      it('agendada por el chat el sábado para el martes sí recibe recordatorio (desde las 7:00 del día que entra en la ventana)', async () => {
+        jest.setSystemTime(new Date('2026-11-02T12:00:00.000Z')); // lunes 7:00 a. m.
+        const { service } = build({
+          eligibles: [
+            cita({
+              id: 'apt-sabado',
+              origin: 'WHATSAPP',
+              createdAt: new Date('2026-10-31T10:08:00.000Z'), // sábado 5:08 a. m.
+              scheduleSlot: {
+                startTime: new Date('2026-11-03T20:10:00.000Z'), // martes 3:10 p. m.
+                doctor: { fullName: 'Dr. Ruiz' },
+                service: { name: 'Medicina General' },
+              },
+            }),
+          ],
         });
         await expect(service.runOnce()).resolves.toMatchObject({
           sent: 1,
           yaConfirmadas: 0,
+          enEspera: 0,
         });
       });
 
@@ -510,6 +559,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
           await expect(service.runOnce()).resolves.toMatchObject({
             sent: 1,
             yaConfirmadas: 0,
+            enEspera: 0,
           });
         },
       );
@@ -785,6 +835,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         skipped: 0,
         tooClose: 0,
         yaConfirmadas: 0,
+        enEspera: 0,
       });
       expect(prisma.appointment.update).toHaveBeenCalledWith({
         where: { id: 'apt-1' },
@@ -807,6 +858,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         skipped: 0,
         tooClose: 0,
         yaConfirmadas: 0,
+        enEspera: 0,
       });
       expect(prisma.appointment.update).not.toHaveBeenCalled();
       expect(interactionLog.logReminderSent).toHaveBeenCalledWith(
@@ -834,6 +886,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         skipped: 0,
         tooClose: 0,
         yaConfirmadas: 0,
+        enEspera: 0,
       });
       expect(prisma.appointment.update).toHaveBeenCalledTimes(2);
     });
@@ -864,6 +917,7 @@ describe('AppointmentReminderCronService — el lote y el disparo manual', () =>
         skipped: 1,
         tooClose: 0,
         yaConfirmadas: 0,
+        enEspera: 0,
       });
       expect(chatbot.sendOutboundForOrg).not.toHaveBeenCalled();
     });
@@ -1524,84 +1578,122 @@ describe('AppointmentReminderCronService — alertas técnicas', () => {
   });
 });
 
-describe('confirmadaPorElChatDentroDeLaVentana', () => {
+describe('recordatorioDelChat', () => {
   const inicio = new Date('2026-10-27T17:00:00.000Z'); // martes 12:00 en Bogotá
   const apt = (origin: string | null, createdAt: string | null) => ({
     origin,
     createdAt: createdAt ? new Date(createdAt) : null,
     scheduleSlot: { startTime: inicio },
   });
+  // Lunes 26, 10:00 a. m. en Bogotá: de día.
+  const LUNES_10AM = new Date('2026-10-26T15:00:00.000Z');
+  const decidir = (
+    origin: string | null,
+    createdAt: string | null,
+    ahora = LUNES_10AM,
+    startTime = inicio,
+  ) =>
+    recordatorioDelChat(
+      { ...apt(origin, createdAt), scheduleSlot: { startTime } },
+      24,
+      ahora,
+      'America/Bogota',
+    );
 
-  it('agendada por WhatsApp minutos antes → sí', () => {
+  it('agendada por WhatsApp minutos antes → la confirmación hizo de recordatorio', () => {
     expect(
-      confirmadaPorElChatDentroDeLaVentana(
-        apt('WHATSAPP', '2026-10-27T13:00:00.000Z'),
-        24,
+      decidir(
+        'WHATSAPP',
+        '2026-10-27T13:00:00.000Z',
+        new Date('2026-10-27T13:10:00.000Z'),
       ),
-    ).toBe(true);
+    ).toBe('YA_CONFIRMADA');
   });
 
-  it('agendada el lunes a la misma hora → justo en el borde de 24 h hábiles → sí', () => {
-    expect(
-      confirmadaPorElChatDentroDeLaVentana(
-        apt('WHATSAPP', '2026-10-26T17:00:00.000Z'),
-        24,
-      ),
-    ).toBe(true);
-  });
-
-  it('agendada el viernes para el martes → no (el fin de semana no cuenta y quedan más de 24 h hábiles)', () => {
-    expect(
-      confirmadaPorElChatDentroDeLaVentana(
-        apt('WHATSAPP', '2026-10-23T17:00:00.000Z'),
-        24,
-      ),
-    ).toBe(false);
-  });
-
-  it('del hospital, del panel o sin origen → no', () => {
-    for (const origin of ['MIRROR', 'MANUAL', null]) {
-      expect(
-        confirmadaPorElChatDentroDeLaVentana(
-          apt(origin, '2026-10-27T13:00:00.000Z'),
-          24,
-        ),
-      ).toBe(false);
-    }
-  });
-
-  it('sin fecha de creación → no', () => {
-    expect(
-      confirmadaPorElChatDentroDeLaVentana(apt('WHATSAPP', null), 24),
-    ).toBe(false);
+  it('agendada 24 h antes (el lunes a la misma hora) → ya confirmada', () => {
+    expect(decidir('WHATSAPP', '2026-10-26T17:00:00.000Z')).toBe(
+      'YA_CONFIRMADA',
+    );
   });
 
   // 2026-10-28: agendadas con 24 a 26 horas, el recordatorio llegaba entre 12
   // minutos y 2 horas después de la confirmación.
-  it('agendada 26 horas antes → sí: el recordatorio llegaría 2 horas después de la confirmación', () => {
-    expect(
-      confirmadaPorElChatDentroDeLaVentana(
-        apt('WHATSAPP', '2026-10-26T15:00:00.000Z'), // lunes 10:00
-        24,
-      ),
-    ).toBe(true);
+  it('agendada 26 horas antes → ya confirmada', () => {
+    expect(decidir('WHATSAPP', '2026-10-26T15:00:00.000Z')).toBe(
+      'YA_CONFIRMADA',
+    );
   });
 
-  it(`agendada justo ${24 + HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO} horas hábiles antes → sí (el borde)`, () => {
+  it(`agendada justo ${24 + HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO} horas reales antes → ya confirmada (el borde); un minuto más, no`, () => {
+    // Martes 12:00 menos 36 h = domingo 25, 24:00 → lunes 00:00 (05:00 UTC).
+    expect(decidir('WHATSAPP', '2026-10-26T05:00:00.000Z')).toBe(
+      'YA_CONFIRMADA',
+    );
     expect(
-      confirmadaPorElChatDentroDeLaVentana(
-        apt('WHATSAPP', '2026-10-26T05:00:00.000Z'), // lunes 00:00
-        24,
+      decidir(
+        'WHATSAPP',
+        '2026-10-26T04:59:00.000Z',
+        new Date('2026-10-26T17:00:00.000Z'),
       ),
-    ).toBe(true);
+    ).toBe('ENVIAR');
   });
 
-  it('agendada el viernes a las 6 p. m. para el martes al mediodía → no: el recordatorio sale el lunes', () => {
+  it('agendada el viernes para el martes → se envía (de día, pasadas 12 h)', () => {
+    expect(decidir('WHATSAPP', '2026-10-23T17:00:00.000Z')).toBe('ENVIAR');
+  });
+
+  // 2026-11-02: en horas hábiles (sin sábados ni domingos) eran «poco antes».
+  it('agendada el sábado 31 de octubre para el martes 3 de noviembre → se envía', () => {
     expect(
-      confirmadaPorElChatDentroDeLaVentana(
-        apt('WHATSAPP', '2026-10-23T23:00:00.000Z'),
-        24,
+      decidir(
+        'WHATSAPP',
+        '2026-10-31T10:08:00.000Z', // sábado 5:08 a. m.
+        new Date('2026-11-02T12:00:00.000Z'), // lunes 7:00 a. m.
+        new Date('2026-11-03T20:10:00.000Z'), // martes 3:10 p. m.
       ),
-    ).toBe(false);
+    ).toBe('ENVIAR');
+  });
+
+  it('agendada el sábado para el lunes: no sale enseguida, espera 12 h desde la confirmación', () => {
+    const lunes9 = new Date('2026-10-26T14:00:00.000Z'); // lunes 9:00 a. m.
+    const creada = '2026-10-24T15:00:00.000Z'; // sábado 10:00 a. m.
+    expect(
+      decidir('WHATSAPP', creada, new Date('2026-10-24T15:15:00.000Z'), lunes9),
+    ).toBe('ESPERAR');
+    // Sábado 10:00 p. m.: ya pasaron 12 h, pero es de noche.
+    expect(
+      decidir('WHATSAPP', creada, new Date('2026-10-25T03:00:00.000Z'), lunes9),
+    ).toBe('ESPERAR');
+    // Domingo 7:00 a. m.: sale.
+    expect(
+      decidir('WHATSAPP', creada, new Date('2026-10-25T12:00:00.000Z'), lunes9),
+    ).toBe('ENVIAR');
+  });
+
+  it.each([
+    ['6:59 a. m.', '2026-10-26T11:59:00.000Z', 'ESPERAR'],
+    ['7:00 a. m.', '2026-10-26T12:00:00.000Z', 'ENVIAR'],
+    ['7:59 p. m.', '2026-10-27T00:59:00.000Z', 'ENVIAR'],
+    ['8:00 p. m.', '2026-10-27T01:00:00.000Z', 'ESPERAR'],
+  ])('a las %s en Bogotá → %s', (_h, ahora, esperado) => {
+    expect(
+      decidir(
+        'WHATSAPP',
+        '2026-10-23T17:00:00.000Z',
+        new Date(ahora),
+        new Date('2026-10-28T17:00:00.000Z'),
+      ),
+    ).toBe(esperado);
+  });
+
+  it('del hospital, del panel o sin origen → se envía como siempre, a cualquier hora', () => {
+    const noche = new Date('2026-10-27T08:00:00.000Z'); // 3:00 a. m.
+    for (const origin of ['MIRROR', 'MANUAL', null]) {
+      expect(decidir(origin, '2026-10-27T07:50:00.000Z', noche)).toBe('ENVIAR');
+    }
+  });
+
+  it('sin fecha de creación → se envía', () => {
+    expect(decidir('WHATSAPP', null)).toBe('ENVIAR');
   });
 });

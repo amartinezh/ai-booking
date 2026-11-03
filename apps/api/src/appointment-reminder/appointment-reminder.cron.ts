@@ -19,6 +19,7 @@ import {
   compuertasHis,
   loteDeRecordatoriosCaido,
   destinoDeContacto,
+  minutoLocal,
   normalizarAnticipacionRecordatorio,
   saludoPorHora,
 } from '@agenia/shared';
@@ -64,48 +65,91 @@ export const ORIGENES_AGENDADOS_POR_EL_PACIENTE = [
 ] as const;
 
 /**
- * 💬 Horas hábiles mínimas entre la confirmación del chat y el recordatorio
+ * 💬 Horas (reales) mínimas entre la confirmación del chat y el recordatorio
  * (2026-10-28): con menos, el recordatorio repite lo que el paciente acaba de leer.
  */
 export const HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO = 12;
 
 /**
- * 💬 ¿El paciente se la agendó por el chat tan poco antes que el recordatorio le
- * llegaría casi junto con la confirmación? Entonces la confirmación ya hizo de
- * recordatorio (2026-10-27: las 17 citas del chat del 26 y 27 de octubre
- * recibieron el recordatorio entre 2 y 26 minutos después de la confirmación, con
- * lo mismo; era una plantilla pagada y cada «gracias» del paciente se contestaba
- * con otro «¡Gracias por confirmar!»). Cuenta la ventana del recordatorio más
- * `HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO` (2026-10-28: las agendadas con 24 a
- * 26 horas lo recibían entre 12 minutos y 2 horas después de la confirmación).
- * La que se agendó con más anticipación sí lo recibe.
+ * 💬 Horario del recordatorio de una cita que el paciente se agendó por el chat,
+ * en la hora de la clínica (2026-11-02): lo que libera la espera de arriba puede
+ * caer de noche, y ahí se guarda hasta la mañana.
+ */
+export const HORARIO_RECORDATORIO_DEL_CHAT = {
+  desdeHora: 7,
+  hastaHora: 20,
+} as const;
+
+/**
+ * Qué hacer con el recordatorio de una cita: ENVIAR; YA_CONFIRMADA (se la agendó
+ * por el chat poco antes: la confirmación hizo de recordatorio, no se envía); o
+ * ESPERAR (todavía no: muy poco después de la confirmación, o de noche).
+ */
+export type RecordatorioDelChat = 'ENVIAR' | 'YA_CONFIRMADA' | 'ESPERAR';
+
+/**
+ * 💬 El recordatorio de una cita que el paciente se agendó por el chat.
+ *
+ *  - Se la agendó con la ventana del recordatorio más
+ *    `HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO` horas o menos de anticipación (con
+ *    24: 36 horas): la confirmación ya hizo de recordatorio, no se envía
+ *    (2026-10-27: las 17 citas del chat del 26 y 27 de octubre recibieron el
+ *    recordatorio entre 2 y 26 minutos después de la confirmación, con lo mismo;
+ *    2026-10-28: las agendadas con 24 a 26 horas, entre 12 minutos y 2 horas
+ *    después).
+ *  - Con más anticipación sí se envía, pero no antes de
+ *    `HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO` horas después de la confirmación
+ *    (una agendada el sábado para el lunes ya entra en la ventana al agendarla) y
+ *    solo de 7:00 a 20:00 en la hora de la clínica.
+ *
+ * Las horas son REALES (2026-11-02): antes se contaban hábiles, que no cuentan
+ * sábados ni domingos, y las 17 citas del chat agendadas el sábado 31 de octubre
+ * para el martes 3 de noviembre (con el lunes festivo) quedaron como «agendadas
+ * poco antes»: ninguna iba a recibir recordatorio.
  *
  * Solo las del chat: las del panel y las del hospital no le confirmaron nada al
- * paciente por este medio.
+ * paciente por este medio (ENVIAR, como siempre).
  */
-export function confirmadaPorElChatDentroDeLaVentana(
+export function recordatorioDelChat(
   apt: {
     origin?: string | null;
     createdAt?: Date | null;
     scheduleSlot: { startTime: Date };
   },
   businessHoursBefore: number,
-): boolean {
+  ahora: Date,
+  timeZone?: string,
+): RecordatorioDelChat {
   if (
     !apt.createdAt ||
     !(ORIGENES_AGENDADOS_POR_EL_PACIENTE as readonly string[]).includes(
       apt.origin ?? '',
     )
   ) {
-    return false;
+    return 'ENVIAR';
   }
-  return (
-    apt.scheduleSlot.startTime.getTime() <=
-    addBusinessHours(
-      apt.createdAt,
-      businessHoursBefore + HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO,
-    ).getTime()
-  );
+  const hora = 3_600_000;
+  const creada = apt.createdAt.getTime();
+  if (
+    apt.scheduleSlot.startTime.getTime() - creada <=
+    (businessHoursBefore + HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO) * hora
+  ) {
+    return 'YA_CONFIRMADA';
+  }
+  if (
+    ahora.getTime() - creada <
+    HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO * hora
+  ) {
+    return 'ESPERAR';
+  }
+  const minuto = minutoLocal(ahora, timeZone);
+  if (
+    minuto < HORARIO_RECORDATORIO_DEL_CHAT.desdeHora * 60 ||
+    minuto >= HORARIO_RECORDATORIO_DEL_CHAT.hastaHora * 60
+  ) {
+    return 'ESPERAR';
+  }
+  return 'ENVIAR';
 }
 
 @Injectable()
@@ -222,6 +266,8 @@ export class AppointmentReminderCronService
     tooClose: number;
     /** Agendadas por el chat poco antes: la confirmación hizo de recordatorio. */
     yaConfirmadas: number;
+    /** Del chat que esperan: muy poco después de la confirmación, o de noche. */
+    enEspera: number;
   }> {
     const start = Date.now();
     const now = new Date();
@@ -239,7 +285,14 @@ export class AppointmentReminderCronService
     );
     if (eligible.length === 0) {
       this.logger.debug('Sin citas elegibles en esta ventana.');
-      return { sent: 0, failed: 0, skipped: 0, tooClose: 0, yaConfirmadas: 0 };
+      return {
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+        tooClose: 0,
+        yaConfirmadas: 0,
+        enEspera: 0,
+      };
     }
 
     // ⏱️ Anticipación mínima de la clínica (/dashboard/configuracion, default 60
@@ -259,22 +312,35 @@ export class AppointmentReminderCronService
         ),
     );
     const tooClose = eligible.length - conAnticipacion.length;
-    // 💬 La que el paciente se agendó por el chat poco antes (la ventana más 12 h): la
-    // confirmación le acaba de decir lo mismo. Tampoco se marca, como las de
-    // arriba: si la mueven a una fecha más lejana, el recordatorio vuelve a salir.
-    const aEnviar = conAnticipacion.filter(
-      (apt) =>
-        !confirmadaPorElChatDentroDeLaVentana(
+    // 💬 La que el paciente se agendó por el chat poco antes (la ventana más 12 h, en
+    // horas reales): la confirmación le acaba de decir lo mismo. La que se agendó
+    // con más anticipación espera 12 h desde la confirmación y la mañana. Ninguna
+    // se marca, como las de arriba: se vuelven a mirar en la siguiente vuelta.
+    const decision = new Map(
+      conAnticipacion.map((apt) => [
+        apt,
+        recordatorioDelChat(
           apt,
           this.cfg.businessHoursBefore,
+          now,
+          apt.organization?.timezone ?? undefined,
         ),
+      ]),
     );
-    const yaConfirmadas = conAnticipacion.length - aEnviar.length;
+    const aEnviar = conAnticipacion.filter(
+      (apt) => decision.get(apt) === 'ENVIAR',
+    );
+    const yaConfirmadas = conAnticipacion.filter(
+      (apt) => decision.get(apt) === 'YA_CONFIRMADA',
+    ).length;
+    const enEspera = conAnticipacion.filter(
+      (apt) => decision.get(apt) === 'ESPERAR',
+    ).length;
     if (aEnviar.length === 0) {
       this.logger.debug(
-        `Sin recordatorios para enviar: ${tooClose} cita(s) empiezan antes de la anticipación mínima y ${yaConfirmadas} se agendaron por el chat poco antes.`,
+        `Sin recordatorios para enviar: ${tooClose} cita(s) empiezan antes de la anticipación mínima, ${yaConfirmadas} se agendaron por el chat poco antes y ${enEspera} del chat esperan su hora.`,
       );
-      if (tooClose > 0 || yaConfirmadas > 0) {
+      if (tooClose > 0 || yaConfirmadas > 0 || enEspera > 0) {
         await this.registrarLote(
           now,
           targetThreshold,
@@ -284,9 +350,17 @@ export class AppointmentReminderCronService
           0,
           tooClose,
           yaConfirmadas,
+          enEspera,
         );
       }
-      return { sent: 0, failed: 0, skipped: 0, tooClose, yaConfirmadas };
+      return {
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+        tooClose,
+        yaConfirmadas,
+        enEspera,
+      };
     }
 
     this.logger.log(`Procesando ${aEnviar.length} recordatorios pendientes.`);
@@ -332,9 +406,10 @@ export class AppointmentReminderCronService
       skipped,
       tooClose,
       yaConfirmadas,
+      enEspera,
     );
 
-    return { sent, failed, skipped, tooClose, yaConfirmadas };
+    return { sent, failed, skipped, tooClose, yaConfirmadas, enEspera };
   }
 
   /** Resumen del lote en el log y en SystemLog. */
@@ -347,6 +422,7 @@ export class AppointmentReminderCronService
     skipped: number,
     tooClose: number,
     yaConfirmadas = 0,
+    enEspera = 0,
   ): Promise<void> {
     const durationMs = Date.now() - start;
     const cerca =
@@ -357,19 +433,24 @@ export class AppointmentReminderCronService
       yaConfirmadas > 0
         ? `, ${yaConfirmadas} sin enviar porque se agendaron por el chat poco antes (la confirmación hizo de recordatorio)`
         : '';
+    const esperan =
+      enEspera > 0
+        ? `, ${enEspera} del chat esperan su hora (${HORAS_ENTRE_CONFIRMACION_Y_RECORDATORIO} h después de la confirmación, de ${HORARIO_RECORDATORIO_DEL_CHAT.desdeHora}:00 a ${HORARIO_RECORDATORIO_DEL_CHAT.hastaHora}:00)`
+        : '';
     this.logger.log(
-      `Resumen lote — enviados=${sent}, fallidos=${failed}, omitidos=${skipped}, muy cerca=${tooClose}, ya confirmadas=${yaConfirmadas} (${durationMs}ms).`,
+      `Resumen lote — enviados=${sent}, fallidos=${failed}, omitidos=${skipped}, muy cerca=${tooClose}, ya confirmadas=${yaConfirmadas}, en espera=${enEspera} (${durationMs}ms).`,
     );
 
     await this.systemLog.event({
       action: 'REMINDER_CRON_RUN',
-      message: `Recordatorios procesados: ${sent} enviados, ${failed} fallidos, ${skipped} omitidos${cerca}${confirmadas}.`,
+      message: `Recordatorios procesados: ${sent} enviados, ${failed} fallidos, ${skipped} omitidos${cerca}${confirmadas}${esperan}.`,
       metadata: {
         sent,
         failed,
         skipped,
         tooClose,
         yaConfirmadas,
+        enEspera,
         durationMs,
         businessHoursBefore: this.cfg.businessHoursBefore,
         windowFrom: now.toISOString(),
