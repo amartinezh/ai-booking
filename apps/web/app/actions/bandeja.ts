@@ -15,7 +15,13 @@ import {
     type RespuestaEnvio,
     type RespuestaRevision,
 } from '@/lib/bandeja/mensaje-paciente';
-import type { EntradaDestinatario, ExcepcionDetalle, PreparacionMensaje, Resultado } from '@/lib/bandeja/tipos';
+import type {
+    EntradaDestinatario,
+    EntradaHorarioAvisos,
+    ExcepcionDetalle,
+    PreparacionMensaje,
+    Resultado,
+} from '@/lib/bandeja/tipos';
 import { actorDeSesion, registrarActividad } from '@/lib/actividad/registrar';
 import { describirCita } from '@/lib/actividad/catalogo';
 import type { EstadoExcepcion } from '@agenia/shared';
@@ -67,10 +73,11 @@ export async function aplicarAccionExcepcionAction(entrada: {
     return r;
 }
 
-/** 📣 Guarda la lista de quién recibe los avisos (docs/PLAN_AVISOS_AGENDADORES.md). Solo el administrador. */
+/** 📣 Guarda la lista de quién recibe los avisos y cuándo salen (docs/PLAN_AVISOS_AGENDADORES.md). Solo el administrador. */
 export async function guardarAvisosAction(entrada: {
     activos: boolean;
     destinatarios: EntradaDestinatario[];
+    horario?: EntradaHorarioAvisos;
 }): Promise<Resultado<{ activos: boolean; personas: number }>> {
     const a = await actor();
     if (!a.ok) return error(a.error);

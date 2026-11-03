@@ -423,7 +423,13 @@ export class MirrorWatchdogService {
     if (fallo) {
       detalle = `El aviso reventó: ${getErrorMessage(fallo)}`;
     } else if (aviso && !aviso.enviado) {
-      if (aviso.motivo === 'YA_RECLAMADO') return; // otra réplica se ocupa
+      // Otra réplica se ocupa, o es fuera del horario laboral de la clínica (no es una
+      // falla, pero tampoco prueba que el aviso salga: ni se avisa ni se resuelve).
+      if (
+        aviso.motivo === 'YA_RECLAMADO' ||
+        aviso.motivo === 'FUERA_DE_HORARIO'
+      )
+        return;
       const motivo = cual.motivos[aviso.motivo];
       if (motivo) {
         detalle = aviso.detalle

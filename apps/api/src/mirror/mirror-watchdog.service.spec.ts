@@ -1659,6 +1659,13 @@ describe('MirrorWatchdogService — alertas técnicas', () => {
     },
   );
 
+  it('🕖 fuera del horario laboral de la clínica → ni avisa ni resuelve (no es falla, ni prueba que salga)', async () => {
+    const { alertas, revisar } = montar();
+    await revisar({ enviado: false, motivo: 'FUERA_DE_HORARIO' });
+    expect(alertas.avisar).not.toHaveBeenCalled();
+    expect(alertas.resolver).not.toHaveBeenCalled();
+  });
+
   it('otra réplica lo tomó → ni avisa ni resuelve', async () => {
     const { alertas, revisar } = montar();
     await revisar({ enviado: false, motivo: 'YA_RECLAMADO' });

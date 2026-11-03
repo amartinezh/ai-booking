@@ -850,6 +850,124 @@ describe('MirrorAlertService', () => {
     });
   });
 
+  describe('🕖 solo en horario laboral (docs/PLAN_AVISOS_AGENDADORES.md §8)', () => {
+    /** De lunes a sábado, de 7:00 a 17:00 en la clínica, sin domingos ni festivos. */
+    const LABORAL = {
+      ...CONFIG,
+      alertsOutsideHours: false,
+      alertsHoursFromMin: 420,
+      alertsHoursToMin: 1020,
+    };
+    const bogota = (isoLocal: string) => new Date(`${isoLocal}:00-05:00`);
+
+    it('sin elegir nada (o «a cualquier hora»): sale también de noche, como siempre', async () => {
+      const noche = bogota('2026-09-22T22:00');
+      for (const config of [CONFIG, { ...LABORAL, alertsOutsideHours: true }]) {
+        const { service, templates } = build({
+          config,
+          excepciones: [excepcion({ appointmentStartAt: inicio(30) })],
+        });
+        await expect(service.avisar(ORG, noche)).resolves.toMatchObject({
+          enviado: true,
+        });
+        expect(templates.sendTemplate).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it('dentro del horario (martes 10:00 a. m.): sale', async () => {
+      const { service, templates } = build({ config: LABORAL });
+      await expect(
+        service.avisar(ORG, bogota('2026-09-22T10:00')),
+      ).resolves.toMatchObject({ enviado: true });
+      expect(templates.sendTemplate).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['martes 10:00 p. m.', '2026-09-22T22:00'],
+      ['martes 6:59 a. m.', '2026-09-22T06:59'],
+      ['martes 5:00 p. m. (fin, excluido)', '2026-09-22T17:00'],
+      ['domingo 10:00 a. m.', '2026-09-20T10:00'],
+      ['lunes festivo (12 de octubre) 10:00 a. m.', '2026-10-12T10:00'],
+    ])(
+      'fuera del horario (%s): FUERA_DE_HORARIO, sin reclamar ni enviar ni leer la lista',
+      async (_n, t) => {
+        const { service, templates, exceptions, prisma } = build({
+          config: LABORAL,
+          excepciones: [
+            excepcion({ appointmentStartAt: bogota('2026-10-30T10:00') }),
+          ],
+        });
+        await expect(service.avisar(ORG, bogota(t))).resolves.toEqual({
+          enviado: false,
+          motivo: 'FUERA_DE_HORARIO',
+        });
+        expect(exceptions.reclamarAviso).not.toHaveBeenCalled();
+        expect(templates.sendTemplate).not.toHaveBeenCalled();
+        expect(prisma.syncAlertRecipient.findMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('los recordatorios también esperan al horario', async () => {
+      const olvidada = excepcion({
+        notifiedSeverity: 'MEDIA',
+        notifiedAt: bogota('2026-09-22T16:50'),
+        appointmentStartAt: bogota('2026-09-25T10:00'),
+      });
+      const { service, templates } = build({
+        config: LABORAL,
+        excepciones: [olvidada],
+      });
+      await expect(
+        service.avisar(ORG, bogota('2026-09-22T17:20')),
+      ).resolves.toMatchObject({ motivo: 'FUERA_DE_HORARIO' });
+      // Al día siguiente, al abrir el horario, sale el recordatorio pendiente.
+      await expect(
+        service.avisar(ORG, bogota('2026-09-23T07:00')),
+      ).resolves.toMatchObject({ enviado: true, recordatorios: 1 });
+      expect(
+        (templates.sendTemplate.mock.calls[0][0] as { bodyParams: string[] })
+          .bodyParams[2],
+      ).toMatch(/^RECORDATORIO 1 de 2/);
+    });
+
+    it('el costo, a propósito: un caso de la noche para una cita de las 6:30 a. m. ya no se avisa a las 7:00', async () => {
+      const temprana = excepcion({
+        appointmentStartAt: bogota('2026-09-23T06:30'),
+      });
+      const { service, templates } = build({
+        config: LABORAL,
+        excepciones: [temprana],
+      });
+      await expect(
+        service.avisar(ORG, bogota('2026-09-22T22:00')),
+      ).resolves.toMatchObject({ motivo: 'FUERA_DE_HORARIO' });
+      await expect(
+        service.avisar(ORG, bogota('2026-09-23T07:00')),
+      ).resolves.toMatchObject({ motivo: 'NADA_QUE_AVISAR' });
+      expect(templates.sendTemplate).not.toHaveBeenCalled();
+    });
+
+    it('la hora es la de la clínica: 7:30 en Bogotá son 6:30 en Ciudad de México', async () => {
+      const t = new Date('2026-09-22T12:30:00Z');
+      const bog = build({ config: LABORAL });
+      await expect(bog.service.avisar(ORG, t)).resolves.toMatchObject({
+        enviado: true,
+      });
+      const mex = build({ config: LABORAL, timezone: 'America/Mexico_City' });
+      await expect(mex.service.avisar(ORG, t)).resolves.toMatchObject({
+        motivo: 'FUERA_DE_HORARIO',
+      });
+    });
+
+    it('«Probar» sale a cualquier hora: es una prueba pedida a mano', async () => {
+      const { service, templates } = build({ config: LABORAL });
+      await expect(
+        service.probar(ORG, 'r-1', 'admin@hsvp.co', bogota('2026-09-20T23:00')),
+      ).resolves.toEqual({ success: true });
+      expect(templates.sendTemplate).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('«Probar» (N9)', () => {
     it('manda la plantilla del aviso con el texto de PRUEBA, anota la salud y deja constancia con el número enmascarado', async () => {
       const { service, templates, prisma } = build();

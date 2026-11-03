@@ -95,6 +95,7 @@ const avisosOk = (over: Partial<EstadoAvisos> = {}): EstadoAvisos => ({
     cobertura: cobertura(),
     yo: { recibe: false, numero: null, modo: null, syncAlerts: false, patientRequestAlerts: false, enPausa: false },
     destinatarios: null,
+    horario: { aCualquierHora: true, desde: '07:00', hasta: '17:00', texto: 'a cualquier hora', reanudaIso: null },
     ...over,
 });
 
@@ -657,6 +658,8 @@ describe('BandejaClient — avisos a los agendadores (docs/PLAN_AVISOS_AGENDADOR
                         { id: null, userId: 'u-ana', label: null, phone: '310 555 0103', mode: 'SOLO_RECORDATORIOS', syncAlerts: true, patientRequestAlerts: false, isActive: true },
                         { id: null, userId: null, label: 'Coordinación', phone: '320 999 8877', mode: 'AVISOS', syncAlerts: true, patientRequestAlerts: true, isActive: true },
                     ],
+                    // Sin tocar el horario, va el que había: nada cambia.
+                    horario: { aCualquierHora: true, desde: '07:00', hasta: '17:00' },
                 }),
             );
             expect(await screen.findByRole('status')).toHaveTextContent('Guardado.');
@@ -674,6 +677,7 @@ describe('BandejaClient — avisos a los agendadores (docs/PLAN_AVISOS_AGENDADOR
                 expect(guardar).toHaveBeenCalledWith({
                     activos: false,
                     destinatarios: [expect.objectContaining({ userId: 'u-karen', isActive: false })],
+                    horario: { aCualquierHora: true, desde: '07:00', hasta: '17:00' },
                 }),
             );
         });
@@ -724,6 +728,67 @@ describe('BandejaClient — avisos a los agendadores (docs/PLAN_AVISOS_AGENDADOR
         it('deja claro que son teléfonos personales y sin datos de pacientes', async () => {
             await abrir();
             expect(screen.getByText(/teléfono personal.*sin datos de ningún paciente/)).toBeInTheDocument();
+        });
+    });
+
+    describe('🕖 ¿Cuándo se envían? (§8)', () => {
+        const LABORAL = {
+            aCualquierHora: false,
+            desde: '07:00',
+            hasta: '17:00',
+            texto: 'de lunes a sábado, de 7:00 a. m. a 5:00 p. m., sin domingos ni festivos',
+            reanudaIso: null,
+        };
+
+        it('a cualquier hora (lo de siempre): el recuadro no dice nada del horario y el formulario lo trae marcado', async () => {
+            await abrir();
+            expect(screen.queryByText(/Solo en horario laboral:/)).not.toBeInTheDocument();
+            expect(screen.getByRole('radio', { name: /A cualquier hora/ })).toBeChecked();
+            expect(screen.queryByLabelText('Inicio del horario laboral')).not.toBeInTheDocument();
+        });
+
+        it('solo en horario laboral: el recuadro lo dice a todos, y fuera del horario, desde cuándo se avisa', () => {
+            const { unmount } = pintar([fila()], { avisos: avisosOk({ horario: LABORAL }) });
+            expect(screen.getByText(/🕖 Solo en horario laboral: de lunes a sábado, de 7:00 a\. m\. a 5:00 p\. m\., sin domingos ni festivos\.$/)).toBeInTheDocument();
+            unmount();
+            pintar([fila()], { avisos: avisosOk({ horario: { ...LABORAL, reanudaIso: '2026-11-03T12:00:00.000Z' } }) });
+            expect(screen.getByText(/Ahora es fuera del horario: lo que aparezca se avisa desde el mar, 3 de nov, 07:00/)).toBeInTheDocument();
+        });
+
+        it('se elige «Solo en horario laboral», se cambia el horario y se guarda con la lista', async () => {
+            guardar.mockResolvedValue({ success: true, data: { activos: true, personas: 2 } });
+            await abrir();
+            await userEvent.click(screen.getByRole('radio', { name: /Solo en horario laboral/ }));
+            expect(screen.getByLabelText('Inicio del horario laboral')).toHaveValue('07:00');
+            expect(screen.getByLabelText('Fin del horario laboral')).toHaveValue('17:00');
+            fireEvent.change(screen.getByLabelText('Inicio del horario laboral'), { target: { value: '06:30' } });
+            fireEvent.change(screen.getByLabelText('Fin del horario laboral'), { target: { value: '18:00' } });
+            expect(screen.getByText(/un caso de la noche para una cita de las 6:30 a\. m\. queda solo en esta bandeja/)).toBeInTheDocument();
+            await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+            await waitFor(() =>
+                expect(guardar).toHaveBeenCalledWith(
+                    expect.objectContaining({ horario: { aCualquierHora: false, desde: '06:30', hasta: '18:00' } }),
+                ),
+            );
+        });
+
+        it('un horario al revés se advierte antes de guardar (el servidor también lo rechaza)', async () => {
+            await abrir({ horario: LABORAL });
+            expect(screen.getByRole('radio', { name: /Solo en horario laboral/ })).toBeChecked();
+            fireEvent.change(screen.getByLabelText('Fin del horario laboral'), { target: { value: '06:00' } });
+            expect(screen.getByText('La hora de fin del horario laboral debe ser después de la de inicio.')).toBeInTheDocument();
+        });
+
+        it('volver a «A cualquier hora» guarda eso, conservando el horario escrito', async () => {
+            guardar.mockResolvedValue({ success: true, data: { activos: true, personas: 2 } });
+            await abrir({ horario: { ...LABORAL, desde: '08:00' } });
+            await userEvent.click(screen.getByRole('radio', { name: /A cualquier hora/ }));
+            await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+            await waitFor(() =>
+                expect(guardar).toHaveBeenCalledWith(
+                    expect.objectContaining({ horario: { aCualquierHora: true, desde: '08:00', hasta: '17:00' } }),
+                ),
+            );
         });
     });
 });

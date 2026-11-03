@@ -12,9 +12,14 @@
  * cambio y su constancia en la bitácora del espejo van en UNA transacción. Quién
  * recibe qué lo deciden las reglas de `@agenia/shared` (`avisos-destinatarios.ts`),
  * las mismas que usa la API al enviar.
+ *
+ * 🕖 Cuándo salen (§8): «A cualquier hora» o «Solo en horario laboral» (de lunes a
+ * sábado, sin domingos ni festivos), con el horario de la clínica. Se guarda junto con
+ * la lista y las reglas son las de `horario-avisos.ts`, las mismas de la API.
  */
 import type { PrismaClient } from '@agenia/database';
 import {
+  DEFAULT_TIMEZONE,
   MAX_DESTINATARIOS_AVISO,
   MODOS_DESTINATARIO,
   SYNC_AUDIT_DIRECTION,
@@ -22,10 +27,18 @@ import {
   coberturaAvisos,
   enmascararIdentificadorWhatsapp,
   hayQuienRecibaElAviso,
+  horaDelDiaATexto,
+  horarioAvisosDe,
+  leerHoraDelDia,
   nombreDeDestinatario,
   normalizePhoneToE164Co,
   problemaDeCobertura,
+  problemaDeHorarioAvisos,
+  proximaVentanaDeAvisos,
+  puedeAvisarAhora,
+  textoHorarioAvisos,
   type DestinatarioAviso,
+  type HorarioAvisos,
   type ModoDestinatario,
 } from '@agenia/shared';
 import { formatAppointmentCompact } from '../date';
@@ -35,8 +48,10 @@ import { MSG_NO_GUARDADA } from './servicio';
 import type {
   DestinatarioVista,
   EntradaDestinatario,
+  EntradaHorarioAvisos,
   EstadoAvisos,
   EstadoEnvioDestinatario,
+  HorarioAvisosVista,
   Resultado,
 } from './tipos';
 
@@ -58,6 +73,7 @@ export const MSG_PERSONA_AJENA =
   'Una de las personas ya no es de esta clínica o cambió de rol. Recarga la página.';
 export const MSG_SIN_NOMBRE = `Escribe el nombre de cada número sin cuenta (por ejemplo «Coordinación de citas»), de hasta ${MAX_ETIQUETA} letras.`;
 export const MSG_TOPE = `Como mucho ${MAX_DESTINATARIOS_AVISO} personas pueden recibir los avisos (las que están en pausa no cuentan).`;
+export const MSG_HORARIO_INVALIDO = 'Elige cuándo se envían los avisos: a cualquier hora o solo en horario laboral.';
 
 const ETIQUETA_MODO: Record<ModoDestinatario, string> = {
   AVISOS: 'avisos y recordatorios',
@@ -138,6 +154,7 @@ const comoDestinatario = (f: FilaLista): DestinatarioAviso => ({
 export async function estadoAvisos(
   db: Db,
   actor: ActorBandeja,
+  ahora: Date = new Date(),
 ): Promise<Resultado<EstadoAvisos>> {
   if (!actor.permisos.ver) return { success: false, error: SIN_PERMISOS };
   const org = actor.organizationId;
@@ -146,10 +163,16 @@ export async function estadoAvisos(
       where: { organizationId: org, kind, isActive: true },
       select: { id: true },
     });
-  const [config, plantilla, plantillaPacientes, filas] = await Promise.all([
+  const [config, plantilla, plantillaPacientes, filas, organizacion] = await Promise.all([
     db.hospitalMirrorConfig.findUnique({
       where: { organizationId: org },
-      select: { enabled: true, conflictAlertsEnabled: true },
+      select: {
+        enabled: true,
+        conflictAlertsEnabled: true,
+        alertsOutsideHours: true,
+        alertsHoursFromMin: true,
+        alertsHoursToMin: true,
+      },
     }),
     plantillaActiva('SYNC_EXCEPTION_ALERT'),
     plantillaActiva('PATIENT_REQUEST_ALERT'),
@@ -158,6 +181,7 @@ export async function estadoAvisos(
       orderBy: { createdAt: 'asc' },
       select: SELECT_FILA,
     }) as Promise<FilaLista[]>,
+    db.organization.findUnique({ where: { id: org }, select: { timezone: true } }),
   ]);
 
   const lista = filas.map(comoDestinatario);
@@ -203,8 +227,20 @@ export async function estadoAvisos(
       enPausa: !!mia && !mia.isActive,
     },
     destinatarios: actor.permisos.configurarAvisos ? await listaParaConfigurar(db, org, filas) : null,
+    horario: horarioParaVer(horarioAvisosDe(config), ahora, organizacion?.timezone || DEFAULT_TIMEZONE),
   };
   return { success: true, data: datos };
+}
+
+/** El horario como lo muestra la pantalla: los campos, la frase y, si ahora no se avisa, cuándo vuelve. */
+function horarioParaVer(h: HorarioAvisos, ahora: Date, zona: string): HorarioAvisosVista {
+  return {
+    aCualquierHora: h.aCualquierHora,
+    desde: horaDelDiaATexto(h.desdeMin),
+    hasta: horaDelDiaATexto(h.hastaMin),
+    texto: textoHorarioAvisos(h),
+    reanudaIso: puedeAvisarAhora(ahora, h, zona) ? null : proximaVentanaDeAvisos(ahora, h, zona).toISOString(),
+  };
 }
 
 /**
@@ -427,12 +463,29 @@ function leerEntradas(
   return { ok: true, filas };
 }
 
-/** La línea de la bitácora: quién entró, quién cambió, quién salió. Números enmascarados. */
+/**
+ * El horario que mandó la pantalla. Sin él (una pantalla de antes) no se toca el
+ * guardado: `horario: null`.
+ */
+function leerHorario(crudo: unknown): { ok: true; horario: HorarioAvisos | null } | { ok: false; error: string } {
+  if (crudo === undefined) return { ok: true, horario: null };
+  if (!crudo || typeof crudo !== 'object') return { ok: false, error: MSG_HORARIO_INVALIDO };
+  const h = crudo as Record<keyof EntradaHorarioAvisos, unknown>;
+  if (typeof h.aCualquierHora !== 'boolean') return { ok: false, error: MSG_HORARIO_INVALIDO };
+  const desdeMin = leerHoraDelDia(h.desde);
+  const hastaMin = leerHoraDelDia(h.hasta);
+  const problema = problemaDeHorarioAvisos(desdeMin, hastaMin);
+  if (problema) return { ok: false, error: problema };
+  return { ok: true, horario: { aCualquierHora: h.aCualquierHora, desdeMin: desdeMin as number, hastaMin: hastaMin as number } };
+}
+
+/** La línea de la bitácora: quién entró, quién cambió, quién salió, y el horario si cambió. Números enmascarados. */
 function describirCambios(
   activos: boolean,
   filas: FilaNueva[],
   existentes: (FilaLista & { nombre: string })[],
   quien: string,
+  horario: { antes: HorarioAvisos; despues: HorarioAvisos | null },
 ): string {
   const resumen = (f: Pick<FilaNueva, 'phone' | 'mode' | 'syncAlerts' | 'patientRequestAlerts' | 'isActive'>) =>
     [
@@ -454,20 +507,25 @@ function describirCambios(
     if (!quedan.has(e.id)) cambios.push(`−${e.nombre} (${enmascararIdentificadorWhatsapp(e.phone)})`);
   }
   const activas = filas.filter((f) => f.isActive).length;
+  const textoAntes = textoHorarioAvisos(horario.antes);
+  const textoDespues = horario.despues ? textoHorarioAvisos(horario.despues) : textoAntes;
+  const cambioHorario =
+    textoDespues !== textoAntes ? ` Horario: ${textoDespues} (antes: ${textoAntes}).` : '';
   return `Avisos de la bandeja ${activos ? 'activos' : 'apagados'}; ${activas} ${activas === 1 ? 'persona recibe' : 'personas reciben'}. ${
     cambios.length ? `Cambios: ${cambios.join('; ')}.` : 'Sin cambios en la lista.'
-  } (Desde el panel, por ${quien}.)`;
+  }${cambioHorario} (Desde el panel, por ${quien}.)`;
 }
 
 /**
  * Guarda la lista completa (solo ORG_ADMIN): quien llega recibe, quien no llega sale
  * de la lista. Valida contra las personas y filas REALES de la clínica: una persona
- * de otra clínica o una fila vieja se rechazan y nada cambia.
+ * de otra clínica o una fila vieja se rechazan y nada cambia. Con `horario`, también
+ * cuándo salen los avisos (§8), en la misma transacción.
  */
 export async function guardarAvisos(
   db: Db,
   actor: ActorBandeja,
-  entrada: { activos: unknown; destinatarios: unknown },
+  entrada: { activos: unknown; destinatarios: unknown; horario?: unknown },
 ): Promise<Resultado<{ activos: boolean; personas: number }>> {
   if (!actor.permisos.configurarAvisos) return { success: false, error: SIN_PERMISOS };
   if (typeof entrada?.activos !== 'boolean') {
@@ -477,15 +535,22 @@ export async function guardarAvisos(
   if (!Array.isArray(entrada.destinatarios) || entrada.destinatarios.length > MAX_FILAS) {
     return { success: false, error: MSG_LISTA_INVALIDA };
   }
+  const horarioLeido = leerHorario(entrada.horario);
+  if (!horarioLeido.ok) return { success: false, error: horarioLeido.error };
+  const horario = horarioLeido.horario;
   const org = actor.organizationId;
 
   try {
-    const [usuarios, existentesCrudas] = await Promise.all([
+    const [usuarios, existentesCrudas, configAntes] = await Promise.all([
       db.user.findMany({
         where: { organizationId: org, role: { in: [...ROLES_DESTINATARIO] } },
         select: { id: true, email: true, role: true, agentProfile: { select: { fullName: true } } },
       }),
       db.syncAlertRecipient.findMany({ where: { organizationId: org }, select: SELECT_FILA }) as Promise<FilaLista[]>,
+      db.hospitalMirrorConfig.findUnique({
+        where: { organizationId: org },
+        select: { alertsOutsideHours: true, alertsHoursFromMin: true, alertsHoursToMin: true },
+      }),
     ]);
     const existentes = existentesCrudas.map((f) => ({ ...f, nombre: nombreDeDestinatario(f) }));
     const leidas = leerEntradas(entrada.destinatarios, usuarios, existentes);
@@ -495,7 +560,16 @@ export async function guardarAvisos(
     return await db.$transaction(async (tx) => {
       const { count } = await tx.hospitalMirrorConfig.updateMany({
         where: { organizationId: org },
-        data: { conflictAlertsEnabled: activos },
+        data: {
+          conflictAlertsEnabled: activos,
+          ...(horario
+            ? {
+                alertsOutsideHours: horario.aCualquierHora,
+                alertsHoursFromMin: horario.desdeMin,
+                alertsHoursToMin: horario.hastaMin,
+              }
+            : {}),
+        },
       });
       if (count !== 1) return { success: false as const, error: MSG_SIN_ESPEJO };
 
@@ -548,7 +622,10 @@ export async function guardarAvisos(
           entityType: 'SyncAlertRecipient',
           op: 'ALERT_SETTINGS_CHANGE',
           outcome: 'OK',
-          detail: describirCambios(activos, filas, existentes, actor.email ?? actor.role),
+          detail: describirCambios(activos, filas, existentes, actor.email ?? actor.role, {
+            antes: horarioAvisosDe(configAntes),
+            despues: horario,
+          }),
         },
       });
       return {

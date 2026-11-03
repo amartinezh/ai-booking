@@ -1,6 +1,6 @@
 # Avisos por WhatsApp a todos los agendadores
 
-**Estado: FASE 1 CONSTRUIDA (2026-11-02), sin desplegar.** N1 … N12 aprobadas por el usuario el 2026-11-02, todas como se recomendaban. Despliegue: migración → API → web, seguidos (§3.7). Lo que sigue es la fase 2 (§7): agregar a los agendadores en Anserma y probar a cada uno.
+**Estado: FASE 1 EN PRODUCCIÓN (commit f4223e2, 2026-11-02); horario de los avisos (§8) construido el mismo día, sin commit.** N1 … N12 aprobadas por el usuario el 2026-11-02, todas como se recomendaban. Despliegue: migración → API → web, seguidos (§3.7). Lo que sigue es la fase 2 (§7): agregar a los agendadores en Anserma y probar a cada uno.
 
 **Cómo quedó (fase 1):** reglas en `packages/shared/src/avisos-destinatarios.ts`; tabla `SyncAlertRecipient` (migración `20261102120000_destinatarios_avisos`, con `lastTestAt` además de lo de §3.2); envío en `apps/api/src/mirror/mirror-alert.service.ts`; «Probar» en `apps/api/src/mirror/sync-alerts.controller.ts`; alerta técnica por persona con el tipo `AVISO_AGENDADOR_NO_SALE` y la clave `espejo:aviso-destinatario:<org>:<id>` (no un tipo nuevo `DESTINATARIO_FALLIDO`: es la misma falla, por persona); panel en `apps/web/lib/bandeja/avisos.ts` y `apps/web/app/dashboard/bandeja/PanelAvisos.tsx`. Verificado con Postgres 15 real: la migración (copia, unión al agendador, cero deriva), el envío por alcance y modo, el recordatorio, «Probar» con dos clics simultáneos y guardar con un número que pasa de una fila a otra.
 
@@ -181,7 +181,7 @@ En orden de magnitud son **10 a 30 avisos al mes por persona**; con 6 personas, 
 | N8 | Quién configura | Solo el administrador de la clínica, como hoy; el agendador ve su propio estado (§3.5) |
 | N9 | «Probar» | Con la plantilla real y el texto «PRUEBA…», uno cada 5 min por número, en la bitácora |
 | N10 | «1 cita cita(s)» | {{1}} pasa a ser solo el número (§3.8) |
-| N11 | Horario silencioso | No en esta entrega: hoy los avisos salen a cualquier hora porque hay citas a las 6:30 a. m. Queda para la fase 3 (§7) |
+| N11 | Horario silencioso | No en esta entrega: hoy los avisos salen a cualquier hora porque hay citas a las 6:30 a. m. Queda para la fase 3 (§7). **Hecho el 2026-11-02 por clínica, a pedido del usuario: §8.** |
 | N12 | Columnas viejas | Se copian y quedan sin uso; se borran en una migración posterior |
 
 ## 7. Fases
@@ -189,10 +189,22 @@ En orden de magnitud son **10 a 30 avisos al mes por persona**; con 6 personas, 
 1. **Varios destinatarios** (todo §3 menos la fase 3, incluido N10). Se prueba con Postgres 55433 y Meta de mentira: dos réplicas, una persona con número malo, un agendador acotado y la migración de los dos números de hoy.
 2. **Encender en Anserma:** el administrador agrega a los agendadores con su celular, «Probar» a cada uno y se mira una semana la columna de estado. Necesita de antes la plantilla `aviso_agendador_pacientes` aprobada.
 3. **Opcional, después:**
+   - **Horario por clínica:** hecho el 2026-11-02 (§8).
    - **Horario por persona** («solo de 6 a 19 h»), con el resumen pendiente a la mañana siguiente si el caso sigue abierto. Exige guardar por persona qué se le avisó.
    - **Telegram para el personal:** quien ya tenga su cuenta unida al asistente de soporte (`SupportBotConversation.chatId`) recibe ahí, gratis y sin plantilla. Espera a que el asistente esté conectado (pasos 7-10 de `docs/ASISTENTE_SOPORTE.md`).
 
-## 8. Riesgos
+## 8. Horario de los avisos (2026-11-02)
+
+Pedido del usuario: poder elegir que los avisos NO salgan fuera del horario común; en ese caso, solo de 7:00 a 17:00 (horario editable, ese por defecto) y nunca los domingos ni los festivos; todo desde el panel, sin dañar lo que ya funciona.
+
+- **Por clínica**, en «Configurar avisos»: «¿Cuándo se envían?» → «A cualquier hora» (lo de siempre) o «Solo en horario laboral», con «De» y «A» (cada 15 minutos). Vale para los dos avisos (citas que no llegan y pedidos de pacientes) y para todas las personas de la lista.
+- **Columnas** en `HospitalMirrorConfig` (migración `20261102180000_horario_avisos`): `alertsOutsideHours` (`true` por defecto: al desplegar nada cambia), `alertsHoursFromMin` (420) y `alertsHoursToMin` (1020), en minutos desde la medianoche de la clínica.
+- **Reglas** en `packages/shared/src/horario-avisos.ts`: `puedeAvisarAhora` (lunes a sábado, desde incluido y hasta excluido, sin domingos ni festivos de Colombia, en la zona de la clínica), `proximaVentanaDeAvisos` (para decir en pantalla desde cuándo se avisa) y la validación (fin después del inicio, al menos una hora).
+- **Envío** (`MirrorAlertService.avisarGrupo`): después de «apagados» y antes de leer la lista, fuera del horario devuelve `FUERA_DE_HORARIO` sin reclamar ni enviar nada; el vigilante no lo trata como falla (ni abre ni cierra alertas técnicas). En la primera vuelta del horario sale el aviso o el recordatorio pendiente, si el caso sigue abierto y la cita no ha pasado. Costo, dicho en la pantalla: un caso de la noche para una cita de las 6:30 a. m. queda solo en la bandeja.
+- **«Probar» no mira el horario**: es una prueba pedida a mano.
+- **Pantalla**: el recuadro de arriba dice a todos «🕖 Solo en horario laboral: …» y, fuera del horario, desde cuándo se avisa. Guardar manda el horario con la lista; una pantalla vieja (sin horario) no lo toca. La bitácora del espejo dice el horario nuevo y el anterior cuando cambia.
+
+## 9. Riesgos
 
 - **Más ruido:** seis personas con el mismo recordatorio. Lo atenúan «Solo recordatorios», las casillas por persona y que el primero que toma el caso en la bandeja apaga los recordatorios para todos.
 - **Celulares personales:** el número del agendador es un dato personal. Se enmascara en la bitácora y el historial y solo el administrador lo ve completo. Hay que avisarle a cada persona antes de agregarla: Meta espera que quien recibe haya aceptado, y «Probar» sirve de confirmación.

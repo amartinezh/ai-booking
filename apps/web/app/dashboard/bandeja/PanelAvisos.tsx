@@ -2,20 +2,24 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useId, useState, useTransition } from 'react';
 import {
     MAX_DESTINATARIOS_AVISO,
     UMBRALES_VIGILANTE,
     coberturaAvisos,
+    leerHoraDelDia,
     problemaDeCobertura,
+    problemaDeHorarioAvisos,
     type ModoDestinatario,
 } from '@agenia/shared';
 import { guardarAvisosAction, probarAvisoAction } from '@/app/actions/bandeja';
+import { formatAppointmentCompact } from '@/lib/date';
 import type {
     DestinatarioVista,
     EntradaDestinatario,
     EstadoAvisos,
     EstadoEnvioDestinatario,
+    HorarioAvisosVista,
     RecibeAvisos,
 } from '@/lib/bandeja/tipos';
 import { BOTON_PRIMARIO, BOTON_SECUNDARIO, CAMPO } from './estilos';
@@ -26,7 +30,8 @@ import { BOTON_PRIMARIO, BOTON_SECUNDARIO, CAMPO } from './estilos';
  * Arriba, si salen y a cuántas personas llegan; quien no configura ve además si él
  * los recibe (§3.5). El administrador abre «Configurar avisos»: la lista de
  * agendadores y administradores de la clínica, cada uno con su celular, qué recibe y
- * cómo le fue con el último aviso, y abajo los números sin cuenta.
+ * cómo le fue con el último aviso, abajo los números sin cuenta y, al final, cuándo
+ * se envían (a cualquier hora o solo en horario laboral, §8).
  *
  * La pantalla no decide nada: el servidor vuelve a validar todo al guardar (y la API,
  * al probar). Lo que se calcula aquí (la cobertura, la advertencia) usa las mismas
@@ -142,6 +147,7 @@ export default function PanelAvisos({ avisos, puedeConfigurar }: { avisos: Estad
                             ? `🙋 Si un paciente pidió cancelar y no confirmó, o avisó que no irá, se avisa cuando a la cita le faltan ${UMBRALES_VIGILANTE.urgenciaAltaHoras} horas o menos, y otra vez a ${UMBRALES_VIGILANTE.urgenciaCriticaHoras} horas.`
                             : `🙋 Pedidos de pacientes (pidió cancelar y no confirmó, avisó que no irá): no se avisan por WhatsApp. ${avisos.razonPacientes}`}
                     </p>
+                    <LineaHorario horario={avisos.horario} />
                     <MiEstado yo={avisos.yo} puedeConfigurar={puedeConfigurar} />
                 </div>
                 {puedeConfigurar && (
@@ -181,6 +187,19 @@ export default function PanelAvisos({ avisos, puedeConfigurar }: { avisos: Estad
     );
 }
 
+/** 🕖 §8: si solo salen en horario laboral, lo dice, y si ahora no es horario, cuándo saldrá lo pendiente. */
+function LineaHorario({ horario }: { horario: HorarioAvisosVista }) {
+    if (horario.aCualquierHora) return null;
+    return (
+        <p className="mt-1 text-sm leading-snug opacity-90">
+            🕖 Solo en horario laboral: {horario.texto}.
+            {horario.reanudaIso
+                ? ` Ahora es fuera del horario: lo que aparezca se avisa desde el ${formatAppointmentCompact(horario.reanudaIso)}.`
+                : ''}
+        </p>
+    );
+}
+
 /** §3.5: lo que cada quien sabe de sí mismo. El administrador que no recibe ya ve la lista. */
 function MiEstado({ yo, puedeConfigurar }: { yo: EstadoAvisos['yo']; puedeConfigurar: boolean }) {
     if (yo.recibe) {
@@ -214,6 +233,9 @@ function Editor({
     const router = useRouter();
     const [filas, setFilas] = useState<FilaEditable[]>(() => filasIniciales(destinatarios));
     const [activos, setActivos] = useState(avisos.alertasActivas);
+    const [aCualquierHora, setACualquierHora] = useState(avisos.horario.aCualquierHora);
+    const [desde, setDesde] = useState(avisos.horario.desde);
+    const [hasta, setHasta] = useState(avisos.horario.hasta);
     const [error, setError] = useState<string | null>(null);
     const [nuevas, setNuevas] = useState(0);
     const [guardando, iniciar] = useTransition();
@@ -224,6 +246,7 @@ function Editor({
     const reglas = comoReglas(filas);
     const cobertura = coberturaAvisos(reglas);
     const problema = problemaDeCobertura(reglas);
+    const problemaHorario = aCualquierHora ? null : problemaDeHorarioAvisos(leerHoraDelDia(desde), leerHoraDelDia(hasta));
     const activas = reglas.filter((r) => r.isActive).length;
     const personas = filas.filter((f) => f.userId);
     const sueltos = filas.filter((f) => !f.userId);
@@ -243,7 +266,7 @@ function Editor({
                 isActive: f.isActive,
             }));
         iniciar(async () => {
-            const r = await guardarAvisosAction({ activos, destinatarios: lista });
+            const r = await guardarAvisosAction({ activos, destinatarios: lista, horario: { aCualquierHora, desde, hasta } });
             if (!r.success) {
                 setError(r.error);
                 return;
@@ -341,6 +364,18 @@ function Editor({
                 </p>
             )}
 
+            <Horario
+                aCualquierHora={aCualquierHora}
+                desde={desde}
+                hasta={hasta}
+                problema={problemaHorario}
+                cambiar={(c) => {
+                    if (c.aCualquierHora !== undefined) setACualquierHora(c.aCualquierHora);
+                    if (c.desde !== undefined) setDesde(c.desde);
+                    if (c.hasta !== undefined) setHasta(c.hasta);
+                }}
+            />
+
             <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={activos} onChange={(e) => setActivos(e.target.checked)} />
                 Avisar por WhatsApp cuando una cita no llegue al hospital o un paciente pida algo con la cita cerca
@@ -366,6 +401,90 @@ function Editor({
                 {guardando ? 'Guardando…' : 'Guardar cambios'}
             </button>
         </div>
+    );
+}
+
+/** 🕖 «¿Cuándo se envían?» (§8): a cualquier hora, o solo de lunes a sábado en el horario laboral. */
+function Horario({
+    aCualquierHora,
+    desde,
+    hasta,
+    problema,
+    cambiar,
+}: {
+    aCualquierHora: boolean;
+    desde: string;
+    hasta: string;
+    problema: string | null;
+    cambiar: (c: { aCualquierHora?: boolean; desde?: string; hasta?: string }) => void;
+}) {
+    const nombre = useId();
+    return (
+        <fieldset className="space-y-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                ¿Cuándo se envían?
+            </legend>
+            <label className="flex items-start gap-2 text-sm">
+                <input
+                    type="radio"
+                    name={nombre}
+                    className="mt-1"
+                    checked={aCualquierHora}
+                    onChange={() => cambiar({ aCualquierHora: true })}
+                />
+                <span>
+                    A cualquier hora
+                    <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                        Apenas aparece el caso, también de noche, los domingos y los festivos.
+                    </span>
+                </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+                <input
+                    type="radio"
+                    name={nombre}
+                    className="mt-1"
+                    checked={!aCualquierHora}
+                    onChange={() => cambiar({ aCualquierHora: false })}
+                />
+                <span>
+                    Solo en horario laboral
+                    <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                        De lunes a sábado, nunca los domingos ni los festivos.
+                    </span>
+                </span>
+            </label>
+            {!aCualquierHora && (
+                <div className="space-y-2 pl-6">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <span>De</span>
+                        <input
+                            type="time"
+                            step={900}
+                            className={`${CAMPO} w-32`}
+                            aria-label="Inicio del horario laboral"
+                            value={desde}
+                            onChange={(e) => cambiar({ desde: e.target.value })}
+                        />
+                        <span>a</span>
+                        <input
+                            type="time"
+                            step={900}
+                            className={`${CAMPO} w-32`}
+                            aria-label="Fin del horario laboral"
+                            value={hasta}
+                            onChange={(e) => cambiar({ hasta: e.target.value })}
+                        />
+                    </div>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                        Lo que aparezca fuera del horario se avisa al empezar el siguiente, si el caso sigue abierto y la cita no ha
+                        pasado: un caso de la noche para una cita de las 6:30 a. m. queda solo en esta bandeja. «Probar» sale a
+                        cualquier hora.
+                    </p>
+                    {problema && <p className="text-xs font-medium text-amber-700 dark:text-amber-300">{problema}</p>}
+                </div>
+            )}
+        </fieldset>
     );
 }
 

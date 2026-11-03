@@ -250,6 +250,20 @@ export {
   recibeGrupo,
   repartirLote,
 } from './src/avisos-destinatarios';
+export {
+  HORARIO_AVISOS_MIN_MINUTOS,
+  HORARIO_AVISOS_POR_DEFECTO,
+  HORARIO_LABORAL_POR_DEFECTO,
+  horaDelDiaATexto,
+  horaDelDiaLegible,
+  horarioAvisosDe,
+  leerHoraDelDia,
+  problemaDeHorarioAvisos,
+  proximaVentanaDeAvisos,
+  puedeAvisarAhora,
+  textoHorarioAvisos,
+} from './src/horario-avisos';
+export type { HorarioAvisos } from './src/horario-avisos';
 export type {
   ClaseAviso,
   CoberturaAvisos,

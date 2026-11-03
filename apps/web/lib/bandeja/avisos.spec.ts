@@ -542,3 +542,116 @@ describe('guardarAvisos', () => {
     consola.mockRestore();
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 🕖 Cuándo salen (docs/PLAN_AVISOS_AGENDADORES.md §8)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('🕖 el horario de los avisos', () => {
+  const bogota = (isoLocal: string) => new Date(`${isoLocal}:00-05:00`);
+  const laboral = (db: any, over: Fila = {}) =>
+    Object.assign(db.hospitalMirrorConfig.filas[0], { alertsOutsideHours: false, alertsHoursFromMin: 420, alertsHoursToMin: 1020, ...over });
+  const horarioDe = async (db: any, ahora: Date, a: ActorBandeja = admin()) => ((await estadoAvisos(db, a, ahora)) as any).data.horario;
+
+  describe('estadoAvisos', () => {
+    it('sin elegir nada: a cualquier hora (lo de siempre), con 7:00 a 17:00 propuesto', async () => {
+      const db = mockDb();
+      sembrar(db);
+      expect(await horarioDe(db, bogota('2026-11-03T22:00'))).toEqual({
+        aCualquierHora: true,
+        desde: '07:00',
+        hasta: '17:00',
+        texto: 'a cualquier hora',
+        reanudaIso: null,
+      });
+    });
+
+    it('solo en horario laboral: la frase, y si ahora no se avisa, desde cuándo (también lo ve el agendador)', async () => {
+      const db = mockDb();
+      sembrar(db);
+      laboral(db);
+      expect(await horarioDe(db, bogota('2026-11-03T10:00'))).toMatchObject({
+        aCualquierHora: false,
+        texto: 'de lunes a sábado, de 7:00 a. m. a 5:00 p. m., sin domingos ni festivos',
+        reanudaIso: null,
+      });
+      expect((await horarioDe(db, bogota('2026-11-03T22:00'), agente())).reanudaIso).toBe(bogota('2026-11-04T07:00').toISOString());
+      // Lunes 2 de noviembre de 2026: festivo → el martes.
+      expect((await horarioDe(db, bogota('2026-11-02T10:00'))).reanudaIso).toBe(bogota('2026-11-03T07:00').toISOString());
+    });
+
+    it('usa la zona de la clínica', async () => {
+      const db = mockDb();
+      sembrar(db);
+      laboral(db);
+      db.organization.filas[0].timezone = 'America/Mexico_City';
+      // 7:30 en Bogotá = 6:30 en Ciudad de México.
+      expect((await horarioDe(db, bogota('2026-11-03T07:30'))).reanudaIso).not.toBeNull();
+    });
+  });
+
+  describe('guardarAvisos', () => {
+    const KAREN = entrada({ userId: 'u-karen' });
+
+    it('guarda «solo en horario laboral» con el horario, y la constancia lo dice', async () => {
+      const db = mockDb();
+      sembrar(db);
+      const r = await guardarAvisos(db, admin(), {
+        activos: true,
+        destinatarios: [KAREN],
+        horario: { aCualquierHora: false, desde: '07:00', hasta: '17:00' },
+      });
+      expect(r.success).toBe(true);
+      expect(db.hospitalMirrorConfig.filas[0]).toMatchObject({ alertsOutsideHours: false, alertsHoursFromMin: 420, alertsHoursToMin: 1020 });
+      expect(db.hospitalMirrorConfig.filas[1]).not.toHaveProperty('alertsOutsideHours');
+      expect(db.syncAudit.filas[0].detail).toMatch(
+        /Horario: de lunes a sábado, de 7:00 a\. m\. a 5:00 p\. m\., sin domingos ni festivos \(antes: a cualquier hora\)\. \(Desde el panel/,
+      );
+    });
+
+    it('con minutos, y de vuelta a «a cualquier hora» conservando el horario escrito', async () => {
+      const db = mockDb();
+      sembrar(db);
+      laboral(db);
+      await guardarAvisos(db, admin(), { activos: true, destinatarios: [KAREN], horario: { aCualquierHora: true, desde: '06:30', hasta: '18:15' } });
+      expect(db.hospitalMirrorConfig.filas[0]).toMatchObject({ alertsOutsideHours: true, alertsHoursFromMin: 390, alertsHoursToMin: 1095 });
+      expect(db.syncAudit.filas[0].detail).toMatch(/Horario: a cualquier hora \(antes: de lunes a sábado/);
+    });
+
+    it('el mismo horario no agrega nada a la constancia', async () => {
+      const db = mockDb();
+      sembrar(db);
+      laboral(db);
+      await guardarAvisos(db, admin(), { activos: true, destinatarios: [KAREN], horario: { aCualquierHora: false, desde: '07:00', hasta: '17:00' } });
+      expect(db.syncAudit.filas[0].detail).not.toMatch(/Horario:/);
+    });
+
+    it('una pantalla de antes (sin horario) no lo toca', async () => {
+      const db = mockDb();
+      sembrar(db);
+      laboral(db, { alertsHoursFromMin: 480 });
+      await guardarAvisos(db, admin(), { activos: true, destinatarios: [KAREN] });
+      expect(db.hospitalMirrorConfig.filas[0]).toMatchObject({ alertsOutsideHours: false, alertsHoursFromMin: 480, alertsHoursToMin: 1020 });
+      expect(db.syncAudit.filas[0].detail).not.toMatch(/Horario:/);
+    });
+
+    it.each([
+      ['no es un objeto', 'siempre', /Elige cuándo se envían/],
+      ['sin elegir el modo', { desde: '07:00', hasta: '17:00' }, /Elige cuándo se envían/],
+      ['una hora que no existe', { aCualquierHora: false, desde: '25:00', hasta: '17:00' }, /Escribe la hora/],
+      ['al revés', { aCualquierHora: false, desde: '17:00', hasta: '07:00' }, /después de la de inicio/],
+      ['de menos de una hora', { aCualquierHora: false, desde: '07:00', hasta: '07:30' }, /al menos una hora/],
+    ])('se rechaza un horario %s, y nada cambia', async (_n, horario, error) => {
+      const db = mockDb();
+      sembrar(db);
+      fila(db, { id: 'r-karen', userId: 'u-karen' });
+      const r = (await guardarAvisos(db, admin(), { activos: false, destinatarios: [], horario })) as { success: false; error: string };
+      expect(r.success).toBe(false);
+      expect(r.error).toMatch(error);
+      expect(db.syncAlertRecipient.filas).toHaveLength(1);
+      expect(db.hospitalMirrorConfig.filas[0]).toMatchObject({ conflictAlertsEnabled: true });
+      expect(db.hospitalMirrorConfig.filas[0]).not.toHaveProperty('alertsOutsideHours');
+      expect(db.syncAudit.filas).toHaveLength(0);
+    });
+  });
+});

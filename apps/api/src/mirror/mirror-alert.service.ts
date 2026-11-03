@@ -13,11 +13,13 @@ import {
   enmascararIdentificadorWhatsapp,
   explicarFalloDeEnvio,
   hayQuienRecibaElAviso,
+  horarioAvisosDe,
   nombreDeDestinatario,
   nombresParaHistorial,
   parametrosPlantillaAviso,
   parametrosPlantillaAvisoPaciente,
   parametrosPruebaAviso,
+  puedeAvisarAhora,
   repartirLote,
   requiereAviso,
   requiereRecordatorio,
@@ -46,6 +48,8 @@ import { getErrorMessage } from '../common/error-message.util';
  *    se silencian y el aviso deja de servir.
  *  · Una vez por gravedad (`requiereAviso`): vuelve a avisar solo si la cita se acercó.
  *  · Solo de lo que nadie ha tomado: si alguien ya se ocupa, avisar es ruido.
+ *  · Si la clínica lo pide, solo en su horario laboral (`puedeAvisarAhora`): de lunes
+ *    a sábado, sin festivos; lo de la noche sale al abrir el horario.
  *
  * ═══ A quién (2026-11-02, docs/PLAN_AVISOS_AGENDADORES.md) ═══
  * A una LISTA (`SyncAlertRecipient`), no a un número: usuarios de la clínica o números
@@ -151,6 +155,7 @@ export type ResultadoAviso =
       motivo:
         | 'NADA_QUE_AVISAR'
         | 'APAGADO'
+        | 'FUERA_DE_HORARIO'
         | 'SIN_DESTINO'
         | 'SIN_PLANTILLA'
         | 'YA_RECLAMADO'
@@ -291,10 +296,26 @@ export class MirrorAlertService {
         conflictAlertsEnabled: true,
         lastHeartbeatAt: true,
         lastHisReachable: true,
+        alertsOutsideHours: true,
+        alertsHoursFromMin: true,
+        alertsHoursToMin: true,
       },
     });
     if (!config?.enabled || !config.conflictAlertsEnabled) {
       return { enviado: false, motivo: 'APAGADO' };
+    }
+    // 🕖 «Solo en horario laboral» (docs/PLAN_AVISOS_AGENDADORES.md §8): fuera del
+    // horario de la clínica no se reclama ni se envía. Nada se pierde: el aviso (o el
+    // recordatorio) sale en la primera vuelta del horario si el caso sigue abierto y
+    // su cita no ha pasado.
+    const horario = horarioAvisosDe(config);
+    if (!horario.aCualquierHora) {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { timezone: true },
+      });
+      if (!puedeAvisarAhora(ahora, horario, org?.timezone || DEFAULT_TIMEZONE))
+        return { enviado: false, motivo: 'FUERA_DE_HORARIO' };
     }
     // Sin nadie que reciba el PRIMER aviso de este grupo no sale nada: los de «Solo
     // recordatorios» se enteran después de un aviso, nunca en su lugar.
@@ -531,7 +552,8 @@ export class MirrorAlertService {
    * N9: «Probar» desde la pantalla. Manda a esa persona la plantilla del aviso con el
    * texto de prueba, como mucho una vez cada `PRUEBA_AVISO_CADA_MIN` (compare-and-set
    * sobre `lastTestAt`: dos clics no mandan dos), y deja constancia en la bitácora.
-   * Sale aunque los avisos estén apagados: sirve para comprobar antes de encenderlos.
+   * Sale aunque los avisos estén apagados o sea fuera del horario laboral: es una
+   * prueba que alguien pidió a mano, y sirve para comprobar antes de encenderlos.
    */
   async probar(
     organizationId: string,

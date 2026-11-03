@@ -2595,6 +2595,17 @@ model HospitalMirrorConfig {
   // (`SyncException`). Con él apagado la bandeja se llena igual: solo no se avisa.
   conflictAlertsEnabled Boolean @default(true)
 
+  // 🕖 CUÁNDO salen esos avisos (2026-11-02, docs/PLAN_AVISOS_AGENDADORES.md §8). Se
+  // edita en Bandeja › Configurar avisos. `true` = a cualquier hora (lo de siempre);
+  // `false` = solo de lunes a sábado, de `alertsHoursFromMin` (incluido) a
+  // `alertsHoursToMin` (excluido), en minutos desde la medianoche de la clínica, y
+  // nunca domingos ni festivos de Colombia. Fuera del horario no se reclama ni se
+  // envía nada: sale en la primera vuelta del horario si el caso sigue abierto. Las
+  // reglas, en @agenia/shared horario-avisos.ts.
+  alertsOutsideHours Boolean @default(true)
+  alertsHoursFromMin Int     @default(420)
+  alertsHoursToMin   Int     @default(1020)
+
   // 🩺 MÉDICOS NUEVOS DEL HOSPITAL (2026-10-24). Un médico con citas de un servicio
   // que AgenIA maneja y sin homologar siempre abre un caso en la Bandeja, con un
   // botón para crearlo y homologarlo. Con esto encendido, AgenIA lo hace sola cuando

@@ -210,7 +210,28 @@ export interface EntradaDestinatario {
   isActive: boolean;
 }
 
-/** ¿Están saliendo los avisos de la bandeja? Si no, por qué, y a quién le llegan. */
+/** 🕖 Cuándo salen los avisos (docs/PLAN_AVISOS_AGENDADORES.md §8), como lo muestra y lo edita la pantalla. */
+export interface HorarioAvisosVista {
+  /** `true` = a cualquier hora (lo de siempre). */
+  aCualquierHora: boolean;
+  /** «07:00»: el valor del campo de hora. */
+  desde: string;
+  hasta: string;
+  /** «de lunes a sábado, de 7:00 a. m. a 5:00 p. m., sin domingos ni festivos». */
+  texto: string;
+  /** Fuera del horario en este momento: cuándo vuelve a poder salir un aviso. `null` si puede salir ya. */
+  reanudaIso: string | null;
+}
+
+/** Lo que manda la pantalla del horario al guardar. */
+export interface EntradaHorarioAvisos {
+  aCualquierHora: boolean;
+  /** «HH:MM», hora de la clínica. */
+  desde: string;
+  hasta: string;
+}
+
+/** ¿Están saliendo los avisos de la bandeja? Si no, por qué, a quién le llegan y cuándo. */
 export interface EstadoAvisos {
   /** Sale el aviso de las citas que no llegan al hospital. */
   salen: boolean;
@@ -238,4 +259,6 @@ export interface EstadoAvisos {
   };
   /** La lista para configurarla: SOLO para el administrador; `null` para los demás. */
   destinatarios: DestinatarioVista[] | null;
+  /** 🕖 Cuándo salen. */
+  horario: HorarioAvisosVista;
 }
