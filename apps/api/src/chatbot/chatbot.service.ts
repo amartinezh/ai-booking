@@ -5616,6 +5616,125 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
+   * ⏰ Contestó SÍ o NO a una oferta de la lista de espera que ya venció (2026-11-03):
+   * si el cupo sigue libre se le reserva como un SÍ a tiempo; si no, se le ofrece otro
+   * libre o se le dice que sigue en la lista en su puesto. false si no tiene una
+   * oferta vencida reciente (sigue el camino de siempre) o si algo falla.
+   */
+  private async atenderRespuestaTardia(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    MSGS: ReturnType<typeof buildMessages>;
+    acepta: boolean;
+  }): Promise<boolean> {
+    let r: Awaited<ReturnType<WaitlistService['respuestaTardia']>>;
+    try {
+      r = await this.waitlistService.respuestaTardia({
+        whatsappId: p.senderId,
+        organizationId: p.organizationId,
+        acepta: p.acepta,
+      });
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo atender la respuesta tardía a la lista de espera (org ${p.organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+    if (!r) return false;
+
+    if (r.tipo === 'TOMAR') {
+      await this.reservarCupoDeLista(
+        p.organizationId,
+        p.senderId,
+        p.text,
+        p.MSGS,
+        r.slotId,
+        r.patientId,
+        r.epsId,
+      );
+      await this.cleanUpSession(p.organizationId, p.senderId);
+      return true;
+    }
+    if (r.tipo === 'OFRECIDO') {
+      // La oferta del otro cupo ya salió y el paso espera su SÍ o su NO.
+      await this.auditSuccess(p.senderId, p.organizationId, {
+        userMessage: p.text || '[audio]',
+        botReply: '[Oferta de otro cupo de la lista de espera]',
+        metadata: { step: 'WAITLIST_TARDIA_OTRO_CUPO' },
+      });
+      return true;
+    }
+    const tz =
+      (await this.organizacionDe(p.organizationId))?.timezone || undefined;
+    const reply =
+      r.tipo === 'RECHAZADO'
+        ? p.MSGS.waitlistCupoRechazado()
+        : p.MSGS.waitlistRespuestaTardia(
+            formatAppointmentLong(r.slotDate, { timeZone: tz }),
+          );
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.cleanUpSession(p.organizationId, p.senderId);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text || '[audio]',
+      botReply: reply,
+      metadata: {
+        step:
+          r.tipo === 'RECHAZADO'
+            ? 'WAITLIST_TARDIA_NO'
+            : 'WAITLIST_TARDIA_SIN_CUPO',
+      },
+    });
+    return true;
+  }
+
+  /**
+   * 🔔 Contesta en reposo algo que es para la lista de espera (2026-11-03): el paso
+   * de la oferta pudo cerrarse antes (otra conversación en medio, o la oferta ya
+   * venció). Con una oferta vigente, su SÍ o NO va al paso de la oferta y un saludo
+   * se la repite; con una vencida hace poco, su SÍ o NO es una respuesta tardía.
+   * false si no es nada de eso.
+   */
+  private async atenderListaDeEsperaEnReposo(p: {
+    organizationId: string;
+    senderId: string;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    timeZone: string | undefined;
+  }): Promise<boolean> {
+    const decision = this.decisionSiNoSinPreguntas(p.text);
+    const saludo = esSoloSaludo(p.text);
+    if (!decision && !saludo) return false;
+    try {
+      const vigente = await this.waitlistService.ofertaPendiente({
+        whatsappId: p.senderId,
+        organizationId: p.organizationId,
+      });
+      if (vigente) {
+        if (!decision) return this.recordarOfertaDeLista(p);
+        await this.setUserState(
+          p.organizationId,
+          p.senderId,
+          ChatState.AWAITING_WAITLIST_CONFIRM,
+        );
+        await this.handleWaitlistConfirmStep(
+          p.organizationId,
+          p.senderId,
+          p.text,
+        );
+        return true;
+      }
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo revisar la oferta de la lista de espera (org ${p.organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+    if (!decision) return false;
+    return this.atenderRespuestaTardia({ ...p, acepta: decision === 'SI' });
+  }
+
+  /**
    * 🔔 Le repite la oferta de la lista de espera que tiene por responder (saludó en
    * vez de contestar SÍ o NO). false si no tiene una vigente: el saludo sigue su
    * camino de siempre. Si algo falla, también false.
@@ -6794,6 +6913,23 @@ export class ChatbotService implements OnModuleInit {
           `No se pudo revisar la duda sobre una cita del asistente (org ${organizationId}): ${getErrorMessage(error)}`,
         );
       });
+    }
+
+    // 🔔 SÍ, NO o un saludo para la lista de espera con la conversación en reposo
+    // (2026-11-03): la oferta puede seguir vigente o haber vencido hace poco.
+    if (
+      messageType === 'text' &&
+      !!text &&
+      currentState === ChatState.IDLE &&
+      (await this.atenderListaDeEsperaEnReposo({
+        organizationId,
+        senderId,
+        text,
+        MSGS,
+        timeZone: org?.timezone || undefined,
+      }))
+    ) {
+      return;
     }
 
     // 💬 Respuesta al bot: «sí voy» / «gracias» tras un recordatorio, o «¿de
@@ -13477,6 +13613,18 @@ export class ChatbotService implements OnModuleInit {
         });
 
       if (!slotId || !patientId) {
+        // ⏰ Su oferta ya venció: se le atiende como respuesta tardía (2026-11-03).
+        if (
+          await this.atenderRespuestaTardia({
+            organizationId,
+            senderId,
+            text,
+            MSGS,
+            acepta: true,
+          })
+        ) {
+          return;
+        }
         const reply = MSGS.sesionExpirada();
         await this.smartReply(organizationId, senderId, reply);
         await this.cleanUpSession(organizationId, senderId);
@@ -13500,11 +13648,23 @@ export class ChatbotService implements OnModuleInit {
         epsId,
       );
     } else if (decision === 'NO') {
-      await this.waitlistService.confirmFromWaitlist({
+      const { sinOferta } = await this.waitlistService.confirmFromWaitlist({
         whatsappId: senderId,
         organizationId,
         confirmed: false,
       });
+      if (
+        sinOferta &&
+        (await this.atenderRespuestaTardia({
+          organizationId,
+          senderId,
+          text,
+          MSGS,
+          acepta: false,
+        }))
+      ) {
+        return;
+      }
       const reply = MSGS.waitlistCupoRechazado();
       await this.smartReply(organizationId, senderId, reply);
 
@@ -15958,6 +16118,8 @@ export class ChatbotService implements OnModuleInit {
     slotId?: string;
     patientCedula?: string;
     via?: 'TEXTO' | 'PLANTILLA';
+    /** Hasta cuándo tiene para contestar (2026-11-03: 30 min o 2 h según el cupo). */
+    hasta?: Date;
   }): Promise<boolean> {
     const {
       whatsappId,
@@ -15967,6 +16129,7 @@ export class ChatbotService implements OnModuleInit {
       doctor,
       slotDate,
     } = params;
+    const hasta = params.hasta ?? new Date(Date.now() + 30 * 60_000);
     const claveEstado = `chat_state:${organizationId}:${whatsappId}`;
     let estadoAnterior: string | null = null;
     let estadoCambiado = false;
@@ -15982,6 +16145,14 @@ export class ChatbotService implements OnModuleInit {
         organizationId,
         whatsappId,
         ChatState.AWAITING_WAITLIST_CONFIRM,
+      );
+      // El paso dura lo que tiene para contestar (hasta 2 h), con margen.
+      await this.redis.expire(
+        claveEstado,
+        Math.max(
+          SESSION_TTL,
+          Math.ceil((hasta.getTime() - Date.now()) / 1000) + 600,
+        ),
       );
       estadoCambiado = true;
       await this.redis.set(
@@ -16028,6 +16199,7 @@ export class ChatbotService implements OnModuleInit {
           especialidad,
           fechaFormateada,
           doctor,
+          formatTimeOnly(hasta),
         );
         enviado = !!(await this.sendWhatsAppMessage(whatsappId, reply, {
           kind: 'WAITLIST_OFFER',

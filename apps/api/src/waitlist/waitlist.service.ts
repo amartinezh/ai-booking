@@ -9,6 +9,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   diaLocal,
+  formatAppointmentLong,
   inicioMinimoParaOfrecer,
   isTelegramSender,
   minutoLocal,
@@ -21,6 +22,7 @@ import { ChatbotService } from '../chatbot/chatbot.service';
 import { cupoApartadoKey } from '../chatbot/chatbot.constants';
 import { RedisService } from '../redis/redis.service';
 import { getErrorMessage } from '../common/error-message.util';
+import { AppointmentsService } from '../appointments/appointments.service';
 
 /**
  * Lo que `notifyWaitlist` guarda en `WaitlistEntry.metadata` (columna `Json`)
@@ -48,10 +50,28 @@ interface WaitlistNotificationMetadata {
    * día no le sirve y no se le ofrece otro cupo del mismo día.
    */
   diasRechazados?: string[];
+  /**
+   * Ofertas seguidas que dejó vencer sin contestar (2026-11-03). Con
+   * `OFERTAS_SIN_RESPUESTA_PARA_SALIR` sale de la lista; si contesta algo, vuelve a 0.
+   */
+  sinRespuesta?: number;
+  /** La última oferta que dejó vencer: para atender su respuesta tardía. */
+  ultimaOferta?: OfertaVencida;
   /** Por qué salió de la lista sin tomar un cupo de ella (`YA_TIENE_CITA`). */
   motivo?: string;
   /** La cita que consiguió por otro camino. */
   appointmentId?: string;
+}
+
+/** La oferta que venció sin respuesta (`WaitlistEntry.metadata.ultimaOferta`). */
+interface OfertaVencida {
+  slotId: string;
+  /** ISO 8601. */
+  slotDate: string;
+  doctorName: string;
+  epsDelCupo: string | null;
+  /** ISO 8601: cuándo venció. */
+  vencioIso: string;
 }
 
 /** `WaitlistEntry.metadata` es `Prisma.JsonValue`; esto valida la forma antes de usarla. */
@@ -77,21 +97,80 @@ function quienesPuedenTomarElCupo(
 
 /**
  * Lo que la entrada conserva mientras sigue esperando: los cupos y los días que ya
- * rechazó. Sin nada, la columna queda vacía (como antes).
+ * rechazó, y cuántas ofertas seguidas dejó vencer. Sin nada, la columna queda vacía
+ * (como antes).
  */
-function loQueRechazo(
+function loQueConserva(
   m: WaitlistNotificationMetadata,
 ): Prisma.InputJsonValue | Prisma.NullTypes.DbNull {
   const rechazados = m.rechazados ?? [];
   const diasRechazados = m.diasRechazados ?? [];
-  if (rechazados.length === 0 && diasRechazados.length === 0) {
+  const sinRespuesta = m.sinRespuesta ?? 0;
+  if (
+    rechazados.length === 0 &&
+    diasRechazados.length === 0 &&
+    sinRespuesta === 0
+  ) {
     return Prisma.DbNull;
   }
   return {
     ...(rechazados.length > 0 ? { rechazados } : {}),
     ...(diasRechazados.length > 0 ? { diasRechazados } : {}),
+    ...(sinRespuesta > 0 ? { sinRespuesta } : {}),
   };
 }
+
+/** `loQueConserva` como objeto, para sumarle campos (vacío si no hay nada). */
+function conservadoComoObjeto(
+  m: WaitlistNotificationMetadata,
+): Prisma.InputJsonObject {
+  const c = loQueConserva(m);
+  return c === Prisma.DbNull ? {} : (c as Prisma.InputJsonObject);
+}
+
+/**
+ * ⏳ Cuánto tiene para contestar una oferta (2026-11-03): 30 minutos si el cupo es
+ * en menos de 12 horas (hay que moverlo rápido), 2 horas si es en 12 horas o más.
+ * Del 28 de octubre al 2 de noviembre, 21 de 33 ofertas eran para cupos a 10-76
+ * horas y 7 personas leyeron la oferta después de los 30 minutos; dos de ellas
+ * contestaron «Sí» a los 76 y 93 minutos y ya no lo tuvieron. La plantilla de Meta
+ * dice «30 minutos»: con un cupo lejano solo tiene más tiempo del prometido.
+ */
+export const PLAZO_PARA_CONTESTAR = {
+  cercanoMin: 30,
+  lejanoMin: 120,
+  horasCupoLejano: 12,
+} as const;
+
+export function minutosParaContestar(slotDate: Date, ahora: Date): number {
+  return slotDate.getTime() - ahora.getTime() >=
+    PLAZO_PARA_CONTESTAR.horasCupoLejano * 3_600_000
+    ? PLAZO_PARA_CONTESTAR.lejanoMin
+    : PLAZO_PARA_CONTESTAR.cercanoMin;
+}
+
+/**
+ * 🙋 Ofertas seguidas sin contestar para salir de la lista (2026-11-03): la primera
+ * vez conserva su puesto; la segunda, sale. Así nadie pierde el puesto por no ver un
+ * mensaje a tiempo, y la lista no se traba con quien nunca contesta.
+ */
+export const OFERTAS_SIN_RESPUESTA_PARA_SALIR = 2;
+
+/** Hasta cuántas horas después de vencer una oferta se atiende su respuesta tardía. */
+export const HORAS_RESPUESTA_TARDIA = 24;
+
+/**
+ * Lo que pasó con una respuesta tardía (contestó después de vencer su oferta):
+ *  - TOMAR: el cupo sigue libre y es suyo (el chat lo reserva como un SÍ a tiempo).
+ *  - OFRECIDO: ese ya no, pero se le ofreció otro cupo libre (el mensaje ya salió).
+ *  - SIN_CUPO: ni ese ni otro; sigue en la lista en su puesto.
+ *  - RECHAZADO: contestó NO; sigue en la lista sin ese cupo ni ese día.
+ */
+export type RespuestaTardia =
+  | { tipo: 'TOMAR'; slotId: string; patientId: string; epsId: string | null }
+  | { tipo: 'OFRECIDO' }
+  | { tipo: 'SIN_CUPO'; slotDate: Date }
+  | { tipo: 'RECHAZADO' };
 
 /** `lista` con `valor` al final, sin repetir. */
 const conUnoMas = (lista: string[] | undefined, valor: string): string[] =>
@@ -137,7 +216,6 @@ const epsDelCupoGuardada = (
 @Injectable()
 export class WaitlistService {
   private readonly logger = new Logger(WaitlistService.name);
-  private readonly CONFIRMATION_TTL_MINUTES = 30;
 
   constructor(
     private prisma: PrismaService,
@@ -147,6 +225,8 @@ export class WaitlistService {
     // Para apartar el cupo ofrecido (el mismo apartado del chat). Sin Redis se
     // ofrece igual, sin apartarlo (como antes del 2026-10-31).
     @Optional() private readonly redis?: RedisService,
+    // Para buscarle otro cupo libre a quien contesta tarde (2026-11-03).
+    @Optional() private readonly appointments?: AppointmentsService,
   ) {}
 
   // ════════════════════════════════════════════════════════════
@@ -222,88 +302,19 @@ export class WaitlistService {
   }): Promise<boolean> {
     const { slotId, serviceId, epsId, organizationId, slotDate } = params;
 
-    // 🔒 Con las operaciones del bot apagadas (/dashboard/configuracion) no se
-    // ofrece el cupo: el «SÍ» del paciente sería una cita agendada por el bot.
-    // La cola queda intacta (nadie pasa a NOTIFIED) y se retoma al encenderlo.
-    const settings = await this.prisma.organizationSettings.findUnique({
-      where: { organizationId },
-      select: { bookingEnabled: true },
-    });
-    if (settings?.bookingEnabled === false) {
-      this.logger.log(
-        `Operaciones del bot apagadas en ${organizationId}: no se ofrece el cupo ${slotId} a la lista de espera`,
-      );
-      return false;
-    }
-
-    // 👨‍⚕️ Solo cupos que el asistente puede agendar: con el médico del cupo en
-    // WhatsApp apagado, al «SÍ» la reserva se rechaza (DOCTOR_NOT_BOOKABLE). El
-    // 2026-10-30: 8 de 14 ofertas en dos semanas fueron del médico comodín del
-    // hospital, con WhatsApp apagado; ninguna terminó en cita. La regla es la misma
-    // de `AppointmentsService.bookAppointment`.
-    const cupo = await this.prisma.scheduleSlot.findFirst({
-      where: { id: slotId, organizationId },
-      select: {
-        isAvailable: true,
-        doctor: { select: { whatsappBookingEnabled: true } },
-      },
-    });
-    if (!cupo?.doctor?.whatsappBookingEnabled) {
-      this.logger.log(
-        `El cupo ${slotId} es de un médico que no agenda por el asistente: no se ofrece a la lista de espera`,
-      );
-      return false;
-    }
-
-    // 🔒 Que siga libre (2026-11-02): al vencer una oferta o tras un NO, el cupo se
-    // le ofrecía al siguiente sin mirar si alguien ya lo había tomado o si el
-    // hospital lo había cerrado. El 31 de octubre un cupo cerrado por la agenda del
-    // hospital se ofreció cuatro veces seguidas, y una persona dijo SÍ dos veces y
-    // las dos recibió «ese cupo ya no está».
-    if (cupo.isAvailable === false) {
-      this.logger.log(
-        `El cupo ${slotId} ya no está libre: no se ofrece a la lista de espera`,
-      );
-      return false;
-    }
-
-    // ⏱️ Un cupo que empieza antes de la anticipación mínima no se ofrece: el
-    // paciente no alcanzaría a llegar, y al reservar se rechazaría igual.
-    if (slotDate < inicioMinimoParaOfrecer(new Date())) {
-      this.logger.log(
-        `El cupo ${slotId} empieza antes de la anticipación mínima: no se ofrece a la lista de espera`,
-      );
-      return false;
-    }
-
-    // 📅 Un cupo de un día u hora sin citas por el asistente no se ofrece.
-    if (
-      await cupoBloqueadoParaElAsistente(this.prisma, organizationId, slotDate)
-    ) {
-      this.logger.log(
-        `El cupo ${slotId} cae en un día u hora sin citas por el asistente: no se ofrece a la lista de espera`,
-      );
-      return false;
-    }
-
-    // 🗓️ Ni un cupo más allá del plazo máximo para agendar: la cola espera a
-    // que se libere uno dentro del plazo.
-    if (
-      await fueraDelPlazoParaElAsistente(this.prisma, organizationId, slotDate)
-    ) {
-      this.logger.log(
-        `El cupo ${slotId} queda más allá del plazo máximo para agendar: no se ofrece a la lista de espera`,
-      );
-      return false;
-    }
-
-    // 🔁 Ya se le ofreció a alguien que aún no responde, lo tiene apartado un
-    // paciente del chat mientras termina, o hace poco no se pudo tomar desde la
-    // lista: no se ofrece otra vez.
-    if (await this.cupoOcupado(organizationId, slotId)) {
+    const motivo = await this.motivoParaNoOfrecer(
+      organizationId,
+      slotId,
+      slotDate,
+    );
+    if (motivo === 'OCUPADO') {
       this.logger.debug(
         `El cupo ${slotId} ya está ofrecido o apartado: no se ofrece otra vez a la lista de espera`,
       );
+      return false;
+    }
+    if (motivo) {
+      this.logger.log(motivo);
       return false;
     }
 
@@ -371,6 +382,83 @@ export class WaitlistService {
   }
 
   /**
+   * Por qué este cupo NO se le puede ofrecer a la lista ahora (texto para el log), o
+   * 'OCUPADO' si ya está ofrecido o apartado; null si se puede. Las mismas reglas
+   * para un cupo que se libera, para el barrido y para la respuesta tardía.
+   */
+  private async motivoParaNoOfrecer(
+    organizationId: string,
+    slotId: string,
+    slotDate: Date,
+  ): Promise<string | null> {
+    // 🔒 Con las operaciones del bot apagadas (/dashboard/configuracion) no se
+    // ofrece el cupo: el «SÍ» del paciente sería una cita agendada por el bot.
+    // La cola queda intacta (nadie pasa a NOTIFIED) y se retoma al encenderlo.
+    const settings = await this.prisma.organizationSettings.findUnique({
+      where: { organizationId },
+      select: { bookingEnabled: true },
+    });
+    if (settings?.bookingEnabled === false) {
+      return `Operaciones del bot apagadas en ${organizationId}: no se ofrece el cupo ${slotId} a la lista de espera`;
+    }
+
+    // 👨‍⚕️ Solo cupos que el asistente puede agendar: con el médico del cupo en
+    // WhatsApp apagado, al «SÍ» la reserva se rechaza (DOCTOR_NOT_BOOKABLE). El
+    // 2026-10-30: 8 de 14 ofertas en dos semanas fueron del médico comodín del
+    // hospital, con WhatsApp apagado; ninguna terminó en cita. La regla es la misma
+    // de `AppointmentsService.bookAppointment`.
+    const cupo = await this.prisma.scheduleSlot.findFirst({
+      where: { id: slotId, organizationId },
+      select: {
+        isAvailable: true,
+        doctor: { select: { whatsappBookingEnabled: true } },
+      },
+    });
+    if (!cupo?.doctor?.whatsappBookingEnabled) {
+      return `El cupo ${slotId} es de un médico que no agenda por el asistente: no se ofrece a la lista de espera`;
+    }
+
+    // 🔒 Que siga libre (2026-11-02): al vencer una oferta o tras un NO, el cupo se
+    // le ofrecía al siguiente sin mirar si alguien ya lo había tomado o si el
+    // hospital lo había cerrado. El 31 de octubre un cupo cerrado por la agenda del
+    // hospital se ofreció cuatro veces seguidas, y una persona dijo SÍ dos veces y
+    // las dos recibió «ese cupo ya no está».
+    if (cupo.isAvailable === false) {
+      return `El cupo ${slotId} ya no está libre: no se ofrece a la lista de espera`;
+    }
+
+    // ⏱️ Un cupo que empieza antes de la anticipación mínima no se ofrece: el
+    // paciente no alcanzaría a llegar, y al reservar se rechazaría igual.
+    if (slotDate < inicioMinimoParaOfrecer(new Date())) {
+      return `El cupo ${slotId} empieza antes de la anticipación mínima: no se ofrece a la lista de espera`;
+    }
+
+    // 📅 Un cupo de un día u hora sin citas por el asistente no se ofrece.
+    if (
+      await cupoBloqueadoParaElAsistente(this.prisma, organizationId, slotDate)
+    ) {
+      return `El cupo ${slotId} cae en un día u hora sin citas por el asistente: no se ofrece a la lista de espera`;
+    }
+
+    // 🗓️ Ni un cupo más allá del plazo máximo para agendar: la cola espera a
+    // que se libere uno dentro del plazo.
+    if (
+      await fueraDelPlazoParaElAsistente(this.prisma, organizationId, slotDate)
+    ) {
+      return `El cupo ${slotId} queda más allá del plazo máximo para agendar: no se ofrece a la lista de espera`;
+    }
+
+    // 🔁 Ya se le ofreció a alguien que aún no responde, lo tiene apartado un
+    // paciente del chat mientras termina, o hace poco no se pudo tomar desde la
+    // lista: no se ofrece otra vez.
+    if (await this.cupoOcupado(organizationId, slotId)) {
+      return 'OCUPADO';
+    }
+
+    return null;
+  }
+
+  /**
    * Le ofrece el cupo: lo marca NOTIFIED (antes de escribirle, para que un SÍ
    * rápido lo encuentre), se lo aparta mientras responde (el chat no lo muestra,
    * 2026-10-31) y le escribe. Si el mensaje no sale, vuelve a WAITING con su turno
@@ -393,12 +481,13 @@ export class WaitlistService {
       slotDate: Date;
     },
   ): Promise<boolean> {
+    const ahora = new Date();
     const expiresAt = new Date(
-      Date.now() + this.CONFIRMATION_TTL_MINUTES * 60 * 1000,
+      ahora.getTime() + minutosParaContestar(cupo.slotDate, ahora) * 60_000,
     );
 
     const antes = readWaitlistMetadata(candidate.metadata);
-    const conservado = loQueRechazo(antes);
+    const conservado = loQueConserva(antes);
     await this.prisma.waitlistEntry.update({
       where: { id: candidate.id },
       data: {
@@ -433,6 +522,7 @@ export class WaitlistService {
       slotDate: cupo.slotDate,
       slotId: cupo.slotId,
       via,
+      hasta: expiresAt,
     });
 
     if (!enviado) {
@@ -478,6 +568,8 @@ export class WaitlistService {
      * puede pedir una cita particular, y la ficha solo guarda su EPS de siempre.
      */
     epsId: string | null;
+    /** No tenía una oferta por contestar (2026-11-03: puede ser una respuesta tardía). */
+    sinOferta?: true;
   }> {
     const { whatsappId, organizationId, confirmed } = params;
 
@@ -486,7 +578,9 @@ export class WaitlistService {
       include: { patient: true },
     });
 
-    if (!entry) return { slotId: null, patientId: null, epsId: null };
+    if (!entry) {
+      return { slotId: null, patientId: null, epsId: null, sinOferta: true };
+    }
 
     const metadata = readWaitlistMetadata(entry.metadata);
     const slotId = metadata.pendingSlotId ?? null;
@@ -513,7 +607,7 @@ export class WaitlistService {
         notifiedAt: null,
         expiresAt: null,
         metadata: slotId
-          ? loQueRechazo({
+          ? loQueConserva({
               rechazados: conUnoMas(metadata.rechazados, slotId),
               diasRechazados: metadata.slotDate
                 ? conUnoMas(
@@ -525,7 +619,7 @@ export class WaitlistService {
                   )
                 : metadata.diasRechazados,
             })
-          : loQueRechazo(metadata),
+          : loQueConserva(metadata),
       },
     });
 
@@ -617,9 +711,11 @@ export class WaitlistService {
         notifiedAt: null,
         expiresAt: null,
         // Lo que ya había rechazado se conserva, y este cupo tampoco se le ofrece.
-        metadata: loQueRechazo({
+        metadata: loQueConserva({
           ...antes,
           rechazados: conUnoMas(antes.rechazados, slotId),
+          // Contestó: la cuenta de ofertas sin respuesta vuelve a empezar.
+          sinRespuesta: 0,
         }),
       },
     });
@@ -649,11 +745,47 @@ export class WaitlistService {
       // Carol tomó el cupo desde el menú del chat y media hora después recibió «el
       // tiempo para confirmar el cupo expiró»): sale de la lista sin aviso.
       const yaTieneCita = await this.cerrarSiYaTieneCita(entry);
+
+      // 🙋 No contestó (2026-11-03): la primera vez conserva su puesto (WAITING,
+      // `createdAt` intacto); a la segunda seguida, sale de la lista. Antes salía a
+      // la primera: 6 de 33 ofertas se contestaron tarde y esas personas se volvían
+      // a anotar al final. Se guarda la oferta vencida para atender su respuesta
+      // tardía, y ese cupo no se le vuelve a ofrecer a ella.
+      const sinRespuesta = (metadata.sinRespuesta ?? 0) + 1;
+      const sale = sinRespuesta >= OFERTAS_SIN_RESPUESTA_PARA_SALIR;
       if (!yaTieneCita) {
-        this.logger.log(`Expirando waitlist de ${entry.patient.fullName}`);
+        const ultimaOferta: OfertaVencida | null =
+          metadata.pendingSlotId && metadata.slotDate
+            ? {
+                slotId: metadata.pendingSlotId,
+                slotDate: metadata.slotDate,
+                doctorName: metadata.doctorName ?? '',
+                epsDelCupo: epsDelCupoGuardada(metadata, entry.epsId),
+                vencioIso: new Date().toISOString(),
+              }
+            : null;
+        this.logger.log(
+          sale
+            ? `${entry.patient.fullName} no contestó ${sinRespuesta} ofertas seguidas: sale de la lista de espera`
+            : `${entry.patient.fullName} no contestó la oferta: conserva su puesto en la lista de espera`,
+        );
         await this.prisma.waitlistEntry.update({
           where: { id: entry.id },
-          data: { status: 'EXPIRED' },
+          data: {
+            status: sale ? 'EXPIRED' : 'WAITING',
+            notifiedAt: null,
+            expiresAt: null,
+            metadata: {
+              ...conservadoComoObjeto({
+                ...metadata,
+                rechazados: metadata.pendingSlotId
+                  ? conUnoMas(metadata.rechazados, metadata.pendingSlotId)
+                  : metadata.rechazados,
+                sinRespuesta,
+              }),
+              ...(ultimaOferta ? { ultimaOferta: { ...ultimaOferta } } : {}),
+            },
+          },
         });
       }
       if (metadata.pendingSlotId) {
@@ -664,10 +796,10 @@ export class WaitlistService {
         );
       }
 
-      // Avisar al paciente que perdió el cupo — por la línea de SU clínica
-      // (antes dependía del caché origin_org, que podía apuntar a otra org).
-      // Solo si el texto le llega: a quien se le ofreció con la plantilla y no
-      // respondió, WhatsApp no deja escribirle (sería un envío rechazado).
+      // Avisar al paciente qué pasó — por la línea de SU clínica (antes dependía del
+      // caché origin_org, que podía apuntar a otra org). Solo si el texto le llega: a
+      // quien se le ofreció con la plantilla y no respondió, WhatsApp no deja
+      // escribirle (sería un envío rechazado).
       if (yaTieneCita) {
         this.logger.log(
           `La oferta a ${entry.whatsappId} venció, pero ya tiene cita: sale de la lista sin aviso`,
@@ -676,9 +808,16 @@ export class WaitlistService {
         await this.puedeEscribirleTexto(entry.organizationId, entry.whatsappId)
       ) {
         try {
+          const fecha = metadata.slotDate
+            ? formatAppointmentLong(new Date(metadata.slotDate), {
+                timeZone: await this.zonaDeLaClinica(entry.organizationId),
+              })
+            : null;
           await this.chatbotService.sendOutboundMessage(
             entry.whatsappId,
-            `Lo sentimos, el tiempo para confirmar el cupo expiró. ⏰\n\nSi aún desea una cita, escríbame "Hola" y lo agregaremos nuevamente. 😊`,
+            sale
+              ? `No alcanzamos a recibir su respuesta a dos ofertas seguidas, así que salió de la *lista de espera*. ⏰\n\nSi todavía necesita la cita, escríbame *"Hola"* y le anoto de nuevo.`
+              : `No alcanzamos a recibir su respuesta, así que el cupo${fecha ? ` del *${fecha}*` : ''} pasó a la siguiente persona. ⏰\n\nUsted sigue en la *lista de espera*, en su mismo puesto, y le aviso por aquí apenas haya otro cupo.`,
             entry.organizationId,
           );
         } catch {
@@ -688,7 +827,7 @@ export class WaitlistService {
         }
       } else {
         this.logger.log(
-          `No se le avisa a ${entry.whatsappId} que el cupo expiró: no ha escrito en las últimas 24 h`,
+          `No se le avisa a ${entry.whatsappId} que la oferta venció: no ha escrito en las últimas 24 h`,
         );
       }
 
@@ -706,6 +845,182 @@ export class WaitlistService {
         });
       }
     }
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // 5. RESPUESTA TARDÍA (contestó después de vencer su oferta)
+  // ════════════════════════════════════════════════════════════
+  /**
+   * ⏰ Contestó SÍ o NO después de vencer su oferta (2026-11-03: del 28 de octubre
+   * al 2 de noviembre, cuatro personas contestaron «Sí» entre 76 minutos y 5 horas
+   * después; recibieron el menú de agendar, «agenda completa» y se volvieron a
+   * anotar al final). Hasta `HORAS_RESPUESTA_TARDIA` horas después de vencer:
+   *
+   *  - SÍ y el cupo sigue libre (nadie lo tiene ofrecido ni apartado): es suyo.
+   *  - SÍ y ya no: se le ofrece el primer otro cupo libre que el chat le daría.
+   *  - SÍ y no hay ninguno: sigue en la lista en su puesto, y se le dice.
+   *  - NO: sigue en la lista, sin ese cupo ni ese día.
+   *
+   * Contestar cuenta como respuesta: vuelve a la lista si había salido y la cuenta
+   * de ofertas sin contestar vuelve a 0. null si no tiene una oferta vencida reciente.
+   */
+  async respuestaTardia(params: {
+    whatsappId: string;
+    organizationId: string;
+    acepta: boolean;
+  }): Promise<RespuestaTardia | null> {
+    const { whatsappId, organizationId, acepta } = params;
+    const desde = Date.now() - HORAS_RESPUESTA_TARDIA * 3_600_000;
+    const recientes = await this.prisma.waitlistEntry.findMany({
+      where: {
+        whatsappId,
+        organizationId,
+        status: { in: ['WAITING', 'EXPIRED'] },
+        updatedAt: { gte: new Date(desde) },
+      },
+      include: { patient: true, service: true },
+      orderBy: { updatedAt: 'desc' },
+      take: 5,
+    });
+    const entry = recientes.find((e) => {
+      const u = readWaitlistMetadata(e.metadata).ultimaOferta;
+      return !!u && new Date(u.vencioIso).getTime() >= desde;
+    });
+    if (!entry) return null;
+    const m = readWaitlistMetadata(entry.metadata);
+    const u = m.ultimaOferta!;
+    const slotDate = new Date(u.slotDate);
+
+    // Contestó: sigue (o vuelve) en la lista, en su puesto, sin la oferta vencida.
+    const base: WaitlistNotificationMetadata = {
+      rechazados: m.rechazados,
+      diasRechazados: m.diasRechazados,
+      sinRespuesta: 0,
+    };
+
+    if (!acepta) {
+      await this.prisma.waitlistEntry.update({
+        where: { id: entry.id },
+        data: {
+          status: 'WAITING',
+          metadata: loQueConserva({
+            ...base,
+            rechazados: conUnoMas(m.rechazados, u.slotId),
+            diasRechazados: conUnoMas(
+              m.diasRechazados,
+              diaLocal(slotDate, await this.zonaDeLaClinica(organizationId)),
+            ),
+          }),
+        },
+      });
+      return { tipo: 'RECHAZADO' };
+    }
+
+    // ¿El mismo cupo sigue libre? Las mismas reglas de una oferta.
+    if (
+      (await this.motivoParaNoOfrecer(organizationId, u.slotId, slotDate)) ===
+      null
+    ) {
+      await this.prisma.waitlistEntry.update({
+        where: { id: entry.id },
+        data: {
+          status: 'CONFIRMED',
+          notifiedAt: new Date(),
+          metadata: {
+            ...conservadoComoObjeto(base),
+            pendingSlotId: u.slotId,
+            doctorName: u.doctorName,
+            slotDate: u.slotDate,
+            epsDelCupo: u.epsDelCupo,
+          },
+        },
+      });
+      this.logger.log(
+        `Respuesta tardía de ${whatsappId}: el cupo ${u.slotId} seguía libre y es suyo`,
+      );
+      return {
+        tipo: 'TOMAR',
+        slotId: u.slotId,
+        patientId: entry.patientId,
+        epsId: entry.epsId,
+      };
+    }
+
+    // Ese ya no: sigue en la lista y, si hay otro cupo libre, se le ofrece ya.
+    const metadataEnEspera = loQueConserva({
+      ...base,
+      rechazados: conUnoMas(m.rechazados, u.slotId),
+    });
+    await this.prisma.waitlistEntry.update({
+      where: { id: entry.id },
+      data: { status: 'WAITING', metadata: metadataEnEspera },
+    });
+    const ofrecido = await this.ofrecerOtroCupoLibre({
+      ...entry,
+      metadata:
+        metadataEnEspera === Prisma.DbNull
+          ? null
+          : (metadataEnEspera as Prisma.JsonValue),
+    });
+    return ofrecido ? { tipo: 'OFRECIDO' } : { tipo: 'SIN_CUPO', slotDate };
+  }
+
+  /**
+   * El primer cupo libre que el chat le daría a esta persona (sin los que rechazó ni
+   * los días que no le sirven), ofrecido como una oferta más. false si no hay.
+   */
+  private async ofrecerOtroCupoLibre(entry: {
+    id: string;
+    whatsappId: string;
+    organizationId: string;
+    serviceId: string;
+    epsId: string | null;
+    metadata: Prisma.JsonValue;
+    patient: { fullName: string };
+    service: { name: string };
+  }): Promise<boolean> {
+    if (!this.appointments) return false;
+    const m = readWaitlistMetadata(entry.metadata);
+    const cupos = await this.appointments.getAvailableSlots(
+      entry.service.name,
+      entry.epsId,
+      entry.organizationId,
+      null,
+      { todos: true },
+    );
+    if (cupos.length === 0) return false;
+    const filas = await this.prisma.scheduleSlot.findMany({
+      where: {
+        id: { in: cupos.map((c) => c.slotId) },
+        organizationId: entry.organizationId,
+        serviceId: entry.serviceId,
+        isAvailable: true,
+      },
+      include: { doctor: true },
+      orderBy: { startTime: 'asc' },
+    });
+    const zona = await this.zonaDeLaClinica(entry.organizationId);
+    for (const cupo of filas) {
+      if (m.rechazados?.includes(cupo.id)) continue;
+      if (m.diasRechazados?.includes(diaLocal(cupo.startTime, zona))) continue;
+      if (
+        await this.motivoParaNoOfrecer(
+          entry.organizationId,
+          cupo.id,
+          cupo.startTime,
+        )
+      ) {
+        continue;
+      }
+      return this.ofrecerCupo(entry, 'TEXTO', {
+        slotId: cupo.id,
+        epsId: cupo.allowedEpsId,
+        organizationId: entry.organizationId,
+        doctorName: cupo.doctor.fullName,
+        slotDate: cupo.startTime,
+      });
+    }
+    return false;
   }
 
   // ════════════════════════════════════════════════════════════

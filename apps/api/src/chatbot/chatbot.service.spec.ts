@@ -221,7 +221,13 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
         },
         {
           provide: WaitlistService,
-          useValue: { joinWaitlist: jest.fn(), notifyWaitlist: jest.fn() },
+          useValue: {
+            joinWaitlist: jest.fn(),
+            notifyWaitlist: jest.fn(),
+            // Sin ofertas de la lista por contestar ni vencidas.
+            ofertaPendiente: jest.fn(async () => null),
+            respuestaTardia: jest.fn(async () => null),
+          },
         },
         { provide: InteractionLogService, useValue: interactionLog },
         { provide: ChannelActivityService, useValue: channelActivity },

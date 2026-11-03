@@ -529,6 +529,8 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
       joinWaitlist: jest.fn(() => ({ id: 'wl-1', position: 2 })),
       notifyWaitlist: jest.fn(() => undefined),
       confirmFromWaitlist: jest.fn(() => ({ slotId: null, patientId: null })),
+      ofertaPendiente: jest.fn(async () => null),
+      respuestaTardia: jest.fn(async () => null),
     };
     interactionLog = {
       logSuccess: jest.fn(async () => {}),

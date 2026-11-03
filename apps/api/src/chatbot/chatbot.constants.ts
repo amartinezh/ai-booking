@@ -1063,15 +1063,22 @@ const FORMAL = {
     especialidad: string,
     fecha: string,
     doctor: string,
+    hasta: string,
   ) =>
     pick([
       `🔔 ${nombre}, tengo buenas noticias.\n\n` +
         `Hay un cupo disponible en *${especialidad}* y usted es la siguiente persona en la lista.\n\n` +
-        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe reservé este cupo por *30 minutos*. ¿Le interesa tomarlo?\n\nResponda *SÍ* para confirmarlo o *NO* si ese horario no le sirve.`,
+        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nSe lo tengo apartado hasta las *${hasta}*. ¿Le interesa tomarlo?\n\nResponda *SÍ* para confirmarlo o *NO* si ese horario no le sirve.`,
       `🔔 ${nombre}, le tengo una buena noticia.\n\n` +
         `Se abrió un espacio para *${especialidad}* y le corresponde a usted, que es la primera persona en espera.\n\n` +
-        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe aparté el cupo por *30 minutos*. ¿Desea tomarlo?\n\nConfírmeme con *SÍ* o, si ya no le sirve, escriba *NO*.`,
+        `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nLe aparté el cupo hasta las *${hasta}*. ¿Desea tomarlo?\n\nConfírmeme con *SÍ* o, si ya no le sirve, escriba *NO*.`,
     ]),
+
+  // ⏰ Contestó SÍ después de vencer su oferta y ese cupo ya pasó a otra persona, sin
+  // otro libre (2026-11-03). Sigue en la lista, en su puesto.
+  waitlistRespuestaTardia: (fecha: string) =>
+    `Gracias por responder. 🙏 Como no alcanzamos a recibir su respuesta a tiempo, el cupo del *${fecha}* pasó a la siguiente persona de la lista.\n\n` +
+    `Usted sigue en la *lista de espera*, en su mismo puesto, y le aviso por aquí apenas haya otro cupo.`,
 
   // 🔔 Dijo SÍ a un cupo de la lista de espera y ya no se podía tomar (otro lo tomó,
   // el médico no agenda por aquí o el hospital no lo registró). Vuelve a la lista
@@ -2529,11 +2536,16 @@ const INFORMAL = {
     especialidad: string,
     fecha: string,
     doctor: string,
+    hasta: string,
   ) =>
     pick([
-      `🔔 ¡Hey ${nombre}, tengo súper buenas noticias! Hay un cupo para *${especialidad}* y tú eres la siguiente persona en la lista. 🌟\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTe lo aparto por *30 minutos*. ¿Lo tomas? Responde *SÍ* para confirmarte o *NO* si ese horario no te sirve.`,
-      `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eres la primera en espera:\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTienes *30 minutos* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
+      `🔔 ¡Hey ${nombre}, tengo súper buenas noticias! Hay un cupo para *${especialidad}* y tú eres la siguiente persona en la lista. 🌟\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTe lo aparto hasta las *${hasta}*. ¿Lo tomas? Responde *SÍ* para confirmarte o *NO* si ese horario no te sirve.`,
+      `🔔 ¡${nombre}, buena noticia! 🌟 Se abrió un espacio para *${especialidad}* y te toca a ti, eres la primera en espera:\n\n📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\nTienes hasta las *${hasta}* para confirmarme. ¿Te lo dejo? *SÍ* o *NO*.`,
     ]),
+
+  waitlistRespuestaTardia: (fecha: string) =>
+    `¡Gracias por responder! 🙏 Como no alcanzamos a recibir tu respuesta a tiempo, el cupo del *${fecha}* pasó a la siguiente persona de la lista.\n\n` +
+    `Sigues en la *lista de espera*, en tu mismo puesto, y te aviso por acá apenas haya otro cupo. 💚`,
 
   cupoDeListaNoDisponible: () =>
     `Qué pena 😔: ese cupo dejó de estar disponible antes de confirmarlo.\n\n` +

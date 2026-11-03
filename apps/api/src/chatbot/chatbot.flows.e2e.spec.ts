@@ -366,6 +366,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     confirmFromWaitlist: jest.Mock;
     volverAEsperar: jest.Mock;
     ofertaPendiente: jest.Mock;
+    respuestaTardia: jest.Mock;
   };
   // 📨 Plantillas de WhatsApp: por defecto la clínica no tiene ninguna.
   let plantillas: { findTemplate: jest.Mock; sendTemplate: jest.Mock };
@@ -457,6 +458,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       volverAEsperar: jest.fn(async () => true),
       // Sin oferta por responder, salvo que la prueba la ponga.
       ofertaPendiente: jest.fn(async () => null),
+      // Sin oferta vencida reciente, salvo que la prueba la ponga.
+      respuestaTardia: jest.fn(async () => null),
     };
     limiteCitas = {
       evaluar: jest.fn(async () => null),
@@ -2927,6 +2930,161 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         );
         plantillas.findTemplate.mockRejectedValueOnce(new Error('BD caída'));
         expect(await service.ofertaDeCupoConPlantilla(ORG_ID)).toBe(false);
+      });
+    });
+
+    // ────────────────────────────────────────────────────────────────
+    // 4.6 Plazo para contestar y respuesta tardía (2026-11-03): del 28-oct al
+    // 2-nov, 6 de 33 ofertas se contestaron después de los 30 minutos y esas
+    // personas recibieron el menú de agendar y «agenda completa».
+    // ────────────────────────────────────────────────────────────────
+    describe('4.6 plazo para contestar y respuesta tardía', () => {
+      const ofrecer = (hasta?: Date) =>
+        service.notifyWaitlistCandidate({
+          whatsappId: SENDER,
+          organizationId: ORG_ID,
+          nombre: 'HENRY ANTONIO OSPINA MARIN',
+          especialidad: 'Medicina General',
+          doctor: 'Ana Pérez',
+          slotDate: FECHA_C,
+          slotId: 'slot-free',
+          via: 'TEXTO',
+          hasta,
+        });
+      const conPaciente = () => {
+        db.slots.push(slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA));
+        db.patients.push({
+          id: 'pat-wl',
+          cedula: '9695539',
+          fullName: 'HENRY ANTONIO OSPINA MARIN',
+          organizationId: ORG_ID,
+          epsId: null,
+          eps: null,
+        });
+      };
+
+      it('el mensaje dice hasta qué hora tiene el cupo apartado, y el paso dura eso', async () => {
+        const hasta = new Date(Date.now() + 2 * 3_600_000);
+        sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
+        expect(await ofrecer(hasta)).toBe(true);
+        expect(lastSent()).toMatch(/hasta las \*/);
+        expect(lastSent()).not.toContain('30 minutos');
+        expect(redis.expire).toHaveBeenCalledWith(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          expect.any(Number),
+        );
+        const segundos = redis.expire.mock.calls.find(
+          (c: any[]) => c[0] === `chat_state:${ORG_ID}:${SENDER}`,
+        )[1];
+        expect(segundos).toBeGreaterThanOrEqual(2 * 3600);
+      });
+
+      it('«Sí» en el paso de la oferta cuando ya venció y el cupo sigue libre: se lo agenda', async () => {
+        conPaciente();
+        redis.store.set(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          ChatState.AWAITING_WAITLIST_CONFIRM,
+        );
+        waitlist.confirmFromWaitlist.mockResolvedValue({
+          slotId: null,
+          patientId: null,
+          epsId: null,
+          sinOferta: true,
+        });
+        waitlist.respuestaTardia.mockResolvedValue({
+          tipo: 'TOMAR',
+          slotId: 'slot-free',
+          patientId: 'pat-wl',
+          epsId: null,
+        });
+        await say('Sí');
+        expect(waitlist.respuestaTardia).toHaveBeenCalledWith({
+          whatsappId: SENDER,
+          organizationId: ORG_ID,
+          acepta: true,
+        });
+        expect(appointments.bookAppointment).toHaveBeenCalledWith(
+          'pat-wl',
+          'slot-free',
+          null,
+          'WHATSAPP',
+          ORG_ID,
+        );
+        expect(lastSent()).not.toMatch(/sesión expiró|Se agotó el tiempo/);
+      });
+
+      it('«Sí» en reposo, horas después, sin el cupo ni otro libre: se le explica y sigue en su puesto (no el menú)', async () => {
+        waitlist.respuestaTardia.mockResolvedValue({
+          tipo: 'SIN_CUPO',
+          slotDate: FECHA_C,
+        });
+        await say('Sí');
+        const r = lastSent();
+        expect(r).toContain('pasó a la siguiente persona');
+        expect(r).toContain(
+          'sigue en la *lista de espera*, en su mismo puesto',
+        );
+        expect(r).not.toMatch(/¿Qué servicio|servicios/i);
+        expect([null, ChatState.IDLE]).toContain(await state());
+      });
+
+      it('«No» en reposo a una oferta vencida: sigue en la lista', async () => {
+        waitlist.respuestaTardia.mockResolvedValue({ tipo: 'RECHAZADO' });
+        await say('No');
+        expect(waitlist.respuestaTardia).toHaveBeenCalledWith(
+          expect.objectContaining({ acepta: false }),
+        );
+        expect(lastSent()).toMatch(
+          /sigue en (nuestra|la) lista|permanece en la lista/,
+        );
+      });
+
+      it('se le ofreció otro cupo libre: no se le contesta nada más (la oferta ya salió)', async () => {
+        waitlist.respuestaTardia.mockResolvedValue({ tipo: 'OFRECIDO' });
+        const antes = sendSpy.mock.calls.length;
+        await say('Sí');
+        expect(sendSpy.mock.calls.length).toBe(antes);
+      });
+
+      it('«Sí» en reposo con la oferta todavía vigente (el paso se cerró por otra conversación): se lo agenda', async () => {
+        conPaciente();
+        waitlist.ofertaPendiente.mockResolvedValue({
+          nombre: 'HENRY ANTONIO OSPINA MARIN',
+          servicio: 'Medicina General',
+          doctorName: 'Ana Pérez',
+          slotDate: FECHA_C,
+          expiresAt: new Date(Date.now() + 60 * 60_000),
+        });
+        waitlist.confirmFromWaitlist.mockResolvedValue({
+          slotId: 'slot-free',
+          patientId: 'pat-wl',
+          epsId: null,
+        });
+        await say('Sí');
+        expect(waitlist.confirmFromWaitlist).toHaveBeenCalledWith(
+          expect.objectContaining({ confirmed: true }),
+        );
+        expect(appointments.bookAppointment).toHaveBeenCalled();
+        expect(waitlist.respuestaTardia).not.toHaveBeenCalled();
+      });
+
+      it('«Hola» en reposo con la oferta vigente: se la repite', async () => {
+        waitlist.ofertaPendiente.mockResolvedValue({
+          nombre: 'HENRY ANTONIO OSPINA MARIN',
+          servicio: 'Medicina General',
+          doctorName: 'Ana Pérez',
+          slotDate: FECHA_C,
+          expiresAt: new Date(Date.now() + 60 * 60_000),
+        });
+        await say('Hola');
+        expect(lastSent()).toContain('Se lo tengo apartado hasta las');
+        expect(await state()).toBe(ChatState.AWAITING_WAITLIST_CONFIRM);
+      });
+
+      it('🛡️ «Sí» en reposo sin ninguna oferta de la lista: el camino de siempre', async () => {
+        await say('Sí');
+        expect(waitlist.respuestaTardia).toHaveBeenCalled();
+        expect(lastSent()).not.toContain('pasó a la siguiente persona');
       });
     });
   });
