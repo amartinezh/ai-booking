@@ -1117,13 +1117,13 @@ export class MirrorApplyService {
       // sería ofrecer un cupo que ya no está.
       if (!cupo || !cupo.isAvailable) return;
 
-      await this.waitlistService.notifyWaitlist({
-        slotId: cupo.id,
-        serviceId: cupo.serviceId,
-        epsId: cupo.allowedEpsId,
+      // ⏳ No se ofrece enseguida (2026-11-03): queda apartado unos minutos y
+      // después, si sigue libre, va a la lista. El hospital a veces anula las citas
+      // de un médico para quitarle el día, o anula y vuelve a crear la misma cita;
+      // ofrecerlo de una vez terminaba en «ese cupo ya no está».
+      await this.waitlistService.cupoLiberadoPorElHospital({
         organizationId,
-        doctorName: cupo.doctor.fullName,
-        slotDate: cupo.startTime,
+        slotId: cupo.id,
       });
     } catch (error: unknown) {
       this.logger.error(

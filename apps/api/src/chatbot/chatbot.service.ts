@@ -5644,7 +5644,7 @@ export class ChatbotService implements OnModuleInit {
     if (!r) return false;
 
     if (r.tipo === 'TOMAR') {
-      await this.reservarCupoDeLista(
+      const otraOferta = await this.reservarCupoDeLista(
         p.organizationId,
         p.senderId,
         p.text,
@@ -5653,7 +5653,9 @@ export class ChatbotService implements OnModuleInit {
         r.patientId,
         r.epsId,
       );
-      await this.cleanUpSession(p.organizationId, p.senderId);
+      if (otraOferta !== true) {
+        await this.cleanUpSession(p.organizationId, p.senderId);
+      }
       return true;
     }
     if (r.tipo === 'OFRECIDO') {
@@ -5702,16 +5704,20 @@ export class ChatbotService implements OnModuleInit {
     MSGS: ReturnType<typeof buildMessages>;
     timeZone: string | undefined;
   }): Promise<boolean> {
+    // Con una oferta vigente, «Perfecto» o «Me sirve» también son SÍ; para una
+    // vencida (respuesta tardía), solo un SÍ o un NO claros: un «Excelente» por
+    // otra cosa no debe agendarle el cupo de ayer.
+    const decisionOferta = this.decisionDeLaOferta(p.text);
     const decision = this.decisionSiNoSinPreguntas(p.text);
     const saludo = esSoloSaludo(p.text);
-    if (!decision && !saludo) return false;
+    if (!decisionOferta && !saludo) return false;
     try {
       const vigente = await this.waitlistService.ofertaPendiente({
         whatsappId: p.senderId,
         organizationId: p.organizationId,
       });
       if (vigente) {
-        if (!decision) return this.recordarOfertaDeLista(p);
+        if (!decisionOferta) return this.recordarOfertaDeLista(p);
         await this.setUserState(
           p.organizationId,
           p.senderId,
@@ -13351,7 +13357,7 @@ export class ChatbotService implements OnModuleInit {
     slotId: string,
     patientId: string,
     epsId: string | null,
-  ): Promise<void> {
+  ): Promise<boolean | void> {
     const patient = await this.prisma.patientProfile.findUnique({
       where: { id: patientId },
       include: { eps: true },
@@ -13392,14 +13398,15 @@ export class ChatbotService implements OnModuleInit {
       if (enElHospital === 'RECHAZADA') {
         // El hospital no la registró: vuelve a la lista en su puesto. Aquí no hay
         // menú del que elegir «otro» (2026-10-30).
-        await this.responderCupoDeListaNoDisponible({
+        const { otraOferta } = await this.responderCupoDeListaNoDisponible({
           organizationId,
           senderId,
           MSGS,
           slotId,
         });
-        await this.cleanUpSession(organizationId, senderId);
-        return;
+        // Con otra oferta en camino, la conversación sigue en ese paso.
+        if (!otraOferta) await this.cleanUpSession(organizationId, senderId);
+        return otraOferta;
       }
       if (enElHospital === 'PENDIENTE') {
         await this.cleanUpSession(organizationId, senderId);
@@ -13530,12 +13537,14 @@ export class ChatbotService implements OnModuleInit {
       // servir. Aquí no hay menú del que elegir «otro»: vuelve a la lista en su
       // mismo puesto (2026-10-30: se le pedía «otro de la lista» que no existía y
       // perdía su turno).
-      const reply = await this.responderCupoDeListaNoDisponible({
-        organizationId,
-        senderId,
-        MSGS,
-        slotId,
-      });
+      const { reply, otraOferta } = await this.responderCupoDeListaNoDisponible(
+        {
+          organizationId,
+          senderId,
+          MSGS,
+          slotId,
+        },
+      );
 
       await this.auditFailure(senderId, organizationId, {
         reason: FailureReason.SLOT_TAKEN,
@@ -13546,8 +13555,10 @@ export class ChatbotService implements OnModuleInit {
           slotId,
           patientId,
           motivo: bookingResult.reason ?? null,
+          ...(otraOferta ? { otraOferta: true } : {}),
         },
       });
+      return otraOferta;
     }
   }
 
@@ -13562,7 +13573,7 @@ export class ChatbotService implements OnModuleInit {
     senderId: string;
     MSGS: ReturnType<typeof buildMessages>;
     slotId: string;
-  }): Promise<string> {
+  }): Promise<{ reply: string; otraOferta: boolean }> {
     const devuelto = await this.waitlistService
       .volverAEsperar({
         whatsappId: p.senderId,
@@ -13575,6 +13586,24 @@ export class ChatbotService implements OnModuleInit {
         );
         return false;
       });
+    // 🔁 Si hay otro cupo libre, se le ofrece ya (2026-11-03: 17 «Sí» sin cupo en
+    // una mañana recibieron solo «sigue en la lista»). La oferta sale con su texto.
+    if (
+      devuelto &&
+      (await this.waitlistService
+        .ofrecerOtroCupo({
+          whatsappId: p.senderId,
+          organizationId: p.organizationId,
+          intro: p.MSGS.cupoDeListaNoDisponibleConOtro(),
+        })
+        .catch(() => false))
+    ) {
+      return {
+        reply:
+          '[Ese cupo ya no estaba: oferta de otro cupo de la lista de espera]',
+        otraOferta: true,
+      };
+    }
     const reply = devuelto
       ? p.MSGS.cupoDeListaNoDisponible()
       : p.MSGS.cupoTomadoSinOtros(
@@ -13586,7 +13615,34 @@ export class ChatbotService implements OnModuleInit {
           ),
         );
     await this.smartReply(p.organizationId, p.senderId, reply);
-    return reply;
+    return { reply, otraOferta: false };
+  }
+
+  /**
+   * SÍ o NO a una oferta de la lista de espera (2026-11-03): además de lo que se
+   * entiende en cualquier paso SÍ/NO, «Perfecto», «Me sirve», «Lo tomo» o «Di» (la
+   * tecla de al lado) cuentan como SÍ. Esa mañana, «Perfecto» recibió «necesito un
+   * SÍ o un NO» y, mientras tanto, el cupo se fue.
+   */
+  private decisionDeLaOferta(
+    text: string | undefined | null,
+  ): 'SI' | 'NO' | null {
+    const decision = this.decisionSiNoSinPreguntas(text);
+    if (decision || !text || esPreguntaEnVezDeRespuesta(text)) return decision;
+    const t = text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!t || t.split(' ').length > 6) return null;
+    if (/^d+i+$/.test(t)) return 'SI';
+    return /\b(perfecto|perfecta|de acuerdo|esta bien|me sirve|me queda bien|lo tomo|la tomo|lo quiero|la quiero|genial|excelente|super)\b/.test(
+      t,
+    )
+      ? 'SI'
+      : null;
   }
 
   private async handleWaitlistConfirmStep(
@@ -13602,7 +13658,7 @@ export class ChatbotService implements OnModuleInit {
     const respuesta = text?.toUpperCase().trim() || '';
     // Acepta SÍ/NO por texto y por voz (transcripción), de forma tolerante.
     // ❓ Una pregunta no es un SÍ: reserva el cupo.
-    const decision = this.decisionSiNoSinPreguntas(text);
+    const decision = this.decisionDeLaOferta(text);
 
     if (decision === 'SI') {
       const { slotId, patientId, epsId } =
@@ -13638,15 +13694,20 @@ export class ChatbotService implements OnModuleInit {
         return;
       }
 
-      await this.reservarCupoDeLista(
-        organizationId,
-        senderId,
-        text,
-        MSGS,
-        slotId,
-        patientId,
-        epsId,
-      );
+      // Si ese cupo ya no estaba y se le ofreció otro, el paso sigue esperando.
+      if (
+        (await this.reservarCupoDeLista(
+          organizationId,
+          senderId,
+          text,
+          MSGS,
+          slotId,
+          patientId,
+          epsId,
+        )) === true
+      ) {
+        return;
+      }
     } else if (decision === 'NO') {
       const { sinOferta } = await this.waitlistService.confirmFromWaitlist({
         whatsappId: senderId,
@@ -16120,6 +16181,8 @@ export class ChatbotService implements OnModuleInit {
     via?: 'TEXTO' | 'PLANTILLA';
     /** Hasta cuándo tiene para contestar (2026-11-03: 30 min o 2 h según el cupo). */
     hasta?: Date;
+    /** Texto antes de la oferta, solo por texto («ese cupo ya no está, pero…»). */
+    intro?: string;
   }): Promise<boolean> {
     const {
       whatsappId,
@@ -16201,6 +16264,7 @@ export class ChatbotService implements OnModuleInit {
           doctor,
           formatTimeOnly(hasta),
         );
+        if (params.intro) reply = `${params.intro}\n\n${reply}`;
         enviado = !!(await this.sendWhatsAppMessage(whatsappId, reply, {
           kind: 'WAITLIST_OFFER',
         }));

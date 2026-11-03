@@ -227,6 +227,7 @@ describe('ChatbotService — Intake del Primer Turno (INTENT ROUTER + ACK)', () 
             // Sin ofertas de la lista por contestar ni vencidas.
             ofertaPendiente: jest.fn(async () => null),
             respuestaTardia: jest.fn(async () => null),
+            ofrecerOtroCupo: jest.fn(async () => false),
           },
         },
         { provide: InteractionLogService, useValue: interactionLog },

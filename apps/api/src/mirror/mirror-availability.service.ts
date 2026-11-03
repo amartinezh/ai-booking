@@ -31,6 +31,18 @@ interface CitaEnAgendaQuitada {
 const ESTADOS_ACTIVOS_CASO = ['ABIERTA', 'EN_REVISION'];
 
 /**
+ * 🗓️ Día lleno que el hospital cerró (2026-11-03): el hospital borra el turno de un
+ * día ya lleno para cerrar la agenda, y sus citas siguen en pie. Si el médico tiene
+ * al menos estas citas VIGENTES del hospital ese día, que «no tenga turno» no es un
+ * día quitado: las citas de AgenIA de ese día tampoco se dan por fuera de la agenda.
+ * El 3 de noviembre, RU68 tenía el miércoles 16 citas del hospital y 5 del chat
+ * (escritas en el hospital); se abrieron 5 casos de prioridad alta y un error cada 5
+ * minutos. Si el hospital de verdad le quita el día, anula sus citas y el caso sí se
+ * abre.
+ */
+export const MIN_CITAS_DEL_HOSPITAL_DIA_CERRADO = 3;
+
+/**
  * Fase 2 — la agenda de AgenIA pasa a ser la del hospital.
  *
  * ═══ El problema que resuelve ═══
@@ -259,6 +271,19 @@ export class MirrorAvailabilityService {
     const medicosConTurno = new Set(
       [...deseados.values()].map((c) => c.doctorId),
     );
+    // Citas vigentes del hospital por médico en esta ventana (día lleno cerrado).
+    const citasDelHospital = new Map<string, number>();
+    for (const c of existentes) {
+      for (const a of c.appointments) {
+        if (a.status !== 'CANCELLED' && a.origin === 'MIRROR') {
+          citasDelHospital.set(
+            c.doctorId,
+            (citasDelHospital.get(c.doctorId) ?? 0) + 1,
+          );
+        }
+      }
+    }
+    const enDiaCerradoLleno = new Set<string>();
     const ahora = new Date();
     const afectadas: CitaEnAgendaQuitada[] = [];
     const anotar = (
@@ -296,6 +321,18 @@ export class MirrorAvailabilityService {
       // día ya lleno para cerrar la agenda, y guarda cupos con citas «temporales»
       // fuera de los turnos. AgenIA responde por las citas que ella agendó.
       if (vivas.length > 0 && vivas.every((a) => a.origin === 'MIRROR')) {
+        continue;
+      }
+
+      // 🗓️ Sin turno ese día, pero con el día lleno de citas del hospital: el
+      // hospital cerró la agenda, no le quitó el día al médico (2026-11-03).
+      if (
+        vivas.length > 0 &&
+        sinTurno &&
+        (citasDelHospital.get(actual.doctorId) ?? 0) >=
+          MIN_CITAS_DEL_HOSPITAL_DIA_CERRADO
+      ) {
+        for (const a of vivas) enDiaCerradoLleno.add(a.id);
         continue;
       }
 
@@ -410,7 +447,14 @@ export class MirrorAvailabilityService {
       );
     }
 
-    await this.casosDeAgendaQuitada(organizationId, from, to, afectadas, ahora);
+    await this.casosDeAgendaQuitada(
+      organizationId,
+      from,
+      to,
+      afectadas,
+      ahora,
+      enDiaCerradoLleno,
+    );
 
     await this.registrar(organizationId, input, resumen);
     return resumen;
@@ -433,6 +477,7 @@ export class MirrorAvailabilityService {
     to: Date,
     afectadas: CitaEnAgendaQuitada[],
     ahora: Date,
+    enDiaCerradoLleno: ReadonlySet<string> = new Set(),
   ): Promise<void> {
     if (!this.exceptions) return;
     try {
@@ -474,7 +519,7 @@ export class MirrorAvailabilityService {
           status: { in: ESTADOS_ACTIVOS_CASO },
           appointmentStartAt: { gte: from, lt: to },
         },
-        select: { id: true, dedupeKey: true, meta: true },
+        select: { id: true, dedupeKey: true, meta: true, appointmentId: true },
       });
       for (const c of activas) {
         if (vigentes.has(c.dedupeKey)) continue;
@@ -487,7 +532,9 @@ export class MirrorAvailabilityService {
           c.id,
           delHospital
             ? 'Cita agendada en el hospital: AgenIA ya no abre casos por los cambios de agenda en las citas del hospital (las maneja el hospital).'
-            : 'La hora volvió a la agenda del hospital, o la cita ya no está vigente.',
+            : c.appointmentId && enDiaCerradoLleno.has(c.appointmentId)
+              ? 'El hospital cerró la agenda de ese día con el médico lleno (tiene citas del hospital ese día): la cita sigue en pie.'
+              : 'La hora volvió a la agenda del hospital, o la cita ya no está vigente.',
           ahora,
         );
       }

@@ -1637,6 +1637,19 @@ describe('WaitlistService', () => {
       expect(data).not.toHaveProperty('createdAt');
     });
 
+    it('si ya consiguió cita por otro camino: sale de la lista y no se le agenda otra (null)', async () => {
+      prisma.waitlistEntry.findMany.mockResolvedValue([conOfertaVencida()]);
+      prisma.appointment.findFirst.mockResolvedValue({ id: 'apt-nueva' });
+      await expect(responder(true)).resolves.toBeNull();
+      expect(prisma.waitlistEntry.update).toHaveBeenCalledWith({
+        where: { id: 'w1' },
+        data: {
+          status: 'CANCELLED',
+          metadata: { motivo: 'YA_TIENE_CITA', appointmentId: 'apt-nueva' },
+        },
+      });
+    });
+
     it('NO tarde: sigue en la lista, sin ese cupo ni ese día', async () => {
       prisma.waitlistEntry.findMany.mockResolvedValue([conOfertaVencida()]);
       await expect(responder(false)).resolves.toEqual({ tipo: 'RECHAZADO' });
@@ -1679,6 +1692,177 @@ describe('WaitlistService', () => {
           ahora,
         ),
       ).toBe(minutos);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────
+  // 2026-11-03: dijo SÍ y el cupo ya no estaba → se le ofrece otro libre ya.
+  describe('ofrecerOtroCupo', () => {
+    const libre = {
+      id: 'slot-9',
+      allowedEpsId: null,
+      startTime: new Date('2030-06-02T14:00:00.000Z'),
+      doctor: { fullName: 'Dr. Gómez' },
+    };
+
+    it('con otro cupo libre: se lo ofrece, con el texto de antes', async () => {
+      prisma.waitlistEntry.findFirst.mockResolvedValue(
+        entrada({ metadata: { rechazados: ['slot-7'] } }),
+      );
+      appointments.getAvailableSlots.mockResolvedValue([
+        { slotId: 'slot-7' },
+        { slotId: 'slot-9' },
+      ]);
+      prisma.scheduleSlot.findMany.mockResolvedValue([
+        { ...libre, id: 'slot-7' },
+        libre,
+      ]);
+
+      await expect(
+        service.ofrecerOtroCupo({
+          whatsappId: '573001112233',
+          organizationId: ORG,
+          intro: 'Ese ya no está, pero tengo otro:',
+        }),
+      ).resolves.toBe(true);
+
+      // El que no se pudo tomar (rechazados) no se le vuelve a ofrecer.
+      expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledTimes(1);
+      expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slotId: 'slot-9',
+          via: 'TEXTO',
+          intro: 'Ese ya no está, pero tengo otro:',
+        }),
+      );
+      expect(prisma.waitlistEntry.findFirst.mock.calls[0][0].where).toEqual({
+        whatsappId: '573001112233',
+        organizationId: ORG,
+        status: 'WAITING',
+      });
+    });
+
+    it('sin otro cupo libre, o sin entrada en la lista: false', async () => {
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+      await expect(
+        service.ofrecerOtroCupo({ whatsappId: 'x', organizationId: ORG }),
+      ).resolves.toBe(false);
+      prisma.waitlistEntry.findFirst.mockResolvedValue(null);
+      await expect(
+        service.ofrecerOtroCupo({ whatsappId: 'x', organizationId: ORG }),
+      ).resolves.toBe(false);
+      expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+    });
+
+    it('si algo falla: false (se le dice que sigue en la lista)', async () => {
+      prisma.waitlistEntry.findFirst.mockRejectedValue(new Error('caída'));
+      await expect(
+        service.ofrecerOtroCupo({ whatsappId: 'x', organizationId: ORG }),
+      ).resolves.toBe(false);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────
+  // 2026-11-03: el hospital anuló las citas del miércoles de un médico y le quitó
+  // el turno; los cupos se ofrecieron antes de que la agenda los cerrara.
+  describe('cupoLiberadoPorElHospital', () => {
+    let programado: (() => void) | null;
+    let espera: number | null;
+    beforeEach(() => {
+      programado = null;
+      espera = null;
+      jest
+        .spyOn(service as any, 'programar')
+        .mockImplementation((fn: any, ms: any) => {
+          programado = fn;
+          espera = ms;
+        });
+    });
+    const despuesDeLaEspera = async () => {
+      programado!();
+      // Deja correr la oferta que dispara el temporizador.
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+    };
+
+    it('no se ofrece enseguida: el cupo queda apartado 10 minutos (el chat tampoco lo muestra)', async () => {
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+      await service.cupoLiberadoPorElHospital({
+        organizationId: ORG,
+        slotId: 'slot-1',
+      });
+      expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+      expect(espera).toBe(10 * 60_000);
+      expect(redis.store.get(`cupo_apartado:${ORG}:slot-1`)).toMatch(
+        /^HOSPITAL:/,
+      );
+      // Mientras tanto, ni la lista lo ofrece.
+      await expect(
+        service.notifyWaitlist({
+          slotId: 'slot-1',
+          serviceId: 'svc-1',
+          epsId: null,
+          organizationId: ORG,
+          doctorName: 'Dra. Ruiz',
+          slotDate: new Date('2030-06-01T14:00:00Z'),
+        }),
+      ).resolves.toBe(false);
+    });
+
+    it('pasada la espera, si sigue libre: suelta el apartado y lo ofrece a la lista', async () => {
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+      await service.cupoLiberadoPorElHospital({
+        organizationId: ORG,
+        slotId: 'slot-1',
+      });
+      prisma.scheduleSlot.findFirst.mockResolvedValue({
+        id: 'slot-1',
+        serviceId: 'svc-1',
+        allowedEpsId: null,
+        isAvailable: true,
+        startTime: new Date('2030-06-01T14:00:00Z'),
+        doctor: { fullName: 'Dra. Ruiz', whatsappBookingEnabled: true },
+      });
+
+      await despuesDeLaEspera();
+
+      expect(chatbot.notifyWaitlistCandidate).toHaveBeenCalledWith(
+        expect.objectContaining({ slotId: 'slot-1' }),
+      );
+      // Queda apartado, ahora para quien lo recibió.
+      expect(redis.store.get(`cupo_apartado:${ORG}:slot-1`)).toBe(
+        '573001112233',
+      );
+    });
+
+    it('pasada la espera, si la agenda lo cerró (el hospital quitó el día): no lo ofrece', async () => {
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
+      await service.cupoLiberadoPorElHospital({
+        organizationId: ORG,
+        slotId: 'slot-1',
+      });
+      prisma.scheduleSlot.findFirst.mockResolvedValue({
+        id: 'slot-1',
+        isAvailable: false,
+        doctor: { fullName: 'Dra. Ruiz', whatsappBookingEnabled: true },
+      });
+
+      await despuesDeLaEspera();
+
+      expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+      expect(redis.store.has(`cupo_apartado:${ORG}:slot-1`)).toBe(false);
+    });
+
+    it('si el cupo ya lo tenía apartado alguien del chat, no se lo quita', async () => {
+      redis.store.set(`cupo_apartado:${ORG}:slot-1`, '573005550000');
+      redis.set.mockImplementationOnce(async () => null); // NX: ya existía
+      await service.cupoLiberadoPorElHospital({
+        organizationId: ORG,
+        slotId: 'slot-1',
+      });
+      expect(redis.store.get(`cupo_apartado:${ORG}:slot-1`)).toBe(
+        '573005550000',
+      );
     });
   });
 });

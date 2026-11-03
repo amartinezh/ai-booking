@@ -531,6 +531,7 @@ describe('ChatbotService — el bot por Telegram (E2E conversacional)', () => {
       confirmFromWaitlist: jest.fn(() => ({ slotId: null, patientId: null })),
       ofertaPendiente: jest.fn(async () => null),
       respuestaTardia: jest.fn(async () => null),
+      ofrecerOtroCupo: jest.fn(async () => false),
     };
     interactionLog = {
       logSuccess: jest.fn(async () => {}),

@@ -1088,6 +1088,10 @@ const FORMAL = {
     `Lo siento: ese cupo dejó de estar disponible antes de confirmarlo. 🙏\n\n` +
     `Usted sigue en la *lista de espera*, en el mismo puesto, y le aviso por aquí apenas se libere otro.`,
 
+  // 🔁 …y hay otro cupo libre: va antes de la oferta nueva (2026-11-03).
+  cupoDeListaNoDisponibleConOtro: () =>
+    `Lo siento: ese cupo dejó de estar disponible antes de confirmarlo. 🙏 Pero tengo otro para usted:`,
+
   // 🔔 Saluda mientras tiene una oferta de la lista de espera por responder
   // (2026-11-02: a quien contestaba «Buenas tardes» a la plantilla se le abría el
   // menú de agendar y perdía el cupo). Se le repite la oferta.
@@ -2546,6 +2550,9 @@ const INFORMAL = {
   waitlistRespuestaTardia: (fecha: string) =>
     `¡Gracias por responder! 🙏 Como no alcanzamos a recibir tu respuesta a tiempo, el cupo del *${fecha}* pasó a la siguiente persona de la lista.\n\n` +
     `Sigues en la *lista de espera*, en tu mismo puesto, y te aviso por acá apenas haya otro cupo. 💚`,
+
+  cupoDeListaNoDisponibleConOtro: () =>
+    `Qué pena 😔: ese cupo dejó de estar disponible antes de confirmarlo. ¡Pero tengo otro para ti!`,
 
   cupoDeListaNoDisponible: () =>
     `Qué pena 😔: ese cupo dejó de estar disponible antes de confirmarlo.\n\n` +

@@ -682,6 +682,103 @@ describe('MirrorAvailabilityService', () => {
       });
     });
 
+    // 2026-11-03: RU68 el miércoles tenía 16 citas del hospital y 5 del chat
+    // (escritas en el hospital) y el hospital borró su turno para cerrar el día
+    // lleno: se abrían 5 casos de prioridad alta y un error cada 5 minutos.
+    describe('🗓️ día lleno que el hospital cerró', () => {
+      const cupoDe = (startIso: string, citas: any[]) => ({
+        ...cupoAgenIA(startIso, { isAvailable: false }),
+        appointments: citas,
+      });
+      const delHospital = (n: number) =>
+        Array.from({ length: n }, (_, i) =>
+          cupoDe(`2030-01-08T1${i}:30:00.000Z`, [cita('MIRROR', `his-${i}`)]),
+        );
+
+      it('sin turno, pero con 3 o más citas vigentes del hospital ese día: sin caso ni conflicto', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoDe('2030-01-08T17:00:00.000Z', [cita('WHATSAPP')]),
+          ...delHospital(3),
+        ]);
+
+        const r = await aplicarFut([]);
+
+        expect(r.conflicts).toEqual([]);
+        expect(exceptions.registrar).not.toHaveBeenCalled();
+        expect((conCasos as any).logger.error).not.toHaveBeenCalled();
+      });
+
+      it('con menos de 3 del hospital (o ninguna, porque las anuló): el caso se abre como siempre', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoDe('2030-01-08T17:00:00.000Z', [cita('WHATSAPP')]),
+          ...delHospital(2),
+        ]);
+
+        const r = await aplicarFut([]);
+
+        expect(r.conflicts).toEqual(['doc-1|2030-01-08T17:00:00.000Z']);
+        expect(casos()[0]).toMatchObject({
+          meta: { motivo: 'DIA_SIN_TURNO', origen: 'WHATSAPP' },
+        });
+      });
+
+      it('las citas canceladas del hospital no cuentan', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoDe('2030-01-08T17:00:00.000Z', [cita('WHATSAPP')]),
+          ...delHospital(3).map((c) => ({
+            ...c,
+            appointments: c.appointments.map((a: any) => ({
+              ...a,
+              status: 'CANCELLED',
+            })),
+          })),
+        ]);
+
+        const r = await aplicarFut([]);
+
+        expect(r.conflicts).toHaveLength(1);
+      });
+
+      it('si el médico sí tiene turno ese día y le quitaron la hora, el caso se abre igual (no es día cerrado)', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoDe('2030-01-08T17:10:00.000Z', [cita('WHATSAPP')]),
+          ...delHospital(3),
+        ]);
+
+        const r = await aplicarFut([
+          cupoHis('2030-01-08T10:30:00.000Z'),
+          cupoHis('2030-01-08T11:30:00.000Z'),
+          cupoHis('2030-01-08T12:30:00.000Z'),
+        ]);
+
+        expect(r.conflicts).toEqual(['doc-1|2030-01-08T17:10:00.000Z']);
+      });
+
+      it('un caso ya abierto de esa cita se cierra solo, diciendo que la cita sigue en pie', async () => {
+        prisma.scheduleSlot.findMany.mockResolvedValue([
+          cupoDe('2030-01-08T17:00:00.000Z', [cita('WHATSAPP')]),
+          ...delHospital(3),
+        ]);
+        prisma.syncException.findMany.mockResolvedValue([
+          {
+            id: 'caso-1',
+            dedupeKey: 'agenda-quitada:apt-1',
+            meta: { motivo: 'DIA_SIN_TURNO', origen: 'WHATSAPP' },
+            appointmentId: 'apt-1',
+          },
+        ]);
+
+        await aplicarFut([]);
+
+        expect(exceptions.autoResolver).toHaveBeenCalledWith(
+          'org1',
+          'caso-1',
+          expect.stringContaining('cerró la agenda de ese día'),
+          expect.any(Date),
+        );
+      });
+    });
+
     // 2026-10-29 (segunda decisión del día): el hospital borra el turno de un día
     // lleno para cerrar la agenda y guarda cupos con citas «temporales»; las citas
     // que agenda el hospital las maneja él. AgenIA solo abre casos por las suyas.
@@ -788,7 +885,7 @@ describe('MirrorAvailabilityService', () => {
             lt: new Date(FUT.toIso),
           },
         },
-        select: { id: true, dedupeKey: true, meta: true },
+        select: { id: true, dedupeKey: true, meta: true, appointmentId: true },
       });
       expect(exceptions.autoResolver).toHaveBeenCalledTimes(1);
       expect(exceptions.autoResolver).toHaveBeenCalledWith(

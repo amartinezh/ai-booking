@@ -156,6 +156,20 @@ export function minutosParaContestar(slotDate: Date, ahora: Date): number {
  */
 export const OFERTAS_SIN_RESPUESTA_PARA_SALIR = 2;
 
+/**
+ * ⏳ Cuánto se espera antes de ofrecer un cupo que liberó una anulación del hospital
+ * (2026-11-03). El 3 de noviembre el hospital anuló las citas del miércoles de un
+ * médico y quitó su turno; los cupos quedaron libres unos minutos y la lista de
+ * espera los ofreció antes de que la agenda los cerrara: seis «Sí» terminaron en
+ * «ese cupo ya no está» y cuatro citas las rechazó el hospital. Mientras espera, el
+ * cupo queda apartado (el chat tampoco lo muestra). También cubre cuando el
+ * hospital anula y vuelve a crear la misma cita en un par de minutos.
+ */
+export const ESPERA_CUPO_LIBERADO_POR_HOSPITAL_MS = 10 * 60_000;
+
+/** El dueño del apartado mientras espera un cupo liberado por el hospital. */
+const APARTADO_HOSPITAL = 'HOSPITAL';
+
 /** Hasta cuántas horas después de vencer una oferta se atiende su respuesta tardía. */
 export const HORAS_RESPUESTA_TARDIA = 24;
 
@@ -480,6 +494,8 @@ export class WaitlistService {
       doctorName: string;
       slotDate: Date;
     },
+    /** Texto antes de la oferta (solo por texto): «ese cupo ya no está, pero…». */
+    intro?: string,
   ): Promise<boolean> {
     const ahora = new Date();
     const expiresAt = new Date(
@@ -523,6 +539,7 @@ export class WaitlistService {
       slotId: cupo.slotId,
       via,
       hasta: expiresAt,
+      ...(intro ? { intro } : {}),
     });
 
     if (!enviado) {
@@ -887,6 +904,9 @@ export class WaitlistService {
       return !!u && new Date(u.vencioIso).getTime() >= desde;
     });
     if (!entry) return null;
+    // Ya consiguió cita por otro camino: sale de la lista y su «Sí» sigue el camino
+    // de siempre (no se le agenda una segunda cita).
+    if (await this.cerrarSiYaTieneCita(entry)) return null;
     const m = readWaitlistMetadata(entry.metadata);
     const u = m.ultimaOferta!;
     const slotDate = new Date(u.slotDate);
@@ -969,16 +989,19 @@ export class WaitlistService {
    * El primer cupo libre que el chat le daría a esta persona (sin los que rechazó ni
    * los días que no le sirven), ofrecido como una oferta más. false si no hay.
    */
-  private async ofrecerOtroCupoLibre(entry: {
-    id: string;
-    whatsappId: string;
-    organizationId: string;
-    serviceId: string;
-    epsId: string | null;
-    metadata: Prisma.JsonValue;
-    patient: { fullName: string };
-    service: { name: string };
-  }): Promise<boolean> {
+  private async ofrecerOtroCupoLibre(
+    entry: {
+      id: string;
+      whatsappId: string;
+      organizationId: string;
+      serviceId: string;
+      epsId: string | null;
+      metadata: Prisma.JsonValue;
+      patient: { fullName: string };
+      service: { name: string };
+    },
+    intro?: string,
+  ): Promise<boolean> {
     if (!this.appointments) return false;
     const m = readWaitlistMetadata(entry.metadata);
     const cupos = await this.appointments.getAvailableSlots(
@@ -1012,15 +1035,133 @@ export class WaitlistService {
       ) {
         continue;
       }
-      return this.ofrecerCupo(entry, 'TEXTO', {
+      return this.ofrecerCupo(
+        entry,
+        'TEXTO',
+        {
+          slotId: cupo.id,
+          epsId: cupo.allowedEpsId,
+          organizationId: entry.organizationId,
+          doctorName: cupo.doctor.fullName,
+          slotDate: cupo.startTime,
+        },
+        intro,
+      );
+    }
+    return false;
+  }
+
+  /**
+   * 🔁 Dijo SÍ y el cupo ya no estaba (2026-11-03: 17 «Sí» así en una mañana): ya
+   * volvió a la lista en su puesto (`volverAEsperar`); si hay otro cupo libre que
+   * el chat le daría, se le ofrece enseguida, con `intro` antes de la oferta. true
+   * si se le ofreció. Si algo falla, false: se le dice que sigue en la lista.
+   */
+  async ofrecerOtroCupo(params: {
+    whatsappId: string;
+    organizationId: string;
+    intro?: string;
+  }): Promise<boolean> {
+    try {
+      const entry = await this.prisma.waitlistEntry.findFirst({
+        where: {
+          whatsappId: params.whatsappId,
+          organizationId: params.organizationId,
+          status: 'WAITING',
+        },
+        include: { patient: true, service: true },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (!entry) return false;
+      return await this.ofrecerOtroCupoLibre(entry, params.intro);
+    } catch (error: unknown) {
+      this.logger.warn(
+        `No se pudo ofrecer otro cupo de la lista de espera a ${params.whatsappId}: ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * ⏳ El hospital anuló una cita y su cupo quedó libre (2026-11-03): se aparta
+   * `ESPERA_CUPO_LIBERADO_POR_HOSPITAL_MS` (ni el chat ni la lista lo ofrecen) y
+   * después, si sigue libre, se le ofrece a la lista. Si en ese rato el hospital
+   * quitó el día del médico o volvió a crear la cita, la agenda lo cerró y no se
+   * ofrece. Nunca lanza.
+   */
+  async cupoLiberadoPorElHospital(params: {
+    organizationId: string;
+    slotId: string;
+  }): Promise<void> {
+    const { organizationId, slotId } = params;
+    const marca = `${APARTADO_HOSPITAL}:${Date.now()}`;
+    let apartado = false;
+    if (this.redis) {
+      try {
+        apartado =
+          (await this.redis.set(
+            cupoApartadoKey(organizationId, slotId),
+            marca,
+            'EX',
+            Math.ceil(ESPERA_CUPO_LIBERADO_POR_HOSPITAL_MS / 1000) + 60,
+            'NX',
+          )) === 'OK';
+      } catch (error: unknown) {
+        this.logger.warn(
+          `No se pudo apartar el cupo ${slotId} liberado por el hospital: ${getErrorMessage(error)}`,
+        );
+      }
+    }
+    this.programar(() => {
+      void this.ofrecerCupoLiberadoPorElHospital(
+        organizationId,
+        slotId,
+        apartado ? marca : null,
+      );
+    }, ESPERA_CUPO_LIBERADO_POR_HOSPITAL_MS);
+  }
+
+  /** Pasada la espera: suelta el apartado y, si el cupo sigue libre, lo ofrece. */
+  async ofrecerCupoLiberadoPorElHospital(
+    organizationId: string,
+    slotId: string,
+    marca: string | null,
+  ): Promise<boolean> {
+    try {
+      if (marca && this.redis) {
+        const key = cupoApartadoKey(organizationId, slotId);
+        if ((await this.redis.get(key)) === marca) await this.redis.del(key);
+      }
+      const cupo = await this.prisma.scheduleSlot.findFirst({
+        where: { id: slotId, organizationId },
+        include: { doctor: true },
+      });
+      if (!cupo || !cupo.isAvailable) {
+        this.logger.log(
+          `El cupo ${slotId} que liberó el hospital ya no está libre: no se ofrece a la lista de espera`,
+        );
+        return false;
+      }
+      return await this.notifyWaitlist({
         slotId: cupo.id,
+        serviceId: cupo.serviceId,
         epsId: cupo.allowedEpsId,
-        organizationId: entry.organizationId,
+        organizationId,
         doctorName: cupo.doctor.fullName,
         slotDate: cupo.startTime,
       });
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo ofrecer a la lista de espera el cupo ${slotId} que liberó el hospital: ${getErrorMessage(error)}`,
+      );
+      return false;
     }
-    return false;
+  }
+
+  /** Programa algo para más tarde, sin retener el proceso (aparte para las pruebas). */
+  protected programar(fn: () => void, ms: number): void {
+    const t = setTimeout(fn, ms);
+    t.unref?.();
   }
 
   // ════════════════════════════════════════════════════════════

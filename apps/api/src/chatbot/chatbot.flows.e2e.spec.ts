@@ -367,6 +367,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     volverAEsperar: jest.Mock;
     ofertaPendiente: jest.Mock;
     respuestaTardia: jest.Mock;
+    ofrecerOtroCupo: jest.Mock;
   };
   // 📨 Plantillas de WhatsApp: por defecto la clínica no tiene ninguna.
   let plantillas: { findTemplate: jest.Mock; sendTemplate: jest.Mock };
@@ -460,6 +461,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       ofertaPendiente: jest.fn(async () => null),
       // Sin oferta vencida reciente, salvo que la prueba la ponga.
       respuestaTardia: jest.fn(async () => null),
+      // Sin otro cupo libre que ofrecer, salvo que la prueba lo ponga.
+      ofrecerOtroCupo: jest.fn(async () => false),
     };
     limiteCitas = {
       evaluar: jest.fn(async () => null),
@@ -2703,6 +2706,104 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         expect(await state()).toBe(ChatState.IDLE);
       },
     );
+
+    // 2026-11-03: 17 «Sí» sin cupo en una mañana recibieron solo «sigue en la lista».
+    it('4.3d el cupo ya no está y hay otro libre: se lo ofrecen enseguida y el paso sigue esperando su respuesta', async () => {
+      const slot = slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA);
+      db.slots.push(slot);
+      db.patients.push({
+        id: 'pat-wl',
+        cedula: '55555',
+        fullName: 'Rosa Díaz',
+        organizationId: ORG_ID,
+        epsId: null,
+        eps: null,
+      });
+      waitlist.confirmFromWaitlist.mockResolvedValue({
+        slotId: 'slot-free',
+        patientId: 'pat-wl',
+        epsId: null,
+      });
+      appointments.bookAppointment.mockResolvedValueOnce({
+        success: false,
+        reason: 'SLOT_TAKEN',
+      });
+      waitlist.ofrecerOtroCupo.mockResolvedValueOnce(true);
+      sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
+      await service.notifyWaitlistCandidate({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+        nombre: 'Rosa Díaz',
+        especialidad: 'Medicina General',
+        doctor: 'Ana Pérez',
+        slotDate: FECHA_C,
+      });
+      const antes = sendSpy.mock.calls.length;
+
+      await say('Sí');
+
+      expect(waitlist.ofrecerOtroCupo).toHaveBeenCalledWith({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+        intro: expect.stringContaining('Pero tengo otro para usted'),
+      });
+      // El mensaje lo manda la oferta nueva; aquí no se le dice «sigue en la lista».
+      expect(sendSpy.mock.calls.length).toBe(antes);
+      expect(await state()).toBe(ChatState.AWAITING_WAITLIST_CONFIRM);
+    });
+
+    it('4.3e el texto de la oferta puede llevar algo antes («ese ya no está, pero…»)', async () => {
+      sendSpy.mockResolvedValueOnce({ messages: [{ id: 'wamid.oferta' }] });
+      await service.notifyWaitlistCandidate({
+        whatsappId: SENDER,
+        organizationId: ORG_ID,
+        nombre: 'Rosa Díaz',
+        especialidad: 'Medicina General',
+        doctor: 'Ana Pérez',
+        slotDate: FECHA_C,
+        via: 'TEXTO',
+        intro: 'Lo siento: ese cupo dejó de estar disponible. Pero tengo otro:',
+      });
+      expect(lastSent()).toMatch(
+        /^Lo siento: ese cupo dejó de estar disponible\. Pero tengo otro:\n\n/,
+      );
+      expect(lastSent()).toContain('Ana Pérez');
+    });
+
+    // 2026-11-03: «Perfecto» a la oferta recibió «necesito un SÍ o un NO» y, mientras
+    // tanto, el cupo se fue.
+    it.each(['Perfecto', 'Di', 'Me sirve', 'Lo tomo', 'Perfecto, gracias'])(
+      '4.3f «%s» a la oferta cuenta como SÍ',
+      async (texto) => {
+        redis.store.set(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          ChatState.AWAITING_WAITLIST_CONFIRM,
+        );
+        await say(texto);
+        expect(waitlist.confirmFromWaitlist).toHaveBeenCalledWith(
+          expect.objectContaining({ confirmed: true }),
+        );
+      },
+    );
+
+    it.each(['Muchas gracias', 'No me sirve', '¿Perfecto?'])(
+      '4.3g «%s» a la oferta NO es un SÍ',
+      async (texto) => {
+        redis.store.set(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          ChatState.AWAITING_WAITLIST_CONFIRM,
+        );
+        await say(texto);
+        expect(waitlist.confirmFromWaitlist).not.toHaveBeenCalledWith(
+          expect.objectContaining({ confirmed: true }),
+        );
+      },
+    );
+
+    it('4.3h en reposo, «Excelente» no cuenta como SÍ tardío a una oferta vencida', async () => {
+      await say('Excelente');
+      expect(waitlist.respuestaTardia).not.toHaveBeenCalled();
+    });
 
     it('4.3c si su entrada no aparece, no le promete la lista: le dice con quién comunicarse', async () => {
       const slot = slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA);

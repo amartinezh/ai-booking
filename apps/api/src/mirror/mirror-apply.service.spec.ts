@@ -69,7 +69,10 @@ describe('MirrorApplyService', () => {
         { provide: AppointmentsService, useValue: appointmentsService },
         {
           provide: WaitlistService,
-          useValue: { notifyWaitlist: jest.fn() },
+          useValue: {
+            notifyWaitlist: jest.fn(),
+            cupoLiberadoPorElHospital: jest.fn(),
+          },
         },
         {
           provide: MirrorPatientService,
@@ -317,7 +320,10 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
   let prisma: any;
   let tx: any;
   let appointments: { bookAppointment: jest.Mock; updateAttendance: jest.Mock };
-  let waitlist: { notifyWaitlist: jest.Mock };
+  let waitlist: {
+    notifyWaitlist: jest.Mock;
+    cupoLiberadoPorElHospital: jest.Mock;
+  };
   /** El alta en caliente: por defecto NO consigue paciente (el caso de antes). */
   let pacientes: { resolverOCrear: jest.Mock };
   let excepciones: { registrar: jest.Mock };
@@ -413,7 +419,11 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       })),
       updateAttendance: jest.fn(async () => ({ success: true })),
     };
-    waitlist = { notifyWaitlist: jest.fn(async () => undefined) };
+    waitlist = {
+      notifyWaitlist: jest.fn(async () => undefined),
+      // El cupo que libera el hospital se aparta unos minutos antes de ofrecerse.
+      cupoLiberadoPorElHospital: jest.fn(async () => undefined),
+    };
     pacientes = { resolverOCrear: jest.fn(async () => sinPaciente()) };
     excepciones = { registrar: jest.fn(async () => 'CREADA') };
     avisoCambio = { alCancelarElHospital: jest.fn(async () => undefined) };
@@ -1153,7 +1163,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
         orden(tx.appointment.update),
       );
       expect(orden(avisoCambio.alCancelarElHospital)).toBeGreaterThan(
-        orden(waitlist.notifyWaitlist),
+        orden(waitlist.cupoLiberadoPorElHospital),
       );
     });
   });
@@ -1172,21 +1182,20 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
 
     const citaViva = { id: 'apt-1', scheduleSlotId: 'slot-1' };
 
-    it('cancelada una cita de AgenIA, se avisa al primero de la lista', async () => {
+    // 2026-11-03: no se ofrece enseguida; se aparta unos minutos (el hospital a
+    // veces anula para quitarle el día al médico o para volver a crear la cita).
+    it('cancelada una cita de AgenIA, el cupo pasa a la lista después de la espera (no enseguida)', async () => {
       prisma.appointment.findFirst.mockResolvedValue(citaViva);
       tx.appointment.findFirst.mockResolvedValue(citaViva);
 
       const r = await aplicar(cancelacion());
 
       expect(r.applied).toBe(1);
-      expect(waitlist.notifyWaitlist).toHaveBeenCalledWith({
-        slotId: 'slot-1',
-        serviceId: 'srv-1',
-        epsId: null,
+      expect(waitlist.cupoLiberadoPorElHospital).toHaveBeenCalledWith({
         organizationId: ORG,
-        doctorName: 'MEDICO DISPONIBLE HSVP 02',
-        slotDate: CUPO.startTime,
+        slotId: 'slot-1',
       });
+      expect(waitlist.notifyWaitlist).not.toHaveBeenCalled();
     });
 
     it('también cuando la cita era del hospital y AgenIA nunca la tuvo', async () => {
@@ -1198,7 +1207,7 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
       const r = await aplicar(cancelacion());
 
       expect(r.applied).toBe(1);
-      expect(waitlist.notifyWaitlist).toHaveBeenCalledTimes(1);
+      expect(waitlist.cupoLiberadoPorElHospital).toHaveBeenCalledTimes(1);
     });
 
     it('🛡️ si alguien tomó el cupo entre medias, no se ofrece una hora que ya no está', async () => {
@@ -1211,13 +1220,15 @@ describe('MirrorApplyService — la cita la agendó el hospital', () => {
 
       await aplicar(cancelacion());
 
-      expect(waitlist.notifyWaitlist).not.toHaveBeenCalled();
+      expect(waitlist.cupoLiberadoPorElHospital).not.toHaveBeenCalled();
     });
 
     it('🛡️ si el aviso falla, la cancelación NO se deshace ni se cuenta como error', async () => {
       prisma.appointment.findFirst.mockResolvedValue(citaViva);
       tx.appointment.findFirst.mockResolvedValue(citaViva);
-      waitlist.notifyWaitlist.mockRejectedValue(new Error('WhatsApp caído'));
+      waitlist.cupoLiberadoPorElHospital.mockRejectedValue(
+        new Error('Redis caído'),
+      );
 
       const r = await aplicar(cancelacion());
 
