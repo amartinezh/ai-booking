@@ -243,11 +243,26 @@ export class WaitlistService {
     // de `AppointmentsService.bookAppointment`.
     const cupo = await this.prisma.scheduleSlot.findFirst({
       where: { id: slotId, organizationId },
-      select: { doctor: { select: { whatsappBookingEnabled: true } } },
+      select: {
+        isAvailable: true,
+        doctor: { select: { whatsappBookingEnabled: true } },
+      },
     });
     if (!cupo?.doctor?.whatsappBookingEnabled) {
       this.logger.log(
         `El cupo ${slotId} es de un médico que no agenda por el asistente: no se ofrece a la lista de espera`,
+      );
+      return false;
+    }
+
+    // 🔒 Que siga libre (2026-11-02): al vencer una oferta o tras un NO, el cupo se
+    // le ofrecía al siguiente sin mirar si alguien ya lo había tomado o si el
+    // hospital lo había cerrado. El 31 de octubre un cupo cerrado por la agenda del
+    // hospital se ofreció cuatro veces seguidas, y una persona dijo SÍ dos veces y
+    // las dos recibió «ese cupo ya no está».
+    if (cupo.isAvailable === false) {
+      this.logger.log(
+        `El cupo ${slotId} ya no está libre: no se ofrece a la lista de espera`,
       );
       return false;
     }
@@ -530,6 +545,43 @@ export class WaitlistService {
   }
 
   /**
+   * 🔔 La oferta que esta persona tiene por responder, si sigue vigente: para
+   * repetírsela si saluda en vez de contestar SÍ o NO (2026-11-02). null si no tiene
+   * una o ya venció.
+   */
+  async ofertaPendiente(params: {
+    whatsappId: string;
+    organizationId: string;
+  }): Promise<{
+    nombre: string;
+    servicio: string;
+    doctorName: string;
+    slotDate: Date;
+    expiresAt: Date;
+  } | null> {
+    const entry = await this.prisma.waitlistEntry.findFirst({
+      where: {
+        whatsappId: params.whatsappId,
+        organizationId: params.organizationId,
+        status: 'NOTIFIED',
+      },
+      include: { patient: true, service: true },
+    });
+    if (!entry?.expiresAt || entry.expiresAt.getTime() <= Date.now()) {
+      return null;
+    }
+    const m = readWaitlistMetadata(entry.metadata);
+    if (!m.slotDate) return null;
+    return {
+      nombre: entry.patient.fullName,
+      servicio: entry.service.name,
+      doctorName: m.doctorName ?? '',
+      slotDate: new Date(m.slotDate),
+      expiresAt: entry.expiresAt,
+    };
+  }
+
+  /**
    * 🔁 Dijo SÍ al cupo ofrecido, pero ya no se pudo tomar (otro lo tomó, el médico
    * no agenda por el asistente o el hospital no lo registró): vuelve a la lista en
    * su mismo puesto (2026-10-30: quedaba CONFIRMED y, al anotarse otra vez, pasaba
@@ -591,13 +643,19 @@ export class WaitlistService {
     });
 
     for (const entry of expired) {
-      this.logger.log(`Expirando waitlist de ${entry.patient.fullName}`);
       const metadata = readWaitlistMetadata(entry.metadata);
 
-      await this.prisma.waitlistEntry.update({
-        where: { id: entry.id },
-        data: { status: 'EXPIRED' },
-      });
+      // 📅 No contestó la oferta porque ya consiguió cita por otro camino (2026-11-02:
+      // Carol tomó el cupo desde el menú del chat y media hora después recibió «el
+      // tiempo para confirmar el cupo expiró»): sale de la lista sin aviso.
+      const yaTieneCita = await this.cerrarSiYaTieneCita(entry);
+      if (!yaTieneCita) {
+        this.logger.log(`Expirando waitlist de ${entry.patient.fullName}`);
+        await this.prisma.waitlistEntry.update({
+          where: { id: entry.id },
+          data: { status: 'EXPIRED' },
+        });
+      }
       if (metadata.pendingSlotId) {
         await this.soltarCupo(
           entry.organizationId,
@@ -610,7 +668,11 @@ export class WaitlistService {
       // (antes dependía del caché origin_org, que podía apuntar a otra org).
       // Solo si el texto le llega: a quien se le ofreció con la plantilla y no
       // respondió, WhatsApp no deja escribirle (sería un envío rechazado).
-      if (
+      if (yaTieneCita) {
+        this.logger.log(
+          `La oferta a ${entry.whatsappId} venció, pero ya tiene cita: sale de la lista sin aviso`,
+        );
+      } else if (
         await this.puedeEscribirleTexto(entry.organizationId, entry.whatsappId)
       ) {
         try {

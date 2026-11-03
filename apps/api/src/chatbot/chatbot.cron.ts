@@ -72,6 +72,13 @@ export class ChatbotCron {
     for (const key of keys) {
       const state = await this.redis.get(key);
       if (!state || (state as ChatState) === ChatState.IDLE) continue;
+      // 🔔 La oferta de la lista de espera no se cierra por inactividad: el paciente
+      // tiene 30 minutos para responder y la vence la lista (WaitlistService
+      // .expireStaleNotifications). Antes se cerraba a los 5 minutos y quien
+      // contestaba «Sí» después perdía el cupo (2026-11-02: al menos tres personas
+      // del 29 al 31 de octubre, a los 10, 19 y 20 minutos).
+      if ((state as ChatState) === ChatState.AWAITING_WAITLIST_CONFIRM)
+        continue;
 
       const rest = key.slice('chat_state:'.length);
       const [organizationId, ...phoneParts] = rest.split(':');

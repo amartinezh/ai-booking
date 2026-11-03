@@ -157,6 +157,20 @@ describe('ChatbotCron — cierre por inactividad', () => {
     expect(redis.del).not.toHaveBeenCalled();
   });
 
+  // 2026-11-02: la oferta de la lista de espera se cerraba a los 5 minutos y quien
+  // contestaba «Sí» después (tiene 30) perdía el cupo.
+  it('no cierra la oferta de la lista de espera: la vence la lista a los 30 minutos', async () => {
+    const { cron, redis, httpService } = build({
+      state: ChatState.AWAITING_WAITLIST_CONFIRM,
+      ttl: SESSION_TTL - 20 * 60, // 20 minutos sin responder
+    });
+
+    await cron.handleAbandonedSessions();
+
+    expect(httpService.post).not.toHaveBeenCalled();
+    expect(redis.del).not.toHaveBeenCalled();
+  });
+
   // El cron replica el juego de claves de ChatbotService.cleanUpSession. Los
   // cupos ofrecidos van scoped por organización (slotKey/slotDateKey), así que
   // el patrón debe incluir el tenant: con `temp_slot_*:<phone>` a secas, cerrar

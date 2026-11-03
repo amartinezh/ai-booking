@@ -1,4 +1,5 @@
 import {
+  pideConfirmarSuCita,
   clasificarRespuestaAlBot,
   esAgradecimiento,
   esMensajeAjeno,
@@ -480,5 +481,28 @@ describe('mismoNombre', () => {
     ['Al', 'Al'],
   ])('«%s» y «%s» → no', (a, b) => {
     expect(mismoNombre(a, b)).toBe(false);
+  });
+});
+
+describe('pideConfirmarSuCita', () => {
+  it.each([
+    'Para confirmar la cita de mañana',
+    'Quiero confirmar mi cita',
+    'confirmo la cita del martes',
+    'Buenas tardes, necesito confirmar la sita',
+    'la cita de mañana, la quiero confirmar',
+  ])('«%s» → sí', (texto) => {
+    expect(pideConfirmarSuCita(texto)).toBe(true);
+  });
+
+  it.each([
+    'quiero una cita, como confirmo',
+    'necesito sacar una cita',
+    'Confirmo',
+    'Gracias',
+    'quiero agendar y confirmar la cita',
+    '',
+  ])('«%s» → no', (texto) => {
+    expect(pideConfirmarSuCita(texto)).toBe(false);
   });
 });

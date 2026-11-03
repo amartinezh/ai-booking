@@ -286,6 +286,24 @@ const CORTESIA = new Set(
 );
 
 /**
+ * 📅 Pide confirmar SU cita: «Para confirmar la cita de mañana», «quiero confirmar
+ * mi cita», «confirmo la cita del martes» (2026-11-02: una paciente que se agendó
+ * por el chat escribió eso sin haber recibido recordatorio y el asistente le abrió
+ * el menú de agendar y le dijo «agenda completa»). No si pide una cita nueva
+ * («quiero una cita, ¿cómo confirmo?»).
+ */
+const CONFIRMAR_SU_CITA =
+  /\bconfirm\w*\b.*\b(cita|sita|consulta)\b|\b(cita|sita|consulta)\b.*\bconfirm\w*\b/;
+const PIDE_OTRA_CITA =
+  /\b(una|otra|nueva) (cita|sita|consulta)\b|\b(agendar|sacar|pedir|separar|programar|solicitar)\b/;
+
+export function pideConfirmarSuCita(texto: string | null | undefined): boolean {
+  if (!texto) return false;
+  const t = sinTildes(textoParaCoincidencia(texto));
+  return CONFIRMAR_SU_CITA.test(t) && !PIDE_OTRA_CITA.test(t);
+}
+
+/**
  * ¿Es solo un agradecimiento (con cortesías), sin pedir ni preguntar nada?
  * (2026-10-17: «Muchas gracias por su ayuda buen día 🙏» después de cancelar recibió
  * «no es posible agendar citas»: el «buen día» lo hacía pasar por un saludo, y la

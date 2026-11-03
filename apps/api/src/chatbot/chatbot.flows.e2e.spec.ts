@@ -365,6 +365,7 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
     notifyWaitlist: jest.Mock;
     confirmFromWaitlist: jest.Mock;
     volverAEsperar: jest.Mock;
+    ofertaPendiente: jest.Mock;
   };
   // 📨 Plantillas de WhatsApp: por defecto la clínica no tiene ninguna.
   let plantillas: { findTemplate: jest.Mock; sendTemplate: jest.Mock };
@@ -454,6 +455,8 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
         patientId: null,
       })),
       volverAEsperar: jest.fn(async () => true),
+      // Sin oferta por responder, salvo que la prueba la ponga.
+      ofertaPendiente: jest.fn(async () => null),
     };
     limiteCitas = {
       evaluar: jest.fn(async () => null),
@@ -2817,6 +2820,65 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
           'WHATSAPP',
           ORG_ID,
         );
+      });
+
+      // 2026-11-02: a quien contestaba «Buenas tardes» a la plantilla se le abría
+      // el menú de agendar y el SÍ que venía después ya no tomaba el cupo.
+      it.each(['Buenas tardes', 'Hola buenas tardes', 'hola'])(
+        '«%s» a la oferta: le repite la oferta (no abre el menú) y su SÍ reserva el cupo',
+        async (saludo) => {
+          db.slots.push(
+            slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA),
+          );
+          db.patients.push({
+            id: 'pat-wl',
+            cedula: '9695539',
+            fullName: 'HENRY ANTONIO OSPINA MARIN',
+            organizationId: ORG_ID,
+            epsId: null,
+            eps: null,
+          });
+          waitlist.ofertaPendiente.mockResolvedValue({
+            nombre: 'HENRY ANTONIO OSPINA MARIN',
+            servicio: 'Medicina General',
+            doctorName: 'Ana Pérez',
+            slotDate: FECHA_C,
+            expiresAt: new Date(Date.now() + 25 * 60_000),
+          });
+          waitlist.confirmFromWaitlist.mockResolvedValue({
+            slotId: 'slot-free',
+            patientId: 'pat-wl',
+            epsId: null,
+          });
+          expect(await ofrecer('PLANTILLA')).toBe(true);
+
+          await say(saludo);
+          const r = lastSent();
+          expect(r).toContain('lista de espera');
+          expect(r).toContain('*Medicina General*');
+          expect(r).toContain('Ana Pérez');
+          expect(r).toContain('Se lo tengo apartado hasta las');
+          expect(r).not.toMatch(/¿Qué servicio|servicios/i);
+          expect(await state()).toBe(ChatState.AWAITING_WAITLIST_CONFIRM);
+          expect(waitlist.confirmFromWaitlist).not.toHaveBeenCalled();
+
+          await say('Sí');
+          expect(appointments.bookAppointment).toHaveBeenCalledWith(
+            'pat-wl',
+            'slot-free',
+            null,
+            'WHATSAPP',
+            ORG_ID,
+          );
+        },
+      );
+
+      it('un saludo sin oferta vigente (ya venció) sigue su camino de siempre: el menú', async () => {
+        expect(await ofrecer('PLANTILLA')).toBe(true);
+        waitlist.ofertaPendiente.mockResolvedValue(null);
+        await say('Buenas tardes');
+        expect(lastSent()).not.toContain('Se lo tengo apartado');
+        expect(await state()).not.toBe(ChatState.AWAITING_WAITLIST_CONFIRM);
       });
 
       it('si Meta rechaza la plantilla: devuelve false y la conversación queda como estaba', async () => {

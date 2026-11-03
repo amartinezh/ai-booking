@@ -1081,6 +1081,20 @@ const FORMAL = {
     `Lo siento: ese cupo dejó de estar disponible antes de confirmarlo. 🙏\n\n` +
     `Usted sigue en la *lista de espera*, en el mismo puesto, y le aviso por aquí apenas se libere otro.`,
 
+  // 🔔 Saluda mientras tiene una oferta de la lista de espera por responder
+  // (2026-11-02: a quien contestaba «Buenas tardes» a la plantilla se le abría el
+  // menú de agendar y perdía el cupo). Se le repite la oferta.
+  waitlistOfertaPendiente: (
+    nombre: string,
+    especialidad: string,
+    fecha: string,
+    doctor: string,
+    hasta: string,
+  ) =>
+    `Hola, ${nombre}. 👋 Le escribimos porque usted está en la *lista de espera* y se abrió un cupo para *${especialidad}*:\n\n` +
+    `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\n` +
+    `Se lo tengo apartado hasta las *${hasta}*. ¿Lo toma? Responda *SÍ* para agendarlo o *NO* si ese horario no le sirve.`,
+
   waitlistCupoRechazado: () =>
     pick([
       `Sin problema. Libero ese cupo para otro paciente.\n\nUsted sigue en nuestra lista y le aviso apenas haya otra disponibilidad. Que tenga un excelente día.`,
@@ -2524,6 +2538,17 @@ const INFORMAL = {
   cupoDeListaNoDisponible: () =>
     `Qué pena 😔: ese cupo dejó de estar disponible antes de confirmarlo.\n\n` +
     `Sigues en la *lista de espera*, en el mismo puesto, y te aviso por acá apenas se libere otro. 💚`,
+
+  waitlistOfertaPendiente: (
+    nombre: string,
+    especialidad: string,
+    fecha: string,
+    doctor: string,
+    hasta: string,
+  ) =>
+    `¡Hola, ${nombre}! 👋 Te escribimos porque estás en la *lista de espera* y se abrió un cupo para *${especialidad}*:\n\n` +
+    `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\n` +
+    `Te lo tengo apartado hasta las *${hasta}*. ¿Lo tomas? Responde *SÍ* o *NO*. 💚`,
 
   waitlistCupoRechazado: () =>
     pick([

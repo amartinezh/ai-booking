@@ -36,6 +36,7 @@ import {
   esSoloSaludo,
   mismoNombre,
   nombreQueNiega,
+  pideConfirmarSuCita,
   RESPUESTAS_AL_RECORDATORIO_EN_MENU,
 } from './respuesta-recordatorio';
 import {
@@ -85,6 +86,7 @@ import {
   formatAppointmentLong,
   formatAppointmentCompact,
   formatAppointmentSpoken,
+  formatTimeOnly,
   parseFechaPreferida,
   parseHoraPreferida,
   matchesHora,
@@ -4590,13 +4592,19 @@ export class ChatbotService implements OnModuleInit {
       !!tipo &&
       RESPUESTAS_AL_RECORDATORIO_EN_MENU.has(tipo);
     if (!ajeno && !respondeAlRecordatorio) return false;
+    // 📅 «Para confirmar la cita de mañana» después de un saludo que abrió el menú,
+    // sin recordatorio (2026-11-02): también se atiende aquí.
+    const confirmaSuCita =
+      p.currentState === ChatState.AWAITING_SPECIALTY &&
+      tipo === 'CONFIRMA' &&
+      pideConfirmarSuCita(p.text);
 
     const recordadas = await this.citasRecordadasDelRemitente(
       p.organizationId,
       p.identity,
       { incluirTelefonoEquivocado: true },
     );
-    if (recordadas.length === 0) return false;
+    if (recordadas.length === 0 && !confirmaSuCita) return false;
 
     const { currentState, ...resto } = p;
     if (!(await this.atenderRespuestaAlBot(resto))) return false;
@@ -5031,7 +5039,11 @@ export class ChatbotService implements OnModuleInit {
     const citas = this.juntarPorHora(recordadas, recien);
     const cita = citas[0];
     if ((tipo === 'CONFIRMA' || tipo === 'PREGUNTA_CITA') && !cita) {
-      return false;
+      // 📅 «Para confirmar la cita de mañana» sin recordatorio: se le confirma su
+      // próxima cita (2026-11-02).
+      return tipo === 'CONFIRMA' && pideConfirmarSuCita(p.text)
+        ? this.confirmarSuCitaSinRecordatorio(p)
+        : false;
     }
 
     const fecha = cita
@@ -5564,6 +5576,91 @@ export class ChatbotService implements OnModuleInit {
    *
    * Solo citas de los perfiles de quien escribe: nunca la de otra persona.
    */
+  /**
+   * 📅 Pide confirmar su cita sin haber recibido recordatorio («Para confirmar la
+   * cita de mañana», 2026-11-02): se le confirma su próxima cita, o las próximas si
+   * son varias (cada una con su paciente si el número es de una familia). Sin
+   * citas próximas, false: sigue el camino de siempre.
+   */
+  private async confirmarSuCitaSinRecordatorio(
+    p: Parameters<ChatbotService['atenderRespuestaAlBot']>[0],
+  ): Promise<boolean> {
+    const citas = await this.citasProximasDelRemitente(
+      p.organizationId,
+      p.identity,
+    );
+    const cita = citas[0];
+    if (!cita) return false;
+    const reply =
+      citas.length > 1
+        ? p.MSGS.recordatorioConfirmadoVarias(
+            this.lineasDeCitas(p.MSGS, citas, p.timeZone),
+          )
+        : p.MSGS.recordatorioConfirmado(
+            formatAppointmentLong(cita.scheduleSlot.startTime, {
+              timeZone: p.timeZone,
+            }),
+            cita.scheduleSlot.service?.name ?? '',
+          );
+    await this.smartReply(p.organizationId, p.senderId, reply);
+    await this.auditSuccess(p.senderId, p.organizationId, {
+      userMessage: p.text,
+      botReply: reply,
+      metadata: {
+        step: 'CITA_CONFIRMADA_SIN_RECORDATORIO',
+        appointmentId: cita.id,
+        ...(citas.length > 1 ? { appointmentIds: citas.map((c) => c.id) } : {}),
+      },
+    });
+    return true;
+  }
+
+  /**
+   * 🔔 Le repite la oferta de la lista de espera que tiene por responder (saludó en
+   * vez de contestar SÍ o NO). false si no tiene una vigente: el saludo sigue su
+   * camino de siempre. Si algo falla, también false.
+   */
+  private async recordarOfertaDeLista(p: {
+    organizationId: string;
+    senderId: string;
+    text: string;
+    MSGS: ReturnType<typeof buildMessages>;
+    timeZone: string | undefined;
+  }): Promise<boolean> {
+    try {
+      const oferta = await this.waitlistService.ofertaPendiente({
+        whatsappId: p.senderId,
+        organizationId: p.organizationId,
+      });
+      if (!oferta) return false;
+      const reply = p.MSGS.waitlistOfertaPendiente(
+        oferta.nombre,
+        oferta.servicio,
+        formatAppointmentLong(oferta.slotDate, { timeZone: p.timeZone }),
+        oferta.doctorName,
+        formatTimeOnly(oferta.expiresAt, { timeZone: p.timeZone }),
+      );
+      await this.smartReply(p.organizationId, p.senderId, reply);
+      // Sigue esperando su SÍ o su NO.
+      await this.setUserState(
+        p.organizationId,
+        p.senderId,
+        ChatState.AWAITING_WAITLIST_CONFIRM,
+      );
+      await this.auditSuccess(p.senderId, p.organizationId, {
+        userMessage: p.text,
+        botReply: reply,
+        metadata: { step: 'WAITLIST_OFERTA_RECORDADA' },
+      });
+      return true;
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo repetir la oferta de la lista de espera (org ${p.organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+  }
+
   /**
    * Pidió cancelar (lo entendió la IA) y tiene citas recordadas hace poco: se le
    * ofrece cancelar esas. Sin recordatorio reciente, false (sigue el flujo de
@@ -7262,6 +7359,23 @@ export class ChatbotService implements OnModuleInit {
         MSGS,
         via: aiData.isLookup ? 'llm' : 'voice_regex',
       });
+      return;
+    }
+
+    // 🔔 Saluda mientras tiene una oferta de la lista de espera por responder: se le
+    // repite la oferta, sin cerrarla (2026-11-02: «Buenas tardes» a la plantilla
+    // abría el menú de agendar y el SÍ que venía después ya no tomaba el cupo).
+    if (
+      currentState === ChatState.AWAITING_WAITLIST_CONFIRM &&
+      esSoloSaludo(text) &&
+      (await this.recordarOfertaDeLista({
+        organizationId,
+        senderId,
+        text: text ?? '',
+        MSGS,
+        timeZone: org?.timezone || undefined,
+      }))
+    ) {
       return;
     }
 

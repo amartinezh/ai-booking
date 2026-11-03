@@ -1693,6 +1693,59 @@ describe('ChatbotService — consulta de citas (E2E conversacional)', () => {
       });
     });
 
+    // 2026-11-02: una paciente que se agendó por el chat (sin recordatorio, porque la
+    // confirmación hizo de recordatorio) escribió «Buenas tardes» y luego «Para
+    // confirmar la cita de mañana»: recibió el menú de agendar y «agenda completa».
+    describe('📅 confirmar su cita sin recordatorio', () => {
+      beforeEach(() => {
+        bookingEnabled = true;
+      });
+      const sinRecordatorio = () => {
+        seedPaciente();
+        seedCita('apt-1', MANANA); // sin reminderSentAt
+      };
+
+      it.each([
+        'Para confirmar la cita de mañana',
+        'Quiero confirmar mi cita',
+        'Buenas tardes, para confirmar la cita',
+      ])('«%s» en reposo → le confirma su cita', async (texto) => {
+        sinRecordatorio();
+        await say(texto);
+        const r = lastSent();
+        expect(r).toContain('¡Gracias por confirmar!');
+        expect(r).toContain('Medicina General');
+        expect([null, ChatState.IDLE]).toContain(state());
+        expect(
+          paso('CITA_CONFIRMADA_SIN_RECORDATORIO')?.metadata,
+        ).toMatchObject({ appointmentId: 'apt-1' });
+      });
+
+      it('la conversación real: «Buenas tardes» abre el menú y «Para confirmar la cita de mañana» le confirma la cita y lo cierra', async () => {
+        sinRecordatorio();
+        await say('Buenas tardes');
+        expect(state()).toBe(ChatState.AWAITING_SPECIALTY);
+        await say('Para confirmar la cita de mañana');
+        const r = lastSent();
+        expect(r).toContain('¡Gracias por confirmar!');
+        expect(r).not.toMatch(/servicio|EPS/i);
+        expect([null, ChatState.IDLE]).toContain(state());
+      });
+
+      it('🛡️ sin citas próximas no le confirma nada: sigue el camino de siempre', async () => {
+        seedPaciente();
+        await say('Para confirmar la cita de mañana');
+        expect(lastSent()).not.toContain('Gracias por confirmar');
+        expect(paso('CITA_CONFIRMADA_SIN_RECORDATORIO')).toBeUndefined();
+      });
+
+      it('🛡️ «quiero una cita, ¿cómo confirmo?» pide una cita nueva: no confirma la que tiene', async () => {
+        sinRecordatorio();
+        await say('quiero una cita, como confirmo');
+        expect(lastSent()).not.toContain('Gracias por confirmar');
+      });
+    });
+
     it('«muchas gracias» SIN recordatorio reciente sigue siendo una despedida', async () => {
       seedPaciente();
       seedCita('apt-1', MANANA); // sin reminderSentAt
