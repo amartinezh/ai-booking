@@ -452,3 +452,27 @@ describe('«Envíos de documentos» (resumen de la atención, D14)', () => {
     expect(banderasDelEspejo({ ...base, driverKey: 'otro', resumenAtencion: {} }).conResumen).toBe(false);
   });
 });
+
+describe('Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md)', () => {
+  const MASIVOS = '/dashboard/mensajes-masivos';
+  const tiene = (menus: { href: string }[]) => menus.some((m) => m.href === MASIVOS);
+
+  it('ORG_ADMIN lo ve en todas las clínicas, con espejo o sin él', () => {
+    expect(tiene(getMenusForRole('ORG_ADMIN'))).toBe(true);
+    expect(tiene(getMenusForRole('ORG_ADMIN', { conEspejo: true, conAvisosDriver: true }))).toBe(true);
+  });
+
+  it.each(['BOOKING_AGENT', 'DOCTOR', 'PATIENT', 'GENERAL_OBSERVER', 'SUPER_ADMIN'] as const)(
+    '%s no lo ve: los comunicados los decide el administrador',
+    (rol) => {
+      expect(tiene(getMenusForRole(rol, { conEspejo: true, conAvisosDriver: true }))).toBe(false);
+    },
+  );
+
+  it('no es la opción de Avisos masivos del hospital de Anserma', () => {
+    const menus = getMenusForRole('ORG_ADMIN');
+    const opcion = menus.find((m) => m.href === MASIVOS);
+    expect(opcion?.label).toBe('Mensajes masivos');
+    expect(menus.some((m) => m.href === '/dashboard/espejo/avisos')).toBe(false);
+  });
+});

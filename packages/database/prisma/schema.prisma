@@ -97,6 +97,9 @@ model Organization {
 
   // 📣 Avisos masivos (exclusivo cnt-sanvicente-anserma) — ver PLAN_AVISOS_MASIVOS.md.
   massNoticeBatches    MassNoticeBatch[]
+  massContactLists     MassContactList[]
+  massCampaigns        MassCampaign[]
+  massMessageOptOuts   MassMessageOptOut[]
   noticeRosterRequests NoticeRosterRequest[]
 
   // 🔎 Rastreo de paciente (docs/PLAN_RASTREO_PACIENTE.md, Fase 0).
@@ -468,6 +471,12 @@ enum WhatsappTemplateKind {
   // listos los documentos de su consulta», sin datos clínicos, con un botón de
   // respuesta rápida «Recibir mis documentos». Dos variables: nombre y fecha.
   ATTENTION_SUMMARY_READY
+  // 📢 Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md §5): el comunicado de la
+  // clínica, sin imagen y con encabezado de imagen. Dos plantillas porque Meta no deja
+  // mandar una con encabezado de imagen sin la imagen, ni al revés. Dos variables
+  // cada una: nombre y comunicado.
+  MASS_MESSAGE_TEXT
+  MASS_MESSAGE_IMAGE
 }
 
 model WhatsappTemplate {
@@ -670,6 +679,172 @@ model MassNoticeRecipient {
   /// Cubre "¿algún envío ENVIADO previo para (organización, documento, hora
   /// de cita)?" — la consulta que llena `previousSentAt` al poblar un lote.
   @@index([organizationId, patientDocument, appointmentAtUtc])
+}
+
+// -----------------------------------------------------------------------------
+// 📢 MENSAJES MASIVOS — comunicados de la clínica por WhatsApp a una lista de
+// contactos o a sus pacientes (docs/PLAN_MENSAJES_MASIVOS.md). Para TODAS las
+// clínicas, solo ORG_ADMIN. Distinto de los avisos masivos de arriba (Anserma).
+// -----------------------------------------------------------------------------
+
+/// Una lista de contactos guardada para volver a usarla en otros envíos.
+model MassContactList {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  /// 'ARCHIVO' | 'PACIENTES' | 'MIXTA' — de dónde salieron los contactos.
+  source      String  @default("ARCHIVO")
+
+  /// Ley 1581: quien la cargó declara de dónde salen los contactos y que
+  /// autorizaron a la clínica a escribirles. Sin esto no se guarda la lista.
+  consentNote       String   @db.Text
+  consentAttestedAt DateTime
+  /// Sin FK a User a propósito: la constancia sobrevive a que se borre la cuenta.
+  consentAttestedBy String
+
+  contactsCount   Int      @default(0)
+  createdByUserId String
+  createdByEmail  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  contacts  MassContact[]
+  campaigns MassCampaign[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, createdAt])
+}
+
+/// Un contacto de una lista. El celular es la llave: uno por lista.
+model MassContact {
+  id             String          @id @default(uuid())
+  listId         String
+  list           MassContactList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  /// Denormalizado: «¿este celular está en alguna lista de la clínica?» sin join.
+  organizationId String
+
+  fullName         String?
+  firstName        String?
+  /// E.164 con «+» (ej. «+573001234567»).
+  phoneE164        String
+  email            String?
+  document         String?
+  /// Las columnas «Otro dato» del archivo, con su encabezado.
+  extra            Json?
+  /// La ficha de paciente con ese celular, si la hay (para enlazar, no para enviar).
+  patientProfileId String?
+  createdAt        DateTime @default(now())
+
+  @@unique([listId, phoneE164])
+  @@index([organizationId, phoneE164])
+}
+
+/// Un envío masivo: el texto, la imagen, a qué lista y cómo va.
+model MassCampaign {
+  id             String          @id @default(uuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  listId         String
+  list           MassContactList @relation(fields: [listId], references: [id], onDelete: Restrict)
+
+  name   String
+  /// 'BORRADOR' | 'EN_COLA' | 'ENVIANDO' | 'PAUSADO' | 'TERMINADO' | 'CANCELADO'
+  status String @default("BORRADOR")
+
+  messageText String @default("") @db.Text
+
+  /// La imagen del encabezado ya optimizada en el navegador (JPEG o PNG, ≤ 5 MB).
+  /// En la base y no en disco: el contenedor de la API no tiene volumen propio y
+  /// el id de Meta vence a los 30 días (hay que poder volver a subirla).
+  imageData            Bytes?
+  imageMime            String?
+  imageWidth           Int?
+  imageHeight          Int?
+  imageBytes           Int?
+  /// El id de la imagen en Meta (`/media`) y cuándo se subió (vence a los 30 días).
+  imageMediaId         String?
+  imageMediaUploadedAt DateTime?
+
+  /// Resultado de las revisiones al confirmar (reglas y, si hubo, IA): constancia
+  /// de qué se revisó antes de enviar.
+  textReview  Json?
+  imageReview Json?
+
+  /// La plantilla con que salió ('MASS_MESSAGE_TEXT' | 'MASS_MESSAGE_IMAGE') y su nombre en Meta.
+  templateKind  String?
+  templateName  String?
+  ratePerMinute Int     @default(60)
+
+  total   Int @default(0)
+  sent    Int @default(0)
+  failed  Int @default(0)
+  skipped Int @default(0)
+
+  createdByUserId   String
+  createdByEmail    String?
+  confirmedByUserId String?
+  confirmedByEmail  String?
+  confirmedAt       DateTime?
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  /// Turno de la vuelta del envío: evita que dos vueltas trabajen el mismo envío.
+  lockedUntil       DateTime?
+  /// Por qué se detuvo solo (plantilla rechazada, token vencido, imagen…).
+  lastError         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recipients MassCampaignRecipient[]
+
+  @@index([organizationId, createdAt])
+  @@index([status, lockedUntil])
+}
+
+/// Una fila por persona de un envío: la foto de a quién se le iba a escribir.
+model MassCampaignRecipient {
+  id             String       @id @default(uuid())
+  campaignId     String
+  campaign       MassCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  organizationId String
+  contactId      String?
+
+  name      String?
+  phoneE164 String
+
+  /// 'PENDIENTE' | 'ENVIADO' | 'FALLIDO' | 'OMITIDO'
+  outcome    String    @default("PENDIENTE")
+  /// 'BAJA' | 'BAJA_EN_META' | 'CANCELADO' | 'CELULAR_INVALIDO'
+  skipReason String?
+  error      String?
+  errorCode  String?
+  /// El id del mensaje en Meta: con él se cruza el estado de entrega (WhatsappMessageLog).
+  wamid      String?
+  attempts   Int       @default(0)
+  sentAt     DateTime?
+
+  /// Idempotencia: volver a apretar «Enviar» no le escribe dos veces a nadie.
+  @@unique([campaignId, phoneE164])
+  @@index([campaignId, outcome])
+}
+
+/// Quien pidió no recibir más mensajes masivos de la clínica.
+model MassMessageOptOut {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// «+57…» para un teléfono; el BSUID tal cual si no lo hay (`claveDeBaja`).
+  destination String
+  /// 'CHAT' (lo escribió) | 'PANEL' (lo registró el administrador)
+  source      String   @default("CHAT")
+  note        String?
+  createdAt   DateTime @default(now())
+
+  @@unique([organizationId, destination])
 }
 
 // -----------------------------------------------------------------------------
@@ -2907,6 +3082,8 @@ enum WhatsappMessageKind {
   MANUAL
   SYSTEM_NOTICE
   ATTENTION_SUMMARY
+  // 📢 Comunicados de Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md).
+  MASS_MESSAGE
 }
 
 /// Estado de entrega según Meta. El orden importa: solo se avanza

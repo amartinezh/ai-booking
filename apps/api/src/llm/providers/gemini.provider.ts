@@ -188,7 +188,17 @@ export class GeminiProvider implements LLMProvider {
       return model.generateContent({
         contents: p.turnos.map((t) => ({
           role: t.rol === 'usuario' ? 'user' : 'model',
-          parts: [{ text: t.texto }],
+          parts: t.imagen
+            ? [
+                {
+                  inlineData: {
+                    data: t.imagen.base64,
+                    mimeType: t.imagen.mimeType,
+                  },
+                },
+                { text: t.texto },
+              ]
+            : [{ text: t.texto }],
         })),
       });
     });

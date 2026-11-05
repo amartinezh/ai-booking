@@ -200,6 +200,11 @@ export interface ClinicalRecordDraft {
 export interface TurnoConversacion {
   rol: 'usuario' | 'asistente';
   texto: string;
+  /**
+   * Una imagen que acompaña el turno del usuario (revisión de la imagen de los
+   * mensajes masivos, docs/PLAN_MENSAJES_MASIVOS.md §7). Va antes del texto.
+   */
+  imagen?: { base64: string; mimeType: string };
 }
 
 export interface PeticionConversacion {

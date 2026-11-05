@@ -45,6 +45,8 @@ export const PARTE2_PARA_EL_ASISTENTE: Readonly<Record<string, boolean>> = {
   'Documentación detallada': false,
   // El asistente sabe cómo funciona él mismo: el código, la conversación, qué hace.
   'Asistente de soporte para el personal': true,
+  // Cómo se importan los contactos, las revisiones, el envío y las bajas: lo que pregunta el administrador.
+  'Mensajes masivos': true,
 };
 
 export interface SeccionParte2 {

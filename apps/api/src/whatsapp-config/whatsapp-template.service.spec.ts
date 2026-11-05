@@ -144,6 +144,30 @@ describe('WhatsappTemplateService', () => {
     ]);
   });
 
+  it('la imagen del encabezado va primero, como componente header (comunicado con imagen)', async () => {
+    const ctx = build();
+    await ctx.service.sendTemplate({
+      organizationId: ORG,
+      recipientId: PHONE,
+      kind: 'MASS_MESSAGE_IMAGE' as any,
+      bodyParams: ['Ana', 'La jornada es el sábado.'],
+      headerImageId: 'media-123',
+    });
+    expect(bodyOf(ctx.post).template.components).toEqual([
+      {
+        type: 'header',
+        parameters: [{ type: 'image', image: { id: 'media-123' } }],
+      },
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: 'Ana' },
+          { type: 'text', text: 'La jornada es el sábado.' },
+        ],
+      },
+    ]);
+  });
+
   it('teléfono → `to`; BSUID → `recipient`', async () => {
     const conTelefono = build();
     await send(conTelefono);

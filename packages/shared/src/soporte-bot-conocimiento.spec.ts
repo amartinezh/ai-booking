@@ -67,9 +67,9 @@ describe('seccionesDeLaParte2', () => {
     expect(seccionesDeLaParte2('# Parte 1\n\n## 1. Algo\n')).toEqual([]);
   });
 
-  it('lee las 15 secciones del archivo real', () => {
+  it('lee las 16 secciones del archivo real', () => {
     expect(seccionesDeLaParte2(AGENIA_MD).map((s) => s.numero)).toEqual(
-      Array.from({ length: 15 }, (_, i) => i + 1),
+      Array.from({ length: 16 }, (_, i) => i + 1),
     );
   });
 });
@@ -219,7 +219,8 @@ describe('armarManualDelAsistente con el archivo real', () => {
     // Las que el asistente no lee, tampoco se citan.
     expect(agente.temasValidos.has('parte2-10')).toBe(false);
     expect(agente.temasValidos.has('parte2-12')).toBe(false);
-    expect(agente.temasValidos.size).toBe(CONTENIDO.temas.length + 1 + 12);
+    expect(agente.temasValidos.has('parte2-16')).toBe(true);
+    expect(agente.temasValidos.size).toBe(CONTENIDO.temas.length + 1 + 13);
   });
 
   it('cada sección de la Parte 2 lleva su id citable en el encabezado', () => {

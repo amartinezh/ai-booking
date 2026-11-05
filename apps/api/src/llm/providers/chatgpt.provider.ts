@@ -167,7 +167,17 @@ export class ChatGptProvider implements LLMProvider {
           },
           ...p.turnos.map((t) => ({
             role: t.rol === 'usuario' ? 'user' : 'assistant',
-            content: t.texto,
+            content: t.imagen
+              ? [
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${t.imagen.mimeType};base64,${t.imagen.base64}`,
+                    },
+                  },
+                  { type: 'text', text: t.texto },
+                ]
+              : t.texto,
           })),
         ],
         ...(p.json ? { response_format: { type: 'json_object' } } : {}),

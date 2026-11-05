@@ -19,6 +19,7 @@ import { SurveyModule } from '../survey/survey.module';
 import { TelegramCoreModule } from '../telegram/telegram-core.module';
 import { MirrorExceptionsService } from '../mirror/mirror-exceptions.service';
 import { AttentionSummaryModule } from '../attention-summary/attention-summary.module';
+import { MassMessageModule } from '../mass-message/mass-message.module';
 
 @Module({
   imports: [
@@ -36,6 +37,8 @@ import { AttentionSummaryModule } from '../attention-summary/attention-summary.m
     // 🩺 El botón «Recibir mis documentos» y «mis documentos» del resumen de la
     // atención (docs/PLAN_RESUMEN_ATENCION.md, Fase 4). No importa este módulo.
     AttentionSummaryModule,
+    // 📢 «No más comunicados»: la baja de los mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md §9).
+    MassMessageModule,
   ],
   controllers: [ChatbotController],
   providers: [

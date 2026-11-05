@@ -880,3 +880,95 @@ export type {
   ExclusionesResumen,
   OrigenDestino,
 } from './src/resumen-envio';
+
+// 📢 Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md): leer contactos de cualquier
+// archivo, revisar el texto y la imagen, y las reglas del envío.
+export {
+  MAX_CONTACTOS_POR_ARCHIVO,
+  TIPOS_DE_COLUMNA,
+  analizarArchivoDeContactos,
+  clasificarTelefono,
+  extraerContactos,
+  leerMapeoDeIa,
+  muestraParaIa,
+  nombrePropio,
+  normalizarContacto,
+  normalizarCorreo,
+  normalizarDocumentoContacto,
+  normalizarEncabezado,
+  partirLinea,
+  telefonosEnTexto,
+} from './src/mensajes-masivos-contactos';
+export type {
+  AnalisisContactos,
+  ClaseTelefono,
+  ColumnaDetectada,
+  ContactoImportado,
+  FormatoContactos,
+  MotivoProblemaContacto,
+  ProblemaContacto,
+  ResultadoContactos,
+  TipoColumna,
+} from './src/mensajes-masivos-contactos';
+export {
+  LIMITES_TEXTO,
+  NOMBRE_POR_DEFECTO,
+  arreglarAutomaticamente,
+  cuerpoConVariables,
+  nombreParaSaludo,
+  revisarTexto,
+  textoParaEnviar,
+  trozosConFormato,
+  unirEnUnParrafo,
+} from './src/mensajes-masivos-texto';
+export type {
+  CategoriaProblema,
+  NivelProblema,
+  OpcionesRevision,
+  ProblemaTexto,
+  RevisionTexto,
+  TrozoConFormato,
+} from './src/mensajes-masivos-texto';
+export {
+  MIME_DE_FORMATO,
+  REGLAS_IMAGEN,
+  evaluarImagen,
+  formatoPorFirma,
+  nombreDeFormato,
+  pesoLegible,
+  problemaDuroDeImagen,
+  recorteIdeal,
+  tamanoOptimizado,
+} from './src/mensajes-masivos-imagen';
+export type {
+  EvaluacionImagen,
+  FormatoImagen,
+  MedidasImagen,
+  NivelImagen,
+  ObservacionImagen,
+} from './src/mensajes-masivos-imagen';
+export {
+  CUERPO_SUGERIDO_COMUNICADO,
+  ESTADOS_ENVIO_ACTIVOS,
+  ETIQUETA_ESTADO_ENVIO,
+  ETIQUETA_OMISION,
+  HORARIO_COMUNICADOS,
+  LIMITES_ENVIO,
+  TEXTOS_BAJA_COMUNICADOS,
+  TEXTO_HORARIO_COMUNICADOS,
+  cierreDeLaJornada,
+  claveDeBaja,
+  codigoDeErrorMeta,
+  estimarDuracion,
+  explicarErrorDeEnvio,
+  intencionDeComunicados,
+  proximaVentanaDeComunicados,
+  puedeEnviarComunicadoAhora,
+  variablesDelCuerpo,
+} from './src/mensajes-masivos-envio';
+export type {
+  ErrorDeEnvioExplicado,
+  EstadoEnvioMasivo,
+  MotivoOmision,
+  ResultadoDestinatario,
+} from './src/mensajes-masivos-envio';

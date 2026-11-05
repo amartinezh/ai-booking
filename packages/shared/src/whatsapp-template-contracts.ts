@@ -36,7 +36,9 @@ export type TemplateKind =
   | 'HIS_APPOINTMENT_CONFIRMATION'
   | 'HIS_APPOINTMENT_CANCELLED'
   | 'PATIENT_REQUEST_ALERT'
-  | 'ATTENTION_SUMMARY_READY';
+  | 'ATTENTION_SUMMARY_READY'
+  | 'MASS_MESSAGE_TEXT'
+  | 'MASS_MESSAGE_IMAGE';
 
 export interface ContratoPlantilla {
   label: string;
@@ -130,6 +132,19 @@ export const TEMPLATE_CONTRACTS: Record<TemplateKind, ContratoPlantilla> = {
     description:
       'Avisa al paciente que el hospital tiene listos los documentos de su consulta (resumen, fórmula y órdenes), sin datos clínicos. Categoría Utilidad, con UN botón de respuesta rápida «Recibir mis documentos»: al tocarlo, el asistente le envía los documentos en PDF e imagen (y antes le pide la fecha de nacimiento si el número no está verificado). Solo se usa si el paciente no ha escrito en las últimas 24 h; dentro de ese plazo sale como mensaje con el mismo botón. Ejemplo: «Hola {{1}}, el hospital tiene listos los documentos de su consulta del {{2}}: resumen, fórmula y órdenes. Toque el botón para recibirlos aquí.»',
     variables: ['Nombre del paciente', 'Fecha de la consulta (por ejemplo «1 de noviembre»)'],
+  },
+  // 📢 2026-11-05: mensajes masivos de la clínica (docs/PLAN_MENSAJES_MASIVOS.md §5).
+  MASS_MESSAGE_TEXT: {
+    label: 'Comunicado (mensajes masivos, sin imagen)',
+    description:
+      'Para los Mensajes masivos sin imagen: el comunicado que escribe el Administrador viaja como la segunda variable, en un solo párrafo. Meta la clasifica como Marketing. Ejemplo del cuerpo: «Hola {{1}}, tenemos un comunicado para usted: {{2}} Si no desea recibir más comunicados, responda NO MÁS COMUNICADOS.» Sin esta plantilla no se pueden enviar comunicados sin imagen.',
+    variables: ['Nombre de la persona (o «paciente» si no hay)', 'El comunicado'],
+  },
+  MASS_MESSAGE_IMAGE: {
+    label: 'Comunicado con imagen (mensajes masivos)',
+    description:
+      'Igual al comunicado sin imagen, pero con ENCABEZADO de tipo Imagen (en Meta: Encabezado → Multimedia → Imagen). Las dos variables del cuerpo son las mismas. Debe ser una plantilla aparte: una plantilla con encabezado de imagen no se puede enviar sin imagen, ni al revés.',
+    variables: ['Nombre de la persona (o «paciente» si no hay)', 'El comunicado'],
   },
 };
 

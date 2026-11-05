@@ -115,6 +115,21 @@ const SOLICITUDES_CITAS: MenuItem = {
   accent: 'rose',
 };
 
+/**
+ * 📢 Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md): comunicados de la clínica
+ * por WhatsApp a una lista de contactos o a sus pacientes. Solo ORG_ADMIN, en
+ * todas las clínicas (no depende del espejo). Distinto de `AVISOS`, que es del
+ * hospital de Anserma y avisa de las citas de un especialista. El permiso real lo
+ * aplican la página y sus acciones (`apps/web/lib/mensajes-masivos/acceso.ts`).
+ */
+const MENSAJES_MASIVOS: MenuItem = {
+  label: 'Mensajes masivos',
+  href: '/dashboard/mensajes-masivos',
+  icon: '📢',
+  description: 'Comunicados por WhatsApp a tus pacientes o a una lista',
+  accent: 'teal',
+};
+
 const PATIENT_MENUS: MenuItem[] = [
   {
     label: 'Mis Citas Programadas',
@@ -205,6 +220,7 @@ const ADMIN_MENUS: MenuItem[] = [
     description: 'Opiniones de pacientes',
     accent: 'orange',
   },
+  MENSAJES_MASIVOS,
   {
     label: 'Solicitudes de Alta',
     href: '/dashboard/solicitudes-alta',

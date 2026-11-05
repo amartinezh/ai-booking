@@ -142,7 +142,19 @@ export class ClaudeProvider implements LLMProvider {
         ],
         messages: p.turnos.map((t) => ({
           role: t.rol === 'usuario' ? 'user' : 'assistant',
-          content: t.texto,
+          content: t.imagen
+            ? [
+                {
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: t.imagen.mimeType,
+                    data: t.imagen.base64,
+                  },
+                },
+                { type: 'text', text: t.texto },
+              ]
+            : t.texto,
         })),
       }),
     });

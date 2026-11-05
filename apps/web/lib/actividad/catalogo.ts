@@ -98,6 +98,14 @@ export const ACCIONES_DE_LA_BITACORA: Record<string, AccionDeLaBitacora> = {
     APPOINTMENT_EDITED_PANEL: { categoria: 'CITAS', titulo: 'Corrigió la EPS o el nombre del paciente de una cita' },
     PATIENT_MESSAGE_SENT: { categoria: 'AVISOS', titulo: 'Le escribió a un paciente desde el panel' },
 
+    // ── Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md, 2026-11-05) ──
+    MASS_CONTACT_LIST_SAVED: { categoria: 'AVISOS', titulo: 'Guardó contactos en una lista de Mensajes masivos' },
+    MASS_CONTACT_LIST_DELETED: { categoria: 'AVISOS', titulo: 'Eliminó una lista de Mensajes masivos', aviso: true },
+    MASS_MESSAGE_TEST_SENT: { categoria: 'AVISOS', titulo: 'Envió una prueba de un mensaje masivo' },
+    MASS_MESSAGE_SEND_CONFIRMED: { categoria: 'AVISOS', titulo: 'Confirmó un envío de mensajes masivos', aviso: true },
+    MASS_MESSAGE_CONTROLLED: { categoria: 'AVISOS', titulo: 'Pausó, reanudó, canceló o reintentó un envío masivo' },
+    MASS_MESSAGE_OPT_OUT_CHANGED: { categoria: 'AVISOS', titulo: 'Registró o quitó una baja de Mensajes masivos' },
+
     // ── Agendas (cupos) ──
     SLOTS_GENERATED: { categoria: 'CITAS', titulo: 'Abrió cupos en la agenda' },
     SLOTS_CLONED: { categoria: 'CITAS', titulo: 'Copió la agenda de un día a otro' },

@@ -258,3 +258,98 @@ describe('conversar', () => {
     });
   });
 });
+
+/**
+ * Un turno con imagen (revisión de la imagen de los mensajes masivos,
+ * docs/PLAN_MENSAJES_MASIVOS.md §7): cada proveedor la manda en su formato, antes
+ * del texto, y un turno sin imagen sigue siendo texto plano.
+ */
+describe('conversar con imagen', () => {
+  const realFetch = global.fetch;
+  let fetchMock: jest.Mock;
+  const IMAGEN = { base64: 'QUJD', mimeType: 'image/jpeg' };
+  const CON_IMAGEN: PeticionConversacion = {
+    sistema: { fijo: 'F', variable: 'V' },
+    turnos: [{ rol: 'usuario', texto: 'Revise esta imagen', imagen: IMAGEN }],
+    json: true,
+  };
+  const ok = (body: unknown) =>
+    ({
+      ok: true,
+      status: 200,
+      json: async () => body,
+      text: async () => '',
+    }) as unknown as Response;
+  const cuerpo = () =>
+    JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      messages: unknown[];
+    };
+
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+  });
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  it('Claude: bloque image en base64 y luego el texto', async () => {
+    fetchMock.mockResolvedValue(
+      ok({ content: [{ type: 'text', text: '{}' }] }),
+    );
+    await new ClaudeProvider({ apiKey: 'k', model: 'm' }).conversar(CON_IMAGEN);
+    expect(cuerpo().messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/jpeg', data: 'QUJD' },
+          },
+          { type: 'text', text: 'Revise esta imagen' },
+        ],
+      },
+    ]);
+  });
+
+  it('ChatGPT: image_url con data URL y luego el texto', async () => {
+    fetchMock.mockResolvedValue(
+      ok({ choices: [{ message: { content: '{}' } }] }),
+    );
+    await new ChatGptProvider({ apiKey: 'k', model: 'm' }).conversar(
+      CON_IMAGEN,
+    );
+    expect(cuerpo().messages[1]).toEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'image_url',
+          image_url: { url: 'data:image/jpeg;base64,QUJD' },
+        },
+        { type: 'text', text: 'Revise esta imagen' },
+      ],
+    });
+  });
+
+  it('Gemini: inlineData y luego el texto', async () => {
+    const p = new GeminiProvider({ apiKey: 'k', model: 'gemini-2.5-flash' });
+    const generateContent = jest.fn().mockResolvedValue({
+      response: { text: () => '{}', usageMetadata: undefined },
+    });
+    const client = (p as unknown as { client: { getGenerativeModel: unknown } })
+      .client;
+    client.getGenerativeModel = jest.fn().mockReturnValue({ generateContent });
+    await p.conversar(CON_IMAGEN);
+    expect(generateContent).toHaveBeenCalledWith({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { data: 'QUJD', mimeType: 'image/jpeg' } },
+            { text: 'Revise esta imagen' },
+          ],
+        },
+      ],
+    });
+  });
+});

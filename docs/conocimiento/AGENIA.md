@@ -454,6 +454,125 @@ Revisa que la cita que pide sea del mismo día o mes de la solicitud: la aprobac
 
 Otra persona la decidió primero. Recarga la página para ver la decisión.
 
+### 📢 Mensajes masivos {#mensajes-masivos}
+
+- **Ruta:** `/dashboard/mensajes-masivos`
+- **Resumen:** Comunicados de la clínica por WhatsApp a una lista de contactos o a sus pacientes, con texto e imagen revisados antes de salir.
+- **Disponibilidad:** Solo la ve el Administrador, en todas las clínicas. Para enviar hacen falta las plantillas del comunicado aprobadas en Meta y registradas en Configuración.
+- **Relacionados:** [Configuración](#configuracion), [Primeros pasos](#primeros-pasos)
+- **Palabras clave:** campaña, difusión, comunicado, mensaje a todos, envío masivo, jornada de salud, vacunación, publicidad, importar contactos, lista de difusión, base de datos de pacientes, imagen, banner
+
+#### Para qué sirve
+
+Para avisarles a muchas personas a la vez de algo de la clínica: una jornada de vacunación, un cambio de horario o de sede, una campaña de prevención. Se importan los contactos de cualquier archivo o se usan los pacientes con WhatsApp, se escribe el mensaje, se agrega una imagen si se quiere y se envía después de revisarlo. El texto y la imagen se revisan solos mientras se preparan, y con la IA de la clínica si se pide. Las listas quedan guardadas para otros envíos. Es distinto de Avisos masivos, que avisan a los pacientes de las citas de un especialista en el hospital de Anserma.
+
+#### Paso a paso
+
+##### Preparar las plantillas en Meta (una sola vez)
+
+1. En el Administrador de WhatsApp de Meta cree dos plantillas de categoría Marketing, en español: una sin encabezado y otra con encabezado de imagen (Encabezado, Multimedia, Imagen).
+2. El cuerpo de las dos lleva 2 variables: el nombre y el comunicado. La pantalla muestra un ejemplo en «Cómo crear las plantillas en Meta».
+3. Cuando Meta las apruebe, regístrelas con su nombre e idioma en Configuración, WhatsApp: «Comunicado (mensajes masivos, sin imagen)» y «Comunicado con imagen».
+4. Vuelva a Mensajes masivos: arriba debe decir «aprobada» en las dos.
+
+##### Importar una lista de contactos
+
+1. En «Nuevo envío», elija «Importar contactos».
+2. Suba el archivo (Excel, CSV, TXT o los contactos del celular en .vcf) o pegue la lista en «Pegar texto». Puede venir con o sin encabezados y en cualquier orden.
+3. Revise «Qué encontró en el archivo»: cada columna dice qué es (nombre, celular, correo, documento) y por qué. Si alguna está mal, cámbiela en la lista desplegable o pulse «Pedir ayuda a la IA».
+4. Revise el «Resultado»: cuántos contactos quedan listos y cuáles se descartan (sin celular, fijos, inválidos o repetidos). «Ver las filas con observaciones» dice cuál y por qué.
+5. Póngale nombre a la lista, escriba de dónde salen los contactos y cómo autorizaron a la clínica a escribirles, marque la declaración y pulse «Guardar».
+
+> 💡 Sin celular no hay a quién escribirle: los teléfonos fijos y los números incompletos no entran. Un celular colombiano tiene 10 dígitos y empieza por 3; uno de otro país se escribe con el + y su indicativo.
+
+##### Enviar un comunicado
+
+1. En «Nuevo envío», elija la lista (o importe una, o use «Pacientes de la clínica»).
+2. Escriba el mensaje en un solo párrafo. Debajo aparece lo que hay que corregir: lo marcado «Impide enviar» se tiene que arreglar; «Aplicar» lo arregla solo y «Arreglar lo automático» arregla todo lo que se puede de una vez.
+3. Si quiere, pulse «Revisar con IA»: revisa ortografía, redacción, tono y datos que falten, y propone un texto corregido.
+4. Si quiere, agregue una imagen. La pantalla dice si queda bien en WhatsApp; «Optimizar» la convierte y la aliviana, y «Recortar a 1,91:1» la deja en la proporción ideal.
+5. Mire la vista previa a la derecha y pulse «Revisar y enviar».
+6. Revise «Antes de enviar», mándese una prueba a su celular y pulse «Enviar a … personas».
+7. Marque la confirmación, escriba la cantidad de personas que le pide y pulse «Sí, enviar».
+
+> 💡 Los mensajes salen de lunes a viernes de 7:00 a. m. a 7:00 p. m. y los sábados de 8:00 a. m. a 3:00 p. m., nunca domingos ni festivos (Ley 2300 de 2023). Si se confirma fuera de ese horario, el envío espera y sale solo al abrir el horario.
+
+##### Seguir un envío y detenerlo
+
+1. En «Envíos», abra el envío.
+2. Las cifras se actualizan solas: en cola, enviados, entregados, leídos y a quiénes no les llegó, con el motivo.
+3. «Pausar» detiene lo que falta y «Reanudar» lo continúa. «Cancelar lo que falta» lo termina: a quien ya le llegó no se le puede borrar.
+4. Si hubo fallos pasajeros (por ejemplo, límites de Meta), «Reintentar» los vuelve a poner en cola.
+
+##### Registrar que alguien no quiere más comunicados
+
+1. Abra la pestaña «Bajas».
+2. Escriba el celular y, si quiere, cómo lo pidió, y pulse «Registrar baja».
+
+> 💡 Quien responde «NO MÁS COMUNICADOS» o «stop» por WhatsApp queda dado de baja solo. Sus recordatorios de citas siguen igual.
+
+#### Qué ves en la pantalla
+
+- **Recuadro de arriba:** Si las dos plantillas del comunicado están aprobadas en Meta, si la revisión con IA está disponible y si el horario de envío está abierto.
+- **Nuevo envío:** Los tres pasos: destinatarios, mensaje e imagen, y revisar y enviar. El borrador se guarda solo y se puede retomar desde Envíos.
+- **Vista previa:** Cómo le llega el mensaje a una persona, con el texto de la plantilla aprobada, su nombre y la imagen recortada como en la conversación.
+- **Antes de enviar:** A cuántas personas les llega (sin las que pidieron la baja ni las que bloquearon a la clínica), si el texto y la plantilla están bien, la calidad del número en Meta, cuándo sale y cuánto tarda.
+- **Envíos:** Los borradores y los envíos confirmados con su avance.
+- **Listas de contactos:** Las listas guardadas: ver, buscar y quitar contactos, agregar más, renombrar o eliminar.
+- **Bajas:** Quienes pidieron no recibir más comunicados.
+
+#### Preguntas frecuentes
+
+##### ¿Por qué el mensaje no puede tener varios párrafos?
+
+Porque el texto viaja dentro de una plantilla de WhatsApp y Meta rechaza un mensaje con saltos de línea, tabulaciones o más de 4 espacios seguidos: el envío fallaría con todos. Los párrafos fijos de la plantilla sí se ven separados.
+
+##### ¿Por qué hace falta una plantilla aprobada?
+
+Porque WhatsApp solo deja escribirle a alguien con un mensaje libre durante las 24 horas siguientes a su último mensaje. Para escribirle a cualquiera en cualquier momento hay que usar una plantilla aprobada por Meta, y Meta cobra cada mensaje de marketing entregado.
+
+##### ¿Qué ve la IA de mis contactos?
+
+Solo los encabezados y 5 filas, con los números y los correos tapados, y solo si se pulsa «Pedir ayuda a la IA». Para revisar el texto ve el mensaje, y para revisar la imagen ve la imagen y el mensaje, siempre con la IA configurada por la clínica.
+
+##### ¿Se le puede escribir dos veces a la misma persona por error?
+
+No en el mismo envío: cada celular va una sola vez, aunque esté repetido en la lista o se vuelva a pulsar un botón. Si la persona está en dos listas distintas y se hacen dos envíos, sí recibe los dos.
+
+##### ¿Qué pasa con los contactos que no tienen nombre?
+
+Se les saluda como «paciente». El nombre se toma del archivo (el primer nombre) o de la ficha del paciente.
+
+##### ¿Qué significa «Calidad» del número?
+
+Es la calificación que Meta le da al número de WhatsApp de la clínica según cuántas personas lo bloquean o lo reportan. Si baja, Meta limita los envíos. Por eso conviene escribirle solo a quien autorizó y no enviar seguido.
+
+##### ¿Puedo enviar correos?
+
+Todavía no. El correo de los contactos se guarda para más adelante, pero los comunicados salen solo por WhatsApp.
+
+#### Si algo no sale bien
+
+##### Arriba dice «sin registrar» o «no está aprobada».
+
+Falta crear la plantilla en Meta, que Meta la apruebe o registrarla en Configuración, WhatsApp, con el mismo nombre e idioma. Mientras tanto se puede preparar el envío, pero no confirmarlo.
+
+##### El envío quedó «En pausa» con «El envío se detuvo solo».
+
+Hubo un problema de la clínica, no de las personas: la plantilla rechazada o pausada por Meta, el token vencido o la imagen. El aviso dice cuál. Corríjalo y pulse «Reanudar»: a nadie se le envía dos veces.
+
+##### Muchos aparecen como «No les llegó».
+
+Cada uno dice el motivo: números sin WhatsApp, personas que bloquearon a la clínica o límites de Meta. Los pasajeros se pueden reintentar; los demás no.
+
+##### La imagen dice «Así no se puede enviar».
+
+WhatsApp solo acepta JPEG o PNG de hasta 5 MB. Pulse «Optimizar»: la convierte y la aliviana. Si es una foto de iPhone (HEIC) y el navegador no la abre, guárdela como JPEG o use Safari.
+
+##### El archivo de contactos sale con letras raras.
+
+Pasa con algunos CSV guardados en Windows. La pantalla intenta leerlos bien sola; si siguen mal, guarde el archivo como Excel o como «CSV UTF-8» y súbalo de nuevo.
+
 ## Categoría: Agenda y catálogos {#catalogos}
 
 Lo que el asistente necesita para ofrecer citas: servicios, médicos, EPS, padrón y cupos.
@@ -2065,6 +2184,12 @@ Trajo más citas de las que caben en un lote. Reduce el rango de fechas.
 
 ## Glosario {#glosario}
 
+- **Comunicado:** Un mensaje de la clínica que se envía por WhatsApp a muchas personas a la vez desde Mensajes masivos.
+  - También se dice: mensaje masivo, campaña, difusión
+  - Se ve en: [Mensajes masivos](#mensajes-masivos)
+- **Baja de comunicados:** La persona pidió no recibir más mensajes masivos de la clínica; sus recordatorios de citas no cambian.
+  - También se dice: no más comunicados, darse de baja
+  - Se ve en: [Mensajes masivos](#mensajes-masivos)
 - **HIS:** Sistema de información del hospital: donde el hospital lleva su agenda y sus citas.
   - También se dice: sistema del hospital
   - Se ve en: [Espejo con el HIS](#espejo)
@@ -2466,6 +2591,7 @@ Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las his
 | Mantenimiento de consultas en vivo | API | 1 min | Vence y borra los datos de las consultas al HIS. |
 | Retención de datos | API | 03:30 | Borra conversaciones de más de 180 días y la bitácora del rastreo de más de 365; del resumen de la atención, el contenido a los 30 días y la fila al año (§5.8). |
 | Purga de avisos masivos | API | diario | Borra los datos personales vencidos de los lotes. |
+| Mensajes masivos | API | 20 s | Solo de lunes a viernes de 7 a 19 h y sábados de 8 a 15 h, sin domingos ni festivos: cada envío confirmado manda su tanda al ritmo elegido (§16). |
 | Alertas técnicas | API | 1 min (03:15 limpieza) | §8. |
 | Avisos de los casos de Soporte al grupo | API | 1 min (y al instante desde el asistente) | §8 y §15. |
 | Avisos de sus casos a quien los reportó | API | 1 min (con el asistente encendido) | §15. |
@@ -2558,6 +2684,7 @@ Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las his
 - **Actividad de usuarios**: lo que solo se consulta se anota por pantalla (una vez cada 30 minutos), no cada búsqueda ni cada ficha que se mira, salvo el Rastreo de paciente y la historia clínica, que anotan cada consulta. Elegir los destinatarios de un lote de avisos y su nota adicional no se anotan uno por uno (sí el lote y su envío). El administrador de la clínica no tiene un botón de «Cerrar sesiones»: lo logra poniéndole una clave nueva a la persona.
 - **Consulta en vivo al HIS** y **consulta del asistente al HIS**: construidas y apagadas hasta medir su costo en el hospital.
 - **Centro de ayuda**: solo lo ve el administrador.
+- **Mensajes masivos** (§16): solo por WhatsApp (el correo de los contactos se guarda, no se envía); los resultados de los envíos y las listas no se purgan solos; la baja por el botón «Detener promociones» de Meta no se lee como botón, solo como texto. Construido el 2026-11-05: faltan las dos plantillas aprobadas en Meta en cada clínica.
 - **Alertas técnicas**: en producción en el hospital (bot conectado, grupo vinculado y encendidas; revisado el 2026-10-20).
 - **Asistente de soporte por Telegram** (para el personal de las clínicas, §15): desplegado en el hospital el 2026-10-20 (`SUPPORT_BOT_ENABLED`, la ruta del webhook en el proxy y el examen con su IA aprobado: 59 de 62, sin violaciones). Todavía no conversa con nadie: falta crear y conectar su bot de Telegram, elegir las personas del piloto y encenderlo (`docs/ASISTENTE_SOPORTE.md`, pasos 7 a 10). Pendiente: «Avísame cuando se resuelva» para las fallas generales.
 
@@ -2574,6 +2701,7 @@ Primera fase de `docs/PLAN_RESUMEN_ATENCION.md`. AgenIA lee del hospital las his
 | `docs/PLAN_RESUMEN_ATENCION.md` | Resumen de la atención y sus documentos (fórmula, órdenes de exámenes, remisión, incapacidad) en PDF e imagen para imprimir, por WhatsApp, Telegram y correo, cuando el médico termina la historia clínica en el HIS. Fase 0 con las consultas de solo lectura del driver. Fase 1 (lectura en sombra y revisión contra el HIS), Fase 2 (documentos en PDF e imagen y página del paciente con enlaces de prueba) Fase 3 (correo) y Fase 4 (WhatsApp y Telegram, con la baja escrita), todas en modo prueba y construidas el 2026-11-01 (§5.8); faltan la prueba real, los rebotes del correo y el piloto. |
 | `docs/PLAN_ALERTAS_TECNICAS.md` · `docs/ALERTAS_TECNICAS.md` | Alertas técnicas por Telegram y vigía del servidor. |
 | `docs/PLAN_BOT_SOPORTE.md` · `docs/ASISTENTE_SOPORTE.md` | Asistente de soporte por Telegram para el personal de las clínicas: el plan y su operación (paso a producción, piloto, apagarlo). |
+| `docs/PLAN_MENSAJES_MASIVOS.md` | Mensajes masivos: comunicados por WhatsApp a listas de contactos o a los pacientes; importación inteligente, revisiones del texto y la imagen, envío y bajas. |
 | `docs/MONITOR_SERVICIOS.md` | Monitor de servicios externos. |
 | `docs/GUARDRAIL_EMERGENCIAS.md` | Barandas de emergencias médicas. |
 | `docs/PLAN_PRUEBAS_CITAS.md` | Plan de pruebas del ciclo de vida de una cita. |
@@ -2596,12 +2724,25 @@ Un bot de Telegram propio de la plataforma —distinto del de las alertas técni
 - **Configuración** (`/super-admin/soporte-bot`, solo super administrador): token del bot y su webhook (`/api/support-bot/webhook/<ruta>`, con `secret_token`), encendido, el piloto, horario del equipo (por defecto de lunes a viernes de 8:00 a 17:00), minutos de la conversación, límites (40 mensajes por hora, 2.000 caracteres por mensaje, tope diario de respuestas con IA por clínica) y un código de prueba. Cada cambio queda en la auditoría global. Sin `SUPPORT_BOT_ENABLED=true` en la API no existe ninguna de sus rutas y la tarjeta de Soporte no aparece.
 - **Datos**: los mensajes de las conversaciones verificadas se guardan 180 días (`SupportBotMessage`); lo que se escribe antes del código no se guarda en la base. Los casos y sus notas no se borran con la conversación: quedan en Soporte.
 
+## 16. Mensajes masivos
+
+Comunicados de la clínica por WhatsApp (`/dashboard/mensajes-masivos`, solo ORG_ADMIN, en todas las clínicas; plan en `docs/PLAN_MENSAJES_MASIVOS.md`). Aparte de los avisos masivos del hospital de Anserma (§5), que no cambian.
+
+- **Listas de contactos** (`MassContactList`, `MassContact`): se importan de cualquier archivo en el navegador (`analizarArchivoDeContactos` de `@agenia/shared`): CSV con cualquier separador, Excel convertido con `xlsxToCsv`, vCard o texto libre. Cada columna se reconoce por el encabezado (también los de Google Contactos y Outlook) y por el contenido; si no está claro, la IA de la clínica propone el mapeo viendo solo los encabezados y 5 filas con los dígitos y los correos tapados. Se descartan los fijos, los celulares inválidos y los repetidos; el servidor vuelve a normalizar cada contacto al guardar. Al guardar se declara de dónde salen y cómo autorizaron (Ley 1581): queda en la lista con el usuario y la fecha. También se arma una lista con los pacientes que tienen un celular de WhatsApp (todos o los de una EPS). Una lista usada en un envío no se puede borrar: es la constancia.
+- **Revisión del texto**: reglas fijas al escribir (`revisarTexto`): saltos de línea, tabulaciones o más de 4 espacios (Meta rechaza la variable: impiden enviar), más de 800 caracteres, espacios por llenar («{nombre}», «XXX»), groserías (impiden enviar), palabras informales y abreviaturas de chat, mayúsculas sostenidas, signos repetidos o sin abrir, tildes frecuentes, enlaces acortados o sin https y datos de salud de una persona. Lo que se puede arreglar solo trae su corrección. La revisión con IA (`MassMessageAiService`) evalúa ortografía, gramática, claridad, tono, privacidad y datos que falten, sin cambiar fechas, lugares ni cifras; solo se aplica lo que está tal cual en el texto. La API vuelve a correr las reglas antes de confirmar.
+- **Imagen**: se mide en el navegador (formato real por sus bytes, peso, tamaño, proporción, transparencias, brillo y nitidez) y se dice qué tan bien queda; «Optimizar» la pasa a JPEG con fondo blanco, como mucho 1600 px de ancho y por debajo de 1 MB si se puede, y «Recortar» la centra en 1,91:1. Se guarda en la base (`MassCampaign.imageData`, JPEG o PNG de hasta 5 MB, revisado por sus bytes) y se sube a Meta (`/media`) al enviar; el id se vuelve a pedir pasados 25 días. La IA revisa si el texto de la imagen se lee, sus errores, datos personales, contenido inadecuado y si concuerda con el mensaje.
+- **Plantillas**: `MASS_MESSAGE_TEXT` (sin imagen) y `MASS_MESSAGE_IMAGE` (encabezado de imagen), 2 variables cada una: el primer nombre (o «paciente») y el comunicado. La API pregunta a Meta (con el id de la cuenta de WhatsApp Business) si existe, si está aprobada, su encabezado y su cuerpo, que es el que usa la vista previa; también la calidad y el nivel de mensajes del número.
+- **Envío** (`MassMessageSenderService`): la previa dice a cuántos les llega y qué impide enviar. Al confirmar hay que escribir esa cantidad: entonces se toma la foto de destinatarios (`MassCampaignRecipient`), sin quienes pidieron la baja ni quienes bloquearon a la clínica en Meta (error 131050 en el libro de mensajes). Cada 20 s, solo en el horario de la Ley 2300 (lunes a viernes de 7 a 19 h, sábados de 8 a 15 h, sin domingos ni festivos), cada envío activo manda una tanda al ritmo elegido (60 por minuto por defecto), con un turno en la base para que dos vueltas no trabajen el mismo. Antes de cada mensaje revisa la pausa y la baja. Un error de la persona la deja «fallida» y sigue; un error de la clínica (plantilla, token, cuenta, imagen) pausa el envío con el motivo y la persona sigue en cola. Lo entregado y lo leído salen del libro de mensajes (`WhatsappMessageLog`, tipo `MASS_MESSAGE`) por el id de Meta. Se puede pausar, reanudar, cancelar lo que falta y reintentar los fallos pasajeros.
+- **Bajas** (`MassMessageOptOut`): el asistente atiende «no más comunicados», «stop» o «no quiero más mensajes» (y «activar comunicados» para volver) con frases fijas, sin IA, después de la emergencia; vale para el número que escribe y, si escribe con el número oculto, también para el teléfono de sus fichas. No toca los recordatorios. Por Telegram no aplica. El administrador también registra o quita bajas en el panel.
+- **Actividad de usuarios**: guardar o eliminar una lista, la prueba, la confirmación, pausar, reanudar, cancelar o reintentar y las bajas del panel quedan con quién y cuándo.
+
 ---
 
 # Parte 3 · Bitácora de cambios
 
 Una línea por ajuste o mejora, la más reciente arriba: fecha, qué cambió para quien usa el sistema y el commit si lo hay.
 
+- **2026-11-05** — Opción nueva **Mensajes masivos** para el Administrador, en todas las clínicas: comunicados por WhatsApp a una lista de contactos o a los pacientes. Los contactos se importan de cualquier archivo (Excel, CSV, contactos del celular o texto pegado): el sistema reconoce cada columna y dice por qué, se puede corregir o pedir ayuda a la IA, descarta fijos, inválidos y repetidos, y guarda la lista con la declaración de autorización (Ley 1581) para volver a usarla. El texto se revisa mientras se escribe (formato de WhatsApp, ortografía frecuente, groserías, mayúsculas, espacios por llenar, datos de salud) y con la IA si se pide; la imagen se revisa (formato, peso, tamaño, proporción, nitidez) y se optimiza o se recorta ahí mismo, y la IA revisa su contenido. Antes de enviar: vista previa con la plantilla aprobada, prueba al celular propio y confirmación escribiendo la cantidad de personas. Sale solo en el horario de la Ley 2300, al ritmo elegido, con seguimiento de entregados y leídos, pausa, cancelación y reintento. Quien responde «NO MÁS COMUNICADOS» no vuelve a recibirlos. Hacen falta dos plantillas aprobadas en Meta en cada clínica.
 - **2026-11-05** — Arreglos del diagnóstico del jueves. **Lista de espera:** si alguien contesta la oferta nombrando otro día u otra hora («Me sirve para mañana viernes» a un cupo del lunes), el asistente ya no le agenda ese cupo: le dice cuál es y espera su SÍ o su NO (esa mañana a una paciente se le agendó el lunes y tuvo que cancelarlo); y el cupo que se ofrece en lugar de uno que ya no estaba también espera 10 minutos si acaba de aparecer. **Monitoreo:** el monitor del espejo ya no cuenta un envío fallido que AgenIA ya cerró; por eso marcaba el espejo con problemas desde el 29 de octubre y la alerta técnica no se cerraba.
 - **2026-11-04** — Arreglos del diagnóstico del miércoles. **Avisos de cambios del hospital:** cuando el hospital cambia una cita del chat y la vuelve a cambiar minutos después, AgenIA espera a que quede quieta y le avisa al paciente solo cómo quedó; si la devolvió como estaba, no le escribe nada (esa mañana el hospital pasó la agenda de un médico a otro y la devolvió a los 10 minutos, y a 4 pacientes les llegó un médico equivocado; a otro no le llegó el último cambio). Si solo cambia el médico, el aviso lo dice. **Lista de espera:** un cupo que acaba de aparecer en la agenda espera 10 minutos antes de ofrecerse (el hospital abrió una tarde y la quitó a los 5 minutos, y ya se habían ofrecido 12 cupos). **Bandeja:** el «día lleno cerrado» solo vale para citas del chat dentro del horario de las del hospital ese día; una cita en un turno que el hospital abrió y quitó enseguida sí abre el caso. **Chat:** «Sí, para cancelar la cita» en medio de un agendamiento ya pasa a cancelar, y «👍» u «ok» después de consultar las citas cierra la conversación.
 - **2026-11-03** — Arreglos del diagnóstico del martes. **Lista de espera:** si alguien dice «Sí» y el cupo ya no está (lo tomó la ventanilla o el hospital rechazó la cita), el asistente le ofrece enseguida otro libre en vez de solo decirle que sigue en la lista; un cupo que libera una anulación del hospital espera 10 minutos antes de ofrecerse, por si el hospital está quitando ese día o vuelve a crear la cita (esa mañana se ofrecieron cupos de un día que el hospital estaba quitando y 17 «Sí» terminaron en «ese cupo ya no está»); y «Perfecto», «Me sirve» o «Lo tomo» cuentan como «Sí» en la oferta. **Bandeja:** si el médico tiene ese día 3 o más citas vigentes del hospital, que «no tenga turno» se toma como un día lleno que el hospital cerró y ya no abre el caso «Cita en un horario que el hospital quitó» ni deja un error cada 5 minutos; los casos ya abiertos así se cierran solos.

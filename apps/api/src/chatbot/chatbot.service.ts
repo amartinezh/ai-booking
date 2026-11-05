@@ -128,6 +128,7 @@ import {
 import { WhatsappCredentialsService } from '../whatsapp-config/whatsapp-credentials.service';
 import { WhatsappTemplateService } from '../whatsapp-config/whatsapp-template.service';
 import { ResumenChatService } from '../attention-summary/resumen-chat.service';
+import { MassMessageOptOutService } from '../mass-message/mass-message-opt-out.service';
 import { formatForPatientInSentence } from '../common/business-hours';
 import {
   WhatsappMessageLogService,
@@ -468,6 +469,8 @@ export class ChatbotService implements OnModuleInit {
     // «Recibir mis documentos», la fecha de nacimiento y «mis documentos».
     // Opcional: sin él (tests), esos mensajes siguen el camino de siempre.
     @Optional() private readonly resumenChat?: ResumenChatService,
+    // 📢 «No más comunicados» (docs/PLAN_MENSAJES_MASIVOS.md §9). Opcional: sin él (tests), el turno sigue igual.
+    @Optional() private readonly comunicados?: MassMessageOptOutService,
   ) {}
 
   async onModuleInit() {
@@ -6723,6 +6726,31 @@ export class ChatbotService implements OnModuleInit {
       (await this.resumenChat.manejarTexto(organizationId, senderId, text))
     ) {
       return;
+    }
+
+    // 📢 Baja (o alta) de los mensajes masivos: «no más comunicados», «stop»,
+    // «activar comunicados». Frases fijas, sin IA: es una decisión sobre sus datos.
+    // No toca los recordatorios ni la conversación en curso.
+    if (messageType === 'text' && this.comunicados) {
+      const comunicado = await this.comunicados.manejarTexto(
+        organizationId,
+        senderId,
+        text,
+      );
+      if (comunicado) {
+        await this.smartReply(organizationId, senderId, comunicado.respuesta);
+        await this.auditSuccess(senderId, organizationId, {
+          userMessage: text,
+          botReply: comunicado.respuesta,
+          metadata: {
+            step:
+              comunicado.intencion === 'BAJA'
+                ? 'COMUNICADOS_BAJA'
+                : 'COMUNICADOS_ALTA',
+          },
+        });
+        return;
+      }
     }
 
     // 🛡️ GUARDRAIL: INSULTO → DERIVACIÓN INMEDIATA ───────────────

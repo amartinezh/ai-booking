@@ -37,6 +37,9 @@ const TIPO_DE_MENSAJE: Record<WhatsappTemplateKind, WhatsappMessageKind> = {
   PATIENT_REQUEST_ALERT: 'SYSTEM_NOTICE',
   // 🩺 «Tiene listos los documentos de su consulta» (resumen de la atención, Fase 4).
   ATTENTION_SUMMARY_READY: 'ATTENTION_SUMMARY',
+  // 📢 Comunicados de Mensajes masivos (docs/PLAN_MENSAJES_MASIVOS.md).
+  MASS_MESSAGE_TEXT: 'MASS_MESSAGE',
+  MASS_MESSAGE_IMAGE: 'MASS_MESSAGE',
 };
 
 /**
@@ -190,6 +193,12 @@ export class WhatsappTemplateService {
      * devuelve el texto del botón.
      */
     buttonPayloads?: string[];
+    /**
+     * El id en Meta (`/media`) de la imagen del ENCABEZADO, para las plantillas
+     * que lo llevan (el comunicado con imagen de Mensajes masivos). Una plantilla
+     * con encabezado de imagen no sale sin ella, y una sin encabezado no la acepta.
+     */
+    headerImageId?: string;
   }): Promise<{
     success: boolean;
     error?: string;
@@ -202,6 +211,7 @@ export class WhatsappTemplateService {
       kind,
       bodyParams = [],
       buttonPayloads = [],
+      headerImageId,
     } = params;
 
     if (!organizationId || !recipientId) {
@@ -255,9 +265,19 @@ export class WhatsappTemplateService {
         language: { code: template.language },
         // `components` se omite cuando la plantilla no lleva variables ni
         // botones: Meta rechaza un arreglo de parámetros que no case con la aprobación.
-        ...(bodyParams.length > 0 || buttonPayloads.length > 0
+        ...(bodyParams.length > 0 || buttonPayloads.length > 0 || headerImageId
           ? {
               components: [
+                ...(headerImageId
+                  ? [
+                      {
+                        type: 'header',
+                        parameters: [
+                          { type: 'image', image: { id: headerImageId } },
+                        ],
+                      },
+                    ]
+                  : []),
                 ...(bodyParams.length > 0
                   ? [
                       {

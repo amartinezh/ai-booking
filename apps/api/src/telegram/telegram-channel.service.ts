@@ -183,8 +183,9 @@ export class TelegramChannelService {
 
 /**
  * `WhatsappMessageKind` → `TelegramMessageKind`. Son los mismos valores salvo
- * `MASS_NOTICE`, que no sale por Telegram (T7); si llegara, se registra como
- * aviso del sistema en vez de fallar.
+ * `MASS_NOTICE` y `MASS_MESSAGE`, que no salen por Telegram (T7; los mensajes
+ * masivos son solo de WhatsApp); si llegaran, se registran como aviso del
+ * sistema en vez de fallar.
  */
 function toTelegramCtx(ctx?: BotOutboundContext): {
   kind?: TelegramMessageKind;
@@ -192,6 +193,8 @@ function toTelegramCtx(ctx?: BotOutboundContext): {
 } {
   if (!ctx) return {};
   const kind: TelegramMessageKind | undefined =
-    ctx.kind === 'MASS_NOTICE' ? 'SYSTEM_NOTICE' : ctx.kind;
+    ctx.kind === 'MASS_NOTICE' || ctx.kind === 'MASS_MESSAGE'
+      ? 'SYSTEM_NOTICE'
+      : ctx.kind;
   return { kind, appointmentId: ctx.appointmentId ?? null };
 }
