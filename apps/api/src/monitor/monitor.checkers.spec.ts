@@ -128,6 +128,21 @@ describe('MonitorCheckers — espejo con el HIS', () => {
     expect(r.errorMessage).toContain('el hospital NO los tiene');
   });
 
+  // 2026-11-05: un evento rendido que AgenIA ya cerró (la cita se anuló y el evento
+  // quedó con `deliveredAt`) dejó el espejo en rojo desde el 29-oct.
+  it('solo cuenta los rendidos que siguen sin cerrar', async () => {
+    conEstado({});
+
+    await checkers.checkService(svc);
+
+    expect(prisma.syncOutbox.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        deadLettered: true,
+        deliveredAt: null,
+      }),
+    });
+  });
+
   // 🚨 docs/PLAN_ALERTAS_TECNICAS.md A11: late puntual y no escribe una sola cita.
   it('el agente late pero no alcanza la base del hospital → DOWN, con su motivo', async () => {
     conEstado({

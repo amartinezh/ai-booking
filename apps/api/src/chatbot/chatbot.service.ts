@@ -29,6 +29,7 @@ import {
   type OpcionConsulta,
 } from './chatbot.constants';
 import { textoParaCoincidencia } from './texto-para-coincidencia.util';
+import { pideOtroMomentoQueElCupo } from './oferta-otro-momento';
 import {
   clasificarRespuestaAlBot,
   esAgradecimiento,
@@ -5629,6 +5630,9 @@ export class ChatbotService implements OnModuleInit {
     MSGS: ReturnType<typeof buildMessages>;
     acepta: boolean;
   }): Promise<boolean> {
+    // 🗓️ Un SÍ tardío que nombra un día o una hora («Sí, para el viernes») es un
+    // pedido nuevo, no el cupo de ayer (2026-11-05): sigue el camino de siempre.
+    if (p.acepta && interpretarOtroHorario(p.text)) return false;
     let r: Awaited<ReturnType<WaitlistService['respuestaTardia']>>;
     try {
       r = await this.waitlistService.respuestaTardia({
@@ -13625,6 +13629,57 @@ export class ChatbotService implements OnModuleInit {
   }
 
   /**
+   * 🗓️ Contestó SÍ a la oferta nombrando otro día, otra hora u otra jornada
+   * (`pideOtroMomentoQueElCupo`): se le dice cuál es el cupo apartado y el paso sigue
+   * esperando su SÍ o su NO. false si no pide otro momento, si ya no tiene una
+   * oferta vigente (sigue el camino de siempre) o si algo falla.
+   */
+  private async repreguntarSiPideOtroMomento(p: {
+    organizationId: string;
+    senderId: string;
+    text: string | undefined;
+    MSGS: ReturnType<typeof buildMessages>;
+  }): Promise<boolean> {
+    try {
+      const oferta = await this.waitlistService.ofertaPendiente({
+        whatsappId: p.senderId,
+        organizationId: p.organizationId,
+      });
+      if (!oferta) return false;
+      const org = await this.prisma.organization.findUnique({
+        where: { id: p.organizationId },
+        select: { timezone: true },
+      });
+      const timeZone = org?.timezone || undefined;
+      if (!pideOtroMomentoQueElCupo(p.text, oferta.slotDate, { timeZone })) {
+        return false;
+      }
+      const reply = p.MSGS.waitlistOfertaOtroMomento(
+        formatAppointmentLong(oferta.slotDate, { timeZone }),
+        oferta.doctorName,
+        formatTimeOnly(oferta.expiresAt, { timeZone }),
+      );
+      await this.smartReply(p.organizationId, p.senderId, reply);
+      await this.setUserState(
+        p.organizationId,
+        p.senderId,
+        ChatState.AWAITING_WAITLIST_CONFIRM,
+      );
+      await this.auditSuccess(p.senderId, p.organizationId, {
+        userMessage: p.text || '[audio]',
+        botReply: reply,
+        metadata: { step: 'WAITLIST_OFERTA_OTRO_MOMENTO' },
+      });
+      return true;
+    } catch (error: unknown) {
+      this.logger.error(
+        `No se pudo revisar si la respuesta a la oferta pide otro momento (org ${p.organizationId}): ${getErrorMessage(error)}`,
+      );
+      return false;
+    }
+  }
+
+  /**
    * SÍ o NO a una oferta de la lista de espera (2026-11-03): además de lo que se
    * entiende en cualquier paso SÍ/NO, «Perfecto», «Me sirve», «Lo tomo» o «Di» (la
    * tecla de al lado) cuentan como SÍ. Esa mañana, «Perfecto» recibió «necesito un
@@ -13665,6 +13720,20 @@ export class ChatbotService implements OnModuleInit {
     // Acepta SÍ/NO por texto y por voz (transcripción), de forma tolerante.
     // ❓ Una pregunta no es un SÍ: reserva el cupo.
     const decision = this.decisionDeLaOferta(text);
+
+    // 🗓️ «Me sirve para mañana viernes» no es un SÍ a un cupo del lunes
+    // (2026-11-05): se le dice cuál es el cupo y sigue esperando su SÍ o su NO.
+    if (
+      decision === 'SI' &&
+      (await this.repreguntarSiPideOtroMomento({
+        organizationId,
+        senderId,
+        text,
+        MSGS,
+      }))
+    ) {
+      return;
+    }
 
     if (decision === 'SI') {
       const { slotId, patientId, epsId } =

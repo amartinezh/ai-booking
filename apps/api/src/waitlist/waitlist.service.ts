@@ -167,6 +167,19 @@ export const OFERTAS_SIN_RESPUESTA_PARA_SALIR = 2;
  */
 export const ESPERA_CUPO_LIBERADO_POR_HOSPITAL_MS = 10 * 60_000;
 
+/**
+ * ⏳ Un cupo que acaba de aparecer en la agenda espera esto antes de ofrecerse a la
+ * lista (2026-11-04): dos lecturas de la agenda del hospital (cada 5 minutos). El
+ * hospital abrió la tarde del viernes de MD08 a las 13:39 y la quitó a las 13:44; a
+ * las 13:40 el barrido ya había ofrecido 12 de esos cupos y 10 desaparecieron antes
+ * de que las personas contestaran. Igual que los cupos que libera una anulación del
+ * hospital (`ESPERA_CUPO_LIBERADO_POR_HOSPITAL_MS`). Vale para el barrido
+ * (`CuposLibresListaService`) y, desde el 2026-11-05, para el cupo que se ofrece en
+ * lugar de uno que ya no estaba o tras una respuesta tardía (`ofrecerOtroCupoLibre`:
+ * ese día a una persona se le ofreció uno de 5 minutos).
+ */
+export const ESPERA_CUPO_NUEVO_MS = 10 * 60_000;
+
 /** El dueño del apartado mientras espera un cupo liberado por el hospital. */
 const APARTADO_HOSPITAL = 'HOSPITAL';
 
@@ -1018,6 +1031,8 @@ export class WaitlistService {
         organizationId: entry.organizationId,
         serviceId: entry.serviceId,
         isAvailable: true,
+        // Recién aparecido: todavía no (2026-11-05), como en el barrido.
+        createdAt: { lte: new Date(Date.now() - ESPERA_CUPO_NUEVO_MS) },
       },
       include: { doctor: true },
       orderBy: { startTime: 'asc' },

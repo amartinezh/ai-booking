@@ -1111,6 +1111,12 @@ const FORMAL = {
     `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\n` +
     `Se lo tengo apartado hasta las *${hasta}*. ¿Lo toma? Responda *SÍ* para agendarlo o *NO* si ese horario no le sirve.`,
 
+  // 🗓️ Contestó la oferta nombrando otro día u otra hora (2026-11-05: «Me sirve
+  // para mañana viernes» a un cupo del lunes se agendó el lunes). Se le dice cuál es.
+  waitlistOfertaOtroMomento: (fecha: string, doctor: string, hasta: string) =>
+    `El cupo que le tengo apartado es el *${fecha}*${doctor ? ` con ${doctor}` : ''}; no tengo otro día ni otra hora para ofrecerle por ahora. 🙏\n\n` +
+    `¿Le sirve ese? Responda *SÍ* para agendarlo o *NO* si no le sirve (seguirá en la lista, en su mismo puesto). Se lo guardo hasta las *${hasta}*.`,
+
   waitlistCupoRechazado: () =>
     pick([
       `Sin problema. Libero ese cupo para otro paciente.\n\nUsted sigue en nuestra lista y le aviso apenas haya otra disponibilidad. Que tenga un excelente día.`,
@@ -2575,6 +2581,10 @@ const INFORMAL = {
     `¡Hola, ${nombre}! 👋 Te escribimos porque estás en la *lista de espera* y se abrió un cupo para *${especialidad}*:\n\n` +
     `📅 *${fecha}*\n👨‍⚕️ ${doctor}\n\n` +
     `Te lo tengo apartado hasta las *${hasta}*. ¿Lo tomas? Responde *SÍ* o *NO*. 💚`,
+
+  waitlistOfertaOtroMomento: (fecha: string, doctor: string, hasta: string) =>
+    `El cupo que te tengo apartado es el *${fecha}*${doctor ? ` con ${doctor}` : ''}; por ahora no tengo otro día ni otra hora para ofrecerte. 🙏\n\n` +
+    `¿Te sirve ese? Responde *SÍ* para agendarlo o *NO* si no te sirve (sigues en la lista, en tu mismo puesto). Te lo guardo hasta las *${hasta}*.`,
 
   waitlistCupoRechazado: () =>
     pick([

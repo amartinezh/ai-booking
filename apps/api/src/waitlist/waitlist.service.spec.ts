@@ -1742,6 +1742,25 @@ describe('WaitlistService', () => {
       });
     });
 
+    // 2026-11-05: a una persona se le ofreció como reemplazo un cupo con 5 minutos
+    // de creado; los recién aparecidos esperan 10, como en el barrido.
+    it('solo cupos que llevan 10 minutos o más en la agenda', async () => {
+      prisma.waitlistEntry.findFirst.mockResolvedValue(entrada({}));
+      appointments.getAvailableSlots.mockResolvedValue([{ slotId: 'slot-9' }]);
+      prisma.scheduleSlot.findMany.mockResolvedValue([]);
+      const antes = Date.now();
+
+      await expect(
+        service.ofrecerOtroCupo({ whatsappId: 'x', organizationId: ORG }),
+      ).resolves.toBe(false);
+
+      const where = prisma.scheduleSlot.findMany.mock.calls[0][0].where;
+      const tope = where.createdAt.lte.getTime();
+      expect(tope).toBeLessThanOrEqual(Date.now() - 10 * 60_000);
+      expect(tope).toBeGreaterThanOrEqual(antes - 10 * 60_000);
+      expect(chatbot.notifyWaitlistCandidate).not.toHaveBeenCalled();
+    });
+
     it('sin otro cupo libre, o sin entrada en la lista: false', async () => {
       prisma.waitlistEntry.findFirst.mockResolvedValue(entrada());
       await expect(

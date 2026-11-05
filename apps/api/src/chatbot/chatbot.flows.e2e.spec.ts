@@ -2836,6 +2836,70 @@ describe('ChatbotService — flujos completos de citas (E2E conversacional)', ()
       expect(waitlist.respuestaTardia).not.toHaveBeenCalled();
     });
 
+    // 2026-11-05: a una oferta del lunes a la 1:00 p. m., «Me sirve para mañana
+    // viernes» se tomó como SÍ (por «me sirve») y se le agendó el lunes.
+    describe('4.3i la respuesta nombra otro día u otra hora', () => {
+      // Lunes 7 de enero de 2030, 1:00 p. m. en Bogotá.
+      const LUNES_1PM = new Date('2030-01-07T18:00:00.000Z');
+      beforeEach(() => {
+        waitlist.ofertaPendiente.mockResolvedValue({
+          nombre: 'Rosa Díaz',
+          servicio: 'Medicina General',
+          doctorName: 'Ana Pérez',
+          slotDate: LUNES_1PM,
+          expiresAt: new Date(Date.now() + 60 * 60_000),
+        });
+        redis.store.set(
+          `chat_state:${ORG_ID}:${SENDER}`,
+          ChatState.AWAITING_WAITLIST_CONFIRM,
+        );
+      });
+
+      it.each([
+        'Me sirve para el viernes',
+        'Sí, pero en la mañana',
+        'Perfecto, a las 10',
+        'Sí, pero otro día',
+      ])(
+        '«%s»: no lo agenda, le dice cuál es el cupo y sigue esperando',
+        async (texto) => {
+          await say(texto);
+          expect(waitlist.confirmFromWaitlist).not.toHaveBeenCalledWith(
+            expect.objectContaining({ confirmed: true }),
+          );
+          expect(appointments.bookAppointment).not.toHaveBeenCalled();
+          expect(lastSent()).toContain('lunes, 7 de enero');
+          expect(lastSent()).toContain('Ana Pérez');
+          expect(await state()).toBe(ChatState.AWAITING_WAITLIST_CONFIRM);
+        },
+      );
+
+      it('y después un «Sí» sí toma el cupo', async () => {
+        await say('Me sirve para el viernes');
+        await say('Sí');
+        expect(waitlist.confirmFromWaitlist).toHaveBeenCalledWith(
+          expect.objectContaining({ confirmed: true }),
+        );
+      });
+
+      // El mismo día del cupo («el lunes») lo prueba oferta-otro-momento.spec.ts
+      // con un reloj fijo; aquí el cupo es de 2030.
+      it.each(['Me sirve, a la 1', 'Sí, a la 1 de la tarde'])(
+        '«%s» (la misma hora del cupo) es SÍ',
+        async (texto) => {
+          await say(texto);
+          expect(waitlist.confirmFromWaitlist).toHaveBeenCalledWith(
+            expect.objectContaining({ confirmed: true }),
+          );
+        },
+      );
+    });
+
+    it('4.3j en reposo, un «Sí, para el viernes» no se toma como SÍ tardío a una oferta vencida', async () => {
+      await say('Sí, para el viernes');
+      expect(waitlist.respuestaTardia).not.toHaveBeenCalled();
+    });
+
     it('4.3c si su entrada no aparece, no le promete la lista: le dice con quién comunicarse', async () => {
       const slot = slotRow('slot-free', FECHA_C, 'Ana Pérez', SVC_MEDICINA);
       db.slots.push(slot);

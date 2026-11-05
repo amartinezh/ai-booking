@@ -147,8 +147,17 @@ export class MonitorCheckers {
 
     for (const cfg of configs) {
       const [deadLetters, pendientes, ajustes] = await Promise.all([
+        // Solo los que siguen SIN cerrar (2026-11-05). Uno que AgenIA ya cerró
+        // —la cita del chat que el hospital no registró se anula y su evento se
+        // da por terminado con `deliveredAt`— conserva la marca de rendido: contado,
+        // dejó el espejo en rojo desde el 29-oct por una cita que ya no existe, y
+        // con la alerta abierta una caída de verdad no habría avisado de nuevo.
         this.prisma.syncOutbox.count({
-          where: { organizationId: cfg.organizationId, deadLettered: true },
+          where: {
+            organizationId: cfg.organizationId,
+            deadLettered: true,
+            deliveredAt: null,
+          },
         }),
         this.prisma.syncOutbox.findMany({
           where: {

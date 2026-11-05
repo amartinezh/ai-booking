@@ -5,9 +5,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { getErrorMessage } from '../common/error-message.util';
 import {
+  ESPERA_CUPO_NUEVO_MS,
   HORARIO_OFERTA_CON_PLANTILLA,
   WaitlistService,
 } from './waitlist.service';
+
+// Se reexporta por compatibilidad: la constante vive en waitlist.service.ts, que
+// también la usa al ofrecer otro cupo (2026-11-05).
+export { ESPERA_CUPO_NUEVO_MS };
 
 /**
  * 🔔 La lista de espera recibe primero los cupos libres (2026-10-31).
@@ -30,16 +35,6 @@ import {
 
 /** Ofertas que no salen seguidas antes de dejar el servicio para el siguiente barrido. */
 const MAX_FALLOS_SEGUIDOS = 3;
-
-/**
- * ⏳ Un cupo que acaba de aparecer en la agenda espera esto antes de ofrecerse a la
- * lista (2026-11-04): dos lecturas de la agenda del hospital (cada 5 minutos). El
- * hospital abrió la tarde del viernes de MD08 a las 13:39 y la quitó a las 13:44; a
- * las 13:40 el barrido ya había ofrecido 12 de esos cupos y 10 desaparecieron antes
- * de que las personas contestaran. Igual que los cupos que libera una anulación del
- * hospital (`ESPERA_CUPO_LIBERADO_POR_HOSPITAL_MS`).
- */
-export const ESPERA_CUPO_NUEVO_MS = 10 * 60_000;
 
 @Injectable()
 export class CuposLibresListaService {
